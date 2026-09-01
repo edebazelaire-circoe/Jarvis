@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "pinned_at": "2026-08-31",
+  "runtime_sources": {
+    "barehands": {
+      "repository": "https://github.com/jaredrhod/barehands",
+      "commit": "eb23bed2d772f9d5a24de26fb92f46c3c76d69cf",
+      "license": "AGPL-3.0-or-later",
+      "critical_git_blobs": {
+        "server.py": "984f0ed5ed49a50513deb0edeec8f399cb0e487a",
+        "stage.html": "7098ef2b39901ab35773da6719a30762467f15c6"
+      }
+    },
+    "ai-visualizer": {
+      "repository": "https://github.com/jaredrhod/ai-visualizer",
+      "commit": "6921e1d4b06bdd4a34c5264882d5257c4d5f70fd",
+      "license": "AGPL-3.0-or-later",
+      "critical_git_blobs": {
+        "server.py": "ffccf4c1d8b11685a448033053b29b8b404bd32f"
+      }
+    }
+  },
+  "reference_only": {
+    "fullstack-agent": "5bb159f47dbd6fa8f108651d0532a43aef16346b",
+    "backtalk": "84b3a6cd321060cabb74aad6ebe794621cf99bd3",
+    "ai-memory-vault": "659bba9c8b351c937dd393b3042801d1ff1b502c"
+  },
+  "browser_assets": {
+    "three": {
+      "version": "0.160.0",
+      "url": "https://registry.npmjs.org/three/-/three-0.160.0.tgz",
+      "integrity_sha512_base64": "DLU8lc0zNIPkM7rH5/e1Ks1Z8tWCGRq6g8mPowdDJpw1CFBJMU7UoJjC6PefXW7z//SSl0b2+GCw14LB+uDhng==",
+      "license": "MIT"
+    },
+    "mediapipe_tasks_vision": {
+      "version": "0.10.14",
+      "url": "https://registry.npmjs.org/@mediapipe/tasks-vision/-/tasks-vision-0.10.14.tgz",
+      "integrity_sha512_base64": "vOifgZhkndgybdvoRITzRkIueWWSiCKuEUXXK6Q4FaJsFvRJuwgg++vqFUMlL0Uox62U5aEXFhHxlhV7Ja5e3Q==",
+      "license": "Apache-2.0"
+    },
+    "hand_landmarker_model": {
+      "url": "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+      "sha256": "fbc2a30080c3c557093b5ddfc334698132eb341044ccee322ccf8bcf3607cde1",
+      "license": "Apache-2.0"
+    }
+  }
+}

@@ -1,0 +1,29 @@
+[openai]
+base_url = "https://api.openai.com/v1"
+transcription_model = "gpt-4o-transcribe"
+agent_model = "gpt-5.6-terra"
+tts_model = "gpt-4o-mini-tts"
+tts_voice = "cedar"
+tts_instructions = "Parle en francais naturel, chaleureux et concis. Ne surjoue pas."
+timeout_s = 45.0
+
+[runtime]
+ptt_key = "f9"
+memory_dir = "./data/memory"
+runtime_dir = "./runtime"
+log_level = "INFO"
+log_content = false
+confirmation_timeout_s = 45.0
+
+[audio]
+sample_rate = 16000
+channels = 1
+input_device = ""
+
+[board]
+enabled = true
+url = "http://127.0.0.1:8794"
+
+[visualizer]
+enabled = true
+url = "http://127.0.0.1:8790"

@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.env
+runtime/
+data/memory/.jarvis/
+third_party/barehands/
+third_party/ai-visualizer/
+third_party/.downloads/
+third_party/INSTALL-STATE.json
+*.log
+
+config/jarvis.toml

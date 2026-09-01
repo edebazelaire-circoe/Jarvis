@@ -1,0 +1,17 @@
+{
+  "name": "Jarvis V1",
+  "version": "0.1.0-rc1",
+  "built_at": "2026-08-31",
+  "status": "release-candidate",
+  "automated_tests": {"passed": 107, "skipped": 1},
+  "coverage_jarvis_and_scripts_percent": 75,
+  "manual_gates_remaining": [
+    "live OpenAI provider smoke and latency",
+    "real microphone/speaker acceptance",
+    "third-party network bootstrap on workstation",
+    "Chrome camera/offline Barehands physical gesture smoke",
+    "Windows PowerShell setup execution"
+  ],
+  "handoff_source": "docs/handoff-source/",
+  "implementation_report": "docs/FINAL_IMPLEMENTATION_REPORT.md"
+}

@@ -1,0 +1,15 @@
+{
+  "title": "Jarvis V1 personal assistant prototype implementation handoff",
+  "created_at": "2026-08-31",
+  "source": "Reconstructed from ChatGPT audit of jaredrhod/fullstack-agent and follow-up implementation request",
+  "task_count": 12,
+  "language": "fr",
+  "status": "implementation-ready prototype plan",
+  "upstream_repositories": [
+    "https://github.com/jaredrhod/fullstack-agent",
+    "https://github.com/jaredrhod/backtalk",
+    "https://github.com/jaredrhod/barehands",
+    "https://github.com/jaredrhod/ai-visualizer",
+    "https://github.com/jaredrhod/ai-memory-vault"
+  ]
+}
