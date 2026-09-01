@@ -65,6 +65,22 @@ $env:OPENAI_API_KEY="your-key"
 .\.venv\Scripts\python.exe scripts\dev_start.py
 ```
 
+`setup.ps1` accepts any working Python 3.11+ interpreter. It first tries the `python` command, then falls back to the Windows `py -3` launcher; it does not require Python 3.11 specifically.
+
+If PowerShell reports that `setup.ps1` is not digitally signed because the downloaded file is blocked, prefer removing the Internet-zone mark from that file:
+
+```powershell
+Unblock-File .\setup.ps1
+.\setup.ps1
+```
+
+If your organization enforces a stricter execution policy, you can use a process-scoped bypass for the current terminal only:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\setup.ps1
+```
+
 The bootstrap is one-time and networked. It pins and verifies exact upstream inputs before applying the local Barehands hardening patch. The launcher re-verifies installed executable/static trees before starting the UI components.
 
 ## Run modes
