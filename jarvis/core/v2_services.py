@@ -187,6 +187,11 @@ class JobService:
     async def submit(self, job: Job) -> Job:
         if job.kind not in self.workers:
             raise KeyError(f"no worker for job kind {job.kind}")
+        for existing in await self.state.list_jobs():
+            if existing.idempotency_key == job.idempotency_key:
+                return existing
+        if job.id in self._running:
+            return job
         await self.state.save_job(job)
         task = asyncio.create_task(self._execute(job), name=f"jarvis-job-{job.id}")
         self._running[job.id] = task
