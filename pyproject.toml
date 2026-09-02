@@ -17,6 +17,12 @@ voice = [
   "numpy>=2.0,<3",
   "sounddevice>=0.5,<1",
   "pynput>=1.7,<2",
+  "pvporcupine>=3,<4",
+]
+calendar-google = [
+  "google-api-python-client>=2,<3",
+  "google-auth>=2,<3",
+  "google-auth-oauthlib>=1,<2",
 ]
 dev = [
   "pytest>=8,<10",
