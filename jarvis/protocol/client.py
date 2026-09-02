@@ -48,6 +48,12 @@ class LocalCoreClient:
         async with session.post(self.base_url + f"/v1/conversations/{conversation_id}/turns", headers=self.headers, json=payload) as response:
             return await self._json(response)
 
+    async def call_tool(self, name: str, arguments: dict[str, object], *, conversation_id: str | None = None) -> dict[str, Any]:
+        session = await self._http()
+        payload = {"name": name, "arguments": arguments, "conversation_id": conversation_id}
+        async with session.post(self.base_url + "/v1/tools/call", headers=self.headers, json=payload) as response:
+            return await self._json(response)
+
     async def events(self) -> AsyncIterator[ProtocolEnvelope]:
         session = await self._http()
         async with session.ws_connect(self.base_url.replace("http://", "ws://") + "/v1/events", headers=self.headers, heartbeat=20) as ws:
