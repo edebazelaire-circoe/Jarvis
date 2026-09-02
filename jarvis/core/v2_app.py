@@ -4,9 +4,12 @@ import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 
+from jarvis.adapters.fake_calendar import InMemoryCalendarBackend
 from jarvis.adapters.jsonl_history import JsonlHistoryStore
 from jarvis.adapters.sqlite_state import SQLiteStateRepository
+from jarvis.core.calendar_service import CalendarService
 from jarvis.core.v2_services import ConversationService, CoreEventBus, SchedulerService
+from jarvis.core.v2_tools import CoreToolRouter
 from jarvis.domain.v2 import Device
 
 
@@ -20,13 +23,15 @@ class CoreHealth:
 class JarvisCoreApplication:
     """Long-lived provider-neutral v0.2 application container."""
 
-    def __init__(self, *, data_root: Path) -> None:
+    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris") -> None:
         root = Path(data_root).resolve()
         self.state = SQLiteStateRepository(root / "state" / "jarvis.sqlite3")
         self.history = JsonlHistoryStore(root / "history")
         self.events = CoreEventBus()
         self.conversations = ConversationService(self.state, self.history)
         self.scheduler = SchedulerService(self.state, self.events)
+        self.calendar = CalendarService(InMemoryCalendarBackend())
+        self.tools = CoreToolRouter(scheduler=self.scheduler, calendar=self.calendar, timezone=timezone)
         self.health = CoreHealth()
         self._stopped = asyncio.Event()
 
