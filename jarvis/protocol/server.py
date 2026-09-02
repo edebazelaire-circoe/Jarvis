@@ -39,7 +39,14 @@ class LocalProtocolServer:
 
     def _app(self) -> web.Application:
         app = web.Application(middlewares=[self._auth])
-        app.add_routes([web.get("/v1/health", self.health),web.post("/v1/conversations", self.create_conversation),web.get("/v1/conversations/{conversation_id}/context", self.context),web.post("/v1/conversations/{conversation_id}/turns", self.append_turn),web.get("/v1/events", self.events)])
+        app.add_routes([
+            web.get("/v1/health", self.health),
+            web.post("/v1/conversations", self.create_conversation),
+            web.get("/v1/conversations/{conversation_id}/context", self.context),
+            web.post("/v1/conversations/{conversation_id}/turns", self.append_turn),
+            web.post("/v1/tools/call", self.call_tool),
+            web.get("/v1/events", self.events),
+        ])
         return app
 
     async def start(self) -> None:
@@ -81,6 +88,15 @@ class LocalProtocolServer:
         turn = await self.core.conversations.append_turn(request.match_info["conversation_id"], kind, content, correlation_id=correlation_id, reference_id=body.get("reference_id"), metadata=body.get("metadata") or {})
         return web.json_response(jsonable(turn), status=201)
 
+    async def call_tool(self, request: web.Request) -> web.Response:
+        body = await request.json()
+        name = str(body.get("name") or "").strip()
+        arguments = body.get("arguments") or {}
+        if not name or not isinstance(arguments, dict):
+            raise ValueError("tool name and object arguments are required")
+        result = await self.core.tools.call(name, arguments, conversation_id=body.get("conversation_id"))
+        return web.json_response(result)
+
     async def events(self, request: web.Request) -> web.StreamResponse:
         ws = web.WebSocketResponse(heartbeat=20)
         await ws.prepare(request)
@@ -93,6 +109,7 @@ class LocalProtocolServer:
                 done, pending = await asyncio.wait({event_task, receive_task}, return_when=asyncio.FIRST_COMPLETED)
                 for task in pending:
                     task.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
                 if event_task in done:
                     await ws.send_json(jsonable(event_task.result()))
                 if receive_task in done:
