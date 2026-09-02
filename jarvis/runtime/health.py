@@ -14,13 +14,7 @@ class HealthCheck:
     details: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
-        return {
-            "name": self.name,
-            "status": self.status,
-            "required": self.required,
-            "message": self.message,
-            "details": self.details,
-        }
+        return {"name": self.name, "status": self.status, "required": self.required, "message": self.message, "details": self.details}
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,7 +28,6 @@ class HealthReport:
 
 async def run_health_checks(config, *, board=None, check_audio: bool = True, recorder=None) -> HealthReport:
     checks: list[HealthCheck] = []
-
     runtime_dir = Path(config.runtime.runtime_dir)
     try:
         runtime_dir.mkdir(parents=True, exist_ok=True)
@@ -45,10 +38,7 @@ async def run_health_checks(config, *, board=None, check_audio: bool = True, rec
     except Exception as exc:
         checks.append(HealthCheck("runtime_dir", "fail", True, type(exc).__name__))
 
-    if config.openai.api_key:
-        checks.append(HealthCheck("openai_credentials", "ok", True))
-    else:
-        checks.append(HealthCheck("openai_credentials", "warn", False, "OPENAI_API_KEY absent"))
+    checks.append(HealthCheck("openai_credentials", "ok", True) if config.openai.api_key else HealthCheck("openai_credentials", "warn", False, "OPENAI_API_KEY absent"))
 
     if check_audio:
         if recorder is None:
@@ -67,22 +57,23 @@ async def run_health_checks(config, *, board=None, check_audio: bool = True, rec
             checks.append(HealthCheck("barehands", "warn", False, "Client non fourni"))
         else:
             try:
-                ping = getattr(board, "health", None) or getattr(board, "ping", None)
-                if ping is not None:
-                    result = ping()
+                check = getattr(board, "health", None) or getattr(board, "ping", None)
+                if check is None:
+                    checks.append(HealthCheck("barehands", "warn", False, "Aucun health check exposé"))
+                else:
+                    result = check()
                     if hasattr(result, "__await__"):
-                        await result
-                checks.append(HealthCheck("barehands", "ok", False))
+                        result = await result
+                    if result is False:
+                        checks.append(HealthCheck("barehands", "warn", False, "Board indisponible"))
+                    else:
+                        checks.append(HealthCheck("barehands", "ok", False))
             except Exception as exc:
                 checks.append(HealthCheck("barehands", "warn", False, type(exc).__name__))
     else:
         checks.append(HealthCheck("barehands", "disabled", False))
 
-    if config.board.enabled or config.visualizer.enabled:
-        checks.append(HealthCheck("third_party", "ok", False))
-    else:
-        checks.append(HealthCheck("third_party", "disabled", False))
-
+    checks.append(HealthCheck("third_party", "ok", False) if (config.board.enabled or config.visualizer.enabled) else HealthCheck("third_party", "disabled", False))
     if any(c.status == "fail" and c.required for c in checks):
         status = "fail"
     elif any(c.status == "warn" for c in checks):
