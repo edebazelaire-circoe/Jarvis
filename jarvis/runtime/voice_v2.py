@@ -49,8 +49,20 @@ class PersistentVoiceRuntime:
             async for _keyword in self.wakeword.detections():
                 if self._stop.is_set():
                     break
-                if self.runtime.state is VoiceLifecycleState.BACKGROUND:
-                    await self.activate()
+                if self.runtime.state is not VoiceLifecycleState.BACKGROUND:
+                    continue
+                await self.activate()
+                bridge_task = self._bridge_task
+                if bridge_task is None:
+                    continue
+                outcome = (await asyncio.gather(bridge_task, return_exceptions=True))[0]
+                # Mute/timeout intentionally cancels the bridge and returns to
+                # wake-word mode. A genuine provider/audio failure must instead
+                # terminate Voice so the external supervisor can restart it.
+                if self.runtime.state is not VoiceLifecycleState.BACKGROUND:
+                    await self.mute()
+                if isinstance(outcome, BaseException) and not isinstance(outcome, asyncio.CancelledError):
+                    raise outcome
         finally:
             await self.close()
 
