@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 
 from jarvis.adapters.fake_calendar import InMemoryCalendarBackend
@@ -11,7 +12,7 @@ from jarvis.adapters.windows_notifications import NullNotificationDelivery
 from jarvis.core.calendar_service import CalendarService
 from jarvis.core.v2_services import ConversationService, CoreEventBus, JobService, NotificationService, SchedulerService
 from jarvis.core.v2_tools import CoreToolRouter
-from jarvis.domain.v2 import Device, Notification, NotificationPriority, ProtocolEnvelope
+from jarvis.domain.v2 import Device, Job, MissedRunPolicy, Notification, NotificationPriority, ProtocolEnvelope, ScheduledItem, ScheduledStatus, utc_now
 
 
 @dataclass(slots=True)
@@ -57,6 +58,7 @@ class JarvisCoreApplication:
             self._notification_task = asyncio.create_task(self._notification_loop(self._notification_queue), name="jarvis-v2-notifications")
             await self.notifications.recover()
             await self.jobs.recover()
+            await self._ensure_system_schedules()
             await self.scheduler.start()
             self.health.ready = True
             self.health.status = "ok"
@@ -72,6 +74,22 @@ class JarvisCoreApplication:
                 pass
             raise
 
+    async def _ensure_system_schedules(self) -> None:
+        if "memory_maintenance" not in self.jobs.workers:
+            return
+        existing = await self.state.list_scheduled_items()
+        if any(item.idempotency_key == "system:memory-maintenance-daily" and item.status is not ScheduledStatus.CANCELLED for item in existing):
+            return
+        item = ScheduledItem(
+            kind="job",
+            payload={"job_kind": "memory_maintenance", "payload": {}},
+            next_fire_at=utc_now() + timedelta(days=1),
+            recurrence_seconds=24 * 60 * 60,
+            missed_run_policy=MissedRunPolicy.SKIP,
+            idempotency_key="system:memory-maintenance-daily",
+        )
+        await self.scheduler.create(item)
+
     async def _notification_loop(self, queue: asyncio.Queue[ProtocolEnvelope]) -> None:
         try:
             while True:
@@ -81,6 +99,19 @@ class JarvisCoreApplication:
                 reference = str(event.payload.get("scheduled_item_id") or event.payload.get("job_id") or event.correlation_id)
                 if event.message_type.startswith("schedule."):
                     payload = event.payload.get("payload") if isinstance(event.payload.get("payload"), dict) else {}
+                    if event.payload.get("kind") == "job":
+                        job_kind = str(payload.get("job_kind") or "").strip()
+                        job_payload = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+                        scheduled_for = str(event.payload.get("scheduled_for") or "unknown")
+                        try:
+                            await self.jobs.submit(Job(kind=job_kind, payload=job_payload, requested_by_conversation_id=event.conversation_id, idempotency_key=f"schedule:{reference}:{scheduled_for}"))
+                        except Exception as exc:
+                            notification = Notification(summary="Tâche planifiée Jarvis en échec", body=f"Impossible de lancer {job_kind or 'la tâche'} ({type(exc).__name__}).", priority=NotificationPriority.HIGH, originating_reference_id=reference, idempotency_key=f"schedule-dispatch-failed:{reference}:{scheduled_for}")
+                            try:
+                                await self.notifications.create(notification, deliver=True)
+                            except Exception:
+                                pass
+                        continue
                     summary = "Rappel Jarvis"
                     body = str(payload.get("message") or "Un rappel est arrivé à échéance.")
                 elif event.message_type == "job.completed":
