@@ -24,7 +24,7 @@ class OpenAIRealtimeSession:
         try:
             ws = await http.ws_connect(f"wss://api.openai.com/v1/realtime?model={model}", headers={"Authorization": f"Bearer {api_key}"}, heartbeat=20)
             instance = cls(ws, http, owns_http=owns)
-            instructions = "You are Jarvis. Speak naturally and concisely. All actions must use the provided Core tools. Never claim an action succeeded before its tool result."
+            instructions = "You are Jarvis. Speak naturally and concisely. All actions must use the provided Core tools. Never claim an action succeeded before its tool result. If Core says confirmation is required, ask the user for an explicit yes/no and wait."
             recent = context.get("recent_turns") or []
             if recent:
                 instructions += "\nConversation context:\n" + "\n".join(f"{item.get('kind')}: {item.get('content')}" for item in recent[-12:] if isinstance(item, dict))
@@ -40,6 +40,10 @@ class OpenAIRealtimeSession:
 
     async def send_tool_result(self, call_id: str, result: dict[str, object]) -> None:
         await self.ws.send_json({"type": "conversation.item.create", "item": {"type": "function_call_output", "call_id": call_id, "output": json.dumps(result, ensure_ascii=False)}})
+        await self.ws.send_json({"type": "response.create"})
+
+    async def send_context(self, text: str) -> None:
+        await self.ws.send_json({"type": "conversation.item.create", "item": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": text}]}})
         await self.ws.send_json({"type": "response.create"})
 
     async def events(self) -> AsyncIterator[ProtocolEnvelope]:
