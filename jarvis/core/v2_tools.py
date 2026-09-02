@@ -69,6 +69,12 @@ class CoreToolRouter:
             query = CalendarQuery(start_at=self._datetime(arguments["start_at"]), end_at=self._datetime(arguments["end_at"]), text=str(arguments["text"]) if arguments.get("text") else None)
             events = await self.calendar.find(query)
             return {"disposition": "execute", "executed": True, "events": [self._event_payload(e) for e in events]}
+        if name == "calendar_get":
+            event_id = str(arguments["event_id"])
+            event = await self.calendar.backend.get_event(event_id)
+            if event is None:
+                raise KeyError(event_id)
+            return {"disposition": "execute", "executed": True, "event": self._event_payload(event)}
         if name == "calendar_create":
             event = CalendarEvent(title=str(arguments["title"]), start_at=self._datetime(arguments["start_at"]), end_at=self._datetime(arguments["end_at"]), timezone=str(arguments.get("timezone") or self.timezone.key), description=str(arguments.get("description") or ""), location=str(arguments.get("location") or ""))
             created = await self.calendar.create(event, idempotency_key=str(arguments.get("idempotency_key") or new_id()))
@@ -120,5 +126,5 @@ class CoreToolRouter:
 
     @staticmethod
     def _is_ambiguous(name: str, args: dict[str, object]) -> bool:
-        required = {"reminder_create": {"message", "due_at"}, "calendar_list": {"start_at", "end_at"}, "calendar_create": {"title", "start_at", "end_at"}, "calendar_update": {"event_id"}, "calendar_delete": {"event_id"}, "calendar_invite": {"event_id", "attendee"}}.get(name, set())
+        required = {"reminder_create": {"message", "due_at"}, "calendar_list": {"start_at", "end_at"}, "calendar_get": {"event_id"}, "calendar_create": {"title", "start_at", "end_at"}, "calendar_update": {"event_id"}, "calendar_delete": {"event_id"}, "calendar_invite": {"event_id", "attendee"}}.get(name, set())
         return any(not args.get(key) for key in required)
