@@ -108,6 +108,7 @@ def _calendar_backend_from_env():
 
 async def _run_core_v2() -> int:
     from jarvis.adapters.windows_notifications import NullNotificationDelivery, WindowsNotificationDelivery
+    from jarvis.core.memory_maintenance import MemoryMaintenanceWorker
     from jarvis.core.v2_app import JarvisCoreApplication
     from jarvis.protocol.server import LocalProtocolServer
     from jarvis.v2_config import V2Settings
@@ -115,7 +116,8 @@ async def _run_core_v2() -> int:
     token = generate_session_token()
     _write_session_token(settings.token_file, token)
     delivery = WindowsNotificationDelivery() if os.name == "nt" and os.getenv("JARVIS_WINDOWS_NOTIFICATIONS", "0") in {"1", "true", "yes"} else NullNotificationDelivery()
-    core = JarvisCoreApplication(data_root=settings.data_root, timezone=settings.timezone, calendar_backend=_calendar_backend_from_env(), notification_delivery=delivery)
+    workers = {"memory_maintenance": MemoryMaintenanceWorker(settings.data_root / "memory")}
+    core = JarvisCoreApplication(data_root=settings.data_root, timezone=settings.timezone, calendar_backend=_calendar_backend_from_env(), notification_delivery=delivery, workers=workers)
     server = LocalProtocolServer(core, host=settings.core_host, port=settings.core_port, token=token)
     try:
         await core.start(); await server.start()
