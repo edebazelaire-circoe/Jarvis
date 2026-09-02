@@ -45,6 +45,7 @@ class LocalProtocolServer:
             web.get("/v1/conversations/{conversation_id}/context", self.context),
             web.post("/v1/conversations/{conversation_id}/turns", self.append_turn),
             web.post("/v1/tools/call", self.call_tool),
+            web.post("/v1/actions/{action_id}/confirmation", self.confirm_action),
             web.get("/v1/events", self.events),
         ])
         return app
@@ -96,6 +97,13 @@ class LocalProtocolServer:
             raise ValueError("tool name and object arguments are required")
         result = await self.core.tools.call(name, arguments, conversation_id=body.get("conversation_id"))
         return web.json_response(result)
+
+    async def confirm_action(self, request: web.Request) -> web.Response:
+        body = await request.json()
+        text = body.get("text")
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("confirmation text is required")
+        return web.json_response(await self.core.tools.resolve_confirmation(request.match_info["action_id"], text))
 
     async def events(self, request: web.Request) -> web.StreamResponse:
         ws = web.WebSocketResponse(heartbeat=20)
