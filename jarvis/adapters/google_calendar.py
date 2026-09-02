@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import os
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +35,13 @@ class GoogleCalendarBackend:
                 flow = InstalledAppFlow.from_client_secrets_file(str(client_secret_file), cls.SCOPES)
                 creds = flow.run_local_server(port=0)
             token_file.parent.mkdir(parents=True, exist_ok=True)
-            token_file.write_text(creds.to_json(), encoding="utf-8")
+            tmp = token_file.with_suffix(token_file.suffix + ".tmp")
+            tmp.write_text(creds.to_json(), encoding="utf-8")
+            try:
+                os.chmod(tmp, 0o600)
+            except OSError:
+                pass
+            os.replace(tmp, token_file)
         return cls(build("calendar", "v3", credentials=creds, cache_discovery=False), calendar_id=calendar_id)
 
     async def list_events(self, query: CalendarQuery):
