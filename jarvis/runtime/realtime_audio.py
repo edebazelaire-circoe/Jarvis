@@ -88,6 +88,7 @@ class RealtimeConversationBridge:
         self.on_addressed = on_addressed
         self.on_mute = on_mute
         self.classifier = classifier or ConservativeAddressingClassifier()
+        self._pending_action_id: str | None = None
 
     async def run(self) -> None:
         await self.audio.start()
@@ -101,12 +102,18 @@ class RealtimeConversationBridge:
                     decision = self.classifier.classify(text, active=True)
                     if decision is not AddressingDecision.ADDRESSED:
                         continue
-                    if " ".join(text.casefold().split()) in {"jarvis mute", "jarvis, mute"}:
+                    normalized = " ".join(text.casefold().replace(",", " ").split())
+                    if normalized == "jarvis mute":
                         maybe = self.on_mute()
                         if hasattr(maybe, "__await__"):
                             await maybe
                         break
                     await self.core.append_turn(self.conversation_id, kind="user", content=text)
+                    if self._pending_action_id is not None and normalized in {"oui", "non", "yes", "no"}:
+                        result = await self.core.confirm_action(self._pending_action_id, text)
+                        if result.get("disposition") != "confirm":
+                            self._pending_action_id = None
+                        await self.session.send_context("Jarvis Core confirmation result: " + str(result))
                     maybe = self.on_addressed()
                     if hasattr(maybe, "__await__"):
                         await maybe
@@ -122,6 +129,8 @@ class RealtimeConversationBridge:
                     name = str(event.payload.get("name") or "")
                     arguments = event.payload.get("arguments") if isinstance(event.payload.get("arguments"), dict) else {}
                     result = await self.core.call_tool(name, arguments, conversation_id=self.conversation_id)
+                    action_id = result.get("action_id")
+                    self._pending_action_id = str(action_id) if result.get("disposition") == "confirm" and action_id else None
                     await self.session.send_tool_result(call_id, result)
                 elif event.message_type == "realtime.error":
                     raise RuntimeError("Realtime provider reported an error")
