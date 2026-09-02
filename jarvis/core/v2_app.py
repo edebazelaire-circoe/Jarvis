@@ -11,7 +11,7 @@ from jarvis.adapters.windows_notifications import NullNotificationDelivery
 from jarvis.core.calendar_service import CalendarService
 from jarvis.core.v2_services import ConversationService, CoreEventBus, JobService, NotificationService, SchedulerService
 from jarvis.core.v2_tools import CoreToolRouter
-from jarvis.domain.v2 import Device, Notification, NotificationPriority
+from jarvis.domain.v2 import Device, Notification, NotificationPriority, ProtocolEnvelope
 
 
 @dataclass(slots=True)
@@ -43,25 +43,36 @@ class JarvisCoreApplication:
         self.health = CoreHealth()
         self._stopped = asyncio.Event()
         self._notification_task: asyncio.Task[None] | None = None
+        self._notification_queue: asyncio.Queue[ProtocolEnvelope] | None = None
 
     async def start(self) -> None:
+        if self.health.ready:
+            return
         try:
             await self.state.initialize()
             await self.state.save_device(Device())
-            await self.jobs.recover()
+            # Subscribe before recovery: overdue schedules and interrupted jobs
+            # may emit events immediately during startup.
+            self._notification_queue = self.events.subscribe()
+            self._notification_task = asyncio.create_task(self._notification_loop(self._notification_queue), name="jarvis-v2-notifications")
             await self.notifications.recover()
+            await self.jobs.recover()
             await self.scheduler.start()
-            self._notification_task = asyncio.create_task(self._notification_loop(), name="jarvis-v2-notifications")
             self.health.ready = True
             self.health.status = "ok"
+            self.health.detail = ""
         except Exception as exc:
             self.health.ready = False
             self.health.status = "fail"
             self.health.detail = f"{type(exc).__name__}: {exc}"
+            await self._stop_notification_loop()
+            try:
+                await self.state.close()
+            except Exception:
+                pass
             raise
 
-    async def _notification_loop(self) -> None:
-        queue = self.events.subscribe()
+    async def _notification_loop(self, queue: asyncio.Queue[ProtocolEnvelope]) -> None:
         try:
             while True:
                 event = await queue.get()
@@ -77,17 +88,30 @@ class JarvisCoreApplication:
                 else:
                     summary, body = "Tâche Jarvis à vérifier", f"État: {event.message_type}."
                 notification = Notification(summary=summary, body=body, priority=NotificationPriority.NORMAL, originating_reference_id=reference, idempotency_key=f"event:{event.message_type}:{reference}")
-                await self.notifications.create(notification, deliver=True)
+                try:
+                    await self.notifications.create(notification, deliver=True)
+                except Exception:
+                    # Notification state is persisted as FAILED by the service;
+                    # the Core event loop must stay alive if the OS channel fails.
+                    continue
         finally:
             self.events.unsubscribe(queue)
 
-    async def stop(self) -> None:
-        self.health.ready = False
-        self.health.status = "stopping"
+    async def _stop_notification_loop(self) -> None:
         task, self._notification_task = self._notification_task, None
+        queue, self._notification_queue = self._notification_queue, None
         if task is not None:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+        if queue is not None:
+            self.events.unsubscribe(queue)
+
+    async def stop(self) -> None:
+        if self.health.status == "stopped":
+            return
+        self.health.ready = False
+        self.health.status = "stopping"
+        await self._stop_notification_loop()
         await self.jobs.stop()
         await self.scheduler.stop()
         await self.state.close()
