@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime
+import time
+from typing import Callable
 import unicodedata
 from zoneinfo import ZoneInfo
 
@@ -13,19 +15,18 @@ from jarvis.security.v2_policy import ActionDisposition, V2ActionBroker
 
 
 class CoreToolRouter:
-    """Authoritative tool boundary for Voice/Realtime clients.
+    """Authoritative tool boundary for Voice/Realtime clients."""
 
-    Sensitive actions are retained server-side and can only be resolved by an
-    explicit exact yes/no confirmation. The client/model never supplies risk or
-    overrides policy.
-    """
-
-    def __init__(self, *, scheduler: SchedulerService, calendar: CalendarService, timezone: str = "Europe/Paris") -> None:
+    def __init__(self, *, scheduler: SchedulerService, calendar: CalendarService, timezone: str = "Europe/Paris", confirmation_timeout_s: float = 45.0, clock: Callable[[], float] = time.monotonic) -> None:
+        if confirmation_timeout_s <= 0:
+            raise ValueError("confirmation_timeout_s must be positive")
         self.scheduler = scheduler
         self.calendar = calendar
         self.timezone = ZoneInfo(timezone)
         self.policy = V2ActionBroker()
-        self._pending: dict[str, tuple[str, dict[str, object], str | None]] = {}
+        self.confirmation_timeout_s = confirmation_timeout_s
+        self.clock = clock
+        self._pending: dict[str, tuple[str, dict[str, object], str | None, float]] = {}
 
     async def call(self, name: str, arguments: dict[str, object], *, conversation_id: str | None) -> dict[str, object]:
         ambiguous = not isinstance(arguments, dict) or self._is_ambiguous(name, arguments)
@@ -34,7 +35,7 @@ class CoreToolRouter:
             return {"disposition": disposition.value, "executed": False, "action": name}
         if disposition is ActionDisposition.CONFIRM:
             action_id = new_id()
-            self._pending[action_id] = (name, dict(arguments), conversation_id)
+            self._pending[action_id] = (name, dict(arguments), conversation_id, self.clock() + self.confirmation_timeout_s)
             return {"disposition": disposition.value, "executed": False, "action": name, "action_id": action_id, "message": "Confirmation requise. Répondez exactement oui ou non."}
         if disposition is not ActionDisposition.EXECUTE:
             return {"disposition": disposition.value, "executed": False, "action": name}
@@ -44,13 +45,17 @@ class CoreToolRouter:
         pending = self._pending.get(action_id)
         if pending is None:
             return {"disposition": "deny", "executed": False, "action_id": action_id, "message": "Confirmation inconnue ou expirée."}
+        name, arguments, conversation_id, expires_at = pending
+        if self.clock() >= expires_at:
+            self._pending.pop(action_id, None)
+            return {"disposition": "deny", "executed": False, "action_id": action_id, "message": "Confirmation expirée."}
         normalized = self._normalize_confirmation(text)
         if normalized in {"non", "no"}:
             self._pending.pop(action_id, None)
             return {"disposition": "deny", "executed": False, "action_id": action_id, "message": "Action annulée."}
         if normalized not in {"oui", "yes"}:
             return {"disposition": "confirm", "executed": False, "action_id": action_id, "message": "Confirmation ambiguë. Répondez exactement oui ou non."}
-        name, arguments, conversation_id = self._pending.pop(action_id)
+        self._pending.pop(action_id, None)
         result = await self._execute(name, arguments, conversation_id=conversation_id)
         return {**result, "action_id": action_id}
 
