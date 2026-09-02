@@ -142,6 +142,7 @@ class SchedulerService:
             await self.clock.sleep(0.5)
 
     async def _evaluate_due(self, item: ScheduledItem, now: datetime, *, recovering: bool) -> None:
+        scheduled_for = item.next_fire_at.isoformat()
         late_s = max(0.0, (now - item.next_fire_at).total_seconds())
         should_fire = True
         event_type = "schedule.triggered"
@@ -155,12 +156,12 @@ class SchedulerService:
                 event_type = "schedule.confirmation_required"
             elif item.missed_run_policy is MissedRunPolicy.NOTIFY_LATE:
                 event_type = "schedule.triggered_late"
-        fire_key = f"{item.id}:{item.next_fire_at.isoformat()}"
+        fire_key = f"{item.id}:{scheduled_for}"
         if should_fire and fire_key not in self._fired_keys:
             self._fired_keys.add(fire_key)
-            await self.events.publish(ProtocolEnvelope(message_type=event_type, payload={"scheduled_item_id": item.id, "kind": item.kind, "payload": item.payload, "late_seconds": int(late_s)}, conversation_id=item.requested_by_conversation_id))
+            await self.events.publish(ProtocolEnvelope(message_type=event_type, payload={"scheduled_item_id": item.id, "scheduled_for": scheduled_for, "kind": item.kind, "payload": item.payload, "late_seconds": int(late_s)}, conversation_id=item.requested_by_conversation_id))
         elif not should_fire and event_type == "schedule.confirmation_required":
-            await self.events.publish(ProtocolEnvelope(message_type=event_type, payload={"scheduled_item_id": item.id, "payload": item.payload}, conversation_id=item.requested_by_conversation_id))
+            await self.events.publish(ProtocolEnvelope(message_type=event_type, payload={"scheduled_item_id": item.id, "scheduled_for": scheduled_for, "payload": item.payload}, conversation_id=item.requested_by_conversation_id))
 
         if item.recurrence_seconds:
             next_fire = item.next_fire_at
