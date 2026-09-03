@@ -1,0 +1,19 @@
+Metadata-Version: 2.4
+Name: jarvis-local-v1
+Version: 0.2.0
+Summary: Persistent local Jarvis assistant with separate Core and Voice runtimes
+Requires-Python: >=3.11
+Requires-Dist: httpx<1,>=0.27
+Requires-Dist: aiohttp<4,>=3.11
+Provides-Extra: voice
+Requires-Dist: numpy<3,>=2.0; extra == "voice"
+Requires-Dist: sounddevice<1,>=0.5; extra == "voice"
+Requires-Dist: pynput<2,>=1.7; extra == "voice"
+Requires-Dist: pvporcupine<4,>=3; extra == "voice"
+Provides-Extra: calendar-google
+Requires-Dist: google-api-python-client<3,>=2; extra == "calendar-google"
+Requires-Dist: google-auth<3,>=2; extra == "calendar-google"
+Requires-Dist: google-auth-oauthlib<2,>=1; extra == "calendar-google"
+Provides-Extra: dev
+Requires-Dist: pytest<10,>=8; extra == "dev"
+Requires-Dist: pytest-asyncio<2,>=0.24; extra == "dev"
