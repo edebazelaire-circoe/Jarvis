@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 from collections.abc import Callable
 
 from jarvis.domain.v2 import AddressingDecision
@@ -133,7 +134,14 @@ class RealtimeConversationBridge:
                     self._pending_action_id = str(action_id) if result.get("disposition") == "confirm" and action_id else None
                     await self.session.send_tool_result(call_id, result)
                 elif event.message_type == "realtime.error":
-                    raise RuntimeError("Realtime provider reported an error")
+                    error = event.payload.get("error") or {}
+                    if isinstance(error, dict):
+                        code = str(error.get("code") or "unknown_error")
+                        message = str(error.get("message") or error)
+                    else:
+                        code = "unknown_error"
+                        message = str(error)
+                    raise RuntimeError(f"Realtime provider error [{code}]: {message}")
         finally:
             input_task.cancel()
             await asyncio.gather(input_task, return_exceptions=True)
