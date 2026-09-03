@@ -36,9 +36,15 @@ class CompositeWakeWordBackend:
 
     async def suspend(self) -> None:
         for backend in self.backends:
-            suspend = getattr(backend, "suspend", None)
-            if suspend is not None:
-                await suspend()
+            await backend.suspend()
+        self._clear_pending()
+
+    async def suspend_for_active_session(self) -> None:
+        for backend in self.backends:
+            await backend.suspend_for_active_session()
+        self._clear_pending()
+
+    def _clear_pending(self) -> None:
         while not self._queue.empty():
             try:
                 self._queue.get_nowait()
@@ -47,9 +53,7 @@ class CompositeWakeWordBackend:
 
     async def resume(self) -> None:
         for backend in self.backends:
-            resume = getattr(backend, "resume", None)
-            if resume is not None:
-                await resume()
+            await backend.resume()
 
     async def close(self) -> None:
         if self._closed:

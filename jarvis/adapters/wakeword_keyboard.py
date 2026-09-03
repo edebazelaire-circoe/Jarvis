@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 class KeyboardWakeWordBackend:
     """Global keyboard wake trigger used as a local/manual Voice fallback."""
 
-    def __init__(self, *, key_name: str = "f1") -> None:
+    def __init__(self, *, key_name: str = "f9") -> None:
         self.key_name = key_name.lower().strip()
         self._queue: asyncio.Queue[str] = asyncio.Queue(maxsize=1)
         self._listener = None
@@ -54,6 +54,12 @@ class KeyboardWakeWordBackend:
                 self._queue.get_nowait()
             except asyncio.QueueEmpty:
                 break
+
+    async def suspend_for_active_session(self) -> None:
+        """Keep the manual key active so a second press can submit the turn."""
+        if not self._closed:
+            self._enabled = True
+            await self.start()
 
     async def resume(self) -> None:
         if not self._closed:

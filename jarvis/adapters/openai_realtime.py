@@ -58,11 +58,7 @@ class OpenAIRealtimeSession:
                             "input": {
                                 "format": {"type": "audio/pcm", "rate": 24000},
                                 "transcription": {"model": "gpt-4o-mini-transcribe"},
-                                "turn_detection": {
-                                    "type": "server_vad",
-                                    "create_response": True,
-                                    "interrupt_response": True,
-                                },
+                                "turn_detection": None,
                             },
                             "output": {
                                 "format": {"type": "audio/pcm", "rate": 24000},
@@ -84,6 +80,10 @@ class OpenAIRealtimeSession:
         await self.ws.send_json(
             {"type": "input_audio_buffer.append", "audio": base64.b64encode(pcm).decode("ascii")}
         )
+
+    async def finish_input(self) -> None:
+        await self.ws.send_json({"type": "input_audio_buffer.commit"})
+        await self.ws.send_json({"type": "response.create"})
 
     async def send_tool_result(self, call_id: str, result: dict[str, object]) -> None:
         await self.ws.send_json(
@@ -121,6 +121,14 @@ class OpenAIRealtimeSession:
             kind = str(data.get("type") or "")
             if kind in {"response.audio.delta", "response.output_audio.delta"}:
                 yield ProtocolEnvelope(message_type="realtime.audio", payload={"pcm_b64": data.get("delta", "")})
+            elif kind in {"response.audio.done", "response.output_audio.done"}:
+                yield ProtocolEnvelope(message_type="realtime.audio_done", payload={})
+            elif kind == "response.done":
+                response = data.get("response") if isinstance(data.get("response"), dict) else {}
+                yield ProtocolEnvelope(
+                    message_type="realtime.response_done",
+                    payload={"status": response.get("status")},
+                )
             elif kind in {
                 "conversation.item.input_audio_transcription.completed",
                 "input_audio_buffer.transcription.completed",

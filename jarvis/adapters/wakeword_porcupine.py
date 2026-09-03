@@ -55,7 +55,11 @@ class PorcupineWakeWordBackend:
             try:
                 stream.stop(); stream.close()
             except Exception:
+                # Audio-device teardown is best effort during lifecycle transitions.
                 pass
+
+    async def suspend_for_active_session(self) -> None:
+        await self.suspend()
 
     async def resume(self) -> None:
         if not self._closed:
