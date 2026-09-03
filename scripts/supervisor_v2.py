@@ -42,24 +42,48 @@ class Supervisor:
             await asyncio.sleep(0.25)
         raise RuntimeError(f"Core readiness timeout: {last_error or 'no healthy response'}")
 
+    async def _ensure_role(self, role: str, *args: str) -> asyncio.subprocess.Process:
+        current = self.children.get(role)
+        if current is None or current.returncode is not None:
+            return await self.spawn(role, *args)
+        return current
+
     async def run(self) -> int:
         await self.spawn("core", "core")
         await self.wait_core_ready()
-        backoff = 1.0
+        voice_backoff = 1.0
+        await self._ensure_role("ui", "control-center")
+        await self._ensure_role("voice", "voice")
+
         while not self.stopping:
-            voice = await self.spawn("voice", "voice")
-            waiter = asyncio.create_task(voice.wait())
-            core_waiter = asyncio.create_task(self.children["core"].wait())
-            done, pending = await asyncio.wait({waiter, core_waiter}, return_when=asyncio.FIRST_COMPLETED)
+            core = self.children["core"]
+            voice = self.children["voice"]
+            ui = self.children["ui"]
+            waits = {
+                "core": asyncio.create_task(core.wait(), name="jarvis-core-wait"),
+                "voice": asyncio.create_task(voice.wait(), name="jarvis-voice-wait"),
+                "ui": asyncio.create_task(ui.wait(), name="jarvis-ui-wait"),
+            }
+            done, pending = await asyncio.wait(set(waits.values()), return_when=asyncio.FIRST_COMPLETED)
+            completed = next(name for name, task in waits.items() if task in done)
             for task in pending:
                 task.cancel()
             await asyncio.gather(*pending, return_exceptions=True)
-            if core_waiter in done:
-                return int(core_waiter.result() or 1)
+
+            if completed == "core":
+                return int(core.returncode or 1)
             if self.stopping:
                 break
-            await asyncio.sleep(backoff)
-            backoff = min(backoff * 2, 8.0)
+            if completed == "voice":
+                await asyncio.sleep(voice_backoff)
+                voice_backoff = min(voice_backoff * 2, 8.0)
+                await self.spawn("voice", "voice")
+                continue
+            if completed == "ui":
+                await asyncio.sleep(1.0)
+                await self.spawn("ui", "control-center")
+                continue
+
         return 0
 
     async def stop(self) -> None:
