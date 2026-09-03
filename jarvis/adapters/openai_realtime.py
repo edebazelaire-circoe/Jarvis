@@ -121,6 +121,8 @@ class OpenAIRealtimeSession:
             kind = str(data.get("type") or "")
             if kind in {"response.audio.delta", "response.output_audio.delta"}:
                 yield ProtocolEnvelope(message_type="realtime.audio", payload={"pcm_b64": data.get("delta", "")})
+            elif kind in {"response.audio.done", "response.output_audio.done"}:
+                yield ProtocolEnvelope(message_type="realtime.audio_done", payload={})
             elif kind in {
                 "conversation.item.input_audio_transcription.completed",
                 "input_audio_buffer.transcription.completed",
