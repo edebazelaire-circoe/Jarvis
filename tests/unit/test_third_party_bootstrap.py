@@ -61,7 +61,7 @@ def test_archive_path_traversal_rejected():
         _safe_relative("../escape")
     with pytest.raises(RuntimeError):
         _safe_relative("folder/../../escape")
-    assert str(_safe_relative("folder/ok.txt")) == "folder/ok.txt"
+    assert _safe_relative("folder/ok.txt").as_posix() == "folder/ok.txt"
 
 
 def test_sha512_integrity_fails_closed():
