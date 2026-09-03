@@ -130,6 +130,8 @@ async def _run_core_v2() -> int:
 
 async def _run_voice_v2() -> int:
     from jarvis.adapters.openai_realtime import OpenAIRealtimeSession
+    from jarvis.adapters.wakeword_composite import CompositeWakeWordBackend
+    from jarvis.adapters.wakeword_keyboard import KeyboardWakeWordBackend
     from jarvis.adapters.wakeword_porcupine import PorcupineWakeWordBackend
     from jarvis.protocol.client import LocalCoreClient
     from jarvis.runtime.realtime_tools import REALTIME_TOOLS
@@ -139,9 +141,6 @@ async def _run_voice_v2() -> int:
     if not settings.token_file.exists():
         raise RuntimeError("Core session token is missing; start `jarvis core` first")
     token = settings.token_file.read_text(encoding="utf-8").strip()
-    wake_key = os.getenv("PORCUPINE_ACCESS_KEY", "").strip()
-    if not wake_key:
-        raise RuntimeError("PORCUPINE_ACCESS_KEY is required for wake-word mode; use `jarvis run` for PTT fallback")
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is required for Realtime voice")
@@ -149,12 +148,21 @@ async def _run_voice_v2() -> int:
     health = await core.health()
     if not health.get("ready"):
         await core.close(); raise RuntimeError(f"Core is not ready: {health}")
-    wake = PorcupineWakeWordBackend(access_key=wake_key, keyword=os.getenv("JARVIS_WAKE_KEYWORD", "jarvis"))
+
+    wake_backends = [KeyboardWakeWordBackend(key_name=os.getenv("JARVIS_MANUAL_WAKE_KEY", "f1"))]
+    wake_key = os.getenv("PORCUPINE_ACCESS_KEY", "").strip()
+    if wake_key:
+        wake_backends.append(PorcupineWakeWordBackend(access_key=wake_key, keyword=os.getenv("JARVIS_WAKE_KEYWORD", "jarvis")))
+    wake = CompositeWakeWordBackend(wake_backends)
+
     async def realtime_factory(context: dict[str, object]):
         return await OpenAIRealtimeSession.connect(api_key=api_key, model=settings.realtime_model, voice=settings.realtime_voice, context=context, tools=REALTIME_TOOLS)
     voice = PersistentVoiceRuntime(wakeword=wake, core=core, realtime_factory=realtime_factory, active_timeout_s=settings.active_timeout_s)
     timeout_task = asyncio.create_task(_voice_timeout_loop(voice), name="jarvis-voice-timeout")
-    print("Jarvis Voice v0.2 en arrière-plan. Dites 'Jarvis' pour activer; 'Jarvis Mute' pour revenir en arrière-plan.")
+    if wake_key:
+        print("Jarvis Voice v0.2 en arrière-plan. Dites 'Jarvis' ou appuyez sur F1 pour activer; 'Jarvis Mute' pour revenir en arrière-plan.")
+    else:
+        print("Jarvis Voice v0.2 en arrière-plan. Appuyez sur F1 pour activer (Porcupine non configuré); 'Jarvis Mute' pour revenir en arrière-plan.")
     try:
         await voice.run()
     finally:
