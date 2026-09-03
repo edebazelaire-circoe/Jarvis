@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from aiohttp import web
 
@@ -17,12 +18,12 @@ class ControlCenter:
         self.project_root = project_root
         self.visualizer_url = visualizer_url
         self.journal = RuntimeJournal(runtime_root)
+        self.settings_path = runtime_root / "control-center-settings.json"
         self.agent = ClaudeLocalAgent(
             runtime_root=runtime_root,
             cwd=project_root,
             command=os.getenv("JARVIS_CLAUDE_CLI", "claude"),
         )
-        self.settings_path = runtime_root / "control-center-settings.json"
         self._app = web.Application(middlewares=[self._origin_guard])
         self._app.add_routes([
             web.get("/", self.index),
@@ -45,19 +46,25 @@ class ControlCenter:
             origin = request.headers.get("Origin")
             if origin:
                 try:
-                    host = origin.split("://", 1)[1].split("/", 1)[0].split(":", 1)[0]
-                except (IndexError, ValueError):
+                    host = urlparse(origin).hostname
+                except ValueError:
                     raise web.HTTPForbidden(text="invalid origin")
-                if host not in {"127.0.0.1", "localhost", "[::1]", "::1"}:
+                if host not in {"127.0.0.1", "localhost", "::1"}:
                     raise web.HTTPForbidden(text="forbidden origin")
         return await handler(request)
 
     async def start(self, *, host: str = "127.0.0.1", port: int = 17654) -> None:
         self.runtime_root.mkdir(parents=True, exist_ok=True)
+        settings = self._settings()
+        self.agent.command = str(settings.get("claude_cli") or "claude")
         self._runner = web.AppRunner(self._app)
         await self._runner.setup()
         await web.TCPSite(self._runner, host, port).start()
         self.journal.emit("ui.start", "Jarvis Control Center started", data={"host": host, "port": port})
+        try:
+            await self.agent.start()
+        except RuntimeError as exc:
+            self.journal.emit("agent.unavailable", str(exc), level="error")
 
     async def stop(self) -> None:
         await self.agent.stop()
@@ -86,11 +93,17 @@ class ControlCenter:
         })
 
     async def trace(self, request: web.Request) -> web.Response:
-        limit = min(max(int(request.query.get("limit", "100")), 1), 500)
+        try:
+            limit = min(max(int(request.query.get("limit", "100")), 1), 500)
+        except ValueError:
+            limit = 100
         return web.json_response(read_jsonl_tail(self.journal.trace_path, limit=limit))
 
     async def errors(self, request: web.Request) -> web.Response:
-        limit = min(max(int(request.query.get("limit", "100")), 1), 500)
+        try:
+            limit = min(max(int(request.query.get("limit", "100")), 1), 500)
+        except ValueError:
+            limit = 100
         return web.json_response(read_jsonl_tail(self.journal.error_path, limit=limit))
 
     def _settings(self) -> dict[str, Any]:
@@ -108,6 +121,16 @@ class ControlCenter:
         data.setdefault("manual_wake_key", os.getenv("JARVIS_MANUAL_WAKE_KEY", "f1"))
         data.setdefault("active_timeout_s", os.getenv("JARVIS_ACTIVE_TIMEOUT_S", "90"))
         return data
+
+    def _write_settings(self, settings: dict[str, Any]) -> None:
+        self.runtime_root.mkdir(parents=True, exist_ok=True)
+        tmp = self.settings_path.with_suffix(self.settings_path.suffix + ".tmp")
+        tmp.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+        try:
+            os.chmod(tmp, 0o600)
+        except OSError:
+            pass
+        tmp.replace(self.settings_path)
 
     async def get_settings(self, request: web.Request) -> web.Response:
         del request
@@ -132,8 +155,7 @@ class ControlCenter:
             value = payload.get(key)
             if isinstance(value, str) and value.strip():
                 current[key] = value.strip()
-        self.runtime_root.mkdir(parents=True, exist_ok=True)
-        self.settings_path.write_text(json.dumps(current, indent=2) + "\n", encoding="utf-8")
+        self._write_settings(current)
         self.agent.command = str(current.get("claude_cli") or "claude")
         self.journal.emit("settings.update", "Control Center settings updated", data={"keys": sorted(payload.keys())})
         return await self.get_settings(request)
@@ -144,11 +166,17 @@ class ControlCenter:
 
     async def agent_start(self, request: web.Request) -> web.Response:
         del request
-        return web.json_response(await self.agent.start())
+        try:
+            return web.json_response(await self.agent.start())
+        except RuntimeError as exc:
+            raise web.HTTPServiceUnavailable(text=str(exc)) from exc
 
     async def agent_restart(self, request: web.Request) -> web.Response:
         del request
-        return web.json_response(await self.agent.restart())
+        try:
+            return web.json_response(await self.agent.restart())
+        except RuntimeError as exc:
+            raise web.HTTPServiceUnavailable(text=str(exc)) from exc
 
     async def agent_kill(self, request: web.Request) -> web.Response:
         del request
@@ -161,3 +189,5 @@ class ControlCenter:
             return web.json_response(await self.agent.send(text))
         except ValueError as exc:
             raise web.HTTPBadRequest(text=str(exc)) from exc
+        except RuntimeError as exc:
+            raise web.HTTPServiceUnavailable(text=str(exc)) from exc
