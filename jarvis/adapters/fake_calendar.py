@@ -4,6 +4,17 @@ from jarvis.domain.calendar import CalendarEvent, CalendarQuery
 
 
 class InMemoryCalendarBackend:
+    """Agenda local de repli, en mémoire.
+
+    Il n'est relié à aucun agenda réel et son contenu disparaît à l'arrêt de
+    Core. `name`/`persistent` existent pour que les outils puissent le dire :
+    sans cela un `calendar_create` renvoie un succès indiscernable d'un vrai
+    rendez-vous enregistré.
+    """
+
+    name = "in-memory"
+    persistent = False
+
     def __init__(self, events=()) -> None:
         self._events = {event.id: event for event in events}
         self._results: dict[str, object] = {}

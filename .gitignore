@@ -3,12 +3,18 @@ __pycache__/
 .pytest_cache/
 .venv/
 .env
-runtime/
+/runtime/
 data/memory/.jarvis/
 third_party/barehands/
 third_party/ai-visualizer/
 third_party/.downloads/
 third_party/INSTALL-STATE.json
-*.log
+/runtime/*.log
 
 config/jarvis.toml
+
+# Artefacts de test et etat runtime local
+.pytest-tmp-*/
+data/history/
+data/state/*.sqlite3-shm
+data/state/*.sqlite3-wal

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import time
 
@@ -41,9 +42,28 @@ class VisualSignalBus:
         payload = {"ts": time.time(), "samples": samples[:64]}
         self._atomic_text(self.root / ".voice_waveform", json.dumps(payload))
 
-    @staticmethod
-    def _atomic_text(path: Path, content: str) -> None:
+    # Windows opens files without FILE_SHARE_DELETE, so a reader polling the bus
+    # at the same moment makes os.replace fail with PermissionError. Retrying and
+    # then writing in place keeps the signal flowing instead of killing the writer.
+    REPLACE_ATTEMPTS = 5
+    REPLACE_BACKOFF_S = 0.02
+
+    @classmethod
+    def _atomic_text(cls, path: Path, content: str) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(content, encoding="utf-8")
-        tmp.replace(path)
+        for attempt in range(cls.REPLACE_ATTEMPTS):
+            try:
+                tmp.replace(path)
+                return
+            except PermissionError:
+                if attempt + 1 < cls.REPLACE_ATTEMPTS:
+                    time.sleep(cls.REPLACE_BACKOFF_S)
+        try:
+            path.write_text(content, encoding="utf-8")
+        finally:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass

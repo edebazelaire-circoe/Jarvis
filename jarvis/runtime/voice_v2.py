@@ -45,6 +45,10 @@ class PersistentVoiceRuntime:
         clock: Clock | None = None,
         signals: VisualSignalBus | None = None,
         journal: RuntimeJournal | None = None,
+        audio_input_device: int | str | None = None,
+        audio_output_device: int | str | None = None,
+        auto_turn: bool = False,
+        claude=None,
     ) -> None:
         self.wakeword = wakeword
         self.core = core
@@ -54,6 +58,11 @@ class PersistentVoiceRuntime:
         self.runtime = VoiceRuntimeState()
         self.signals = signals
         self.journal = journal
+        self.audio_input_device = audio_input_device
+        self.audio_output_device = audio_output_device
+        self.auto_turn = auto_turn
+        # Passerelle vers l'agent Claude local : c'est lui qui agit sur le PC.
+        self.claude = claude
         self._session: RealtimeSession | None = None
         self._bridge = None
         self._bridge_task: asyncio.Task[None] | None = None
@@ -103,7 +112,9 @@ class PersistentVoiceRuntime:
                         break
                     detection_task = None
                     if self.runtime.state is VoiceLifecycleState.ACTIVE:
-                        if self._turn_submitted:
+                        # Under server VAD the turn closes on silence, so the wake key
+                        # only ever means "stop": there is nothing left to submit.
+                        if self._turn_submitted or self.auto_turn:
                             self._trace("voice.manual_cancel", "Manual key cancelled the active response")
                             await self.mute()
                         else:
@@ -153,14 +164,19 @@ class PersistentVoiceRuntime:
             core=self.core,
             session=self._session,
             conversation_id=self.runtime.conversation_id,
-            audio=SoundDeviceRealtimeAudio(),
+            audio=SoundDeviceRealtimeAudio(
+                input_device=self.audio_input_device,
+                output_device=self.audio_output_device,
+            ),
             on_addressed=self.addressed_activity,
             on_mute=self.mute,
             on_listening=self.visual_listening,
             on_thinking=self.visual_thinking,
             on_speaking=self.visual_speaking,
             on_response_done=self.mute,
+            auto_turn=self.auto_turn,
             journal=self.journal,
+            claude=self.claude,
         )
         self._bridge = bridge
         self._bridge_task = asyncio.create_task(bridge.run(), name="jarvis-realtime-bridge")
@@ -172,7 +188,15 @@ class PersistentVoiceRuntime:
         self._turn_submitted = True
         self._trace("voice.manual_submit", "Manual key submitted the active turn", data={"source": source})
         try:
-            return await bridge.submit_input()
+            submitted = await bridge.submit_input()
+            if not submitted:
+                await self.mute()
+                if self.signals is not None:
+                    self.signals.alert(
+                        "Enregistrement trop court. Relancez l'écoute, attendez l'état LISTENING, "
+                        "puis parlez avant d'envoyer."
+                    )
+            return submitted
         except Exception as exc:
             self.runtime.state = VoiceLifecycleState.ERROR
             if self.signals is not None:
@@ -232,6 +256,8 @@ class PersistentVoiceRuntime:
         await self.mute()
         await self.wakeword.close()
         await self.core.close()
+        if self.claude is not None:
+            await self.claude.close()
         if self.signals is not None:
             self.signals.offline()
         self._trace("voice.stop", "Voice runtime stopped")

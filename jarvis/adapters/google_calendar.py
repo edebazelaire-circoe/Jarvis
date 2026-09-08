@@ -12,6 +12,8 @@ class GoogleCalendarBackend:
     """Google Calendar adapter; provider objects stay outside Core contracts."""
 
     SCOPES = ("https://www.googleapis.com/auth/calendar",)
+    name = "google"
+    persistent = True
 
     def __init__(self, service: Any, *, calendar_id: str = "primary") -> None:
         self.service = service

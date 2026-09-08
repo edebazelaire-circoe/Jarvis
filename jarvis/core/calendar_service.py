@@ -14,6 +14,14 @@ class CalendarService:
     def __init__(self, backend: CalendarBackend) -> None:
         self.backend = backend
 
+    @property
+    def storage(self) -> dict[str, object]:
+        """Où atterrissent réellement les événements, joint à chaque résultat."""
+        return {
+            "backend": str(getattr(self.backend, "name", "unknown")),
+            "persisted": bool(getattr(self.backend, "persistent", False)),
+        }
+
     async def find(self, query: CalendarQuery):
         return tuple(await self.backend.list_events(query))
 

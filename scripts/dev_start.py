@@ -137,8 +137,10 @@ def main() -> None:
 
     from jarvis.config import AppConfig
     from jarvis.domain.errors import ConfigurationError
+    from jarvis.environment import load_project_environment
 
     try:
+        load_project_environment()
         config = AppConfig.load(args.config)
     except ConfigurationError as exc:
         raise SystemExit(f"Jarvis configuration error: {exc}") from None

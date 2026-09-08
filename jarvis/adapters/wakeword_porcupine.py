@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 class PorcupineWakeWordBackend:
     """Local-only wake-word detector. Microphone frames are not persisted or streamed."""
 
-    def __init__(self, *, access_key: str, keyword: str = "jarvis", device: str | None = None) -> None:
+    def __init__(self, *, access_key: str, keyword: str = "jarvis", device: int | str | None = None) -> None:
         self.access_key = access_key
         self.keyword = keyword
         self.device = device
@@ -32,15 +32,21 @@ class PorcupineWakeWordBackend:
 
         def callback(indata, frames, time_info, status) -> None:  # noqa: ANN001
             del frames, time_info, status
-            if self._closed or engine is None:
+            loop = self._loop
+            if self._closed or engine is None or loop is None:
                 return
             import struct
             raw = bytes(indata)
             frame_bytes = engine.frame_length * 2
             for offset in range(0, len(raw) - frame_bytes + 1, frame_bytes):
                 pcm = struct.unpack_from("h" * engine.frame_length, raw, offset)
-                if engine.process(pcm) >= 0 and self._loop is not None:
-                    self._loop.call_soon_threadsafe(self._detected)
+                if engine.process(pcm) >= 0:
+                    try:
+                        loop.call_soon_threadsafe(self._detected)
+                    except RuntimeError:
+                        # La boucle se ferme : lever depuis un callback PortAudio
+                        # ferait tomber le flux au lieu d'arrêter proprement.
+                        return
 
         self._stream = sd.RawInputStream(samplerate=engine.sample_rate, channels=1, dtype="int16", device=self.device, blocksize=engine.frame_length, callback=callback)
         self._stream.start()

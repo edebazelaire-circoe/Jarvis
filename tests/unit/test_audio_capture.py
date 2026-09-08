@@ -3,7 +3,6 @@ from __future__ import annotations
 import sys
 import types
 import threading
-import time
 
 import pytest
 
@@ -12,12 +11,23 @@ from jarvis.domain.errors import AudioDeviceError
 
 
 class FakeRawInputStream:
+    last: "FakeRawInputStream | None" = None
+
     def __init__(self, *, callback, **kwargs):
         self.callback = callback
         self.closed = False
+        # La livraison du bloc est asynchrone : cet événement laisse les tests
+        # l'attendre plutôt que de parier sur un délai fixe, qui rendait
+        # l'assertion de durée dépendante de la charge de la machine.
+        self.delivered = threading.Event()
+        FakeRawInputStream.last = self
+
+    def _deliver(self):
+        self.callback(b"\x01\x00" * 1600, 1600, None, None)
+        self.delivered.set()
 
     def start(self):
-        threading.Timer(0.005, lambda: self.callback(b"\x01\x00" * 1600, 1600, None, None)).start()
+        threading.Timer(0.005, self._deliver).start()
 
     def stop(self):
         pass
@@ -43,7 +53,7 @@ def test_capture_creates_in_memory_wav_and_no_raw_file(tmp_path, monkeypatch):
     recorder = SoundDeviceRecorder(sample_rate=16000, channels=1)
     assert recorder.preflight()["name"] == "Fake Mic"
     recorder.start()
-    time.sleep(0.02)
+    assert FakeRawInputStream.last.delivered.wait(5), "le bloc audio n'a jamais été livré"
     clip = recorder.stop()
     assert clip.data.startswith(b"RIFF")
     assert 95 <= clip.duration_ms <= 105

@@ -31,6 +31,20 @@ def _int_env(name: str, default: int) -> int:
         raise ConfigurationError(f"{name} must be an integer") from exc
 
 
+TURN_MODES = {"auto": True, "manual": False}
+
+# The Realtime timbres offered by gpt-realtime, lowest and most level first.
+REALTIME_VOICES = ("cedar", "ash", "verse", "ballad", "echo", "sage", "alloy", "marin", "coral", "shimmer")
+
+
+def parse_turn_mode(value: str | None) -> bool:
+    """True when the provider closes the turn on silence, False for wake-key submit."""
+    normalized = (value or "auto").strip().lower() or "auto"
+    if normalized not in TURN_MODES:
+        raise ConfigurationError("Voice turn mode must be 'auto' or 'manual'")
+    return TURN_MODES[normalized]
+
+
 def _float_env(name: str, default: float) -> float:
     raw = os.getenv(name)
     try:
@@ -51,6 +65,7 @@ class V2Settings:
     active_timeout_s: float
     realtime_model: str
     realtime_voice: str
+    auto_turn: bool
 
     @classmethod
     def load(cls) -> "V2Settings":
@@ -66,7 +81,10 @@ class V2Settings:
         if timeout < 5:
             raise ConfigurationError("JARVIS_ACTIVE_TIMEOUT_S must be >= 5")
         model = os.getenv("OPENAI_REALTIME_MODEL", "gpt-realtime-2.1").strip()
-        voice = os.getenv("OPENAI_REALTIME_VOICE", "marin").strip()
+        # "cedar" is the low, level voice of the two gpt-realtime timbres, which is
+        # the one that reads as Jarvis rather than as a generic assistant.
+        voice = os.getenv("OPENAI_REALTIME_VOICE", "cedar").strip()
         if not model or not voice:
             raise ConfigurationError("Realtime model and voice must not be empty")
-        return cls(data_root=data_root,runtime_root=runtime_root,core_host=validate_loopback_host(os.getenv("JARVIS_CORE_HOST", "127.77.0.1")),core_port=port,timezone=os.getenv("JARVIS_TIMEZONE", "Europe/Paris").strip() or "Europe/Paris",token_file=Path(os.getenv("JARVIS_CORE_TOKEN_FILE", str(runtime_root / "core.token"))).expanduser().resolve(),recent_turn_limit=recent,active_timeout_s=timeout,realtime_model=model,realtime_voice=voice)
+        auto_turn = parse_turn_mode(os.getenv("JARVIS_VOICE_TURN_MODE", "auto"))
+        return cls(data_root=data_root,runtime_root=runtime_root,core_host=validate_loopback_host(os.getenv("JARVIS_CORE_HOST", "127.77.0.1")),core_port=port,timezone=os.getenv("JARVIS_TIMEZONE", "Europe/Paris").strip() or "Europe/Paris",token_file=Path(os.getenv("JARVIS_CORE_TOKEN_FILE", str(runtime_root / "core.token"))).expanduser().resolve(),recent_turn_limit=recent,active_timeout_s=timeout,realtime_model=model,realtime_voice=voice,auto_turn=auto_turn)

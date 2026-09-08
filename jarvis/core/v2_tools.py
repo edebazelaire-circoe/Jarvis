@@ -60,6 +60,16 @@ class CoreToolRouter:
         return {**result, "action_id": action_id}
 
     async def _execute(self, name: str, arguments: dict[str, object], *, conversation_id: str | None) -> dict[str, object]:
+        result = await self._dispatch(name, arguments, conversation_id=conversation_id)
+        if name.startswith("calendar_") and result.get("executed"):
+            # Sans cela un succès sur l'agenda de repli en mémoire est
+            # indiscernable d'un rendez-vous réellement enregistré : ni la trace
+            # ni le modèle ne peuvent dire à l'utilisateur où l'événement a
+            # atterri.
+            result = {**result, "calendar": self.calendar.storage}
+        return result
+
+    async def _dispatch(self, name: str, arguments: dict[str, object], *, conversation_id: str | None) -> dict[str, object]:
         if name == "reminder_create":
             due_at = self._datetime(arguments["due_at"])
             item = ScheduledItem(kind="reminder", payload={"message": str(arguments["message"])}, next_fire_at=due_at, missed_run_policy=MissedRunPolicy(str(arguments.get("missed_run_policy") or MissedRunPolicy.NOTIFY_LATE.value)), max_lateness_seconds=int(arguments["max_lateness_seconds"]) if arguments.get("max_lateness_seconds") is not None else None, requested_by_conversation_id=conversation_id)

@@ -1,0 +1,167 @@
+﻿JARVIS — DERNIÈRES AVANCÉES DU PROJET
+État au 8 septembre 2026 (branche main, travaux non encore commités)
+
+
+1. LA BOUCLE VOIX -> CLAUDE -> VOIX EST EN PLACE
+------------------------------------------------
+C'est la fonction fondamentale visée : une interface vocale vers un agent
+qui agit réellement sur cet ordinateur.
+
+    votre voix -> OpenAI Realtime (les oreilles)
+                       | outil claude_task
+                       v
+                 processus Voice --HTTP--> Control Center --> agent Claude
+                       |                                          |
+                       |<---------- texte de la réponse ----------+
+                       v
+             OpenAI Realtime (la voix) -> vous
+
+- Le modèle Realtime ne répond plus lui-même aux demandes portant sur la
+  machine ou le projet : ses consignes (OPERATING_RULES) lui imposent
+  d'appeler l'outil claude_task, d'annoncer qu'il s'en occupe, puis de lire
+  le résultat à voix haute. Les rappels et l'agenda gardent leurs outils Core.
+- claude_task est le seul outil qui ne passe pas par Core : il est intercepté
+  dans RealtimeConversationBridge et transmis à ClaudeGateway
+  (jarvis/runtime/claude_gateway.py, nouveau), qui joint le Control Center sur
+  POST /api/agent/ask.
+- Toute panne (agent arrêté, Control Center injoignable, délai dépassé) revient
+  sous forme de phrase prononçable, jamais en exception qui casserait le tour.
+- Réglages : JARVIS_UI_PORT (17654), JARVIS_CLAUDE_TIMEOUT_S (180 s),
+  JARVIS_CLAUDE_PERMISSION_MODE (bypassPermissions par défaut).
+
+Point d'attention assumé : en headless, personne ne peut répondre à une demande
+d'approbation. Le CLI est donc lancé en bypassPermissions, ce qui signifie que
+l'agent exécute sans confirmation ce qui lui est demandé à la voix (écriture de
+fichiers, commandes shell, suppression). Le mode est modifiable dans Settings
+(« Autorisations Claude ») et journalisé à chaque démarrage de l'agent
+(agent.start, champ permission_mode).
+
+
+2. CONTROL CENTER : CONSOLE CLAUDE ET HISTORIQUE
+------------------------------------------------
+Deux vues sur le même agent :
+
+  Console Windows | le vrai « claude » interactif, TUI complète, dans sa fenêtre
+  Historique      | lecture du flux stream-json (réflexion, outils, coût)
+
+La console relance « claude --resume <session_id> » avec CREATE_NEW_CONSOLE,
+donc sur la même conversation. Une session Claude ne pouvant pas être écrite par
+deux processus à la fois, l'agent piloté par tuyaux est arrêté au passage ; il
+redémarre à la fermeture de la console, sur la même conversation. Tant que la
+console est ouverte, relancer l'agent est refusé explicitement plutôt que de
+corrompre la session.
+
+Endpoints : POST /api/agent/console/open, POST /api/agent/console/close,
+GET /api/agent/transcript?limit=
+
+Le panneau ERR sait désormais archiver les erreurs traitées : les entrées
+passent de runtime/errors.jsonl à runtime/errors-archive.jsonl en étant
+horodatées. Le badge se vide, rien n'est perdu, runtime/trace.jsonl reste
+intact.
+
+
+3. TROIS PANNES DE FOND DIAGNOSTIQUÉES ET CORRIGÉES
+---------------------------------------------------
+Chaque incident a son rapport dans docs/fixes/.
+
+a) Clé OpenAI jamais chargée (docs/fixes/openai-api-key/)
+   Le .env du projet contenait bien OPENAI_API_KEY, mais aucun chemin de
+   démarrage ne lisait ce fichier : Voice s'arrêtait avant de contacter OpenAI.
+   jarvis/environment.py (nouveau) charge désormais le .env de la racine avant
+   la configuration CLI et avant que les lanceurs ne démarrent leurs enfants.
+   Les variables déjà présentes dans le processus gardent la priorité, les
+   identifiants sauvegardés dans le Control Center restent prioritaires pour
+   Voice, et une clé réellement absente donne enfin des instructions utiles.
+   Format supporté : UTF-8 avec ou sans BOM, NAME=value, export, guillemets,
+   commentaires. Validé par 53 tests ciblés.
+
+b) Entrée Realtime vide (docs/fixes/realtime-empty-input/)
+   Le périphérique sélectionné était bien enregistré, mais Voice tournait déjà
+   quand la sélection a été sauvée, et le F9 suivant demandait la soumission
+   37 ms après l'ouverture audio : le fournisseur recevait un buffer vide.
+   - L'adaptateur Realtime compte les octets PCM après envoi réussi et
+     n'autorise le commit qu'à partir de 4 800 octets (100 ms en 24 kHz mono
+     PCM16). Les appends vides et les commits trop courts n'envoient rien.
+   - L'arrêt de l'entrée draine les callbacks déjà programmés par PortAudio
+     avant de poser la marque de fin : les derniers blocs audio sont préservés.
+   - Une soumission trop précoce renvoie Voice en arrière-plan avec un conseil
+     de réessai, sans tuer le runtime.
+   - Le journal expose désormais octets capturés/envoyés et durée, sans jamais
+     stocker d'audio (voice.input_skipped, voice.input_submitted).
+   Validé par 44 tests ciblés.
+
+c) Voice OFFLINE et tour sans fin (docs/fixes/voice-offline-and-turn-end/)
+   Un même incident, trois symptômes.
+   - Le tour ne finissait jamais : session.update envoyait turn_detection: None,
+     ce qui désactive le VAD serveur. Désormais connect() prend auto_turn (vrai
+     par défaut) et envoie le VAD serveur avec create_response et
+     interrupt_response. Le micro est relâché sur input_audio_buffer.committed,
+     donc les haut-parleurs ne peuvent plus alimenter le segment VAD suivant.
+     En mode auto, F9 ne sert plus qu'à annuler. Le mode manual reste dispo.
+   - Le timbre était trop clair : le défaut Realtime passe de marin à cedar, en
+     accord avec le chemin TTS, et les instructions de session portent enfin une
+     persona JARVIS explicite au lieu d'une consigne générique.
+   - L'OFFLINE était un faux négatif. Voice n'avait pas crashé : sur Windows,
+     Python ouvre les fichiers sans FILE_SHARE_DELETE, donc pendant que le
+     handler status du Control Center (interrogé une fois par seconde) tenait
+     .voice_heartbeat ouvert en lecture, os.replace levait PermissionError
+     [WinError 5]. Deux boucles 1 Hz non synchronisées sur un même fichier
+     finissent toujours par se croiser. L'exception s'échappait d'une tâche que
+     personne n'attendait : le heartbeat mourait en silence et l'interface
+     affichait OFFLINE au-dessus d'un runtime parfaitement sain. Le même blocage
+     arrêtait aussi le timeout d'inactivité.
+     _atomic_text réessaie le remplacement puis écrit sur place, et la boucle de
+     heartbeat continue en signalant une seule fois voice.heartbeat_degraded.
+   Validé par 168 tests unitaires.
+
+
+4. VOIR LES MORTS QUE PYTHON NE PEUT PAS VOIR
+---------------------------------------------
+jarvis/runtime/crash_guard.py (nouveau) part d'un constat simple : un « except »
+Python ne s'exécute que si l'interpréteur survit. Trois familles de pannes
+échappaient donc entièrement au système d'erreurs : les crashs natifs
+(violation d'accès 0xC0000005 dans PortAudio ou Porcupine, remontée par Windows
+sous forme de NTSTATUS signé -1073741819), les exceptions non rattrapées d'un
+thread ou d'une tâche asyncio orpheline, et la sortie fatale d'un enfant
+supervisé, invisible depuis le processus mort.
+
+Trois filets installés :
+  runtime/crash-<role>.log            dump faulthandler au signal fatal
+  runtime/crashes/<role>-<date>.log   dumps archivés après réinjection
+  runtime/logs/<role>.log             stderr complète de chaque enfant supervisé
+
+Le log laissé par un processus mort est réinjecté dans le journal au démarrage
+suivant, donc il apparaît dans le Control Center.
+
+
+5. AUDIO : DIAGNOSTIC AVANT CONVERSATION
+----------------------------------------
+jarvis/runtime/audio_devices.py (nouveau) et le panneau Settings listent les
+périphériques exposés par PortAudio. Le bouton « Tester micro + sortie »
+enregistre deux secondes exactement au format Realtime Voice (24 kHz mono),
+exige un signal micro détecté (seuil -50 dBFS) et rejoue la capture sur la
+sortie choisie. La sélection est ensuite appliquée aux conversations et à
+Porcupine après redémarrage de Voice.
+
+
+6. ÉTAT DES LIEUX
+-----------------
+Fait et couvert par les tests :
+  - chargement des identifiants, garde 100 ms sur l'entrée Realtime,
+    VAD serveur, persona et timbre, heartbeat résistant au verrou Windows,
+    console Claude et historique, archivage des erreurs, filets de crash ;
+  - 26 fichiers modifiés, ~2 200 lignes ajoutées, dont une large part de tests
+    (test_v2_voice_toggle +442, test_control_center_mvp +230) et 8 nouveaux
+    fichiers de tests unitaires.
+
+Reste à valider sur poste réel (impossible en sandbox headless) :
+  - micro et haut-parleurs physiques, écho sous VAD serveur, timbre réel,
+    latence OpenAI réelle, permissions caméra Chrome et gestes Barehands.
+    La liste explicite est dans docs/ACCEPTANCE_STATUS.md.
+
+À noter : ces travaux ne sont pas encore commités. « git status » montre
+26 fichiers modifiés et 15 nouveaux fichiers non suivis.
+
+
+Documentation de référence : docs/OPERATIONS.md (guide d'exploitation, très
+enrichi) et docs/fixes/*/resolution-report.md (un rapport par incident).

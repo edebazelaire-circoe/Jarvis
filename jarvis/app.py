@@ -13,6 +13,8 @@ from jarvis.audio.capture import SoundDeviceRecorder
 from jarvis.audio.ptt import PTTKeyListener
 from jarvis.config import AppConfig
 from jarvis.domain.errors import JarvisError
+from jarvis.environment import load_project_environment
+from jarvis.runtime.crash_guard import install_asyncio_crash_guard, install_crash_guard, report_fatal
 from jarvis.runtime.factory import create_runtime
 from jarvis.runtime.health import run_health_checks
 from jarvis.runtime.voice import VoiceRuntime
@@ -122,6 +124,30 @@ def _control_settings(runtime_root: Path) -> dict[str, object]:
     return value if isinstance(value, dict) else {}
 
 
+def _announce_calendar_backend(core, runtime_root: Path) -> None:
+    """Dire au démarrage si l'agenda est réel ou seulement en mémoire.
+
+    Sans agenda configuré, Core retombe silencieusement sur un stockage en
+    mémoire : `calendar_create` réussit, JARVIS annonce le rendez-vous, et rien
+    n'apparaît jamais dans un vrai agenda.
+    """
+    from jarvis.runtime.journal import RuntimeJournal
+
+    storage = core.calendar.storage
+    journal = RuntimeJournal(runtime_root)
+    if storage.get("persisted"):
+        journal.emit("calendar.backend", f"Agenda connecté : {storage['backend']}", data=storage)
+        return
+    journal.emit(
+        "calendar.backend",
+        "Aucun agenda réel n'est configuré : les rendez-vous ne sont gardés qu'en "
+        "mémoire et disparaissent à l'arrêt de Core. Définissez "
+        "JARVIS_CALENDAR_PROVIDER=google pour les enregistrer réellement.",
+        level="warning",
+        data={**storage, "code": "calendar_backend_in_memory"},
+    )
+
+
 async def _run_core_v2() -> int:
     from jarvis.adapters.windows_notifications import NullNotificationDelivery, WindowsNotificationDelivery
     from jarvis.core.memory_maintenance import MemoryMaintenanceWorker
@@ -135,6 +161,7 @@ async def _run_core_v2() -> int:
     workers = {"memory_maintenance": MemoryMaintenanceWorker(settings.data_root / "memory")}
     core = JarvisCoreApplication(data_root=settings.data_root, timezone=settings.timezone, calendar_backend=_calendar_backend_from_env(), notification_delivery=delivery, workers=workers)
     server = LocalProtocolServer(core, host=settings.core_host, port=settings.core_port, token=token)
+    _announce_calendar_backend(core, settings.runtime_root)
     try:
         await core.start(); await server.start()
         print(f"Jarvis Core v0.2 ready on http://{settings.core_host}:{settings.core_port}")
@@ -149,12 +176,15 @@ async def _run_voice_v2() -> int:
     from jarvis.adapters.wakeword_composite import CompositeWakeWordBackend
     from jarvis.adapters.wakeword_keyboard import KeyboardWakeWordBackend
     from jarvis.adapters.wakeword_porcupine import PorcupineWakeWordBackend
+    from jarvis.domain.errors import ConfigurationError
     from jarvis.protocol.client import LocalCoreClient
+    from jarvis.runtime.audio_devices import normalize_device_id
+    from jarvis.runtime.claude_gateway import ClaudeGateway
     from jarvis.runtime.journal import RuntimeJournal
     from jarvis.runtime.realtime_tools import REALTIME_TOOLS
     from jarvis.runtime.visual_signals import VisualSignalBus
     from jarvis.runtime.voice_v2 import PersistentVoiceRuntime
-    from jarvis.v2_config import V2Settings
+    from jarvis.v2_config import REALTIME_VOICES, V2Settings, parse_turn_mode
     settings = V2Settings.load()
     signals = VisualSignalBus(settings.runtime_root)
     signals.offline()
@@ -164,27 +194,64 @@ async def _run_voice_v2() -> int:
     token = settings.token_file.read_text(encoding="utf-8").strip()
     api_key = str(overrides.get("openai_api_key") or os.getenv("OPENAI_API_KEY", "")).strip()
     if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is required for Realtime voice")
+        raise RuntimeError(
+            "OPENAI_API_KEY is required for Realtime voice. "
+            "Configurez-la dans le fichier .env de JARVIS, dans l'environnement "
+            "ou dans Settings du Control Center, puis relancez Voice."
+        )
     core = LocalCoreClient(host=settings.core_host, port=settings.core_port, token=token)
     health = await core.health()
     if not health.get("ready"):
         await core.close(); raise RuntimeError(f"Core is not ready: {health}")
 
     manual_key = str(overrides.get("manual_wake_key") or os.getenv("JARVIS_MANUAL_WAKE_KEY", "f9")).strip() or "f9"
+    input_raw = overrides.get("audio_input_device") if "audio_input_device" in overrides else os.getenv("JARVIS_AUDIO_INPUT_DEVICE", "")
+    output_raw = overrides.get("audio_output_device") if "audio_output_device" in overrides else os.getenv("JARVIS_AUDIO_OUTPUT_DEVICE", "")
+    audio_input_device = normalize_device_id(input_raw)
+    audio_output_device = normalize_device_id(output_raw)
     wake_backends = [KeyboardWakeWordBackend(key_name=manual_key)]
     wake_key = str(overrides.get("porcupine_access_key") or os.getenv("PORCUPINE_ACCESS_KEY", "")).strip()
     if wake_key:
-        wake_backends.append(PorcupineWakeWordBackend(access_key=wake_key, keyword=os.getenv("JARVIS_WAKE_KEYWORD", "jarvis")))
+        wake_backends.append(
+            PorcupineWakeWordBackend(
+                access_key=wake_key,
+                keyword=os.getenv("JARVIS_WAKE_KEYWORD", "jarvis"),
+                device=audio_input_device,
+            )
+        )
     wake = CompositeWakeWordBackend(wake_backends)
     try:
         active_timeout = float(overrides.get("active_timeout_s") or settings.active_timeout_s)
     except (TypeError, ValueError):
         active_timeout = settings.active_timeout_s
 
+    realtime_voice = str(overrides.get("realtime_voice") or settings.realtime_voice).strip()
+    if realtime_voice not in REALTIME_VOICES:
+        realtime_voice = settings.realtime_voice
+    try:
+        auto_turn = parse_turn_mode(str(overrides.get("voice_turn_mode") or "")) if overrides.get("voice_turn_mode") else settings.auto_turn
+    except ConfigurationError:
+        auto_turn = settings.auto_turn
+
     async def realtime_factory(context: dict[str, object]):
-        return await OpenAIRealtimeSession.connect(api_key=api_key, model=settings.realtime_model, voice=settings.realtime_voice, context=context, tools=REALTIME_TOOLS)
+        return await OpenAIRealtimeSession.connect(
+            api_key=api_key,
+            model=settings.realtime_model,
+            voice=realtime_voice,
+            context=context,
+            tools=REALTIME_TOOLS,
+            auto_turn=auto_turn,
+        )
 
     journal = RuntimeJournal(settings.runtime_root)
+    # L'agent Claude est hébergé par le Control Center : Voice le joint par la
+    # boucle locale pour lui transmettre les demandes de l'utilisateur.
+    ui_port = int(os.getenv("JARVIS_UI_PORT", "17654"))
+    claude = ClaudeGateway(
+        base_url=f"http://127.0.0.1:{ui_port}",
+        timeout_s=float(os.getenv("JARVIS_CLAUDE_TIMEOUT_S", "600")),
+    )
+    journal.emit("claude.gateway", "Passerelle vers l'agent Claude configurée", data={"url": claude.base_url})
     voice = PersistentVoiceRuntime(
         wakeword=wake,
         core=core,
@@ -192,12 +259,20 @@ async def _run_voice_v2() -> int:
         active_timeout_s=active_timeout,
         signals=signals,
         journal=journal,
+        audio_input_device=audio_input_device,
+        audio_output_device=audio_output_device,
+        auto_turn=auto_turn,
+        claude=claude,
     )
-    timeout_task = asyncio.create_task(_voice_timeout_loop(voice, signals), name="jarvis-voice-timeout")
-    if wake_key:
-        print(f"Jarvis Voice v0.2 en arrière-plan. Dites 'Jarvis' ou appuyez sur {manual_key.upper()} pour activer; appuyez à nouveau sur {manual_key.upper()} pour envoyer.")
+    timeout_task = asyncio.create_task(_voice_timeout_loop(voice, signals, journal), name="jarvis-voice-timeout")
+    key = manual_key.upper()
+    wake_hint = f"Dites 'Jarvis' ou appuyez sur {key}" if wake_key else f"Appuyez sur {key}"
+    if auto_turn:
+        print(f"Jarvis Voice v0.2 en arrière-plan ({realtime_voice}). {wake_hint} pour parler; "
+              f"JARVIS répond dès que vous vous taisez. {key} de nouveau pour interrompre.")
     else:
-        print(f"Jarvis Voice v0.2 en arrière-plan. Appuyez sur {manual_key.upper()} pour activer, puis à nouveau pour envoyer (Porcupine non configuré).")
+        print(f"Jarvis Voice v0.2 en arrière-plan ({realtime_voice}). {wake_hint} pour activer, "
+              f"puis à nouveau pour envoyer.")
     try:
         await voice.run()
     finally:
@@ -267,16 +342,60 @@ async def _run_control_center_v2() -> int:
                 visualizer.kill(); await visualizer.wait()
 
 
-async def _voice_timeout_loop(voice, signals) -> None:
+async def _voice_timeout_loop(voice, signals, journal=None) -> None:
+    """Publish the liveness heartbeat. A transient bus or timeout failure must
+    never end this loop: the Control Center reads a missing heartbeat as
+    "voice OFFLINE" and blanks the face while Voice is in fact still running."""
+    reported = False
     while True:
         await asyncio.sleep(1.0)
-        signals.heartbeat()
-        await voice.check_timeout()
+        try:
+            signals.heartbeat()
+            await voice.check_timeout()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if not reported and journal is not None:
+                journal.emit(
+                    "voice.heartbeat_degraded",
+                    f"Heartbeat publication failed, continuing: {type(exc).__name__}: {exc}",
+                    level="warning",
+                )
+                reported = True
+        else:
+            reported = False
+
+
+# Les rôles longue durée sont ceux qui peuvent mourir sans témoin ; les
+# commandes ponctuelles rapportent déjà leur erreur au terminal.
+_SUPERVISED_ROLES = {"core": "core", "voice": "voice", "control-center": "ui", "run": "run"}
+
+
+def _arm_crash_capture(command: str) -> None:
+    """Armer faulthandler et les hooks d'exception pour ce rôle.
+
+    Sans cela un crash natif (0xC0000005 dans PortAudio ou Porcupine) tue le
+    processus sans qu'aucun `except` ne s'exécute et sans qu'aucune trace
+    n'atteigne le journal.
+    """
+    role = _SUPERVISED_ROLES.get(command)
+    if role is None:
+        return
+    try:
+        from jarvis.v2_config import V2Settings
+
+        install_crash_guard(runtime_root=V2Settings.load().runtime_root, role=role)
+        install_asyncio_crash_guard(asyncio.get_running_loop())
+    except Exception as exc:
+        # Le diagnostic ne doit jamais empêcher Jarvis de démarrer.
+        print(f"Jarvis: capture de crash indisponible ({exc})", file=sys.stderr)
 
 
 async def _amain(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    load_project_environment()
     command = args.command or "health"
+    _arm_crash_capture(command)
     if command == "core": return await _run_core_v2()
     if command == "voice": return await _run_voice_v2()
     if command == "control-center": return await _run_control_center_v2()
@@ -291,12 +410,18 @@ async def _amain(argv: list[str] | None = None) -> int:
 def main() -> None:
     try:
         raise SystemExit(asyncio.run(_amain()))
-    except JarvisError as exc:
-        print(f"Jarvis: {exc}", file=sys.stderr); raise SystemExit(2) from None
-    except RuntimeError as exc:
-        print(f"Jarvis: {exc}", file=sys.stderr); raise SystemExit(2) from None
+    except SystemExit:
+        raise
     except KeyboardInterrupt:
         raise SystemExit(130) from None
+    except (JarvisError, RuntimeError) as exc:
+        report_fatal(exc, context={"source": "cli"})
+        print(f"Jarvis: {exc}", file=sys.stderr); raise SystemExit(2) from None
+    except BaseException as exc:
+        # Une exception non prévue partait jusqu'ici dans la console sans jamais
+        # rejoindre le journal : le Control Center n'en voyait rien.
+        report_fatal(exc, context={"source": "cli"})
+        raise
 
 
 if __name__ == "__main__":

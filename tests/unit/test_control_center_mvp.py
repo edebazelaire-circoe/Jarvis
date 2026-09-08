@@ -7,6 +7,7 @@ import time
 import pytest
 
 from jarvis.runtime.control_center import ControlCenter
+from jarvis.runtime.audio_devices import AudioDiagnosticError
 from jarvis.runtime.journal import RuntimeJournal, read_jsonl_tail
 from jarvis.runtime.visual_signals import VisualSignalBus
 
@@ -71,8 +72,16 @@ def test_control_center_keeps_pointer_visible_and_explains_configured_voice_togg
     html = CONTROL_CENTER_HTML.read_text(encoding="utf-8")
     assert "pointer-events:none;cursor:default" in html
     assert "F9 · DÉMARRER" in html
-    assert "`${k} · ENVOYER`" in html
+    # Under server VAD the key never means "send" while a turn is open: it can
+    # only cancel. The "send" wording is kept for the manual turn mode.
+    assert "s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`" in html
     assert "`${k} · ANNULER`" in html
+    assert "`${k} · INTERROMPRE`" in html
+    assert "Entrée microphone" in html
+    assert "Sortie haut-parleur" in html
+    assert "Tester micro + sortie" in html
+    assert 'name="realtime_voice"' in html
+    assert 'name="voice_turn_mode"' in html
 
 
 def test_control_center_defaults_manual_voice_toggle_to_f9(tmp_path):
@@ -107,3 +116,222 @@ async def test_control_center_accepts_live_listening_state(tmp_path):
 
     assert payload["voice_online"] is True
     assert payload["voice_state"] == "listening"
+
+
+class JsonRequest:
+    def __init__(self, payload: object) -> None:
+        self.payload = payload
+
+    async def json(self) -> object:
+        return self.payload
+
+
+class FakeAudioDiagnostics:
+    def __init__(
+        self,
+        *,
+        failure: AudioDiagnosticError | None = None,
+        list_failure: AudioDiagnosticError | None = None,
+    ) -> None:
+        self.failure = failure
+        self.list_failure = list_failure
+        self.tests: list[tuple[object, object]] = []
+
+    def list_devices(self) -> dict[str, object]:
+        if self.list_failure is not None:
+            raise self.list_failure
+        return {
+            "inputs": [{"id": 3, "name": "Test Mic", "hostapi": "WASAPI", "channels": 1}],
+            "outputs": [{"id": 7, "name": "Test Speaker", "hostapi": "WASAPI", "channels": 2}],
+            "defaults": {"input": 3, "output": 7},
+            "sample_rate": 24_000,
+        }
+
+    def test_record_and_playback(self, *, input_device, output_device) -> dict[str, object]:  # noqa: ANN001
+        self.tests.append((input_device, output_device))
+        if self.failure is not None:
+            raise self.failure
+        return {"ok": True, "peak_dbfs": -8.5, "rms_dbfs": -18.2, "duration_s": 2.0, "sample_rate": 24_000}
+
+
+@pytest.mark.asyncio
+async def test_control_center_persists_audio_device_selection(tmp_path):
+    control = ControlCenter(runtime_root=tmp_path, project_root=tmp_path)
+
+    response = await control.save_settings(JsonRequest({"audio_input_device": "3", "audio_output_device": "7"}))  # type: ignore[arg-type]
+    payload = json.loads(response.text)
+
+    assert payload["audio_input_device"] == "3"
+    assert payload["audio_output_device"] == "7"
+    saved = json.loads((tmp_path / "control-center-settings.json").read_text(encoding="utf-8"))
+    assert saved["audio_input_device"] == "3"
+    assert saved["audio_output_device"] == "7"
+
+
+@pytest.mark.asyncio
+async def test_control_center_audio_test_uses_selected_devices_and_emits_trace(tmp_path):
+    diagnostics = FakeAudioDiagnostics()
+    control = ControlCenter(runtime_root=tmp_path, project_root=tmp_path, audio_diagnostics=diagnostics)  # type: ignore[arg-type]
+
+    response = await control.audio_test(JsonRequest({"input_device": "3", "output_device": "7"}))  # type: ignore[arg-type]
+    payload = json.loads(response.text)
+
+    assert response.status == 200
+    assert payload["ok"] is True
+    assert diagnostics.tests == [(3, 7)]
+    trace = read_jsonl_tail(control.journal.trace_path)
+    assert [item["kind"] for item in trace] == ["audio.test.started", "audio.test.completed"]
+    assert trace[0]["data"]["correlation_id"] == trace[1]["data"]["correlation_id"]
+
+
+@pytest.mark.asyncio
+async def test_control_center_lists_audio_devices_with_trace(tmp_path):
+    diagnostics = FakeAudioDiagnostics()
+    control = ControlCenter(runtime_root=tmp_path, project_root=tmp_path, audio_diagnostics=diagnostics)  # type: ignore[arg-type]
+
+    response = await control.audio_devices(None)
+    payload = json.loads(response.text)
+
+    assert payload["ok"] is True
+    assert payload["inputs"][0]["name"] == "Test Mic"
+    assert payload["outputs"][0]["name"] == "Test Speaker"
+    trace = read_jsonl_tail(control.journal.trace_path)
+    assert trace[-1]["kind"] == "audio.devices.listed"
+
+
+@pytest.mark.asyncio
+async def test_control_center_audio_test_returns_stable_failure_code(tmp_path):
+    diagnostics = FakeAudioDiagnostics(failure=AudioDiagnosticError("audio_input_no_signal", "Aucun signal."))
+    control = ControlCenter(runtime_root=tmp_path, project_root=tmp_path, audio_diagnostics=diagnostics)  # type: ignore[arg-type]
+
+    response = await control.audio_test(JsonRequest({"input_device": "3", "output_device": "7"}))  # type: ignore[arg-type]
+    payload = json.loads(response.text)
+
+    assert response.status == 422
+    assert payload["code"] == "audio_input_no_signal"
+    errors = read_jsonl_tail(control.journal.error_path)
+    assert errors[-1]["kind"] == "audio.test.failed"
+    assert errors[-1]["data"]["code"] == "audio_input_no_signal"
+
+
+@pytest.mark.asyncio
+async def test_control_center_audio_device_failure_is_actionable(tmp_path):
+    diagnostics = FakeAudioDiagnostics(
+        list_failure=AudioDiagnosticError("audio_device_enumeration_failed", "Périphériques indisponibles."),
+    )
+    control = ControlCenter(runtime_root=tmp_path, project_root=tmp_path, audio_diagnostics=diagnostics)  # type: ignore[arg-type]
+
+    response = await control.audio_devices(None)
+    payload = json.loads(response.text)
+
+    assert response.status == 503
+    assert payload["code"] == "audio_device_enumeration_failed"
+    errors = read_jsonl_tail(control.journal.error_path)
+    assert errors[-1]["kind"] == "audio.devices.failed"
+
+
+@pytest.mark.asyncio
+async def test_control_center_rejects_invalid_audio_device_id(tmp_path):
+    control = ControlCenter(runtime_root=tmp_path, project_root=tmp_path, audio_diagnostics=FakeAudioDiagnostics())  # type: ignore[arg-type]
+
+    response = await control.audio_test(JsonRequest({"input_device": "-1", "output_device": "7"}))  # type: ignore[arg-type]
+    payload = json.loads(response.text)
+
+    assert response.status == 400
+    assert payload["code"] == "audio_test_invalid_request"
+    errors = read_jsonl_tail(control.journal.error_path)
+    assert errors[-1]["data"]["code"] == "audio_test_invalid_request"
+
+
+def test_visual_bus_publishes_even_when_replace_is_blocked(tmp_path, monkeypatch):
+    """Windows opens files without FILE_SHARE_DELETE, so a Control Center poll of
+    the bus can make os.replace fail. The signal must still reach the reader."""
+    bus = VisualSignalBus(tmp_path)
+    monkeypatch.setattr(VisualSignalBus, "REPLACE_BACKOFF_S", 0.0)
+    attempts = {"count": 0}
+    original = Path.replace
+
+    def blocked(self, target):
+        attempts["count"] += 1
+        raise PermissionError("[WinError 5] Access is denied")
+
+    monkeypatch.setattr(Path, "replace", blocked)
+    bus.heartbeat()
+    monkeypatch.setattr(Path, "replace", original)
+
+    assert attempts["count"] == VisualSignalBus.REPLACE_ATTEMPTS
+    heartbeat = tmp_path / ".voice_heartbeat"
+    assert float(heartbeat.read_text(encoding="utf-8").strip()) > 0
+    assert not (tmp_path / ".voice_heartbeat.tmp").exists()
+
+
+def test_visual_bus_recovers_after_a_transient_replace_failure(tmp_path, monkeypatch):
+    bus = VisualSignalBus(tmp_path)
+    monkeypatch.setattr(VisualSignalBus, "REPLACE_BACKOFF_S", 0.0)
+    original = Path.replace
+    calls = {"count": 0}
+
+    def flaky(self, target):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise PermissionError("[WinError 5] Access is denied")
+        return original(self, target)
+
+    monkeypatch.setattr(Path, "replace", flaky)
+    bus.state("listening")
+    monkeypatch.setattr(Path, "replace", original)
+
+    assert calls["count"] == 2
+    assert (tmp_path / ".voice_state").read_text(encoding="utf-8").strip() == "listening"
+
+
+@pytest.mark.asyncio
+async def test_control_center_persists_voice_timbre_and_turn_mode(tmp_path):
+    control = ControlCenter(runtime_root=tmp_path, project_root=tmp_path)
+    settings = control._settings()
+    assert settings["realtime_voice"] == "cedar"
+    assert settings["voice_turn_mode"] == "auto"
+
+    class Payload:
+        @staticmethod
+        async def json():
+            return {"realtime_voice": "ash", "voice_turn_mode": "manual"}
+
+    response = await control.save_settings(Payload())  # type: ignore[arg-type]
+    stored = json.loads((tmp_path / "control-center-settings.json").read_text(encoding="utf-8"))
+    assert stored["realtime_voice"] == "ash"
+    assert stored["voice_turn_mode"] == "manual"
+    assert json.loads(response.text)["realtime_voice"] == "ash"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [{"realtime_voice": "not-a-voice"}, {"voice_turn_mode": "sometimes"}],
+)
+async def test_control_center_rejects_unknown_voice_settings(tmp_path, payload):
+    from aiohttp import web
+
+    control = ControlCenter(runtime_root=tmp_path, project_root=tmp_path)
+
+    class Payload:
+        @staticmethod
+        async def json():
+            return payload
+
+    with pytest.raises(web.HTTPBadRequest):
+        await control.save_settings(Payload())  # type: ignore[arg-type]
+    assert not (tmp_path / "control-center-settings.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_status_reports_turn_mode_for_the_key_hint(tmp_path):
+    control = ControlCenter(runtime_root=tmp_path, project_root=tmp_path)
+    payload = json.loads((await control.status(None)).text)  # type: ignore[arg-type]
+    assert payload["voice_turn_mode"] == "auto"
+
+    (tmp_path / "control-center-settings.json").write_text(
+        json.dumps({"voice_turn_mode": "manual"}), encoding="utf-8"
+    )
+    payload = json.loads((await control.status(None)).text)  # type: ignore[arg-type]
+    assert payload["voice_turn_mode"] == "manual"
