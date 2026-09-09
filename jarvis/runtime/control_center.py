@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
+import re
 import time
 from typing import Any
 from urllib.parse import urlparse
@@ -86,7 +87,7 @@ class ControlCenter:
         *,
         runtime_root: Path,
         project_root: Path,
-        visualizer_url: str = "http://127.0.0.1:8790/faces/board/",
+        visualizer_url: str | None = None,
         audio_diagnostics: SoundDeviceAudioDiagnostics | None = None,
     ) -> None:
         self.runtime_root = runtime_root
@@ -268,7 +269,14 @@ class ControlCenter:
     async def index(self, request: web.Request) -> web.Response:
         del request
         html = (Path(__file__).with_name("control_center.html")).read_text(encoding="utf-8")
-        html = html.replace("__VISUALIZER_URL__", self.visualizer_url)
+        if self.visualizer_url:
+            html = html.replace("__VISUALIZER_URL__", self.visualizer_url)
+        else:
+            html = re.sub(
+                r'<iframe class="face"[^>]*></iframe>',
+                '<div class="face"></div>',
+                html,
+            )
         return web.Response(text=html, content_type="text/html")
 
     async def status(self, request: web.Request) -> web.Response:

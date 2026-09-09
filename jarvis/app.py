@@ -438,53 +438,66 @@ async def _run_control_center_v2() -> int:
     settings = V2Settings.load()
     runtime_root = settings.runtime_root
     journal = RuntimeJournal(runtime_root)
-    visualizer_root = ROOT / "third_party" / "ai-visualizer"
-    server_path = visualizer_root / "server.py"
-    if not server_path.is_file():
-        raise RuntimeError("ai-visualizer is not installed; run `python scripts/bootstrap_third_party.py` first")
-
-    visualizer_port = int(os.getenv("JARVIS_VISUALIZER_PORT", "8790"))
     ui_port = int(os.getenv("JARVIS_UI_PORT", "17654"))
-    config = {
-        "name": "JARVIS",
-        "badge": "MVP",
-        "face": "board",
-        "port": visualizer_port,
-        "bus_dir": str(runtime_root.resolve()),
-        "thinking_sound": True,
-    }
-    (visualizer_root / "ai-visualizer.json").write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
-    visualizer_env = os.environ.copy()
-    visualizer_env.pop("OPENAI_API_KEY", None)
-    visualizer_env.pop("PORCUPINE_ACCESS_KEY", None)
-    visualizer = await asyncio.create_subprocess_exec(
-        sys.executable,
-        "server.py",
-        "--no-open",
-        cwd=str(visualizer_root),
-        env=visualizer_env,
-    )
-    visualizer_url = f"http://127.0.0.1:{visualizer_port}/faces/board/"
+
+    # Le visage ai-visualizer n'est qu'un decor : le rendu temps reel est porte
+    # par Barehands. Il reste rallumable par JARVIS_VISUALIZER_ENABLED=1, mais
+    # son absence ne doit plus empecher le Control Center de demarrer.
+    visualizer: asyncio.subprocess.Process | None = None
+    visualizer_url: str | None = None
+    if os.getenv("JARVIS_VISUALIZER_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
+        visualizer_root = ROOT / "third_party" / "ai-visualizer"
+        if not (visualizer_root / "server.py").is_file():
+            raise RuntimeError("ai-visualizer is not installed; run `python scripts/bootstrap_third_party.py` first")
+        visualizer_port = int(os.getenv("JARVIS_VISUALIZER_PORT", "8790"))
+        config = {
+            "name": "JARVIS",
+            "badge": "MVP",
+            "face": "board",
+            "port": visualizer_port,
+            "bus_dir": str(runtime_root.resolve()),
+            "thinking_sound": True,
+        }
+        (visualizer_root / "ai-visualizer.json").write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+        visualizer_env = os.environ.copy()
+        visualizer_env.pop("OPENAI_API_KEY", None)
+        visualizer_env.pop("PORCUPINE_ACCESS_KEY", None)
+        visualizer = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "server.py",
+            "--no-open",
+            cwd=str(visualizer_root),
+            env=visualizer_env,
+        )
+        visualizer_url = f"http://127.0.0.1:{visualizer_port}/faces/board/"
+
     control = ControlCenter(runtime_root=runtime_root, project_root=ROOT, visualizer_url=visualizer_url)
     await control.start(port=ui_port)
     url = f"http://127.0.0.1:{ui_port}/"
     print(f"Jarvis Control Center ready on {url}")
-    journal.emit("ui.visualizer", "ai-visualizer launched", data={"url": visualizer_url, "pid": visualizer.pid})
+    if visualizer is not None:
+        journal.emit("ui.visualizer", "ai-visualizer launched", data={"url": visualizer_url, "pid": visualizer.pid})
+    else:
+        journal.emit("ui.visualizer", "ai-visualizer desactive ; rendu visuel assure par Barehands", data={"enabled": False})
     try:
         await asyncio.sleep(0.5)
         webbrowser.open(url)
-        waiter = asyncio.create_task(visualizer.wait(), name="jarvis-visualizer-wait")
         stop = asyncio.create_task(asyncio.Event().wait(), name="jarvis-control-center-wait")
-        done, pending = await asyncio.wait({waiter, stop}, return_when=asyncio.FIRST_COMPLETED)
+        watched = {stop}
+        waiter = None
+        if visualizer is not None:
+            waiter = asyncio.create_task(visualizer.wait(), name="jarvis-visualizer-wait")
+            watched.add(waiter)
+        done, pending = await asyncio.wait(watched, return_when=asyncio.FIRST_COMPLETED)
         for task in pending:
             task.cancel()
         await asyncio.gather(*pending, return_exceptions=True)
-        if waiter in done and visualizer.returncode not in (None, 0):
+        if waiter is not None and waiter in done and visualizer.returncode not in (None, 0):
             raise RuntimeError(f"ai-visualizer exited with code {visualizer.returncode}")
         return 0
     finally:
         await control.stop()
-        if visualizer.returncode is None:
+        if visualizer is not None and visualizer.returncode is None:
             visualizer.terminate()
             try:
                 await asyncio.wait_for(visualizer.wait(), timeout=3)
