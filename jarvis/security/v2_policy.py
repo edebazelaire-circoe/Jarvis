@@ -27,6 +27,16 @@ class V2ActionPolicy:
 
 POLICIES: dict[str, V2ActionPolicy] = {
     "memory_search": V2ActionPolicy(ActionImpact.READ_ONLY),"memory_append": V2ActionPolicy(ActionImpact.PERSISTENT, confirm=True),"board_present": V2ActionPolicy(ActionImpact.REVERSIBLE_LOCAL),"reminder_create": V2ActionPolicy(ActionImpact.REVERSIBLE_LOCAL),"reminder_cancel": V2ActionPolicy(ActionImpact.REVERSIBLE_LOCAL),"calendar_list": V2ActionPolicy(ActionImpact.READ_ONLY),"calendar_get": V2ActionPolicy(ActionImpact.READ_ONLY),"calendar_create": V2ActionPolicy(ActionImpact.REVERSIBLE_LOCAL),"calendar_update": V2ActionPolicy(ActionImpact.REVERSIBLE_LOCAL),"calendar_delete": V2ActionPolicy(ActionImpact.DESTRUCTIVE, confirm=True),"calendar_invite": V2ActionPolicy(ActionImpact.EXTERNAL, confirm=True),"job_cancel": V2ActionPolicy(ActionImpact.REVERSIBLE_LOCAL),
+    # Drive est un espace partagé et distant : toute écriture y est confirmée,
+    # y compris la création. Un fichier de trop dans le Drive de l'utilisateur
+    # n'est pas rattrapable par Jarvis, contrairement à un fichier local.
+    "drive_search": V2ActionPolicy(ActionImpact.READ_ONLY),
+    "drive_get": V2ActionPolicy(ActionImpact.READ_ONLY),
+    "drive_read": V2ActionPolicy(ActionImpact.READ_ONLY),
+    "drive_create": V2ActionPolicy(ActionImpact.PERSISTENT, confirm=True),
+    "drive_update": V2ActionPolicy(ActionImpact.PERSISTENT, confirm=True),
+    "drive_delete": V2ActionPolicy(ActionImpact.DESTRUCTIVE, confirm=True),
+    "drive_share": V2ActionPolicy(ActionImpact.EXTERNAL, confirm=True),
 }
 
 

@@ -80,8 +80,24 @@ def test_control_center_keeps_pointer_visible_and_explains_configured_voice_togg
     assert "Entrée microphone" in html
     assert "Sortie haut-parleur" in html
     assert "Tester micro + sortie" in html
-    assert 'name="realtime_voice"' in html
-    assert 'name="voice_turn_mode"' in html
+
+
+def test_settings_window_is_a_modal_that_closes_on_an_outside_click():
+    """La fenêtre de réglages est une modale centrée, dimensionnée en % d'écran.
+
+    Ces assertions portent sur des choix demandés explicitement : un clic à
+    l'extérieur ferme, et la taille suit la fenêtre plutôt qu'un nombre de
+    pixels. Les champs eux-mêmes ne sont pas vérifiés ici : ils sont décrits
+    par le serveur, pas écrits en dur dans la page.
+    """
+    html = CONTROL_CENTER_HTML.read_text(encoding="utf-8")
+    assert ".modal{width:82vw;height:82vh" in html
+    assert "overlay.addEventListener('mousedown',event=>{if(event.target===overlay)closeSettings()})" in html
+    for label in ("Mode vocal", "CLI agent", "Config", "API Keys", "Raccourcis"):
+        assert f"label:'{label}'" in html
+    # Les listes de modèles passent par le catalogue du serveur : aucune liste
+    # de modèles ne doit être écrite dans la page.
+    assert "/api/models?provider=" in html
 
 
 def test_control_center_defaults_manual_voice_toggle_to_f9(tmp_path):

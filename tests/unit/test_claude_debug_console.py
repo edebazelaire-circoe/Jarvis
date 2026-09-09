@@ -19,6 +19,7 @@ import pytest
 from jarvis.runtime import claude_local
 from jarvis.runtime.claude_local import CREATE_NEW_CONSOLE, ClaudeLocalAgent
 from jarvis.runtime.control_center import ControlCenter
+from jarvis.runtime.cli_catalog import resolve_command
 from jarvis.runtime.journal import read_jsonl_tail
 
 
@@ -69,7 +70,11 @@ async def test_console_resumes_the_current_conversation_in_its_own_window(tmp_pa
 
     # La console hérite du même mode d'autorisation que l'agent piloté : les
     # deux vues doivent se comporter pareil sur la même conversation.
-    assert spawner[0]["command"] == ["claude", "--permission-mode", "bypassPermissions", "--resume", "4a890ce3-230c"]
+    # L'exécutable est résolu avant le lancement : sous Windows, `CreateProcess`
+    # n'applique pas PATHEXT, et un CLI installé en shim `.CMD` ne démarrerait pas.
+    assert spawner[0]["command"] == [
+        resolve_command("claude"), "--permission-mode", "bypassPermissions", "--resume", "4a890ce3-230c",
+    ]
     # Sans ce drapeau le processus n'aurait aucune fenêtre : c'est lui qui fait
     # la différence entre « vraie console » et agent headless.
     assert spawner[0]["creationflags"] == CREATE_NEW_CONSOLE
@@ -88,7 +93,7 @@ async def test_console_starts_a_fresh_conversation_when_none_exists(tmp_path, sp
 
     await agent.open_console()
 
-    assert spawner[0]["command"] == ["claude", "--permission-mode", "bypassPermissions"]
+    assert spawner[0]["command"] == [resolve_command("claude"), "--permission-mode", "bypassPermissions"]
     assert "nouvelle conversation" in read_jsonl_tail(tmp_path / "trace.jsonl")[-1]["message"]
 
 
@@ -112,14 +117,67 @@ async def test_reopening_raises_the_existing_window_instead_of_spawning_a_second
     assert read_jsonl_tail(tmp_path / "trace.jsonl")[-1]["kind"] == "agent.console_focus"
 
 
-async def test_piped_agent_cannot_be_restarted_while_the_console_holds_the_session(tmp_path, spawner):
+async def test_voice_is_never_held_hostage_by_the_debug_console(tmp_path, spawner, monkeypatch):
+    """La voix est la fonction fondamentale : si la console occupe la
+    conversation, l'agent en ouvre une nouvelle au lieu de refuser."""
     agent = _agent(tmp_path)
+    agent._record({"type": "system", "session_id": "session-tenue"})
     await agent.open_console()
 
-    with pytest.raises(RuntimeError, match="Fermez-la avant"):
-        await agent.start()
+    started: list[list[str]] = []
 
-    assert len(spawner) == 1
+    async def fake_exec(*args, **kwargs):  # noqa: ANN002, ANN003
+        started.append(list(args))
+        return _FakePipedProcess()
+
+    monkeypatch.setattr(claude_local.asyncio, "create_subprocess_exec", fake_exec)
+    await agent.start()
+
+    # Aucun --resume : la session tenue par la console n'est pas réécrite.
+    assert "--resume" not in started[0]
+    assert agent.session_id is None
+    forked = next(e for e in read_jsonl_tail(tmp_path / "trace.jsonl") if e["kind"] == "agent.session_forked")
+    assert forked["level"] == "warning"
+    assert forked["data"]["held_session_id"] == "session-tenue"
+
+
+async def test_the_session_is_resumed_once_the_console_is_gone(tmp_path, spawner, monkeypatch):
+    agent = _agent(tmp_path)
+    agent._record({"type": "system", "session_id": "session-libre"})
+    await agent.open_console()
+    await agent.close_console()
+
+    started: list[list[str]] = []
+
+    async def fake_exec(*args, **kwargs):  # noqa: ANN002, ANN003
+        started.append(list(args))
+        return _FakePipedProcess()
+
+    monkeypatch.setattr(claude_local.asyncio, "create_subprocess_exec", fake_exec)
+    await agent.start()
+
+    assert "--resume" in started[0] and "session-libre" in started[0]
+
+
+class _EmptyStream:
+    async def readline(self) -> bytes:
+        return b""
+
+
+class _FakePipedProcess:
+    """Processus piloté factice : ses flux se ferment aussitôt, ce qui laisse
+    les tâches de lecture se terminer proprement au lieu de lever."""
+
+    pid = 777
+
+    def __init__(self) -> None:
+        self.returncode = 0
+        self.stdin = None
+        self.stdout = _EmptyStream()
+        self.stderr = _EmptyStream()
+
+    async def wait(self) -> int:
+        return 0
 
 
 async def test_closing_the_console_hands_the_session_back(tmp_path, spawner):

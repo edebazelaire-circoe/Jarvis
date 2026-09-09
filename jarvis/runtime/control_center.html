@@ -5,22 +5,167 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>JARVIS</title>
 <style>
-:root{color-scheme:dark;--bg:#05080b;--panel:rgba(6,12,18,.94);--line:#183343;--text:#d8edf7;--muted:#7190a0;--accent:#6ee7ff;--danger:#ff6577;--ok:#68e0a0}*{box-sizing:border-box}html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px ui-monospace,SFMono-Regular,Consolas,monospace;overflow:hidden;cursor:default}#app{position:relative;width:100%;height:100%}.face{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000;pointer-events:none;cursor:default}.topbar{position:absolute;top:18px;left:18px;right:18px;display:flex;justify-content:space-between;align-items:center;pointer-events:none}.brand,.state,.voicehint{background:rgba(3,8,12,.72);border:1px solid rgba(110,231,255,.18);backdrop-filter:blur(10px);padding:8px 12px;letter-spacing:.14em;text-transform:uppercase}.state{font-size:12px;color:var(--muted)}.state strong{color:var(--accent)}.voicehint{position:absolute;left:50%;bottom:22px;transform:translateX(-50%);font-size:12px;color:var(--accent);pointer-events:none;box-shadow:0 0 30px rgba(0,0,0,.35)}.dock{position:absolute;right:18px;top:50%;transform:translateY(-50%);display:grid;gap:10px}.dock button{width:52px;height:52px;border:1px solid rgba(110,231,255,.26);background:rgba(3,8,12,.82);color:var(--text);border-radius:10px;cursor:pointer;font:12px inherit;backdrop-filter:blur(12px)}.dock button:hover,.dock button.active{border-color:var(--accent);color:var(--accent)}.badge{position:absolute;right:-5px;top:-5px;min-width:18px;height:18px;border-radius:9px;background:var(--danger);color:white;font-size:10px;display:none;align-items:center;justify-content:center}.tool{position:relative}.panel{position:absolute;top:18px;right:86px;bottom:18px;width:min(560px,calc(100% - 120px));background:var(--panel);border:1px solid var(--line);backdrop-filter:blur(18px);display:none;flex-direction:column;box-shadow:0 0 50px rgba(0,0,0,.45)}.panel.open{display:flex}.panel header{display:flex;justify-content:space-between;align-items:center;padding:15px 17px;border-bottom:1px solid var(--line)}.panel header h2{font-size:14px;margin:0;letter-spacing:.12em;text-transform:uppercase}.panel header button{background:none;color:var(--muted);border:0;font-size:20px;cursor:pointer}.body{padding:16px;overflow:auto;min-height:0}.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.statusdot{width:9px;height:9px;border-radius:50%;background:var(--muted)}.statusdot.running{background:var(--ok)}button.action{border:1px solid var(--line);background:#0b141a;color:var(--text);padding:8px 11px;border-radius:6px;cursor:pointer}button.action:hover{border-color:var(--accent)}button.action:disabled{opacity:.5;cursor:wait}button.danger:hover{border-color:var(--danger);color:var(--danger)}pre.log{white-space:pre-wrap;word-break:break-word;margin:0;font-size:12px;line-height:1.55;color:#a9c5d2}.entry{padding:9px 0;border-bottom:1px solid rgba(113,144,160,.12)}.entry .meta{font-size:10px;color:var(--muted);margin-bottom:3px}.entry.error{color:#ff9eaa}details.entry{padding:0;border-bottom:1px solid rgba(113,144,160,.12)}details.entry>summary{display:flex;align-items:flex-start;gap:9px;padding:9px 2px;cursor:pointer;list-style:none}details.entry>summary::-webkit-details-marker{display:none}details.entry>summary:hover{background:rgba(110,231,255,.05)}.ico{flex:0 0 18px;text-align:center;font-size:13px;line-height:1.5;filter:grayscale(.25)}.etxt{flex:1 1 auto;min-width:0}.emsg{display:block;word-break:break-word;line-height:1.45}.emeta{display:block;font-size:10px;color:var(--muted);margin-top:2px}.dot{flex:0 0 9px;width:9px;height:9px;border-radius:50%;margin-top:6px;background:var(--muted)}.dot.ok{background:var(--ok)}.dot.warn{background:#ffb85c}.dot.bad{background:var(--danger)}.dot.busy{background:var(--accent)}details.entry[open]>summary{background:rgba(110,231,255,.06)}details.entry .detail{padding:0 2px 11px 29px}.chip{display:inline-block;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);border:1px solid var(--line);border-radius:3px;padding:1px 5px;margin-right:6px}.settings{display:grid;gap:13px}.settings label{display:grid;gap:5px;color:var(--muted);font-size:12px}.settings input,.settings select{width:100%;background:#071015;border:1px solid var(--line);color:var(--text);padding:9px;border-radius:5px;font:inherit}.hint{font-size:11px;color:var(--muted)}.test-result{min-height:18px;font-size:12px;color:var(--muted)}.test-result.ok{color:var(--ok)}.test-result.error{color:var(--danger)}textarea{width:100%;min-height:80px;background:#071015;border:1px solid var(--line);color:var(--text);padding:9px;border-radius:5px;font:inherit;resize:vertical}.agentEvents{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}.empty{color:var(--muted);padding:20px 0;text-align:center}@media(max-width:700px){.panel{left:12px;right:76px;top:12px;bottom:12px;width:auto}.dock{right:10px}.topbar{left:10px;right:74px}.brand{display:none}}
+:root{color-scheme:dark;--bg:#05080b;--panel:rgba(6,12,18,.94);--solid:#070d13;--line:#183343;--text:#d8edf7;--muted:#7190a0;--accent:#6ee7ff;--danger:#ff6577;--ok:#68e0a0;--warn:#ffb85c}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px ui-monospace,SFMono-Regular,Consolas,monospace;overflow:hidden;cursor:default}
+#app{position:relative;width:100%;height:100%}
+.face{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000;pointer-events:none;cursor:default}
+.topbar{position:absolute;top:18px;left:18px;right:18px;display:flex;justify-content:space-between;align-items:center;pointer-events:none}
+.brand,.state,.voicehint{background:rgba(3,8,12,.72);border:1px solid rgba(110,231,255,.18);backdrop-filter:blur(10px);padding:8px 12px;letter-spacing:.14em;text-transform:uppercase}
+.state{font-size:12px;color:var(--muted)}
+.state strong{color:var(--accent)}
+.voicehint{position:absolute;left:50%;bottom:22px;transform:translateX(-50%);font-size:12px;color:var(--accent);pointer-events:none;box-shadow:0 0 30px rgba(0,0,0,.35)}
+.dock{position:absolute;right:18px;top:50%;transform:translateY(-50%);display:grid;gap:10px}
+.dock button{width:52px;height:52px;border:1px solid rgba(110,231,255,.26);background:rgba(3,8,12,.82);color:var(--text);border-radius:10px;cursor:pointer;font:12px inherit;backdrop-filter:blur(12px)}
+.dock button:hover,.dock button.active{border-color:var(--accent);color:var(--accent)}
+.badge{position:absolute;right:-5px;top:-5px;min-width:18px;height:18px;border-radius:9px;background:var(--danger);color:white;font-size:10px;display:none;align-items:center;justify-content:center}
+.tool{position:relative}
+.panel{position:absolute;top:18px;right:86px;bottom:18px;width:min(560px,calc(100% - 120px));background:var(--panel);border:1px solid var(--line);backdrop-filter:blur(18px);display:none;flex-direction:column;box-shadow:0 0 50px rgba(0,0,0,.45)}
+.panel.open{display:flex}
+.panel header{display:flex;justify-content:space-between;align-items:center;padding:15px 17px;border-bottom:1px solid var(--line)}
+.panel header h2{font-size:14px;margin:0;letter-spacing:.12em;text-transform:uppercase}
+.panel header button{background:none;color:var(--muted);border:0;font-size:20px;cursor:pointer}
+.body{padding:16px;overflow:auto;min-height:0}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.statusdot{width:9px;height:9px;border-radius:50%;background:var(--muted)}
+.statusdot.running{background:var(--ok)}
+button.action{border:1px solid var(--line);background:#0b141a;color:var(--text);padding:8px 11px;border-radius:6px;cursor:pointer;font:inherit}
+button.action:hover{border-color:var(--accent)}
+button.action:disabled{opacity:.5;cursor:wait}
+button.danger:hover{border-color:var(--danger);color:var(--danger)}
+button.primary{border-color:var(--accent);color:var(--accent)}
+pre.log{white-space:pre-wrap;word-break:break-word;margin:0;font-size:12px;line-height:1.55;color:#a9c5d2}
+.entry{padding:9px 0;border-bottom:1px solid rgba(113,144,160,.12)}
+.entry .meta{font-size:10px;color:var(--muted);margin-bottom:3px}
+.entry.error{color:#ff9eaa}
+details.entry{padding:0;border-bottom:1px solid rgba(113,144,160,.12)}
+details.entry>summary{display:flex;align-items:flex-start;gap:9px;padding:9px 2px;cursor:pointer;list-style:none}
+details.entry>summary::-webkit-details-marker{display:none}
+details.entry>summary:hover{background:rgba(110,231,255,.05)}
+.ico{flex:0 0 18px;text-align:center;font-size:13px;line-height:1.5;filter:grayscale(.25)}
+.etxt{flex:1 1 auto;min-width:0}
+.emsg{display:block;word-break:break-word;line-height:1.45}
+.emeta{display:block;font-size:10px;color:var(--muted);margin-top:2px}
+.dot{flex:0 0 9px;width:9px;height:9px;border-radius:50%;margin-top:6px;background:var(--muted)}
+.dot.ok{background:var(--ok)}
+.dot.warn{background:var(--warn)}
+.dot.bad{background:var(--danger)}
+.dot.busy{background:var(--accent)}
+details.entry[open]>summary{background:rgba(110,231,255,.06)}
+details.entry .detail{padding:0 2px 11px 29px}
+.chip{display:inline-block;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);border:1px solid var(--line);border-radius:3px;padding:1px 5px;margin-right:6px}
+.hint{font-size:11px;color:var(--muted);line-height:1.5}
+.test-result{min-height:18px;font-size:12px;color:var(--muted)}
+.test-result.ok{color:var(--ok)}
+.test-result.error{color:var(--danger)}
+textarea{width:100%;min-height:80px;background:#071015;border:1px solid var(--line);color:var(--text);padding:9px;border-radius:5px;font:inherit;resize:vertical}
+.agentEvents{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}
+.empty{color:var(--muted);padding:20px 0;text-align:center}
+
+/* ---------- Fenêtre de réglages ---------- */
+.overlay{position:fixed;inset:0;z-index:60;display:none;place-items:center;padding:3vh 3vw;background:rgba(2,6,10,.68);backdrop-filter:blur(7px)}
+.overlay.open{display:grid}
+.modal{width:82vw;height:82vh;display:grid;grid-template-rows:auto minmax(0,1fr) auto;background:var(--solid);border:1px solid var(--line);box-shadow:0 34px 90px rgba(0,0,0,.65);overflow:hidden}
+.modal>header{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:16px 22px;border-bottom:1px solid var(--line)}
+.modal>header h2{margin:0;font-size:14px;letter-spacing:.16em;text-transform:uppercase}
+.modal>header .sub{font-size:11px;color:var(--muted);letter-spacing:.04em;text-transform:none}
+.modal>header button{background:none;border:0;color:var(--muted);font-size:24px;line-height:1;cursor:pointer}
+.modal>header button:hover{color:var(--text)}
+.split{display:grid;grid-template-columns:212px minmax(0,1fr);min-height:0}
+nav.tabs{border-right:1px solid var(--line);padding:14px 0;overflow:auto}
+nav.tabs button{display:block;width:100%;text-align:left;padding:11px 20px;background:none;border:0;border-left:2px solid transparent;color:var(--muted);font:inherit;font-size:13px;cursor:pointer;letter-spacing:.05em}
+nav.tabs button:hover{color:var(--text)}
+nav.tabs button.active{color:var(--accent);border-left-color:var(--accent);background:rgba(110,231,255,.06)}
+.content{overflow:auto;padding:24px 28px 32px;min-height:0}
+.content>section{max-width:760px}
+.content h3{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:26px 0 12px;font-weight:normal}
+.content h3:first-child{margin-top:0}
+.field{display:grid;gap:6px;margin-bottom:18px}
+.field>label{font-size:12px;color:var(--muted)}
+.field input,.field select{width:100%;background:#071015;border:1px solid var(--line);color:var(--text);padding:9px;border-radius:5px;font:inherit}
+.field input:focus,.field select:focus{outline:none;border-color:var(--accent)}
+.field.inline{grid-template-columns:auto 1fr;align-items:center;gap:10px}
+.field.inline input[type=checkbox]{width:16px;height:16px;accent-color:var(--accent)}
+.choices{display:grid;gap:10px;margin-bottom:20px}
+.choice{display:grid;grid-template-columns:auto 1fr;gap:12px;align-items:start;border:1px solid var(--line);border-radius:8px;padding:13px 15px;cursor:pointer;background:#060d12}
+.choice:hover{border-color:rgba(110,231,255,.4)}
+.choice.selected{border-color:var(--accent);background:rgba(110,231,255,.06)}
+.choice input{margin-top:3px;accent-color:var(--accent)}
+.choice .title{display:flex;gap:9px;align-items:center;flex-wrap:wrap}
+.choice .title strong{font-weight:normal;letter-spacing:.04em}
+.tag{font-size:10px;letter-spacing:.08em;text-transform:uppercase;border:1px solid var(--line);border-radius:3px;padding:1px 6px;color:var(--muted)}
+.tag.ok{color:var(--ok);border-color:rgba(104,224,160,.45)}
+.tag.bad{color:var(--danger);border-color:rgba(255,101,119,.45)}
+.tag.warn{color:var(--warn);border-color:rgba(255,184,92,.45)}
+.source{font-size:11px;color:var(--muted);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.note.bad{color:var(--danger)}
+.note.warn{color:var(--warn)}
+.linkish{background:none;border:0;color:var(--accent);font:inherit;font-size:11px;cursor:pointer;padding:0;text-decoration:underline dotted}
+table.keys{width:100%;border-collapse:collapse;font-size:13px}
+table.keys th{text-align:left;font-weight:normal;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);padding:0 10px 8px 0;border-bottom:1px solid var(--line)}
+table.keys td{padding:10px 10px 10px 0;border-bottom:1px solid rgba(113,144,160,.12);vertical-align:middle}
+table.keys input[type=radio]{accent-color:var(--accent)}
+.keyform{display:grid;grid-template-columns:170px 1fr 1fr auto;gap:10px;align-items:end;margin-top:8px}
+.keyform .field{margin:0}
+.shortcut{display:grid;grid-template-columns:1fr 190px;gap:14px;align-items:center;padding:12px 0;border-bottom:1px solid rgba(113,144,160,.12)}
+.shortcut .desc{font-size:11px;color:var(--muted);line-height:1.5;margin-top:3px}
+.keycap{width:100%;border:1px solid var(--line);background:#0b141a;color:var(--text);padding:9px;border-radius:5px;font:inherit;cursor:pointer;text-align:center;letter-spacing:.06em}
+.keycap:hover{border-color:var(--accent)}
+.keycap.capturing{border-color:var(--accent);color:var(--accent);animation:pulse 1.1s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.45}}
+.modal>footer{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:14px 22px;border-top:1px solid var(--line)}
+.modal>footer .status{font-size:12px;color:var(--muted);min-height:16px}
+.modal>footer .status.ok{color:var(--ok)}
+.modal>footer .status.error{color:var(--danger)}
+.notice{border-left:2px solid var(--warn);padding:10px 14px;margin:0 0 18px;background:rgba(255,184,92,.06);font-size:12px;line-height:1.6;color:#e4d3b8}
+.notice.bad{border-left-color:var(--danger);background:rgba(255,101,119,.07);color:#f0c3c9}
+@media(max-width:900px){
+  .modal{width:94vw;height:88vh}
+  .split{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}
+  nav.tabs{display:flex;border-right:0;border-bottom:1px solid var(--line);padding:0;overflow-x:auto}
+  nav.tabs button{border-left:0;border-bottom:2px solid transparent;white-space:nowrap;padding:12px 16px}
+  nav.tabs button.active{border-left:0;border-bottom-color:var(--accent)}
+  .keyform{grid-template-columns:1fr}
+}
+@media(max-width:700px){
+  .panel{left:12px;right:76px;top:12px;bottom:12px;width:auto}
+  .dock{right:10px}
+  .topbar{left:10px;right:74px}
+  .brand{display:none}
+}
 </style>
 </head>
 <body>
 <div id="app">
   <iframe class="face" src="__VISUALIZER_URL__" title="Jarvis visualizer"></iframe>
-  <div class="topbar"><div class="brand">JARVIS</div><div class="state">VOICE <strong id="voiceState">IDLE</strong> · CLAUDE <strong id="agentState">STOPPED</strong></div></div>
+  <div class="topbar"><div class="brand">JARVIS</div><div class="state">VOICE <strong id="voiceState">IDLE</strong> · <strong id="agentName">CLAUDE</strong> <strong id="agentState">STOPPED</strong></div></div>
   <div class="voicehint" id="voiceHint">F9 · DÉMARRER</div>
   <nav class="dock" aria-label="Jarvis tools">
     <div class="tool"><button data-panel="errors" title="Errors">ERR</button><span class="badge" id="errorBadge">0</span></div>
     <div class="tool"><button data-panel="trace" title="Trace">TRC</button></div>
-    <div class="tool"><button data-panel="settings" title="Settings">SET</button></div>
+    <div class="tool"><button id="openSettings" title="Réglages">SET</button></div>
     <div class="tool"><button data-panel="agents" title="Agents">AGT</button></div>
   </nav>
   <section class="panel" id="panel"><header><h2 id="panelTitle">Panel</h2><button id="closePanel" aria-label="Fermer">×</button></header><div class="body" id="panelBody"></div></section>
 </div>
+
+<div class="overlay" id="overlay">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <header>
+      <div><h2 id="modalTitle">Réglages</h2><div class="sub" id="modalSub"></div></div>
+      <button id="closeModal" aria-label="Fermer les réglages">×</button>
+    </header>
+    <div class="split">
+      <nav class="tabs" id="modalTabs"></nav>
+      <div class="content" id="modalContent"></div>
+    </div>
+    <footer>
+      <div class="status" id="modalStatus"></div>
+      <div class="row"><button class="action primary" id="modalSave">Enregistrer</button></div>
+    </footer>
+  </div>
+</div>
+
 <script>
 const $=s=>document.querySelector(s);let current=null;const panel=$('#panel'),body=$('#panelBody'),title=$('#panelTitle');
 async function api(path,opts){const r=await fetch(path,opts),text=await r.text();let value={};try{value=text?JSON.parse(text):{}}catch{value={error:text}}if(!r.ok)throw new Error(value.error||value.code||text);return value}
@@ -32,22 +177,457 @@ function timeOf(ts){const t=String(ts||'');return t.length>19?t.slice(11,23):t}
 function entries(items){if(!items.length)return '<div class="empty">Aucune entrée.</div>';return items.slice().reverse().map(x=>{const data=x.data&&Object.keys(x.data).length?x.data:null;return `<details class="entry ${x.level==='error'?'error':''}"><summary><span class="ico">${iconFor(String(x.kind||''))}</span><span class="etxt"><span class="emsg">${esc(x.message)}</span><span class="emeta">${esc(timeOf(x.ts))} · ${esc(x.kind)}${x.archived_at?' · archivé le '+esc(timeOf(x.archived_at)):''}</span></span><span class="dot ${statusFor(x)}"></span></summary><div class="detail"><div class="emeta" style="margin-bottom:6px"><span class="chip">${esc(x.level)}</span>${esc(x.ts)}</div>${data?`<pre class="log">${esc(JSON.stringify(data,null,2))}</pre>`:'<div class="hint">Aucun détail supplémentaire.</div>'}</div></details>`}).join('')}
 let errorsView='active';
 async function renderErrors(){const archived=errorsView==='archived';title.textContent=archived?'Errors · Archives':'Errors';const items=await api('/api/errors'+(archived?'?archived=1&limit=500':''));body.innerHTML=`<div class="row" style="margin-bottom:12px"><button class="action" id="toggleErrors">${archived?'Erreurs actives':'Erreurs archivées'}</button>${archived?'':'<button class="action danger" id="archiveErrors">Archiver</button>'}<span class="hint">${items.length} entrée(s)</span></div><div>${entries(items)}</div>`;$('#toggleErrors').addEventListener('click',()=>{errorsView=archived?'active':'archived';renderErrors().catch(e=>{body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`})});const archive=$('#archiveErrors');if(archive)archive.addEventListener('click',async()=>{archive.disabled=true;try{await api('/api/errors/archive',{method:'POST'});await renderErrors();refreshStatus()}catch(e){alert(e.message)}finally{archive.disabled=false}})}
-async function refreshStatus(){try{const s=await api('/api/status'),v=s.voice_state||'idle',k=String(s.manual_wake_key||'f9').toUpperCase(),online=s.voice_online===true;$('#voiceState').textContent=online?v.toUpperCase():'OFFLINE';const listening=s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`;$('#voiceHint').textContent=online?({idle:`${k} · DÉMARRER`,listening,thinking:`${k} · ANNULER`,speaking:`${k} · INTERROMPRE`}[v]||`${k} · CONTRÔLER`):`${k} · VOICE HORS LIGNE`;$('.face').style.visibility=online?'visible':'hidden';$('#agentState').textContent=(s.agent.state||'stopped').toUpperCase();const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';if(current==='agents'){if(agentView==='transcript')renderTranscript().catch(()=>{});else renderAgents(s.agent)}}catch(e){$('#voiceState').textContent='OFFLINE';$('#agentState').textContent='OFFLINE';$('#voiceHint').textContent='VOICE HORS LIGNE';$('.face').style.visibility='hidden'}}
-async function openPanel(name){current=name;document.querySelectorAll('.dock button').forEach(b=>b.classList.toggle('active',b.dataset.panel===name));panel.classList.add('open');title.textContent={errors:'Errors',trace:'Trace',settings:'Settings',agents:'Agents'}[name];body.innerHTML='<div class="empty">Chargement…</div>';try{if(name==='errors')await renderErrors();if(name==='trace')body.innerHTML=entries(await api('/api/trace'));if(name==='settings'){const [s,d]=await Promise.all([api('/api/settings'),api('/api/audio/devices')]);renderSettings(s,d)}if(name==='agents'){if(agentView==='transcript')await renderTranscript(true);else renderAgents(await api('/api/agent'),true)}}catch(e){body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`}}
-function deviceOptions(items,selected,defaultId){const chosen=String(selected??''),defaultDevice=items.find(x=>String(x.id)===String(defaultId)),defaultLabel=defaultDevice?` (${defaultDevice.name})`:'',missing=chosen!==''&&!items.some(x=>String(x.id)===chosen)?`<option value="${esc(chosen)}" selected>Périphérique indisponible (#${esc(chosen)})</option>`:'';return missing+`<option value="" ${chosen===''?'selected':''}>Système par défaut${esc(defaultLabel)}</option>`+items.map(x=>`<option value="${esc(x.id)}" ${chosen===String(x.id)?'selected':''}>${esc(x.name)}${x.hostapi?' · '+esc(x.hostapi):''}</option>`).join('')}
-function renderSettings(s,d){body.innerHTML=`<form class="settings" id="settingsForm"><label>Entrée microphone<select name="audio_input_device">${deviceOptions(d.inputs||[],s.audio_input_device,d.defaults?.input)}</select></label><label>Sortie haut-parleur<select name="audio_output_device">${deviceOptions(d.outputs||[],s.audio_output_device,d.defaults?.output)}</select></label><div class="row"><button class="action" type="button" id="testAudio">Tester micro + sortie</button></div><div class="test-result" id="audioTestResult">Parlez pendant le test : les 2 secondes enregistrées seront rejouées.</div><label>Voix JARVIS<select name="realtime_voice">${(s.realtime_voices||[]).map(v=>`<option value="${esc(v)}" ${v===s.realtime_voice?'selected':''}>${esc(v)}</option>`).join('')}</select></label><label>Fin de tour<select name="voice_turn_mode">${(s.voice_turn_modes||[]).map(m=>`<option value="${esc(m)}" ${m===s.voice_turn_mode?'selected':''}>${m==='auto'?'Automatique (silence)':'Manuelle (2e appui)'}</option>`).join('')}</select></label><label>Claude CLI<input name="claude_cli" value="${esc(s.claude_cli)}"></label><label>Autorisations Claude<select name="claude_permission_mode">${(s.claude_permission_modes||[]).map(m=>`<option value="${esc(m)}" ${m===s.claude_permission_mode?'selected':''}>${m==='bypassPermissions'?'Tout autoriser (aucune demande)':m}</option>`).join('')}</select></label><div class="hint">En vocal personne ne peut approuver une demande d’autorisation : hors « tout autoriser », Claude refusera d’écrire ou d’exécuter.</div><label>OpenAI API key<input name="openai_api_key" type="password" placeholder="${s.openai_api_key_set?'Configured — leave blank to keep':'Not configured'}"></label><label>Porcupine access key<input name="porcupine_access_key" type="password" placeholder="${s.porcupine_access_key_set?'Configured — leave blank to keep':'Not configured'}"></label><label>Manual wake key<input name="manual_wake_key" value="${esc(s.manual_wake_key)}"></label><label>Active timeout (seconds)<input name="active_timeout_s" type="number" min="5" value="${esc(s.active_timeout_s)}"></label><div class="row"><button class="action" type="submit">Enregistrer</button></div><div class="hint">Les changements Voice prennent effet au prochain redémarrage du runtime Voice.</div></form>`;const form=$('#settingsForm'),result=$('#audioTestResult'),test=$('#testAudio');form.addEventListener('submit',async e=>{e.preventDefault();const p=Object.fromEntries(new FormData(form).entries());try{await api('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});await openPanel('settings')}catch(err){alert(err.message)}});test.addEventListener('click',async()=>{const p=Object.fromEntries(new FormData(form).entries());test.disabled=true;result.className='test-result';result.textContent='Parlez maintenant pendant 2 secondes…';try{const r=await api('/api/audio/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({input_device:p.audio_input_device,output_device:p.audio_output_device})});await api('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});result.className='test-result ok';result.textContent=`Test réussi · pic ${r.peak_dbfs} dBFS · enregistrement rejoué et sélection sauvegardée.`}catch(err){result.className='test-result error';result.textContent=err.message}finally{test.disabled=false}})}
+async function refreshStatus(){try{const s=await api('/api/status'),v=s.voice_state||'idle',k=String(s.manual_wake_key||'f9').toUpperCase(),online=s.voice_online===true;$('#voiceState').textContent=online?v.toUpperCase():'OFFLINE';const listening=s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`;$('#voiceHint').textContent=online?({idle:`${k} · DÉMARRER`,listening,thinking:`${k} · ANNULER`,speaking:`${k} · INTERROMPRE`}[v]||`${k} · CONTRÔLER`):`${k} · VOICE HORS LIGNE`;$('.face').style.visibility=online?'visible':'hidden';$('#agentName').textContent=String(s.agent.name||s.agent_cli||'agent').toUpperCase();$('#agentState').textContent=(s.agent.state||'stopped').toUpperCase();const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';if(current==='agents'){if(agentView==='transcript')renderTranscript().catch(()=>{});else renderAgents(s.agent)}}catch(e){$('#voiceState').textContent='OFFLINE';$('#agentState').textContent='OFFLINE';$('#voiceHint').textContent='VOICE HORS LIGNE';$('.face').style.visibility='hidden'}}
+async function openPanel(name){current=name;document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.toggle('active',b.dataset.panel===name));panel.classList.add('open');title.textContent={errors:'Errors',trace:'Trace',agents:'Agents'}[name];body.innerHTML='<div class="empty">Chargement…</div>';try{if(name==='errors')await renderErrors();if(name==='trace')body.innerHTML=entries(await api('/api/trace'));if(name==='agents'){if(agentView==='transcript')await renderTranscript(true);else renderAgents(await api('/api/agent'),true)}}catch(e){body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`}}
+function closePanel(){current=null;panel.classList.remove('open');document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.remove('active'))}
+
 let agentView='controls',transcriptCount=-1,agentSignature='';
 const ROLE_ICONS={user:'🧑',assistant:'🤖',system:'⚙️',result:'✅',stderr:'⚠️',notice:'📊',stdout:'📄'};
-function agentHeader(a){const c=a.console||{};return `<div class="row"><span class="statusdot ${a.state==='running'?'running':''}"></span><strong>Claude</strong><span class="hint">${esc(a.state)}${a.pid?' · PID '+esc(a.pid):''}${a.session_id?' · session '+esc(String(a.session_id).slice(0,8)):''}</span></div><div class="row" style="margin-top:10px"><button class="action" id="openConsole"${c.supported===false?' disabled':''}>🖥️ Console Windows</button>${c.open?`<button class="action danger" id="closeConsole">Fermer la console</button><span class="dot busy" title="console ouverte"></span><span class="hint">PID ${esc(c.pid)}</span>`:''}</div><div class="hint" id="consoleHint" style="margin-top:6px">${c.open?'Console de debug ouverte : elle a la main sur la conversation.':'Ouvre la vraie console Claude dans une fenêtre Windows, sur cette même conversation. L’agent piloté rend la main pendant ce temps.'}</div>`}
+function agentHeader(a){const c=a.console||{},name=a.name||'Agent';return `<div class="row"><span class="statusdot ${a.state==='running'?'running':''}"></span><strong>${esc(name)}</strong><span class="hint">${esc(a.state)}${a.pid?' · PID '+esc(a.pid):''}${a.model?' · '+esc(a.model):''}${a.session_id?' · session '+esc(String(a.session_id).slice(0,8)):''}</span></div><div class="row" style="margin-top:10px"><button class="action" id="openConsole"${c.supported===false?' disabled':''}>🖥️ Console Windows</button>${c.open?`<button class="action danger" id="closeConsole">Fermer la console</button><span class="dot busy" title="console ouverte"></span><span class="hint">PID ${esc(c.pid)}</span>`:''}</div><div class="hint" id="consoleHint" style="margin-top:6px">${c.open?'Console ouverte : elle garde cette conversation.':'Ouvre la vraie console dans une fenêtre Windows, sur cette même conversation.'}</div>`}
 function bindConsole(after){const open=$('#openConsole');if(open)open.addEventListener('click',async()=>{open.disabled=true;$('#consoleHint').textContent='Ouverture de la console…';try{const r=await api('/api/agent/console/open',{method:'POST'});$('#consoleHint').textContent=r.already_open?(r.raised?'Console existante ramenée au premier plan.':'Console déjà ouverte (fenêtre à retrouver dans la barre des tâches).'):(r.handover?'Console ouverte, conversation reprise. L’agent piloté a été arrêté.':'Console ouverte.')}catch(e){$('#consoleHint').textContent=e.message}finally{open.disabled=false;setTimeout(after,400)}});const close=$('#closeConsole');if(close)close.addEventListener('click',async()=>{close.disabled=true;try{await api('/api/agent/console/close',{method:'POST'})}catch(e){alert(e.message)}finally{setTimeout(after,300)}})}
-function sendBox(){return `<div style="margin-top:14px"><textarea id="agentInput" placeholder="Message direct au Claude local…"></textarea><button class="action" id="sendAgent" style="margin-top:7px">Envoyer</button></div>`}
+function sendBox(){return `<div style="margin-top:14px"><textarea id="agentInput" placeholder="Message direct à l'agent local…"></textarea><button class="action" id="sendAgent" style="margin-top:7px">Envoyer</button></div>`}
 function bindSend(after){$('#sendAgent').addEventListener('click',async()=>{const input=$('#agentInput'),text=input.value.trim();if(!text)return;input.value='';try{await api('/api/agent/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})})}catch(e){alert(e.message)}transcriptCount=-1;setTimeout(after,300)})}
 function transcriptEntries(items){if(!items.length)return '<div class="empty">Aucun échange. Envoyez un message pour démarrer la conversation.</div>';return items.map(e=>`<details class="entry"><summary><span class="ico">${ROLE_ICONS[e.role]||'•'}</span><span class="etxt"><span class="emsg">${esc(e.text||e.title)}</span><span class="emeta">${esc(e.title)}</span></span><span class="dot ${esc(e.status||'ok')}"></span></summary><div class="detail"><pre class="log">${esc(JSON.stringify(e.raw,null,2))}</pre></div></details>`).join('')}
-async function renderTranscript(force){if(current!=='agents'||agentView!=='console')return;const c=await api('/api/agent/transcript');if(!force&&c.events.length===transcriptCount)return;transcriptCount=c.events.length;title.textContent='Claude · Historique';body.innerHTML=`${agentHeader(c)}<div class="row" style="margin-top:10px"><button class="action" id="agentControls">← Contrôles</button><span class="hint">${esc(c.command)} · ${esc(c.cwd)}</span></div><div class="agentEvents">${transcriptEntries(c.events)}</div>${sendBox()}`;$('#agentControls').addEventListener('click',()=>{agentView='controls';transcriptCount=-1;openPanel('agents')});bindConsole(()=>renderTranscript(true));bindSend(()=>renderTranscript(true));body.scrollTop=body.scrollHeight}
-function agentSig(a){const c=a.console||{};return [a.state,a.pid,a.session_id,c.open,c.pid,(a.events||[]).length].join('|')}
+async function renderTranscript(force){if(current!=='agents'||agentView!=='transcript')return;const c=await api('/api/agent/transcript');if(!force&&c.events.length===transcriptCount)return;transcriptCount=c.events.length;title.textContent=`${c.name||'Agent'} · Historique`;body.innerHTML=`${agentHeader(c)}<div class="row" style="margin-top:10px"><button class="action" id="agentControls">← Contrôles</button><span class="hint">${esc(c.command)} · ${esc(c.cwd)}</span></div><div class="agentEvents">${transcriptEntries(c.events)}</div>${sendBox()}`;$('#agentControls').addEventListener('click',()=>{agentView='controls';transcriptCount=-1;openPanel('agents')});bindConsole(()=>renderTranscript(true));bindSend(()=>renderTranscript(true));body.scrollTop=body.scrollHeight}
+function agentSig(a){const c=a.console||{};return [a.name,a.state,a.pid,a.session_id,c.open,c.pid,(a.events||[]).length].join('|')}
 function renderAgents(a,force){if(current!=='agents'||agentView==='transcript')return;const sig=agentSig(a);if(!force&&sig===agentSignature)return;agentSignature=sig;title.textContent='Agents';body.innerHTML=`${agentHeader(a)}<div class="row" style="margin-top:12px"><button class="action" data-agent="start">Start</button><button class="action" data-agent="restart">Restart</button><button class="action danger" data-agent="kill">Kill</button><button class="action" id="agentConsoleBtn">Historique</button></div>${sendBox()}<div class="agentEvents">${transcriptEntries((a.events||[]).map(transcriptFallback))}</div>`;document.querySelectorAll('[data-agent]').forEach(b=>b.addEventListener('click',async()=>{await api('/api/agent/'+b.dataset.agent,{method:'POST'});await openPanel('agents')}));bindConsole(()=>openPanel('agents'));$('#agentConsoleBtn').addEventListener('click',()=>{agentView='transcript';transcriptCount=-1;renderTranscript(true).catch(e=>{body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`})});bindSend(()=>openPanel('agents'))}
 function transcriptFallback(x){return {role:String(x.type||'event'),title:String(x.type||'event'),text:'',status:'ok',raw:x}}
-document.querySelectorAll('.dock button').forEach(b=>b.addEventListener('click',()=>{if(b.dataset.panel==='errors')errorsView='active';openPanel(b.dataset.panel)}));$('#closePanel').addEventListener('click',()=>{current=null;panel.classList.remove('open');document.querySelectorAll('.dock button').forEach(b=>b.classList.remove('active'))});setInterval(refreshStatus,1000);refreshStatus();
+
+/* =====================================================================
+   Fenêtre de réglages
+   =====================================================================
+   Le serveur décrit ce qui existe (piles vocales, CLI, champs, raccourcis),
+   cette page ne fait que le rendre. Ajouter une option côté Python suffit :
+   aucun champ n'est écrit en dur ici, et les listes de modèles viennent du
+   catalogue réel du fournisseur, jamais d'une liste figée.                */
+
+const TABS=[
+  {id:'voice',label:'Mode vocal',save:true},
+  {id:'cli',label:'CLI agent',save:true},
+  {id:'config',label:'Config',save:true},
+  {id:'keys',label:'API Keys',save:false},
+  {id:'shortcuts',label:'Raccourcis',save:false},
+];
+const SET={open:false,tab:'voice',data:null,draft:null,dirty:false,catalog:{},clis:null,devices:null,capture:null,shortcuts:null};
+const overlay=$('#overlay'),modalContent=$('#modalContent'),modalStatus=$('#modalStatus'),modalSave=$('#modalSave'),modalSub=$('#modalSub');
+
+function say(text,kind){modalStatus.className='status'+(kind?' '+kind:'');modalStatus.textContent=text||''}
+
+/* Catalogue de modèles : une entrée par (fournisseur, usage), gardée le temps
+   de la session pour ne pas rappeler l'API à chaque changement d'onglet. */
+async function catalog(provider,role,refresh){
+  const key=provider+':'+role;
+  if(SET.catalog[key]&&!refresh)return SET.catalog[key];
+  let value;
+  try{
+    value=await api(`/api/models?provider=${encodeURIComponent(provider)}&role=${encodeURIComponent(role)}${refresh?'&refresh=1':''}`);
+  }catch(e){value={ok:false,error:e.message,models:[]}}
+  SET.catalog[key]=value;return value;
+}
+
+function catalogNote(result,provider){
+  const name=providerLabel(provider);
+  if(result.ok&&result.source==='live')return `<span class="note">${result.models.length} modèle(s) · liste demandée à l'API ${esc(name)} à l'instant</span>`;
+  if(result.ok)return `<span class="note">${result.models.length} modèle(s) · liste ${esc(name)} en cache</span>`;
+  if(result.source==='stale')return `<span class="note warn">Liste ${esc(name)} périmée (dernier appel réussi) — ${esc(result.error||'')}</span>`;
+  return `<span class="note bad">${esc(result.error||'Catalogue indisponible.')}</span>`;
+}
+
+function selectOptions(values,selected,placeholder){
+  const chosen=String(selected??'');
+  const missing=chosen&&!values.some(v=>String(v.value)===chosen)
+    ? `<option value="${esc(chosen)}" selected>${esc(chosen)} (absent du catalogue)</option>` : '';
+  const head=placeholder?`<option value="" ${chosen===''?'selected':''}>${esc(placeholder)}</option>`:'';
+  return missing+head+values.map(v=>`<option value="${esc(v.value)}" ${chosen===String(v.value)?'selected':''}>${esc(v.label)}</option>`).join('');
+}
+
+/* --- champs décrits par le serveur ------------------------------------- */
+async function renderField(field,values,scope){
+  if(field.depends_on&&!(field.depends_values||[]).includes(String(values[field.depends_on])))return '';
+  const id=`f_${scope}_${field.key}`,value=values[field.key];
+  const hint=field.hint?`<div class="hint">${esc(field.hint)}</div>`:'';
+  if(field.kind==='toggle'){
+    return `<div class="field inline"><input type="checkbox" id="${id}" data-field="${esc(field.key)}" data-scope="${esc(scope)}" ${value?'checked':''}><div><label for="${id}">${esc(field.label)}</label>${hint}</div></div>`;
+  }
+  if(field.kind==='number'){
+    const attrs=['min','max','step'].filter(k=>field[k]!==undefined).map(k=>`${k}="${esc(field[k])}"`).join(' ');
+    return `<div class="field"><label for="${id}">${esc(field.label)}</label><input type="number" id="${id}" data-field="${esc(field.key)}" data-scope="${esc(scope)}" value="${esc(value)}" ${attrs}>${hint}</div>`;
+  }
+  if(field.source){
+    const [provider,role]=field.source.split(':');
+    const result=await catalog(provider,role);
+    const options=(result.models||[]).map(m=>({value:m.id,label:m.label&&m.label!==m.id?`${m.id} — ${m.label}`:m.id}));
+    return `<div class="field"><label for="${id}">${esc(field.label)}</label>`+
+      `<select id="${id}" data-field="${esc(field.key)}" data-scope="${esc(scope)}">${selectOptions(options,value,'Valeur par défaut du service')}</select>`+
+      `<div class="source">${catalogNote(result,provider)} <button class="linkish" data-refresh="${esc(field.source)}">rafraîchir</button></div>${hint}</div>`;
+  }
+  if(field.kind==='text'){
+    return `<div class="field"><label for="${id}">${esc(field.label)}</label><input id="${id}" data-field="${esc(field.key)}" data-scope="${esc(scope)}" value="${esc(value)}">${hint}</div>`;
+  }
+  const options=(field.options||[]).map(o=>({value:o,label:o}));
+  return `<div class="field"><label for="${id}">${esc(field.label)}</label><select id="${id}" data-field="${esc(field.key)}" data-scope="${esc(scope)}">${selectOptions(options,value,'')}</select>${hint}</div>`;
+}
+
+function providerLabel(id){
+  const found=(SET.data.credentials.providers||[]).find(p=>p.id===id);
+  return found?found.label:id;
+}
+
+function keyStateFor(provider){
+  const state=SET.data.credentials||{};
+  const bound=(state.bindings||{})[provider];
+  const item=(state.credentials||[]).find(c=>c.id===bound)||(state.credentials||[]).find(c=>c.provider===provider);
+  if(item)return `<span class="tag ok">clé « ${esc(item.name)} »</span>`;
+  if(((state.environment||{})[provider]||[]).length)return `<span class="tag warn">clé d'environnement</span>`;
+  return `<span class="tag bad">aucune clé</span>`;
+}
+
+/* --- onglet Mode vocal -------------------------------------------------- */
+async function tabVoice(){
+  const draft=SET.draft.voice,stacks=SET.data.voice.stacks;
+  const spec=stacks.find(s=>s.id===draft.stack)||stacks[0];
+  const choices=stacks.map(s=>`
+    <label class="choice ${s.id===draft.stack?'selected':''}">
+      <input type="radio" name="voicestack" value="${esc(s.id)}" ${s.id===draft.stack?'checked':''}>
+      <div><div class="title"><strong>${esc(s.label)}</strong>${keyStateFor(s.credential_provider)}<span class="tag">${s.input_sample_rate/1000} kHz → ${s.output_sample_rate/1000} kHz</span></div>
+      <div class="hint" style="margin-top:5px">${esc(s.description)}</div></div>
+    </label>`).join('');
+  const values=draft.settings[spec.id];
+  const fields=[];
+  for(const field of spec.fields)fields.push(await renderField(field,values,spec.id));
+  const keyWarning=keyStateFor(spec.credential_provider).includes('aucune clé')
+    ? `<div class="notice bad">Aucune clé ${esc(providerLabel(spec.credential_provider))} n'est enregistrée : cette pile ne pourra pas démarrer. Ajoutez-la dans l'onglet API Keys.</div>`:'';
+  return `<section><h3>Pile vocale</h3><div class="choices">${choices}</div>${keyWarning}<h3>Réglages de ${esc(spec.label)}</h3>${fields.join('')}
+    <div class="hint">Les changements prennent effet au prochain redémarrage du runtime Voice.</div></section>`;
+}
+
+/* --- onglet CLI --------------------------------------------------------- */
+async function tabCli(){
+  if(!SET.clis)SET.clis=await api('/api/cli/agents').catch(e=>({ok:false,error:e.message,agents:[]}));
+  const draft=SET.draft.cli,detected=SET.clis.agents||[];
+  const spec=detected.find(a=>a.id===draft.agent)||detected[0];
+  if(!spec)return `<section><div class="notice bad">${esc(SET.clis.error||'Aucun CLI détecté.')}</div></section>`;
+  const choices=detected.map(a=>{
+    const tag=a.available?`<span class="tag ok">${esc(a.version||'installé')}</span>`:`<span class="tag bad">introuvable</span>`;
+    return `<label class="choice ${a.id===draft.agent?'selected':''}">
+      <input type="radio" name="clicagent" value="${esc(a.id)}" ${a.id===draft.agent?'checked':''}>
+      <div><div class="title"><strong>${esc(a.label)}</strong>${tag}${keyStateFor(a.model_provider)}</div>
+      <div class="hint" style="margin-top:5px">${esc(a.description)}</div>
+      <div class="hint" style="margin-top:4px">${a.available?esc(a.path):esc(a.error||'')}</div></div>
+    </label>`}).join('');
+  const values=SET.draft.cli.settings[spec.id];
+  const modelResult=await catalog(spec.model_provider,'text');
+  const modelOptions=(modelResult.models||[]).map(m=>({value:m.id,label:m.label&&m.label!==m.id?`${m.id} — ${m.label}`:m.id}));
+  const permission=`<div class="field"><label for="f_cli_perm">${esc(spec.permission_label)}</label>
+    <select id="f_cli_perm" data-cli-field="permission_mode" data-scope="${esc(spec.id)}">${selectOptions((spec.permission_modes||[]).map(m=>({value:m,label:m})),values.permission_mode,'')}</select>
+    <div class="hint">En vocal, personne ne peut répondre à une demande d'autorisation : hors mode permissif, l'agent refusera d'écrire ou d'exécuter.</div></div>`;
+  const unavailable=spec.available?'':`<div class="notice bad">${esc(spec.error||'CLI introuvable.')} Tant que la commande n'est pas résolue, cet agent ne peut pas démarrer.</div>`;
+  return `<section><h3>Agent piloté par la voix</h3><div class="choices">${choices}</div>${unavailable}
+    <h3>Réglages de ${esc(spec.label)}</h3>
+    <div class="field"><label for="f_cli_cmd">Commande</label>
+      <input id="f_cli_cmd" data-cli-field="command" data-scope="${esc(spec.id)}" value="${esc(values.command)}">
+      <div class="source">${spec.available?`<span class="tag ok">résolu</span> ${esc(spec.path)}`:`<span class="tag bad">non résolu</span>`} <button class="linkish" id="reprobe">re-détecter</button></div>
+      <div class="hint">Nom dans le PATH ou chemin complet. Documentation : <code>${esc(spec.docs)}</code></div></div>
+    <div class="field"><label for="f_cli_model">Modèle</label>
+      <select id="f_cli_model" data-cli-field="model" data-scope="${esc(spec.id)}">${selectOptions(modelOptions,values.model,'Modèle par défaut du CLI')}</select>
+      <div class="source">${catalogNote(modelResult,spec.model_provider)} <button class="linkish" data-refresh="${esc(spec.model_provider)}:text">rafraîchir</button></div>
+      <div class="hint">Liste demandée à l'API ${esc(providerLabel(spec.model_provider))}. Sans clé de ce fournisseur, aucun modèle ne peut être listé : le CLI garde alors son modèle par défaut.</div></div>
+    ${permission}</section>`;
+}
+
+/* --- onglet Config ------------------------------------------------------ */
+function deviceOptions(items,selected,defaultId){
+  const chosen=String(selected??''),def=items.find(x=>String(x.id)===String(defaultId));
+  const missing=chosen!==''&&!items.some(x=>String(x.id)===chosen)?`<option value="${esc(chosen)}" selected>Périphérique indisponible (#${esc(chosen)})</option>`:'';
+  return missing+`<option value="" ${chosen===''?'selected':''}>Système par défaut${def?` (${esc(def.name)})`:''}</option>`+
+    items.map(x=>`<option value="${esc(x.id)}" ${chosen===String(x.id)?'selected':''}>${esc(x.name)}${x.hostapi?' · '+esc(x.hostapi):''}</option>`).join('');
+}
+async function tabConfig(){
+  if(!SET.devices)SET.devices=await api('/api/audio/devices').catch(e=>({ok:false,error:e.message,inputs:[],outputs:[]}));
+  const d=SET.devices,a=SET.draft.audio;
+  const failure=d.ok===false?`<div class="notice bad">${esc(d.error||'Périphériques audio indisponibles.')}</div>`:'';
+  return `<section>${failure}<h3>Audio</h3>
+    <div class="field"><label for="f_in">Entrée microphone</label><select id="f_in" data-audio="input_device">${deviceOptions(d.inputs||[],a.input_device,(d.defaults||{}).input)}</select></div>
+    <div class="field"><label for="f_out">Sortie haut-parleur</label><select id="f_out" data-audio="output_device">${deviceOptions(d.outputs||[],a.output_device,(d.defaults||{}).output)}</select></div>
+    <div class="row" style="margin-bottom:8px"><button class="action" id="testAudio">Tester micro + sortie</button></div>
+    <div class="test-result" id="audioTestResult">Le test enregistre 2 secondes au format de la pile vocale active, puis les rejoue.</div>
+    <h3>Session</h3>
+    <div class="field"><label for="f_timeout">Délai d'inactivité avant mise en veille (secondes)</label>
+      <input type="number" min="5" id="f_timeout" data-audio="active_timeout_s" value="${esc(a.active_timeout_s)}">
+      <div class="hint">Passé ce délai sans échange utile, JARVIS repasse en arrière-plan et rend le micro.</div></div>
+  </section>`;
+}
+
+/* --- onglet API Keys ---------------------------------------------------- */
+function tabKeys(){
+  const state=SET.data.credentials,items=state.credentials||[];
+  const providerOptions=state.providers.map(p=>`<option value="${esc(p.id)}">${esc(p.label)}</option>`).join('');
+  const rows=items.length?items.map(c=>{
+    const provider=state.providers.find(p=>p.id===c.provider)||{label:c.provider};
+    return `<tr>
+      <td><input type="radio" name="bind_${esc(c.provider)}" data-bind-provider="${esc(c.provider)}" data-bind-id="${esc(c.id)}" ${c.bound?'checked':''} title="Utiliser cette clé pour ${esc(provider.label)}"></td>
+      <td>${esc(provider.label)}</td><td>${esc(c.name)}</td><td class="hint">${esc(c.hint)}</td>
+      <td><button class="linkish" data-delete-key="${esc(c.id)}">supprimer</button></td></tr>`}).join('')
+    :'<tr><td colspan="5" class="hint" style="padding:18px 0">Aucune clé enregistrée. Les clés du fichier .env restent utilisées en secours.</td></tr>';
+  const envRows=Object.entries(state.environment||{}).filter(([,names])=>names.length)
+    .map(([provider,names])=>`<li>${esc(provider)} — ${names.map(esc).join(', ')}</li>`).join('');
+  return `<section><h3>Clés enregistrées</h3>
+    <table class="keys"><thead><tr><th style="width:34px">Active</th><th>Fournisseur</th><th>Nom</th><th>Valeur</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+    <div class="hint" style="margin-top:10px">Le bouton de la colonne « Active » désigne la clé qu'utilisent les services de ce fournisseur. Les valeurs ne sont jamais renvoyées à cette page : seuls les quatre derniers caractères sont affichés.</div>
+    <h3>Ajouter une clé</h3>
+    <form class="keyform" id="keyForm">
+      <div class="field"><label for="k_provider">Type</label><select id="k_provider" name="provider">${providerOptions}</select></div>
+      <div class="field"><label for="k_name">Nom</label><input id="k_name" name="name" placeholder="Perso, Travail…" autocomplete="off"></div>
+      <div class="field"><label for="k_value">Valeur</label><input id="k_value" name="value" type="password" placeholder="collez la clé" autocomplete="off"></div>
+      <button class="action primary" type="submit">Ajouter</button>
+    </form>
+    <div class="hint" id="keyHint" style="margin-top:10px"></div>
+    ${envRows?`<h3>Détectées dans l'environnement</h3><ul class="hint" style="padding-left:18px">${envRows}</ul>
+    <div class="hint">Utilisées uniquement si aucune clé enregistrée ne couvre le fournisseur.</div>`:''}
+  </section>`;
+}
+
+/* --- onglet Raccourcis --------------------------------------------------- */
+const GLOBAL_KEY_NAMES={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',PageUp:'page_up',PageDown:'page_down',Home:'home',End:'end',Insert:'insert',Delete:'delete',Pause:'pause',ScrollLock:'scroll_lock',ContextMenu:'menu',PrintScreen:'print_screen'};
+function tabShortcuts(){
+  const list=SET.shortcuts.shortcuts||[];
+  const rows=list.map(s=>`<div class="shortcut">
+      <div><div>${esc(s.label)} <span class="tag">${s.scope==='global'?'système':'interface'}</span></div><div class="desc">${esc(s.description)}</div></div>
+      <button class="keycap" data-shortcut="${esc(s.id)}" data-scope="${esc(s.scope)}">${esc(s.value)}</button>
+    </div>`).join('');
+  return `<section><h3>Raccourcis</h3>
+    <div class="hint" style="margin-bottom:14px">Cliquez sur une touche puis appuyez sur la combinaison voulue. Les raccourcis <em>système</em> sont captés même quand JARVIS n'a pas le focus, et n'acceptent qu'une touche seule. Les raccourcis <em>interface</em> ne s'appliquent que sur cette page et ignorent la saisie dans un champ.</div>
+    ${rows}<div class="hint" id="shortcutHint" style="margin-top:14px">Enregistrement immédiat. Le raccourci système prend effet au prochain redémarrage du runtime Voice.</div></section>`;
+}
+
+/* --- rendu et liaisons --------------------------------------------------- */
+function renderTabs(){
+  $('#modalTabs').innerHTML=TABS.map(t=>`<button data-tab="${t.id}" class="${t.id===SET.tab?'active':''}">${esc(t.label)}</button>`).join('');
+  document.querySelectorAll('#modalTabs button').forEach(b=>b.addEventListener('click',()=>selectTab(b.dataset.tab)));
+}
+
+async function renderTab(){
+  modalContent.innerHTML='<div class="empty">Chargement…</div>';
+  const tab=TABS.find(t=>t.id===SET.tab);
+  modalSave.style.display=tab.save?'':'none';
+  modalSub.textContent=tab.save?'Les modifications sont appliquées quand vous enregistrez.':'Les modifications de cet onglet sont enregistrées immédiatement.';
+  try{
+    if(SET.tab==='voice')modalContent.innerHTML=await tabVoice();
+    else if(SET.tab==='cli')modalContent.innerHTML=await tabCli();
+    else if(SET.tab==='config')modalContent.innerHTML=await tabConfig();
+    else if(SET.tab==='keys')modalContent.innerHTML=tabKeys();
+    else modalContent.innerHTML=tabShortcuts();
+  }catch(e){modalContent.innerHTML=`<div class="notice bad">${esc(e.message)}</div>`;return}
+  bindTab();
+  if(SET.dirty&&tab.save)say('Modifications non enregistrées.','');
+}
+
+function bindTab(){
+  modalContent.querySelectorAll('input[name=voicestack]').forEach(el=>el.addEventListener('change',()=>{
+    SET.draft.voice.stack=el.value;SET.dirty=true;renderTab()}));
+  modalContent.querySelectorAll('input[name=clicagent]').forEach(el=>el.addEventListener('change',()=>{
+    SET.draft.cli.agent=el.value;SET.dirty=true;renderTab()}));
+  modalContent.querySelectorAll('[data-field]').forEach(el=>el.addEventListener('change',()=>{
+    const values=SET.draft.voice.settings[el.dataset.scope];
+    values[el.dataset.field]=el.type==='checkbox'?el.checked:(el.type==='number'?Number(el.value):el.value);
+    SET.dirty=true;
+    // Un champ dont d'autres dépendent (le mode de tour) fait apparaître ou
+    // disparaître les réglages de détection de silence : il faut redessiner.
+    const spec=SET.data.voice.stacks.find(s=>s.id===el.dataset.scope);
+    if(spec&&spec.fields.some(f=>f.depends_on===el.dataset.field))renderTab();else say('Modifications non enregistrées.','');
+  }));
+  modalContent.querySelectorAll('[data-cli-field]').forEach(el=>el.addEventListener('change',()=>{
+    SET.draft.cli.settings[el.dataset.scope][el.dataset.cliField]=el.value;SET.dirty=true;say('Modifications non enregistrées.','')}));
+  modalContent.querySelectorAll('[data-audio]').forEach(el=>el.addEventListener('change',()=>{
+    SET.draft.audio[el.dataset.audio]=el.value;SET.dirty=true;say('Modifications non enregistrées.','')}));
+  modalContent.querySelectorAll('[data-refresh]').forEach(el=>el.addEventListener('click',async()=>{
+    const [provider,role]=el.dataset.refresh.split(':');el.textContent='…';
+    await catalog(provider,role,true);renderTab()}));
+
+  const reprobe=$('#reprobe');
+  if(reprobe)reprobe.addEventListener('click',async()=>{
+    reprobe.textContent='…';
+    try{await saveDraft({silent:true})}catch(e){say(e.message,'error');return}
+    SET.clis=null;renderTab()});
+
+  const test=$('#testAudio');
+  if(test)test.addEventListener('click',runAudioTest);
+
+  const form=$('#keyForm');
+  if(form)form.addEventListener('submit',addCredential);
+  modalContent.querySelectorAll('[data-delete-key]').forEach(el=>el.addEventListener('click',()=>deleteCredential(el.dataset.deleteKey)));
+  modalContent.querySelectorAll('[data-bind-provider]').forEach(el=>el.addEventListener('change',()=>bindCredential(el.dataset.bindProvider,el.dataset.bindId)));
+  modalContent.querySelectorAll('[data-shortcut]').forEach(el=>el.addEventListener('click',()=>startCapture(el)));
+}
+
+function selectTab(id){SET.tab=id;renderTabs();renderTab()}
+
+async function runAudioTest(){
+  const test=$('#testAudio'),result=$('#audioTestResult'),a=SET.draft.audio;
+  test.disabled=true;result.className='test-result';result.textContent='Parlez maintenant pendant 2 secondes…';
+  try{
+    const r=await api('/api/audio/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({input_device:a.input_device,output_device:a.output_device})});
+    await saveDraft({silent:true});
+    result.className='test-result ok';
+    result.textContent=`Test réussi · pic ${r.peak_dbfs} dBFS · enregistrement rejoué et sélection enregistrée.`;
+  }catch(e){result.className='test-result error';result.textContent=e.message}
+  finally{test.disabled=false}
+}
+
+async function addCredential(event){
+  event.preventDefault();
+  const form=event.target,hint=$('#keyHint');
+  const payload={provider:form.provider.value,name:form.name.value,value:form.value.value};
+  hint.textContent='Enregistrement…';
+  try{
+    const r=await api('/api/credentials',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    SET.data.credentials={providers:r.providers,credentials:r.credentials,bindings:r.bindings,environment:r.environment};
+    SET.catalog={};  // Une nouvelle clé peut ouvrir un catalogue jusque-là vide.
+    renderTab();
+  }catch(e){hint.textContent=e.message}
+}
+
+async function deleteCredential(id){
+  try{
+    const r=await api('/api/credentials/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
+    SET.data.credentials={providers:r.providers,credentials:r.credentials,bindings:r.bindings,environment:r.environment};
+    SET.catalog={};renderTab();
+  }catch(e){$('#keyHint').textContent=e.message}
+}
+
+async function bindCredential(provider,id){
+  try{
+    const r=await api('/api/credentials/bind',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider,id})});
+    SET.data.credentials={providers:r.providers,credentials:r.credentials,bindings:r.bindings,environment:r.environment};
+    SET.catalog={};renderTab();
+  }catch(e){$('#keyHint').textContent=e.message}
+}
+
+/* Capture d'un raccourci : on lit la prochaine frappe au lieu de demander à
+   l'utilisateur d'écrire « ctrl+ArrowRight » à la main. */
+function startCapture(button){
+  if(SET.capture)SET.capture.cancel();
+  const previous=button.textContent;
+  button.classList.add('capturing');button.textContent='appuyez…';
+  const hint=$('#shortcutHint');hint.textContent='Échap pour annuler.';
+  const onKey=async event=>{
+    event.preventDefault();event.stopPropagation();
+    if(['Control','Alt','Shift','Meta'].includes(event.key))return;
+    cleanup();
+    if(event.key==='Escape'){button.textContent=previous;hint.textContent='Capture annulée.';return}
+    const value=button.dataset.scope==='global'?globalKey(event):uiKey(event);
+    if(!value){button.textContent=previous;hint.textContent='Un raccourci système JARVIS doit être une touche seule (F1…F20, Début, Suppr…), sans modificateur.';return}
+    hint.textContent='Enregistrement…';
+    try{
+      const r=await api('/api/shortcuts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({shortcuts:{[button.dataset.shortcut]:value}})});
+      SET.shortcuts=r;renderTab();$('#shortcutHint').textContent='Raccourci enregistré.';
+    }catch(e){button.textContent=previous;hint.textContent=e.message}
+  };
+  const cleanup=()=>{window.removeEventListener('keydown',onKey,true);button.classList.remove('capturing');SET.capture=null};
+  SET.capture={cancel:()=>{cleanup();button.textContent=previous}};
+  window.addEventListener('keydown',onKey,true);
+}
+function globalKey(event){
+  if(event.ctrlKey||event.altKey||event.metaKey)return '';
+  if(GLOBAL_KEY_NAMES[event.key])return GLOBAL_KEY_NAMES[event.key];
+  if(/^F\d{1,2}$/.test(event.key))return event.key.toLowerCase();
+  if(event.key.length===1)return event.key.toLowerCase();
+  return '';
+}
+function uiKey(event){
+  const parts=[];
+  if(event.ctrlKey)parts.push('ctrl');
+  if(event.altKey)parts.push('alt');
+  if(event.shiftKey)parts.push('shift');
+  if(event.metaKey)parts.push('meta');
+  const key=event.key===' '?'Space':(event.key.length===1?event.key.toLowerCase():event.key);
+  return [...parts,key].join('+');
+}
+
+/* --- ouverture, enregistrement, fermeture -------------------------------- */
+function draftFrom(data){
+  return {
+    voice:{stack:data.voice.stack,settings:JSON.parse(JSON.stringify(data.voice.settings))},
+    cli:{agent:data.cli.agent,settings:JSON.parse(JSON.stringify(data.cli.settings))},
+    audio:{...data.audio},
+  };
+}
+
+async function openSettings(){
+  overlay.classList.add('open');SET.open=true;
+  if(!SET.data){
+    modalContent.innerHTML='<div class="empty">Chargement…</div>';renderTabs();
+    try{
+      SET.data=await api('/api/settings');
+      SET.shortcuts=SET.data.shortcuts;
+      SET.draft=draftFrom(SET.data);
+    }catch(e){modalContent.innerHTML=`<div class="notice bad">${esc(e.message)}</div>`;return}
+  }
+  renderTabs();await renderTab();
+}
+
+function closeSettings(){overlay.classList.remove('open');SET.open=false;if(SET.capture)SET.capture.cancel()}
+
+async function saveDraft(options){
+  const silent=options&&options.silent;
+  if(!silent){modalSave.disabled=true;say('Enregistrement…','')}
+  try{
+    const data=await api('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(SET.draft)});
+    SET.data=data;SET.shortcuts=data.shortcuts;SET.draft=draftFrom(data);SET.dirty=false;
+    // Le CLI actif a pu changer : sa détection est refaite à l'ouverture de l'onglet.
+    SET.clis=null;
+    if(!silent){say('Enregistré.','ok');await renderTab()}
+    return data;
+  }catch(e){
+    if(!silent)say(e.message,'error');
+    throw e;
+  }finally{modalSave.disabled=false}
+}
+
+modalSave.addEventListener('click',()=>saveDraft().catch(()=>{}));
+$('#closeModal').addEventListener('click',closeSettings);
+$('#openSettings').addEventListener('click',openSettings);
+overlay.addEventListener('mousedown',event=>{if(event.target===overlay)closeSettings()});
+
+/* --- raccourcis d'interface ---------------------------------------------- */
+function currentSignature(event){
+  const parts=[];
+  if(event.ctrlKey)parts.push('ctrl');
+  if(event.altKey)parts.push('alt');
+  if(event.shiftKey)parts.push('shift');
+  if(event.metaKey)parts.push('meta');
+  const key=event.key===' '?'Space':(event.key.length===1?event.key.toLowerCase():event.key);
+  return [...parts,key].join('+');
+}
+function typingInField(target){
+  if(!target)return false;
+  return target.isContentEditable||['INPUT','TEXTAREA','SELECT'].includes(target.tagName);
+}
+window.addEventListener('keydown',event=>{
+  if(SET.capture||typingInField(event.target))return;
+  const values=(SET.shortcuts&&SET.shortcuts.values)||{};
+  const signature=currentSignature(event);
+  const match=Object.entries(values).find(([id,value])=>id.startsWith('ui_')&&value===signature);
+  if(!match)return;
+  const [id]=match;
+  if(id==='ui_settings'){event.preventDefault();if(!SET.open)openSettings();return}
+  if(id==='ui_close'){event.preventDefault();if(SET.open)closeSettings();else closePanel();return}
+  if(id==='ui_tab_next'||id==='ui_tab_prev'){
+    if(!SET.open)return;
+    event.preventDefault();
+    const index=TABS.findIndex(t=>t.id===SET.tab),step=id==='ui_tab_next'?1:-1;
+    selectTab(TABS[(index+step+TABS.length)%TABS.length].id);return;
+  }
+  const panelName={ui_panel_errors:'errors',ui_panel_trace:'trace',ui_panel_agents:'agents'}[id];
+  if(panelName){event.preventDefault();if(current===panelName)closePanel();else{if(panelName==='errors')errorsView='active';openPanel(panelName)}}
+});
+
+document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.addEventListener('click',()=>{if(b.dataset.panel==='errors')errorsView='active';openPanel(b.dataset.panel)}));
+$('#closePanel').addEventListener('click',closePanel);
+// Les raccourcis d'interface doivent répondre avant même la première ouverture
+// des réglages : leurs valeurs sont donc chargées au démarrage.
+api('/api/shortcuts').then(value=>{SET.shortcuts=value}).catch(()=>{});
+setInterval(refreshStatus,1000);refreshStatus();
 </script>
 </body>
 </html>

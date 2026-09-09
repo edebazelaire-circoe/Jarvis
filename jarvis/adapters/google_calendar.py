@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime
-import os
 from pathlib import Path
 from typing import Any
 
+from jarvis.adapters.google_oauth import build_service, load_credentials
 from jarvis.domain.calendar import CalendarAttendee, CalendarEvent, CalendarQuery
 
 
@@ -22,29 +22,8 @@ class GoogleCalendarBackend:
 
     @classmethod
     def from_oauth_files(cls, client_secret_file: Path, token_file: Path, *, calendar_id: str = "primary") -> "GoogleCalendarBackend":
-        try:
-            from google.auth.transport.requests import Request  # type: ignore
-            from google.oauth2.credentials import Credentials  # type: ignore
-            from google_auth_oauthlib.flow import InstalledAppFlow  # type: ignore
-            from googleapiclient.discovery import build  # type: ignore
-        except ImportError as exc:
-            raise RuntimeError("Google Calendar support requires the calendar-google optional dependencies") from exc
-        creds = Credentials.from_authorized_user_file(str(token_file), cls.SCOPES) if token_file.exists() else None
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
-                flow = InstalledAppFlow.from_client_secrets_file(str(client_secret_file), cls.SCOPES)
-                creds = flow.run_local_server(port=0)
-            token_file.parent.mkdir(parents=True, exist_ok=True)
-            tmp = token_file.with_suffix(token_file.suffix + ".tmp")
-            tmp.write_text(creds.to_json(), encoding="utf-8")
-            try:
-                os.chmod(tmp, 0o600)
-            except OSError:
-                pass
-            os.replace(tmp, token_file)
-        return cls(build("calendar", "v3", credentials=creds, cache_discovery=False), calendar_id=calendar_id)
+        creds = load_credentials(client_secret_file, token_file, cls.SCOPES)
+        return cls(build_service("calendar", "v3", creds), calendar_id=calendar_id)
 
     async def list_events(self, query: CalendarQuery):
         import asyncio

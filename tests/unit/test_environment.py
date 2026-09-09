@@ -120,7 +120,7 @@ async def test_voice_missing_key_explains_how_to_configure_it(tmp_path):
     (runtime_root / "core.token").write_text("local-token", encoding="utf-8")
     os.environ["JARVIS_RUNTIME_DIR"] = str(runtime_root)
 
-    with pytest.raises(RuntimeError, match=r"OPENAI_API_KEY.*\.env.*Settings"):
+    with pytest.raises(RuntimeError, match=r"API Keys.*OPENAI_API_KEY.*\.env"):
         await app._amain(["voice"])
 
 

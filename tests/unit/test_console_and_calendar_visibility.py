@@ -189,7 +189,7 @@ def test_trace_entries_are_expandable_with_icon_and_status():
     assert "function iconFor(kind)" in html
     assert "function statusFor(x)" in html
     assert "class=\"dot ${statusFor(x)}\"" in html
-    assert ".dot.warn{background:#ffb85c}" in html
+    assert "--warn:#ffb85c" in html and ".dot.warn{background:var(--warn)}" in html
 
 
 def test_agents_panel_exposes_the_real_console_and_the_transcript():

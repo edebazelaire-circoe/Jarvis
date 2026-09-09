@@ -8,8 +8,10 @@ import unicodedata
 from zoneinfo import ZoneInfo
 
 from jarvis.core.calendar_service import CalendarService
+from jarvis.core.drive_service import DriveService
 from jarvis.core.v2_services import SchedulerService
 from jarvis.domain.calendar import CalendarAttendee, CalendarEvent, CalendarQuery
+from jarvis.domain.drive import DriveFile, DriveQuery
 from jarvis.domain.v2 import MissedRunPolicy, ScheduledItem, new_id
 from jarvis.security.v2_policy import ActionDisposition, V2ActionBroker
 
@@ -17,11 +19,12 @@ from jarvis.security.v2_policy import ActionDisposition, V2ActionBroker
 class CoreToolRouter:
     """Authoritative tool boundary for Voice/Realtime clients."""
 
-    def __init__(self, *, scheduler: SchedulerService, calendar: CalendarService, timezone: str = "Europe/Paris", confirmation_timeout_s: float = 45.0, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(self, *, scheduler: SchedulerService, calendar: CalendarService, drive: DriveService | None = None, timezone: str = "Europe/Paris", confirmation_timeout_s: float = 45.0, clock: Callable[[], float] = time.monotonic) -> None:
         if confirmation_timeout_s <= 0:
             raise ValueError("confirmation_timeout_s must be positive")
         self.scheduler = scheduler
         self.calendar = calendar
+        self.drive = drive or DriveService()
         self.timezone = ZoneInfo(timezone)
         self.policy = V2ActionBroker()
         self.confirmation_timeout_s = confirmation_timeout_s
@@ -67,6 +70,8 @@ class CoreToolRouter:
             # ni le modèle ne peuvent dire à l'utilisateur où l'événement a
             # atterri.
             result = {**result, "calendar": self.calendar.storage}
+        if name.startswith("drive_") and result.get("executed"):
+            result = {**result, "drive": self.drive.storage}
         return result
 
     async def _dispatch(self, name: str, arguments: dict[str, object], *, conversation_id: str | None) -> dict[str, object]:
@@ -114,6 +119,45 @@ class CoreToolRouter:
             updated = replace(current, attendees=current.attendees + (CalendarAttendee(email=email),))
             result = await self.calendar.update(updated, idempotency_key=str(arguments.get("idempotency_key") or new_id()))
             return {"disposition": "execute", "executed": True, "event": self._event_payload(result)}
+        if name.startswith("drive_"):
+            return await self._dispatch_drive(name, arguments)
+        return {"disposition": ActionDisposition.DENY.value, "executed": False, "action": name}
+
+    async def _dispatch_drive(self, name: str, arguments: dict[str, object]) -> dict[str, object]:
+        if not self.drive.available:
+            return {"disposition": "deny", "executed": False, "action": name, "message": "Aucun Google Drive n'est configuré."}
+        key = str(arguments.get("idempotency_key") or new_id())
+        if name == "drive_search":
+            query = DriveQuery(text=str(arguments["text"]).strip() if arguments.get("text") else None, parent_id=str(arguments["parent_id"]) if arguments.get("parent_id") else None, mime_type=str(arguments["mime_type"]) if arguments.get("mime_type") else None, limit=int(arguments.get("limit") or 25))
+            files = await self.drive.find(query)
+            return {"disposition": "execute", "executed": True, "files": [self._file_payload(f) for f in files]}
+        if name == "drive_get":
+            file_id = str(arguments["file_id"])
+            found = await self.drive.get(file_id)
+            if found is None:
+                raise KeyError(file_id)
+            return {"disposition": "execute", "executed": True, "file": self._file_payload(found)}
+        if name == "drive_read":
+            content = await self.drive.read(str(arguments["file_id"]), max_chars=int(arguments.get("max_chars") or 20000))
+            return {"disposition": "execute", "executed": True, "file": self._file_payload(content.file), "text": content.text, "truncated": content.truncated, "exported_as": content.exported_as}
+        if name == "drive_create":
+            created = await self.drive.create(str(arguments["name"]), content=str(arguments.get("content") or ""), mime_type=str(arguments.get("mime_type") or "text/plain"), parent_id=str(arguments["parent_id"]) if arguments.get("parent_id") else None, idempotency_key=key)
+            return {"disposition": "execute", "executed": True, "file": self._file_payload(created)}
+        if name == "drive_update":
+            updated = await self.drive.update(str(arguments["file_id"]), content=str(arguments["content"]), idempotency_key=key)
+            return {"disposition": "execute", "executed": True, "file": self._file_payload(updated)}
+        if name == "drive_delete":
+            file_id = str(arguments["file_id"])
+            await self.drive.delete(file_id, idempotency_key=key)
+            # « trashed » et non « deleted » : le fichier reste récupérable, et
+            # l'utilisateur doit s'entendre dire exactement cela.
+            return {"disposition": "execute", "executed": True, "trashed_file_id": file_id}
+        if name == "drive_share":
+            email = str(arguments["email"]).strip()
+            if "@" not in email:
+                raise ValueError("email address required")
+            shared = await self.drive.share(str(arguments["file_id"]), email=email, role=str(arguments.get("role") or "reader"), idempotency_key=key)
+            return {"disposition": "execute", "executed": True, "file": self._file_payload(shared), "shared_with": email}
         return {"disposition": ActionDisposition.DENY.value, "executed": False, "action": name}
 
     def _datetime(self, value: object) -> datetime:
@@ -123,6 +167,10 @@ class CoreToolRouter:
         if result.tzinfo is None:
             result = result.replace(tzinfo=self.timezone)
         return result
+
+    @staticmethod
+    def _file_payload(file: DriveFile) -> dict[str, object]:
+        return {"id": file.id, "name": file.name, "mime_type": file.mime_type, "size": file.size, "modified_at": file.modified_at.isoformat() if file.modified_at else None, "web_link": file.web_link, "is_folder": file.is_folder, "parents": list(file.parents)}
 
     @staticmethod
     def _event_payload(event: CalendarEvent) -> dict[str, object]:
@@ -136,5 +184,5 @@ class CoreToolRouter:
 
     @staticmethod
     def _is_ambiguous(name: str, args: dict[str, object]) -> bool:
-        required = {"reminder_create": {"message", "due_at"}, "calendar_list": {"start_at", "end_at"}, "calendar_get": {"event_id"}, "calendar_create": {"title", "start_at", "end_at"}, "calendar_update": {"event_id"}, "calendar_delete": {"event_id"}, "calendar_invite": {"event_id", "attendee"}}.get(name, set())
+        required = {"reminder_create": {"message", "due_at"}, "calendar_list": {"start_at", "end_at"}, "calendar_get": {"event_id"}, "calendar_create": {"title", "start_at", "end_at"}, "calendar_update": {"event_id"}, "calendar_delete": {"event_id"}, "calendar_invite": {"event_id", "attendee"}, "drive_get": {"file_id"}, "drive_read": {"file_id"}, "drive_create": {"name"}, "drive_update": {"file_id", "content"}, "drive_delete": {"file_id"}, "drive_share": {"file_id", "email"}}.get(name, set())
         return any(not args.get(key) for key in required)

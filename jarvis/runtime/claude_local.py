@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 from typing import Any
 
+from jarvis.runtime.cli_catalog import resolve_command
 from jarvis.runtime.journal import RuntimeJournal
 
 
@@ -70,11 +71,15 @@ class ClaudeLocalAgent:
         cwd: Path,
         command: str = "claude",
         permission_mode: str = DEFAULT_PERMISSION_MODE,
+        model: str = "",
     ) -> None:
         self.runtime_root = runtime_root
         self.cwd = cwd
         self.command = command
         self.permission_mode = normalize_permission_mode(permission_mode)
+        # Vide = on laisse le CLI choisir son modèle par défaut. Une chaîne
+        # vide passée à `--model` serait refusée par le CLI, d'où le filtrage.
+        self.model = str(model or "").strip()
         self.journal = RuntimeJournal(runtime_root)
         self.process: asyncio.subprocess.Process | None = None
         self._reader_task: asyncio.Task[None] | None = None
@@ -111,6 +116,7 @@ class ClaudeLocalAgent:
             "events": self._events[-80:],
             "session_id": self.session_id,
             "permission_mode": self.permission_mode,
+            "model": self.model,
             "console": self.console_snapshot(),
         }
 
@@ -167,7 +173,13 @@ class ClaudeLocalAgent:
                     "claude_handover",
                 )
             await self.stop()
-        command = [self.command, "--permission-mode", self.permission_mode, *(["--resume", session_id] if session_id else [])]
+        command = [
+            resolve_command(self.command),
+            "--permission-mode",
+            self.permission_mode,
+            *(["--model", self.model] if self.model else []),
+            *(["--resume", session_id] if session_id else []),
+        ]
         try:
             self._console = subprocess.Popen(
                 command,
@@ -283,23 +295,30 @@ class ClaudeLocalAgent:
         async with self._lock:
             if self.process is not None and self.process.returncode is None:
                 return self.snapshot()
+            # Deux processus ne peuvent pas écrire la même session Claude. Mais
+            # la voix est la fonction fondamentale de JARVIS : elle ne doit
+            # jamais être otage d'un outil de debug. Si la console occupe la
+            # conversation, l'agent vocal en ouvre simplement une nouvelle.
             console = self._console
-            if console is not None and console.poll() is None:
-                # Deux processus qui écrivent la même session Claude se marchent
-                # dessus : la console de debug garde la main jusqu'à sa fermeture.
-                raise RuntimeError(
-                    "La console de debug est ouverte sur cette conversation. "
-                    "Fermez-la avant de relancer l'agent."
-                )
+            console_holds_session = console is not None and console.poll() is None
             env = os.environ.copy()
             env.setdefault("PYTHONUNBUFFERED", "1")
             # Reprendre la conversation permet de retrouver le fil après un
             # passage par la console de debug.
+            if console_holds_session and self.session_id:
+                self.journal.emit(
+                    "agent.session_forked",
+                    "La console de debug occupe la conversation : l'agent démarre une nouvelle session.",
+                    level="warning",
+                    data={"code": "claude_console_holds_session", "held_session_id": self.session_id},
+                )
+                self.session_id = None
             resume_args = ["--resume", self.session_id] if resume and self.session_id else []
             permission_args = ["--permission-mode", self.permission_mode]
+            model_args = ["--model", self.model] if self.model else []
             try:
                 self.process = await asyncio.create_subprocess_exec(
-                    self.command,
+                    resolve_command(self.command),
                     "-p",
                     "--input-format",
                     "stream-json",
@@ -307,6 +326,7 @@ class ClaudeLocalAgent:
                     "stream-json",
                     "--verbose",
                     *permission_args,
+                    *model_args,
                     *resume_args,
                     cwd=str(self.cwd),
                     env=env,
@@ -317,7 +337,7 @@ class ClaudeLocalAgent:
             except FileNotFoundError as exc:
                 self.journal.emit("agent.start", "Claude CLI not found", level="error", data={"command": self.command})
                 raise RuntimeError("Claude CLI not found; install Claude Code and ensure `claude` is in PATH") from exc
-            self.journal.emit("agent.start", "Claude local agent started", data={"pid": self.process.pid, "resumed": bool(resume_args), "permission_mode": self.permission_mode})
+            self.journal.emit("agent.start", "Claude local agent started", data={"pid": self.process.pid, "resumed": bool(resume_args), "permission_mode": self.permission_mode, "model": self.model or "(défaut du CLI)"})
             self._reader_task = asyncio.create_task(self._read_stdout(), name="jarvis-claude-stdout")
             self._stderr_task = asyncio.create_task(self._read_stderr(), name="jarvis-claude-stderr")
             return self.snapshot()
