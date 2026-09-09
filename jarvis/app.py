@@ -38,7 +38,34 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("core", help="Run persistent v0.2 Core daemon")
     sub.add_parser("voice", help="Run v0.2 wake-word + Realtime Voice client")
     sub.add_parser("control-center", help="Run Jarvis visualizer + Control Center + local Claude agent")
+    sub.add_parser("drive-auth", help="Authorize Google Drive access once and store the token")
+    sub.add_parser("drive-mcp", help="Serve the Google Drive MCP tools over stdio")
     return parser
+
+
+async def _drive_auth() -> int:
+    from jarvis.adapters.google_drive import GoogleDriveBackend
+    from jarvis.domain.drive import DriveQuery
+    from jarvis.runtime.drive_mcp import credential_paths
+
+    secret, token = credential_paths()
+    print(f"Autorisation Google Drive : un navigateur va s'ouvrir.\nSecret client : {secret}\nJeton : {token}")
+    # `run_local_server` bloque jusqu'au consentement : hors du fil principal,
+    # la boucle asyncio reste libre d'être interrompue au clavier.
+    backend = await asyncio.to_thread(GoogleDriveBackend.from_oauth_files, secret, token)
+    files = await backend.list_files(DriveQuery(limit=1))
+    print(f"Drive autorisé. Jeton écrit dans {token}.")
+    print(f"Vérification : {len(files)} fichier(s) visible(s) dans le Drive.")
+    return 0
+
+
+async def _drive_mcp() -> int:
+    from jarvis.runtime.drive_mcp import build_server
+
+    # `run_stdio_async` plutôt que `run` : ce dernier ouvre sa propre boucle,
+    # que la boucle du CLI rendrait invalide.
+    await build_server().run_stdio_async()
+    return 0
 
 
 async def _run_voice(config: AppConfig, *, no_preflight: bool) -> int:
@@ -113,6 +140,44 @@ def _calendar_backend_from_env():
     return GoogleCalendarBackend.from_oauth_files(Path(secret), Path(token), calendar_id=os.getenv("GOOGLE_CALENDAR_ID", "primary"))
 
 
+def _drive_backend_from_env():
+    provider = os.getenv("JARVIS_DRIVE_PROVIDER", "none").strip().lower()
+    if provider in {"", "none", "fake"}:
+        return None
+    if provider != "google":
+        raise RuntimeError(f"Unsupported drive provider: {provider}")
+    from jarvis.adapters.google_drive import GoogleDriveBackend
+    # Le même client OAuth sert l'agenda et Drive; seuls les jetons diffèrent,
+    # parce qu'un jeton porte les portées accordées.
+    secret = os.getenv("GOOGLE_DRIVE_CLIENT_SECRET") or os.getenv("GOOGLE_CALENDAR_CLIENT_SECRET")
+    token = os.getenv("GOOGLE_DRIVE_TOKEN")
+    if not secret or not token:
+        raise RuntimeError("Google Drive requires GOOGLE_DRIVE_CLIENT_SECRET and GOOGLE_DRIVE_TOKEN paths")
+    return GoogleDriveBackend.from_oauth_files(Path(secret), Path(token))
+
+
+def _control_center_url() -> str:
+    """Boucle locale du Control Center, hôte de l'agent et de son endpoint."""
+    return f"http://127.0.0.1:{int(os.getenv('JARVIS_UI_PORT', '17654'))}"
+
+
+def _brain_backend_from_env():
+    """Construire le `BrainBackend` injecté dans Core (Décisions 23 et 28).
+
+    L'adaptateur vit dans `jarvis/adapters` et n'est jamais importé par
+    `jarvis/core` : c'est ici, au composition root, qu'il est assemblé puis
+    passé en paramètre, exactement comme l'agenda et Drive.
+
+    Il vise la route agent-agnostique `POST /api/agent/ask` : le choix
+    Claude/Codex reste une affaire du Control Center. Si celui-ci n'est pas
+    lancé, le backend rend un échec prononçable plutôt qu'une exception.
+    """
+    from jarvis.adapters.control_center_brain import ControlCenterBrainBackend
+
+    timeout = os.getenv("JARVIS_BRAIN_TIMEOUT_S") or os.getenv("JARVIS_CLAUDE_TIMEOUT_S") or "600"
+    return ControlCenterBrainBackend(base_url=_control_center_url(), timeout_s=float(timeout))
+
+
 def _control_settings(runtime_root: Path) -> dict[str, object]:
     path = runtime_root / "control-center-settings.json"
     if not path.is_file():
@@ -153,38 +218,46 @@ async def _run_core_v2() -> int:
     from jarvis.core.memory_maintenance import MemoryMaintenanceWorker
     from jarvis.core.v2_app import JarvisCoreApplication
     from jarvis.protocol.server import LocalProtocolServer
+    from jarvis.runtime.journal import RuntimeJournal
     from jarvis.v2_config import V2Settings
     settings = V2Settings.load()
     token = generate_session_token()
     _write_session_token(settings.token_file, token)
     delivery = WindowsNotificationDelivery() if os.name == "nt" and os.getenv("JARVIS_WINDOWS_NOTIFICATIONS", "0") in {"1", "true", "yes"} else NullNotificationDelivery()
     workers = {"memory_maintenance": MemoryMaintenanceWorker(settings.data_root / "memory")}
-    core = JarvisCoreApplication(data_root=settings.data_root, timezone=settings.timezone, calendar_backend=_calendar_backend_from_env(), notification_delivery=delivery, workers=workers)
+    # Le journal runtime sert de puits de diagnostic à Core : sans lui, l'éviction
+    # d'un abonné saturé du bus resterait invisible en production (Décision 25).
+    brain_backend = _brain_backend_from_env()
+    core = JarvisCoreApplication(data_root=settings.data_root, timezone=settings.timezone, calendar_backend=_calendar_backend_from_env(), drive_backend=_drive_backend_from_env(), brain_backend=brain_backend, notification_delivery=delivery, workers=workers, diagnostics=RuntimeJournal(settings.runtime_root))
     server = LocalProtocolServer(core, host=settings.core_host, port=settings.core_port, token=token)
     _announce_calendar_backend(core, settings.runtime_root)
+    RuntimeJournal(settings.runtime_root).emit("brain.backend", "Cerveau relié à l'agent du Control Center", data={"url": brain_backend.base_url})
     try:
         await core.start(); await server.start()
         print(f"Jarvis Core v0.2 ready on http://{settings.core_host}:{settings.core_port}")
         await core.wait()
     finally:
-        await server.stop(); await core.stop(); settings.token_file.unlink(missing_ok=True)
+        # Le backend est fermé après Core : `core.stop()` annule d'abord les
+        # tâches cerveau, qui tiennent encore la session HTTP à cet instant.
+        await server.stop(); await core.stop(); await brain_backend.close(); settings.token_file.unlink(missing_ok=True)
     return 0
 
 
 async def _run_voice_v2() -> int:
+    from jarvis.adapters.gemini_live import GeminiLiveSession
     from jarvis.adapters.openai_realtime import OpenAIRealtimeSession
     from jarvis.adapters.wakeword_composite import CompositeWakeWordBackend
     from jarvis.adapters.wakeword_keyboard import KeyboardWakeWordBackend
     from jarvis.adapters.wakeword_porcupine import PorcupineWakeWordBackend
-    from jarvis.domain.errors import ConfigurationError
     from jarvis.protocol.client import LocalCoreClient
+    from jarvis.runtime import credentials as creds, realtime_tools, shortcuts as shortcut_registry, voice_stack
     from jarvis.runtime.audio_devices import normalize_device_id
     from jarvis.runtime.claude_gateway import ClaudeGateway
     from jarvis.runtime.journal import RuntimeJournal
     from jarvis.runtime.realtime_tools import REALTIME_TOOLS
     from jarvis.runtime.visual_signals import VisualSignalBus
     from jarvis.runtime.voice_v2 import PersistentVoiceRuntime
-    from jarvis.v2_config import REALTIME_VOICES, V2Settings, parse_turn_mode
+    from jarvis.v2_config import V2Settings, VoiceArchitecture
     settings = V2Settings.load()
     signals = VisualSignalBus(settings.runtime_root)
     signals.offline()
@@ -192,25 +265,29 @@ async def _run_voice_v2() -> int:
     if not settings.token_file.exists():
         raise RuntimeError("Core session token is missing; start `jarvis core` first")
     token = settings.token_file.read_text(encoding="utf-8").strip()
-    api_key = str(overrides.get("openai_api_key") or os.getenv("OPENAI_API_KEY", "")).strip()
+    stack = voice_stack.stack_spec(overrides.get("voice_stack"))
+    stack_values = voice_stack.settings_for(overrides, stack.id)
+    api_key = creds.secret_for(overrides, stack.credential_provider)
     if not api_key:
+        provider = creds.provider_spec(stack.credential_provider)
+        env_names = " ou ".join(provider.env) or "la variable du fournisseur"
         raise RuntimeError(
-            "OPENAI_API_KEY is required for Realtime voice. "
-            "Configurez-la dans le fichier .env de JARVIS, dans l'environnement "
-            "ou dans Settings du Control Center, puis relancez Voice."
+            f"La pile vocale « {stack.label} » a besoin d'une clé {provider.label}. "
+            "Ajoutez-la dans l'onglet API Keys des réglages du Control Center, "
+            f"ou définissez {env_names} dans le .env du projet, puis relancez Voice."
         )
     core = LocalCoreClient(host=settings.core_host, port=settings.core_port, token=token)
     health = await core.health()
     if not health.get("ready"):
         await core.close(); raise RuntimeError(f"Core is not ready: {health}")
 
-    manual_key = str(overrides.get("manual_wake_key") or os.getenv("JARVIS_MANUAL_WAKE_KEY", "f9")).strip() or "f9"
+    manual_key = shortcut_registry.current(overrides)["wake_toggle"]
     input_raw = overrides.get("audio_input_device") if "audio_input_device" in overrides else os.getenv("JARVIS_AUDIO_INPUT_DEVICE", "")
     output_raw = overrides.get("audio_output_device") if "audio_output_device" in overrides else os.getenv("JARVIS_AUDIO_OUTPUT_DEVICE", "")
     audio_input_device = normalize_device_id(input_raw)
     audio_output_device = normalize_device_id(output_raw)
     wake_backends = [KeyboardWakeWordBackend(key_name=manual_key)]
-    wake_key = str(overrides.get("porcupine_access_key") or os.getenv("PORCUPINE_ACCESS_KEY", "")).strip()
+    wake_key = creds.secret_for(overrides, "porcupine")
     if wake_key:
         wake_backends.append(
             PorcupineWakeWordBackend(
@@ -225,33 +302,86 @@ async def _run_voice_v2() -> int:
     except (TypeError, ValueError):
         active_timeout = settings.active_timeout_s
 
-    realtime_voice = str(overrides.get("realtime_voice") or settings.realtime_voice).strip()
-    if realtime_voice not in REALTIME_VOICES:
-        realtime_voice = settings.realtime_voice
-    try:
-        auto_turn = parse_turn_mode(str(overrides.get("voice_turn_mode") or "")) if overrides.get("voice_turn_mode") else settings.auto_turn
-    except ConfigurationError:
-        auto_turn = settings.auto_turn
+    # Une voix vide enregistree (possible si le champ a ete vide a la main)
+    # ferait refuser la session par le fournisseur : on retombe sur le defaut
+    # declare par la pile, pas sur une chaine vide.
+    realtime_voice = str(stack_values.get("voice") or "").strip() or str(stack.defaults().get("voice") or "")
+    auto_turn = str(stack_values.get("turn_mode") or "auto").strip().lower() != "manual"
+    # Un modèle laissé vide dans les réglages veut dire « celui de la config » :
+    # OPENAI_REALTIME_MODEL côté OpenAI. Gemini Live n'a pas de défaut connu.
+    realtime_model = str(stack_values.get("model") or "").strip()
+    # Une seule lecture de l'architecture pour la surface : elle choisit à la
+    # fois le jeu de règles et le catalogue d'outils, et les deux doivent dire la
+    # même chose au modèle.
+    continuous_brain = settings.voice_arch is VoiceArchitecture.CONTINUOUS_BRAIN
 
-    async def realtime_factory(context: dict[str, object]):
-        return await OpenAIRealtimeSession.connect(
-            api_key=api_key,
-            model=settings.realtime_model,
-            voice=realtime_voice,
-            context=context,
-            tools=REALTIME_TOOLS,
-            auto_turn=auto_turn,
-        )
+    if stack.id == voice_stack.GEMINI_LIVE.id:
+        if continuous_brain:
+            # Décision 21 : Gemini reste sur le chemin legacy. Il n'implémente ni
+            # le port de contrôle de sortie ni les règles de surface du mode
+            # continu ; le laisser démarrer donnerait une voix qui commente le
+            # travail du cerveau sans pouvoir être interrompue.
+            raise RuntimeError(
+                "La pile Gemini Live ne prend pas en charge JARVIS_VOICE_ARCH=continuous_brain. "
+                "Choisissez la pile OpenAI Realtime dans les réglages, ou repassez "
+                "JARVIS_VOICE_ARCH sur 'legacy'."
+            )
+        if not realtime_model:
+            raise RuntimeError(
+                "Choisissez un modèle Gemini Live dans les réglages : Google ne définit pas "
+                "de modèle Live par défaut."
+            )
+
+        async def realtime_factory(context: dict[str, object]):
+            return await GeminiLiveSession.connect(
+                api_key=api_key,
+                model=realtime_model,
+                voice=realtime_voice,
+                context=context,
+                tools=REALTIME_TOOLS,
+                auto_turn=auto_turn,
+                input_transcription=bool(stack_values.get("input_transcription", True)),
+                output_transcription=bool(stack_values.get("output_transcription", True)),
+                start_sensitivity=str(stack_values.get("vad_start_sensitivity") or "LOW"),
+                end_sensitivity=str(stack_values.get("vad_end_sensitivity") or "LOW"),
+                prefix_padding_ms=int(stack_values.get("vad_prefix_padding_ms") or 300),
+                silence_duration_ms=int(stack_values.get("vad_silence_duration_ms") or 1500),
+            )
+    else:
+        openai_model = realtime_model or settings.realtime_model
+        surface_tools = realtime_tools.tools_for(continuous_brain=continuous_brain)
+
+        async def realtime_factory(context: dict[str, object]):
+            return await OpenAIRealtimeSession.connect(
+                api_key=api_key,
+                model=openai_model,
+                voice=realtime_voice,
+                context=context,
+                tools=surface_tools,
+                continuous_brain=continuous_brain,
+                auto_turn=auto_turn,
+                transcription_model=str(stack_values.get("transcription_model") or ""),
+                vad_threshold=stack_values.get("vad_threshold"),
+                vad_prefix_padding_ms=stack_values.get("vad_prefix_padding_ms"),
+                vad_silence_duration_ms=stack_values.get("vad_silence_duration_ms"),
+            )
 
     journal = RuntimeJournal(settings.runtime_root)
-    # L'agent Claude est hébergé par le Control Center : Voice le joint par la
-    # boucle locale pour lui transmettre les demandes de l'utilisateur.
-    ui_port = int(os.getenv("JARVIS_UI_PORT", "17654"))
-    claude = ClaudeGateway(
-        base_url=f"http://127.0.0.1:{ui_port}",
-        timeout_s=float(os.getenv("JARVIS_CLAUDE_TIMEOUT_S", "600")),
-    )
-    journal.emit("claude.gateway", "Passerelle vers l'agent Claude configurée", data={"url": claude.base_url})
+    # Mode legacy : l'agent Claude est hébergé par le Control Center, et Voice
+    # le joint lui-même par la boucle locale.
+    #
+    # Mode continu : Voice ne possède plus le modèle fort (Décision 19). Core
+    # le joint à travers son `BrainBackend`, et ne pas construire la passerelle
+    # ici est ce qui rend l'ancien chemin réellement inaccessible.
+    if settings.voice_arch is VoiceArchitecture.CONTINUOUS_BRAIN:
+        claude = None
+        journal.emit("claude.gateway", "Mode continu : le modèle fort est joint par Core, pas par Voice", data={"arch": settings.voice_arch.value})
+    else:
+        claude = ClaudeGateway(
+            base_url=_control_center_url(),
+            timeout_s=float(os.getenv("JARVIS_CLAUDE_TIMEOUT_S", "600")),
+        )
+        journal.emit("claude.gateway", "Passerelle vers l'agent Claude configurée", data={"url": claude.base_url})
     voice = PersistentVoiceRuntime(
         wakeword=wake,
         core=core,
@@ -263,16 +393,36 @@ async def _run_voice_v2() -> int:
         audio_output_device=audio_output_device,
         auto_turn=auto_turn,
         claude=claude,
+        input_sample_rate=stack.input_sample_rate,
+        output_sample_rate=stack.output_sample_rate,
+        voice_arch=settings.voice_arch,
     )
     timeout_task = asyncio.create_task(_voice_timeout_loop(voice, signals, journal), name="jarvis-voice-timeout")
     key = manual_key.upper()
     wake_hint = f"Dites 'Jarvis' ou appuyez sur {key}" if wake_key else f"Appuyez sur {key}"
+    banner = f"Jarvis Voice v0.2 en arrière-plan · {stack.label} · voix {realtime_voice}"
+    journal.emit(
+        "voice.stack",
+        f"Pile vocale : {stack.label}",
+        data={
+            "stack": stack.id,
+            "model": realtime_model or "(défaut)",
+            "voice": realtime_voice,
+            "auto_turn": auto_turn,
+            "arch": settings.voice_arch.value,
+            # Ce qui a réellement été envoyé au fournisseur : en continu la
+            # surface est bornée aux réflexes et son catalogue d'outils est vide
+            # (Décision 34).
+            "surface_reflex_only": continuous_brain,
+            "input_sample_rate": stack.input_sample_rate,
+            "output_sample_rate": stack.output_sample_rate,
+        },
+    )
     if auto_turn:
-        print(f"Jarvis Voice v0.2 en arrière-plan ({realtime_voice}). {wake_hint} pour parler; "
+        print(f"{banner}. {wake_hint} pour parler; "
               f"JARVIS répond dès que vous vous taisez. {key} de nouveau pour interrompre.")
     else:
-        print(f"Jarvis Voice v0.2 en arrière-plan ({realtime_voice}). {wake_hint} pour activer, "
-              f"puis à nouveau pour envoyer.")
+        print(f"{banner}. {wake_hint} pour activer, puis à nouveau pour envoyer.")
     try:
         await voice.run()
     finally:
@@ -399,6 +549,8 @@ async def _amain(argv: list[str] | None = None) -> int:
     if command == "core": return await _run_core_v2()
     if command == "voice": return await _run_voice_v2()
     if command == "control-center": return await _run_control_center_v2()
+    if command == "drive-auth": return await _drive_auth()
+    if command == "drive-mcp": return await _drive_mcp()
     config = AppConfig.load(args.config)
     if command == "run": return await _run_voice(config, no_preflight=args.no_preflight)
     if command == "text": return await _run_text(config, message=args.message)

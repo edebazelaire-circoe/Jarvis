@@ -107,3 +107,76 @@ The current V1 adapter is non-streaming, so `agent_first_token_ms` cannot honest
 ## Skills deviation from handoff
 
 The handoff asked the implementation agent to load `/caveman` and `/coding-guideline` for coding tasks. Those skills were not installed/available in this ChatGPT environment, so they could not be invoked. Their observable engineering intent was enforced manually through modularity, typed contracts, fail-closed security, tests on behavior changes, and repeated audit/rework. This is a tooling-environment deviation, not a runtime dependency of Jarvis.
+
+---
+
+# Realtime + async brain acceptance status (v0.2 voice path)
+
+Date: 2026-09-09. Scope: the handoff under `docs/handoff-realtime-brain/`
+(Tasks 00-12). The V1 status above is unchanged by it.
+
+Legend is the same as above, plus:
+
+- **UNVERIFIED**: the gate exists, was not executed, and is not assumed to pass.
+
+## Automated acceptance executed
+
+Run from the repository root on the Windows workstation, 2026-09-09:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe scripts\verify_release.py
+```
+
+Result: **706 passed, 4 skipped, 0 failed**, and `Release verification passed.`
+The four skips are the two opt-in live OpenAI tests, one POSIX-only signal test
+and one test needing symlinks.
+
+## Status
+
+| Gate | Status | Evidence / remaining work |
+| --- | --- | --- |
+| Typed brain/speech contracts, Core-owned orchestrator, protocol ingress | PASS | Unit + integration suites; provider-neutral architecture gate widened before any backend was injected. |
+| Continuous LIVE lifecycle and `JARVIS_VOICE_ARCH` switch | PASS automated | `legacy` stays the default, computed from `CONTINUOUS_BRAIN_DEFAULT_BLOCKERS`; both directions pinned by tests. |
+| Empty surface tool catalogue in continuous mode | PASS | Unit test on the catalogue plus an integration scenario proving no Core tool executes from the surface. |
+| Barge-in ordering and truncation honesty | PASS automated, up to the local stop | Tests prove local stop -> `cancel_output` -> `truncate`, and that a truncated sentence is persisted as partly heard. They do **not** prove that sound stops in the speakers, nor how fast. |
+| Six latency measures | PASS automated | Emitted into `runtime/trace.jsonl`, identifier-only, joinable by `correlation_id` / `speech_id` / `work_id`. |
+| Live OpenAI Realtime smoke test on the continuous path | **UNVERIFIED** | `tests/integration/test_live_openai.py` covers it but is opt-in and was not run. Not a failure; simply not executed. It carries the `response.metadata` round-trip check described in step 1 of the checklist below. |
+| `response.metadata` round-trip on `response.created` | **UNVERIFIED** | Named single point of failure. `speak()` correlates a brain speech with its provider response only through `response.metadata` (`jarvis/adapters/openai_realtime.py:455-467`, `_bind_response()` line 235). If the real service does not echo it back, the speech loses its `speech_id` and is persisted twice - once as `surface.reflex` by the conversation bridge, once as `brain.speech` by the scheduler - and barge-in loses its truncation target. Open question 9 in `docs/handoff-realtime-brain/docs/07-open-questions.md`. |
+| Workstation acoustic acceptance | **UNVERIFIED** | No microphone, speaker, headphone, echo or VAD-retrigger measurement was made at any point in this handoff. |
+| Brain access to calendar and reminders | **UNVERIFIED** | The blocking gate. In continuous mode the surface holds no tools, and the brain's own calendar/reminder access has never been confirmed. Drive is reachable only if the operator registered `python -m jarvis drive-mcp` in the CLI agent. |
+
+## Blocking workstation checklist for `continuous_brain`
+
+Not executed. Run on the target Windows workstation with
+`JARVIS_VOICE_ARCH=continuous_brain`, after `python -m jarvis core`:
+
+1. **Check this first, before anything else is judged.** Have the brain speak
+   once, then open `runtime/trace.jsonl` and find the `voice.output_started`
+   event of that speech (it is emitted from the `realtime.output_started`
+   envelope). Its `speech_id` **must be non-null**. If it is null, the real
+   service did not echo `response.metadata` back on `response.created`, and the
+   whole correlation chain is broken: the sentence is persisted twice, once as
+   `surface.reflex` by the conversation bridge and once as `brain.speech` by the
+   scheduler, and barge-in can no longer truncate the right output. Stop the
+   checklist there and record it - nothing measured afterwards is trustworthy.
+   See open question 9 in
+   `docs/handoff-realtime-brain/docs/07-open-questions.md`.
+2. Headphones: normal conversation over several turns without a second wake.
+3. Normal speakers: same, and record whether Jarvis' own voice retriggers the
+   VAD while the microphone stays open. If it does, keep `legacy` and say so.
+4. Keyboard noise and background speech: neither must count as useful activity
+   nor open a turn.
+5. Interrupt Jarvis mid-sentence. Measure how long the sound keeps playing.
+   Compare with the `stop_latency_ms` recorded in `voice.barge_in`.
+6. Long brain job while the user keeps talking: the session must stay ACTIVE,
+   progress must be spoken, and the surface must never claim a result.
+7. `Jarvis Mute` during a job: the job survives in Core, nothing is spoken, and
+   no auto-wake occurs when the result arrives.
+8. Wake again after the job completed: the surface must stay silent about the
+   missed result; the brain receives it on the next turn.
+9. Ask for a calendar event and a reminder. This is the gate of Decision 34: it
+   fails today unless the brain has that access.
+
+Record the OS/PortAudio/device versions, because echo behaviour is a hardware
+gate, not a software one.

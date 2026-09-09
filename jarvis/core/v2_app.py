@@ -9,10 +9,13 @@ from jarvis.adapters.fake_calendar import InMemoryCalendarBackend
 from jarvis.adapters.jsonl_history import JsonlHistoryStore
 from jarvis.adapters.sqlite_state import SQLiteStateRepository
 from jarvis.adapters.windows_notifications import NullNotificationDelivery
+from jarvis.core.brain_service import BrainOrchestrator
 from jarvis.core.calendar_service import CalendarService
+from jarvis.core.drive_service import DriveService
 from jarvis.core.v2_services import ConversationService, CoreEventBus, JobService, NotificationService, SchedulerService
 from jarvis.core.v2_tools import CoreToolRouter
 from jarvis.domain.v2 import Device, Job, MissedRunPolicy, Notification, NotificationPriority, ProtocolEnvelope, ScheduledItem, ScheduledStatus, utc_now
+from jarvis.ports.v2 import DiagnosticSink
 
 
 @dataclass(slots=True)
@@ -30,17 +33,28 @@ class JarvisCoreApplication:
     or Windows UI dependency.
     """
 
-    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, notification_delivery=None, workers=None) -> None:
+    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None) -> None:
         root = Path(data_root).resolve()
         self.state = SQLiteStateRepository(root / "state" / "jarvis.sqlite3")
         self.history = JsonlHistoryStore(root / "history")
-        self.events = CoreEventBus()
+        self.events = CoreEventBus(diagnostics=diagnostics)
         self.conversations = ConversationService(self.state, self.history)
         self.scheduler = SchedulerService(self.state, self.events)
-        self.jobs = JobService(self.state, self.events, workers or {})
+        self.jobs = JobService(self.state, self.events, workers or {}, diagnostics=diagnostics)
         self.notifications = NotificationService(self.state, notification_delivery or NullNotificationDelivery())
         self.calendar = CalendarService(calendar_backend or InMemoryCalendarBackend())
-        self.tools = CoreToolRouter(scheduler=self.scheduler, calendar=self.calendar, timezone=timezone)
+        # Pas de repli en mémoire pour Drive : un faux Drive donnerait à
+        # l'utilisateur la certitude d'avoir déposé un fichier qui n'existe pas.
+        self.drive = DriveService(drive_backend)
+        # Le cerveau autoritaire vit dans Core (Décision 01). Le backend fort est
+        # injecté depuis l'extérieur (Décision 28) : à défaut, l'objet nul défini
+        # dans `brain_service` garde un démarrage headless possible sans jamais
+        # faire croire qu'un tour a été traité.
+        # `jobs` est la couture d'annulation (`WorkCanceller`) : une décision
+        # explicite du cerveau doit arrêter le job qu'elle vise, sinon
+        # l'annulation ne serait qu'une écriture d'état.
+        self.brain = BrainOrchestrator(conversations=self.conversations, events=self.events, backend=brain_backend, jobs=self.jobs, diagnostics=diagnostics)
+        self.tools = CoreToolRouter(scheduler=self.scheduler, calendar=self.calendar, drive=self.drive, timezone=timezone)
         self.health = CoreHealth()
         self._stopped = asyncio.Event()
         self._notification_task: asyncio.Task[None] | None = None
@@ -142,6 +156,9 @@ class JarvisCoreApplication:
             return
         self.health.ready = False
         self.health.status = "stopping"
+        # Le cerveau s'arrête en premier : ses tâches écrivent en base via
+        # ConversationService et publient sur le bus, deux ressources fermées plus bas.
+        await self.brain.stop()
         await self._stop_notification_loop()
         await self.jobs.stop()
         await self.scheduler.stop()

@@ -119,16 +119,128 @@ In both modes, connecting and opening the devices can take several seconds, and
 `voice.input_submitted` includes the number of captured/sent bytes and sent
 duration, without storing raw audio.
 
-## Realtime voice timbre
+## La fenêtre de réglages
 
-`OPENAI_REALTIME_VOICE` (or "Voix JARVIS" in Control Center settings) selects
-the Realtime timbre. The default is `cedar`, the low and level one of the two
-gpt-realtime voices; `marin` is its brighter counterpart. `ash`, `verse`,
-`ballad`, `echo`, `sage`, `alloy`, `coral` and `shimmer` are also accepted. The
-persona itself lives in `JARVIS_PERSONA` in `jarvis/adapters/openai_realtime.py`.
+Le bouton **SET** du Control Center (ou la touche `s`) ouvre une fenêtre
+centrée, fermée par un clic à l'extérieur ou par `Échap`. Elle a cinq onglets.
 
-Voice reads both settings at startup only: restart the Voice runtime after a
-change.
+Un principe la traverse : **la page ne connaît aucun réglage**. Le serveur
+décrit ce qui existe — les piles vocales, leurs champs, les CLI, leurs modes,
+les raccourcis — et la page se contente de l'afficher. Ajouter une option se
+fait donc dans `jarvis/runtime/voice_stack.py` ou `cli_catalog.py`, pas dans le
+HTML. Corollaire : un champ visible est un champ réellement transmis au
+fournisseur, et il n'apparaît que lorsqu'il s'applique — les réglages de silence
+disparaissent en fin de tour manuelle, les options Gemini n'existent pas sous
+OpenAI.
+
+### Mode vocal
+
+Deux piles, interchangeables :
+
+| Pile | Modèle | Clé | Fréquences |
+| --- | --- | --- | --- |
+| ChatGPT Live (OpenAI Realtime) | `gpt-realtime*` | OpenAI | 24 kHz → 24 kHz |
+| Gemini Live (Google) | modèles `bidiGenerateContent` | Google | 16 kHz → 24 kHz |
+
+Les deux adaptateurs émettent les mêmes enveloppes `realtime.*` : le pont de
+conversation, les outils Core et l'appel de `claude_task` ne savent pas quel
+fournisseur parle. Les fréquences ne sont pas des préférences, elles sont
+imposées par chaque API ; `SoundDeviceRealtimeAudio` ouvre donc deux flux
+PortAudio de fréquences différentes selon la pile choisie.
+
+Gemini envoie les transcriptions par fragments pendant que la phrase se
+construit. L'adaptateur les accumule et n'en publie qu'une par tour : le pont
+range la transcription dans l'historique et s'en sert pour décider si JARVIS est
+concerné, un flot de fragments créerait une dizaine de faux tours par phrase.
+
+Gemini Live n'a pas de modèle par défaut : il faut en choisir un, sinon Voice
+refuse de démarrer en le disant.
+
+Les voix (`cedar`, `ash`, … côté OpenAI ; `Puck`, `Kore`, … côté Google) sont
+les seules listes écrites en dur de cet écran, parce qu'aucun des deux
+fournisseurs ne les expose par une API. La persona vit dans `JARVIS_PERSONA`,
+`jarvis/adapters/openai_realtime.py`, et sert aux deux piles.
+
+### CLI agent
+
+| CLI | Pilotage | Console | Modèles listés depuis |
+| --- | --- | --- | --- |
+| Claude Code | processus permanent, `stream-json` | oui, sur la même conversation | Anthropic |
+| Codex CLI | un `codex exec --json` par question | oui, sans passation de main | OpenAI |
+
+L'onglet ne propose pas « Claude » et « Codex » dans l'abstrait : il exécute
+`shutil.which` puis `<cli> --version`, et affiche la version et le chemin
+résolus, ou la raison de l'échec. C'est aussi ce chemin résolu qui est lancé —
+sous Windows, `CreateProcess` n'applique pas PATHEXT, et un CLI installé par npm
+en shim `.CMD` (c'est le cas de `codex`) ne démarre pas autrement.
+
+Changer de CLI arrête l'agent précédent avant d'armer le nouveau : deux agents
+vivants écriraient dans le même dépôt sans se voir. Codex n'ayant pas de
+processus permanent, son état oscille entre `ready` et `running`, et son fil se
+poursuit d'une question à l'autre par son identifiant de thread.
+
+Le vocabulaire diffère et l'écran le reprend : Claude parle d'autorisations
+(`bypassPermissions`, …), Codex de bac à sable (`danger-full-access`,
+`workspace-write`, `read-only`). Dans les deux cas, voir « Autorisations :
+pourquoi le défaut est "tout autoriser" » plus bas — en vocal, personne ne peut
+répondre à une demande d'approbation.
+
+### D'où viennent les listes de modèles
+
+Aucun CLI n'expose « donne-moi tes modèles ». La seule source qui ne périme pas
+est l'API du fournisseur, et c'est celle qu'interroge `model_catalog` :
+
+| Fournisseur | Appel | Classement |
+| --- | --- | --- |
+| Anthropic | `GET /v1/models` (paginé) | tout est du texte |
+| OpenAI | `GET /v1/models` | `realtime`, `transcribe`/`whisper`, `tts`, sinon texte |
+| Google | `GET /v1beta/models` | d'après `supportedGenerationMethods` déclaré par l'API |
+
+Le résultat est mis en cache dix minutes, en mémoire et dans
+`runtime/model-catalog.json`. Changer la clé active d'un fournisseur invalide
+son catalogue : les modèles visibles dépendent du compte, pas seulement du
+fournisseur.
+
+Quand l'appel échoue, l'écran le dit et propose le dernier catalogue connu en le
+marquant comme périmé. **Aucune liste écrite en dur n'est servie à la place** :
+un modèle retiré du service qui resterait proposé dans un menu est un piège, pas
+un secours. Sans clé du fournisseur, le menu reste sur « valeur par défaut du
+service » et l'explique.
+
+### API Keys
+
+Une clé est une entrée nommée : `<fournisseur>` — `<nom libre>` — `<valeur>`.
+Deux clés OpenAI, une perso et une du travail, coexistent ; le bouton de la
+colonne « Active » désigne celle qu'utilisent les services de ce fournisseur.
+
+L'ordre de résolution, dans `credentials.secret_for` :
+
+1. la clé explicitement désignée pour ce fournisseur ;
+2. son unique clé, s'il n'y en a qu'une ;
+3. l'ancien champ plat du Control Center, s'il existe encore ;
+4. la variable d'environnement, donc le `.env` du projet.
+
+Les valeurs ne remontent jamais vers le navigateur : seuls les quatre derniers
+caractères sont affichés. Et une clé venue de l'environnement n'est pas recopiée
+dans le fichier de réglages — sinon le `.env` cesserait d'être sa propre source,
+et la copie gagnerait après une rotation.
+
+Le fichier `runtime/control-center-settings.json` contient donc des secrets en
+clair dès qu'une clé y est saisie. Il est écrit en `0600`, hors du dépôt.
+
+### Raccourcis
+
+Ne figure dans cet onglet que ce qui fait quelque chose. Deux portées :
+
+- **système** — la touche de réveil, captée par pynput dans le processus Voice
+  même sans focus. `KeyboardWakeWordBackend` ne sait résoudre qu'une **touche
+  seule** : `ctrl+j` est refusé à la saisie plutôt qu'accepté puis ignoré au
+  démarrage. Prend effet au prochain redémarrage de Voice.
+- **interface** — captés par le Control Center dans le navigateur, avec
+  modificateurs, ignorés pendant la saisie dans un champ. Effet immédiat.
+
+Deux actions ne peuvent pas partager une touche dans une même portée : la
+seconde ne se déclencherait jamais et rien ne le dirait.
 
 ## Confirmation behavior
 
@@ -155,7 +267,7 @@ It is safe to delete `<memory>/.jarvis/index.sqlite3`; the next rebuild recreate
 
 Tracked defaults live in `config/jarvis.example.toml`; local `config/jarvis.toml` is ignored by Git.
 
-The Control Center **Settings** panel lists the audio devices exposed by PortAudio. Select an input and an output, then use **Tester micro + sortie**: Jarvis records two seconds in the exact Realtime Voice format (24 kHz mono), requires a detected microphone signal, and replays the captured audio through the selected output. Save the selection and restart the Voice runtime to apply it to conversations and Porcupine.
+The Control Center settings window (tab **Config**) lists the audio devices exposed by PortAudio. Select an input and an output, then use **Tester micro + sortie**: Jarvis records two seconds, requires a detected microphone signal, and replays the captured audio through the selected output. Save the selection and restart the Voice runtime to apply it to conversations and Porcupine. Everything else that window offers is described above, under "La fenetre de reglages".
 
 Main environment overrides:
 
@@ -173,6 +285,13 @@ Main environment overrides:
 | `OPENAI_REALTIME_MODEL` | Realtime model |
 | `OPENAI_REALTIME_VOICE` | Realtime timbre; default `cedar` |
 | `JARVIS_VOICE_TURN_MODE` | `auto` (server VAD, default) or `manual` (second key press) |
+| `JARVIS_VOICE_STACK` | `openai_realtime` (default) or `gemini_live` |
+| `JARVIS_VOICE_ARCH` | `legacy` (default, computed) or `continuous_brain`; see "Deux architectures vocales" below. Unsetting it is the rollback path |
+| `JARVIS_ACTIVE_TIMEOUT_S` | useful-inactivity timeout of an ACTIVE voice session; default 90 |
+| `JARVIS_AGENT_CLI` | `claude` (default) or `codex` |
+| `JARVIS_CLAUDE_MODEL` | model passed to `claude --model`; empty means the CLI default |
+| `ANTHROPIC_API_KEY` | lists the real Claude models; the CLI itself can run on a subscription |
+| `GOOGLE_API_KEY` / `GEMINI_API_KEY` | Gemini Live voice and its model list |
 | `JARVIS_MEMORY_DIR` | canonical Markdown root |
 | `JARVIS_RUNTIME_DIR` | transient signal/log directory |
 | `JARVIS_CONFIRMATION_TIMEOUT_S` | pending write confirmation expiry |
@@ -185,14 +304,43 @@ Main environment overrides:
 | `JARVIS_BOARD_URL` | loopback board URL only |
 | `JARVIS_VISUALIZER_ENABLED` | enable visualizer health/config |
 | `JARVIS_VISUALIZER_URL` | loopback visualizer URL only |
+| `JARVIS_DRIVE_PROVIDER` | `none` (default) or `google` |
+| `GOOGLE_DRIVE_CLIENT_SECRET` | OAuth desktop client JSON; falls back to `GOOGLE_CALENDAR_CLIENT_SECRET` |
+| `GOOGLE_DRIVE_TOKEN` | Drive token file, kept separate from the calendar token |
 
 `JARVIS_BOARD_TOKEN` is an internal per-launch secret normally created by `dev_start.py`; do not persist it.
 
 ## Diagnostics
 
-Runtime logs are JSONL in the runtime directory. With default privacy settings, content fields are redacted. Useful fields include state/event names, durations and exception class.
+Runtime logs are JSONL in the runtime directory. Two different journals exist and
+they do not have the same privacy behaviour.
 
-When troubleshooting provider errors, first run health, then inspect diagnostic event names/error classes. Avoid turning on content logging unless required and remove those logs afterwards.
+- **V1 push-to-talk diagnostics** (`jarvis/diagnostics/logger.py`): transcript,
+  prompt and body-like fields are redacted while `log_content` / `JARVIS_LOG_CONTENT`
+  stays false, which is the default. Useful fields remain state/event names,
+  durations and exception class.
+- **v0.2 runtime journal** (`jarvis/runtime/journal.py`, `runtime/trace.jsonl` and
+  `runtime/errors.jsonl`): `JARVIS_LOG_CONTENT` does **not** apply to it. Events
+  such as `voice.transcript`, `voice.assistant`, `voice.brain_turn_submitted` and
+  `voice.speech.*` deliberately carry up to 300 characters of what was said, because
+  the Control Center **TRC** panel is built on reading it back. Nothing leaves the
+  machine, and `runtime/` is outside the repository. The latency telemetry added on
+  top of this journal carries identifiers, types and durations only - never text.
+- **Raw agent reasoning** (Decision 43): the local CLI agent's reasoning is kept on
+  this machine on purpose. `jarvis/runtime/claude_local.py:477` journals every raw
+  `stream-json` event - `thinking` blocks included - into `runtime/trace.jsonl`, and
+  `claude_local.py:284` renders them as `[réflexion] ...` in the Control Center
+  console (same for Codex, `codex_local.py:156`). The scoped guarantee is narrower
+  than "no chain-of-thought anywhere": no reasoning field exists in Core's domain
+  state, none is persisted in conversation turns, none travels in `brain.state.updated`
+  or in any speech request, and none reaches the Realtime surface. Inside the machine,
+  the trace and the console carry it, which is what the debug console is for.
+
+When troubleshooting provider errors, first run health, then inspect diagnostic
+event names/error classes. Avoid turning on V1 content logging unless required and
+remove those logs afterwards. If the local trace itself must be content-free, treat
+that as a product change to the debug console rather than a setting that exists
+today.
 
 ### Crashs natifs et morts de processus
 
@@ -266,6 +414,102 @@ calendrier porte un bloc `calendar`** :
 Le modèle Realtime le reçoit avec le résultat, ce qui lui permet de dire où le
 rendez-vous a réellement atterri au lieu d'annoncer une création trompeuse.
 
+### Google Drive
+
+Drive est **désactivé par défaut** : `JARVIS_DRIVE_PROVIDER=none`. Une fois
+activé, le même adaptateur sert deux consommateurs — la voix Jarvis, et Claude
+Code via un serveur MCP local. Un seul client OAuth, aucun service tiers dans la
+boucle.
+
+#### Mise en place (une fois)
+
+1. Dans la [console Google Cloud](https://console.cloud.google.com/), créer (ou
+   réutiliser) un projet, puis **activer l'API Google Drive**.
+2. Écran de consentement OAuth : type « Externe », et s'ajouter comme
+   utilisateur de test — sans cela le consentement est refusé tant que l'app
+   n'est pas publiée.
+3. « Identifiants » → « Créer des identifiants » → « ID client OAuth » →
+   **Application de bureau**. Télécharger le JSON.
+4. Renseigner `.env` à la racine du projet :
+
+```
+JARVIS_DRIVE_PROVIDER=google
+GOOGLE_DRIVE_CLIENT_SECRET=C:\Users\<vous>\.jarvis\google_client_secret.json
+GOOGLE_DRIVE_TOKEN=C:\Users\<vous>\.jarvis\google_drive_token.json
+```
+
+5. Autoriser une fois, navigateur à l'appui :
+
+```powershell
+.\.venv\Scripts\python.exe -m jarvis drive-auth
+```
+
+La commande écrit le jeton (permissions 600 quand la plateforme le permet) et
+compte les fichiers visibles pour confirmer que l'accès fonctionne.
+
+Le client OAuth est partageable avec l'agenda (`GOOGLE_DRIVE_CLIENT_SECRET`
+retombe sur `GOOGLE_CALENDAR_CLIENT_SECRET` s'il n'est pas défini), mais **les
+jetons restent séparés** : un jeton porte les portées accordées, et les mélanger
+invaliderait silencieusement l'un des deux accès.
+
+#### Portée
+
+Une seule portée est demandée : `https://www.googleapis.com/auth/drive`, soit la
+lecture **et** l'écriture sur tout le Drive. Pour restreindre, remplacer
+`GoogleDriveBackend.SCOPES` par `.../auth/drive.readonly` (lecture seule) ou
+`.../auth/drive.file` (uniquement les fichiers créés par Jarvis), puis supprimer
+le fichier de jeton et relancer `drive-auth` : changer une portée exige un
+nouveau consentement, qu'un simple rafraîchissement ne demande jamais.
+
+#### Ce que Jarvis peut faire à la voix
+
+`drive_search`, `drive_get`, `drive_read` sont en lecture seule et s'exécutent
+directement. `drive_create`, `drive_update`, `drive_delete` et `drive_share`
+**demandent confirmation** (`oui`/`non` exact), y compris la création : un
+fichier de trop dans un espace distant et partagé n'est pas rattrapable par
+Jarvis, contrairement à un fichier local. Pour assouplir, passer `confirm=False`
+sur l'entrée voulue de `POLICIES` dans `jarvis/security/v2_policy.py`.
+
+`drive_delete` **met à la corbeille** au lieu de supprimer : le fichier reste
+récupérable 30 jours depuis l'interface Drive. Le résultat renvoie
+`trashed_file_id`, pas `deleted_file_id`, pour que la voix dise ce qui s'est
+réellement passé.
+
+Les documents natifs (Docs, Sheets, Slides) n'ont pas d'octets à télécharger :
+`drive_read` les exporte automatiquement en markdown, CSV ou texte. Ils ne
+peuvent pas être écrasés par `drive_update`, qui le refuse explicitement.
+
+Comme pour l'agenda, chaque résultat porte un bloc d'origine :
+
+```json
+"drive": {"backend": "google", "persisted": true}
+```
+
+Sans Drive configuré, les outils répondent `deny` avec un message explicite
+plutôt que d'échouer sur une trace technique. Il n'y a **aucun repli en
+mémoire** : un faux Drive donnerait la certitude d'avoir déposé un fichier qui
+n'existe pas.
+
+#### Le même Drive depuis Claude Code
+
+`python -m jarvis drive-mcp` sert les sept mêmes outils en MCP stdio. Enregistré
+une fois :
+
+```powershell
+claude mcp add jarvis-drive --scope user -- C:\Projects\jarvis\.venv\Scripts\python.exe -m jarvis drive-mcp
+```
+
+`--scope user` le rend disponible dans tous les projets ; `--scope local` le
+limiterait à Jarvis. Vérifier avec `claude mcp list`, retirer avec
+`claude mcp remove jarvis-drive --scope user`.
+
+Côté MCP, la politique de confirmation de Core **ne s'applique pas** : c'est le
+système d'autorisations de Claude Code qui arbitre les appels d'outils. Le
+serveur construit l'adaptateur au premier appel et refuse de lancer une
+autorisation OAuth interactive : en stdio, tout ce qui s'écrit sur la sortie
+standard est du protocole, et une fenêtre de consentement bloquerait le serveur
+sans qu'aucun message n'atteigne l'utilisateur. D'où `drive-auth` d'abord.
+
 ### Agent Claude local : deux vues, une conversation
 
 `ClaudeLocalAgent` lance `claude -p --input-format stream-json` : le même agent
@@ -294,6 +538,11 @@ Endpoints : `POST /api/agent/console/open`, `POST /api/agent/console/close`,
 
 C'est la fonction fondamentale de JARVIS : une interface vocale vers un agent
 qui agit sur cet ordinateur.
+
+> Cette section décrit l'architecture **`legacy`**, celle qui tourne par défaut.
+> En mode `continuous_brain`, l'outil `claude_task` n'existe plus et
+> `ClaudeGateway` n'est même pas construite : c'est Core qui joint l'agent. Voir
+> « Deux architectures vocales » plus bas.
 
 ```
 votre voix ──► OpenAI Realtime (oreilles)
@@ -347,11 +596,21 @@ minute. Deux garde-fous existent pour qu'elle ne soit pas tuée en route :
   liste d'erreurs) et le runtime repart en veille, prêt pour le prochain réveil.
   Une vraie erreur du fournisseur (`realtime.error`) continue de remonter.
 
-Ouvrir la console de debug pendant qu'une tâche vocale tourne **l'interrompt** :
-la console prend la main sur la session, l'agent piloté est arrêté. C'est
-volontaire, mais le tour vocal est débloqué immédiatement avec un message
+### Console de debug et voix : qui tient la conversation
+
+Ouvrir la console pendant qu'une tâche vocale tourne **l'interrompt** : la
+console prend la main sur la session, l'agent piloté est arrêté. C'est
+volontaire, et le tour vocal est débloqué immédiatement avec un message
 prononçable (`agent.console_interrupt`, niveau `warning`) au lieu d'attendre le
 délai complet.
+
+En revanche, **la voix n'est jamais bloquée**. Une session Claude ne pouvant pas
+être écrite par deux processus, une demande vocale arrivant pendant que la
+console tient la conversation ouvre simplement une **nouvelle** session
+(`agent.session_forked`, niveau `warning`) au lieu d'échouer. La console garde
+la conversation que vous êtes en train de regarder, la voix continue sur la
+sienne, et la reprise avec `--resume` redevient automatique dès que la console
+est fermée — que ce soit par le bouton du panneau ou en fermant la fenêtre.
 
 ### Autorisations : pourquoi le défaut est « tout autoriser »
 
@@ -374,6 +633,135 @@ Le panneau **ERR** du Control Center archive les erreurs traitées (`Archiver`)
 et affiche l'archive (`Erreurs archivées`). L'archivage déplace les entrées de
 `runtime/errors.jsonl` vers `runtime/errors-archive.jsonl` en les horodatant :
 le badge se vide, rien n'est perdu, et `runtime/trace.jsonl` reste intact.
+
+## Deux architectures vocales : `legacy` et `continuous_brain`
+
+`JARVIS_VOICE_ARCH` choisit le chemin de code de la voix. Ce n'est pas une
+préférence d'utilisateur mais un interrupteur de déploiement : il vit dans
+`jarvis/v2_config.py` et non dans les réglages du Control Center, pour qu'on
+puisse revenir en arrière avec une ligne de `.env` et un redémarrage, sans
+dépendre d'un fichier écrit par l'interface.
+
+| | `legacy` (défaut) | `continuous_brain` (opt-in) |
+| --- | --- | --- |
+| Session | un réveil, un tour, retour au fond dès la fin de la réponse | une session ACTIVE couvre plusieurs tours |
+| Micro | fermé dès que le fournisseur clôt le tour | reste ouvert entre les tours |
+| Outils de la surface | catalogue Core complet (agenda, rappels, Drive) + `claude_task` | **vide** |
+| Modèle fort | joint par Voice, `ClaudeGateway` → `POST /api/agent/ask` | joint par Core, à travers un `BrainBackend` |
+| Parole du cerveau | c'est la réponse du tour Realtime | évènements `brain.speech.requested` sur `/v1/events`, rendus par le `SpeechScheduler` |
+| Piles vocales | OpenAI Realtime et Gemini Live | OpenAI Realtime seulement |
+| Fin de tour | `auto` ou `manual` | `auto` obligatoire |
+| Retour au fond | fin de réponse, mute, délai, panne | mute, délai d'activité utile, panne irrécupérable |
+
+### La surface a les réflexes, le cerveau a la vérité
+
+En mode continu, le modèle Realtime n'est plus qu'une bouche et des oreilles. De
+lui-même il ne peut qu'accuser réception par une phrase courte, réparer une
+écoute (« je n'ai pas bien entendu ») ou poser une question portant strictement
+sur ce qu'il a entendu. Il lui est interdit d'annoncer un résultat, une
+progression, un succès ou un échec, et il **n'a aucun outil** : le tour complet
+part déjà au cerveau, donc « supprime ce fichier du Drive » s'exécuterait deux
+fois, ou s'exécuterait pendant que le cerveau décide qu'il ne faut pas. Aucune
+formulation de prompt n'empêche cela ; seule l'absence de l'outil l'empêche.
+
+Le cerveau, lui, vit dans Core (`BrainOrchestrator`). Il possède l'intention,
+l'état public du travail et les identifiants de travail, et il parle par
+demandes de parole typées. Couper la parole à JARVIS n'annule jamais un travail :
+l'arrêt est local d'abord (PortAudio), l'annulation et la troncature côté
+fournisseur ensuite, et le tour suivant porte simplement
+`interrupted_speech_id` — c'est le cerveau qui décide de retenir, remplacer ou
+annuler. `Jarvis Mute` arrête la voix, jamais le travail de Core, et ne réveille
+jamais la voix pour prononcer un résultat que vous avez coupé.
+
+### Basculer, et revenir
+
+```powershell
+# activer, dans le .env du projet ou l'environnement du processus Voice
+$env:JARVIS_VOICE_ARCH = "continuous_brain"
+
+# revenir en arrière : retirer la variable (ou la remettre à "legacy")
+Remove-Item Env:\JARVIS_VOICE_ARCH
+```
+
+Core et Voice lisent la variable au démarrage : il faut relancer les deux
+processus. Le mode retenu est journalisé dans `voice.stack` et `voice.active`
+(champ `arch`), et `surface_reflex_only` de `voice.stack` dit si le catalogue
+d'outils envoyé au fournisseur était vide.
+
+Le retour arrière n'est pas une écriture inverse : le défaut est **calculé** par
+`default_voice_arch()`, seul endroit qui en décide. Retirer la variable ramène
+donc mécaniquement à `legacy`.
+
+### La porte bloquante : le mode continu ne peut pas devenir le défaut
+
+`CONTINUOUS_BRAIN_DEFAULT_BLOCKERS`, dans `jarvis/v2_config.py`, contient
+aujourd'hui `brain_calendar_access_unverified` et
+`brain_reminder_access_unverified`. Tant que ce tuple n'est pas vide,
+`default_voice_arch()` rend `legacy`, et un test échoue si le défaut bascule
+alors qu'un bloqueur subsiste.
+
+La raison est directe : en mode continu la surface perd **tous** les outils Core,
+donc plus personne ne crée de rendez-vous ni de rappel par la voix — sauf si le
+cerveau sait le faire. Or **son accès à l'agenda et aux rappels n'est pas
+vérifié**. Seul Drive lui est atteignable, et uniquement si vous avez enregistré
+le serveur MCP vous-même (`claude mcp add jarvis-drive …`, voir « Le même Drive
+depuis Claude Code » plus haut) ; rien dans JARVIS ne l'enregistre pour vous.
+
+Vider ce tuple est donc un acte délibéré, qui demande soit de câbler l'accès
+manquant, soit d'acter l'écart par écrit. L'opt-in explicite, lui, n'est pas
+bloqué : `JARVIS_VOICE_ARCH=continuous_brain` reste accepté aujourd'hui.
+
+### Échouer bruyamment plutôt que dégrader
+
+- Pile Gemini Live + `continuous_brain` → refus au démarrage de Voice : Gemini
+  n'implémente pas les contrôles de sortie sémantiques.
+- Fin de tour `manual` + `continuous_brain` → refus au démarrage : le mode
+  continu repose sur le découpage de tours du fournisseur.
+- Pile sans contrôle de sortie détectée à l'ouverture de session → état `ERROR`,
+  trace `voice.arch_unsupported`, retour au fond.
+
+### Où atterrit la télémétrie de latence
+
+Six mesures, définies dans `jarvis/core/latency.py`. Elles passent par le même
+journal que le reste : `runtime/trace.jsonl`, donc le panneau **TRC** du Control
+Center. Chaque entrée porte `measure` et `elapsed_ms` dans `data`, ce qui les
+rend toutes trouvables d'un même filtre.
+
+| Mesure | `kind` de l'évènement | Clé de jointure | Processus |
+| --- | --- | --- | --- |
+| `speech_started` → premier audio de la surface | `voice.latency.surface_first_audio` | `segment_id` | Voice |
+| transcription complète → tour accepté par le cerveau | `voice.latency.brain_turn_accepted` | `correlation_id` | Voice |
+| parole demandée → premier audio du cerveau | `voice.latency.first_brain_audio` | `speech_id` | Voice |
+| interruption détectée → sortie locale arrêtée | `voice.barge_in` (`stop_latency_ms`) | `speech_id` | Voice |
+| travail démarré → première progression publique | `core.brain.latency.first_public_progress` | `work_id` | Core |
+| travail démarré → terminé | `core.brain.latency.work_completed` | `work_id` | Core |
+
+Les deux bornes d'une mesure sont toujours prises dans le **même** processus, sur
+une horloge monotone : aucune ne traverse la frontière Core/Voice, et le
+transport n'y est donc jamais compté. La dernière n'est pas émise pour un travail
+en échec ou annulé — une panne n'est pas une durée d'exécution. Ces évènements ne
+portent que des identifiants : `LatencyTracker` fabrique lui-même son message à
+partir du nom de la mesure, un appelant ne peut pas y glisser de transcription.
+
+### Ce qui n'est pas vérifié
+
+Trois points, à ne jamais présenter comme acquis :
+
+1. **Aucune recette matérielle n'a tourné.** Micro, haut-parleurs, casque, écho
+   acoustique, redéclenchement du VAD par les haut-parleurs, barge-in réellement
+   audible : rien de tout cela n'a été mesuré. Le mode continu garde le micro
+   ouvert pendant que les haut-parleurs jouent, et **cet écho n'est traité par
+   aucun logiciel ici** ; `legacy` reste le repli half-duplex.
+2. **Aucune exécution contre le vrai OpenAI.** Le test de fumée
+   `tests/integration/test_live_openai.py` couvre le chemin continu mais reste
+   sauté par défaut et n'a pas été lancé.
+3. **L'accès du cerveau à l'agenda et aux rappels n'est pas vérifié.** C'est le
+   contenu même de la porte ci-dessus.
+
+Sur l'interruption, soyez précis : les tests automatisés prouvent l'ordre arrêt
+local → annulation → troncature, et que l'historique ne prétend pas que
+l'utilisateur a entendu ce qui a été tronqué. Ils ne prouvent **pas** que le son
+cesse dans les haut-parleurs, ni en combien de millisecondes.
 
 ## Tests
 
@@ -398,3 +786,5 @@ JARVIS_LIVE_OPENAI=1 OPENAI_API_KEY=... python -m pytest -q tests/integration/te
 ## Manual workstation acceptance
 
 Follow `docs/ACCEPTANCE_STATUS.md`. It is intentionally explicit about checks that cannot be proven in a headless build sandbox: real microphone/speaker, real OpenAI latency, Chrome camera permissions and physical Barehands gestures.
+
+The `continuous_brain` voice architecture adds its own workstation gate, listed in the same document and **not executed**: headphones, normal speakers, keyboard noise, background speech, interruption while Jarvis speaks, a long brain job while the user keeps talking, `Jarvis Mute` during a job, and waking again once the job has completed. Record whether speaker-to-mic echo retriggers the VAD; if it does, keep `legacy` rather than masking the result.

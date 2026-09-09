@@ -231,12 +231,14 @@ class RecordingClaude:
 class RecordingCore:
     def __init__(self) -> None:
         self.calls: list[str] = []
+        self.turns: list[dict] = []
 
     async def call_tool(self, name, arguments, *, conversation_id):  # noqa: ANN001
         self.calls.append(name)
         return {"disposition": "execute", "executed": True}
 
-    async def append_turn(self, *args, **kwargs):  # noqa: ANN002, ANN003
+    async def append_turn(self, conversation_id, *, kind, content):  # noqa: ANN001
+        self.turns.append({"conversation_id": conversation_id, "kind": kind, "content": content})
         return {}
 
 
@@ -269,8 +271,20 @@ class SilentAudio:
     async def start(self) -> None:
         return None
 
+    def __init__(self) -> None:
+        self._drained = asyncio.Event()
+
     async def pump_input(self, session) -> None:  # noqa: ANN001
-        await asyncio.Event().wait()
+        await self._drained.wait()
+
+    async def stop_input(self) -> None:
+        self._drained.set()
+
+    def set_active_output(self, **identity) -> None:  # noqa: ANN003
+        del identity
+
+    async def play_b64(self, value: str) -> None:
+        del value
 
     async def close(self) -> None:
         return None
@@ -395,11 +409,16 @@ async def test_settings_expose_and_validate_the_permission_mode(tmp_path):
         await control.save_settings(JsonRequest({"claude_permission_mode": "yolo"}))
 
 
-def test_settings_panel_offers_the_permission_mode():
+def test_settings_window_offers_the_permission_mode():
+    """Le mode d'autorisation vient de la description du CLI renvoyée par le
+    serveur (`permission_modes` / `permission_label`), pas d'une liste figée
+    dans la page : c'est ce branchement que ce test protège."""
     html = (Path(__file__).resolve().parents[2] / "jarvis" / "runtime" / "control_center.html").read_text(encoding="utf-8")
 
-    assert 'name="claude_permission_mode"' in html
-    assert "Tout autoriser (aucune demande)" in html
+    assert 'data-cli-field="permission_mode"' in html
+    assert "spec.permission_modes" in html
+    assert "esc(spec.permission_label)" in html
+    assert "personne ne peut répondre à une demande d'autorisation" in html
 
 
 # --------------------------------------------------------------------------
@@ -568,9 +587,13 @@ async def test_a_lost_realtime_connection_ends_the_turn_instead_of_killing_voice
     entry = next(e for e in read_jsonl_tail(tmp_path / "trace.jsonl") if e["kind"] == "provider.disconnected")
     assert entry["level"] == "warning"
     assert entry["data"]["code"] == "realtime_disconnected"
-    # Une connexion perdue n'est pas une erreur : rien ne doit atterrir dans
-    # la liste d'erreurs du Control Center.
-    assert read_jsonl_tail(tmp_path / "errors.jsonl") == []
+    # La déconnexion elle-même reste un avertissement : elle n'a rien cassé.
+    assert entry["kind"] not in {e["kind"] for e in read_jsonl_tail(tmp_path / "errors.jsonl")}
+    # En revanche la réponse de Claude, elle, est perdue pour l'utilisateur :
+    # c'est le seul canal qui reste pour la lui montrer.
+    rescued = read_jsonl_tail(tmp_path / "errors.jsonl")
+    assert [e["kind"] for e in rescued] == ["claude.answer_undelivered"]
+    assert rescued[0]["message"] == "c'est fait"
 
 
 async def test_a_provider_error_is_still_raised():
@@ -637,3 +660,190 @@ async def test_the_session_is_pinged_while_claude_works():
     await asyncio.wait_for(running, timeout=5)
 
     assert pings_during >= 3
+
+
+# --------------------------------------------------------------------------
+# La fin de tour : ne jamais laisser la session suspendue
+
+
+async def test_a_response_without_audio_ends_the_turn_instead_of_hanging(tmp_path):
+    """L'incident du 8 septembre à 15:41:58 : le VAD a clos le tour au milieu
+    d'une explication, le fournisseur a terminé sa réponse sans un seul bloc
+    audio, et plus rien n'est arrivé. L'état est resté « thinking » jusqu'au
+    délai d'activité utile — quatre-vingt-dix secondes d'écran figé, puis
+    retour au fond sans un mot ni une trace."""
+    from jarvis.runtime.journal import RuntimeJournal
+    from jarvis.runtime.realtime_audio import RealtimeConversationBridge
+
+    class SilentResponseSession(ToolCallSession):
+        async def events(self):
+            yield ProtocolEnvelope(message_type="realtime.input_committed", payload={"item_id": "item-1"})
+            yield ProtocolEnvelope(message_type="realtime.response_done", payload={"status": "cancelled"})
+
+    done: list[str] = []
+    bridge = RealtimeConversationBridge(
+        core=RecordingCore(),
+        session=SilentResponseSession("x", {}),
+        conversation_id="conv-1",
+        audio=SilentAudio(),
+        on_addressed=lambda: None,
+        on_mute=lambda: None,
+        on_response_done=lambda: done.append("done"),
+        auto_turn=True,
+        journal=RuntimeJournal(tmp_path),
+    )
+
+    await bridge.run()
+
+    assert done == ["done"], "le tour doit se clore au lieu d'attendre le délai d'activité"
+    entry = next(e for e in read_jsonl_tail(tmp_path / "trace.jsonl") if e["kind"] == "voice.response_silent")
+    assert entry["level"] == "warning"
+    assert entry["data"]["status"] == "cancelled"
+
+
+async def test_the_response_carrying_a_tool_call_does_not_end_the_turn():
+    """La réponse qui appelle l'outil porte déjà l'audio du « je m'en occupe ».
+    Sa clôture arrive après le résultat de l'outil : la prendre pour la fin du
+    tour coupait la session avant que la vraie réponse ne soit prononcée."""
+    from jarvis.runtime.realtime_audio import RealtimeConversationBridge
+
+    class ToolThenAnswerSession(ToolCallSession):
+        async def events(self):
+            yield ProtocolEnvelope(message_type="realtime.input_committed", payload={"item_id": "item-1"})
+            # Réponse 1 : l'annonce parlée, puis l'appel d'outil.
+            yield ProtocolEnvelope(message_type="realtime.audio", payload={"pcm_b64": ""})
+            yield ProtocolEnvelope(
+                message_type="realtime.tool_call",
+                payload={"call_id": "call_1", "name": CLAUDE_TOOL, "arguments": {"request": "une tâche"}},
+            )
+            yield ProtocolEnvelope(message_type="realtime.response_done", payload={"status": "completed"})
+            # Réponse 2 : celle que le résultat de l'outil vient de créer.
+            yield ProtocolEnvelope(message_type="realtime.audio", payload={"pcm_b64": ""})
+            yield ProtocolEnvelope(message_type="realtime.response_done", payload={"status": "completed"})
+
+    done: list[str] = []
+    bridge = RealtimeConversationBridge(
+        core=RecordingCore(),
+        session=ToolThenAnswerSession(CLAUDE_TOOL, {}),
+        conversation_id="conv-1",
+        audio=SilentAudio(),
+        on_addressed=lambda: None,
+        on_mute=lambda: None,
+        on_response_done=lambda: done.append("done"),
+        auto_turn=True,
+        claude=RecordingClaude({"ok": True, "spoken": "c'est fait"}),
+    )
+
+    await bridge.run()
+
+    assert done == ["done"], "le tour se clôt une seule fois, sur la réponse finale"
+
+
+async def test_the_same_tool_call_is_never_executed_twice():
+    """Garde de ceinture : même si le fournisseur annonce deux fois le même
+    `call_id`, Claude ne travaille qu'une fois."""
+    from jarvis.runtime.realtime_audio import RealtimeConversationBridge
+
+    class RepeatingSession(ToolCallSession):
+        async def events(self):
+            for _ in range(2):
+                yield ProtocolEnvelope(
+                    message_type="realtime.tool_call",
+                    payload={"call_id": "call_1", "name": CLAUDE_TOOL, "arguments": {"request": "une tâche"}},
+                )
+
+    claude = RecordingClaude({"ok": True, "spoken": "c'est fait"})
+    session = RepeatingSession(CLAUDE_TOOL, {})
+    bridge = RealtimeConversationBridge(
+        core=RecordingCore(),
+        session=session,
+        conversation_id="conv-1",
+        audio=SilentAudio(),
+        on_addressed=lambda: None,
+        on_mute=lambda: None,
+        claude=claude,
+    )
+
+    await bridge.run()
+
+    assert claude.asked == ["une tâche"]
+    assert len(session.results) == 1
+
+
+# --------------------------------------------------------------------------
+# La tâche longue : ne jamais couper la session sous les pieds de l'agent
+
+
+async def test_the_keepalive_keeps_beating_when_the_websocket_stops_answering(tmp_path):
+    """L'incident du 8 septembre à 15:45:28 : Claude travaillait toujours — la
+    console le montrait — mais le ping du websocket avait échoué, la boucle de
+    battement s'était arrêtée en silence, et 90 s plus tard le délai
+    d'inactivité a rendu la main sans un mot, sans erreur, sans vocal."""
+    from jarvis.runtime.journal import RuntimeJournal
+    from jarvis.runtime.realtime_audio import RealtimeConversationBridge
+
+    class DeafSession(ToolCallSession):
+        pings = 0
+
+        async def keepalive(self) -> None:
+            DeafSession.pings += 1
+            raise ConnectionResetError("websocket is gone")
+
+    released = asyncio.Event()
+
+    class SlowClaude:
+        async def ask(self, request: str) -> dict:
+            del request
+            await released.wait()
+            return {"ok": True, "spoken": "c'est fait"}
+
+    beats: list[int] = []
+    bridge = RealtimeConversationBridge(
+        core=RecordingCore(),
+        session=DeafSession(CLAUDE_TOOL, {"request": "une tâche longue"}),
+        conversation_id="conv-1",
+        audio=SilentAudio(),
+        on_addressed=lambda: beats.append(1),
+        on_mute=lambda: None,
+        claude=SlowClaude(),
+        journal=RuntimeJournal(tmp_path),
+    )
+    bridge.CLAUDE_KEEPALIVE_S = 0.01
+
+    running = asyncio.get_running_loop().create_task(bridge.run())
+    await asyncio.sleep(0.15)
+    beats_during = len(beats)
+    released.set()
+    await asyncio.wait_for(running, timeout=5)
+
+    assert beats_during >= 3, "le battement d'activité utile doit survivre au ping mort"
+    # On cesse de pinger une connexion morte, mais une seule fois : pas de
+    # tempête de tentatives sur un websocket fermé.
+    assert DeafSession.pings == 1
+    entry = next(e for e in read_jsonl_tail(tmp_path / "trace.jsonl") if e["kind"] == "provider.keepalive_failed")
+    assert entry["data"]["code"] == "realtime_keepalive_failed"
+
+
+async def test_an_answer_that_cannot_be_spoken_is_written_to_the_conversation():
+    """La réponse d'une tâche de plusieurs minutes ne doit pas disparaître
+    parce que la voix n'est plus là pour la porter."""
+    from jarvis.runtime.realtime_audio import RealtimeConversationBridge
+
+    class DisconnectingSession(ToolCallSession):
+        async def send_tool_result(self, call_id: str, result: dict) -> None:
+            raise ConnectionResetError("Cannot write to closing transport")
+
+    core = RecordingCore()
+    bridge = RealtimeConversationBridge(
+        core=core,
+        session=DisconnectingSession(CLAUDE_TOOL, {"request": "une tâche"}),
+        conversation_id="conv-1",
+        audio=SilentAudio(),
+        on_addressed=lambda: None,
+        on_mute=lambda: None,
+        claude=RecordingClaude({"ok": True, "spoken": "les tests passent"}),
+    )
+
+    await bridge.run()
+
+    assert ("assistant", "les tests passent") in [(t["kind"], t["content"]) for t in core.turns]

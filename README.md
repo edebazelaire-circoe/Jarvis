@@ -15,6 +15,7 @@ It deliberately **does not fork or build on `fullstack-agent`**. The Jarvis core
 - File signal bus compatible with ai-visualizer.
 - Authenticated Barehands `/cmd` integration with a random per-launch token held only in process environment/headers.
 - One-time third-party bootstrap with immutable commits, integrity checks and local vendoring of Three.js/MediaPipe so Barehands no longer needs CDN/model downloads at runtime.
+- Optional Google Drive access (read/write) behind one OAuth client, exposed both as Jarvis voice tools and as a local MCP stdio server (`python -m jarvis drive-mcp`) usable from Claude Code. See `docs/OPERATIONS.md`.
 - Health checks, privacy-safe JSONL diagnostics, automated release gates and a single local launcher.
 
 ## Architecture
@@ -117,6 +118,53 @@ python -m jarvis reindex
 
 Default PTT key is `F9`. Edit `config/jarvis.toml` or use the documented environment variables in `docs/OPERATIONS.md`.
 
+## Voice architectures (v0.2 realtime path)
+
+Beside the V1 push-to-talk loop, the repository runs a v0.2 realtime stack as
+three processes: `python -m jarvis core` (the persistent daemon that owns
+conversations, jobs, tools and the brain), `python -m jarvis voice` (wake word +
+Realtime session) and `python -m jarvis control-center` (browser panel and the
+local Claude/Codex agent).
+
+That voice path has two architectures, chosen by `JARVIS_VOICE_ARCH`:
+
+- `legacy` (**the default**) - one wake press, one turn, back to background as
+  soon as the answer ends. The microphone closes when the provider closes the
+  turn, so the speakers can never feed the next VAD segment. The realtime
+  surface holds the full Core tool catalogue (calendar, reminders, Drive) and
+  reaches the local agent itself through its `claude_task` tool.
+- `continuous_brain` (opt-in) - one ACTIVE session spans several turns; only an
+  explicit mute, the useful-inactivity timeout or an unrecoverable failure
+  returns to background. The microphone stays open between turns. The surface
+  keeps reflexes only - a short acknowledgement, a hearing repair, a
+  hearing-scoped clarification - and receives an **empty** tool catalogue. Every
+  completed user turn is submitted to a Core-owned brain, which owns truth,
+  intent and work state and speaks back through typed speech requests.
+
+The model behind it: **the surface has the reflexes, the brain has the truth.**
+
+Rollback is removing the variable. The default is computed by
+`default_voice_arch()` in `jarvis/v2_config.py`, which returns `legacy` while
+`CONTINUOUS_BRAIN_DEFAULT_BLOCKERS` is non-empty; nothing else decides it.
+
+**Blocking rollout gate.** That tuple currently holds
+`brain_calendar_access_unverified` and `brain_reminder_access_unverified`. In
+continuous mode the surface can no longer create a calendar event or a reminder,
+and the brain's own calendar/reminder access is **not verified**. Only Drive is
+reachable by the brain, and only if the operator registered
+`python -m jarvis drive-mcp` in the CLI agent (see `docs/OPERATIONS.md`).
+Continuous mode must not become the default until that access is wired or the
+gap is accepted in writing.
+
+Continuous mode additionally requires the OpenAI Realtime stack and automatic
+turn mode. Gemini Live and manual turn mode are refused loudly at startup rather
+than degraded silently.
+
+**Not verified.** No workstation acceptance (microphone, speakers, headphones,
+acoustic echo, VAD retriggering, audible barge-in) and no run against the real
+OpenAI Realtime service have been executed for this path. See
+`docs/handoff-realtime-brain/FINAL-REPORT.md` and `docs/ACCEPTANCE_STATUS.md`.
+
 ## Security defaults
 
 - No general shell/browser/send/delete tool exists in the V1 registry.
@@ -125,7 +173,9 @@ Default PTT key is `F9`. Edit `config/jarvis.toml` or use the documented environ
 - Board/visualizer URLs must be HTTP loopback addresses.
 - Barehands mutations require a random per-launch token and loopback origin; the token is never placed in the browser URL.
 - Barehands remote runtime assets are replaced by verified local copies; CSP blocks external connects.
-- Transcript/prompt/body content is redacted from logs by default (`log_content = false`).
+- V1 push-to-talk diagnostics redact transcript/prompt/body-like fields by default (`log_content = false`).
+- The v0.2 realtime runtime writes a different journal. `runtime/trace.jsonl` deliberately keeps up to 300 characters of transcripts, agent answers and spoken text so the Control Center debug console can show what was actually said; `JARVIS_LOG_CONTENT` does not gate it. Nothing leaves the machine. The latency telemetry added on top of it carries identifiers only.
+- Raw agent reasoning stays inside the brain boundary, not out of the machine (Decision 43). No reasoning field exists in Core's domain state, none is persisted in conversation turns, none is carried by `brain.state.updated` or by any speech request, and none reaches the Realtime surface. The local CLI agent's own reasoning, however, *is* kept locally by design: `runtime/trace.jsonl` records its raw `stream-json` events, `thinking` blocks included, and the Control Center console renders them as `[réflexion] ...`. That is the debug console working as intended; no setting turns it off today.
 - Memory path traversal and symlink escape attempts are rejected.
 
 See `docs/SECURITY.md` for threat boundaries and residual risks.

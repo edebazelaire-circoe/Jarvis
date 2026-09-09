@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import base64
 import json
+import uuid
+from collections import OrderedDict
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 
 import aiohttp
 
-from jarvis.domain.v2 import ProtocolEnvelope
+from jarvis.domain.v2 import PlaybackCursor, ProtocolEnvelope, SpeechRequest
 
 
 JARVIS_PERSONA = (
@@ -19,6 +22,10 @@ JARVIS_PERSONA = (
     "Ne joue pas la comédie et n'ajoute pas de didascalies."
 )
 
+# Règles du chemin *legacy* uniquement. `jarvis/adapters/gemini_live.py` importe
+# cette constante et Gemini reste sur ce chemin (Décision 21) : la modifier ici
+# changerait le comportement des deux piles vocales d'un coup. Le mode continu a
+# son propre jeu, ci-dessous.
 OPERATING_RULES = (
     "Tu es la voix d'un agent local, Claude, qui exécute les actions sur cet ordinateur. "
     "Tu ne réponds jamais de toi-même à une demande portant sur cette machine, ce projet, "
@@ -33,29 +40,279 @@ OPERATING_RULES = (
     "Si Core demande une confirmation, pose une question fermée oui/non et attends la réponse."
 )
 
+# Vocabulaire fermé des réflexes autorisés en mode continu (spec section 9).
+#
+# La question ouverte n°4 laisse le choix entre un acquittement libre et un
+# acquittement déterministe. Rien, dans une suite hors ligne, ne peut prouver
+# qu'un vrai modèle restera dans la limite ; on réduit donc l'espace au lieu de
+# le décrire : la consigne impose de choisir une phrase de ces listes, telle
+# quelle. Ce sont aussi les phrases qu'un futur acquittement émis par le code
+# devrait reprendre — d'où une seule source, ici.
+SURFACE_ACKNOWLEDGEMENTS: tuple[str, ...] = (
+    "Oui.",
+    "Entendu.",
+    "Je m'en occupe.",
+    "Un instant.",
+    "Je n'ai pas encore de retour.",
+)
+
+SURFACE_HEARING_REPAIRS: tuple[str, ...] = (
+    "Je n'ai pas saisi la fin.",
+    "Je n'ai pas entendu, pouvez-vous répéter ?",
+)
+
+
+def _quoted(phrases: tuple[str, ...]) -> str:
+    return ", ".join(f"« {phrase} »" for phrase in phrases)
+
+
+# Règles du mode `continuous_brain`. Frontière non négociable : la surface a les
+# réflexes, le cerveau détient la vérité et l'intention (Décisions 02 et 14).
+#
+# Ce jeu ne remplace pas le précédent, il le double : le mode legacy et Gemini
+# gardent `OPERATING_RULES` à l'identique.
+CONTINUOUS_BRAIN_OPERATING_RULES = (
+    "Tu es la surface vocale de JARVIS. Le cerveau de JARVIS est un agent séparé : c'est lui qui "
+    "détient la vérité et l'intention, comprend la demande, exécute le travail et rédige la réponse. "
+    "Tout ce que dit l'utilisateur lui est déjà transmis intégralement, mot pour mot : tu n'as rien "
+    "à déclencher, rien à résumer, rien à retransmettre. Sa réponse sera prononcée par un autre "
+    "chemin, telle quelle : ne l'anticipe pas, ne la répète pas, ne la commente pas.\n"
+    "De toi-même, tu peux uniquement : accuser réception par une phrase de cette liste, telle "
+    f"quelle — {_quoted(SURFACE_ACKNOWLEDGEMENTS)} ; réparer une écoute par une phrase de cette "
+    f"liste, telle quelle — {_quoted(SURFACE_HEARING_REPAIRS)} ; poser une question de "
+    "clarification minimale portant strictement sur ce que tu as entendu, jamais sur le fond de la "
+    "demande. Une seule phrase courte à la fois, puis tu te tais et tu écoutes.\n"
+    "Il t'est interdit d'annoncer un résultat, une progression, un succès ou un échec ; de prétendre "
+    "qu'une opération sur un fichier, un e-mail, un agenda, un projet ou cette machine a eu lieu ; "
+    "de répondre sur le fond à la place du cerveau ; d'inventer une progression pour meubler le "
+    "silence ; de décider d'annuler, de remplacer ou de relancer un travail en cours. "
+    "Tu ne sais rien de l'avancement du travail : si l'utilisateur demande où il en est, dis "
+    "seulement que tu n'as pas encore de retour, sans estimer ni supposer quoi que ce soit. "
+    "Se taire vaut toujours mieux qu'inventer une progression.\n"
+    "Tu n'exécutes aucune action toi-même : tu ne disposes d'aucun outil. Aucun fichier, aucun "
+    "message, aucun rendez-vous, aucun rappel ne passe par toi. Toute demande, qu'elle consiste à "
+    "lire ou à écrire, appartient au cerveau, qui l'a déjà reçue. Si tu es tenté d'agir, ou de dire "
+    "qu'une action a eu lieu, tais-toi : c'est toujours le bon choix."
+)
+
+
+def operating_rules_for(*, continuous_brain: bool) -> str:
+    """Le jeu de règles de surface correspondant à l'architecture active.
+
+    Les deux jeux sont volontairement distincts : en continu la surface perd le
+    droit de parler du travail, ce que le jeu legacy lui demande au contraire de
+    faire. Un seul point de sélection existe pour qu'aucun appelant n'ait à
+    recomposer un prompt de son côté.
+    """
+
+    return CONTINUOUS_BRAIN_OPERATING_RULES if continuous_brain else OPERATING_RULES
+
+
+def build_session_instructions(context: dict[str, object], *, continuous_brain: bool = False) -> str:
+    """Assembler les instructions de session : persona, règles, contexte récent.
+
+    Extrait de `connect()` pour être vérifiable sans websocket : le respect de la
+    frontière vérité/progression se teste sur le texte, pas sur le réseau.
+    """
+
+    instructions = JARVIS_PERSONA + " " + operating_rules_for(continuous_brain=continuous_brain)
+    recent = context.get("recent_turns") or []
+    if recent:
+        instructions += "\nConversation context:\n" + "\n".join(
+            f"{item.get('kind')}: {item.get('content')}" for item in recent[-12:] if isinstance(item, dict)
+        )
+    return instructions
+
+
 # Server-side voice activity detection: the turn ends on silence and the
 # response starts on its own, so the wake key never has to be pressed twice.
 SERVER_VAD = {
     "type": "server_vad",
     "threshold": 0.55,
     "prefix_padding_ms": 300,
-    "silence_duration_ms": 800,
+    # 800 ms suffisaient à prendre une pause de réflexion pour une fin de phrase :
+    # le tour se fermait au milieu d'une explication et tout le reste était perdu.
+    "silence_duration_ms": 1500,
     "create_response": True,
     "interrupt_response": True,
 }
 
+# Clé de corrélation posée dans `response.metadata` et renvoyée telle quelle par
+# le fournisseur : c'est ce qui relie une réponse Realtime à la demande de
+# parole du cerveau qui l'a déclenchée.
+OUTPUT_ID_METADATA_KEY = "jarvis_output_id"
+SPEECH_ID_METADATA_KEY = "jarvis_speech_id"
+
+# Consigne de restitution fidèle : elle remplace les instructions de session
+# pour cette réponse-là, ce qui interdit à la surface de reformuler le texte du
+# cerveau (spec section 8, Décisions 02 et 13).
+VERBATIM_SPEECH_INSTRUCTION = (
+    "Lis à voix haute, mot pour mot, exactement le texte délimité ci-dessous. "
+    "N'ajoute rien, ne retire rien, ne reformule pas, ne commente pas, "
+    "n'annonce pas que tu vas le lire et ne lis pas les délimiteurs.\n"
+    "<<<TEXTE>>>\n{text}\n<<<FIN>>>"
+)
+
+
+@dataclass(slots=True)
+class _RealtimeOutput:
+    """Une sortie vocale du fournisseur, du `response.create` au `response.done`.
+
+    `output_id` est l'identifiant local et opaque rendu par `speak()` : les
+    identifiants fournisseur n'existent qu'après l'aller-retour websocket, et
+    la boucle `events()` est consommée ailleurs, donc `speak()` ne peut pas les
+    attendre sans se bloquer. Ils sont renseignés ici dès qu'ils arrivent.
+    """
+
+    output_id: str
+    speech_id: str | None = None
+    response_id: str | None = None
+    item_id: str | None = None
+    content_index: int = 0
+
 
 class OpenAIRealtimeSession:
-    """OpenAI Realtime WebSocket adapter; provider JSON never enters Core contracts."""
+    """OpenAI Realtime WebSocket adapter; provider JSON never enters Core contracts.
+
+    Implémente deux ports : `RealtimeSession` (transport, inchangé) et
+    `RealtimeOutputControl` (parole du cerveau, annulation, troncature). Le
+    second est délibérément séparé pour ne pas élargir le premier (Décision 22).
+
+    Propriété/concurrence : l'état de sortie ci-dessous n'est écrit que par
+    `events()` et par les méthodes de contrôle, toutes appelées depuis la seule
+    boucle asyncio du runtime Voice. Aucun verrou n'est donc pris ; si un jour
+    deux tâches pilotent la même session, cette invariante doit être revue.
+    """
 
     # The configured input is 24 kHz, mono PCM16; commits require 100 ms.
     MIN_INPUT_BYTES = 24000 * 2 // 10
+
+    # Une session longue enchaîne des centaines de réponses : seules les plus
+    # récentes peuvent encore être annulées ou tronquées, le reste est purgé.
+    MAX_TRACKED_OUTPUTS = 32
 
     def __init__(self, ws: aiohttp.ClientWebSocketResponse, http: aiohttp.ClientSession, *, owns_http: bool) -> None:
         self.ws = ws
         self.http = http
         self.owns_http = owns_http
         self._pending_audio_bytes = 0
+        # Un appel de fonction est annoncé deux fois : d'abord ses arguments
+        # terminés, puis l'élément terminé. Sans mémoire des identifiants déjà
+        # publiés, l'outil part deux fois et le résultat revient deux fois.
+        self._emitted_calls: set[str] = set()
+        # Suivi minimal des sorties vocales : sans lui, personne ne sait quelle
+        # réponse joue, donc ni l'annuler ni la tronquer au barge-in.
+        self._outputs: OrderedDict[str, _RealtimeOutput] = OrderedDict()
+        self._output_by_speech: dict[str, str] = {}
+        self._output_by_response: dict[str, str] = {}
+        self._active_output_id: str | None = None
+
+    @property
+    def active_output_id(self) -> str | None:
+        """Sortie en cours de génération, ou None quand la surface se tait."""
+
+        return self._active_output_id
+
+    def output_for_speech(self, speech_id: str) -> _RealtimeOutput | None:
+        """Retrouver la sortie déclenchée par une demande de parole donnée."""
+
+        output_id = self._output_by_speech.get(speech_id)
+        return self._outputs.get(output_id) if output_id else None
+
+    def _register_output(self, *, speech_id: str | None) -> _RealtimeOutput:
+        output = _RealtimeOutput(output_id=f"out-{uuid.uuid4()}", speech_id=speech_id)
+        self._outputs[output.output_id] = output
+        if speech_id:
+            self._output_by_speech[speech_id] = output.output_id
+        while len(self._outputs) > self.MAX_TRACKED_OUTPUTS:
+            _, evicted = self._outputs.popitem(last=False)
+            if evicted.speech_id:
+                self._output_by_speech.pop(evicted.speech_id, None)
+            if evicted.response_id:
+                self._output_by_response.pop(evicted.response_id, None)
+        return output
+
+    def _bind_response(self, response: dict[str, object]) -> _RealtimeOutput:
+        """Rattacher une réponse fournisseur à la sortie locale correspondante.
+
+        La corrélation passe uniquement par les métadonnées renvoyées par le
+        fournisseur. Une réponse sans métadonnée connue n'est pas une parole du
+        cerveau : c'est un réflexe de surface ou un tour créé par le VAD, et
+        elle reçoit sa propre sortie locale pour rester pilotable.
+        """
+
+        metadata = response.get("metadata") if isinstance(response.get("metadata"), dict) else {}
+        output_id = str(metadata.get(OUTPUT_ID_METADATA_KEY) or "")
+        output = self._outputs.get(output_id) if output_id else None
+        if output is None:
+            output = self._register_output(speech_id=None)
+        response_id = response.get("id")
+        if response_id:
+            output.response_id = str(response_id)
+            self._output_by_response[str(response_id)] = output.output_id
+        self._outputs.move_to_end(output.output_id)
+        return output
+
+    def _output_for_event(self, data: dict[str, object]) -> _RealtimeOutput | None:
+        """Retrouver la sortie visée par un événement de génération.
+
+        Les événements de flux portent `response_id` ; ils renseignent au
+        passage l'identifiant d'élément, seul support de la troncature, car
+        `response.output_item.added` peut manquer sur les noms d'événements
+        hérités.
+        """
+
+        response_id = data.get("response_id")
+        if not response_id:
+            return None
+        output_id = self._output_by_response.get(str(response_id))
+        output = self._outputs.get(output_id) if output_id else None
+        if output is None:
+            return None
+        item_id = data.get("item_id")
+        if item_id:
+            output.item_id = str(item_id)
+        content_index = data.get("content_index")
+        if isinstance(content_index, int):
+            output.content_index = content_index
+        return output
+
+    @staticmethod
+    def _output_payload(output: _RealtimeOutput | None) -> dict[str, object]:
+        """Identifiants normalisés joints à tout événement de sortie."""
+
+        if output is None:
+            return {"output_id": None, "speech_id": None, "response_id": None, "item_id": None}
+        return {
+            "output_id": output.output_id,
+            "speech_id": output.speech_id,
+            "response_id": output.response_id,
+            "item_id": output.item_id,
+        }
+
+    def _resolve_output(self, cursor: PlaybackCursor | None) -> _RealtimeOutput | None:
+        """Choisir la sortie visée par un curseur de lecture.
+
+        Ordre de résolution : identifiants fournisseur portés par le curseur,
+        puis la demande de parole, puis la sortie active. Le curseur peut venir
+        d'un runtime qui n'a observé que les événements normalisés, donc aucun
+        de ses champs facultatifs n'est exigé (Décision 24).
+        """
+
+        if cursor is None:
+            return self._outputs.get(self._active_output_id) if self._active_output_id else None
+        if cursor.provider_response_id:
+            output_id = self._output_by_response.get(cursor.provider_response_id)
+            if output_id and output_id in self._outputs:
+                return self._outputs[output_id]
+        known = self.output_for_speech(cursor.speech_id)
+        if known is not None:
+            return known
+        if cursor.provider_item_id:
+            for output in reversed(self._outputs.values()):
+                if output.item_id == cursor.provider_item_id:
+                    return output
+        return self._outputs.get(self._active_output_id) if self._active_output_id else None
 
     @classmethod
     async def connect(
@@ -67,6 +324,11 @@ class OpenAIRealtimeSession:
         context: dict[str, object],
         tools: list[dict[str, object]] | None = None,
         auto_turn: bool = True,
+        transcription_model: str = "gpt-4o-mini-transcribe",
+        vad_threshold: float | None = None,
+        vad_prefix_padding_ms: int | None = None,
+        vad_silence_duration_ms: int | None = None,
+        continuous_brain: bool = False,
         session: aiohttp.ClientSession | None = None,
     ) -> "OpenAIRealtimeSession":
         owns = session is None
@@ -78,12 +340,17 @@ class OpenAIRealtimeSession:
                 heartbeat=20,
             )
             instance = cls(ws, http, owns_http=owns)
-            instructions = JARVIS_PERSONA + " " + OPERATING_RULES
-            recent = context.get("recent_turns") or []
-            if recent:
-                instructions += "\nConversation context:\n" + "\n".join(
-                    f"{item.get('kind')}: {item.get('content')}" for item in recent[-12:] if isinstance(item, dict)
-                )
+            # Les défauts restent ceux de SERVER_VAD : seuls les réglages
+            # explicitement fournis par le Control Center les remplacent.
+            vad = dict(SERVER_VAD)
+            for key, value in (
+                ("threshold", vad_threshold),
+                ("prefix_padding_ms", vad_prefix_padding_ms),
+                ("silence_duration_ms", vad_silence_duration_ms),
+            ):
+                if value is not None:
+                    vad[key] = type(SERVER_VAD[key])(value)
+            instructions = build_session_instructions(context, continuous_brain=continuous_brain)
             await ws.send_json(
                 {
                     "type": "session.update",
@@ -94,8 +361,8 @@ class OpenAIRealtimeSession:
                         "audio": {
                             "input": {
                                 "format": {"type": "audio/pcm", "rate": 24000},
-                                "transcription": {"model": "gpt-4o-mini-transcribe"},
-                                "turn_detection": dict(SERVER_VAD) if auto_turn else None,
+                                "transcription": ({"model": transcription_model} if transcription_model else None),
+                                "turn_detection": vad if auto_turn else None,
                             },
                             "output": {
                                 "format": {"type": "audio/pcm", "rate": 24000},
@@ -103,7 +370,11 @@ class OpenAIRealtimeSession:
                             },
                         },
                         "tools": tools or [],
-                        "tool_choice": "auto",
+                        # Catalogue vide (mode continu, Décision 34) : le dire au
+                        # fournisseur plutôt que le laisser deviner. « auto » sur
+                        # une liste vide est une contradiction que rien n'oblige
+                        # le fournisseur à trancher comme nous l'entendons.
+                        "tool_choice": "auto" if tools else "none",
                     },
                 }
             )
@@ -164,6 +435,76 @@ class OpenAIRealtimeSession:
         )
         await self.ws.send_json({"type": "response.create"})
 
+    async def speak(self, request: SpeechRequest) -> str:
+        """Faire dire le texte du cerveau tel quel et rendre l'identifiant de sortie.
+
+        Un seul message part : `response.create` porteur d'une instruction de
+        réponse. Aucun `conversation.item.create` n'est émis, donc aucun faux
+        tour `role=user` n'est fabriqué (spec section 8) : `send_context()` reste
+        réservé au chemin legacy.
+
+        La réponse est créée dans la conversation par défaut, et non hors bande,
+        afin que l'audio produit devienne un élément tronquable au barge-in
+        (spec section 12).
+
+        L'identifiant rendu est local et opaque : les identifiants fournisseur
+        n'arrivent qu'ensuite, sur `realtime.output_started`, qui rappelle ce
+        même `output_id`.
+        """
+
+        output = self._register_output(speech_id=request.id)
+        await self.ws.send_json(
+            {
+                "type": "response.create",
+                "response": {
+                    "instructions": VERBATIM_SPEECH_INSTRUCTION.format(text=request.text),
+                    "output_modalities": ["audio"],
+                    "metadata": {
+                        OUTPUT_ID_METADATA_KEY: output.output_id,
+                        SPEECH_ID_METADATA_KEY: request.id,
+                    },
+                },
+            }
+        )
+        return output.output_id
+
+    async def cancel_output(self, cursor: PlaybackCursor | None = None) -> None:
+        """Interrompre la génération en cours ; sans effet si rien ne joue.
+
+        Ne touche pas à l'historique : l'alignement de ce que l'utilisateur a
+        réellement entendu est le travail de `truncate()`, appelé juste après
+        dans la séquence de barge-in.
+        """
+
+        output = self._resolve_output(cursor)
+        if output is None and self._active_output_id is None:
+            return
+        payload: dict[str, object] = {"type": "response.cancel"}
+        if output is not None and output.response_id:
+            payload["response_id"] = output.response_id
+        await self.ws.send_json(payload)
+
+    async def truncate(self, cursor: PlaybackCursor) -> None:
+        """Aligner l'historique fournisseur sur ce qui a réellement été entendu.
+
+        Lève `ValueError` quand aucun élément fournisseur ne correspond au
+        curseur : tronquer au hasard couperait la mauvaise réponse, et se taire
+        laisserait le modèle croire qu'il a dit ce que personne n'a entendu.
+        """
+
+        output = self._resolve_output(cursor)
+        item_id = cursor.provider_item_id or (output.item_id if output else None)
+        if not item_id:
+            raise ValueError(f"no provider item to truncate for speech {cursor.speech_id!r}")
+        await self.ws.send_json(
+            {
+                "type": "conversation.item.truncate",
+                "item_id": item_id,
+                "content_index": output.content_index if output else 0,
+                "audio_end_ms": cursor.played_ms,
+            }
+        )
+
     async def events(self) -> AsyncIterator[ProtocolEnvelope]:
         async for message in self.ws:
             if message.type != aiohttp.WSMsgType.TEXT:
@@ -172,26 +513,70 @@ class OpenAIRealtimeSession:
                 continue
             data = message.json()
             kind = str(data.get("type") or "")
-            if kind in {"response.audio.delta", "response.output_audio.delta"}:
-                yield ProtocolEnvelope(message_type="realtime.audio", payload={"pcm_b64": data.get("delta", "")})
+            if kind == "response.created":
+                response = data.get("response") if isinstance(data.get("response"), dict) else {}
+                output = self._bind_response(response)
+                self._active_output_id = output.output_id
+                yield ProtocolEnvelope(
+                    message_type="realtime.output_started",
+                    payload=self._output_payload(output),
+                )
+            elif kind == "response.output_item.added":
+                # Seul porteur fiable de l'identifiant d'élément avant l'audio :
+                # c'est lui qui rend la troncature possible dès la première ms.
+                item = data.get("item") if isinstance(data.get("item"), dict) else {}
+                # Un appel d'outil est aussi un élément de sortie : le retenir
+                # ferait tronquer le mauvais élément au barge-in.
+                if item.get("type") in {None, "message"}:
+                    self._output_for_event({**data, "item_id": item.get("id")})
+            elif kind in {"response.audio.delta", "response.output_audio.delta"}:
+                output = self._output_for_event(data)
+                yield ProtocolEnvelope(
+                    message_type="realtime.audio",
+                    payload={"pcm_b64": data.get("delta", ""), **self._output_payload(output)},
+                )
             elif kind in {"response.audio.done", "response.output_audio.done"}:
-                yield ProtocolEnvelope(message_type="realtime.audio_done", payload={})
+                output = self._output_for_event(data)
+                yield ProtocolEnvelope(
+                    message_type="realtime.audio_done", payload=self._output_payload(output)
+                )
             elif kind == "response.done":
                 response = data.get("response") if isinstance(data.get("response"), dict) else {}
+                output = self._output_for_event({"response_id": response.get("id")})
+                if output is not None and self._active_output_id == output.output_id:
+                    self._active_output_id = None
                 yield ProtocolEnvelope(
                     message_type="realtime.response_done",
-                    payload={"status": response.get("status")},
+                    payload={"status": response.get("status"), **self._output_payload(output)},
                 )
             elif kind in {
                 "conversation.item.input_audio_transcription.completed",
                 "input_audio_buffer.transcription.completed",
             }:
                 yield ProtocolEnvelope(
-                    message_type="realtime.transcript", payload={"text": data.get("transcript", "")}
+                    message_type="realtime.transcript",
+                    payload={
+                        "text": data.get("transcript", ""),
+                        "item_id": data.get("item_id"),
+                        "content_index": data.get("content_index"),
+                    },
+                )
+            elif kind == "conversation.item.input_audio_transcription.delta":
+                # Contexte tentatif uniquement : le transcript complété reste le
+                # seul déclencheur de travail irréversible (Décision 07).
+                yield ProtocolEnvelope(
+                    message_type="realtime.transcript_delta",
+                    payload={
+                        "text": data.get("delta", ""),
+                        "item_id": data.get("item_id"),
+                        "content_index": data.get("content_index"),
+                    },
                 )
             elif kind in {"response.audio_transcript.done", "response.output_audio_transcript.done"}:
+                output = self._output_for_event(data)
                 yield ProtocolEnvelope(
-                    message_type="realtime.assistant_transcript", payload={"text": data.get("transcript", "")}
+                    message_type="realtime.assistant_transcript",
+                    payload={"text": data.get("transcript", ""), **self._output_payload(output)},
                 )
             elif kind in {"response.function_call_arguments.done", "response.output_item.done"}:
                 item = data.get("item") if isinstance(data.get("item"), dict) else data
@@ -201,12 +586,19 @@ class OpenAIRealtimeSession:
                         arguments = json.loads(raw) if isinstance(raw, str) else dict(raw)
                     except Exception:
                         arguments = {}
+                    call_id = item.get("call_id") or data.get("call_id")
+                    if call_id and str(call_id) in self._emitted_calls:
+                        continue
+                    if call_id:
+                        self._emitted_calls.add(str(call_id))
                     yield ProtocolEnvelope(
                         message_type="realtime.tool_call",
                         payload={
-                            "call_id": item.get("call_id") or data.get("call_id"),
+                            "call_id": call_id,
                             "name": item.get("name") or data.get("name"),
                             "arguments": arguments,
+                            "response_id": data.get("response_id"),
+                            "item_id": item.get("id") or data.get("item_id"),
                         },
                     )
             elif kind == "input_audio_buffer.speech_started":

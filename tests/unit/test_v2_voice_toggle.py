@@ -10,6 +10,14 @@ from jarvis.adapters.openai_realtime import OpenAIRealtimeSession
 from jarvis.domain.v2 import ProtocolEnvelope, VoiceLifecycleState
 from jarvis.runtime.realtime_audio import SoundDeviceRealtimeAudio
 from jarvis.runtime.voice_v2 import PersistentVoiceRuntime
+from jarvis.v2_config import VoiceArchitecture
+
+# Ce fichier prouve le contrat *legacy* : un appui, un tour, retour au fond dès
+# que la reponse est terminee. Le mode continu (Decision 08) le contredit
+# volontairement et vit dans `test_v2_continuous_live.py`. Chaque runtime
+# construit ici passe donc `voice_arch` explicitement : si le defaut bascule un
+# jour, ces tests doivent continuer a prouver l'ancien chemin, pas changer de
+# sens en silence.
 
 
 class FakeWebSocket:
@@ -184,8 +192,10 @@ class FakeAudio(SoundDeviceRealtimeAudio):
     order: list[str] = []
     pcm = b"\x01\x00" * 2400
 
-    def __init__(self, *, input_device=None, output_device=None) -> None:  # noqa: ANN001
-        super().__init__(input_device=input_device, output_device=output_device)
+    def __init__(self, *, input_device=None, output_device=None, **rates) -> None:  # noqa: ANN001
+        # Les fréquences dépendent de la pile vocale choisie : les accepter
+        # telles quelles évite que ce double se désynchronise de l'appelant.
+        super().__init__(input_device=input_device, output_device=output_device, **rates)
         self.started = asyncio.Event()
         self.input_stopped = asyncio.Event()
         self.closed = False
@@ -262,6 +272,7 @@ async def test_second_f9_submits_audio_and_returns_to_background_after_response(
         journal=journal,  # type: ignore[arg-type]
         audio_input_device=3,
         audio_output_device=7,
+        voice_arch=VoiceArchitecture.LEGACY,
     )
     run_task = asyncio.create_task(runtime.run())
 
@@ -355,6 +366,7 @@ async def test_auto_turn_answers_without_a_second_key_press(monkeypatch):
         signals=signals,  # type: ignore[arg-type]
         journal=journal,  # type: ignore[arg-type]
         auto_turn=True,
+        voice_arch=VoiceArchitecture.LEGACY,
     )
     run_task = asyncio.create_task(runtime.run())
     try:
@@ -398,6 +410,7 @@ async def test_auto_turn_key_press_cancels_instead_of_submitting(monkeypatch):
         realtime_factory=factory,  # type: ignore[arg-type]
         journal=journal,  # type: ignore[arg-type]
         auto_turn=True,
+        voice_arch=VoiceArchitecture.LEGACY,
     )
     run_task = asyncio.create_task(runtime.run())
     try:
@@ -545,6 +558,7 @@ async def test_short_turn_keeps_runtime_alive_for_next_f9(monkeypatch, tmp_path,
     runtime = PersistentVoiceRuntime(
         wakeword=wakeword, core=FakeCore(), realtime_factory=factory,
         signals=signals, journal=RuntimeJournal(tmp_path), audio_input_device=3,
+        voice_arch=VoiceArchitecture.LEGACY,
     )
     run_task = asyncio.create_task(runtime.run())
 
@@ -610,6 +624,7 @@ async def test_submission_before_audio_start_is_skipped_and_closes_session(monke
 
     runtime = PersistentVoiceRuntime(
         wakeword=FakeWakeWord(), core=FakeCore(), realtime_factory=factory, journal=journal,
+        voice_arch=VoiceArchitecture.LEGACY,
     )
     try:
         await runtime.activate()
@@ -653,3 +668,57 @@ def test_realtime_defaults_are_hands_free_and_low_timbre(monkeypatch, tmp_path):
     settings = V2Settings.load()
     assert settings.realtime_voice == "cedar"
     assert settings.auto_turn is True
+
+
+@pytest.mark.asyncio
+async def test_a_function_call_announced_twice_is_only_dispatched_once():
+    """Un appel de fonction est annoncé sur deux évènements successifs.
+
+    OpenAI publie `response.function_call_arguments.done` puis
+    `response.output_item.done` pour le même `call_id` : les deux étaient
+    traduits en appel d'outil, donc Claude partait deux fois sur la même
+    demande et le résultat était renvoyé deux fois au fournisseur.
+    """
+    import aiohttp
+
+    frames = [
+        {
+            "type": "response.function_call_arguments.done",
+            "call_id": "call_1",
+            "name": "claude_task",
+            "arguments": '{"request": "ouvre un notepad"}',
+        },
+        {
+            "type": "response.output_item.done",
+            "item": {
+                "type": "function_call",
+                "call_id": "call_1",
+                "name": "claude_task",
+                "arguments": '{"request": "ouvre un notepad"}',
+            },
+        },
+    ]
+
+    class Message:
+        type = aiohttp.WSMsgType.TEXT
+
+        def __init__(self, payload):
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+    class IterableWebSocket(FakeWebSocket):
+        def __aiter__(self):
+            async def stream():
+                for frame in frames:
+                    yield Message(frame)
+
+            return stream()
+
+    websocket = IterableWebSocket()
+    session = OpenAIRealtimeSession(websocket, FakeHttpSession(websocket), owns_http=False)  # type: ignore[arg-type]
+    events = [event async for event in session.events()]
+
+    assert [event.message_type for event in events] == ["realtime.tool_call"]
+    assert events[0].payload["call_id"] == "call_1"

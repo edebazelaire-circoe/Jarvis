@@ -1,15 +1,28 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
 from jarvis.domain.v2 import (
-    Conversation, ConversationStatus, ConversationTurn, HistoryRecord, Job, JobStatus,
+    Conversation, ConversationStatus, ConversationTurn, HistoryRecord, Job, JobProgress, JobStatus,
     MissedRunPolicy, Notification, NotificationState, ProtocolEnvelope, ScheduledItem,
-    ScheduledStatus, TurnKind, utc_now,
+    ScheduledStatus, TurnKind, new_id, utc_now,
 )
-from jarvis.ports.v2 import Clock, HistoryStore, JobWorker, NotificationDelivery, StateRepository
+from jarvis.ports.v2 import (
+    Clock, DiagnosticSink, HistoryStore, JobProgressSink, JobWorker, NotificationDelivery,
+    ProgressReportingJobWorker, StateRepository,
+)
+
+# Type d'evenement du contrat public d'avancement
+# (`docs/handoff-realtime-brain/docs/05-event-contracts.md`). Il est defini ici
+# plutot que dans `brain_service` parce que `JobService` en est une source
+# legitime — un job qui avance **est** du travail cerveau qui avance — et que
+# `brain_service` importe deja ce module (l'inverse creerait un cycle).
+BRAIN_WORK_PROGRESS = "brain.work.progress"
+
+# Canal de diagnostic emis quand de l'avancement a ete coalesce a la source.
+JOB_PROGRESS_COALESCED_KIND = "core.job.progress_coalesced"
 
 
 class SystemClock:
@@ -20,9 +33,42 @@ class SystemClock:
         await asyncio.sleep(seconds)
 
 
+class NullDiagnosticSink:
+    """Puits de diagnostic inerte.
+
+    Défaut du bus : les appelants qui n'injectent rien gardent exactement le
+    comportement historique, sans dépendance vers un journal concret.
+    """
+
+    def emit(self, kind: str, message: str, *, level: str = "info", data: dict | None = None) -> None:
+        return None
+
+
 class CoreEventBus:
-    def __init__(self) -> None:
+    """Bus d'événements borné, avec éviction observable.
+
+    La politique reste inchangée : un abonné dont la file est pleine est
+    désabonné (le bus ne devient jamais illimité). Ce qui change, c'est que
+    l'éviction n'est plus silencieuse — elle est signalée au puits de
+    diagnostic injecté, sinon une surface pourrait disparaître du flux sans
+    laisser de trace.
+    """
+
+    EVICTION_KIND = "core.event_bus.subscriber_evicted"
+
+    def __init__(self, *, diagnostics: DiagnosticSink | None = None) -> None:
         self._subscribers: set[asyncio.Queue[ProtocolEnvelope]] = set()
+        self._diagnostics: DiagnosticSink = diagnostics or NullDiagnosticSink()
+        self._evicted_total = 0
+
+    @property
+    def evicted_total(self) -> int:
+        """Nombre cumulé d'abonnés évincés depuis la création du bus."""
+        return self._evicted_total
+
+    @property
+    def subscriber_count(self) -> int:
+        return len(self._subscribers)
 
     async def publish(self, event: ProtocolEnvelope) -> None:
         dead: list[asyncio.Queue[ProtocolEnvelope]] = []
@@ -33,6 +79,32 @@ class CoreEventBus:
                 dead.append(queue)
         for queue in dead:
             self._subscribers.discard(queue)
+            self._evicted_total += 1
+            self._report_eviction(event, queue)
+
+    def _report_eviction(self, event: ProtocolEnvelope, queue: asyncio.Queue[ProtocolEnvelope]) -> None:
+        payload = {
+            "message_type": event.message_type,
+            "correlation_id": event.correlation_id,
+            "conversation_id": event.conversation_id,
+            "queue_maxsize": queue.maxsize,
+            "queue_size": queue.qsize(),
+            "remaining_subscribers": len(self._subscribers),
+            "evicted_total": self._evicted_total,
+        }
+        try:
+            self._diagnostics.emit(
+                self.EVICTION_KIND,
+                "abonné évincé du bus : file d'événements saturée",
+                level="warning",
+                data=payload,
+            )
+        except Exception:
+            # L'observabilité ne doit jamais casser la diffusion d'événements :
+            # un journal indisponible (disque plein, fichier verrouillé) ne peut
+            # pas faire échouer un publish. La perte reste comptée dans
+            # `evicted_total`, qui est lisible par l'appelant.
+            pass
 
     def subscribe(self, *, max_queue: int = 128) -> asyncio.Queue[ProtocolEnvelope]:
         queue: asyncio.Queue[ProtocolEnvelope] = asyncio.Queue(maxsize=max_queue)
@@ -77,6 +149,17 @@ class ConversationService:
         await self.state.save_conversation(replace(conversation, updated_at=turn.created_at))
         await self.history.append(HistoryRecord(id=turn.id, kind=kind, created_at=turn.created_at, correlation_id=correlation_id, conversation_id=conversation_id, content=content, reference_id=reference_id, metadata=turn.metadata))
         return turn
+
+    async def list_turns(self, conversation_id: str, *, limit: int | None = None):
+        """Derniers tours persistes, du plus ancien au plus recent.
+
+        Passe-plat assume vers le magasin d'etat : il evite que les services du
+        coeur (l'orchestrateur cerveau, notamment) aient a atteindre
+        `ConversationService.state` a travers l'objet, ce qui rendrait la
+        propriete du magasin illisible.
+        """
+
+        return await self.state.list_turns(conversation_id, limit=limit or self.recent_turn_limit)
 
     async def rehydration_context(self, conversation_id: str) -> dict[str, object]:
         conversation = await self.state.get_conversation(conversation_id)
@@ -173,19 +256,174 @@ class SchedulerService:
         await self.state.save_scheduled_item(updated)
 
 
+@dataclass(frozen=True, slots=True)
+class _WorkLink:
+    """Rattachement d'un job au travail cerveau qui l'a demande.
+
+    En memoire uniquement, et volontairement : ce lien ne sert que pendant
+    l'execution. Un redemarrage de Core marque de toute facon les jobs RUNNING
+    comme INTERRUPTED (`JobService.recover`), donc rien de ce lien ne survivrait
+    a un usage utile. Le persister imposerait une migration de schema pour une
+    donnee qui n'a plus de sens au redemarrage.
+    """
+
+    work_id: str
+    correlation_id: str
+
+
+class _JobProgressChannel:
+    """Puits d'avancement d'un job unique, borne a la source.
+
+    Propriete
+    ---------
+    Cree et detruit par `JobService._execute`, confine a la tache du job. Le
+    worker ne le partage avec personne, donc aucun verrou n'est pris ; cette
+    invariante devrait etre revue si un jour un worker deleguait `emit` a
+    plusieurs taches.
+
+    Debit
+    -----
+    `CoreEventBus` reste borne a 128 et evince l'abonne dont la file deborde
+    (Decision 25, question ouverte 6). Un worker bavard pourrait donc faire
+    disparaitre la surface vocale du flux. Le debit est limite **ici**, a la
+    source, plutot qu'en elargissant le bus :
+
+    - la premiere progression part immediatement ;
+    - ensuite, une progression au plus par `min_interval_s` ;
+    - ce qui arrive dans la fenetre est coalesce : seule la plus recente
+      survit, et elle sera publiee par le premier `emit()` qui tombe hors de
+      la fenetre.
+
+    Ce qui reste en attente a la fin du job est **jete, pas rejoue** :
+    `brain.work.completed` porte deja la verite finale, et la Decision 31
+    interdit de prononcer une progression qui n'est plus vraie. Consequence
+    assumee : un worker qui emet une rafale puis se tait longtemps verra sa
+    derniere progression perdue jusqu'a la fin du job. Le compteur
+    `coalesced_total` rend cette perte visible au diagnostic.
+    """
+
+    def __init__(
+        self,
+        *,
+        job: Job,
+        events: CoreEventBus,
+        link: _WorkLink,
+        min_interval_s: float,
+        clock: Clock,
+    ) -> None:
+        self._job = job
+        self._events = events
+        self._link = link
+        self._min_interval_s = max(0.0, min_interval_s)
+        self._clock = clock
+        self._last_published_at: datetime | None = None
+        self._pending: JobProgress | None = None
+        self._published_total = 0
+        self._coalesced_total = 0
+
+    @property
+    def published_total(self) -> int:
+        return self._published_total
+
+    @property
+    def coalesced_total(self) -> int:
+        """Progressions absorbees par la coalescence, donc jamais publiees."""
+
+        return self._coalesced_total
+
+    async def emit(self, job_id: str, progress: JobProgress) -> None:
+        """Signaler un fait d'avancement. Ne decide jamais d'une prise de parole."""
+
+        if job_id != self._job.id:
+            raise ValueError(f"progress reported for another job: {job_id!r}")
+        now = self._clock.now()
+        if self._last_published_at is not None and (now - self._last_published_at).total_seconds() < self._min_interval_s:
+            if self._pending is not None:
+                self._coalesced_total += 1
+            self._pending = progress
+            return
+        if self._pending is not None:
+            # La plus recente prime : publier l'ancienne ferait dire au bus une
+            # etape que le worker a deja depassee.
+            self._coalesced_total += 1
+            self._pending = None
+        await self._publish(progress, now)
+
+    def close(self) -> None:
+        """Solder le canal a la fin du job, sans rien rejouer."""
+
+        if self._pending is not None:
+            self._coalesced_total += 1
+            self._pending = None
+
+    async def _publish(self, progress: JobProgress, now: datetime) -> None:
+        self._last_published_at = now
+        self._published_total += 1
+        await self._events.publish(
+            ProtocolEnvelope(
+                message_type=BRAIN_WORK_PROGRESS,
+                payload={
+                    "work_id": self._link.work_id,
+                    "job_id": self._job.id,
+                    **progress.to_payload(),
+                },
+                correlation_id=self._link.correlation_id,
+                conversation_id=self._job.requested_by_conversation_id,
+            )
+        )
+
+
 class JobService:
-    def __init__(self, state: StateRepository, events: CoreEventBus, workers: dict[str, JobWorker]) -> None:
+    """Execution de travail long, avec une couture d'avancement neutre.
+
+    Le service publie des **faits** (`brain.work.progress`) ; il ne fabrique
+    jamais de parole. C'est le cerveau qui decide si un avancement merite
+    d'etre dit (spec section 13). Un worker n'a donc aucun moyen, par cette
+    couture, d'imposer une phrase a la surface vocale.
+    """
+
+    #: Intervalle minimal entre deux progressions publiees pour un meme job.
+    #: 0,5 s borne le debit a deux evenements par seconde et par job, soit
+    #: environ une minute de marge devant un abonne de 128 places, tout en
+    #: restant sous le seuil de perception d'un humain qui ecoute.
+    DEFAULT_PROGRESS_MIN_INTERVAL_S = 0.5
+
+    def __init__(
+        self,
+        state: StateRepository,
+        events: CoreEventBus,
+        workers: dict[str, JobWorker],
+        *,
+        clock: Clock | None = None,
+        diagnostics: DiagnosticSink | None = None,
+        progress_min_interval_s: float | None = None,
+    ) -> None:
         self.state = state
         self.events = events
         self.workers = dict(workers)
+        self.clock = clock or SystemClock()
+        self.diagnostics: DiagnosticSink = diagnostics or NullDiagnosticSink()
+        self.progress_min_interval_s = (
+            self.DEFAULT_PROGRESS_MIN_INTERVAL_S if progress_min_interval_s is None else progress_min_interval_s
+        )
         self._running: dict[str, asyncio.Task[None]] = {}
+        self._links: dict[str, _WorkLink] = {}
 
     async def recover(self) -> None:
         for job in await self.state.list_jobs(status=JobStatus.RUNNING.value):
             await self.state.save_job(replace(job, status=JobStatus.INTERRUPTED, error="core restarted while job was running", completed_at=utc_now()))
             await self.events.publish(ProtocolEnvelope(message_type="job.interrupted", payload={"job_id": job.id, "kind": job.kind}, conversation_id=job.requested_by_conversation_id))
 
-    async def submit(self, job: Job) -> Job:
+    async def submit(self, job: Job, *, work_id: str | None = None, correlation_id: str | None = None) -> Job:
+        """Lancer un job, en le rattachant si besoin au travail cerveau qui le demande.
+
+        `work_id` et `correlation_id` sont optionnels : un job soumis par le
+        planificateur n'appartient a aucun tour de conversation. Quand ils sont
+        fournis, l'avancement publie porte le meme `work_id` que les
+        `brain.work.*` du cerveau, ce qui rend les deux sources rattachables
+        sans que `JobService` connaisse l'orchestrateur.
+        """
+
         if job.kind not in self.workers:
             raise KeyError(f"no worker for job kind {job.kind}")
         for existing in await self.state.list_jobs():
@@ -194,19 +432,31 @@ class JobService:
         if job.id in self._running:
             return job
         await self.state.save_job(job)
+        self._links[job.id] = _WorkLink(
+            work_id=work_id or f"job:{job.id}",
+            correlation_id=correlation_id or new_id(),
+        )
         task = asyncio.create_task(self._execute(job), name=f"jarvis-job-{job.id}")
         self._running[job.id] = task
         return job
 
     async def _execute(self, job: Job) -> None:
         worker = self.workers[job.kind]
+        link = self._links.get(job.id) or _WorkLink(work_id=f"job:{job.id}", correlation_id=new_id())
         running = replace(job, status=JobStatus.RUNNING, started_at=utc_now())
         await self.state.save_job(running)
+        channel = _JobProgressChannel(
+            job=running,
+            events=self.events,
+            link=link,
+            min_interval_s=self.progress_min_interval_s,
+            clock=self.clock,
+        )
         try:
-            result = await worker.execute(running)
+            result = await self._run_worker(worker, running, channel)
             completed = replace(running, status=JobStatus.COMPLETED, result=dict(result), completed_at=utc_now())
             await self.state.save_job(completed)
-            await self.events.publish(ProtocolEnvelope(message_type="job.completed", payload={"job_id": job.id, "kind": job.kind, "result": result}, conversation_id=job.requested_by_conversation_id))
+            await self.events.publish(ProtocolEnvelope(message_type="job.completed", payload={"job_id": job.id, "kind": job.kind, "result": result}, correlation_id=link.correlation_id, conversation_id=job.requested_by_conversation_id))
         except asyncio.CancelledError:
             cancelled = replace(running, status=JobStatus.CANCELLED, completed_at=utc_now())
             await self.state.save_job(cancelled)
@@ -214,9 +464,71 @@ class JobService:
         except Exception as exc:
             failed = replace(running, status=JobStatus.FAILED, error=f"{type(exc).__name__}: {exc}", completed_at=utc_now())
             await self.state.save_job(failed)
-            await self.events.publish(ProtocolEnvelope(message_type="job.failed", payload={"job_id": job.id, "kind": job.kind, "error_class": type(exc).__name__}, conversation_id=job.requested_by_conversation_id))
+            await self.events.publish(ProtocolEnvelope(message_type="job.failed", payload={"job_id": job.id, "kind": job.kind, "error_class": type(exc).__name__}, correlation_id=link.correlation_id, conversation_id=job.requested_by_conversation_id))
         finally:
+            channel.close()
+            self._report_progress_budget(job, link, channel)
             self._running.pop(job.id, None)
+            self._links.pop(job.id, None)
+
+    async def _run_worker(self, worker: JobWorker, job: Job, progress: JobProgressSink) -> dict[str, object]:
+        """Executer le worker, avec la couture d'avancement s'il la declare.
+
+        Detection structurelle et non par inspection de signature : un worker
+        historique n'a pas `execute_with_progress`, il continue donc d'etre
+        appele par `execute` sans la moindre modification.
+        """
+
+        if isinstance(worker, ProgressReportingJobWorker):
+            return await worker.execute_with_progress(job, progress)
+        return await worker.execute(job)
+
+    def _report_progress_budget(self, job: Job, link: _WorkLink, channel: _JobProgressChannel) -> None:
+        """Rendre visible ce que l'etranglement a absorbe (Decision 25).
+
+        Une progression coalescee n'est pas une panne : elle est le prix,
+        assume, de ne pas saturer un bus borne. Elle doit malgre tout laisser
+        une trace, sinon un worker devenu bavard passerait inapercu.
+        """
+
+        if channel.coalesced_total <= 0:
+            return
+        self.diagnostics.emit(
+            JOB_PROGRESS_COALESCED_KIND,
+            "avancement coalesce a la source pour proteger le bus",
+            level="info",
+            data={
+                "job_id": job.id,
+                "kind": job.kind,
+                "work_id": link.work_id,
+                "correlation_id": link.correlation_id,
+                "published_total": channel.published_total,
+                "coalesced_total": channel.coalesced_total,
+                "min_interval_s": self.progress_min_interval_s,
+            },
+        )
+
+    async def cancel_work(self, work_id: str) -> tuple[str, ...]:
+        """Annuler les jobs rattaches a un `work_id` du cerveau, et eux seuls.
+
+        Implemente le port `WorkCanceller`. La selection passe par les liens
+        poses a la soumission (`_WorkLink`) : un job soumis sans `work_id` a
+        recu un lien synthetique `job:<id>`, donc il ne peut pas etre atteint
+        par erreur depuis une decision du cerveau.
+
+        Rend les identifiants de job reellement annules — la liste vide est un
+        cas normal, pas une panne : le cerveau peut retirer du travail qui
+        n'avait aucun job executable derriere lui.
+        """
+
+        if not work_id:
+            return ()
+        # Instantane : `_execute` retire le lien en fin de job, donc iterer
+        # directement sur le dictionnaire le muterait en cours de parcours.
+        targets = tuple(job_id for job_id, link in self._links.items() if link.work_id == work_id)
+        for job_id in targets:
+            await self.cancel(job_id)
+        return targets
 
     async def cancel(self, job_id: str) -> None:
         task = self._running.get(job_id)

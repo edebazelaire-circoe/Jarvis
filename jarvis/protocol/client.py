@@ -9,6 +9,24 @@ from jarvis.domain.v2 import PROTOCOL_VERSION, ProtocolEnvelope, new_id
 from jarvis.v2_config import validate_loopback_host
 
 
+class CoreProtocolError(RuntimeError):
+    """Erreur rendue par Core, avec de quoi décider quoi faire.
+
+    Hérite de `RuntimeError` pour ne rien casser des appelants existants, qui
+    l'attrapaient sous cette forme. Le statut et le code sont exposés parce que
+    la surface doit distinguer des situations qui n'appellent pas la même
+    conduite : 404 (conversation inconnue) est définitif, 503 (`core_stopping`)
+    est transitoire et rejouable avec la même corrélation.
+    """
+
+    __slots__ = ("status", "code")
+
+    def __init__(self, status: int, code: str, message: str) -> None:
+        super().__init__(f"Core protocol error {status}: {code}: {message}")
+        self.status = status
+        self.code = code
+
+
 class LocalCoreClient:
     def __init__(self, *, host: str, port: int, token: str, session: aiohttp.ClientSession | None = None) -> None:
         self.host = validate_loopback_host(host)
@@ -48,6 +66,43 @@ class LocalCoreClient:
         async with session.post(self.base_url + f"/v1/conversations/{conversation_id}/turns", headers=self.headers, json=payload) as response:
             return await self._json(response)
 
+    async def submit_brain_turn(self, conversation_id: str, *, content: str, correlation_id: str | None = None, source: str = "realtime", addressing: str = "addressed", provider_item_id: str | None = None, interrupted_speech_id: str | None = None) -> dict[str, Any]:
+        """Soumettre un tour utilisateur complet faisant autorité au cerveau.
+
+        Rend l'accusé (`turn_id`, `revision`, `duplicate`, ...) sans attendre le
+        modèle fort : la suite du tour arrive par `events()`. Cet appel remplace
+        `append_turn()` pour les tours routés vers le cerveau ; les appeler tous
+        les deux persisterait le tour deux fois.
+
+        `correlation_id` est la clé de rejeu : un appelant qui réessaie doit
+        réutiliser la même valeur, sinon Core y verra deux tours distincts. La
+        valeur générée par défaut ne convient donc qu'à une première tentative.
+        La déduplication côté Core est en mémoire et ne survit pas à un
+        redémarrage (Décision 29, détaillée dans le docstring du endpoint).
+
+        `addressing` dit ce que la surface a cru du tour : `"addressed"` par
+        défaut, `"uncertain"` quand elle n'a pas su si la phrase lui était
+        adressée et laisse la question au cerveau (Décision 44). `"ambient"`
+        n'est pas une valeur soumissible : Core la refuse.
+
+        Erreurs : `CoreProtocolError` avec `status=404` pour une conversation
+        inconnue (définitif) et `status=503`, `code="core_stopping"` pour un
+        Core en cours d'arrêt (transitoire, rejouable à l'identique). Un rejeu
+        reconnu n'est pas une erreur : il rend 200 avec `duplicate=true`.
+        """
+
+        session = await self._http()
+        payload = {
+            "content": content,
+            "correlation_id": correlation_id or new_id(),
+            "source": source,
+            "addressing": addressing,
+            "provider_item_id": provider_item_id,
+            "interrupted_speech_id": interrupted_speech_id,
+        }
+        async with session.post(self.base_url + f"/v1/conversations/{conversation_id}/brain-turns", headers=self.headers, json=payload) as response:
+            return await self._json(response)
+
     async def call_tool(self, name: str, arguments: dict[str, object], *, conversation_id: str | None = None) -> dict[str, Any]:
         session = await self._http()
         payload = {"name": name, "arguments": arguments, "conversation_id": conversation_id}
@@ -81,5 +136,5 @@ class LocalCoreClient:
         data = await response.json()
         if response.status >= 400:
             error = data.get("error") or {}
-            raise RuntimeError(f"Core protocol error {response.status}: {error.get('code', 'unknown')}: {error.get('message', '')}")
+            raise CoreProtocolError(response.status, str(error.get("code", "unknown")), str(error.get("message", "")))
         return data

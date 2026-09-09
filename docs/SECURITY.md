@@ -77,9 +77,40 @@ Memory adapter resolves paths within a fixed root, repeatedly decodes URL-encode
 
 ### 10. Privacy-safe diagnostics
 
-Default `log_content = false`. Structured JSONL logs retain event type, timing and error class while redacting transcript/prompt/body-like fields. API keys and authorization values are not logged by adapters.
+Two journals exist and they do not behave the same way.
 
-Changing `log_content` to true is an explicit privacy tradeoff and should be temporary.
+**V1 push-to-talk diagnostics** (`jarvis/diagnostics/logger.py`): default
+`log_content = false`. Structured JSONL logs retain event type, timing and error
+class while redacting transcript/prompt/body-like fields. Changing `log_content`
+to true is an explicit privacy tradeoff and should be temporary.
+
+**v0.2 runtime journal** (`jarvis/runtime/journal.py` → `runtime/trace.jsonl`,
+`runtime/errors.jsonl`): `log_content` / `JARVIS_LOG_CONTENT` does **not** apply
+to it. Events such as `voice.transcript`, `voice.assistant`,
+`voice.brain_turn_submitted` and `voice.speech.*` intentionally carry up to 300
+characters of what was said, because the Control Center debug console is built
+on reading it back. This is a deliberate local-diagnostic tradeoff, not an
+oversight: the file is local, sits outside the repository, and no content is sent
+anywhere. Anyone who needs a content-free local trace must treat that as a change
+to the debug console, because no setting turns it off today. The latency
+telemetry layered on the same journal is identifier-only by construction and is
+covered by tests that forbid content in it.
+
+**Raw agent reasoning** (Decision 43): the guarantee is scoped, and the scope is
+the brain boundary, not the machine. No reasoning field exists in Core's domain
+state, no reasoning is persisted in conversation turns, none is carried by
+`brain.state.updated` or by any speech request, and none reaches the Realtime
+surface; `tests/unit/test_v2_brain_contracts.py` pins that. What is *not*
+guaranteed, and must not be claimed, is that no raw reasoning is stored or
+exposed anywhere: `jarvis/runtime/claude_local.py:477` journals every raw
+`stream-json` event from the local CLI agent - `thinking` blocks included - into
+`runtime/trace.jsonl`, and `claude_local.py:284` renders those blocks as
+`[réflexion] ...` in the Control Center console (same for Codex,
+`codex_local.py:156`). This is the same deliberate local-diagnostic tradeoff as
+above: local file, local console, nothing sent anywhere, and no setting turns it
+off today. Open `runtime/trace.jsonl` to see exactly what is kept.
+
+In both journals, API keys and authorization values are not logged by adapters.
 
 ### 11. Provider transport and process least privilege
 

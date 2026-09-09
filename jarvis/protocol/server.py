@@ -6,8 +6,23 @@ import hmac
 from aiohttp import web
 
 from jarvis.core.v2_app import JarvisCoreApplication
-from jarvis.domain.v2 import PROTOCOL_VERSION, TurnKind, jsonable
+from jarvis.domain.v2 import PROTOCOL_VERSION, AddressingDecision, BrainTurnInput, BrainTurnSource, TurnKind, jsonable
 from jarvis.v2_config import validate_loopback_host
+
+
+def _optional_text(value: object, field: str) -> str | None:
+    """Normaliser un champ texte optionnel de la requête.
+
+    Absent, `null` et chaîne vide désignent la même chose : « non fourni ».
+    Un type non textuel est en revanche une erreur de l'appelant, pas une
+    absence, et doit produire un 400 plutôt qu'un silence.
+    """
+
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a string when present")
+    return value.strip() or None
 
 
 class LocalProtocolServer:
@@ -44,6 +59,7 @@ class LocalProtocolServer:
             web.post("/v1/conversations", self.create_conversation),
             web.get("/v1/conversations/{conversation_id}/context", self.context),
             web.post("/v1/conversations/{conversation_id}/turns", self.append_turn),
+            web.post("/v1/conversations/{conversation_id}/brain-turns", self.submit_brain_turn),
             web.post("/v1/tools/call", self.call_tool),
             web.post("/v1/actions/{action_id}/confirmation", self.confirm_action),
             web.get("/v1/events", self.events),
@@ -88,6 +104,83 @@ class LocalProtocolServer:
             raise ValueError("content and correlation_id are required")
         turn = await self.core.conversations.append_turn(request.match_info["conversation_id"], kind, content, correlation_id=correlation_id, reference_id=body.get("reference_id"), metadata=body.get("metadata") or {})
         return web.json_response(jsonable(turn), status=201)
+
+    async def submit_brain_turn(self, request: web.Request) -> web.Response:
+        """Ingress autoritaire d'un tour utilisateur complet (spec section 4).
+
+        Voie unique
+        -----------
+        Ce handler ne persiste rien lui-même : il délègue à
+        `BrainOrchestrator.submit()`, seul propriétaire du triptyque
+        « déduplication → persistance → dépêche cerveau ». `POST .../turns`
+        reste le chemin des tours ordinaires ; un tour routé vers le cerveau ne
+        doit jamais emprunter les deux, sinon il serait écrit deux fois.
+
+        Réponse immédiate
+        -----------------
+        L'accusé est rendu sans attendre le modèle fort : `submit()` publie
+        `brain.turn.accepted` puis lance le backend dans une tâche possédée par
+        Core. Les suites du tour (`brain.speech.requested`, `brain.work.*`)
+        arrivent par le flux `/v1/events` déjà existant (Décision 05).
+
+        Idempotence et fenêtre de crash
+        -------------------------------
+        `correlation_id` est la clé de déduplication obligatoire ;
+        `provider_item_id` n'est qu'une clé secondaire, absente des surfaces qui
+        n'en produisent pas (Décision 24). Un rejeu portant la même corrélation
+        rend l'accusé d'origine avec `duplicate=true` et ne redéclenche aucun
+        travail. Cette déduplication est **en mémoire** : elle ne survit pas à un
+        redémarrage de Core (Décision 29). Si Core redémarre entre la
+        persistance d'un tour et le rejeu de ce tour par la surface, le tour
+        sera persisté et dépêché une seconde fois. Cette fenêtre est assumée et
+        documentée, pas colmatée : aucune garantie transactionnelle n'est
+        promise ici. La corriger supposerait une déduplication persistée, qui
+        relève d'une décision d'architecture et non de ce endpoint.
+
+        Codes de statut
+        ---------------
+        - 202 : tour accepté et dépêché ;
+        - 200 : rejeu reconnu comme doublon, rien de nouveau n'a été écrit ;
+        - 400 : corps invalide (JSON illisible, `content`/`correlation_id`
+          manquants, champ optionnel mal typé, `source` ou `addressing`
+          inconnue, `addressing="ambient"`) ;
+        - 401 / 426 : authentification ou version de protocole (middleware) ;
+        - 404 : conversation inconnue ;
+        - 503 : Core en cours d'arrêt, aucun nouveau tour n'est accepté.
+        """
+
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("brain turn body must be a JSON object")
+        content = body.get("content")
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("content is required")
+        correlation_id = _optional_text(body.get("correlation_id"), "correlation_id")
+        if not correlation_id:
+            raise ValueError("correlation_id is required")
+        source = _optional_text(body.get("source"), "source") or BrainTurnSource.REALTIME.value
+        # Décision 44 : la surface dit ce qu'elle a cru du tour. Absent, le tour
+        # vaut `addressed` — c'est le cas de toutes les surfaces existantes.
+        # `ambient` est refusé par le domaine, donc rendu 400 ici : un tour non
+        # adressé n'entre pas dans le cerveau par ce chemin ni par un autre.
+        addressing = _optional_text(body.get("addressing"), "addressing") or AddressingDecision.ADDRESSED.value
+        turn = BrainTurnInput(
+            conversation_id=request.match_info["conversation_id"],
+            text=content,
+            correlation_id=correlation_id,
+            source=BrainTurnSource(source),
+            addressing=AddressingDecision(addressing),
+            provider_item_id=_optional_text(body.get("provider_item_id"), "provider_item_id"),
+            interrupted_speech_id=_optional_text(body.get("interrupted_speech_id"), "interrupted_speech_id"),
+        )
+        try:
+            acceptance = await self.core.brain.submit(turn)
+        except RuntimeError as exc:
+            # `submit()` refuse tout nouveau tour pendant l'arrêt de Core. Ce
+            # n'est pas une erreur de l'appelant : la surface peut réessayer sur
+            # une instance vivante, avec la même corrélation.
+            return web.json_response({"error": {"code": "core_stopping", "message": str(exc)}}, status=503)
+        return web.json_response(jsonable(acceptance), status=200 if acceptance.duplicate else 202)
 
     async def call_tool(self, request: web.Request) -> web.Response:
         body = await request.json()
