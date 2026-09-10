@@ -424,6 +424,44 @@ async def test_useful_inactivity_timeout_returns_to_background(monkeypatch):
         await asyncio.gather(run_task, return_exceptions=True)
 
 
+async def test_a_zero_timeout_keeps_the_session_until_the_wake_key(monkeypatch):
+    """« Le mode vocal doit rester continu tant que je n'ai pas éteint la
+    conversation avec F9. » Délai à 0 : des heures de silence ne rendent pas la
+    main, la touche de réveil si."""
+    session = ContinuousSession()
+    journal = RecordingJournal()
+    clock = FakeClock()
+    runtime, wakeword, core = _runtime(
+        monkeypatch, session=session, journal=journal, clock=clock, timeout_s=0
+    )
+    run_task = await _wake(runtime, wakeword, journal)
+    try:
+        await _play_one_turn(session)
+        await journal.wait_until(lambda: journal.count("voice.turn_completed") == 1)
+
+        for _ in range(3):
+            clock.advance(3 * 3600)
+            assert await runtime.check_timeout() is False
+        assert runtime.runtime.state is VoiceLifecycleState.ACTIVE
+        assert session.closed is False
+        assert FakeAudio.instances[0].stop_input_calls == 0
+        assert journal.count("voice.timeout") == 0
+        assert journal.count("voice.timeout_deferred") == 0
+        assert journal.count("voice.background") == 0
+
+        await wakeword.queue.put("f9")
+        await asyncio.wait_for(wakeword.resumed.wait(), timeout=TIMEOUT_S)
+
+        assert runtime.runtime.state is VoiceLifecycleState.BACKGROUND
+        assert journal.count("voice.manual_cancel") == 1
+        assert session.closed is True
+        # Rendre la main ne coupe toujours pas le travail de Core (Décision 11).
+        assert core.closed is False
+    finally:
+        run_task.cancel()
+        await asyncio.gather(run_task, return_exceptions=True)
+
+
 async def test_ambient_speech_and_partial_transcripts_do_not_rearm_the_timeout(monkeypatch):
     """Décision 10 : le silence de la pièce n'est pas le critère.
 

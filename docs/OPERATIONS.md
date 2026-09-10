@@ -296,7 +296,7 @@ Main environment overrides:
 | `JARVIS_VOICE_TURN_MODE` | `auto` (server VAD, default) or `manual` (second key press) |
 | `JARVIS_VOICE_STACK` | `openai_realtime` (default) or `gemini_live` |
 | `JARVIS_VOICE_ARCH` | `legacy` (default, computed) or `continuous_brain`; see "Deux architectures vocales" below. The **Architecture** choice of the Control Center (tab Mode vocal) takes precedence; this variable only applies while that choice is left on "Par défaut" |
-| `JARVIS_ACTIVE_TIMEOUT_S` | useful-inactivity timeout of an ACTIVE voice session; default 90 |
+| `JARVIS_ACTIVE_TIMEOUT_S` | useful-inactivity timeout of an ACTIVE voice session; default 90. `0` = jamais : seule la touche de réveil (F9) ou « Jarvis mute » met fin à la conversation. Toute autre valeur doit être >= 5. Le champ « Délai d'inactivité » des réglages du Control Center passe devant |
 | `JARVIS_AGENT_CLI` | `claude` (default) or `codex` |
 | `JARVIS_CLAUDE_MODEL` | model passed to `claude --model`; empty means the CLI default |
 | `ANTHROPIC_API_KEY` | lists the real Claude models; the CLI itself can run on a subscription |
@@ -663,7 +663,7 @@ journalisée dans `voice.stack` (champ `arch_source` : `settings`, `env` ou
 | Parole du cerveau | c'est la réponse du tour Realtime | évènements `brain.speech.requested` sur `/v1/events`, rendus par le `SpeechScheduler` |
 | Piles vocales | OpenAI Realtime et Gemini Live | OpenAI Realtime seulement |
 | Fin de tour | `auto` ou `manual` | `auto` obligatoire |
-| Retour au fond | fin de réponse, mute, délai, panne | mute, délai d'activité utile, panne irrécupérable |
+| Retour au fond | fin de réponse, mute, délai, panne | mute (touche de réveil ou « Jarvis mute »), délai d'activité utile (sauf `JARVIS_ACTIVE_TIMEOUT_S=0`), panne irrécupérable |
 
 ### La surface a les réflexes, le cerveau a la vérité
 

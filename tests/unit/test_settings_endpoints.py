@@ -295,6 +295,29 @@ async def test_the_audio_section_and_the_flat_fields_lead_to_the_same_place(cont
     assert payload["audio_input_device"] == "3"
 
 
+async def test_an_inactivity_timeout_of_zero_is_stored_as_never(control):
+    await control.save_settings(JsonRequest({"audio": {"active_timeout_s": "0"}}))
+    assert (await settings_of(control))["audio"]["active_timeout_s"] == "0"
+
+    await control.save_settings(JsonRequest({"active_timeout_s": 45}))
+    assert (await settings_of(control))["active_timeout_s"] == "45"
+
+    # Un champ vidé reste vide : Voice retombe alors sur l'environnement.
+    await control.save_settings(JsonRequest({"audio": {"active_timeout_s": " "}}))
+    assert (await settings_of(control))["active_timeout_s"] == ""
+
+
+@pytest.mark.parametrize("bad", ["3", "-1", "abc", "nan", True])
+@pytest.mark.parametrize("shape", ["flat", "audio"])
+async def test_an_invalid_inactivity_timeout_is_refused_and_nothing_is_written(control, tmp_path, shape, bad):
+    payload = {"active_timeout_s": bad} if shape == "flat" else {"audio": {"active_timeout_s": bad}}
+    with pytest.raises(web.HTTPBadRequest) as refused:
+        await control.save_settings(JsonRequest(payload))
+    assert "Délai d'inactivité invalide" in refused.value.text
+    assert "indiquez 0" in refused.value.text
+    assert not (tmp_path / "control-center-settings.json").exists()
+
+
 # ===========================================================================
 # Clés API
 # ===========================================================================

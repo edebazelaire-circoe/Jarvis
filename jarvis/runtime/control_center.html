@@ -360,8 +360,8 @@ async function tabConfig(){
     <div class="test-result" id="audioTestResult">Le test enregistre 2 secondes au format de la pile vocale active, puis les rejoue.</div>
     <h3>Session</h3>
     <div class="field"><label for="f_timeout">Délai d'inactivité avant mise en veille (secondes)</label>
-      <input type="number" min="5" id="f_timeout" data-audio="active_timeout_s" value="${esc(a.active_timeout_s)}">
-      <div class="hint">Passé ce délai sans échange utile, JARVIS repasse en arrière-plan et rend le micro.</div></div>
+      <input type="number" min="0" id="f_timeout" data-audio="active_timeout_s" value="${esc(a.active_timeout_s)}">
+      <div class="hint">Passé ce délai sans échange utile, JARVIS repasse en arrière-plan et rend le micro. 0 = jamais : seule la touche de réveil (F9 par défaut) ou « Jarvis mute » met fin à la conversation. Sinon, 5 s minimum.</div></div>
   </section>`;
 }
 

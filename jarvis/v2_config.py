@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 import ipaddress
+import math
 import os
 
 from jarvis.domain.errors import ConfigurationError
@@ -143,12 +144,31 @@ def recommended_realtime_model(voice_arch: VoiceArchitecture) -> str:
     return DEFAULT_REALTIME_MODEL
 
 
-def _float_env(name: str, default: float) -> float:
-    raw = os.getenv(name)
+# Plancher d'un délai d'activité utile non nul. En dessous, une simple pause
+# pour réfléchir suffirait à renvoyer la session au fond.
+MIN_ACTIVE_TIMEOUT_S = 5.0
+
+
+def parse_active_timeout(raw: object, *, name: str = "JARVIS_ACTIVE_TIMEOUT_S") -> float:
+    """Délai d'activité utile d'une session ACTIVE, en secondes.
+
+    `0` veut dire « jamais » : seuls la touche de réveil, le mute vocal ou une
+    panne irrécupérable rendent alors la main. Toute autre valeur doit valoir
+    au moins `MIN_ACTIVE_TIMEOUT_S`. Un même validateur sert l'environnement,
+    le fichier de réglages et le Control Center, pour qu'ils ne divergent pas.
+    """
+
+    if isinstance(raw, bool):
+        raise ConfigurationError(f"{name} must be a number")
     try:
-        return float(raw) if raw is not None else default
-    except ValueError as exc:
+        value = float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError) as exc:
         raise ConfigurationError(f"{name} must be a number") from exc
+    if not math.isfinite(value) or value < 0 or 0 < value < MIN_ACTIVE_TIMEOUT_S:
+        raise ConfigurationError(
+            f"{name} must be 0 (never time out) or >= {MIN_ACTIVE_TIMEOUT_S:g}, got {raw!r}"
+        )
+    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,9 +196,7 @@ class V2Settings:
         recent = _int_env("JARVIS_RECENT_TURN_LIMIT", 12)
         if not 1 <= recent <= 100:
             raise ConfigurationError("JARVIS_RECENT_TURN_LIMIT must be between 1 and 100")
-        timeout = _float_env("JARVIS_ACTIVE_TIMEOUT_S", 90.0)
-        if timeout < 5:
-            raise ConfigurationError("JARVIS_ACTIVE_TIMEOUT_S must be >= 5")
+        timeout = parse_active_timeout(os.getenv("JARVIS_ACTIVE_TIMEOUT_S", "90"))
         voice_arch = parse_voice_arch(os.getenv("JARVIS_VOICE_ARCH"))
         recommended_model = (
             DEFAULT_CONTINUOUS_SURFACE_MODEL

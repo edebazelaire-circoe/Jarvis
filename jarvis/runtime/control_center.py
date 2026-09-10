@@ -21,7 +21,15 @@ from jarvis.runtime.codex_local import CodexLocalAgent, normalize_sandbox_mode
 from jarvis.runtime.journal import RuntimeJournal, read_jsonl_tail
 from jarvis.runtime.model_catalog import CatalogError, ModelCatalog, filter_by_role
 from jarvis.runtime.visual_signals import VisualSignalBus
-from jarvis.v2_config import REALTIME_VOICES, TURN_MODES, VoiceArchitecture, default_voice_arch, parse_voice_arch
+from jarvis.v2_config import (
+    MIN_ACTIVE_TIMEOUT_S,
+    REALTIME_VOICES,
+    TURN_MODES,
+    VoiceArchitecture,
+    default_voice_arch,
+    parse_active_timeout,
+    parse_voice_arch,
+)
 
 
 VOICE_HEARTBEAT_MAX_AGE_S = 5.0
@@ -40,7 +48,7 @@ _VOICE_ARCH_CHOICES: tuple[tuple[VoiceArchitecture, str, str], ...] = (
         VoiceArchitecture.CONTINUOUS_BRAIN,
         "Conversation continue (jusqu'à {key})",
         "La session couvre plusieurs tours et le micro reste ouvert jusqu'à un nouvel appui sur "
-        "{key} ou le délai d'inactivité. Exige la pile OpenAI Realtime et la fin de tour "
+        "{key} ou le délai d'inactivité (jamais s'il vaut 0). Exige la pile OpenAI Realtime et la fin de tour "
         "automatique ; préférez un casque, l'écho des haut-parleurs n'est pas filtré.",
     ),
 )
@@ -601,7 +609,7 @@ class ControlCenter:
             except shortcut_registry.ShortcutError as exc:
                 raise web.HTTPBadRequest(text=str(exc)) from exc
         if payload.get("active_timeout_s") is not None:
-            current["active_timeout_s"] = str(payload["active_timeout_s"]).strip()
+            current["active_timeout_s"] = self._active_timeout(payload["active_timeout_s"])
 
         for key in ("audio_input_device", "audio_output_device"):
             if key in payload:
@@ -620,7 +628,7 @@ class ControlCenter:
                         raise web.HTTPBadRequest(text=str(exc)) from exc
                     current[target] = "" if device is None else str(device)
             if audio.get("active_timeout_s") is not None:
-                current["active_timeout_s"] = str(audio["active_timeout_s"]).strip()
+                current["active_timeout_s"] = self._active_timeout(audio["active_timeout_s"])
 
         for key in ("openai_api_key", "porcupine_access_key"):
             value = payload.get(key)
@@ -641,6 +649,28 @@ class ControlCenter:
             self._apply_agent_settings(current)
         self.journal.emit("settings.update", "Control Center settings updated", data={"keys": sorted(payload.keys())})
         return web.json_response(self._settings_payload(current))
+
+    @staticmethod
+    def _active_timeout(raw: Any) -> str:
+        """Valider le délai d'inactivité avant de l'écrire dans les réglages.
+
+        `0` veut dire « jamais ». Un champ vidé est gardé vide : Voice retombe
+        alors sur `JARVIS_ACTIVE_TIMEOUT_S`, comme avant. Tout le reste doit être
+        un nombre d'au moins cinq secondes, sinon Voice l'ignorerait en silence.
+        """
+        text = str(raw).strip()
+        if not text:
+            return ""
+        try:
+            parse_active_timeout(text)
+        except ConfigurationError as exc:
+            raise web.HTTPBadRequest(
+                text=(
+                    f"Délai d'inactivité invalide (« {text} ») : indiquez 0 pour ne jamais "
+                    f"mettre en veille, ou une durée d'au moins {MIN_ACTIVE_TIMEOUT_S:g} secondes."
+                )
+            ) from exc
+        return text
 
     def _apply_voice(self, current: dict[str, Any], payload: dict[str, Any]) -> None:
         voice = payload.get("voice")

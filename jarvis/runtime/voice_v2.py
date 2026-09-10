@@ -16,16 +16,28 @@ from jarvis.v2_config import VoiceArchitecture
 
 
 class UsefulActivityTracker:
+    """Délai d'activité utile d'une session ACTIVE.
+
+    `timeout_s <= 0` désactive le délai : la session ne rend alors la main que
+    sur la touche de réveil, un mute vocal ou une panne irrécupérable.
+    """
+
     def __init__(self, *, timeout_s: float, clock: Clock | None = None) -> None:
         self.timeout_s = timeout_s
         self.clock = clock or SystemClock()
         self._last_useful = self.clock.now()
+
+    @property
+    def enabled(self) -> bool:
+        return self.timeout_s > 0
 
     def reset(self, decision: AddressingDecision = AddressingDecision.ADDRESSED) -> None:
         if decision is AddressingDecision.ADDRESSED:
             self._last_useful = self.clock.now()
 
     def expired(self) -> bool:
+        if not self.enabled:
+            return False
         return (self.clock.now() - self._last_useful).total_seconds() >= self.timeout_s
 
 
@@ -44,8 +56,8 @@ class PersistentVoiceRuntime:
       est terminée. Le micro est fermé au moment où le fournisseur clôt le tour,
       donc les haut-parleurs ne peuvent jamais nourrir le VAD suivant.
     - `CONTINUOUS_BRAIN` : une session ACTIVE couvre plusieurs tours. Seuls un
-      mute explicite, le délai d'activité utile ou une panne irrécupérable
-      ramènent au fond (Décisions 08 et 09). Le micro reste ouvert entre les
+      mute explicite (touche de réveil ou « Jarvis mute »), le délai d'activité
+      utile — sauf s'il vaut 0 — ou une panne irrécupérable ramènent au fond (Décisions 08 et 09). Le micro reste ouvert entre les
       tours, ce qui expose un risque d'écho acoustique réel et non traité ici
       (spec §11) : `LEGACY` reste le repli half-duplex.
 
@@ -367,7 +379,9 @@ class PersistentVoiceRuntime:
 
         Le délai repart du **dernier** évènement cerveau, jamais d'une échéance
         fixe : un cerveau bloqué ou muet finit donc par rendre la session, au
-        lieu de tenir le micro ouvert indéfiniment.
+        lieu de tenir le micro ouvert indéfiniment. Exception voulue : un délai
+        de 0 (« jamais ») laisse la session ouverte jusqu'à la touche de réveil
+        ou un mute vocal, cerveau actif ou non.
         """
 
         self.activity.reset(AddressingDecision.ADDRESSED)
@@ -401,6 +415,8 @@ class PersistentVoiceRuntime:
             self._visual("speaking")
 
     async def check_timeout(self) -> bool:
+        # Délai à 0 : `expired()` ne devient jamais vrai, donc ni mute ni
+        # `voice.timeout_deferred` à chaque tic de la boucle de supervision.
         if self.runtime.state is not VoiceLifecycleState.ACTIVE or not self.activity.expired():
             return False
         # Le délai mesure l'attente de l'utilisateur, pas la durée d'un outil.

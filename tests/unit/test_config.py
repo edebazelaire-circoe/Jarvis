@@ -73,3 +73,51 @@ def test_loopback_http_openai_base_url_is_allowed_for_local_test_proxy(tmp_path)
     path.write_text(config_text(openai_base_url="http://127.0.0.1:9000/v1"), encoding="utf-8")
     cfg = AppConfig.load(path)
     assert cfg.openai.base_url == "http://127.0.0.1:9000/v1"
+
+
+# ---------------------------------------------------------------------------
+# Délai d'activité utile de la voix v0.2
+# ---------------------------------------------------------------------------
+
+
+def _v2_settings(tmp_path, monkeypatch, timeout: str | None):
+    from jarvis.v2_config import V2Settings
+
+    monkeypatch.setenv("JARVIS_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("JARVIS_RUNTIME_DIR", str(tmp_path))
+    if timeout is None:
+        monkeypatch.delenv("JARVIS_ACTIVE_TIMEOUT_S", raising=False)
+    else:
+        monkeypatch.setenv("JARVIS_ACTIVE_TIMEOUT_S", timeout)
+    return V2Settings.load()
+
+
+@pytest.mark.parametrize("raw, expected", [(None, 90.0), ("0", 0.0), ("5", 5.0), ("120", 120.0)])
+def test_active_timeout_accepts_zero_as_never(tmp_path, monkeypatch, raw, expected):
+    assert _v2_settings(tmp_path, monkeypatch, raw).active_timeout_s == expected
+
+
+@pytest.mark.parametrize("raw", ["3", "4.9", "-1", "abc", "inf"])
+def test_active_timeout_rejects_negative_short_and_invalid_values(tmp_path, monkeypatch, raw):
+    with pytest.raises(ConfigurationError, match="JARVIS_ACTIVE_TIMEOUT_S"):
+        _v2_settings(tmp_path, monkeypatch, raw)
+
+
+@pytest.mark.parametrize(
+    "stored, expected",
+    [
+        ({}, 45.0),
+        ({"active_timeout_s": ""}, 45.0),
+        ({"active_timeout_s": "0"}, 0.0),
+        ({"active_timeout_s": 0}, 0.0),
+        ({"active_timeout_s": "120"}, 120.0),
+        # Écrites à la main : Voice démarre quand même, sur la valeur de l'environnement.
+        ({"active_timeout_s": "3"}, 45.0),
+        ({"active_timeout_s": "-1"}, 45.0),
+        ({"active_timeout_s": "abc"}, 45.0),
+    ],
+)
+def test_voice_reads_the_settings_timeout_and_falls_back_on_invalid_values(stored, expected):
+    from jarvis.app import _active_timeout_from
+
+    assert _active_timeout_from(stored, 45.0) == expected

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from jarvis.domain.v2 import AddressingDecision
 from jarvis.runtime.realtime_audio import ConservativeAddressingClassifier
 from jarvis.runtime.voice_v2 import UsefulActivityTracker
@@ -50,6 +52,16 @@ def test_addressed_followup_resets_useful_timer():
     assert tracker.expired() is False
 
 
+def test_a_zero_timeout_never_expires():
+    """`0` veut dire « jamais » : seule une action explicite rend la main."""
+    clock = FakeClock()
+    tracker = UsefulActivityTracker(timeout_s=0, clock=clock)
+    assert tracker.expired() is False
+    clock.advance(24 * 3600)
+    tracker.reset(AddressingDecision.AMBIENT)
+    assert tracker.expired() is False
+
+
 def test_contextual_addressing_is_conservative():
     classifier = ConservativeAddressingClassifier()
     assert classifier.classify("Jarvis donne-moi l'heure", active=False) is AddressingDecision.ADDRESSED
@@ -94,7 +106,16 @@ class _StubBridge:
         self.tool_in_flight = tool_in_flight
 
 
-def _expired_runtime(*, tool_in_flight: bool):
+class _RecordingJournal:
+    def __init__(self) -> None:
+        self.kinds: list[str] = []
+
+    def emit(self, kind: str, message: str, *, level: str = "info", data=None) -> None:  # noqa: ANN001
+        del message, level, data
+        self.kinds.append(kind)
+
+
+def _expired_runtime(*, tool_in_flight: bool, timeout_s: float = 10, journal=None):  # noqa: ANN001
     """Un runtime ACTIVE dont le délai d'inactivité vient d'expirer."""
     from jarvis.domain.v2 import VoiceLifecycleState
     from jarvis.runtime.voice_v2 import PersistentVoiceRuntime
@@ -104,8 +125,9 @@ def _expired_runtime(*, tool_in_flight: bool):
         wakeword=None,  # type: ignore[arg-type]
         core=None,  # type: ignore[arg-type]
         realtime_factory=None,  # type: ignore[arg-type]
-        active_timeout_s=10,
+        active_timeout_s=timeout_s,
         clock=clock,
+        journal=journal,
     )
     runtime.runtime.state = VoiceLifecycleState.ACTIVE
     runtime._bridge = _StubBridge(tool_in_flight)
@@ -137,3 +159,24 @@ async def test_the_inactivity_timeout_still_ends_an_idle_session():
 
     assert await runtime.check_timeout() is True
     assert muted == [1]
+
+
+@pytest.mark.parametrize("tool_in_flight", [False, True])
+async def test_a_zero_timeout_never_mutes_nor_reports_a_deferral(tool_in_flight):
+    """Délai à 0 : la boucle de supervision interroge chaque seconde, et rien
+    ne doit en sortir — ni mute, ni un `voice.timeout_deferred` par tic."""
+    journal = _RecordingJournal()
+    runtime, clock = _expired_runtime(tool_in_flight=tool_in_flight, timeout_s=0, journal=journal)
+    muted: list[int] = []
+
+    async def fake_mute() -> None:
+        muted.append(1)
+
+    runtime.mute = fake_mute  # type: ignore[method-assign]
+
+    for _ in range(3):
+        clock.advance(3600)
+        assert await runtime.check_timeout() is False
+    assert muted == []
+    assert "voice.timeout" not in journal.kinds
+    assert "voice.timeout_deferred" not in journal.kinds

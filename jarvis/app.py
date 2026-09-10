@@ -189,6 +189,26 @@ def _control_settings(runtime_root: Path) -> dict[str, object]:
     return value if isinstance(value, dict) else {}
 
 
+def _active_timeout_from(overrides: dict[str, object], default: float) -> float:
+    """Délai d'activité utile retenu pour Voice, réglages avant environnement.
+
+    "0" (délai désactivé) est une valeur, pas une absence : seul un champ vide
+    retombe sur l'environnement. Une valeur invalide écrite à la main dans le
+    fichier de réglages retombe elle aussi, plutôt que d'empêcher Voice de
+    démarrer.
+    """
+    from jarvis.domain.errors import ConfigurationError
+    from jarvis.v2_config import parse_active_timeout
+
+    raw = overrides.get("active_timeout_s")
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        return parse_active_timeout(raw, name="active_timeout_s")
+    except ConfigurationError:
+        return default
+
+
 def _announce_calendar_backend(core, runtime_root: Path) -> None:
     """Dire au démarrage si l'agenda est réel ou seulement en mémoire.
 
@@ -310,10 +330,7 @@ async def _run_voice_v2() -> int:
             )
         )
     wake = CompositeWakeWordBackend(wake_backends)
-    try:
-        active_timeout = float(overrides.get("active_timeout_s") or settings.active_timeout_s)
-    except (TypeError, ValueError):
-        active_timeout = settings.active_timeout_s
+    active_timeout = _active_timeout_from(overrides, settings.active_timeout_s)
 
     # Une voix vide enregistree (possible si le champ a ete vide a la main)
     # ferait refuser la session par le fournisseur : on retombe sur le defaut
