@@ -12,6 +12,7 @@ import uuid
 
 from aiohttp import web
 
+from jarvis.domain.errors import ConfigurationError
 from jarvis.domain.v2 import BRAIN_NOT_ADDRESSED_ANSWER, AddressingDecision
 from jarvis.runtime.audio_devices import AudioDiagnosticError, SoundDeviceAudioDiagnostics, normalize_device_id
 from jarvis.runtime import cli_catalog, credentials as creds, shortcuts as shortcut_registry, voice_stack
@@ -20,10 +21,29 @@ from jarvis.runtime.codex_local import CodexLocalAgent, normalize_sandbox_mode
 from jarvis.runtime.journal import RuntimeJournal, read_jsonl_tail
 from jarvis.runtime.model_catalog import CatalogError, ModelCatalog, filter_by_role
 from jarvis.runtime.visual_signals import VisualSignalBus
-from jarvis.v2_config import REALTIME_VOICES, TURN_MODES
+from jarvis.v2_config import REALTIME_VOICES, TURN_MODES, VoiceArchitecture, default_voice_arch, parse_voice_arch
 
 
 VOICE_HEARTBEAT_MAX_AGE_S = 5.0
+
+#: Architectures vocales proposées dans l'onglet « Mode vocal ». Comme le reste
+#: de l'écran, leur libellé vit ici et non dans la page. `{key}` est remplacé
+#: par la touche de réveil courante.
+_VOICE_ARCH_CHOICES: tuple[tuple[VoiceArchitecture, str, str], ...] = (
+    (
+        VoiceArchitecture.LEGACY,
+        "Un tour par appui",
+        "Un appui sur {key}, une question, une réponse, puis JARVIS repasse en arrière-plan. "
+        "Le micro est fermé pendant que JARVIS parle.",
+    ),
+    (
+        VoiceArchitecture.CONTINUOUS_BRAIN,
+        "Conversation continue (jusqu'à {key})",
+        "La session couvre plusieurs tours et le micro reste ouvert jusqu'à un nouvel appui sur "
+        "{key} ou le délai d'inactivité. Exige la pile OpenAI Realtime et la fin de tour "
+        "automatique ; préférez un casque, l'écho des haut-parleurs n'est pas filtré.",
+    ),
+)
 
 #: Champs de l'état public de Core rendus dans la consigne, dans cet ordre.
 #: Liste blanche assumée : le contexte est lu clé par clé, donc un champ inconnu
@@ -370,6 +390,11 @@ class ControlCenter:
         data.setdefault("claude_permission_mode", os.getenv("JARVIS_CLAUDE_PERMISSION_MODE", DEFAULT_PERMISSION_MODE))
         data.setdefault("voice_stack", os.getenv("JARVIS_VOICE_STACK", voice_stack.DEFAULT_VOICE_STACK))
         data.setdefault("agent_cli", os.getenv("JARVIS_AGENT_CLI", cli_catalog.DEFAULT_AGENT_CLI))
+        # Vide veut dire « pas de choix dans l'interface » : Voice retombe alors
+        # sur JARVIS_VOICE_ARCH, puis sur `default_voice_arch()`. La variable
+        # n'est pas recopiée ici, sinon le premier enregistrement la figerait
+        # dans le fichier et la retirer du .env ne ramènerait plus à `legacy`.
+        data.setdefault("voice_arch", "")
         return data
 
     def _write_settings(self, settings: dict[str, Any]) -> None:
@@ -400,6 +425,91 @@ class ControlCenter:
         settings["claude_permission_mode"] = claude_values["permission_mode"]
         settings["manual_wake_key"] = shortcut_registry.current(settings)["wake_toggle"]
 
+    # -------------------------------------------------- architecture vocale
+
+    @staticmethod
+    def _voice_arch_source(settings: dict[str, Any]) -> tuple[str, str]:
+        """Valeur brute que Voice retiendra au démarrage, et d'où elle vient.
+
+        Même ordre que `app._run_voice_v2` : le réglage de l'interface, puis
+        JARVIS_VOICE_ARCH, puis le défaut calculé par `default_voice_arch()`.
+        """
+        stored = str(settings.get("voice_arch") or "").strip()
+        if stored:
+            return stored, "settings"
+        env = os.getenv("JARVIS_VOICE_ARCH", "").strip()
+        if env:
+            return env, "env"
+        return default_voice_arch().value, "default"
+
+    @staticmethod
+    def _store_voice_arch(current: dict[str, Any], raw: object) -> None:
+        value = str(raw or "").strip().lower()
+        if value:
+            try:
+                value = parse_voice_arch(value).value
+            except ConfigurationError as exc:
+                raise voice_stack.VoiceStackError(
+                    "voice_unknown_arch", f"Architecture vocale inconnue : {value}."
+                ) from exc
+        current["voice_arch"] = value
+
+    def _voice_arch_problem(self, settings: dict[str, Any]) -> str | None:
+        """Pourquoi Voice refuserait de démarrer avec ces réglages, ou None.
+
+        Ce sont les refus de `app._run_voice_v2` et de `PersistentVoiceRuntime`,
+        dits ici avant qu'un redémarrage de Voice ne les découvre.
+        """
+        raw, source = self._voice_arch_source(settings)
+        origin = " (valeur imposée par JARVIS_VOICE_ARCH)" if source == "env" else ""
+        try:
+            arch = parse_voice_arch(raw)
+        except ConfigurationError:
+            return f"Architecture vocale inconnue : « {raw} »{origin}. Voice refusera de démarrer."
+        if arch is not VoiceArchitecture.CONTINUOUS_BRAIN:
+            return None
+        if voice_stack.normalize_stack(settings.get("voice_stack")) == voice_stack.GEMINI_LIVE.id:
+            return (
+                f"La conversation continue n'est possible qu'avec la pile OpenAI Realtime{origin} : "
+                "Gemini Live ne sait pas piloter sa sortie audio. Choisissez OpenAI Realtime, "
+                "ou l'architecture « Un tour par appui »."
+            )
+        if str(voice_stack.settings_for(settings).get("turn_mode") or "auto").strip().lower() == "manual":
+            return (
+                f"La conversation continue exige la fin de tour automatique{origin} : remettez "
+                "« Fin de tour » sur « auto », ou choisissez l'architecture « Un tour par appui »."
+            )
+        return None
+
+    def _voice_arch_payload(self, settings: dict[str, Any]) -> dict[str, Any]:
+        key = shortcut_registry.current(settings)["wake_toggle"].upper()
+        choices = [
+            {"id": arch.value, "label": label.format(key=key), "hint": hint.format(key=key)}
+            for arch, label, hint in _VOICE_ARCH_CHOICES
+        ]
+        raw, source = self._voice_arch_source(settings)
+        try:
+            effective = parse_voice_arch(raw).value
+        except ConfigurationError:
+            effective = ""
+        labels = {choice["id"]: choice["label"] for choice in choices}
+        fallback = labels.get(effective) or f"valeur invalide « {raw} »"
+        # L'option vide rend la main à l'environnement : son libellé dit ce
+        # qu'elle vaut réellement aujourd'hui.
+        default_choice = {
+            "id": "",
+            "label": f"Selon JARVIS_VOICE_ARCH — {fallback}" if source == "env" else f"Par défaut — {fallback}",
+            "hint": "Aucun choix enregistré ici : Voice suit JARVIS_VOICE_ARCH, "
+            "ou l'architecture par défaut si la variable est absente.",
+        }
+        return {
+            "arch": str(settings.get("voice_arch") or ""),
+            "arch_effective": effective,
+            "arch_source": source,
+            "archs": [default_choice, *choices],
+            "arch_problem": self._voice_arch_problem(settings),
+        }
+
     def _settings_payload(self, settings: dict[str, Any]) -> dict[str, Any]:
         stack_id = voice_stack.normalize_stack(settings.get("voice_stack"))
         agent_id = cli_catalog.normalize_agent_cli(settings.get("agent_cli"))
@@ -410,6 +520,7 @@ class ControlCenter:
                 "settings": {
                     spec.id: voice_stack.settings_for(settings, spec.id) for spec in voice_stack.VOICE_STACKS
                 },
+                **self._voice_arch_payload(settings),
             },
             "cli": {
                 "agent": agent_id,
@@ -459,6 +570,9 @@ class ControlCenter:
 
         try:
             self._apply_voice(current, payload)
+            # Champ plat, pendant de `voice_turn_mode` ; vide = revenir au défaut.
+            if payload.get("voice_arch") is not None:
+                self._store_voice_arch(current, payload["voice_arch"])
             switch_to = self._apply_cli(current, payload)
         except (voice_stack.VoiceStackError, cli_catalog.CliSettingsError, creds.CredentialError) as exc:
             raise web.HTTPBadRequest(text=str(exc)) from exc
@@ -515,6 +629,11 @@ class ControlCenter:
                 creds.migrate_legacy(current)
 
         self._mirror_legacy(current)
+        # Une combinaison que Voice refuserait au démarrage n'est pas écrite :
+        # l'erreur tombe ici, en clair, plutôt qu'au prochain lancement de Voice.
+        problem = self._voice_arch_problem(current)
+        if problem:
+            raise web.HTTPBadRequest(text=problem)
         self._write_settings(current)
         if switch_to is not None:
             await self._switch_agent(switch_to, current)
@@ -534,6 +653,8 @@ class ControlCenter:
                     "voice_unknown_stack", f"Pile vocale inconnue : {stack_id}."
                 )
             current["voice_stack"] = stack_id
+        if voice.get("arch") is not None:
+            self._store_voice_arch(current, voice["arch"])
         values = voice.get("settings")
         if isinstance(values, dict):
             for stack_id, stack_values in values.items():

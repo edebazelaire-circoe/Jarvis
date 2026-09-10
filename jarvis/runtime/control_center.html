@@ -297,7 +297,14 @@ async function tabVoice(){
   for(const field of spec.fields)fields.push(await renderField(field,values,spec.id));
   const keyWarning=keyStateFor(spec.credential_provider).includes('aucune clé')
     ? `<div class="notice bad">Aucune clé ${esc(providerLabel(spec.credential_provider))} n'est enregistrée : cette pile ne pourra pas démarrer. Ajoutez-la dans l'onglet API Keys.</div>`:'';
-  return `<section><h3>Pile vocale</h3><div class="choices">${choices}</div>${keyWarning}<h3>Réglages de ${esc(spec.label)}</h3>${fields.join('')}
+  // Architecture : liste et libellés décrits par le serveur, l'option vide
+  // rendant la main à JARVIS_VOICE_ARCH.
+  const archs=SET.data.voice.archs||[],arch=archs.find(a=>a.id===(draft.arch||''))||archs[0];
+  const archProblem=SET.data.voice.arch_problem?`<div class="notice bad">${esc(SET.data.voice.arch_problem)}</div>`:'';
+  const archField=archs.length?`<h3>Architecture</h3>${archProblem}<div class="field"><label for="f_voice_arch">Déroulé d'une conversation</label>
+    <select id="f_voice_arch" data-voice-arch>${selectOptions(archs.map(a=>({value:a.id,label:a.label})),draft.arch||'','')}</select>
+    <div class="hint">${esc(arch?arch.hint:'')}</div></div>`:'';
+  return `<section>${archField}<h3>Pile vocale</h3><div class="choices">${choices}</div>${keyWarning}<h3>Réglages de ${esc(spec.label)}</h3>${fields.join('')}
     <div class="hint">Les changements prennent effet au prochain redémarrage du runtime Voice.</div></section>`;
 }
 
@@ -425,6 +432,8 @@ async function renderTab(){
 function bindTab(){
   modalContent.querySelectorAll('input[name=voicestack]').forEach(el=>el.addEventListener('change',()=>{
     SET.draft.voice.stack=el.value;SET.dirty=true;renderTab()}));
+  modalContent.querySelectorAll('[data-voice-arch]').forEach(el=>el.addEventListener('change',()=>{
+    SET.draft.voice.arch=el.value;SET.dirty=true;renderTab()}));
   modalContent.querySelectorAll('input[name=clicagent]').forEach(el=>el.addEventListener('change',()=>{
     SET.draft.cli.agent=el.value;SET.dirty=true;renderTab()}));
   modalContent.querySelectorAll('[data-field]').forEach(el=>el.addEventListener('change',()=>{
@@ -547,7 +556,7 @@ function uiKey(event){
 /* --- ouverture, enregistrement, fermeture -------------------------------- */
 function draftFrom(data){
   return {
-    voice:{stack:data.voice.stack,settings:JSON.parse(JSON.stringify(data.voice.settings))},
+    voice:{stack:data.voice.stack,arch:data.voice.arch||'',settings:JSON.parse(JSON.stringify(data.voice.settings))},
     cli:{agent:data.cli.agent,settings:JSON.parse(JSON.stringify(data.cli.settings))},
     audio:{...data.audio},
   };

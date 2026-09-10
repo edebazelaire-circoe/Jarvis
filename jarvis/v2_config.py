@@ -60,13 +60,16 @@ def parse_turn_mode(value: str | None) -> bool:
 class VoiceArchitecture(StrEnum):
     """Bascule de déploiement entre l'ancien cycle de vie vocal et le continu.
 
-    Elle vit ici, et non dans les réglages de pile du Control Center, pour deux
-    raisons. D'abord `voice_stack.py` dit explicitement ne décrire que des champs
-    « réellement transmis au fournisseur » : le mode d'architecture ne part chez
-    personne, il choisit le chemin de code de JARVIS. Ensuite c'est un
-    interrupteur de déploiement, pas une préférence d'utilisateur (Décision 20) :
-    on doit pouvoir revenir à `legacy` en une ligne de `.env` et un
-    redémarrage, sans dépendre d'un fichier de réglages écrit par l'interface.
+    Elle vit ici, et non dans les réglages de pile de `voice_stack.py`, qui dit
+    explicitement ne décrire que des champs « réellement transmis au
+    fournisseur » : le mode d'architecture ne part chez personne, il choisit le
+    chemin de code de JARVIS.
+
+    Le Control Center l'expose tout de même comme réglage à part (`voice_arch`
+    dans `control-center-settings.json`), qui passe devant `JARVIS_VOICE_ARCH`
+    au démarrage de Voice. Laissé vide, il rend la main à la variable puis à
+    `default_voice_arch()` : le retour arrière par le `.env` (Décision 20)
+    reste donc possible tant que l'interface n'a rien imposé.
 
     `LEGACY` reste le défaut tant que le mode continu n'a pas passé les recettes
     poste de travail : garder le micro ouvert pendant que les haut-parleurs
@@ -130,6 +133,14 @@ def parse_voice_arch(value: str | None) -> VoiceArchitecture:
     except ValueError as exc:
         allowed = " ou ".join(f"'{item.value}'" for item in VoiceArchitecture)
         raise ConfigurationError(f"JARVIS_VOICE_ARCH must be {allowed}") from exc
+
+
+def recommended_realtime_model(voice_arch: VoiceArchitecture) -> str:
+    """Modèle Realtime conseillé pour une architecture, faute de choix explicite."""
+
+    if voice_arch is VoiceArchitecture.CONTINUOUS_BRAIN:
+        return DEFAULT_CONTINUOUS_SURFACE_MODEL
+    return DEFAULT_REALTIME_MODEL
 
 
 def _float_env(name: str, default: float) -> float:

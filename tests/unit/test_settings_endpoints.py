@@ -34,7 +34,10 @@ class QueryRequest:
 
 @pytest.fixture
 def control(tmp_path, monkeypatch):
-    for name in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY", "PORCUPINE_ACCESS_KEY"):
+    for name in (
+        "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY", "PORCUPINE_ACCESS_KEY",
+        "JARVIS_VOICE_ARCH",
+    ):
         monkeypatch.delenv(name, raising=False)
     return ControlCenter(runtime_root=tmp_path, project_root=tmp_path)
 
@@ -121,6 +124,117 @@ async def test_the_turn_mode_of_the_active_stack_drives_the_key_hint(control):
     status = json.loads((await control.status(None)).text)
     assert status["voice_turn_mode"] == "manual"
     assert status["voice_stack"] == "gemini_live"
+
+
+# ===========================================================================
+# Architecture vocale
+# ===========================================================================
+
+
+def stored_settings(tmp_path) -> dict:
+    return json.loads((tmp_path / "control-center-settings.json").read_text(encoding="utf-8"))
+
+
+async def test_the_voice_architecture_is_described_with_its_choices(control):
+    voice = (await settings_of(control))["voice"]
+
+    # Rien d'enregistré : Voice suivra le défaut calculé, et la page le dit.
+    assert voice["arch"] == ""
+    assert voice["arch_effective"] == "legacy"
+    assert voice["arch_source"] == "default"
+    assert voice["arch_problem"] is None
+    archs = {item["id"]: item for item in voice["archs"]}
+    assert list(archs) == ["", "legacy", "continuous_brain"]
+    assert archs["legacy"]["label"] == "Un tour par appui"
+    assert archs["continuous_brain"]["label"] == "Conversation continue (jusqu'à F9)"
+    assert archs[""]["label"] == "Par défaut — Un tour par appui"
+    assert all(item["hint"] for item in voice["archs"])
+
+
+async def test_the_voice_architecture_round_trips_and_can_be_reset(control, tmp_path):
+    await control.save_settings(JsonRequest({"voice": {"arch": " Continuous_Brain "}}))
+
+    assert stored_settings(tmp_path)["voice_arch"] == "continuous_brain"
+    voice = (await settings_of(control))["voice"]
+    assert (voice["arch"], voice["arch_effective"], voice["arch_source"]) == (
+        "continuous_brain", "continuous_brain", "settings"
+    )
+
+    # Champ plat, pendant de `voice_turn_mode` ; vide rend la main au défaut.
+    await control.save_settings(JsonRequest({"voice_arch": ""}))
+
+    assert stored_settings(tmp_path)["voice_arch"] == ""
+    voice = (await settings_of(control))["voice"]
+    assert (voice["arch"], voice["arch_effective"], voice["arch_source"]) == ("", "legacy", "default")
+
+
+@pytest.mark.parametrize("payload", [{"voice": {"arch": "continuous"}}, {"voice_arch": "duplex"}])
+async def test_an_unknown_voice_architecture_is_refused_and_nothing_is_written(control, tmp_path, payload):
+    with pytest.raises(web.HTTPBadRequest) as refused:
+        await control.save_settings(JsonRequest(payload))
+
+    assert "Architecture vocale inconnue" in refused.value.text
+    assert not (tmp_path / "control-center-settings.json").exists()
+
+
+async def test_continuous_mode_is_refused_on_gemini_live(control, tmp_path):
+    with pytest.raises(web.HTTPBadRequest) as refused:
+        await control.save_settings(JsonRequest({"voice": {"stack": "gemini_live", "arch": "continuous_brain"}}))
+
+    assert "OpenAI Realtime" in refused.value.text
+    assert not (tmp_path / "control-center-settings.json").exists()
+
+
+async def test_continuous_mode_is_refused_with_a_manual_turn(control, tmp_path):
+    with pytest.raises(web.HTTPBadRequest) as refused:
+        await control.save_settings(JsonRequest({
+            "voice": {"arch": "continuous_brain", "settings": {"openai_realtime": {"turn_mode": "manual"}}}
+        }))
+
+    assert "fin de tour automatique" in refused.value.text
+    assert not (tmp_path / "control-center-settings.json").exists()
+
+
+async def test_the_environment_answers_while_nothing_is_chosen_but_is_never_copied(control, tmp_path, monkeypatch):
+    """JARVIS_VOICE_ARCH reste le repli, et le retirer doit encore ramener à legacy.
+
+    Si le premier enregistrement recopiait la variable dans le fichier, c'est
+    cette copie figée qui gagnerait ensuite, et le retour arrière par le .env
+    cesserait silencieusement de fonctionner.
+    """
+    monkeypatch.setenv("JARVIS_VOICE_ARCH", "continuous_brain")
+
+    voice = (await settings_of(control))["voice"]
+    assert (voice["arch"], voice["arch_effective"], voice["arch_source"]) == ("", "continuous_brain", "env")
+    assert voice["archs"][0]["label"] == "Selon JARVIS_VOICE_ARCH — Conversation continue (jusqu'à F9)"
+
+    await control.save_settings(JsonRequest({"voice": {"settings": {"openai_realtime": {"voice": "ash"}}}}))
+    assert stored_settings(tmp_path)["voice_arch"] == ""
+
+
+async def test_the_interface_choice_overrides_an_incompatible_environment(control, tmp_path, monkeypatch):
+    monkeypatch.setenv("JARVIS_VOICE_ARCH", "continuous_brain")
+    manual = {"settings": {"openai_realtime": {"turn_mode": "manual"}}}
+
+    # La variable impose le continu : une fin de tour manuelle est refusée…
+    with pytest.raises(web.HTTPBadRequest) as refused:
+        await control.save_settings(JsonRequest({"voice": manual}))
+    assert "JARVIS_VOICE_ARCH" in refused.value.text
+
+    # … sauf si l'interface choisit explicitement « Un tour par appui ».
+    await control.save_settings(JsonRequest({"voice": {**manual, "arch": "legacy"}}))
+    stored = stored_settings(tmp_path)
+    assert stored["voice_arch"] == "legacy"
+    assert stored["voice_turn_mode"] == "manual"
+
+
+async def test_an_incompatible_file_written_by_hand_is_flagged(control, tmp_path):
+    (tmp_path / "control-center-settings.json").write_text(
+        json.dumps({"voice_stack": "gemini_live", "voice_arch": "continuous_brain"}), encoding="utf-8"
+    )
+
+    voice = (await settings_of(control))["voice"]
+    assert "OpenAI Realtime" in voice["arch_problem"]
 
 
 async def test_cli_settings_are_stored_per_agent_and_reach_the_running_one(control, tmp_path):

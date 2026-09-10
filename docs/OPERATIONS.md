@@ -135,6 +135,15 @@ OpenAI.
 
 ### Mode vocal
 
+En tête de l'onglet, **Architecture** choisit le déroulé d'une conversation :
+« Un tour par appui » (`legacy`) ou « Conversation continue (jusqu'à F9) »
+(`continuous_brain`). Le choix est rangé dans `voice_arch` de
+`runtime/control-center-settings.json` et passe devant `JARVIS_VOICE_ARCH` ;
+laissé sur « Par défaut », Voice suit la variable, puis le défaut calculé (voir
+« Deux architectures vocales »). Une combinaison que Voice refuserait —
+conversation continue avec Gemini Live, ou avec une fin de tour manuelle — est
+refusée à l'enregistrement, avec la raison.
+
 Deux piles, interchangeables :
 
 | Pile | Modèle | Clé | Fréquences |
@@ -286,7 +295,7 @@ Main environment overrides:
 | `OPENAI_REALTIME_VOICE` | Realtime timbre; default `cedar` |
 | `JARVIS_VOICE_TURN_MODE` | `auto` (server VAD, default) or `manual` (second key press) |
 | `JARVIS_VOICE_STACK` | `openai_realtime` (default) or `gemini_live` |
-| `JARVIS_VOICE_ARCH` | `legacy` (default, computed) or `continuous_brain`; see "Deux architectures vocales" below. Unsetting it is the rollback path |
+| `JARVIS_VOICE_ARCH` | `legacy` (default, computed) or `continuous_brain`; see "Deux architectures vocales" below. The **Architecture** choice of the Control Center (tab Mode vocal) takes precedence; this variable only applies while that choice is left on "Par défaut" |
 | `JARVIS_ACTIVE_TIMEOUT_S` | useful-inactivity timeout of an ACTIVE voice session; default 90 |
 | `JARVIS_AGENT_CLI` | `claude` (default) or `codex` |
 | `JARVIS_CLAUDE_MODEL` | model passed to `claude --model`; empty means the CLI default |
@@ -636,11 +645,14 @@ le badge se vide, rien n'est perdu, et `runtime/trace.jsonl` reste intact.
 
 ## Deux architectures vocales : `legacy` et `continuous_brain`
 
-`JARVIS_VOICE_ARCH` choisit le chemin de code de la voix. Ce n'est pas une
-préférence d'utilisateur mais un interrupteur de déploiement : il vit dans
-`jarvis/v2_config.py` et non dans les réglages du Control Center, pour qu'on
-puisse revenir en arrière avec une ligne de `.env` et un redémarrage, sans
-dépendre d'un fichier écrit par l'interface.
+L'architecture choisit le chemin de code de la voix. Voice la lit au démarrage,
+dans cet ordre : le réglage **Architecture** du Control Center (`voice_arch`
+dans `runtime/control-center-settings.json`), puis `JARVIS_VOICE_ARCH`, puis
+`default_voice_arch()`. Le réglage laissé sur « Par défaut » n'écrit rien de
+l'environnement dans le fichier : le retour arrière par le `.env` reste donc
+possible tant que l'interface n'a rien imposé. L'origine retenue est
+journalisée dans `voice.stack` (champ `arch_source` : `settings`, `env` ou
+`default`).
 
 | | `legacy` (défaut) | `continuous_brain` (opt-in) |
 | --- | --- | --- |
@@ -675,6 +687,11 @@ jamais la voix pour prononcer un résultat que vous avez coupé.
 
 ### Basculer, et revenir
 
+Le plus simple : onglet **Mode vocal** du Control Center, champ
+**Architecture**, puis redémarrage de Voice. Revenir en arrière, c'est choisir
+« Un tour par appui » ou « Par défaut ». La variable reste le chemin sans
+interface :
+
 ```powershell
 # activer, dans le .env du projet ou l'environnement du processus Voice
 $env:JARVIS_VOICE_ARCH = "continuous_brain"
@@ -684,7 +701,9 @@ Remove-Item Env:\JARVIS_VOICE_ARCH
 ```
 
 Core et Voice lisent la variable au démarrage : il faut relancer les deux
-processus. Le mode retenu est journalisé dans `voice.stack` et `voice.active`
+processus (le réglage du Control Center, lui, n'est lu que par Voice). Sans
+`OPENAI_REALTIME_MODEL`, le modèle Realtime conseillé suit l'architecture
+effective, y compris quand elle vient du Control Center. Le mode retenu est journalisé dans `voice.stack` et `voice.active`
 (champ `arch`), et `surface_reflex_only` de `voice.stack` dit si le catalogue
 d'outils envoyé au fournisseur était vide.
 
@@ -717,6 +736,9 @@ bloqué : `JARVIS_VOICE_ARCH=continuous_brain` reste accepté aujourd'hui.
   n'implémente pas les contrôles de sortie sémantiques.
 - Fin de tour `manual` + `continuous_brain` → refus au démarrage : le mode
   continu repose sur le découpage de tours du fournisseur.
+- Ces deux combinaisons sont aussi refusées par le Control Center à
+  l'enregistrement (HTTP 400, message en clair), et signalées dans l'onglet
+  Mode vocal si le fichier de réglages les contient déjà.
 - Pile sans contrôle de sortie détectée à l'ouverture de session → état `ERROR`,
   trace `voice.arch_unsupported`, retour au fond.
 

@@ -257,11 +257,24 @@ async def _run_voice_v2() -> int:
     from jarvis.runtime.realtime_tools import REALTIME_TOOLS
     from jarvis.runtime.visual_signals import VisualSignalBus
     from jarvis.runtime.voice_v2 import PersistentVoiceRuntime
-    from jarvis.v2_config import V2Settings, VoiceArchitecture
+    from jarvis.domain.errors import ConfigurationError
+    from jarvis.v2_config import V2Settings, VoiceArchitecture, parse_voice_arch, recommended_realtime_model
     settings = V2Settings.load()
     signals = VisualSignalBus(settings.runtime_root)
     signals.offline()
     overrides = _control_settings(settings.runtime_root)
+    # L'architecture choisie dans le Control Center passe devant
+    # JARVIS_VOICE_ARCH. Laissée vide, la variable puis `default_voice_arch()`
+    # décident, exactement comme avant que le réglage n'existe.
+    arch_override = str(overrides.get("voice_arch") or "").strip()
+    try:
+        voice_arch = parse_voice_arch(arch_override) if arch_override else settings.voice_arch
+    except ConfigurationError as exc:
+        raise RuntimeError(
+            f"Architecture vocale inconnue dans les réglages du Control Center : « {arch_override} ». "
+            "Choisissez-la de nouveau dans l'onglet Mode vocal, puis relancez Voice."
+        ) from exc
+    arch_source = "settings" if arch_override else ("env" if os.getenv("JARVIS_VOICE_ARCH", "").strip() else "default")
     if not settings.token_file.exists():
         raise RuntimeError("Core session token is missing; start `jarvis core` first")
     token = settings.token_file.read_text(encoding="utf-8").strip()
@@ -313,7 +326,7 @@ async def _run_voice_v2() -> int:
     # Une seule lecture de l'architecture pour la surface : elle choisit à la
     # fois le jeu de règles et le catalogue d'outils, et les deux doivent dire la
     # même chose au modèle.
-    continuous_brain = settings.voice_arch is VoiceArchitecture.CONTINUOUS_BRAIN
+    continuous_brain = voice_arch is VoiceArchitecture.CONTINUOUS_BRAIN
 
     if stack.id == voice_stack.GEMINI_LIVE.id:
         if continuous_brain:
@@ -322,9 +335,9 @@ async def _run_voice_v2() -> int:
             # continu ; le laisser démarrer donnerait une voix qui commente le
             # travail du cerveau sans pouvoir être interrompue.
             raise RuntimeError(
-                "La pile Gemini Live ne prend pas en charge JARVIS_VOICE_ARCH=continuous_brain. "
-                "Choisissez la pile OpenAI Realtime dans les réglages, ou repassez "
-                "JARVIS_VOICE_ARCH sur 'legacy'."
+                "La pile Gemini Live ne prend pas en charge l'architecture continuous_brain. "
+                "Choisissez la pile OpenAI Realtime dans les réglages, ou repassez l'architecture "
+                "sur « Un tour par appui » (onglet Mode vocal, ou JARVIS_VOICE_ARCH=legacy)."
             )
         if not realtime_model:
             raise RuntimeError(
@@ -348,7 +361,14 @@ async def _run_voice_v2() -> int:
                 silence_duration_ms=int(stack_values.get("vad_silence_duration_ms") or 1500),
             )
     else:
-        openai_model = realtime_model or settings.realtime_model
+        # Sans OPENAI_REALTIME_MODEL, le modèle conseillé suit l'architecture
+        # effective, et non celle que l'environnement seul aurait retenue.
+        default_model = (
+            settings.realtime_model
+            if os.getenv("OPENAI_REALTIME_MODEL") is not None
+            else recommended_realtime_model(voice_arch)
+        )
+        openai_model = realtime_model or default_model
         surface_tools = realtime_tools.tools_for(continuous_brain=continuous_brain)
 
         async def realtime_factory(context: dict[str, object]):
@@ -373,9 +393,9 @@ async def _run_voice_v2() -> int:
     # Mode continu : Voice ne possède plus le modèle fort (Décision 19). Core
     # le joint à travers son `BrainBackend`, et ne pas construire la passerelle
     # ici est ce qui rend l'ancien chemin réellement inaccessible.
-    if settings.voice_arch is VoiceArchitecture.CONTINUOUS_BRAIN:
+    if continuous_brain:
         claude = None
-        journal.emit("claude.gateway", "Mode continu : le modèle fort est joint par Core, pas par Voice", data={"arch": settings.voice_arch.value})
+        journal.emit("claude.gateway", "Mode continu : le modèle fort est joint par Core, pas par Voice", data={"arch": voice_arch.value})
     else:
         claude = ClaudeGateway(
             base_url=_control_center_url(),
@@ -395,7 +415,7 @@ async def _run_voice_v2() -> int:
         claude=claude,
         input_sample_rate=stack.input_sample_rate,
         output_sample_rate=stack.output_sample_rate,
-        voice_arch=settings.voice_arch,
+        voice_arch=voice_arch,
     )
     timeout_task = asyncio.create_task(_voice_timeout_loop(voice, signals, journal), name="jarvis-voice-timeout")
     key = manual_key.upper()
@@ -409,7 +429,10 @@ async def _run_voice_v2() -> int:
             "model": realtime_model or "(défaut)",
             "voice": realtime_voice,
             "auto_turn": auto_turn,
-            "arch": settings.voice_arch.value,
+            "arch": voice_arch.value,
+            # D'où vient `arch` : réglage du Control Center, variable
+            # d'environnement, ou défaut calculé.
+            "arch_source": arch_source,
             # Ce qui a réellement été envoyé au fournisseur : en continu la
             # surface est bornée aux réflexes et son catalogue d'outils est vide
             # (Décision 34).
