@@ -621,6 +621,42 @@ async def test_a_provider_error_is_still_raised():
         await bridge.run()
 
 
+async def test_a_late_cancel_after_barge_in_does_not_stop_voice(tmp_path):
+    """Le barge-in annule une réponse que le fournisseur venait de finir : son
+    refus (`response_cancel_not_active`) n'est pas une panne, la voix continue."""
+    from jarvis.runtime.journal import RuntimeJournal, read_jsonl_tail
+    from jarvis.runtime.realtime_audio import RealtimeConversationBridge
+
+    class LateCancelSession(ToolCallSession):
+        async def events(self):
+            yield ProtocolEnvelope(
+                message_type="realtime.error",
+                payload={
+                    "error": {
+                        "code": "response_cancel_not_active",
+                        "message": "Cancellation failed: no active response found",
+                    }
+                },
+            )
+
+    bridge = RealtimeConversationBridge(
+        core=RecordingCore(),
+        session=LateCancelSession("x", {}),
+        conversation_id="conv-1",
+        audio=SilentAudio(),
+        on_addressed=lambda: None,
+        on_mute=lambda: None,
+        journal=RuntimeJournal(tmp_path),
+    )
+
+    await bridge.run()  # ne doit pas lever
+
+    entry = next(e for e in read_jsonl_tail(tmp_path / "trace.jsonl") if e["kind"] == "voice.barge_in_degraded")
+    assert entry["level"] == "warning"
+    assert entry["data"]["code"] == "response_cancel_not_active"
+    assert "provider.error" not in {e["kind"] for e in read_jsonl_tail(tmp_path / "trace.jsonl")}
+
+
 async def test_the_session_is_pinged_while_claude_works():
     """Sans ping, le websocket reste muet pendant toute la tâche et se ferme."""
     from jarvis.runtime.realtime_audio import RealtimeConversationBridge

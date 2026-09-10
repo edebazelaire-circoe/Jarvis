@@ -33,6 +33,13 @@ LATENCY_BRAIN_TURN_ACCEPTED_KIND = "voice.latency.brain_turn_accepted"
 # complet ; l'outil rend immédiatement un accusé (voir `_brain_owns_the_request`).
 CLAUDE_TOOL = "claude_task"
 
+# Erreurs fournisseur qui ne disent rien d'une panne. `response.cancel` part au
+# barge-in, pendant que le haut-parleur joue encore l'audio déjà reçu : si le
+# fournisseur a fini de générer entre-temps, il refuse l'annulation. Le son est
+# déjà coupé localement, le tour est simplement dégradé (voir
+# `_cancel_provider_output`) ; en faire une exception fermerait la session.
+BENIGN_PROVIDER_ERRORS = frozenset({"response_cancel_not_active"})
+
 
 def _optional_text(value: object) -> str | None:
     """Normaliser un identifiant de charge utile : vide et absent se valent."""
@@ -1441,6 +1448,14 @@ class RealtimeConversationBridge:
                     else:
                         code = "unknown_error"
                         message = str(error)
+                    if code in BENIGN_PROVIDER_ERRORS:
+                        self._trace(
+                            "voice.barge_in_degraded",
+                            f"Annulation de la sortie refusée par le fournisseur: {message}",
+                            level="warning",
+                            data={"conversation_id": self.conversation_id, "code": code},
+                        )
+                        continue
                     self._trace("provider.error", message, level="error", data={"code": code})
                     raise RuntimeError(f"Realtime provider error [{code}]: {message}")
         except ConnectionError as exc:
