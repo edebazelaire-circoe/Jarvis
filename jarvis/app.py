@@ -480,15 +480,20 @@ async def _run_control_center_v2() -> int:
     journal = RuntimeJournal(runtime_root)
     ui_port = int(os.getenv("JARVIS_UI_PORT", "17654"))
 
-    # Le visage ai-visualizer n'est qu'un decor : le rendu temps reel est porte
-    # par Barehands. Il reste rallumable par JARVIS_VISUALIZER_ENABLED=1, mais
-    # son absence ne doit plus empecher le Control Center de demarrer.
+    # Le visage ai-visualizer est lance des qu'il est installe : sans lui, le
+    # Control Center n'affiche qu'un fond noir. Son absence ne doit pas pour
+    # autant empecher le Control Center de demarrer ; JARVIS_VISUALIZER_ENABLED
+    # force l'un ou l'autre choix.
     visualizer: asyncio.subprocess.Process | None = None
     visualizer_url: str | None = None
-    if os.getenv("JARVIS_VISUALIZER_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
-        visualizer_root = ROOT / "third_party" / "ai-visualizer"
-        if not (visualizer_root / "server.py").is_file():
-            raise RuntimeError("ai-visualizer is not installed; run `python scripts/bootstrap_third_party.py` first")
+    visualizer_root = ROOT / "third_party" / "ai-visualizer"
+    visualizer_installed = (visualizer_root / "server.py").is_file()
+    visualizer_flag = os.getenv("JARVIS_VISUALIZER_ENABLED", "").strip().lower()
+    visualizer_forced = visualizer_flag in {"1", "true", "yes", "on"}
+    if visualizer_forced and not visualizer_installed:
+        raise RuntimeError("ai-visualizer is not installed; run `python scripts/bootstrap_third_party.py` first")
+    visualizer_enabled = visualizer_forced if visualizer_flag else visualizer_installed
+    if visualizer_enabled:
         visualizer_port = int(os.getenv("JARVIS_VISUALIZER_PORT", "8790"))
         config = {
             "name": "JARVIS",
@@ -518,7 +523,8 @@ async def _run_control_center_v2() -> int:
     if visualizer is not None:
         journal.emit("ui.visualizer", "ai-visualizer launched", data={"url": visualizer_url, "pid": visualizer.pid})
     else:
-        journal.emit("ui.visualizer", "ai-visualizer desactive ; rendu visuel assure par Barehands", data={"enabled": False})
+        reason = "desactive par JARVIS_VISUALIZER_ENABLED" if visualizer_flag else "non installe"
+        journal.emit("ui.visualizer", f"ai-visualizer {reason} ; pas de visage", data={"enabled": False, "installed": visualizer_installed})
     try:
         await asyncio.sleep(0.5)
         webbrowser.open(url)
