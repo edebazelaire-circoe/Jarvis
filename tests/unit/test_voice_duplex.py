@@ -1041,6 +1041,64 @@ async def test_a_cut_between_the_call_and_the_writer_thread_plays_nothing():
     assert written == []
 
 
+def test_the_cursor_counts_from_the_start_of_the_item_actually_playing():
+    """Crash du 11/09 12:41 : préambule de 4,45 s puis texte, coupé à 23,9 s.
+
+    La troncature visait le premier élément avec la durée de toute la réponse ;
+    le fournisseur refusait (« Audio content of 4450ms is already shorter than
+    23868ms ») et Voice tombait.
+    """
+
+    audio = SoundDeviceRealtimeAudio()
+    ms = lambda value: int(value * 48)  # noqa: E731 - octets pour `value` ms à 24 kHz
+    audio.set_active_output(output_id="out-1", speech_id="speech-1", item_id="item-preamble")
+    audio._credit_written(audio._output_epoch, ms(4450))
+    audio.set_active_output(output_id="out-1", speech_id="speech-1", item_id="item-text")
+    audio._credit_written(audio._output_epoch, ms(19418))
+
+    cursor = audio.playback_cursor()
+
+    assert cursor.provider_item_id == "item-text"
+    assert cursor.played_ms == 19418
+
+
+async def test_the_adapter_never_truncates_beyond_what_an_item_contains():
+    from jarvis.domain.v2 import PlaybackCursor
+
+    websocket = FakeWebSocket()
+    session = OpenAIRealtimeSession(websocket, object(), owns_http=False)  # type: ignore[arg-type]
+    output = session._register_output(speech_id="speech-1")
+    output.item_id = "item-preamble"
+    output.item_audio_ms["item-preamble"] = 4450.0
+
+    await session.truncate(PlaybackCursor(speech_id="speech-1", played_ms=23868, provider_item_id="item-preamble"))
+
+    assert websocket.sent[-1]["audio_end_ms"] == 4450
+
+
+async def test_a_refused_truncation_does_not_kill_voice():
+    audio = GuardedAudio(guarded=False)
+    journal = RecordingJournal()
+    bridge = build_bridge(audio, journal=journal)
+
+    await feed(
+        bridge,
+        [
+            event("realtime.output_started", output_id="out-1", speech_id="speech-1"),
+            audio_delta(2, output_id="out-1", speech_id="speech-1", item_id="item-1"),
+            event("realtime.speech_started"),
+            event(
+                "realtime.error",
+                error={"code": "invalid_value", "message": "Audio content of 4450ms is already shorter than 23868ms"},
+            ),
+        ],
+    )
+
+    assert journal.count("voice.barge_in") == 1
+    assert journal.count("provider.error") == 0
+    assert "invalid_value" in {item["data"]["code"] for item in journal.of("voice.barge_in_degraded")}
+
+
 async def test_a_refused_overlapping_response_does_not_kill_the_session():
     journal = RecordingJournal()
     bridge = build_bridge(GuardedAudio(guarded=False), journal=journal)

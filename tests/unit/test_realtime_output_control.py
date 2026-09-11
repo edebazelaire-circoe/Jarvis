@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+
 import aiohttp
 import pytest
 
@@ -43,6 +45,9 @@ class _Message:
 
     def json(self) -> dict[str, object]:
         return self._payload
+
+
+ONE_SECOND_B64 = base64.b64encode(bytes(48000)).decode()
 
 
 def make_session(inbound: list[dict[str, object]] | None = None) -> OpenAIRealtimeSession:
@@ -365,7 +370,8 @@ async def test_barge_in_sequence_emits_cancel_then_truncate():
             "type": "response.created",
             "response": {"id": "resp-6", "metadata": {OUTPUT_ID_METADATA_KEY: output_id}},
         },
-        {"type": "response.output_audio.delta", "response_id": "resp-6", "item_id": "item-6", "delta": "C"},
+        # Une seconde d'audio reçue : la troncature à 640 ms reste dans l'élément.
+        {"type": "response.output_audio.delta", "response_id": "resp-6", "item_id": "item-6", "delta": ONE_SECOND_B64},
     ]
     await drain(session)
     session.ws.sent.clear()

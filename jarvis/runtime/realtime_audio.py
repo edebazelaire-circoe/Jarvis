@@ -207,6 +207,9 @@ class SoundDeviceRealtimeAudio:
         self._output_response_id: str | None = None
         self._output_item_id: str | None = None
         self._output_written_bytes = 0
+        # Début, dans la sortie, de l'élément audio en cours (voir
+        # `set_active_output`).
+        self._item_offset_bytes = 0
         self._output_latency_ms = 0.0
 
     async def start(self) -> None:
@@ -364,6 +367,11 @@ class SoundDeviceRealtimeAudio:
 
         Une sortie sans aucun identifiant (Gemini Live n'en émet pas,
         Décision 21) ne déclare rien : le curseur reste indisponible.
+
+        Une même réponse peut porter plusieurs éléments audio — le modèle a
+        par exemple ajouté un préambule avant le texte à lire. La troncature
+        vise un élément et se compte depuis *son* début : quand l'élément change
+        au sein d'une sortie, on retient où il commence.
         """
 
         identity = output_id or speech_id
@@ -373,6 +381,7 @@ class SoundDeviceRealtimeAudio:
                 self._output_epoch += 1
                 self._playback_epoch += 1
                 self._output_written_bytes = 0
+                self._item_offset_bytes = 0
                 self._output_speech_id = speech_id or None
                 self._output_id = output_id or None
                 self._output_response_id = response_id or None
@@ -382,7 +391,12 @@ class SoundDeviceRealtimeAudio:
             self._output_speech_id = self._output_speech_id or speech_id or None
             self._output_id = self._output_id or output_id or None
             self._output_response_id = self._output_response_id or response_id or None
-            self._output_item_id = self._output_item_id or item_id or None
+            if item_id and self._output_item_id and item_id != self._output_item_id:
+                # Élément suivant de la même réponse : il commence ici.
+                self._item_offset_bytes = self._output_written_bytes
+                self._output_item_id = item_id
+            else:
+                self._output_item_id = self._output_item_id or item_id or None
 
     def playback_cursor(self) -> PlaybackCursor | None:
         """Ce que l'utilisateur a réellement entendu de la sortie en cours.
@@ -399,9 +413,10 @@ class SoundDeviceRealtimeAudio:
             speech_id = self._output_speech_id or self._output_id
             if not speech_id:
                 return None
+            item_start_ms = self._item_offset_bytes * 1000.0 / (self.output_sample_rate * self._BYTES_PER_FRAME)
             return PlaybackCursor(
                 speech_id=speech_id,
-                played_ms=self._played_ms_locked(),
+                played_ms=max(0, int(self._played_ms_locked() - item_start_ms)),
                 provider_response_id=self._output_response_id,
                 provider_item_id=self._output_item_id,
             )
@@ -814,6 +829,8 @@ class RealtimeConversationBridge:
         # quand la fin de la sortie est traitée.
         self._received_outputs: dict[str, dict[str, object]] = {}
         self._last_correlation_id: str | None = None
+        # Dernier envoi d'une annulation ou d'une troncature (barge-in).
+        self._control_sent_at = float("-inf")
 
     async def _call(self, callback: Callable[[], object] | None) -> None:
         if callback is None:
@@ -968,6 +985,9 @@ class RealtimeConversationBridge:
         sans exception.
         """
 
+        # Les réponses du fournisseur à ces deux commandes arrivent plus tard
+        # dans le flux : une erreur qui les suit de près est la leur.
+        self._control_sent_at = self._clock()
         if not supports_output_control(self.session):
             self._trace(
                 "voice.barge_in_degraded",
@@ -1718,6 +1738,10 @@ class RealtimeConversationBridge:
     #: écho (réverbération, tampon du périphérique).
     ECHO_WINDOW_S = 2.0
 
+    #: Une erreur du fournisseur reçue dans ce délai après une annulation ou
+    #: une troncature est la réponse à cette commande, pas une panne.
+    CONTROL_ERROR_WINDOW_S = 5.0
+
     async def _note_user_speech(self, active: bool) -> None:
         if self._user_speaking == active:
             return
@@ -1961,6 +1985,19 @@ class RealtimeConversationBridge:
                 self._trace(
                     "voice.barge_in_degraded",
                     f"Annulation de la sortie refusée par le fournisseur: {message}",
+                    level="warning",
+                    data={"conversation_id": self.conversation_id, "code": code},
+                )
+                return False
+            if self._clock() - self._control_sent_at <= self.CONTROL_ERROR_WINDOW_S:
+                # Refus d'une annulation ou d'une troncature que nous venons
+                # d'envoyer (« Audio content of 4450ms is already shorter
+                # than 23868ms », 11/09) : le son est déjà coupé, seul
+                # l'historique du fournisseur reste approximatif. Voice ne
+                # doit pas tomber pour ça.
+                self._trace(
+                    "voice.barge_in_degraded",
+                    f"Commande d'interruption refusée par le fournisseur: {message}",
                     level="warning",
                     data={"conversation_id": self.conversation_id, "code": code},
                 )

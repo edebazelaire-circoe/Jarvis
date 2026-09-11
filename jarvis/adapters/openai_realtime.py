@@ -5,7 +5,7 @@ import json
 import uuid
 from collections import OrderedDict
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import aiohttp
 
@@ -178,10 +178,17 @@ SPEECH_ID_METADATA_KEY = "jarvis_speech_id"
 # Consigne de restitution fidèle : elle remplace les instructions de session
 # pour cette réponse-là, ce qui interdit à la surface de reformuler le texte du
 # cerveau (spec section 8, Décisions 02 et 13).
+#
+# Le premier mot prononcé doit être le premier mot du texte : sur une longue
+# réponse, le modèle a déjà ajouté de lui-même « Ok, je lis le passage mot à
+# mot… » — une phrase fausse de plus, et un second élément audio dans la
+# réponse (voir `SoundDeviceRealtimeAudio.set_active_output`).
 VERBATIM_SPEECH_INSTRUCTION = (
     "Lis à voix haute, mot pour mot, exactement le texte délimité ci-dessous. "
-    "N'ajoute rien, ne retire rien, ne reformule pas, ne commente pas, "
-    "n'annonce pas que tu vas le lire et ne lis pas les délimiteurs.\n"
+    "Ton premier mot est le premier mot du texte : aucune introduction, aucun "
+    "« d'accord », aucune annonce de lecture. N'ajoute rien, ne retire rien, ne "
+    "reformule pas, ne commente pas et ne lis pas les délimiteurs. Une seule prise, "
+    "sans rien ajouter à la fin.\n"
     "<<<TEXTE>>>\n{text}\n<<<FIN>>>"
 )
 
@@ -269,6 +276,10 @@ class _RealtimeOutput:
     response_id: str | None = None
     item_id: str | None = None
     content_index: int = 0
+    # Audio reçu par élément, en ms : une troncature au-delà est refusée par
+    # le fournisseur (`invalid_value`), et une réponse peut compter plusieurs
+    # éléments audio.
+    item_audio_ms: dict[str, float] = field(default_factory=dict)
 
 
 class OpenAIRealtimeSession:
@@ -626,12 +637,18 @@ class OpenAIRealtimeSession:
         item_id = cursor.provider_item_id or (output.item_id if output else None)
         if not item_id:
             raise ValueError(f"no provider item to truncate for speech {cursor.speech_id!r}")
+        audio_end_ms = max(0, int(cursor.played_ms))
+        received = output.item_audio_ms.get(item_id) if output else None
+        if received is not None:
+            # Jamais au-delà de ce que l'élément contient : le fournisseur
+            # refuserait la troncature, et l'historique garderait tout.
+            audio_end_ms = min(audio_end_ms, int(received))
         await self.ws.send_json(
             {
                 "type": "conversation.item.truncate",
                 "item_id": item_id,
                 "content_index": output.content_index if output else 0,
-                "audio_end_ms": cursor.played_ms,
+                "audio_end_ms": audio_end_ms,
             }
         )
 
@@ -661,6 +678,10 @@ class OpenAIRealtimeSession:
                     self._output_for_event({**data, "item_id": item.get("id")})
             elif kind in {"response.audio.delta", "response.output_audio.delta"}:
                 output = self._output_for_event(data)
+                if output is not None and output.item_id:
+                    # 24 kHz int16 mono : 48 octets par ms ; base64 : 3 octets pour 4 caractères.
+                    received = len(str(data.get("delta") or "")) * 3 / 4 / 48.0
+                    output.item_audio_ms[output.item_id] = output.item_audio_ms.get(output.item_id, 0.0) + received
                 yield ProtocolEnvelope(
                     message_type="realtime.audio",
                     payload={"pcm_b64": data.get("delta", ""), **self._output_payload(output)},

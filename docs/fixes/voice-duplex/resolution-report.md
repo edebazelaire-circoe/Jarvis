@@ -137,14 +137,31 @@ pinned by a test in `tests/unit/test_voice_duplex.py`:
 - legacy mode keeps the exact stream order (no event overtakes audio there),
   and the pre-roll only replays frames that were replaced by silence.
 
+### First workstation run, 12:41 UTC: Voice crashed on a barge-in
+
+`provider.error invalid_value: Audio content of 4450ms is already shorter than
+23868ms`, then `process.failed`. Reading a 24 s brain answer, the surface model
+first added a preamble of its own ("Ok, je lis le passage mot à mot…"), so the
+response held two audio items. The playback cursor kept the first item id but
+counted the whole response, and the provider refused the truncation; every
+provider error was fatal.
+
+- The cursor now counts from the start of the item actually playing
+  (`SoundDeviceRealtimeAudio.set_active_output` records where each item starts).
+- The adapter never truncates beyond the audio received for that item.
+- A provider error within 5 s of our own cancel/truncate is a degraded barge-in
+  (`voice.barge_in_degraded`), not a session failure.
+- The verbatim instruction now forbids any introduction: the first spoken word
+  must be the first word of the brain's text.
+
 ## Verification
 
-- `python -W error::ResourceWarning -m pytest -q`: 883 passed, 4 skipped (the
+- `python -W error::ResourceWarning -m pytest -q`: 886 passed, 4 skipped (the
   single ResourceWarning, an unclosed SQLite connection in
   `test_an_http_error_from_the_control_center_is_a_stable_token`, predates this
   change).
 - `python scripts/verify_release.py`: passed.
-- New: `tests/unit/test_voice_duplex.py` (62 tests), including the 11 Sept echo
+- New: `tests/unit/test_voice_duplex.py` (65 tests), including the 11 Sept echo
   transcripts and a barge-in while 49 audio blocks are still queued.
 - Real-time bench (fake PortAudio devices whose speaker feeds its echo back to
   the microphone with 120 ms delay, real WebRTC canceller, real bridge): user
