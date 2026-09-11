@@ -140,6 +140,12 @@ That voice path has two architectures, chosen by `JARVIS_VOICE_ARCH`:
   hearing-scoped clarification - and receives an **empty** tool catalogue. Every
   completed user turn is submitted to a Core-owned brain, which owns truth,
   intent and work state and speaks back through typed speech requests.
+  The provider never answers on its own in this mode: echo, noise and
+  hallucinated transcripts are filtered first, and a contextual acknowledgement
+  is spoken only when the brain is slow. The microphone goes through WebRTC echo
+  cancellation (optional `livekit` dependency) and an echo guard that lets the
+  user interrupt JARVIS without JARVIS interrupting himself - see
+  `docs/fixes/voice-duplex/resolution-report.md`.
 
 The model behind it: **the surface has the reflexes, the brain has the truth.**
 

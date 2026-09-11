@@ -14,7 +14,7 @@ from jarvis.domain.v2 import (
     SpeechProvenance,
     SpeechRequest,
 )
-from jarvis.ports.v2 import Clock, RealtimeOutputControl
+from jarvis.ports.v2 import Clock, RealtimeOutputControl, supports_reflex
 from jarvis.runtime.journal import RuntimeJournal
 
 # Types d'événements Core consommés ici. Ils sont repris de `brain_service`
@@ -38,6 +38,11 @@ SPEECH_INTERRUPTED = "voice.speech.interrupted"
 SPEECH_EXPIRED = "voice.speech.expired"
 SPEECH_SUPERSEDED = "voice.speech.superseded"
 SPEECH_IGNORED = "voice.speech.ignored"
+
+# Accusé de réception de la surface (mode continu) : proposé par le bridge après
+# un tour adressé, prononcé seulement si le cerveau n'a encore rien dit.
+REFLEX_STARTED = "voice.reflex.started"
+REFLEX_SKIPPED = "voice.reflex.skipped"
 
 # Mesure 3 des six de `docs/04-testing-and-quality.md` : de la demande de parole
 # du cerveau au premier bloc audio réellement rendu. Elle se joint par
@@ -85,6 +90,21 @@ class _ActiveSpeech:
     # échec, et lui seul ne dit pas combien de millisecondes ont été jouées.
     interrupted: bool = False
     played_ms: int = 0
+
+
+@dataclass(slots=True)
+class _Reflex:
+    """Accusé de réception en attente : dû à `due`, caduc après `expires`.
+
+    Échéances en temps de boucle asyncio (`loop.time()`) : ce sont des délais
+    à attendre, pas des dates à comparer à celles du cerveau.
+    """
+
+    transcript: str
+    correlation_id: str
+    avoid: tuple[str, ...]
+    due: float
+    expires: float
 
 
 class SpeechScheduler:
@@ -143,6 +163,15 @@ class SpeechScheduler:
     # filet, pour le jour où un backend oublierait de dater sa péremption.
     TRANSIENT_TTL_S = 60.0
 
+    # Au-delà de son échéance, un accusé de réception arrive trop tard pour
+    # être naturel : mieux vaut se taire jusqu'à la réponse.
+    REFLEX_GRACE_S = 2.5
+
+    # L'utilisateur parle : la parole attend qu'il ait fini, mais pas
+    # indéfiniment — un VAD bloqué sur un bruit continu ne doit pas bâillonner
+    # JARVIS.
+    USER_SPEECH_HOLD_MAX_S = 8.0
+
     def __init__(
         self,
         *,
@@ -155,6 +184,8 @@ class SpeechScheduler:
         output_timeout_s: float | None = None,
         reconnect_delay_s: float | None = None,
         transient_ttl_s: float | None = None,
+        reflex_delay_s: float = 0.0,
+        user_speech_hold_s: float | None = None,
     ) -> None:
         self.core = core
         self.conversation_id = conversation_id
@@ -188,6 +219,19 @@ class SpeechScheduler:
         # seul à dater l'arrivée d'une demande de parole ; le bridge, lui, est le
         # seul à voir l'audio, et le lui notifie (`note_output_event`).
         self._latency = LatencyTracker(journal)
+        # Accusé de réception : délai laissé au cerveau avant que la surface
+        # ne dise qu'elle a compris. 0 = jamais.
+        self.reflex_delay_s = max(0.0, float(reflex_delay_s))
+        self.user_speech_hold_s = self.USER_SPEECH_HOLD_MAX_S if user_speech_hold_s is None else user_speech_hold_s
+        self._reflex: _Reflex | None = None
+        # Posé par le runtime quand le bridge existe : une sortie dont le
+        # fournisseur a fini la génération peut encore jouer ici pendant de
+        # longues secondes. Sans lui, une phrase de plus de `output_timeout_s`
+        # passait pour bloquée et la suivante partait par-dessus.
+        self.output_alive: Callable[[str], bool] | None = None
+        self._user_speaking = False
+        self._user_quiet = asyncio.Event()
+        self._user_quiet.set()
 
     # -- cycle de vie -------------------------------------------------------
 
@@ -227,9 +271,64 @@ class SpeechScheduler:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._expire_all(reason="voice_background")
         self._active = None
+        self._reflex = None
         self._live_outputs.clear()
         self._seen_speech_ids.clear()
         self._idle.set()
+        self.note_user_speech(False)
+
+    # -- accusé de réception et tour de parole ---------------------------------
+
+    def request_reflex(self, transcript: str, *, correlation_id: str, avoid: tuple[str, ...] = ()) -> None:
+        """Proposer un accusé de réception pour le tour qui vient d'être soumis.
+
+        Il n'est prononcé qu'après `reflex_delay_s`, et seulement si le cerveau
+        n'a encore rien demandé à dire : une réponse rapide le rend inutile, et
+        la répétition « Entendu. » à chaque phrase était précisément ce qui
+        rendait la conversation mécanique. Le plus récent remplace le
+        précédent.
+        """
+
+        if not self._running or self.reflex_delay_s <= 0 or not supports_reflex(self.session):
+            return
+        now = asyncio.get_running_loop().time()
+        due = now + self.reflex_delay_s
+        self._reflex = _Reflex(
+            transcript=transcript,
+            correlation_id=correlation_id,
+            avoid=tuple(avoid),
+            due=due,
+            expires=due + self.REFLEX_GRACE_S,
+        )
+        self._wakeup.set()
+
+    def note_user_speech(self, active: bool) -> None:
+        """Le VAD du fournisseur entend l'utilisateur, ou ne l'entend plus."""
+
+        self._user_speaking = bool(active)
+        if self._user_speaking:
+            self._user_quiet.clear()
+            reflex = self._reflex
+            if reflex is not None:
+                # L'utilisateur reprend la parole : l'accusé de sa phrase
+                # précédente arriverait en travers de la nouvelle.
+                self._reflex = None
+                self._skip_reflex(reflex, "user_speaking")
+        else:
+            self._user_quiet.set()
+
+    def _output_still_alive(self, output_id: str) -> bool:
+        if getattr(self.session, "active_output_id", None) == output_id:
+            return True
+        alive = self.output_alive
+        return bool(alive is not None and alive(output_id))
+
+    def _skip_reflex(self, reflex: _Reflex, reason: str) -> None:
+        self._trace(
+            REFLEX_SKIPPED,
+            reflex.transcript[:300],
+            data={"conversation_id": self.conversation_id, "correlation_id": reflex.correlation_id, "reason": reason},
+        )
 
     # -- notifications venues du bridge -------------------------------------
 
@@ -533,6 +632,11 @@ class SpeechScheduler:
                 )
         self._pending.append(request)
         self._trace(SPEECH_QUEUED, request.text[:300], data=self._fields(request))
+        reflex = self._reflex
+        if reflex is not None and reflex.correlation_id == request.correlation_id:
+            # Le cerveau répond à ce tour-là : l'accusé n'a plus lieu d'être.
+            self._reflex = None
+            self._skip_reflex(reflex, "brain_answered")
         self._wakeup.set()
 
     def _drop_work(self, raw: object, *, reason: str) -> None:
@@ -588,8 +692,7 @@ class SpeechScheduler:
         """Boucle de livraison : seule voie d'accès à `speak()`."""
 
         while True:
-            await self._wakeup.wait()
-            self._wakeup.clear()
+            await self._wait_for_work()
             while self._pending:
                 # Attendre le silence **avant** de choisir : une attente longue
                 # peut voir arriver un résultat qui périme la progression qu'on
@@ -599,8 +702,89 @@ class SpeechScheduler:
                 if request is None:
                     break
                 await self._speak(request)
+            await self._maybe_speak_reflex()
+
+    async def _wait_for_work(self) -> None:
+        """Attendre une demande de parole, ou l'échéance de l'accusé en attente."""
+
+        reflex = self._reflex
+        if reflex is None or self._pending:
+            await self._wakeup.wait()
+        else:
+            timeout = max(0.0, reflex.due - asyncio.get_running_loop().time())
+            try:
+                await asyncio.wait_for(self._wakeup.wait(), timeout=timeout)
+            except asyncio.TimeoutError:
+                pass
+        self._wakeup.clear()
+
+    async def _maybe_speak_reflex(self) -> None:
+        """Dire l'accusé de réception s'il est dû et encore utile."""
+
+        reflex = self._reflex
+        if reflex is None:
+            return
+        loop = asyncio.get_running_loop()
+        if loop.time() < reflex.due:
+            return
+        if self._pending or self._active is not None:
+            # JARVIS a déjà quelque chose de vrai à dire.
+            self._reflex = None
+            self._skip_reflex(reflex, "brain_speaking")
+            return
+        await self._wait_until_silent()
+        if self._reflex is not reflex:
+            # Retiré pendant l'attente : le cerveau a répondu, l'utilisateur a
+            # repris la parole, ou un tour plus récent l'a remplacé.
+            return
+        self._reflex = None
+        if self._pending:
+            self._skip_reflex(reflex, "brain_speaking")
+            self._wakeup.set()
+            return
+        if loop.time() > reflex.expires:
+            self._skip_reflex(reflex, "too_late")
+            return
+        try:
+            output_id = await self.session.speak_reflex(transcript=reflex.transcript, avoid=reflex.avoid)  # type: ignore[attr-defined]
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._trace(
+                SPEAK_FAILED,
+                f"La surface n'a pas pu accuser réception: {type(exc).__name__}: {exc}",
+                level="warning",
+                data={"conversation_id": self.conversation_id, "correlation_id": reflex.correlation_id, "code": "reflex_speak_failed"},
+            )
+            return
+        # Comme pour une parole du cerveau : marquer la sortie tout de suite
+        # empêche un `speak()` de partir avant que le fournisseur ne confirme.
+        self._live_outputs.add(str(output_id))
+        self._idle.clear()
+        self._trace(
+            REFLEX_STARTED,
+            reflex.transcript[:300],
+            data={"conversation_id": self.conversation_id, "correlation_id": reflex.correlation_id, "output_id": str(output_id)},
+        )
 
     async def _wait_until_silent(self) -> None:
+        """Attendre que plus rien ne joue et que l'utilisateur ait fini de parler.
+
+        Ne pas lancer une phrase par-dessus l'utilisateur : son tour à lui
+        arrive, et ce qu'on dirait maintenant serait coupé par le barge-in.
+        L'attente est bornée par `user_speech_hold_s`.
+        """
+
+        await self._wait_for_idle_output()
+        if not self._user_speaking:
+            return
+        try:
+            await asyncio.wait_for(self._user_quiet.wait(), timeout=self.user_speech_hold_s)
+        except asyncio.TimeoutError:
+            return
+        await self._wait_for_idle_output()
+
+    async def _wait_for_idle_output(self) -> None:
         """Attendre que plus aucune sortie ne joue, réflexe de surface compris.
 
         Une sortie ouverte dont la fin ne revient jamais — glitch fournisseur,
@@ -615,7 +799,9 @@ class SpeechScheduler:
                 await asyncio.wait_for(self._idle.wait(), timeout=self.output_timeout_s)
                 return
             except asyncio.TimeoutError:
-                if getattr(self.session, "active_output_id", None) is not None:
+                if getattr(self.session, "active_output_id", None) is not None or any(
+                    self._output_still_alive(output_id) for output_id in self._live_outputs
+                ):
                     continue
                 self._trace(
                     OUTPUT_STALLED,
@@ -693,7 +879,7 @@ class SpeechScheduler:
                 await asyncio.wait_for(active.done.wait(), timeout=self.output_timeout_s)
                 return
             except asyncio.TimeoutError:
-                still_active = getattr(self.session, "active_output_id", None) == active.output_id
+                still_active = self._output_still_alive(active.output_id)
                 self._trace(
                     OUTPUT_STALLED,
                     "Aucune fin de sortie reçue dans le délai",

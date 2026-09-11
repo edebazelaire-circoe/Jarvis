@@ -58,8 +58,9 @@ class PersistentVoiceRuntime:
     - `CONTINUOUS_BRAIN` : une session ACTIVE couvre plusieurs tours. Seuls un
       mute explicite (touche de réveil ou « Jarvis mute »), le délai d'activité
       utile — sauf s'il vaut 0 — ou une panne irrécupérable ramènent au fond (Décisions 08 et 09). Le micro reste ouvert entre les
-      tours, ce qui expose un risque d'écho acoustique réel et non traité ici
-      (spec §11) : `LEGACY` reste le repli half-duplex.
+      tours ; l'écho acoustique (spec §11) est traité par la capture duplex
+      que fournit `capture_factory` (`jarvis/audio/duplex.py`). `LEGACY`
+      reste le repli half-duplex.
 
     Écouter, parler et travailler restent des projections d'activité : elles ne
     sont jamais encodées comme des états de `VoiceLifecycleState`.
@@ -82,6 +83,9 @@ class PersistentVoiceRuntime:
         input_sample_rate: int = 24000,
         output_sample_rate: int = 24000,
         voice_arch: VoiceArchitecture = VoiceArchitecture.LEGACY,
+        capture_factory: Callable[[], object] | None = None,
+        reflex_delay_s: float = 0.0,
+        engagement_window_s: float = 30.0,
     ) -> None:
         self.voice_arch = voice_arch
         if self.continuous and not auto_turn:
@@ -116,6 +120,16 @@ class PersistentVoiceRuntime:
         # mode continu, l'agent est joint par Core à travers un `BrainBackend`,
         # et cette passerelle n'est transmise à aucun bridge (Décisions 19 et 23).
         self.claude = claude
+        # Mode continu : traitement duplex du micro (annulation d'écho, garde
+        # d'écho). Fourni par le composition root, qui connaît l'adaptateur ;
+        # créé une fois et gardé d'une session à l'autre pour ne pas
+        # réapprendre la pièce à chaque réveil. Absent : micro brut.
+        self.capture_factory = capture_factory
+        self._capture: object | None = None
+        # Délai laissé au cerveau avant que la surface n'accuse réception
+        # (0 = jamais), et fenêtre de conversation pour l'adressage.
+        self.reflex_delay_s = reflex_delay_s
+        self.engagement_window_s = engagement_window_s
         self._session: RealtimeSession | None = None
         self._bridge = None
         self._bridge_task: asyncio.Task[None] | None = None
@@ -261,11 +275,16 @@ class PersistentVoiceRuntime:
                 journal=self.journal,
                 clock=self.clock,
                 on_brain_activity=self.brain_activity,
+                reflex_delay_s=self.reflex_delay_s,
             )
             if self.continuous
             else None
         )
         self._speech = speech
+        audio_options: dict[str, object] = {}
+        capture = self._duplex_capture() if self.continuous else None
+        if capture is not None:
+            audio_options["capture"] = capture
         bridge = RealtimeConversationBridge(
             core=self.core,
             session=self._session,
@@ -275,6 +294,7 @@ class PersistentVoiceRuntime:
                 output_device=self.audio_output_device,
                 input_sample_rate=self.input_sample_rate,
                 output_sample_rate=self.output_sample_rate,
+                **audio_options,
             ),
             on_addressed=self.addressed_activity,
             on_ambient=self.ambient_activity,
@@ -290,6 +310,11 @@ class PersistentVoiceRuntime:
             # demande de parole y était rattachée. Sans ce fil, l'historique
             # présenterait comme entendue une phrase tronquée.
             on_interruption=speech.note_interruption if speech is not None else None,
+            # L'ordonnanceur ne parle pas par-dessus l'utilisateur, et décide
+            # seul si un accusé de réception sert encore.
+            on_user_speech=speech.note_user_speech if speech is not None else None,
+            on_reflex=speech.request_reflex if speech is not None else None,
+            engagement_window_s=self.engagement_window_s,
             auto_turn=self.auto_turn,
             continuous=self.continuous,
             journal=self.journal,
@@ -301,8 +326,33 @@ class PersistentVoiceRuntime:
         )
         self._bridge = bridge
         if speech is not None:
+            # Seul le bridge sait si une sortie joue encore localement.
+            speech.output_alive = bridge.output_pending
             await speech.start()
         self._bridge_task = asyncio.create_task(bridge.run(), name="jarvis-realtime-bridge")
+
+    def _duplex_capture(self) -> object | None:
+        """Le traitement duplex du micro, créé au premier réveil puis réutilisé."""
+
+        if self.capture_factory is None:
+            return None
+        if self._capture is None:
+            try:
+                self._capture = self.capture_factory()
+            except Exception as exc:
+                # Sans lui, le micro part brut : dégradé, pas bloquant.
+                self._trace(
+                    "voice.duplex_unavailable",
+                    f"Traitement duplex du micro indisponible: {type(exc).__name__}: {exc}",
+                    level="warning",
+                    data={"code": "duplex_capture_unavailable"},
+                )
+                self.capture_factory = None
+                return None
+        reset = getattr(self._capture, "reset", None)
+        if reset is not None:
+            reset()
+        return self._capture
 
     async def submit_active_turn(self, *, source: str) -> bool:
         bridge = self._bridge

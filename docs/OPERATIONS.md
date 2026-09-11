@@ -769,11 +769,13 @@ partir du nom de la mesure, un appelant ne peut pas y glisser de transcription.
 
 Trois points, à ne jamais présenter comme acquis :
 
-1. **Aucune recette matérielle n'a tourné.** Micro, haut-parleurs, casque, écho
-   acoustique, redéclenchement du VAD par les haut-parleurs, barge-in réellement
-   audible : rien de tout cela n'a été mesuré. Le mode continu garde le micro
-   ouvert pendant que les haut-parleurs jouent, et **cet écho n'est traité par
-   aucun logiciel ici** ; `legacy` reste le repli half-duplex.
+1. **Aucune recette matérielle complète n'a tourné.** Le mode continu garde le
+   micro ouvert pendant que les haut-parleurs jouent ; depuis le 11 septembre
+   2026, cet écho est traité par une annulation d'écho WebRTC et une garde
+   d'écho (`jarvis/audio/duplex.py`, rapport `docs/fixes/voice-duplex/`), dont
+   les marges ne sont validées qu'en simulation. Sur poste, le journal dit quel
+   mode tourne (`voice.duplex`) et trace chaque décision de barge-in et chaque
+   transcript écarté. `legacy` reste le repli half-duplex.
 2. **Aucune exécution contre le vrai OpenAI.** Le test de fumée
    `tests/integration/test_live_openai.py` couvre le chemin continu mais reste
    sauté par défaut et n'a pas été lancé.

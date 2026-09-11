@@ -137,6 +137,38 @@ SERVER_VAD = {
     "interrupt_response": True,
 }
 
+# Mode continu : le fournisseur découpe les tours, mais ne répond plus de
+# lui-même ni ne coupe sa propre sortie. Répondre à chaque segment faisait
+# accuser réception de l'écho de JARVIS, d'un bruit de bureau ou d'une
+# conversation voisine, avant même que la transcription n'existe ; couper sur
+# chaque début de parole laissait l'écho interrompre JARVIS. C'est désormais la
+# surface qui décide : elle filtre le transcript, et le barge-in passe par la
+# garde d'écho locale (`jarvis.audio.duplex`).
+CONTINUOUS_TURN_FLAGS = {"create_response": False, "interrupt_response": False}
+
+# Réduction de bruit du fournisseur, appliquée avant son VAD et sa
+# transcription : `far_field` pour un micro d'ordinateur portable ou de
+# bureau, `near_field` pour un casque.
+NOISE_REDUCTION_TYPES = ("far_field", "near_field")
+
+# Accusé de réception de la surface, mode continu. Il remplace les consignes de
+# session pour cette réponse-là, comme la lecture fidèle : la surface ne parle
+# jamais de sa propre initiative, seulement quand l'ordonnanceur le lui demande
+# parce que le cerveau tarde.
+REFLEX_INSTRUCTION = (
+    "{persona}\n"
+    "Tu es la surface vocale de JARVIS. L'utilisateur vient de formuler la demande "
+    "ci-dessous ; le cerveau de JARVIS la traite et répondra lui-même, par un autre chemin. "
+    "Ton seul rôle maintenant : accuser réception naturellement, en une phrase courte de "
+    "trois à dix mots, qui montre que tu as compris ce qu'il faut faire, au présent — par "
+    "exemple « Je regarde l'état des commits. », « Je vérifie votre agenda de demain. », "
+    "« Je cherche ce fichier dans votre Drive. ».\n"
+    "Interdit : donner la réponse ou un résultat, annoncer une progression, un succès ou un "
+    "échec, poser une question, promettre un délai, dire que tu vas lire quelque chose.\n"
+    "{avoid}"
+    "Demande de l'utilisateur (transcription) : <<<{transcript}>>>"
+)
+
 # Clé de corrélation posée dans `response.metadata` et renvoyée telle quelle par
 # le fournisseur : c'est ce qui relie une réponse Realtime à la demande de
 # parole du cerveau qui l'a déclenchée.
@@ -152,6 +184,74 @@ VERBATIM_SPEECH_INSTRUCTION = (
     "n'annonce pas que tu vas le lire et ne lis pas les délimiteurs.\n"
     "<<<TEXTE>>>\n{text}\n<<<FIN>>>"
 )
+
+
+def build_turn_detection(
+    *,
+    continuous_brain: bool,
+    vad_type: str | None = None,
+    eagerness: str | None = None,
+    threshold: float | None = None,
+    prefix_padding_ms: int | None = None,
+    silence_duration_ms: int | None = None,
+) -> dict[str, object]:
+    """Configuration du découpage des tours côté fournisseur.
+
+    Les défauts restent ceux de SERVER_VAD : seuls les réglages explicitement
+    fournis par le Control Center les remplacent. `semantic_vad` juge la fin
+    de phrase sur son sens plutôt que sur une durée de silence : il répond vite
+    à une phrase finie et attend pendant une hésitation. Il n'a ni seuil ni
+    durée de silence.
+    """
+
+    if (vad_type or "").strip() == "semantic_vad":
+        vad: dict[str, object] = {
+            "type": "semantic_vad",
+            "eagerness": (eagerness or "auto").strip() or "auto",
+            "create_response": True,
+            "interrupt_response": True,
+        }
+    else:
+        vad = dict(SERVER_VAD)
+        for key, value in (
+            ("threshold", threshold),
+            ("prefix_padding_ms", prefix_padding_ms),
+            ("silence_duration_ms", silence_duration_ms),
+        ):
+            if value is not None:
+                vad[key] = type(SERVER_VAD[key])(value)
+    if continuous_brain:
+        vad.update(CONTINUOUS_TURN_FLAGS)
+    return vad
+
+
+def build_transcription(model: str | None, language: str | None = None) -> dict[str, object] | None:
+    """Transcription de l'entrée ; la langue évite les hallucinations d'une autre langue."""
+
+    if not model:
+        return None
+    config: dict[str, object] = {"model": model}
+    code = (language or "").strip().lower()
+    if code:
+        config["language"] = code
+    return config
+
+
+def build_noise_reduction(value: str | None) -> dict[str, object] | None:
+    kind = (value or "").strip()
+    return {"type": kind} if kind in NOISE_REDUCTION_TYPES else None
+
+
+def build_reflex_instruction(transcript: str, avoid: tuple[str, ...] | list[str] = ()) -> str:
+    """Consigne d'un accusé de réception contextuel, sans répétition récente."""
+
+    recent = [phrase.strip() for phrase in avoid if phrase and phrase.strip()]
+    avoid_text = (
+        "Ne reprends aucune de ces phrases déjà dites : " + ", ".join(f"« {phrase} »" for phrase in recent) + ".\n"
+        if recent
+        else ""
+    )
+    return REFLEX_INSTRUCTION.format(persona=JARVIS_PERSONA, avoid=avoid_text, transcript=transcript.strip())
 
 
 @dataclass(slots=True)
@@ -328,6 +428,10 @@ class OpenAIRealtimeSession:
         vad_threshold: float | None = None,
         vad_prefix_padding_ms: int | None = None,
         vad_silence_duration_ms: int | None = None,
+        vad_type: str | None = None,
+        vad_eagerness: str | None = None,
+        noise_reduction: str | None = None,
+        transcription_language: str | None = None,
         continuous_brain: bool = False,
         session: aiohttp.ClientSession | None = None,
     ) -> "OpenAIRealtimeSession":
@@ -340,16 +444,14 @@ class OpenAIRealtimeSession:
                 heartbeat=20,
             )
             instance = cls(ws, http, owns_http=owns)
-            # Les défauts restent ceux de SERVER_VAD : seuls les réglages
-            # explicitement fournis par le Control Center les remplacent.
-            vad = dict(SERVER_VAD)
-            for key, value in (
-                ("threshold", vad_threshold),
-                ("prefix_padding_ms", vad_prefix_padding_ms),
-                ("silence_duration_ms", vad_silence_duration_ms),
-            ):
-                if value is not None:
-                    vad[key] = type(SERVER_VAD[key])(value)
+            vad = build_turn_detection(
+                continuous_brain=continuous_brain,
+                vad_type=vad_type,
+                eagerness=vad_eagerness,
+                threshold=vad_threshold,
+                prefix_padding_ms=vad_prefix_padding_ms,
+                silence_duration_ms=vad_silence_duration_ms,
+            )
             instructions = build_session_instructions(context, continuous_brain=continuous_brain)
             await ws.send_json(
                 {
@@ -361,7 +463,8 @@ class OpenAIRealtimeSession:
                         "audio": {
                             "input": {
                                 "format": {"type": "audio/pcm", "rate": 24000},
-                                "transcription": ({"model": transcription_model} if transcription_model else None),
+                                "transcription": build_transcription(transcription_model, transcription_language),
+                                "noise_reduction": build_noise_reduction(noise_reduction),
                                 "turn_detection": vad if auto_turn else None,
                             },
                             "output": {
@@ -468,6 +571,28 @@ class OpenAIRealtimeSession:
         )
         return output.output_id
 
+    async def speak_reflex(self, *, transcript: str, avoid: tuple[str, ...] | list[str] = ()) -> str:
+        """Faire accuser réception de la dernière demande, et rendre l'identifiant de sortie.
+
+        Même mécanique que `speak()` : un seul `response.create` dans la
+        conversation par défaut, donc tronquable au barge-in, et aucun faux
+        tour `role=user`. La sortie n'a pas de `speech_id` : c'est un réflexe
+        de surface, que le bridge persiste comme tel (spec section 15).
+        """
+
+        output = self._register_output(speech_id=None)
+        await self.ws.send_json(
+            {
+                "type": "response.create",
+                "response": {
+                    "instructions": build_reflex_instruction(transcript, avoid),
+                    "output_modalities": ["audio"],
+                    "metadata": {OUTPUT_ID_METADATA_KEY: output.output_id},
+                },
+            }
+        )
+        return output.output_id
+
     async def cancel_output(self, cursor: PlaybackCursor | None = None) -> None:
         """Interrompre la génération en cours ; sans effet si rien ne joue.
 
@@ -476,7 +601,12 @@ class OpenAIRealtimeSession:
         dans la séquence de barge-in.
         """
 
-        output = self._resolve_output(cursor)
+        # La génération en cours d'abord : le fournisseur n'en a qu'une, et
+        # c'est elle qui enverrait encore de l'audio. Le curseur peut désigner
+        # une phrase déjà générée — celle qui jouait —, alors qu'une réponse
+        # plus récente est en train de naître.
+        active = self._outputs.get(self._active_output_id) if self._active_output_id else None
+        output = active or self._resolve_output(cursor)
         if output is None and self._active_output_id is None:
             return
         payload: dict[str, object] = {"type": "response.cancel"}
@@ -602,9 +732,11 @@ class OpenAIRealtimeSession:
                         },
                     )
             elif kind == "input_audio_buffer.speech_started":
-                yield ProtocolEnvelope(message_type="realtime.speech_started", payload={})
+                # `item_id` relie le segment à son transcript, qui arrive plus
+                # tard — parfois après le segment suivant.
+                yield ProtocolEnvelope(message_type="realtime.speech_started", payload={"item_id": data.get("item_id")})
             elif kind == "input_audio_buffer.speech_stopped":
-                yield ProtocolEnvelope(message_type="realtime.speech_stopped", payload={})
+                yield ProtocolEnvelope(message_type="realtime.speech_stopped", payload={"item_id": data.get("item_id")})
             elif kind == "input_audio_buffer.committed":
                 yield ProtocolEnvelope(
                     message_type="realtime.input_committed",

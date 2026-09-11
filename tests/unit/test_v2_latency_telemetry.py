@@ -268,6 +268,9 @@ async def feed(bridge: RealtimeConversationBridge, events: list[ProtocolEnvelope
     async def stream():
         for event in events:
             yield event
+            # Le fournisseur réel n'envoie pas tout d'un bloc : chaque
+            # évènement est traité — audio joué compris — avant le suivant.
+            await bridge.wait_idle()
 
     await bridge._consume(stream())
 

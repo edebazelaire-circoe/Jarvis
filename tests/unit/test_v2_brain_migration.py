@@ -779,9 +779,11 @@ async def test_legacy_mode_still_appends_the_user_turn():
 # Décision 44 : en continu, un tour incertain va au cerveau, pas à la poubelle
 
 
-#: Une vraie demande, plus de huit mots, sans préfixe d'éveil ni point
-#: d'interrogation : `ConservativeAddressingClassifier` la classe `UNCERTAIN`.
-UNCERTAIN_REQUEST = "Regarde dans mon Drive le fichier des comptes de janvier et donne moi le total"
+#: Une phrase qui pourrait viser JARVIS comme un collègue : plus de huit mots,
+#: à la troisième personne, sans nom ni point d'interrogation.
+#: `ConservativeAddressingClassifier` la classe `UNCERTAIN`. (Une consigne à
+#: l'impératif, « Regarde dans mon Drive… », est désormais adressée.)
+UNCERTAIN_REQUEST = "Il faudrait que quelqu'un sorte le total du fichier des comptes de janvier"
 
 
 async def test_an_uncertain_turn_is_submitted_to_the_brain_in_continuous_mode():

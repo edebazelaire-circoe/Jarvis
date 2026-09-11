@@ -5,9 +5,10 @@ Un seul endroit décrit ce qui existe : l'interface y lit les champs à afficher
 Gemini demanderait de la répéter dans le HTML, dans le validateur et dans le
 lanceur — et les trois finiraient par diverger.
 
-Un champ décrit ici est un champ qui est réellement transmis au fournisseur.
-Les listes de modèles ne sont pas écrites ici : elles viennent de
-`model_catalog`, donc de l'API du fournisseur.
+Un champ décrit ici est un champ qui est réellement utilisé : transmis au
+fournisseur, ou appliqué par JARVIS au traitement audio propre à cette pile
+(annulation d'écho, accusé de réception). Les listes de modèles ne sont pas
+écrites ici : elles viennent de `model_catalog`, donc de l'API du fournisseur.
 """
 
 from __future__ import annotations
@@ -28,6 +29,10 @@ OPENAI_REALTIME_VOICES = (
 GEMINI_LIVE_VOICES = ("Puck", "Charon", "Kore", "Fenrir", "Aoede", "Leda", "Orus", "Zephyr")
 
 SENSITIVITIES = ("LOW", "HIGH")
+
+OPENAI_VAD_TYPES = ("server_vad", "semantic_vad")
+OPENAI_VAD_EAGERNESS = ("auto", "low", "medium", "high")
+OPENAI_NOISE_REDUCTION = ("far_field", "near_field", "off")
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,6 +148,62 @@ OPENAI_REALTIME = VoiceStackSpec(
             source="openai:transcription",
             hint="Sert à écrire ce que vous dites dans l'historique et à décider si JARVIS est "
             "concerné. N'affecte pas la réponse audio.",
+        ),
+        Field(
+            key="transcription_language",
+            label="Langue de transcription",
+            kind="text",
+            default="fr",
+            hint="Code ISO (fr, en…). Fixer la langue évite que du bruit soit transcrit en une "
+            "autre langue. Vide = détection automatique.",
+        ),
+        Field(
+            key="noise_reduction",
+            label="Réduction de bruit",
+            kind="select",
+            default="far_field",
+            options=OPENAI_NOISE_REDUCTION,
+            hint="Appliquée par OpenAI avant la détection de parole. far_field : micro d'ordinateur "
+            "ou de bureau ; near_field : casque ; off : aucune.",
+        ),
+        Field(
+            key="echo_cancellation",
+            label="Annulation d'écho (mode continu)",
+            kind="toggle",
+            default=True,
+            hint="Retire la voix de JARVIS du micro pour qu'il ne s'entende pas lui-même et que vous "
+            "puissiez le couper en parlant. Sans elle, il faut parler plus fort que lui.",
+        ),
+        Field(
+            key="ack_delay_ms",
+            label="Délai avant accusé de réception (ms)",
+            kind="number",
+            default=1200,
+            minimum=0,
+            maximum=10000,
+            step=100,
+            hint="Mode continu : si la réponse tarde au-delà, JARVIS dit brièvement ce qu'il fait "
+            "(« Je regarde les commits. »). 0 = jamais.",
+        ),
+        Field(
+            key="vad_type",
+            label="Détection de fin de tour",
+            kind="select",
+            default="server_vad",
+            options=OPENAI_VAD_TYPES,
+            depends_on="turn_mode",
+            depends_values=("auto",),
+            hint="server_vad : fin de tour après un silence fixe. semantic_vad : le modèle juge si "
+            "la phrase est finie — plus réactif, et patient quand vous hésitez.",
+        ),
+        Field(
+            key="vad_eagerness",
+            label="Réactivité (semantic_vad)",
+            kind="select",
+            default="auto",
+            options=OPENAI_VAD_EAGERNESS,
+            depends_on="vad_type",
+            depends_values=("semantic_vad",),
         ),
         Field(
             key="vad_threshold",

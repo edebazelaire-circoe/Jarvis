@@ -19,6 +19,9 @@ voice = [
   "sounddevice>=0.5,<1",
   "pynput>=1.7,<2",
   "pvporcupine>=3,<4",
+  # Annulation d'écho WebRTC (AEC3) du mode continu, roue précompilée.
+  # Facultative : sans elle, la garde d'écho seule protège le micro.
+  "livekit>=1.1,<2",
 ]
 calendar-google = [
   "google-api-python-client>=2,<3",

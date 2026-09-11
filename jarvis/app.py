@@ -398,6 +398,10 @@ async def _run_voice_v2() -> int:
                 continuous_brain=continuous_brain,
                 auto_turn=auto_turn,
                 transcription_model=str(stack_values.get("transcription_model") or ""),
+                transcription_language=str(stack_values.get("transcription_language") or ""),
+                noise_reduction=str(stack_values.get("noise_reduction") or ""),
+                vad_type=str(stack_values.get("vad_type") or ""),
+                vad_eagerness=str(stack_values.get("vad_eagerness") or ""),
                 vad_threshold=stack_values.get("vad_threshold"),
                 vad_prefix_padding_ms=stack_values.get("vad_prefix_padding_ms"),
                 vad_silence_duration_ms=stack_values.get("vad_silence_duration_ms"),
@@ -419,6 +423,43 @@ async def _run_voice_v2() -> int:
             timeout_s=float(os.getenv("JARVIS_CLAUDE_TIMEOUT_S", "600")),
         )
         journal.emit("claude.gateway", "Passerelle vers l'agent Claude configurée", data={"url": claude.base_url})
+    # Mode continu : le micro reste ouvert pendant que JARVIS parle. La capture
+    # duplex retire son écho et ne laisse passer l'utilisateur que s'il parle
+    # vraiment (docs/fixes/voice-duplex/). Pile OpenAI seulement : Gemini est
+    # refusé en continu plus haut.
+    echo_cancellation = bool(stack_values.get("echo_cancellation", True))
+    capture_factory = None
+    if continuous_brain:
+
+        def capture_factory():
+            from jarvis.adapters.webrtc_echo import create_echo_canceller
+            from jarvis.audio.duplex import CaptureProcessor
+
+            canceller = (
+                create_echo_canceller(capture_rate=stack.input_sample_rate, render_rate=stack.output_sample_rate)
+                if echo_cancellation
+                else None
+            )
+            journal.emit(
+                "voice.duplex",
+                "Annulation d'écho active" if canceller is not None else "Garde d'écho seule (sans annulation d'écho)",
+                level="info" if canceller is not None or not echo_cancellation else "warning",
+                data={
+                    "echo_cancellation": canceller is not None,
+                    "requested": echo_cancellation,
+                    "code": "duplex_aec" if canceller is not None else "duplex_guard_only",
+                },
+            )
+            return CaptureProcessor(
+                capture_rate=stack.input_sample_rate,
+                render_rate=stack.output_sample_rate,
+                canceller=canceller,
+            )
+
+    try:
+        ack_delay_s = max(0.0, float(stack_values.get("ack_delay_ms", 1200) or 0) / 1000.0)
+    except (TypeError, ValueError):
+        ack_delay_s = 1.2
     voice = PersistentVoiceRuntime(
         wakeword=wake,
         core=core,
@@ -433,6 +474,8 @@ async def _run_voice_v2() -> int:
         input_sample_rate=stack.input_sample_rate,
         output_sample_rate=stack.output_sample_rate,
         voice_arch=voice_arch,
+        capture_factory=capture_factory,
+        reflex_delay_s=ack_delay_s if continuous_brain else 0.0,
     )
     timeout_task = asyncio.create_task(_voice_timeout_loop(voice, signals, journal), name="jarvis-voice-timeout")
     key = manual_key.upper()

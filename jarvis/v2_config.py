@@ -74,7 +74,8 @@ class VoiceArchitecture(StrEnum):
 
     `LEGACY` reste le défaut tant que le mode continu n'a pas passé les recettes
     poste de travail : garder le micro ouvert pendant que les haut-parleurs
-    jouent est un risque acoustique réel, jamais résolu logiciellement ici.
+    jouent est un risque acoustique réel. Il est traité par la capture duplex
+    (`jarvis/audio/duplex.py`), validée en simulation seulement.
 
     Ce défaut n'est pas écrit en dur : il est calculé par `default_voice_arch()`
     à partir de `CONTINUOUS_BRAIN_DEFAULT_BLOCKERS`, la porte de la Décision 34.

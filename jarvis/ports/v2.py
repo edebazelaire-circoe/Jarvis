@@ -206,6 +206,18 @@ def supports_output_control(session: object) -> TypeGuard[RealtimeOutputControl]
     return isinstance(session, RealtimeOutputControl)
 
 
+def supports_reflex(session: object) -> bool:
+    """Indiquer si la surface sait accuser réception d'une demande d'elle-même.
+
+    Capacité optionnelle, testée structurellement comme la précédente :
+    `speak_reflex(transcript=..., avoid=...)` rend un identifiant de sortie
+    opaque, et une pile qui ne l'a pas se tait simplement en attendant le
+    cerveau.
+    """
+
+    return callable(getattr(session, "speak_reflex", None))
+
+
 JobFactory = Callable[[ScheduledItem], Awaitable[Job | None]]
 
 

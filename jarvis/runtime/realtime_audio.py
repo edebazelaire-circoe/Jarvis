@@ -5,7 +5,9 @@ import base64
 import json
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from jarvis.core.latency import (
     BRAIN_TURN_ACCEPTED as LATENCY_BRAIN_TURN_ACCEPTED,
@@ -17,6 +19,15 @@ from jarvis.domain.v2 import AddressingDecision, PlaybackCursor, ProtocolEnvelop
 from jarvis.ports.v2 import RealtimeSession, supports_output_control
 from jarvis.protocol.client import CoreProtocolError, LocalCoreClient
 from jarvis.runtime.journal import RuntimeJournal
+from jarvis.runtime.turn_filters import EchoGuard, looks_like_request, mentions_jarvis, noise_reason, words
+
+if TYPE_CHECKING:
+    from jarvis.audio.duplex import CaptureProcessor
+
+# Signal de la capture duplex : l'utilisateur parle par-dessus JARVIS. Même
+# valeur que `jarvis.audio.duplex.NEAR_END`, recopiée pour que ce module
+# n'importe pas numpy (un test garde les deux en phase).
+NEAR_END_SIGNAL = "near_end"
 
 # Télémétrie de latence (docs/04-testing-and-quality.md, « Latency telemetry »).
 # Le journal ne porte que des identifiants, des types et des durées : la clé de
@@ -40,6 +51,26 @@ CLAUDE_TOOL = "claude_task"
 # `_cancel_provider_output`) ; en faire une exception fermerait la session.
 BENIGN_PROVIDER_ERRORS = frozenset({"response_cancel_not_active"})
 
+# Erreurs qui perdent une phrase sans condamner la session : une réponse
+# demandée pendant qu'une autre génère encore est refusée, la suivante passera.
+RECOVERABLE_PROVIDER_ERRORS = frozenset({"conversation_already_has_active_response"})
+
+# Évènements fournisseur rattachés à l'audio qui les précède : ils ne sont
+# traités qu'une fois cet audio réellement joué (voir `_consume`).
+ORDERED_OUTPUT_EVENTS = frozenset(
+    {
+        "realtime.output_started",
+        "realtime.audio_done",
+        "realtime.response_done",
+        "realtime.assistant_transcript",
+    }
+)
+
+# Accusé de réception de surface : réservé aux vraies demandes. « Merci »,
+# « d'accord » ou un « oui » de confirmation n'appellent pas de « je m'en
+# occupe » — le cerveau y répond directement.
+REFLEX_MIN_WORDS = 4
+
 
 def _optional_text(value: object) -> str | None:
     """Normaliser un identifiant de charge utile : vide et absent se valent."""
@@ -48,17 +79,39 @@ def _optional_text(value: object) -> str | None:
 
 
 class ConservativeAddressingClassifier:
+    """Ce que la surface croit de l'adressage d'une phrase complète.
+
+    `engaged` dit si l'utilisateur est en conversation avec JARVIS : réveil
+    récent, réponse de JARVIS ou demande adressée il y a peu (fenêtre tenue par
+    le bridge en mode continu). `None` : pas de fenêtre (mode legacy, un tour
+    par appui, toujours engagé).
+
+    - Nom prononcé : adressé, toujours.
+    - Pas engagé : incertain. Une phrase captée à côté après des minutes de
+      silence part au cerveau avec la marque du doute (Décision 44), sans
+      accusé de réception de la surface.
+    - Engagé : la forme décide. Question, relance courte, phrase brève, ou
+      consigne à l'impératif / à la deuxième personne (« Regarde dans mon
+      Drive… », quelle qu'en soit la longueur) : adressé. Une longue phrase à
+      la troisième personne reste incertaine — c'est la forme typique d'une
+      conversation voisine.
+    """
+
     FOLLOWUPS = ("oui", "non", "yes", "no", "ok", "d'accord", "et ", "mais ", "alors ", "continue", "pourquoi", "comment", "quand", "où", "qui", "quoi")
 
-    def classify(self, text: str, *, active: bool) -> AddressingDecision:
+    def classify(self, text: str, *, active: bool, engaged: bool | None = None) -> AddressingDecision:
         normalized = " ".join(text.casefold().strip().split())
         if not normalized:
             return AddressingDecision.AMBIENT
-        if normalized.startswith("jarvis"):
+        if normalized.startswith("jarvis") or mentions_jarvis(text):
             return AddressingDecision.ADDRESSED
         if not active:
             return AddressingDecision.AMBIENT
+        if engaged is False:
+            return AddressingDecision.UNCERTAIN
         if normalized.endswith("?") or normalized.startswith(self.FOLLOWUPS) or len(normalized.split()) <= 8:
+            return AddressingDecision.ADDRESSED
+        if engaged and looks_like_request(text):
             return AddressingDecision.ADDRESSED
         return AddressingDecision.UNCERTAIN
 
@@ -90,6 +143,12 @@ class SoundDeviceRealtimeAudio:
     inutilisable, `stop_output()` ne coupe que la parole et laisse le micro
     ouvert (barge-in en mode continu). Tous deux passent par le même
     `_output_lock` avant d'appeler `abort()`.
+
+    Capture en duplex (mode continu) : avec un `CaptureProcessor`, chaque bloc
+    du micro passe par l'annulation d'écho et la garde d'écho *dans le thread
+    PortAudio*, avant d'atteindre la file d'envoi ; chaque bloc joué lui est
+    remis comme référence juste après son écriture, hors de `_output_lock`. Les
+    signaux de parole proche remontent sur la boucle par `on_capture_signal`.
     """
 
     # La lecture est découpée pour que la fermeture n'attende jamais plus d'un
@@ -105,9 +164,20 @@ class SoundDeviceRealtimeAudio:
         sample_rate: int = 24000,
         input_sample_rate: int | None = None,
         output_sample_rate: int | None = None,
+        capture: "CaptureProcessor | None" = None,
     ) -> None:
         self.input_device = input_device
         self.output_device = output_device
+        # Traitement duplex du micro (mode continu) ; absent, le micro part tel
+        # quel, exactement comme avant.
+        self.capture = capture
+        # Appelé sur la boucle asyncio pour chaque signal de la capture
+        # (`jarvis.audio.duplex.NEAR_END`). Posé par le bridge.
+        self.on_capture_signal: Callable[[str], object] | None = None
+        # Gain appliqué aux blocs suivants : le barge-in baisse la voix de
+        # JARVIS dès que l'utilisateur semble parler, avant de la couper.
+        self._output_gain = 1.0
+        self._applied_gain = 1.0
         # Les deux sens n'ont pas forcément la même fréquence : OpenAI Realtime
         # travaille en 24 kHz dans les deux sens, Gemini Live veut 16 kHz en
         # entrée et rend 24 kHz. `sample_rate` reste celui de l'entrée, car
@@ -151,8 +221,19 @@ class SoundDeviceRealtimeAudio:
             loop = self._loop
             if loop is None or self._closing:
                 return
+            raw = bytes(indata)
+            capture = self.capture
             try:
-                loop.call_soon_threadsafe(self._enqueue, bytes(indata))
+                if capture is None:
+                    loop.call_soon_threadsafe(self._enqueue, raw)
+                else:
+                    try:
+                        processed, signals = capture.process(raw)
+                    except Exception:
+                        # Jamais d'exception dans le callback PortAudio : le
+                        # micro repart brut plutôt que de faire tomber le flux.
+                        processed, signals = raw, ()
+                    loop.call_soon_threadsafe(self._deliver_capture, len(raw), processed, signals)
             except RuntimeError:
                 # La boucle se ferme : les derniers blocs n'ont plus de
                 # destinataire, et lever ici ferait tomber le flux PortAudio.
@@ -178,8 +259,64 @@ class SoundDeviceRealtimeAudio:
             await self.close()
             raise RuntimeError(f"Impossible d'ouvrir les périphériques audio Voice: {type(exc).__name__}") from exc
 
+    def _deliver_capture(self, captured: int, processed: bytes, signals: tuple[str, ...]) -> None:
+        """Remettre sur la boucle un bloc traité par la capture duplex."""
+
+        self.captured_bytes += captured
+        if processed:
+            self._put_input(processed)
+        callback = self.on_capture_signal
+        if callback is not None:
+            for signal in signals:
+                callback(signal)
+
+    # -- garde d'écho : état lu par le bridge ---------------------------------
+
+    @property
+    def echo_guard_open(self) -> bool:
+        """Le fournisseur entend-il le micro ? Toujours vrai sans capture duplex."""
+
+        return self.capture is None or self.capture.gate_open
+
+    @property
+    def has_echo_guard(self) -> bool:
+        return self.capture is not None
+
+    @property
+    def far_end_recent(self) -> bool:
+        """JARVIS parle, ou vient de se taire (écho encore possible dans la pièce)."""
+
+        return self.capture is not None and self.capture.far_recent
+
+    def release_near_end(self) -> None:
+        """Refermer la garde : la parole locale n'a pas été confirmée."""
+
+        if self.capture is not None:
+            self.capture.release_near_end()
+
+    def set_output_gain(self, gain: float) -> None:
+        """Gain des prochains blocs joués (1.0 = normal)."""
+
+        self._output_gain = max(0.0, min(1.0, float(gain)))
+
+    def _apply_gain(self, block: bytes) -> bytes:
+        """Appliquer le gain courant, en rampe sur le bloc pour éviter un clic."""
+
+        target, start = self._output_gain, self._applied_gain
+        self._applied_gain = target
+        if target == 1.0 and start == 1.0:
+            return block
+        import numpy as np
+
+        samples = np.frombuffer(block, dtype=np.int16).astype(np.float32)
+        ramp = np.linspace(start, target, num=len(samples), dtype=np.float32) if start != target else target
+        return np.clip(samples * ramp, -32768, 32767).astype(np.int16).tobytes()
+
     def _enqueue(self, raw: bytes) -> None:
         self.captured_bytes += len(raw)
+        self._put_input(raw)
+
+    def _put_input(self, raw: bytes) -> None:
         if self._queue.full():
             try:
                 self._queue.get_nowait()
@@ -343,9 +480,15 @@ class SoundDeviceRealtimeAudio:
     async def play_b64(self, value: str) -> None:
         if not value:
             return
-        await asyncio.to_thread(self._write_output, base64.b64decode(value))
+        # Époques figées sur la boucle, *avant* de passer au thread : si un
+        # `stop_output()` survient entre-temps, le thread doit voir que ce bloc
+        # appartient au passé. Les lire au démarrage du thread laissait jouer
+        # un bloc entier après la coupure.
+        with self._cursor_lock:
+            epochs = (self._output_epoch, self._playback_epoch)
+        await asyncio.to_thread(self._write_output, base64.b64decode(value), epochs)
 
-    def _write_output(self, pcm: bytes) -> None:
+    def _write_output(self, pcm: bytes, epochs: tuple[int, int] | None = None) -> None:
         """Écrire la réponse par blocs, verrou tenu.
 
         Ce thread survit à l'annulation de la tâche qui l'a lancé : le verrou
@@ -363,16 +506,25 @@ class SoundDeviceRealtimeAudio:
         bloc suivant sans jamais couper un `write()` en cours.
         """
         step = self.OUTPUT_CHUNK_FRAMES * self._BYTES_PER_FRAME
-        with self._cursor_lock:
-            epoch, playback_epoch = self._output_epoch, self._playback_epoch
+        if epochs is None:
+            with self._cursor_lock:
+                epochs = (self._output_epoch, self._playback_epoch)
+        epoch, playback_epoch = epochs
+        capture = self.capture
         for offset in range(0, len(pcm), step):
-            block = pcm[offset:offset + step]
+            block = self._apply_gain(pcm[offset:offset + step])
             with self._output_lock:
                 stream = self._output
                 if stream is None or self._closing or playback_epoch != self._playback_epoch:
                     return
                 stream.write(block)
             self._credit_written(epoch, len(block))
+            if capture is not None and playback_epoch == self._playback_epoch:
+                # Ce qui vient d'entrer dans le tampon du périphérique sera
+                # entendu, donc renverra de l'écho : l'annuleur doit le savoir.
+                # Coupé entre-temps, `abort()` l'a jeté : il ne sera jamais
+                # entendu, et le compter ferait croire que JARVIS parle encore.
+                capture.push_reference(block)
 
     async def stop_output(self) -> None:
         """Couper la lecture en cours sans fermer le flux d'entrée.
@@ -413,6 +565,12 @@ class SoundDeviceRealtimeAudio:
             # bel et bien été joué, donc il reste crédité.
             self._playback_epoch += 1
         await asyncio.to_thread(self._abort_output)
+        if self.capture is not None:
+            # `abort()` a jeté le tampon : cette référence ne sera jamais
+            # entendue, la garder ferait croire que JARVIS parle encore.
+            self.capture.clear_reference()
+        # La prochaine sortie repart à plein volume.
+        self._output_gain = 1.0
 
     def _abort_output(self) -> None:
         with self._output_lock:
@@ -475,9 +633,27 @@ class RealtimeConversationBridge:
     chaque tour multiplierait les occasions de la prendre en défaut. Le mode
     continu allonge la durée de vie de la capture sans toucher à sa fermeture.
 
-    Contrepartie assumée : micro ouvert pendant que les haut-parleurs jouent.
-    Aucune annulation d'écho n'est implémentée ici (spec §11) ; le mode legacy
-    reste le repli half-duplex.
+    Micro ouvert pendant que les haut-parleurs jouent : en mode continu, la
+    capture passe par `jarvis.audio.duplex` (annulation d'écho, garde d'écho),
+    et les transcripts par `jarvis.runtime.turn_filters` (écho, bruit). Le mode
+    legacy reste le repli half-duplex.
+
+    Trois tâches pendant `_consume`, une seule boucle asyncio :
+
+    - le **lecteur** vide le flux du fournisseur sans jamais attendre ;
+    - la **lecture** joue l'audio dans l'ordre reçu, et ne remet les
+      évènements de fin de sortie (`ORDERED_OUTPUT_EVENTS`) qu'une fois
+      l'audio qui les précède réellement joué ;
+    - la tâche **principale** traite tout le reste, dès réception.
+
+    C'est ce qui rend le barge-in possible : le fournisseur génère plus vite
+    que le temps réel, donc quand l'utilisateur coupe JARVIS, `speech_started`
+    arrive alors que des secondes d'audio attendent encore d'être jouées.
+    Jouer l'audio dans la boucle principale, comme avant, faisait attendre
+    `speech_started` derrière toute la phrase : JARVIS ne s'arrêtait jamais.
+    Tous les rappels du runtime (`on_mute` compris) restent appelés par la
+    tâche principale — jamais par la lecture, que `mute()` annulerait sous ses
+    propres pieds.
 
     Propriété du travail long : elle a quitté ce bridge en mode continu.
 
@@ -512,11 +688,17 @@ class RealtimeConversationBridge:
         on_response_done: Callable[[], object] | None = None,
         on_output_event: Callable[[ProtocolEnvelope], object] | None = None,
         on_interruption: Callable[[PlaybackCursor | None], object] | None = None,
+        on_user_speech: Callable[[bool], object] | None = None,
+        on_reflex: Callable[..., object] | None = None,
         auto_turn: bool = False,
         continuous: bool = False,
         classifier: ConservativeAddressingClassifier | None = None,
         journal: RuntimeJournal | None = None,
         claude=None,
+        engagement_window_s: float = 30.0,
+        barge_in_confirm_s: float = 0.8,
+        barge_in_duck_gain: float = 0.3,
+        clock: Callable[[], float] | None = None,
     ) -> None:
         self.core = core
         self.session = session
@@ -593,6 +775,46 @@ class RealtimeConversationBridge:
         # Purgé à la fin de chaque réponse.
         self._audio_notified_outputs: set[str] = set()
 
+        # -- mode continu : tours, écho, barge-in -----------------------------
+        # Prévient l'ordonnanceur que l'utilisateur parle (VAD serveur) : il ne
+        # lance pas une phrase par-dessus lui.
+        self.on_user_speech = on_user_speech
+        # Demande d'accusé de réception à l'ordonnanceur, après un tour adressé.
+        self.on_reflex = on_reflex
+        self._clock = clock or time.monotonic
+        self.engagement_window_s = engagement_window_s
+        self.barge_in_confirm_s = barge_in_confirm_s
+        self.barge_in_duck_gain = barge_in_duck_gain
+        # Le réveil vaut engagement : la première phrase après F9 est adressée.
+        self._last_engaged = self._clock()
+        self._echo = EchoGuard(clock=self._clock)
+        self._recent_reflexes: deque[str] = deque(maxlen=4)
+        self._user_speaking = False
+        self._last_playback_end = float("-inf")
+        # Segment VAD capté pendant une parole de JARVIS (ou juste après) :
+        # seul un tel segment peut être de l'écho. Par élément fournisseur,
+        # parce que le transcript arrive après le segment suivant parfois.
+        self._segment_near_playback: dict[str, bool] = {}
+        self._last_segment_near_playback = False
+        # Barge-in en deux temps : la capture locale entend l'utilisateur, la
+        # voix de JARVIS baisse ; le VAD du fournisseur confirme, elle se tait.
+        self._barge_pending_token = 0
+        self._barge_pending = False
+        # Plomberie de `_consume` (voir la docstring de la classe).
+        self._inbox: asyncio.Queue | None = None
+        self._playout: asyncio.Queue | None = None
+        self._seq = 0
+        self._queued_audio = 0
+        self._drop_audio_before = 0
+        self._unfinished = 0
+        self._idle = asyncio.Event()
+        self._idle.set()
+        # Sorties reçues du fournisseur et pas encore finies de jouer ici, par
+        # identité (voir `_output_identity`). Tenues par le lecteur, retirées
+        # quand la fin de la sortie est traitée.
+        self._received_outputs: dict[str, dict[str, object]] = {}
+        self._last_correlation_id: str | None = None
+
     async def _call(self, callback: Callable[[], object] | None) -> None:
         if callback is None:
             return
@@ -658,6 +880,7 @@ class RealtimeConversationBridge:
             self._live_output_identity = None
         if identity is not None:
             self._interrupted_outputs.discard(identity)
+            self._received_outputs.pop(identity, None)
         output_id = _optional_text((event.payload or {}).get("output_id"))
         if output_id is not None:
             self._audio_notified_outputs.discard(output_id)
@@ -677,15 +900,41 @@ class RealtimeConversationBridge:
         """
 
         started = time.perf_counter()
+        # Tout l'audio déjà reçu et pas encore joué appartient à ce qui vient
+        # d'être coupé : la tâche de lecture le jettera au lieu de le jouer.
+        self._drop_audio_before = self._seq
+        self._barge_pending = False
+        self._barge_pending_token += 1
+        self._last_engaged = self._clock()
         await self.audio.stop_output()
-        cursor = self.audio.playback_cursor()
-        stop_latency_ms = round((time.perf_counter() - started) * 1000, 1)
         interrupted = self._live_output_identity
+        # Le curseur de l'audio décrit la dernière sortie *jouée*. Si plus rien
+        # ne jouait (la sortie coupée n'avait encore rien fait entendre), il
+        # désignerait une phrase déjà entendue en entier : pas de curseur.
+        cursor = self.audio.playback_cursor() if interrupted is not None else None
+        stop_latency_ms = round((time.perf_counter() - started) * 1000, 1)
+        # Toute sortie reçue et pas finie est coupée, pas seulement celle qui
+        # jouait : une sortie dont aucun bloc n'est encore sorti enverrait
+        # sinon la suite de sa phrase après la parole de l'utilisateur.
+        targets = set(self._received_outputs)
         if interrupted is not None:
-            self._interrupted_outputs.add(interrupted)
+            targets.add(interrupted)
+        self._interrupted_outputs.update(targets)
+        for identity, entry in self._received_outputs.items():
+            heard = 0.0
+            if cursor is not None and identity == interrupted and float(entry.get("audio_ms") or 0) > 0:
+                heard = min(1.0, cursor.played_ms / float(entry["audio_ms"]))
+            # L'écho possible ne porte que sur ce qui a été entendu.
+            self._echo.limit(identity, heard)
         self._playing = False
         self._live_output_identity = None
-        self._interrupted_speech_id = cursor.speech_id if cursor is not None else None
+        if cursor is not None:
+            self._interrupted_speech_id = cursor.speech_id
+        else:
+            newest = next(reversed(self._received_outputs.values()), None)
+            self._interrupted_speech_id = (
+                _optional_text(newest.get("speech_id")) or _optional_text(newest.get("output_id")) if newest else None
+            )
         await self._call_with(self.on_interruption, cursor)
         self._trace(
             "voice.barge_in",
@@ -1077,6 +1326,7 @@ class RealtimeConversationBridge:
             )
             return False
         payload = acceptance if isinstance(acceptance, dict) else {}
+        self._last_correlation_id = correlation_id
         self._trace(
             "voice.brain_turn_submitted",
             text[:300],
@@ -1157,6 +1407,171 @@ class RealtimeConversationBridge:
         )
         return True
 
+    # -- boucle d'évènements ----------------------------------------------------
+
+    async def wait_idle(self) -> None:
+        """Attendre que tout ce qui a été reçu du fournisseur soit traité.
+
+        Audio joué compris. Les tests, qui injectent leurs évènements d'un bloc,
+        s'en servent pour retrouver l'enchaînement du temps réel.
+        """
+
+        await self._idle.wait()
+
+    def _next_seq(self) -> int:
+        self._seq += 1
+        return self._seq
+
+    def _begin_item(self) -> None:
+        self._unfinished += 1
+        self._idle.clear()
+
+    def _finish_item(self) -> None:
+        self._unfinished = max(0, self._unfinished - 1)
+        if self._unfinished == 0:
+            self._idle.set()
+
+    def _post(self, kind: str, item: object = None) -> None:
+        """Déposer un signal local dans la boîte de la tâche principale."""
+
+        inbox = self._inbox
+        if inbox is None:
+            return
+        self._begin_item()
+        inbox.put_nowait((kind, item, None))
+
+    def _on_capture_signal(self, signal: str) -> None:
+        """Rappel de la capture duplex, appelé sur la boucle asyncio."""
+
+        if signal == NEAR_END_SIGNAL:
+            self._post("near_end")
+
+    def _dispatch(self, event: ProtocolEnvelope) -> None:
+        """Aiguiller un évènement fournisseur dès réception, sans jamais attendre."""
+
+        assert self._inbox is not None and self._playout is not None
+        self._begin_item()
+        message_type = event.message_type
+        payload = event.payload or {}
+        if message_type in {"realtime.audio", "realtime.output_started"}:
+            self._note_output_received(payload, audio=message_type == "realtime.audio")
+        if message_type == "realtime.audio":
+            self._queued_audio += 1
+            self._enqueue_playout("audio", event)
+        elif message_type in ORDERED_OUTPUT_EVENTS:
+            if message_type == "realtime.assistant_transcript":
+                # Retenu dès réception : l'écho de cette phrase peut revenir au
+                # micro avant qu'elle ait fini de jouer.
+                self._echo.remember(str(payload.get("text") or ""), key=self._output_identity(payload))
+            self._enqueue_playout("event", event)
+        elif self.continuous and self._queued_audio > 0:
+            # De l'audio reçu avant cet évènement n'est pas encore joué : il
+            # passe devant, sinon la parole de l'utilisateur attendrait la fin
+            # de la phrase qu'elle doit couper. Le legacy, half-duplex, n'a
+            # rien à couper : il garde l'ordre strict du flux.
+            self._inbox.put_nowait(("urgent", event, None))
+        else:
+            # Rien ne joue : l'ordre du flux est respecté à la lettre.
+            self._enqueue_playout("event", event)
+
+    def _enqueue_playout(self, kind: str, item: object) -> None:
+        assert self._playout is not None
+        self._playout.put_nowait((self._next_seq(), kind, item))
+
+    def _note_output_received(self, payload: dict[str, object], *, audio: bool) -> None:
+        """Tenir, dès réception, les sorties que le fournisseur a commencées.
+
+        La lecture ne les découvre qu'en les jouant : un barge-in qui survient
+        entre-temps doit pourtant pouvoir couper une sortie dont aucun bloc
+        n'est encore sorti, et mettre ses blocs à venir sur liste noire.
+        """
+
+        identity = self._output_identity(payload)
+        if identity is None:
+            return
+        entry = self._received_outputs.setdefault(
+            identity,
+            {"output_id": _optional_text(payload.get("output_id")), "speech_id": _optional_text(payload.get("speech_id")), "audio_ms": 0.0},
+        )
+        if audio:
+            # Taille décodée d'un base64 : 3 octets pour 4 caractères, int16 mono.
+            size = len(str(payload.get("pcm_b64") or "")) * 3 // 4
+            rate = int(getattr(self.audio, "output_sample_rate", 24000) or 24000)
+            entry["audio_ms"] = float(entry["audio_ms"]) + size * 1000.0 / (rate * 2)
+        while len(self._received_outputs) > 32:
+            self._received_outputs.pop(next(iter(self._received_outputs)))
+
+    def output_pending(self, output_id: str) -> bool:
+        """Une sortie reçue n'a-t-elle pas encore fini d'être jouée ici ?
+
+        Lu par l'ordonnanceur : le fournisseur a fini de *générer* bien avant
+        que le haut-parleur ait fini de *jouer*, et seul le bridge le sait.
+        """
+
+        return any(entry.get("output_id") == output_id for entry in self._received_outputs.values())
+
+    async def _read_provider(self, events) -> None:  # noqa: ANN001
+        """Tâche de lecture du flux fournisseur.
+
+        La fin du flux et une connexion perdue passent par la file de lecture :
+        elles ne sont traitées qu'une fois l'audio déjà reçu joué, comme avant.
+        Toute autre panne remonte aussitôt à la tâche principale.
+        """
+
+        assert self._inbox is not None and self._playout is not None
+        try:
+            async for event in events:
+                self._dispatch(event)
+        except ConnectionError as exc:
+            self._begin_item()
+            self._enqueue_playout("disconnected", exc)
+        except Exception as exc:
+            self._begin_item()
+            self._inbox.put_nowait(("failed", exc, None))
+        else:
+            self._begin_item()
+            self._enqueue_playout("end", None)
+
+    async def _play_out(self) -> None:
+        """Tâche de lecture : l'audio dans l'ordre, puis ce qui le suivait."""
+
+        assert self._inbox is not None and self._playout is not None
+        while True:
+            seq, kind, item = await self._playout.get()
+            if kind == "audio":
+                try:
+                    await self._play_audio(seq, item)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    self._post("failed", exc)
+                    return
+                finally:
+                    self._queued_audio = max(0, self._queued_audio - 1)
+                    self._finish_item()
+                continue
+            # Évènement ordonné : la tâche principale le traite, et la lecture
+            # attend qu'elle ait fini — l'état qu'il pose (`_playing`, curseur)
+            # doit précéder l'audio de la sortie suivante.
+            done = asyncio.Event()
+            self._inbox.put_nowait((kind, item, done))
+            await done.wait()
+            if kind in {"end", "disconnected"}:
+                return
+
+    async def _play_audio(self, seq: int, event: ProtocolEnvelope) -> None:
+        self._response_had_audio = True
+        if seq <= self._drop_audio_before or self._output_was_interrupted(event.payload):
+            # Reçu avant le barge-in, ou encore émis par le fournisseur pour la
+            # phrase coupée : le jouer remettrait du son après que
+            # l'utilisateur a repris la parole, et le créditer fausserait la
+            # troncature.
+            return
+        self._track_playback_output(event)
+        await self._note_first_audio(event)
+        await self._call(self.on_speaking)
+        await self.audio.play_b64(str(event.payload.get("pcm_b64") or ""))
+
     async def _consume(self, events) -> None:  # noqa: ANN001
         """Traiter le flux du fournisseur.
 
@@ -1164,308 +1579,543 @@ class RealtimeConversationBridge:
         websocket Realtime peut être fermé pendant qu'un outil lent travaille.
         Laisser l'exception remonter tuait tout le processus Voice alors que le
         tour venait de réussir.
+
+        Voir la docstring de la classe pour le partage entre les trois tâches.
         """
+
+        self._inbox, self._playout = asyncio.Queue(), asyncio.Queue()
+        self._unfinished = 0
+        self._idle.set()
+        reader = asyncio.create_task(self._read_provider(events), name="jarvis-realtime-reader")
+        player = asyncio.create_task(self._play_out(), name="jarvis-realtime-playout")
         try:
-            async for event in events:
-                if event.message_type == "realtime.audio":
-                    self._response_had_audio = True
-                    if self._output_was_interrupted(event.payload):
-                        # Le fournisseur n'a pas encore vu l'annulation : ces
-                        # blocs appartiennent à la phrase que l'utilisateur
-                        # vient de couper. Les jouer remettrait du son après le
-                        # barge-in, et les créditer fausserait la troncature.
-                        continue
-                    self._track_playback_output(event)
-                    await self._note_first_audio(event)
-                    await self._call(self.on_speaking)
-                    await self.audio.play_b64(str(event.payload.get("pcm_b64") or ""))
-                elif event.message_type == "realtime.audio_done":
-                    if self.on_response_done is None:
-                        await self._call(self.on_listening)
-                elif event.message_type == "realtime.output_started":
-                    # JARVIS commence à parler : de la parole utile, donc du
-                    # temps rendu à l'utilisateur pour répondre (Décision 10).
-                    self._track_playback_output(event)
-                    await self._notify_output(event)
-                    self._trace(
-                        "voice.output_started",
-                        "Sortie vocale ouverte",
-                        data={
-                            "conversation_id": self.conversation_id,
-                            "output_id": event.payload.get("output_id"),
-                            "speech_id": event.payload.get("speech_id"),
-                        },
-                    )
-                    await self._call(self.on_addressed)
-                elif event.message_type == "realtime.transcript_delta":
-                    # Transcription partielle de l'entrée : une observation
-                    # révisable, pas un tour adressé (Décisions 07 et 10). Elle
-                    # ne réarme pas le délai, et elle n'est pas journalisée :
-                    # elle arrive plusieurs fois par seconde.
-                    await self._call(self.on_ambient)
-                elif event.message_type == "realtime.response_done":
-                    response_had_audio, self._response_had_audio = self._response_had_audio, False
-                    status = str(event.payload.get("status") or "")
-                    self._release_playback_output(event)
-                    # Avant tout traitement local : c'est la fin de cette sortie
-                    # qui libère l'ordonnanceur, y compris quand la réponse
-                    # s'arrête sur un appel d'outil.
-                    await self._notify_output(event)
-                    if self._tool_result_pending:
-                        # Cette réponse-ci s'arrête sur l'appel d'outil ; le tour
-                        # se terminera sur celle que le résultat vient de créer.
-                        self._tool_result_pending = False
-                        continue
-                    if self.continuous:
-                        # Le tour est clos, pas la session : le prochain commit
-                        # du VAD serveur ouvrira le suivant sur le même micro.
-                        # Le drapeau de commit ne garde plus rien ici — en
-                        # legacy il protégeait le mute d'une réponse qu'on
-                        # n'avait pas demandée ; en continu la conséquence est
-                        # un retour à l'écoute, et s'y fier laisserait la
-                        # projection bloquée sur « speaking » après une réponse
-                        # interrompue par la parole de l'utilisateur.
-                        self._input_submitted = False
-                    elif not self._input_submitted:
-                        continue
-                    if response_had_audio:
-                        await self._call(self.on_response_done)
-                        continue
-                    # Réponse muette : faux départ du VAD annulé par la parole
-                    # qui a suivi, échec fournisseur, quota... Sans ce retour la
-                    # session resterait « thinking » jusqu'au délai d'activité
-                    # utile — quatre-vingt-dix secondes d'écran figé sans un mot.
-                    self._trace(
-                        "voice.response_silent",
-                        "Le fournisseur a terminé sans audio : tour clos sans réponse vocale",
-                        level="warning",
-                        data={
-                            "conversation_id": self.conversation_id,
-                            "status": status or "unknown",
-                            "code": "realtime_response_without_audio",
-                        },
-                    )
-                    await self._rescue_undelivered_answer()
-                    await self._call(self.on_response_done or self.on_mute)
-                elif event.message_type == "realtime.speech_started":
-                    # Borne de départ de la mesure 1, posée avant toute
-                    # décision : que ce segment coupe la parole de JARVIS ou
-                    # ouvre un tour, le délai jusqu'au premier son rendu est le
-                    # même chiffre pour l'utilisateur.
-                    self._open_speech_segment()
-                    if self.continuous and self._playing:
-                        # Barge-in : JARVIS parle et l'utilisateur enchaîne. Le
-                        # chemin legacy, half-duplex, ne peut pas se trouver
-                        # dans cet état — il garde donc exactement sa trace.
-                        await self._barge_in()
-                    elif self.auto_turn and not self._input_submitted:
-                        self._trace(
-                            "voice.speech_started",
-                            "Speech detected by server VAD",
-                            data={"conversation_id": self.conversation_id},
-                        )
-                elif event.message_type == "realtime.input_committed":
-                    if self.auto_turn and self.continuous:
-                        # Le micro reste ouvert : c'est le VAD serveur qui
-                        # découpe les tours, et fermer le flux ici condamnerait
-                        # la session au tour unique. Un commit qui arrive alors
-                        # qu'une réponse joue encore est une interruption
-                        # légitime, pas un segment perdu : la lecture a déjà été
-                        # coupée et l'historique tronqué sur
-                        # `realtime.speech_started` (voir `_barge_in`).
-                        self._input_submitted = True
-                        self._trace(
-                            "voice.input_submitted",
-                            "Server VAD closed a turn inside the continuous session",
-                            data=self._input_metrics(),
-                        )
-                        await self._call(self.on_thinking)
-                    elif self.auto_turn and not self._input_submitted:
-                        self._input_submitted = True
-                        # The provider already holds the turn; releasing the microphone
-                        # here keeps the speakers from feeding the next VAD segment.
-                        await self._close_input()
-                        self._trace(
-                            "voice.input_submitted",
-                            "Server VAD closed the turn and requested a response",
-                            data=self._input_metrics(),
-                        )
-                        await self._call(self.on_thinking)
-                    elif self.auto_turn:
-                        # Le micro était déjà fermé : ce segment est la suite de
-                        # phrase que le VAD a coupée, et le fournisseur l'a mise
-                        # dans un tour que personne n'écoute. Le tracer est la
-                        # seule façon de voir, après coup, qu'on a été coupé.
-                        self._trace(
-                            "voice.input_dropped",
-                            "Segment capté après la clôture du tour : il ne sera pas traité",
-                            level="warning",
-                            data={
-                                "conversation_id": self.conversation_id,
-                                "code": "audio_input_after_commit",
-                            },
-                        )
-                elif event.message_type == "realtime.transcript":
-                    # Borne de départ de la mesure 2. Prise avant le classement
-                    # d'adressage : ce qui est chronométré est le chemin complet
-                    # « transcript complet → Core a accepté », décision de
-                    # surface comprise.
-                    self._latency.mark(LATENCY_BRAIN_TURN_ACCEPTED, self.conversation_id)
-                    text = str(event.payload.get("text") or "").strip()
-                    decision = self.classifier.classify(text, active=True)
-                    self._trace("voice.transcript", text or "<empty>", data={"addressing": decision.value})
-                    if self.continuous and decision is AddressingDecision.UNCERTAIN:
-                        # Décision 44 : décider qu'une demande n'en est pas une
-                        # est une décision d'intention, et l'intention
-                        # appartient au cerveau. En continu, un tour complet
-                        # dont l'adressage est douteux part donc vers Core au
-                        # lieu d'être jeté, avec la marque du doute.
-                        #
-                        # Le doute n'est pas de l'activité utile : on passe par
-                        # `on_ambient` exactement comme avant, ce qui laisse le
-                        # minuteur d'inactivité où il est (Décision 10). Router
-                        # et réarmer sont deux choses distinctes ; seul le
-                        # cerveau, s'il donne signe de vie sur ce tour, réarmera
-                        # (Décision 32). Pour la même raison, ni `on_thinking`
-                        # ni `on_addressed` ne sont appelés : la surface ne
-                        # doit pas afficher qu'elle travaille pour l'utilisateur
-                        # sur une phrase qui ne lui était peut-être pas
-                        # adressée.
-                        #
-                        # « Jarvis mute » ne peut pas tomber ici : toute phrase
-                        # commençant par « jarvis » est classée ADDRESSED, donc
-                        # la commande reste traitée plus bas, avant tout envoi
-                        # au cerveau, exactement comme avant.
-                        await self._call(self.on_ambient)
-                        await self._submit_brain_turn(
-                            text,
-                            provider_item_id=str(event.payload.get("item_id") or "") or None,
-                            addressing=decision,
-                        )
-                        continue
-                    if decision is not AddressingDecision.ADDRESSED:
-                        # Entendu, mais pas pour JARVIS : le délai d'activité
-                        # utile ne bouge pas (Décision 10). AMBIENT est jeté
-                        # dans les deux modes ; UNCERTAIN ne parvient ici qu'en
-                        # legacy, où la surface possède les outils et garde son
-                        # rôle d'arbitre (Décisions 20 et 44).
-                        await self._call(self.on_ambient)
-                        continue
-                    normalized = " ".join(text.casefold().replace(",", " ").split())
-                    if normalized == "jarvis mute":
-                        await self._call(self.on_mute)
-                        break
-                    if self.continuous:
-                        # Chemin autoritaire unique : persistance et dépêche du
-                        # cerveau en une seule opération côté Core.
-                        await self._submit_brain_turn(
-                            text,
-                            provider_item_id=str(event.payload.get("item_id") or "") or None,
-                        )
-                    else:
-                        await self._append_legacy_user_turn(text)
-                    await self._call(self.on_thinking)
-                    if self._pending_action_id is not None and normalized in {"oui", "non", "yes", "no"}:
-                        result = await self.core.confirm_action(self._pending_action_id, text)
-                        if result.get("disposition") != "confirm":
-                            self._pending_action_id = None
-                        await self.session.send_context("Jarvis Core confirmation result: " + str(result))
-                    await self._call(self.on_addressed)
-                elif event.message_type == "realtime.assistant_transcript":
-                    text = str(event.payload.get("text") or "").strip()
-                    speech_id = str(event.payload.get("speech_id") or "")
-                    if text and speech_id:
-                        # Cette réponse restitue une demande de parole du
-                        # cerveau : c'est l'ordonnanceur qui persiste le tour,
-                        # avec la provenance `brain.speech` et le texte
-                        # autoritaire (spec section 15). Écrire ici aussi
-                        # persisterait le même tour deux fois, dont une fois
-                        # sous une provenance fausse.
-                        self._undelivered_answer = None
-                        self._trace("voice.assistant", text, data={"speech_id": speech_id, "provenance": SpeechProvenance.BRAIN.value})
-                        await self._call(self.on_addressed)
-                    elif text:
-                        # JARVIS a parlé : le résultat de l'outil est arrivé
-                        # jusqu'à l'utilisateur, plus rien à sauver.
-                        self._undelivered_answer = None
-                        self._trace("voice.assistant", text)
-                        # Un tour assistant reste légitime par ce chemin
-                        # (Décision 30). En continu on l'étiquette : ce que la
-                        # surface prononce d'elle-même est un réflexe, pas la
-                        # parole du cerveau (spec section 15).
-                        if self.continuous:
-                            await self.core.append_turn(
-                                self.conversation_id,
-                                kind="assistant",
-                                content=text,
-                                metadata={"provenance": SpeechProvenance.SURFACE_REFLEX.value},
-                            )
-                        else:
-                            await self.core.append_turn(self.conversation_id, kind="assistant", content=text)
-                        await self._call(self.on_addressed)
-                elif event.message_type == "realtime.tool_call":
-                    call_id = str(event.payload.get("call_id") or "")
-                    name = str(event.payload.get("name") or "")
-                    arguments = event.payload.get("arguments") if isinstance(event.payload.get("arguments"), dict) else {}
-                    if call_id and call_id in self._dispatched_calls:
-                        self._trace(
-                            "tool.duplicate",
-                            name,
-                            level="warning",
-                            data={"call_id": call_id, "code": "tool_call_already_dispatched"},
-                        )
-                        continue
-                    if call_id:
-                        self._dispatched_calls.add(call_id)
-                    self._trace("tool.call", name, data={"call_id": call_id, "arguments": arguments})
-                    # Le délai d'activité utile mesure l'attente de l'utilisateur,
-                    # pas la durée d'un outil : tant que celui-ci travaille, la
-                    # session ne doit pas pouvoir être coupée sous ses pieds.
-                    # Ce drapeau ne couvre plus que les outils que le bridge
-                    # exécute lui-même. En mode continu, le travail long a
-                    # quitté ce processus : il n'est plus « en vol » ici, et
-                    # rien de ce qui suit ne dure.
-                    self.tool_in_flight = True
-                    try:
-                        if name == CLAUDE_TOOL:
-                            result = self._brain_owns_the_request() if self.continuous else await self._call_claude(arguments)
-                        elif self.continuous:
-                            result = self._surface_tools_are_closed(name, call_id=call_id)
-                        else:
-                            result = await self.core.call_tool(name, arguments, conversation_id=self.conversation_id)
-                    finally:
-                        self.tool_in_flight = False
-                    self._trace("tool.result", name, data={"call_id": call_id, "result": result})
-                    action_id = result.get("action_id")
-                    self._pending_action_id = str(action_id) if result.get("disposition") == "confirm" and action_id else None
-                    self._tool_result_pending = True
-                    await self.session.send_tool_result(call_id, result)
-                elif event.message_type == "realtime.error":
-                    error = event.payload.get("error") or {}
-                    if isinstance(error, dict):
-                        code = str(error.get("code") or "unknown_error")
-                        message = str(error.get("message") or error)
-                    else:
-                        code = "unknown_error"
-                        message = str(error)
-                    if code in BENIGN_PROVIDER_ERRORS:
-                        self._trace(
-                            "voice.barge_in_degraded",
-                            f"Annulation de la sortie refusée par le fournisseur: {message}",
-                            level="warning",
-                            data={"conversation_id": self.conversation_id, "code": code},
-                        )
-                        continue
-                    self._trace("provider.error", message, level="error", data={"code": code})
-                    raise RuntimeError(f"Realtime provider error [{code}]: {message}")
-        except ConnectionError as exc:
+            while True:
+                kind, item, done = await self._inbox.get()
+                try:
+                    if kind == "end":
+                        return
+                    if kind == "disconnected":
+                        await self._note_disconnected(item)
+                        return
+                    if kind == "failed":
+                        raise item
+                    if kind == "near_end":
+                        await self._on_near_end()
+                    elif kind == "barge_timeout":
+                        await self._on_barge_timeout(item)
+                    elif await self._handle_event(item):
+                        return
+                except ConnectionError as exc:
+                    # Écrire sur un websocket qui se ferme (résultat d'outil,
+                    # annulation) : même fin de vie qu'une lecture coupée.
+                    await self._note_disconnected(exc)
+                    return
+                finally:
+                    if done is not None:
+                        done.set()
+                    self._finish_item()
+        finally:
+            for task in (reader, player):
+                task.cancel()
+            await asyncio.gather(reader, player, return_exceptions=True)
+            self._inbox = self._playout = None
+            self._unfinished = 0
+            self._queued_audio = 0
+            self._idle.set()
+
+    async def _note_disconnected(self, exc: object) -> None:
+        self._trace(
+            "provider.disconnected",
+            f"Connexion Realtime perdue: {exc}",
+            level="warning",
+            data={"code": "realtime_disconnected", "conversation_id": self.conversation_id},
+        )
+        await self._rescue_undelivered_answer()
+
+    # -- barge-in en deux temps ----------------------------------------------
+
+    def _output_live(self) -> bool:
+        """JARVIS parle, ou a reçu de l'audio qu'il n'a pas encore joué."""
+
+        return self._playing or self._queued_audio > 0
+
+    def _set_output_gain(self, gain: float) -> None:
+        setter = getattr(self.audio, "set_output_gain", None)
+        if setter is not None:
+            setter(gain)
+
+    def _barge_in_allowed(self) -> bool:
+        """Le VAD du fournisseur a-t-il pu entendre autre chose que l'écho ?
+
+        Sans garde d'écho (pile de test, capture brute), il n'y a pas d'autre
+        témoin : on le croit, comme avant. Avec la garde, le fournisseur ne
+        reçoit le micro pendant que JARVIS parle que si la capture locale a
+        entendu l'utilisateur ; un `speech_started` garde fermée ne peut venir
+        que de ce qui a précédé la fermeture, ou de l'écho.
+        """
+
+        if not getattr(self.audio, "has_echo_guard", False):
+            return True
+        return bool(getattr(self.audio, "echo_guard_open", True)) or self._barge_pending
+
+    async def _on_near_end(self) -> None:
+        """La capture locale entend l'utilisateur pendant que JARVIS parle.
+
+        Premier temps du barge-in : la voix de JARVIS baisse aussitôt, et la
+        garde s'est ouverte pour que le fournisseur entende la phrase depuis son
+        début. Le second temps — couper — attend que le VAD du fournisseur
+        confirme qu'il s'agit bien de parole : un choc sur le bureau ou une
+        toux ne doivent pas faire taire JARVIS. Sans confirmation dans
+        `barge_in_confirm_s`, la voix remonte et la garde se referme.
+        """
+
+        if not self.continuous or not self._output_live():
+            return
+        if self._user_speaking:
+            # Le VAD du fournisseur est déjà en parole : c'est confirmé.
+            await self._barge_in()
+            return
+        if self._barge_pending:
+            return
+        self._barge_pending = True
+        self._barge_pending_token += 1
+        token = self._barge_pending_token
+        self._set_output_gain(self.barge_in_duck_gain)
+        self._trace(
+            "voice.barge_in_pending",
+            "Parole détectée localement pendant que JARVIS parle : voix baissée, confirmation attendue",
+            data={"conversation_id": self.conversation_id},
+        )
+        asyncio.get_running_loop().call_later(self.barge_in_confirm_s, self._post, "barge_timeout", token)
+
+    async def _on_barge_timeout(self, token: object) -> None:
+        if not self._barge_pending or token != self._barge_pending_token:
+            return
+        self._barge_pending = False
+        self._set_output_gain(1.0)
+        release = getattr(self.audio, "release_near_end", None)
+        if release is not None:
+            release()
+        self._trace(
+            "voice.barge_in_rejected",
+            "Parole locale non confirmée par le fournisseur : JARVIS reprend à plein volume",
+            data={"conversation_id": self.conversation_id, "code": "barge_in_not_confirmed"},
+        )
+
+    def _engaged(self) -> bool:
+        """L'utilisateur est-il en conversation avec JARVIS en ce moment ?"""
+
+        if self.engagement_window_s <= 0:
+            return True
+        return self._clock() - self._last_engaged <= self.engagement_window_s
+
+    def _segment_was_near_playback(self, item_id: str | None) -> bool:
+        if item_id and item_id in self._segment_near_playback:
+            return self._segment_near_playback.pop(item_id)
+        return self._last_segment_near_playback
+
+    #: Après la fin d'une parole de JARVIS, un segment peut encore contenir son
+    #: écho (réverbération, tampon du périphérique).
+    ECHO_WINDOW_S = 2.0
+
+    async def _note_user_speech(self, active: bool) -> None:
+        if self._user_speaking == active:
+            return
+        self._user_speaking = active
+        await self._call_with(self.on_user_speech, active)
+
+    async def _request_reflex(self, text: str) -> None:
+        """Proposer un accusé de réception à l'ordonnanceur, qui décidera s'il sert.
+
+        Il ne partira que si le cerveau tarde : une réponse rapide rend
+        l'accusé inutile, et l'ordonnanceur le jette alors.
+        """
+
+        if self.on_reflex is None or self._last_correlation_id is None:
+            return
+        if len(words(text)) < REFLEX_MIN_WORDS:
+            return
+        value = self.on_reflex(text, correlation_id=self._last_correlation_id, avoid=tuple(self._recent_reflexes))
+        if hasattr(value, "__await__"):
+            await value
+
+    # -- traitement d'un évènement -------------------------------------------
+
+    async def _handle_event(self, event: ProtocolEnvelope) -> bool:
+        """Traiter un évènement ; rend True quand la session doit s'arrêter."""
+
+        if event.message_type == "realtime.audio_done":
+            if self.on_response_done is None:
+                await self._call(self.on_listening)
+        elif event.message_type == "realtime.output_started":
+            # JARVIS commence à parler : de la parole utile, donc du
+            # temps rendu à l'utilisateur pour répondre (Décision 10).
+            self._track_playback_output(event)
+            await self._notify_output(event)
             self._trace(
-                "provider.disconnected",
-                f"Connexion Realtime perdue: {exc}",
+                "voice.output_started",
+                "Sortie vocale ouverte",
+                data={
+                    "conversation_id": self.conversation_id,
+                    "output_id": event.payload.get("output_id"),
+                    "speech_id": event.payload.get("speech_id"),
+                },
+            )
+            await self._call(self.on_addressed)
+        elif event.message_type == "realtime.transcript_delta":
+            # Transcription partielle de l'entrée : une observation
+            # révisable, pas un tour adressé (Décisions 07 et 10). Elle
+            # ne réarme pas le délai, et elle n'est pas journalisée :
+            # elle arrive plusieurs fois par seconde.
+            await self._call(self.on_ambient)
+        elif event.message_type == "realtime.response_done":
+            response_had_audio, self._response_had_audio = self._response_had_audio, False
+            status = str(event.payload.get("status") or "")
+            self._release_playback_output(event)
+            if not self._output_live():
+                # Plus rien ne joue : fin de parole de JARVIS. Un barge-in en
+                # attente n'a plus rien à couper, la voix suivante repart à
+                # plein volume, et la conversation reste engagée.
+                if self._barge_pending:
+                    self._barge_pending = False
+                    self._barge_pending_token += 1
+                self._set_output_gain(1.0)
+                if response_had_audio:
+                    self._last_playback_end = self._clock()
+                    self._last_engaged = self._last_playback_end
+            # Avant tout traitement local : c'est la fin de cette sortie
+            # qui libère l'ordonnanceur, y compris quand la réponse
+            # s'arrête sur un appel d'outil.
+            await self._notify_output(event)
+            if self._tool_result_pending:
+                # Cette réponse-ci s'arrête sur l'appel d'outil ; le tour
+                # se terminera sur celle que le résultat vient de créer.
+                self._tool_result_pending = False
+                return False
+            if self.continuous:
+                # Le tour est clos, pas la session : le prochain commit
+                # du VAD serveur ouvrira le suivant sur le même micro.
+                # Le drapeau de commit ne garde plus rien ici — en
+                # legacy il protégeait le mute d'une réponse qu'on
+                # n'avait pas demandée ; en continu la conséquence est
+                # un retour à l'écoute, et s'y fier laisserait la
+                # projection bloquée sur « speaking » après une réponse
+                # interrompue par la parole de l'utilisateur.
+                self._input_submitted = False
+            elif not self._input_submitted:
+                return False
+            if response_had_audio:
+                await self._call(self.on_response_done)
+                return False
+            # Réponse muette : faux départ du VAD annulé par la parole
+            # qui a suivi, échec fournisseur, quota... Sans ce retour la
+            # session resterait « thinking » jusqu'au délai d'activité
+            # utile — quatre-vingt-dix secondes d'écran figé sans un mot.
+            self._trace(
+                "voice.response_silent",
+                "Le fournisseur a terminé sans audio : tour clos sans réponse vocale",
                 level="warning",
-                data={"code": "realtime_disconnected", "conversation_id": self.conversation_id},
+                data={
+                    "conversation_id": self.conversation_id,
+                    "status": status or "unknown",
+                    "code": "realtime_response_without_audio",
+                },
             )
             await self._rescue_undelivered_answer()
+            await self._call(self.on_response_done or self.on_mute)
+        elif event.message_type == "realtime.speech_started":
+            # Borne de départ de la mesure 1, posée avant toute
+            # décision : que ce segment coupe la parole de JARVIS ou
+            # ouvre un tour, le délai jusqu'au premier son rendu est le
+            # même chiffre pour l'utilisateur.
+            self._open_speech_segment()
+            payload = event.payload or {}
+            near_playback = (
+                self._output_live()
+                or bool(getattr(self.audio, "far_end_recent", False))
+                or self._clock() - self._last_playback_end < self.ECHO_WINDOW_S
+            )
+            self._last_segment_near_playback = near_playback
+            item_id = _optional_text(payload.get("item_id"))
+            if item_id:
+                self._segment_near_playback[item_id] = near_playback
+                while len(self._segment_near_playback) > 16:
+                    self._segment_near_playback.pop(next(iter(self._segment_near_playback)))
+            if self.continuous:
+                await self._note_user_speech(True)
+            if self.continuous and self._output_live():
+                if self._barge_in_allowed():
+                    # Barge-in : JARVIS parle et l'utilisateur enchaîne. Le
+                    # chemin legacy, half-duplex, ne peut pas se trouver
+                    # dans cet état — il garde donc exactement sa trace.
+                    await self._barge_in()
+                else:
+                    # Garde fermée : le fournisseur n'a entendu que du
+                    # silence ou de l'écho. Couper JARVIS ici, c'est le
+                    # laisser s'interrompre lui-même.
+                    self._trace(
+                        "voice.barge_in_ignored",
+                        "Début de parole signalé alors que la garde d'écho était fermée : JARVIS continue",
+                        data={"conversation_id": self.conversation_id, "code": "speech_started_behind_echo_guard"},
+                    )
+            elif self.continuous or (self.auto_turn and not self._input_submitted):
+                self._trace(
+                    "voice.speech_started",
+                    "Speech detected by server VAD",
+                    data={"conversation_id": self.conversation_id},
+                )
+        elif event.message_type == "realtime.speech_stopped":
+            if self.continuous:
+                await self._note_user_speech(False)
+        elif event.message_type == "realtime.input_committed":
+            if self.continuous:
+                # Sans parole, pas de commit : si `speech_stopped` s'est
+                # perdu, c'est ici que l'utilisateur a fini de parler.
+                await self._note_user_speech(False)
+            if self.auto_turn and self.continuous:
+                # Le micro reste ouvert : c'est le VAD serveur qui
+                # découpe les tours, et fermer le flux ici condamnerait
+                # la session au tour unique. Un commit qui arrive alors
+                # qu'une réponse joue encore est une interruption
+                # légitime, pas un segment perdu : la lecture a déjà été
+                # coupée et l'historique tronqué sur
+                # `realtime.speech_started` (voir `_barge_in`).
+                self._input_submitted = True
+                self._trace(
+                    "voice.input_submitted",
+                    "Server VAD closed a turn inside the continuous session",
+                    data=self._input_metrics(),
+                )
+                await self._call(self.on_thinking)
+            elif self.auto_turn and not self._input_submitted:
+                self._input_submitted = True
+                # The provider already holds the turn; releasing the microphone
+                # here keeps the speakers from feeding the next VAD segment.
+                await self._close_input()
+                self._trace(
+                    "voice.input_submitted",
+                    "Server VAD closed the turn and requested a response",
+                    data=self._input_metrics(),
+                )
+                await self._call(self.on_thinking)
+            elif self.auto_turn:
+                # Le micro était déjà fermé : ce segment est la suite de
+                # phrase que le VAD a coupée, et le fournisseur l'a mise
+                # dans un tour que personne n'écoute. Le tracer est la
+                # seule façon de voir, après coup, qu'on a été coupé.
+                self._trace(
+                    "voice.input_dropped",
+                    "Segment capté après la clôture du tour : il ne sera pas traité",
+                    level="warning",
+                    data={
+                        "conversation_id": self.conversation_id,
+                        "code": "audio_input_after_commit",
+                    },
+                )
+        elif event.message_type == "realtime.transcript":
+            return await self._handle_transcript(event)
+        elif event.message_type == "realtime.assistant_transcript":
+            text = str(event.payload.get("text") or "").strip()
+            speech_id = str(event.payload.get("speech_id") or "")
+            if text and speech_id:
+                # Cette réponse restitue une demande de parole du
+                # cerveau : c'est l'ordonnanceur qui persiste le tour,
+                # avec la provenance `brain.speech` et le texte
+                # autoritaire (spec section 15). Écrire ici aussi
+                # persisterait le même tour deux fois, dont une fois
+                # sous une provenance fausse.
+                self._undelivered_answer = None
+                self._trace("voice.assistant", text, data={"speech_id": speech_id, "provenance": SpeechProvenance.BRAIN.value})
+                await self._call(self.on_addressed)
+            elif text:
+                # JARVIS a parlé : le résultat de l'outil est arrivé
+                # jusqu'à l'utilisateur, plus rien à sauver.
+                self._undelivered_answer = None
+                self._trace("voice.assistant", text)
+                # Un tour assistant reste légitime par ce chemin
+                # (Décision 30). En continu on l'étiquette : ce que la
+                # surface prononce d'elle-même est un réflexe, pas la
+                # parole du cerveau (spec section 15).
+                if self.continuous:
+                    self._recent_reflexes.append(text)
+                    await self.core.append_turn(
+                        self.conversation_id,
+                        kind="assistant",
+                        content=text,
+                        metadata={"provenance": SpeechProvenance.SURFACE_REFLEX.value},
+                    )
+                else:
+                    await self.core.append_turn(self.conversation_id, kind="assistant", content=text)
+                await self._call(self.on_addressed)
+        elif event.message_type == "realtime.tool_call":
+            await self._handle_tool_call(event)
+        elif event.message_type == "realtime.error":
+            error = event.payload.get("error") or {}
+            if isinstance(error, dict):
+                code = str(error.get("code") or "unknown_error")
+                message = str(error.get("message") or error)
+            else:
+                code = "unknown_error"
+                message = str(error)
+            if code in BENIGN_PROVIDER_ERRORS:
+                self._trace(
+                    "voice.barge_in_degraded",
+                    f"Annulation de la sortie refusée par le fournisseur: {message}",
+                    level="warning",
+                    data={"conversation_id": self.conversation_id, "code": code},
+                )
+                return False
+            if code in RECOVERABLE_PROVIDER_ERRORS:
+                self._trace(
+                    "voice.provider_refused",
+                    f"Demande refusée par le fournisseur, session maintenue: {message}",
+                    level="warning",
+                    data={"conversation_id": self.conversation_id, "code": code},
+                )
+                return False
+            self._trace("provider.error", message, level="error", data={"code": code})
+            raise RuntimeError(f"Realtime provider error [{code}]: {message}")
+        return False
+
+    async def _handle_transcript(self, event: ProtocolEnvelope) -> bool:
+        # Borne de départ de la mesure 2. Prise avant le classement
+        # d'adressage : ce qui est chronométré est le chemin complet
+        # « transcript complet → Core a accepté », décision de
+        # surface comprise.
+        self._latency.mark(LATENCY_BRAIN_TURN_ACCEPTED, self.conversation_id)
+        text = str(event.payload.get("text") or "").strip()
+        item_id = _optional_text(event.payload.get("item_id"))
+        near_playback = self._segment_was_near_playback(item_id)
+        engaged = self._engaged() if self.continuous else None
+        decision = self.classifier.classify(text, active=True, engaged=engaged)
+        self._trace("voice.transcript", text or "<empty>", data={"addressing": decision.value})
+        if self.continuous and text:
+            reason = noise_reason(text)
+            if reason is None and near_playback and self._echo.is_echo(text):
+                reason = "echo"
+            if reason is not None:
+                # Ce n'est pas un propos de l'utilisateur : ni tour, ni
+                # réarmement du délai, et l'écran revient à l'écoute.
+                self._latency.forget(LATENCY_BRAIN_TURN_ACCEPTED, self.conversation_id)
+                self._trace(
+                    "voice.transcript_dropped",
+                    text[:300],
+                    data={
+                        "conversation_id": self.conversation_id,
+                        "reason": reason,
+                        "near_playback": near_playback,
+                        "code": f"transcript_{reason}",
+                    },
+                )
+                await self._call(self.on_ambient)
+                await self._call(self.on_listening)
+                return False
+        if self.continuous and decision is AddressingDecision.UNCERTAIN:
+            # Décision 44 : décider qu'une demande n'en est pas une
+            # est une décision d'intention, et l'intention
+            # appartient au cerveau. En continu, un tour complet
+            # dont l'adressage est douteux part donc vers Core au
+            # lieu d'être jeté, avec la marque du doute.
+            #
+            # Le doute n'est pas de l'activité utile : on passe par
+            # `on_ambient` exactement comme avant, ce qui laisse le
+            # minuteur d'inactivité où il est (Décision 10). Router
+            # et réarmer sont deux choses distinctes ; seul le
+            # cerveau, s'il donne signe de vie sur ce tour, réarmera
+            # (Décision 32). Pour la même raison, ni `on_thinking`
+            # ni `on_addressed` ne sont appelés, ni aucun accusé de
+            # réception : la surface ne doit pas afficher qu'elle
+            # travaille pour l'utilisateur sur une phrase qui ne lui
+            # était peut-être pas adressée.
+            #
+            # « Jarvis mute » ne peut pas tomber ici : toute phrase
+            # mentionnant « jarvis » est classée ADDRESSED, donc
+            # la commande reste traitée plus bas, avant tout envoi
+            # au cerveau, exactement comme avant.
+            await self._call(self.on_ambient)
+            await self._submit_brain_turn(
+                text,
+                provider_item_id=item_id,
+                addressing=decision,
+            )
+            await self._call(self.on_listening)
+            return False
+        if decision is not AddressingDecision.ADDRESSED:
+            # Entendu, mais pas pour JARVIS : le délai d'activité
+            # utile ne bouge pas (Décision 10). AMBIENT est jeté
+            # dans les deux modes ; UNCERTAIN ne parvient ici qu'en
+            # legacy, où la surface possède les outils et garde son
+            # rôle d'arbitre (Décisions 20 et 44).
+            await self._call(self.on_ambient)
+            if self.continuous:
+                # Segment sans parole : plus rien ne ramènerait l'écran de
+                # « thinking » (posé au commit) vers l'écoute.
+                await self._call(self.on_listening)
+            return False
+        normalized = " ".join(text.casefold().replace(",", " ").split())
+        if normalized == "jarvis mute":
+            await self._call(self.on_mute)
+            return True
+        if self.continuous:
+            # Chemin autoritaire unique : persistance et dépêche du
+            # cerveau en une seule opération côté Core.
+            submitted = await self._submit_brain_turn(text, provider_item_id=item_id)
+            self._last_engaged = self._clock()
+        else:
+            submitted = False
+            await self._append_legacy_user_turn(text)
+        if self.continuous and not submitted:
+            # Core a refusé le tour : aucune réponse ne viendra.
+            await self._call(self.on_listening)
+            return False
+        await self._call(self.on_thinking)
+        if self._pending_action_id is not None and normalized in {"oui", "non", "yes", "no"}:
+            result = await self.core.confirm_action(self._pending_action_id, text)
+            if result.get("disposition") != "confirm":
+                self._pending_action_id = None
+            await self.session.send_context("Jarvis Core confirmation result: " + str(result))
+        await self._call(self.on_addressed)
+        if self.continuous:
+            await self._request_reflex(text)
+        return False
+
+    async def _handle_tool_call(self, event: ProtocolEnvelope) -> None:
+        call_id = str(event.payload.get("call_id") or "")
+        name = str(event.payload.get("name") or "")
+        arguments = event.payload.get("arguments") if isinstance(event.payload.get("arguments"), dict) else {}
+        if call_id and call_id in self._dispatched_calls:
+            self._trace(
+                "tool.duplicate",
+                name,
+                level="warning",
+                data={"call_id": call_id, "code": "tool_call_already_dispatched"},
+            )
+            return
+        if call_id:
+            self._dispatched_calls.add(call_id)
+        self._trace("tool.call", name, data={"call_id": call_id, "arguments": arguments})
+        # Le délai d'activité utile mesure l'attente de l'utilisateur,
+        # pas la durée d'un outil : tant que celui-ci travaille, la
+        # session ne doit pas pouvoir être coupée sous ses pieds.
+        # Ce drapeau ne couvre plus que les outils que le bridge
+        # exécute lui-même. En mode continu, le travail long a
+        # quitté ce processus : il n'est plus « en vol » ici, et
+        # rien de ce qui suit ne dure.
+        self.tool_in_flight = True
+        try:
+            if name == CLAUDE_TOOL:
+                result = self._brain_owns_the_request() if self.continuous else await self._call_claude(arguments)
+            elif self.continuous:
+                result = self._surface_tools_are_closed(name, call_id=call_id)
+            else:
+                result = await self.core.call_tool(name, arguments, conversation_id=self.conversation_id)
+        finally:
+            self.tool_in_flight = False
+        self._trace("tool.result", name, data={"call_id": call_id, "result": result})
+        action_id = result.get("action_id")
+        self._pending_action_id = str(action_id) if result.get("disposition") == "confirm" and action_id else None
+        self._tool_result_pending = True
+        await self.session.send_tool_result(call_id, result)
 
     async def _rescue_undelivered_answer(self) -> None:
         """Sauver la réponse de Claude quand la voix ne peut plus la porter.
@@ -1500,6 +2150,10 @@ class RealtimeConversationBridge:
             pass
 
     async def run(self) -> None:
+        if hasattr(self.audio, "on_capture_signal"):
+            # Parole proche entendue par la capture duplex : premier temps du
+            # barge-in (voir `_on_near_end`).
+            self.audio.on_capture_signal = self._on_capture_signal
         await self.audio.start()
         self._trace(
             "audio.start",
