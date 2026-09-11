@@ -198,8 +198,9 @@ def test_agents_panel_exposes_the_real_console_and_the_transcript():
     assert "/api/agent/console/close" in html
     assert "/api/agent/transcript" in html
     assert "Console Windows" in html
-    assert "id=\"agentConsoleBtn\"" in html
-    assert "← Contrôles" in html
+    # La console s'ouvre depuis le menu contextuel du brain, dans le panneau Agents.
+    assert "act:'console-open'" in html
+    assert "← Agents" in html
 
 
 class QueryRequest:

@@ -25,6 +25,7 @@ import subprocess
 import time
 from typing import Any
 
+from jarvis.runtime.agent_tasks import AgentTaskTracker, describe_tool
 from jarvis.runtime.claude_local import CREATE_NEW_CONSOLE, raise_console_window
 from jarvis.runtime.cli_catalog import CODEX_SANDBOX_MODES, resolve_command
 from jarvis.runtime.journal import RuntimeJournal
@@ -58,6 +59,11 @@ class CodexLocalAgent:
         self.process: asyncio.subprocess.Process | None = None
         self.session_id: str | None = None
         self._events: list[dict[str, Any]] = []
+        self._event_times: list[int] = []
+        # Même suivi que chez Claude, réduit au brain : aucun format de
+        # sous-tâche Codex n'a été relevé, rien n'est donc déduit du flux.
+        # `busy` suit le processus du tour, le seul signal certain.
+        self.subtasks = AgentTaskTracker(provider="codex", journal=self.journal, formatter=self._transcript_entry)
         self._started = False
         self._turn_lock = asyncio.Lock()
         self._console: subprocess.Popen | None = None
@@ -100,14 +106,47 @@ class CodexLocalAgent:
         thread_id = event.get("thread_id")
         if isinstance(thread_id, str) and thread_id:
             self.session_id = thread_id
+        try:
+            self._note_activity(event)
+        except Exception as exc:  # noqa: BLE001
+            # Comme chez Claude : la lecture du tour ne doit jamais mourir pour
+            # une activité affichée dans le panneau Agents.
+            self.subtasks.report_failure(exc, event)
         self._events.append(event)
+        self._event_times.append(self.subtasks.now_ms())
         if len(self._events) > 500:
             del self._events[:-500]
+            del self._event_times[:-500]
+
+    def _note_activity(self, event: dict[str, Any]) -> None:
+        """Dernière action du tour, lue sur les éléments déjà rendus par le transcript."""
+        if event.get("type") != "item.completed" or not isinstance(event.get("item"), dict):
+            return
+        item = event["item"]
+        item_type = item.get("type")
+        if item_type == "command_execution":
+            self.subtasks.note_brain_activity(describe_tool("Commande", {"command": str(item.get("command") or "")}))
+        elif item_type == "mcp_tool_call":
+            self.subtasks.note_brain_activity(f"Outil · {item.get('server') or ''} {item.get('tool') or ''}".strip())
+        elif item_type == "file_change":
+            self.subtasks.note_brain_activity("Fichiers modifiés")
+
+    def tasks_snapshot(self) -> dict[str, Any]:
+        """Même forme que chez Claude : le brain, et aucune sous-tâche connue."""
+        return self.subtasks.payload(state=self.state, session_id=self.session_id, configured_model=self.model)
+
+    def task_trace(self, task_id: str, *, limit: int = 300) -> dict[str, Any] | None:
+        if task_id == "brain":
+            brain = self.subtasks.brain_snapshot(state=self.state, session_id=self.session_id, configured_model=self.model)
+            return {"task": brain, "entries": self.transcript(limit=limit)}
+        return self.subtasks.trace(task_id, limit=limit)
 
     # ------------------------------------------------------------- historique
 
     def transcript(self, *, limit: int = 200) -> list[dict[str, Any]]:
-        return [self._transcript_entry(event) for event in self._events[-limit:]]
+        events = self._events[-limit:]
+        times = self._event_times[-limit:]
+        return [{**self._transcript_entry(event), "ts_ms": ts} for event, ts in zip(events, times)]
 
     @staticmethod
     def _transcript_entry(event: dict[str, Any]) -> dict[str, Any]:
@@ -231,6 +270,10 @@ class CodexLocalAgent:
                 data={"command": self.command, "code": "codex_cli_not_found"},
             )
             raise RuntimeError(f"Codex CLI indisponible : {detection.get('error')}")
+        if not self._started:
+            # Pas de processus permanent : « démarré » date du moment où
+            # l'agent a été armé, pas d'un tour en particulier.
+            self.subtasks.process_started()
         self._started = True
         self.journal.emit(
             "agent.start",
@@ -266,6 +309,7 @@ class CodexLocalAgent:
             return {"ok": False, "text": "", "error": str(exc), "code": "codex_spawn_failed"}
 
         process = self.process
+        self.subtasks.turn_started()
         assert process.stdin is not None
         try:
             process.stdin.write(text.encode("utf-8"))
@@ -304,6 +348,7 @@ class CodexLocalAgent:
             await process.wait()
             self._last_returncode = process.returncode
             self.process = None
+            self.subtasks.turn_finished()
 
         duration_ms = int((time.perf_counter() - started) * 1000)
         if outcome.get("ok") is None:
@@ -422,6 +467,7 @@ class CodexLocalAgent:
         # ferait rien de visible, faute de processus à relancer.
         self.session_id = None
         self._events.clear()
+        self._event_times.clear()
         return await self.start()
 
     async def stop(self) -> dict[str, Any]:
@@ -440,6 +486,7 @@ class CodexLocalAgent:
             self._last_returncode = process.returncode
         self.process = None
         self._started = False
+        self.subtasks.process_stopped()
         self.journal.emit("agent.stop", "Agent Codex arrêté", data={"returncode": self._last_returncode})
         return self.snapshot()
 

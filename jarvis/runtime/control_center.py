@@ -154,6 +154,8 @@ class ControlCenter:
             web.post("/api/audio/test", self.audio_test),
             web.get("/api/agent", self.agent_status),
             web.get("/api/agent/transcript", self.agent_transcript),
+            web.get("/api/agent/tasks", self.agent_tasks),
+            web.get("/api/agent/tasks/{task_id}/trace", self.agent_task_trace),
             web.post("/api/agent/console/open", self.agent_console_open),
             web.post("/api/agent/console/close", self.agent_console_close),
             web.post("/api/agent/start", self.agent_start),
@@ -347,6 +349,8 @@ class ControlCenter:
             "voice_stack_label": stack.label,
             "agent_cli": self._agent_id,
             "agent": self.agent.snapshot(),
+            # Le badge des sous-agents : le brain n'y est jamais compté.
+            "subagents": self.agent.subtasks.counts(),
             "error_count": len(read_jsonl_tail(self.journal.error_path, limit=1000)),
         })
 
@@ -1015,6 +1019,26 @@ class ControlCenter:
             "console": self.agent.console_snapshot(),
             "events": self.agent.transcript(limit=limit),
         })
+
+    async def agent_tasks(self, request: web.Request) -> web.Response:
+        """Le brain et ses sous-tâches. Toujours ceux de l'agent actif : après
+        une bascule Claude ↔ Codex, c'est le nouvel agent qui répond."""
+        del request
+        return web.json_response(self.agent.tasks_snapshot())
+
+    async def agent_task_trace(self, request: web.Request) -> web.Response:
+        task_id = str(request.match_info.get("task_id") or "")
+        try:
+            limit = min(max(int(request.query.get("limit", "300")), 1), 500)
+        except ValueError:
+            limit = 300
+        trace = self.agent.task_trace(task_id, limit=limit)
+        if trace is None:
+            return web.json_response(
+                {"ok": False, "code": "agent_task_not_found", "error": f"Tâche inconnue : {task_id}"},
+                status=404,
+            )
+        return web.json_response(trace)
 
     async def agent_start(self, request: web.Request) -> web.Response:
         del request

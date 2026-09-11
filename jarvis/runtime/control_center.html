@@ -61,6 +61,131 @@ details.entry .detail{padding:0 2px 11px 29px}
 textarea{width:100%;min-height:80px;background:#071015;border:1px solid var(--line);color:var(--text);padding:9px;border-radius:5px;font:inherit;resize:vertical}
 .agentEvents{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}
 .empty{color:var(--muted);padding:20px 0;text-align:center}
+[hidden]{display:none!important}
+
+/* ---------- Panneau Agents ---------- */
+.badge.count{background:var(--accent);color:#02202a;font-weight:700;box-shadow:0 0 12px rgba(110,231,255,.45);cursor:pointer}
+.sechead{display:flex;align-items:center;gap:8px;margin:18px 2px 8px;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.sechead .count{font-size:10px;border:1px solid var(--line);border-radius:9px;padding:0 6px;line-height:16px;letter-spacing:.04em}
+.sechead.live .count{color:var(--accent);border-color:rgba(110,231,255,.45)}
+details.sect>summary.sechead{cursor:pointer;list-style:none;border-radius:4px}
+details.sect>summary::-webkit-details-marker{display:none}
+details.sect>summary.sechead::before{content:'▸';font-size:10px;transition:transform .15s}
+details.sect[open]>summary.sechead::before{transform:rotate(90deg)}
+details.sect>summary:hover{color:var(--text)}
+details.sect>summary:focus-visible{outline:1px solid var(--accent);outline-offset:3px}
+.alist{display:grid;gap:8px}
+.acard{position:relative;display:grid;grid-template-columns:32px minmax(0,1fr) auto;gap:12px;align-items:start;padding:11px 12px;border:1px solid var(--line);border-radius:9px;background:#060d12;outline:none;transition:border-color .15s,background-color .15s}
+.acard:hover{border-color:rgba(110,231,255,.35);background:#08121a}
+.acard:focus-visible{border-color:var(--accent);box-shadow:0 0 0 1px rgba(110,231,255,.4)}
+.acard.brain{border-color:rgba(110,231,255,.34);background:linear-gradient(120deg,rgba(110,231,255,.09),rgba(6,13,18,.95) 58%)}
+.acard.done{background:#050b10}
+.acard.done .aname{color:#b9d0dc}
+.acard.nested{margin-left:calc(var(--indent,1)*22px)}
+.acard.nested::before{content:'';position:absolute;left:-14px;top:-9px;height:calc(50% + 9px);width:10px;border-left:1px solid var(--line);border-bottom:1px solid var(--line);border-bottom-left-radius:7px}
+.acard.compact{padding:8px 11px;grid-template-columns:26px minmax(0,1fr) auto;gap:10px}
+.alogo{width:32px;height:32px;border-radius:8px;display:grid;place-items:center;border:1px solid rgba(113,144,160,.2);background:rgba(255,255,255,.025)}
+.alogo svg{width:20px;height:20px;display:block}
+.alogo.claude{background:rgba(217,119,87,.1);border-color:rgba(217,119,87,.3)}
+.alogo.codex{background:rgba(223,232,238,.05);border-color:rgba(223,232,238,.22)}
+.alogo.shell{background:rgba(104,224,160,.06);border-color:rgba(104,224,160,.25)}
+.alogo .glyph{font-size:11px;font-weight:700;color:var(--ok);letter-spacing:-.04em}
+.acard.compact .alogo,.toast .alogo{width:26px;height:26px;border-radius:7px}
+.acard.compact .alogo svg,.toast .alogo svg{width:16px;height:16px}
+.amain{min-width:0}
+.aname{display:flex;align-items:center;gap:8px;min-width:0;font-weight:700;font-size:14px;letter-spacing:.02em}
+.aname>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.acard.compact .aname{font-size:13px}
+.pin{flex:none;font-size:9px;font-weight:normal;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);border:1px solid rgba(110,231,255,.4);border-radius:3px;padding:0 5px;line-height:15px}
+.amodel{font-size:11px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.aact{font-size:12px;color:#9dbccb;margin-top:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.acard.compact .aact{margin-top:4px}
+.aact .sep{color:var(--muted);margin:0 6px}
+.dim{color:var(--muted)}
+.ameta{display:flex;flex-wrap:wrap;align-items:center;gap:3px 10px;margin-top:6px;font-size:10.5px;color:var(--muted)}
+.ameta .chip{margin:0}
+.chip.on{color:var(--accent);border-color:rgba(110,231,255,.45)}
+.chip.bad{color:var(--danger);border-color:rgba(255,101,119,.45)}
+.chip.warn{color:var(--warn);border-color:rgba(255,184,92,.45)}
+.aside{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
+.atime{display:flex;align-items:center;gap:7px}
+.timer{font-variant-numeric:tabular-nums;font-size:13px;color:#b9d0dc;letter-spacing:.02em;white-space:nowrap}
+.timer.live{color:var(--accent)}
+.timer.idle{color:var(--muted);font-size:12px}
+.adot{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
+.adot.running{background:var(--accent);box-shadow:0 0 8px rgba(110,231,255,.8);animation:breathe 1.6s ease-in-out infinite}
+.adot.ok{background:var(--ok)}
+.adot.bad{background:var(--danger)}
+.adot.warn{background:var(--warn)}
+@keyframes breathe{50%{opacity:.35}}
+.amore{opacity:0;background:none;border:1px solid transparent;border-radius:5px;color:var(--muted);font:inherit;font-size:14px;line-height:1;padding:2px 7px 5px;cursor:pointer}
+.acard:hover .amore,.acard:focus-within .amore,.acard:focus .amore{opacity:1}
+.amore:hover{color:var(--accent);border-color:var(--line)}
+.agfoot{margin-top:18px;text-align:center}
+.agempty{border:1px dashed var(--line);border-radius:9px;padding:14px 16px;color:var(--muted);font-size:12px;line-height:1.6}
+.agempty strong{color:var(--text);font-weight:normal;display:block;margin-bottom:4px}
+.vbar{display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+.vbar .grow{flex:1}
+button.action.small{padding:5px 9px;font-size:12px}
+.kv{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:7px 16px;font-size:12px;margin:0}
+.kv dt{color:var(--muted)}
+.kv dd{margin:0;word-break:break-word}
+.dsec{margin-top:18px}
+.dsec>h4{display:flex;align-items:center;gap:10px;margin:0 0 8px;font-size:10px;font-weight:normal;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+pre.block{background:#050b10;border:1px solid rgba(113,144,160,.16);border-radius:6px;padding:10px 12px;max-height:42vh;overflow:auto}
+.trow .emsg.clamp{display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-wrap}
+.trow[open] .emsg.clamp{display:block;-webkit-line-clamp:unset}
+.trow .emsg.one{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.trow[open] .emsg.one{white-space:normal;word-break:break-word}
+.trow.minor .emsg{color:var(--muted);font-size:12px}
+.trow.minor>summary{padding-top:5px;padding-bottom:5px}
+.trow.minor .ico{opacity:.6}
+/* Compte rendu final d'une tâche : l'entrée qui compte le plus, lisible sans la déplier. */
+.trow.final{margin:12px 0 6px;border:1px solid rgba(104,224,160,.32);border-left:3px solid var(--ok);border-radius:8px;background:rgba(104,224,160,.045)}
+.trow.final.error{border-color:rgba(255,101,119,.35);border-left-color:var(--danger);background:rgba(255,101,119,.05)}
+.trow.final>summary{padding:11px 10px 10px 8px}
+.trow.final .ico{font-size:15px}
+.trow.final .emsg{margin-top:6px;color:var(--text)}
+.trow.final:not([open]) .emsg.clamp{-webkit-line-clamp:12}
+.rhead{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:12px;letter-spacing:.06em;text-transform:uppercase}
+.rhead .chip{margin:0}
+.rhead .dim{text-transform:none;letter-spacing:0;font-size:11px}
+.rhead .chip.ok{color:var(--ok);border-color:rgba(104,224,160,.45)}
+.trow[open] .rmore{display:none}
+.tname{color:var(--accent)}
+.targ{color:#9dbccb}
+.trow.error .tname,b.bad{color:var(--danger);font-weight:normal}
+.rawjson{margin-top:8px}
+.rawjson>summary{cursor:pointer;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.rawjson>summary:hover{color:var(--text)}
+.newpill{position:sticky;bottom:6px;display:block;margin:10px auto 0;border:1px solid var(--accent);background:rgba(3,14,20,.95);color:var(--accent);border-radius:14px;padding:5px 14px;font:inherit;font-size:12px;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.5)}
+.ctxmenu{position:fixed;z-index:80;left:0;top:0;min-width:220px;max-width:300px;padding:5px;background:#08121a;border:1px solid rgba(110,231,255,.3);border-radius:8px;box-shadow:0 18px 50px rgba(0,0,0,.65)}
+.ctxmenu .mhead{padding:5px 10px 8px;margin-bottom:4px;border-bottom:1px solid var(--line);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ctxmenu button{display:flex;justify-content:space-between;align-items:center;gap:18px;width:100%;padding:8px 10px;background:none;border:0;border-radius:5px;color:var(--text);font:inherit;font-size:13px;text-align:left;cursor:pointer}
+.ctxmenu button:focus{outline:none;background:rgba(110,231,255,.1);color:var(--accent)}
+.ctxmenu button.danger:focus{background:rgba(255,101,119,.1);color:var(--danger)}
+.ctxmenu button:disabled{opacity:.38;cursor:default}
+.ctxmenu kbd{font:inherit;font-size:10px;color:var(--muted)}
+.ctxmenu .sep{height:1px;background:var(--line);margin:5px 4px}
+.toasts{position:fixed;right:18px;bottom:18px;z-index:70;display:grid;gap:8px;width:min(340px,calc(100vw - 36px));pointer-events:none}
+.toast{pointer-events:auto;display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 8px 10px 12px;background:rgba(6,13,19,.97);border:1px solid var(--line);border-left:2px solid var(--accent);border-radius:8px;box-shadow:0 14px 40px rgba(0,0,0,.55);animation:toastIn .18s ease-out;transition:opacity .2s,transform .2s}
+.toast.ok{border-left-color:var(--ok)}
+.toast.bad{border-left-color:var(--danger)}
+.toast.warn{border-left-color:var(--warn)}
+.toast.clickable{cursor:pointer}
+.toast.clickable:hover{border-color:rgba(110,231,255,.4)}
+.toast .ttxt{min-width:0}
+.toast .ttxt strong{display:block;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.toast .ttxt span{display:block;font-size:11px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tclose{background:none;border:0;color:var(--muted);font-size:16px;line-height:1;cursor:pointer;padding:0 4px;align-self:start}
+.tclose:hover{color:var(--text)}
+.toast.out{opacity:0;transform:translateY(6px)}
+@keyframes toastIn{from{opacity:0;transform:translateY(8px)}}
+/* Panneau ouvert : la pile passe à sa gauche, en bas, pour ne pas masquer le
+   bas du panneau (dernières entrées de trace, envoi au brain). Plus étroit,
+   la place manque à gauche : la pile reste à droite, comme panneau fermé. */
+@media(min-width:940px){#app:has(.panel.open)~.toasts{right:calc(98px + min(560px,100vw - 120px));width:min(340px,calc(100vw - 676px))}}
+@media(prefers-reduced-motion:reduce){.adot.running,.toast{animation:none}}
 
 /* ---------- Fenêtre de réglages ---------- */
 .overlay{position:fixed;inset:0;z-index:60;display:none;place-items:center;padding:3vh 3vw;background:rgba(2,6,10,.68);backdrop-filter:blur(7px)}
@@ -138,16 +263,18 @@ table.keys input[type=radio]{accent-color:var(--accent)}
 <body>
 <div id="app">
   <iframe class="face" src="__VISUALIZER_URL__" title="Jarvis visualizer"></iframe>
-  <div class="topbar"><div class="brand">JARVIS</div><div class="state">VOICE <strong id="voiceState">IDLE</strong> · <strong id="agentName">CLAUDE</strong> <strong id="agentState">STOPPED</strong></div></div>
+  <div class="topbar"><div class="brand">JARVIS</div><div class="state">VOICE <strong id="voiceState">IDLE</strong> · <strong id="agentName">CLAUDE</strong> <strong id="agentState">STOPPED</strong><span id="subagentState" hidden> · <strong id="subagentCount">0</strong> <span id="subagentWord">SOUS-AGENTS</span></span></div></div>
   <div class="voicehint" id="voiceHint">F9 · DÉMARRER</div>
   <nav class="dock" aria-label="Jarvis tools">
     <div class="tool"><button data-panel="errors" title="Errors">ERR</button><span class="badge" id="errorBadge">0</span></div>
     <div class="tool"><button data-panel="trace" title="Trace">TRC</button></div>
     <div class="tool"><button id="openSettings" title="Réglages">SET</button></div>
-    <div class="tool"><button data-panel="agents" title="Agents">AGT</button></div>
+    <div class="tool"><button data-panel="agents" id="agentsButton" title="Agents">AGT</button><span class="badge count" id="agentBadge">0</span></div>
   </nav>
   <section class="panel" id="panel"><header><h2 id="panelTitle">Panel</h2><button id="closePanel" aria-label="Fermer">×</button></header><div class="body" id="panelBody"></div></section>
 </div>
+<div class="ctxmenu" id="ctxMenu" role="menu" hidden></div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
 
 <div class="overlay" id="overlay">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
@@ -168,7 +295,7 @@ table.keys input[type=radio]{accent-color:var(--accent)}
 
 <script>
 const $=s=>document.querySelector(s);let current=null;const panel=$('#panel'),body=$('#panelBody'),title=$('#panelTitle');
-async function api(path,opts){const r=await fetch(path,opts),text=await r.text();let value={};try{value=text?JSON.parse(text):{}}catch{value={error:text}}if(!r.ok)throw new Error(value.error||value.code||text);return value}
+async function api(path,opts){const r=await fetch(path,opts),text=await r.text();let value={};try{value=text?JSON.parse(text):{}}catch{value={error:text}}if(!r.ok){const e=new Error(value.error||value.code||text||`HTTP ${r.status}`);e.status=r.status;throw e}return value}
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 const ICONS=[[/^tool\./,'🔧'],[/^voice\.transcript/,'🎤'],[/^voice\.assistant/,'💬'],[/^voice\.(wake|active|connecting|speech_started|input_)/,'👂'],[/^voice\./,'🎙️'],[/^audio\./,'🔊'],[/^agent\./,'🤖'],[/^calendar\./,'📅'],[/^settings\./,'⚙️'],[/^(supervisor|process)\./,'⚡'],[/^ui\./,'🖥️'],[/^provider\./,'☁️'],[/^errors\./,'🗄️']];
 function iconFor(kind){for(const [re,ic] of ICONS)if(re.test(kind))return ic;return '•'}
@@ -177,21 +304,1051 @@ function timeOf(ts){const t=String(ts||'');return t.length>19?t.slice(11,23):t}
 function entries(items){if(!items.length)return '<div class="empty">Aucune entrée.</div>';return items.slice().reverse().map(x=>{const data=x.data&&Object.keys(x.data).length?x.data:null;return `<details class="entry ${x.level==='error'?'error':''}"><summary><span class="ico">${iconFor(String(x.kind||''))}</span><span class="etxt"><span class="emsg">${esc(x.message)}</span><span class="emeta">${esc(timeOf(x.ts))} · ${esc(x.kind)}${x.archived_at?' · archivé le '+esc(timeOf(x.archived_at)):''}</span></span><span class="dot ${statusFor(x)}"></span></summary><div class="detail"><div class="emeta" style="margin-bottom:6px"><span class="chip">${esc(x.level)}</span>${esc(x.ts)}</div>${data?`<pre class="log">${esc(JSON.stringify(data,null,2))}</pre>`:'<div class="hint">Aucun détail supplémentaire.</div>'}</div></details>`}).join('')}
 let errorsView='active';
 async function renderErrors(){const archived=errorsView==='archived';title.textContent=archived?'Errors · Archives':'Errors';const items=await api('/api/errors'+(archived?'?archived=1&limit=500':''));body.innerHTML=`<div class="row" style="margin-bottom:12px"><button class="action" id="toggleErrors">${archived?'Erreurs actives':'Erreurs archivées'}</button>${archived?'':'<button class="action danger" id="archiveErrors">Archiver</button>'}<span class="hint">${items.length} entrée(s)</span></div><div>${entries(items)}</div>`;$('#toggleErrors').addEventListener('click',()=>{errorsView=archived?'active':'archived';renderErrors().catch(e=>{body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`})});const archive=$('#archiveErrors');if(archive)archive.addEventListener('click',async()=>{archive.disabled=true;try{await api('/api/errors/archive',{method:'POST'});await renderErrors();refreshStatus()}catch(e){alert(e.message)}finally{archive.disabled=false}})}
-async function refreshStatus(){try{const s=await api('/api/status'),v=s.voice_state||'idle',k=String(s.manual_wake_key||'f9').toUpperCase(),online=s.voice_online===true;$('#voiceState').textContent=online?v.toUpperCase():'OFFLINE';const listening=s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`;$('#voiceHint').textContent=online?({idle:`${k} · DÉMARRER`,listening,thinking:`${k} · ANNULER`,speaking:`${k} · INTERROMPRE`}[v]||`${k} · CONTRÔLER`):`${k} · VOICE HORS LIGNE`;$('.face').style.visibility=online?'visible':'hidden';$('#agentName').textContent=String(s.agent.name||s.agent_cli||'agent').toUpperCase();$('#agentState').textContent=(s.agent.state||'stopped').toUpperCase();const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';if(current==='agents'){if(agentView==='transcript')renderTranscript().catch(()=>{});else renderAgents(s.agent)}}catch(e){$('#voiceState').textContent='OFFLINE';$('#agentState').textContent='OFFLINE';$('#voiceHint').textContent='VOICE HORS LIGNE';$('.face').style.visibility='hidden'}}
-async function openPanel(name){current=name;document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.toggle('active',b.dataset.panel===name));panel.classList.add('open');title.textContent={errors:'Errors',trace:'Trace',agents:'Agents'}[name];body.innerHTML='<div class="empty">Chargement…</div>';try{if(name==='errors')await renderErrors();if(name==='trace')body.innerHTML=entries(await api('/api/trace'));if(name==='agents'){if(agentView==='transcript')await renderTranscript(true);else renderAgents(await api('/api/agent'),true)}}catch(e){body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`}}
-function closePanel(){current=null;panel.classList.remove('open');document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.remove('active'))}
+async function refreshStatus(){try{const s=await api('/api/status'),v=s.voice_state||'idle',k=String(s.manual_wake_key||'f9').toUpperCase(),online=s.voice_online===true;$('#voiceState').textContent=online?v.toUpperCase():'OFFLINE';const listening=s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`;$('#voiceHint').textContent=online?({idle:`${k} · DÉMARRER`,listening,thinking:`${k} · ANNULER`,speaking:`${k} · INTERROMPRE`}[v]||`${k} · CONTRÔLER`):`${k} · VOICE HORS LIGNE`;$('.face').style.visibility=online?'visible':'hidden';$('#agentName').textContent=String(s.agent.name||s.agent_cli||'agent').toUpperCase();$('#agentState').textContent=(s.agent.state||'stopped').toUpperCase();const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';AG.agent=s.agent||null;AG.cli=s.agent_cli||'';updateSubagentBadge(s.subagents);watchSubagents(s.subagents)}catch(e){$('#voiceState').textContent='OFFLINE';$('#agentState').textContent='OFFLINE';$('#voiceHint').textContent='VOICE HORS LIGNE';$('.face').style.visibility='hidden';updateSubagentBadge(null)}}
+async function openPanel(name){current=name;document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.toggle('active',b.dataset.panel===name));panel.classList.add('open');title.textContent={errors:'Errors',trace:'Trace',agents:'Agents'}[name];closeMenu(false);if(name==='agents'){openAgentsPanel();return}stopAgentsPolling();body.innerHTML='<div class="empty">Chargement…</div>';try{if(name==='errors')await renderErrors();if(name==='trace')body.innerHTML=entries(await api('/api/trace'))}catch(e){body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`}}
+function closePanel(){current=null;panel.classList.remove('open');document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.remove('active'));closeMenu(false);stopAgentsPolling()}
 
-let agentView='controls',transcriptCount=-1,agentSignature='';
+/* =====================================================================
+   Panneau Agents
+   =====================================================================
+   Vue principale : une carte par agent. Le brain (l'agent CLI piloté par
+   JARVIS) est épinglé en haut, puis viennent les sous-agents qu'il lance
+   avec l'outil Agent de Claude Code, les terminés, et les commandes shell
+   de fond. Clic droit, ⋯ ou Maj+F10 sur une carte : trace, détails, prompt.
+
+   Les compteurs de temps tournent côté client, corrigés du décalage
+   d'horloge (`now_ms`) : seuls leurs nœuds sont réécrits chaque seconde,
+   jamais la liste. La liste n'est redessinée que si son HTML change.       */
+
+const AG={
+  view:'list',        // list | trace | details
+  target:null,        // agent affiché par les vues trace et détails ('brain' ou id de tâche)
+  data:null,          // dernière réponse de /api/agent/tasks
+  cache:new Map(),    // dernier état connu de chaque tâche, même purgée côté serveur
+  skew:0,             // horloge serveur − horloge locale, en ms
+  missing:false,      // le serveur ne connaît pas /api/agent/tasks (404)
+  error:'',           // dernière erreur réseau
+  agent:null,         // instantané de l'agent issu de /api/status (PID, console…)
+  cli:'',
+  known:null,         // id → statut observé, pour ne notifier que les vraies transitions
+  knownSince:0,
+  fetching:null,
+  lastFetch:0,
+  watchSig:'',
+  poll:null,
+  html:{},            // dernier HTML injecté par zone, pour ne rien redessiner d'identique
+  open:{done:false,shell:null},
+  listScroll:0,
+  listNow:0,          // heure serveur du dernier rendu de la liste (voir LINGER_MS)
+  lastElapsed:{},
+  trace:null,
+  traceTimer:null,
+  menu:null,
+  kbdMenuAt:0,
+};
+
+const GENERIC_TYPES=new Set(['','general-purpose','general','fork','default','agent','task','subagent']);
+const STATUS={
+  running:{cls:'running',label:'en cours',verb:'en cours'},
+  completed:{cls:'ok',label:'terminé',verb:'terminé'},
+  failed:{cls:'bad',label:'échec',verb:'a échoué'},
+  killed:{cls:'warn',label:'tué',verb:'tué'},
+  stopped:{cls:'warn',label:'arrêté',verb:'arrêté'},
+  interrupted:{cls:'warn',label:'interrompu',verb:'interrompu'},
+};
+const MODEL_FAMILIES={opus:'Opus',sonnet:'Sonnet',haiku:'Haiku',fable:'Fable'};
 const ROLE_ICONS={user:'🧑',assistant:'🤖',system:'⚙️',result:'✅',stderr:'⚠️',notice:'📊',stdout:'📄'};
-function agentHeader(a){const c=a.console||{},name=a.name||'Agent';return `<div class="row"><span class="statusdot ${a.state==='running'?'running':''}"></span><strong>${esc(name)}</strong><span class="hint">${esc(a.state)}${a.pid?' · PID '+esc(a.pid):''}${a.model?' · '+esc(a.model):''}${a.session_id?' · session '+esc(String(a.session_id).slice(0,8)):''}</span></div><div class="row" style="margin-top:10px"><button class="action" id="openConsole"${c.supported===false?' disabled':''}>🖥️ Console Windows</button>${c.open?`<button class="action danger" id="closeConsole">Fermer la console</button><span class="dot busy" title="console ouverte"></span><span class="hint">PID ${esc(c.pid)}</span>`:''}</div><div class="hint" id="consoleHint" style="margin-top:6px">${c.open?'Console ouverte : elle garde cette conversation.':'Ouvre la vraie console dans une fenêtre Windows, sur cette même conversation.'}</div>`}
-function bindConsole(after){const open=$('#openConsole');if(open)open.addEventListener('click',async()=>{open.disabled=true;$('#consoleHint').textContent='Ouverture de la console…';try{const r=await api('/api/agent/console/open',{method:'POST'});$('#consoleHint').textContent=r.already_open?(r.raised?'Console existante ramenée au premier plan.':'Console déjà ouverte (fenêtre à retrouver dans la barre des tâches).'):(r.handover?'Console ouverte, conversation reprise. L’agent piloté a été arrêté.':'Console ouverte.')}catch(e){$('#consoleHint').textContent=e.message}finally{open.disabled=false;setTimeout(after,400)}});const close=$('#closeConsole');if(close)close.addEventListener('click',async()=>{close.disabled=true;try{await api('/api/agent/console/close',{method:'POST'})}catch(e){alert(e.message)}finally{setTimeout(after,300)}})}
-function sendBox(){return `<div style="margin-top:14px"><textarea id="agentInput" placeholder="Message direct à l'agent local…"></textarea><button class="action" id="sendAgent" style="margin-top:7px">Envoyer</button></div>`}
-function bindSend(after){$('#sendAgent').addEventListener('click',async()=>{const input=$('#agentInput'),text=input.value.trim();if(!text)return;input.value='';try{await api('/api/agent/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})})}catch(e){alert(e.message)}transcriptCount=-1;setTimeout(after,300)})}
-function transcriptEntries(items){if(!items.length)return '<div class="empty">Aucun échange. Envoyez un message pour démarrer la conversation.</div>';return items.map(e=>`<details class="entry"><summary><span class="ico">${ROLE_ICONS[e.role]||'•'}</span><span class="etxt"><span class="emsg">${esc(e.text||e.title)}</span><span class="emeta">${esc(e.title)}</span></span><span class="dot ${esc(e.status||'ok')}"></span></summary><div class="detail"><pre class="log">${esc(JSON.stringify(e.raw,null,2))}</pre></div></details>`).join('')}
-async function renderTranscript(force){if(current!=='agents'||agentView!=='transcript')return;const c=await api('/api/agent/transcript');if(!force&&c.events.length===transcriptCount)return;transcriptCount=c.events.length;title.textContent=`${c.name||'Agent'} · Historique`;body.innerHTML=`${agentHeader(c)}<div class="row" style="margin-top:10px"><button class="action" id="agentControls">← Contrôles</button><span class="hint">${esc(c.command)} · ${esc(c.cwd)}</span></div><div class="agentEvents">${transcriptEntries(c.events)}</div>${sendBox()}`;$('#agentControls').addEventListener('click',()=>{agentView='controls';transcriptCount=-1;openPanel('agents')});bindConsole(()=>renderTranscript(true));bindSend(()=>renderTranscript(true));body.scrollTop=body.scrollHeight}
-function agentSig(a){const c=a.console||{};return [a.name,a.state,a.pid,a.session_id,c.open,c.pid,(a.events||[]).length].join('|')}
-function renderAgents(a,force){if(current!=='agents'||agentView==='transcript')return;const sig=agentSig(a);if(!force&&sig===agentSignature)return;agentSignature=sig;title.textContent='Agents';body.innerHTML=`${agentHeader(a)}<div class="row" style="margin-top:12px"><button class="action" data-agent="start">Start</button><button class="action" data-agent="restart">Restart</button><button class="action danger" data-agent="kill">Kill</button><button class="action" id="agentConsoleBtn">Historique</button></div>${sendBox()}<div class="agentEvents">${transcriptEntries((a.events||[]).map(transcriptFallback))}</div>`;document.querySelectorAll('[data-agent]').forEach(b=>b.addEventListener('click',async()=>{await api('/api/agent/'+b.dataset.agent,{method:'POST'});await openPanel('agents')}));bindConsole(()=>openPanel('agents'));$('#agentConsoleBtn').addEventListener('click',()=>{agentView='transcript';transcriptCount=-1;renderTranscript(true).catch(e=>{body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`})});bindSend(()=>openPanel('agents'))}
-function transcriptFallback(x){return {role:String(x.type||'event'),title:String(x.type||'event'),text:'',status:'ok',raw:x}}
+
+/* --- logos (SVG inline, aucune ressource externe) ------------------------- */
+const LOGOS=(()=>{
+  // L'étoile de Claude : rayons de longueurs inégales autour d'un cœur vide.
+  const rays=[[-90,10.6],[-60,8.2],[-31,10.2],[0,8.7],[29,10.8],[59,8.4],[90,10.3],[119,8.6],[149,10.7],[180,8.5],[211,10.1],[240,8.8]];
+  const lines=rays.map(([deg,len])=>{
+    const a=deg*Math.PI/180,c=Math.cos(a),s=Math.sin(a),f=v=>v.toFixed(2);
+    return `<line x1="${f(12+2.7*c)}" y1="${f(12+2.7*s)}" x2="${f(12+len*c)}" y2="${f(12+len*s)}"/>`;
+  }).join('');
+  return {
+    claude:`<svg viewBox="0 0 24 24" aria-hidden="true"><g stroke="#D97757" stroke-width="2.3" stroke-linecap="round">${lines}</g></svg>`,
+    codex:'<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="#dfe8ee" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"><path d="M12 2.6 20.2 7.3v9.4L12 21.4 3.8 16.7V7.3z"/><path d="M10.2 9.4 7.6 12l2.6 2.6M13.8 9.4l2.6 2.6-2.6 2.6"/></svg>',
+    shell:'<span class="glyph">&gt;_</span>',
+    other:'<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="#7190a0" stroke-width="1.6"><circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="2" fill="#7190a0"/></svg>',
+  };
+})();
+
+function providerOf(t){
+  if(t.kind==='shell')return 'shell';
+  const p=String(t.provider||(t.id==='brain'?AG.cli:'')||'').toLowerCase();
+  if(p==='claude'||p==='anthropic')return 'claude';
+  if(p==='codex'||p==='openai')return 'codex';
+  const m=String(t.model||'').toLowerCase();
+  if(m.startsWith('claude')||MODEL_FAMILIES[m.replace(/\[.*\]$/,'')])return 'claude';
+  if(/^(gpt|o\d|codex)/.test(m))return 'codex';
+  return p?'other':'claude';  // les sous-agents de Claude Code sont des Claude par défaut
+}
+const PROVIDER_LABELS={claude:'Claude',codex:'Codex',shell:'Commande shell',other:'Agent'};
+function logoHtml(t){
+  const p=providerOf(t);
+  return `<span class="alogo ${p}" title="${esc(PROVIDER_LABELS[p])}">${LOGOS[p]}</span>`;
+}
+
+/* --- formats (fonctions pures) --------------------------------------------- */
+function pad2(n){return String(n).padStart(2,'0')}
+function fmtDuration(ms){
+  if(ms===null||ms===undefined||!isFinite(ms))return '—';
+  const total=Math.max(0,Math.floor(ms/1000));
+  const h=Math.floor(total/3600),m=Math.floor(total%3600/60),s=total%60;
+  return h?`${h}:${pad2(m)}:${pad2(s)}`:`${pad2(m)}:${pad2(s)}`;
+}
+function fmtTokens(n){
+  n=Number(n);
+  if(!isFinite(n)||n<=0)return '';
+  if(n<1000)return `${n} jetons`;
+  if(n<1e6)return `${(n/1000).toFixed(n<1e5?1:0).replace('.',',')} k jetons`;
+  return `${(n/1e6).toFixed(1).replace('.',',')} M jetons`;
+}
+function fmtSize(chars){return chars<1000?`${chars} car.`:`${(chars/1024).toFixed(1).replace('.',',')} ko`}
+function plural(n,one,many){return `${n} ${n>1?many:one}`}
+function prettyType(type){
+  return String(type).split(/[-_\s]+/).filter(Boolean)
+    .map(w=>/^[A-Z0-9]+$/.test(w)?w:w.charAt(0).toUpperCase()+w.slice(1)).join(' ');
+}
+function titleFromType(t){return t.kind!=='shell'&&!GENERIC_TYPES.has(String(t.subagent_type||'').trim().toLowerCase())}
+function taskTitle(t){
+  if(!t)return '';
+  if(t.id==='brain')return 'Brain';
+  if(titleFromType(t))return prettyType(String(t.subagent_type).trim());
+  return String(t.description||'').trim()||(t.kind==='shell'?'Commande':'Sous-agent');
+}
+function prettyModel(model){
+  const raw=String(model||'').trim();
+  if(!raw)return 'modèle par défaut';
+  let s=raw.toLowerCase(),ctx='',m;
+  const win=s.match(/\[(\d+(?:\.\d+)?)\s*([km])\]$/);
+  if(win){ctx=win[1]+win[2].toUpperCase();s=s.slice(0,win.index)}
+  s=s.replace(/^(?:[a-z]{2,4}\.)?anthropic\./,'').replace(/-v\d+(?::\d+)?$/,'').replace(/[@-]\d{8}$/,'').replace(/-latest$/,'');
+  let name='';
+  if((m=s.match(/^claude-([a-z]+)-(\d+)(?:[-.](\d{1,2}))?$/))&&MODEL_FAMILIES[m[1]])name=`${MODEL_FAMILIES[m[1]]} ${m[2]}${m[3]?'.'+m[3]:''}`;
+  else if((m=s.match(/^claude-(\d+)(?:[-.](\d))?-([a-z]+)$/))&&MODEL_FAMILIES[m[3]])name=`${MODEL_FAMILIES[m[3]]} ${m[1]}${m[2]?'.'+m[2]:''}`;
+  else if(MODEL_FAMILIES[s])name=MODEL_FAMILIES[s];
+  else if(s==='inherit')name='modèle du parent';
+  else if((m=s.match(/^gpt-(\d[\w.]*)((?:-[a-z0-9]+)*)$/)))name='GPT-'+m[1]+(m[2]?' '+prettyType(m[2].slice(1)):'');
+  else name=raw.replace(/\[[^\]]*\]$/,'');
+  return ctx?`${name} · ${ctx}`:name;
+}
+function statusInfo(status){return STATUS[status]||{cls:'',label:String(status||'inconnu'),verb:String(status||'terminé')}}
+function serverNow(){return Date.now()+AG.skew}
+function fmtClock(serverMs){
+  if(!serverMs)return '';
+  return new Date(Number(serverMs)-AG.skew).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+}
+
+/* --- données ---------------------------------------------------------------- */
+function allTasks(){return (AG.data&&AG.data.tasks)||[]}
+function isRunning(t){return !!t&&t.status==='running'}
+// Même règle que le badge (`active_count`) : tout ce qui n'est pas une commande shell.
+function activeAgents(){return allTasks().filter(t=>t.kind!=='shell'&&isRunning(t))}
+function brainTask(){
+  const b=AG.data&&AG.data.brain,a=AG.agent||{};
+  if(b)return {...b,id:'brain'};
+  // Serveur sans /api/agent/tasks : le brain est reconstitué depuis /api/status.
+  return {id:'brain',provider:AG.cli||'claude',role:'Brain',model:a.model||'',state:a.state||'stopped',
+    busy:false,turn_started_ms:null,started_ms:null,activity:'',session_id:a.session_id||''};
+}
+function findTask(id){
+  if(id==='brain')return brainTask();
+  return allTasks().find(t=>t.id===id)||AG.cache.get(id)||null;
+}
+function childrenOf(id){
+  return allTasks().filter(t=>id==='brain'?(!t.parent_id&&t.kind!=='shell'):t.parent_id===id);
+}
+
+async function fetchTasks(){
+  if(AG.fetching)return AG.fetching;
+  AG.fetching=(async()=>{
+    const t0=Date.now();
+    try{
+      const data=await api('/api/agent/tasks');
+      const t1=Date.now();
+      if(typeof data.now_ms==='number')AG.skew=data.now_ms-Math.round((t0+t1)/2);
+      AG.data=data;AG.missing=false;AG.error='';
+      for(const t of data.tasks||[])AG.cache.set(t.id,t);
+      while(AG.cache.size>200)AG.cache.delete(AG.cache.keys().next().value);
+      for(const id of Object.keys(AG.lastElapsed))if(!AG.cache.has(id))delete AG.lastElapsed[id];
+      noticeTransitions(data.tasks||[]);
+    }catch(e){
+      if(e.status===404){AG.missing=true;AG.data=null;AG.error=''}
+      else AG.error=e.message||'réseau indisponible';
+    }finally{AG.lastFetch=Date.now();AG.fetching=null}
+    return AG.data;
+  })();
+  return AG.fetching;
+}
+
+/* Badge du dock et bandeau du haut : sous-agents en cours, jamais le brain. */
+function updateSubagentBadge(sub){
+  const n=sub?Math.max(0,Number(sub.active)||0):0;
+  const label=n?`${plural(n,'sous-agent','sous-agents')} en cours`:'';
+  const badge=$('#agentBadge'),button=$('#agentsButton');
+  badge.textContent=n>99?'99+':String(n);
+  badge.style.display=n?'flex':'none';
+  badge.title=label;
+  button.title=n?`Agents · ${label}`:'Agents';
+  button.setAttribute('aria-label',button.title);
+  $('#subagentState').hidden=!n;
+  $('#subagentCount').textContent=String(n);
+  $('#subagentWord').textContent=n>1?'SOUS-AGENTS':'SOUS-AGENT';
+}
+
+/* Panneau fermé : la liste n'est demandée que si le compteur bouge (ou toutes
+   les 5 s tant que quelque chose tourne), pour notifier les fins de tâches. */
+function watchSubagents(sub){
+  if(current==='agents'||!sub)return;
+  const sig=`${sub.active}|${sub.running_shell}`,age=Date.now()-AG.lastFetch;
+  const busy=Number(sub.active)>0||Number(sub.running_shell)>0;
+  if(AG.missing&&age<30000)return;
+  if(sig!==AG.watchSig||(busy&&age>5000)){AG.watchSig=sig;fetchTasks()}
+}
+
+/* --- notifications ------------------------------------------------------------- */
+function noticeTransitions(tasks){
+  const previous=AG.known;
+  AG.known=new Map(tasks.map(t=>[t.id,t.status]));
+  if(previous===null){AG.knownSince=serverNow();return}  // premier chargement : aucune notification
+  const ended=tasks.filter(t=>{
+    if(t.kind!=='agent'||isRunning(t))return false;
+    const before=previous.get(t.id);
+    // Tâche vue en cours, ou apparue déjà finie entre deux sondages.
+    return before==='running'||(before===undefined&&Number(t.started_ms)>=AG.knownSince-2000);
+  });
+  if(ended.length>3){
+    const failed=ended.filter(t=>t.status==='failed').length;
+    toast({title:`${ended.length} sous-agents terminés`,sub:failed?`dont ${plural(failed,'échec','échecs')}`:'',kind:failed?'bad':'warn',onClick:()=>openAgentsAt('list')});
+    return;
+  }
+  for(const t of ended){
+    const st=statusInfo(t.status);
+    const detail=String(t.summary||t.description||'').replace(/\s+/g,' ').trim();
+    toast({
+      title:`${taskTitle(t)} · ${st.verb}`,
+      sub:[prettyModel(t.model),fmtDuration(taskElapsed(t)),detail].filter(Boolean).join(' · '),
+      kind:st.cls==='ok'?'ok':st.cls==='bad'?'bad':'warn',
+      logo:logoHtml(t),
+      onClick:()=>openAgentsAt('trace',t.id),
+    });
+  }
+}
+
+function toast({title:heading,sub='',kind='info',logo='',onClick=null,ms=5000}){
+  const box=$('#toasts'),el=document.createElement('div');
+  el.className=`toast ${kind}`;
+  el.setAttribute('role','status');
+  el.innerHTML=`${logo}<div class="ttxt"><strong>${esc(heading)}</strong>${sub?`<span>${esc(sub)}</span>`:''}</div><button type="button" class="tclose" aria-label="Fermer la notification">×</button>`;
+  if(!logo)el.style.gridTemplateColumns='minmax(0,1fr) auto';
+  let timer=null;
+  const dismiss=()=>{clearTimeout(timer);el.classList.add('out');setTimeout(()=>el.remove(),220)};
+  const arm=delay=>{clearTimeout(timer);timer=setTimeout(dismiss,delay)};
+  el.querySelector('.tclose').addEventListener('click',e=>{e.stopPropagation();dismiss()});
+  if(onClick){el.classList.add('clickable');el.title='Ouvrir';el.addEventListener('click',()=>{dismiss();onClick()})}
+  el.addEventListener('mouseenter',()=>clearTimeout(timer));
+  el.addEventListener('mouseleave',()=>arm(2000));
+  box.appendChild(el);
+  while(box.children.length>4)box.firstElementChild.remove();
+  arm(ms);
+}
+
+/* --- cartes ------------------------------------------------------------------- */
+function taskElapsed(t){
+  const start=Number(t.started_ms);
+  if(!start)return null;
+  if(isRunning(t))return serverNow()-start;
+  const end=Number(t.ended_ms);
+  if(end)return Math.max(0,end-start);
+  return AG.lastElapsed[t.id]??null;
+}
+// Le texte des compteurs vivants est laissé vide : tickTimers() le remplit, ce
+// qui garde un HTML stable d'une seconde à l'autre (pas de re-rendu inutile).
+function liveTimer(id,start,cls,hint){
+  return `<span class="timer ${cls}" data-start="${Number(start)}" data-tid="${esc(id)}" title="${esc(hint)}"></span>`;
+}
+function timerHtml(t){
+  if(t.id==='brain'){
+    if(t.busy&&t.turn_started_ms)return liveTimer('brain',t.turn_started_ms,'live',`Tour en cours depuis ${fmtClock(t.turn_started_ms)}`);
+    if(t.started_ms&&t.state==='running')return liveTimer('brain',t.started_ms,'idle',`En service depuis ${fmtClock(t.started_ms)}`);
+    return '<span class="timer idle" title="Brain arrêté">—</span>';
+  }
+  if(isRunning(t)&&t.started_ms)return liveTimer(t.id,t.started_ms,'live',`Démarré à ${fmtClock(t.started_ms)}`);
+  const hint=t.ended_ms?`${fmtClock(t.started_ms)} → ${fmtClock(t.ended_ms)}`:'Durée finale';
+  return `<span class="timer" title="${esc(hint)}">${fmtDuration(taskElapsed(t))}</span>`;
+}
+function tickTimers(){
+  const now=serverNow();
+  document.querySelectorAll('.timer[data-start]').forEach(el=>{
+    const ms=now-Number(el.dataset.start);
+    el.textContent=fmtDuration(ms);
+    if(el.dataset.tid&&el.dataset.tid!=='brain')AG.lastElapsed[el.dataset.tid]=ms;
+  });
+}
+
+function brainState(b){
+  const state=b.state||'stopped';
+  if(b.busy)return {cls:'running',label:'tour en cours'};
+  if(state==='running')return {cls:'ok',label:'en attente'};
+  if(state==='exited')return {cls:'bad',label:'processus terminé'};
+  return {cls:'',label:'arrêté'};
+}
+
+function cardHtml(t,{level=0,compact=false,head=false}={}){
+  const brain=t.id==='brain',title=taskTitle(t);
+  let st,line='',lineTitle='',meta=[],model;
+  if(brain){
+    const a=AG.agent||{},c=a.console||{};
+    st=brainState(t);
+    model=prettyModel(t.model);
+    line=t.activity||(t.busy?'Tour en cours…':t.state==='running'?'En attente d’une demande':t.state==='exited'?'Le processus s’est arrêté':'Arrêté · clic droit pour démarrer');
+    lineTitle=line;
+    meta.push(`<span>${esc(st.label)}</span>`);
+    if(a.pid)meta.push(`<span>PID ${esc(a.pid)}</span>`);
+    const sid=t.session_id||a.session_id;
+    if(sid)meta.push(`<span title="${esc(sid)}">session ${esc(String(sid).slice(0,8))}</span>`);
+    if(c.open)meta.push('<span class="chip on">console ouverte</span>');
+  }else{
+    st=statusInfo(t.status);
+    model=t.kind==='shell'?'commande de fond':prettyModel(t.model);
+    const desc=String(t.description||'').trim(),act=String(t.activity||'').trim(),sum=String(t.summary||'').replace(/\s+/g,' ').trim();
+    let first,second='';
+    if(titleFromType(t)){first=desc;second=isRunning(t)?act:sum}
+    else if(isRunning(t))first=act&&act!==desc?act:(t.kind==='shell'?'En cours…':'Démarrage…');
+    else first=sum&&sum!==desc?sum:(st.cls==='ok'?st.label:'');  // sinon la puce de statut suffit
+    if(!first){first=second;second=''}
+    line=esc(first)+(second?`<span class="sep">·</span><span class="dim">${esc(second)}</span>`:'');
+    lineTitle=[first,second].filter(Boolean).join(' · ');
+    if(!isRunning(t)&&st.cls!=='ok')meta.push(`<span class="chip ${st.cls}">${esc(st.label)}</span>`);
+    if(t.background)meta.push('<span class="chip">arrière-plan</span>');
+    const tokens=fmtTokens(t.tokens);
+    if(tokens)meta.push(`<span>${esc(tokens)}</span>`);
+    if(Number(t.tool_uses)>0)meta.push(`<span>${esc(plural(Number(t.tool_uses),'outil','outils'))}</span>`);
+    if(t.parent_id&&!level){
+      const parent=findTask(t.parent_id);
+      meta.push(`<span>↳ lancé par ${esc(parent?taskTitle(parent):'un sous-agent')}</span>`);
+    }
+  }
+  const classes=['acard',brain?'brain':'',!brain&&!isRunning(t)?'done':'',level?'nested':'',compact?'compact':''].filter(Boolean).join(' ');
+  const aria=[brain?'Brain, agent principal':title,model,st.label].join(', ');
+  return `<div class="${classes}"${level?` style="--indent:${level}"`:''} role="listitem" tabindex="0" data-id="${esc(t.id)}" aria-label="${esc(aria)}" aria-haspopup="menu">
+    ${logoHtml(t)}
+    <div class="amain">
+      <div class="aname"><span title="${esc(brain?'Agent principal piloté par JARVIS':String(t.description||title))}">${esc(title)}</span>${brain&&!head?'<span class="pin">principal</span>':''}</div>
+      <div class="amodel" title="${esc(t.model||'modèle par défaut du CLI')}">${esc(model)}</div>
+      ${line?`<div class="aact" title="${esc(lineTitle)}">${brain?esc(line):line}</div>`:''}
+      ${meta.length?`<div class="ameta">${meta.join('')}</div>`:''}
+    </div>
+    <div class="aside">
+      <div class="atime"><span class="adot ${st.cls}" title="${esc(st.label)}"></span>${timerHtml(t)}</div>
+      <button type="button" class="amore" tabindex="-1" data-more aria-label="Actions" title="Actions (clic droit)">⋯</button>
+    </div>
+  </div>`;
+}
+
+/* Sous-agents imbriqués rangés sous leur parent, quand il est dans le même groupe. */
+function treeOrder(list){
+  const ids=new Set(list.map(t=>t.id)),kids=new Map(),roots=[];
+  for(const t of list){
+    if(t.parent_id&&t.parent_id!==t.id&&ids.has(t.parent_id)){
+      if(!kids.has(t.parent_id))kids.set(t.parent_id,[]);
+      kids.get(t.parent_id).push(t);
+    }else roots.push(t);
+  }
+  const out=[],seen=new Set();
+  const walk=(t,level)=>{
+    if(seen.has(t.id))return;
+    seen.add(t.id);out.push({t,level});
+    for(const k of kids.get(t.id)||[])walk(k,level+1);
+  };
+  roots.forEach(t=>walk(t,0));
+  list.forEach(t=>walk(t,0));
+  return out;
+}
+function cardsHtml(list,options){
+  return `<div class="alist" role="list">${treeOrder(list).map(({t,level})=>cardHtml(t,{...options,level})).join('')}</div>`;
+}
+
+/* Un sous-agent qui vient de finir garde sa place quelques secondes, avec son
+   état final. Sinon sa carte file aussitôt dans « Terminés » (replié) : on ne
+   voit pas comment il a fini, et les suivantes remontent sous le curseur — un
+   clic droit à cet instant ouvrirait le menu d'une autre tâche. Le sondage
+   d'une seconde suffit à l'en faire sortir : le HTML change à l'expiration. */
+const LINGER_MS=8000;
+
+function listHtml(now=serverNow()){
+  if(!AG.data&&!AG.missing&&!AG.error)return '<div class="empty">Chargement…</div>';
+  const parts=[];
+  if(AG.error)parts.push(`<div class="notice bad">Control Center injoignable : dernières données connues affichées. <span class="dim">(${esc(AG.error)})</span></div>`);
+  parts.push(`<div class="alist" role="list">${cardHtml(brainTask())}</div>`);
+  if(AG.missing){
+    parts.push(`<div class="notice" style="margin-top:14px">Ce serveur ne publie pas encore le suivi des sous-agents (<code>/api/agent/tasks</code> introuvable). Redémarrez le Control Center après la mise à jour ; en attendant, seul le brain est affiché.</div>`);
+    return parts.join('');
+  }
+  const tasks=allTasks();
+  const agents=tasks.filter(t=>t.kind!=='shell'),shells=tasks.filter(t=>t.kind==='shell');
+  // Une seule heure pour tout le tri : une tâche est dans un groupe ou l'autre, jamais les deux.
+  const shown=[],done=[];
+  for(const t of agents)(isRunning(t)||now-Number(t.ended_ms)<LINGER_MS?shown:done).push(t);
+  // Le serveur range les terminées par fin décroissante : le démarrage donne un ordre qui ne bouge pas.
+  shown.sort((a,b)=>(Number(a.started_ms)||0)-(Number(b.started_ms)||0));
+  const running=shown.filter(isRunning);
+  parts.push(`<div class="sechead ${running.length?'live':''}"><span>Sous-agents en cours</span><span class="count">${running.length}</span></div>`);
+  if(shown.length)parts.push(cardsHtml(shown));
+  else if(done.length)parts.push('<div class="hint" style="padding:2px 2px 4px">Aucun sous-agent en cours.</div>');
+  else parts.push(`<div class="agempty"><strong>Aucun sous-agent pour l’instant.</strong>Quand le brain délègue une tâche — exploration du code, planification, relecture… — elle apparaît ici avec son modèle, sa durée et son activité en direct. Vous serez notifié à la fin de chacune.</div>`);
+  if(done.length){
+    const failed=done.filter(t=>t.status==='failed').length;
+    parts.push(`<details class="sect" data-sect="done"${AG.open.done?' open':''}><summary class="sechead"><span>Terminés</span><span class="count">${done.length}${failed?` · ${plural(failed,'échec','échecs')}`:''}</span></summary>${cardsHtml(done)}</details>`);
+  }
+  if(shells.length){
+    const live=shells.filter(isRunning).length,open=AG.open.shell??live>0;
+    parts.push(`<details class="sect" data-sect="shell"${open?' open':''}><summary class="sechead ${live?'live':''}"><span>Commandes de fond</span><span class="count">${live?`${live} en cours · `:''}${shells.length}</span></summary>${cardsHtml(shells,{compact:true})}</details>`);
+  }
+  parts.push('<div class="hint agfoot">Clic droit ou ⋯ sur une carte : trace, détails, prompt · Entrée ou double-clic : trace</div>');
+  return parts.join('');
+}
+
+function cardEl(id){
+  return [...body.querySelectorAll('.acard')].find(el=>el.dataset.id===id)||null;
+}
+function focusedCardId(){
+  const el=document.activeElement;
+  return el&&el.classList&&el.classList.contains('acard')?el.dataset.id:null;
+}
+
+function renderAgentList(force){
+  const now=serverNow(),html=listHtml(now);
+  // Le DOM vaut désormais listHtml(now) : le repli d'une section le recalcule à
+  // cette même heure, sinon une carte sortie de LINGER_MS entre-temps resterait coincée.
+  AG.listNow=now;
+  if(!force&&html===AG.html.list)return;
+  AG.html.list=html;
+  title.textContent='Agents';
+  const focus=focusedCardId(),scroll=body.scrollTop;
+  body.innerHTML=html;
+  body.scrollTop=scroll;
+  if(focus){const el=cardEl(focus);if(el)el.focus({preventScroll:true})}
+  tickTimers();
+}
+
+/* --- navigation entre les vues ------------------------------------------------ */
+function leaveList(){if(AG.view==='list')AG.listScroll=body.scrollTop}
+function stopTracePolling(){clearTimeout(AG.traceTimer);AG.traceTimer=null}
+
+function showList(){
+  const from=AG.target;
+  stopTracePolling();
+  AG.view='list';AG.target=null;AG.trace=null;AG.html={};
+  renderAgentList(true);
+  body.scrollTop=AG.listScroll;
+  const el=from&&cardEl(from);
+  if(el)el.focus({preventScroll:true});
+}
+
+function viewBar(id,label,extra){
+  return `<div class="vbar"><button type="button" class="action small" id="agBack">← Agents</button><span class="hint" id="agViewInfo">${esc(label)}</span><span class="grow"></span>${extra||''}<button type="button" class="action small" id="agActions" aria-haspopup="menu" title="Actions (clic droit sur la carte)">⋯ Actions</button></div>`;
+}
+function bindViewBar(id){
+  $('#agBack').addEventListener('click',showList);
+  const actions=$('#agActions');
+  actions.addEventListener('click',()=>openMenu(id,anchorBelow(actions),actions));
+  const other=$('#agSwitch');
+  if(other)other.addEventListener('click',()=>other.dataset.go==='trace'?showTrace(id):showDetails(id));
+}
+function updateHead(){
+  const head=$('#agHead'),t=findTask(AG.target);
+  if(!head||!t)return;
+  const html=cardHtml(t,{head:true});
+  if(html===AG.html.head)return;
+  const hadFocus=head.contains(document.activeElement);
+  AG.html.head=html;
+  head.innerHTML=html;
+  if(hadFocus)head.querySelector('.acard').focus({preventScroll:true});
+  tickTimers();
+}
+
+/* --- vue trace ------------------------------------------------------------------ */
+function showTrace(id){
+  leaveList();stopTracePolling();
+  const t=findTask(id);
+  AG.view='trace';AG.target=id;AG.html={};
+  AG.trace={id,keys:[],tools:new Map(),raw:new Map(),lastAt:0,loading:false,first:true,
+    final:id!=='brain'&&!!t&&!isRunning(t)};
+  title.textContent=`Trace · ${t?taskTitle(t):id}`;
+  body.innerHTML=`${viewBar(id,"Trace d'exécution",'<button type="button" class="action small" id="agSwitch" data-go="details">Détails</button>')}
+    <div id="agHead" class="alist" role="list"></div>
+    <div class="agentEvents" id="traceList"><div class="empty">Chargement de la trace…</div></div>
+    ${id==='brain'?sendBox():''}
+    <button type="button" class="newpill" id="newPill" hidden>↓ Nouvelles entrées</button>`;
+  bindViewBar(id);
+  updateHead();
+  if(id==='brain')bindSend(()=>loadTrace());
+  $('#newPill').addEventListener('click',()=>{body.scrollTop=body.scrollHeight;$('#newPill').hidden=true;if(AG.trace)AG.trace.unseen=0});
+  $('#agBack').focus({preventScroll:true});
+  loadTrace();
+}
+
+function traceIsLive(){
+  const t=findTask(AG.target);
+  return AG.target==='brain'||isRunning(t);
+}
+async function loadTrace(){
+  const tr=AG.trace;
+  if(!tr||tr.loading||current!=='agents'||AG.view!=='trace')return;
+  tr.loading=true;
+  let result=null,failure='';
+  try{
+    result=await api(`/api/agent/tasks/${encodeURIComponent(tr.id)}/trace?limit=300`);
+  }catch(e){
+    if(e.status===404&&tr.id==='brain'){
+      // Serveur plus ancien : l'historique du brain reste disponible.
+      try{const c=await api('/api/agent/transcript');result={task:null,entries:c.events||[]}}
+      catch(e2){failure=`Trace indisponible : ${e2.message}`}
+    }else if(e.status===404){
+      failure=AG.missing?'Ce serveur ne fournit pas encore la trace des sous-agents (route /api/agent/tasks absente).':'Cette tâche n’est plus suivie par le serveur (historique purgé ou brain redémarré).';
+    }else failure=`Trace indisponible : ${e.message}`;
+  }finally{tr.loading=false}
+  if(AG.trace!==tr||AG.view!=='trace')return;  // l'utilisateur est passé ailleurs entre-temps
+  tr.lastAt=Date.now();
+  if(result){
+    if(result.task&&result.task.id&&tr.id!=='brain')AG.cache.set(result.task.id,result.task);
+    if(!AG.menu)applyTrace(result.entries||[]);
+    else tr.pending=result.entries||[];
+  }else if(failure&&!tr.keys.length){
+    $('#traceList').innerHTML=`<div class="notice bad" style="margin-top:4px">${esc(failure)}</div>`;
+  }
+  if(traceIsLive()){
+    stopTracePolling();
+    AG.traceTimer=setTimeout(loadTrace,1500);
+  }
+}
+
+function entryKey(e){
+  const text=String(e.text||'');
+  return [e.ts_ms||'',e.role||'',e.title||'',text.length,text.slice(0,24)].join('|');
+}
+function entryKeys(list){
+  const seen=new Map();
+  return list.map(e=>{const k=entryKey(e),n=(seen.get(k)||0)+1;seen.set(k,n);return n>1?`${k}#${n}`:k});
+}
+
+/* Nouvelles entrées : ajoutées au bout, ou fenêtre glissante (limite de 300)
+   décalée. Rien ne change : rien n'est touché, les <details> ouverts restent. */
+function applyTrace(list){
+  const tr=AG.trace,box=$('#traceList');
+  if(!box)return;
+  const keys=entryKeys(list),prev=tr.keys;
+  if(keys.length===prev.length&&keys.every((k,i)=>k===prev[i])&&!tr.first)return;
+  const atBottom=body.scrollHeight-body.scrollTop-body.clientHeight<48;
+  let added=0;
+  const start=prev.length?prev.indexOf(keys[0]):-1;
+  const kept=start>=0?prev.length-start:0;
+  const extends_=start>=0&&kept<=keys.length&&prev.slice(start).every((k,i)=>k===keys[i]);
+  if(extends_&&!tr.first){
+    for(let i=0;i<start;i++)box.firstElementChild&&box.firstElementChild.remove();
+    added=keys.length-kept;
+    if(added)box.insertAdjacentHTML('beforeend',list.slice(kept).map((e,i)=>entryHtml(e,keys[kept+i],tr)).join(''));
+  }else{
+    const opened=new Set([...box.querySelectorAll('details[open][data-key]')].map(d=>d.dataset.key));
+    added=Math.max(0,keys.length-prev.length);
+    box.innerHTML=list.length?list.map((e,i)=>entryHtml(e,keys[i],tr)).join(''):`<div class="empty">${tr.id==='brain'?'Aucun échange. Envoyez un message pour démarrer la conversation.':'Aucune entrée pour l’instant.'}</div>`;
+    box.querySelectorAll('details[data-key]').forEach(d=>{if(opened.has(d.dataset.key))d.open=true});
+  }
+  tr.keys=keys;
+  const live=new Set(keys);
+  for(const k of [...tr.raw.keys()])if(!live.has(k))tr.raw.delete(k);
+  const info=$('#agViewInfo');
+  if(info)info.textContent=`Trace d'exécution · ${plural(list.length,'entrée','entrées')}${list.length>=300?' (les 300 dernières)':''}`;
+  const pill=$('#newPill');
+  if(tr.first||atBottom){body.scrollTop=body.scrollHeight;pill.hidden=true;tr.unseen=0}
+  else if(added>0){
+    // L'utilisateur lit plus haut : on ne le déplace pas, on signale ce qui arrive.
+    tr.unseen=(tr.unseen||0)+added;
+    pill.hidden=false;pill.textContent=`↓ ${plural(tr.unseen,'nouvelle entrée','nouvelles entrées')}`;
+  }
+  tr.first=false;
+}
+
+function traceMeta(e,tr){
+  if(!e.ts_ms)return '';
+  const parts=[fmtClock(e.ts_ms)];
+  const t=tr.id==='brain'?null:findTask(tr.id);
+  if(t&&t.started_ms&&e.ts_ms>=t.started_ms)parts.push('+'+fmtDuration(e.ts_ms-t.started_ms));
+  return parts.join(' · ');
+}
+function traceRow({key,rawKey,icon,html,meta,status,detail,cls,one,head}){
+  return `<details class="entry trow ${cls||''}" data-key="${esc(key)}"><summary><span class="ico">${icon}</span><span class="etxt">${head?`<span class="rhead">${head}</span>`:''}<span class="emsg ${one?'one':'clamp'}">${html}</span>${meta?`<span class="emeta">${esc(meta)}</span>`:''}</span><span class="dot ${esc(status||'ok')}"></span></summary><div class="detail">${detail||''}<details class="rawjson" data-raw="${esc(rawKey)}"><summary>JSON brut</summary><pre class="log"></pre></details></div></details>`;
+}
+function withMeta(label,meta){return [label,meta].filter(Boolean).join(' · ')}
+function toolArg(name,input){
+  if(!input||typeof input!=='object')return '';
+  if((name==='Agent'||name==='Task')&&input.description){
+    const type=String(input.subagent_type||'');
+    return (GENERIC_TYPES.has(type.toLowerCase())?'':prettyType(type)+' — ')+input.description;
+  }
+  for(const k of ['file_path','notebook_path','command','pattern','url','query','path','description','skill','prompt']){
+    if(typeof input[k]==='string'&&input[k].trim())return input[k].trim().replace(/\s+/g,' ').slice(0,240);
+  }
+  const first=Object.values(input).find(v=>typeof v==='string');
+  return first?first.replace(/\s+/g,' ').slice(0,240):'';
+}
+function resultText(content){
+  if(typeof content==='string')return content;
+  if(Array.isArray(content))return content.map(b=>b&&typeof b==='object'?(b.type==='text'?String(b.text||''):`[${b.type||'bloc'}]`):String(b)).join('\n');
+  return content==null?'':JSON.stringify(content,null,2);
+}
+function clip(text,max){return text.length>max?text.slice(0,max)+'\n… (tronqué)':text}
+function agentCallTitle(input){
+  const type=String(input.subagent_type||'').trim();
+  return GENERIC_TYPES.has(type.toLowerCase())?String(input.description||'').trim():prettyType(type);
+}
+function taskForCall(toolUseId){
+  if(!toolUseId)return null;
+  return allTasks().find(x=>x.tool_use_id===toolUseId)||[...AG.cache.values()].find(x=>x.tool_use_id===toolUseId)||null;
+}
+function subTraceLink(sub){
+  return sub?`<div class="row" style="margin-bottom:8px"><button type="button" class="action small" data-go="trace" data-id="${esc(sub.id)}">Trace du sous-agent « ${esc(taskTitle(sub))} » →</button></div>`:'';
+}
+function ownResultRow(e,key,raw,msg,meta){
+  const block=(Array.isArray(msg.content)?msg.content:[]).find(b=>b&&b.type==='tool_result')||{};
+  const text=String(e.text||'').trim()||resultText(block.content).trim();
+  if(e.role==='launch'){
+    const first=(text.split('\n').find(l=>l.trim())||'').trim();
+    return traceRow({key,rawKey:key,icon:'⤴',one:true,status:'busy',html:`<b>En arrière-plan</b>${first?` <span class="targ">${esc(first)}</span>`:''}`,
+      meta,detail:`<pre class="log">${esc(clip(text,20000))||'<span class="dim">(vide)</span>'}</pre>`});
+  }
+  const extra=raw.tool_use_result&&typeof raw.tool_use_result==='object'?raw.tool_use_result:{};
+  const failed=e.status==='bad'||!!block.is_error;
+  const st=statusInfo(failed?'failed':(extra.status&&extra.status!=='running'?extra.status:'completed'));
+  const cls=failed?'bad':st.cls==='warn'?'warn':'ok';
+  const uses=Number(extra.totalToolUseCount);
+  const stats=[fmtTokens(extra.totalTokens),uses>0?plural(uses,'outil','outils'):'',extra.totalDurationMs?fmtDuration(Number(extra.totalDurationMs)):''].filter(Boolean).join(' · ');
+  const long=text.split('\n').length>12||text.length>600;
+  return traceRow({key,rawKey:key,icon:failed?'⛔':'🏁',cls:'final'+(failed?' error':''),status:cls,
+    head:`<b${failed?' class="bad"':''}>Résultat</b><span class="chip ${cls}">${esc(st.label)}</span>${stats?`<span class="dim">${esc(stats)}</span>`:''}${long?'<span class="dim rmore">· cliquer pour tout afficher</span>':''}`,
+    html:text?esc(text):'<span class="dim">Aucun compte rendu transmis.</span>',meta});
+}
+
+function entryHtml(e,key,tr){
+  const raw=e.raw&&typeof e.raw==='object'?e.raw:null;
+  tr.raw.set(key,raw||e);
+  return `<div class="tent" data-entry="${esc(key)}">${entryRows(e,key,raw,tr)}</div>`;
+}
+function entryRows(e,key,raw,tr){
+  const meta=traceMeta(e,tr),type=raw&&raw.type;
+  const msg=raw&&raw.message&&typeof raw.message==='object'?raw.message:null;
+  // Réponse à l'appel qui a lancé la tâche (appel absent de cette trace) :
+  // compte rendu final, ou confirmation du passage en arrière-plan.
+  if((e.role==='result'||e.role==='launch')&&type==='user'&&msg)return ownResultRow(e,key,raw,msg,meta);
+  if((type==='assistant'||type==='user')&&msg){
+    const who=type==='assistant'?(e.title&&e.title!=='assistant'?e.title:'Claude'):(tr.id==='brain'?'Vous':'Consigne');
+    if(Array.isArray(msg.content)){
+      const rows=msg.content.map((b,i)=>blockRow(b,`${key}§${i}`,key,type,who,meta,tr)).filter(Boolean);
+      if(rows.length)return rows.join('');
+    }else if(typeof msg.content==='string'&&msg.content.trim()){
+      return traceRow({key,rawKey:key,icon:type==='user'?'🧑':'💬',html:esc(msg.content.trim()),meta:withMeta(who,meta)});
+    }
+  }
+  if(type==='system'&&/^task_/.test(String(raw.subtype||'')))return taskEventRow(raw,key,meta);
+  const text=String(e.text||'');
+  return traceRow({key,rawKey:key,icon:ROLE_ICONS[e.role]||'•',html:esc(text||e.title||e.role||'événement'),
+    meta:withMeta(e.title||e.role,meta),status:e.status,cls:e.role==='stderr'||e.status==='bad'?'error':''});
+}
+function blockRow(b,key,rawKey,type,who,meta,tr){
+  if(!b||typeof b!=='object')return '';
+  if(b.type==='text'){
+    const text=String(b.text||'').trim();
+    if(!text)return '';
+    return traceRow({key,rawKey,icon:type==='assistant'?'💬':'🧑',html:esc(text),meta:withMeta(who,meta)});
+  }
+  if(b.type==='thinking'||b.type==='redacted_thinking'){
+    const text=String(b.thinking||'').trim();
+    return traceRow({key,rawKey,icon:'💭',html:`<span class="dim">Réflexion</span>${text?' '+esc(text):''}`,meta:withMeta(who,meta),cls:'minor'});
+  }
+  if(b.type==='tool_use'){
+    const name=String(b.name||'outil'),input=b.input&&typeof b.input==='object'?b.input:{};
+    const arg=toolArg(name,input),agent=name==='Agent'||name==='Task';
+    tr.tools.set(b.id,{name,arg,title:agent?agentCallTitle(input):''});
+    const sub=agent?taskForCall(b.id):null;
+    return traceRow({key,rawKey,icon:'🔧',one:true,cls:'tool',
+      html:`<span class="tname">${esc(name)}</span>${sub?' <span class="chip on" style="margin:0 2px">sous-agent</span>':''}${arg?` <span class="targ">${esc(arg)}</span>`:''}`,
+      meta:withMeta("appel d'outil",meta),detail:`${subTraceLink(sub)}<pre class="log">${esc(clip(JSON.stringify(input,null,2),20000))}</pre>`});
+  }
+  if(b.type==='tool_result'){
+    const info=tr.tools.get(b.tool_use_id)||{name:'outil'},text=resultText(b.content),failed=!!b.is_error;
+    const firstLine=(text.split('\n').find(l=>l.trim())||'').trim();
+    // Résultat d'un sous-agent : nommé par sa tâche, même si l'appel est sorti de la fenêtre.
+    const found=taskForCall(b.tool_use_id),sub=found&&found.kind==='agent'?found:null;
+    const agent=info.name==='Agent'||info.name==='Task'||!!sub;
+    const name=agent&&info.name==='outil'?'Agent':info.name,task=agent?(sub?taskTitle(sub):info.title||''):'';
+    return traceRow({key,rawKey,icon:'↳',one:true,cls:'result'+(failed?' error':''),status:failed?'bad':'ok',
+      html:`${failed?'<b class="bad">erreur</b>':'<span class="dim">résultat</span>'} <span class="tname">${esc(name)}${task?' · '+esc(task):''}</span> <span class="targ">${esc(failed?firstLine:fmtSize(text.length))}</span>`,
+      meta:withMeta(failed?'résultat en erreur':'résultat',meta),detail:`${subTraceLink(sub)}<pre class="log">${esc(clip(text,20000))||'<span class="dim">(vide)</span>'}</pre>`});
+  }
+  return traceRow({key,rawKey,icon:'•',html:`<span class="dim">${esc(b.type||'bloc')}</span>`,meta:withMeta(who,meta),cls:'minor'});
+}
+function taskEventRow(raw,key,meta){
+  const sub=String(raw.subtype),usage=raw.usage&&typeof raw.usage==='object'?raw.usage:{};
+  if(sub==='task_started'){
+    const extra=[raw.subagent_type&&!GENERIC_TYPES.has(String(raw.subagent_type).toLowerCase())?prettyType(raw.subagent_type):raw.task_type,raw.is_backgrounded?'arrière-plan':''];
+    return traceRow({key,rawKey:key,icon:'▶',one:true,status:'busy',html:`<b>Démarrage</b> <span class="targ">${esc(raw.description||'')}</span>`,meta:[...extra,meta].filter(Boolean).join(' · ')});
+  }
+  if(sub==='task_progress'){
+    const extra=[fmtTokens(usage.total_tokens),usage.tool_uses?plural(usage.tool_uses,'outil','outils'):''];
+    return traceRow({key,rawKey:key,icon:'·',one:true,cls:'minor',status:'busy',html:`Avancement · ${esc(raw.description||raw.last_tool_name||'')}`,meta:[...extra,meta].filter(Boolean).join(' · ')});
+  }
+  if(sub==='task_notification'){
+    const st=statusInfo(raw.status);
+    return traceRow({key,rawKey:key,icon:'■',status:st.cls==='running'?'busy':(st.cls||'ok'),cls:st.cls==='bad'?'error':'',
+      html:`<b>Fin</b> · ${esc(st.label)}${raw.summary?` — ${esc(raw.summary)}`:''}`,meta});
+  }
+  const patch=raw.patch&&typeof raw.patch==='object'?raw.patch:{};
+  const text=Object.entries(patch).map(([k,v])=>`${k} = ${typeof v==='object'?JSON.stringify(v):v}`).join(', ');
+  return traceRow({key,rawKey:key,icon:'·',one:true,cls:'minor',html:`${esc(sub.replace(/^task_/,'Tâche · '))}${text?' '+esc(text):''}`,meta});
+}
+function fillRaw(details){
+  const pre=details.querySelector('pre');
+  if(!pre||pre.textContent||!AG.trace)return;
+  const value=AG.trace.raw.get(details.dataset.raw);
+  pre.textContent=clip(JSON.stringify(value??null,null,2),60000);
+}
+
+/* --- vue détails ------------------------------------------------------------------ */
+function showDetails(id){
+  leaveList();stopTracePolling();
+  const t=findTask(id);
+  AG.view='details';AG.target=id;AG.trace=null;AG.html={};
+  title.textContent=`Détails · ${t?taskTitle(t):id}`;
+  body.innerHTML=`${viewBar(id,'Détails','<button type="button" class="action small" id="agSwitch" data-go="trace">Trace d’exécution</button>')}
+    <div id="agHead" class="alist" role="list"></div>
+    <div class="dsec"><dl class="kv" id="dKv"></dl></div>
+    <div id="dMore"></div>`;
+  bindViewBar(id);
+  renderDetails();
+  body.scrollTop=0;
+  $('#agBack').focus({preventScroll:true});
+}
+function kvRows(t){
+  if(t.id==='brain'){
+    const a=AG.agent||{},c=a.console||{};
+    return [
+      ['Fournisseur',PROVIDER_LABELS[providerOf(t)]],
+      ['Modèle',t.model||'par défaut du CLI'],
+      ['État',brainState(t).label],
+      ['Tour en cours',t.busy&&t.turn_started_ms?`depuis ${fmtClock(t.turn_started_ms)} (${liveTimer('brain',t.turn_started_ms,'live','')})`:'',true],
+      ['En service depuis',t.started_ms?fmtClock(t.started_ms):''],
+      ['Activité',t.activity||''],
+      ['PID',a.pid||''],
+      ['Session',t.session_id||a.session_id||''],
+      ['Permissions',a.permission_mode||''],
+      ['Console Windows',c.open?`ouverte (PID ${c.pid})`:(c.supported===false?'non disponible':'fermée')],
+    ];
+  }
+  const parent=t.parent_id?findTask(t.parent_id):null,st=statusInfo(t.status);
+  return [
+    ['Type',t.kind==='shell'?'commande shell':(t.subagent_type||t.kind||'')],
+    ['Description',t.description||''],
+    ['Fournisseur',PROVIDER_LABELS[providerOf(t)]],
+    ['Modèle',t.kind==='shell'?'':(t.model||'par défaut')],
+    ['Statut',st.label],
+    ['Démarré',t.started_ms?fmtClock(t.started_ms):''],
+    ['Terminé',t.ended_ms?fmtClock(t.ended_ms):''],
+    ['Durée',isRunning(t)&&t.started_ms?liveTimer(t.id,t.started_ms,'live',''):fmtDuration(taskElapsed(t)),isRunning(t)],
+    ['Exécution',t.background?'arrière-plan':'premier plan'],
+    ['Activité',isRunning(t)?(t.activity||''):''],
+    ['Jetons',fmtTokens(t.tokens)],
+    ['Outils utilisés',Number(t.tool_uses)>0?String(t.tool_uses):''],
+    ['Dernier outil',t.last_tool||''],
+    ['Profondeur',t.depth>1?`niveau ${t.depth}`:''],
+    ['Lancé par',parent?`<button type="button" class="linkish" data-go="details" data-id="${esc(parent.id)}">${esc(taskTitle(parent))}</button>`:(t.parent_id?esc(t.parent_id):'le brain'),true],
+    ['Entrées de trace',t.trace_count!=null?String(t.trace_count):''],
+    ['Identifiant',t.id],
+    ['tool_use_id',t.tool_use_id||''],
+  ];
+}
+function detailsMoreHtml(t){
+  const parts=[];
+  if(t.id!=='brain'){
+    const prompt=String(t.prompt||'');
+    parts.push(`<div class="dsec"><h4>Prompt${prompt?' <button type="button" class="linkish" data-copy-prompt="'+esc(t.id)+'">copier</button>':''}</h4>${prompt?`<pre class="log block">${esc(prompt)}</pre>${prompt.length>=4000?'<div class="hint" style="margin-top:4px">Tronqué à 4000 caractères par le serveur.</div>':''}`:'<div class="hint">Prompt non transmis.</div>'}</div>`);
+    const summary=String(t.summary||'');
+    parts.push(`<div class="dsec"><h4>Résumé / résultat</h4>${summary?`<pre class="log block">${esc(summary)}</pre>`:`<div class="hint">${isRunning(t)?'Pas encore de résultat : la tâche est en cours.':'Aucun résumé transmis.'}</div>`}</div>`);
+  }
+  const kids=childrenOf(t.id);
+  if(kids.length){
+    parts.push(`<div class="dsec"><h4>${t.id==='brain'?'Sous-agents lancés':'Sous-agents lancés par cette tâche'} (${kids.length})</h4>${cardsHtml(kids,{compact:true})}</div>`);
+  }
+  return parts.join('');
+}
+function renderDetails(){
+  const t=findTask(AG.target);
+  updateHead();
+  const kv=$('#dKv'),more=$('#dMore');
+  if(!kv)return;
+  if(!t){
+    if(AG.html.kv!=='missing'){AG.html.kv='missing';kv.innerHTML='';more.innerHTML='<div class="notice">Cette tâche n’est plus suivie par le serveur.</div>'}
+    return;
+  }
+  const rows=kvRows(t).filter(([,v])=>v!==''&&v!=null).map(([k,v,isHtml])=>`<dt>${esc(k)}</dt><dd>${isHtml?v:esc(v)}</dd>`).join('');
+  if(rows!==AG.html.kv){AG.html.kv=rows;kv.innerHTML=rows}
+  const extra=detailsMoreHtml(t);
+  if(extra!==AG.html.more){
+    // Ne pas perdre une sélection de texte en cours dans le prompt ou le résumé.
+    const sel=window.getSelection&&window.getSelection();
+    if(!(sel&&!sel.isCollapsed&&more.contains(sel.anchorNode))){AG.html.more=extra;more.innerHTML=extra}
+  }
+  tickTimers();
+}
+
+/* --- rafraîchissement ------------------------------------------------------------- */
+function renderAgentsView(){
+  if(current!=='agents'||AG.menu)return;  // rien ne bouge sous un menu ouvert
+  if(AG.view==='trace'){
+    updateHead();
+    const tr=AG.trace;
+    if(tr&&tr.pending){const list=tr.pending;tr.pending=null;applyTrace(list)}
+    // Une tâche qui vient de finir : une dernière lecture, puis plus de sondage.
+    if(tr&&!tr.final&&!traceIsLive()){tr.final=true;stopTracePolling();loadTrace()}
+    else if(tr&&traceIsLive()&&!AG.traceTimer&&!tr.loading)loadTrace();
+  }else if(AG.view==='details')renderDetails();
+  else renderAgentList();
+}
+async function agentsTick(){
+  if(current!=='agents')return;
+  // Serveur sans la route : on la redemande de temps en temps (mise à jour à
+  // chaud), sans marteler de 404 chaque seconde. Le brain reste à jour via /api/status.
+  if(!AG.missing||Date.now()-AG.lastFetch>10000)await fetchTasks();
+  updateSubagentBadgeFromTasks();
+  renderAgentsView();
+}
+function updateSubagentBadgeFromTasks(){
+  if(AG.data&&typeof AG.data.active_count==='number')updateSubagentBadge({active:AG.data.active_count});
+}
+function startAgentsPolling(){if(!AG.poll)AG.poll=setInterval(agentsTick,1000)}
+function stopAgentsPolling(){clearInterval(AG.poll);AG.poll=null;stopTracePolling()}
+function openAgentsPanel(){
+  startAgentsPolling();
+  if(AG.view==='trace'&&AG.target)showTrace(AG.target);
+  else if(AG.view==='details'&&AG.target)showDetails(AG.target);
+  else{AG.view='list';AG.html={};renderAgentList(true)}
+  agentsTick();
+}
+function openAgentsAt(view,id){
+  if(view==='trace'&&id){AG.view='trace';AG.target=id}
+  else{AG.view='list';AG.target=null}
+  openPanel('agents');
+}
+
+/* --- menu contextuel ------------------------------------------------------------- */
+const ctxMenu=$('#ctxMenu');
+function menuItems(id){
+  const t=findTask(id),items=[{act:'trace',label:"Trace d'exécution",key:'Entrée'},{act:'details',label:'Détails'}];
+  if(id!=='brain'){
+    items.push({act:'copy',label:'Copier le prompt',disabled:!t||!t.prompt});
+    return items;
+  }
+  const a=AG.agent||{},c=a.console||{},running=(a.state||(t&&t.state))==='running';
+  items.push('-',
+    {act:'start',label:'Démarrer',disabled:running},
+    {act:'restart',label:'Redémarrer'},
+    {act:'kill',label:'Arrêter',danger:true,disabled:!running},
+    '-');
+  if(c.open)items.push({act:'console-open',label:'Ramener la console Windows'},{act:'console-close',label:'Fermer la console Windows',danger:true});
+  else items.push({act:'console-open',label:'Console Windows',disabled:c.supported===false});
+  return items;
+}
+function anchorOf(card){
+  const r=card.getBoundingClientRect();
+  return {x:r.left+44,y:r.top+Math.min(r.height-6,46),above:r.top+8};
+}
+function anchorBelow(el){
+  const r=el.getBoundingClientRect();
+  return {x:r.left,y:r.bottom+4,above:r.top-4,alignRight:r.right};
+}
+function openMenu(id,pos,origin){
+  closeMenu(false);
+  const t=findTask(id);
+  if(!t)return;
+  ctxMenu.innerHTML=`<div class="mhead">${esc(t.id==='brain'?'Brain':taskTitle(t))}</div>`+menuItems(id).map(it=>it==='-'
+    ?'<div class="sep" role="separator"></div>'
+    :`<button type="button" role="menuitem" data-act="${it.act}" class="${it.danger?'danger':''}"${it.disabled?' disabled':''}><span>${esc(it.label)}</span>${it.key?`<kbd>${esc(it.key)}</kbd>`:''}</button>`).join('');
+  ctxMenu.setAttribute('aria-label',`Actions : ${t.id==='brain'?'Brain':taskTitle(t)}`);
+  ctxMenu.style.left='0px';ctxMenu.style.top='0px';
+  ctxMenu.hidden=false;
+  const w=ctxMenu.offsetWidth,h=ctxMenu.offsetHeight,W=window.innerWidth,H=window.innerHeight;
+  let x=pos.alignRight?pos.alignRight-w:pos.x,y=pos.y;
+  if(x+w>W-8)x=W-w-8;
+  if(y+h>H-8)y=(pos.above??y)-h;
+  ctxMenu.style.left=Math.max(8,x)+'px';
+  ctxMenu.style.top=Math.max(8,Math.min(y,H-h-8))+'px';
+  AG.menu={id,origin,at:performance.now()};
+  const first=ctxMenu.querySelector('button:not(:disabled)');
+  if(first)first.focus({preventScroll:true});
+}
+function closeMenu(restore){
+  if(!AG.menu){ctxMenu.hidden=true;return}
+  const {id,origin}=AG.menu;
+  AG.menu=null;
+  ctxMenu.hidden=true;ctxMenu.innerHTML='';
+  if(restore){
+    const el=origin&&origin.isConnected?origin:cardEl(id);
+    if(el)el.focus({preventScroll:true});
+  }
+  // Les mises à jour retenues pendant l'ouverture du menu reprennent.
+  setTimeout(renderAgentsView,0);
+}
+async function runMenuAction(act,id){
+  closeMenu(act!=='trace'&&act!=='details');
+  if(act==='trace')return showTrace(id);
+  if(act==='details')return showDetails(id);
+  if(act==='copy'){
+    const t=findTask(id);
+    const ok=t&&t.prompt?await copyText(t.prompt):false;
+    return toast({title:ok?'Prompt copié':'Copie impossible',sub:ok?taskTitle(t):'Le navigateur a refusé l’accès au presse-papiers.',kind:ok?'info':'bad',ms:2500});
+  }
+  if(act==='start'||act==='restart'||act==='kill')return brainAction(act);
+  if(act==='console-open'||act==='console-close')return consoleAction(act);
+}
+async function copyText(text){
+  try{await navigator.clipboard.writeText(text);return true}catch{}
+  const area=document.createElement('textarea');
+  area.value=text;area.style.position='fixed';area.style.opacity='0';
+  document.body.appendChild(area);area.select();
+  let ok=false;
+  try{ok=document.execCommand('copy')}catch{}
+  area.remove();
+  return ok;
+}
+async function brainAction(act){
+  const running=activeAgents().length;
+  if((act==='kill'||act==='restart')&&running&&!confirm(`${act==='kill'?'Arrêter':'Redémarrer'} le brain interrompra ${plural(running,'sous-agent en cours','sous-agents en cours')}. Continuer ?`))return;
+  try{
+    await api('/api/agent/'+act,{method:'POST'});
+    toast({title:{start:'Brain démarré',restart:'Brain redémarré',kill:'Brain arrêté'}[act],kind:act==='kill'?'warn':'ok',ms:3000});
+  }catch(e){toast({title:'Action impossible',sub:e.message,kind:'bad'})}
+  refreshStatus();
+  if(current==='agents')agentsTick();
+}
+async function consoleAction(act){
+  try{
+    if(act==='console-close'){
+      await api('/api/agent/console/close',{method:'POST'});
+      toast({title:'Console Windows fermée',kind:'info',ms:3000});
+    }else{
+      const r=await api('/api/agent/console/open',{method:'POST'});
+      const text=r.already_open?(r.raised?'Console existante ramenée au premier plan.':'Console déjà ouverte : fenêtre à retrouver dans la barre des tâches.'):(r.handover?'Conversation reprise. L’agent piloté a été arrêté.':'Console ouverte sur cette conversation.');
+      toast({title:'Console Windows',sub:text,kind:'info'});
+    }
+  }catch(e){toast({title:'Console Windows',sub:e.message,kind:'bad'})}
+  setTimeout(refreshStatus,400);
+}
+
+ctxMenu.addEventListener('mousedown',e=>e.preventDefault());  // garder le focus clavier dans le menu
+ctxMenu.addEventListener('click',e=>{
+  const button=e.target.closest('button[data-act]');
+  if(!button||button.disabled||!AG.menu)return;
+  runMenuAction(button.dataset.act,AG.menu.id);
+});
+ctxMenu.addEventListener('mouseover',e=>{
+  const button=e.target.closest('button[data-act]:not(:disabled)');
+  if(button&&document.activeElement!==button)button.focus({preventScroll:true});
+});
+ctxMenu.addEventListener('keydown',e=>{
+  // Le menu garde ses touches : Échap ou une lettre ne doivent pas déclencher
+  // les raccourcis d'interface (fermer le panneau, en ouvrir un autre).
+  e.stopPropagation();
+  const items=[...ctxMenu.querySelectorAll('button:not(:disabled)')];
+  const i=items.indexOf(document.activeElement);
+  const go=n=>{e.preventDefault();if(items.length)items[(n+items.length)%items.length].focus()};
+  if(e.key==='ArrowDown')go(i+1);
+  else if(e.key==='ArrowUp')go(i<0?-1:i-1);
+  else if(e.key==='Home')go(0);
+  else if(e.key==='End')go(-1);
+  else if(e.key==='Escape'||e.key==='Tab'||e.key==='ContextMenu'||(e.key==='F10'&&e.shiftKey)){e.preventDefault();closeMenu(true)}
+});
+ctxMenu.addEventListener('focusout',e=>{if(AG.menu&&!ctxMenu.contains(e.relatedTarget))closeMenu(false)});
+document.addEventListener('mousedown',e=>{if(AG.menu&&!ctxMenu.contains(e.target))closeMenu(false)},true);
+// Un défilement déclenché juste avant l'ouverture (suivi automatique de la
+// trace) arrive parfois à l'image suivante : seul un défilement ultérieur ferme.
+document.addEventListener('scroll',()=>{if(AG.menu&&performance.now()-AG.menu.at>150)closeMenu(false)},true);
+window.addEventListener('blur',()=>closeMenu(false));
+window.addEventListener('resize',()=>closeMenu(false));
+
+/* --- interactions du panneau (délégation : les cartes sont redessinées) ---------- */
+body.addEventListener('contextmenu',e=>{
+  const card=current==='agents'&&e.target.closest('.acard');
+  if(!card)return;
+  e.preventDefault();
+  if(performance.now()-AG.kbdMenuAt<700)return;  // déjà ouvert par la touche Menu / Maj+F10
+  const keyboard=e.clientX===0&&e.clientY===0;
+  openMenu(card.dataset.id,keyboard?anchorOf(card):{x:e.clientX,y:e.clientY,above:e.clientY},card);
+});
+function traceFromCard(id){if(!(AG.view==='trace'&&AG.target===id))showTrace(id)}
+body.addEventListener('dblclick',e=>{
+  const card=current==='agents'&&e.target.closest('.acard');
+  if(card&&!e.target.closest('button'))traceFromCard(card.dataset.id);
+});
+body.addEventListener('click',e=>{
+  if(current!=='agents')return;
+  // Ouvrir/replier une section est un choix de l'utilisateur : il prime ensuite
+  // sur l'ouverture automatique (commandes de fond dépliées quand l'une tourne).
+  const sect=e.target.closest('details.sect>summary');
+  if(sect){AG.open[sect.parentElement.dataset.sect]=!sect.parentElement.open;return}
+  const more=e.target.closest('[data-more]');
+  if(more){const card=more.closest('.acard');openMenu(card.dataset.id,anchorBelow(more),card);return}
+  const go=e.target.closest('[data-go][data-id]');
+  if(go){go.dataset.go==='trace'?showTrace(go.dataset.id):showDetails(go.dataset.id);return}
+  const copy=e.target.closest('[data-copy-prompt]');
+  if(copy)runMenuAction('copy',copy.dataset.copyPrompt);
+});
+body.addEventListener('keydown',e=>{
+  const card=e.target;
+  if(current!=='agents'||!card.classList||!card.classList.contains('acard'))return;
+  if(e.key==='Enter'){e.preventDefault();traceFromCard(card.dataset.id)}
+  else if(e.key==='ContextMenu'||(e.key==='F10'&&e.shiftKey)){
+    e.preventDefault();AG.kbdMenuAt=performance.now();openMenu(card.dataset.id,anchorOf(card),card);
+  }else if(['ArrowDown','ArrowUp','Home','End'].includes(e.key)){
+    const cards=[...body.querySelectorAll('.acard')].filter(el=>el.offsetParent!==null);
+    const i=cards.indexOf(card);
+    const next={ArrowDown:i+1,ArrowUp:i-1,Home:0,End:cards.length-1}[e.key];
+    if(cards[next]){e.preventDefault();cards[next].focus()}
+  }
+});
+body.addEventListener('toggle',e=>{
+  const d=e.target;
+  if(!(d instanceof HTMLDetailsElement))return;
+  if(d.matches('details.sect[data-sect]')){if(AG.view==='list')AG.html.list=listHtml(AG.listNow)}  // le DOM reflète déjà l'état
+  else if(d.matches('details.rawjson')&&d.open)fillRaw(d);
+},true);
+body.addEventListener('scroll',()=>{
+  const pill=$('#newPill');
+  if(pill&&!pill.hidden&&body.scrollHeight-body.scrollTop-body.clientHeight<48){pill.hidden=true;if(AG.trace)AG.trace.unseen=0}
+},{passive:true});
+$('#agentBadge').addEventListener('click',()=>openAgentsAt('list'));
+setInterval(tickTimers,1000);
+
+/* --- envoi direct au brain (vue trace du brain) ------------------------------------ */
+function sendBox(){return `<div style="margin-top:14px"><textarea id="agentInput" placeholder="Message direct au brain… (Ctrl+Entrée pour envoyer)"></textarea><button class="action" id="sendAgent" style="margin-top:7px">Envoyer</button></div>`}
+function bindSend(after){
+  const button=$('#sendAgent'),input=$('#agentInput');
+  const send=async()=>{
+    const text=input.value.trim();
+    if(!text)return;
+    button.disabled=true;
+    try{
+      await api('/api/agent/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
+      input.value='';
+    }catch(e){toast({title:'Envoi impossible',sub:e.message,kind:'bad'})}
+    finally{button.disabled=false}
+    setTimeout(after,300);
+  };
+  button.addEventListener('click',send);
+  input.addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();send()}});
+}
 
 /* =====================================================================
    Fenêtre de réglages
@@ -631,7 +1788,7 @@ window.addEventListener('keydown',event=>{
   if(panelName){event.preventDefault();if(current===panelName)closePanel();else{if(panelName==='errors')errorsView='active';openPanel(panelName)}}
 });
 
-document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.addEventListener('click',()=>{if(b.dataset.panel==='errors')errorsView='active';openPanel(b.dataset.panel)}));
+document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.addEventListener('click',()=>{if(b.dataset.panel==='errors')errorsView='active';if(b.dataset.panel==='agents'&&current==='agents'){showList();return}openPanel(b.dataset.panel)}));
 $('#closePanel').addEventListener('click',closePanel);
 // Les raccourcis d'interface doivent répondre avant même la première ouverture
 // des réglages : leurs valeurs sont donc chargées au démarrage.

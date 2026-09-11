@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 from typing import Any
 
+from jarvis.runtime.agent_tasks import AgentTaskTracker
 from jarvis.runtime.cli_catalog import resolve_command
 from jarvis.runtime.journal import RuntimeJournal
 
@@ -84,7 +85,11 @@ class ClaudeLocalAgent:
         self.process: asyncio.subprocess.Process | None = None
         self._reader_task: asyncio.Task[None] | None = None
         self._stderr_task: asyncio.Task[None] | None = None
+        # Événements du brain seul, avec leur heure de réception (ms epoch).
+        # Ceux des sous-agents vivent dans `subtasks`, tâche par tâche.
         self._events: list[dict[str, Any]] = []
+        self._event_times: list[int] = []
+        self.subtasks = AgentTaskTracker(provider="claude", journal=self.journal, formatter=self._transcript_entry)
         self._lock = asyncio.Lock()
         # Identifiant de la conversation en cours : c'est lui qui permet à la
         # console de debug de reprendre *la même* conversation.
@@ -124,9 +129,34 @@ class ClaudeLocalAgent:
         session = event.get("session_id")
         if isinstance(session, str) and session:
             self.session_id = session
+        now_ms = self.subtasks.now_ms()
+        try:
+            self.subtasks.observe_claude(event, now_ms=now_ms)
+        except Exception as exc:  # noqa: BLE001
+            # La voix ne doit jamais dépendre du suivi des sous-tâches : levée
+            # ici, l'exception tuerait la lecture de stdout, le `result` du tour
+            # ne serait plus livré et `ask()` attendrait son délai — brain sourd.
+            self.subtasks.report_failure(exc, event)
+        if not AgentTaskTracker.belongs_to_brain(event):
+            # Un sous-agent actif produit des centaines d'événements : mêlés à
+            # ceux du brain, ils chasseraient son historique hors de la fenêtre.
+            return
         self._events.append(event)
+        self._event_times.append(now_ms)
         if len(self._events) > 500:
             del self._events[:-500]
+            del self._event_times[:-500]
+
+    def tasks_snapshot(self) -> dict[str, Any]:
+        """Le brain et ses sous-tâches, pour `/api/agent/tasks`."""
+        return self.subtasks.payload(state=self.state, session_id=self.session_id, configured_model=self.model)
+
+    def task_trace(self, task_id: str, *, limit: int = 300) -> dict[str, Any] | None:
+        """Trace d'une sous-tâche, ou du brain (`"brain"`) ; None si inconnue."""
+        if task_id == "brain":
+            brain = self.subtasks.brain_snapshot(state=self.state, session_id=self.session_id, configured_model=self.model)
+            return {"task": brain, "entries": self.transcript(limit=limit)}
+        return self.subtasks.trace(task_id, limit=limit)
 
     def console_snapshot(self) -> dict[str, Any]:
         process = self._console
@@ -222,16 +252,23 @@ class ClaudeLocalAgent:
 
         Les événements bruts sont des blocs JSON de plusieurs kilo-octets : tels
         quels ils sont illisibles. Chaque entrée renvoyée porte un rôle, un titre
-        court et le détail à déplier.
+        court, le détail à déplier et son heure de réception (`ts_ms`).
+
+        Seul le brain y figure : les messages des sous-agents se consultent
+        tâche par tâche, via `task_trace()`.
         """
-        return [self._transcript_entry(event) for event in self._events[-limit:]]
+        events = self._events[-limit:]
+        times = self._event_times[-limit:]
+        return [{**self._transcript_entry(event), "ts_ms": ts} for event, ts in zip(events, times)]
 
     @staticmethod
     def _transcript_entry(event: dict[str, Any]) -> dict[str, Any]:
         kind = str(event.get("type") or "event")
         entry: dict[str, Any] = {"role": kind, "title": kind, "text": "", "status": "ok", "raw": event}
 
-        if kind == "system":
+        if kind == "system" and str(event.get("subtype") or "").startswith("task_"):
+            entry.update(ClaudeLocalAgent._task_entry(event))
+        elif kind == "system":
             entry["title"] = f"Session {event.get('subtype') or 'system'}"
             entry["text"] = " · ".join(
                 part for part in (str(event.get("model") or ""), str(event.get("cwd") or "")) if part
@@ -265,6 +302,37 @@ class ClaudeLocalAgent:
             entry["title"] = "Quota"
             entry["text"] = f"{status} · utilisation {info.get('utilization')}"
         return entry
+
+    @staticmethod
+    def _task_entry(event: dict[str, Any]) -> dict[str, Any]:
+        """Jalons d'une sous-tâche (`task_started`, `task_notification`...)."""
+        subtype = str(event.get("subtype") or "")
+        description = str(event.get("description") or "")
+        if subtype == "task_started":
+            task_type = str(event.get("task_type") or "")
+            title = {"local_agent": "Sous-agent lancé", "local_bash": "Commande lancée"}.get(task_type, "Tâche lancée")
+            text = "\n".join(part for part in (description, str(event.get("prompt") or "")) if part)
+            return {"role": "system", "title": title, "text": text, "status": "busy"}
+        if subtype == "task_progress":
+            usage = event.get("usage") if isinstance(event.get("usage"), dict) else {}
+            details = [description]
+            if usage.get("tool_uses") is not None:
+                details.append(f"{usage.get('tool_uses')} outils")
+            if usage.get("total_tokens") is not None:
+                details.append(f"{usage.get('total_tokens')} jetons")
+            return {"role": "system", "title": "Avancement", "text": " · ".join(part for part in details if part), "status": "busy"}
+        if subtype == "task_notification":
+            status = str(event.get("status") or "")
+            titles = {"completed": "Tâche terminée", "failed": "Tâche en échec", "killed": "Tâche tuée", "stopped": "Tâche arrêtée"}
+            return {
+                "role": "system",
+                "title": titles.get(status, f"Tâche : {status}" if status else "Tâche notifiée"),
+                "text": str(event.get("summary") or ""),
+                "status": "bad" if status == "failed" else "warn" if status in {"killed", "stopped"} else "ok",
+            }
+        patch = event.get("patch") if isinstance(event.get("patch"), dict) else {}
+        text = " · ".join(f"{key} = {value}" for key, value in patch.items())
+        return {"role": "system", "title": "Tâche mise à jour" if subtype == "task_updated" else f"Tâche {subtype}", "text": text}
 
     @staticmethod
     def _message_text(message: dict[str, Any]) -> str:
@@ -337,6 +405,7 @@ class ClaudeLocalAgent:
             except FileNotFoundError as exc:
                 self.journal.emit("agent.start", "Claude CLI not found", level="error", data={"command": self.command})
                 raise RuntimeError("Claude CLI not found; install Claude Code and ensure `claude` is in PATH") from exc
+            self.subtasks.process_started()
             self.journal.emit("agent.start", "Claude local agent started", data={"pid": self.process.pid, "resumed": bool(resume_args), "permission_mode": self.permission_mode, "model": self.model or "(défaut du CLI)"})
             self._reader_task = asyncio.create_task(self._read_stdout(), name="jarvis-claude-stdout")
             self._stderr_task = asyncio.create_task(self._read_stderr(), name="jarvis-claude-stderr")
@@ -350,6 +419,9 @@ class ClaudeLocalAgent:
             await self.start()
         assert self.process is not None and self.process.stdin is not None
         payload = {"type": "user", "message": {"role": "user", "content": text}}
+        # Avant l'écriture : pendant `drain()`, la lecture de stdout peut déjà
+        # traiter les premiers événements du tour.
+        self.subtasks.turn_started()
         self.process.stdin.write((json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
         await self.process.stdin.drain()
         # Le CLI ne réémet pas l'entrée : sans cet écho la console n'afficherait
@@ -456,6 +528,9 @@ class ClaudeLocalAgent:
                     task.cancel()
             await asyncio.gather(*(t for t in (self._reader_task, self._stderr_task) if t is not None), return_exceptions=True)
             self._reader_task = self._stderr_task = None
+            # Les sous-agents vivaient dans le processus arrêté : ils sont
+            # interrompus, pas « en cours » pour toujours.
+            self.subtasks.process_stopped()
             self.journal.emit("agent.stop", "Claude local agent stopped", data={"returncode": process.returncode})
             return self.snapshot()
 
@@ -483,6 +558,7 @@ class ClaudeLocalAgent:
                 "code": "claude_exited",
                 "error": f"L'agent Claude s'est arrêté (code {self.process.returncode}).",
             })
+            self.subtasks.process_stopped()
             self.journal.emit("agent.exit", "Claude local agent exited", level="error" if self.process.returncode else "info", data={"returncode": self.process.returncode})
 
     async def _read_stderr(self) -> None:
