@@ -40,6 +40,10 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("control-center", help="Run Jarvis visualizer + Control Center + local Claude agent")
     sub.add_parser("drive-auth", help="Authorize Google Drive access once and store the token")
     sub.add_parser("drive-mcp", help="Serve the Google Drive MCP tools over stdio")
+    # Appelée par le CLI d'agent lui-même, pas par un humain : elle lit
+    # l'appel d'outil sur stdin et rend la décision d'aiguillage sur stdout.
+    routing_hook = sub.add_parser("routing-hook", help="Apply the sub-agent routing policy to one agent CLI tool call")
+    routing_hook.add_argument("--runtime-root", default="")
     from jarvis.runtime.owner_voice import add_parser as add_owner_voice_parser
 
     add_owner_voice_parser(sub)
@@ -795,6 +799,10 @@ async def _amain(argv: list[str] | None = None) -> int:
     if command == "control-center": return await _run_control_center_v2()
     if command == "drive-auth": return await _drive_auth()
     if command == "drive-mcp": return await _drive_mcp()
+    if command == "routing-hook":
+        from jarvis.runtime.routing_hook import main as routing_hook_main
+
+        return routing_hook_main(["--runtime-root", args.runtime_root] if args.runtime_root else [])
     if command == "owner-voice":
         from jarvis.runtime.owner_voice import run_cli
         return run_cli(args)

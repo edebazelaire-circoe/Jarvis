@@ -27,9 +27,10 @@ from jarvis.domain.speaker import (
     VerifierAvailability,
     assess_authorization,
 )
+from jarvis.domain.routing import RoutingError
 from jarvis.domain.v2 import BRAIN_NOT_ADDRESSED_ANSWER, AddressingDecision
 from jarvis.runtime.audio_devices import AudioDiagnosticError, SoundDeviceAudioDiagnostics, normalize_device_id
-from jarvis.runtime import cli_catalog, credentials as creds, shortcuts as shortcut_registry, voice_stack
+from jarvis.runtime import agent_routing, cli_catalog, credentials as creds, shortcuts as shortcut_registry, voice_stack
 from jarvis.runtime.claude_local import DEFAULT_PERMISSION_MODE, PERMISSION_MODES, ClaudeLocalAgent, normalize_permission_mode
 from jarvis.runtime.codex_local import CodexLocalAgent, normalize_sandbox_mode
 from jarvis.runtime.journal import RuntimeJournal, read_jsonl_tail
@@ -250,6 +251,7 @@ class ControlCenter:
             web.post("/api/credentials/bind", self.bind_credential),
             web.get("/api/models", self.models),
             web.get("/api/cli/agents", self.cli_agents),
+            web.get("/api/routing/candidates", self.routing_candidates),
             web.get("/api/shortcuts", self.get_shortcuts),
             web.post("/api/shortcuts", self.save_shortcuts),
             web.get("/api/audio/devices", self.audio_devices),
@@ -1092,6 +1094,11 @@ class ControlCenter:
                 },
                 "active_state": self.agent.snapshot()["state"],
             },
+            # Aiguillage des sous-agents. Les candidats ne sont pas ici : les
+            # lister demande de sonder les CLI et d'appeler les fournisseurs, ce
+            # qui n'a pas sa place dans un GET qui doit rester immédiat.
+            # `/api/routing/candidates` les donne, mesurés.
+            "routing": agent_routing.describe(agent_routing.load_policy(settings), ()),
             "audio": {
                 "input_device": settings.get("audio_input_device", ""),
                 "output_device": settings.get("audio_output_device", ""),
@@ -1133,11 +1140,14 @@ class ControlCenter:
             if payload.get("voice_arch") is not None:
                 self._store_voice_arch(current, payload["voice_arch"])
             switch_to = self._apply_cli(current, payload)
+            if payload.get("routing") is not None:
+                agent_routing.apply(current, payload["routing"])
         except (
             voice_stack.VoiceStackError,
             ConversationAuthorizationError,
             cli_catalog.CliSettingsError,
             creds.CredentialError,
+            RoutingError,
         ) as exc:
             # Le corps reste le message en clair (ce que la page affiche) ; le
             # code stable voyage à côté, pour les clients et les tests.
@@ -1399,6 +1409,40 @@ class ControlCenter:
                 "models": filter_by_role(list(result.get("models") or []), role),
             }
         )
+
+    async def routing_candidates(self, request: web.Request) -> web.Response:
+        """Les couples agent + modèle proposables maintenant, et leur état.
+
+        Deux mesures, pas une supposition : quels CLI répondent à `--version`,
+        et quels modèles texte le fournisseur déclare. Un catalogue injoignable
+        ne vide pas l'écran — le dernier connu sert, dit périmé — et les
+        préférences enregistrées restent visibles même devenues inutilisables.
+        """
+        del request
+        settings = self._settings()
+        policy = agent_routing.load_policy(settings)
+        commands = {spec.id: self._agent_settings(settings, spec.id)["command"] for spec in cli_catalog.AGENT_CLIS}
+        detected = await cli_catalog.detect_all(commands)
+        agents = [
+            {**entry, "capabilities": list(cli_catalog.spec_for(entry["id"]).capabilities)}
+            for entry in detected
+        ]
+
+        models: dict[str, list[dict[str, Any]]] = {}
+        sources: dict[str, str] = {}
+        for provider in sorted({spec.model_provider for spec in cli_catalog.AGENT_CLIS}):
+            try:
+                result = await self.catalog.models(provider, creds.secret_for(settings, provider))
+            except CatalogError as exc:
+                stale = self.catalog.cached(provider)
+                sources[provider] = "stale" if stale is not None else exc.code
+                result = stale or {}
+            else:
+                sources[provider] = str(result.get("source") or "live")
+            models[provider] = filter_by_role(list(result.get("models") or []), "text")
+
+        candidates = agent_routing.with_saved(agent_routing.build_candidates(agents, models), policy)
+        return web.json_response({"ok": True, "sources": sources, **agent_routing.describe(policy, candidates)})
 
     async def cli_agents(self, request: web.Request) -> web.Response:
         del request

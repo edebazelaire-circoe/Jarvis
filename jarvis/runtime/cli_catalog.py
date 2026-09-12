@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 import shutil
 from typing import Any
 
+from jarvis.domain import routing
+
 # `--version` sur un CLI installé répond en moins d'une seconde ; au-delà, la
 # réponse ne vaut plus la peine de faire attendre l'ouverture des réglages.
 PROBE_TIMEOUT_S = 8.0
@@ -31,6 +33,12 @@ class AgentCliSpec:
     permission_modes: tuple[str, ...] = field(default=())
     permission_label: str = ""
     docs: str = ""
+    # Ce que ce CLI sait faire, dans le vocabulaire de l'aiguillage
+    # (`jarvis.domain.routing`). C'est l'agent qui exécute, pas le modèle : la
+    # capacité est donc portée ici, et un modèle n'apporte que d'être utilisable
+    # en texte. Rien n'est déclaré qui ne soit vérifiable dans la commande
+    # réellement lancée.
+    capabilities: tuple[str, ...] = field(default=())
 
 
 CLAUDE_PERMISSION_MODES = ("bypassPermissions", "acceptEdits", "dontAsk", "auto", "manual", "plan")
@@ -51,6 +59,10 @@ AGENT_CLIS: tuple[AgentCliSpec, ...] = (
         permission_modes=CLAUDE_PERMISSION_MODES,
         permission_label="Autorisations",
         docs="claude --help",
+        # `computer_use` vient du `--chrome` réellement passé au lancement :
+        # le CLI pilote le navigateur. Il ne pilote pas le bureau entier ; le
+        # jour où un agent le fera, il le déclarera ici.
+        capabilities=(routing.CODE, routing.SEMANTIC, routing.BACKGROUND, routing.STREAMING, routing.COMPUTER_USE),
     ),
     AgentCliSpec(
         id="codex",
@@ -64,6 +76,9 @@ AGENT_CLIS: tuple[AgentCliSpec, ...] = (
         permission_modes=CODEX_SANDBOX_MODES,
         permission_label="Bac à sable",
         docs="codex exec --help",
+        # Pas de `background` : `codex exec` rend la main à la fin du tour, il
+        # n'a pas d'outil de sous-agent d'arrière-plan.
+        capabilities=(routing.CODE, routing.SEMANTIC, routing.SANDBOX),
     ),
 )
 
@@ -161,6 +176,7 @@ def describe(spec: AgentCliSpec, *, command: str, detection: dict[str, Any]) -> 
         "model_provider": spec.model_provider,
         "description": spec.description,
         "features": list(spec.features),
+        "capabilities": list(spec.capabilities),
         "permission_modes": list(spec.permission_modes),
         "permission_label": spec.permission_label,
         "docs": spec.docs,

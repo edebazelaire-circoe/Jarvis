@@ -10,6 +10,8 @@ from typing import Any
 import uuid
 
 from jarvis.domain.v2 import BRAIN_NOT_ADDRESSED_ANSWER
+from jarvis.runtime import routing_hook
+from jarvis.runtime.routing_hook import PROFILE_RULE
 from jarvis.runtime.agent_tasks import AgentTaskTracker
 from jarvis.runtime.cli_catalog import resolve_command
 from jarvis.runtime.journal import RuntimeJournal
@@ -53,6 +55,7 @@ Tu aiguilles, tu n'exécutes pas. Pendant que tu travailles, l'utilisateur ne pe
 - Tout le reste part en sous-agent d'arrière-plan : outil Agent avec run_in_background à true. C'est obligatoire pour une recherche ou une lecture web (WebSearch, WebFetch, navigateur), la lecture de plusieurs fichiers ou l'exploration du dépôt, toute modification de code ou de fichier, une commande longue, tout travail en plusieurs étapes, et tout ce qui risque de dépasser quelques secondes. Dans le doute, délègue.
 - Ne fais jamais ce travail toi-même dans le tour, même pour vérifier vite. N'attends pas le sous-agent : pas d'attente bloquante de son résultat, pas de sleep.
 - Donne au sous-agent une consigne complète et autonome, car il ne voit pas la conversation, et demande-lui un compte rendu court.
+- {PROFILE_RULE}
 - Dès le lancement, réponds en une phrase qui dit ce que tu as lancé, puis termine ton tour.
 - Quand un sous-agent ou une tâche de fond se termine, tu reçois une notification : relaie le résultat en une à trois phrases orales. Si elle ne mérite aucune annonce, réponds exactement {BRAIN_NOT_ADDRESSED_ANSWER} et rien d'autre : rien ne sera dit.
 - Une nouvelle demande pendant qu'un sous-agent travaille se traite normalement, sans attendre la fin de celui-ci.
@@ -479,6 +482,11 @@ class ClaudeLocalAgent:
             # La règle de délégation au niveau système, pour l'agent vocal
             # seulement : la console de debug est une session humaine.
             brain_args = ["--append-system-prompt", cli_prompt_argument(BRAIN_SYSTEM_PROMPT, executable)]
+            # La politique d'aiguillage, déclarée au CLI sous forme de hook :
+            # c'est le seul endroit où un modèle hors réglages peut être
+            # corrigé avant que le sous-agent parte. Le prompt demande le
+            # profil ; ce hook impose le modèle.
+            routing_args = ["--settings", routing_hook.hook_settings(self.runtime_root)]
             try:
                 self.process = await asyncio.create_subprocess_exec(
                     executable,
@@ -491,6 +499,7 @@ class ClaudeLocalAgent:
                     "--chrome",
                     *permission_args,
                     *brain_args,
+                    *routing_args,
                     *model_args,
                     *resume_args,
                     cwd=str(self.cwd),
