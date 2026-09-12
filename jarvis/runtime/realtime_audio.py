@@ -816,6 +816,7 @@ class RealtimeConversationBridge:
         on_mute: Callable[[], object],
         on_ambient: Callable[[], object] | None = None,
         on_listening: Callable[[], object] | None = None,
+        on_idle: Callable[[], object] | None = None,
         on_thinking: Callable[[], object] | None = None,
         on_speaking: Callable[[], object] | None = None,
         on_response_done: Callable[[], object] | None = None,
@@ -849,6 +850,13 @@ class RealtimeConversationBridge:
         self.on_mute = on_mute
         self.on_ambient = on_ambient
         self.on_listening = on_listening
+        # Veille de la surface. En continu, la session reste ACTIVE bien
+        # au-delà de l'échange qui l'a ouverte : afficher « écoute » pendant
+        # ce temps-là fait croire à l'utilisateur que JARVIS se déclenche pour
+        # lui à chaque phrase prononcée dans la pièce. Tant que rien ne lui a
+        # été adressé (voir `_rest_surface`), l'écran revient à cette veille.
+        # Absent : l'ancien comportement, tout retour se fait sur `on_listening`.
+        self.on_idle = on_idle
         self.on_thinking = on_thinking
         self.on_speaking = on_speaking
         self.on_response_done = on_response_done
@@ -2557,6 +2565,24 @@ class RealtimeConversationBridge:
             return True
         return self._clock() - self._last_engaged <= self.engagement_window_s
 
+    async def _rest_surface(self) -> None:
+        """L'état d'écran entre deux segments qui n'étaient pas pour JARVIS.
+
+        Le micro reste ouvert — la session continue d'entendre, et un vrai
+        réveil (touche, « Jarvis… ») passe toujours. Ce qui change est ce que
+        l'utilisateur voit : hors conversation engagée, une phrase captée à
+        côté ne doit pas allumer l'écoute, sans quoi JARVIS a l'air de se
+        déclencher pour lui à chaque fois qu'on parle dans la pièce. Engagé
+        (réveil récent, réponse de JARVIS, demande adressée il y a peu), on
+        revient à l'écoute comme avant : l'utilisateur est en train de lui
+        parler, et cacher l'écoute lui ferait croire qu'il n'est plus entendu.
+        """
+
+        if self.continuous and self.on_idle is not None and not self._engaged():
+            await self._call(self.on_idle)
+            return
+        await self._call(self.on_listening)
+
     def _segment_was_near_playback(self, item_id: str | None) -> bool:
         if item_id and item_id in self._segment_near_playback:
             return self._segment_near_playback.pop(item_id)
@@ -2768,7 +2794,14 @@ class RealtimeConversationBridge:
                     "Server VAD closed a turn inside the continuous session",
                     data=self._input_metrics(),
                 )
-                await self._call(self.on_thinking)
+                if self._engaged():
+                    # Le commit du VAD ne dit rien de l'adressage : il tombe
+                    # sur n'importe quelle phrase prononcée dans la pièce.
+                    # Hors conversation engagée, afficher « traitement » ici
+                    # fait croire à l'utilisateur que JARVIS s'est déclenché
+                    # pour lui. On attend le classement du transcript, qui
+                    # posera lui-même « thinking » si le tour était adressé.
+                    await self._call(self.on_thinking)
             elif self.auto_turn and not self._input_submitted:
                 self._input_submitted = True
                 # The provider already holds the turn; releasing the microphone
@@ -2880,7 +2913,7 @@ class RealtimeConversationBridge:
             # ni tracé (pas de texte au journal), ni tour, ni activité utile.
             self._drop_input("transcript_unverified")
             await self._call(self.on_ambient)
-            await self._call(self.on_listening)
+            await self._rest_surface()
             return False
         # Borne de départ de la mesure 2. Prise avant le classement
         # d'adressage : ce qui est chronométré est le chemin complet
@@ -2911,7 +2944,7 @@ class RealtimeConversationBridge:
                     },
                 )
                 await self._call(self.on_ambient)
-                await self._call(self.on_listening)
+                await self._rest_surface()
                 return False
         if self.continuous and decision is AddressingDecision.UNCERTAIN:
             # Décision 44 : décider qu'une demande n'en est pas une
@@ -2941,7 +2974,7 @@ class RealtimeConversationBridge:
                 provider_item_id=item_id,
                 addressing=decision,
             )
-            await self._call(self.on_listening)
+            await self._rest_surface()
             return False
         if decision is not AddressingDecision.ADDRESSED:
             # Entendu, mais pas pour JARVIS : le délai d'activité
@@ -2952,8 +2985,9 @@ class RealtimeConversationBridge:
             await self._call(self.on_ambient)
             if self.continuous:
                 # Segment sans parole : plus rien ne ramènerait l'écran de
-                # « thinking » (posé au commit) vers l'écoute.
-                await self._call(self.on_listening)
+                # « thinking » (posé au commit) vers l'écoute — ou vers la
+                # veille, si rien n'a été adressé à JARVIS depuis un moment.
+                await self._rest_surface()
             return False
         normalized = " ".join(text.casefold().replace(",", " ").split())
         # La ponctuation de transcription ne change pas la commande vocale.

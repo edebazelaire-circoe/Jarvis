@@ -1275,6 +1275,62 @@ async def test_outside_the_engagement_window_a_turn_is_uncertain_unless_jarvis_i
     ]
 
 
+async def _surface_states(bridge) -> list[str]:  # noqa: ANN001
+    states: list[str] = []
+    bridge.on_idle = lambda: states.append("idle")
+    bridge.on_listening = lambda: states.append("listening")
+    bridge.on_thinking = lambda: states.append("thinking")
+    return states
+
+
+async def test_outside_the_engagement_window_the_surface_stays_idle():
+    """Une phrase qui n'était pas pour JARVIS n'allume ni l'écoute ni le traitement.
+
+    Le commit du VAD tombe sur n'importe quelle voix de la pièce : s'y fier
+    pour afficher « traitement » donne à l'utilisateur l'impression que JARVIS
+    s'est déclenché pour lui. Le doute part quand même au cerveau (Décision
+    44) : la session n'est pas rendue sourde, elle est rendue discrète.
+    """
+
+    clock = ManualClock()
+    core = RecordingCore()
+    bridge = build_bridge(GuardedAudio(guarded=False), core=core, clock=clock)
+    states = await _surface_states(bridge)
+    clock.now += 120  # la conversation n'est plus engagée
+
+    await feed(
+        bridge,
+        [
+            event("realtime.input_committed", item_id="i1"),
+            event("realtime.transcript", text="Tu viens déjeuner avec nous ?", item_id="i1"),
+        ],
+    )
+
+    assert states == ["idle"]
+    assert [turn["addressing"] for turn in core.brain_turns] == ["uncertain"]
+
+
+async def test_a_named_sentence_still_wakes_the_surface_after_the_window():
+    """Le réveil explicite passe toujours : la veille ne rend pas JARVIS sourd."""
+
+    clock = ManualClock()
+    core = RecordingCore()
+    bridge = build_bridge(GuardedAudio(guarded=False), core=core, clock=clock)
+    states = await _surface_states(bridge)
+    clock.now += 120
+
+    await feed(
+        bridge,
+        [
+            event("realtime.input_committed", item_id="i1"),
+            event("realtime.transcript", text="Jarvis, quelle heure est-il ?", item_id="i1"),
+        ],
+    )
+
+    assert states == ["thinking"]
+    assert [turn["addressing"] for turn in core.brain_turns] == ["addressed"]
+
+
 async def test_the_scheduler_learns_when_the_user_speaks():
     states: list[bool] = []
     bridge = build_bridge(GuardedAudio(guarded=False), on_user_speech=states.append)

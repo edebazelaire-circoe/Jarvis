@@ -340,6 +340,9 @@ class PersistentVoiceRuntime:
             on_ambient=self.ambient_activity,
             on_mute=self.mute,
             on_listening=self.visual_listening,
+            # Session ACTIVE mais rien d'adressé : la surface reste en veille
+            # au lieu d'annoncer une écoute que l'utilisateur n'a pas demandée.
+            on_idle=self.visual_idle,
             on_thinking=self.visual_thinking,
             on_speaking=self.visual_speaking,
             # Décision 08 : en continu, une réponse terminée rouvre l'écoute au
@@ -762,6 +765,18 @@ class PersistentVoiceRuntime:
     async def visual_listening(self) -> None:
         if self.runtime.state is VoiceLifecycleState.ACTIVE:
             self._visual("listening")
+
+    async def visual_idle(self) -> None:
+        """Veille affichée alors que la session reste ACTIVE (mode continu).
+
+        Le micro n'est pas fermé et le cycle de vie ne bouge pas : seul
+        l'écran redescend. Une phrase qui n'était pas pour JARVIS ne doit ni
+        l'allumer ni lui faire prendre la parole ; le réveil (touche ou
+        « Jarvis… ») continue de passer, et rallume l'écoute.
+        """
+
+        if self.runtime.state is VoiceLifecycleState.ACTIVE:
+            self._visual("idle")
 
     async def visual_thinking(self) -> None:
         if self.runtime.state is VoiceLifecycleState.ACTIVE:
