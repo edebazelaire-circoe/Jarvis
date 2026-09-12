@@ -1325,6 +1325,119 @@ brain saw — without opening megabytes of JSONL:
 It reads declared scalars only: no transcript, no voiceprint, nothing else ever
 reaches its output.
 
+## Aiguillage des sous-agents
+
+Onglet **Aiguillage** de la fenêtre de réglages. Éteint, rien ne change : chaque
+sous-agent garde le modèle par défaut du CLI, comme avant. Allumé, JARVIS impose
+pour chaque profil le premier candidat autorisé *et* utilisable.
+
+Quatre profils : **Poste de travail** (navigateur, fichiers ouverts), **Code
+avancé**, **Sémantique rapide**, **Général** — ce dernier servant aussi de
+recours aux autres. Les candidats affichés viennent de `GET
+/api/routing/candidates`, qui sonde les CLI installés et demande au fournisseur
+sa liste de modèles ; rien n'est écrit en dur dans la page. **L'ordre des cases
+cochées est la préférence** : le premier disponible gagne, les suivants sont des
+recours.
+
+Un candidat enregistré qui disparaît (clé retirée, modèle déprécié) reste
+affiché, marqué indisponible avec la raison. C'est voulu : un réglage qui
+s'efface en silence est pire qu'une erreur.
+
+Le cerveau ne nomme pas de modèle, il nomme un profil, en commençant la
+description de chaque sous-agent par `[code]`, `[desktop]`, `[fast]` ou
+`[general]`. Ce qu'il demande n'engage rien : un hook `PreToolUse` déclaré au CLI
+corrige le modèle avant que l'appel parte.
+
+Pour comprendre un choix :
+
+```powershell
+Select-String -Path runtime\trace.jsonl -Pattern 'agent.routing.decided' | Select-Object -Last 5
+```
+
+Chaque entrée porte le profil, le modèle demandé, le modèle retenu, la raison
+(`preferred`, `fallback`, `general_fallback`, `override`, `compatibility`) et le
+verdict de chaque candidat écarté (`model_unavailable`, `missing_capability`,
+`unknown_candidate`, `not_allowed`…). `agent.routing.failed` signale un hook en
+panne : dans ce cas le CLI a gardé la main, rien n'a été imposé.
+
+Si aucun candidat n'est utilisable pour un profil, le lancement du sous-agent est
+refusé, en clair, avec un renvoi aux réglages. C'est le comportement attendu tant
+qu'aucun agent capable n'est installé — par exemple pour le profil Poste de
+travail si le CLI actif ne pilote pas la machine.
+
+## Auto-développement
+
+Deux crans distincts, **éteints tous les deux à l'installation** :
+`self_development.enabled` autorise à construire un candidat,
+`self_development.auto_deploy` autorise à le déployer. Le second refuse de
+s'allumer seul.
+
+Le plan de construction est un dossier frère `sub-agents` (ou `sous-agents`)
+contenant des worktrees git de ce dépôt. `JARVIS_WORKTREE_ROOT` force le chemin.
+Ajouter un worktree :
+
+```powershell
+git worktree add ..\sub-agents\jarvis-agent-02 -b agent/jarvis-agent-02
+```
+
+Un deuxième ou un troisième ne demandent aucun changement : ils sont découverts,
+et deux chantiers travaillent alors en parallèle. L'intégration, elle, reste
+sérialisée.
+
+Inspecter l'état :
+
+```powershell
+curl.exe -s http://127.0.0.1:17654/api/self-dev | ConvertFrom-Json
+```
+
+On y lit les deux autorisations, la racine du pool, chaque worktree avec sa
+branche, son état propre/sale et son bail éventuel, les chantiers connus, et le
+déploiement en cours s'il y en a un. Les fichiers correspondants :
+
+| Quoi | Où |
+| --- | --- |
+| Baux des worktrees | `runtime/worktree-leases/*.json` |
+| Chantiers | `runtime/self-dev/*.json` |
+| Verrou d'intégration | `runtime/integration.lock` |
+| Déploiement en cours ou passé | `runtime/deployment.json` |
+| Demande de rechargement | `runtime/reload.request` |
+
+### Ce qui bloque un déploiement, et pourquoi c'est voulu
+
+- `deploy_primary_dirty` — la copie qui sert a des modifications non validées.
+  Validez-les ou mettez-les de côté **vous-même** : JARVIS ne remise ni n'efface
+  le travail de personne.
+- `deploy_primary_branch` — la copie qui sert n'est pas sur `main`.
+- `deploy_primary_diverged` — elle a des commits que le distant n'a pas.
+- `deploy_conflict` — le candidat entre en conflit avec `main` : la fusion est
+  annulée, le worktree retrouve son état, le chantier doit reprendre. Aucun
+  conflit n'est résolu automatiquement.
+- `deploy_gate_failed` — les tests refusent le candidat une fois réconcilié.
+- `deploy_locked` — une autre intégration est en cours.
+
+### Retour en arrière
+
+Un déploiement n'est confirmé (`committed`) que lorsque Core répond prêt après le
+rechargement. Sinon la copie qui sert est **détachée** sur la révision qui
+marchait : aucun commit ne disparaît, `main` garde la révision fautive, et c'est
+à vous de décider ce qu'on en fait. Revenir ensuite sur `main` une fois le
+problème corrigé :
+
+```powershell
+git -C C:\Projects\jarvis\jarvis switch main
+```
+
+Si quelqu'un a modifié la copie qui sert entre-temps, le retour en arrière
+s'arrête en `deploy_rollback_unsafe` plutôt que d'écraser ce travail : le
+déploiement reste `blocked` et attend une décision humaine.
+
+Un déploiement interrompu (processus tué au mauvais moment) est repris au
+démarrage suivant à partir de `runtime/deployment.json` seul.
+
+N'utilisez jamais `git reset --hard`, `git push --force` ni `git stash` pour
+débloquer une de ces situations : rien dans le chemin automatique ne le fait, et
+c'est précisément ce qui rend l'auto-modification acceptable.
+
 ## Tests
 
 Fast full suite:

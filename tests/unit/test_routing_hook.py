@@ -210,6 +210,42 @@ def test_the_hook_without_any_settings_says_nothing(tmp_path):
     assert routing_hook.run(call(), tmp_path) == {}
 
 
+def test_a_byte_order_mark_never_silently_switches_routing_off(tmp_path, monkeypatch):
+    """Mesuré sur cette machine : PowerShell préfixe stdin d'une marque d'ordre
+    d'octets, et le Bloc-notes en ajoute une au fichier de réglages. Les refuser
+    éteindrait l'aiguillage sans aucun message."""
+
+    monkeypatch.setattr(routing_hook, "local_agents", lambda: [CLAUDE])
+    (tmp_path / "model-catalog.json").write_text(
+        json.dumps({"anthropic": {"provider": "anthropic", "models": MODELS["anthropic"], "fetched_at": 0, "key_hint": "x"}}),
+        encoding="utf-8",
+    )
+    settings: dict = {}
+    agent_routing.apply(settings, {"enabled": True, "profiles": {"code": {"candidates": [{"agent": "claude", "model": "petit"}]}}})
+    # Le fichier tel que le Bloc-notes le réécrit.
+    (tmp_path / "control-center-settings.json").write_text(json.dumps(settings), encoding="utf-8-sig")
+
+    assert routing_hook.load_settings(tmp_path) == settings
+    assert updated(routing_hook.run(call(model="grand"), tmp_path)) == {"model": "petit"}
+
+
+def test_the_hook_reads_a_marked_event_from_its_standard_input(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(routing_hook, "local_agents", lambda: [CLAUDE])
+    (tmp_path / "model-catalog.json").write_text(
+        json.dumps({"anthropic": {"provider": "anthropic", "models": MODELS["anthropic"], "fetched_at": 0, "key_hint": "x"}}),
+        encoding="utf-8",
+    )
+    _write_settings(tmp_path, {"enabled": True, "profiles": {"code": {"candidates": [{"agent": "claude", "model": "petit"}]}}})
+
+    import io
+    import sys
+
+    monkeypatch.setattr(sys, "stdin", io.StringIO("﻿" + json.dumps(call(model="grand"))))
+    assert routing_hook.main(["--runtime-root", str(tmp_path)]) == 0
+
+    assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["updatedInput"] == {"model": "petit"}
+
+
 def test_a_broken_routing_policy_never_paralyses_the_brain(tmp_path, monkeypatch):
     _write_settings(tmp_path, {"enabled": True, "profiles": {"code": {"candidates": [{"agent": "claude"}]}}})
 

@@ -1278,6 +1278,113 @@ clock; no measure crosses the Core/Voice boundary. `LatencyTracker` builds its
 own message from the measure name, so a caller cannot smuggle transcript content
 into it.
 
+## Sub-agent routing
+
+The brain is a CLI process (`claude -p --input-format stream-json`). It spawns
+its own sub-agents with the `Agent` tool and picks their `model` itself. Jarvis
+never builds that launch, so a system prompt can *ask* for a model but cannot
+*impose* one. Routing therefore has two halves, and only the second is binding.
+
+**Intent** — the brain names a task profile, not a model. The system prompt
+(`routing_hook.PROFILE_RULE`, appended to `BRAIN_SYSTEM_PROMPT`) asks it to start
+each sub-agent description with `[code]`, `[desktop]`, `[fast]` or `[general]`.
+An absent or invented marker means `general`; the text is never interpreted to
+guess a profile, because guessing would hand the choice back to the model.
+
+**Resolution** — a `PreToolUse` hook, declared to the CLI with `--settings` at
+launch, sees every `Agent`/`Task` call before it runs. It resolves the profile
+against the saved policy and rewrites `model` (`updatedInput`) when the model
+the brain asked for is not allowed. This is the only point in the system where
+an allowlist can actually bind.
+
+| Piece | File | Holds |
+| --- | --- | --- |
+| Contracts | `jarvis/domain/routing.py` | profiles, policy, candidates, decision, refusal codes. No I/O, no provider, no model id |
+| Persistence | `jarvis/runtime/agent_routing.py` | tolerant read, strict atomic write, candidates built from `cli_catalog` + `model_catalog` |
+| Enforcement | `jarvis/runtime/routing_hook.py` | the hook, its declaration, and the routing trace |
+
+Decisions are deterministic: the order of a profile's candidate list *is* the
+preference, and the first allowed-and-usable candidate wins. There are no
+weights and no cost estimates — providers publish no comparable figures, and an
+invented number would be worse than an assumed order.
+
+Conduct under doubt: policy off or profile empty → the hook stays silent and the
+CLI keeps its own model (today's behaviour); model outside the policy → rewritten
+rather than refused, so the work still happens; no usable candidate → explicit
+refusal; hook failure → silence, because a broken policy must not paralyse the
+brain.
+
+Capabilities (`code`, `semantic`, `computer_use`, `background`, `streaming`,
+`sandbox`) are declared on the CLI spec, not on the model: the agent is what
+executes. `claude` declares `computer_use` because it is launched with
+`--chrome`; it drives the browser, not the whole desktop. No agent for full
+desktop/office work is integrated, and none is faked.
+
+Each decision is journalled as `agent.routing.decided` with the profile, every
+candidate's verdict code, the requested model and the resolved one — enough to
+explain a wrong choice, and nothing resembling reasoning.
+
+## Self-development: two planes
+
+Jarvis can change its own code, never where it runs.
+
+- the **serving plane** is the primary checkout, the one Core, the UI and Voice
+  run from right now. No agent writes there;
+- the **build plane** is a set of sibling git worktrees (`../sub-agents`, also
+  spelled `sous-agents`; `JARVIS_WORKTREE_ROOT` overrides). Everything happens
+  there: editing, tests, commit, pushing a candidate branch.
+
+A folder proves nothing. `jarvis/runtime/worktrees.py` asks git for the common
+repository directory of each candidate and rejects anything that is not a
+worktree of *this* repository, is dirty, has vanished, or is already leased.
+Leases live in the serving plane's `runtime/worktree-leases/`, so borrowing a
+worktree never dirties it; a lease whose owner is dead is taken over, and a
+lease that was reassigned is never released by its former holder.
+
+`jarvis/runtime/self_dev.py` runs one job: lease a worktree, fetch `main`, open
+`selfdev/<job>`, run the coding agent chosen by the routing policy with `cwd`
+fixed to that worktree, require a non-empty diff and green tests, commit, push,
+release the lease — including after a failure. It produces a candidate. It
+deploys nothing.
+
+## Deployment transaction
+
+Merging is not deploying. `jarvis/runtime/deployment.py` treats integration as a
+transaction that is only finished once the code answers.
+
+1. **Integration lock** — many jobs build, one integrates.
+2. **Serving-plane guards** — dirty, on another branch, or diverged: stop.
+   Unvalidated human work outranks an automatic deployment.
+3. **Reconciliation** — the candidate merges the newest `main` inside its own
+   worktree. A conflict aborts the merge and sends the candidate back to its
+   job; nothing is ever auto-resolved.
+4. **Gates replayed** — after reconciliation it is no longer the code that was
+   validated, so the tests run again.
+5. **Integration** — fast-forward push only, straight from the worktree to
+   `refs/heads/main`. No force push.
+6. **Serving update** — `merge --ff-only` in the primary checkout.
+7. **Reload** — the supervisor stops its children and re-execs itself, so no
+   module of the old revision survives. Continuity comes from persistent
+   Core/task state on disk, not from keeping processes alive.
+8. **Health** — the deployment is marked `committed` only once Core answers
+   ready. Otherwise the serving copy is detached back onto the last known-good
+   revision: no commit disappears, `main` keeps the faulty revision, and a human
+   decides what to do with it. If even that would crush someone's work, the
+   transaction stops as `blocked` and says so.
+
+The durable marker `runtime/deployment.json` is written *before* the serving
+plane is touched, which is what makes an interrupted deployment recoverable: the
+next start concludes it from the file alone.
+
+Nothing here is automatic until it is opened. `self_development.enabled` allows
+building a candidate; `self_development.auto_deploy` allows shipping one, and
+cannot be switched on by itself. Both are off on a fresh install.
+
+Surface: `GET /api/self-dev` (gate, worktrees, leases, jobs, deployment),
+`POST /api/self-dev` (open a job, returns at once), `POST /api/self-dev/deploy`
+(integrate a job's candidate), `GET /api/routing/candidates` (measured agent +
+model candidates with availability).
+
 ## Deliberate limits of this path
 
 - Acoustic echo is handled in software since 11 September 2026 (WebRTC AEC3 plus

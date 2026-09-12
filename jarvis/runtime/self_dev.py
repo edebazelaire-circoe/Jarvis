@@ -38,6 +38,10 @@ from jarvis.runtime import agent_routing, cli_catalog, routing_hook
 from jarvis.runtime.journal import RuntimeJournal
 from jarvis.runtime.worktrees import Lease, WorktreeError, WorktreePool, git
 
+#: Bloc de réglages qui autorise l'auto-développement. Absent, tout est éteint :
+#: la capacité existe, elle ne s'exerce pas tant que personne ne l'a ouverte.
+SETTING_KEY = "self_development"
+
 #: Préfixe des branches de chantier. Un humain doit reconnaître d'un coup d'œil
 #: ce qui vient de JARVIS lui-même.
 BRANCH_PREFIX = "selfdev"
@@ -378,6 +382,40 @@ class SelfDevelopmentRunner:
             data={"code": code, "job_id": job.job_id, "step": job.step, "worktree": job.worktree},
         )
         return job
+
+
+# --------------------------------------------------------------- autorisation
+
+
+def load_gate(settings: dict[str, Any]) -> dict[str, bool]:
+    """Ce que l'utilisateur a ouvert. Éteint par défaut, sans exception.
+
+    Deux crans distincts : construire un candidat, et le déployer. Le second
+    touche au service et ne s'allume qu'après avoir vu le premier marcher.
+    """
+    stored = settings.get(SETTING_KEY)
+    stored = stored if isinstance(stored, dict) else {}
+    return {
+        "enabled": bool(stored.get("enabled", False)),
+        "auto_deploy": bool(stored.get("auto_deploy", False)),
+    }
+
+
+def apply_gate(settings: dict[str, Any], payload: Any) -> dict[str, bool]:
+    if not isinstance(payload, dict):
+        raise SelfDevError("selfdev_bad_payload", "L'auto-développement doit être un objet.")
+    unknown = set(payload) - {"enabled", "auto_deploy"}
+    if unknown:
+        raise SelfDevError("selfdev_unknown_field", f"Réglage inconnu : {', '.join(sorted(unknown))}.")
+    current = load_gate(settings)
+    gate = {key: bool(payload[key]) if key in payload else current[key] for key in current}
+    if gate["auto_deploy"] and not gate["enabled"]:
+        raise SelfDevError(
+            "selfdev_deploy_without_build",
+            "Le déploiement automatique demande que l'auto-développement soit permis.",
+        )
+    settings[SETTING_KEY] = gate
+    return gate
 
 
 def _default_python() -> str:

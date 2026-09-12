@@ -195,8 +195,11 @@ def offline_candidates(runtime_root: Path, policy: RoutingPolicy) -> list[ModelC
 
 
 def load_settings(runtime_root: Path) -> dict[str, Any]:
+    # `utf-8-sig` et non `utf-8` : un fichier de réglages réouvert dans le
+    # Bloc-notes revient avec une marque d'ordre d'octets, et la refuser
+    # éteindrait l'aiguillage sans que personne comprenne pourquoi.
     try:
-        loaded = json.loads((runtime_root / "control-center-settings.json").read_text(encoding="utf-8"))
+        loaded = json.loads((runtime_root / "control-center-settings.json").read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError):
         return {}
     return loaded if isinstance(loaded, dict) else {}
@@ -302,8 +305,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         if index + 1 < len(args):
             runtime_root = Path(args[index + 1])
     try:
-        event = json.loads(sys.stdin.read() or "{}")
-    except (json.JSONDecodeError, OSError):
+        # Sous Windows, ce qui arrive sur stdin peut porter une marque d'ordre
+        # d'octets selon qui écrit. La refuser reviendrait à ne jamais aiguiller
+        # sur cette machine, et en silence.
+        event = json.loads(sys.stdin.read().lstrip("﻿") or "{}")
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
         event = {}
     output = run(event if isinstance(event, dict) else {}, runtime_root)
     if output:

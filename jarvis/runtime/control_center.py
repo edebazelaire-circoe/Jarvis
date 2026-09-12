@@ -36,6 +36,8 @@ from jarvis.runtime.codex_local import CodexLocalAgent, normalize_sandbox_mode
 from jarvis.runtime.journal import RuntimeJournal, read_jsonl_tail
 from jarvis.runtime.model_catalog import CatalogError, ModelCatalog, filter_by_role
 from jarvis.runtime.owner_voice import effective_verifier_settings, probe_remedy
+from jarvis.runtime.self_dev import SelfDevError, apply_gate as apply_self_dev_gate, load_gate as load_self_dev_gate
+from jarvis.runtime.self_dev_service import SelfDevelopmentService
 from jarvis.runtime.owner_voice import probe_from_settings as probe_owner_verifier
 from jarvis.runtime.visual_signals import VisualSignalBus
 from jarvis.runtime.work_brief import render_work_brief
@@ -232,6 +234,7 @@ class ControlCenter:
 
         settings = self._settings()
         self._agent_id = cli_catalog.normalize_agent_cli(settings.get("agent_cli"))
+        self._self_dev: SelfDevelopmentService | None = None
         self._agents: dict[str, Any] = {}
         self._agent_lock = asyncio.Lock()
         self._apply_agent_settings(settings)
@@ -252,6 +255,9 @@ class ControlCenter:
             web.get("/api/models", self.models),
             web.get("/api/cli/agents", self.cli_agents),
             web.get("/api/routing/candidates", self.routing_candidates),
+            web.get("/api/self-dev", self.self_dev_state),
+            web.post("/api/self-dev", self.self_dev_start),
+            web.post("/api/self-dev/deploy", self.self_dev_deploy),
             web.get("/api/shortcuts", self.get_shortcuts),
             web.post("/api/shortcuts", self.save_shortcuts),
             web.get("/api/audio/devices", self.audio_devices),
@@ -1099,6 +1105,9 @@ class ControlCenter:
             # qui n'a pas sa place dans un GET qui doit rester immédiat.
             # `/api/routing/candidates` les donne, mesurés.
             "routing": agent_routing.describe(agent_routing.load_policy(settings), ()),
+            # Auto-développement : deux crans, éteints tant que l'utilisateur ne
+            # les ouvre pas. L'état des worktrees vit sur `/api/self-dev`.
+            "self_development": load_self_dev_gate(settings),
             "audio": {
                 "input_device": settings.get("audio_input_device", ""),
                 "output_device": settings.get("audio_output_device", ""),
@@ -1142,12 +1151,15 @@ class ControlCenter:
             switch_to = self._apply_cli(current, payload)
             if payload.get("routing") is not None:
                 agent_routing.apply(current, payload["routing"])
+            if payload.get("self_development") is not None:
+                apply_self_dev_gate(current, payload["self_development"])
         except (
             voice_stack.VoiceStackError,
             ConversationAuthorizationError,
             cli_catalog.CliSettingsError,
             creds.CredentialError,
             RoutingError,
+            SelfDevError,
         ) as exc:
             # Le corps reste le message en clair (ce que la page affiche) ; le
             # code stable voyage à côté, pour les clients et les tests.
@@ -1443,6 +1455,45 @@ class ControlCenter:
 
         candidates = agent_routing.with_saved(agent_routing.build_candidates(agents, models), policy)
         return web.json_response({"ok": True, "sources": sources, **agent_routing.describe(policy, candidates)})
+
+    # ------------------------------------------------- auto-développement
+
+    @property
+    def self_dev(self) -> SelfDevelopmentService:
+        """Construit à la demande : rien ne tourne tant que personne ne demande."""
+        if self._self_dev is None:
+            self._self_dev = SelfDevelopmentService(
+                project_root=self.project_root,
+                runtime_root=self.runtime_root,
+                settings=self._settings,
+                journal=self.journal,
+            )
+        return self._self_dev
+
+    async def self_dev_state(self, request: web.Request) -> web.Response:
+        del request
+        return web.json_response(await self.self_dev.state())
+
+    async def self_dev_start(self, request: web.Request) -> web.Response:
+        """Ouvrir un chantier et rendre la main : le travail continue en fond."""
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise web.HTTPBadRequest(text="self-dev request must be an object")
+        profile = str(payload.get("profile") or "code")
+        try:
+            job = self.self_dev.start(str(payload.get("request") or ""), profile=profile)
+        except SelfDevError as exc:
+            return web.json_response({"ok": False, "code": exc.code, "error": str(exc)}, status=400)
+        return web.json_response({"ok": True, "job": job.as_dict()})
+
+    async def self_dev_deploy(self, request: web.Request) -> web.Response:
+        payload = await request.json()
+        job_id = str(payload.get("job_id") or "") if isinstance(payload, dict) else ""
+        try:
+            deployment = await self.self_dev.deploy(job_id)
+        except SelfDevError as exc:
+            return web.json_response({"ok": False, "code": exc.code, "error": str(exc)}, status=400)
+        return web.json_response({"ok": True, "deployment": deployment})
 
     async def cli_agents(self, request: web.Request) -> web.Response:
         del request
