@@ -1504,11 +1504,12 @@ function bindSend(after){
 const TABS=[
   {id:'voice',label:'Mode vocal',save:true},
   {id:'cli',label:'CLI agent',save:true},
+  {id:'routing',label:'Aiguillage',save:true},
   {id:'config',label:'Config',save:true},
   {id:'keys',label:'API Keys',save:false},
   {id:'shortcuts',label:'Raccourcis',save:false},
 ];
-const SET={open:false,tab:'voice',data:null,draft:null,dirty:false,catalog:{},clis:null,devices:null,capture:null,shortcuts:null,restartNotice:false,rdOpen:false};
+const SET={open:false,tab:'voice',data:null,draft:null,dirty:false,catalog:{},clis:null,devices:null,capture:null,shortcuts:null,restartNotice:false,rdOpen:false,routing:null};
 const overlay=$('#overlay'),modalContent=$('#modalContent'),modalStatus=$('#modalStatus'),modalSave=$('#modalSave'),modalSub=$('#modalSub');
 
 function say(text,kind){modalStatus.className='status'+(kind?' '+kind:'');modalStatus.textContent=text||''}
@@ -1738,6 +1739,63 @@ async function tabCli(){
     ${permission}</section>`;
 }
 
+/* --- onglet Aiguillage ---------------------------------------------------
+   Rien de ce qui est affiché ici n'est écrit dans cette page : les profils,
+   les candidats et leur disponibilité viennent tous de /api/routing/candidates.
+   Un candidat enregistré devenu indisponible reste coché et visible — sa
+   disparition serait un réglage perdu en silence.                          */
+function candidateLabel(c){return c.label||(c.model?`${c.agent} · ${c.model}`:c.agent)}
+function candidateKey(c){return JSON.stringify({agent:c.agent,model:c.model||''})}
+
+function routingRow(profile,candidate,chosen){
+  const key=candidateKey(candidate);
+  const rank=chosen.indexOf(key);
+  const state=candidate.available
+    ? '<span class="tag ok">disponible</span>'
+    : `<span class="tag bad">indisponible</span>`;
+  const why=candidate.available?'':`<div class="hint">${esc(candidate.unavailable_reason||'')}</div>`;
+  const order=rank>=0?`<span class="tag">${rank===0?'préféré':'recours '+rank}</span>`:'';
+  return `<label class="choice ${rank>=0?'selected':''}">
+    <input type="checkbox" data-routing-candidate="${esc(key)}" data-routing-profile="${esc(profile)}" ${rank>=0?'checked':''}>
+    <div><div class="title"><strong>${esc(candidateLabel(candidate))}</strong>${state}${order}</div>${why}</div>
+  </label>`;
+}
+
+async function tabRouting(){
+  if(!SET.routing)SET.routing=await api('/api/routing/candidates').catch(e=>({ok:false,error:e.message,profiles:[],candidates:[]}));
+  const state=SET.routing,draft=SET.draft.routing;
+  if(state.ok===false)return `<section><div class="notice bad">${esc(state.error||'Aiguillage indisponible.')}</div></section>`;
+  const candidates=state.candidates||[];
+  const blocks=(state.profiles||[]).map(profile=>{
+    const entry=draft.profiles[profile.id]||{candidates:[],enabled:true,allow_general_fallback:true};
+    const chosen=(entry.candidates||[]).map(candidateKey);
+    const rows=candidates.map(c=>routingRow(profile.id,c,chosen)).join('');
+    const empty=chosen.length?'':'<div class="hint">Aucun candidat autorisé : ce profil garde le modèle configuré du CLI.</div>';
+    const fallback=profile.id==='general'?'':`<div class="field inline">
+      <input type="checkbox" id="f_fb_${esc(profile.id)}" data-routing-fallback="${esc(profile.id)}" ${entry.allow_general_fallback?'checked':''}>
+      <div><label for="f_fb_${esc(profile.id)}">Se rabattre sur le profil Général</label>
+      <div class="hint">Quand aucun candidat de ce profil n'est utilisable, essayer ceux du profil Général plutôt que d'échouer.</div></div></div>`;
+    return `<h3>${esc(profile.label)}</h3>
+      <div class="hint" style="margin-bottom:8px">${esc(profile.description)}${profile.requires.length?` · exige : ${profile.requires.map(esc).join(', ')}`:''}</div>
+      <div class="choices">${rows}</div>${empty}${fallback}`;
+  }).join('');
+  const sources=Object.entries(state.sources||{}).map(([provider,source])=>{
+    const label=providerLabel(provider);
+    if(source==='live')return `<span class="note">${esc(label)} : liste à jour</span>`;
+    if(source==='cache')return `<span class="note">${esc(label)} : liste en cache</span>`;
+    if(source==='stale')return `<span class="note warn">${esc(label)} : dernière liste connue</span>`;
+    return `<span class="note bad">${esc(label)} : ${esc(source)}</span>`;
+  }).join(' ');
+  return `<section>
+    <div class="field inline"><input type="checkbox" id="f_routing_on" data-routing-enabled ${draft.enabled?'checked':''}>
+      <div><label for="f_routing_on">Choisir le modèle des sous-agents selon la tâche</label>
+      <div class="hint">Décoché, rien ne change : chaque sous-agent garde le modèle par défaut du CLI. Coché, JARVIS impose pour chaque profil le premier candidat autorisé et utilisable, et corrige le modèle demandé par le cerveau si besoin.</div></div></div>
+    <div class="source" style="margin-bottom:10px">${sources} <button class="linkish" id="routingRefresh">rafraîchir</button></div>
+    ${blocks}
+    <div class="hint" style="margin-top:14px">L'ordre des candidats est celui de la liste : le premier disponible est choisi, les suivants servent de recours. Les sous-agents s'exécutent dans le CLI vocal actif ; un candidat d'un autre CLI ne peut servir qu'à l'auto-développement.</div>
+  </section>`;
+}
+
 /* --- onglet Config ------------------------------------------------------ */
 function deviceOptions(items,selected,defaultId){
   const chosen=String(selected??''),def=items.find(x=>String(x.id)===String(defaultId));
@@ -1817,6 +1875,7 @@ async function renderTab(){
   try{
     if(SET.tab==='voice')modalContent.innerHTML=await tabVoice();
     else if(SET.tab==='cli')modalContent.innerHTML=await tabCli();
+    else if(SET.tab==='routing')modalContent.innerHTML=await tabRouting();
     else if(SET.tab==='config')modalContent.innerHTML=await tabConfig();
     else if(SET.tab==='keys')modalContent.innerHTML=tabKeys();
     else modalContent.innerHTML=tabShortcuts();
@@ -1857,6 +1916,24 @@ function bindTab(){
   modalContent.querySelectorAll('[data-refresh]').forEach(el=>el.addEventListener('click',async()=>{
     const [provider,role]=el.dataset.refresh.split(':');el.textContent='…';
     await catalog(provider,role,true);renderTab()}));
+
+  // Aiguillage : cocher ajoute le candidat en fin de liste (donc en dernier
+  // recours), décocher le retire. L'ordre reste celui des ajouts.
+  const routingOn=modalContent.querySelector('[data-routing-enabled]');
+  if(routingOn)routingOn.addEventListener('change',()=>{
+    SET.draft.routing.enabled=routingOn.checked;SET.dirty=true;renderTab()});
+  modalContent.querySelectorAll('[data-routing-candidate]').forEach(el=>el.addEventListener('change',()=>{
+    const entry=SET.draft.routing.profiles[el.dataset.routingProfile];
+    const value=JSON.parse(el.dataset.routingCandidate);
+    const rest=(entry.candidates||[]).filter(c=>candidateKey(c)!==el.dataset.routingCandidate);
+    entry.candidates=el.checked?[...rest,value]:rest;
+    SET.dirty=true;renderTab()}));
+  modalContent.querySelectorAll('[data-routing-fallback]').forEach(el=>el.addEventListener('change',()=>{
+    SET.draft.routing.profiles[el.dataset.routingFallback].allow_general_fallback=el.checked;
+    SET.dirty=true;say('Modifications non enregistrées.','')}));
+  const routingRefresh=$('#routingRefresh');
+  if(routingRefresh)routingRefresh.addEventListener('click',async()=>{
+    routingRefresh.textContent='…';SET.routing=null;SET.catalog={};renderTab()});
 
   const reprobe=$('#reprobe');
   if(reprobe)reprobe.addEventListener('click',async()=>{
@@ -1978,6 +2055,9 @@ function draftFrom(data){
     // `authorization` : seules les clés touchées, jamais la description reçue.
     voice:{stack:data.voice.stack,arch:data.voice.arch||'',settings:JSON.parse(JSON.stringify(data.voice.settings)),authorization:{}},
     cli:{agent:data.cli.agent,settings:JSON.parse(JSON.stringify(data.cli.settings))},
+    // La politique complète, telle que le serveur la décrit : la page ne
+    // connaît ni les profils ni les candidats, elle les reçoit.
+    routing:{enabled:data.routing.enabled,profiles:JSON.parse(JSON.stringify(data.routing.policy))},
     audio:{...data.audio},
   };
 }
@@ -2010,7 +2090,7 @@ async function saveDraft(options){
     if(voiceRestart)SET.restartNotice=true;
     SET.data=data;SET.shortcuts=data.shortcuts;SET.draft=draftFrom(data);SET.dirty=false;
     // Le CLI actif a pu changer : sa détection est refaite à l'ouverture de l'onglet.
-    SET.clis=null;
+    SET.clis=null;SET.routing=null;
     if(!silent){say('Enregistré.','ok');await renderTab()}
     return data;
   }catch(e){

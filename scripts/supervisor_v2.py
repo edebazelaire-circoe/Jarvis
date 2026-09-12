@@ -20,6 +20,10 @@ RESTART_WINDOW_S = 120.0
 # backoff repart de zéro.
 HEALTHY_UPTIME_S = 60.0
 STDERR_TAIL_LINES = 40
+# Une demande de rechargement arrive par un fichier, écrit par un autre
+# processus : il faut aller la voir. Une seconde est invisible à l'usage et ne
+# coûte rien.
+RELOAD_POLL_S = 1.0
 
 
 class Supervisor:
@@ -192,10 +196,73 @@ class Supervisor:
             data={**report, "code": "supervisor_child_crash" if report.get("native_crash") else "supervisor_child_failed"},
         )
 
+    async def _core_health(self) -> dict[str, object]:
+        """L'avis de Core sur lui-même, une fois. Sert à conclure un déploiement."""
+        from jarvis.protocol.client import LocalCoreClient
+        from jarvis.v2_config import V2Settings
+
+        settings = V2Settings.load()
+        if not settings.token_file.exists():
+            return {"ready": False, "error": "jeton de Core absent"}
+        client = LocalCoreClient(
+            host=settings.core_host,
+            port=settings.core_port,
+            token=settings.token_file.read_text(encoding="utf-8").strip(),
+        )
+        try:
+            return dict(await client.health())
+        finally:
+            await client.close()
+
+    def _deployments(self):  # noqa: ANN202 - le coordinateur, construit à la demande
+        from jarvis.runtime.deployment import DeploymentCoordinator
+
+        return DeploymentCoordinator(primary=ROOT, runtime_root=self.runtime_root, journal=self.journal)
+
+    async def settle_deployment(self) -> None:
+        """Conclure un déploiement laissé en cours par le redémarrage précédent.
+
+        C'est ici qu'un déploiement devient vrai : Core vient de répondre prêt,
+        donc le nouveau code tourne. S'il n'avait pas répondu, le coordinateur
+        serait revenu à la révision qui marchait.
+        """
+        try:
+            await self._deployments().finish(health=self._core_health)
+        except Exception as exc:  # noqa: BLE001 - un déploiement ne fait pas tomber le service
+            self.journal.emit(
+                "deploy.settle_failed",
+                f"Conclusion du déploiement impossible ({type(exc).__name__}) : le service continue.",
+                level="error",
+                data={"code": "deploy_settle_failed", "exception_type": type(exc).__name__},
+            )
+
+    async def _reload_requested(self) -> bool:
+        try:
+            return self._deployments().take_reload_request()
+        except OSError:
+            return False
+
+    async def _reload(self) -> None:
+        """Repartir sur le code présent sur le disque, état durable conservé.
+
+        Le superviseur se remplace lui-même : c'est le seul moyen d'être sûr
+        qu'aucun module Python de l'ancienne révision ne survit. Les enfants
+        sont arrêtés proprement avant ; ce qu'ils ont écrit reste sur le disque,
+        et c'est cet état qui fait la continuité, pas les processus.
+        """
+        self.journal.emit(
+            "supervisor.reload",
+            "Rechargement demandé : arrêt des enfants puis reprise sur le nouveau code.",
+            data={"code": "supervisor_reload", "pid": os.getpid()},
+        )
+        await self.stop()
+        os.execv(sys.executable, [sys.executable, *sys.argv])
+
     async def run(self) -> int:
         self.journal.emit("supervisor.start", "Superviseur Jarvis démarré", data={"pid": os.getpid()})
         await self.spawn("core", "core")
         await self.wait_core_ready()
+        await self.settle_deployment()
         await self._ensure_role("ui", "control-center")
         await self._ensure_role("voice", "voice")
 
@@ -210,11 +277,19 @@ class Supervisor:
                 role: asyncio.create_task(process.wait(), name=f"jarvis-{role}-wait")
                 for role, process in live.items()
             }
-            done, pending = await asyncio.wait(set(waits.values()), return_when=asyncio.FIRST_COMPLETED)
-            completed = next(name for name, task in waits.items() if task in done)
+            # Le réveil régulier sert à voir une demande de rechargement : elle
+            # arrive par le disque, d'un autre processus, sans rien à écouter.
+            done, pending = await asyncio.wait(
+                set(waits.values()), timeout=RELOAD_POLL_S, return_when=asyncio.FIRST_COMPLETED
+            )
             for task in pending:
                 task.cancel()
             await asyncio.gather(*pending, return_exceptions=True)
+            if not done:
+                if await self._reload_requested():
+                    await self._reload()
+                continue
+            completed = next(name for name, task in waits.items() if task in done)
 
             report = await self._exit_report(completed)
             self._journal_exit(completed, report)
