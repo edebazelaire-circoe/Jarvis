@@ -1,5 +1,6 @@
 httpx<1,>=0.27
 aiohttp<4,>=3.11
+tzdata>=2025.2
 
 [calendar-google]
 google-api-python-client<3,>=2
@@ -10,8 +11,21 @@ google-auth-oauthlib<2,>=1
 pytest<10,>=8
 pytest-asyncio<2,>=0.24
 
+[drive-google]
+google-api-python-client<3,>=2
+google-auth<3,>=2
+google-auth-oauthlib<2,>=1
+
+[mcp]
+mcp<2,>=1.2
+
+[speaker]
+numpy<3,>=2.0
+sherpa-onnx<2,>=1.13.8
+
 [voice]
 numpy<3,>=2.0
 sounddevice<1,>=0.5
 pynput<2,>=1.7
 pvporcupine<4,>=3
+livekit<2,>=1.1
