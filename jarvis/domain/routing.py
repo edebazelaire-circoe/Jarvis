@@ -185,6 +185,11 @@ class ModelCandidate:
     capabilities: frozenset[str] = frozenset()
     available: bool = True
     unavailable_reason: str = ""
+    # Les deux moitiés du libellé, gardées séparées : l'écran de réglages
+    # choisit d'abord le harness puis son modèle, et recoller « CLI · modèle »
+    # pour le redécouper serait une devinette.
+    agent_label: str = ""
+    model_label: str = ""
 
     @property
     def ref(self) -> CandidateRef:

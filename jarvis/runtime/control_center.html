@@ -1531,7 +1531,7 @@ const TABS=[
   {id:'keys',label:'API Keys',save:false},
   {id:'shortcuts',label:'Raccourcis',save:false},
 ];
-const SET={open:false,tab:'voice',data:null,draft:null,dirty:false,catalog:{},clis:null,devices:null,capture:null,shortcuts:null,restartNotice:false,rdOpen:false,routing:null,prompts:null};
+const SET={open:false,tab:'voice',data:null,draft:null,dirty:false,catalog:{},clis:null,devices:null,capture:null,shortcuts:null,restartNotice:false,rdOpen:false,routing:null,prompts:null,routingPick:{}};
 const overlay=$('#overlay'),modalContent=$('#modalContent'),modalStatus=$('#modalStatus'),modalSave=$('#modalSave'),modalSub=$('#modalSub');
 
 function say(text,kind){modalStatus.className='status'+(kind?' '+kind:'');modalStatus.textContent=text||''}
@@ -1853,35 +1853,78 @@ async function tabCli(){
 
 /* --- onglet Aiguillage ---------------------------------------------------
    Rien de ce qui est affiché ici n'est écrit dans cette page : les profils,
-   les candidats et leur disponibilité viennent tous de /api/routing/candidates.
-   Un candidat enregistré devenu indisponible reste coché et visible — sa
-   disparition serait un réglage perdu en silence.                          */
-function candidateLabel(c){return c.label||(c.model?`${c.agent} · ${c.model}`:c.agent)}
-function candidateKey(c){return JSON.stringify({agent:c.agent,model:c.model||''})}
+   les harness, leurs modèles et leur disponibilité viennent tous de
+   /api/routing/candidates.
 
-function routingRow(profile,candidate,chosen){
-  const key=candidateKey(candidate);
-  const rank=chosen.indexOf(key);
-  const state=candidate.available
-    ? '<span class="tag ok">disponible</span>'
-    : `<span class="tag bad">indisponible</span>`;
-  const why=candidate.available?'':`<div class="hint">${esc(candidate.unavailable_reason||'')}</div>`;
-  const order=rank>=0?`<span class="tag">${rank===0?'préféré':'recours '+rank}</span>`:'';
-  return `<label class="choice ${rank>=0?'selected':''}">
-    <input type="checkbox" data-routing-candidate="${esc(key)}" data-routing-profile="${esc(profile)}" ${rank>=0?'checked':''}>
-    <div><div class="title"><strong>${esc(candidateLabel(candidate))}</strong>${state}${order}</div>${why}</div>
-  </label>`;
+   Le choix se fait en deux temps : d'abord le harness, ensuite un de ses
+   modèles seulement. Une liste unique de tous les couples harness × modèle
+   devient illisible dès qu'un fournisseur en déclare vingt.
+
+   Ce que le profil retient reste une liste ordonnée de couples {agent, model}
+   — le format enregistré ne change pas. Un candidat enregistré devenu
+   indisponible y reste visible et expliqué : sa disparition serait un réglage
+   perdu en silence.                                                        */
+function candidateKey(c){return JSON.stringify({agent:c.agent,model:c.model||''})}
+function harnessOf(state,agent){return (state.harnesses||[]).find(h=>h.id===agent)||null}
+function modelOf(harness,model){return harness?(harness.models||[]).find(m=>(m.model||'')===(model||'')):null}
+/* Le choix en cours d'un profil ne devient un candidat qu'à « Ajouter » :
+   sélectionner un harness ne modifie donc aucun réglage. */
+function routingPick(profile){
+  const picks=SET.routingPick||(SET.routingPick={});
+  return picks[profile]||(picks[profile]={agent:'',model:''});
+}
+/* Le brouillon reçoit tous les profils du serveur ; un profil apparu depuis
+   l'ouverture de la fenêtre est créé vide plutôt que de faire échouer le clic. */
+function routingEntry(profile){
+  const profiles=SET.draft.routing.profiles;
+  return profiles[profile]||(profiles[profile]={candidates:[],enabled:true,allow_general_fallback:true});
+}
+function candidateLabel(state,ref){
+  const harness=harnessOf(state,ref.agent),model=modelOf(harness,ref.model);
+  const left=harness?harness.label:ref.agent;
+  const right=model?model.label:(ref.model||'');
+  return right?`${left} · ${right}`:left;
+}
+
+function routingRow(profile,ref,rank,state){
+  const harness=harnessOf(state,ref.agent),model=modelOf(harness,ref.model);
+  const usable=!!(harness&&model&&model.available);
+  const tag=usable?'<span class="tag ok">disponible</span>':'<span class="tag bad">indisponible</span>';
+  const reason=(model&&model.unavailable_reason)||(harness&&harness.unavailable_reason)||"Ce couple n'est plus proposé sur cette machine.";
+  const why=usable?'':`<div class="hint">${esc(reason)}</div>`;
+  const order=`<span class="tag">${rank===0?'préféré':'recours '+rank}</span>`;
+  const up=rank>0?`<button class="linkish" data-routing-up="${esc(profile)}" data-routing-rank="${rank}">monter</button> `:'';
+  return `<div class="choice selected">
+    <div><div class="title"><strong>${esc(candidateLabel(state,ref))}</strong>${tag}${order}</div>${why}
+      <div class="source">${up}<button class="linkish" data-routing-drop="${esc(profile)}" data-routing-rank="${rank}">retirer</button></div></div>
+  </div>`;
+}
+
+/* Les deux sélecteurs en cascade : le second ne montre que les modèles du
+   harness choisi au premier. */
+function routingPicker(profile,state){
+  const pick=routingPick(profile);
+  const harness=harnessOf(state,pick.agent);
+  const harnesses=(state.harnesses||[]).map(h=>({value:h.id,label:h.available?h.label:`${h.label} — indisponible`}));
+  const models=(harness?harness.models||[]:[]).map(m=>({value:m.model,label:m.available?m.label:`${m.label} — indisponible`}));
+  const modelField=harness
+    ? `<select id="f_rt_model_${esc(profile)}" data-routing-model="${esc(profile)}">${selectOptions(models,pick.model,'')}</select>`
+    : `<select id="f_rt_model_${esc(profile)}" disabled><option>Choisir d'abord un harness</option></select>`;
+  const why=harness&&!harness.available?`<div class="hint">${esc(harness.unavailable_reason||'')}</div>`:'';
+  return `<div class="field"><label for="f_rt_harness_${esc(profile)}">Harness</label>
+      <select id="f_rt_harness_${esc(profile)}" data-routing-harness="${esc(profile)}">${selectOptions(harnesses,pick.agent,'Choisir un harness…')}</select>${why}</div>
+    <div class="field"><label for="f_rt_model_${esc(profile)}">Modèle</label>${modelField}
+      <div class="source"><button class="linkish" data-routing-add="${esc(profile)}" ${harness?'':'disabled'}>ajouter à ce profil</button></div></div>`;
 }
 
 async function tabRouting(){
-  if(!SET.routing)SET.routing=await api('/api/routing/candidates').catch(e=>({ok:false,error:e.message,profiles:[],candidates:[]}));
+  if(!SET.routing)SET.routing=await api('/api/routing/candidates').catch(e=>({ok:false,error:e.message,profiles:[],harnesses:[]}));
   const state=SET.routing,draft=SET.draft.routing;
   if(state.ok===false)return `<section><div class="notice bad">${esc(state.error||'Aiguillage indisponible.')}</div></section>`;
-  const candidates=state.candidates||[];
   const blocks=(state.profiles||[]).map(profile=>{
     const entry=draft.profiles[profile.id]||{candidates:[],enabled:true,allow_general_fallback:true};
-    const chosen=(entry.candidates||[]).map(candidateKey);
-    const rows=candidates.map(c=>routingRow(profile.id,c,chosen)).join('');
+    const chosen=entry.candidates||[];
+    const rows=chosen.map((ref,rank)=>routingRow(profile.id,ref,rank,state)).join('');
     const empty=chosen.length?'':'<div class="hint">Aucun candidat autorisé : ce profil garde le modèle configuré du CLI.</div>';
     const fallback=profile.id==='general'?'':`<div class="field inline">
       <input type="checkbox" id="f_fb_${esc(profile.id)}" data-routing-fallback="${esc(profile.id)}" ${entry.allow_general_fallback?'checked':''}>
@@ -1889,7 +1932,7 @@ async function tabRouting(){
       <div class="hint">Quand aucun candidat de ce profil n'est utilisable, essayer ceux du profil Général plutôt que d'échouer.</div></div></div>`;
     return `<h3>${esc(profile.label)}</h3>
       <div class="hint" style="margin-bottom:8px">${esc(profile.description)}${profile.requires.length?` · exige : ${profile.requires.map(esc).join(', ')}`:''}</div>
-      <div class="choices">${rows}</div>${empty}${fallback}`;
+      ${rows?`<div class="choices">${rows}</div>`:empty}${routingPicker(profile.id,state)}${fallback}`;
   }).join('');
   const sources=Object.entries(state.sources||{}).map(([provider,source])=>{
     const label=providerLabel(provider);
@@ -1904,7 +1947,7 @@ async function tabRouting(){
       <div class="hint">Décoché, rien ne change : chaque sous-agent garde le modèle par défaut du CLI. Coché, JARVIS impose pour chaque profil le premier candidat autorisé et utilisable, et corrige le modèle demandé par le cerveau si besoin.</div></div></div>
     <div class="source" style="margin-bottom:10px">${sources} <button class="linkish" id="routingRefresh">rafraîchir</button></div>
     ${blocks}
-    <div class="hint" style="margin-top:14px">L'ordre des candidats est celui de la liste : le premier disponible est choisi, les suivants servent de recours. Les sous-agents s'exécutent dans le CLI vocal actif ; un candidat d'un autre CLI ne peut servir qu'à l'auto-développement.</div>
+    <div class="hint" style="margin-top:14px">Un candidat s'ajoute en deux temps : le harness, puis un de ses modèles. L'ordre de la liste est la préférence — le premier disponible est choisi, les suivants servent de recours, et « monter » change le préféré. Les sous-agents s'exécutent dans le CLI vocal actif ; un candidat d'un autre CLI ne peut servir qu'à l'auto-développement.</div>
   </section>`;
 }
 
@@ -2041,19 +2084,38 @@ function bindTab(){
     const [provider,role]=el.dataset.refresh.split(':');el.textContent='…';
     await catalog(provider,role,true);renderTab()}));
 
-  // Aiguillage : cocher ajoute le candidat en fin de liste (donc en dernier
-  // recours), décocher le retire. L'ordre reste celui des ajouts.
+  // Aiguillage : choisir un harness puis un modèle ne change rien ; seul
+  // « ajouter » met le couple en fin de liste (donc en dernier recours).
+  // « monter » et « retirer » réordonnent, l'ordre étant la préférence.
   const routingOn=modalContent.querySelector('[data-routing-enabled]');
   if(routingOn)routingOn.addEventListener('change',()=>{
     SET.draft.routing.enabled=routingOn.checked;SET.dirty=true;renderTab()});
-  modalContent.querySelectorAll('[data-routing-candidate]').forEach(el=>el.addEventListener('change',()=>{
-    const entry=SET.draft.routing.profiles[el.dataset.routingProfile];
-    const value=JSON.parse(el.dataset.routingCandidate);
-    const rest=(entry.candidates||[]).filter(c=>candidateKey(c)!==el.dataset.routingCandidate);
-    entry.candidates=el.checked?[...rest,value]:rest;
+  modalContent.querySelectorAll('[data-routing-harness]').forEach(el=>el.addEventListener('change',()=>{
+    // Changer de harness invalide le modèle retenu : il appartenait à l'autre.
+    const pick=routingPick(el.dataset.routingHarness);
+    pick.agent=el.value;pick.model='';renderTab()}));
+  modalContent.querySelectorAll('[data-routing-model]').forEach(el=>el.addEventListener('change',()=>{
+    routingPick(el.dataset.routingModel).model=el.value}));
+  modalContent.querySelectorAll('[data-routing-add]').forEach(el=>el.addEventListener('click',()=>{
+    const profile=el.dataset.routingAdd,pick=routingPick(profile);
+    if(!pick.agent)return;
+    const entry=routingEntry(profile);
+    const value={agent:pick.agent,model:pick.model||''};
+    const rest=(entry.candidates||[]).filter(c=>candidateKey(c)!==candidateKey(value));
+    entry.candidates=[...rest,value];
+    SET.dirty=true;renderTab()}));
+  modalContent.querySelectorAll('[data-routing-drop]').forEach(el=>el.addEventListener('click',()=>{
+    const entry=routingEntry(el.dataset.routingDrop);
+    entry.candidates=(entry.candidates||[]).filter((c,i)=>i!==Number(el.dataset.routingRank));
+    SET.dirty=true;renderTab()}));
+  modalContent.querySelectorAll('[data-routing-up]').forEach(el=>el.addEventListener('click',()=>{
+    const entry=routingEntry(el.dataset.routingUp),rank=Number(el.dataset.routingRank);
+    const list=[...(entry.candidates||[])];
+    if(rank>0)list.splice(rank-1,0,list.splice(rank,1)[0]);
+    entry.candidates=list;
     SET.dirty=true;renderTab()}));
   modalContent.querySelectorAll('[data-routing-fallback]').forEach(el=>el.addEventListener('change',()=>{
-    SET.draft.routing.profiles[el.dataset.routingFallback].allow_general_fallback=el.checked;
+    routingEntry(el.dataset.routingFallback).allow_general_fallback=el.checked;
     SET.dirty=true;say('Modifications non enregistrées.','')}));
   const routingRefresh=$('#routingRefresh');
   if(routingRefresh)routingRefresh.addEventListener('click',async()=>{
