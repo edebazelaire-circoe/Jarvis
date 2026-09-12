@@ -2,6 +2,13 @@
 
 Date: 2026-08-31
 
+> Solo Owner (owner-aware voice gating) and the Core work state, delivered by the
+> handoff `tasks/jarvis_solo_owner_duplex_handoff/`, have their own workstation
+> protocol: [`docs/HARDWARE_ACCEPTANCE.md`](HARDWARE_ACCEPTANCE.md), **not
+> executed** (it needs the owner's voice and real background speech). What was
+> automated is reported in
+> [`docs/fixes/solo-owner-duplex/final-implementation-report.md`](fixes/solo-owner-duplex/final-implementation-report.md).
+
 Legend:
 
 - **PASS**: executed in this build environment.

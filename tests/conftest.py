@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
+import json
+from pathlib import Path
+import shutil
+import subprocess
 from typing import Any
 
 import pytest
@@ -9,6 +13,40 @@ import pytest
 from jarvis.domain.events import StateEvent
 from jarvis.domain.messages import CancellationToken, UserTurn
 from jarvis.domain.results import AgentResult, SpeechResult
+
+#: Logique pure de la page du Control Center : le fichier même que
+#: `ControlCenter.index` insère dans la page servie au navigateur.
+CONTROL_CENTER_WORK_JS = Path(__file__).resolve().parents[1] / "jarvis" / "runtime" / "control_center_work.js"
+_NODE = shutil.which("node")
+
+
+@pytest.fixture
+def page_logic():
+    """Exécuter la logique pure de la page avec node, et rendre son résultat.
+
+    Les règles de l'interface (garde de révision, durées, projection d'un
+    travail Core, cohérence mode/vérification) sont ainsi prouvées en
+    exécutant le code servi, pas en relisant sa source : une erreur de logique
+    qui conserverait le texte ne passerait plus.
+
+    `body` est le corps d'une fonction ; `W` y désigne le module chargé, et la
+    valeur rendue revient décodée depuis JSON.
+    """
+
+    def run(body: str) -> Any:
+        if _NODE is None:
+            pytest.skip("node absent")
+        script = (
+            f"const W=require({json.dumps(str(CONTROL_CENTER_WORK_JS))});"
+            f"console.log(JSON.stringify((()=>{{{body}}})()))"
+        )
+        result = subprocess.run(
+            [_NODE, "-e", script], capture_output=True, text=True, encoding="utf-8", timeout=60
+        )
+        assert result.returncode == 0, result.stderr
+        return json.loads(result.stdout)
+
+    return run
 
 
 @dataclass

@@ -678,6 +678,9 @@ class VoiceStack:
     sessions: list[FakeRealtimeSession]
     clock: FakeClock | None
     run_task: asyncio.Task[None] | None = None
+    #: Abonnés internes de Core, mesurés juste après son démarrage (boucle de
+    #: notifications, politique d'état de travail...).
+    core_subscribers: int = 1
 
     @property
     def session(self) -> FakeRealtimeSession:
@@ -712,9 +715,9 @@ class VoiceStack:
         )
 
     def _expected_subscribers(self) -> int:
-        # Core lui-même (boucle de notifications), l'observateur du test, et
+        # Core lui-même (ses abonnés internes), l'observateur du test, et
         # l'ordonnanceur de parole de la session active.
-        return 3
+        return self.core_subscribers + 2
 
     async def wait_background(self) -> None:
         """Attendre un retour au fond **complet**, abonnement `/v1/events` compris.
@@ -812,6 +815,7 @@ async def voice_stack(
     port = free_port()
     core = JarvisCoreApplication(data_root=tmp_path, brain_backend=backend, diagnostics=core_journal)
     await core.start()
+    core_subscribers = core.events.subscriber_count
     server = LocalProtocolServer(core, host="127.0.0.1", port=port, token=TOKEN)
     await server.start()
     client = LocalCoreClient(host="127.0.0.1", port=port, token=TOKEN)
@@ -849,6 +853,7 @@ async def voice_stack(
         events=recorder,
         sessions=sessions,
         clock=clock,
+        core_subscribers=core_subscribers,
     )
     run_task = asyncio.create_task(runtime.run(), name="jarvis-test-voice-runtime")
     stack.run_task = run_task

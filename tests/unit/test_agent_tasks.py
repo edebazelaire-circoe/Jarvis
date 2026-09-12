@@ -1032,7 +1032,7 @@ async def test_the_tasks_route_follows_the_contract(control):
     assert payload["brain"]["busy"] is True and payload["brain"]["model"] == "claude-opus-5[1m]"
     assert [task["id"] for task in payload["tasks"]] == ["a1", "b1", "s1"]
     assert set(payload["tasks"][0]) == {
-        "id", "tool_use_id", "kind", "provider", "subagent_type", "description", "model", "status", "background",
+        "id", "work_key", "tool_use_id", "kind", "provider", "subagent_type", "description", "model", "status", "background",
         "depth", "parent_id", "started_ms", "ended_ms", "activity", "last_tool", "tokens", "tool_uses", "prompt",
         "summary", "trace_count",
     }

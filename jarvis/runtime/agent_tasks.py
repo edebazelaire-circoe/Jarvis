@@ -44,6 +44,8 @@ MAX_TEXT = 4_000
 MAX_PROMPT = 4_000
 MAX_SUMMARY = 1_000
 MAX_LABEL = 160
+#: Clés de travail retirées par une fusion, en attente d'être closes côté Core.
+MAX_RETIRED_WORK_KEYS = 64
 
 AGENT_TOOLS = frozenset({"Agent", "Task"})
 SYNTHETIC_MODEL = "<synthetic>"
@@ -193,6 +195,10 @@ class AgentTask:
     resolved_model: str = ""
     requested_model: str = ""
     start_logged: bool = False
+    # Identité stable de la tâche pour l'état de travail Core : son premier
+    # identifiant public. `id` passe du `tool_use_id` au `task_id` quand le
+    # `task_started` arrive ; Core, lui, doit voir un seul travail.
+    work_key: str = ""
     trace: deque[dict[str, Any]] = field(default_factory=lambda: deque(maxlen=MAX_TRACE_ENTRIES))
 
     @property
@@ -238,6 +244,13 @@ class AgentTaskTracker:
         self._brain_call: str | None = None
         # Types d'exception déjà consignés par `report_failure`.
         self._failures: set[str] = set()
+        # Observateurs prévenus après chaque changement possible (l'état de
+        # travail Core, tâche 11 du handoff work-state), et types d'exception
+        # qu'ils ont déjà levés.
+        self._listeners: list[Callable[[], None]] = []
+        self._listener_failures: set[str] = set()
+        # Clés de travail d'une tâche absorbée par `_merge`.
+        self._retired_work_keys: deque[str] = deque(maxlen=MAX_RETIRED_WORK_KEYS)
 
     def now_ms(self) -> int:
         return int(self.clock() * 1000)
@@ -266,6 +279,44 @@ class AgentTaskTracker:
             },
         )
 
+    # ------------------------------------------------------- observateurs
+
+    def subscribe(self, listener: Callable[[], None]) -> None:
+        """Être prévenu après chaque événement et chaque arrêt/démarrage du processus.
+
+        L'observateur relit l'état (`tasks()`) : il ne reçoit aucun événement
+        brut. Il est appelé dans la boucle, sur le chemin de lecture du flux :
+        il ne doit ni bloquer ni attendre.
+        """
+        self._listeners.append(listener)
+
+    def _notify(self) -> None:
+        for listener in tuple(self._listeners):
+            try:
+                listener()
+            except Exception as exc:  # noqa: BLE001
+                # Un observateur défaillant ne doit casser ni le suivi ni la
+                # lecture du flux qui l'alimente : consigné une fois par type.
+                self._report_listener_failure(exc)
+
+    def _report_listener_failure(self, exc: Exception) -> None:
+        name = type(exc).__name__
+        if name in self._listener_failures or self.journal is None:
+            return
+        self._listener_failures.add(name)
+        self.journal.emit(
+            "agent.work_state_failed",
+            f"Relais de l'état des sous-tâches vers Core en échec ({name}) : l'agent continue.",
+            level="error",
+            data={"code": "agent_work_state_failed", "provider": self.provider, "exception_type": name, "error": truncate(str(exc), 300)},
+        )
+
+    def drain_retired_work_keys(self) -> list[str]:
+        """Clés de travail retirées par une fusion depuis le dernier appel."""
+        keys = list(self._retired_work_keys)
+        self._retired_work_keys.clear()
+        return keys
+
     # ------------------------------------------------------------ brain
 
     def process_started(self, *, now_ms: int | None = None) -> None:
@@ -275,12 +326,14 @@ class AgentTaskTracker:
         self._interrupt_all(now)
         self.turn_finished()
         self.started_ms = now
+        self._notify()
 
     def process_stopped(self, *, now_ms: int | None = None) -> None:
         """Arrêt, redémarrage ou sortie du brain : ses sous-tâches meurent avec lui."""
         self._interrupt_all(self.now_ms() if now_ms is None else now_ms)
         self.turn_finished()
         self.started_ms = None
+        self._notify()
 
     def turn_started(self, *, now_ms: int | None = None) -> None:
         if self.busy:
@@ -312,7 +365,13 @@ class AgentTaskTracker:
 
     def observe_claude(self, event: dict[str, Any], *, now_ms: int | None = None) -> None:
         """Intégrer un événement `stream-json` de Claude Code."""
-        now = self.now_ms() if now_ms is None else now_ms
+        try:
+            self._observe_claude(event, self.now_ms() if now_ms is None else now_ms)
+        finally:
+            # Même après un événement malformé : ce qui a déjà changé est vrai.
+            self._notify()
+
+    def _observe_claude(self, event: dict[str, Any], now: int) -> None:
         kind = event.get("type")
         parent = _text(event.get("parent_tool_use_id"))
         if kind == "system":
@@ -559,6 +618,7 @@ class AgentTaskTracker:
 
     def _create(self, *, task_id: str | None, tool_use_id: str | None, now: int) -> AgentTask:
         task = AgentTask(task_id=task_id, tool_use_id=tool_use_id, started_ms=now)
+        task.work_key = task.id
         self._tasks.append(task)
         self._index(task)
         return task
@@ -590,6 +650,15 @@ class AgentTaskTracker:
         return task
 
     def _merge(self, keep: AgentTask, drop: AgentTask) -> None:
+        # Une seule identité survit côté Core : celle de la plus ancienne des
+        # deux tâches, déjà vue le plus tôt. L'autre clé est retirée, pour que
+        # l'observateur clôture le doublon qu'il aurait déjà publié.
+        if drop.work_key and (not keep.work_key or drop.started_ms < keep.started_ms):
+            keep.work_key, retired = drop.work_key, keep.work_key
+        else:
+            retired = drop.work_key
+        if retired and retired != keep.work_key:
+            self._retired_work_keys.append(retired)
         for name in (
             "tool_use_id", "subagent_type", "description", "parent_tool_use_id", "activity", "last_tool",
             "prompt", "summary", "observed_model", "resolved_model", "requested_model",
@@ -709,17 +778,28 @@ class AgentTaskTracker:
 
     # -------------------------------------------------------------- lecture
 
-    def _parent_id(self, task: AgentTask) -> str | None:
+    def parent_of(self, task: AgentTask) -> AgentTask | None:
         # Résolu à la lecture : le parent a pu changer d'identifiant public
         # (son `task_started` est arrivé) depuis le lancement de l'enfant.
         if not task.parent_tool_use_id:
             return None
-        parent = self._by_tool_use.get(task.parent_tool_use_id)
+        return self._by_tool_use.get(task.parent_tool_use_id)
+
+    def _parent_id(self, task: AgentTask) -> str | None:
+        parent = self.parent_of(task)
         return parent.id if parent is not None else None
 
     def find(self, task_id: str) -> AgentTask | None:
-        """Par `task_id`, ou par `tool_use_id` : un client peut encore tenir l'ancien."""
-        return self._by_task_id.get(task_id) or self._by_tool_use.get(task_id)
+        """Par `task_id`, ou par `tool_use_id` : un client peut encore tenir l'ancien.
+
+        En dernier recours par `work_key`, l'`external_id` que Core connaît :
+        le panneau ouvre la trace d'un travail Core sous cet identifiant
+        (tâche 13), même si une fusion l'a rendu étranger aux deux autres.
+        """
+        found = self._by_task_id.get(task_id) or self._by_tool_use.get(task_id)
+        if found is None and task_id:
+            found = next((task for task in self._tasks if task.work_key == task_id), None)
+        return found
 
     def tasks(self) -> list[AgentTask]:
         running = sorted((task for task in self._tasks if task.running), key=lambda task: task.started_ms)
@@ -738,6 +818,9 @@ class AgentTaskTracker:
     def task_snapshot(self, task: AgentTask) -> dict[str, Any]:
         return {
             "id": task.id,
+            # Clé de jointure avec l'état Core (`external_id`) : stable, alors
+            # que `id` passe du `tool_use_id` au `task_id` (tâche 13).
+            "work_key": task.work_key,
             "tool_use_id": task.tool_use_id,
             "kind": task.kind,
             "provider": self.provider,

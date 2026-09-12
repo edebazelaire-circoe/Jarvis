@@ -244,6 +244,14 @@ table.keys input[type=radio]{accent-color:var(--accent)}
 .modal>footer .status.error{color:var(--danger)}
 .notice{border-left:2px solid var(--warn);padding:10px 14px;margin:0 0 18px;background:rgba(255,184,92,.06);font-size:12px;line-height:1.6;color:#e4d3b8}
 .notice.bad{border-left-color:var(--danger);background:rgba(255,101,119,.07);color:#f0c3c9}
+.notice.ok{border-left-color:var(--ok);background:rgba(104,224,160,.06);color:#cdeedd}
+.notice.info{border-left-color:var(--line);background:rgba(113,144,160,.06);color:var(--text)}
+.notice .hint{margin-top:4px}
+.notice code,.kv code{word-break:break-all}
+details.rd{border:1px solid var(--line);border-radius:6px;padding:10px 14px;margin:0 0 18px}
+details.rd>summary{cursor:pointer;font-size:12px;color:var(--muted);letter-spacing:.04em}
+details.rd[open]>summary{margin-bottom:14px}
+.hint.agsource{margin:0 2px 8px}
 @media(max-width:900px){
   .modal{width:94vw;height:88vh}
   .split{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}
@@ -304,7 +312,7 @@ function timeOf(ts){const t=String(ts||'');return t.length>19?t.slice(11,23):t}
 function entries(items){if(!items.length)return '<div class="empty">Aucune entrée.</div>';return items.slice().reverse().map(x=>{const data=x.data&&Object.keys(x.data).length?x.data:null;return `<details class="entry ${x.level==='error'?'error':''}"><summary><span class="ico">${iconFor(String(x.kind||''))}</span><span class="etxt"><span class="emsg">${esc(x.message)}</span><span class="emeta">${esc(timeOf(x.ts))} · ${esc(x.kind)}${x.archived_at?' · archivé le '+esc(timeOf(x.archived_at)):''}</span></span><span class="dot ${statusFor(x)}"></span></summary><div class="detail"><div class="emeta" style="margin-bottom:6px"><span class="chip">${esc(x.level)}</span>${esc(x.ts)}</div>${data?`<pre class="log">${esc(JSON.stringify(data,null,2))}</pre>`:'<div class="hint">Aucun détail supplémentaire.</div>'}</div></details>`}).join('')}
 let errorsView='active';
 async function renderErrors(){const archived=errorsView==='archived';title.textContent=archived?'Errors · Archives':'Errors';const items=await api('/api/errors'+(archived?'?archived=1&limit=500':''));body.innerHTML=`<div class="row" style="margin-bottom:12px"><button class="action" id="toggleErrors">${archived?'Erreurs actives':'Erreurs archivées'}</button>${archived?'':'<button class="action danger" id="archiveErrors">Archiver</button>'}<span class="hint">${items.length} entrée(s)</span></div><div>${entries(items)}</div>`;$('#toggleErrors').addEventListener('click',()=>{errorsView=archived?'active':'archived';renderErrors().catch(e=>{body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`})});const archive=$('#archiveErrors');if(archive)archive.addEventListener('click',async()=>{archive.disabled=true;try{await api('/api/errors/archive',{method:'POST'});await renderErrors();refreshStatus()}catch(e){alert(e.message)}finally{archive.disabled=false}})}
-async function refreshStatus(){try{const s=await api('/api/status'),v=s.voice_state||'idle',k=String(s.manual_wake_key||'f9').toUpperCase(),online=s.voice_online===true;$('#voiceState').textContent=online?v.toUpperCase():'OFFLINE';const listening=s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`;$('#voiceHint').textContent=online?({idle:`${k} · DÉMARRER`,listening,thinking:`${k} · ANNULER`,speaking:`${k} · INTERROMPRE`}[v]||`${k} · CONTRÔLER`):`${k} · VOICE HORS LIGNE`;$('.face').style.visibility=online?'visible':'hidden';$('#agentName').textContent=String(s.agent.name||s.agent_cli||'agent').toUpperCase();$('#agentState').textContent=(s.agent.state||'stopped').toUpperCase();const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';AG.agent=s.agent||null;AG.cli=s.agent_cli||'';updateSubagentBadge(s.subagents);watchSubagents(s.subagents)}catch(e){$('#voiceState').textContent='OFFLINE';$('#agentState').textContent='OFFLINE';$('#voiceHint').textContent='VOICE HORS LIGNE';$('.face').style.visibility='hidden';updateSubagentBadge(null)}}
+async function refreshStatus(){try{const s=await api('/api/status'),v=s.voice_state||'idle',k=String(s.manual_wake_key||'f9').toUpperCase(),online=s.voice_online===true;$('#voiceState').textContent=online?v.toUpperCase():'OFFLINE';const listening=s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`;$('#voiceHint').textContent=online?({idle:`${k} · DÉMARRER`,listening,thinking:`${k} · ANNULER`,speaking:`${k} · INTERROMPRE`}[v]||`${k} · CONTRÔLER`):`${k} · VOICE HORS LIGNE`;$('.face').style.visibility=online?'visible':'hidden';$('#agentName').textContent=String(s.agent.name||s.agent_cli||'agent').toUpperCase();$('#agentState').textContent=(s.agent.state||'stopped').toUpperCase();const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';AG.agent=s.agent||null;AG.cli=s.agent_cli||'';if(!(current==='agents'&&coreOk()))updateSubagentBadge(s.subagents,false);watchSubagents(s.subagents)}catch(e){$('#voiceState').textContent='OFFLINE';$('#agentState').textContent='OFFLINE';$('#voiceHint').textContent='VOICE HORS LIGNE';$('.face').style.visibility='hidden';updateSubagentBadge(null)}}
 async function openPanel(name){current=name;document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.toggle('active',b.dataset.panel===name));panel.classList.add('open');title.textContent={errors:'Errors',trace:'Trace',agents:'Agents'}[name];closeMenu(false);if(name==='agents'){openAgentsPanel();return}stopAgentsPolling();body.innerHTML='<div class="empty">Chargement…</div>';try{if(name==='errors')await renderErrors();if(name==='trace')body.innerHTML=entries(await api('/api/trace'))}catch(e){body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`}}
 function closePanel(){current=null;panel.classList.remove('open');document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.remove('active'));closeMenu(false);stopAgentsPolling()}
 
@@ -318,12 +326,21 @@ function closePanel(){current=null;panel.classList.remove('open');document.query
 
    Les compteurs de temps tournent côté client, corrigés du décalage
    d'horloge (`now_ms`) : seuls leurs nœuds sont réécrits chaque seconde,
-   jamais la liste. La liste n'est redessinée que si son HTML change.       */
+   jamais la liste. La liste n'est redessinée que si son HTML change.
+
+   Source des cartes (tâche 13) : l'état normalisé de Core (/api/work) —
+   statut, libellé, activité, modèle, dates, résumé, classe d'erreur. Le
+   suivi du fournisseur (/api/agent/tasks) n'apporte que le diagnostic
+   (trace brute, prompt, type de sous-agent), joint par work_key =
+   external_id. Core indisponible : projection locale affichée comme dégradée. */
 
 const AG={
   view:'list',        // list | trace | details
   target:null,        // agent affiché par les vues trace et détails ('brain' ou id de tâche)
-  data:null,          // dernière réponse de /api/agent/tasks
+  data:null,          // dernière réponse de /api/agent/tasks (brain + diagnostic fournisseur)
+  core:null,          // état Core affiché : {ok, store_id, revision, items, error, subtasks_supported}
+  coreHeld:null,      // dernier instantané Core accepté : garde contre les réponses périmées
+  projected:null,     // {core,data,list} : tâches projetées, recalculées quand core ou data changent
   cache:new Map(),    // dernier état connu de chaque tâche, même purgée côté serveur
   skew:0,             // horloge serveur − horloge locale, en ms
   missing:false,      // le serveur ne connaît pas /api/agent/tasks (404)
@@ -340,7 +357,7 @@ const AG={
   open:{done:false,shell:null},
   listScroll:0,
   listNow:0,          // heure serveur du dernier rendu de la liste (voir LINGER_MS)
-  lastElapsed:{},
+  knownKey:'',        // store_id Core (ou 'local') des statuts connus : autre source, pas de notification
   trace:null,
   traceTimer:null,
   menu:null,
@@ -349,13 +366,25 @@ const AG={
 
 const GENERIC_TYPES=new Set(['','general-purpose','general','fork','default','agent','task','subagent']);
 const STATUS={
+  pending:{cls:'running',label:'en attente',verb:'en attente'},
   running:{cls:'running',label:'en cours',verb:'en cours'},
+  blocked:{cls:'warn',label:'bloqué',verb:'bloqué'},
   completed:{cls:'ok',label:'terminé',verb:'terminé'},
   failed:{cls:'bad',label:'échec',verb:'a échoué'},
+  cancelled:{cls:'warn',label:'annulé',verb:'annulé'},
   killed:{cls:'warn',label:'tué',verb:'tué'},
   stopped:{cls:'warn',label:'arrêté',verb:'arrêté'},
   interrupted:{cls:'warn',label:'interrompu',verb:'interrompu'},
 };
+/* Logique pure du panneau (garde de révision, projection, durées, cohérence
+   mode/vérification) : `jarvis/runtime/control_center_work.js`, inséré ici tel
+   quel par le serveur et exécuté tel quel par les tests node. */
+/*__CONTROL_CENTER_WORK_JS__*/
+// `error_class` normalisées par Core ou ses observateurs ; les autres restent brutes.
+const ERROR_CLASSES={process_stopped:'processus arrêté',producer_restarted:'Control Center redémarré',
+  core_restarted:'Core redémarré',merged:'doublon fusionné',unknown_status:'statut inconnu',killed:'tué',stopped:'arrêté',cancelled:'annulé'};
+// Sources dont les travaux sont des sous-agents du brain ; les autres (jobs Core…) ont leur section.
+const AGENT_SOURCES=new Set(['claude','codex']);
 const MODEL_FAMILIES={opus:'Opus',sonnet:'Sonnet',haiku:'Haiku',fable:'Fable'};
 const ROLE_ICONS={user:'🧑',assistant:'🤖',system:'⚙️',result:'✅',stderr:'⚠️',notice:'📊',stdout:'📄'};
 
@@ -443,10 +472,24 @@ function fmtClock(serverMs){
 }
 
 /* --- données ---------------------------------------------------------------- */
-function allTasks(){return (AG.data&&AG.data.tasks)||[]}
-function isRunning(t){return !!t&&t.status==='running'}
+/* `acceptWork`, `msOf`, `coreTask`, `isRunning`, `taskElapsed` et `clockSkew`
+   sont définis plus haut, dans control_center_work.js. */
+function coreOk(){return !!(AG.core&&AG.core.ok)}
+function allTasks(){
+  // Core lisible : ses éléments et rien d'autre. Sinon, projection locale du
+  // tracker, affichée comme dégradée (voir listHtml).
+  if(!coreOk())return (AG.data&&AG.data.tasks)||[];
+  const p=AG.projected;
+  if(p&&p.core===AG.core&&p.data===AG.data)return p.list;
+  const diag=new Map();
+  for(const t of (AG.data&&AG.data.tasks)||[])if(t.work_key)diag.set(`${t.provider}|${t.work_key}`,t);
+  const list=(AG.core.items||[]).map(item=>coreTask(item,diag.get(`${item.source}|${item.external_id}`)));
+  AG.projected={core:AG.core,data:AG.data,list};
+  return list;
+}
+function sectionOf(t){return t.core&&!AGENT_SOURCES.has(t.source)?'other':t.kind==='shell'?'shell':'agent'}
 // Même règle que le badge (`active_count`) : tout ce qui n'est pas une commande shell.
-function activeAgents(){return allTasks().filter(t=>t.kind!=='shell'&&isRunning(t))}
+function activeAgents(){return allTasks().filter(t=>sectionOf(t)==='agent'&&isRunning(t))}
 function brainTask(){
   const b=AG.data&&AG.data.brain,a=AG.agent||{};
   if(b)return {...b,id:'brain'};
@@ -459,7 +502,27 @@ function findTask(id){
   return allTasks().find(t=>t.id===id)||AG.cache.get(id)||null;
 }
 function childrenOf(id){
-  return allTasks().filter(t=>id==='brain'?(!t.parent_id&&t.kind!=='shell'):t.parent_id===id);
+  return allTasks().filter(t=>id==='brain'?(!t.parent_id&&sectionOf(t)==='agent'):t.parent_id===id);
+}
+
+/* Réponse de /api/work. Core injoignable : dit tel quel, l'état tenu sert
+   encore de garde de révision. Control Center injoignable (erreur réseau) :
+   rien ne change ici, AG.error le signale. Route absente : serveur ancien. */
+function applyWork(w,err){
+  if(err){
+    if(err.status===404)AG.core={ok:false,items:[],code:'missing_route',error:'route /api/work absente, redémarrez le Control Center'};
+    return;
+  }
+  if(!w.core_reachable){
+    const e=w.error||{};
+    AG.core={ok:false,items:[],code:e.code||'',error:e.message||'Core injoignable',subtasks_supported:w.subtasks_supported};
+    return;
+  }
+  if(acceptWork(AG.coreHeld,w))AG.coreHeld={store_id:w.store_id,revision:w.revision,items:w.items||[],updated_at:w.updated_at};
+  // Réponse périmée : l'instantané tenu reste affiché, tel quel.
+  const h=AG.coreHeld;
+  AG.core={ok:true,store_id:h.store_id,revision:h.revision,items:h.items,updated_at:h.updated_at,error:'',
+    subtasks_supported:w.subtasks_supported!==false};
 }
 
 async function fetchTasks(){
@@ -467,27 +530,33 @@ async function fetchTasks(){
   AG.fetching=(async()=>{
     const t0=Date.now();
     try{
-      const data=await api('/api/agent/tasks');
+      const [diag,work]=await Promise.allSettled([api('/api/agent/tasks'),api('/api/work')]);
       const t1=Date.now();
-      if(typeof data.now_ms==='number')AG.skew=data.now_ms-Math.round((t0+t1)/2);
-      AG.data=data;AG.missing=false;AG.error='';
-      for(const t of data.tasks||[])AG.cache.set(t.id,t);
+      if(diag.status==='fulfilled'){
+        const data=diag.value;
+        const skew=clockSkew(data.now_ms,t0,t1);if(skew!==null)AG.skew=skew;
+        AG.data=data;AG.missing=false;AG.error='';
+      }else if(diag.reason&&diag.reason.status===404){AG.missing=true;AG.data=null;AG.error=''}
+      else AG.error=(diag.reason&&diag.reason.message)||'réseau indisponible';
+      applyWork(work.status==='fulfilled'?work.value:null,work.status==='rejected'?work.reason:null);
+      const tasks=allTasks();
+      for(const t of tasks)AG.cache.set(t.id,t);
       while(AG.cache.size>200)AG.cache.delete(AG.cache.keys().next().value);
-      for(const id of Object.keys(AG.lastElapsed))if(!AG.cache.has(id))delete AG.lastElapsed[id];
-      noticeTransitions(data.tasks||[]);
-    }catch(e){
-      if(e.status===404){AG.missing=true;AG.data=null;AG.error=''}
-      else AG.error=e.message||'réseau indisponible';
+      noticeTransitions(tasks,coreOk()?AG.core.store_id:'local');
     }finally{AG.lastFetch=Date.now();AG.fetching=null}
     return AG.data;
   })();
   return AG.fetching;
 }
 
-/* Badge du dock et bandeau du haut : sous-agents en cours, jamais le brain. */
-function updateSubagentBadge(sub){
+/* Badge du dock et bandeau du haut : sous-agents en cours, jamais le brain.
+   `fromCore` dit d'où sort le décompte : l'état normalisé de Core, ou — comme
+   le bandeau dégradé de la liste — le suivi local du Control Center, qui ne
+   fait pas foi. Le badge n'a pas la place de l'écrire, l'infobulle si. */
+function updateSubagentBadge(sub,fromCore){
   const n=sub?Math.max(0,Number(sub.active)||0):0;
-  const label=n?`${plural(n,'sous-agent','sous-agents')} en cours`:'';
+  const origin=fromCore?'':' · décompte local du Control Center, non autoritaire';
+  const label=n?`${plural(n,'sous-agent','sous-agents')} en cours${origin}`:'';
   const badge=$('#agentBadge'),button=$('#agentsButton');
   badge.textContent=n>99?'99+':String(n);
   badge.style.display=n?'flex':'none';
@@ -495,6 +564,7 @@ function updateSubagentBadge(sub){
   button.title=n?`Agents · ${label}`:'Agents';
   button.setAttribute('aria-label',button.title);
   $('#subagentState').hidden=!n;
+  $('#subagentState').title=label;
   $('#subagentCount').textContent=String(n);
   $('#subagentWord').textContent=n>1?'SOUS-AGENTS':'SOUS-AGENT';
 }
@@ -510,15 +580,18 @@ function watchSubagents(sub){
 }
 
 /* --- notifications ------------------------------------------------------------- */
-function noticeTransitions(tasks){
-  const previous=AG.known;
+function noticeTransitions(tasks,key){
+  const previous=AG.known,sameSource=AG.knownKey===key;
   AG.known=new Map(tasks.map(t=>[t.id,t.status]));
-  if(previous===null){AG.knownSince=serverNow();return}  // premier chargement : aucune notification
+  AG.knownKey=key;
+  // Premier chargement, Core redémarré ou bascule Core ↔ projection locale :
+  // les identifiants ne se correspondent plus, aucune notification.
+  if(previous===null||!sameSource){AG.knownSince=serverNow();return}
   const ended=tasks.filter(t=>{
     if(t.kind!=='agent'||isRunning(t))return false;
     const before=previous.get(t.id);
-    // Tâche vue en cours, ou apparue déjà finie entre deux sondages.
-    return before==='running'||(before===undefined&&Number(t.started_ms)>=AG.knownSince-2000);
+    // Tâche vue active, ou apparue déjà finie entre deux sondages.
+    return ACTIVE.has(before)||(before===undefined&&Number(t.started_ms)>=AG.knownSince-2000);
   });
   if(ended.length>3){
     const failed=ended.filter(t=>t.status==='failed').length;
@@ -530,7 +603,7 @@ function noticeTransitions(tasks){
     const detail=String(t.summary||t.description||'').replace(/\s+/g,' ').trim();
     toast({
       title:`${taskTitle(t)} · ${st.verb}`,
-      sub:[prettyModel(t.model),fmtDuration(taskElapsed(t)),detail].filter(Boolean).join(' · '),
+      sub:[prettyModel(t.model),fmtDuration(taskElapsed(t,serverNow())),errorLabel(t.error_class),detail].filter(Boolean).join(' · '),
       kind:st.cls==='ok'?'ok':st.cls==='bad'?'bad':'warn',
       logo:logoHtml(t),
       onClick:()=>openAgentsAt('trace',t.id),
@@ -557,14 +630,7 @@ function toast({title:heading,sub='',kind='info',logo='',onClick=null,ms=5000}){
 }
 
 /* --- cartes ------------------------------------------------------------------- */
-function taskElapsed(t){
-  const start=Number(t.started_ms);
-  if(!start)return null;
-  if(isRunning(t))return serverNow()-start;
-  const end=Number(t.ended_ms);
-  if(end)return Math.max(0,end-start);
-  return AG.lastElapsed[t.id]??null;
-}
+function errorLabel(code){return code?(ERROR_CLASSES[code]||String(code)):''}
 // Le texte des compteurs vivants est laissé vide : tickTimers() le remplit, ce
 // qui garde un HTML stable d'une seconde à l'autre (pas de re-rendu inutile).
 function liveTimer(id,start,cls,hint){
@@ -578,14 +644,12 @@ function timerHtml(t){
   }
   if(isRunning(t)&&t.started_ms)return liveTimer(t.id,t.started_ms,'live',`Démarré à ${fmtClock(t.started_ms)}`);
   const hint=t.ended_ms?`${fmtClock(t.started_ms)} → ${fmtClock(t.ended_ms)}`:'Durée finale';
-  return `<span class="timer" title="${esc(hint)}">${fmtDuration(taskElapsed(t))}</span>`;
+  return `<span class="timer" title="${esc(hint)}">${fmtDuration(taskElapsed(t,serverNow()))}</span>`;
 }
 function tickTimers(){
   const now=serverNow();
   document.querySelectorAll('.timer[data-start]').forEach(el=>{
-    const ms=now-Number(el.dataset.start);
-    el.textContent=fmtDuration(ms);
-    if(el.dataset.tid&&el.dataset.tid!=='brain')AG.lastElapsed[el.dataset.tid]=ms;
+    el.textContent=fmtDuration(now-Number(el.dataset.start));
   });
 }
 
@@ -613,7 +677,7 @@ function cardHtml(t,{level=0,compact=false,head=false}={}){
     if(c.open)meta.push('<span class="chip on">console ouverte</span>');
   }else{
     st=statusInfo(t.status);
-    model=t.kind==='shell'?'commande de fond':prettyModel(t.model);
+    model=t.kind==='shell'?'commande de fond':sectionOf(t)==='other'&&!t.model?`travail Core · ${t.source}`:prettyModel(t.model);
     const desc=String(t.description||'').trim(),act=String(t.activity||'').trim(),sum=String(t.summary||'').replace(/\s+/g,' ').trim();
     let first,second='';
     if(titleFromType(t)){first=desc;second=isRunning(t)?act:sum}
@@ -622,7 +686,8 @@ function cardHtml(t,{level=0,compact=false,head=false}={}){
     if(!first){first=second;second=''}
     line=esc(first)+(second?`<span class="sep">·</span><span class="dim">${esc(second)}</span>`:'');
     lineTitle=[first,second].filter(Boolean).join(' · ');
-    if(!isRunning(t)&&st.cls!=='ok')meta.push(`<span class="chip ${st.cls}">${esc(st.label)}</span>`);
+    if(t.status!=='running'&&st.cls!=='ok')meta.push(`<span class="chip ${st.cls==='running'?'':st.cls}">${esc(st.label)}</span>`);
+    if(t.error_class)meta.push(`<span title="Classe d'erreur (Core) : ${esc(t.error_class)}">${esc(errorLabel(t.error_class))}</span>`);
     if(t.background)meta.push('<span class="chip">arrière-plan</span>');
     const tokens=fmtTokens(t.tokens);
     if(tokens)meta.push(`<span>${esc(tokens)}</span>`);
@@ -679,17 +744,28 @@ function cardsHtml(list,options){
    d'une seconde suffit à l'en faire sortir : le HTML change à l'expiration. */
 const LINGER_MS=8000;
 
+/* D'où viennent les cartes : l'état normalisé de Core, ou — Core
+   indisponible — la projection locale du tracker, dite dégradée. */
+function sourceHtml(){
+  const c=AG.core;
+  if(coreOk())return `<div class="hint agsource" title="Statut, activité, modèle et durées : état de travail tenu par Core, le même que reçoit le brain. Trace et prompt : diagnostic du fournisseur.">Source : état normalisé Core · révision ${esc(c.revision)}</div>`;
+  if(!c)return '';
+  const why=c.code==='missing_route'?c.error:`Core indisponible : ${c.error}`;
+  return `<div class="notice agsource degraded">${esc(why)}. Affichage dégradé : projection locale du Control Center (suivi du fournisseur), non autoritaire — le brain ne la voit pas.</div>`;
+}
+
 function listHtml(now=serverNow()){
-  if(!AG.data&&!AG.missing&&!AG.error)return '<div class="empty">Chargement…</div>';
+  if(!AG.data&&!AG.core&&!AG.missing&&!AG.error)return '<div class="empty">Chargement…</div>';
   const parts=[];
   if(AG.error)parts.push(`<div class="notice bad">Control Center injoignable : dernières données connues affichées. <span class="dim">(${esc(AG.error)})</span></div>`);
+  parts.push(sourceHtml());
   parts.push(`<div class="alist" role="list">${cardHtml(brainTask())}</div>`);
-  if(AG.missing){
+  if(AG.missing&&!coreOk()){
     parts.push(`<div class="notice" style="margin-top:14px">Ce serveur ne publie pas encore le suivi des sous-agents (<code>/api/agent/tasks</code> introuvable). Redémarrez le Control Center après la mise à jour ; en attendant, seul le brain est affiché.</div>`);
     return parts.join('');
   }
   const tasks=allTasks();
-  const agents=tasks.filter(t=>t.kind!=='shell'),shells=tasks.filter(t=>t.kind==='shell');
+  const agents=tasks.filter(t=>sectionOf(t)==='agent'),shells=tasks.filter(t=>sectionOf(t)==='shell'),others=tasks.filter(t=>sectionOf(t)==='other');
   // Une seule heure pour tout le tri : une tâche est dans un groupe ou l'autre, jamais les deux.
   const shown=[],done=[];
   for(const t of agents)(isRunning(t)||now-Number(t.ended_ms)<LINGER_MS?shown:done).push(t);
@@ -699,6 +775,7 @@ function listHtml(now=serverNow()){
   parts.push(`<div class="sechead ${running.length?'live':''}"><span>Sous-agents en cours</span><span class="count">${running.length}</span></div>`);
   if(shown.length)parts.push(cardsHtml(shown));
   else if(done.length)parts.push('<div class="hint" style="padding:2px 2px 4px">Aucun sous-agent en cours.</div>');
+  else if(AG.core&&AG.core.subtasks_supported===false)parts.push(`<div class="agempty"><strong>Aucun sous-agent suivi pour ce CLI.</strong>${esc(PROVIDER_LABELS[providerOf(brainTask())]||'Cet agent')} ne publie pas de sous-tâches dans un format vérifié : rien n’est inventé ici. Le brain reste suivi ci-dessus.</div>`);
   else parts.push(`<div class="agempty"><strong>Aucun sous-agent pour l’instant.</strong>Quand le brain délègue une tâche — exploration du code, planification, relecture… — elle apparaît ici avec son modèle, sa durée et son activité en direct. Vous serez notifié à la fin de chacune.</div>`);
   if(done.length){
     const failed=done.filter(t=>t.status==='failed').length;
@@ -707,6 +784,11 @@ function listHtml(now=serverNow()){
   if(shells.length){
     const live=shells.filter(isRunning).length,open=AG.open.shell??live>0;
     parts.push(`<details class="sect" data-sect="shell"${open?' open':''}><summary class="sechead ${live?'live':''}"><span>Commandes de fond</span><span class="count">${live?`${live} en cours · `:''}${shells.length}</span></summary>${cardsHtml(shells,{compact:true})}</details>`);
+  }
+  if(others.length){
+    // Travaux Core qui ne sont pas des sous-agents du brain (jobs…).
+    const live=others.filter(isRunning).length,open=AG.open.other??live>0;
+    parts.push(`<details class="sect" data-sect="other"${open?' open':''}><summary class="sechead ${live?'live':''}"><span>Autres travaux Core</span><span class="count">${live?`${live} en cours · `:''}${others.length}</span></summary>${cardsHtml(others,{compact:true})}</details>`);
   }
   parts.push('<div class="hint agfoot">Clic droit ou ⋯ sur une carte : trace, détails, prompt · Entrée ou double-clic : trace</div>');
   return parts.join('');
@@ -779,7 +861,7 @@ function showTrace(id){
   AG.trace={id,keys:[],tools:new Map(),raw:new Map(),lastAt:0,loading:false,first:true,
     final:id!=='brain'&&!!t&&!isRunning(t)};
   title.textContent=`Trace · ${t?taskTitle(t):id}`;
-  body.innerHTML=`${viewBar(id,"Trace d'exécution",'<button type="button" class="action small" id="agSwitch" data-go="details">Détails</button>')}
+  body.innerHTML=`${viewBar(id,id==='brain'?"Trace d'exécution":TRACE_LABEL,'<button type="button" class="action small" id="agSwitch" data-go="details">Détails</button>')}
     <div id="agHead" class="alist" role="list"></div>
     <div class="agentEvents" id="traceList"><div class="empty">Chargement de la trace…</div></div>
     ${id==='brain'?sendBox():''}
@@ -792,9 +874,13 @@ function showTrace(id){
   loadTrace();
 }
 
+// La trace d'une sous-tâche est brute et propre au fournisseur : un diagnostic,
+// jamais l'état de la tâche (celui-là est dans la carte, venu de Core).
+const TRACE_LABEL="Trace brute du fournisseur · diagnostic";
 function traceIsLive(){
   const t=findTask(AG.target);
-  return AG.target==='brain'||isRunning(t);
+  // Un travail Core sans suivi fournisseur (job, tâche purgée) n'a pas de trace à sonder.
+  return AG.target==='brain'||(isRunning(t)&&!(t.core&&!t.diag));
 }
 async function loadTrace(){
   const tr=AG.trace;
@@ -809,7 +895,10 @@ async function loadTrace(){
       try{const c=await api('/api/agent/transcript');result={task:null,entries:c.events||[]}}
       catch(e2){failure=`Trace indisponible : ${e2.message}`}
     }else if(e.status===404){
-      failure=AG.missing?'Ce serveur ne fournit pas encore la trace des sous-agents (route /api/agent/tasks absente).':'Cette tâche n’est plus suivie par le serveur (historique purgé ou brain redémarré).';
+      const t=findTask(tr.id);
+      failure=AG.missing?'Ce serveur ne fournit pas encore la trace des sous-agents (route /api/agent/tasks absente).'
+        :t&&t.core&&!t.diag?'Aucune trace fournisseur pour ce travail : seul son état normalisé Core est connu (tâche purgée du suivi, Control Center redémarré, ou travail sans trace comme un job Core).'
+        :'Cette tâche n’est plus suivie par le serveur (historique purgé ou brain redémarré).';
     }else failure=`Trace indisponible : ${e.message}`;
   }finally{tr.loading=false}
   if(AG.trace!==tr||AG.view!=='trace')return;  // l'utilisateur est passé ailleurs entre-temps
@@ -862,7 +951,7 @@ function applyTrace(list){
   const live=new Set(keys);
   for(const k of [...tr.raw.keys()])if(!live.has(k))tr.raw.delete(k);
   const info=$('#agViewInfo');
-  if(info)info.textContent=`Trace d'exécution · ${plural(list.length,'entrée','entrées')}${list.length>=300?' (les 300 dernières)':''}`;
+  if(info)info.textContent=`${tr.id==='brain'?"Trace d'exécution":TRACE_LABEL} · ${plural(list.length,'entrée','entrées')}${list.length>=300?' (les 300 dernières)':''}`;
   const pill=$('#newPill');
   if(tr.first||atBottom){body.scrollTop=body.scrollHeight;pill.hidden=true;tr.unseen=0}
   else if(added>0){
@@ -1025,7 +1114,8 @@ function showDetails(id){
   title.textContent=`Détails · ${t?taskTitle(t):id}`;
   body.innerHTML=`${viewBar(id,'Détails','<button type="button" class="action small" id="agSwitch" data-go="trace">Trace d’exécution</button>')}
     <div id="agHead" class="alist" role="list"></div>
-    <div class="dsec"><dl class="kv" id="dKv"></dl></div>
+    <div class="dsec"><h4 id="dKvTitle" hidden></h4><dl class="kv" id="dKv"></dl></div>
+    <div class="dsec" id="dDiagSec" hidden><h4>Diagnostic fournisseur · brut, non autoritaire</h4><dl class="kv" id="dDiag"></dl></div>
     <div id="dMore"></div>`;
   bindViewBar(id);
   renderDetails();
@@ -1049,6 +1139,30 @@ function kvRows(t){
     ];
   }
   const parent=t.parent_id?findTask(t.parent_id):null,st=statusInfo(t.status);
+  const launcher=['Lancé par',parent?`<button type="button" class="linkish" data-go="details" data-id="${esc(parent.id)}">${esc(taskTitle(parent))}</button>`:(t.parent_id?esc(t.parent_id):'le brain'),true];
+  if(t.core){
+    // État normalisé tenu par Core : les mêmes faits que ceux remis au brain.
+    return [
+      ['Source',AGENT_SOURCES.has(t.source)?PROVIDER_LABELS[providerOf(t)]:t.source],
+      ['Type',t.kind==='shell'?'commande shell':(t.kind||'')],
+      ['Libellé',t.description||''],
+      ['Statut',st.label],
+      ['Classe d’erreur',t.error_class?`${errorLabel(t.error_class)} (${t.error_class})`:''],
+      ['Modèle',t.kind==='shell'?'':(t.model||(sectionOf(t)==='other'?'':'par défaut'))],
+      ['Démarré',t.started_ms?fmtClock(t.started_ms):''],
+      ['Terminé',t.ended_ms?fmtClock(t.ended_ms):''],
+      ['Durée',isRunning(t)&&t.started_ms?liveTimer(t.id,t.started_ms,'live',''):fmtDuration(taskElapsed(t,serverNow())),isRunning(t)],
+      ['Exécution',t.background?'arrière-plan':'premier plan'],
+      ['Activité',isRunning(t)?(t.activity||''):''],
+      ['Avancement',typeof t.progress==='number'?`${Math.round(t.progress*100)} %`:''],
+      ['Jetons',fmtTokens(t.tokens)],
+      ['Outils utilisés',Number(t.tool_uses)>0?String(t.tool_uses):''],
+      t.parent_id||sectionOf(t)==='agent'?launcher:['Lancé par',''],
+      ['Travail du brain',t.work_id||''],
+      ['Identifiant Core',t.id],
+      ['Révision Core',t.revision!=null?String(t.revision):''],
+    ];
+  }
   return [
     ['Type',t.kind==='shell'?'commande shell':(t.subagent_type||t.kind||'')],
     ['Description',t.description||''],
@@ -1057,24 +1171,44 @@ function kvRows(t){
     ['Statut',st.label],
     ['Démarré',t.started_ms?fmtClock(t.started_ms):''],
     ['Terminé',t.ended_ms?fmtClock(t.ended_ms):''],
-    ['Durée',isRunning(t)&&t.started_ms?liveTimer(t.id,t.started_ms,'live',''):fmtDuration(taskElapsed(t)),isRunning(t)],
+    ['Durée',isRunning(t)&&t.started_ms?liveTimer(t.id,t.started_ms,'live',''):fmtDuration(taskElapsed(t,serverNow())),isRunning(t)],
     ['Exécution',t.background?'arrière-plan':'premier plan'],
     ['Activité',isRunning(t)?(t.activity||''):''],
     ['Jetons',fmtTokens(t.tokens)],
     ['Outils utilisés',Number(t.tool_uses)>0?String(t.tool_uses):''],
     ['Dernier outil',t.last_tool||''],
     ['Profondeur',t.depth>1?`niveau ${t.depth}`:''],
-    ['Lancé par',parent?`<button type="button" class="linkish" data-go="details" data-id="${esc(parent.id)}">${esc(taskTitle(parent))}</button>`:(t.parent_id?esc(t.parent_id):'le brain'),true],
+    launcher,
     ['Entrées de trace',t.trace_count!=null?String(t.trace_count):''],
     ['Identifiant',t.id],
     ['tool_use_id',t.tool_use_id||''],
   ];
 }
+/* Ce que seul le suivi du fournisseur sait d'un travail Core : utile au
+   diagnostic, jamais pris pour son état. */
+function diagRows(t){
+  if(!t.core||!t.diag)return [];
+  return [
+    ['Type de sous-agent',t.subagent_type||''],
+    ['Dernier outil',t.last_tool||''],
+    ['Profondeur',t.depth>1?`niveau ${t.depth}`:''],
+    ['Entrées de trace',t.trace_count!=null?String(t.trace_count):''],
+    ['Identifiant fournisseur',t.provider_id&&t.provider_id!==t.id?t.provider_id:''],
+    ['tool_use_id',t.tool_use_id||''],
+  ];
+}
+function kvHtml(rows){
+  return rows.filter(([,v])=>v!==''&&v!=null).map(([k,v,isHtml])=>`<dt>${esc(k)}</dt><dd>${isHtml?v:esc(v)}</dd>`).join('');
+}
+function kvTitle(t){
+  if(t.id==='brain')return '';
+  return t.core?'État normalisé · Core (fait foi)':'Projection locale du Control Center · dégradée, non autoritaire';
+}
 function detailsMoreHtml(t){
   const parts=[];
   if(t.id!=='brain'){
     const prompt=String(t.prompt||'');
-    parts.push(`<div class="dsec"><h4>Prompt${prompt?' <button type="button" class="linkish" data-copy-prompt="'+esc(t.id)+'">copier</button>':''}</h4>${prompt?`<pre class="log block">${esc(prompt)}</pre>${prompt.length>=4000?'<div class="hint" style="margin-top:4px">Tronqué à 4000 caractères par le serveur.</div>':''}`:'<div class="hint">Prompt non transmis.</div>'}</div>`);
+    parts.push(`<div class="dsec"><h4>Prompt${t.core?' · diagnostic fournisseur':''}${prompt?' <button type="button" class="linkish" data-copy-prompt="'+esc(t.id)+'">copier</button>':''}</h4>${prompt?`<pre class="log block">${esc(prompt)}</pre>${prompt.length>=4000?'<div class="hint" style="margin-top:4px">Tronqué à 4000 caractères par le serveur.</div>':''}`:'<div class="hint">Prompt non transmis.</div>'}</div>`);
     const summary=String(t.summary||'');
     parts.push(`<div class="dsec"><h4>Résumé / résultat</h4>${summary?`<pre class="log block">${esc(summary)}</pre>`:`<div class="hint">${isRunning(t)?'Pas encore de résultat : la tâche est en cours.':'Aucun résumé transmis.'}</div>`}</div>`);
   }
@@ -1090,11 +1224,18 @@ function renderDetails(){
   const kv=$('#dKv'),more=$('#dMore');
   if(!kv)return;
   if(!t){
-    if(AG.html.kv!=='missing'){AG.html.kv='missing';kv.innerHTML='';more.innerHTML='<div class="notice">Cette tâche n’est plus suivie par le serveur.</div>'}
+    if(AG.html.kv!=='missing'){
+      AG.html.kv='missing';AG.html.diag='';kv.innerHTML='';more.innerHTML='<div class="notice">Cette tâche n’est plus suivie par le serveur.</div>';
+      const diagSec=$('#dDiagSec');if(diagSec)diagSec.hidden=true;
+    }
     return;
   }
-  const rows=kvRows(t).filter(([,v])=>v!==''&&v!=null).map(([k,v,isHtml])=>`<dt>${esc(k)}</dt><dd>${isHtml?v:esc(v)}</dd>`).join('');
+  const rows=kvHtml(kvRows(t));
   if(rows!==AG.html.kv){AG.html.kv=rows;kv.innerHTML=rows}
+  const head=$('#dKvTitle'),heading=kvTitle(t);
+  if(head&&head.textContent!==heading){head.textContent=heading;head.hidden=!heading}
+  const diag=kvHtml(diagRows(t)),diagSec=$('#dDiagSec');
+  if(diagSec&&diag!==AG.html.diag){AG.html.diag=diag;$('#dDiag').innerHTML=diag;diagSec.hidden=!diag}
   const extra=detailsMoreHtml(t);
   if(extra!==AG.html.more){
     // Ne pas perdre une sélection de texte en cours dans le prompt ou le résumé.
@@ -1126,7 +1267,9 @@ async function agentsTick(){
   renderAgentsView();
 }
 function updateSubagentBadgeFromTasks(){
-  if(AG.data&&typeof AG.data.active_count==='number')updateSubagentBadge({active:AG.data.active_count});
+  // Panneau ouvert : le badge suit les cartes (Core quand il est lisible).
+  if(coreOk())updateSubagentBadge({active:activeAgents().length},true);
+  else if(AG.data&&typeof AG.data.active_count==='number')updateSubagentBadge({active:AG.data.active_count},false);
 }
 function startAgentsPolling(){if(!AG.poll)AG.poll=setInterval(agentsTick,1000)}
 function stopAgentsPolling(){clearInterval(AG.poll);AG.poll=null;stopTracePolling()}
@@ -1365,7 +1508,7 @@ const TABS=[
   {id:'keys',label:'API Keys',save:false},
   {id:'shortcuts',label:'Raccourcis',save:false},
 ];
-const SET={open:false,tab:'voice',data:null,draft:null,dirty:false,catalog:{},clis:null,devices:null,capture:null,shortcuts:null};
+const SET={open:false,tab:'voice',data:null,draft:null,dirty:false,catalog:{},clis:null,devices:null,capture:null,shortcuts:null,restartNotice:false,rdOpen:false};
 const overlay=$('#overlay'),modalContent=$('#modalContent'),modalStatus=$('#modalStatus'),modalSave=$('#modalSave'),modalSub=$('#modalSub');
 
 function say(text,kind){modalStatus.className='status'+(kind?' '+kind:'');modalStatus.textContent=text||''}
@@ -1407,7 +1550,7 @@ async function renderField(field,values,scope){
     return `<div class="field inline"><input type="checkbox" id="${id}" data-field="${esc(field.key)}" data-scope="${esc(scope)}" ${value?'checked':''}><div><label for="${id}">${esc(field.label)}</label>${hint}</div></div>`;
   }
   if(field.kind==='number'){
-    const attrs=['min','max','step'].filter(k=>field[k]!==undefined).map(k=>`${k}="${esc(field[k])}"`).join(' ');
+    const attrs=['min','max','step','placeholder'].filter(k=>field[k]!==undefined).map(k=>`${k}="${esc(field[k])}"`).join(' ');
     return `<div class="field"><label for="${id}">${esc(field.label)}</label><input type="number" id="${id}" data-field="${esc(field.key)}" data-scope="${esc(scope)}" value="${esc(value)}" ${attrs}>${hint}</div>`;
   }
   if(field.source){
@@ -1421,8 +1564,9 @@ async function renderField(field,values,scope){
   if(field.kind==='text'){
     return `<div class="field"><label for="${id}">${esc(field.label)}</label><input id="${id}" data-field="${esc(field.key)}" data-scope="${esc(scope)}" value="${esc(value)}">${hint}</div>`;
   }
-  const options=(field.options||[]).map(o=>({value:o,label:o}));
-  return `<div class="field"><label for="${id}">${esc(field.label)}</label><select id="${id}" data-field="${esc(field.key)}" data-scope="${esc(scope)}">${selectOptions(options,value,'')}</select>${hint}</div>`;
+  const labels=field.option_labels||[];
+  const options=(field.options||[]).map((o,i)=>({value:o,label:labels[i]||o}));
+  return `<div class="field"><label for="${id}">${esc(field.label)}</label><select id="${id}" data-field="${esc(field.key)}" data-scope="${esc(scope)}">${selectOptions(options,value,field.placeholder||'')}</select>${hint}</div>`;
 }
 
 function providerLabel(id){
@@ -1437,6 +1581,101 @@ function keyStateFor(provider){
   if(item)return `<span class="tag ok">clé « ${esc(item.name)} »</span>`;
   if(((state.environment||{})[provider]||[]).length)return `<span class="tag warn">clé d'environnement</span>`;
   return `<span class="tag bad">aucune clé</span>`;
+}
+
+/* --- Qui peut parler à JARVIS (Solo Owner, tâche 08) --------------------
+   La page projette un état, elle ne décide rien : le verdict (prêt, dégradé,
+   refusé) vient du serveur, qui l'évalue avec la fonction même dont Voice se
+   sert, et ce que Voice a réellement appliqué l'emporte. Aucune empreinte
+   vocale n'arrive jusqu'ici, seulement des métadonnées. Les champs sont
+   décrits par le serveur ; seules les clés touchées partent à l'enregistrement. */
+const AUTH_SCOPE='authorization';
+const AUTH_STATUS={ready:{cls:'ok',label:'prêt'},degraded:{cls:'warn',label:'dégradé'},refused:{cls:'bad',label:'refusé'},invalid:{cls:'bad',label:'réglage invalide'}};
+const AEC_STATUS={ready:{cls:'ok',label:'active'},degraded:{cls:'',label:'dégradée'},off:{cls:'',label:'désactivée'},not_applicable:{cls:'info',label:'sans objet'}};
+function authValues(a){return {...(a.stored||{}),...((a.verifier_settings||{}).stored||{}),...SET.draft.voice.authorization}}
+function whenOf(ts){if(!ts)return '';const d=new Date(ts*1000);return isNaN(d)?'':d.toLocaleTimeString('fr-FR')}
+function voiceSeen(block,what){const r=block.runtime||{};return `Constaté par Voice${r.phase?` (${esc(r.phase)}${r.ts?`, ${esc(whenOf(r.ts))}`:''})`:''}`+(what?` — ${what}`:'')}
+function codeTag(code){return code?` <span class="tag">${esc(code)}</span>`:''}
+function authVerdictHtml(a){
+  const st=AUTH_STATUS[a.status]||{cls:'bad',label:a.status};
+  const eff=a.effective,r=a.runtime||{};
+  const src=a.status_source==='voice'?voiceSeen(a,'ce que seule Voice pouvait voir')
+    :eff&&r.status==='ready'&&r.conversation_mode===eff.conversation_mode?voiceSeen(a,'appliqué à sa dernière activation')
+    :"D'après la sonde des réglages (le modèle n'est pas chargé ici)";
+  const why=a.problem?` ${esc(a.problem)}${codeTag(a.code)}`:'';
+  if(!eff)return `<div class="notice bad"><strong>Réglage invalide</strong> : Voice refuse d'écouter tant qu'il n'est pas corrigé.${why}</div>`;
+  const tag=`<span class="tag ${st.cls}">${esc(st.label)}</span> `;
+  if(eff.conversation_mode==='solo_owner'){
+    if(a.status==='ready')return `<div class="notice ok">${tag}<strong>Solo Owner appliqué</strong> : seule votre voix reconnue coupe JARVIS et devient un tour (vérification enforce).<div class="hint">${src}.</div></div>`;
+    return `<div class="notice bad">${tag}<strong>Solo Owner configuré mais NON appliqué</strong> : JARVIS ne peut pas vérifier votre identité, donc Voice refuse d'écouter dans ce mode — aucun repli silencieux sur la salle ouverte.${why}<div class="hint">${src}.</div></div>`;
+  }
+  if(eff.speaker_verification==='shadow'){
+    const legacy=SET.data.voice.arch_effective!=='continuous_brain'?" L'observation ne tourne qu'en conversation continue : sous « Un tour par appui », rien n'est mesuré.":'';
+    if(a.status==='ready')return `<div class="notice info">${tag}<strong>Salle ouverte, vérification en ombre</strong> : les scores sont mesurés et journalisés (voice.owner.*), rien n'est filtré — toute voix peut couper JARVIS.${esc(legacy)}<div class="hint">${src}.</div></div>`;
+    return `<div class="notice">${tag}<strong>Salle ouverte, observation dégradée</strong> : rien n'est mesuré ; la conversation reste ouverte à toutes les voix.${why}<div class="hint">${src}.</div></div>`;
+  }
+  return `<div class="notice info">${tag}<strong>Salle ouverte</strong> : toute voix captée peut couper JARVIS et devenir un tour (comportement historique). Aucune vérification d'identité.</div>`;
+}
+function authEffectiveHtml(a){
+  const vs=a.verifier_settings||{},eff={...(a.effective||{}),...(vs.effective||{})},origin={...(a.origin||{}),...(vs.origin||{})};
+  const fields=[...(a.fields||[]),...(a.advanced_fields||[])];
+  const rows=fields.map(f=>{
+    let v=eff[f.key];
+    if(f.key==='speaker_verification'&&origin[f.key]==='default'&&v)v=`${v} (selon le mode)`;
+    if(f.key==='owner_short_evidence_ms'&&v===0)v='0 (règle brève désactivée)';
+    const tag=origin[f.key]==='stored'?'<span class="tag">réglage</span>':'<span class="tag">défaut</span>';
+    return `<dt>${esc(f.label)}</dt><dd>${v===undefined||v===null?'—':esc(v)} ${tag}</dd>`}).join('');
+  const path=eff.owner_profile_path?`<dt>Fichier du profil vocal</dt><dd><code>${esc(eff.owner_profile_path)}</code> <span class="tag">${origin.owner_profile_path==='stored'?'réglage':'défaut'}</span> <span class="tag">lecture seule</span></dd>`:'';
+  const invalid=vs.status==='invalid'?`<div class="notice bad"><strong>Réglage fin du vérificateur invalide</strong> (écrit à la main ?) : ${esc(vs.problem||'')}${codeTag(vs.code)}</div>`:'';
+  return `${invalid}<dl class="kv">${rows}${path}</dl>`;
+}
+function verifierHtml(a){
+  const d=a.verifier_detail||{},p=d.profile,av=d.availability||a.verifier||'';
+  const cls=av==='ready'?'ok':av==='failed'?'bad':'warn';
+  const rows=[
+    ['Disponibilité',`<span class="tag ${cls}">${esc(av||'inconnue')}</span> ${esc(d.message||'')}${d.code&&d.code!=='ready'?codeTag(d.code):''}`],
+    ['Moteur',esc(d.engine||'non installé')],
+    ['Modèle',`${esc(d.model_id||'—')}${d.model_license?` · ${esc(d.model_license)}`:''} · ${d.model_present?'présent':'absent'}`],
+    ['Profil vocal',p?`${esc(p.profile_id)} · enrôlé le ${esc(p.created_at||'?')} · ${esc(p.enrollment_ms!=null?(p.enrollment_ms/1000).toFixed(1).replace('.',',')+' s':'?')} de parole${p.consistency!=null?` · cohérence ${esc(p.consistency)}`:''}`:'aucun'],
+  ];
+  if(a.worker!==undefined){
+    const w=a.worker;
+    rows.push(['Fil de vérification (Voice)',w?`<span class="tag ${w.availability==='ready'?'ok':'bad'}">${esc(w.availability||'inconnu')}</span> · ${esc(w.dropped_ms??'?')} ms de fenêtres perdues (file saturée) · ${esc(w.phase||'')} ${esc(whenOf(w.ts))}`:'aucun vérificateur branché dans la capture']);
+  }
+  const remedy=a.verifier_remedy?`<div class="notice">Pour lever cette indisponibilité, lancez dans le dossier du projet :<div><code>${esc(a.verifier_remedy)}</code></div><div class="hint">Enrôlement au micro : arrêtez Voice d'abord (le micro doit être libre), parlez 30 s à votre place habituelle. Détails : docs/OPERATIONS.md, « Local speaker verifier ».</div></div>`:'';
+  return `<dl class="kv">${rows.map(([k,v])=>`<dt>${esc(k)}</dt><dd>${v}</dd>`).join('')}</dl>${remedy}`;
+}
+async function authSectionHtml(){
+  const a=SET.data.voice.authorization;if(!a)return '';
+  const values=authValues(a),mode=values.conversation_mode||'open_room';
+  const fields=[];
+  for(const f of a.fields||[]){
+    let field=f;
+    if(f.key==='speaker_verification'){
+      // Seules les vérifications compatibles avec le mode choisi sont proposées.
+      const allowed=(a.verification_modes_by_mode||{})[mode]||f.options||[];
+      field={...f,options:allowed,option_labels:allowed.map(o=>(f.option_labels||[])[(f.options||[]).indexOf(o)]||o)};
+    }
+    fields.push(await renderField(field,values,AUTH_SCOPE));
+  }
+  const advanced=[];
+  for(const f of a.advanced_fields||[])advanced.push(await renderField(f,values,AUTH_SCOPE));
+  const e=SET.data.voice.echo_cancellation||{};
+  const restart=SET.restartNotice||a.restart_required||e.restart_required;
+  const restartHtml=restart?`<div class="notice"><strong>Redémarrez Voice pour appliquer</strong> : ces réglages sont lus au démarrage de Voice${a.restart_required||e.restart_required?' — elle applique encore les précédents':''}.</div>`:'';
+  return `<h3>Qui peut parler à JARVIS</h3><div class="source" style="margin-bottom:10px">État lu à l'ouverture de cette fenêtre. <button class="linkish" id="authRefresh">relire l'état</button></div>${restartHtml}${authVerdictHtml(a)}${fields.join('')}
+    <details class="rd" id="authAdvanced"${SET.rdOpen?' open':''}><summary>Réglages avancés — R&amp;D (mesures sur poste, tâches 09 et 14)</summary>
+      <div class="hint" style="margin-bottom:14px">Points de départ des mesures, pas des valeurs réglées : ne les changez qu'après mesure (docs/SPEAKER_BENCHMARK.md). Vide = défaut.</div>${advanced.join('')}</details>
+    <h3>Vérificateur de locuteur</h3>${verifierHtml(a)}
+    <h3>Valeurs effectives</h3>${authEffectiveHtml(a)}`;
+}
+function aecHtml(){
+  const e=SET.data.voice.echo_cancellation;if(!e)return '';
+  const st=AEC_STATUS[e.status]||{cls:'bad',label:e.status};
+  const src=e.status_source==='voice'?voiceSeen(e,''):"D'après les réglages et l'installation de LiveKit (bibliothèque non chargée ici)";
+  const detail=e.problem?` ${esc(e.problem)}${codeTag(e.code)}`:" Voice retire la voix de JARVIS du micro (WebRTC AEC3).";
+  const title=e.status==='degraded'?'<strong>Mode dégradé</strong> :':'';
+  return `<h3>Annulation d'écho</h3><div class="notice ${st.cls}"><span class="tag ${st.cls==='info'?'':st.cls||'warn'}">${esc(st.label)}</span> ${title}${detail}<div class="hint">${src}.</div></div>`;
 }
 
 /* --- onglet Mode vocal -------------------------------------------------- */
@@ -1461,8 +1700,8 @@ async function tabVoice(){
   const archField=archs.length?`<h3>Architecture</h3>${archProblem}<div class="field"><label for="f_voice_arch">Déroulé d'une conversation</label>
     <select id="f_voice_arch" data-voice-arch>${selectOptions(archs.map(a=>({value:a.id,label:a.label})),draft.arch||'','')}</select>
     <div class="hint">${esc(arch?arch.hint:'')}</div></div>`:'';
-  return `<section>${archField}<h3>Pile vocale</h3><div class="choices">${choices}</div>${keyWarning}<h3>Réglages de ${esc(spec.label)}</h3>${fields.join('')}
-    <div class="hint">Les changements prennent effet au prochain redémarrage du runtime Voice.</div></section>`;
+  return `<section>${archField}${await authSectionHtml()}<h3>Pile vocale</h3><div class="choices">${choices}</div>${keyWarning}<h3>Réglages de ${esc(spec.label)}</h3>${fields.join('')}
+    ${aecHtml()}<div class="hint">Les changements prennent effet au prochain redémarrage du runtime Voice.</div></section>`;
 }
 
 /* --- onglet CLI --------------------------------------------------------- */
@@ -1594,6 +1833,7 @@ function bindTab(){
   modalContent.querySelectorAll('input[name=clicagent]').forEach(el=>el.addEventListener('change',()=>{
     SET.draft.cli.agent=el.value;SET.dirty=true;renderTab()}));
   modalContent.querySelectorAll('[data-field]').forEach(el=>el.addEventListener('change',()=>{
+    if(el.dataset.scope===AUTH_SCOPE){authFieldChanged(el);return}
     const values=SET.draft.voice.settings[el.dataset.scope];
     values[el.dataset.field]=el.type==='checkbox'?el.checked:(el.type==='number'?Number(el.value):el.value);
     SET.dirty=true;
@@ -1602,6 +1842,14 @@ function bindTab(){
     const spec=SET.data.voice.stacks.find(s=>s.id===el.dataset.scope);
     if(spec&&spec.fields.some(f=>f.depends_on===el.dataset.field))renderTab();else say('Modifications non enregistrées.','');
   }));
+  const advanced=$('#authAdvanced');
+  if(advanced)advanced.addEventListener('toggle',()=>{SET.rdOpen=advanced.open});
+  // Relire l'état sans perdre les modifications en cours (le brouillon reste).
+  const authRefresh=$('#authRefresh');
+  if(authRefresh)authRefresh.addEventListener('click',async()=>{
+    authRefresh.textContent='…';
+    try{SET.data=await api('/api/settings')}catch(e){say(e.message,'error')}
+    renderTab()});
   modalContent.querySelectorAll('[data-cli-field]').forEach(el=>el.addEventListener('change',()=>{
     SET.draft.cli.settings[el.dataset.scope][el.dataset.cliField]=el.value;SET.dirty=true;say('Modifications non enregistrées.','')}));
   modalContent.querySelectorAll('[data-audio]').forEach(el=>el.addEventListener('change',()=>{
@@ -1624,6 +1872,20 @@ function bindTab(){
   modalContent.querySelectorAll('[data-delete-key]').forEach(el=>el.addEventListener('click',()=>deleteCredential(el.dataset.deleteKey)));
   modalContent.querySelectorAll('[data-bind-provider]').forEach(el=>el.addEventListener('change',()=>bindCredential(el.dataset.bindProvider,el.dataset.bindId)));
   modalContent.querySelectorAll('[data-shortcut]').forEach(el=>el.addEventListener('click',()=>startCapture(el)));
+}
+
+/* Texte brut : vide = revenir au défaut, et c'est le serveur qui valide. */
+function authFieldChanged(el){
+  const a=SET.data.voice.authorization||{},key=el.dataset.field;
+  // Changer de mode ne remet la vérification au défaut du mode que si la
+  // valeur enregistrée devient incohérente (solo_owner + shadow…) : une
+  // observation enregistrée survit à open_room → solo_owner → open_room.
+  const stored={...(a.stored||{}),...((a.verifier_settings||{}).stored||{})};
+  SET.draft.voice.authorization=authDraftAfterChange(
+    SET.draft.voice.authorization,key,el.value,stored,a.verification_modes_by_mode);
+  SET.dirty=true;
+  if(key==='conversation_mode'){renderTab();return}
+  say('Modifications non enregistrées.','');
 }
 
 function selectTab(id){SET.tab=id;renderTabs();renderTab()}
@@ -1713,7 +1975,8 @@ function uiKey(event){
 /* --- ouverture, enregistrement, fermeture -------------------------------- */
 function draftFrom(data){
   return {
-    voice:{stack:data.voice.stack,arch:data.voice.arch||'',settings:JSON.parse(JSON.stringify(data.voice.settings))},
+    // `authorization` : seules les clés touchées, jamais la description reçue.
+    voice:{stack:data.voice.stack,arch:data.voice.arch||'',settings:JSON.parse(JSON.stringify(data.voice.settings)),authorization:{}},
     cli:{agent:data.cli.agent,settings:JSON.parse(JSON.stringify(data.cli.settings))},
     audio:{...data.audio},
   };
@@ -1721,7 +1984,9 @@ function draftFrom(data){
 
 async function openSettings(){
   overlay.classList.add('open');SET.open=true;
-  if(!SET.data){
+  // Sans modification en cours, relire : l'état de Voice (Solo Owner,
+  // annulation d'écho) a pu changer depuis la dernière ouverture.
+  if(!SET.data||!SET.dirty){
     modalContent.innerHTML='<div class="empty">Chargement…</div>';renderTabs();
     try{
       SET.data=await api('/api/settings');
@@ -1738,7 +2003,11 @@ async function saveDraft(options){
   const silent=options&&options.silent;
   if(!silent){modalSave.disabled=true;say('Enregistrement…','')}
   try{
+    // Réglages lus par Voice à son démarrage seulement : on le rappellera.
+    const echo=s=>((s.voice.settings||{}).openai_realtime||{}).echo_cancellation;
+    const voiceRestart=Object.keys(SET.draft.voice.authorization||{}).length>0||echo(SET.draft)!==echo(SET.data);
     const data=await api('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(SET.draft)});
+    if(voiceRestart)SET.restartNotice=true;
     SET.data=data;SET.shortcuts=data.shortcuts;SET.draft=draftFrom(data);SET.dirty=false;
     // Le CLI actif a pu changer : sa détection est refaite à l'ouverture de l'onglet.
     SET.clis=null;

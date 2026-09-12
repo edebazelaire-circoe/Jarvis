@@ -7,7 +7,9 @@ import os
 from pathlib import Path
 import subprocess
 from typing import Any
+import uuid
 
+from jarvis.domain.v2 import BRAIN_NOT_ADDRESSED_ANSWER
 from jarvis.runtime.agent_tasks import AgentTaskTracker
 from jarvis.runtime.cli_catalog import resolve_command
 from jarvis.runtime.journal import RuntimeJournal
@@ -27,6 +29,68 @@ DEFAULT_PERMISSION_MODE = "bypassPermissions"
 def normalize_permission_mode(value: object) -> str:
     mode = str(value or "").strip()
     return mode if mode in PERMISSION_MODES else DEFAULT_PERMISSION_MODE
+
+
+# Consigne système du brain vocal, ajoutée au prompt système du CLI
+# (`--append-system-prompt`) : c'est le niveau le plus fort dont dispose
+# JARVIS, au-dessus du contexte répété à chaque tour. Le CLI traite les tours
+# un par un : tant que le brain travaille, les phrases suivantes de
+# l'utilisateur attendent derrière lui (mesuré : 30 à 37 s de retard, et 85 s
+# de recherche web faite dans le tour le 11/09). D'où une règle ferme, avec
+# des critères concrets plutôt qu'un conseil.
+#
+# Le CLI enregistre le prompt système au premier tour d'une conversation et
+# le réutilise à la reprise (`--system-prompt-snapshot`, activé par défaut) :
+# une conversation ouverte avant cette consigne ne la verra qu'après un
+# redémarrage de JARVIS, qui ouvre une conversation neuve. Le rappel du
+# contexte par tour (`build_agent_brief`) s'applique, lui, immédiatement.
+BRAIN_SYSTEM_PROMPT = f"""\
+Tu es le cerveau vocal de JARVIS. Tes réponses sont lues à voix haute, dans une conversation en direct.
+
+RÈGLE ABSOLUE : RESTE DISPONIBLE, DÉLÈGUE LE TRAVAIL
+Tu aiguilles, tu n'exécutes pas. Pendant que tu travailles, l'utilisateur ne peut plus te parler : ses phrases suivantes attendent derrière toi. Chacun de tes tours doit donc se terminer en quelques secondes.
+- Tu réponds toi-même uniquement quand la réponse est immédiate : conversation, clarification, confirmation, fait déjà connu. Au plus une lecture rapide d'un seul fichier.
+- Tout le reste part en sous-agent d'arrière-plan : outil Agent avec run_in_background à true. C'est obligatoire pour une recherche ou une lecture web (WebSearch, WebFetch, navigateur), la lecture de plusieurs fichiers ou l'exploration du dépôt, toute modification de code ou de fichier, une commande longue, tout travail en plusieurs étapes, et tout ce qui risque de dépasser quelques secondes. Dans le doute, délègue.
+- Ne fais jamais ce travail toi-même dans le tour, même pour vérifier vite. N'attends pas le sous-agent : pas d'attente bloquante de son résultat, pas de sleep.
+- Donne au sous-agent une consigne complète et autonome, car il ne voit pas la conversation, et demande-lui un compte rendu court.
+- Dès le lancement, réponds en une phrase qui dit ce que tu as lancé, puis termine ton tour.
+- Quand un sous-agent ou une tâche de fond se termine, tu reçois une notification : relaie le résultat en une à trois phrases orales. Si elle ne mérite aucune annonce, réponds exactement {BRAIN_NOT_ADDRESSED_ANSWER} et rien d'autre : rien ne sera dit.
+- Une nouvelle demande pendant qu'un sous-agent travaille se traite normalement, sans attendre la fin de celui-ci.
+
+FORMAT ORAL
+- Quelques phrases courtes, en français parlé. Pas de markdown : ni titres, ni tableaux, ni listes à puces, ni gras, ni blocs de code.
+- Pas de chemin de fichier, d'URL ni d'identifiant lu à voix haute, sauf demande explicite.
+- Les détails longs vont dans un fichier ou dans le panneau ; à l'oral, seulement l'essentiel.
+"""
+
+
+def cli_prompt_argument(text: str, command: str) -> str:
+    """Rendre une consigne transmissible en argument au CLI résolu.
+
+    Un exécutable natif reçoit l'argument tel quel, retours à la ligne compris.
+    Un shim `.cmd`/`.bat` (installation npm) passe par `cmd.exe`, pour qui un
+    retour à la ligne termine la commande : la consigne y part sur une ligne.
+    """
+    if command.lower().endswith((".cmd", ".bat")):
+        return " ".join(line.strip() for line in text.splitlines() if line.strip())
+    return text
+
+
+# Budget d'un tour du brain. Au-delà, le tour est journalisé
+# (`agent.turn_over_budget`) : c'est la mesure de régression de la règle de
+# délégation. Réglable par `JARVIS_BRAIN_TURN_BUDGET_S`.
+DEFAULT_TURN_BUDGET_S = 8.0
+
+# Outils d'aiguillage : les appeler, c'est déléguer ou suivre, pas exécuter.
+# Tout autre outil appelé par le brain lui-même est du travail fait dans le tour.
+DELEGATION_TOOLS = frozenset({
+    "Agent", "Task", "TaskOutput", "TaskStop", "KillShell", "SendMessage",
+    "TodoWrite", "ToolSearch", "Skill",
+})
+
+# Réponses spontanées gardées pour `/api/agent/notices` : assez pour couvrir une
+# coupure du lecteur, trop peu pour devenir un historique.
+NOTICE_LIMIT = 50
 
 
 def raise_console_window(pid: int) -> bool:
@@ -103,6 +167,32 @@ class ClaudeLocalAgent:
         # Nombre de tours dont on n'attend plus la réponse : leur `result`
         # arrivera en retard et doit être ignoré, pas attribué au suivant.
         self._abandoned = 0
+        # Attribution exacte des `result` : chaque message porte un `uuid`, que
+        # le CLI rend dans `result.user_message_uuids`. Sans elle, le tour que
+        # le CLI ouvre de lui-même à la fin d'un sous-agent (`origin` =
+        # `task-notification`) livrait sa réponse à la question vocale suivante,
+        # puis chaque réponse glissait d'un cran (trace du 11/09, 15:50).
+        self._pending_uuid: str | None = None
+        self._abandoned_uuids: set[str] = set()
+        # Réponses que personne n'a demandées : le brain relaie la fin d'un
+        # sous-agent. Numérotées pour `/api/agent/notices` ; l'époque change
+        # avec l'objet, donc un lecteur sait quand repartir de zéro.
+        self.notices: list[dict[str, Any]] = []
+        self._notice_seq = 0
+        self.notice_epoch = uuid.uuid4().hex[:12]
+        self._notice_event = asyncio.Event()
+        # Outils appelés par le brain lui-même depuis le dernier `result`, pour
+        # repérer un tour long fait « dans le tour » au lieu d'être délégué.
+        self._turn_tools: dict[str, int] = {}
+        self.turn_budget_s = self._turn_budget_from_env()
+
+    @staticmethod
+    def _turn_budget_from_env() -> float:
+        try:
+            value = float(os.getenv("JARVIS_BRAIN_TURN_BUDGET_S") or DEFAULT_TURN_BUDGET_S)
+        except ValueError:
+            return DEFAULT_TURN_BUDGET_S
+        return value if value > 0 else DEFAULT_TURN_BUDGET_S
 
     @property
     def state(self) -> str:
@@ -205,6 +295,7 @@ class ClaudeLocalAgent:
             await self.stop()
         command = [
             resolve_command(self.command),
+            "--chrome",
             "--permission-mode",
             self.permission_mode,
             *(["--model", self.model] if self.model else []),
@@ -384,16 +475,22 @@ class ClaudeLocalAgent:
             resume_args = ["--resume", self.session_id] if resume and self.session_id else []
             permission_args = ["--permission-mode", self.permission_mode]
             model_args = ["--model", self.model] if self.model else []
+            executable = resolve_command(self.command)
+            # La règle de délégation au niveau système, pour l'agent vocal
+            # seulement : la console de debug est une session humaine.
+            brain_args = ["--append-system-prompt", cli_prompt_argument(BRAIN_SYSTEM_PROMPT, executable)]
             try:
                 self.process = await asyncio.create_subprocess_exec(
-                    resolve_command(self.command),
+                    executable,
                     "-p",
                     "--input-format",
                     "stream-json",
                     "--output-format",
                     "stream-json",
                     "--verbose",
+                    "--chrome",
                     *permission_args,
+                    *brain_args,
                     *model_args,
                     *resume_args,
                     cwd=str(self.cwd),
@@ -406,19 +503,22 @@ class ClaudeLocalAgent:
                 self.journal.emit("agent.start", "Claude CLI not found", level="error", data={"command": self.command})
                 raise RuntimeError("Claude CLI not found; install Claude Code and ensure `claude` is in PATH") from exc
             self.subtasks.process_started()
+            self._turn_tools = {}
             self.journal.emit("agent.start", "Claude local agent started", data={"pid": self.process.pid, "resumed": bool(resume_args), "permission_mode": self.permission_mode, "model": self.model or "(défaut du CLI)"})
             self._reader_task = asyncio.create_task(self._read_stdout(), name="jarvis-claude-stdout")
             self._stderr_task = asyncio.create_task(self._read_stderr(), name="jarvis-claude-stderr")
             return self.snapshot()
 
-    async def send(self, text: str) -> dict[str, Any]:
+    async def send(self, text: str, *, message_uuid: str | None = None) -> dict[str, Any]:
         text = text.strip()
         if not text:
             raise ValueError("message cannot be empty")
         if self.process is None or self.process.returncode is not None:
             await self.start()
         assert self.process is not None and self.process.stdin is not None
-        payload = {"type": "user", "message": {"role": "user", "content": text}}
+        # Le `uuid` revient dans `result.user_message_uuids` : c'est lui qui
+        # rattache une réponse à la question qui l'a provoquée.
+        payload = {"type": "user", "uuid": message_uuid or str(uuid.uuid4()), "message": {"role": "user", "content": text}}
         # Avant l'écriture : pendant `drain()`, la lecture de stdout peut déjà
         # traiter les premiers événements du tour.
         self.subtasks.turn_started()
@@ -440,15 +540,19 @@ class ClaudeLocalAgent:
         async with self._ask_lock:
             loop = asyncio.get_running_loop()
             self._pending_result = loop.create_future()
+            message_uuid = str(uuid.uuid4())
+            self._pending_uuid = message_uuid
             try:
-                await self.send(text)
+                await self.send(text, message_uuid=message_uuid)
             except (RuntimeError, ValueError) as exc:
                 self._pending_result = None
+                self._pending_uuid = None
                 return {"ok": False, "text": "", "error": str(exc), "code": "claude_unavailable"}
             try:
                 event = await asyncio.wait_for(self._pending_result, timeout=timeout_s)
             except asyncio.TimeoutError:
                 self._abandoned += 1
+                self._abandoned_uuids.add(message_uuid)
                 self.journal.emit(
                     "agent.ask_timeout",
                     f"Claude n'a pas répondu en {timeout_s:.0f} s",
@@ -458,6 +562,7 @@ class ClaudeLocalAgent:
                 return {"ok": False, "text": "", "error": f"Claude n'a pas répondu en {timeout_s:.0f} secondes.", "code": "claude_timeout"}
             finally:
                 self._pending_result = None
+                self._pending_uuid = None
 
         if event.get("type") != "result":
             # Événement synthétique : agent arrêté, passation à la console, sortie.
@@ -488,6 +593,13 @@ class ClaudeLocalAgent:
         }
 
     def _resolve_pending(self, event: dict[str, Any]) -> None:
+        if event.get("type") == "result":
+            consumed = self._consumed_uuids(event)
+            if consumed is not None:
+                self._resolve_correlated(event, consumed)
+                return
+        # CLI qui ne dit pas quels messages un tour a consommés : attribution
+        # à l'ancienne, au tour vocal en vol.
         if self._abandoned and event.get("type") == "result":
             # Ce résultat appartient à un tour abandonné (délai dépassé) :
             # le livrer à la question suivante mélangerait deux réponses.
@@ -496,6 +608,138 @@ class ClaudeLocalAgent:
         pending = self._pending_result
         if pending is not None and not pending.done():
             pending.set_result(event)
+
+    @staticmethod
+    def _consumed_uuids(event: dict[str, Any]) -> set[str] | None:
+        """Messages utilisateur qu'un tour a consommés, ou None si le CLI ne le dit pas.
+
+        Un tour peut en consommer plusieurs (message écrit pendant le tour et
+        fusionné), ou aucun : le CLI ouvre de lui-même un tour quand une tâche de
+        fond se termine, et le marque d'un `origin`.
+        """
+        uuids = event.get("user_message_uuids")
+        if isinstance(uuids, list):
+            return {str(value) for value in uuids if value}
+        single = event.get("user_message_uuid")
+        if isinstance(single, str) and single:
+            return {single}
+        if isinstance(event.get("origin"), dict):
+            return set()
+        return None
+
+    def _resolve_correlated(self, event: dict[str, Any], consumed: set[str]) -> None:
+        pending, expected = self._pending_result, self._pending_uuid
+        late = consumed & self._abandoned_uuids
+        if late:
+            # Tenir aussi le compteur de l'attribution à l'ancienne à jour.
+            self._abandoned_uuids -= late
+            self._abandoned = max(0, self._abandoned - len(late))
+        if expected is not None and expected in consumed:
+            if pending is not None and not pending.done():
+                pending.set_result(event)
+            return
+        if late:
+            self.journal.emit(
+                "agent.late_result",
+                "Réponse arrivée après l'abandon de sa question : ignorée",
+                data={"session_id": event.get("session_id"), "duration_ms": event.get("duration_ms")},
+            )
+            return
+        if consumed:
+            # Message écrit hors d'un tour vocal (panneau) : sa réponse
+            # n'appartient à aucune question en attente.
+            return
+        self._push_notice(event)
+
+    def _push_notice(self, event: dict[str, Any]) -> None:
+        """Garder une réponse que personne n'a demandée, pour qu'elle soit dite.
+
+        C'est la voie du relais : un sous-agent termine, le CLI ouvre un tour,
+        le brain résume. Un échec, un texte vide ou la réponse convenue de
+        silence ne produisent rien à dire.
+        """
+        origin = event.get("origin") if isinstance(event.get("origin"), dict) else {}
+        text = str(event.get("result") or "").strip()
+        failed = bool(event.get("is_error")) or event.get("subtype") != "success"
+        silent = failed or not text or text.casefold() == BRAIN_NOT_ADDRESSED_ANSWER.casefold()
+        data = {
+            "origin": str(origin.get("kind") or ""),
+            "session_id": event.get("session_id"),
+            "duration_ms": event.get("duration_ms"),
+            "spoken": not silent,
+        }
+        if silent:
+            self.journal.emit("agent.unsolicited_result", "Tour spontané du brain, rien à dire", data=data)
+            return
+        self._notice_seq += 1
+        notice = {"seq": self._notice_seq, "text": text, "ts_ms": self.subtasks.now_ms(), "origin": data["origin"]}
+        self.notices.append(notice)
+        del self.notices[:-NOTICE_LIMIT]
+        self.journal.emit("agent.unsolicited_result", text[:300], data={**data, "seq": self._notice_seq})
+        # Réveiller les lecteurs en attente, puis réarmer pour les suivants.
+        event_to_set, self._notice_event = self._notice_event, asyncio.Event()
+        event_to_set.set()
+
+    async def wait_notices(self, after: int, *, timeout_s: float = 25.0) -> list[dict[str, Any]]:
+        """Réponses spontanées de numéro supérieur à `after`, en attendant au plus `timeout_s`."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + max(0.0, timeout_s)
+        while True:
+            fresh = [dict(notice) for notice in self.notices if notice["seq"] > after]
+            remaining = deadline - loop.time()
+            if fresh or remaining <= 0:
+                return fresh
+            try:
+                await asyncio.wait_for(self._notice_event.wait(), timeout=remaining)
+            except asyncio.TimeoutError:
+                return []
+
+    @property
+    def last_notice_seq(self) -> int:
+        return self._notice_seq
+
+    def _audit_turn(self, event: dict[str, Any]) -> None:
+        """Mesurer les tours du brain qui dépassent leur budget.
+
+        `agent.turn_over_budget` est la mesure de régression de la règle de
+        délégation : avec `inline_tools` non vide, le brain a travaillé dans le
+        tour au lieu de lancer un sous-agent.
+        """
+        if not AgentTaskTracker.belongs_to_brain(event):
+            return
+        kind = event.get("type")
+        if kind == "assistant":
+            message = event.get("message") if isinstance(event.get("message"), dict) else {}
+            content = message.get("content")
+            for block in content if isinstance(content, list) else ():
+                if isinstance(block, dict) and block.get("type") == "tool_use":
+                    name = str(block.get("name") or "?")
+                    self._turn_tools[name] = self._turn_tools.get(name, 0) + 1
+            return
+        if kind != "result":
+            return
+        tools, self._turn_tools = self._turn_tools, {}
+        duration_ms = event.get("duration_ms")
+        budget_ms = int(self.turn_budget_s * 1000)
+        if not isinstance(duration_ms, (int, float)) or isinstance(duration_ms, bool) or duration_ms <= budget_ms:
+            return
+        inline = {name: count for name, count in tools.items() if name not in DELEGATION_TOOLS}
+        origin = event.get("origin") if isinstance(event.get("origin"), dict) else {}
+        self.journal.emit(
+            "agent.turn_over_budget",
+            f"Tour du brain de {duration_ms / 1000:.1f} s"
+            + (" : travail fait dans le tour au lieu d'un sous-agent" if inline else ""),
+            level="warning" if inline else "info",
+            data={
+                "code": "brain_inline_work" if inline else "brain_turn_slow",
+                "duration_ms": duration_ms,
+                "budget_ms": budget_ms,
+                "inline_tools": inline,
+                "delegated": any(name in {"Agent", "Task"} for name in tools),
+                "origin": str(origin.get("kind") or ""),
+                "session_id": event.get("session_id"),
+            },
+        )
 
     def _abort_pending(self, reason: str, code: str) -> None:
         """Débloquer immédiatement un `ask()` qui n'aura jamais son résultat."""
@@ -547,6 +791,12 @@ class ClaudeLocalAgent:
                 event = {"type": "stdout", "text": text}
             if isinstance(event, dict):
                 self._record(event)
+                try:
+                    self._audit_turn(event)
+                except Exception as exc:  # noqa: BLE001
+                    # Même règle que le suivi des sous-tâches : une mesure ne
+                    # doit jamais couper la lecture du flux, donc la voix.
+                    self.subtasks.report_failure(exc, event)
                 if event.get("type") == "result":
                     self._resolve_pending(event)
                 self.journal.emit("agent.event", str(event.get("type") or "event"), data=event)

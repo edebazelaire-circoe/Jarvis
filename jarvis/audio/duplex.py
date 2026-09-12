@@ -24,6 +24,22 @@ Trois étages, tous exécutés dans le thread de capture PortAudio :
    millisecondes captées, pour que le début de la phrase ne soit pas perdu, et
    un signal `near_end` part vers le bridge, qui décide du barge-in.
 
+Un observateur (`CaptureObserver`) peut en outre recevoir chaque trame nettoyée
+— la vérification du locuteur en ombre, `jarvis/audio/speaker_shadow.py` —
+avec ce que la capture savait d'elle (`CaptureFrameContext` : parole proche,
+JARVIS audible, garde, temps du flux), sans rien changer à ce qui part ni aux
+signaux.
+
+Solo Owner (tâches 06 et 07) : avec un tampon de vérification du propriétaire
+(`owner_buffer_ms`) et la garde confiée au propriétaire (`set_owner_gate`),
+le micro n'atteint plus le fournisseur que par le flux que le propriétaire
+ouvre — que JARVIS parle ou se taise : le verrou acoustique n'ouvre plus rien,
+et le silence de JARVIS non plus. C'est la confirmation du propriétaire
+(`open_owner_flow`) qui ouvre le flux : le préfixe jamais envoyé depuis le
+début estimé de sa parole part d'abord, une seule fois et dans l'ordre, puis
+le direct (`OwnerReplay`). C'est le point de filtrage le plus tôt possible :
+une autre voix n'y devient ni transcript, ni `speech_started`, ni réponse.
+
 Rien n'est persisté : l'audio ne vit que dans des tampons bornés en mémoire.
 """
 
@@ -32,11 +48,21 @@ from __future__ import annotations
 import math
 import threading
 from collections import deque
+from dataclasses import dataclass
+from itertools import islice
 from typing import Protocol
 
 import numpy as np
 
 NEAR_END = "near_end"
+#: Signal de la capture : un préfixe du propriétaire vient d'être rejoué
+#: (`CaptureProcessor.take_owner_replays`).
+OWNER_REPLAY = "owner_replay"
+#: Marge rejouée avant le début estimé de la parole du propriétaire : la
+#: première trame « proche » du détecteur suit l'attaque réelle de la syllabe
+#: (consonne sourde, montée d'énergie). Jamais appliquée quand un étranger
+#: parlait juste avant dans le même candidat.
+OWNER_REPLAY_MARGIN_MS = 150
 
 FRAME_MS = 10
 _BYTES_PER_SAMPLE = 2  # int16 mono
@@ -64,6 +90,81 @@ class EchoCanceller(Protocol):
     def process_render(self, frame: bytes) -> None: ...
 
     def process_capture(self, frame: bytes) -> bytes: ...
+
+
+@dataclass(frozen=True, slots=True)
+class CaptureFrameContext:
+    """Ce que la capture savait d'une trame au moment de la traiter.
+
+    Calculé dans le thread PortAudio, sans E/S ni copie d'audio : quelques
+    booléens déjà connus de la garde. Immuable, l'observateur peut le garder.
+
+    - `stream_ms` : début de la trame, en millisecondes d'audio capté depuis
+      le dernier `CaptureProcessor.reset()` (horloge du flux, pas l'horloge
+      murale) ;
+    - `sample_rate` : fréquence de la trame ;
+    - `near_end` : la trame, prise seule, dépasse le plancher de bruit — et,
+      quand JARVIS parle, l'écho attendu — de la marge du `NearEndDetector`.
+      Candidat acoustique, jamais une identité (D03) ;
+    - `far_end` : JARVIS parle ou vient de se taire (`far_recent`) : un écho
+      résiduel est possible dans cette trame ;
+    - `near_end_latched` : parole proche confirmée (verrou du détecteur) ;
+    - `gate_open` : le fournisseur entend le micro après cette trame.
+    """
+
+    stream_ms: int
+    sample_rate: int
+    near_end: bool
+    far_end: bool
+    near_end_latched: bool
+    gate_open: bool
+
+
+@dataclass(frozen=True, slots=True)
+class OwnerReplay:
+    """Ce qu'une ouverture du flux par le propriétaire a rejoué (tâche 06).
+
+    Scalaires seulement, en millisecondes de l'horloge du flux de capture
+    (`CaptureProcessor.stream_ms`) : jamais d'audio.
+
+    - `owner_onset_ms` : début estimé de la parole du propriétaire, tel que
+      reçu ; `requested_from_ms` : ce début moins la marge éventuelle
+      (`margin_ms`) ;
+    - `from_ms` / `until_ms` : premier instant rejoué et fin du rejeu — l'instant
+      où le direct reprend ; `replay_ms` = `until_ms - from_ms` ;
+    - `already_sent_ms` : partie de l'intervalle demandé que le fournisseur
+      avait déjà reçue (pré-roll, garde ouverte) ou qui précède de l'audio déjà
+      envoyé — jamais renvoyée, l'ordre du flux primant ;
+    - `clamped_ms` : début demandé plus ancien que le tampon, perdu ;
+    - `buffer_ms` : capacité du tampon.
+    """
+
+    owner_onset_ms: int
+    requested_from_ms: int
+    from_ms: int
+    until_ms: int
+    replay_ms: int
+    margin_ms: int
+    already_sent_ms: int
+    clamped_ms: int
+    buffer_ms: int
+
+
+class CaptureObserver(Protocol):
+    """Observateur passif de la capture nettoyée (vérification du locuteur).
+
+    `observe` est appelé dans le thread PortAudio, une fois par trame de 10 ms,
+    après l'annulation d'écho et la garde, avec le contexte de la trame : il
+    rend la main aussitôt — une file bornée, pas de calcul lourd, pas d'E/S —
+    et ne peut rien changer à ce qui part. `reset` suit
+    `CaptureProcessor.reset` (capture arrêtée), `close` sa fermeture.
+    """
+
+    def observe(self, frame: bytes, context: CaptureFrameContext) -> None: ...
+
+    def reset(self) -> None: ...
+
+    def close(self) -> None: ...
 
 
 class NearEndDetector:
@@ -142,6 +243,11 @@ class NearEndDetector:
         self._frames_since_far = 1 << 30
         self._refractory = 0
         self.latched = False
+        #: Verdict brut de la dernière trame (candidat acoustique), lu par
+        #: l'observateur de la capture. Informatif : aucune décision du
+        #: détecteur n'en dépend. JARVIS silencieux, seule la marge au
+        #: plancher compte.
+        self.last_near = False
 
     @property
     def far_recent(self) -> bool:
@@ -186,6 +292,7 @@ class NearEndDetector:
         self._frames_since_far = 0 if far_now else self._frames_since_far + 1
         if not self.far_recent:
             self._update_floor(mic_db)
+            self.last_near = mic_db > self.floor_db + self.floor_margin_db
             self.latched = False
             self._reset_window()
             self._refractory = 0
@@ -200,6 +307,7 @@ class NearEndDetector:
             coupling = max(coupling, self.warmup_coupling_db)
         predicted = ref_env + coupling if far_now else -math.inf
         near = mic_db > self.floor_db + self.floor_margin_db and mic_db > predicted + self.echo_margin_db
+        self.last_near = near
         recently_near = any(self._near)
         self._near.append(near)
         if ref_env > self.REF_LEARN_DB and not near and not recently_near and not self.latched:
@@ -237,7 +345,35 @@ class CaptureProcessor:
     `push_reference()` par le thread d'écriture de la sortie, `clear_reference()`
     et `release_near_end()` par la boucle asyncio. Seule la file de référence et
     la demande de libération sont partagées, sous `_lock` ; l'annuleur et le
-    détecteur ne sont touchés que par le thread de capture.
+    détecteur ne sont touchés que par le thread de capture. L'observateur
+    reçoit sa copie depuis le thread de capture et fait lui-même passer le
+    travail lourd dans son propre fil.
+
+    Tampon de vérification du propriétaire (Solo Owner, tâche 06), présent
+    seulement si `owner_buffer_ms` est donné — la salle ouverte n'en a pas :
+
+    - distinct du pré-roll : le pré-roll (400 ms) sert l'ouverture acoustique
+      rapide ; ce tampon garde les `owner_buffer_ms` dernières millisecondes
+      de trames nettoyées (après l'annuleur, donc sans toucher à l'ordre de la
+      référence), le temps que le vérificateur reconnaisse la voix (D07, D08).
+      Mémoire bornée : `owner_buffer_ms / 10` trames de 10 ms, soit
+      `owner_buffer_ms × fréquence × 2 / 1000` octets (240 Ko à 48 kHz et
+      2,5 s). Jamais persisté, jamais journalisé ;
+    - indexé sur l'horloge du flux : la trame `i` commence à `i × 10` ms,
+      l'horloge de `OwnerStateSnapshot` ; `owner_onset_ms` désigne donc une
+      trame du tampon ;
+    - envoyé / pas envoyé : un seul repère, `_sent_until`, l'indice qui suit
+      la dernière trame réelle remise au fournisseur (direct, pré-roll ou
+      rejeu). Toute trame d'indice inférieur est envoyée ou abandonnée : le
+      rejeu ne remet jamais une trame derrière de l'audio déjà envoyé, donc
+      ni doublon ni désordre ;
+    - vidé par `reset()` (session, fréquence d'une nouvelle capture).
+
+    Les commandes du propriétaire (`set_owner_gate`, `open_owner_flow`,
+    `close_owner_flow`) viennent de la boucle asyncio : elles sont déposées
+    sous `_lock` et appliquées par le thread de capture au début du bloc
+    suivant, avant ses trames — c'est ce qui rend le rejeu unique et exact
+    face aux trames qui continuent d'arriver.
     """
 
     #: Durée de référence gardée au plus : au-delà, c'est une dérive d'horloge
@@ -252,6 +388,9 @@ class CaptureProcessor:
         canceller: EchoCanceller | None = None,
         preroll_ms: int | None = None,
         detector: NearEndDetector | None = None,
+        observer: CaptureObserver | None = None,
+        owner_buffer_ms: int | None = None,
+        owner_replay_margin_ms: int = OWNER_REPLAY_MARGIN_MS,
     ) -> None:
         self.capture_rate = int(capture_rate)
         self.render_rate = int(render_rate)
@@ -277,6 +416,29 @@ class CaptureProcessor:
         self._carry = b""
         self._gate_open = True
         self.canceller_failed = False
+        # Trames traitées depuis le dernier `reset()` : l'horloge du flux,
+        # partagée avec l'observateur (`CaptureFrameContext.stream_ms`).
+        self._stream_frames = 0
+        # Vérification du locuteur en ombre ; absent, rien ne change.
+        self.observer = observer
+        self.observer_failed = False
+        # Tampon de vérification du propriétaire (voir la docstring) : thread
+        # de capture seulement, sauf les commandes et rapports sous `_lock`.
+        self._owner_ring: deque[bytes] | None = None
+        self.owner_buffer_ms = 0
+        if owner_buffer_ms is not None:
+            frames = max(1, int(owner_buffer_ms) // FRAME_MS)
+            self._owner_ring = deque(maxlen=frames)
+            self.owner_buffer_ms = frames * FRAME_MS
+        self.owner_replay_margin_ms = max(0, int(owner_replay_margin_ms))
+        self._sent_until = 0
+        self._owner_gate = False
+        self._owner_flow = False
+        self._owner_gate_wanted = False
+        # Dernière commande de flux non appliquée : (ouvrir, début, candidat,
+        # refermer aussitôt après le rejeu).
+        self._owner_flow_request: tuple[bool, int, int | None, bool] | None = None
+        self._owner_replays: deque[OwnerReplay] = deque(maxlen=4)
 
     # -- côté sortie ----------------------------------------------------------
 
@@ -306,26 +468,58 @@ class CaptureProcessor:
     def reset(self) -> None:
         """Repartir pour une nouvelle session vocale.
 
-        Appelé à l'activation, avant l'ouverture du micro : aucun thread
-        PortAudio ne tourne alors. Les tampons de la session précédente
+        Appelé à l'activation, avant l'ouverture du micro, et au retour au fond
+        une fois le micro fermé : aucun thread PortAudio ne tourne alors.
+        L'horloge du flux repart de zéro. Les tampons de la session précédente
         disparaissent ; l'annuleur convergé et le plancher de bruit restent. Le
         couplage, lui, ne redescend pas sous sa valeur prudente : entre deux
         réveils, le casque a pu laisser place aux haut-parleurs, et un couplage
         appris au casque ferait prendre leur écho pour l'utilisateur. Il
         réapprend en une seconde de parole de JARVIS.
+
+        Le tampon du propriétaire est vidé, la garde rendue à la règle
+        acoustique et toute commande en attente oubliée : aucun rejeu ne peut
+        désigner une trame d'une autre session. Le bridge suivant rend la
+        garde au propriétaire s'il en a l'autorité.
         """
 
         with self._lock:
             self._reference.clear()
             self._release_requested = False
+            self._owner_gate_wanted = False
+            self._owner_flow_request = None
+            self._owner_replays.clear()
         self._carry = b""
         self._preroll.clear()
         self._gate_open = True
+        self._stream_frames = 0
+        if self._owner_ring is not None:
+            self._owner_ring.clear()
+        self._sent_until = 0
+        self._owner_gate = False
+        self._owner_flow = False
         detector = self.detector
         detector.latched = False
         detector._reset_window()
         detector._refractory = 0
         detector.coupling_db = max(detector.coupling_db, detector.initial_coupling_db)
+        observer = self.observer
+        if observer is not None and not self.observer_failed:
+            try:
+                observer.reset()
+            except Exception:
+                self.observer_failed = True
+
+    def close(self) -> None:
+        """Libérer l'observateur : cette capture ne servira plus."""
+
+        observer, self.observer = self.observer, None
+        if observer is not None:
+            try:
+                observer.close()
+            except Exception:
+                # Fermeture best effort : Voice s'arrête de toute façon.
+                pass
 
     # -- état lu par la boucle ------------------------------------------------
 
@@ -343,6 +537,80 @@ class CaptureProcessor:
     def far_recent(self) -> bool:
         return self.detector.far_recent
 
+    @property
+    def stream_ms(self) -> int:
+        """Audio capté et traité depuis le dernier `reset()`, en millisecondes.
+
+        Même horloge que `CaptureFrameContext.stream_ms` et que les instants de
+        l'état du propriétaire (`OwnerStateSnapshot`). Écrit par le thread de
+        capture ; une lecture d'ailleurs peut retarder d'un bloc.
+        """
+
+        return self._stream_frames * FRAME_MS
+
+    # -- Solo Owner : flux ouvert par le propriétaire (boucle asyncio) -------
+
+    @property
+    def owner_gate(self) -> bool:
+        """La garde appartient-elle au propriétaire (dernière commande appliquée) ?"""
+
+        return self._owner_gate
+
+    def set_owner_gate(self, enabled: bool) -> bool:
+        """Confier la garde au propriétaire (Solo Owner) ou la rendre à la règle acoustique.
+
+        Confiée, le fournisseur reçoit du silence jusqu'à `open_owner_flow`,
+        que JARVIS parle ou se taise (tâche 07) : le verrou de parole proche
+        ne fait plus que signaler un candidat. Rend False — et rien ne change —
+        sans tampon du propriétaire : fermer la garde sans pouvoir rejouer
+        perdrait le début de phrase.
+        """
+
+        if enabled and self._owner_ring is None:
+            return False
+        with self._lock:
+            self._owner_gate_wanted = bool(enabled)
+            if not enabled:
+                self._owner_flow_request = None
+        return True
+
+    def open_owner_flow(self, owner_onset_ms: int, *, candidate_onset_ms: int | None = None) -> None:
+        """Le propriétaire est confirmé : rejouer son préfixe non envoyé, puis le direct.
+
+        Appliqué au début du bloc suivant, dans le thread de capture ; sans
+        effet si le flux est déjà ouvert ou la garde acoustique.
+        `candidate_onset_ms` : début du candidat acoustique ; s'il précède
+        `owner_onset_ms`, un étranger parlait avant, et la marge n'est pas
+        appliquée.
+        """
+
+        with self._lock:
+            self._owner_flow_request = (True, max(0, int(owner_onset_ms)), candidate_onset_ms, False)
+
+    def close_owner_flow(self) -> None:
+        """Le propriétaire a fini (ou un étranger a repris) : garde refermée.
+
+        Une ouverture encore en attente n'est pas perdue : elle rejoue son
+        préfixe au bloc suivant, puis le flux se referme aussitôt. C'est le cas
+        d'une réponse brève reconnue à la fin de son candidat (tâche 07) :
+        confirmation et fin arrivent ensemble, tout le candidat part au rejeu.
+        """
+
+        with self._lock:
+            pending = self._owner_flow_request
+            if pending is not None and pending[0]:
+                self._owner_flow_request = (True, pending[1], pending[2], True)
+            else:
+                self._owner_flow_request = (False, 0, None, False)
+
+    def take_owner_replays(self) -> tuple[OwnerReplay, ...]:
+        """Rapports des rejeux faits depuis le dernier appel (au plus 4), pour la trace."""
+
+        with self._lock:
+            replays = tuple(self._owner_replays)
+            self._owner_replays.clear()
+        return replays
+
     # -- côté capture ---------------------------------------------------------
 
     def process(self, pcm: bytes) -> tuple[bytes, tuple[str, ...]]:
@@ -354,33 +622,127 @@ class CaptureProcessor:
         self._carry = data[usable:]
         with self._lock:
             release, self._release_requested = self._release_requested, False
+            owner_gate = self._owner_gate_wanted
+            flow_request, self._owner_flow_request = self._owner_flow_request, None
         if release:
             self.detector.release()
         out = bytearray()
         signals: list[str] = []
+        ring = self._owner_ring
+        if ring is not None:
+            self._apply_owner_commands(owner_gate, flow_request, out, signals)
         for offset in range(0, usable, size):
             frame = data[offset:offset + size]
             reference = self._pop_reference()
             frame = self._cancel_echo(frame, reference)
             confirmed = self.detector.update(frame_db(frame), frame_db(reference))
-            should_open = self.detector.latched or not self.detector.far_recent
-            if confirmed and not self._gate_open:
-                # Ouverture sur parole confirmée : le fournisseur reçoit d'abord
-                # ce qu'il n'a pas entendu juste avant, trame courante comprise,
-                # puis le direct.
-                self._preroll.append((frame, False))
-                out += b"".join(item for item, sent in self._preroll if not sent)
-                self._preroll = deque(((item, True) for item, _sent in self._preroll), maxlen=self._preroll.maxlen)
-            elif should_open:
-                out += frame
-                self._preroll.append((frame, True))
+            if self._owner_gate:
+                # Solo Owner : seul le propriétaire ouvre le flux, que JARVIS
+                # parle ou se taise (tâche 07) — une autre voix n'atteint
+                # jamais le fournisseur. Le verrou acoustique ne fait plus que
+                # signaler un candidat au bridge ; son pré-roll ne part pas.
+                should_open = self._owner_flow
+                if should_open:
+                    out += frame
+                else:
+                    out += bytes(len(frame))
+                self._preroll.append((frame, should_open))
             else:
-                out += bytes(len(frame))
-                self._preroll.append((frame, False))
+                should_open = self.detector.latched or not self.detector.far_recent
+                if confirmed and not self._gate_open:
+                    # Ouverture sur parole confirmée : le fournisseur reçoit d'abord
+                    # ce qu'il n'a pas entendu juste avant, trame courante comprise,
+                    # puis le direct.
+                    self._preroll.append((frame, False))
+                    out += b"".join(item for item, sent in self._preroll if not sent)
+                    self._preroll = deque(((item, True) for item, _sent in self._preroll), maxlen=self._preroll.maxlen)
+                elif should_open:
+                    out += frame
+                    self._preroll.append((frame, True))
+                else:
+                    out += bytes(len(frame))
+                    self._preroll.append((frame, False))
             if confirmed:
                 signals.append(NEAR_END)
             self._gate_open = should_open
+            if ring is not None:
+                # Trame nettoyée, telle qu'elle serait partie ; envoyée si la
+                # garde était ouverte (direct, ou pré-roll vidé jusqu'à elle).
+                ring.append(frame)
+                if should_open:
+                    self._sent_until = self._stream_frames + 1
+            # Après la garde : l'observateur reçoit la trame nettoyée et ce que
+            # la garde en a conclu. Rien de ce qui précède n'en dépend.
+            self._observe(frame)
+            self._stream_frames += 1
         return bytes(out), tuple(signals)
+
+    def _apply_owner_commands(
+        self,
+        owner_gate: bool,
+        flow_request: tuple[bool, int, int | None, bool] | None,
+        out: bytearray,
+        signals: list[str],
+    ) -> None:
+        """Appliquer, avant les trames du bloc, ce que la boucle a demandé."""
+
+        self._owner_gate = owner_gate
+        if not owner_gate:
+            self._owner_flow = False
+            return
+        if flow_request is None:
+            return
+        opening, owner_onset_ms, candidate_onset_ms, close_after = flow_request
+        if not opening:
+            self._owner_flow = False
+            return
+        if not self._owner_flow:
+            # Sinon, déjà ouvert : tout ce qui a suivi l'ouverture est parti
+            # en direct.
+            self._owner_flow = True
+            replay = self._replay_owner_prefix(owner_onset_ms, candidate_onset_ms, out)
+            with self._lock:
+                self._owner_replays.append(replay)
+            signals.append(OWNER_REPLAY)
+        if close_after:
+            self._owner_flow = False
+
+    def _replay_owner_prefix(self, owner_onset_ms: int, candidate_onset_ms: int | None, out: bytearray) -> OwnerReplay:
+        """Remettre au fournisseur, une fois, les trames jamais envoyées depuis le début du propriétaire.
+
+        Thread de capture. Intervalle demandé : `owner_onset_ms` moins la marge
+        (seulement si aucun étranger ne parlait avant dans ce candidat), jusqu'à
+        la dernière trame traitée. N'en part que ce qui suit `_sent_until` —
+        l'ordre du flux prime sur l'exhaustivité — et que le tampon garde
+        encore ; le reste est compté (`already_sent_ms`, `clamped_ms`).
+        """
+
+        ring = self._owner_ring
+        assert ring is not None
+        end = self._stream_frames
+        oldest = end - len(ring)
+        after_non_owner = candidate_onset_ms is not None and owner_onset_ms > candidate_onset_ms
+        margin = 0 if after_non_owner else self.owner_replay_margin_ms // FRAME_MS
+        requested = max(0, owner_onset_ms // FRAME_MS - margin)
+        needed = max(requested, self._sent_until)
+        first = min(end, max(needed, oldest))
+        if first < end:
+            out += b"".join(islice(ring, first - oldest, None))
+        # Tout ce qui précède est désormais envoyé ou abandonné : ni le
+        # pré-roll acoustique ni un rejeu suivant ne le renverront.
+        self._sent_until = end
+        self._preroll = deque(((item, True) for item, _sent in self._preroll), maxlen=self._preroll.maxlen)
+        return OwnerReplay(
+            owner_onset_ms=owner_onset_ms,
+            requested_from_ms=requested * FRAME_MS,
+            from_ms=first * FRAME_MS,
+            until_ms=end * FRAME_MS,
+            replay_ms=(end - first) * FRAME_MS,
+            margin_ms=margin * FRAME_MS,
+            already_sent_ms=max(0, min(needed, end) - requested) * FRAME_MS,
+            clamped_ms=max(0, min(oldest, end) - needed) * FRAME_MS,
+            buffer_ms=self.owner_buffer_ms,
+        )
 
     def _pop_reference(self) -> bytes:
         size = self._render_frame_bytes
@@ -390,6 +752,27 @@ class CaptureProcessor:
         if len(chunk) < size:
             chunk += bytes(size - len(chunk))
         return chunk
+
+    def _observe(self, frame: bytes) -> None:
+        observer = self.observer
+        if observer is None or self.observer_failed:
+            return
+        detector = self.detector
+        context = CaptureFrameContext(
+            stream_ms=self._stream_frames * FRAME_MS,
+            sample_rate=self.capture_rate,
+            near_end=detector.last_near,
+            far_end=detector.far_recent,
+            near_end_latched=detector.latched,
+            gate_open=self._gate_open,
+        )
+        try:
+            observer.observe(frame, context)
+        except Exception:
+            # Une exception ici ferait repartir le micro brut depuis le
+            # callback PortAudio (`SoundDeviceRealtimeAudio`) : l'observateur
+            # est écarté, la capture continue à l'identique.
+            self.observer_failed = True
 
     def _cancel_echo(self, frame: bytes, reference: bytes) -> bytes:
         canceller = self.canceller

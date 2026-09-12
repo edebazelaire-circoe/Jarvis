@@ -16,6 +16,30 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from jarvis.domain.speaker import (
+    DEFAULT_OWNER_BUFFER_MS,
+    MAX_OWNER_BUFFER_MS,
+    MIN_OWNER_BUFFER_MS,
+    ConversationMode,
+    SpeakerVerificationMode,
+)
+from jarvis.v2_config import (
+    CONVERSATION_MODE_SETTING,
+    DEFAULT_OWNER_EVIDENCE_MS,
+    DEFAULT_OWNER_SHORT_EVIDENCE_MS,
+    DEFAULT_OWNER_SHORT_MARGIN,
+    MAX_OWNER_EVIDENCE_MS,
+    MAX_OWNER_SHORT_MARGIN,
+    MIN_OWNER_EVIDENCE_MS,
+    MIN_OWNER_SHORT_EVIDENCE_MS,
+    OWNER_BUFFER_MS_SETTING,
+    OWNER_EVIDENCE_MS_SETTING,
+    OWNER_SHORT_EVIDENCE_MS_SETTING,
+    OWNER_SHORT_MARGIN_SETTING,
+    OWNER_THRESHOLD_SETTING,
+    SPEAKER_VERIFICATION_SETTING,
+)
+
 TURN_MODES = ("auto", "manual")
 
 # OpenAI ne publie pas d'endpoint « liste des voix » : ces timbres sont ceux
@@ -52,6 +76,10 @@ class Field:
     # N'afficher ce champ que si un autre vaut l'une de ces valeurs.
     depends_on: str = ""
     depends_values: tuple[str, ...] = ()
+    # Libellés lisibles des options, dans le même ordre (sinon l'identifiant).
+    option_labels: tuple[str, ...] = ()
+    # Texte d'un champ laissé vide : ce que vaut alors le défaut.
+    placeholder: str = ""
 
     def describe(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -63,6 +91,10 @@ class Field:
         }
         if self.options:
             payload["options"] = list(self.options)
+        if self.option_labels:
+            payload["option_labels"] = list(self.option_labels)
+        if self.placeholder:
+            payload["placeholder"] = self.placeholder
         if self.source:
             payload["source"] = self.source
         for name, value in (("min", self.minimum), ("max", self.maximum), ("step", self.step)):
@@ -334,6 +366,112 @@ VOICE_STACKS: tuple[VoiceStackSpec, ...] = (OPENAI_REALTIME, GEMINI_LIVE)
 VOICE_STACK_IDS: tuple[str, ...] = tuple(spec.id for spec in VOICE_STACKS)
 DEFAULT_VOICE_STACK = OPENAI_REALTIME.id
 _BY_ID = {spec.id: spec for spec in VOICE_STACKS}
+
+
+# --- Qui peut parler à JARVIS (handoff Solo Owner, tâche 08) ---------------
+# Ces champs n'appartiennent à aucune pile : ils règlent la capture duplex de
+# JARVIS (conversation continue seulement) et sont rangés à plat dans les
+# réglages, comme `voice_arch`. Ils ne passent pas par `coerce` : leur seul
+# validateur est celui de `v2_config` (`parse_conversation_authorization`,
+# `parse_speaker_verifier_settings`), celui-là même que Voice appelle au
+# démarrage. Décrits ici pour que la page les rende comme les autres champs.
+AUTHORIZATION_FIELDS: tuple[Field, ...] = (
+    Field(
+        key=CONVERSATION_MODE_SETTING,
+        label="Mode de conversation",
+        kind="select",
+        default=ConversationMode.OPEN_ROOM.value,
+        options=tuple(item.value for item in ConversationMode),
+        option_labels=("Salle ouverte — toute voix (open_room)", "Solo Owner — votre voix seulement (solo_owner)"),
+        hint="Salle ouverte : toute voix captée peut couper JARVIS et devenir un tour, comme avant. "
+        "Solo Owner : seule votre voix enrôlée compte. Il exige la conversation continue, le "
+        "vérificateur et votre profil vocal ; sinon Voice refuse d'écouter plutôt que de faire semblant.",
+    ),
+    Field(
+        key=SPEAKER_VERIFICATION_SETTING,
+        label="Vérification du locuteur",
+        kind="select",
+        default="",
+        options=tuple(item.value for item in SpeakerVerificationMode),
+        option_labels=(
+            "Désactivée (off)",
+            "En ombre : mesure sans rien filtrer (shadow)",
+            "Appliquée : écarte les autres voix (enforce)",
+        ),
+        placeholder="Selon le mode",
+        hint="Laissée « Selon le mode » : enforce en Solo Owner, off en salle ouverte. En salle "
+        "ouverte, shadow mesure et journalise les scores sans rien changer : le chemin pour "
+        "mesurer avant d'appliquer.",
+    ),
+    Field(
+        key=OWNER_BUFFER_MS_SETTING,
+        label="Tampon de rejeu du propriétaire (ms)",
+        kind="number",
+        default=DEFAULT_OWNER_BUFFER_MS,
+        minimum=MIN_OWNER_BUFFER_MS,
+        maximum=MAX_OWNER_BUFFER_MS,
+        step=100,
+        placeholder=f"{DEFAULT_OWNER_BUFFER_MS} par défaut",
+        hint="Solo Owner : audio gardé en mémoire le temps de vous reconnaître, pour renvoyer le "
+        "début de votre phrase. Trop court, le début est perdu (owner_replay_clamped dans la trace).",
+    ),
+)
+
+#: Réglages fins du vérificateur : pour les mesures (tâches 09 et 14), pas
+#: pour l'usage courant. Le chemin du profil n'est pas ici : il reste en
+#: lecture seule dans l'écran, jamais écrit depuis la page.
+OWNER_TUNING_FIELDS: tuple[Field, ...] = (
+    Field(
+        key=OWNER_THRESHOLD_SETTING,
+        label="Seuil de reconnaissance",
+        kind="number",
+        default=None,
+        minimum=0.0,
+        maximum=1.0,
+        step=0.01,
+        placeholder="seuil calibré du moteur",
+        hint="Échelle commune ]0, 1]. Plus haut : moins d'autres voix acceptées, mais vous êtes "
+        "reconnu moins souvent. Vide : le seuil calibré du moteur.",
+    ),
+    Field(
+        key=OWNER_EVIDENCE_MS_SETTING,
+        label="Fenêtre de preuve (ms)",
+        kind="number",
+        default=DEFAULT_OWNER_EVIDENCE_MS,
+        minimum=MIN_OWNER_EVIDENCE_MS,
+        maximum=MAX_OWNER_EVIDENCE_MS,
+        step=100,
+        placeholder=f"{DEFAULT_OWNER_EVIDENCE_MS} par défaut",
+        hint="Parole voisée sur laquelle repose un verdict : elle fixe le délai de reconnaissance.",
+    ),
+    Field(
+        key=OWNER_SHORT_EVIDENCE_MS_SETTING,
+        label="Réponse brève : parole minimale (ms)",
+        kind="number",
+        default=DEFAULT_OWNER_SHORT_EVIDENCE_MS,
+        minimum=0,
+        maximum=MAX_OWNER_EVIDENCE_MS,
+        step=50,
+        placeholder=f"{DEFAULT_OWNER_SHORT_EVIDENCE_MS} par défaut",
+        hint=f"0 désactive ; sinon au moins {MIN_OWNER_SHORT_EVIDENCE_MS} ms et moins que la fenêtre "
+        "de preuve. Sert aussi de fenêtre récente pour repérer une autre voix qui enchaîne sans pause.",
+    ),
+    Field(
+        key=OWNER_SHORT_MARGIN_SETTING,
+        label="Réponse brève : marge du seuil",
+        kind="number",
+        default=DEFAULT_OWNER_SHORT_MARGIN,
+        minimum=0.0,
+        maximum=MAX_OWNER_SHORT_MARGIN,
+        step=0.01,
+        placeholder=f"{DEFAULT_OWNER_SHORT_MARGIN:g} par défaut",
+        hint="Réponse brève acceptée au seuil + marge ; fenêtre récente refermée sous seuil − marge.",
+    ),
+)
+
+
+def describe_fields(fields: tuple[Field, ...]) -> list[dict[str, Any]]:
+    return [item.describe() for item in fields]
 
 
 class VoiceStackError(ValueError):

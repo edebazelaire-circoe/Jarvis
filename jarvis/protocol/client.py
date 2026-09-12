@@ -114,6 +114,22 @@ class LocalCoreClient:
         async with session.post(self.base_url + f"/v1/actions/{action_id}/confirmation", headers=self.headers, json={"text": text}) as response:
             return await self._json(response)
 
+    async def ingest_work_observations(self, batch: dict[str, Any]) -> dict[str, Any]:
+        """Remettre un lot d'observations de travail (`WorkObservationBatch.to_payload()`).
+
+        `CoreProtocolError` avec `status=400` : lot refusé, le rejouer ne
+        servirait à rien ; `status=401` : jeton périmé (Core redémarré).
+        """
+
+        session = await self._http()
+        async with session.post(self.base_url + "/v1/work/observations", headers=self.headers, json=batch) as response:
+            return await self._json(response)
+
+    async def work_snapshot(self) -> dict[str, Any]:
+        session = await self._http()
+        async with session.get(self.base_url + "/v1/work/snapshot", headers=self.headers) as response:
+            return await self._json(response)
+
     async def events(self) -> AsyncIterator[ProtocolEnvelope]:
         session = await self._http()
         async with session.ws_connect(self.base_url.replace("http://", "ws://") + "/v1/events", headers=self.headers, heartbeat=20) as ws:

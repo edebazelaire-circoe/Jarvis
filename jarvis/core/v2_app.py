@@ -9,11 +9,13 @@ from jarvis.adapters.fake_calendar import InMemoryCalendarBackend
 from jarvis.adapters.jsonl_history import JsonlHistoryStore
 from jarvis.adapters.sqlite_state import SQLiteStateRepository
 from jarvis.adapters.windows_notifications import NullNotificationDelivery
-from jarvis.core.brain_service import BrainOrchestrator
+from jarvis.core.brain_context import ATTENTION_QUEUE_SIZE, BrainContextBuilder, WorkAttentionPolicy
+from jarvis.core.brain_service import DEFAULT_TURN_BUDGET_S, BrainOrchestrator
 from jarvis.core.calendar_service import CalendarService
 from jarvis.core.drive_service import DriveService
 from jarvis.core.v2_services import ConversationService, CoreEventBus, JobService, NotificationService, SchedulerService
 from jarvis.core.v2_tools import CoreToolRouter
+from jarvis.core.work_state import WorkStateStore
 from jarvis.domain.v2 import Device, Job, MissedRunPolicy, Notification, NotificationPriority, ProtocolEnvelope, ScheduledItem, ScheduledStatus, utc_now
 from jarvis.ports.v2 import DiagnosticSink
 
@@ -33,15 +35,30 @@ class JarvisCoreApplication:
     or Windows UI dependency.
     """
 
-    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None) -> None:
+    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = True, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S) -> None:
         root = Path(data_root).resolve()
         self.state = SQLiteStateRepository(root / "state" / "jarvis.sqlite3")
         self.history = JsonlHistoryStore(root / "history")
         self.events = CoreEventBus(diagnostics=diagnostics)
         self.conversations = ConversationService(self.state, self.history)
         self.scheduler = SchedulerService(self.state, self.events)
-        self.jobs = JobService(self.state, self.events, workers or {}, diagnostics=diagnostics)
-        self.notifications = NotificationService(self.state, notification_delivery or NullNotificationDelivery())
+        # État de travail détaillé, possédé par Core (handoff work-state, tâche
+        # 11) : alimenté par les jobs et par l'ingress `/v1/work/observations`,
+        # en mémoire seulement (voir `jarvis/core/work_state.py`).
+        self.work_state = WorkStateStore(events=self.events, diagnostics=diagnostics)
+        self.jobs = JobService(self.state, self.events, workers or {}, diagnostics=diagnostics, work_state=self.work_state)
+        # Tâche 12 : le cerveau lit ce même magasin à chaque tour, et une
+        # politique abonnée à `core.work.updated` retient pour lui les échecs,
+        # interruptions et blocages. Aucun réveil n'est câblé : le prochain tour
+        # les reçoit (voir `jarvis/core/brain_context.py`).
+        self.work_attention = WorkAttentionPolicy(diagnostics=diagnostics)
+        self.brain_context = BrainContextBuilder(
+            reader=self.work_state,
+            store_id=self.work_state.store_id,
+            attention=self.work_attention,
+            diagnostics=diagnostics,
+        )
+        self.notifications =NotificationService(self.state, notification_delivery or NullNotificationDelivery())
         self.calendar = CalendarService(calendar_backend or InMemoryCalendarBackend())
         # Pas de repli en mémoire pour Drive : un faux Drive donnerait à
         # l'utilisateur la certitude d'avoir déposé un fichier qui n'existe pas.
@@ -53,12 +70,27 @@ class JarvisCoreApplication:
         # `jobs` est la couture d'annulation (`WorkCanceller`) : une décision
         # explicite du cerveau doit arrêter le job qu'elle vise, sinon
         # l'annulation ne serait qu'une écriture d'état.
-        self.brain = BrainOrchestrator(conversations=self.conversations, events=self.events, backend=brain_backend, jobs=self.jobs, diagnostics=diagnostics)
+        self.brain = BrainOrchestrator(
+            conversations=self.conversations,
+            events=self.events,
+            backend=brain_backend,
+            jobs=self.jobs,
+            diagnostics=diagnostics,
+            supersede_stale_replies=supersede_stale_replies,
+            turn_budget_s=brain_turn_budget_s,
+            work_context=self.brain_context,
+        )
         self.tools = CoreToolRouter(scheduler=self.scheduler, calendar=self.calendar, drive=self.drive, timezone=timezone)
         self.health = CoreHealth()
         self._stopped = asyncio.Event()
         self._notification_task: asyncio.Task[None] | None = None
         self._notification_queue: asyncio.Queue[ProtocolEnvelope] | None = None
+        # Relais spontanés du cerveau (fin d'un sous-agent) : capacité
+        # optionnelle du backend, détectée structurellement comme les autres.
+        self._brain_notices = getattr(brain_backend, "next_notices", None)
+        self._brain_notice_task: asyncio.Task[None] | None = None
+        self._work_attention_task: asyncio.Task[None] | None = None
+        self._work_attention_queue: asyncio.Queue[ProtocolEnvelope] | None = None
 
     async def start(self) -> None:
         if self.health.ready:
@@ -70,10 +102,17 @@ class JarvisCoreApplication:
             # may emit events immediately during startup.
             self._notification_queue = self.events.subscribe()
             self._notification_task = asyncio.create_task(self._notification_loop(self._notification_queue), name="jarvis-v2-notifications")
+            # Abonné tolérant : une éviction éteindrait l'attention pour la vie
+            # du processus (rien ne se réabonne), alors qu'une rafale coûte au
+            # pire une note — le statut du travail, lui, reste dans l'instantané.
+            self._work_attention_queue = self.events.subscribe(max_queue=ATTENTION_QUEUE_SIZE, lossy=True)
+            self._work_attention_task = asyncio.create_task(self.work_attention.run(self._work_attention_queue), name="jarvis-work-attention")
             await self.notifications.recover()
             await self.jobs.recover()
             await self._ensure_system_schedules()
             await self.scheduler.start()
+            if callable(self._brain_notices):
+                self._brain_notice_task = asyncio.create_task(self._brain_notice_loop(self._brain_notices), name="jarvis-brain-notices")
             self.health.ready = True
             self.health.status = "ok"
             self.health.detail = ""
@@ -82,6 +121,7 @@ class JarvisCoreApplication:
             self.health.status = "fail"
             self.health.detail = f"{type(exc).__name__}: {exc}"
             await self._stop_notification_loop()
+            await self._stop_work_attention()
             try:
                 await self.state.close()
             except Exception:
@@ -142,6 +182,35 @@ class JarvisCoreApplication:
         finally:
             self.events.unsubscribe(queue)
 
+    async def _brain_notice_loop(self, next_notices) -> None:
+        """Faire dire, dès qu'ils arrivent, les relais que le cerveau rédige seul.
+
+        `next_notices()` attend (longuement) et ne lève pas en temps normal ;
+        une exception inattendue est absorbée avec une pause, pour que la
+        boucle survive à un backend fautif sans tourner à vide.
+        """
+        loop = asyncio.get_running_loop()
+        while True:
+            started = loop.time()
+            try:
+                texts = await next_notices()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                await asyncio.sleep(5.0)
+                continue
+            for text in texts or ():
+                await self.brain.announce_notice(str(text))
+            if not texts and loop.time() - started < 0.05:
+                # Un backend qui rend la main aussitôt ne doit pas monopoliser la boucle.
+                await asyncio.sleep(1.0)
+
+    async def _stop_brain_notice_loop(self) -> None:
+        task, self._brain_notice_task = self._brain_notice_task, None
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
     async def _stop_notification_loop(self) -> None:
         task, self._notification_task = self._notification_task, None
         queue, self._notification_queue = self._notification_queue, None
@@ -151,6 +220,16 @@ class JarvisCoreApplication:
         if queue is not None:
             self.events.unsubscribe(queue)
 
+    async def _stop_work_attention(self) -> None:
+        task, self._work_attention_task = self._work_attention_task, None
+        queue, self._work_attention_queue = self._work_attention_queue, None
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        if queue is not None:
+            self.events.unsubscribe(queue)
+        await self.work_attention.stop()
+
     async def stop(self) -> None:
         if self.health.status == "stopped":
             return
@@ -158,6 +237,10 @@ class JarvisCoreApplication:
         self.health.status = "stopping"
         # Le cerveau s'arrête en premier : ses tâches écrivent en base via
         # ConversationService et publient sur le bus, deux ressources fermées plus bas.
+        # Le relais spontané le précède : il alimente le cerveau.
+        await self._stop_brain_notice_loop()
+        # La politique d'état de travail aussi : un réveil pourrait nourrir le cerveau.
+        await self._stop_work_attention()
         await self.brain.stop()
         await self._stop_notification_loop()
         await self.jobs.stop()

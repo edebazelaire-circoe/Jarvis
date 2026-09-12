@@ -544,7 +544,7 @@ async def test_the_core_event_stream_reconnects_without_replaying_stale_progress
         stack.server = LocalProtocolServer(stack.core, host="127.0.0.1", port=stack.port, token=TOKEN)
         await stack.server.start()
         await wait_until(
-            lambda: stack.core.events.subscriber_count >= 3,
+            lambda: stack.core.events.subscriber_count >= stack._expected_subscribers(),
             message="ordonnanceur réabonné après la coupure",
         )
 

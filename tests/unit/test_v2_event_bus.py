@@ -123,6 +123,51 @@ async def test_the_requested_bound_is_enforced_not_merely_stored():
     assert bus.evicted_total == 1
 
 
+async def test_a_lossy_subscriber_loses_the_oldest_event_but_never_its_subscription():
+    """NB4 : l'abonné permanent de Core survit à une rafale, borné comme les autres."""
+
+    sink = RecordingSink()
+    bus = CoreEventBus(diagnostics=sink)
+    queue = bus.subscribe(max_queue=2, lossy=True)
+
+    await bus.publish(envelope("first"))
+    await bus.publish(envelope("second"))
+    await bus.publish(envelope("third"))
+    await bus.publish(envelope("fourth"))
+
+    assert bus.subscriber_count == 1 and bus.evicted_total == 0
+    assert queue.qsize() == 2 and bus.dropped_total == 2
+    assert [queue.get_nowait().message_type for _ in range(2)] == ["third", "fourth"]
+    kinds = [kind for kind, _message, _level, _data in sink.events]
+    assert kinds == [CoreEventBus.DROP_KIND, CoreEventBus.DROP_KIND]  # une fois par type
+    assert sink.events[0][3] == {"message_type": "third", "queue_maxsize": 2, "dropped_total": 1}
+
+
+async def test_an_unsubscribed_lossy_queue_is_forgotten_by_both_registers():
+    bus = CoreEventBus()
+    queue = bus.subscribe(max_queue=1, lossy=True)
+
+    bus.unsubscribe(queue)
+    await bus.publish(envelope())
+
+    assert bus.subscriber_count == 0 and bus.dropped_total == 0 and queue.qsize() == 0
+
+
+async def test_the_attention_policy_keeps_its_subscription_through_a_burst():
+    """Le branchement réel : Core abonne la politique d'attention en mode tolérant."""
+
+    from jarvis.core.brain_context import ATTENTION_QUEUE_SIZE
+
+    bus = CoreEventBus()
+    queue = bus.subscribe(max_queue=ATTENTION_QUEUE_SIZE, lossy=True)
+
+    for _ in range(ATTENTION_QUEUE_SIZE + 10):
+        await bus.publish(envelope("core.work.updated"))
+
+    assert bus.subscriber_count == 1 and bus.evicted_total == 0
+    assert queue.qsize() == ATTENTION_QUEUE_SIZE and bus.dropped_total == 10
+
+
 async def test_runtime_journal_satisfies_the_diagnostic_sink(tmp_path):
     """Le branchement réel se fait au composition root, sans adaptateur."""
     journal = RuntimeJournal(tmp_path)

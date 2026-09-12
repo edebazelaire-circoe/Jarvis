@@ -7,6 +7,7 @@ from aiohttp import web
 
 from jarvis.core.v2_app import JarvisCoreApplication
 from jarvis.domain.v2 import PROTOCOL_VERSION, AddressingDecision, BrainTurnInput, BrainTurnSource, TurnKind, jsonable
+from jarvis.domain.work_state import WorkObservationBatch
 from jarvis.v2_config import validate_loopback_host
 
 
@@ -62,6 +63,8 @@ class LocalProtocolServer:
             web.post("/v1/conversations/{conversation_id}/brain-turns", self.submit_brain_turn),
             web.post("/v1/tools/call", self.call_tool),
             web.post("/v1/actions/{action_id}/confirmation", self.confirm_action),
+            web.post("/v1/work/observations", self.ingest_work_observations),
+            web.get("/v1/work/snapshot", self.work_snapshot),
             web.get("/v1/events", self.events),
         ])
         return app
@@ -197,6 +200,35 @@ class LocalProtocolServer:
         if not isinstance(text, str) or not text.strip():
             raise ValueError("confirmation text is required")
         return web.json_response(await self.core.tools.resolve_confirmation(request.match_info["action_id"], text))
+
+    async def ingest_work_observations(self, request: web.Request) -> web.Response:
+        """Ingress des observateurs de travail d'un autre processus (handoff work-state, tâche 11).
+
+        Corps : `WorkObservationBatch` (`source`, `producer_id`, 1 à 64
+        `observations`). Strict : un champ inconnu, à l'enveloppe comme dans
+        une observation, rend 400 et rien n'est appliqué — une trace brute de
+        fournisseur n'entre pas dans Core. Une observation valide mais périmée,
+        en double ou contredisant une fin n'est pas une erreur : elle est
+        comptée dans `outcomes` et ignorée.
+
+        Réponse 200 : `store_id` (change à chaque démarrage de Core : le
+        producteur renvoie alors son état complet), `revision`, `outcomes`,
+        `interrupted` (éléments d'une instance précédente du producteur).
+        """
+
+        body = await request.json()
+        try:
+            batch = WorkObservationBatch.from_payload(body)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"invalid work observation batch: {exc}") from exc
+        result = await self.core.work_state.ingest(batch)
+        return web.json_response(result.to_payload())
+
+    async def work_snapshot(self, request: web.Request) -> web.Response:
+        """État de travail normalisé tenu par Core, indépendant de tout Control Center."""
+
+        snapshot = await self.core.work_state.snapshot()
+        return web.json_response({"store_id": self.core.work_state.store_id, **snapshot.to_payload()})
 
     async def events(self, request: web.Request) -> web.StreamResponse:
         ws = web.WebSocketResponse(heartbeat=20)

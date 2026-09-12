@@ -26,6 +26,35 @@ class VisualSignalBus:
         self.state("idle")
         self.alert(None)
         (self.root / ".voice_waveform").unlink(missing_ok=True)
+        self.authorization(None)
+        self.capture(None)
+
+    #: État réel de l'autorisation de conversation vu par Voice (Solo Owner,
+    #: tâche 07) : lu par le Control Center tant que Voice bat.
+    AUTHORIZATION_FILE = ".voice_authorization"
+
+    def authorization(self, report: dict[str, object] | None) -> None:
+        """Publier ce que Voice applique vraiment (`ready` / `refused`, code, message), ou l'effacer."""
+
+        path = self.root / self.AUTHORIZATION_FILE
+        if report is None:
+            path.unlink(missing_ok=True)
+            return
+        self._atomic_text(path, json.dumps({**report, "ts": time.time()}, ensure_ascii=False))
+
+    #: État réel de la capture duplex vu par Voice (tâche 08) : annulation
+    #: d'écho effectivement active ou non, disponibilité du vérificateur et
+    #: fenêtres perdues. Scalaires seulement, jamais d'audio ni d'empreinte.
+    CAPTURE_FILE = ".voice_capture"
+
+    def capture(self, report: dict[str, object] | None) -> None:
+        """Publier l'état effectif de la capture duplex, ou l'effacer."""
+
+        path = self.root / self.CAPTURE_FILE
+        if report is None:
+            path.unlink(missing_ok=True)
+            return
+        self._atomic_text(path, json.dumps({**report, "ts": time.time()}, ensure_ascii=False))
 
     def offline(self) -> None:
         self.reset()

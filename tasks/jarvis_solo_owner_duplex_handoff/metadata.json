@@ -1,0 +1,25 @@
+{
+  "handoff_type": "grill-to-task",
+  "project": "Jarvis",
+  "topic": "solo-owner-duplex-and-core-work-state",
+  "created_from_session_date": "2026-09-11",
+  "repository": "edebazelaire-circoe/Jarvis",
+  "baseline_branch": "main",
+  "baseline_commit": "8fc7a117791f39eba70362cb2acd56ecbc8e44fa",
+  "session_reconstructed": true,
+  "validated_by_user": true,
+  "primary_goals": [
+    "owner-aware local audio gating for Solo Pro",
+    "preserve current AEC/duplex/semantic-VAD work",
+    "provider-swappable speaker verification and benchmarks",
+    "Core-owned normalized task state shared by brain and UI"
+  ],
+  "coding_skills_required": [
+    "/caveman",
+    "/coding-guideline"
+  ],
+  "title": "JARVIS Solo Owner Duplex + Core Work State Handoff",
+  "created_at": "2026-09-11T14:26:00+02:00",
+  "source": "Reconstructed design session + GitHub main review",
+  "task_count": 15
+}

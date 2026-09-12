@@ -6,6 +6,13 @@ from typing import Awaitable, Callable
 
 from jarvis.core.v2_services import SystemClock
 from jarvis.domain.errors import ConfigurationError
+from jarvis.domain.speaker import (
+    AuthorizationStatus,
+    ConversationAuthorization,
+    ConversationAuthorizationError,
+    VerifierAvailability,
+    assess_authorization,
+)
 from jarvis.domain.v2 import AddressingDecision, VoiceLifecycleState
 from jarvis.ports.v2 import Clock, RealtimeSession, WakeWordBackend, supports_output_control
 from jarvis.protocol.client import LocalCoreClient
@@ -86,8 +93,23 @@ class PersistentVoiceRuntime:
         capture_factory: Callable[[], object] | None = None,
         reflex_delay_s: float = 0.0,
         engagement_window_s: float = 30.0,
+        authorization: ConversationAuthorization | None = None,
+        authorization_error: ConversationAuthorizationError | None = None,
+        echo_cancellation: bool | None = None,
     ) -> None:
         self.voice_arch = voice_arch
+        # Annulation d'écho demandée par les réglages de la pile (mode continu),
+        # ou None si inconnu : sert seulement à dire au Control Center ce qui
+        # a été demandé face à ce que la capture applique (tâche 08).
+        self.echo_cancellation = echo_cancellation
+        self._aec_failure_traced = False
+        # Qui peut parler à JARVIS (`conversation_mode`, domaine `speaker`).
+        # Absent : salle ouverte, le comportement d'avant ce réglage.
+        self.authorization = authorization or ConversationAuthorization()
+        # Réglage d'autorisation illisible (fichier écrit à la main) : Voice
+        # ne devine pas ce qui était voulu — elle refuse d'écouter et le dit
+        # à chaque réveil (tâche 07), au lieu de retomber sur la salle ouverte.
+        self.authorization_error = authorization_error
         if self.continuous and not auto_turn:
             # Le mode continu est défini par le découpage des tours côté
             # fournisseur : c'est lui qui permet de garder le micro ouvert d'un
@@ -159,6 +181,7 @@ class PersistentVoiceRuntime:
         if self.signals is not None:
             self.signals.heartbeat()
         self._trace("voice.start", "Voice runtime started")
+        self._announce_static_refusal()
         detections = self.wakeword.detections()
         detection_task: asyncio.Task[str] | None = None
         try:
@@ -213,6 +236,19 @@ class PersistentVoiceRuntime:
     async def activate(self) -> None:
         if self.runtime.state is not VoiceLifecycleState.BACKGROUND:
             return
+        capture: object | None = None
+        capture_prepared = False
+        if self.authorization.owner_enforced or self.authorization_error is not None:
+            # Solo Owner (tâche 07) : accepté ou refusé avant d'ouvrir quoi que
+            # ce soit — ni session fournisseur, ni micro, ni mot d'éveil
+            # suspendu. La capture (et son vérificateur) est préparée d'abord :
+            # c'est elle qui dit si la voix du propriétaire peut être reconnue.
+            capture = self._duplex_capture() if self.continuous else None
+            capture_prepared = True
+            refusal = self._authorization_refusal(capture)
+            if refusal is not None:
+                self._refuse_activation(*refusal, phase="activation")
+                return
         self.runtime.state = VoiceLifecycleState.CONNECTING
         self._visual("thinking")
         self._trace("voice.connecting", "Opening Realtime session")
@@ -282,9 +318,13 @@ class PersistentVoiceRuntime:
         )
         self._speech = speech
         audio_options: dict[str, object] = {}
-        capture = self._duplex_capture() if self.continuous else None
+        if not capture_prepared:
+            capture = self._duplex_capture() if self.continuous else None
         if capture is not None:
             audio_options["capture"] = capture
+        barge_in_authority, owner_source = self._barge_in_policy(capture)
+        if owner_source is not None:
+            self._report_authorization("ready", phase="activation")
         bridge = RealtimeConversationBridge(
             core=self.core,
             session=self._session,
@@ -318,6 +358,11 @@ class PersistentVoiceRuntime:
             auto_turn=self.auto_turn,
             continuous=self.continuous,
             journal=self.journal,
+            # Solo Owner (tâche 05) : qui a le droit de couper JARVIS.
+            barge_in_authority=barge_in_authority,
+            owner_source=owner_source,
+            # Tâche 07 : vérificateur perdu en cours de session → alerte.
+            on_authorization_refused=self.authorization_lost if owner_source is not None else None,
             # Décision 19 : en mode continu, Voice ne possède plus le modèle
             # fort. Ne pas transmettre la passerelle rend l'interdiction
             # structurelle plutôt que conventionnelle — le bridge n'a
@@ -348,11 +393,246 @@ class PersistentVoiceRuntime:
                     data={"code": "duplex_capture_unavailable"},
                 )
                 self.capture_factory = None
+                self._report_capture(None, phase="activation")
                 return None
         reset = getattr(self._capture, "reset", None)
         if reset is not None:
             reset()
+        self._report_capture(self._capture, phase="activation")
         return self._capture
+
+    def _report_capture(self, capture: object | None, *, phase: str) -> None:
+        """Déposer l'état effectif de la capture duplex pour le Control Center (tâche 08).
+
+        Ce que Voice applique vraiment : annulation d'écho active, jamais
+        construite (LiveKit absent ou en échec) ou tombée en cours de session
+        (`canceller_failed`, la capture continue alors avec la garde seule) ;
+        disponibilité du vérificateur et fenêtres perdues par sa file. Lu
+        par attributs, sans rien exiger de la capture ; jamais bloquant.
+        """
+
+        requested = self.echo_cancellation
+        if capture is None:
+            active, code = False, "duplex_capture_unavailable"
+        elif getattr(capture, "canceller", None) is None:
+            active, code = False, ("aec_disabled" if requested is False else "aec_unavailable")
+        elif getattr(capture, "canceller_failed", False) is True:
+            active, code = False, "aec_failed"
+            if not self._aec_failure_traced:
+                self._aec_failure_traced = True
+                self._trace(
+                    "voice.duplex",
+                    "Annulation d'écho tombée en cours de session : garde d'écho seule jusqu'au redémarrage de Voice",
+                    level="warning",
+                    data={"echo_cancellation": False, "requested": True, "code": "duplex_aec_failed"},
+                )
+        else:
+            active, code = True, "aec_active"
+        writer = getattr(self.signals, "capture", None)
+        if writer is None:
+            return
+        try:
+            observer = getattr(capture, "observer", None)
+            verifier: dict[str, object] | None = None
+            if observer is not None and hasattr(observer, "availability"):
+                availability = observer.availability
+                dropped = getattr(observer, "dropped_ms", 0)
+                verifier = {
+                    "availability": str(getattr(availability, "value", availability)),
+                    "dropped_ms": dropped if isinstance(dropped, int) and not isinstance(dropped, bool) else 0,
+                }
+            writer(
+                {
+                    "echo_cancellation": {"requested": requested, "active": active, "code": code},
+                    "verifier": verifier,
+                    # Réglage que ce vérificateur sert, pour que le Control
+                    # Center reconnaisse un constat périmé (redémarrage attendu).
+                    "speaker_verification": (
+                        None if self.authorization_error is not None else self.authorization.verification.value
+                    ),
+                    "arch": self.voice_arch.value,
+                    "phase": phase,
+                }
+            )
+        except Exception as exc:
+            # Le Control Center verra un état plus ancien ; Voice continue.
+            self._trace(
+                "voice.capture_report_failed",
+                f"État de la capture non publié : {type(exc).__name__}",
+                level="warning",
+                data={"code": "capture_report_failed"},
+            )
+
+    def _barge_in_policy(self, capture: object | None):  # noqa: ANN202 - (BargeInAuthority, OwnerStateSource | None)
+        """Autorité du barge-in pour la session qui s'ouvre (Solo Owner, tâche 05).
+
+        Salle ouverte (défaut, et retour arrière) : l'autorité acoustique
+        d'avant, sans rien tracer de plus. Solo Owner : la confirmation du
+        propriétaire, par le vérificateur branché sur la capture duplex.
+
+        Appelé une fois l'activation acceptée (`_authorization_refusal`) : un
+        Solo Owner inapplicable ne vient jamais jusqu'ici, il est refusé
+        avant, sans repli sur la salle ouverte (tâche 07). Un vérificateur qui
+        lâche entre-temps (chargement du modèle pendant la connexion au
+        fournisseur) est l'affaire du bridge : il referme l'entrée dès son
+        abonnement et désactive la session en le disant. Sans source d'état du
+        tout, lever plutôt que dégrader.
+        """
+
+        from jarvis.runtime.realtime_audio import BARGE_IN_AUTHORITY_KIND, BargeInAuthority
+
+        authorization = self.authorization
+        if not authorization.owner_enforced:
+            return BargeInAuthority.ACOUSTIC, None
+        source = self._owner_state_source(capture)
+        if source is None:
+            raise ConfigurationError(
+                "Solo Owner sans vérificateur de locuteur branché : l'activation aurait dû être refusée."
+            )
+        self._trace(
+            BARGE_IN_AUTHORITY_KIND,
+            "Solo Owner : seule la voix du propriétaire coupe JARVIS et devient un tour",
+            data={
+                "conversation_id": self.runtime.conversation_id,
+                "conversation_mode": authorization.mode.value,
+                "speaker_verification": authorization.verification.value,
+                "arch": self.voice_arch.value,
+                "configured": BargeInAuthority.OWNER.value,
+                "availability": self._availability_of(source).value,
+                "authority": BargeInAuthority.OWNER.value,
+                "status": AuthorizationStatus.READY.value,
+            },
+        )
+        return BargeInAuthority.OWNER, source
+
+    @staticmethod
+    def _availability_of(source: object | None) -> VerifierAvailability:
+        if source is None:
+            return VerifierAvailability.NOT_INSTALLED
+        try:
+            return VerifierAvailability(getattr(source, "availability"))
+        except Exception:
+            return VerifierAvailability.FAILED
+
+    @staticmethod
+    def _owner_state_source(capture: object | None):  # noqa: ANN205 - OwnerStateSource | None
+        """L'état du propriétaire publié par le vérificateur de la capture, s'il y en a un."""
+
+        source = getattr(capture, "observer", None)
+        if not all(hasattr(source, name) for name in ("add_owner_listener", "owner_state", "availability")):
+            return None
+        return source
+
+    def _authorization_refusal(self, capture: object | None) -> tuple[str, str, dict[str, object]] | None:
+        """Pourquoi la session qui s'ouvre ne peut pas appliquer Solo Owner, ou None (tâche 07).
+
+        Même verdict que le Control Center (`assess_authorization`, même
+        ordre des raisons), plus ce que seul Voice voit : le vérificateur
+        réellement branché et sa disponibilité, et une capture capable de
+        retenir la voix du propriétaire. Rend (code, message, détails).
+        """
+
+        error = self.authorization_error
+        if error is not None:
+            return (
+                error.code,
+                f"Réglage de conversation invalide : {error} Voice n'écoute pas tant qu'il n'est pas "
+                "corrigé dans runtime/control-center-settings.json (ou conversation_mode remis sur "
+                "open_room) ; relancez ensuite Voice.",
+                {},
+            )
+        authorization = self.authorization
+        if not authorization.owner_enforced:
+            return None
+        availability = self._availability_of(self._owner_state_source(capture))
+        details: dict[str, object] = {"availability": availability.value}
+        assessment = assess_authorization(authorization, availability, continuous=self.continuous)
+        if assessment.status is AuthorizationStatus.REFUSED:
+            return assessment.code, assessment.message, details
+        if not isinstance(getattr(capture, "owner_buffer_ms", None), int) or capture.owner_buffer_ms <= 0:  # type: ignore[union-attr]
+            return (
+                "solo_owner_capture_unsupported",
+                "Mode Solo Owner refusé : la capture duplex n'a pas de tampon de rejeu du propriétaire, elle "
+                "ne pourrait pas écarter les autres voix sans perdre le début de vos phrases. Voice n'écoute "
+                "pas dans ce mode. Retour arrière : conversation_mode sur open_room, puis relancez Voice.",
+                details,
+            )
+        return None
+
+    def _refuse_activation(self, code: str, message: str, details: dict[str, object], *, phase: str) -> None:
+        """Solo Owner inapplicable : ne pas écouter, et dire pourquoi (trace, alerte, Control Center)."""
+
+        from jarvis.runtime.realtime_audio import AUTHORIZATION_REFUSED_KIND
+
+        error = self.authorization_error
+        self._trace(
+            AUTHORIZATION_REFUSED_KIND,
+            message,
+            level="warning",
+            data={
+                "conversation_id": self.runtime.conversation_id,
+                "conversation_mode": None if error is not None else self.authorization.mode.value,
+                "speaker_verification": None if error is not None else self.authorization.verification.value,
+                "arch": self.voice_arch.value,
+                "phase": phase,
+                "code": code,
+                **details,
+            },
+        )
+        if self.signals is not None:
+            self.signals.alert(message)
+        self._report_authorization("refused", code=code, message=message, phase=phase)
+
+    def _announce_static_refusal(self) -> None:
+        """Au démarrage : dire tout de suite ce qui refusera chaque réveil, sans attendre le premier.
+
+        Seules les raisons connues sans ouvrir la capture : réglage illisible,
+        Solo Owner sous `legacy`. Le vérificateur, lui, se juge au réveil.
+        """
+
+        if self.authorization_error is None and not (self.authorization.owner_enforced and not self.continuous):
+            return
+        refusal = self._authorization_refusal(None)
+        if refusal is not None:
+            self._refuse_activation(*refusal, phase="startup")
+
+    async def authorization_lost(self, code: str, message: str) -> None:
+        """Le bridge a refermé Solo Owner en cours de session (vérificateur perdu, tâche 07).
+
+        La trace est déjà écrite par le bridge ; ici, ce que l'utilisateur et
+        le Control Center voient. Le bridge désactive ensuite la session.
+        """
+
+        if self.signals is not None:
+            self.signals.alert(message)
+        self._report_authorization("refused", code=code, message=message, phase="session")
+
+    def _report_authorization(self, status: str, *, code: str = "", message: str = "", phase: str) -> None:
+        """Déposer l'état réel de l'autorisation pour le Control Center (`voice.authorization.runtime`)."""
+
+        writer = getattr(self.signals, "authorization", None)
+        if writer is None:
+            return
+        error = self.authorization_error
+        try:
+            writer(
+                {
+                    "status": status,
+                    "code": code or None,
+                    "problem": message or None,
+                    "conversation_mode": None if error is not None else self.authorization.mode.value,
+                    "arch": self.voice_arch.value,
+                    "phase": phase,
+                }
+            )
+        except Exception as exc:
+            # Le Control Center verra un état plus ancien ; Voice continue.
+            self._trace(
+                "voice.authorization_report_failed",
+                f"État de l'autorisation non publié : {type(exc).__name__}",
+                level="warning",
+                data={"code": "authorization_report_failed"},
+            )
 
     async def submit_active_turn(self, *, source: str) -> bool:
         bridge = self._bridge
@@ -393,9 +673,16 @@ class PersistentVoiceRuntime:
             await speech.stop()
         self._bridge = None
         bridge_task, self._bridge_task = self._bridge_task, None
-        if bridge_task is not None and bridge_task is not asyncio.current_task():
+        inside_bridge = bridge_task is not None and bridge_task is asyncio.current_task()
+        if bridge_task is not None and not inside_bridge:
             bridge_task.cancel()
             await asyncio.gather(bridge_task, return_exceptions=True)
+        if not inside_bridge:
+            # Micro fermé (le bridge a refermé l'audio) : la capture duplex
+            # oublie la session — état du propriétaire compris. Appelé depuis
+            # le bridge lui-même, le micro vit encore : l'activation suivante
+            # s'en chargera.
+            self._end_capture_session()
         session, self._session = self._session, None
         if session is not None:
             await session.close()
@@ -405,6 +692,26 @@ class PersistentVoiceRuntime:
         self.runtime.state = VoiceLifecycleState.BACKGROUND
         self._visual("idle")
         self._trace("voice.background", "Voice returned to background")
+
+    def _end_capture_session(self) -> None:
+        if self._capture is not None:
+            # Avant la remise à zéro, qui rend au vérificateur sa disponibilité
+            # déclarée : c'est l'état de la session écoulée qu'on publie.
+            self._report_capture(self._capture, phase="session_end")
+        reset = getattr(self._capture, "reset", None)
+        if reset is None:
+            return
+        try:
+            reset()
+        except Exception as exc:
+            # Best effort : l'activation suivante remet de toute façon la
+            # capture à zéro.
+            self._trace(
+                "voice.duplex_reset_failed",
+                f"Remise à zéro de la capture duplex impossible: {type(exc).__name__}",
+                level="warning",
+                data={"code": "duplex_reset_failed"},
+            )
 
     async def addressed_activity(self) -> None:
         self.activity.reset(AddressingDecision.ADDRESSED)
@@ -498,6 +805,13 @@ class PersistentVoiceRuntime:
     async def close(self) -> None:
         self._stop.set()
         await self.mute()
+        # Après `mute()` : le micro est fermé, plus aucune trame n'arrive. La
+        # capture duplex libère son observateur (fil du vérificateur de
+        # locuteur), dont l'arrêt peut attendre une fenêtre en cours de calcul.
+        capture, self._capture = self._capture, None
+        close_capture = getattr(capture, "close", None)
+        if close_capture is not None:
+            await asyncio.to_thread(close_capture)
         await self.wakeword.close()
         await self.core.close()
         if self.claude is not None:

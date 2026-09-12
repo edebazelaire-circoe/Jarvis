@@ -7,6 +7,7 @@ import threading
 import time
 from collections import deque
 from collections.abc import Callable
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from jarvis.core.latency import (
@@ -15,6 +16,7 @@ from jarvis.core.latency import (
     SURFACE_FIRST_AUDIO as LATENCY_SURFACE_FIRST_AUDIO,
     LatencyTracker,
 )
+from jarvis.domain.speaker import OwnerState, OwnerStateSnapshot, VerifierAvailability
 from jarvis.domain.v2 import AddressingDecision, PlaybackCursor, ProtocolEnvelope, SpeechProvenance, new_id
 from jarvis.ports.v2 import RealtimeSession, supports_output_control
 from jarvis.protocol.client import CoreProtocolError, LocalCoreClient
@@ -23,11 +25,57 @@ from jarvis.runtime.turn_filters import EchoGuard, looks_like_request, mentions_
 
 if TYPE_CHECKING:
     from jarvis.audio.duplex import CaptureProcessor
+    from jarvis.ports.speaker import OwnerStateSource
 
 # Signal de la capture duplex : l'utilisateur parle par-dessus JARVIS. Même
 # valeur que `jarvis.audio.duplex.NEAR_END`, recopiée pour que ce module
 # n'importe pas numpy (un test garde les deux en phase).
 NEAR_END_SIGNAL = "near_end"
+# Signal de la capture duplex : un préfixe du propriétaire a été rejoué vers le
+# fournisseur (`jarvis.audio.duplex.OWNER_REPLAY`, recopié pour la même raison).
+OWNER_REPLAY_SIGNAL = "owner_replay"
+# Signal de la file d'envoi : un bloc portant un rejeu du propriétaire a tout de
+# même été perdu. Ne vient pas de la capture ; produit par `_put_input`.
+OWNER_REPLAY_DROPPED_SIGNAL = "owner_replay_dropped"
+
+
+class BargeInAuthority(StrEnum):
+    """Ce qui a le droit de faire taire JARVIS pendant qu'il parle (Solo Owner, tâche 05).
+
+    Politique de *déclenchement* seulement. L'arrêt lui-même ne dépend pas
+    d'elle : arrêt local d'abord, curseur figé, sorties reçues mises sur liste
+    noire, puis annulation et troncature fournisseur en suivi best effort
+    (`RealtimeConversationBridge._barge_in`).
+
+    - `ACOUSTIC` : le comportement historique, salle ouverte. La parole proche
+      captée localement baisse la voix de JARVIS, le `speech_started` du
+      fournisseur la coupe.
+    - `OWNER` : Solo Owner (D04, D05, D09). Seule la confirmation locale du
+      propriétaire par le vérificateur de locuteur coupe. La parole proche ne
+      touche plus au volume ; `speech_started` ne sert qu'à corréler. Avec une
+      capture qui sait rejouer (tâche 06), elle n'ouvre plus non plus le flux
+      vers le fournisseur : c'est la confirmation du propriétaire qui l'ouvre,
+      début de phrase rejoué — que JARVIS parle ou se taise (tâche 07). Une
+      autre voix ne devient ni tour, ni réflexe, ni activité utile.
+    """
+
+    ACOUSTIC = "acoustic"
+    OWNER = "owner"
+
+
+# Diagnostics du barge-in Solo Owner : scalaires seulement, jamais d'audio ni
+# d'empreinte vocale. Les instants sont ceux de l'horloge de la capture.
+BARGE_IN_AUTHORITY_KIND = "voice.barge_in.authority"
+BARGE_IN_OWNER_CONFIRMED_KIND = "voice.barge_in.owner_confirmed"
+BARGE_IN_PROVIDER_ADVISORY_KIND = "voice.barge_in.provider_advisory"
+# Rejeu du début de phrase du propriétaire (tâche 06) : mêmes règles.
+OWNER_REPLAY_KIND = "voice.owner.replay"
+# Solo Owner, entrée filtrée par l'identité (tâche 07). Entrée écartée : raison,
+# scalaires, jamais le texte ni l'audio. Même nom que l'évènement de la capture
+# (`jarvis.audio.speaker_shadow.OWNER_INPUT_DROPPED`), `source` les distingue.
+INPUT_NON_OWNER_DROPPED_KIND = "voice.input.non_owner_dropped"
+# Solo Owner refusé ou suspendu : code stable et message en clair.
+AUTHORIZATION_REFUSED_KIND = "voice.authorization_refused"
 
 # Télémétrie de latence (docs/04-testing-and-quality.md, « Latency telemetry »).
 # Le journal ne porte que des identifiants, des types et des durées : la clé de
@@ -189,6 +237,11 @@ class SoundDeviceRealtimeAudio:
         self._input = None
         self._output = None
         self._queue: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=64)
+        # Un drapeau par bloc en file, dans le même ordre : dit lequel porte le
+        # rejeu du propriétaire, que la file n'a pas le droit d'évincer.
+        self._queued_replay: deque[bool] = deque()
+        #: Rejeux tout de même perdus (file saturée par un autre rejeu) : tracé.
+        self.dropped_replays = 0
         self._loop: asyncio.AbstractEventLoop | None = None
         self._output_lock = threading.Lock()
         self._closing = False
@@ -267,7 +320,11 @@ class SoundDeviceRealtimeAudio:
 
         self.captured_bytes += captured
         if processed:
-            self._put_input(processed)
+            # Le bloc qui porte un rejeu contient un début de phrase que la
+            # capture a déjà marqué envoyé (`_sent_until`) : personne ne le
+            # réoffrira, la file n'a donc pas le droit de l'évincer.
+            if self._put_input(processed, replay=OWNER_REPLAY_SIGNAL in signals):
+                signals = (*signals, OWNER_REPLAY_DROPPED_SIGNAL)
         callback = self.on_capture_signal
         if callback is not None:
             for signal in signals:
@@ -297,6 +354,43 @@ class SoundDeviceRealtimeAudio:
         if self.capture is not None:
             self.capture.release_near_end()
 
+    # -- Solo Owner : flux ouvert par le propriétaire (tâche 06) -------------
+
+    @property
+    def owner_gate_supported(self) -> bool:
+        """La capture connaît-elle la garde du propriétaire ? (sans dire si elle l'accepte)."""
+
+        return getattr(self.capture, "set_owner_gate", None) is not None
+
+    def set_owner_gate(self, enabled: bool) -> bool:
+        """Confier la garde de la capture au propriétaire ; False si elle ne sait pas rejouer."""
+
+        setter = getattr(self.capture, "set_owner_gate", None)
+        if setter is None:
+            return False
+        return bool(setter(enabled))
+
+    def open_owner_flow(self, owner_onset_ms: int, *, candidate_onset_ms: int | None = None) -> None:
+        """Rejouer le préfixe non envoyé du propriétaire, puis le direct (voir `CaptureProcessor`).
+
+        Le rejeu suit le chemin de tout bloc capturé — `_deliver_capture`,
+        file d'envoi, `pump_input` — jamais la lecture : il part derrière ce
+        qui a déjà été envoyé, devant le direct.
+        """
+
+        opener = getattr(self.capture, "open_owner_flow", None)
+        if opener is not None:
+            opener(owner_onset_ms, candidate_onset_ms=candidate_onset_ms)
+
+    def close_owner_flow(self) -> None:
+        closer = getattr(self.capture, "close_owner_flow", None)
+        if closer is not None:
+            closer()
+
+    def take_owner_replays(self) -> tuple[object, ...]:
+        take = getattr(self.capture, "take_owner_replays", None)
+        return tuple(take()) if take is not None else ()
+
     def set_output_gain(self, gain: float) -> None:
         """Gain des prochains blocs joués (1.0 = normal)."""
 
@@ -319,17 +413,39 @@ class SoundDeviceRealtimeAudio:
         self.captured_bytes += len(raw)
         self._put_input(raw)
 
-    def _put_input(self, raw: bytes) -> None:
+    def _put_input(self, raw: bytes, *, replay: bool = False) -> bool:
+        """Mettre un bloc capté en file d'envoi ; rend True si un rejeu a été perdu.
+
+        File pleine (envoi fournisseur bloqué) : on écarte le plus ancien, comme
+        avant — sauf si c'est un rejeu du propriétaire. Celui-là ne peut pas être
+        réoffert, alors on écarte plutôt le bloc en direct qui arrive : mieux
+        vaut perdre la fin d'une phrase que son début (tâche 06).
+        """
+
         if self._queue.full():
+            if self._queued_replay and self._queued_replay[0] and not replay:
+                return False
             try:
                 self._queue.get_nowait()
             except asyncio.QueueEmpty:
                 pass
+            else:
+                if self._queued_replay and self._queued_replay.popleft():
+                    # Deux rejeux coincés derrière un envoi bloqué : très
+                    # improbable, mais jamais silencieux (spec §3).
+                    self.dropped_replays += 1
+                    self._queue.put_nowait(raw)
+                    self._queued_replay.append(replay)
+                    return True
         self._queue.put_nowait(raw)
+        self._queued_replay.append(replay)
+        return False
 
     async def pump_input(self, session: RealtimeSession) -> None:
         while True:
             raw = await self._queue.get()
+            if self._queued_replay:
+                self._queued_replay.popleft()
             if raw is None:
                 return
             await session.send_audio(raw)
@@ -347,6 +463,7 @@ class SoundDeviceRealtimeAudio:
         # scheduled on this loop. Enqueue them before the end-of-input marker.
         await asyncio.sleep(0)
         await self._queue.put(None)
+        self._queued_replay.append(False)
 
     def set_active_output(
         self,
@@ -714,7 +831,15 @@ class RealtimeConversationBridge:
         barge_in_confirm_s: float = 0.8,
         barge_in_duck_gain: float = 0.3,
         clock: Callable[[], float] | None = None,
+        barge_in_authority: BargeInAuthority = BargeInAuthority.ACOUSTIC,
+        owner_source: "OwnerStateSource | None" = None,
+        on_authorization_refused: Callable[[str, str], object] | None = None,
     ) -> None:
+        barge_in_authority = BargeInAuthority(barge_in_authority)
+        if barge_in_authority is BargeInAuthority.OWNER and (owner_source is None or not continuous):
+            # Jamais d'autorité du propriétaire sans vérificateur pour la
+            # porter : JARVIS deviendrait impossible à couper à la voix.
+            raise ValueError("owner barge-in authority needs a continuous bridge and an owner-state source")
         self.core = core
         self.session = session
         self.conversation_id = conversation_id
@@ -815,6 +940,58 @@ class RealtimeConversationBridge:
         # voix de JARVIS baisse ; le VAD du fournisseur confirme, elle se tait.
         self._barge_pending_token = 0
         self._barge_pending = False
+        # Le candidat en attente a-t-il baissé la voix ? Toujours en salle
+        # ouverte, jamais en Solo Owner (voir `_note_owner_candidate`).
+        self._barge_pending_ducked = False
+        # -- Solo Owner : autorité du propriétaire (voir `BargeInAuthority`) --
+        self.barge_in_authority = barge_in_authority
+        self._owner_source = owner_source if barge_in_authority is BargeInAuthority.OWNER else None
+        # Boucle qui reçoit les états du fil du vérificateur, posée par
+        # `_consume` le temps de l'abonnement.
+        self._owner_loop: asyncio.AbstractEventLoop | None = None
+        self._owner_attached = False
+        # Dernier état de l'autorité effective, pour ne tracer que ses changements.
+        self._owner_ready: bool | None = None
+        # Dernier état du propriétaire accepté : un état qui n'est pas plus
+        # récent (séquence) ou qui vient d'une session antérieure est écarté.
+        self._owner_session = 0
+        self._owner_sequence = 0
+        # Corrélation avec le VAD du fournisseur (diagnostic seulement) : son
+        # dernier `speech_started` pendant que JARVIS parlait sans propriétaire
+        # confirmé, et la dernière coupure du propriétaire pas encore corrélée.
+        self._provider_speech_at: float | None = None
+        self._owner_stopped_at: float | None = None
+        # Tâche 06 : la capture a-t-elle accepté de confier sa garde au
+        # propriétaire (tampon de rejeu présent) ? Sans cela, la garde reste
+        # acoustique, comme en tâche 05.
+        self._owner_gated = False
+        # Dernière ouverture du flux demandée, pour dater son rejeu, et
+        # instant de capture du dernier arrêt local du propriétaire.
+        self._owner_replay_context: dict[str, object] | None = None
+        self._owner_stop_stream_ms: int | None = None
+        self._last_replay_ms: int | None = None
+        # -- Solo Owner : entrée filtrée par l'identité (tâche 07) ------------
+        # Le runtime est prévenu quand Solo Owner se referme en cours de
+        # session (alerte visible, état lu par le Control Center).
+        self.on_authorization_refused = on_authorization_refused
+        # Flux du propriétaire ouvert vers le fournisseur, et dernier instant
+        # (horloge du bridge) où il l'était : un segment du VAD fournisseur
+        # n'est attribué au propriétaire que s'il commence pendant, ou peu
+        # après — le fournisseur segmente le rejeu avec un temps de retard.
+        self._owner_flow_open = False
+        self._owner_forwarded_at: float | None = None
+        self._segment_owner: dict[str, bool] = {}
+        self._last_segment_owner = False
+        # L'ordonnanceur est-il tenu par un candidat local (voix pas encore
+        # jugée, ou propriétaire reconnu) ? Voir `_hold_for_candidate`.
+        self._local_speech = False
+        # Dernier état remis à l'ordonnanceur (VAD fournisseur ou candidat local).
+        self._notified_speech = False
+        # Solo Owner refermé faute de vérificateur : une seule fois par session.
+        self._owner_lost = False
+        # Traces d'entrée écartée côté fournisseur, bornées par minute.
+        self._drop_traces: deque[float] = deque()
+        self._drops_suppressed = 0
         # Plomberie de `_consume` (voir la docstring de la classe).
         self._inbox: asyncio.Queue | None = None
         self._playout: asyncio.Queue | None = None
@@ -902,7 +1079,7 @@ class RealtimeConversationBridge:
         if output_id is not None:
             self._audio_notified_outputs.discard(output_id)
 
-    async def _barge_in(self) -> None:
+    async def _barge_in(self, *, owner: OwnerStateSnapshot | None = None) -> None:
         """Interrompre JARVIS parce que l'utilisateur parle (spec §12, mode continu).
 
         Ordre imposé, et c'est tout l'intérêt de la méthode : l'arrêt local
@@ -914,6 +1091,11 @@ class RealtimeConversationBridge:
         Rien n'est annulé côté travail : couper la parole n'est pas annuler la
         tâche (Décisions 15 et 35). Le tour utilisateur qui suit portera
         simplement `interrupted_speech_id`, et c'est le cerveau qui décidera.
+
+        C'est le mécanisme d'arrêt ; ce qui le déclenche relève de la
+        politique (`BargeInAuthority`). `owner` : l'état du propriétaire qui a
+        autorisé la coupure en Solo Owner, pour dater l'arrêt sur l'horloge de
+        la capture ; absent, rien ne change à la trace d'avant.
         """
 
         started = time.perf_counter()
@@ -924,6 +1106,9 @@ class RealtimeConversationBridge:
         self._barge_pending_token += 1
         self._last_engaged = self._clock()
         await self.audio.stop_output()
+        stop_stream_ms = self._capture_stream_ms() if owner is not None else None
+        if owner is not None:
+            self._owner_stop_stream_ms = stop_stream_ms
         interrupted = self._live_output_identity
         # Le curseur de l'audio décrit la dernière sortie *jouée*. Si plus rien
         # ne jouait (la sortie coupée n'avait encore rien fait entendre), il
@@ -953,25 +1138,79 @@ class RealtimeConversationBridge:
                 _optional_text(newest.get("speech_id")) or _optional_text(newest.get("output_id")) if newest else None
             )
         await self._call_with(self.on_interruption, cursor)
+        data: dict[str, object] = {
+            "conversation_id": self.conversation_id,
+            "speech_id": cursor.speech_id if cursor is not None else None,
+            "played_ms": cursor.played_ms if cursor is not None else None,
+            "provider_item_id": cursor.provider_item_id if cursor is not None else None,
+            "output_id": interrupted,
+            "stop_latency_ms": stop_latency_ms,
+            # Mesure 4 des six de `04-testing-and-quality.md`. Elle est née
+            # avec la tranche 09c et n'a pas besoin d'un second évènement :
+            # seul son nom manquait pour qu'elle se trouve comme les cinq
+            # autres. `speech_id` est sa clé de jointure.
+            "measure": LATENCY_LOCAL_OUTPUT_STOPPED,
+            "elapsed_ms": stop_latency_ms,
+        }
+        if owner is not None:
+            data["trigger"] = BargeInAuthority.OWNER.value
+        self._trace("voice.barge_in", "L'utilisateur a coupé la parole de JARVIS", data=data)
+        if owner is not None:
+            self._trace_owner_stop(owner, stop_stream_ms=stop_stream_ms, data=data)
+        await self._cancel_provider_output(cursor)
+
+    def _capture_stream_ms(self) -> int | None:
+        """Instant présent sur l'horloge de la capture duplex, s'il y en a une."""
+
+        value = getattr(getattr(self.audio, "capture", None), "stream_ms", None)
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+    def _trace_owner_stop(self, owner: OwnerStateSnapshot, *, stop_stream_ms: int | None, data: dict[str, object]) -> None:
+        """Dater une coupure du propriétaire : début de parole → confirmation → arrêt local.
+
+        Tout sur l'horloge de la capture (millisecondes d'audio capté depuis le
+        début de la session), la même que celle de l'état du propriétaire :
+        les écarts ne dépendent ni du retard du fil du vérificateur ni de celui
+        de la boucle. `stop_latency_ms`, lui, mesure l'appel d'arrêt local.
+        Le fournisseur n'y figure qu'en corrélation : avait-il déjà signalé la
+        parole, et depuis combien de temps.
+        """
+
+        now = self._clock()
+        lead, self._provider_speech_at = self._provider_speech_at, None
+        self._owner_stopped_at = now
+        if lead is not None and now - lead > self.OWNER_ADVISORY_WINDOW_S:
+            lead = None
+        onset, confirmed = owner.owner_onset_ms, owner.confirmed_ms
+
+        def gap(start: int | None, end: int | None) -> int | None:
+            # Horloges incohérentes (session changée entre-temps) : pas de chiffre.
+            return end - start if start is not None and end is not None and end >= start else None
+
         self._trace(
-            "voice.barge_in",
-            "L'utilisateur a coupé la parole de JARVIS",
+            BARGE_IN_OWNER_CONFIRMED_KIND,
+            "Propriétaire reconnu pendant que JARVIS parlait : sortie coupée localement",
             data={
                 "conversation_id": self.conversation_id,
-                "speech_id": cursor.speech_id if cursor is not None else None,
-                "played_ms": cursor.played_ms if cursor is not None else None,
-                "provider_item_id": cursor.provider_item_id if cursor is not None else None,
-                "output_id": interrupted,
-                "stop_latency_ms": stop_latency_ms,
-                # Mesure 4 des six de `04-testing-and-quality.md`. Elle est née
-                # avec la tranche 09c et n'a pas besoin d'un second évènement :
-                # seul son nom manquait pour qu'elle se trouve comme les cinq
-                # autres. `speech_id` est sa clé de jointure.
-                "measure": LATENCY_LOCAL_OUTPUT_STOPPED,
-                "elapsed_ms": stop_latency_ms,
+                "session": owner.session,
+                "sequence": owner.sequence,
+                "candidate_onset_ms": owner.candidate_onset_ms,
+                "owner_onset_ms": onset,
+                "confirmed_ms": confirmed,
+                "stop_stream_ms": stop_stream_ms,
+                "confirm_ms": gap(onset, confirmed),
+                "confirm_to_stop_ms": gap(confirmed, stop_stream_ms),
+                "onset_to_stop_ms": gap(onset, stop_stream_ms),
+                "stop_latency_ms": data.get("stop_latency_ms"),
+                "owner_score": owner.owner_score,
+                "evidence_ms": owner.evidence_ms,
+                "speech_id": data.get("speech_id"),
+                "output_id": data.get("output_id"),
+                "played_ms": data.get("played_ms"),
+                "provider_speech_started": lead is not None,
+                "provider_lead_ms": round((now - lead) * 1000) if lead is not None else None,
             },
         )
-        await self._cancel_provider_output(cursor)
 
     async def _cancel_provider_output(self, cursor: PlaybackCursor | None) -> None:
         """Annuler la génération, puis aligner l'historique du fournisseur.
@@ -1465,6 +1704,10 @@ class RealtimeConversationBridge:
 
         if signal == NEAR_END_SIGNAL:
             self._post("near_end")
+        elif signal == OWNER_REPLAY_SIGNAL:
+            self._post("owner_replay")
+        elif signal == OWNER_REPLAY_DROPPED_SIGNAL:
+            self._post("owner_replay_dropped")
 
     def _dispatch(self, event: ProtocolEnvelope) -> None:
         """Aiguiller un évènement fournisseur dès réception, sans jamais attendre."""
@@ -1606,6 +1849,7 @@ class RealtimeConversationBridge:
         self._inbox, self._playout = asyncio.Queue(), asyncio.Queue()
         self._unfinished = 0
         self._idle.set()
+        detach_owner = self._attach_owner_source()
         reader = asyncio.create_task(self._read_provider(events), name="jarvis-realtime-reader")
         player = asyncio.create_task(self._play_out(), name="jarvis-realtime-playout")
         try:
@@ -1623,6 +1867,15 @@ class RealtimeConversationBridge:
                         await self._on_near_end()
                     elif kind == "barge_timeout":
                         await self._on_barge_timeout(item)
+                    elif kind == "owner_state":
+                        await self._on_owner_state(item)
+                    elif kind == "owner_replay":
+                        self._on_owner_replay()
+                    elif kind == "owner_replay_dropped":
+                        self._on_owner_replay_dropped()
+                    elif kind == "owner_lost":
+                        await self._on_owner_lost(item)
+                        return
                     elif await self._handle_event(item):
                         return
                 except ConnectionError as exc:
@@ -1635,6 +1888,7 @@ class RealtimeConversationBridge:
                         done.set()
                     self._finish_item()
         finally:
+            self._detach_owner_source(detach_owner)
             for task in (reader, player):
                 task.cancel()
             await asyncio.gather(reader, player, return_exceptions=True)
@@ -1687,9 +1941,18 @@ class RealtimeConversationBridge:
         confirme qu'il s'agit bien de parole : un choc sur le bureau ou une
         toux ne doivent pas faire taire JARVIS. Sans confirmation dans
         `barge_in_confirm_s`, la voix remonte et la garde se referme.
+
+        Autorité acoustique (salle ouverte) seulement. En Solo Owner, la
+        parole proche ne baisse ni ne coupe rien : voir `_note_owner_candidate`.
         """
 
         if not self.continuous or not self._output_live():
+            return
+        if self.barge_in_authority is BargeInAuthority.OWNER:
+            # Solo Owner configuré : jamais la règle acoustique, même
+            # vérificateur perdu — l'entrée est alors refermée (tâche 07).
+            if self._owner_authority():
+                self._note_owner_candidate()
             return
         if self._user_speaking:
             # Le VAD du fournisseur est déjà en parole : c'est confirmé.
@@ -1698,6 +1961,7 @@ class RealtimeConversationBridge:
         if self._barge_pending:
             return
         self._barge_pending = True
+        self._barge_pending_ducked = True
         self._barge_pending_token += 1
         token = self._barge_pending_token
         self._set_output_gain(self.barge_in_duck_gain)
@@ -1711,16 +1975,579 @@ class RealtimeConversationBridge:
     async def _on_barge_timeout(self, token: object) -> None:
         if not self._barge_pending or token != self._barge_pending_token:
             return
+        if self._owner_gated and self._owner_authority() and self._owner_state_value() not in (None, OwnerState.IDLE.value):
+            # Solo Owner, garde au propriétaire (tâche 06) : le fournisseur
+            # n'entend plus rien pendant que JARVIS parle, son silence ne
+            # prouve donc pas l'écho. Le candidat du vérificateur est toujours
+            # ouvert : parole soutenue, le verrou reste — comme après un
+            # `speech_started` en tâche 05. Relâcher maintenant ferait monter
+            # le couplage au niveau de cette voix, et rendrait le détecteur
+            # sourd au propriétaire. Le verrou tombe quand le candidat se
+            # ferme, sur une fenêtre qui ne contient plus que l'écho.
+            asyncio.get_running_loop().call_later(self.barge_in_confirm_s, self._post, "barge_timeout", token)
+            return
         self._barge_pending = False
-        self._set_output_gain(1.0)
+        if self._barge_pending_ducked:
+            self._set_output_gain(1.0)
         release = getattr(self.audio, "release_near_end", None)
         if release is not None:
             release()
+        if self._barge_pending_ducked:
+            self._trace(
+                "voice.barge_in_rejected",
+                "Parole locale non confirmée par le fournisseur : JARVIS reprend à plein volume",
+                data={"conversation_id": self.conversation_id, "code": "barge_in_not_confirmed"},
+            )
+        else:
+            self._trace(
+                "voice.barge_in_rejected",
+                "Parole locale non confirmée par le fournisseur : garde d'écho refermée, volume jamais baissé",
+                data={
+                    "conversation_id": self.conversation_id,
+                    "code": "barge_in_not_confirmed",
+                    "authority": BargeInAuthority.OWNER.value,
+                },
+            )
+
+    # -- Solo Owner : la confirmation du propriétaire coupe (tâche 05) --------
+
+    #: Fenêtre de corrélation entre une coupure du propriétaire et le
+    #: `speech_started` du fournisseur qui la précède ou la suit.
+    OWNER_ADVISORY_WINDOW_S = 5.0
+
+    def _owner_authority(self) -> bool:
+        """La confirmation du propriétaire gouverne-t-elle le barge-in en ce moment ?
+
+        Vrai seulement si l'autorité `OWNER` a été choisie à l'activation
+        **et** que le vérificateur est abonné et prêt. Un vérificateur tombé
+        en panne pendant la session ne peut plus reconnaître personne. Solo
+        Owner se referme alors en sécurité (tâche 07, `_lose_owner`) : la
+        garde reste au propriétaire, flux fermé — plus rien de ce que capte le
+        micro n'atteint le fournisseur —, c'est tracé, et la session se
+        désactive en disant pourquoi. Jamais de repli silencieux sur la salle
+        ouverte.
+        """
+
+        if self.barge_in_authority is not BargeInAuthority.OWNER:
+            return False
+        availability: str | None = None
+        ready = False
+        if self._owner_attached:
+            try:
+                availability = VerifierAvailability(getattr(self._owner_source, "availability")).value
+                ready = availability == VerifierAvailability.READY.value
+            except Exception:
+                ready = False
+        if ready is not self._owner_ready:
+            previous, self._owner_ready = self._owner_ready, ready
+            if not ready:
+                self._lose_owner("owner_verifier_unavailable", availability=availability)
+            elif previous is not None:
+                self._trace(
+                    BARGE_IN_AUTHORITY_KIND,
+                    "Vérificateur de locuteur de nouveau prêt : seul le propriétaire coupe JARVIS",
+                    data={
+                        "conversation_id": self.conversation_id,
+                        "configured": BargeInAuthority.OWNER.value,
+                        "authority": BargeInAuthority.OWNER.value,
+                        "availability": availability,
+                        "code": "owner_verifier_ready",
+                    },
+                )
+        return ready
+
+    #: Message du refus en cours de session (tâche 07) : ce qui s'est passé,
+    #: ce qui est garanti, et comment en sortir.
+    OWNER_LOST_MESSAGE = (
+        "Mode Solo Owner suspendu : le vérificateur de locuteur ne répond plus. Par sécurité, plus rien "
+        "de ce que capte le micro n'est transmis, et la session vocale se désactive. Réveillez JARVIS "
+        "pour réessayer ; si cela se répète, repassez conversation_mode sur open_room et relancez Voice."
+    )
+
+    def _lose_owner(self, code: str, *, availability: str | None = None, error: str | None = None) -> None:
+        """Fermeture sûre de Solo Owner en cours de session (tâche 07).
+
+        Synchrone, appelable de partout sur la boucle : l'entrée se referme
+        tout de suite — garde au propriétaire, flux fermé —, puis la tâche
+        principale désactive la session (`_on_owner_lost`).
+        """
+
+        if self._owner_lost:
+            return
+        self._owner_lost = True
+        self._set_owner_gate(True)
+        if self._owner_gated:
+            self._close_owner_flow()
+        data: dict[str, object] = {
+            "conversation_id": self.conversation_id,
+            "configured": BargeInAuthority.OWNER.value,
+            "authority": BargeInAuthority.OWNER.value,
+            "input": "closed",
+            "availability": availability,
+            "code": code,
+        }
+        if error is not None:
+            data["error"] = error
         self._trace(
-            "voice.barge_in_rejected",
-            "Parole locale non confirmée par le fournisseur : JARVIS reprend à plein volume",
-            data={"conversation_id": self.conversation_id, "code": "barge_in_not_confirmed"},
+            BARGE_IN_AUTHORITY_KIND,
+            "Vérificateur de locuteur indisponible : Solo Owner refermé par sécurité, plus rien n'atteint "
+            "le fournisseur ; la session se désactive",
+            level="warning",
+            data=data,
         )
+        self._post("owner_lost", data)
+
+    async def _on_owner_lost(self, data: object) -> None:
+        """Tâche principale : dire pourquoi, puis désactiver la session comme un « Jarvis mute »."""
+
+        details = dict(data) if isinstance(data, dict) else {}
+        code = str(details.get("code") or "owner_verifier_unavailable")
+        message = self.OWNER_LOST_MESSAGE
+        self._trace(
+            AUTHORIZATION_REFUSED_KIND,
+            message,
+            level="warning",
+            data={
+                "conversation_id": self.conversation_id,
+                "phase": "session",
+                "conversation_mode": "solo_owner",
+                "availability": details.get("availability"),
+                "code": code,
+            },
+        )
+        callback = self.on_authorization_refused
+        if callback is not None:
+            value = callback(code, message)
+            if hasattr(value, "__await__"):
+                await value
+        await self._call(self.on_mute)
+
+    def _attach_owner_source(self) -> Callable[[], None] | None:
+        """S'abonner à l'état du propriétaire pour la durée de `_consume`.
+
+        L'état courant sert de référence : ce qui a été publié avant ce bridge
+        (session précédente, confirmation déjà ancienne) ne coupera rien.
+        La garde de la capture est confiée au propriétaire d'emblée, flux
+        fermé (tâche 07) : rien ne part avant qu'il ne soit reconnu.
+        """
+
+        source = self._owner_source
+        if source is None:
+            return None
+        # Posé avant la garde : une capture qui la refuse ici doit refermer
+        # l'entrée (`_set_owner_gate`), pas laisser Solo Owner se dégrader.
+        self._owner_attached = True
+        self._set_owner_gate(True)
+        self._owner_loop = asyncio.get_running_loop()
+        try:
+            baseline = source.owner_state
+            self._owner_session, self._owner_sequence = int(baseline.session), int(baseline.sequence)
+            detach = source.add_owner_listener(self._owner_listener)
+        except Exception as exc:
+            self._owner_attached = False
+            self._owner_loop = None
+            self._owner_ready = False
+            self._lose_owner("owner_listener_unavailable", error=type(exc).__name__)
+            return None
+        # État initial de l'autorité : rien à dire s'il est prêt.
+        self._owner_authority()
+        return detach
+
+    def _detach_owner_source(self, detach: Callable[[], None] | None) -> None:
+        self._owner_attached = False
+        self._owner_loop = None
+        if self._owner_gated:
+            # La garde reste au propriétaire jusqu'à la remise à zéro de la
+            # capture : rendre la main à la règle acoustique maintenant
+            # laisserait passer le micro brut le temps que la session se
+            # referme (tâche 07).
+            self._close_owner_flow()
+        if detach is None:
+            return
+        try:
+            detach()
+        except Exception:
+            # Désabonnement best effort : la session vocale se ferme de toute façon.
+            pass
+
+    def _owner_listener(self, snapshot: OwnerStateSnapshot) -> None:
+        """Rappel du fil du vérificateur : passer la main à la boucle, rien d'autre.
+
+        Jamais d'exception ici — le publieur retirerait l'abonnement — et
+        jamais d'appel en retour vers le vérificateur.
+        """
+
+        loop = self._owner_loop
+        if loop is None:
+            return
+        try:
+            loop.call_soon_threadsafe(self._post, "owner_state", snapshot)
+        except RuntimeError:
+            # La boucle se ferme : plus personne à prévenir.
+            pass
+
+    async def _on_owner_state(self, snapshot: object) -> None:
+        """Nouvel état du propriétaire, sur la tâche principale (D05, D09).
+
+        Le déclencheur Solo Owner : le propriétaire confirmé pendant que JARVIS
+        est audible (`far_end`) et qu'une sortie non encore coupée joue ou
+        attend. L'arrêt local part aussitôt, sans attendre le fournisseur ;
+        annulation et troncature suivent en best effort (`_barge_in`).
+
+        Écartés : un état périmé (séquence déjà vue) ou d'une session
+        antérieure de la capture, une confirmation pendant que JARVIS se tait —
+        il n'y a rien à couper, et ce n'est pas à ce bridge d'ouvrir un tour
+        (tâche 07) —, et une confirmation qui suit une coupure déjà faite.
+
+        Flux vers le fournisseur (tâche 06, garde au propriétaire) : toute
+        confirmation ouvre le flux — après l'arrêt local et l'envoi de
+        l'annulation et de la troncature s'il y a eu coupure, pour que
+        l'historique du fournisseur soit aligné avant la parole qui suit. La
+        capture rejoue alors, une fois, le préfixe jamais envoyé depuis
+        `owner_onset_ms`, puis le direct. Un verdict « étranger » ou la fin du
+        candidat referment le flux : que JARVIS parle ou se taise (tâche 07),
+        le fournisseur n'entend plus que du silence. Une réponse brève
+        reconnue à la fin de son candidat arrive en `owner_confirmed` puis
+        `idle` : la capture rejoue tout le candidat, puis referme.
+
+        Un état qui arrive alors que le vérificateur n'est plus prêt referme
+        Solo Owner (`_owner_authority`), sans rien ouvrir.
+        """
+
+        if not isinstance(snapshot, OwnerStateSnapshot):
+            return
+        if snapshot.session < self._owner_session or snapshot.sequence <= self._owner_sequence:
+            return
+        self._owner_session, self._owner_sequence = snapshot.session, snapshot.sequence
+        if not self.continuous or not self._owner_authority():
+            return
+        await self._hold_for_candidate(snapshot.state)
+        if snapshot.state is OwnerState.OWNER_CONFIRMED:
+            cut = snapshot.far_end and self._interruptible_output()
+            if cut:
+                await self._barge_in(owner=snapshot)
+            self._open_owner_flow(snapshot, cut=cut)
+        elif snapshot.state in (OwnerState.IDLE, OwnerState.REJECTED) and self._owner_gated:
+            self._close_owner_flow()
+
+    async def _hold_for_candidate(self, state: OwnerState) -> None:
+        """Solo Owner : l'ordonnanceur ne lance rien par-dessus une voix pas encore jugée (D14).
+
+        Un candidat acoustique encore sans verdict peut être le propriétaire,
+        pas encore reconnu (≈ 1,5 à 2 s) : un accusé ou une réponse lancés
+        maintenant lui parleraient par-dessus. Il tient donc l'ordonnanceur
+        (`on_user_speech`), comme le VAD du fournisseur en salle ouverte ; le
+        propriétaire reconnu aussi. Un verdict « étranger » ou la fin du
+        candidat le libèrent : une autre voix ne retient JARVIS que le temps
+        d'être jugée, jamais indéfiniment — et ne crée ni accusé ni tour. Elle
+        peut en revanche faire tomber un accusé en attente, comme toute prise
+        de parole (l'accusé est facultatif, parler sur le propriétaire ne l'est
+        pas).
+        """
+
+        speaking = state in (OwnerState.CANDIDATE, OwnerState.OWNER_CONFIRMED)
+        if speaking is self._local_speech:
+            return
+        self._local_speech = speaking
+        await self._notify_user_speech()
+
+    #: Après la fermeture du flux du propriétaire, délai pendant lequel un
+    #: nouveau segment du VAD fournisseur lui est encore attribué : le rejeu
+    #: part d'un bloc, le fournisseur le segmente avec retard, et une réponse
+    #: brève est rejouée et refermée d'un seul geste.
+    OWNER_SEGMENT_GRACE_S = 3.0
+    #: Traces `voice.input.non_owner_dropped` du bridge par minute, au plus.
+    MAX_DROP_TRACES_PER_MINUTE = 30
+
+    def _input_gated(self) -> bool:
+        """Solo Owner avec garde au propriétaire : seul le flux qu'il ouvre atteint le fournisseur."""
+
+        return self.continuous and self.barge_in_authority is BargeInAuthority.OWNER and self._owner_gated
+
+    def _admit_provider_segment(self, item_id: str | None) -> bool:
+        """Un `speech_started` du fournisseur vient-il du flux du propriétaire ?
+
+        Défense en profondeur (tâche 07) : la capture ne transmet déjà rien
+        d'autre, le fournisseur ne devrait donc rien segmenter d'autre. Ce
+        qui commence hors du flux ouvert — et de son court délai — est écarté
+        et tracé ; la décision est retenue pour le transcript du segment.
+        """
+
+        at = self._owner_forwarded_at
+        admitted = self._owner_flow_open or (at is not None and self._clock() - at <= self.OWNER_SEGMENT_GRACE_S)
+        self._last_segment_owner = admitted
+        if item_id:
+            self._segment_owner[item_id] = admitted
+            while len(self._segment_owner) > 16:
+                self._segment_owner.pop(next(iter(self._segment_owner)))
+        if not admitted:
+            self._drop_input("provider_speech_unverified")
+        return admitted
+
+    def _segment_from_owner(self, item_id: str | None) -> bool:
+        if item_id and item_id in self._segment_owner:
+            return self._segment_owner.pop(item_id)
+        return self._last_segment_owner
+
+    def _drop_input(self, reason: str) -> None:
+        """Tracer une entrée écartée côté fournisseur : raison seule, jamais le texte ni l'audio."""
+
+        now = self._clock()
+        sent = self._drop_traces
+        while sent and now - sent[0] >= 60.0:
+            sent.popleft()
+        if len(sent) >= self.MAX_DROP_TRACES_PER_MINUTE:
+            self._drops_suppressed += 1
+            return
+        sent.append(now)
+        data: dict[str, object] = {
+            "conversation_id": self.conversation_id,
+            "mode": "enforce",
+            "source": "provider",
+            "reason": reason,
+            "code": f"input_{reason}",
+        }
+        if self._drops_suppressed:
+            data["suppressed"] = self._drops_suppressed
+            self._drops_suppressed = 0
+        self._trace(
+            INPUT_NON_OWNER_DROPPED_KIND,
+            "Entrée écartée : ce segment ne vient pas du flux ouvert par le propriétaire",
+            data=data,
+        )
+
+    def _close_owner_flow(self) -> None:
+        """Refermer le flux du propriétaire vers le fournisseur (silence à la place du micro)."""
+
+        if self._owner_flow_open:
+            self._owner_flow_open = False
+            self._owner_forwarded_at = self._clock()
+        close = getattr(self.audio, "close_owner_flow", None)
+        if close is not None:
+            close()
+
+    def _set_owner_gate(self, enabled: bool) -> None:
+        """Confier (ou reprendre) la garde de la capture au propriétaire ; retenir si elle l'a acceptée."""
+
+        setter = getattr(self.audio, "set_owner_gate", None)
+        accepted = False
+        if setter is not None:
+            try:
+                accepted = bool(setter(enabled))
+            except Exception:
+                accepted = False
+        self._owner_gated = enabled and accepted
+        if (
+            enabled
+            and not accepted
+            and self._owner_attached
+            and self.barge_in_authority is BargeInAuthority.OWNER
+            and getattr(self.audio, "owner_gate_supported", False)
+        ):
+            # Spec §3 : jamais de repli silencieux. Sans la garde, Solo Owner
+            # deviendrait « le propriétaire coupe, mais tout le monde est
+            # transmis » ; on referme plutôt l'entrée, comme pour un
+            # vérificateur perdu. L'activation refuse déjà une capture sans
+            # tampon de rejeu (`solo_owner_capture_unsupported`) : ce cas-ci est
+            # celui d'une capture duplex qui se dérobe à l'ouverture de la
+            # session.
+            self._lose_owner("solo_owner_capture_unsupported")
+
+    def _open_owner_flow(self, snapshot: OwnerStateSnapshot, *, cut: bool) -> None:
+        """Demander à la capture le rejeu du préfixe du propriétaire, puis le direct."""
+
+        if not self._owner_gated or snapshot.owner_onset_ms is None:
+            return
+        self._owner_replay_context = {
+            "session": snapshot.session,
+            "sequence": snapshot.sequence,
+            "candidate_onset_ms": snapshot.candidate_onset_ms,
+            "owner_onset_ms": snapshot.owner_onset_ms,
+            "confirmed_ms": snapshot.confirmed_ms,
+            "stop_stream_ms": self._owner_stop_stream_ms if cut else None,
+            "barge_in": cut,
+        }
+        self._owner_flow_open = True
+        self._owner_forwarded_at = self._clock()
+        self.audio.open_owner_flow(  # type: ignore[attr-defined]
+            snapshot.owner_onset_ms, candidate_onset_ms=snapshot.candidate_onset_ms
+        )
+
+    def _on_owner_replay(self) -> None:
+        """La capture a rejoué un préfixe du propriétaire : le dater (`voice.owner.replay`).
+
+        Scalaires seulement, horloge de la capture : début estimé, confirmation,
+        arrêt local, début et durée du rejeu, et ce qui n'a pas été rejoué —
+        déjà envoyé, ou plus ancien que le tampon (`clamped_ms`, avertissement).
+        Un rejeu vide hors coupure (tout était déjà parti) n'est pas tracé.
+        Depuis la tâche 07, JARVIS silencieux, le fournisseur n'a rien reçu
+        avant la confirmation : chaque tour du propriétaire a son rejeu.
+        """
+
+        take = getattr(self.audio, "take_owner_replays", None)
+        if take is None:
+            return
+        context, self._owner_replay_context = self._owner_replay_context, None
+        for replay in take():
+            replay_ms = int(getattr(replay, "replay_ms", 0))
+            clamped_ms = int(getattr(replay, "clamped_ms", 0))
+            onset = getattr(replay, "owner_onset_ms", None)
+            until = getattr(replay, "until_ms", None)
+            matched = context if context is not None and context.get("owner_onset_ms") == onset else {}
+            self._last_replay_ms = replay_ms
+            if not (replay_ms or clamped_ms or matched.get("barge_in")):
+                continue
+            confirmed = matched.get("confirmed_ms")
+            data: dict[str, object] = {
+                "conversation_id": self.conversation_id,
+                "session": matched.get("session"),
+                "sequence": matched.get("sequence"),
+                "candidate_onset_ms": matched.get("candidate_onset_ms"),
+                "owner_onset_ms": onset,
+                "confirmed_ms": confirmed,
+                "stop_stream_ms": matched.get("stop_stream_ms"),
+                "barge_in": bool(matched.get("barge_in")),
+                "requested_from_ms": getattr(replay, "requested_from_ms", None),
+                "replay_from_ms": getattr(replay, "from_ms", None),
+                "replay_until_ms": until,
+                "replay_ms": replay_ms,
+                "margin_ms": getattr(replay, "margin_ms", None),
+                "already_sent_ms": getattr(replay, "already_sent_ms", None),
+                "clamped_ms": clamped_ms,
+                "buffer_ms": getattr(replay, "buffer_ms", None),
+                "confirm_to_replay_ms": until - confirmed
+                if isinstance(until, int) and isinstance(confirmed, int) and until >= confirmed
+                else None,
+            }
+            if clamped_ms:
+                data["code"] = "owner_replay_clamped"
+            self._trace(
+                OWNER_REPLAY_KIND,
+                "Début de phrase du propriétaire plus ancien que le tampon : rejeu tronqué"
+                if clamped_ms
+                else "Début de phrase du propriétaire rejoué vers le fournisseur, puis le direct",
+                level="warning" if clamped_ms else "info",
+                data=data,
+            )
+
+    def _on_owner_replay_dropped(self) -> None:
+        """La file d'envoi a perdu un rejeu : le dire, jamais un succès muet (spec §3)."""
+
+        self._trace(
+            OWNER_REPLAY_KIND,
+            "Rejeu du propriétaire perdu : la file d'envoi au fournisseur était saturée, ce début de "
+            "phrase ne lui parviendra pas",
+            level="warning",
+            data={
+                "conversation_id": self.conversation_id,
+                "code": "owner_replay_dropped",
+                "dropped_replays": int(getattr(self.audio, "dropped_replays", 0)),
+            },
+        )
+
+    def _interruptible_output(self) -> bool:
+        """Reste-t-il une sortie audible, ou reçue et à venir, qui n'a pas été coupée ?
+
+        `_output_live()` reste vrai après une coupure tant que la lecture n'a
+        pas jeté les blocs reçus avant elle : sur ce seul critère, un second
+        signal couperait deux fois. Ici, seul compte ce qui n'est ni sous la
+        marque de coupure ni sur la liste noire des sorties interrompues.
+        """
+
+        if self._playing:
+            return True
+        if self._queued_audio <= 0 or self._seq <= self._drop_audio_before:
+            return False
+        if not self._received_outputs:
+            # Pile sans identifiant de sortie : l'audio reçu après la marque
+            # de coupure ne peut appartenir qu'à une sortie nouvelle.
+            return True
+        return any(identity not in self._interrupted_outputs for identity in self._received_outputs)
+
+    def _note_owner_candidate(self) -> None:
+        """Solo Owner : la parole proche n'est qu'un candidat acoustique (D03, D04).
+
+        Ni baisse de volume ni coupure : une conversation de bureau continue
+        ferait sinon onduler la voix de JARVIS, et une autre voix n'a pas le
+        droit de l'interrompre. Seule la confirmation du propriétaire coupe
+        (`_on_owner_state`).
+
+        Le délai de confirmation acoustique reste celui de la salle ouverte :
+        sans `speech_started` du fournisseur dans `barge_in_confirm_s`, la
+        garde se referme et le détecteur apprend l'écho (`release_near_end`).
+        Avec lui, c'est bien de la parole : la garde reste ouverte, pour que le
+        fournisseur entende la phrase depuis son début si c'est le propriétaire.
+
+        Garde au propriétaire (tâche 06, capture avec tampon de rejeu) : le
+        verrou n'ouvre plus rien, le fournisseur n'entend pas cette voix. Le
+        délai ne relâche le verrou qu'une fois le candidat du vérificateur
+        refermé (`_on_barge_timeout`) ; le début de phrase du propriétaire
+        part au rejeu (`_open_owner_flow`).
+        """
+
+        if self._user_speaking or self._barge_pending:
+            return
+        self._barge_pending = True
+        self._barge_pending_ducked = False
+        self._barge_pending_token += 1
+        token = self._barge_pending_token
+        self._trace(
+            "voice.barge_in_pending",
+            "Parole détectée localement pendant que JARVIS parle : identité en vérification, volume inchangé",
+            data={"conversation_id": self.conversation_id, "authority": BargeInAuthority.OWNER.value},
+        )
+        asyncio.get_running_loop().call_later(self.barge_in_confirm_s, self._post, "barge_timeout", token)
+
+    def _owner_state_value(self) -> str | None:
+        try:
+            return OwnerState(self._owner_source.owner_state.state).value  # type: ignore[union-attr]
+        except Exception:
+            return None
+
+    def _note_provider_speech(self, *, jarvis_audible: bool) -> None:
+        """Solo Owner : le `speech_started` du fournisseur corrèle, il ne coupe jamais (D09).
+
+        Le VAD du fournisseur entend toute voix que la garde laisse passer —
+        une autre personne aussi bien que le propriétaire en cours de
+        vérification. Il ne décide donc rien, qu'il arrive avant, après ou
+        jamais :
+
+        - JARVIS audible, aucun propriétaire confirmé : JARVIS continue. Le
+          signal vaut confirmation acoustique (de la parole, pas de l'écho) :
+          le délai de `_note_owner_candidate` ne refermera pas la garde. Il est
+          retenu pour dater l'avance du fournisseur si le propriétaire est
+          confirmé ensuite ;
+        - juste après une coupure du propriétaire : le fournisseur rattrape la
+          décision locale ; son retard est mesuré, rien n'est recoupé.
+
+        La trace `voice.barge_in.provider_advisory` ne porte que des scalaires.
+        """
+
+        now = self._clock()
+        data: dict[str, object] = {
+            "conversation_id": self.conversation_id,
+            "owner_state": self._owner_state_value(),
+            "guard_open": bool(getattr(self.audio, "echo_guard_open", True)),
+        }
+        if jarvis_audible and self._interruptible_output():
+            self._provider_speech_at = now
+            if self._barge_pending:
+                self._barge_pending = False
+                self._barge_pending_token += 1
+            data["relation"] = "awaiting_owner"
+            message = "Début de parole signalé par le fournisseur, aucun propriétaire confirmé : JARVIS continue"
+        else:
+            stopped = self._owner_stopped_at
+            if stopped is None or now - stopped > self.OWNER_ADVISORY_WINDOW_S:
+                return
+            self._owner_stopped_at = None
+            data["relation"] = "after_owner_stop"
+            data["lag_ms"] = round((now - stopped) * 1000)
+            # Garde au propriétaire : le fournisseur n'a pu entendre que le
+            # rejeu, ce début de parole le segmente (tâche 06).
+            data["replay_ms"] = self._last_replay_ms
+            message = "Début de parole signalé par le fournisseur après l'arrêt local : corrélé, rien à recouper"
+        self._trace(BARGE_IN_PROVIDER_ADVISORY_KIND, message, data=data)
 
     def _engaged(self) -> bool:
         """L'utilisateur est-il en conversation avec JARVIS en ce moment ?"""
@@ -1743,10 +2570,25 @@ class RealtimeConversationBridge:
     CONTROL_ERROR_WINDOW_S = 5.0
 
     async def _note_user_speech(self, active: bool) -> None:
+        """Le VAD du fournisseur entend l'utilisateur, ou ne l'entend plus."""
+
         if self._user_speaking == active:
             return
         self._user_speaking = active
-        await self._call_with(self.on_user_speech, active)
+        await self._notify_user_speech()
+
+    async def _notify_user_speech(self) -> None:
+        """Prévenir l'ordonnanceur : VAD du fournisseur, ou candidat local en Solo Owner.
+
+        En salle ouverte seul le VAD du fournisseur compte, exactement comme
+        avant ; `_user_speaking` reste le sien (le barge-in le lit).
+        """
+
+        speaking = self._user_speaking or self._local_speech
+        if speaking == self._notified_speech:
+            return
+        self._notified_speech = speaking
+        await self._call_with(self.on_user_speech, speaking)
 
     async def _request_reflex(self, text: str) -> None:
         """Proposer un accusé de réception à l'ordonnanceur, qui décidera s'il sert.
@@ -1848,12 +2690,17 @@ class RealtimeConversationBridge:
             await self._rescue_undelivered_answer()
             await self._call(self.on_response_done or self.on_mute)
         elif event.message_type == "realtime.speech_started":
+            payload = event.payload or {}
+            if self._input_gated() and not self._admit_provider_segment(_optional_text(payload.get("item_id"))):
+                # Solo Owner : le fournisseur n'a pu entendre que du silence
+                # ou un reste d'avant la garde. Défense en profondeur — ni
+                # parole utilisateur, ni mesure, ni barge-in.
+                return False
             # Borne de départ de la mesure 1, posée avant toute
             # décision : que ce segment coupe la parole de JARVIS ou
             # ouvre un tour, le délai jusqu'au premier son rendu est le
             # même chiffre pour l'utilisateur.
             self._open_speech_segment()
-            payload = event.payload or {}
             near_playback = (
                 self._output_live()
                 or bool(getattr(self.audio, "far_end_recent", False))
@@ -1868,7 +2715,14 @@ class RealtimeConversationBridge:
             if self.continuous:
                 await self._note_user_speech(True)
             if self.continuous and self._output_live():
-                if self._barge_in_allowed():
+                if self.barge_in_authority is BargeInAuthority.OWNER:
+                    # Solo Owner : seul le propriétaire confirmé localement
+                    # coupe. Ce signal peut venir de n'importe quelle voix ;
+                    # il corrèle, il ne coupe pas (D09) — et vérificateur
+                    # perdu, il ne coupe pas davantage (tâche 07).
+                    if self._owner_authority():
+                        self._note_provider_speech(jarvis_audible=True)
+                elif self._barge_in_allowed():
                     # Barge-in : JARVIS parle et l'utilisateur enchaîne. Le
                     # chemin legacy, half-duplex, ne peut pas se trouver
                     # dans cet état — il garde donc exactement sa trace.
@@ -1883,6 +2737,9 @@ class RealtimeConversationBridge:
                         data={"conversation_id": self.conversation_id, "code": "speech_started_behind_echo_guard"},
                     )
             elif self.continuous or (self.auto_turn and not self._input_submitted):
+                if self.continuous and self._owner_stopped_at is not None and self._owner_authority():
+                    # Le VAD du fournisseur rattrape une coupure du propriétaire.
+                    self._note_provider_speech(jarvis_audible=False)
                 self._trace(
                     "voice.speech_started",
                     "Speech detected by server VAD",
@@ -2015,13 +2872,21 @@ class RealtimeConversationBridge:
         return False
 
     async def _handle_transcript(self, event: ProtocolEnvelope) -> bool:
+        item_id = _optional_text(event.payload.get("item_id"))
+        if self._input_gated() and not self._segment_from_owner(item_id):
+            # Solo Owner : l'identité passe avant l'adressage, et jamais par
+            # le texte. Un segment que le propriétaire n'a pas ouvert n'est
+            # ni tracé (pas de texte au journal), ni tour, ni activité utile.
+            self._drop_input("transcript_unverified")
+            await self._call(self.on_ambient)
+            await self._call(self.on_listening)
+            return False
         # Borne de départ de la mesure 2. Prise avant le classement
         # d'adressage : ce qui est chronométré est le chemin complet
         # « transcript complet → Core a accepté », décision de
         # surface comprise.
         self._latency.mark(LATENCY_BRAIN_TURN_ACCEPTED, self.conversation_id)
         text = str(event.payload.get("text") or "").strip()
-        item_id = _optional_text(event.payload.get("item_id"))
         near_playback = self._segment_was_near_playback(item_id)
         engaged = self._engaged() if self.continuous else None
         decision = self.classifier.classify(text, active=True, engaged=engaged)
@@ -2191,6 +3056,11 @@ class RealtimeConversationBridge:
             # Parole proche entendue par la capture duplex : premier temps du
             # barge-in (voir `_on_near_end`).
             self.audio.on_capture_signal = self._on_capture_signal
+        if self.barge_in_authority is BargeInAuthority.OWNER:
+            # Solo Owner (tâche 07) : la garde est au propriétaire dès le
+            # premier bloc capté, flux fermé — pas un seul bloc brut ne part
+            # avant l'abonnement à son état.
+            self._set_owner_gate(True)
         await self.audio.start()
         self._trace(
             "audio.start",

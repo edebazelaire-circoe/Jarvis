@@ -16,6 +16,8 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta
 
+import pytest
+
 from jarvis.domain.v2 import (
     PlaybackCursor,
     ProtocolEnvelope,
@@ -40,6 +42,20 @@ TIMEOUT_S = 2.0
 # l'horloge système. Les assertions restent relatives à cette origine, donc
 # rien de leur sens ne dépend de la date.
 ORIGIN = utc_now()
+
+
+@pytest.fixture(autouse=True)
+def _origin_of_this_test():
+    """Réancrer l'origine au début de chaque test, pas à l'import du module.
+
+    Ancrée à la collecte, elle vieillit avec la suite : une suite complète qui
+    atteint ce fichier plus de 60 s après la collecte (TTL des paroles
+    transitoires) fabriquait des progressions déjà périmées, et neuf tests
+    échouaient alors qu'ils passaient seuls.
+    """
+
+    global ORIGIN
+    ORIGIN = utc_now()
 
 
 class FakeClock:

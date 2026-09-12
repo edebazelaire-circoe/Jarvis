@@ -24,6 +24,7 @@ import threading
 import numpy as np
 import pytest
 
+from jarvis.adapters.fake_speaker_verifier import ScriptedSpeakerVerifier
 from jarvis.adapters.openai_realtime import (
     OUTPUT_ID_METADATA_KEY,
     OpenAIRealtimeSession,
@@ -31,6 +32,7 @@ from jarvis.adapters.openai_realtime import (
     build_turn_detection,
 )
 from jarvis.audio.duplex import NEAR_END, CaptureProcessor, NearEndDetector, frame_db
+from jarvis.domain.speaker import OwnerState
 from jarvis.domain.v2 import AddressingDecision, ProtocolEnvelope, SpeechKind, SpeechPriority, SpeechRequest
 from jarvis.ports.v2 import supports_reflex
 from jarvis.runtime import voice_stack
@@ -551,6 +553,407 @@ def test_the_capture_callback_delivers_processed_audio_and_signals_on_the_loop()
     assert audio.captured_bytes == 2400
     assert audio._queue.qsize() == 1
     assert received == [NEAR_END]
+
+
+# --------------------------------------------------------------------------
+# 1 bis. Vérification du locuteur en ombre : la capture ne change pas d'un octet
+
+
+class RecordingObserver:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.frames: list[bytes] = []
+        self.contexts: list[object] = []
+        self.resets = 0
+        self.closed = False
+        self.fail = fail
+
+    def observe(self, frame: bytes, context) -> None:  # noqa: ANN001
+        if self.fail:
+            raise RuntimeError("observer down")
+        self.frames.append(frame)
+        self.contexts.append(context)
+
+    def reset(self) -> None:
+        self.resets += 1
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class HalvingCanceller(PassThroughCanceller):
+    def process_capture(self, frame: bytes) -> bytes:
+        self.capture_frames += 1
+        return (np.frombuffer(frame, dtype=np.int16) // 2).astype(np.int16).tobytes()
+
+
+def _capture_trace(observer, mic: bytes, reference: bytes) -> list[tuple]:  # noqa: ANN001
+    """Tout ce que la capture rend, bloc par bloc : audio, signaux, garde, parole proche.
+
+    La dernière entrée fige l'état appris du détecteur : l'observateur ne doit
+    pas plus le toucher que l'audio.
+    """
+
+    processor = CaptureProcessor(capture_rate=RATE, render_rate=RATE, canceller=PassThroughCanceller(), observer=observer)
+    block, trace, pushed = 1200 * 2, [], 0
+    for offset in range(0, len(mic), block):
+        while pushed < min(len(reference), offset + 4800 * 2):
+            processor.push_reference(reference[pushed:pushed + 4800])
+            pushed += 4800
+        chunk, emitted = processor.process(mic[offset:offset + block])
+        trace.append((chunk, emitted, processor.gate_open, processor.near_end_active))
+    detector = processor.detector
+    trace.append((detector.coupling_db, detector.floor_db, detector.latched, detector._far_frames, processor.stream_ms))
+    return trace
+
+
+def _keyboard(seconds: float) -> bytes:
+    """Clics de 20 ms toutes les 130 ms, comme au test de la garde."""
+
+    clicks = bytearray(silence(seconds))
+    loud = noise(0.02, amplitude=0.5)
+    for start in np.arange(0.5, seconds - 0.2, 0.13):
+        offset = int(start * RATE) * 2
+        clicks[offset:offset + len(loud)] = loud
+    return bytes(clicks)
+
+
+_SHADOW_SCENARIOS = {
+    # L'utilisateur coupe JARVIS : garde fermée, puis ouverte avec pré-roll.
+    "barge_in": (
+        mix(tone(3.0, amplitude=0.02), silence(1.5) + tone(1.5, amplitude=0.4, freq=180.0), noise(3.0, amplitude=0.001)),
+        tone(3.0, amplitude=0.3),
+    ),
+    # JARVIS seul : rien que du silence part.
+    "echo_only": (mix(tone(2.0, amplitude=0.2), noise(2.0, amplitude=0.002)), tone(2.0, amplitude=0.3)),
+    # JARVIS se tait : le micro passe tel quel.
+    "idle": (tone(1.0, amplitude=0.1), b""),
+    # JARVIS se tait, une voix parle six secondes d'affilée : candidat long.
+    "long_voice": (mix(tone(6.0, amplitude=0.3, freq=180.0), noise(6.0, amplitude=0.001)), b""),
+    # Clavier pendant que JARVIS parle.
+    "keyboard": (mix(tone(3.0, amplitude=0.02), _keyboard(3.0)), tone(3.0, amplitude=0.3)),
+}
+
+
+def _shadow_worker(verifier, journal=None, **options):  # noqa: ANN001, ANN003, ANN202
+    from jarvis.audio.speaker_shadow import SpeakerVerificationWorker
+
+    # File large : un test tourne plus vite que le temps réel, rien ne doit être sauté.
+    return SpeakerVerificationWorker(verifier, sample_rate=RATE, diagnostics=journal, max_pending_ms=60_000, **options)
+
+
+@pytest.mark.parametrize("scenario", sorted(_SHADOW_SCENARIOS))
+@pytest.mark.parametrize("verifier_kind", ["owner", "stranger", "overlap", "crashing", "broken_listener", "broken_observer"])
+def test_shadow_verification_leaves_the_capture_byte_for_byte_identical(scenario, verifier_kind):  # noqa: ANN001
+    from jarvis.adapters.fake_speaker_verifier import ScriptedSpeakerVerifier
+    from jarvis.audio.speaker_shadow import SpeakerVerificationWorker
+
+    mic, reference = _SHADOW_SCENARIOS[scenario]
+    baseline = _capture_trace(None, mic, reference)
+    scripts = {
+        "owner": [0.2, 0.9] * 30,
+        "stranger": [0.2] * 60,
+        "overlap": [0.2, 0.9, 0.3, 0.95] * 15,
+        "crashing": [0.5, RuntimeError("model lost")],
+        "broken_listener": [0.9] * 60,
+    }
+    journal = RecordingJournal()
+    verifier = None
+    if verifier_kind == "broken_observer":
+        observer = RecordingObserver(fail=True)
+    else:
+        verifier = ScriptedSpeakerVerifier(scripts[verifier_kind])
+        observer = _shadow_worker(verifier, journal)
+        if verifier_kind == "broken_listener":
+            observer.add_owner_listener(lambda snapshot: 1 / 0)
+    try:
+        shadowed = _capture_trace(observer, mic, reference)
+        if isinstance(observer, SpeakerVerificationWorker):
+            assert observer.flush(TIMEOUT_S)
+    finally:
+        observer.close()
+
+    assert shadowed == baseline
+    if verifier is not None:
+        assert verifier.calls  # le vérificateur a bien écouté
+        assert all(str(event["kind"]).startswith("voice.owner.") for event in journal.events)
+
+
+def test_the_observer_sees_the_echo_cancelled_frames():
+    observer = RecordingObserver()
+    processor = CaptureProcessor(capture_rate=RATE, render_rate=RATE, canceller=HalvingCanceller(), observer=observer)
+    mic = tone(0.3, amplitude=0.4)
+
+    run_capture(processor, mic)
+
+    assert len(observer.frames) == 30 and {len(frame) for frame in observer.frames} == {FRAME * 2}
+    assert b"".join(observer.frames) == (np.frombuffer(mic, dtype=np.int16) // 2).astype(np.int16).tobytes()
+    assert [context.stream_ms for context in observer.contexts] == list(range(0, 300, 10))
+    assert {context.sample_rate for context in observer.contexts} == {RATE}
+    assert not any(context.far_end for context in observer.contexts)  # JARVIS se tait
+
+
+@pytest.mark.parametrize("canceller", [None, BrokenCanceller], ids=["no_canceller", "failed_canceller"])
+def test_without_a_canceller_the_observer_sees_the_raw_microphone(canceller):  # noqa: ANN001
+    """Ce que le vérificateur reçoit vraiment quand l'AEC manque ou tombe.
+
+    `_cancel_echo` est alors un passe-plat : la trame remise à l'observateur
+    porte encore l'écho de JARVIS. Comportement voulu (l'état dégradé est
+    montré, le micro n'est pas coupé), mais la documentation doit le dire tel
+    quel plutôt que promettre une trame « nettoyée » — d'où ce test.
+    """
+
+    observer = RecordingObserver()
+    processor = CaptureProcessor(
+        capture_rate=RATE, render_rate=RATE, canceller=canceller() if canceller else None, observer=observer
+    )
+    mic, reference = _SHADOW_SCENARIOS["barge_in"]
+
+    run_capture(processor, mic, reference)
+
+    assert b"".join(observer.frames) == mic  # rien n'a été retiré : micro brut
+    assert processor.canceller_failed is (canceller is not None)
+
+
+def test_the_frame_context_carries_near_end_far_end_and_the_guard():
+    """Ce que l'observateur apprend de chaque trame : candidat, JARVIS audible, garde, horloge."""
+
+    observer = RecordingObserver()
+    processor = CaptureProcessor(capture_rate=RATE, render_rate=RATE, canceller=PassThroughCanceller(), observer=observer)
+    mic, reference = _SHADOW_SCENARIOS["barge_in"]
+
+    _, signals = run_capture(processor, mic, reference)
+
+    contexts = observer.contexts
+    assert len(contexts) == 300 and all(context.far_end for context in contexts)
+    assert not any(context.near_end for context in contexts[:150])  # écho seul : jamais candidat
+    assert sum(context.near_end for context in contexts[150:]) >= 140  # l'utilisateur, lui, l'est
+    first_latched = next(index for index, context in enumerate(contexts) if context.near_end_latched)
+    assert abs(first_latched * 0.01 - signals[0]) <= 0.05  # même instant que le signal `near_end`
+    assert not any(context.gate_open for context in contexts[10:first_latched])
+    assert all(context.gate_open for context in contexts[first_latched:])
+    assert processor.stream_ms == 3000
+
+    processor.reset()
+    run_capture(processor, silence(0.1))
+
+    assert processor.stream_ms == 100 and contexts[300].stream_ms == 0  # nouvelle session, nouvelle horloge
+
+
+def _owner_trace(worker) -> list:  # noqa: ANN001
+    published: list = []
+    worker.add_owner_listener(published.append)
+    return published
+
+
+class _RecordingPcmVerifier(ScriptedSpeakerVerifier):
+    """Vérificateur qui dit toujours « propriétaire » et garde ce qu'il reçoit."""
+
+    def __init__(self, score: float = 0.99, windows: int = 200) -> None:
+        super().__init__([score] * windows)
+        self.received: list[bytes] = []
+
+    def process(self, pcm: bytes, sample_rate: int):  # noqa: ANN201
+        self.received.append(pcm)
+        return super().process(pcm, sample_rate)
+
+
+@pytest.mark.parametrize(
+    "canceller,echo_amplitude",
+    [(None, 0.2), (PassThroughCanceller, 0.005)],
+    ids=["guard_only_loud_echo", "aec_residual"],
+)
+def test_echo_only_playback_never_becomes_the_owner(canceller, echo_amplitude):  # noqa: ANN001
+    """Même un vérificateur qui dit « propriétaire » à tout : l'écho n'est pas un candidat."""
+
+    verifier = _RecordingPcmVerifier()
+    journal = RecordingJournal()
+    worker = _shadow_worker(verifier, journal)
+    published = _owner_trace(worker)
+    processor = CaptureProcessor(
+        capture_rate=RATE, render_rate=RATE, canceller=canceller() if canceller else None, observer=worker
+    )
+    try:
+        run_capture(processor, mix(tone(4.0, amplitude=echo_amplitude), noise(4.0, amplitude=0.002)), tone(4.0, amplitude=0.3))
+        assert worker.flush(TIMEOUT_S)
+    finally:
+        processor.close()
+
+    assert published == [] and journal.events == []
+    assert worker.owner_state.state is OwnerState.IDLE
+    # L'écho résiduel n'entre jamais dans la preuve du moteur : silence numérique.
+    assert len(verifier.received) == 40 and not any(any(pcm) for pcm in verifier.received)
+
+
+def test_real_aec_echo_never_becomes_the_owner_but_the_user_does():
+    """Chaîne réelle AEC3 : JARVIS seul pendant 4,5 s, puis l'utilisateur par-dessus."""
+
+    pytest.importorskip("livekit")
+    from jarvis.adapters.webrtc_echo import create_echo_canceller
+
+    far = _speechlike(8.0, amplitude=0.5, seed=2)
+    far[: RATE // 2] = 0
+    response = np.zeros(int(RATE * 0.08))
+    response[[0, int(RATE * 0.007), int(RATE * 0.019), int(RATE * 0.045)]] = [1.0, 0.4, -0.3, 0.15]
+    echo = np.tanh(2 * np.convolve(far, response)[: len(far)] * 0.6) / 2
+    echo = np.concatenate([np.zeros(int(RATE * 0.15)), echo])[: len(far)]
+    user = _speechlike(8.0, amplitude=0.2, seed=12)
+    user[: int(RATE * 5.0)] = 0
+    user[int(RATE * 6.5):] = 0
+    mic = echo + user + 0.003 * np.random.default_rng(3).standard_normal(len(far))
+    to_pcm = lambda values: (np.clip(values, -1, 1) * 32767).astype(np.int16).tobytes()  # noqa: E731
+
+    verifier = _RecordingPcmVerifier(windows=100)
+    worker = _shadow_worker(verifier)
+    published = _owner_trace(worker)
+    processor = CaptureProcessor(
+        capture_rate=RATE,
+        render_rate=RATE,
+        canceller=create_echo_canceller(capture_rate=RATE, render_rate=RATE),
+        observer=worker,
+    )
+    try:
+        run_capture(processor, to_pcm(mic), to_pcm(far))
+        assert worker.flush(TIMEOUT_S)
+    finally:
+        processor.close()
+
+    confirmed = [snapshot for snapshot in published if snapshot.state is OwnerState.OWNER_CONFIRMED]
+    assert confirmed, "l'utilisateur doit être confirmé"
+    assert all(snapshot.candidate_onset_ms >= 4900 for snapshot in published if snapshot.candidate_onset_ms is not None)
+    assert 5000 <= confirmed[0].owner_onset_ms <= 5800 and confirmed[0].far_end
+    # Lecture seule (1 s à 4,9 s) : le moteur n'a reçu que du silence numérique.
+    assert not any(any(pcm) for pcm in verifier.received[10:49])
+
+
+@pytest.mark.parametrize("jarvis_speaks", [False, True], ids=["jarvis_silent", "jarvis_speaking"])
+def test_keyboard_clicks_never_become_the_owner(jarvis_speaks):  # noqa: ANN001
+    verifier = _RecordingPcmVerifier()
+    journal = RecordingJournal()
+    worker = _shadow_worker(verifier, journal)
+    published = _owner_trace(worker)
+    processor = CaptureProcessor(capture_rate=RATE, render_rate=RATE, observer=worker)
+    mic = mix(tone(3.0, amplitude=0.02), _keyboard(3.0)) if jarvis_speaks else _keyboard(3.0)
+    try:
+        run_capture(processor, mic, tone(3.0, amplitude=0.3) if jarvis_speaks else b"")
+        assert worker.flush(TIMEOUT_S)
+    finally:
+        processor.close()
+
+    assert published == [] and journal.events == []
+    assert worker.owner_state.state is OwnerState.IDLE
+
+
+def test_the_owner_is_confirmed_after_a_long_stranger_sentence_without_silence():
+    """D06 au bout de la chaîne : quatre secondes d'étranger, puis le propriétaire, d'une traite."""
+
+    from jarvis.adapters.fake_speaker_verifier import ScriptedSpeakerVerifier
+    from jarvis.audio.speaker_shadow import OWNER_CANDIDATE, OWNER_CONFIRMED, OWNER_REJECTED
+    from jarvis.domain.speaker import SpeakerVerification, VerificationStatus
+
+    owner = SpeakerVerification(
+        status=VerificationStatus.OK, engine="fake-speaker/1", owner_score=0.9, owner_detected=True, evidence_ms=1500
+    )
+    journal = RecordingJournal()
+    worker = _shadow_worker(ScriptedSpeakerVerifier([0.2] * 40 + [owner] * 20), journal)
+    published = _owner_trace(worker)
+    processor = CaptureProcessor(capture_rate=RATE, render_rate=RATE, observer=worker)
+    mic, _ = _SHADOW_SCENARIOS["long_voice"]
+    try:
+        out, _ = run_capture(processor, mic)
+        assert worker.flush(TIMEOUT_S)
+    finally:
+        processor.close()
+
+    assert out == mic  # JARVIS se tait : le micro passe, vérification ou non
+    assert [snapshot.state for snapshot in published] == [OwnerState.REJECTED, OwnerState.OWNER_CONFIRMED]
+    confirmed = published[-1]
+    assert (confirmed.candidate_onset_ms, confirmed.confirmed_ms, confirmed.owner_onset_ms) == (0, 4100, 2600)
+    assert not confirmed.far_end
+    kinds = [event["kind"] for event in journal.events]
+    assert kinds == [OWNER_CANDIDATE, OWNER_CONFIRMED] and OWNER_REJECTED not in kinds
+    assert journal.events[-1]["data"]["after_non_owner"] is True
+
+
+def test_an_owner_barge_in_is_confirmed_with_stream_timestamps():
+    """Ce que la tâche 05 consommera : confirmation, début estimé, JARVIS audible."""
+
+    from jarvis.adapters.fake_speaker_verifier import ScriptedSpeakerVerifier
+    from jarvis.audio.speaker_shadow import OWNER_CONFIRMED
+
+    journal = RecordingJournal()
+    # « Propriétaire » à chaque fenêtre, écho compris : seul le candidat compte.
+    worker = _shadow_worker(ScriptedSpeakerVerifier([0.99] * 40), journal)
+    published = _owner_trace(worker)
+    processor = CaptureProcessor(capture_rate=RATE, render_rate=RATE, canceller=PassThroughCanceller(), observer=worker)
+    mic, reference = _SHADOW_SCENARIOS["barge_in"]
+    try:
+        run_capture(processor, mic, reference)
+        assert worker.flush(TIMEOUT_S)
+    finally:
+        processor.close()
+
+    assert [snapshot.state for snapshot in published] == [OwnerState.OWNER_CONFIRMED]
+    owner = published[0]
+    # L'utilisateur commence à 1,5 s ; la 12e trame proche tombe dans la
+    # fenêtre 1,6–1,7 s, jugée aussitôt.
+    assert (owner.candidate_onset_ms, owner.owner_onset_ms, owner.confirmed_ms) == (1500, 1500, 1700)
+    assert owner.far_end and owner.session == 0
+    confirmed = [event["data"] for event in journal.events if event["kind"] == OWNER_CONFIRMED]
+    assert confirmed[0]["confirm_ms"] == 200 and confirmed[0]["far_end"] is True
+
+
+def test_each_capture_session_starts_a_fresh_owner_state():
+    from jarvis.adapters.fake_speaker_verifier import ScriptedSpeakerVerifier
+
+    verifier = ScriptedSpeakerVerifier([0.9] * 100)
+    worker = _shadow_worker(verifier)
+    processor = CaptureProcessor(capture_rate=RATE, render_rate=RATE, observer=worker)
+    mic, _ = _SHADOW_SCENARIOS["long_voice"]
+    try:
+        processor.reset()  # activation
+        run_capture(processor, mic[: len(mic) // 3])
+        assert worker.flush(TIMEOUT_S)
+        first = worker.owner_state
+        processor.reset()  # retour au fond, micro fermé
+        assert worker.flush(TIMEOUT_S)
+        ended = worker.owner_state
+        run_capture(processor, mic[: len(mic) // 3])
+        assert worker.flush(TIMEOUT_S)
+        second = worker.owner_state
+    finally:
+        processor.close()
+
+    assert (first.session, first.state, first.confirmed_ms) == (1, OwnerState.OWNER_CONFIRMED, 200)
+    assert (ended.session, ended.state, ended.candidate_onset_ms) == (2, OwnerState.IDLE, None)
+    # Même horloge repartie de zéro : mêmes instants, rien hérité de la session d'avant.
+    assert (second.session, second.state, second.confirmed_ms, second.candidate_onset_ms) == (2, OwnerState.OWNER_CONFIRMED, 200, 0)
+    assert verifier.resets == 2
+    assert worker.telemetry.machine.region is not None and len(worker.telemetry.machine._near) <= 40
+
+
+def test_a_failing_observer_is_dropped_without_touching_the_microphone():
+    observer = RecordingObserver(fail=True)
+    processor = CaptureProcessor(capture_rate=RATE, render_rate=RATE, observer=observer)
+    mic = tone(0.3, amplitude=0.1)
+
+    out, _ = run_capture(processor, mic)
+    processor.reset()
+
+    assert out == mic
+    assert processor.observer_failed
+    assert observer.resets == 0  # écarté pour de bon, comme un annuleur en panne
+
+
+def test_the_capture_resets_and_closes_its_observer():
+    observer = RecordingObserver()
+    processor = CaptureProcessor(capture_rate=RATE, render_rate=RATE, observer=observer)
+
+    processor.reset()
+    processor.close()
+    processor.close()
+
+    assert observer.resets == 1 and observer.closed
+    assert processor.observer is None
 
 
 # --------------------------------------------------------------------------

@@ -13,6 +13,7 @@ passer JARVIS pour l'utilisateur.
 
 from __future__ import annotations
 
+import importlib.util
 from typing import Any
 
 
@@ -64,6 +65,20 @@ def echo_cancellation_available() -> bool:
     except Exception:
         return False
     return True
+
+
+def echo_cancellation_installed() -> bool:
+    """Sonde bon marché (Control Center, tâche 08) : le paquet est-il installé ?
+
+    Ne charge pas la bibliothèque native : un paquet présent qui ne se charge
+    pas n'est vu que par Voice, qui le publie (`.voice_capture`).
+    """
+
+    try:
+        # `livekit` est un paquet d'espace de noms (vide) : seul `rtc` porte l'AEC3.
+        return importlib.util.find_spec("livekit.rtc") is not None
+    except (ImportError, ValueError):
+        return False
 
 
 def create_echo_canceller(*, capture_rate: int, render_rate: int, stream_delay_ms: int = 0) -> WebRtcEchoCanceller | None:

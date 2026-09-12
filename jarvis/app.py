@@ -40,6 +40,9 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("control-center", help="Run Jarvis visualizer + Control Center + local Claude agent")
     sub.add_parser("drive-auth", help="Authorize Google Drive access once and store the token")
     sub.add_parser("drive-mcp", help="Serve the Google Drive MCP tools over stdio")
+    from jarvis.runtime.owner_voice import add_parser as add_owner_voice_parser
+
+    add_owner_voice_parser(sub)
     return parser
 
 
@@ -178,6 +181,24 @@ def _brain_backend_from_env():
     return ControlCenterBrainBackend(base_url=_control_center_url(), timeout_s=float(timeout))
 
 
+def _brain_availability_from_env() -> dict[str, object]:
+    """Réglages de disponibilité du cerveau pour Core, actifs par défaut.
+
+    - `JARVIS_SUPERSEDE_STALE_REPLIES` (défaut 1) : une nouvelle intention
+      périme la parole des tours précédents encore en file (retour n° 8).
+    - `JARVIS_BRAIN_TURN_BUDGET_S` (défaut 8) : au-delà, le tour est signalé
+      dans la trace (`core.brain.turn_slow`, `core.brain.turn_over_budget`).
+    """
+    from jarvis.core.brain_service import DEFAULT_TURN_BUDGET_S
+
+    supersede = os.getenv("JARVIS_SUPERSEDE_STALE_REPLIES", "1").strip().lower() not in {"0", "false", "no", "off"}
+    try:
+        budget = float(os.getenv("JARVIS_BRAIN_TURN_BUDGET_S") or DEFAULT_TURN_BUDGET_S)
+    except ValueError:
+        budget = DEFAULT_TURN_BUDGET_S
+    return {"supersede_stale_replies": supersede, "brain_turn_budget_s": budget if budget > 0 else DEFAULT_TURN_BUDGET_S}
+
+
 def _control_settings(runtime_root: Path) -> dict[str, object]:
     path = runtime_root / "control-center-settings.json"
     if not path.is_file():
@@ -207,6 +228,77 @@ def _active_timeout_from(overrides: dict[str, object], default: float) -> float:
         return parse_active_timeout(raw, name="active_timeout_s")
     except ConfigurationError:
         return default
+
+
+def _speaker_verifier(overrides: dict[str, object], runtime_root: Path, journal=None):
+    """Vérificateur de locuteur à brancher en ombre sur la capture duplex.
+
+    Rien n'est branché — la capture reste exactement celle d'avant — tant que
+    la vérification est `off` (défaut), que le réglage est invalide, ou que le
+    moteur, son modèle ou le profil du propriétaire manquent (raison
+    journalisée). Sinon, le moteur local (`jarvis/runtime/owner_voice.py`)
+    observe la capture sans en changer un octet ; en Solo Owner, l'état du
+    propriétaire qu'il publie décide seul du barge-in (tâche 05,
+    `PersistentVoiceRuntime._barge_in_policy`) et seul ouvre le flux vers le
+    fournisseur, que JARVIS parle (tâche 06) ou se taise (tâche 07). Sans
+    vérificateur, Solo Owner est refusé à l'activation.
+    """
+    from jarvis.domain.errors import ConfigurationError
+    from jarvis.domain.speaker import SpeakerVerificationMode
+    from jarvis.v2_config import parse_conversation_authorization
+
+    try:
+        authorization = parse_conversation_authorization(overrides)
+    except ConfigurationError:
+        return None
+    if authorization.verification is SpeakerVerificationMode.OFF:
+        return None
+    from jarvis.runtime.owner_voice import open_owner_verifier
+
+    try:
+        return open_owner_verifier(overrides, runtime_root=runtime_root, journal=journal)
+    except Exception as exc:
+        # L'ombre ne doit jamais coûter la capture duplex : une erreur ici
+        # ferait retomber Voice sur le micro brut.
+        if journal is not None:
+            journal.emit(
+                "voice.owner.unavailable",
+                f"Vérificateur de locuteur non branché : {type(exc).__name__}",
+                level="warning",
+                data={"code": "verifier_open_failed", "error": type(exc).__name__},
+            )
+        return None
+
+
+def _conversation_authorization(overrides: dict[str, object], journal=None):
+    """Autorisation de conversation retenue par Voice, et l'erreur de réglage éventuelle.
+
+    Rend `(autorisation, erreur)`. Un réglage invalide écrit à la main n'est
+    ni deviné ni remplacé par la salle ouverte (tâche 07) : l'erreur part au
+    runtime, qui refuse chaque activation en disant pourquoi — Voice reste
+    lancée, le mot d'éveil aussi, rien n'écoute. L'autorisation rendue alors
+    (salle ouverte) ne s'applique jamais.
+    """
+    from jarvis.domain.errors import ConfigurationError
+    from jarvis.domain.speaker import ConversationAuthorization, ConversationAuthorizationError
+    from jarvis.v2_config import parse_conversation_authorization
+
+    try:
+        return parse_conversation_authorization(overrides), None
+    except ConfigurationError as exc:
+        error = (
+            exc
+            if isinstance(exc, ConversationAuthorizationError)
+            else ConversationAuthorizationError("conversation_authorization_invalid", str(exc))
+        )
+        if journal is not None:
+            journal.emit(
+                "voice.authorization_invalid",
+                f"Réglage de conversation invalide : Voice n'écoutera pas tant qu'il n'est pas corrigé. {exc}",
+                level="warning",
+                data={"code": error.code},
+            )
+        return ConversationAuthorization(), error
 
 
 def _announce_calendar_backend(core, runtime_root: Path) -> None:
@@ -248,7 +340,7 @@ async def _run_core_v2() -> int:
     # Le journal runtime sert de puits de diagnostic à Core : sans lui, l'éviction
     # d'un abonné saturé du bus resterait invisible en production (Décision 25).
     brain_backend = _brain_backend_from_env()
-    core = JarvisCoreApplication(data_root=settings.data_root, timezone=settings.timezone, calendar_backend=_calendar_backend_from_env(), drive_backend=_drive_backend_from_env(), brain_backend=brain_backend, notification_delivery=delivery, workers=workers, diagnostics=RuntimeJournal(settings.runtime_root))
+    core = JarvisCoreApplication(data_root=settings.data_root, timezone=settings.timezone, calendar_backend=_calendar_backend_from_env(), drive_backend=_drive_backend_from_env(), brain_backend=brain_backend, notification_delivery=delivery, workers=workers, diagnostics=RuntimeJournal(settings.runtime_root), **_brain_availability_from_env())
     server = LocalProtocolServer(core, host=settings.core_host, port=settings.core_port, token=token)
     _announce_calendar_backend(core, settings.runtime_root)
     RuntimeJournal(settings.runtime_root).emit("brain.backend", "Cerveau relié à l'agent du Control Center", data={"url": brain_backend.base_url})
@@ -450,16 +542,37 @@ async def _run_voice_v2() -> int:
                     "code": "duplex_aec" if canceller is not None else "duplex_guard_only",
                 },
             )
+            # Vérification du locuteur en ombre : elle observe la capture
+            # nettoyée dans son propre fil et journalise, sans rien changer à
+            # ce qui part vers le fournisseur. Sans moteur, rien n'est branché.
+            verifier = _speaker_verifier(overrides, settings.runtime_root, journal)
+            observer = None
+            if verifier is not None:
+                from jarvis.audio.speaker_shadow import SpeakerVerificationWorker
+
+                observer = SpeakerVerificationWorker(
+                    verifier,
+                    sample_rate=stack.input_sample_rate,
+                    diagnostics=journal,
+                    # Solo Owner appliqué : les candidats écartés sont tracés
+                    # comme entrée écartée (`voice.input.non_owner_dropped`).
+                    enforce=authorization.owner_enforced,
+                )
+            # Solo Owner (tâche 06) : tampon de rejeu du début de phrase, en
+            # mémoire seulement. La salle ouverte n'en a pas.
             return CaptureProcessor(
                 capture_rate=stack.input_sample_rate,
                 render_rate=stack.output_sample_rate,
                 canceller=canceller,
+                observer=observer,
+                owner_buffer_ms=authorization.owner_buffer_ms if authorization.owner_enforced else None,
             )
 
     try:
         ack_delay_s = max(0.0, float(stack_values.get("ack_delay_ms", 1200) or 0) / 1000.0)
     except (TypeError, ValueError):
         ack_delay_s = 1.2
+    authorization, authorization_error = _conversation_authorization(overrides, journal)
     voice = PersistentVoiceRuntime(
         wakeword=wake,
         core=core,
@@ -476,6 +589,11 @@ async def _run_voice_v2() -> int:
         voice_arch=voice_arch,
         capture_factory=capture_factory,
         reflex_delay_s=ack_delay_s if continuous_brain else 0.0,
+        authorization=authorization,
+        authorization_error=authorization_error,
+        # Ce qui a été demandé, face à ce que la capture applique : publié au
+        # Control Center (`.voice_capture`, tâche 08). Hors mode continu, sans objet.
+        echo_cancellation=echo_cancellation if continuous_brain else None,
     )
     timeout_task = asyncio.create_task(_voice_timeout_loop(voice, signals, journal), name="jarvis-voice-timeout")
     key = manual_key.upper()
@@ -559,7 +677,31 @@ async def _run_control_center_v2() -> int:
         )
         visualizer_url = f"http://127.0.0.1:{visualizer_port}/faces/board/"
 
-    control = ControlCenter(runtime_root=runtime_root, project_root=ROOT, visualizer_url=visualizer_url)
+    # Les sous-tâches de l'agent vivent ici, l'état de travail dans Core : un
+    # relais borné les y porte (handoff work-state, tâche 11). Core absent,
+    # rien ne bloque ; l'état attend puis est renvoyé en entier.
+    from jarvis.runtime.work_ingress import CoreWorkTransport, WorkIngressForwarder
+
+    work_ingress = WorkIngressForwarder(
+        source="claude",
+        transport=CoreWorkTransport(host=settings.core_host, port=settings.core_port, token_file=settings.token_file),
+        journal=journal,
+    )
+    # Le panneau Agents lit l'état normalisé dans Core (tâche 13), par sa
+    # propre connexion : lecture seule, jamais celle du relais.
+    from jarvis.runtime.work_view import CoreWorkView
+
+    work_view = CoreWorkView(
+        CoreWorkTransport(host=settings.core_host, port=settings.core_port, token_file=settings.token_file),
+        journal=journal,
+    )
+    control = ControlCenter(
+        runtime_root=runtime_root,
+        project_root=ROOT,
+        visualizer_url=visualizer_url,
+        work_ingress=work_ingress,
+        work_view=work_view,
+    )
     await control.start(port=ui_port)
     url = f"http://127.0.0.1:{ui_port}/"
     print(f"Jarvis Control Center ready on {url}")
@@ -653,6 +795,9 @@ async def _amain(argv: list[str] | None = None) -> int:
     if command == "control-center": return await _run_control_center_v2()
     if command == "drive-auth": return await _drive_auth()
     if command == "drive-mcp": return await _drive_mcp()
+    if command == "owner-voice":
+        from jarvis.runtime.owner_voice import run_cli
+        return run_cli(args)
     config = AppConfig.load(args.config)
     if command == "run": return await _run_voice(config, no_preflight=args.no_preflight)
     if command == "text": return await _run_text(config, message=args.message)

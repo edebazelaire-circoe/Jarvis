@@ -1,0 +1,96 @@
+{
+  "schema": "jarvis.speaker_benchmark.manifest",
+  "schema_version": 1,
+  "name": "office-2026-09",
+  "evidence": "real",
+  "notes": "Owner recordings made with the Voice microphone at the usual position. Keep this file and the audio under runtime/speaker-verification/benchmark/private/ (ignored by Git).",
+  "_comment": "Keys starting with an underscore are ignored. Relative paths are relative to this file.",
+  "preprocessing": {
+    "capture_rate": 24000,
+    "hop_ms": 100,
+    "gate_margin_db": 10.0,
+    "gate_absolute_min_db": -55.0,
+    "gate_history_frames": 250
+  },
+  "evaluation": {
+    "confirm_grace_ms": 200,
+    "transition_guard_ms": 0,
+    "min_label_coverage": 0.5,
+    "event_merge_gap_ms": 1000
+  },
+  "thresholds": "0.30:0.80:0.025",
+  "profiles": {
+    "owner": {
+      "enroll": ["enroll/owner-enroll-1.wav", "enroll/owner-enroll-2.wav"]
+    }
+  },
+  "engines": [
+    {
+      "name": "campplus-zh-en-advanced",
+      "kind": "sherpa-onnx",
+      "model": "campplus-zh-en-advanced",
+      "threshold": 0.6,
+      "evidence_ms": 1500,
+      "stride_ms": 500,
+      "max_gap_ms": 600,
+      "_comment_gate": "Production rules replayed by the Solo Owner gate: short replies judged at the end of a candidate, handover sub-window, owner replay ring.",
+      "short_evidence_ms": 600,
+      "short_margin": 0.1,
+      "owner_buffer_ms": 2500,
+      "num_threads": 1
+    },
+    {
+      "name": "eres2netv2-zh-cn",
+      "kind": "sherpa-onnx",
+      "model": "eres2netv2-zh-cn"
+    },
+    {
+      "_comment": "A commercial engine plugs in through a factory returning a BenchmarkEngine (see docs/SPEAKER_BENCHMARK.md).",
+      "name": "eagle",
+      "kind": "factory",
+      "factory": "jarvis.adapters.eagle_speaker_benchmark:create_engine",
+      "options": {"access_key_env": "PICOVOICE_ACCESS_KEY"},
+      "threshold": 0.5
+    }
+  ],
+  "scenarios": [
+    {
+      "name": "owner-quiet-desk",
+      "profile": "owner",
+      "audio": "sessions/owner-quiet-desk.wav",
+      "tags": ["owner_alone"],
+      "intervals": [
+        {"start_ms": 1200, "end_ms": 5400, "label": "owner"},
+        {"start_ms": 7000, "end_ms": 11800, "label": "owner"}
+      ]
+    },
+    {
+      "name": "colleague-then-owner",
+      "profile": "owner",
+      "audio": "sessions/colleague-then-owner.wav",
+      "tags": ["transition"],
+      "labels": "sessions/colleague-then-owner.labels.txt"
+    },
+    {
+      "name": "owner-far-6db",
+      "profile": "owner",
+      "audio": "sessions/owner-quiet-desk.wav",
+      "gain_db": -6,
+      "tags": ["level"],
+      "intervals": [
+        {"start_ms": 1200, "end_ms": 5400, "label": "owner"},
+        {"start_ms": 7000, "end_ms": 11800, "label": "owner"}
+      ]
+    },
+    {
+      "name": "office-chatter",
+      "profile": "owner",
+      "audio": "sessions/office-chatter.wav",
+      "tags": ["non_owner_only"],
+      "intervals": [
+        {"start_ms": 0, "end_ms": 42000, "label": "non_owner", "speaker": "colleagues"},
+        {"start_ms": 42000, "end_ms": 50000, "label": "noise"}
+      ]
+    }
+  ]
+}

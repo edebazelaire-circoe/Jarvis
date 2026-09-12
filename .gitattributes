@@ -1,0 +1,7 @@
+# Git lit `.gitignore` dans l'arbre de travail, ligne par ligne, sans retirer un
+# CR final : extrait en CRLF (core.autocrlf=true sous Windows), chacune de ses
+# lignes vides y devient un motif « CR » qui correspond a n'importe quel dossier
+# et rend `git check-ignore -v <dossier>/` illisible (il designe cette ligne vide
+# au lieu de la vraie regle). On l'extrait donc en LF ; le depot, lui, est deja
+# en LF.
+.gitignore text eol=lf

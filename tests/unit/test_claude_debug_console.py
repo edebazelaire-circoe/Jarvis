@@ -73,7 +73,7 @@ async def test_console_resumes_the_current_conversation_in_its_own_window(tmp_pa
     # L'exécutable est résolu avant le lancement : sous Windows, `CreateProcess`
     # n'applique pas PATHEXT, et un CLI installé en shim `.CMD` ne démarrerait pas.
     assert spawner[0]["command"] == [
-        resolve_command("claude"), "--permission-mode", "bypassPermissions", "--resume", "4a890ce3-230c",
+        resolve_command("claude"), "--chrome", "--permission-mode", "bypassPermissions", "--resume", "4a890ce3-230c",
     ]
     # Sans ce drapeau le processus n'aurait aucune fenêtre : c'est lui qui fait
     # la différence entre « vraie console » et agent headless.
@@ -93,7 +93,7 @@ async def test_console_starts_a_fresh_conversation_when_none_exists(tmp_path, sp
 
     await agent.open_console()
 
-    assert spawner[0]["command"] == [resolve_command("claude"), "--permission-mode", "bypassPermissions"]
+    assert spawner[0]["command"] == [resolve_command("claude"), "--chrome", "--permission-mode", "bypassPermissions"]
     assert "nouvelle conversation" in read_jsonl_tail(tmp_path / "trace.jsonl")[-1]["message"]
 
 

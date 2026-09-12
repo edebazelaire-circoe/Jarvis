@@ -19,5 +19,12 @@ data/history/
 data/state/*.sqlite3-shm
 data/state/*.sqlite3-wal
 
+# Verification du locuteur : profil vocal du proprietaire (biometrique) et
+# modeles telecharges. Le defaut vit sous /runtime/ ; ces motifs couvrent aussi
+# un chemin de profil choisi dans le depot.
+speaker-verification/
+owner-voice-profile*.json
+*.onnx
+
 # Etat local Visual Studio
 .vs/

@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from datetime import datetime
 from typing import Any, Protocol, TypeGuard, runtime_checkable
 
+from jarvis.domain.brain_context import BrainContext
 from jarvis.domain.v2 import (
     BrainEvent,
     BrainTurnInput,
@@ -162,6 +163,36 @@ class BrainBackend(Protocol):
         state: BrainWorkingState,
         emit: BrainEventSink,
     ) -> BrainTurnResult: ...
+
+
+@runtime_checkable
+class ContextAwareBrainBackend(Protocol):
+    """Backend cerveau sachant recevoir le contexte complet assemblé par Core.
+
+    Capacité **optionnelle** (handoff work-state, tâche 12), déclarée par une
+    méthode distincte comme `ProgressReportingJobWorker` : `BrainBackend` n'est
+    pas élargi, ses doubles de test restent valides, et un backend qui ne la
+    déclare pas reçoit `run_turn(turn, state, emit)` exactement comme avant.
+    Détection structurelle par `supports_brain_context`.
+
+    `context.state` est l'état passé à `run_turn` ; `context.work` est
+    l'instantané borné du travail en cours, lu par Core au moment du tour
+    (`None` si Core n'a pas pu le lire). Mêmes règles de concurrence et
+    d'annulation que `BrainBackend.run_turn`.
+    """
+
+    async def run_turn_with_context(
+        self,
+        turn: BrainTurnInput,
+        context: BrainContext,
+        emit: BrainEventSink,
+    ) -> BrainTurnResult: ...
+
+
+def supports_brain_context(backend: object) -> TypeGuard[ContextAwareBrainBackend]:
+    """Indiquer si le backend sait recevoir le `BrainContext` de Core."""
+
+    return isinstance(backend, ContextAwareBrainBackend)
 
 
 @runtime_checkable

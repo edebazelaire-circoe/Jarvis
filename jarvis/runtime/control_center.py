@@ -12,7 +12,21 @@ import uuid
 
 from aiohttp import web
 
+from jarvis.adapters.file_replace import replace_with_retry
+from jarvis.adapters.webrtc_echo import echo_cancellation_installed
 from jarvis.domain.errors import ConfigurationError
+from jarvis.domain.speaker import (
+    DEFAULT_OWNER_BUFFER_MS,
+    MAX_OWNER_BUFFER_MS,
+    MIN_OWNER_BUFFER_MS,
+    AuthorizationStatus,
+    ConversationAuthorization,
+    ConversationAuthorizationError,
+    ConversationMode,
+    SpeakerVerificationMode,
+    VerifierAvailability,
+    assess_authorization,
+)
 from jarvis.domain.v2 import BRAIN_NOT_ADDRESSED_ANSWER, AddressingDecision
 from jarvis.runtime.audio_devices import AudioDiagnosticError, SoundDeviceAudioDiagnostics, normalize_device_id
 from jarvis.runtime import cli_catalog, credentials as creds, shortcuts as shortcut_registry, voice_stack
@@ -20,19 +34,41 @@ from jarvis.runtime.claude_local import DEFAULT_PERMISSION_MODE, PERMISSION_MODE
 from jarvis.runtime.codex_local import CodexLocalAgent, normalize_sandbox_mode
 from jarvis.runtime.journal import RuntimeJournal, read_jsonl_tail
 from jarvis.runtime.model_catalog import CatalogError, ModelCatalog, filter_by_role
+from jarvis.runtime.owner_voice import effective_verifier_settings, probe_remedy
+from jarvis.runtime.owner_voice import probe_from_settings as probe_owner_verifier
 from jarvis.runtime.visual_signals import VisualSignalBus
+from jarvis.runtime.work_brief import render_work_brief
+from jarvis.runtime.work_ingress import TrackerWorkObserver, WorkIngressForwarder
+from jarvis.runtime.work_view import NOT_CONFIGURED, CoreWorkView, unavailable_payload
 from jarvis.v2_config import (
+    CONVERSATION_AUTHORIZATION_SETTINGS,
     MIN_ACTIVE_TIMEOUT_S,
+    OWNER_EVIDENCE_MS_SETTING,
+    OWNER_PROFILE_PATH_SETTING,
+    OWNER_SHORT_EVIDENCE_MS_SETTING,
+    OWNER_SHORT_MARGIN_SETTING,
+    OWNER_THRESHOLD_SETTING,
     REALTIME_VOICES,
+    SPEAKER_VERIFIER_SETTINGS,
     TURN_MODES,
     VoiceArchitecture,
+    conversation_authorization_settings,
     default_voice_arch,
     parse_active_timeout,
+    parse_conversation_authorization,
+    parse_speaker_verifier_settings,
     parse_voice_arch,
 )
 
 
 VOICE_HEARTBEAT_MAX_AGE_S = 5.0
+#: En-tête d'un refus d'enregistrement (HTTP 400) portant son code stable.
+SETTINGS_ERROR_CODE_HEADER = "X-Jarvis-Error-Code"
+
+#: Logique pure du panneau Agents, gardée à part pour être exécutée par les
+#: tests (node) et insérée dans la page à la place de ce repère.
+WORK_SCRIPT_FILE = "control_center_work.js"
+WORK_SCRIPT_MARKER = "/*__CONTROL_CENTER_WORK_JS__*/"
 
 #: Architectures vocales proposées dans l'onglet « Mode vocal ». Comme le reste
 #: de l'écran, leur libellé vit ici et non dans la page. `{key}` est remplacé
@@ -53,6 +89,48 @@ _VOICE_ARCH_CHOICES: tuple[tuple[VoiceArchitecture, str, str], ...] = (
     ),
 )
 
+#: Réglages du vérificateur que la page peut écrire (Solo Owner, tâche 08).
+#: Pas `owner_profile_path` : un chemin arbitraire écrit depuis un navigateur
+#: ferait lire — ou écraser, à l'enrôlement — n'importe quel fichier. Il reste
+#: affiché en lecture seule ; le changer passe par le fichier de réglages.
+_UI_VERIFIER_SETTINGS: tuple[str, ...] = (
+    OWNER_THRESHOLD_SETTING,
+    OWNER_EVIDENCE_MS_SETTING,
+    OWNER_SHORT_EVIDENCE_MS_SETTING,
+    OWNER_SHORT_MARGIN_SETTING,
+)
+_FLOAT_VERIFIER_SETTINGS = frozenset({OWNER_THRESHOLD_SETTING, OWNER_SHORT_MARGIN_SETTING})
+
+#: État de l'annulation d'écho (tâche 08) : message affiché pour chaque code,
+#: qu'il vienne de la sonde des réglages ou de ce que Voice a publié.
+_AEC_PROBLEMS: dict[str, str] = {
+    "aec_not_applicable": (
+        "Sans objet : en « Un tour par appui », le micro est fermé pendant que JARVIS parle ; "
+        "l'annulation d'écho ne sert qu'à la conversation continue (pile OpenAI Realtime)."
+    ),
+    "aec_disabled": (
+        "Annulation d'écho désactivée dans les réglages de la pile : garde d'écho seule. JARVIS ne "
+        "s'entend pas lui-même, mais il faut parler plus fort que lui pour le couper."
+    ),
+    "aec_not_installed": (
+        "Annulation d'écho demandée, mais LiveKit (AEC3) n'est pas installé : Voice tournera en mode "
+        "dégradé, avec la garde d'écho seule (il faudra parler plus fort que JARVIS pour le couper). "
+        "Installez l'extra : .\\.venv\\Scripts\\python.exe -m pip install -e \".[voice]\", puis relancez Voice."
+    ),
+    "aec_unavailable": (
+        "Annulation d'écho demandée, mais Voice n'a pas pu la construire (LiveKit AEC3 absent ou en échec "
+        "au chargement) : mode dégradé, garde d'écho seule. Voir voice.duplex dans la trace."
+    ),
+    "aec_failed": (
+        "L'annulation d'écho est tombée en cours de session : Voice continue en mode dégradé, avec la "
+        "garde d'écho seule, jusqu'à son redémarrage (voice.duplex, code duplex_aec_failed, dans la trace)."
+    ),
+    "duplex_capture_unavailable": (
+        "Traitement duplex du micro indisponible : mode dégradé, le micro part brut, sans annulation ni "
+        "garde d'écho (voice.duplex_unavailable dans la trace). Relancez Voice."
+    ),
+}
+
 #: Champs de l'état public de Core rendus dans la consigne, dans cet ordre.
 #: Liste blanche assumée : le contexte est lu clé par clé, donc un champ inconnu
 #: — ou ajouté un jour à la projection publique — n'atteint pas le modèle tant
@@ -64,6 +142,15 @@ _BRIEF_STATE_FIELDS: tuple[tuple[str, str], ...] = (
     ("active_work_ids", "Travaux en cours"),
     ("known_public_facts", "Déjà dit à l'utilisateur"),
     ("unresolved_questions", "Questions en suspens"),
+)
+
+
+#: Rappel ajouté à la consigne quand « Travaux en cours » n'est pas vide. La
+#: règle complète vit dans le prompt système du brain (`BRAIN_SYSTEM_PROMPT`).
+BRIEF_DELEGATION_REMINDER = (
+    "Rappel : du travail est déjà en cours. Si cette demande n'a pas de réponse "
+    "immédiate, lance-la en sous-agent d'arrière-plan (Agent, run_in_background) "
+    "et réponds en une phrase ; ne la traite pas dans ce tour."
 )
 
 
@@ -104,6 +191,12 @@ def build_agent_brief(context: dict[str, Any], text: str) -> str:
             rendered = _brief_value(state.get(key))
             if rendered:
                 lines.append(f"{label} : {rendered}")
+        # Du travail tourne déjà : c'est exactement le moment où un tour long
+        # ferait attendre l'utilisateur. Rappel bref de la consigne système.
+        if _brief_value(state.get("active_work_ids")):
+            lines.append(BRIEF_DELEGATION_REMINDER)
+    # Travail en cours tenu par Core (handoff work-state, tâche 12).
+    lines.extend(render_work_brief(context.get("work")))
     lines.append("[Demande]")
     lines.append(text)
     return "\n".join(lines)
@@ -117,6 +210,8 @@ class ControlCenter:
         project_root: Path,
         visualizer_url: str | None = None,
         audio_diagnostics: SoundDeviceAudioDiagnostics | None = None,
+        work_ingress: WorkIngressForwarder | None = None,
+        work_view: CoreWorkView | None = None,
     ) -> None:
         self.runtime_root = runtime_root
         self.project_root = project_root
@@ -126,6 +221,13 @@ class ControlCenter:
         self._audio_test_lock = asyncio.Lock()
         self.settings_path = runtime_root / "control-center-settings.json"
         self.catalog = ModelCatalog(runtime_root / "model-catalog.json")
+        # Relais des sous-tâches Claude vers l'état de travail Core (handoff
+        # work-state, tâche 11). Absent, rien ne part : Core ne connaît pas
+        # ces sous-tâches, et `/api/work` le dit (`subtasks_supported`).
+        self.work_ingress = work_ingress
+        # Lecture seule de l'état de travail Core pour le panneau Agents
+        # (tâche 13). Absent, `/api/work` répond « Core indisponible ».
+        self.work_view = work_view
 
         settings = self._settings()
         self._agent_id = cli_catalog.normalize_agent_cli(settings.get("agent_cli"))
@@ -154,6 +256,7 @@ class ControlCenter:
             web.post("/api/audio/test", self.audio_test),
             web.get("/api/agent", self.agent_status),
             web.get("/api/agent/transcript", self.agent_transcript),
+            web.get("/api/work", self.work),
             web.get("/api/agent/tasks", self.agent_tasks),
             web.get("/api/agent/tasks/{task_id}/trace", self.agent_task_trace),
             web.post("/api/agent/console/open", self.agent_console_open),
@@ -163,6 +266,7 @@ class ControlCenter:
             web.post("/api/agent/kill", self.agent_kill),
             web.post("/api/agent/send", self.agent_send),
             web.post("/api/agent/ask", self.agent_ask),
+            web.get("/api/agent/notices", self.agent_notices),
         ])
         self._runner: web.AppRunner | None = None
 
@@ -183,6 +287,12 @@ class ControlCenter:
                 command=os.getenv("JARVIS_CLAUDE_CLI", "claude"),
                 permission_mode=os.getenv("JARVIS_CLAUDE_PERMISSION_MODE", DEFAULT_PERMISSION_MODE),
             )
+            if self.work_ingress is not None:
+                # Seul Claude expose des sous-tâches : aucun format Codex n'est
+                # vérifié, rien n'est inventé pour lui.
+                observer = TrackerWorkObserver(agent.subtasks, self.work_ingress.offer)
+                agent.subtasks.subscribe(observer.sync)
+                self.work_ingress.on_resync = observer.resync
         self._agents[self._agent_id] = agent
         return agent
 
@@ -281,6 +391,8 @@ class ControlCenter:
         await self._runner.setup()
         await web.TCPSite(self._runner, host, port).start()
         self.journal.emit("ui.start", "Jarvis Control Center started", data={"host": host, "port": port})
+        if self.work_ingress is not None:
+            self.work_ingress.start()
         try:
             await self.agent.start()
         except RuntimeError as exc:
@@ -292,13 +404,28 @@ class ControlCenter:
                 await agent.stop()
             except Exception:  # noqa: BLE001 - l'arrêt du serveur ne doit jamais rester bloqué
                 pass
+        if self.work_ingress is not None:
+            # Après les agents : leurs sous-tâches interrompues partent vers
+            # Core dans une dernière tentative bornée.
+            await self.work_ingress.aclose()
+        if self.work_view is not None:
+            await self.work_view.aclose()
         if self._runner is not None:
             await self._runner.cleanup()
             self._runner = None
 
     async def index(self, request: web.Request) -> web.Response:
         del request
-        html = (Path(__file__).with_name("control_center.html")).read_text(encoding="utf-8")
+        page = Path(__file__).with_name("control_center.html")
+        html = page.read_text(encoding="utf-8")
+        # Logique pure du panneau Agents, tenue dans son propre fichier pour que
+        # les tests l'exécutent (node) au lieu d'en relire la source : elle est
+        # insérée ici telle quelle, la page restant un document unique sans
+        # ressource externe — aucun cache ne peut donc en servir une autre
+        # version que celle du serveur.
+        html = html.replace(
+            WORK_SCRIPT_MARKER, page.with_name(WORK_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
         if self.visualizer_url:
             html = html.replace("__VISUALIZER_URL__", self.visualizer_url)
         else:
@@ -417,7 +544,30 @@ class ControlCenter:
             os.chmod(tmp, 0o600)
         except OSError:
             pass
-        tmp.replace(self.settings_path)
+        # Windows tient parfois le fichier cible quelques millisecondes
+        # (antivirus, indexeur) et refuse le remplacement : réessayer plutôt
+        # que de rendre une erreur 500 sur un simple enregistrement de réglage.
+        # Jamais d'écriture en place : le fichier porte des secrets et doit
+        # rester complet ou inchangé.
+        try:
+            replace_with_retry(tmp, self.settings_path)
+        except OSError as exc:
+            # Le temporaire porte les mêmes secrets que le fichier final (clé
+            # OpenAI…) : il ne survit pas à un échec. Même règle que
+            # `owner_voice_profile.save_profile`, et même verdict : les
+            # réglages précédents sont intacts, rien n'est à moitié écrit.
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise web.HTTPServiceUnavailable(
+                text=(
+                    f"Réglages non enregistrés ({self.settings_path}) : {type(exc).__name__}. "
+                    "Fermez ce qui tient le fichier (antivirus, éditeur) et recommencez ; "
+                    "les réglages précédents sont inchangés."
+                ),
+                headers={SETTINGS_ERROR_CODE_HEADER: "settings_write_failed"},
+            ) from None
 
     def _mirror_legacy(self, settings: dict[str, Any]) -> None:
         """Réécrire les anciens champs plats à partir des réglages structurés.
@@ -493,6 +643,25 @@ class ControlCenter:
             )
         return None
 
+    def _voice_arch_is_continuous(self, settings: dict[str, Any]) -> bool:
+        """Voice tournera-t-elle vraiment en `continuous_brain` avec ces réglages ?
+
+        Pas seulement « l'architecture demandée est-elle celle-là » : une
+        combinaison que Voice refuse au démarrage (pile Gemini Live, fin de
+        tour manuelle — `_voice_arch_problem`) ne donne aucune conversation
+        continue, donc ni Solo Owner ni annulation d'écho. Le fichier de
+        réglages peut porter une telle paire s'il a été écrit à la main :
+        l'écran doit alors dire « refusé », pas « appliqué ».
+        """
+
+        raw, _source = self._voice_arch_source(settings)
+        try:
+            if parse_voice_arch(raw) is not VoiceArchitecture.CONTINUOUS_BRAIN:
+                return False
+        except ConfigurationError:
+            return False
+        return self._voice_arch_problem(settings) is None
+
     def _voice_arch_payload(self, settings: dict[str, Any]) -> dict[str, Any]:
         key = shortcut_registry.current(settings)["wake_toggle"].upper()
         choices = [
@@ -522,9 +691,375 @@ class ControlCenter:
             "arch_problem": self._voice_arch_problem(settings),
         }
 
+    # ------------------------------------------ autorisation de conversation
+
+    @staticmethod
+    def _store_authorization(current: dict[str, Any], values: dict[str, Any], *, runtime_root: Path) -> None:
+        """Ranger l'autorisation de conversation, puis valider l'ensemble.
+
+        Seules les clés reçues sont touchées ; une valeur vide retire la clé,
+        qui retombe sur son défaut (la vérification suit alors le mode). La
+        combinaison résultante est validée avant toute écriture : une valeur
+        inconnue ou incohérente n'atteint pas le disque. Un Solo Owner que
+        rien ne peut appliquer aujourd'hui est, lui, enregistré : ce n'est pas
+        une erreur de réglage, et `_authorization_payload` le signale.
+
+        Réglages fins du vérificateur (tâche 08) : même règle, même
+        validateur que Voice (`parse_speaker_verifier_settings`), bornes
+        croisées comprises (réponse brève plus courte que la fenêtre de
+        preuve). Jamais le chemin du profil (`_UI_VERIFIER_SETTINGS`).
+        """
+        touched = [key for key in CONVERSATION_AUTHORIZATION_SETTINGS if values.get(key) is not None]
+        tuning = [key for key in _UI_VERIFIER_SETTINGS if values.get(key) is not None]
+        for key in (*touched, *tuning):
+            raw = values[key]
+            if isinstance(raw, str) and not raw.strip():
+                current.pop(key, None)
+            else:
+                current[key] = raw
+        if touched:
+            canonical = conversation_authorization_settings(parse_conversation_authorization(current))
+            for key in CONVERSATION_AUTHORIZATION_SETTINGS:
+                if key in current:
+                    current[key] = canonical[key]
+        if tuning:
+            parse_speaker_verifier_settings(current, runtime_root=runtime_root)
+            for key in tuning:
+                if key in current:
+                    value = float(current[key])
+                    current[key] = value if key in _FLOAT_VERIFIER_SETTINGS else int(value)
+
+    @staticmethod
+    def _authorization_payload(
+        settings: dict[str, Any],
+        runtime_root: Path,
+        *,
+        continuous: bool = True,
+        continuous_problem: str | None = None,
+        runtime_report: dict[str, Any] | None = None,
+        capture_report: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Autorisation enregistrée, valeur effective, et ce qui s'applique vraiment.
+
+        `status` vaut `ready`, `degraded` ou `refused` (`assess_authorization`,
+        la fonction même dont Voice se sert, architecture comprise), ou
+        `invalid` quand le fichier contient une valeur écrite à la main que la
+        validation refuse — signalée ici plutôt que de bloquer l'écran. Voice
+        refuse alors d'écouter.
+
+        L'état du vérificateur vient d'une sonde de système de fichiers (module
+        installé, fichier du modèle, métadonnées du profil) : le modèle n'est
+        jamais chargé ici, et l'empreinte vocale n'apparaît jamais dans la
+        réponse. Elle n'est pas gratuite pour autant : elle vérifie aussi le
+        SHA-256 du modèle, donc le premier appel après une modification du
+        fichier relit les `MODEL_SIZE` octets (28 281 164, soit ~27 Mio) sur la
+        boucle aiohttp ; les suivants retombent sur le cache (taille, date de
+        modification).
+
+        `runtime` (tâche 07) : ce que Voice, en marche, a réellement appliqué
+        à sa dernière activation (`ready` / `refused`, code, message, phase).
+        Un refus que seule Voice pouvait voir — moteur qui ne charge pas,
+        vérificateur tombé en cours de session — l'emporte sur la sonde tant
+        qu'il porte sur le même mode : `status` passe à `refused`,
+        `status_source` à `voice`.
+
+        Tâche 08 (écran) : description des champs (`fields`, et
+        `advanced_fields` pour les réglages fins R&D), origine de chaque valeur
+        (`origin` : réglage enregistré ou défaut), vérifications compatibles
+        avec chaque mode, réglages effectifs du vérificateur
+        (`verifier_settings`, chemin du profil en lecture seule), commande qui
+        lève l'indisponibilité (`verifier_remedy`), et, tant que Voice bat,
+        l'état de son fil de vérification (`worker` : disponibilité, fenêtres
+        perdues). Aucune clé de premier niveau n'est une clé enregistrable :
+        un client qui renverrait cette description ne toucherait à rien.
+        """
+        probe = probe_owner_verifier(settings, runtime_root=runtime_root)
+        detail = probe.payload()
+        described: dict[str, Any] = {
+            "verifier_detail": detail,
+            "verifier_remedy": probe_remedy(str(detail.get("code") or "")),
+            "stored": {key: settings.get(key, "") for key in CONVERSATION_AUTHORIZATION_SETTINGS},
+            "origin": {
+                key: "stored" if ControlCenter._is_set(settings.get(key)) else "default"
+                for key in CONVERSATION_AUTHORIZATION_SETTINGS
+            },
+            "conversation_modes": [item.value for item in ConversationMode],
+            "verification_modes": [item.value for item in SpeakerVerificationMode],
+            # Règle de cohérence du domaine, dite pour chaque mode : la page ne
+            # propose que ce que l'enregistrement accepterait.
+            "verification_modes_by_mode": {
+                mode.value: [
+                    verification.value
+                    for verification in SpeakerVerificationMode
+                    if ControlCenter._coherent(mode, verification)
+                ]
+                for mode in ConversationMode
+            },
+            # Pas `owner_buffer_ms` : un client qui renverrait cette description
+            # écrirait les bornes à la place de la valeur.
+            "owner_buffer_ms_bounds": {
+                "default": DEFAULT_OWNER_BUFFER_MS,
+                "min": MIN_OWNER_BUFFER_MS,
+                "max": MAX_OWNER_BUFFER_MS,
+            },
+            "fields": voice_stack.describe_fields(voice_stack.AUTHORIZATION_FIELDS),
+            "advanced_fields": voice_stack.describe_fields(voice_stack.OWNER_TUNING_FIELDS),
+            "verifier_settings": ControlCenter._verifier_settings_payload(settings, runtime_root),
+            "restart_required": False,
+        }
+        if runtime_report is not None:
+            described["runtime"] = runtime_report
+        worker = (capture_report or {}).get("verifier")
+        if capture_report is not None:
+            described["worker"] = (
+                {**worker, "phase": capture_report.get("phase"), "ts": capture_report.get("ts")}
+                if isinstance(worker, dict)
+                else None
+            )
+        try:
+            authorization = parse_conversation_authorization(settings)
+        except ConversationAuthorizationError as exc:
+            return {**described, "effective": None, "status": "invalid", "code": exc.code, "problem": str(exc)}
+        assessment = assess_authorization(authorization, probe.availability, continuous=continuous)
+        payload = {
+            **described,
+            "effective": conversation_authorization_settings(authorization),
+            "verifier": assessment.verifier.value,
+            "status": assessment.status.value,
+            "code": assessment.code or None,
+            "problem": assessment.message or None,
+            "status_source": "settings",
+        }
+        if continuous_problem and payload["code"] == "solo_owner_requires_continuous_brain":
+            # La conversation continue est bien demandée, mais ces réglages
+            # empêchent Voice de la démarrer : dire laquelle, plutôt que de
+            # laisser le message générique parler d'« un tour par appui ».
+            payload["problem"] = f"{continuous_problem} Solo Owner ne peut donc pas s'appliquer."
+        if runtime_report is not None and runtime_report.get("conversation_mode") not in (None, authorization.mode.value):
+            # Voice applique encore l'ancien mode : le nouveau attend son redémarrage.
+            payload["restart_required"] = True
+        if capture_report is not None and capture_report.get("speaker_verification") not in (
+            None,
+            authorization.verification.value,
+        ):
+            payload["restart_required"] = True
+        if (
+            runtime_report is not None
+            and runtime_report.get("status") == AuthorizationStatus.REFUSED.value
+            and runtime_report.get("conversation_mode") == authorization.mode.value
+            and assessment.status is not AuthorizationStatus.REFUSED
+        ):
+            payload.update(
+                status=AuthorizationStatus.REFUSED.value,
+                code=runtime_report.get("code"),
+                problem=runtime_report.get("problem"),
+                status_source="voice",
+            )
+        elif (
+            authorization.verification is SpeakerVerificationMode.SHADOW
+            and assessment.status is AuthorizationStatus.READY
+            and capture_report is not None
+            and capture_report.get("speaker_verification") == SpeakerVerificationMode.SHADOW.value
+            and (not isinstance(worker, dict) or worker.get("availability") != VerifierAvailability.READY.value)
+        ):
+            # Mesure en ombre demandée, mais Voice n'a aucun vérificateur en
+            # marche (moteur qui ne se construit pas, panne en session) : rien
+            # n'est mesuré, et seule Voice pouvait le voir.
+            availability = worker.get("availability") if isinstance(worker, dict) else None
+            payload.update(
+                status=AuthorizationStatus.DEGRADED.value,
+                code="speaker_verification_unavailable",
+                problem=(
+                    "Vérification du locuteur en observation demandée, mais Voice "
+                    + (f"a un vérificateur « {availability} »" if availability else "n'a branché aucun vérificateur")
+                    + " : rien n'est mesuré (voice.owner.unavailable dans la trace). La conversation reste "
+                    "ouverte à toutes les voix, comme avant."
+                ),
+                status_source="voice",
+            )
+        return payload
+
+    @staticmethod
+    def _is_set(raw: object) -> bool:
+        return raw is not None and not (isinstance(raw, str) and not raw.strip())
+
+    @staticmethod
+    def _coherent(mode: ConversationMode, verification: SpeakerVerificationMode) -> bool:
+        try:
+            ConversationAuthorization(mode, verification)
+        except ConversationAuthorizationError:
+            return False
+        return True
+
+    @staticmethod
+    def _verifier_settings_payload(settings: dict[str, Any], runtime_root: Path) -> dict[str, Any]:
+        """Réglages fins du vérificateur : enregistrés, origine, effectifs (tâche 08).
+
+        Même lecture que Voice. Une valeur écrite à la main que la validation
+        refuse est signalée (`status: invalid`) sans bloquer l'écran.
+        """
+
+        payload: dict[str, Any] = {
+            "stored": {key: settings.get(key, "") for key in SPEAKER_VERIFIER_SETTINGS},
+            "origin": {
+                key: "stored" if ControlCenter._is_set(settings.get(key)) else "default"
+                for key in SPEAKER_VERIFIER_SETTINGS
+            },
+            # Écrit depuis le fichier seulement, jamais depuis la page.
+            "read_only": [OWNER_PROFILE_PATH_SETTING],
+        }
+        try:
+            parsed = parse_speaker_verifier_settings(settings, runtime_root=runtime_root)
+        except ConversationAuthorizationError as exc:
+            return {**payload, "effective": None, "status": "invalid", "code": exc.code, "problem": str(exc)}
+        return {**payload, "effective": effective_verifier_settings(parsed), "status": "valid", "code": None, "problem": None}
+
+    def _echo_cancellation_payload(self, settings: dict[str, Any], capture_report: dict[str, Any] | None) -> dict[str, Any]:
+        """Annulation d'écho : demandée, installée, et réellement appliquée (tâche 08).
+
+        La demande est le champ « Annulation d'écho » de la pile OpenAI (le
+        seul chemin de configuration) ; elle ne s'applique qu'en conversation
+        continue. La sonde ne regarde que l'installation de LiveKit, sans
+        charger sa bibliothèque native. Tant que Voice bat et applique la même
+        demande, son constat (`runtime`, publié dans `.voice_capture`) fait foi
+        (`status_source: voice`) : échec de construction, panne en session.
+        """
+
+        configured = bool(voice_stack.settings_for(settings, voice_stack.OPENAI_REALTIME.id).get("echo_cancellation", True))
+        applicable = (
+            self._voice_arch_is_continuous(settings)
+            and voice_stack.normalize_stack(settings.get("voice_stack")) == voice_stack.OPENAI_REALTIME.id
+        )
+        installed = echo_cancellation_installed()
+        if not applicable:
+            status, code = "not_applicable", "aec_not_applicable"
+        elif not configured:
+            status, code = "off", "aec_disabled"
+        elif not installed:
+            status, code = "degraded", "aec_not_installed"
+        else:
+            status, code = "ready", ""
+        payload: dict[str, Any] = {
+            "configured": configured,
+            "applicable": applicable,
+            "installed": installed,
+            "status": status,
+            "code": code or None,
+            "problem": _AEC_PROBLEMS.get(code),
+            "status_source": "settings",
+            "restart_required": False,
+        }
+        runtime = (capture_report or {}).get("echo_cancellation")
+        if not isinstance(runtime, dict):
+            return payload
+        payload["runtime"] = {
+            **runtime,
+            "arch": capture_report.get("arch"),
+            "phase": capture_report.get("phase"),
+            "ts": capture_report.get("ts"),
+        }
+        # Seule une capture duplex publie cet état (conversation continue) : un
+        # constat qui ne porte pas sur la demande courante vient de réglages
+        # antérieurs, qui attendent le redémarrage de Voice.
+        if (
+            not applicable
+            or runtime.get("requested") is not configured
+            or capture_report.get("arch") != VoiceArchitecture.CONTINUOUS_BRAIN.value
+        ):
+            payload["restart_required"] = True
+            return payload
+        runtime_code = str(runtime.get("code") or "")
+        if runtime_code == "duplex_capture_unavailable" or (configured and runtime.get("active") is not True):
+            payload.update(
+                status="degraded",
+                code=runtime_code or "aec_unavailable",
+                problem=_AEC_PROBLEMS.get(runtime_code, _AEC_PROBLEMS["aec_unavailable"]),
+                status_source="voice",
+            )
+        elif configured:
+            payload.update(status="ready", code=None, problem=None, status_source="voice")
+        return payload
+
+    def _voice_authorization_report(self) -> dict[str, Any] | None:
+        """Dernier état d'autorisation publié par Voice, seulement si Voice bat encore.
+
+        Clés connues seulement, texte borné : ce fichier est écrit par un
+        autre processus.
+        """
+
+        if not self._voice_beating():
+            return None
+        try:
+            raw = json.loads(
+                (self.runtime_root / VisualSignalBus.AUTHORIZATION_FILE).read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError):
+            return None
+        if not isinstance(raw, dict) or raw.get("status") not in {item.value for item in AuthorizationStatus}:
+            return None
+        report: dict[str, Any] = {}
+        for key in ("status", "code", "problem", "conversation_mode", "arch", "phase"):
+            value = raw.get(key)
+            report[key] = str(value)[:600] if value is not None else None
+        ts = raw.get("ts")
+        report["ts"] = float(ts) if isinstance(ts, (int, float)) and not isinstance(ts, bool) else None
+        return report
+
+    def _voice_beating(self) -> bool:
+        try:
+            heartbeat_at = float((self.runtime_root / ".voice_heartbeat").read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            return False
+        return max(0.0, time.time() - heartbeat_at) <= VOICE_HEARTBEAT_MAX_AGE_S
+
+    def _voice_capture_report(self) -> dict[str, Any] | None:
+        """Dernier état de la capture duplex publié par Voice (tâche 08), si Voice bat encore.
+
+        Écrit par un autre processus : clés connues seulement, types vérifiés,
+        texte borné. Scalaires seulement — ni audio ni empreinte n'y passent.
+        """
+
+        if not self._voice_beating():
+            return None
+        try:
+            raw = json.loads((self.runtime_root / VisualSignalBus.CAPTURE_FILE).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if not isinstance(raw, dict):
+            return None
+
+        def text(value: object) -> str | None:
+            return str(value)[:64] if isinstance(value, str) and value else None
+
+        report: dict[str, Any] = {key: text(raw.get(key)) for key in ("arch", "phase", "speaker_verification")}
+        ts = raw.get("ts")
+        report["ts"] = float(ts) if isinstance(ts, (int, float)) and not isinstance(ts, bool) else None
+        aec = raw.get("echo_cancellation")
+        report["echo_cancellation"] = (
+            {
+                "requested": aec.get("requested") if isinstance(aec.get("requested"), bool) else None,
+                "active": aec.get("active") is True,
+                "code": text(aec.get("code")),
+            }
+            if isinstance(aec, dict)
+            else None
+        )
+        verifier = raw.get("verifier")
+        if isinstance(verifier, dict):
+            availability = verifier.get("availability")
+            dropped = verifier.get("dropped_ms")
+            report["verifier"] = {
+                "availability": availability if availability in {item.value for item in VerifierAvailability} else None,
+                "dropped_ms": dropped if isinstance(dropped, int) and not isinstance(dropped, bool) and dropped >= 0 else None,
+            }
+        else:
+            report["verifier"] = None
+        return report
+
     def _settings_payload(self, settings: dict[str, Any]) -> dict[str, Any]:
         stack_id = voice_stack.normalize_stack(settings.get("voice_stack"))
         agent_id = cli_catalog.normalize_agent_cli(settings.get("agent_cli"))
+        capture_report = self._voice_capture_report()
         return {
             "voice": {
                 "stack": stack_id,
@@ -533,6 +1068,18 @@ class ControlCenter:
                     spec.id: voice_stack.settings_for(settings, spec.id) for spec in voice_stack.VOICE_STACKS
                 },
                 **self._voice_arch_payload(settings),
+                # Qui peut parler à JARVIS : réglage distinct de l'architecture,
+                # mais Solo Owner n'existe qu'en continuous_brain (tâche 07).
+                "authorization": self._authorization_payload(
+                    settings,
+                    self.runtime_root,
+                    continuous=self._voice_arch_is_continuous(settings),
+                    continuous_problem=self._voice_arch_problem(settings),
+                    runtime_report=self._voice_authorization_report(),
+                    capture_report=capture_report,
+                ),
+                # Annulation d'écho demandée face à ce que Voice applique (tâche 08).
+                "echo_cancellation": self._echo_cancellation_payload(settings, capture_report),
             },
             "cli": {
                 "agent": agent_id,
@@ -586,8 +1133,15 @@ class ControlCenter:
             if payload.get("voice_arch") is not None:
                 self._store_voice_arch(current, payload["voice_arch"])
             switch_to = self._apply_cli(current, payload)
-        except (voice_stack.VoiceStackError, cli_catalog.CliSettingsError, creds.CredentialError) as exc:
-            raise web.HTTPBadRequest(text=str(exc)) from exc
+        except (
+            voice_stack.VoiceStackError,
+            ConversationAuthorizationError,
+            cli_catalog.CliSettingsError,
+            creds.CredentialError,
+        ) as exc:
+            # Le corps reste le message en clair (ce que la page affiche) ; le
+            # code stable voyage à côté, pour les clients et les tests.
+            raise web.HTTPBadRequest(text=str(exc), headers={SETTINGS_ERROR_CODE_HEADER: exc.code}) from exc
 
         # --- réglages plats, conservés pour les clients existants ------------
         if payload.get("realtime_voice") is not None:
@@ -689,6 +1243,8 @@ class ControlCenter:
             current["voice_stack"] = stack_id
         if voice.get("arch") is not None:
             self._store_voice_arch(current, voice["arch"])
+        if isinstance(voice.get("authorization"), dict):
+            self._store_authorization(current, voice["authorization"], runtime_root=self.runtime_root)
         values = voice.get("settings")
         if isinstance(values, dict):
             for stack_id, stack_values in values.items():
@@ -1020,9 +1576,40 @@ class ControlCenter:
             "events": self.agent.transcript(limit=limit),
         })
 
+    async def work(self, request: web.Request) -> web.Response:
+        """État de travail normalisé tenu par Core, projeté pour le panneau Agents (tâche 13).
+
+        Source de vérité des cartes : statut, libellé, activité, modèle,
+        dates, résumé, `error_class`. Lecture seule — aucune route du Control
+        Center ne modifie l'état de travail de Core. `now_ms` (horloge de ce
+        processus, comme `/api/agent/tasks`) sert au client à corriger son
+        décalage ; les durées se calculent depuis `started_at` / `ended_at`.
+        `subtasks_supported` dit si l'agent actif relaie ses sous-tâches à
+        Core : faux pour Codex, dont aucun format n'est vérifié.
+        """
+        del request
+        if self.work_view is None:
+            body = unavailable_payload(NOT_CONFIGURED, "Lecture de l'état de travail Core non configurée.")
+        else:
+            body = await self.work_view.read()
+        # Lecture seule jusqu'au bout : `self.agent` construirait l'agent au
+        # premier appel (abonnement d'un observateur, reprise de
+        # `work_ingress.on_resync`). Seul l'agent déjà bâti est lu ; sans lui,
+        # l'horloge de ce processus — celle-là même que porte son suivi.
+        agent = self._agents.get(self._agent_id)
+        body["now_ms"] = agent.subtasks.now_ms() if agent is not None else int(time.time() * 1000)
+        body["agent_cli"] = self._agent_id
+        body["subtasks_supported"] = self._agent_id == "claude" and self.work_ingress is not None
+        return web.json_response(body)
+
     async def agent_tasks(self, request: web.Request) -> web.Response:
         """Le brain et ses sous-tâches. Toujours ceux de l'agent actif : après
-        une bascule Claude ↔ Codex, c'est le nouvel agent qui répond."""
+        une bascule Claude ↔ Codex, c'est le nouvel agent qui répond.
+
+        Depuis la tâche 13, diagnostic seulement pour les sous-tâches : le
+        panneau lit leur état dans `/api/work` (Core) et ne prend ici que ce
+        que Core ne porte pas (prompt, type de sous-agent, trace), joint par
+        `work_key` = `external_id`. Conservé tel quel pour compatibilité."""
         del request
         return web.json_response(self.agent.tasks_snapshot())
 
@@ -1076,6 +1663,33 @@ class ControlCenter:
         context = payload.get("context")
         prompt = build_agent_brief(context, text) if isinstance(context, dict) else text
         return web.json_response(await self.agent.ask(prompt, timeout_s=timeout_s))
+
+    async def agent_notices(self, request: web.Request) -> web.Response:
+        """Réponses que le brain a produites sans question : relais de fin de sous-agent.
+
+        Attente longue (`wait`, 25 s au plus) : Core interroge en boucle et
+        reçoit une réponse dès qu'un relais existe. `epoch` identifie la file :
+        un lecteur qui n'en a pas encore reçoit l'époque et le dernier numéro
+        sans rien rejouer ; un lecteur dont l'époque a changé (agent recréé)
+        reçoit tout ce que la nouvelle file contient déjà.
+        """
+        agent = self.agent
+        if not callable(getattr(agent, "wait_notices", None)):
+            # Codex n'ouvre pas de tour de lui-même : rien à relayer.
+            return web.json_response({"ok": True, "supported": False, "notices": [], "epoch": "", "last_seq": 0})
+        try:
+            after = int(request.query.get("after", "0"))
+            wait_s = min(max(float(request.query.get("wait", "25")), 0.0), 25.0)
+        except ValueError:
+            raise web.HTTPBadRequest(text="after and wait must be numbers") from None
+        epoch = str(agent.notice_epoch)
+        known = request.query.get("epoch", "")
+        if not known:
+            return web.json_response({"ok": True, "supported": True, "notices": [], "epoch": epoch, "last_seq": agent.last_notice_seq})
+        if known != epoch:
+            after, wait_s = 0, 0.0
+        notices = await agent.wait_notices(after, timeout_s=wait_s)
+        return web.json_response({"ok": True, "supported": True, "notices": notices, "epoch": epoch, "last_seq": agent.last_notice_seq})
 
     async def agent_send(self, request: web.Request) -> web.Response:
         payload = await request.json()

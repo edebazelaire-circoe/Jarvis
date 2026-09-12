@@ -23,6 +23,14 @@ voice = [
   # Facultative : sans elle, la garde d'écho seule protège le micro.
   "livekit>=1.1,<2",
 ]
+# Vérification du locuteur locale (Solo Owner, moteur de référence de la
+# tâche 03, pas le choix définitif). Apache-2.0 ; le modèle se télécharge à part
+# (`jarvis owner-voice download-model`). Facultative : sans elle, rien n'est
+# vérifié et Solo Owner est refusé.
+speaker = [
+  "numpy>=2.0,<3",
+  "sherpa-onnx>=1.13.8,<2",
+]
 calendar-google = [
   "google-api-python-client>=2,<3",
   "google-auth>=2,<3",

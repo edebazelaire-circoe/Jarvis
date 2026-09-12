@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
@@ -9,10 +10,14 @@ from jarvis.domain.v2 import (
     MissedRunPolicy, Notification, NotificationState, ProtocolEnvelope, ScheduledItem,
     ScheduledStatus, TurnKind, new_id, utc_now,
 )
+from jarvis.domain.work_state import (
+    MAX_ACTIVITY_CHARS, MAX_ERROR_CLASS_CHARS, MAX_LABEL_CHARS, WorkLink, WorkObservation, WorkStatus, clip_text,
+)
 from jarvis.ports.v2 import (
     Clock, DiagnosticSink, HistoryStore, JobProgressSink, JobWorker, NotificationDelivery,
     ProgressReportingJobWorker, StateRepository,
 )
+from jarvis.ports.work_state import WorkObservationSink
 
 # Type d'evenement du contrat public d'avancement
 # (`docs/handoff-realtime-brain/docs/05-event-contracts.md`). Il est defini ici
@@ -23,6 +28,23 @@ BRAIN_WORK_PROGRESS = "brain.work.progress"
 
 # Canal de diagnostic emis quand de l'avancement a ete coalesce a la source.
 JOB_PROGRESS_COALESCED_KIND = "core.job.progress_coalesced"
+
+# Source des observations de travail emises par `JobService` (tache 11 du
+# handoff work-state), et diagnostic d'une observation qui n'a pas pu partir.
+JOB_WORK_SOURCE = "job"
+JOB_WORK_STATE_FAILED_KIND = "core.job.work_state_failed"
+
+
+def _work_error_class(exc: BaseException) -> str:
+    """`error_class` d'un job en echec : le nom de l'exception s'il est un jeton valide.
+
+    Un nom de classe Python peut contenir des lettres non ASCII, que le contrat
+    refuse : l'observation d'echec serait perdue et le travail resterait
+    « en cours » pour toujours. Repli sur `error` plutot.
+    """
+
+    name = type(exc).__name__.lstrip("_")[:MAX_ERROR_CLASS_CHARS]
+    return name if name.isascii() and name else "error"
 
 
 class SystemClock:
@@ -52,19 +74,36 @@ class CoreEventBus:
     l'éviction n'est plus silencieuse — elle est signalée au puits de
     diagnostic injecté, sinon une surface pourrait disparaître du flux sans
     laisser de trace.
+
+    Un abonné peut demander l'autre borne (`subscribe(lossy=True)`) : sa file
+    pleine perd l'événement le plus ancien au lieu de le faire désabonner. Le
+    bus reste tout aussi borné, mais la surface survit à une rafale. Réservé
+    aux abonnés permanents de Core qu'une éviction condamnerait pour la vie
+    du processus, et dont la perte d'un événement ne perd pas le fait : leur
+    état reste lisible dans l'instantané.
     """
 
     EVICTION_KIND = "core.event_bus.subscriber_evicted"
+    DROP_KIND = "core.event_bus.event_dropped"
+    _MAX_REPORTED_DROPS = 32
 
     def __init__(self, *, diagnostics: DiagnosticSink | None = None) -> None:
         self._subscribers: set[asyncio.Queue[ProtocolEnvelope]] = set()
+        self._lossy: set[asyncio.Queue[ProtocolEnvelope]] = set()
         self._diagnostics: DiagnosticSink = diagnostics or NullDiagnosticSink()
         self._evicted_total = 0
+        self._dropped_total = 0
+        self._reported_drops: set[str] = set()
 
     @property
     def evicted_total(self) -> int:
         """Nombre cumulé d'abonnés évincés depuis la création du bus."""
         return self._evicted_total
+
+    @property
+    def dropped_total(self) -> int:
+        """Événements perdus par un abonné tolérant depuis la création du bus."""
+        return self._dropped_total
 
     @property
     def subscriber_count(self) -> int:
@@ -76,11 +115,45 @@ class CoreEventBus:
             try:
                 queue.put_nowait(event)
             except asyncio.QueueFull:
-                dead.append(queue)
+                if queue in self._lossy:
+                    self._drop_oldest(event, queue)
+                else:
+                    dead.append(queue)
         for queue in dead:
             self._subscribers.discard(queue)
+            self._lossy.discard(queue)
             self._evicted_total += 1
             self._report_eviction(event, queue)
+
+    def _drop_oldest(self, event: ProtocolEnvelope, queue: asyncio.Queue[ProtocolEnvelope]) -> None:
+        """Faire de la place chez un abonné tolérant, et le dire une fois par type."""
+
+        try:
+            queue.get_nowait()
+            queue.put_nowait(event)
+        except (asyncio.QueueEmpty, asyncio.QueueFull):  # pragma: no cover - un seul fil publie
+            return
+        self._dropped_total += 1
+        if event.message_type in self._reported_drops:
+            return
+        if len(self._reported_drops) >= self._MAX_REPORTED_DROPS:
+            self._reported_drops.clear()
+        self._reported_drops.add(event.message_type)
+        try:
+            self._diagnostics.emit(
+                self.DROP_KIND,
+                "événement perdu par un abonné tolérant : file saturée, abonnement gardé",
+                level="warning",
+                data={
+                    "message_type": event.message_type,
+                    "queue_maxsize": queue.maxsize,
+                    "dropped_total": self._dropped_total,
+                },
+            )
+        except Exception:
+            # Même règle que pour l'éviction : l'observabilité ne casse jamais
+            # la diffusion.
+            pass
 
     def _report_eviction(self, event: ProtocolEnvelope, queue: asyncio.Queue[ProtocolEnvelope]) -> None:
         payload = {
@@ -106,13 +179,16 @@ class CoreEventBus:
             # `evicted_total`, qui est lisible par l'appelant.
             pass
 
-    def subscribe(self, *, max_queue: int = 128) -> asyncio.Queue[ProtocolEnvelope]:
+    def subscribe(self, *, max_queue: int = 128, lossy: bool = False) -> asyncio.Queue[ProtocolEnvelope]:
         queue: asyncio.Queue[ProtocolEnvelope] = asyncio.Queue(maxsize=max_queue)
         self._subscribers.add(queue)
+        if lossy:
+            self._lossy.add(queue)
         return queue
 
     def unsubscribe(self, queue: asyncio.Queue[ProtocolEnvelope]) -> None:
         self._subscribers.discard(queue)
+        self._lossy.discard(queue)
 
 
 class ConversationService:
@@ -310,12 +386,16 @@ class _JobProgressChannel:
         link: _WorkLink,
         min_interval_s: float,
         clock: Clock,
+        on_published: Callable[[JobProgress], Awaitable[None]] | None = None,
     ) -> None:
         self._job = job
         self._events = events
         self._link = link
         self._min_interval_s = max(0.0, min_interval_s)
         self._clock = clock
+        # Suit la meme cadence que le bus : l'etat de travail ne recoit que les
+        # progressions publiees, donc deja etranglees.
+        self._on_published = on_published
         self._last_published_at: datetime | None = None
         self._pending: JobProgress | None = None
         self._published_total = 0
@@ -371,6 +451,8 @@ class _JobProgressChannel:
                 conversation_id=self._job.requested_by_conversation_id,
             )
         )
+        if self._on_published is not None:
+            await self._on_published(progress)
 
 
 class JobService:
@@ -397,6 +479,7 @@ class JobService:
         clock: Clock | None = None,
         diagnostics: DiagnosticSink | None = None,
         progress_min_interval_s: float | None = None,
+        work_state: WorkObservationSink | None = None,
     ) -> None:
         self.state = state
         self.events = events
@@ -406,13 +489,74 @@ class JobService:
         self.progress_min_interval_s = (
             self.DEFAULT_PROGRESS_MIN_INTERVAL_S if progress_min_interval_s is None else progress_min_interval_s
         )
+        # Observateur de bord comme un autre (tache 11) : `JobService` garde la
+        # persistance et l'execution des jobs, l'etat de travail normalise
+        # appartient au magasin Core. Absent, rien ne change.
+        self.work_state = work_state
         self._running: dict[str, asyncio.Task[None]] = {}
         self._links: dict[str, _WorkLink] = {}
+        # Rattachement tel qu'affirme par l'appelant, sans le repli
+        # synthetique `job:<id>` de `_links` : ce repli n'est pas un travail
+        # cerveau et ne doit jamais apparaitre comme tel dans l'etat de travail.
+        self._work_links: dict[str, WorkLink] = {}
 
     async def recover(self) -> None:
         for job in await self.state.list_jobs(status=JobStatus.RUNNING.value):
             await self.state.save_job(replace(job, status=JobStatus.INTERRUPTED, error="core restarted while job was running", completed_at=utc_now()))
             await self.events.publish(ProtocolEnvelope(message_type="job.interrupted", payload={"job_id": job.id, "kind": job.kind}, conversation_id=job.requested_by_conversation_id))
+            await self._observe_work(job, WorkStatus.INTERRUPTED, error_class="core_restarted")
+
+    async def _observe_work(
+        self,
+        job: Job,
+        status: WorkStatus,
+        *,
+        activity: str = "",
+        progress_fraction: float | None = None,
+        error_class: str | None = None,
+    ) -> None:
+        """Remettre un constat au magasin d'etat de travail. Ne leve jamais.
+
+        L'etat de travail est une vue : son echec ne doit ni faire echouer un
+        job, ni empecher sa persistance ou ses evenements `job.*`.
+        """
+
+        if self.work_state is None:
+            return
+        try:
+            await self.work_state.observe(
+                WorkObservation(
+                    source=JOB_WORK_SOURCE,
+                    external_id=job.id,
+                    status=status,
+                    observed_at=utc_now(),
+                    kind="job",
+                    label=clip_text(job.kind, MAX_LABEL_CHARS),
+                    activity=clip_text(activity, MAX_ACTIVITY_CHARS),
+                    link=self._work_links.get(job.id, WorkLink()),
+                    progress_fraction=progress_fraction,
+                    error_class=error_class,
+                    started_at=job.started_at,
+                )
+            )
+        except Exception as exc:
+            try:
+                self.diagnostics.emit(
+                    JOB_WORK_STATE_FAILED_KIND,
+                    "etat de travail non mis a jour pour ce job",
+                    level="warning",
+                    data={"job_id": job.id, "status": status.value, "exception_type": type(exc).__name__},
+                )
+            except Exception:
+                pass
+
+    async def _observe_progress(self, job: Job, progress: JobProgress) -> None:
+        await self._observe_work(
+            job,
+            WorkStatus.RUNNING,
+            activity=progress.public_summary or progress.phase,
+            progress_fraction=progress.fraction,
+        )
 
     async def submit(self, job: Job, *, work_id: str | None = None, correlation_id: str | None = None) -> Job:
         """Lancer un job, en le rattachant si besoin au travail cerveau qui le demande.
@@ -436,6 +580,12 @@ class JobService:
             work_id=work_id or f"job:{job.id}",
             correlation_id=correlation_id or new_id(),
         )
+        try:
+            self._work_links[job.id] = WorkLink(work_id=work_id or None, correlation_id=correlation_id or None)
+        except (TypeError, ValueError):
+            # Identifiant hors contrat (trop long, espaces) : le job part quand
+            # meme, son travail reste simplement non rattache.
+            self._work_links[job.id] = WorkLink()
         task = asyncio.create_task(self._execute(job), name=f"jarvis-job-{job.id}")
         self._running[job.id] = task
         return job
@@ -445,31 +595,37 @@ class JobService:
         link = self._links.get(job.id) or _WorkLink(work_id=f"job:{job.id}", correlation_id=new_id())
         running = replace(job, status=JobStatus.RUNNING, started_at=utc_now())
         await self.state.save_job(running)
+        await self._observe_work(running, WorkStatus.RUNNING)
         channel = _JobProgressChannel(
             job=running,
             events=self.events,
             link=link,
             min_interval_s=self.progress_min_interval_s,
             clock=self.clock,
+            on_published=lambda progress: self._observe_progress(running, progress),
         )
         try:
             result = await self._run_worker(worker, running, channel)
             completed = replace(running, status=JobStatus.COMPLETED, result=dict(result), completed_at=utc_now())
             await self.state.save_job(completed)
             await self.events.publish(ProtocolEnvelope(message_type="job.completed", payload={"job_id": job.id, "kind": job.kind, "result": result}, correlation_id=link.correlation_id, conversation_id=job.requested_by_conversation_id))
+            await self._observe_work(running, WorkStatus.COMPLETED)
         except asyncio.CancelledError:
             cancelled = replace(running, status=JobStatus.CANCELLED, completed_at=utc_now())
             await self.state.save_job(cancelled)
+            await self._observe_work(running, WorkStatus.CANCELLED)
             raise
         except Exception as exc:
             failed = replace(running, status=JobStatus.FAILED, error=f"{type(exc).__name__}: {exc}", completed_at=utc_now())
             await self.state.save_job(failed)
             await self.events.publish(ProtocolEnvelope(message_type="job.failed", payload={"job_id": job.id, "kind": job.kind, "error_class": type(exc).__name__}, correlation_id=link.correlation_id, conversation_id=job.requested_by_conversation_id))
+            await self._observe_work(running, WorkStatus.FAILED, error_class=_work_error_class(exc))
         finally:
             channel.close()
             self._report_progress_budget(job, link, channel)
             self._running.pop(job.id, None)
             self._links.pop(job.id, None)
+            self._work_links.pop(job.id, None)
 
     async def _run_worker(self, worker: JobWorker, job: Job, progress: JobProgressSink) -> dict[str, object]:
         """Executer le worker, avec la couture d'avancement s'il la declare.

@@ -50,6 +50,7 @@ from jarvis.domain.v2 import (
     SpeechPriority,
     SpeechRequest,
 )
+from jarvis.domain.brain_context import BrainContext, BrainWorkContext
 from jarvis.ports.v2 import BrainEventSink
 
 # Jetons d'erreur stables publiés dans `brain.work.failed.error_class`. Ils
@@ -75,7 +76,11 @@ def _stable_token(value: object, fallback: str) -> str:
     return cleaned[:60].strip("_") or fallback
 
 
-def _turn_context(turn: BrainTurnInput, state: BrainWorkingState | None) -> dict[str, object]:
+def _turn_context(
+    turn: BrainTurnInput,
+    state: BrainWorkingState | None,
+    work: BrainWorkContext | None = None,
+) -> dict[str, object]:
     """Le contexte public que Core joint au tour, et rien d'autre.
 
     Deux choses, décidées ailleurs :
@@ -99,6 +104,11 @@ def _turn_context(turn: BrainTurnInput, state: BrainWorkingState | None) -> dict
     context: dict[str, object] = {"addressing": turn.addressing.value}
     if state is not None:
         context["state"] = state.to_rehydration_payload()
+    if work is not None:
+        # Tâche 12 du handoff work-state : le travail en cours tel que Core le
+        # tient, borné par `build_brain_work_context`. Absent quand Core ne l'a
+        # pas lu (backend appelé par `run_turn`, ou lecture en échec).
+        context["work"] = work.to_payload()
     return context
 
 
@@ -134,11 +144,71 @@ class ControlCenterBrainBackend:
     #: couramment plusieurs dizaines de secondes.
     DEFAULT_TIMEOUT_S = 600.0
 
+    #: Attente longue demandée au Control Center pour les relais spontanés.
+    NOTICE_WAIT_S = 25.0
+    #: Pause après une panne de transport, pour ne pas tourner à vide.
+    NOTICE_RETRY_S = 5.0
+    #: Pause quand l'agent actif ne produit pas de relais (Codex).
+    NOTICE_UNSUPPORTED_RETRY_S = 30.0
+
     def __init__(self, *, base_url: str, timeout_s: float = DEFAULT_TIMEOUT_S) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout_s = timeout_s
         self._http: aiohttp.ClientSession | None = None
         self._http_lock = asyncio.Lock()
+        # Curseur de lecture de `/api/agent/notices` : époque de la file et
+        # dernier numéro reçu. Époque vide = premier appel, rien n'est rejoué.
+        self._notice_epoch = ""
+        self._notice_after = 0
+
+    async def next_notices(self) -> tuple[str, ...]:
+        """Attendre les relais spontanés du brain (fin d'un sous-agent).
+
+        Le brain parle parfois sans question : quand un sous-agent d'arrière-
+        plan se termine, le CLI lui ouvre un tour et il en résume le résultat.
+        Aucun tour Core n'attend cette réponse ; Core interroge donc cette
+        méthode en boucle et fait dire ce qu'elle rend.
+
+        Rend un tuple de textes prononçables, vide si rien n'est arrivé pendant
+        l'attente. Ne lève jamais, sauf `CancelledError` : une panne de transport
+        se solde par une pause puis un tuple vide.
+        """
+
+        try:
+            http = await self._session()
+            async with http.get(
+                f"{self.base_url}/api/agent/notices",
+                params={"after": str(self._notice_after), "epoch": self._notice_epoch, "wait": str(self.NOTICE_WAIT_S)},
+            ) as response:
+                if response.status != 200:
+                    raise ValueError(f"notices HTTP {response.status}")
+                payload = await response.json()
+        except asyncio.CancelledError:
+            raise
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+            await asyncio.sleep(self.NOTICE_RETRY_S)
+            return ()
+        if not isinstance(payload, dict) or not payload.get("supported"):
+            await asyncio.sleep(self.NOTICE_UNSUPPORTED_RETRY_S)
+            return ()
+        epoch = str(payload.get("epoch") or "")
+        notices = payload.get("notices") if isinstance(payload.get("notices"), list) else []
+        if epoch != self._notice_epoch:
+            # Premier appel ou file recréée : repartir de son dernier numéro.
+            self._notice_epoch = epoch
+            last_seq = payload.get("last_seq")
+            self._notice_after = last_seq if isinstance(last_seq, int) else 0
+        texts: list[str] = []
+        for notice in notices:
+            if not isinstance(notice, dict):
+                continue
+            seq = notice.get("seq")
+            if isinstance(seq, int) and not isinstance(seq, bool):
+                self._notice_after = max(self._notice_after, seq)
+            text = _public_answer(notice.get("text"))
+            if text:
+                texts.append(text)
+        return tuple(texts)
 
     async def run_turn(self, turn: BrainTurnInput, state: BrainWorkingState, emit: BrainEventSink) -> BrainTurnResult:
         """Exécuter un tour complet et rendre son issue à l'orchestrateur.
@@ -149,6 +219,21 @@ class ControlCenterBrainBackend:
         qu'il a lui-même fait, elle ne porte pas ce que Core sait (Décision 42).
         """
 
+        return await self._run(turn, state, None, emit)
+
+    async def run_turn_with_context(self, turn: BrainTurnInput, context: BrainContext, emit: BrainEventSink) -> BrainTurnResult:
+        """Même tour, avec le travail en cours que Core a lu pour lui (capacité
+        `ContextAwareBrainBackend`, tâche 12) : il part dans `context.work`."""
+
+        return await self._run(turn, context.state, context.work, emit)
+
+    async def _run(
+        self,
+        turn: BrainTurnInput,
+        state: BrainWorkingState | None,
+        work: BrainWorkContext | None,
+        emit: BrainEventSink,
+    ) -> BrainTurnResult:
         work_id = f"brain-turn:{turn.correlation_id}"
         await emit.emit(
             BrainEvent(
@@ -159,7 +244,7 @@ class ControlCenterBrainBackend:
                 public_summary="Demande transmise à l'agent local.",
             )
         )
-        outcome = await self._ask(turn.text, _turn_context(turn, state))
+        outcome = await self._ask(turn.text, _turn_context(turn, state, work))
         if outcome.get("ok"):
             return await self._settle_success(turn, work_id, _public_answer(outcome.get("text")), emit)
         return await self._settle_failure(

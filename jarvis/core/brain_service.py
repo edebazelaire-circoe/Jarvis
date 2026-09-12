@@ -16,6 +16,7 @@ from jarvis.core.v2_services import (
     NullDiagnosticSink,
 )
 from jarvis.domain.v2 import (
+    BRAIN_NOT_ADDRESSED_ANSWER,
     DEFAULT_TRANSIENT_SPEECH_TTL_S,
     SPEECH_DELIVERY_PARTIAL,
     AddressingDecision,
@@ -33,9 +34,12 @@ from jarvis.domain.v2 import (
     SpeechProvenance,
     SpeechRequest,
     TurnKind,
+    new_id,
     utc_now,
 )
-from jarvis.ports.v2 import BrainBackend, DiagnosticSink, WorkCanceller
+from jarvis.core.brain_context import BrainContextBuilder
+from jarvis.domain.brain_context import BrainContext
+from jarvis.ports.v2 import BrainBackend, DiagnosticSink, WorkCanceller, supports_brain_context
 
 # Types d'événements publiés sur `CoreEventBus`. Les charges utiles suivent
 # `docs/handoff-realtime-brain/docs/05-event-contracts.md` ; les clés que le
@@ -58,6 +62,17 @@ BRAIN_BACKEND_CONTRACT_KIND = "core.brain.backend_contract_violation"
 BRAIN_WORK_CANCELLED_KIND = "core.brain.work_cancelled"
 BRAIN_WORK_CANCEL_FAILED_KIND = "core.brain.work_cancel_failed"
 BRAIN_SPEECH_DROPPED_KIND = "core.brain.speech_dropped"
+# Disponibilité du cerveau : un tour qui dépasse son budget fait attendre
+# l'utilisateur (et les tours suivants). `turn_slow` part au franchissement,
+# `turn_over_budget` à la fin, avec la durée réelle.
+BRAIN_TURN_SLOW_KIND = "core.brain.turn_slow"
+BRAIN_TURN_OVER_BUDGET_KIND = "core.brain.turn_over_budget"
+BRAIN_REPLIES_SUPERSEDED_KIND = "core.brain.replies_superseded"
+BRAIN_NOTICE_RELAYED_KIND = "core.brain.notice_relayed"
+BRAIN_NOTICE_DROPPED_KIND = "core.brain.notice_dropped"
+
+#: Budget d'un tour cerveau, en secondes : au-delà, la conversation attend.
+DEFAULT_TURN_BUDGET_S = 8.0
 
 # Mesures 5 et 6 des six de `docs/04-testing-and-quality.md`. Elles se joignent
 # par `work_id`, l'identifiant que le cerveau a lui-même nommé, et ne portent ni
@@ -183,6 +198,9 @@ class BrainOrchestrator:
         jobs: WorkCanceller | None = None,
         diagnostics: DiagnosticSink | None = None,
         transient_speech_ttl_s: float = DEFAULT_TRANSIENT_SPEECH_TTL_S,
+        supersede_stale_replies: bool = True,
+        turn_budget_s: float = DEFAULT_TURN_BUDGET_S,
+        work_context: BrainContextBuilder | None = None,
     ) -> None:
         self._conversations = conversations
         self._events = events
@@ -217,6 +235,25 @@ class BrainOrchestrator:
         # tours en vol.
         self._unconfirmed_turns: dict[str, BrainTurnInput] = {}
         self._stopping = False
+        # Retour utilisateur n° 8 : une réponse prête mais encore en file quand
+        # l'utilisateur relance n'est plus cohérente avec ce qu'il vient de
+        # dire, et bouchait la file (30 à 37 s de retard mesurés). Travaux
+        # dont le cerveau a déjà émis la parole, par conversation, avec le
+        # numéro d'ordre de cette parole ; vidé à chaque nouvelle intention.
+        self._supersede_stale_replies = supersede_stale_replies
+        self._spoken_works: dict[str, dict[str, int]] = {}
+        # Numéro d'ordre des paroles émises ; un tour incertain retient celui
+        # de son arrivée (`_unconfirmed_since`), borné comme `_unconfirmed_turns`.
+        self._speech_seq = 0
+        self._unconfirmed_since: dict[str, int] = {}
+        self._turn_budget_s = turn_budget_s
+        # Conversation du dernier tour reçu : c'est là que va un relais
+        # spontané du cerveau, qu'aucun tour n'attend (`announce_notice`).
+        self._last_conversation_id: str | None = None
+        # Travail en cours lu dans l'état de travail Core à chaque tour (tâche
+        # 12 du handoff work-state), remis aux seuls backends qui savent le
+        # recevoir (`supports_brain_context`).
+        self._work_context = work_context
 
     # -- lecture ------------------------------------------------------------
 
@@ -431,7 +468,9 @@ class BrainOrchestrator:
             # un tour incertain, la dérivation le laisse en attente au lieu d'en
             # faire une intention (voir `_derive_state`).
             state = await self._ensure_state(turn.conversation_id)
+            self._last_conversation_id = turn.conversation_id
             revision: BrainIntentRevision | None = None
+            superseded: tuple[str, ...] = ()
             if turn.addressing is AddressingDecision.UNCERTAIN:
                 # Moitié aval de la Décision 44. La surface ne jette plus un
                 # tour douteux, elle transmet le doute : Core ne doit donc pas
@@ -442,6 +481,9 @@ class BrainOrchestrator:
                 # renvoie au cerveau : une phrase captée à la télévision ne doit
                 # pas devenir ce que Core lui affirme.
                 self._unconfirmed_turns[turn.correlation_id] = turn
+                # Repère pour la promotion : seules les réponses émises avant
+                # l'arrivée de ce tour pourront alors être déclarées périmées.
+                self._unconfirmed_since[turn.correlation_id] = self._speech_seq
             else:
                 state = self._revise(turn.conversation_id, current_user_intent=turn.text, unresolved_questions=())
                 # Rétention par défaut, rendue explicite et observable : une
@@ -449,11 +491,18 @@ class BrainOrchestrator:
                 # parole à Jarvis — garde tout le travail en cours. Core ne peut
                 # d'ailleurs pas savoir ici ce que le cerveau va décider : seule une
                 # décision explicite ultérieure retirera un travail.
+                # Seule exception, qui ne retire aucun travail : la parole déjà
+                # émise par les tours précédents et pas encore dite est périmée
+                # (`superseded`), l'utilisateur ayant relancé entre-temps.
+                # L'ordonnanceur ne la retire que de sa file : une phrase en
+                # cours de lecture n'est jamais coupée par ce chemin.
+                superseded = self._take_stale_replies(turn.conversation_id, before_seq=None)
                 revision = BrainIntentRevision(
                     conversation_id=turn.conversation_id,
                     revision=state.revision,
                     previous_revision=state.revision - 1,
-                    retained_work_ids=state.active_work_ids,
+                    superseded_work_ids=superseded,
+                    retained_work_ids=tuple(work_id for work_id in state.active_work_ids if work_id not in superseded),
                 )
             acceptance = BrainTurnAcceptance(
                 turn_id=record.id,
@@ -476,6 +525,7 @@ class BrainOrchestrator:
             if revision is not None:
                 await self._publish(BRAIN_INTENT_REVISED, revision.to_payload(), turn.conversation_id, turn.correlation_id)
                 await self._publish(BRAIN_STATE_UPDATED, state.to_public_payload(), turn.conversation_id, turn.correlation_id)
+            self._note_superseded_replies(turn.conversation_id, turn.correlation_id, superseded)
 
             task = asyncio.create_task(self._run_turn(turn, state), name=f"jarvis-brain-{turn.correlation_id}")
             self._tasks[turn.correlation_id] = task
@@ -498,6 +548,61 @@ class BrainOrchestrator:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._tasks.clear()
+
+    # -- relais spontanés ---------------------------------------------------
+
+    async def announce_notice(self, text: str, *, conversation_id: str | None = None) -> bool:
+        """Faire dire un relais que le cerveau a rédigé sans qu'aucun tour l'attende.
+
+        Cas d'usage : un sous-agent d'arrière-plan se termine, le backend
+        ouvre de lui-même un tour et le cerveau en résume le résultat. Aucun
+        `run_turn` ne porte cette réponse ; sans cette voie, elle était perdue,
+        ou livrée à la question suivante à la place de la sienne.
+
+        Le texte est celui du cerveau, jamais reformulé (Décision 13) ; Core
+        n'en fabrique aucun (Décision 14). Il part vers la conversation du
+        dernier tour reçu, avec sa propre corrélation, et devient un fait
+        public comme le résumé d'un tour terminé. La réponse convenue de
+        silence (`[pas-pour-moi]`) et un texte vide ne produisent rien.
+
+        Rend True si une parole a été publiée.
+        """
+
+        summary = (text or "").strip()
+        target = conversation_id or self._last_conversation_id
+        if not summary or summary.casefold() == BRAIN_NOT_ADDRESSED_ANSWER.casefold():
+            return False
+        if self._stopping or not target:
+            self._diagnostics.emit(
+                BRAIN_NOTICE_DROPPED_KIND,
+                "relais du cerveau sans conversation où le dire",
+                level="warning",
+                data={"reason": "stopping" if self._stopping else "no_conversation", "text": summary[:300]},
+            )
+            return False
+        correlation_id = f"brain-notice:{new_id()}"
+        await self._emit_speech(
+            SpeechRequest(
+                conversation_id=target,
+                text=summary,
+                kind=SpeechKind.RESULT,
+                priority=SpeechPriority.NORMAL,
+                correlation_id=correlation_id,
+                provenance=SpeechProvenance.BRAIN,
+            )
+        )
+        async with self._lock:
+            facts = self.working_state(target).known_public_facts
+            state = None if summary in facts else self._revise(target, known_public_facts=facts + (summary,))
+        if state is not None:
+            await self._publish(BRAIN_STATE_UPDATED, state.to_public_payload(), target, correlation_id)
+        self._diagnostics.emit(
+            BRAIN_NOTICE_RELAYED_KIND,
+            "relais spontané du cerveau transmis à la voix",
+            level="info",
+            data={"conversation_id": target, "correlation_id": correlation_id},
+        )
+        return True
 
     # -- déduplication ------------------------------------------------------
 
@@ -582,6 +687,38 @@ class BrainOrchestrator:
             return None
         return self._revise(conversation_id, unresolved_questions=current.unresolved_questions + (text,))
 
+    # -- réponses périmées --------------------------------------------------
+
+    def _take_stale_replies(self, conversation_id: str, *, before_seq: int | None) -> tuple[str, ...]:
+        """Retirer et rendre les travaux dont la parole a déjà été émise.
+
+        Appelée quand une nouvelle intention s'impose : un tour adressé à son
+        arrivée (`before_seq=None`, tout ce qui a été émis jusque-là), ou un
+        tour incertain au moment où le cerveau le prend (`before_seq` = repère
+        de son arrivée : une réponse émise après lui reste due, comme pour un
+        tour adressé). Ne touche aucun travail : seule la parole en attente
+        est visée, et l'ordonnanceur vocal ne la retire que de sa file.
+        """
+
+        if not self._supersede_stale_replies:
+            return ()
+        spoken = self._spoken_works.get(conversation_id)
+        if not spoken:
+            return ()
+        stale = tuple(work_id for work_id, seq in spoken.items() if before_seq is None or seq <= before_seq)
+        for work_id in stale:
+            del spoken[work_id]
+        return stale
+
+    def _note_superseded_replies(self, conversation_id: str, correlation_id: str, work_ids: tuple[str, ...]) -> None:
+        if work_ids:
+            self._diagnostics.emit(
+                BRAIN_REPLIES_SUPERSEDED_KIND,
+                "nouvelle intention : la parole encore en attente des tours précédents est périmée",
+                level="info",
+                data={"conversation_id": conversation_id, "correlation_id": correlation_id, "work_ids": list(work_ids)},
+            )
+
     # -- adressage incertain ------------------------------------------------
 
     async def _promote_uncertain_turn(self, correlation_id: str) -> None:
@@ -606,22 +743,28 @@ class BrainOrchestrator:
         """
 
         turn = self._unconfirmed_turns.pop(correlation_id, None)
+        arrived_at = self._unconfirmed_since.pop(correlation_id, self._speech_seq)
         if turn is None:
             return
         async with self._lock:
             previous_revision = self.working_state(turn.conversation_id).revision
             state = self._revise(turn.conversation_id, current_user_intent=turn.text, unresolved_questions=())
+            # Même règle qu'à l'arrivée d'un tour adressé, appliquée au moment
+            # où ce tour devient l'intention.
+            superseded = self._take_stale_replies(turn.conversation_id, before_seq=arrived_at)
             revision = BrainIntentRevision(
                 conversation_id=turn.conversation_id,
                 revision=state.revision,
                 previous_revision=previous_revision,
-                retained_work_ids=state.active_work_ids,
+                superseded_work_ids=superseded,
+                retained_work_ids=tuple(work_id for work_id in state.active_work_ids if work_id not in superseded),
             )
         # Même séquence que pour un tour adressé, simplement décalée au moment
         # où elle devient vraie. Le consommateur qui suit les numéros de révision
         # voit `previous_revision` suivre l'accusé sans trou (Décision 31).
         await self._publish(BRAIN_INTENT_REVISED, revision.to_payload(), turn.conversation_id, turn.correlation_id)
         await self._publish(BRAIN_STATE_UPDATED, state.to_public_payload(), turn.conversation_id, turn.correlation_id)
+        self._note_superseded_replies(turn.conversation_id, turn.correlation_id, superseded)
 
     # -- exécution ----------------------------------------------------------
 
@@ -629,9 +772,17 @@ class BrainOrchestrator:
         """Corps de la tâche possédée par l'orchestrateur pour un tour."""
 
         sink = _TurnEventSink(orchestrator=self, turn=turn)
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        # Chien de garde de disponibilité : il ne coupe rien et ne fait rien
+        # dire (Décision 14), il rend visible dans la trace un tour qui fait
+        # attendre la conversation, au moment même où il la fait attendre.
+        slow = loop.call_later(self._turn_budget_s, self._note_slow_turn, turn) if self._turn_budget_s > 0 else None
+        cancelled = False
         try:
-            result = await self._backend.run_turn(turn, state, sink)
+            result = await self._call_backend(turn, state, sink)
         except asyncio.CancelledError:
+            cancelled = True
             self._diagnostics.emit(
                 BRAIN_TURN_CANCELLED_KIND,
                 "tour cerveau annulé avant la fin du backend",
@@ -654,11 +805,59 @@ class BrainOrchestrator:
         else:
             await self._settle(turn, result)
         finally:
+            if slow is not None:
+                slow.cancel()
+            elapsed_s = loop.time() - started
+            if not cancelled and self._turn_budget_s > 0 and elapsed_s > self._turn_budget_s:
+                self._diagnostics.emit(
+                    BRAIN_TURN_OVER_BUDGET_KIND,
+                    f"tour cerveau de {elapsed_s:.1f} s, au-delà de son budget",
+                    level="warning",
+                    data={
+                        "conversation_id": turn.conversation_id,
+                        "correlation_id": turn.correlation_id,
+                        "duration_ms": round(elapsed_s * 1000),
+                        "budget_ms": round(self._turn_budget_s * 1000),
+                    },
+                )
             self._tasks.pop(turn.correlation_id, None)
             self._error_spoken.discard(turn.correlation_id)
             # Un tour incertain que le cerveau n'a pas pris ne peut plus l'être
             # une fois sa tâche soldée : l'entrée s'en va avec elle.
             self._unconfirmed_turns.pop(turn.correlation_id, None)
+            self._unconfirmed_since.pop(turn.correlation_id, None)
+
+    async def _call_backend(self, turn: BrainTurnInput, state: BrainWorkingState, sink: _TurnEventSink) -> BrainTurnResult:
+        """Appeler le backend avec le contexte le plus riche qu'il sait recevoir.
+
+        Un backend qui déclare `run_turn_with_context` reçoit un `BrainContext` :
+        l'état public du tour et le travail en cours lu par Core à cet instant
+        (Décision D16). Les autres reçoivent `run_turn(turn, state, emit)` comme
+        avant, et l'état de travail n'est même pas lu pour eux : les
+        changements retenus par la politique attendent un backend qui les
+        transmette.
+        """
+
+        if not supports_brain_context(self._backend):
+            return await self._backend.run_turn(turn, state, sink)
+        work = None
+        if self._work_context is not None:
+            work = await self._work_context.work_context(correlation_id=turn.correlation_id)
+        return await self._backend.run_turn_with_context(turn, BrainContext(state=state, work=work), sink)
+
+    def _note_slow_turn(self, turn: BrainTurnInput) -> None:
+        self._diagnostics.emit(
+            BRAIN_TURN_SLOW_KIND,
+            "tour cerveau au-delà de son budget : la conversation attend",
+            level="warning",
+            data={
+                "conversation_id": turn.conversation_id,
+                "correlation_id": turn.correlation_id,
+                "budget_ms": round(self._turn_budget_s * 1000),
+                # Tours en vol derrière celui-ci : ceux que l'utilisateur attend.
+                "other_turns_in_flight": max(0, len(self._tasks) - 1),
+            },
+        )
 
     async def _settle(self, turn: BrainTurnInput, result: BrainTurnResult) -> None:
         if result.correlation_id != turn.correlation_id:
@@ -1093,6 +1292,12 @@ class BrainOrchestrator:
             # `_revise_question`, sinon elle effacerait la question que le
             # cerveau vient de poser sur ce tour-là.
             await self._promote_uncertain_turn(speech.correlation_id)
+        # Après la promotion, qui périme la parole des tours précédents : celle-ci
+        # sera périmée à son tour par la prochaine intention, si elle attend
+        # encore d'être dite. Une parole transitoire a déjà son échéance.
+        if self._supersede_stale_replies and speech.work_id and not speech.is_transient:
+            self._speech_seq += 1
+            self._spoken_works.setdefault(speech.conversation_id, {})[speech.work_id] = self._speech_seq
         state: BrainWorkingState | None = None
         if speech.kind is SpeechKind.QUESTION:
             async with self._lock:

@@ -240,3 +240,89 @@ async def test_an_unknown_architecture_in_the_settings_file_stops_voice_clearly(
     with pytest.raises(RuntimeError, match="Architecture vocale inconnue"):
         await app._run_voice_v2()
     assert "voice_arch" not in captured
+
+
+async def test_the_duplex_capture_has_no_speaker_verifier_by_default(tmp_path, monkeypatch):
+    """Tâche 02 Solo Owner : la couture existe, rien n'y est branché."""
+
+    captured = _voice_startup(tmp_path, monkeypatch, env_arch=None, overrides={"voice_arch": "continuous_brain"})
+    await _start_voice(captured)
+
+    processor = captured["capture_factory"]()
+
+    assert processor.observer is None
+
+
+async def test_an_injected_speaker_verifier_observes_the_capture_in_shadow(tmp_path, monkeypatch):
+    from jarvis.adapters.fake_speaker_verifier import ScriptedSpeakerVerifier
+    from jarvis.audio.speaker_shadow import SpeakerVerificationWorker
+
+    verifier = ScriptedSpeakerVerifier()
+    monkeypatch.setattr(app, "_speaker_verifier", lambda *args, **kwargs: verifier)
+    captured = _voice_startup(tmp_path, monkeypatch, env_arch=None, overrides={"voice_arch": "continuous_brain"})
+    await _start_voice(captured)
+
+    processor = captured["capture_factory"]()
+    try:
+        assert isinstance(processor.observer, SpeakerVerificationWorker)
+        assert processor.observer.telemetry.verifier is verifier
+    finally:
+        processor.close()
+    assert verifier.closed
+
+
+async def test_only_solo_owner_gives_the_capture_an_owner_replay_buffer(tmp_path, monkeypatch):
+    """Tâche 06 Solo Owner : tampon de rejeu dimensionné par `owner_buffer_ms`, absent en salle ouverte."""
+
+    monkeypatch.setattr(app, "_speaker_verifier", lambda *args, **kwargs: None)
+    (tmp_path / "solo").mkdir()
+    (tmp_path / "room").mkdir()
+    solo = _voice_startup(
+        tmp_path / "solo",
+        monkeypatch,
+        env_arch=None,
+        overrides={"voice_arch": "continuous_brain", "conversation_mode": "solo_owner", "owner_buffer_ms": 1800},
+    )
+    await _start_voice(solo)
+    assert solo["capture_factory"]().owner_buffer_ms == 1800
+
+    room = _voice_startup(tmp_path / "room", monkeypatch, env_arch=None, overrides={"voice_arch": "continuous_brain"})
+    await _start_voice(room)
+    processor = room["capture_factory"]()
+    assert processor.owner_buffer_ms == 0 and processor.set_owner_gate(True) is False
+
+
+async def test_voice_receives_the_conversation_authorization(tmp_path, monkeypatch):
+    """Tâche 05 Solo Owner : le mode choisi atteint le runtime, qui en tire l'autorité du barge-in."""
+    from jarvis.domain.speaker import ConversationMode, SpeakerVerificationMode
+
+    captured = _voice_startup(
+        tmp_path, monkeypatch, env_arch=None, overrides={"voice_arch": "continuous_brain", "conversation_mode": "solo_owner"}
+    )
+    await _start_voice(captured)
+
+    assert captured["authorization"].mode is ConversationMode.SOLO_OWNER
+    assert captured["authorization"].verification is SpeakerVerificationMode.ENFORCE
+
+
+async def test_an_invalid_conversation_setting_is_handed_to_voice_to_refuse_and_say_so(tmp_path, monkeypatch):
+    """Tâche 07 : plus de salle ouverte gardée en silence — le runtime reçoit l'erreur et refuse d'écouter."""
+    from jarvis.runtime.journal import RuntimeJournal, read_jsonl_tail
+
+    captured = _voice_startup(
+        tmp_path, monkeypatch, env_arch=None, overrides={"voice_arch": "continuous_brain", "conversation_mode": "salon"}
+    )
+    await _start_voice(captured)
+
+    assert captured["authorization_error"].code == "conversation_mode_unknown"
+    trace = read_jsonl_tail(RuntimeJournal(captured["runtime_root"]).trace_path, limit=100)
+    invalid = [item for item in trace if item.get("kind") == "voice.authorization_invalid"]
+    assert invalid and invalid[0]["data"]["code"] == "conversation_mode_unknown"
+    assert "n'écoutera pas" in invalid[0]["message"]
+
+
+async def test_a_valid_conversation_setting_carries_no_error(tmp_path, monkeypatch):
+    captured = _voice_startup(tmp_path, monkeypatch, env_arch=None, overrides={"voice_arch": "continuous_brain"})
+    await _start_voice(captured)
+
+    assert captured["authorization_error"] is None
