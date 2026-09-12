@@ -1,0 +1,229 @@
+INTERNALERROR> Traceback (most recent call last):
+INTERNALERROR>   File "C:\Projects\jarvis\jarvis\.venv\Lib\site-packages\_pytest\main.py", line 326, in wrap_session
+INTERNALERROR>     config._do_configure()
+INTERNALERROR>     ~~~~~~~~~~~~~~~~~~~~^^
+INTERNALERROR>   File "C:\Projects\jarvis\jarvis\.venv\Lib\site-packages\_pytest\config\__init__.py", line 1205, in _do_configure
+INTERNALERROR>     self.hook.pytest_configure.call_historic(kwargs=dict(config=self))
+INTERNALERROR>     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+INTERNALERROR>   File "C:\Projects\jarvis\jarvis\.venv\Lib\site-packages\pluggy\_hooks.py", line 534, in call_historic
+INTERNALERROR>     res = self._hookexec(self.name, self._hookimpls.copy(), kwargs, False)
+INTERNALERROR>   File "C:\Projects\jarvis\jarvis\.venv\Lib\site-packages\pluggy\_manager.py", line 120, in _hookexec
+INTERNALERROR>     return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+INTERNALERROR>            ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+INTERNALERROR>   File "C:\Projects\jarvis\jarvis\.venv\Lib\site-packages\pluggy\_callers.py", line 167, in _multicall
+INTERNALERROR>     raise exception
+INTERNALERROR>   File "C:\Projects\jarvis\jarvis\.venv\Lib\site-packages\pluggy\_callers.py", line 121, in _multicall
+INTERNALERROR>     res = hook_impl.function(*args)
+INTERNALERROR>   File "C:\Projects\jarvis\jarvis\.venv\Lib\site-packages\pytest_asyncio\plugin.py", line 299, in pytest_configure
+INTERNALERROR>     warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+INTERNALERROR>     ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+INTERNALERROR> pytest.PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+INTERNALERROR> The event loop scope for asynchronous fixtures will default to the "fixture" caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to "function" scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+FAIL: pytest failed
+
+ATTEMPT 2: PYTHONWARNINGS=error; PYTEST_ADDOPTS=-o asyncio_default_fixture_loop_scope=function
+.......ss............................................................... [  3%]
+........................................................................ [  7%]
+........................................................................ [ 11%]
+........................................................................ [ 15%]
+F....................................................................... [ 18%]
+........................................................................ [ 22%]
+.....................................................s.................. [ 26%]
+........................................................................ [ 30%]
+..............s......................................................... [ 34%]
+........................................................................ [ 37%]
+........................................................................ [ 41%]
+........................................................................ [ 45%]
+........................................................................ [ 49%]
+........................................................................ [ 53%]
+........................................................................ [ 56%]
+........................................................................ [ 60%]
+........................................................................ [ 64%]
+........................................................................ [ 68%]
+........................................................................ [ 72%]
+........................................................................ [ 75%]
+........................................................................ [ 79%]
+........................................................................ [ 83%]
+........................................................................ [ 87%]
+........................................................................ [ 91%]
+........................................................................ [ 94%]
+........................................................................ [ 98%]
+.......................                                                  [100%]
+================================== FAILURES ===================================
+____________ test_control_center_surfaces_a_console_failure_as_503 ____________
+  + Exception Group Traceback (most recent call last):
+  |   File "C:\Projects\jarvis\jarvis\.venv\Lib\site-packages\_pytest\runner.py", line 361, in from_call
+  |     result: TResult | None = func()
+  |                              ~~~~^^
+  |   File "C:\Projects\jarvis\jarvis\.venv\Lib\site-packages\_pytest\runner.py", line 250, in <lambda>
+  |     lambda: runtest_hook(item=item, **kwds),
+  |             ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+  |   File "C:\Projects\jarvis\jarvis\.venv\Lib\site-packages\pluggy\_hooks.py", line 512, in __call__
+  |     return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  |            ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |   File "C:\Projects\jarvis\jarvis\.venv\Lib\site-packages\pluggy\_manager.py", line 120, in _hookexec
+  |     return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  |            ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |   File "C:\Projects\jarvis\jarvis\.venv\Lib\site-packages\pluggy\_callers.py", line 167, in _multicall
+  |     raise exception
+  |   File "C:\Projects\jarvis\jarvis\.venv\Lib\site-packages\pluggy\_callers.py", line 139, in _multicall
+  |     teardown.throw(exception)
+  |     ~~~~~~~~~~~~~~^^^^^^^^^^^
+  |   File "C:\Projects\jarvis\jarvis\.venv\Lib\site-packages\_pytest\logging.py", line 865, in pytest_runtest_call
+  |     yield
+  |   File "C:\Projects\jarvis\jarvis\.venv\Lib\site-packages\pluggy\_callers.py", line 139, in _multicall
+  |     teardown.throw(exception)
+  |     ~~~~~~~~~~~~~~^^^^^^^^^^^
+  |   File "C:\Projects\jarvis\jarvis\.venv\Lib\site-packages\_pytest\capture.py", line 900, in pytest_runtest_call
+  |     return (yield)
+  |             ^^^^^
+  |   File "C:\Projects\jarvis\jarvis\.venv\Lib\site-packages\pluggy\_callers.py", line 139, in _multicall
+  |     teardown.throw(exception)
+  |     ~~~~~~~~~~~~~~^^^^^^^^^^^
+  |   File "C:\Projects\jarvis\jarvis\.venv\Lib\site-packages\_pytest\skipping.py", line 268, in pytest_runtest_call
+  |     return (yield)
+  |             ^^^^^
+  |   File "C:\Projects\jarvis\jarvis\.venv\Lib\site-packages\pluggy\_callers.py", line 121, in _multicall
+  |     res = hook_impl.function(*args)
+  |   File "C:\Projects\jarvis\jarvis\.venv\Lib\site-packages\_pytest\unraisableexception.py", line 183, in pytest_runtest_call
+  |     collect_unraisable(item.config)
+  |     ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  |   File "C:\Projects\jarvis\jarvis\.venv\Lib\site-packages\_pytest\unraisableexception.py", line 81, in collect_unraisable
+  |     raise ExceptionGroup("multiple unraisable exception warnings", errors)
+  | ExceptionGroup: multiple unraisable exception warnings (6 sub-exceptions)
+  +-+---------------- 1 ----------------
+    | Traceback (most recent call last):
+    |   File "C:\Projects\jarvis\jarvis\.venv\Lib\site-packages\aiohttp\web_urldispatcher.py", line 886, in __init__
+    |     def __init__(
+    |     
+    | ResourceWarning: unclosed database in <sqlite3.Connection object at 0x000001F24F8E4220>
+    | 
+    | The above exception was the direct cause of the following exception:
+    | 
+    | Traceback (most recent call last):
+    |   File "C:\Projects\jarvis\jarvis\.venv\Lib\site-packages\_pytest\unraisableexception.py", line 67, in collect_unraisable
+    |     warnings.warn(pytest.PytestUnraisableExceptionWarning(msg))
+    |     ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    | pytest.PytestUnraisableExceptionWarning: Exception ignored while finalizing database connection <sqlite3.Connection object at 0x000001F24F8E4220>: None
+    | 
+    +---------------- 2 ----------------
+    | Traceback (most recent call last):
+    |   File "C:\Projects\jarvis\jarvis\.venv\Lib\site-packages\aiohttp\web_urldispatcher.py", line 886, in __init__
+    |     def __init__(
+    |     
+    | ResourceWarning: unclosed database in <sqlite3.Connection object at 0x000001F24F6773D0>
+    | 
+    | The above exception was the direct cause of the following exception:
+    | 
+    | Traceback (most recent call last):
+    |   File "C:\Projects\jarvis\jarvis\.venv\Lib\site-packages\_pytest\unraisableexception.py", line 67, in collect_unraisable
+    |     warnings.warn(pytest.PytestUnraisableExceptionWarning(msg))
+    |     ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    | pytest.PytestUnraisableExceptionWarning: Exception ignored while finalizing database connection <sqlite3.Connection object at 0x000001F24F6773D0>: None
+    | 
+    +---------------- 3 ----------------
+    | Traceback (most recent call last):
+    |   File "C:\Projects\jarvis\jarvis\.venv\Lib\site-packages\aiohttp\web_urldispatcher.py", line 886, in __init__
+    |     def __init__(
+    |     
+    | ResourceWarning: unclosed database in <sqlite3.Connection object at 0x000001F24F6776A0>
+    | 
+    | The above exception was the direct cause of the following exception:
+    | 
+    | Traceback (most recent call last):
+    |   File "C:\Projects\jarvis\jarvis\.venv\Lib\site-packages\_pytest\unraisableexception.py", line 67, in collect_unraisable
+    |     warnings.warn(pytest.PytestUnraisableExceptionWarning(msg))
+    |     ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    | pytest.PytestUnraisableExceptionWarning: Exception ignored while finalizing database connection <sqlite3.Connection object at 0x000001F24F6776A0>: None
+    | 
+    +---------------- 4 ----------------
+    | Traceback (most recent call last):
+    |   File "C:\Projects\jarvis\jarvis\.venv\Lib\site-packages\aiohttp\web_urldispatcher.py", line 886, in __init__
+    |     def __init__(
+    |     
+    | ResourceWarning: unclosed database in <sqlite3.Connection object at 0x000001F24F677970>
+    | 
+    | The above exception was the direct cause of the following exception:
+    | 
+    | Traceback (most recent call last):
+    |   File "C:\Projects\jarvis\jarvis\.venv\Lib\site-packages\_pytest\unraisableexception.py", line 67, in collect_unraisable
+    |     warnings.warn(pytest.PytestUnraisableExceptionWarning(msg))
+    |     ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    | pytest.PytestUnraisableExceptionWarning: Exception ignored while finalizing database connection <sqlite3.Connection object at 0x000001F24F677970>: None
+    | 
+    +---------------- 5 ----------------
+    | Traceback (most recent call last):
+    |   File "C:\Projects\jarvis\jarvis\.venv\Lib\site-packages\aiohttp\web_urldispatcher.py", line 886, in __init__
+    |     def __init__(
+    |     
+    | ResourceWarning: unclosed database in <sqlite3.Connection object at 0x000001F24F677100>
+    | 
+    | The above exception was the direct cause of the following exception:
+    | 
+    | Traceback (most recent call last):
+    |   File "C:\Projects\jarvis\jarvis\.venv\Lib\site-packages\_pytest\unraisableexception.py", line 67, in collect_unraisable
+    |     warnings.warn(pytest.PytestUnraisableExceptionWarning(msg))
+    |     ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    | pytest.PytestUnraisableExceptionWarning: Exception ignored while finalizing database connection <sqlite3.Connection object at 0x000001F24F677100>: None
+    | 
+    +---------------- 6 ----------------
+    | Traceback (most recent call last):
+    |   File "C:\Projects\jarvis\jarvis\.venv\Lib\site-packages\aiohttp\web_urldispatcher.py", line 886, in __init__
+    |     def __init__(
+    |     
+    | ResourceWarning: unclosed database in <sqlite3.Connection object at 0x000001F24F677A60>
+    | 
+    | The above exception was the direct cause of the following exception:
+    | 
+    | Traceback (most recent call last):
+    |   File "C:\Projects\jarvis\jarvis\.venv\Lib\site-packages\_pytest\unraisableexception.py", line 67, in collect_unraisable
+    |     warnings.warn(pytest.PytestUnraisableExceptionWarning(msg))
+    |     ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    | pytest.PytestUnraisableExceptionWarning: Exception ignored while finalizing database connection <sqlite3.Connection object at 0x000001F24F677A60>: None
+    | 
+    +------------------------------------
+=========================== short test summary info ===========================
+SKIPPED [1] ..\tests\integration\test_live_openai.py:49: opt-in live provider test
+SKIPPED [1] ..\tests\integration\test_live_openai.py:61: opt-in live provider test
+SKIPPED [1] ..\tests\unit\test_crash_guard.py:51: signals are POSIX-only
+SKIPPED [1] ..\tests\unit\test_memory.py:50: symlinks unavailable
+FAILED tests/unit/test_claude_debug_console.py::test_control_center_surfaces_a_console_failure_as_503
+1 failed, 1890 passed, 4 skipped in 582.12s (0:09:42)
+FAIL: pytest failed
+
+ATTEMPT 3: after precise fixture cleanup; all tests, PYTHONWARNINGS=error; asyncio fixture scope=function
+.......ss............................................................... [  3%]
+........................................................................ [  7%]
+........................................................................ [ 11%]
+........................................................................ [ 15%]
+........................................................................ [ 18%]
+........................................................................ [ 22%]
+.....................................................s.................. [ 26%]
+........................................................................ [ 30%]
+..............s......................................................... [ 34%]
+........................................................................ [ 37%]
+........................................................................ [ 41%]
+........................................................................ [ 45%]
+........................................................................ [ 49%]
+........................................................................ [ 53%]
+........................................................................ [ 56%]
+........................................................................ [ 60%]
+........................................................................ [ 64%]
+........................................................................ [ 68%]
+........................................................................ [ 72%]
+........................................................................ [ 75%]
+........................................................................ [ 79%]
+........................................................................ [ 83%]
+........................................................................ [ 87%]
+........................................................................ [ 91%]
+........................................................................ [ 94%]
+........................................................................ [ 98%]
+.......................                                                  [100%]
+=========================== short test summary info ===========================
+SKIPPED [1] ..\tests\integration\test_live_openai.py:49: opt-in live provider test
+SKIPPED [1] ..\tests\integration\test_live_openai.py:61: opt-in live provider test
+SKIPPED [1] ..\tests\unit\test_crash_guard.py:51: signals are POSIX-only
+SKIPPED [1] ..\tests\unit\test_memory.py:50: symlinks unavailable
+1891 passed, 4 skipped in 221.26s (0:03:41)
+Release verification passed.
+RELEASE_EXIT_CODE=0

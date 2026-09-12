@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from functools import partial
 from pathlib import Path
 import shutil
 import subprocess
@@ -225,7 +226,8 @@ async def test_a_deployment_that_never_answers_comes_back_to_what_worked(site, m
     pool, coordinator, primary, remote, runtime = site
     from jarvis.runtime import deployment as deploy
 
-    monkeypatch.setattr(deploy, "READY_TIMEOUT_S", 0.05)
+    # Le défaut est lié à la définition : passer le budget au vrai poller.
+    monkeypatch.setattr(coordinator, "_await_health", partial(coordinator._await_health, timeout_s=0.05))
     monkeypatch.setattr(deploy, "READY_POLL_S", 0.01)
     catalogue(monkeypatch)
     settings = settings_with([{"agent": "claude", "model": "grand"}])

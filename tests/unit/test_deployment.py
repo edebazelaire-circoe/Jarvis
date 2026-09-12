@@ -9,6 +9,7 @@ chemins n'a le droit de détruire du travail.
 from __future__ import annotations
 
 import json
+from functools import partial
 from pathlib import Path
 import shutil
 import subprocess
@@ -297,7 +298,8 @@ async def test_the_serving_copy_is_never_the_place_where_a_candidate_is_reconcil
 
 async def test_a_deployment_that_never_answers_goes_back_to_what_did(field, monkeypatch):
     coordinator, primary, remote, worktrees = field
-    monkeypatch.setattr(deploy, "READY_TIMEOUT_S", 0.05)
+    # Le défaut est lié à la définition : passer le budget au vrai poller.
+    monkeypatch.setattr(coordinator, "_await_health", partial(coordinator._await_health, timeout_s=0.05))
     monkeypatch.setattr(deploy, "READY_POLL_S", 0.01)
     prepared = candidate(worktrees["un"], job_id="j1")
     result = await coordinator.integrate(prepared)
@@ -315,7 +317,7 @@ async def test_a_deployment_that_never_answers_goes_back_to_what_did(field, monk
 
 async def test_a_rollback_that_would_crush_someone_s_work_stops_and_says_so(field, monkeypatch):
     coordinator, primary, _remote, worktrees = field
-    monkeypatch.setattr(deploy, "READY_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(coordinator, "_await_health", partial(coordinator._await_health, timeout_s=0.05))
     monkeypatch.setattr(deploy, "READY_POLL_S", 0.01)
     await coordinator.integrate(candidate(worktrees["un"], job_id="j1"))
     # Quelqu'un est intervenu dans la copie qui sert entre-temps.

@@ -824,42 +824,46 @@ async def test_core_does_not_count_a_truncated_sentence_as_a_known_fact(tmp_path
     from jarvis.adapters.jsonl_history import JsonlHistoryStore
     from jarvis.adapters.sqlite_state import SQLiteStateRepository
 
-    state = SQLiteStateRepository(tmp_path / "state" / "jarvis.sqlite3")
-    await state.initialize()
-    conversations = ConversationService(state, JsonlHistoryStore(tmp_path / "history"))
+    repository = SQLiteStateRepository(tmp_path / "state" / "jarvis.sqlite3")
+    await repository.initialize()
+    conversations = ConversationService(repository, JsonlHistoryStore(tmp_path / "history"))
     orchestrator = BrainOrchestrator(conversations=conversations, events=CoreEventBus())
-    conversation = await conversations.create()
-    await conversations.append_turn(
-        conversation.id,
-        TurnKind.ASSISTANT,
-        "Le vol de demain est annulé.",
-        correlation_id="corr-1",
-        metadata={
-            "provenance": SpeechProvenance.BRAIN.value,
-            "speech_kind": SpeechKind.RESULT.value,
-            "delivery": SPEECH_DELIVERY_PARTIAL,
-            "played_ms": 400,
-        },
-    )
+    try:
+        conversation = await conversations.create()
+        await conversations.append_turn(
+            conversation.id,
+            TurnKind.ASSISTANT,
+            "Le vol de demain est annulé.",
+            correlation_id="corr-1",
+            metadata={
+                "provenance": SpeechProvenance.BRAIN.value,
+                "speech_kind": SpeechKind.RESULT.value,
+                "delivery": SPEECH_DELIVERY_PARTIAL,
+                "played_ms": 400,
+            },
+        )
 
-    state = await orchestrator.rehydrate(conversation.id)
+        snapshot = await orchestrator.rehydrate(conversation.id)
 
-    assert state["known_public_facts"] == []
+        assert snapshot["known_public_facts"] == []
 
-    # Témoin : la même phrase, entendue en entier, est bien un fait public.
-    other = await conversations.create()
-    await conversations.append_turn(
-        other.id,
-        TurnKind.ASSISTANT,
-        "Le vol de demain est annulé.",
-        correlation_id="corr-2",
-        metadata={
-            "provenance": SpeechProvenance.BRAIN.value,
-            "speech_kind": SpeechKind.RESULT.value,
-        },
-    )
+        # Témoin : la même phrase, entendue en entier, est bien un fait public.
+        other = await conversations.create()
+        await conversations.append_turn(
+            other.id,
+            TurnKind.ASSISTANT,
+            "Le vol de demain est annulé.",
+            correlation_id="corr-2",
+            metadata={
+                "provenance": SpeechProvenance.BRAIN.value,
+                "speech_kind": SpeechKind.RESULT.value,
+            },
+        )
 
-    assert (await orchestrator.rehydrate(other.id))["known_public_facts"] == ["Le vol de demain est annulé."]
+        assert (await orchestrator.rehydrate(other.id))["known_public_facts"] == ["Le vol de demain est annulé."]
+    finally:
+        await orchestrator.stop()
+        await repository.close()
 
 
 # --------------------------------------------------------------------------

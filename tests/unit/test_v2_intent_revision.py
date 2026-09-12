@@ -46,6 +46,8 @@ from jarvis.domain.v2 import (
     ProtocolEnvelope,
     SpeechKind,
     SpeechRequest,
+    SpeechProvenance,
+    TurnKind,
 )
 
 # Clés exigées par docs/handoff-realtime-brain/docs/05-event-contracts.md pour
@@ -501,6 +503,75 @@ async def wait_idle(brain) -> None:
             await asyncio.sleep(0)
 
     await asyncio.wait_for(loop(), timeout=TIMEOUT_S)
+
+
+@pytest.mark.parametrize("newer", ["addressed", "confirmed", "recused", "unconfirmed"])
+async def test_late_uncertain_confirmation_preserves_latest_confirmed_intent(tmp_path, newer):
+    class OrderedBackend:
+        def __init__(self):
+            self.release = {key: asyncio.Event() for key in ("old", "new")}
+            self.started = {key: asyncio.Event() for key in ("old", "new")}
+
+        async def run_turn(self, turn, state, emit):
+            work_id = f"work-{turn.correlation_id}"
+            await emit.emit(BrainEvent(kind=BrainEventKind.ACCEPTED, conversation_id=turn.conversation_id, correlation_id=turn.correlation_id, work_id=work_id))
+            self.started[turn.correlation_id].set()
+            await self.release[turn.correlation_id].wait()
+            summary = "" if turn.correlation_id == "new" and newer == "recused" else f"Result {turn.correlation_id}"
+            if summary:
+                await emit.emit(BrainEvent(
+                    kind=BrainEventKind.SPEECH, conversation_id=turn.conversation_id,
+                    correlation_id=turn.correlation_id, work_id=work_id,
+                    speech=SpeechRequest(conversation_id=turn.conversation_id, text=summary, kind=SpeechKind.RESULT, work_id=work_id),
+                ))
+            await emit.emit(BrainEvent(kind=BrainEventKind.COMPLETED, conversation_id=turn.conversation_id, correlation_id=turn.correlation_id, work_id=work_id, public_summary=summary))
+            return BrainTurnResult(correlation_id=turn.correlation_id, public_summary=summary)
+
+    backend = OrderedBackend()
+    canceller = RecordingCanceller()
+    brain, events, repository, conversation_id = await build_orchestrator(tmp_path, backend, jobs=canceller)
+    queue = events.subscribe()
+    cold = BrainOrchestrator(conversations=brain._conversations, events=CoreEventBus())
+    revisions = []
+    try:
+        for correlation_id, text, addressing in (
+            ("old", "January", AddressingDecision.UNCERTAIN),
+            ("new", "February", AddressingDecision.ADDRESSED if newer == "addressed" else AddressingDecision.UNCERTAIN),
+        ):
+            await brain.submit(BrainTurnInput(conversation_id=conversation_id, text=text, correlation_id=correlation_id, addressing=addressing))
+            await asyncio.wait_for(backend.started[correlation_id].wait(), timeout=TIMEOUT_S)
+
+        # Newer replies first; the unconfirmed case stays in flight throughout.
+        for correlation_id in (("old",) if newer == "unconfirmed" else ("new", "old")):
+            task = brain._tasks[correlation_id]
+            backend.release[correlation_id].set()
+            await asyncio.wait_for(asyncio.shield(task), timeout=TIMEOUT_S)
+            # Model the ordinary assistant-turn persistence on completed delivery.
+            for event in drain(queue):
+                if event.message_type == BRAIN_INTENT_REVISED:
+                    revisions.append(event.correlation_id)
+                if event.message_type == BRAIN_SPEECH_REQUESTED:
+                    await brain._conversations.append_turn(
+                        conversation_id, TurnKind.ASSISTANT, event.payload["text"],
+                        correlation_id=event.correlation_id,
+                        metadata={"provenance": SpeechProvenance.BRAIN.value, "speech_kind": SpeechKind.RESULT.value},
+                    )
+
+        expected = "February" if newer in ("addressed", "confirmed") else "January"
+        current = brain.working_state(conversation_id)
+        assert current.current_user_intent == expected
+        restored = await cold.rehydrate(conversation_id)
+        assert restored["current_user_intent"] == expected
+        assert revisions == (["new"] if newer in ("addressed", "confirmed") else ["old"])
+        assert "Result old" in current.known_public_facts
+        assert "Result old" in restored["known_public_facts"]
+        assert "work-old" in current.completed_work_ids
+        assert current.active_work_ids == (("work-new",) if newer == "unconfirmed" else ())
+        assert canceller.calls == []
+    finally:
+        await cold.stop()
+        await brain.stop()
+        await repository.close()
 
 
 async def test_an_uncertain_turn_does_not_overwrite_the_current_intent(tmp_path):

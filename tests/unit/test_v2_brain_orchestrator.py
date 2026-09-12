@@ -582,6 +582,83 @@ async def test_backend_reported_cancellation_publishes_nothing_but_leaves_a_trac
 # --- arrêt -------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("failure", ["exception", "failed_result", "wrong_correlation"])
+async def test_terminal_turn_failure_settles_only_its_unfinished_backend_work(tmp_path, failure):
+    class FailingAfterAcceptance:
+        async def run_turn(self, turn, state, emit):
+            async def event(kind, work_id):
+                await emit.emit(BrainEvent(
+                    kind=kind, conversation_id=turn.conversation_id,
+                    correlation_id=turn.correlation_id, work_id=work_id,
+                ))
+
+            await event(BrainEventKind.ACCEPTED, "orphan")
+            await event(BrainEventKind.ACCEPTED, "finished")
+            await event(BrainEventKind.COMPLETED, "finished")
+            # Reporting another turn's work does not acquire its ownership.
+            await event(BrainEventKind.PROGRESS, "independent")
+            if failure == "exception":
+                raise RuntimeError("backend disconnected after acceptance")
+            if failure == "failed_result":
+                return BrainTurnResult(correlation_id=turn.correlation_id, status=BrainRunStatus.FAILED, error="backend_unavailable")
+            return BrainTurnResult(correlation_id="wrong-correlation")
+
+    class RecordingJobs:
+        def __init__(self):
+            self.cancelled = []
+
+        async def cancel_work(self, work_id):
+            self.cancelled.append(work_id)
+            return ()
+
+    sink = RecordingSink()
+    brain, conversations, events, state, conversation_id = await build_orchestrator(tmp_path, FailingAfterAcceptance(), diagnostics=sink)
+    jobs = RecordingJobs()
+    brain._jobs = jobs
+    queue = events.subscribe()
+    other = await conversations.create()
+    try:
+        # Same work id in another conversation, and different work in this one.
+        for owner_conversation, work_id in ((conversation_id, "independent"), (other.id, "orphan")):
+            await brain._dispatch_backend_event(BrainEvent(
+                kind=BrainEventKind.ACCEPTED, conversation_id=owner_conversation,
+                correlation_id="other-turn", work_id=work_id,
+            ))
+        drain(queue)
+        turn = BrainTurnInput(conversation_id=conversation_id, text="Regarde les mails.")
+        await brain.submit(turn)
+        await wait_idle(brain)
+
+        assert brain.working_state(conversation_id).active_work_ids == ("independent",)
+        assert brain.working_state(conversation_id).completed_work_ids == ("finished",)
+        assert brain.working_state(other.id).active_work_ids == ("orphan",)
+        assert jobs.cancelled == []
+        published = drain(queue)
+        failures = [event for event in published if event.message_type == BRAIN_WORK_FAILED]
+        assert [event.payload["work_id"] for event in failures] == ["orphan", None]
+        expected_error = {"exception": "RuntimeError", "failed_result": "backend_unavailable", "wrong_correlation": "backend_correlation_mismatch"}[failure]
+        assert all(event.payload["error_class"] == expected_error for event in failures)
+        assert all(event.correlation_id == turn.correlation_id and event.conversation_id == conversation_id for event in failures)
+        assert not any(event.message_type == BRAIN_SPEECH_REQUESTED for event in published)
+        states = [event for event in published if event.message_type == BRAIN_STATE_UPDATED]
+        assert states[-1].payload["active_work_ids"] == ["independent"]
+        assert "core.brain.turn_failed" in sink.kinds() or "core.brain.backend_contract_violation" in sink.kinds()
+        assert turn.correlation_id not in brain._work_owners.values()
+        # Only the independent completion and the other conversation's two
+        # measures remain. The failed work must leave neither timer behind.
+        assert brain._latency.pending_count == 3
+        await brain._dispatch_backend_event(BrainEvent(
+            kind=BrainEventKind.COMPLETED, conversation_id=other.id,
+            correlation_id="other-turn", work_id="orphan",
+        ))
+        other_completions = [data for kind, _level, data in sink.events if kind == "core.brain.latency.work_completed" and data["conversation_id"] == other.id]
+        assert len(other_completions) == 1
+        assert brain._latency.pending_count == 1
+    finally:
+        await brain.stop()
+        await state.close()
+
+
 async def test_stop_cancels_in_flight_brain_work_without_publishing_a_failure(tmp_path):
     backend = SlowBackend()
     sink = RecordingSink()

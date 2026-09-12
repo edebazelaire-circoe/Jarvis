@@ -929,6 +929,86 @@ async def test_brain_speech_is_persisted_with_its_provenance():
         await scheduler.stop()
 
 
+@pytest.mark.parametrize("missing_completion", ["no_response", "lost_completion", "missing_status"])
+async def test_unconfirmed_speech_is_not_persisted_and_the_queue_continues(missing_completion):
+    """Ni refus asynchrone ni fin perdue ne prouvent que le texte a été entendu."""
+
+    core, session, journal = FakeCore(), FakeVoiceSession(), RecordingJournal()
+    scheduler = build_scheduler(core, session, journal=journal, output_timeout_s=0.02)
+    await scheduler.start()
+    try:
+        await core.publish(speech_envelope("Phrase non confirmée.", kind=SpeechKind.RESULT, speech_id="unconfirmed"))
+        await wait_for(lambda: len(session.spoken) == 1)
+        first_output = session.active_output_id
+        assert first_output is not None
+        if missing_completion == "lost_completion":
+            await scheduler.note_output_event(
+                ProtocolEnvelope(message_type="realtime.output_started", payload={"output_id": first_output})
+            )
+            await scheduler.note_output_event(
+                ProtocolEnvelope(message_type="realtime.audio", payload={"output_id": first_output, "speech_id": "unconfirmed"})
+            )
+        session.active_output_id = None
+        session.live_speaks = 0
+        if missing_completion == "missing_status":
+            await scheduler.note_output_event(
+                ProtocolEnvelope(message_type="realtime.response_done", payload={"output_id": first_output})
+            )
+        await core.publish(speech_envelope("Réponse suivante.", kind=SpeechKind.RESULT, speech_id="confirmed"))
+        await wait_for(lambda: len(session.spoken) == 2)
+
+        assert core.turns == []
+        assert journal.of("voice.speech.completed") == []
+        interrupted = journal.of("voice.speech.interrupted")
+        assert len(interrupted) == 1
+        assert interrupted[0]["data"]["status"] == "unknown"
+        assert interrupted[0]["data"]["speech_id"] == "unconfirmed"
+        if missing_completion != "missing_status":
+            stalled = journal.of("voice.speech.output_stalled")
+            assert stalled[-1]["data"]["code"] == "speech_output_stalled"
+            assert stalled[-1]["data"]["still_active"] is False
+        # Une notification tardive de l'ancienne sortie ne termine pas la suivante.
+        await release_surface(scheduler, first_output, status="failed")
+        assert core.turns == []
+        await finish_speech(scheduler, session)
+        await wait_for(lambda: len(core.turns) == 1)
+        assert core.turns[0]["content"] == "Réponse suivante."
+        assert core.turns[0]["metadata"]["speech_id"] == "confirmed"
+        assert len(journal.of("voice.speech.completed")) == 1
+    finally:
+        await scheduler.stop()
+
+
+@pytest.mark.parametrize("alive_source", ["provider", "local_playback"])
+async def test_missing_completion_keeps_waiting_while_output_is_alive(alive_source):
+    """Le délai sonde la lecture ; une phrase longue n'est pas abandonnée."""
+
+    core, session, journal = FakeCore(), FakeVoiceSession(), RecordingJournal()
+    scheduler = build_scheduler(core, session, journal=journal, output_timeout_s=0.02)
+    await scheduler.start()
+    try:
+        await core.publish(speech_envelope("Longue phrase.", kind=SpeechKind.RESULT, speech_id="long"))
+        await wait_for(lambda: len(session.spoken) == 1)
+        output_id = session.active_output_id
+        if alive_source == "local_playback":
+            session.active_output_id = None
+            scheduler.output_alive = lambda candidate: candidate == output_id
+        await core.publish(speech_envelope("À la suite.", kind=SpeechKind.RESULT, speech_id="next"))
+        await journal.wait_until(lambda: journal.count("voice.speech.output_stalled") > 0)
+        assert journal.of("voice.speech.output_stalled")[-1]["data"]["still_active"] is True
+        assert len(session.spoken) == 1
+        assert core.turns == []
+        assert journal.of("voice.speech.interrupted") == []
+        session.active_output_id = None
+        session.live_speaks = 0
+        scheduler.output_alive = None
+        await release_surface(scheduler, output_id)
+        await wait_for(lambda: len(session.spoken) == 2)
+        assert [turn["content"] for turn in core.turns] == ["Longue phrase."]
+    finally:
+        await scheduler.stop()
+
+
 async def test_an_interrupted_output_is_not_persisted_as_heard():
     """Une réponse qui ne s'est pas terminée n'a pas été entendue en entier.
 

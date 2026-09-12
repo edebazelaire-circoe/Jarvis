@@ -217,6 +217,10 @@ class BrainOrchestrator:
         self._states: dict[str, BrainWorkingState] = {}
         self._accepted: dict[str, BrainTurnAcceptance] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
+        # Seul le tour qui active un travail en devient propriétaire. Un tour
+        # qui décrit un travail déjà actif ne peut pas le solder en échouant.
+        # Aucun lien avec l'annulation des jobs exécutés indépendamment de Core.
+        self._work_owners: dict[tuple[str, str], str] = {}
         # Corrélations dont l'échec a déjà été rédigé en parole. Un tour en
         # échec publie deux `brain.work.failed` (portée travail puis portée
         # tour) et le backend peut en plus émettre sa propre parole d'erreur :
@@ -233,7 +237,12 @@ class BrainOrchestrator:
         # qu'il les prenait (Décision 44). Indexés par corrélation, retirés dès
         # la promotion ou à la fin de la tâche du tour : bornés par le nombre de
         # tours en vol.
-        self._unconfirmed_turns: dict[str, BrainTurnInput] = {}
+        self._unconfirmed_turns: dict[str, tuple[int, BrainTurnInput]] = {}
+        # L'ordre d'arrivée distingue l'intention de l'ordre des réponses async.
+        # Une confirmation ancienne ne remplace pas une intention plus récente ;
+        # un tour encore incertain, lui, ne bloque aucune confirmation.
+        self._turn_seq = 0
+        self._confirmed_turn_order: dict[str, int] = {}
         self._stopping = False
         # Retour utilisateur n° 8 : une réponse prête mais encore en file quand
         # l'utilisateur relance n'est plus cohérente avec ce qu'il vient de
@@ -357,16 +366,19 @@ class BrainOrchestrator:
         facts: list[str] = []
         questions: list[str] = []
         # Tours incertains vus mais pas encore confirmés, par corrélation. Le
-        # journal est chronologique : la dernière confirmation rencontrée fait
-        # l'intention, et un tour adressé ultérieur les périme tous.
-        pending_uncertain: dict[str, str] = {}
-        for turn in await self._conversations.list_turns(conversation_id, limit=self.REHYDRATION_TURN_LIMIT):
+        # journal est chronologique : l'arrivée du tour confirmé le plus récent
+        # fait l'intention, même si une réponse plus ancienne arrive après.
+        pending_uncertain: dict[str, tuple[int, str]] = {}
+        confirmed_order = -1
+        turns = await self._conversations.list_turns(conversation_id, limit=self.REHYDRATION_TURN_LIMIT)
+        for order, turn in enumerate(turns):
             metadata = turn.metadata or {}
             if turn.kind is TurnKind.USER and metadata.get("authoritative"):
                 if metadata.get("addressing") == AddressingDecision.UNCERTAIN.value:
-                    pending_uncertain[turn.correlation_id] = turn.content
+                    pending_uncertain[turn.correlation_id] = (order, turn.content)
                     continue
                 intent = turn.content
+                confirmed_order = order
                 # Un nouveau tour utilisateur clôt les questions ouvertes,
                 # exactement comme en vol.
                 questions.clear()
@@ -379,11 +391,11 @@ class BrainOrchestrator:
             speech_kind = str(metadata.get("speech_kind") or "")
             if speech_kind != SpeechKind.ERROR.value:
                 confirmed = pending_uncertain.pop(turn.correlation_id, None)
-                if confirmed is not None:
+                if confirmed is not None and confirmed[0] > confirmed_order:
                     # Résolu avant les filtres ci-dessous : une phrase coupée
                     # prouve quand même que le cerveau a pris ce tour, même si
                     # son contenu ne compte pas comme fait public.
-                    intent = confirmed
+                    confirmed_order, intent = confirmed
                     questions.clear()
             if metadata.get("delivery") == SPEECH_DELIVERY_PARTIAL:
                 # Phrase coupee par la parole de l'utilisateur : elle est dans
@@ -468,6 +480,7 @@ class BrainOrchestrator:
             # un tour incertain, la dérivation le laisse en attente au lieu d'en
             # faire une intention (voir `_derive_state`).
             state = await self._ensure_state(turn.conversation_id)
+            self._turn_seq += 1
             self._last_conversation_id = turn.conversation_id
             revision: BrainIntentRevision | None = None
             superseded: tuple[str, ...] = ()
@@ -480,11 +493,12 @@ class BrainOrchestrator:
                 # survivent. C'est exactement cet état-là que la Décision 45
                 # renvoie au cerveau : une phrase captée à la télévision ne doit
                 # pas devenir ce que Core lui affirme.
-                self._unconfirmed_turns[turn.correlation_id] = turn
+                self._unconfirmed_turns[turn.correlation_id] = (self._turn_seq, turn)
                 # Repère pour la promotion : seules les réponses émises avant
                 # l'arrivée de ce tour pourront alors être déclarées périmées.
                 self._unconfirmed_since[turn.correlation_id] = self._speech_seq
             else:
+                self._confirmed_turn_order[turn.conversation_id] = self._turn_seq
                 state = self._revise(turn.conversation_id, current_user_intent=turn.text, unresolved_questions=())
                 # Rétention par défaut, rendue explicite et observable : une
                 # nouvelle intention utilisateur — y compris celle qui a coupé la
@@ -742,11 +756,17 @@ class BrainOrchestrator:
         `asyncio.Lock` n'est pas réentrant.
         """
 
-        turn = self._unconfirmed_turns.pop(correlation_id, None)
+        pending = self._unconfirmed_turns.pop(correlation_id, None)
         arrived_at = self._unconfirmed_since.pop(correlation_id, self._speech_seq)
-        if turn is None:
+        if pending is None:
             return
+        turn_order, turn = pending
         async with self._lock:
+            if turn_order <= self._confirmed_turn_order.get(turn.conversation_id, 0):
+                # Le travail et son résultat restent valides ; seule la promotion
+                # de cette ancienne intention est désormais sans effet.
+                return
+            self._confirmed_turn_order[turn.conversation_id] = turn_order
             previous_revision = self.working_state(turn.conversation_id).revision
             state = self._revise(turn.conversation_id, current_user_intent=turn.text, unresolved_questions=())
             # Même règle qu'à l'arrivée d'un tour adressé, appliquée au moment
@@ -821,6 +841,9 @@ class BrainOrchestrator:
                     },
                 )
             self._tasks.pop(turn.correlation_id, None)
+            for key, owner in tuple(self._work_owners.items()):
+                if key[0] == turn.conversation_id and owner == turn.correlation_id:
+                    self._work_owners.pop(key)
             self._error_spoken.discard(turn.correlation_id)
             # Un tour incertain que le cerveau n'a pas pris ne peut plus l'être
             # une fois sa tâche soldée : l'entrée s'en va avec elle.
@@ -927,6 +950,7 @@ class BrainOrchestrator:
         d'échec factuel, et l'envelope porte déjà la corrélation du tour.
         """
 
+        await self._settle_failed_turn_work(turn, error_class=error_class)
         await self._publish(
             BRAIN_WORK_FAILED,
             {
@@ -944,6 +968,42 @@ class BrainOrchestrator:
             work_id=None,
             public_summary=public_summary,
         )
+
+    async def _settle_failed_turn_work(self, turn: BrainTurnInput, *, error_class: str) -> None:
+        """Solder les travaux backend orphelins, sans annuler aucun job.
+
+        L'échec du tour ne dit rien des travaux d'autres tours. Les événements
+        terminaux et les annulations explicites ont déjà retiré leur propriété.
+        La transition sous verrou précède la publication, comme celle d'un
+        événement FAILED du backend. Aucune parole d'erreur n'est inventée.
+        """
+
+        settled: list[tuple[str, BrainWorkingState]] = []
+        async with self._lock:
+            for key, owner in tuple(self._work_owners.items()):
+                conversation_id, work_id = key
+                if conversation_id != turn.conversation_id or owner != turn.correlation_id:
+                    continue
+                self._work_owners.pop(key)
+                state = self._revise_work(conversation_id, drop=work_id)
+                work_key = self._work_latency_key(conversation_id, work_id)
+                self._latency.forget(LATENCY_FIRST_PUBLIC_PROGRESS, work_key)
+                self._latency.forget(LATENCY_WORK_COMPLETED, work_key)
+                if state is not None:
+                    settled.append((work_id, state))
+        for work_id, state in settled:
+            await self._publish(
+                BRAIN_WORK_FAILED,
+                {"work_id": work_id, "job_id": None, "error_class": error_class, "public_summary": ""},
+                turn.conversation_id,
+                turn.correlation_id,
+            )
+            await self._publish(BRAIN_STATE_UPDATED, state.to_public_payload(), turn.conversation_id, turn.correlation_id)
+
+    @staticmethod
+    def _work_latency_key(conversation_id: str, work_id: str | None) -> str:
+        # Deux conversations peuvent nommer leur travail de la même façon.
+        return repr((conversation_id, work_id)) if work_id else ""
 
     async def _speak_failure(
         self,
@@ -1003,9 +1063,10 @@ class BrainOrchestrator:
             return
 
         state: BrainWorkingState | None = None
-        work_key = str(event.work_id or "")
+        work_key = self._work_latency_key(event.conversation_id, event.work_id)
         if event.kind is BrainEventKind.ACCEPTED:
             async with self._lock:
+                self._claim_work(event)
                 state = self._revise_work(event.conversation_id, activate=event.work_id)
             # Bornes de départ des mesures 5 et 6 : un travail accepté est un
             # travail qui commence, et c'est de là que l'utilisateur attend.
@@ -1024,6 +1085,7 @@ class BrainOrchestrator:
             )
         elif event.kind is BrainEventKind.PROGRESS:
             async with self._lock:
+                self._claim_work(event)
                 state = self._revise_work(event.conversation_id, activate=event.work_id)
             # Mesure 5 : seule la **première** progression compte, et la marque
             # est consommée, donc les suivantes n'émettent rien.
@@ -1051,6 +1113,7 @@ class BrainOrchestrator:
             )
         elif event.kind is BrainEventKind.COMPLETED:
             async with self._lock:
+                self._work_owners.pop((event.conversation_id, event.work_id), None)
                 state = self._revise_work(event.conversation_id, complete=event.work_id)
             # Mesure 6. Un travail qui se termine sans avoir jamais progressé
             # publiquement n'a pas de mesure 5 : sa marque est abandonnée, pas
@@ -1079,6 +1142,7 @@ class BrainOrchestrator:
             )
         else:  # BrainEventKind.FAILED
             async with self._lock:
+                self._work_owners.pop((event.conversation_id, event.work_id), None)
                 state = self._revise_work(event.conversation_id, drop=event.work_id)
             # Une panne n'est pas une durée d'exécution : mesurer un travail qui
             # a échoué mélangerait deux populations dans le même chiffre.
@@ -1107,6 +1171,12 @@ class BrainOrchestrator:
 
         if state is not None:
             await self._publish(BRAIN_STATE_UPDATED, state.to_public_payload(), event.conversation_id, event.correlation_id)
+
+    def _claim_work(self, event: BrainEvent) -> None:
+        """Rattacher une nouvelle activation au tour, sous `_lock`."""
+
+        if event.work_id and event.work_id not in self.working_state(event.conversation_id).active_work_ids:
+            self._work_owners[(event.conversation_id, event.work_id)] = event.correlation_id
 
     # -- révision d'intention -----------------------------------------------
 
@@ -1165,10 +1235,12 @@ class BrainOrchestrator:
             if work_id in cancelled:
                 return
             cancelled.add(work_id)
+            self._work_owners.pop((event.conversation_id, work_id), None)
             # Un travail annulé n'aboutira pas : ses deux mesures sont
             # abandonnées, pas fermées.
-            self._latency.forget(LATENCY_FIRST_PUBLIC_PROGRESS, work_id)
-            self._latency.forget(LATENCY_WORK_COMPLETED, work_id)
+            work_key = self._work_latency_key(event.conversation_id, work_id)
+            self._latency.forget(LATENCY_FIRST_PUBLIC_PROGRESS, work_key)
+            self._latency.forget(LATENCY_WORK_COMPLETED, work_key)
             current = self.working_state(event.conversation_id)
             previous_revision = current.revision
             retained = tuple(item for item in current.active_work_ids if item != work_id)

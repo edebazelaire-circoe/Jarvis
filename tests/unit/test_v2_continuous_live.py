@@ -372,7 +372,16 @@ async def test_a_response_without_its_own_commit_still_returns_to_listening(monk
         await asyncio.gather(run_task, return_exceptions=True)
 
 
-async def test_jarvis_mute_returns_to_background_without_touching_core_work(monkeypatch):
+@pytest.mark.parametrize("transcript", [
+    "Jarvis mute",
+    "Jarvis mute.",
+    "Jarvis mute!",
+    "Jarvis mute ?",
+    "Jarvis, mute !",
+    " \tJarvis,\n mute… \n",
+    "« Jarvis mute. »",
+])
+async def test_jarvis_mute_returns_to_background_without_touching_core_work(monkeypatch, transcript):
     """Décision 11 : mute est une commande d'état vocal, pas d'annulation."""
     session = ContinuousSession()
     journal = RecordingJournal()
@@ -382,7 +391,7 @@ async def test_jarvis_mute_returns_to_background_without_touching_core_work(monk
         await _play_one_turn(session)
         await journal.wait_until(lambda: journal.count("voice.turn_completed") == 1)
 
-        await session.push("realtime.transcript", text="Jarvis mute")
+        await session.push("realtime.transcript", text=transcript)
         await asyncio.wait_for(wakeword.resumed.wait(), timeout=TIMEOUT_S)
 
         assert runtime.runtime.state is VoiceLifecycleState.BACKGROUND
@@ -394,12 +403,44 @@ async def test_jarvis_mute_returns_to_background_without_touching_core_work(monk
         # Le mute n'est pas une demande : il ne part pas au cerveau, y compris
         # depuis que les tours incertains y partent (Décision 44).
         assert core.brain_turns == []
+        assert journal.count("voice.brain_turn_submitted") == 0
+        assert journal.count("voice.background") == 1
         # Le travail de Core continue : rien n'a été annulé, rien n'a été fermé.
         assert core.jobs == {"job-1": "running"}
         assert core.cancel_calls == []
         assert core.closed is False
         # La conversation survit au mute : le prochain éveil la reprend.
         assert runtime.runtime.conversation_id == "conversation-1"
+    finally:
+        run_task.cancel()
+        await asyncio.gather(run_task, return_exceptions=True)
+
+
+@pytest.mark.parametrize("transcript", [
+    "Jarvis, ne mute pas.",
+    "Explique la commande « Jarvis mute ».",
+    "Jarvis mute, mais pas maintenant.",
+    "Ne dis pas « Jarvis mute ».",
+    "Jarvis mute non",
+    "Jarvis mute нет",
+])
+async def test_mentioning_mute_does_not_trigger_the_voice_command(monkeypatch, transcript):
+    """Les mots supplémentaires restent significatifs, même hors alphabet latin."""
+    session = ContinuousSession()
+    journal = RecordingJournal()
+    runtime, wakeword, core = _runtime(monkeypatch, session=session, journal=journal)
+    run_task = await _wake(runtime, wakeword, journal)
+    try:
+        await session.push("realtime.transcript", text=transcript)
+        await journal.wait_until(lambda: len(core.brain_turns) == 1)
+        assert core.brain_turns[0]["content"] == transcript
+        assert journal.count("voice.brain_turn_submitted") == 1
+        assert journal.count("voice.background") == 0
+        assert runtime.runtime.state is VoiceLifecycleState.ACTIVE
+        assert session.closed is False
+        assert not wakeword.resumed.is_set()
+        assert core.jobs == {"job-1": "running"}
+        assert core.cancel_calls == []
     finally:
         run_task.cancel()
         await asyncio.gather(run_task, return_exceptions=True)

@@ -1,5 +1,14 @@
 # Jarvis Realtime + Async Brain - Implementation TODO
 
+> Reprise du 2026-09-12 : l'archive de ce handoff a été fournie de nouveau.
+> Le code ci-dessous était déjà livré. Une revue indépendante des slices et
+> les corrections confirmées sont suivies dans
+> [ORCHESTRATION.md](../../../tasks/jarvis-realtime-brain-orchestration/ORCHESTRATION.md).
+> Les résultats historiques ci-dessous ne remplacent pas les nouvelles preuves.
+> Reprise clôturée côté logiciel : quatre régressions corrigées, fixtures réparées,
+> 1 891 tests réussis / 4 skips, release et smoke Realtime réel réussis. Recette
+> acoustique et accès agenda/rappels toujours à valider.
+
 ## Orchestration mode
 
 A fresh implementation agent must start with Task 00 and remain in orchestration mode for this handoff. Do not jump directly to a coding slice.

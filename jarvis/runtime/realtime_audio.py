@@ -5,6 +5,7 @@ import base64
 import json
 import threading
 import time
+import unicodedata
 from collections import deque
 from collections.abc import Callable
 from enum import StrEnum
@@ -2955,7 +2956,14 @@ class RealtimeConversationBridge:
                 await self._call(self.on_listening)
             return False
         normalized = " ".join(text.casefold().replace(",", " ").split())
-        if normalized == "jarvis mute":
+        # La ponctuation de transcription ne change pas la commande vocale.
+        # Garder toutes les lettres (y compris non latines) et les mots en
+        # plus : une négation ou une mention de la commande n'est pas un mute.
+        mute_words = "".join(
+            " " if unicodedata.category(char).startswith("P") else char
+            for char in text.casefold()
+        ).split()
+        if mute_words == ["jarvis", "mute"]:
             await self._call(self.on_mute)
             return True
         if self.continuous:

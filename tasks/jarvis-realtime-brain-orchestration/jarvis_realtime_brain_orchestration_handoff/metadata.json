@@ -1,0 +1,10 @@
+{
+  "title": "Jarvis Realtime Surface and Async Brain Orchestration",
+  "created_at": "2026-09-08",
+  "source": "Reconstructed from Jarvis project conversation plus live inspection of edebazelaire-circoe/Jarvis and current OpenAI Realtime API documentation.",
+  "task_count": 13,
+  "repository": "edebazelaire-circoe/Jarvis",
+  "repository_branch": "main",
+  "status": "implementation-ready handoff",
+  "git_modified_during_handoff": false
+}

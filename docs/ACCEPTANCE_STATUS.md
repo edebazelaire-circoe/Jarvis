@@ -1,5 +1,12 @@
 # Jarvis V1 acceptance status
 
+> Realtime + async brain revalidation, **2026-09-12**: 1,891 tests passed,
+> 4 expected skips with warnings treated as errors; release verifier passed.
+> The real Realtime speech smoke also passed separately. Four behavioral
+> regressions and test fixture leaks were corrected. See the
+> [current report](../tasks/jarvis-realtime-brain-orchestration/FINAL-REPORT.md).
+> This does not close workstation acoustic or brain calendar/reminder gates.
+
 Date: 2026-08-31
 
 > Solo Owner (owner-aware voice gating) and the Core work state, delivered by the
@@ -148,8 +155,8 @@ and one test needing symlinks.
 | Empty surface tool catalogue in continuous mode | PASS | Unit test on the catalogue plus an integration scenario proving no Core tool executes from the surface. |
 | Barge-in ordering and truncation honesty | PASS automated, up to the local stop | Tests prove local stop -> `cancel_output` -> `truncate`, and that a truncated sentence is persisted as partly heard. They do **not** prove that sound stops in the speakers, nor how fast. |
 | Six latency measures | PASS automated | Emitted into `runtime/trace.jsonl`, identifier-only, joinable by `correlation_id` / `speech_id` / `work_id`. |
-| Live OpenAI Realtime smoke test on the continuous path | **UNVERIFIED** | `tests/integration/test_live_openai.py` covers it but is opt-in and was not run. Not a failure; simply not executed. It carries the `response.metadata` round-trip check described in step 1 of the checklist below. |
-| `response.metadata` round-trip on `response.created` | **UNVERIFIED** | Named single point of failure. `speak()` correlates a brain speech with its provider response only through `response.metadata` (`jarvis/adapters/openai_realtime.py:455-467`, `_bind_response()` line 235). If the real service does not echo it back, the speech loses its `speech_id` and is persisted twice - once as `surface.reflex` by the conversation bridge, once as `brain.speech` by the scheduler - and barge-in loses its truncation target. Open question 9 in `docs/handoff-realtime-brain/docs/07-open-questions.md`. |
+| Live OpenAI Realtime smoke test on the continuous path | **PASS — 2026-09-12** | `test_real_openai_realtime_brain_speech`: 1 passed in 3.28 s against the real service. No microphone or speaker opened. [Evidence](../tasks/jarvis-realtime-brain-orchestration/live-smoke-2026-09-12.txt). This validates session/speech creation, correlated output/audio and sending cancellation, not acoustic behavior or a server cancellation acknowledgement. |
+| `response.metadata` correlation round-trip | **PASS — 2026-09-12, one live session** | The live smoke test observed the expected output id and `speech_id` on normalized output start and first audio. This closes the previously unrun provider-binding check for the tested adapter/service combination; retain the opt-in regression test for future provider changes. |
 | Workstation acoustic acceptance | **UNVERIFIED** | No microphone, speaker, headphone, echo or VAD-retrigger measurement was made at any point in this handoff. |
 | Brain access to calendar and reminders | **UNVERIFIED** | The blocking gate. In continuous mode the surface holds no tools, and the brain's own calendar/reminder access has never been confirmed. Drive is reachable only if the operator registered `python -m jarvis drive-mcp` in the CLI agent. |
 

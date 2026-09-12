@@ -84,7 +84,7 @@ class _ActiveSpeech:
     request: SpeechRequest
     output_id: str
     done: asyncio.Event = field(default_factory=asyncio.Event)
-    status: str = ""
+    status: str = "unknown"
     # Coupée par la parole de l'utilisateur, et ce qui en a été entendu. Le
     # statut du fournisseur ne suffit pas : `cancelled` peut aussi venir d'un
     # échec, et lui seul ne dit pas combien de millisecondes ont été jouées.
@@ -374,7 +374,7 @@ class SpeechScheduler:
             return
         if event.message_type != "realtime.response_done":
             return
-        status = str(payload.get("status") or "")
+        status = str(payload.get("status") or "unknown")
         if output_id:
             self._live_outputs.discard(output_id)
         if not self._live_outputs:
@@ -842,7 +842,9 @@ class SpeechScheduler:
             await self._await_output(active)
         finally:
             self._active = None
-        if active.interrupted or (active.status and active.status != "completed"):
+        # Une sortie devenue inactive libère la file, mais seule une fin
+        # explicitement confirmée prouve que la phrase a été dite en entier.
+        if active.interrupted or active.status != "completed":
             self._trace(
                 SPEECH_INTERRUPTED,
                 request.text[:300],

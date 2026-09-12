@@ -1,5 +1,11 @@
 # Final Implementation Report - Jarvis Realtime + Async Brain
 
+> Rapport historique du 2026-09-09. Pour la reprise et la validation du code
+> actuel le 2026-09-12, voir
+> [ORCHESTRATION.md](../../tasks/jarvis-realtime-brain-orchestration/ORCHESTRATION.md).
+> Les travaux ultérieurs du dépôt ont notamment ajouté le duplex et Solo Owner ;
+> les limitations énumérées ici décrivent la livraison initiale.
+
 Date: 2026-09-09. Covers Tasks 00 to 12 of `docs/handoff-realtime-brain/`.
 Written from `templates/final-implementation-report-template.md`.
 

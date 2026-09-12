@@ -43,6 +43,14 @@ Deferred. Use stable `work_id`, `correlation_id`, and optional parent/root metad
 
 ## 9. Provider metadata round-trip (opened by Task 04, 2026-09-09)
 
+**Validation du 2026-09-12 :** le test réel
+`test_real_openai_realtime_brain_speech` passe : sortie et premier audio sont
+rattachés au `speech_id` attendu. La réponse fournisseur permet donc la
+corrélation dans cette session. Voir la
+[preuve](../../../tasks/jarvis-realtime-brain-orchestration/live-smoke-2026-09-12.txt).
+La recette acoustique reste distincte et non exécutée. Le contexte historique
+ci-dessous explique pourquoi ce smoke test est requis.
+
 `speak()` correlates a `SpeechRequest` with the provider response by putting an
 opaque `output_id` into `response.metadata` and reading it back from
 `response.created`. The `response.cancel`, `conversation.item.truncate`, and input

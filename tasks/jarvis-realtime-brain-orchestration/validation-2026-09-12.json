@@ -1,0 +1,211 @@
+[
+  {
+    "slice": "01",
+    "command": [
+      "C:\\Projects\\jarvis\\jarvis\\.venv\\Scripts\\python.exe",
+      "-m",
+      "pytest",
+      "-q",
+      "-W",
+      "error",
+      "tests/unit/test_v2_brain_contracts.py",
+      "tests/unit/test_v2_domain.py",
+      "tests/unit/test_v2_architecture.py"
+    ],
+    "exit_code": 0,
+    "output": "........................................                                 [100%]\n40 passed in 0.85s\n",
+    "checked_at": "2026-09-12T11:36:30.663393+00:00"
+  },
+  {
+    "slice": "02",
+    "command": [
+      "C:\\Projects\\jarvis\\jarvis\\.venv\\Scripts\\python.exe",
+      "-m",
+      "pytest",
+      "-q",
+      "-W",
+      "error",
+      "tests/unit/test_v2_brain_orchestrator.py",
+      "tests/unit/test_v2_event_bus.py",
+      "tests/unit/test_v2_wire_form.py"
+    ],
+    "exit_code": 0,
+    "output": "....................................                                     [100%]\n36 passed in 1.58s\n",
+    "checked_at": "2026-09-12T11:36:33.248594+00:00"
+  },
+  {
+    "slice": "03",
+    "command": [
+      "C:\\Projects\\jarvis\\jarvis\\.venv\\Scripts\\python.exe",
+      "-m",
+      "pytest",
+      "-q",
+      "-W",
+      "error",
+      "tests/integration/test_v2_brain_protocol.py",
+      "tests/integration/test_v2_protocol.py"
+    ],
+    "exit_code": 0,
+    "output": ".................                                                        [100%]\n17 passed in 1.64s\n",
+    "checked_at": "2026-09-12T11:36:35.926401+00:00"
+  },
+  {
+    "slice": "04",
+    "command": [
+      "C:\\Projects\\jarvis\\jarvis\\.venv\\Scripts\\python.exe",
+      "-m",
+      "pytest",
+      "-q",
+      "-W",
+      "error",
+      "tests/unit/test_realtime_output_control.py"
+    ],
+    "exit_code": 0,
+    "output": ".................                                                        [100%]\n17 passed in 0.38s\n",
+    "checked_at": "2026-09-12T11:36:37.301126+00:00"
+  },
+  {
+    "slice": "05",
+    "command": [
+      "C:\\Projects\\jarvis\\jarvis\\.venv\\Scripts\\python.exe",
+      "-m",
+      "pytest",
+      "-q",
+      "-W",
+      "error",
+      "tests/unit/test_v2_continuous_live.py",
+      "tests/unit/test_v2_voice_toggle.py",
+      "tests/unit/test_v2_voice_activity.py",
+      "tests/unit/test_realtime_audio_lifecycle.py"
+    ],
+    "exit_code": 0,
+    "output": "...................................................................      [100%]\n67 passed in 1.06s\n",
+    "checked_at": "2026-09-12T11:36:39.404021+00:00"
+  },
+  {
+    "slice": "06",
+    "command": [
+      "C:\\Projects\\jarvis\\jarvis\\.venv\\Scripts\\python.exe",
+      "-m",
+      "pytest",
+      "-q",
+      "-W",
+      "error",
+      "tests/unit/test_surface_reflex_policy.py"
+    ],
+    "exit_code": 0,
+    "output": "........................                                                 [100%]\n24 passed in 0.66s\n",
+    "checked_at": "2026-09-12T11:36:41.222334+00:00"
+  },
+  {
+    "slice": "07",
+    "command": [
+      "C:\\Projects\\jarvis\\jarvis\\.venv\\Scripts\\python.exe",
+      "-m",
+      "pytest",
+      "-q",
+      "-W",
+      "error",
+      "tests/unit/test_v2_brain_migration.py"
+    ],
+    "exit_code": 0,
+    "output": ".......................................                                  [100%]\n39 passed in 3.29s\n",
+    "checked_at": "2026-09-12T11:36:45.575539+00:00"
+  },
+  {
+    "slice": "08",
+    "command": [
+      "C:\\Projects\\jarvis\\jarvis\\.venv\\Scripts\\python.exe",
+      "-m",
+      "pytest",
+      "-q",
+      "-W",
+      "error",
+      "tests/unit/test_v2_speech_scheduler.py"
+    ],
+    "exit_code": 0,
+    "output": "............................                                             [100%]\n28 passed in 1.63s\n",
+    "checked_at": "2026-09-12T11:36:48.335315+00:00"
+  },
+  {
+    "slice": "09",
+    "command": [
+      "C:\\Projects\\jarvis\\jarvis\\.venv\\Scripts\\python.exe",
+      "-m",
+      "pytest",
+      "-q",
+      "-W",
+      "error",
+      "tests/unit/test_v2_barge_in.py",
+      "tests/unit/test_v2_intent_revision.py",
+      "tests/unit/test_v2_playback_cursor.py"
+    ],
+    "exit_code": 1,
+    "output": "......................................F....................              [100%]\n================================== FAILURES ===================================\n____ test_an_uncertain_turn_is_acknowledged_without_announcing_a_revision _____\n\nself = <Handle Task.task_wakeup()>\ncallback = <built-in method task_wakeup of _asyncio.Task object at 0x000001E3E6B1C910>\nargs = (<Future finished result=None>,)\nloop = <ProactorEventLoop running=False closed=False debug=False>\ncontext = <_contextvars.Context object at 0x000001E3E6B2E940>\n\n>   def __init__(self, callback, args, loop, context=None):\nE   ResourceWarning: unclosed database in <sqlite3.Connection object at 0x000001E3E6AFFA60>\n\nC:\\Python314\\Lib\\asyncio\\events.py:41: ResourceWarning\n\nThe above exception was the direct cause of the following exception:\n\ncls = <class '_pytest.runner.CallInfo'>\nfunc = <function call_and_report.<locals>.<lambda> at 0x000001E3E6B40F60>\nwhen = 'call'\nreraise = (<class '_pytest.outcomes.Exit'>, <class 'KeyboardInterrupt'>)\n\n    @classmethod\n    def from_call(\n        cls,\n        func: Callable[[], TResult],\n        when: Literal[\"collect\", \"setup\", \"call\", \"teardown\"],\n        reraise: type[BaseException] | tuple[type[BaseException], ...] | None = None,\n    ) -> CallInfo[TResult]:\n        \"\"\"Call func, wrapping the result in a CallInfo.\n    \n        :param func:\n            The function to call. Called without arguments.\n        :type func: Callable[[], _pytest.runner.TResult]\n        :param when:\n            The phase in which the function is called.\n        :param reraise:\n            Exception or exceptions that shall propagate if raised by the\n            function, instead of being wrapped in the CallInfo.\n        \"\"\"\n        excinfo = None\n        instant = timing.Instant()\n        try:\n>           result: TResult | None = func()\n                                     ^^^^^^\n\n.venv\\Lib\\site-packages\\_pytest\\runner.py:361: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _\n.venv\\Lib\\site-packages\\_pytest\\runner.py:250: in <lambda>\n    lambda: runtest_hook(item=item, **kwds),\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n.venv\\Lib\\site-packages\\pluggy\\_hooks.py:512: in __call__\n    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n.venv\\Lib\\site-packages\\pluggy\\_manager.py:120: in _hookexec\n    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n.venv\\Lib\\site-packages\\_pytest\\logging.py:865: in pytest_runtest_call\n    yield\n.venv\\Lib\\site-packages\\_pytest\\capture.py:900: in pytest_runtest_call\n    return (yield)\n            ^^^^^\n.venv\\Lib\\site-packages\\_pytest\\skipping.py:268: in pytest_runtest_call\n    return (yield)\n            ^^^^^\n.venv\\Lib\\site-packages\\_pytest\\unraisableexception.py:183: in pytest_runtest_call\n    collect_unraisable(item.config)\n.venv\\Lib\\site-packages\\_pytest\\unraisableexception.py:79: in collect_unraisable\n    raise errors[0]\n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _\n\nconfig = <_pytest.config.Config object at 0x000001E3E2E83620>\n\n    def collect_unraisable(config: Config) -> None:\n        pop_unraisable = config.stash[unraisable_exceptions].pop\n        errors: list[pytest.PytestUnraisableExceptionWarning | RuntimeError] = []\n        meta = None\n        hook_error = None\n        try:\n            while True:\n                try:\n                    meta = pop_unraisable()\n                except IndexError:\n                    break\n    \n                if isinstance(meta, BaseException):\n                    hook_error = RuntimeError(\"Failed to process unraisable exception\")\n                    hook_error.__cause__ = meta\n                    errors.append(hook_error)\n                    continue\n    \n                msg = meta.msg\n                try:\n>                   warnings.warn(pytest.PytestUnraisableExceptionWarning(msg))\nE                   pytest.PytestUnraisableExceptionWarning: Exception ignored while finalizing database connection <sqlite3.Connection object at 0x000001E3E6AFFA60>: None\n\n.venv\\Lib\\site-packages\\_pytest\\unraisableexception.py:67: PytestUnraisableExceptionWarning\n=========================== short test summary info ===========================\nFAILED tests/unit/test_v2_intent_revision.py::test_an_uncertain_turn_is_acknowledged_without_announcing_a_revision\n1 failed, 58 passed in 2.30s\n",
+    "checked_at": "2026-09-12T11:36:51.581652+00:00"
+  },
+  {
+    "slice": "09R",
+    "command": [
+      "C:\\Projects\\jarvis\\jarvis\\.venv\\Scripts\\python.exe",
+      "-m",
+      "pytest",
+      "-q",
+      "-W",
+      "error",
+      "tests/unit/test_v2_barge_in.py",
+      "tests/unit/test_v2_intent_revision.py",
+      "tests/unit/test_v2_playback_cursor.py",
+      "tests/unit/test_v2_brain_orchestrator.py"
+    ],
+    "exit_code": 0,
+    "output": "........................................................................ [ 82%]\n...............                                                          [100%]\n87 passed in 3.28s\n",
+    "checked_at": "2026-09-12T11:48:33.596220+00:00"
+  },
+  {
+    "slice": "10",
+    "command": [
+      "C:\\Projects\\jarvis\\jarvis\\.venv\\Scripts\\python.exe",
+      "-m",
+      "pytest",
+      "-q",
+      "-W",
+      "error",
+      "tests/unit/test_v2_work_progress.py"
+    ],
+    "exit_code": 0,
+    "output": ".............                                                            [100%]\n13 passed in 0.52s\n",
+    "checked_at": "2026-09-12T11:48:35.062693+00:00"
+  },
+  {
+    "slice": "11",
+    "command": [
+      "C:\\Projects\\jarvis\\jarvis\\.venv\\Scripts\\python.exe",
+      "-m",
+      "pytest",
+      "-q",
+      "-W",
+      "error",
+      "tests/integration/test_v2_async_conversation.py"
+    ],
+    "exit_code": 0,
+    "output": "................                                                         [100%]\n16 passed in 3.00s\n",
+    "checked_at": "2026-09-12T11:48:39.039647+00:00"
+  },
+  {
+    "slice": "12",
+    "command": [
+      "C:\\Projects\\jarvis\\jarvis\\.venv\\Scripts\\python.exe",
+      "-m",
+      "pytest",
+      "-q",
+      "-W",
+      "error",
+      "tests/unit/test_v2_latency_telemetry.py",
+      "tests/unit/test_v2_architecture.py"
+    ],
+    "exit_code": 0,
+    "output": "..........................                                               [100%]\n26 passed in 0.92s\n",
+    "checked_at": "2026-09-12T11:48:40.961723+00:00"
+  }
+]

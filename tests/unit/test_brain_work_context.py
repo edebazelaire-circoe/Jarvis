@@ -179,11 +179,18 @@ class Stack:
     clock: FixedClock
     conversation_id: str
     policy_task: asyncio.Task
+    repository: SQLiteStateRepository
 
     async def close(self) -> None:
-        self.policy_task.cancel()
-        await asyncio.gather(self.policy_task, return_exceptions=True)
-        await self.policy.stop()
+        try:
+            self.policy_task.cancel()
+            await asyncio.gather(self.policy_task, return_exceptions=True)
+            await self.policy.stop()
+        finally:
+            try:
+                await self.brain.stop()
+            finally:
+                await self.repository.close()
 
 
 async def build_stack(tmp_path, backend, *, reader=None, jobs=None) -> Stack:
@@ -199,7 +206,7 @@ async def build_stack(tmp_path, backend, *, reader=None, jobs=None) -> Stack:
     brain = BrainOrchestrator(conversations=conversations, events=events, backend=backend, diagnostics=diagnostics, work_context=builder, jobs=jobs)
     conversation = await conversations.create()
     policy_task = asyncio.create_task(policy.run(events.subscribe(max_queue=512)))
-    return Stack(brain, events, store, policy, builder, diagnostics, clock, conversation.id, policy_task)
+    return Stack(brain, events, store, policy, builder, diagnostics, clock, conversation.id, policy_task, state)
 
 
 def turn(conversation_id: str, text: str = "Où en sont mes tâches ?", correlation_id: str = "corr-1") -> BrainTurnInput:
