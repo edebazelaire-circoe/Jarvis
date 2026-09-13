@@ -1,0 +1,250 @@
+{
+  "schema": "jarvis.voice_benchmark.session",
+  "schema_version": 1,
+  "session_id": "offline-duplex-a12285b93fd1",
+  "conversation_id": "offline-voice-common-v1",
+  "architecture": "duplex",
+  "provider_id": "openai",
+  "model_id": "gpt-live-1",
+  "configuration_id": "a99cd226fae9be53d9b6482ee4d1336e46b63ddc3a879cc002181fb7c86934c2",
+  "components": [
+    {
+      "role": "surface",
+      "provider_id": "openai",
+      "model_id": "gpt-live-1"
+    }
+  ],
+  "prompt_applications": [
+    {
+      "program_id": "voice.duplex.openai.session",
+      "layer_revisions": [
+        "c165c6c68c51f9a55eabea5dc99b0aa52230a5a7582bfa3f5b72bd6bbd397354",
+        "b50b529b68db95baf5722d53850c1c47b5f79c77e3889a3e3470c31a054d057c",
+        "fccc652756045a553e8ae30136b804ca045c0ba70bb849dbfefc3414897ff6c5"
+      ],
+      "static_fingerprint": "1427c4254c441bbb57113ff91ece9d272ec7f37e41fb57e79d0b233683afd32a",
+      "application": "saved"
+    }
+  ],
+  "session_fingerprint": "94223750a9ee62127638da1b75c2320a74dbce728485fc38476d2362d535db1e",
+  "started_at": "2026-09-13T00:00:00+00:00",
+  "ended_at": "2026-09-13T00:00:00+00:00",
+  "session_duration_seconds": 0.0,
+  "terminal_status": "stopped",
+  "live_active_seconds": null,
+  "provider_usage_seconds": null,
+  "provider_usage_final": false,
+  "provider_usage": {
+    "duration_seconds": null,
+    "input_tokens": null,
+    "output_tokens": null,
+    "final": false,
+    "source": null
+  },
+  "provider_usage_components": [
+    {
+      "role": "surface",
+      "provider_id": "openai",
+      "model_id": "gpt-live-1",
+      "usage": {
+        "duration_seconds": null,
+        "input_tokens": null,
+        "output_tokens": null,
+        "total_tokens": null,
+        "cached_tokens": null,
+        "reasoning_tokens": null,
+        "requests": null,
+        "final": false,
+        "source": "unavailable",
+        "observed_provider_id": null,
+        "observed_model_id": null,
+        "identity_consistent": null
+      },
+      "cost_estimate": null
+    }
+  ],
+  "trace_evidence_complete": true,
+  "latency_metrics": {
+    "provider_first_pcm_ms": {
+      "count": 0,
+      "samples_ms": [],
+      "min_ms": null,
+      "max_ms": null,
+      "mean_ms": null
+    },
+    "playback_attempt_ms": {
+      "count": 0,
+      "samples_ms": [],
+      "min_ms": null,
+      "max_ms": null,
+      "mean_ms": null
+    },
+    "time_to_first_audible_reaction_ms": {
+      "count": 0,
+      "samples_ms": [],
+      "min_ms": null,
+      "max_ms": null,
+      "mean_ms": null
+    },
+    "time_to_first_useful_answer_ms": {
+      "count": 0,
+      "samples_ms": [],
+      "min_ms": null,
+      "max_ms": null,
+      "mean_ms": null
+    },
+    "frontend_blocking_ms": {
+      "count": 0,
+      "samples_ms": [],
+      "min_ms": null,
+      "max_ms": null,
+      "mean_ms": null
+    },
+    "delegation_latency_ms": {
+      "count": 0,
+      "samples_ms": [],
+      "min_ms": null,
+      "max_ms": null,
+      "mean_ms": null
+    },
+    "speech_queue_wait_ms": {
+      "count": 0,
+      "samples_ms": [],
+      "min_ms": null,
+      "max_ms": null,
+      "mean_ms": null
+    },
+    "brain_speech_to_first_audio_ms": {
+      "count": 0,
+      "samples_ms": [],
+      "min_ms": null,
+      "max_ms": null,
+      "mean_ms": null
+    },
+    "backend_first_progress_ms": {
+      "count": 0,
+      "samples_ms": [],
+      "min_ms": null,
+      "max_ms": null,
+      "mean_ms": null
+    },
+    "backend_result_ms": {
+      "count": 0,
+      "samples_ms": [],
+      "min_ms": null,
+      "max_ms": null,
+      "mean_ms": null
+    },
+    "user_interrupt_stop_ms": {
+      "count": 0,
+      "samples_ms": [],
+      "min_ms": null,
+      "max_ms": null,
+      "mean_ms": null
+    },
+    "device_drain_ms": {
+      "count": 0,
+      "samples_ms": [],
+      "min_ms": null,
+      "max_ms": null,
+      "mean_ms": null
+    }
+  },
+  "event_counts": {
+    "backend_task_started": 0,
+    "backend_task_result": 0,
+    "stale_cancellation": 0,
+    "user_interruption": 0,
+    "false_or_rejected_barge_in": 0,
+    "output_stall": 0,
+    "unnecessary_acknowledgement": 0,
+    "intended_spoken_divergence": 0
+  },
+  "annotations": [
+    {
+      "name": "quiet-ambient",
+      "outcome": "uncertain",
+      "note_length": 70,
+      "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1"
+    },
+    {
+      "name": "short-confirmation",
+      "outcome": "uncertain",
+      "note_length": 70,
+      "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1"
+    },
+    {
+      "name": "direct-question",
+      "outcome": "uncertain",
+      "note_length": 70,
+      "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1"
+    },
+    {
+      "name": "pause-mid-sentence",
+      "outcome": "uncertain",
+      "note_length": 70,
+      "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1"
+    },
+    {
+      "name": "long-monologue",
+      "outcome": "uncertain",
+      "note_length": 70,
+      "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1"
+    },
+    {
+      "name": "late-correction",
+      "outcome": "uncertain",
+      "note_length": 70,
+      "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1"
+    },
+    {
+      "name": "long-backend-work",
+      "outcome": "uncertain",
+      "note_length": 70,
+      "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1"
+    },
+    {
+      "name": "backend-result-after-topic-shift",
+      "outcome": "uncertain",
+      "note_length": 70,
+      "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1"
+    },
+    {
+      "name": "user-interruption",
+      "outcome": "uncertain",
+      "note_length": 70,
+      "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1"
+    },
+    {
+      "name": "background-noise",
+      "outcome": "uncertain",
+      "note_length": 70,
+      "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1"
+    },
+    {
+      "name": "output-stall-reconnect",
+      "outcome": "uncertain",
+      "note_length": 70,
+      "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1"
+    },
+    {
+      "name": "mode-switch",
+      "outcome": "uncertain",
+      "note_length": 70,
+      "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1"
+    },
+    {
+      "name": "manual-stop",
+      "outcome": "uncertain",
+      "note_length": 70,
+      "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1"
+    },
+    {
+      "name": "spoken-divergence",
+      "outcome": "uncertain",
+      "note_length": 70,
+      "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1"
+    }
+  ],
+  "cost_estimate": null
+}

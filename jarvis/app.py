@@ -330,21 +330,35 @@ def _announce_calendar_backend(core, runtime_root: Path) -> None:
 
 
 async def _run_core_v2() -> int:
+    from jarvis.adapters.openai_live_sideband import (
+        OpenAILiveSidebandCloser, aiohttp_live_sideband_connector,
+    )
     from jarvis.adapters.windows_notifications import NullNotificationDelivery, WindowsNotificationDelivery
     from jarvis.core.memory_maintenance import MemoryMaintenanceWorker
+    from jarvis.runtime.agent_settings import resolve_agent_execution
+    from jarvis.runtime.back_brain_worker import BackBrainJobWorker
     from jarvis.core.v2_app import JarvisCoreApplication
     from jarvis.protocol.server import LocalProtocolServer
     from jarvis.runtime.journal import RuntimeJournal
+    from jarvis.runtime import credentials as creds
     from jarvis.v2_config import V2Settings
     settings = V2Settings.load()
     token = generate_session_token()
     _write_session_token(settings.token_file, token)
     delivery = WindowsNotificationDelivery() if os.name == "nt" and os.getenv("JARVIS_WINDOWS_NOTIFICATIONS", "0") in {"1", "true", "yes"} else NullNotificationDelivery()
-    workers = {"memory_maintenance": MemoryMaintenanceWorker(settings.data_root / "memory")}
+    agent_execution = resolve_agent_execution(
+        _control_settings(settings.runtime_root), cwd=ROOT, runtime_root=settings.runtime_root)
+    workers = {
+        "memory_maintenance": MemoryMaintenanceWorker(settings.data_root / "memory"),
+        "back_brain": BackBrainJobWorker(lambda: agent_execution),
+    }
     # Le journal runtime sert de puits de diagnostic à Core : sans lui, l'éviction
     # d'un abonné saturé du bus resterait invisible en production (Décision 25).
     brain_backend = _brain_backend_from_env()
-    core = JarvisCoreApplication(data_root=settings.data_root, timezone=settings.timezone, calendar_backend=_calendar_backend_from_env(), drive_backend=_drive_backend_from_env(), brain_backend=brain_backend, notification_delivery=delivery, workers=workers, diagnostics=RuntimeJournal(settings.runtime_root), **_brain_availability_from_env())
+    openai_key = creds.secret_for(_control_settings(settings.runtime_root), "openai")
+    live_closer = (OpenAILiveSidebandCloser(aiohttp_live_sideband_connector(openai_key))
+                   if openai_key else None)
+    core = JarvisCoreApplication(data_root=settings.data_root, timezone=settings.timezone, calendar_backend=_calendar_backend_from_env(), drive_backend=_drive_backend_from_env(), brain_backend=brain_backend, notification_delivery=delivery, workers=workers, diagnostics=RuntimeJournal(settings.runtime_root), live_sideband_closer=live_closer, **_brain_availability_from_env())
     server = LocalProtocolServer(core, host=settings.core_host, port=settings.core_port, token=token)
     _announce_calendar_backend(core, settings.runtime_root)
     RuntimeJournal(settings.runtime_root).emit("brain.backend", "Cerveau relié à l'agent du Control Center", data={"url": brain_backend.base_url})
@@ -361,7 +375,8 @@ async def _run_core_v2() -> int:
 
 async def _run_voice_v2() -> int:
     from jarvis.adapters.gemini_live import GeminiLiveSession
-    from jarvis.adapters.openai_realtime import OpenAIRealtimeSession
+    from jarvis.runtime.realtime_frontend_session import RealtimeFrontendSession
+    from jarvis.runtime.live_frontend_session import LiveFrontendSession
     from jarvis.adapters.wakeword_composite import CompositeWakeWordBackend
     from jarvis.adapters.wakeword_keyboard import KeyboardWakeWordBackend
     from jarvis.adapters.wakeword_porcupine import PorcupineWakeWordBackend
@@ -373,33 +388,51 @@ async def _run_voice_v2() -> int:
     from jarvis.runtime.realtime_tools import REALTIME_TOOLS
     from jarvis.runtime.visual_signals import VisualSignalBus
     from jarvis.runtime.voice_v2 import PersistentVoiceRuntime
+    from jarvis.runtime.voice_switch import VoiceSwitchBus, VoiceSwitchCoordinator
     from jarvis.domain.errors import ConfigurationError
     from jarvis.v2_config import V2Settings, VoiceArchitecture, parse_voice_arch, recommended_realtime_model
+    from jarvis.runtime.voice_composition import resolve_voice_composition
+    from jarvis.domain.voice_architecture import DuplexVoiceConfig, FrontBrainVoiceConfig, VoiceConfigError
     settings = V2Settings.load()
     signals = VisualSignalBus(settings.runtime_root)
     signals.offline()
+    switch_bus = VoiceSwitchBus(settings.runtime_root)
     overrides = _control_settings(settings.runtime_root)
+    from jarvis.runtime.prompt_overrides import prompt_override_document
+    prompt_overrides = prompt_override_document(overrides)
     # L'architecture choisie dans le Control Center passe devant
     # JARVIS_VOICE_ARCH. Laissée vide, la variable puis `default_voice_arch()`
     # décident, exactement comme avant que le réglage n'existe.
     arch_override = str(overrides.get("voice_arch") or "").strip()
     try:
-        voice_arch = parse_voice_arch(arch_override) if arch_override else settings.voice_arch
-    except ConfigurationError as exc:
+        composition = resolve_voice_composition(overrides)
+        direct_conversation = composition.direct_conversation
+        compatibility = composition.selection.compatibility
+        operational_architecture = (
+            compatibility.execution_mode
+            if compatibility is not None
+            else composition.selection.config.architecture.value
+        )
+        voice_arch = (VoiceArchitecture.LEGACY if direct_conversation else
+                      parse_voice_arch(operational_architecture))
+    except (ConfigurationError, VoiceConfigError) as exc:
+        switch_bus.mark_pending_restart_failed(code="replacement_configuration_invalid")
         raise RuntimeError(
-            f"Architecture vocale inconnue dans les réglages du Control Center : « {arch_override} ». "
+            f"Architecture vocale inconnue ou configuration invalide dans les réglages du Control Center : « {arch_override} ». "
             "Choisissez-la de nouveau dans l'onglet Mode vocal, puis relancez Voice."
         ) from exc
     arch_source = "settings" if arch_override else ("env" if os.getenv("JARVIS_VOICE_ARCH", "").strip() else "default")
     if not settings.token_file.exists():
+        switch_bus.mark_pending_restart_failed(code="core_token_missing")
         raise RuntimeError("Core session token is missing; start `jarvis core` first")
     token = settings.token_file.read_text(encoding="utf-8").strip()
-    stack = voice_stack.stack_spec(overrides.get("voice_stack"))
+    stack = voice_stack.stack_spec(composition.stack_id)
     stack_values = voice_stack.settings_for(overrides, stack.id)
     api_key = creds.secret_for(overrides, stack.credential_provider)
     if not api_key:
         provider = creds.provider_spec(stack.credential_provider)
         env_names = " ou ".join(provider.env) or "la variable du fournisseur"
+        switch_bus.mark_pending_restart_failed(code="replacement_credentials_missing")
         raise RuntimeError(
             f"La pile vocale « {stack.label} » a besoin d'une clé {provider.label}. "
             "Ajoutez-la dans l'onglet API Keys des réglages du Control Center, "
@@ -408,6 +441,7 @@ async def _run_voice_v2() -> int:
     core = LocalCoreClient(host=settings.core_host, port=settings.core_port, token=token)
     health = await core.health()
     if not health.get("ready"):
+        switch_bus.mark_pending_restart_failed(code="core_not_ready")
         await core.close(); raise RuntimeError(f"Core is not ready: {health}")
 
     manual_key = shortcut_registry.current(overrides)["wake_toggle"]
@@ -427,19 +461,30 @@ async def _run_voice_v2() -> int:
         )
     wake = CompositeWakeWordBackend(wake_backends)
     active_timeout = _active_timeout_from(overrides, settings.active_timeout_s)
+    if isinstance(composition.selection.config, DuplexVoiceConfig):
+        # GPT-Live owns a separately validated billing-idle contract.  The
+        # legacy value may legitimately be zero and must never disable it.
+        active_timeout = composition.selection.config.idle_timeout_s
 
     # Une voix vide enregistree (possible si le champ a ete vide a la main)
     # ferait refuser la session par le fournisseur : on retombe sur le defaut
     # declare par la pile, pas sur une chaine vide.
     realtime_voice = str(stack_values.get("voice") or "").strip() or str(stack.defaults().get("voice") or "")
     auto_turn = str(stack_values.get("turn_mode") or "auto").strip().lower() != "manual"
+    if direct_conversation and not isinstance(composition.selection.config, DuplexVoiceConfig) and not auto_turn:
+        raise ConfigurationError("Simple and Front Brain currently require automatic input segmentation")
     # Un modèle laissé vide dans les réglages veut dire « celui de la config » :
     # OPENAI_REALTIME_MODEL côté OpenAI. Gemini Live n'a pas de défaut connu.
     realtime_model = str(stack_values.get("model") or "").strip()
+    if direct_conversation:
+        config = composition.selection.config
+        realtime_model = (config.reflex_model if isinstance(config, FrontBrainVoiceConfig) else config.conversation_model).model_id
     # Une seule lecture de l'architecture pour la surface : elle choisit à la
     # fois le jeu de règles et le catalogue d'outils, et les deux doivent dire la
     # même chose au modèle.
-    continuous_brain = voice_arch is VoiceArchitecture.CONTINUOUS_BRAIN
+    continuous_brain = voice_arch is VoiceArchitecture.CONTINUOUS_BRAIN and not direct_conversation
+    continuous_capture = continuous_brain or direct_conversation
+    effective_model = realtime_model
 
     if stack.id == voice_stack.GEMINI_LIVE.id:
         if continuous_brain:
@@ -459,12 +504,21 @@ async def _run_voice_v2() -> int:
             )
 
         async def realtime_factory(context: dict[str, object]):
-            return await GeminiLiveSession.connect(
+            from jarvis.domain.prompt_registry import PromptTarget
+            from jarvis.runtime.prompt_runtime import prompt_channel, prompt_evidence, resolve_prompt
+            resolution = resolve_prompt(
+                PromptTarget("conversation", "simple", "google", realtime_model, "legacy", "session"),
+                overrides=prompt_overrides,
+                variables={"context": context},
+            )
+            session = await GeminiLiveSession.connect(
                 api_key=api_key,
                 model=realtime_model,
                 voice=realtime_voice,
                 context=context,
                 tools=REALTIME_TOOLS,
+                instructions_override=prompt_channel(resolution, "session.instructions"),
+                prompt_evidence=prompt_evidence(resolution, application="sent", channel="session.instructions"),
                 auto_turn=auto_turn,
                 input_transcription=bool(stack_values.get("input_transcription", True)),
                 output_transcription=bool(stack_values.get("output_transcription", True)),
@@ -473,6 +527,8 @@ async def _run_voice_v2() -> int:
                 prefix_padding_ms=int(stack_values.get("vad_prefix_padding_ms") or 300),
                 silence_duration_ms=int(stack_values.get("vad_silence_duration_ms") or 1500),
             )
+            journal.emit("voice.prompt", "Prompt application recorded", data=session.prompt_applications[0])
+            return session
     else:
         # Sans OPENAI_REALTIME_MODEL, le modèle conseillé suit l'architecture
         # effective, et non celle que l'environnement seul aurait retenue.
@@ -482,16 +538,28 @@ async def _run_voice_v2() -> int:
             else recommended_realtime_model(voice_arch)
         )
         openai_model = realtime_model or default_model
-        surface_tools = realtime_tools.tools_for(continuous_brain=continuous_brain)
+        effective_model = openai_model
+        from jarvis.runtime.back_brain_delegation import conversation_tools
+        surface_tools = conversation_tools() if direct_conversation else realtime_tools.tools_for(continuous_brain=continuous_brain)
 
         async def realtime_factory(context: dict[str, object]):
-            return await OpenAIRealtimeSession.connect(
+            if isinstance(composition.selection.config, DuplexVoiceConfig):
+                return await LiveFrontendSession.connect(
+                    api_key=api_key, voice=realtime_voice, context=context,
+                    architecture_config=composition.selection.config,
+                    core=core,
+                    prompt_overrides=prompt_overrides,
+                )
+            session = await RealtimeFrontendSession.connect(
                 api_key=api_key,
                 model=openai_model,
                 voice=realtime_voice,
                 context=context,
                 tools=surface_tools,
-                continuous_brain=continuous_brain,
+                continuous_brain=continuous_capture,
+                conversational=direct_conversation,
+                architecture_config=composition.selection.config if direct_conversation else None,
+                prompt_overrides=prompt_overrides,
                 auto_turn=auto_turn,
                 transcription_model=str(stack_values.get("transcription_model") or ""),
                 transcription_language=str(stack_values.get("transcription_language") or ""),
@@ -502,6 +570,10 @@ async def _run_voice_v2() -> int:
                 vad_prefix_padding_ms=stack_values.get("vad_prefix_padding_ms"),
                 vad_silence_duration_ms=stack_values.get("vad_silence_duration_ms"),
             )
+            if direct_conversation and isinstance(composition.selection.config, FrontBrainVoiceConfig):
+                from jarvis.runtime.front_brain_factory import attach_front_brain
+                attach_front_brain(session, composition.selection.config, context, overrides=overrides, journal=journal)
+            return session
 
     journal = RuntimeJournal(settings.runtime_root)
     # Mode legacy : l'agent Claude est hébergé par le Control Center, et Voice
@@ -510,9 +582,10 @@ async def _run_voice_v2() -> int:
     # Mode continu : Voice ne possède plus le modèle fort (Décision 19). Core
     # le joint à travers son `BrainBackend`, et ne pas construire la passerelle
     # ici est ce qui rend l'ancien chemin réellement inaccessible.
-    if continuous_brain:
+    if continuous_capture:
         claude = None
-        journal.emit("claude.gateway", "Mode continu : le modèle fort est joint par Core, pas par Voice", data={"arch": voice_arch.value})
+        journal.emit("claude.gateway", "Direct conversation has no execution gateway" if direct_conversation else "Mode continu : le modèle fort est joint par Core, pas par Voice",
+                     data={"arch": composition.selection.config.architecture.value if direct_conversation else voice_arch.value})
     else:
         claude = ClaudeGateway(
             base_url=_control_center_url(),
@@ -525,7 +598,7 @@ async def _run_voice_v2() -> int:
     # refusé en continu plus haut.
     echo_cancellation = bool(stack_values.get("echo_cancellation", True))
     capture_factory = None
-    if continuous_brain:
+    if continuous_capture:
 
         def capture_factory():
             from jarvis.adapters.webrtc_echo import create_echo_canceller
@@ -577,6 +650,32 @@ async def _run_voice_v2() -> int:
     except (TypeError, ValueError):
         ack_delay_s = 1.2
     authorization, authorization_error = _conversation_authorization(overrides, journal)
+    from jarvis.runtime.voice_metrics import VoiceSessionMetricRecorder
+    metric_components = [{
+        "role": "surface",
+        "provider_id": stack.credential_provider,
+        "model_id": effective_model or "(default)",
+    }]
+    if isinstance(composition.selection.config, FrontBrainVoiceConfig):
+        metric_components.append({
+            "role": "analysis",
+            "provider_id": composition.selection.config.analysis_model.provider_id,
+            "model_id": composition.selection.config.analysis_model.model_id,
+        })
+    from jarvis.runtime.agent_settings import resolve_agent_execution
+    backend_execution = resolve_agent_execution(
+        overrides, cwd=ROOT, runtime_root=settings.runtime_root,
+    )
+    metric_components.append({
+        "role": "backend",
+        "provider_id": backend_execution.provider,
+        "model_id": backend_execution.model or "(provider-default)",
+    })
+    switch_handoff = switch_bus.handoff(composition.configuration_id)
+    initial_conversation_id = (
+        switch_handoff.get("conversation_id") if isinstance(switch_handoff, dict)
+        else switch_bus.conversation_id()
+    )
     voice = PersistentVoiceRuntime(
         wakeword=wake,
         core=core,
@@ -591,15 +690,40 @@ async def _run_voice_v2() -> int:
         input_sample_rate=stack.input_sample_rate,
         output_sample_rate=stack.output_sample_rate,
         voice_arch=voice_arch,
+        conversation_architecture=composition.selection.config.architecture if direct_conversation else None,
+        conversation_model=effective_model or None,
+        configuration_id=composition.configuration_id,
+        initial_conversation_id=initial_conversation_id if isinstance(initial_conversation_id, str) else None,
+        switch_handoff=switch_handoff,
+        switch_bus=switch_bus,
+        metric_recorder_factory=lambda: VoiceSessionMetricRecorder(
+            runtime_root=settings.runtime_root, journal=journal,
+            architecture=operational_architecture,
+            provider_id=stack.credential_provider, model_id=effective_model or "(default)",
+            configuration_id=composition.configuration_id,
+            pricing={"surface": overrides.get("live_pricing"),
+                     "analysis": overrides.get("analysis_pricing"),
+                     "backend": overrides.get("backend_pricing")},
+            components=metric_components,
+        ),
         capture_factory=capture_factory,
         reflex_delay_s=ack_delay_s if continuous_brain else 0.0,
         authorization=authorization,
         authorization_error=authorization_error,
         # Ce qui a été demandé, face à ce que la capture applique : publié au
         # Control Center (`.voice_capture`, tâche 08). Hors mode continu, sans objet.
-        echo_cancellation=echo_cancellation if continuous_brain else None,
+        echo_cancellation=echo_cancellation if continuous_capture else None,
     )
-    timeout_task = asyncio.create_task(_voice_timeout_loop(voice, signals, journal), name="jarvis-voice-timeout")
+    if switch_handoff is not None:
+        switch_bus.mark_handoff_loaded(switch_handoff)
+    switch_coordinator = VoiceSwitchCoordinator(
+        voice=voice, core=core, bus=switch_bus, configuration_id=composition.configuration_id,
+        architecture=operational_architecture,
+        model=effective_model or "(default)", journal=journal,
+    )
+    timeout_task = asyncio.create_task(
+        _voice_timeout_loop(voice, signals, journal, switch_coordinator), name="jarvis-voice-timeout",
+    )
     key = manual_key.upper()
     wake_hint = f"Dites 'Jarvis' ou appuyez sur {key}" if wake_key else f"Appuyez sur {key}"
     banner = f"Jarvis Voice v0.2 en arrière-plan · {stack.label} · voix {realtime_voice}"
@@ -611,10 +735,14 @@ async def _run_voice_v2() -> int:
             "model": realtime_model or "(défaut)",
             "voice": realtime_voice,
             "auto_turn": auto_turn,
-            "arch": voice_arch.value,
+            "arch": composition.selection.config.architecture.value if direct_conversation else voice_arch.value,
             # D'où vient `arch` : réglage du Control Center, variable
             # d'environnement, ou défaut calculé.
-            "arch_source": arch_source,
+            "arch_source": "voice_architecture" if direct_conversation else arch_source,
+            "compatibility": composition.selection.uses_compatibility_runtime,
+            "configuration_id": composition.configuration_id,
+            "conversation_model": realtime_model or None,
+            "analysis_model": composition.selection.config.analysis_model.model_id if direct_conversation and isinstance(composition.selection.config, FrontBrainVoiceConfig) else None,
             # Ce qui a réellement été envoyé au fournisseur : en continu la
             # surface est bornée aux réflexes et son catalogue d'outils est vide
             # (Décision 34).
@@ -694,8 +822,13 @@ async def _run_control_center_v2() -> int:
     # Le panneau Agents lit l'état normalisé dans Core (tâche 13), par sa
     # propre connexion : lecture seule, jamais celle du relais.
     from jarvis.runtime.work_view import CoreWorkView
+    from jarvis.runtime.live_status import CoreLiveStatusView
 
     work_view = CoreWorkView(
+        CoreWorkTransport(host=settings.core_host, port=settings.core_port, token_file=settings.token_file),
+        journal=journal,
+    )
+    live_view = CoreLiveStatusView(
         CoreWorkTransport(host=settings.core_host, port=settings.core_port, token_file=settings.token_file),
         journal=journal,
     )
@@ -705,6 +838,7 @@ async def _run_control_center_v2() -> int:
         visualizer_url=visualizer_url,
         work_ingress=work_ingress,
         work_view=work_view,
+        live_view=live_view,
     )
     await control.start(port=ui_port)
     url = f"http://127.0.0.1:{ui_port}/"
@@ -740,16 +874,16 @@ async def _run_control_center_v2() -> int:
                 visualizer.kill(); await visualizer.wait()
 
 
-async def _voice_timeout_loop(voice, signals, journal=None) -> None:
+async def _voice_timeout_loop(voice, signals, journal=None, switch_coordinator=None) -> None:
     """Publish the liveness heartbeat. A transient bus or timeout failure must
     never end this loop: the Control Center reads a missing heartbeat as
     "voice OFFLINE" and blanks the face while Voice is in fact still running."""
     reported = False
+    handled_stop_request: str | None = None
     while True:
         await asyncio.sleep(1.0)
         try:
             signals.heartbeat()
-            await voice.check_timeout()
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -762,6 +896,83 @@ async def _voice_timeout_loop(voice, signals, journal=None) -> None:
                 reported = True
         else:
             reported = False
+        runtime_reporter = getattr(voice, "voice_runtime_report", None)
+        runtime_publisher = getattr(signals, "voice_runtime", None)
+        if callable(runtime_reporter) and callable(runtime_publisher):
+            try:
+                runtime_publisher(runtime_reporter())
+            except Exception:
+                pass
+        try:
+            handled_stop_request = await _handle_live_ui_supervision(
+                voice, signals, journal, handled_stop_request,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if journal is not None:
+                journal.emit(
+                    "voice.live_supervision_degraded",
+                    f"Live UI supervision failed: {type(exc).__name__}", level="warning",
+                    data={"code": "live_ui_supervision_degraded"},
+                )
+        if switch_coordinator is not None:
+            try:
+                await switch_coordinator.poll()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                if journal is not None:
+                    journal.emit(
+                        "voice.switch.failed", "Voice switch coordination failed", level="error",
+                        data={"code": "voice_switch_failed", "exception_type": type(exc).__name__},
+                    )
+        # Safety supervision is independent from the best-effort visual bus.
+        # A locked heartbeat file must not keep a billable session alive.
+        try:
+            await voice.check_timeout()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if journal is not None:
+                journal.emit(
+                    "voice.timeout_check_failed",
+                    f"Voice idle supervision failed: {type(exc).__name__}",
+                    level="warning",
+                )
+
+
+async def _handle_live_ui_supervision(voice, signals, journal, handled_request_id: str | None):
+    """Publish Duplex details and consume at most one idempotent Stop request."""
+    reporter = getattr(voice, "live_runtime_report", None)
+    publish_live = getattr(signals, "live_runtime", None)
+    read_stop = getattr(signals, "read_live_stop_request", None)
+    complete_stop = getattr(signals, "complete_live_stop", None)
+    if not all(callable(value) for value in (reporter, publish_live, read_stop, complete_stop)):
+        return handled_request_id
+    report = reporter()
+    publish_live(report)
+    request = read_stop()
+    request_id = request.get("request_id") if isinstance(request, dict) else None
+    if not isinstance(request_id, str) or request_id == handled_request_id:
+        return handled_request_id
+    from jarvis.domain.voice_frontend import VoiceStopReason
+    try:
+        if not isinstance(report, dict) or request.get("session_id") != report.get("session_id"):
+            raise RuntimeError("La demande ne correspond pas à la session Voice courante")
+        await voice.mute(VoiceStopReason.USER)
+    except Exception as exc:
+        complete_stop(request, status="failed",
+                      message=f"Arrêt Live non confirmé ({type(exc).__name__}). Réessayez.")
+        if journal is not None:
+            journal.emit("voice.live_stop_failed", "Control Center Live stop failed", level="error",
+                         data={"code": "live_stop_failed", "exception_type": type(exc).__name__})
+    else:
+        complete_stop(request, status="accepted")
+        if journal is not None:
+            journal.emit("voice.live_stop_accepted", "Control Center Live stop accepted",
+                         data={"request_id": request_id})
+    return request_id
 
 
 # Les rôles longue durée sont ceux qui peuvent mourir sans témoin ; les

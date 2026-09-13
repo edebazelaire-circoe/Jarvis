@@ -100,6 +100,8 @@ class GeminiLiveSession:
         prefix_padding_ms: int = 300,
         silence_duration_ms: int = 1500,
         session: aiohttp.ClientSession | None = None,
+        instructions_override: str | None = None,
+        prompt_evidence: dict[str, object] | None = None,
     ) -> "GeminiLiveSession":
         owns = session is None
         http = session or aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=None))
@@ -113,6 +115,8 @@ class GeminiLiveSession:
                 instructions += "\nConversation context:\n" + "\n".join(
                     f"{item.get('kind')}: {item.get('content')}" for item in recent[-12:] if isinstance(item, dict)
                 )
+            if instructions_override is not None:
+                instructions = instructions_override
 
             if auto_turn:
                 detection: dict[str, Any] = {
@@ -146,6 +150,7 @@ class GeminiLiveSession:
                 setup["outputAudioTranscription"] = {}
 
             await ws.send_json({"setup": setup})
+            instance.prompt_applications = [dict(prompt_evidence)] if isinstance(prompt_evidence, dict) else []
             return instance
         except Exception:
             if owns:

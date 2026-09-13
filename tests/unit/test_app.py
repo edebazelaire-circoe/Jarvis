@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
@@ -167,7 +168,25 @@ def _voice_startup(tmp_path, monkeypatch, *, env_arch: str | None, overrides: di
 
     async def fake_connect(**kwargs):
         captured["connect"] = kwargs
-        return object()
+        from jarvis.domain.v2 import ProtocolEnvelope
+
+        class ConnectedSession:
+            """Provider boundary double; canonical startup still requires ACK."""
+            active_output_id = None
+
+            def __init__(self):
+                self.closed = asyncio.Event()
+
+            async def events(self):
+                yield ProtocolEnvelope(message_type="realtime.session_updated", payload={
+                    "session_id": "test-provider-session", "instructions": kwargs["instructions_override"],
+                })
+                await self.closed.wait()
+
+            async def close(self):
+                self.closed.set()
+
+        return ConnectedSession()
 
     monkeypatch.setattr(voice_v2, "PersistentVoiceRuntime", FakeRuntime)
     monkeypatch.setattr(OpenAIRealtimeSession, "connect", staticmethod(fake_connect))
@@ -180,12 +199,55 @@ async def _start_voice(captured: dict) -> dict:
 
     with pytest.raises(_StopVoice):
         await app._run_voice_v2()
-    await captured["realtime_factory"]({})
+    session = await captured["realtime_factory"]({})
+    try:
+        from jarvis.runtime.realtime_frontend_session import RealtimeFrontendSession
+        from jarvis.domain.voice_frontend import FrontendState
+        assert isinstance(session, RealtimeFrontendSession)
+        assert session.frontend.state is FrontendState.ACTIVE
+    finally:
+        await session.close()
     trace = read_jsonl_tail(RuntimeJournal(captured["runtime_root"]).trace_path, limit=100)
     return next(item for item in trace if item.get("kind") == "voice.stack")
 
 
+@pytest.mark.parametrize(
+    ("selection", "expected"),
+    [("legacy", "legacy"), ("continuous_brain", "continuous_brain"), ("simple", "simple")],
+)
+async def test_operational_architecture_provenance_matches_the_runtime(
+    tmp_path, monkeypatch, selection, expected,
+):
+    from jarvis.domain.voice_architecture import SimpleVoiceConfig, VoiceModelRef
+    from jarvis.runtime import voice_switch
+    from jarvis.runtime.voice_architecture_config import VoiceArchitectureSettings
+
+    overrides = {"voice_arch": selection}
+    if selection == "simple":
+        overrides = {
+            "voice_architecture": VoiceArchitectureSettings(
+                SimpleVoiceConfig(VoiceModelRef("openai", "gpt-realtime-2.1"))
+            ).to_dict()
+        }
+    captured = _voice_startup(tmp_path, monkeypatch, env_arch=None, overrides=overrides)
+
+    class CapturingSwitchCoordinator:
+        def __init__(self, **kwargs) -> None:
+            captured["switch_architecture"] = kwargs["architecture"]
+
+        async def poll(self) -> bool:
+            return False
+
+    monkeypatch.setattr(voice_switch, "VoiceSwitchCoordinator", CapturingSwitchCoordinator)
+    await _start_voice(captured)
+
+    assert captured["metric_recorder_factory"]().architecture == expected
+    assert captured["switch_architecture"] == expected
+
+
 async def test_voice_honours_the_control_center_architecture(tmp_path, monkeypatch):
+    from jarvis.adapters.openai_realtime import CONTINUOUS_BRAIN_OPERATING_RULES, JARVIS_PERSONA
+    from jarvis.runtime.realtime_tools import tools_for
     from jarvis.v2_config import DEFAULT_CONTINUOUS_SURFACE_MODEL, VoiceArchitecture
 
     captured = _voice_startup(tmp_path, monkeypatch, env_arch=None, overrides={"voice_arch": "continuous_brain"})
@@ -195,6 +257,8 @@ async def test_voice_honours_the_control_center_architecture(tmp_path, monkeypat
     # Mode continu : Voice ne joint plus l'agent, Core s'en charge.
     assert captured["claude"] is None
     assert captured["connect"]["continuous_brain"] is True
+    assert captured["connect"]["instructions_override"] == JARVIS_PERSONA + " " + CONTINUOUS_BRAIN_OPERATING_RULES
+    assert captured["connect"]["tools"] == tools_for(continuous_brain=True)
     # Sans OPENAI_REALTIME_MODEL, le modèle conseillé suit l'architecture effective.
     assert captured["connect"]["model"] == DEFAULT_CONTINUOUS_SURFACE_MODEL
     assert stack_event["data"]["arch"] == "continuous_brain"
@@ -202,7 +266,9 @@ async def test_voice_honours_the_control_center_architecture(tmp_path, monkeypat
 
 
 async def test_the_control_center_architecture_wins_over_the_environment(tmp_path, monkeypatch):
+    from jarvis.adapters.openai_realtime import JARVIS_PERSONA, OPERATING_RULES
     from jarvis.runtime.claude_gateway import ClaudeGateway
+    from jarvis.runtime.realtime_tools import tools_for
     from jarvis.v2_config import DEFAULT_REALTIME_MODEL, VoiceArchitecture
 
     captured = _voice_startup(tmp_path, monkeypatch, env_arch="continuous_brain", overrides={"voice_arch": "legacy"})
@@ -211,6 +277,8 @@ async def test_the_control_center_architecture_wins_over_the_environment(tmp_pat
     assert captured["voice_arch"] is VoiceArchitecture.LEGACY
     assert isinstance(captured["claude"], ClaudeGateway)
     assert captured["connect"]["continuous_brain"] is False
+    assert captured["connect"]["instructions_override"] == JARVIS_PERSONA + " " + OPERATING_RULES
+    assert captured["connect"]["tools"] == tools_for(continuous_brain=False)
     # L'environnement seul aurait retenu le modèle du mode continu.
     assert captured["connect"]["model"] == DEFAULT_REALTIME_MODEL
     assert stack_event["data"]["arch_source"] == "settings"
@@ -240,6 +308,78 @@ async def test_an_unknown_architecture_in_the_settings_file_stops_voice_clearly(
     with pytest.raises(RuntimeError, match="Architecture vocale inconnue"):
         await app._run_voice_v2()
     assert "voice_arch" not in captured
+
+
+async def test_an_invalid_explicit_voice_configuration_marks_pending_restart_failed(
+    tmp_path, monkeypatch,
+):
+    from jarvis.runtime import voice_switch
+
+    captured = _voice_startup(tmp_path, monkeypatch, env_arch=None, overrides={
+        "voice_architecture": {
+            "schema_version": 1,
+            "config": {"architecture": "invalid"},
+            "compatibility": None,
+        },
+    })
+    failure_codes = []
+
+    class CapturingSwitchBus:
+        def __init__(self, _root) -> None:
+            pass
+
+        def mark_pending_restart_failed(self, *, code: str) -> None:
+            failure_codes.append(code)
+
+    monkeypatch.setattr(voice_switch, "VoiceSwitchBus", CapturingSwitchBus)
+
+    with pytest.raises(RuntimeError, match="configuration invalide"):
+        await app._run_voice_v2()
+
+    assert failure_codes == ["replacement_configuration_invalid"]
+    assert "voice_arch" not in captured and "connect" not in captured
+
+
+async def test_explicit_duplex_reaches_credential_gate_before_session(tmp_path, monkeypatch):
+    from jarvis.domain.voice_architecture import DuplexVoiceConfig, VoiceModelRef
+    from jarvis.runtime.voice_architecture_config import VoiceArchitectureSettings
+
+    config = DuplexVoiceConfig(VoiceModelRef("openai", "gpt-live-1"))
+    captured = _voice_startup(tmp_path, monkeypatch, env_arch=None, overrides={
+        "voice_architecture": VoiceArchitectureSettings(config).to_dict(),
+    })
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    with pytest.raises(RuntimeError, match="OPENAI_API_KEY"):
+        await app._run_voice_v2()
+    assert "voice_arch" not in captured
+    assert "connect" not in captured
+
+
+async def test_explicit_duplex_factory_selects_live_session(tmp_path, monkeypatch):
+    from jarvis.domain.voice_architecture import DuplexVoiceConfig, VoiceModelRef
+    from jarvis.runtime.live_frontend_session import LiveFrontendSession
+    from jarvis.runtime.voice_architecture_config import VoiceArchitectureSettings
+
+    config = DuplexVoiceConfig(VoiceModelRef("openai", "gpt-live-1"))
+    captured = _voice_startup(tmp_path, monkeypatch, env_arch=None, overrides={
+        "voice_architecture": VoiceArchitectureSettings(config).to_dict(),
+    })
+    connection = {}
+
+    async def connect(**kwargs):
+        connection.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(LiveFrontendSession, "connect", staticmethod(connect))
+    with pytest.raises(_StopVoice):
+        await app._run_voice_v2()
+    result = await captured["realtime_factory"]({"voice_ledger": {"revision": 1}})
+
+    assert result is not None
+    assert connection["architecture_config"] == config
+    assert connection["voice"]
+    assert captured["conversation_architecture"].value == "duplex"
 
 
 async def test_the_duplex_capture_has_no_speaker_verifier_by_default(tmp_path, monkeypatch):

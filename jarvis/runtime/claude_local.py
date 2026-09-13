@@ -66,6 +66,21 @@ FORMAT ORAL
 - Les détails longs vont dans un fichier ou dans le panneau ; à l'oral, seulement l'essentiel.
 """
 
+# A job owns a complete terminal result, not the conversational coordinator's
+# acknowledgement of a background delegation. This is not a sandbox policy.
+JOB_RESULT_SYSTEM_PROMPT = """Execute the admitted job and return its complete final result.
+Finish and verify the requested work before ending your turn. Do not return an
+acknowledgement or promise in place of the result. If you delegate, wait for and
+collect the delegated results before finishing. Report failure or permission
+denial honestly. This is a background job, with no speech or conversational role.
+"""
+
+SPECULATIVE_SYSTEM_PROMPT = """Analyze only the supplied provisional conversation data.
+Return useful facts, calculations, alternatives or a draft, with uncertainty.
+The input may change. Do not execute actions, retrieve external data, invoke
+tools, or claim user authorization. No speech or promise of action is requested.
+"""
+
 
 def cli_prompt_argument(text: str, command: str) -> str:
     """Rendre une consigne transmissible en argument au CLI résolu.
@@ -140,6 +155,8 @@ class ClaudeLocalAgent:
         command: str = "claude",
         permission_mode: str = DEFAULT_PERMISSION_MODE,
         model: str = "",
+        execution_profile: str = "conversation",
+        prompt_overrides: object | None = None,
     ) -> None:
         self.runtime_root = runtime_root
         self.cwd = cwd
@@ -148,6 +165,22 @@ class ClaudeLocalAgent:
         # Vide = on laisse le CLI choisir son modèle par défaut. Une chaîne
         # vide passée à `--model` serait refusée par le CLI, d'où le filtrage.
         self.model = str(model or "").strip()
+        if execution_profile not in {"conversation", "job_result", "speculative_analysis"}:
+            raise ValueError("unknown Claude execution profile")
+        self.execution_profile = execution_profile
+        from jarvis.runtime.prompt_runtime import normalize_prompt_overrides
+        self._prompt_overrides = normalize_prompt_overrides(prompt_overrides)
+        self.prompt_applications: list[dict[str, object]] = []
+        self._next_prompt_evidence: dict[str, object] | None = None
+        if execution_profile == "speculative_analysis":
+            self.permission_mode = "dontAsk"
+        self._owned_closed = False
+        self._owned_root_closed = False
+        self._job_started = asyncio.Event()
+        self._process_tree = None
+        if execution_profile in {"job_result", "speculative_analysis"}:
+            from jarvis.runtime.owned_process_tree import OwnedProcessTree
+            self._process_tree = OwnedProcessTree()
         self.journal = RuntimeJournal(runtime_root)
         self.process: asyncio.subprocess.Process | None = None
         self._reader_task: asyncio.Task[None] | None = None
@@ -455,6 +488,8 @@ class ClaudeLocalAgent:
 
     async def start(self, *, resume: bool = True) -> dict[str, Any]:
         async with self._lock:
+            if self._owned_closed:
+                raise RuntimeError("owned_agent_closed")
             if self.process is not None and self.process.returncode is None:
                 return self.snapshot()
             # Deux processus ne peuvent pas écrire la même session Claude. Mais
@@ -481,12 +516,40 @@ class ClaudeLocalAgent:
             executable = resolve_command(self.command)
             # La règle de délégation au niveau système, pour l'agent vocal
             # seulement : la console de debug est une session humaine.
-            brain_args = ["--append-system-prompt", cli_prompt_argument(BRAIN_SYSTEM_PROMPT, executable)]
+            from jarvis.domain.prompt_registry import PromptTarget
+            from jarvis.runtime.prompt_runtime import prompt_channel, prompt_evidence, resolve_prompt
+            invocation = "job_result_session" if self.execution_profile == "job_result" else "conversation_session"
+            prompt_resolution = resolve_prompt(
+                PromptTarget("backend", None, "claude", self.model or None, None, invocation),
+                overrides=self._prompt_overrides,
+            )
+            prompt = prompt_channel(prompt_resolution, "cli.append_system_prompt")
+            brain_args = ["--append-system-prompt", cli_prompt_argument(prompt, executable)]
             # La politique d'aiguillage, déclarée au CLI sous forme de hook :
             # c'est le seul endroit où un modèle hors réglages peut être
             # corrigé avant que le sous-agent parte. Le prompt demande le
             # profil ; ce hook impose le modèle.
-            routing_args = ["--settings", routing_hook.hook_settings(self.runtime_root)]
+            speculative = self.execution_profile == "speculative_analysis"
+            routing_args = [] if speculative else ["--settings", routing_hook.hook_settings(self.runtime_root)]
+            restricted_args = []
+            if speculative:
+                suffix = os.path.splitext(executable)[1].lower()
+                if ((os.name == "nt" and suffix not in {".exe", ".com"})
+                        or (os.name != "nt" and suffix in {".cmd", ".bat", ".ps1"})):
+                    raise RuntimeError("restricted profile requires direct native argv")
+                # CLI-enforced capabilities, not merely instructions. Never inherit
+                # routing hooks, MCP, custom agents/skills or a persisted session.
+                resume_args, routing_args = [], []
+                permission_args = ["--permission-mode", "dontAsk"]
+                prompt_resolution = resolve_prompt(
+                    PromptTarget("backend", None, "claude", self.model or None, None, "speculative_session"),
+                    overrides=self._prompt_overrides,
+                )
+                brain_args = ["--system-prompt", cli_prompt_argument(
+                    prompt_channel(prompt_resolution, "cli.system_prompt"), executable)]
+                restricted_args = ["--restricted", "--tools", "", "--strict-mcp-config",
+                    "--safe-mode", "--no-chrome", "--disable-slash-commands",
+                    "--permission-prompts", "none", "--no-session-persistence"]
             try:
                 self.process = await asyncio.create_subprocess_exec(
                     executable,
@@ -496,7 +559,8 @@ class ClaudeLocalAgent:
                     "--output-format",
                     "stream-json",
                     "--verbose",
-                    "--chrome",
+                    *(["--chrome"] if self.execution_profile == "conversation" else []),
+                    *restricted_args,
                     *permission_args,
                     *brain_args,
                     *routing_args,
@@ -507,13 +571,24 @@ class ClaudeLocalAgent:
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
+                    **({"creationflags": self._process_tree.creationflags} if self._process_tree else {}),
                 )
+                if self._process_tree:
+                    self._process_tree.attach_and_resume(self.process.pid)
+                self._job_started.set()
             except FileNotFoundError as exc:
                 self.journal.emit("agent.start", "Claude CLI not found", level="error", data={"command": self.command})
                 raise RuntimeError("Claude CLI not found; install Claude Code and ensure `claude` is in PATH") from exc
             self.subtasks.process_started()
+            applied = prompt_evidence(
+                prompt_resolution, application="sent",
+                channel="cli.system_prompt" if speculative else "cli.append_system_prompt",
+            )
+            applied["resumed"] = bool(resume_args)
+            self.prompt_applications.append(applied)
             self._turn_tools = {}
             self.journal.emit("agent.start", "Claude local agent started", data={"pid": self.process.pid, "resumed": bool(resume_args), "permission_mode": self.permission_mode, "model": self.model or "(défaut du CLI)"})
+            self.journal.emit("agent.prompt", "Prompt application recorded", data=applied)
             self._reader_task = asyncio.create_task(self._read_stdout(), name="jarvis-claude-stdout")
             self._stderr_task = asyncio.create_task(self._read_stderr(), name="jarvis-claude-stderr")
             return self.snapshot()
@@ -524,6 +599,8 @@ class ClaudeLocalAgent:
             raise ValueError("message cannot be empty")
         if self.process is None or self.process.returncode is not None:
             await self.start()
+        if self._owned_closed:
+            raise RuntimeError("owned_agent_closed")
         assert self.process is not None and self.process.stdin is not None
         # Le `uuid` revient dans `result.user_message_uuids` : c'est lui qui
         # rattache une réponse à la question qui l'a provoquée.
@@ -533,13 +610,25 @@ class ClaudeLocalAgent:
         self.subtasks.turn_started()
         self.process.stdin.write((json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
         await self.process.stdin.drain()
+        if self._next_prompt_evidence is not None:
+            evidence, self._next_prompt_evidence = self._next_prompt_evidence, None
+            self.prompt_applications.append(dict(evidence))
+            self.journal.emit("agent.prompt", "Prompt application recorded", data=dict(evidence))
         # Le CLI ne réémet pas l'entrée : sans cet écho la console n'afficherait
         # que les réponses, sans la question qui les a provoquées.
         self._record(payload)
         self.journal.emit("agent.input", text)
         return self.snapshot()
 
-    async def ask(self, text: str, *, timeout_s: float = 180.0) -> dict[str, Any]:
+    def set_next_prompt_evidence(self, evidence: dict[str, object]) -> None:
+        self._next_prompt_evidence = dict(evidence)
+
+    def set_prompt_overrides(self, overrides: object | None) -> None:
+        from jarvis.runtime.prompt_runtime import normalize_prompt_overrides
+        self._prompt_overrides = normalize_prompt_overrides(overrides)
+
+    async def ask(self, text: str, *, timeout_s: float = 180.0,
+                  prompt_evidence: dict[str, object] | None = None) -> dict[str, Any]:
         """Poser une question et attendre la réponse complète du tour.
 
         C'est le point d'entrée de la boucle vocale : la voix a besoin d'un
@@ -547,16 +636,24 @@ class ClaudeLocalAgent:
         déposer un message.
         """
         async with self._ask_lock:
+            if prompt_evidence is not None:
+                self._next_prompt_evidence = dict(prompt_evidence)
             loop = asyncio.get_running_loop()
             self._pending_result = loop.create_future()
             message_uuid = str(uuid.uuid4())
             self._pending_uuid = message_uuid
             try:
                 await self.send(text, message_uuid=message_uuid)
-            except (RuntimeError, ValueError) as exc:
+            except (RuntimeError, ValueError, OSError) as exc:
+                self._next_prompt_evidence = None
                 self._pending_result = None
                 self._pending_uuid = None
                 return {"ok": False, "text": "", "error": str(exc), "code": "claude_unavailable"}
+            except BaseException:
+                self._next_prompt_evidence = None
+                self._pending_result = None
+                self._pending_uuid = None
+                raise
             try:
                 event = await asyncio.wait_for(self._pending_result, timeout=timeout_s)
             except asyncio.TimeoutError:
@@ -597,6 +694,7 @@ class ClaudeLocalAgent:
             "session_id": event.get("session_id"),
             "duration_ms": event.get("duration_ms"),
             "cost_usd": event.get("total_cost_usd"),
+            "usage": event.get("usage"),
             "permission_denials": denials,
             "error": None if not failed else (answer or "Le tour Claude a échoué."),
         }
@@ -760,6 +858,21 @@ class ClaudeLocalAgent:
         await self.stop()
         return await self.start()
 
+    async def close_owned(self) -> bool:
+        """Permanent job-instance closure; never reuse a stopped job session."""
+        self._owned_closed = True
+        async with self._lock:
+            if self._process_tree:
+                self._process_tree.terminate()
+        if not self._owned_root_closed:
+            await self.stop()
+            self._owned_root_closed = self.process is None or self.process.returncode is not None
+        root_closed = self.process is None or self.process.returncode is not None
+        return root_closed and self._process_tree is not None and self._process_tree.close_if_empty()
+
+    async def wait_started(self) -> None:
+        await self._job_started.wait()
+
     async def stop(self) -> dict[str, Any]:
         # Avant toute chose : la tâche de lecture va être annulée, donc le code
         # qui débloque un `ask()` en fin de flux ne s'exécutera jamais. Sans
@@ -770,7 +883,10 @@ class ClaudeLocalAgent:
             if process is None:
                 return self.snapshot()
             if process.returncode is None:
-                process.terminate()
+                try:
+                    process.terminate()
+                except ProcessLookupError:
+                    pass  # The owned Windows job may have already terminated it.
                 try:
                     await asyncio.wait_for(process.wait(), timeout=3)
                 except asyncio.TimeoutError:

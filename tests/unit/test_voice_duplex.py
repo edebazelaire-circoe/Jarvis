@@ -42,6 +42,7 @@ from jarvis.runtime.realtime_audio import (
     RealtimeConversationBridge,
     SoundDeviceRealtimeAudio,
 )
+from tests.fakes.speech_context import source, context
 from jarvis.runtime.speech_scheduler import SpeechScheduler
 from jarvis.runtime.turn_filters import EchoGuard, looks_like_request, mentions_jarvis, noise_reason
 
@@ -150,18 +151,29 @@ class ControllableSession:
     async def close(self) -> None:
         return None
 
+    async def speak_reserved(self, request: SpeechRequest, *, output_id: str) -> str:
+        await self.speak(request)
+        self.reserved_output_id = output_id
+        return output_id
+
+    async def invalidate_unstarted_output(self, output_id: str) -> None:
+        self.calls.append("invalidate_unstarted_output")
+
     async def speak(self, request: SpeechRequest) -> str:
         self.spoken.append(request)
         self.calls.append("speak")
         return f"out-{len(self.spoken)}"
 
-    async def speak_reflex(self, *, transcript: str, avoid=()) -> str:  # noqa: ANN001
+    async def speak_reflex(self, *, transcript: str, avoid=(), output_id=None, correlation_id=None) -> str:  # noqa: ANN001
         self.reflexes.append({"transcript": transcript, "avoid": tuple(avoid)})
         self.calls.append("speak_reflex")
-        return f"reflex-{len(self.reflexes)}"
+        return output_id or f"reflex-{len(self.reflexes)}"
 
     async def cancel_output(self, cursor=None) -> None:  # noqa: ANN001
         self.calls.append("cancel_output")
+
+    async def invalidate_reflex(self, output_id: str) -> None:
+        self.calls.append("invalidate_reflex")
 
     async def truncate(self, cursor) -> None:  # noqa: ANN001
         self.calls.append("truncate")
@@ -509,7 +521,7 @@ async def test_played_blocks_become_the_echo_reference_and_a_cut_clears_them():
         def write(self, block) -> None:  # noqa: ANN001
             del block
 
-        def abort(self) -> None:
+        def abort(self, *, ignore_errors=True) -> None:
             return None
 
         def start(self) -> None:
@@ -576,7 +588,7 @@ class RecordingObserver:
     def reset(self) -> None:
         self.resets += 1
 
-    def close(self) -> None:
+    def close(self, *, ignore_errors=True) -> None:
         self.closed = True
 
 
@@ -1066,7 +1078,7 @@ async def test_user_speech_cuts_jarvis_even_while_received_audio_is_still_queued
                 assert release.wait(5)
             written.append(bytes(block))
 
-        def abort(self) -> None:
+        def abort(self, *, ignore_errors=True) -> None:
             return None
 
         def start(self) -> None:
@@ -1121,7 +1133,7 @@ async def test_speech_behind_a_closed_echo_guard_does_not_cut_jarvis():
     assert journal.count("voice.barge_in_ignored") == 1
 
 
-async def test_local_speech_ducks_jarvis_then_the_provider_confirms_the_cut():
+async def test_local_candidate_preserves_volume_until_provider_confirms_cut():
     audio = GuardedAudio(guarded=True, gate_open=True)
     session, journal = ControllableSession(), RecordingJournal()
     bridge = build_bridge(audio, session=session, journal=journal)
@@ -1138,7 +1150,7 @@ async def test_local_speech_ducks_jarvis_then_the_provider_confirms_the_cut():
 
     bridge._on_capture_signal(NEAR_END_SIGNAL)
     await until(lambda: journal.count("voice.barge_in_pending") == 1)
-    assert audio.gains[-1] == pytest.approx(bridge.barge_in_duck_gain)
+    assert audio.gains == []
     assert audio.stop_output_calls == 0
 
     await queue.put(event("realtime.speech_started"))
@@ -1149,7 +1161,7 @@ async def test_local_speech_ducks_jarvis_then_the_provider_confirms_the_cut():
     assert audio.stop_output_calls == 1
 
 
-async def test_unconfirmed_local_speech_restores_jarvis():
+async def test_unconfirmed_local_speech_never_changes_volume():
     audio = GuardedAudio(guarded=True, gate_open=True)
     journal = RecordingJournal()
     bridge = build_bridge(audio, journal=journal, barge_in_confirm_s=0.05)
@@ -1169,7 +1181,7 @@ async def test_unconfirmed_local_speech_restores_jarvis():
     await queue.put(None)
     await asyncio.wait_for(running, timeout=TIMEOUT_S)
 
-    assert audio.gains[-1] == 1.0
+    assert audio.gains == []
     assert audio.released == 1
     assert audio.stop_output_calls == 0
 
@@ -1244,15 +1256,21 @@ async def test_a_real_request_asks_the_scheduler_for_an_acknowledgement():
 async def test_short_social_turns_and_doubtful_turns_get_no_acknowledgement():
     requested: list[str] = []
     clock = ManualClock()
-    bridge = build_bridge(
-        GuardedAudio(guarded=False), clock=clock, on_reflex=lambda text, **kw: requested.append(text)
-    )
+    session = ControllableSession()
+    scheduler = SpeechScheduler(core=EmptyCore(), conversation_id=CONVERSATION, session=session, reflex_delay_s=.05)
+    scheduler._running = True
+    def gate(text, **kwargs):
+        requested.append(text)
+        scheduler.request_reflex(text, **kwargs)
+    bridge = build_bridge(GuardedAudio(guarded=False), clock=clock, on_reflex=gate)
 
     await feed(bridge, [event("realtime.transcript", text="Merci !", item_id="i1")])
     clock.now += 120  # la conversation n'est plus engagée
     await feed(bridge, [event("realtime.transcript", text="Tu viens déjeuner avec nous ?", item_id="i2")])
 
-    assert requested == []
+    assert requested == ["Merci !"]  # Admitted social input reaches explicit WAIT policy.
+    assert scheduler._reflex is None and session.reflexes == []
+    await scheduler.stop()
 
 
 async def test_outside_the_engagement_window_a_turn_is_uncertain_unless_jarvis_is_named():
@@ -1360,7 +1378,7 @@ async def test_a_barge_in_also_cuts_an_output_that_has_not_played_yet():
             if SlowStream.writes == 2:
                 assert release.wait(5)
 
-        def abort(self) -> None:
+        def abort(self, *, ignore_errors=True) -> None:
             return None
 
         def start(self) -> None:
@@ -1484,7 +1502,7 @@ async def test_a_cut_between_the_call_and_the_writer_thread_plays_nothing():
         def write(self, block) -> None:  # noqa: ANN001
             written.append(bytes(block))
 
-        def abort(self) -> None:
+        def abort(self, *, ignore_errors=True) -> None:
             return None
 
         def start(self) -> None:
@@ -1575,7 +1593,12 @@ async def test_a_refused_overlapping_response_does_not_kill_the_session():
 
 
 class EmptyCore:
-    async def events(self):
+    async def speech_context(self, conversation_id):
+        return context(conversation_id, "c1")
+
+    async def events(self, *, on_connected=None):
+        if on_connected is not None:
+            on_connected()
         await asyncio.Event().wait()
         yield  # pragma: no cover
 
@@ -1590,6 +1613,7 @@ def brain_speech(correlation_id: str) -> ProtocolEnvelope:
         kind=SpeechKind.RESULT,
         priority=SpeechPriority.HIGH,
         correlation_id=correlation_id,
+        source=source(correlation_id),
     )
     return ProtocolEnvelope(message_type="brain.speech.requested", payload=request.to_payload())
 
@@ -1599,6 +1623,8 @@ async def test_an_acknowledgement_is_spoken_when_the_brain_is_slow():
     scheduler = SpeechScheduler(core=EmptyCore(), conversation_id=CONVERSATION, session=session, journal=journal, reflex_delay_s=0.05)
     await scheduler.start()
     try:
+        await scheduler.handle_core_event(ProtocolEnvelope(message_type="brain.work.started", payload={
+            "conversation_id": CONVERSATION, "correlation_id": "c1", "work_id": "work-1"}))
         scheduler.request_reflex("Est-ce qu'on est à jour au niveau des commits ?", correlation_id="c1", avoid=("Je regarde.",))
         await until(lambda: session.reflexes)
     finally:
@@ -1663,8 +1689,8 @@ async def test_a_long_answer_still_playing_locally_is_not_taken_for_a_stall():
 
     session, journal = ControllableSession(), RecordingJournal()
     scheduler = SpeechScheduler(core=EmptyCore(), conversation_id=CONVERSATION, session=session, journal=journal, output_timeout_s=0.05)
-    playing = {"out-1"}
-    scheduler.output_alive = lambda output_id: output_id in playing
+    playing = {"active"}
+    scheduler.output_alive = lambda output_id: bool(playing) and output_id == getattr(session, "reserved_output_id", None)
     await scheduler.start()
     try:
         await scheduler.handle_core_event(brain_speech("c1"))

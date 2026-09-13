@@ -47,6 +47,8 @@ class CodexLocalAgent:
         command: str = "codex",
         permission_mode: str = DEFAULT_SANDBOX_MODE,
         model: str = "",
+        execution_profile: str = "conversation",
+        prompt_overrides: object | None = None,
     ) -> None:
         self.runtime_root = runtime_root
         self.cwd = cwd
@@ -55,6 +57,10 @@ class CodexLocalAgent:
         # Control Center écrit. Chez Codex il désigne le bac à sable.
         self.permission_mode = normalize_sandbox_mode(permission_mode)
         self.model = str(model or "").strip()
+        from jarvis.runtime.prompt_runtime import normalize_prompt_overrides
+        self._prompt_overrides = normalize_prompt_overrides(prompt_overrides)
+        self.prompt_applications: list[dict[str, object]] = []
+        self._next_prompt_evidence: dict[str, object] | None = None
         self.journal = RuntimeJournal(runtime_root)
         self.process: asyncio.subprocess.Process | None = None
         self.session_id: str | None = None
@@ -69,6 +75,16 @@ class CodexLocalAgent:
         self._console: subprocess.Popen | None = None
         self._background: asyncio.Task[None] | None = None
         self._last_returncode: int | None = None
+        self._process_lock = asyncio.Lock()
+        self._owned_closed = False
+        self._owned_root_closed = False
+        self._job_started = asyncio.Event()
+        if execution_profile not in {"conversation", "job_result"}:
+            raise ValueError("unknown Codex execution profile")
+        self._process_tree = None
+        if execution_profile == "job_result":
+            from jarvis.runtime.owned_process_tree import OwnedProcessTree
+            self._process_tree = OwnedProcessTree()
 
     # ------------------------------------------------------------------ état
 
@@ -261,6 +277,8 @@ class CodexLocalAgent:
         from jarvis.runtime.cli_catalog import probe
 
         detection = await probe(self.command)
+        if self._owned_closed:
+            raise RuntimeError("owned_agent_closed")
         if not detection.get("available"):
             self._started = False
             self.journal.emit(
@@ -293,20 +311,31 @@ class CodexLocalAgent:
         argv = self._turn_command(resume=True)
         started = time.perf_counter()
         try:
-            self.process = await asyncio.create_subprocess_exec(
-                *argv,
-                cwd=str(self.cwd),
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env={**os.environ, "PYTHONUNBUFFERED": "1"},
-            )
+            async with self._process_lock:
+                if self._owned_closed:
+                    raise RuntimeError("owned_agent_closed")
+                self.process = await asyncio.create_subprocess_exec(
+                    *argv,
+                    cwd=str(self.cwd),
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env={**os.environ, "PYTHONUNBUFFERED": "1"},
+                    **({"creationflags": self._process_tree.creationflags} if self._process_tree else {}),
+                )
+                if self._process_tree:
+                    self._process_tree.attach_and_resume(self.process.pid)
+                self._job_started.set()
         except OSError as exc:
+            self._next_prompt_evidence = None
             self.journal.emit(
                 "agent.start", f"Impossible de lancer Codex : {exc}", level="error",
                 data={"command": argv, "code": "codex_spawn_failed"},
             )
             return {"ok": False, "text": "", "error": str(exc), "code": "codex_spawn_failed"}
+        except BaseException:
+            self._next_prompt_evidence = None
+            raise
 
         process = self.process
         self.subtasks.turn_started()
@@ -314,9 +343,13 @@ class CodexLocalAgent:
         try:
             process.stdin.write(text.encode("utf-8"))
             await process.stdin.drain()
+            if self._next_prompt_evidence is not None:
+                evidence, self._next_prompt_evidence = self._next_prompt_evidence, None
+                self.prompt_applications.append(dict(evidence))
+                self.journal.emit("agent.prompt", "Prompt application recorded", data=dict(evidence))
             process.stdin.close()
         except (BrokenPipeError, ConnectionResetError, OSError):
-            pass
+            self._next_prompt_evidence = None
 
         stderr_task = asyncio.create_task(self._read_stderr(process), name="jarvis-codex-stderr")
         try:
@@ -427,14 +460,24 @@ class CodexLocalAgent:
             self._record({"type": "stderr", "text": text})
             self.journal.emit("agent.stderr", text, level="error")
 
-    async def ask(self, text: str, *, timeout_s: float = 180.0) -> dict[str, Any]:
+    async def ask(self, text: str, *, timeout_s: float = 180.0,
+                  prompt_evidence: dict[str, object] | None = None) -> dict[str, Any]:
         message = text.strip()
         if not message:
             return {"ok": False, "text": "", "error": "message cannot be empty", "code": "codex_empty"}
         async with self._turn_lock:
+            if prompt_evidence is not None:
+                self._next_prompt_evidence = dict(prompt_evidence)
             self._record({"type": "user", "text": message})
             self.journal.emit("agent.input", message)
             return await self._run_turn(message, timeout_s=timeout_s)
+
+    def set_next_prompt_evidence(self, evidence: dict[str, object]) -> None:
+        self._next_prompt_evidence = dict(evidence)
+
+    def set_prompt_overrides(self, overrides: object | None) -> None:
+        from jarvis.runtime.prompt_runtime import normalize_prompt_overrides
+        self._prompt_overrides = normalize_prompt_overrides(overrides)
 
     async def send(self, text: str) -> dict[str, Any]:
         """Déposer un message sans attendre : le tour part en arrière-plan.
@@ -477,7 +520,10 @@ class CodexLocalAgent:
             await asyncio.gather(task, return_exceptions=True)
         process = self.process
         if process is not None and process.returncode is None:
-            process.terminate()
+            try:
+                process.terminate()
+            except ProcessLookupError:
+                pass  # The owned Windows job may have already terminated it.
             try:
                 await asyncio.wait_for(process.wait(), timeout=3)
             except asyncio.TimeoutError:
@@ -489,6 +535,21 @@ class CodexLocalAgent:
         self.subtasks.process_stopped()
         self.journal.emit("agent.stop", "Agent Codex arrêté", data={"returncode": self._last_returncode})
         return self.snapshot()
+
+    async def close_owned(self) -> bool:
+        """Join a pending spawn before terminating this dedicated job process."""
+        self._owned_closed = True
+        async with self._process_lock:
+            if self._process_tree:
+                self._process_tree.terminate()
+            if not self._owned_root_closed:
+                await self.stop()
+                self._owned_root_closed = self.process is None or self.process.returncode is not None
+        root_closed = self.process is None or self.process.returncode is not None
+        return root_closed and self._process_tree is not None and self._process_tree.close_if_empty()
+
+    async def wait_started(self) -> None:
+        await self._job_started.wait()
 
     # ---------------------------------------------------------------- console
 

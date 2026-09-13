@@ -14,7 +14,7 @@ from jarvis.core.tools import ToolRegistry
 from jarvis.domain.events import JarvisState
 from jarvis.domain.messages import ToolCall
 
-from conftest import RecordingBoard, RecordingStatePublisher, RecordingTTS, ScriptedAgent
+from tests.conftest import RecordingBoard, RecordingStatePublisher, RecordingTTS, ScriptedAgent
 
 
 def _orchestrator(tmp_path: Path, agent, *, board=None, tts=None):

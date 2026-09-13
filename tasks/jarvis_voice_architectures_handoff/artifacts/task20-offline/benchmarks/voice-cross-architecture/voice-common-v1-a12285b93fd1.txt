@@ -1,0 +1,8 @@
+Offline cross-architecture benchmark offline-voice-common-v1-a12285b93fd1
+suite_fingerprint=a12285b93fd158a29e7906b68b1959b718a5b39ee387e72adf553ee3ddb2b6a2
+scenarios=14 architectures=3
+evidence=controlled_production_seams
+live_latency=unavailable provider_usage=unavailable cost=unavailable ranking=unavailable
+simple: architecture_specific_pass=1 shared_contract_evidence=11 not_run=2 fail=0
+front_brain: architecture_specific_pass=1 shared_contract_evidence=11 not_run=2 fail=0
+duplex: architecture_specific_pass=0 shared_contract_evidence=11 not_run=3 fail=0

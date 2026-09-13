@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import timedelta
+import time
+import uuid
 
 from jarvis.core.latency import FIRST_BRAIN_AUDIO as LATENCY_FIRST_BRAIN_AUDIO, LatencyTracker
 from jarvis.core.v2_services import SystemClock
@@ -14,8 +18,14 @@ from jarvis.domain.v2 import (
     SpeechProvenance,
     SpeechRequest,
 )
+from jarvis.domain.reflex_policy import ReflexAction, ReflexDecision, decide_reflex
+from jarvis.domain.voice_frontend import VoiceReflexRequest
+from jarvis.domain.speech_presentation import SpeechCandidateStatus, SpeechChunk, SpeechDependency, SpeechSource, SpeechTextSpan, semantic_text_spans
 from jarvis.ports.v2 import Clock, RealtimeOutputControl, supports_reflex
 from jarvis.runtime.journal import RuntimeJournal
+from jarvis.runtime.output_admission import OutputAdmission, OutputAdmissionState
+from jarvis.runtime.conversation_presentation import ConversationCandidate
+from jarvis.domain.voice_frontend import VoiceConversationRequest
 
 # Types d'événements Core consommés ici. Ils sont repris de `brain_service`
 # sous forme de littéraux : le runtime ne doit pas importer `jarvis.core`
@@ -25,6 +35,9 @@ BRAIN_SPEECH_REQUESTED = "brain.speech.requested"
 BRAIN_TURN_ACCEPTED = "brain.turn.accepted"
 BRAIN_STATE_UPDATED = "brain.state.updated"
 BRAIN_INTENT_REVISED = "brain.intent.revised"
+BRAIN_WORK_STARTED = "brain.work.started"
+BRAIN_WORK_COMPLETED = "brain.work.completed"
+BRAIN_WORK_FAILED = "brain.work.failed"
 BRAIN_EVENT_PREFIX = "brain."
 
 # Télémétrie de livraison (docs/05, section « Voice delivery telemetry »).
@@ -32,17 +45,20 @@ BRAIN_EVENT_PREFIX = "brain."
 # haut-parleur a fait, et la Décision 27 dit que `RuntimeJournal` est le
 # support d'observabilité de ce dépôt.
 SPEECH_QUEUED = "voice.speech.queued"
+SPEECH_DISPATCHED = "voice.speech.dispatched"
 SPEECH_STARTED = "voice.speech.started"
 SPEECH_COMPLETED = "voice.speech.completed"
 SPEECH_INTERRUPTED = "voice.speech.interrupted"
 SPEECH_EXPIRED = "voice.speech.expired"
 SPEECH_SUPERSEDED = "voice.speech.superseded"
 SPEECH_IGNORED = "voice.speech.ignored"
+SPEECH_DECIDED = "voice.speech.presentation_decided"
 
 # Accusé de réception de la surface (mode continu) : proposé par le bridge après
 # un tour adressé, prononcé seulement si le cerveau n'a encore rien dit.
 REFLEX_STARTED = "voice.reflex.started"
 REFLEX_SKIPPED = "voice.reflex.skipped"
+REFLEX_DECIDED = "voice.reflex.decided"
 
 # Mesure 3 des six de `docs/04-testing-and-quality.md` : de la demande de parole
 # du cerveau au premier bloc audio réellement rendu. Elle se joint par
@@ -81,7 +97,7 @@ class _ActiveSpeech:
     pilotaient la même session.
     """
 
-    request: SpeechRequest
+    request: SpeechRequest | ConversationCandidate
     output_id: str
     done: asyncio.Event = field(default_factory=asyncio.Event)
     status: str = "unknown"
@@ -90,6 +106,15 @@ class _ActiveSpeech:
     # échec, et lui seul ne dit pas combien de millisecondes ont été jouées.
     interrupted: bool = False
     played_ms: int = 0
+    admission: OutputAdmission | None = None
+
+
+@dataclass(slots=True)
+class _Candidate:
+    request: SpeechRequest
+    status: SpeechCandidateStatus
+    reason: str
+    chunk: SpeechChunk
 
 
 @dataclass(slots=True)
@@ -105,6 +130,10 @@ class _Reflex:
     avoid: tuple[str, ...]
     due: float
     expires: float
+    requested: float
+    next_check: float
+    output_id: str | None = None
+    admission: OutputAdmission | None = None
 
 
 class SpeechScheduler:
@@ -192,12 +221,33 @@ class SpeechScheduler:
         self.session = session
         self.journal = journal
         self.clock = clock or SystemClock()
+        monotonic = getattr(self.clock, "monotonic", None)
+        self._monotonic = monotonic if callable(monotonic) else time.monotonic
         self.on_brain_activity = on_brain_activity
         self.output_timeout_s = self.OUTPUT_TIMEOUT_S if output_timeout_s is None else output_timeout_s
         self.reconnect_delay_s = self.RECONNECT_DELAY_S if reconnect_delay_s is None else reconnect_delay_s
         self.transient_ttl_s = self.TRANSIENT_TTL_S if transient_ttl_s is None else transient_ttl_s
 
         self._pending: list[SpeechRequest] = []
+        self._deferred: OrderedDict[str, SpeechRequest] = OrderedDict()
+        self._candidates: OrderedDict[str, _Candidate] = OrderedDict()
+        self._chain_next: OrderedDict[str, int] = OrderedDict()
+        self._blocked_chains: set[str] = set()
+        self._attempted_ids: set[str] = set()
+        self._queued_at: dict[str, float] = {}
+        self._current_source: SpeechSource | None = None
+        self._source_complete = False
+        self._intent_watermark = -1
+        self._invalidated_dependencies: set[SpeechDependency] = set()
+        self._presentation_admissions: dict[str, OutputAdmission] = {}
+        self._presentation_cancels: set[asyncio.Task] = set()
+        self._presentation_cancelled: set[str] = set()
+        self._presentation_expiries: dict[str, asyncio.TimerHandle] = {}
+        self._source_refresh: asyncio.Task | None = None
+        self._source_queries: set[asyncio.Task] = set()
+        self._stopping = False
+        self._source_generation = 0
+        self._stream_connected = False
         self._wakeup = asyncio.Event()
         self._active: _ActiveSpeech | None = None
         # Sorties fournisseur commencées et pas encore terminées, quelle qu'en
@@ -224,6 +274,16 @@ class SpeechScheduler:
         self.reflex_delay_s = max(0.0, float(reflex_delay_s))
         self.user_speech_hold_s = self.USER_SPEECH_HOLD_MAX_S if user_speech_hold_s is None else user_speech_hold_s
         self._reflex: _Reflex | None = None
+        self._live_reflex: _Reflex | None = None
+        self._reflex_work: OrderedDict[str, tuple[str, bool]] = OrderedDict()
+        self._reflex_terminal: OrderedDict[str, bool] = OrderedDict()
+        self._reflex_decisions: OrderedDict[str, ReflexDecision] = OrderedDict()
+        self._reflex_used: set[str] = set()
+        self._reflex_requested: set[str] = set()
+        self._reflex_admissions: dict[str, OutputAdmission] = {}
+        self._reflex_cancels: set[asyncio.Task] = set()
+        self._reflex_cancelled: set[str] = set()
+        self._reflex_expiries: dict[str, asyncio.TimerHandle] = {}
         # Posé par le runtime quand le bridge existe : une sortie dont le
         # fournisseur a fini la génération peut encore jouer ici pendant de
         # longues secondes. Sans lui, une phrase de plus de `output_timeout_s`
@@ -232,6 +292,7 @@ class SpeechScheduler:
         self._user_speaking = False
         self._user_quiet = asyncio.Event()
         self._user_quiet.set()
+        self._active_continuation_until: float | None = None
 
     # -- cycle de vie -------------------------------------------------------
 
@@ -243,12 +304,33 @@ class SpeechScheduler:
     def pending_count(self) -> int:
         return len(self._pending)
 
+    @property
+    def immediate_continuation_pending(self) -> bool:
+        """A bounded, already-admitted utterance is being delivered now."""
+        return self.immediate_continuation_until is not None
+
+    @property
+    def immediate_continuation_until(self) -> float | None:
+        """Loop-clock deadline; durable/background work never creates one."""
+        now = asyncio.get_running_loop().time()
+        deadlines = []
+        if self._active_continuation_until is not None:
+            deadlines.append(self._active_continuation_until)
+        for reflex in (self._live_reflex, self._reflex):
+            if reflex is not None:
+                deadlines.append(reflex.expires)
+        future = [deadline for deadline in deadlines if deadline > now]
+        return max(future) if future else None
+
     async def start(self) -> None:
         """Démarrer l'abonnement et la boucle de livraison."""
 
         if self._running:
             return
+        if self._stopping:
+            raise RuntimeError("A stopped scheduler requires a new frontend incarnation")
         self._running = True
+        self._source_unknown("activation")
         self._tasks = [
             asyncio.create_task(self._consume_core_events(), name="jarvis-speech-events"),
             asyncio.create_task(self._deliver_pending(), name="jarvis-speech-delivery"),
@@ -263,17 +345,44 @@ class SpeechScheduler:
         """
 
         self._running = False
+        self._stopping = True
+        self._source_complete = False
+        self._stream_connected = False
+        self._source_generation += 1
+        self._invalidate_reflex("voice_background")
+        if self._active is not None:
+            self._invalidate_presentation(self._active, "voice_background")
+        for handle in self._presentation_expiries.values():
+            handle.cancel()
+        self._presentation_expiries.clear()
+        for query in tuple(self._source_queries):
+            query.cancel()
+        for handle in self._reflex_expiries.values():
+            handle.cancel()
+        self._reflex_expiries.clear()
         tasks, self._tasks = self._tasks, []
         for task in tasks:
             if task is not asyncio.current_task():
                 task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+        if self._source_queries:
+            await asyncio.gather(*tuple(self._source_queries), return_exceptions=True)
+        if self._reflex_cancels:
+            await asyncio.gather(*tuple(self._reflex_cancels), return_exceptions=True)
+        if self._presentation_cancels:
+            await asyncio.gather(*tuple(self._presentation_cancels), return_exceptions=True)
         self._expire_all(reason="voice_background")
+        for request in tuple(self._deferred.values()):
+            self._decision(request, SpeechCandidateStatus.EXPIRED, "voice_background")
+        self._deferred.clear()
         self._active = None
         self._reflex = None
+        self._live_reflex = None
+        self._reflex_work.clear()
+        self._reflex_terminal.clear()
+        self._reflex_decisions.clear()
         self._live_outputs.clear()
-        self._seen_speech_ids.clear()
         self._idle.set()
         self.note_user_speech(False)
 
@@ -289,18 +398,94 @@ class SpeechScheduler:
         précédent.
         """
 
-        if not self._running or self.reflex_delay_s <= 0 or not supports_reflex(self.session):
-            return
         now = asyncio.get_running_loop().time()
+        VoiceReflexRequest(transcript, avoid)  # Reuse the canonical bounds before retaining user data.
+        if not isinstance(correlation_id, str) or not correlation_id or len(correlation_id) > 256 or correlation_id.strip() != correlation_id or not correlation_id.isprintable():
+            raise ValueError("Reflex correlation must be a bounded printable ID")
+        if correlation_id in self._reflex_requested:
+            return  # Includes completed/expired candidates: never cancel or rearm a duplicate.
+        if len(self._reflex_requested) >= 4096:
+            return  # Session retention exhausted: silence, without forgetting dedup evidence.
+        self._reflex_requested.add(correlation_id)
+        self._invalidate_reflex("new_turn")
         due = now + self.reflex_delay_s
-        self._reflex = _Reflex(
+        candidate = _Reflex(
             transcript=transcript,
             correlation_id=correlation_id,
             avoid=tuple(avoid),
             due=due,
             expires=due + self.REFLEX_GRACE_S,
+            requested=now,
+            next_check=due,
         )
+        decision = self._decide_reflex(candidate)
+        self._record_reflex_decision(candidate, decision, "request")
+        if decision.reason not in ("work_unconfirmed", "answer_may_arrive_quickly", "confirmed_work_wait"):
+            return
+        self._reflex = candidate
         self._wakeup.set()
+
+    def _decide_reflex(self, reflex: _Reflex) -> ReflexDecision:
+        now = asyncio.get_running_loop().time()
+        return decide_reflex(text=reflex.transcript,
+            enabled=self._running and self.reflex_delay_s > 0 and supports_reflex(self.session)
+                    and callable(getattr(self.session, "invalidate_reflex", None)) and len(self._reflex_used) < 4096,
+            admitted=True, user_speaking=self._user_speaking,
+            useful_ready=bool(self._pending) or self._active is not None,
+            work_confirmed=any(correlation == reflex.correlation_id and active for correlation, active in self._reflex_work.values()),
+            work_terminal=reflex.correlation_id in self._reflex_terminal,
+            noticeable_wait=now >= reflex.due, already_used=reflex.correlation_id in self._reflex_used,
+            stale=now > reflex.expires)
+
+    def _record_reflex_decision(self, reflex: _Reflex, decision: ReflexDecision, phase: str) -> None:
+        self._reflex_decisions[reflex.correlation_id] = decision
+        self._reflex_decisions.move_to_end(reflex.correlation_id)
+        while len(self._reflex_decisions) > 128:
+            self._reflex_decisions.popitem(last=False)
+        self._trace(REFLEX_DECIDED, "Reflex gate decision", data={"conversation_id": self.conversation_id,
+            "session_id": str(getattr(self.session, "session_id", "")) or None,
+            "correlation_id": reflex.correlation_id, "action": decision.action.value, "reason": decision.reason,
+            "phase": phase, "elapsed_ms": round((asyncio.get_running_loop().time() - reflex.requested) * 1000, 3)})
+
+    def output_admission(self, output_id: str) -> OutputAdmission | None:
+        return self._presentation_admissions.get(output_id) or self._reflex_admissions.get(output_id)
+
+    def _invalidate_reflex(self, reason: str, *, correlation_id: str | None = None) -> None:
+        seen: set[int] = set()
+        for reflex in (self._reflex, self._live_reflex):
+            if reflex is None or (correlation_id is not None and reflex.correlation_id != correlation_id):
+                continue
+            if id(reflex) in seen or (reflex.output_id is not None and reflex.output_id in self._reflex_cancelled):
+                continue
+            seen.add(id(reflex))
+            if reflex.admission is not None and not reflex.admission.invalidate():
+                continue  # A native write already began; this is not proven unplayed.
+            self._record_reflex_decision(reflex, ReflexDecision(ReflexAction.WAIT, reason), "invalidate")
+            self._skip_reflex(reflex, "brain_answered" if reason == "useful_content_ready" else reason)
+            if reflex is self._reflex:
+                self._reflex = None
+            if reflex.output_id is not None:
+                self._reflex_cancelled.add(reflex.output_id)
+                cancel = getattr(self.session, "invalidate_reflex", None)
+                if callable(cancel):
+                    task = asyncio.create_task(self._cancel_reflex(cancel, reflex.output_id))
+                    self._reflex_cancels.add(task)
+                    task.add_done_callback(self._reflex_cancels.discard)
+
+    async def _cancel_reflex(self, cancel, output_id: str) -> None:
+        try:
+            await asyncio.wait_for(cancel(output_id), self.output_timeout_s)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._trace(SPEAK_FAILED, "Reflex cancellation failed", level="warning",
+                        data={"conversation_id": self.conversation_id, "output_id": output_id,
+                              "code": "reflex_cancel_failed", "exception_type": type(exc).__name__})
+
+    def _forget_reflex_work(self, reason: str) -> None:
+        self._reflex_work.clear()
+        self._reflex_terminal.clear()
+        self._invalidate_reflex(reason)
 
     def note_user_speech(self, active: bool) -> None:
         """Le VAD du fournisseur entend l'utilisateur, ou ne l'entend plus."""
@@ -308,6 +493,7 @@ class SpeechScheduler:
         self._user_speaking = bool(active)
         if self._user_speaking:
             self._user_quiet.clear()
+            self._invalidate_reflex("user_speaking")
             reflex = self._reflex
             if reflex is not None:
                 # L'utilisateur reprend la parole : l'accusé de sa phrase
@@ -316,6 +502,7 @@ class SpeechScheduler:
                 self._skip_reflex(reflex, "user_speaking")
         else:
             self._user_quiet.set()
+            self._wakeup.set()
 
     def _output_still_alive(self, output_id: str) -> bool:
         if getattr(self.session, "active_output_id", None) == output_id:
@@ -326,8 +513,10 @@ class SpeechScheduler:
     def _skip_reflex(self, reflex: _Reflex, reason: str) -> None:
         self._trace(
             REFLEX_SKIPPED,
-            reflex.transcript[:300],
-            data={"conversation_id": self.conversation_id, "correlation_id": reflex.correlation_id, "reason": reason},
+            "Reflex skipped",
+            data={"conversation_id": self.conversation_id,
+                  "session_id": str(getattr(self.session, "session_id", "")) or None,
+                  "correlation_id": reflex.correlation_id, "reason": reason},
         )
 
     # -- notifications venues du bridge -------------------------------------
@@ -343,6 +532,8 @@ class SpeechScheduler:
         payload = event.payload or {}
         output_id = str(payload.get("output_id") or "")
         if event.message_type == "realtime.audio":
+            if self._active is not None and isinstance(self._active.request, ConversationCandidate):
+                return  # No backend speech latency/known intended text for direct generation.
             # Le bridge ne relaie que le **premier** bloc audio de chaque
             # sortie : il n'y a donc rien à dédupliquer ici, et la marque est de
             # toute façon consommée par la mesure. Une sortie sans `speech_id`
@@ -359,6 +550,7 @@ class SpeechScheduler:
                 kind=LATENCY_FIRST_BRAIN_AUDIO_KIND,
                 data={
                     "conversation_id": self.conversation_id,
+                    "session_id": str(getattr(self.session, "session_id", "")) or None,
                     "speech_id": speech_id or None,
                     "output_id": output_id or None,
                     "correlation_id": active.request.correlation_id if active is not None else None,
@@ -403,6 +595,10 @@ class SpeechScheduler:
         if active is None:
             return
         active.interrupted = True
+        candidate = self._candidates.get(active.request.id)
+        if candidate is not None:
+            self._blocked_chains.add(candidate.chunk.chain_id)
+        self._replan()
         if cursor is not None and cursor.speech_id in {active.request.id, active.output_id}:
             active.played_ms = cursor.played_ms
 
@@ -421,7 +617,7 @@ class SpeechScheduler:
         while True:
             stream: AsyncIterator[ProtocolEnvelope] | None = None
             try:
-                stream = self.core.events()
+                stream = self.core.events(on_connected=self._subscription_ready)
                 async for envelope in stream:
                     await self.handle_core_event(envelope)
             except asyncio.CancelledError:
@@ -441,10 +637,13 @@ class SpeechScheduler:
                     level="warning",
                     data={"conversation_id": self.conversation_id, "code": "core_event_stream_closed"},
                 )
+            self._stream_connected = False
+            self._source_unknown("stream_gap")
             await self._close_stream(stream)
             # Décision 31 : pas de rejeu. Ce qui a été manqué est perdu, donc
             # ce qui reste en file et n'est plus forcément vrai est jeté.
             self._drop_transient(reason="stream_gap")
+            self._forget_reflex_work("stream_gap")
             # Attente de reconnexion volontairement sur `asyncio.sleep` et non
             # sur l'horloge injectée : celle-ci sert à dater et à comparer des
             # TTL, et une horloge de test qui « dort » instantanément
@@ -471,8 +670,10 @@ class SpeechScheduler:
     async def handle_core_event(self, envelope: ProtocolEnvelope) -> None:
         """Router un évènement Core. Point d'entrée unique, aussi pour les tests."""
 
+        if self._stopping:
+            return
         message_type = envelope.message_type
-        if not message_type.startswith(BRAIN_EVENT_PREFIX):
+        if not message_type.startswith(BRAIN_EVENT_PREFIX) and message_type != "voice.turn.admitted":
             return
         payload = envelope.payload or {}
         conversation_id = str(payload.get("conversation_id") or envelope.conversation_id or "")
@@ -491,7 +692,16 @@ class SpeechScheduler:
         # Décision 32 : le cerveau qui travaille est de l'activité utile. Le
         # délai repart du **dernier** évènement, donc un cerveau muet finit
         # quand même par rendre la session au fond.
+        if message_type == "brain.source.changed":
+            self.update_speech_context(payload)
+        elif message_type in (BRAIN_TURN_ACCEPTED, BRAIN_INTENT_REVISED):
+            self._note_revision(payload.get("revision"))
+            self.update_speech_context(payload)
+        elif message_type == BRAIN_STATE_UPDATED:
+            self._note_revision(payload.get("revision"))
         await self._rearm_activity()
+        if self._stopping:
+            return
 
         if message_type == BRAIN_SPEECH_REQUESTED:
             request = self._read_request(payload)
@@ -502,23 +712,51 @@ class SpeechScheduler:
                 self._latency.mark(LATENCY_FIRST_BRAIN_AUDIO, request.id)
                 self._enqueue(request)
         elif message_type == BRAIN_TURN_ACCEPTED:
+            current = self._reflex or self._live_reflex
+            if current is not None and current.correlation_id != payload.get("correlation_id"):
+                self._invalidate_reflex("new_turn")
             self._note_revision(payload.get("revision"))
             # Un nouveau tour utilisateur faisant autorité est une révision
             # d'intention : ce qui attendait d'être dit sur l'intention
             # précédente ne l'est plus (spec section 6).
-            self._drop_transient(reason="intent_revised")
+            self._replan()
         elif message_type == BRAIN_INTENT_REVISED:
+            self._invalidate_reflex("intent_revised")
+            for field in ("superseded_work_ids", "cancelled_work_ids"):
+                for work_id in payload.get(field, ()) if isinstance(payload.get(field), (list, tuple)) else ():
+                    if work_id in self._reflex_work:
+                        correlation = self._reflex_work[work_id][0]
+                        self._reflex_work[work_id] = (correlation, False)
+                        self._reflex_terminal[correlation] = True
+            while len(self._reflex_terminal) > 128:
+                self._reflex_terminal.popitem(last=False)
             self._note_revision(payload.get("revision"))
             # Core a désigné le travail dont la parole n'est plus vraie. C'est
             # une décision du cerveau, pas une heuristique de surface : elle
             # emporte donc aussi les paroles durables (résultat, question), que
             # rien d'autre ne permet de retirer (Décision 14). Le travail
             # `retained` n'est jamais touché.
-            self._drop_work(payload.get("superseded_work_ids"), reason="work_superseded")
-            self._drop_work(payload.get("cancelled_work_ids"), reason="work_cancelled")
-            self._drop_transient(reason="intent_revised")
+            # Work generation invalidations come from the exact dependency context, not reusable IDs.
+            self._replan()
         elif message_type == BRAIN_STATE_UPDATED:
             self._note_revision(payload.get("revision"))
+        elif message_type in (BRAIN_WORK_STARTED, BRAIN_WORK_COMPLETED, BRAIN_WORK_FAILED):
+            correlation, work_id = payload.get("correlation_id"), payload.get("work_id")
+            if isinstance(correlation, str) and correlation and len(correlation) <= 256 and isinstance(work_id, str) and work_id and len(work_id) <= 256:
+                active = message_type == BRAIN_WORK_STARTED
+                # A late start cannot resurrect work already observed terminal.
+                previous = self._reflex_work.get(work_id)
+                if previous is not None and not previous[1]:
+                    active = False
+                self._reflex_work[work_id] = (correlation, active)
+                while len(self._reflex_work) > 128:
+                    self._reflex_work.popitem(last=False)
+                if not active:
+                    self._reflex_terminal[correlation] = True
+                    while len(self._reflex_terminal) > 128:
+                        self._reflex_terminal.popitem(last=False)
+                    self._invalidate_reflex("work_terminal", correlation_id=correlation)
+                self._wakeup.set()
         # `brain.work.*` n'est pas de la parole : ce sont des faits. Core émet
         # lui-même la `brain.speech.requested` quand un échec mérite d'être dit
         # (Décision 13) ; en fabriquer une ici remettrait de la politique de
@@ -575,6 +813,8 @@ class SpeechScheduler:
             return
         previous = self._last_revision
         if previous is not None and value > previous + 1:
+            self._forget_reflex_work("revision_gap")
+            self._source_unknown("revision_gap")
             self._trace(
                 REVISION_GAP,
                 "Révision de l'état cerveau discontinue : des évènements ont été manqués",
@@ -592,98 +832,300 @@ class SpeechScheduler:
 
     # -- file ---------------------------------------------------------------
 
-    def _enqueue(self, request: SpeechRequest) -> None:
-        if request.id in self._seen_speech_ids:
-            self._trace(
-                SPEECH_IGNORED,
-                request.text[:300],
-                data={**self._fields(request), "reason": "duplicate_speech_id"},
-            )
+    def presentation_snapshot(self) -> dict:
+        """Bounded diagnostics; outcome ownership and text remain in Core."""
+        return {"source_complete": self._source_complete,
+                "current_source": self._current_source.to_payload() if self._current_source else None,
+                "candidates": [{**self._fields(item.request), "status": item.status.value,
+                    "reason": item.reason, "outcome_id": item.request.outcome_id,
+                    "source": item.request.source.to_payload() if item.request.source else None,
+                    "chunk": item.chunk.to_payload(),
+                    "age_ms": max(0, int((self.clock.now() - item.request.created_at).total_seconds() * 1000))}
+                    for item in self._candidates.values()]}
+
+    def update_speech_context(self, payload: dict) -> None:
+        """Apply Core intent authority, never the general working-state revision."""
+        if self._stopping:
             return
-        self._seen_speech_ids.add(request.id)
-        if request.conversation_id != self.conversation_id:
-            self._trace(
-                SPEECH_IGNORED,
-                request.text[:300],
-                data={**self._fields(request), "reason": "other_conversation"},
-            )
-            return
-        now = self.clock.now()
-        if request.is_expired(now):
-            self._trace(SPEECH_EXPIRED, request.text[:300], data={**self._fields(request), "reason": "ttl"})
-            return
-        # Relation dirigée : une demande peut arriver déjà périmée par ce qui
-        # est en file (ordre d'arrivée non garanti), et inversement.
-        for queued in tuple(self._pending):
-            if queued.supersedes(request):
-                self._trace(
-                    SPEECH_SUPERSEDED,
-                    request.text[:300],
-                    data={**self._fields(request), "reason": "superseded_on_arrival", "by_speech_id": queued.id},
-                )
+        try:
+            if type(payload.get("schema_version")) is not int or payload["schema_version"] != 1 or payload.get("conversation_id") != self.conversation_id:
+                raise ValueError("Invalid source context envelope")
+            complete = payload["source_complete"]
+            if type(complete) is not bool:
+                raise ValueError("Invalid completeness")
+            source = SpeechSource.from_payload(payload["current_speech_source"]) if payload["current_speech_source"] is not None else None
+            raw = payload["invalidated_dependencies"]
+            if not isinstance(raw, list) or len(raw) > 256:
+                raise ValueError("Invalid dependencies")
+            invalid = {SpeechDependency.from_payload(item) for item in raw}
+            if len(self._invalidated_dependencies | invalid) > 4096:
+                raise ValueError("Dependency retention exhausted")
+            self._invalidated_dependencies.update(invalid)
+            if source is not None and source.intent_epoch < self._intent_watermark:
+                self._replan()  # Old snapshots may add tombstones, never roll intent backwards.
                 return
-        for queued in tuple(self._pending):
-            if request.supersedes(queued):
-                self._pending.remove(queued)
-                self._trace(
-                    SPEECH_SUPERSEDED,
-                    queued.text[:300],
-                    data={**self._fields(queued), "reason": "superseded", "by_speech_id": request.id},
-                )
-        self._pending.append(request)
-        self._trace(SPEECH_QUEUED, request.text[:300], data=self._fields(request))
-        reflex = self._reflex
-        if reflex is not None and reflex.correlation_id == request.correlation_id:
-            # Le cerveau répond à ce tour-là : l'accusé n'a plus lieu d'être.
-            self._reflex = None
-            self._skip_reflex(reflex, "brain_answered")
+            if source is not None and source.intent_epoch == self._intent_watermark and self._current_source is not None and source != self._current_source:
+                raise ValueError("Conflicting source at the same epoch")
+            if source is None and self._intent_watermark >= 0:
+                raise ValueError("Current source disappeared")
+            self._current_source = source
+            if source is not None:
+                self._intent_watermark = source.intent_epoch
+            self._source_complete = complete
+        except (ValueError, TypeError, KeyError):
+            self._source_complete = False
+        self._update_analysis_source()
+        self._replan()
+
+    def _update_analysis_source(self) -> None:
+        analysis = getattr(self.session, "analysis", None)
+        if analysis is not None:
+            analysis.update_source(source=self._current_source, source_complete=self._source_complete,
+                                   invalidated_dependencies=tuple(self._invalidated_dependencies)[:256])
+
+    def _subscription_ready(self) -> None:
+        if self._stopping:
+            return
+        self._stream_connected = True
+        self._source_unknown("subscribed")
+
+    def _source_unknown(self, reason: str) -> None:
+        self._source_generation += 1
+        self._source_complete = False
+        self._update_analysis_source()
+        self._replan()
+        if self._source_refresh is not None and not self._source_refresh.done():
+            self._source_refresh.cancel()
+        if self._running and self._stream_connected and len(self._source_queries) < 8:
+            self._source_refresh = asyncio.create_task(self._refresh_source(self._source_generation), name="jarvis-speech-source")
+            self._source_queries.add(self._source_refresh)
+            self._source_refresh.add_done_callback(self._source_queries.discard)
+
+    async def _refresh_source(self, generation: int) -> None:
+        query = getattr(self.core, "speech_context", None)
+        if not callable(query):
+            return
+        try:
+            payload = await asyncio.wait_for(query(self.conversation_id), self.output_timeout_s)
+            if self._running and self._stream_connected and generation == self._source_generation:
+                self.update_speech_context(payload)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if generation != self._source_generation or not self._running:
+                return
+            self._source_complete = False
+            self._replan()
+            self._trace(SPEECH_DECIDED, "Speech source unavailable", level="warning",
+                        data={"conversation_id": self.conversation_id, "reason": "source_query_failed", "exception_type": type(exc).__name__})
+
+    def _eligibility(self, request: SpeechRequest) -> tuple[SpeechCandidateStatus, str]:
+        if request.is_expired(self.clock.now()):
+            return SpeechCandidateStatus.EXPIRED, "ttl"
+        candidate = self._candidates.get(request.id)
+        if candidate is not None and candidate.chunk.chain_id in self._blocked_chains:
+            return SpeechCandidateStatus.SUPERSEDED, "interrupted_chain"
+        if request.source is None:
+            return SpeechCandidateStatus.DEFERRED, "unknown_source"
+        if not self._source_complete or self._current_source is None:
+            return SpeechCandidateStatus.DEFERRED, "source_state_unknown"
+        if any(dependency in self._invalidated_dependencies for dependency in request.source.dependencies):
+            return SpeechCandidateStatus.SUPERSEDED, "dependency_revoked"
+        if (request.source.intent_id, request.source.intent_epoch) != (self._current_source.intent_id, self._current_source.intent_epoch):
+            if isinstance(request, ConversationCandidate):
+                if request.source.intent_epoch > self._intent_watermark:
+                    return SpeechCandidateStatus.DEFERRED, "source_state_unknown"
+                return SpeechCandidateStatus.SUPERSEDED, "stale_source"
+            status = SpeechCandidateStatus.SUPERSEDED if request.kind in TRANSIENT_KINDS else SpeechCandidateStatus.DEFERRED
+            return status, "stale_source"
+        if isinstance(request, ConversationCandidate):
+            available = callable(getattr(self.session, "request_conversation", None)) and callable(getattr(self.session, "invalidate_unstarted_output", None))
+            return (SpeechCandidateStatus.ELIGIBLE, "current_intent") if available else (SpeechCandidateStatus.DEFERRED, "output_admission_unavailable")
+        if not callable(getattr(self.session, "speak_reserved", None)) or not callable(getattr(self.session, "invalidate_unstarted_output", None)):
+            return SpeechCandidateStatus.DEFERRED, "output_admission_unavailable"
+        return SpeechCandidateStatus.ELIGIBLE, "current_intent"
+
+    def _decision(self, request: SpeechRequest, status: SpeechCandidateStatus, reason: str) -> None:
+        if isinstance(request, ConversationCandidate):
+            self._trace("voice.conversation.presentation", "Direct conversation presentation", data={**self._fields(request), "status": status.value, "reason": reason})
+            return
+        candidate = self._candidates.get(request.id)
+        if candidate is None or (candidate.status is status and candidate.reason == reason):
+            return
+        candidate.status, candidate.reason = status, reason
+        terminal_channel = {SpeechCandidateStatus.EXPIRED: SPEECH_EXPIRED, SpeechCandidateStatus.SUPERSEDED: SPEECH_SUPERSEDED}.get(status)
+        if terminal_channel is not None:
+            self._trace(terminal_channel, "Speech presentation retired", data={**self._fields(request), "reason": reason})
+        self._trace(SPEECH_DECIDED, "Speech presentation decision", data={**self._fields(request),
+            "status": status.value, "reason": reason, "outcome_id": request.outcome_id,
+            "intent_id": request.source.intent_id if request.source else None,
+            "intent_epoch": request.source.intent_epoch if request.source else None,
+            "chunk": candidate.chunk.to_payload(),
+            "age_ms": max(0, int((self.clock.now() - request.created_at).total_seconds() * 1000))})
+
+    def _retain_candidate(self, candidate: _Candidate) -> bool:
+        while len(self._candidates) >= 256:
+            disposable = next((key for key, value in self._candidates.items()
+                if value.status in {SpeechCandidateStatus.SUPERSEDED, SpeechCandidateStatus.EXPIRED,
+                                    SpeechCandidateStatus.COMPLETED, SpeechCandidateStatus.INTERRUPTED}), None)
+            if disposable is None:
+                return False
+            del self._candidates[disposable]
+        self._candidates[candidate.request.id] = candidate
+        return True
+
+    def _defer(self, request: SpeechRequest, status: SpeechCandidateStatus, reason: str) -> None:
+        if request in self._pending:
+            self._pending.remove(request)
+        self._queued_at.pop(request.id, None)
+        self._deferred.pop(request.id, None)
+        if isinstance(request, ConversationCandidate):
+            self._decision(request, status, reason)
+            return  # Direct input is never silently replayed after freshness loss.
+        if status is SpeechCandidateStatus.DEFERRED:
+            if len(self._deferred) >= 64:
+                status, reason = SpeechCandidateStatus.SUPERSEDED, "deferred_capacity"
+            else:
+                self._deferred[request.id] = request
+        self._decision(request, status, reason)
+
+    def _replan(self) -> None:
+        for request in tuple(self._pending):
+            status, reason = self._eligibility(request)
+            if isinstance(request, ConversationCandidate) and reason == "source_state_unknown":
+                continue  # Existing subscription barrier will replan this bounded candidate.
+            if status is not SpeechCandidateStatus.ELIGIBLE:
+                self._defer(request, status, reason)
+        for request in tuple(self._deferred.values()):
+            if request.id in self._attempted_ids:
+                continue  # Re-expression requires a new Core request/chain identity.
+            status, reason = self._eligibility(request)
+            if status is SpeechCandidateStatus.ELIGIBLE and len(self._pending) < 64:
+                same_origin = [queued for queued in self._pending if isinstance(queued, SpeechRequest) and queued.source == request.source
+                               and self._candidates[queued.id].chunk.chain_id != self._candidates[request.id].chunk.chain_id]
+                if any(queued.supersedes(request) for queued in same_origin):
+                    self._defer(request, SpeechCandidateStatus.SUPERSEDED, "superseded_on_arrival")
+                    continue
+                for queued in same_origin:
+                    if request.supersedes(queued):
+                        self._defer(queued, SpeechCandidateStatus.SUPERSEDED, "superseded")
+                active = self._active
+                if active is not None and isinstance(active.request, SpeechRequest) and active.request.source == request.source and request.supersedes(active.request):
+                    self._invalidate_presentation(active, "superseded")
+                self._deferred.pop(request.id, None)
+                self._pending.append(request)
+                self._decision(request, status, reason)
+                self._note_queued(request)
+            elif status is not SpeechCandidateStatus.ELIGIBLE:
+                self._defer(request, status, reason)
+        active = self._active
+        if active is not None:
+            status, reason = self._eligibility(active.request)
+            if status is not SpeechCandidateStatus.ELIGIBLE:
+                self._invalidate_presentation(active, reason)
+        if any(self._eligibility(request)[0] is SpeechCandidateStatus.ELIGIBLE for request in self._pending):
+            self._invalidate_reflex("useful_content_ready")
+            self._wakeup.set()
+
+    def _invalidate_presentation(self, active: _ActiveSpeech, reason: str) -> None:
+        if active.output_id in self._presentation_cancelled or active.admission is None or not active.admission.invalidate():
+            return  # An attempted native write is no longer proven unplayed.
+        self._presentation_cancelled.add(active.output_id)
+        self._decision(active.request, SpeechCandidateStatus.DEFERRED, reason)
+        task = asyncio.create_task(self._cancel_presentation(active.output_id), name="jarvis-speech-cancel")
+        self._presentation_cancels.add(task)
+        task.add_done_callback(self._presentation_cancels.discard)
+
+    async def _cancel_presentation(self, output_id: str) -> None:
+        try:
+            await asyncio.wait_for(self.session.invalidate_unstarted_output(output_id), self.output_timeout_s)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._trace(SPEAK_FAILED, "Speech cancellation failed", level="warning",
+                data={"output_id": output_id, "reason": "presentation_cancel_failed", "exception_type": type(exc).__name__})
+
+    def _expire_presentation(self, active: _ActiveSpeech) -> None:
+        self._presentation_expiries.pop(active.output_id, None)
+        self._invalidate_presentation(active, "ttl")
+
+    def enqueue_controller_speech(self, request: SpeechRequest) -> None:
+        """Present a source-bound controller notice through normal admission."""
+        self._enqueue(request)
         self._wakeup.set()
 
-    def _drop_work(self, raw: object, *, reason: str) -> None:
-        """Jeter la parole en file rattachée à des travaux désignés par Core.
-
-        Ne touche que la file : une sortie déjà commencée relève de la séquence
-        de barge-in, pas de l'ordonnancement. Une charge utile mal formée est
-        ignorée sans bruit ici — `_note_revision` a déjà vu la révision, et
-        refuser l'évènement entier pour un champ absent priverait la surface de
-        l'invalidation qu'il portait.
-        """
-
-        if not isinstance(raw, (list, tuple, set)):
+    def _enqueue(self, request: SpeechRequest) -> None:
+        if self._stopping:
             return
-        work_ids = {str(value) for value in raw if value}
-        if not work_ids:
+        if request.id in self._seen_speech_ids or request.conversation_id != self.conversation_id:
+            self._trace(SPEECH_IGNORED, "Speech request ignored", data={**self._fields(request), "reason": "duplicate_speech_id" if request.id in self._seen_speech_ids else "other_conversation"})
             return
-        for queued in tuple(self._pending):
-            if queued.work_id in work_ids:
-                self._pending.remove(queued)
-                self._trace(SPEECH_SUPERSEDED, queued.text[:300], data={**self._fields(queued), "reason": reason})
+        if len(self._seen_speech_ids) >= 4096:
+            self._trace(SPEECH_IGNORED, "Speech identity capacity reached", data={**self._fields(request), "reason": "session_capacity"})
+            return
+        self._seen_speech_ids.add(request.id)
+        try:
+            spans = request.chunks or semantic_text_spans(request.text)
+        except ValueError:
+            self._trace(SPEECH_DECIDED, "Speech presentation deferred", data={**self._fields(request), "status": "deferred", "reason": "semantic_chunk_limit", "outcome_id": request.outcome_id})
+            return
+        if len(self._seen_speech_ids) + len(spans) > 4096:
+            return
+        # Replacement needs eligible, exact-origin authority; a late old result cannot remove current work.
+        incoming_status, _ = self._eligibility(request)
+        existing = tuple(item for item in self._pending if isinstance(item, SpeechRequest)) + tuple(self._deferred.values())
+        if incoming_status is SpeechCandidateStatus.ELIGIBLE and any(queued.source == request.source and queued.supersedes(request) for queued in existing):
+            self._trace(SPEECH_SUPERSEDED, "Speech superseded on arrival", data={**self._fields(request), "reason": "superseded_on_arrival"})
+            return
+        for queued in existing:
+            if incoming_status is SpeechCandidateStatus.ELIGIBLE and queued.source == request.source and request.supersedes(queued):
+                self._defer(queued, SpeechCandidateStatus.SUPERSEDED, "superseded")
+        active = self._active
+        if incoming_status is SpeechCandidateStatus.ELIGIBLE and active is not None and isinstance(active.request, SpeechRequest) and active.request.source == request.source and request.supersedes(active.request):
+            self._invalidate_presentation(active, "superseded")
+        self._chain_next[request.id] = 0
+        for index, span in enumerate(spans):
+            identifier = request.id if len(spans) == 1 else str(uuid.uuid5(uuid.NAMESPACE_URL, f"jarvis-speech:{request.id}:{index}:{span.start}:{span.end}"))
+            self._seen_speech_ids.add(identifier)
+            child = replace(request, id=identifier, text=request.text[span.start:span.end], chunks=())
+            candidate = _Candidate(child, SpeechCandidateStatus.DEFERRED, "received", SpeechChunk(request.id, index, len(spans), span))
+            if not self._retain_candidate(candidate):
+                self._trace(SPEECH_IGNORED, "Speech candidate capacity reached", data={**self._fields(child), "reason": "candidate_capacity"})
+                break
+            status, reason = self._eligibility(child)
+            if status is SpeechCandidateStatus.ELIGIBLE and len(self._pending) < 64:
+                self._pending.append(child)
+                self._decision(child, status, reason)
+                self._note_queued(child)
+                self._latency.mark(LATENCY_FIRST_BRAIN_AUDIO, child.id)
+            else:
+                self._defer(child, status if status is not SpeechCandidateStatus.ELIGIBLE else SpeechCandidateStatus.DEFERRED,
+                            reason if status is not SpeechCandidateStatus.ELIGIBLE else "queue_capacity")
+        self._replan()
 
     def _drop_transient(self, *, reason: str) -> None:
         """Jeter la parole transitoire que l'évènement courant rend caduque."""
 
-        for queued in tuple(self._pending):
-            if queued.kind in TRANSIENT_KINDS:
-                self._pending.remove(queued)
-                self._trace(SPEECH_SUPERSEDED, queued.text[:300], data={**self._fields(queued), "reason": reason})
+        for queued in tuple(self._pending) + tuple(self._deferred.values()):
+            if isinstance(queued, ConversationCandidate) or queued.kind in TRANSIENT_KINDS:
+                self._defer(queued, SpeechCandidateStatus.SUPERSEDED, reason)
 
     def _expire_all(self, *, reason: str) -> None:
         for queued in tuple(self._pending):
-            self._trace(SPEECH_EXPIRED, queued.text[:300], data={**self._fields(queued), "reason": reason})
+            self._decision(queued, SpeechCandidateStatus.EXPIRED, reason)
         self._pending.clear()
 
     def _pop_next(self) -> SpeechRequest | None:
-        """Retirer la demande à dire maintenant : priorité, puis FIFO."""
-
-        now = self.clock.now()
-        for queued in tuple(self._pending):
-            if queued.is_expired(now):
-                self._pending.remove(queued)
-                self._trace(SPEECH_EXPIRED, queued.text[:300], data={**self._fields(queued), "reason": "ttl"})
-        if not self._pending:
+        self._replan()
+        eligible = [request for request in self._pending
+                    if (isinstance(request, ConversationCandidate) and self._eligibility(request)[0] is SpeechCandidateStatus.ELIGIBLE)
+                    or (isinstance(request, SpeechRequest) and self._candidates[request.id].chunk.index == self._chain_next.get(self._candidates[request.id].chunk.chain_id))]
+        if not eligible or self._user_speaking:
             return None
-        chosen = min(self._pending, key=lambda item: item.ordering_key)
+        direct = [item for item in eligible if isinstance(item, ConversationCandidate)]
+        chosen = direct[-1] if direct else min(eligible, key=lambda item: item.ordering_key)
         self._pending.remove(chosen)
+        self._decision(chosen, SpeechCandidateStatus.SELECTED, "priority_then_fifo")
         return chosen
 
     # -- livraison ----------------------------------------------------------
@@ -711,7 +1153,7 @@ class SpeechScheduler:
         if reflex is None or self._pending:
             await self._wakeup.wait()
         else:
-            timeout = max(0.0, reflex.due - asyncio.get_running_loop().time())
+            timeout = max(0.0, reflex.next_check - asyncio.get_running_loop().time())
             try:
                 await asyncio.wait_for(self._wakeup.wait(), timeout=timeout)
             except asyncio.TimeoutError:
@@ -724,38 +1166,55 @@ class SpeechScheduler:
         reflex = self._reflex
         if reflex is None:
             return
-        loop = asyncio.get_running_loop()
-        if loop.time() < reflex.due:
+        if asyncio.get_running_loop().time() < reflex.due:
             return
-        if self._pending or self._active is not None:
-            # JARVIS a déjà quelque chose de vrai à dire.
-            self._reflex = None
-            self._skip_reflex(reflex, "brain_speaking")
+        decision = self._decide_reflex(reflex)
+        self._record_reflex_decision(reflex, decision, "deadline")
+        if decision.action is not ReflexAction.PREAMBLE:
+            if decision.reason == "work_unconfirmed":
+                reflex.next_check = reflex.expires
+            else:
+                self._reflex = None
             return
         await self._wait_until_silent()
         if self._reflex is not reflex:
             # Retiré pendant l'attente : le cerveau a répondu, l'utilisateur a
             # repris la parole, ou un tour plus récent l'a remplacé.
             return
-        self._reflex = None
-        if self._pending:
-            self._skip_reflex(reflex, "brain_speaking")
-            self._wakeup.set()
+        decision = self._decide_reflex(reflex)
+        self._record_reflex_decision(reflex, decision, "before_start")
+        if decision.action is not ReflexAction.PREAMBLE:
+            self._reflex = None
             return
-        if loop.time() > reflex.expires:
-            self._skip_reflex(reflex, "too_late")
-            return
+        reflex.output_id = str(uuid.uuid4())
+        reflex.admission = OutputAdmission(expires_at=reflex.expires)
+        self._reflex_admissions[reflex.output_id] = reflex.admission
+        self._reflex_used.add(reflex.correlation_id)
+        self._live_reflex = reflex
+        self._reflex_expiries[reflex.output_id] = asyncio.get_running_loop().call_at(reflex.expires, self._expire_reflex, reflex)
         try:
-            output_id = await self.session.speak_reflex(transcript=reflex.transcript, avoid=reflex.avoid)  # type: ignore[attr-defined]
+            output_id = await self.session.speak_reflex(transcript=reflex.transcript, avoid=reflex.avoid,
+                                                       output_id=reflex.output_id, correlation_id=reflex.correlation_id)  # type: ignore[attr-defined]
         except asyncio.CancelledError:
+            self._invalidate_reflex("start_cancelled")
             raise
         except Exception as exc:
+            self._invalidate_reflex("start_failed")
             self._trace(
                 SPEAK_FAILED,
-                f"La surface n'a pas pu accuser réception: {type(exc).__name__}: {exc}",
+                "La surface n'a pas pu démarrer le préambule",
                 level="warning",
-                data={"conversation_id": self.conversation_id, "correlation_id": reflex.correlation_id, "code": "reflex_speak_failed"},
+                data={"conversation_id": self.conversation_id, "correlation_id": reflex.correlation_id, "code": "reflex_speak_failed", "exception_type": type(exc).__name__},
             )
+            return
+        if self._reflex is reflex:
+            self._reflex = None
+        if output_id != reflex.output_id:
+            self._invalidate_reflex("output_identity_mismatch")
+            self._trace(SPEAK_FAILED, "Reserved reflex output identity changed", level="error",
+                        data={"code": "reflex_output_identity_mismatch", "correlation_id": reflex.correlation_id})
+            return
+        if reflex.admission.state is OutputAdmissionState.INVALIDATED:
             return
         # Comme pour une parole du cerveau : marquer la sortie tout de suite
         # empêche un `speak()` de partir avant que le fournisseur ne confirme.
@@ -763,9 +1222,15 @@ class SpeechScheduler:
         self._idle.clear()
         self._trace(
             REFLEX_STARTED,
-            reflex.transcript[:300],
-            data={"conversation_id": self.conversation_id, "correlation_id": reflex.correlation_id, "output_id": str(output_id)},
+            "Preamble generation requested",
+            data={"conversation_id": self.conversation_id,
+                  "session_id": str(getattr(self.session, "session_id", "")) or None,
+                  "correlation_id": reflex.correlation_id, "output_id": str(output_id)},
         )
+
+    def _expire_reflex(self, reflex: _Reflex) -> None:
+        self._reflex_expiries.pop(reflex.output_id, None)
+        self._invalidate_reflex("too_late", correlation_id=reflex.correlation_id)
 
     async def _wait_until_silent(self) -> None:
         """Attendre que plus rien ne joue et que l'utilisateur ait fini de parler.
@@ -809,6 +1274,7 @@ class SpeechScheduler:
                     level="warning",
                     data={
                         "conversation_id": self.conversation_id,
+                        "session_id": str(getattr(self.session, "session_id", "")) or None,
                         "live_outputs": sorted(self._live_outputs),
                         "code": "speech_surface_stalled",
                     },
@@ -817,55 +1283,156 @@ class SpeechScheduler:
                 self._idle.set()
                 return
 
-    async def _speak(self, request: SpeechRequest) -> None:
+    def request_conversation(self, *, input_item_ids: tuple[str, ...], source: SpeechSource) -> bool:
+        request = VoiceConversationRequest(input_item_ids)
+        if not isinstance(source, SpeechSource) or self._stopping or not self._running:
+            return False
+        identity = str(uuid.uuid5(uuid.NAMESPACE_URL, f"conversation:{self.conversation_id}:{source.correlation_id}"))
+        if identity in self._seen_speech_ids or len(self._seen_speech_ids) >= 4096 or len(self._pending) >= 64:
+            return False
+        self._seen_speech_ids.add(identity)
+        candidate = ConversationCandidate(identity, self.conversation_id, source, request, self.clock.now() + timedelta(seconds=10))
+        self._pending.append(candidate)
+        self._decision(candidate, SpeechCandidateStatus.DEFERRED, "admitted_input")
+        self._note_queued(candidate)
+        self._replan()
+        self._wakeup.set()
+        return candidate in self._pending
+
+    async def _speak_conversation(self, request: ConversationCandidate) -> None:
+        if self._stopping or self._eligibility(request)[0] is not SpeechCandidateStatus.ELIGIBLE:
+            return
+        output_id = str(uuid.uuid4())
+        expires = asyncio.get_running_loop().time() + max(0, (request.expires_at - self.clock.now()).total_seconds())
+        token = OutputAdmission(expires_at=expires)
+        active = _ActiveSpeech(request, output_id, admission=token)
+        self._active = active
+        self._active_continuation_until = min(
+            expires, asyncio.get_running_loop().time() + self.output_timeout_s,
+        )
+        self._presentation_admissions[output_id] = token
+        self._presentation_expiries[output_id] = asyncio.get_running_loop().call_at(expires, self._expire_presentation, active)
+        self._live_outputs.add(output_id)
+        self._idle.clear()
+        queued_at = self._queued_at.pop(request.id, None)
+        queue_wait_ms = None if queued_at is None else max(0.0, (self._monotonic() - queued_at) * 1000)
+        self._trace(SPEECH_DISPATCHED, "Direct conversation dispatched to frontend", data={
+            **self._fields(request), "output_id": output_id,
+            "queue_wait_ms": round(queue_wait_ms, 1) if queue_wait_ms is not None else None,
+        })
+        self._trace("voice.conversation.requested", "Direct conversation generation requested", data={
+            **self._fields(request), "output_id": output_id,
+        })
         try:
-            output_id = await self.session.speak(request)
+            returned = await self.session.request_conversation(request.request.input_item_ids, source=request.source, output_id=output_id)
+            if returned != output_id:
+                raise ValueError("reserved conversation output identity changed")
+            self._replan()
+            self._decision(request, SpeechCandidateStatus.STARTED, "generation_requested")
+            await self._await_output(active)
         except asyncio.CancelledError:
+            self._invalidate_presentation(active, "start_cancelled")
             raise
         except Exception as exc:
-            self._trace(
-                SPEAK_FAILED,
-                f"La surface n'a pas pu prononcer la demande: {type(exc).__name__}: {exc}",
-                level="error",
-                data={**self._fields(request), "code": "speech_speak_failed"},
-            )
-            return
-        active = _ActiveSpeech(request=request, output_id=str(output_id))
-        self._active = active
-        # Le fournisseur n'a pas encore confirmé la création de la réponse :
-        # marquer la sortie tout de suite est ce qui empêche un second
-        # `speak()` de partir dans cet intervalle.
-        self._live_outputs.add(active.output_id)
-        self._idle.clear()
-        self._trace(SPEECH_STARTED, request.text[:300], data={**self._fields(request), "output_id": active.output_id})
-        try:
-            await self._await_output(active)
+            self._invalidate_presentation(active, "start_failed")
+            self._trace(SPEAK_FAILED, "Direct conversation request failed", level="error",
+                        data={**self._fields(request), "exception_type": type(exc).__name__, "code": "conversation_request_failed"})
+            if self._output_still_alive(output_id):
+                await self._await_output(active)
         finally:
             self._active = None
-        # Une sortie devenue inactive libère la file, mais seule une fin
-        # explicitement confirmée prouve que la phrase a été dite en entier.
-        if active.interrupted or active.status != "completed":
-            self._trace(
-                SPEECH_INTERRUPTED,
-                request.text[:300],
-                level="warning",
-                data={
-                    **self._fields(request),
-                    "output_id": active.output_id,
-                    "status": active.status,
-                    "played_ms": active.played_ms,
-                },
-            )
-            # Ce qui n'a jamais atteint le haut-parleur n'appartient pas à
-            # l'historique : une sortie refusée par le fournisseur, ou coupée
-            # avant le premier bloc audio, n'a rien à y laisser. Une phrase
-            # entamée, si : la taire ferait croire au cerveau qu'il n'a rien dit
-            # et il la redirait en entier.
-            if active.interrupted and active.played_ms > 0:
-                await self._persist(request, output_id=active.output_id, played_ms=active.played_ms)
+            self._active_continuation_until = None
+            handle = self._presentation_expiries.pop(output_id, None)
+            if handle is not None:
+                handle.cancel()
+            if not self._output_still_alive(output_id):
+                self._live_outputs.discard(output_id)
+                if not self._live_outputs:
+                    self._idle.set()
+        # Canonical playback ledger alone projects heard text. A generation
+        # outcome never manufactures intended text or an assistant history turn.
+        self._trace("voice.conversation.finished", "Direct conversation generation released", data={
+            **self._fields(request), "output_id": output_id, "generation_status": active.status,
+            "interrupted": active.interrupted})
+
+    async def _speak(self, request: SpeechRequest) -> None:
+        if isinstance(request, ConversationCandidate):
+            await self._speak_conversation(request)
             return
-        self._trace(SPEECH_COMPLETED, request.text[:300], data={**self._fields(request), "output_id": active.output_id})
-        await self._persist(request, output_id=active.output_id)
+        if self._stopping:
+            return
+        status, reason = self._eligibility(request)
+        if status is not SpeechCandidateStatus.ELIGIBLE:
+            self._defer(request, status, reason)
+            return
+        output_id = str(uuid.uuid4())
+        expires = None if request.expires_at is None else asyncio.get_running_loop().time() + max(0, (request.expires_at - self.clock.now()).total_seconds())
+        token = OutputAdmission(expires_at=expires)
+        active = _ActiveSpeech(request=request, output_id=output_id, admission=token)
+        self._active = active  # Own the reservation before any Core/provider await.
+        self._active_continuation_until = min(
+            expires if expires is not None else float("inf"),
+            asyncio.get_running_loop().time() + self.output_timeout_s,
+        )
+        self._attempted_ids.add(request.id)
+        self._presentation_admissions[output_id] = token
+        if expires is not None:
+            self._presentation_expiries[output_id] = asyncio.get_running_loop().call_at(expires, self._expire_presentation, active)
+        self._live_outputs.add(output_id)
+        self._idle.clear()
+        try:
+            queued_at = self._queued_at.pop(request.id, None)
+            queue_wait_ms = (None if queued_at is None else
+                             max(0.0, (self._monotonic() - queued_at) * 1000))
+            self._trace(SPEECH_DISPATCHED, "Speech dispatched to frontend", data={
+                **self._fields(request), "output_id": output_id,
+                "queue_wait_ms": round(queue_wait_ms, 1) if queue_wait_ms is not None else None,
+            })
+            returned = await self.session.speak_reserved(request, output_id=output_id)
+            if returned != output_id:
+                raise ValueError("Reserved output identity changed")
+            self._replan()
+            if token.state is not OutputAdmissionState.INVALIDATED:
+                self._decision(request, SpeechCandidateStatus.STARTED, "generation_requested")
+                self._trace(SPEECH_STARTED, "Speech generation requested", data={**self._fields(request), "output_id": output_id})
+            await self._await_output(active)
+        except asyncio.CancelledError:
+            self._invalidate_presentation(active, "start_cancelled")
+            raise
+        except Exception as exc:
+            self._invalidate_presentation(active, "start_failed")
+            self._trace(SPEAK_FAILED, "Speech request failed", level="error",
+                        data={**self._fields(request), "code": "speech_speak_failed", "exception_type": type(exc).__name__})
+            # Failed commands can still have created an output; retain the fence.
+            if self._output_still_alive(output_id):
+                await self._await_output(active)
+        finally:
+            self._active = None
+            self._active_continuation_until = None
+            handle = self._presentation_expiries.pop(output_id, None)
+            if handle is not None:
+                handle.cancel()
+            if not self._output_still_alive(output_id):
+                self._live_outputs.discard(output_id)
+                if not self._live_outputs:
+                    self._idle.set()
+        candidate = self._candidates.get(request.id)
+        if active.interrupted or active.status != "completed" or token.state is OutputAdmissionState.INVALIDATED:
+            if candidate is not None:
+                self._blocked_chains.add(candidate.chunk.chain_id)
+            self._decision(request, SpeechCandidateStatus.INTERRUPTED, "delivery_not_complete")
+            self._replan()
+            self._trace(SPEECH_INTERRUPTED, "Speech interrupted", level="warning", data={**self._fields(request),
+                        "output_id": output_id, "status": active.status, "played_ms": active.played_ms})
+            if active.interrupted and active.played_ms > 0:
+                await self._persist(request, output_id=output_id, played_ms=active.played_ms)
+            return
+        self._decision(request, SpeechCandidateStatus.COMPLETED, "output_completed")
+        if candidate is not None:
+            self._chain_next[candidate.chunk.chain_id] = candidate.chunk.index + 1
+        self._trace(SPEECH_COMPLETED, "Speech completed", data={**self._fields(request), "output_id": output_id})
+        await self._persist(request, output_id=output_id)
+        self._replan()
 
     async def _await_output(self, active: _ActiveSpeech) -> None:
         """Attendre la fin de la sortie, en interrogeant l'adaptateur si elle traîne.
@@ -917,6 +1484,10 @@ class SpeechScheduler:
         l'utilisateur connaît.
         """
 
+        if getattr(self.session, "canonical_history", False):
+            # Task05: Core ledger owns heard history. Provider-generated text
+            # and local playback evidence replace the old intended-text claim.
+            return
         metadata: dict[str, object] = {
             "provenance": SpeechProvenance.BRAIN.value,
             "speech_id": request.id,
@@ -950,9 +1521,20 @@ class SpeechScheduler:
 
     # -- outillage ----------------------------------------------------------
 
+    def _note_queued(self, request: SpeechRequest) -> None:
+        self._queued_at[request.id] = self._monotonic()
+        self._trace(SPEECH_QUEUED, "Speech queued", data=self._fields(request))
+
     def _fields(self, request: SpeechRequest) -> dict[str, object]:
+        session_id = str(getattr(self.session, "session_id", "")) or None
+        if isinstance(request, ConversationCandidate):
+            return {"conversation_id": request.conversation_id, "candidate_id": request.id,
+                    "correlation_id": request.correlation_id, "kind": "conversation",
+                    "intent_id": request.source.intent_id, "intent_epoch": request.source.intent_epoch,
+                    "session_id": session_id}
         return {
             "conversation_id": request.conversation_id,
+            "session_id": session_id,
             "speech_id": request.id,
             "correlation_id": request.correlation_id,
             "work_id": request.work_id,

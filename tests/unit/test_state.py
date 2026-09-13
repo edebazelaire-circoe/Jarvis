@@ -9,7 +9,7 @@ from jarvis.core.session import SessionStateMachine
 from jarvis.domain.errors import StateTransitionError
 from jarvis.domain.events import JarvisState, StateEvent
 
-from conftest import RecordingStatePublisher
+from tests.conftest import RecordingStatePublisher
 
 
 @pytest.mark.asyncio

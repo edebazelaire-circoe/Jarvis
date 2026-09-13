@@ -242,6 +242,18 @@ class Supervisor:
         except OSError:
             return False
 
+    def _voice_switch_restart_requested(self) -> bool:
+        """Recognize a coordinated clean Voice exit without spending crash budget."""
+        try:
+            from jarvis.runtime.voice_switch import VoiceSwitchBus
+            bus = VoiceSwitchBus(self.runtime_root)
+            receipt = bus.receipt()
+            target = receipt.get("target_configuration_id") if isinstance(receipt, dict) else None
+            return bool(receipt and receipt.get("status") == "ready_for_restart"
+                        and isinstance(target, str) and bus.handoff(target) is not None)
+        except (OSError, ValueError):
+            return False
+
     async def _reload(self) -> None:
         """Repartir sur le code présent sur le disque, état durable conservé.
 
@@ -298,6 +310,14 @@ class Supervisor:
                 return int(self.children["core"].returncode or 1)
             if self.stopping:
                 break
+            if completed == "voice" and self._voice_switch_restart_requested():
+                self.journal.emit(
+                    "supervisor.voice_switch_restart",
+                    "Voice architecture switch requested a clean restart",
+                    data={"code": "voice_switch_restart"},
+                )
+                await self.spawn("voice", "voice")
+                continue
             if not self._may_restart(completed):
                 # Le rôle est abandonné mais le superviseur continue de veiller
                 # sur les autres : une voix morte ne doit pas emporter l'UI.

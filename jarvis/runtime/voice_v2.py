@@ -14,6 +14,7 @@ from jarvis.domain.speaker import (
     assess_authorization,
 )
 from jarvis.domain.v2 import AddressingDecision, VoiceLifecycleState
+from jarvis.domain.voice_frontend import FrontendState, VoiceOperationResult, VoiceOperationStatus
 from jarvis.ports.v2 import Clock, RealtimeSession, WakeWordBackend, supports_output_control
 from jarvis.protocol.client import LocalCoreClient
 from jarvis.runtime.journal import RuntimeJournal
@@ -46,6 +47,12 @@ class UsefulActivityTracker:
         if not self.enabled:
             return False
         return (self.clock.now() - self._last_useful).total_seconds() >= self.timeout_s
+
+    def remaining_seconds(self) -> float | None:
+        if not self.enabled:
+            return None
+        elapsed = (self.clock.now() - self._last_useful).total_seconds()
+        return max(0.0, self.timeout_s - elapsed)
 
 
 @dataclass(slots=True)
@@ -96,8 +103,26 @@ class PersistentVoiceRuntime:
         authorization: ConversationAuthorization | None = None,
         authorization_error: ConversationAuthorizationError | None = None,
         echo_cancellation: bool | None = None,
+        conversation_architecture=None,
+        conversation_model: str | None = None,
+        configuration_id: str | None = None,
+        initial_conversation_id: str | None = None,
+        switch_handoff: dict[str, object] | None = None,
+        switch_bus=None,
+        metric_recorder_factory: Callable[[], object] | None = None,
     ) -> None:
         self.voice_arch = voice_arch
+        from jarvis.domain.voice_architecture import VoiceArchitectureId
+        if conversation_architecture not in (None, VoiceArchitectureId.SIMPLE, VoiceArchitectureId.FRONT_BRAIN, VoiceArchitectureId.DUPLEX):
+            raise ConfigurationError("Unsupported conversational voice architecture")
+        self.conversation_architecture = conversation_architecture
+        self.conversation_model = conversation_model
+        self.configuration_id = configuration_id
+        self.switch_handoff = switch_handoff
+        self.switch_bus = switch_bus
+        self.metric_recorder_factory = metric_recorder_factory
+        self._metrics = None
+        self._metric_live_record = None
         # Annulation d'écho demandée par les réglages de la pile (mode continu),
         # ou None si inconnu : sert seulement à dire au Control Center ce qui
         # a été demandé face à ce que la capture applique (tâche 08).
@@ -128,7 +153,7 @@ class PersistentVoiceRuntime:
         self.realtime_factory = realtime_factory
         self.clock = clock or SystemClock()
         self.activity = UsefulActivityTracker(timeout_s=active_timeout_s, clock=self.clock)
-        self.runtime = VoiceRuntimeState()
+        self.runtime = VoiceRuntimeState(conversation_id=initial_conversation_id)
         self.signals = signals
         self.journal = journal
         self.audio_input_device = audio_input_device
@@ -153,6 +178,9 @@ class PersistentVoiceRuntime:
         self.reflex_delay_s = reflex_delay_s
         self.engagement_window_s = engagement_window_s
         self._session: RealtimeSession | None = None
+        self._pending_canonical_close: RealtimeSession | None = None
+        self._pending_audio = None
+        self._mute_task: asyncio.Task | None = None
         self._bridge = None
         self._bridge_task: asyncio.Task[None] | None = None
         # Ordonnanceur de la parole du cerveau. Sa durée de vie est celle du
@@ -167,7 +195,7 @@ class PersistentVoiceRuntime:
     def continuous(self) -> bool:
         """Vrai quand une session ACTIVE doit couvrir plusieurs tours."""
 
-        return self.voice_arch is VoiceArchitecture.CONTINUOUS_BRAIN
+        return self.conversation_architecture is not None or self.voice_arch is VoiceArchitecture.CONTINUOUS_BRAIN
 
     def _visual(self, state: str) -> None:
         if self.signals is not None:
@@ -184,6 +212,7 @@ class PersistentVoiceRuntime:
         self._announce_static_refusal()
         detections = self.wakeword.detections()
         detection_task: asyncio.Task[str] | None = None
+        stop_task = asyncio.create_task(self._stop.wait(), name="jarvis-voice-stop-wait")
         try:
             while not self._stop.is_set():
                 if detection_task is None:
@@ -191,7 +220,10 @@ class PersistentVoiceRuntime:
 
                 if self.runtime.state is VoiceLifecycleState.BACKGROUND:
                     try:
-                        keyword = await detection_task
+                        done, _ = await asyncio.wait({detection_task, stop_task}, return_when=asyncio.FIRST_COMPLETED)
+                        if stop_task in done:
+                            break
+                        keyword = detection_task.result()
                     except StopAsyncIteration:
                         break
                     detection_task = None
@@ -202,9 +234,19 @@ class PersistentVoiceRuntime:
                 bridge_task = self._bridge_task
                 if bridge_task is None:
                     await self.mute()
+                    # An UNKNOWN provider close is retained for reconciliation.
+                    # Do not retry it at scheduler speed while no bridge can
+                    # make progress; the durable Live reaper owns recovery.
+                    if self._pending_canonical_close is not None:
+                        try:
+                            await asyncio.wait_for(self._stop.wait(), timeout=.1)
+                        except TimeoutError:
+                            pass
                     continue
 
-                done, _ = await asyncio.wait({detection_task, bridge_task}, return_when=asyncio.FIRST_COMPLETED)
+                done, _ = await asyncio.wait({detection_task, bridge_task, stop_task}, return_when=asyncio.FIRST_COMPLETED)
+                if stop_task in done:
+                    break
                 if detection_task in done:
                     try:
                         keyword = detection_task.result()
@@ -223,7 +265,11 @@ class PersistentVoiceRuntime:
 
                 outcome = (await asyncio.gather(bridge_task, return_exceptions=True))[0]
                 if self.runtime.state is not VoiceLifecycleState.BACKGROUND:
-                    await self.mute()
+                    from jarvis.domain.voice_frontend import VoiceStopReason
+                    await self.mute(
+                        VoiceStopReason.ERROR
+                        if isinstance(outcome, BaseException) else VoiceStopReason.USER
+                    )
                 if isinstance(outcome, BaseException) and not isinstance(outcome, asyncio.CancelledError):
                     self._trace("voice.failure", str(outcome), level="error")
                     raise outcome
@@ -231,9 +277,21 @@ class PersistentVoiceRuntime:
             if detection_task is not None:
                 detection_task.cancel()
                 await asyncio.gather(detection_task, return_exceptions=True)
+            stop_task.cancel()
+            await asyncio.gather(stop_task, return_exceptions=True)
             await self.close()
 
     async def activate(self) -> None:
+        if self._mute_task is not None and not self._mute_task.done():
+            return
+        if self._pending_audio is not None:
+            if not await self._reconcile_audio_close():
+                return  # Never reopen a device still owned by native cleanup.
+            self.runtime.state = VoiceLifecycleState.BACKGROUND
+        if self._pending_canonical_close is not None:
+            if not await self._close_provider_session(self._pending_canonical_close):
+                return
+            self.runtime.state = VoiceLifecycleState.BACKGROUND
         if self.runtime.state is not VoiceLifecycleState.BACKGROUND:
             return
         capture: object | None = None
@@ -255,14 +313,57 @@ class PersistentVoiceRuntime:
         if self.runtime.conversation_id is None:
             conversation = await self.core.create_conversation()
             self.runtime.conversation_id = str(conversation["id"])
+        if self.switch_bus is not None and self.configuration_id is not None:
+            self.switch_bus.remember_conversation(self.runtime.conversation_id, self.configuration_id)
         context = await self.core.context(self.runtime.conversation_id)
+        if self.switch_handoff is not None:
+            from jarvis.runtime.voice_switch import active_task_context
+            try:
+                task_context = active_task_context(await self.core.work_snapshot())
+            except Exception as exc:
+                task_context = ""
+                self._trace("voice.switch.context_degraded", "Active work context unavailable during switch",
+                            level="warning", data={"code": "voice_switch_work_unavailable",
+                                                   "exception_type": type(exc).__name__})
+            if task_context:
+                context = {**context, "switch_task_context": task_context}
         try:
+            if self.metric_recorder_factory is not None:
+                if self._metrics is not None:
+                    self._finish_metrics("uncertain")
+                if self._metrics is not None:
+                    raise RuntimeError("previous voice metric report is still pending")
+                self._metrics = self.metric_recorder_factory()
+                self._metric_live_record = None
+                self._metrics.start(conversation_id=self.runtime.conversation_id)
             self._session = await self.realtime_factory(context)
+            if self._metrics is not None:
+                self._metrics.identify_frontend(
+                    session_id=str(getattr(self._session, "session_id", "unknown")),
+                    prompt_applications=getattr(self._session, "prompt_applications", ()),
+                )
+            attach = getattr(self._session, "attach_core", None)
+            if callable(attach):
+                await attach(self.core, self.runtime.conversation_id,
+                             on_failure=lambda: asyncio.create_task(self._close_failed_evidence(), name="jarvis-voice-evidence-stop"),
+                             journal=self.journal)
         except Exception as exc:
             self.runtime.state = VoiceLifecycleState.ERROR
             if self.signals is not None:
                 self.signals.alert(str(exc))
             self._trace("voice.provider_error", str(exc), level="error")
+            if self._metrics is not None:
+                self._finish_metrics("failed")
+            if self.switch_handoff is not None and self.switch_bus is not None:
+                self.switch_bus.mark_handoff_failed(
+                    self.switch_handoff, code=f"replacement_start_failed:{type(exc).__name__}",
+                )
+                self._trace(
+                    "voice.switch.replacement_failed", "Replacement voice frontend failed to start",
+                    level="error", data={"code": "voice_switch_replacement_failed",
+                                         "exception_type": type(exc).__name__,
+                                         "request_id": self.switch_handoff.get("request_id")},
+                )
             await self.mute()
             raise
         if self.continuous and not supports_output_control(self._session):
@@ -296,8 +397,27 @@ class PersistentVoiceRuntime:
         self._trace(
             "voice.active",
             "Realtime session active",
-            data={"conversation_id": self.runtime.conversation_id, "arch": self.voice_arch.value},
+            data={"conversation_id": self.runtime.conversation_id, "arch": self.conversation_architecture.value if self.conversation_architecture is not None else self.voice_arch.value},
         )
+        if self.switch_handoff is not None:
+            from jarvis.runtime.voice_switch import prompt_transition_evidence
+            prompt_apps = getattr(self._session, "prompt_applications", ())
+            evidence = prompt_transition_evidence(prompt_apps)
+            self._trace(
+                "voice.switch.completed", "Replacement voice frontend is active",
+                data={"request_id": self.switch_handoff.get("request_id"),
+                      "source_configuration_id": self.switch_handoff.get("source_configuration_id"),
+                      "target_configuration_id": self.configuration_id,
+                      "source_architecture": self.switch_handoff.get("source_architecture"),
+                      "source_model": self.switch_handoff.get("source_model"),
+                      "architecture": self.conversation_architecture.value if self.conversation_architecture else self.voice_arch.value,
+                      "model": self.conversation_model, "prompt_applications": evidence,
+                      "recent_turn_count": self.switch_handoff.get("recent_turn_count"),
+                      "active_work_count": self.switch_handoff.get("active_work_count")},
+            )
+            if self.switch_bus is not None:
+                self.switch_bus.clear_handoff(self.switch_handoff.get("request_id"))
+            self.switch_handoff = None
         from jarvis.runtime.realtime_audio import RealtimeConversationBridge, SoundDeviceRealtimeAudio
         # Tâche 08 : en mode continu, la parole du cerveau arrive par
         # `/v1/events` et personne d'autre ne la restituerait. L'ordonnanceur
@@ -317,6 +437,8 @@ class PersistentVoiceRuntime:
             else None
         )
         self._speech = speech
+        if speech is not None and hasattr(self._session, "set_back_brain_presenter"):
+            self._session.set_back_brain_presenter(speech.enqueue_controller_speech)
         audio_options: dict[str, object] = {}
         if not capture_prepared:
             capture = self._duplex_capture() if self.continuous else None
@@ -334,6 +456,7 @@ class PersistentVoiceRuntime:
                 output_device=self.audio_output_device,
                 input_sample_rate=self.input_sample_rate,
                 output_sample_rate=self.output_sample_rate,
+                journal=self.journal,
                 **audio_options,
             ),
             on_addressed=self.addressed_activity,
@@ -357,9 +480,12 @@ class PersistentVoiceRuntime:
             # seul si un accusé de réception sert encore.
             on_user_speech=speech.note_user_speech if speech is not None else None,
             on_reflex=speech.request_reflex if speech is not None else None,
+            output_admission=speech.output_admission if speech is not None else None,
             engagement_window_s=self.engagement_window_s,
             auto_turn=self.auto_turn,
             continuous=self.continuous,
+            direct_conversation=self.conversation_architecture is not None,
+            on_conversation=speech.request_conversation if self.conversation_architecture is not None and speech is not None else None,
             journal=self.journal,
             # Solo Owner (tâche 05) : qui a le droit de couper JARVIS.
             barge_in_authority=barge_in_authority,
@@ -646,12 +772,12 @@ class PersistentVoiceRuntime:
         try:
             submitted = await bridge.submit_input()
             if not submitted:
-                await self.mute()
                 if self.signals is not None:
                     self.signals.alert(
                         "Enregistrement trop court. Relancez l'écoute, attendez l'état LISTENING, "
                         "puis parlez avant d'envoyer."
                     )
+                await self.mute()
             return submitted
         except Exception as exc:
             self.runtime.state = VoiceLifecycleState.ERROR
@@ -666,7 +792,18 @@ class PersistentVoiceRuntime:
             await self.mute()
             raise
 
-    async def mute(self) -> None:
+    async def mute(self, reason=None) -> None:
+        from jarvis.domain.voice_frontend import VoiceStopReason
+        reason = reason or VoiceStopReason.USER
+        if self._mute_task is None or self._mute_task.done():
+            initiator = asyncio.current_task()
+            if self._bridge_task is not None and self._bridge_task is not initiator:
+                self._bridge_task.cancel()  # Stop admission before yielding to the owner task.
+            self._mute_task = asyncio.create_task(self._mute_owned(initiator, reason), name="jarvis-voice-mute-owner")
+            self._mute_task.add_done_callback(lambda task: None if task.cancelled() else task.exception())
+        await asyncio.shield(self._mute_task)
+
+    async def _mute_owned(self, initiator: asyncio.Task | None, reason) -> None:
         # Arrêté en premier : la parole en file doit périmer avant que la
         # session ne se ferme, et non partir vers un websocket mourant. Ce que
         # l'utilisateur a coupé ne se rattrape pas par une reprise surprise
@@ -674,27 +811,99 @@ class PersistentVoiceRuntime:
         speech, self._speech = self._speech, None
         if speech is not None:
             await speech.stop()
-        self._bridge = None
+        bridge, self._bridge = self._bridge, None
+        if bridge is not None:
+            self._pending_audio = bridge.audio
         bridge_task, self._bridge_task = self._bridge_task, None
-        inside_bridge = bridge_task is not None and bridge_task is asyncio.current_task()
+        inside_bridge = bridge_task is not None and bridge_task is initiator
         if bridge_task is not None and not inside_bridge:
-            bridge_task.cancel()
+            if not bridge_task.cancelling():
+                bridge_task.cancel()
             await asyncio.gather(bridge_task, return_exceptions=True)
-        if not inside_bridge:
+        audio_closed = await self._reconcile_audio_close()
+        if not inside_bridge and audio_closed:
             # Micro fermé (le bridge a refermé l'audio) : la capture duplex
             # oublie la session — état du propriétaire compris. Appelé depuis
             # le bridge lui-même, le micro vit encore : l'activation suivante
             # s'en chargera.
             self._end_capture_session()
         session, self._session = self._session, None
+        live_record = None
         if session is not None:
-            await session.close()
+            owner = getattr(session, "_lifecycle_owner", None)
+            live_record = getattr(owner, "record", None)
+            self._metric_live_record = live_record
+            try:
+                if not await self._close_provider_session(session, reason=reason):
+                    return
+            except Exception:
+                if getattr(session, "canonical_history", False):
+                    self._pending_canonical_close = session
+                    self.runtime.state = VoiceLifecycleState.ERROR
+                raise
+            live_record = getattr(owner, "record", live_record)
+            self._metric_live_record = live_record
+        elif self._pending_canonical_close is not None:
+            if not await self._close_provider_session(self._pending_canonical_close, reason=reason):
+                return
+        if not audio_closed:
+            # The provider may already be STOPPED; device ownership is separate.
+            self.runtime.state = VoiceLifecycleState.ERROR
+            self._visual("thinking")  # Cleanup is pending; ERROR belongs to lifecycle + alert.
+            if self.signals is not None:
+                self.signals.alert("Audio cleanup is still pending. Voice cannot reopen yet.")
+            return
         if not self._stop.is_set():
             await self.wakeword.resume()
         self._turn_submitted = False
         self.runtime.state = VoiceLifecycleState.BACKGROUND
+        if self._metrics is not None:
+            self._finish_metrics("stopped", live_record=live_record)
         self._visual("idle")
         self._trace("voice.background", "Voice returned to background")
+
+    async def _close_provider_session(self, session, *, reason=None) -> bool:
+        stop = getattr(session, "stop", None)
+        result = await stop(reason) if reason is not None and callable(stop) else await session.close()
+        if isinstance(result, VoiceOperationResult) and (
+            result.status is not VoiceOperationStatus.COMPLETED or result.state is not FrontendState.STOPPED
+        ):
+            self._pending_canonical_close = session
+            self.runtime.state = VoiceLifecycleState.ERROR
+            self._trace("voice.provider_close_pending", "Provider closure remains unconfirmed", level="warning",
+                        data={"code": "voice_close_unconfirmed", "frontend_state": result.state.value})
+            if self.signals is not None:
+                self.signals.alert("Voice session closure is unconfirmed. A new session cannot open yet.")
+            return False
+        if self._pending_canonical_close is session:
+            self._pending_canonical_close = None
+        return True
+
+    async def _reconcile_audio_close(self) -> bool:
+        audio = self._pending_audio
+        if audio is None:
+            return True
+        try:
+            closed = await audio.close()
+        except Exception as exc:
+            self.runtime.state = VoiceLifecycleState.ERROR
+            self._trace("voice.device_cleanup_failed", "Audio cleanup failed; device remains owned", level="error",
+                        data={"code": "voice_device_cleanup_failed", "exception_type": type(exc).__name__})
+            return False
+        if closed is False or getattr(audio, "cleanup_pending", False):
+            self.runtime.state = VoiceLifecycleState.ERROR
+            self._trace("voice.device_cleanup_pending", "Audio cleanup pending; activation unavailable", level="warning",
+                        data={"code": "voice_device_cleanup_pending", "cleanup_pending": True})
+            return False
+        self._pending_audio = None
+        return True
+
+    async def _close_failed_evidence(self) -> None:
+        try:
+            await self.mute()
+        except Exception as exc:
+            self._trace("voice.evidence_cleanup_pending", "Voice close requires Core reconciliation", level="error",
+                        data={"code": "voice_close_reconciliation_pending", "exception_type": type(exc).__name__})
 
     def _end_capture_session(self) -> None:
         if self._capture is not None:
@@ -744,7 +953,9 @@ class PersistentVoiceRuntime:
         ou un mute vocal, cerveau actif ou non.
         """
 
-        self.activity.reset(AddressingDecision.ADDRESSED)
+        from jarvis.domain.voice_architecture import VoiceArchitectureId
+        if self.conversation_architecture is not VoiceArchitectureId.DUPLEX:
+            self.activity.reset(AddressingDecision.ADDRESSED)
 
     async def turn_completed(self) -> None:
         """Fin d'un tour en mode continu : on réécoute, on ne se tait pas.
@@ -754,7 +965,9 @@ class PersistentVoiceRuntime:
         session reste ACTIVE jusqu'à un mute, un délai dépassé ou une panne.
         """
 
-        self.activity.reset(AddressingDecision.ADDRESSED)
+        from jarvis.domain.voice_architecture import VoiceArchitectureId
+        if self.conversation_architecture is not VoiceArchitectureId.DUPLEX:
+            self.activity.reset(AddressingDecision.ADDRESSED)
         self._trace(
             "voice.turn_completed",
             "Tour terminé, la session continue d'écouter",
@@ -784,7 +997,46 @@ class PersistentVoiceRuntime:
 
     async def visual_speaking(self) -> None:
         if self.runtime.state is VoiceLifecycleState.ACTIVE:
+            # This callback follows an accepted local device write. It is real
+            # conversational activity; backend progress/usage callbacks are not.
+            self.activity.reset(AddressingDecision.ADDRESSED)
             self._visual("speaking")
+
+    def live_runtime_report(self) -> dict[str, object] | None:
+        """Return scalar Duplex supervision data; Core still owns lifecycle truth."""
+        from jarvis.domain.voice_architecture import VoiceArchitectureId
+        if self.conversation_architecture is not VoiceArchitectureId.DUPLEX:
+            return None
+        session = self._session or self._pending_canonical_close
+        owner = getattr(session, "_lifecycle_owner", None)
+        record = getattr(owner, "record", None)
+        session_id = getattr(record, "session_id", None)
+        remaining = self.activity.remaining_seconds()
+        waiting = False
+        if remaining == 0 and self.runtime.state is VoiceLifecycleState.ACTIVE:
+            waiting = not self._live_idle_ready()
+        return {
+            "session_id": session_id,
+            "model_id": self.conversation_model,
+            "configuration_id": self.configuration_id,
+            "architecture": self.conversation_architecture.value if self.conversation_architecture else self.voice_arch.value,
+            "runtime_state": self.runtime.state.value,
+            "idle_enabled": self.activity.enabled,
+            "idle_timeout_s": self.activity.timeout_s,
+            "idle_remaining_s": remaining,
+            "idle_waiting_for_safe_point": waiting,
+        }
+
+    def voice_runtime_report(self) -> dict[str, object]:
+        session = self._session or self._pending_canonical_close
+        return {
+            "configuration_id": self.configuration_id,
+            "architecture": self.conversation_architecture.value if self.conversation_architecture else self.voice_arch.value,
+            "model_id": self.conversation_model,
+            "conversation_id": self.runtime.conversation_id,
+            "session_id": getattr(session, "session_id", None),
+            "runtime_state": self.runtime.state.value,
+        }
 
     async def check_timeout(self) -> bool:
         # Délai à 0 : `expired()` ne devient jamais vrai, donc ni mute ni
@@ -804,7 +1056,11 @@ class PersistentVoiceRuntime:
         # chaque évènement `brain.*` (Décision 32) : le report ci-dessous n'a
         # donc pas à connaître le cerveau, et un cerveau silencieux finit par
         # laisser le délai expirer normalement.
-        if getattr(self._bridge, "tool_in_flight", False):
+        from jarvis.domain.voice_architecture import VoiceArchitectureId
+        duplex = self.conversation_architecture is VoiceArchitectureId.DUPLEX
+        if duplex and not self._live_idle_ready():
+            return False
+        if not duplex and getattr(self._bridge, "tool_in_flight", False):
             self._trace(
                 "voice.timeout_deferred",
                 "Délai d'inactivité atteint mais un outil travaille encore : session maintenue",
@@ -814,12 +1070,48 @@ class PersistentVoiceRuntime:
             self.activity.reset()
             return False
         self._trace("voice.timeout", "Useful activity timeout reached")
-        await self.mute()
+        if duplex:
+            owner = getattr(self._session, "_lifecycle_owner", None)
+            if owner is not None:
+                try:
+                    await owner.idle_candidate()
+                except Exception:
+                    return False
+        from jarvis.domain.voice_frontend import VoiceStopReason
+        await self.mute(VoiceStopReason.IDLE)
         return True
+
+    def _live_idle_ready(self) -> bool:
+        from jarvis.domain.live_idle import LiveIdleEvidence
+        evidence_reader = getattr(self._bridge, "live_idle_evidence", None)
+        if not callable(evidence_reader):
+            return False
+        try:
+            evidence = evidence_reader()
+        except Exception:
+            return False
+        if not isinstance(evidence, LiveIdleEvidence):
+            return False
+        if not evidence.locally_idle:
+            return False
+        continuation = getattr(self._speech, "immediate_continuation_pending", False)
+        return type(continuation) is bool and not continuation
 
     async def close(self) -> None:
         self._stop.set()
-        await self.mute()
+        from jarvis.domain.voice_frontend import VoiceStopReason
+        await self.mute(VoiceStopReason.SHUTDOWN)
+        if self._pending_canonical_close is not None:
+            self._finish_metrics("uncertain")
+            self._trace("voice.stop_pending", "Voice provider closure is still unconfirmed", level="warning",
+                        data={"code": "voice_close_unconfirmed"})
+            return
+        if self._pending_audio is not None:
+            self._finish_metrics("uncertain")
+            # Retain capture/runtime references while native ownership survives.
+            self._trace("voice.stop_pending", "Voice provider closed; audio cleanup still pending", level="warning",
+                        data={"code": "voice_device_cleanup_pending", "cleanup_pending": True})
+            return
         # Après `mute()` : le micro est fermé, plus aucune trame n'arrive. La
         # capture duplex libère son observateur (fil du vérificateur de
         # locuteur), dont l'arrêt peut attendre une fenêtre en cours de calcul.
@@ -834,3 +1126,38 @@ class PersistentVoiceRuntime:
         if self.signals is not None:
             self.signals.offline()
         self._trace("voice.stop", "Voice runtime stopped")
+
+    async def mode_switch(self) -> None:
+        """Stop the current frontend without cancelling Core-owned work."""
+        from jarvis.domain.voice_frontend import VoiceStopReason
+        await self.mute(VoiceStopReason.SWITCH)
+
+    def switch_close_pending(self) -> bool:
+        return self._pending_canonical_close is not None or self._pending_audio is not None
+
+    def accept_reaped_live_close(self) -> bool:
+        """Release a local Live facade only after Core proves no unresolved lease."""
+        pending = self._pending_canonical_close
+        if pending is None or getattr(pending, "_lifecycle_owner", None) is None:
+            return False
+        self._pending_canonical_close = None
+        self._finish_metrics("stopped")
+        return True
+
+    def _finish_metrics(self, status: str, *, live_record=None) -> None:
+        metrics = self._metrics
+        if metrics is None:
+            return
+        record = live_record if live_record is not None else self._metric_live_record
+        try:
+            metrics.finish(status=status, live_record=record)
+        except Exception as exc:
+            self._trace("voice.metrics.report_failed", "Voice benchmark report failed", level="error",
+                        data={"code": "voice_metrics_report_failed",
+                              "exception_type": type(exc).__name__})
+        else:
+            self._metrics = None
+            self._metric_live_record = None
+
+    def request_switch_exit(self) -> None:
+        self._stop.set()

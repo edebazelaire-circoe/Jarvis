@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import inspect
 import threading
 
 from jarvis.core.brain_service import BrainOrchestrator
@@ -32,6 +33,7 @@ from jarvis.domain.v2 import (
 )
 from jarvis.runtime.realtime_audio import RealtimeConversationBridge, SoundDeviceRealtimeAudio
 from jarvis.runtime.speech_scheduler import SpeechScheduler
+from tests.fakes.speech_context import context as speech_context_payload, source as speech_source
 
 CONVERSATION = "conv-barge-in"
 CHUNK_FRAMES = SoundDeviceRealtimeAudio.OUTPUT_CHUNK_FRAMES
@@ -70,15 +72,15 @@ class FakeOutputStream:
     def start(self) -> None:
         self.started += 1
 
-    def abort(self) -> None:
+    def abort(self, *, ignore_errors=True) -> None:
         self.aborted += 1
         self.freed_while_writing |= self.writing
 
-    def stop(self) -> None:
+    def stop(self, *, ignore_errors=True) -> None:
         self.stopped += 1
         self.freed_while_writing |= self.writing
 
-    def close(self) -> None:
+    def close(self, *, ignore_errors=True) -> None:
         self.freed_while_writing |= self.writing
         self.closed = True
 
@@ -90,13 +92,13 @@ class FakeInputStream:
         self.stopped = False
         self.closed = False
 
-    def stop(self) -> None:
+    def stop(self, *, ignore_errors=True) -> None:
         self.stopped = True
 
-    def abort(self) -> None:
+    def abort(self, *, ignore_errors=True) -> None:
         self.stopped = True
 
-    def close(self) -> None:
+    def close(self, *, ignore_errors=True) -> None:
         self.closed = True
 
 
@@ -131,6 +133,7 @@ class RecordingCore:
         self.turns: list[dict[str, object]] = []
         self.tool_calls: list[str] = []
         self.queue: asyncio.Queue[ProtocolEnvelope | None] = asyncio.Queue()
+        self.current_speech_context = speech_context_payload(CONVERSATION)
 
     async def submit_brain_turn(
         self,
@@ -172,7 +175,15 @@ class RecordingCore:
         self.tool_calls.append(name)
         return {"ok": True}
 
-    async def events(self):
+    async def speech_context(self, conversation_id: str):
+        assert conversation_id == CONVERSATION
+        return self.current_speech_context
+
+    async def events(self, *, on_connected=None):
+        if on_connected is not None:
+            result = on_connected()
+            if inspect.isawaitable(result):
+                await result
         while True:
             event = await self.queue.get()
             if event is None:
@@ -180,11 +191,19 @@ class RecordingCore:
             yield event
 
     async def publish(self, envelope: ProtocolEnvelope) -> None:
+        if "current_speech_source" in envelope.payload:
+            self.current_speech_context = {
+                key: envelope.payload[key] for key in speech_context_payload(CONVERSATION)
+            }
         await self.queue.put(envelope)
 
 
 class ControllableSession:
     """Pile vocale de test qui implémente `RealtimeOutputControl`."""
+
+    # These unit tests retain the compatibility history port. Canonical heard
+    # evidence is exercised independently through the real facade/device tests.
+    canonical_history = False
 
     def __init__(self) -> None:
         self.spoken: list[SpeechRequest] = []
@@ -219,6 +238,15 @@ class ControllableSession:
         self.active_output_id = output_id
         return output_id
 
+    async def speak_reserved(self, request: SpeechRequest, *, output_id: str) -> str:
+        self.spoken.append(request)
+        self.active_output_id = output_id
+        return output_id
+
+    async def invalidate_unstarted_output(self, output_id: str) -> None:
+        if self.active_output_id == output_id:
+            self.active_output_id = None
+
     async def cancel_output(self, cursor: PlaybackCursor | None = None) -> None:
         self.calls.append("cancel_output")
         self.cancelled.append(cursor)
@@ -234,6 +262,8 @@ class BlindSession(ControllableSession):
     """Pile sans contrôles de sortie : la forme de Gemini Live (Décision 21)."""
 
     speak = None  # type: ignore[assignment]
+    speak_reserved = None  # type: ignore[assignment]
+    invalidate_unstarted_output = None  # type: ignore[assignment]
     cancel_output = None  # type: ignore[assignment]
     truncate = None  # type: ignore[assignment]
 
@@ -697,6 +727,7 @@ def speech_request(text: str, *, kind: SpeechKind = SpeechKind.RESULT, speech_id
         correlation_id="corr-1",
         work_id="work-1",
         created_at=utc_now(),
+        source=speech_source("corr-1", work_id="work-1"),
     )
 
 
@@ -720,7 +751,14 @@ def build_scheduler(core: RecordingCore, session: ControllableSession, journal=N
     )
 
 
-async def finish_output(scheduler: SpeechScheduler, output_id: str, *, status: str) -> None:
+async def finish_output(scheduler: SpeechScheduler, session: ControllableSession, *, status: str) -> None:
+    # The scheduler reserves opaque output IDs before its provider await.
+    # Keep the current production correlation instead of inventing out-N.
+    active = scheduler._active
+    assert active is not None
+    output_id = active.output_id
+    if session.active_output_id == output_id:
+        session.active_output_id = None
     await scheduler.note_output_event(
         ProtocolEnvelope(
             message_type="realtime.response_done", payload={"output_id": output_id, "status": status}
@@ -737,15 +775,19 @@ async def test_an_interrupted_speech_is_persisted_as_partially_delivered():
     try:
         await core.publish(speech_envelope(speech_request("Voici les trois messages en attente.")))
         await until(lambda: len(session.spoken) == 1)
+        reserved_output = session.active_output_id
 
         scheduler.note_interruption(PlaybackCursor(speech_id="speech-1", played_ms=1200))
-        await finish_output(scheduler, "out-1", status="cancelled")
+        await finish_output(scheduler, session, status="cancelled")
         await until(lambda: len(core.turns) == 1)
 
         metadata = core.turns[0]["metadata"]
         assert metadata["provenance"] == SpeechProvenance.BRAIN.value
         assert metadata["delivery"] == SPEECH_DELIVERY_PARTIAL
         assert metadata["played_ms"] == 1200
+        assert metadata["output_id"] == reserved_output
+        assert metadata["speech_id"] == "speech-1" and metadata["work_id"] == "work-1"
+        assert core.turns[0]["correlation_id"] == "corr-1"
         # Le texte n'est jamais réécrit (Décision 13) : c'est la métadonnée qui
         # dit qu'il n'a pas été entendu jusqu'au bout.
         assert core.turns[0]["content"] == "Voici les trois messages en attente."
@@ -764,7 +806,7 @@ async def test_a_speech_interrupted_before_the_first_audio_leaves_no_turn():
         await until(lambda: len(session.spoken) == 1)
 
         scheduler.note_interruption(PlaybackCursor(speech_id="speech-1", played_ms=0))
-        await finish_output(scheduler, "out-1", status="cancelled")
+        await finish_output(scheduler, session, status="cancelled")
         await journal.wait_until(lambda: journal.count("voice.speech.interrupted") == 1)
 
         assert core.turns == []
@@ -781,7 +823,7 @@ async def test_a_completed_speech_keeps_its_untouched_metadata():
     try:
         await core.publish(speech_envelope(speech_request("Voici les trois messages en attente.")))
         await until(lambda: len(session.spoken) == 1)
-        await finish_output(scheduler, "out-1", status="completed")
+        await finish_output(scheduler, session, status="completed")
         await until(lambda: len(core.turns) == 1)
 
         assert "delivery" not in core.turns[0]["metadata"]
@@ -801,7 +843,7 @@ async def test_an_interruption_without_cursor_does_not_raise():
         await until(lambda: len(session.spoken) == 1)
 
         scheduler.note_interruption(None)
-        await finish_output(scheduler, "out-1", status="completed")
+        await finish_output(scheduler, session, status="completed")
         await journal.wait_until(lambda: journal.count("voice.speech.interrupted") == 1)
 
         assert core.turns == []  # ms entendues inconnues : on n'affirme rien
@@ -884,10 +926,10 @@ async def test_a_brain_result_arriving_during_the_interruption_is_still_spoken()
         # que l'utilisateur coupe la phrase en cours.
         await core.publish(speech_envelope(speech_request("Trois messages.", speech_id="speech-2")))
         scheduler.note_interruption(PlaybackCursor(speech_id="speech-1", played_ms=500))
-        await finish_output(scheduler, "out-1", status="cancelled")
+        await finish_output(scheduler, session, status="cancelled")
 
         await until(lambda: len(session.spoken) == 2)
-        await finish_output(scheduler, "out-2", status="completed")
+        await finish_output(scheduler, session, status="completed")
         await until(lambda: len(core.turns) == 2)
 
         assert [request.text for request in session.spoken] == ["Je regarde.", "Trois messages."]
@@ -908,11 +950,11 @@ async def test_the_race_resolves_the_same_way_in_the_reverse_order():
         await until(lambda: len(session.spoken) == 1)
 
         scheduler.note_interruption(PlaybackCursor(speech_id="speech-1", played_ms=500))
-        await finish_output(scheduler, "out-1", status="cancelled")
+        await finish_output(scheduler, session, status="cancelled")
         await core.publish(speech_envelope(speech_request("Trois messages.", speech_id="speech-2")))
 
         await until(lambda: len(session.spoken) == 2)
-        await finish_output(scheduler, "out-2", status="completed")
+        await finish_output(scheduler, session, status="completed")
         await until(lambda: len(core.turns) == 2)
 
         assert core.turns[0]["metadata"]["delivery"] == SPEECH_DELIVERY_PARTIAL
@@ -942,13 +984,27 @@ async def test_a_progress_queued_during_the_interruption_is_dropped_by_the_new_t
         await core.publish(
             ProtocolEnvelope(
                 message_type="brain.turn.accepted",
-                payload={"conversation_id": CONVERSATION, "revision": 1},
+                payload={**speech_context_payload(CONVERSATION, "corr-2", epoch=2), "revision": 2},
                 conversation_id=CONVERSATION,
             )
         )
         await until(lambda: scheduler.pending_count == 0)
-        await finish_output(scheduler, "out-1", status="cancelled")
+        await finish_output(scheduler, session, status="cancelled")
 
         assert [request.text for request in session.spoken] == ["Je regarde."]
+        retired = next(item for item in scheduler.presentation_snapshot()["candidates"] if item["speech_id"] == "speech-2")
+        assert retired["status"] == "superseded" and retired["reason"] == "stale_source"
+
+        # The same old work may finish after the new intent. Its result remains
+        # available for a future explicit selection; the old voice is deferred.
+        late_result = speech_request("Trois messages.", speech_id="speech-3")
+        await core.publish(speech_envelope(late_result))
+        await until(lambda: late_result.id in scheduler._deferred)
+        assert scheduler._deferred[late_result.id].text == late_result.text
+        assert scheduler._deferred[late_result.id].source == late_result.source
+        deferred = next(item for item in scheduler.presentation_snapshot()["candidates"] if item["speech_id"] == late_result.id)
+        assert deferred["status"] == "deferred" and deferred["reason"] == "stale_source"
+        assert [request.text for request in session.spoken] == ["Je regarde."]
+        assert not any(turn["content"] == late_result.text for turn in core.turns)
     finally:
         await scheduler.stop()

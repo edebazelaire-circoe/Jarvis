@@ -7,7 +7,7 @@ import pytest
 from jarvis.config import AppConfig, ComponentConfig
 from jarvis.runtime.health import run_health_checks
 
-from conftest import RecordingBoard
+from tests.conftest import RecordingBoard
 
 
 class HealthyRecorder:

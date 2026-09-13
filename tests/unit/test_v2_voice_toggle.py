@@ -247,6 +247,72 @@ class RecordingJournal:
         self.events.append({"kind": kind, "message": message, "level": level, "data": data or {}})
 
 
+def test_failed_metric_report_remains_attached_for_retry():
+    journal = RecordingJournal()
+
+    class FlakyMetrics:
+        def __init__(self):
+            self.calls = 0
+
+        def finish(self, **values):  # noqa: ANN003
+            self.calls += 1
+            if self.calls == 1:
+                raise OSError("temporary report failure")
+            self.values = values
+
+    async def unused(_context):
+        raise AssertionError("not started")
+
+    runtime = PersistentVoiceRuntime(
+        wakeword=FakeWakeWord(), core=FakeCore(), realtime_factory=unused,
+        journal=journal, voice_arch=VoiceArchitecture.LEGACY,
+    )
+    metrics, live_record = FlakyMetrics(), object()
+    runtime._metrics = metrics
+    runtime._metric_live_record = live_record
+    runtime._finish_metrics("uncertain")
+    assert runtime._metrics is metrics and runtime._metric_live_record is live_record
+    runtime._finish_metrics("uncertain")
+    assert runtime._metrics is None and runtime._metric_live_record is None
+    assert metrics.values == {"status": "uncertain", "live_record": live_record}
+
+
+@pytest.mark.asyncio
+async def test_activation_never_overwrites_a_metric_report_that_still_cannot_commit():
+    class FailingMetrics:
+        calls = 0
+
+        def finish(self, **_values):  # noqa: ANN003
+            self.calls += 1
+            raise OSError("persistent report failure")
+
+    created = 0
+    provider_called = False
+
+    def metric_factory():
+        nonlocal created
+        created += 1
+        raise AssertionError("pending report was overwritten")
+
+    async def realtime_factory(_context):
+        nonlocal provider_called
+        provider_called = True
+        raise AssertionError("provider opened with a pending report")
+
+    runtime = PersistentVoiceRuntime(
+        wakeword=FakeWakeWord(), core=FakeCore(), realtime_factory=realtime_factory,
+        journal=RecordingJournal(), voice_arch=VoiceArchitecture.LEGACY,
+        metric_recorder_factory=metric_factory,
+    )
+    pending = FailingMetrics()
+    runtime._metrics = pending
+    with pytest.raises(RuntimeError, match="previous voice metric report is still pending"):
+        await runtime.activate()
+    assert runtime._metrics is pending
+    assert pending.calls >= 2  # activation retry, then failed-activation finalization retry
+    assert created == 0 and provider_called is False
+
+
 @pytest.mark.asyncio
 async def test_second_f9_submits_audio_and_returns_to_background_after_response(monkeypatch):
     import jarvis.runtime.realtime_audio as realtime_audio
@@ -258,6 +324,17 @@ async def test_second_f9_submits_audio_and_returns_to_background_after_response(
     session = FakeRealtimeSession(order)
     signals = RecordingSignals()
     journal = RecordingJournal()
+    reports = []
+
+    class Metrics:
+        def start(self, **values):  # noqa: ANN003
+            self.started = values
+
+        def identify_frontend(self, **values):  # noqa: ANN003
+            self.frontend = values
+
+        def finish(self, **values):  # noqa: ANN003
+            reports.append(values)
 
     async def realtime_factory(context: dict[str, object]) -> FakeRealtimeSession:
         assert context == {}
@@ -273,6 +350,7 @@ async def test_second_f9_submits_audio_and_returns_to_background_after_response(
         audio_input_device=3,
         audio_output_device=7,
         voice_arch=VoiceArchitecture.LEGACY,
+        metric_recorder_factory=Metrics,
     )
     run_task = asyncio.create_task(runtime.run())
 
@@ -298,6 +376,7 @@ async def test_second_f9_submits_audio_and_returns_to_background_after_response(
         "voice.input_submitted",
         "voice.background",
     }
+    assert reports == [{"status": "stopped", "live_record": None}]
 
     run_task.cancel()
     await asyncio.gather(run_task, return_exceptions=True)
@@ -492,11 +571,11 @@ async def test_stop_input_drains_scheduled_callbacks_before_end_marker(chunk_cou
     chunk = b"\x01\x00" * 1200
 
     class InputStream:
-        def stop(self):
+        def stop(self, *, ignore_errors=True):
             for _ in range(chunk_count):
                 loop.call_soon_threadsafe(audio._enqueue, chunk)
 
-        def close(self):
+        def close(self, *, ignore_errors=True):
             pass
 
     audio._input = InputStream()
@@ -505,7 +584,9 @@ async def test_stop_input_drains_scheduled_callbacks_before_end_marker(chunk_cou
         await asyncio.wait_for(audio.stop_input(), timeout=1)
         await asyncio.wait_for(pump, timeout=1)
         assert audio.captured_bytes == chunk_count * len(chunk)
-        assert audio.sent_bytes == min(chunk_count, 64) * len(chunk)
+        # Native input stop no longer stalls the event loop: the pump may send
+        # callbacks while they arrive, avoiding the old forced 65th-block drop.
+        assert min(chunk_count, 64) * len(chunk) <= audio.sent_bytes <= chunk_count * len(chunk)
         assert audio._queue.empty()
         assert await session.finish_input() is True
         assert [event["type"] for event in websocket.sent[-2:]] == [

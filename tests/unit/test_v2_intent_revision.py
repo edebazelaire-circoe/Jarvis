@@ -34,6 +34,7 @@ from jarvis.core.brain_service import (
     BrainOrchestrator,
 )
 from jarvis.core.v2_services import ConversationService, CoreEventBus, JobService
+from jarvis.core.brain_outcomes import BRAIN_OUTCOME_AVAILABLE
 from jarvis.domain.v2 import (
     AddressingDecision,
     BrainEvent,
@@ -283,7 +284,7 @@ async def test_the_revision_is_published_between_acceptance_and_state(tmp_path):
         assert [e.message_type for e in published][:3] == [BRAIN_TURN_ACCEPTED, BRAIN_INTENT_REVISED, BRAIN_STATE_UPDATED]
 
         payload = revisions(published)[0]
-        assert set(payload) == DOC_REVISION_KEYS | {"conversation_id"}
+        assert set(payload) == DOC_REVISION_KEYS | {"conversation_id", "schema_version", "source", "current_speech_source", "source_complete", "invalidated_dependencies"}
         assert payload["revision"] == acceptance.revision == 1
         assert payload["previous_revision"] == 0
         assert published[1].correlation_id == turn.correlation_id
@@ -696,6 +697,7 @@ async def test_the_brain_taking_the_turn_promotes_it_to_the_current_intent(tmp_p
         assert final.known_public_facts == ("J'ai appelé le plombier.",)
         assert [e.message_type for e in drain(queue)] == [
             BRAIN_TURN_ACCEPTED,
+            BRAIN_OUTCOME_AVAILABLE,
             BRAIN_INTENT_REVISED,
             BRAIN_STATE_UPDATED,
             BRAIN_STATE_UPDATED,

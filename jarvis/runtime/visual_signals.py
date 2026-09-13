@@ -4,10 +4,15 @@ import json
 import os
 from pathlib import Path
 import time
+import uuid
 
 
 class VisualSignalBus:
     VALID_STATES = {"idle", "listening", "thinking", "speaking"}
+    LIVE_RUNTIME_FILE = ".voice_live_runtime"
+    VOICE_RUNTIME_FILE = ".voice_runtime"
+    LIVE_STOP_REQUEST_FILE = ".voice_live_stop_request"
+    LIVE_STOP_RECEIPT_FILE = ".voice_live_stop_receipt"
 
     def __init__(self, root: Path) -> None:
         self.root = root
@@ -28,6 +33,8 @@ class VisualSignalBus:
         (self.root / ".voice_waveform").unlink(missing_ok=True)
         self.authorization(None)
         self.capture(None)
+        self.live_runtime(None)
+        self.voice_runtime(None)
 
     #: État réel de l'autorisation de conversation vu par Voice (Solo Owner,
     #: tâche 07) : lu par le Control Center tant que Voice bat.
@@ -55,6 +62,56 @@ class VisualSignalBus:
             path.unlink(missing_ok=True)
             return
         self._atomic_text(path, json.dumps({**report, "ts": time.time()}, ensure_ascii=False))
+
+    def live_runtime(self, report: dict[str, object] | None) -> None:
+        path = self.root / self.LIVE_RUNTIME_FILE
+        if report is None:
+            path.unlink(missing_ok=True)
+            return
+        self._atomic_text(path, json.dumps({**report, "ts": time.time()}, ensure_ascii=False))
+
+    def voice_runtime(self, report: dict[str, object] | None) -> None:
+        path = self.root / self.VOICE_RUNTIME_FILE
+        if report is None:
+            path.unlink(missing_ok=True)
+            return
+        self._atomic_text(path, json.dumps({**report, "ts": time.time()}, ensure_ascii=False))
+
+    def request_live_stop(self, session_id: str) -> dict[str, object]:
+        current = self.read_live_stop_request()
+        if current is not None and current.get("session_id") == session_id:
+            return current
+        request = {"schema_version": 1, "request_id": str(uuid.uuid4()),
+                   "session_id": session_id, "requested_at": time.time()}
+        self._atomic_text(self.root / self.LIVE_STOP_REQUEST_FILE, json.dumps(request))
+        return request
+
+    def read_live_stop_request(self) -> dict[str, object] | None:
+        return self._read_json(self.root / self.LIVE_STOP_REQUEST_FILE)
+
+    def live_stop_receipt(self) -> dict[str, object] | None:
+        return self._read_json(self.root / self.LIVE_STOP_RECEIPT_FILE)
+
+    def complete_live_stop(self, request: dict[str, object], *, status: str,
+                           message: str | None = None) -> None:
+        if status not in {"accepted", "failed"}:
+            raise ValueError("invalid Live stop receipt status")
+        receipt = {"schema_version": 1, "request_id": request.get("request_id"),
+                   "session_id": request.get("session_id"), "status": status,
+                   "message": message, "completed_at": time.time()}
+        self._atomic_text(self.root / self.LIVE_STOP_RECEIPT_FILE,
+                          json.dumps(receipt, ensure_ascii=False))
+        current = self.read_live_stop_request()
+        if current is not None and current.get("request_id") == request.get("request_id"):
+            (self.root / self.LIVE_STOP_REQUEST_FILE).unlink(missing_ok=True)
+
+    @staticmethod
+    def _read_json(path: Path) -> dict[str, object] | None:
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        return value if isinstance(value, dict) else None
 
     def offline(self) -> None:
         self.reset()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -15,6 +16,11 @@ from aiohttp import web
 from jarvis.adapters.file_replace import replace_with_retry
 from jarvis.adapters.webrtc_echo import echo_cancellation_installed
 from jarvis.domain.errors import ConfigurationError
+from jarvis.domain.voice_architecture import VoiceConfigError
+from jarvis.runtime.voice_architecture_config import (
+    parse_voice_mode, store_voice_architecture, voice_architecture_query,
+)
+from jarvis.runtime.voice_capabilities import VoiceCapabilityRegistry, default_voice_registry
 from jarvis.domain.speaker import (
     DEFAULT_OWNER_BUFFER_MS,
     MAX_OWNER_BUFFER_MS,
@@ -34,6 +40,7 @@ from jarvis.runtime import agent_routing, cli_catalog, credentials as creds, sho
 from jarvis.runtime.claude_local import DEFAULT_PERMISSION_MODE, PERMISSION_MODES, ClaudeLocalAgent, normalize_permission_mode
 from jarvis.runtime.codex_local import CodexLocalAgent, normalize_sandbox_mode
 from jarvis.runtime.journal import RuntimeJournal, read_jsonl_tail
+from jarvis.runtime.live_status import CoreLiveStatusView, project_live_status
 from jarvis.runtime.model_catalog import CatalogError, ModelCatalog, filter_by_role
 from jarvis.runtime.owner_voice import effective_verifier_settings, probe_remedy
 from jarvis.runtime.self_dev import SelfDevError, apply_gate as apply_self_dev_gate, load_gate as load_self_dev_gate
@@ -72,6 +79,8 @@ SETTINGS_ERROR_CODE_HEADER = "X-Jarvis-Error-Code"
 #: tests (node) et insérée dans la page à la place de ce repère.
 WORK_SCRIPT_FILE = "control_center_work.js"
 WORK_SCRIPT_MARKER = "/*__CONTROL_CENTER_WORK_JS__*/"
+LIVE_SCRIPT_FILE = "control_center_live.js"
+LIVE_SCRIPT_MARKER = "/*__CONTROL_CENTER_LIVE_JS__*/"
 
 #: Architectures vocales proposées dans l'onglet « Mode vocal ». Comme le reste
 #: de l'écran, leur libellé vit ici et non dans la page. `{key}` est remplacé
@@ -215,6 +224,8 @@ class ControlCenter:
         audio_diagnostics: SoundDeviceAudioDiagnostics | None = None,
         work_ingress: WorkIngressForwarder | None = None,
         work_view: CoreWorkView | None = None,
+        live_view: CoreLiveStatusView | None = None,
+        voice_registry: VoiceCapabilityRegistry | None = None,
     ) -> None:
         self.runtime_root = runtime_root
         self.project_root = project_root
@@ -224,6 +235,7 @@ class ControlCenter:
         self._audio_test_lock = asyncio.Lock()
         self.settings_path = runtime_root / "control-center-settings.json"
         self.catalog = ModelCatalog(runtime_root / "model-catalog.json")
+        self._voice_registry = voice_registry
         # Relais des sous-tâches Claude vers l'état de travail Core (handoff
         # work-state, tâche 11). Absent, rien ne part : Core ne connaît pas
         # ces sous-tâches, et `/api/work` le dit (`subtasks_supported`).
@@ -231,6 +243,10 @@ class ControlCenter:
         # Lecture seule de l'état de travail Core pour le panneau Agents
         # (tâche 13). Absent, `/api/work` répond « Core indisponible ».
         self.work_view = work_view
+        # Vue de lecture du bail Live détenu par Core. Elle conserve un état
+        # non terminal lors d'une panne de lecture afin de ne jamais afficher
+        # OFF tant qu'une clôture n'est pas prouvée.
+        self.live_view = live_view
 
         settings = self._settings()
         self._agent_id = cli_catalog.normalize_agent_cli(settings.get("agent_cli"))
@@ -243,11 +259,14 @@ class ControlCenter:
         self._app.add_routes([
             web.get("/", self.index),
             web.get("/api/status", self.status),
+            web.post("/api/live/stop", self.live_stop),
             web.get("/api/trace", self.trace),
             web.get("/api/errors", self.errors),
             web.post("/api/errors/archive", self.archive_errors),
             web.get("/api/settings", self.get_settings),
             web.post("/api/settings", self.save_settings),
+            web.get("/api/prompts", self.get_prompts),
+            web.post("/api/prompts/{prompt_id}", self.update_prompt),
             web.get("/api/credentials", self.get_credentials),
             web.post("/api/credentials", self.save_credential),
             web.post("/api/credentials/delete", self.remove_credential),
@@ -305,44 +324,22 @@ class ControlCenter:
         return agent
 
     def _agent_defaults(self, agent_id: str) -> dict[str, Any]:
-        spec = cli_catalog.spec_for(agent_id)
-        if agent_id == "codex":
-            return {"command": spec.default_command, "model": "", "permission_mode": "danger-full-access"}
-        return {
-            "command": os.getenv("JARVIS_CLAUDE_CLI", spec.default_command),
-            "model": os.getenv("JARVIS_CLAUDE_MODEL", ""),
-            "permission_mode": os.getenv("JARVIS_CLAUDE_PERMISSION_MODE", DEFAULT_PERMISSION_MODE),
-        }
+        from jarvis.runtime.agent_settings import agent_defaults
+        return agent_defaults(agent_id)
 
     def _agent_settings(self, settings: dict[str, Any], agent_id: str) -> dict[str, Any]:
-        values = self._agent_defaults(agent_id)
-        # `claude_cli` et `claude_permission_mode` sont les anciens champs plats.
-        # Ils passent avant l'environnement — une configuration antérieure à cet
-        # écran ne doit pas être perdue — mais après le format structuré, qui
-        # est désormais la source et dont ils ne sont que le reflet.
-        if agent_id == "claude":
-            if settings.get("claude_cli"):
-                values["command"] = str(settings["claude_cli"])
-            if settings.get("claude_permission_mode"):
-                values["permission_mode"] = str(settings["claude_permission_mode"])
-        stored = settings.get("agent_cli_settings")
-        saved = stored.get(agent_id) if isinstance(stored, dict) and isinstance(stored.get(agent_id), dict) else {}
-        values.update({key: saved[key] for key in values if key in saved and saved[key] is not None})
-        values["command"] = str(values.get("command") or cli_catalog.spec_for(agent_id).default_command)
-        values["model"] = str(values.get("model") or "")
-        values["permission_mode"] = (
-            normalize_sandbox_mode(values.get("permission_mode"))
-            if agent_id == "codex"
-            else normalize_permission_mode(values.get("permission_mode"))
-        )
-        return values
+        from jarvis.runtime.agent_settings import resolve_agent_settings
+        return resolve_agent_settings(settings, agent_id)
 
     def _apply_agent_settings(self, settings: dict[str, Any]) -> None:
+        from jarvis.runtime.prompt_overrides import prompt_override_document
         values = self._agent_settings(settings, self._agent_id)
         agent = self.agent
         agent.command = values["command"]
         agent.model = values["model"]
         agent.permission_mode = values["permission_mode"]
+        if callable(getattr(agent, "set_prompt_overrides", None)):
+            agent.set_prompt_overrides(prompt_override_document(settings))
 
     async def _switch_agent(self, agent_id: str, settings: dict[str, Any]) -> None:
         """Changer de CLI : arrêter l'ancien avant d'armer le nouveau.
@@ -418,6 +415,8 @@ class ControlCenter:
             await self.work_ingress.aclose()
         if self.work_view is not None:
             await self.work_view.aclose()
+        if self.live_view is not None:
+            await self.live_view.aclose()
         if self._runner is not None:
             await self._runner.cleanup()
             self._runner = None
@@ -433,6 +432,9 @@ class ControlCenter:
         # version que celle du serveur.
         html = html.replace(
             WORK_SCRIPT_MARKER, page.with_name(WORK_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            LIVE_SCRIPT_MARKER, page.with_name(LIVE_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         if self.visualizer_url:
             html = html.replace("__VISUALIZER_URL__", self.visualizer_url)
@@ -475,6 +477,7 @@ class ControlCenter:
             if stale_state != "idle" or any(path.exists() for path in stale_paths[1:]):
                 VisualSignalBus(self.runtime_root).reset()
         stack = voice_stack.stack_spec(settings.get("voice_stack"))
+        live = await self._live_status(settings, voice_online=voice_online)
         return web.json_response({
             "voice_state": voice_state,
             "voice_online": voice_online,
@@ -487,7 +490,68 @@ class ControlCenter:
             # Le badge des sous-agents : le brain n'y est jamais compté.
             "subagents": self.agent.subtasks.counts(),
             "error_count": len(read_jsonl_tail(self.journal.error_path, limit=1000)),
+            "live": live,
         })
+
+    def _fresh_live_signal(self, name: str, *, voice_online: bool) -> dict[str, object] | None:
+        if not voice_online:
+            return None
+        value = VisualSignalBus._read_json(self.runtime_root / name)
+        timestamp = value.get("ts") if isinstance(value, dict) else None
+        if (isinstance(timestamp, bool) or not isinstance(timestamp, (int, float))
+                or max(0.0, time.time() - float(timestamp)) > VOICE_HEARTBEAT_MAX_AGE_S):
+            return None
+        return value
+
+    async def _live_status(self, settings: dict[str, Any], *, voice_online: bool) -> dict[str, object]:
+        now = datetime.now(timezone.utc)
+        if self.live_view is None:
+            return {"visible": False, "state": "unconfigured", "core_reachable": False,
+                    "stale": False, "server_time": now.isoformat(),
+                    "stop": {"pending": False, "failed": False, "available": False}}
+        record, reachable, stale = await self.live_view.read()
+        bus = VisualSignalBus(self.runtime_root)
+        runtime = self._fresh_live_signal(bus.LIVE_RUNTIME_FILE, voice_online=voice_online)
+        request = bus.read_live_stop_request()
+        receipt = bus.live_stop_receipt()
+        payload = project_live_status(
+            record, now=now, runtime=runtime, pricing=settings.get("live_pricing"),
+            core_reachable=reachable, stale=stale, request=request, receipt=receipt,
+        )
+        if not payload["visible"] and reachable:
+            # A successful empty Core read is the only UI-side proof that no
+            # unresolved session exists; old control files may now be removed.
+            for path in (bus.LIVE_STOP_REQUEST_FILE, bus.LIVE_STOP_RECEIPT_FILE):
+                (self.runtime_root / path).unlink(missing_ok=True)
+        return payload
+
+    async def live_stop(self, request: web.Request) -> web.Response:
+        del request
+        settings = self._settings()
+        heartbeat = self.runtime_root / ".voice_heartbeat"
+        try:
+            voice_online = time.time() - float(heartbeat.read_text(encoding="utf-8")) <= VOICE_HEARTBEAT_MAX_AGE_S
+        except (OSError, ValueError):
+            voice_online = False
+        live = await self._live_status(settings, voice_online=voice_online)
+        if not live.get("visible"):
+            return web.json_response(
+                {"code": "live_not_active", "error": "Aucune session GPT-Live non résolue."}, status=409,
+            )
+        session_id = live.get("session_id")
+        if not isinstance(session_id, str):
+            return web.json_response(
+                {"code": "live_core_unavailable",
+                 "error": "Core est indisponible et l’identité de session Live n’est pas connue."}, status=503,
+            )
+        stop_request = VisualSignalBus(self.runtime_root).request_live_stop(session_id)
+        self.journal.emit(
+            "voice.live_stop_requested", "GPT-Live stop requested from Control Center",
+            data={"request_id": stop_request["request_id"], "session_id": session_id},
+        )
+        live["stop"] = {**live["stop"], "pending": True,
+                        "request_id": stop_request["request_id"]}
+        return web.json_response({"ok": True, "live": live})
 
     async def trace(self, request: web.Request) -> web.Response:
         try:
@@ -630,6 +694,10 @@ class ControlCenter:
         Ce sont les refus de `app._run_voice_v2` et de `PersistentVoiceRuntime`,
         dits ici avant qu'un redémarrage de Voice ne les découvre.
         """
+        if isinstance(settings.get("voice_architecture"), dict) and settings["voice_architecture"].get("compatibility") is None:
+            # Canonical selection is checked independently; inactive legacy
+            # fields cannot veto an explicit selection or an unrelated Save.
+            return None
         raw, source = self._voice_arch_source(settings)
         origin = " (valeur imposée par JARVIS_VOICE_ARCH)" if source == "env" else ""
         try:
@@ -662,6 +730,8 @@ class ControlCenter:
         l'écran doit alors dire « refusé », pas « appliqué ».
         """
 
+        if isinstance(settings.get("voice_architecture"), dict) and settings["voice_architecture"].get("compatibility") is None:
+            return True
         raw, _source = self._voice_arch_source(settings)
         try:
             if parse_voice_arch(raw) is not VoiceArchitecture.CONTINUOUS_BRAIN:
@@ -1064,12 +1134,47 @@ class ControlCenter:
             report["verifier"] = None
         return report
 
+    def _voice_architecture_registry(self, settings: dict[str, Any]):
+        del settings
+        if self._voice_registry is not None:
+            return self._voice_registry
+        try:
+            cached = self.catalog.cached("google") or {}
+        except (TypeError, AttributeError, ValueError):
+            # The optional on-disk catalog is not an authority for Settings.
+            # Keep known capabilities usable, never expose corrupt raw data.
+            cached = {"models": None}
+        records = cached.get("models", ()) if isinstance(cached, dict) else ()
+        valid = [item for item in records if isinstance(item, dict)
+                 and isinstance(item.get("id"), str) and item["id"].strip()
+                 and item["id"] == item["id"].strip()
+                 and isinstance(item.get("methods"), (list, tuple))] if isinstance(records, (list, tuple)) else []
+        if not isinstance(records, (list, tuple)) or len(valid) != len(records):
+            self.journal.emit("voice.settings.catalog_rejected", "Optional voice catalog contains invalid records",
+                              level="warning", data={"code": "voice_catalog_invalid", "provider": "google"})
+        return default_voice_registry(google_models=valid)
+
+    def _voice_architecture_payload(self, settings: dict[str, Any]) -> dict[str, Any]:
+        registry = self._voice_architecture_registry(settings)
+        try:
+            result = voice_architecture_query(settings, registry=registry)
+            if (not result["compatibility_runtime"] and result["selection"]["config"]["architecture"] != "duplex"
+                    and voice_stack.settings_for(settings, voice_stack.OPENAI_REALTIME.id).get("turn_mode") == "manual"):
+                result["problem"] = {"code": "voice_auto_turn_required", "message": "Simple et Front Brain exigent la fin de tour automatique."}
+                result["new_runtime_ready"] = False
+            return result
+        except (VoiceConfigError, ConfigurationError) as exc:
+            return {"selection": None, "compatibility_runtime": "voice_architecture" not in settings,
+                    "new_runtime_ready": False, "problem": {"code": getattr(exc, "code", "voice_architecture_invalid"),
+                    "message": str(exc)}, "architectures": registry.settings_architectures()}
+
     def _settings_payload(self, settings: dict[str, Any]) -> dict[str, Any]:
         stack_id = voice_stack.normalize_stack(settings.get("voice_stack"))
         agent_id = cli_catalog.normalize_agent_cli(settings.get("agent_cli"))
         capture_report = self._voice_capture_report()
         return {
             "voice": {
+                "architecture": self._voice_architecture_payload(settings),
                 "stack": stack_id,
                 "stacks": voice_stack.describe_stacks(),
                 "settings": {
@@ -1088,6 +1193,7 @@ class ControlCenter:
                 ),
                 # Annulation d'écho demandée face à ce que Voice applique (tâche 08).
                 "echo_cancellation": self._echo_cancellation_payload(settings, capture_report),
+                "switch": self._voice_switch_payload(),
             },
             "cli": {
                 "agent": agent_id,
@@ -1135,11 +1241,169 @@ class ControlCenter:
         del request
         return web.json_response(self._settings_payload(self._settings()))
 
+    def _prompt_payload(self, settings: dict[str, Any]) -> dict[str, Any]:
+        """Project only programs active for the selected architecture and backend."""
+        from jarvis.domain.prompt_registry import PromptTarget
+        from jarvis.domain.voice_architecture import DuplexVoiceConfig, FrontBrainVoiceConfig
+        from jarvis.runtime.prompt_catalog import default_prompt_registry
+        from jarvis.runtime.prompt_overrides import prompt_override_document
+        from jarvis.runtime.prompt_runtime import resolve_prompt
+        from jarvis.runtime.voice_composition import resolve_voice_composition
+
+        composition = resolve_voice_composition(settings)
+        selection, config = composition.selection, composition.selection.config
+        targets: list[tuple[str, PromptTarget, dict[str, object]]] = []
+        if selection.uses_compatibility_runtime:
+            compatibility = selection.compatibility
+            assert compatibility is not None
+            conversation_model = config.conversation_model
+            targets.append(("Conversation vocale", PromptTarget(
+                "conversation", "simple", conversation_model.provider_id,
+                conversation_model.model_id or None, compatibility.execution_mode, "session",
+            ), {"context": {}}))
+            if conversation_model.provider_id == "openai":
+                targets.extend((
+                    ("Réflexe de surface", PromptTarget("reflex", None, "openai", None, None, "reflex"),
+                     {"transcript": "", "avoid": []}),
+                    ("Lecture fidèle", PromptTarget("speech", None, "openai", None, None, "verbatim"),
+                     {"text": ""}),
+                ))
+        elif isinstance(config, DuplexVoiceConfig):
+            targets.append(("Conversation Duplex / GPT-Live", PromptTarget(
+                "conversation", "duplex", "openai", config.conversation_model.model_id,
+                "explicit", "session",
+            ), {"context": {}}))
+        else:
+            conversation_model = config.reflex_model if isinstance(config, FrontBrainVoiceConfig) else config.conversation_model
+            targets.extend((
+                ("Conversation vocale", PromptTarget(
+                    "conversation", config.architecture.value, conversation_model.provider_id,
+                    conversation_model.model_id, "explicit", "session",
+                ), {"context": {}}),
+                ("Réflexe de surface", PromptTarget("reflex", None, "openai", None, None, "reflex"),
+                 {"transcript": "", "avoid": []}),
+                ("Lecture fidèle", PromptTarget("speech", None, "openai", None, None, "verbatim"),
+                 {"text": ""}),
+            ))
+            if isinstance(config, FrontBrainVoiceConfig):
+                targets.append(("Analyse Front Brain", PromptTarget(
+                    "analysis", "front_brain", config.analysis_model.provider_id,
+                    config.analysis_model.model_id, "explicit", "hint",
+                ), {"observation": {}}))
+
+        agent_id = cli_catalog.normalize_agent_cli(settings.get("agent_cli"))
+        agent_model = self._agent_settings(settings, agent_id)["model"] or None
+        if agent_id == "claude":
+            targets.extend((
+                ("Système du backend Claude", PromptTarget(
+                    "backend", None, "claude", agent_model, None, "conversation_session"), {}),
+                ("Exécution de travail Claude", PromptTarget(
+                    "backend", None, "claude", agent_model, None, "job_result_session"), {}),
+                ("Analyse spéculative Claude", PromptTarget(
+                    "backend", None, "claude", agent_model, None, "speculative_session"), {}),
+            ))
+        targets.append(("Tour du backend", PromptTarget(
+            "backend", None, agent_id, agent_model, None, "turn",
+        ), {"context": {}, "request_text": ""}))
+
+        overrides = prompt_override_document(settings)
+        programs = []
+        active_ids: set[str] = set()
+        for label, target, variables in targets:
+            resolution = resolve_prompt(target, overrides=overrides, variables=variables)
+            payload = resolution.to_payload()
+            payload["label"] = label
+            payload["preview"] = "empty_runtime_data"
+            programs.append(payload)
+            active_ids.update(str(item["prompt_id"]) for item in resolution.layers)
+        inspection = default_prompt_registry().inspect(overrides)
+        layers = []
+        for layer in inspection["layers"]:
+            if layer["prompt_id"] in active_ids:
+                layer = dict(layer)
+                layer["bindings"] = [item for item in layer["bindings"]
+                                     if item["program_id"] in {program["program_id"] for program in programs}]
+                layers.append(layer)
+        return {
+            "schema_version": 1,
+            "selection": selection.to_dict(),
+            "programs": programs,
+            "layers": layers,
+            "unknown_overrides": inspection["unknown_overrides"],
+            "provider_internal_prompts": "unavailable",
+            "application": "preview_only",
+            "application_note": (
+                "Saving changes does not update a running session. Session layers apply at the next Voice or "
+                "Claude session; invocation layers apply when the next matching request is actually sent."
+            ),
+        }
+
+    def _voice_switch_payload(self) -> dict[str, object]:
+        from jarvis.runtime.voice_switch import VoiceSwitchBus
+        bus = VoiceSwitchBus(self.runtime_root)
+        request, receipt = bus.read_request(), bus.receipt()
+        return {
+            "pending": request is not None,
+            "request_id": request.request_id if request else None,
+            "target_configuration_id": request.target_configuration_id if request else (
+                receipt.get("target_configuration_id") if isinstance(receipt, dict) else None
+            ),
+            "status": receipt.get("status") if isinstance(receipt, dict) else None,
+            "message": receipt.get("message") if isinstance(receipt, dict) else None,
+        }
+
+    async def get_prompts(self, request: web.Request) -> web.Response:
+        del request
+        try:
+            return web.json_response(self._prompt_payload(self._settings()))
+        except Exception as exc:
+            from jarvis.domain.prompt_registry import PromptError
+            if isinstance(exc, (PromptError, VoiceConfigError, ConfigurationError)):
+                code = getattr(exc, "code", "prompt_query_invalid")
+                raise web.HTTPBadRequest(text=str(exc), headers={SETTINGS_ERROR_CODE_HEADER: code}) from exc
+            raise
+
+    async def update_prompt(self, request: web.Request) -> web.Response:
+        from jarvis.domain.prompt_registry import PromptError
+        from jarvis.runtime.prompt_catalog import default_prompt_registry
+        from jarvis.runtime.prompt_overrides import PromptOverrideStore
+
+        identifier = request.match_info["prompt_id"]
+        try:
+            payload = await request.json()
+            if not isinstance(payload, dict):
+                raise PromptError("prompt_request_invalid", "Prompt mutation must be an object")
+            store = PromptOverrideStore(
+                default_prompt_registry(), read_settings=self._settings,
+                write_settings=self._write_settings, diagnostics=self.journal,
+            )
+            action = payload.get("action")
+            if action == "reset":
+                mutation = store.reset(identifier)
+            elif action == "edit" and set(payload) <= {"action", "text", "base_revision", "expected_effective_revision"}:
+                mutation = store.edit(
+                    identifier,
+                    text=payload.get("text"),
+                    base_revision=payload.get("base_revision"),
+                    expected_effective_revision=payload.get("expected_effective_revision"),
+                )
+            else:
+                raise PromptError("prompt_request_invalid", "Use action edit or reset with the documented fields")
+            return web.json_response({"mutation": mutation, "prompts": self._prompt_payload(self._settings())})
+        except (PromptError, TypeError) as exc:
+            code = getattr(exc, "code", "prompt_request_invalid")
+            raise web.HTTPBadRequest(text=str(exc), headers={SETTINGS_ERROR_CODE_HEADER: code}) from exc
+
     async def save_settings(self, request: web.Request) -> web.Response:
         payload = await request.json()
         if not isinstance(payload, dict):
             raise web.HTTPBadRequest(text="settings must be an object")
         current = self._settings()
+        from jarvis.runtime.voice_composition import resolve_voice_composition
+        try:
+            previous_composition = resolve_voice_composition(current)
+        except (VoiceConfigError, ConfigurationError):
+            previous_composition = None
         creds.migrate_legacy(current)
         switch_to: str | None = None
 
@@ -1160,9 +1424,11 @@ class ControlCenter:
             creds.CredentialError,
             RoutingError,
             SelfDevError,
+            VoiceConfigError,
         ) as exc:
             # Le corps reste le message en clair (ce que la page affiche) ; le
             # code stable voyage à côté, pour les clients et les tests.
+            self.journal.emit("voice.settings.rejected", "Settings validation rejected", level="warning", data={"code": exc.code})
             raise web.HTTPBadRequest(text=str(exc), headers={SETTINGS_ERROR_CODE_HEADER: exc.code}) from exc
 
         # --- réglages plats, conservés pour les clients existants ------------
@@ -1222,7 +1488,52 @@ class ControlCenter:
         problem = self._voice_arch_problem(current)
         if problem:
             raise web.HTTPBadRequest(text=problem)
+        voice_payload = payload.get("voice")
+        if isinstance(voice_payload, dict) and "architecture" in voice_payload:
+            problem = self._voice_architecture_payload(current)["problem"]
+            if problem:
+                self.journal.emit("voice.settings.rejected", "Settings validation rejected", level="warning", data={"code": problem["code"]})
+                raise web.HTTPBadRequest(text=problem["message"], headers={SETTINGS_ERROR_CODE_HEADER: problem["code"]})
+        switch_values = None
+        try:
+            target = resolve_voice_composition(current)
+        except (VoiceConfigError, ConfigurationError):
+            # An injected/extended Settings registry may describe an adapter
+            # this production composition root does not own.
+            target = None
+        if target is not None and previous_composition is not None:
+            from jarvis.domain.voice_architecture import FrontBrainVoiceConfig
+            from jarvis.runtime.voice_switch import VoiceSwitchBus
+            config = target.selection.config
+            model = (config.reflex_model if isinstance(config, FrontBrainVoiceConfig)
+                     else config.conversation_model).model_id
+            runtime = VisualSignalBus._read_json(self.runtime_root / VisualSignalBus.VOICE_RUNTIME_FILE)
+            runtime_id = runtime.get("configuration_id") if isinstance(runtime, dict) else None
+            runtime_ts = runtime.get("ts") if isinstance(runtime, dict) else None
+            source_id = previous_composition.configuration_id
+            if (isinstance(runtime_id, str) and isinstance(runtime_ts, (int, float))
+                    and not isinstance(runtime_ts, bool)
+                    and time.time() - float(runtime_ts) <= VOICE_HEARTBEAT_MAX_AGE_S):
+                source_id = runtime_id
+            # La projection de compatibilité conserve volontairement un
+            # modèle Gemini manquant pour que Settings puisse être réparé.
+            # Ce n'est pas encore une cible démarrable : ne pas arrêter Voice.
+            if source_id != target.configuration_id and model:
+                switch_values = (VoiceSwitchBus(self.runtime_root), source_id,
+                                 target.configuration_id, config.architecture.value, model)
         self._write_settings(current)
+        if switch_values is not None:
+            bus, source_id, target_id, architecture, model = switch_values
+            issued = bus.request(source_configuration_id=source_id,
+                                 target_configuration_id=target_id,
+                                 target_architecture=architecture, target_model=model)
+            self.journal.emit(
+                "voice.switch.requested", "Voice architecture switch requested",
+                data={"request_id": issued.request_id,
+                      "source_configuration_id": source_id,
+                      "target_configuration_id": target_id,
+                      "target_architecture": architecture, "target_model": model},
+            )
         if switch_to is not None:
             await self._switch_agent(switch_to, current)
         else:
@@ -1256,6 +1567,11 @@ class ControlCenter:
         voice = payload.get("voice")
         if not isinstance(voice, dict):
             return
+        if "architecture" in voice:
+            registry = self._voice_architecture_registry(current)
+            config = parse_voice_mode(voice["architecture"], registry)
+            registry.validate(config, require_ready=True)
+            store_voice_architecture(current, config, registry)
         if voice.get("stack") is not None:
             stack_id = str(voice["stack"]).strip().lower()
             if stack_id not in voice_stack.VOICE_STACK_IDS:
@@ -1756,8 +2072,27 @@ class ControlCenter:
         # et le panneau navigateur appellent sans, et reçoivent alors exactement
         # le texte d'avant. Seul Core, qui connaît l'état public, le remplit.
         context = payload.get("context")
-        prompt = build_agent_brief(context, text) if isinstance(context, dict) else text
-        return web.json_response(await self.agent.ask(prompt, timeout_s=timeout_s))
+        if isinstance(context, dict):
+            from jarvis.domain.prompt_registry import PromptTarget
+            from jarvis.runtime.prompt_overrides import prompt_override_document
+            from jarvis.runtime.prompt_runtime import prompt_channel, prompt_evidence, resolve_prompt
+            resolution = resolve_prompt(
+                PromptTarget("backend", None, self._agent_id, self.agent.model or None, None, "turn"),
+                overrides=prompt_override_document(self._settings()),
+                variables={"context": context, "request_text": text},
+            )
+            prompt = prompt_channel(resolution, "stdin.user_message")
+            evidence = prompt_evidence(resolution, application="sent", channel="stdin.user_message")
+        else:
+            prompt = text
+            evidence = None
+        import inspect
+        supports_evidence = "prompt_evidence" in inspect.signature(self.agent.ask).parameters
+        if evidence is not None and supports_evidence:
+            result = await self.agent.ask(prompt, timeout_s=timeout_s, prompt_evidence=evidence)
+        else:
+            result = await self.agent.ask(prompt, timeout_s=timeout_s)
+        return web.json_response(result)
 
     async def agent_notices(self, request: web.Request) -> web.Response:
         """Réponses que le brain a produites sans question : relais de fin de sous-agent.

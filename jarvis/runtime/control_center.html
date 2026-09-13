@@ -15,6 +15,14 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
 .state{font-size:12px;color:var(--muted)}
 .state strong{color:var(--accent)}
 .voicehint{position:absolute;left:50%;bottom:22px;transform:translateX(-50%);font-size:12px;color:var(--accent);pointer-events:none;box-shadow:0 0 30px rgba(0,0,0,.35)}
+.live-banner{position:absolute;z-index:35;top:68px;left:50%;transform:translateX(-50%);width:min(720px,calc(100vw - 170px));display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:14px;align-items:center;padding:12px 14px;background:rgba(35,7,12,.94);border:2px solid var(--danger);border-radius:10px;box-shadow:0 0 32px rgba(255,101,119,.28);pointer-events:auto}
+.live-banner.uncertain{border-color:var(--warn);background:rgba(38,23,5,.96);box-shadow:0 0 32px rgba(255,184,92,.24)}
+.live-led{width:13px;height:13px;border-radius:50%;background:var(--danger);box-shadow:0 0 15px var(--danger);animation:pulse 1.2s ease-in-out infinite}
+.live-banner.uncertain .live-led{background:var(--warn);box-shadow:0 0 15px var(--warn)}
+.live-main{min-width:0}.live-title{font-size:13px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#fff}.live-title strong{color:var(--danger)}
+.live-banner.uncertain .live-title strong{color:var(--warn)}
+.live-meta{margin-top:4px;font-size:11px;color:#d9b9bf;line-height:1.45}.live-banner.uncertain .live-meta{color:#ead1ae}.live-warning{display:block;color:var(--warn);margin-top:3px}
+.live-stop{border:1px solid var(--danger);background:#26070c;color:#fff;padding:9px 13px;border-radius:7px;font:700 12px inherit;letter-spacing:.08em;cursor:pointer}.live-stop:hover{background:#3c0a12}.live-stop:disabled{opacity:.6;cursor:wait}
 .dock{position:absolute;right:18px;top:50%;transform:translateY(-50%);display:grid;gap:10px}
 .dock button{width:52px;height:52px;border:1px solid rgba(110,231,255,.26);background:rgba(3,8,12,.82);color:var(--text);border-radius:10px;cursor:pointer;font:12px inherit;backdrop-filter:blur(12px)}
 .dock button:hover,.dock button.active{border-color:var(--accent);color:var(--accent)}
@@ -264,6 +272,8 @@ details.rd[open]>summary{margin-bottom:14px}
   .panel{left:12px;right:76px;top:12px;bottom:12px;width:auto}
   .dock{right:10px}
   .topbar{left:10px;right:74px}
+  .live-banner{top:62px;left:10px;right:74px;width:auto;transform:none;grid-template-columns:auto minmax(0,1fr)}
+  .live-stop{grid-column:1/-1;width:100%}
   .brand{display:none}
 }
 </style>
@@ -272,6 +282,11 @@ details.rd[open]>summary{margin-bottom:14px}
 <div id="app">
   <iframe class="face" src="__VISUALIZER_URL__" title="Jarvis visualizer"></iframe>
   <div class="topbar"><div class="brand">JARVIS</div><div class="state">VOICE <strong id="voiceState">IDLE</strong> · <strong id="agentName">CLAUDE</strong> <strong id="agentState">STOPPED</strong><span id="subagentState" hidden> · <strong id="subagentCount">0</strong> <span id="subagentWord">SOUS-AGENTS</span></span></div></div>
+  <section class="live-banner" id="liveBanner" role="status" aria-live="assertive" aria-label="État de la session GPT-Live" hidden>
+    <span class="live-led" aria-hidden="true"></span>
+    <div class="live-main"><div class="live-title">GPT-LIVE <strong id="liveState">ACTIF</strong> · <span id="liveElapsed">00:00</span></div><div class="live-meta" id="liveMeta"></div></div>
+    <button class="live-stop" id="liveStop" type="button">ARRÊTER</button>
+  </section>
   <div class="voicehint" id="voiceHint">F9 · DÉMARRER</div>
   <nav class="dock" aria-label="Jarvis tools">
     <div class="tool"><button data-panel="errors" title="Errors">ERR</button><span class="badge" id="errorBadge">0</span></div>
@@ -302,6 +317,7 @@ details.rd[open]>summary{margin-bottom:14px}
 </div>
 
 <script>
+/*__CONTROL_CENTER_LIVE_JS__*/
 const $=s=>document.querySelector(s);let current=null;const panel=$('#panel'),body=$('#panelBody'),title=$('#panelTitle');
 async function api(path,opts){const r=await fetch(path,opts),text=await r.text();let value={};try{value=text?JSON.parse(text):{}}catch{value={error:text}}if(!r.ok){const e=new Error(value.error||value.code||text||`HTTP ${r.status}`);e.status=r.status;throw e}return value}
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
@@ -310,9 +326,14 @@ function iconFor(kind){for(const [re,ic] of ICONS)if(re.test(kind))return ic;ret
 function statusFor(x){const k=String(x.kind||''),lvl=String(x.level||'info'),r=x.data&&x.data.result;if(x.data&&x.data.is_error)return 'bad';if(r&&typeof r==='object'&&r.executed===false)return 'warn';if(lvl==='error'||/fail|error|crash|giveup|denied/.test(k))return 'bad';if(lvl==='warning'||/skip|cancel|timeout|degraded|unavailable/.test(k))return 'warn';if(/connecting|spawn|start|wake/.test(k))return 'busy';return 'ok'}
 function timeOf(ts){const t=String(ts||'');return t.length>19?t.slice(11,23):t}
 function entries(items){if(!items.length)return '<div class="empty">Aucune entrée.</div>';return items.slice().reverse().map(x=>{const data=x.data&&Object.keys(x.data).length?x.data:null;return `<details class="entry ${x.level==='error'?'error':''}"><summary><span class="ico">${iconFor(String(x.kind||''))}</span><span class="etxt"><span class="emsg">${esc(x.message)}</span><span class="emeta">${esc(timeOf(x.ts))} · ${esc(x.kind)}${x.archived_at?' · archivé le '+esc(timeOf(x.archived_at)):''}</span></span><span class="dot ${statusFor(x)}"></span></summary><div class="detail"><div class="emeta" style="margin-bottom:6px"><span class="chip">${esc(x.level)}</span>${esc(x.ts)}</div>${data?`<pre class="log">${esc(JSON.stringify(data,null,2))}</pre>`:'<div class="hint">Aucun détail supplémentaire.</div>'}</div></details>`}).join('')}
+const LIVE={base:0,received:0,running:false};
+function tickLive(){if(!LIVE.running)return;$('#liveElapsed').textContent=JarvisLiveView.duration(LIVE.base+(Date.now()-LIVE.received)/1000)}
+function renderLive(live){const view=JarvisLiveView.project(live),banner=$('#liveBanner');if(!view.visible){banner.hidden=true;LIVE.running=false;return}banner.hidden=false;banner.classList.toggle('uncertain',view.uncertain);$('#liveState').textContent=view.label;LIVE.base=view.elapsed;LIVE.received=Date.now();LIVE.running=true;tickLive();const parts=view.details.map(esc);if(view.warning)parts.push(`<span class="live-warning">${esc(view.warning)}</span>`);$('#liveMeta').innerHTML=parts.join(' · ');const stop=$('#liveStop');stop.disabled=view.disabled;stop.textContent=view.action}
+async function stopLive(){const button=$('#liveStop');button.disabled=true;button.textContent='DEMANDE…';try{const result=await api('/api/live/stop',{method:'POST'});renderLive(result.live)}catch(e){button.disabled=false;button.textContent='RÉESSAYER L’ARRÊT';const meta=$('#liveMeta');meta.innerHTML+=` · <span class="live-warning">${esc(e.message)}</span>`}}
+$('#liveStop').addEventListener('click',stopLive);
 let errorsView='active';
 async function renderErrors(){const archived=errorsView==='archived';title.textContent=archived?'Errors · Archives':'Errors';const items=await api('/api/errors'+(archived?'?archived=1&limit=500':''));body.innerHTML=`<div class="row" style="margin-bottom:12px"><button class="action" id="toggleErrors">${archived?'Erreurs actives':'Erreurs archivées'}</button>${archived?'':'<button class="action danger" id="archiveErrors">Archiver</button>'}<span class="hint">${items.length} entrée(s)</span></div><div>${entries(items)}</div>`;$('#toggleErrors').addEventListener('click',()=>{errorsView=archived?'active':'archived';renderErrors().catch(e=>{body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`})});const archive=$('#archiveErrors');if(archive)archive.addEventListener('click',async()=>{archive.disabled=true;try{await api('/api/errors/archive',{method:'POST'});await renderErrors();refreshStatus()}catch(e){alert(e.message)}finally{archive.disabled=false}})}
-async function refreshStatus(){try{const s=await api('/api/status'),v=s.voice_state||'idle',k=String(s.manual_wake_key||'f9').toUpperCase(),online=s.voice_online===true;$('#voiceState').textContent=online?v.toUpperCase():'OFFLINE';const listening=s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`;$('#voiceHint').textContent=online?({idle:`${k} · DÉMARRER`,listening,thinking:`${k} · ANNULER`,speaking:`${k} · INTERROMPRE`}[v]||`${k} · CONTRÔLER`):`${k} · VOICE HORS LIGNE`;$('.face').style.visibility=online?'visible':'hidden';$('#agentName').textContent=String(s.agent.name||s.agent_cli||'agent').toUpperCase();$('#agentState').textContent=(s.agent.state||'stopped').toUpperCase();const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';AG.agent=s.agent||null;AG.cli=s.agent_cli||'';if(!(current==='agents'&&coreOk()))updateSubagentBadge(s.subagents,false);watchSubagents(s.subagents)}catch(e){$('#voiceState').textContent='OFFLINE';$('#agentState').textContent='OFFLINE';$('#voiceHint').textContent='VOICE HORS LIGNE';$('.face').style.visibility='hidden';updateSubagentBadge(null)}}
+async function refreshStatus(){try{const s=await api('/api/status'),v=s.voice_state||'idle',k=String(s.manual_wake_key||'f9').toUpperCase(),online=s.voice_online===true;renderLive(s.live);$('#voiceState').textContent=online?v.toUpperCase():'OFFLINE';const listening=s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`;$('#voiceHint').textContent=online?({idle:`${k} · DÉMARRER`,listening,thinking:`${k} · ANNULER`,speaking:`${k} · INTERROMPRE`}[v]||`${k} · CONTRÔLER`):`${k} · VOICE HORS LIGNE`;$('.face').style.visibility=online?'visible':'hidden';$('#agentName').textContent=String(s.agent.name||s.agent_cli||'agent').toUpperCase();$('#agentState').textContent=(s.agent.state||'stopped').toUpperCase();const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';AG.agent=s.agent||null;AG.cli=s.agent_cli||'';if(!(current==='agents'&&coreOk()))updateSubagentBadge(s.subagents,false);watchSubagents(s.subagents)}catch(e){$('#voiceState').textContent='OFFLINE';$('#agentState').textContent='OFFLINE';$('#voiceHint').textContent='VOICE HORS LIGNE';$('.face').style.visibility='hidden';updateSubagentBadge(null)}}
 async function openPanel(name){current=name;document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.toggle('active',b.dataset.panel===name));panel.classList.add('open');title.textContent={errors:'Errors',trace:'Trace',agents:'Agents'}[name];closeMenu(false);if(name==='agents'){openAgentsPanel();return}stopAgentsPolling();body.innerHTML='<div class="empty">Chargement…</div>';try{if(name==='errors')await renderErrors();if(name==='trace')body.innerHTML=entries(await api('/api/trace'))}catch(e){body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`}}
 function closePanel(){current=null;panel.classList.remove('open');document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.remove('active'));closeMenu(false);stopAgentsPolling()}
 
@@ -1503,13 +1524,14 @@ function bindSend(after){
 
 const TABS=[
   {id:'voice',label:'Mode vocal',save:true},
+  {id:'prompts',label:'Prompts',save:false},
   {id:'cli',label:'CLI agent',save:true},
   {id:'routing',label:'Aiguillage',save:true},
   {id:'config',label:'Config',save:true},
   {id:'keys',label:'API Keys',save:false},
   {id:'shortcuts',label:'Raccourcis',save:false},
 ];
-const SET={open:false,tab:'voice',data:null,draft:null,dirty:false,catalog:{},clis:null,devices:null,capture:null,shortcuts:null,restartNotice:false,rdOpen:false,routing:null};
+const SET={open:false,tab:'voice',data:null,draft:null,dirty:false,catalog:{},clis:null,devices:null,capture:null,shortcuts:null,restartNotice:false,rdOpen:false,routing:null,prompts:null};
 const overlay=$('#overlay'),modalContent=$('#modalContent'),modalStatus=$('#modalStatus'),modalSave=$('#modalSave'),modalSub=$('#modalSub');
 
 function say(text,kind){modalStatus.className='status'+(kind?' '+kind:'');modalStatus.textContent=text||''}
@@ -1611,7 +1633,7 @@ function authVerdictHtml(a){
     return `<div class="notice bad">${tag}<strong>Solo Owner configuré mais NON appliqué</strong> : JARVIS ne peut pas vérifier votre identité, donc Voice refuse d'écouter dans ce mode — aucun repli silencieux sur la salle ouverte.${why}<div class="hint">${src}.</div></div>`;
   }
   if(eff.speaker_verification==='shadow'){
-    const legacy=SET.data.voice.arch_effective!=='continuous_brain'?" L'observation ne tourne qu'en conversation continue : sous « Un tour par appui », rien n'est mesuré.":'';
+    const legacy=SET.data.voice.architecture.compatibility_runtime&&SET.data.voice.arch_effective!=='continuous_brain'?" L'observation ne tourne qu'en conversation continue : sous « Un tour par appui », rien n'est mesuré.":'';
     if(a.status==='ready')return `<div class="notice info">${tag}<strong>Salle ouverte, vérification en ombre</strong> : les scores sont mesurés et journalisés (voice.owner.*), rien n'est filtré — toute voix peut couper JARVIS.${esc(legacy)}<div class="hint">${src}.</div></div>`;
     return `<div class="notice">${tag}<strong>Salle ouverte, observation dégradée</strong> : rien n'est mesuré ; la conversation reste ouverte à toutes les voix.${why}<div class="hint">${src}.</div></div>`;
   }
@@ -1680,29 +1702,119 @@ function aecHtml(){
 }
 
 /* --- onglet Mode vocal -------------------------------------------------- */
+function voiceArchitectureConfig(){
+  return SET.draft.voice.architecture||((SET.data.voice.architecture.selection||{}).config)||{};
+}
+function modelRefKey(value){return JSON.stringify(value&&{provider_id:value.provider_id,model_id:value.model_id});}
+function voiceArchitectureChanged(key,value){
+  const query=SET.data.voice.architecture;
+  if(key==='architecture'){
+    const profile=query.architectures.find(item=>item.id===value);
+    if(!profile)return;
+    const current=voiceArchitectureConfig();
+    SET.draft.voice.architecture=JSON.parse(JSON.stringify(current.architecture===value?current:profile.defaults));
+  }else{
+    SET.draft.voice.architecture=JSON.parse(JSON.stringify(voiceArchitectureConfig()));
+    SET.draft.voice.architecture[key]=value;
+  }
+  SET.architectureDirty=true;SET.dirty=true;
+}
+async function voiceArchitectureHtml(){
+  const query=SET.data.voice.architecture,config=voiceArchitectureConfig();
+  const profile=query.architectures.find(item=>item.id===config.architecture);
+  const options=query.architectures.map(item=>`<option value="${esc(item.id)}" ${item.id===config.architecture?'selected':''}>${esc(item.label)}</option>`).join('');
+  let html=`<h3>Architecture vocale</h3><div class="field"><label for="voiceArchitecture">Architecture</label><select id="voiceArchitecture" data-voice-architecture><option value="" disabled ${profile?'':'selected'}>Choisir une architecture</option>${options}</select></div>`;
+  if(query.compatibility_runtime&&!SET.architectureDirty)html+='<div class="notice">Compatibilité conservée. Enregistrer sans modifier ce choix garde le fonctionnement actuel. Modifier un modèle ou choisir explicitement une architecture prépare le nouveau mode.</div><button class="action" data-architecture-activate>Utiliser explicitement cette architecture</button>';
+  if(query.problem&&!SET.architectureDirty)html+=`<div class="notice bad">${esc(query.problem.message)}</div>`;
+  if(!profile)return html;
+  html+=`<div class="hint">${esc(profile.description)}</div>`;
+  for(const field of profile.fields){
+    const value=config[field.key]??field.default,id='architecture_'+field.key;
+    let input='';
+    if(field.kind==='model'){
+      const key=modelRefKey(value),found=field.options.some(option=>modelRefKey(option)===key);
+      const missing=found?'':`<option value="${esc(key||'null')}" selected disabled>${esc(value?value.provider_id+' / '+(value.model_id||'(modèle manquant)'):'Aucun modèle')} — modèle non pris en charge</option>`;
+      input=`<select id="${id}" data-architecture-field="${esc(field.key)}" data-architecture-kind="model">${missing}${field.options.map(option=>`<option value="${esc(modelRefKey(option))}" ${modelRefKey(option)===key?'selected':''} ${option.selectable?'':'disabled'}>${esc(option.label)}${option.reason?' — '+esc(option.reason):''}</option>`).join('')}</select>`;
+      const selected=field.options.find(option=>modelRefKey(option)===key);
+      if(selected)input+=`<div class="hint">Adaptateur : ${esc(selected.adapter_status)} · Disponibilité compte : ${esc(selected.availability)}${selected.reason?' — '+esc(selected.reason):''}</div>`;
+    }else if(field.kind==='select'){
+      const sourceField=profile.fields.find(item=>item.key===field.options_from);
+      const selected=sourceField&&sourceField.options.find(item=>modelRefKey(item)===modelRefKey(config[field.options_from]));
+      const values=selected?(selected[field.options_property]||[]):[];
+      input=`<select id="${id}" data-architecture-field="${esc(field.key)}">${values.includes(value)?'':`<option value="${esc(value??'')}" selected disabled>${esc(value??'Non configuré')} — indisponible</option>`}${values.map(item=>`<option value="${esc(item)}" ${item===value?'selected':''}>${esc(item)}</option>`).join('')}</select>`;
+    }else if(field.kind==='toggle')input=`<input id="${id}" type="checkbox" data-architecture-field="${esc(field.key)}" ${value?'checked':''} ${field.readonly?'disabled':''}>`;
+    else if(field.kind==='number')input=`<input id="${id}" type="number" min="${field.min}" max="${field.max}" value="${esc(value)}" data-architecture-field="${esc(field.key)}">`;
+    html+=`<div class="field"><label for="${id}">${esc(field.label)}</label>${input}</div>`;
+  }
+  // Provider settings are projected by the registry, never chosen by a JS model switch.
+  for(const field of profile.fields.filter(item=>item.kind==='model')){
+    const selected=field.options.find(item=>modelRefKey(item)===modelRefKey(config[field.key]));
+    if(!selected||!selected.settings_scope)continue;
+    const scope=selected.settings_scope,values=SET.draft.voice.settings[scope]||{};
+    for(const setting of selected.settings_fields||[])html+=await renderField(setting,values,scope);
+  }
+  return html;
+}
 async function tabVoice(){
-  const draft=SET.draft.voice,stacks=SET.data.voice.stacks;
-  const spec=stacks.find(s=>s.id===draft.stack)||stacks[0];
-  const choices=stacks.map(s=>`
-    <label class="choice ${s.id===draft.stack?'selected':''}">
-      <input type="radio" name="voicestack" value="${esc(s.id)}" ${s.id===draft.stack?'checked':''}>
-      <div><div class="title"><strong>${esc(s.label)}</strong>${keyStateFor(s.credential_provider)}<span class="tag">${s.input_sample_rate/1000} kHz → ${s.output_sample_rate/1000} kHz</span></div>
-      <div class="hint" style="margin-top:5px">${esc(s.description)}</div></div>
-    </label>`).join('');
-  const values=draft.settings[spec.id];
-  const fields=[];
-  for(const field of spec.fields)fields.push(await renderField(field,values,spec.id));
-  const keyWarning=keyStateFor(spec.credential_provider).includes('aucune clé')
-    ? `<div class="notice bad">Aucune clé ${esc(providerLabel(spec.credential_provider))} n'est enregistrée : cette pile ne pourra pas démarrer. Ajoutez-la dans l'onglet API Keys.</div>`:'';
-  // Architecture : liste et libellés décrits par le serveur, l'option vide
-  // rendant la main à JARVIS_VOICE_ARCH.
-  const archs=SET.data.voice.archs||[],arch=archs.find(a=>a.id===(draft.arch||''))||archs[0];
-  const archProblem=SET.data.voice.arch_problem?`<div class="notice bad">${esc(SET.data.voice.arch_problem)}</div>`:'';
-  const archField=archs.length?`<h3>Architecture</h3>${archProblem}<div class="field"><label for="f_voice_arch">Déroulé d'une conversation</label>
-    <select id="f_voice_arch" data-voice-arch>${selectOptions(archs.map(a=>({value:a.id,label:a.label})),draft.arch||'','')}</select>
-    <div class="hint">${esc(arch?arch.hint:'')}</div></div>`:'';
-  return `<section>${archField}${await authSectionHtml()}<h3>Pile vocale</h3><div class="choices">${choices}</div>${keyWarning}<h3>Réglages de ${esc(spec.label)}</h3>${fields.join('')}
-    ${aecHtml()}<div class="hint">Les changements prennent effet au prochain redémarrage du runtime Voice.</div></section>`;
+  let html=await voiceArchitectureHtml();
+  const sw=SET.data.voice.switch||{};
+  if(sw.pending||sw.status==='blocked'||sw.status==='failed')html+=`<div class="notice ${sw.status==='blocked'||sw.status==='failed'?'bad':'warn'}"><strong>Changement vocal ${sw.status==='blocked'?'bloqué':sw.status==='failed'?'en échec':'en cours'}</strong>${sw.message?' : '+esc(sw.message):'. Voice ferme la session courante avant son redémarrage supervisé.'}</div>`;
+  else if(sw.status==='ready_for_restart')html+='<div class="notice">Ancienne session fermée. Redémarrage supervisé de Voice en cours.</div>';
+  else if(sw.status==='applied')html+='<div class="notice ok">Architecture sélectionnée chargée par Voice. Elle sera utilisée à la prochaine activation.</div>';
+  html+=`${await authSectionHtml()}`;
+  if(SET.data.voice.architecture.compatibility_runtime&&!SET.architectureDirty){
+    const draft=SET.draft.voice,stacks=SET.data.voice.stacks,spec=stacks.find(s=>s.id===draft.stack)||stacks[0];
+    html+='<details><summary>Réglages de compatibilité existants</summary>';
+    const archs=SET.data.voice.archs||[];
+    html+=`<select data-voice-arch>${selectOptions(archs.map(a=>({value:a.id,label:a.label})),draft.arch||'','')}</select>`;
+    html+=stacks.map(s=>`<label><input type="radio" name="voicestack" value="${esc(s.id)}" ${s.id===draft.stack?'checked':''}>${esc(s.label)}</label>`).join('');
+    for(const field of spec.fields)html+=await renderField(field,draft.settings[spec.id],spec.id);
+    html+=`${aecHtml()}</details>`;
+  }
+  return `<section>${html}<div class="hint">Un changement d’architecture ou de modèle ferme d’abord la session courante, conserve l’état Core, puis redémarre Voice. Le nouvel adaptateur démarre à la prochaine activation. Une clôture incertaine bloque le remplacement.</div></section>`;
+}
+
+/* --- onglet Prompts -----------------------------------------------------
+   Le serveur choisit les programmes actifs et compose leur aperçu. La page
+   n'invente aucun prompt fournisseur et n'envoie que la couche éditée. */
+function promptLayerHtml(layer, resolved){
+  const conflict=layer.conflict?`<span class="tag bad">${esc(layer.conflict)}</span>`:'';
+  const mode=layer.editable?'<span class="tag ok">modifiable</span>':'<span class="tag">lecture seule</span>';
+  const source=resolved&&resolved.source==='override'?'<span class="tag warn">override</span>':'<span class="tag">défaut</span>';
+  const value=String(layer.current_text??'');
+  const editor=layer.editable
+    ? `<textarea data-prompt-text="${esc(layer.prompt_id)}">${esc(value)}</textarea>
+       <div class="row" style="margin-top:8px"><button type="button" class="action primary" data-prompt-save="${esc(layer.prompt_id)}" data-base-revision="${esc(layer.default_revision)}" data-effective-revision="${esc(layer.effective_revision)}">Enregistrer cette couche</button>
+       <button type="button" class="action" data-prompt-reset="${esc(layer.prompt_id)}">Revenir au défaut</button></div>`
+    : `<pre class="log block">${esc(value)}</pre>`;
+  return `<details class="rd"><summary><code>${esc(layer.prompt_id)}</code> ${mode} ${source} ${conflict}</summary>
+    <div class="source">${esc(layer.source_path)} :: ${esc(layer.source_symbol)}</div>
+    <div class="hint" style="margin:7px 0">Canal ${esc(resolved&&resolved.channel||'')} · opération ${esc(resolved&&resolved.operation||'')} · application ${esc(layer.apply_policy)}</div>
+    ${editor}</details>`;
+}
+
+async function tabPrompts(){
+  if(!SET.prompts)SET.prompts=await api('/api/prompts').catch(e=>({error:e.message,programs:[],layers:[]}));
+  const state=SET.prompts;
+  if(state.error)return `<section><div class="notice bad">${esc(state.error)}</div></section>`;
+  const byId=new Map((state.layers||[]).map(layer=>[layer.prompt_id,layer]));
+  const programs=(state.programs||[]).map(program=>{
+    const layers=(program.layers||[]).map(resolved=>{
+      const layer=byId.get(resolved.prompt_id);
+      return layer?promptLayerHtml(layer,resolved):'';
+    }).join('');
+    const channels=(program.channels||[]).map(channel=>`<details class="rd"><summary>Prompt effectif · <code>${esc(channel.channel)}</code> · ${esc(channel.operation)}</summary>
+      <pre class="log block">${esc(channel.text??'Donnée runtime non liée')}</pre></details>`).join('');
+    return `<h3>${esc(program.label)}</h3>
+      <div class="source" style="margin-bottom:10px"><code>${esc(program.program_id)}</code> · empreinte statique <code>${esc(program.static_fingerprint)}</code></div>
+      ${layers}${channels}`;
+  }).join('');
+  return `<section>
+    <div class="notice info"><strong>Aperçu JARVIS</strong> : les données de conversation et de requête sont vides dans cet écran. L'ordre, les canaux et les couches sont ceux envoyés par le runtime.</div>
+    <div class="notice"><strong>Application</strong> : enregistrer ne modifie aucune session active. Une couche de session s'applique au prochain démarrage concerné ; une couche d'invocation au prochain envoi correspondant. Les traces distinguent enregistré, envoyé et reconnu.</div>
+    <div class="notice info">Les prompts internes du fournisseur ne sont pas exposés par son API et restent indiqués comme indisponibles. Seules les couches contrôlées par JARVIS figurent ici.</div>
+    ${programs||'<div class="empty">Aucun programme de prompt applicable.</div>'}
+  </section>`;
 }
 
 /* --- onglet CLI --------------------------------------------------------- */
@@ -1868,23 +1980,35 @@ function renderTabs(){
 }
 
 async function renderTab(){
+  const revision=SET.renderRevision=(SET.renderRevision||0)+1;
   modalContent.innerHTML='<div class="empty">Chargement…</div>';
   const tab=TABS.find(t=>t.id===SET.tab);
   modalSave.style.display=tab.save?'':'none';
-  modalSub.textContent=tab.save?'Les modifications sont appliquées quand vous enregistrez.':'Les modifications de cet onglet sont enregistrées immédiatement.';
+  modalSub.textContent=tab.save?'Les réglages vocaux sont préparés pour la prochaine activation.':'Les modifications de cet onglet sont enregistrées immédiatement.';
   try{
-    if(SET.tab==='voice')modalContent.innerHTML=await tabVoice();
-    else if(SET.tab==='cli')modalContent.innerHTML=await tabCli();
-    else if(SET.tab==='routing')modalContent.innerHTML=await tabRouting();
-    else if(SET.tab==='config')modalContent.innerHTML=await tabConfig();
-    else if(SET.tab==='keys')modalContent.innerHTML=tabKeys();
-    else modalContent.innerHTML=tabShortcuts();
-  }catch(e){modalContent.innerHTML=`<div class="notice bad">${esc(e.message)}</div>`;return}
+    let content;
+    if(SET.tab==='voice')content=await tabVoice();
+    else if(SET.tab==='prompts')content=await tabPrompts();
+    else if(SET.tab==='cli')content=await tabCli();
+    else if(SET.tab==='routing')content=await tabRouting();
+    else if(SET.tab==='config')content=await tabConfig();
+    else if(SET.tab==='keys')content=tabKeys();
+    else content=tabShortcuts();
+    if(revision!==SET.renderRevision)return;
+    modalContent.innerHTML=content;
+  }catch(e){if(revision===SET.renderRevision)modalContent.innerHTML=`<div class="notice bad">${esc(e.message)}</div>`;return}
   bindTab();
   if(SET.dirty&&tab.save)say('Modifications non enregistrées.','');
 }
 
 function bindTab(){
+  modalContent.querySelectorAll('[data-voice-architecture]').forEach(el=>el.addEventListener('change',()=>{
+    voiceArchitectureChanged('architecture',el.value);renderTab()}));
+  modalContent.querySelectorAll('[data-architecture-activate]').forEach(el=>el.addEventListener('click',()=>{
+    voiceArchitectureChanged('architecture',voiceArchitectureConfig().architecture);renderTab()}));
+  modalContent.querySelectorAll('[data-architecture-field]').forEach(el=>el.addEventListener('change',()=>{
+    const value=el.dataset.architectureKind==='model'?JSON.parse(el.value):el.type==='checkbox'?el.checked:el.type==='number'?Number(el.value):el.value;
+    voiceArchitectureChanged(el.dataset.architectureField,value);renderTab()}));
   modalContent.querySelectorAll('input[name=voicestack]').forEach(el=>el.addEventListener('change',()=>{
     SET.draft.voice.stack=el.value;SET.dirty=true;renderTab()}));
   modalContent.querySelectorAll('[data-voice-arch]').forEach(el=>el.addEventListener('change',()=>{
@@ -1949,6 +2073,28 @@ function bindTab(){
   modalContent.querySelectorAll('[data-delete-key]').forEach(el=>el.addEventListener('click',()=>deleteCredential(el.dataset.deleteKey)));
   modalContent.querySelectorAll('[data-bind-provider]').forEach(el=>el.addEventListener('change',()=>bindCredential(el.dataset.bindProvider,el.dataset.bindId)));
   modalContent.querySelectorAll('[data-shortcut]').forEach(el=>el.addEventListener('click',()=>startCapture(el)));
+  modalContent.querySelectorAll('[data-prompt-save]').forEach(el=>el.addEventListener('click',()=>savePromptLayer(el)));
+  modalContent.querySelectorAll('[data-prompt-reset]').forEach(el=>el.addEventListener('click',()=>resetPromptLayer(el)));
+}
+
+async function savePromptLayer(button){
+  const id=button.dataset.promptSave,area=modalContent.querySelector(`[data-prompt-text="${CSS.escape(id)}"]`);
+  if(!area)return;
+  button.disabled=true;say('Enregistrement de la couche…','');
+  try{
+    const result=await api(`/api/prompts/${encodeURIComponent(id)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      action:'edit',text:area.value,base_revision:button.dataset.baseRevision,expected_effective_revision:button.dataset.effectiveRevision})});
+    SET.prompts=result.prompts;SET.restartNotice=true;say('Couche enregistrée. Application au prochain démarrage ou envoi concerné.','ok');await renderTab();
+  }catch(e){say(e.message,'error');button.disabled=false}
+}
+
+async function resetPromptLayer(button){
+  const id=button.dataset.promptReset;
+  button.disabled=true;say('Réinitialisation de la couche…','');
+  try{
+    const result=await api(`/api/prompts/${encodeURIComponent(id)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'reset'})});
+    SET.prompts=result.prompts;SET.restartNotice=true;say('Couche revenue au défaut.','ok');await renderTab();
+  }catch(e){say(e.message,'error');button.disabled=false}
 }
 
 /* Texte brut : vide = revenir au défaut, et c'est le serveur qui valide. */
@@ -2051,6 +2197,7 @@ function uiKey(event){
 
 /* --- ouverture, enregistrement, fermeture -------------------------------- */
 function draftFrom(data){
+  SET.architectureDirty=false;
   return {
     // `authorization` : seules les clés touchées, jamais la description reçue.
     voice:{stack:data.voice.stack,arch:data.voice.arch||'',settings:JSON.parse(JSON.stringify(data.voice.settings)),authorization:{}},
@@ -2084,13 +2231,14 @@ async function saveDraft(options){
   if(!silent){modalSave.disabled=true;say('Enregistrement…','')}
   try{
     // Réglages lus par Voice à son démarrage seulement : on le rappellera.
-    const echo=s=>((s.voice.settings||{}).openai_realtime||{}).echo_cancellation;
-    const voiceRestart=Object.keys(SET.draft.voice.authorization||{}).length>0||echo(SET.draft)!==echo(SET.data);
-    const data=await api('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(SET.draft)});
+    const voiceRestart=Object.keys(SET.draft.voice.authorization||{}).length>0;
+    const payload=JSON.parse(JSON.stringify(SET.draft));
+    if(!SET.architectureDirty)delete payload.voice.architecture;
+    const data=await api('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     if(voiceRestart)SET.restartNotice=true;
     SET.data=data;SET.shortcuts=data.shortcuts;SET.draft=draftFrom(data);SET.dirty=false;
     // Le CLI actif a pu changer : sa détection est refaite à l'ouverture de l'onglet.
-    SET.clis=null;SET.routing=null;
+    SET.clis=null;SET.routing=null;SET.prompts=null;
     if(!silent){say('Enregistré.','ok');await renderTab()}
     return data;
   }catch(e){
@@ -2142,7 +2290,7 @@ $('#closePanel').addEventListener('click',closePanel);
 // Les raccourcis d'interface doivent répondre avant même la première ouverture
 // des réglages : leurs valeurs sont donc chargées au démarrage.
 api('/api/shortcuts').then(value=>{SET.shortcuts=value}).catch(()=>{});
-setInterval(refreshStatus,1000);refreshStatus();
+setInterval(refreshStatus,1000);setInterval(tickLive,250);refreshStatus();
 </script>
 </body>
 </html>

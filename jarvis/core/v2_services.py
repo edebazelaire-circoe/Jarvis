@@ -216,15 +216,46 @@ class ConversationService:
         await self.state.save_conversation(closed)
         return closed
 
-    async def append_turn(self, conversation_id: str, kind: TurnKind, content: str, *, correlation_id: str, reference_id: str | None = None, metadata: dict | None = None) -> ConversationTurn:
+    async def append_turn(self, conversation_id: str, kind: TurnKind, content: str, *, correlation_id: str, reference_id: str | None = None, metadata: dict | None = None, turn_id: str | None = None, created_at: datetime | None = None) -> ConversationTurn:
         conversation = await self.state.get_conversation(conversation_id)
         if conversation is None:
             raise KeyError(f"unknown conversation: {conversation_id}")
-        turn = ConversationTurn(conversation_id=conversation_id, kind=kind, content=content, correlation_id=correlation_id, reference_id=reference_id, metadata=metadata or {})
+        turn = ConversationTurn(id=turn_id or new_id(), conversation_id=conversation_id, kind=kind, content=content, correlation_id=correlation_id, reference_id=reference_id, metadata=metadata or {}, created_at=created_at or utc_now())
         await self.state.save_turn(turn)
-        await self.state.save_conversation(replace(conversation, updated_at=turn.created_at))
+        await self.state.save_conversation(replace(conversation, updated_at=max(conversation.updated_at, turn.created_at)))
         await self.history.append(HistoryRecord(id=turn.id, kind=kind, created_at=turn.created_at, correlation_id=correlation_id, conversation_id=conversation_id, content=content, reference_id=reference_id, metadata=turn.metadata))
         return turn
+
+    async def project_confirmed_voice_text(self, conversation_id: str, output_key: str, text: str, *,
+                                           correlation_id: str, reference_id: str | None,
+                                           metadata: dict, created_at: datetime) -> tuple[int, int]:
+        """Append only new heard suffixes, replaying exact pending ranges first.
+
+        SQLite stages a range before either existing store writes it. A crash
+        after archive append but before completion can therefore never turn an
+        old 0:5 range into overlapping 0:7 when a longer confirmation arrives.
+        """
+        offset, pending = await self.state.get_voice_projection(conversation_id, output_key)
+        completed = 0
+        while pending is not None or offset < len(text):
+            if pending is None:
+                end = len(text)
+                pending = ConversationTurn(
+                    id=f"voice-heard-{output_key}-{offset}-{end}", conversation_id=conversation_id,
+                    kind=TurnKind.ASSISTANT, content=text[offset:end], created_at=created_at,
+                    correlation_id=correlation_id, reference_id=reference_id,
+                    metadata={**metadata, "confirmed_start": offset, "confirmed_end": end},
+                )
+                offset, pending = await self.state.stage_voice_projection(conversation_id, output_key, offset, pending)
+            await self.append_turn(
+                conversation_id, pending.kind, pending.content, correlation_id=pending.correlation_id,
+                reference_id=pending.reference_id, metadata=pending.metadata,
+                turn_id=pending.id, created_at=pending.created_at,
+            )
+            offset = await self.state.complete_voice_projection(conversation_id, output_key, pending.id)
+            completed += 1
+            pending = None
+        return offset, completed
 
     async def list_turns(self, conversation_id: str, *, limit: int | None = None):
         """Derniers tours persistes, du plus ancien au plus recent.
@@ -499,12 +530,25 @@ class JobService:
         # synthetique `job:<id>` de `_links` : ce repli n'est pas un travail
         # cerveau et ne doit jamais apparaitre comme tel dans l'etat de travail.
         self._work_links: dict[str, WorkLink] = {}
+        from jarvis.core.owned_job_execution import OwnedJobExecution
+        self.owned = OwnedJobExecution(self)
 
     async def recover(self) -> None:
-        for job in await self.state.list_jobs(status=JobStatus.RUNNING.value):
-            await self.state.save_job(replace(job, status=JobStatus.INTERRUPTED, error="core restarted while job was running", completed_at=utc_now()))
-            await self.events.publish(ProtocolEnvelope(message_type="job.interrupted", payload={"job_id": job.id, "kind": job.kind}, conversation_id=job.requested_by_conversation_id))
-            await self._observe_work(job, WorkStatus.INTERRUPTED, error_class="core_restarted")
+        for job in await self.state.list_jobs():
+            if job.status not in {JobStatus.PENDING, JobStatus.RUNNING}:
+                continue
+            interrupted = replace(job, status=JobStatus.INTERRUPTED, error="core_restarted", completed_at=utc_now(), revision=job.revision + 1)
+            await self.state.save_job(interrupted)
+            if job.kind == "back_brain":
+                from jarvis.domain.back_brain import BackBrainWorkPayload
+                source = getattr(BackBrainWorkPayload.from_payload(job.payload).provenance, "source", None)
+                if source is not None:
+                    self._work_links[job.id] = WorkLink(work_id=job.id, correlation_id=source.correlation_id)
+                await self.owned._publish(interrupted, "interrupted")
+            else:
+                await self.events.publish(ProtocolEnvelope(message_type="job.interrupted", payload={"job_id": job.id, "kind": job.kind}, conversation_id=job.requested_by_conversation_id))
+            await self._observe_work(interrupted, WorkStatus.INTERRUPTED, error_class="core_restarted")
+            self._work_links.pop(job.id, None)
 
     async def _observe_work(
         self,
@@ -568,6 +612,8 @@ class JobService:
         sans que `JobService` connaisse l'orchestrateur.
         """
 
+        if job.kind == "back_brain":
+            raise ValueError("back_brain requires canonical admitted ingress")
         if job.kind not in self.workers:
             raise KeyError(f"no worker for job kind {job.kind}")
         for existing in await self.state.list_jobs():
@@ -687,6 +733,10 @@ class JobService:
         return targets
 
     async def cancel(self, job_id: str) -> None:
+        job = await self.state.get_job(job_id)
+        if job is not None and job.kind == "back_brain":
+            await self.owned.cancel(job_id)
+            return
         task = self._running.get(job_id)
         if task:
             task.cancel()
@@ -696,13 +746,16 @@ class JobService:
             except Exception:
                 continue
 
-    async def stop(self) -> None:
+    async def stop(self) -> bool:
+        if not await self.owned.stop():
+            return False
         tasks = tuple(self._running.values())
         for task in tasks:
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._running.clear()
+        return True
 
 
 class NotificationService:

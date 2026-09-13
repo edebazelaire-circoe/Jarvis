@@ -1,0 +1,41 @@
+{
+  "schema": "jarvis.voice_benchmark.cross_architecture_suite",
+  "schema_version": 1,
+  "suite_id": "voice-common-v1",
+  "origin": "2026-09-13T00:00:00+00:00",
+  "provenance": {
+    "source_path": "tasks/jarvis_voice_architectures_handoff/tasks/20-cross-architecture-benchmark-migration/TASK.md",
+    "evidence_kind": "constructed_offline_contract",
+    "gaps": [
+      "No provider session was opened.",
+      "No microphone or speaker device was used.",
+      "Fixture durations are scenario inputs, not latency measurements.",
+      "Provider usage, cost, acoustic quality, and conversational quality remain unavailable."
+    ]
+  },
+  "representative_e2e": {
+    "simple": ["tests/integration/test_simple_front_brain_composition.py::test_explicit_conversation_is_direct_while_optional_luna_is_blocked[gpt-realtime-2.1-mini-simple]"],
+    "front_brain": ["tests/integration/test_simple_front_brain_composition.py::test_explicit_conversation_is_direct_while_optional_luna_is_blocked[gpt-realtime-2.1-mini-front_brain]"],
+    "duplex": ["tests/integration/test_live_duplex_session.py::test_first_live_deltas_drive_restricted_job_without_blocking_second_turn"]
+  },
+  "migration_evidence": [
+    "tests/unit/test_voice_architecture_config.py::test_migration_maps_simple_projection_without_reinterpreting_execution",
+    "tests/unit/test_app.py::test_operational_architecture_provenance_matches_the_runtime"
+  ],
+  "scenarios": [
+    {"scenario_id": "quiet-ambient", "action": "quiet_ambient", "params": {"duration_ms": 5000}, "expected_invariant": "no_speech_or_work", "evidence": {"shared": [], "by_architecture": {"simple": [], "front_brain": [], "duplex": []}}},
+    {"scenario_id": "short-confirmation", "action": "short_confirmation", "params": {}, "expected_invariant": "silent_completion", "evidence": {"shared": ["tests/unit/test_reflex_gate.py::test_wait_controls"], "by_architecture": {"simple": [], "front_brain": [], "duplex": []}}},
+    {"scenario_id": "direct-question", "action": "direct_question", "params": {}, "expected_invariant": "one_useful_output", "evidence": {"shared": [], "by_architecture": {"simple": ["tests/integration/test_simple_front_brain_composition.py::test_explicit_conversation_is_direct_while_optional_luna_is_blocked[gpt-realtime-2.1-mini-simple]"], "front_brain": ["tests/integration/test_simple_front_brain_composition.py::test_explicit_conversation_is_direct_while_optional_luna_is_blocked[gpt-realtime-2.1-mini-front_brain]"], "duplex": []}}},
+    {"scenario_id": "pause-mid-sentence", "action": "pause_mid_sentence", "params": {"pause_ms": 2900}, "expected_invariant": "no_precommit_effect", "evidence": {"shared": ["tests/integration/test_voice_replay_regressions.py::test_thinking_pause_wait_stays_silent_on_the_full_voice_stack"], "by_architecture": {"simple": [], "front_brain": [], "duplex": []}}},
+    {"scenario_id": "long-monologue", "action": "long_monologue", "params": {"fragment_count": 32}, "expected_invariant": "single_committed_turn", "evidence": {"shared": [], "by_architecture": {"simple": [], "front_brain": [], "duplex": []}}},
+    {"scenario_id": "late-correction", "action": "late_correction", "params": {"revision_count": 3}, "expected_invariant": "latest_revision_only", "evidence": {"shared": ["tests/unit/test_v2_intent_revision.py::test_late_uncertain_confirmation_preserves_latest_confirmed_intent"], "by_architecture": {"simple": [], "front_brain": [], "duplex": []}}},
+    {"scenario_id": "long-backend-work", "action": "long_backend_work", "params": {"duration_ms": 85700, "later_turns": 2}, "expected_invariant": "conversation_nonblocking", "evidence": {"shared": ["tests/integration/test_voice_replay_regressions.py::test_backend_85_7s_does_not_block_later_turn_admission_on_full_stack"], "by_architecture": {"simple": [], "front_brain": [], "duplex": []}}},
+    {"scenario_id": "backend-result-after-topic-shift", "action": "backend_result_after_topic_shift", "params": {}, "expected_invariant": "result_deferred_not_spoken", "evidence": {"shared": ["tests/integration/test_voice_replay_regressions.py::test_backend_85_7s_does_not_block_later_turn_admission_on_full_stack"], "by_architecture": {"simple": [], "front_brain": [], "duplex": []}}},
+    {"scenario_id": "user-interruption", "action": "user_interruption", "params": {}, "expected_invariant": "local_output_stopped", "evidence": {"shared": ["tests/integration/test_voice_replay_safety_regressions.py::test_confirmed_interrupt_without_provider_item_never_invents_heard_words", "tests/integration/test_voice_replay_safety_regressions.py::test_late_provider_cancel_rejection_keeps_local_stop_and_drops_late_pcm"], "by_architecture": {"simple": [], "front_brain": [], "duplex": []}}},
+    {"scenario_id": "background-noise", "action": "background_noise", "params": {"candidate_count": 7}, "expected_invariant": "no_false_interruption", "evidence": {"shared": ["tests/integration/test_voice_replay_safety_regressions.py::test_bus_cluster_seven_rejections_never_stop_duck_cancel_or_submit_work"], "by_architecture": {"simple": [], "front_brain": [], "duplex": []}}},
+    {"scenario_id": "output-stall-reconnect", "action": "output_stall_reconnect", "params": {}, "expected_invariant": "queue_recovers", "evidence": {"shared": ["tests/integration/test_voice_replay_safety_regressions.py::test_missing_terminal_recovers_at_replay_deadline_and_next_output_speaks"], "by_architecture": {"simple": [], "front_brain": [], "duplex": []}}},
+    {"scenario_id": "mode-switch", "action": "mode_switch", "params": {}, "expected_invariant": "active_work_preserved", "evidence": {"shared": ["tests/unit/test_voice_switch.py::test_simple_front_duplex_simple_sequence_keeps_conversation_and_work"], "by_architecture": {"simple": [], "front_brain": [], "duplex": []}}},
+    {"scenario_id": "manual-stop", "action": "manual_stop", "params": {}, "expected_invariant": "session_closed_usage_unknown", "evidence": {"shared": ["tests/integration/test_voice_replay_safety_regressions.py::test_manual_close_retains_late_core_results_without_speech_and_reports_once"], "by_architecture": {"simple": [], "front_brain": [], "duplex": []}}},
+    {"scenario_id": "spoken-divergence", "action": "spoken_divergence", "params": {}, "expected_invariant": "heard_text_authoritative", "evidence": {"shared": ["tests/integration/test_voice_replay_safety_regressions.py::test_spoken_divergence_preserves_intended_generated_and_heard_evidence"], "by_architecture": {"simple": [], "front_brain": [], "duplex": []}}}
+  ]
+}

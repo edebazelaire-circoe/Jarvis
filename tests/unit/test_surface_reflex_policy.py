@@ -500,11 +500,23 @@ def _connect_keywords(function: str, session_class: str) -> dict[str, str]:
 
 
 def test_the_openai_surface_is_wired_to_the_architecture():
-    keywords = _connect_keywords("_run_voice_v2", "OpenAIRealtimeSession")
+    keywords = _connect_keywords("_run_voice_v2", "RealtimeFrontendSession")
 
-    assert keywords["continuous_brain"] == "continuous_brain"
+    # The historical connector flag disables automatic provider responses and
+    # interruption for every Core-admitted mode. Prompt authority is selected
+    # independently: explicit conversation must not inherit reflex-only rules.
+    assert keywords["continuous_brain"] == "continuous_capture"
+    assert keywords["conversational"] == "direct_conversation"
     assert keywords["tools"] == "surface_tools"
     assert "tools_for(continuous_brain=continuous_brain)" in APP.read_text(encoding="utf-8")
+    facade = ast.parse((SOURCE_ROOT / "runtime" / "realtime_frontend_session.py").read_text(encoding="utf-8"))
+    calls = [node for node in ast.walk(facade) if isinstance(node, ast.Call)]
+    connect = next(node for node in calls if ast.unparse(node.func) == "OpenAIRealtimeSession.connect")
+    # The facade's low-level connector forwards all existing settings, while
+    # the canonical frontend owns and starts that connector.
+    assert any(keyword.arg is None and ast.unparse(keyword.value) == "settings" for keyword in connect.keywords)
+    assert any(ast.unparse(node.func) == "OpenAIRealtimeFrontend" and ast.unparse(node.args[0]) == "connector" for node in calls)
+    assert any(ast.unparse(node.func) == "frontend.start" for node in calls)
 
 
 def test_the_gemini_surface_keeps_the_legacy_wiring():

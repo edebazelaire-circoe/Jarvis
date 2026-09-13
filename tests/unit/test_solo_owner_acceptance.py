@@ -310,7 +310,7 @@ async def test_rolling_back_to_open_room_restores_the_previous_chain_byte_for_by
     with_verifier = await open_room_run(verifier=True)
 
     assert with_verifier["forwarded"] == baseline["forwarded"]
-    assert with_verifier["gains"] == baseline["gains"] == [0.3]  # la baisse acoustique est de retour
+    assert with_verifier["gains"] == baseline["gains"] == []  # Même candidat sans duck dans les deux chemins.
     assert with_verifier["calls"] == baseline["calls"]
     assert with_verifier["kinds"] == baseline["kinds"]
     assert with_verifier["stops"] == baseline["stops"] == 1  # coupé sur la confirmation du fournisseur

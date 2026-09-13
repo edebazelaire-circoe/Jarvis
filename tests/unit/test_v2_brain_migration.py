@@ -303,8 +303,8 @@ async def test_the_backend_turns_the_agent_answer_into_result_speech():
     # Le contexte part avec le tour, même sans état (contrat inversé : jusqu'à
     # la Décision 44 l'adaptateur n'envoyait que `text` et `timeout_s`).
     assert seen == {"text": "Relis mes mails.", "timeout_s": 5, "context": {"addressing": "addressed"}}
-    assert sink.kinds() == ["accepted", "speech", "completed"]
-    speech = sink.events[1].speech
+    assert sink.kinds() == ["accepted", "completed", "speech"]
+    speech = sink.events[2].speech
     assert speech.text == "Trois mails attendent une réponse."
     assert speech.kind is SpeechKind.RESULT
     assert result.status is BrainRunStatus.COMPLETED

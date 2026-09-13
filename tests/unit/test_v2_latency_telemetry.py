@@ -56,6 +56,7 @@ from jarvis.domain.v2 import (
 )
 from jarvis.runtime.realtime_audio import (
     LATENCY_BRAIN_TURN_ACCEPTED_KIND,
+    LATENCY_FIRST_AUDIBLE_REACTION_KIND,
     LATENCY_SURFACE_FIRST_AUDIO_KIND,
     RealtimeConversationBridge,
     SoundDeviceRealtimeAudio,
@@ -347,7 +348,9 @@ async def test_first_audio_after_user_speech_is_timed_and_joinable():
     journal = RecordingJournal()
     bridge = build_bridge(core=RecordingCore(), journal=journal)
 
-    await feed(bridge, [speech_started(), audio_delta(output_id="out-1"), audio_delta(output_id="out-1")])
+    await feed(bridge, [speech_started(),
+        ProtocolEnvelope(message_type="realtime.output_started", payload={"output_id": "out-1"}),
+        audio_delta(output_id="out-1"), audio_delta(output_id="out-1")])
 
     emitted = journal.of(LATENCY_SURFACE_FIRST_AUDIO_KIND)
     # Un seul évènement bien que deux blocs audio soient arrivés : c'est le
@@ -361,14 +364,54 @@ async def test_first_audio_after_user_speech_is_timed_and_joinable():
     # Sans `speech_id`, le son vient d'un réflexe de surface, pas du cerveau.
     assert data["speech_id"] is None
     assert data["source"] == SpeechProvenance.SURFACE_REFLEX.value
+    audible = journal.of(LATENCY_FIRST_AUDIBLE_REACTION_KIND)
+    assert len(audible) == 1
+    output_write = journal.of("voice.latency.output_first_write")
+    assert len(output_write) == 1
+    assert output_write[0]["data"]["elapsed_ms"] <= data["elapsed_ms"]
+    assert audible[0]["data"]["delivery_boundary"] == "successful_native_write"
+    assert audible[0]["data"]["elapsed_ms"] == data["elapsed_ms"]
+    kinds = [event["kind"] for event in journal.events]
+    assert kinds.index("voice.latency.provider_first_pcm") < kinds.index("voice.latency.playback_attempted")
+    assert kinds.index("voice.latency.playback_attempted") < kinds.index(LATENCY_FIRST_AUDIBLE_REACTION_KIND)
+
+
+async def test_rejected_or_failed_playback_never_claims_an_audible_write():
+    class RejectedAudio(DevicelessAudio):
+        async def play_b64(self, value: str) -> bool:
+            del value
+            return False
+
+    class FailedAudio(DevicelessAudio):
+        async def play_b64(self, value: str) -> bool:
+            del value
+            raise RuntimeError("native write failed")
+
+    for audio in (RejectedAudio(), FailedAudio()):
+        journal = RecordingJournal()
+        bridge = build_bridge(core=RecordingCore(), journal=journal, audio=audio)
+        events = [speech_started(), ProtocolEnvelope(message_type="realtime.output_started",
+                  payload={"output_id": "out-1"}), audio_delta(output_id="out-1")]
+        if isinstance(audio, FailedAudio):
+            with pytest.raises(RuntimeError, match="native write failed"):
+                await feed(bridge, events)
+        else:
+            await feed(bridge, events)
+        assert len(journal.of("voice.latency.provider_first_pcm")) == 1
+        assert len(journal.of("voice.latency.playback_attempted")) == 1
+        assert journal.of("voice.latency.output_first_write") == []
+        assert journal.of(LATENCY_FIRST_AUDIBLE_REACTION_KIND) == []
+        assert journal.of(LATENCY_SURFACE_FIRST_AUDIO_KIND) == []
 
 
 async def test_first_audio_without_a_user_segment_invents_nothing():
     journal = RecordingJournal()
     bridge = build_bridge(core=RecordingCore(), journal=journal)
 
-    await feed(bridge, [audio_delta(output_id="out-1")])
+    await feed(bridge, [ProtocolEnvelope(message_type="realtime.output_started", payload={"output_id": "out-1"}),
+                        audio_delta(output_id="out-1")])
 
+    assert bridge.audio.written_output_ms > 0  # No segment, not a rejected unknown output.
     assert journal.of(LATENCY_SURFACE_FIRST_AUDIO_KIND) == []
 
 
@@ -547,13 +590,16 @@ async def test_the_bridge_relays_only_the_first_audio_block_of_an_output():
     await feed(
         bridge,
         [
+            ProtocolEnvelope(message_type="realtime.output_started", payload={"output_id": "out-1", "speech_id": "sp-1"}),
             audio_delta(output_id="out-1", speech_id="sp-1"),
             audio_delta(output_id="out-1", speech_id="sp-1"),
             audio_delta(output_id="out-1", speech_id="sp-1"),
         ],
     )
 
-    assert [event.message_type for event in relayed] == ["realtime.audio"]
+    assert [event.message_type for event in relayed] == ["realtime.output_started", "realtime.audio"]
+    assert relayed[1].payload["output_id"] == "out-1"
+    assert relayed[1].payload["speech_id"] == "sp-1"
 
 
 # --- mesures 5 et 6 : le cerveau possédé par Core ----------------------------
@@ -648,6 +694,7 @@ async def test_every_documented_measure_is_reachable_in_one_pass(tmp_path):
             speech_started(),
             # Puis le tour que cette interruption a ouvert, jusqu'au transcript.
             speech_started(),
+            ProtocolEnvelope(message_type="realtime.output_started", payload={"output_id": "out-2"}),
             audio_delta(output_id="out-2"),
             transcript(USER_TEXT),
         ],

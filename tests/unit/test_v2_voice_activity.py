@@ -150,15 +150,16 @@ async def test_the_inactivity_timeout_never_cuts_a_running_tool():
 async def test_the_inactivity_timeout_still_ends_an_idle_session():
     """Le garde-fou ne doit pas devenir une session éternelle."""
     runtime, _ = _expired_runtime(tool_in_flight=False)
-    muted: list[int] = []
+    from jarvis.domain.voice_frontend import VoiceStopReason
+    muted: list[VoiceStopReason] = []
 
-    async def fake_mute() -> None:
-        muted.append(1)
+    async def fake_mute(reason: VoiceStopReason) -> None:
+        muted.append(reason)
 
     runtime.mute = fake_mute  # type: ignore[method-assign]
 
     assert await runtime.check_timeout() is True
-    assert muted == [1]
+    assert muted == [VoiceStopReason.IDLE]
 
 
 @pytest.mark.parametrize("tool_in_flight", [False, True])

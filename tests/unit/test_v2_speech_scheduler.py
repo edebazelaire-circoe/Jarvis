@@ -28,6 +28,8 @@ from jarvis.domain.v2 import (
     VoiceLifecycleState,
     utc_now,
 )
+from tests.fakes.speech_context import source, context
+from jarvis.domain.speech_presentation import SpeechDependency
 from jarvis.runtime.realtime_audio import SoundDeviceRealtimeAudio
 from jarvis.runtime.speech_scheduler import SpeechScheduler
 from jarvis.runtime.voice_v2 import PersistentVoiceRuntime
@@ -104,8 +106,10 @@ class FakeCore:
         self.subscriptions = 0
         self.closed = False
 
-    async def events(self):
+    async def events(self, *, on_connected=None):
         self.subscriptions += 1
+        if on_connected is not None:
+            on_connected()
         while True:
             event = await self.queue.get()
             if event is None:
@@ -136,6 +140,9 @@ class FakeCore:
     async def create_conversation(self) -> dict[str, str]:
         return {"id": CONVERSATION}
 
+    async def speech_context(self, conversation_id: str):
+        return context(conversation_id)
+
     async def context(self, conversation_id: str) -> dict[str, object]:
         del conversation_id
         return {}
@@ -160,6 +167,7 @@ class FakeVoiceSession:
     """
 
     def __init__(self) -> None:
+        self.session_id = "test-session"
         self.inbox: asyncio.Queue[ProtocolEnvelope | None] = asyncio.Queue()
         self.spoken: list[SpeechRequest] = []
         self.active_output_id: str | None = None
@@ -197,6 +205,15 @@ class FakeVoiceSession:
         await self.inbox.put(ProtocolEnvelope(message_type=message_type, payload=payload))
 
     # -- RealtimeOutputControl
+    async def speak_reserved(self, request: SpeechRequest, *, output_id: str) -> str:
+        await self.speak(request)
+        self.active_output_id = output_id
+        return output_id
+
+    async def invalidate_unstarted_output(self, output_id: str) -> None:
+        if self.active_output_id == output_id:
+            self.active_output_id = None
+
     async def speak(self, request: SpeechRequest) -> str:
         self.spoken.append(request)
         self.live_speaks += 1
@@ -292,6 +309,7 @@ def speech_envelope(
         supersedes_key=supersedes_key,
         created_at=created_at,
         expires_at=created_at + timedelta(seconds=ttl_s) if ttl_s else None,
+        source=source(correlation_id, epoch=2 if correlation_id == "corr-2" else 1, work_id=work_id),
     )
     return ProtocolEnvelope(
         message_type="brain.speech.requested",
@@ -302,16 +320,17 @@ def speech_envelope(
 
 
 def brain_envelope(message_type: str, payload: dict[str, object], *, correlation_id: str = "corr-1") -> ProtocolEnvelope:
-    return ProtocolEnvelope(
-        message_type=message_type,
-        payload={"conversation_id": CONVERSATION, **payload},
-        correlation_id=correlation_id,
-        conversation_id=CONVERSATION,
-    )
+    if message_type in ("brain.turn.accepted", "brain.intent.revised"):
+        epoch = 2 if correlation_id == "corr-2" and payload.get("revision", 0) >= 2 else 1
+        current_correlation = "corr-2" if epoch == 2 else "corr-1"
+        invalid = [SpeechDependency(work_id, "corr-1") for key in ("superseded_work_ids", "cancelled_work_ids") for work_id in payload.get(key, [])]
+        payload = {**context(CONVERSATION, current_correlation, epoch=epoch, invalid=invalid), **payload}
+    return ProtocolEnvelope(message_type=message_type, payload={"conversation_id": CONVERSATION, **payload},
+                            correlation_id=correlation_id, conversation_id=CONVERSATION)
 
 
 def build_scheduler(core, session, *, journal=None, clock=None, on_brain_activity=None, output_timeout_s=5.0, transient_ttl_s=None):
-    return SpeechScheduler(
+    scheduler = SpeechScheduler(
         core=core,
         conversation_id=CONVERSATION,
         session=session,
@@ -322,6 +341,8 @@ def build_scheduler(core, session, *, journal=None, clock=None, on_brain_activit
         output_timeout_s=output_timeout_s,
         transient_ttl_s=transient_ttl_s,
     )
+    scheduler.update_speech_context(context(CONVERSATION))
+    return scheduler
 
 
 async def busy_surface(scheduler: SpeechScheduler, *, output_id: str = "out-surface") -> str:
@@ -447,7 +468,8 @@ async def test_a_result_supersedes_the_stale_progress_of_the_same_work():
         assert session.texts() == ["Trois messages attendent une réponse."]
         superseded = journal.of("voice.speech.superseded")
         assert superseded[0]["data"]["reason"] == "superseded"
-        assert superseded[0]["message"] == "Je regarde les messages."
+        assert superseded[0]["message"] == "Speech presentation retired"
+        assert superseded[0]["data"]["work_id"] == "work-1"
     finally:
         await scheduler.stop()
 
@@ -501,17 +523,14 @@ async def test_progress_queued_before_an_intent_revision_is_abandoned():
         await wait_for(lambda: scheduler.pending_count == 2)
 
         await core.publish(brain_envelope("brain.turn.accepted", {"turn_id": "turn-2", "revision": 2}, correlation_id="corr-2"))
-        await wait_for(lambda: scheduler.pending_count == 1)
+        await wait_for(lambda: scheduler.pending_count == 0 and bool(scheduler._deferred))
 
         await release_surface(scheduler, held)
-        await wait_for(lambda: session.active_output_id is not None)
-        await finish_speech(scheduler, session)
-
-        # La progression disparaît ; le résultat, lui, est une vérité que seul
-        # le cerveau peut retirer (Décisions 14 et 16).
-        assert session.texts() == ["Trois messages attendent une réponse."]
-        dropped = journal.of("voice.speech.superseded")
-        assert dropped[0]["data"]["reason"] == "intent_revised"
+        await asyncio.sleep(.03)
+        assert session.texts() == []
+        assert [item.text for item in scheduler._deferred.values()] == ["Trois messages attendent une réponse."]
+        assert scheduler.presentation_snapshot()["candidates"][0]["status"] == "superseded"
+        assert journal.of("voice.speech.superseded")[0]["data"]["reason"] == "stale_source"
     finally:
         await scheduler.stop()
 
@@ -540,6 +559,7 @@ async def test_speech_of_superseded_or_cancelled_work_is_dropped_by_designation(
             brain_envelope(
                 "brain.intent.revised",
                 {
+                    **context(CONVERSATION, invalid=(SpeechDependency("work-1", "corr-1"), SpeechDependency("work-2", "corr-1"))),
                     "revision": 2,
                     "previous_revision": 1,
                     "superseded_work_ids": ["work-1"],
@@ -557,7 +577,7 @@ async def test_speech_of_superseded_or_cancelled_work_is_dropped_by_designation(
 
         assert session.texts() == ["Trois réponses attendent."]
         reasons = {event["data"]["reason"] for event in journal.of("voice.speech.superseded")}
-        assert reasons == {"work_superseded", "work_cancelled"}
+        assert reasons == {"dependency_revoked"}
     finally:
         await scheduler.stop()
 
@@ -589,12 +609,11 @@ async def test_a_revision_without_work_lists_still_drops_stale_progress():
                 correlation_id="corr-2",
             )
         )
+        await wait_for(lambda: scheduler.pending_count == 0 and bool(scheduler._deferred))
         await release_surface(scheduler, held)
-        await wait_for(lambda: session.active_output_id is not None)
-        await finish_speech(scheduler, session)
-
-        # Le travail est gardé : son résultat reste vrai et se dit.
-        assert session.texts() == ["Trois réponses attendent."]
+        await asyncio.sleep(.03)
+        assert session.texts() == []
+        assert [item.text for item in scheduler._deferred.values()] == ["Trois réponses attendent."]
     finally:
         await scheduler.stop()
 
@@ -1046,12 +1065,17 @@ async def test_delivery_telemetry_reaches_the_journal():
         await journal.wait_until(lambda: journal.count("voice.speech.completed") == 1)
 
         kinds = [event["kind"] for event in journal.events if str(event["kind"]).startswith("voice.speech.")]
-        assert kinds[:3] == ["voice.speech.queued", "voice.speech.started", "voice.speech.completed"]
+        assert [kind for kind in kinds if kind != "voice.speech.presentation_decided"][:4] == [
+            "voice.speech.queued", "voice.speech.dispatched", "voice.speech.started", "voice.speech.completed"]
+        assert "voice.speech.presentation_decided" in kinds
         queued = journal.of("voice.speech.queued")[0]
         assert queued["data"]["work_id"] == "work-1"
         assert queued["data"]["kind"] == "result"
         assert queued["data"]["priority"] == "normal"
-        assert queued["message"] == "Voici la réponse."
+        assert queued["message"] == "Speech queued"
+        dispatched = journal.of("voice.speech.dispatched")[0]
+        assert dispatched["data"]["queue_wait_ms"] >= 0
+        assert dispatched["data"]["session_id"] == session.session_id
     finally:
         await scheduler.stop()
 

@@ -1,0 +1,27 @@
+{
+  "schema": "jarvis.voice_replay",
+  "schema_version": 1,
+  "scenario_id": "spoken_divergence",
+  "origin": "2026-09-11T15:46:29+02:00",
+  "provenance": {
+    "source_path": "tasks/jarvis_voice_architectures_handoff/sources/transcript-2026-09-11.md",
+    "source_kind": "human_trace_reconstruction",
+    "reported": [
+      {"source_ref": "lines 90-113 and 308-314", "fact": "A backend result was replaced by unrelated generated speech."}
+    ],
+    "derived": [
+      {"source_ref": "TASK.md lines 49-50", "fact": "Intended and generated speech must remain separately observable and policy-safe."}
+    ],
+    "constructed": [
+      {"source_ref": "fixture design", "fact": "Text is replaced by synthetic unequal tags and playback timing."}
+    ]
+  },
+  "steps": [
+    {"at_ms": 0, "port": "brain", "action": "ready", "data": {"work_id": "work-a", "result_tag": "intended-a"}},
+    {"at_ms": 0, "port": "scheduler", "action": "enqueue", "data": {"candidate_id": "candidate-a", "work_id": "work-a", "kind": "result"}},
+    {"at_ms": 4900, "port": "provider", "action": "output_started", "data": {"output_id": "output-a"}},
+    {"at_ms": 5000, "port": "provider", "action": "transcript_final", "data": {"output_id": "output-a", "generated_tag": "actual-b"}},
+    {"at_ms": 5100, "port": "device", "action": "consume", "data": {"output_id": "output-a", "played_ms": 100}},
+    {"at_ms": 5200, "port": "provider", "action": "output_done", "data": {"output_id": "output-a", "status": "completed"}}
+  ]
+}

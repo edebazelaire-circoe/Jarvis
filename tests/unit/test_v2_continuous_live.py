@@ -719,13 +719,13 @@ async def test_audio_close_never_frees_the_stream_under_a_running_write():
             assert self.release.wait(timeout=5)
             self.calls.append("write:end")
 
-        def abort(self) -> None:
+        def abort(self, *, ignore_errors=True) -> None:
             self.calls.append("abort")
 
-        def stop(self) -> None:  # pragma: no cover - la sortie utilise abort()
+        def stop(self, *, ignore_errors=True) -> None:  # pragma: no cover - la sortie utilise abort()
             self.calls.append("stop")
 
-        def close(self) -> None:
+        def close(self, *, ignore_errors=True) -> None:
             self.calls.append("close")
 
     stream = BlockingOutputStream()

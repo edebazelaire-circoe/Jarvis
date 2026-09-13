@@ -1,0 +1,26 @@
+{
+  "schema": "jarvis.voice_replay",
+  "schema_version": 1,
+  "scenario_id": "provider_cancel_after_generation",
+  "origin": "2026-09-11T15:44:06+02:00",
+  "provenance": {
+    "source_path": "tasks/jarvis_voice_architectures_handoff/sources/transcript-2026-09-11.md",
+    "source_kind": "human_trace_reconstruction",
+    "reported": [
+      {"source_ref": "lines 316-322", "fact": "Provider cancellation was rejected after generation on five confirmed interruptions."}
+    ],
+    "derived": [
+      {"source_ref": "scheduler review plan", "fact": "Local playback stop must remain effective when remote cancellation is too late."}
+    ],
+    "constructed": [
+      {"source_ref": "fixture design", "fact": "Output identity, played duration, and relative event spacing are synthetic."}
+    ]
+  },
+  "steps": [
+    {"at_ms": 0, "port": "provider", "action": "output_started", "data": {"output_id": "generated-output"}},
+    {"at_ms": 0, "port": "device", "action": "output_busy", "data": {"output_id": "generated-output"}},
+    {"at_ms": 6800, "port": "owner", "action": "confirmed", "data": {"candidate_id": "owner-confirmed", "played_ms": 6800}},
+    {"at_ms": 6810, "port": "provider", "action": "cancel_rejected", "data": {"output_id": "generated-output", "reason_code": "no_active_response"}},
+    {"at_ms": 6810, "port": "device", "action": "release", "data": {"output_id": "generated-output"}}
+  ]
+}

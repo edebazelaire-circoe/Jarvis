@@ -16,7 +16,7 @@ from jarvis.domain.messages import AudioClip
 from jarvis.domain.results import SpeechResult, TranscriptionResult
 from jarvis.runtime.voice import VoiceRuntime
 
-from conftest import RecordingStatePublisher, RecordingTTS, ScriptedAgent
+from tests.conftest import RecordingStatePublisher, RecordingTTS, ScriptedAgent
 
 
 def make_clip(ms=200):

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, Callable
 
 import aiohttp
 
 from jarvis.domain.v2 import PROTOCOL_VERSION, ProtocolEnvelope, new_id
 from jarvis.v2_config import validate_loopback_host
+from jarvis.domain.voice_admission import VoiceTurnAdmissionAcceptance, VoiceTurnAdmissionRequest
+from jarvis.domain.v2 import AddressingDecision
+from jarvis.domain.live_lifecycle import LiveCloseEvidence, LiveLifecycleState, LiveSessionRecord
 
 
 class CoreProtocolError(RuntimeError):
@@ -59,6 +62,187 @@ class LocalCoreClient:
         session = await self._http()
         async with session.get(self.base_url + f"/v1/conversations/{conversation_id}/context", headers=self.headers) as response:
             return await self._json(response)
+
+    async def submit_back_brain_task(self, conversation_id: str, *, source_correlation_id: str | None = None,
+                                     scope: str = "admitted_work", session_id: str | None = None,
+                                     delegation_id: str | None = None):
+        from jarvis.domain.back_brain import BackBrainSubmission, BackBrainSubmitRequest
+        value = BackBrainSubmitRequest(conversation_id, source_correlation_id, scope, session_id, delegation_id)
+        session = await self._http()
+        async with session.post(self.base_url + f"/v1/conversations/{conversation_id}/back-brain/tasks", headers=self.headers,
+                                json=value.to_payload()) as response:
+            return BackBrainSubmission.from_payload(await self._json(response))
+
+    async def back_brain_task_status(self, conversation_id: str, job_id: str):
+        from jarvis.domain.back_brain import BackBrainTaskSnapshot
+        from jarvis.domain.speech_presentation import speech_id
+        speech_id(conversation_id, "conversation_id")
+        speech_id(job_id, "job_id")
+        session = await self._http()
+        async with session.get(self.base_url + f"/v1/conversations/{conversation_id}/back-brain/tasks/{job_id}", headers=self.headers) as response:
+            return BackBrainTaskSnapshot.from_payload(await self._json(response)).to_payload()
+
+    async def list_back_brain_tasks(self, conversation_id: str, *, limit: int = 32):
+        from jarvis.domain.back_brain import BackBrainTaskList
+        from jarvis.domain.speech_presentation import speech_id
+        speech_id(conversation_id, "conversation_id")
+        if type(limit) is not int or not 1 <= limit <= 32:
+            raise ValueError("invalid back brain list limit")
+        session = await self._http()
+        async with session.get(self.base_url + f"/v1/conversations/{conversation_id}/back-brain/tasks", headers=self.headers, params={"limit": limit}) as response:
+            return BackBrainTaskList.from_payload(await self._json(response)).to_payload()
+
+    async def cancel_back_brain_task(self, conversation_id: str, job_id: str):
+        from jarvis.domain.back_brain import BackBrainTaskSnapshot
+        from jarvis.domain.speech_presentation import speech_id
+        speech_id(conversation_id, "conversation_id")
+        speech_id(job_id, "job_id")
+        session = await self._http()
+        async with session.post(self.base_url + f"/v1/conversations/{conversation_id}/back-brain/tasks/{job_id}/cancel", headers=self.headers,
+                                json={"schema_version": 1}) as response:
+            return BackBrainTaskSnapshot.from_payload(await self._json(response)).to_payload()
+
+    async def speech_context(self, conversation_id: str) -> dict[str, Any]:
+        session = await self._http()
+        async with session.get(self.base_url + f"/v1/conversations/{conversation_id}/speech-context", headers=self.headers) as response:
+            return await self._json(response)
+
+    async def list_brain_outcomes(self, conversation_id: str, *, limit: int = 32) -> dict[str, Any]:
+        session = await self._http()
+        async with session.get(self.base_url + f"/v1/conversations/{conversation_id}/outcomes", headers=self.headers, params={"limit": str(limit)}) as response:
+            return await self._json(response)
+
+    async def get_brain_outcome(self, conversation_id: str, outcome_id: str) -> dict[str, Any]:
+        session = await self._http()
+        async with session.get(self.base_url + f"/v1/conversations/{conversation_id}/outcomes/{outcome_id}", headers=self.headers) as response:
+            return await self._json(response)
+
+    async def select_brain_outcome(self, conversation_id: str, outcome_id: str, *, selection_id: str) -> dict[str, Any]:
+        session = await self._http()
+        async with session.post(self.base_url + f"/v1/conversations/{conversation_id}/outcomes/{outcome_id}/select", headers=self.headers,
+                                json={"selection_id": selection_id}) as response:
+            return await self._json(response)
+
+    async def bind_voice_session(self, conversation_id: str, session_id: str) -> dict[str, Any]:
+        session = await self._http()
+        async with session.post(self.base_url + f"/v1/conversations/{conversation_id}/voice/session", headers=self.headers,
+                                json={"session_id": session_id}) as response:
+            return await self._json(response)
+
+    async def submit_voice_observations(self, conversation_id: str, session_id: str, events: list[dict]) -> dict[str, Any]:
+        session = await self._http()
+        async with session.post(self.base_url + f"/v1/conversations/{conversation_id}/voice/observations", headers=self.headers,
+                                json={"session_id": session_id, "events": events}) as response:
+            return await self._json(response)
+
+    async def voice_snapshot(self, conversation_id: str) -> dict[str, Any]:
+        session = await self._http()
+        async with session.get(self.base_url + f"/v1/conversations/{conversation_id}/voice/snapshot", headers=self.headers) as response:
+            return await self._json(response)
+
+    async def admit_voice_turn(self, conversation_id: str, *, text: str, addressing: str,
+                              session_id: str, canonical_turn_id: str, transcript_id: str,
+                              transcript_revision: int, provider_item_id: str) -> VoiceTurnAdmissionAcceptance:
+        """Admit canonical input without backend work; Core owns source identity."""
+        request = VoiceTurnAdmissionRequest(conversation_id=conversation_id, text=text,
+            addressing=AddressingDecision(addressing), session_id=session_id, canonical_turn_id=canonical_turn_id,
+            transcript_id=transcript_id, transcript_revision=transcript_revision, provider_item_id=provider_item_id)
+        session = await self._http()
+        async with session.post(self.base_url + f"/v1/conversations/{conversation_id}/voice/admitted-turns",
+                                headers=self.headers, json=request.to_payload()) as response:
+            return VoiceTurnAdmissionAcceptance.from_payload(await self._json(response))
+
+    async def register_voice_speech(self, conversation_id: str, correlation: dict, intended_text: str) -> dict[str, Any]:
+        session = await self._http()
+        async with session.post(self.base_url + f"/v1/conversations/{conversation_id}/voice/speech", headers=self.headers,
+                                json={"correlation": correlation, "intended_text": intended_text}) as response:
+            return await self._json(response)
+
+    @staticmethod
+    def _live_record(payload: dict[str, Any]) -> LiveSessionRecord | None:
+        if not isinstance(payload, dict) or set(payload) != {"record"}:
+            raise ValueError("invalid Live lifecycle response")
+        return None if payload["record"] is None else LiveSessionRecord.from_payload(payload["record"])
+
+    async def _live_post(self, path: str, payload: dict[str, object]) -> LiveSessionRecord:
+        session = await self._http()
+        async with session.post(self.base_url + path, headers=self.headers, json=payload) as response:
+            record = self._live_record(await self._json(response))
+        if record is None:
+            raise ValueError("Live lifecycle mutation returned no record")
+        return record
+
+    async def reserve_live_session(self, session_id: str, owner_incarnation_id: str) -> LiveSessionRecord:
+        return await self._live_post("/v1/live/sessions/reserve", {
+            "session_id": session_id, "owner_incarnation_id": owner_incarnation_id,
+        })
+
+    async def live_session_status(self, session_id: str | None = None) -> LiveSessionRecord | None:
+        session = await self._http()
+        path = f"/v1/live/sessions/{session_id}" if session_id is not None else "/v1/live/sessions/current"
+        async with session.get(self.base_url + path, headers=self.headers) as response:
+            return self._live_record(await self._json(response))
+
+    async def bind_live_session(self, session_id: str, owner_incarnation_id: str, owner_epoch: int,
+                                expected_revision: int, provider_session_id: str,
+                                ) -> LiveSessionRecord:
+        return await self._live_post(f"/v1/live/sessions/{session_id}/bind", {
+            "owner_incarnation_id": owner_incarnation_id, "owner_epoch": owner_epoch,
+            "expected_revision": expected_revision, "provider_session_id": provider_session_id,
+        })
+
+    async def mark_live_session_start(self, session_id: str, owner_incarnation_id: str,
+                                      owner_epoch: int, expected_revision: int) -> LiveSessionRecord:
+        return await self._live_post(f"/v1/live/sessions/{session_id}/mark-start", {
+            "owner_incarnation_id": owner_incarnation_id, "owner_epoch": owner_epoch,
+            "expected_revision": expected_revision,
+        })
+
+    async def heartbeat_live_session(self, session_id: str, owner_incarnation_id: str, owner_epoch: int,
+                                     expected_revision: int) -> LiveSessionRecord:
+        return await self._live_post(f"/v1/live/sessions/{session_id}/heartbeat", {
+            "owner_incarnation_id": owner_incarnation_id, "owner_epoch": owner_epoch,
+            "expected_revision": expected_revision,
+        })
+
+    async def transition_live_session(self, session_id: str, owner_incarnation_id: str, owner_epoch: int,
+                                      expected_revision: int, target: LiveLifecycleState,
+                                      close_reason: str | None = None) -> LiveSessionRecord:
+        return await self._live_post(f"/v1/live/sessions/{session_id}/transition", {
+            "owner_incarnation_id": owner_incarnation_id, "owner_epoch": owner_epoch,
+            "expected_revision": expected_revision, "target": target.value,
+            "close_reason": close_reason,
+        })
+
+    async def update_live_session_usage(self, session_id: str, owner_incarnation_id: str, owner_epoch: int,
+                                        expected_revision: int, active_seconds: float,
+                                        provider_usage_seconds: float | None,
+                                        provider_usage_final: bool = False) -> LiveSessionRecord:
+        return await self._live_post(f"/v1/live/sessions/{session_id}/usage", {
+            "owner_incarnation_id": owner_incarnation_id, "owner_epoch": owner_epoch,
+            "expected_revision": expected_revision,
+            "active_seconds": active_seconds, "provider_usage_seconds": provider_usage_seconds,
+            "provider_usage_final": provider_usage_final,
+        })
+
+    async def claim_live_session_reap(self, session_id: str, reaper_incarnation_id: str,
+                                      expected_revision: int) -> LiveSessionRecord:
+        return await self._live_post(f"/v1/live/sessions/{session_id}/claim-reap", {
+            "reaper_incarnation_id": reaper_incarnation_id,
+            "expected_revision": expected_revision,
+        })
+
+    async def finalize_live_session(self, session_id: str, owner_incarnation_id: str, owner_epoch: int,
+                                    expected_revision: int, provider_session_id: str | None,
+                                    active_seconds: float, provider_usage_seconds: float | None,
+                                    close_reason: str, close_evidence: LiveCloseEvidence) -> LiveSessionRecord:
+        return await self._live_post(f"/v1/live/sessions/{session_id}/finalize", {
+            "owner_incarnation_id": owner_incarnation_id, "owner_epoch": owner_epoch,
+            "expected_revision": expected_revision,
+            "provider_session_id": provider_session_id, "active_seconds": active_seconds,
+            "provider_usage_seconds": provider_usage_seconds, "close_reason": close_reason,
+            "close_evidence": close_evidence.value,
+        })
 
     async def append_turn(self, conversation_id: str, *, kind: str, content: str, correlation_id: str | None = None, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
         session = await self._http()
@@ -130,13 +314,17 @@ class LocalCoreClient:
         async with session.get(self.base_url + "/v1/work/snapshot", headers=self.headers) as response:
             return await self._json(response)
 
-    async def events(self) -> AsyncIterator[ProtocolEnvelope]:
+    async def events(self, *, on_connected: Callable[[], None] | None = None) -> AsyncIterator[ProtocolEnvelope]:
         session = await self._http()
         async with session.ws_connect(self.base_url.replace("http://", "ws://") + "/v1/events", headers=self.headers, heartbeat=20) as ws:
             async for message in ws:
                 if message.type == aiohttp.WSMsgType.TEXT:
                     data = message.json()
-                    if data.get("message_type") in {"connected", "ack"}:
+                    if data.get("message_type") == "connected":
+                        if on_connected is not None:
+                            on_connected()
+                        continue
+                    if data.get("message_type") == "ack":
                         continue
                     yield ProtocolEnvelope(message_type=data["message_type"], payload=data.get("payload") or {}, correlation_id=data.get("correlation_id") or new_id(), protocol_version=int(data.get("protocol_version", PROTOCOL_VERSION)), device_id=data.get("device_id") or "windows-desktop", conversation_id=data.get("conversation_id"))
                 elif message.type in {aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR}:

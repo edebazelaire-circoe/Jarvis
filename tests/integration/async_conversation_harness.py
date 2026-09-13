@@ -66,6 +66,7 @@ from jarvis.runtime.realtime_audio import SoundDeviceRealtimeAudio
 from jarvis.runtime.speech_scheduler import SpeechScheduler
 from jarvis.runtime.voice_v2 import PersistentVoiceRuntime
 from jarvis.v2_config import VoiceArchitecture
+from tests.fakes.audio_device import BufferedOutputStream
 
 TOKEN = "i" * 48
 
@@ -214,13 +215,24 @@ class FakeWakeWord:
         self.closed = True
 
 
-class FakeAudio(SoundDeviceRealtimeAudio):
-    """Périphérique sans PortAudio, mais avec la vraie comptabilité de lecture.
+class ImmediateOutputStream(BufferedOutputStream):
+    """Test device that consumes each successful native write immediately."""
 
-    Deux choses sont conservées de la classe de production, parce que le
-    barge-in en dépend : les époques de sortie et le crédit des octets écrits.
-    C'est ce qui donne un `played_ms` non nul, donc une troncature exacte et un
-    tour assistant marqué « partiellement entendu » (Décision 36).
+    latency = 0.0
+
+    def write(self, pcm):
+        super().write(pcm)
+        self.consume()
+
+
+class FakeAudio(SoundDeviceRealtimeAudio):
+    """Controlled native device, production guarded writer and byte accounting.
+
+    Task08 migration: both play_b64 and play_b64_guarded now use the real
+    SoundDevice writer. The native stream consumes immediately, without physical
+    hardware. This tests admission, epochs and interruption cursors, not acoustic
+    timing or canonical full-transcript evidence. The historical session double
+    still exercises its existing compatibility-history contract.
     """
 
     instances: list["FakeAudio"] = []
@@ -231,6 +243,7 @@ class FakeAudio(SoundDeviceRealtimeAudio):
         self.stop_output_calls = 0
         self.stop_input_calls = 0
         self.closed = False
+        self._output = ImmediateOutputStream()
         self.__class__.instances.append(self)
 
     async def start(self) -> None:
@@ -240,35 +253,16 @@ class FakeAudio(SoundDeviceRealtimeAudio):
         self.stop_input_calls += 1
         await super().stop_input()
 
-    async def stop_output(self) -> None:
+    async def stop_output(self) -> bool:
         self.stop_output_calls += 1
-        await super().stop_output()
+        return await super().stop_output()
 
-    async def play_b64(self, value: str) -> None:
-        """Créditer ce qui aurait été joué, bloc par bloc, sans périphérique.
-
-        Reproduit la boucle de `_write_output` : l'époque de lecture est relue à
-        chaque bloc, si bien qu'un `stop_output()` concurrent arrête le crédit
-        au bloc suivant exactement comme en production.
-        """
-
-        if not value:
-            return
-        pcm = base64.b64decode(value)
-        with self._cursor_lock:
-            epoch, playback_epoch = self._output_epoch, self._playback_epoch
-        step = self.OUTPUT_CHUNK_FRAMES * self._BYTES_PER_FRAME
-        for offset in range(0, len(pcm), step):
-            with self._cursor_lock:
-                if playback_epoch != self._playback_epoch:
-                    return
-            self._credit_written(epoch, len(pcm[offset:offset + step]))
-            # Rendre la main entre deux blocs : le vrai `play_b64` passe par un
-            # thread, donc la boucle asyncio n'est jamais monopolisée.
-            await asyncio.sleep(0)
-
-    async def close(self) -> None:
-        self.closed = True
+    # Both ordinary and guarded playback run through the production writer.
+    # Only the native stream is controlled; admission/epochs/accounting are real.
+    async def close(self) -> bool:
+        result = await super().close()
+        self.closed = bool(result)
+        return result
 
 
 def audio_chunk_b64(chunks: int = 1) -> str:
@@ -316,6 +310,8 @@ class FakeRealtimeSession:
         self.active_speech_id: str | None = None
         self._outputs = 0
         self._items = 0
+        self._reserved_outputs: set[str] = set()
+        self.invalidated_outputs: set[str] = set()
 
     # -- RealtimeSession ----------------------------------------------------
 
@@ -348,12 +344,23 @@ class FakeRealtimeSession:
 
     # -- RealtimeOutputControl ---------------------------------------------
 
-    async def speak(self, request: SpeechRequest) -> str:
+    async def speak_reserved(self, request: SpeechRequest, *, output_id: str) -> str:
+        if not output_id or output_id in self._reserved_outputs or output_id in self.invalidated_outputs:
+            raise ValueError("Invalid or reused reserved output")
+        self._reserved_outputs.add(output_id)
+        return await self.speak(request, output_id=output_id)
+
+    async def invalidate_unstarted_output(self, output_id: str) -> None:
+        self.invalidated_outputs.add(output_id)
+        if self.active_output_id == output_id:
+            await self.cancel_output()
+
+    async def speak(self, request: SpeechRequest, *, output_id: str | None = None) -> str:
         """Restituer la demande du cerveau et ouvrir la sortie correspondante."""
 
         self.spoken.append(request)
         self._outputs += 1
-        output_id = f"{self.name}-out-{self._outputs}"
+        output_id = output_id or f"{self.name}-out-{self._outputs}"
         self.active_output_id = output_id
         self.active_speech_id = request.id
         await self.push(
@@ -388,6 +395,9 @@ class FakeRealtimeSession:
             output_id=self.active_output_id,
             speech_id=self.active_speech_id,
             item_id=f"{self.active_output_id}-item",
+            response_id=f"{self.active_output_id}-resp",
+            content_index=0,
+            output_index=0,
         )
 
     async def finish_output(self, *, status: str = "completed", transcript: str | None = None) -> None:

@@ -81,6 +81,8 @@ async def test_a_long_task_acks_fast_then_speaks_progress_then_the_result(tmp_pa
         progress = await handle.say("Je regarde les vols de demain.", work_id="work-1")
         await stack.wait_spoken(1)
         assert stack.session.texts() == ["Je regarde les vols de demain."]
+        assert stack.session.active_output_id in stack.session._reserved_outputs
+        assert stack.session.spoken[0].source.correlation_id == handle.correlation_id
         await stack.speak_and_finish(transcript=progress.text)
 
         result = await handle.say(
@@ -347,6 +349,9 @@ async def test_jarvis_mute_leaves_the_work_in_core_and_speaks_nothing_stale(tmp_
         expired = [event["data"] for event in stack.journal.of("voice.speech.expired")]
         assert [data["speech_id"] for data in expired] == [queued.id]
         assert [data["reason"] for data in expired] == ["voice_background"]
+        assert expired[0]["correlation_id"] == handle.correlation_id
+        assert expired[0]["conversation_id"] == conversation_id
+        assert expired[0]["work_id"] == "work-1"
 
         # Le travail n'a pas été touché : ni annulé, ni interrompu.
         assert stack.core.brain.active_turn_count == 1

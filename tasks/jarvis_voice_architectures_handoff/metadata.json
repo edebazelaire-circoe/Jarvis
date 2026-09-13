@@ -1,0 +1,16 @@
+{
+  "title": "JARVIS voice architectures: Simple, Front Brain, Duplex",
+  "created_at": "2026-09-11T22:17:00+02:00",
+  "source": [
+    "conversation design session",
+    "uploaded transcript-2026-09-11.md",
+    "OpenAI API documentation checked 2026-09-11"
+  ],
+  "task_count": 21,
+  "primary_target": "GPT-Live 1 client delegation with switchable Realtime baselines",
+  "architectures": [
+    "simple",
+    "front_brain",
+    "duplex"
+  ]
+}

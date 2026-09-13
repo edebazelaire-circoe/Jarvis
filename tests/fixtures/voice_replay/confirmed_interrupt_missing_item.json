@@ -1,0 +1,25 @@
+{
+  "schema": "jarvis.voice_replay",
+  "schema_version": 1,
+  "scenario_id": "confirmed_interrupt_missing_item",
+  "origin": "2026-09-11T15:46:56+02:00",
+  "provenance": {
+    "source_path": "tasks/jarvis_voice_architectures_handoff/sources/transcript-2026-09-11.md",
+    "source_kind": "human_trace_reconstruction",
+    "reported": [
+      {"source_ref": "lines 117-123 and 320", "fact": "A confirmed interruption had zero played milliseconds and no provider item."}
+    ],
+    "derived": [
+      {"source_ref": "scheduler review plan", "fact": "Missing provider identity must remain explicit and must not create heard evidence."}
+    ],
+    "constructed": [
+      {"source_ref": "fixture design", "fact": "Playback identifier and relative confirmation timestamp are synthetic."}
+    ]
+  },
+  "steps": [
+    {"at_ms": 0, "port": "device", "action": "output_busy", "data": {"playback_id": "local-playback", "played_ms": 0}},
+    {"at_ms": 1000, "port": "owner", "action": "candidate", "data": {"candidate_id": "confirmed-owner"}},
+    {"at_ms": 1000, "port": "owner", "action": "confirmed", "data": {"candidate_id": "confirmed-owner", "played_ms": 0, "provider_item_id": null}},
+    {"at_ms": 1000, "port": "control", "action": "checkpoint", "data": {"checkpoint_id": "interrupt_applied"}}
+  ]
+}

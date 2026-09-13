@@ -1,0 +1,27 @@
+{
+  "schema": "jarvis.voice_replay",
+  "schema_version": 1,
+  "scenario_id": "backend_nonblocking_85_7s",
+  "origin": "2026-09-11T15:45:03+02:00",
+  "provenance": {
+    "source_path": "tasks/jarvis_voice_architectures_handoff/sources/transcript-2026-09-11.md",
+    "source_kind": "human_trace_reconstruction",
+    "reported": [
+      {"source_ref": "lines 60, 88-90 and 306", "fact": "One backend result became ready 85700 ms after its request while later user turns arrived."}
+    ],
+    "derived": [
+      {"source_ref": "TASK.md lines 16 and 31", "fact": "Long work must not block admission of later turns."}
+    ],
+    "constructed": [
+      {"source_ref": "fixture design", "fact": "Work identifiers, content tags, and the 33000 and 78000 ms relative turn times are synthetic approximations."}
+    ]
+  },
+  "steps": [
+    {"at_ms": 0, "port": "user", "action": "turn", "data": {"turn_id": "slow-turn", "content_tag": "slow_lookup"}},
+    {"at_ms": 0, "port": "brain", "action": "hold", "data": {"work_id": "slow-work"}},
+    {"at_ms": 33000, "port": "user", "action": "turn", "data": {"turn_id": "later-turn-1", "content_tag": "follow_up_one"}},
+    {"at_ms": 78000, "port": "user", "action": "turn", "data": {"turn_id": "later-turn-2", "content_tag": "follow_up_two"}},
+    {"at_ms": 85700, "port": "brain", "action": "ready", "data": {"work_id": "slow-work", "result_tag": "historical_lookup_result"}},
+    {"at_ms": 85700, "port": "brain", "action": "release", "data": {"work_id": "slow-work"}}
+  ]
+}

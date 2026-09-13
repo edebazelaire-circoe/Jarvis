@@ -248,6 +248,16 @@ class CoreWorkTransport:
         await self.close()
         return await self._connect().work_snapshot()
 
+    async def live_session_status(self):
+        """Read Core's current unresolved GPT-Live lifecycle record."""
+        try:
+            return await self._connect().live_session_status()
+        except CoreProtocolError as exc:
+            if exc.status != 401:
+                raise
+        await self.close()
+        return await self._connect().live_session_status()
+
     def _connect(self) -> LocalCoreClient:
         if self._client is None:
             try:

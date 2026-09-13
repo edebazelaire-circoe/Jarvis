@@ -16,6 +16,9 @@ from jarvis.core.drive_service import DriveService
 from jarvis.core.v2_services import ConversationService, CoreEventBus, JobService, NotificationService, SchedulerService
 from jarvis.core.v2_tools import CoreToolRouter
 from jarvis.core.work_state import WorkStateStore
+from jarvis.core.voice_ledger import VoiceLedgerService
+from jarvis.core.live_lifecycle import LiveLifecycleService
+from jarvis.core.live_reaper import LiveLifecycleWatchdog
 from jarvis.domain.v2 import Device, Job, MissedRunPolicy, Notification, NotificationPriority, ProtocolEnvelope, ScheduledItem, ScheduledStatus, utc_now
 from jarvis.ports.v2 import DiagnosticSink
 
@@ -35,12 +38,20 @@ class JarvisCoreApplication:
     or Windows UI dependency.
     """
 
-    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = True, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S) -> None:
+    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = True, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None) -> None:
         root = Path(data_root).resolve()
+        self.health = CoreHealth()
         self.state = SQLiteStateRepository(root / "state" / "jarvis.sqlite3")
         self.history = JsonlHistoryStore(root / "history")
         self.events = CoreEventBus(diagnostics=diagnostics)
         self.conversations = ConversationService(self.state, self.history)
+        self.voice_ledger = VoiceLedgerService(self.conversations, diagnostics=diagnostics)
+        self.live_lifecycle = LiveLifecycleService(
+            self.state, diagnostics=diagnostics, accepting_new=lambda: self.health.ready,
+        )
+        self.live_reaper = LiveLifecycleWatchdog(
+            self.live_lifecycle, closer=live_sideband_closer, diagnostics=diagnostics,
+        )
         self.scheduler = SchedulerService(self.state, self.events)
         # État de travail détaillé, possédé par Core (handoff work-state, tâche
         # 11) : alimenté par les jobs et par l'ingress `/v1/work/observations`,
@@ -79,9 +90,13 @@ class JarvisCoreApplication:
             supersede_stale_replies=supersede_stale_replies,
             turn_budget_s=brain_turn_budget_s,
             work_context=self.brain_context,
+            voice_ledger=self.voice_ledger,
         )
+        self.outcomes = self.brain.outcomes
+        self.voice_admission = self.brain.admission
+        from jarvis.core.back_brain import BackBrainTaskService
+        self.back_brain = BackBrainTaskService(self.jobs, self.conversations, self.voice_ledger)
         self.tools = CoreToolRouter(scheduler=self.scheduler, calendar=self.calendar, drive=self.drive, timezone=timezone)
-        self.health = CoreHealth()
         self._stopped = asyncio.Event()
         self._notification_task: asyncio.Task[None] | None = None
         self._notification_queue: asyncio.Queue[ProtocolEnvelope] | None = None
@@ -97,6 +112,7 @@ class JarvisCoreApplication:
             return
         try:
             await self.state.initialize()
+            self.live_reaper.start()
             await self.state.save_device(Device())
             # Subscribe before recovery: overdue schedules and interrupted jobs
             # may emit events immediately during startup.
@@ -120,6 +136,7 @@ class JarvisCoreApplication:
             self.health.ready = False
             self.health.status = "fail"
             self.health.detail = f"{type(exc).__name__}: {exc}"
+            await self.live_reaper.stop()
             await self._stop_notification_loop()
             await self._stop_work_attention()
             try:
@@ -235,6 +252,9 @@ class JarvisCoreApplication:
             return
         self.health.ready = False
         self.health.status = "stopping"
+        self.back_brain.stopping = True
+        self.jobs.owned.stopping = True
+        await self.live_reaper.stop()
         # Le cerveau s'arrête en premier : ses tâches écrivent en base via
         # ConversationService et publient sur le bus, deux ressources fermées plus bas.
         # Le relais spontané le précède : il alimente le cerveau.
@@ -243,8 +263,15 @@ class JarvisCoreApplication:
         await self._stop_work_attention()
         await self.brain.stop()
         await self._stop_notification_loop()
-        await self.jobs.stop()
         await self.scheduler.stop()
+        if not await self.back_brain.stop():
+            self.health.status = "state_persistence_unknown"
+            self.health.detail = "back brain submission remains owned while storage completes"
+            return
+        if not await self.jobs.stop():
+            self.health.status = "state_persistence_unknown" if self.jobs.owned.persistence_failures else "cleanup_unknown"
+            self.health.detail = "back brain finalization remains owned and unconfirmed"
+            return
         await self.state.close()
         self.health.status = "stopped"
         self._stopped.set()

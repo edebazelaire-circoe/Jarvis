@@ -1,0 +1,36 @@
+{
+  "schema": "jarvis.voice_replay",
+  "schema_version": 1,
+  "scenario_id": "bus_cluster_7",
+  "origin": "2026-09-11T15:46:36+02:00",
+  "provenance": {
+    "source_path": "tasks/jarvis_voice_architectures_handoff/sources/transcript-2026-09-11.md",
+    "source_kind": "human_trace_reconstruction",
+    "reported": [
+      {"source_ref": "lines 316-322", "fact": "Seven local detections in an 18 second bus-noise interval were not confirmed."}
+    ],
+    "derived": [
+      {"source_ref": "TASK.md lines 31 and 51", "fact": "Rejected noise must not trigger destructive interruption."}
+    ],
+    "constructed": [
+      {"source_ref": "fixture design", "fact": "Individual candidate offsets, identifiers, and lack of raw audio are explicit synthetic inputs."}
+    ]
+  },
+  "steps": [
+    {"at_ms": 0, "port": "provider", "action": "output_started", "data": {"output_id": "bus-output"}},
+    {"at_ms": 2000, "port": "owner", "action": "candidate", "data": {"candidate_id": "bus-1"}},
+    {"at_ms": 2100, "port": "owner", "action": "rejected", "data": {"candidate_id": "bus-1"}},
+    {"at_ms": 4500, "port": "owner", "action": "candidate", "data": {"candidate_id": "bus-2"}},
+    {"at_ms": 4600, "port": "owner", "action": "rejected", "data": {"candidate_id": "bus-2"}},
+    {"at_ms": 7000, "port": "owner", "action": "candidate", "data": {"candidate_id": "bus-3"}},
+    {"at_ms": 7100, "port": "owner", "action": "rejected", "data": {"candidate_id": "bus-3"}},
+    {"at_ms": 9500, "port": "owner", "action": "candidate", "data": {"candidate_id": "bus-4"}},
+    {"at_ms": 9600, "port": "owner", "action": "rejected", "data": {"candidate_id": "bus-4"}},
+    {"at_ms": 12000, "port": "owner", "action": "candidate", "data": {"candidate_id": "bus-5"}},
+    {"at_ms": 12100, "port": "owner", "action": "rejected", "data": {"candidate_id": "bus-5"}},
+    {"at_ms": 14500, "port": "owner", "action": "candidate", "data": {"candidate_id": "bus-6"}},
+    {"at_ms": 14600, "port": "owner", "action": "rejected", "data": {"candidate_id": "bus-6"}},
+    {"at_ms": 17900, "port": "owner", "action": "candidate", "data": {"candidate_id": "bus-7"}},
+    {"at_ms": 18000, "port": "owner", "action": "rejected", "data": {"candidate_id": "bus-7"}}
+  ]
+}

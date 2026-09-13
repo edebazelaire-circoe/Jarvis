@@ -12,7 +12,7 @@ from jarvis.core.session import SessionStateMachine
 from jarvis.core.tools import ToolRegistry
 from jarvis.domain.messages import ToolCall
 
-from conftest import RecordingBoard, RecordingStatePublisher, RecordingTTS, ScriptedAgent
+from tests.conftest import RecordingBoard, RecordingStatePublisher, RecordingTTS, ScriptedAgent
 
 
 def make_orchestrator(memory, board, agent, tts):

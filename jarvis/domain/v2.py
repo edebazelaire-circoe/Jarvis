@@ -5,6 +5,9 @@ from datetime import datetime, timedelta, timezone
 from enum import IntEnum, StrEnum
 from typing import Any
 import uuid
+from jarvis.domain.speech_presentation import (
+    MAX_SPEECH_CHUNKS, MAX_SPEECH_TEXT, MAX_SPEECH_CHUNK_TEXT, SpeechSource, SpeechTextSpan, speech_id,
+)
 
 PROTOCOL_VERSION = 1
 DEFAULT_DEVICE_ID = "windows-desktop"
@@ -164,10 +167,20 @@ class Job:
     started_at: datetime | None = None
     completed_at: datetime | None = None
     idempotency_key: str = field(default_factory=new_id)
+    revision: int = 0
+    cancellation: str = "none"
+    cancel_requested: bool = False
+    progress: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if not self.kind:
             raise ValueError("job kind is required")
+        if type(self.revision) is not int or self.revision < 0:
+            raise ValueError("invalid job revision")
+        if self.cancellation not in {"none", "requested", "cleanup_unknown", "confirmed"}:
+            raise ValueError("invalid job cancellation")
+        if type(self.cancel_requested) is not bool:
+            raise ValueError("invalid job cancel request")
         _aware(self.created_at)
         for value in (self.started_at, self.completed_at):
             if value is not None:
@@ -455,14 +468,39 @@ class SpeechRequest:
     expires_at: datetime | None = None
     provenance: SpeechProvenance = SpeechProvenance.BRAIN
     created_at: datetime = field(default_factory=utc_now)
+    source: SpeechSource | None = None
+    outcome_id: str | None = None
+    chunks: tuple[SpeechTextSpan, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.conversation_id:
             raise ValueError("conversation_id is required")
-        if not self.text.strip():
+        if not isinstance(self.text, str) or not self.text.strip():
             raise ValueError("speech text is required")
         if not self.correlation_id:
             raise ValueError("correlation_id is required")
+        for name in ("conversation_id", "id", "correlation_id"):
+            speech_id(getattr(self, name), name)
+        for name in ("work_id", "supersedes_key", "outcome_id"):
+            speech_id(getattr(self, name), name, optional=True)
+        if not isinstance(self.text, str) or len(self.text) > MAX_SPEECH_TEXT:
+            raise ValueError("Speech text exceeds bounded presentation size")
+        if type(self.interruptible) is not bool:
+            raise ValueError("Speech interruptible must be boolean")
+        if self.source is not None and not isinstance(self.source, SpeechSource):
+            raise ValueError("Speech source must be typed")
+        if self.source is not None and self.source.correlation_id != self.correlation_id:
+            raise ValueError("Speech source correlation disagrees with request")
+        if not isinstance(self.chunks, tuple) or len(self.chunks) > MAX_SPEECH_CHUNKS or any(not isinstance(span, SpeechTextSpan) for span in self.chunks):
+            raise ValueError("Speech chunks must be a bounded typed tuple")
+        if self.chunks:
+            previous = 0
+            for span in self.chunks:
+                if span.start != previous or span.end > len(self.text) or span.end - span.start > MAX_SPEECH_CHUNK_TEXT or not self.text[span.start:span.end].strip():
+                    raise ValueError("Speech chunks must cover exact contiguous nonempty text")
+                previous = span.end
+            if previous != len(self.text):
+                raise ValueError("Speech chunks must cover the entire text")
         _aware(self.created_at)
         if self.expires_at is not None:
             _aware(self.expires_at)
@@ -531,12 +569,18 @@ class SpeechRequest:
             "expires_at": self.expires_at.isoformat() if self.expires_at else None,
             "provenance": self.provenance.value,
             "created_at": self.created_at.isoformat(),
+            "source": self.source.to_payload() if self.source else None,
+            "outcome_id": self.outcome_id,
+            "chunks": [span.to_payload() for span in self.chunks],
         }
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> SpeechRequest:
         expires_at = payload.get("expires_at")
         created_at = payload.get("created_at")
+        chunks = payload.get("chunks", [])
+        if not isinstance(chunks, list) or len(chunks) > MAX_SPEECH_CHUNKS:
+            raise ValueError("Invalid speech chunk list")
         return cls(
             conversation_id=str(payload.get("conversation_id") or ""),
             text=str(payload.get("text") or ""),
@@ -546,10 +590,13 @@ class SpeechRequest:
             correlation_id=str(payload.get("correlation_id") or new_id()),
             work_id=payload.get("work_id"),
             supersedes_key=payload.get("supersedes_key"),
-            interruptible=bool(payload.get("interruptible", True)),
+            interruptible=payload.get("interruptible", True),
             expires_at=_parse_aware(expires_at) if expires_at else None,
             provenance=SpeechProvenance(payload.get("provenance", SpeechProvenance.BRAIN)),
             created_at=_parse_aware(created_at) if created_at else utc_now(),
+            source=SpeechSource.from_payload(payload["source"]) if payload.get("source") is not None else None,
+            outcome_id=payload.get("outcome_id"),
+            chunks=tuple(SpeechTextSpan.from_payload(span) for span in chunks),
         )
 
 
@@ -566,12 +613,15 @@ class PlaybackCursor:
     played_ms: int = 0
     provider_response_id: str | None = None
     provider_item_id: str | None = None
+    content_index: int | None = None
 
     def __post_init__(self) -> None:
         if not self.speech_id:
             raise ValueError("speech_id is required")
         if self.played_ms < 0:
             raise ValueError("played_ms must be positive or zero")
+        if self.content_index is not None and (type(self.content_index) is not int or not 0 <= self.content_index <= 127):
+            raise ValueError("content_index must be a bounded nonnegative integer")
 
 
 @dataclass(frozen=True, slots=True)

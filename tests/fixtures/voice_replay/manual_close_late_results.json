@@ -1,0 +1,28 @@
+{
+  "schema": "jarvis.voice_replay",
+  "schema_version": 1,
+  "scenario_id": "manual_close_late_results",
+  "origin": "2026-09-11T15:53:00+02:00",
+  "provenance": {
+    "source_path": "tasks/jarvis_voice_architectures_handoff/sources/transcript-2026-09-11.md",
+    "source_kind": "human_trace_reconstruction",
+    "reported": [
+      {"source_ref": "lines 256-278 and 301-313", "fact": "Manual stop occurred two seconds after output began; two later backend results were never spoken."}
+    ],
+    "derived": [
+      {"source_ref": "TASK.md line 16", "fact": "Session closure must suppress later speech while retaining backend outcomes."}
+    ],
+    "constructed": [
+      {"source_ref": "fixture design", "fact": "Identifiers and relative late-result offsets use sanitized synthetic values."}
+    ]
+  },
+  "steps": [
+    {"at_ms": 0, "port": "provider", "action": "output_started", "data": {"output_id": "closing-output"}},
+    {"at_ms": 0, "port": "device", "action": "output_busy", "data": {"output_id": "closing-output"}},
+    {"at_ms": 2000, "port": "control", "action": "stop", "data": {"reason": "manual"}},
+    {"at_ms": 2000, "port": "provider", "action": "session_closed", "data": {"reason": "manual"}},
+    {"at_ms": 6000, "port": "brain", "action": "ready", "data": {"work_id": "late-work-1", "result_tag": "late-result-1"}},
+    {"at_ms": 11000, "port": "brain", "action": "ready", "data": {"work_id": "late-work-2", "result_tag": "late-result-2"}},
+    {"at_ms": 11000, "port": "control", "action": "checkpoint", "data": {"checkpoint_id": "closed_with_late_results"}}
+  ]
+}

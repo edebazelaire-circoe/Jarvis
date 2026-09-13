@@ -258,6 +258,15 @@ class ControlCenterBrainBackend:
     async def _settle_success(self, turn: BrainTurnInput, work_id: str, answer: str, emit: BrainEventSink) -> BrainTurnResult:
         """Clore un tour réussi : ce que l'agent a écrit devient de la parole publique."""
 
+        await emit.emit(
+            BrainEvent(
+                kind=BrainEventKind.COMPLETED,
+                conversation_id=turn.conversation_id,
+                correlation_id=turn.correlation_id,
+                work_id=work_id,
+                public_summary=answer,
+            )
+        )
         if answer:
             # `supersedes_key` rattaché au travail : une progression du même
             # travail devient caduque dès que le résultat existe (spec §6).
@@ -278,15 +287,6 @@ class ControlCenterBrainBackend:
                     ),
                 )
             )
-        await emit.emit(
-            BrainEvent(
-                kind=BrainEventKind.COMPLETED,
-                conversation_id=turn.conversation_id,
-                correlation_id=turn.correlation_id,
-                work_id=work_id,
-                public_summary=answer,
-            )
-        )
         return BrainTurnResult(
             correlation_id=turn.correlation_id,
             status=BrainRunStatus.COMPLETED,

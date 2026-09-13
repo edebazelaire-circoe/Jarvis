@@ -38,8 +38,12 @@ from jarvis.v2_config import DEFAULT_CONTINUOUS_SURFACE_MODEL
 # Un seul interrupteur pour tout le fichier : poser la variable est un acte
 # délibéré, qui consomme du quota et sort du réseau local.
 live_only = pytest.mark.skipif(
-    os.getenv("JARVIS_LIVE_OPENAI") != "1",
-    reason="opt-in live provider test",
+    os.getenv("JARVIS_LIVE_OPENAI") != "1" or not os.getenv("OPENAI_API_KEY"),
+    reason="requires JARVIS_LIVE_OPENAI=1 and OPENAI_API_KEY",
+)
+gpt_live_only = pytest.mark.skipif(
+    os.getenv("JARVIS_LIVE_GPT_LIVE") != "1" or not os.getenv("OPENAI_API_KEY"),
+    reason="requires JARVIS_LIVE_GPT_LIVE=1 and OPENAI_API_KEY",
 )
 
 # Le fournisseur peut être lent ; il ne doit pas pouvoir être infini.
@@ -126,3 +130,71 @@ async def test_real_openai_realtime_brain_speech():
         await asyncio.wait_for(session.cancel_output(), timeout=LIVE_TIMEOUT_S)
     finally:
         await session.close()
+
+
+@pytest.mark.asyncio
+@gpt_live_only
+async def test_real_openai_gpt_live_start_and_confirmed_close():
+    """Strict opt-in wire smoke for the production GPT-Live connector."""
+
+    from jarvis.adapters.openai_live_frontend import OpenAILiveFrontend, aiohttp_live_connector
+    from jarvis.domain.voice_architecture import DuplexVoiceConfig, VoiceModelRef
+    from jarvis.domain.voice_events import FrontendLifecycleChanged, VoiceUsageSource, VoiceUsageUpdated
+    from jarvis.domain.voice_frontend import (
+        FrontendState, VoiceCorrelation, VoiceFrontendConfig, VoiceOperation,
+        VoiceOperationId, VoiceOperationStatus, VoiceSessionId, VoiceStopReason,
+    )
+
+    key = os.environ["OPENAI_API_KEY"]
+    frontend = OpenAILiveFrontend(
+        aiohttp_live_connector(key), voice=os.getenv("OPENAI_LIVE_VOICE", "marin"),
+        start_timeout_s=15, close_timeout_s=10,
+    )
+    correlation = VoiceCorrelation(VoiceSessionId("gpt-live-smoke"))
+
+    def operation(identity: str) -> VoiceOperation:
+        return VoiceOperation(VoiceOperationId(identity), correlation)
+
+    observed = []
+
+    async def consume() -> None:
+        async for event in frontend.events():
+            observed.append(event)
+
+    consumer = asyncio.create_task(consume())
+    try:
+        async with asyncio.timeout(LIVE_TIMEOUT_S):
+            started = await frontend.start(VoiceFrontendConfig(
+                DuplexVoiceConfig(VoiceModelRef("openai", "gpt-live-1")),
+                instructions="Respond naturally and wait for audio input.",
+            ), operation=operation("gpt-live-smoke-start"))
+            assert started.status is VoiceOperationStatus.COMPLETED
+            assert frontend.state is FrontendState.ACTIVE
+            result = await frontend.stop(
+                VoiceStopReason.USER, operation=operation("gpt-live-smoke-stop"),
+            )
+            assert result.status is VoiceOperationStatus.COMPLETED
+            assert result.state is frontend.state is FrontendState.STOPPED
+            await consumer
+            active = next(event for event in observed if
+                          event.payload == FrontendLifecycleChanged(FrontendState.ACTIVE))
+            assert active.correlation.provider_session_id
+            final_usage = next(event.payload for event in observed if
+                               isinstance(event.payload, VoiceUsageUpdated) and
+                               event.payload.source is VoiceUsageSource.PROVIDER_FINAL)
+            assert final_usage.duration_s is not None and final_usage.duration_s >= 0
+    finally:
+        try:
+            if frontend.state is not FrontendState.STOPPED:
+                async with asyncio.timeout(12):
+                    await frontend.stop(
+                        VoiceStopReason.ERROR, operation=operation("gpt-live-smoke-cleanup"),
+                    )
+        finally:
+            try:
+                async with asyncio.timeout(12):
+                    await frontend.wait_transport_closed()
+            finally:
+                if not consumer.done():
+                    consumer.cancel()
+                await asyncio.gather(consumer, return_exceptions=True)

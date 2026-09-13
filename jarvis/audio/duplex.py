@@ -534,6 +534,11 @@ class CaptureProcessor:
         return self.detector.latched
 
     @property
+    def near_end_observed(self) -> bool:
+        """Latest classified frame or the detector's bounded speech latch."""
+        return self.detector.last_near or self.detector.latched
+
+    @property
     def far_recent(self) -> bool:
         return self.detector.far_recent
 

@@ -1,0 +1,22 @@
+Voice session offline-front_brain-a12285b93fd1
+front_brain | openai/gpt-realtime-2.1-mini
+configuration=14bd97fe46bfd468e272d3b57ba752d6c935e4cf1f74cd24c169f9a110e6be8d fingerprint=d71c4627f03f220645b9a630d0d1c7b8628925f0fd03a532271cf38a390ec96d
+status=stopped duration=0.000s
+trace_evidence_complete=True
+provider_usage={"duration_seconds": null, "final": false, "input_tokens": null, "output_tokens": null, "source": null}
+provider_usage_components=[{"cost_estimate": null, "model_id": "gpt-realtime-2.1-mini", "provider_id": "openai", "role": "surface", "usage": {"cached_tokens": null, "duration_seconds": null, "final": false, "identity_consistent": null, "input_tokens": null, "observed_model_id": null, "observed_provider_id": null, "output_tokens": null, "reasoning_tokens": null, "requests": null, "source": "unavailable", "total_tokens": null}}, {"cost_estimate": null, "model_id": "gpt-5.6-luna", "provider_id": "openai", "role": "analysis", "usage": {"cached_tokens": null, "duration_seconds": null, "final": null, "identity_consistent": null, "input_tokens": null, "observed_model_id": null, "observed_provider_id": null, "output_tokens": null, "reasoning_tokens": null, "requests": null, "source": "unavailable", "total_tokens": null}}]
+cost_estimate=null
+event_counts={"backend_task_result": 0, "backend_task_started": 0, "false_or_rejected_barge_in": 0, "intended_spoken_divergence": 0, "output_stall": 0, "stale_cancellation": 0, "unnecessary_acknowledgement": 0, "user_interruption": 0}
+annotations=[{"name": "quiet-ambient", "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1", "note_length": 70, "outcome": "uncertain"}, {"name": "short-confirmation", "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1", "note_length": 70, "outcome": "uncertain"}, {"name": "direct-question", "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1", "note_length": 70, "outcome": "pass"}, {"name": "pause-mid-sentence", "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1", "note_length": 70, "outcome": "uncertain"}, {"name": "long-monologue", "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1", "note_length": 70, "outcome": "uncertain"}, {"name": "late-correction", "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1", "note_length": 70, "outcome": "uncertain"}, {"name": "long-backend-work", "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1", "note_length": 70, "outcome": "uncertain"}, {"name": "backend-result-after-topic-shift", "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1", "note_length": 70, "outcome": "uncertain"}, {"name": "user-interruption", "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1", "note_length": 70, "outcome": "uncertain"}, {"name": "background-noise", "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1", "note_length": 70, "outcome": "uncertain"}, {"name": "output-stall-reconnect", "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1", "note_length": 70, "outcome": "uncertain"}, {"name": "mode-switch", "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1", "note_length": 70, "outcome": "uncertain"}, {"name": "manual-stop", "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1", "note_length": 70, "outcome": "uncertain"}, {"name": "spoken-divergence", "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1", "note_length": 70, "outcome": "uncertain"}]
+provider_first_pcm_ms: count=0 mean_ms=None
+playback_attempt_ms: count=0 mean_ms=None
+time_to_first_audible_reaction_ms: count=0 mean_ms=None
+time_to_first_useful_answer_ms: count=0 mean_ms=None
+frontend_blocking_ms: count=0 mean_ms=None
+delegation_latency_ms: count=0 mean_ms=None
+speech_queue_wait_ms: count=0 mean_ms=None
+brain_speech_to_first_audio_ms: count=0 mean_ms=None
+backend_first_progress_ms: count=0 mean_ms=None
+backend_result_ms: count=0 mean_ms=None
+user_interrupt_stop_ms: count=0 mean_ms=None
+device_drain_ms: count=0 mean_ms=None

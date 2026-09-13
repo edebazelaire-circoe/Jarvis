@@ -50,14 +50,14 @@ class FakeOutputStream:
     def start(self) -> None:
         self.thread = threading.current_thread()
 
-    def abort(self) -> None:
+    def abort(self, *, ignore_errors=True) -> None:
         self.aborted = True
         self.freed_while_writing |= self.writing
 
-    def stop(self) -> None:
+    def stop(self, *, ignore_errors=True) -> None:
         self.freed_while_writing |= self.writing
 
-    def close(self) -> None:
+    def close(self, *, ignore_errors=True) -> None:
         self.freed_while_writing |= self.writing
         self.closed = True
 
@@ -72,13 +72,13 @@ class FakeInputStream:
     def start(self) -> None:
         self.thread = threading.current_thread()
 
-    def stop(self) -> None:
+    def stop(self, *, ignore_errors=True) -> None:
         self.stopped = True
 
-    def abort(self) -> None:
+    def abort(self, *, ignore_errors=True) -> None:
         self.aborted = True
 
-    def close(self) -> None:
+    def close(self, *, ignore_errors=True) -> None:
         self.closed = True
 
 

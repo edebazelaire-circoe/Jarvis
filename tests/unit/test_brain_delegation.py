@@ -633,18 +633,24 @@ async def test_a_quick_turn_leaves_no_budget_trace(tmp_path):
 class BusCore:
     """Core vu de l'ordonnanceur vocal, branché sur le vrai bus de l'orchestrateur."""
 
-    def __init__(self, bus: CoreEventBus) -> None:
+    def __init__(self, bus: CoreEventBus, brain: BrainOrchestrator) -> None:
         self.bus = bus
+        self.brain = brain
         self.subscribed = asyncio.Event()
 
-    async def events(self):
+    async def events(self, *, on_connected=None):
         queue = self.bus.subscribe()
+        if on_connected is not None:
+            on_connected()
         self.subscribed.set()
         try:
             while True:
                 yield await queue.get()
         finally:
             self.bus.unsubscribe(queue)
+
+    async def speech_context(self, conversation_id):
+        return await self.brain.speech_context(conversation_id)
 
     async def append_turn(self, conversation_id, *, kind, content, correlation_id=None, metadata=None):  # noqa: ANN001
         del conversation_id, kind, content, correlation_id, metadata
@@ -656,13 +662,29 @@ class PlayingSession:
 
     def __init__(self) -> None:
         self.spoken: list[str] = []
+        self.requests: dict[str, SpeechRequest] = {}
+        self.admission = None
+        self.invalidated: list[str] = []
         self.active_output_id: str | None = None
         self.cancelled = 0
 
-    async def speak(self, request: SpeechRequest) -> str:
-        self.spoken.append(request.text)
-        self.active_output_id = f"out-{len(self.spoken)}"
+    async def speak_reserved(self, request: SpeechRequest, *, output_id: str) -> str:
+        self.requests[output_id] = request
+        self.active_output_id = output_id
         return self.active_output_id
+
+    def begin_write(self, output_id: str) -> bool:
+        token = self.admission(output_id)
+        assert token is not None  # Actual scheduler08 reservation, not a fixture flag.
+        if not token.begin_write():
+            return False
+        self.spoken.append(self.requests[output_id].text)
+        return True
+
+    async def invalidate_unstarted_output(self, output_id: str) -> None:
+        self.invalidated.append(output_id)
+        if self.active_output_id == output_id:
+            self.active_output_id = None
 
     async def cancel_output(self, cursor=None) -> None:  # noqa: ANN001
         del cursor
@@ -680,36 +702,64 @@ async def _until(predicate) -> None:
     raise AssertionError("condition jamais atteinte")
 
 
-async def test_a_superseded_reply_leaves_the_queue_but_never_cuts_what_is_playing(tmp_path):
+@pytest.mark.parametrize("write_started", [False, True], ids=["zero-write", "write-started"])
+async def test_a_superseded_reply_leaves_the_queue_but_never_cuts_what_is_playing(tmp_path, write_started):
     """Bout à bout, orchestrateur → ordonnanceur vocal : la réponse en cours de
     lecture va au bout, celle qui attendait derrière n'est jamais dite."""
 
     from jarvis.runtime.speech_scheduler import SpeechScheduler
+    from jarvis.runtime.output_admission import OutputAdmissionState
 
     backend = ScriptedBackend(replies={"Un.": "Réponse une, en cours de lecture.", "Deux.": "Réponse deux, en attente."})
     brain, events, state, conversation_id, _sink = await _orchestrator(tmp_path, backend)
-    session, journal, core = PlayingSession(), RecordingSink(), BusCore(events)
+    session, journal, core = PlayingSession(), RecordingSink(), BusCore(events, brain)
     scheduler = SpeechScheduler(core=core, conversation_id=conversation_id, session=session, journal=journal, reconnect_delay_s=0.0, output_timeout_s=5.0)
+    session.admission = scheduler.output_admission
     await scheduler.start()
     try:
         await asyncio.wait_for(core.subscribed.wait(), timeout=TIMEOUT_S)
         await brain.submit(BrainTurnInput(conversation_id=conversation_id, text="Un."))
-        await _until(lambda: session.spoken == ["Réponse une, en cours de lecture."])
+        await _until(lambda: len(session.requests) == 1)
+        output_id = session.active_output_id
+        token = scheduler.output_admission(output_id)
+        assert token.state is OutputAdmissionState.RESERVED
+        if write_started:
+            assert session.begin_write(output_id)
+            assert token.state is OutputAdmissionState.WRITE_STARTED
 
         # L'utilisateur relance pendant la lecture : la réponse deux arrive et attend.
-        await brain.submit(BrainTurnInput(conversation_id=conversation_id, text="Deux."))
+        second_turn = BrainTurnInput(conversation_id=conversation_id, text="Deux.")
+        await brain.submit(second_turn)
         await _until(lambda: scheduler.pending_count == 1)
+        [second_queued] = [data for data in journal.of("voice.speech.queued")
+                           if data["correlation_id"] == second_turn.correlation_id]
+        second_speech_id = second_queued["speech_id"]
         # Il relance encore avant qu'elle soit dite.
         await brain.submit(BrainTurnInput(conversation_id=conversation_id, text="Trois."))
         await _until(lambda: scheduler.pending_count == 0)
 
-        assert session.cancelled == 0 and session.active_output_id == "out-1"
-        await scheduler.note_output_event(ProtocolEnvelope(message_type="realtime.response_done", payload={"output_id": "out-1", "status": "completed"}))
+        assert session.cancelled == 0
+        if write_started:
+            assert session.invalidated == [] and session.active_output_id == output_id
+            assert token.state is OutputAdmissionState.WRITE_STARTED
+            token.finish_write(succeeded=True)
+        else:
+            await _until(lambda: session.invalidated == [output_id])
+            assert token.state is OutputAdmissionState.INVALIDATED
+            assert not session.begin_write(output_id) and session.spoken == []
+        await scheduler.note_output_event(ProtocolEnvelope(message_type="realtime.response_done", payload={"output_id": output_id, "status": "completed"}))
         await asyncio.sleep(0.05)
 
-        assert session.spoken == ["Réponse une, en cours de lecture."]
+        assert session.spoken == (["Réponse une, en cours de lecture."] if write_started else [])
+        assert len(session.requests) == 1  # The queued second answer never gets an output reservation.
         dropped = [data for kind, _level, data in journal.events if kind == "voice.speech.superseded"]
-        assert [data["reason"] for data in dropped] == ["work_superseded"]
+        [second_dropped] = [data for data in dropped if data["speech_id"] == second_speech_id]
+        assert (second_dropped["correlation_id"], second_dropped["work_id"], second_dropped["reason"]) == (
+            second_turn.correlation_id, f"brain-turn:{second_turn.correlation_id}", "dependency_revoked")
+        # The first candidate may also acquire a stale dependency diagnosis;
+        # this is separate from cancelling its already-started native write.
+        other_dropped = [data for data in dropped if data["speech_id"] != second_speech_id]
+        assert all(data["speech_id"] == session.requests[output_id].id for data in other_dropped)
     finally:
         await scheduler.stop()
         await brain.stop()

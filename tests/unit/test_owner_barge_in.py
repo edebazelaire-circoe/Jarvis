@@ -586,7 +586,7 @@ async def test_open_room_keeps_the_acoustic_barge_in_even_with_a_verifier():
         assert source.listeners == []
         bridge._on_capture_signal(NEAR_END_SIGNAL)
         await live.idle()
-        assert audio.gains == [pytest.approx(bridge.barge_in_duck_gain)]
+        assert audio.gains == []
         await live.send(event("realtime.speech_started"))
 
     assert audio.stop_output_calls == 1

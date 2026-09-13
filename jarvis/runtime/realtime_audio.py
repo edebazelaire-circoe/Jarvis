@@ -6,8 +6,9 @@ import json
 import threading
 import time
 import unicodedata
+import uuid
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
@@ -19,9 +20,14 @@ from jarvis.core.latency import (
 )
 from jarvis.domain.speaker import OwnerState, OwnerStateSnapshot, VerifierAvailability
 from jarvis.domain.v2 import AddressingDecision, PlaybackCursor, ProtocolEnvelope, SpeechProvenance, new_id
+from jarvis.domain.voice_playback import (
+    VoiceAudioPart, VoiceAudioPartExtent, VoiceDevicePlaybackProof,
+    VoiceDevicePlaybackStatus, VoicePlaybackManifest,
+)
 from jarvis.ports.v2 import RealtimeSession, supports_output_control
 from jarvis.protocol.client import CoreProtocolError, LocalCoreClient
 from jarvis.runtime.journal import RuntimeJournal
+from jarvis.runtime.output_admission import OutputAdmission, OutputAdmissionState
 from jarvis.runtime.turn_filters import EchoGuard, looks_like_request, mentions_jarvis, noise_reason, words
 
 if TYPE_CHECKING:
@@ -49,7 +55,7 @@ class BargeInAuthority(StrEnum):
     (`RealtimeConversationBridge._barge_in`).
 
     - `ACOUSTIC` : le comportement historique, salle ouverte. La parole proche
-      captée localement baisse la voix de JARVIS, le `speech_started` du
+      captée localement ne change pas le volume ; le `speech_started` du
       fournisseur la coupe.
     - `OWNER` : Solo Owner (D04, D05, D09). Seule la confirmation locale du
       propriétaire par le vérificateur de locuteur coupe. La parole proche ne
@@ -82,6 +88,7 @@ AUTHORIZATION_REFUSED_KIND = "voice.authorization_refused"
 # Le journal ne porte que des identifiants, des types et des durées : la clé de
 # jointure est nommée dans la charge utile, jamais le texte qui l'a produite.
 LATENCY_SURFACE_FIRST_AUDIO_KIND = "voice.latency.surface_first_audio"
+LATENCY_FIRST_AUDIBLE_REACTION_KIND = "voice.latency.first_audible_write"
 LATENCY_BRAIN_TURN_ACCEPTED_KIND = "voice.latency.brain_turn_accepted"
 
 
@@ -118,7 +125,6 @@ ORDERED_OUTPUT_EVENTS = frozenset(
 # Accusé de réception de surface : réservé aux vraies demandes. « Merci »,
 # « d'accord » ou un « oui » de confirmation n'appellent pas de « je m'en
 # occupe » — le cerveau y répond directement.
-REFLEX_MIN_WORDS = 4
 
 
 def _optional_text(value: object) -> str | None:
@@ -181,8 +187,7 @@ class SoundDeviceRealtimeAudio:
     compte de ce qui a été joué pour la sortie vocale en cours, exposé par
     `playback_cursor()`. Deux verrous distincts, jamais imbriqués :
 
-    - `_output_lock` protège le flux PortAudio, exactement comme avant. Rien
-      n'a été ajouté à l'intérieur de sa section critique.
+    - `_output_lock` sérialise write/start/drain/abort/close du flux PortAudio.
     - `_cursor_lock` protège les seuls compteurs. Il n'est jamais pris pendant
       qu'un thread est à l'intérieur de PortAudio : la boucle d'évènements peut
       donc lire le curseur pendant qu'un bloc de 100 ms s'écrit, sans attendre,
@@ -200,8 +205,8 @@ class SoundDeviceRealtimeAudio:
     signaux de parole proche remontent sur la boucle par `on_capture_signal`.
     """
 
-    # La lecture est découpée pour que la fermeture n'attende jamais plus d'un
-    # bloc : l'interruption reste réactive sans jamais couper une écriture.
+    # Budget de découpage des writes, pas une garantie de durée du driver.
+    # Une attente native lente conserve son owner et expose cleanup pending.
     OUTPUT_CHUNK_FRAMES = 2400  # 100 ms à 24 kHz, la fréquence de sortie usuelle
     _BYTES_PER_FRAME = 2  # int16 mono
 
@@ -214,17 +219,42 @@ class SoundDeviceRealtimeAudio:
         input_sample_rate: int | None = None,
         output_sample_rate: int | None = None,
         capture: "CaptureProcessor | None" = None,
+        device_wait_s: float = 0.25,
+        journal: RuntimeJournal | None = None,
     ) -> None:
         self.input_device = input_device
         self.output_device = output_device
         # Traitement duplex du micro (mode continu) ; absent, le micro part tel
         # quel, exactement comme avant.
         self.capture = capture
+        self.device_wait_s = max(0.01, float(device_wait_s))
+        self.journal = journal
+        self.audio_instance_id = str(uuid.uuid4())
+        self._native_tasks: set[asyncio.Task] = set()
+        self._start_task: asyncio.Task | None = None
+        self._stop_task: asyncio.Task | None = None
+        self._close_task: asyncio.Task | None = None
+        self._input_close_task: asyncio.Task | None = None
+        self._drain_task: asyncio.Task | None = None
+        # Live has no provider output-final event. Its checked native drain may
+        # outlive the small bridge wait budget, so retain the native operation
+        # and the exact epochs it proves for late reconciliation.
+        self._live_drain_task: asyncio.Task | None = None
+        self._live_drain_epochs: tuple[int, int] | None = None
+        self._live_drain_token = 0
+        self._completion_task: asyncio.Task | None = None
+        self._completion_key = None
+        self._released_stream_ids: set[int] = set()
+        self._drain_result = None
+        self._output_stopped = False
+        self._output_unavailable = False
+        self._written_parts: dict[object, int] = {}
+        self._output_part = None
+        self._write_incomplete = False
         # Appelé sur la boucle asyncio pour chaque signal de la capture
         # (`jarvis.audio.duplex.NEAR_END`). Posé par le bridge.
         self.on_capture_signal: Callable[[str], object] | None = None
-        # Gain appliqué aux blocs suivants : le barge-in baisse la voix de
-        # JARVIS dès que l'utilisateur semble parler, avant de la couper.
+        # Gain des prochains blocs ; un candidat faible ne le change jamais.
         self._output_gain = 1.0
         self._applied_gain = 1.0
         # Les deux sens n'ont pas forcément la même fréquence : OpenAI Realtime
@@ -235,6 +265,7 @@ class SoundDeviceRealtimeAudio:
         self.output_sample_rate = int(output_sample_rate or sample_rate)
         self.captured_bytes = 0
         self.sent_bytes = 0
+        self._last_capture_at: float | None = None
         self._input = None
         self._output = None
         self._queue: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=64)
@@ -266,7 +297,54 @@ class SoundDeviceRealtimeAudio:
         self._item_offset_bytes = 0
         self._output_latency_ms = 0.0
 
+    def _device_trace(self, kind: str, *, level: str = "info", **data: object) -> None:
+        if self.journal is not None:
+            self.journal.emit(kind, "Audio device lifecycle", level=level,
+                              data={"audio_instance_id": self.audio_instance_id, **data})
+
+    def _native(self, operation: str, fn, *args) -> asyncio.Task:
+        task = asyncio.create_task(asyncio.to_thread(fn, *args), name=f"jarvis-audio-{operation}")
+        self._native_tasks.add(task)
+        def finished(done):
+            self._native_tasks.discard(done)
+            if not done.cancelled() and (error := done.exception()) is not None:
+                self._output_unavailable = True
+                self._device_trace("audio.native_failed", level="error", code="audio_native_failed",
+                                   operation=operation, exception_type=type(error).__name__)
+        task.add_done_callback(finished)
+        return task
+
+    async def _bounded_device_wait(self, task: asyncio.Task, operation: str) -> bool:
+        try:
+            await asyncio.wait_for(asyncio.shield(task), self.device_wait_s)
+            return True
+        except asyncio.TimeoutError:
+            self._device_trace("audio.cleanup_pending", level="warning", code="audio_device_pending",
+                               operation=operation, cleanup_pending=True)
+            return False
+
+    @property
+    def cleanup_pending(self) -> bool:
+        return any(task is not None and not task.done() for task in (self._close_task, self._stop_task))
+
+    @property
+    def device_closed(self) -> bool:
+        return (self._closing and self._close_task is not None and self._close_task.done()
+                and not self._close_task.cancelled() and self._close_task.exception() is None)
+
     async def start(self) -> None:
+        if self._closing:
+            raise RuntimeError("audio_device_closing")
+        if self._start_task is None:
+            self._start_task = asyncio.create_task(self._open(), name="jarvis-audio-open-owner")
+        try:
+            await asyncio.shield(self._start_task)
+        except asyncio.CancelledError:
+            # Opening also survives cancellation: close waits for its owned result.
+            await self.close()
+            raise
+
+    async def _open(self) -> None:
         try:
             import sounddevice as sd  # type: ignore
         except ImportError as exc:
@@ -298,28 +376,31 @@ class SoundDeviceRealtimeAudio:
 
         def open_streams():
             input_stream = sd.RawInputStream(samplerate=self.sample_rate, channels=1, dtype="int16", device=self.input_device, blocksize=1200, callback=callback)
+            self._input = input_stream  # Ownership begins at creation, even if start/cleanup fails.
+            output_stream = None
             try:
                 output_stream = sd.RawOutputStream(samplerate=self.output_sample_rate, channels=1, dtype="int16", device=self.output_device)
+                self._output = output_stream
                 input_stream.start(); output_stream.start()
             except Exception:
-                self._shutdown_stream(input_stream, abort=True)
+                self._shutdown(input_stream, output_stream)
                 raise
             return input_stream, output_stream
 
         try:
             # L'ouverture PortAudio coûte plusieurs centaines de millisecondes :
             # la laisser sur la boucle gèle le clavier et les signaux visuels.
-            self._input, self._output = await asyncio.to_thread(open_streams)
+            self._input, self._output = await asyncio.shield(self._native("open", open_streams))
             with self._cursor_lock:
                 self._output_latency_ms = self._stream_latency_ms()
         except Exception as exc:
-            await self.close()
             raise RuntimeError(f"Impossible d'ouvrir les périphériques audio Voice: {type(exc).__name__}") from exc
 
     def _deliver_capture(self, captured: int, processed: bytes, signals: tuple[str, ...]) -> None:
         """Remettre sur la boucle un bloc traité par la capture duplex."""
 
         self.captured_bytes += captured
+        self._last_capture_at = time.monotonic()
         if processed:
             # Le bloc qui porte un rejeu contient un début de phrase que la
             # capture a déjà marqué envoyé (`_sent_until`) : personne ne le
@@ -404,6 +485,7 @@ class SoundDeviceRealtimeAudio:
         self._applied_gain = target
         if target == 1.0 and start == 1.0:
             return block
+        self._write_incomplete = True  # Includes a recovery ramp from reduced gain.
         import numpy as np
 
         samples = np.frombuffer(block, dtype=np.int16).astype(np.float32)
@@ -412,7 +494,32 @@ class SoundDeviceRealtimeAudio:
 
     def _enqueue(self, raw: bytes) -> None:
         self.captured_bytes += len(raw)
+        self._last_capture_at = time.monotonic()
         self._put_input(raw)
+
+    @property
+    def input_evidence_available(self) -> bool:
+        """The input device is open and callbacks are still arriving."""
+        observed = self._last_capture_at
+        return bool(
+            self.capture is not None and self._input is not None
+            and not self._closing and not self.cleanup_pending
+            and observed is not None and time.monotonic() - observed <= 2.5
+        )
+
+    @property
+    def input_speech_active(self) -> bool:
+        return bool(
+            self.capture is not None
+            and getattr(self.capture, "near_end_observed", False)
+        )
+
+    @property
+    def output_evidence_available(self) -> bool:
+        return bool(
+            self._output is not None and not self._closing
+            and not self._output_unavailable and not self.cleanup_pending
+        )
 
     def _put_input(self, raw: bytes, *, replay: bool = False) -> bool:
         """Mettre un bloc capté en file d'envoi ; rend True si un rejeu a été perdu.
@@ -453,13 +560,17 @@ class SoundDeviceRealtimeAudio:
             self.sent_bytes += len(raw)
 
     async def stop_input(self) -> None:
-        stream, self._input = self._input, None
-        if stream is not None:
-            # Volontairement synchrone : stop() attend la fin des callbacks en
-            # vol, et rester sur la boucle garantit que tout ce qu'ils y ont
-            # planifié est déjà en file avant le marqueur ci-dessous. Le passer
-            # dans un thread ferait perdre les derniers blocs capturés.
-            self._shutdown_stream(stream, abort=False)
+        if self._start_task is not None:
+            await asyncio.gather(asyncio.shield(self._start_task), return_exceptions=True)
+        stream = self._input
+        if stream is not None and id(stream) not in self._released_stream_ids and (self._input_close_task is None or self._input_close_task.done()):
+            self._input_close_task = self._native("input-close", self._shutdown_stream, stream, False)
+        if self._input_close_task is not None:
+            try:
+                await asyncio.shield(self._input_close_task)
+            finally:
+                if stream is not None and id(stream) in self._released_stream_ids and self._input is stream:
+                    self._input = None
         # PortAudio has stopped, but its final thread callbacks may still be
         # scheduled on this loop. Enqueue them before the end-of-input marker.
         await asyncio.sleep(0)
@@ -473,6 +584,8 @@ class SoundDeviceRealtimeAudio:
         output_id: str | None = None,
         response_id: str | None = None,
         item_id: str | None = None,
+        content_index: int | None = None,
+        output_index: int | None = None,
     ) -> None:
         """Déclarer la sortie vocale à laquelle la comptabilité s'applique.
 
@@ -494,11 +607,16 @@ class SoundDeviceRealtimeAudio:
 
         identity = output_id or speech_id
         with self._cursor_lock:
+            part = VoiceAudioPart(item_id, content_index, output_index) if item_id and type(content_index) is int else None
             current = self._output_id or self._output_speech_id
             if identity and identity != current:
                 self._output_epoch += 1
                 self._playback_epoch += 1
                 self._output_written_bytes = 0
+                self._written_parts = {}
+                self._output_part = part
+                self._write_incomplete = False
+                self._drain_result = None
                 self._item_offset_bytes = 0
                 self._output_speech_id = speech_id or None
                 self._output_id = output_id or None
@@ -509,7 +627,10 @@ class SoundDeviceRealtimeAudio:
             self._output_speech_id = self._output_speech_id or speech_id or None
             self._output_id = self._output_id or output_id or None
             self._output_response_id = self._output_response_id or response_id or None
-            if item_id and self._output_item_id and item_id != self._output_item_id:
+            previous_part = self._output_part
+            self._output_part = part
+            if item_id and self._output_item_id and (item_id != self._output_item_id or
+                    (part is not None and previous_part is not None and part != previous_part)):
                 # Élément suivant de la même réponse : il commence ici.
                 self._item_offset_bytes = self._output_written_bytes
                 self._output_item_id = item_id
@@ -537,6 +658,7 @@ class SoundDeviceRealtimeAudio:
                 played_ms=max(0, int(self._played_ms_locked() - item_start_ms)),
                 provider_response_id=self._output_response_id,
                 provider_item_id=self._output_item_id,
+                content_index=self._output_part.content_index if self._output_part is not None else None,
             )
 
     @property
@@ -552,26 +674,12 @@ class SoundDeviceRealtimeAudio:
 
     @property
     def played_output_ms(self) -> int:
-        """Millisecondes réellement jouées, estimation basse assumée.
+        """Estimation conservatrice : durée écrite moins latence déclarée.
 
-        `write()` bloque tant que le tampon du périphérique est plein : l'audio
-        écrit ne devance donc jamais l'audio joué de plus d'un tampon, dont
-        `sounddevice` annonce la durée (`stream.latency`). On retranche cette
-        durée de ce qui a été écrit.
-
-        Le sens de l'erreur est choisi, pas subi :
-
-        - à l'interruption, `abort()` jette le contenu du tampon, qui n'est donc
-          jamais entendu : l'estimation est alors *exacte*, et c'est le seul cas
-          qui compte pour un barge-in ;
-        - à la fin naturelle d'une réponse, le tampon se vide et est entendu :
-          l'estimation sous-évalue d'au plus un tampon. Tronquer trop court fait
-          croire au modèle qu'il a dit moins que ce qui a été entendu, ce qui
-          reste conforme au critère d'acceptation (l'historique ne doit jamais
-          prétendre que l'utilisateur a entendu de l'audio coupé) ;
-        - un flux qui n'annonce pas de latence (flux de test) vaut zéro : le
-          curseur se confond alors avec l'audio écrit et surestime d'au plus un
-          tampon. Les périphériques réels annoncent toujours leur latence.
+        Ce curseur aide la troncature ; ni une latence nulle/mal renseignée ni
+        un retour de write ne constituent une preuve de lecture complète.
+        Les mots partiellement entendus restent inconnus. Seul complete_output
+        certifie les octets au terme d'un drain checked avec identité intacte.
         """
 
         with self._cursor_lock:
@@ -602,26 +710,67 @@ class SoundDeviceRealtimeAudio:
             # l'erreur documenté sur `played_output_ms`.
             return 0.0
 
-    def _credit_written(self, epoch: int, size: int) -> None:
+    def _credit_written(self, epoch: int, size: int, part: VoiceAudioPart | None = None) -> None:
         with self._cursor_lock:
             if epoch != self._output_epoch:
                 # La sortie a changé pendant l'écriture : ces octets
                 # appartiennent à la précédente, surtout pas à la nouvelle.
                 return
             self._output_written_bytes += size
+            if part is None:
+                self._write_incomplete = True
+            else:
+                self._written_parts[part] = self._written_parts.get(part, 0) + size
 
-    async def play_b64(self, value: str) -> None:
+    async def play_b64(self, value: str) -> bool:
+        return await self.play_b64_guarded(value, None)
+
+    async def play_b64_guarded(self, value: str, admission: OutputAdmission | None) -> bool:
         if not value:
-            return
+            return False
+        if (self._closing or self._output_unavailable or self.cleanup_pending
+                or (self._start_task is not None and not self._start_task.done())
+                or (self._drain_task is not None and not self._drain_task.done())):
+            return False  # Quarantine before a worker can wait on a stuck native lock.
         # Époques figées sur la boucle, *avant* de passer au thread : si un
         # `stop_output()` survient entre-temps, le thread doit voir que ce bloc
         # appartient au passé. Les lire au démarrage du thread laissait jouer
         # un bloc entier après la coupure.
         with self._cursor_lock:
             epochs = (self._output_epoch, self._playback_epoch)
-        await asyncio.to_thread(self._write_output, base64.b64decode(value), epochs)
+            part = self._output_part
+        return await asyncio.shield(self._native("write", self._write_output, base64.b64decode(value), epochs, admission, part))
 
-    def _write_output(self, pcm: bytes, epochs: tuple[int, int] | None = None) -> None:
+    async def wait_output_ready(self, admission: OutputAdmission | None) -> bool:
+        """Wait behind an in-flight device operation, then recheck output ownership.
+
+        This remains a preflight check: the writer repeats every check immediately
+        before the native write. It lets the event-loop callback avoid announcing
+        speech for an output invalidated while it waited for the device lock.
+        """
+        if (self._closing or self._output_unavailable or self.cleanup_pending
+                or (self._start_task is not None and not self._start_task.done())
+                or (self._drain_task is not None and not self._drain_task.done())):
+            return False
+        with self._cursor_lock:
+            playback_epoch = self._playback_epoch
+        return await asyncio.shield(
+            self._native("prewrite", self._output_ready, playback_epoch, admission)
+        )
+
+    def _output_ready(self, playback_epoch: int, admission: OutputAdmission | None) -> bool:
+        with self._output_lock:
+            return bool(
+                self._output is not None
+                and not self._closing
+                and not self._output_unavailable
+                and not self.cleanup_pending
+                and playback_epoch == self._playback_epoch
+                and (admission is None or admission.can_write())
+            )
+
+    def _write_output(self, pcm: bytes, epochs: tuple[int, int] | None = None, admission: OutputAdmission | None = None,
+                      part: VoiceAudioPart | None = None) -> bool:
         """Écrire la réponse par blocs, verrou tenu.
 
         Ce thread survit à l'annulation de la tâche qui l'a lancé : le verrou
@@ -644,109 +793,292 @@ class SoundDeviceRealtimeAudio:
                 epochs = (self._output_epoch, self._playback_epoch)
         epoch, playback_epoch = epochs
         capture = self.capture
+        wrote = False
         for offset in range(0, len(pcm), step):
             block = self._apply_gain(pcm[offset:offset + step])
             with self._output_lock:
                 stream = self._output
-                if stream is None or self._closing or playback_epoch != self._playback_epoch:
-                    return
-                stream.write(block)
-            self._credit_written(epoch, len(block))
+                if stream is None or self._closing or self._output_unavailable or playback_epoch != self._playback_epoch or self.cleanup_pending:
+                    return wrote
+                if admission is not None and admission.state is OutputAdmissionState.INVALIDATED:
+                    return wrote
+                try:
+                    if self._output_stopped:
+                        stream.start()
+                        self._output_stopped = False
+                    # A slow native start may outlive Stop or the preamble TTL.
+                    # Admission remains immediately before the first real write.
+                    if self._closing or playback_epoch != self._playback_epoch or self.cleanup_pending or self._output_unavailable:
+                        return wrote
+                    if admission is not None and not admission.begin_write():
+                        return wrote
+                    stream.write(block)
+                except BaseException:
+                    if admission is not None:
+                        admission.finish_write(succeeded=False)
+                    raise
+                if admission is not None:
+                    admission.finish_write(succeeded=True)
+                wrote = True
+            self._credit_written(epoch, len(block), part)
             if capture is not None and playback_epoch == self._playback_epoch:
                 # Ce qui vient d'entrer dans le tampon du périphérique sera
                 # entendu, donc renverra de l'écho : l'annuleur doit le savoir.
                 # Coupé entre-temps, `abort()` l'a jeté : il ne sera jamais
                 # entendu, et le compter ferait croire que JARVIS parle encore.
                 capture.push_reference(block)
+        return wrote
 
-    async def stop_output(self) -> None:
-        """Couper la lecture en cours sans fermer le flux d'entrée.
-
-        C'est l'arrêt du barge-in (spec §12) : jusqu'ici seul `close()` savait
-        interrompre la parole, mais il ferme aussi le micro — inacceptable en
-        mode continu, où le tour de l'utilisateur commence précisément par la
-        phrase qui coupe JARVIS.
-
-        Même invariant de sûreté que `close()`, pour la même raison : l'époque
-        est changée **avant** de prendre le verrou, si bien qu'une écriture en
-        vol rend la main au prochain bloc au lieu de faire attendre l'arrêt, et
-        `abort()` n'est appelé que le verrou tenu, donc jamais pendant qu'un
-        thread est à l'intérieur de PortAudio (violation d'accès 0xC0000005).
-
-        C'est bien l'époque, et non un drapeau rendu à la fin de l'appel, qui
-        invalide l'écriture : le thread d'écriture et celui qui interrompt se
-        disputent le même verrou, et un drapeau rendu trop tôt laisserait le
-        premier reprendre là où il en était — le son repartirait juste après
-        l'interruption.
-
-        `abort()` jette le tampon du périphérique au lieu de le vider : ce qui
-        y restait n'est jamais entendu, et c'est ce qui rend `played_output_ms`
-        exact au moment où le curseur est lu. Le flux est immédiatement
-        relancé, car un flux arrêté refuse les écritures suivantes : l'objet
-        reste utilisable pour la sortie d'après, sur le même périphérique.
-
-        Ce que ceci n'arrête pas : les blocs que le fournisseur enverrait encore
-        pour la sortie coupée, puisqu'ils créeraient de nouvelles écritures. Le
-        bridge les écarte à la source (`_output_was_interrupted`).
-        """
-
+    def _invalidate_output(self) -> None:
         with self._cursor_lock:
-            # Seule l'époque de lecture avance : ni les compteurs, ni l'identité
-            # de la sortie, ni l'époque de comptabilité ne bougent. Le curseur
-            # doit rester lisible juste après l'arrêt — c'est lui qui porte la
-            # troncature — et le bloc que PortAudio était en train d'écrire a
-            # bel et bien été joué, donc il reste crédité.
             self._playback_epoch += 1
-        await asyncio.to_thread(self._abort_output)
-        if self.capture is not None:
-            # `abort()` a jeté le tampon : cette référence ne sera jamais
-            # entendue, la garder ferait croire que JARVIS parle encore.
-            self.capture.clear_reference()
-        # La prochaine sortie repart à plein volume.
-        self._output_gain = 1.0
+            self._write_incomplete = True
+            self._drain_result = None
 
-    def _abort_output(self) -> None:
+    async def complete_output(self, manifest: VoicePlaybackManifest) -> VoiceDevicePlaybackProof:
+        key = (manifest, self._output_epoch, self._playback_epoch)
+        if self._completion_task is not None and self._completion_key != key and not self._completion_task.done():
+            raise RuntimeError("audio_drain_already_pending")
+        if self._completion_task is None or self._completion_key != key:
+            self._completion_key = key
+            self._completion_task = asyncio.create_task(self._complete_output(manifest), name="jarvis-audio-drain-owner")
+        try:
+            return await asyncio.shield(self._completion_task)
+        except asyncio.CancelledError:
+            self._invalidate_output()
+            self._output_unavailable = True
+            self._request_output_stop()
+            raise
+
+    async def _complete_output(self, manifest: VoicePlaybackManifest) -> VoiceDevicePlaybackProof:
+        """Checked, all-byte drain at the player's completed-generation fence."""
+        with self._cursor_lock:
+            epochs = (self._output_epoch, self._playback_epoch)
+            actual_parts = tuple(VoiceAudioPartExtent(part, size) for part, size in self._written_parts.items())
+            parts = actual_parts or tuple(VoiceAudioPartExtent(extent.part, 0) for extent in manifest.parts)
+            written = sum(part.byte_count for part in parts)
+            eligible = (not self._closing and not self._output_unavailable and not self.cleanup_pending
+                        and not self._write_incomplete and self._output_id == manifest.output_id
+                        and self._output_response_id == manifest.provider_response_id
+                        and parts == manifest.parts and written == manifest.received_bytes
+                        and written == self._output_written_bytes)
+        stream = self._output
+        operation_id = str(uuid.uuid4())
+        status = VoiceDevicePlaybackStatus.STALE
+        started = time.monotonic()
+        fields = dict(session_id=manifest.session_id, output_id=manifest.output_id,
+                      provider_response_id=manifest.provider_response_id,
+                      audio_instance_id=self.audio_instance_id, output_epoch=epochs[0],
+                      playback_epoch=epochs[1], operation_id=operation_id,
+                      parts=parts, written_bytes=written)
+        if eligible and stream is not None:
+            self._device_trace("audio.drain_requested", session_id=manifest.session_id,
+                               operation_id=operation_id, output_id=manifest.output_id,
+                               output_epoch=epochs[0], playback_epoch=epochs[1], written_bytes=written,
+                               part_count=len(parts))
+            self._drain_task = self._native("drain", self._checked_drain, stream, epochs)
+            try:
+                complete = await self._bounded_device_wait(self._drain_task, "drain")
+                if not complete:
+                    self._invalidate_output()
+                    self._output_unavailable = True
+                    status = VoiceDevicePlaybackStatus.UNKNOWN
+                    # Serialized abort follows the owned native stop; no new stream.
+                    self._request_output_stop()
+                elif self._drain_task.result() and not self._closing and epochs == (self._output_epoch, self._playback_epoch):
+                    status = VoiceDevicePlaybackStatus.COMPLETE
+            except asyncio.CancelledError:
+                self._invalidate_output()
+                self._output_unavailable = True
+                self._request_output_stop()
+                raise
+            except Exception:
+                self._invalidate_output()
+                self._output_unavailable = True
+                status = VoiceDevicePlaybackStatus.FAILED
+                self._request_output_stop()
+        result = VoiceDevicePlaybackProof(status=status, confirmed_bytes=written if status is VoiceDevicePlaybackStatus.COMPLETE else 0, **fields)
+        self._drain_result = result
+        self._device_trace("audio.drain_result", level="error" if status is VoiceDevicePlaybackStatus.FAILED else "info",
+                           session_id=manifest.session_id, code=f"audio_drain_{status.value}",
+                           operation_id=operation_id, output_id=manifest.output_id,
+                           output_epoch=epochs[0], playback_epoch=epochs[1], written_bytes=written,
+                           confirmed_bytes=result.confirmed_bytes, status=status.value,
+                           elapsed_ms=round((time.monotonic() - started) * 1000, 3), cleanup_pending=self.cleanup_pending)
+        return result
+
+    def _checked_drain(self, stream, epochs: tuple[int, int]) -> bool:
+        with self._output_lock:
+            if self._output is not stream or self._closing or epochs != (self._output_epoch, self._playback_epoch):
+                return False
+            stream.stop(ignore_errors=False)
+            self._output_stopped = True
+            return True
+
+    async def confirm_live_output_quiescence(self) -> bool:
+        """Drain the native buffer without claiming text or provider finality."""
+        stream = self._output
+        with self._cursor_lock:
+            epochs = (self._output_epoch, self._playback_epoch)
+            eligible = (
+                stream is not None and not self._closing
+                and not self._output_unavailable and not self.cleanup_pending
+            )
+        if not eligible:
+            return False
+        self._live_drain_token += 1
+        token = self._live_drain_token
+        task = self._native("live-drain", self._checked_drain, stream, epochs)
+        self._live_drain_task = task
+        self._live_drain_epochs = epochs
+        try:
+            completed = await self._bounded_device_wait(task, "live-drain")
+            return bool(
+                completed and token == self._live_drain_token
+                and task.result() and not self._closing
+                and epochs == (self._output_epoch, self._playback_epoch)
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self._output_unavailable = True
+            return False
+
+    @property
+    def live_output_drain_token(self) -> int | None:
+        """Identity of the most recent owned Live drain, if one was started."""
+
+        return self._live_drain_token if self._live_drain_task is not None else None
+
+    async def wait_live_output_quiescence(self, token: int) -> bool:
+        """Reconcile one late Live drain without issuing another native stop."""
+
+        if type(token) is not int or token != self._live_drain_token:
+            return False
+        task = self._live_drain_task
+        epochs = self._live_drain_epochs
+        if task is None or epochs is None:
+            return False
+        try:
+            result = await asyncio.shield(task)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self._output_unavailable = True
+            return False
+        return bool(
+            result and token == self._live_drain_token and not self._closing
+            and epochs == (self._output_epoch, self._playback_epoch)
+        )
+
+    def _request_output_stop(self) -> asyncio.Task:
+        if self._stop_task is None or self._stop_task.done():
+            self._stop_task = asyncio.create_task(self._stop_owned(), name="jarvis-audio-stop-owner")
+        return self._stop_task
+
+    async def stop_output(self) -> bool:
+        """Invalidate immediately; false means native cleanup still owns output."""
+        self._invalidate_output()
+        task = self._request_output_stop()
+        return bool(task.result()) if await self._bounded_device_wait(task, "stop") else False
+
+    async def _stop_owned(self) -> bool:
+        if self._start_task is not None:
+            await asyncio.gather(asyncio.shield(self._start_task), return_exceptions=True)
+        stopped = await asyncio.shield(self._native("abort", self._abort_output))
+        if not stopped:
+            return False
+        if self.capture is not None:
+            self.capture.clear_reference()
+        self._output_gain = 1.0
+        if not self._closing:
+            self._output_unavailable = False
+        self._device_trace("audio.output_stopped", cleanup_pending=False)
+        return True
+
+    def _abort_output(self) -> bool:
         with self._output_lock:
             stream = self._output
-            if stream is None or self._closing:
-                return
+            if stream is None:
+                return True
+            if self._closing:
+                return False
+            stream.abort(ignore_errors=False)
+            self._output_stopped = True  # Next valid write starts lazily.
+            return True
+
+    async def close(self) -> bool:
+        """Bounded application wait; the owned task retains every native pointer."""
+        if not self._closing:
+            self._closing = True
+            self._invalidate_output()
+        if self._close_task is None or (self._close_task.done() and not self.device_closed):
+            self._close_task = asyncio.create_task(self._close_owned(), name="jarvis-audio-close-owner")
+        return await self._bounded_device_wait(self._close_task, "close")
+
+    async def _close_owned(self) -> None:
+        if self._start_task is not None:
+            await asyncio.gather(asyncio.shield(self._start_task), return_exceptions=True)
+        input_error = None
+        if self._input_close_task is not None:
+            await asyncio.gather(asyncio.shield(self._input_close_task), return_exceptions=True)
+            if self._input is not None and id(self._input) in self._released_stream_ids:
+                self._input = None
+        if self._input is not None:
             try:
-                stream.abort()
-                stream.start()
-            except Exception:
-                # Même politique que `_shutdown_stream` : couper la sortie est
-                # au mieux best effort côté périphérique, et lever ici priverait
-                # le barge-in de sa troncature alors que le son s'est arrêté.
-                pass
+                await asyncio.shield(self._native("input-close", self._shutdown_stream, self._input, False))
+            except Exception as exc:
+                input_error = exc
+            finally:
+                if id(self._input) in self._released_stream_ids:
+                    self._input = None
+        # Stop/close and outstanding writes/drain retain their tasks independently
+        # of a cancelled bridge. Closing forbids admission of any new write.
+        if self._stop_task is not None:
+            await asyncio.gather(asyncio.shield(self._stop_task), return_exceptions=True)
+        if self._native_tasks:
+            await asyncio.gather(*(asyncio.shield(task) for task in tuple(self._native_tasks)), return_exceptions=True)
+        await asyncio.shield(self._native("close", self._shutdown, self._input, self._output))
+        self._input = self._output = None
+        if input_error is not None:
+            raise input_error
+        self._device_trace("audio.device_closed", cleanup_pending=False)
 
-    async def close(self) -> None:
-        # Signalé avant de prendre le verrou : une lecture en cours s'arrête au
-        # prochain bloc au lieu de faire attendre la fermeture jusqu'au bout.
-        self._closing = True
-        input_stream, self._input = self._input, None
-        output_stream, self._output = self._output, None
-        if input_stream is None and output_stream is None:
-            return
-        await asyncio.to_thread(self._shutdown, input_stream, output_stream)
-
-    def _shutdown(self, input_stream, output_stream) -> None:  # noqa: ANN001
+    def _shutdown(self, input_stream, output_stream) -> None:
+        errors = []
         if input_stream is not None:
-            self._shutdown_stream(input_stream, abort=False)
+            try:
+                self._shutdown_stream(input_stream, abort=False)
+            except Exception as exc:
+                errors.append(exc)
+            finally:
+                if id(input_stream) in self._released_stream_ids and self._input is input_stream:
+                    self._input = None
         if output_stream is not None:
-            # abort() coupe la lecture en cours au lieu de vider le tampon, ce
-            # qu'on veut pour une interruption ; le verrou garantit qu'aucun
-            # thread n'est alors à l'intérieur de PortAudio.
             with self._output_lock:
-                self._shutdown_stream(output_stream, abort=True)
+                try:
+                    self._shutdown_stream(output_stream, abort=True)
+                except Exception as exc:
+                    errors.append(exc)
+                finally:
+                    if id(output_stream) in self._released_stream_ids and self._output is output_stream:
+                        self._output = None
+        if errors:
+            raise RuntimeError("audio_device_close_failed") from errors[0]
 
-    @staticmethod
-    def _shutdown_stream(stream, abort: bool) -> None:  # noqa: ANN001
+    def _shutdown_stream(self, stream, abort: bool) -> None:
+        failure = None
         try:
-            stream.abort() if abort else stream.stop()
-            stream.close()
+            stream.abort(ignore_errors=False) if abort else stream.stop(ignore_errors=False)
+        except Exception as exc:
+            failure = exc
+        try:
+            stream.close(ignore_errors=False)
+            self._released_stream_ids.add(id(stream))
         except Exception:
-            # Audio-device teardown is best effort; session shutdown still proceeds.
-            pass
+            raise
+        if failure is not None:
+            raise failure
 
 
 class RealtimeConversationBridge:
@@ -824,8 +1156,11 @@ class RealtimeConversationBridge:
         on_interruption: Callable[[PlaybackCursor | None], object] | None = None,
         on_user_speech: Callable[[bool], object] | None = None,
         on_reflex: Callable[..., object] | None = None,
+        output_admission: Callable[[str], OutputAdmission | None] | None = None,
         auto_turn: bool = False,
         continuous: bool = False,
+        direct_conversation: bool = False,
+        on_conversation=None,
         classifier: ConservativeAddressingClassifier | None = None,
         journal: RuntimeJournal | None = None,
         claude=None,
@@ -873,6 +1208,8 @@ class RealtimeConversationBridge:
         # Mode continu : la session couvre plusieurs tours, donc le flux
         # d'entrée n'est jamais fermé entre eux. Voir `_consume`.
         self.continuous = continuous
+        self.direct_conversation = direct_conversation
+        self.on_conversation = on_conversation
         self.classifier = classifier or ConservativeAddressingClassifier()
         self.journal = journal
         # Passerelle vers l'agent Claude local. Absente, l'outil `claude_task`
@@ -905,6 +1242,7 @@ class RealtimeConversationBridge:
         # remettrait du son après que l'utilisateur a repris la parole. Borné
         # par le nombre de barge-ins, purgé à la fin de chaque réponse.
         self._interrupted_outputs: set[str] = set()
+        self._terminal_outputs: deque[str] = deque()
         # Parole coupée par l'utilisateur, transmise une seule fois au prochain
         # tour cerveau faisant autorité (spec §12, étape 6).
         self._interrupted_speech_id: str | None = None
@@ -918,11 +1256,14 @@ class RealtimeConversationBridge:
         # est rappelé sur le tour cerveau pour relier les deux mesures d'un même
         # tour lorsqu'aucune corrélation n'existe encore.
         self._speech_segment_id: str | None = None
+        self._speech_segment_started_at: float | None = None
         # Sorties dont le premier bloc audio a déjà été relayé à l'ordonnanceur.
         # Sans ce garde, le relais partirait à chaque bloc — cinquante fois par
         # seconde — alors qu'une seule notification suffit à dater la latence.
         # Purgé à la fin de chaque réponse.
         self._audio_notified_outputs: set[str] = set()
+        self._provider_pcm_outputs: set[str] = set()
+        self._playback_attempted_outputs: set[str] = set()
 
         # -- mode continu : tours, écho, barge-in -----------------------------
         # Prévient l'ordonnanceur que l'utilisateur parle (VAD serveur) : il ne
@@ -930,6 +1271,7 @@ class RealtimeConversationBridge:
         self.on_user_speech = on_user_speech
         # Demande d'accusé de réception à l'ordonnanceur, après un tour adressé.
         self.on_reflex = on_reflex
+        self.output_admission = output_admission
         self._clock = clock or time.monotonic
         self.engagement_window_s = engagement_window_s
         self.barge_in_confirm_s = barge_in_confirm_s
@@ -1006,6 +1348,12 @@ class RealtimeConversationBridge:
         self._playout: asyncio.Queue | None = None
         self._seq = 0
         self._queued_audio = 0
+        self._device_fence_pending = 0
+        self._live_output_quiescent = True
+        # Byte generation, separate from provider output identity: Live may
+        # append more PCM to the same output while a native drain is pending.
+        self._live_output_generation = 0
+        self._live_drain_reconcile: asyncio.Task | None = None
         self._drop_audio_before = 0
         self._unfinished = 0
         self._idle = asyncio.Event()
@@ -1066,11 +1414,15 @@ class RealtimeConversationBridge:
             output_id=_optional_text(payload.get("output_id")),
             response_id=_optional_text(payload.get("response_id")),
             item_id=_optional_text(payload.get("item_id")),
+            content_index=payload.get("content_index"),
+            output_index=payload.get("output_index"),
         )
 
     def _output_was_interrupted(self, payload: dict[str, object]) -> bool:
         """Vrai si cet évènement appartient à une sortie déjà coupée."""
 
+        if getattr(self.session, "playback_suppressed", False):
+            return True  # Live cannot identify a safe new output after interruption.
         identity = self._output_identity(payload)
         return identity is not None and identity in self._interrupted_outputs
 
@@ -1082,20 +1434,25 @@ class RealtimeConversationBridge:
         if identity is None or identity == self._live_output_identity:
             self._live_output_identity = None
         if identity is not None:
-            self._interrupted_outputs.discard(identity)
+            if identity not in self._terminal_outputs:
+                self._terminal_outputs.append(identity)
+            self._interrupted_outputs.add(identity)
+            while len(self._terminal_outputs) > 128:
+                self._interrupted_outputs.discard(self._terminal_outputs.popleft())
             self._received_outputs.pop(identity, None)
         output_id = _optional_text((event.payload or {}).get("output_id"))
         if output_id is not None:
             self._audio_notified_outputs.discard(output_id)
+            self._provider_pcm_outputs.discard(output_id)
+            self._playback_attempted_outputs.discard(output_id)
 
     async def _barge_in(self, *, owner: OwnerStateSnapshot | None = None) -> None:
         """Interrompre JARVIS parce que l'utilisateur parle (spec §12, mode continu).
 
-        Ordre imposé, et c'est tout l'intérêt de la méthode : l'arrêt local
-        d'abord, le fournisseur ensuite. `stop_output()` ne fait qu'un aller
-        vers PortAudio, donc l'utilisateur cesse d'entendre JARVIS sans attendre
-        le moindre aller-retour réseau ; l'annulation et la troncature ne
-        partent qu'après, une fois le curseur figé.
+        Invalider la sortie avant toute attente native, puis demander l'arrêt
+        local sans dépendre du fournisseur. Une deadline native rend pending,
+        jamais une fausse confirmation d'arrêt. Annulation et troncature suivent
+        avec le curseur conservateur de la partie effectivement en lecture.
 
         Rien n'est annulé côté travail : couper la parole n'est pas annuler la
         tâche (Décisions 15 et 35). Le tour utilisateur qui suit portera
@@ -1108,17 +1465,26 @@ class RealtimeConversationBridge:
         """
 
         started = time.perf_counter()
+        suppress = getattr(self.session, "suppress_playback_until_session_end", None)
+        if callable(suppress):
+            suppress()  # Fence both queued and future PCM before any device await.
         # Tout l'audio déjà reçu et pas encore joué appartient à ce qui vient
         # d'être coupé : la tâche de lecture le jettera au lieu de le jouer.
         self._drop_audio_before = self._seq
         self._barge_pending = False
         self._barge_pending_token += 1
         self._last_engaged = self._clock()
-        await self.audio.stop_output()
-        stop_stream_ms = self._capture_stream_ms() if owner is not None else None
+        if self._live_output_identity in self._received_outputs:
+            self._canonical_playback(self._received_outputs[self._live_output_identity], terminal=True)
+        interrupted = self._live_output_identity
+        targets = set(self._received_outputs)
+        if interrupted is not None:
+            targets.add(interrupted)
+        self._interrupted_outputs.update(targets)
+        stopped = await self.audio.stop_output()
+        stop_stream_ms = self._capture_stream_ms() if owner is not None and stopped is not False else None
         if owner is not None:
             self._owner_stop_stream_ms = stop_stream_ms
-        interrupted = self._live_output_identity
         # Le curseur de l'audio décrit la dernière sortie *jouée*. Si plus rien
         # ne jouait (la sortie coupée n'avait encore rien fait entendre), il
         # désignerait une phrase déjà entendue en entier : pas de curseur.
@@ -1149,6 +1515,7 @@ class RealtimeConversationBridge:
         await self._call_with(self.on_interruption, cursor)
         data: dict[str, object] = {
             "conversation_id": self.conversation_id,
+            "session_id": str(getattr(self.session, "session_id", "")) or None,
             "speech_id": cursor.speech_id if cursor is not None else None,
             "played_ms": cursor.played_ms if cursor is not None else None,
             "provider_item_id": cursor.provider_item_id if cursor is not None else None,
@@ -1158,13 +1525,15 @@ class RealtimeConversationBridge:
             # avec la tranche 09c et n'a pas besoin d'un second évènement :
             # seul son nom manquait pour qu'elle se trouve comme les cinq
             # autres. `speech_id` est sa clé de jointure.
-            "measure": LATENCY_LOCAL_OUTPUT_STOPPED,
+            "measure": LATENCY_LOCAL_OUTPUT_STOPPED if stopped is not False else "local_output_stop_requested",
             "elapsed_ms": stop_latency_ms,
+            "device_stopped": stopped is not False,
+            "cleanup_pending": stopped is False,
         }
         if owner is not None:
             data["trigger"] = BargeInAuthority.OWNER.value
-        self._trace("voice.barge_in", "L'utilisateur a coupé la parole de JARVIS", data=data)
-        if owner is not None:
+        self._trace("voice.barge_in", "Interruption demandée, nettoyage audio en attente" if stopped is False else "L'utilisateur a coupé la parole de JARVIS", data=data)
+        if owner is not None and stopped is not False:
             self._trace_owner_stop(owner, stop_stream_ms=stop_stream_ms, data=data)
         await self._cancel_provider_output(cursor)
 
@@ -1289,6 +1658,7 @@ class RealtimeConversationBridge:
 
         segment_id = new_id()
         self._speech_segment_id = segment_id
+        self._speech_segment_started_at = self._clock()
         self._latency.mark(LATENCY_SURFACE_FIRST_AUDIO, segment_id)
         return segment_id
 
@@ -1310,25 +1680,44 @@ class RealtimeConversationBridge:
 
         payload = event.payload or {}
         speech_id = _optional_text(payload.get("speech_id"))
+        output_id = _optional_text(payload.get("output_id"))
         # Le segment n'est pas refermé ici : c'est la marque qui est consommée,
         # donc un second bloc audio ne réémet rien, et l'identifiant reste
         # disponible pour relier le tour cerveau à la mesure 1.
         segment_id = self._speech_segment_id
-        if segment_id is not None:
-            self._latency.measure(
+        first_output_write = output_id is not None and output_id not in self._audio_notified_outputs
+        if segment_id is not None and first_output_write:
+            common = {
+                "conversation_id": self.conversation_id,
+                "session_id": str(getattr(self.session, "session_id", "")) or None,
+                "segment_id": segment_id,
+                "speech_id": speech_id,
+                "output_id": output_id,
+                "source": SpeechProvenance.BRAIN.value if speech_id else SpeechProvenance.SURFACE_REFLEX.value,
+            }
+            started = self._speech_segment_started_at
+            output_elapsed = None if started is None else round(max(0.0, self._clock() - started) * 1000, 1)
+            if output_elapsed is not None:
+                self._trace(
+                    "voice.latency.output_first_write",
+                    f"Output first successful audio write: {output_elapsed} ms",
+                    data={**common, "elapsed_ms": output_elapsed,
+                          "delivery_boundary": "successful_native_write"},
+                )
+            elapsed = self._latency.measure(
                 LATENCY_SURFACE_FIRST_AUDIO,
                 segment_id,
                 kind=LATENCY_SURFACE_FIRST_AUDIO_KIND,
-                data={
-                    "conversation_id": self.conversation_id,
-                    "segment_id": segment_id,
-                    "speech_id": speech_id,
-                    "output_id": _optional_text(payload.get("output_id")),
-                    "source": SpeechProvenance.BRAIN.value if speech_id else SpeechProvenance.SURFACE_REFLEX.value,
-                },
+                data=common,
             )
-        output_id = _optional_text(payload.get("output_id"))
-        if output_id is not None and output_id not in self._audio_notified_outputs:
+            if elapsed is not None:
+                self._trace(
+                    LATENCY_FIRST_AUDIBLE_REACTION_KIND,
+                    f"First successful audio write: {elapsed} ms",
+                    data={**common, "elapsed_ms": elapsed,
+                          "delivery_boundary": "successful_native_write"},
+                )
+        if first_output_write:
             self._audio_notified_outputs.add(output_id)
             await self._notify_output(event)
 
@@ -1551,6 +1940,7 @@ class RealtimeConversationBridge:
         interrupted_speech_id, self._interrupted_speech_id = self._interrupted_speech_id, None
         base = {
             "conversation_id": self.conversation_id,
+            "session_id": str(getattr(self.session, "session_id", "")) or None,
             "correlation_id": correlation_id,
             "addressing": addressing.value,
             "provider_item_id": provider_item_id,
@@ -1594,6 +1984,7 @@ class RealtimeConversationBridge:
             )
             return False
         payload = acceptance if isinstance(acceptance, dict) else {}
+        self._admit_canonical_transcript(provider_item_id, source_correlation_id=correlation_id)
         self._last_correlation_id = correlation_id
         self._trace(
             "voice.brain_turn_submitted",
@@ -1616,6 +2007,7 @@ class RealtimeConversationBridge:
             kind=LATENCY_BRAIN_TURN_ACCEPTED_KIND,
             data={
                 "conversation_id": self.conversation_id,
+                "session_id": str(getattr(self.session, "session_id", "")) or None,
                 "correlation_id": correlation_id,
                 "turn_id": payload.get("turn_id"),
                 "segment_id": self._speech_segment_id,
@@ -1725,18 +2117,49 @@ class RealtimeConversationBridge:
         self._begin_item()
         message_type = event.message_type
         payload = event.payload or {}
+        if message_type in {"realtime.audio", "realtime.output_started"} and getattr(self.session, "playback_suppressed", False):
+            self._finish_item()
+            return
+        if message_type == "realtime.audio":
+            identity = self._output_identity(payload)
+            if identity is not None and identity not in self._received_outputs:
+                if getattr(self.session, "audio_observation_starts_output", False):
+                    self._note_output_received(payload, audio=False)
+                else:
+                    self._trace("audio.output_rejected", "PCM has no live declared output",
+                                data={"code": "audio_output_not_live", "output_id": payload.get("output_id")})
+                    self._finish_item()
+                    return
+            output_id = _optional_text(payload.get("output_id")) or identity
+            if output_id is not None and output_id not in self._provider_pcm_outputs:
+                if len(self._provider_pcm_outputs) >= 256:
+                    self._provider_pcm_outputs.pop()
+                self._provider_pcm_outputs.add(output_id)
+                started = self._speech_segment_started_at
+                elapsed = None if started is None else round(max(0.0, self._clock() - started) * 1000, 1)
+                self._trace("voice.latency.provider_first_pcm", "First provider PCM received", data={
+                    "conversation_id": self.conversation_id,
+                    "session_id": str(getattr(self.session, "session_id", "")) or None,
+                    "segment_id": self._speech_segment_id,
+                    "speech_id": _optional_text(payload.get("speech_id")),
+                    "output_id": output_id,
+                    "elapsed_ms": elapsed,
+                    "delivery_boundary": "provider_pcm_received",
+                })
         if message_type in {"realtime.audio", "realtime.output_started"}:
             self._note_output_received(payload, audio=message_type == "realtime.audio")
         if message_type == "realtime.audio":
             self._queued_audio += 1
             self._enqueue_playout("audio", event)
         elif message_type in ORDERED_OUTPUT_EVENTS:
+            if message_type == "realtime.response_done" and callable(getattr(self.session, "playback_manifest", None)):
+                self._device_fence_pending += 1
             if message_type == "realtime.assistant_transcript":
                 # Retenu dès réception : l'écho de cette phrase peut revenir au
                 # micro avant qu'elle ait fini de jouer.
                 self._echo.remember(str(payload.get("text") or ""), key=self._output_identity(payload))
             self._enqueue_playout("event", event)
-        elif self.continuous and self._queued_audio > 0:
+        elif self.continuous and (self._queued_audio > 0 or self._device_fence_pending > 0):
             # De l'audio reçu avant cet évènement n'est pas encore joué : il
             # passe devant, sinon la parole de l'utilisateur attendrait la fin
             # de la phrase qu'elle doit couper. Le legacy, half-duplex, n'a
@@ -1761,13 +2184,17 @@ class RealtimeConversationBridge:
         identity = self._output_identity(payload)
         if identity is None:
             return
+        self._live_output_quiescent = False
+        if identity in self._terminal_outputs:
+            return
         entry = self._received_outputs.setdefault(
             identity,
             {"output_id": _optional_text(payload.get("output_id")), "speech_id": _optional_text(payload.get("speech_id")), "audio_ms": 0.0},
         )
         if audio:
+            self._live_output_generation += 1
             # Taille décodée d'un base64 : 3 octets pour 4 caractères, int16 mono.
-            size = len(str(payload.get("pcm_b64") or "")) * 3 // 4
+            size = len(base64.b64decode(str(payload.get("pcm_b64") or ""), validate=True))
             rate = int(getattr(self.audio, "output_sample_rate", 24000) or 24000)
             entry["audio_ms"] = float(entry["audio_ms"]) + size * 1000.0 / (rate * 2)
         while len(self._received_outputs) > 32:
@@ -1781,6 +2208,23 @@ class RealtimeConversationBridge:
         """
 
         return any(entry.get("output_id") == output_id for entry in self._received_outputs.values())
+
+    def live_idle_evidence(self):
+        """Current local microphone/device evidence for Live idle policy."""
+        from jarvis.domain.live_idle import LiveIdleEvidence
+        return LiveIdleEvidence(
+            sensor_known=bool(getattr(self.audio, "input_evidence_available", False)),
+            device_known=bool(getattr(self.audio, "output_evidence_available", False)),
+            user_speaking=bool(
+                self._user_speaking or self._local_speech or self._barge_pending
+                or getattr(self.audio, "input_speech_active", False)
+            ),
+            output_pending=bool(
+                not self._live_output_quiescent or self._playing
+                or self._queued_audio > 0 or self._device_fence_pending > 0
+                or self._unfinished > 0
+            ),
+        )
 
     async def _read_provider(self, events) -> None:  # noqa: ANN001
         """Tâche de lecture du flux fournisseur.
@@ -1821,15 +2265,83 @@ class RealtimeConversationBridge:
                 finally:
                     self._queued_audio = max(0, self._queued_audio - 1)
                     self._finish_item()
+                if (getattr(self.session, "requires_local_quiescence_without_output_final", False)
+                        and self._queued_audio == 0):
+                    # Live has no response.done. A checked native drain proves
+                    # only device quiescence; later frames may reopen output.
+                    drain = getattr(self.audio, "confirm_live_output_quiescence", None)
+                    if callable(drain):
+                        generation = self._live_output_generation
+                        self._live_output_quiescent = bool(await drain())
+                        if self._live_output_quiescent and self._queued_audio == 0:
+                            self._playing = False
+                            self._received_outputs.clear()
+                        elif self._queued_audio == 0:
+                            token = getattr(self.audio, "live_output_drain_token", None)
+                            wait_late = getattr(self.audio, "wait_live_output_quiescence", None)
+                            if type(token) is int and callable(wait_late):
+                                if self._live_drain_reconcile is not None:
+                                    self._live_drain_reconcile.cancel()
+                                self._live_drain_reconcile = asyncio.create_task(
+                                    self._reconcile_live_output_drain(token, generation, wait_late),
+                                    name="jarvis-live-output-drain-reconcile",
+                                )
                 continue
             # Évènement ordonné : la tâche principale le traite, et la lecture
             # attend qu'elle ait fini — l'état qu'il pose (`_playing`, curseur)
             # doit précéder l'audio de la sortie suivante.
+            if kind == "event" and item.message_type == "realtime.response_done":
+                try:
+                    await self._complete_device_output(item)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    self._post("failed", exc)
+                    self._finish_item()
+                    return
+                finally:
+                    self._device_fence_pending = max(0, self._device_fence_pending - 1)
             done = asyncio.Event()
             self._inbox.put_nowait((kind, item, done))
             await done.wait()
             if kind in {"end", "disconnected"}:
                 return
+
+    async def _reconcile_live_output_drain(
+        self,
+        token: int,
+        generation: int,
+        wait_late: Callable[[int], Awaitable[bool]],
+    ) -> None:
+        """Apply a late device proof only to the unchanged queued byte tail."""
+
+        try:
+            quiescent = await wait_late(token)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return
+        if (
+            quiescent
+            and self._inbox is not None
+            and generation == self._live_output_generation
+            and self._queued_audio == 0
+        ):
+            self._live_output_quiescent = True
+            self._playing = False
+            self._received_outputs.clear()
+
+    async def _complete_device_output(self, event: ProtocolEnvelope) -> None:
+        manifest_for = getattr(self.session, "playback_manifest", None)
+        observe = getattr(self.session, "observe_device_completion", None)
+        complete = getattr(self.audio, "complete_output", None)
+        if (event.payload.get("status") != "completed" or self._output_was_interrupted(event.payload)
+                or not callable(manifest_for) or not callable(observe) or not callable(complete)):
+            return
+        manifest = manifest_for(event.payload)
+        if manifest is not None:
+            proof = await complete(manifest)
+            observe(manifest, proof)
 
     async def _play_audio(self, seq: int, event: ProtocolEnvelope) -> None:
         self._response_had_audio = True
@@ -1839,10 +2351,63 @@ class RealtimeConversationBridge:
             # l'utilisateur a repris la parole, et le créditer fausserait la
             # troncature.
             return
+        admission = self.output_admission(str(event.payload.get("output_id"))) if self.output_admission else None
+        if admission is not None and admission.state is OutputAdmissionState.INVALIDATED:
+            observe = getattr(self.session, "observe_playback", None)
+            if callable(observe):
+                observe(event.payload, played_ms=0, written_ms=0, terminal=True)
+            return
         self._track_playback_output(event)
-        await self._note_first_audio(event)
-        await self._call(self.on_speaking)
-        await self.audio.play_b64(str(event.payload.get("pcm_b64") or ""))
+        output_id = _optional_text(event.payload.get("output_id")) or self._output_identity(event.payload)
+        if output_id is not None and output_id not in self._playback_attempted_outputs:
+            if len(self._playback_attempted_outputs) >= 256:
+                self._playback_attempted_outputs.pop()
+            self._playback_attempted_outputs.add(output_id)
+            started = self._speech_segment_started_at
+            elapsed = None if started is None else round(max(0.0, self._clock() - started) * 1000, 1)
+            self._trace("voice.latency.playback_attempted", "First local playback attempt", data={
+                "conversation_id": self.conversation_id,
+                "session_id": str(getattr(self.session, "session_id", "")) or None,
+                "segment_id": self._speech_segment_id,
+                "speech_id": _optional_text(event.payload.get("speech_id")),
+                "output_id": output_id,
+                "elapsed_ms": elapsed,
+                "delivery_boundary": "before_device_write",
+            })
+        if admission is None:
+            await self._call(self.on_speaking)
+            if self._output_was_interrupted(event.payload):
+                return
+            wrote = await self.audio.play_b64(str(event.payload.get("pcm_b64") or ""))
+            if wrote is not False:
+                await self._note_first_audio(event)
+        else:
+            if admission.state is OutputAdmissionState.RESERVED:
+                ready = getattr(self.audio, "wait_output_ready", None)
+                if callable(ready) and not await ready(admission):
+                    self._canonical_playback(event.payload, terminal=True)
+                    return
+                await self._call(self.on_speaking)
+            wrote = await self.audio.play_b64_guarded(str(event.payload.get("pcm_b64") or ""), admission)
+            if wrote:
+                # Device accepted bytes. This is neither a drain nor heard-text evidence.
+                await self._note_first_audio(event)
+        self._canonical_playback(event.payload)
+
+    def _canonical_playback(self, payload: dict, *, terminal: bool = False) -> None:
+        observe = getattr(self.session, "observe_playback", None)
+        if callable(observe):
+            played = getattr(self.audio, "played_output_ms", None)
+            written = getattr(self.audio, "written_output_ms", None)
+            get_cursor = getattr(self.audio, "playback_cursor", None)
+            cursor = get_cursor() if callable(get_cursor) else None
+            same_output = cursor is not None and (
+                (payload.get("response_id") and cursor.provider_response_id == payload.get("response_id"))
+                or cursor.speech_id in {payload.get("speech_id"), payload.get("output_id")})
+            if not same_output:
+                played = written = None  # Another device epoch cannot credit this output.
+            observe(payload, played_ms=played if type(played) is int else None,
+                    written_ms=written if type(written) is int else None, terminal=terminal)
 
     async def _consume(self, events) -> None:  # noqa: ANN001
         """Traiter le flux du fournisseur.
@@ -1898,12 +2463,17 @@ class RealtimeConversationBridge:
                     self._finish_item()
         finally:
             self._detach_owner_source(detach_owner)
+            if self._live_drain_reconcile is not None:
+                self._live_drain_reconcile.cancel()
+                await asyncio.gather(self._live_drain_reconcile, return_exceptions=True)
+                self._live_drain_reconcile = None
             for task in (reader, player):
                 task.cancel()
             await asyncio.gather(reader, player, return_exceptions=True)
             self._inbox = self._playout = None
             self._unfinished = 0
             self._queued_audio = 0
+            self._device_fence_pending = 0
             self._idle.set()
 
     async def _note_disconnected(self, exc: object) -> None:
@@ -1942,17 +2512,12 @@ class RealtimeConversationBridge:
         return bool(getattr(self.audio, "echo_guard_open", True)) or self._barge_pending
 
     async def _on_near_end(self) -> None:
-        """La capture locale entend l'utilisateur pendant que JARVIS parle.
+        """Ouvrir un candidat acoustique sans modifier la sortie audible.
 
-        Premier temps du barge-in : la voix de JARVIS baisse aussitôt, et la
-        garde s'est ouverte pour que le fournisseur entende la phrase depuis son
-        début. Le second temps — couper — attend que le VAD du fournisseur
-        confirme qu'il s'agit bien de parole : un choc sur le bureau ou une
-        toux ne doivent pas faire taire JARVIS. Sans confirmation dans
-        `barge_in_confirm_s`, la voix remonte et la garde se referme.
-
-        Autorité acoustique (salle ouverte) seulement. En Solo Owner, la
-        parole proche ne baisse ni ne coupe rien : voir `_note_owner_candidate`.
+        Capture et pré-roll restent réactifs. La confirmation fournisseur
+        autorise la coupure en salle ouverte ; le timeout referme le candidat.
+        Solo Owner conserve son autorité locale : candidat sans duck ni coupure,
+        confirmation du propriétaire seule habilitée à interrompre.
         """
 
         if not self.continuous or not self._output_live():
@@ -1970,14 +2535,13 @@ class RealtimeConversationBridge:
         if self._barge_pending:
             return
         self._barge_pending = True
-        self._barge_pending_ducked = True
+        self._barge_pending_ducked = False
         self._barge_pending_token += 1
         token = self._barge_pending_token
-        self._set_output_gain(self.barge_in_duck_gain)
         self._trace(
             "voice.barge_in_pending",
-            "Parole détectée localement pendant que JARVIS parle : voix baissée, confirmation attendue",
-            data={"conversation_id": self.conversation_id},
+            "Parole locale candidate : volume inchangé, confirmation attendue",
+            data={"conversation_id": self.conversation_id, "authority": self.barge_in_authority.value},
         )
         asyncio.get_running_loop().call_later(self.barge_in_confirm_s, self._post, "barge_timeout", token)
 
@@ -2005,7 +2569,9 @@ class RealtimeConversationBridge:
             self._trace(
                 "voice.barge_in_rejected",
                 "Parole locale non confirmée par le fournisseur : JARVIS reprend à plein volume",
-                data={"conversation_id": self.conversation_id, "code": "barge_in_not_confirmed"},
+                data={"conversation_id": self.conversation_id,
+                      "session_id": str(getattr(self.session, "session_id", "")) or None,
+                      "code": "barge_in_not_confirmed"},
             )
         else:
             self._trace(
@@ -2013,8 +2579,9 @@ class RealtimeConversationBridge:
                 "Parole locale non confirmée par le fournisseur : garde d'écho refermée, volume jamais baissé",
                 data={
                     "conversation_id": self.conversation_id,
+                    "session_id": str(getattr(self.session, "session_id", "")) or None,
                     "code": "barge_in_not_confirmed",
-                    "authority": BargeInAuthority.OWNER.value,
+                    "authority": self.barge_in_authority.value,
                 },
             )
 
@@ -2535,6 +3102,7 @@ class RealtimeConversationBridge:
         now = self._clock()
         data: dict[str, object] = {
             "conversation_id": self.conversation_id,
+            "session_id": str(getattr(self.session, "session_id", "")) or None,
             "owner_state": self._owner_state_value(),
             "guard_open": bool(getattr(self.audio, "echo_guard_open", True)),
         }
@@ -2626,8 +3194,6 @@ class RealtimeConversationBridge:
 
         if self.on_reflex is None or self._last_correlation_id is None:
             return
-        if len(words(text)) < REFLEX_MIN_WORDS:
-            return
         value = self.on_reflex(text, correlation_id=self._last_correlation_id, avoid=tuple(self._recent_reflexes))
         if hasattr(value, "__await__"):
             await value
@@ -2641,6 +3207,8 @@ class RealtimeConversationBridge:
             if self.on_response_done is None:
                 await self._call(self.on_listening)
         elif event.message_type == "realtime.output_started":
+            if getattr(self.session, "playback_suppressed", False):
+                return False
             # JARVIS commence à parler : de la parole utile, donc du
             # temps rendu à l'utilisateur pour répondre (Décision 10).
             self._track_playback_output(event)
@@ -2664,6 +3232,7 @@ class RealtimeConversationBridge:
         elif event.message_type == "realtime.response_done":
             response_had_audio, self._response_had_audio = self._response_had_audio, False
             status = str(event.payload.get("status") or "")
+            self._canonical_playback(event.payload, terminal=True)
             self._release_playback_output(event)
             if not self._output_live():
                 # Plus rien ne joue : fin de parole de JARVIS. Un barge-in en
@@ -2719,6 +3288,9 @@ class RealtimeConversationBridge:
         elif event.message_type == "realtime.speech_started":
             payload = event.payload or {}
             if self._input_gated() and not self._admit_provider_segment(_optional_text(payload.get("item_id"))):
+                analysis = getattr(self.session, "analysis", None)
+                if analysis is not None and payload.get("item_id"):
+                    analysis.reject_item(str(payload["item_id"]), "owner_unverified")
                 # Solo Owner : le fournisseur n'a pu entendre que du silence
                 # ou un reste d'avant la garde. Défense en profondeur — ni
                 # parole utilisateur, ni mesure, ni barge-in.
@@ -2739,6 +3311,9 @@ class RealtimeConversationBridge:
                 self._segment_near_playback[item_id] = near_playback
                 while len(self._segment_near_playback) > 16:
                     self._segment_near_playback.pop(next(iter(self._segment_near_playback)))
+                analysis = getattr(self.session, "analysis", None)
+                if analysis is not None and (self._input_gated() or not near_playback or self._barge_in_allowed()):
+                    analysis.allow_item(item_id, str(uuid.uuid4()))
             if self.continuous:
                 await self._note_user_speech(True)
             if self.continuous and self._output_live():
@@ -2761,7 +3336,9 @@ class RealtimeConversationBridge:
                     self._trace(
                         "voice.barge_in_ignored",
                         "Début de parole signalé alors que la garde d'écho était fermée : JARVIS continue",
-                        data={"conversation_id": self.conversation_id, "code": "speech_started_behind_echo_guard"},
+                        data={"conversation_id": self.conversation_id,
+                              "session_id": str(getattr(self.session, "session_id", "")) or None,
+                              "code": "speech_started_behind_echo_guard"},
                     )
             elif self.continuous or (self.auto_turn and not self._input_submitted):
                 if self.continuous and self._owner_stopped_at is not None and self._owner_authority():
@@ -2832,6 +3409,13 @@ class RealtimeConversationBridge:
         elif event.message_type == "realtime.assistant_transcript":
             text = str(event.payload.get("text") or "").strip()
             speech_id = str(event.payload.get("speech_id") or "")
+            if getattr(self.session, "canonical_history", False):
+                # Generation is recorded by the canonical facade. No second
+                # assistant-history writer and no declaration that text played.
+                if text and not speech_id and self.continuous:
+                    self._recent_reflexes.append(text)
+                self._undelivered_answer = None
+                return False
             if text and speech_id:
                 # Cette réponse restitue une demande de parole du
                 # cerveau : c'est l'ordonnanceur qui persiste le tour,
@@ -2906,6 +3490,19 @@ class RealtimeConversationBridge:
         return False
 
     async def _handle_transcript(self, event: ProtocolEnvelope) -> bool:
+        try:
+            return await self._handle_admitted_transcript(event)
+        finally:
+            discard = getattr(self.session, "discard_transcript", None)
+            if callable(discard):
+                discard(_optional_text(event.payload.get("item_id")))
+
+    def _admit_canonical_transcript(self, item_id: str | None, *, source_correlation_id: str | None = None) -> None:
+        admit = getattr(self.session, "admit_transcript", None)
+        if callable(admit):
+            admit(item_id, source_correlation_id=source_correlation_id)
+
+    async def _handle_admitted_transcript(self, event: ProtocolEnvelope) -> bool:
         item_id = _optional_text(event.payload.get("item_id"))
         if self._input_gated() and not self._segment_from_owner(item_id):
             # Solo Owner : l'identité passe avant l'adressage, et jamais par
@@ -2946,7 +3543,7 @@ class RealtimeConversationBridge:
                 await self._call(self.on_ambient)
                 await self._rest_surface()
                 return False
-        if self.continuous and decision is AddressingDecision.UNCERTAIN:
+        if self.continuous and not self.direct_conversation and decision is AddressingDecision.UNCERTAIN:
             # Décision 44 : décider qu'une demande n'en est pas une
             # est une décision d'intention, et l'intention
             # appartient au cerveau. En continu, un tour complet
@@ -2998,8 +3595,38 @@ class RealtimeConversationBridge:
             for char in text.casefold()
         ).split()
         if mute_words == ["jarvis", "mute"]:
+            self._admit_canonical_transcript(item_id)
             await self._call(self.on_mute)
             return True
+        if self.direct_conversation:
+            if not item_id:
+                self._trace("voice.conversation.admission_failed", "Direct input identity missing", level="warning",
+                            data={"code": "voice_input_identity_missing"})
+                await self._call(self.on_listening)
+                return False
+            try:
+                accepted = await self.session.admit_conversation(self.core, self.conversation_id, item_id, addressing=decision)
+            except asyncio.CancelledError:
+                analysis = getattr(self.session, "analysis", None)
+                if analysis is not None:
+                    analysis.reject_item(item_id, "admission_cancelled")
+                raise
+            except Exception as exc:
+                analysis = getattr(self.session, "analysis", None)
+                if analysis is not None:
+                    analysis.reject_item(item_id, "admission_failed")
+                self._trace("voice.conversation.admission_failed", "Direct input admission failed", level="error",
+                            data={"code": "voice_admission_failed", "exception_type": type(exc).__name__})
+                await self._call(self.on_listening)
+                return False
+            # Callback merely queues the source-bound candidate. Stop/source
+            # checks remain inside the existing output scheduler and first write.
+            if self.on_conversation is not None:
+                self.on_conversation(input_item_ids=(item_id,), source=accepted.source)
+            self._last_engaged = self._clock()
+            await self._call(self.on_thinking)
+            await self._call(self.on_addressed)
+            return False
         if self.continuous:
             # Chemin autoritaire unique : persistance et dépêche du
             # cerveau en une seule opération côté Core.
@@ -3008,6 +3635,7 @@ class RealtimeConversationBridge:
         else:
             submitted = False
             await self._append_legacy_user_turn(text)
+            self._admit_canonical_transcript(item_id)
         if self.continuous and not submitted:
             # Core a refusé le tour : aucune réponse ne viendra.
             await self._call(self.on_listening)
@@ -3026,6 +3654,13 @@ class RealtimeConversationBridge:
     async def _handle_tool_call(self, event: ProtocolEnvelope) -> None:
         call_id = str(event.payload.get("call_id") or "")
         name = str(event.payload.get("name") or "")
+        from jarvis.runtime.back_brain_delegation import BACK_BRAIN_DELEGATE
+        if self.direct_conversation and name == BACK_BRAIN_DELEGATE:
+            # This only schedules bounded Core admission; it never awaits the
+            # independent job and does not block provider/input consumption.
+            if not self.session.dispatch_back_brain(self.core, self.conversation_id, call_id):
+                await self.session.send_back_brain_tool_result(call_id, {"status": "unavailable", "reason": "back_brain_capacity"})
+            return
         arguments = event.payload.get("arguments") if isinstance(event.payload.get("arguments"), dict) else {}
         if call_id and call_id in self._dispatched_calls:
             self._trace(
@@ -3087,6 +3722,8 @@ class RealtimeConversationBridge:
             level="error",
             data={"conversation_id": self.conversation_id, "code": "claude_answer_undelivered"},
         )
+        if getattr(self.session, "canonical_history", False):
+            return  # Available result remains diagnostic; it was never heard.
         try:
             await self.core.append_turn(self.conversation_id, kind="assistant", content=answer)
         except Exception:
@@ -3118,5 +3755,7 @@ class RealtimeConversationBridge:
             if input_task is not None:
                 input_task.cancel()
                 await asyncio.gather(input_task, return_exceptions=True)
-            await self.audio.close()
-            self._trace("audio.stop", "Realtime microphone and speaker closed")
+            closed = await self.audio.close()
+            self._trace("audio.cleanup_pending" if closed is False else "audio.stop",
+                        "Audio device cleanup pending" if closed is False else "Realtime microphone and speaker closed",
+                        data={"cleanup_pending": closed is False})

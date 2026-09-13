@@ -30,7 +30,7 @@ REQUEST_TIMEOUT_S = 15.0
 ANTHROPIC_VERSION = "2023-06-01"
 
 # Usages proposés dans l'interface. Un modèle peut en cumuler plusieurs.
-ROLES = ("text", "realtime", "transcription", "speech")
+ROLES = ("text", "realtime", "duplex", "transcription", "speech")
 
 
 class CatalogError(RuntimeError):
@@ -41,6 +41,8 @@ class CatalogError(RuntimeError):
 
 def _openai_roles(model_id: str) -> tuple[str, ...]:
     name = model_id.lower()
+    if name == "gpt-live-1":
+        return ("duplex",)
     if "realtime" in name:
         return ("realtime",)
     if "transcribe" in name or name.startswith("whisper"):

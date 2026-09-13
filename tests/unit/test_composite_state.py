@@ -5,7 +5,7 @@ import pytest
 from jarvis.adapters.file_state_bus import CompositeStatePublisher
 from jarvis.domain.events import JarvisState, StateEvent
 
-from conftest import RecordingStatePublisher
+from tests.conftest import RecordingStatePublisher
 
 
 class FailingPublisher:

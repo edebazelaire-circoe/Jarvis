@@ -189,6 +189,9 @@ def test_the_routing_tab_is_declared_and_rendered_and_saved():
     page = PAGE.read_text(encoding="utf-8")
 
     assert re.search(r"\{id:'routing',label:'Aiguillage',save:true\}", page)
-    assert "else if(SET.tab==='routing')modalContent.innerHTML=await tabRouting()" in page
+    # Awaited panels publish only after the render revision guard; an older
+    # catalog response cannot overwrite a newly selected voice architecture.
+    assert "else if(SET.tab==='routing')content=await tabRouting()" in page
+    assert "if(revision!==SET.renderRevision)return" in page
     # Le brouillon envoyé au serveur contient la politique complète.
     assert "routing:{enabled:data.routing.enabled" in page

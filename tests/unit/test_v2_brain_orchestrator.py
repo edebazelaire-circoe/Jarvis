@@ -20,6 +20,7 @@ from jarvis.core.brain_service import (
     BrainOrchestrator,
 )
 from jarvis.core.v2_app import JarvisCoreApplication
+from jarvis.core.brain_outcomes import BRAIN_OUTCOME_AVAILABLE
 from jarvis.core.v2_services import ConversationService, CoreEventBus
 from jarvis.domain.v2 import (
     BrainEvent,
@@ -36,6 +37,7 @@ from jarvis.domain.v2 import (
 
 # Clés documentées dans docs/handoff-realtime-brain/docs/05-event-contracts.md.
 DOC_PAYLOAD_KEYS = {
+    BRAIN_OUTCOME_AVAILABLE: {"schema_version", "outcome"},
     BRAIN_TURN_ACCEPTED: {"turn_id", "provider_item_id", "revision", "interrupted_speech_id"},
     BRAIN_STATE_UPDATED: {"revision", "current_user_intent", "active_work_ids", "unresolved_question_count", "completed_work_count"},
     BRAIN_WORK_STARTED: {"work_id", "job_id", "kind", "public_label"},
@@ -45,6 +47,9 @@ DOC_PAYLOAD_KEYS = {
     BRAIN_SPEECH_REQUESTED: {"speech_id", "text", "kind", "priority", "work_id", "supersedes_key", "interruptible", "expires_at", "provenance"},
     BRAIN_INTENT_REVISED: {"revision", "previous_revision", "superseded_work_ids", "cancelled_work_ids", "retained_work_ids"},
 }
+for _event in (BRAIN_TURN_ACCEPTED, BRAIN_INTENT_REVISED):
+    DOC_PAYLOAD_KEYS[_event] |= {"schema_version", "source", "current_speech_source", "source_complete", "invalidated_dependencies"}
+DOC_PAYLOAD_KEYS[BRAIN_SPEECH_REQUESTED] |= {"source", "outcome_id", "chunks"}
 
 
 # --- doubles -----------------------------------------------------------------
@@ -502,6 +507,7 @@ async def test_backend_events_map_onto_the_documented_event_types(tmp_path):
         BRAIN_STATE_UPDATED,
         BRAIN_WORK_PROGRESS,
         BRAIN_SPEECH_REQUESTED,
+        BRAIN_OUTCOME_AVAILABLE,
         BRAIN_WORK_COMPLETED,
         BRAIN_STATE_UPDATED,
     ]
@@ -520,7 +526,7 @@ async def test_backend_events_map_onto_the_documented_event_types(tmp_path):
 # --- échecs ------------------------------------------------------------------
 
 
-async def test_backend_crash_is_published_as_a_class_and_detailed_only_in_diagnostics(tmp_path):
+async def test_backend_crash_is_published_and_diagnosed_without_raw_secret_detail(tmp_path):
     sink = RecordingSink()
     brain, _conversations, events, state, conversation_id = await build_orchestrator(tmp_path, ExplodingBackend(), diagnostics=sink)
     queue = events.subscribe()
@@ -532,7 +538,8 @@ async def test_backend_crash_is_published_as_a_class_and_detailed_only_in_diagno
     assert len(failures) == 1
     assert failures[0].payload["error_class"] == "RuntimeError"
     assert "sk-secret-123" not in str(failures[0].payload)
-    assert any("sk-secret-123" in str(data) for _kind, _level, data in sink.events)
+    assert not any("sk-secret-123" in str(data) for _kind, _level, data in sink.events)
+    assert any(data.get("error_class") == "RuntimeError" for _kind, _level, data in sink.events)
     await state.close()
 
 
@@ -644,16 +651,17 @@ async def test_terminal_turn_failure_settles_only_its_unfinished_backend_work(tm
         assert states[-1].payload["active_work_ids"] == ["independent"]
         assert "core.brain.turn_failed" in sink.kinds() or "core.brain.backend_contract_violation" in sink.kinds()
         assert turn.correlation_id not in brain._work_owners.values()
-        # Only the independent completion and the other conversation's two
-        # measures remain. The failed work must leave neither timer behind.
-        assert brain._latency.pending_count == 3
+        # The unknown-owner progress is now rejected conservatively. Both
+        # independent timers and the other conversation's two remain; failed
+        # work must leave neither timer behind.
+        assert brain._latency.pending_count == 4
         await brain._dispatch_backend_event(BrainEvent(
             kind=BrainEventKind.COMPLETED, conversation_id=other.id,
             correlation_id="other-turn", work_id="orphan",
         ))
         other_completions = [data for kind, _level, data in sink.events if kind == "core.brain.latency.work_completed" and data["conversation_id"] == other.id]
         assert len(other_completions) == 1
-        assert brain._latency.pending_count == 1
+        assert brain._latency.pending_count == 2
     finally:
         await brain.stop()
         await state.close()

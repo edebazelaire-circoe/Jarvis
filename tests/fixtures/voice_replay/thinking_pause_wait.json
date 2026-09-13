@@ -1,0 +1,23 @@
+{
+  "schema": "jarvis.voice_replay",
+  "schema_version": 1,
+  "scenario_id": "thinking_pause_wait",
+  "origin": "2026-09-11T15:43:35+02:00",
+  "provenance": {
+    "source_path": "tasks/jarvis_voice_architectures_handoff/sources/transcript-2026-09-11.md",
+    "source_kind": "human_trace_reconstruction",
+    "reported": [
+      {"source_ref": "lines 48-52", "fact": "An uncertain thinking pause produced an acknowledgement."}
+    ],
+    "derived": [
+      {"source_ref": "TASK.md lines 29-31", "fact": "The regression invariant is a wait outcome without filler or work."}
+    ],
+    "constructed": [
+      {"source_ref": "fixture design", "fact": "Turn identifier and content tag are synthetic."}
+    ]
+  },
+  "steps": [
+    {"at_ms": 0, "port": "user", "action": "turn", "data": {"turn_id": "pause-turn", "addressing": "uncertain", "content_tag": "thinking_pause"}},
+    {"at_ms": 2900, "port": "control", "action": "checkpoint", "data": {"checkpoint_id": "policy_settled"}}
+  ]
+}

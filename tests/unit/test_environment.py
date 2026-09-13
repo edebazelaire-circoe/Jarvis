@@ -85,7 +85,10 @@ def test_invalid_file_fails_without_partial_loading_or_secret_disclosure(tmp_pat
 
 @pytest.mark.asyncio
 async def test_voice_cli_passes_dotenv_key_to_realtime_and_hides_it_in_ui(tmp_path, monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
     from jarvis.adapters.openai_realtime import OpenAIRealtimeSession
+    from jarvis.domain.v2 import ProtocolEnvelope
     from jarvis.protocol.client import LocalCoreClient
     from jarvis.runtime.voice_v2 import PersistentVoiceRuntime
 
@@ -97,11 +100,27 @@ async def test_voice_cli_passes_dotenv_key_to_realtime_and_hides_it_in_ui(tmp_pa
         encoding="utf-8-sig",
     )
     monkeypatch.setattr(LocalCoreClient, "health", AsyncMock(return_value={"ready": True}))
-    connect = AsyncMock()
+    async def connected_session(**kwargs):
+        closed = asyncio.Event()
+        async def events():
+            yield ProtocolEnvelope(message_type="realtime.session_updated", payload={
+                "session_id": "test-provider-session", "instructions": kwargs["instructions_override"],
+            })
+            await closed.wait()
+        async def close():
+            closed.set()
+        return SimpleNamespace(events=events, close=close, active_output_id=None)
+
+    connect = AsyncMock(side_effect=connected_session)
     monkeypatch.setattr(OpenAIRealtimeSession, "connect", connect)
 
     async def run_once(voice):
-        await voice.realtime_factory({})
+        session = await voice.realtime_factory({})
+        try:
+            from jarvis.domain.voice_frontend import FrontendState
+            assert session.frontend.state is FrontendState.ACTIVE
+        finally:
+            await session.close()
 
     monkeypatch.setattr(PersistentVoiceRuntime, "run", run_once)
 

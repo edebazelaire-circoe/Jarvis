@@ -1,0 +1,1660 @@
+{
+  "architectures": [
+    {
+      "architecture": "simple",
+      "component_fingerprint": "6c91297591386c0ff3b1cdadf38bca3d9dc60c60a34cfa02a4fe5fd91d6a244a",
+      "components": [
+        {
+          "model_id": "gpt-realtime-2.1-mini",
+          "provider_id": "openai",
+          "role": "surface"
+        }
+      ],
+      "configuration": {
+        "compatibility": null,
+        "config": {
+          "architecture": "simple",
+          "conversation_model": {
+            "model_id": "gpt-realtime-2.1-mini",
+            "provider_id": "openai"
+          }
+        },
+        "schema_version": 1
+      },
+      "configuration_fingerprint": "411fd223d3d9bf1c7ad3ada56cf77a94ec9b4d82fb33d57b4229f47b1342f29c",
+      "configuration_id": "9a8ed5ed709bdfd56978f3027632672caf0e67574f840b84790f04d5c0bb0153",
+      "configuration_readiness": {
+        "compatibility": false,
+        "evidence_kind": "production_composition_resolution",
+        "explicit": true,
+        "outcome": "pass"
+      },
+      "prompt_applications": [
+        {
+          "application": "saved",
+          "channel": null,
+          "layer_revisions": [
+            "9653a2edd9506339c1ef82f5dd74c41b216d7d2b44c10f841f0a41ca09e918d6",
+            "48e7e856ece3c4d1f993bd03c693982cf2e99ae10d5749f4cb584103b8d6776d",
+            "4e1f36686cce93ab85ed5162a263b3cbece8bdef39494b03a7191514636387f9",
+            "fccc652756045a553e8ae30136b804ca045c0ba70bb849dbfefc3414897ff6c5",
+            "67182a1b8fdaf6f5010c163588e79293b54f543dbad888ffbbb92517e5d8d6d0"
+          ],
+          "program_id": "voice.simple.openai.session",
+          "prompt_ids": [
+            "voice.persona",
+            "voice.rules.conversation",
+            "voice.conversation.addition",
+            "voice.initial_context",
+            "voice.tools.conversation"
+          ],
+          "render_fingerprint": null,
+          "static_fingerprint": "f0e5258414108c08aaf738938fd2f2f5cc65bd8a8c14ad4fc46441c3fcd83182"
+        }
+      ],
+      "representative_e2e": {
+        "evidence_kind": "production_seam_pytest",
+        "evidence_node_ids": [
+          "tests/integration/test_simple_front_brain_composition.py::test_explicit_conversation_is_direct_while_optional_luna_is_blocked[gpt-realtime-2.1-mini-simple]"
+        ],
+        "outcome": "architecture_specific_pass"
+      },
+      "scenario_suite_fingerprint": "a12285b93fd158a29e7906b68b1959b718a5b39ee387e72adf553ee3ddb2b6a2",
+      "scenarios": [
+        {
+          "action": "quiet_ambient",
+          "evidence_kind": "unavailable",
+          "evidence_node_ids": [],
+          "expected_invariant": "no_speech_or_work",
+          "outcome": "not_run",
+          "scenario_id": "quiet-ambient",
+          "scripted_parameters": {
+            "duration_ms": 5000
+          }
+        },
+        {
+          "action": "short_confirmation",
+          "evidence_kind": "shared_contract_evidence",
+          "evidence_node_ids": [
+            "tests/unit/test_reflex_gate.py::test_wait_controls"
+          ],
+          "expected_invariant": "silent_completion",
+          "outcome": "shared_contract_evidence",
+          "scenario_id": "short-confirmation",
+          "scripted_parameters": {}
+        },
+        {
+          "action": "direct_question",
+          "evidence_kind": "production_seam_pytest",
+          "evidence_node_ids": [
+            "tests/integration/test_simple_front_brain_composition.py::test_explicit_conversation_is_direct_while_optional_luna_is_blocked[gpt-realtime-2.1-mini-simple]"
+          ],
+          "expected_invariant": "one_useful_output",
+          "outcome": "architecture_specific_pass",
+          "scenario_id": "direct-question",
+          "scripted_parameters": {}
+        },
+        {
+          "action": "pause_mid_sentence",
+          "evidence_kind": "shared_contract_evidence",
+          "evidence_node_ids": [
+            "tests/integration/test_voice_replay_regressions.py::test_thinking_pause_wait_stays_silent_on_the_full_voice_stack"
+          ],
+          "expected_invariant": "no_precommit_effect",
+          "outcome": "shared_contract_evidence",
+          "scenario_id": "pause-mid-sentence",
+          "scripted_parameters": {
+            "pause_ms": 2900
+          }
+        },
+        {
+          "action": "long_monologue",
+          "evidence_kind": "unavailable",
+          "evidence_node_ids": [],
+          "expected_invariant": "single_committed_turn",
+          "outcome": "not_run",
+          "scenario_id": "long-monologue",
+          "scripted_parameters": {
+            "fragment_count": 32
+          }
+        },
+        {
+          "action": "late_correction",
+          "evidence_kind": "shared_contract_evidence",
+          "evidence_node_ids": [
+            "tests/unit/test_v2_intent_revision.py::test_late_uncertain_confirmation_preserves_latest_confirmed_intent"
+          ],
+          "expected_invariant": "latest_revision_only",
+          "outcome": "shared_contract_evidence",
+          "scenario_id": "late-correction",
+          "scripted_parameters": {
+            "revision_count": 3
+          }
+        },
+        {
+          "action": "long_backend_work",
+          "evidence_kind": "shared_contract_evidence",
+          "evidence_node_ids": [
+            "tests/integration/test_voice_replay_regressions.py::test_backend_85_7s_does_not_block_later_turn_admission_on_full_stack"
+          ],
+          "expected_invariant": "conversation_nonblocking",
+          "outcome": "shared_contract_evidence",
+          "scenario_id": "long-backend-work",
+          "scripted_parameters": {
+            "duration_ms": 85700,
+            "later_turns": 2
+          }
+        },
+        {
+          "action": "backend_result_after_topic_shift",
+          "evidence_kind": "shared_contract_evidence",
+          "evidence_node_ids": [
+            "tests/integration/test_voice_replay_regressions.py::test_backend_85_7s_does_not_block_later_turn_admission_on_full_stack"
+          ],
+          "expected_invariant": "result_deferred_not_spoken",
+          "outcome": "shared_contract_evidence",
+          "scenario_id": "backend-result-after-topic-shift",
+          "scripted_parameters": {}
+        },
+        {
+          "action": "user_interruption",
+          "evidence_kind": "shared_contract_evidence",
+          "evidence_node_ids": [
+            "tests/integration/test_voice_replay_safety_regressions.py::test_confirmed_interrupt_without_provider_item_never_invents_heard_words",
+            "tests/integration/test_voice_replay_safety_regressions.py::test_late_provider_cancel_rejection_keeps_local_stop_and_drops_late_pcm"
+          ],
+          "expected_invariant": "local_output_stopped",
+          "outcome": "shared_contract_evidence",
+          "scenario_id": "user-interruption",
+          "scripted_parameters": {}
+        },
+        {
+          "action": "background_noise",
+          "evidence_kind": "shared_contract_evidence",
+          "evidence_node_ids": [
+            "tests/integration/test_voice_replay_safety_regressions.py::test_bus_cluster_seven_rejections_never_stop_duck_cancel_or_submit_work"
+          ],
+          "expected_invariant": "no_false_interruption",
+          "outcome": "shared_contract_evidence",
+          "scenario_id": "background-noise",
+          "scripted_parameters": {
+            "candidate_count": 7
+          }
+        },
+        {
+          "action": "output_stall_reconnect",
+          "evidence_kind": "shared_contract_evidence",
+          "evidence_node_ids": [
+            "tests/integration/test_voice_replay_safety_regressions.py::test_missing_terminal_recovers_at_replay_deadline_and_next_output_speaks"
+          ],
+          "expected_invariant": "queue_recovers",
+          "outcome": "shared_contract_evidence",
+          "scenario_id": "output-stall-reconnect",
+          "scripted_parameters": {}
+        },
+        {
+          "action": "mode_switch",
+          "evidence_kind": "shared_contract_evidence",
+          "evidence_node_ids": [
+            "tests/unit/test_voice_switch.py::test_simple_front_duplex_simple_sequence_keeps_conversation_and_work"
+          ],
+          "expected_invariant": "active_work_preserved",
+          "outcome": "shared_contract_evidence",
+          "scenario_id": "mode-switch",
+          "scripted_parameters": {}
+        },
+        {
+          "action": "manual_stop",
+          "evidence_kind": "shared_contract_evidence",
+          "evidence_node_ids": [
+            "tests/integration/test_voice_replay_safety_regressions.py::test_manual_close_retains_late_core_results_without_speech_and_reports_once"
+          ],
+          "expected_invariant": "session_closed_usage_unknown",
+          "outcome": "shared_contract_evidence",
+          "scenario_id": "manual-stop",
+          "scripted_parameters": {}
+        },
+        {
+          "action": "spoken_divergence",
+          "evidence_kind": "shared_contract_evidence",
+          "evidence_node_ids": [
+            "tests/integration/test_voice_replay_safety_regressions.py::test_spoken_divergence_preserves_intended_generated_and_heard_evidence"
+          ],
+          "expected_invariant": "heard_text_authoritative",
+          "outcome": "shared_contract_evidence",
+          "scenario_id": "spoken-divergence",
+          "scripted_parameters": {}
+        }
+      ],
+      "task18_session_report": {
+        "annotations": [
+          {
+            "name": "quiet-ambient",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "short-confirmation",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "direct-question",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "pass"
+          },
+          {
+            "name": "pause-mid-sentence",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "long-monologue",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "late-correction",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "long-backend-work",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "backend-result-after-topic-shift",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "user-interruption",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "background-noise",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "output-stall-reconnect",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "mode-switch",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "manual-stop",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "spoken-divergence",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          }
+        ],
+        "architecture": "simple",
+        "components": [
+          {
+            "model_id": "gpt-realtime-2.1-mini",
+            "provider_id": "openai",
+            "role": "surface"
+          }
+        ],
+        "configuration_id": "9a8ed5ed709bdfd56978f3027632672caf0e67574f840b84790f04d5c0bb0153",
+        "conversation_id": "offline-voice-common-v1",
+        "cost_estimate": null,
+        "ended_at": "2026-09-13T00:00:00+00:00",
+        "event_counts": {
+          "backend_task_result": 0,
+          "backend_task_started": 0,
+          "false_or_rejected_barge_in": 0,
+          "intended_spoken_divergence": 0,
+          "output_stall": 0,
+          "stale_cancellation": 0,
+          "unnecessary_acknowledgement": 0,
+          "user_interruption": 0
+        },
+        "latency_metrics": {
+          "backend_first_progress_ms": {
+            "count": 0,
+            "max_ms": null,
+            "mean_ms": null,
+            "min_ms": null,
+            "samples_ms": []
+          },
+          "backend_result_ms": {
+            "count": 0,
+            "max_ms": null,
+            "mean_ms": null,
+            "min_ms": null,
+            "samples_ms": []
+          },
+          "brain_speech_to_first_audio_ms": {
+            "count": 0,
+            "max_ms": null,
+            "mean_ms": null,
+            "min_ms": null,
+            "samples_ms": []
+          },
+          "delegation_latency_ms": {
+            "count": 0,
+            "max_ms": null,
+            "mean_ms": null,
+            "min_ms": null,
+            "samples_ms": []
+          },
+          "device_drain_ms": {
+            "count": 0,
+            "max_ms": null,
+            "mean_ms": null,
+            "min_ms": null,
+            "samples_ms": []
+          },
+          "frontend_blocking_ms": {
+            "count": 0,
+            "max_ms": null,
+            "mean_ms": null,
+            "min_ms": null,
+            "samples_ms": []
+          },
+          "playback_attempt_ms": {
+            "count": 0,
+            "max_ms": null,
+            "mean_ms": null,
+            "min_ms": null,
+            "samples_ms": []
+          },
+          "provider_first_pcm_ms": {
+            "count": 0,
+            "max_ms": null,
+            "mean_ms": null,
+            "min_ms": null,
+            "samples_ms": []
+          },
+          "speech_queue_wait_ms": {
+            "count": 0,
+            "max_ms": null,
+            "mean_ms": null,
+            "min_ms": null,
+            "samples_ms": []
+          },
+          "time_to_first_audible_reaction_ms": {
+            "count": 0,
+            "max_ms": null,
+            "mean_ms": null,
+            "min_ms": null,
+            "samples_ms": []
+          },
+          "time_to_first_useful_answer_ms": {
+            "count": 0,
+            "max_ms": null,
+            "mean_ms": null,
+            "min_ms": null,
+            "samples_ms": []
+          },
+          "user_interrupt_stop_ms": {
+            "count": 0,
+            "max_ms": null,
+            "mean_ms": null,
+            "min_ms": null,
+            "samples_ms": []
+          }
+        },
+        "live_active_seconds": null,
+        "model_id": "gpt-realtime-2.1-mini",
+        "prompt_applications": [
+          {
+            "application": "saved",
+            "layer_revisions": [
+              "9653a2edd9506339c1ef82f5dd74c41b216d7d2b44c10f841f0a41ca09e918d6",
+              "48e7e856ece3c4d1f993bd03c693982cf2e99ae10d5749f4cb584103b8d6776d",
+              "4e1f36686cce93ab85ed5162a263b3cbece8bdef39494b03a7191514636387f9",
+              "fccc652756045a553e8ae30136b804ca045c0ba70bb849dbfefc3414897ff6c5",
+              "67182a1b8fdaf6f5010c163588e79293b54f543dbad888ffbbb92517e5d8d6d0"
+            ],
+            "program_id": "voice.simple.openai.session",
+            "static_fingerprint": "f0e5258414108c08aaf738938fd2f2f5cc65bd8a8c14ad4fc46441c3fcd83182"
+          }
+        ],
+        "provider_id": "openai",
+        "provider_usage": {
+          "duration_seconds": null,
+          "final": false,
+          "input_tokens": null,
+          "output_tokens": null,
+          "source": null
+        },
+        "provider_usage_components": [
+          {
+            "cost_estimate": null,
+            "model_id": "gpt-realtime-2.1-mini",
+            "provider_id": "openai",
+            "role": "surface",
+            "usage": {
+              "cached_tokens": null,
+              "duration_seconds": null,
+              "final": false,
+              "identity_consistent": null,
+              "input_tokens": null,
+              "observed_model_id": null,
+              "observed_provider_id": null,
+              "output_tokens": null,
+              "reasoning_tokens": null,
+              "requests": null,
+              "source": "unavailable",
+              "total_tokens": null
+            }
+          }
+        ],
+        "provider_usage_final": false,
+        "provider_usage_seconds": null,
+        "schema": "jarvis.voice_benchmark.session",
+        "schema_version": 1,
+        "session_duration_seconds": 0.0,
+        "session_fingerprint": "0c0382086ebb84e1948d6ac5a29e82191a1e696d81cf957c93706bad3d583e5a",
+        "session_id": "offline-simple-a12285b93fd1",
+        "started_at": "2026-09-13T00:00:00+00:00",
+        "terminal_status": "stopped",
+        "trace_evidence_complete": true
+      },
+      "test_environment": {
+        "microphone": "controlled_fake",
+        "provider_transport": "controlled_fake",
+        "speaker": "controlled_fake"
+      }
+    },
+    {
+      "architecture": "front_brain",
+      "component_fingerprint": "77cd6aa78427decfc4b0072b81b0ebc1d505bf21413ed7f3435df6bb00703724",
+      "components": [
+        {
+          "model_id": "gpt-realtime-2.1-mini",
+          "provider_id": "openai",
+          "role": "surface"
+        },
+        {
+          "model_id": "gpt-5.6-luna",
+          "provider_id": "openai",
+          "role": "analysis"
+        }
+      ],
+      "configuration": {
+        "compatibility": null,
+        "config": {
+          "analysis_model": {
+            "model_id": "gpt-5.6-luna",
+            "provider_id": "openai"
+          },
+          "architecture": "front_brain",
+          "reasoning_effort": "low",
+          "reflex_model": {
+            "model_id": "gpt-realtime-2.1-mini",
+            "provider_id": "openai"
+          },
+          "speculative_deltas": true
+        },
+        "schema_version": 1
+      },
+      "configuration_fingerprint": "ed449546bace369cb6a52e8264381bb892e714bac73a803e7b0cbb1bdf25f07f",
+      "configuration_id": "14bd97fe46bfd468e272d3b57ba752d6c935e4cf1f74cd24c169f9a110e6be8d",
+      "configuration_readiness": {
+        "compatibility": false,
+        "evidence_kind": "production_composition_resolution",
+        "explicit": true,
+        "outcome": "pass"
+      },
+      "prompt_applications": [
+        {
+          "application": "saved",
+          "channel": null,
+          "layer_revisions": [
+            "9653a2edd9506339c1ef82f5dd74c41b216d7d2b44c10f841f0a41ca09e918d6",
+            "48e7e856ece3c4d1f993bd03c693982cf2e99ae10d5749f4cb584103b8d6776d",
+            "4e1f36686cce93ab85ed5162a263b3cbece8bdef39494b03a7191514636387f9",
+            "fccc652756045a553e8ae30136b804ca045c0ba70bb849dbfefc3414897ff6c5",
+            "67182a1b8fdaf6f5010c163588e79293b54f543dbad888ffbbb92517e5d8d6d0"
+          ],
+          "program_id": "voice.front_brain.openai.session",
+          "prompt_ids": [
+            "voice.persona",
+            "voice.rules.conversation",
+            "voice.conversation.addition",
+            "voice.initial_context",
+            "voice.tools.conversation"
+          ],
+          "render_fingerprint": null,
+          "static_fingerprint": "086bfe00429fc52add7f89d55226219427ce820cb786fed3996c82cad53e5ba4"
+        },
+        {
+          "application": "saved",
+          "channel": null,
+          "layer_revisions": [
+            "edf2d00536165809fa0ffa694188bb47a7e5eff21872fda71cca18e932394835",
+            "9a81b5ef941526cb71db841c64e2f3bb2b418e32e1e17c962d5d2b57c9654fe3",
+            "558d0cce2caa57c8d202e8323d8aff7ebbc91ee22f7cc7af9b74f2c5c4354eb7",
+            "a9aa83e7ff65abafb0dd74aa58f31028a66c734aee1ec7256c4daa1af03a320b"
+          ],
+          "program_id": "front_brain.openai.analysis",
+          "prompt_ids": [
+            "front_brain.analysis.instructions",
+            "front_brain.analysis.addition",
+            "front_brain.analysis.input",
+            "front_brain.analysis.schema"
+          ],
+          "render_fingerprint": null,
+          "static_fingerprint": "6887048ff514ed8b0cfb3402d038a1db6fc47e784d1a83c9860d17be5a358240"
+        }
+      ],
+      "representative_e2e": {
+        "evidence_kind": "production_seam_pytest",
+        "evidence_node_ids": [
+          "tests/integration/test_simple_front_brain_composition.py::test_explicit_conversation_is_direct_while_optional_luna_is_blocked[gpt-realtime-2.1-mini-front_brain]"
+        ],
+        "outcome": "architecture_specific_pass"
+      },
+      "scenario_suite_fingerprint": "a12285b93fd158a29e7906b68b1959b718a5b39ee387e72adf553ee3ddb2b6a2",
+      "scenarios": [
+        {
+          "action": "quiet_ambient",
+          "evidence_kind": "unavailable",
+          "evidence_node_ids": [],
+          "expected_invariant": "no_speech_or_work",
+          "outcome": "not_run",
+          "scenario_id": "quiet-ambient",
+          "scripted_parameters": {
+            "duration_ms": 5000
+          }
+        },
+        {
+          "action": "short_confirmation",
+          "evidence_kind": "shared_contract_evidence",
+          "evidence_node_ids": [
+            "tests/unit/test_reflex_gate.py::test_wait_controls"
+          ],
+          "expected_invariant": "silent_completion",
+          "outcome": "shared_contract_evidence",
+          "scenario_id": "short-confirmation",
+          "scripted_parameters": {}
+        },
+        {
+          "action": "direct_question",
+          "evidence_kind": "production_seam_pytest",
+          "evidence_node_ids": [
+            "tests/integration/test_simple_front_brain_composition.py::test_explicit_conversation_is_direct_while_optional_luna_is_blocked[gpt-realtime-2.1-mini-front_brain]"
+          ],
+          "expected_invariant": "one_useful_output",
+          "outcome": "architecture_specific_pass",
+          "scenario_id": "direct-question",
+          "scripted_parameters": {}
+        },
+        {
+          "action": "pause_mid_sentence",
+          "evidence_kind": "shared_contract_evidence",
+          "evidence_node_ids": [
+            "tests/integration/test_voice_replay_regressions.py::test_thinking_pause_wait_stays_silent_on_the_full_voice_stack"
+          ],
+          "expected_invariant": "no_precommit_effect",
+          "outcome": "shared_contract_evidence",
+          "scenario_id": "pause-mid-sentence",
+          "scripted_parameters": {
+            "pause_ms": 2900
+          }
+        },
+        {
+          "action": "long_monologue",
+          "evidence_kind": "unavailable",
+          "evidence_node_ids": [],
+          "expected_invariant": "single_committed_turn",
+          "outcome": "not_run",
+          "scenario_id": "long-monologue",
+          "scripted_parameters": {
+            "fragment_count": 32
+          }
+        },
+        {
+          "action": "late_correction",
+          "evidence_kind": "shared_contract_evidence",
+          "evidence_node_ids": [
+            "tests/unit/test_v2_intent_revision.py::test_late_uncertain_confirmation_preserves_latest_confirmed_intent"
+          ],
+          "expected_invariant": "latest_revision_only",
+          "outcome": "shared_contract_evidence",
+          "scenario_id": "late-correction",
+          "scripted_parameters": {
+            "revision_count": 3
+          }
+        },
+        {
+          "action": "long_backend_work",
+          "evidence_kind": "shared_contract_evidence",
+          "evidence_node_ids": [
+            "tests/integration/test_voice_replay_regressions.py::test_backend_85_7s_does_not_block_later_turn_admission_on_full_stack"
+          ],
+          "expected_invariant": "conversation_nonblocking",
+          "outcome": "shared_contract_evidence",
+          "scenario_id": "long-backend-work",
+          "scripted_parameters": {
+            "duration_ms": 85700,
+            "later_turns": 2
+          }
+        },
+        {
+          "action": "backend_result_after_topic_shift",
+          "evidence_kind": "shared_contract_evidence",
+          "evidence_node_ids": [
+            "tests/integration/test_voice_replay_regressions.py::test_backend_85_7s_does_not_block_later_turn_admission_on_full_stack"
+          ],
+          "expected_invariant": "result_deferred_not_spoken",
+          "outcome": "shared_contract_evidence",
+          "scenario_id": "backend-result-after-topic-shift",
+          "scripted_parameters": {}
+        },
+        {
+          "action": "user_interruption",
+          "evidence_kind": "shared_contract_evidence",
+          "evidence_node_ids": [
+            "tests/integration/test_voice_replay_safety_regressions.py::test_confirmed_interrupt_without_provider_item_never_invents_heard_words",
+            "tests/integration/test_voice_replay_safety_regressions.py::test_late_provider_cancel_rejection_keeps_local_stop_and_drops_late_pcm"
+          ],
+          "expected_invariant": "local_output_stopped",
+          "outcome": "shared_contract_evidence",
+          "scenario_id": "user-interruption",
+          "scripted_parameters": {}
+        },
+        {
+          "action": "background_noise",
+          "evidence_kind": "shared_contract_evidence",
+          "evidence_node_ids": [
+            "tests/integration/test_voice_replay_safety_regressions.py::test_bus_cluster_seven_rejections_never_stop_duck_cancel_or_submit_work"
+          ],
+          "expected_invariant": "no_false_interruption",
+          "outcome": "shared_contract_evidence",
+          "scenario_id": "background-noise",
+          "scripted_parameters": {
+            "candidate_count": 7
+          }
+        },
+        {
+          "action": "output_stall_reconnect",
+          "evidence_kind": "shared_contract_evidence",
+          "evidence_node_ids": [
+            "tests/integration/test_voice_replay_safety_regressions.py::test_missing_terminal_recovers_at_replay_deadline_and_next_output_speaks"
+          ],
+          "expected_invariant": "queue_recovers",
+          "outcome": "shared_contract_evidence",
+          "scenario_id": "output-stall-reconnect",
+          "scripted_parameters": {}
+        },
+        {
+          "action": "mode_switch",
+          "evidence_kind": "shared_contract_evidence",
+          "evidence_node_ids": [
+            "tests/unit/test_voice_switch.py::test_simple_front_duplex_simple_sequence_keeps_conversation_and_work"
+          ],
+          "expected_invariant": "active_work_preserved",
+          "outcome": "shared_contract_evidence",
+          "scenario_id": "mode-switch",
+          "scripted_parameters": {}
+        },
+        {
+          "action": "manual_stop",
+          "evidence_kind": "shared_contract_evidence",
+          "evidence_node_ids": [
+            "tests/integration/test_voice_replay_safety_regressions.py::test_manual_close_retains_late_core_results_without_speech_and_reports_once"
+          ],
+          "expected_invariant": "session_closed_usage_unknown",
+          "outcome": "shared_contract_evidence",
+          "scenario_id": "manual-stop",
+          "scripted_parameters": {}
+        },
+        {
+          "action": "spoken_divergence",
+          "evidence_kind": "shared_contract_evidence",
+          "evidence_node_ids": [
+            "tests/integration/test_voice_replay_safety_regressions.py::test_spoken_divergence_preserves_intended_generated_and_heard_evidence"
+          ],
+          "expected_invariant": "heard_text_authoritative",
+          "outcome": "shared_contract_evidence",
+          "scenario_id": "spoken-divergence",
+          "scripted_parameters": {}
+        }
+      ],
+      "task18_session_report": {
+        "annotations": [
+          {
+            "name": "quiet-ambient",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "short-confirmation",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "direct-question",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "pass"
+          },
+          {
+            "name": "pause-mid-sentence",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "long-monologue",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "late-correction",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "long-backend-work",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "backend-result-after-topic-shift",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "user-interruption",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "background-noise",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "output-stall-reconnect",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "mode-switch",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "manual-stop",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "spoken-divergence",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          }
+        ],
+        "architecture": "front_brain",
+        "components": [
+          {
+            "model_id": "gpt-realtime-2.1-mini",
+            "provider_id": "openai",
+            "role": "surface"
+          },
+          {
+            "model_id": "gpt-5.6-luna",
+            "provider_id": "openai",
+            "role": "analysis"
+          }
+        ],
+        "configuration_id": "14bd97fe46bfd468e272d3b57ba752d6c935e4cf1f74cd24c169f9a110e6be8d",
+        "conversation_id": "offline-voice-common-v1",
+        "cost_estimate": null,
+        "ended_at": "2026-09-13T00:00:00+00:00",
+        "event_counts": {
+          "backend_task_result": 0,
+          "backend_task_started": 0,
+          "false_or_rejected_barge_in": 0,
+          "intended_spoken_divergence": 0,
+          "output_stall": 0,
+          "stale_cancellation": 0,
+          "unnecessary_acknowledgement": 0,
+          "user_interruption": 0
+        },
+        "latency_metrics": {
+          "backend_first_progress_ms": {
+            "count": 0,
+            "max_ms": null,
+            "mean_ms": null,
+            "min_ms": null,
+            "samples_ms": []
+          },
+          "backend_result_ms": {
+            "count": 0,
+            "max_ms": null,
+            "mean_ms": null,
+            "min_ms": null,
+            "samples_ms": []
+          },
+          "brain_speech_to_first_audio_ms": {
+            "count": 0,
+            "max_ms": null,
+            "mean_ms": null,
+            "min_ms": null,
+            "samples_ms": []
+          },
+          "delegation_latency_ms": {
+            "count": 0,
+            "max_ms": null,
+            "mean_ms": null,
+            "min_ms": null,
+            "samples_ms": []
+          },
+          "device_drain_ms": {
+            "count": 0,
+            "max_ms": null,
+            "mean_ms": null,
+            "min_ms": null,
+            "samples_ms": []
+          },
+          "frontend_blocking_ms": {
+            "count": 0,
+            "max_ms": null,
+            "mean_ms": null,
+            "min_ms": null,
+            "samples_ms": []
+          },
+          "playback_attempt_ms": {
+            "count": 0,
+            "max_ms": null,
+            "mean_ms": null,
+            "min_ms": null,
+            "samples_ms": []
+          },
+          "provider_first_pcm_ms": {
+            "count": 0,
+            "max_ms": null,
+            "mean_ms": null,
+            "min_ms": null,
+            "samples_ms": []
+          },
+          "speech_queue_wait_ms": {
+            "count": 0,
+            "max_ms": null,
+            "mean_ms": null,
+            "min_ms": null,
+            "samples_ms": []
+          },
+          "time_to_first_audible_reaction_ms": {
+            "count": 0,
+            "max_ms": null,
+            "mean_ms": null,
+            "min_ms": null,
+            "samples_ms": []
+          },
+          "time_to_first_useful_answer_ms": {
+            "count": 0,
+            "max_ms": null,
+            "mean_ms": null,
+            "min_ms": null,
+            "samples_ms": []
+          },
+          "user_interrupt_stop_ms": {
+            "count": 0,
+            "max_ms": null,
+            "mean_ms": null,
+            "min_ms": null,
+            "samples_ms": []
+          }
+        },
+        "live_active_seconds": null,
+        "model_id": "gpt-realtime-2.1-mini",
+        "prompt_applications": [
+          {
+            "application": "saved",
+            "layer_revisions": [
+              "9653a2edd9506339c1ef82f5dd74c41b216d7d2b44c10f841f0a41ca09e918d6",
+              "48e7e856ece3c4d1f993bd03c693982cf2e99ae10d5749f4cb584103b8d6776d",
+              "4e1f36686cce93ab85ed5162a263b3cbece8bdef39494b03a7191514636387f9",
+              "fccc652756045a553e8ae30136b804ca045c0ba70bb849dbfefc3414897ff6c5",
+              "67182a1b8fdaf6f5010c163588e79293b54f543dbad888ffbbb92517e5d8d6d0"
+            ],
+            "program_id": "voice.front_brain.openai.session",
+            "static_fingerprint": "086bfe00429fc52add7f89d55226219427ce820cb786fed3996c82cad53e5ba4"
+          },
+          {
+            "application": "saved",
+            "layer_revisions": [
+              "edf2d00536165809fa0ffa694188bb47a7e5eff21872fda71cca18e932394835",
+              "9a81b5ef941526cb71db841c64e2f3bb2b418e32e1e17c962d5d2b57c9654fe3",
+              "558d0cce2caa57c8d202e8323d8aff7ebbc91ee22f7cc7af9b74f2c5c4354eb7",
+              "a9aa83e7ff65abafb0dd74aa58f31028a66c734aee1ec7256c4daa1af03a320b"
+            ],
+            "program_id": "front_brain.openai.analysis",
+            "static_fingerprint": "6887048ff514ed8b0cfb3402d038a1db6fc47e784d1a83c9860d17be5a358240"
+          }
+        ],
+        "provider_id": "openai",
+        "provider_usage": {
+          "duration_seconds": null,
+          "final": false,
+          "input_tokens": null,
+          "output_tokens": null,
+          "source": null
+        },
+        "provider_usage_components": [
+          {
+            "cost_estimate": null,
+            "model_id": "gpt-realtime-2.1-mini",
+            "provider_id": "openai",
+            "role": "surface",
+            "usage": {
+              "cached_tokens": null,
+              "duration_seconds": null,
+              "final": false,
+              "identity_consistent": null,
+              "input_tokens": null,
+              "observed_model_id": null,
+              "observed_provider_id": null,
+              "output_tokens": null,
+              "reasoning_tokens": null,
+              "requests": null,
+              "source": "unavailable",
+              "total_tokens": null
+            }
+          },
+          {
+            "cost_estimate": null,
+            "model_id": "gpt-5.6-luna",
+            "provider_id": "openai",
+            "role": "analysis",
+            "usage": {
+              "cached_tokens": null,
+              "duration_seconds": null,
+              "final": null,
+              "identity_consistent": null,
+              "input_tokens": null,
+              "observed_model_id": null,
+              "observed_provider_id": null,
+              "output_tokens": null,
+              "reasoning_tokens": null,
+              "requests": null,
+              "source": "unavailable",
+              "total_tokens": null
+            }
+          }
+        ],
+        "provider_usage_final": false,
+        "provider_usage_seconds": null,
+        "schema": "jarvis.voice_benchmark.session",
+        "schema_version": 1,
+        "session_duration_seconds": 0.0,
+        "session_fingerprint": "d71c4627f03f220645b9a630d0d1c7b8628925f0fd03a532271cf38a390ec96d",
+        "session_id": "offline-front_brain-a12285b93fd1",
+        "started_at": "2026-09-13T00:00:00+00:00",
+        "terminal_status": "stopped",
+        "trace_evidence_complete": true
+      },
+      "test_environment": {
+        "microphone": "controlled_fake",
+        "provider_transport": "controlled_fake",
+        "speaker": "controlled_fake"
+      }
+    },
+    {
+      "architecture": "duplex",
+      "component_fingerprint": "f749fa84ffac8ea091c90659027ddf3f82b5236f0b5a6399b1638645b5ede2c3",
+      "components": [
+        {
+          "model_id": "gpt-live-1",
+          "provider_id": "openai",
+          "role": "surface"
+        }
+      ],
+      "configuration": {
+        "compatibility": null,
+        "config": {
+          "architecture": "duplex",
+          "client_delegation": true,
+          "conversation_model": {
+            "model_id": "gpt-live-1",
+            "provider_id": "openai"
+          },
+          "idle_timeout_s": 60.0
+        },
+        "schema_version": 1
+      },
+      "configuration_fingerprint": "c059ad7f83884edcd9f9825bb384bd725ccafcbfeb9848222a84b1fa1ddc204c",
+      "configuration_id": "a99cd226fae9be53d9b6482ee4d1336e46b63ddc3a879cc002181fb7c86934c2",
+      "configuration_readiness": {
+        "compatibility": false,
+        "evidence_kind": "production_composition_resolution",
+        "explicit": true,
+        "outcome": "pass"
+      },
+      "prompt_applications": [
+        {
+          "application": "saved",
+          "channel": null,
+          "layer_revisions": [
+            "c165c6c68c51f9a55eabea5dc99b0aa52230a5a7582bfa3f5b72bd6bbd397354",
+            "b50b529b68db95baf5722d53850c1c47b5f79c77e3889a3e3470c31a054d057c",
+            "fccc652756045a553e8ae30136b804ca045c0ba70bb849dbfefc3414897ff6c5"
+          ],
+          "program_id": "voice.duplex.openai.session",
+          "prompt_ids": [
+            "live.duplex.instructions",
+            "live.duplex.addition",
+            "voice.initial_context"
+          ],
+          "render_fingerprint": null,
+          "static_fingerprint": "1427c4254c441bbb57113ff91ece9d272ec7f37e41fb57e79d0b233683afd32a"
+        }
+      ],
+      "representative_e2e": {
+        "evidence_kind": "production_seam_pytest",
+        "evidence_node_ids": [
+          "tests/integration/test_live_duplex_session.py::test_first_live_deltas_drive_restricted_job_without_blocking_second_turn"
+        ],
+        "outcome": "architecture_specific_pass"
+      },
+      "scenario_suite_fingerprint": "a12285b93fd158a29e7906b68b1959b718a5b39ee387e72adf553ee3ddb2b6a2",
+      "scenarios": [
+        {
+          "action": "quiet_ambient",
+          "evidence_kind": "unavailable",
+          "evidence_node_ids": [],
+          "expected_invariant": "no_speech_or_work",
+          "outcome": "not_run",
+          "scenario_id": "quiet-ambient",
+          "scripted_parameters": {
+            "duration_ms": 5000
+          }
+        },
+        {
+          "action": "short_confirmation",
+          "evidence_kind": "shared_contract_evidence",
+          "evidence_node_ids": [
+            "tests/unit/test_reflex_gate.py::test_wait_controls"
+          ],
+          "expected_invariant": "silent_completion",
+          "outcome": "shared_contract_evidence",
+          "scenario_id": "short-confirmation",
+          "scripted_parameters": {}
+        },
+        {
+          "action": "direct_question",
+          "evidence_kind": "unavailable",
+          "evidence_node_ids": [],
+          "expected_invariant": "one_useful_output",
+          "outcome": "not_run",
+          "scenario_id": "direct-question",
+          "scripted_parameters": {}
+        },
+        {
+          "action": "pause_mid_sentence",
+          "evidence_kind": "shared_contract_evidence",
+          "evidence_node_ids": [
+            "tests/integration/test_voice_replay_regressions.py::test_thinking_pause_wait_stays_silent_on_the_full_voice_stack"
+          ],
+          "expected_invariant": "no_precommit_effect",
+          "outcome": "shared_contract_evidence",
+          "scenario_id": "pause-mid-sentence",
+          "scripted_parameters": {
+            "pause_ms": 2900
+          }
+        },
+        {
+          "action": "long_monologue",
+          "evidence_kind": "unavailable",
+          "evidence_node_ids": [],
+          "expected_invariant": "single_committed_turn",
+          "outcome": "not_run",
+          "scenario_id": "long-monologue",
+          "scripted_parameters": {
+            "fragment_count": 32
+          }
+        },
+        {
+          "action": "late_correction",
+          "evidence_kind": "shared_contract_evidence",
+          "evidence_node_ids": [
+            "tests/unit/test_v2_intent_revision.py::test_late_uncertain_confirmation_preserves_latest_confirmed_intent"
+          ],
+          "expected_invariant": "latest_revision_only",
+          "outcome": "shared_contract_evidence",
+          "scenario_id": "late-correction",
+          "scripted_parameters": {
+            "revision_count": 3
+          }
+        },
+        {
+          "action": "long_backend_work",
+          "evidence_kind": "shared_contract_evidence",
+          "evidence_node_ids": [
+            "tests/integration/test_voice_replay_regressions.py::test_backend_85_7s_does_not_block_later_turn_admission_on_full_stack"
+          ],
+          "expected_invariant": "conversation_nonblocking",
+          "outcome": "shared_contract_evidence",
+          "scenario_id": "long-backend-work",
+          "scripted_parameters": {
+            "duration_ms": 85700,
+            "later_turns": 2
+          }
+        },
+        {
+          "action": "backend_result_after_topic_shift",
+          "evidence_kind": "shared_contract_evidence",
+          "evidence_node_ids": [
+            "tests/integration/test_voice_replay_regressions.py::test_backend_85_7s_does_not_block_later_turn_admission_on_full_stack"
+          ],
+          "expected_invariant": "result_deferred_not_spoken",
+          "outcome": "shared_contract_evidence",
+          "scenario_id": "backend-result-after-topic-shift",
+          "scripted_parameters": {}
+        },
+        {
+          "action": "user_interruption",
+          "evidence_kind": "shared_contract_evidence",
+          "evidence_node_ids": [
+            "tests/integration/test_voice_replay_safety_regressions.py::test_confirmed_interrupt_without_provider_item_never_invents_heard_words",
+            "tests/integration/test_voice_replay_safety_regressions.py::test_late_provider_cancel_rejection_keeps_local_stop_and_drops_late_pcm"
+          ],
+          "expected_invariant": "local_output_stopped",
+          "outcome": "shared_contract_evidence",
+          "scenario_id": "user-interruption",
+          "scripted_parameters": {}
+        },
+        {
+          "action": "background_noise",
+          "evidence_kind": "shared_contract_evidence",
+          "evidence_node_ids": [
+            "tests/integration/test_voice_replay_safety_regressions.py::test_bus_cluster_seven_rejections_never_stop_duck_cancel_or_submit_work"
+          ],
+          "expected_invariant": "no_false_interruption",
+          "outcome": "shared_contract_evidence",
+          "scenario_id": "background-noise",
+          "scripted_parameters": {
+            "candidate_count": 7
+          }
+        },
+        {
+          "action": "output_stall_reconnect",
+          "evidence_kind": "shared_contract_evidence",
+          "evidence_node_ids": [
+            "tests/integration/test_voice_replay_safety_regressions.py::test_missing_terminal_recovers_at_replay_deadline_and_next_output_speaks"
+          ],
+          "expected_invariant": "queue_recovers",
+          "outcome": "shared_contract_evidence",
+          "scenario_id": "output-stall-reconnect",
+          "scripted_parameters": {}
+        },
+        {
+          "action": "mode_switch",
+          "evidence_kind": "shared_contract_evidence",
+          "evidence_node_ids": [
+            "tests/unit/test_voice_switch.py::test_simple_front_duplex_simple_sequence_keeps_conversation_and_work"
+          ],
+          "expected_invariant": "active_work_preserved",
+          "outcome": "shared_contract_evidence",
+          "scenario_id": "mode-switch",
+          "scripted_parameters": {}
+        },
+        {
+          "action": "manual_stop",
+          "evidence_kind": "shared_contract_evidence",
+          "evidence_node_ids": [
+            "tests/integration/test_voice_replay_safety_regressions.py::test_manual_close_retains_late_core_results_without_speech_and_reports_once"
+          ],
+          "expected_invariant": "session_closed_usage_unknown",
+          "outcome": "shared_contract_evidence",
+          "scenario_id": "manual-stop",
+          "scripted_parameters": {}
+        },
+        {
+          "action": "spoken_divergence",
+          "evidence_kind": "shared_contract_evidence",
+          "evidence_node_ids": [
+            "tests/integration/test_voice_replay_safety_regressions.py::test_spoken_divergence_preserves_intended_generated_and_heard_evidence"
+          ],
+          "expected_invariant": "heard_text_authoritative",
+          "outcome": "shared_contract_evidence",
+          "scenario_id": "spoken-divergence",
+          "scripted_parameters": {}
+        }
+      ],
+      "task18_session_report": {
+        "annotations": [
+          {
+            "name": "quiet-ambient",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "short-confirmation",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "direct-question",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "pause-mid-sentence",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "long-monologue",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "late-correction",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "long-backend-work",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "backend-result-after-topic-shift",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "user-interruption",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "background-noise",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "output-stall-reconnect",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "mode-switch",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "manual-stop",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          },
+          {
+            "name": "spoken-divergence",
+            "note_fingerprint": "58b5bf4c3c65459d6427d3d03662471d95d5e8cd051d7a13623797a5ea3412f1",
+            "note_length": 70,
+            "outcome": "uncertain"
+          }
+        ],
+        "architecture": "duplex",
+        "components": [
+          {
+            "model_id": "gpt-live-1",
+            "provider_id": "openai",
+            "role": "surface"
+          }
+        ],
+        "configuration_id": "a99cd226fae9be53d9b6482ee4d1336e46b63ddc3a879cc002181fb7c86934c2",
+        "conversation_id": "offline-voice-common-v1",
+        "cost_estimate": null,
+        "ended_at": "2026-09-13T00:00:00+00:00",
+        "event_counts": {
+          "backend_task_result": 0,
+          "backend_task_started": 0,
+          "false_or_rejected_barge_in": 0,
+          "intended_spoken_divergence": 0,
+          "output_stall": 0,
+          "stale_cancellation": 0,
+          "unnecessary_acknowledgement": 0,
+          "user_interruption": 0
+        },
+        "latency_metrics": {
+          "backend_first_progress_ms": {
+            "count": 0,
+            "max_ms": null,
+            "mean_ms": null,
+            "min_ms": null,
+            "samples_ms": []
+          },
+          "backend_result_ms": {
+            "count": 0,
+            "max_ms": null,
+            "mean_ms": null,
+            "min_ms": null,
+            "samples_ms": []
+          },
+          "brain_speech_to_first_audio_ms": {
+            "count": 0,
+            "max_ms": null,
+            "mean_ms": null,
+            "min_ms": null,
+            "samples_ms": []
+          },
+          "delegation_latency_ms": {
+            "count": 0,
+            "max_ms": null,
+            "mean_ms": null,
+            "min_ms": null,
+            "samples_ms": []
+          },
+          "device_drain_ms": {
+            "count": 0,
+            "max_ms": null,
+            "mean_ms": null,
+            "min_ms": null,
+            "samples_ms": []
+          },
+          "frontend_blocking_ms": {
+            "count": 0,
+            "max_ms": null,
+            "mean_ms": null,
+            "min_ms": null,
+            "samples_ms": []
+          },
+          "playback_attempt_ms": {
+            "count": 0,
+            "max_ms": null,
+            "mean_ms": null,
+            "min_ms": null,
+            "samples_ms": []
+          },
+          "provider_first_pcm_ms": {
+            "count": 0,
+            "max_ms": null,
+            "mean_ms": null,
+            "min_ms": null,
+            "samples_ms": []
+          },
+          "speech_queue_wait_ms": {
+            "count": 0,
+            "max_ms": null,
+            "mean_ms": null,
+            "min_ms": null,
+            "samples_ms": []
+          },
+          "time_to_first_audible_reaction_ms": {
+            "count": 0,
+            "max_ms": null,
+            "mean_ms": null,
+            "min_ms": null,
+            "samples_ms": []
+          },
+          "time_to_first_useful_answer_ms": {
+            "count": 0,
+            "max_ms": null,
+            "mean_ms": null,
+            "min_ms": null,
+            "samples_ms": []
+          },
+          "user_interrupt_stop_ms": {
+            "count": 0,
+            "max_ms": null,
+            "mean_ms": null,
+            "min_ms": null,
+            "samples_ms": []
+          }
+        },
+        "live_active_seconds": null,
+        "model_id": "gpt-live-1",
+        "prompt_applications": [
+          {
+            "application": "saved",
+            "layer_revisions": [
+              "c165c6c68c51f9a55eabea5dc99b0aa52230a5a7582bfa3f5b72bd6bbd397354",
+              "b50b529b68db95baf5722d53850c1c47b5f79c77e3889a3e3470c31a054d057c",
+              "fccc652756045a553e8ae30136b804ca045c0ba70bb849dbfefc3414897ff6c5"
+            ],
+            "program_id": "voice.duplex.openai.session",
+            "static_fingerprint": "1427c4254c441bbb57113ff91ece9d272ec7f37e41fb57e79d0b233683afd32a"
+          }
+        ],
+        "provider_id": "openai",
+        "provider_usage": {
+          "duration_seconds": null,
+          "final": false,
+          "input_tokens": null,
+          "output_tokens": null,
+          "source": null
+        },
+        "provider_usage_components": [
+          {
+            "cost_estimate": null,
+            "model_id": "gpt-live-1",
+            "provider_id": "openai",
+            "role": "surface",
+            "usage": {
+              "cached_tokens": null,
+              "duration_seconds": null,
+              "final": false,
+              "identity_consistent": null,
+              "input_tokens": null,
+              "observed_model_id": null,
+              "observed_provider_id": null,
+              "output_tokens": null,
+              "reasoning_tokens": null,
+              "requests": null,
+              "source": "unavailable",
+              "total_tokens": null
+            }
+          }
+        ],
+        "provider_usage_final": false,
+        "provider_usage_seconds": null,
+        "schema": "jarvis.voice_benchmark.session",
+        "schema_version": 1,
+        "session_duration_seconds": 0.0,
+        "session_fingerprint": "94223750a9ee62127638da1b75c2320a74dbce728485fc38476d2362d535db1e",
+        "session_id": "offline-duplex-a12285b93fd1",
+        "started_at": "2026-09-13T00:00:00+00:00",
+        "terminal_status": "stopped",
+        "trace_evidence_complete": true
+      },
+      "test_environment": {
+        "microphone": "controlled_fake",
+        "provider_transport": "controlled_fake",
+        "speaker": "controlled_fake"
+      }
+    }
+  ],
+  "evidence_run": {
+    "command": [
+      "python",
+      "-m",
+      "pytest",
+      "tests/integration/test_live_duplex_session.py::test_first_live_deltas_drive_restricted_job_without_blocking_second_turn",
+      "tests/integration/test_simple_front_brain_composition.py::test_explicit_conversation_is_direct_while_optional_luna_is_blocked[gpt-realtime-2.1-mini-front_brain]",
+      "tests/integration/test_simple_front_brain_composition.py::test_explicit_conversation_is_direct_while_optional_luna_is_blocked[gpt-realtime-2.1-mini-simple]",
+      "tests/integration/test_voice_replay_regressions.py::test_backend_85_7s_does_not_block_later_turn_admission_on_full_stack",
+      "tests/integration/test_voice_replay_regressions.py::test_thinking_pause_wait_stays_silent_on_the_full_voice_stack",
+      "tests/integration/test_voice_replay_safety_regressions.py::test_bus_cluster_seven_rejections_never_stop_duck_cancel_or_submit_work",
+      "tests/integration/test_voice_replay_safety_regressions.py::test_confirmed_interrupt_without_provider_item_never_invents_heard_words",
+      "tests/integration/test_voice_replay_safety_regressions.py::test_late_provider_cancel_rejection_keeps_local_stop_and_drops_late_pcm",
+      "tests/integration/test_voice_replay_safety_regressions.py::test_manual_close_retains_late_core_results_without_speech_and_reports_once",
+      "tests/integration/test_voice_replay_safety_regressions.py::test_missing_terminal_recovers_at_replay_deadline_and_next_output_speaks",
+      "tests/integration/test_voice_replay_safety_regressions.py::test_spoken_divergence_preserves_intended_generated_and_heard_evidence",
+      "tests/unit/test_app.py::test_operational_architecture_provenance_matches_the_runtime",
+      "tests/unit/test_reflex_gate.py::test_wait_controls",
+      "tests/unit/test_v2_intent_revision.py::test_late_uncertain_confirmation_preserves_latest_confirmed_intent",
+      "tests/unit/test_voice_architecture_config.py::test_migration_maps_simple_projection_without_reinterpreting_execution",
+      "tests/unit/test_voice_switch.py::test_simple_front_duplex_simple_sequence_keeps_conversation_and_work",
+      "-q",
+      "-W",
+      "error",
+      "-o",
+      "asyncio_default_fixture_loop_scope=function",
+      "--tb=short"
+    ],
+    "exit_code": 0,
+    "passed_node_ids": [
+      "tests/integration/test_live_duplex_session.py::test_first_live_deltas_drive_restricted_job_without_blocking_second_turn",
+      "tests/integration/test_simple_front_brain_composition.py::test_explicit_conversation_is_direct_while_optional_luna_is_blocked[gpt-realtime-2.1-mini-front_brain]",
+      "tests/integration/test_simple_front_brain_composition.py::test_explicit_conversation_is_direct_while_optional_luna_is_blocked[gpt-realtime-2.1-mini-simple]",
+      "tests/integration/test_voice_replay_regressions.py::test_backend_85_7s_does_not_block_later_turn_admission_on_full_stack",
+      "tests/integration/test_voice_replay_regressions.py::test_thinking_pause_wait_stays_silent_on_the_full_voice_stack",
+      "tests/integration/test_voice_replay_safety_regressions.py::test_bus_cluster_seven_rejections_never_stop_duck_cancel_or_submit_work",
+      "tests/integration/test_voice_replay_safety_regressions.py::test_confirmed_interrupt_without_provider_item_never_invents_heard_words",
+      "tests/integration/test_voice_replay_safety_regressions.py::test_late_provider_cancel_rejection_keeps_local_stop_and_drops_late_pcm",
+      "tests/integration/test_voice_replay_safety_regressions.py::test_manual_close_retains_late_core_results_without_speech_and_reports_once",
+      "tests/integration/test_voice_replay_safety_regressions.py::test_missing_terminal_recovers_at_replay_deadline_and_next_output_speaks",
+      "tests/integration/test_voice_replay_safety_regressions.py::test_spoken_divergence_preserves_intended_generated_and_heard_evidence",
+      "tests/unit/test_app.py::test_operational_architecture_provenance_matches_the_runtime",
+      "tests/unit/test_reflex_gate.py::test_wait_controls",
+      "tests/unit/test_v2_intent_revision.py::test_late_uncertain_confirmation_preserves_latest_confirmed_intent",
+      "tests/unit/test_voice_architecture_config.py::test_migration_maps_simple_projection_without_reinterpreting_execution",
+      "tests/unit/test_voice_switch.py::test_simple_front_duplex_simple_sequence_keeps_conversation_and_work"
+    ]
+  },
+  "evidence_scope": {
+    "backend_model": "unavailable",
+    "compatibility_projection_samples": "excluded_from_architecture_comparison",
+    "configuration_scope": "explicit_only",
+    "cost": "unavailable",
+    "live_latency": "unavailable",
+    "live_run": "not_run_no_authorization",
+    "microphone": "unavailable",
+    "migration_compatibility_evidence": "verified_separately",
+    "production_seam_pytest": "available",
+    "provider_session": "unavailable",
+    "provider_usage": "unavailable",
+    "ranking": "unavailable",
+    "reason": "offline fake adapters cannot measure provider, acoustic, latency, usage, cost, or conversational quality",
+    "shared_deterministic_policy_contract": "available",
+    "speaker": "unavailable"
+  },
+  "metric_interpretation": {
+    "count_keys": [
+      "backend_task_started",
+      "backend_task_result",
+      "stale_cancellation",
+      "user_interruption",
+      "false_or_rejected_barge_in",
+      "output_stall",
+      "unnecessary_acknowledgement",
+      "intended_spoken_divergence"
+    ],
+    "latency_keys": [
+      "provider_first_pcm_ms",
+      "playback_attempt_ms",
+      "time_to_first_audible_reaction_ms",
+      "time_to_first_useful_answer_ms",
+      "frontend_blocking_ms",
+      "delegation_latency_ms",
+      "speech_queue_wait_ms",
+      "brain_speech_to_first_audio_ms",
+      "backend_first_progress_ms",
+      "backend_result_ms",
+      "user_interrupt_stop_ms",
+      "device_drain_ms"
+    ],
+    "scripted_clock_values_are_performance_measurements": false,
+    "task18_schema": "emitted_per_architecture",
+    "zero_event_counts_are_live_passes": false
+  },
+  "migration_evidence": {
+    "compatibility_projection": "verified",
+    "evidence_kind": "production_seam_pytest",
+    "evidence_node_ids": [
+      "tests/unit/test_voice_architecture_config.py::test_migration_maps_simple_projection_without_reinterpreting_execution",
+      "tests/unit/test_app.py::test_operational_architecture_provenance_matches_the_runtime"
+    ],
+    "operational_architecture_provenance": [
+      "legacy",
+      "continuous_brain",
+      "simple"
+    ],
+    "outcome": "pass"
+  },
+  "origin": "2026-09-13T00:00:00+00:00",
+  "run_id": "offline-voice-common-v1-a12285b93fd1",
+  "schema": "jarvis.voice_benchmark.cross_architecture",
+  "schema_version": 1,
+  "suite": {
+    "fingerprint": "a12285b93fd158a29e7906b68b1959b718a5b39ee387e72adf553ee3ddb2b6a2",
+    "provenance": {
+      "evidence_kind": "constructed_offline_contract",
+      "gaps": [
+        "No provider session was opened.",
+        "No microphone or speaker device was used.",
+        "Fixture durations are scenario inputs, not latency measurements.",
+        "Provider usage, cost, acoustic quality, and conversational quality remain unavailable."
+      ],
+      "source_path": "tasks/jarvis_voice_architectures_handoff/tasks/20-cross-architecture-benchmark-migration/TASK.md"
+    },
+    "scenario_ids": [
+      "quiet-ambient",
+      "short-confirmation",
+      "direct-question",
+      "pause-mid-sentence",
+      "long-monologue",
+      "late-correction",
+      "long-backend-work",
+      "backend-result-after-topic-shift",
+      "user-interruption",
+      "background-noise",
+      "output-stall-reconnect",
+      "mode-switch",
+      "manual-stop",
+      "spoken-divergence"
+    ],
+    "schema": "jarvis.voice_benchmark.cross_architecture_suite",
+    "schema_version": 1,
+    "suite_id": "voice-common-v1"
+  }
+}

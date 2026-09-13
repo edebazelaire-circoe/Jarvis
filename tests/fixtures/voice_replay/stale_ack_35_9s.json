@@ -1,0 +1,26 @@
+{
+  "schema": "jarvis.voice_replay",
+  "schema_version": 1,
+  "scenario_id": "stale_ack_35_9s",
+  "origin": "2026-09-11T15:43:38+02:00",
+  "provenance": {
+    "source_path": "tasks/jarvis_voice_architectures_handoff/sources/transcript-2026-09-11.md",
+    "source_kind": "human_trace_reconstruction",
+    "reported": [
+      {"source_ref": "lines 50 and 289-305", "fact": "A ready acknowledgement waited 35900 ms before output."}
+    ],
+    "derived": [
+      {"source_ref": "TASK.md lines 47-50", "fact": "A superseded candidate must not become spoken at the historical delay."}
+    ],
+    "constructed": [
+      {"source_ref": "fixture design", "fact": "Intent epochs, identifiers, and the 28000 ms supersession point are synthetic."}
+    ]
+  },
+  "steps": [
+    {"at_ms": 0, "port": "device", "action": "output_busy", "data": {"output_id": "prior-output"}},
+    {"at_ms": 0, "port": "scheduler", "action": "enqueue", "data": {"candidate_id": "old-ack", "intent_id": "intent-old", "intent_epoch": 1, "kind": "ack", "ttl_ms": 60000}},
+    {"at_ms": 28000, "port": "user", "action": "turn", "data": {"turn_id": "new-turn", "content_tag": "new_intent"}},
+    {"at_ms": 28000, "port": "scheduler", "action": "enqueue", "data": {"candidate_id": "new-result", "intent_id": "intent-new", "intent_epoch": 2, "kind": "result"}},
+    {"at_ms": 35900, "port": "device", "action": "release", "data": {"output_id": "prior-output"}}
+  ]
+}
