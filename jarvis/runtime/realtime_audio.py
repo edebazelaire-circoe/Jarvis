@@ -1071,7 +1071,11 @@ class SoundDeviceRealtimeAudio:
         try:
             stream.abort(ignore_errors=False) if abort else stream.stop(ignore_errors=False)
         except Exception as exc:
-            failure = exc
+            # Un barge-in (`_abort_output`) laisse la sortie arrêtée mais encore
+            # possédée : PortAudio refuse alors le second abort avec
+            # paStreamIsStopped. L'état visé est atteint, seul close() compte.
+            if not _is_stream_already_stopped(exc):
+                failure = exc
         try:
             stream.close(ignore_errors=False)
             self._released_stream_ids.add(id(stream))
@@ -1079,6 +1083,15 @@ class SoundDeviceRealtimeAudio:
             raise
         if failure is not None:
             raise failure
+
+
+_PA_STREAM_IS_STOPPED = -9983
+
+
+def _is_stream_already_stopped(exc: BaseException) -> bool:
+    """`PortAudioError(msg, paStreamIsStopped)`, sans importer sounddevice."""
+    args = getattr(exc, "args", ())
+    return type(exc).__name__ == "PortAudioError" and len(args) > 1 and args[1] == _PA_STREAM_IS_STOPPED
 
 
 class RealtimeConversationBridge:

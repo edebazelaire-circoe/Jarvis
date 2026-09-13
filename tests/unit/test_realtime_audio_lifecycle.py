@@ -157,6 +157,44 @@ async def test_playback_after_close_is_a_no_op():
     assert stream.writes == []
 
 
+async def test_close_after_barge_in_tolerates_an_already_stopped_output():
+    """Crash du 13 septembre : abort d'un flux déjà arrêté par un barge-in."""
+
+    class PortAudioError(Exception):
+        pass
+
+    class StoppedOnceStream(FakeOutputStream):
+        def abort(self, *, ignore_errors=True) -> None:
+            if self.aborted:
+                raise PortAudioError("Error aborting stream: Stream is stopped [PaErrorCode -9983]", -9983)
+            super().abort()
+
+    audio = SoundDeviceRealtimeAudio()
+    stream = StoppedOnceStream()
+    audio._output = stream
+
+    assert await audio.stop_output() is True
+    assert await audio.close() is True
+    assert stream.closed is True
+
+
+async def test_close_still_reports_real_output_abort_failures():
+    class PortAudioError(Exception):
+        pass
+
+    class BrokenStream(FakeOutputStream):
+        def abort(self, *, ignore_errors=True) -> None:
+            raise PortAudioError("Error aborting stream: Unanticipated host error [PaErrorCode -9999]", -9999)
+
+    audio = SoundDeviceRealtimeAudio()
+    stream = BrokenStream()
+    audio._output = stream
+
+    with pytest.raises(RuntimeError, match="audio_device_close_failed"):
+        await audio.close()
+    assert stream.closed is True
+
+
 async def test_input_teardown_waits_for_callbacks_rather_than_aborting():
     """stop() attend les callbacks en vol ; abort() les abandonnerait."""
     audio = SoundDeviceRealtimeAudio()

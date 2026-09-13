@@ -9,6 +9,7 @@ import pytest
 
 from jarvis.core.v2_app import JarvisCoreApplication
 from jarvis.domain.back_brain import BackBrainSubmitRequest
+from jarvis.domain.voice_state import MAX_SPEECHES, VoiceSpeechState
 from jarvis.runtime.live_frontend_session import LiveFrontendSession
 from tests.unit.test_back_brain_worker import harness, until
 
@@ -121,6 +122,46 @@ async def test_first_live_deltas_drive_restricted_job_without_blocking_second_tu
         assert restored["status"] == "completed" and restored["result"]["text"] == "2 is smaller than 3."
     finally:
         await reopened.stop()
+
+
+async def test_long_conversation_settles_outputs_before_the_ledger_bound(harness, tmp_path):
+    """Crash du 13 septembre : la 65e réponse Live dépassait MAX_SPEECHES."""
+    core = JarvisCoreApplication(data_root=tmp_path / "data", workers={"back_brain": harness.worker("claude")})
+    await core.start()
+    conversation = (await core.conversations.create()).id
+    wire = LiveWire()
+    session = await LiveFrontendSession.connect(api_key="unused", voice="marin", context={},
+                                                connector=lambda: asyncio.sleep(0, result=wire), poll_interval_s=.005)
+    await session.attach_core(CoreClient(core), conversation)
+    audio_events = []
+
+    async def consume():
+        async for event in session.events():
+            if event.message_type == "realtime.audio":
+                audio_events.append(event)
+
+    reader = asyncio.create_task(consume())
+    try:
+        for turn in range(MAX_SPEECHES + 6):
+            wire.push({"type": "session.input_transcript.delta", "event_id": f"input-{turn}",
+                       "delta": f"Question {turn}.", "start_ms": turn * 100, "end_ms": turn * 100 + 10})
+            wire.push({"type": "session.output_audio.delta", "event_id": f"audio-{turn}",
+                       "delta": base64.b64encode(b"\1\0" * 20).decode()})
+            await until(lambda: len(audio_events) == turn + 1)
+            session.observe_playback(audio_events[-1].payload, played_ms=1, written_ms=1)
+            if turn % 16 == 15:
+                await session.flush_observations()
+        # Barge-in: the bridge reports the current output as terminal.
+        session.observe_playback(audio_events[-1].payload, played_ms=2, written_ms=2, terminal=True)
+        await session.flush_observations()
+        speeches = (await core.voice_ledger.snapshot(conversation))["snapshot"]["speeches"]
+        active = {VoiceSpeechState.QUEUED.value, VoiceSpeechState.GENERATING.value, VoiceSpeechState.PLAYING.value}
+        assert 0 < len(speeches) <= MAX_SPEECHES
+        assert [speech["state"] for speech in speeches if speech["state"] in active] == []
+    finally:
+        await session.close()
+        await asyncio.gather(reader, return_exceptions=True)
+        await core.stop()
 
 
 async def test_completed_result_is_not_reused_after_session_replacement(harness, tmp_path):
