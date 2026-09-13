@@ -660,7 +660,7 @@ function liveTimer(id,start,cls,hint){
 function timerHtml(t){
   if(t.id==='brain'){
     if(t.busy&&t.turn_started_ms)return liveTimer('brain',t.turn_started_ms,'live',`Tour en cours depuis ${fmtClock(t.turn_started_ms)}`);
-    if(t.started_ms&&t.state==='running')return liveTimer('brain',t.started_ms,'idle',`En service depuis ${fmtClock(t.started_ms)}`);
+    if(t.started_ms&&brainArmed(t))return liveTimer('brain',t.started_ms,'idle',`En service depuis ${fmtClock(t.started_ms)}`);
     return '<span class="timer idle" title="Brain arrêté">—</span>';
   }
   if(isRunning(t)&&t.started_ms)return liveTimer(t.id,t.started_ms,'live',`Démarré à ${fmtClock(t.started_ms)}`);
@@ -674,10 +674,17 @@ function tickTimers(){
   });
 }
 
+// « Armé » veut dire prêt à prendre un tour, pas « un processus tourne ».
+// Claude tient un processus permanent (`running`) ; Codex en lance un par tour
+// et se déclare `ready` entre deux. Sans ce second état, un brain Codex
+// s'affichait « arrêté » quoi qu'on fasse : « Redémarrer » réussissait en
+// silence, « Arrêter » restait grisé, et rien ne le disait.
+function brainArmed(b){const state=(b&&b.state)||'';return state==='running'||state==='ready'}
 function brainState(b){
   const state=b.state||'stopped';
   if(b.busy)return {cls:'running',label:'tour en cours'};
   if(state==='running')return {cls:'ok',label:'en attente'};
+  if(state==='ready')return {cls:'ok',label:'prêt'};
   if(state==='exited')return {cls:'bad',label:'processus terminé'};
   return {cls:'',label:'arrêté'};
 }
@@ -689,7 +696,7 @@ function cardHtml(t,{level=0,compact=false,head=false}={}){
     const a=AG.agent||{},c=a.console||{};
     st=brainState(t);
     model=prettyModel(t.model);
-    line=t.activity||(t.busy?'Tour en cours…':t.state==='running'?'En attente d’une demande':t.state==='exited'?'Le processus s’est arrêté':'Arrêté · clic droit pour démarrer');
+    line=t.activity||(t.busy?'Tour en cours…':brainArmed(t)?'En attente d’une demande':t.state==='exited'?'Le processus s’est arrêté':'Arrêté · clic droit pour démarrer');
     lineTitle=line;
     meta.push(`<span>${esc(st.label)}</span>`);
     if(a.pid)meta.push(`<span>PID ${esc(a.pid)}</span>`);
@@ -1315,11 +1322,11 @@ function menuItems(id){
     items.push({act:'copy',label:'Copier le prompt',disabled:!t||!t.prompt});
     return items;
   }
-  const a=AG.agent||{},c=a.console||{},running=(a.state||(t&&t.state))==='running';
+  const a=AG.agent||{},c=a.console||{},armed=brainArmed({state:a.state||(t&&t.state)});
   items.push('-',
-    {act:'start',label:'Démarrer',disabled:running},
+    {act:'start',label:'Démarrer',disabled:armed},
     {act:'restart',label:'Redémarrer'},
-    {act:'kill',label:'Arrêter',danger:true,disabled:!running},
+    {act:'kill',label:'Arrêter',danger:true,disabled:!armed},
     '-');
   if(c.open)items.push({act:'console-open',label:'Ramener la console Windows'},{act:'console-close',label:'Fermer la console Windows',danger:true});
   else items.push({act:'console-open',label:'Console Windows',disabled:c.supported===false});
