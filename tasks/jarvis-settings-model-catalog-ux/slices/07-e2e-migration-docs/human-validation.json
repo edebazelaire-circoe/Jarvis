@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-SET-E2E-01",
+      "title": "Final settings personalization walkthrough",
+      "instructions": "After maximum machine QA passes, perform one end-to-end walkthrough: switch Auto/Dupliqué, adjust verbosity and politeness/formality, compare/filter model catalogs, inspect an unavailable/requestable model, navigate all voice tabs, reload Jarvis/Control Center, and confirm values/state remain coherent.",
+      "expected": "The new settings architecture persists correctly, never misrepresents availability, and is materially easier to navigate than the removed Aiguillage/dense voice pages."
+    }
+  ]
+}

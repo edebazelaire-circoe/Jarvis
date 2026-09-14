@@ -8,6 +8,7 @@ Program: `tasks/jarvis_voice_architectures_handoff`.
 | Evidence-backed registry, architecture/role queries and readiness | `jarvis/runtime/voice_capabilities.py` |
 | Version1 codec, compatibility projection, isolated persistence/query | `jarvis/runtime/voice_architecture_config.py` |
 | Existing provider account model discovery | `jarvis/runtime/model_catalog.py` |
+| Shared sourced comparison projection (read-only, not runtime authority) | `docs/catalog/INDEX.md`, `jarvis/runtime/catalog_view.py` |
 | Regression and journal evidence | `tests/unit/test_voice_architecture_config.py` |
 | Canonical commands, correlation, PCM, lifecycle, bounded context and diagnostics | `jarvis/domain/voice_frontend.py` |
 | Typed canonical provider observations and local playback evidence | `jarvis/domain/voice_events.py` |

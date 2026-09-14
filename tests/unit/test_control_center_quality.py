@@ -25,6 +25,7 @@ from jarvis.adapters import file_replace
 from jarvis.adapters import sherpa_speaker_embedder as engine
 from jarvis.adapters.owner_voice_profile import OwnerVoiceProfile, save_profile
 from jarvis.domain.speaker import ConversationAuthorization, ConversationMode, SpeakerVerificationMode, VerifierAvailability
+from jarvis.domain.voice_architecture import VoiceArchitectureId
 import jarvis.runtime.control_center as control_module
 from jarvis.runtime import voice_stack
 from jarvis.runtime.control_center import SETTINGS_ERROR_CODE_HEADER, ControlCenter
@@ -841,7 +842,16 @@ class Capture:
         self.resets += 1
 
 
-def voice_runtime(tmp_path, factory, *, echo_cancellation: bool | None = True, journal: Journal | None = None):
+def voice_runtime(
+    tmp_path,
+    factory,
+    *,
+    echo_cancellation: bool | None = True,
+    journal: Journal | None = None,
+    voice_arch: VoiceArchitecture = VoiceArchitecture.CONTINUOUS_BRAIN,
+    conversation_architecture: VoiceArchitectureId | None = None,
+    configuration_id: str | None = None,
+):
     return PersistentVoiceRuntime(
         wakeword=object(),
         core=object(),
@@ -849,7 +859,9 @@ def voice_runtime(tmp_path, factory, *, echo_cancellation: bool | None = True, j
         signals=VisualSignalBus(tmp_path),
         journal=journal,
         auto_turn=True,
-        voice_arch=VoiceArchitecture.CONTINUOUS_BRAIN,
+        voice_arch=voice_arch,
+        conversation_architecture=conversation_architecture,
+        configuration_id=configuration_id,
         capture_factory=factory,
         authorization=ConversationAuthorization(ConversationMode.OPEN_ROOM, SpeakerVerificationMode.SHADOW),
         echo_cancellation=echo_cancellation,
@@ -871,6 +883,23 @@ def test_voice_publishes_the_capture_it_applies_at_each_activation(tmp_path):
     assert report["verifier"] == {"availability": "ready", "dropped_ms": 0}
     assert (report["speaker_verification"], report["arch"], report["phase"]) == ("shadow", "continuous_brain", "activation")
     assert capture.resets == 1
+
+
+def test_explicit_voice_capture_publishes_its_configuration_identity_despite_legacy_operational_arch(tmp_path):
+    runtime = voice_runtime(
+        tmp_path,
+        lambda: Capture(),
+        voice_arch=VoiceArchitecture.LEGACY,
+        conversation_architecture=VoiceArchitectureId.DUPLEX,
+        configuration_id="c" * 64,
+    )
+
+    runtime._duplex_capture()
+
+    report = published(tmp_path)
+    assert report["arch"] == "legacy"
+    assert report["architecture"] == "duplex"
+    assert report["configuration_id"] == "c" * 64
 
 
 def test_an_aec_failure_during_the_session_is_published_before_the_reset_and_traced_once(tmp_path):

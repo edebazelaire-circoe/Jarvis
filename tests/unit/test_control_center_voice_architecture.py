@@ -74,7 +74,7 @@ def test_browser_renderer_and_draft_preserve_same_mode_and_only_post_explicit_ch
     query['selection']['config']['conversation_model'] = {
         k: query['architectures'][0]['fields'][0]['options'][1][k] for k in ('provider_id', 'model_id')}
     page = Path('jarvis/runtime/control_center.html').read_text(encoding='utf-8')
-    functions = page[page.index('function voiceArchitectureConfig()'):page.index('/* --- onglet CLI')]
+    functions = page[page.index('function voiceArchitectureConfig()'):page.index('/* --- onglet Agent / CLI')]
     functions += page[page.index('function draftFrom(data)'):page.index('async function openSettings()')]
     functions += page[page.index('async function saveDraft(options)'):page.index("modalSave.addEventListener('click'")]
     script = r'''
@@ -123,23 +123,23 @@ def test_async_browser_render_does_not_restore_a_previous_panel(tmp_path):
     if node is None:
         pytest.skip('Node required to execute browser rendering')
     page = Path('jarvis/runtime/control_center.html').read_text(encoding='utf-8')
-    render = page[page.index('async function renderTab()'):page.index('function bindTab()')]
+    render = page[page.index('async function renderTab()'):page.index('function bindTab(revision)')]
     script = r'''
 const assert=require('node:assert/strict');
-const SET={tab:'voice'},TABS=[{id:'voice',save:true},{id:'routing',save:true}];
+const SET={tab:'voice'},TABS=[{id:'voice',save:true},{id:'cli',save:true}];
 const modalContent={},modalSub={},modalSave={style:{}};
-const esc=String,say=()=>{},bindTab=()=>{};
+const esc=String,say=()=>{},bindTab=()=>{},destroyAgentCatalog=()=>{},mountAgentCatalog=()=>{},hydrateCliAgents=()=>{};
 let finish;
 const tabVoice=()=>new Promise(resolve=>{finish=resolve});
-const tabRouting=async()=>'<new routing panel>';
+const tabCli=()=>'<new agent panel>';
 ''' + render + r'''
 (async()=>{
 const first=renderTab();
-SET.tab='routing';
+SET.tab='cli';
 await renderTab();
 finish('<old voice panel>');
 await first;
-assert.equal(modalContent.innerHTML,'<new routing panel>');
+assert.equal(modalContent.innerHTML,'<new agent panel>');
 })().catch(error=>{console.error(error);process.exitCode=1});
 '''
     path = tmp_path / 'settings-render.cjs'

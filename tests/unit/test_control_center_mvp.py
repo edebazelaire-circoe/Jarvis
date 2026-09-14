@@ -93,7 +93,7 @@ def test_settings_window_is_a_modal_that_closes_on_an_outside_click():
     html = CONTROL_CENTER_HTML.read_text(encoding="utf-8")
     assert ".modal{width:82vw;height:82vh" in html
     assert "overlay.addEventListener('mousedown',event=>{if(event.target===overlay)closeSettings()})" in html
-    for label in ("Mode vocal", "CLI agent", "Config", "API Keys", "Raccourcis"):
+    for label in ("Mode vocal", "Agent / CLI", "Config", "API Keys", "Raccourcis"):
         assert f"label:'{label}'" in html
     # Les listes de modèles passent par le catalogue du serveur : aucune liste
     # de modèles ne doit être écrite dans la page.

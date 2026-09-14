@@ -36,6 +36,20 @@ from jarvis.domain.routing import (
 #: ont leurs propres clés : un modèle de voix n'est pas un candidat de
 #: sous-agent, et rien ici ne doit les attraper.
 SETTING_KEY = "agent_routing"
+DELEGATION_AUTO = "auto"
+DELEGATION_DUPLICATE = "duplicate"
+DELEGATION_MODES = (
+    {
+        "id": DELEGATION_AUTO,
+        "label": "Auto",
+        "help": "Applique les profils aux candidats du CLI hôte actif; un seul modèle gagne.",
+    },
+    {
+        "id": DELEGATION_DUPLICATE,
+        "label": "Dupliqué",
+        "help": "Hérite du modèle CLI/appelant; ne duplique jamais l'exécution.",
+    },
+)
 
 #: Modèle absent du catalogue : le candidat reste, marqué.
 MISSING_MODEL_REASON = "Ce modèle n'est plus proposé par le fournisseur."
@@ -90,6 +104,42 @@ def store(settings: dict[str, Any], policy: RoutingPolicy) -> None:
     settings[SETTING_KEY] = {
         "enabled": policy.enabled,
         "profiles": {entry.profile: entry.as_dict() for entry in policy.profiles},
+    }
+
+
+def delegation_mode(settings: Mapping[str, Any]) -> str:
+    """Project the existing routing switch without writing a migration field."""
+    return DELEGATION_AUTO if load_policy(settings).enabled else DELEGATION_DUPLICATE
+
+
+def delegation_enabled(value: object) -> bool:
+    if value == DELEGATION_AUTO:
+        return True
+    if value == DELEGATION_DUPLICATE:
+        return False
+    raise RoutingError(
+        "agent_settings_invalid_delegation_mode",
+        "Mode de sous-agents inconnu; utilisez auto ou duplicate.",
+    )
+
+
+def apply_delegation_mode(settings: dict[str, Any], value: object) -> RoutingPolicy:
+    """Write only `agent_routing.enabled`, preserving every profile choice."""
+    return apply(settings, {"enabled": delegation_enabled(value)})
+
+
+def describe_delegation_modes() -> dict[str, Any]:
+    return {
+        "id": "delegation_mode",
+        "label": "Mode des sous-agents",
+        "type": "enum",
+        "default": DELEGATION_DUPLICATE,
+        "help": "Auto choisit sur le CLI hôte actif; Dupliqué hérite du CLI/appelant sans fan-out.",
+        "destination": "agent_cli.technical",
+        "advanced": False,
+        "runtime_status": "live-alias",
+        "persistence": "agent_routing.enabled",
+        "options": [dict(option) for option in DELEGATION_MODES],
     }
 
 
@@ -229,7 +279,12 @@ def build_candidates(
     return candidates
 
 
-def with_saved(candidates: Sequence[ModelCandidate], policy: RoutingPolicy) -> list[ModelCandidate]:
+def with_saved(
+    candidates: Sequence[ModelCandidate],
+    policy: RoutingPolicy,
+    *,
+    unavailable_reasons_by_agent: Mapping[str, str] | None = None,
+) -> list[ModelCandidate]:
     """Ajouter, marqués indisponibles, les candidats enregistrés qui ont disparu.
 
     Sans cela, une clé API retirée ferait taire un choix de l'utilisateur : le
@@ -239,6 +294,7 @@ def with_saved(candidates: Sequence[ModelCandidate], policy: RoutingPolicy) -> l
     """
     known = {(item.agent, item.model) for item in candidates}
     enriched = list(candidates)
+    reasons = unavailable_reasons_by_agent or {}
     for entry in policy.profiles:
         for ref in entry.candidates:
             if (ref.agent, ref.model) in known:
@@ -251,7 +307,10 @@ def with_saved(candidates: Sequence[ModelCandidate], policy: RoutingPolicy) -> l
                     label=ref.key,
                     capabilities=frozenset(),
                     available=False,
-                    unavailable_reason=MISSING_MODEL_REASON if ref.model else MISSING_AGENT_REASON,
+                    unavailable_reason=(
+                        reasons.get(ref.agent)
+                        or (MISSING_MODEL_REASON if ref.model else MISSING_AGENT_REASON)
+                    ),
                 )
             )
     return enriched

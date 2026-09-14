@@ -122,7 +122,8 @@ duration, without storing raw audio.
 ## La fenêtre de réglages
 
 Le bouton **SET** du Control Center (ou la touche `s`) ouvre une fenêtre
-centrée, fermée par un clic à l'extérieur ou par `Échap`. Elle a cinq onglets.
+centrée, fermée par un clic à l'extérieur ou par `Échap`. Elle a six onglets :
+Mode vocal, Prompts, Agent / CLI, Config, API Keys et Raccourcis.
 
 Un principe la traverse : **la page ne connaît aucun réglage**. Le serveur
 décrit ce qui existe — les piles vocales, leurs champs, les CLI, leurs modes,
@@ -178,7 +179,7 @@ les seules listes écrites en dur de cet écran, parce qu'aucun des deux
 fournisseurs ne les expose par une API. La persona vit dans `JARVIS_PERSONA`,
 `jarvis/adapters/openai_realtime.py`, et sert aux deux piles.
 
-### CLI agent
+### Agent / CLI
 
 | CLI | Pilotage | Console | Modèles listés depuis |
 | --- | --- | --- | --- |
@@ -1325,11 +1326,36 @@ brain saw — without opening megabytes of JSONL:
 It reads declared scalars only: no transcript, no voiceprint, nothing else ever
 reaches its output.
 
-## Aiguillage des sous-agents
+## Configuration des sous-agents
 
-Onglet **Aiguillage** de la fenêtre de réglages. Éteint, rien ne change : chaque
-sous-agent garde le modèle par défaut du CLI, comme avant. Allumé, JARVIS impose
-pour chaque profil le premier candidat autorisé *et* utilisable.
+### Contrat backend Agent / CLI
+
+Le backend expose maintenant dans `GET /api/settings` :
+
+- `cli.delegation_mode`: `auto` ou `duplicate` ;
+- `cli.delegation_mode_metadata`: libellés, aide et persistance canonique ;
+- `cli.behavior.values` et `cli.behavior.fields`: verbosité puis
+  politesse/formalité.
+
+`POST /api/settings` accepte la même projection sous `cli`. Il n'enregistre
+jamais `delegation_mode` : Auto écrit `agent_routing.enabled=true`, Dupliqué
+écrit `false`, sans supprimer les profils ni leurs candidats. Dupliqué
+conserve le choix modèle du CLI/appelant et ne signifie jamais deux appels.
+L'ancien bloc `routing` reste accepté pendant la migration; envoyer les deux
+formes avec des valeurs contradictoires refuse toute l'écriture.
+
+Les préférences de réponse sont stockées sous `agent_behavior`. La valeur
+`inherit` n'ajoute aucun octet au prompt. Les autres valeurs passent par la
+composition commune `backend.turn.addition` pour Claude et Codex, sur les
+routes Agent `ask` et `send` comme sur les jobs possédés. Ajout de tour sauvegardé
+et comportement généré partagent une borne de 8 192 caractères, validée avant
+toute écriture. Détails et contrat de test : `docs/settings/INDEX.md`.
+
+L'onglet **Agent / CLI** place les réglages techniques avant le comportement et
+le catalogue. Le mode **Dupliqué** conserve le modèle du CLI/appelant sans
+dupliquer l'exécution. Le mode **Auto** applique à chaque profil le premier
+candidat autorisé *et* utilisable. Les profils et recours restent accessibles
+sous **Configuration avancée des sous-agents**.
 
 Quatre profils : **Poste de travail** (navigateur, fichiers ouverts), **Code
 avancé**, **Sémantique rapide**, **Général** — ce dernier servant aussi de

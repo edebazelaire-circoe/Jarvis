@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-SET-VOICE-01",
+      "title": "Validate voice settings navigation",
+      "instructions": "After automated QA passes, open the voice settings page. Confirm the top sub-tabs make the dense settings understandable, turn-taking/interruption controls are easy to find, Models uses the shared comparison table, and advanced/diagnostic options no longer overwhelm primary configuration.",
+      "expected": "Voice configuration is substantially easier to scan and expert controls are categorized without losing access."
+    }
+  ]
+}

@@ -8,10 +8,15 @@ refusé en clair, et aucune panne de ce hook ne peut paralyser le cerveau.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 import json
+import time
+
+import pytest
 
 from jarvis.domain import routing
 from jarvis.runtime import agent_routing, routing_hook
+from jarvis.runtime.catalog_view import CatalogViewService
 from jarvis.runtime.journal import read_jsonl_tail
 
 CLAUDE = {
@@ -188,7 +193,7 @@ def _write_settings(tmp_path, payload: dict) -> None:
 def test_the_hook_reads_the_settings_file_and_answers_on_its_own(tmp_path, monkeypatch):
     monkeypatch.setattr(routing_hook, "local_agents", lambda: [CLAUDE])
     (tmp_path / "model-catalog.json").write_text(
-        json.dumps({"anthropic": {"provider": "anthropic", "models": MODELS["anthropic"], "fetched_at": 0, "key_hint": "x"}}),
+        json.dumps({"anthropic": {"provider": "anthropic", "models": MODELS["anthropic"], "fetched_at": time.time(), "key_hint": "x"}}),
         encoding="utf-8",
     )
     _write_settings(tmp_path, {"enabled": True, "profiles": {"code": {"candidates": [{"agent": "claude", "model": "petit"}]}}})
@@ -206,6 +211,42 @@ def test_the_hook_reads_the_settings_file_and_answers_on_its_own(tmp_path, monke
     assert "Fais-le." not in json.dumps(event, ensure_ascii=False)
 
 
+def test_stale_saved_model_is_nonselectable_in_view_and_noneligible_in_hook(tmp_path, monkeypatch):
+    now = datetime(2026, 9, 14, 12, 0, tzinfo=timezone.utc)
+    stale_payload = {
+        "provider": "anthropic",
+        "models": MODELS["anthropic"],
+        "fetched_at": (now - timedelta(days=1)).timestamp(),
+        "key_hint": "private-hint",
+    }
+    (tmp_path / "model-catalog.json").write_text(
+        json.dumps({"anthropic": stale_payload}), encoding="utf-8",
+    )
+    chosen = policy({"agent": "claude", "model": "petit"})
+    monkeypatch.setattr(routing_hook, "local_agents", lambda: [CLAUDE])
+
+    candidates = routing_hook.offline_candidates(tmp_path, chosen, now=now)
+    stale = next(item for item in candidates if item.model == "petit")
+    view = CatalogViewService().subagents(
+        agents=[CLAUDE],
+        catalogs={"anthropic": {**stale_payload, "source": "cache"}},
+        saved=[routing.CandidateRef("claude", "petit")],
+        now=now,
+    ).to_dict()
+    comparison = next(item for item in view["items"] if item["identity"]["model_id"] == "petit")
+
+    assert stale.available is False
+    assert "non vérifiée" in stale.unavailable_reason
+    assert comparison["availability"]["state"] == "configured_unverified"
+    assert comparison["availability"]["selectable"] is False
+    output, decision = routing_hook.decide(call(model="grand"), chosen, candidates)
+    assert applied(output) == "deny" and decision is None
+    with pytest.raises(routing.NoEligibleCandidateError):
+        routing_hook.resolve_for(
+            "code", chosen, candidates, override=routing.CandidateRef("claude", "petit"),
+        )
+
+
 def test_the_hook_without_any_settings_says_nothing(tmp_path):
     assert routing_hook.run(call(), tmp_path) == {}
 
@@ -217,7 +258,7 @@ def test_a_byte_order_mark_never_silently_switches_routing_off(tmp_path, monkeyp
 
     monkeypatch.setattr(routing_hook, "local_agents", lambda: [CLAUDE])
     (tmp_path / "model-catalog.json").write_text(
-        json.dumps({"anthropic": {"provider": "anthropic", "models": MODELS["anthropic"], "fetched_at": 0, "key_hint": "x"}}),
+        json.dumps({"anthropic": {"provider": "anthropic", "models": MODELS["anthropic"], "fetched_at": time.time(), "key_hint": "x"}}),
         encoding="utf-8",
     )
     settings: dict = {}
@@ -232,7 +273,7 @@ def test_a_byte_order_mark_never_silently_switches_routing_off(tmp_path, monkeyp
 def test_the_hook_reads_a_marked_event_from_its_standard_input(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(routing_hook, "local_agents", lambda: [CLAUDE])
     (tmp_path / "model-catalog.json").write_text(
-        json.dumps({"anthropic": {"provider": "anthropic", "models": MODELS["anthropic"], "fetched_at": 0, "key_hint": "x"}}),
+        json.dumps({"anthropic": {"provider": "anthropic", "models": MODELS["anthropic"], "fetched_at": time.time(), "key_hint": "x"}}),
         encoding="utf-8",
     )
     _write_settings(tmp_path, {"enabled": True, "profiles": {"code": {"candidates": [{"agent": "claude", "model": "petit"}]}}})

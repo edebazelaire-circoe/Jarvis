@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "surface": "subagents",
+  "role": "subagent",
+  "generated_at": "2026-09-14T12:00:00+00:00",
+  "sources": [
+    {
+      "source_id": "provider:anthropic",
+      "kind": "provider_live",
+      "reference": "fixture",
+      "observed_at": "2026-09-14T12:00:00+00:00",
+      "updated_at": null,
+      "freshness": "live",
+      "status_code": "ok"
+    }
+  ],
+  "items": [
+    {
+      "key": "catalog_v1_expensive",
+      "kind": "subagent_model",
+      "identity": {"agent_id": "claude", "provider_id": "anthropic", "model_id": "expensive"},
+      "label": "Expensive",
+      "roles": {"value": ["subagent", "text"], "provenance": {"source_id": "runtime:claude", "freshness": "fresh", "status_code": "ok"}},
+      "capabilities": {"value": ["code", "vision"], "provenance": {"source_id": "runtime:claude", "freshness": "fresh", "status_code": "ok"}},
+      "description": {"value": "Travaux complexes", "provenance": {"source_id": "review", "freshness": "fresh", "status_code": "ok"}},
+      "tags": {"value": ["premium"], "provenance": {"source_id": "review", "freshness": "fresh", "status_code": "ok"}},
+      "recommended_uses": {"value": ["architecture"], "provenance": {"source_id": "review", "freshness": "fresh", "status_code": "ok"}},
+      "pricing": {"value": {"currency": "USD", "unit": "million_tokens", "input": 10, "output": 30}, "provenance": {"source_id": "pricing", "freshness": "fresh", "status_code": "ok"}},
+      "availability": {"state": "usable", "selectable": true, "reason_code": "verified", "reason": "Vérifié maintenant", "evidence": [{"source_id": "provider:anthropic", "freshness": "live", "status_code": "ok"}]},
+      "actions": []
+    },
+    {
+      "key": "catalog_v1_cheap",
+      "kind": "subagent_model",
+      "identity": {"agent_id": "codex", "provider_id": "openai", "model_id": "cheap"},
+      "label": "Cheap",
+      "roles": {"value": ["subagent", "text"], "provenance": {"source_id": "runtime:codex", "freshness": "fresh", "status_code": "ok"}},
+      "capabilities": {"value": ["code"], "provenance": {"source_id": "runtime:codex", "freshness": "fresh", "status_code": "ok"}},
+      "description": null,
+      "tags": {"value": ["fast"], "provenance": {"source_id": "review", "freshness": "fresh", "status_code": "ok"}},
+      "recommended_uses": null,
+      "pricing": {"value": {"currency": "USD", "unit": "million_tokens", "input": 1, "output": 3}, "provenance": {"source_id": "pricing", "freshness": "fresh", "status_code": "ok"}},
+      "availability": {"state": "usable", "selectable": true, "reason_code": "verified", "reason": "Vérifié maintenant", "evidence": []},
+      "actions": [{"id": "inspect", "label": "Inspecter", "enabled": true}]
+    },
+    {
+      "key": "catalog_v1_unverified",
+      "kind": "subagent_model",
+      "identity": {"agent_id": "claude", "provider_id": "anthropic", "model_id": "default"},
+      "label": "Default CLI",
+      "roles": {"value": ["subagent"], "provenance": {"source_id": "runtime:claude", "freshness": "fresh", "status_code": "ok"}},
+      "capabilities": null,
+      "description": null,
+      "tags": null,
+      "recommended_uses": null,
+      "pricing": null,
+      "availability": {"state": "configured_unverified", "selectable": false, "reason_code": "default_unverified", "reason": "Authentification non vérifiée", "evidence": []},
+      "actions": []
+    },
+    {
+      "key": "catalog_v1_not_configured",
+      "kind": "subagent_model",
+      "identity": {"agent_id": "codex", "provider_id": "openai", "model_id": "remote"},
+      "label": "Remote only",
+      "roles": {"value": ["subagent"], "provenance": {"source_id": "provider:openai", "freshness": "live", "status_code": "ok"}},
+      "capabilities": null,
+      "description": null,
+      "tags": null,
+      "recommended_uses": null,
+      "pricing": null,
+      "availability": {"state": "available_not_configured", "selectable": false, "reason_code": "cli_missing", "reason": "CLI absent", "evidence": []},
+      "actions": []
+    },
+    {
+      "key": "catalog_v1_unavailable",
+      "kind": "subagent_model",
+      "identity": {"agent_id": "claude", "provider_id": "anthropic", "model_id": "retired"},
+      "label": "Retired <unsafe>",
+      "roles": {"value": ["subagent"], "provenance": {"source_id": "saved", "freshness": "fresh", "status_code": "ok"}},
+      "capabilities": null,
+      "description": null,
+      "tags": {"value": ["legacy"], "provenance": {"source_id": "review", "freshness": "stale", "status_code": "stale"}},
+      "recommended_uses": null,
+      "pricing": null,
+      "availability": {"state": "unavailable", "selectable": false, "reason_code": "not_listed", "reason": "Absent du catalogue courant", "evidence": []},
+      "actions": []
+    },
+    {
+      "key": "catalog_v1_unknown",
+      "kind": "subagent_model",
+      "identity": {"agent_id": "codex", "provider_id": "openai", "model_id": "mystery"},
+      "label": "Mystery",
+      "roles": {"value": ["subagent"], "provenance": {"source_id": "saved", "freshness": "unknown", "status_code": "catalog_unreachable"}},
+      "capabilities": null,
+      "description": null,
+      "tags": null,
+      "recommended_uses": null,
+      "pricing": null,
+      "availability": {"state": "unknown", "selectable": false, "reason_code": "no_evidence", "reason": "Aucune preuve courante", "evidence": []},
+      "actions": []
+    }
+  ]
+}

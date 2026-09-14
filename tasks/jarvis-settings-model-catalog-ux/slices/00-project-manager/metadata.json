@@ -1,0 +1,15 @@
+{
+  "slice_id": "00",
+  "task_type": null,
+  "work_intent": "project management and readiness audit",
+  "dependencies": [],
+  "task_type_blocker": "Waived by explicit user authorization on 2026-09-14; task_type remains null rather than inventing a value.",
+  "readiness_state": "READY",
+  "audited_branch": "main",
+  "audited_sha": "f0aec1067542ac4beae7dcced74a336fcfaa7fdf",
+  "baseline_qa": {
+    "passed": 386,
+    "failed": 0,
+    "skipped": 0
+  }
+}

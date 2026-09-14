@@ -36,7 +36,16 @@ from jarvis.domain.speaker import (
 from jarvis.domain.routing import RoutingError
 from jarvis.domain.v2 import BRAIN_NOT_ADDRESSED_ANSWER, AddressingDecision
 from jarvis.runtime.audio_devices import AudioDiagnosticError, SoundDeviceAudioDiagnostics, normalize_device_id
-from jarvis.runtime import agent_routing, cli_catalog, credentials as creds, shortcuts as shortcut_registry, voice_stack
+from jarvis.runtime import (
+    agent_behavior,
+    agent_routing,
+    cli_catalog,
+    credentials as creds,
+    shortcuts as shortcut_registry,
+    voice_settings_schema,
+    voice_stack,
+)
+from jarvis.runtime.catalog_view import CatalogViewService, ProviderCatalogSnapshot, SUBAGENT_ROLES, VOICE_ROLES
 from jarvis.runtime.claude_local import DEFAULT_PERMISSION_MODE, PERMISSION_MODES, ClaudeLocalAgent, normalize_permission_mode
 from jarvis.runtime.codex_local import CodexLocalAgent, normalize_sandbox_mode
 from jarvis.runtime.journal import RuntimeJournal, read_jsonl_tail
@@ -81,6 +90,8 @@ WORK_SCRIPT_FILE = "control_center_work.js"
 WORK_SCRIPT_MARKER = "/*__CONTROL_CENTER_WORK_JS__*/"
 LIVE_SCRIPT_FILE = "control_center_live.js"
 LIVE_SCRIPT_MARKER = "/*__CONTROL_CENTER_LIVE_JS__*/"
+CATALOG_SCRIPT_FILE = "control_center_catalog.js"
+CATALOG_SCRIPT_MARKER = "/*__CONTROL_CENTER_CATALOG_JS__*/"
 
 #: Architectures vocales proposées dans l'onglet « Mode vocal ». Comme le reste
 #: de l'écran, leur libellé vit ici et non dans la page. `{key}` est remplacé
@@ -235,6 +246,7 @@ class ControlCenter:
         self._audio_test_lock = asyncio.Lock()
         self.settings_path = runtime_root / "control-center-settings.json"
         self.catalog = ModelCatalog(runtime_root / "model-catalog.json")
+        self._catalog_view_service = CatalogViewService()
         self._voice_registry = voice_registry
         # Relais des sous-tâches Claude vers l'état de travail Core (handoff
         # work-state, tâche 11). Absent, rien ne part : Core ne connaît pas
@@ -271,6 +283,7 @@ class ControlCenter:
             web.post("/api/credentials", self.save_credential),
             web.post("/api/credentials/delete", self.remove_credential),
             web.post("/api/credentials/bind", self.bind_credential),
+            web.get("/api/catalog", self.catalog_view),
             web.get("/api/models", self.models),
             web.get("/api/cli/agents", self.cli_agents),
             web.get("/api/routing/candidates", self.routing_candidates),
@@ -435,6 +448,9 @@ class ControlCenter:
         )
         html = html.replace(
             LIVE_SCRIPT_MARKER, page.with_name(LIVE_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            CATALOG_SCRIPT_MARKER, page.with_name(CATALOG_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         if self.visualizer_url:
             html = html.replace("__VISUALIZER_URL__", self.visualizer_url)
@@ -992,7 +1008,14 @@ class ControlCenter:
             return {**payload, "effective": None, "status": "invalid", "code": exc.code, "problem": str(exc)}
         return {**payload, "effective": effective_verifier_settings(parsed), "status": "valid", "code": None, "problem": None}
 
-    def _echo_cancellation_payload(self, settings: dict[str, Any], capture_report: dict[str, Any] | None) -> dict[str, Any]:
+    def _echo_cancellation_payload(
+        self,
+        settings: dict[str, Any],
+        capture_report: dict[str, Any] | None,
+        effective_stack: str | None,
+        configuration_id: str | None,
+        compatibility_runtime: bool,
+    ) -> dict[str, Any]:
         """Annulation d'écho : demandée, installée, et réellement appliquée (tâche 08).
 
         La demande est le champ « Annulation d'écho » de la pile OpenAI (le
@@ -1006,7 +1029,7 @@ class ControlCenter:
         configured = bool(voice_stack.settings_for(settings, voice_stack.OPENAI_REALTIME.id).get("echo_cancellation", True))
         applicable = (
             self._voice_arch_is_continuous(settings)
-            and voice_stack.normalize_stack(settings.get("voice_stack")) == voice_stack.OPENAI_REALTIME.id
+            and effective_stack == voice_stack.OPENAI_REALTIME.id
         )
         installed = echo_cancellation_installed()
         if not applicable:
@@ -1033,17 +1056,27 @@ class ControlCenter:
         payload["runtime"] = {
             **runtime,
             "arch": capture_report.get("arch"),
+            "architecture": capture_report.get("architecture"),
+            "configuration_id": capture_report.get("configuration_id"),
             "phase": capture_report.get("phase"),
             "ts": capture_report.get("ts"),
         }
         # Seule une capture duplex publie cet état (conversation continue) : un
         # constat qui ne porte pas sur la demande courante vient de réglages
         # antérieurs, qui attendent le redémarrage de Voice.
-        if (
-            not applicable
-            or runtime.get("requested") is not configured
-            or capture_report.get("arch") != VoiceArchitecture.CONTINUOUS_BRAIN.value
-        ):
+        reported_configuration = capture_report.get("configuration_id")
+        if reported_configuration is not None:
+            same_configuration = reported_configuration == configuration_id
+        else:
+            # Compatibilité avec les processus Voice antérieurs au champ
+            # `configuration_id`. Leur `arch=continuous_brain` est sans
+            # ambiguïté uniquement pour le runtime de compatibilité ; une
+            # architecture explicite doit attendre un rapport corrélé.
+            same_configuration = (
+                compatibility_runtime
+                and capture_report.get("arch") == VoiceArchitecture.CONTINUOUS_BRAIN.value
+            )
+        if not applicable or runtime.get("requested") is not configured or not same_configuration:
             payload["restart_required"] = True
             return payload
         runtime_code = str(runtime.get("code") or "")
@@ -1109,7 +1142,10 @@ class ControlCenter:
         def text(value: object) -> str | None:
             return str(value)[:64] if isinstance(value, str) and value else None
 
-        report: dict[str, Any] = {key: text(raw.get(key)) for key in ("arch", "phase", "speaker_verification")}
+        report: dict[str, Any] = {
+            key: text(raw.get(key))
+            for key in ("arch", "architecture", "configuration_id", "phase", "speaker_verification")
+        }
         ts = raw.get("ts")
         report["ts"] = float(ts) if isinstance(ts, (int, float)) and not isinstance(ts, bool) else None
         aec = raw.get("echo_cancellation")
@@ -1168,19 +1204,40 @@ class ControlCenter:
                     "new_runtime_ready": False, "problem": {"code": getattr(exc, "code", "voice_architecture_invalid"),
                     "message": str(exc)}, "architectures": registry.settings_architectures()}
 
+    @staticmethod
+    def _effective_voice_composition(settings: dict[str, Any]):
+        """Composition réellement consommée, sans modifier les réglages enregistrés."""
+
+        from jarvis.runtime.voice_composition import resolve_voice_composition
+
+        try:
+            return resolve_voice_composition(settings)
+        except (VoiceConfigError, ConfigurationError):
+            return None
+
     def _settings_payload(self, settings: dict[str, Any]) -> dict[str, Any]:
         stack_id = voice_stack.normalize_stack(settings.get("voice_stack"))
         agent_id = cli_catalog.normalize_agent_cli(settings.get("agent_cli"))
         capture_report = self._voice_capture_report()
+        architecture_payload = self._voice_architecture_payload(settings)
+        legacy_arch_payload = self._voice_arch_payload(settings)
+        composition = self._effective_voice_composition(settings)
+        effective_stack = composition.stack_id if composition is not None else None
+        voice_schema = voice_settings_schema.describe_voice_settings(
+            architecture_profiles=architecture_payload.get("architectures", []),
+            legacy_arches=legacy_arch_payload.get("archs", []),
+        )
         return {
             "voice": {
-                "architecture": self._voice_architecture_payload(settings),
+                "architecture": architecture_payload,
                 "stack": stack_id,
+                "effective_stack": effective_stack,
                 "stacks": voice_stack.describe_stacks(),
                 "settings": {
                     spec.id: voice_stack.settings_for(settings, spec.id) for spec in voice_stack.VOICE_STACKS
                 },
-                **self._voice_arch_payload(settings),
+                **legacy_arch_payload,
+                **voice_schema,
                 # Qui peut parler à JARVIS : réglage distinct de l'architecture,
                 # mais Solo Owner n'existe qu'en continuous_brain (tâche 07).
                 "authorization": self._authorization_payload(
@@ -1192,11 +1249,20 @@ class ControlCenter:
                     capture_report=capture_report,
                 ),
                 # Annulation d'écho demandée face à ce que Voice applique (tâche 08).
-                "echo_cancellation": self._echo_cancellation_payload(settings, capture_report),
+                "echo_cancellation": self._echo_cancellation_payload(
+                    settings,
+                    capture_report,
+                    effective_stack,
+                    composition.configuration_id if composition is not None else None,
+                    bool(composition is not None and composition.selection.uses_compatibility_runtime),
+                ),
                 "switch": self._voice_switch_payload(),
             },
             "cli": {
                 "agent": agent_id,
+                "delegation_mode": agent_routing.delegation_mode(settings),
+                "delegation_mode_metadata": agent_routing.describe_delegation_modes(),
+                "behavior": agent_behavior.describe(settings),
                 "agents": [
                     cli_catalog.describe(spec, command=self._agent_settings(settings, spec.id)["command"], detection={})
                     for spec in cli_catalog.AGENT_CLIS
@@ -1246,7 +1312,7 @@ class ControlCenter:
         from jarvis.domain.prompt_registry import PromptTarget
         from jarvis.domain.voice_architecture import DuplexVoiceConfig, FrontBrainVoiceConfig
         from jarvis.runtime.prompt_catalog import default_prompt_registry
-        from jarvis.runtime.prompt_overrides import prompt_override_document
+        from jarvis.runtime.prompt_overrides import stored_prompt_override_document
         from jarvis.runtime.prompt_runtime import resolve_prompt
         from jarvis.runtime.voice_composition import resolve_voice_composition
 
@@ -1306,7 +1372,7 @@ class ControlCenter:
             "backend", None, agent_id, agent_model, None, "turn",
         ), {"context": {}, "request_text": ""}))
 
-        overrides = prompt_override_document(settings)
+        overrides = stored_prompt_override_document(settings)
         programs = []
         active_ids: set[str] = set()
         for label, target, variables in targets:
@@ -1390,7 +1456,7 @@ class ControlCenter:
             else:
                 raise PromptError("prompt_request_invalid", "Use action edit or reset with the documented fields")
             return web.json_response({"mutation": mutation, "prompts": self._prompt_payload(self._settings())})
-        except (PromptError, TypeError) as exc:
+        except (PromptError, agent_behavior.AgentBehaviorError, TypeError) as exc:
             code = getattr(exc, "code", "prompt_request_invalid")
             raise web.HTTPBadRequest(text=str(exc), headers={SETTINGS_ERROR_CODE_HEADER: code}) from exc
 
@@ -1408,6 +1474,7 @@ class ControlCenter:
         switch_to: str | None = None
 
         try:
+            self._validate_delegation_aliases(payload)
             self._apply_voice(current, payload)
             # Champ plat, pendant de `voice_turn_mode` ; vide = revenir au défaut.
             if payload.get("voice_arch") is not None:
@@ -1417,10 +1484,15 @@ class ControlCenter:
                 agent_routing.apply(current, payload["routing"])
             if payload.get("self_development") is not None:
                 apply_self_dev_gate(current, payload["self_development"])
+            # Behavior extends an editable prompt layer. Validate their
+            # combined bound before any atomic settings replacement.
+            from jarvis.runtime.prompt_overrides import prompt_override_document
+            prompt_override_document(current)
         except (
             voice_stack.VoiceStackError,
             ConversationAuthorizationError,
             cli_catalog.CliSettingsError,
+            agent_behavior.AgentBehaviorError,
             creds.CredentialError,
             RoutingError,
             SelfDevError,
@@ -1428,7 +1500,13 @@ class ControlCenter:
         ) as exc:
             # Le corps reste le message en clair (ce que la page affiche) ; le
             # code stable voyage à côté, pour les clients et les tests.
-            self.journal.emit("voice.settings.rejected", "Settings validation rejected", level="warning", data={"code": exc.code})
+            agent_error = isinstance(
+                exc, (cli_catalog.CliSettingsError, agent_behavior.AgentBehaviorError, RoutingError, SelfDevError)
+            )
+            self.journal.emit(
+                "settings.agent.rejected" if agent_error else "voice.settings.rejected",
+                "Settings validation rejected", level="warning", data={"code": exc.code},
+            )
             raise web.HTTPBadRequest(text=str(exc), headers={SETTINGS_ERROR_CODE_HEADER: exc.code}) from exc
 
         # --- réglages plats, conservés pour les clients existants ------------
@@ -1611,6 +1689,10 @@ class ControlCenter:
             if agent_id != current.get("agent_cli"):
                 switch_to = agent_id
             current["agent_cli"] = agent_id
+        if cli.get("delegation_mode") is not None:
+            agent_routing.apply_delegation_mode(current, cli["delegation_mode"])
+        if cli.get("behavior") is not None:
+            agent_behavior.apply(current, cli["behavior"])
         values = cli.get("settings")
         if isinstance(values, dict):
             for agent_id, entry in values.items():
@@ -1638,6 +1720,22 @@ class ControlCenter:
                 if clean:
                     self._store_agent(current, agent_id, clean)
         return switch_to
+
+    @staticmethod
+    def _validate_delegation_aliases(payload: dict[str, Any]) -> None:
+        """Reject contradictory canonical and legacy routing switches atomically."""
+        cli = payload.get("cli")
+        routing_payload = payload.get("routing")
+        if not isinstance(cli, dict) or "delegation_mode" not in cli:
+            return
+        if not isinstance(routing_payload, dict) or "enabled" not in routing_payload:
+            return
+        canonical_enabled = agent_routing.delegation_enabled(cli["delegation_mode"])
+        if canonical_enabled != bool(routing_payload["enabled"]):
+            raise RoutingError(
+                "agent_settings_conflicting_delegation_mode",
+                "Les modes de sous-agents canonique et historique se contredisent.",
+            )
 
     # ------------------------------------------------------------ API keys
 
@@ -1703,6 +1801,82 @@ class ControlCenter:
 
     # ------------------------------------------------------------- catalogues
 
+    async def _catalog_sources(
+        self,
+        settings: dict[str, Any],
+        providers: set[str],
+        *,
+        refresh: bool,
+    ) -> dict[str, dict[str, Any]]:
+        """Measure provider catalogs while preserving failures as evidence."""
+        async def fetch(provider: str) -> tuple[str, dict[str, Any]]:
+            try:
+                result = await self.catalog.models(
+                    provider,
+                    creds.secret_for(settings, provider),
+                    refresh=refresh,
+                )
+            except CatalogError as exc:
+                stale = self.catalog.cached(provider)
+                self.journal.emit(
+                    "provider.models_failed",
+                    str(exc),
+                    level="warning",
+                    data={"provider": provider, "code": exc.code},
+                )
+                if stale is not None:
+                    return provider, {**stale, "source": "stale", "status_code": exc.code}
+                return provider, {"models": [], "source": "unknown", "status_code": exc.code}
+            return provider, result
+
+        measured = await asyncio.gather(*(fetch(provider) for provider in sorted(providers)))
+        return dict(measured)
+
+    async def catalog_view(self, request: web.Request) -> web.Response:
+        """Canonical sourced comparison view; never mutates routing or settings."""
+        surface = str(request.query.get("surface", "")).strip().lower()
+        if surface not in {"subagents", "voice"}:
+            return web.json_response(
+                {"ok": False, "code": "catalog_surface_invalid", "error": "surface must be subagents or voice"},
+                status=400,
+            )
+        default_role = "subagent" if surface == "subagents" else ""
+        role = str(request.query.get("role", default_role)).strip().lower()
+        allowed_roles = SUBAGENT_ROLES if surface == "subagents" else VOICE_ROLES | {""}
+        if role not in allowed_roles:
+            return web.json_response(
+                {"ok": False, "code": "catalog_role_invalid", "error": f"role is not valid for {surface}"},
+                status=400,
+            )
+        refresh = str(request.query.get("refresh", "")).strip().lower() in {"1", "true", "yes"}
+        settings = self._settings()
+
+        if surface == "subagents":
+            commands = {
+                spec.id: self._agent_settings(settings, spec.id)["command"]
+                for spec in cli_catalog.AGENT_CLIS
+            }
+            agents = await cli_catalog.detect_all(commands)
+            providers = {spec.model_provider for spec in cli_catalog.AGENT_CLIS}
+            catalogs = await self._catalog_sources(settings, providers, refresh=refresh)
+            policy = agent_routing.load_policy(settings)
+            saved = tuple(ref for profile in policy.profiles for ref in profile.candidates)
+            view = self._catalog_view_service.subagents(
+                agents=agents,
+                catalogs=catalogs,
+                saved=saved,
+                role=role,
+            )
+        else:
+            providers = {stack.credential_provider for stack in voice_stack.VOICE_STACKS}
+            catalogs = await self._catalog_sources(settings, providers, refresh=refresh)
+            view = self._catalog_view_service.voice(
+                registry=self._voice_architecture_registry(settings),
+                catalogs=catalogs,
+                role=role,
+            )
+        return web.json_response({"ok": True, **view.to_dict()})
+
     async def models(self, request: web.Request) -> web.Response:
         provider = str(request.query.get("provider", "")).strip().lower()
         role = str(request.query.get("role", "")).strip().lower()
@@ -1758,18 +1932,38 @@ class ControlCenter:
 
         models: dict[str, list[dict[str, Any]]] = {}
         sources: dict[str, str] = {}
+        snapshots: dict[str, ProviderCatalogSnapshot] = {}
         for provider in sorted({spec.model_provider for spec in cli_catalog.AGENT_CLIS}):
             try:
                 result = await self.catalog.models(provider, creds.secret_for(settings, provider))
             except CatalogError as exc:
                 stale = self.catalog.cached(provider)
                 sources[provider] = "stale" if stale is not None else exc.code
-                result = stale or {}
+                result = (
+                    {**stale, "source": "stale", "status_code": exc.code}
+                    if stale is not None
+                    else {"models": [], "source": "unknown", "status_code": exc.code}
+                )
             else:
                 sources[provider] = str(result.get("source") or "live")
-            models[provider] = filter_by_role(list(result.get("models") or []), "text")
+            snapshot = ProviderCatalogSnapshot.from_payload(
+                provider,
+                result,
+                now=datetime.now(timezone.utc),
+            )
+            snapshots[provider] = snapshot
+            models[provider] = filter_by_role(list(snapshot.current_models("text")), "text")
 
-        candidates = agent_routing.with_saved(agent_routing.build_candidates(agents, models), policy)
+        unavailable_reasons = {
+            spec.id: "Disponibilité non vérifiée : catalogue fournisseur absent ou périmé."
+            for spec in cli_catalog.AGENT_CLIS
+            if not snapshots[spec.model_provider].authoritative
+        }
+        candidates = agent_routing.with_saved(
+            agent_routing.build_candidates(agents, models),
+            policy,
+            unavailable_reasons_by_agent=unavailable_reasons,
+        )
         return web.json_response({"ok": True, "sources": sources, **agent_routing.describe(policy, candidates)})
 
     # ------------------------------------------------- auto-développement
@@ -2072,22 +2266,21 @@ class ControlCenter:
         # et le panneau navigateur appellent sans, et reçoivent alors exactement
         # le texte d'avant. Seul Core, qui connaît l'état public, le remplit.
         context = payload.get("context")
-        if isinstance(context, dict):
-            from jarvis.domain.prompt_registry import PromptTarget
+        settings = self._settings()
+        behavior_active = bool(agent_behavior.prompt_instruction(settings))
+        if isinstance(context, dict) or behavior_active:
             from jarvis.runtime.prompt_overrides import prompt_override_document
-            from jarvis.runtime.prompt_runtime import prompt_channel, prompt_evidence, resolve_prompt
-            resolution = resolve_prompt(
-                PromptTarget("backend", None, self._agent_id, self.agent.model or None, None, "turn"),
-                overrides=prompt_override_document(self._settings()),
-                variables={"context": context, "request_text": text},
+            from jarvis.runtime.prompt_runtime import compose_agent_turn
+            prompt, evidence = compose_agent_turn(
+                agent_id=self._agent_id, model=self.agent.model or None, request_text=text,
+                overrides=prompt_override_document(settings), behavior_active=behavior_active,
+                context=context if isinstance(context, dict) else None,
             )
-            prompt = prompt_channel(resolution, "stdin.user_message")
-            evidence = prompt_evidence(resolution, application="sent", channel="stdin.user_message")
         else:
             prompt = text
             evidence = None
-        import inspect
-        supports_evidence = "prompt_evidence" in inspect.signature(self.agent.ask).parameters
+        from jarvis.runtime.prompt_runtime import accepts_prompt_evidence
+        supports_evidence = accepts_prompt_evidence(self.agent.ask)
         if evidence is not None and supports_evidence:
             result = await self.agent.ask(prompt, timeout_s=timeout_s, prompt_evidence=evidence)
         else:
@@ -2124,8 +2317,22 @@ class ControlCenter:
     async def agent_send(self, request: web.Request) -> web.Response:
         payload = await request.json()
         text = str(payload.get("text") or "") if isinstance(payload, dict) else ""
+        if not text.strip():
+            raise web.HTTPBadRequest(text="message cannot be empty")
         try:
-            return web.json_response(await self.agent.send(text))
+            settings = self._settings()
+            behavior_active = bool(agent_behavior.prompt_instruction(settings))
+            from jarvis.runtime.prompt_overrides import prompt_override_document
+            from jarvis.runtime.prompt_runtime import compose_agent_turn
+            prompt, evidence = compose_agent_turn(
+                agent_id=self._agent_id, model=self.agent.model or None,
+                request_text=text.strip() if behavior_active else text,
+                overrides=prompt_override_document(settings), behavior_active=behavior_active,
+            )
+            set_evidence = getattr(self.agent, "set_next_prompt_evidence", None)
+            if evidence is not None and callable(set_evidence):
+                set_evidence(evidence)
+            return web.json_response(await self.agent.send(prompt))
         except ValueError as exc:
             raise web.HTTPBadRequest(text=str(exc)) from exc
         except RuntimeError as exc:

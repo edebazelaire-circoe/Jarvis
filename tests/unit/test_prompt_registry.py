@@ -27,6 +27,7 @@ from jarvis.runtime.claude_local import (
 from jarvis.runtime.control_center import build_agent_brief
 from jarvis.runtime.prompt_catalog import default_prompt_registry
 from jarvis.runtime.prompt_overrides import PromptOverrideStore, prompt_override_document
+from jarvis.runtime.agent_behavior import AgentBehaviorError
 from jarvis.runtime.realtime_tools import tools_for
 
 
@@ -229,3 +230,26 @@ def test_override_store_detects_concurrent_editor_and_writer_failure_without_fal
     assert journal.events[-1]["kind"] == "prompt.override.write_failed"
     assert not any(event["kind"] == "prompt.override.saved" and event["data"]["fingerprint"] is None
                    for event in journal.events)
+
+
+def test_override_store_rejects_behavior_combination_overflow_before_writer():
+    registry = default_prompt_registry()
+    descriptor = registry.require("backend.turn.addition")
+    state = {"sentinel": "kept", "agent_behavior": {
+        "response_verbosity": "concise", "politeness_formality": "inherit",
+    }}
+    before = deepcopy(state)
+    writes = []
+    journal = Journal()
+    store = PromptOverrideStore(
+        registry, read_settings=lambda: state, write_settings=lambda value: writes.append(value), diagnostics=journal,
+    )
+
+    with pytest.raises(AgentBehaviorError) as overflow:
+        store.edit(descriptor.prompt_id, text="x" * 8192, base_revision=descriptor.default_revision)
+
+    assert overflow.value.code == "agent_settings_behavior_prompt_too_large"
+    assert state == before
+    assert writes == []
+    assert journal.events[-1]["kind"] == "prompt.override.rejected"
+    assert journal.events[-1]["data"]["code"] == overflow.value.code

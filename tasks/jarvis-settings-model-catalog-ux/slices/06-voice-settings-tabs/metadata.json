@@ -1,0 +1,27 @@
+{
+  "slice_id": "06",
+  "task_type": null,
+  "work_intent": "voice settings backend schema and frontend categorization",
+  "status": "BACKEND_COMPLETE_UI_PENDING",
+  "dependencies": [
+    "01",
+    "04"
+  ],
+  "task_type_blocker": "Waived globally by the user/orchestrator; task_type remains null because no canonical vocabulary was provided.",
+  "backend_implementation": [
+    "jarvis/runtime/voice_settings_schema.py",
+    "jarvis/runtime/control_center.py",
+    "jarvis/runtime/voice_v2.py",
+    "tests/unit/test_voice_settings_schema.py",
+    "tests/unit/test_control_center_quality.py",
+    "docs/voice-settings-schema.md"
+  ],
+  "backend_validation": {
+    "command": ".venv/Scripts/python.exe -m pytest tests/unit/test_voice_settings_schema.py tests/unit/test_settings_endpoints.py tests/unit/test_control_center_quality.py tests/unit/test_settings_ia_contract.py tests/unit/test_voice_composition.py tests/unit/test_voice_architecture_config.py tests/unit/test_control_center_voice_architecture_review.py tests/unit/test_control_center_voice_architecture.py tests/unit/test_voice_switch.py -q -W error",
+    "result": "285 passed in 9.68s"
+  },
+  "remaining": [
+    "Voice category UI and shared voice catalog embedding",
+    "responsive/human validation"
+  ]
+}

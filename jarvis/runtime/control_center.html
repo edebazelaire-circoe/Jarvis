@@ -260,6 +260,31 @@ details.rd{border:1px solid var(--line);border-radius:6px;padding:10px 14px;marg
 details.rd>summary{cursor:pointer;font-size:12px;color:var(--muted);letter-spacing:.04em}
 details.rd[open]>summary{margin-bottom:14px}
 .hint.agsource{margin:0 2px 8px}
+/* ---------- Catalogue partagé (Agent/CLI + Voice) ---------- */
+.catalog-shell{display:grid;gap:14px;max-width:none}
+.catalog-toolbar{display:grid;grid-template-columns:minmax(220px,1fr) minmax(170px,240px);gap:12px;align-items:end}
+.catalog-toolbar label{display:grid;gap:6px;font-size:11px;color:var(--muted)}
+.catalog-toolbar input,.catalog-toolbar select{width:100%;background:#071015;border:1px solid var(--line);color:var(--text);padding:9px;border-radius:5px;font:inherit}
+.catalog-toolbar input:focus-visible,.catalog-toolbar select:focus-visible,.catalog-filter input:focus-visible,.catalog-table button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.catalog-filters{display:flex;gap:8px;overflow-x:auto;padding:1px 1px 5px}
+.catalog-filter{display:flex;gap:8px;align-items:center;min-width:max-content;margin:0;padding:7px 9px;border:1px solid var(--line);border-radius:6px}
+.catalog-filter legend{padding:0 4px;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.catalog-filter label{font-size:11px;color:var(--text);white-space:nowrap}.catalog-filter input{accent-color:var(--accent)}
+.catalog-summary{font-size:11px;color:var(--muted)}
+.catalog-notice,.catalog-empty{border-left:2px solid var(--line);padding:11px 13px;background:rgba(113,144,160,.06);font-size:12px;line-height:1.5}
+.catalog-notice.error{border-left-color:var(--danger);color:#f0c3c9}.catalog-notice.no_credentials,.catalog-notice.partial{border-left-color:var(--warn);color:#e4d3b8}
+.catalog-table-wrap{width:100%;overflow:auto;border:1px solid var(--line);border-radius:7px}
+.catalog-table{width:100%;border-collapse:collapse;font-size:12px}.catalog-table caption{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.catalog-table thead th{position:sticky;top:0;z-index:1;text-align:left;font-weight:normal;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);background:#071015;padding:9px;border-bottom:1px solid var(--line)}
+.catalog-table tbody th,.catalog-table td{min-width:110px;padding:10px 9px;border-bottom:1px solid rgba(113,144,160,.12);vertical-align:top;text-align:left;font-weight:normal}.catalog-table tr:last-child :is(th,td){border-bottom:0}
+.catalog-table tr:hover :is(th,td){background:rgba(110,231,255,.025)}.catalog-table input[type=checkbox]{accent-color:var(--accent)}
+.catalog-cell-compare{min-width:76px!important;width:76px;text-align:center}.catalog-cell-model{min-width:180px!important}.catalog-cell-availability{min-width:210px!important}
+.catalog-model-id,.catalog-reason{display:block;margin-top:4px;color:var(--muted);font-size:10px;line-height:1.4;word-break:break-word}
+.catalog-chip{display:inline-block;margin:0 3px 3px 0;padding:1px 5px;border:1px solid var(--line);border-radius:3px;color:#a9c5d2;font-size:10px}
+.catalog-unknown{color:var(--muted)}.catalog-status{display:inline-block;padding:2px 6px;border:1px solid var(--line);border-radius:10px;font-size:10px;white-space:nowrap}
+.catalog-status.ok{color:var(--ok);border-color:rgba(104,224,160,.45)}.catalog-status.warn{color:var(--warn);border-color:rgba(255,184,92,.45)}.catalog-status.bad{color:var(--danger);border-color:rgba(255,101,119,.45)}
+.catalog-evidence{margin-top:5px;color:var(--muted);font-size:10px}.catalog-evidence summary{cursor:pointer}.catalog-evidence ul{margin:5px 0 0;padding-left:18px}
+.agent-catalog-head{display:flex;align-items:start;justify-content:space-between;gap:12px;margin-bottom:10px}.agent-catalog-head .hint{max-width:620px}
 @media(max-width:900px){
   .modal{width:94vw;height:88vh}
   .split{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}
@@ -275,6 +300,14 @@ details.rd[open]>summary{margin-bottom:14px}
   .live-banner{top:62px;left:10px;right:74px;width:auto;transform:none;grid-template-columns:auto minmax(0,1fr)}
   .live-stop{grid-column:1/-1;width:100%}
   .brand{display:none}
+  .catalog-toolbar{grid-template-columns:1fr}
+  .catalog-table-wrap{overflow:visible;border:0}
+  .catalog-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
+  .catalog-table,.catalog-table tbody,.catalog-table tr,.catalog-table tbody th,.catalog-table td{display:block;width:100%}
+  .catalog-table tr{margin-bottom:10px;border:1px solid var(--line);border-radius:7px;background:#060d12;overflow:hidden}
+  .catalog-table tbody th,.catalog-table td{display:grid;grid-template-columns:minmax(92px,32%) minmax(0,1fr);gap:8px;min-width:0!important;border-bottom:1px solid rgba(113,144,160,.12)}
+  .catalog-table tbody th::before,.catalog-table td::before{content:attr(data-label);font-size:9px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+  .catalog-cell-compare{text-align:left}
 }
 </style>
 </head>
@@ -318,6 +351,7 @@ details.rd[open]>summary{margin-bottom:14px}
 
 <script>
 /*__CONTROL_CENTER_LIVE_JS__*/
+/*__CONTROL_CENTER_CATALOG_JS__*/
 const $=s=>document.querySelector(s);let current=null;const panel=$('#panel'),body=$('#panelBody'),title=$('#panelTitle');
 async function api(path,opts){const r=await fetch(path,opts),text=await r.text();let value={};try{value=text?JSON.parse(text):{}}catch{value={error:text}}if(!r.ok){const e=new Error(value.error||value.code||text||`HTTP ${r.status}`);e.status=r.status;throw e}return value}
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
@@ -1525,26 +1559,30 @@ function bindSend(after){
 const TABS=[
   {id:'voice',label:'Mode vocal',save:true},
   {id:'prompts',label:'Prompts',save:false},
-  {id:'cli',label:'CLI agent',save:true},
-  {id:'routing',label:'Aiguillage',save:true},
+  {id:'cli',label:'Agent / CLI',save:true},
   {id:'config',label:'Config',save:true},
   {id:'keys',label:'API Keys',save:false},
   {id:'shortcuts',label:'Raccourcis',save:false},
 ];
-const SET={open:false,tab:'voice',data:null,draft:null,dirty:false,catalog:{},clis:null,devices:null,capture:null,shortcuts:null,restartNotice:false,rdOpen:false,routing:null,prompts:null};
+const SET={open:false,tab:'voice',data:null,draft:null,dirty:false,catalog:{},clis:null,devices:null,capture:null,shortcuts:null,restartNotice:false,rdOpen:false,routingAdvancedOpen:false,routing:null,prompts:null,agentCatalog:null,openGeneration:0,cliGeneration:0,cliModelGeneration:0,routingGeneration:0};
 const overlay=$('#overlay'),modalContent=$('#modalContent'),modalStatus=$('#modalStatus'),modalSave=$('#modalSave'),modalSub=$('#modalSub');
 
 function say(text,kind){modalStatus.className='status'+(kind?' '+kind:'');modalStatus.textContent=text||''}
 
 /* Catalogue de modèles : une entrée par (fournisseur, usage), gardée le temps
    de la session pour ne pas rappeler l'API à chaque changement d'onglet. */
-async function catalog(provider,role,refresh){
-  const key=provider+':'+role;
-  if(SET.catalog[key]&&!refresh)return SET.catalog[key];
+async function requestCatalog(provider,role,refresh){
   let value;
   try{
     value=await api(`/api/models?provider=${encodeURIComponent(provider)}&role=${encodeURIComponent(role)}${refresh?'&refresh=1':''}`);
   }catch(e){value={ok:false,error:e.message,models:[]}}
+  return value;
+}
+
+async function catalog(provider,role,refresh){
+  const key=provider+':'+role;
+  if(SET.catalog[key]&&!refresh)return SET.catalog[key];
+  const value=await requestCatalog(provider,role,refresh);
   SET.catalog[key]=value;return value;
 }
 
@@ -1817,12 +1855,34 @@ async function tabPrompts(){
   </section>`;
 }
 
-/* --- onglet CLI --------------------------------------------------------- */
-async function tabCli(){
-  if(!SET.clis)SET.clis=await api('/api/cli/agents').catch(e=>({ok:false,error:e.message,agents:[]}));
+/* --- onglet Agent / CLI ------------------------------------------------- */
+function metadataOptions(field,value){
+  return (field.options||[]).map(option=>`<option value="${esc(option.id)}" ${option.id===value?'selected':''}>${esc(option.label)}</option>`).join('');
+}
+
+function delegationModeHtml(){
+  const field=SET.data.cli.delegation_mode_metadata||{},value=SET.draft.cli.delegation_mode;
+  const selected=(field.options||[]).find(option=>option.id===value);
+  return `<div class="field"><label for="f_delegation_mode">${esc(field.label||'Mode des sous-agents')}</label>
+    <select id="f_delegation_mode" data-delegation-mode>${metadataOptions(field,value)}</select>
+    <div class="hint">${esc(field.help||'')}${selected&&selected.help?` ${esc(selected.help)}`:''}</div></div>`;
+}
+
+function behaviorHtml(){
+  const behavior=SET.data.cli.behavior||{},values=SET.draft.cli.behavior||{};
+  return (behavior.fields||[]).map(field=>{
+    const value=values[field.id];
+    return `<div class="field"><label for="f_behavior_${esc(field.id)}">${esc(field.label)}</label>
+      <select id="f_behavior_${esc(field.id)}" data-behavior-field="${esc(field.id)}">${metadataOptions(field,value)}</select>
+      <div class="hint">${esc(field.help||'')}</div></div>`;
+  }).join('');
+}
+
+function cliTechnicalHtml(){
+  if(!SET.clis)return '<div class="notice info" id="cliStatus">Détection des CLI…</div>';
   const draft=SET.draft.cli,detected=SET.clis.agents||[];
   const spec=detected.find(a=>a.id===draft.agent)||detected[0];
-  if(!spec)return `<section><div class="notice bad">${esc(SET.clis.error||'Aucun CLI détecté.')}</div></section>`;
+  if(!spec)return `<div class="notice bad" id="cliStatus">${esc(SET.clis.error||'Aucun CLI détecté.')} <button type="button" class="linkish" data-cli-retry>réessayer</button></div>`;
   const choices=detected.map(a=>{
     const tag=a.available?`<span class="tag ok">${esc(a.version||'installé')}</span>`:`<span class="tag bad">introuvable</span>`;
     return `<label class="choice ${a.id===draft.agent?'selected':''}">
@@ -1832,26 +1892,40 @@ async function tabCli(){
       <div class="hint" style="margin-top:4px">${a.available?esc(a.path):esc(a.error||'')}</div></div>
     </label>`}).join('');
   const values=SET.draft.cli.settings[spec.id];
-  const modelResult=await catalog(spec.model_provider,'text');
-  const modelOptions=(modelResult.models||[]).map(m=>({value:m.id,label:m.label&&m.label!==m.id?`${m.id} — ${m.label}`:m.id}));
+  const modelResult=SET.catalog[spec.model_provider+':text'];
+  const modelOptions=((modelResult&&modelResult.models)||[]).map(m=>({value:m.id,label:m.label&&m.label!==m.id?`${m.id} — ${m.label}`:m.id}));
   const permission=`<div class="field"><label for="f_cli_perm">${esc(spec.permission_label)}</label>
     <select id="f_cli_perm" data-cli-field="permission_mode" data-scope="${esc(spec.id)}">${selectOptions((spec.permission_modes||[]).map(m=>({value:m,label:m})),values.permission_mode,'')}</select>
     <div class="hint">En vocal, personne ne peut répondre à une demande d'autorisation : hors mode permissif, l'agent refusera d'écrire ou d'exécuter.</div></div>`;
   const unavailable=spec.available?'':`<div class="notice bad">${esc(spec.error||'CLI introuvable.')} Tant que la commande n'est pas résolue, cet agent ne peut pas démarrer.</div>`;
-  return `<section><h3>Agent piloté par la voix</h3><div class="choices">${choices}</div>${unavailable}
-    <h3>Réglages de ${esc(spec.label)}</h3>
+  const modelSource=modelResult
+    ? `${catalogNote(modelResult,spec.model_provider)} <button class="linkish" data-cli-model-refresh>rafraîchir</button>`
+    : '<span class="note">Chargement du catalogue du CLI…</span>';
+  return `<div class="notice info"><strong>Agent piloté</strong> — CLI principal utilisé par JARVIS pour les demandes directes et les sous-agents.</div>
+    <div class="choices">${choices}</div>${unavailable}
+    <h3>Réglages techniques de ${esc(spec.label)}</h3>
     <div class="field"><label for="f_cli_cmd">Commande</label>
       <input id="f_cli_cmd" data-cli-field="command" data-scope="${esc(spec.id)}" value="${esc(values.command)}">
       <div class="source">${spec.available?`<span class="tag ok">résolu</span> ${esc(spec.path)}`:`<span class="tag bad">non résolu</span>`} <button class="linkish" id="reprobe">re-détecter</button></div>
       <div class="hint">Nom dans le PATH ou chemin complet. Documentation : <code>${esc(spec.docs)}</code></div></div>
     <div class="field"><label for="f_cli_model">Modèle</label>
       <select id="f_cli_model" data-cli-field="model" data-scope="${esc(spec.id)}">${selectOptions(modelOptions,values.model,'Modèle par défaut du CLI')}</select>
-      <div class="source">${catalogNote(modelResult,spec.model_provider)} <button class="linkish" data-refresh="${esc(spec.model_provider)}:text">rafraîchir</button></div>
+      <div class="source">${modelSource}</div>
       <div class="hint">Liste demandée à l'API ${esc(providerLabel(spec.model_provider))}. Sans clé de ce fournisseur, aucun modèle ne peut être listé : le CLI garde alors son modèle par défaut.</div></div>
-    ${permission}</section>`;
+    ${permission}`;
 }
 
-/* --- onglet Aiguillage ---------------------------------------------------
+function tabCli(){
+  return `<section><h3>Technique</h3>${delegationModeHtml()}<div id="cliTechnical">${cliTechnicalHtml()}</div>
+    <h3>Comportement</h3>${behaviorHtml()}
+    <h3>Sous-agents / Modèles</h3>
+    <div class="agent-catalog-head"><div class="hint">Inventaire sourcé de comparaison. La disponibilité et les actions viennent uniquement du backend.</div><button type="button" class="linkish" id="agentCatalogRefresh">rafraîchir</button></div>
+    <div id="agentCatalog" aria-label="Catalogue des modèles de sous-agents"></div>
+    ${routingAdvancedShell()}
+  </section>`;
+}
+
+/* --- configuration avancée des sous-agents ------------------------------
    Rien de ce qui est affiché ici n'est écrit dans cette page : les profils,
    les candidats et leur disponibilité viennent tous de /api/routing/candidates.
    Un candidat enregistré devenu indisponible reste coché et visible — sa
@@ -1873,10 +1947,10 @@ function routingRow(profile,candidate,chosen){
   </label>`;
 }
 
-async function tabRouting(){
-  if(!SET.routing)SET.routing=await api('/api/routing/candidates').catch(e=>({ok:false,error:e.message,profiles:[],candidates:[]}));
+function routingAdvancedBody(){
+  if(!SET.routing)return '<div class="hint">Ouvrez cette section pour charger les profils et candidats.</div>';
   const state=SET.routing,draft=SET.draft.routing;
-  if(state.ok===false)return `<section><div class="notice bad">${esc(state.error||'Aiguillage indisponible.')}</div></section>`;
+  if(state.ok===false)return `<div class="notice bad">${esc(state.error||'Configuration avancée indisponible.')} <button type="button" class="linkish" id="routingRetry">réessayer</button></div>`;
   const candidates=state.candidates||[];
   const blocks=(state.profiles||[]).map(profile=>{
     const entry=draft.profiles[profile.id]||{candidates:[],enabled:true,allow_general_fallback:true};
@@ -1887,7 +1961,9 @@ async function tabRouting(){
       <input type="checkbox" id="f_fb_${esc(profile.id)}" data-routing-fallback="${esc(profile.id)}" ${entry.allow_general_fallback?'checked':''}>
       <div><label for="f_fb_${esc(profile.id)}">Se rabattre sur le profil Général</label>
       <div class="hint">Quand aucun candidat de ce profil n'est utilisable, essayer ceux du profil Général plutôt que d'échouer.</div></div></div>`;
-    return `<h3>${esc(profile.label)}</h3>
+    const enabled=`<div class="field inline"><input type="checkbox" id="f_profile_${esc(profile.id)}" data-routing-profile-enabled="${esc(profile.id)}" ${entry.enabled?'checked':''}>
+      <div><label for="f_profile_${esc(profile.id)}">Profil actif</label><div class="hint">Désactivé, ce profil conserve le choix du CLI même en mode Auto.</div></div></div>`;
+    return `<h3>${esc(profile.label)}</h3>${enabled}
       <div class="hint" style="margin-bottom:8px">${esc(profile.description)}${profile.requires.length?` · exige : ${profile.requires.map(esc).join(', ')}`:''}</div>
       <div class="choices">${rows}</div>${empty}${fallback}`;
   }).join('');
@@ -1898,14 +1974,114 @@ async function tabRouting(){
     if(source==='stale')return `<span class="note warn">${esc(label)} : dernière liste connue</span>`;
     return `<span class="note bad">${esc(label)} : ${esc(source)}</span>`;
   }).join(' ');
-  return `<section>
-    <div class="field inline"><input type="checkbox" id="f_routing_on" data-routing-enabled ${draft.enabled?'checked':''}>
-      <div><label for="f_routing_on">Choisir le modèle des sous-agents selon la tâche</label>
-      <div class="hint">Décoché, rien ne change : chaque sous-agent garde le modèle par défaut du CLI. Coché, JARVIS impose pour chaque profil le premier candidat autorisé et utilisable, et corrige le modèle demandé par le cerveau si besoin.</div></div></div>
-    <div class="source" style="margin-bottom:10px">${sources} <button class="linkish" id="routingRefresh">rafraîchir</button></div>
+  return `<div class="source" style="margin-bottom:10px">${sources} <button class="linkish" id="routingRefresh">rafraîchir</button></div>
     ${blocks}
-    <div class="hint" style="margin-top:14px">L'ordre des candidats est celui de la liste : le premier disponible est choisi, les suivants servent de recours. Les sous-agents s'exécutent dans le CLI vocal actif ; un candidat d'un autre CLI ne peut servir qu'à l'auto-développement.</div>
-  </section>`;
+    <div class="hint" style="margin-top:14px">L'ordre des candidats est celui de la liste : le premier disponible est choisi, les suivants servent de recours. Les sous-agents s'exécutent dans le CLI vocal actif ; un candidat d'un autre CLI ne peut servir qu'à l'auto-développement.</div>`;
+}
+
+function routingAdvancedShell(){
+  return `<details class="rd" id="routingAdvanced" ${SET.routingAdvancedOpen?'open':''}><summary>Configuration avancée des sous-agents</summary>
+    <div id="routingAdvancedBody">${routingAdvancedBody()}</div></details>`;
+}
+
+function currentAgentTab(revision){
+  return SET.open&&SET.tab==='cli'&&revision===SET.renderRevision;
+}
+
+function renderCliTechnical(revision){
+  if(!currentAgentTab(revision))return;
+  const host=$('#cliTechnical');
+  if(!host)return;
+  host.innerHTML=cliTechnicalHtml();bindCliTechnical(host,revision);
+}
+
+function bindCliTechnical(host,revision){
+  host.querySelectorAll('input[name=clicagent]').forEach(el=>el.addEventListener('change',()=>{
+    SET.draft.cli.agent=el.value;SET.dirty=true;renderCliTechnical(revision);hydrateCliModel(revision);
+    say('Modifications non enregistrées.','');
+  }));
+  host.querySelectorAll('[data-cli-field]').forEach(el=>el.addEventListener('change',()=>{
+    SET.draft.cli.settings[el.dataset.scope][el.dataset.cliField]=el.value;SET.dirty=true;
+    say('Modifications non enregistrées.','');
+  }));
+  const modelRefresh=host.querySelector('[data-cli-model-refresh]');
+  if(modelRefresh)modelRefresh.addEventListener('click',()=>hydrateCliModel(revision,true));
+  const retry=host.querySelector('[data-cli-retry]');
+  if(retry)retry.addEventListener('click',()=>hydrateCliAgents(revision,true));
+  const reprobe=host.querySelector('#reprobe');
+  if(reprobe)reprobe.addEventListener('click',async()=>{
+    reprobe.textContent='…';
+    try{await saveDraft({silent:true})}catch(e){say(e.message,'error');return}
+    if(!currentAgentTab(revision))return;
+    SET.clis=null;renderCliTechnical(revision);hydrateCliAgents(revision,true);
+  });
+}
+
+async function hydrateCliAgents(revision,refresh=false){
+  if(!currentAgentTab(revision))return;
+  if(SET.clis&&SET.clis.ok!==false&&!refresh){await hydrateCliModel(revision);return}
+  if(refresh||SET.clis&&SET.clis.ok===false){SET.clis=null;renderCliTechnical(revision)}
+  const requestId=++SET.cliGeneration;
+  let state;
+  try{state=await api('/api/cli/agents')}
+  catch(e){state={ok:false,error:e.message,agents:[]}}
+  if(!currentAgentTab(revision)||requestId!==SET.cliGeneration)return;
+  SET.clis=state;renderCliTechnical(revision);
+  if(state.ok!==false&&(state.agents||[]).length)await hydrateCliModel(revision);
+}
+
+async function hydrateCliModel(revision,refresh=false){
+  if(!currentAgentTab(revision)||!SET.clis)return;
+  const detected=SET.clis.agents||[],draft=SET.draft.cli;
+  const spec=detected.find(agent=>agent.id===draft.agent)||detected[0];
+  if(!spec)return;
+  const key=spec.model_provider+':text';
+  if(SET.catalog[key]&&!refresh)return;
+  const requestId=++SET.cliModelGeneration;
+  const state=await requestCatalog(spec.model_provider,'text',refresh);
+  if(!currentAgentTab(revision)||requestId!==SET.cliModelGeneration)return;
+  SET.catalog[key]=state;
+  renderCliTechnical(revision);
+}
+
+function renderRoutingAdvanced(revision){
+  if(!currentAgentTab(revision)||!SET.routingAdvancedOpen)return;
+  const body=$('#routingAdvancedBody');
+  if(!body)return;
+  body.innerHTML=routingAdvancedBody();bindRoutingAdvanced(revision);
+}
+
+function bindRoutingAdvanced(revision){
+  const body=$('#routingAdvancedBody');
+  if(!body)return;
+  body.querySelectorAll('[data-routing-profile-enabled]').forEach(el=>el.addEventListener('change',()=>{
+    SET.draft.routing.profiles[el.dataset.routingProfileEnabled].enabled=el.checked;
+    SET.dirty=true;say('Modifications non enregistrées.','')}));
+  body.querySelectorAll('[data-routing-candidate]').forEach(el=>el.addEventListener('change',()=>{
+    const entry=SET.draft.routing.profiles[el.dataset.routingProfile];
+    const value=JSON.parse(el.dataset.routingCandidate);
+    const rest=(entry.candidates||[]).filter(candidate=>candidateKey(candidate)!==el.dataset.routingCandidate);
+    entry.candidates=el.checked?[...rest,value]:rest;
+    SET.dirty=true;renderRoutingAdvanced(revision)}));
+  body.querySelectorAll('[data-routing-fallback]').forEach(el=>el.addEventListener('change',()=>{
+    SET.draft.routing.profiles[el.dataset.routingFallback].allow_general_fallback=el.checked;
+    SET.dirty=true;say('Modifications non enregistrées.','')}));
+  const refresh=body.querySelector('#routingRefresh');
+  if(refresh)refresh.addEventListener('click',()=>hydrateRoutingAdvanced(revision,true));
+  const retry=body.querySelector('#routingRetry');
+  if(retry)retry.addEventListener('click',()=>hydrateRoutingAdvanced(revision,true));
+}
+
+async function hydrateRoutingAdvanced(revision,refresh=false){
+  if(!currentAgentTab(revision)||!SET.routingAdvancedOpen)return;
+  if(SET.routing&&SET.routing.ok!==false&&!refresh){renderRoutingAdvanced(revision);return}
+  const requestId=++SET.routingGeneration,body=$('#routingAdvancedBody');
+  if(body)body.innerHTML='<div class="notice info">Chargement des profils et candidats…</div>';
+  let state;
+  try{state=await api('/api/routing/candidates')}
+  catch(e){state={ok:false,error:e.message,profiles:[],candidates:[]}}
+  if(!currentAgentTab(revision)||!SET.routingAdvancedOpen||requestId!==SET.routingGeneration)return;
+  SET.routing=state;renderRoutingAdvanced(revision);
 }
 
 /* --- onglet Config ------------------------------------------------------ */
@@ -1980,28 +2156,36 @@ function renderTabs(){
 }
 
 async function renderTab(){
+  destroyAgentCatalog();
   const revision=SET.renderRevision=(SET.renderRevision||0)+1;
   modalContent.innerHTML='<div class="empty">Chargement…</div>';
   const tab=TABS.find(t=>t.id===SET.tab);
   modalSave.style.display=tab.save?'':'none';
-  modalSub.textContent=tab.save?'Les réglages vocaux sont préparés pour la prochaine activation.':'Les modifications de cet onglet sont enregistrées immédiatement.';
+  modalSub.textContent={
+    voice:'Les réglages vocaux sont préparés pour la prochaine activation.',
+    cli:'Configuration technique, comportement et modèles des agents.',
+    config:'Audio et session vocale.',
+    prompts:'Chaque couche est enregistrée avec son propre bouton.',
+    keys:'Les clés sont enregistrées immédiatement sans jamais être relues par la page.',
+    shortcuts:'Les raccourcis sont enregistrés immédiatement.',
+  }[SET.tab]||'';
   try{
     let content;
     if(SET.tab==='voice')content=await tabVoice();
     else if(SET.tab==='prompts')content=await tabPrompts();
-    else if(SET.tab==='cli')content=await tabCli();
-    else if(SET.tab==='routing')content=await tabRouting();
+    else if(SET.tab==='cli')content=tabCli();
     else if(SET.tab==='config')content=await tabConfig();
     else if(SET.tab==='keys')content=tabKeys();
     else content=tabShortcuts();
-    if(revision!==SET.renderRevision)return;
+    if(revision!==SET.renderRevision||SET.open===false)return;
     modalContent.innerHTML=content;
-  }catch(e){if(revision===SET.renderRevision)modalContent.innerHTML=`<div class="notice bad">${esc(e.message)}</div>`;return}
-  bindTab();
+  }catch(e){if(revision===SET.renderRevision&&SET.open!==false)modalContent.innerHTML=`<div class="notice bad">${esc(e.message)}</div>`;return}
+  bindTab(revision);
+  if(SET.tab==='cli'){mountAgentCatalog(revision);hydrateCliAgents(revision)}
   if(SET.dirty&&tab.save)say('Modifications non enregistrées.','');
 }
 
-function bindTab(){
+function bindTab(revision){
   modalContent.querySelectorAll('[data-voice-architecture]').forEach(el=>el.addEventListener('change',()=>{
     voiceArchitectureChanged('architecture',el.value);renderTab()}));
   modalContent.querySelectorAll('[data-architecture-activate]').forEach(el=>el.addEventListener('click',()=>{
@@ -2013,8 +2197,6 @@ function bindTab(){
     SET.draft.voice.stack=el.value;SET.dirty=true;renderTab()}));
   modalContent.querySelectorAll('[data-voice-arch]').forEach(el=>el.addEventListener('change',()=>{
     SET.draft.voice.arch=el.value;SET.dirty=true;renderTab()}));
-  modalContent.querySelectorAll('input[name=clicagent]').forEach(el=>el.addEventListener('change',()=>{
-    SET.draft.cli.agent=el.value;SET.dirty=true;renderTab()}));
   modalContent.querySelectorAll('[data-field]').forEach(el=>el.addEventListener('change',()=>{
     if(el.dataset.scope===AUTH_SCOPE){authFieldChanged(el);return}
     const values=SET.draft.voice.settings[el.dataset.scope];
@@ -2033,37 +2215,29 @@ function bindTab(){
     authRefresh.textContent='…';
     try{SET.data=await api('/api/settings')}catch(e){say(e.message,'error')}
     renderTab()});
-  modalContent.querySelectorAll('[data-cli-field]').forEach(el=>el.addEventListener('change',()=>{
-    SET.draft.cli.settings[el.dataset.scope][el.dataset.cliField]=el.value;SET.dirty=true;say('Modifications non enregistrées.','')}));
+  const cliTechnical=$('#cliTechnical');
+  if(cliTechnical)bindCliTechnical(cliTechnical,revision);
+  const delegationMode=modalContent.querySelector('[data-delegation-mode]');
+  if(delegationMode)delegationMode.addEventListener('change',()=>{
+    SET.draft.cli.delegation_mode=delegationMode.value;SET.dirty=true;say('Modifications non enregistrées.','')});
+  modalContent.querySelectorAll('[data-behavior-field]').forEach(el=>el.addEventListener('change',()=>{
+    SET.draft.cli.behavior[el.dataset.behaviorField]=el.value;SET.dirty=true;say('Modifications non enregistrées.','')}));
   modalContent.querySelectorAll('[data-audio]').forEach(el=>el.addEventListener('change',()=>{
     SET.draft.audio[el.dataset.audio]=el.value;SET.dirty=true;say('Modifications non enregistrées.','')}));
   modalContent.querySelectorAll('[data-refresh]').forEach(el=>el.addEventListener('click',async()=>{
     const [provider,role]=el.dataset.refresh.split(':');el.textContent='…';
     await catalog(provider,role,true);renderTab()}));
 
-  // Aiguillage : cocher ajoute le candidat en fin de liste (donc en dernier
-  // recours), décocher le retire. L'ordre reste celui des ajouts.
-  const routingOn=modalContent.querySelector('[data-routing-enabled]');
-  if(routingOn)routingOn.addEventListener('change',()=>{
-    SET.draft.routing.enabled=routingOn.checked;SET.dirty=true;renderTab()});
-  modalContent.querySelectorAll('[data-routing-candidate]').forEach(el=>el.addEventListener('change',()=>{
-    const entry=SET.draft.routing.profiles[el.dataset.routingProfile];
-    const value=JSON.parse(el.dataset.routingCandidate);
-    const rest=(entry.candidates||[]).filter(c=>candidateKey(c)!==el.dataset.routingCandidate);
-    entry.candidates=el.checked?[...rest,value]:rest;
-    SET.dirty=true;renderTab()}));
-  modalContent.querySelectorAll('[data-routing-fallback]').forEach(el=>el.addEventListener('change',()=>{
-    SET.draft.routing.profiles[el.dataset.routingFallback].allow_general_fallback=el.checked;
-    SET.dirty=true;say('Modifications non enregistrées.','')}));
-  const routingRefresh=$('#routingRefresh');
-  if(routingRefresh)routingRefresh.addEventListener('click',async()=>{
-    routingRefresh.textContent='…';SET.routing=null;SET.catalog={};renderTab()});
-
-  const reprobe=$('#reprobe');
-  if(reprobe)reprobe.addEventListener('click',async()=>{
-    reprobe.textContent='…';
-    try{await saveDraft({silent:true})}catch(e){say(e.message,'error');return}
-    SET.clis=null;renderTab()});
+  const routingAdvanced=$('#routingAdvanced');
+  if(routingAdvanced)routingAdvanced.addEventListener('toggle',()=>{
+    SET.routingAdvancedOpen=routingAdvanced.open;
+    if(routingAdvanced.open)hydrateRoutingAdvanced(revision);
+    else ++SET.routingGeneration;
+  });
+  if(routingAdvanced&&routingAdvanced.open){
+    if(SET.routing)bindRoutingAdvanced(revision);
+    else hydrateRoutingAdvanced(revision);
+  }
 
   const test=$('#testAudio');
   if(test)test.addEventListener('click',runAudioTest);
@@ -2111,7 +2285,32 @@ function authFieldChanged(el){
   say('Modifications non enregistrées.','');
 }
 
-function selectTab(id){SET.tab=id;renderTabs();renderTab()}
+function canonicalSettingsTab(id){return id==='routing'?'cli':id}
+function selectTab(id){
+  const next=canonicalSettingsTab(id);
+  if(SET.tab==='cli'&&next!=='cli'){SET.routingAdvancedOpen=false;++SET.routingGeneration}
+  SET.tab=next;renderTabs();renderTab();
+}
+
+function destroyAgentCatalog(){
+  if(!SET.agentCatalog)return;
+  SET.agentCatalog.destroy();SET.agentCatalog=null;
+}
+
+function mountAgentCatalog(revision){
+  if(!currentAgentTab(revision))return;
+  const host=$('#agentCatalog');
+  if(!host)return;
+  destroyAgentCatalog();
+  const controller=JarvisCatalog.createCatalogTable(host,{
+    surface:'subagents',role:'subagent',
+    columns:['compare','model','provider','capabilities','guidance','price','availability']
+  });
+  SET.agentCatalog=controller;
+  const refresh=$('#agentCatalogRefresh');
+  if(refresh)refresh.addEventListener('click',()=>controller.refresh());
+  controller.load();
+}
 
 async function runAudioTest(){
   const test=$('#testAudio'),result=$('#audioTestResult'),a=SET.draft.audio;
@@ -2201,30 +2400,37 @@ function draftFrom(data){
   return {
     // `authorization` : seules les clés touchées, jamais la description reçue.
     voice:{stack:data.voice.stack,arch:data.voice.arch||'',settings:JSON.parse(JSON.stringify(data.voice.settings)),authorization:{}},
-    cli:{agent:data.cli.agent,settings:JSON.parse(JSON.stringify(data.cli.settings))},
+    cli:{
+      agent:data.cli.agent,
+      settings:JSON.parse(JSON.stringify(data.cli.settings)),
+      delegation_mode:data.cli.delegation_mode,
+      behavior:JSON.parse(JSON.stringify(data.cli.behavior.values)),
+    },
     // La politique complète, telle que le serveur la décrit : la page ne
     // connaît ni les profils ni les candidats, elle les reçoit.
-    routing:{enabled:data.routing.enabled,profiles:JSON.parse(JSON.stringify(data.routing.policy))},
+    routing:{profiles:JSON.parse(JSON.stringify(data.routing.policy))},
     audio:{...data.audio},
   };
 }
 
 async function openSettings(){
+  const generation=++SET.openGeneration;
   overlay.classList.add('open');SET.open=true;
   // Sans modification en cours, relire : l'état de Voice (Solo Owner,
   // annulation d'écho) a pu changer depuis la dernière ouverture.
   if(!SET.data||!SET.dirty){
     modalContent.innerHTML='<div class="empty">Chargement…</div>';renderTabs();
     try{
-      SET.data=await api('/api/settings');
-      SET.shortcuts=SET.data.shortcuts;
-      SET.draft=draftFrom(SET.data);
-    }catch(e){modalContent.innerHTML=`<div class="notice bad">${esc(e.message)}</div>`;return}
+      const data=await api('/api/settings');
+      if(!SET.open||generation!==SET.openGeneration)return;
+      SET.data=data;SET.shortcuts=data.shortcuts;SET.draft=draftFrom(data);
+    }catch(e){if(SET.open&&generation===SET.openGeneration)modalContent.innerHTML=`<div class="notice bad">${esc(e.message)}</div>`;return}
   }
+  if(!SET.open||generation!==SET.openGeneration)return;
   renderTabs();await renderTab();
 }
 
-function closeSettings(){overlay.classList.remove('open');SET.open=false;if(SET.capture)SET.capture.cancel()}
+function closeSettings(){++SET.openGeneration;++SET.cliGeneration;++SET.cliModelGeneration;++SET.routingGeneration;SET.renderRevision=(SET.renderRevision||0)+1;SET.routingAdvancedOpen=false;destroyAgentCatalog();overlay.classList.remove('open');SET.open=false;if(SET.capture)SET.capture.cancel()}
 
 async function saveDraft(options){
   const silent=options&&options.silent;

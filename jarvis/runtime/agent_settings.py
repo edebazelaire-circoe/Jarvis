@@ -51,13 +51,16 @@ class AgentExecutionSettings:
     cwd: Path
     runtime_root: Path
     prompt_overrides: dict | None = None
+    behavior_active: bool = False
 
 
 def resolve_agent_execution(settings: Mapping[str, object], *, cwd: Path, runtime_root: Path,
                             environ: Mapping[str, str] | None = None) -> AgentExecutionSettings:
+    from jarvis.runtime.agent_behavior import prompt_instruction
     from jarvis.runtime.prompt_overrides import prompt_override_document
     agent_id = cli_catalog.normalize_agent_cli(settings.get("agent_cli"))
     values = resolve_agent_settings(settings, agent_id, environ=environ)
     return AgentExecutionSettings(agent_id, cli_catalog.spec_for(agent_id).model_provider,
                                   **values, cwd=Path(cwd), runtime_root=Path(runtime_root),
-                                  prompt_overrides=prompt_override_document(dict(settings)))
+                                  prompt_overrides=prompt_override_document(dict(settings)),
+                                  behavior_active=bool(prompt_instruction(settings)))

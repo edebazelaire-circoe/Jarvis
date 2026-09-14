@@ -1,0 +1,27 @@
+{
+  "slice_id": "03",
+  "task_type": null,
+  "work_intent": "catalog backend and metadata",
+  "dependencies": [
+    "01"
+  ],
+  "task_type_blocker": "Waived by explicit user authorization on 2026-09-14; task_type remains null rather than inventing a value.",
+  "status": "COMPLETE",
+  "canonical_contract": "docs/catalog/view-model.md",
+  "implementation": [
+    "jarvis/domain/catalog.py",
+    "jarvis/runtime/catalog_metadata.py",
+    "jarvis/runtime/catalog_view.py",
+    "jarvis/runtime/routing_hook.py",
+    "jarvis/runtime/control_center.py"
+  ],
+  "validation": {
+    "command": ".venv/Scripts/python.exe -m pytest -q -p no:cacheprovider -W error -o asyncio_default_fixture_loop_scope=function tests/unit/test_catalog_view.py tests/unit/test_settings_workbench.py tests/unit/test_settings_endpoints.py tests/unit/test_agent_routing.py tests/unit/test_agent_routing_settings.py tests/unit/test_routing_hook.py tests/unit/test_routing_settings_screen.py tests/unit/test_control_center_voice_architecture.py tests/unit/test_control_center_voice_architecture_review.py tests/unit/test_voice_architecture_config.py",
+    "passed": 296,
+    "failed": 0,
+    "duration_seconds": 4.85,
+    "logbroker_cli": "unavailable: ModuleNotFoundError: No module named observability",
+    "ruff": "unavailable: No module named ruff"
+  },
+  "qa_pending": []
+}

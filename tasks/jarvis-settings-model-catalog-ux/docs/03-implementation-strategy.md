@@ -1,0 +1,3 @@
+# Implementation Strategy
+
+First define the new Settings information architecture and catalog view-model contract, then backend persistence/API, then metadata enrichment, then the reusable table, then the two UI surfaces. The old “Aiguillage” UI is removed only after its useful controls have a new home and runtime routing remains intact. The Auto/Dupliqué switch must bind to whatever the live CLI/runtime actually means by duplicated delegation; Slice 00 must locate that semantics or mark it as a required new backend contract rather than guessing. Voice turn-taking controls must be refreshed against the arbitration handoff before the voice sub-tabs ship.

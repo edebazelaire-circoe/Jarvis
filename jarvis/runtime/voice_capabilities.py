@@ -27,6 +27,10 @@ class VoiceCapabilityRegistry:
     def find(self, ref: VoiceModelRef) -> VoiceModelDescriptor | None:
         return self._models.get(ref)
 
+    def descriptors(self) -> tuple[VoiceModelDescriptor, ...]:
+        """All registered evidence records, in deterministic registration order."""
+        return tuple(self._models.values())
+
     def settings_architectures(self) -> list[dict[str, object]]:
         """UI schema; all choices derive from registered capability evidence."""
         descriptions = {

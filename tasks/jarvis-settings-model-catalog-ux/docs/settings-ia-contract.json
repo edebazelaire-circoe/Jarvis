@@ -1,0 +1,209 @@
+{
+  "schema_version": 1,
+  "status": "canonical-for-slices-02-through-07",
+  "source_snapshot": {
+    "branch": "main",
+    "sha": "f0aec1067542ac4beae7dcced74a336fcfaa7fdf",
+    "audited_on": "2026-09-14"
+  },
+  "navigation": [
+    {
+      "id": "agent_cli",
+      "label": "Agent / CLI",
+      "sections": ["technical", "behavior", "catalog"],
+      "replaces": ["cli", "routing"]
+    },
+    {
+      "id": "voice",
+      "label": "Voix",
+      "subtabs": ["architecture", "conversation", "turn_taking", "models", "audio", "advanced", "diagnostic"]
+    },
+    {"id": "prompts", "label": "Prompts"},
+    {"id": "credentials", "label": "Clés API"},
+    {"id": "shortcuts", "label": "Raccourcis"}
+  ],
+  "option_metadata_contract": {
+    "required": ["id", "label", "type", "default", "help", "destination", "advanced", "runtime_status"],
+    "enum_requires": ["options"],
+    "number_requires": ["minimum", "maximum"],
+    "optional": ["step", "placeholder", "depends_on", "source", "persistence", "readonly", "exclusive_minimum"]
+  },
+  "agent_cli": {
+    "delegation_mode": {
+      "id": "delegation_mode",
+      "label": "Mode des sous-agents",
+      "type": "enum",
+      "default": "duplicate",
+      "options": [
+        {
+          "id": "auto",
+          "label": "Auto",
+          "meaning": "Enable the existing profile routing policy. Each Agent/Task call still launches at most the one sub-agent requested by the caller; the hook may replace its requested model with the first allowed and usable candidate on the active host CLI only."
+        },
+        {
+          "id": "duplicate",
+          "label": "Dupliqué",
+          "meaning": "Compatibility/inheritance mode. Preserve the model selected by the caller or CLI and launch only the requested sub-agent. Never duplicate work and never fan out."
+        }
+      ],
+      "help": "Auto choisit le modèle selon les profils. Dupliqué hérite du choix du CLI/appelant; ce nom ne signifie jamais deux exécutions.",
+      "destination": "agent_cli.technical",
+      "advanced": false,
+      "runtime_status": "live-alias",
+      "persistence": "agent_routing.enabled",
+      "mapping": {"auto": true, "duplicate": false},
+      "host_agent_scope": "active_cli_only",
+      "cross_cli_policy": "self_development_only",
+      "max_subagent_calls_per_tool_call": 1
+    },
+    "settings": [
+      {"id": "agent_cli", "label": "Agent piloté", "type": "enum", "default": "claude", "options": ["claude", "codex"], "help": "CLI principal utilisé par JARVIS.", "destination": "agent_cli.technical", "advanced": false, "runtime_status": "live", "persistence": "agent_cli"},
+      {"id": "command", "label": "Commande", "type": "text", "default": "CLI default", "help": "Nom dans PATH ou chemin complet, par CLI.", "destination": "agent_cli.technical", "advanced": true, "runtime_status": "live", "persistence": "agent_cli_settings.<agent>.command"},
+      {"id": "model", "label": "Modèle principal", "type": "catalog-select", "default": "CLI default", "help": "Modèle du CLI; valeur vide laisse le CLI choisir.", "destination": "agent_cli.technical", "advanced": false, "runtime_status": "live", "persistence": "agent_cli_settings.<agent>.model", "source": "model_catalog:<provider>:text"},
+      {"id": "permission_mode", "label": "Autorisations / bac à sable", "type": "enum-by-cli", "default": "bypassPermissions (Claude), danger-full-access (Codex)", "help": "Valeurs déclarées par cli_catalog; ne pas fusionner les vocabulaires Claude et Codex.", "destination": "agent_cli.technical", "advanced": true, "runtime_status": "live", "persistence": "agent_cli_settings.<agent>.permission_mode"},
+      {"id": "profile_enabled", "label": "Profil actif", "type": "boolean", "default": true, "help": "Désactivé: ce profil hérite du choix du CLI même en mode Auto.", "destination": "agent_cli.technical.routing_advanced", "advanced": true, "runtime_status": "live", "persistence": "agent_routing.profiles.<profile>.enabled"},
+      {"id": "profile_candidates", "label": "Candidats autorisés", "type": "ordered-catalog-list", "default": [], "help": "Premier candidat autorisé et utilisable gagnant; liste vide conserve le choix CLI.", "destination": "agent_cli.catalog", "advanced": true, "runtime_status": "live", "persistence": "agent_routing.profiles.<profile>.candidates", "source": "cli_catalog + model_catalog"},
+      {"id": "allow_general_fallback", "label": "Recours au profil Général", "type": "boolean", "default": true, "help": "Après épuisement du profil, essayer Général; ne s'applique pas au profil general.", "destination": "agent_cli.technical.routing_advanced", "advanced": true, "runtime_status": "live", "persistence": "agent_routing.profiles.<profile>.allow_general_fallback"},
+      {"id": "self_development_enabled", "label": "Auto-développement", "type": "boolean", "default": false, "help": "Autorise la construction d'un candidat en worktree; aucun déploiement implicite.", "destination": "agent_cli.technical.self_development", "advanced": true, "runtime_status": "live-api-not-current-ui", "persistence": "self_development.enabled"},
+      {"id": "self_development_auto_deploy", "label": "Déploiement automatique", "type": "boolean", "default": false, "help": "N'est valide que si auto-développement est actif.", "destination": "agent_cli.technical.self_development", "advanced": true, "runtime_status": "live-api-not-current-ui", "persistence": "self_development.auto_deploy"},
+      {"id": "response_verbosity", "label": "Verbosité", "type": "enum", "default": "inherit", "options": ["inherit", "concise", "balanced", "detailed"], "help": "inherit n'ajoute aucune consigne et préserve le comportement actuel.", "destination": "agent_cli.behavior", "advanced": false, "runtime_status": "live", "persistence": "agent_behavior.response_verbosity"},
+      {"id": "politeness_formality", "label": "Politesse / formalité", "type": "enum", "default": "inherit", "options": ["inherit", "direct", "courteous", "formal"], "help": "inherit n'ajoute aucune consigne et préserve le comportement actuel.", "destination": "agent_cli.behavior", "advanced": false, "runtime_status": "live", "persistence": "agent_behavior.politeness_formality"}
+    ],
+    "profiles": ["desktop", "code", "fast", "general"],
+    "deferred_controls": [
+      {"id": "parallelism", "reason": "No configurable runtime semantic; delegation mode never controls fan-out."},
+      {"id": "delegation_timeout", "reason": "Existing timeouts are fixed and path-specific, not one safe user setting."},
+      {"id": "cost_latency_quality_bias", "reason": "No measured comparable score or resolver input exists."},
+      {"id": "extra_fallback_policy", "reason": "Profile/general fallback already exists; a second fallback would contradict it."},
+      {"id": "confirmations", "reason": "ActionBroker security confirmation is policy, not personality; no weakening setting."},
+      {"id": "proactivity", "reason": "No central runtime consumer exists."},
+      {"id": "explanation_depth", "reason": "Overlaps response_verbosity until distinct runtime semantics exist."}
+    ]
+  },
+  "voice": {
+    "categories": [
+      {"id": "architecture", "label": "Architecture"},
+      {"id": "conversation", "label": "Conversation"},
+      {"id": "turn_taking", "label": "Tours & interruptions"},
+      {"id": "models", "label": "Modèles"},
+      {"id": "audio", "label": "Audio"},
+      {"id": "advanced", "label": "Avancé"},
+      {"id": "diagnostic", "label": "Diagnostic"}
+    ],
+    "stack_projection": {
+      "compatibility": "Sans voice_architecture, voice_arch choisit legacy/continuous_brain et voice_stack choisit la pile; les champs de cette pile pilotent le runtime.",
+      "explicit": "Avec voice_architecture, l'architecture et ses modèles viennent du bloc versionné. Le runtime dérive sa pile (OpenAI actuellement), consomme les réglages transport correspondants et conserve les autres piles inactives sans les effacer.",
+      "model_precedence": "Les modèles du bloc voice_architecture remplacent les champs model de compatibilité; les réglages audio/VAD/transcription de la pile dérivée restent actifs."
+    },
+    "settings": [
+      {"id": "voice_stack", "label": "Pile vocale de compatibilité", "type": "enum", "default": "openai_realtime", "options": ["openai_realtime", "gemini_live"], "help": "Choisit la pile seulement sans architecture versionnée; une architecture explicite dérive sa pile.", "destination": "voice.architecture", "advanced": true, "runtime_status": "live-compatibility", "persistence": "voice_stack"},
+      {"id": "voice_arch", "label": "Mode vocal historique", "type": "enum", "default": "", "options": ["", "legacy", "continuous_brain"], "placeholder": "Par défaut", "help": "S'applique seulement sans architecture versionnée; vide suit environnement/défaut.", "destination": "voice.architecture", "advanced": true, "runtime_status": "live-compatibility", "persistence": "voice_arch"},
+      {"id": "architecture", "label": "Architecture vocale", "type": "enum", "default": null, "options": ["simple", "front_brain", "duplex"], "placeholder": "Projection de compatibilité", "help": "Sélection versionnée par le registre de capacités.", "destination": "voice.architecture", "advanced": false, "runtime_status": "live", "persistence": "voice_architecture.config.architecture"},
+      {"id": "conversation_model", "label": "Modèle conversation", "type": "catalog-select", "default": "registry default", "help": "Simple/Duplex; choix filtré par architecture et capacités.", "destination": "voice.models", "advanced": false, "runtime_status": "live", "persistence": "voice_architecture.config.conversation_model", "source": "voice capability registry"},
+      {"id": "reflex_model", "label": "Modèle réflexe", "type": "catalog-select", "default": "registry default", "help": "Front Brain seulement.", "destination": "voice.models", "advanced": false, "runtime_status": "live", "persistence": "voice_architecture.config.reflex_model", "source": "voice capability registry"},
+      {"id": "analysis_model", "label": "Modèle d'analyse", "type": "catalog-select", "default": "registry default", "help": "Front Brain seulement; doit produire texte structuré.", "destination": "voice.models", "advanced": false, "runtime_status": "live", "persistence": "voice_architecture.config.analysis_model", "source": "voice capability registry"},
+      {"id": "speculative_deltas", "label": "Analyse des transcriptions provisoires", "type": "boolean", "default": true, "help": "Front Brain; exige deltas de transcription.", "destination": "voice.conversation", "advanced": true, "runtime_status": "live", "persistence": "voice_architecture.config.speculative_deltas"},
+      {"id": "reasoning_effort", "label": "Effort de raisonnement", "type": "enum-from-model", "default": "low", "help": "Front Brain; options du descripteur du modèle d'analyse.", "destination": "voice.models", "advanced": true, "runtime_status": "live", "persistence": "voice_architecture.config.reasoning_effort"},
+      {"id": "client_delegation", "label": "Délégation client active", "type": "boolean", "default": true, "help": "Invariant Duplex, affiché en lecture seule.", "destination": "voice.architecture", "advanced": true, "runtime_status": "live-invariant", "persistence": "voice_architecture.config.client_delegation", "readonly": true},
+      {"id": "idle_timeout_s", "label": "Fermeture Live après inactivité", "type": "number", "default": 60, "minimum": 5, "maximum": 3600, "help": "Durée facturable de session Duplex.", "destination": "voice.conversation", "advanced": false, "runtime_status": "live", "persistence": "voice_architecture.config.idle_timeout_s"},
+
+      {"id": "openai.model", "label": "Modèle Realtime", "type": "catalog-select", "default": "environment/default", "help": "Pile OpenAI de compatibilité.", "destination": "voice.models", "advanced": false, "runtime_status": "live-compatibility", "persistence": "voice_stack_settings.openai_realtime.model", "source": "openai:realtime"},
+      {"id": "openai.voice", "label": "Voix OpenAI", "type": "enum", "default": "cedar", "options": ["cedar", "ash", "verse", "ballad", "echo", "sage", "alloy", "marin", "coral", "shimmer"], "help": "Liste documentaire acceptée par Realtime.", "destination": "voice.models", "advanced": false, "runtime_status": "live", "persistence": "voice_stack_settings.openai_realtime.voice"},
+      {"id": "openai.turn_mode", "label": "Fin de tour", "type": "enum", "default": "auto", "options": ["auto", "manual"], "help": "Auto: fournisseur clôt au silence; manual: second appui envoie.", "destination": "voice.turn_taking", "advanced": false, "runtime_status": "live", "persistence": "voice_stack_settings.openai_realtime.turn_mode"},
+      {"id": "openai.transcription_model", "label": "Modèle de transcription", "type": "catalog-select", "default": "gpt-4o-mini-transcribe", "help": "Transcrit l'utilisateur; n'affecte pas la réponse audio.", "destination": "voice.models", "advanced": false, "runtime_status": "live", "persistence": "voice_stack_settings.openai_realtime.transcription_model", "source": "openai:transcription"},
+      {"id": "openai.transcription_language", "label": "Langue de transcription", "type": "text", "default": "fr", "help": "Code ISO; vide = détection automatique.", "destination": "voice.conversation", "advanced": true, "runtime_status": "live", "persistence": "voice_stack_settings.openai_realtime.transcription_language"},
+      {"id": "openai.noise_reduction", "label": "Réduction de bruit", "type": "enum", "default": "far_field", "options": ["far_field", "near_field", "off"], "help": "Prétraitement OpenAI avant VAD.", "destination": "voice.audio", "advanced": false, "runtime_status": "live", "persistence": "voice_stack_settings.openai_realtime.noise_reduction"},
+      {"id": "openai.echo_cancellation", "label": "Annulation d'écho", "type": "boolean", "default": true, "help": "Permet l'interruption pendant la sortie locale en mode continu.", "destination": "voice.turn_taking", "advanced": false, "runtime_status": "live", "persistence": "voice_stack_settings.openai_realtime.echo_cancellation"},
+      {"id": "openai.ack_delay_ms", "label": "Délai avant accusé", "type": "number", "default": 1200, "minimum": 0, "maximum": 10000, "step": 100, "help": "0 désactive l'accusé.", "destination": "voice.conversation", "advanced": false, "runtime_status": "live", "persistence": "voice_stack_settings.openai_realtime.ack_delay_ms"},
+      {"id": "openai.vad_type", "label": "Détection de fin de tour", "type": "enum", "default": "server_vad", "options": ["server_vad", "semantic_vad"], "help": "Visible quand turn_mode=auto.", "destination": "voice.turn_taking", "advanced": false, "runtime_status": "live", "persistence": "voice_stack_settings.openai_realtime.vad_type", "depends_on": "openai.turn_mode=auto"},
+      {"id": "openai.vad_eagerness", "label": "Réactivité semantic VAD", "type": "enum", "default": "auto", "options": ["auto", "low", "medium", "high"], "help": "Visible quand vad_type=semantic_vad.", "destination": "voice.turn_taking", "advanced": true, "runtime_status": "live", "persistence": "voice_stack_settings.openai_realtime.vad_eagerness", "depends_on": "openai.vad_type=semantic_vad"},
+      {"id": "openai.vad_threshold", "label": "Seuil de parole", "type": "number", "default": 0.55, "minimum": 0.0, "maximum": 1.0, "step": 0.05, "help": "Plus haut exige voix plus forte.", "destination": "voice.turn_taking", "advanced": true, "runtime_status": "live", "persistence": "voice_stack_settings.openai_realtime.vad_threshold", "depends_on": "openai.turn_mode=auto"},
+      {"id": "openai.vad_prefix_padding_ms", "label": "Audio avant parole", "type": "number", "default": 300, "minimum": 0, "maximum": 2000, "step": 50, "help": "Préserve début de phrase.", "destination": "voice.turn_taking", "advanced": true, "runtime_status": "live", "persistence": "voice_stack_settings.openai_realtime.vad_prefix_padding_ms", "depends_on": "openai.turn_mode=auto"},
+      {"id": "openai.vad_silence_duration_ms", "label": "Silence de clôture", "type": "number", "default": 1500, "minimum": 100, "maximum": 4000, "step": 50, "help": "Compromis coupure/latence.", "destination": "voice.turn_taking", "advanced": true, "runtime_status": "live", "persistence": "voice_stack_settings.openai_realtime.vad_silence_duration_ms", "depends_on": "openai.turn_mode=auto"},
+
+      {"id": "gemini.model", "label": "Modèle Gemini Live", "type": "catalog-select", "default": "service default", "help": "Filtré sur bidiGenerateContent.", "destination": "voice.models", "advanced": false, "runtime_status": "live-compatibility", "persistence": "voice_stack_settings.gemini_live.model", "source": "google:realtime"},
+      {"id": "gemini.voice", "label": "Voix Gemini", "type": "enum", "default": "Puck", "options": ["Puck", "Charon", "Kore", "Fenrir", "Aoede", "Leda", "Orus", "Zephyr"], "help": "Voix préconstruites documentées.", "destination": "voice.models", "advanced": false, "runtime_status": "live", "persistence": "voice_stack_settings.gemini_live.voice"},
+      {"id": "gemini.turn_mode", "label": "Fin de tour", "type": "enum", "default": "auto", "options": ["auto", "manual"], "help": "Même contrat utilisateur que pile OpenAI.", "destination": "voice.turn_taking", "advanced": false, "runtime_status": "live", "persistence": "voice_stack_settings.gemini_live.turn_mode"},
+      {"id": "gemini.input_transcription", "label": "Transcrire votre voix", "type": "boolean", "default": true, "help": "Nécessaire à historique et commande mute.", "destination": "voice.conversation", "advanced": false, "runtime_status": "live", "persistence": "voice_stack_settings.gemini_live.input_transcription"},
+      {"id": "gemini.output_transcription", "label": "Transcrire les réponses", "type": "boolean", "default": true, "help": "Écrit les réponses parlées dans historique.", "destination": "voice.conversation", "advanced": false, "runtime_status": "live", "persistence": "voice_stack_settings.gemini_live.output_transcription"},
+      {"id": "gemini.vad_start_sensitivity", "label": "Sensibilité début", "type": "enum", "default": "LOW", "options": ["LOW", "HIGH"], "help": "HIGH déclenche plus facilement.", "destination": "voice.turn_taking", "advanced": true, "runtime_status": "live", "persistence": "voice_stack_settings.gemini_live.vad_start_sensitivity", "depends_on": "gemini.turn_mode=auto"},
+      {"id": "gemini.vad_end_sensitivity", "label": "Sensibilité fin", "type": "enum", "default": "LOW", "options": ["LOW", "HIGH"], "help": "Sensibilité serveur à fin de parole.", "destination": "voice.turn_taking", "advanced": true, "runtime_status": "live", "persistence": "voice_stack_settings.gemini_live.vad_end_sensitivity", "depends_on": "gemini.turn_mode=auto"},
+      {"id": "gemini.vad_prefix_padding_ms", "label": "Audio avant parole", "type": "number", "default": 300, "minimum": 0, "maximum": 2000, "step": 50, "help": "Préserve début de phrase.", "destination": "voice.turn_taking", "advanced": true, "runtime_status": "live", "persistence": "voice_stack_settings.gemini_live.vad_prefix_padding_ms", "depends_on": "gemini.turn_mode=auto"},
+      {"id": "gemini.vad_silence_duration_ms", "label": "Silence de clôture", "type": "number", "default": 1500, "minimum": 100, "maximum": 4000, "step": 50, "help": "Compromis coupure/latence.", "destination": "voice.turn_taking", "advanced": true, "runtime_status": "live", "persistence": "voice_stack_settings.gemini_live.vad_silence_duration_ms", "depends_on": "gemini.turn_mode=auto"},
+
+      {"id": "conversation_mode", "label": "Mode de conversation", "type": "enum", "default": "open_room", "options": ["open_room", "solo_owner"], "help": "Solo Owner exige conversation continue et vérificateur prêt.", "destination": "voice.conversation", "advanced": false, "runtime_status": "live", "persistence": "conversation_mode"},
+      {"id": "speaker_verification", "label": "Vérification locuteur", "type": "enum", "default": "", "options": ["", "off", "shadow", "enforce"], "placeholder": "Selon le mode de conversation", "help": "Valeurs proposées filtrées par mode conversation.", "destination": "voice.conversation", "advanced": false, "runtime_status": "live", "persistence": "speaker_verification"},
+      {"id": "owner_buffer_ms", "label": "Tampon rejeu propriétaire", "type": "number", "default": 2500, "minimum": 500, "maximum": 5000, "step": 100, "help": "Conserve début de phrase pendant reconnaissance.", "destination": "voice.turn_taking", "advanced": true, "runtime_status": "live", "persistence": "owner_buffer_ms"},
+      {"id": "owner_threshold", "label": "Seuil reconnaissance", "type": "number", "default": null, "minimum": 0.0, "exclusive_minimum": 0.0, "maximum": 1.0, "step": 0.01, "help": "Vide = seuil calibré du moteur; une valeur explicite doit être strictement positive.", "destination": "voice.advanced", "advanced": true, "runtime_status": "live", "persistence": "owner_threshold"},
+      {"id": "owner_evidence_ms", "label": "Fenêtre de preuve", "type": "number", "default": 1500, "minimum": 500, "maximum": 4000, "step": 100, "help": "Parole voisée nécessaire au verdict.", "destination": "voice.advanced", "advanced": true, "runtime_status": "live", "persistence": "owner_evidence_ms"},
+      {"id": "owner_short_evidence_ms", "label": "Réponse brève minimale", "type": "number", "default": 600, "minimum": 0, "maximum": 4000, "step": 50, "help": "0 désactive; sinon inférieur à owner_evidence_ms.", "destination": "voice.advanced", "advanced": true, "runtime_status": "live", "persistence": "owner_short_evidence_ms"},
+      {"id": "owner_short_margin", "label": "Marge réponse brève", "type": "number", "default": 0.1, "minimum": 0.0, "maximum": 0.3, "step": 0.01, "help": "Marge autour du seuil pour règles courtes.", "destination": "voice.advanced", "advanced": true, "runtime_status": "live", "persistence": "owner_short_margin"},
+      {"id": "owner_profile_path", "label": "Profil vocal", "type": "path", "default": "runtime default", "help": "Affichage diagnostic seulement; jamais écrit par écran.", "destination": "voice.diagnostic", "advanced": true, "runtime_status": "live-readonly", "persistence": "owner_profile_path", "readonly": true},
+      {"id": "audio_input_device", "label": "Microphone", "type": "device-select", "default": "system", "help": "Périphérique capture.", "destination": "voice.audio", "advanced": false, "runtime_status": "live", "persistence": "audio_input_device"},
+      {"id": "audio_output_device", "label": "Haut-parleur", "type": "device-select", "default": "system", "help": "Périphérique lecture.", "destination": "voice.audio", "advanced": false, "runtime_status": "live", "persistence": "audio_output_device"},
+      {"id": "active_timeout_s", "label": "Mise en veille après inactivité", "type": "number-or-empty", "default": 90, "minimum": 0, "maximum": null, "help": "0 = jamais; sinon 5 s minimum; vide = environnement/défaut.", "destination": "voice.conversation", "advanced": false, "runtime_status": "live", "persistence": "active_timeout_s"},
+      {"id": "wake_toggle", "label": "Réveiller / envoyer / interrompre", "type": "key", "default": "f9", "help": "Touche globale unique; rôle dépend de turn_mode.", "destination": "voice.turn_taking", "advanced": false, "runtime_status": "live", "persistence": "shortcuts.wake_toggle"}
+    ],
+    "diagnostic_projections": ["authorization.status", "authorization.runtime", "authorization.verifier", "authorization.worker", "echo_cancellation.status", "switch.status", "catalog.source", "model.adapter_status", "model.availability"]
+  },
+  "retained_surfaces": [
+    {"id": "prompts", "persistence": "prompt_overrides", "destination": "prompts", "policy": "unchanged"},
+    {"id": "credentials", "persistence": "credentials + credential_bindings", "destination": "credentials", "policy": "unchanged; never return secrets"},
+    {"id": "ui_shortcuts", "persistence": "shortcuts.* except wake_toggle", "destination": "shortcuts", "policy": "unchanged"}
+  ],
+  "migration": {
+    "rules": [
+      {"from": "agent_routing.enabled=true", "to": "delegation_mode=auto", "write": "none on read"},
+      {"from": "agent_routing.enabled=false or missing", "to": "delegation_mode=duplicate", "write": "none on read"},
+      {"from": "settings tab routing / label Aiguillage", "to": "Agent / CLI navigation", "write": "Slice 05 complete; legacy programmatic tab ID routing normalizes to cli; no URL deep-link claim"},
+      {"from": "/api/routing/candidates", "to": "internal compatibility endpoint or new catalog adapter", "write": "retain until Slice 07; never user-facing naming"},
+      {"from": "claude_cli", "to": "agent_cli_settings.claude.command", "write": "existing mirror retained"},
+      {"from": "claude_permission_mode", "to": "agent_cli_settings.claude.permission_mode", "write": "existing mirror retained"},
+      {"from": "realtime_voice", "to": "voice_stack_settings.openai_realtime.voice", "write": "existing mirror retained"},
+      {"from": "voice_turn_mode", "to": "voice_stack_settings.<active>.turn_mode", "write": "existing mirror retained"},
+      {"from": "manual_wake_key", "to": "shortcuts.wake_toggle", "write": "existing mirror retained"},
+      {"from": "voice_arch + voice_stack + voice_stack_settings", "to": "voice_architecture compatibility projection", "write": "do not auto-upgrade; preserve inactive stacks"}
+    ],
+    "invariants": [
+      "Reading settings never mutates persisted data.",
+      "Missing routing state never silently enables Auto.",
+      "Switching to duplicate preserves profile candidates for a later Auto re-enable.",
+      "Saving unrelated settings preserves unknown and inactive legacy fields.",
+      "Both delegation modes affect model selection only, never sub-agent call count.",
+      "No primary navigation label or category contains Aiguillage after migration."
+    ]
+  },
+  "observability_test_contract": {
+    "runtime_change_in_slice_01": false,
+    "runtime_change_in_slice_02": true,
+    "implementation_status": "live in RuntimeJournal-backed settings and existing routing hook",
+    "logbroker_channel": "none; repository uses RuntimeJournal and no observability.cli module is installed",
+    "future_expected_events": [
+      {"event": "settings.update", "level": "info", "when": "successful save", "required_data": ["keys"], "secret_policy": "keys only, no values"},
+      {"event": "settings.agent.rejected", "level": "warning", "when": "Agent/CLI, routing, self-development or behavior validation rejected by POST /api/settings", "required_data": ["code"], "code_scope": "The owning CliSettingsError, RoutingError, SelfDevError or AgentBehaviorError supplies its stable code. slice_02_stable_codes lists only codes introduced by this Slice, not the pre-existing validator registries.", "slice_02_stable_codes": ["agent_settings_invalid_delegation_mode", "agent_settings_conflicting_delegation_mode", "agent_settings_invalid_behavior", "agent_settings_invalid_verbosity", "agent_settings_invalid_politeness_formality", "agent_settings_behavior_prompt_too_large"]},
+      {"event": "prompt.override.rejected", "level": "warning", "when": "Prompt edit would make saved turn addition plus generated behavior exceed 8192 characters", "required_data": ["code", "prompt_id"], "slice_02_stable_codes": ["agent_settings_behavior_prompt_too_large"]},
+      {"event": "agent.prompt", "level": "info", "when": "Composed ask/send reaches an agent supporting prompt evidence", "required_data": ["program_id", "prompt_ids", "layer_revisions", "static_fingerprint", "render_fingerprint", "channel", "application"], "secret_policy": "identity only; no prompt text"},
+      {"event": "job.agent.prompt", "level": "info", "when": "Composed owned job reaches a Claude/Codex wrapper supporting prompt evidence", "required_data": ["job_id", "program_id", "prompt_ids", "layer_revisions", "static_fingerprint", "render_fingerprint", "channel", "application"], "secret_policy": "identity only; no prompt text"},
+      {"event": "agent.routing.decided", "level": "info-or-warning-on-deny", "when": "Auto handles one Agent/Task call", "required_data": ["tool_use_id", "profile", "requested_model", "model", "reason", "applied"]},
+      {"event": "agent.routing.failed", "level": "error", "when": "routing hook fails open", "required_data": ["code", "exception_type"], "stable_codes": ["routing_hook_failed"]}
+    ],
+    "correlation": "Use tool_use_id for each delegation decision. Settings save remains correlated to RuntimeJournal session until an HTTP request correlation id exists; do not fabricate one.",
+    "recovery": "Invalid saves are atomic and keep prior settings and active-agent prompt memory. Prompt edits validate the same combined bound before their writer. Routing hook internal failure preserves caller/CLI choice and emits routing_hook_failed. No automatic retry or fan-out.",
+    "temporary_probes": "None. Add TEMP probes only in an active debug session and remove them before closure.",
+    "tests": [
+      "contract manifest metadata and unique destinations",
+      "live agent/CLI setting inventory equals manifest",
+      "live voice stack and architecture field inventory equals manifest",
+      "legacy routing projection true->auto and false/missing->duplicate",
+      "duplicate mode preserves requested model and returns one unchanged Agent/Task call",
+      "Auto chooses at most one candidate and preserves deny/fallback semantics",
+      "old navigation redirects without displaying Aiguillage",
+      "verbosity and politeness/formality use one shared backend-turn consumer; inherit adds no instruction"
+    ],
+    "cli_queries": [
+      "python -m observability.cli logs errors --session latest --json",
+      "python -m observability.cli logs query --session latest --correlation-id <tool_use_id> --json",
+      "python -m observability.cli logs summary --session latest --json"
+    ]
+  }
+}

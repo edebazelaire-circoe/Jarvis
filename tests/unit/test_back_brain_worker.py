@@ -10,7 +10,7 @@ from jarvis.domain.speech_presentation import SpeechSource
 from jarvis.domain.v2 import Job
 from jarvis.runtime import cli_catalog
 from jarvis.runtime.agent_settings import resolve_agent_execution, resolve_agent_settings
-from jarvis.runtime.back_brain_worker import BackBrainJobWorker, BackBrainWorkerError
+from jarvis.runtime.back_brain_worker import BackBrainJobWorker, BackBrainWorkerError, create_job_agent
 from jarvis.runtime.claude_local import BRAIN_SYSTEM_PROMPT, JOB_RESULT_SYSTEM_PROMPT
 from jarvis.runtime.control_center import ControlCenter
 from jarvis.runtime.journal import read_jsonl_tail
@@ -124,10 +124,15 @@ def harness(tmp_path, monkeypatch):
             self.processes.append(process)
             return process
 
-        def settings(self, provider):
-            return resolve_agent_execution({"agent_cli": provider, "agent_cli_settings": {provider: {
+        def settings(self, provider, *, behavior=False):
+            payload = {"agent_cli": provider, "agent_cli_settings": {provider: {
                 "command": f"{provider}.exe", "model": "chosen-model", "permission_mode": "read-only" if provider == "codex" else "dontAsk",
-            }}}, cwd=tmp_path, runtime_root=tmp_path, environ={})
+            }}}
+            if behavior:
+                payload["agent_behavior"] = {
+                    "response_verbosity": "concise", "politeness_formality": "courteous",
+                }
+            return resolve_agent_execution(payload, cwd=tmp_path, runtime_root=tmp_path, environ={})
 
         def worker(self, provider, **kwargs):
             return BackBrainJobWorker(lambda: self.settings(provider), **kwargs)
@@ -149,6 +154,90 @@ def job(job_id="job-a"):
                                      "voice-session", "canonical-turn", "transcript", 1, "provider-input", 1)
     payload = BackBrainWorkPayload("Do the admitted task", "Selected context", provenance)
     return Job(id=job_id, kind="back_brain", requested_by_conversation_id="conversation", payload=payload.to_payload())
+
+
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+@pytest.mark.parametrize("verbosity", ["inherit", "concise"])
+async def test_owned_agent_behavior_preserves_inherit_and_composes_explicit_choice(
+    tmp_path, provider, verbosity,
+):
+    captured = []
+
+    class Agent:
+        started = asyncio.Event()
+
+        async def ask(self, text, *, timeout_s):
+            del timeout_s
+            captured.append(text)
+            self.started.set()
+            return {"ok": True, "text": "complete", "session_id": "owned"}
+
+        async def wait_started(self):
+            await self.started.wait()
+
+        async def close_owned(self):
+            return True
+
+    settings = resolve_agent_execution(
+        {"agent_cli": provider, "agent_behavior": {
+            "response_verbosity": verbosity, "politeness_formality": "inherit",
+        }},
+        cwd=tmp_path, runtime_root=tmp_path, environ={},
+    )
+    worker = BackBrainJobWorker(lambda: settings, agent_factory=lambda *_args, **_kwargs: Agent())
+
+    await worker.execute(job())
+
+    original = json.dumps(
+        {"request": "Do the admitted task", "context_data": "Selected context"}, ensure_ascii=False,
+    )
+    if verbosity == "inherit":
+        assert captured == [original]
+    else:
+        assert "Réponds de façon concise" in captured[0]
+        assert captured[0].endswith("[Demande]\n" + original)
+
+
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+async def test_owned_real_agents_emit_bounded_prompt_evidence_for_behavior(harness, tmp_path, provider):
+    created = []
+
+    def factory(settings, job_id):
+        agent = create_job_agent(settings, job_id)
+        created.append(agent)
+        return agent
+
+    worker = BackBrainJobWorker(lambda: harness.settings(provider, behavior=True), agent_factory=factory)
+    running = asyncio.create_task(worker.execute(job()))
+    try:
+        await until(lambda: harness.processes and harness.processes[0].input)
+        harness.processes[0].result(provider, "complete")
+        await asyncio.wait_for(running, 2)
+
+        events = read_jsonl_tail(tmp_path / "trace.jsonl", limit=300)
+        prompt_events = [
+            event for event in events
+            if event["kind"] == "job.agent.prompt"
+            and event["data"].get("program_id") == f"backend.{provider}.turn"
+        ]
+        assert len(prompt_events) == 1
+        event = prompt_events[0]
+        assert event["level"] == "info"
+        assert event["data"]["job_id"] == "job-a"
+        assert event["data"]["program_id"] == f"backend.{provider}.turn"
+        assert event["data"]["channel"] == "stdin.user_message"
+        assert event["data"]["application"] == "sent"
+        assert event["data"]["static_fingerprint"]
+        assert "Réponds de façon concise" not in json.dumps(event)
+        turn_evidence = [
+            item for item in created[0].prompt_applications
+            if item.get("program_id") == f"backend.{provider}.turn"
+        ]
+        assert len(turn_evidence) == 1
+        assert turn_evidence[0]["render_fingerprint"] == event["data"]["render_fingerprint"]
+    finally:
+        await worker.cancel_owned("job-a")
+        await asyncio.gather(running, return_exceptions=True)
 
 
 @pytest.mark.parametrize("provider", ["claude", "codex"])
