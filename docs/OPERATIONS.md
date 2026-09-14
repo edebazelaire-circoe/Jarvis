@@ -123,7 +123,8 @@ duration, without storing raw audio.
 
 Le bouton **SET** du Control Center (ou la touche `s`) ouvre une fenêtre
 centrée, fermée par un clic à l'extérieur ou par `Échap`. Elle a six onglets :
-Mode vocal, Prompts, Agent / CLI, Config, API Keys et Raccourcis.
+Mode vocal, Prompts, Agent / CLI, Config, API Keys et Raccourcis, plus
+Apparence (couche de thèmes) et Expérimental (Barehands en mode test).
 
 Un principe la traverse : **la page ne connaît aucun réglage**. Le serveur
 décrit ce qui existe — les piles vocales, leurs champs, les CLI, leurs modes,
@@ -259,6 +260,83 @@ Ne figure dans cet onglet que ce qui fait quelque chose. Deux portées :
 
 Deux actions ne peuvent pas partager une touche dans une même portée : la
 seconde ne se déclencherait jamais et rien ne le dirait.
+
+### Expérimental : Barehands en mode test (pointeur à mains nues)
+
+L'onglet **Expérimental** (ajouté par `jarvis/runtime/control_center_barehands.js`,
+comme l'onglet Apparence l'est par la couche de thèmes) porte un interrupteur
+**Activer Barehands (mode test)**, éteint par défaut. Il s'applique et
+s'enregistre immédiatement, sans bouton Enregistrer, sous
+`barehands_test_mode.enabled` dans `runtime/control-center-settings.json` ; il
+reste actif au prochain chargement de la page. Route dédiée, comme les
+raccourcis : `GET /api/barehands` (état + présence des assets) et
+`POST /api/barehands` (`{"enabled": true|false}`, refus HTTP 400 avec code
+stable `barehands_*`, rien d'écrit). Événements : `settings.barehands`,
+`settings.barehands.rejected`.
+
+Activé, la page ouvre la webcam et suit les mains **dans le navigateur**
+(MediaPipe Hand Landmarker, WASM + modèle `hand_landmarker.task`), sans service
+cloud ni serveur Barehands. Chaque main détectée affiche un jeton rond qui suit
+le bout de l'index (image vue en miroir, 12 % de bord ignoré pour atteindre les
+coins). Retour visuel : le jeton grossit et l'élément visé est cerné au survol ;
+l'anneau se remplit pendant le rapprochement pouce-index et le jeton se fige
+pour viser ; au pincement franc, une onde marque le clic. Le clic rejoue la
+séquence souris (`pointerdown`, `mousedown`, `pointerup`, `mouseup`, `click`)
+sur l'élément sous le jeton : boutons du dock, onglets, cases, cartes Agents,
+fermeture de fenêtre. Seuils (`JarvisBarehandsCore.DEFAULTS`) : pincé sous 0,28
+de la taille de paume, relâché au-dessus de 0,42 (hystérésis), deux images de
+confirmation, 450 ms d'anti-rebond, un seul clic par pincement. Le jeton suit
+la couleur d'accent du thème (`--omega-accent` sous Omega, `--accent` sinon).
+
+Arrêt : interrupteur coupé, caméra refusée, absente, occupée ou débranchée,
+modèle absent, erreur du suivi, fermeture de la page. Dans tous les cas, un seul
+chemin (`teardown`) arrête les pistes caméra, ferme le modèle, retire la vidéo,
+les jetons et le survol ; un toast et l'onglet disent pourquoi. Un démarrage
+encore en vol quand on éteint rend la caméra dès qu'elle arrive.
+
+Assets : non versionnés, ce sont ceux que `scripts/bootstrap_third_party.py` a
+vendorisés sous `third_party/barehands/vendor` (MediaPipe Tasks Vision 0.10.14,
+Apache-2.0). Le Control Center en sert une liste blanche sous
+`/barehands/assets/…` ; `JARVIS_BAREHANDS_VENDOR_DIR` désigne un autre dossier
+(un worktree sans installation, par exemple). Absents, l'onglet liste les
+fichiers manquants et la caméra n'est jamais ouverte.
+
+Ce qui n'a pas été repris ni touché, volontairement : le serveur Barehands
+(port 8794), `stage.html` et son moteur de gestes (code AGPL-3.0 : rien n'en est
+copié, le pointeur est une réimplémentation), le jeton codé en dur de
+`jarvis/runtime/factory.py` (il ne concerne que l'outil V1 `board_present` via
+`/cmd`, que le mode test n'utilise pas), la CSP `frame-ancestors 'none'` du
+serveur patché (aucune iframe) et le chemin d'orbe périmé de
+`third_party/barehands/barehands.json` (lu seulement par `stage.html`). Ces
+points restent ouverts pour le board V1.
+
+Limites connues : pas de glisser-déposer ni de défilement ; une liste
+déroulante `<select>` ne s'ouvre pas sur un clic simulé ; le visage
+ai-visualizer (iframe) ne reçoit pas les clics ; le survol n'active pas les
+styles `:hover` natifs (un contour les remplace) ; le suivi tourne sur le fil
+principal de la page.
+
+#### Procédure de test manuel (caméra réelle)
+
+1. Assets présents : `python scripts/bootstrap_third_party.py --verify` rend 0.
+2. Lancer le Control Center (`python -m jarvis control-center`), ouvrir
+   `http://127.0.0.1:17654/` dans Chrome. Depuis un worktree, en parallèle d'un
+   JARVIS déjà lancé : `JARVIS_UI_PORT=17655`, `JARVIS_VISUALIZER_ENABLED=0`,
+   `JARVIS_BAREHANDS_VENDOR_DIR=<dépôt principal>\third_party\barehands\vendor`.
+3. SET → Expérimental → cocher l'interrupteur. Attendu : invite caméra, puis
+   toast « Barehands actif » et pastille `MAINS · TEST` en bas à gauche.
+4. Montrer une main : un jeton suit l'index ; deux mains, deux jetons.
+   Survoler un bouton du dock : jeton agrandi, bouton cerné.
+5. Rapprocher lentement pouce et index : anneau qui se remplit, jeton figé.
+   Pincer franchement sur le bouton Trace : le panneau s'ouvre (onde de clic).
+   Rester pincé : aucun second clic. Rouvrir puis repincer : nouveau clic.
+6. Ouvrir SET, changer d'onglet et cocher une case au pincement.
+7. Couper l'interrupteur au pincement : jetons retirés, voyant caméra éteint,
+   toast « Barehands arrêté ». Recharger la page : toujours éteint.
+8. Réactiver, recharger : le mode test repart seul. Refuser la caméra dans
+   Chrome (icône de l'adresse) puis recharger : toast « Caméra refusée »,
+   aucune surimpression, message dans l'onglet.
+9. Débrancher la webcam pendant le suivi : « Caméra coupée », tout est retiré.
 
 ## Confirmation behavior
 
