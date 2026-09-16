@@ -162,6 +162,10 @@ CATALOG_SCRIPT_MARKER = "/*__CONTROL_CENTER_CATALOG_JS__*/"
 #: plus son branchement navigateur. Même insertion que les scripts ci-dessus.
 BAREHANDS_SCRIPT_FILE = "control_center_barehands.js"
 BAREHANDS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_JS__*/"
+#: Chronologie de conversation plein écran (Slice 05) : logique pure testée par
+#: node et branchement navigateur, insérés comme les scripts ci-dessus.
+TIMELINE_SCRIPT_FILE = "control_center_timeline.js"
+TIMELINE_SCRIPT_MARKER = "/*__CONTROL_CENTER_TIMELINE_JS__*/"
 
 #: Architectures vocales proposées dans l'onglet « Mode vocal ». Comme le reste
 #: de l'écran, leur libellé vit ici et non dans la page. `{key}` est remplacé
@@ -574,6 +578,9 @@ class ControlCenter:
         )
         html = html.replace(
             BAREHANDS_SCRIPT_MARKER, page.with_name(BAREHANDS_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            TIMELINE_SCRIPT_MARKER, page.with_name(TIMELINE_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         if self.visualizer_url:
             html = html.replace("__VISUALIZER_URL__", self.visualizer_url)

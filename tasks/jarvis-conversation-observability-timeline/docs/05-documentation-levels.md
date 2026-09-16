@@ -46,3 +46,9 @@ Slice 00 must correct these levels if the live repository has gained equivalent 
 | Concept | Level | Evidence |
 |---|---:|---|
 | Conversation query / live API | 3 | Core + Control Center routes, cursor/long-poll/reconnect semantics, redacted drill-down allowlist, errors table in `docs/conversation-events.md` + ARCHITECTURE; 139 Slice 04 tests incl. reconnect, long-poll bounds, redaction with planted secrets. |
+
+## After Slice 05 (2026-09-16)
+
+| Concept | Level | Evidence |
+|---|---:|---|
+| Live transcript/timeline UI | 3 | `control_center_timeline.js` (pure logic + browser glue), Timeline UI section in `docs/conversation-events.md` + OPERATIONS CNV section, 40 timeline tests (JS parity with Python reconstruction), headless-Chrome QA evidence (readability, keyboard, switch races, security, performance). |

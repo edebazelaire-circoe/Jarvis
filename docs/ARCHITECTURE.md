@@ -337,6 +337,23 @@ detail reads. Loss visibility: `GET /v1/health` → `conversation_events`
 long-poll semantics, drill-down bounds and the redaction allowlist:
 [Conversation Events](conversation-events.md), "Query and live API".
 
+Timeline view (Slice 05). The Control Center dock button **CNV** opens a
+full-screen `role="dialog"` over the page: four lanes (Utilisateur, Jarvis ·
+voix, Brain, Sous-agents) on one downward time axis, live. Its logic is
+`jarvis/runtime/control_center_timeline.js`, inserted at
+`/*__CONTROL_CENTER_TIMELINE_JS__*/` like the other page scripts: the pure part
+(`JarvisTimelineCore`: a port of `reconstruct_conversation` tested for parity,
+lane rule, duplicate-message collapse, folded-silence axis, need-weighted lane
+widths, column packing measured at the final column width, viewport windowing, hydration + long-poll state machine, status /
+detail / trace models) runs unchanged under node tests; the browser block holds
+DOM, focus and fetch. It reads only `GET /api/conversations`,
+`GET /api/conversations/sessions`, `GET /api/conversations/events` (one request
+in flight per tab: pages then `wait_ms=25000` long-poll from the last
+`next_cursor`, backoff 1 → 30 s on retryable codes),
+`GET /api/conversations/events/{event_id}` and
+`GET /api/conversations/events/{event_id}/trace`; never `/api/trace`. UX, states
+and troubleshooting: [Conversation Events](conversation-events.md), "Timeline UI".
+
 ## Speech, interruption and work
 
 `SpeechScheduler` (`jarvis/runtime/speech_scheduler.py`) consumes `/v1/events`,

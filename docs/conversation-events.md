@@ -24,6 +24,9 @@ timeline are projections of these events, not separate truths.
   routes and typed `LocalCoreClient` reads, Control Center view
   `jarvis/runtime/conversation_event_view.py` and trace drill-down
   `jarvis/runtime/conversation_event_trace.py` (see Query and live API).
+- Timeline UI (Slice 05): `jarvis/runtime/control_center_timeline.js`
+  (pure logic + browser block) and the `#timeline` view of
+  `jarvis/runtime/control_center.html` (see Timeline UI).
 - Conformance tests: `tests/unit/test_conversation_events.py`,
   `tests/unit/test_conversation_event_store.py`,
   `tests/integration/test_conversation_event_store_recovery.py`,
@@ -39,7 +42,9 @@ timeline are projections of these events, not separate truths.
   `tests/unit/test_conversation_event_query_contract.py`,
   `tests/unit/test_conversation_event_trace.py`,
   `tests/integration/test_conversation_event_query_protocol.py`,
-  `tests/integration/test_control_center_conversation_events.py`.
+  `tests/integration/test_control_center_conversation_events.py`,
+  `tests/unit/test_control_center_timeline_js.py`,
+  `tests/unit/test_control_center_timeline_ui.py`.
 - Golden fixture: `tests/fixtures/conversation_events/overlapping_conversation.json`.
 - Handoff: `tasks/jarvis-conversation-observability-timeline/` (Slice 01).
 
@@ -49,7 +54,8 @@ the voice runtime records Mouth speech, reflexes, tool spans and rejected turns,
 the Control Center records sub-agent spans, both through a bounded forwarder that
 posts batches to the ingestion route. Slice 04 adds the authenticated query
 routes, a bounded long-poll, the Control Center proxy and the redacted trace
-drill-down (Query and live API). The timeline UI is Slice 05.
+drill-down (Query and live API). Slice 05 adds the live four-lane timeline in
+the Control Center (Timeline UI).
 
 ## Relation to existing observability
 
@@ -921,6 +927,241 @@ conversation pages end to end over the real loopback in about 1.4 s (10 pages
 of 500 or 50 pages of 100, `test_a_long_session_of_5000_events_pages_quickly`,
 idle host). Every read decodes each row through the codec.
 
+## Timeline UI
+
+Slice 05. A full-screen, live transcript/debug view of one conversation in the
+Control Center, built only on the Query and live API above. It never reads
+`/api/trace` nor a raw journal line, and it never shows anything the events do
+not carry (no hidden reasoning exists in them).
+
+- Module: `jarvis/runtime/control_center_timeline.js`, inserted into
+  the page at `/*__CONTROL_CENTER_TIMELINE_JS__*/` by `ControlCenter.index` like
+  the other Control Center scripts. Pure part `JarvisTimelineCore` (executed as
+  is by node tests); browser block `installJarvisTimeline` (DOM, focus, fetch).
+- Markup and CSS: `jarvis/runtime/control_center.html` (`#timeline`, `.tl-*`),
+  dock button **CNV** (`#openTimeline`), also in the Omega theme's icon bar.
+- Tests: `tests/unit/test_control_center_timeline_js.py` (node logic, parity with
+  `reconstruct_conversation`), `tests/unit/test_control_center_timeline_ui.py`
+  (page contract).
+
+### Lanes, colors and entries
+
+Time runs downward on one axis shared by four lanes. Color always doubles a
+text label, an icon and a status word.
+
+| Lane (left → right) | Color token | Content |
+|---|---|---|
+| Utilisateur | `--tl-user` white | `user.transcript.accepted` cards (no drill-down: not a button, `role="article"`) |
+| Jarvis · voix | `--tl-mouth` light blue | `mouth.speech.*` cards with the playback text and an exact-duration bar; `mouth.reflex.started` compact cards (marked "réflexe"); left rail: `mouth.speech.queued` dots; right rail: `tool.*` bars from `voice.*` producers; `system.failure` from `voice.*` producers as a red card |
+| Brain | `--tl-brain` orange | `brain.message.published` cards; left rail: `brain.turn.accepted` and `brain.speech.requested` dots; right rail (next to the sub-agents): `brain.work.*` bars; `brain.turn.failed` and other `system.failure` as red cards |
+| Sous-agents | `--tl-sub` red | `subagent.*` duration blocks with the text inside: name (type, or description when the type is generic), description, start · duration · status |
+
+- **Lane rule** (`laneOf`): the actor's lane; `tool` and `system` go to the
+  lane of their producer: `voice.*` → Jarvis · voix (the realtime model that
+  speaks for Jarvis calls these tools), anything else → Brain.
+- **Entry kinds** (`entryKind`):
+  - *card*: public text (user transcript, Jarvis speech, public reflex, Brain
+    message), **never clamped**: the card grows to fit its text; for a speech, a 3 px bar drawn
+    from the start time has the exact duration (amber tip when the speech was
+    cut, fading when still open). A card may extend past its end time.
+  - *failure*: `brain.turn.failed` / `system.failure`, a red card whose label and
+    code are always visible.
+  - *dot*: diagnostic instants only (turn accepted, speech requested, queued,
+    any unknown diagnostic type), a dot on an 18 px rail on the left of the lane.
+    Its label appears on hover and on keyboard focus in a bounded box (at most
+    28 rem or the viewport width minus 32 px, wrapped with `overflow-wrap:anywhere`,
+    at most 240 characters then "…") placed in fixed position inside the visible
+    timeline area, so it never widens the scroll area; the full description is in
+    the `aria-label` and the drawer.
+  - *bar*: Brain work and tool spans, a 14 px bar on the right rail with a
+    vertical label when it is taller than 40 px; full information in the drawer.
+  - *block*: a sub-agent, a red block of exact duration (at least 46 px, dashed
+    beyond the exact fill when shorter) whose name, description and meta line
+    wrap inside it; the number of lines comes from the block height.
+- **Status marks**: statuses are written on cards and blocks ("interrompu",
+  "en cours", "échec"…); open spans fade at their end and show a live duration;
+  failures are hatched (bars, blocks) or red (cards).
+- **Interrupted speech**: mouth `content` is the text sent for playback, not the
+  text heard (note 5). The card text is italic and its label and detail say
+  "Texte envoyé à la lecture · coupé après N s entendues" (`played_ms`), or that
+  the heard duration is unknown.
+- **Duplicate text** (projection obligation above, `collapseMessages`): a
+  `brain.message.published` whose text equals the previous published message of
+  the same `correlation_id` is merged into it (badge `×2`, both events listed in
+  the detail). "Previous" means the last published message of that correlation,
+  so A, B, A stays three entries.
+- **Filter**: *Tout* (default: this is a debug surface, and sub-agent and Brain
+  work spans are diagnostic) or *Public* (what was said, heard or shown).
+  Filtering happens after pairing, on the item visibility, exactly like
+  `include_diagnostic=False`: a public `mouth.speech.started` closed by a
+  diagnostic `failed` still pairs. The page therefore never asks the server for
+  `visibility=`.
+- **Reflex** (PM decision): a public `mouth.reflex.started` is transcript text, a
+  compact card in both *Tout* and *Public* views.
+- **Unreadable time**: an event whose `occurred_at` does not parse is never
+  placed at epoch 0; it is left out and counted in the partial-data notice
+  (`readableEvents`).
+
+### Axis, packing and virtualization
+
+- **Pairing** (`reconstruct`): a line-by-line port of `reconstruct_conversation`
+  (same keys, earliest open/close, clamping, anomalies, order). Tested for
+  parity on the golden fixture (shuffled, with duplicates) and on every anomaly
+  case against the Python output.
+- **Scale**: linear, 60 px/s by default (20–160 selectable). Any silence longer
+  than 6 s between two event instants is folded into a 44 px hatched band
+  ("N sans événement · axe replié") placed below the cards already drawn. The
+  mapping stays strictly increasing, so start positions, order and overlaps
+  across lanes are preserved; durations are proportional outside folds and
+  always written as text.
+- **Lane widths**: weighted by need. A first packing at equal widths gives each
+  lane its simultaneous text columns (capped at 4), sub-agent block columns and
+  rails; the need is rails + columns × a minimum of 28 characters of text
+  (150 px for an empty lane). The available width is shared in proportion to
+  need; when the screen is narrower than the total need, every lane keeps its
+  need and the timeline scrolls horizontally. A lane that never needs a second
+  column (typically Utilisateur) stays narrow.
+- **Packing and heights**: cards overlapping in time are laid out in columns
+  (calendar algorithm per cluster). A card's height is computed at the width of
+  the column it is finally drawn in: packing and measuring repeat until the
+  heights no longer change. The measure simulates `pre-wrap` word wrapping with
+  the character width the page measures on the real monospace font; after
+  rendering, a card taller than its estimate records its real height for that
+  width (`heightFix`) and the layout is recomputed, so text can never be clipped
+  and cards never overlap. Cards use `min-height`, never a fixed height.
+- **Open spans** grow to the browser clock every second (all processes are on
+  the same host).
+- **Virtualization**: only entries intersecting the viewport ± 700 px are in the
+  DOM (`visibleRange`: binary search on a running maximum of bottoms, so a long
+  span started far above stays visible). Keyed by `item_id`; a node is replaced
+  only when its HTML changes. Keyboard order follows time (`model.order`), not
+  the drawing order.
+
+### Live strategy
+
+One flow per tab (`createFeed`), and at most one request in flight:
+
+1. hydrate: `GET /api/conversations/events?conversation_id=…&after_sequence=0&limit=500`
+   and follow `next_cursor` while `has_more` (an empty filtered page with
+   `has_more` is normal);
+2. live: long-poll the same route with `wait_ms=25000` from the last
+   `next_cursor` received; a page with `has_more` switches back to immediate
+   catch-up; the client deadline is `wait_ms` + 10 s (hydration pages 15 s), so a
+   request can never hang;
+3. retryable failure (`core_unreachable`, `conversation_events_unavailable`,
+   `control_center_stopping`, `core_unauthorized`, `core_refused`,
+   `invalid_core_response`, network, timeout, any 5xx/408/429): state
+   `reconnecting`, backoff 1 s doubling to 30 s, resume from the last cursor;
+4. blocking failure (`invalid_request`, `forbidden_origin`, `not_configured`,
+   HTTP 404 `missing_route`): state `blocked` until "Réessayer maintenant".
+
+Rows are keyed by `event_id`: a replayed page adds nothing. Switching
+conversation aborts the held long-poll once the selection has been stable for
+350 ms (so arrowing through the list does not churn connections; the Control
+Center frees its slot within 0.25 s) and hydrates the new one from cursor 0.
+While the selected conversation is not the one loaded, the canvas says
+"Chargement de la conversation…" and never shows the previous rows. Going back
+to the current conversation within the settle window cancels the pending
+switch. Closing the view stops the flow and cancels a pending switch; reopening
+loads the conversation last selected. The conversation list (`/api/conversations`,
+100 most recent) refreshes every 15 s (5 s after an error); "Plus récente"
+follows the most active conversation until the user picks one. Sessions
+(`/api/conversations/sessions`) are jump targets, not filters (Brain events
+carry no session).
+
+### States
+
+The status pill always says whether something is happening, what, for how long,
+and how to get out:
+
+| Pill | Meaning |
+|---|---|
+| Chargement · N événements · T | hydration pages in progress |
+| Rattrapage · N événements | a live page reported `has_more` |
+| En direct · N événements · dernier reçu il y a T | long-poll held; events append without reload |
+| *error title* · *server message* · nouvelle tentative dans T (essai N) · coupé depuis T, button "Réessayer maintenant" | retryable failure, cursor kept, rows kept |
+| … · nouvelle tentative en cours (essai N) | the retry request is in flight |
+| *error title* · *message* · *hint*, button | blocking failure |
+
+Canvas states: "Aucune conversation enregistrée" (empty store), "Chargement de
+la conversation…", "Cette conversation n'a encore aucun événement", "Aucun
+événement public" with "Tout afficher", the error title before any data. Per
+lane, an empty lane explains itself (for example the direct voice architectures
+have no mouth lane; sub-agents from panel or spontaneous turns are not
+recorded). A non-zero `skipped_rows` shows "N lignes illisibles ignorées par
+Core … chronologie partielle", and events with an unreadable time are counted in
+the same notice.
+
+### Detail drawer and trace navigation
+
+Enter or click on any non-user entry opens the drawer (a column on wide screens,
+an overlay below 1100 px): status and visibility, text and playback note,
+timing (start, end, duration, "Depuis la parole utilisateur" = latency from the
+user turn of the same `correlation_id`, latency from the parent), outcome
+attributes (provider status, reason, code, error class, heard duration, model,
+sub-agent type, tokens, tools), anomalies, navigation (parent via
+`parent_event_id`, in view or loaded with `GET /api/conversations/events/{event_id}`;
+children; sub-agent task trace opens the Agents panel), then every event of the
+entry (role, `event_id`, store sequence, producer, visibility, times, ids,
+attributes, `trace_ref`) with its drill-down
+`GET /api/conversations/events/{event_id}/trace`, fetched one at a time (the
+Control Center runs at most two):
+
+| Drill-down | Shown |
+|---|---|
+| `found` | "N ligne(s) de trace jointe(s)", each redacted projection (ts, kind, level, constant message or "message masqué", allowlisted data, count of masked fields), scan stats (`scanned_lines`, why it stopped, corrupt/oversized lines, "tronqué") |
+| `not_found` | "Aucune ligne de trace jointe" + the same scan stats |
+| `no_trace_ref` | "Le producteur n'écrit pas de ligne de trace pour ce fait" |
+| `agent_task` | "Ouvrir la trace de la tâche dans Agents" |
+| `trace_busy`, `trace_unreadable`, `trace_drill_down_failed`, `core_unreachable`, timeout (20 s) | error title, server message, hint, "Réessayer" |
+| `trace_not_applicable` | never requested (user entries have no drawer) |
+
+### Keyboard and accessibility
+
+- The view is `role="dialog"` `aria-modal="true"`. While it is open every other
+  child of `body` is `inert` (restored on close), Tab and Shift+Tab cycle only
+  through its elements with `tabIndex >= 0`, a click in empty space focuses the
+  scroll region, and the page's own shortcut handler ignores keys while
+  `#timeline` is visible (verified in Chrome: 60 Tab presses, "s" and "t" after
+  an empty click). Esc closes the drawer (focus returns to the entry), then the
+  view (focus returns to the dock button).
+- Entries use a roving tabindex: ↑/↓ previous/next in time, ←/→ nearest entry in
+  the neighbouring lane, Home/End first/last, Enter opens the detail. Each entry
+  has a full `aria-label` (lane, type, status, time, duration, playback note,
+  text).
+- Status changes and new events (throttled to one announcement per 15 s) are
+  announced through a polite live region; `prefers-reduced-motion` stops the
+  pulsing indicators.
+- Below 700 px the toolbar is compact (title as an icon, field labels kept for
+  screen readers only; toolbar + lane headers end at 130 px on a 390×844
+  screen), the close button is a 44 px target, lanes keep their need and scroll
+  horizontally under a sticky time ruler and sticky lane headers.
+
+### Performance and readability (measured 2026-09-16)
+
+Real Core + Control Center on temp dirs, headless Chrome. 1440×900: demo
+conversation, 10 public texts out of 11 text entries, **0 truncated**, 0 card
+overlaps (whole canvas swept); 390×844: 12 public texts, 0 truncated, 0
+overlaps. 2 400-event conversation hydrated in 1.5 s (5 pages of 500), 19–30
+entry nodes in the DOM, reconstruct + layout 15 ms, live append visible 0.17 s
+after the Core append. Node: 5 000 events reconstructed and laid out under the
+3 s test budget, any viewport window computed in < 50 ms.
+
+### Troubleshooting
+
+| Symptom | Cause and action |
+|---|---|
+| "Core injoignable" with a countdown | Core stopped or restarting. Nothing to do: the view resumes at its cursor (rows are never duplicated). "Réessayer maintenant" skips the wait |
+| "Jeton de session refusé par Core" | Core restarted and its token file changed; the Control Center re-reads it on the next attempt |
+| "Origine refusée" | the page was opened through a non-loopback host name; open `http://127.0.0.1:<port>/` |
+| "Route de conversation absente" | Control Center older than Slice 04: restart it |
+| "Vue non reliée à Core" | the Control Center was started without a conversation reader (`not_configured`) |
+| Lane *Jarvis · voix* empty during a voice session | direct voice architecture (simple, front_brain, duplex): no mouth events yet (Known limits) |
+| A sub-agent seen in the Agents panel is missing | it was launched by a panel/console message or a spontaneous turn, or its attribution was rejected (`agent.subagent.conversation_unattributed` in the trace) |
+| "Aucune ligne de trace jointe" | the journal line is outside the ±15 min window, beyond the scan budget, or the trace file was rotated; the scan stats say which |
+| "N lignes illisibles ignorées par Core" | damaged rows skipped by the store (`core.conversation_events.row_unreadable`) |
+| Speech text longer than what was heard | expected: mouth text is the playback text; read "coupé après N s" |
+
 ## Visibility and redaction
 
 Allowlist first, denylist as defense in depth:
@@ -1187,5 +1428,5 @@ version 1 is an unreadable row, never silently reinterpreted.
 ## Validation
 
 ```powershell
-$env:PYTHONDONTWRITEBYTECODE=1; .venv/Scripts/python.exe -W error::ResourceWarning -m pytest -q -p no:cacheprovider tests/unit/test_conversation_events.py tests/unit/test_conversation_event_store.py tests/integration/test_conversation_event_store_recovery.py tests/unit/test_conversation_event_emitter.py tests/unit/test_conversation_event_producers.py tests/integration/test_conversation_event_ingest_protocol.py tests/integration/test_conversation_event_production.py tests/unit/test_conversation_event_forwarder.py tests/unit/test_conversation_event_mouth_producers.py tests/unit/test_conversation_event_voice_bridge.py tests/unit/test_conversation_event_subagents.py tests/integration/test_conversation_event_timeline.py tests/unit/test_conversation_event_query_contract.py tests/unit/test_conversation_event_trace.py tests/integration/test_conversation_event_query_protocol.py tests/integration/test_control_center_conversation_events.py
+$env:PYTHONDONTWRITEBYTECODE=1; .venv/Scripts/python.exe -W error::ResourceWarning -m pytest -q -p no:cacheprovider tests/unit/test_conversation_events.py tests/unit/test_conversation_event_store.py tests/integration/test_conversation_event_store_recovery.py tests/unit/test_conversation_event_emitter.py tests/unit/test_conversation_event_producers.py tests/integration/test_conversation_event_ingest_protocol.py tests/integration/test_conversation_event_production.py tests/unit/test_conversation_event_forwarder.py tests/unit/test_conversation_event_mouth_producers.py tests/unit/test_conversation_event_voice_bridge.py tests/unit/test_conversation_event_subagents.py tests/integration/test_conversation_event_timeline.py tests/unit/test_conversation_event_query_contract.py tests/unit/test_conversation_event_trace.py tests/integration/test_conversation_event_query_protocol.py tests/integration/test_control_center_conversation_events.py tests/unit/test_control_center_timeline_js.py tests/unit/test_control_center_timeline_ui.py
 ```

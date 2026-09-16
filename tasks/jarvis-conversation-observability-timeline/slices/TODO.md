@@ -28,7 +28,7 @@ Every coding Slice must load `/caveman` and `/coding-guideline` before implement
 - [x] 04 — Expose conversation query and live-stream APIs (2026-09-16, QA APPROVE_WITH_ISSUES → reworked)
   - Path: `slices/04-query-live-stream-api/SLICE.md`
   - Depends on: 02, 03
-- [ ] 05 — Build the live four-lane transcript/debug timeline
+- [x] 05 — Build the live four-lane transcript/debug timeline (2026-09-16, QA REWORK → reworked → re-QA APPROVE_WITH_ISSUES → follow-up)
   - Path: `slices/05-timeline-debug-ui/SLICE.md`
   - Depends on: 04
 - [ ] 06 — Add readable transcript/export/search and end-to-end rollout gates

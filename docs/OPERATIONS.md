@@ -492,6 +492,45 @@ dégradé ou ignoré, rouge = échec. Elle vient du niveau de l'entrée, complé
 par le contenu — un résultat d'outil avec `executed: false` passe en orange même
 si l'entrée est de niveau `info`.
 
+### Chronologie de conversation (CNV)
+
+Le bouton **CNV** du dock ouvre, en plein écran sur fond sombre flouté, la
+chronologie en direct d'une conversation, lue dans le journal canonique de Core
+(jamais dans `trace.jsonl`). Quatre lanes sur un même axe de temps qui descend :
+**Utilisateur** (blanc, à gauche), **Jarvis · voix** (bleu clair : paroles en
+entier avec une barre de durée exacte, réflexes en petites cartes ; points pour les mises en file ;
+barres à droite pour les outils), **Brain** (orange : messages en entier ; points
+pour les tours acceptés et paroles demandées ; barres de travaux à droite),
+**Sous-agents** (blocs rouges : nom, description, durée, statut). Le texte public
+n'est jamais coupé ; survoler ou focaliser un point affiche son libellé. Les
+lanes prennent la largeur dont elles ont besoin. Les chevauchements restent visibles : une coupure de parole tombe à
+l'intérieur de la parole qu'elle interrompt, un sous-agent couvre les tours qui
+se déroulent pendant qu'il tourne. Un silence de plus de 6 s est replié en une
+bande « N sans événement · axe replié ».
+
+- **Conversation** : « Plus récente » suit la conversation active ; choisir une
+  conversation l'épingle. **Session** fait défiler jusqu'au début d'une session.
+- **Tout / Public** : *Tout* montre le diagnostic (travaux, sous-agents, outils,
+  repères) ; *Public* ne garde que ce qui a été dit, entendu ou montré.
+- **Échelle** : pixels par seconde (60 par défaut).
+- Clic ou Entrée sur une entrée qui n'est pas de l'utilisateur : détail (ids,
+  statut, durée, latence depuis la parole utilisateur, raison d'interruption ou
+  d'échec, parent et enfants) et, pour chaque événement, la ligne de trace
+  expurgée (`/api/conversations/events/{event_id}/trace`) ou le lien vers la
+  trace de la tâche dans le panneau Agents. ↑/↓ : entrée précédente/suivante ;
+  ←/→ : lane voisine ; Échap : ferme le détail puis la vue.
+- Une parole interrompue affiche le **texte envoyé à la lecture**, en italique,
+  avec « coupé après N s entendues » : ce n'est pas le texte entendu.
+
+La pastille d'état dit toujours ce qui se passe : « Chargement », « En direct ·
+N événements · dernier reçu il y a T », ou le problème réel (« Core
+injoignable », « Jeton de session refusé par Core », « Origine refusée »…) avec
+le compte à rebours de la prochaine tentative, le numéro d'essai, la durée de la
+coupure et **Réessayer maintenant**. Rien n'est perdu pendant une coupure : la
+vue reprend à son dernier curseur, sans doublon. Dépannage détaillé (lane voix
+vide, sous-agent absent, trace non trouvée, lignes illisibles) :
+[Conversation Events](conversation-events.md), « Timeline UI ».
+
 ### Agenda : réel ou en mémoire
 
 Sans `JARVIS_CALENDAR_PROVIDER=google` (avec `GOOGLE_CALENDAR_CLIENT_SECRET` et
