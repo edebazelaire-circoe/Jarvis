@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import asdict
 from datetime import datetime, timezone
 import json
 import os
@@ -67,6 +68,13 @@ from jarvis.runtime.visual_signals import VisualSignalBus
 from jarvis.runtime.work_brief import render_work_brief
 from jarvis.runtime.subagent_conversation import SubagentConversationScope
 from jarvis.runtime.conversation_event_forwarder import ConversationEventForwarder
+from jarvis.domain.conversation_event_query import (
+    CONVERSATIONS_PARAMS, EVENTS_PARAMS, LOOKUP_PARAMS, SESSIONS_PARAMS, check_event_id, conversations_query,
+    encode_event_page, encode_event_response, encode_summary_page, events_query, lookup_query, query_params,
+    sessions_query,
+)
+from jarvis.runtime.conversation_event_trace import TraceNotApplicable, drill_down
+from jarvis.runtime.conversation_event_view import ConversationEventView, ConversationEventViewError
 from jarvis.runtime.work_ingress import TrackerWorkObserver, WorkIngressForwarder
 from jarvis.runtime.work_view import NOT_CONFIGURED, CoreWorkView, unavailable_payload
 from jarvis.v2_config import (
@@ -91,6 +99,54 @@ from jarvis.v2_config import (
 
 
 VOICE_HEARTBEAT_MAX_AGE_S = 5.0
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+#: Préfixe des routes de lecture des Conversation Events (Slice 04).
+CONVERSATIONS_ROUTE = "/api/conversations"
+
+
+#: Characters that never belong to a plain `host[:port]` authority (userinfo,
+#: fragment, path, query, spaces): their presence refuses the request outright.
+_AUTHORITY_FORBIDDEN = frozenset("@#/?\\ \t%")
+#: Concurrent trace drill-down scans (each one reads up to 64 MiB in a thread).
+MAX_TRACE_DRILL_DOWNS = 2
+TRACE_SLOT_WAIT_S = 10.0
+
+
+def _authority_host(authority: str) -> str | None:
+    """Exact host of `host[:port]` / `[v6][:port]`, lower-cased, or None when malformed."""
+    if not authority or any(char in _AUTHORITY_FORBIDDEN for char in authority):
+        return None
+    if authority.startswith("["):
+        close = authority.find("]")
+        host, rest = (authority[1:close], authority[close + 1:]) if close > 0 else (None, "")
+    elif authority.count(":") <= 1:
+        host, _, port = authority.partition(":")
+        rest = ":" + port if _ else ""
+    else:
+        return None  # bare IPv6 without brackets is not a valid Host
+    if host is None or (rest and not (rest.startswith(":") and rest[1:].isascii() and rest[1:].isdigit())):
+        return None
+    return host.lower()
+
+
+def _loopback_refusal(origin: str | None, host_header: str | None, fetch_site: str | None) -> str | None:
+    """Why a conversation history request is refused, or None.
+
+    Exact comparison after splitting the port, no URL parser quirks:
+    `evil.com@127.0.0.1` or `127.0.0.1#.evil.com` are refused. `Sec-Fetch-Site:
+    cross-site` is refused whatever the other headers say.
+    """
+    if (fetch_site or "").strip().lower() == "cross-site":
+        return "cross-site request"
+    if origin is not None:
+        scheme, separator, authority = origin.partition("://")
+        if not separator or scheme.lower() not in {"http", "https"} or _authority_host(authority) not in LOOPBACK_HOSTS:
+            return "forbidden origin"
+    if _authority_host(host_header or "") not in LOOPBACK_HOSTS:
+        return "forbidden host"
+    return None
+
+
 #: En-tête d'un refus d'enregistrement (HTTP 400) portant son code stable.
 SETTINGS_ERROR_CODE_HEADER = "X-Jarvis-Error-Code"
 
@@ -249,6 +305,7 @@ class ControlCenter:
         audio_diagnostics: SoundDeviceAudioDiagnostics | None = None,
         work_ingress: WorkIngressForwarder | None = None,
         conversation_events: ConversationEventForwarder | None = None,
+        conversation_event_view: ConversationEventView | None = None,
         work_view: CoreWorkView | None = None,
         live_view: CoreLiveStatusView | None = None,
         voice_registry: VoiceCapabilityRegistry | None = None,
@@ -281,6 +338,12 @@ class ControlCenter:
         # Conversation Events des sous-agents Claude (handoff
         # conversation-observability, Slice 03b). Absent, rien ne part.
         self.conversation_events = conversation_events
+        # Lecture des Conversation Events tenus par Core (Slice 04), pour la
+        # timeline : le navigateur ne parle jamais à Core. Absent, les routes
+        # `/api/conversations...` répondent `not_configured`.
+        self.conversation_event_view = conversation_event_view or ConversationEventView(None, journal=self.journal)
+        self._trace_slots = asyncio.Semaphore(MAX_TRACE_DRILL_DOWNS)
+        self._trace_failing = False
         # Lecture seule de l'état de travail Core pour le panneau Agents
         # (tâche 13). Absent, `/api/work` répond « Core indisponible ».
         self.work_view = work_view
@@ -341,6 +404,12 @@ class ControlCenter:
             web.get("/api/agent/notices", self.agent_notices),
             web.get("/api/background", self.background_events),
             web.post("/api/background/ack", self.background_ack),
+            web.get("/api/conversations", self.conversations_list),
+            web.get("/api/conversations/sessions", self.conversation_sessions),
+            web.get("/api/conversations/events", self.conversation_events_page),
+            web.get("/api/conversations/lookup", self.conversation_events_lookup),
+            web.get("/api/conversations/events/{event_id}", self.conversation_event_detail),
+            web.get("/api/conversations/events/{event_id}/trace", self.conversation_event_trace),
         ])
         self._runner: web.AppRunner | None = None
 
@@ -426,14 +495,21 @@ class ControlCenter:
 
     @web.middleware
     async def _origin_guard(self, request: web.Request, handler):  # noqa: ANN001
-        if request.method not in {"GET", "HEAD", "OPTIONS"}:
+        if request.path == CONVERSATIONS_ROUTE or request.path.startswith(CONVERSATIONS_ROUTE + "/"):
+            # Conversation history (user transcripts) is read-sensitive: every
+            # method is guarded, and the Host must be loopback too (DNS rebinding).
+            refusal = _loopback_refusal(request.headers.get("Origin"), request.headers.get("Host"),
+                                        request.headers.get("Sec-Fetch-Site"))
+            if refusal is not None:
+                return web.json_response({"ok": False, "code": "forbidden_origin", "error": refusal}, status=403)
+        elif request.method not in {"GET", "HEAD", "OPTIONS"}:
             origin = request.headers.get("Origin")
             if origin:
                 try:
                     host = urlparse(origin).hostname
                 except ValueError:
                     raise web.HTTPForbidden(text="invalid origin")
-                if host not in {"127.0.0.1", "localhost", "::1"}:
+                if host not in LOOPBACK_HOSTS:
                     raise web.HTTPForbidden(text="forbidden origin")
         return await handler(request)
 
@@ -467,6 +543,9 @@ class ControlCenter:
             # Après les agents, pour la même raison : leurs sous-agents
             # interrompus sont des fins de span à remettre à Core.
             await self.conversation_events.aclose()
+        # Avant l'arrêt du serveur : une lecture longue en cours vers Core est
+        # interrompue au lieu de retenir l'arrêt jusqu'à son délai.
+        await self.conversation_event_view.aclose()
         if self.work_view is not None:
             await self.work_view.aclose()
         if self.live_view is not None:
@@ -555,7 +634,16 @@ class ControlCenter:
             # c'est lui qui fait avancer le registre.
             "background": self._background_summary(),
             "live": live,
+            # Pertes visibles (Slice 04) : compteurs du relais des Conversation
+            # Events de ce processus ; ceux de Core sont dans `GET /v1/health`.
+            "conversation_events": self._conversation_event_counters(),
         })
+
+    def _conversation_event_counters(self) -> dict[str, Any] | None:
+        forwarder = self.conversation_events
+        if forwarder is None:
+            return None
+        return {**asdict(forwarder.counters), "pending": forwarder.pending_count}
 
     def _background_summary(self) -> dict[str, Any]:
         """Avancer le registre des événements de fond et en rendre le résumé.
@@ -2464,6 +2552,121 @@ class ControlCenter:
         )
         return web.json_response({"ok": True, "acknowledged": cursor, "unread": self.background.unread,
                                   "counts": self.background.counts()})
+
+    # ------------------------------------------------- Conversation Events (Slice 04)
+    #
+    # Contrat : `docs/conversation-events.md`, « Query and live API ». Même
+    # forme de page que Core (`conversation_event_query`), lue par
+    # `ConversationEventView`. Erreurs explicites `{"ok": false, "code",
+    # "error", "core_status"}` : 400 paramètre invalide (jamais sa valeur),
+    # 404 événement inconnu ou sans drill-down, 502/503 Core refusé ou injoignable.
+
+    @staticmethod
+    def _conversation_error(status: int, code: str, message: str) -> web.Response:
+        return web.json_response({"ok": False, "code": code, "error": message, "core_status": None}, status=status)
+
+    async def _conversation_read(self, request: web.Request, allowed: frozenset[str], parse, read) -> web.Response:
+        try:
+            query = parse(query_params(request.query.items(), allowed))
+        except ValueError as exc:
+            return self._conversation_error(400, "invalid_request", str(exc))
+        try:
+            return web.json_response(await read(query))
+        except ConversationEventViewError as exc:
+            return web.json_response(exc.to_payload(), status=exc.status)
+
+    async def conversations_list(self, request: web.Request) -> web.Response:
+        """Conversations par activité la plus récente ; page suivante : `before_sequence=next_cursor`."""
+        view = self.conversation_event_view
+        return await self._conversation_read(request, CONVERSATIONS_PARAMS, conversations_query,
+                                             lambda q: self._encode(encode_summary_page, view.conversations(**q)))
+
+    async def conversation_sessions(self, request: web.Request) -> web.Response:
+        view = self.conversation_event_view
+        return await self._conversation_read(request, SESSIONS_PARAMS, sessions_query, lambda q: self._encode(
+            encode_summary_page, view.sessions(q.pop("conversation_id"), **q)))
+
+    async def conversation_events_page(self, request: web.Request) -> web.Response:
+        """Événements après `after_sequence` ; `wait_ms` (≤ 25 s) attend le prochain ajout (long-poll)."""
+        view = self.conversation_event_view
+        return await self._conversation_read(request, EVENTS_PARAMS, events_query, lambda q: self._encode(
+            encode_event_page, view.events(q.pop("conversation_id"), **q, disconnected=lambda: (
+                request.transport is None or request.transport.is_closing()))))
+
+    async def conversation_events_lookup(self, request: web.Request) -> web.Response:
+        view = self.conversation_event_view
+        return await self._conversation_read(request, LOOKUP_PARAMS, lookup_query, lambda q: self._encode(
+            encode_event_page, view.lookup(q.pop("field"), q.pop("value"), **q)))
+
+    @staticmethod
+    async def _encode(encode, read) -> dict[str, Any]:
+        return encode(await read)
+
+    async def _stored_event(self, request: web.Request):
+        """(stored event, None) or (None, error response)."""
+        try:
+            query_params(request.query.items(), frozenset())
+            event_id = check_event_id(request.match_info.get("event_id"))
+        except ValueError as exc:
+            return None, self._conversation_error(400, "invalid_request", str(exc))
+        try:
+            stored = await self.conversation_event_view.event(event_id)
+        except ConversationEventViewError as exc:
+            return None, web.json_response(exc.to_payload(), status=exc.status)
+        if stored is None:
+            return None, self._conversation_error(404, "conversation_event_not_found",
+                                                  "Aucun Conversation Event lisible ne porte cet identifiant.")
+        return stored, None
+
+    async def conversation_event_detail(self, request: web.Request) -> web.Response:
+        stored, error = await self._stored_event(request)
+        return error if error is not None else web.json_response(encode_event_response(stored))
+
+    async def conversation_event_trace(self, request: web.Request) -> web.Response:
+        """Preuve diagnostique d'un événement **stocké** : lignes de trace jointes et expurgées.
+
+        Toujours depuis l'événement relu dans Core, jamais depuis un identifiant
+        lu dans une ligne de trace. Événement utilisateur : 404
+        `trace_not_applicable`. Lecture bornée du fichier dans un thread.
+        """
+        stored, error = await self._stored_event(request)
+        if error is not None:
+            return error
+        try:
+            await asyncio.wait_for(self._trace_slots.acquire(), timeout=TRACE_SLOT_WAIT_S)
+        except TimeoutError:
+            return self._conversation_error(503, "trace_busy", f"{MAX_TRACE_DRILL_DOWNS} lectures de trace déjà en "
+                                            f"cours depuis plus de {TRACE_SLOT_WAIT_S:.0f} s ; réessayez.")
+        try:
+            body = await asyncio.to_thread(drill_down, stored.event, self.journal.trace_path)
+        except TraceNotApplicable:
+            return self._conversation_error(404, "trace_not_applicable",
+                                            "Les événements utilisateur n'ont pas de trace diagnostique.")
+        except Exception as exc:  # noqa: BLE001 - an unreadable or malformed trace is shown, logged, never a bare 500
+            code = "trace_unreadable" if isinstance(exc, OSError) else "trace_drill_down_failed"
+            self._trace_failure(code, exc, stored.event.event_id)
+            return self._conversation_error(503, code, f"Lecture de la trace impossible : {type(exc).__name__}.")
+        finally:
+            self._trace_slots.release()
+        if self._trace_failing:
+            self._trace_failing = False
+            self._journal_quietly("ui.conversation_event_trace_recovered", "Drill-down de trace à nouveau possible",
+                                  "info", {})
+        return web.json_response({**body, "sequence": stored.sequence})
+
+    def _trace_failure(self, code: str, exc: Exception, event_id: str) -> None:
+        """One journal error per failure episode (a page retrying cannot flood the journal)."""
+        if self._trace_failing:
+            return
+        self._trace_failing = True
+        self._journal_quietly("ui.conversation_event_trace_unreadable", "Drill-down de trace en échec", "error",
+                              {"code": code, "exception_type": type(exc).__name__, "event_id": event_id})
+
+    def _journal_quietly(self, kind: str, message: str, level: str, data: dict[str, Any]) -> None:
+        try:
+            self.journal.emit(kind, message, level=level, data=data)
+        except Exception:  # noqa: BLE001 - argued: the error response already tells the user; a dead journal cannot be reported to itself
+            pass
 
     async def agent_notices(self, request: web.Request) -> web.Response:
         """Réponses que le brain a produites sans question : relais de fin de sous-agent.

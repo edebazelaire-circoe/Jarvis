@@ -22,7 +22,9 @@ Guarantees:
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+import asyncio
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from datetime import datetime
 import json
 import re
@@ -63,6 +65,14 @@ _KIND_UNREADABLE = "core.conversation_events.row_unreadable"
 _KIND_SUMMARY_UNREADABLE = "core.conversation_events.summary_unreadable"
 _KIND_RETENTION = "core.conversation_events.retention_applied"
 _KIND_ARCHIVE_FAILED = "core.conversation_events.archive_failed"
+
+
+class _AppendWatch:
+    __slots__ = ("event", "readers")
+
+    def __init__(self) -> None:
+        self.event = asyncio.Event()
+        self.readers = 0
 
 
 class _UnreadableRow(Exception):
@@ -117,6 +127,11 @@ class SQLiteConversationEventStore:
         self.unreadable_rows = 0
         #: Diagnostics the sink refused; the storage outcome stands regardless.
         self.diagnostic_failures = 0
+        #: Long-poll watches (Slice 04), one per conversation with waiting readers,
+        #: removed when its last reader leaves or when an append fires it.
+        #: In-process only: an append committed through another connection is
+        #: seen by the next query, never signalled.
+        self._append_watches: dict[str, _AppendWatch] = {}
 
     # ------------------------------------------------------------ plumbing
 
@@ -247,6 +262,11 @@ class SQLiteConversationEventStore:
             return tuple(results), conflicts, unreadable
 
         results, conflicts, unreadable = await self._run(write, "append")
+        for conversation_id in {event.conversation_id for event, result in zip(events, results)
+                                if result.status is AppendStatus.APPENDED}:
+            watch = self._append_watches.pop(conversation_id, None)
+            if watch is not None:
+                watch.event.set()
         self._report_unreadable(unreadable)
         for event, sequence, reason in conflicts:
             self._diagnose(_KIND_CONFLICT, "Conversation event id already stored with another payload; first copy kept",
@@ -254,6 +274,32 @@ class SQLiteConversationEventStore:
                                        "conversation_id": event.conversation_id,
                                        "event_type": event.event_type.value, "producer": event.producer})
         return results
+
+    @contextmanager
+    def watch_appends(self, conversation_id: str) -> Iterator[asyncio.Event]:
+        """Event set by the next commit appending a row **to this conversation**.
+
+        Enter it **before** querying: a reader that watches, queries, then waits
+        cannot miss an append committed between its query and its wait. Appends to
+        other conversations never wake it. Readers of one conversation share one
+        event; it is dropped when the last of them leaves (no growth with
+        conversations that were watched once).
+        """
+        watch = self._append_watches.get(conversation_id)
+        if watch is None:
+            watch = self._append_watches[conversation_id] = _AppendWatch()
+        watch.readers += 1
+        try:
+            yield watch.event
+        finally:
+            watch.readers -= 1
+            if watch.readers == 0 and self._append_watches.get(conversation_id) is watch:
+                del self._append_watches[conversation_id]
+
+    @property
+    def watched_conversations(self) -> int:
+        """Conversations with at least one waiting reader (observability, tests)."""
+        return len(self._append_watches)
 
     # --------------------------------------------------------------- reads
 

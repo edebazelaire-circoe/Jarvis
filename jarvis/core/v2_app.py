@@ -14,6 +14,7 @@ from jarvis.core.brain_context import ATTENTION_QUEUE_SIZE, DEFAULT_WAKE_INTERVA
 from jarvis.core.brain_service import DEFAULT_TURN_BUDGET_S, BrainOrchestrator
 from jarvis.core.calendar_service import CalendarService
 from jarvis.core.conversation_event_emitter import ConversationEventEmitter
+from jarvis.core.conversation_event_query import ConversationEventQueryService
 from jarvis.core.drive_service import DriveService
 from jarvis.core.v2_services import ConversationService, CoreEventBus, JobService, NotificationService, SchedulerService
 from jarvis.core.v2_tools import CoreToolRouter
@@ -52,6 +53,9 @@ class JarvisCoreApplication:
         # `POST /v1/conversation-events` appends batches from other processes.
         self.conversation_events = SQLiteConversationEventStore(self.state, diagnostics=diagnostics)
         self.conversation_event_emitter = ConversationEventEmitter(self.conversation_events, diagnostics=diagnostics)
+        # Slice 04: read side for the authenticated `GET /v1/conversation-events...` routes.
+        self.conversation_event_queries = ConversationEventQueryService(self.conversation_events,
+                                                                        diagnostics=diagnostics)
         self.events = CoreEventBus(diagnostics=diagnostics)
         self.conversations = ConversationService(self.state, self.history)
         self.voice_ledger = VoiceLedgerService(self.conversations, diagnostics=diagnostics)

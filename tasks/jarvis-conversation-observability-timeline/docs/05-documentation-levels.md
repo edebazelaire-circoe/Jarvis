@@ -40,3 +40,9 @@ Slice 00 must correct these levels if the live repository has gained equivalent 
 |---|---:|---|
 | Trace correlation from conversation events | 3 | Every emitting site writes `conversation_event_id` into its journal line; end-to-end test asserts each `trace_ref` joins exactly one line across Core, voice and Control Center journals. |
 | Producer ownership (User/Brain/Mouth/tools/sub-agents) | 3 | Ownership table + forwarder/emitter guarantees and known limits in `docs/conversation-events.md`; producer, forwarder, backfill, attribution and timeline tests. |
+
+## After Slice 04 (2026-09-16)
+
+| Concept | Level | Evidence |
+|---|---:|---|
+| Conversation query / live API | 3 | Core + Control Center routes, cursor/long-poll/reconnect semantics, redacted drill-down allowlist, errors table in `docs/conversation-events.md` + ARCHITECTURE; 139 Slice 04 tests incl. reconnect, long-poll bounds, redaction with planted secrets. |

@@ -870,12 +870,21 @@ async def _run_control_center_v2() -> int:
                                                  token_file=settings.token_file),
         journal=journal,
     )
+    # Lecture des Conversation Events pour la timeline (Slice 04) : le
+    # navigateur passe par le Control Center, qui lit Core sur sa propre connexion.
+    from jarvis.runtime.conversation_event_view import ConversationEventView, CoreConversationEventReader
+
+    conversation_event_view = ConversationEventView(
+        CoreConversationEventReader(host=settings.core_host, port=settings.core_port, token_file=settings.token_file),
+        journal=journal,
+    )
     control = ControlCenter(
         runtime_root=runtime_root,
         project_root=ROOT,
         visualizer_url=visualizer_url,
         work_ingress=work_ingress,
         conversation_events=conversation_events,
+        conversation_event_view=conversation_event_view,
         work_view=work_view,
         live_view=live_view,
     )

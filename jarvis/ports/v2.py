@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import AbstractContextManager
 from datetime import datetime
 from typing import Any, Protocol, TypeGuard, runtime_checkable
 
@@ -113,6 +115,7 @@ class ConversationEventStore(Protocol):
 
     async def append(self, event: ConversationEvent) -> AppendResult: ...
     async def append_many(self, events: Sequence[ConversationEvent]) -> tuple[AppendResult, ...]: ...
+    def watch_appends(self, conversation_id: str) -> AbstractContextManager[asyncio.Event]: ...
     async def get_event(self, event_id: str) -> StoredConversationEvent | None: ...
     async def latest_recorded_at(self) -> datetime | None: ...
     async def list_conversation_events(self, conversation_id: str, *, after_sequence: int = 0,

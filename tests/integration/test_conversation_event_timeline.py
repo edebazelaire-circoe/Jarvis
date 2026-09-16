@@ -33,6 +33,7 @@ from jarvis.runtime.conversation_event_forwarder import ConversationEventForward
 from jarvis.runtime.journal import RuntimeJournal, read_jsonl_tail
 from jarvis.runtime.realtime_audio import CLAUDE_TOOL
 from tests.fakes.conversation_events import (
+    assert_drill_down_joins_one_line,
     assert_each_trace_ref_joins_one_line,
     open_store,
     wait_emitter_settled,
@@ -172,6 +173,8 @@ async def test_a_multi_actor_conversation_with_an_interruption_during_a_subagent
     # Every event with a trace_ref joins exactly one diagnostic journal line, across the three journals.
     cc_lines = read_jsonl_tail(tmp_path / "control-center" / "trace.jsonl", limit=1000)
     assert_each_trace_ref_joins_one_line(events, [*voice_journal, *core_journal, *cc_lines])
+    # Slice 04: the Control Center drill-down finds that same line in one interleaved trace file, redacted.
+    assert_drill_down_joins_one_line(events, [*voice_journal, *core_journal, *cc_lines], tmp_path / "trace.jsonl")
     for forwarder in (*voice_events, cc_events):
         c = forwarder.counters
         assert (c.invalid, c.conflicts, c.dropped_queue_full, c.dropped_rejected, c.dropped_shutdown) == (0, 0, 0, 0, 0)

@@ -18,6 +18,12 @@ timeline are projections of these events, not separate truths.
   producers `SpeechScheduler`, `RealtimeConversationBridge`, and `AgentTaskTracker`
   delegating sub-agent attribution to `jarvis/runtime/subagent_conversation.py`
   (see Forwarder, Sub-agent mapping rule).
+- Query and live API (Level 3, Slice 04): wire module
+  `jarvis/domain/conversation_event_query.py`, Core service
+  `jarvis/core/conversation_event_query.py`, `GET /v1/conversation-events...`
+  routes and typed `LocalCoreClient` reads, Control Center view
+  `jarvis/runtime/conversation_event_view.py` and trace drill-down
+  `jarvis/runtime/conversation_event_trace.py` (see Query and live API).
 - Conformance tests: `tests/unit/test_conversation_events.py`,
   `tests/unit/test_conversation_event_store.py`,
   `tests/integration/test_conversation_event_store_recovery.py`,
@@ -29,7 +35,11 @@ timeline are projections of these events, not separate truths.
   `tests/unit/test_conversation_event_mouth_producers.py`,
   `tests/unit/test_conversation_event_voice_bridge.py`,
   `tests/unit/test_conversation_event_subagents.py`,
-  `tests/integration/test_conversation_event_timeline.py`.
+  `tests/integration/test_conversation_event_timeline.py`,
+  `tests/unit/test_conversation_event_query_contract.py`,
+  `tests/unit/test_conversation_event_trace.py`,
+  `tests/integration/test_conversation_event_query_protocol.py`,
+  `tests/integration/test_control_center_conversation_events.py`.
 - Golden fixture: `tests/fixtures/conversation_events/overlapping_conversation.json`.
 - Handoff: `tasks/jarvis-conversation-observability-timeline/` (Slice 01).
 
@@ -37,7 +47,9 @@ Status 2026-09-16: contract, durable store (Slice 02), Core-side producers plus
 the ingestion route (Slice 03a), and the out-of-process producers (Slice 03b):
 the voice runtime records Mouth speech, reflexes, tool spans and rejected turns,
 the Control Center records sub-agent spans, both through a bounded forwarder that
-posts batches to the ingestion route. Query/stream API is Slice 04.
+posts batches to the ingestion route. Slice 04 adds the authenticated query
+routes, a bounded long-poll, the Control Center proxy and the redacted trace
+drill-down (Query and live API). The timeline UI is Slice 05.
 
 ## Relation to existing observability
 
@@ -256,9 +268,9 @@ Source-specific join limits (checked against the live trace, 2026-09-16):
 - `tool.call` / `tool.result` lines carry only `{call_id, arguments}` / `{call_id,
   result}`: no conversation, session or correlation id. Tool events must join by
   `conversation_event_id` only; a `trace_ref` with `join_keys` on a tool event is
-  rejected. **Slice 04 obligation:** the debug view must never render raw
-  `tool.call` / `tool.result` trace lines unredacted (they hold raw arguments and
-  results).
+  rejected. **Slice 04 obligation (met by the trace drill-down redaction, Query
+  and live API):** the debug view must never render raw `tool.call` /
+  `tool.result` trace lines unredacted (they hold raw arguments and results).
 - `agent.subagent.*` lines carry no `conversation_id`, and their `task_id` is the
   moving public id. Sub-agent events therefore join them by
   `conversation_event_id` only (no join keys), and map to a conversation only
@@ -604,9 +616,10 @@ tool call belongs to). A call without `call_id` records nothing.
   in `result`; foreground sub-agents are confirmed when their turn ends, so their
   start reaches Core at that moment (with its real `occurred_at`). A sub-agent
   whose brain process dies before the turn result is not recorded.
-- **Slice 04 trace drill-down** must start from stored events and resolve their
-  `trace_ref`; it must never resolve a `conversation_event_id` found in a journal
-  line (a provisional sub-agent line can name an event that was never stored).
+- **Trace drill-down** (implemented in Slice 04) starts from stored events and
+  resolves their `trace_ref`; it never resolves a `conversation_event_id` found
+  in a journal line (a provisional sub-agent line can name an event that was
+  never stored).
 
 ### Ingestion route
 
@@ -642,6 +655,271 @@ tool call belongs to). A call without `call_id` records nothing.
   producer, whose append then becomes `conflict`. Core-owned types and `core.*`
   producers are refused, and the route is loopback-only behind the session
   bearer token.
+
+## Query and live API
+
+Slice 04. Core owns the store and serves it over authenticated loopback routes;
+the browser never talks to Core: the Control Center proxies the same pages as
+same-origin `/api/conversations...` routes. Both sides parse parameters and
+encode pages with one module, `jarvis/domain/conversation_event_query.py`.
+
+- Core: `LocalProtocolServer` routes → `ConversationEventQueryService`
+  (`jarvis/core/conversation_event_query.py`) → `ConversationEventStore`.
+- Client: typed `LocalCoreClient` methods (`list_event_conversations`,
+  `list_event_sessions`, `list_conversation_events`, `lookup_conversation_events`,
+  `get_conversation_event`) returning the store types
+  (`ConversationEventSummaryPage`, `ConversationEventPage`,
+  `StoredConversationEvent`), decoded strictly.
+- Control Center: `ConversationEventView` + `CoreConversationEventReader`
+  (`jarvis/runtime/conversation_event_view.py`, own loopback session, token file
+  re-read and one retry after a 401), trace drill-down
+  `jarvis/runtime/conversation_event_trace.py`.
+
+### Routes
+
+Core (bearer token and `X-Jarvis-Protocol` like every `/v1` route; 401
+`unauthorized` otherwise):
+
+| Route | Parameters | 200 body |
+|---|---|---|
+| `GET /v1/conversation-events/conversations` | `before_sequence` (optional, ≥ 0), `limit` 1..100 (50) | summary page |
+| `GET /v1/conversation-events/sessions` | `conversation_id` (required), `after_sequence` ≥ 0 (0), `limit` 1..100 (50) | summary page |
+| `GET /v1/conversation-events` | `conversation_id` (required), `after_sequence` ≥ 0 (0), `limit` 1..500 (100), `visibility` `public`\|`diagnostic` (all), `wait_ms` 0..25000 (0) | event page |
+| `GET /v1/conversation-events/lookup` | `field` ∈ `session_id, turn_id, correlation_id, task_id, work_id, speech_id, outcome_id, span_id` (required), `value` (required), `conversation_id` (optional), `after_sequence`, `limit` 1..500, `visibility` | event page |
+| `GET /v1/conversation-events/events/{event_id}` | none | `{"schema_version": 1, "sequence", "recorded_at", "event"}` |
+
+Control Center (same parameters and 200 bodies):
+
+| Route | Proxies |
+|---|---|
+| `GET /api/conversations` | conversations |
+| `GET /api/conversations/sessions` | sessions |
+| `GET /api/conversations/events` | events of a conversation (with long-poll) |
+| `GET /api/conversations/lookup` | lookup by id |
+| `GET /api/conversations/events/{event_id}` | one event (detail panel) |
+| `GET /api/conversations/events/{event_id}/trace` | trace drill-down (Control Center only, below) |
+
+Bodies:
+
+- event page: `{"schema_version": 1, "events": [{"sequence", "recorded_at",
+  "event"}], "next_cursor", "has_more", "skipped_rows"}`. `event` is the encoded
+  canonical event **exactly as stored** (`encode_conversation_event`), decodable
+  with `decode_conversation_event`; `recorded_at` is Core's store clock (wire time).
+- summary page: `{"schema_version": 1, "summaries": [{"conversation_id",
+  "session_id", "event_count", "first_sequence", "last_sequence",
+  "first_occurred_at", "last_occurred_at", "last_recorded_at"}], "next_cursor",
+  "has_more", "skipped_summaries"}` (`event_count` = raw row count, see Queries).
+
+Parameters are strict: an unknown or repeated name, a non-decimal or
+out-of-range number, an invalid id or lookup field, a malformed `event_id` →
+400. Messages name the parameter and the rule, never the value.
+
+### Cursor, reconnect and live
+
+- The cursor is the store `sequence` (see Sequence and cursor). A consumer
+  hydrates with `after_sequence=0`, follows `next_cursor` while `has_more`, then
+  keeps polling from its last `next_cursor`. Events appended meanwhile always
+  land after the cursor, so live polling never misses nor repeats one, and a
+  reload (walk from 0) yields exactly the union of what live consumption
+  received (tested with concurrent appends into two interleaved conversations).
+- Reconnect: resume from the last `next_cursor` **received** (not the sequence
+  of the last event rendered: the cursor may already be past filtered-out or
+  unreadable rows). A consumer that keys rows by `event_id` (or `sequence`) can
+  safely replay a page.
+  A new Core process keeps the same sequences (durable store), so the cursor
+  survives a Core restart.
+- `next_cursor` is the last **scanned** sequence: it advances past rows that do
+  not decode (`skipped_rows` > 0, diagnosed once by the store) and past events
+  removed by the `visibility` filter. A filtered page can hold fewer events
+  than `limit`, even none, with `has_more` true: keep paging.
+- An unknown conversation is an empty page (`next_cursor` = request cursor),
+  not a 404.
+- Listing conversations is not a snapshot (see Queries): refresh page one after
+  a walk.
+
+**Long-poll (decision).** The Control Center page polls (1 s / 250 ms) and
+Core's `/v1/events` WebSocket is live-only without replay; `/api/agent/notices`
+already long-polls (`wait` ≤ 25 s). So no SSE or WebSocket was added:
+`wait_ms` (≤ `MAX_WAIT_MS` = 25 000) turns `GET .../conversation-events` into a
+long-poll, and long-poll and plain poll converge on the same cursor.
+
+- Returns as soon as a page holds events **after the `visibility` filter**, or
+  after `wait_ms`, or when the server stops (interrupt set before the runner
+  waits for handlers), or when the HTTP client disconnected. Rows scanned
+  meanwhile (filtered out, unreadable) advance the returned `next_cursor` and
+  add up in `skipped_rows`; a filtered long-poll therefore keeps waiting past
+  hidden events instead of returning an empty page early.
+- Wake-up is **per conversation**: `ConversationEventStore.watch_appends(conversation_id)`
+  (SQLite adapter: one shared `asyncio.Event` per watched conversation, created
+  lazily, removed when its last reader leaves or when an append fires it). The
+  reader enters the watch before querying, so an append between the query and
+  the wait is not missed; appends to other conversations never re-query it
+  (tested: 20 waiters, 30 appends elsewhere, 0 extra queries). In-process only:
+  Core is the only writer.
+- aiohttp does not cancel a handler whose client left. Core checks
+  `request.transport` every `DISCONNECT_CHECK_S` = 1 s while waiting and ends
+  the wait; the Control Center checks the browser connection every 0.25 s and
+  cancels its Core request (closing that Core connection).
+- Control Center bounds: at most `MAX_LONG_POLLS` = 8 long-polls wait at Core at
+  once; a request over the cap is forwarded with `wait_ms=0` (answered at once,
+  same page and cursor; counted in `long_polls_downgraded`). Long-polls use
+  their own Core session (connection limit 10) and lists/details another (limit
+  16), so held polls never starve detail reads. After a 401 the token file is
+  re-read and set on both clients **without closing** their sessions (other
+  in-flight polls continue). Once the view is closed (Control Center stopping)
+  reads answer 503 `control_center_stopping` and no session is reopened.
+- The client extends its request timeout by `wait_ms`; the Control Center read
+  budget is 5 s + `wait_ms`.
+
+**Slice 05 guidance.** One long-poll per tab (for the selected conversation);
+do not abort and reissue it on every conversation switch (a new one after the
+current returns, or let the old one finish: the cap downgrades extras to plain
+polls, which is correct but not live). Browsers allow about 6 connections per
+host, shared with the existing 1 s / 250 ms polls of the page: a held
+long-poll takes one of them. Resume from the last `next_cursor` received.
+
+### Errors
+
+| Case | Core | Control Center |
+|---|---|---|
+| bad parameter | 400 `invalid_request` | 400 `invalid_request` (validated before calling Core) |
+| missing/rotated token | 401 `unauthorized` | token file re-read, one retry; still refused → 502 `core_unauthorized` |
+| store failure, repository closed (Core stopping) | 503 `conversation_events_unavailable` | 503 `conversation_events_unavailable` |
+| Core down, token file missing, timeout | — | 503 `core_unreachable` |
+| answer out of contract | — | 502 `invalid_core_response` |
+| other Core refusal | — | 502 `core_refused` |
+| event absent **or** unreadable | 404 `conversation_event_not_found` | 404 `conversation_event_not_found` |
+| user event trace | — | 404 `trace_not_applicable` |
+| trace file unreadable (I/O) | — | 503 `trace_unreadable` |
+| unexpected drill-down failure | — | 503 `trace_drill_down_failed` |
+| 2 drill-downs already running for 10 s | — | 503 `trace_busy` |
+| foreign `Origin`, non-loopback `Host`, `Sec-Fetch-Site: cross-site` | — | 403 `forbidden_origin` |
+| view not wired | — | 503 `not_configured` |
+| Control Center stopping (view closed) | — | 503 `control_center_stopping` |
+
+Core JSON errors keep the `/v1` shape `{"error": {"code", "message"}}`; Control
+Center errors are `{"ok": false, "code", "error", "core_status"}`. An unreadable
+row looked up by id is a 404 because the store returns None for it; its
+`core.conversation_events.row_unreadable` diagnostic was already emitted by the
+store.
+
+Diagnostics (never a value): Core `core.conversation_events.query_failed`
+(error, `operation`, `error_class`) once per failure episode and
+`core.conversation_events.query_recovered` (info); Control Center
+`ui.conversation_events_unavailable` (warning, `code`, `operation`,
+`exception_type`, `core_status`) once per episode,
+`ui.conversation_events_recovered` (info), `ui.conversation_events_invalid_response`
+(error, once per exception type), `ui.conversation_event_trace_unreadable` (error,
+`code`, `exception_type`, `event_id`, once per drill-down failure episode) and
+`ui.conversation_event_trace_recovered` (info).
+
+**Origin guard.** The Control Center guards `/api/conversations...` for every
+method (the rest of its routes guard only mutating methods; `/api/trace` and
+`/api/errors` are a tracked Issue): `Sec-Fetch-Site: cross-site` is refused; a
+present `Origin` must be exactly `http(s)://<loopback>[:port]`; the `Host`
+header must be a loopback host (DNS rebinding). Hosts are compared exactly
+after splitting the port, without a URL parser: any `@ # / ? \ %` or space in
+the authority refuses the request (`evil.com@127.0.0.1`, `127.0.0.1#.evil.com`).
+Loopback hosts: `127.0.0.1`, `localhost`, `::1` (bracketed). Conversation
+history holds user transcripts.
+
+### Trace drill-down
+
+`GET /api/conversations/events/{event_id}/trace` (Control Center, which already
+reads `runtime/trace.jsonl`):
+
+1. Validate `event_id`; load the **stored** event through Core (404 if absent or
+   unreadable). The drill-down never starts from, nor follows, an id found in a
+   journal line (a provisional sub-agent line may name an event never stored).
+2. Actor `user` → 404 `trace_not_applicable` (locked intent).
+3. `trace_ref` null → 200 `status: "no_trace_ref"` (the producer wrote no line).
+4. `trace_ref.source == agent_task` → 200 `status: "agent_task"`, with
+   `agent_task: {task_id, trace_url: "/api/agent/tasks/{task_id}/trace"}` (the
+   existing route; nothing duplicated). Sub-agent events also carry this link.
+5. `runtime_journal` → bounded newest-first scan in a worker thread (at most
+   `MAX_TRACE_DRILL_DOWNS` = 2 at once; a third waits up to 10 s, then 503
+   `trace_busy`) (`scan_trace`), each candidate line (contains the journal kind) decoded and
+   matched with `trace_entry_matches`; 200 `status: "found"` or `"not_found"`
+   with `scan: {entries, match_count, scanned_lines, scanned_bytes,
+   corrupt_lines, oversized_lines, truncated, stopped_by}`.
+
+Bounds (`ScanLimits`): 64 MiB read and 500 000 lines at most, lines above
+256 KiB skipped (`oversized_lines`), stop at the first line older than
+`occurred_at - 15 min` (`stopped_by: window_start`; journal lines are appended
+in time order per process, interleaved by milliseconds across processes), lines
+newer than `occurred_at + 15 min` not decoded, at most 8 matches (the contract
+expects exactly one). `truncated` is true when a byte, line or match budget
+stopped the scan (`stopped_by` `max_bytes` / `max_lines` / `max_matches`);
+otherwise `stopped_by` is `window_start`, `file_start` or `missing_file`.
+Undecodable candidate lines (torn, glued, binary) count as `corrupt_lines`.
+Measured: a 4 MB synthetic trace scanned end to end well under a second in the
+unit test; the live 14 MB file is inside the byte budget. Known limit: a
+producer clock skewed by more than the window can stop the scan early.
+
+Redaction (`project_trace_entry`, defined once in
+`jarvis/runtime/conversation_event_trace.py`, total over any decoded JSON
+object: a list or object `message`, odd keys or nested data are projected,
+never raised on). Every returned line is a projection `{ts, kind, level,
+message, message_redacted, data, redacted_keys, redacted_key_count}`:
+
+- `data` keeps only allowlisted keys whose value passes the rule of its group
+  (`_safe_data_value`); `null` and booleans pass everywhere:
+
+  | group | keys | value rule |
+  |---|---|---|
+  | `TRACE_ID_KEYS` | `conversation_id, session_id, turn_id, correlation_id, task_id, work_id, speech_id, outcome_id, output_id, call_id, tool_use_id, parent_id, job_id, candidate_id` | printable string ≤ 256 chars without `@`, `/`, `\`, `=`, `+` or whitespace |
+  | `TRACE_EVENT_ID_KEYS` | `conversation_event_id` | `cev-` + 64 lowercase hex |
+  | `TRACE_CODE_KEYS` | `status, code, reason, kind, priority, provider, source, disposition` | `[a-z][a-z0-9_.-]{0,63}` or a finite number |
+  | `TRACE_CLASS_KEYS` | `error_class, exception_type` | `[A-Z][A-Za-z0-9_]{0,63}` or a code token |
+  | `TRACE_MODEL_KEYS` | `model, subagent_type` | `[a-z0-9][a-z0-9._:-]{0,63}` or a finite number |
+  | `TRACE_NUMBER_KEYS` | `duplicate, background, duration_ms, played_ms, tokens, tool_uses, depth, revision, attempt` | booleans and finite numbers only |
+
+  Every string whose lower-cased form starts with a credential prefix
+  (`SECRET_PREFIXES`: `sk-`, `sk_`, `pk_`, `rk_`, `ghp_`, `gho_`, `ghs_`,
+  `ghu_`, `github_pat_`, `glpat-`, `xox`, `akia`, `asia`, `aiza`, `ya29.`,
+  `eyj` (JWT), `hf_`, `bearer`) is dropped whatever its key. Anything else —
+  `arguments`, `result`, `error`, `text`, `summary`, `description`, nested
+  objects, free text, emails, paths, URLs, base64 with padding — is dropped and
+  counted in `redacted_key_count`; its key name is listed in `redacted_keys`
+  only when it is a code identifier (`[a-z][a-z0-9_]{0,63}`). Checked against a
+  scratch copy of the live `runtime/trace.jsonl` (13 123 lines, 2026-09-16):
+  of the 48 279 allowlisted values the first rule kept, the current rule drops 0.
+  Known limit: an id-shaped secret without a known prefix (base64url, no
+  padding) is indistinguishable from an opaque id; allowlisted keys are written
+  by Jarvis code, never by providers.
+- `message` is returned only when it is a string equal to one of the constant
+  messages the producer of that kind writes (`STATIC_MESSAGES`: `core.brain.*`
+  trace kinds, `voice.speech.*`, `voice.reflex.started`; a test asserts each
+  string still appears in its producer source). Tool (`tool.call` /
+  `tool.result`: tool name), `voice.brain_turn_rejected` (exception text) and
+  `agent.subagent.*` (description) messages are withheld (`message_redacted`).
+  A producer that changes its wording only hides its message, never leaks.
+- `agent.event` lines are never decoded into a result, even if a reference
+  named that kind (the codec already refuses such a `trace_ref`).
+
+Tests plant secrets in `arguments`, `result`, `error`, `text`, `summary`,
+`description` and messages, and API keys, emails, paths, URLs, JWTs, base64,
+forge tokens and bearer strings in **every** allowlisted key, and assert none
+reaches a response; the Slice 03b multi-actor timeline test runs the drill-down
+on the real Core, voice and Control Center journal lines interleaved with torn
+fragments.
+
+### Loss and health visibility
+
+- Core `GET /v1/health` adds `conversation_events: {emitter: <all
+  ConversationEventEmitterCounters>, store: {unreadable_rows,
+  diagnostic_failures}, query_failures}`.
+- Control Center `GET /api/status` adds `conversation_events`: this process's
+  forwarder counters (`ConversationEventForwarderCounters`) plus `pending`, or
+  null when no forwarder is wired. The voice process forwarder counters stay in
+  its `conversation_events.forwarder_*` journal lines (no status route there).
+
+### Limits and performance
+
+Page and summary limits are the store maxima (500 / 100). A 5 000-event
+conversation pages end to end over the real loopback in about 1.4 s (10 pages
+of 500 or 50 pages of 100, `test_a_long_session_of_5000_events_pages_quickly`,
+idle host). Every read decodes each row through the codec.
 
 ## Visibility and redaction
 
@@ -909,5 +1187,5 @@ version 1 is an unreadable row, never silently reinterpreted.
 ## Validation
 
 ```powershell
-$env:PYTHONDONTWRITEBYTECODE=1; .venv/Scripts/python.exe -W error::ResourceWarning -m pytest -q -p no:cacheprovider tests/unit/test_conversation_events.py tests/unit/test_conversation_event_store.py tests/integration/test_conversation_event_store_recovery.py tests/unit/test_conversation_event_emitter.py tests/unit/test_conversation_event_producers.py tests/integration/test_conversation_event_ingest_protocol.py tests/integration/test_conversation_event_production.py tests/unit/test_conversation_event_forwarder.py tests/unit/test_conversation_event_mouth_producers.py tests/unit/test_conversation_event_voice_bridge.py tests/unit/test_conversation_event_subagents.py tests/integration/test_conversation_event_timeline.py
+$env:PYTHONDONTWRITEBYTECODE=1; .venv/Scripts/python.exe -W error::ResourceWarning -m pytest -q -p no:cacheprovider tests/unit/test_conversation_events.py tests/unit/test_conversation_event_store.py tests/integration/test_conversation_event_store_recovery.py tests/unit/test_conversation_event_emitter.py tests/unit/test_conversation_event_producers.py tests/integration/test_conversation_event_ingest_protocol.py tests/integration/test_conversation_event_production.py tests/unit/test_conversation_event_forwarder.py tests/unit/test_conversation_event_mouth_producers.py tests/unit/test_conversation_event_voice_bridge.py tests/unit/test_conversation_event_subagents.py tests/integration/test_conversation_event_timeline.py tests/unit/test_conversation_event_query_contract.py tests/unit/test_conversation_event_trace.py tests/integration/test_conversation_event_query_protocol.py tests/integration/test_control_center_conversation_events.py
 ```

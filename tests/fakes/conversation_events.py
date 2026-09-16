@@ -197,3 +197,39 @@ def assert_each_trace_ref_joins_one_line(events, entries) -> None:
         matches = journal_matches(event, entries)
         assert len(matches) == 1, (event.event_type, event.trace_ref, len(matches))
         assert matches[0]["data"]["conversation_event_id"] == event.event_id
+
+
+def assert_drill_down_joins_one_line(events, entries, trace_path: Path, *, private: str = "PRIVATE") -> None:
+    """Slice 04: the Control Center drill-down of each stored event finds its one journal line.
+
+    `entries` (journal dicts from several processes) are written interleaved with
+    torn fragments into one `trace.jsonl`, as the live file is; each stored event
+    is resolved from its own `trace_ref` only, and no projection carries `private`.
+    """
+    import json
+    from datetime import datetime, timezone
+
+    from jarvis.domain.conversation_events import ConversationActor
+    from jarvis.runtime.conversation_event_trace import TraceNotApplicable, drill_down
+
+    now = datetime.now(timezone.utc).isoformat()
+    with trace_path.open("w", encoding="utf-8") as handle:
+        for index, entry in enumerate(entries):
+            handle.write(json.dumps({"ts": entry.get("ts") or now, **entry}, ensure_ascii=False, default=str) + "\n")
+            if index % 3 == 0:
+                handle.write('{"ts": "' + now + '", "kind": "voice.speech.started", "data": {"conv\n')
+    for event in events:
+        if event.actor is ConversationActor.USER:
+            try:
+                drill_down(event, trace_path)
+            except TraceNotApplicable:
+                continue
+            raise AssertionError("user events must have no drill-down")
+        body = drill_down(event, trace_path)
+        assert private not in json.dumps(body, ensure_ascii=False), event.event_type
+        if event.trace_ref is None:
+            assert body["status"] == "no_trace_ref", event.event_type
+            continue
+        assert body["status"] == "found", (event.event_type, body["scan"])
+        [entry] = body["scan"]["entries"]
+        assert entry["data"]["conversation_event_id"] == event.event_id and not body["scan"]["truncated"]

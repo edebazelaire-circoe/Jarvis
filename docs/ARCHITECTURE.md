@@ -306,6 +306,37 @@ On start, Core re-records recent durable user turns whose event a crash lost
 producer ownership table: [Conversation Events](conversation-events.md),
 "Producers and ingestion".
 
+Reading the log (Slice 04). Core serves the store over authenticated loopback
+routes; the browser only reads the Control Center, which proxies them through
+`LocalCoreClient` (`ConversationEventView`, own session, token re-read after a
+401). Pages carry each event exactly as stored plus its store `sequence` and
+`recorded_at`; the cursor is the sequence (`next_cursor`, `has_more`,
+`skipped_rows`), so reload and live polling yield the same event set.
+
+| Core route | Control Center route | Purpose |
+|---|---|---|
+| `GET /v1/conversation-events/conversations` | `GET /api/conversations` | conversations by recent activity (`before_sequence`, `limit` ≤ 100) |
+| `GET /v1/conversation-events/sessions` | `GET /api/conversations/sessions` | sessions of a conversation (`conversation_id`, `after_sequence`, `limit` ≤ 100) |
+| `GET /v1/conversation-events` | `GET /api/conversations/events` | events after a cursor (`conversation_id`, `after_sequence`, `limit` ≤ 500, `visibility`, long-poll `wait_ms` ≤ 25 000) |
+| `GET /v1/conversation-events/lookup` | `GET /api/conversations/lookup` | events by `session_id`/`turn_id`/`correlation_id`/`task_id`/`work_id`/`speech_id`/`outcome_id`/`span_id` |
+| `GET /v1/conversation-events/events/{event_id}` | `GET /api/conversations/events/{event_id}` | one stored event (404 `conversation_event_not_found`) |
+| — | `GET /api/conversations/events/{event_id}/trace` | redacted journal evidence of a stored event (bounded newest-first scan of `runtime/trace.jsonl`; user events 404 `trace_not_applicable`; sub-agent/agent-task link to `/api/agent/tasks/{task_id}/trace`) |
+
+Errors: 400 `invalid_request` (never echoes a value), 401 `unauthorized` (Core),
+503 `conversation_events_unavailable` (store failing or Core stopping), and on
+the Control Center 503 `core_unreachable`, 502 `core_unauthorized` /
+`core_refused` / `invalid_core_response`, 503 `control_center_stopping` /
+`trace_busy` / `trace_drill_down_failed`, 403 `forbidden_origin` (every method
+under `/api/conversations` requires an exact loopback `Origin` when present and
+`Host`, and no `Sec-Fetch-Site: cross-site`). Long-poll: woken per conversation,
+ended when the client disconnects; the Control Center lets at most 8 wait at
+Core (extras are sent as plain polls) on a Core session separate from list and
+detail reads. Loss visibility: `GET /v1/health` → `conversation_events`
+(emitter counters, unreadable rows, query failures); `GET /api/status` →
+`conversation_events` (Control Center forwarder counters). Contract, cursor and
+long-poll semantics, drill-down bounds and the redaction allowlist:
+[Conversation Events](conversation-events.md), "Query and live API".
+
 ## Speech, interruption and work
 
 `SpeechScheduler` (`jarvis/runtime/speech_scheduler.py`) consumes `/v1/events`,
