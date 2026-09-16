@@ -25,6 +25,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 
 import asyncio
 
@@ -621,9 +622,12 @@ async def test_a_start_next_to_a_checkpointing_writer_is_never_falsely_refused(t
     await repository.close()
     root = Path(__file__).resolve().parents[2]
     writer = subprocess.Popen([sys.executable, "-c", WRITER, str(path), str(root), "4"], stdout=subprocess.PIPE, text=True)
+    outcomes: dict[str, int] = {}
     try:
-        assert writer.stdout.readline().strip() == "writing"
-        outcomes: dict[str, int] = {}
+        # Lectures bornées : si l'enfant se tait, le `finally` le tue et la
+        # lecture en cours se termine sur EOF.
+        first = await asyncio.wait_for(asyncio.to_thread(writer.stdout.readline), 30)
+        assert first.strip() == "writing", first
         loop = asyncio.get_running_loop()
         deadline = loop.time() + 3
         while loop.time() < deadline:
@@ -636,8 +640,10 @@ async def test_a_start_next_to_a_checkpointing_writer_is_never_falsely_refused(t
                 outcomes[exc.code.value] = outcomes.get(exc.code.value, 0) + 1
             finally:
                 await starter.close()
-        tail = writer.stdout.read()
+        tail = await asyncio.wait_for(asyncio.to_thread(writer.stdout.read), 30)
     finally:
+        if writer.poll() is None:
+            writer.kill()
         writer.wait(timeout=30)
         writer.stdout.close()
     assert outcomes.get("accepted", 0) >= 3, (outcomes, tail)
@@ -645,56 +651,95 @@ async def test_a_start_next_to_a_checkpointing_writer_is_never_falsely_refused(t
     assert "failures 0" in tail, tail
 
 
-async def test_the_sweep_removes_interrupted_creations_and_nothing_else(tmp_path, monkeypatch):
+def age(path: Path, seconds: float) -> None:
+    stamp = time.time() - seconds
+    os.utime(path, (stamp, stamp))
+
+
+async def test_the_sweep_removes_only_old_interrupted_creations_of_its_own_directory(tmp_path, monkeypatch):
     state = tmp_path / "state"
     state.mkdir()
-    temporary_root = tmp_path / "system-temp"
-    temporary_root.mkdir()
-    monkeypatch.setattr(sqlite_scene.tempfile, "gettempdir", lambda: str(temporary_root))
-    stale = [state / "scene.sqlite3.ab12_cd.creating", state / "scene.sqlite3.ab12_cd.creating-journal"]
+    old = [state / "scene.sqlite3.ab12_cd.creating", state / "scene.sqlite3.ab12_cd.creating-journal"]
+    fresh_creation = state / "scene.sqlite3.new42.creating"
     kept = [
         state / "scene.sqlite3.bak",
         state / "scene.sqlite3.x.creating.txt",
         state / "other.sqlite3.ab.creating",
         state / "scene.sqlite3-wal",
         state / "notes.creating",
+        fresh_creation,
     ]
-    for item in stale + kept:
+    for item in old + kept:
         item.write_bytes(b"data")
-    legacy = temporary_root / "jarvis-scene-check-k3j2"
-    legacy.mkdir()
-    for name in ("scene.sqlite3", "scene.sqlite3-wal", "scene.sqlite3-shm"):
-        (legacy / name).write_bytes(b"user content")
-    mixed = temporary_root / "jarvis-scene-check-mixed"
-    mixed.mkdir()
-    (mixed / "scene.sqlite3").write_bytes(b"x")
-    (mixed / "something-else.txt").write_bytes(b"x")
-    nested = temporary_root / "jarvis-scene-check-nested"
-    (nested / "scene.sqlite3").mkdir(parents=True)
-    unrelated = temporary_root / "jarvis-scene-checkXYZ"
-    unrelated.mkdir()
-    (unrelated / "scene.sqlite3").write_bytes(b"x")
-    other = temporary_root / "someone-else"
-    other.mkdir()
-    (other / "scene.sqlite3").write_bytes(b"x")
+    for item in old + kept:
+        if item is not fresh_creation:
+            age(item, sqlite_scene.STALE_CREATION_S + 60)
+    age(fresh_creation, 5)
+    # Garde de régression S1/S2 : rien hors du dossier de la scène, même un
+    # ancien dossier `jarvis-scene-check-*` du dossier temporaire.
+    temporary_root = tmp_path / "system-temp"
+    legacy = temporary_root / "jarvis-scene-check-x"
+    legacy.mkdir(parents=True)
+    (legacy / "scene.sqlite3").write_bytes(b"not ours to delete")
+    monkeypatch.setattr(sqlite_scene.tempfile, "gettempdir", lambda: str(temporary_root))
+    monkeypatch.setattr(tempfile, "tempdir", str(temporary_root))
 
     report = await SQLiteSceneRepository(state / "scene.sqlite3").sweep_leftovers()
 
     assert report.failed == ()
-    assert sorted(report.removed) == sorted(
-        [str(item) for item in stale] + [str(legacy / name) for name in ("scene.sqlite3", "scene.sqlite3-shm", "scene.sqlite3-wal")] + [str(legacy)]
-    )
-    assert not any(item.exists() for item in stale) and not legacy.exists()
+    assert sorted(report.removed) == sorted(str(item) for item in old)
+    assert not any(item.exists() for item in old)
     assert all(item.exists() for item in kept)
-    assert all(directory.exists() for directory in (mixed, nested, unrelated, other))
+    assert (legacy / "scene.sqlite3").read_bytes() == b"not ours to delete"
+
+
+async def test_the_sweep_never_follows_or_removes_a_junction(tmp_path):
+    state = tmp_path / "state"
+    state.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "scene.sqlite3").write_bytes(b"precious")
+    junction = state / "scene.sqlite3.jx1.creating"
+    if os.name != "nt":
+        pytest.skip("jonction Windows")
+    made = subprocess.run(["cmd", "/c", "mklink", "/J", str(junction), str(outside)], capture_output=True, text=True)
+    if made.returncode:
+        pytest.skip(f"mklink /J unavailable: {made.stdout} {made.stderr}")
+    try:
+        age(outside, sqlite_scene.STALE_CREATION_S + 60)
+        report = await SQLiteSceneRepository(state / "scene.sqlite3").sweep_leftovers()
+        assert report == sqlite_scene.SceneSweepReport()
+        assert os.path.lexists(junction)
+        assert (outside / "scene.sqlite3").read_bytes() == b"precious"
+    finally:
+        os.rmdir(junction)
+
+
+async def test_the_sweep_skips_a_reparse_point_even_when_it_looks_like_a_file(tmp_path, monkeypatch):
+    state = tmp_path / "state"
+    state.mkdir()
+    target = state / "scene.sqlite3.rp1.creating"
+    target.write_bytes(b"x")
+    age(target, sqlite_scene.STALE_CREATION_S + 60)
+    real_lstat = os.lstat
+
+    class Info:
+        def __init__(self, info):
+            self.st_mode, self.st_mtime = info.st_mode, info.st_mtime
+            self.st_file_attributes = sqlite_scene._REPARSE_POINT
+
+    monkeypatch.setattr(sqlite_scene.os, "lstat", lambda path: Info(real_lstat(path)))
+    report = await SQLiteSceneRepository(state / "scene.sqlite3").sweep_leftovers()
+    assert report == sqlite_scene.SceneSweepReport()
+    assert target.exists()
 
 
 async def test_the_sweep_reports_what_it_could_not_remove(tmp_path, monkeypatch):
     state = tmp_path / "state"
     state.mkdir()
-    monkeypatch.setattr(sqlite_scene.tempfile, "gettempdir", lambda: str(tmp_path / "empty-temp"))
     stuck = state / "scene.sqlite3.zz9.creating"
     stuck.write_bytes(b"x")
+    age(stuck, sqlite_scene.STALE_CREATION_S + 60)
 
     def refuse(target):
         raise PermissionError("file in use (injected)")
@@ -704,6 +749,35 @@ async def test_the_sweep_reports_what_it_could_not_remove(tmp_path, monkeypatch)
     assert report.removed == ()
     assert report.failed == (f"{stuck}: PermissionError: file in use (injected)",)
     assert stuck.exists()
+
+
+async def test_a_file_vanishing_before_the_open_is_never_recreated(tmp_path):
+    path = tmp_path / "scene.sqlite3"
+    repository, _ = await fresh(path)
+    await repository.close()
+    racing = SQLiteSceneRepository(path)
+    racing._check_access = lambda: path.unlink()
+    with pytest.raises(SceneStoreError, match="refused: OperationalError") as caught:
+        await racing.initialize()
+    assert caught.value.code is SceneStoreErrorCode.STORAGE_IO
+    assert not path.exists()
+    await racing.close()
+    again = SQLiteSceneRepository(path, scene_id_factory=lambda: "recreated")
+    assert await again.initialize() is True
+    assert (await again.load()).scene_id == "recreated"
+    await again.close()
+
+
+async def test_a_path_with_spaces_and_uri_characters_opens_and_reopens(tmp_path):
+    path = tmp_path / "données a b#c%20" / "scene.sqlite3"
+    repository, snapshot = await fresh(path)
+    snapshot = await commit_all(repository, snapshot, scenario()[:3])
+    await repository.close()
+    reopened = SQLiteSceneRepository(path)
+    assert await reopened.initialize() is False
+    assert await reopened.load() == snapshot
+    await reopened.close()
+    assert sorted(item.name for item in path.parent.iterdir()) == ["scene.sqlite3"]
 
 
 async def test_opening_creates_no_validation_copy_anywhere(tmp_path, monkeypatch):
@@ -719,3 +793,8 @@ async def test_opening_creates_no_validation_copy_anywhere(tmp_path, monkeypatch
     await reopened.close()
     assert list(temporary_root.iterdir()) == []
     assert sorted(item.name for item in path.parent.iterdir()) == ["scene.sqlite3"]
+
+
+async def test_the_sweep_of_a_missing_directory_is_empty(tmp_path):
+    report = await SQLiteSceneRepository(tmp_path / "absent" / "scene.sqlite3").sweep_leftovers()
+    assert report == sqlite_scene.SceneSweepReport()

@@ -151,9 +151,9 @@ class SceneReader(Protocol):
 class SceneRepository(Protocol):
     """Persistance durable de la scène active et de son historique.
 
-    - `sweep_leftovers` retire les restes que ce stockage a pu laisser
-      (créations interrompues, anciennes copies de validation) et dit ce qu'il
-      a retiré ou n'a pas pu retirer ; il ne lève pas pour un fichier resté ;
+    - `sweep_leftovers` retire, dans le seul dossier du stockage, les restes
+      de créations interrompues et dit ce qu'il a retiré ou n'a pas pu
+      retirer ; il ne lève pas pour un fichier resté et ne touche rien ailleurs ;
     - `initialize` ouvre le stockage et refuse (`SceneStoreError`) une version
       plus récente ou inconnue, un fichier corrompu (vide compris) ou non
       inscriptible, sans jamais en modifier le contenu logique ; si le fichier

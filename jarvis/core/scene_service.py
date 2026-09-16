@@ -184,7 +184,7 @@ class SceneService:
         if report.removed:
             self._emit(
                 SCENE_SWEPT_KIND,
-                "restes de la scène retirés (création interrompue ou ancienne copie de validation)",
+                "temporaires de création interrompue de la scène retirés",
                 data={"removed": list(report.removed)},
             )
         if report.failed:

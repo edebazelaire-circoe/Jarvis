@@ -25,16 +25,19 @@ suite de patchs à rejouer :
 Ouverture, dans cet ordre :
 
 0. `sweep_leftovers` (appelé par le service avant l'ouverture) retire les
-   temporaires de création interrompue de ce dossier et les anciens dossiers
-   de copie `jarvis-scene-check-*` qu'une version antérieure de cette Slice
-   laissait dans le dossier temporaire du système ;
+   temporaires de création interrompue **de ce dossier seulement**, plus
+   vieux que 10 minutes, fichiers ordinaires uniquement (jamais un lien ni une
+   jonction). Rien hors du dossier de la scène n'est jamais touché ;
 1. fichier **absent** (et pas de `-wal` orphelin) : il est créé de façon
    atomique — schéma, `schema_version` et ligne `scene_meta` écrits dans un
    fichier temporaire du même dossier, puis renommé (`replace_with_retry`).
    Un arrêt brutal laisse au pire ce temporaire, jamais un `scene.sqlite3`
    vide ou partiel ;
 2. fichier **présent** : `os.access` (fichier et dossier inscriptibles) avant
-   toute ouverture, puis ouverture du vrai fichier en lecture-écriture. Un
+   toute ouverture, puis ouverture du vrai fichier en lecture-écriture sans
+   jamais le créer (URI `mode=rw` : un fichier disparu entre-temps lève
+   `storage_io`, au lieu de laisser un fichier vide ; le démarrage suivant crée
+   la scène normalement). Un
    fichier vide ou sans table est refusé (`corrupted`) avant toute écriture,
    jamais recréé ;
 3. validation complète **sous `BEGIN IMMEDIATE`** sur cette même connexion :
@@ -45,9 +48,10 @@ Ouverture, dans cet ordre :
    celle que le magasin garde.
 
 Garantie de refus : le **contenu logique** d'un fichier refusé n'est jamais
-modifié, réécrit, recréé ni effacé. SQLite peut y faire son checkpoint WAL
-physique normal à la fermeture ; l'identité octet pour octet du `-wal` et du
-`-shm` n'est pas promise. Ce que SQLite signale « pas une base » ou
+modifié, réécrit, recréé ni effacé. Seuls des changements physiques peuvent
+survenir (checkpoint WAL à la fermeture, en-tête de mode de journal passé en
+WAL) ; l'identité octet pour octet du fichier, du `-wal` et du `-shm` n'est
+pas promise. Ce que SQLite signale « pas une base » ou
 « malformé » est `corrupted` ; verrou, droits et E/S sont `storage_io`.
 
 Chaque `commit` est une transaction `BEGIN IMMEDIATE … COMMIT` : un arrêt
@@ -69,7 +73,9 @@ import os
 from pathlib import Path
 import re
 import sqlite3
+import stat
 import tempfile
+import time
 from typing import Any, Callable, TypeVar
 
 from jarvis.adapters.file_replace import replace_with_retry
@@ -93,10 +99,25 @@ T = TypeVar("T")
 _SCHEMA_VERSION = 1
 #: Lecture d'historique : bornée, jamais un fichier entier en mémoire.
 MAX_HISTORY_READ = 1_000
-#: Dossiers de copie de validation d'une version antérieure de cette Slice,
-#: retirés par `sweep_leftovers` s'ils ne contiennent que des `scene.sqlite3*`.
-_LEGACY_CHECK_PREFIX = "jarvis-scene-check-"
-_LEGACY_CHECK_FILE = re.compile(r"^scene\.sqlite3(-wal|-shm|-journal)?$")
+#: Âge minimal d'un temporaire de création pour être balayé : une création en
+#: cours dans un autre Core (non pris en charge, mais possible) n'est jamais
+#: coupée sous lui.
+STALE_CREATION_S = 600.0
+#: Attribut Windows d'un point d'analyse (lien symbolique, jonction) ; absent
+#: ailleurs, où `S_ISREG` sur `lstat` suffit.
+_REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+
+
+def _is_plain_file(info: os.stat_result) -> bool:
+    """Fichier ordinaire lu par `lstat` : ni lien, ni jonction, ni dossier."""
+
+    return stat.S_ISREG(info.st_mode) and not (getattr(info, "st_file_attributes", 0) & _REPARSE_POINT)
+
+
+def _sqlite_uri(path: Path, mode: str) -> str:
+    """URI SQLite sûre pour un chemin Windows (espaces, `#`, `?` encodés par `as_uri`)."""
+
+    return f"{path.as_uri()}?mode={mode}"
 
 _TABLES = ("schema_version", "scene_meta", "scene_objects", "scene_relations", "scene_tombstones", "scene_history")
 _DDL = (
@@ -186,55 +207,43 @@ class SQLiteSceneRepository:
         return await run_sqlite_in_thread(self._sweep_sync)
 
     def _sweep_sync(self) -> SceneSweepReport:
-        """Retirer ce que ce code a pu laisser derrière lui, et rien d'autre.
+        """Retirer les temporaires de création interrompue du dossier de la scène, et rien d'autre.
 
-        - `scene.sqlite3.<aléa>.creating` (et son `-journal`) du dossier de la
-          scène : créations interrompues par un arrêt brutal ;
-        - `jarvis-scene-check-*` du dossier temporaire du système, **seulement**
-          s'il ne contient que des `scene.sqlite3*` : copies de validation
-          qu'une version antérieure de cette Slice pouvait y laisser (contenu
-          utilisateur). Hygiène ponctuelle, bornée à ce motif exact.
+        Motif exact `scene.sqlite3.<aléa>.creating` (et son `-journal`), plus
+        vieux que `STALE_CREATION_S`, fichier ordinaire seulement : un lien ou
+        une jonction n'est jamais suivi ni supprimé (`os.lstat`). Rien hors de
+        ce dossier n'est lu ni touché. Un lien physique ne perd que ce nom.
         """
 
         removed: list[str] = []
         failed: list[str] = []
-
-        def remove(target: Path, action: Callable[[Path], None]) -> None:
-            try:
-                action(target)
-                removed.append(str(target))
-            except OSError as exc:
-                failed.append(f"{target}: {type(exc).__name__}: {exc}")
-
+        directory = self.path.parent
         pattern = re.compile(rf"^{re.escape(self.path.name)}\.[A-Za-z0-9_]+\.creating(-journal)?$")
         try:
-            candidates = sorted(self.path.parent.iterdir()) if self.path.parent.is_dir() else []
+            names = sorted(os.listdir(directory))
+        except FileNotFoundError:
+            # Premier démarrage : le dossier n'existe pas encore, rien à balayer.
+            return SceneSweepReport()
         except OSError as exc:
-            candidates = []
-            failed.append(f"{self.path.parent}: {type(exc).__name__}: {exc}")
-        for entry in candidates:
-            if pattern.match(entry.name) and entry.is_file():
-                remove(entry, lambda item: os.remove(item))
-
-        temporary_root = Path(tempfile.gettempdir())
-        try:
-            directories = sorted(temporary_root.glob(f"{_LEGACY_CHECK_PREFIX}*"))
-        except OSError as exc:
-            directories = []
-            failed.append(f"{temporary_root}: {type(exc).__name__}: {exc}")
-        for directory in directories:
+            return SceneSweepReport(failed=(f"{directory}: {type(exc).__name__}: {exc}",))
+        now = time.time()
+        for name in names:
+            if not pattern.match(name):
+                continue
+            target = directory / name
             try:
-                if not directory.is_dir() or directory.is_symlink():
+                info = os.lstat(target)
+                if not _is_plain_file(info) or now - info.st_mtime < STALE_CREATION_S:
                     continue
-                entries = list(directory.iterdir())
+                os.remove(target)
+            except FileNotFoundError:
+                # Retiré entre la liste et la suppression : il n'y a plus rien
+                # à retirer, ce n'est pas un échec.
+                continue
             except OSError as exc:
-                failed.append(f"{directory}: {type(exc).__name__}: {exc}")
+                failed.append(f"{target}: {type(exc).__name__}: {exc}")
                 continue
-            if not all(item.is_file() and _LEGACY_CHECK_FILE.match(item.name) for item in entries):
-                continue
-            for item in entries:
-                remove(item, lambda target: os.remove(target))
-            remove(directory, lambda target: os.rmdir(target))
+            removed.append(str(target))
         return SceneSweepReport(removed=tuple(removed), failed=tuple(failed))
 
     # ------------------------------------------------------------ ouverture
@@ -327,7 +336,12 @@ class SQLiteSceneRepository:
         """
 
         try:
-            conn = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None)
+            # `mode=rw` : ne jamais créer le fichier. S'il a disparu depuis
+            # `_check_access`, l'ouverture échoue (`storage_io`) au lieu de
+            # laisser un fichier vide que le démarrage suivant refuserait.
+            conn = sqlite3.connect(
+                _sqlite_uri(self.path, "rw"), uri=True, check_same_thread=False, isolation_level=None
+            )
         except sqlite3.Error as exc:
             raise self._refusal(exc) from exc
         try:
