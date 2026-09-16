@@ -1,0 +1,1314 @@
+"""Contrats de la scène constellation (handoff jarvis-constellation-scene-runtime, Slice 01).
+
+La scène est la **projection visuelle** persistante du travail et des
+explications que JARVIS montre à l'écran : étoiles d'exécution, artefacts,
+signaux d'attention, fenêtres et groupes, reliés entre eux sur un plan 2D à
+couches explicites. Elle ne fait jamais foi sur le travail lui-même : l'état de
+travail Core (`jarvis.domain.work_state`) reste la vérité d'exécution
+(Décision 17).
+
+- `SceneObject` : un objet stable (`object_id`), de nature fermée (`kind`),
+  coloré par sa catégorie, avec représentation, géométrie, couche, visibilité,
+  disposition et contraintes ;
+- `SceneRelation` : un lien typé entre deux objets actifs ;
+- `SceneSnapshot` : la scène complète à une révision ;
+- `SceneCommand` : une intention d'un acteur (`runtime`, `brain`, `user`) ;
+- `ScenePatch` : le delta exact produit par une commande appliquée.
+
+Invariants transverses :
+
+- l'autorité est appliquée par le réducteur, jamais par l'appelant : une
+  commande hors droits rend `rejected_authority`, quel que soit le catalogue
+  d'outils qui l'a émise (Décision 14) ;
+- `exec_state` et `work_ref` reflètent Core : seul `runtime` les écrit ;
+- une fin d'exécution ne change ni la visibilité ni la disposition
+  (Décision 12) ; caché ≠ archivé (Décision 13) ; seul `user` archive ;
+- un objet épinglé par l'utilisateur ne bouge que sous la main de
+  l'utilisateur (Décision 9) ;
+- changer de représentation garde l'identité de l'objet (Décision 6) ;
+- la révision avance d'exactement un par commande appliquée ; une commande
+  refusée, invalide ou sans effet ne la touche pas (Décision 20) ;
+- toutes les chaînes, collections et charges sont bornées ; les formes
+  sérialisées racines portent `schema_version` et le décodage est strict.
+
+`apply_scene_command` est une fonction pure : le futur `SceneStore`
+(Slice 02) l'applique, persiste le patch puis le publie. Aucune E/S ici.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field, replace
+from enum import StrEnum
+import json
+import math
+import re
+from typing import Any, Callable
+
+from jarvis.domain.work_state import MAX_ID_CHARS, MAX_SOURCE_CHARS
+
+#: Version des formes sérialisées racines (instantané, commande, patch). Un
+#: lecteur refuse toute autre valeur, plus récente comprise : il ne devine pas
+#: une forme qu'il ne connaît pas.
+SCENE_SCHEMA_VERSION = 1
+
+# Bornes des champs publics. Les identifiants reprennent celles de l'état de
+# travail : un `object_id` dérive souvent d'un `(source, external_id)`.
+MAX_CATEGORY_CHARS = 32
+MAX_TITLE_CHARS = 160
+MAX_PAYLOAD_SUMMARY_CHARS = 2_000
+MAX_PAYLOAD_ITEMS = 32
+MAX_ITEM_LABEL_CHARS = 160
+MAX_ITEM_REF_CHARS = 256
+MAX_URL_CHARS = 2_048
+#: Taille JSON UTF-8 compacte d'une charge. Refusée au-delà, jamais tronquée.
+MAX_PAYLOAD_BYTES = 16_384
+#: Objets d'un instantané, archivés compris. Au-delà, une création est
+#: `invalid` (`scene_full`) : le magasin décide quoi sortir vers l'historique.
+MAX_SCENE_OBJECTS = 512
+MAX_SCENE_RELATIONS = 1_024
+#: Un archivage émet l'objet et la suppression de toutes ses relations.
+MAX_PATCH_OPS = 1 + MAX_SCENE_RELATIONS
+#: Coordonnées en unités de scène (pas en pixels) ; le rendu met à l'échelle.
+MAX_SCENE_COORDINATE = 100_000.0
+MAX_SCENE_EXTENT = 100_000.0
+#: Couches : tout entier de la plage est valide ; 50/100/120/150/220/300 sont
+#: des conventions (Décision 8), pas des valeurs imposées.
+MIN_LAYER = 0
+MAX_LAYER = 1_000
+MAX_ORDER = 1_000_000
+DEFAULT_RELATION_LAYER = 50
+
+# Même forme de jeton que l'état de travail : pas d'espace, pas de `:`.
+_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
+
+
+class SceneObjectKind(StrEnum):
+    """Nature fermée d'un objet de scène. Extensible plus tard, jamais libre."""
+
+    AGENT = "agent"
+    JOB = "job"
+    ARTIFACT = "artifact"
+    ATTENTION = "attention"
+    WINDOW = "window"
+    GROUP = "group"
+
+
+#: Nœuds d'exécution : les étoiles que le runtime crée sans tour du cerveau.
+EXECUTION_KINDS = frozenset({SceneObjectKind.AGENT, SceneObjectKind.JOB})
+#: Natures que `runtime` peut écrire : nœuds d'exécution et signaux.
+RUNTIME_KINDS = EXECUTION_KINDS | {SceneObjectKind.ATTENTION}
+
+#: Couche donnée à un objet créé sans couche explicite. Suit les bandes
+#: conventionnelles : groupes derrière, étoiles, artefacts, fenêtres, attention
+#: au-dessus. Le cerveau et l'utilisateur peuvent la changer ensuite.
+DEFAULT_LAYERS: dict[SceneObjectKind, int] = {
+    SceneObjectKind.GROUP: 50,
+    SceneObjectKind.AGENT: 100,
+    SceneObjectKind.JOB: 100,
+    SceneObjectKind.ARTIFACT: 120,
+    SceneObjectKind.WINDOW: 220,
+    SceneObjectKind.ATTENTION: 300,
+}
+
+
+class ExecState(StrEnum):
+    """Reflet de `WorkStatus`, plus `unknown`. Indice secondaire, jamais couleur.
+
+    `unknown` : objet sans travail Core (artefact, fenêtre...) ou travail pas
+    encore réobservé après un redémarrage (Slice 10).
+    """
+
+    UNKNOWN = "unknown"
+    PENDING = "pending"
+    RUNNING = "running"
+    BLOCKED = "blocked"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    INTERRUPTED = "interrupted"
+
+
+class Representation(StrEnum):
+    """Forme de rendu d'un même objet (Décision 6)."""
+
+    POINT = "point"
+    CAPSULE = "capsule"
+    WINDOW = "window"
+
+
+class Visibility(StrEnum):
+    """Rendu ou non d'un objet **actif** (Décision 13)."""
+
+    VISIBLE = "visible"
+    HIDDEN = "hidden"
+
+
+class Disposition(StrEnum):
+    """Présence dans la scène active. `archived` : historique seulement."""
+
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+
+
+class PlacedBy(StrEnum):
+    """Auteur de la géométrie retenue, ou créateur tant qu'elle manque.
+
+    Un objet sans géométrie n'est pas placé, quel que soit `placed_by`.
+    `resolver` : placement opportuniste de l'AutoResolver, validé par un
+    acteur ; il ne remplace jamais un placement explicite (Décision 9).
+    """
+
+    RUNTIME = "runtime"
+    BRAIN = "brain"
+    USER = "user"
+    RESOLVER = "resolver"
+
+
+class RelationKind(StrEnum):
+    """Nature fermée d'un lien. `explains` relie aussi un signal à son nœud."""
+
+    PARENT_OF = "parent_of"
+    EXPLAINS = "explains"
+    GROUPS = "groups"
+
+
+class SceneActor(StrEnum):
+    """Émetteur d'une commande. Le transport l'impose, le réducteur l'applique."""
+
+    RUNTIME = "runtime"
+    BRAIN = "brain"
+    USER = "user"
+
+
+class SceneOp(StrEnum):
+    UPSERT_OBJECT = "upsert_object"
+    PATCH_OBJECT = "patch_object"
+    SET_GEOMETRY = "set_geometry"
+    SET_REPRESENTATION = "set_representation"
+    SET_VISIBILITY = "set_visibility"
+    PIN = "pin"
+    UNPIN = "unpin"
+    LINK = "link"
+    UNLINK = "unlink"
+    ARCHIVE = "archive"
+    ATTACH_SIGNAL = "attach_signal"
+
+
+#: Matrice d'autorité par opération. S'y ajoutent des règles par champ et par
+#: nature, appliquées sur l'effet réel de la commande (voir
+#: `apply_scene_command`). `pin`/`unpin` sont réservées à l'utilisateur :
+#: `pinned_by_user` enregistre une décision de l'utilisateur, et un `unpin` du
+#: cerveau suffirait à contourner la protection de géométrie.
+ALLOWED_SCENE_OPS: dict[SceneActor, frozenset[SceneOp]] = {
+    SceneActor.RUNTIME: frozenset(
+        {SceneOp.UPSERT_OBJECT, SceneOp.PATCH_OBJECT, SceneOp.LINK, SceneOp.UNLINK, SceneOp.ATTACH_SIGNAL}
+    ),
+    SceneActor.BRAIN: frozenset(set(SceneOp) - {SceneOp.ARCHIVE, SceneOp.PIN, SceneOp.UNPIN}),
+    SceneActor.USER: frozenset(SceneOp),
+}
+
+#: Champs qui reflètent Core : écrits par `runtime` seulement.
+EXECUTION_FIELDS = frozenset({"exec_state", "work_ref"})
+#: Champs de composition : jamais écrits par `runtime` (Décision 3).
+COMPOSITION_FIELDS = frozenset({"representation", "geometry", "layer", "order", "visibility"})
+_WRITABLE_FIELDS = ("category", "payload", *sorted(EXECUTION_FIELDS), *sorted(COMPOSITION_FIELDS))
+
+
+class UnsupportedSceneSchemaVersion(ValueError):
+    """Forme sérialisée absente de version, ou d'une version non prise en charge."""
+
+    def __init__(self, name: str, version: object) -> None:
+        super().__init__(f"unsupported {name} schema_version {version!r} (expected {SCENE_SCHEMA_VERSION})")
+        self.version = version
+
+
+# ------------------------------------------------------------------ validation
+
+
+def _check_text(name: str, value: object, limit: int, *, single_line: bool = True) -> None:
+    if not isinstance(value, str):
+        raise TypeError(f"{name} must be a string")
+    if len(value) > limit:
+        raise ValueError(f"{name} exceeds {limit} characters")
+    if single_line and value and not value.isprintable():
+        raise ValueError(f"{name} must be a single printable line")
+
+
+def _check_token(name: str, value: object, limit: int) -> None:
+    _check_text(name, value, limit)
+    if not _TOKEN.fullmatch(str(value)):
+        raise ValueError(f"{name} must be a short token (letters, digits, '_', '.', '-')")
+
+
+def _check_id(name: str, value: object, *, required: bool = True) -> None:
+    if value is None and not required:
+        return
+    _check_text(name, value, MAX_ID_CHARS)
+    if not str(value).strip() or str(value) != str(value).strip():
+        raise ValueError(f"{name} must be a non-empty identifier without surrounding spaces")
+
+
+def _check_enum(name: str, value: object, enum_type: type[StrEnum]) -> None:
+    if not isinstance(value, enum_type):
+        raise TypeError(f"{name} must be a {enum_type.__name__}")
+
+
+def _check_int(name: str, value: object, low: int, high: int) -> None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{name} must be an integer")
+    if not low <= value <= high:
+        raise ValueError(f"{name} must be between {low} and {high}")
+
+
+def _check_instance(name: str, value: object, expected: type) -> None:
+    if not isinstance(value, expected):
+        raise TypeError(f"{name} must be a {expected.__name__}")
+
+
+# ------------------------------------------------------------------ fil
+
+
+def _check_keys(name: str, payload: object, required: frozenset[str], optional: frozenset[str] = frozenset()) -> dict[str, Any]:
+    """Décodage strict : clé inconnue ou clé requise absente sont refusées."""
+
+    if not isinstance(payload, dict):
+        raise TypeError(f"{name} must be an object")
+    unknown = sorted(str(key)[:40] for key in payload if key not in required and key not in optional)
+    if unknown:
+        raise ValueError(f"{name} has unknown fields: {unknown[:5]}")
+    missing = sorted(required - payload.keys())
+    if missing:
+        raise ValueError(f"{name} is missing fields: {missing}")
+    return payload
+
+
+def _check_schema_version(name: str, payload: object) -> None:
+    """Contrôlée avant toute autre clé : une forme future n'est pas « invalide »,
+    elle est d'une version que ce lecteur ne connaît pas."""
+
+    if not isinstance(payload, dict):
+        raise TypeError(f"{name} must be an object")
+    version = payload.get("schema_version")
+    # `type(...) is int` : ni `True` ni `1.0` ne passent pour la version 1.
+    if type(version) is not int or version != SCENE_SCHEMA_VERSION:
+        raise UnsupportedSceneSchemaVersion(name, version)
+
+
+def _enum(enum_type: type[StrEnum], raw: object, name: str) -> Any:
+    if not isinstance(raw, str):
+        raise TypeError(f"{name} must be a string")
+    return enum_type(raw)
+
+
+def _optional_enum(enum_type: type[StrEnum], payload: dict[str, Any], key: str) -> Any:
+    raw = payload.get(key)
+    return None if raw is None else _enum(enum_type, raw, key)
+
+
+def _optional_nested(cls: Any, payload: dict[str, Any], key: str) -> Any:
+    raw = payload.get(key)
+    return None if raw is None else cls.from_payload(raw)
+
+
+def _list(name: str, raw: object, limit: int) -> list[Any]:
+    if not isinstance(raw, list):
+        raise TypeError(f"{name} must be a list")
+    if len(raw) > limit:
+        # Refusé avant de décoder : un fil hostile ne fait pas construire un
+        # nombre arbitraire d'objets.
+        raise ValueError(f"{name} holds at most {limit} entries")
+    return raw
+
+
+def _wire(value: Any) -> Any:
+    if isinstance(value, StrEnum):
+        return value.value
+    if hasattr(value, "to_payload"):
+        return value.to_payload()
+    return value
+
+
+# ------------------------------------------------------------------ types
+
+
+@dataclass(frozen=True, slots=True)
+class SceneGeometry:
+    """Rectangle en unités de scène : coin `(x, y)`, largeur `w`, hauteur `h`."""
+
+    x: float
+    y: float
+    w: float
+    h: float
+
+    def __post_init__(self) -> None:
+        for name in ("x", "y", "w", "h"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise TypeError(f"{name} must be a number")
+            if not math.isfinite(value):
+                raise ValueError(f"{name} must be finite")
+            object.__setattr__(self, name, float(value))
+        if abs(self.x) > MAX_SCENE_COORDINATE or abs(self.y) > MAX_SCENE_COORDINATE:
+            raise ValueError(f"x and y must be within ±{MAX_SCENE_COORDINATE:g}")
+        if not (0 < self.w <= MAX_SCENE_EXTENT and 0 < self.h <= MAX_SCENE_EXTENT):
+            raise ValueError(f"w and h must be positive and at most {MAX_SCENE_EXTENT:g}")
+
+    def to_payload(self) -> dict[str, Any]:
+        return {"x": self.x, "y": self.y, "w": self.w, "h": self.h}
+
+    @classmethod
+    def from_payload(cls, payload: object) -> SceneGeometry:
+        data = _check_keys("geometry", payload, frozenset({"x", "y", "w", "h"}))
+        return cls(x=data["x"], y=data["y"], w=data["w"], h=data["h"])
+
+
+@dataclass(frozen=True, slots=True)
+class WorkRef:
+    """Rattachement d'un nœud d'exécution au travail Core qu'il projette.
+
+    Même identité que `WorkItem` : `(source, external_id)`, plus le `work_id`
+    du cerveau quand Core le connaît. Jamais déduit d'un libellé.
+    """
+
+    source: str
+    external_id: str
+    work_id: str | None = None
+
+    def __post_init__(self) -> None:
+        _check_token("source", self.source, MAX_SOURCE_CHARS)
+        _check_id("external_id", self.external_id)
+        _check_id("work_id", self.work_id, required=False)
+
+    def to_payload(self) -> dict[str, Any]:
+        return {"source": self.source, "external_id": self.external_id, "work_id": self.work_id}
+
+    @classmethod
+    def from_payload(cls, payload: object) -> WorkRef:
+        data = _check_keys("work_ref", payload, frozenset({"source", "external_id"}), frozenset({"work_id"}))
+        return cls(source=data["source"], external_id=data["external_id"], work_id=data.get("work_id"))
+
+
+@dataclass(frozen=True, slots=True)
+class ScenePayloadItem:
+    """Entrée d'une charge (fichier, URL visitée, test...). `url` : http(s) seulement."""
+
+    label: str
+    ref: str = ""
+    url: str = ""
+
+    def __post_init__(self) -> None:
+        _check_text("label", self.label, MAX_ITEM_LABEL_CHARS)
+        if not self.label.strip():
+            raise ValueError("label is required")
+        _check_text("ref", self.ref, MAX_ITEM_REF_CHARS)
+        _check_text("url", self.url, MAX_URL_CHARS)
+        if self.url and not self.url.startswith(("https://", "http://")):
+            # Le rendu insère l'URL dans le DOM : pas de `javascript:` ni de
+            # `file:`.
+            raise ValueError("url must use http or https")
+
+    def to_payload(self) -> dict[str, Any]:
+        return {"label": self.label, "ref": self.ref, "url": self.url}
+
+    @classmethod
+    def from_payload(cls, payload: object) -> ScenePayloadItem:
+        data = _check_keys("payload item", payload, frozenset({"label"}), frozenset({"ref", "url"}))
+        return cls(label=data["label"], ref=data.get("ref", ""), url=data.get("url", ""))
+
+
+@dataclass(frozen=True, slots=True)
+class ScenePayload:
+    """Contenu affichable borné : titre, résumé, entrées (artefacts surtout)."""
+
+    title: str = ""
+    summary: str = ""
+    items: tuple[ScenePayloadItem, ...] = ()
+
+    def __post_init__(self) -> None:
+        _check_text("title", self.title, MAX_TITLE_CHARS)
+        _check_text("summary", self.summary, MAX_PAYLOAD_SUMMARY_CHARS, single_line=False)
+        if not isinstance(self.items, tuple) or not all(isinstance(item, ScenePayloadItem) for item in self.items):
+            raise TypeError("items must be a tuple of ScenePayloadItem")
+        if len(self.items) > MAX_PAYLOAD_ITEMS:
+            raise ValueError(f"a payload holds at most {MAX_PAYLOAD_ITEMS} items")
+        size = len(json.dumps(self.to_payload(), ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+        if size > MAX_PAYLOAD_BYTES:
+            raise ValueError(f"payload exceeds {MAX_PAYLOAD_BYTES} bytes ({size})")
+
+    def to_payload(self) -> dict[str, Any]:
+        return {"title": self.title, "summary": self.summary, "items": [item.to_payload() for item in self.items]}
+
+    @classmethod
+    def from_payload(cls, payload: object) -> ScenePayload:
+        data = _check_keys("payload", payload, frozenset(), frozenset({"title", "summary", "items"}))
+        items = _list("items", data.get("items", []), MAX_PAYLOAD_ITEMS)
+        return cls(
+            title=data.get("title", ""),
+            summary=data.get("summary", ""),
+            items=tuple(ScenePayloadItem.from_payload(item) for item in items),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SceneConstraints:
+    """Contraintes de placement, posées par le réducteur, jamais par une charge.
+
+    `pinned_by_user` : l'utilisateur a fixé l'objet ; seul lui peut encore le
+    déplacer ou le redimensionner. Un objet épinglé a toujours une géométrie.
+    """
+
+    placed_by: PlacedBy
+    pinned_by_user: bool = False
+
+    def __post_init__(self) -> None:
+        _check_enum("placed_by", self.placed_by, PlacedBy)
+        if not isinstance(self.pinned_by_user, bool):
+            raise TypeError("pinned_by_user must be a boolean")
+
+    def to_payload(self) -> dict[str, Any]:
+        return {"placed_by": self.placed_by.value, "pinned_by_user": self.pinned_by_user}
+
+    @classmethod
+    def from_payload(cls, payload: object) -> SceneConstraints:
+        data = _check_keys("constraints", payload, frozenset({"placed_by", "pinned_by_user"}))
+        return cls(placed_by=_enum(PlacedBy, data["placed_by"], "placed_by"), pinned_by_user=data["pinned_by_user"])
+
+
+def _check_layer(value: object) -> None:
+    _check_int("layer", value, MIN_LAYER, MAX_LAYER)
+
+
+def _check_order(value: object) -> None:
+    _check_int("order", value, -MAX_ORDER, MAX_ORDER)
+
+
+@dataclass(frozen=True, slots=True)
+class SceneObject:
+    """Objet de la scène, identifié par `object_id` pour toute sa vie.
+
+    `geometry` vaut `None` tant que l'objet n'est pas placé : l'AutoResolver
+    du navigateur le place alors (Slice 05). `layer` ordonne l'empilement,
+    `order` départage une même couche.
+    """
+
+    object_id: str
+    kind: SceneObjectKind
+    category: str
+    constraints: SceneConstraints
+    exec_state: ExecState = ExecState.UNKNOWN
+    representation: Representation = Representation.POINT
+    geometry: SceneGeometry | None = None
+    layer: int = 100
+    order: int = 0
+    visibility: Visibility = Visibility.VISIBLE
+    disposition: Disposition = Disposition.ACTIVE
+    work_ref: WorkRef | None = None
+    payload: ScenePayload = field(default_factory=ScenePayload)
+
+    def __post_init__(self) -> None:
+        _check_id("object_id", self.object_id)
+        _check_enum("kind", self.kind, SceneObjectKind)
+        _check_token("category", self.category, MAX_CATEGORY_CHARS)
+        _check_instance("constraints", self.constraints, SceneConstraints)
+        _check_enum("exec_state", self.exec_state, ExecState)
+        _check_enum("representation", self.representation, Representation)
+        if self.geometry is not None:
+            _check_instance("geometry", self.geometry, SceneGeometry)
+        _check_layer(self.layer)
+        _check_order(self.order)
+        _check_enum("visibility", self.visibility, Visibility)
+        _check_enum("disposition", self.disposition, Disposition)
+        if self.work_ref is not None:
+            _check_instance("work_ref", self.work_ref, WorkRef)
+        _check_instance("payload", self.payload, ScenePayload)
+        if self.constraints.pinned_by_user and self.geometry is None:
+            raise ValueError("a pinned object must have a geometry")
+
+    @property
+    def active(self) -> bool:
+        return self.disposition is Disposition.ACTIVE
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "object_id": self.object_id,
+            "kind": self.kind.value,
+            "category": self.category,
+            "constraints": self.constraints.to_payload(),
+            "exec_state": self.exec_state.value,
+            "representation": self.representation.value,
+            "geometry": _wire(self.geometry),
+            "layer": self.layer,
+            "order": self.order,
+            "visibility": self.visibility.value,
+            "disposition": self.disposition.value,
+            "work_ref": _wire(self.work_ref),
+            "payload": self.payload.to_payload(),
+        }
+
+    @classmethod
+    def from_payload(cls, payload: object) -> SceneObject:
+        data = _check_keys("object", payload, _OBJECT_WIRE_KEYS)
+        return cls(
+            object_id=data["object_id"],
+            kind=_enum(SceneObjectKind, data["kind"], "kind"),
+            category=data["category"],
+            constraints=SceneConstraints.from_payload(data["constraints"]),
+            exec_state=_enum(ExecState, data["exec_state"], "exec_state"),
+            representation=_enum(Representation, data["representation"], "representation"),
+            geometry=_optional_nested(SceneGeometry, data, "geometry"),
+            layer=data["layer"],
+            order=data["order"],
+            visibility=_enum(Visibility, data["visibility"], "visibility"),
+            disposition=_enum(Disposition, data["disposition"], "disposition"),
+            work_ref=_optional_nested(WorkRef, data, "work_ref"),
+            payload=ScenePayload.from_payload(data["payload"]),
+        )
+
+
+#: Forme stockée : toutes les clés sont requises.
+_OBJECT_WIRE_KEYS = frozenset(
+    {
+        "object_id", "kind", "category", "constraints", "exec_state", "representation", "geometry",
+        "layer", "order", "visibility", "disposition", "work_ref", "payload",
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class SceneRelation:
+    """Lien orienté `from_id` → `to_id` entre deux objets actifs distincts."""
+
+    relation_id: str
+    kind: RelationKind
+    from_id: str
+    to_id: str
+    layer: int = DEFAULT_RELATION_LAYER
+
+    def __post_init__(self) -> None:
+        _check_id("relation_id", self.relation_id)
+        _check_enum("kind", self.kind, RelationKind)
+        _check_id("from_id", self.from_id)
+        _check_id("to_id", self.to_id)
+        if self.from_id == self.to_id:
+            raise ValueError("a relation cannot link an object to itself")
+        _check_layer(self.layer)
+
+    @property
+    def endpoints(self) -> tuple[RelationKind, str, str]:
+        return (self.kind, self.from_id, self.to_id)
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "relation_id": self.relation_id,
+            "kind": self.kind.value,
+            "from_id": self.from_id,
+            "to_id": self.to_id,
+            "layer": self.layer,
+        }
+
+    @classmethod
+    def from_payload(cls, payload: object) -> SceneRelation:
+        data = _check_keys("relation", payload, frozenset({"relation_id", "kind", "from_id", "to_id"}), frozenset({"layer"}))
+        return cls(
+            relation_id=data["relation_id"],
+            kind=_enum(RelationKind, data["kind"], "kind"),
+            from_id=data["from_id"],
+            to_id=data["to_id"],
+            layer=data.get("layer", DEFAULT_RELATION_LAYER),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SceneSnapshot:
+    """Scène complète à une révision : objets actifs et archivés, relations.
+
+    Chaque relation relie deux objets actifs : l'archivage supprime les
+    relations de l'objet archivé. La scène active est `active_objects`.
+    """
+
+    scene_id: str
+    revision: int = 0
+    objects: tuple[SceneObject, ...] = ()
+    relations: tuple[SceneRelation, ...] = ()
+
+    def __post_init__(self) -> None:
+        _check_id("scene_id", self.scene_id)
+        if isinstance(self.revision, bool) or not isinstance(self.revision, int):
+            raise TypeError("revision must be an integer")
+        if self.revision < 0:
+            raise ValueError("revision must be positive or zero")
+        if not isinstance(self.objects, tuple) or not all(isinstance(item, SceneObject) for item in self.objects):
+            raise TypeError("objects must be a tuple of SceneObject")
+        if not isinstance(self.relations, tuple) or not all(isinstance(item, SceneRelation) for item in self.relations):
+            raise TypeError("relations must be a tuple of SceneRelation")
+        if len(self.objects) > MAX_SCENE_OBJECTS:
+            raise ValueError(f"a scene holds at most {MAX_SCENE_OBJECTS} objects")
+        if len(self.relations) > MAX_SCENE_RELATIONS:
+            raise ValueError(f"a scene holds at most {MAX_SCENE_RELATIONS} relations")
+        by_id = {item.object_id: item for item in self.objects}
+        if len(by_id) != len(self.objects):
+            raise ValueError("scene objects must be unique per object_id")
+        if len({relation.relation_id for relation in self.relations}) != len(self.relations):
+            raise ValueError("scene relations must be unique per relation_id")
+        for relation in self.relations:
+            for endpoint in (relation.from_id, relation.to_id):
+                target = by_id.get(endpoint)
+                if target is None or not target.active:
+                    raise ValueError(f"relation {relation.relation_id} must link active objects")
+
+    @property
+    def active_objects(self) -> tuple[SceneObject, ...]:
+        return tuple(item for item in self.objects if item.active)
+
+    def get_object(self, object_id: str) -> SceneObject | None:
+        return next((item for item in self.objects if item.object_id == object_id), None)
+
+    def get_relation(self, relation_id: str) -> SceneRelation | None:
+        return next((item for item in self.relations if item.relation_id == relation_id), None)
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": SCENE_SCHEMA_VERSION,
+            "scene_id": self.scene_id,
+            "revision": self.revision,
+            "objects": [item.to_payload() for item in self.objects],
+            "relations": [item.to_payload() for item in self.relations],
+        }
+
+    @classmethod
+    def from_payload(cls, payload: object) -> SceneSnapshot:
+        _check_schema_version("scene snapshot", payload)
+        data = _check_keys("scene snapshot", payload, frozenset({"schema_version", "scene_id", "revision", "objects", "relations"}))
+        objects = _list("objects", data["objects"], MAX_SCENE_OBJECTS)
+        relations = _list("relations", data["relations"], MAX_SCENE_RELATIONS)
+        return cls(
+            scene_id=data["scene_id"],
+            revision=data["revision"],
+            objects=tuple(SceneObject.from_payload(item) for item in objects),
+            relations=tuple(SceneRelation.from_payload(item) for item in relations),
+        )
+
+
+# ------------------------------------------------------------------ commandes
+
+
+@dataclass(frozen=True, slots=True)
+class SceneObjectFields:
+    """Champs annoncés par une commande d'objet. `None` : non annoncé, inchangé.
+
+    Ni `constraints` ni `disposition` : ils ne changent que par `pin`,
+    `unpin`, `archive` et par le réducteur. Une géométrie ne se retire pas.
+    """
+
+    kind: SceneObjectKind | None = None
+    category: str | None = None
+    exec_state: ExecState | None = None
+    representation: Representation | None = None
+    geometry: SceneGeometry | None = None
+    layer: int | None = None
+    order: int | None = None
+    visibility: Visibility | None = None
+    work_ref: WorkRef | None = None
+    payload: ScenePayload | None = None
+
+    def __post_init__(self) -> None:
+        if self.kind is not None:
+            _check_enum("kind", self.kind, SceneObjectKind)
+        if self.category is not None:
+            _check_token("category", self.category, MAX_CATEGORY_CHARS)
+        if self.exec_state is not None:
+            _check_enum("exec_state", self.exec_state, ExecState)
+        if self.representation is not None:
+            _check_enum("representation", self.representation, Representation)
+        if self.geometry is not None:
+            _check_instance("geometry", self.geometry, SceneGeometry)
+        if self.layer is not None:
+            _check_layer(self.layer)
+        if self.order is not None:
+            _check_order(self.order)
+        if self.visibility is not None:
+            _check_enum("visibility", self.visibility, Visibility)
+        if self.work_ref is not None:
+            _check_instance("work_ref", self.work_ref, WorkRef)
+        if self.payload is not None:
+            _check_instance("payload", self.payload, ScenePayload)
+
+    def to_payload(self) -> dict[str, Any]:
+        return {name: _wire(getattr(self, name)) for name in _FIELDS_WIRE_KEYS if getattr(self, name) is not None}
+
+    @classmethod
+    def from_payload(cls, payload: object) -> SceneObjectFields:
+        data = _check_keys("fields", payload, frozenset(), _FIELDS_WIRE_KEYS)
+        return cls(
+            kind=_optional_enum(SceneObjectKind, data, "kind"),
+            category=data.get("category"),
+            exec_state=_optional_enum(ExecState, data, "exec_state"),
+            representation=_optional_enum(Representation, data, "representation"),
+            geometry=_optional_nested(SceneGeometry, data, "geometry"),
+            layer=data.get("layer"),
+            order=data.get("order"),
+            visibility=_optional_enum(Visibility, data, "visibility"),
+            work_ref=_optional_nested(WorkRef, data, "work_ref"),
+            payload=_optional_nested(ScenePayload, data, "payload"),
+        )
+
+
+_FIELDS_WIRE_KEYS = frozenset(
+    {"kind", "category", "exec_state", "representation", "geometry", "layer", "order", "visibility", "work_ref", "payload"}
+)
+
+#: Arguments requis et facultatifs de chaque opération ; tout autre argument
+#: doit rester `None`. Une commande mal formée ne se construit pas.
+_OP_ARGUMENTS: dict[SceneOp, tuple[frozenset[str], frozenset[str]]] = {
+    SceneOp.UPSERT_OBJECT: (frozenset({"object_id", "fields"}), frozenset()),
+    SceneOp.PATCH_OBJECT: (frozenset({"object_id", "fields"}), frozenset()),
+    SceneOp.SET_GEOMETRY: (frozenset({"object_id", "geometry"}), frozenset({"placed_by"})),
+    SceneOp.SET_REPRESENTATION: (frozenset({"object_id", "representation"}), frozenset({"geometry"})),
+    SceneOp.SET_VISIBILITY: (frozenset({"object_id", "visibility"}), frozenset()),
+    SceneOp.PIN: (frozenset({"object_id"}), frozenset()),
+    SceneOp.UNPIN: (frozenset({"object_id"}), frozenset()),
+    SceneOp.LINK: (frozenset({"relation"}), frozenset()),
+    SceneOp.UNLINK: (frozenset({"relation_id"}), frozenset()),
+    SceneOp.ARCHIVE: (frozenset({"object_id"}), frozenset()),
+    SceneOp.ATTACH_SIGNAL: (frozenset({"object_id", "fields", "target_id"}), frozenset()),
+}
+_COMMAND_ARGUMENTS = (
+    "object_id", "fields", "geometry", "placed_by", "representation", "visibility", "relation", "relation_id", "target_id",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class SceneCommand:
+    """Intention d'un acteur sur la scène. Voir `_OP_ARGUMENTS` pour la forme.
+
+    - `upsert_object` crée l'objet (`kind` et `category` requis) ou fusionne
+      les champs annoncés ; `patch_object` exige un objet existant ;
+    - `set_geometry` accepte `placed_by=resolver` pour valider un placement
+      de l'AutoResolver ; `set_representation` peut porter la géométrie de la
+      nouvelle forme ;
+    - `attach_signal` crée ou met à jour le signal `object_id` (nature
+      `attention`) et le relie par `explains` à `target_id` ; la relation
+      porte l'identifiant du signal : un signal a une seule cible.
+    """
+
+    op: SceneOp
+    actor: SceneActor
+    object_id: str | None = None
+    fields: SceneObjectFields | None = None
+    geometry: SceneGeometry | None = None
+    placed_by: PlacedBy | None = None
+    representation: Representation | None = None
+    visibility: Visibility | None = None
+    relation: SceneRelation | None = None
+    relation_id: str | None = None
+    target_id: str | None = None
+
+    def __post_init__(self) -> None:
+        _check_enum("op", self.op, SceneOp)
+        _check_enum("actor", self.actor, SceneActor)
+        required, optional = _OP_ARGUMENTS[self.op]
+        given = {name for name in _COMMAND_ARGUMENTS if getattr(self, name) is not None}
+        if required - given:
+            raise ValueError(f"{self.op.value} requires {sorted(required - given)}")
+        if given - required - optional:
+            raise ValueError(f"{self.op.value} does not take {sorted(given - required - optional)}")
+        _check_id("object_id", self.object_id, required=False)
+        _check_id("relation_id", self.relation_id, required=False)
+        _check_id("target_id", self.target_id, required=False)
+        for name, expected in (
+            ("fields", SceneObjectFields),
+            ("geometry", SceneGeometry),
+            ("relation", SceneRelation),
+        ):
+            if getattr(self, name) is not None:
+                _check_instance(name, getattr(self, name), expected)
+        if self.representation is not None:
+            _check_enum("representation", self.representation, Representation)
+        if self.visibility is not None:
+            _check_enum("visibility", self.visibility, Visibility)
+        if self.placed_by is not None:
+            _check_enum("placed_by", self.placed_by, PlacedBy)
+            if self.placed_by is not PlacedBy.RESOLVER:
+                # Sinon l'auteur est l'acteur lui-même : rien à annoncer.
+                raise ValueError("placed_by may only announce a resolver placement")
+        if self.op is SceneOp.ATTACH_SIGNAL and self.fields is not None:
+            if self.fields.kind not in (None, SceneObjectKind.ATTENTION):
+                raise ValueError("a signal is an attention object")
+            if self.object_id == self.target_id:
+                raise ValueError("a signal cannot target itself")
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": SCENE_SCHEMA_VERSION,
+            "op": self.op.value,
+            "actor": self.actor.value,
+            **{name: _wire(getattr(self, name)) for name in _COMMAND_ARGUMENTS if getattr(self, name) is not None},
+        }
+
+    @classmethod
+    def from_payload(cls, payload: object) -> SceneCommand:
+        _check_schema_version("scene command", payload)
+        data = _check_keys(
+            "scene command", payload, frozenset({"schema_version", "op", "actor"}), frozenset(_COMMAND_ARGUMENTS)
+        )
+        return cls(
+            op=_enum(SceneOp, data["op"], "op"),
+            actor=_enum(SceneActor, data["actor"], "actor"),
+            object_id=data.get("object_id"),
+            fields=_optional_nested(SceneObjectFields, data, "fields"),
+            geometry=_optional_nested(SceneGeometry, data, "geometry"),
+            placed_by=_optional_enum(PlacedBy, data, "placed_by"),
+            representation=_optional_enum(Representation, data, "representation"),
+            visibility=_optional_enum(Visibility, data, "visibility"),
+            relation=_optional_nested(SceneRelation, data, "relation"),
+            relation_id=data.get("relation_id"),
+            target_id=data.get("target_id"),
+        )
+
+
+# ------------------------------------------------------------------ patchs
+
+
+class PatchOpKind(StrEnum):
+    """Delta d'état. Un objet n'est jamais supprimé : il est archivé."""
+
+    PUT_OBJECT = "put_object"
+    PUT_RELATION = "put_relation"
+    DELETE_RELATION = "delete_relation"
+
+
+@dataclass(frozen=True, slots=True)
+class ScenePatchOp:
+    op: PatchOpKind
+    object: SceneObject | None = None
+    relation: SceneRelation | None = None
+    relation_id: str | None = None
+
+    def __post_init__(self) -> None:
+        _check_enum("op", self.op, PatchOpKind)
+        expected = {
+            PatchOpKind.PUT_OBJECT: "object",
+            PatchOpKind.PUT_RELATION: "relation",
+            PatchOpKind.DELETE_RELATION: "relation_id",
+        }[self.op]
+        given = {name for name in ("object", "relation", "relation_id") if getattr(self, name) is not None}
+        if given != {expected}:
+            raise ValueError(f"{self.op.value} carries exactly {expected}")
+        if self.object is not None:
+            _check_instance("object", self.object, SceneObject)
+        if self.relation is not None:
+            _check_instance("relation", self.relation, SceneRelation)
+        _check_id("relation_id", self.relation_id, required=False)
+
+    def to_payload(self) -> dict[str, Any]:
+        name = next(name for name in ("object", "relation", "relation_id") if getattr(self, name) is not None)
+        return {"op": self.op.value, name: _wire(getattr(self, name))}
+
+    @classmethod
+    def from_payload(cls, payload: object) -> ScenePatchOp:
+        data = _check_keys("patch op", payload, frozenset({"op"}), frozenset({"object", "relation", "relation_id"}))
+        return cls(
+            op=_enum(PatchOpKind, data["op"], "op"),
+            object=_optional_nested(SceneObject, data, "object"),
+            relation=_optional_nested(SceneRelation, data, "relation"),
+            relation_id=data.get("relation_id"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ScenePatch:
+    """Delta exact d'une révision à la suivante (`revision` = précédente + 1).
+
+    Appliqué dans l'ordre à l'instantané de la révision précédente, il donne
+    exactement le nouvel instantané (`apply_scene_patch`). Un consommateur
+    qui voit un saut de révision relit l'instantané.
+    """
+
+    revision: int
+    ops: tuple[ScenePatchOp, ...]
+
+    def __post_init__(self) -> None:
+        if isinstance(self.revision, bool) or not isinstance(self.revision, int):
+            raise TypeError("revision must be an integer")
+        if self.revision < 1:
+            raise ValueError("a patch revision starts at 1")
+        if not isinstance(self.ops, tuple) or not all(isinstance(op, ScenePatchOp) for op in self.ops):
+            raise TypeError("ops must be a tuple of ScenePatchOp")
+        if not 1 <= len(self.ops) <= MAX_PATCH_OPS:
+            raise ValueError(f"a patch holds between 1 and {MAX_PATCH_OPS} ops")
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": SCENE_SCHEMA_VERSION,
+            "revision": self.revision,
+            "ops": [op.to_payload() for op in self.ops],
+        }
+
+    @classmethod
+    def from_payload(cls, payload: object) -> ScenePatch:
+        _check_schema_version("scene patch", payload)
+        data = _check_keys("scene patch", payload, frozenset({"schema_version", "revision", "ops"}))
+        ops = _list("ops", data["ops"], MAX_PATCH_OPS)
+        return cls(revision=data["revision"], ops=tuple(ScenePatchOp.from_payload(op) for op in ops))
+
+
+def apply_scene_patch(snapshot: SceneSnapshot, patch: ScenePatch) -> SceneSnapshot:
+    """Appliquer un patch à l'instantané de la révision précédente. Fonction pure.
+
+    Un objet remplacé garde sa place dans l'ordre des objets ; un nouvel objet
+    est ajouté à la fin. Lève `ValueError` sur un saut de révision ou une
+    suppression de relation inconnue : le consommateur doit se resynchroniser.
+    """
+
+    if patch.revision != snapshot.revision + 1:
+        raise ValueError(f"patch {patch.revision} does not follow revision {snapshot.revision}")
+    objects = {item.object_id: item for item in snapshot.objects}
+    relations = {item.relation_id: item for item in snapshot.relations}
+    for op in patch.ops:
+        if op.object is not None:
+            objects[op.object.object_id] = op.object
+        elif op.relation is not None:
+            relations[op.relation.relation_id] = op.relation
+        else:
+            if op.relation_id not in relations:
+                raise ValueError(f"patch deletes unknown relation {op.relation_id}")
+            del relations[op.relation_id]
+    return SceneSnapshot(
+        scene_id=snapshot.scene_id,
+        revision=patch.revision,
+        objects=tuple(objects.values()),
+        relations=tuple(relations.values()),
+    )
+
+
+# ------------------------------------------------------------------ règles
+
+
+class SceneCommandOutcome(StrEnum):
+    """Effet d'une commande sur la scène."""
+
+    APPLIED = "applied"
+    #: Rien ne change : ni révision ni patch. Rejouer une commande appliquée
+    #: donne ce résultat.
+    DUPLICATE = "duplicate"
+    #: L'acteur n'a pas ce droit (matrice d'autorité, champ ou épinglage).
+    REJECTED_AUTHORITY = "rejected_authority"
+    #: Commande bien formée mais inapplicable à cette scène (objet inconnu ou
+    #: archivé, nature changée, borne atteinte...).
+    INVALID = "invalid"
+
+
+class SceneRefusal(StrEnum):
+    """Motif stable d'un refus, pour le journal et l'erreur d'outil du cerveau."""
+
+    # rejected_authority
+    OP_NOT_ALLOWED = "op_not_allowed"
+    RUNTIME_KIND = "runtime_kind"
+    RUNTIME_COMPOSITION = "runtime_composition"
+    RUNTIME_RELATION = "runtime_relation"
+    EXECUTION_TRUTH = "execution_truth"
+    PINNED_BY_USER = "pinned_by_user"
+    EXPLICIT_PLACEMENT = "explicit_placement"
+    # invalid
+    UNKNOWN_OBJECT = "unknown_object"
+    OBJECT_ARCHIVED = "object_archived"
+    KIND_IMMUTABLE = "kind_immutable"
+    INCOMPLETE_OBJECT = "incomplete_object"
+    UNPLACED = "unplaced"
+    SCENE_FULL = "scene_full"
+    RELATION_LIMIT = "relation_limit"
+    RELATION_CONFLICT = "relation_conflict"
+
+
+@dataclass(frozen=True, slots=True)
+class SceneUpdate:
+    """Résultat de `apply_scene_command`.
+
+    `snapshot` est la nouvelle scène si la commande est appliquée, l'instantané
+    reçu (le même objet) sinon. `patch` existe exactement quand la commande
+    est appliquée, `reason` exactement quand elle est refusée ou invalide.
+    """
+
+    outcome: SceneCommandOutcome
+    snapshot: SceneSnapshot
+    patch: ScenePatch | None = None
+    reason: SceneRefusal | None = None
+
+    def __post_init__(self) -> None:
+        if (self.patch is not None) != (self.outcome is SceneCommandOutcome.APPLIED):
+            raise ValueError("a patch exists exactly when the command is applied")
+        refused = self.outcome in (SceneCommandOutcome.REJECTED_AUTHORITY, SceneCommandOutcome.INVALID)
+        if (self.reason is not None) != refused:
+            raise ValueError("a reason exists exactly when the command is refused")
+
+    @property
+    def changed(self) -> bool:
+        return self.outcome is SceneCommandOutcome.APPLIED
+
+
+class _Refused(Exception):
+    """Interruption interne d'un plan ; ne sort jamais de `apply_scene_command`."""
+
+    def __init__(self, outcome: SceneCommandOutcome, reason: SceneRefusal) -> None:
+        super().__init__(reason.value)
+        self.outcome = outcome
+        self.reason = reason
+
+
+def _rejected(reason: SceneRefusal) -> _Refused:
+    return _Refused(SceneCommandOutcome.REJECTED_AUTHORITY, reason)
+
+
+def _invalid(reason: SceneRefusal) -> _Refused:
+    return _Refused(SceneCommandOutcome.INVALID, reason)
+
+
+def apply_scene_command(snapshot: SceneSnapshot, command: SceneCommand) -> SceneUpdate:
+    """Appliquer une commande à la scène. Fonction pure.
+
+    Contrôles, dans l'ordre :
+
+    1. matrice `ALLOWED_SCENE_OPS` : une opération hors droits est refusée
+       avant même de regarder la scène (`archive` par le cerveau est refusé
+       même sur un objet inconnu) ;
+    2. existence et disposition des objets visés (`invalid`) ;
+    3. autorité sur l'**effet** : `runtime` n'écrit que des nœuds
+       d'exécution et des signaux, jamais un champ de composition, et ne relie
+       que des `parent_of` entre nœuds d'exécution ; seul `runtime` change
+       `exec_state` ou `work_ref` ; seul `user` déplace ou redimensionne un
+       objet épinglé ; un placement `resolver` ne remplace ni une épingle ni
+       un placement explicite ;
+    4. bornes de la scène (`invalid`) ;
+    5. si rien ne change, `duplicate` ; sinon la révision avance d'un et le
+       patch décrit exactement le changement.
+
+    Une commande qui ne réécrit que des valeurs déjà retenues ne change rien :
+    réannoncer la géométrie d'un objet épinglé ou l'`exec_state` connu n'est
+    pas un déplacement ni une écriture de vérité.
+    """
+
+    _check_instance("snapshot", snapshot, SceneSnapshot)
+    _check_instance("command", command, SceneCommand)
+    if command.op not in ALLOWED_SCENE_OPS[command.actor]:
+        return SceneUpdate(SceneCommandOutcome.REJECTED_AUTHORITY, snapshot, reason=SceneRefusal.OP_NOT_ALLOWED)
+    try:
+        ops = _PLANNERS[command.op](snapshot, command)
+    except _Refused as refused:
+        return SceneUpdate(refused.outcome, snapshot, reason=refused.reason)
+    if not ops:
+        return SceneUpdate(SceneCommandOutcome.DUPLICATE, snapshot)
+    patch = ScenePatch(revision=snapshot.revision + 1, ops=tuple(ops))
+    return SceneUpdate(SceneCommandOutcome.APPLIED, apply_scene_patch(snapshot, patch), patch)
+
+
+def _require_active(snapshot: SceneSnapshot, object_id: str) -> SceneObject:
+    current = snapshot.get_object(object_id)
+    if current is None:
+        raise _invalid(SceneRefusal.UNKNOWN_OBJECT)
+    if not current.active:
+        raise _invalid(SceneRefusal.OBJECT_ARCHIVED)
+    return current
+
+
+def _plan_object_write(
+    snapshot: SceneSnapshot,
+    actor: SceneActor,
+    object_id: str,
+    fields: SceneObjectFields,
+    *,
+    create: bool,
+    kind: SceneObjectKind | None = None,
+    placed_by: PlacedBy | None = None,
+) -> list[ScenePatchOp]:
+    """Plan commun des écritures de champs d'objet (upsert, patch, set_*, signal)."""
+
+    current = snapshot.get_object(object_id)
+    wanted_kind = kind or fields.kind
+    if current is None:
+        if not create:
+            raise _invalid(SceneRefusal.UNKNOWN_OBJECT)
+        if wanted_kind is None or fields.category is None:
+            raise _invalid(SceneRefusal.INCOMPLETE_OBJECT)
+        before = SceneObject(
+            object_id=object_id,
+            kind=wanted_kind,
+            category=fields.category,
+            constraints=SceneConstraints(placed_by=PlacedBy(actor.value)),
+            layer=DEFAULT_LAYERS[wanted_kind],
+        )
+    else:
+        if not current.active:
+            raise _invalid(SceneRefusal.OBJECT_ARCHIVED)
+        if wanted_kind is not None and wanted_kind is not current.kind:
+            raise _invalid(SceneRefusal.KIND_IMMUTABLE)
+        before = current
+
+    after = replace(
+        before,
+        **{name: getattr(fields, name) for name in _WRITABLE_FIELDS if getattr(fields, name) is not None},
+    )
+    changed = {name for name in _WRITABLE_FIELDS if getattr(after, name) != getattr(before, name)}
+    _check_write_authority(actor, before, changed, placed_by)
+    if current is None and len(snapshot.objects) >= MAX_SCENE_OBJECTS:
+        raise _invalid(SceneRefusal.SCENE_FULL)
+    if "geometry" in changed:
+        author = placed_by or PlacedBy(actor.value)
+        after = replace(after, constraints=replace(after.constraints, placed_by=author))
+    if after == current:
+        return []
+    return [ScenePatchOp(PatchOpKind.PUT_OBJECT, object=after)]
+
+
+def _check_write_authority(
+    actor: SceneActor, before: SceneObject, changed: set[str], placed_by: PlacedBy | None
+) -> None:
+    if actor is SceneActor.RUNTIME:
+        if before.kind not in RUNTIME_KINDS:
+            raise _rejected(SceneRefusal.RUNTIME_KIND)
+        if changed & COMPOSITION_FIELDS:
+            raise _rejected(SceneRefusal.RUNTIME_COMPOSITION)
+    elif changed & EXECUTION_FIELDS:
+        # Décision 17 : l'état d'exécution se lit dans Core, il ne s'écrit pas
+        # depuis la scène.
+        raise _rejected(SceneRefusal.EXECUTION_TRUTH)
+    if "geometry" not in changed:
+        return
+    if before.constraints.pinned_by_user and (actor is not SceneActor.USER or placed_by is PlacedBy.RESOLVER):
+        raise _rejected(SceneRefusal.PINNED_BY_USER)
+    if (
+        placed_by is PlacedBy.RESOLVER
+        and before.geometry is not None
+        and before.constraints.placed_by is not PlacedBy.RESOLVER
+    ):
+        raise _rejected(SceneRefusal.EXPLICIT_PLACEMENT)
+
+
+def _plan_upsert(snapshot: SceneSnapshot, command: SceneCommand) -> list[ScenePatchOp]:
+    assert command.object_id is not None and command.fields is not None
+    return _plan_object_write(snapshot, command.actor, command.object_id, command.fields, create=True)
+
+
+def _plan_patch(snapshot: SceneSnapshot, command: SceneCommand) -> list[ScenePatchOp]:
+    assert command.object_id is not None and command.fields is not None
+    return _plan_object_write(snapshot, command.actor, command.object_id, command.fields, create=False)
+
+
+def _plan_set_geometry(snapshot: SceneSnapshot, command: SceneCommand) -> list[ScenePatchOp]:
+    assert command.object_id is not None
+    fields = SceneObjectFields(geometry=command.geometry)
+    return _plan_object_write(
+        snapshot, command.actor, command.object_id, fields, create=False, placed_by=command.placed_by
+    )
+
+
+def _plan_set_representation(snapshot: SceneSnapshot, command: SceneCommand) -> list[ScenePatchOp]:
+    assert command.object_id is not None
+    fields = SceneObjectFields(representation=command.representation, geometry=command.geometry)
+    return _plan_object_write(snapshot, command.actor, command.object_id, fields, create=False)
+
+
+def _plan_set_visibility(snapshot: SceneSnapshot, command: SceneCommand) -> list[ScenePatchOp]:
+    assert command.object_id is not None
+    fields = SceneObjectFields(visibility=command.visibility)
+    return _plan_object_write(snapshot, command.actor, command.object_id, fields, create=False)
+
+
+def _plan_pin(snapshot: SceneSnapshot, command: SceneCommand, *, pinned: bool) -> list[ScenePatchOp]:
+    assert command.object_id is not None
+    current = _require_active(snapshot, command.object_id)
+    if current.constraints.pinned_by_user is pinned:
+        return []
+    if pinned and current.geometry is None:
+        raise _invalid(SceneRefusal.UNPLACED)
+    updated = replace(current, constraints=replace(current.constraints, pinned_by_user=pinned))
+    return [ScenePatchOp(PatchOpKind.PUT_OBJECT, object=updated)]
+
+
+def _plan_archive(snapshot: SceneSnapshot, command: SceneCommand) -> list[ScenePatchOp]:
+    assert command.object_id is not None
+    current = snapshot.get_object(command.object_id)
+    if current is None:
+        raise _invalid(SceneRefusal.UNKNOWN_OBJECT)
+    if not current.active:
+        return []
+    ops = [ScenePatchOp(PatchOpKind.PUT_OBJECT, object=replace(current, disposition=Disposition.ARCHIVED))]
+    ops.extend(
+        ScenePatchOp(PatchOpKind.DELETE_RELATION, relation_id=relation.relation_id)
+        for relation in snapshot.relations
+        if command.object_id in (relation.from_id, relation.to_id)
+    )
+    return ops
+
+
+def _plan_link(snapshot: SceneSnapshot, command: SceneCommand) -> list[ScenePatchOp]:
+    relation = command.relation
+    assert relation is not None
+    runtime = command.actor is SceneActor.RUNTIME
+    if runtime and relation.kind is not RelationKind.PARENT_OF:
+        raise _rejected(SceneRefusal.RUNTIME_RELATION)
+    source = _require_active(snapshot, relation.from_id)
+    target = _require_active(snapshot, relation.to_id)
+    if runtime and (source.kind not in EXECUTION_KINDS or target.kind not in EXECUTION_KINDS):
+        raise _rejected(SceneRefusal.RUNTIME_RELATION)
+    existing = snapshot.get_relation(relation.relation_id)
+    if existing is not None:
+        if existing.endpoints != relation.endpoints:
+            raise _invalid(SceneRefusal.RELATION_CONFLICT)
+        if existing == relation:
+            return []
+    elif len(snapshot.relations) >= MAX_SCENE_RELATIONS:
+        raise _invalid(SceneRefusal.RELATION_LIMIT)
+    return [ScenePatchOp(PatchOpKind.PUT_RELATION, relation=relation)]
+
+
+def _plan_unlink(snapshot: SceneSnapshot, command: SceneCommand) -> list[ScenePatchOp]:
+    assert command.relation_id is not None
+    existing = snapshot.get_relation(command.relation_id)
+    if existing is None:
+        # Retirer ce qui n'existe plus ne change rien : un unlink rejoué est
+        # un doublon, pas une erreur.
+        return []
+    if command.actor is SceneActor.RUNTIME:
+        kinds = {snapshot.get_object(endpoint).kind for endpoint in (existing.from_id, existing.to_id)}  # type: ignore[union-attr]
+        if existing.kind is not RelationKind.PARENT_OF or not kinds <= EXECUTION_KINDS:
+            raise _rejected(SceneRefusal.RUNTIME_RELATION)
+    return [ScenePatchOp(PatchOpKind.DELETE_RELATION, relation_id=command.relation_id)]
+
+
+def _plan_attach_signal(snapshot: SceneSnapshot, command: SceneCommand) -> list[ScenePatchOp]:
+    assert command.object_id is not None and command.fields is not None and command.target_id is not None
+    target = _require_active(snapshot, command.target_id)
+    if command.actor is SceneActor.RUNTIME and target.kind not in EXECUTION_KINDS:
+        raise _rejected(SceneRefusal.RUNTIME_KIND)
+    ops = _plan_object_write(
+        snapshot, command.actor, command.object_id, command.fields, create=True, kind=SceneObjectKind.ATTENTION
+    )
+    relation = SceneRelation(
+        relation_id=command.object_id,
+        kind=RelationKind.EXPLAINS,
+        from_id=command.object_id,
+        to_id=command.target_id,
+    )
+    existing = snapshot.get_relation(relation.relation_id)
+    if existing is not None:
+        if existing.endpoints != relation.endpoints:
+            raise _invalid(SceneRefusal.RELATION_CONFLICT)
+        return ops
+    if len(snapshot.relations) >= MAX_SCENE_RELATIONS:
+        raise _invalid(SceneRefusal.RELATION_LIMIT)
+    return [*ops, ScenePatchOp(PatchOpKind.PUT_RELATION, relation=relation)]
+
+
+_PLANNERS: dict[SceneOp, Callable[[SceneSnapshot, SceneCommand], list[ScenePatchOp]]] = {
+    SceneOp.UPSERT_OBJECT: _plan_upsert,
+    SceneOp.PATCH_OBJECT: _plan_patch,
+    SceneOp.SET_GEOMETRY: _plan_set_geometry,
+    SceneOp.SET_REPRESENTATION: _plan_set_representation,
+    SceneOp.SET_VISIBILITY: _plan_set_visibility,
+    SceneOp.PIN: lambda snapshot, command: _plan_pin(snapshot, command, pinned=True),
+    SceneOp.UNPIN: lambda snapshot, command: _plan_pin(snapshot, command, pinned=False),
+    SceneOp.LINK: _plan_link,
+    SceneOp.UNLINK: _plan_unlink,
+    SceneOp.ARCHIVE: _plan_archive,
+    SceneOp.ATTACH_SIGNAL: _plan_attach_signal,
+}

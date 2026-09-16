@@ -2,6 +2,8 @@
 
 `jarvis/core/voice_state.py::VoiceConversationState` owns a bounded, immutable projection of canonical voice evidence. `jarvis/domain/voice_state.py` defines its records and version1 snapshot codec. The reducer does not send audio, dispatch tasks, grant permissions, or write durable conversation history. Task05 adds `VoiceLedgerService`, owned by `JarvisCoreApplication`, to ingest canonical observations and project confirmed words through the existing `ConversationService` writer. See the Task05 section below for authenticated ingress, durable range recovery and cache eviction.
 
+Related domain models: Core work state (`jarvis/domain/work_state.py`, [ARCHITECTURE.md › Core work state](ARCHITECTURE.md#core-work-state)) and the constellation scene projection (`jarvis/domain/scene.py`, [scene-model.md](scene-model.md)).
+
 ## Public API and ownership
 
 | Entry point | Responsibility |

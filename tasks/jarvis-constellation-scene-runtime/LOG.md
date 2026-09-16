@@ -58,3 +58,24 @@ Readiness state: `HUMAN_DECISION_REQUIRED`.
 - Human chose to leave the Drive handoff in `to-do`; the local copy under `tasks/` is the working source. Queue placement is to be handled manually by the Human.
 - Slice 00 state: **`READY`**.
 - Freshness check before Slice 01: `origin/main` still `7ed67bb`; anchors `jarvis/domain/work_state.py` (`WorkStatus`, `ALLOWED_WORK_TRANSITIONS`, `apply_observation`) present; baseline green.
+
+## 2026-09-16 — Slice 01 — implementation notes (agent 01)
+
+Delivered `jarvis/domain/scene.py` (pure, imports only stdlib + `jarvis.domain.work_state` bounds), `tests/unit/test_scene_contracts.py`, `docs/scene-model.md` (linked from `docs/ARCHITECTURE.md` › Core contracts and `docs/state-model.md`).
+
+Decisions taken inside the contract (reviewable by PM):
+
+- **`pin`/`unpin` are user-only.** The contract says brain "may do everything except archive and cannot move/resize a pinned object". A brain `unpin` followed by `set_geometry` would bypass that protection, and a brain `pin` would write a flag named `pinned_by_user`. Matrix: runtime {upsert, patch, link, unlink, attach_signal}; brain = all − {archive, pin, unpin}; user = all.
+- **Runtime never writes composition fields** (`representation`, `geometry`, `layer`, `order`, `visibility`), not only "never geometry of a pinned object". Reason: Decision 3 (narrow runtime authority) and Slice 04 ("no geometry beyond unplaced"); it also makes "completion never hides" structural. Runtime-created objects get `DEFAULT_LAYERS[kind]` (group 50, agent/job 100, artifact 120, window 220, attention 300 — conventions, overridable by brain/user).
+- **`exec_state` and `work_ref` are runtime-only** (`execution_truth` refusal for brain/user), from Decision 17. Echoing the known value is not a change and is accepted.
+- **Authority is checked on the effective change**, not on announced values: re-sending the current geometry of a pinned object is a `duplicate`, not a refusal. Op-level matrix is checked first, so brain `archive` is refused even on an unknown object.
+- **Upsert/patch merge** announced fields (`SceneObjectFields`, `None` = unchanged) so a runtime refresh never resets brain/user composition. `constraints` and `disposition` are not command fields; the reducer sets `placed_by` (creator, then author of each geometry change) and only `pin`/`unpin`/`archive` change the rest.
+- **Resolver placements** go through `set_geometry(placed_by=resolver)` from any actor with the op (Slice 05/08 commit path is user); refused on a pinned object (`pinned_by_user`) and on an explicitly placed one (`explicit_placement`). Unplaced = `geometry is None`; `placed_by = runtime` then just records the creator.
+- **Archive keeps the object** in `SceneSnapshot.objects` (`disposition = archived`) and deletes its relations; later commands on it are `invalid/object_archived`, so a late runtime update cannot resurrect it. `active_objects` gives the active scene. The 512-object bound includes archived objects: Slice 02 must move old archived objects to history storage before the bound is reached (creation beyond is `invalid/scene_full`).
+- **Signals:** `attach_signal` upserts an `attention` object and an `explains` relation whose `relation_id` is the signal id (one target per signal; retargeting is `relation_conflict`). Runtime may attach only to `agent`/`job`.
+- **Patches are state deltas** (`put_object`, `put_relation`, `delete_relation`), not replayed commands; `apply_scene_patch(previous, patch)` reproduces the new snapshot and raises on gaps. No command id / dedup cache: `duplicate` means "no effect", so replays are idempotent (unlink of an absent relation is `duplicate`).
+- **Refusal reasons** are a closed `SceneRefusal` token enum (for journal and MCP tool errors).
+- **Wire:** snapshot, command and patch carry `schema_version: 1`, checked before any other key (`UnsupportedSceneSchemaVersion`, a `ValueError`, for missing/unknown/newer/non-int); decoding is strict at every level (unknown keys rejected). Payload `url` restricted to http(s) because the renderer will put it in the DOM.
+- Relation-kind semantics beyond runtime rules (e.g. `groups` must start at a `group`) and `parent_of` cycles are **not** validated in V1.
+
+No deviation from the locked decisions. No temporary/mock behaviour.
