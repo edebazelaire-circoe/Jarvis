@@ -6,7 +6,7 @@ The runtime components are intentionally kept outside the `jarvis/` Python packa
 - **Barehands** — AGPL-3.0-or-later, pinned source snapshot, locally hardened for Jarvis.
 - **ai-visualizer** — AGPL-3.0-or-later, pinned source snapshot, unmodified runtime consumer of Jarvis' file signal bus.
 - **Three.js 0.160.0** — MIT, vendored into the Barehands snapshot.
-- **MediaPipe Tasks Vision 0.10.14** and the hand-landmarker model — Apache-2.0, vendored into the Barehands snapshot.
+- **MediaPipe Tasks Vision 0.10.14** and the hand-landmarker model — Apache-2.0, vendored into the Barehands snapshot. The Control Center also serves a whitelist of these files (`/barehands/assets/…`) to its own "Barehands (mode test)" hand pointer; that pointer is an original reimplementation and copies no Barehands (AGPL) code. See `docs/OPERATIONS.md`, "Expérimental : Barehands en mode test".
 
 `fullstack-agent`, `backtalk`, and `ai-memory-vault` are reference-only: Jarvis does not import or execute them.
 

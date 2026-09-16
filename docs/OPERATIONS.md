@@ -122,10 +122,9 @@ duration, without storing raw audio.
 ## La fenêtre de réglages
 
 Le bouton **SET** du Control Center (ou la touche `s`) ouvre une fenêtre
-centrée, fermée par un clic à l'extérieur ou par `Échap`. La page assemblée a
-six onglets : Voix, Prompts, Agent / CLI, API Keys, Raccourcis et Apparence.
-Apparence change uniquement le renderer local et conserve le choix dans le
-navigateur ; il n'écrit aucun réglage runtime.
+centrée, fermée par un clic à l'extérieur ou par `Échap`. Elle a six onglets :
+Mode vocal, Prompts, Agent / CLI, Config, API Keys et Raccourcis, plus
+Apparence (couche de thèmes) et Expérimental (Barehands en mode test).
 
 Un principe la traverse : **la page ne connaît aucun réglage**. Le serveur
 décrit ce qui existe — les piles vocales, leurs champs, les CLI, leurs modes,
@@ -136,25 +135,7 @@ fournisseur, et il n'apparaît que lorsqu'il s'applique — les réglages de sil
 disparaissent en fin de tour manuelle, les options Gemini n'existent pas sous
 OpenAI.
 
-### Voix
-
-L'onglet Voix contient sept sous-onglets décrits et ordonnés par le backend :
-Architecture, Conversation, Tours & interruptions, Modèles, Audio, Avancé et
-Diagnostic. Les réglages audio et le délai de mise en veille anciennement sous
-Config sont respectivement sous Audio et Conversation. Le raccourci global de
-réveil se règle uniquement sous Tours & interruptions.
-
-Modèles intègre le catalogue comparatif partagé. Le rôle demandé au backend
-peut être Conversation temps réel, Transcription ou Synthèse vocale ; les états
-de disponibilité restent ceux de `/api/catalog`, sans inventaire navigateur.
-Les sélecteurs de modèle fournisseur utilisent en parallèle leur `source`
-`/api/models`, conservent une valeur enregistrée devenue absente et proposent
-une relance locale en cas d'échec, sans réinitialiser le catalogue comparatif.
-Diagnostic distingue la pile effective de la pile historique conservée et
-affiche en lecture seule les états autorisation, vérificateur, AEC, changement
-de pile et modèles, une seule fois selon l'inventaire backend. Sans entrée ou
-sortie audio détectée, Audio le signale, propose une nouvelle détection et
-désactive le test matériel.
+### Mode vocal
 
 En tête de l'onglet, **Architecture** choisit le déroulé d'une conversation :
 « Un tour par appui » (`legacy`) ou « Conversation continue (jusqu'à F9) »
@@ -280,6 +261,83 @@ Ne figure dans cet onglet que ce qui fait quelque chose. Deux portées :
 Deux actions ne peuvent pas partager une touche dans une même portée : la
 seconde ne se déclencherait jamais et rien ne le dirait.
 
+### Expérimental : Barehands en mode test (pointeur à mains nues)
+
+L'onglet **Expérimental** (ajouté par `jarvis/runtime/control_center_barehands.js`,
+comme l'onglet Apparence l'est par la couche de thèmes) porte un interrupteur
+**Activer Barehands (mode test)**, éteint par défaut. Il s'applique et
+s'enregistre immédiatement, sans bouton Enregistrer, sous
+`barehands_test_mode.enabled` dans `runtime/control-center-settings.json` ; il
+reste actif au prochain chargement de la page. Route dédiée, comme les
+raccourcis : `GET /api/barehands` (état + présence des assets) et
+`POST /api/barehands` (`{"enabled": true|false}`, refus HTTP 400 avec code
+stable `barehands_*`, rien d'écrit). Événements : `settings.barehands`,
+`settings.barehands.rejected`.
+
+Activé, la page ouvre la webcam et suit les mains **dans le navigateur**
+(MediaPipe Hand Landmarker, WASM + modèle `hand_landmarker.task`), sans service
+cloud ni serveur Barehands. Chaque main détectée affiche un jeton rond qui suit
+le bout de l'index (image vue en miroir, 12 % de bord ignoré pour atteindre les
+coins). Retour visuel : le jeton grossit et l'élément visé est cerné au survol ;
+l'anneau se remplit pendant le rapprochement pouce-index et le jeton se fige
+pour viser ; au pincement franc, une onde marque le clic. Le clic rejoue la
+séquence souris (`pointerdown`, `mousedown`, `pointerup`, `mouseup`, `click`)
+sur l'élément sous le jeton : boutons du dock, onglets, cases, cartes Agents,
+fermeture de fenêtre. Seuils (`JarvisBarehandsCore.DEFAULTS`) : pincé sous 0,28
+de la taille de paume, relâché au-dessus de 0,42 (hystérésis), deux images de
+confirmation, 450 ms d'anti-rebond, un seul clic par pincement. Le jeton suit
+la couleur d'accent du thème (`--omega-accent` sous Omega, `--accent` sinon).
+
+Arrêt : interrupteur coupé, caméra refusée, absente, occupée ou débranchée,
+modèle absent, erreur du suivi, fermeture de la page. Dans tous les cas, un seul
+chemin (`teardown`) arrête les pistes caméra, ferme le modèle, retire la vidéo,
+les jetons et le survol ; un toast et l'onglet disent pourquoi. Un démarrage
+encore en vol quand on éteint rend la caméra dès qu'elle arrive.
+
+Assets : non versionnés, ce sont ceux que `scripts/bootstrap_third_party.py` a
+vendorisés sous `third_party/barehands/vendor` (MediaPipe Tasks Vision 0.10.14,
+Apache-2.0). Le Control Center en sert une liste blanche sous
+`/barehands/assets/…` ; `JARVIS_BAREHANDS_VENDOR_DIR` désigne un autre dossier
+(un worktree sans installation, par exemple). Absents, l'onglet liste les
+fichiers manquants et la caméra n'est jamais ouverte.
+
+Ce qui n'a pas été repris ni touché, volontairement : le serveur Barehands
+(port 8794), `stage.html` et son moteur de gestes (code AGPL-3.0 : rien n'en est
+copié, le pointeur est une réimplémentation), le jeton codé en dur de
+`jarvis/runtime/factory.py` (il ne concerne que l'outil V1 `board_present` via
+`/cmd`, que le mode test n'utilise pas), la CSP `frame-ancestors 'none'` du
+serveur patché (aucune iframe) et le chemin d'orbe périmé de
+`third_party/barehands/barehands.json` (lu seulement par `stage.html`). Ces
+points restent ouverts pour le board V1.
+
+Limites connues : pas de glisser-déposer ni de défilement ; une liste
+déroulante `<select>` ne s'ouvre pas sur un clic simulé ; le visage
+ai-visualizer (iframe) ne reçoit pas les clics ; le survol n'active pas les
+styles `:hover` natifs (un contour les remplace) ; le suivi tourne sur le fil
+principal de la page.
+
+#### Procédure de test manuel (caméra réelle)
+
+1. Assets présents : `python scripts/bootstrap_third_party.py --verify` rend 0.
+2. Lancer le Control Center (`python -m jarvis control-center`), ouvrir
+   `http://127.0.0.1:17654/` dans Chrome. Depuis un worktree, en parallèle d'un
+   JARVIS déjà lancé : `JARVIS_UI_PORT=17655`, `JARVIS_VISUALIZER_ENABLED=0`,
+   `JARVIS_BAREHANDS_VENDOR_DIR=<dépôt principal>\third_party\barehands\vendor`.
+3. SET → Expérimental → cocher l'interrupteur. Attendu : invite caméra, puis
+   toast « Barehands actif » et pastille `MAINS · TEST` en bas à gauche.
+4. Montrer une main : un jeton suit l'index ; deux mains, deux jetons.
+   Survoler un bouton du dock : jeton agrandi, bouton cerné.
+5. Rapprocher lentement pouce et index : anneau qui se remplit, jeton figé.
+   Pincer franchement sur le bouton Trace : le panneau s'ouvre (onde de clic).
+   Rester pincé : aucun second clic. Rouvrir puis repincer : nouveau clic.
+6. Ouvrir SET, changer d'onglet et cocher une case au pincement.
+7. Couper l'interrupteur au pincement : jetons retirés, voyant caméra éteint,
+   toast « Barehands arrêté ». Recharger la page : toujours éteint.
+8. Réactiver, recharger : le mode test repart seul. Refuser la caméra dans
+   Chrome (icône de l'adresse) puis recharger : toast « Caméra refusée »,
+   aucune surimpression, message dans l'onglet.
+9. Débrancher la webcam pendant le suivi : « Caméra coupée », tout est retiré.
+
 ## Confirmation behavior
 
 For a persistent memory write, Jarvis reads a summary of the requested content and waits. Exact accepted forms:
@@ -305,7 +363,7 @@ It is safe to delete `<memory>/.jarvis/index.sqlite3`; the next rebuild recreate
 
 Tracked defaults live in `config/jarvis.example.toml`; local `config/jarvis.toml` is ignored by Git.
 
-The Control Center settings window (**Voix → Audio**) lists the audio devices exposed by PortAudio. Select an input and an output, then use **Tester micro + sortie**: Jarvis records two seconds, requires a detected microphone signal, and replays the captured audio through the selected output. Save the selection and restart the Voice runtime to apply it to conversations and Porcupine. Everything else that window offers is described above, under "La fenetre de reglages".
+The Control Center settings window (tab **Config**) lists the audio devices exposed by PortAudio. Select an input and an output, then use **Tester micro + sortie**: Jarvis records two seconds, requires a detected microphone signal, and replays the captured audio through the selected output. Save the selection and restart the Voice runtime to apply it to conversations and Porcupine. Everything else that window offers is described above, under "La fenetre de reglages".
 
 Main environment overrides:
 
@@ -324,7 +382,7 @@ Main environment overrides:
 | `OPENAI_REALTIME_VOICE` | Realtime timbre; default `cedar` |
 | `JARVIS_VOICE_TURN_MODE` | `auto` (server VAD, default) or `manual` (second key press) |
 | `JARVIS_VOICE_STACK` | `openai_realtime` (default) or `gemini_live` |
-| `JARVIS_VOICE_ARCH` | `legacy` (default, computed) or `continuous_brain`; see "Deux architectures vocales" below. The **Architecture** choice of the Control Center (Voix → Architecture) takes precedence; this variable only applies while that choice is left on "Par défaut" |
+| `JARVIS_VOICE_ARCH` | `legacy` (default, computed) or `continuous_brain`; see "Deux architectures vocales" below. The **Architecture** choice of the Control Center (tab Mode vocal) takes precedence; this variable only applies while that choice is left on "Par défaut" |
 | `JARVIS_ACTIVE_TIMEOUT_S` | useful-inactivity timeout of an ACTIVE voice session; default 90. `0` = jamais : seule la touche de réveil (F9) ou « Jarvis mute » met fin à la conversation. Toute autre valeur doit être >= 5. Le champ « Délai d'inactivité » des réglages du Control Center passe devant |
 | `JARVIS_AGENT_CLI` | `claude` (default) or `codex` |
 | `JARVIS_CLAUDE_MODEL` | model passed to `claude --model`; empty means the CLI default |
@@ -767,7 +825,7 @@ jamais la voix pour prononcer un résultat que vous avez coupé.
 
 ### Basculer, et revenir
 
-Le plus simple : **Voix → Architecture** dans le Control Center, champ
+Le plus simple : onglet **Mode vocal** du Control Center, champ
 **Architecture**, puis redémarrage de Voice. Revenir en arrière, c'est choisir
 « Un tour par appui » ou « Par défaut ». La variable reste le chemin sans
 interface :
@@ -818,7 +876,7 @@ bloqué : `JARVIS_VOICE_ARCH=continuous_brain` reste accepté aujourd'hui.
   continu repose sur le découpage de tours du fournisseur.
 - Ces deux combinaisons sont aussi refusées par le Control Center à
   l'enregistrement (HTTP 400, message en clair), et signalées dans l'onglet
-  Voix → Diagnostic si le fichier de réglages les contient déjà.
+  Mode vocal si le fichier de réglages les contient déjà.
 - Pile sans contrôle de sortie détectée à l'ouverture de session → état `ERROR`,
   trace `voice.arch_unsupported`, retour au fond.
 
@@ -953,7 +1011,7 @@ enrollment, overwrite any file): it is shown read-only and changed only in the f
 
 ### What the Control Center shows for Solo Owner and echo cancellation
 
-Sub-tab **Voix → Conversation** of the settings window (button **SET**), block **Qui peut
+Tab **Mode vocal** of the settings window (button **SET**), block **Qui peut
 parler à JARVIS**, right under the architecture. The page only projects: every
 verdict comes from the server (`assess_authorization`, the function Voice uses) or
 from what Voice itself published; the page never decides who is speaking and never
@@ -1041,7 +1099,7 @@ provider follow the owner — JARVIS speaking (replay buffer, task 06) or silent
 (task 07): only your recognized voice becomes a turn (next paragraphs). A Solo
 Owner that cannot apply is refused, never silently turned into the open room. The
 mode, the verification and the tuning are chosen in the Control Center (tab
-**Voix → Conversation**, block **Qui peut parler à JARVIS**, see above), the API or the file.
+**Mode vocal**, block **Qui peut parler à JARVIS**, see above), the API or the file.
 
 ### Solo Owner barge-in: who can interrupt JARVIS
 
@@ -1262,7 +1320,7 @@ library (`enrollment_audio_unavailable`). Anything else is a real bug and is
 still reported as a traceback.
 
 **Turn shadow measurement on**: set `speaker_verification` to `shadow` with
-`conversation_mode` `open_room` (Control Center, **Voix → Conversation**, *Vérification
+`conversation_mode` `open_room` (Control Center, tab **Mode vocal**, *Vérification
 du locuteur* = « En ombre » ; or API `POST /api/settings` with
 `{"voice": {"authorization": {"speaker_verification": "shadow"}}}`, or the file),
 then restart Voice in `continuous_brain`. At the first wake the trace shows
@@ -1374,10 +1432,8 @@ toute écriture. Détails et contrat de test : `docs/settings/INDEX.md`.
 L'onglet **Agent / CLI** place les réglages techniques avant le comportement et
 le catalogue. Le mode **Dupliqué** conserve le modèle du CLI/appelant sans
 dupliquer l'exécution. Le mode **Auto** applique à chaque profil le premier
-candidat autorisé *et* utilisable sur le CLI Claude hôte. Codex n'expose pas
-encore de hook de sous-agent équivalent : ses candidats sont non sélectionnables
-en Auto, sans bascule cross-CLI ni fan-out. Les profils et recours restent
-accessibles sous **Configuration avancée des sous-agents**.
+candidat autorisé *et* utilisable. Les profils et recours restent accessibles
+sous **Configuration avancée des sous-agents**.
 
 Quatre profils : **Poste de travail** (navigateur, fichiers ouverts), **Code
 avancé**, **Sémantique rapide**, **Général** — ce dernier servant aussi de

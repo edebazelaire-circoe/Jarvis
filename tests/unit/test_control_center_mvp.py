@@ -82,6 +82,31 @@ def test_control_center_keeps_pointer_visible_and_explains_configured_voice_togg
     assert "Tester micro + sortie" in html
 
 
+def test_background_notifications_are_round_pills_in_the_main_interface_not_a_tool():
+    """Retour utilisateur du 16/09/2026 : pas de bouton « BGD » parmi les outils.
+
+    Le bouton Agents reste l'entrée de gestion des sous-agents ; les
+    notifications d'arrière-plan sont de petites pastilles rondes de
+    l'interface principale, accolées à lui, qui s'ouvrent et s'acquittent sur
+    place.
+    """
+    html = CONTROL_CENTER_HTML.read_text(encoding="utf-8")
+    dock = html[html.index('<nav class="dock"') : html.index("</nav>", html.index('<nav class="dock"'))]
+    assert 'data-panel="background"' not in html and "BGD" not in dock and "bgBadge" not in html
+    assert 'id="agentsButton"' in dock
+    # Hors de la barre d'outils, juste après elle, et jamais dans les réglages.
+    after_dock = html[html.index("</nav>", html.index('<nav class="dock"')) :]
+    assert after_dock.index('id="bgPills"') < after_dock.index('id="panel"')
+    assert "id:'background'" not in html
+    assert ".bgpill{" in html and "border-radius:50%" in html[html.index(".bgpill{") :][:400]
+    assert "renderBackgroundPills(s.background)" in html
+    # Chaque pastille s'acquitte seule, et mène au panneau Agents.
+    assert "JSON.stringify({seq:data.seq,category})" in html
+    assert "openAgentsAt(id?'trace':'list',id||null)" in html
+    work = CONTROL_CENTER_HTML.with_name("control_center_work.js").read_text(encoding="utf-8")
+    assert 'html[data-jarvis-theme="omega"] .bgpills{' in work
+
+
 def test_settings_window_is_a_modal_that_closes_on_an_outside_click():
     """La fenêtre de réglages est une modale centrée, dimensionnée en % d'écran.
 

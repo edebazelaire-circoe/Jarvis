@@ -146,6 +146,11 @@ html[data-jarvis-theme="omega"] .dock button.active{
   color:var(--omega-accent,#6ee7ff);border-color:color-mix(in srgb,var(--omega-accent,#6ee7ff) 46%,transparent);
   background:rgba(10,19,26,.72);transform:translateY(-1px)}
 html[data-jarvis-theme="omega"] .dock .badge{right:-4px;top:-4px;transform:scale(.82)}
+/* Pastilles d'arrière-plan : en ligne, juste à gauche du bouton Agents (premier
+   des 4 outils : 4×34 + 3×6 = 154 px depuis right:18px). */
+html[data-jarvis-theme="omega"] .bgpills{top:22px;right:182px;flex-direction:row-reverse;gap:6px;z-index:50}
+html[data-jarvis-theme="omega"] .bgpill{width:26px;height:26px;font-size:10px;background:rgba(5,11,16,.56);backdrop-filter:blur(16px)}
+html[data-jarvis-theme="omega"] .bgpop{border-radius:14px;background:rgba(4,10,15,.92);backdrop-filter:blur(26px)}
 html[data-jarvis-theme="omega"] .panel{
   top:64px;right:18px;bottom:18px;width:min(500px,calc(100% - 36px));
   border:1px solid rgba(151,191,209,.14);border-radius:16px;
@@ -178,6 +183,7 @@ html[data-jarvis-theme="omega"] .choice.theme-choice.selected{
   left:50%;top:50%;transform:translate(-50%,-50%);background:#43aaff;box-shadow:0 0 16px #43aaff}
 @media(max-width:700px){
   html[data-jarvis-theme="omega"] .dock{right:10px;top:10px}
+  html[data-jarvis-theme="omega"] .bgpills{right:174px;top:14px}
   html[data-jarvis-theme="omega"] .topbar{left:10px;top:10px}
   html[data-jarvis-theme="omega"] .state{max-width:calc(100vw - 190px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   html[data-jarvis-theme="omega"] .panel{left:10px;right:10px;top:56px;bottom:10px;width:auto}
