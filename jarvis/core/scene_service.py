@@ -1,18 +1,26 @@
 """Service Core de la scène constellation (handoff jarvis-constellation-scene-runtime, Slice 02).
 
-Core possède la scène (Décision 11) : même processus que la vérité de travail
-et que le bus. `SceneService` implémente `SceneCommandSink` et `SceneReader` :
+Core possède la scène (Décision 11) : même processus que la vérité de
+travail. `SceneService` implémente `SceneCommandSink` et `SceneReader` :
 
 1. les commandes sont sérialisées par un verrou asyncio et pliées par
    `apply_scene_command` (le domaine décide : autorité, bornes, révision) ;
-2. une commande appliquée est **persistée avant d'être publiée**, en une
-   transaction (`SceneRepository.commit`) ;
+2. une commande appliquée est **persistée d'abord**, en une transaction
+   (`SceneRepository.commit`) ;
 3. seulement ensuite la scène en mémoire avance, le patch entre dans un anneau
-   borné (`PATCH_RING_SIZE`) et `core.scene.updated` part sur `CoreEventBus`.
+   borné (`PATCH_RING_SIZE`) et les attentes de `wait_for_revision` sont
+   réveillées.
 
-Échec d'écriture : la révision n'avance pas, rien n'entre dans l'anneau, rien
-n'est publié ; l'échec est journalisé (`core.scene.persist_failed`) et
-l'appelant reçoit `ScenePersistenceError`. Si le stockage a divergé de la
+La scène ne passe **pas** par `CoreEventBus` : `/v1/events` relaie chaque
+événement du bus, sans filtre, à tous ses clients WebSocket, Voice compris. Des
+patchs de scène y pèseraient jusqu'à plusieurs mégaoctets, et une rafale de la
+projection pourrait remplir la file bornée d'un abonné et l'évincer. Personne
+n'écoute la scène par diffusion : le transport (Slice 03) attend localement
+une révision (`wait_for_revision`) puis lit `patches_since`.
+
+Échec d'écriture : la révision n'avance pas, rien n'entre dans l'anneau, aucune
+attente n'est réveillée ; l'échec est journalisé (`core.scene.persist_failed`)
+et l'appelant reçoit `ScenePersistenceError`. Si le stockage a divergé de la
 mémoire (`revision_conflict`), la scène devient indisponible jusqu'au
 prochain démarrage : servir une mémoire que le disque contredit mentirait au
 redémarrage suivant.
@@ -29,8 +37,9 @@ import asyncio
 from collections import deque
 from dataclasses import dataclass
 from enum import StrEnum
+import math
 
-from jarvis.core.v2_services import CoreEventBus, NullDiagnosticSink
+from jarvis.core.v2_services import NullDiagnosticSink
 from jarvis.domain.scene import (
     SceneCommand,
     SceneCommandOutcome,
@@ -39,7 +48,7 @@ from jarvis.domain.scene import (
     SceneUpdate,
     apply_scene_command,
 )
-from jarvis.domain.v2 import ProtocolEnvelope, new_id
+from jarvis.domain.v2 import new_id
 from jarvis.ports.scene import (
     ArchivedSceneObject,
     ScenePatchWindow,
@@ -51,21 +60,17 @@ from jarvis.ports.scene import (
 )
 from jarvis.ports.v2 import DiagnosticSink
 
-#: Une révision appliquée et persistée. Charge utile : `scene_id`, `revision`,
-#: `patch` (`ScenePatch.to_payload()`, `schema_version` compris). Un
-#: consommateur qui voit un saut de révision relit l'instantané.
-CORE_SCENE_UPDATED = "core.scene.updated"
-
 SCENE_LOADED_KIND = "core.scene.loaded"
 SCENE_UNAVAILABLE_KIND = "core.scene.unavailable"
 SCENE_PERSIST_FAILED_KIND = "core.scene.persist_failed"
-SCENE_PUBLISH_FAILED_KIND = "core.scene.publish_failed"
 SCENE_COMMAND_REFUSED_KIND = "core.scene.command_refused"
 SCENE_CLOSE_FAILED_KIND = "core.scene.close_failed"
 
 #: Patchs gardés en mémoire pour le transport. Au-delà, un consommateur en
 #: retard reçoit `resync_required` et relit l'instantané.
 PATCH_RING_SIZE = 512
+#: Borne d'une attente de révision (long-poll du transport, Slice 03).
+MAX_REVISION_WAIT_S = 30.0
 _MAX_REPORTED = 256
 
 
@@ -96,20 +101,22 @@ class SceneService:
         self,
         repository: SceneRepository,
         *,
-        events: CoreEventBus | None = None,
         diagnostics: DiagnosticSink | None = None,
         patch_ring_size: int = PATCH_RING_SIZE,
     ) -> None:
         if not 1 <= patch_ring_size <= PATCH_RING_SIZE:
             raise ValueError(f"patch_ring_size must be between 1 and {PATCH_RING_SIZE}")
         self._repository = repository
-        self._events = events
         self._diagnostics: DiagnosticSink = diagnostics or NullDiagnosticSink()
         self._lock = asyncio.Lock()
         self._snapshot: SceneSnapshot | None = None
         self._ring: deque[ScenePatch] = deque(maxlen=patch_ring_size)
         self._availability = SceneAvailability(SceneState.STARTING)
         self._reported: set[tuple[str, ...]] = set()
+        #: Remplacé à chaque changement (révision commise, fermeture,
+        #: divergence) : l'ancien est levé, ses attentes se réveillent et
+        #: relisent l'état ; les suivantes attendent le nouveau.
+        self._changed = asyncio.Event()
 
     @property
     def availability(self) -> SceneAvailability:
@@ -170,6 +177,7 @@ class SceneService:
             self._availability = SceneAvailability(SceneState.CLOSED, SceneStoreErrorCode.UNAVAILABLE, "scene closed")
             self._snapshot = None
             self._ring.clear()
+            self._notify_change()
             await self._close_repository()
 
     async def _close_repository(self) -> None:
@@ -192,7 +200,7 @@ class SceneService:
 
         L'application se poursuit dans une tâche protégée : annuler l'appelant
         pendant l'écriture ne laisse jamais le disque en avance sur la mémoire
-        (la commande se termine, publie, et l'appelant reçoit
+        (la commande se termine, réveille les attentes, et l'appelant reçoit
         `CancelledError`).
         """
 
@@ -216,7 +224,7 @@ class SceneService:
                 raise self._persistence_failed(current, update.patch, exc) from exc
             self._snapshot = update.snapshot
             self._ring.append(update.patch)
-            await self._publish(update.snapshot.scene_id, update.patch)
+            self._notify_change()
             return update
 
     def _persistence_failed(self, current: SceneSnapshot, patch: ScenePatch, exc: Exception) -> ScenePersistenceError:
@@ -227,7 +235,7 @@ class SceneService:
         diverged = code in (SceneStoreErrorCode.REVISION_CONFLICT, SceneStoreErrorCode.UNAVAILABLE)
         self._emit(
             SCENE_PERSIST_FAILED_KIND,
-            "commande de scène non persistée : révision inchangée, rien publié"
+            "commande de scène non persistée : révision inchangée, aucune attente réveillée"
             + (" ; scène rendue indisponible" if diverged else ""),
             level="error",
             data={
@@ -242,26 +250,12 @@ class SceneService:
             self._availability = SceneAvailability(SceneState.UNAVAILABLE, code, detail)
             self._snapshot = None
             self._ring.clear()
+            self._notify_change()
         return ScenePersistenceError(code, f"scene revision {patch.revision} was not persisted: {detail}")
 
-    async def _publish(self, scene_id: str, patch: ScenePatch) -> None:
-        if self._events is None:
-            return
-        envelope = ProtocolEnvelope(
-            message_type=CORE_SCENE_UPDATED,
-            payload={"scene_id": scene_id, "revision": patch.revision, "patch": patch.to_payload()},
-        )
-        try:
-            await self._events.publish(envelope)
-        except Exception as exc:
-            # La révision est déjà persistée et fait foi : un consommateur qui
-            # a manqué ce patch verra le saut et relira l'instantané.
-            self._emit(
-                SCENE_PUBLISH_FAILED_KIND,
-                "révision de scène persistée mais non publiée : les consommateurs se resynchroniseront",
-                level="error",
-                data={"scene_id": scene_id, "revision": patch.revision, "error": f"{type(exc).__name__}: {exc}"},
-            )
+    def _notify_change(self) -> None:
+        event, self._changed = self._changed, asyncio.Event()
+        event.set()
 
     # ------------------------------------------------------------ lecture
 
@@ -283,6 +277,33 @@ class SceneService:
             return window
         patches = tuple(patch for patch in self._ring if patch.revision > revision)
         return ScenePatchWindow(current.scene_id, current.revision, patches, resync_required=False)
+
+    async def wait_for_revision(self, after: int, *, timeout_s: float) -> int:
+        """Attendre une révision supérieure à `after` ; rendre la révision courante.
+
+        Rend dès que la révision dépasse `after`, ou à l'échéance avec la
+        révision inchangée. `timeout_s` est borné à [0, `MAX_REVISION_WAIT_S`].
+        Scène indisponible ou fermée, à l'entrée comme pendant l'attente :
+        `SceneUnavailableError`, sans attendre l'échéance. Annuler l'attente ne
+        laisse rien derrière elle (aucune tâche, aucun abonnement).
+        """
+
+        if isinstance(after, bool) or not isinstance(after, int):
+            raise TypeError("after must be an integer")
+        if isinstance(timeout_s, bool) or not isinstance(timeout_s, (int, float)) or math.isnan(timeout_s):
+            raise TypeError("timeout_s must be a number")
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + min(max(float(timeout_s), 0.0), MAX_REVISION_WAIT_S)
+        while True:
+            current = self._require_snapshot()
+            remaining = deadline - loop.time()
+            if current.revision > after or remaining <= 0:
+                return current.revision
+            try:
+                async with asyncio.timeout(remaining):
+                    await self._changed.wait()
+            except TimeoutError:
+                return self._require_snapshot().revision
 
     async def archived_history(self, *, object_id: str | None = None, limit: int = 100) -> tuple[ArchivedSceneObject, ...]:
         self._require_snapshot()

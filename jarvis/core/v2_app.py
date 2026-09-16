@@ -64,12 +64,12 @@ class JarvisCoreApplication:
         # Scène constellation (handoff jarvis-constellation-scene-runtime,
         # Slice 02) : durable, contrairement à l'état de travail, dans son
         # propre fichier pour garder `jarvis.sqlite3` au schéma 1. Un fichier
-        # de scène refusé rend la scène indisponible, jamais Core (voir
+        # de scène refusé rend la scène indisponible, jamais Core. Hors du bus
+        # à dessein : `/v1/events` relaie tout le bus à Voice (voir
         # `jarvis/core/scene_service.py`). `scene_repository` : injection de
         # test uniquement.
         self.scene = SceneService(
             scene_repository or SQLiteSceneRepository(root / "state" / "scene.sqlite3"),
-            events=self.events,
             diagnostics=diagnostics,
         )
         # Tâche 12 : le cerveau lit ce même magasin à chaque tour, et une

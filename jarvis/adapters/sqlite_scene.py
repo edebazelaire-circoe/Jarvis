@@ -163,8 +163,8 @@ class SQLiteSceneRepository:
         if tables:
             self._check_existing(conn, tables)
         conn.execute("PRAGMA journal_mode=WAL")
-        # FULL : une révision publiée doit survivre à une coupure de courant,
-        # puisque Core ne publie qu'après l'avoir persistée.
+        # FULL : une révision servie doit survivre à une coupure de courant,
+        # puisque Core ne l'expose qu'après l'avoir persistée.
         conn.execute("PRAGMA synchronous=FULL")
         if not tables:
             self._create_schema(conn)

@@ -4,9 +4,9 @@ Handoff `tasks/jarvis-constellation-scene-runtime/`, Slice 01 (domain contract).
 Pure types and rules live in `jarvis/domain/scene.py`; the conformance suite is
 `tests/unit/test_scene_contracts.py`. No I/O, no Core, adapter or runtime import:
 Core's `SceneService` (Slice 02, see *Storage and revision continuity* below)
-applies these rules, persists the result and publishes the patch; transport (03),
-runtime projection (04), renderer (05) and the brain display MCP (06) all speak
-this vocabulary.
+applies these rules, persists the result and keeps the patch for transport;
+transport (03), runtime projection (04), renderer (05) and the brain display MCP
+(06) all speak this vocabulary.
 
 The scene is a **projection**. Core work state (`jarvis/domain/work_state.py`,
 see `ARCHITECTURE.md` › *Core work state*) stays the execution truth
@@ -247,7 +247,9 @@ private module `jarvis/domain/_checks.py` (same rules, same messages).
 
 Slice 02 (`ARCHITECTURE.md` › *Constellation scene store*). Core's `SceneService`
 applies commands with `apply_scene_command`, persists the resulting state to
-`data/state/scene.sqlite3`, then publishes the patch. The `scene_id` is created
+`data/state/scene.sqlite3`, then keeps the patch in a bounded ring and wakes
+`wait_for_revision` waiters. The scene is never published on `CoreEventBus`
+(that bus is relayed unfiltered to Voice over `/v1/events`). The `scene_id` is created
 once and kept; the revision continues from its stored value across restarts and
 never regresses (a commit is refused unless the stored revision is the one the
 patch starts from). Archived objects leave `SceneSnapshot.objects` but their

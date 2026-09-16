@@ -809,7 +809,7 @@ automatiquement. Que faire selon `data.code` :
 | `storage_io` | fichier inaccessible (droits, verrou d'un autre processus, disque) | corriger l'accès, redémarrer Core |
 
 En cours de route, `core.scene.persist_failed` (erreur) signale une commande de
-scène non écrite : la révision n'a pas bougé et rien n'a été diffusé. Avec
+scène non écrite : la révision n'a pas bougé et aucun lecteur ne l'a vue. Avec
 `code: revision_conflict`, la scène devient indisponible jusqu'au prochain
 redémarrage de Core (deux Core sur le même dossier de données, par exemple).
 

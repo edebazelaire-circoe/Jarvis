@@ -58,7 +58,7 @@ class SceneUnavailableError(SceneStoreError):
 
 
 class ScenePersistenceError(SceneStoreError):
-    """Une commande appliquée n'a pas pu être persistée : révision inchangée, rien publié."""
+    """Une commande appliquée n'a pas pu être persistée : révision inchangée, rien de visible."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,10 +93,10 @@ class ArchivedSceneObject:
 class SceneCommandSink(Protocol):
     """Entrée des commandes de scène, possédée par Core.
 
-    `apply` sérialise les commandes, persiste avant de publier et rend le
+    `apply` sérialise les commandes, persiste avant d'exposer et rend le
     `SceneUpdate` du domaine. Lève `SceneUnavailableError` si la scène n'est
     pas servie, `ScenePersistenceError` si l'écriture échoue (la révision
-    n'avance pas, rien n'est publié).
+    n'avance pas, aucun lecteur ne voit la commande).
     """
 
     async def apply(self, command: SceneCommand) -> SceneUpdate: ...
@@ -108,6 +108,15 @@ class SceneReader(Protocol):
     async def snapshot(self) -> SceneSnapshot: ...
 
     async def patches_since(self, revision: int, *, scene_id: str | None = None) -> ScenePatchWindow: ...
+
+    async def wait_for_revision(self, after: int, *, timeout_s: float) -> int:
+        """Rendre la révision courante dès qu'elle dépasse `after`, ou à l'échéance (≤ 30 s).
+
+        Primitive locale du long-poll : la scène n'est jamais diffusée sur
+        `CoreEventBus`. Lève `SceneUnavailableError` si la scène est ou devient
+        indisponible pendant l'attente.
+        """
+        ...
 
     async def archived_history(self, *, object_id: str | None = None, limit: int = 100) -> tuple[ArchivedSceneObject, ...]: ...
 

@@ -1272,28 +1272,43 @@ SceneCommand ─► SceneService.apply()  (Core, asyncio lock)
                   ├► apply_scene_command()            pure domain decision
                   ├► SQLiteSceneRepository.commit()   one transaction  ─► data/state/scene.sqlite3
                   ├► memory snapshot + patch ring (512)
-                  └► core.scene.updated  (CoreEventBus, hence /v1/events)
+                  └► wake wait_for_revision() waiters   (never CoreEventBus)
 ```
 
 | Piece | File | Role |
 | --- | --- | --- |
-| Ports | `jarvis/ports/scene.py` | `SceneCommandSink.apply`, `SceneReader` (`snapshot`, `patches_since`, `archived_history`), `SceneRepository`, `SceneStoreError` + stable `SceneStoreErrorCode` |
+| Ports | `jarvis/ports/scene.py` | `SceneCommandSink.apply`, `SceneReader` (`snapshot`, `patches_since`, `wait_for_revision`, `archived_history`), `SceneRepository`, `SceneStoreError` + stable `SceneStoreErrorCode` |
 | Adapter | `jarvis/adapters/sqlite_scene.py` | `SQLiteSceneRepository`, dedicated SQLite file |
 | Service | `jarvis/core/scene_service.py` | `SceneService` = `JarvisCoreApplication.scene` |
 
 Command path. Commands are serialized by one asyncio lock. The domain decides
 the outcome; a refused (`rejected_authority`, `invalid`) or `duplicate` command
-writes nothing, publishes nothing and returns its `SceneUpdate` (refusals are
+writes nothing, wakes nobody and returns its `SceneUpdate` (refusals are
 journaled once per actor/op/reason as `core.scene.command_refused`). An applied
-command is **persisted before it is published**: commit, then the in-memory
-snapshot advances, the patch enters the ring, and `core.scene.updated` is
-published with `{"scene_id", "revision", "patch": ScenePatch.to_payload()}`.
+command is **persisted before anyone can see it**: commit, then the in-memory
+snapshot advances, the patch enters the ring, and waiters of
+`wait_for_revision` are woken.
 The application runs in a shielded task, so cancelling a caller mid-write never
 leaves the file ahead of memory. `patches_since(revision, scene_id=)` returns the
 patches after `revision`, or `resync_required` when the ring (512 patches, empty
 after a restart) no longer covers the gap, when the revision is ahead of Core or
 when the `scene_id` differs: the consumer then re-reads the snapshot
 (decision 20).
+
+Change notification. The scene is deliberately **not** on `CoreEventBus`:
+`LocalProtocolServer.events()` forwards every bus event, unfiltered, to every
+`/v1/events` WebSocket client, Voice included. Scene patches (up to 1 025 ops)
+would weigh megabytes on the voice socket, and a projector burst could fill a
+non-lossy 128-slot subscriber queue and evict Voice. No component needs a
+broadcast: the projector (Slice 04) writes and never listens, and the transport
+(Slice 03) long-polls locally. `wait_for_revision(after, *, timeout_s)` returns
+the current revision as soon as it exceeds `after`, or unchanged at the
+deadline; `timeout_s` is clamped to [0, 30] s (`MAX_REVISION_WAIT_S`). It raises
+`SceneUnavailableError` at once when the scene is unavailable or closed, and
+wakes with that error when `close()` or a divergence happens during the wait.
+It is an `asyncio.Event` swapped on every commit, close and divergence;
+cancelling a waiter leaves no task and no registration behind. A failed commit
+wakes nobody.
 
 ### Persistence
 
@@ -1309,7 +1324,7 @@ live in a file it never touches.
 Conventions copied from `sqlite_state.py`: a `schema_version` table, JSON `data`
 columns, one connection serialized by a lock, native work in a thread that
 cancellation cannot interrupt (`run_sqlite_in_thread`, shared), WAL; plus
-`synchronous=FULL`, because a published revision must survive a power cut.
+`synchronous=FULL`, because a revision Core has exposed must survive a power cut.
 
 | Table | Content |
 | --- | --- |
@@ -1340,9 +1355,8 @@ Failure semantics:
 | not a SQLite file, `quick_check` failure, missing table, row that does not decode | refused `corrupted`; file not modified |
 | file cannot be opened (directory, rights, lock) | refused `storage_io` |
 | any refusal at start | `core.scene.unavailable` (error); scene unavailable (`SceneUnavailableError`), **rest of Core starts normally**; the file is never wiped |
-| commit fails (I/O, lock) | transaction rolled back; no revision advance, nothing in the ring, no publish; `core.scene.persist_failed` (error); caller gets `ScenePersistenceError`; the next command may succeed |
-| stored revision ≠ Core's (`revision_conflict`) | same, and the scene becomes unavailable until Core restarts |
-| publish fails after commit | revision kept (the file is authoritative); `core.scene.publish_failed` (error); consumers resync on the gap |
+| commit fails (I/O, lock) | transaction rolled back; no revision advance, nothing in the ring, no waiter woken; `core.scene.persist_failed` (error); caller gets `ScenePersistenceError`; the next command may succeed |
+| stored revision ≠ Core's (`revision_conflict`) | same, and the scene becomes unavailable until Core restarts; current waiters get `SceneUnavailableError` |
 
 Lifecycle: `SceneService.start()` runs right after `jarvis.sqlite3` opens in
 `JarvisCoreApplication.start()` and never raises; `close()` runs in `stop()`
