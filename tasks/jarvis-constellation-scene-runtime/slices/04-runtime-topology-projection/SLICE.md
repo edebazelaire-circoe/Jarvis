@@ -11,6 +11,8 @@ Audit facts: Core `WorkStateStore` publishes `core.work.updated` (`jarvis/core/w
 
 PM amendment (Slice 01 QA, F1): the Slice 01 reducer lets runtime create signals but not retire them (no runtime `unlink` of `explains`, no hide/archive; `None` means unchanged so `work_ref`/`geometry` cannot be cleared). This Slice must define and implement the runtime signal lifecycle (e.g. runtime may unlink/resolve `attention` objects whose `origin` is runtime when the underlying work recovers or is superseded) as a reviewed domain change, without granting runtime archive or layout rights. Signals must not accumulate unboundedly per work item (one live attention per `(source, external_id)` updated in place).
 
+PM amendment (Slice 02 QA): `JarvisCoreApplication.stop()` closes the scene before `back_brain.stop()`/`jobs.stop()`; a projector fed by job/work events would hit `SceneUnavailableError` during shutdown. Reorder so writers (projector) stop before the scene closes, and treat `SceneUnavailableError` from the projector as a journaled, non-fatal condition.
+
 ## Scope
 ### In Scope
 Projector, subscription resilience, kind propagation if missing, runtime signal lifecycle (see amendment), tests with the fake bus and real `WorkStateStore`.

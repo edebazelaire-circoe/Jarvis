@@ -15,6 +15,8 @@ PM amendment (Slice 01 QA, F3): worst-case snapshot is ~8 MB (512 objects × 16 
 
 PM amendment (Slice 02 review): the Core long-poll uses `SceneService.wait_for_revision` (local wait primitive), never `CoreEventBus`/`/v1/events`.
 
+PM amendment (Slice 02 QA): restoring an older `scene.sqlite3` backup keeps the same `scene_id` while revisions get reused, so a client keyed on `(scene_id, revision)` could apply new patches onto a divergent cache. Transport must carry a per-load epoch (generated at each `SceneService.start()`, returned with snapshot and patches); any epoch change forces resync. Also expose scene availability (`ready`/`unavailable` + code) in `/v1/health` and the Control Center degraded payload.
+
 ## Scope
 ### In Scope
 Core routes, Control Center proxy view, pure JS patch-application logic + node tests, `test_documented_routes.py` compliance.
