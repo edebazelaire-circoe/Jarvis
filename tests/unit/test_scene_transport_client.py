@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import random
 
+import pytest
+
 from jarvis.domain.scene import (
     MAX_ARCHIVED_IDS,
     ExecState,
@@ -79,6 +81,8 @@ def random_command(rng: random.Random, step: int) -> SceneCommand:
         return SceneCommand(op=SceneOp.SET_VISIBILITY, actor=actor, object_id=target, visibility=rng.choice(tuple(Visibility)))
     if roll < 0.78:
         other = rng.choice((rng.choice(stars), f"{rng.choice(notes)}-{step // 40}"))
+        if other == target:  # une relation relie deux objets distincts : la commande ne se construirait pas
+            other = rng.choice(stars)
         return SceneCommand(op=SceneOp.LINK, actor=actor, relation=SceneRelation(
             relation_id=f"rel-{rng.randrange(30)}", kind=RelationKind.EXPLAINS, from_id=target, to_id=other,
             layer=rng.choice((50, 60))))
@@ -121,8 +125,9 @@ def snapshot_response(snapshot: dict, epoch: str = "epoch-1") -> dict:
 # --------------------------------------------------------------------- parité
 
 
-def test_the_js_applier_reproduces_the_python_reducer(scene_logic):
-    final, patches, _, outcomes = run_sequence(SceneSnapshot(scene_id="scene-parity"), seed=20260916, count=1500)
+@pytest.mark.parametrize("seed", [20260916, 1, 99, 4242])
+def test_the_js_applier_reproduces_the_python_reducer(scene_logic, seed):
+    final, patches, _, outcomes = run_sequence(SceneSnapshot(scene_id="scene-parity"), seed=seed, count=1500)
 
     assert len(patches) > 400 and outcomes.get("rejected_authority", 0) > 0 and outcomes.get("invalid", 0) > 0
     kinds = {op["op"] for patch in patches for op in patch["ops"]}
@@ -250,6 +255,9 @@ def test_every_resync_reason_is_signalled_and_nothing_is_half_applied(scene_logi
         out.ok=S.applyPatchResponse(s0,{...base,revision:2,patches:[D.patch1,D.patch2]});
         out.stale=S.applyPatchResponse(out.ok.state,{...base,revision:2,patches:[D.patch1,D.patch2]});
         out.more=S.applyPatchResponse(s0,{...base,revision:1,more:true,patches:[D.patch1]});
+        out.retry=S.applyPatchResponse(s0,{source:'core',core_reachable:null,scene:null,scene_id:null,epoch:null,revision:null,
+          patches:[],resync_required:false,more:false,retry_after_ms:1000,error:{code:'patch_waits_busy',message:'x'}});
+        out.retry={action:out.retry.action,reason:out.retry.reason,retry_after_ms:out.retry.retry_after_ms,same:out.retry.state===s0};
         // Patch refusé à mi-chemin : l'état reçu reste intact.
         const bad={...D.patch2,ops:[D.patch2.ops[0],{op:'delete_relation',relation_id:'absent'}]};
         const s1=S.applyPatch(s0,D.patch1).state;
@@ -274,6 +282,7 @@ def test_every_resync_reason_is_signalled_and_nothing_is_half_applied(scene_logi
     assert result["ok"] == {"action": "applied", "reason": "", "revision": 2}
     assert result["stale"] == {"action": "unchanged", "reason": "", "revision": 2}
     assert result["more"] == {"action": "more", "reason": "", "revision": 1}
+    assert result["retry"] == {"action": "retry", "reason": "patch_waits_busy", "retry_after_ms": 1000, "same": True}
     assert result["atomic"] == {"ok": False, "reason": "delete_unknown_relation", "still": ["art-1"], "archived": []}
     assert result["rewrite"] == "rewrite_archived_object"
     assert result["schema"] == "invalid_patch"

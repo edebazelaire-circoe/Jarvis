@@ -1485,27 +1485,50 @@ guarantee that the brain does not archive is the display MCP tool catalog
 authority for honest callers. It is **not** a local security boundary, and the
 actor field is a declaration, not an authentication.
 
-Control Center proxy. `GET /api/scene` and `GET /api/scene/patches` always
-answer 200, shaped like `/api/work`: `source`, `core_reachable`, `scene`
-(`{state, code}` or `null` when unknown), `scene_id`, `epoch`, `revision`,
-`snapshot` (or `patches`, `resync_required`, `more`) and `error` (`null`, or
-`{code, message}` with `not_configured`, `core_unreachable`, `core_refused`,
-`invalid_scene_response`, `scene_unavailable`). Core's answers are decoded with
-the strict domain decoders before reaching the page; an out-of-contract answer
-is journaled `scene.view_invalid_response` (error). A read outage is journaled
-once, `scene.view_unavailable` (warning), and its end once,
-`scene.view_restored` (info). The proxy clamps `wait_s` to 25 s and gives up
-after the wait plus 5 s (HTTP timeout, then a second `asyncio.wait_for` bound),
-so a hung Core cannot hold the page. Snapshot reads time out after 10 s.
+Control Center proxy. `GET /api/scene` and `GET /api/scene/patches` answer
+400 for a malformed query; otherwise they answer 200 whatever the state of
+Core or of the scene, shaped like `/api/work`: `source`, `core_reachable`
+(`null` when Core was not asked), `scene` (`{state, code}` or `null` when
+unknown), `scene_id`, `epoch`, `revision`, `snapshot` (or `patches`,
+`resync_required`, `more`) and `error` (`null`, or `{code, message}` with
+`not_configured`, `core_unreachable`, `core_refused`, `invalid_scene_response`,
+`scene_unavailable`, `patch_waits_busy`). Core's answers are decoded with the
+strict domain decoders before reaching the page. Journal: a read outage once,
+`scene.view_unavailable` (warning), and its end once, `scene.view_restored`
+(info); an out-of-contract answer once per read kind (`snapshot`, `patches`,
+`command`) until the next good answer, `scene.view_invalid_response` (error).
+The full cause (file paths included) stays in the journal; every message sent
+to the page goes through `page_text`, which replaces file paths with
+`<chemin>`.
+
+Load. Long-polls use their own connection pool to Core
+(`CoreSceneTransport._polls`), so snapshot reads and commands never wait for a
+pool slot held by a long-poll (QA measured a 504 at 200 concurrent long-polls
+when they shared aiohttp's 100-connection pool). At most 32 long-polls are
+relayed at once (`MAX_CONCURRENT_PATCH_WAITS`); beyond that the answer is
+immediate, no connection held or opened: 200 with `error.code =
+patch_waits_busy`, `core_reachable: null` and `retry_after_ms: 1000`, which the
+pure client maps to action `retry` (keep the state, ask again after the delay).
+Busy refusals are journaled `scene.view_busy` (warning) at most once a minute
+with the number silenced. The proxy clamps `wait_s` to 25 s and gives up after
+the wait plus 5 s (HTTP timeout, then a second `asyncio.wait_for` bound), so a
+hung Core cannot hold the page. Snapshot reads time out after 10 s.
+
 `POST /api/scene/commands` validates the body locally (64 KiB, strict JSON,
-`SceneCommand`) and answers 200 with the domain outcome, 400/413 for form,
-403 for another actor, 503 when Core or the scene is unavailable (`scene` block
-included) or the write failed, 504 `core_timeout` after 10 s — the command may
-have been applied, the client re-reads the scene — and 502 when Core refused
-the call (`core_refused`) or answered out of contract. Relayed commands are
+`SceneCommand`) and answers 200 with the domain outcome, 400/413 for form, 403
+for another actor, 503 when Core or the scene is unavailable (`scene` block
+included) or the write failed, and 502 when Core refused the call
+(`core_refused`) or answered out of contract. Two timeouts tell "not sent" from
+"unknown": no connection to Core within 3 s (aiohttp `ConnectionTimeoutError`,
+pool wait included) is 503 `command_not_sent` — nothing was applied, retrying
+is safe; a connection refused or a missing token is 503 `core_unreachable`
+("commande non envoyée"); no answer within 10 s once the request is sent
+(`SocketTimeoutError`, or the outer bound) is 504 `core_timeout` — the command
+may have been applied, the client re-reads the scene. Relayed commands are
 journaled `scene.command` (info: op, outcome, reason, revision), failures
-`scene.command_failed` (warning), refused actors `scene.command_forbidden`
-(warning).
+`scene.command_failed` (warning, with the full cause), refused actors
+`scene.command_forbidden` (warning, at most once a minute per actor value, with
+the number silenced).
 
 Pure client (`JarvisSceneClient`). `fromSnapshot(response)` builds
 `{scene_id, epoch, revision, objects: Map, relations: Map, archived_ids: Set}`;
@@ -1514,7 +1537,8 @@ Pure client (`JarvisSceneClient`). `fromSnapshot(response)` builds
 `apply_scene_patch`'s semantics (order kept, tombstones evicted beyond 4 096)
 and returns a new state or `{ok: false, reason}` without touching the old one;
 `applyPatchResponse(state, response)` returns `{state, action, reason}` with
-`action` `unavailable` (retry later), `resync` (refetch `/api/scene`: no state,
+`action` `retry` (Control Center busy: wait `retry_after_ms`), `unavailable`
+(retry later), `resync` (refetch `/api/scene`: no state,
 `scene_changed`, `epoch_changed`, `resync_required`, `gap`, refused patch),
 `more`, `applied` or `unchanged` (late duplicates are skipped);
 `patchQuery(state, waitS)` and `toSnapshot(state)` complete it.

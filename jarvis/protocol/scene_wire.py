@@ -18,12 +18,16 @@ from dataclasses import dataclass
 import json
 import math
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from aiohttp import web
+if TYPE_CHECKING:
+    # Annotations seulement : `LocalCoreClient` importe ce module pour une
+    # borne, et ses autres utilisateurs (Voice) n'ont pas à charger
+    # `aiohttp.web` ni le domaine de la scène.
+    from aiohttp import web
 
-from jarvis.domain.scene import SceneSnapshot, SceneUpdate
-from jarvis.ports.scene import ScenePatchWindow
+    from jarvis.domain.scene import SceneSnapshot, SceneUpdate
+    from jarvis.ports.scene import ScenePatchWindow
 
 #: Corps d'une commande. Une charge vaut au plus 16 KiB en UTF-8 compact ;
 #: échappée en ASCII (`\uXXXX`, paires de substitution) et avec ses autres

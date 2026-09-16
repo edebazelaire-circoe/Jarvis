@@ -821,8 +821,11 @@ compte Windows et pourrait lire `runtime\core.token` ; l'interdiction
 d'archiver tient au catalogue d'outils du cerveau et au réducteur, pas à une
 barrière de sécurité locale.
 
-Dépannage, d'après `error.code` (réponses `/api/scene*`, toujours 200 en
-lecture) et la trace :
+Dépannage, d'après `error.code` et la trace. En lecture, `/api/scene` et
+`/api/scene/patches` répondent 400 à une requête mal formée ; sinon 200, que
+Core ou la scène soient disponibles ou non, avec `error` renseigné. Les
+messages montrés à la page ne contiennent jamais de chemin de fichier
+(`<chemin>`) : le chemin exact est dans la trace (`data.error`).
 
 | Ce que vous voyez | Cause | Que faire |
 | --- | --- | --- |
@@ -830,15 +833,20 @@ lecture) et la trace :
 | `core_unreachable`, trace `scene.view_unavailable` (avertissement, une fois) | Core arrêté, jeton absent, ou pas de réponse dans le délai (`n'a pas répondu en N s`) | démarrer Core ; au retour, `scene.view_restored` (info) apparaît et la page relit la scène |
 | `core_refused` | Core a refusé l'appel (jeton périmé encore après relecture, version de protocole) | redémarrer le Control Center après Core ; lire le statut et le code dans le message |
 | `scene_unavailable` avec `scene.code` (`corrupted`, `schema_newer`, `storage_io`…) | Core tourne, mais la scène est refusée au démarrage ou devenue indisponible | voir « Scène constellation : fichier et refus » ci-dessous ; `/v1/health` montre le même `scene` |
-| `invalid_scene_response`, trace `scene.view_invalid_response` (erreur, panneau **ERR**) | Core a répondu hors contrat (versions de Core et du Control Center différentes) | redémarrer les deux sur la même version |
+| `invalid_scene_response`, trace `scene.view_invalid_response` (erreur, panneau **ERR**, une fois par type de lecture jusqu'au retour à la normale) | Core a répondu hors contrat (versions de Core et du Control Center différentes) | redémarrer les deux sur la même version |
+| `patch_waits_busy` avec `retry_after_ms`, trace `scene.view_busy` (avertissement, au plus une fois par minute) | plus de 32 attentes de scène en cours dans ce Control Center (beaucoup d'onglets ou une page qui boucle) | rien à faire pour un pic : la page réessaie après le délai ; si cela dure, fermer les onglets en trop |
 | commande : 400 `invalid_request` | corps illisible (JSON, clé en double, `NaN`, champ inconnu, valeur hors borne) | lire `error.message` : il nomme le champ |
 | commande : 413 `payload_too_large` | corps de plus de 64 Kio | réduire la charge (16 Kio au plus en UTF-8) |
 | commande : 503 `scene_persist_failed` | écriture SQLite échouée ; `error.scene` dit si la scène reste servie | voir `core.scene.persist_failed` dans la trace |
-| commande : 504 `core_timeout` | pas de réponse de Core en 10 s | **l'issue est inconnue** : relire `/api/scene` avant de renvoyer la commande |
+| commande : 503 `command_not_sent` | connexion à Core non obtenue en 3 s | **rien n'a été appliqué** : renvoyer la commande est sûr |
+| commande : 503 `core_unreachable` (« commande non envoyée ») | Core arrêté ou jeton absent | démarrer Core, puis renvoyer |
+| commande : 504 `core_timeout` | requête partie, pas de réponse de Core en 10 s | **l'issue est inconnue** : relire `/api/scene` avant de renvoyer la commande |
 
 Chaque commande relayée laisse `scene.command` (info : op, issue, motif,
 révision) dans `runtime/trace.jsonl` ; un échec, `scene.command_failed`
-(avertissement) ; un acteur refusé, `scene.command_forbidden`.
+(avertissement, cause complète dans `data.error`) ; un acteur refusé,
+`scene.command_forbidden` (au plus une fois par minute par valeur d'acteur,
+`data.suppressed` compte les refus tus).
 
 ### Scène constellation : fichier et refus
 

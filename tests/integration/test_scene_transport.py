@@ -471,6 +471,27 @@ async def test_the_control_center_user_may_archive_what_the_brain_may_not(stack)
     assert response.status == 200 and body["outcome"] == "applied" and body["revision"] == 2
 
 
+async def test_long_polls_beyond_the_control_center_cap_are_told_to_retry(stack):
+    process, control, client = stack
+    control.scene_view.max_concurrent_waits = 4
+    scene = await (await client.get("/api/scene")).json()
+    query = f"/api/scene/patches?scene_id={scene['scene_id']}&epoch={scene['epoch']}&after=0&wait_s=20"
+    held = [asyncio.create_task(client.get(query)) for _ in range(4)]
+    await asyncio.sleep(0.5)
+
+    started = time.monotonic()
+    busy = await client.get(query)
+    busy_body = await busy.json()
+    command = await client.post("/api/scene/commands", json=artifact("art-1"))
+    elapsed = time.monotonic() - started
+    woken = [await (await asyncio.wait_for(task, 10)).json() for task in held]
+
+    assert busy.status == 200 and busy_body["error"]["code"] == "patch_waits_busy" and busy_body["retry_after_ms"] == 1000
+    assert command.status == 200 and elapsed < 2
+    assert all(body["revision"] == 1 and len(body["patches"]) == 1 for body in woken)
+    assert control.scene_view.waiting == 0
+
+
 async def test_the_control_center_guards_origin_size_and_shape(stack):
     process, _, client = stack
     body = {"schema_version": 1, "op": "archive", "object_id": "art-1"}
@@ -530,5 +551,8 @@ async def test_the_control_center_reports_an_unavailable_scene_with_its_code(tmp
 
     assert scene["core_reachable"] is True and scene["snapshot"] is None
     assert scene["error"]["code"] == scene_wire.SCENE_UNAVAILABLE
+    # Le message de Core nomme le fichier ; la page n'en reçoit pas le chemin.
+    assert "<chemin>" in scene["error"]["message"] and "<chemin>" in command_body["error"]["message"]
+    assert tmp_path.name not in json.dumps([scene, command_body], ensure_ascii=False)
     assert scene["scene"] == {"state": "unavailable", "code": "corrupted"}
     assert command.status == 503 and command_body["scene"] == {"state": "unavailable", "code": "corrupted"}

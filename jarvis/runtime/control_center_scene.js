@@ -92,6 +92,9 @@
   }
 
   /* Appliquer une réponse de `GET /api/scene/patches`. Rend {state,action,reason} :
+     - 'retry'       : le Control Center a déjà son plafond d'attentes
+       (`retry_after_ms`, recopié dans le résultat) ; état gardé, redemander
+       après ce délai, sans relire l'instantané ;
      - 'unavailable' : Core ou la scène ne répond pas (`error`) ; état gardé,
        réessayer plus tard ;
      - 'resync'      : relire `/api/scene` (pas d'état, autre scène, autre
@@ -103,6 +106,8 @@
      Un patch déjà appliqué (révision ≤ état tenu, réponse en retard) est ignoré. */
   function applyPatchResponse(state,response){
     if(!response)return {state,action:'unavailable',reason:'no_response'};
+    if(response.error&&Number.isFinite(response.retry_after_ms))
+      return {state,action:'retry',reason:String(response.error.code||'busy'),retry_after_ms:Math.max(0,response.retry_after_ms)};
     if(response.error)return {state,action:'unavailable',reason:String(response.error.code||'error')};
     if(!state)return {state,action:'resync',reason:'no_state'};
     if(response.scene_id!==state.scene_id)return {state,action:'resync',reason:'scene_changed'};

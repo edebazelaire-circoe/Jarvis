@@ -15,12 +15,26 @@ injoignable, réponse illisible ou scène indisponible sont dits tels quels
 (`core_reachable`, `scene`, `error`), sans rien inventer. Le proxy ne garde
 aucun état de scène : l'ordre des patchs, les sauts et les resynchronisations
 sont l'affaire du client (`control_center_scene.js`).
+
+Charge (QA Slice 03) : les long-polls ont leur **propre pool de connexions**
+vers Core, et leur nombre simultané est plafonné (`MAX_CONCURRENT_PATCH_WAITS`).
+Au-delà, la réponse est immédiate (`patch_waits_busy`, `retry_after_ms`), sans
+connexion tenue. Instantanés et commandes ne font donc jamais la queue derrière
+des attentes longues.
+
+Messages : ce qui part vers la page ne porte jamais de chemin de fichier
+(`page_text`) ; le message complet reste dans le journal.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
+import re
+import time
 from typing import Any, Awaitable, Callable, Protocol
+
+import aiohttp
 
 from jarvis.domain.scene import SceneActor, SceneCommand, SceneCommandOutcome, ScenePatch, SceneSnapshot
 from jarvis.protocol import scene_wire
@@ -35,6 +49,10 @@ SCENE_VIEW_SOURCE = "core"
 INVALID_SCENE_RESPONSE = "invalid_scene_response"
 #: Commande partie sans réponse à l'échéance : son issue est inconnue.
 CORE_TIMEOUT = "core_timeout"
+#: Commande jamais partie (connexion à Core non obtenue) : rien n'a été appliqué.
+COMMAND_NOT_SENT = "command_not_sent"
+#: Trop de long-polls en cours dans ce Control Center : réessayer plus tard.
+PATCH_WAITS_BUSY = "patch_waits_busy"
 
 #: Lecture de l'instantané (jusqu'à ~11 MiB au pire sur la boucle locale).
 SNAPSHOT_TIMEOUT_S = 10.0
@@ -42,14 +60,74 @@ SNAPSHOT_TIMEOUT_S = 10.0
 MAX_PATCH_WAIT_S = 25.0
 #: Marge au-delà de l'attente demandée avant de déclarer Core injoignable.
 PATCH_WAIT_GRACE_S = 5.0
-#: Une commande écrit en une transaction SQLite (verrou ≤ 5 s côté Core).
+#: Une commande écrit en une transaction SQLite (verrou ≤ 5 s côté Core) :
+#: délai de réponse une fois la requête partie.
 COMMAND_TIMEOUT_S = 10.0
+#: Délai pour obtenir la connexion à Core. Au-delà, la commande n'est pas partie.
+COMMAND_CONNECT_TIMEOUT_S = 3.0
+#: Long-polls relayés en même temps. Au-delà : réponse immédiate `patch_waits_busy`.
+MAX_CONCURRENT_PATCH_WAITS = 32
+#: Délai conseillé au client avant de redemander quand le plafond est atteint.
+PATCH_RETRY_AFTER_MS = 1_000
+#: Fenêtre de limitation des avertissements répétitifs (acteur refusé, plafond atteint).
+REPORT_WINDOW_S = 60.0
+
+_PATH = re.compile(
+    # C:\dossier avec espaces\fichier, C:/…, \\serveur\partage\… : dossiers avec espaces, nom de fichier sans.
+    r"(?:(?<![A-Za-z0-9])[A-Za-z]:[\\/]|\\\\(?=\w))(?:[^\\/\r\n\"'<>|:*?]*[\\/])*[^\s\\/\"'<>|:*?]*"
+    # /home/…/fichier : au moins deux segments, jamais une URL (`http://…/api`).
+    r"|(?<![\w.:/])/(?:[^\s'\"<>/:]+/)+[^\s'\"<>:]*"
+)
 
 _SCENE_ERROR_CODES = frozenset({scene_wire.SCENE_UNAVAILABLE, scene_wire.SCENE_PERSIST_FAILED})
 
 
 class SceneActorForbidden(Exception):
-    """Corps de commande du navigateur portant un autre acteur que `user` : 403."""
+    """Corps de commande du navigateur portant un autre acteur que `user` : 403.
+
+    `actor` : la valeur reçue, résumée (au plus 40 caractères), pour le journal.
+    """
+
+    def __init__(self, actor: object) -> None:
+        super().__init__("the Control Center only sends user commands")
+        try:
+            text = json.dumps(actor, ensure_ascii=False)
+        except (TypeError, ValueError):
+            text = type(actor).__name__
+        self.actor = truncate(text, 40)
+
+
+def page_text(text: str, limit: int = 200) -> str:
+    """Texte destiné à la page : chemins de fichiers remplacés par `<chemin>`, longueur bornée."""
+
+    return truncate(_PATH.sub("<chemin>", text), limit)
+
+
+class ReportThrottle:
+    """Au plus un rapport par clé par fenêtre ; le suivant dit combien ont été tus entre-temps.
+
+    `admit(key)` rend `None` (taire) ou le nombre d'occurrences tues depuis le
+    dernier rapport de cette clé. Clés bornées : au-delà de `max_keys`, tout
+    est oublié (au pire un rapport de plus, jamais une mémoire qui grossit).
+    """
+
+    def __init__(self, window_s: float = REPORT_WINDOW_S, *, clock: Callable[[], float] = time.monotonic, max_keys: int = 64) -> None:
+        self.window_s = window_s
+        self.clock = clock
+        self.max_keys = max_keys
+        self._entries: dict[str, list[float]] = {}
+
+    def admit(self, key: str) -> int | None:
+        now = self.clock()
+        entry = self._entries.get(key)
+        if entry is not None and now - entry[0] < self.window_s:
+            entry[1] += 1
+            return None
+        if entry is None and len(self._entries) >= self.max_keys:
+            self._entries.clear()
+        suppressed = int(entry[1]) if entry is not None else 0
+        self._entries[key] = [now, 0]
+        return suppressed
 
 
 class SceneTransport(Protocol):
@@ -59,37 +137,60 @@ class SceneTransport(Protocol):
 
     async def scene_patches(self, *, scene_id: str, epoch: str, after: int, wait_s: float, timeout_s: float) -> dict[str, Any]: ...
 
-    async def scene_command(self, command: dict[str, Any]) -> dict[str, Any]: ...
+    async def scene_command(self, command: dict[str, Any], *, connect_timeout_s: float, read_timeout_s: float) -> dict[str, Any]:
+        """`aiohttp.ConnectionTimeoutError` : connexion non obtenue, commande **non envoyée**."""
+        ...
 
     async def close(self) -> None: ...
+
+
+async def _with_fresh_token(transport: CoreWorkTransport, call: Callable[[LocalCoreClient], Awaitable[dict[str, Any]]]) -> dict[str, Any]:
+    """Jeton refusé (Core redémarré) : relu, puis une seule nouvelle tentative.
+
+    Rejouer est sûr, commande comprise : un 401 est rendu avant que Core ne lise le corps.
+    """
+
+    try:
+        return await call(transport._connect())
+    except CoreProtocolError as exc:
+        if exc.status != 401:
+            raise
+    await transport.close()
+    return await call(transport._connect())
 
 
 class CoreSceneTransport(CoreWorkTransport):
     """Transport de scène : même jeton relu à chaque connexion que `CoreWorkTransport`.
 
-    Jeton refusé (Core redémarré) : relu, puis une seule nouvelle tentative.
-    Rejouer une commande est sûr ici : un 401 est rendu avant que Core ne la lise.
+    Deux connexions à Core : celle héritée (instantanés, commandes) et
+    `_polls` (long-polls seulement). Chacune a son propre pool : des dizaines
+    d'attentes longues n'occupent jamais une place dont une commande a besoin.
     """
 
+    def __init__(self, *, host: str, port: int, token_file) -> None:  # noqa: ANN001 - même signature que le parent
+        super().__init__(host=host, port=port, token_file=token_file)
+        self._polls = CoreWorkTransport(host=host, port=port, token_file=token_file)
+
     async def scene_snapshot(self) -> dict[str, Any]:
-        return await self._with_fresh_token(lambda client: client.scene_snapshot())
+        return await _with_fresh_token(self, lambda client: client.scene_snapshot())
 
     async def scene_patches(self, *, scene_id: str, epoch: str, after: int, wait_s: float, timeout_s: float) -> dict[str, Any]:
-        return await self._with_fresh_token(
-            lambda client: client.scene_patches(scene_id=scene_id, epoch=epoch, after=after, wait_s=wait_s, timeout_s=timeout_s)
+        return await _with_fresh_token(
+            self._polls,
+            lambda client: client.scene_patches(scene_id=scene_id, epoch=epoch, after=after, wait_s=wait_s, timeout_s=timeout_s),
         )
 
-    async def scene_command(self, command: dict[str, Any]) -> dict[str, Any]:
-        return await self._with_fresh_token(lambda client: client.scene_command(command))
+    async def scene_command(self, command: dict[str, Any], *, connect_timeout_s: float, read_timeout_s: float) -> dict[str, Any]:
+        return await _with_fresh_token(
+            self,
+            lambda client: client.scene_command(command, connect_timeout_s=connect_timeout_s, read_timeout_s=read_timeout_s),
+        )
 
-    async def _with_fresh_token(self, call: Callable[[LocalCoreClient], Awaitable[dict[str, Any]]]) -> dict[str, Any]:
+    async def close(self) -> None:
         try:
-            return await call(self._connect())
-        except CoreProtocolError as exc:
-            if exc.status != 401:
-                raise
-        await self.close()
-        return await call(self._connect())
+            await self._polls.close()
+        finally:
+            await super().close()
 
 
 def _degraded(code: str, message: str, *, core_reachable: bool, scene: dict[str, Any] | None, **empty: Any) -> dict[str, Any]:
@@ -186,7 +287,7 @@ def user_command(body: Any) -> SceneCommand:
         raise TypeError("scene command must be a JSON object")
     actor = body.get("actor", SceneActor.USER.value)
     if actor != SceneActor.USER.value:
-        raise SceneActorForbidden("the Control Center only sends user commands")
+        raise SceneActorForbidden(actor)
     return SceneCommand.from_payload({**body, "actor": SceneActor.USER.value})
 
 
@@ -200,20 +301,33 @@ class CoreSceneView:
         journal: RuntimeJournal | None = None,
         snapshot_timeout_s: float = SNAPSHOT_TIMEOUT_S,
         command_timeout_s: float = COMMAND_TIMEOUT_S,
+        command_connect_timeout_s: float = COMMAND_CONNECT_TIMEOUT_S,
         max_patch_wait_s: float = MAX_PATCH_WAIT_S,
         patch_wait_grace_s: float = PATCH_WAIT_GRACE_S,
+        max_concurrent_waits: int = MAX_CONCURRENT_PATCH_WAITS,
+        throttle: ReportThrottle | None = None,
     ) -> None:
-        if min(snapshot_timeout_s, command_timeout_s, patch_wait_grace_s) <= 0 or max_patch_wait_s < 0:
+        if min(snapshot_timeout_s, command_timeout_s, command_connect_timeout_s, patch_wait_grace_s) <= 0 or max_patch_wait_s < 0:
             raise ValueError("scene view timeouts must be positive")
+        if max_concurrent_waits < 1:
+            raise ValueError("max_concurrent_waits must be at least 1")
         self.transport = transport
         self.journal = journal
         self.snapshot_timeout_s = snapshot_timeout_s
         self.command_timeout_s = command_timeout_s
+        self.command_connect_timeout_s = command_connect_timeout_s
         self.max_patch_wait_s = max_patch_wait_s
         self.patch_wait_grace_s = patch_wait_grace_s
+        self.max_concurrent_waits = max_concurrent_waits
+        self.throttle = throttle or ReportThrottle()
+        #: Long-polls en cours vers Core (plafonnés par `max_concurrent_waits`).
+        self.waiting = 0
         #: Codes d'indisponibilité déjà journalisés depuis la dernière lecture
         #: réussie : une panne de Core se lit une fois, pas à chaque sondage.
         self._down: set[str] = set()
+        #: Lectures (`snapshot`, `patches`, `command`) dont la réponse hors
+        #: contrat est déjà journalisée ; oublié au retour à la normale.
+        self._invalid_reported: set[str] = set()
 
     # ------------------------------------------------------------ lectures
 
@@ -230,6 +344,33 @@ class CoreSceneView:
         return self._ready(body)
 
     async def patches(self, query: scene_wire.PatchQuery) -> dict[str, Any]:
+        if self.waiting >= self.max_concurrent_waits:
+            return self._busy()
+        self.waiting += 1
+        try:
+            return await self._relay_patches(query)
+        finally:
+            self.waiting -= 1
+
+    def _busy(self) -> dict[str, Any]:
+        """Plafond atteint : réponse immédiate, aucune connexion tenue ni ouverte vers Core."""
+
+        suppressed = self.throttle.admit("patch_waits_busy")
+        if suppressed is not None:
+            self._emit(
+                "scene.view_busy",
+                f"{self.max_concurrent_waits} attentes de scène déjà en cours : nouvelle attente refusée, le client réessaie",
+                level="warning",
+                data={"limit": self.max_concurrent_waits, "suppressed": suppressed},
+            )
+        body = unavailable_patches_payload(
+            PATCH_WAITS_BUSY,
+            f"Trop d'attentes de scène en cours ({self.max_concurrent_waits}) : nouvel essai dans {PATCH_RETRY_AFTER_MS / 1000:g} s.",
+        )
+        # Core n'a pas été interrogé : on ne sait rien de lui.
+        return {**body, "core_reachable": None, "retry_after_ms": PATCH_RETRY_AFTER_MS}
+
+    async def _relay_patches(self, query: scene_wire.PatchQuery) -> dict[str, Any]:
         wait_s = min(query.wait_s, self.max_patch_wait_s)
         deadline = wait_s + self.patch_wait_grace_s
         try:
@@ -256,30 +397,47 @@ class CoreSceneView:
         """Relayer une commande `user` ; rend `(statut HTTP, corps)`.
 
         200 : issue du domaine (refus compris). 400/413 : refus de forme par
-        Core. 503 : Core injoignable, scène indisponible ou écriture échouée.
-        504 : pas de réponse à l'échéance, **issue inconnue** (la commande a
-        pu être appliquée) : le client relit la scène. 502 : réponse illisible.
+        Core. 503 : Core injoignable ou connexion non obtenue en
+        `command_connect_timeout_s` (`command_not_sent` : **rien n'est parti**,
+        réessayer est sûr), scène indisponible ou écriture échouée. 504 : requête
+        partie, pas de réponse en `command_timeout_s`, **issue inconnue** (la
+        commande a pu être appliquée) : le client relit la scène. 502 : réponse
+        illisible ou refus d'appel.
         """
 
         if command.actor is not SceneActor.USER:
             raise ValueError("the scene view relays user commands only")
         op = command.op.value
         try:
-            raw = await asyncio.wait_for(self.transport.scene_command(command.to_payload()), timeout=self.command_timeout_s)
+            raw = await asyncio.wait_for(
+                self.transport.scene_command(
+                    command.to_payload(), connect_timeout_s=self.command_connect_timeout_s, read_timeout_s=self.command_timeout_s,
+                ),
+                # Seconde borne : elle ne sait pas si la requête est partie, d'où « issue inconnue ».
+                timeout=self.command_connect_timeout_s + self.command_timeout_s + 1.0,
+            )
             body = self._decode_command(raw)
         except asyncio.CancelledError:
             raise
+        except aiohttp.ConnectionTimeoutError:
+            message = (f"Commande non envoyée : connexion à Core non obtenue en {self.command_connect_timeout_s:g} s. "
+                       "Rien n'a été appliqué, réessayer est sûr.")
+            return self._command_failed(503, COMMAND_NOT_SENT, message, op=op, core_reachable=False)
         except TimeoutError:
-            message = f"Core n'a pas répondu en {self.command_timeout_s:g} s : issue inconnue, relire la scène."
+            message = f"Core n'a pas répondu en {self.command_timeout_s:g} s après l'envoi : issue inconnue, relire la scène."
             return self._command_failed(504, CORE_TIMEOUT, message, op=op, core_reachable=False)
         except CoreProtocolError as exc:
             return self._command_refused_by_core(exc, op=op)
         except (TypeError, ValueError) as exc:
             self._report_invalid(exc, "command")
-            return self._command_failed(502, INVALID_SCENE_RESPONSE, f"Réponse de Core illisible : {truncate(str(exc), 160)}", op=op, core_reachable=True)
-        except Exception as exc:  # noqa: BLE001 - Core arrêté, jeton absent, réseau
-            detail = truncate(str(exc), 160) or type(exc).__name__
-            return self._command_failed(503, CORE_UNREACHABLE, f"Core injoignable : {detail}", op=op, core_reachable=False)
+            return self._command_failed(502, INVALID_SCENE_RESPONSE, f"Réponse de Core illisible : {str(exc)}", op=op, core_reachable=True)
+        except (aiohttp.ClientConnectorError, ConnectionError) as exc:
+            detail = str(exc) or type(exc).__name__
+            return self._command_failed(503, CORE_UNREACHABLE, f"Core injoignable, commande non envoyée : {detail}", op=op, core_reachable=False)
+        except Exception as exc:  # noqa: BLE001 - coupure après l'envoi, réseau : issue inconnue
+            detail = str(exc) or type(exc).__name__
+            return self._command_failed(503, CORE_UNREACHABLE, f"Liaison à Core perdue ({detail}) : issue inconnue, relire la scène.", op=op, core_reachable=False)
+        self._invalid_reported.discard("command")
         self._emit(
             "scene.command",
             f"commande de scène {op} : {body['outcome']}",
@@ -313,25 +471,27 @@ class CoreSceneView:
 
     def _command_refused_by_core(self, exc: CoreProtocolError, *, op: str) -> tuple[int, dict[str, Any]]:
         if exc.code in _SCENE_ERROR_CODES:
-            return self._command_failed(503, exc.code, _core_message(exc), op=op, core_reachable=True, scene=_scene_block(exc))
+            return self._command_failed(503, exc.code, exc.message, op=op, core_reachable=True, scene=_scene_block(exc))
         if exc.status in (400, 413):
-            return self._command_failed(exc.status, exc.code, _core_message(exc), op=op, core_reachable=True)
+            return self._command_failed(exc.status, exc.code, exc.message, op=op, core_reachable=True)
         return self._command_failed(502, CORE_REFUSED, f"Core a refusé la commande ({exc.status} {exc.code}).", op=op, core_reachable=True)
 
     def _command_failed(
         self, status: int, code: str, message: str, *, op: str, core_reachable: bool, scene: dict[str, Any] | None = None,
     ) -> tuple[int, dict[str, Any]]:
+        """`message` complet au journal ; la page n'en reçoit qu'une version sans chemin (`page_text`)."""
+
         self._emit(
             "scene.command_failed",
-            f"commande de scène {op} non relayée : {message}",
+            f"commande de scène {op} non relayée : {truncate(message, 500)}",
             level="warning",
-            data={"op": op, "status": status, "code": code},
+            data={"op": op, "status": status, "code": code, "error": truncate(message, 500)},
         )
         return status, {
             "source": SCENE_VIEW_SOURCE,
             "core_reachable": core_reachable,
             "scene": scene,
-            "error": {"code": code, "message": message},
+            "error": {"code": code, "message": page_text(message) or code},
         }
 
     # ------------------------------------------------------------ diagnostic
@@ -341,39 +501,46 @@ class CoreSceneView:
         return {"source": SCENE_VIEW_SOURCE, "core_reachable": True, "scene": {"state": "ready", "code": None}, **body, "error": None}
 
     def _read_failure(self, exc: Exception, what: str, timeout_s: float) -> tuple[str, str, bool, dict[str, Any] | None]:
-        """Classer l'échec d'une lecture : `(code, message, core_reachable, scene)`, journalisé à la transition."""
+        """Classer l'échec d'une lecture : `(code, message pour la page, core_reachable, scene)`.
+
+        Journalisé à la transition seulement (message complet, chemins compris).
+        """
 
         if isinstance(exc, CoreProtocolError) and exc.code in _SCENE_ERROR_CODES:
-            result = (scene_wire.SCENE_UNAVAILABLE, _core_message(exc), True, _scene_block(exc))
+            code, message, reachable, scene = scene_wire.SCENE_UNAVAILABLE, exc.message or f"{exc.status} {exc.code}", True, _scene_block(exc)
         elif isinstance(exc, CoreProtocolError):
-            result = (CORE_REFUSED, f"Core a refusé la lecture ({exc.status} {exc.code}).", True, None)
+            code, message, reachable, scene = CORE_REFUSED, f"Core a refusé la lecture ({exc.status} {exc.code}).", True, None
         elif isinstance(exc, TimeoutError):
-            result = (CORE_UNREACHABLE, f"Core n'a pas répondu en {timeout_s:g} s.", False, None)
+            code, message, reachable, scene = CORE_UNREACHABLE, f"Core n'a pas répondu en {timeout_s:g} s.", False, None
         elif isinstance(exc, (TypeError, ValueError)):
             self._report_invalid(exc, what)
-            result = (INVALID_SCENE_RESPONSE, f"Réponse de scène de Core illisible : {truncate(str(exc), 160)}", True, None)
+            code, message, reachable, scene = INVALID_SCENE_RESPONSE, f"Réponse de scène de Core illisible : {exc}", True, None
         else:
-            detail = truncate(str(exc), 160) or type(exc).__name__
-            result = (CORE_UNREACHABLE, f"Core injoignable : {detail}", False, None)
-        code, message = result[0], result[1]
+            code, message, reachable, scene = CORE_UNREACHABLE, f"Core injoignable : {str(exc) or type(exc).__name__}", False, None
         if code not in self._down:
             self._down.add(code)
             self._emit(
                 "scene.view_unavailable",
-                f"Scène non lisible depuis le Control Center ({what}) : {message}",
+                f"Scène non lisible depuis le Control Center ({what}) : {truncate(message, 500)}",
                 level="warning",
-                data={"code": code, "read": what, "exception_type": type(exc).__name__},
+                data={"code": code, "read": what, "exception_type": type(exc).__name__, "error": truncate(message, 500)},
             )
-        return result
+        return code, page_text(message) or code, reachable, scene
 
     def _restored(self, what: str) -> None:
+        self._invalid_reported.discard(what)
         if not self._down:
             return
         codes, self._down = sorted(self._down), set()
+        self._invalid_reported.clear()
         self._emit("scene.view_restored", f"Scène de nouveau lisible depuis le Control Center ({what})", data={"after": codes})
 
     def _report_invalid(self, exc: Exception, what: str) -> None:
-        # Core a répondu hors contrat : défaut à corriger, en erreur (panneau ERR).
+        # Core a répondu hors contrat : défaut à corriger, en erreur (panneau
+        # ERR), une fois par lecture jusqu'au retour à la normale.
+        if what in self._invalid_reported:
+            return
+        self._invalid_reported.add(what)
         self._emit(
             "scene.view_invalid_response",
             f"Réponse de scène de Core illisible ({what}).",
@@ -394,10 +561,6 @@ class CoreSceneView:
             await self.transport.close()
         except Exception:  # noqa: BLE001 - l'arrêt du Control Center ne reste jamais bloqué
             pass
-
-
-def _core_message(exc: CoreProtocolError) -> str:
-    return truncate(exc.message, 200) or f"{exc.status} {exc.code}"
 
 
 def _scene_block(exc: CoreProtocolError) -> dict[str, Any] | None:

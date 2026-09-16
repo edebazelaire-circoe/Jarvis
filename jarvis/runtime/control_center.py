@@ -71,6 +71,7 @@ from jarvis.protocol import scene_wire
 from jarvis.protocol.strict_json import loads_strict_json
 from jarvis.runtime.scene_view import (
     CoreSceneView,
+    ReportThrottle,
     SceneActorForbidden,
     unavailable_patches_payload,
     unavailable_snapshot_payload,
@@ -300,6 +301,9 @@ class ControlCenter:
         # Proxy de la scène constellation tenue par Core (Slice 03). Absent,
         # `/api/scene*` répondent « non configuré ».
         self.scene_view = scene_view
+        # Acteurs refusés : un avertissement par valeur par minute, avec le
+        # nombre d'occurrences tues (une page en boucle ne remplit pas la trace).
+        self._scene_forbidden_reports = ReportThrottle()
 
         settings = self._settings()
         self._agent_id = cli_catalog.normalize_agent_cli(settings.get("agent_cli"))
@@ -2414,8 +2418,12 @@ class ControlCenter:
         try:
             command = user_command(loads_strict_json(raw, invalid_message="invalid scene command JSON"))
         except SceneActorForbidden as exc:
-            self.journal.emit("scene.command_forbidden", "commande de scène refusée : acteur autre que user", level="warning",
-                              data={"code": scene_wire.SCENE_ACTOR_FORBIDDEN})
+            suppressed = self._scene_forbidden_reports.admit(exc.actor)
+            if suppressed is not None:
+                self.journal.emit(
+                    "scene.command_forbidden", f"commande de scène refusée : acteur {exc.actor} au lieu de user", level="warning",
+                    data={"code": scene_wire.SCENE_ACTOR_FORBIDDEN, "actor": exc.actor, "suppressed": suppressed},
+                )
             return self._scene_error(403, scene_wire.SCENE_ACTOR_FORBIDDEN, str(exc))
         except (TypeError, ValueError) as exc:
             return self._scene_error(400, scene_wire.INVALID_REQUEST, f"invalid scene command: {exc}")

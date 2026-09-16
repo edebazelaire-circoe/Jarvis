@@ -6,7 +6,7 @@ from typing import Any, Callable
 import aiohttp
 
 from jarvis.domain.v2 import PROTOCOL_VERSION, ProtocolEnvelope, new_id
-from jarvis.protocol.scene_wire import MAX_SCENE_RESPONSE_BYTES
+from jarvis.protocol.scene_wire import MAX_SCENE_RESPONSE_BYTES  # module léger : ni aiohttp.web, ni domaine de scène
 from jarvis.protocol.strict_json import loads_strict_json
 from jarvis.v2_config import validate_loopback_host
 from jarvis.domain.voice_admission import VoiceTurnAdmissionAcceptance, VoiceTurnAdmissionRequest
@@ -340,11 +340,23 @@ class LocalCoreClient:
         ) as response:
             return await self._bounded_json(response)
 
-    async def scene_command(self, command: dict[str, Any]) -> dict[str, Any]:
-        """`POST /v1/scene/commands` : une `SceneCommand.to_payload()` ; refus du domaine = 200."""
+    async def scene_command(
+        self, command: dict[str, Any], *, connect_timeout_s: float | None = None, read_timeout_s: float | None = None,
+    ) -> dict[str, Any]:
+        """`POST /v1/scene/commands` : une `SceneCommand.to_payload()` ; refus du domaine = 200.
+
+        `connect_timeout_s` borne l'obtention de la connexion (attente du pool
+        comprise) : son dépassement lève `aiohttp.ConnectionTimeoutError`, la
+        requête n'est **pas partie**. `read_timeout_s` borne l'attente de la
+        réponse une fois la requête envoyée (`aiohttp.SocketTimeoutError` :
+        issue inconnue).
+        """
 
         session = await self._http()
-        async with session.post(self.base_url + "/v1/scene/commands", headers=self.headers, json=command) as response:
+        options: dict[str, Any] = {}
+        if connect_timeout_s is not None or read_timeout_s is not None:
+            options["timeout"] = aiohttp.ClientTimeout(total=None, connect=connect_timeout_s, sock_read=read_timeout_s)
+        async with session.post(self.base_url + "/v1/scene/commands", headers=self.headers, json=command, **options) as response:
             return await self._bounded_json(response)
 
     @staticmethod

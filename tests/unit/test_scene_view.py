@@ -19,9 +19,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
+import subprocess
+import sys
 import time
 from typing import Any
 
+import aiohttp
+import aiohttp.web
 from aiohttp.test_utils import TestClient, TestServer, make_mocked_request
 import pytest
 from multidict import MultiDict
@@ -38,15 +43,21 @@ from jarvis.domain.scene import (
 )
 from jarvis.ports.scene import ScenePatchWindow
 from jarvis.protocol import scene_wire
-from jarvis.protocol.client import CoreProtocolError
+from jarvis.protocol.client import CoreProtocolError, LocalCoreClient
 from jarvis.runtime.control_center import ControlCenter
 from jarvis.runtime.scene_view import (
+    COMMAND_NOT_SENT,
     CORE_TIMEOUT,
     CORE_UNREACHABLE,
     INVALID_SCENE_RESPONSE,
+    PATCH_RETRY_AFTER_MS,
+    PATCH_WAITS_BUSY,
     CoreSceneTransport,
     CoreSceneView,
+    ReportThrottle,
     SceneActorForbidden,
+    _with_fresh_token,
+    page_text,
     decode_patches_response,
     decode_snapshot_response,
     user_command,
@@ -97,7 +108,7 @@ class ScriptedTransport:
         self.calls.append(("patches", kwargs))
         return await self._answer(self.patches_result)
 
-    async def scene_command(self, command: dict) -> dict:
+    async def scene_command(self, command: dict, **kwargs: Any) -> dict:
         self.calls.append(("command", command))
         return await self._answer(self.command_result)
 
@@ -298,7 +309,7 @@ async def test_each_command_failure_has_its_status_and_code(failure, status, cod
 
 
 async def test_a_command_without_answer_says_its_outcome_is_unknown():
-    view = CoreSceneView(ScriptedTransport(hang=True), command_timeout_s=0.2)
+    view = CoreSceneView(ScriptedTransport(hang=True), command_timeout_s=0.1, command_connect_timeout_s=0.1)
 
     status, body = await view.command(user_archive())
 
@@ -338,7 +349,9 @@ async def test_the_transport_rereads_the_token_once_when_core_restarted(tmp_path
         return {"ok": True}
 
     try:
-        assert await transport._with_fresh_token(call) == {"ok": True}
+        assert await _with_fresh_token(transport, call) == {"ok": True}
+        # Les long-polls ont leur propre connexion (QA Slice 03, MINOR-1).
+        assert transport._polls is not transport and transport._polls.token_file == token_file
     finally:
         await transport.close()
     assert tokens == ["a" * 48, "b" * 48]
@@ -432,3 +445,191 @@ def test_the_patch_body_always_carries_at_least_one_whole_patch(monkeypatch):
                     "patches": [patch.to_payload()]}
     resync = json.loads(scene_wire.patch_window_body(ScenePatchWindow("scene-1", 9, (), True), epoch="e1", after=0))
     assert resync["revision"] == 9 and resync["resync_required"] is True and resync["patches"] == []
+
+# ------------------------------------------------------------ QA Slice 03 : charge, journal, messages
+
+
+async def test_long_polls_beyond_the_cap_answer_at_once_without_calling_core():
+    journal = Journal()
+    transport = ScriptedTransport(hang=True)
+    view = CoreSceneView(transport, journal=journal, max_concurrent_waits=2)
+    held = [asyncio.create_task(view.patches(QUERY)) for _ in range(2)]
+    await asyncio.sleep(0.05)
+
+    started = time.monotonic()
+    busy = [await view.patches(QUERY) for _ in range(4)]
+
+    assert time.monotonic() - started < 0.5 and len(transport.calls) == 2 and view.waiting == 2
+    assert busy[0]["error"]["code"] == PATCH_WAITS_BUSY and busy[0]["retry_after_ms"] == PATCH_RETRY_AFTER_MS
+    assert busy[0]["core_reachable"] is None and busy[0]["patches"] == [] and busy[0]["resync_required"] is False
+    assert [kind for kind in journal.kinds() if kind[0] == "scene.view_busy"] == [("scene.view_busy", "warning")]
+    for task in held:
+        task.cancel()
+    await asyncio.gather(*held, return_exceptions=True)
+    assert view.waiting == 0
+    transport.hang = False
+    transport.patches_result = good_patches()
+    assert (await view.patches(QUERY))["error"] is None
+
+
+async def test_a_command_that_never_got_a_connection_says_it_was_not_sent():
+    view = CoreSceneView(ScriptedTransport(command=aiohttp.ConnectionTimeoutError("pool")), command_connect_timeout_s=3)
+    status, body = await view.command(user_archive())
+    assert (status, body["error"]["code"]) == (503, COMMAND_NOT_SENT)
+    assert "Rien n'a été appliqué" in body["error"]["message"] and "inconnue" not in body["error"]["message"]
+
+    view = CoreSceneView(ScriptedTransport(command=aiohttp.SocketTimeoutError("read")))
+    status, body = await view.command(user_archive())
+    assert (status, body["error"]["code"]) == (504, CORE_TIMEOUT) and "inconnue" in body["error"]["message"]
+
+    view = CoreSceneView(ScriptedTransport(command=ConnectionError("Core session token is unavailable")))
+    status, body = await view.command(user_archive())
+    assert (status, body["error"]["code"]) == (503, CORE_UNREACHABLE) and "non envoyée" in body["error"]["message"]
+
+
+async def test_the_client_tells_a_connection_wait_from_a_response_wait():
+    """aiohttp réel : attendre une place du pool = non envoyée ; attendre la réponse = issue inconnue."""
+
+    release = asyncio.Event()
+
+    async def slow(request):  # noqa: ANN001
+        await request.read()
+        await release.wait()
+        return aiohttp.web.json_response({})
+
+    app = aiohttp.web.Application()
+    app.router.add_post("/v1/scene/commands", slow)
+    async with TestServer(app, host="127.0.0.1") as server:
+        session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(limit=1))
+        client = LocalCoreClient(host="127.0.0.1", port=server.port, token="t" * 48, session=session)
+        try:
+            holder = asyncio.create_task(client.scene_command({"op": "hold"}))
+            await asyncio.sleep(0.2)
+            with pytest.raises(aiohttp.ConnectionTimeoutError):
+                await client.scene_command({"op": "queued"}, connect_timeout_s=0.2, read_timeout_s=5)
+            release.set()
+            await holder
+            release.clear()
+            with pytest.raises(aiohttp.SocketTimeoutError):
+                await client.scene_command({"op": "slow"}, connect_timeout_s=2, read_timeout_s=0.2)
+            release.set()
+        finally:
+            await session.close()
+
+
+async def test_an_out_of_contract_answer_is_journaled_once_until_restored():
+    journal = Journal()
+    transport = ScriptedTransport(snapshot={"scene_id": "s"}, patches={"nope": 1}, command={"outcome": "maybe"})
+    view = CoreSceneView(transport, journal=journal)
+
+    for _ in range(5):
+        await view.snapshot()
+        await view.patches(QUERY)
+        await view.command(user_archive())
+    errors = [data["read"] for kind, level, data in journal.events if kind == "scene.view_invalid_response"]
+    assert sorted(errors) == ["command", "patches", "snapshot"]
+
+    transport.snapshot_result = good_snapshot()
+    await view.snapshot()
+    transport.snapshot_result = {"scene_id": "s"}
+    await view.snapshot()
+    await view.snapshot()
+    errors = [data["read"] for kind, level, data in journal.events if kind == "scene.view_invalid_response"]
+    assert sorted(errors) == ["command", "patches", "snapshot", "snapshot"]
+    assert [kind for kind, _, _ in journal.events].count("scene.view_restored") == 1
+
+
+def test_the_report_throttle_counts_what_it_silenced():
+    now = [0.0]
+    throttle = ReportThrottle(60, clock=lambda: now[0], max_keys=2)
+
+    assert throttle.admit('"brain"') == 0
+    assert [throttle.admit('"brain"') for _ in range(4)] == [None] * 4
+    assert throttle.admit('"runtime"') == 0
+    now[0] = 61
+    assert throttle.admit('"brain"') == 4
+    assert throttle.admit("third") == 0  # au-delà de max_keys : tout est oublié, jamais de croissance
+    assert throttle.admit('"runtime"') == 0
+
+
+async def test_forbidden_actors_are_journaled_once_per_value_per_window(tmp_path):
+    control = ControlCenter(runtime_root=tmp_path, project_root=tmp_path)
+    now = [0.0]
+    control._scene_forbidden_reports.clock = lambda: now[0]
+
+    async with TestClient(TestServer(control._app)) as client:
+        async def post(actor):  # noqa: ANN001, ANN202
+            response = await client.post("/api/scene/commands", json={"schema_version": 1, "op": "archive", "actor": actor, "object_id": "a"})
+            assert response.status == 403
+
+        for _ in range(5):
+            await post("brain")
+        await post("runtime")
+        now[0] = 61
+        await post("brain")
+
+    events = [json.loads(line) for line in (tmp_path / "trace.jsonl").read_text(encoding="utf-8").splitlines()]
+    forbidden = [(event["data"]["actor"], event["data"]["suppressed"]) for event in events if event["kind"] == "scene.command_forbidden"]
+    assert forbidden == [('"brain"', 0), ('"runtime"', 0), ('"brain"', 4)]
+
+
+WINDOWS_PATH = r"C:\Users\Jean Dupont\AppData\Local\jarvis\data\state\scene.sqlite3"
+
+
+async def test_messages_sent_to_the_page_never_carry_file_paths():
+    journal = Journal()
+    message = f"scene is unavailable: SceneStoreError: scene store {WINDOWS_PATH} refused: DatabaseError: file is not a database"
+    failure = CoreProtocolError(503, "scene_unavailable", message, details={"scene": {"state": "unavailable", "code": "corrupted"}})
+    view = CoreSceneView(ScriptedTransport(snapshot=failure, patches=failure, command=failure), journal=journal)
+
+    bodies = [await view.snapshot(), await view.patches(QUERY), (await view.command(user_archive()))[1]]
+
+    for body in bodies:
+        text = json.dumps(body, ensure_ascii=False)
+        assert "Users" not in text and "scene.sqlite3" not in text and ":\\\\" not in text, text
+        assert body["error"]["message"] == "scene is unavailable: SceneStoreError: scene store <chemin> refused: DatabaseError: file is not a database"
+    journaled = " ".join(json.dumps(event, ensure_ascii=False) for event in journal.events)
+    assert "Jean Dupont" in journaled  # le journal garde la cause complète
+    assert page_text(r"\\serveur\partage\scene.sqlite3 bloqué") == "<chemin> bloqué"
+    assert page_text("/home/jean/.local/data/scene.sqlite3 absent") == "<chemin> absent"
+    assert page_text("Cannot connect to host 127.77.0.1:17791 ssl:default, see http://127.0.0.1:17654/api/scene") == (
+        "Cannot connect to host 127.77.0.1:17791 ssl:default, see http://127.0.0.1:17654/api/scene")
+
+
+def test_the_protocol_client_does_not_load_the_scene_domain_or_aiohttp_web():
+    code = (
+        "import sys, jarvis.protocol.client;"
+        "print(sorted(m for m in ('aiohttp.web', 'jarvis.domain.scene', 'jarvis.ports.scene') if m in sys.modules))"
+    )
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60, cwd=Path(__file__).resolve().parents[2])
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "[]"
+
+
+async def test_snapshots_and_commands_never_queue_behind_long_polls(tmp_path):
+    """Au-delà du pool de 100 connexions d'une session aiohttp : lectures et commandes restent immédiates."""
+
+    from tests.integration.test_scene_transport import CoreProcess, artifact
+
+    process = CoreProcess(tmp_path)
+    await process.start()
+    view = CoreSceneView(CoreSceneTransport(host="127.0.0.1", port=process.port, token_file=process.token_file),
+                         max_concurrent_waits=500, command_connect_timeout_s=2, command_timeout_s=2, snapshot_timeout_s=2)
+    try:
+        snap = await view.snapshot()
+        query = scene_wire.PatchQuery(snap["scene_id"], snap["epoch"], snap["revision"], wait_s=20)
+        polls = [asyncio.create_task(view.patches(query)) for _ in range(120)]
+        await asyncio.sleep(1.0)
+
+        started = time.monotonic()
+        snapshot = await view.snapshot()
+        status, body = await view.command(user_command(artifact("art-load")))
+        elapsed = time.monotonic() - started
+        results = await asyncio.wait_for(asyncio.gather(*polls), 30)
+    finally:
+        await view.aclose()
+        await process.stop()
+
+    assert snapshot["error"] is None and status == 200 and body["outcome"] == "applied", (snapshot, body)
+    assert elapsed < 1.5, elapsed
+    assert all(result["error"] is None and result["revision"] == 1 for result in results)
