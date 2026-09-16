@@ -356,3 +356,18 @@ Evidence:
 - **`qa04_capacity2.py`:** same numbers as QA's run (saturation at 403, `refused=0`, 37 of 117 missed stars caught up after archive, forced reconcile 37, health `saturated: true`, bus dropped/evicted 0/0). The new sub-agent created after the archive ends `failed` (terminal), so it waits behind older terminal work, per the rule.
 - **Targeted suite** (the 1010 list plus the 6 new tests) under `-W error::ResourceWarning`: **1016 passed**.
 - **Full `scripts/verify_release.py`**, alone: `3925 passed, 9 skipped in 313.01s` / `Release verification passed.`
+
+## 2026-09-16 — Slice 04 PM decision: APPROVED
+
+- Commits: `07f25b7`, `696e855`, `a146a70`, `376bdf8` (implementation); `764fe58`, `6c8fb93`, `d4a59e9` (QA rework: saturation defer/catch-up + health capacity, speculative guard, persist_failed dedup, docs); `7b32ed0`, `cf7ec8e`, `7a51a2a` (final follow-up: watcher lifetime, episode closure, 10-min warning throttle, active-work-first catch-up, restart docs).
+- QA (qa-verification + code-review + runtime-validation + agent-trace-analysis): APPROVE twice. **Live real-model proof** (Claude CLI, haiku, 2 turns ≈ $0.10): background sub-agent star 520 ms after `tool_use Agent`; nested sub-agent star + `parent_of` link; both `completed`; zero scene commands from brain turns. Real trace replay (independent): 18 agent stars, 0/49 bash stars, 4 interrupted signals, 19 ms median latency, 50 scene revisions for 1500 work revisions, no errors. Domain fuzz 120k commands: no forbidden removal. Resilience: Core hard-kill mid-stream, transient/fatal outages, lossy flood + reconcile, 2 s commit stall with no WebSocket/bus impact, stop during job burst (all `cancelled`), `finally` early returns. Capacity: saturation at 403 stars / 512 objects, 0 refusals logged, catch-up after archive in 0.06 s, active work first.
+- PM spot-check after final follow-up: 347 projector/contract/speculative tests passed. `verify_release.py` alone: 3925 passed / 9 skipped.
+- Domain change accepted: runtime may `unlink` a signal relation (`explains`, `relation_id == from_id`, runtime attention → runtime star). `ALLOWED_SCENE_OPS` unchanged.
+- Accepted residual risks:
+  1. Relations carry no origin: runtime can remove brain/user relations of signal shape or `parent_of` between runtime stars.
+  2. Pending (deferred) star creations are memory-only; a Core restart forgets them (only items still in Core's 64-item work snapshot or re-sent by producers return). >1024 pending drops oldest terminal entries first.
+  3. While saturated, brain/user creations are also refused (`scene_full`, visible in health). Orphan attention after archive and bulk archive → Slice 08 amendment.
+  4. After a restart, a brain edit that kept the star title can be overwritten by the projector.
+  5. `parent_of` cycles possible (Slice 05 tolerates). Every brain CLI stop raises one `process_stopped` signal per running sub-agent (Slice 05 styles as low urgency).
+  6. Stars from a previous Core session keep their last `exec_state` until Slice 10.
+- Open product question for Human (not blocking): automatic retention/archive of old completed stars would modify Decision 12; not implemented.
