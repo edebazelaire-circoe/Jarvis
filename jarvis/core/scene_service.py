@@ -64,6 +64,8 @@ SCENE_UNAVAILABLE_KIND = "core.scene.unavailable"
 SCENE_PERSIST_FAILED_KIND = "core.scene.persist_failed"
 SCENE_COMMAND_REFUSED_KIND = "core.scene.command_refused"
 SCENE_CLOSE_FAILED_KIND = "core.scene.close_failed"
+SCENE_SWEPT_KIND = "core.scene.swept"
+SCENE_SWEEP_FAILED_KIND = "core.scene.sweep_failed"
 
 #: Patchs gardés en mémoire pour le transport. Au-delà, un consommateur en
 #: retard reçoit `resync_required` et relit l'instantané.
@@ -134,6 +136,7 @@ class SceneService:
         async with self._lock:
             if self._availability.state is not SceneState.STARTING:
                 return self._availability
+            await self._sweep()
             try:
                 created = await self._repository.initialize()
                 snapshot = await self._repository.load()
@@ -164,6 +167,33 @@ class SceneService:
                 },
             )
             return self._availability
+
+    async def _sweep(self) -> None:
+        """Balayer les restes du stockage avant de l'ouvrir ; un échec n'empêche jamais le démarrage."""
+
+        try:
+            report = await self._repository.sweep_leftovers()
+        except Exception as exc:
+            self._emit(
+                SCENE_SWEEP_FAILED_KIND,
+                "balayage des restes de la scène impossible",
+                level="warning",
+                data={"error": f"{type(exc).__name__}: {exc}"},
+            )
+            return
+        if report.removed:
+            self._emit(
+                SCENE_SWEPT_KIND,
+                "restes de la scène retirés (création interrompue ou ancienne copie de validation)",
+                data={"removed": list(report.removed)},
+            )
+        if report.failed:
+            self._emit(
+                SCENE_SWEEP_FAILED_KIND,
+                "restes de la scène non retirés",
+                level="warning",
+                data={"failed": list(report.failed)},
+            )
 
     async def close(self) -> None:
         async with self._lock:

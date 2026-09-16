@@ -24,6 +24,9 @@ import sqlite3
 import stat
 import subprocess
 import sys
+import tempfile
+
+import asyncio
 
 import pytest
 
@@ -126,7 +129,7 @@ async def expect_refusal(path: Path, code: SceneStoreErrorCode, match: str) -> N
 
 
 def test_repository_matches_its_port():
-    for name in ("initialize", "load", "commit", "archived_history", "close"):
+    for name in ("sweep_leftovers", "initialize", "load", "commit", "archived_history", "close"):
         assert callable(getattr(SQLiteSceneRepository, name)), name
         assert name in SceneRepository.__dict__
 
@@ -236,8 +239,19 @@ async def test_a_file_that_is_not_a_database_is_refused_as_corrupted(tmp_path):
     path = tmp_path / "scene.sqlite3"
     path.write_bytes(b"this is not a sqlite database\x00" * 200)
     before = digest(path)
-    await expect_refusal(path, SceneStoreErrorCode.CORRUPTED, "unusable: DatabaseError")
+    await expect_refusal(path, SceneStoreErrorCode.CORRUPTED, "refused: DatabaseError: file is not a database")
     assert digest(path) == before
+
+
+@pytest.mark.parametrize("cut", ["half", "100b"])
+async def test_a_truncated_file_is_corrupted_not_a_storage_error(tmp_path, cut):
+    path = tmp_path / "scene.sqlite3"
+    repository, snapshot = await fresh(path)
+    await commit_all(repository, snapshot, scenario()[:10])
+    await repository.close()
+    data = path.read_bytes()
+    path.write_bytes(data[: len(data) // 2] if cut == "half" else data[:100])
+    await expect_refusal(path, SceneStoreErrorCode.CORRUPTED, r"refused: DatabaseError|holds no table|quick_check failed")
 
 
 @pytest.mark.parametrize(
@@ -430,11 +444,25 @@ async def test_an_orphan_wal_without_its_database_is_refused(tmp_path):
     assert not path.exists()
 
 
-async def test_a_refused_file_with_a_pending_wal_stays_byte_identical(tmp_path):
-    """Cas QA `wal_pending_newer` : une version plus récente vit encore dans le `-wal`."""
+def logical_content(path: Path) -> dict[str, list]:
+    """Contenu logique, lu en lecture seule : ce que la garantie de refus protège."""
+
+    conn = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
+    try:
+        return {
+            table: conn.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall()
+            for table in ("schema_version", "scene_meta", "scene_objects", "scene_relations", "scene_tombstones", "scene_history")
+        }
+    finally:
+        conn.close()
+
+
+async def test_a_refused_file_with_a_pending_wal_keeps_its_logical_content(tmp_path):
+    """Cas QA `wal_pending_newer` : la version plus récente ne vit encore que dans le `-wal`."""
 
     path = tmp_path / "scene.sqlite3"
-    repository, _ = await fresh(path)
+    repository, snapshot = await fresh(path)
+    await commit_all(repository, snapshot, scenario()[:3])
     await repository.close()
     code = (
         "import sqlite3, os, sys; c = sqlite3.connect(sys.argv[1], isolation_level=None);"
@@ -442,13 +470,14 @@ async def test_a_refused_file_with_a_pending_wal_stays_byte_identical(tmp_path):
         "c.execute('UPDATE schema_version SET version = 2'); os._exit(0)"
     )
     subprocess.run([sys.executable, "-c", code, str(path)], check=True)
-    before = scene_files(path)
-    assert set(before) == {"scene.sqlite3", "scene.sqlite3-shm", "scene.sqlite3-wal"}
+    assert (tmp_path / "scene.sqlite3-wal").is_file()
+    before = logical_content(path)
+    assert before["schema_version"] == [(2,)]
     await expect_refusal(path, SceneStoreErrorCode.SCHEMA_NEWER, "schema 2 is newer than supported 1")
-    assert scene_files(path) == before
+    assert logical_content(path) == before
 
 
-async def test_a_refused_file_leaves_no_stray_wal_or_shm(tmp_path):
+async def test_a_refused_file_without_pending_wal_stays_byte_identical_and_leaves_no_stray_files(tmp_path):
     path = tmp_path / "scene.sqlite3"
     repository, _ = await fresh(path)
     await repository.close()
@@ -482,7 +511,7 @@ async def test_the_write_probe_refuses_what_os_access_cannot_see(tmp_path, monke
     # `os.access` trompé (ACL, partage réseau) : la sonde d'écriture refuse quand même.
     monkeypatch.setattr(sqlite_scene.os, "access", lambda *args, **kwargs: True)
     try:
-        await expect_refusal(path, SceneStoreErrorCode.STORAGE_IO, "is not writable: OperationalError: attempt to write a readonly database")
+        await expect_refusal(path, SceneStoreErrorCode.STORAGE_IO, "refused: OperationalError: attempt to write a readonly database")
     finally:
         os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
 
@@ -529,3 +558,164 @@ async def test_an_integrity_error_during_commit_is_a_revision_conflict(tmp_path)
         await repository.commit(snapshot, update.patch, update.snapshot)
     assert caught.value.code is SceneStoreErrorCode.REVISION_CONFLICT
     await repository.close()
+
+
+# --- validation sous verrou et balayage (seconde reprise QA) ---------------------------------
+
+
+async def test_a_newer_schema_written_just_before_the_open_is_never_served(tmp_path):
+    """Cas QA R3 : le fichier change juste avant l'ouverture ; validation et usage sont une seule étape verrouillée."""
+
+    path = tmp_path / "scene.sqlite3"
+    repository, _ = await fresh(path)
+    await repository.close()
+    racing = SQLiteSceneRepository(path)
+    original = racing._check_access
+
+    def mutate_then_check():
+        conn = sqlite3.connect(path)
+        conn.execute("UPDATE schema_version SET version = 2")
+        conn.commit()
+        conn.close()
+        original()
+
+    racing._check_access = mutate_then_check
+    with pytest.raises(SceneStoreError, match="schema 2 is newer") as caught:
+        await racing.initialize()
+    assert caught.value.code is SceneStoreErrorCode.SCHEMA_NEWER
+    assert racing._conn is None
+    await racing.close()
+
+
+WRITER = r"""
+import asyncio, sys, time
+sys.path.insert(0, sys.argv[2])
+from jarvis.adapters.sqlite_scene import SQLiteSceneRepository
+from jarvis.core.scene_service import SceneService
+from jarvis.domain.scene import *
+async def main(path, seconds):
+    repo = SQLiteSceneRepository(path)
+    service = SceneService(repo)
+    assert (await service.start()).state.value == "ready"
+    repo._conn.execute("PRAGMA wal_autocheckpoint=8")
+    print("writing", flush=True)
+    end, i, failures = time.monotonic() + seconds, 0, 0
+    while time.monotonic() < end:
+        i += 1
+        try:
+            await service.apply(SceneCommand(SceneOp.UPSERT_OBJECT, SceneActor.BRAIN, object_id=f"w{i % 200}",
+                fields=SceneObjectFields(kind=SceneObjectKind.ARTIFACT, category="c", payload=ScenePayload(title=str(i), summary="x" * 1500))))
+        except Exception:
+            failures += 1
+    await service.close()
+    print(f"commits {i} failures {failures}", flush=True)
+asyncio.run(main(sys.argv[1], float(sys.argv[3])))
+"""
+
+
+async def test_a_start_next_to_a_checkpointing_writer_is_never_falsely_refused(tmp_path):
+    """Cas QA R2 : un écrivain concurrent (checkpoints fréquents) ne fait jamais refuser un fichier valide."""
+
+    path = tmp_path / "scene.sqlite3"
+    repository, _ = await fresh(path)
+    await repository.close()
+    root = Path(__file__).resolve().parents[2]
+    writer = subprocess.Popen([sys.executable, "-c", WRITER, str(path), str(root), "4"], stdout=subprocess.PIPE, text=True)
+    try:
+        assert writer.stdout.readline().strip() == "writing"
+        outcomes: dict[str, int] = {}
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 3
+        while loop.time() < deadline:
+            starter = SQLiteSceneRepository(path)
+            try:
+                await starter.initialize()
+                await starter.load()
+                outcomes["accepted"] = outcomes.get("accepted", 0) + 1
+            except SceneStoreError as exc:
+                outcomes[exc.code.value] = outcomes.get(exc.code.value, 0) + 1
+            finally:
+                await starter.close()
+        tail = writer.stdout.read()
+    finally:
+        writer.wait(timeout=30)
+        writer.stdout.close()
+    assert outcomes.get("accepted", 0) >= 3, (outcomes, tail)
+    assert set(outcomes) == {"accepted"}, (outcomes, tail)
+    assert "failures 0" in tail, tail
+
+
+async def test_the_sweep_removes_interrupted_creations_and_nothing_else(tmp_path, monkeypatch):
+    state = tmp_path / "state"
+    state.mkdir()
+    temporary_root = tmp_path / "system-temp"
+    temporary_root.mkdir()
+    monkeypatch.setattr(sqlite_scene.tempfile, "gettempdir", lambda: str(temporary_root))
+    stale = [state / "scene.sqlite3.ab12_cd.creating", state / "scene.sqlite3.ab12_cd.creating-journal"]
+    kept = [
+        state / "scene.sqlite3.bak",
+        state / "scene.sqlite3.x.creating.txt",
+        state / "other.sqlite3.ab.creating",
+        state / "scene.sqlite3-wal",
+        state / "notes.creating",
+    ]
+    for item in stale + kept:
+        item.write_bytes(b"data")
+    legacy = temporary_root / "jarvis-scene-check-k3j2"
+    legacy.mkdir()
+    for name in ("scene.sqlite3", "scene.sqlite3-wal", "scene.sqlite3-shm"):
+        (legacy / name).write_bytes(b"user content")
+    mixed = temporary_root / "jarvis-scene-check-mixed"
+    mixed.mkdir()
+    (mixed / "scene.sqlite3").write_bytes(b"x")
+    (mixed / "something-else.txt").write_bytes(b"x")
+    nested = temporary_root / "jarvis-scene-check-nested"
+    (nested / "scene.sqlite3").mkdir(parents=True)
+    unrelated = temporary_root / "jarvis-scene-checkXYZ"
+    unrelated.mkdir()
+    (unrelated / "scene.sqlite3").write_bytes(b"x")
+    other = temporary_root / "someone-else"
+    other.mkdir()
+    (other / "scene.sqlite3").write_bytes(b"x")
+
+    report = await SQLiteSceneRepository(state / "scene.sqlite3").sweep_leftovers()
+
+    assert report.failed == ()
+    assert sorted(report.removed) == sorted(
+        [str(item) for item in stale] + [str(legacy / name) for name in ("scene.sqlite3", "scene.sqlite3-shm", "scene.sqlite3-wal")] + [str(legacy)]
+    )
+    assert not any(item.exists() for item in stale) and not legacy.exists()
+    assert all(item.exists() for item in kept)
+    assert all(directory.exists() for directory in (mixed, nested, unrelated, other))
+
+
+async def test_the_sweep_reports_what_it_could_not_remove(tmp_path, monkeypatch):
+    state = tmp_path / "state"
+    state.mkdir()
+    monkeypatch.setattr(sqlite_scene.tempfile, "gettempdir", lambda: str(tmp_path / "empty-temp"))
+    stuck = state / "scene.sqlite3.zz9.creating"
+    stuck.write_bytes(b"x")
+
+    def refuse(target):
+        raise PermissionError("file in use (injected)")
+
+    monkeypatch.setattr(sqlite_scene.os, "remove", refuse)
+    report = await SQLiteSceneRepository(state / "scene.sqlite3").sweep_leftovers()
+    assert report.removed == ()
+    assert report.failed == (f"{stuck}: PermissionError: file in use (injected)",)
+    assert stuck.exists()
+
+
+async def test_opening_creates_no_validation_copy_anywhere(tmp_path, monkeypatch):
+    temporary_root = tmp_path / "system-temp"
+    temporary_root.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temporary_root))
+    path = tmp_path / "state" / "scene.sqlite3"
+    repository, snapshot = await fresh(path)
+    await commit_all(repository, snapshot, scenario()[:3])
+    await repository.close()
+    reopened = SQLiteSceneRepository(path)
+    await reopened.initialize()
+    await reopened.close()
+    assert list(temporary_root.iterdir()) == []
+    assert sorted(item.name for item in path.parent.iterdir()) == ["scene.sqlite3"]

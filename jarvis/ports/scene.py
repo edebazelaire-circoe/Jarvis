@@ -93,6 +93,17 @@ class ScenePatchWindow:
 
 
 @dataclass(frozen=True, slots=True)
+class SceneSweepReport:
+    """Ce que `SceneRepository.sweep_leftovers` a retiré, et ce qu'il n'a pas pu retirer.
+
+    Chemins et messages seulement, jamais le contenu des fichiers.
+    """
+
+    removed: tuple[str, ...] = ()
+    failed: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class ArchivedSceneObject:
     """Forme historique d'un objet archivé (`disposition = archived`).
 
@@ -140,17 +151,22 @@ class SceneReader(Protocol):
 class SceneRepository(Protocol):
     """Persistance durable de la scène active et de son historique.
 
+    - `sweep_leftovers` retire les restes que ce stockage a pu laisser
+      (créations interrompues, anciennes copies de validation) et dit ce qu'il
+      a retiré ou n'a pas pu retirer ; il ne lève pas pour un fichier resté ;
     - `initialize` ouvre le stockage et refuse (`SceneStoreError`) une version
       plus récente ou inconnue, un fichier corrompu (vide compris) ou non
-      inscriptible, sans jamais le modifier ; si le fichier n'existe pas, il
-      crée atomiquement une scène vide et son `scene_id` stable, et rend
-      `True` ;
+      inscriptible, sans jamais en modifier le contenu logique ; si le fichier
+      n'existe pas, il crée atomiquement une scène vide et son `scene_id`
+      stable, et rend `True` ;
     - `load` rend la scène persistée ;
     - `commit` écrit, en une seule transaction, l'état qui résulte de
       `patch` appliqué à `previous` ; il refuse si la révision stockée n'est
       pas `previous.revision` (`REVISION_CONFLICT`) ;
     - `archived_history` lit l'historique alimenté par les `archive_object`.
     """
+
+    async def sweep_leftovers(self) -> SceneSweepReport: ...
 
     async def initialize(self) -> bool: ...
 

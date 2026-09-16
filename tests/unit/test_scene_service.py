@@ -31,6 +31,8 @@ from jarvis.core.scene_service import (
     SCENE_COMMAND_REFUSED_KIND,
     SCENE_LOADED_KIND,
     SCENE_PERSIST_FAILED_KIND,
+    SCENE_SWEEP_FAILED_KIND,
+    SCENE_SWEPT_KIND,
     SCENE_UNAVAILABLE_KIND,
     SceneService,
     SceneState,
@@ -58,6 +60,7 @@ from jarvis.ports.scene import (
     SceneReader,
     SceneStoreError,
     SceneStoreErrorCode,
+    SceneSweepReport,
     SceneUnavailableError,
 )
 
@@ -80,6 +83,7 @@ class MemoryRepository:
         self.stored: SceneSnapshot | None = None
         self.history: list[ArchivedSceneObject] = []
         self.fail_initialize: Exception | None = None
+        self.sweep: SceneSweepReport | Exception = SceneSweepReport()
         self.fail_commit: Exception | None = None
         self.commit_delay = 0.0
         self.commit_started = asyncio.Event()
@@ -87,6 +91,11 @@ class MemoryRepository:
         self.max_in_commit = 0
         self.commits: list[int] = []
         self.closed = False
+
+    async def sweep_leftovers(self) -> SceneSweepReport:
+        if isinstance(self.sweep, Exception):
+            raise self.sweep
+        return self.sweep
 
     async def initialize(self) -> bool:
         if self.fail_initialize is not None:
@@ -587,3 +596,27 @@ async def test_real_store_failures_after_begin_or_on_rollback(tmp_path, fail_at,
     await reopened.initialize()
     assert (await reopened.load()).revision == (1 if state is SceneState.READY else 0)
     await reopened.close()
+
+
+# --- balayage au démarrage (seconde reprise QA) --------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("sweep", "expected"),
+    [
+        (SceneSweepReport(), []),
+        (SceneSweepReport(removed=("state/scene.sqlite3.a1.creating",)),
+         [(SCENE_SWEPT_KIND, "info", {"removed": ["state/scene.sqlite3.a1.creating"]})]),
+        (SceneSweepReport(removed=("a",), failed=("b: PermissionError: busy",)),
+         [(SCENE_SWEPT_KIND, "info", {"removed": ["a"]}), (SCENE_SWEEP_FAILED_KIND, "warning", {"failed": ["b: PermissionError: busy"]})]),
+        (OSError("temp dir unreadable"),
+         [(SCENE_SWEEP_FAILED_KIND, "warning", {"error": "OSError: temp dir unreadable"})]),
+    ],
+)
+async def test_start_journals_the_sweep_and_never_fails_because_of_it(sweep, expected):
+    repository = MemoryRepository()
+    repository.sweep = sweep
+    diagnostics = RecordingDiagnostics()
+    service = SceneService(repository, diagnostics=diagnostics)
+    assert (await service.start()).state is SceneState.READY
+    assert [event for event in diagnostics.events if event[0] in (SCENE_SWEPT_KIND, SCENE_SWEEP_FAILED_KIND)] == expected

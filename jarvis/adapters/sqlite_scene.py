@@ -24,22 +24,31 @@ suite de patchs à rejouer :
 
 Ouverture, dans cet ordre :
 
+0. `sweep_leftovers` (appelé par le service avant l'ouverture) retire les
+   temporaires de création interrompue de ce dossier et les anciens dossiers
+   de copie `jarvis-scene-check-*` qu'une version antérieure de cette Slice
+   laissait dans le dossier temporaire du système ;
 1. fichier **absent** (et pas de `-wal` orphelin) : il est créé de façon
    atomique — schéma, `schema_version` et ligne `scene_meta` écrits dans un
    fichier temporaire du même dossier, puis renommé (`replace_with_retry`).
    Un arrêt brutal laisse au pire ce temporaire, jamais un `scene.sqlite3`
    vide ou partiel ;
-2. fichier **présent** : toute la validation (version, tables, `quick_check`,
-   décodage complet de la scène) se fait sur une **copie** privée du fichier
-   et de son `-wal`, dans un dossier temporaire du système. Une connexion,
-   même en lecture seule (`mode=ro`), sur l'original réécrit son `-shm`, crée
-   des `-wal`/`-shm` ou reverse le WAL à la fermeture : un fichier refusé, son
-   `-wal` et son `-shm` restent ainsi octet pour octet identiques. Un fichier
-   vide ou sans table n'est jamais recréé : il est refusé (`corrupted`) ;
-3. accepté, le fichier doit être inscriptible : `os.access` avant d'ouvrir
-   (aucune trace laissée), puis une écriture annulée sous `BEGIN IMMEDIATE`
-   sur la vraie connexion (ACL, verrou d'un autre processus) ; sinon refus
-   `storage_io`.
+2. fichier **présent** : `os.access` (fichier et dossier inscriptibles) avant
+   toute ouverture, puis ouverture du vrai fichier en lecture-écriture. Un
+   fichier vide ou sans table est refusé (`corrupted`) avant toute écriture,
+   jamais recréé ;
+3. validation complète **sous `BEGIN IMMEDIATE`** sur cette même connexion :
+   `schema_version`, tables, `quick_check`, version du fil, décodage de toute
+   la scène, puis une écriture sonde, et `ROLLBACK`. Tenir le verrou
+   d'écriture empêche un écrivain concurrent de déchirer ce qui est lu, et
+   rien ne change entre la validation et l'usage : la connexion acceptée est
+   celle que le magasin garde.
+
+Garantie de refus : le **contenu logique** d'un fichier refusé n'est jamais
+modifié, réécrit, recréé ni effacé. SQLite peut y faire son checkpoint WAL
+physique normal à la fermeture ; l'identité octet pour octet du `-wal` et du
+`-shm` n'est pas promise. Ce que SQLite signale « pas une base » ou
+« malformé » est `corrupted` ; verrou, droits et E/S sont `storage_io`.
 
 Chaque `commit` est une transaction `BEGIN IMMEDIATE … COMMIT` : un arrêt
 brutal laisse la révision précédente ou la suivante, jamais une moitié. Une
@@ -58,7 +67,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
-import shutil
+import re
 import sqlite3
 import tempfile
 from typing import Any, Callable, TypeVar
@@ -75,7 +84,7 @@ from jarvis.domain.scene import (
     SceneSnapshot,
 )
 from jarvis.domain.v2 import new_id, utc_now
-from jarvis.ports.scene import ArchivedSceneObject, SceneStoreError, SceneStoreErrorCode
+from jarvis.ports.scene import ArchivedSceneObject, SceneStoreError, SceneStoreErrorCode, SceneSweepReport
 
 T = TypeVar("T")
 
@@ -84,6 +93,10 @@ T = TypeVar("T")
 _SCHEMA_VERSION = 1
 #: Lecture d'historique : bornée, jamais un fichier entier en mémoire.
 MAX_HISTORY_READ = 1_000
+#: Dossiers de copie de validation d'une version antérieure de cette Slice,
+#: retirés par `sweep_leftovers` s'ils ne contiennent que des `scene.sqlite3*`.
+_LEGACY_CHECK_PREFIX = "jarvis-scene-check-"
+_LEGACY_CHECK_FILE = re.compile(r"^scene\.sqlite3(-wal|-shm|-journal)?$")
 
 _TABLES = ("schema_version", "scene_meta", "scene_objects", "scene_relations", "scene_tombstones", "scene_history")
 _DDL = (
@@ -167,6 +180,63 @@ class SQLiteSceneRepository:
     def _wal_path(self) -> Path:
         return self.path.with_name(f"{self.path.name}-wal")
 
+    # ------------------------------------------------------------ balayage
+
+    async def sweep_leftovers(self) -> SceneSweepReport:
+        return await run_sqlite_in_thread(self._sweep_sync)
+
+    def _sweep_sync(self) -> SceneSweepReport:
+        """Retirer ce que ce code a pu laisser derrière lui, et rien d'autre.
+
+        - `scene.sqlite3.<aléa>.creating` (et son `-journal`) du dossier de la
+          scène : créations interrompues par un arrêt brutal ;
+        - `jarvis-scene-check-*` du dossier temporaire du système, **seulement**
+          s'il ne contient que des `scene.sqlite3*` : copies de validation
+          qu'une version antérieure de cette Slice pouvait y laisser (contenu
+          utilisateur). Hygiène ponctuelle, bornée à ce motif exact.
+        """
+
+        removed: list[str] = []
+        failed: list[str] = []
+
+        def remove(target: Path, action: Callable[[Path], None]) -> None:
+            try:
+                action(target)
+                removed.append(str(target))
+            except OSError as exc:
+                failed.append(f"{target}: {type(exc).__name__}: {exc}")
+
+        pattern = re.compile(rf"^{re.escape(self.path.name)}\.[A-Za-z0-9_]+\.creating(-journal)?$")
+        try:
+            candidates = sorted(self.path.parent.iterdir()) if self.path.parent.is_dir() else []
+        except OSError as exc:
+            candidates = []
+            failed.append(f"{self.path.parent}: {type(exc).__name__}: {exc}")
+        for entry in candidates:
+            if pattern.match(entry.name) and entry.is_file():
+                remove(entry, lambda item: os.remove(item))
+
+        temporary_root = Path(tempfile.gettempdir())
+        try:
+            directories = sorted(temporary_root.glob(f"{_LEGACY_CHECK_PREFIX}*"))
+        except OSError as exc:
+            directories = []
+            failed.append(f"{temporary_root}: {type(exc).__name__}: {exc}")
+        for directory in directories:
+            try:
+                if not directory.is_dir() or directory.is_symlink():
+                    continue
+                entries = list(directory.iterdir())
+            except OSError as exc:
+                failed.append(f"{directory}: {type(exc).__name__}: {exc}")
+                continue
+            if not all(item.is_file() and _LEGACY_CHECK_FILE.match(item.name) for item in entries):
+                continue
+            for item in entries:
+                remove(item, lambda target: os.remove(target))
+            remove(directory, lambda target: os.rmdir(target))
+        return SceneSweepReport(removed=tuple(removed), failed=tuple(failed))
+
     # ------------------------------------------------------------ ouverture
 
     async def initialize(self) -> bool:
@@ -194,9 +264,8 @@ class SQLiteSceneRepository:
         elif not self.path.is_file():
             raise SceneStoreError(SceneStoreErrorCode.STORAGE_IO, f"scene store {self.path} is not a regular file")
         else:
-            self._validate_copy()
             self._check_access()
-        self._conn = self._open_writable()
+        self._conn = self._open_validated()
         return not exists
 
     def _create_file(self) -> None:
@@ -236,38 +305,10 @@ class SQLiteSceneRepository:
                     try:
                         leftover.unlink(missing_ok=True)
                     except OSError as cleanup_exc:
-                        # Le temporaire porte un autre nom : il ne gêne aucune
-                        # ouverture future. Signalé avec l'erreur d'origine.
+                        # Balayé au prochain démarrage (`sweep_leftovers`) ;
+                        # signalé ici avec l'erreur d'origine.
                         error.add_note(f"temporary {leftover.name} not removed: {cleanup_exc}")
             raise error from exc
-
-    def _validate_copy(self) -> None:
-        """Valider une copie privée : SQLite n'ouvre jamais l'original avant qu'il soit accepté."""
-
-        # `ignore_cleanup_errors` : une copie de contrôle restée dans le dossier
-        # temporaire du système ne gêne rien, alors qu'une erreur de nettoyage
-        # masquerait la vraie raison du refus.
-        with tempfile.TemporaryDirectory(prefix="jarvis-scene-check-", ignore_cleanup_errors=True) as directory:
-            copy = Path(directory) / self.path.name
-            try:
-                shutil.copyfile(self.path, copy)
-                if self._wal_path.is_file():
-                    shutil.copyfile(self._wal_path, copy.with_name(f"{copy.name}-wal"))
-            except OSError as exc:
-                raise SceneStoreError(
-                    SceneStoreErrorCode.STORAGE_IO, f"scene store {self.path} cannot be read: {type(exc).__name__}: {exc}"
-                ) from exc
-            conn = sqlite3.connect(copy, isolation_level=None)
-            try:
-                tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-                self._check_schema(conn, tables)
-                self._load_sync(conn)
-            except sqlite3.Error as exc:
-                raise SceneStoreError(
-                    _sqlite_code(exc), f"scene store {self.path} unusable: {type(exc).__name__}: {exc}"
-                ) from exc
-            finally:
-                conn.close()
 
     def _check_access(self) -> None:
         for target in (self.path, self.path.parent):
@@ -277,36 +318,58 @@ class SQLiteSceneRepository:
                     f"scene store {target} is not writable: fix its permissions, then restart Core",
                 )
 
-    def _open_writable(self) -> sqlite3.Connection:
+    def _open_validated(self) -> sqlite3.Connection:
+        """Ouvrir le vrai fichier et le valider entièrement sous son verrou d'écriture.
+
+        La connexion validée est celle que le magasin garde : rien ne peut
+        changer entre la validation et l'usage, et un écrivain concurrent ne
+        peut pas déchirer ce qui est lu.
+        """
+
         try:
             conn = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None)
         except sqlite3.Error as exc:
-            raise SceneStoreError(
-                SceneStoreErrorCode.STORAGE_IO, f"scene store {self.path} cannot be opened: {type(exc).__name__}: {exc}"
-            ) from exc
+            raise self._refusal(exc) from exc
         try:
+            # Lecture d'abord, hors transaction : un fichier vide ou sans table
+            # est refusé avant toute écriture (le passage en WAL écrirait son
+            # en-tête), et un fichier qui n'est pas une base lève NOTADB ici.
+            if not self._tables(conn):
+                self._check_schema(conn, set())
             conn.execute("PRAGMA journal_mode=WAL")
             # FULL : une révision servie doit survivre à une coupure de courant,
             # puisque Core ne l'expose qu'après l'avoir persistée.
             conn.execute("PRAGMA synchronous=FULL")
-            # Sonde d'écriture annulée : `os.access` ne voit ni les ACL ni le
-            # verrou d'un autre processus, et `BEGIN IMMEDIATE` seul réussit
-            # même sur un fichier en lecture seule ; l'écriture, non.
             conn.execute("BEGIN IMMEDIATE")
             try:
+                self._check_schema(conn, self._tables(conn))
+                self._load_sync(conn)
+                # Sonde d'écriture annulée : `os.access` ne voit ni les ACL ni
+                # tout verrou ; `BEGIN IMMEDIATE` seul réussit même sur un
+                # fichier en lecture seule, l'écriture non.
                 conn.execute("UPDATE schema_version SET version = version")
             finally:
                 if conn.in_transaction:
                     conn.execute("ROLLBACK")
         except sqlite3.Error as exc:
             conn.close()
-            raise SceneStoreError(
-                SceneStoreErrorCode.STORAGE_IO, f"scene store {self.path} is not writable: {type(exc).__name__}: {exc}"
-            ) from exc
+            raise self._refusal(exc) from exc
         except BaseException:
             conn.close()
             raise
         return conn
+
+    def _refusal(self, exc: sqlite3.Error) -> SceneStoreError:
+        code = _sqlite_code(exc)
+        if code is SceneStoreErrorCode.REVISION_CONFLICT:
+            # Pas d'écriture réelle à l'ouverture : une contrainte n'y signale
+            # pas une divergence de révision, mais un fichier incohérent.
+            code = SceneStoreErrorCode.CORRUPTED
+        return SceneStoreError(code, f"scene store {self.path} refused: {type(exc).__name__}: {exc}")
+
+    @staticmethod
+    def _tables(conn: sqlite3.Connection) -> set[str]:
+        return {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
 
     def _check_schema(self, conn: sqlite3.Connection, tables: set[str]) -> None:
         if not tables:
