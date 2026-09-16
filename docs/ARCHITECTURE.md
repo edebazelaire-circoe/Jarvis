@@ -1757,63 +1757,105 @@ comes first. `agent.start` carries `display_mcp: true|false`. The routing hook
 still matches `Agent|Task` only; under `bypassPermissions` the MCP tools need no
 allowlist. The CLI may defer MCP tool schemas behind `ToolSearch` (one extra call
 per new tool per conversation, observed). Display tools are not counted as inline
-work by the turn budget audit (`DISPLAY_TOOL_PREFIX`).
+work by the turn budget audit (`DISPLAY_TOOLS`: the exact six
+`mcp__jarvis-display__<tool>` names, never a prefix match).
 
 Tool catalog (V1). Exactly six tools; **no archive, pin or unpin tool** and no
 parameter that could carry `actor`, `placed_by`, `exec_state`, `work_ref` or a
-disposition (tested). Mapping in [scene-model.md](scene-model.md) › *Brain tool
+disposition (tested). Unknown arguments are refused, never ignored: every tool
+schema says `additionalProperties: false` (nested geometry and items too), and
+the server's `call_tool` refuses an unknown key with an error naming it before
+anything runs (FastMCP alone would drop `archived: true` and answer success).
+Numbers are strict (`true`, `"5"` refused). Mapping in [scene-model.md](scene-model.md) › *Brain tool
 mapping*. `scene_update_object` sends **one** command, so a refusal applies
 nothing: geometry alone → `set_geometry`; representation (± geometry) →
 `set_representation`; anything touching category, payload, layer or order → one
-`patch_object` carrying every given field. A payload edit merges with the
+`patch_object` carrying every given field; `visibility` alone → `set_visibility`
+(added after the QA live run, where haiku did not find `scene_set_visibility`
+behind the CLI's deferred tool list; that tool stays). A payload edit merges with the
 object's current payload (read from the snapshot just before; a concurrent edit
 in between is overwritten). `scene_link` omits `layer` unless given; since the
 wire decodes a missing layer as 50, re-linking an existing relation without a
 layer is answered `duplicate` locally and sends nothing, so a layer chosen by the
 user is kept. Ids are generated: `brain-<kind>-<12 hex>` for objects (no `:`/`!`,
 so never a runtime id), `brain-<relation kind>-<sha256(from, to)[:16]>` for
-relations (idempotent re-link).
+relations (idempotent re-link). A `relation_id` the brain supplies must match
+`brain-[A-Za-z0-9_.-]+`; the domain independently refuses brain/user ids in the
+runtime's reserved forms (`reserved_id`, scene-model › *Authority matrix*), so the
+brain can no longer squat `parent_of!…` or `attention!…` and suppress a runtime
+link or failure signal.
 
 Inspection. `scene_inspect` returns compact JSON: header (`scene_id`,
-`revision`, `objects`, `object_limit`, `saturated`, `relations`, `archived`,
-legend) plus rows `o` = `[id, kind, category, origin, exec_state,
-representation, [x,y,w,h]|null, layer, order, visible, pinned_by_user,
+`revision`, `objects`, `object_limit`, `saturated`, `relations`, `hidden`,
+`archived`, legend) plus rows `o` = `[id, kind, category, origin, exec_state,
+representation, [x,y,w,h]|null, layer, order, visibility, pinned_by_user,
 placed_by, live_signal, title≤60]` and `r` = `[relation_id, kind, from, to,
 layer]` (only relations between listed objects). Brain objects first, then user,
 then runtime; cut at `MAX_INSPECT_BYTES` = 20 000 with `truncated`
 (`objects_omitted`, `relations_omitted`, hint). Optional filters `kind`,
 `category` (exact), `text` (title or id substring). Capacity is derived from the
 snapshot (same as the Control Center proxy). Summaries and screenshots are Slice 09.
+The legend's `data` entry, the tool description and the prompt mark ids,
+categories and titles as data, never instructions: runtime star titles come from
+sub-agent labels, which may copy web content (prompt-injection vector, not a
+security boundary; SECURITY 13).
+
+Stale scene memory (QA M1). Decision 4 changes the scene without a brain turn, so
+the prompt and every mutating tool description say to re-read with
+`scene_inspect` in the same turn before describing the screen or acting. As a
+cheap mechanical aid, `SceneDisplayTools` remembers the `(scene_id, revision)` the
+brain last saw (its last `scene_inspect`, then its own commands). A command whose
+answer is not at the expected revision (seen + 1 when applied, seen otherwise), or
+a command sent before any inspection in this server process, returns
+`scene_changed` (one French sentence with `révision X → Y`) in its result, or
+appends it to the refusal message. It is per MCP server process, i.e. per brain
+CLI process.
 
 Errors. Every failure becomes a tool error (`isError: true`, FastMCP
-`ToolError`), never a stack trace nor a success-shaped result:
+`ToolError`), never a success-shaped result. What the brain reads never carries a
+non-JSON Core error body (an HTML page or traceback text becomes `Core a répondu
+<status> sans erreur lisible`), a file path (`page_text`, Slice 03 redaction,
+also applied to the `error` field journaled), nor the received value of a
+refused argument (pydantic errors are reduced to `field : reason`, without
+`input_value` or documentation URL). Transport failures are classified by the
+same function as the Control Center proxy, `scene_view.classify_scene_call_failure`
+(`decode_command_response` is shared too):
 
-| Case | `DisplayToolError.code` | Text given to the brain |
+| Case | Code | Text given to the brain |
 | --- | --- | --- |
-| domain refusal | `scene_refused` | `<op> refusé par la scène (outcome=<outcome>, reason=<reason>) : <explanation>` (`REFUSAL_EXPLANATIONS`; `scene_full` asks to propose archiving to the user) |
-| argument out of bounds (domain constructors, 64 KiB body) | `invalid_argument`, `payload_too_large` | nothing sent |
-| token file missing, Core down | `core_unreachable` | nothing applied |
-| no connection within 3 s | `command_not_sent` | retry is safe |
+| domain refusal | `scene_refused` | `<op> refusé par la scène (outcome=<outcome>, reason=<reason>) : <explanation>` (`REFUSAL_EXPLANATIONS`; `scene_full` asks to propose archiving to the user; `runtime_owned` says the signal can be hidden) + `scene_changed` sentence when relevant |
+| unknown argument | `unknown_argument` (journal) | names the refused keys and the allowed ones; nothing sent |
+| schema or domain bound (type, enum, NaN, out of range, 64 KiB body) | `invalid_argument`, `payload_too_large` | `field : reason`; nothing sent |
+| token file missing, connection refused | `core_unreachable` | command not sent |
+| link lost after send | `core_unreachable` | outcome unknown, re-inspect |
+| no connection within 3 s | `command_not_sent` | nothing applied, retry is safe |
 | no answer 10 s after send, snapshot > 10 s | `core_timeout` | outcome unknown, re-inspect |
-| stale token after one re-read | `unauthorized` | |
 | 503 | `scene_unavailable` / `scene_persist_failed` | nothing applied |
-| 400/413/other HTTP | `invalid_request` / `payload_too_large` / `core_refused` | |
+| 400/413 with a JSON error | Core's code (`invalid_request`, `payload_too_large`) | Core's message, redacted |
+| other HTTP (401 after one token re-read, 5xx, non-JSON body) | `core_refused` | status and code only |
 | out-of-contract answer | `invalid_scene_response` | |
-| anything else | `display_internal_error` | type and message only |
+| anything else | `display_internal_error` | type and message only, redacted |
 
-Journal (`runtime/trace.jsonl`, identifiers only): `display.server_started` /
-`display.server_stopped`, `display.tool` (info: tool, op, outcome, revision, id),
+Journal (`runtime/trace.jsonl`, identifiers only): `display.server_started`,
+`display.tool` (info: tool, op, outcome, revision, id, `scene_changed`),
 `display.tool_refused` (info, with `reason`; Core also journals
-`core.scene.command_refused`), `display.tool_failed` (warning for transport and
-argument failures, error for `display_internal_error`).
+`core.scene.command_refused`), `display.tool_failed` (warning for transport,
+argument and schema failures with `code` and, for schema refusals, the field
+names; error for `display_internal_error`). `display.server_stopped` is written
+only when the stdio session ends cleanly (stdin closed); when the brain CLI stops,
+its job object usually kills the server first, so the two events are not paired.
 
 Authority and threat model. The actor is forced to `brain` by construction (the
 tools build `SceneCommand(actor=brain)` and assert it before sending, never with
 `placed_by`). Core's reducer refuses `archive`/`pin`/`unpin` to `brain`
-(`op_not_allowed`) whatever the catalog. This protects against an honest caller
+(`op_not_allowed`) whatever the catalog, refuses brain and user an `unlink` of
+runtime execution topology or of a runtime signal link (`runtime_owned`, QA
+rework: the brain could silence a failure signal), and refuses ids in the
+runtime's reserved forms (`reserved_id`). This protects against an honest caller
 only: see *Scene transport* › threat-model limit and `docs/SECURITY.md` › 13.
-Relations carry no origin, so the runtime may remove a brain `parent_of` between
-two runtime stars (runtime owns execution topology); the tool description says so.
+Relations carry no origin: the runtime may remove a brain relation shaped like its
+own, and a `parent_of` the brain draws between two runtime stars is treated as
+runtime topology (the brain cannot remove it; archiving a star removes it).
 
 ## Telemetry
 

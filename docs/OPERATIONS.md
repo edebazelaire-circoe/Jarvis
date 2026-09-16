@@ -1044,7 +1044,10 @@ Core et le **chemin** du jeton, jamais le jeton.
 | `agent.display_mcp_failed` (erreur, panneau ERR) | `runtime/display-mcp.json` non inscriptible | corriger les droits du dossier runtime, redémarrer l'agent ; la voix marche sans l'écran en attendant |
 | `mcp_servers` montre `jarvis-display` en `failed` | interpréteur introuvable, paquet `mcp` absent (`pip install -e .[mcp]`), variable d'environnement invalide | lancer à la main la commande de `runtime/display-mcp.json` avec son `env` : l'erreur s'affiche |
 | erreur d'outil `core_unreachable` / `command_not_sent` | Core arrêté ou jeton absent | démarrer Core ; rien n'a été appliqué |
-| erreur d'outil `unauthorized` | Core redémarré, jeton relu mais toujours refusé | vérifier `JARVIS_CORE_TOKEN_FILE` du Control Center et de Core |
+| erreur d'outil `core_refused` avec `401` | Core redémarré, jeton relu mais toujours refusé | vérifier `JARVIS_CORE_TOKEN_FILE` du Control Center et de Core |
+| erreur d'outil avec `reason=runtime_owned` | le cerveau a voulu retirer un lien de parenté entre étoiles ou le lien d'un signal de tâche | normal : ces liens sont au runtime ; masquer le signal, ou l'archiver depuis le Control Center |
+| erreur d'outil `Arguments inconnus refusés` | le modèle a inventé un argument (`archived`, `pinned_by_user`…) | normal : rien n'est parti ; `display.tool_failed` code `unknown_argument` nomme les champs |
+| le cerveau décrit un écran qui n'est plus à jour | il n'a pas relu la scène dans le tour | chercher `mcp__jarvis-display__scene_inspect` dans le tour de la trace ; les résultats de commande portent `scene_changed` quand la scène a bougé |
 | erreur d'outil `scene_unavailable` | scène refusée par Core | voir « Scène constellation : fichier et refus » |
 | erreur d'outil avec `reason=pinned_by_user` | objet épinglé par l'utilisateur | normal : le cerveau ne le déplace pas |
 | erreur d'outil avec `reason=scene_full` | 512 objets actifs | archiver des objets terminés ; le cerveau ne peut pas |
@@ -1052,7 +1055,9 @@ Core et le **chemin** du jeton, jamais le jeton.
 
 Tous les appels laissent `display.tool` / `display.tool_refused` /
 `display.tool_failed` dans `runtime/trace.jsonl` (identifiants et issues, jamais
-le texte des notes). Les actions d'affichage sont silencieuses à l'oral : le
+le texte des notes ni un chemin de fichier). `display.server_stopped` n'apparaît
+que si la session se termine proprement : un arrêt du cerveau tue d'ordinaire le
+serveur sans cet événement, ce n'est pas une panne. Les actions d'affichage sont silencieuses à l'oral : le
 cerveau ne décrit pas ce qu'il place.
 
 ## Deux architectures vocales : `legacy` et `continuous_brain`

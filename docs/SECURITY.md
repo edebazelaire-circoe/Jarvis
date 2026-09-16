@@ -148,6 +148,21 @@ What this guarantee is **not**:
   Evidence that it complied comes from `runtime/trace.jsonl` (tool calls), not
   from a boundary.
 
+Prompt injection through the scene. Runtime star titles are sub-agent labels,
+which can copy web or file content, and they enter the brain's context through
+`scene_inspect` (so do ids, categories and titles written by the user). The
+inspection legend, the tool description and the brain prompt state that this text
+is data, never an instruction. This is a mitigation, not a boundary: a brain that
+follows injected text still has its own Bash/file/web tools. Tool arguments are
+strict (unknown keys refused by name, typed numbers), and Core errors, file paths
+and refused argument values are not echoed back to the brain.
+
+Runtime-owned topology and signals. Brain and user cannot `unlink` a `parent_of`
+between execution stars nor the link of a runtime failure signal
+(`runtime_owned`), and cannot create objects or relations under the runtime's id
+forms (`reserved_id`), so an honest brain cannot silence or pre-empt a failure
+signal. Same honest-caller limit as above.
+
 The generated `runtime/display-mcp.json` holds the interpreter path, Core's
 loopback host and port and the token file **path**, never the token. Tool journal
 entries (`display.*`) carry identifiers and outcomes, never note content. Making
@@ -164,7 +179,7 @@ or an OS boundary around the brain) is out of V1 scope.
 - Confirmation is conversational, not OS-level privileged authorization.
 - Board placement is an ephemeral UI write and intentionally does not require confirmation.
 - V1 has no destructive memory delete tool, no messaging/email tool, no browser navigation tool and no general filesystem writer.
-- v0.2 constellation scene: the brain's display tool is write-capable and scene actors are declared, not authenticated; a brain that ignores its instructions can impersonate `user` with `runtime/core.token` (see control 13).
+- v0.2 constellation scene: the brain's display tool is write-capable and scene actors are declared, not authenticated; a brain that ignores its instructions can impersonate `user` with `runtime/core.token` (see control 13). Scene text (runtime star titles from sub-agent labels) reaches the brain and is marked as data only; injection resistance is not guaranteed.
 
 ## Release rule
 

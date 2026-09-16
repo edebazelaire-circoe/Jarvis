@@ -126,7 +126,7 @@ commands.
 | `set_visibility` | `object_id`, `visibility` | hide/show |
 | `pin` / `unpin` | `object_id` | set/clear `pinned_by_user` (pin needs a placed object) |
 | `link` | `relation` | add a relation, or change the layer of the same relation (brain/user; runtime never changes a layer) |
-| `unlink` | `relation_id` | remove a relation (absent → `duplicate`); for runtime, also how it retires its own signal |
+| `unlink` | `relation_id` | remove a relation (absent → `duplicate`); for runtime, also how it retires its own signal; brain/user cannot remove runtime topology or signal links (`runtime_owned`) |
 | `archive` | `object_id` | user disposition |
 | `attach_signal` | `object_id`, `fields`, `target_id` | create/update an `attention` object and its `explains` relation |
 
@@ -192,6 +192,25 @@ Rules:
   to point at something worth a look, user to mark something for themselves.
 - **Execution truth**: only runtime changes `exec_state` or `work_ref`
   (`execution_truth`, decision 17).
+- **Runtime-owned relations** (Slice 06 QA rework, decisions 3 and 17): brain
+  and user never `unlink` a `parent_of` between two execution nodes, nor a
+  signal-shaped `explains` (`relation_id == from_id`) from a runtime `attention`
+  to an execution node (`runtime_owned`, `is_runtime_owned_relation`). The rule is
+  on shape and endpoints (relations have no origin), so a `parent_of` the brain
+  itself drew between two runtime stars is covered too. What stays open: the
+  user dismisses by archiving the star or the signal (archive removes the object's
+  relations); brain and user may hide the signal object (`set_visibility`) and
+  change a runtime relation's layer (`link` on the same id and endpoints).
+- **Reserved ids** (same rework): brain and user never create an object or a
+  relation whose id has the form the runtime projector builds
+  (`is_runtime_reserved_id`: any `:` as in `<source>:<external_id>` and its
+  hashed form, or a `attention!` / `attention#` / `parent_of!` / `parent_of#`
+  head): `reserved_id`. Otherwise an object or relation created first under such
+  an id would stop the projector from placing the star, the `parent_of` link or
+  the failure signal (`relation_conflict`, `projection_conflict`). Composing what
+  runtime created under those ids (patch, hide, relayer an existing relation)
+  stays allowed; re-attaching a retired runtime signal (`attach_signal` creating
+  its relation again) is the runtime's.
 - **Pins**: a `pinned_by_user` object is moved or resized by the user only
   (`pinned_by_user`), and never by a resolver placement even when a user
   command carries it. `pin`/`unpin` are user-only because the flag records a
@@ -212,7 +231,7 @@ Rules:
 | --- | --- | --- | --- |
 | `applied` | something changed | `+1` | yes |
 | `duplicate` | nothing would change (replay, echo, unlink of an absent relation) | unchanged | no |
-| `rejected_authority` | matrix or effect rule (`op_not_allowed`, `runtime_kind`, `runtime_composition`, `runtime_relation`, `runtime_origin`, `resolver_actor`, `execution_node`, `execution_truth`, `pinned_by_user`, `explicit_placement`) | unchanged | no |
+| `rejected_authority` | matrix or effect rule (`op_not_allowed`, `runtime_kind`, `runtime_composition`, `runtime_relation`, `runtime_origin`, `runtime_owned`, `reserved_id`, `resolver_actor`, `execution_node`, `execution_truth`, `pinned_by_user`, `explicit_placement`) | unchanged | no |
 | `invalid` | well-formed but inapplicable: `unknown_object`, `object_archived`, `kind_immutable`, `incomplete_object`, `unplaced`, `scene_full`, `relation_limit`, `relation_conflict`, `revision_exhausted` | unchanged | no |
 
 `reason` (`SceneRefusal`) is a stable token for the journal and for tool errors
@@ -373,15 +392,17 @@ Slice 06 (`ARCHITECTURE.md` › *Brain display MCP*). The brain's MCP tools
 | --- | --- | --- | --- |
 | `scene_inspect` | `kind?`, `category?`, `text?` | `GET /v1/scene/snapshot` (read only) | — (transport errors only) |
 | `scene_create_object` | `kind` ∈ artifact/window/group/attention, `category`, `title?`, `summary?`, `items?`, `representation?`, `geometry?`, `layer?`, `order?` | `upsert_object` on a fresh id `brain-<kind>-<hex>`; unset fields are not announced (kind default layer applies) | `scene_full`, `object_archived` |
-| `scene_update_object` | `object_id`, `category?`, `title?`, `summary?`, `items?`, `representation?`, `geometry?`, `layer?`, `order?` | geometry only → `set_geometry`; representation (± geometry) only → `set_representation`; otherwise one `patch_object` with every given field (payload merged with the current one) | `pinned_by_user`, `unknown_object`, `object_archived` |
+| `scene_update_object` | `object_id`, `category?`, `title?`, `summary?`, `items?`, `representation?`, `geometry?`, `layer?`, `order?`, `visibility?` | geometry only → `set_geometry`; representation (± geometry) only → `set_representation`; visibility only → `set_visibility`; otherwise one `patch_object` with every given field (payload merged with the current one) | `pinned_by_user`, `unknown_object`, `object_archived` |
 | `scene_set_visibility` | `object_id`, `visibility` | `set_visibility` | `unknown_object`, `object_archived` |
-| `scene_link` | `from_id`, `to_id`, `kind`, `relation_id?`, `layer?` | `link`; `layer` key omitted unless given (never a default of 50); an existing identical relation without a layer is a local `duplicate`, nothing sent | `relation_conflict`, `relation_limit`, `unknown_object`, `object_archived` |
-| `scene_unlink` | `relation_id` | `unlink` (absent → `duplicate`) | — |
+| `scene_link` | `from_id`, `to_id`, `kind`, `relation_id?` (`brain-…` only), `layer?` | `link`; `layer` key omitted unless given (never a default of 50); an existing identical relation without a layer is a local `duplicate`, nothing sent | `relation_conflict`, `relation_limit`, `unknown_object`, `object_archived`, `reserved_id` (domain side) |
+| `scene_unlink` | `relation_id` | `unlink` (absent → `duplicate`) | `runtime_owned` |
 
 Refusals come back as MCP tool errors carrying `outcome`, `reason` (the
-`SceneRefusal` token) and one explanatory sentence. Relations have no origin: a
-`parent_of` the brain draws between two runtime stars may be removed by the
-runtime, which owns execution topology.
+`SceneRefusal` token) and one explanatory sentence. Unknown arguments are refused
+by name. Mutating results carry `scene_changed` when the scene moved since the
+brain's last `scene_inspect`. Relations have no origin: a `parent_of` the brain
+draws between two runtime stars may be removed by the runtime and not by the
+brain (runtime-owned shape).
 
 Validation:
 
