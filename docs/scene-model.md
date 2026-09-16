@@ -363,9 +363,29 @@ revision, patch}` — refusals are outcomes, not HTTP errors.
   client read of any scene response 16 MiB; responses are compact UTF-8 JSON
   (a worst-case snapshot stays under 11 MiB).
 
+## Brain tool mapping
+
+Slice 06 (`ARCHITECTURE.md` › *Brain display MCP*). The brain's MCP tools
+(`jarvis/runtime/display_mcp.py`) speak this vocabulary as actor `brain`, one
+`SceneCommand` per call, never `placed_by`, never `archive` / `pin` / `unpin`.
+
+| Tool | Arguments | Command sent | Typical refusals surfaced |
+| --- | --- | --- | --- |
+| `scene_inspect` | `kind?`, `category?`, `text?` | `GET /v1/scene/snapshot` (read only) | — (transport errors only) |
+| `scene_create_object` | `kind` ∈ artifact/window/group/attention, `category`, `title?`, `summary?`, `items?`, `representation?`, `geometry?`, `layer?`, `order?` | `upsert_object` on a fresh id `brain-<kind>-<hex>`; unset fields are not announced (kind default layer applies) | `scene_full`, `object_archived` |
+| `scene_update_object` | `object_id`, `category?`, `title?`, `summary?`, `items?`, `representation?`, `geometry?`, `layer?`, `order?` | geometry only → `set_geometry`; representation (± geometry) only → `set_representation`; otherwise one `patch_object` with every given field (payload merged with the current one) | `pinned_by_user`, `unknown_object`, `object_archived` |
+| `scene_set_visibility` | `object_id`, `visibility` | `set_visibility` | `unknown_object`, `object_archived` |
+| `scene_link` | `from_id`, `to_id`, `kind`, `relation_id?`, `layer?` | `link`; `layer` key omitted unless given (never a default of 50); an existing identical relation without a layer is a local `duplicate`, nothing sent | `relation_conflict`, `relation_limit`, `unknown_object`, `object_archived` |
+| `scene_unlink` | `relation_id` | `unlink` (absent → `duplicate`) | — |
+
+Refusals come back as MCP tool errors carrying `outcome`, `reason` (the
+`SceneRefusal` token) and one explanatory sentence. Relations have no origin: a
+`parent_of` the brain draws between two runtime stars may be removed by the
+runtime, which owns execution topology.
+
 Validation:
 
 ```powershell
-.venv/Scripts/python.exe -W error::ResourceWarning -m pytest -q -p no:cacheprovider tests/unit/test_scene_contracts.py tests/unit/test_work_state_contracts.py tests/unit/test_v2_architecture.py tests/unit/test_sqlite_scene.py tests/unit/test_scene_service.py tests/integration/test_v2_core_recovery.py tests/unit/test_scene_view.py tests/unit/test_scene_transport_client.py tests/integration/test_scene_transport.py tests/unit/test_scene_projector.py tests/integration/test_scene_projection_protocol.py
+.venv/Scripts/python.exe -W error::ResourceWarning -m pytest -q -p no:cacheprovider tests/unit/test_scene_contracts.py tests/unit/test_work_state_contracts.py tests/unit/test_v2_architecture.py tests/unit/test_sqlite_scene.py tests/unit/test_scene_service.py tests/integration/test_v2_core_recovery.py tests/unit/test_scene_view.py tests/unit/test_scene_transport_client.py tests/integration/test_scene_transport.py tests/unit/test_scene_projector.py tests/integration/test_scene_projection_protocol.py tests/unit/test_display_mcp.py tests/unit/test_scene_settings.py
 .venv/Scripts/python.exe scripts/verify_release.py
 ```

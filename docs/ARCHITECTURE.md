@@ -1715,6 +1715,106 @@ in flight still finishes its transaction, `apply` is shielded), and only then
 `scene.close()` runs. No writer outlives the scene, so shutdown never meets
 `SceneUnavailableError`; a start failure stops them in the same order.
 
+### Brain display MCP
+
+Handoff `tasks/jarvis-constellation-scene-runtime/`, Slice 06 (decisions 1, 2,
+14, 15, 16). The conversational brain composes the scene through an MCP tool
+surface, as actor `brain`, on the same Core scene the user and the runtime
+write. No dedicated display AI: the tools call Core's scene port over HTTP,
+never the renderer.
+
+```text
+ControlCenter (scene.enabled) ─► ClaudeLocalAgent.display_mcp = DisplayMcpTarget
+  └► claude -p … --mcp-config runtime/display-mcp.json      (conversation profile only)
+       └► python -m jarvis display-mcp   (FastMCP stdio, env: JARVIS_CORE_HOST/PORT/TOKEN_FILE, JARVIS_RUNTIME_DIR)
+            └► SceneDisplayTools ─► CoreSceneTransport ─► POST /v1/scene/commands  (actor = brain, always)
+                                                         └► GET  /v1/scene/snapshot
+```
+
+| Piece | File | Role |
+| --- | --- | --- |
+| Gate | `jarvis/runtime/scene_settings.py` | `scene.enabled` in `control-center-settings.json` (default false); `JARVIS_SCENE_ENABLED` overrides; exposed by `GET/POST /api/settings` as `scene` (no UI before Slice 11) |
+| Wiring | `jarvis/runtime/control_center.py`, `jarvis/app.py` | `_run_control_center_v2` builds `DisplayMcpTarget` from `V2Settings`; `_apply_agent_settings` hands it to the Claude agent only when the gate is on |
+| Spawn | `jarvis/runtime/claude_local.py` | `_display_mcp_args`: atomic write of `runtime/display-mcp.json`, `--mcp-config <file>`; prompt program `conversation_display_session` |
+| Server | `jarvis/runtime/display_mcp.py` | `build_server` (lazy `mcp` import), `SceneDisplayTools` (logic, testable against a real Core), `serve_stdio` |
+| Prompt | `BRAIN_DISPLAY_PROMPT` → descriptor `backend.claude.conversation.display` | appended after `BRAIN_SYSTEM_PROMPT` by program `backend.claude.conversation.display_session` |
+
+Gating. Off, nothing changes for the brain: same argv, same system prompt
+(`backend.claude.conversation.session`). On, only the `conversation` profile gets
+`--mcp-config`; `job_result` never does, and `speculative_analysis` keeps
+`--restricted --tools "" --strict-mcp-config`. The core projector and the store
+run whatever the gate (Slice 11 PM decision). The CLI reads its MCP servers and
+its system prompt when the process starts, so a change applies at the next brain
+(re)start; a resumed CLI conversation keeps the system prompt it recorded first
+(`--system-prompt-snapshot`) while the tools appear at once. The config is a file,
+not inline JSON, because an npm `.cmd` shim re-parses quotes through `cmd.exe`;
+it carries paths and a port, never the token. `--mcp-config` without
+`--strict-mcp-config` **adds** the server: the user-scope servers (`jarvis-drive`,
+claude.ai connectors, `claude-in-chrome`) stay loaded (checked on CLI 2.1.273,
+`system/init.mcp_servers`). If the file cannot be written, the brain starts
+without display tools and `agent.display_mcp_failed` (error) says why; voice
+comes first. `agent.start` carries `display_mcp: true|false`. The routing hook
+still matches `Agent|Task` only; under `bypassPermissions` the MCP tools need no
+allowlist. The CLI may defer MCP tool schemas behind `ToolSearch` (one extra call
+per new tool per conversation, observed). Display tools are not counted as inline
+work by the turn budget audit (`DISPLAY_TOOL_PREFIX`).
+
+Tool catalog (V1). Exactly six tools; **no archive, pin or unpin tool** and no
+parameter that could carry `actor`, `placed_by`, `exec_state`, `work_ref` or a
+disposition (tested). Mapping in [scene-model.md](scene-model.md) › *Brain tool
+mapping*. `scene_update_object` sends **one** command, so a refusal applies
+nothing: geometry alone → `set_geometry`; representation (± geometry) →
+`set_representation`; anything touching category, payload, layer or order → one
+`patch_object` carrying every given field. A payload edit merges with the
+object's current payload (read from the snapshot just before; a concurrent edit
+in between is overwritten). `scene_link` omits `layer` unless given; since the
+wire decodes a missing layer as 50, re-linking an existing relation without a
+layer is answered `duplicate` locally and sends nothing, so a layer chosen by the
+user is kept. Ids are generated: `brain-<kind>-<12 hex>` for objects (no `:`/`!`,
+so never a runtime id), `brain-<relation kind>-<sha256(from, to)[:16]>` for
+relations (idempotent re-link).
+
+Inspection. `scene_inspect` returns compact JSON: header (`scene_id`,
+`revision`, `objects`, `object_limit`, `saturated`, `relations`, `archived`,
+legend) plus rows `o` = `[id, kind, category, origin, exec_state,
+representation, [x,y,w,h]|null, layer, order, visible, pinned_by_user,
+placed_by, live_signal, title≤60]` and `r` = `[relation_id, kind, from, to,
+layer]` (only relations between listed objects). Brain objects first, then user,
+then runtime; cut at `MAX_INSPECT_BYTES` = 20 000 with `truncated`
+(`objects_omitted`, `relations_omitted`, hint). Optional filters `kind`,
+`category` (exact), `text` (title or id substring). Capacity is derived from the
+snapshot (same as the Control Center proxy). Summaries and screenshots are Slice 09.
+
+Errors. Every failure becomes a tool error (`isError: true`, FastMCP
+`ToolError`), never a stack trace nor a success-shaped result:
+
+| Case | `DisplayToolError.code` | Text given to the brain |
+| --- | --- | --- |
+| domain refusal | `scene_refused` | `<op> refusé par la scène (outcome=<outcome>, reason=<reason>) : <explanation>` (`REFUSAL_EXPLANATIONS`; `scene_full` asks to propose archiving to the user) |
+| argument out of bounds (domain constructors, 64 KiB body) | `invalid_argument`, `payload_too_large` | nothing sent |
+| token file missing, Core down | `core_unreachable` | nothing applied |
+| no connection within 3 s | `command_not_sent` | retry is safe |
+| no answer 10 s after send, snapshot > 10 s | `core_timeout` | outcome unknown, re-inspect |
+| stale token after one re-read | `unauthorized` | |
+| 503 | `scene_unavailable` / `scene_persist_failed` | nothing applied |
+| 400/413/other HTTP | `invalid_request` / `payload_too_large` / `core_refused` | |
+| out-of-contract answer | `invalid_scene_response` | |
+| anything else | `display_internal_error` | type and message only |
+
+Journal (`runtime/trace.jsonl`, identifiers only): `display.server_started` /
+`display.server_stopped`, `display.tool` (info: tool, op, outcome, revision, id),
+`display.tool_refused` (info, with `reason`; Core also journals
+`core.scene.command_refused`), `display.tool_failed` (warning for transport and
+argument failures, error for `display_internal_error`).
+
+Authority and threat model. The actor is forced to `brain` by construction (the
+tools build `SceneCommand(actor=brain)` and assert it before sending, never with
+`placed_by`). Core's reducer refuses `archive`/`pin`/`unpin` to `brain`
+(`op_not_allowed`) whatever the catalog. This protects against an honest caller
+only: see *Scene transport* › threat-model limit and `docs/SECURITY.md` › 13.
+Relations carry no origin, so the runtime may remove a brain `parent_of` between
+two runtime stars (runtime owns execution topology); the tool description says so.
+
 ## Telemetry
 
 Six latency measures are defined in `jarvis/core/latency.py` and emitted through

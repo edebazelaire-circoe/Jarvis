@@ -988,6 +988,73 @@ prochain redémarrage de Core. Cas limite : une erreur d'E/S à la toute fin d'u
 commande suivante échoue alors en `revision_conflict`, et le redémarrage
 recharge ce qui est réellement sur disque.
 
+### Scène constellation : outils d'affichage du cerveau
+
+Le cerveau conversationnel (Claude CLI) peut lire et composer la scène par six
+outils MCP du serveur `jarvis-display` : `scene_inspect`, `scene_create_object`,
+`scene_update_object`, `scene_set_visibility`, `scene_link`, `scene_unlink`.
+Il agit toujours comme acteur `brain`. **Aucun outil n'archive ni n'épingle** :
+l'archivage reste à l'utilisateur (et Core le refuse au cerveau de toute façon).
+Détail technique : `docs/ARCHITECTURE.md`, « Brain display MCP ».
+
+**Activer.** Interrupteur `scene.enabled`, éteint par défaut, dans
+`runtime/control-center-settings.json` (pas encore d'écran de réglage, il
+arrive au Slice 11) :
+
+```json
+{ "scene": { "enabled": true } }
+```
+
+ou par l'API du Control Center, `POST /api/settings` avec
+`{"scene": {"enabled": true}}` (lecture : `GET /api/settings`, bloc `scene`,
+`source` = `settings` ou `env`). `JARVIS_SCENE_ENABLED=1` (ou `0`) dans
+l'environnement du Control Center l'emporte sur le fichier. **Effet au prochain
+démarrage du cerveau** (bouton Redémarrer de l'agent, ou redémarrage de JARVIS) :
+le CLI lit ses serveurs MCP et sa consigne système à son lancement. Une
+conversation reprise (`--resume`) voit les outils tout de suite mais garde la
+consigne système enregistrée à son premier tour ; un redémarrage complet de
+JARVIS ouvre une conversation neuve qui a la consigne. Éteint, le cerveau est
+lancé exactement comme avant.
+
+Rien à enregistrer avec `claude mcp add` : JARVIS écrit
+`runtime/display-mcp.json` à chaque lancement du cerveau et le passe en
+`--mcp-config`. Vos serveurs MCP personnels (`jarvis-drive`…) restent chargés à
+côté ; seul le profil conversationnel reçoit ce serveur, jamais les jobs de fond
+ni l'analyse spéculative. Le fichier contient l'interpréteur Python, le port de
+Core et le **chemin** du jeton, jamais le jeton.
+
+**Vérifier que les outils sont visibles.**
+
+1. `runtime/trace.jsonl` : `agent.start` avec `data.display_mcp: true`, puis
+   `agent.prompt` avec `program_id` = `backend.claude.conversation.display_session` ;
+2. au premier tour, l'événement `agent.event` de type `system` / `init` liste
+   `jarvis-display` dans `mcp_servers` avec `status: connected`, et les outils
+   `mcp__jarvis-display__scene_*` ;
+3. `display.server_started` (info) quand le CLI lance le serveur ;
+4. demander « montre-moi à l'écran une note qui résume … » : `display.tool`
+   `scene_create_object : applied`, et l'objet (`origin: brain`) dans
+   `GET /api/scene`.
+
+**Dépanner.**
+
+| Symptôme | Cause probable | Action |
+| --- | --- | --- |
+| `agent.start` dit `display_mcp: false` alors que l'interrupteur est vrai | cerveau pas redémarré, ou `JARVIS_SCENE_ENABLED=0` | redémarrer l'agent ; lire `GET /api/settings` → `scene.source` |
+| `scene.display_mcp_unconfigured` (avertissement) | Control Center lancé sans coordonnées de Core (hors `python -m jarvis control-center`) | lancer par la commande normale |
+| `agent.display_mcp_failed` (erreur, panneau ERR) | `runtime/display-mcp.json` non inscriptible | corriger les droits du dossier runtime, redémarrer l'agent ; la voix marche sans l'écran en attendant |
+| `mcp_servers` montre `jarvis-display` en `failed` | interpréteur introuvable, paquet `mcp` absent (`pip install -e .[mcp]`), variable d'environnement invalide | lancer à la main la commande de `runtime/display-mcp.json` avec son `env` : l'erreur s'affiche |
+| erreur d'outil `core_unreachable` / `command_not_sent` | Core arrêté ou jeton absent | démarrer Core ; rien n'a été appliqué |
+| erreur d'outil `unauthorized` | Core redémarré, jeton relu mais toujours refusé | vérifier `JARVIS_CORE_TOKEN_FILE` du Control Center et de Core |
+| erreur d'outil `scene_unavailable` | scène refusée par Core | voir « Scène constellation : fichier et refus » |
+| erreur d'outil avec `reason=pinned_by_user` | objet épinglé par l'utilisateur | normal : le cerveau ne le déplace pas |
+| erreur d'outil avec `reason=scene_full` | 512 objets actifs | archiver des objets terminés ; le cerveau ne peut pas |
+| `display.tool_failed` niveau erreur `display_internal_error` | défaut du serveur | remonter le message (type et texte) |
+
+Tous les appels laissent `display.tool` / `display.tool_refused` /
+`display.tool_failed` dans `runtime/trace.jsonl` (identifiants et issues, jamais
+le texte des notes). Les actions d'affichage sont silencieuses à l'oral : le
+cerveau ne décrit pas ce qu'il place.
+
 ## Deux architectures vocales : `legacy` et `continuous_brain`
 
 L'architecture choisit le chemin de code de la voix. Voice la lit au démarrage,

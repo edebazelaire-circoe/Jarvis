@@ -120,6 +120,40 @@ Remote OpenAI-compatible endpoints must use HTTPS. Plain HTTP is accepted only o
 
 STT, agent and TTS failures are typed. Provider errors transition through visible `error`, attempt a short spoken user-safe error, and return to idle. Technical class/context stay in diagnostics without reading raw provider messages aloud.
 
+### 13. Brain scene display tool (constellation, v0.2 path)
+
+With `scene.enabled` (off by default), the conversational Claude CLI brain gets a
+**write-capable** MCP server, `jarvis-display` (`python -m jarvis display-mcp`,
+declared per launch through `--mcp-config`; `docs/ARCHITECTURE.md` › *Brain
+display MCP*). It can create, edit, move, hide and link scene objects in Core's
+persistent scene. It cannot archive, pin or unpin: those tools do not exist in
+its catalog (decision 14, pinned by a test), and Core's reducer refuses those
+operations to actor `brain` regardless (`op_not_allowed`), as it refuses moving an
+object the user pinned (`pinned_by_user`) and creating execution stars
+(`execution_node`). Background jobs and speculative analysis never receive the
+server; speculative analysis keeps `--strict-mcp-config` and no tools.
+
+What this guarantee is **not**:
+
+- the actor field of a scene command is a **declaration**, not an
+  authentication. Core's bearer token (`runtime/core.token`) is a loopback session
+  credential shared by every local JARVIS process;
+- the brain runs as the same OS user with `--permission-mode bypassPermissions`
+  and has Bash, file and web tools. It can read `core.token` and send
+  `POST /v1/scene/commands` claiming `user`, which would archive or pin anything
+  (and it can already modify files, including the scene database, or the code);
+- the V1 guarantee therefore holds for an **honest caller** only: tool catalog +
+  reducer authority. The brain prompt tells it never to work around archive
+  through shell, HTTP or files, which is an instruction, not an enforcement.
+  Evidence that it complied comes from `runtime/trace.jsonl` (tool calls), not
+  from a boundary.
+
+The generated `runtime/display-mcp.json` holds the interpreter path, Core's
+loopback host and port and the token file **path**, never the token. Tool journal
+entries (`display.*`) carry identifiers and outcomes, never note content. Making
+the actor an authenticated property (per-actor credentials the brain cannot read,
+or an OS boundary around the brain) is out of V1 scope.
+
 ## Residual risks / non-goals
 
 - OpenAI is an online provider in this V1; requests leave the machine according to provider/API policy.
@@ -130,6 +164,7 @@ STT, agent and TTS failures are typed. Provider errors transition through visibl
 - Confirmation is conversational, not OS-level privileged authorization.
 - Board placement is an ephemeral UI write and intentionally does not require confirmation.
 - V1 has no destructive memory delete tool, no messaging/email tool, no browser navigation tool and no general filesystem writer.
+- v0.2 constellation scene: the brain's display tool is write-capable and scene actors are declared, not authenticated; a brain that ignores its instructions can impersonate `user` with `runtime/core.token` (see control 13).
 
 ## Release rule
 
