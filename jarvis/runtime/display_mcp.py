@@ -389,17 +389,20 @@ class SceneDisplayTools:
         geometry: Mapping[str, Any] | None = None,
         layer: int | None = None,
         order: int | None = None,
+        visibility: str | None = None,
     ) -> dict[str, Any]:
         async def run() -> dict[str, Any]:
             payload_given = title is not None or summary is not None or items is not None
             try:
                 parsed_geometry = _geometry(geometry)
                 parsed_representation = Representation(representation) if representation is not None else None
+                parsed_visibility = Visibility(visibility) if visibility is not None else None
                 parsed_items = _items(items)
             except (TypeError, ValueError) as exc:
                 raise _invalid_argument(exc) from None
             if not (payload_given or category is not None or parsed_representation is not None
-                    or parsed_geometry is not None or layer is not None or order is not None):
+                    or parsed_geometry is not None or layer is not None or order is not None
+                    or parsed_visibility is not None):
                 raise DisplayToolError("invalid_argument", "Rien à modifier : donne au moins un champ.")
             payload = None
             if payload_given:
@@ -416,7 +419,8 @@ class SceneDisplayTools:
                         summary=base.summary if summary is None else summary,
                         items=base.items if parsed_items is None else parsed_items,
                     )
-                command = self._update_command(object_id, category, payload, parsed_representation, parsed_geometry, layer, order)
+                command = self._update_command(object_id, category, payload, parsed_representation, parsed_geometry, layer, order,
+                                               parsed_visibility)
             except (TypeError, ValueError) as exc:
                 raise _invalid_argument(exc) from None
             return {"object_id": object_id, "command": command.op.value,
@@ -515,11 +519,12 @@ class SceneDisplayTools:
             "object_limit": MAX_SCENE_OBJECTS,
             "saturated": count >= MAX_SCENE_OBJECTS,
             "relations": len(snapshot.relations),
+            "hidden": sum(1 for item in snapshot.objects if item.visibility is Visibility.HIDDEN),
             "archived": len(snapshot.archived_ids),
             "filter": {key: value for key, value in (("kind", kind), ("category", category), ("text", text)) if value},
             "legend": {
                 "o": "[id, kind, category, origin, exec_state, representation, [x,y,w,h]|null, layer, order, "
-                     "visible, pinned_by_user, placed_by, live_signal, title]",
+                     "visibility (visible|hidden), pinned_by_user, placed_by, live_signal, title]",
                 "r": "[relation_id, kind, from_id, to_id, layer]",
                 "data": UNTRUSTED_DATA_NOTE,
             },
@@ -548,7 +553,7 @@ class SceneDisplayTools:
             None if geometry is None else [_number(geometry.x), _number(geometry.y), _number(geometry.w), _number(geometry.h)],
             item.layer,
             item.order,
-            item.visibility is Visibility.VISIBLE,
+            item.visibility.value,
             item.constraints.pinned_by_user,
             item.constraints.placed_by.value,
             item.kind is SceneObjectKind.ATTENTION and is_live_signal(snapshot, item.object_id),
@@ -604,23 +609,29 @@ class SceneDisplayTools:
         geometry: SceneGeometry | None,
         layer: int | None,
         order: int | None,
+        visibility: Visibility | None = None,
     ) -> SceneCommand:
         """Une seule commande, donc tout ou rien.
 
         Géométrie seule → `set_geometry` ; représentation (avec ou sans
-        géométrie) seule → `set_representation` ; dès que catégorie, charge,
-        couche ou ordre changent → un `patch_object` qui porte tout (même
-        autorité, même effet, sans application partielle). Jamais
+        géométrie) seule → `set_representation` ; visibilité seule →
+        `set_visibility` ; dès que plusieurs de ces familles, ou catégorie,
+        charge, couche ou ordre changent → un `patch_object` qui porte tout
+        (même autorité, même effet, sans application partielle). Jamais
         `placed_by=resolver`.
         """
 
+        placement = representation is not None or geometry is not None
         if category is None and payload is None and layer is None and order is None:
-            if representation is not None:
+            if visibility is not None and not placement:
+                return SceneCommand(op=SceneOp.SET_VISIBILITY, actor=SceneActor.BRAIN, object_id=object_id, visibility=visibility)
+            if visibility is None and representation is not None:
                 return SceneCommand(op=SceneOp.SET_REPRESENTATION, actor=SceneActor.BRAIN, object_id=object_id,
                                     representation=representation, geometry=geometry)
-            return SceneCommand(op=SceneOp.SET_GEOMETRY, actor=SceneActor.BRAIN, object_id=object_id, geometry=geometry)
+            if visibility is None:
+                return SceneCommand(op=SceneOp.SET_GEOMETRY, actor=SceneActor.BRAIN, object_id=object_id, geometry=geometry)
         fields = SceneObjectFields(category=category, payload=payload, representation=representation,
-                                   geometry=geometry, layer=layer, order=order)
+                                   geometry=geometry, layer=layer, order=order, visibility=visibility)
         return SceneCommand(op=SceneOp.PATCH_OBJECT, actor=SceneActor.BRAIN, object_id=object_id, fields=fields)
 
     @staticmethod
@@ -885,7 +896,7 @@ def build_server(target: DisplayMcpTarget | None = None, *, tools: SceneDisplayT
         return await display.create_object(kind=kind, category=category, title=title, summary=summary, items=items,
                                            representation=representation, geometry=geometry, layer=layer, order=order)
 
-    @mcp.tool(description=f"""Modifier un objet existant (y compris une étoile runtime) : charge, catégorie, représentation, géométrie, couche, ordre.
+    @mcp.tool(description=f"""Modifier un objet existant (y compris une étoile runtime) : charge, catégorie, représentation, géométrie, couche, ordre, visibilité (masquer ou réafficher).
 
 {_READ_FIRST} Tout ou rien. Refus rendus comme erreur : pinned_by_user (objet
 épinglé par l'utilisateur, ne le déplace pas), object_archived, unknown_object.
@@ -901,9 +912,11 @@ a bougé depuis ta dernière lecture.""")
         geometry: GeometryField = None,
         layer: LayerField = None,
         order: OrderField = None,
+        visibility: Annotated[Literal["visible", "hidden"] | None, Field(description="hidden : masquer (pas archiver) ; visible : réafficher.")] = None,
     ) -> dict[str, Any]:
         return await display.update_object(object_id=object_id, category=category, title=title, summary=summary, items=items,
-                                           representation=representation, geometry=geometry, layer=layer, order=order)
+                                           representation=representation, geometry=geometry, layer=layer, order=order,
+                                           visibility=visibility)
 
     @mcp.tool(description=f"""Masquer ou réafficher un objet. Masquer n'est pas archiver (l'archivage appartient à l'utilisateur) : l'objet reste actif et récupérable.
 

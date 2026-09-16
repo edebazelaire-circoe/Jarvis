@@ -123,7 +123,7 @@ async def test_create_inspect_update_link_and_hide_act_on_the_real_scene_as_brai
     assert listing["scene"]["objects"] == 1 and listing["scene"]["object_limit"] == MAX_SCENE_OBJECTS
     assert listing["scene"]["saturated"] is False and listing["scene"]["revision"] == 1
     [row] = listing["o"]
-    assert row == [object_id, "artifact", "research", "brain", "unknown", "capsule", None, 120, 0, True, False, "brain", False, "Synthèse X"]
+    assert row == [object_id, "artifact", "research", "brain", "unknown", "capsule", None, 120, 0, "visible", False, "brain", False, "Synthèse X"]
     assert "truncated" not in listing
 
     moved = await tools.update_object(object_id=object_id, geometry={"x": -800, "y": -450, "w": 320, "h": 180})
@@ -193,12 +193,16 @@ async def test_every_command_is_a_plain_brain_command(core):
     await spied.update_object(object_id="o", geometry={"x": 1, "y": 1, "w": 1, "h": 1})
     await spied.update_object(object_id="o", representation="point")
     await spied.update_object(object_id="o", layer=3, order=-2, title="t")
+    await spied.update_object(object_id="o", visibility="hidden")
+    await spied.update_object(object_id="o", visibility="visible", geometry={"x": 1, "y": 1, "w": 1, "h": 1})
     await spied.set_visibility(object_id="o", visibility="visible")
     await spied.link(from_id="a", to_id="b", kind="parent_of", layer=10)
     await spied.unlink(relation_id="r")
     assert [command["op"] for command in spy.commands] == [
-        "upsert_object", "set_geometry", "set_representation", "patch_object", "set_visibility", "link", "unlink",
+        "upsert_object", "set_geometry", "set_representation", "patch_object", "set_visibility", "patch_object",
+        "set_visibility", "link", "unlink",
     ]
+    assert spy.commands[5]["fields"] == {"geometry": {"x": 1.0, "y": 1.0, "w": 1.0, "h": 1.0}, "visibility": "visible"}
     assert all(command["actor"] == "brain" and "placed_by" not in command for command in spy.commands)
     assert all(command["op"] not in {"archive", "pin", "unpin"} for command in spy.commands)
     # Pas de couche ni d'ordre inventés pour une création qui n'en donne pas.
@@ -735,13 +739,14 @@ async def test_unknown_arguments_are_refused_with_their_names_and_nothing_is_sen
         assert all(tool.inputSchema["additionalProperties"] is False for tool in listed)
         for name, arguments, rejected in (
             ("scene_create_object", {"kind": "artifact", "category": "note", "archived": True, "actor": "user"}, ["actor", "archived"]),
-            ("scene_update_object", {"object_id": base, "title": "t2", "pinned_by_user": True, "visibility": "hidden"},
-             ["pinned_by_user", "visibility"]),
+            ("scene_update_object", {"object_id": base, "title": "t2", "pinned_by_user": True, "archived": True},
+             ["archived", "pinned_by_user"]),
         ):
             result = await session.call_tool(name, arguments)
             text = result.content[0].text
             assert result.isError is True and "Arguments inconnus refusés" in text
-            assert all(key in text for key in rejected)
+            named = text.split("rien n'a été envoyé : ")[1].split(". Arguments permis")[0]
+            assert named == ", ".join(rejected)
         nested = await session.call_tool("scene_update_object", {"object_id": base, "geometry": {"x": 1, "y": 1, "w": 5, "h": 5, "placed_by": "resolver"}})
         assert nested.isError is True and "geometry.placed_by" in nested.content[0].text
     assert await wait_for(core, lambda snap: True) == before
