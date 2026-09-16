@@ -1349,10 +1349,11 @@ Opening, in order:
 
 0. **Sweep** (`sweep_leftovers`, called by `SceneService.start()` first):
    removes interrupted-creation temporaries `scene.sqlite3.<random>.creating`
-   (and `-journal`) from the scene's own directory, and `jarvis-scene-check-*`
-   directories in the system temporary directory that an earlier version of
-   this Slice left behind, only when they hold nothing but `scene.sqlite3*`
-   files. Removals are journaled `core.scene.swept` (info), failures
+   (and `-journal`) from the scene's own directory only, when they are older
+   than 10 minutes (a concurrent creation is never cut) and are regular files
+   checked with `os.lstat` (a symlink or junction is never followed nor
+   removed). **Nothing outside the scene's directory is ever read or touched.**
+   Removals are journaled `core.scene.swept` (info), failures
    `core.scene.sweep_failed` (warning); a sweep never blocks the start.
 1. **Missing file** (and no orphan `-wal`): created atomically. Schema,
    `schema_version` and the `scene_meta` row (new `scene_id`, revision 0) are
@@ -1362,7 +1363,9 @@ Opening, in order:
    path that creates a scene.
 2. **Existing file**: `os.access` on the file and its directory before opening
    (a read-only file is refused `storage_io` and leaves no trace), then the
-   real file is opened read-write. An empty or table-less file is refused
+   real file is opened read-write through a `file:…?mode=rw` URI, which never
+   creates it: a file that vanished in between is refused `storage_io` instead
+   of leaving an empty file, and the next start creates a scene. An empty or table-less file is refused
    `corrupted` by a read before any write (switching to WAL would write its
    header), never recreated.
 3. **Validation under the write lock**: `BEGIN IMMEDIATE` on that connection,
@@ -1374,9 +1377,10 @@ Opening, in order:
    the scene is ever made.
 
 Refusal guarantee: a refused file's **logical content** is never modified,
-rewritten, recreated or deleted. SQLite may still perform its normal physical
-WAL checkpoint when the connection closes, so byte identity of `-wal`/`-shm`
-(or of the main file when a WAL was pending) is not promised. What SQLite
+rewritten, recreated or deleted. Only physical changes may happen (WAL
+checkpoint on close, journal-mode header switched to WAL for a file in
+rollback-journal mode), so byte identity of the file, `-wal` and `-shm` is not
+promised. What SQLite
 reports as not-a-database or malformed is `corrupted`; lock, permission and
 I/O conditions are `storage_io`.
 
@@ -1389,7 +1393,8 @@ Failure semantics:
 | version unreadable/unknown, foreign database, `wire_schema_version` ≠ 1 | refused `schema_unknown` (or `schema_newer` for a newer wire version) |
 | empty (0 bytes) or table-less file, not a SQLite file, `quick_check` failure, missing table, missing `scene_meta` row, row that does not decode, `-wal` without its database | refused `corrupted` |
 | path is a directory, file or directory not writable (read-only, ACL), write lock held by another process beyond the 5 s busy timeout, I/O error | refused `storage_io` |
-| any refusal at start | `core.scene.unavailable` (error); scene unavailable (`SceneUnavailableError`), **rest of Core starts normally**; the file's logical content is never modified, rewritten, recreated or deleted (only SQLite's physical WAL checkpoint may run on close) |
+| any refusal at start | `core.scene.unavailable` (error); scene unavailable (`SceneUnavailableError`), **rest of Core starts normally**; the file's logical content is never modified, rewritten, recreated or deleted (physical-only changes: WAL checkpoint, journal-mode header) |
+| file vanishes between the access check and the open | refused `storage_io`, no file created; the next start creates a scene |
 | commit fails (I/O, lock) | transaction rolled back (including a failure right after `BEGIN`); no revision advance, nothing in the ring, no waiter woken; `core.scene.persist_failed` (error); caller gets `ScenePersistenceError`; the next command may succeed |
 | rollback fails, connection left inside a transaction | same, reported `storage_io` with `fatal`; the scene becomes unavailable until Core restarts |
 | stored revision ≠ Core's (`revision_conflict`), or an integrity constraint fails during the write | same, and the scene becomes unavailable until Core restarts; current waiters get `SceneUnavailableError` |
