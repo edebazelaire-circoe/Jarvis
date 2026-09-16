@@ -253,3 +253,15 @@ Validation:
 - `qa03_attack.py`: 43 OK, 0 UNEXPECTED; actor/origin/bounds attacks unchanged.
 - `qa03_parity_seeds.py`: 40 seeds, 17 205 patches, 0 mismatches.
 - Full `verify_release.py`, alone → `3869 passed, 9 skipped in 310.66s` / `Release verification passed.`
+
+## 2026-09-16 — Slice 03 PM decision: APPROVED
+
+- Commits: `7f9bf03`, `0eb4545` (implementation); `542d28e`, `f68bdc2` (QA rework: separate long-poll pool + 32-wait cap with `retry`, command not-sent vs unknown, journal dedup/throttle, path redaction to page, docs, parity generator, light client imports).
+- QA (qa-verification + code-review + runtime-validation): APPROVE, no blocking/major. Strict-JSON extraction behaviour-identical (26 hostile bodies, 103 HTTP requests per voice route); server stop, `CoreProtocolError`, `/v1/health` consumers unaffected; actor attacks (Core + Control Center) all held; origin guard identical to existing POST routes; 8 real-process convergence seeds with restarts, backup restores, ring overflow and `more` chunks all equal to Core; 40-seed parity 0 mismatches; 8.1 MiB near-bound scene served and converged.
+- Rework verified by implementer on QA scripts (load 50/200/500: snapshot 0.00 s, command 0.01 s; attack 43/43; degraded; parity 40 seeds) and a mutation check (reverting the separate pool reproduces starvation); PM spot-check 129 transport tests passed. `verify_release.py` alone: 3869 passed / 9 skipped.
+- Accepted residual risks:
+  1. Aborted long-polls keep a Core waiter until `wait_s` (≤ 30 s); waiter count bounded only by token holders (Control Center caps its own at 32).
+  2. The actor field is a declaration: anything able to read `runtime/core.token` (the brain included, running with `bypassPermissions` as the same OS user) can act as `user`. V1 archive protection against the brain = MCP catalog + reducer authority for honest callers. To be restated in SECURITY.md (Slice 06) and surfaced to Human at close-out.
+  3. GET scene routes have no origin guard (same exposure as `/api/work`, DNS-rebinding read).
+  4. Pre-existing: Core stop waits ~30 s while a `/v1/events` WebSocket client is connected.
+- Operational rule adopted: validators never start `python -m jarvis control-center` via the launcher (it calls `webbrowser.open`); drive `ControlCenter` in-process. One stray tab was opened in the user's Chrome during Slice 03 implementation (dead port, harmless).
