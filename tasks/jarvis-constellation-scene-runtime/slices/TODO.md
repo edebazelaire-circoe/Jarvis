@@ -11,7 +11,7 @@ Note (PM, Slice 00): 04 needs 01/02 only; 03 is not required for 04.
 ## Status
 - [x] 00 Project Manager readiness gate — READY (Human waived Task Type gate; Drive left in to-do). See LOG.
 - [x] 01 Scene domain contract — APPROVED (c4a7b48, 22bdd2a, 3018cbd)
-- [ ] 02 Scene store & persistence
+- [x] 02 Scene store & persistence — APPROVED (see LOG)
 - [ ] 03 Scene transport
 - [ ] 04 Runtime topology projection
 - [ ] 05 Layered renderer & AutoResolver
