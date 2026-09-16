@@ -15,6 +15,8 @@ Audit facts: vanilla JS, no build; JS files injected into `control_center.html` 
 
 PM amendment (Slice 01 QA): payload text may contain DEL, C1, bidi overrides (U+202E), zero-width and U+2028 characters. Render only via `textContent` (never `innerHTML` for scene payload) and neutralise bidi override/isolate controls so summaries cannot spoof their displayed content.
 
+PM amendment (Slice 03 QA): browsers allow ~6 HTTP/1.1 connections per host:port and each tab's 25 s scene long-poll holds one alongside the 1 s `/api/status`/`/api/work` polls. The page loop must: run a single scene long-poll per tab, pause it when `document.visibilityState` is hidden (resume with a snapshot/patch catch-up), honour the Control Center long-poll cap response (`retry`), and back off on errors. Validate with several tabs open. Use `window.JarvisSceneClient` (already injected) rather than re-implementing patch application. Runtime validation must never start the Control Center through the launcher (`webbrowser.open` opens a tab in the user's browser): drive `ControlCenter` in-process or use a dedicated test tab opened and closed by the validator.
+
 ## Scope
 ### In Scope
 `control_center_scene.js` renderer + resolver, CSS, marker injection, feature flag gate (render only if enabled, see 11), node tests for resolver.
