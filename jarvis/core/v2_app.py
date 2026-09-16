@@ -7,6 +7,7 @@ from pathlib import Path
 
 from jarvis.adapters.fake_calendar import InMemoryCalendarBackend
 from jarvis.adapters.jsonl_history import JsonlHistoryStore
+from jarvis.adapters.sqlite_conversation_events import SQLiteConversationEventStore
 from jarvis.adapters.sqlite_state import SQLiteStateRepository
 from jarvis.adapters.windows_notifications import NullNotificationDelivery
 from jarvis.core.brain_context import ATTENTION_QUEUE_SIZE, DEFAULT_WAKE_INTERVAL_S, BrainContextBuilder, WorkAttentionPolicy
@@ -43,6 +44,10 @@ class JarvisCoreApplication:
         self.health = CoreHealth()
         self.state = SQLiteStateRepository(root / "state" / "jarvis.sqlite3")
         self.history = JsonlHistoryStore(root / "history")
+        # Conversation Event log (handoff conversation-observability, Slice 02):
+        # same state DB, connection and lifecycle as `self.state` (schema v2).
+        # Core owns it; producers and routes are wired by later Slices.
+        self.conversation_events = SQLiteConversationEventStore(self.state, diagnostics=diagnostics)
         self.events = CoreEventBus(diagnostics=diagnostics)
         self.conversations = ConversationService(self.state, self.history)
         self.voice_ledger = VoiceLedgerService(self.conversations, diagnostics=diagnostics)

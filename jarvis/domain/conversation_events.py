@@ -357,6 +357,25 @@ def _format_time(value: datetime | None) -> str | None:
     return value.strftime("%Y-%m-%dT%H:%M:%S.") + f"{value.microsecond // 1000:03d}Z"
 
 
+def format_event_time(value: datetime) -> str:
+    """Wire form `YYYY-MM-DDTHH:MM:SS.mmmZ` of any aware time (normalized by `to_event_time`).
+
+    Fixed width, so wire times sort lexicographically in chronological order:
+    the store (Slice 02) indexes and compares them as text.
+    """
+    return _format_time(to_event_time(value))
+
+
+def parse_event_time(value: object, name: str = "time") -> datetime:
+    """Strict inverse of `format_event_time`: only `YYYY-MM-DDTHH:MM:SS.mmmZ` of a real calendar time.
+
+    Raises `ConversationEventError` naming `name`, never echoing the value.
+    """
+    if value is None:
+        raise ConversationEventError(f"{name} is required")
+    return _parse_time(value, name)
+
+
 def _parse_time(value: object, name: str) -> datetime | None:
     if value is None:
         return None

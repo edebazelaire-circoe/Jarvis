@@ -16,7 +16,7 @@ Every coding Slice must load `/caveman` and `/coding-guideline` before implement
 - [x] 01 — Define the canonical conversation event contract (2026-09-16, QA APPROVE_WITH_ISSUES → reworked)
   - Path: `slices/01-conversation-event-contract/SLICE.md`
   - Depends on: 00
-- [ ] 02 — Add durable append/replay storage for conversation events
+- [x] 02 — Add durable append/replay storage for conversation events (2026-09-16, QA APPROVE_WITH_ISSUES → reworked)
   - Path: `slices/02-durable-event-store/SLICE.md`
   - Depends on: 01
 - [ ] 03 — Instrument User, Brain, Mouth, tools and sub-agents at source

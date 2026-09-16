@@ -254,8 +254,9 @@ It maps user transcript admission, the `brain.*` envelopes above, the
 `voice.speech.*` / `voice.reflex.*` delivery telemetry, `agent.subagent.*` and
 tool calls to one strict, redacted envelope with deterministic `event_id`,
 instant/span timing and a `trace_ref` join to `runtime/trace.jsonl`. It never
-ingests `agent.event`. Contract only for now; storage and producers follow in
-the conversation-observability handoff.
+ingests `agent.event`. Durable storage: the `conversation_events` table of the
+Core state DB (schema v2), behind the `ConversationEventStore` port; producers
+and routes follow in the conversation-observability handoff.
 
 ## Speech, interruption and work
 

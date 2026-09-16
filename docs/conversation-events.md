@@ -6,13 +6,19 @@ timeline are projections of these events, not separate truths.
 
 - Implementation (Level 3): `jarvis/domain/conversation_events.py` (pure domain:
   no I/O, no clock, no provider import).
-- Conformance tests: `tests/unit/test_conversation_events.py`.
+- Storage (Level 3): port `jarvis/ports/v2.py::ConversationEventStore`, types
+  `jarvis/domain/conversation_event_store.py`, adapter
+  `jarvis/adapters/sqlite_conversation_events.py` (see Storage).
+- Conformance tests: `tests/unit/test_conversation_events.py`,
+  `tests/unit/test_conversation_event_store.py`,
+  `tests/integration/test_conversation_event_store_recovery.py`.
 - Golden fixture: `tests/fixtures/conversation_events/overlapping_conversation.json`.
 - Handoff: `tasks/jarvis-conversation-observability-timeline/` (Slice 01).
 
-Status 2026-09-16: contract only. Storage (SQLite, store sequence) is Slice 02,
-producer instrumentation Slice 03, query/stream API Slice 04. No producer emits
-these events yet and no HTTP route exists.
+Status 2026-09-16: contract and durable store (Slice 02). Producer
+instrumentation is Slice 03, query/stream API Slice 04. No producer emits these
+events yet and no HTTP route exists; Core only constructs the store
+(`JarvisCoreApplication.conversation_events`).
 
 ## Relation to existing observability
 
@@ -290,8 +296,211 @@ For a span, text is the close's content when present, otherwise the open's.
 basis). Overlaps are preserved: a sub-agent span may cover several user and mouth
 items.
 
+## Storage
+
+The store is the `conversation_events` table of the Core operational state DB
+(`<data_root>/state/jarvis.sqlite3`, `SQLiteStateRepository`). It shares that
+repository's file, single connection, asyncio lock, worker thread, lifecycle and
+cancellation guarantee; there is no second database or connection model.
+
+**Ownership.** Core owns the store. Only the Core process opens the state DB;
+other processes (voice runtime, Control Center) must reach the log through Core
+protocol paths (Slice 03/04), never by opening the file.
+
+### Schema (state DB schema version 2)
+
+```sql
+CREATE TABLE conversation_events (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id TEXT NOT NULL UNIQUE,
+    conversation_id TEXT NOT NULL,
+    session_id TEXT,
+    event_type TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    visibility TEXT NOT NULL,
+    occurred_at TEXT NOT NULL,          -- wire time, sorts lexicographically
+    recorded_at TEXT NOT NULL,          -- Core clock when append* is called (not the commit instant)
+    span_id TEXT, turn_id TEXT, correlation_id TEXT, task_id TEXT, work_id TEXT, speech_id TEXT,
+    outcome_id TEXT,
+    data TEXT NOT NULL);                -- encoded canonical event: the source of truth
+CREATE INDEX idx_conversation_events_conversation ON conversation_events(conversation_id, sequence);
+CREATE INDEX idx_conversation_events_occurred ON conversation_events(occurred_at, sequence);
+-- for each of session_id, turn_id, correlation_id, task_id, work_id, speech_id, outcome_id, span_id:
+CREATE INDEX idx_conversation_events_<id> ON conversation_events(<id>, sequence) WHERE <id> IS NOT NULL;
+```
+
+No foreign key to `conversations`: the log records a fact even when the
+operational conversation row is missing. The extracted columns are copies for
+indexing only.
+
+### Append, duplicates and conflicts
+
+- `append(event)` / `append_many(events)` (0 to `MAX_APPEND_BATCH` = 32; empty
+  returns `()`) encode every event through the codec **before** touching storage
+  (an invalid value raises `ConversationEventError`, nothing is written), then
+  run one `BEGIN IMMEDIATE` transaction for the whole batch.
+- Per event: no stored copy: insert, `AppendResult(event_id, sequence,
+  appended)`; identical stored copy (`is_duplicate_event`): `duplicate` with the
+  stored sequence, nothing written; different payload: `conflict` with the
+  stored sequence, first copy kept. A stored copy that no longer decodes is also
+  a `conflict` (reason `stored_copy_unreadable`). Duplicates and conflicts inside
+  one batch follow the same rule.
+- A conflict never raises. After commit the store emits
+  `core.conversation_events.append_conflict` (warning) with `event_id`,
+  `stored_sequence`, `reason`, `conversation_id`, `event_type`, `producer`, never
+  content. A failing diagnostic sink is counted (`diagnostic_failures`) and never
+  fails the append.
+- A storage failure (SQLite error: disk full, lock timeout...) rolls the batch
+  back and raises `ConversationEventStoreError`: **not acknowledged**, safe to
+  retry whole. Using a closed repository raises `RuntimeError("state repository
+  is not initialized")`.
+
+### Durability and recovery
+
+- `PRAGMA journal_mode=WAL` and `PRAGMA synchronous=FULL` (set explicitly at
+  initialize; FULL syncs the WAL on every commit). `append*` returns only after
+  `COMMIT`, so an acknowledged event survives a process crash and an OS
+  crash/power loss. SQLite busy timeout is the `sqlite3.connect` default (5 s).
+- A process killed mid-batch leaves no partial batch: the uncommitted
+  transaction is discarded by WAL recovery at next open
+  (`tests/integration/test_conversation_event_store_recovery.py` kills a child
+  process inside the third INSERT of a batch). Acknowledged events are intact and
+  sequences continue.
+- `initialize` still runs `PRAGMA quick_check` and refuses a corrupt file; the DB
+  is never repaired by deletion.
+- Several connections on the same file (tested with two repositories) serialize
+  writers through `BEGIN IMMEDIATE`; sequences stay unique and a racing identical
+  append yields one `appended` and one `duplicate`.
+
+### Sequence and cursor
+
+- `sequence` is assigned at insert, strictly increasing, and **never reused**
+  (`AUTOINCREMENT`), even when retention deletes the newest rows. It is the
+  canonical order; producer `occurred_at` never reorders stored events (equal or
+  out-of-order timestamps keep append order).
+- Event pages: ascending sequence, `after_sequence` cursor (exclusive, default
+  0), `limit` 1..`MAX_EVENT_PAGE_LIMIT` = 500 (default 100). A page returns
+  `next_cursor` = last **scanned** sequence (or the request cursor when empty),
+  `has_more`, and `skipped_rows`. Events appended while a reader pages always
+  land after its cursor, so incremental polling never misses or repeats an event.
+
+### Queries (port `ConversationEventStore`)
+
+| Method | Returns |
+|---|---|
+| `get_event(event_id)` | `StoredConversationEvent(sequence, recorded_at, event)` or None (absent **or** unreadable, the latter diagnosed) |
+| `list_conversation_events(conversation_id, after_sequence, limit)` | event page |
+| `list_events_in_time_range(start, end, conversation_id?, after_sequence, limit)` | event page, `start <= occurred_at < end` (producer clock, ms), sequence order |
+| `list_events_by_id(field, value, conversation_id?, after_sequence, limit)` | event page; `field` in `LOOKUP_FIELDS` = session, turn, correlation, task, work, speech, outcome, span id |
+| `list_conversations(before_sequence?, limit)` | summaries by most recent store activity; `next_cursor` = last row's `last_sequence`, pass as `before_sequence` |
+| `list_sessions(conversation_id, after_sequence, limit)` | per-session summaries (null session is its own group) by first appearance; `next_cursor` = last row's `first_sequence` |
+| `apply_retention(policy, archive?)` | `RetentionReport` |
+
+Summaries (`ConversationEventSummary`) carry `event_count`, first/last sequence,
+first/last `occurred_at` and last `recorded_at`. `event_count` is the **raw stored
+row count**: rows that do not decode are included (summaries do not decode rows).
+Summary `limit` is 1..`MAX_SUMMARY_PAGE_LIMIT` = 100 (default 50). Listings
+aggregate over the table (no summary table): fine at Jarvis scale, to revisit if
+the log reaches millions of rows.
+
+`list_conversations` is not a snapshot. A conversation that receives an event
+between two page requests gets a new `last_sequence` above the cursor: it moves to
+the top of the listing and **is omitted from the following pages** of that walk.
+A client that needs every conversation refreshes page one after walking.
+
+A summary group whose aggregated time columns do not parse as wire times (a
+damaged `occurred_at` or `recorded_at`) is skipped, counted in the page's
+`skipped_summaries`, and diagnosed once per group per store instance as
+`core.conversation_events.summary_unreadable` (error) with the ids, the group's
+first/last sequence and the field-level detail, never the value. The cursor comes
+from the integer sequence columns, so paging walks past a skipped group.
+
+The time-range query matches event **instants** (`occurred_at`): a span that
+started before `start` and closes after `end` has no event in the window. A
+timeline window that must show such spans reads the conversation by cursor.
+
+Out-of-range limits, negative cursors, unknown lookup fields, blank ids, naive or
+inverted time bounds raise `ValueError` (caller error).
+
+### Undecodable rows
+
+Every read decodes `data` through `decode_conversation_event` and checks that the
+extracted columns equal the payload and that `recorded_at` parses. A row failing
+any check (`invalid_json`, `invalid_event`, `column_mismatch`,
+`invalid_recorded_at`) is skipped, counted in the page's `skipped_rows` and in
+the store's `unreadable_rows`, and diagnosed as
+`core.conversation_events.row_unreadable` (error) with `sequence`, `reason` and
+the codec's field-level detail, never the value. The diagnostic is emitted once
+per sequence per store instance (live polling would repeat it); counting never
+stops. The row is not modified.
+
+### Retention
+
+`ConversationEventRetentionPolicy(enabled=False, max_age=180 days,
+max_conversations_per_run=16)` (at most 64 per run). **Disabled by default**, and
+nothing in Core schedules it yet. When enabled, a conversation's events are
+deleted only when all of these hold. They are one SQL predicate
+(`_CANDIDATES`), evaluated for selection and again inside the delete transaction:
+
+1. its `conversations` row exists with status `closed` (an active, reopened or
+   unknown conversation is never touched);
+2. its newest `recorded_at` (Core clock, not producer clocks) is older than
+   `now - max_age`;
+3. every span it opened has a close of a matching type for its `span_id`;
+4. every row is readable enough to judge: known `event_type`, valid JSON `data`,
+   `occurred_at` and `recorded_at` in wire format (and the aggregated times parse);
+5. no event was appended since selection (`max(sequence)` unchanged).
+
+Conversations failing 3 or 4 are **blocked**: they are excluded before the
+per-run budget, so they never starve prunable conversations, and are only counted
+in `RetentionReport.blocked_open_span` / `blocked_unreadable` and in the run
+diagnostic. `skipped` lists conversations selected in this run that could not be
+pruned (`not_closed`, `new_activity`, `open_span`, `unreadable` on re-check, or
+`archive_failed`).
+
+**Known limit: orphaned spans.** A span whose close was never recorded (for
+example a sub-agent running when Core crashed) keeps its conversation blocked
+forever. This is the safe default: retention never auto-closes a span and never
+deletes history it cannot prove finished. Clearing such a conversation needs an
+explicit decision (a producer-side terminal event), not a retention change.
+
+The optional `archive(summary)` hook runs before the delete and may page the
+events through the store; if it raises, the events are kept (`archive_failed`,
+diagnostic `core.conversation_events.archive_failed`). Only `conversation_events`
+rows up to the selected sequence are deleted; turns, conversations and other
+tables are never touched. Each enabled run emits
+`core.conversation_events.retention_applied` (info) with counts.
+
+### Migration
+
+The state DB `schema_version` goes 1 to 2 through `sqlite_state._MIGRATIONS`:
+forward-only, additive, one `BEGIN IMMEDIATE` transaction per step (DDL + version
+bump), version re-read under the write lock; a failing `ROLLBACK` is attached to
+the original error as a note, never raised instead of it. A fresh file starts at
+v1 and takes the same steps, without backup. A crash mid-migration rolls back and
+the next start retries.
+
+Before the first step on an **existing** file, `SQLiteStateRepository` takes a
+one-time online backup (`sqlite3.Connection.backup`) to `<db>.v1.bak` next to
+the DB (written as `<db>.v1.bak.partial`, renamed when complete). An existing
+`.bak` is never overwritten. If the backup fails, initialization raises
+`RuntimeError` before any schema statement runs: the file stays v1. Rollback
+procedure: [state model](state-model.md) (persistence section).
+
+An existing v1 file (tested with the real v1 schema in
+`tests/fixtures/sqlite_state/state_v1.sql`; a read-only backup copy of the live
+`data/state/jarvis.sqlite3` is exercised only on opt-in with
+`JARVIS_TEST_REAL_STATE_DB=1`, because it reads user data) upgrades in place with
+every row kept. A v2 file
+opened by a pre-Slice-02 binary fails with `state DB schema 2 is newer than
+supported 1`; a future v3 file fails the same way for this binary.
+
+Changing the event payload schema (event `schema_version` 2) will need a state
+migration or a read-time upcaster; until then a stored row that is not event
+version 1 is an unreadable row, never silently reinterpreted.
+
 ## Validation
 
 ```powershell
-$env:PYTHONDONTWRITEBYTECODE=1; .venv/Scripts/python.exe -W error::ResourceWarning -m pytest -q -p no:cacheprovider tests/unit/test_conversation_events.py
+$env:PYTHONDONTWRITEBYTECODE=1; .venv/Scripts/python.exe -W error::ResourceWarning -m pytest -q -p no:cacheprovider tests/unit/test_conversation_events.py tests/unit/test_conversation_event_store.py tests/integration/test_conversation_event_store_recovery.py
 ```

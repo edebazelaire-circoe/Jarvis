@@ -9,6 +9,12 @@ from jarvis.domain.back_brain import BackBrainAdvisoryReference, BackBrainContex
 from jarvis.domain.voice_state import VoiceConversationSnapshot
 from jarvis.domain.speech_presentation import BackendOutcome, SpeechDependency, SpeechSource
 from jarvis.domain.live_lifecycle import LiveSessionRecord
+from jarvis.domain.conversation_events import ConversationEvent
+from jarvis.domain.conversation_event_store import (
+    DEFAULT_EVENT_PAGE_LIMIT, DEFAULT_SUMMARY_PAGE_LIMIT, AppendResult, ConversationEventPage,
+    ConversationEventRetentionPolicy, ConversationEventSummary, ConversationEventSummaryPage, RetentionReport,
+    StoredConversationEvent,
+)
 from jarvis.domain.v2 import (
     BrainEvent,
     BrainTurnInput,
@@ -86,6 +92,40 @@ class HistoryStore(Protocol):
     async def append(self, record: HistoryRecord) -> bool: ...
     async def read(self, *, conversation_id: str | None = None) -> Sequence[HistoryRecord]: ...
     async def cleanup(self, *, older_than: datetime) -> int: ...
+
+
+#: Retention archive hook: called before a closed conversation's events are
+#: deleted; it may page them through the store. Raising keeps them.
+ConversationEventArchiver = Callable[[ConversationEventSummary], Awaitable[None]]
+
+
+class ConversationEventStore(Protocol):
+    """Durable append-only Conversation Event log, owned by Core.
+
+    Contract: `docs/conversation-events.md` (Storage). Order and cursor are the
+    store sequence. `append*` returns only after commit; a storage failure
+    raises `ConversationEventStoreError` (not acknowledged, retry is safe). A
+    duplicate or conflicting `event_id` is a result status, never an exception.
+    Reads decode every row through the contract codec and skip (count +
+    diagnose) rows that do not decode. Limits: `conversation_event_store.MAX_*`.
+    """
+
+    async def append(self, event: ConversationEvent) -> AppendResult: ...
+    async def append_many(self, events: Sequence[ConversationEvent]) -> tuple[AppendResult, ...]: ...
+    async def get_event(self, event_id: str) -> StoredConversationEvent | None: ...
+    async def list_conversation_events(self, conversation_id: str, *, after_sequence: int = 0,
+                                       limit: int = DEFAULT_EVENT_PAGE_LIMIT) -> ConversationEventPage: ...
+    async def list_events_in_time_range(self, start: datetime, end: datetime, *, conversation_id: str | None = None,
+                                        after_sequence: int = 0,
+                                        limit: int = DEFAULT_EVENT_PAGE_LIMIT) -> ConversationEventPage: ...
+    async def list_events_by_id(self, field: str, value: str, *, conversation_id: str | None = None,
+                                after_sequence: int = 0, limit: int = DEFAULT_EVENT_PAGE_LIMIT) -> ConversationEventPage: ...
+    async def list_conversations(self, *, before_sequence: int | None = None,
+                                 limit: int = DEFAULT_SUMMARY_PAGE_LIMIT) -> ConversationEventSummaryPage: ...
+    async def list_sessions(self, conversation_id: str, *, after_sequence: int = 0,
+                            limit: int = DEFAULT_SUMMARY_PAGE_LIMIT) -> ConversationEventSummaryPage: ...
+    async def apply_retention(self, policy: ConversationEventRetentionPolicy, *,
+                              archive: ConversationEventArchiver | None = None) -> RetentionReport: ...
 
 
 class EventSink(Protocol):

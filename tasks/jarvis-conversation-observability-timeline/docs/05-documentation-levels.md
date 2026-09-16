@@ -27,3 +27,9 @@ Slice 00 must correct these levels if the live repository has gained equivalent 
 |---|---:|---|
 | Canonical conversation event envelope | 3 | `docs/conversation-events.md` + `jarvis/domain/conversation_events.py` + `tests/unit/test_conversation_events.py` (strict codec, redaction, fixtures). |
 | Trace correlation | 2 | `trace_ref` join contract tested against real `trace.jsonl` lines; producer-side `conversation_event_id` pending Slice 03. |
+
+## After Slice 02 (2026-09-16)
+
+| Concept | Level | Evidence |
+|---|---:|---|
+| Conversation event persistence/replay | 3 | `ConversationEventStore` port, `sqlite_conversation_events.py`, schema v2 migration with `.v1.bak`, crash/restart/migration/retention tests, storage section in `docs/conversation-events.md` + `docs/state-model.md`. |

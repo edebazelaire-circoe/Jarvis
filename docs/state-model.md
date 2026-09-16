@@ -117,6 +117,18 @@ Projection follows `first_played_order`, not candidate creation order. Archive `
 
 ### Bounded ledger registry and persistence
 
+The state DB runs WAL with `synchronous=FULL` (explicit since schema v2): a committed transaction is on disk before the call returns. `schema_version` migrations are forward-only, one transaction per step (`sqlite_state._MIGRATIONS`); v2 adds the Conversation Event log (`conversation_events`), which shares this connection and lock through `SQLiteStateRepository.run_serialized`. A `run_serialized` callback cannot leave that shared connection inside a transaction: on failure it is rolled back (the original error kept), and a callback that returns with a transaction still open is rolled back and raises `RuntimeError`. Its append/cursor/conflict/recovery/retention guarantees are in [Conversation Events, Storage](conversation-events.md#storage). A binary older than the file refuses to open it (`newer than supported`); the DB is never downgraded or repaired by deletion.
+
+Before migrating an **existing** file, Core writes a one-time online backup `<db>.v<old version>.bak` next to it (for the 1 → 2 step: `jarvis.sqlite3.v1.bak`), never overwriting an existing one; if the backup fails, startup fails and the file is unchanged. Rollback to the pre-migration state (also the way back to an older Core binary):
+
+1. Stop Core (and anything else holding the DB open).
+2. Keep the migrated file aside if its newer data matters (`jarvis.sqlite3` → `jarvis.sqlite3.v2.kept`).
+3. Replace the DB with the backup: copy `jarvis.sqlite3.v1.bak` to `jarvis.sqlite3`.
+4. Delete `jarvis.sqlite3-wal` and `jarvis.sqlite3-shm`; they belong to the replaced file and would corrupt the restored one.
+5. Start the older binary. Everything written after the backup (turns, jobs, conversation events) is lost in the restored file; a newer binary would migrate it again (and, the `.bak` existing, not back it up again).
+
+`data/state/jarvis.sqlite3` is git-tracked and used live. The first Core start with schema v2 migrates it in place, so git shows it modified, and creates `data/state/jarvis.sqlite3.v1.bak`, an untracked copy of the same private data (not covered by `.gitignore`, which only lists `-wal`/`-shm`): never commit it. Restoring the tracked v1 file with `git checkout` is equivalent to step 3 only when the working copy had no newer data.
+
 SQLite initialization, operations and close retain the repository connection lock until native thread work finishes, including repeated caller cancellation. Cancellation is re-raised after that boundary, never translated into successful staging. Native transaction failure still rolls back; a cancelled caller does not permit a second transaction or close to race the worker. This wait preserves connection ownership and does not claim that SQLite thread work can be forcibly cancelled.
 
 The registry holds at most128 conversations by default. A new ledger can evict only a STOPPED ledger with no active canonical task references or speech. Its strict Core snapshot is saved in `voice_conversation_snapshots` before removal; persistence failure leaves it retained and propagates failure. Later bind/context/snapshot loads that trusted Core-owned snapshot, preserving heard evidence and task references. Active capacity is rejected explicitly instead of dropping current work. A ledger transaction lock serializes ingress/projection with registry eviction; awaited storage does not take the separate brain/job execution locks.
