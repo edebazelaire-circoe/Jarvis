@@ -7,12 +7,14 @@ from pathlib import Path
 
 from jarvis.adapters.fake_calendar import InMemoryCalendarBackend
 from jarvis.adapters.jsonl_history import JsonlHistoryStore
+from jarvis.adapters.sqlite_scene import SQLiteSceneRepository
 from jarvis.adapters.sqlite_state import SQLiteStateRepository
 from jarvis.adapters.windows_notifications import NullNotificationDelivery
 from jarvis.core.brain_context import ATTENTION_QUEUE_SIZE, DEFAULT_WAKE_INTERVAL_S, BrainContextBuilder, WorkAttentionPolicy
 from jarvis.core.brain_service import DEFAULT_TURN_BUDGET_S, BrainOrchestrator
 from jarvis.core.calendar_service import CalendarService
 from jarvis.core.drive_service import DriveService
+from jarvis.core.scene_service import SceneService
 from jarvis.core.v2_services import ConversationService, CoreEventBus, JobService, NotificationService, SchedulerService
 from jarvis.core.v2_tools import CoreToolRouter
 from jarvis.core.work_state import WorkStateStore
@@ -20,6 +22,7 @@ from jarvis.core.voice_ledger import VoiceLedgerService
 from jarvis.core.live_lifecycle import LiveLifecycleService
 from jarvis.core.live_reaper import LiveLifecycleWatchdog
 from jarvis.domain.v2 import Device, Job, MissedRunPolicy, Notification, NotificationPriority, ProtocolEnvelope, ScheduledItem, ScheduledStatus, utc_now
+from jarvis.ports.scene import SceneRepository
 from jarvis.ports.v2 import DiagnosticSink
 
 
@@ -38,7 +41,7 @@ class JarvisCoreApplication:
     or Windows UI dependency.
     """
 
-    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = True, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S) -> None:
+    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = True, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None) -> None:
         root = Path(data_root).resolve()
         self.health = CoreHealth()
         self.state = SQLiteStateRepository(root / "state" / "jarvis.sqlite3")
@@ -58,6 +61,17 @@ class JarvisCoreApplication:
         # en mémoire seulement (voir `jarvis/core/work_state.py`).
         self.work_state = WorkStateStore(events=self.events, diagnostics=diagnostics)
         self.jobs = JobService(self.state, self.events, workers or {}, diagnostics=diagnostics, work_state=self.work_state)
+        # Scène constellation (handoff jarvis-constellation-scene-runtime,
+        # Slice 02) : durable, contrairement à l'état de travail, dans son
+        # propre fichier pour garder `jarvis.sqlite3` au schéma 1. Un fichier
+        # de scène refusé rend la scène indisponible, jamais Core (voir
+        # `jarvis/core/scene_service.py`). `scene_repository` : injection de
+        # test uniquement.
+        self.scene = SceneService(
+            scene_repository or SQLiteSceneRepository(root / "state" / "scene.sqlite3"),
+            events=self.events,
+            diagnostics=diagnostics,
+        )
         # Tâche 12 : le cerveau lit ce même magasin à chaque tour, et une
         # politique abonnée à `core.work.updated` retient pour lui les échecs,
         # interruptions et blocages (voir `jarvis/core/brain_context.py`).
@@ -122,6 +136,9 @@ class JarvisCoreApplication:
             return
         try:
             await self.state.initialize()
+            # Ne lève pas : un refus est journalisé et la scène reste
+            # indisponible pendant que le reste de Core démarre.
+            await self.scene.start()
             self.live_reaper.start()
             await self.state.save_device(Device())
             # Subscribe before recovery: overdue schedules and interrupted jobs
@@ -149,6 +166,7 @@ class JarvisCoreApplication:
             await self.live_reaper.stop()
             await self._stop_notification_loop()
             await self._stop_work_attention()
+            await self.scene.close()
             try:
                 await self.state.close()
             except Exception:
@@ -287,6 +305,11 @@ class JarvisCoreApplication:
         await self.brain.stop()
         await self._stop_notification_loop()
         await self.scheduler.stop()
+        # Les écrivains de la scène (cerveau, puis projection et transport des
+        # Slices suivantes) sont arrêtés avant ; une commande encore en vol
+        # termine sa transaction, `close` attend le verrou. Fermée avant les
+        # retours anticipés ci-dessous pour ne jamais laisser le fichier ouvert.
+        await self.scene.close()
         if not await self.back_brain.stop():
             self.health.status = "state_persistence_unknown"
             self.health.detail = "back brain submission remains owned while storage completes"

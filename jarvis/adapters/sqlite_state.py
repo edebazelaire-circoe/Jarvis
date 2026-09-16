@@ -28,6 +28,30 @@ def _dt(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value) if value else None
 
 
+async def run_sqlite_in_thread(fn: Callable[..., T], *args: Any) -> T:
+    """Keep the caller's connection lock until native work has really ended.
+
+    Shared by every SQLite adapter (`sqlite_state`, `sqlite_scene`).
+    """
+    worker = asyncio.create_task(asyncio.to_thread(fn, *args))
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        # Cancelling to_thread's waiter cannot interrupt SQLite. Releasing
+        # the lock now could let another transaction or close use this
+        # connection concurrently. Preserve even repeated cancellation.
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                break
+        if not worker.cancelled():
+            worker.exception()  # Observe worker failure; cancellation wins.
+        raise
+
+
 def _dump(value: Any) -> str:
     return json.dumps(jsonable(value), ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
@@ -51,24 +75,7 @@ class SQLiteStateRepository:
 
     @staticmethod
     async def _thread(fn: Callable[..., T], *args: Any) -> T:
-        """Keep the caller's connection lock until native work has really ended."""
-        worker = asyncio.create_task(asyncio.to_thread(fn, *args))
-        try:
-            return await asyncio.shield(worker)
-        except asyncio.CancelledError:
-            # Cancelling to_thread's waiter cannot interrupt SQLite. Releasing
-            # the lock now could let another transaction or close use this
-            # connection concurrently. Preserve even repeated cancellation.
-            while not worker.done():
-                try:
-                    await asyncio.shield(worker)
-                except asyncio.CancelledError:
-                    continue
-                except Exception:
-                    break
-            if not worker.cancelled():
-                worker.exception()  # Observe worker failure; cancellation wins.
-            raise
+        return await run_sqlite_in_thread(fn, *args)
 
     def _initialize_sync(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
