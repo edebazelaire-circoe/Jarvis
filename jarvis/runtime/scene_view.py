@@ -29,10 +29,11 @@ Messages : ce qui part vers la page ne porte jamais de chemin de fichier
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 import json
 import re
 import time
-from typing import Any, Awaitable, Callable, Protocol
+from typing import Any, Awaitable, Callable, Literal, Protocol
 
 import aiohttp
 
@@ -275,6 +276,104 @@ def decode_patches_response(raw: Any, *, after: int) -> dict[str, Any]:
     }
 
 
+def decode_command_response(raw: Any) -> dict[str, Any]:
+    """Valider `POST /v1/scene/commands` : issue, motif, révision et patch cohérents."""
+
+    if not isinstance(raw, dict):
+        raise TypeError("scene command response must be an object")
+    outcome = SceneCommandOutcome(raw.get("outcome"))
+    reason = raw.get("reason")
+    if reason is not None and not isinstance(reason, str):
+        raise ValueError("scene command reason must be a string")
+    patch = raw.get("patch")
+    decoded = ScenePatch.from_payload(patch) if patch is not None else None
+    revision = _require_int(raw, "revision")
+    if (decoded is not None) != (outcome is SceneCommandOutcome.APPLIED):
+        raise ValueError("an applied scene command carries exactly one patch")
+    if decoded is not None and decoded.revision != revision:
+        raise ValueError("scene command patch does not match its revision")
+    return {
+        "outcome": outcome.value,
+        "reason": reason,
+        "scene_id": _require_text(raw, "scene_id"),
+        "epoch": _require_text(raw, "epoch"),
+        "revision": revision,
+        "patch": decoded.to_payload() if decoded is not None else None,
+    }
+
+
+@dataclass(frozen=True, slots=True)
+class SceneCallFailure:
+    """Échec classé d'un appel de scène à Core : ce que le proxy et les outils du cerveau en disent.
+
+    `message` peut contenir un chemin de fichier (message de Core) : tout
+    texte montré hors du journal passe par `page_text`.
+    """
+
+    status: int
+    code: str
+    message: str
+    core_reachable: bool
+    scene: dict[str, Any] | None = None
+    #: Réponse de Core hors contrat (défaut à corriger, pas une panne).
+    invalid_response: bool = False
+
+
+#: Classes d'exceptions qu'un appel de scène à Core peut lever par le transport ;
+#: toute autre est un défaut de l'appelant.
+SCENE_CALL_ERRORS = (aiohttp.ClientError, OSError, TimeoutError, CoreProtocolError, TypeError, ValueError)
+
+
+def core_error_text(exc: CoreProtocolError) -> str:
+    """Message d'erreur de Core, jamais un corps non JSON (page HTML, trace) relayé tel quel."""
+
+    if exc.code.startswith("http_"):
+        return f"Core a répondu {exc.status} sans erreur lisible."
+    return exc.message or f"{exc.status} {exc.code}"
+
+
+def classify_scene_call_failure(
+    exc: BaseException, *, connect_timeout_s: float, read_timeout_s: float, call: Literal["command", "read"] = "command",
+) -> SceneCallFailure:
+    """Classement unique des échecs d'appel de scène (Control Center et `jarvis-display`).
+
+    Codes : `command_not_sent` (connexion non obtenue : rien n'est parti),
+    `core_timeout` (partie sans réponse : issue inconnue), `scene_unavailable`
+    / `scene_persist_failed` (503 de Core), le code de Core pour 400/413,
+    `core_refused` (autre refus HTTP), `invalid_scene_response` (hors
+    contrat), `core_unreachable` (connexion refusée, ou liaison perdue en
+    cours : issue inconnue pour une commande).
+    """
+
+    command = call == "command"
+    if isinstance(exc, aiohttp.ConnectionTimeoutError):
+        message = (f"Commande non envoyée : connexion à Core non obtenue en {connect_timeout_s:g} s. "
+                   "Rien n'a été appliqué, réessayer est sûr." if command
+                   else f"Connexion à Core non obtenue en {connect_timeout_s:g} s.")
+        return SceneCallFailure(503, COMMAND_NOT_SENT if command else CORE_TIMEOUT, message, False)
+    if isinstance(exc, TimeoutError):
+        message = (f"Core n'a pas répondu en {read_timeout_s:g} s après l'envoi : issue inconnue, relire la scène." if command
+                   else f"Core n'a pas répondu en {read_timeout_s:g} s.")
+        return SceneCallFailure(504, CORE_TIMEOUT, message, False)
+    if isinstance(exc, CoreProtocolError):
+        text = core_error_text(exc)
+        if exc.code in _SCENE_ERROR_CODES:
+            return SceneCallFailure(503, exc.code, text, True, _scene_block(exc))
+        if exc.status in (400, 413) and not exc.code.startswith("http_"):
+            return SceneCallFailure(exc.status, exc.code, text, True)
+        what = "la commande" if command else "la lecture"
+        return SceneCallFailure(502, CORE_REFUSED, f"Core a refusé {what} ({exc.status} {exc.code}).", True)
+    if isinstance(exc, (TypeError, ValueError)):
+        return SceneCallFailure(502, INVALID_SCENE_RESPONSE, f"Réponse de Core illisible : {exc}", True, invalid_response=True)
+    detail = str(exc) or type(exc).__name__
+    if isinstance(exc, (aiohttp.ClientConnectorError, ConnectionError)):
+        suffix = ", commande non envoyée" if command else ""
+        return SceneCallFailure(503, CORE_UNREACHABLE, f"Core injoignable{suffix} : {detail}", False)
+    if command:
+        return SceneCallFailure(503, CORE_UNREACHABLE, f"Liaison à Core perdue ({detail}) : issue inconnue, relire la scène.", False)
+    return SceneCallFailure(503, CORE_UNREACHABLE, f"Liaison à Core perdue ({detail}).", False)
+
+
 def user_command(body: Any) -> SceneCommand:
     """Commande du navigateur, acteur forcé à `user`.
 
@@ -416,27 +515,17 @@ class CoreSceneView:
                 # Seconde borne : elle ne sait pas si la requête est partie, d'où « issue inconnue ».
                 timeout=self.command_connect_timeout_s + self.command_timeout_s + 1.0,
             )
-            body = self._decode_command(raw)
+            body = decode_command_response(raw)
         except asyncio.CancelledError:
             raise
-        except aiohttp.ConnectionTimeoutError:
-            message = (f"Commande non envoyée : connexion à Core non obtenue en {self.command_connect_timeout_s:g} s. "
-                       "Rien n'a été appliqué, réessayer est sûr.")
-            return self._command_failed(503, COMMAND_NOT_SENT, message, op=op, core_reachable=False)
-        except TimeoutError:
-            message = f"Core n'a pas répondu en {self.command_timeout_s:g} s après l'envoi : issue inconnue, relire la scène."
-            return self._command_failed(504, CORE_TIMEOUT, message, op=op, core_reachable=False)
-        except CoreProtocolError as exc:
-            return self._command_refused_by_core(exc, op=op)
-        except (TypeError, ValueError) as exc:
-            self._report_invalid(exc, "command")
-            return self._command_failed(502, INVALID_SCENE_RESPONSE, f"Réponse de Core illisible : {str(exc)}", op=op, core_reachable=True)
-        except (aiohttp.ClientConnectorError, ConnectionError) as exc:
-            detail = str(exc) or type(exc).__name__
-            return self._command_failed(503, CORE_UNREACHABLE, f"Core injoignable, commande non envoyée : {detail}", op=op, core_reachable=False)
-        except Exception as exc:  # noqa: BLE001 - coupure après l'envoi, réseau : issue inconnue
-            detail = str(exc) or type(exc).__name__
-            return self._command_failed(503, CORE_UNREACHABLE, f"Liaison à Core perdue ({detail}) : issue inconnue, relire la scène.", op=op, core_reachable=False)
+        except Exception as exc:  # noqa: BLE001 - classé par `classify_scene_call_failure` ; inconnu = liaison perdue, issue inconnue
+            failure = classify_scene_call_failure(
+                exc, connect_timeout_s=self.command_connect_timeout_s, read_timeout_s=self.command_timeout_s,
+            )
+            if failure.invalid_response:
+                self._report_invalid(exc, "command")
+            return self._command_failed(failure.status, failure.code, failure.message, op=op,
+                                        core_reachable=failure.core_reachable, scene=failure.scene)
         self._invalid_reported.discard("command")
         self._emit(
             "scene.command",
@@ -444,37 +533,6 @@ class CoreSceneView:
             data={"op": op, "outcome": body["outcome"], "reason": body["reason"], "revision": body["revision"]},
         )
         return 200, {"source": SCENE_VIEW_SOURCE, "core_reachable": True, **body, "error": None}
-
-    @staticmethod
-    def _decode_command(raw: Any) -> dict[str, Any]:
-        if not isinstance(raw, dict):
-            raise TypeError("scene command response must be an object")
-        outcome = SceneCommandOutcome(raw.get("outcome"))
-        reason = raw.get("reason")
-        if reason is not None and not isinstance(reason, str):
-            raise ValueError("scene command reason must be a string")
-        patch = raw.get("patch")
-        decoded = ScenePatch.from_payload(patch) if patch is not None else None
-        revision = _require_int(raw, "revision")
-        if (decoded is not None) != (outcome is SceneCommandOutcome.APPLIED):
-            raise ValueError("an applied scene command carries exactly one patch")
-        if decoded is not None and decoded.revision != revision:
-            raise ValueError("scene command patch does not match its revision")
-        return {
-            "outcome": outcome.value,
-            "reason": reason,
-            "scene_id": _require_text(raw, "scene_id"),
-            "epoch": _require_text(raw, "epoch"),
-            "revision": revision,
-            "patch": decoded.to_payload() if decoded is not None else None,
-        }
-
-    def _command_refused_by_core(self, exc: CoreProtocolError, *, op: str) -> tuple[int, dict[str, Any]]:
-        if exc.code in _SCENE_ERROR_CODES:
-            return self._command_failed(503, exc.code, exc.message, op=op, core_reachable=True, scene=_scene_block(exc))
-        if exc.status in (400, 413):
-            return self._command_failed(exc.status, exc.code, exc.message, op=op, core_reachable=True)
-        return self._command_failed(502, CORE_REFUSED, f"Core a refusé la commande ({exc.status} {exc.code}).", op=op, core_reachable=True)
 
     def _command_failed(
         self, status: int, code: str, message: str, *, op: str, core_reachable: bool, scene: dict[str, Any] | None = None,

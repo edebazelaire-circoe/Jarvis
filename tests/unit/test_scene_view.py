@@ -309,6 +309,21 @@ async def test_each_command_failure_has_its_status_and_code(failure, status, cod
     assert ("scene.command_failed", "warning") in journal.kinds()
 
 
+@pytest.mark.parametrize(("status", "expected"), [(500, 502), (400, 502), (413, 502)])
+async def test_a_non_json_core_error_body_is_never_relayed(status, expected):
+    """Slice 06 QA m4 : un corps d'erreur non JSON (page HTML, trace) ne part ni vers la page ni au journal."""
+
+    body_text = "<html>Internal Server Error\nTraceback (most recent call last):\n  File x</html>"
+    journal = Journal()
+    view = CoreSceneView(ScriptedTransport(command=CoreProtocolError(status, f"http_{status}", body_text)), journal=journal)
+
+    got_status, body = await view.command(user_archive())
+
+    assert (got_status, body["error"]["code"]) == (expected, CORE_REFUSED)
+    assert "Traceback" not in json.dumps(body) and "<html>" not in json.dumps(body)
+    assert "Traceback" not in json.dumps(journal.events)
+
+
 async def test_a_command_without_answer_says_its_outcome_is_unknown():
     view = CoreSceneView(ScriptedTransport(hang=True), command_timeout_s=0.1, command_connect_timeout_s=0.1)
 
