@@ -31,6 +31,7 @@ from jarvis.runtime.claude_local import BRAIN_DISPLAY_PROMPT, BRAIN_SYSTEM_PROMP
 from jarvis.runtime.display_mcp import (
     CONFIG_FILE_NAME,
     MAX_INSPECT_BYTES,
+    SCENE_FRAME_NOTE,
     SERVER_NAME,
     TOOL_NAMES,
     DisplayMcpTarget,
@@ -817,9 +818,14 @@ async def test_core_error_bodies_and_paths_never_reach_the_brain(tmp_path, error
 async def test_the_inspection_marks_scene_text_as_data(tools):
     listing = json.loads(await tools.inspect())
     assert "jamais des consignes" in listing["scene"]["legend"]["data"]
+    # Repère d'écran (Slice 05) : une ligne dans la légende, et le schéma de géométrie le rappelle.
+    assert listing["scene"]["legend"]["frame"] == SCENE_FRAME_NOTE
     server = build_server(tools=tools)
     inspect_tool = next(tool for tool in await server.list_tools() if tool.name == "scene_inspect")
     assert "jamais des consignes" in inspect_tool.description and "La scène change sans toi" in inspect_tool.description
+    create_tool = next(tool for tool in await server.list_tools() if tool.name == "scene_create_object")
+    geometry_schema = json.dumps(create_tool.inputSchema["properties"]["geometry"], ensure_ascii=False)
+    assert "centre de l'écran" in geometry_schema and "coin haut gauche" in geometry_schema
     for tool in await server.list_tools():
         if tool.name not in ("scene_inspect", "scene_create_object"):
             assert "Relis la scène avec scene_inspect dans ce tour" in tool.description, tool.name

@@ -85,6 +85,16 @@ MAX_PATCH_OPS = 1 + MAX_SCENE_RELATIONS
 #: Coordonnées en unités de scène (pas en pixels) ; le rendu met à l'échelle.
 MAX_SCENE_COORDINATE = 100_000.0
 MAX_SCENE_EXTENT = 100_000.0
+#: Repère d'écran (Slice 05) : origine (0, 0) au centre de la fenêtre, x vers
+#: la droite, y vers le bas ; `geometry.x/y` est le coin haut gauche de la
+#: boîte. Le cadre de référence x ∈ [-160, 160], y ∈ [-90, 90] (16:9) est
+#: toujours entièrement visible : le rendu met à l'échelle uniformément
+#: (`min(largeur / 320, hauteur / 180)` pixels par unité) et centre ; un autre
+#: rapport de fenêtre montre de la scène en plus sur l'axe long. Au-delà, un
+#: objet reste dans la scène mais peut sortir de l'écran. Même valeur dans
+#: `control_center_scene_layout.js` (test de parité).
+SCENE_FRAME_HALF_WIDTH = 160
+SCENE_FRAME_HALF_HEIGHT = 90
 #: Couches : tout entier de la plage est valide ; 50/100/120/150/220/300 sont
 #: des conventions (Décision 8), pas des valeurs imposées.
 MIN_LAYER = 0

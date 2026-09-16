@@ -121,6 +121,14 @@ BAREHANDS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_JS__*/"
 #: `window.JarvisSceneClient` et ne touche pas au DOM ; le rendu vient en Slice 05.
 SCENE_SCRIPT_FILE = "control_center_scene.js"
 SCENE_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_JS__*/"
+#: Rendu de la scène (Slice 05) : repère, AutoResolver et modèle de vue purs
+#: (`window.JarvisSceneLayout`), puis boucle de lecture, validation des
+#: placements et dessin (`window.JarvisScene`), inerte tant que `scene.enabled`
+#: est faux dans `/api/status`.
+SCENE_LAYOUT_SCRIPT_FILE = "control_center_scene_layout.js"
+SCENE_LAYOUT_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_LAYOUT_JS__*/"
+SCENE_PAGE_SCRIPT_FILE = "control_center_scene_page.js"
+SCENE_PAGE_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_PAGE_JS__*/"
 
 #: Architectures vocales proposées dans l'onglet « Mode vocal ». Comme le reste
 #: de l'écran, leur libellé vit ici et non dans la page. `{key}` est remplacé
@@ -533,6 +541,12 @@ class ControlCenter:
         html = html.replace(
             SCENE_SCRIPT_MARKER, page.with_name(SCENE_SCRIPT_FILE).read_text(encoding="utf-8")
         )
+        html = html.replace(
+            SCENE_LAYOUT_SCRIPT_MARKER, page.with_name(SCENE_LAYOUT_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            SCENE_PAGE_SCRIPT_MARKER, page.with_name(SCENE_PAGE_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
         if self.visualizer_url:
             html = html.replace("__VISUALIZER_URL__", self.visualizer_url)
         else:
@@ -592,6 +606,10 @@ class ControlCenter:
             # c'est lui qui fait avancer le registre.
             "background": self._background_summary(),
             "live": live,
+            # Interrupteur du rendu de la scène (Slice 05) : la page ne crée son
+            # calque et n'ouvre sa lecture que s'il est vrai. Lu à chaque
+            # sondage, sans E/S de plus que les réglages déjà lus.
+            "scene": load_scene_gate(settings),
         })
 
     def _background_summary(self) -> dict[str, Any]:
