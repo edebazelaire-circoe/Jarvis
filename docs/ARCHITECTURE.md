@@ -1395,7 +1395,7 @@ Failure semantics:
 | path is a directory, file or directory not writable (read-only, ACL), write lock held by another process beyond the 5 s busy timeout, I/O error | refused `storage_io` |
 | any refusal at start | `core.scene.unavailable` (error); scene unavailable (`SceneUnavailableError`), **rest of Core starts normally**; the file's logical content is never modified, rewritten, recreated or deleted (physical-only changes: WAL checkpoint, journal-mode header) |
 | file vanishes between the access check and the open | refused `storage_io`, no file created; the next start creates a scene |
-| commit fails (I/O, lock) | transaction rolled back (including a failure right after `BEGIN`); no revision advance, nothing in the ring, no waiter woken; `core.scene.persist_failed` (error); caller gets `ScenePersistenceError`; the next command may succeed |
+| commit fails (I/O, lock) | transaction rolled back (including a failure right after `BEGIN`); no revision advance, nothing in the ring, no waiter woken; `core.scene.persist_failed` (error) **once per outage**: an identical failure (same code, same exception type) repeated before a successful commit is only counted, a different one is journaled with `suppressed` = the count silenced so far, a divergence always is; the first successful commit after failures journals `core.scene.persist_restored` (info, `code`, `suppressed`); caller gets `ScenePersistenceError` every time; the next command may succeed |
 | rollback fails, connection left inside a transaction | same, reported `storage_io` with `fatal`; the scene becomes unavailable until Core restarts |
 | stored revision ≠ Core's (`revision_conflict`), or an integrity constraint fails during the write | same, and the scene becomes unavailable until Core restarts; current waiters get `SceneUnavailableError` |
 | `COMMIT` durable on disk but reported as failed (I/O error at the very end) | caller gets `ScenePersistenceError` although the command may already be durable; memory did not advance, so the next command fails closed with `revision_conflict` (scene unavailable) and a restart loads the revision actually written. Nothing is lost silently |
@@ -1445,7 +1445,9 @@ A 503 carries `error.scene` (`{state, code}` of `SceneService.availability`) and
 `ValueError`/`TypeError` and mapped to 400 by the existing middleware; the
 message is the decoder's (received values echoed ≤ 80 characters), never a stack
 trace. `GET /v1/health` keeps `protocol_version`, `ready`, `status`, `detail`
-unchanged and adds `scene: {state, code}`; an unavailable scene never turns
+unchanged and adds `scene: {state, code, saturated, objects, object_limit}`
+(`objects` is `null` when the scene is not served; the capacity fields were
+added in Slice 04 and the 503 `error.scene` block carries them too); an unavailable scene never turns
 `ready` false (the scene is a projection).
 
 Long-poll. `GET /v1/scene/patches` answers at once with `resync_required: true`
@@ -1577,12 +1579,13 @@ Projection authority. The projector issues only what decision 3 grants runtime
 | `kind = agent` (Claude sub-agent) or `kind = job` (Core job, back-brain jobs included; speculative jobs are never observed) | star `agent` / `job`, `category` = the kind token, `exec_state` = `status`, `work_ref` = `{source, external_id, work_id}`, `payload.title` = label (clipped to 160, one printable line), `payload.summary` = summary (C0 controls other than `\n`/`\t` replaced, `\r\n` → `\n`); unplaced (`geometry = null`, the renderer places it) |
 | `kind = shell`, `other`, empty | nothing (decision 4); a task whose kind later becomes `agent` gets its star then |
 | status change | `exec_state` only; never visibility nor disposition (decision 12) |
-| label / summary change | payload refreshed only while the star still carries the payload the projector wrote (remembered per star, or same title after a restart); a payload or category the brain or user rewrote is never overwritten. Category is announced at creation only |
+| label / summary change | payload refreshed only while the star still carries the payload the projector wrote. In memory (per star, up to 1 024 stars) the rule is exact: a payload the brain or user changed is left alone. Without that memory (after a Core restart, or once forgotten) the projector treats a payload with an empty title or the same title as its own, so a brain or user edit that kept the title (a rewritten summary only) **can be overwritten** by the next refresh. Category is announced at creation only and never rewritten |
 | `parent_external_id` (same source) | `parent_of` parent → child once both stars exist, whichever arrives first (child first: linked when the parent star is born, by scanning the ≤ 64 work items). A parent without a star (a shell task) gives no link and no star |
 | `failed`, `interrupted`, `blocked` | one `attention` signal per work item, updated in place with `attach_signal`: `category` = status, `exec_state` = status, `payload.title` = `error_class` (or the status), `payload.summary` = activity (blocked) or summary, ≤ 240 characters, `work_ref` of the work |
 | leaves that state (`blocked` → `running`, an interruption Core reopens, `blocked` → `completed` / `cancelled`) | the projector retires its signal: `unlink` of the signal's `explains` relation, then `patch_object` of the signal's `exec_state` to the new status. The attention object stays, not live. A later `blocked` / `failed` re-attaches the same id |
 | `completed`, `cancelled` | no signal; the star's `exec_state` says it |
 | star tombstoned (the user archived it) | nothing is sent: the projector reads `archived_ids` before writing, so an archived star never resurrects and produces no `object_archived` refusal |
+| scene full (`MAX_SCENE_OBJECTS` = 512 active objects) | the star or signal creation is **deferred**, not lost (see *Saturation* below) |
 
 Identity scheme (`star_object_id`, `signal_object_id`, `parent_relation_id`):
 deterministic, at most 128 characters, collision-safe.
@@ -1601,12 +1604,54 @@ these ids is left alone (`core.scene.projection_conflict`, once per id).
 
 Signal lifecycle. A runtime signal is **live exactly while its `explains`
 relation exists** (`is_live_signal` in `jarvis/domain/scene.py`). The domain
-change of this Slice (PM amendment F1) lets runtime `unlink` that relation when
-its source is an `attention` object of `origin = runtime` and its target a
-runtime `agent` / `job`; nothing else is granted (no archive, no visibility, no
-geometry, no deletion). Retired signals stay in the scene, at most one per star.
-See [scene-model.md](scene-model.md) › *Runtime signal lifecycle* for the rule
-and its residual risk.
+change of this Slice (PM amendment F1) lets runtime `unlink` a relation of that
+shape (`explains`, `relation_id` = source id) when its source is an `attention`
+object of `origin = runtime` and its target a runtime `agent` / `job`; nothing
+else is granted (no archive, no visibility, no geometry, no deletion). Retired
+signals stay in the scene, at most one per star. See
+[scene-model.md](scene-model.md) › *Runtime signal lifecycle* for the rule and
+its residual risks (relations carry no origin).
+
+Notes for the renderer (Slice 05):
+
+- a retired signal keeps its last `category` (`failed`, `blocked`…) and payload;
+  only its `exec_state` changes. Use `is_live_signal` (relation present), never
+  the category or `exec_state`, to decide whether to draw it as an alert;
+- `parent_of` cycles are possible: the domain does not validate them and runtime
+  links whatever parents the producers report, while brain and user may add
+  their own `parent_of`. A layout that walks parents must guard against cycles.
+
+Saturation. Decision 12 stays: completed work is never removed automatically,
+so a long-lived scene fills up (QA measured about 400 sub-agents at a realistic
+failure mix). Saturation is made visible and recoverable instead:
+
+- before creating a star or a signal, the projector checks the active object
+  count; at the limit (or on an `invalid` / `scene_full` refusal raced by another
+  writer) it **defers** the creation: the work item's last known state is kept
+  in a pending set, ordered by first deferral, updated in place by later events,
+  bounded to `MAX_PENDING_CREATIONS` = 1 024 (beyond, the oldest entry is dropped
+  and counted; it can only come back if its work is still in Core's 64-item
+  snapshot at a reconciliation). Recovery therefore does not depend on Core's
+  work snapshot;
+- `core.scene.projection_saturated` (warning) once per saturation episode, with
+  `objects`, `object_limit`, `pending`; `core.scene.projection_pending_overflow`
+  (warning) at the first drop of an episode; `core.scene.projection_desaturated`
+  (info) once the pending set is empty again, with `objects`, `object_limit`,
+  `deferred` (deferrals during the episode) and `dropped`;
+- while something is pending, a watcher task waits on
+  `SceneService.wait_for_revision` (at most `SATURATION_RETRY_S` = 30 s) and puts an
+  internal space-check marker in the projector's own queue (never on the bus): a
+  user archive therefore triggers the catch-up at once, and the timeout is the
+  periodic retry. Each work event also runs the catch-up first when something is
+  pending. The catch-up creates pending stars and signals **oldest first** while
+  there is room, with their parent links, and stops at the first one that no
+  longer fits;
+- `SceneService.capacity` (`objects`, `object_limit`, `saturated` =
+  `objects >= object_limit`) is exposed in the `scene` block of `/v1/health` and
+  of 503 scene errors, and the Control Center's `/api/scene` derives the same
+  three fields from the snapshot it serves, so Slice 05 can show "scène pleine —
+  archiver". Brain and user creations are refused with `scene_full` too while the
+  scene is full.
 
 Consistency and bounded work. Events carry `{store_id, revision}`; the projector
 applies an event only when `store_id` is the one it reconciled with and

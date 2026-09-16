@@ -812,13 +812,29 @@ Ce que la projection **ne fait jamais** :
   décidée par l'affichage, le cerveau ou l'utilisateur ;
 - elle ne ressuscite pas une étoile archivée, même si le travail donne encore
   des nouvelles ;
-- elle n'écrase pas un titre ou une catégorie que le cerveau ou l'utilisateur
-  ont réécrits.
+- elle ne change jamais la catégorie d'une étoile après sa création, et ne
+  réécrit pas une charge (titre, résumé) que le cerveau ou l'utilisateur ont
+  modifiée — sauf un cas : après un redémarrage de Core, une charge dont seul le
+  résumé a été réécrit (titre gardé) peut être remplacée au rafraîchissement
+  suivant du travail.
 
 Signaux. Un seul signal par travail, mis à jour sur place. Quand le travail
 repart (bloqué puis relancé, interruption levée), le signal est **retiré** : son
 lien vers l'étoile disparaît, l'objet reste avec l'état atteint. Un échec
 définitif garde son signal.
+
+**Scène pleine.** La scène garde au plus 512 objets actifs, et une étoile
+terminée n'est jamais retirée automatiquement : après quelques centaines de
+sous-agents, la scène se remplit. Rien n'est perdu pour autant :
+
+- les nouvelles étoiles (et les signaux sur des étoiles existantes) sont mises
+  **en attente** (au plus 1 024 ; au-delà, les plus anciennes sont oubliées) ;
+- `/v1/health` le dit : `scene.saturated: true`, `scene.objects` et
+  `scene.object_limit` (même bloc dans `/api/scene` du Control Center) ; le
+  cerveau et l'utilisateur ne peuvent plus rien créer non plus (`scene_full`) ;
+- **que faire** : archiver des étoiles terminées. Dès qu'une place se libère,
+  les étoiles en attente apparaissent, les plus anciennes d'abord, sans attendre
+  de nouvelle activité (au plus tard 30 s).
 
 Vérifier dans `runtime/trace.jsonl` (niveau info sauf mention) :
 
@@ -831,6 +847,9 @@ Vérifier dans `runtime/trace.jsonl` (niveau info sauf mention) :
 | `core.scene.projection_restored` | la scène répond de nouveau ; `suppressed` compte les tentatives manquées ; la projection a tout réconcilié |
 | `core.scene.projection_failed` (erreur, panneau **ERR**, une fois par type) | un travail n'a pas pu être projeté (défaut logiciel) ; les autres continuent |
 | `core.scene.projection_conflict` (avertissement) | un objet du cerveau ou de l'utilisateur porte déjà l'identifiant que la projection voulait utiliser : il est laissé intact |
+| `core.scene.projection_saturated` (avertissement, une fois par épisode) | scène pleine : `objects`, `object_limit`, `pending` ; les créations attendent |
+| `core.scene.projection_pending_overflow` (avertissement, une fois par épisode) | plus de 1 024 créations en attente : les plus anciennes sont oubliées |
+| `core.scene.projection_desaturated` | toutes les créations en attente ont été rattrapées ; `deferred` et `dropped` comptent l'épisode |
 
 Dépannage :
 
@@ -838,6 +857,7 @@ Dépannage :
 | --- | --- | --- |
 | un sous-agent tourne mais aucune étoile | l'agent n'est pas celui du Control Center (Codex, sous-agent interne d'un job : pas d'observation), ou Core ne reçoit pas l'état des sous-tâches (`work.ingress_unavailable` côté Control Center) | vérifier `GET /v1/work/snapshot` : pas d'élément `kind: agent` → problème d'ingestion, pas de scène |
 | l'élément existe dans `/v1/work/snapshot` mais pas d'étoile | `kind` n'est pas `agent`/`job`, ou l'étoile a été archivée (`archived_ids`), ou la scène est indisponible (`projection_unavailable`) | lire `/v1/health` (`scene.state`) et la trace |
+| de nouveaux sous-agents tournent mais aucune étoile n'apparaît, `scene.saturated: true` dans `/v1/health` | scène pleine (`core.scene.projection_saturated`) | archiver des étoiles terminées ; les étoiles en attente arrivent aussitôt |
 | après un redémarrage de Core, une étoile reste `running` alors que le travail est fini | la scène est durable, l'état de travail ne l'est pas ; le marquage des étoiles non revues au redémarrage viendra avec la Slice 10 | rien à faire ; l'état est corrigé dès que le producteur renvoie ce travail |
 
 ### Scène constellation : lecture HTTP et dépannage
@@ -857,7 +877,7 @@ Voir la scène brute, Core démarré :
 ```powershell
 $token = Get-Content runtime\core.token
 $h = @{ Authorization = "Bearer $token" }
-Invoke-RestMethod http://127.77.0.1:17653/v1/health -Headers $h            # champ scene : state, code
+Invoke-RestMethod http://127.77.0.1:17653/v1/health -Headers $h            # champ scene : state, code, saturated, objects, object_limit
 $s = Invoke-RestMethod http://127.77.0.1:17653/v1/scene/snapshot -Headers $h
 Invoke-RestMethod "http://127.77.0.1:17653/v1/scene/patches?scene_id=$($s.scene_id)&epoch=$($s.epoch)&after=$($s.revision)&wait_s=5" -Headers $h
 Invoke-RestMethod http://127.0.0.1:17654/api/scene                          # même chose, vue par le Control Center
@@ -948,7 +968,12 @@ retiré est journalisé `core.scene.swept` (info) ; ce qui n'a pas pu l'être,
 main si le message persiste.
 
 En cours de route, `core.scene.persist_failed` (erreur) signale une commande de
-scène non écrite : la révision n'a pas bougé et aucun lecteur ne l'a vue. Avec
+scène non écrite : la révision n'a pas bougé et aucun lecteur ne l'a vue. Il
+n'apparaît **qu'une fois par panne** : les échecs identiques suivants (même
+code, même type d'erreur, par exemple les nouvelles tentatives de la projection)
+sont seulement comptés jusqu'à la première écriture réussie, qui laisse
+`core.scene.persist_restored` (info, `suppressed` = échecs tus) ; un échec d'une
+autre nature est journalisé à nouveau avec ce compte. Avec
 `code: revision_conflict` (deux Core sur le même dossier de données, par
 exemple), ou si la connexion reste bloquée dans une transaction (`storage_io`,
 message « left inside a transaction »), la scène devient indisponible jusqu'au

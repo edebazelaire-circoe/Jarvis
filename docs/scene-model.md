@@ -169,11 +169,14 @@ Rules:
 - **runtime** writes only `agent`/`job`/`attention` objects (`runtime_kind`),
   never a composition field — `representation`, `geometry`, `layer`, `order`,
   `visibility` — nor a relation layer (`runtime_composition`); links only
-  `parent_of` between execution nodes; unlinks only such a `parent_of` or the
-  `explains` relation of its own signal, from a runtime `attention` object to a
-  runtime execution node (the retirement of a signal, Slice 04;
-  `runtime_relation` otherwise, `runtime_origin` when an endpoint is a brain or
-  user object); attaches signals only to execution nodes. It never creates or
+  `parent_of` between execution nodes; unlinks only a `parent_of` between two
+  runtime execution nodes, or a relation **shaped like a signal link**
+  (`explains` whose `relation_id` equals its `from_id`) from a runtime
+  `attention` object to a runtime execution node — the retirement of a signal,
+  Slice 04 (`runtime_relation` otherwise, `runtime_origin` when an endpoint is
+  a brain or user object). Relations carry no origin: whoever created such a
+  relation, runtime may remove it (see *Runtime signal lifecycle* › residual
+  risks); attaches signals only to execution nodes. It never creates or
   edits artifacts, and never archives, hides or places anything, its own
   signals included.
 - **Origin**: runtime patches, upserts, reuses as a signal id, attaches to, or
@@ -250,8 +253,9 @@ Rule:
 Domain change in `_plan_unlink`: runtime may now also delete a relation for
 which `is_signal_relation` holds (`explains` whose `relation_id` equals its
 `from_id`) when the source is an `attention` object of `origin = runtime` and
-the target an `agent` / `job` of `origin = runtime`. Everything else is
-unchanged:
+the target an `agent` / `job` of `origin = runtime`. The check is on the
+relation's **shape and endpoints**, not on who created the relation, because
+relations have no `origin`. Everything else is unchanged:
 
 | Runtime `unlink` of… | Before Slice 04 | Now |
 | --- | --- | --- |
@@ -269,13 +273,28 @@ disposition rights decision 3 withholds, and an archived id could never signal
 again); keeping the relation and marking only `exec_state` (a stale `explains`
 edge would still be drawn and read as live).
 
-Residual risk: runtime cannot delete objects, so a retired signal occupies an
-object slot as long as its star lives. When the user archives a star, the
-star's relations go with it, but its attention object (live or retired) stays
-until the user archives it too: a slot leak of at most one object per archived
-star with a signal, towards `MAX_SCENE_OBJECTS` = 512. Cascading a runtime
-signal with its star on archive belongs to the user archive lifecycle
-(Slice 08).
+Residual risks (accepted by the PM after Slice 04 QA):
+
+- **relations have no origin.** A brain or user relation that has the same
+  shape and endpoints as a runtime link is removable by runtime: an `explains`
+  from a runtime signal to its runtime star named after the signal (for example a
+  user who re-attached a retired signal by hand), and any `parent_of` between two
+  runtime stars (runtime owns execution topology). Brain and user relations that
+  touch a brain or user object, or of any other shape, stay untouchable. Adding
+  an origin to relations would be a wire and storage schema change;
+- a **retired signal keeps its last `category`** (`failed`, `blocked`…) and
+  payload; only `exec_state` records the new status. Consumers must use
+  `is_live_signal`, not the category;
+- runtime cannot delete objects, so a retired signal occupies an object slot as
+  long as its star lives. When the user archives a star, the star's relations go
+  with it, but its attention object (live or retired) stays until the user
+  archives it too: at most one leaked slot per archived star with a signal,
+  towards `MAX_SCENE_OBJECTS` = 512. Archive cascade (a star takes its runtime
+  signal with it) and bulk archive of completed work are in the Slice 08
+  contract;
+- `parent_of` **cycles** are not validated (Slice 01) and can appear from
+  producer data or brain/user links; renderers walking parents must guard
+  against them (Slice 05).
 
 ## Bounds and wire form
 
