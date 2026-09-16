@@ -993,6 +993,11 @@ recharge ce qui est réellement sur disque.
 Le cerveau conversationnel (Claude CLI) peut lire et composer la scène par six
 outils MCP du serveur `jarvis-display` : `scene_inspect`, `scene_create_object`,
 `scene_update_object`, `scene_set_visibility`, `scene_link`, `scene_unlink`.
+« Réaffiche tout » passe par `scene_set_visibility` avec `scope: "all_hidden"` :
+le serveur réaffiche un par un tout ce qui est masqué au moment de l'appel et
+rend les comptes ; il n'existe pas de « tout masquer ». Quand la scène a bougé
+depuis la dernière lecture du cerveau, les résultats de commande listent ce qui
+a changé (apparu, archivé, masqué ou réaffiché, état), dix lignes au plus.
 Il agit toujours comme acteur `brain`. **Aucun outil n'archive ni n'épingle** :
 l'archivage reste à l'utilisateur (et Core le refuse au cerveau de toute façon).
 Détail technique : `docs/ARCHITECTURE.md`, « Brain display MCP ».
