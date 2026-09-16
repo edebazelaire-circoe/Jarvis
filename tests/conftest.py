@@ -17,6 +17,7 @@ from jarvis.domain.results import AgentResult, SpeechResult
 #: Logique pure de la page du Control Center : le fichier même que
 #: `ControlCenter.index` insère dans la page servie au navigateur.
 CONTROL_CENTER_WORK_JS = Path(__file__).resolve().parents[1] / "jarvis" / "runtime" / "control_center_work.js"
+CONTROL_CENTER_SCENE_JS = CONTROL_CENTER_WORK_JS.with_name("control_center_scene.js")
 _NODE = shutil.which("node")
 
 
@@ -42,6 +43,35 @@ def page_logic():
         )
         result = subprocess.run(
             [_NODE, "-e", script], capture_output=True, text=True, encoding="utf-8", timeout=60
+        )
+        assert result.returncode == 0, result.stderr
+        return json.loads(result.stdout)
+
+    return run
+
+
+@pytest.fixture
+def scene_logic(tmp_path):
+    """Exécuter le client pur de la scène (`control_center_scene.js`) avec node.
+
+    Même principe que `page_logic` : `body` est le corps d'une fonction où `S`
+    désigne le module chargé et `D` les données `data` (écrites dans un
+    fichier : un parcours de parité dépasse la longueur d'une ligne de
+    commande). Node absent : le test est sauté.
+    """
+
+    def run(body: str, data: Any = None) -> Any:
+        if _NODE is None:
+            pytest.skip("node absent")
+        data_file = tmp_path / f"scene-data-{len(list(tmp_path.glob('scene-data-*')))}.json"
+        data_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        script = (
+            f"const S=require({json.dumps(str(CONTROL_CENTER_SCENE_JS))});"
+            f"const D=JSON.parse(require('fs').readFileSync({json.dumps(str(data_file))},'utf8'));"
+            f"console.log(JSON.stringify((()=>{{{body}}})()))"
+        )
+        result = subprocess.run(
+            [_NODE, "-e", script], capture_output=True, text=True, encoding="utf-8", timeout=120
         )
         assert result.returncode == 0, result.stderr
         return json.loads(result.stdout)

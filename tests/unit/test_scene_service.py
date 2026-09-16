@@ -186,9 +186,29 @@ async def test_start_creates_a_stable_scene_and_journals_it(tmp_path):
     assert reloaded.scene_id == first.scene_id
     assert reloaded.revision == 1
     assert diagnostics.kinds(SCENE_LOADED_KIND) == [
-        ("info", {"scene_id": first.scene_id, "revision": 1, "objects": 1, "relations": 0, "archived_ids": 0, "created": False})
+        ("info", {"scene_id": first.scene_id, "revision": 1, "objects": 1, "relations": 0, "archived_ids": 0, "created": False, "epoch": again.epoch})
     ]
     await again.close()
+
+
+async def test_each_start_opens_a_new_epoch_for_the_same_scene(tmp_path):
+    """Slice 03 : l'époque change à chaque chargement, `scene_id` et révision restent."""
+
+    path = tmp_path / "scene.sqlite3"
+    unstarted = SceneService(MemoryRepository())
+    assert unstarted.epoch is None
+    first, _, _ = await started(SQLiteSceneRepository(path))
+    epoch = first.epoch
+    assert isinstance(epoch, str) and len(epoch) == 32
+    await first.start()  # un second start() ne recharge rien : même époque
+    assert first.epoch == epoch
+    scene_id = (await first.snapshot()).scene_id
+    await first.close()
+    assert first.epoch == epoch  # lecture seule, gardée après fermeture
+
+    second, _, _ = await started(SQLiteSceneRepository(path))
+    assert second.epoch != epoch and (await second.snapshot()).scene_id == scene_id
+    await second.close()
 
 
 async def test_concurrent_commands_are_serialized_with_consecutive_revisions():

@@ -130,7 +130,15 @@ class SceneCommandSink(Protocol):
 
 
 class SceneReader(Protocol):
-    """Lecture seule de la scène. Lève `SceneUnavailableError` si elle n'est pas servie."""
+    """Lecture seule de la scène. Lève `SceneUnavailableError` si elle n'est pas servie.
+
+    `epoch` identifie le chargement courant (neuf à chaque démarrage de Core) :
+    le transport le rend avec chaque réponse, et toute autre époque impose au
+    client de relire l'instantané.
+    """
+
+    @property
+    def epoch(self) -> str | None: ...
 
     async def snapshot(self) -> SceneSnapshot: ...
 

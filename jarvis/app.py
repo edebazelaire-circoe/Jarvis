@@ -844,6 +844,14 @@ async def _run_control_center_v2() -> int:
         CoreWorkTransport(host=settings.core_host, port=settings.core_port, token_file=settings.token_file),
         journal=journal,
     )
+    # Scène constellation (Slice 03) : relais sans état, par sa propre
+    # connexion ; les long-polls n'occupent pas celle du panneau Agents.
+    from jarvis.runtime.scene_view import CoreSceneTransport, CoreSceneView
+
+    scene_view = CoreSceneView(
+        CoreSceneTransport(host=settings.core_host, port=settings.core_port, token_file=settings.token_file),
+        journal=journal,
+    )
     control = ControlCenter(
         runtime_root=runtime_root,
         project_root=ROOT,
@@ -851,6 +859,7 @@ async def _run_control_center_v2() -> int:
         work_ingress=work_ingress,
         work_view=work_view,
         live_view=live_view,
+        scene_view=scene_view,
     )
     await control.start(port=ui_port)
     url = f"http://127.0.0.1:{ui_port}/"

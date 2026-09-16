@@ -6,6 +6,8 @@ from typing import Any, Callable
 import aiohttp
 
 from jarvis.domain.v2 import PROTOCOL_VERSION, ProtocolEnvelope, new_id
+from jarvis.protocol.scene_wire import MAX_SCENE_RESPONSE_BYTES
+from jarvis.protocol.strict_json import loads_strict_json
 from jarvis.v2_config import validate_loopback_host
 from jarvis.domain.voice_admission import VoiceTurnAdmissionAcceptance, VoiceTurnAdmissionRequest
 from jarvis.domain.v2 import AddressingDecision
@@ -22,12 +24,16 @@ class CoreProtocolError(RuntimeError):
     est transitoire et rejouable avec la même corrélation.
     """
 
-    __slots__ = ("status", "code")
+    __slots__ = ("status", "code", "message", "details")
 
-    def __init__(self, status: int, code: str, message: str) -> None:
+    def __init__(self, status: int, code: str, message: str, *, details: dict[str, Any] | None = None) -> None:
         super().__init__(f"Core protocol error {status}: {code}: {message}")
         self.status = status
         self.code = code
+        self.message = message
+        #: Champs de `error` autres que `code` et `message` (par exemple
+        #: `scene` et `store_code` d'une scène indisponible).
+        self.details: dict[str, Any] = dict(details or {})
 
 
 class LocalCoreClient:
@@ -313,6 +319,63 @@ class LocalCoreClient:
         session = await self._http()
         async with session.get(self.base_url + "/v1/work/snapshot", headers=self.headers) as response:
             return await self._json(response)
+
+    # ------------------------------------------------------------ scène (Slice 03)
+
+    async def scene_snapshot(self) -> dict[str, Any]:
+        """`GET /v1/scene/snapshot` : `{scene_id, epoch, revision, snapshot}` (lecture bornée)."""
+
+        session = await self._http()
+        async with session.get(self.base_url + "/v1/scene/snapshot", headers=self.headers) as response:
+            return await self._bounded_json(response)
+
+    async def scene_patches(self, *, scene_id: str, epoch: str, after: int, wait_s: float, timeout_s: float) -> dict[str, Any]:
+        """`GET /v1/scene/patches` : long-poll ; `timeout_s` borne la requête entière, attente comprise."""
+
+        session = await self._http()
+        params = {"scene_id": scene_id, "epoch": epoch, "after": str(after), "wait_s": f"{wait_s:.6f}"}
+        async with session.get(
+            self.base_url + "/v1/scene/patches", headers=self.headers, params=params,
+            timeout=aiohttp.ClientTimeout(total=timeout_s),
+        ) as response:
+            return await self._bounded_json(response)
+
+    async def scene_command(self, command: dict[str, Any]) -> dict[str, Any]:
+        """`POST /v1/scene/commands` : une `SceneCommand.to_payload()` ; refus du domaine = 200."""
+
+        session = await self._http()
+        async with session.post(self.base_url + "/v1/scene/commands", headers=self.headers, json=command) as response:
+            return await self._bounded_json(response)
+
+    @staticmethod
+    async def _bounded_json(response: aiohttp.ClientResponse, limit: int = MAX_SCENE_RESPONSE_BYTES) -> dict[str, Any]:
+        """Lire au plus `limit` octets puis décoder ; au-delà ou illisible : `ValueError`.
+
+        Une erreur HTTP devient `CoreProtocolError` avec ses `details`, même
+        quand le corps n'est pas du JSON (le code est alors `http_<statut>`).
+        """
+
+        if response.content_length is not None and response.content_length > limit:
+            raise ValueError(f"Core response exceeds {limit} bytes")
+        raw = bytearray()
+        async for chunk in response.content.iter_chunked(65_536):
+            raw.extend(chunk)
+            if len(raw) > limit:
+                raise ValueError(f"Core response exceeds {limit} bytes")
+        try:
+            data = loads_strict_json(bytes(raw), invalid_message="Core response is not JSON")
+        except ValueError as exc:
+            if response.status >= 400:
+                raise CoreProtocolError(response.status, f"http_{response.status}", bytes(raw[:160]).decode("utf-8", "replace")) from exc
+            raise
+        if response.status >= 400:
+            error = data.get("error") if isinstance(data, dict) else None
+            error = error if isinstance(error, dict) else {}
+            details = {key: value for key, value in error.items() if key not in ("code", "message")}
+            raise CoreProtocolError(response.status, str(error.get("code", "unknown")), str(error.get("message", "")), details=details)
+        if not isinstance(data, dict):
+            raise TypeError("Core response must be a JSON object")
+        return data
 
     async def events(self, *, on_connected: Callable[[], None] | None = None) -> AsyncIterator[ProtocolEnvelope]:
         session = await self._http()

@@ -38,6 +38,7 @@ from collections import deque
 from dataclasses import dataclass
 from enum import StrEnum
 import math
+import uuid
 
 from jarvis.core.v2_services import NullDiagnosticSink
 from jarvis.domain.scene import (
@@ -118,10 +119,24 @@ class SceneService:
         #: divergence) : l'ancien est levé, ses attentes se réveillent et
         #: relisent l'état ; les suivantes attendent le nouveau.
         self._changed = asyncio.Event()
+        self._epoch: str | None = None
 
     @property
     def availability(self) -> SceneAvailability:
         return self._availability
+
+    @property
+    def epoch(self) -> str | None:
+        """Identité de ce chargement de la scène, neuve à chaque `start()` (transport, Slice 03).
+
+        `(scene_id, revision)` ne suffit pas à un client : restaurer une
+        sauvegarde plus ancienne de `scene.sqlite3` garde le `scene_id` et
+        réutilise des révisions déjà vues. L'époque change à chaque
+        démarrage de Core ; un client qui voit une autre époque relit
+        l'instantané. `None` tant que `start()` n'a pas été appelé.
+        """
+
+        return self._epoch
 
     # ------------------------------------------------------------ cycle de vie
 
@@ -136,6 +151,7 @@ class SceneService:
         async with self._lock:
             if self._availability.state is not SceneState.STARTING:
                 return self._availability
+            self._epoch = uuid.uuid4().hex
             await self._sweep()
             try:
                 created = await self._repository.initialize()
@@ -164,6 +180,7 @@ class SceneService:
                     "relations": len(snapshot.relations),
                     "archived_ids": len(snapshot.archived_ids),
                     "created": created,
+                    "epoch": self._epoch,
                 },
             )
             return self._availability

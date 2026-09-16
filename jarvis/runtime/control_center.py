@@ -67,6 +67,15 @@ from jarvis.runtime.visual_signals import VisualSignalBus
 from jarvis.runtime.work_brief import render_work_brief
 from jarvis.runtime.work_ingress import TrackerWorkObserver, WorkIngressForwarder
 from jarvis.runtime.work_view import NOT_CONFIGURED, CoreWorkView, unavailable_payload
+from jarvis.protocol import scene_wire
+from jarvis.protocol.strict_json import loads_strict_json
+from jarvis.runtime.scene_view import (
+    CoreSceneView,
+    SceneActorForbidden,
+    unavailable_patches_payload,
+    unavailable_snapshot_payload,
+    user_command,
+)
 from jarvis.v2_config import (
     CONVERSATION_AUTHORIZATION_SETTINGS,
     MIN_ACTIVE_TIMEOUT_S,
@@ -104,6 +113,11 @@ CATALOG_SCRIPT_MARKER = "/*__CONTROL_CENTER_CATALOG_JS__*/"
 #: plus son branchement navigateur. Même insertion que les scripts ci-dessus.
 BAREHANDS_SCRIPT_FILE = "control_center_barehands.js"
 BAREHANDS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_JS__*/"
+#: Client pur de la scène constellation (Slice 03) : application ordonnée des
+#: patchs et détection de resynchronisation. Il n'expose que
+#: `window.JarvisSceneClient` et ne touche pas au DOM ; le rendu vient en Slice 05.
+SCENE_SCRIPT_FILE = "control_center_scene.js"
+SCENE_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_JS__*/"
 
 #: Architectures vocales proposées dans l'onglet « Mode vocal ». Comme le reste
 #: de l'écran, leur libellé vit ici et non dans la page. `{key}` est remplacé
@@ -248,6 +262,7 @@ class ControlCenter:
         work_ingress: WorkIngressForwarder | None = None,
         work_view: CoreWorkView | None = None,
         live_view: CoreLiveStatusView | None = None,
+        scene_view: CoreSceneView | None = None,
         voice_registry: VoiceCapabilityRegistry | None = None,
         barehands_vendor_root: Path | None = None,
     ) -> None:
@@ -282,6 +297,9 @@ class ControlCenter:
         # non terminal lors d'une panne de lecture afin de ne jamais afficher
         # OFF tant qu'une clôture n'est pas prouvée.
         self.live_view = live_view
+        # Proxy de la scène constellation tenue par Core (Slice 03). Absent,
+        # `/api/scene*` répondent « non configuré ».
+        self.scene_view = scene_view
 
         settings = self._settings()
         self._agent_id = cli_catalog.normalize_agent_cli(settings.get("agent_cli"))
@@ -323,6 +341,9 @@ class ControlCenter:
             web.get("/api/agent", self.agent_status),
             web.get("/api/agent/transcript", self.agent_transcript),
             web.get("/api/work", self.work),
+            web.get("/api/scene", self.scene),
+            web.get("/api/scene/patches", self.scene_patches),
+            web.post("/api/scene/commands", self.scene_command),
             web.get("/api/agent/tasks", self.agent_tasks),
             web.get("/api/agent/tasks/{task_id}/trace", self.agent_task_trace),
             web.post("/api/agent/console/open", self.agent_console_open),
@@ -458,6 +479,8 @@ class ControlCenter:
             await self.work_view.aclose()
         if self.live_view is not None:
             await self.live_view.aclose()
+        if self.scene_view is not None:
+            await self.scene_view.aclose()
         if self._runner is not None:
             await self._runner.cleanup()
             self._runner = None
@@ -482,6 +505,9 @@ class ControlCenter:
         )
         html = html.replace(
             BAREHANDS_SCRIPT_MARKER, page.with_name(BAREHANDS_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            SCENE_SCRIPT_MARKER, page.with_name(SCENE_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         if self.visualizer_url:
             html = html.replace("__VISUALIZER_URL__", self.visualizer_url)
@@ -2328,6 +2354,75 @@ class ControlCenter:
         body["agent_cli"] = self._agent_id
         body["subtasks_supported"] = self._agent_id == "claude" and self.work_ingress is not None
         return web.json_response(body)
+
+    # ------------------------------------------------------------------ scène
+
+    @staticmethod
+    def _scene_error(status: int, code: str, message: str) -> web.Response:
+        return web.json_response(scene_wire.error_body(code, message), status=status)
+
+    async def scene(self, request: web.Request) -> web.Response:
+        """Instantané de la scène constellation tenue par Core (Slice 03).
+
+        Toujours 200, comme `/api/work` : Core injoignable, réponse illisible
+        ou scène indisponible donnent `snapshot: null` et `error` (`code`,
+        `message`), avec `core_reachable` et `scene` (`state`, `code`).
+        """
+
+        if request.query:
+            return self._scene_error(400, scene_wire.INVALID_REQUEST, "unexpected query")
+        if self.scene_view is None:
+            body = unavailable_snapshot_payload(NOT_CONFIGURED, "Lecture de la scène Core non configurée.")
+        else:
+            body = await self.scene_view.snapshot()
+        return web.json_response(body, dumps=scene_wire.compact_json)
+
+    async def scene_patches(self, request: web.Request) -> web.Response:
+        """Long-poll des patchs de scène (`scene_id`, `epoch`, `after`, `wait_s` ≤ 25 s ici).
+
+        Paramètres invalides : 400. Sinon 200 : patchs, `resync_required`
+        (relire `/api/scene`), `more` (redemander aussitôt), ou forme dégradée
+        avec `error`. L'attente est bornée côté Control Center aussi : un
+        Core figé rend la main après l'attente demandée plus une marge.
+        """
+
+        try:
+            query = scene_wire.parse_patch_query(request.query)
+        except ValueError as exc:
+            return self._scene_error(400, scene_wire.INVALID_REQUEST, str(exc))
+        if self.scene_view is None:
+            body = unavailable_patches_payload(NOT_CONFIGURED, "Lecture de la scène Core non configurée.")
+        else:
+            body = await self.scene_view.patches(query)
+        return web.json_response(body, dumps=scene_wire.compact_json)
+
+    async def scene_command(self, request: web.Request) -> web.Response:
+        """Commande de scène du navigateur, relayée à Core avec l'acteur `user` imposé.
+
+        Sans `actor`, `user` est posé ; tout autre acteur est refusé (403
+        `scene_actor_forbidden`) : la page ne parle jamais au nom du cerveau.
+        Corps illisible : 400 ; trop gros : 413. Refus du domaine : 200 avec
+        `outcome`/`reason`. Voir `CoreSceneView.command` pour 502/503/504.
+        """
+
+        if request.query:
+            return self._scene_error(400, scene_wire.INVALID_REQUEST, "unexpected query")
+        try:
+            raw = await scene_wire.read_bounded_body(request)
+        except scene_wire.SceneBodyTooLarge:
+            return self._scene_error(413, scene_wire.PAYLOAD_TOO_LARGE, f"scene command exceeds {scene_wire.MAX_SCENE_COMMAND_BYTES} bytes")
+        try:
+            command = user_command(loads_strict_json(raw, invalid_message="invalid scene command JSON"))
+        except SceneActorForbidden as exc:
+            self.journal.emit("scene.command_forbidden", "commande de scène refusée : acteur autre que user", level="warning",
+                              data={"code": scene_wire.SCENE_ACTOR_FORBIDDEN})
+            return self._scene_error(403, scene_wire.SCENE_ACTOR_FORBIDDEN, str(exc))
+        except (TypeError, ValueError) as exc:
+            return self._scene_error(400, scene_wire.INVALID_REQUEST, f"invalid scene command: {exc}")
+        if self.scene_view is None:
+            return self._scene_error(503, NOT_CONFIGURED, "Commande de scène Core non configurée.")
+        status, body = await self.scene_view.command(command)
+        return web.json_response(body, status=status, dumps=scene_wire.compact_json)
 
     async def agent_tasks(self, request: web.Request) -> web.Response:
         """Le brain et ses sous-tâches. Toujours ceux de l'agent actif : après
