@@ -1083,10 +1083,11 @@ class SceneRefusal(StrEnum):
     EXECUTION_NODE = "execution_node"
     PINNED_BY_USER = "pinned_by_user"
     EXPLICIT_PLACEMENT = "explicit_placement"
-    #: `brain`/`user` délient la topologie ou un signal posés par le runtime
-    #: (`parent_of` entre étoiles runtime, lien d'un signal runtime) : le
-    #: runtime en est le maître (Décisions 3, 17, Slice 06). L'utilisateur
-    #: écarte par l'archivage, le cerveau peut masquer le signal.
+    #: `brain`/`user` touchent la topologie d'exécution ou un signal du
+    #: runtime : délier un `parent_of` entre nœuds d'exécution ou le lien d'un
+    #: signal runtime, ou poser un nouveau `parent_of` entre deux nœuds
+    #: d'exécution. Le runtime en est le maître (Décisions 3, 17, Slice 06).
+    #: L'utilisateur écarte par l'archivage, le cerveau peut masquer le signal.
     RUNTIME_OWNED = "runtime_owned"
     #: `brain`/`user` créent un objet ou un lien sous un identifiant de la
     #: forme que le runtime fabrique (`is_runtime_reserved_id`) : il
@@ -1421,9 +1422,15 @@ def _plan_link(snapshot: SceneSnapshot, command: SceneCommand) -> list[ScenePatc
     if runtime:
         _check_runtime_reach(source, EXECUTION_KINDS, SceneRefusal.RUNTIME_RELATION)
         _check_runtime_reach(target, EXECUTION_KINDS, SceneRefusal.RUNTIME_RELATION)
-    elif snapshot.get_relation(relation.relation_id) is None and is_runtime_reserved_id(relation.relation_id):
-        # Changer la couche d'un lien runtime existant reste permis.
-        raise _rejected(SceneRefusal.RESERVED_ID)
+    elif snapshot.get_relation(relation.relation_id) is None:
+        # Changer la couche d'un lien runtime existant reste permis ; créer
+        # ne l'est pas sous un identifiant du runtime, ni pour une parenté
+        # entre nœuds d'exécution : une fausse topologie ne pourrait plus être
+        # retirée (`runtime_owned` au `unlink`).
+        if is_runtime_reserved_id(relation.relation_id):
+            raise _rejected(SceneRefusal.RESERVED_ID)
+        if relation.kind is RelationKind.PARENT_OF and source.kind in EXECUTION_KINDS and target.kind in EXECUTION_KINDS:
+            raise _rejected(SceneRefusal.RUNTIME_OWNED)
     return _plan_relation_put(snapshot, relation, layer_announced=not runtime)
 
 

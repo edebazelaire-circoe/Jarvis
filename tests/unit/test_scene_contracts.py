@@ -179,7 +179,9 @@ def matrix_command(op: SceneOp, actor: SceneActor) -> SceneCommand:
         SceneOp.SET_VISIBILITY: {"object_id": "star-a", "visibility": Visibility.HIDDEN},
         SceneOp.PIN: {"object_id": "star-a"},
         SceneOp.UNPIN: {"object_id": "star-p"},
-        SceneOp.LINK: {"relation": SceneRelation("rel-new", RelationKind.PARENT_OF, "star-b", "star-p")},
+        # Parenté entre étoiles : au runtime seul (Slice 06) ; brain/user relient un artefact.
+        SceneOp.LINK: {"relation": SceneRelation("rel-new", RelationKind.PARENT_OF, "star-b", "star-p") if actor is RUNTIME
+                       else SceneRelation("rel-new", RelationKind.EXPLAINS, "art-1", "star-p")},
         # `rel-ab` appartient au runtime (Slice 06) : brain/user délient un lien à eux.
         SceneOp.UNLINK: {"relation_id": "rel-ab" if actor is RUNTIME else "rel-note"},
         SceneOp.ARCHIVE: {"object_id": "star-b"},
@@ -847,9 +849,10 @@ def test_brain_and_user_cannot_unlink_runtime_topology_or_signals(actor):
     # Le signal reste masquable par le cerveau comme par l'utilisateur.
     hidden = apply_scene_command(before, cmd(SceneOp.SET_VISIBILITY, actor, object_id="sig-1", visibility=Visibility.HIDDEN))
     assert hidden.outcome is APPLIED and is_live_signal(hidden.snapshot, "sig-1")
-    # Relations sans origine : un `parent_of` posé par le cerveau entre deux étoiles runtime a la même forme.
-    drawn = run(before, cmd(SceneOp.LINK, BRAIN, relation=SceneRelation("brain-parent", RelationKind.PARENT_OF, "star-b", "star-p")))
-    assert apply_scene_command(drawn, cmd(SceneOp.UNLINK, actor, relation_id="brain-parent")).reason is SceneRefusal.RUNTIME_OWNED
+    # Une parenté entre deux étoiles ne se pose pas non plus : elle ne pourrait plus être retirée.
+    drawn = apply_scene_command(before, cmd(SceneOp.LINK, actor, relation=SceneRelation("brain-parent", RelationKind.PARENT_OF, "star-b", "star-p")))
+    assert (drawn.outcome, drawn.reason) == (REJECTED, SceneRefusal.RUNTIME_OWNED)
+    assert_unchanged(before, drawn)
     # Toute autre forme reste à eux : un `parent_of` depuis un artefact, un `explains` d'artefact.
     other = run(
         before,
@@ -888,6 +891,27 @@ def test_runtime_reserved_ids_are_refused_to_brain_and_user(identifier):
             assert_unchanged(before, update)
     # Le runtime les fabrique toujours.
     assert apply_scene_command(before, runtime_signal(object_id="attention!star-a")).outcome is APPLIED
+
+
+@pytest.mark.parametrize("actor", [BRAIN, USER])
+def test_brain_and_user_cannot_draw_execution_topology_but_keep_other_links(actor):
+    before = run(scene_with_stars(), cmd(SceneOp.UPSERT_OBJECT, BRAIN, object_id="grp", fields=SceneObjectFields(kind=SceneObjectKind.GROUP, category="plan")))
+    for source, target in (("star-a", "star-p"), ("star-p", "star-a"), ("star-b", "star-a")):
+        update = apply_scene_command(before, cmd(SceneOp.LINK, actor, relation=SceneRelation("brain-p", RelationKind.PARENT_OF, source, target)))
+        assert (update.outcome, update.reason) == (REJECTED, SceneRefusal.RUNTIME_OWNED)
+        assert_unchanged(before, update)
+    allowed = (
+        SceneRelation("r1", RelationKind.PARENT_OF, "art-1", "star-a"),
+        SceneRelation("r2", RelationKind.PARENT_OF, "grp", "art-1"),
+        SceneRelation("r3", RelationKind.GROUPS, "grp", "star-a"),
+        SceneRelation("r4", RelationKind.EXPLAINS, "star-a", "star-b"),
+        # Recomposer la parenté que le runtime a posée (couche) reste permis.
+        SceneRelation("rel-ab", RelationKind.PARENT_OF, "star-a", "star-b", layer=80),
+    )
+    for relation in allowed:
+        assert apply_scene_command(before, cmd(SceneOp.LINK, actor, relation=relation)).outcome is APPLIED, relation
+    # Le runtime la pose toujours.
+    assert apply_scene_command(before, cmd(SceneOp.LINK, RUNTIME, relation=SceneRelation("rel-bp", RelationKind.PARENT_OF, "star-b", "star-p"))).outcome is APPLIED
 
 
 def test_ordinary_ids_are_not_reserved():
