@@ -362,7 +362,7 @@ async def test_health_keeps_its_fields_and_adds_scene_availability(core):
     assert status == 200
     assert {"protocol_version", "ready", "status", "detail"} <= set(body)
     assert body["ready"] is True and body["protocol_version"] == PROTOCOL_VERSION
-    assert body["scene"] == {"state": "ready", "code": None}
+    assert body["scene"] == {"state": "ready", "code": None, "saturated": False, "objects": 0, "object_limit": 512}
 
 
 async def test_an_unavailable_scene_is_503_with_its_code_and_core_stays_ready(tmp_path):
@@ -381,12 +381,12 @@ async def test_an_unavailable_scene_is_503_with_its_code_and_core_stays_ready(tm
             status, body, _ = await process.request(method, path, **kwargs)
             assert status == 503, (path, body)
             assert body["error"]["code"] == scene_wire.SCENE_UNAVAILABLE and body["error"]["store_code"] == "corrupted"
-            assert body["error"]["scene"] == {"state": "unavailable", "code": "corrupted"}
+            assert body["error"]["scene"] == {"state": "unavailable", "code": "corrupted", "saturated": False, "objects": None, "object_limit": 512}
         status, health, _ = await process.request("GET", "/v1/health")
     finally:
         await process.stop()
 
-    assert status == 200 and health["ready"] is True and health["scene"] == {"state": "unavailable", "code": "corrupted"}
+    assert status == 200 and health["ready"] is True and health["scene"] == {"state": "unavailable", "code": "corrupted", "saturated": False, "objects": None, "object_limit": 512}
 
 
 async def test_a_persistence_failure_is_503_and_nothing_advances(tmp_path):
@@ -398,7 +398,7 @@ async def test_a_persistence_failure_is_503_and_nothing_advances(tmp_path):
         status, body, _ = await process.request("POST", "/v1/scene/commands", json=artifact("art-1"))
         assert status == 503
         assert body["error"]["code"] == scene_wire.SCENE_PERSIST_FAILED and body["error"]["store_code"] == "storage_io"
-        assert "disk full" in body["error"]["message"] and body["error"]["scene"] == {"state": "ready", "code": None}
+        assert "disk full" in body["error"]["message"] and body["error"]["scene"] == {"state": "ready", "code": None, "saturated": False, "objects": 0, "object_limit": 512}
         repository.fail_commit = None
         status, retry, _ = await process.request("POST", "/v1/scene/commands", json=artifact("art-1"))
         assert status == 200 and retry["revision"] == 1
@@ -430,7 +430,7 @@ async def test_the_control_center_serves_snapshot_long_poll_and_user_commands(st
     response = await client.get("/api/scene")
     scene = await response.json()
     assert response.status == 200 and scene["core_reachable"] is True and scene["error"] is None
-    assert scene["scene"] == {"state": "ready", "code": None} and scene["revision"] == 0
+    assert scene["scene"] == {"state": "ready", "code": None, "saturated": False, "objects": 0, "object_limit": 512} and scene["revision"] == 0
     assert scene["epoch"] == process.core.scene.epoch and scene["snapshot"]["objects"] == []
 
     query = f"/api/scene/patches?scene_id={scene['scene_id']}&epoch={scene['epoch']}&after=0&wait_s=20"
@@ -554,5 +554,23 @@ async def test_the_control_center_reports_an_unavailable_scene_with_its_code(tmp
     # Le message de Core nomme le fichier ; la page n'en reçoit pas le chemin.
     assert "<chemin>" in scene["error"]["message"] and "<chemin>" in command_body["error"]["message"]
     assert tmp_path.name not in json.dumps([scene, command_body], ensure_ascii=False)
-    assert scene["scene"] == {"state": "unavailable", "code": "corrupted"}
-    assert command.status == 503 and command_body["scene"] == {"state": "unavailable", "code": "corrupted"}
+    assert scene["scene"] == {"state": "unavailable", "code": "corrupted", "saturated": False, "objects": None, "object_limit": 512}
+    assert command.status == 503 and command_body["scene"] == {"state": "unavailable", "code": "corrupted", "saturated": False, "objects": None, "object_limit": 512}
+
+
+async def test_health_and_the_control_center_say_when_the_scene_is_full(core):
+    """Slice 04 QA F1 : la saturation se lit dans `/v1/health` sans changer ses champs d'origine."""
+
+    from jarvis.domain.scene import MAX_SCENE_OBJECTS, SceneActor, SceneCommand, SceneObjectFields, SceneObjectKind, SceneOp
+    from jarvis.runtime.scene_view import CoreSceneView
+
+    for index in range(MAX_SCENE_OBJECTS):
+        await core.core.scene.apply(SceneCommand(
+            op=SceneOp.UPSERT_OBJECT, actor=SceneActor.USER, object_id=f"note-{index}",
+            fields=SceneObjectFields(kind=SceneObjectKind.ARTIFACT, category="note"),
+        ))
+    status, body, _ = await core.request("GET", "/v1/health")
+    assert status == 200 and body["ready"] is True and body["status"] == "ok"
+    assert body["scene"] == {"state": "ready", "code": None, "saturated": True, "objects": MAX_SCENE_OBJECTS, "object_limit": MAX_SCENE_OBJECTS}
+    served = CoreSceneView._ready({"snapshot": {"objects": [{}] * MAX_SCENE_OBJECTS}})
+    assert served["scene"]["saturated"] is True and served["scene"]["objects"] == MAX_SCENE_OBJECTS

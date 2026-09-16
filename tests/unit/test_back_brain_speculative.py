@@ -234,3 +234,43 @@ async def test_cancel_analysis_waits_for_its_owned_tree(harness, tmp_path):
     finally:
         harness.tree_pending = False
         await core.stop()
+
+
+async def test_a_speculative_job_recovered_after_a_restart_never_reaches_work_state_or_the_scene(harness, tmp_path):
+    """Slice 04 QA F2 : la reprise (`JobService.recover`) filtre l'analyse spéculative comme l'exécution."""
+
+    from jarvis.adapters.sqlite_state import SQLiteStateRepository
+    from jarvis.domain.back_brain import BackBrainAdvisoryDependency, BackBrainSpeculativeProvenance, provenance_job_id
+    from jarvis.domain.v2 import Job, JobStatus
+
+    root = tmp_path / "data"
+    core = JarvisCoreApplication(data_root=root, workers={"back_brain": harness.worker("claude")})
+    await core.start()
+    request, _ = await provisional(core)
+    projection = await core.voice_ledger.back_brain_projection(request.conversation_id, session_id=request.session_id)
+    proof = BackBrainSpeculativeProvenance(
+        request.conversation_id, request.session_id, request.delegation_id, projection["revision"],
+        tuple(BackBrainAdvisoryDependency.from_payload(item) for item in projection["dependencies"]),
+    )
+    identifier = provenance_job_id(proof)
+    payload = BackBrainWorkPayload("\n".join(item.text for item in proof.dependencies), "", proof, scope="speculative_analysis")
+    job = Job(id=identifier, kind="back_brain", idempotency_key=identifier,
+              requested_by_conversation_id=request.conversation_id, payload=payload.to_payload())
+    await core.state.accept_speculative_job(job)
+    await core.stop()
+    # Image d'un arrêt brutal : le job est resté en cours sur disque.
+    image = SQLiteStateRepository(root / "state" / "jarvis.sqlite3")
+    await image.initialize()
+    await image.save_job(job)
+    await image.close()
+
+    reopened = JarvisCoreApplication(data_root=root, workers={"back_brain": harness.worker("claude")})
+    await reopened.start()
+    try:
+        recovered = await reopened.state.get_job(identifier)
+        assert recovered.status is JobStatus.INTERRUPTED  # la reprise a bien eu lieu
+        await asyncio.sleep(0.2)  # laisser la projection traiter ce qui aurait été publié
+        assert (await reopened.work_state.snapshot()).items == ()
+        assert (await reopened.scene.snapshot()).objects == ()
+    finally:
+        await reopened.stop()

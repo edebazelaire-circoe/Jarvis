@@ -42,6 +42,7 @@ import uuid
 
 from jarvis.core.v2_services import NullDiagnosticSink
 from jarvis.domain.scene import (
+    MAX_SCENE_OBJECTS,
     SceneCommand,
     SceneCommandOutcome,
     ScenePatch,
@@ -63,6 +64,9 @@ from jarvis.ports.v2 import DiagnosticSink
 SCENE_LOADED_KIND = "core.scene.loaded"
 SCENE_UNAVAILABLE_KIND = "core.scene.unavailable"
 SCENE_PERSIST_FAILED_KIND = "core.scene.persist_failed"
+#: Première écriture réussie après une série d'échecs d'écriture journalisés
+#: une seule fois (`suppressed` compte les échecs identiques tus).
+SCENE_PERSIST_RESTORED_KIND = "core.scene.persist_restored"
 SCENE_COMMAND_REFUSED_KIND = "core.scene.command_refused"
 SCENE_CLOSE_FAILED_KIND = "core.scene.close_failed"
 SCENE_SWEPT_KIND = "core.scene.swept"
@@ -96,6 +100,24 @@ class SceneAvailability:
     detail: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class SceneCapacity:
+    """Occupation de la scène active (Slice 04, QA F1).
+
+    `objects` : objets actifs, `None` si la scène n'est pas servie.
+    `saturated` : la scène tient `object_limit` objets ; toute création y est
+    refusée (`scene_full`) jusqu'à ce que l'utilisateur archive. Décision 12 :
+    rien n'est retiré automatiquement, la saturation se montre.
+    """
+
+    objects: int | None
+    object_limit: int = MAX_SCENE_OBJECTS
+
+    @property
+    def saturated(self) -> bool:
+        return self.objects is not None and self.objects >= self.object_limit
+
+
 class SceneService:
     """Scène active possédée par Core. Implémente `SceneCommandSink` et `SceneReader`."""
 
@@ -120,10 +142,21 @@ class SceneService:
         #: relisent l'état ; les suivantes attendent le nouveau.
         self._changed = asyncio.Event()
         self._epoch: str | None = None
+        #: Série d'échecs d'écriture en cours : `(code, type d'exception)` déjà
+        #: journalisé, et nombre d'échecs identiques tus depuis.
+        self._persist_failing: tuple[str, str] | None = None
+        self._persist_suppressed = 0
 
     @property
     def availability(self) -> SceneAvailability:
         return self._availability
+
+    @property
+    def capacity(self) -> SceneCapacity:
+        """Objets actifs et limite ; lecture en mémoire, sans verrou."""
+
+        snapshot = self._snapshot
+        return SceneCapacity(objects=len(snapshot.objects) if snapshot is not None else None)
 
     @property
     def epoch(self) -> str | None:
@@ -267,6 +300,7 @@ class SceneService:
             self._snapshot = update.snapshot
             self._ring.append(update.patch)
             self._notify_change()
+            self._persist_recovered(update.patch)
             return update
 
     def _persistence_failed(self, current: SceneSnapshot, patch: ScenePatch, exc: Exception) -> ScenePersistenceError:
@@ -280,25 +314,49 @@ class SceneService:
             (isinstance(exc, SceneStoreError) and exc.fatal)
             or code in (SceneStoreErrorCode.REVISION_CONFLICT, SceneStoreErrorCode.UNAVAILABLE)
         )
-        self._emit(
-            SCENE_PERSIST_FAILED_KIND,
-            "commande de scène non persistée : révision inchangée, aucune attente réveillée"
-            + (" ; scène rendue indisponible" if diverged else ""),
-            level="error",
-            data={
-                "scene_id": current.scene_id,
-                "revision": current.revision,
-                "attempted_revision": patch.revision,
-                "code": code.value,
-                "error": detail,
-            },
-        )
+        # Un échec identique au précédent (même code, même type) pendant une
+        # même panne n'est journalisé qu'une fois : un écrivain qui réessaie
+        # (projection runtime) ne remplit pas le journal d'erreurs. Une
+        # divergence est toujours journalisée.
+        key = (code.value, type(exc).__name__)
+        if key == self._persist_failing and not diverged:
+            self._persist_suppressed += 1
+        else:
+            self._persist_failing = key
+            self._emit(
+                SCENE_PERSIST_FAILED_KIND,
+                "commande de scène non persistée : révision inchangée, aucune attente réveillée"
+                + (" ; scène rendue indisponible" if diverged else "")
+                + (f" ; {self._persist_suppressed} échec(s) précédent(s) tu(s)" if self._persist_suppressed else ""),
+                level="error",
+                data={
+                    "scene_id": current.scene_id,
+                    "revision": current.revision,
+                    "attempted_revision": patch.revision,
+                    "code": code.value,
+                    "error": detail,
+                    **({"suppressed": self._persist_suppressed} if self._persist_suppressed else {}),
+                },
+            )
+            self._persist_suppressed = 0
         if diverged:
             self._availability = SceneAvailability(SceneState.UNAVAILABLE, code, detail)
             self._snapshot = None
             self._ring.clear()
             self._notify_change()
         return ScenePersistenceError(code, f"scene revision {patch.revision} was not persisted: {detail}")
+
+    def _persist_recovered(self, patch: ScenePatch) -> None:
+        """Première écriture réussie après des échecs : fin de la panne, dite une fois."""
+
+        if self._persist_failing is None:
+            return
+        self._emit(
+            SCENE_PERSIST_RESTORED_KIND,
+            "écriture de la scène de nouveau possible",
+            data={"revision": patch.revision, "code": self._persist_failing[0], "suppressed": self._persist_suppressed},
+        )
+        self._persist_failing, self._persist_suppressed = None, 0
 
     def _notify_change(self) -> None:
         event, self._changed = self._changed, asyncio.Event()

@@ -28,6 +28,9 @@ import pytest
 from jarvis.adapters.sqlite_scene import SQLiteSceneRepository
 from jarvis.core.scene_projector import (
     SCENE_PROJECTION_CONFLICT_KIND,
+    SCENE_PROJECTION_DESATURATED_KIND,
+    SCENE_PROJECTION_PENDING_OVERFLOW_KIND,
+    SCENE_PROJECTION_SATURATED_KIND,
     SCENE_PROJECTION_FAILED_KIND,
     SCENE_PROJECTION_RECONCILED_KIND,
     SCENE_PROJECTION_RESTORED_KIND,
@@ -46,18 +49,22 @@ from jarvis.core.v2_services import CoreEventBus
 from jarvis.core.work_state import CORE_WORK_UPDATED, WorkStateStore
 from jarvis.domain._checks import MAX_ID_CHARS
 from jarvis.domain.scene import (
+    MAX_SCENE_OBJECTS,
     Disposition,
     ExecState,
     PlacedBy,
     RelationKind,
     SceneActor,
     SceneCommand,
+    SceneConstraints,
     SceneGeometry,
+    SceneObject,
     SceneObjectFields,
     SceneObjectKind,
     SceneOp,
     ScenePayload,
     SceneRelation,
+    SceneSnapshot,
     Visibility,
     WorkRef,
     is_live_signal,
@@ -77,15 +84,17 @@ def obs(external_id: str, status: WorkStatus = WorkStatus.RUNNING, *, at: int = 
 
 
 class Stack:
-    def __init__(self, *, repository=None, queue_size: int = 512, stop_drain_s: float = 2.0) -> None:
+    def __init__(
+        self, *, repository=None, queue_size: int = 512, stop_drain_s: float = 2.0, work_max_items: int = 64, **projector
+    ) -> None:
         self.diagnostics = RecordingDiagnostics()
         self.events = CoreEventBus(diagnostics=self.diagnostics)
-        self.work = WorkStateStore(events=self.events, diagnostics=self.diagnostics)
+        self.work = WorkStateStore(events=self.events, diagnostics=self.diagnostics, max_items=work_max_items)
         self.repository = repository or MemoryRepository()
         self.scene = SceneService(self.repository, diagnostics=self.diagnostics)
         self.projector = SceneProjector(
             work=self.work, scene=self.scene, events=self.events, diagnostics=self.diagnostics,
-            queue_size=queue_size, retry_min_s=0.01, retry_max_s=0.05, stop_drain_s=stop_drain_s,
+            queue_size=queue_size, retry_min_s=0.01, retry_max_s=0.05, stop_drain_s=stop_drain_s, **projector,
         )
 
     async def __aenter__(self) -> Stack:
@@ -557,6 +566,182 @@ async def test_stop_drains_what_is_already_queued_within_its_bound():
         await bounded.projector.stop()
         assert loop.time() - started < 1.0  # borne de vidage, plus au plus une écriture en vol
         assert len((await bounded.snapshot()).objects) < 5
+
+
+# --- saturation (QA F1) ----------------------------------------------------------
+
+
+def nearly_full(free: int) -> MemoryRepository:
+    """Dépôt dont la scène tient déjà des artefacts du cerveau, à `free` places de la limite."""
+
+    repository = MemoryRepository()
+    fillers = tuple(
+        SceneObject(f"art-{index:03d}", SceneObjectKind.ARTIFACT, "note", SceneConstraints(PlacedBy.BRAIN), SceneActor.BRAIN)
+        for index in range(MAX_SCENE_OBJECTS - free)
+    )
+    repository.stored = SceneSnapshot(scene_id="scene-memory", objects=fillers)
+    return repository
+
+
+async def archive(stack: Stack, *object_ids: str) -> None:
+    for object_id in object_ids:
+        update = await stack.scene.apply(SceneCommand(op=SceneOp.ARCHIVE, actor=SceneActor.USER, object_id=object_id))
+        assert update.changed
+
+
+async def until_true(predicate, *, timeout: float = 5.0) -> None:
+    async def poll() -> None:
+        while not await predicate():
+            await asyncio.sleep(0.01)
+
+    await asyncio.wait_for(poll(), timeout)
+
+
+async def test_a_full_scene_defers_stars_says_so_once_and_catches_up_oldest_first_after_archive():
+    # Magasin de travail à 2 éléments : les travaux différés en sont élagués,
+    # le rattrapage ne dépend pas de l'instantané de Core.
+    async with Stack(repository=nearly_full(2), work_max_items=2) as stack:
+        for index in range(6):
+            await stack.observe(obs(f"a{index}", label=f"tâche {index}"), obs(f"a{index}", WorkStatus.COMPLETED, at=1))
+        full = await stack.snapshot()
+        assert len(full.objects) == MAX_SCENE_OBJECTS and stack.scene.capacity.saturated
+        assert {f"claude:a{index}" for index in range(6)} & ids(full) == {"claude:a0", "claude:a1"}
+        assert stack.projector.pending_count == 4
+        assert len((await stack.work.snapshot()).items) == 2
+        saturated = stack.diagnostics.kinds(SCENE_PROJECTION_SATURATED_KIND)
+        assert saturated == [("warning", {"objects": MAX_SCENE_OBJECTS, "object_limit": MAX_SCENE_OBJECTS, "pending": 1})]
+        assert stack.diagnostics.kinds(SCENE_COMMAND_REFUSED_KIND) == []  # différé avant d'écrire : aucun refus
+
+        # L'utilisateur archive 3 objets : 3 étoiles manquées reviennent, sans nouvel événement de travail.
+        await archive(stack, "art-000", "art-001", "art-002")
+
+        async def three_back() -> bool:
+            return stack.projector.pending_count == 1
+
+        await until_true(three_back)
+        await settled(stack.projector)
+        caught = await stack.snapshot()
+        assert {"claude:a2", "claude:a3", "claude:a4"} <= ids(caught) and "claude:a5" not in ids(caught)
+        assert caught.get_object("claude:a2").exec_state is ExecState.COMPLETED
+        assert caught.get_object("claude:a2").payload.title == "tâche 2"
+        assert stack.diagnostics.kinds(SCENE_PROJECTION_DESATURATED_KIND) == []
+
+        await archive(stack, "art-003")
+
+        async def all_back() -> bool:
+            return stack.projector.pending_count == 0
+
+        await until_true(all_back)
+        await settled(stack.projector)
+        assert "claude:a5" in ids(await stack.snapshot())
+    assert stack.projector.stats.caught_up == 4
+    desaturated = stack.diagnostics.kinds(SCENE_PROJECTION_DESATURATED_KIND)
+    assert len(desaturated) == 1 and desaturated[0][0] == "info"
+    assert desaturated[0][1]["dropped"] == 0 and desaturated[0][1]["deferred"] >= 4
+    assert len(stack.diagnostics.kinds(SCENE_PROJECTION_SATURATED_KIND)) == 1
+
+
+async def test_a_deferred_signal_and_its_parent_link_are_restored_when_space_frees():
+    async with Stack(repository=nearly_full(2)) as stack:
+        await stack.observe(obs("parent"), obs("running"))
+        await stack.observe(obs("child", parent_external_id="parent"), obs("running", WorkStatus.FAILED, at=1, error_class="boom"))
+        full = await stack.snapshot()
+        assert "claude:child" not in ids(full) and signal_object_id("claude:running") not in ids(full)
+        assert stack.projector.pending_count == 2
+
+        await archive(stack, "art-000", "art-001")
+
+        async def restored() -> bool:
+            return stack.projector.pending_count == 0
+
+        await until_true(restored)
+        await settled(stack.projector)
+        snapshot = await stack.snapshot()
+    assert is_live_signal(snapshot, signal_object_id("claude:running"))
+    assert snapshot.get_relation(parent_relation_id("claude:child")).from_id == "claude:parent"
+
+
+async def test_the_pending_set_is_bounded_and_forgets_the_oldest_with_one_warning():
+    async with Stack(repository=nearly_full(0), work_max_items=2, max_pending=3) as stack:
+        for index in range(5):
+            await stack.observe(obs(f"a{index}"), obs(f"a{index}", WorkStatus.COMPLETED, at=1))
+        assert stack.projector.pending_count == 3 and stack.projector.stats.pending_dropped == 2
+        assert [level for level, _ in stack.diagnostics.kinds(SCENE_PROJECTION_PENDING_OVERFLOW_KIND)] == ["warning"]
+
+        await archive(stack, *(f"art-{index:03d}" for index in range(5)))
+
+        async def drained() -> bool:
+            return stack.projector.pending_count == 0
+
+        await until_true(drained)
+        await settled(stack.projector)
+        snapshot = await stack.snapshot()
+    assert {f"claude:a{index}" for index in range(5)} & ids(snapshot) == {"claude:a2", "claude:a3", "claude:a4"}
+    (_, desaturated), = stack.diagnostics.kinds(SCENE_PROJECTION_DESATURATED_KIND)
+    assert desaturated["dropped"] == 2
+
+
+async def test_a_pending_work_keeps_its_rank_when_it_changes_and_the_oldest_comes_back_first():
+    async with Stack(repository=nearly_full(0)) as stack:
+        await stack.observe(obs("first"), obs("second"))
+        await stack.observe(obs("first", WorkStatus.COMPLETED, at=1, summary="fini"))
+        assert stack.projector.pending_count == 2
+        await archive(stack, "art-000")
+
+        async def one_back() -> bool:
+            return stack.projector.pending_count == 1
+
+        await until_true(one_back)
+        await settled(stack.projector)
+        snapshot = await stack.snapshot()
+    assert "claude:first" in ids(snapshot) and "claude:second" not in ids(snapshot)
+    assert snapshot.get_object("claude:first").exec_state is ExecState.COMPLETED  # dernier état connu
+
+
+async def test_a_scene_full_refusal_raced_by_another_writer_is_deferred_too():
+    async with Stack(repository=nearly_full(1)) as stack:
+        original = stack.scene.apply
+        raced = False
+
+        async def racing(command):
+            nonlocal raced
+            if not raced and command.actor is SceneActor.RUNTIME and command.op is SceneOp.UPSERT_OBJECT:
+                raced = True  # l'utilisateur prend la dernière place entre le contrôle et l'écriture
+                await original(SceneCommand(
+                    op=SceneOp.UPSERT_OBJECT, actor=SceneActor.USER, object_id="note-last",
+                    fields=SceneObjectFields(kind=SceneObjectKind.ARTIFACT, category="note"),
+                ))
+            return await original(command)
+
+        stack.scene.apply = racing
+        await stack.observe(obs("a"))
+        assert raced and stack.projector.pending_count == 1 and "claude:a" not in ids(await stack.snapshot())
+        assert len(stack.diagnostics.kinds(SCENE_PROJECTION_SATURATED_KIND)) == 1
+        await archive(stack, "note-last")
+
+        async def back() -> bool:
+            return stack.projector.pending_count == 0
+
+        await until_true(back)
+        assert "claude:a" in ids(await stack.snapshot())
+
+
+async def test_space_is_rechecked_periodically_even_without_a_scene_revision():
+    async with Stack(repository=nearly_full(0), saturation_retry_s=0.05) as stack:
+        await stack.observe(obs("late"))
+        assert stack.projector.pending_count == 1
+        # Place libérée sans révision visible par la veille (magasin modifié en
+        # dessous) : seul le contrôle périodique peut la voir.
+        stack.scene._snapshot = SceneSnapshot(
+            scene_id="scene-memory", revision=stack.scene._snapshot.revision, objects=stack.scene._snapshot.objects[1:]
+        )
+        stack.repository.stored = stack.scene._snapshot
+
+        async def created() -> bool:
+            return stack.projector.pending_count == 0
+
+        await until_true(created)
+        assert "claude:late" in ids(await stack.snapshot())
 
 
 # --- arrêt de Core ------------------------------------------------------------

@@ -52,6 +52,12 @@ def _work_error_class(exc: BaseException) -> str:
     return name if name.isascii() and name else "error"
 
 
+def is_speculative_job(job: Job) -> bool:
+    """Vrai pour une analyse spéculative du back brain (`scope = speculative_analysis`)."""
+
+    return isinstance(job.payload, dict) and job.payload.get("scope") == "speculative_analysis"
+
+
 class SystemClock:
     def now(self) -> datetime:
         return utc_now()
@@ -577,7 +583,11 @@ class JobService:
         job, ni empecher sa persistance ou ses evenements `job.*`.
         """
 
-        if self.work_state is None:
+        if self.work_state is None or is_speculative_job(job):
+            # Une analyse spéculative n'est pas un travail du cerveau : ni
+            # pendant son exécution (`OwnedJobExecution._observe_work`) ni à la
+            # reprise après redémarrage (`recover`), elle n'entre dans l'état de
+            # travail, donc jamais dans la scène.
             return
         try:
             await self.work_state.observe(

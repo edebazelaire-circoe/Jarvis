@@ -36,7 +36,7 @@ from typing import Any, Awaitable, Callable, Protocol
 
 import aiohttp
 
-from jarvis.domain.scene import SceneActor, SceneCommand, SceneCommandOutcome, ScenePatch, SceneSnapshot
+from jarvis.domain.scene import MAX_SCENE_OBJECTS, SceneActor, SceneCommand, SceneCommandOutcome, ScenePatch, SceneSnapshot
 from jarvis.protocol import scene_wire
 from jarvis.protocol.client import CoreProtocolError, LocalCoreClient
 from jarvis.runtime.agent_tasks import truncate
@@ -498,7 +498,15 @@ class CoreSceneView:
 
     @staticmethod
     def _ready(body: dict[str, Any]) -> dict[str, Any]:
-        return {"source": SCENE_VIEW_SOURCE, "core_reachable": True, "scene": {"state": "ready", "code": None}, **body, "error": None}
+        scene: dict[str, Any] = {"state": "ready", "code": None}
+        snapshot = body.get("snapshot")
+        if isinstance(snapshot, dict):
+            # Saturation (Slice 04) : déduite de l'instantané validé, pour que
+            # la page puisse dire « scène pleine — archiver ». Une réponse de
+            # patchs n'a pas d'instantané : le bloc reste `{state, code}`.
+            objects = len(snapshot["objects"])
+            scene.update(saturated=objects >= MAX_SCENE_OBJECTS, objects=objects, object_limit=MAX_SCENE_OBJECTS)
+        return {"source": SCENE_VIEW_SOURCE, "core_reachable": True, "scene": scene, **body, "error": None}
 
     def _read_failure(self, exc: Exception, what: str, timeout_s: float) -> tuple[str, str, bool, dict[str, Any] | None]:
         """Classer l'échec d'une lecture : `(code, message pour la page, core_reachable, scene)`.
@@ -568,4 +576,11 @@ def _scene_block(exc: CoreProtocolError) -> dict[str, Any] | None:
     if not isinstance(scene, dict) or not isinstance(scene.get("state"), str):
         return None
     code = scene.get("code")
-    return {"state": scene["state"], "code": code if isinstance(code, str) else None}
+    block: dict[str, Any] = {"state": scene["state"], "code": code if isinstance(code, str) else None}
+    # Occupation (Slice 04), relayée seulement si Core l'a donnée et bien typée.
+    saturated, objects, limit = scene.get("saturated"), scene.get("objects"), scene.get("object_limit")
+    if isinstance(saturated, bool) and isinstance(limit, int) and not isinstance(limit, bool) and (
+        objects is None or (isinstance(objects, int) and not isinstance(objects, bool))
+    ):
+        block.update(saturated=saturated, objects=objects, object_limit=limit)
+    return block

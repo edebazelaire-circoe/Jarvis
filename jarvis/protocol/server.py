@@ -138,7 +138,7 @@ class LocalProtocolServer:
     async def health(self, request: web.Request) -> web.Response:
         # `scene` : disponibilité de la scène constellation (Slice 03). Elle ne
         # change pas `ready` : une scène refusée n'empêche pas Core de servir.
-        return web.json_response({"protocol_version": PROTOCOL_VERSION, "ready": self.core.health.ready, "status": self.core.health.status, "detail": self.core.health.detail, "scene": scene_wire.availability_block(self.core.scene.availability)})
+        return web.json_response({"protocol_version": PROTOCOL_VERSION, "ready": self.core.health.ready, "status": self.core.health.status, "detail": self.core.health.detail, "scene": scene_wire.availability_block(self.core.scene.availability, self.core.scene.capacity)})
 
     async def create_conversation(self, request: web.Request) -> web.Response:
         body = await request.json() if request.can_read_body else {}
@@ -524,7 +524,7 @@ class LocalProtocolServer:
 
         code = scene_wire.SCENE_UNAVAILABLE if isinstance(exc, SceneUnavailableError) else scene_wire.SCENE_PERSIST_FAILED
         return web.json_response(
-            scene_wire.error_body(code, str(exc), scene=scene_wire.availability_block(self.core.scene.availability), store_code=exc.code.value),
+            scene_wire.error_body(code, str(exc), scene=scene_wire.availability_block(self.core.scene.availability, self.core.scene.capacity), store_code=exc.code.value),
             status=503,
         )
 

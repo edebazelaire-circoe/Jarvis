@@ -31,6 +31,7 @@ from jarvis.core.scene_service import (
     SCENE_COMMAND_REFUSED_KIND,
     SCENE_LOADED_KIND,
     SCENE_PERSIST_FAILED_KIND,
+    SCENE_PERSIST_RESTORED_KIND,
     SCENE_SWEEP_FAILED_KIND,
     SCENE_SWEPT_KIND,
     SCENE_UNAVAILABLE_KIND,
@@ -640,3 +641,39 @@ async def test_start_journals_the_sweep_and_never_fails_because_of_it(sweep, exp
     service = SceneService(repository, diagnostics=diagnostics)
     assert (await service.start()).state is SceneState.READY
     assert [event for event in diagnostics.events if event[0] in (SCENE_SWEPT_KIND, SCENE_SWEEP_FAILED_KIND)] == expected
+
+
+async def test_repeated_identical_persist_failures_are_journaled_once_until_a_commit_succeeds():
+    """Slice 04 QA F3 : un écrivain qui réessaie pendant une panne ne remplit pas le journal d'erreurs."""
+
+    service, repository, diagnostics = await started()
+    repository.fail_commit = SceneStoreError(SceneStoreErrorCode.STORAGE_IO, "disk unavailable")
+    for _ in range(5):
+        with pytest.raises(ScenePersistenceError):
+            await service.apply(star("star-a"))
+    assert len(diagnostics.kinds(SCENE_PERSIST_FAILED_KIND)) == 1
+    repository.fail_commit = OSError("another cause")
+    with pytest.raises(ScenePersistenceError):
+        await service.apply(star("star-a"))
+    failed = diagnostics.kinds(SCENE_PERSIST_FAILED_KIND)
+    assert len(failed) == 2 and failed[1][1]["suppressed"] == 4 and "OSError" in failed[1][1]["error"]
+
+    repository.fail_commit = None
+    assert (await service.apply(star("star-a"))).changed
+    assert diagnostics.kinds(SCENE_PERSIST_RESTORED_KIND) == [("info", {"revision": 1, "code": "storage_io", "suppressed": 0})]
+    assert (await service.apply(star("star-b"))).changed
+    assert len(diagnostics.kinds(SCENE_PERSIST_RESTORED_KIND)) == 1
+
+    repository.fail_commit = SceneStoreError(SceneStoreErrorCode.STORAGE_IO, "disk unavailable")
+    with pytest.raises(ScenePersistenceError):
+        await service.apply(star("star-c"))
+    assert len(diagnostics.kinds(SCENE_PERSIST_FAILED_KIND)) == 3  # nouvelle panne : de nouveau journalisée
+
+
+async def test_capacity_counts_active_objects_against_the_limit():
+    service, _, _ = await started()
+    assert (service.capacity.objects, service.capacity.object_limit, service.capacity.saturated) == (0, 512, False)
+    await service.apply(star("star-a"))
+    assert service.capacity.objects == 1
+    await service.close()
+    assert (service.capacity.objects, service.capacity.saturated) == (None, False)

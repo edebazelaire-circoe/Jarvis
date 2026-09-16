@@ -32,7 +32,14 @@ Règles (voir `docs/ARCHITECTURE.md` › *Runtime scene projection*) :
   délie le lien `explains` (droit ouvert au runtime par la Slice 04) puis note
   l'état du travail dans l'`exec_state` du signal ;
 - **archivé** : une étoile archivée par l'utilisateur ne renaît jamais ; la
-  projection lit la pierre tombale avant d'écrire et n'envoie rien.
+  projection lit la pierre tombale avant d'écrire et n'envoie rien ;
+- **saturation** : scène pleine (`MAX_SCENE_OBJECTS`), une création d'étoile
+  ou de signal est différée, pas perdue. Le travail est retenu (dernier état
+  connu, au plus `MAX_PENDING_CREATIONS`, les plus anciens oubliés et comptés) ;
+  la saturation est journalisée une fois par épisode, et dès que de la place se
+  libère (archivage de l'utilisateur, ou au plus tard toutes les
+  `saturation_retry_s`) les créations différées reprennent, les plus anciennes
+  d'abord. Décision 12 : rien n'est retiré automatiquement.
 
 Robustesse : l'abonnement est tolérant (`lossy=True`), jamais évincé et sans
 effet sur les autres abonnés. Un saut de révision, un autre `store_id` ou le
@@ -57,6 +64,7 @@ from jarvis.domain._checks import MAX_ID_CHARS
 from jarvis.domain.scene import (
     EXECUTION_KINDS,
     MAX_PAYLOAD_SUMMARY_CHARS,
+    MAX_SCENE_OBJECTS,
     MAX_TITLE_CHARS,
     ExecState,
     RelationKind,
@@ -68,6 +76,7 @@ from jarvis.domain.scene import (
     SceneObjectKind,
     SceneOp,
     ScenePayload,
+    SceneRefusal,
     SceneRelation,
     SceneSnapshot,
     SceneUpdate,
@@ -87,6 +96,9 @@ SCENE_PROJECTION_CONFLICT_KIND = "core.scene.projection_conflict"
 SCENE_STAR_CREATED_KIND = "core.scene.star_created"
 SCENE_SIGNAL_RAISED_KIND = "core.scene.signal_raised"
 SCENE_SIGNAL_RETIRED_KIND = "core.scene.signal_retired"
+SCENE_PROJECTION_SATURATED_KIND = "core.scene.projection_saturated"
+SCENE_PROJECTION_DESATURATED_KIND = "core.scene.projection_desaturated"
+SCENE_PROJECTION_PENDING_OVERFLOW_KIND = "core.scene.projection_pending_overflow"
 
 #: `WorkItem.kind` qui devient une étoile. `shell` et `other` : jamais
 #: (Décision 4). La catégorie de l'étoile reprend ce jeton.
@@ -101,6 +113,16 @@ MAX_SIGNAL_MESSAGE_CHARS = 240
 #: Charges écrites retenues pour savoir si une étoile porte encore la charge de
 #: la projection. Au-delà, la plus ancienne est oubliée (repli : même titre).
 MAX_REMEMBERED_PAYLOADS = 1_024
+#: Créations différées retenues pendant une saturation. Au-delà, la plus
+#: ancienne est oubliée (comptée, journalisée une fois par épisode) : elle ne
+#: revient que si son travail est encore dans l'instantané de Core.
+MAX_PENDING_CREATIONS = 1_024
+#: Contrôle d'espace périodique pendant une saturation (borne de
+#: `wait_for_revision`) ; un archivage le déclenche aussitôt.
+SATURATION_RETRY_S = 30.0
+#: Type interne que la veille d'espace met dans la file de la projection ;
+#: jamais publié sur le bus.
+_SPACE_CHECK = "scene.projection.space_check"
 _MAX_REPORTED = 64
 _HASH_CHARS = 24
 
@@ -175,6 +197,8 @@ class SceneProjectionTarget(Protocol):
 
     async def snapshot(self) -> SceneSnapshot: ...
 
+    async def wait_for_revision(self, after: int, *, timeout_s: float) -> int: ...
+
 
 @dataclass(slots=True)
 class SceneProjectionStats:
@@ -191,6 +215,9 @@ class SceneProjectionStats:
     skipped_archived: int = 0
     outages: int = 0
     failures: int = 0
+    deferred: int = 0
+    caught_up: int = 0
+    pending_dropped: int = 0
 
 
 # ------------------------------------------------------------------ texte
@@ -252,8 +279,13 @@ class SceneProjector:
         retry_min_s: float = 1.0,
         retry_max_s: float = 30.0,
         stop_drain_s: float = 2.0,
+        max_pending: int = MAX_PENDING_CREATIONS,
+        saturation_retry_s: float = SATURATION_RETRY_S,
     ) -> None:
-        if queue_size < 1 or retry_min_s <= 0 or retry_max_s < retry_min_s or stop_drain_s < 0:
+        if (
+            queue_size < 1 or retry_min_s <= 0 or retry_max_s < retry_min_s or stop_drain_s < 0
+            or max_pending < 1 or saturation_retry_s <= 0
+        ):
             raise ValueError("invalid scene projector bounds")
         self._work = work
         self._scene = scene
@@ -274,11 +306,26 @@ class SceneProjector:
         self._suppressed = 0
         self._reported: set[str] = set()
         self._written: OrderedDict[str, ScenePayload] = OrderedDict()
+        self._max_pending = max_pending
+        self._saturation_retry_s = saturation_retry_s
+        #: Créations différées faute de place, par travail, dans l'ordre du
+        #: premier report ; la valeur est le dernier état connu du travail.
+        self._pending: OrderedDict[tuple[str, str], WorkItem] = OrderedDict()
+        #: Épisode de saturation en cours : `None`, ou ses compteurs.
+        self._saturation: dict[str, int] | None = None
+        self._deferred_key: tuple[str, str] | None = None
+        self._watch: asyncio.Task[None] | None = None
         self.stats = SceneProjectionStats()
 
     @property
     def running(self) -> bool:
         return self._task is not None and not self._task.done()
+
+    @property
+    def pending_count(self) -> int:
+        """Créations d'étoile ou de signal en attente de place."""
+
+        return len(self._pending)
 
     # ------------------------------------------------------------ cycle de vie
 
@@ -296,6 +343,10 @@ class SceneProjector:
         queue, self._queue = self._queue, None
         if queue is not None:
             self._events.unsubscribe(queue)
+        watch, self._watch = self._watch, None
+        if watch is not None:
+            watch.cancel()
+            await asyncio.gather(watch, return_exceptions=True)
         if task is None:
             return
         if not task.done() and self._stop_drain_s > 0:
@@ -353,6 +404,13 @@ class SceneProjector:
                 return
 
     async def _handle(self, envelope: ProtocolEnvelope) -> None:
+        if envelope.message_type == _SPACE_CHECK:
+            if self._pending and self._dirty is None:
+                try:
+                    await self._catch_up()
+                except SceneStoreError as exc:
+                    self._outage(exc)
+            return
         if envelope.message_type != CORE_WORK_UPDATED:
             return
         self.stats.events += 1
@@ -387,6 +445,9 @@ class SceneProjector:
             return
         self._revision = revision
         try:
+            if self._pending:
+                # De la place a pu se libérer : les plus anciens d'abord.
+                await self._catch_up()
             await self._project(item)
         except SceneStoreError as exc:
             self._outage(exc)
@@ -410,6 +471,8 @@ class SceneProjector:
                     raise
                 except Exception as exc:
                     self._failed("reconcile", exc)
+            if self._pending:
+                await self._catch_up()
         except SceneStoreError as exc:
             self._outage(exc)
             return False
@@ -440,6 +503,100 @@ class SceneProjector:
     # ------------------------------------------------------------ projection
 
     async def _project(self, item: WorkItem) -> None:
+        """Projeter un travail ; s'il reste différé faute de place, il reste en attente."""
+
+        self._deferred_key = None
+        await self._project_item(item)
+        if self._deferred_key == item.key or self._pending.pop(item.key, None) is None:
+            return
+        if self._saturation is not None and not self._pending:
+            episode, self._saturation = self._saturation, None
+            self._emit(
+                SCENE_PROJECTION_DESATURATED_KIND,
+                "scène de nouveau disponible : toutes les créations différées sont rattrapées",
+                data={"objects": len((await self._scene.snapshot()).objects), "object_limit": MAX_SCENE_OBJECTS, **episode},
+            )
+
+    async def _catch_up(self) -> None:
+        """Rattraper les créations différées, les plus anciennes d'abord, tant qu'il y a de la place."""
+
+        while self._pending:
+            if len((await self._scene.snapshot()).objects) >= MAX_SCENE_OBJECTS:
+                return
+            key, item = next(iter(self._pending.items()))
+            applied_before = self.stats.applied
+            try:
+                await self._project(item)
+            except SceneStoreError:
+                raise
+            except Exception as exc:
+                # Un travail qu'on ne sait pas projeter ne bloque pas les autres.
+                self._pending.pop(key, None)
+                self._failed("catch_up", exc)
+                continue
+            if key in self._pending:
+                return  # de nouveau différé : plus de place
+            if self.stats.applied > applied_before:
+                self.stats.caught_up += 1
+
+    def _defer(self, item: WorkItem, objects: int) -> None:
+        """Retenir un travail dont la création (étoile ou signal) n'a pas trouvé de place."""
+
+        self._deferred_key = item.key
+        self.stats.deferred += 1
+        if self._saturation is None:
+            self._saturation = {"deferred": 0, "dropped": 0}
+            self._emit(
+                SCENE_PROJECTION_SATURATED_KIND,
+                "scène pleine : les nouvelles étoiles attendent un archivage, rien n'est retiré automatiquement",
+                level="warning",
+                data={
+                    "objects": objects,
+                    "object_limit": MAX_SCENE_OBJECTS,
+                    "pending": len(self._pending) + (0 if item.key in self._pending else 1),
+                },
+            )
+        self._saturation["deferred"] += 1
+        # Affectation sur place : un travail déjà en attente garde son rang.
+        self._pending[item.key] = item
+        while len(self._pending) > self._max_pending:
+            self._pending.popitem(last=False)
+            self.stats.pending_dropped += 1
+            self._saturation["dropped"] += 1
+            if self._saturation["dropped"] == 1:
+                self._emit(
+                    SCENE_PROJECTION_PENDING_OVERFLOW_KIND,
+                    "trop de créations en attente : les plus anciennes sont oubliées",
+                    level="warning",
+                    data={"max_pending": self._max_pending},
+                )
+        if self._watch is None or self._watch.done():
+            self._watch = asyncio.get_running_loop().create_task(self._watch_space(), name="jarvis-scene-projector-space")
+
+    async def _watch_space(self) -> None:
+        """Pendant une saturation : réveiller la boucle à chaque révision de scène, au plus tard toutes les `saturation_retry_s`."""
+
+        while self._pending:
+            try:
+                revision = (await self._scene.snapshot()).revision
+                await self._scene.wait_for_revision(revision, timeout_s=self._saturation_retry_s)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                # Scène indisponible (la boucle le journalise) ou défaut : on
+                # patiente, sans jamais tourner à vide.
+                if not isinstance(exc, SceneStoreError):
+                    self._failed("watch", exc)
+                await asyncio.sleep(self._saturation_retry_s)
+            queue = self._queue
+            if queue is None:
+                return
+            try:
+                queue.put_nowait(ProtocolEnvelope(message_type=_SPACE_CHECK, payload={}))
+            except asyncio.QueueFull:
+                pass  # la boucle est occupée : elle rattrape à l'événement suivant
+
+    async def _project_item(self, item: WorkItem) -> None:
         star_id = star_object_id(item.source, item.external_id)
         scene = await self._scene.snapshot()
         if scene.is_archived(star_id):
@@ -450,6 +607,9 @@ class SceneProjector:
         if current is None:
             kind = STAR_WORK_KINDS.get(item.kind)
             if kind is None:
+                return
+            if len(scene.objects) >= MAX_SCENE_OBJECTS:
+                self._defer(item, len(scene.objects))
                 return
             payload = star_payload(item)
             fields = SceneObjectFields(
@@ -466,6 +626,9 @@ class SceneProjector:
                 payload=payload if self._owns_payload(current, payload) else None,
             )
         update = await self._apply(SceneCommand(op=SceneOp.UPSERT_OBJECT, actor=SceneActor.RUNTIME, object_id=star_id, fields=fields))
+        if update.reason is SceneRefusal.SCENE_FULL:
+            self._defer(item, MAX_SCENE_OBJECTS)
+            return
         if update.changed and fields.payload is not None:
             self._remember(star_id, fields.payload)
         if current is None:
@@ -539,6 +702,9 @@ class SceneProjector:
         state = ExecState(item.status.value)
         if item.status in SIGNAL_STATUSES:
             live = is_live_signal(scene, signal_id)
+            if existing is None and len(scene.objects) >= MAX_SCENE_OBJECTS:
+                self._defer(item, len(scene.objects))
+                return
             update = await self._apply(
                 SceneCommand(
                     op=SceneOp.ATTACH_SIGNAL,
@@ -554,6 +720,9 @@ class SceneProjector:
                     ),
                 )
             )
+            if update.reason is SceneRefusal.SCENE_FULL:
+                self._defer(item, MAX_SCENE_OBJECTS)
+                return
             if update.changed and not live:
                 self._emit(
                     SCENE_SIGNAL_RAISED_KIND,

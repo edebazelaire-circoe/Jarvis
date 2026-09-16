@@ -144,7 +144,8 @@ async def test_a_valid_core_answer_is_served_with_declared_fields_only():
     patches = await view.patches(QUERY)
 
     assert snapshot["core_reachable"] is True and snapshot["error"] is None and "extra" not in snapshot
-    assert snapshot["scene"] == {"state": "ready", "code": None} and snapshot["snapshot"] == raw["snapshot"]
+    assert snapshot["scene"] == {"state": "ready", "code": None, "saturated": False, "objects": len(raw["snapshot"]["objects"]), "object_limit": 512}
+    assert snapshot["snapshot"] == raw["snapshot"]
     assert patches["patches"] == good_patches()["patches"] and patches["error"] is None and "extra" not in patches
 
 
@@ -633,3 +634,19 @@ async def test_snapshots_and_commands_never_queue_behind_long_polls(tmp_path):
     assert snapshot["error"] is None and status == 200 and body["outcome"] == "applied", (snapshot, body)
     assert elapsed < 1.5, elapsed
     assert all(result["error"] is None and result["revision"] == 1 for result in results)
+
+
+def test_the_scene_block_relays_capacity_only_when_core_gave_it_well_typed():
+    """Slice 04 QA F1 : `saturated`/`objects`/`object_limit` passent tels quels, ou pas du tout."""
+
+    from jarvis.runtime.scene_view import _scene_block
+
+    def block(scene):
+        return _scene_block(CoreProtocolError(503, "scene_unavailable", "x", details={"scene": scene}))
+
+    full = {"state": "ready", "code": None, "saturated": True, "objects": 512, "object_limit": 512}
+    assert block(full) == full
+    assert block({"state": "unavailable", "code": "corrupted", "saturated": False, "objects": None, "object_limit": 512})["objects"] is None
+    assert block({"state": "ready", "code": None}) == {"state": "ready", "code": None}
+    assert block({**full, "saturated": "yes"}) == {"state": "ready", "code": None}
+    assert block({**full, "objects": True}) == {"state": "ready", "code": None}

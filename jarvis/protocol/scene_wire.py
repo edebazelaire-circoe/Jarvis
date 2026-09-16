@@ -128,10 +128,18 @@ async def read_bounded_body(request: web.Request, limit: int = MAX_SCENE_COMMAND
     return bytes(raw)
 
 
-def availability_block(availability: Any) -> dict[str, Any]:
-    """`{state, code}` d'une `SceneAvailability` : ce que `/v1/health` et les erreurs 503 portent."""
+def availability_block(availability: Any, capacity: Any = None) -> dict[str, Any]:
+    """`{state, code}` d'une `SceneAvailability` : ce que `/v1/health` et les erreurs 503 portent.
 
-    return {"state": availability.state.value, "code": availability.code.value if availability.code is not None else None}
+    Avec `capacity` (`SceneCapacity`, Slice 04) : `saturated`, `objects`
+    (`null` si la scène n'est pas servie) et `object_limit` s'ajoutent, sans
+    toucher aux deux clés d'origine.
+    """
+
+    block = {"state": availability.state.value, "code": availability.code.value if availability.code is not None else None}
+    if capacity is not None:
+        block.update(saturated=capacity.saturated, objects=capacity.objects, object_limit=capacity.object_limit)
+    return block
 
 
 def snapshot_body(snapshot: SceneSnapshot, epoch: str | None) -> str:
