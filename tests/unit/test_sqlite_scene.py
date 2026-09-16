@@ -18,8 +18,12 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import os
 from pathlib import Path
 import sqlite3
+import stat
+import subprocess
+import sys
 
 import pytest
 
@@ -101,10 +105,11 @@ async def commit_all(repository: SQLiteSceneRepository, snapshot: SceneSnapshot,
 
 
 async def fresh(path: Path) -> tuple[SQLiteSceneRepository, SceneSnapshot]:
-    repository = SQLiteSceneRepository(path)
-    await repository.initialize()
-    assert await repository.load() is None
-    return repository, await repository.create("scene-test")
+    repository = SQLiteSceneRepository(path, scene_id_factory=lambda: "scene-test")
+    assert await repository.initialize() is True
+    snapshot = await repository.load()
+    assert snapshot == SceneSnapshot(scene_id="scene-test")
+    return repository, snapshot
 
 
 def digest(path: Path) -> str:
@@ -121,7 +126,7 @@ async def expect_refusal(path: Path, code: SceneStoreErrorCode, match: str) -> N
 
 
 def test_repository_matches_its_port():
-    for name in ("initialize", "load", "create", "commit", "archived_history", "close"):
+    for name in ("initialize", "load", "commit", "archived_history", "close"):
         assert callable(getattr(SQLiteSceneRepository, name)), name
         assert name in SceneRepository.__dict__
 
@@ -151,15 +156,12 @@ async def test_state_round_trips_after_each_commit_and_after_reopen(tmp_path):
     await reopened.close()
 
 
-async def test_create_is_single_and_scene_id_is_stable(tmp_path):
+async def test_scene_id_is_created_once_and_stays_stable(tmp_path):
     path = tmp_path / "scene.sqlite3"
-    repository, snapshot = await fresh(path)
-    with pytest.raises(SceneStoreError) as caught:
-        await repository.create("another")
-    assert caught.value.code is SceneStoreErrorCode.REVISION_CONFLICT
+    repository, _ = await fresh(path)
     await repository.close()
-    reopened = SQLiteSceneRepository(path)
-    await reopened.initialize()
+    reopened = SQLiteSceneRepository(path, scene_id_factory=lambda: "another")
+    assert await reopened.initialize() is False
     assert await reopened.load() == SceneSnapshot(scene_id="scene-test")
     await reopened.close()
 
@@ -245,7 +247,7 @@ async def test_a_file_that_is_not_a_database_is_refused_as_corrupted(tmp_path):
         ("UPDATE scene_objects SET data = json_set(data, '$.kind', 'comet') WHERE object_id = 'star-a'", "kind must be one of"),
         ("UPDATE scene_objects SET object_id = 'other' WHERE object_id = 'star-a'", "row other holds star-a"),
         ("DELETE FROM scene_objects WHERE object_id = 'star-c'", "must link active objects"),
-        ("DELETE FROM scene_meta", "rows but no scene_meta"),
+        ("DELETE FROM scene_meta", "holds no scene_meta row"),
         ("DROP TABLE scene_history", r"lacks tables \['scene_history'\]"),
     ],
 )
@@ -342,3 +344,188 @@ async def test_payload_columns_are_plain_json_of_the_domain_wire_form(tmp_path):
     conn.close()
     assert json.loads(data) == snapshot.objects[0].to_payload()
     assert version == 1
+
+
+# --- ouverture durcie (reprise QA de la Slice 02) --------------------------------------------
+
+
+class FailingConnection:
+    """Mandataire de connexion : lève au n-ième `execute`, ou sur `ROLLBACK`."""
+
+    def __init__(self, real: sqlite3.Connection, *, fail_at: int, after: bool = False, rollback_fails: bool = False):
+        self.real, self.fail_at, self.after, self.rollback_fails = real, fail_at, after, rollback_fails
+        self.calls = 0
+
+    @property
+    def in_transaction(self) -> bool:
+        return self.real.in_transaction
+
+    def execute(self, sql, *args):
+        if self.rollback_fails and sql == "ROLLBACK":
+            raise sqlite3.OperationalError("rollback injected failure")
+        index, self.calls = self.calls, self.calls + 1
+        if index == self.fail_at and not self.after:
+            raise sqlite3.OperationalError("disk I/O error (injected)")
+        result = self.real.execute(sql, *args)
+        if index == self.fail_at and self.after:
+            raise sqlite3.OperationalError("disk I/O error (injected)")
+        return result
+
+    def close(self):
+        self.real.close()
+
+
+def scene_files(path: Path) -> dict[str, str]:
+    return {item.name: digest(item) for item in sorted(path.parent.iterdir()) if item.name.startswith(path.name)}
+
+
+async def test_a_missing_file_is_created_atomically_with_its_scene(tmp_path):
+    path = tmp_path / "state" / "scene.sqlite3"
+    repository = SQLiteSceneRepository(path, scene_id_factory=lambda: "scene-created")
+    assert await repository.initialize() is True
+    assert await repository.load() == SceneSnapshot(scene_id="scene-created")
+    assert await repository.initialize() is False
+    await repository.close()
+    # Aucun temporaire de création ne traîne.
+    assert sorted(item.name for item in path.parent.iterdir()) == ["scene.sqlite3"]
+    reopened = SQLiteSceneRepository(path, scene_id_factory=lambda: "must-not-be-used")
+    assert await reopened.initialize() is False
+    assert (await reopened.load()).scene_id == "scene-created"
+    await reopened.close()
+
+
+async def test_a_failed_creation_leaves_no_file_behind(tmp_path, monkeypatch):
+    path = tmp_path / "scene.sqlite3"
+
+    def refuse(source, target):
+        raise PermissionError("replace refused (injected)")
+
+    monkeypatch.setattr(sqlite_scene, "replace_with_retry", refuse)
+    repository = SQLiteSceneRepository(path)
+    with pytest.raises(SceneStoreError, match="cannot be created: PermissionError: replace refused") as caught:
+        await repository.initialize()
+    assert caught.value.code is SceneStoreErrorCode.STORAGE_IO
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("content", [b"", None])
+async def test_an_empty_or_tableless_file_is_refused_never_recreated(tmp_path, content):
+    path = tmp_path / "scene.sqlite3"
+    if content is None:
+        # Une base SQLite valide mais sans aucune table.
+        conn = sqlite3.connect(path)
+        conn.execute("PRAGMA user_version = 7")
+        conn.close()
+    else:
+        path.write_bytes(content)
+    before = scene_files(path)
+    await expect_refusal(path, SceneStoreErrorCode.CORRUPTED, "holds no table .*never recreated")
+    assert scene_files(path) == before
+
+
+async def test_an_orphan_wal_without_its_database_is_refused(tmp_path):
+    path = tmp_path / "scene.sqlite3"
+    (tmp_path / "scene.sqlite3-wal").write_bytes(b"stale wal")
+    await expect_refusal(path, SceneStoreErrorCode.CORRUPTED, "moved without it")
+    assert not path.exists()
+
+
+async def test_a_refused_file_with_a_pending_wal_stays_byte_identical(tmp_path):
+    """Cas QA `wal_pending_newer` : une version plus récente vit encore dans le `-wal`."""
+
+    path = tmp_path / "scene.sqlite3"
+    repository, _ = await fresh(path)
+    await repository.close()
+    code = (
+        "import sqlite3, os, sys; c = sqlite3.connect(sys.argv[1], isolation_level=None);"
+        "c.execute('PRAGMA journal_mode=WAL'); c.execute('PRAGMA wal_autocheckpoint=0');"
+        "c.execute('UPDATE schema_version SET version = 2'); os._exit(0)"
+    )
+    subprocess.run([sys.executable, "-c", code, str(path)], check=True)
+    before = scene_files(path)
+    assert set(before) == {"scene.sqlite3", "scene.sqlite3-shm", "scene.sqlite3-wal"}
+    await expect_refusal(path, SceneStoreErrorCode.SCHEMA_NEWER, "schema 2 is newer than supported 1")
+    assert scene_files(path) == before
+
+
+async def test_a_refused_file_leaves_no_stray_wal_or_shm(tmp_path):
+    path = tmp_path / "scene.sqlite3"
+    repository, _ = await fresh(path)
+    await repository.close()
+    with sqlite3.connect(path) as conn:
+        conn.execute("UPDATE scene_meta SET wire_schema_version = 9")
+    conn.close()
+    assert set(scene_files(path)) == {"scene.sqlite3"}
+    before = scene_files(path)
+    await expect_refusal(path, SceneStoreErrorCode.SCHEMA_NEWER, "payloads use schema 9")
+    assert scene_files(path) == before
+
+
+async def test_a_read_only_file_is_refused_at_start_without_traces(tmp_path):
+    path = tmp_path / "scene.sqlite3"
+    repository, _ = await fresh(path)
+    await repository.close()
+    before = scene_files(path)
+    os.chmod(path, stat.S_IREAD)
+    try:
+        await expect_refusal(path, SceneStoreErrorCode.STORAGE_IO, "is not writable")
+        assert scene_files(path) == before
+    finally:
+        os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+
+
+async def test_the_write_probe_refuses_what_os_access_cannot_see(tmp_path, monkeypatch):
+    path = tmp_path / "scene.sqlite3"
+    repository, _ = await fresh(path)
+    await repository.close()
+    os.chmod(path, stat.S_IREAD)
+    # `os.access` trompé (ACL, partage réseau) : la sonde d'écriture refuse quand même.
+    monkeypatch.setattr(sqlite_scene.os, "access", lambda *args, **kwargs: True)
+    try:
+        await expect_refusal(path, SceneStoreErrorCode.STORAGE_IO, "is not writable: OperationalError: attempt to write a readonly database")
+    finally:
+        os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+
+
+async def test_a_failure_right_after_begin_is_rolled_back(tmp_path):
+    repository, snapshot = await fresh(tmp_path / "scene.sqlite3")
+    update = apply_scene_command(snapshot, star("star-a"))
+    real = repository._conn
+    repository._conn = FailingConnection(real, fail_at=0, after=True)
+    try:
+        with pytest.raises(SceneStoreError, match="disk I/O error") as caught:
+            await repository.commit(snapshot, update.patch, update.snapshot)
+    finally:
+        repository._conn = real
+    assert (caught.value.code, caught.value.fatal, real.in_transaction) == (SceneStoreErrorCode.STORAGE_IO, False, False)
+    await repository.commit(snapshot, update.patch, update.snapshot)
+    assert await repository.load() == update.snapshot
+    await repository.close()
+
+
+async def test_a_failed_rollback_is_fatal(tmp_path):
+    repository, snapshot = await fresh(tmp_path / "scene.sqlite3")
+    update = apply_scene_command(snapshot, star("star-a"))
+    real = repository._conn
+    repository._conn = FailingConnection(real, fail_at=2, rollback_fails=True)
+    try:
+        with pytest.raises(SceneStoreError, match="left inside a transaction after OperationalError") as caught:
+            await repository.commit(snapshot, update.patch, update.snapshot)
+    finally:
+        repository._conn = real
+    assert (caught.value.code, caught.value.fatal) == (SceneStoreErrorCode.STORAGE_IO, True)
+    assert "rollback failed" in " ".join(getattr(caught.value.__cause__, "__notes__", []))
+    await repository.close()
+
+
+async def test_an_integrity_error_during_commit_is_a_revision_conflict(tmp_path):
+    path = tmp_path / "scene.sqlite3"
+    repository, snapshot = await fresh(path)
+    snapshot = await commit_all(repository, snapshot, [star("star-a")])
+    # Le disque porte déjà une pierre tombale que Core ignore.
+    await repository._run(lambda conn: conn.execute("INSERT INTO scene_tombstones(object_id, position) VALUES ('star-a', 99)"))
+    update = apply_scene_command(snapshot, archive("star-a"))
+    with pytest.raises(SceneStoreError, match="IntegrityError") as caught:
+        await repository.commit(snapshot, update.patch, update.snapshot)
+    assert caught.value.code is SceneStoreErrorCode.REVISION_CONFLICT
+    await repository.close()

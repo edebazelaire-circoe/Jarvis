@@ -36,21 +36,29 @@ class SceneStoreErrorCode(StrEnum):
     #: Fichier illisible par SQLite, contrôle d'intégrité en échec, ou ligne
     #: stockée qui ne se décode pas en scène valide.
     CORRUPTED = "corrupted"
-    #: Le fichier ne s'ouvre pas ou ne s'écrit pas (disque, droits, verrou).
+    #: Le fichier ne s'ouvre pas ou ne s'écrit pas (disque, droits, lecture
+    #: seule, verrou), ou la connexion est restée coincée dans une transaction.
     STORAGE_IO = "storage_io"
-    #: La révision stockée ne suit pas celle que Core croit tenir : deux
-    #: écrivains, ou un état divergé. Rien n'est écrit.
+    #: La révision stockée ne suit pas celle que Core croit tenir (deux
+    #: écrivains, écriture déjà faite, contrainte violée) : le disque a divergé
+    #: de la mémoire. Rien n'est écrit.
     REVISION_CONFLICT = "revision_conflict"
     #: Scène jamais chargée (refus au démarrage) ou déjà fermée.
     UNAVAILABLE = "unavailable"
 
 
 class SceneStoreError(RuntimeError):
-    """Erreur explicite du magasin de scène. `code` est stable, le message dit la cause réelle."""
+    """Erreur explicite du magasin de scène. `code` est stable, le message dit la cause réelle.
 
-    def __init__(self, code: SceneStoreErrorCode, message: str) -> None:
+    `fatal` : le stockage ne peut plus servir d'écriture fiable (connexion
+    restée dans une transaction) ; le service rend la scène indisponible,
+    quel que soit `code`.
+    """
+
+    def __init__(self, code: SceneStoreErrorCode, message: str, *, fatal: bool = False) -> None:
         super().__init__(message)
         self.code = code
+        self.fatal = fatal
 
 
 class SceneUnavailableError(SceneStoreError):
@@ -58,7 +66,15 @@ class SceneUnavailableError(SceneStoreError):
 
 
 class ScenePersistenceError(SceneStoreError):
-    """Une commande appliquée n'a pas pu être persistée : révision inchangée, rien de visible."""
+    """L'écriture d'une commande appliquée a échoué : révision en mémoire inchangée, rien de visible.
+
+    Limite assumée : SQLite peut valider le `COMMIT` sur disque et remonter
+    pourtant une erreur (E/S à la toute fin). La commande est alors peut-être
+    **déjà durable** alors que Core la dit non persistée. Rien ne se perd en
+    silence : la commande suivante échoue fermée (`revision_conflict`, scène
+    rendue indisponible) et un redémarrage recharge la révision réellement
+    écrite.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,20 +141,20 @@ class SceneRepository(Protocol):
     """Persistance durable de la scène active et de son historique.
 
     - `initialize` ouvre le stockage et refuse (`SceneStoreError`) une version
-      plus récente ou inconnue et un fichier corrompu, sans jamais l'effacer ;
-    - `load` rend la scène persistée, ou `None` si aucune n'a encore été créée ;
-    - `create` enregistre une scène vide et son `scene_id` stable ;
+      plus récente ou inconnue, un fichier corrompu (vide compris) ou non
+      inscriptible, sans jamais le modifier ; si le fichier n'existe pas, il
+      crée atomiquement une scène vide et son `scene_id` stable, et rend
+      `True` ;
+    - `load` rend la scène persistée ;
     - `commit` écrit, en une seule transaction, l'état qui résulte de
       `patch` appliqué à `previous` ; il refuse si la révision stockée n'est
       pas `previous.revision` (`REVISION_CONFLICT`) ;
     - `archived_history` lit l'historique alimenté par les `archive_object`.
     """
 
-    async def initialize(self) -> None: ...
+    async def initialize(self) -> bool: ...
 
-    async def load(self) -> SceneSnapshot | None: ...
-
-    async def create(self, scene_id: str) -> SceneSnapshot: ...
+    async def load(self) -> SceneSnapshot: ...
 
     async def commit(self, previous: SceneSnapshot, patch: ScenePatch, result: SceneSnapshot) -> None: ...
 

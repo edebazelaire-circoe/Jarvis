@@ -48,7 +48,6 @@ from jarvis.domain.scene import (
     SceneUpdate,
     apply_scene_command,
 )
-from jarvis.domain.v2 import new_id
 from jarvis.ports.scene import (
     ArchivedSceneObject,
     ScenePatchWindow,
@@ -135,13 +134,9 @@ class SceneService:
         async with self._lock:
             if self._availability.state is not SceneState.STARTING:
                 return self._availability
-            created = False
             try:
-                await self._repository.initialize()
+                created = await self._repository.initialize()
                 snapshot = await self._repository.load()
-                if snapshot is None:
-                    snapshot = await self._repository.create(new_id())
-                    created = True
             except Exception as exc:
                 code = exc.code if isinstance(exc, SceneStoreError) else SceneStoreErrorCode.STORAGE_IO
                 detail = f"{type(exc).__name__}: {exc}"
@@ -232,7 +227,12 @@ class SceneService:
 
         code = exc.code if isinstance(exc, SceneStoreError) else SceneStoreErrorCode.STORAGE_IO
         detail = f"{type(exc).__name__}: {exc}"
-        diverged = code in (SceneStoreErrorCode.REVISION_CONFLICT, SceneStoreErrorCode.UNAVAILABLE)
+        # Divergence ou stockage coincé : servir la mémoire mentirait au
+        # prochain redémarrage, ou chaque commande suivante échouerait.
+        diverged = (
+            (isinstance(exc, SceneStoreError) and exc.fatal)
+            or code in (SceneStoreErrorCode.REVISION_CONFLICT, SceneStoreErrorCode.UNAVAILABLE)
+        )
         self._emit(
             SCENE_PERSIST_FAILED_KIND,
             "commande de scène non persistée : révision inchangée, aucune attente réveillée"

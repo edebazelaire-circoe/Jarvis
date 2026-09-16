@@ -50,6 +50,7 @@ from jarvis.domain.scene import (
     SceneSnapshot,
     apply_scene_patch,
 )
+from tests.unit.test_sqlite_scene import FailingConnection
 from jarvis.ports.scene import (
     ArchivedSceneObject,
     SceneCommandSink,
@@ -87,15 +88,15 @@ class MemoryRepository:
         self.commits: list[int] = []
         self.closed = False
 
-    async def initialize(self) -> None:
+    async def initialize(self) -> bool:
         if self.fail_initialize is not None:
             raise self.fail_initialize
+        created = self.stored is None
+        if created:
+            self.stored = SceneSnapshot(scene_id="scene-memory")
+        return created
 
-    async def load(self) -> SceneSnapshot | None:
-        return self.stored
-
-    async def create(self, scene_id: str) -> SceneSnapshot:
-        self.stored = SceneSnapshot(scene_id=scene_id)
+    async def load(self) -> SceneSnapshot:
         return self.stored
 
     async def commit(self, previous: SceneSnapshot, patch: ScenePatch, result: SceneSnapshot) -> None:
@@ -431,7 +432,8 @@ async def test_many_concurrent_waiters_each_get_a_revision_past_their_own():
 async def test_scene_commands_never_reach_the_core_event_bus(tmp_path):
     """Garde de régression : `/v1/events` relaie tout le bus à Voice."""
 
-    core = JarvisCoreApplication(data_root=tmp_path)
+    # `scene_repository` : la garde porte sur le bus, pas sur SQLite.
+    core = JarvisCoreApplication(data_root=tmp_path, scene_repository=MemoryRepository())
     await core.start()
     published = []
     original = core.events.publish
@@ -538,3 +540,50 @@ def test_ring_size_is_bounded():
     for size in (0, PATCH_RING_SIZE + 1):
         with pytest.raises(ValueError):
             SceneService(MemoryRepository(), patch_ring_size=size)
+
+
+# --- stockage coincé (reprise QA de la Slice 02) -------------------------------------------
+
+
+async def test_a_fatal_storage_error_makes_the_scene_unavailable():
+    service, repository, diagnostics = await started()
+    waiter = asyncio.create_task(service.wait_for_revision(0, timeout_s=5))
+    await settle()
+    repository.fail_commit = SceneStoreError(SceneStoreErrorCode.STORAGE_IO, "connection left inside a transaction", fatal=True)
+    with pytest.raises(ScenePersistenceError) as caught:
+        await service.apply(star("star-a"))
+    assert caught.value.code is SceneStoreErrorCode.STORAGE_IO
+    assert (service.availability.state, service.availability.code) == (SceneState.UNAVAILABLE, SceneStoreErrorCode.STORAGE_IO)
+    with pytest.raises(SceneUnavailableError):
+        await asyncio.wait_for(waiter, 1)
+    (level, data), = diagnostics.kinds(SCENE_PERSIST_FAILED_KIND)
+    assert (level, data["code"]) == ("error", "storage_io")
+
+
+@pytest.mark.parametrize(("fail_at", "after", "rollback_fails", "state"), [
+    (0, True, False, SceneState.READY),        # BEGIN a ouvert la transaction puis levé : annulée
+    (2, False, True, SceneState.UNAVAILABLE),  # écriture en échec et ROLLBACK impossible
+])
+async def test_real_store_failures_after_begin_or_on_rollback(tmp_path, fail_at, after, rollback_fails, state):
+    repository = SQLiteSceneRepository(tmp_path / "scene.sqlite3")
+    service, _, diagnostics = await started(repository)
+    real = repository._conn
+    repository._conn = FailingConnection(real, fail_at=fail_at, after=after, rollback_fails=rollback_fails)
+    try:
+        with pytest.raises(ScenePersistenceError) as caught:
+            await service.apply(star("star-a"))
+    finally:
+        repository._conn = real
+    assert caught.value.code is SceneStoreErrorCode.STORAGE_IO
+    assert service.availability.state is state
+    assert diagnostics.kinds(SCENE_PERSIST_FAILED_KIND)[0][0] == "error"
+    if state is SceneState.READY:
+        assert (await service.apply(star("star-a"))).snapshot.revision == 1
+    else:
+        with pytest.raises(SceneUnavailableError, match="left inside a transaction"):
+            await service.apply(star("star-a"))
+    await service.close()
+    reopened = SQLiteSceneRepository(tmp_path / "scene.sqlite3")
+    await reopened.initialize()
+    assert (await reopened.load()).revision == (1 if state is SceneState.READY else 0)
+    await reopened.close()

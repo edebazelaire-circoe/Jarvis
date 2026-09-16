@@ -22,23 +22,48 @@ suite de patchs à rejouer :
 - `scene_history` : la forme archivée de chaque objet, écrite par les
   opérations `archive_object`.
 
+Ouverture, dans cet ordre :
+
+1. fichier **absent** (et pas de `-wal` orphelin) : il est créé de façon
+   atomique — schéma, `schema_version` et ligne `scene_meta` écrits dans un
+   fichier temporaire du même dossier, puis renommé (`replace_with_retry`).
+   Un arrêt brutal laisse au pire ce temporaire, jamais un `scene.sqlite3`
+   vide ou partiel ;
+2. fichier **présent** : toute la validation (version, tables, `quick_check`,
+   décodage complet de la scène) se fait sur une **copie** privée du fichier
+   et de son `-wal`, dans un dossier temporaire du système. Une connexion,
+   même en lecture seule (`mode=ro`), sur l'original réécrit son `-shm`, crée
+   des `-wal`/`-shm` ou reverse le WAL à la fermeture : un fichier refusé, son
+   `-wal` et son `-shm` restent ainsi octet pour octet identiques. Un fichier
+   vide ou sans table n'est jamais recréé : il est refusé (`corrupted`) ;
+3. accepté, le fichier doit être inscriptible : `os.access` avant d'ouvrir
+   (aucune trace laissée), puis une écriture annulée sous `BEGIN IMMEDIATE`
+   sur la vraie connexion (ACL, verrou d'un autre processus) ; sinon refus
+   `storage_io`.
+
 Chaque `commit` est une transaction `BEGIN IMMEDIATE … COMMIT` : un arrêt
-brutal laisse la révision précédente ou la suivante, jamais une moitié. Le
-chargement relit l'état par les décodeurs stricts du domaine
-(`SceneObject.from_payload`, `SceneSnapshot`) : une ligne invalide est une
-corruption, pas une valeur à deviner. Rien n'est rejoué, donc la garde des
-champs immuables demandée par l'amendement PM de la Slice 02 pour un rejeu de
-patchs stockés n'a pas lieu d'être ici.
+brutal laisse la révision précédente ou la suivante, jamais une moitié. Une
+connexion restée dans une transaction après un échec (rollback impossible)
+est signalée `fatal` : le service rend alors la scène indisponible. Un
+`COMMIT` peut réussir sur disque et remonter pourtant une erreur : la commande
+suivante échoue alors fermée (`revision_conflict`) et un redémarrage recharge
+la révision réellement écrite. Rien n'est rejoué depuis le stockage, donc la
+garde des champs immuables demandée par l'amendement PM de la Slice 02 pour un
+rejeu de patchs n'a pas lieu d'être ici.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
+import shutil
 import sqlite3
+import tempfile
 from typing import Any, Callable, TypeVar
 
+from jarvis.adapters.file_replace import replace_with_retry
 from jarvis.adapters.sqlite_state import run_sqlite_in_thread
 from jarvis.domain.scene import (
     MAX_ARCHIVED_IDS,
@@ -49,7 +74,7 @@ from jarvis.domain.scene import (
     SceneRelation,
     SceneSnapshot,
 )
-from jarvis.domain.v2 import utc_now
+from jarvis.domain.v2 import new_id, utc_now
 from jarvis.ports.scene import ArchivedSceneObject, SceneStoreError, SceneStoreErrorCode
 
 T = TypeVar("T")
@@ -100,6 +125,11 @@ def _sqlite_code(exc: sqlite3.Error) -> SceneStoreErrorCode:
     name = getattr(exc, "sqlite_errorname", "")
     if name.startswith(("SQLITE_NOTADB", "SQLITE_CORRUPT")):
         return SceneStoreErrorCode.CORRUPTED
+    if isinstance(exc, sqlite3.IntegrityError):
+        # Contrainte violée pendant une écriture : le disque ne contient pas ce
+        # que Core croit (ligne déjà là). Divergence, pas incident passager :
+        # la scène doit échouer fermée.
+        return SceneStoreErrorCode.REVISION_CONFLICT
     if isinstance(exc, sqlite3.OperationalError):
         # Verrou, disque plein, droits : le fichier n'est pas en cause.
         return SceneStoreErrorCode.STORAGE_IO
@@ -115,61 +145,175 @@ def _rollback(conn: sqlite3.Connection, exc: BaseException) -> None:
         conn.execute("ROLLBACK")
     except sqlite3.Error as rollback_exc:
         # L'erreur d'origine reste celle qui remonte ; l'échec du rollback
-        # l'accompagne au lieu de la remplacer. SQLite annule de toute façon
-        # une transaction non validée à la fermeture de la connexion.
+        # l'accompagne au lieu de la remplacer. La connexion reste alors dans
+        # la transaction : `_run` le voit et signale l'erreur `fatal`.
         exc.add_note(f"rollback failed: {type(rollback_exc).__name__}: {rollback_exc}")
 
 
 class SQLiteSceneRepository:
-    """Implémente `SceneRepository` sur un fichier SQLite dédié."""
+    """Implémente `SceneRepository` sur un fichier SQLite dédié.
 
-    def __init__(self, path: Path) -> None:
+    `scene_id_factory` : identifiant donné à une scène créée (`new_id` ;
+    injectable pour les tests).
+    """
+
+    def __init__(self, path: Path, *, scene_id_factory: Callable[[], str] = new_id) -> None:
         self.path = Path(path).resolve()
+        self._scene_id_factory = scene_id_factory
         self._lock = asyncio.Lock()
         self._conn: sqlite3.Connection | None = None
 
+    @property
+    def _wal_path(self) -> Path:
+        return self.path.with_name(f"{self.path.name}-wal")
+
     # ------------------------------------------------------------ ouverture
 
-    async def initialize(self) -> None:
+    async def initialize(self) -> bool:
         async with self._lock:
             if self._conn is not None:
-                return
-            await run_sqlite_in_thread(self._initialize_sync)
+                return False
+            return await run_sqlite_in_thread(self._initialize_sync)
 
-    def _initialize_sync(self) -> None:
+    def _initialize_sync(self) -> bool:
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            conn = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None)
+            exists = os.path.lexists(self.path)
+            wal_exists = os.path.lexists(self._wal_path)
+        except OSError as exc:
+            raise SceneStoreError(
+                SceneStoreErrorCode.STORAGE_IO, f"scene store {self.path} cannot be opened: {type(exc).__name__}: {exc}"
+            ) from exc
+        if not exists:
+            if wal_exists:
+                raise SceneStoreError(
+                    SceneStoreErrorCode.CORRUPTED,
+                    f"scene store {self.path} is missing but its -wal file exists: the database was moved without it",
+                )
+            self._create_file()
+        elif not self.path.is_file():
+            raise SceneStoreError(SceneStoreErrorCode.STORAGE_IO, f"scene store {self.path} is not a regular file")
+        else:
+            self._validate_copy()
+            self._check_access()
+        self._conn = self._open_writable()
+        return not exists
+
+    def _create_file(self) -> None:
+        """Créer schéma et scène dans un temporaire du même dossier, puis le renommer."""
+
+        temporary: Path | None = None
+        try:
+            handle, name = tempfile.mkstemp(dir=self.path.parent, prefix=f"{self.path.name}.", suffix=".creating")
+            os.close(handle)
+            temporary = Path(name)
+            conn = sqlite3.connect(temporary, isolation_level=None)
+            try:
+                now = utc_now().isoformat()
+                try:
+                    conn.execute("BEGIN IMMEDIATE")
+                    for statement in _DDL:
+                        conn.execute(statement)
+                    conn.execute("INSERT INTO schema_version(version) VALUES (?)", (_SCHEMA_VERSION,))
+                    conn.execute(
+                        "INSERT INTO scene_meta(singleton, scene_id, revision, wire_schema_version, created_at, updated_at)"
+                        " VALUES (1, ?, 0, ?, ?, ?)",
+                        (self._scene_id_factory(), SCENE_SCHEMA_VERSION, now, now),
+                    )
+                    conn.execute("COMMIT")
+                except BaseException as exc:
+                    _rollback(conn, exc)
+                    raise
+            finally:
+                conn.close()
+            replace_with_retry(temporary, self.path)
         except (OSError, sqlite3.Error) as exc:
+            error = SceneStoreError(
+                SceneStoreErrorCode.STORAGE_IO, f"scene store {self.path} cannot be created: {type(exc).__name__}: {exc}"
+            )
+            if temporary is not None:
+                for leftover in (temporary, temporary.with_name(f"{temporary.name}-journal")):
+                    try:
+                        leftover.unlink(missing_ok=True)
+                    except OSError as cleanup_exc:
+                        # Le temporaire porte un autre nom : il ne gêne aucune
+                        # ouverture future. Signalé avec l'erreur d'origine.
+                        error.add_note(f"temporary {leftover.name} not removed: {cleanup_exc}")
+            raise error from exc
+
+    def _validate_copy(self) -> None:
+        """Valider une copie privée : SQLite n'ouvre jamais l'original avant qu'il soit accepté."""
+
+        # `ignore_cleanup_errors` : une copie de contrôle restée dans le dossier
+        # temporaire du système ne gêne rien, alors qu'une erreur de nettoyage
+        # masquerait la vraie raison du refus.
+        with tempfile.TemporaryDirectory(prefix="jarvis-scene-check-", ignore_cleanup_errors=True) as directory:
+            copy = Path(directory) / self.path.name
+            try:
+                shutil.copyfile(self.path, copy)
+                if self._wal_path.is_file():
+                    shutil.copyfile(self._wal_path, copy.with_name(f"{copy.name}-wal"))
+            except OSError as exc:
+                raise SceneStoreError(
+                    SceneStoreErrorCode.STORAGE_IO, f"scene store {self.path} cannot be read: {type(exc).__name__}: {exc}"
+                ) from exc
+            conn = sqlite3.connect(copy, isolation_level=None)
+            try:
+                tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+                self._check_schema(conn, tables)
+                self._load_sync(conn)
+            except sqlite3.Error as exc:
+                raise SceneStoreError(
+                    _sqlite_code(exc), f"scene store {self.path} unusable: {type(exc).__name__}: {exc}"
+                ) from exc
+            finally:
+                conn.close()
+
+    def _check_access(self) -> None:
+        for target in (self.path, self.path.parent):
+            if not os.access(target, os.W_OK):
+                raise SceneStoreError(
+                    SceneStoreErrorCode.STORAGE_IO,
+                    f"scene store {target} is not writable: fix its permissions, then restart Core",
+                )
+
+    def _open_writable(self) -> sqlite3.Connection:
+        try:
+            conn = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None)
+        except sqlite3.Error as exc:
             raise SceneStoreError(
                 SceneStoreErrorCode.STORAGE_IO, f"scene store {self.path} cannot be opened: {type(exc).__name__}: {exc}"
             ) from exc
         try:
-            self._prepare(conn)
+            conn.execute("PRAGMA journal_mode=WAL")
+            # FULL : une révision servie doit survivre à une coupure de courant,
+            # puisque Core ne l'expose qu'après l'avoir persistée.
+            conn.execute("PRAGMA synchronous=FULL")
+            # Sonde d'écriture annulée : `os.access` ne voit ni les ACL ni le
+            # verrou d'un autre processus, et `BEGIN IMMEDIATE` seul réussit
+            # même sur un fichier en lecture seule ; l'écriture, non.
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                conn.execute("UPDATE schema_version SET version = version")
+            finally:
+                if conn.in_transaction:
+                    conn.execute("ROLLBACK")
         except sqlite3.Error as exc:
             conn.close()
             raise SceneStoreError(
-                _sqlite_code(exc), f"scene store {self.path} unusable: {type(exc).__name__}: {exc}"
+                SceneStoreErrorCode.STORAGE_IO, f"scene store {self.path} is not writable: {type(exc).__name__}: {exc}"
             ) from exc
         except BaseException:
             conn.close()
             raise
-        self._conn = conn
+        return conn
 
-    def _prepare(self, conn: sqlite3.Connection) -> None:
-        # Lecture seule d'abord : un fichier refusé n'est modifié en rien, pas
-        # même son en-tête de journal.
-        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-        if tables:
-            self._check_existing(conn, tables)
-        conn.execute("PRAGMA journal_mode=WAL")
-        # FULL : une révision servie doit survivre à une coupure de courant,
-        # puisque Core ne l'expose qu'après l'avoir persistée.
-        conn.execute("PRAGMA synchronous=FULL")
+    def _check_schema(self, conn: sqlite3.Connection, tables: set[str]) -> None:
         if not tables:
-            self._create_schema(conn)
-
-    def _check_existing(self, conn: sqlite3.Connection, tables: set[str]) -> None:
+            raise SceneStoreError(
+                SceneStoreErrorCode.CORRUPTED,
+                f"scene store {self.path} exists but holds no table (empty or truncated file): refused, never recreated",
+            )
         if "schema_version" not in tables:
             raise SceneStoreError(
                 SceneStoreErrorCode.SCHEMA_UNKNOWN,
@@ -204,18 +348,6 @@ class SQLiteSceneRepository:
                 f"scene store {self.path} quick_check failed: {_clip(quick[0]) if quick else 'no result'}",
             )
 
-    @staticmethod
-    def _create_schema(conn: sqlite3.Connection) -> None:
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            for statement in _DDL:
-                conn.execute(statement)
-            conn.execute("INSERT INTO schema_version(version) VALUES (?)", (_SCHEMA_VERSION,))
-            conn.execute("COMMIT")
-        except BaseException as exc:
-            _rollback(conn, exc)
-            raise
-
     # ------------------------------------------------------------ accès
 
     async def _run(self, fn: Callable[[sqlite3.Connection], T]) -> T:
@@ -225,35 +357,40 @@ class SQLiteSceneRepository:
                 raise SceneStoreError(SceneStoreErrorCode.UNAVAILABLE, "scene store is not initialized or already closed")
             try:
                 return await run_sqlite_in_thread(fn, conn)
-            except sqlite3.Error as exc:
-                raise SceneStoreError(_sqlite_code(exc), f"scene store {type(exc).__name__}: {exc}") from exc
+            except Exception as exc:
+                if conn.in_transaction:
+                    # Rollback impossible ou jamais atteint : la connexion reste
+                    # coincée dans une transaction et toute écriture suivante
+                    # échouerait. `fatal` : le service rend la scène indisponible.
+                    raise SceneStoreError(
+                        SceneStoreErrorCode.STORAGE_IO,
+                        f"scene store connection left inside a transaction after {type(exc).__name__}: {exc}",
+                        fatal=True,
+                    ) from exc
+                if isinstance(exc, sqlite3.Error):
+                    raise SceneStoreError(_sqlite_code(exc), f"scene store {type(exc).__name__}: {exc}") from exc
+                raise
 
-    async def load(self) -> SceneSnapshot | None:
+    async def load(self) -> SceneSnapshot:
         return await self._run(self._load_sync)
 
-    def _load_sync(self, conn: sqlite3.Connection) -> SceneSnapshot | None:
+    def _load_sync(self, conn: sqlite3.Connection) -> SceneSnapshot:
         meta = conn.execute("SELECT scene_id, revision, wire_schema_version FROM scene_meta WHERE singleton = 1").fetchone()
         if meta is None:
-            for table in ("scene_objects", "scene_relations", "scene_tombstones", "scene_history"):
-                if conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone() is not None:
-                    raise SceneStoreError(
-                        SceneStoreErrorCode.CORRUPTED, f"scene store holds {table} rows but no scene_meta"
-                    )
-            return None
+            # La création écrit cette ligne avec le schéma, dans le même
+            # fichier renommé : son absence n'est jamais un premier démarrage.
+            raise SceneStoreError(SceneStoreErrorCode.CORRUPTED, f"scene store {self.path} holds no scene_meta row")
         scene_id, revision, wire_version = meta
         self._check_wire_version(wire_version)
+        # Lignes lues d'abord (`fetchall`) : une erreur de décodage ne doit pas
+        # garder un curseur, donc le fichier, ouvert dans sa trace.
+        object_rows = conn.execute("SELECT object_id, data FROM scene_objects ORDER BY position").fetchall()
+        relation_rows = conn.execute("SELECT relation_id, data FROM scene_relations ORDER BY position").fetchall()
+        tombstone_rows = conn.execute("SELECT object_id FROM scene_tombstones ORDER BY position").fetchall()
         try:
-            objects = tuple(
-                self._decode_row(SceneObject, "scene_objects", key, data)
-                for key, data in conn.execute("SELECT object_id, data FROM scene_objects ORDER BY position")
-            )
-            relations = tuple(
-                self._decode_row(SceneRelation, "scene_relations", key, data)
-                for key, data in conn.execute("SELECT relation_id, data FROM scene_relations ORDER BY position")
-            )
-            archived_ids = tuple(
-                row[0] for row in conn.execute("SELECT object_id FROM scene_tombstones ORDER BY position")
-            )
+            objects = tuple(self._decode_row(SceneObject, "scene_objects", key, data) for key, data in object_rows)
+            relations = tuple(self._decode_row(SceneRelation, "scene_relations", key, data) for key, data in relation_rows)
+            archived_ids = tuple(row[0] for row in tombstone_rows)
             return SceneSnapshot(
                 scene_id=scene_id, revision=revision, objects=objects, relations=relations, archived_ids=archived_ids
             )
@@ -290,28 +427,6 @@ class SQLiteSceneRepository:
             raise ValueError(f"{table} row {_clip(key)} holds {_clip(stored_key)}")
         return value
 
-    async def create(self, scene_id: str) -> SceneSnapshot:
-        snapshot = SceneSnapshot(scene_id=scene_id)
-
-        def create(conn: sqlite3.Connection) -> None:
-            now = utc_now().isoformat()
-            conn.execute("BEGIN IMMEDIATE")
-            try:
-                if conn.execute("SELECT 1 FROM scene_meta WHERE singleton = 1").fetchone() is not None:
-                    raise SceneStoreError(SceneStoreErrorCode.REVISION_CONFLICT, "a scene already exists in this store")
-                conn.execute(
-                    "INSERT INTO scene_meta(singleton, scene_id, revision, wire_schema_version, created_at, updated_at)"
-                    " VALUES (1, ?, 0, ?, ?, ?)",
-                    (snapshot.scene_id, SCENE_SCHEMA_VERSION, now, now),
-                )
-                conn.execute("COMMIT")
-            except BaseException as exc:
-                _rollback(conn, exc)
-                raise
-
-        await self._run(create)
-        return snapshot
-
     async def commit(self, previous: SceneSnapshot, patch: ScenePatch, result: SceneSnapshot) -> None:
         if patch.revision != previous.revision + 1 or result.revision != patch.revision or result.scene_id != previous.scene_id:
             raise SceneStoreError(
@@ -323,8 +438,10 @@ class SQLiteSceneRepository:
     @staticmethod
     def _commit_sync(conn: sqlite3.Connection, previous: SceneSnapshot, patch: ScenePatch, result: SceneSnapshot) -> None:
         now = utc_now().isoformat()
-        conn.execute("BEGIN IMMEDIATE")
         try:
+            # Dans le `try` : si `BEGIN` a ouvert la transaction puis levé, elle
+            # est quand même annulée.
+            conn.execute("BEGIN IMMEDIATE")
             meta = conn.execute("SELECT scene_id, revision FROM scene_meta WHERE singleton = 1").fetchone()
             if meta is None or tuple(meta) != (previous.scene_id, previous.revision):
                 stored = "no scene" if meta is None else f"revision {meta[1]}"
