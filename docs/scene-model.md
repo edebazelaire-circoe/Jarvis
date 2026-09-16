@@ -24,7 +24,7 @@ composition, user constraints and the user's disposition of finished work.
 | `category` | short token (`research`, `error`, `castor`…, ≤ 32). **Primary colour source** (decision 7). |
 | `exec_state` | `WorkStatus` values plus `unknown`. Secondary cue only (halo, ring, badge), never colour. `unknown`: no Core work behind it, or not re-observed yet after a restart. |
 | `representation` | `point` \| `capsule` \| `window` (decision 6). |
-| `geometry` | `{x, y, w, h}` in scene units, or `null` = **unplaced** (the browser AutoResolver places it). `abs(x)`, `abs(y)` ≤ 100 000, `0 < w, h ≤ 100 000`. Cannot be cleared once set. |
+| `geometry` | `{x, y, w, h}` in scene units (top-left corner and size, see *Coordinate frame*), or `null` = **unplaced** (the browser AutoResolver places it). `abs(x)`, `abs(y)` ≤ 100 000, `0 < w, h ≤ 100 000`. Cannot be cleared once set. |
 | `layer` | integer 0–1000, stacking inside the scene container. |
 | `order` | integer tiebreak within a layer (±1 000 000). |
 | `visibility` | `visible` \| `hidden`. |
@@ -315,7 +315,33 @@ Residual risks (accepted by the PM after Slice 04 QA):
   contract;
 - `parent_of` **cycles** are not validated (Slice 01) and can appear from
   producer data or brain/user links; renderers walking parents must guard
-  against them (Slice 05).
+  against them (Slice 05: the AutoResolver's anchor walk stops at the first
+  repeated id).
+
+## Coordinate frame
+
+Slice 05 (`ARCHITECTURE.md` › *Scene renderer*). Geometry is in scene units and
+stays authoritative (decision 10): the renderer maps it to the window and never
+rewrites it.
+
+| Item | Rule |
+| --- | --- |
+| Origin | (0, 0) is the centre of the window (the scene container) |
+| Axes | x grows to the right, y grows downwards |
+| Box | `geometry {x, y}` is the top-left corner, `{w, h}` the size, same units |
+| Reference frame | x ∈ [−160, 160], y ∈ [−90, 90] (`SCENE_FRAME_HALF_WIDTH` = 160, `SCENE_FRAME_HALF_HEIGHT` = 90): always entirely visible |
+| Mapping | uniform scale `s = min(W / 320, H / 180)` pixels per unit, centred; no distortion |
+| Other aspect ratios | the long axis shows extra scene (visible x ∈ ±W/(2s), y ∈ ±H/(2s)); never bars |
+| Outside the window | the object stays in the scene, clipped at the window edge, counted "hors champ"; never moved |
+| Representation | a `point` is drawn at its box centre; `capsule` and `window` fill their box |
+| Unplaced | `geometry = null`: the browser AutoResolver places it inside x ∈ [−154, 144], y ∈ [−80, 80] and commits `set_geometry` with `placed_by = resolver` once |
+
+Examples: top left ≈ (−150, −80); the centre, where JARVIS's face sits, is
+(0, 0); a readable note ≈ 60 × 36. At 1920 × 1080, one unit is 6 px; at
+1280 × 720, 4 px.
+
+The brain reads this frame in the `scene_inspect` legend (`frame`), in the
+`geometry` argument description, and in one line of its display prompt.
 
 ## Bounds and wire form
 
@@ -409,6 +435,6 @@ brain (runtime-owned shape).
 Validation:
 
 ```powershell
-.venv/Scripts/python.exe -W error::ResourceWarning -m pytest -q -p no:cacheprovider tests/unit/test_scene_contracts.py tests/unit/test_work_state_contracts.py tests/unit/test_v2_architecture.py tests/unit/test_sqlite_scene.py tests/unit/test_scene_service.py tests/integration/test_v2_core_recovery.py tests/unit/test_scene_view.py tests/unit/test_scene_transport_client.py tests/integration/test_scene_transport.py tests/unit/test_scene_projector.py tests/integration/test_scene_projection_protocol.py tests/unit/test_display_mcp.py tests/unit/test_scene_settings.py
+.venv/Scripts/python.exe -W error::ResourceWarning -m pytest -q -p no:cacheprovider tests/unit/test_scene_contracts.py tests/unit/test_work_state_contracts.py tests/unit/test_v2_architecture.py tests/unit/test_sqlite_scene.py tests/unit/test_scene_service.py tests/integration/test_v2_core_recovery.py tests/unit/test_scene_view.py tests/unit/test_scene_transport_client.py tests/integration/test_scene_transport.py tests/unit/test_scene_projector.py tests/integration/test_scene_projection_protocol.py tests/unit/test_display_mcp.py tests/unit/test_scene_settings.py tests/unit/test_scene_renderer_logic.py
 .venv/Scripts/python.exe scripts/verify_release.py
 ```

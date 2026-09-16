@@ -1066,6 +1066,86 @@ que si la session se termine proprement : un arrêt du cerveau tue d'ordinaire l
 serveur sans cet événement, ce n'est pas une panne. Les actions d'affichage sont silencieuses à l'oral : le
 cerveau ne décrit pas ce qu'il place.
 
+### Scène constellation : ce que l'on voit dans le Control Center
+
+Quand `scene.enabled` est vrai (voir « outils d'affichage du cerveau » pour
+l'activer), la page du Control Center dessine la scène **par-dessus le visage**
+(circuit imprimé ou Omega) et **sous toutes les commandes** : barre du haut,
+dock, panneaux, pastilles, réglages, notifications, menu contextuel et
+Barehands restent cliquables au-dessus. L'interrupteur est relu à chaque
+sondage de `/api/status` (chaque seconde) : l'allumer ou l'éteindre agit sur la
+page ouverte sans la recharger. Éteint, la page est exactement celle d'avant :
+aucun calque, aucune requête de scène.
+
+**Ce qui est dessiné.**
+
+- **Couleur = catégorie** de l'objet (sous-agent blanc, tâche Core bleu pâle,
+  note ou document vert, recherche cyan, code violet, courriel ou roadmap
+  jaune, erreur rouge, interruption orange, blocage ambre ; une autre catégorie
+  reçoit toujours la même teinte tirée de son nom). L'état d'exécution ne
+  change jamais la couleur : il se lit à un **indice secondaire** — anneau qui
+  respire (en cours), anneau pointillé (en attente), double anneau (bloqué),
+  pastille « × » (échec), « ‖ » (interrompu), « – » (annulé), « ✓ » sur les
+  capsules et fenêtres terminées.
+- **Étoile** (point) : sous-agent ou tâche, reliée à son parent par un trait.
+  Son titre et son état apparaissent au survol ou au focus clavier (Tab).
+- **Signal** (losange près d'une étoile) : **vivant**, il est plein avec un
+  anneau qui s'élargit — vite pour un échec, lentement pour un blocage, **sans
+  mouvement et plus petit pour `process_stopped`** (arrêt du CLI du cerveau :
+  peu urgent). **Retiré** (le travail a repris), il ne reste qu'un contour de
+  losange, sans anneau ni trait.
+- **Capsule** : pastille avec le titre ; **fenêtre** : catégorie, titre,
+  résumé et liste d'éléments. Un objet épinglé porte une punaise. Un objet
+  masqué n'est pas dessiné. **Un travail terminé reste affiché** : seul
+  l'archivage (Slice 08) le retire.
+- Les couches se superposent comme le cerveau ou l'utilisateur l'ont voulu : une
+  fenêtre de couche 240 recouvre une fenêtre de couche 220.
+
+**Repère.** Origine (0, 0) au centre de la fenêtre, x vers la droite, y vers le
+bas. La zone x −160…160, y −90…90 est toujours entièrement visible, quelle que
+soit la taille de la fenêtre (même échelle en largeur et en hauteur) ; une
+fenêtre plus large ou plus haute que 16:9 montre de la scène en plus. Un objet
+placé au-delà du bord n'est jamais déplacé : l'indicateur dit « N objets hors
+champ ».
+
+**Placement automatique.** Un objet sans position (étoile d'un nouveau
+sous-agent, note créée sans géométrie par le cerveau) est placé par la page :
+les étoiles à gauche du visage, un enfant près de son parent, un signal contre
+son étoile, les résultats à droite. La page **enregistre ce placement une seule
+fois dans Core** (commande `set_geometry`, `placed_by = resolver`, journalisée
+`scene.command`) : après un rechargement, dans un autre onglet ou après un
+redémarrage, la disposition est identique. Un objet placé par le cerveau ou par
+vous, ou épinglé, n'est jamais déplacé par la page. Avec plusieurs onglets
+ouverts, un seul à la fois (un onglet visible) enregistre les placements.
+
+**Indicateur discret** (en haut à gauche, sous la barre) :
+
+| Texte | Sens | Que faire |
+| --- | --- | --- |
+| `Scène · chargement…` | première lecture en cours | rien |
+| `Scène figée — Core injoignable · depuis 42 s · nouvel essai dans 8 s` | la lecture a échoué ; la dernière scène connue reste affichée ; nouvel essai automatique (1 s, 2 s, 4 s… jusqu'à 30 s) | démarrer Core ; la page reprend seule |
+| `Scène indisponible — …` | même chose, mais aucune scène n'a encore été lue | idem |
+| `Scène pleine (512/512) — archiver des travaux terminés` | 512 objets actifs : Core refuse toute nouvelle étoile ou note | archiver des objets terminés (l'archivage groupé arrive au Slice 08) |
+| `N objets hors champ` | des objets sont placés au-delà du bord de la fenêtre | agrandir la fenêtre, ou demander au cerveau de les rapprocher |
+
+**Onglets et ressources.** Chaque onglet tient une seule requête longue vers
+`/api/scene/patches`. Un onglet caché (arrière-plan, fenêtre réduite) coupe la
+sienne et rattrape les changements en revenant. Si trop de pages sont ouvertes,
+le Control Center répond « réessayer » et la page attend le délai indiqué.
+
+**Dépanner.**
+
+| Symptôme | Cause probable | Action |
+| --- | --- | --- |
+| aucune scène alors que l'interrupteur est vrai | page servie avant la mise à jour, ou `JARVIS_SCENE_ENABLED=0` | recharger la page ; `GET /api/status` → bloc `scene` (`enabled`, `source`) |
+| la scène reste figée après le retour de Core | la page attend son prochain essai (≤ 30 s) | attendre ; la console du navigateur montre `[scène] scene.view_restored` puis `scene.snapshot_loaded` |
+| un objet apparaît puis bouge une fois | placé localement, puis position enregistrée différente (autre navigateur ou autre profil ouvert en même temps) | sans conséquence ; la position enregistrée fait foi ensuite |
+| `scene.command set_geometry` en grand nombre dans `runtime/trace.jsonl` | première ouverture d'une scène pleine d'objets jamais placés : une commande par objet, une seule fois | normal |
+| la page n'enregistre aucun placement (console : `scene.resolver_commit_retry`) | Core refuse ou ne répond pas ; trois essais par objet au plus (2 s, 8 s) | démarrer Core puis recharger la page |
+| animations absentes | réglage système « réduire les animations » | normal : anneaux fixes, pas de glissement |
+
+Détail technique : `docs/ARCHITECTURE.md`, « Scene renderer ».
+
 ## Deux architectures vocales : `legacy` et `continuous_brain`
 
 L'architecture choisit le chemin de code de la voix. Voice la lit au démarrage,
