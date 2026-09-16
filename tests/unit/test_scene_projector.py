@@ -92,6 +92,7 @@ class Stack:
         self.work = WorkStateStore(events=self.events, diagnostics=self.diagnostics, max_items=work_max_items)
         self.repository = repository or MemoryRepository()
         self.scene = SceneService(self.repository, diagnostics=self.diagnostics)
+        projector.setdefault("saturation_warning_interval_s", 0)
         self.projector = SceneProjector(
             work=self.work, scene=self.scene, events=self.events, diagnostics=self.diagnostics,
             queue_size=queue_size, retry_min_s=0.01, retry_max_s=0.05, stop_drain_s=stop_drain_s, **projector,
@@ -583,6 +584,10 @@ def nearly_full(free: int) -> MemoryRepository:
     return repository
 
 
+def space_tasks() -> list[asyncio.Task]:
+    return [task for task in asyncio.all_tasks() if task.get_name() == "jarvis-scene-projector-space" and not task.done()]
+
+
 async def archive(stack: Stack, *object_ids: str) -> None:
     for object_id in object_ids:
         update = await stack.scene.apply(SceneCommand(op=SceneOp.ARCHIVE, actor=SceneActor.USER, object_id=object_id))
@@ -609,7 +614,7 @@ async def test_a_full_scene_defers_stars_says_so_once_and_catches_up_oldest_firs
         assert stack.projector.pending_count == 4
         assert len((await stack.work.snapshot()).items) == 2
         saturated = stack.diagnostics.kinds(SCENE_PROJECTION_SATURATED_KIND)
-        assert saturated == [("warning", {"objects": MAX_SCENE_OBJECTS, "object_limit": MAX_SCENE_OBJECTS, "pending": 1})]
+        assert saturated == [("warning", {"objects": MAX_SCENE_OBJECTS, "object_limit": MAX_SCENE_OBJECTS, "pending": 1, "suppressed_episodes": 0})]
         assert stack.diagnostics.kinds(SCENE_COMMAND_REFUSED_KIND) == []  # différé avant d'écrire : aucun refus
 
         # L'utilisateur archive 3 objets : 3 étoiles manquées reviennent, sans nouvel événement de travail.
@@ -684,7 +689,7 @@ async def test_the_pending_set_is_bounded_and_forgets_the_oldest_with_one_warnin
 async def test_a_pending_work_keeps_its_rank_when_it_changes_and_the_oldest_comes_back_first():
     async with Stack(repository=nearly_full(0)) as stack:
         await stack.observe(obs("first"), obs("second"))
-        await stack.observe(obs("first", WorkStatus.COMPLETED, at=1, summary="fini"))
+        await stack.observe(obs("second", at=1, activity="avance"), obs("first", at=2, activity="avance aussi"))
         assert stack.projector.pending_count == 2
         await archive(stack, "art-000")
 
@@ -695,7 +700,115 @@ async def test_a_pending_work_keeps_its_rank_when_it_changes_and_the_oldest_come
         await settled(stack.projector)
         snapshot = await stack.snapshot()
     assert "claude:first" in ids(snapshot) and "claude:second" not in ids(snapshot)
-    assert snapshot.get_object("claude:first").exec_state is ExecState.COMPLETED  # dernier état connu
+    assert snapshot.get_object("claude:first").exec_state is ExecState.RUNNING
+
+
+async def test_running_work_takes_a_freed_slot_before_a_backlog_of_finished_work():
+    """QA O1 : Décision 4, un sous-agent en cours devient une étoile avant l'arriéré terminé."""
+
+    async with Stack(repository=nearly_full(0), work_max_items=3) as stack:
+        for index in range(4):
+            await stack.observe(obs(f"done{index}"), obs(f"done{index}", WorkStatus.COMPLETED, at=1))
+        await stack.observe(obs("fresh", at=2))
+        assert stack.projector.pending_count == 5
+        await archive(stack, "art-000")
+
+        async def one_created() -> bool:
+            return stack.projector.pending_count == 4
+
+        await until_true(one_created)
+        await settled(stack.projector)
+        snapshot = await stack.snapshot()
+        assert "claude:fresh" in ids(snapshot)
+        assert not {f"claude:done{index}" for index in range(4)} & ids(snapshot)
+        # Puis les terminés, plus anciens d'abord.
+        await archive(stack, "art-001")
+
+        async def two_created() -> bool:
+            return stack.projector.pending_count == 3
+
+        await until_true(two_created)
+        assert "claude:done0" in ids(await stack.snapshot())
+
+
+async def test_a_new_running_event_is_projected_before_the_finished_backlog_catches_up():
+    async with Stack(repository=nearly_full(0), work_max_items=3) as stack:
+        await stack.observe(obs("old"), obs("old", WorkStatus.COMPLETED, at=1))
+        assert stack.projector.pending_count == 1
+        # Place libérée sans que la veille ne le voie encore, puis un nouveau sous-agent arrive.
+        stack.projector._stopping = True  # veille inerte pour ce test
+        await stack.projector._stop_watch()
+        await archive(stack, "art-000")
+        await stack.observe(obs("new", at=2))
+        snapshot = await stack.snapshot()
+    assert "claude:new" in ids(snapshot) and "claude:old" not in ids(snapshot)
+
+
+async def test_the_pending_bound_drops_the_oldest_finished_work_before_active_work():
+    async with Stack(repository=nearly_full(0), work_max_items=4, max_pending=2) as stack:
+        await stack.observe(obs("active"))
+        await stack.observe(obs("done"), obs("done", WorkStatus.COMPLETED, at=1))
+        await stack.observe(obs("third"))
+        assert list(key[1] for key in stack.projector._pending) == ["active", "third"]
+        assert stack.projector.stats.pending_dropped == 1
+
+
+async def test_the_episode_closes_when_the_last_pending_entry_fails_and_the_next_one_is_announced():
+    """QA R3 : attente vidée par un échec de rattrapage = fin d'épisode, veille arrêtée."""
+
+    async with Stack(repository=nearly_full(0)) as stack:
+        await stack.observe(obs("only"))
+        original = stack.projector._project_item
+
+        async def boom(item):
+            if item.external_id == "only":
+                raise RuntimeError("qa boom")
+            return await original(item)
+
+        stack.projector._project_item = boom
+        await archive(stack, "art-000")
+
+        async def emptied() -> bool:
+            return stack.projector.pending_count == 0
+
+        await until_true(emptied)
+        await settled(stack.projector)
+        stack.projector._project_item = original
+        assert stack.projector._saturation is None
+        await asyncio.sleep(0.05)
+        assert space_tasks() == []
+        assert len(stack.diagnostics.kinds(SCENE_PROJECTION_DESATURATED_KIND)) == 1
+
+        await stack.observe(obs("fill"), obs("next"))
+        assert stack.projector.pending_count == 1
+    assert len(stack.diagnostics.kinds(SCENE_PROJECTION_SATURATED_KIND)) == 2  # intervalle 0 : pas de limitation ici
+
+
+async def test_saturation_warnings_are_throttled_across_archive_one_create_one_cycles():
+    """QA R2 : à la limite, un épisode par sous-agent ; au plus un avertissement par intervalle."""
+
+    clock = [1_000.0]
+    async with Stack(
+        repository=nearly_full(0), saturation_warning_interval_s=600, monotonic=lambda: clock[0]
+    ) as stack:
+        for cycle in range(5):
+            await stack.observe(obs(f"n{cycle}"))
+            await archive(stack, f"art-{cycle:03d}")
+
+            async def caught() -> bool:
+                return stack.projector.pending_count == 0
+
+            await until_true(caught)
+            await settled(stack.projector)
+            clock[0] += 60
+        await asyncio.sleep(0.05)
+        assert space_tasks() == []  # la veille s'arrête à chaque fin d'épisode
+        clock[0] += 600
+        await stack.observe(obs("late"))
+    saturated = stack.diagnostics.kinds(SCENE_PROJECTION_SATURATED_KIND)
+    assert [data["suppressed_episodes"] for _, data in saturated] == [0, 4]
+    # La fin n'est dite que pour les épisodes annoncés.
+    assert len(stack.diagnostics.kinds(SCENE_PROJECTION_DESATURATED_KIND)) == 1
 
 
 async def test_a_scene_full_refusal_raced_by_another_writer_is_deferred_too():
@@ -783,6 +896,29 @@ async def test_core_stop_stops_the_projection_before_closing_the_scene_and_lands
         await repository.close()
     # La fin posée par l'arrêt des jobs a atteint la scène avant sa fermeture.
     assert persisted.get_object(star_id).exec_state is ExecState.CANCELLED
+
+
+async def test_no_space_watcher_survives_core_stop_even_with_deferrals_during_the_drain(tmp_path):
+    """QA R1 (scénario `drain`) : des fins publiées pendant l'arrêt sont différées, sans veille orpheline."""
+
+    core = JarvisCoreApplication(data_root=tmp_path / "data", scene_repository=nearly_full(0))
+    await core.start()
+    original_stop = core.jobs.stop
+
+    async def jobs_stop() -> bool:
+        for index in range(30):
+            await core.work_state.observe(obs(f"d{index}"))
+        return await original_stop()
+
+    core.jobs.stop = jobs_stop
+    # Une veille déjà vivante avant l'arrêt (création différée) doit aussi s'éteindre.
+    await core.work_state.observe(obs("before-stop"))
+    await settled(core.scene_projector)
+    assert len(space_tasks()) == 1
+    await core.stop()
+    await asyncio.sleep(0)
+    assert space_tasks() == [] and core.scene_projector._watch is None
+    assert core.scene.availability.state is SceneState.CLOSED
 
 
 @pytest.mark.parametrize("failing", ["back_brain", "jobs"])

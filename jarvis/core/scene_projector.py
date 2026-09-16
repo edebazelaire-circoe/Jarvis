@@ -34,12 +34,15 @@ Règles (voir `docs/ARCHITECTURE.md` › *Runtime scene projection*) :
 - **archivé** : une étoile archivée par l'utilisateur ne renaît jamais ; la
   projection lit la pierre tombale avant d'écrire et n'envoie rien ;
 - **saturation** : scène pleine (`MAX_SCENE_OBJECTS`), une création d'étoile
-  ou de signal est différée, pas perdue. Le travail est retenu (dernier état
-  connu, au plus `MAX_PENDING_CREATIONS`, les plus anciens oubliés et comptés) ;
-  la saturation est journalisée une fois par épisode, et dès que de la place se
-  libère (archivage de l'utilisateur, ou au plus tard toutes les
-  `saturation_retry_s`) les créations différées reprennent, les plus anciennes
-  d'abord. Décision 12 : rien n'est retiré automatiquement.
+  ou de signal est différée, pas perdue tant que Core tourne. Le travail est
+  retenu en mémoire (dernier état connu, au plus `MAX_PENDING_CREATIONS` ; au-delà
+  les plus anciens terminés sont oubliés d'abord, et comptés). Dès que de la
+  place se libère (archivage de l'utilisateur, ou au plus tard toutes les
+  `saturation_retry_s`), les créations différées reprennent : travail en cours
+  d'abord (Décision 4), puis travail terminé, les plus anciens d'abord dans
+  chaque groupe. L'avertissement de saturation est limité à un toutes les
+  `SATURATION_WARNING_INTERVAL_S`. Décision 12 : rien n'est retiré
+  automatiquement.
 
 Robustesse : l'abonnement est tolérant (`lossy=True`), jamais évincé et sans
 effet sur les autres abonnés. Un saut de révision, un autre `store_id` ou le
@@ -56,7 +59,8 @@ import asyncio
 from collections import OrderedDict
 from dataclasses import dataclass
 import hashlib
-from typing import Protocol
+import time
+from typing import Callable, Protocol
 
 from jarvis.core.v2_services import CoreEventBus, NullDiagnosticSink
 from jarvis.core.work_state import CORE_WORK_UPDATED
@@ -120,6 +124,10 @@ MAX_PENDING_CREATIONS = 1_024
 #: Contrôle d'espace périodique pendant une saturation (borne de
 #: `wait_for_revision`) ; un archivage le déclenche aussitôt.
 SATURATION_RETRY_S = 30.0
+#: Au plus un avertissement `projection_saturated` par intervalle : à la limite,
+#: un utilisateur qui archive une étoile par nouveau sous-agent ouvre un
+#: épisode par sous-agent. Les épisodes tus sont comptés dans le suivant.
+SATURATION_WARNING_INTERVAL_S = 600.0
 #: Type interne que la veille d'espace met dans la file de la projection ;
 #: jamais publié sur le bus.
 _SPACE_CHECK = "scene.projection.space_check"
@@ -281,10 +289,12 @@ class SceneProjector:
         stop_drain_s: float = 2.0,
         max_pending: int = MAX_PENDING_CREATIONS,
         saturation_retry_s: float = SATURATION_RETRY_S,
+        saturation_warning_interval_s: float = SATURATION_WARNING_INTERVAL_S,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         if (
             queue_size < 1 or retry_min_s <= 0 or retry_max_s < retry_min_s or stop_drain_s < 0
-            or max_pending < 1 or saturation_retry_s <= 0
+            or max_pending < 1 or saturation_retry_s <= 0 or saturation_warning_interval_s < 0
         ):
             raise ValueError("invalid scene projector bounds")
         self._work = work
@@ -313,8 +323,15 @@ class SceneProjector:
         self._pending: OrderedDict[tuple[str, str], WorkItem] = OrderedDict()
         #: Épisode de saturation en cours : `None`, ou ses compteurs.
         self._saturation: dict[str, int] | None = None
+        #: L'épisode en cours a-t-il été annoncé (limitation des avertissements) ?
+        self._saturation_warned = False
+        self._saturation_warning_interval_s = saturation_warning_interval_s
+        self._monotonic = monotonic
+        self._last_saturation_warning: float | None = None
+        self._episodes_silenced = 0
         self._deferred_key: tuple[str, str] | None = None
         self._watch: asyncio.Task[None] | None = None
+        self._stopping = False
         self.stats = SceneProjectionStats()
 
     @property
@@ -335,19 +352,20 @@ class SceneProjector:
         if self._task is not None:
             return
         self._queue = self._events.subscribe(max_queue=self._queue_size, lossy=True)
+        self._stopping = False
         self._dirty = "start"
         self._task = asyncio.get_running_loop().create_task(self._run(self._queue), name="jarvis-scene-projector")
 
     async def stop(self) -> None:
         task, self._task = self._task, None
         queue, self._queue = self._queue, None
+        # Plus aucune veille d'espace ne démarre à partir d'ici, même si le
+        # vidage ci-dessous diffère encore des créations.
+        self._stopping = True
         if queue is not None:
             self._events.unsubscribe(queue)
-        watch, self._watch = self._watch, None
-        if watch is not None:
-            watch.cancel()
-            await asyncio.gather(watch, return_exceptions=True)
         if task is None:
+            await self._stop_watch()
             return
         if not task.done() and self._stop_drain_s > 0:
             # Les fins posées pendant l'arrêt (jobs annulés) sont déjà en file :
@@ -361,6 +379,14 @@ class SceneProjector:
                 pass
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+        # Après le vidage et la boucle : aucune veille ne leur survit.
+        await self._stop_watch()
+
+    async def _stop_watch(self) -> None:
+        watch, self._watch = self._watch, None
+        if watch is not None:
+            watch.cancel()
+            await asyncio.gather(watch, return_exceptions=True)
 
     # ------------------------------------------------------------ boucle
 
@@ -445,10 +471,16 @@ class SceneProjector:
             return
         self._revision = revision
         try:
-            if self._pending:
-                # De la place a pu se libérer : les plus anciens d'abord.
+            if self._pending and item.status.is_terminal:
+                # De la place a pu se libérer : l'attente passe avant un travail fini.
                 await self._catch_up()
-            await self._project(item)
+                await self._project(item)
+            else:
+                # Un travail en cours devient une étoile tout de suite (Décision 4),
+                # avant l'attente ; le rattrapage suit.
+                await self._project(item)
+                if self._pending:
+                    await self._catch_up()
         except SceneStoreError as exc:
             self._outage(exc)
         except Exception as exc:
@@ -509,21 +541,52 @@ class SceneProjector:
         await self._project_item(item)
         if self._deferred_key == item.key or self._pending.pop(item.key, None) is None:
             return
-        if self._saturation is not None and not self._pending:
-            episode, self._saturation = self._saturation, None
-            self._emit(
-                SCENE_PROJECTION_DESATURATED_KIND,
-                "scène de nouveau disponible : toutes les créations différées sont rattrapées",
-                data={"objects": len((await self._scene.snapshot()).objects), "object_limit": MAX_SCENE_OBJECTS, **episode},
-            )
+        await self._pending_changed()
+
+    async def _pending_changed(self) -> None:
+        """Après un retrait de l'attente, quelle qu'en soit la cause : attente vide = fin d'épisode.
+
+        La veille d'espace s'arrête aussitôt, et l'épisode se clôt ; la fin
+        n'est journalisée que pour un épisode annoncé.
+        """
+
+        if self._pending:
+            return
+        watch, self._watch = self._watch, None
+        if watch is not None and watch is not asyncio.current_task():
+            # Pas d'attente ici : la veille est suspendue sur une révision ou un
+            # délai, l'annulation la termine au tour de boucle suivant.
+            watch.cancel()
+        if self._saturation is None:
+            return
+        episode, warned = self._saturation, self._saturation_warned
+        self._saturation, self._saturation_warned = None, False
+        if not warned:
+            return
+        try:
+            objects: int | None = len((await self._scene.snapshot()).objects)
+        except SceneStoreError:
+            objects = None
+        self._emit(
+            SCENE_PROJECTION_DESATURATED_KIND,
+            "scène de nouveau disponible : plus aucune création en attente",
+            data={"objects": objects, "object_limit": MAX_SCENE_OBJECTS, **episode},
+        )
 
     async def _catch_up(self) -> None:
-        """Rattraper les créations différées, les plus anciennes d'abord, tant qu'il y a de la place."""
+        """Rattraper les créations différées tant qu'il y a de la place.
+
+        Ordre (décision PM après QA) : travail non terminé d'abord (en attente,
+        en cours, bloqué : il doit devenir une étoile tout de suite,
+        Décision 4), puis travail terminé ; les plus anciens d'abord dans chaque
+        groupe. Une étoile et son signal restent ensemble : `_project` pose le
+        signal juste après l'étoile quand la place le permet.
+        """
 
         while self._pending:
             if len((await self._scene.snapshot()).objects) >= MAX_SCENE_OBJECTS:
                 return
-            key, item = next(iter(self._pending.items()))
+            key, item = self._next_pending()
             applied_before = self.stats.applied
             try:
                 await self._project(item)
@@ -533,11 +596,16 @@ class SceneProjector:
                 # Un travail qu'on ne sait pas projeter ne bloque pas les autres.
                 self._pending.pop(key, None)
                 self._failed("catch_up", exc)
+                await self._pending_changed()
                 continue
             if key in self._pending:
                 return  # de nouveau différé : plus de place
             if self.stats.applied > applied_before:
                 self.stats.caught_up += 1
+
+    def _next_pending(self) -> tuple[tuple[str, str], WorkItem]:
+        active = next(((key, item) for key, item in self._pending.items() if not item.status.is_terminal), None)
+        return active or next(iter(self._pending.items()))
 
     def _defer(self, item: WorkItem, objects: int) -> None:
         """Retenir un travail dont la création (étoile ou signal) n'a pas trouvé de place."""
@@ -546,21 +614,35 @@ class SceneProjector:
         self.stats.deferred += 1
         if self._saturation is None:
             self._saturation = {"deferred": 0, "dropped": 0}
-            self._emit(
-                SCENE_PROJECTION_SATURATED_KIND,
-                "scène pleine : les nouvelles étoiles attendent un archivage, rien n'est retiré automatiquement",
-                level="warning",
-                data={
-                    "objects": objects,
-                    "object_limit": MAX_SCENE_OBJECTS,
-                    "pending": len(self._pending) + (0 if item.key in self._pending else 1),
-                },
-            )
+            now = self._monotonic()
+            last = self._last_saturation_warning
+            self._saturation_warned = last is None or now - last >= self._saturation_warning_interval_s
+            if self._saturation_warned:
+                self._last_saturation_warning = now
+                self._emit(
+                    SCENE_PROJECTION_SATURATED_KIND,
+                    "scène pleine : les nouvelles étoiles attendent un archivage, rien n'est retiré automatiquement",
+                    level="warning",
+                    data={
+                        "objects": objects,
+                        "object_limit": MAX_SCENE_OBJECTS,
+                        "pending": len(self._pending) + (0 if item.key in self._pending else 1),
+                        "suppressed_episodes": self._episodes_silenced,
+                    },
+                )
+                self._episodes_silenced = 0
+            else:
+                self._episodes_silenced += 1
         self._saturation["deferred"] += 1
         # Affectation sur place : un travail déjà en attente garde son rang.
         self._pending[item.key] = item
         while len(self._pending) > self._max_pending:
-            self._pending.popitem(last=False)
+            # Oublier d'abord le plus ancien travail terminé ; à défaut, le plus ancien.
+            victim = next((key for key, pending in self._pending.items() if pending.status.is_terminal), None)
+            if victim is None:
+                self._pending.popitem(last=False)
+            else:
+                del self._pending[victim]
             self.stats.pending_dropped += 1
             self._saturation["dropped"] += 1
             if self._saturation["dropped"] == 1:
@@ -570,13 +652,19 @@ class SceneProjector:
                     level="warning",
                     data={"max_pending": self._max_pending},
                 )
+        if self._stopping or self._queue is None:
+            return  # arrêt en cours : aucune veille ne doit survivre à `stop()`
         if self._watch is None or self._watch.done():
             self._watch = asyncio.get_running_loop().create_task(self._watch_space(), name="jarvis-scene-projector-space")
 
     async def _watch_space(self) -> None:
-        """Pendant une saturation : réveiller la boucle à chaque révision de scène, au plus tard toutes les `saturation_retry_s`."""
+        """Pendant une saturation : réveiller la boucle à chaque révision de scène, au plus tard toutes les `saturation_retry_s`.
 
-        while self._pending:
+        Vit seulement tant que l'attente n'est pas vide : annulée dès qu'elle se
+        vide (`_pending_changed`) et par `stop()`.
+        """
+
+        while self._pending and not self._stopping:
             try:
                 revision = (await self._scene.snapshot()).revision
                 await self._scene.wait_for_revision(revision, timeout_s=self._saturation_retry_s)
