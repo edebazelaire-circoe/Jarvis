@@ -1,0 +1,640 @@
+"""Outils d'affichage du cerveau (handoff jarvis-constellation-scene-runtime, Slice 06).
+
+Chaîne réelle : `SceneDisplayTools` → `CoreSceneTransport` → `LocalProtocolServer`
+(`/v1/scene/*`) → `JarvisCoreApplication.scene`. Ce qui doit tenir :
+
+- chaque outil agit comme `brain`, jamais autrement, sans `placed_by` ;
+- un refus du domaine devient une erreur d'outil avec issue, motif et phrase ;
+- une panne de transport devient une erreur d'outil claire, jamais une trace ;
+- les arguments sont bornés avant envoi ; `scene_inspect` tient sous 20 Ko ;
+- le catalogue n'offre ni archivage ni épinglage ;
+- le cerveau conversationnel reçoit le serveur par `--mcp-config` seulement
+  quand l'interrupteur est vrai ; `job_result` et `speculative_analysis`
+  restent inchangés.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+import pytest
+
+from jarvis.domain.prompt_registry import PromptTarget
+from jarvis.domain.scene import MAX_SCENE_OBJECTS
+from jarvis.runtime import claude_local, display_mcp
+from jarvis.runtime.claude_local import BRAIN_DISPLAY_PROMPT, BRAIN_SYSTEM_PROMPT, ClaudeLocalAgent
+from jarvis.runtime.display_mcp import (
+    CONFIG_FILE_NAME,
+    MAX_INSPECT_BYTES,
+    SERVER_NAME,
+    TOOL_NAMES,
+    DisplayMcpTarget,
+    DisplayToolError,
+    SceneDisplayTools,
+    build_server,
+    mcp_config,
+)
+from jarvis.runtime.journal import read_jsonl_tail
+from jarvis.runtime.prompt_catalog import default_prompt_registry
+from jarvis.runtime.scene_view import CoreSceneTransport
+from tests.integration.test_scene_transport import CoreProcess, free_port
+from tests.unit.test_scene_service import MemoryRepository
+
+
+# ------------------------------------------------------------------ fixtures
+
+
+@pytest.fixture
+async def core(tmp_path):
+    process = CoreProcess(tmp_path)
+    await process.start()
+    try:
+        yield process
+    finally:
+        await process.stop()
+
+
+@pytest.fixture
+async def tools(core, tmp_path):
+    runtime = tmp_path / "runtime"
+    from jarvis.runtime.journal import RuntimeJournal
+
+    display = SceneDisplayTools(
+        CoreSceneTransport(host="127.0.0.1", port=core.port, token_file=core.token_file), journal=RuntimeJournal(runtime)
+    )
+    try:
+        yield display
+    finally:
+        await display.close()
+
+
+async def user_command(core: CoreProcess, payload: dict) -> dict:
+    status, body, _ = await core.request("POST", "/v1/scene/commands", json={"schema_version": 1, "actor": "user", **payload})
+    assert status == 200, body
+    return body
+
+
+async def scene_object(core: CoreProcess, object_id: str) -> dict | None:
+    status, body, _ = await core.request("GET", "/v1/scene/snapshot")
+    assert status == 200
+    return next((item for item in body["snapshot"]["objects"] if item["object_id"] == object_id), None)
+
+
+class SpyTransport:
+    """Transport factice : enregistre les commandes, rend ce qu'on lui dit."""
+
+    def __init__(self, *, command=None, snapshot=None) -> None:  # noqa: ANN001
+        self.commands: list[dict] = []
+        self._command = command
+        self._snapshot = snapshot
+
+    async def scene_command(self, command, *, connect_timeout_s, read_timeout_s):  # noqa: ANN001
+        self.commands.append(command)
+        return await self._command(command) if self._command else {}
+
+    async def scene_snapshot(self):  # noqa: ANN201
+        return await self._snapshot() if self._snapshot else {}
+
+    async def close(self) -> None:
+        return None
+
+
+# ------------------------------------------------------------------ outils, chemin nominal
+
+
+async def test_create_inspect_update_link_and_hide_act_on_the_real_scene_as_brain(core, tools, tmp_path):
+    created = await tools.create_object(
+        kind="artifact", category="research", title="Synthèse X", summary="Trois points\n- a\n- b",
+        items=[{"label": "source", "url": "https://example.org"}], representation="capsule",
+    )
+    object_id = created["object_id"]
+    assert created["outcome"] == "applied" and object_id.startswith("brain-artifact-")
+    stored = await scene_object(core, object_id)
+    assert stored["origin"] == "brain" and stored["constraints"]["placed_by"] == "brain"
+    assert stored["geometry"] is None and stored["layer"] == 120  # couche par défaut de la nature, rien d'inventé
+    assert stored["payload"]["items"] == [{"label": "source", "ref": "", "url": "https://example.org"}]
+
+    listing = json.loads(await tools.inspect())
+    assert listing["scene"]["objects"] == 1 and listing["scene"]["object_limit"] == MAX_SCENE_OBJECTS
+    assert listing["scene"]["saturated"] is False and listing["scene"]["revision"] == 1
+    [row] = listing["o"]
+    assert row == [object_id, "artifact", "research", "brain", "unknown", "capsule", None, 120, 0, True, False, "brain", False, "Synthèse X"]
+    assert "truncated" not in listing
+
+    moved = await tools.update_object(object_id=object_id, geometry={"x": -800, "y": -450, "w": 320, "h": 180})
+    assert moved["command"] == "set_geometry" and moved["outcome"] == "applied"
+    retitled = await tools.update_object(object_id=object_id, title="Synthèse X, v2")
+    assert retitled["command"] == "patch_object"
+    stored = await scene_object(core, object_id)
+    assert stored["geometry"] == {"x": -800.0, "y": -450.0, "w": 320.0, "h": 180.0}
+    # Seul le titre a changé : résumé et entrées sont gardés.
+    assert stored["payload"]["title"] == "Synthèse X, v2" and stored["payload"]["summary"] == "Trois points\n- a\n- b"
+    assert len(stored["payload"]["items"]) == 1
+    reshaped = await tools.update_object(object_id=object_id, representation="window", geometry={"x": 0, "y": 0, "w": 600, "h": 400})
+    assert reshaped["command"] == "set_representation"
+    assert (await scene_object(core, object_id))["representation"] == "window"
+
+    group = await tools.create_object(kind="group", category="plan", title="Groupe")
+    linked = await tools.link(from_id=group["object_id"], to_id=object_id, kind="groups")
+    assert linked["outcome"] == "applied" and linked["relation_id"].startswith("brain-groups-")
+    again = await tools.link(from_id=group["object_id"], to_id=object_id, kind="groups")
+    assert again["outcome"] == "duplicate" and again["relation_id"] == linked["relation_id"]
+    listing = json.loads(await tools.inspect(kind="group"))
+    assert [row[0] for row in listing["o"]] == [group["object_id"]] and listing["r"] == []
+    listing = json.loads(await tools.inspect())
+    assert listing["r"] == [[linked["relation_id"], "groups", group["object_id"], object_id, 50]]
+
+    hidden = await tools.set_visibility(object_id=object_id, visibility="hidden")
+    assert hidden["outcome"] == "applied" and (await scene_object(core, object_id))["visibility"] == "hidden"
+    assert (await tools.unlink(relation_id=linked["relation_id"]))["outcome"] == "applied"
+    assert (await tools.unlink(relation_id=linked["relation_id"]))["outcome"] == "duplicate"
+
+    journal = [entry for entry in read_jsonl_tail(tmp_path / "runtime" / "trace.jsonl", limit=100) if entry["kind"].startswith("display.")]
+    assert {entry["data"]["tool"] for entry in journal} >= {"scene_create_object", "scene_update_object", "scene_link", "scene_set_visibility", "scene_unlink"}
+    # Identifiants et issues, jamais le contenu.
+    assert "Synthèse" not in json.dumps(journal, ensure_ascii=False)
+
+
+async def test_a_relation_layer_is_only_sent_when_given_and_an_existing_layer_is_kept(core, tools):
+    a = (await tools.create_object(kind="artifact", category="note", title="A"))["object_id"]
+    b = (await tools.create_object(kind="artifact", category="note", title="B"))["object_id"]
+    spy = SpyTransport()
+    spied = SceneDisplayTools(spy)
+    spy._snapshot = tools.transport.scene_snapshot
+    spy._command = lambda command: tools.transport.scene_command(command, connect_timeout_s=3, read_timeout_s=10)
+    first = await spied.link(from_id=a, to_id=b, kind="explains")
+    assert "layer" not in spy.commands[-1]["relation"]
+    await spied.link(from_id=a, to_id=b, kind="explains", layer=140)
+    assert spy.commands[-1]["relation"]["layer"] == 140
+    sent = len(spy.commands)
+    # Le lien existe déjà : sans couche, rien ne part et la couche 140 reste.
+    kept = await spied.link(from_id=a, to_id=b, kind="explains")
+    assert len(spy.commands) == sent and kept == {"relation_id": first["relation_id"], "outcome": "duplicate", "layer": 140,
+                                                   "note": "lien déjà présent, rien n'a changé"}
+
+
+async def test_every_command_is_a_plain_brain_command(core):
+    async def answer(command):  # noqa: ANN001
+        return {"outcome": "applied", "reason": None, "scene_id": "s", "epoch": "e", "revision": 1,
+                "patch": {"schema_version": 1, "revision": 1, "ops": [{"op": "delete_relation", "relation_id": "x"}]}}
+
+    async def empty_snapshot():
+        return {"scene_id": "s", "epoch": "e", "revision": 0,
+                "snapshot": {"schema_version": 1, "scene_id": "s", "revision": 0, "objects": [], "relations": [], "archived_ids": []}}
+
+    spy = SpyTransport(command=answer, snapshot=empty_snapshot)
+    spied = SceneDisplayTools(spy)
+    await spied.create_object(kind="attention", category="look")
+    await spied.update_object(object_id="o", geometry={"x": 1, "y": 1, "w": 1, "h": 1})
+    await spied.update_object(object_id="o", representation="point")
+    await spied.update_object(object_id="o", layer=3, order=-2, title="t")
+    await spied.set_visibility(object_id="o", visibility="visible")
+    await spied.link(from_id="a", to_id="b", kind="parent_of", layer=10)
+    await spied.unlink(relation_id="r")
+    assert [command["op"] for command in spy.commands] == [
+        "upsert_object", "set_geometry", "set_representation", "patch_object", "set_visibility", "link", "unlink",
+    ]
+    assert all(command["actor"] == "brain" and "placed_by" not in command for command in spy.commands)
+    assert all(command["op"] not in {"archive", "pin", "unpin"} for command in spy.commands)
+    # Pas de couche ni d'ordre inventés pour une création qui n'en donne pas.
+    assert set(spy.commands[0]["fields"]) == {"kind", "category", "payload"}
+
+
+# ------------------------------------------------------------------ refus du domaine
+
+
+async def test_a_pinned_object_refusal_reaches_the_brain_with_its_reason_and_nothing_is_applied(core, tools):
+    object_id = (await tools.create_object(kind="artifact", category="note", title="Épinglée",
+                                           geometry={"x": 10, "y": 10, "w": 100, "h": 50}))["object_id"]
+    await user_command(core, {"op": "pin", "object_id": object_id})
+    before = await scene_object(core, object_id)
+
+    with pytest.raises(DisplayToolError) as refused:
+        await tools.update_object(object_id=object_id, title="nouveau titre", geometry={"x": 0, "y": 0, "w": 100, "h": 50})
+    message = str(refused.value)
+    assert refused.value.outcome == "rejected_authority" and refused.value.reason == "pinned_by_user"
+    assert "outcome=rejected_authority" in message and "reason=pinned_by_user" in message and "épinglé" in message
+    assert "Traceback" not in message
+    # Tout ou rien : le titre n'a pas changé non plus.
+    assert await scene_object(core, object_id) == before
+    # Sans géométrie, la même modification passe.
+    assert (await tools.update_object(object_id=object_id, title="nouveau titre"))["outcome"] == "applied"
+
+
+@pytest.mark.parametrize(
+    ("scenario", "outcome", "reason"),
+    [
+        ("archived", "invalid", "object_archived"),
+        ("unknown", "invalid", "unknown_object"),
+        ("conflict", "invalid", "relation_conflict"),
+    ],
+)
+async def test_domain_refusals_are_explicit_tool_errors(core, tools, tmp_path, scenario, outcome, reason):
+    a = (await tools.create_object(kind="artifact", category="note", title="A"))["object_id"]
+    b = (await tools.create_object(kind="artifact", category="note", title="B"))["object_id"]
+    with pytest.raises(DisplayToolError) as refused:
+        if scenario == "archived":
+            await user_command(core, {"op": "archive", "object_id": a})
+            await tools.set_visibility(object_id=a, visibility="hidden")
+        elif scenario == "unknown":
+            await tools.update_object(object_id="nope", geometry={"x": 0, "y": 0, "w": 1, "h": 1})
+        else:
+            await tools.link(from_id=a, to_id=b, kind="explains", relation_id="rel-1")
+            await tools.link(from_id=b, to_id=a, kind="explains", relation_id="rel-1")
+    assert (refused.value.outcome, refused.value.reason) == (outcome, reason)
+    assert f"reason={reason}" in str(refused.value)
+    refusals = [e for e in read_jsonl_tail(tmp_path / "runtime" / "trace.jsonl", limit=50) if e["kind"] == "display.tool_refused"]
+    assert refusals and refusals[-1]["data"]["reason"] == reason
+
+
+async def test_a_full_scene_tells_the_brain_to_ask_the_user_to_archive(tmp_path):
+    process = CoreProcess(tmp_path, scene_repository=MemoryRepository())
+    await process.start()
+    display = SceneDisplayTools(CoreSceneTransport(host="127.0.0.1", port=process.port, token_file=process.token_file))
+    try:
+        from jarvis.domain.scene import SceneCommand
+
+        for index in range(MAX_SCENE_OBJECTS):
+            await process.core.scene.apply(SceneCommand.from_payload({
+                "schema_version": 1, "op": "upsert_object", "actor": "user", "object_id": f"u{index}",
+                "fields": {"kind": "artifact", "category": "note"},
+            }))
+        listing = json.loads(await display.inspect())
+        assert listing["scene"]["saturated"] is True
+        with pytest.raises(DisplayToolError) as refused:
+            await display.create_object(kind="artifact", category="note", title="de trop")
+        assert refused.value.reason == "scene_full" and "archiver" in str(refused.value)
+    finally:
+        await display.close()
+        await process.stop()
+
+
+async def test_core_refuses_brain_archive_even_outside_the_catalog(core, tools):
+    object_id = (await tools.create_object(kind="artifact", category="note"))["object_id"]
+    status, body, _ = await core.request("POST", "/v1/scene/commands", json={
+        "schema_version": 1, "op": "archive", "actor": "brain", "object_id": object_id,
+    })
+    assert status == 200 and (body["outcome"], body["reason"]) == ("rejected_authority", "op_not_allowed")
+    assert await scene_object(core, object_id) is not None
+
+
+# ------------------------------------------------------------------ pannes de transport
+
+
+async def test_core_down_missing_token_and_stale_token_are_clear_tool_errors(tmp_path):
+    token_file = tmp_path / "core.token"
+    display = SceneDisplayTools(CoreSceneTransport(host="127.0.0.1", port=free_port(), token_file=token_file))
+    try:
+        with pytest.raises(DisplayToolError) as missing:
+            await display.inspect()
+        assert missing.value.code == "core_unreachable" and "token" in str(missing.value)
+        token_file.write_text("x" * 48, encoding="utf-8")
+        with pytest.raises(DisplayToolError) as down:
+            await display.create_object(kind="artifact", category="note")
+        assert down.value.code == "core_unreachable" and "rien n'a été appliqué" in str(down.value)
+    finally:
+        await display.close()
+
+
+async def test_a_stale_token_is_reread_then_reported_as_unauthorized(core, tmp_path):
+    stale = tmp_path / "stale.token"
+    stale.write_text("z" * 48, encoding="utf-8")
+    display = SceneDisplayTools(CoreSceneTransport(host="127.0.0.1", port=core.port, token_file=stale))
+    try:
+        with pytest.raises(DisplayToolError) as refused:
+            await display.inspect()
+        assert refused.value.code == "unauthorized"
+        stale.write_text(core.token, encoding="utf-8")  # Core redémarré : le jeton neuf est relu
+        assert json.loads(await display.inspect())["scene"]["objects"] == 0
+    finally:
+        await display.close()
+
+
+async def test_an_unavailable_scene_is_a_503_tool_error(core, tools):
+    await core.core.scene.close()
+    with pytest.raises(DisplayToolError) as unavailable:
+        await tools.create_object(kind="artifact", category="note")
+    assert unavailable.value.code == "scene_unavailable" and "Rien n'a été appliqué" in str(unavailable.value)
+
+
+async def test_timeouts_garbage_and_internal_errors_never_look_like_success(tmp_path):
+    from jarvis.runtime.journal import RuntimeJournal
+
+    async def slow(*_):  # noqa: ANN002
+        await asyncio.sleep(5)
+
+    async def garbage(*_):  # noqa: ANN002
+        return {"outcome": "applied", "revision": "nope"}
+
+    async def boom(*_):  # noqa: ANN002
+        raise RuntimeError("inattendu")
+
+    journal = RuntimeJournal(tmp_path)
+    timed = SceneDisplayTools(SpyTransport(command=slow, snapshot=slow), command_connect_timeout_s=0.05,
+                              command_timeout_s=0.05, snapshot_timeout_s=0.1)
+    with pytest.raises(DisplayToolError) as timeout:
+        await timed.create_object(kind="artifact", category="note")
+    assert timeout.value.code == "core_timeout" and "issue inconnue" in str(timeout.value)
+    with pytest.raises(DisplayToolError) as snapshot_timeout:
+        await timed.inspect()
+    assert snapshot_timeout.value.code == "core_timeout"
+
+    with pytest.raises(DisplayToolError) as unreadable:
+        await SceneDisplayTools(SpyTransport(command=garbage)).set_visibility(object_id="o", visibility="hidden")
+    assert unreadable.value.code == "invalid_scene_response"
+
+    with pytest.raises(DisplayToolError) as internal:
+        await SceneDisplayTools(SpyTransport(command=boom), journal=journal).unlink(relation_id="r")
+    assert internal.value.code == "display_internal_error" and "RuntimeError: inattendu" in str(internal.value)
+    [error] = [e for e in read_jsonl_tail(tmp_path / "errors.jsonl", limit=10) if e["kind"] == "display.tool_failed"]
+    assert error["data"]["code"] == "display_internal_error"
+
+
+# ------------------------------------------------------------------ bornes
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"kind": "artifact", "category": "not a token"},
+        {"kind": "artifact", "category": "x" * 33},
+        {"kind": "artifact", "category": "note", "summary": "s" * 2001},
+        {"kind": "artifact", "category": "note", "title": "deux\nlignes"},
+        {"kind": "artifact", "category": "note", "items": [{"label": "l", "url": "javascript:alert(1)"}] },
+        {"kind": "artifact", "category": "note", "items": [{"label": f"l{i}"} for i in range(33)]},
+        {"kind": "artifact", "category": "note", "geometry": {"x": 1e9, "y": 0, "w": 1, "h": 1}},
+        {"kind": "artifact", "category": "note", "geometry": {"x": 0, "y": 0, "w": 1}},
+        {"kind": "artifact", "category": "note", "layer": 5000},
+        {"kind": "agent", "category": "note"},
+        {"kind": "artifact", "category": "note", "representation": "hologram" * 10_000},
+        {"kind": "k" * 100_000, "category": "note"},
+        {"kind": "artifact", "category": "note", "items": [{"label": "é" * 150, "ref": "r" * 250} for _ in range(32)]},
+    ],
+)
+async def test_arguments_are_bounded_before_anything_is_sent(arguments):
+    spy = SpyTransport()
+    with pytest.raises(DisplayToolError) as invalid:
+        await SceneDisplayTools(spy).create_object(**arguments)
+    assert invalid.value.code == "invalid_argument" and "rien n'a été envoyé" in str(invalid.value)
+    assert len(str(invalid.value)) < 400
+    assert spy.commands == []
+
+
+async def test_an_empty_update_and_a_bad_filter_are_refused_locally():
+    spy = SpyTransport()
+    with pytest.raises(DisplayToolError, match="Rien à modifier"):
+        await SceneDisplayTools(spy).update_object(object_id="o")
+    with pytest.raises(DisplayToolError) as bad:
+        await SceneDisplayTools(spy).inspect(text="t" * 500)
+    assert bad.value.code == "invalid_argument" and spy.commands == []
+
+
+async def test_inspect_stays_under_its_budget_and_lists_brain_work_first(tmp_path):
+    process = CoreProcess(tmp_path, scene_repository=MemoryRepository())
+    await process.start()
+    display = SceneDisplayTools(CoreSceneTransport(host="127.0.0.1", port=process.port, token_file=process.token_file))
+    try:
+        from jarvis.domain.scene import SceneCommand
+
+        for index in range(400):
+            await process.core.scene.apply(SceneCommand.from_payload({
+                "schema_version": 1, "op": "upsert_object", "actor": "user", "object_id": f"user-object-{index:04d}-" + "x" * 80,
+                "fields": {"kind": "artifact", "category": "note", "payload": {"title": "T" * 160},
+                           "geometry": {"x": index, "y": 1.25, "w": 10, "h": 10}},
+            }))
+        last = (await display.create_object(kind="artifact", category="brain", title="note du cerveau"))["object_id"]
+        text = await display.inspect()
+        assert len(text.encode("utf-8")) <= MAX_INSPECT_BYTES
+        listing = json.loads(text)
+        assert listing["truncated"]["objects_omitted"] > 0 and "filtre" in listing["truncated"]["hint"]
+        assert listing["o"][0][0] == last  # le cerveau d'abord, même créé en dernier
+        assert all(len(row[-1]) <= 60 for row in listing["o"])
+        filtered = json.loads(await display.inspect(category="brain"))
+        assert [row[0] for row in filtered["o"]] == [last] and "truncated" not in filtered
+    finally:
+        await display.close()
+        await process.stop()
+
+
+# ------------------------------------------------------------------ catalogue MCP
+
+
+async def test_the_catalog_is_exactly_the_v1_tools_with_no_archive_or_pin_capability():
+    server = build_server(DisplayMcpTarget("127.0.0.1", 1, Path("absent.token")))
+    listed = await server.list_tools()
+    assert tuple(tool.name for tool in listed) == TOOL_NAMES
+    forbidden_names = re.compile(r"archiv|pin|dispos|delete|remove", re.IGNORECASE)
+    for tool in listed:
+        assert not forbidden_names.search(tool.name)
+        schema = json.dumps(tool.inputSchema)
+        properties = tool.inputSchema.get("properties", {})
+        assert not any(re.search(r"archiv|pin|dispos|placed_by|exec_state|work_ref|actor", name) for name in properties), tool.name
+        for value in ("archive", "archived", "unpin", "resolver"):
+            assert f'"{value}"' not in schema, (tool.name, value)
+        # « archiver » n'apparaît que pour dire que c'est à l'utilisateur.
+        description = tool.description or ""
+        if re.search(r"archiv", description, re.IGNORECASE):
+            assert "utilisateur" in description, tool.name
+    create = next(tool for tool in listed if tool.name == "scene_create_object")
+    assert create.inputSchema["properties"]["kind"]["enum"] == ["artifact", "window", "group", "attention"]
+    for tool in listed:
+        layer = tool.inputSchema["properties"].get("layer")
+        if layer is not None:
+            assert layer.get("default") is None, tool.name  # jamais 50 ni autre défaut inventé
+
+
+async def test_a_refusal_crosses_the_mcp_protocol_as_an_error_result(core, tools):
+    from mcp.shared.memory import create_connected_server_and_client_session
+
+    object_id = (await tools.create_object(kind="artifact", category="note", geometry={"x": 0, "y": 0, "w": 5, "h": 5}))["object_id"]
+    await user_command(core, {"op": "pin", "object_id": object_id})
+    server = build_server(tools=tools)
+    async with create_connected_server_and_client_session(server) as session:
+        result = await session.call_tool("scene_update_object", {"object_id": object_id, "geometry": {"x": 9, "y": 9, "w": 5, "h": 5}})
+        assert result.isError is True
+        text = result.content[0].text
+        assert "reason=pinned_by_user" in text and "Traceback" not in text
+        ok = await session.call_tool("scene_inspect", {})
+        assert ok.isError is False and json.loads(ok.content[0].text)["o"][0][10] is True
+
+
+async def test_the_display_mcp_subcommand_serves_over_stdio_with_a_clean_stdout(core, tmp_path):
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+
+    target = DisplayMcpTarget("127.0.0.1", core.port, core.token_file, tmp_path / "runtime")
+    server = mcp_config(target)["mcpServers"][SERVER_NAME]
+    params = StdioServerParameters(command=server["command"], args=server["args"],
+                                   env={**os.environ, **server["env"]}, cwd=str(Path(__file__).resolve().parents[2]))
+
+    async def exchange() -> tuple[list[str], dict]:
+        async with stdio_client(params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                names = [tool.name for tool in (await session.list_tools()).tools]
+                result = await session.call_tool("scene_create_object", {"kind": "artifact", "category": "note", "title": "stdio"})
+                return names, json.loads(result.content[0].text)
+
+    names, created = await asyncio.wait_for(exchange(), timeout=60)
+    assert tuple(names) == TOOL_NAMES
+    assert (await scene_object(core, created["object_id"]))["origin"] == "brain"
+    kinds = [entry["kind"] for entry in read_jsonl_tail(tmp_path / "runtime" / "trace.jsonl", limit=20)]
+    assert "display.server_started" in kinds and "display.tool" in kinds
+
+
+def test_the_server_environment_is_read_strictly():
+    target = DisplayMcpTarget.from_env({"JARVIS_CORE_HOST": "127.0.0.1", "JARVIS_CORE_PORT": "4242",
+                                        "JARVIS_CORE_TOKEN_FILE": "C:/a b/core.token", "JARVIS_RUNTIME_DIR": "C:/a b/runtime"})
+    assert (target.core_host, target.core_port, target.token_file.name) == ("127.0.0.1", 4242, "core.token")
+    for bad in ({"JARVIS_CORE_PORT": "abc"}, {"JARVIS_CORE_PORT": "0"}, {"JARVIS_CORE_HOST": "8.8.8.8"}):
+        with pytest.raises(display_mcp.DisplayConfigError):
+            DisplayMcpTarget.from_env(bad)
+
+
+# ------------------------------------------------------------------ lancement du cerveau
+
+
+class _Empty:
+    async def readline(self) -> bytes:
+        return b""
+
+
+class _Process:
+    pid = 4242
+    returncode = 0
+
+    def __init__(self) -> None:
+        self.stdin = None
+        self.stdout = _Empty()
+        self.stderr = _Empty()
+
+    async def wait(self) -> int:
+        return 0
+
+
+async def _launch(monkeypatch, agent: ClaudeLocalAgent) -> list[str]:
+    started: list[list[str]] = []
+
+    async def fake_exec(*args, **kwargs):  # noqa: ANN002, ANN003
+        started.append([str(arg) for arg in args])
+        return _Process()
+
+    monkeypatch.setattr(claude_local.asyncio, "create_subprocess_exec", fake_exec)
+    if agent._process_tree is not None:
+        monkeypatch.setattr(agent._process_tree, "attach_and_resume", lambda pid: None)
+    await agent.start()
+    await agent.stop()
+    return started[0]
+
+
+def _prompt(argv: list[str], flag: str) -> str:
+    return argv[argv.index(flag) + 1]
+
+
+async def test_the_conversation_brain_gets_the_display_server_only_when_enabled(monkeypatch, tmp_path):
+    runtime = tmp_path / "dossier avec espaces" / "runtime"
+    token_file = tmp_path / "dossier avec espaces" / "core.token"
+    token_file.parent.mkdir(parents=True)
+    token_file.write_text("secret-" * 8, encoding="utf-8")
+    target = DisplayMcpTarget("127.0.0.1", 17999, token_file, runtime)
+
+    off = await _launch(monkeypatch, ClaudeLocalAgent(runtime_root=runtime, cwd=tmp_path))
+    assert "--mcp-config" not in off and "--strict-mcp-config" not in off
+    assert _prompt(off, "--append-system-prompt") == BRAIN_SYSTEM_PROMPT
+
+    on = await _launch(monkeypatch, ClaudeLocalAgent(runtime_root=runtime, cwd=tmp_path, display_mcp=target))
+    assert "--strict-mcp-config" not in on  # les serveurs MCP de l'utilisateur restent chargés
+    config_path = Path(on[on.index("--mcp-config") + 1])
+    assert config_path == runtime.resolve() / CONFIG_FILE_NAME and " " in str(config_path)
+    # Option variadique du CLI : l'argument suivant est une autre option, jamais un second chemin.
+    assert on[on.index("--mcp-config") + 2].startswith("--")
+    declared = json.loads(config_path.read_text(encoding="utf-8"))
+    assert list(declared["mcpServers"]) == [SERVER_NAME]
+    server = declared["mcpServers"][SERVER_NAME]
+    assert server == {
+        "type": "stdio", "command": sys.executable, "args": ["-m", "jarvis", "display-mcp"],
+        "env": {"JARVIS_CORE_HOST": "127.0.0.1", "JARVIS_CORE_PORT": "17999",
+                "JARVIS_CORE_TOKEN_FILE": str((tmp_path / "dossier avec espaces" / "core.token").resolve()),
+                "JARVIS_RUNTIME_DIR": str(runtime.resolve())},
+    }
+    assert "secret-" not in config_path.read_text(encoding="utf-8")  # le chemin du jeton, jamais le jeton
+    assert list(runtime.glob("*.tmp")) == []
+    prompt = _prompt(on, "--append-system-prompt")
+    assert prompt == BRAIN_SYSTEM_PROMPT + "\n" + BRAIN_DISPLAY_PROMPT
+    assert "--chrome" in on
+    hook = json.loads(_prompt(on, "--settings"))
+    assert hook["hooks"]["PreToolUse"][0]["matcher"] == "Agent|Task"
+    starts = [e for e in read_jsonl_tail(runtime / "trace.jsonl", limit=50) if e["kind"] == "agent.start"]
+    assert [e["data"]["display_mcp"] for e in starts] == [False, True]
+    prompts = [e for e in read_jsonl_tail(runtime / "trace.jsonl", limit=50) if e["kind"] == "agent.prompt"]
+    assert prompts[-1]["data"]["program_id"] == "backend.claude.conversation.display_session"
+    assert "backend.claude.conversation.display" in prompts[-1]["data"]["prompt_ids"]
+
+
+async def test_job_and_speculative_profiles_never_receive_the_display_server(monkeypatch, tmp_path):
+    target = DisplayMcpTarget("127.0.0.1", 17999, tmp_path / "core.token", tmp_path)
+    job = await _launch(monkeypatch, ClaudeLocalAgent(runtime_root=tmp_path, cwd=tmp_path, execution_profile="job_result",
+                                                      display_mcp=target))
+    assert "--mcp-config" not in job and BRAIN_DISPLAY_PROMPT not in " ".join(job)
+    assert _prompt(job, "--append-system-prompt") == claude_local.JOB_RESULT_SYSTEM_PROMPT
+
+    monkeypatch.setattr(claude_local, "resolve_command", lambda command: "C:/tools/claude.exe")
+    speculative = await _launch(monkeypatch, ClaudeLocalAgent(runtime_root=tmp_path, cwd=tmp_path,
+                                                              execution_profile="speculative_analysis", display_mcp=target))
+    assert "--mcp-config" not in speculative and "--strict-mcp-config" in speculative
+    assert speculative[speculative.index("--tools") + 1] == ""
+    assert not (tmp_path / CONFIG_FILE_NAME).exists()
+
+
+async def test_a_config_that_cannot_be_written_leaves_the_brain_speaking_without_display(monkeypatch, tmp_path):
+    def refuse(*_args, **_kwargs):  # noqa: ANN002, ANN003
+        raise PermissionError("disque verrouillé")
+
+    monkeypatch.setattr(display_mcp, "write_mcp_config", refuse)
+    target = DisplayMcpTarget("127.0.0.1", 17999, tmp_path / "core.token", tmp_path)
+    argv = await _launch(monkeypatch, ClaudeLocalAgent(runtime_root=tmp_path, cwd=tmp_path, display_mcp=target))
+    assert "--mcp-config" not in argv and _prompt(argv, "--append-system-prompt") == BRAIN_SYSTEM_PROMPT
+    [failure] = [e for e in read_jsonl_tail(tmp_path / "errors.jsonl", limit=10) if e["kind"] == "agent.display_mcp_failed"]
+    assert failure["data"]["code"] == "display_mcp_config_write_failed" and "PermissionError" in failure["message"]
+
+
+# ------------------------------------------------------------------ consigne et interrupteur
+
+
+def test_the_display_guidance_is_catalogued_and_only_in_the_display_program():
+    registry = default_prompt_registry()
+    descriptor = registry.require("backend.claude.conversation.display")
+    assert descriptor.default_text == BRAIN_DISPLAY_PROMPT and descriptor.source_symbol == "BRAIN_DISPLAY_PROMPT"
+    plain = registry.resolve(PromptTarget("backend", provider="claude", model="m", compatibility="legacy", invocation="conversation_session"))
+    shown = registry.resolve(PromptTarget("backend", provider="claude", model="m", compatibility="legacy",
+                                          invocation="conversation_display_session"))
+    assert plain.channels[0]["text"] == BRAIN_SYSTEM_PROMPT
+    assert shown.channels[0]["text"] == BRAIN_SYSTEM_PROMPT + "\n" + BRAIN_DISPLAY_PROMPT
+    for rule in ("scene_inspect", "apparaissent seules", "artifact", "Seul l'utilisateur archive", "épinglé",
+                 "capture d'écran", "silencieuses"):
+        assert rule in BRAIN_DISPLAY_PROMPT
+    # Les règles existantes du cerveau restent intactes.
+    assert "RÈGLE ABSOLUE : RESTE DISPONIBLE, DÉLÈGUE LE TRAVAIL" in shown.channels[0]["text"]
+
+
+def test_display_tools_are_not_counted_as_inline_work_in_the_turn_budget(tmp_path):
+    from jarvis.runtime.display_mcp import SERVER_NAME
+
+    agent = ClaudeLocalAgent(runtime_root=tmp_path, cwd=tmp_path)
+    prefix = f"mcp__{SERVER_NAME}__"
+    assert claude_local.DISPLAY_TOOL_PREFIX == prefix
+    for name in ("ToolSearch", prefix + "scene_inspect", prefix + "scene_create_object", "Bash"):
+        agent._audit_turn({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": name, "input": {}}]}})
+    agent._audit_turn({"type": "result", "duration_ms": 12_000})
+    [over] = [e for e in read_jsonl_tail(tmp_path / "trace.jsonl", limit=10) if e["kind"] == "agent.turn_over_budget"]
+    assert over["data"]["inline_tools"] == {"Bash": 1}
+    for name in (prefix + "scene_inspect", prefix + "scene_update_object"):
+        agent._audit_turn({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": name, "input": {}}]}})
+    agent._audit_turn({"type": "result", "duration_ms": 12_000})
+    last = [e for e in read_jsonl_tail(tmp_path / "trace.jsonl", limit=10) if e["kind"] == "agent.turn_over_budget"][-1]
+    assert last["level"] == "info" and last["data"]["code"] == "brain_turn_slow" and last["data"]["inline_tools"] == {}

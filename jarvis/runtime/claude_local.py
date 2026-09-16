@@ -67,6 +67,22 @@ FORMAT ORAL
 - Les détails longs vont dans un fichier ou dans le panneau ; à l'oral, seulement l'essentiel.
 """
 
+# Consigne d'affichage, ajoutée après `BRAIN_SYSTEM_PROMPT` seulement quand
+# `scene.enabled` est vrai et que le serveur MCP `jarvis-display` est déclaré au
+# CLI (handoff jarvis-constellation-scene-runtime, Slice 06). Éteint, le prompt
+# système reste exactement celui d'avant.
+BRAIN_DISPLAY_PROMPT = """\
+ÉCRAN : LA SCÈNE CONSTELLATION
+L'écran est une scène 2D persistante que tu peux lire et composer avec les outils scene_* (serveur jarvis-display).
+- Lis la scène avec scene_inspect avant de créer, déplacer ou relier quoi que ce soit.
+- Les étoiles des sous-agents et des tâches apparaissent seules : ne les recrée jamais.
+- Regroupe un résultat dans un artifact clair plutôt qu'un objet par événement.
+- Seul l'utilisateur archive. Tu ne peux pas archiver : dis-le-lui, et ne contourne jamais cette règle (ni shell, ni HTTP, ni fichier).
+- Un objet épinglé par l'utilisateur ne se déplace pas : respecte-le.
+- Pas de capture d'écran pour l'instant : fie-toi à scene_inspect.
+- Les actions d'affichage sont silencieuses : ne décris pas à l'oral ce que tu places ni où. Si l'utilisateur a demandé l'affichage, quelques mots suffisent ; sinon n'en parle pas.
+"""
+
 # A job owns a complete terminal result, not the conversational coordinator's
 # acknowledgement of a background delegation. This is not a sandbox policy.
 JOB_RESULT_SYSTEM_PROMPT = """Execute the admitted job and return its complete final result.
@@ -106,6 +122,11 @@ DELEGATION_TOOLS = frozenset({
     "Agent", "Task", "TaskOutput", "TaskStop", "KillShell", "SendMessage",
     "TodoWrite", "ToolSearch", "Skill",
 })
+
+# Outils d'affichage du cerveau (Slice 06) : composer l'écran est sa propre
+# modalité de sortie, faite dans le tour comme une réponse, pas du travail à
+# déléguer. Nom vu par le CLI : `mcp__<serveur>__<outil>`.
+DISPLAY_TOOL_PREFIX = "mcp__jarvis-display__"
 
 # Réponses spontanées gardées pour `/api/agent/notices` : assez pour couvrir une
 # coupure du lecteur, trop peu pour devenir un historique.
@@ -158,6 +179,7 @@ class ClaudeLocalAgent:
         model: str = "",
         execution_profile: str = "conversation",
         prompt_overrides: object | None = None,
+        display_mcp: Any | None = None,
     ) -> None:
         self.runtime_root = runtime_root
         self.cwd = cwd
@@ -169,6 +191,10 @@ class ClaudeLocalAgent:
         if execution_profile not in {"conversation", "job_result", "speculative_analysis"}:
             raise ValueError("unknown Claude execution profile")
         self.execution_profile = execution_profile
+        # `DisplayMcpTarget` (Slice 06) : présent seulement quand `scene.enabled`
+        # est vrai ; lu au lancement du processus, donc effectif au prochain
+        # (re)démarrage. Ignoré hors du profil `conversation`.
+        self.display_mcp = display_mcp
         from jarvis.runtime.prompt_runtime import normalize_prompt_overrides
         self._prompt_overrides = normalize_prompt_overrides(prompt_overrides)
         self.prompt_applications: list[dict[str, object]] = []
@@ -523,6 +549,9 @@ class ClaudeLocalAgent:
             from jarvis.domain.prompt_registry import PromptTarget
             from jarvis.runtime.prompt_runtime import prompt_channel, prompt_evidence, resolve_prompt
             invocation = "job_result_session" if self.execution_profile == "job_result" else "conversation_session"
+            display_args = self._display_mcp_args() if self.execution_profile == "conversation" else []
+            if display_args:
+                invocation = "conversation_display_session"
             prompt_resolution = resolve_prompt(
                 PromptTarget("backend", None, "claude", self.model or None, None, invocation),
                 overrides=self._prompt_overrides,
@@ -564,6 +593,7 @@ class ClaudeLocalAgent:
                     "stream-json",
                     "--verbose",
                     *(["--chrome"] if self.execution_profile == "conversation" else []),
+                    *display_args,
                     *restricted_args,
                     *permission_args,
                     *brain_args,
@@ -591,11 +621,35 @@ class ClaudeLocalAgent:
             applied["resumed"] = bool(resume_args)
             self.prompt_applications.append(applied)
             self._turn_tools = {}
-            self.journal.emit("agent.start", "Claude local agent started", data={"pid": self.process.pid, "resumed": bool(resume_args), "permission_mode": self.permission_mode, "model": self.model or "(défaut du CLI)"})
+            self.journal.emit("agent.start", "Claude local agent started", data={"pid": self.process.pid, "resumed": bool(resume_args), "permission_mode": self.permission_mode, "model": self.model or "(défaut du CLI)", "display_mcp": bool(display_args)})
             self.journal.emit("agent.prompt", "Prompt application recorded", data=applied)
             self._reader_task = asyncio.create_task(self._read_stdout(), name="jarvis-claude-stdout")
             self._stderr_task = asyncio.create_task(self._read_stderr(), name="jarvis-claude-stderr")
             return self.snapshot()
+
+    def _display_mcp_args(self) -> list[str]:
+        """`--mcp-config <fichier>` du serveur `jarvis-display`, ou rien.
+
+        Sans `--strict-mcp-config` : les serveurs MCP de l'utilisateur
+        (`jarvis-drive`…) restent chargés, celui-ci s'y ajoute. Écriture du
+        fichier impossible : le cerveau démarre sans affichage (la voix passe
+        avant l'écran), et la panne est journalisée en erreur.
+        """
+        target = self.display_mcp
+        if target is None:
+            return []
+        from jarvis.runtime.display_mcp import write_mcp_config
+        try:
+            path = write_mcp_config(target, self.runtime_root)
+        except OSError as exc:
+            self.journal.emit(
+                "agent.display_mcp_failed",
+                f"Outils d'affichage non déclarés au cerveau : {type(exc).__name__}: {exc}",
+                level="error",
+                data={"code": "display_mcp_config_write_failed", "runtime_root": str(self.runtime_root)},
+            )
+            return []
+        return ["--mcp-config", str(path)]
 
     async def send(
         self,
@@ -872,7 +926,8 @@ class ClaudeLocalAgent:
         budget_ms = int(self.turn_budget_s * 1000)
         if not isinstance(duration_ms, (int, float)) or isinstance(duration_ms, bool) or duration_ms <= budget_ms:
             return
-        inline = {name: count for name, count in tools.items() if name not in DELEGATION_TOOLS}
+        inline = {name: count for name, count in tools.items()
+                  if name not in DELEGATION_TOOLS and not name.startswith(DISPLAY_TOOL_PREFIX)}
         origin = event.get("origin") if isinstance(event.get("origin"), dict) else {}
         self.journal.emit(
             "agent.turn_over_budget",

@@ -61,6 +61,7 @@ from jarvis.runtime.live_status import CoreLiveStatusView, project_live_status
 from jarvis.runtime.model_catalog import CatalogError, ModelCatalog, filter_by_role
 from jarvis.runtime.owner_voice import effective_verifier_settings, probe_remedy
 from jarvis.runtime.self_dev import SelfDevError, apply_gate as apply_self_dev_gate, load_gate as load_self_dev_gate
+from jarvis.runtime.scene_settings import SceneSettingsError, apply_gate as apply_scene_gate, load_gate as load_scene_gate
 from jarvis.runtime.self_dev_service import SelfDevelopmentService
 from jarvis.runtime.owner_voice import probe_from_settings as probe_owner_verifier
 from jarvis.runtime.visual_signals import VisualSignalBus
@@ -69,6 +70,7 @@ from jarvis.runtime.work_ingress import TrackerWorkObserver, WorkIngressForwarde
 from jarvis.runtime.work_view import NOT_CONFIGURED, CoreWorkView, unavailable_payload
 from jarvis.protocol import scene_wire
 from jarvis.protocol.strict_json import loads_strict_json
+from jarvis.runtime.display_mcp import DisplayMcpTarget
 from jarvis.runtime.scene_view import (
     CoreSceneView,
     ReportThrottle,
@@ -264,6 +266,7 @@ class ControlCenter:
         work_view: CoreWorkView | None = None,
         live_view: CoreLiveStatusView | None = None,
         scene_view: CoreSceneView | None = None,
+        display_mcp: DisplayMcpTarget | None = None,
         voice_registry: VoiceCapabilityRegistry | None = None,
         barehands_vendor_root: Path | None = None,
     ) -> None:
@@ -304,6 +307,10 @@ class ControlCenter:
         # Acteurs refusés : un avertissement par valeur par minute, avec le
         # nombre d'occurrences tues (une page en boucle ne remplit pas la trace).
         self._scene_forbidden_reports = ReportThrottle()
+        # Où le serveur MCP d'affichage du cerveau joint Core (Slice 06). Remis
+        # à l'agent Claude seulement quand `scene.enabled` est vrai.
+        self.display_mcp = display_mcp
+        self._display_unconfigured_reported = False
 
         settings = self._settings()
         self._agent_id = cli_catalog.normalize_agent_cli(settings.get("agent_cli"))
@@ -404,6 +411,19 @@ class ControlCenter:
         agent.command = values["command"]
         agent.model = values["model"]
         agent.permission_mode = values["permission_mode"]
+        if hasattr(agent, "display_mcp"):
+            # Effectif au prochain (re)démarrage du cerveau : le CLI lit ses
+            # serveurs MCP et sa consigne système à son lancement.
+            scene = load_scene_gate(settings)
+            agent.display_mcp = self.display_mcp if scene["enabled"] else None
+            if scene["enabled"] and self.display_mcp is None and not self._display_unconfigured_reported:
+                self._display_unconfigured_reported = True
+                self.journal.emit(
+                    "scene.display_mcp_unconfigured",
+                    "scene.enabled est vrai mais le Control Center ne connaît pas Core : outils d'affichage non déclarés au cerveau",
+                    level="warning",
+                    data={"code": "display_mcp_unconfigured", "source": scene["source"]},
+                )
         if callable(getattr(agent, "set_prompt_overrides", None)):
             agent.set_prompt_overrides(prompt_override_document(settings))
 
@@ -1357,6 +1377,9 @@ class ControlCenter:
             # Auto-développement : deux crans, éteints tant que l'utilisateur ne
             # les ouvre pas. L'état des worktrees vit sur `/api/self-dev`.
             "self_development": load_self_dev_gate(settings),
+            # Scène constellation (Slice 06) : rendu et outils d'affichage du
+            # cerveau. Effectif au prochain démarrage du cerveau.
+            "scene": load_scene_gate(settings),
             "audio": {
                 "input_device": settings.get("audio_input_device", ""),
                 "output_device": settings.get("audio_output_device", ""),
@@ -1611,6 +1634,8 @@ class ControlCenter:
                 agent_routing.apply(current, payload["routing"])
             if payload.get("self_development") is not None:
                 apply_self_dev_gate(current, payload["self_development"])
+            if payload.get("scene") is not None:
+                apply_scene_gate(current, payload["scene"])
             # Behavior extends an editable prompt layer. Validate their
             # combined bound before any atomic settings replacement.
             from jarvis.runtime.prompt_overrides import prompt_override_document
@@ -1623,12 +1648,13 @@ class ControlCenter:
             creds.CredentialError,
             RoutingError,
             SelfDevError,
+            SceneSettingsError,
             VoiceConfigError,
         ) as exc:
             # Le corps reste le message en clair (ce que la page affiche) ; le
             # code stable voyage à côté, pour les clients et les tests.
             agent_error = isinstance(
-                exc, (cli_catalog.CliSettingsError, agent_behavior.AgentBehaviorError, RoutingError, SelfDevError)
+                exc, (cli_catalog.CliSettingsError, agent_behavior.AgentBehaviorError, RoutingError, SelfDevError, SceneSettingsError)
             )
             self.journal.emit(
                 "settings.agent.rejected" if agent_error else "voice.settings.rejected",

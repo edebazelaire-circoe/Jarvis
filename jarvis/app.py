@@ -40,6 +40,9 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("control-center", help="Run Jarvis visualizer + Control Center + local Claude agent")
     sub.add_parser("drive-auth", help="Authorize Google Drive access once and store the token")
     sub.add_parser("drive-mcp", help="Serve the Google Drive MCP tools over stdio")
+    # Lancée par le CLI du cerveau via `--mcp-config` (scene.enabled), pas par
+    # un humain : stdout est le protocole MCP.
+    sub.add_parser("display-mcp", help="Serve the brain scene display MCP tools over stdio")
     # Appelée par le CLI d'agent lui-même, pas par un humain : elle lit
     # l'appel d'outil sur stdin et rend la décision d'aiguillage sur stdout.
     routing_hook = sub.add_parser("routing-hook", help="Apply the sub-agent routing policy to one agent CLI tool call")
@@ -73,6 +76,12 @@ async def _drive_mcp() -> int:
     # que la boucle du CLI rendrait invalide.
     await build_server().run_stdio_async()
     return 0
+
+
+async def _display_mcp() -> int:
+    from jarvis.runtime.display_mcp import serve_stdio
+
+    return await serve_stdio()
 
 
 async def _run_voice(config: AppConfig, *, no_preflight: bool) -> int:
@@ -852,6 +861,10 @@ async def _run_control_center_v2() -> int:
         CoreSceneTransport(host=settings.core_host, port=settings.core_port, token_file=settings.token_file),
         journal=journal,
     )
+    # Outils d'affichage du cerveau (Slice 06) : déclarés au CLI seulement si
+    # `scene.enabled` ; le serveur MCP joint Core avec ces coordonnées.
+    from jarvis.runtime.display_mcp import DisplayMcpTarget
+
     control = ControlCenter(
         runtime_root=runtime_root,
         project_root=ROOT,
@@ -860,6 +873,10 @@ async def _run_control_center_v2() -> int:
         work_view=work_view,
         live_view=live_view,
         scene_view=scene_view,
+        display_mcp=DisplayMcpTarget(
+            core_host=settings.core_host, core_port=settings.core_port,
+            token_file=settings.token_file, runtime_root=runtime_root,
+        ),
     )
     await control.start(port=ui_port)
     url = f"http://127.0.0.1:{ui_port}/"
@@ -1031,6 +1048,7 @@ async def _amain(argv: list[str] | None = None) -> int:
     if command == "control-center": return await _run_control_center_v2()
     if command == "drive-auth": return await _drive_auth()
     if command == "drive-mcp": return await _drive_mcp()
+    if command == "display-mcp": return await _display_mcp()
     if command == "routing-hook":
         from jarvis.runtime.routing_hook import main as routing_hook_main
 

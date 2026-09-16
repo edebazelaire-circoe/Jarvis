@@ -133,6 +133,10 @@ def default_prompt_registry() -> PromptRegistry:
                     editable=True, apply_policy="next_session"),
         _descriptor("backend.claude.conversation.system", claude_local, "BRAIN_SYSTEM_PROMPT",
                     claude_local.BRAIN_SYSTEM_PROMPT, apply_policy="read_only"),
+        # Consigne d'affichage (Slice 06) : seulement dans le programme
+        # `conversation_display_session`, choisi quand `scene.enabled` est vrai.
+        _descriptor("backend.claude.conversation.display", claude_local, "BRAIN_DISPLAY_PROMPT",
+                    claude_local.BRAIN_DISPLAY_PROMPT, apply_policy="read_only"),
         _descriptor("backend.claude.job_result.system", claude_local, "JOB_RESULT_SYSTEM_PROMPT",
                     claude_local.JOB_RESULT_SYSTEM_PROMPT, apply_policy="read_only"),
         _descriptor("backend.claude.speculative.system", claude_local, "SPECULATIVE_SYSTEM_PROMPT",
@@ -204,6 +208,12 @@ def default_prompt_registry() -> PromptRegistry:
         PromptProgram("backend.claude.conversation.session",
                       PromptTarget("backend", None, "claude", None, None, "conversation_session"), (
                           PromptStep("backend.claude.conversation.system", "cli.append_system_prompt"),
+                          PromptStep("backend.system.addition", "cli.append_system_prompt", separator="\n"),
+                      )),
+        PromptProgram("backend.claude.conversation.display_session",
+                      PromptTarget("backend", None, "claude", None, None, "conversation_display_session"), (
+                          PromptStep("backend.claude.conversation.system", "cli.append_system_prompt"),
+                          PromptStep("backend.claude.conversation.display", "cli.append_system_prompt", separator="\n"),
                           PromptStep("backend.system.addition", "cli.append_system_prompt", separator="\n"),
                       )),
         PromptProgram("backend.claude.job_result.session",
