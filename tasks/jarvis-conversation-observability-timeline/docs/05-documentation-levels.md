@@ -20,3 +20,10 @@ Slice 00 must correct these levels if the live repository has gained equivalent 
 | Conversation event persistence/replay | 0 (substrate at 3: `sqlite_state.py`) | Reuse SQLite + schema migration. |
 | Trace correlation | 1 | Many IDs, no `trace_id` / span. |
 | Live transcript/timeline UI | 0 | Control Center is polling-only, plain JS. |
+
+## After Slice 01 (2026-09-16)
+
+| Concept | Level | Evidence |
+|---|---:|---|
+| Canonical conversation event envelope | 3 | `docs/conversation-events.md` + `jarvis/domain/conversation_events.py` + `tests/unit/test_conversation_events.py` (strict codec, redaction, fixtures). |
+| Trace correlation | 2 | `trace_ref` join contract tested against real `trace.jsonl` lines; producer-side `conversation_event_id` pending Slice 03. |

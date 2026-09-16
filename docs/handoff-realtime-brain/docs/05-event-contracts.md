@@ -140,3 +140,5 @@ These can remain local journal events unless Core needs them:
 - `voice.speech.superseded`
 
 If assistant speech is persisted, use the normal conversation-turn API with provenance metadata rather than inventing a second transcript store.
+
+2026-09-16: the conversation timeline projection of these events (and of the `brain.*` events above) is specified in [`docs/conversation-events.md`](../../conversation-events.md). It references the heard history; it does not replace it.

@@ -1,0 +1,911 @@
+{
+  "schema": "jarvis.conversation_events.fixture",
+  "schema_version": 1,
+  "description": "Overlapping multi-actor conversation: user barge-in interrupts Mouth speech while a sub-agent span runs under a Brain work span. Timestamps synthetic; ids constructed. The two user turns deliberately use the two candidate user-turn sources (core.voice.turn_admitted via core.voice_admission, voice.brain_turn_submitted via voice.realtime_audio); Slice 03 picks one producer, Core admission preferred.",
+  "events": [
+    {
+      "source_ids": [
+        "voice-session-1",
+        "canonical-turn-1"
+      ],
+      "event": {
+        "schema_version": 1,
+        "event_id": "cev-5b3ab82f620eaf05dcd959ea8ab3c3234cb087f8e420db04587a7fa7ea96023c",
+        "event_type": "user.transcript.accepted",
+        "actor": "user",
+        "conversation_id": "conv-demo",
+        "producer": "core.voice_admission",
+        "visibility": "public",
+        "occurred_at": "2026-09-16T10:00:00.000Z",
+        "started_at": null,
+        "ended_at": null,
+        "span_id": null,
+        "session_id": "voice-session-1",
+        "turn_id": "brain-turn-1",
+        "correlation_id": "voice-source-1",
+        "parent_event_id": null,
+        "task_id": null,
+        "work_id": null,
+        "speech_id": null,
+        "outcome_id": null,
+        "trace_ref": {
+          "source": "runtime_journal",
+          "journal_kind": "core.voice.turn_admitted",
+          "join_keys": [
+            "conversation_id",
+            "correlation_id"
+          ]
+        },
+        "content": "Jarvis, lance les tests et résume-moi le résultat.",
+        "attributes": {
+          "addressing": "addressed",
+          "duplicate": false
+        }
+      }
+    },
+    {
+      "source_ids": [
+        "voice-source-1"
+      ],
+      "event": {
+        "schema_version": 1,
+        "event_id": "cev-da0dbfff1961f7ad5b5b41f8fd399ed1948ed13ef38d30e75d222353d875470a",
+        "event_type": "brain.turn.accepted",
+        "actor": "brain",
+        "conversation_id": "conv-demo",
+        "producer": "core.brain_service",
+        "visibility": "diagnostic",
+        "occurred_at": "2026-09-16T10:00:00.200Z",
+        "started_at": null,
+        "ended_at": null,
+        "span_id": null,
+        "session_id": null,
+        "turn_id": "brain-turn-1",
+        "correlation_id": "voice-source-1",
+        "parent_event_id": null,
+        "task_id": null,
+        "work_id": null,
+        "speech_id": null,
+        "outcome_id": null,
+        "trace_ref": null,
+        "content": null,
+        "attributes": {
+          "revision": 7
+        }
+      }
+    },
+    {
+      "source_ids": [
+        "speech-ack-1"
+      ],
+      "event": {
+        "schema_version": 1,
+        "event_id": "cev-b8f8ec4fd7977f6424f8e43a4d59f81e2a1839a075534c45fe09405bd1443601",
+        "event_type": "brain.speech.requested",
+        "actor": "brain",
+        "conversation_id": "conv-demo",
+        "producer": "core.brain_service",
+        "visibility": "diagnostic",
+        "occurred_at": "2026-09-16T10:00:00.900Z",
+        "started_at": null,
+        "ended_at": null,
+        "span_id": null,
+        "session_id": null,
+        "turn_id": null,
+        "correlation_id": "voice-source-1",
+        "parent_event_id": null,
+        "task_id": null,
+        "work_id": null,
+        "speech_id": "speech-ack-1",
+        "outcome_id": null,
+        "trace_ref": null,
+        "content": "Je lance les tests.",
+        "attributes": {
+          "kind": "ack",
+          "priority": "normal"
+        }
+      }
+    },
+    {
+      "source_ids": [
+        "speech-ack-1"
+      ],
+      "event": {
+        "schema_version": 1,
+        "event_id": "cev-5fb63d18597b217e0ddf3ed6d0bcc3a9904eeb5ce8830c39394d35c4e6ae2ed0",
+        "event_type": "mouth.speech.queued",
+        "actor": "mouth",
+        "conversation_id": "conv-demo",
+        "producer": "voice.speech_scheduler",
+        "visibility": "diagnostic",
+        "occurred_at": "2026-09-16T10:00:01.000Z",
+        "started_at": null,
+        "ended_at": null,
+        "span_id": null,
+        "session_id": "voice-session-1",
+        "turn_id": null,
+        "correlation_id": "voice-source-1",
+        "parent_event_id": null,
+        "task_id": null,
+        "work_id": null,
+        "speech_id": "speech-ack-1",
+        "outcome_id": null,
+        "trace_ref": {
+          "source": "runtime_journal",
+          "journal_kind": "voice.speech.queued",
+          "join_keys": [
+            "conversation_id",
+            "speech_id"
+          ]
+        },
+        "content": null,
+        "attributes": {}
+      }
+    },
+    {
+      "source_ids": [
+        "speech-ack-1"
+      ],
+      "event": {
+        "schema_version": 1,
+        "event_id": "cev-94d6e959199ee241b26f4c11afe4b5745511b6151119de6cf1320905d2fca1b0",
+        "event_type": "mouth.speech.started",
+        "actor": "mouth",
+        "conversation_id": "conv-demo",
+        "producer": "voice.speech_scheduler",
+        "visibility": "public",
+        "occurred_at": "2026-09-16T10:00:01.100Z",
+        "started_at": "2026-09-16T10:00:01.100Z",
+        "ended_at": null,
+        "span_id": "speech-ack-1",
+        "session_id": "voice-session-1",
+        "turn_id": null,
+        "correlation_id": "voice-source-1",
+        "parent_event_id": null,
+        "task_id": null,
+        "work_id": null,
+        "speech_id": "speech-ack-1",
+        "outcome_id": null,
+        "trace_ref": {
+          "source": "runtime_journal",
+          "journal_kind": "voice.speech.started",
+          "join_keys": [
+            "conversation_id",
+            "speech_id"
+          ]
+        },
+        "content": "Je lance les tests.",
+        "attributes": {
+          "output_id": "output-1"
+        }
+      }
+    },
+    {
+      "source_ids": [
+        "work-tests"
+      ],
+      "event": {
+        "schema_version": 1,
+        "event_id": "cev-1cf6234b1e3af3c7313de54f5259bc17c0cd30d2026266d3aeb65a3042bfd851",
+        "event_type": "brain.work.started",
+        "actor": "brain",
+        "conversation_id": "conv-demo",
+        "producer": "core.brain_service",
+        "visibility": "diagnostic",
+        "occurred_at": "2026-09-16T10:00:01.500Z",
+        "started_at": "2026-09-16T10:00:01.500Z",
+        "ended_at": null,
+        "span_id": "work-tests",
+        "session_id": null,
+        "turn_id": null,
+        "correlation_id": "voice-source-1",
+        "parent_event_id": null,
+        "task_id": null,
+        "work_id": "work-tests",
+        "speech_id": null,
+        "outcome_id": null,
+        "trace_ref": {
+          "source": "runtime_journal",
+          "journal_kind": "core.brain.backend_task_started",
+          "join_keys": [
+            "correlation_id",
+            "work_id"
+          ]
+        },
+        "content": "Tests unitaires",
+        "attributes": {}
+      }
+    },
+    {
+      "source_ids": [
+        "task-7"
+      ],
+      "event": {
+        "schema_version": 1,
+        "event_id": "cev-62b76764899b85e710eb0815b67032ffb562f40e0d90d53164d22299031932fc",
+        "event_type": "subagent.started",
+        "actor": "subagent",
+        "conversation_id": "conv-demo",
+        "producer": "control_center.agent_tasks",
+        "visibility": "diagnostic",
+        "occurred_at": "2026-09-16T10:00:01.600Z",
+        "started_at": "2026-09-16T10:00:01.600Z",
+        "ended_at": null,
+        "span_id": "task-7",
+        "session_id": null,
+        "turn_id": null,
+        "correlation_id": null,
+        "parent_event_id": "cev-1cf6234b1e3af3c7313de54f5259bc17c0cd30d2026266d3aeb65a3042bfd851",
+        "task_id": "task-7",
+        "work_id": "work-tests",
+        "speech_id": null,
+        "outcome_id": null,
+        "trace_ref": {
+          "source": "agent_task",
+          "journal_kind": null,
+          "join_keys": [
+            "task_id"
+          ]
+        },
+        "content": "Lancer la suite de tests",
+        "attributes": {
+          "provider": "claude",
+          "subagent_type": "general-purpose",
+          "background": true,
+          "depth": 1
+        }
+      }
+    },
+    {
+      "source_ids": [
+        "voice-session-1",
+        "voice-source-2"
+      ],
+      "event": {
+        "schema_version": 1,
+        "event_id": "cev-69fc924d38a882d746eb501b7c8a05dd654d972e2c1cc4393ac5b2dd53b8dc2f",
+        "event_type": "user.transcript.accepted",
+        "actor": "user",
+        "conversation_id": "conv-demo",
+        "producer": "voice.realtime_audio",
+        "visibility": "public",
+        "occurred_at": "2026-09-16T10:00:02.400Z",
+        "started_at": null,
+        "ended_at": null,
+        "span_id": null,
+        "session_id": "voice-session-1",
+        "turn_id": "brain-turn-2",
+        "correlation_id": "voice-source-2",
+        "parent_event_id": null,
+        "task_id": null,
+        "work_id": null,
+        "speech_id": null,
+        "outcome_id": null,
+        "trace_ref": {
+          "source": "runtime_journal",
+          "journal_kind": "voice.brain_turn_submitted",
+          "join_keys": [
+            "conversation_id",
+            "correlation_id"
+          ]
+        },
+        "content": "Attends, juste les tests unitaires.",
+        "attributes": {
+          "addressing": "addressed",
+          "duplicate": false,
+          "interrupted_speech_id": "speech-ack-1"
+        }
+      }
+    },
+    {
+      "source_ids": [
+        "speech-ack-1"
+      ],
+      "event": {
+        "schema_version": 1,
+        "event_id": "cev-79293086ad57c83b377570419d3bd246f308241f4139b3fe693c3440a4950b86",
+        "event_type": "mouth.speech.interrupted",
+        "actor": "mouth",
+        "conversation_id": "conv-demo",
+        "producer": "voice.speech_scheduler",
+        "visibility": "public",
+        "occurred_at": "2026-09-16T10:00:02.450Z",
+        "started_at": "2026-09-16T10:00:01.100Z",
+        "ended_at": "2026-09-16T10:00:02.450Z",
+        "span_id": "speech-ack-1",
+        "session_id": "voice-session-1",
+        "turn_id": null,
+        "correlation_id": "voice-source-1",
+        "parent_event_id": null,
+        "task_id": null,
+        "work_id": null,
+        "speech_id": "speech-ack-1",
+        "outcome_id": null,
+        "trace_ref": {
+          "source": "runtime_journal",
+          "journal_kind": "voice.speech.interrupted",
+          "join_keys": [
+            "conversation_id",
+            "speech_id"
+          ]
+        },
+        "content": null,
+        "attributes": {
+          "output_id": "output-1",
+          "played_ms": 1200,
+          "status": "cancelled"
+        }
+      }
+    },
+    {
+      "source_ids": [
+        "voice-source-2"
+      ],
+      "event": {
+        "schema_version": 1,
+        "event_id": "cev-d54e4885e3196718cb99e78bf7f5d87114ed9ffd37d15c8216bba1e8c1e3dbb7",
+        "event_type": "brain.turn.accepted",
+        "actor": "brain",
+        "conversation_id": "conv-demo",
+        "producer": "core.brain_service",
+        "visibility": "diagnostic",
+        "occurred_at": "2026-09-16T10:00:02.600Z",
+        "started_at": null,
+        "ended_at": null,
+        "span_id": null,
+        "session_id": null,
+        "turn_id": "brain-turn-2",
+        "correlation_id": "voice-source-2",
+        "parent_event_id": null,
+        "task_id": null,
+        "work_id": null,
+        "speech_id": null,
+        "outcome_id": null,
+        "trace_ref": null,
+        "content": null,
+        "attributes": {
+          "revision": 8,
+          "interrupted_speech_id": "speech-ack-1"
+        }
+      }
+    },
+    {
+      "source_ids": [
+        "speech-2"
+      ],
+      "event": {
+        "schema_version": 1,
+        "event_id": "cev-2f4d3c3ca964e41ad72e382d55dbb0f909a033c588c20ee6879dbf4f97b93244",
+        "event_type": "brain.speech.requested",
+        "actor": "brain",
+        "conversation_id": "conv-demo",
+        "producer": "core.brain_service",
+        "visibility": "diagnostic",
+        "occurred_at": "2026-09-16T10:00:03.000Z",
+        "started_at": null,
+        "ended_at": null,
+        "span_id": null,
+        "session_id": null,
+        "turn_id": null,
+        "correlation_id": "voice-source-2",
+        "parent_event_id": null,
+        "task_id": null,
+        "work_id": null,
+        "speech_id": "speech-2",
+        "outcome_id": null,
+        "trace_ref": null,
+        "content": "D'accord, uniquement les tests unitaires.",
+        "attributes": {
+          "kind": "ack",
+          "priority": "high"
+        }
+      }
+    },
+    {
+      "source_ids": [
+        "speech-2"
+      ],
+      "event": {
+        "schema_version": 1,
+        "event_id": "cev-7b23eaf391b963107c460905960109f5187046191fef37ad88feee5afa38adc7",
+        "event_type": "mouth.speech.started",
+        "actor": "mouth",
+        "conversation_id": "conv-demo",
+        "producer": "voice.speech_scheduler",
+        "visibility": "public",
+        "occurred_at": "2026-09-16T10:00:03.100Z",
+        "started_at": "2026-09-16T10:00:03.100Z",
+        "ended_at": null,
+        "span_id": "speech-2",
+        "session_id": "voice-session-1",
+        "turn_id": null,
+        "correlation_id": "voice-source-2",
+        "parent_event_id": null,
+        "task_id": null,
+        "work_id": null,
+        "speech_id": "speech-2",
+        "outcome_id": null,
+        "trace_ref": {
+          "source": "runtime_journal",
+          "journal_kind": "voice.speech.started",
+          "join_keys": [
+            "conversation_id",
+            "speech_id"
+          ]
+        },
+        "content": "D'accord, uniquement les tests unitaires.",
+        "attributes": {}
+      }
+    },
+    {
+      "source_ids": [
+        "speech-2"
+      ],
+      "event": {
+        "schema_version": 1,
+        "event_id": "cev-6192d98c5d4d107c249e444f1f717f147c0fe31e60b3d6676bb9a66875a950f7",
+        "event_type": "mouth.speech.completed",
+        "actor": "mouth",
+        "conversation_id": "conv-demo",
+        "producer": "voice.speech_scheduler",
+        "visibility": "public",
+        "occurred_at": "2026-09-16T10:00:04.200Z",
+        "started_at": null,
+        "ended_at": "2026-09-16T10:00:04.200Z",
+        "span_id": "speech-2",
+        "session_id": "voice-session-1",
+        "turn_id": null,
+        "correlation_id": "voice-source-2",
+        "parent_event_id": null,
+        "task_id": null,
+        "work_id": null,
+        "speech_id": "speech-2",
+        "outcome_id": null,
+        "trace_ref": {
+          "source": "runtime_journal",
+          "journal_kind": "voice.speech.completed",
+          "join_keys": [
+            "conversation_id",
+            "speech_id"
+          ]
+        },
+        "content": null,
+        "attributes": {}
+      }
+    },
+    {
+      "source_ids": [
+        "call-1"
+      ],
+      "event": {
+        "schema_version": 1,
+        "event_id": "cev-4d189c8a4bcef354514bf14acfd32a36136762ec3d584e304e2d7a6cf170828f",
+        "event_type": "tool.call.started",
+        "actor": "tool",
+        "conversation_id": "conv-demo",
+        "producer": "voice.realtime_audio",
+        "visibility": "diagnostic",
+        "occurred_at": "2026-09-16T10:00:05.000Z",
+        "started_at": "2026-09-16T10:00:05.000Z",
+        "ended_at": null,
+        "span_id": "call-1",
+        "session_id": "voice-session-1",
+        "turn_id": null,
+        "correlation_id": null,
+        "parent_event_id": null,
+        "task_id": null,
+        "work_id": null,
+        "speech_id": null,
+        "outcome_id": null,
+        "trace_ref": {
+          "source": "runtime_journal",
+          "journal_kind": "tool.call",
+          "join_keys": []
+        },
+        "content": null,
+        "attributes": {
+          "tool_name": "get_time",
+          "arguments_redacted": true
+        }
+      }
+    },
+    {
+      "source_ids": [
+        "call-1"
+      ],
+      "event": {
+        "schema_version": 1,
+        "event_id": "cev-65b0a02cc6cddf867a6d9061ba5cae022178bf056659b2648dc52e1989eddc74",
+        "event_type": "tool.call.finished",
+        "actor": "tool",
+        "conversation_id": "conv-demo",
+        "producer": "voice.realtime_audio",
+        "visibility": "diagnostic",
+        "occurred_at": "2026-09-16T10:00:05.300Z",
+        "started_at": null,
+        "ended_at": "2026-09-16T10:00:05.300Z",
+        "span_id": "call-1",
+        "session_id": "voice-session-1",
+        "turn_id": null,
+        "correlation_id": null,
+        "parent_event_id": null,
+        "task_id": null,
+        "work_id": null,
+        "speech_id": null,
+        "outcome_id": null,
+        "trace_ref": {
+          "source": "runtime_journal",
+          "journal_kind": "tool.result",
+          "join_keys": []
+        },
+        "content": null,
+        "attributes": {
+          "tool_name": "get_time"
+        }
+      }
+    },
+    {
+      "source_ids": [
+        "task-7"
+      ],
+      "event": {
+        "schema_version": 1,
+        "event_id": "cev-a12ef295a472dcc49fe04371190b2214b3845098593cde086418d4b90a1cef32",
+        "event_type": "subagent.finished",
+        "actor": "subagent",
+        "conversation_id": "conv-demo",
+        "producer": "control_center.agent_tasks",
+        "visibility": "diagnostic",
+        "occurred_at": "2026-09-16T10:00:09.000Z",
+        "started_at": "2026-09-16T10:00:01.600Z",
+        "ended_at": "2026-09-16T10:00:09.000Z",
+        "span_id": "task-7",
+        "session_id": null,
+        "turn_id": null,
+        "correlation_id": null,
+        "parent_event_id": "cev-1cf6234b1e3af3c7313de54f5259bc17c0cd30d2026266d3aeb65a3042bfd851",
+        "task_id": "task-7",
+        "work_id": "work-tests",
+        "speech_id": null,
+        "outcome_id": null,
+        "trace_ref": {
+          "source": "agent_task",
+          "journal_kind": null,
+          "join_keys": [
+            "task_id"
+          ]
+        },
+        "content": "Tous les tests unitaires passent.",
+        "attributes": {
+          "status": "completed",
+          "duration_ms": 7400,
+          "tokens": 1234,
+          "tool_uses": 5
+        }
+      }
+    },
+    {
+      "source_ids": [
+        "work-tests"
+      ],
+      "event": {
+        "schema_version": 1,
+        "event_id": "cev-53b99c8ed1f99cadf1e1a5fa53452416d33a85b19378cb9581ff7243b4a5b636",
+        "event_type": "brain.work.completed",
+        "actor": "brain",
+        "conversation_id": "conv-demo",
+        "producer": "core.brain_service",
+        "visibility": "diagnostic",
+        "occurred_at": "2026-09-16T10:00:09.300Z",
+        "started_at": null,
+        "ended_at": "2026-09-16T10:00:09.300Z",
+        "span_id": "work-tests",
+        "session_id": null,
+        "turn_id": null,
+        "correlation_id": "voice-source-1",
+        "parent_event_id": null,
+        "task_id": null,
+        "work_id": "work-tests",
+        "speech_id": null,
+        "outcome_id": null,
+        "trace_ref": null,
+        "content": "Les tests unitaires passent.",
+        "attributes": {}
+      }
+    },
+    {
+      "source_ids": [
+        "voice-source-1",
+        "outcome-work-tests"
+      ],
+      "event": {
+        "schema_version": 1,
+        "event_id": "cev-92bfb754a2885eb059df73e6adb2188039078c45f60f4ca760ee65982a1968f8",
+        "event_type": "brain.message.published",
+        "actor": "brain",
+        "conversation_id": "conv-demo",
+        "producer": "core.brain_outcomes",
+        "visibility": "public",
+        "occurred_at": "2026-09-16T10:00:09.350Z",
+        "started_at": null,
+        "ended_at": null,
+        "span_id": null,
+        "session_id": null,
+        "turn_id": null,
+        "correlation_id": "voice-source-1",
+        "parent_event_id": null,
+        "task_id": null,
+        "work_id": "work-tests",
+        "speech_id": null,
+        "outcome_id": "outcome-work-tests",
+        "trace_ref": {
+          "source": "runtime_journal",
+          "journal_kind": "core.brain.outcome_retained",
+          "join_keys": [
+            "correlation_id",
+            "outcome_id"
+          ]
+        },
+        "content": "Les tests unitaires passent.",
+        "attributes": {
+          "kind": "work_result",
+          "status": "completed"
+        }
+      }
+    },
+    {
+      "source_ids": [
+        "speech-3"
+      ],
+      "event": {
+        "schema_version": 1,
+        "event_id": "cev-126d9439c4c450287dbd4cdeba71913f85da7237fe286cbfbc3ebca878545d82",
+        "event_type": "brain.speech.requested",
+        "actor": "brain",
+        "conversation_id": "conv-demo",
+        "producer": "core.brain_service",
+        "visibility": "diagnostic",
+        "occurred_at": "2026-09-16T10:00:09.400Z",
+        "started_at": null,
+        "ended_at": null,
+        "span_id": null,
+        "session_id": null,
+        "turn_id": null,
+        "correlation_id": "voice-source-3",
+        "parent_event_id": null,
+        "task_id": null,
+        "work_id": null,
+        "speech_id": "speech-3",
+        "outcome_id": null,
+        "trace_ref": null,
+        "content": "C'est bon : tous les tests unitaires passent.",
+        "attributes": {
+          "kind": "result",
+          "priority": "normal"
+        }
+      }
+    },
+    {
+      "source_ids": [
+        "speech-3"
+      ],
+      "event": {
+        "schema_version": 1,
+        "event_id": "cev-8737ea87a4ce9d059aef1eb657544bef050b443d31890412698a381bcc952bc2",
+        "event_type": "mouth.speech.started",
+        "actor": "mouth",
+        "conversation_id": "conv-demo",
+        "producer": "voice.speech_scheduler",
+        "visibility": "public",
+        "occurred_at": "2026-09-16T10:00:09.500Z",
+        "started_at": "2026-09-16T10:00:09.500Z",
+        "ended_at": null,
+        "span_id": "speech-3",
+        "session_id": "voice-session-1",
+        "turn_id": null,
+        "correlation_id": "voice-source-3",
+        "parent_event_id": null,
+        "task_id": null,
+        "work_id": null,
+        "speech_id": "speech-3",
+        "outcome_id": null,
+        "trace_ref": null,
+        "content": "C'est bon : tous les tests unitaires passent.",
+        "attributes": {}
+      }
+    }
+  ],
+  "expected_timeline": [
+    {
+      "actor": "user",
+      "event_type": "user.transcript.accepted",
+      "status": "accepted",
+      "started_at": "2026-09-16T10:00:00.000Z",
+      "ended_at": "2026-09-16T10:00:00.000Z",
+      "text": "Jarvis, lance les tests et résume-moi le résultat.",
+      "anomalies": []
+    },
+    {
+      "actor": "brain",
+      "event_type": "brain.turn.accepted",
+      "status": "accepted",
+      "started_at": "2026-09-16T10:00:00.200Z",
+      "ended_at": "2026-09-16T10:00:00.200Z",
+      "text": null,
+      "anomalies": []
+    },
+    {
+      "actor": "brain",
+      "event_type": "brain.speech.requested",
+      "status": "requested",
+      "started_at": "2026-09-16T10:00:00.900Z",
+      "ended_at": "2026-09-16T10:00:00.900Z",
+      "text": "Je lance les tests.",
+      "anomalies": []
+    },
+    {
+      "actor": "mouth",
+      "event_type": "mouth.speech.queued",
+      "status": "queued",
+      "started_at": "2026-09-16T10:00:01.000Z",
+      "ended_at": "2026-09-16T10:00:01.000Z",
+      "text": null,
+      "anomalies": []
+    },
+    {
+      "actor": "mouth",
+      "event_type": "mouth.speech.started",
+      "status": "interrupted",
+      "started_at": "2026-09-16T10:00:01.100Z",
+      "ended_at": "2026-09-16T10:00:02.450Z",
+      "text": "Je lance les tests.",
+      "anomalies": []
+    },
+    {
+      "actor": "brain",
+      "event_type": "brain.work.started",
+      "status": "completed",
+      "started_at": "2026-09-16T10:00:01.500Z",
+      "ended_at": "2026-09-16T10:00:09.300Z",
+      "text": "Les tests unitaires passent.",
+      "anomalies": []
+    },
+    {
+      "actor": "subagent",
+      "event_type": "subagent.started",
+      "status": "finished",
+      "started_at": "2026-09-16T10:00:01.600Z",
+      "ended_at": "2026-09-16T10:00:09.000Z",
+      "text": "Tous les tests unitaires passent.",
+      "anomalies": []
+    },
+    {
+      "actor": "user",
+      "event_type": "user.transcript.accepted",
+      "status": "accepted",
+      "started_at": "2026-09-16T10:00:02.400Z",
+      "ended_at": "2026-09-16T10:00:02.400Z",
+      "text": "Attends, juste les tests unitaires.",
+      "anomalies": []
+    },
+    {
+      "actor": "brain",
+      "event_type": "brain.turn.accepted",
+      "status": "accepted",
+      "started_at": "2026-09-16T10:00:02.600Z",
+      "ended_at": "2026-09-16T10:00:02.600Z",
+      "text": null,
+      "anomalies": []
+    },
+    {
+      "actor": "brain",
+      "event_type": "brain.speech.requested",
+      "status": "requested",
+      "started_at": "2026-09-16T10:00:03.000Z",
+      "ended_at": "2026-09-16T10:00:03.000Z",
+      "text": "D'accord, uniquement les tests unitaires.",
+      "anomalies": []
+    },
+    {
+      "actor": "mouth",
+      "event_type": "mouth.speech.started",
+      "status": "completed",
+      "started_at": "2026-09-16T10:00:03.100Z",
+      "ended_at": "2026-09-16T10:00:04.200Z",
+      "text": "D'accord, uniquement les tests unitaires.",
+      "anomalies": []
+    },
+    {
+      "actor": "tool",
+      "event_type": "tool.call.started",
+      "status": "finished",
+      "started_at": "2026-09-16T10:00:05.000Z",
+      "ended_at": "2026-09-16T10:00:05.300Z",
+      "text": null,
+      "anomalies": []
+    },
+    {
+      "actor": "brain",
+      "event_type": "brain.message.published",
+      "status": "published",
+      "started_at": "2026-09-16T10:00:09.350Z",
+      "ended_at": "2026-09-16T10:00:09.350Z",
+      "text": "Les tests unitaires passent.",
+      "anomalies": []
+    },
+    {
+      "actor": "brain",
+      "event_type": "brain.speech.requested",
+      "status": "requested",
+      "started_at": "2026-09-16T10:00:09.400Z",
+      "ended_at": "2026-09-16T10:00:09.400Z",
+      "text": "C'est bon : tous les tests unitaires passent.",
+      "anomalies": []
+    },
+    {
+      "actor": "mouth",
+      "event_type": "mouth.speech.started",
+      "status": "open",
+      "started_at": "2026-09-16T10:00:09.500Z",
+      "ended_at": null,
+      "text": "C'est bon : tous les tests unitaires passent.",
+      "anomalies": []
+    }
+  ],
+  "expected_public_transcript": [
+    {
+      "actor": "user",
+      "event_type": "user.transcript.accepted",
+      "status": "accepted",
+      "started_at": "2026-09-16T10:00:00.000Z",
+      "ended_at": "2026-09-16T10:00:00.000Z",
+      "text": "Jarvis, lance les tests et résume-moi le résultat.",
+      "anomalies": []
+    },
+    {
+      "actor": "mouth",
+      "event_type": "mouth.speech.started",
+      "status": "interrupted",
+      "started_at": "2026-09-16T10:00:01.100Z",
+      "ended_at": "2026-09-16T10:00:02.450Z",
+      "text": "Je lance les tests.",
+      "anomalies": []
+    },
+    {
+      "actor": "user",
+      "event_type": "user.transcript.accepted",
+      "status": "accepted",
+      "started_at": "2026-09-16T10:00:02.400Z",
+      "ended_at": "2026-09-16T10:00:02.400Z",
+      "text": "Attends, juste les tests unitaires.",
+      "anomalies": []
+    },
+    {
+      "actor": "mouth",
+      "event_type": "mouth.speech.started",
+      "status": "completed",
+      "started_at": "2026-09-16T10:00:03.100Z",
+      "ended_at": "2026-09-16T10:00:04.200Z",
+      "text": "D'accord, uniquement les tests unitaires.",
+      "anomalies": []
+    },
+    {
+      "actor": "brain",
+      "event_type": "brain.message.published",
+      "status": "published",
+      "started_at": "2026-09-16T10:00:09.350Z",
+      "ended_at": "2026-09-16T10:00:09.350Z",
+      "text": "Les tests unitaires passent.",
+      "anomalies": []
+    },
+    {
+      "actor": "mouth",
+      "event_type": "mouth.speech.started",
+      "status": "open",
+      "started_at": "2026-09-16T10:00:09.500Z",
+      "ended_at": null,
+      "text": "C'est bon : tous les tests unitaires passent.",
+      "anomalies": []
+    }
+  ]
+}

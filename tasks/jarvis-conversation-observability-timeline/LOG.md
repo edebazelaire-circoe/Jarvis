@@ -48,3 +48,31 @@ Readiness state: `READY` (after Human waiver of the Task Type gate, see below).
 ### Out-of-scope discoveries
 
 - See `Issues/` for the trace.jsonl concurrent-write corruption and the stale BUILD_VERIFICATION doc.
+
+## 2026-09-16 — Slice 01 implementation (conversation event contract)
+
+- Contract: `docs/conversation-events.md`; implementation `jarvis/domain/conversation_events.py` (pure domain, schema_version 1, strict codec modeled on `voice_event_codec.py`, IDs reuse `voice_state.state_id`).
+- Vocabulary: actors `user, mouth, brain, subagent, tool, system`; 23 event types (24 after rework) grounded in existing journal kinds / bus envelopes (mapping table in the contract doc).
+- Identity: `cev-` + sha256 of `["conversation-event", producer, event_type, conversation_id, *source_ids]`. Duplicate identical = no-op; same id different payload = `ConversationEventConflictError`.
+- Time: UTC ISO-8601 ms on the wire; canonical order = store sequence (Slice 02), `(occurred_at, event_id)` fallback. Spans pair by `(open type, span_id)`, `span_id` = speech_id / work_id / task_id / call id.
+- `trace_id` not introduced: `trace_ref {source, journal_kind, join_keys}` join contract + `data.conversation_event_id` (to be written by Slice 03). `agent.event` rejected as a trace source.
+- Redaction: allowlisted attribute keys + recursive forbidden-key scan (reasoning/thinking/prompt/secret/audio/bytes/arguments...), bounded content/attributes.
+- Deviations from SLICE.md: `generation_id` and `channel` not added (no such id/concept in producers; `producer` + `actor` cover channel). `jarvis/protocol/*` untouched (no HTTP in this Slice). Added `brain.work.cancelled` and `subagent.stopped` so real terminal states close spans.
+- Documentation level: canonical conversation event envelope 0 → 3; trace correlation 1 → 2 (contract + pure join helper; producers not instrumented).
+
+### 2026-09-16 — Slice 01 rework (QA APPROVE_WITH_ISSUES, PM should-fix items)
+
+1. Trace join: `outcome_id` added as optional envelope id + `TRACE_JOIN_FIELDS`; required on `brain.message.published` (several `core.brain.outcome_retained` lines per correlation). Removed from attribute allowlist. Tool events: `trace_ref` with `join_keys` rejected (lines carry only `{call_id, arguments}`); Slice 04 obligation: never render raw `tool.call`/`tool.result` lines unredacted. `agent.subagent.*` has no `conversation_id`: Slice 03 maps task → conversation.
+2. Hygiene: lone surrogates in content / attribute strings / ids / source_ids raise `ConversationEventError`; message field names escaped. Redaction scan capped at `MAX_PAYLOAD_DEPTH = 8` (5000-deep and cyclic payloads raise `ConversationEventError`, not `RecursionError`).
+3. Retry semantics documented and tested: `occurred_at` = fact time; retry with emission time conflicts; duplicate admissions (`duplicate: true`) are not re-emitted; store conflict policy = keep first, diagnostic, producer not failed (Slice 02).
+4. `mouth.speech.failed` (close, diagnostic) ← `voice.speech.speak_failed`. Unknown sub-agent statuses → `subagent.failed` with raw `attributes.status`. Reflex stays instant (no terminal journal kind).
+5. `content` forbidden on `brain.turn.failed` and `system.failure`.
+6. `reconstruct_conversation` never raises on data: earliest open/close kept, close-before-open clamped, first copy of a conflict kept, `ConversationItem.anomalies` (`duplicate_span_open|duplicate_span_close|close_before_open|conflicting_duplicate:<event_id>`). Raises only on non-event input / mixed conversations.
+7. `attributes` is a `MappingProxyType` (lists → tuples); events hash by `event_id`. Doc: exact id comparison (no Unicode normalization), consumers cannot verify `event_id`. Both user-turn sources listed (`voice.brain_turn_submitted` live; `core.voice.turn_admitted` 0 live lines); fixture uses one of each.
+
+PM answers to Slice 01 open questions:
+- Q1: mouth `content` stays sent-for-playback text; Slice 06 readable transcript must use the heard projection (documented).
+- Q2: single `user.transcript.accepted` producer, Core admission preferred, decided in Slice 03 with live evidence.
+- Q3: Slice 03 must pick a stable sub-agent source id.
+- Q4: resolved by item 6.
+- Q5: documentation-levels update owned by PM.

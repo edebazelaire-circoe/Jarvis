@@ -13,7 +13,7 @@ Every coding Slice must load `/caveman` and `/coding-guideline` before implement
 - [x] 00 — Project Manager readiness and orchestration gate (READY 2026-09-16, Task Type gate waived by Human — see LOG.md)
   - Path: `slices/00-project-manager/SLICE.md`
   - Depends on: none
-- [ ] 01 — Define the canonical conversation event contract
+- [x] 01 — Define the canonical conversation event contract (2026-09-16, QA APPROVE_WITH_ISSUES → reworked)
   - Path: `slices/01-conversation-event-contract/SLICE.md`
   - Depends on: 00
 - [ ] 02 — Add durable append/replay storage for conversation events

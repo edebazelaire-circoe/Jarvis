@@ -248,6 +248,15 @@ restart leaves a documented replay window.
 `/v1/events` is live-only. There is no replay: a consumer that missed events
 expires stale speech and rehydrates from Core state.
 
+The canonical conversation record is a separate, versioned contract:
+[Conversation Events](conversation-events.md) (`jarvis/domain/conversation_events.py`).
+It maps user transcript admission, the `brain.*` envelopes above, the
+`voice.speech.*` / `voice.reflex.*` delivery telemetry, `agent.subagent.*` and
+tool calls to one strict, redacted envelope with deterministic `event_id`,
+instant/span timing and a `trace_ref` join to `runtime/trace.jsonl`. It never
+ingests `agent.event`. Contract only for now; storage and producers follow in
+the conversation-observability handoff.
+
 ## Speech, interruption and work
 
 `SpeechScheduler` (`jarvis/runtime/speech_scheduler.py`) consumes `/v1/events`,
