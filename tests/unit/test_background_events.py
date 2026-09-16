@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from jarvis.runtime.background_events import (
     ATTENTION,
     DONE,
@@ -81,6 +83,40 @@ def test_acknowledging_clears_the_count_and_never_rewinds_it():
     # Un accusé au-delà de ce qui existe ne crée pas d'avance.
     assert ledger.acknowledge(99) == 3 and ledger.unread == 0
     emit(ledger, "agent.subagent.finished", "fini 4", status="completed")
+    assert ledger.unread == 1
+
+
+def test_each_round_pill_is_acknowledged_alone_without_hiding_a_failure():
+    """Interface principale : une pastille par catégorie, acquittée seule.
+
+    Regarder les tâches terminées ne doit pas effacer un échec en passant, ni
+    ce qui est arrivé après l'affichage de la liste.
+    """
+    ledger = BackgroundEventLedger()
+    emit(ledger, "agent.subagent.finished", "fini", status="completed", task_id="t-1")
+    emit(ledger, "agent.subagent.finished", "mort", status="interrupted", task_id="t-2")
+    shown = ledger.seq
+    emit(ledger, "agent.subagent.finished", "fini après coup", status="completed")
+
+    assert ledger.acknowledge(shown, category=DONE) == 0  # Le curseur ne bouge pas.
+    assert ledger.counts() == {FAILED: 1, DONE: 1}
+    events = {event["label"]: event for event in ledger.to_payload()["events"]}
+    assert events["fini"]["unread"] is False and events["mort"]["unread"] is True
+    # La trace nomme la sous-tâche : la pastille ouvre directement sa carte.
+    assert events["mort"]["task_id"] == "t-2" and events["fini après coup"]["task_id"] == ""
+
+    ledger.acknowledge(category=FAILED)
+    assert ledger.counts() == {DONE: 1} and ledger.unread == 1
+    # L'acquittement global reste celui d'avant.
+    assert ledger.acknowledge() == ledger.seq and ledger.unread == 0
+
+
+def test_an_unknown_pill_category_is_refused():
+    ledger = BackgroundEventLedger()
+    emit(ledger, "agent.subagent.finished", "mort", status="failed")
+
+    with pytest.raises(ValueError):
+        ledger.acknowledge(category="nope")
     assert ledger.unread == 1
 
 

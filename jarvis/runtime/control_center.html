@@ -197,6 +197,28 @@ pre.block{background:#050b10;border:1px solid rgba(113,144,160,.16);border-radiu
 @media(min-width:940px){#app:has(.panel.open)~.toasts{right:calc(98px + min(560px,100vw - 120px));width:min(340px,calc(100vw - 676px))}}
 @media(prefers-reduced-motion:reduce){.adot.running,.toast{animation:none}}
 
+/* ---------- Pastilles d'arrière-plan (interface principale) ----------
+   Petits boutons ronds accolés au bouton Agents, hors de la barre d'outils :
+   une pastille par catégorie non vue. Dock de 4 outils (4×52 + 3×10 = 238 px,
+   centré) : la colonne commence juste sous le bouton Agents. */
+.bgpills{position:absolute;z-index:40;right:30px;top:calc(50% + 131px);display:flex;flex-direction:column;gap:8px}
+.bgpill{--pill:var(--accent);position:relative;width:28px;height:28px;padding:0;border-radius:50%;display:grid;place-items:center;border:1px solid var(--pill);background:rgba(3,8,12,.86);color:var(--pill);font:700 11px ui-monospace,SFMono-Regular,Consolas,monospace;cursor:pointer;backdrop-filter:blur(12px);box-shadow:0 0 12px color-mix(in srgb,var(--pill) 35%,transparent);transition:transform .15s,background-color .15s}
+.bgpill.bad{--pill:var(--danger)}.bgpill.warn{--pill:var(--warn)}.bgpill.ok{--pill:var(--ok)}
+.bgpill:hover,.bgpill.active{transform:scale(1.12);background:color-mix(in srgb,var(--pill) 18%,#03080c)}
+.bgpill:focus-visible{outline:1px solid var(--pill);outline-offset:3px}
+.bgpill.bad::after{content:'';position:absolute;inset:-4px;border-radius:50%;border:1px solid var(--pill);opacity:.5;animation:pulse 1.6s ease-in-out infinite;pointer-events:none}
+.bgpop{position:fixed;z-index:75;width:min(360px,calc(100vw - 24px));max-height:min(420px,calc(100vh - 24px));display:flex;flex-direction:column;background:rgba(6,13,19,.97);border:1px solid var(--line);border-top:2px solid var(--accent);border-radius:10px;box-shadow:0 18px 50px rgba(0,0,0,.65)}
+.bgpop.bad{border-top-color:var(--danger)}.bgpop.warn{border-top-color:var(--warn)}.bgpop.ok{border-top-color:var(--ok)}
+.bgpop header{display:flex;align-items:center;gap:8px;padding:10px 10px 8px 12px;border-bottom:1px solid var(--line);font-size:11px;letter-spacing:.1em;text-transform:uppercase}
+.bgpop header .dot{margin-top:0}
+.bgpop header strong{flex:1 1 auto;min-width:0}
+.bgpop .bglist{overflow:auto;min-height:0;padding:4px}
+.bgitem{display:flex;align-items:flex-start;gap:9px;width:100%;padding:8px;background:none;border:0;border-radius:6px;color:var(--text);font:inherit;font-size:13px;text-align:left;cursor:pointer}
+.bgitem:hover,.bgitem:focus-visible{outline:none;background:rgba(110,231,255,.08)}
+.bgpop footer{display:flex;gap:8px;justify-content:flex-end;padding:8px 10px;border-top:1px solid var(--line)}
+.bgpop footer .action{padding:6px 10px;font-size:12px}
+@media(prefers-reduced-motion:reduce){.bgpill,.bgpill.bad::after{animation:none;transition:none}}
+
 /* ---------- Fenêtre de réglages ---------- */
 .overlay{position:fixed;inset:0;z-index:60;display:none;place-items:center;padding:3vh 3vw;background:rgba(2,6,10,.68);backdrop-filter:blur(7px)}
 .overlay.open{display:grid}
@@ -304,6 +326,7 @@ details.rd[open]>summary{margin-bottom:14px}
 @media(max-width:700px){
   .panel{left:12px;right:76px;top:12px;bottom:12px;width:auto}
   .dock{right:10px}
+  .bgpills{right:22px}
   .topbar{left:10px;right:74px}
   .live-banner{top:62px;left:10px;right:74px;width:auto;transform:none;grid-template-columns:auto minmax(0,1fr)}
   .live-stop{grid-column:1/-1;width:100%}
@@ -332,15 +355,16 @@ details.rd[open]>summary{margin-bottom:14px}
   <div class="voicehint" id="voiceHint">F9 · DÉMARRER</div>
   <nav class="dock" aria-label="Jarvis tools">
     <div class="tool"><button data-panel="errors" title="Errors">ERR</button><span class="badge" id="errorBadge">0</span></div>
-    <div class="tool"><button data-panel="background" title="Arrière-plan : tâches terminées, échecs, points à vérifier">BGD</button><span class="badge" id="bgBadge">0</span></div>
     <div class="tool"><button data-panel="trace" title="Trace">TRC</button></div>
     <div class="tool"><button id="openSettings" title="Réglages">SET</button></div>
     <div class="tool"><button data-panel="agents" id="agentsButton" title="Agents">AGT</button><span class="badge count" id="agentBadge">0</span></div>
   </nav>
+  <div class="bgpills" id="bgPills" role="group" aria-label="Notifications d’arrière-plan" hidden></div>
   <section class="panel" id="panel"><header><h2 id="panelTitle">Panel</h2><button id="closePanel" aria-label="Fermer">×</button></header><div class="body" id="panelBody"></div></section>
 </div>
 <div class="ctxmenu" id="ctxMenu" role="menu" hidden></div>
 <div class="toasts" id="toasts" aria-live="polite"></div>
+<div class="bgpop" id="bgPop" role="dialog" aria-label="Notifications d’arrière-plan" hidden></div>
 
 <div class="overlay" id="overlay">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
@@ -381,12 +405,19 @@ let errorsView='active';
    =====================================================================
    Retour utilisateur du 16/09/2026 : deux demandes vocales sont mortes en
    silence. La voix est traitée côté Core (le cerveau est réveillé et choisit
-   ses mots) ; ici, la moitié qui n'interrompt pas — un compteur, une liste, et
-   un signal sonore bref quand le compte monte.
+   ses mots) ; ici, la moitié qui n'interrompt pas — des pastilles, et un signal
+   sonore bref quand le compte monte.
+
+   Second retour du même jour : pas de bouton « BGD » rangé parmi les outils.
+   Le bouton Agents reste le lieu où l'on gère les sous-agents ; ce qui mérite
+   un coup d'œil s'affiche dans l'interface principale, en **petites pastilles
+   rondes** accolées au bouton Agents — une par catégorie non vue (échec, à
+   vérifier, terminé, non dit). Un clic ouvre la liste de la catégorie, d'où
+   l'on ouvre la carte du sous-agent ou marque la pastille comme vue.
 
    Le son n'est joué que sur une **hausse** du numéro de séquence, jamais au
    premier sondage : ouvrir la page ne doit pas sonner pour du passé. */
-const BG={seq:0,ctx:null,armed:false};
+const BG={seq:0,ctx:null,armed:false,sig:'',open:null};
 
 /* Deux notes courtes, plus graves s'il y a un échec. WebAudio n'est autorisé
    qu'après un geste de l'utilisateur : tout échec est ignoré en silence — un
@@ -404,52 +435,126 @@ function bgCue(bad){
       gain.gain.exponentialRampToValueAtTime(0.0001,at+0.1);
       osc.connect(gain).connect(BG.ctx.destination);osc.start(at);osc.stop(at+0.12);
     });
-  }catch(e){/* pas de son : le badge suffit */}
+  }catch(e){/* pas de son : les pastilles suffisent */}
 }
 
-/* Le badge suit le résumé de `/api/status`. Rouge dès qu'un échec figure
-   parmi les non-vus, accent sinon : la couleur dit s'il faut regarder tout de
-   suite ou seulement en passant. */
-function renderBackgroundBadge(bg){
-  const badge=$('#bgBadge');if(!badge)return;
-  const summary=bg||{},unread=Number(summary.unread||0),counts=summary.counts||{};
+/* Catégories dans l'ordre du registre : la plus urgente d'abord, au plus près
+   du bouton Agents. `one`/`many` : libellés accordés au compte. */
+const BG_CATS=[
+  {id:'failed',one:'échec',many:'échecs',icon:'⛔',tone:'bad'},
+  {id:'attention',one:'point à vérifier',many:'points à vérifier',icon:'❓',tone:'warn'},
+  {id:'done',one:'tâche terminée',many:'tâches terminées',icon:'✅',tone:'ok'},
+  {id:'said',one:'résultat non dit',many:'résultats non dits',icon:'🔇',tone:'info'},
+];
+const bgCat=id=>BG_CATS.find(c=>c.id===id)||{id,one:id,many:id,icon:'•',tone:'info'};
+const bgCount=(cat,n)=>`${n} ${n>1?cat.many:cat.one}`;
+
+/* Les pastilles suivent le résumé de `/api/status` (sondé chaque seconde) :
+   le DOM n'est réécrit que si un compte change, pour ne pas voler le focus. */
+function renderBackgroundPills(bg){
+  const box=$('#bgPills');if(!box)return;
+  const summary=bg||{},counts=summary.counts||{},unread=Number(summary.unread||0);
   const seq=Number(summary.seq||0),bad=!!(counts.failed||counts.attention);
-  badge.textContent=unread>99?'99+':String(unread);
-  badge.style.display=unread?'flex':'none';
-  badge.classList.toggle('count',!bad);
-  badge.title=Object.entries({failed:'en échec',attention:'à vérifier',done:'terminé(s)',said:'non dit'})
-    .filter(([k])=>counts[k]).map(([k,label])=>`${counts[k]} ${label}`).join(' · ')||'Rien en attente';
+  const shown=BG_CATS.filter(c=>Number(counts[c.id])>0);
+  const sig=shown.map(c=>`${c.id}:${counts[c.id]}`).join('|');
+  if(sig!==BG.sig){
+    BG.sig=sig;
+    box.innerHTML=shown.map(c=>{
+      const n=Number(counts[c.id]),label=`Arrière-plan · ${bgCount(c,n)}`,open=BG.open===c.id;
+      return `<button type="button" class="bgpill ${c.tone}${open?' active':''}" data-bg-cat="${c.id}" title="${esc(label)}" aria-label="${esc(label)}" aria-haspopup="dialog" aria-expanded="${open}">${n>9?'9+':n}</button>`;
+    }).join('');
+    box.hidden=!shown.length;
+  }
+  // La catégorie ouverte a été vue ailleurs (autre fenêtre) : rien à montrer.
+  if(BG.open&&!Number(counts[BG.open]))closeBackgroundPop();
   /* Hausse réelle : on signale. `armed` évite de sonner au tout premier
      sondage, où tout est « nouveau » par construction. */
   if(BG.armed&&seq>BG.seq&&unread>0)bgCue(bad);
   BG.seq=seq;BG.armed=true;
 }
 
-const BG_LABEL={failed:'ÉCHEC',attention:'À VÉRIFIER',done:'TERMINÉ',said:'NON DIT'};
-const BG_DOT={failed:'bad',attention:'warn',done:'ok',said:'warn'};
+/* Carte Agents d'un événement : la trace nomme l'id du tracker, la carte Core
+   porte le work_key — les deux sont essayés. */
+function bgTaskFor(id){
+  if(!id)return null;
+  return allTasks().find(t=>t.id===id||t.provider_id===id)||AG.cache.get(id)||null;
+}
 
-async function renderBackground(){
-  const data=await api('/api/background?limit=40'),events=data.events||[];
-  const counts=data.counts||{};
-  const summary=Object.entries(BG_LABEL).filter(([k])=>counts[k]).map(([k,label])=>`${counts[k]} ${label.toLowerCase()}`).join(' · ');
-  body.innerHTML=`<div class="row" style="margin-bottom:12px"><button class="action" id="bgAck"${data.unread?'':' disabled'}>Marquer comme vu</button><span class="hint">${data.unread?esc(summary):'Rien en attente'} · ${events.length} événement(s)</span></div>`
-    +(events.length?events.map(e=>{
-        const seen=e.seq<=data.acknowledged;
-        return `<div class="entry bgrow${e.category==='failed'?' error':''}${seen?' seen':''}"><span class="ico">${e.category==='failed'?'⛔':e.category==='attention'?'❓':e.category==='done'?'✅':'🔇'}</span><span class="etxt"><span class="emsg">${esc(e.label)}</span><span class="emeta">${esc(timeOf(e.ts))} · ${esc(BG_LABEL[e.category]||e.category)}${e.detail?' · '+esc(e.detail):''} · ${esc(e.kind)}</span></span><span class="dot ${BG_DOT[e.category]||'ok'}"></span></div>`
-      }).join('')
-      :'<div class="empty">Rien ne s’est passé en arrière-plan.</div>');
-  const ack=$('#bgAck');
-  if(ack)ack.addEventListener('click',async()=>{
+function placeBackgroundPop(pill){
+  const pop=$('#bgPop'),r=pill.getBoundingClientRect(),w=window.innerWidth,h=window.innerHeight;
+  const row=getComputedStyle($('#bgPills')).flexDirection.startsWith('row');
+  if(row){
+    // Pastilles en ligne (thème Omega) : la liste tombe sous la pastille.
+    pop.style.top=`${Math.round(r.bottom+10)}px`;
+    pop.style.right=`${Math.max(10,Math.round(w-r.right-12))}px`;
+  }else{
+    // Pastilles en colonne : la liste s'ouvre à leur gauche, bornée à l'écran.
+    pop.style.right=`${Math.round(w-r.left+12)}px`;
+    pop.style.top=`${Math.round(Math.max(12,Math.min(r.top-12,h-pop.offsetHeight-12)))}px`;
+  }
+}
+
+function closeBackgroundPop(){
+  const pop=$('#bgPop');
+  BG.open=null;
+  if(pop){pop.hidden=true;pop.innerHTML=''}
+  document.querySelectorAll('#bgPills .bgpill').forEach(p=>{p.classList.remove('active');p.setAttribute('aria-expanded','false')});
+}
+
+async function openBackgroundPop(category,pill){
+  if(BG.open===category){closeBackgroundPop();return}
+  closeBackgroundPop();
+  const cat=bgCat(category),pop=$('#bgPop');
+  BG.open=category;
+  pill.classList.add('active');pill.setAttribute('aria-expanded','true');
+  pop.className=`bgpop ${cat.tone}`;
+  pop.innerHTML='<div class="empty">Chargement…</div>';
+  pop.hidden=false;placeBackgroundPop(pill);
+  let data;
+  try{data=await api('/api/background?limit=60')}
+  catch(e){if(BG.open===category){pop.innerHTML=`<div class="entry error">${esc(e.message)}</div>`;placeBackgroundPop(pill)}return}
+  if(BG.open!==category)return;
+  const events=(data.events||[]).filter(e=>e.category===category&&e.unread);
+  pop.innerHTML=`<header><span class="dot ${cat.tone==='info'?'busy':cat.tone}"></span><strong>${esc(bgCount(cat,events.length))}</strong><button type="button" class="tclose" data-bg-close aria-label="Fermer">×</button></header>`
+    +`<div class="bglist">${events.length?events.map(e=>{
+        const task=bgTaskFor(e.task_id);
+        return `<button type="button" class="bgitem" data-bg-task="${esc(task?task.id:'')}" title="${task?'Ouvrir la trace de ce sous-agent':'Ouvrir le panneau Agents'}"><span class="ico">${cat.icon}</span><span class="etxt"><span class="emsg">${esc(e.label)}</span><span class="emeta">${esc(timeOf(e.ts))}${e.detail?' · '+esc(e.detail):''}</span></span></button>`;
+      }).join(''):'<div class="empty">Rien en attente.</div>'}</div>`
+    +`<footer><button type="button" class="action primary" data-bg-ack>Marquer comme vu</button><button type="button" class="action" data-bg-agents>Agents →</button></footer>`;
+  placeBackgroundPop(pill);
+  pop.querySelector('[data-bg-close]').addEventListener('click',()=>{closeBackgroundPop();pill.focus()});
+  pop.querySelector('[data-bg-agents]').addEventListener('click',()=>{closeBackgroundPop();openAgentsAt('list')});
+  pop.querySelectorAll('[data-bg-task]').forEach(item=>item.addEventListener('click',()=>{
+    const id=item.dataset.bgTask;closeBackgroundPop();openAgentsAt(id?'trace':'list',id||null);
+  }));
+  const ack=pop.querySelector('[data-bg-ack]');
+  ack.addEventListener('click',async()=>{
     ack.disabled=true;
-    /* On n'acquitte que ce qui a été affiché : un événement arrivé entre le
-       rendu et le clic reste non vu. */
-    try{await api('/api/background/ack',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({seq:data.seq})});await renderBackground();refreshStatus()}
+    /* On n'acquitte que ce qui a été affiché, et seulement cette catégorie :
+       un événement arrivé entre le rendu et le clic reste non vu, et regarder
+       les tâches terminées n'efface pas un échec en passant. */
+    try{await api('/api/background/ack',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({seq:data.seq,category})});closeBackgroundPop();refreshStatus()}
     catch(e){ack.disabled=false;alert(e.message)}
   });
+  (pop.querySelector('.bgitem')||ack).focus({preventScroll:true});
 }
+
+$('#bgPills').addEventListener('click',e=>{
+  const pill=e.target.closest('.bgpill');if(pill)openBackgroundPop(pill.dataset.bgCat,pill);
+});
+document.addEventListener('mousedown',e=>{
+  if(BG.open&&!e.target.closest('#bgPop')&&!e.target.closest('#bgPills'))closeBackgroundPop();
+});
+// Échap ferme la liste avant tout raccourci d'interface (fermeture du panneau).
+document.addEventListener('keydown',e=>{
+  if(e.key!=='Escape'||!BG.open)return;
+  const category=BG.open;closeBackgroundPop();e.stopPropagation();
+  const pill=document.querySelector(`#bgPills [data-bg-cat="${category}"]`);if(pill)pill.focus();
+},true);
+window.addEventListener('resize',()=>{if(BG.open)closeBackgroundPop()});
 async function renderErrors(){const archived=errorsView==='archived';title.textContent=archived?'Errors · Archives':'Errors';const items=await api('/api/errors'+(archived?'?archived=1&limit=500':''));body.innerHTML=`<div class="row" style="margin-bottom:12px"><button class="action" id="toggleErrors">${archived?'Erreurs actives':'Erreurs archivées'}</button>${archived?'':'<button class="action danger" id="archiveErrors">Archiver</button>'}<span class="hint">${items.length} entrée(s)</span></div><div>${entries(items)}</div>`;$('#toggleErrors').addEventListener('click',()=>{errorsView=archived?'active':'archived';renderErrors().catch(e=>{body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`})});const archive=$('#archiveErrors');if(archive)archive.addEventListener('click',async()=>{archive.disabled=true;try{await api('/api/errors/archive',{method:'POST'});await renderErrors();refreshStatus()}catch(e){alert(e.message)}finally{archive.disabled=false}})}
-async function refreshStatus(){try{const s=await api('/api/status'),v=s.voice_state||'idle',k=String(s.manual_wake_key||'f9').toUpperCase(),online=s.voice_online===true;renderLive(s.live);$('#voiceState').textContent=online?v.toUpperCase():'OFFLINE';const listening=s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`;$('#voiceHint').textContent=online?({idle:`${k} · DÉMARRER`,listening,thinking:`${k} · ANNULER`,speaking:`${k} · INTERROMPRE`}[v]||`${k} · CONTRÔLER`):`${k} · VOICE HORS LIGNE`;$('.face').style.visibility=online?'visible':'hidden';$('#agentName').textContent=String(s.agent.name||s.agent_cli||'agent').toUpperCase();$('#agentState').textContent=(s.agent.state||'stopped').toUpperCase();const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';renderBackgroundBadge(s.background);AG.agent=s.agent||null;AG.cli=s.agent_cli||'';if(!(current==='agents'&&coreOk()))updateSubagentBadge(s.subagents,false);watchSubagents(s.subagents)}catch(e){$('#voiceState').textContent='OFFLINE';$('#agentState').textContent='OFFLINE';$('#voiceHint').textContent='VOICE HORS LIGNE';$('.face').style.visibility='hidden';updateSubagentBadge(null)}}
-async function openPanel(name){current=name;document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.toggle('active',b.dataset.panel===name));panel.classList.add('open');title.textContent={errors:'Errors',trace:'Trace',agents:'Agents',background:'Arrière-plan'}[name];closeMenu(false);if(name==='agents'){openAgentsPanel();return}stopAgentsPolling();body.innerHTML='<div class="empty">Chargement…</div>';try{if(name==='errors')await renderErrors();if(name==='background')await renderBackground();if(name==='trace')body.innerHTML=entries(await api('/api/trace'))}catch(e){body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`}}
+async function refreshStatus(){try{const s=await api('/api/status'),v=s.voice_state||'idle',k=String(s.manual_wake_key||'f9').toUpperCase(),online=s.voice_online===true;renderLive(s.live);$('#voiceState').textContent=online?v.toUpperCase():'OFFLINE';const listening=s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`;$('#voiceHint').textContent=online?({idle:`${k} · DÉMARRER`,listening,thinking:`${k} · ANNULER`,speaking:`${k} · INTERROMPRE`}[v]||`${k} · CONTRÔLER`):`${k} · VOICE HORS LIGNE`;$('.face').style.visibility=online?'visible':'hidden';$('#agentName').textContent=String(s.agent.name||s.agent_cli||'agent').toUpperCase();$('#agentState').textContent=(s.agent.state||'stopped').toUpperCase();const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';renderBackgroundPills(s.background);AG.agent=s.agent||null;AG.cli=s.agent_cli||'';if(!(current==='agents'&&coreOk()))updateSubagentBadge(s.subagents,false);watchSubagents(s.subagents)}catch(e){$('#voiceState').textContent='OFFLINE';$('#agentState').textContent='OFFLINE';$('#voiceHint').textContent='VOICE HORS LIGNE';$('.face').style.visibility='hidden';updateSubagentBadge(null)}}
+async function openPanel(name){current=name;document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.toggle('active',b.dataset.panel===name));panel.classList.add('open');title.textContent={errors:'Errors',trace:'Trace',agents:'Agents'}[name];closeMenu(false);if(name==='agents'){openAgentsPanel();return}stopAgentsPolling();body.innerHTML='<div class="empty">Chargement…</div>';try{if(name==='errors')await renderErrors();if(name==='trace')body.innerHTML=entries(await api('/api/trace'))}catch(e){body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`}}
 function closePanel(){current=null;panel.classList.remove('open');document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.remove('active'));closeMenu(false);stopAgentsPolling()}
 
 /* =====================================================================

@@ -45,7 +45,13 @@ from jarvis.runtime import (
     voice_settings_schema,
     voice_stack,
 )
-from jarvis.runtime.background_events import MAX_ENTRIES, BackgroundEventLedger, TraceFollower, follow
+from jarvis.runtime.background_events import (
+    CATEGORIES as BACKGROUND_CATEGORIES,
+    MAX_ENTRIES,
+    BackgroundEventLedger,
+    TraceFollower,
+    follow,
+)
 from jarvis.runtime.catalog_view import CatalogViewService, ProviderCatalogSnapshot, SUBAGENT_ROLES, VOICE_ROLES
 from jarvis.runtime.claude_local import DEFAULT_PERMISSION_MODE, PERMISSION_MODES, ClaudeLocalAgent, normalize_permission_mode
 from jarvis.runtime.codex_local import CodexLocalAgent, normalize_sandbox_mode
@@ -2357,14 +2363,22 @@ class ControlCenter:
 
         Un `seq` explicite évite d'effacer un événement arrivé entre le rendu
         de la liste et le clic : on n'acquitte que ce qui a été affiché.
+        Avec `category`, seule la pastille correspondante est acquittée.
         """
         try:
             body = await request.json()
         except (json.JSONDecodeError, ValueError):
             body = {}
         seq = body.get("seq") if isinstance(body, dict) else None
-        cursor = self.background.acknowledge(seq if isinstance(seq, int) and not isinstance(seq, bool) else None)
-        return web.json_response({"ok": True, "acknowledged": cursor, "unread": self.background.unread})
+        category = body.get("category") if isinstance(body, dict) else None
+        if category is not None and category not in BACKGROUND_CATEGORIES:
+            return web.json_response({"ok": False, "error": f"catégorie inconnue : {category}"}, status=400)
+        cursor = self.background.acknowledge(
+            seq if isinstance(seq, int) and not isinstance(seq, bool) else None,
+            category=category,
+        )
+        return web.json_response({"ok": True, "acknowledged": cursor, "unread": self.background.unread,
+                                  "counts": self.background.counts()})
 
     async def agent_notices(self, request: web.Request) -> web.Response:
         """Réponses que le brain a produites sans question : relais de fin de sous-agent.

@@ -979,6 +979,25 @@ async def test_background_events_are_counted_read_and_acknowledged(control):
     assert json.loads((await control.background_ack(JsonRequest())).text)["unread"] == 0
 
 
+async def test_a_background_pill_is_acknowledged_by_category(control):
+    """Les pastilles rondes de l'interface principale s'acquittent une à une."""
+    assert json.loads((await control.status(QueryRequest())).text)["background"]["unread"] == 0
+
+    control.journal.emit("agent.subagent.finished", "Sous-agent terminé en 3 s : Tests",
+                         data={"status": "completed", "task_id": "task-7"})
+    control.journal.emit("agent.subagent.finished", "Sous-agent en échec après 3 s : Build",
+                         level="warning", data={"status": "failed"})
+    listing = json.loads((await control.background_events(QueryRequest())).text)
+    assert {event["task_id"] for event in listing["events"]} == {"task-7", ""}
+
+    acked = json.loads((await control.background_ack(JsonRequest({"seq": listing["seq"], "category": "done"}))).text)
+    assert (acked["unread"], acked["counts"]) == (1, {"failed": 1})
+
+    refused = await control.background_ack(JsonRequest({"category": "nope"}))
+    assert refused.status == 400
+    assert json.loads((await control.status(QueryRequest())).text)["background"]["counts"] == {"failed": 1}
+
+
 async def test_a_wake_turn_stays_out_of_the_conversation_context_it_never_spoke(tmp_path):
     """Le tour de réveil fait autorité, mais personne ne l'a dit.
 

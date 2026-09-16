@@ -7,7 +7,7 @@ debug a arrêté l'agent, ses sous-agents avec, et rien — ni voix, ni écran �
 l'a dit. Le retour vocal est traité ailleurs (`WorkAttentionPolicy` réveille le
 cerveau, qui choisit ses mots). Ce module tient l'autre moitié, celle qui
 n'interrompt pas : ce qui s'est passé derrière, compté et lisible dans le
-Control Center, avec un signal sonore bref quand le compte monte.
+Control Center (pastilles rondes de l'interface principale), avec un signal sonore bref quand le compte monte.
 
 Ce qu'il est
 ------------
@@ -99,10 +99,16 @@ class BackgroundEvent:
     kind: str
     label: str
     detail: str
+    #: Sous-tâche concernée, quand la trace la nomme : l'interface s'en sert
+    #: pour ouvrir directement sa carte dans le panneau Agents.
+    task_id: str = ""
+    #: Vu individuellement (acquittement par catégorie), en plus du curseur.
+    seen: bool = False
 
     def to_payload(self) -> dict[str, Any]:
         return {"seq": self.seq, "ts": self.ts, "category": self.category,
-                "kind": self.kind, "label": self.label, "detail": self.detail}
+                "kind": self.kind, "label": self.label, "detail": self.detail,
+                "task_id": self.task_id}
 
 
 @dataclass(slots=True)
@@ -130,6 +136,7 @@ class BackgroundEventLedger:
             label=(message or kind)[:MAX_LABEL],
             detail=str(fields.get("description") or fields.get("error_class")
                        or fields.get("reason") or fields.get("status") or "")[:MAX_LABEL],
+            task_id=str(fields.get("task_id") or "")[:MAX_LABEL],
         )
         self.entries.append(entry)
         del self.entries[:-MAX_ENTRIES]
@@ -139,28 +146,43 @@ class BackgroundEventLedger:
         self.acknowledged = max(self.acknowledged, oldest)
         return entry
 
+    def is_unread(self, entry: BackgroundEvent) -> bool:
+        return entry.seq > self.acknowledged and not entry.seen
+
     @property
     def unread(self) -> int:
-        return sum(1 for entry in self.entries if entry.seq > self.acknowledged)
+        return sum(1 for entry in self.entries if self.is_unread(entry))
 
     def counts(self) -> dict[str, int]:
         """Non-vus par catégorie ; seules les catégories présentes figurent."""
 
         tally = {category: 0 for category in CATEGORIES}
         for entry in self.entries:
-            if entry.seq > self.acknowledged:
+            if self.is_unread(entry):
                 tally[entry.category] += 1
         return {category: count for category, count in tally.items() if count}
 
-    def acknowledge(self, seq: int | None = None) -> int:
+    def acknowledge(self, seq: int | None = None, category: str | None = None) -> int:
         """Marquer vu jusqu'à `seq` (tout, par défaut) ; rend le nouveau curseur.
 
         Un `seq` plus ancien que le curseur ne rembobine rien : deux onglets ne
         doivent pas se renvoyer le badge l'un à l'autre.
+
+        Avec `category`, seules les entrées de cette catégorie sont marquées :
+        chaque pastille de l'interface principale s'acquitte seule, sans
+        effacer un échec en passant quand on regarde les tâches terminées.
+        Le curseur, lui, ne bouge pas.
         """
 
         target = self.seq if seq is None else int(seq)
-        self.acknowledged = max(self.acknowledged, min(target, self.seq))
+        if category is None:
+            self.acknowledged = max(self.acknowledged, min(target, self.seq))
+            return self.acknowledged
+        if category not in CATEGORIES:
+            raise ValueError(f"catégorie inconnue : {category}")
+        for entry in self.entries:
+            if entry.category == category and entry.seq <= target:
+                entry.seen = True
         return self.acknowledged
 
     def to_payload(self, *, limit: int = MAX_ENTRIES) -> dict[str, Any]:
@@ -170,7 +192,8 @@ class BackgroundEventLedger:
             "acknowledged": self.acknowledged,
             "unread": self.unread,
             "counts": self.counts(),
-            "events": [entry.to_payload() for entry in reversed(list(recent))],
+            "events": [{**entry.to_payload(), "unread": self.is_unread(entry)}
+                       for entry in reversed(list(recent))],
         }
 
 
