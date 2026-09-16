@@ -580,3 +580,100 @@ Validation:
   4. Payload merge is read-then-write: a concurrent user edit can be lost.
   5. `ToolSearch` adds 1–2 round trips per conversation (CLI behaviour); first display turn ≈ 9–17 s.
   6. Legacy scenes with previously squatted reserved ids have no migration (projector reports `projection_conflict`).
+
+## 2026-09-17 — Slice 05 — implementation notes (agent 01)
+
+Delivered:
+
+- `jarvis/runtime/control_center_scene_layout.js` (`window.JarvisSceneLayout`, pure): frame, text neutralisation, category tones, `isLiveSignal`, AutoResolver, view model, commit ledger.
+- `jarvis/runtime/control_center_scene_page.js`: `JarvisScenePageCore` (pure loop state machine and resolver committer) plus the browser block `window.JarvisScene` (container, SVG, DOM nodes, Web Locks leadership, gate, status indicator).
+- Markers `/*__CONTROL_CENTER_SCENE_LAYOUT_JS__*/` and `/*__CONTROL_CENTER_SCENE_PAGE_JS__*/` in `control_center.html` / `control_center.py`.
+- `/api/status` gains `scene` (`load_scene_gate`); `refreshStatus` calls `JarvisScene.gate(s.scene)`.
+- Explicit z-index registry in `control_center.html` (face 0, topbar/voicehint 31, dock 32, panel 33).
+- `SCENE_FRAME_HALF_WIDTH/HEIGHT` in `jarvis/domain/scene.py`; `SCENE_FRAME_NOTE` in the `scene_inspect` legend (`frame`) and the `geometry` schema description (`display_mcp.py`); one frame line in `BRAIN_DISPLAY_PROMPT`.
+- Tests: `tests/unit/test_scene_renderer_logic.py` (27), frame assertions added to `test_display_mcp.py::test_the_inspection_marks_scene_text_as_data`.
+- Docs: ARCHITECTURE › *Scene renderer* (layers and z-index registry, frame, view model, resolver rules, commit policy, loop, gate), OPERATIONS › *Scène constellation : ce que l'on voit dans le Control Center*, scene-model › *Coordinate frame*.
+
+Decisions taken inside the contract (reviewable by PM):
+
+- **Aesthetic reference.** The uploaded visual-direction document is not in the repository. The reference is the grilling session's visual grammar (colour = category, execution state as a secondary cue, no fade-out of completed work, strict 2D) and the existing Control Center aesthetic, mainly the Omega theme (dark glass surfaces, thin borders, monospace, `--omega-accent` palette). No 3D, parallax or space decoration.
+- **Coordinate frame.** Origin at the window centre, x right, y down; `{x, y}` is the top-left corner. Reference frame x ±160, y ±90 (16:9), always entirely visible. Uniform scale `min(W/320, H/180)`, centred; another aspect ratio reveals extra scene on the long axis. Objects outside the window are clipped, counted "hors champ" and never moved. Why: the Slice 06 brain spontaneously chose negative coordinates for "top left" (y-down, centre origin, as here), and a 16:9 frame fits common screens without distortion. Point = drawn at its box centre.
+- **Resolver, no nudge in V1.** Every object with a geometry is fixed, including committed resolver placements. The contract allows nudging `placed_by=resolver` objects but does not require it; re-optimising would move committed geometry and break "reload renders identical layout" across tabs. Only unplaced visible objects are placed; hidden objects are neither placed nor obstacles.
+- **Resolver commit (PM decision kept: commit from the browser).** Details are in ARCHITECTURE › *Scene renderer* › Commit policy.
+  - One tab commits: the Web Locks leader, while visible, gate on and polling after a healthy read.
+  - Once per object per page, via a ledger. Domain answers and form errors are final. 503, 504 and network errors retry the same box (2 s, 8 s, three sends at most) and pause all sends.
+  - The object is re-read just before the send.
+  - Commit-from-browser did not prove too risky, so no render-local alternative is proposed.
+  - Residual risk: two browsers without a shared lock (different profiles or machines) at different revisions can each commit a different box for one object. The result is one visible move, never a loop.
+- **Gate from `/api/status`.** It is already polled every second and already reads settings, so it is cheaper than `/api/settings`. Off: no container, no style, no scene request. The gate is re-read live, so no reload is needed.
+- **Urgency.** `process_stopped` (the `payload.title` written by the projector) is `low`: no animation and a smaller mark. Failed or error tone is `high`, anything else live is `medium`, retired is `none` (hollow outline). Liveness uses `isLiveSignal` only.
+- **Signal anchor fallback.** A signal without its live relation anchors to the star with the same `work_ref`, so a retired signal placed late still sits next to its star.
+- **Text.** Scene payload goes to the DOM through `textContent` only (no `innerHTML` in the page file). Bidi marks and isolates, invisible characters, C0/DEL/C1 and U+2028/2029 are neutralised. Browser check: the domain refuses U+202E in a title, but a brain `summary` carrying U+202E, U+2066/2069 and U+200B was accepted by Core and rendered as plain text.
+- **Logging.** The page has no client-log route, and none was added (out of scope). Loop and commit transitions go to the browser console as `[scène] …`. The Control Center journal already records read outages and every relayed command (`scene.command`).
+- **Detector.** The impeccable detector flagged width/height transitions: removed (only `transform` animates). Its other findings (side borders, danger glow) are pre-existing in `control_center.html`.
+
+Browser evidence. **The claude-in-chrome extension was not connected** (`tabs_context_mcp`: "Browser extension is not connected"; `list_connected_browsers`: `[]`). Fallback, stated plainly:
+
+- A real headless Chrome 152 (`--headless=new`, dedicated `--user-data-dir` in the scratchpad, never the user's browser) was driven over CDP (`scratchpad/cdp.py`).
+- Host (`scratchpad/s5_host.py`): an in-process `JarvisCoreApplication` + `LocalProtocolServer` (real Core, scratch data/runtime, port 53322), and an in-process `ControlCenter` (53323) with `CoreSceneView`/`CoreWorkView`. No launcher and no `webbrowser.open`.
+- Seed (`s5_seed.py`, `s5_spoof.py`, `s5_fill.py`):
+  - runtime stars through `/v1/work/observations`: nested three levels, failed, interrupted `process_stopped`, blocked, completed;
+  - brain windows overlapping on layers 220/240, a brain capsule with an `explains` link, a hidden brain capsule, a spoofing summary;
+  - a user capsule placed and pinned through `/api/scene/commands`.
+
+Chrome, the host and every process started were killed afterwards (0 left).
+
+Screenshots (`scratchpad/shots/`):
+
+- `s5_circuit_1920x1080.png`, `s5_circuit_1920x1080_after_reload.png`, `s5_omega_1920x1080.png`, `s5_omega_1280x720.png`, `s5_circuit_1280x720.png`
+- `s5_omega_hover_star.png`, `s5_omega_panel_ctxmenu_1920x1080.png`
+- `s5_signals_live_zoom.png`, `s5_signals_retired_zoom.png`
+- `s5_omega_after_new_star_and_move_1920x1080.png`
+- `s5_omega_core_down_indicator_1920x1080.png`, `s5_core_down_indicator_zoom.png`
+- `s5_omega_flag_off_1920x1080.png`, `s5_circuit_flag_off_1920x1080.png`
+- `s5_circuit_saturated_1920x1080.png`, `s5_omega_saturated_1280x720.png`, `s5_omega_saturated_800x1000.png`
+- Animation: `s5_load_new_star_brain_move.apng.png` (29 frames, 960×540, animated PNG built with the stdlib from CDP screenshots; the `gif_creator` tool needs the extension, and no GIF encoder is installed; decoded by Chrome at 960×540).
+
+Observations:
+
+- **First load:** 13 unplaced visible objects → 13 `scene.command set_geometry applied` in the Control Center journal. The hidden object was neither drawn nor committed. The spoof summary rendered as `Pièce jointe : facturefdp.exe / Lien usurpé neutralisé`.
+- **Reload:** node transforms identical, 0 commits (the reloaded page sent 0).
+- **Chrome above the scene:**
+  - `elementFromPoint` at the centre of each dock button hits the button (4/4);
+  - a real click on AGT opened the panel, which covers a scene window;
+  - a right-click on a card opened the context menu, and its first item hit-tests to itself;
+  - the menu was closed with Escape; no action item was clicked.
+- **Hover:** the star label is visible (opacity 1, "Rédiger le compte rendu CASTOR · échec").
+- **Hidden tab (headless hides the other target):**
+  - 0 scene requests in 5 s, lock released, and the visible tab took leadership;
+  - activated again after a retire happened while hidden, the tab's only requests were `/api/scene/patches?…after=40` then `after=43` (patch catch-up, no snapshot);
+  - both tabs then had identical layouts.
+- **New runtime star with two tabs open:** exactly 1 commit.
+- **Live vs retired:** the `ask` signal went from `sc-urgency-medium` (filled, ring) to `sc-urgency-none` (hollow outline, link gone). `report` stayed `high`, `stopped` stayed `low`.
+- **Brain move:** the window slid to its new geometry (animation).
+- **Core stopped for 12 s:**
+  - indicator "Scène figée — Core injoignable · depuis 10 s · nouvel essai dans 1 s", with the scene still drawn;
+  - after restart (new epoch), requests went patches → `/api/scene` → patches;
+  - console showed `scene.resync`, `scene.view_restored`, `scene.snapshot_loaded`;
+  - layout identical, 0 commits.
+- **Flag off (live, then cold reload):** `#sceneLayer` absent; the only requests in 10 s were `/api/status`, with 0 `/api/scene*`. Flag on again: the scene came back without a reload.
+- **`prefers-reduced-motion: reduce` (CDP emulation):** ring and signal `animation-name: none`, `transition-duration: 0s`. Normal: `sc-breathe`, 0.42 s.
+- **Saturation (492 brain objects added, `scene_full` at the 493rd):**
+  - "Scène pleine (512/512) — archiver des travaux terminés" plus "1 objet hors champ";
+  - 511 nodes (1 hidden);
+  - 491 more commits, all `applied`;
+  - a 512-object reload was identical with 0 commits;
+  - the journal holds exactly 506 `set_geometry applied` = 506 objects ever placed by the resolver, 0 duplicates or refusals;
+  - page exceptions 0, console errors or warnings 0.
+
+After the browser run (not re-run in the browser, covered by tests and `node --check`):
+
+- width/height transitions were removed;
+- commits now also require phase `polling` (previously `polling` or `loading`).
+
+Validation:
+
+- Targeted suite under `-W error::ResourceWarning` (new renderer tests, all scene unit and integration tests, display MCP, every Control Center UI test, Barehands, appearance, live status UI, documented routes, work view) → **917 passed** in 62.03 s.
+- Full `scripts/verify_release.py`, alone in the foreground → `4038 passed, 9 skipped in 322.27s` / `Release verification passed.`
+
+Left for later Slices: drag, resize, menus, archive and bulk archive (08); screenshot (09); artifact semantics (07).
