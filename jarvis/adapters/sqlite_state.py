@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sqlite3
@@ -356,6 +356,26 @@ class SQLiteStateRepository:
         if checkpoint_order is None or checkpoint_order != order:
             return None
         return turn, binding, source
+
+    async def list_turns_since(self, since: datetime, *, kind: str, limit: int) -> tuple[ConversationTurn, ...]:
+        """Turns of `kind` created at or after `since`, oldest first, at most the `limit` newest.
+
+        Walks `idx_turns_conversation_time` per conversation whose `updated_at`
+        is not older than `since` (`append_turn` keeps it >= its turns). Times
+        are compared as stored ISO text (every Core writer stores UTC), then
+        re-checked as datetimes.
+        """
+        if since.tzinfo is None or since.utcoffset() is None:
+            raise ValueError("since must be timezone aware")
+        if type(limit) is not int or limit < 1:
+            raise ValueError("limit must be a positive integer")
+        bound = since.astimezone(timezone.utc).isoformat()
+        rows = await self._run(lambda c: c.execute(
+            "SELECT data FROM turns WHERE conversation_id IN (SELECT id FROM conversations WHERE updated_at>=?) "
+            "AND created_at>=? AND json_extract(data,'$.kind')=? ORDER BY created_at DESC,id DESC LIMIT ?",
+            (bound, bound, kind, limit)).fetchall())
+        selected = [turn for turn in (self._turn(json.loads(r[0])) for r in rows) if turn.created_at >= since]
+        return tuple(reversed(selected))
 
     async def list_turns(self, conversation_id: str, *, limit: int = 20):
         rows = await self._run(lambda c: c.execute("SELECT data FROM (SELECT data,created_at,id FROM turns WHERE conversation_id=? ORDER BY created_at DESC,id DESC LIMIT ?) ORDER BY created_at,id", (conversation_id, max(1, limit))).fetchall())

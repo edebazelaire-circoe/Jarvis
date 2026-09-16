@@ -1,12 +1,17 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
+import io
+import json
 from typing import Any, Callable
 
 import aiohttp
 
 from jarvis.domain.v2 import PROTOCOL_VERSION, ProtocolEnvelope, new_id
 from jarvis.v2_config import validate_loopback_host
+from jarvis.domain.conversation_event_ingest import decode_append_results, encode_conversation_event_batch
+from jarvis.domain.conversation_event_store import AppendResult
+from jarvis.domain.conversation_events import ConversationEvent
 from jarvis.domain.voice_admission import VoiceTurnAdmissionAcceptance, VoiceTurnAdmissionRequest
 from jarvis.domain.v2 import AddressingDecision
 from jarvis.domain.live_lifecycle import LiveCloseEvidence, LiveLifecycleState, LiveSessionRecord
@@ -309,6 +314,26 @@ class LocalCoreClient:
         async with session.post(self.base_url + "/v1/work/observations", headers=self.headers, json=batch) as response:
             return await self._json(response)
 
+    async def append_conversation_events(self, events: Sequence[ConversationEvent]) -> tuple[AppendResult, ...]:
+        """Remettre 1 à 32 Conversation Events à Core (`POST /v1/conversation-events`).
+
+        Le lot est encodé par le codec du contrat avant tout envoi : un
+        événement invalide lève `ConversationEventError` sans appel réseau.
+        Rend un `AppendResult` par événement, dans l'ordre (`appended`,
+        `duplicate`, `conflict`). `CoreProtocolError` : `status=400` lot refusé
+        (le rejouer ne sert à rien), `status=503` stockage indisponible (rejouer
+        le même lot, mêmes identifiants et `occurred_at`, est sûr).
+        """
+
+        events = tuple(events)
+        # A contract-valid batch can reach 4.2 MiB: sent as a stream, since
+        # aiohttp warns (ResourceWarning) that a raw body above 1 MiB may block the loop.
+        body = io.BytesIO(json.dumps(encode_conversation_event_batch(events)).encode("utf-8"))
+        session = await self._http()
+        async with session.post(self.base_url + "/v1/conversation-events", data=body,
+                                headers={**self.headers, "Content-Type": "application/json"}) as response:
+            return decode_append_results(await self._json(response), events)
+
     async def work_snapshot(self) -> dict[str, Any]:
         session = await self._http()
         async with session.get(self.base_url + "/v1/work/snapshot", headers=self.headers) as response:
@@ -337,8 +362,15 @@ class LocalCoreClient:
 
     @staticmethod
     async def _json(response: aiohttp.ClientResponse) -> dict[str, Any]:
-        data = await response.json()
         if response.status >= 400:
+            try:
+                data = await response.json()
+            except (aiohttp.ContentTypeError, ValueError):
+                # aiohttp itself answers some failures in text/plain (413 body
+                # too large, 405...): still a Core refusal with its status.
+                raise CoreProtocolError(response.status, "http_error", response.reason or "") from None
+            if not isinstance(data, dict):
+                raise CoreProtocolError(response.status, "http_error", response.reason or "")
             error = data.get("error") or {}
             raise CoreProtocolError(response.status, str(error.get("code", "unknown")), str(error.get("message", "")))
-        return data
+        return await response.json()

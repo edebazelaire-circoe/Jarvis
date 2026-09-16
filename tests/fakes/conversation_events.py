@@ -80,3 +80,60 @@ async def open_store(path: Path, *, diagnostics=None, clock=None) -> tuple[SQLit
     if clock is not None:
         kwargs["clock"] = clock
     return state, SQLiteConversationEventStore(state, **kwargs)
+
+
+def emitter_settled(emitter) -> bool:
+    """Every enqueued event has an outcome (stored, duplicate, conflict or dropped)."""
+    c = emitter.counters
+    return c.enqueued == c.appended + c.duplicates + c.conflicts + c.dropped_store_error + c.dropped_shutdown
+
+
+async def wait_emitter_settled(emitter, *, timeout_s: float = 5.0) -> None:
+    import asyncio
+
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_s
+    while not emitter_settled(emitter):
+        if loop.time() >= deadline:
+            raise AssertionError(f"conversation event emitter never settled: {emitter.counters}")
+        await asyncio.sleep(0.002)
+
+
+def worst_case_ingest_batch(count: int = 32) -> list[ConversationEvent]:
+    """Largest valid ingestion batch on the wire (`json.dumps` escapes non-ASCII).
+
+    Every bounded field is at its limit with astral characters (1 code point,
+    4 UTF-8 bytes, 12 escaped bytes): content 8192, every optional id 256, a
+    64-char producer, a 96-char journal kind with all 8 join keys, and
+    attributes filled up to the 4096 UTF-8 byte bound.
+    """
+    import json
+
+    from jarvis.domain.conversation_events import MAX_ATTRIBUTES_JSON_BYTES, MAX_CONTENT_CHARS, TraceRef, TraceSource
+
+    astral = "\U0001F600"
+    ident = lambda tag: (tag + astral * 256)[:256]  # noqa: E731
+    reason = astral * 512
+    code = ""
+    while len(json.dumps({"reason": [reason], "code": code + astral}, ensure_ascii=False,
+                         separators=(",", ":")).encode()) <= MAX_ATTRIBUTES_JSON_BYTES and len(code) < 512:
+        code += astral
+    producer = "voice." + "p" * 58
+    kind = "voice." + "k" * 90
+    events = []
+    for index in range(count):
+        conversation_id = ident("c")
+        speech = ident(f"s{index}")
+        event_type = ConversationEventType.MOUTH_SPEECH_STARTED
+        events.append(ConversationEvent(
+            event_id=derive_conversation_event_id(producer=producer, event_type=event_type,
+                                                  conversation_id=conversation_id, source_ids=(speech,)),
+            event_type=event_type, actor=event_actor(event_type), conversation_id=conversation_id, producer=producer,
+            visibility=event_visibility(event_type), occurred_at=BASE, started_at=BASE, span_id=speech,
+            session_id=ident("se"), turn_id=ident("t"), correlation_id=ident("co"), task_id=ident("ta"),
+            work_id=ident("w"), speech_id=speech, outcome_id=ident("o"), parent_event_id="cev-" + "a" * 64,
+            trace_ref=TraceRef(TraceSource.RUNTIME_JOURNAL, kind, ("conversation_id", "session_id", "turn_id",
+                                                                 "correlation_id", "task_id", "work_id",
+                                                                 "speech_id", "outcome_id")),
+            content=astral * MAX_CONTENT_CHARS, attributes={"reason": [reason], "code": code}))
+    return events

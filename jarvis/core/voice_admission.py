@@ -6,12 +6,15 @@ cross-service transaction. Stable identities make each step safe to retry.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from datetime import timedelta
 from typing import Callable
 import asyncio
 
 from jarvis.core.brain_outcomes import BrainOutcomeService, stable_identity
+from jarvis.core.conversation_event_emitter import PRODUCER_VOICE_ADMISSION, NullConversationEventEmitter
 from jarvis.core.v2_services import ConversationService, CoreEventBus
 from jarvis.core.voice_ledger import VoiceLedgerService
+from jarvis.domain.conversation_events import ConversationEventType
 from jarvis.domain.speech_presentation import SpeechSource
 from jarvis.domain.voice_state import VoiceTurnOrder
 from jarvis.domain.v2 import AddressingDecision, BrainTurnInput, BrainTurnSource, ConversationTurn, ProtocolEnvelope, TurnKind
@@ -19,7 +22,15 @@ from jarvis.domain.voice_admission import (
     BRAIN_SOURCE_CHANGED, VOICE_TURN_ADMITTED, VoiceTurnAdmissionAcceptance, VoiceTurnAdmissionRequest,
     admission_correlation_id,
 )
-from jarvis.ports.v2 import DiagnosticSink
+from jarvis.ports.v2 import ConversationEventRecorder, ConversationEventStore, DiagnosticSink
+
+#: Start-up backfill of `user.transcript.accepted` (docs/conversation-events.md,
+#: "Start-up backfill"): only user turns created at or after the store's latest
+#: `recorded_at` minus this margin, at most `USER_EVENT_BACKFILL_LIMIT` per start.
+USER_EVENT_BACKFILL_MARGIN = timedelta(minutes=10)
+USER_EVENT_BACKFILL_LIMIT = 256
+USER_EVENT_BACKFILL_KIND = "core.conversation_events.user_backfill"
+USER_EVENT_BACKFILL_FAILED_KIND = "core.conversation_events.user_backfill_failed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,11 +44,72 @@ class VoiceTurnAdmissionService:
     def __init__(self, conversations: ConversationService, outcomes: BrainOutcomeService,
                  events: CoreEventBus, diagnostics: DiagnosticSink, *, lock: asyncio.Lock,
                  ledger: VoiceLedgerService | None = None,
-                 on_activated: Callable[[BrainTurnInput, SpeechSource], None] | None = None) -> None:
+                 on_activated: Callable[[BrainTurnInput, SpeechSource], None] | None = None,
+                 conversation_events: ConversationEventRecorder | None = None) -> None:
         self.conversations, self.outcomes = conversations, outcomes
         self.events, self.diagnostics = events, diagnostics
         self.lock, self.ledger, self.on_activated = lock, ledger, on_activated
+        self.conversation_events = conversation_events or NullConversationEventEmitter()
         self.stopping = False
+
+    def record_user_turn_accepted(self, record: ConversationTurn, *, session_id: str | None = None) -> str | None:
+        """Single `user.transcript.accepted` producer (docs/conversation-events.md, Producers).
+
+        Called once the user turn is durable and before any backend work: from
+        `persist_turn` (voice admission and `/brain-turns`) for a new admission
+        only, and from the legacy `/turns` ingress for a user turn. A duplicate
+        admission is not a new fact and is not recorded. Core-opened turns
+        (`source=system`, the work-attention wake prompt) are not user speech.
+        Never raises; the event id is derived from the durable turn id, and
+        `occurred_at` is the turn's creation time, so a repair replay rebuilds
+        the identical event.
+        """
+        if record.kind is not TurnKind.USER or record.metadata.get("source") == BrainTurnSource.SYSTEM.value:
+            return None
+        attributes = {key: record.metadata[key] for key in ("source", "addressing")
+                      if isinstance(record.metadata.get(key), str)}
+        return self.conversation_events.record(
+            ConversationEventType.USER_TRANSCRIPT_ACCEPTED, producer=PRODUCER_VOICE_ADMISSION,
+            conversation_id=record.conversation_id, source_ids=(record.id,), occurred_at=record.created_at,
+            session_id=session_id, turn_id=record.id, correlation_id=record.correlation_id,
+            content=record.content, attributes=attributes)
+
+    async def backfill_user_turns_accepted(self, store: ConversationEventStore, *,
+                                           margin: timedelta = USER_EVENT_BACKFILL_MARGIN,
+                                           limit: int = USER_EVENT_BACKFILL_LIMIT) -> int:
+        """Re-record recent durable user turns whose event a crash may have lost (Core start).
+
+        The rebuilt event is byte-identical to the original (same id, turn
+        `created_at`, content, attributes and session), so the store answers
+        `duplicate` for what was already committed and `appended` for what the
+        crash lost. Pre-feature history is never backfilled: nothing when the
+        store is empty, and only turns created at or after the latest
+        `recorded_at` minus `margin`. Bounded by `limit` (newest kept). Returns
+        the number of events enqueued; a failure is diagnosed, never raised.
+        """
+        try:
+            latest = await store.latest_recorded_at()
+            if latest is None:
+                self.diagnostics.emit(USER_EVENT_BACKFILL_KIND, "no conversation event yet: nothing to backfill",
+                                      data={"candidates": 0, "recorded": 0, "reason": "empty_store"})
+                return 0
+            turns = await self.outcomes.repository.list_turns_since(latest - margin, kind=TurnKind.USER.value,
+                                                                     limit=limit)
+        except Exception as exc:
+            # Legal capture: the backfill is observability repair; Core must start anyway.
+            self.diagnostics.emit(USER_EVENT_BACKFILL_FAILED_KIND, "user event backfill failed", level="error",
+                                  data={"code": "conversation_events_backfill_failed", "error_class": type(exc).__name__})
+            return 0
+        recorded = 0
+        for turn in turns:
+            binding = turn.metadata.get("voice_admission")
+            session_id = binding.get("session_id") if isinstance(binding, dict) else None
+            if self.record_user_turn_accepted(turn, session_id=session_id if isinstance(session_id, str) else None):
+                recorded += 1
+        self.diagnostics.emit(USER_EVENT_BACKFILL_KIND, "recent user turns re-recorded as conversation events", data={
+            "candidates": len(turns), "recorded": recorded, "limit": limit, "capped": len(turns) >= limit,
+            "margin_s": int(margin.total_seconds())})
+        return recorded
 
     async def persist_turn(self, turn: BrainTurnInput, *, binding: dict | None = None,
                            canonical_order: VoiceTurnOrder | None = None) -> PersistedInput:
@@ -75,6 +147,8 @@ class VoiceTurnAdmissionService:
         )
         if source is None:
             source = await repository.allocate_brain_source(turn.conversation_id, turn_id, turn.correlation_id)
+        if not duplicate:
+            self.record_user_turn_accepted(record, session_id=binding["session_id"] if binding is not None else None)
         return PersistedInput(record, source, duplicate)
 
     async def claim_backend_dispatch(self, admitted: PersistedInput) -> bool:

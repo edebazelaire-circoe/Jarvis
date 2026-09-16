@@ -274,6 +274,21 @@ class SQLiteConversationEventStore:
         self._report_unreadable(unreadable)
         return stored
 
+    async def latest_recorded_at(self) -> datetime | None:
+        """`recorded_at` (Core clock) of the highest sequence; None when empty or unparseable (diagnosed)."""
+
+        def read(conn: sqlite3.Connection):
+            return conn.execute("SELECT sequence, recorded_at FROM conversation_events ORDER BY sequence DESC LIMIT 1").fetchone()
+
+        row = await self._run(read, "lookup")
+        if row is None:
+            return None
+        try:
+            return parse_event_time(row[1], "recorded_at")
+        except ConversationEventError as exc:
+            self._report_unreadable([_UnreadableRow(int(row[0]), "invalid_recorded_at", str(exc))])
+            return None
+
     async def list_conversation_events(self, conversation_id: str, *, after_sequence: int = 0,
                                        limit: int = DEFAULT_EVENT_PAGE_LIMIT) -> ConversationEventPage:
         state_id(conversation_id, "conversation_id")

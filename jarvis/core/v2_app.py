@@ -13,6 +13,7 @@ from jarvis.adapters.windows_notifications import NullNotificationDelivery
 from jarvis.core.brain_context import ATTENTION_QUEUE_SIZE, DEFAULT_WAKE_INTERVAL_S, BrainContextBuilder, WorkAttentionPolicy
 from jarvis.core.brain_service import DEFAULT_TURN_BUDGET_S, BrainOrchestrator
 from jarvis.core.calendar_service import CalendarService
+from jarvis.core.conversation_event_emitter import ConversationEventEmitter
 from jarvis.core.drive_service import DriveService
 from jarvis.core.v2_services import ConversationService, CoreEventBus, JobService, NotificationService, SchedulerService
 from jarvis.core.v2_tools import CoreToolRouter
@@ -46,8 +47,11 @@ class JarvisCoreApplication:
         self.history = JsonlHistoryStore(root / "history")
         # Conversation Event log (handoff conversation-observability, Slice 02):
         # same state DB, connection and lifecycle as `self.state` (schema v2).
-        # Core owns it; producers and routes are wired by later Slices.
+        # Core owns it. Slice 03a: Core producers (voice admission, brain,
+        # outcomes) enqueue through one bounded non-blocking emitter, and
+        # `POST /v1/conversation-events` appends batches from other processes.
         self.conversation_events = SQLiteConversationEventStore(self.state, diagnostics=diagnostics)
+        self.conversation_event_emitter = ConversationEventEmitter(self.conversation_events, diagnostics=diagnostics)
         self.events = CoreEventBus(diagnostics=diagnostics)
         self.conversations = ConversationService(self.state, self.history)
         self.voice_ledger = VoiceLedgerService(self.conversations, diagnostics=diagnostics)
@@ -106,6 +110,7 @@ class JarvisCoreApplication:
             turn_budget_s=brain_turn_budget_s,
             work_context=self.brain_context,
             voice_ledger=self.voice_ledger,
+            conversation_events=self.conversation_event_emitter,
         )
         self.outcomes = self.brain.outcomes
         self.voice_admission = self.brain.admission
@@ -127,6 +132,9 @@ class JarvisCoreApplication:
             return
         try:
             await self.state.initialize()
+            # Before any route or task can admit a turn: repair user events a
+            # crash lost between the durable turn and the emitter commit.
+            await self.voice_admission.backfill_user_turns_accepted(self.conversation_events)
             self.live_reaper.start()
             await self.state.save_device(Device())
             # Subscribe before recovery: overdue schedules and interrupted jobs
@@ -300,6 +308,10 @@ class JarvisCoreApplication:
             self.health.status = "state_persistence_unknown" if self.jobs.owned.persistence_failures else "cleanup_unknown"
             self.health.detail = "back brain finalization remains owned and unconfirmed"
             return
+        # Juste avant la fermeture de la base, après les arrêts qui peuvent
+        # rendre la main sur une persistance incertaine (la vidange ne doit pas
+        # allonger ce chemin-là) : vidange bornée, le reste est compté et tracé.
+        await self.conversation_event_emitter.stop()
         await self.state.close()
         self.health.status = "stopped"
         self._stopped.set()

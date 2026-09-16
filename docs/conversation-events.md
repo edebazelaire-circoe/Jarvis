@@ -9,16 +9,24 @@ timeline are projections of these events, not separate truths.
 - Storage (Level 3): port `jarvis/ports/v2.py::ConversationEventStore`, types
   `jarvis/domain/conversation_event_store.py`, adapter
   `jarvis/adapters/sqlite_conversation_events.py` (see Storage).
+- Producers (Level 3, Core side): emitter `jarvis/core/conversation_event_emitter.py`,
+  ingestion wire batch `jarvis/domain/conversation_event_ingest.py`, route
+  `POST /v1/conversation-events` (see Producers and ingestion).
 - Conformance tests: `tests/unit/test_conversation_events.py`,
   `tests/unit/test_conversation_event_store.py`,
-  `tests/integration/test_conversation_event_store_recovery.py`.
+  `tests/integration/test_conversation_event_store_recovery.py`,
+  `tests/unit/test_conversation_event_emitter.py`,
+  `tests/unit/test_conversation_event_producers.py`,
+  `tests/integration/test_conversation_event_ingest_protocol.py`,
+  `tests/integration/test_conversation_event_production.py`.
 - Golden fixture: `tests/fixtures/conversation_events/overlapping_conversation.json`.
 - Handoff: `tasks/jarvis-conversation-observability-timeline/` (Slice 01).
 
-Status 2026-09-16: contract and durable store (Slice 02). Producer
-instrumentation is Slice 03, query/stream API Slice 04. No producer emits these
-events yet and no HTTP route exists; Core only constructs the store
-(`JarvisCoreApplication.conversation_events`).
+Status 2026-09-16: contract, durable store (Slice 02) and Core-side producers
+plus the ingestion route (Slice 03a). Core records user input and Brain events
+in process; Mouth, reflex, tool and sub-agent producers (voice runtime, Control
+Center) are Slice 03b and will use the ingestion route. Query/stream API is
+Slice 04.
 
 ## Relation to existing observability
 
@@ -74,7 +82,7 @@ Shape: **I** instant, **O** span open, **C** span close. Visibility: **P** publi
 
 | event_type | actor | shape | vis | required ids | content | current source (journal kind / bus event) | owning file |
 |---|---|---|---|---|---|---|---|
-| `user.transcript.accepted` | user | I | P | correlation, turn | req | two candidates, see note 1: journal `voice.brain_turn_submitted` (present in live traces); journal `core.voice.turn_admitted` + bus `voice.turn.admitted` (0 live lines on 2026-09-16) | `jarvis/runtime/realtime_audio.py`, `jarvis/core/voice_admission.py` |
+| `user.transcript.accepted` | user | I | P | correlation, turn | req | Core durable user turn (`VoiceTurnAdmissionService.persist_turn`, legacy `/turns`), see note 1 | `jarvis/core/voice_admission.py` |
 | `brain.turn.accepted` | brain | I | D | correlation, turn | — | bus `brain.turn.accepted` | `jarvis/core/brain_service.py` |
 | `brain.turn.failed` | brain | I | D | correlation | — | bus `brain.work.failed` with `work_id: null`; journal `core.brain.turn_failed` | `jarvis/core/brain_service.py` |
 | `brain.message.published` | brain | I | P | correlation, outcome | req | journal `core.brain.outcome_retained` (available outcome) | `jarvis/core/brain_outcomes.py` |
@@ -97,14 +105,25 @@ Shape: **I** instant, **O** span open, **C** span close. Visibility: **P** publi
 | `subagent.stopped` | subagent | C | D | task | opt | journal `agent.subagent.finished`, `status` ∈ killed/stopped/interrupted (kept in `attributes.status`) | `jarvis/runtime/agent_tasks.py` |
 | `tool.call.started` | tool | O | D | — (span = call id) | — | journal `tool.call` (arguments never copied) | `jarvis/runtime/realtime_audio.py` |
 | `tool.call.finished` | tool | C | D | — (span = call id) | — | journal `tool.result` (result never copied) | `jarvis/runtime/realtime_audio.py` |
-| `system.failure` | system | I | D | — | — | journal `voice.brain_turn_rejected`, `voice.speech.stream_failed` | `jarvis/runtime/realtime_audio.py`, `jarvis/runtime/speech_scheduler.py` |
+| `system.failure` | system | I | D | — | — | journal `core.brain.turn_settlement_failed` (Core); `voice.brain_turn_rejected`, `voice.speech.stream_failed` (03b) | `jarvis/core/brain_service.py`, `jarvis/runtime/realtime_audio.py`, `jarvis/runtime/speech_scheduler.py` |
 
 Notes:
 
-1. **User turn producer.** Both sources above describe the same fact. Because
-   `producer` is part of `event_id`, only one producer may emit
-   `user.transcript.accepted`; Slice 03 chooses it from live evidence, Core
-   admission preferred. The golden fixture shows one turn from each candidate.
+1. **User turn producer (decided in Slice 03a).** Because `producer` is part of
+   `event_id`, only one producer emits `user.transcript.accepted`: Core,
+   `core.voice_admission`, once the user turn is durable and before any backend
+   work. Live evidence (2026-09-16): the live voice architecture is
+   `continuous_brain` (compatibility runtime), which submits through
+   `POST .../brain-turns` -> `BrainOrchestrator.submit` -> `persist_turn`; the
+   direct-admission route (`POST .../voice/admitted-turns`, journal
+   `core.voice.turn_admitted`) is only used by the direct conversation
+   architectures (simple / front_brain / duplex), hence its 0 live lines. Both
+   routes share `persist_turn`, which is the emission point; the legacy
+   architecture's `POST .../turns` (kind `user`) calls the same builder. The
+   voice-side `voice.brain_turn_submitted` is written only after Core's
+   acknowledgement and never covers typed or legacy input: it is not a producer.
+   The golden fixture (Slice 01) still shows one turn from each former candidate;
+   it is a codec fixture, not a producer reference.
 2. **Failures carry no free text.** `core.brain.turn_failed` carries a raw error
    string (`data.error`); `brain.turn.failed` and `system.failure` therefore forbid
    `content` and keep only allowlisted `code` / `error_class` / `reason`.
@@ -143,11 +162,11 @@ same id. Recommended source ids:
 
 | event types | source_ids |
 |---|---|
-| `user.transcript.accepted` | `(session_id, canonical turn id)` |
+| `user.transcript.accepted` | `(turn_id,)`: the Core durable turn id (`brain-turn-` + hash of conversation and correlation on the brain and admission paths, so stable across retries; for direct admission the correlation already encodes session and canonical turn) |
 | `brain.turn.accepted`, `brain.turn.failed` | `(correlation_id,)` |
 | `brain.message.published` | `(correlation_id, outcome_id)` |
 | `brain.speech.requested`, `mouth.speech.*` | `(speech_id,)` |
-| `brain.work.*` | `(work_id,)` |
+| `brain.work.*` | `(correlation_id, work_id)`: a later turn of the same conversation may reuse a work name |
 | `mouth.reflex.started` | `(correlation_id, output_id)` |
 | `subagent.*` | `(task_id,)` |
 | `tool.call.*` | `(call_id,)` |
@@ -236,6 +255,179 @@ Source-specific join limits (checked against the live trace, 2026-09-16):
 Events also join each other: user → brain by `correlation_id`/`turn_id`, brain
 speech → mouth by `speech_id`, brain work → sub-agent by `work_id` and
 `parent_event_id`.
+
+## Producers and ingestion
+
+Core owns the store; producers never open the state DB. Core producers record in
+process through one emitter; other processes post batches to Core.
+
+### Producer ownership
+
+| event_type | emitting function (file) | producer | process | fact time (`occurred_at`) | `trace_ref` (journal kind, join keys) |
+|---|---|---|---|---|---|
+| `user.transcript.accepted` | `VoiceTurnAdmissionService.record_user_turn_accepted`, called by `persist_turn` (new admission only), by `LocalProtocolServer.append_turn` (legacy, kind `user`) and by the start-up backfill `backfill_user_turns_accepted` (`jarvis/core/voice_admission.py`) | `core.voice_admission` | Core | durable turn `created_at` | none (user entries have no drill-down) |
+| `brain.turn.accepted` | `BrainOrchestrator.submit` (`jarvis/core/brain_service.py`), non-duplicate admission | `core.brain_service` | Core | acceptance | none (no Core journal line) |
+| `brain.turn.failed` | `BrainOrchestrator._record_turn_failed`: backend exception (`_run_turn`), `FAILED` result or correlation mismatch (`_settle`) | `core.brain_service` | Core | failure | `core.brain.turn_failed` `[conversation_id, correlation_id]`; mismatch: `core.brain.backend_contract_violation` `[]` |
+| `brain.message.published` | `BrainOutcomeService.retain`, first retention of an outcome (`jarvis/core/brain_outcomes.py`) | `core.brain_outcomes` | Core | outcome `created_at` | `core.brain.outcome_retained` `[correlation_id, outcome_id]` (a later kind maturation of the same outcome is journaled as `core.brain.outcome_matured`, with the same `conversation_event_id`, so the join matches exactly one line) |
+| `brain.speech.requested` | `BrainOrchestrator._emit_speech` (backend speech, failure speech, notices) and `select_outcome` | `core.brain_service` | Core | `SpeechRequest.created_at` | selection only: `core.brain.outcome_selected` `[conversation_id, speech_id]` |
+| `brain.work.started` | `_dispatch_backend_event` (`ACCEPTED`) | `core.brain_service` | Core | `BrainEvent.created_at` | `core.brain.backend_task_started` `[correlation_id, work_id]` |
+| `brain.work.completed` | `_dispatch_backend_event` (`COMPLETED`) | `core.brain_service` | Core | `BrainEvent.created_at` | `core.brain.backend_task_result` `[correlation_id, work_id]` |
+| `brain.work.failed` | `_dispatch_backend_event` (`FAILED`); `_settle_failed_turn_work` (orphan work of a failed turn, `code=turn_failed`) | `core.brain_service` | Core | event time / settlement | `core.brain.backend_task_result` `[correlation_id, work_id]`; orphan: none |
+| `brain.work.cancelled` | `_cancel_work` | `core.brain_service` | Core | `BrainEvent.created_at` | `core.brain.work_cancelled` `[correlation_id, work_id]` |
+| `system.failure` | `_run_turn`, settlement failure (`code=brain_turn_settlement_failed`) | `core.brain_service` | Core | failure | `core.brain.turn_settlement_failed` `[conversation_id, correlation_id]` |
+| `mouth.*`, `subagent.*`, `tool.*`, voice `system.failure` | Slice 03b | `voice.*`, `control_center.*` | Voice, Control Center | producer clock | through `POST /v1/conversation-events` |
+
+Every Core journal line named in a `trace_ref` carries `data.conversation_event_id`
+when its event was recorded, so `trace_entry_matches` decides by id. Deliberately
+not recorded: work progress (`brain.work.progress` has no vocabulary type), work
+supersession (an intent revision, not a work end), a turn cancelled by Core
+shutdown (the stop contract publishes nothing), Core-opened wake turns as user
+input (`source=system`: their text is an internal prompt; the matching
+`brain.turn.accepted` carries `attributes.source = "system"`), duplicate or
+replayed admissions, and Core work state (`WorkStateStore` items carry no
+conversation id; Claude sub-agents are Slice 03b's `agent.subagent.*` source).
+
+Projection obligation (duplicate text): a turn that speaks its result
+(`speech_result`, with `work_id`) and then ends with the same `public_summary`
+(`turn_result`, no `work_id`) retains two distinct outcomes with identical text,
+hence two `brain.message.published` events. The log stays faithful (no producer
+dedupe). Public projections (Slice 05 timeline, Slice 06 readable transcript)
+collapse consecutive `brain.message.published` with identical `content` for the
+same `correlation_id`.
+
+Content and failures: content is only text already public (the user's turn,
+`public_summary` / `public_label`, the speech text, the outcome text). Failures
+carry `code` and `error_class`; `error_class` is copied only when it is a
+code-like token (`safe_error_class`: identifier or dotted class path of at most 64
+characters), so a raw provider message (`core.brain.turn_failed` `data.error`)
+never enters an event. Text above the content bound (8192) is not truncated: the
+event is not recorded and `core.conversation_events.event_invalid` is diagnosed
+(an outcome may hold up to 65536 characters).
+
+### Emitter
+
+`ConversationEventEmitter` (`JarvisCoreApplication.conversation_event_emitter`),
+passed to `BrainOrchestrator`, `BrainOutcomeService` and
+`VoiceTurnAdmissionService` (a `NullConversationEventEmitter` when none is wired):
+
+- `record(...)` builds, validates and enqueues synchronously (no await, no I/O)
+  and never raises into the caller; it returns the event id or None;
+- bounded queue (`DEFAULT_QUEUE_CAPACITY` = 1024). **Overflow drops the newest
+  event**, so queued events keep their causal order; counted
+  (`dropped_queue_full`) and diagnosed once per overflow episode
+  (`core.conversation_events.event_dropped`, warning, no content);
+- one background task (started lazily on the running loop) appends batches of at
+  most 32 through the store. Woken by an event, it first waits
+  `DEFAULT_BATCH_LINGER_S` = 50 ms so the recording producer finishes its own
+  state-DB awaits before a commit takes the shared repository lock (measured on
+  the real Core: 40 submits 200 ms apart, 40/40 overlapped an event commit
+  without the linger, 0/40 with it; commits 280 → 40-62, one per turn burst).
+  A storage failure drops the batch (never retried in memory), counted (`dropped_store_error`), diagnosed once per failure episode
+  (`core.conversation_events.append_failed`, error, `error_class` only), with
+  `core.conversation_events.append_recovered` (info) when appends succeed again;
+- a contract failure is counted (`invalid`) and diagnosed
+  (`core.conversation_events.event_invalid`, warning, codec field-level message);
+- `JarvisCoreApplication.stop()` stops it last, immediately before the state DB
+  closes (after the Brain, scheduler, back-brain and job shutdown, so a stop that
+  returns early on uncertain persistence is not lengthened by the drain): new
+  events are refused (`dropped_stopped`), the queue drains for at most 2 s, the
+  rest is counted (`dropped_shutdown`) and diagnosed; the final counters are
+  journaled as `core.conversation_events.emitter_stopped` (info);
+- the ingestion route (`append_now`) is acknowledged to its caller and counted
+  apart (`ingest_appended`, `ingest_duplicates`, `ingest_conflicts`,
+  `ingest_failures`): `enqueued = appended + duplicates + conflicts +
+  dropped_store_error + dropped_shutdown` stays true for the queue alone;
+- a failing diagnostic sink is counted (`diagnostic_failures`), never raised.
+
+### Start-up backfill (user input)
+
+`JarvisCoreApplication.start()` runs
+`VoiceTurnAdmissionService.backfill_user_turns_accepted` right after
+`state.initialize()`, before any route, task or recovery can admit a turn. It
+re-records recent durable user turns through the same
+`record_user_turn_accepted(turn, session_id=metadata["voice_admission"]["session_id"])`,
+so a rebuilt event is identical to the original: the store answers `duplicate`
+for what was committed and `appended` for what a crash lost (never `conflict`).
+
+- Watermark: only user turns with `created_at >= latest recorded_at - 10 min`
+  (`USER_EVENT_BACKFILL_MARGIN`); the latest `recorded_at` is the Core clock of the
+  highest store sequence (`ConversationEventStore.latest_recorded_at`). An empty
+  store backfills nothing, so pre-feature history is never converted.
+- Bound: at most `USER_EVENT_BACKFILL_LIMIT` = 256 turns per start, newest kept
+  (`StateRepository.list_turns_since`: conversations whose `updated_at` is past the
+  watermark, then `idx_turns_conversation_time`, kind filtered in SQL). Wake turns
+  (`source=system`) are skipped as at admission.
+- Diagnostics, counts only: `core.conversation_events.user_backfill` (info:
+  `candidates`, `recorded`, `limit`, `capped`, `margin_s`, or `reason=empty_store`);
+  `core.conversation_events.user_backfill_failed` (error, `error_class`): Core
+  still starts.
+- Times are compared as stored ISO text; every Core writer stores UTC. A turn
+  written with another offset could be missed by the SQL prefilter.
+
+### Known limits
+
+- **Crash windows.** The queue is memory only. An event is committed about 55-70 ms
+  after `record()` when the store is idle (linger 50 ms + one FULL-sync commit;
+  scratch probe on the real Core, 30 turns with a 300 ms backend: p50/p95/max
+  `user.transcript.accepted` 65/70/72 ms, `brain.turn.accepted` 60/65/67 ms,
+  `brain.speech.requested` 60/64/70 ms, `brain.message.published` 56/65/72 ms,
+  `brain.work.*` 56-65/60-68/64-71 ms), longer when the state DB is busy. A hard
+  kill inside that window loses the event:
+  - `user.transcript.accepted` is repaired by the start-up backfill (tested with
+    a real `os._exit` inside a widened window,
+    `test_crash_between_durable_admission_and_emitter_commit_is_repaired_on_restart`);
+  - every Brain event (`brain.turn.accepted`, `brain.speech.requested`,
+    `brain.message.published`, `brain.work.*`, `brain.turn.failed`,
+    `system.failure`) is **accepted lost** (PM decision, option A): no rebuild.
+- **Hot-path cost.** No await is added, but appends share the state repository
+  connection and lock: an append in progress serializes with other state writes
+  for one commit (`synchronous=FULL`). QA measured the speech-publish path at
+  about +70-90 ms p95 under load. Voice-side producers (Slice 03b) must batch
+  through their own bounded forwarder, never one request per event on the
+  speech path.
+- **Stop bound.** The 2 s drain bound cannot interrupt a native SQLite call that
+  holds the repository lock: cancellation waits for it to return (QA measured a
+  4.01 s stop with a stuck store).
+- **Early stop.** When `stop()` returns early (`state_persistence_unknown` /
+  `cleanup_unknown`, back brain or jobs still owned), the emitter is not stopped
+  and keeps draining into the still-open repository; the next `stop()` call
+  stops it.
+- **Content bound.** Text above 8192 characters is not recorded (diagnosed).
+
+### Ingestion route
+
+`POST /v1/conversation-events` (bearer token and `X-Jarvis-Protocol` like every
+`/v1` route). Client: `LocalCoreClient.append_conversation_events(events)`.
+
+- Body: `{"schema_version": 1, "events": [1..32 encoded events]}`, exact keys
+  (`encode_conversation_event_batch`). Every event is decoded through the codec.
+- 400 `invalid_request`: malformed JSON, wrong shape or version, 0 or more than 32
+  events, any codec error (message `events[i]: <field rule>`, never a value), or a
+  Core-owned event (actor `user` or `brain`, or producer `core` / `core.*`). The
+  whole batch is rejected, nothing is appended; diagnosed as
+  `core.conversation_events.ingest_rejected`.
+- 200: `{"schema_version": 1, "results": [{"event_id", "sequence", "status"}]}` in
+  batch order, `status` one of `appended`, `duplicate`, `conflict` (first copy
+  kept, store diagnostic).
+- 503 `conversation_events_unavailable`: storage failed, the emitter is stopped
+  or the repository is closed (Core stopping); nothing acknowledged, retrying the
+  identical batch is safe (same ids, same `occurred_at`).
+- Body limit: `MAX_CONVERSATION_EVENT_BATCH_BODY_BYTES` = 6 MiB, set as the Core
+  app's `client_max_size` (so it applies to every `/v1` route). The largest
+  contract-valid batch encoded by `json.dumps` (astral characters escape to 12
+  bytes) is 4 446 461 bytes (4.24 MiB), above aiohttp's 1 MiB default
+  (`worst_case_ingest_batch`, tested end to end). A larger body gets aiohttp's
+  plain-text 413, which the client raises as `CoreProtocolError(413, "http_error")`
+  (any non-JSON error response maps the same way).
+- The client encodes (and so validates) before any network call, streams the
+  body (`io.BytesIO`: aiohttp warns on raw bodies above 1 MiB) and checks that the
+  results answer every event, in order.
+- Accepted risk: Core cannot verify that an ingested `event_id` belongs to its
+  producer (ids are derived from source ids the envelope does not carry). A
+  non-Core process could pre-occupy the id of a future event of another non-Core
+  producer, whose append then becomes `conflict`. Core-owned types and `core.*`
+  producers are refused, and the route is loopback-only behind the session
+  bearer token.
 
 ## Visibility and redaction
 
@@ -389,6 +581,7 @@ indexing only.
 | Method | Returns |
 |---|---|
 | `get_event(event_id)` | `StoredConversationEvent(sequence, recorded_at, event)` or None (absent **or** unreadable, the latter diagnosed) |
+| `latest_recorded_at()` | `recorded_at` of the highest sequence, or None (empty store, or unparseable: diagnosed as `row_unreadable`); used by the start-up backfill |
 | `list_conversation_events(conversation_id, after_sequence, limit)` | event page |
 | `list_events_in_time_range(start, end, conversation_id?, after_sequence, limit)` | event page, `start <= occurred_at < end` (producer clock, ms), sequence order |
 | `list_events_by_id(field, value, conversation_id?, after_sequence, limit)` | event page; `field` in `LOOKUP_FIELDS` = session, turn, correlation, task, work, speech, outcome, span id |
@@ -502,5 +695,5 @@ version 1 is an unreadable row, never silently reinterpreted.
 ## Validation
 
 ```powershell
-$env:PYTHONDONTWRITEBYTECODE=1; .venv/Scripts/python.exe -W error::ResourceWarning -m pytest -q -p no:cacheprovider tests/unit/test_conversation_events.py tests/unit/test_conversation_event_store.py tests/integration/test_conversation_event_store_recovery.py
+$env:PYTHONDONTWRITEBYTECODE=1; .venv/Scripts/python.exe -W error::ResourceWarning -m pytest -q -p no:cacheprovider tests/unit/test_conversation_events.py tests/unit/test_conversation_event_store.py tests/integration/test_conversation_event_store_recovery.py tests/unit/test_conversation_event_emitter.py tests/unit/test_conversation_event_producers.py tests/integration/test_conversation_event_ingest_protocol.py tests/integration/test_conversation_event_production.py
 ```

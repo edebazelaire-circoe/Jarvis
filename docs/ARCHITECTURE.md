@@ -255,8 +255,38 @@ It maps user transcript admission, the `brain.*` envelopes above, the
 tool calls to one strict, redacted envelope with deterministic `event_id`,
 instant/span timing and a `trace_ref` join to `runtime/trace.jsonl`. It never
 ingests `agent.event`. Durable storage: the `conversation_events` table of the
-Core state DB (schema v2), behind the `ConversationEventStore` port; producers
-and routes follow in the conversation-observability handoff.
+Core state DB (schema v2), behind the `ConversationEventStore` port.
+
+Producers: Core records user input (`core.voice_admission`, once the user turn is
+durable, before any backend work) and Brain events (`core.brain_service`,
+`core.brain_outcomes`) in process through `ConversationEventEmitter`
+(`jarvis/core/conversation_event_emitter.py`): synchronous enqueue into a bounded
+queue drained by one background task (50 ms linger, batches ≤ 32), newest event dropped on overflow, storage
+failures dropped and diagnosed, never an exception or an await on the turn and
+speech path. Other processes post to Core:
+
+```text
+Voice / Control Center                          Core process
+----------------------                          ------------
+LocalCoreClient.append_conversation_events ---> POST /v1/conversation-events
+  (1..32 events, codec-encoded)                   -> ConversationEventEmitter.append_now -> conversation_events table
+                                                BrainOrchestrator / VoiceTurnAdmissionService
+                                                  -> ConversationEventEmitter.record (bounded queue) -> same table
+```
+
+`POST /v1/conversation-events` takes `{"schema_version": 1, "events": [...]}`.
+Invalid batch, codec error or Core-owned event (`user.*`, `brain.*`, producer
+`core.*`) -> 400 `invalid_request`, nothing appended, message names the index and
+rule, never a value. 200 -> `{"schema_version": 1, "results": [{"event_id",
+"sequence", "status"}]}` (`appended` / `duplicate` / `conflict`). Storage failure
+(or Core stopping) -> 503 `conversation_events_unavailable`, retry the same batch.
+Body limit: the Core app's `client_max_size` is 6 MiB for every `/v1` route (the
+largest contract-valid batch is 4.24 MiB on the wire; aiohttp's 1 MiB default
+would answer 413, which `LocalCoreClient` raises as `CoreProtocolError(413)`).
+On start, Core re-records recent durable user turns whose event a crash lost
+(bounded backfill); Brain events lost in the ~60 ms commit window are not rebuilt. Details and the
+producer ownership table: [Conversation Events](conversation-events.md),
+"Producers and ingestion".
 
 ## Speech, interruption and work
 

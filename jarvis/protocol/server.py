@@ -7,6 +7,11 @@ import json
 from aiohttp import web
 
 from jarvis.core.v2_app import JarvisCoreApplication
+from jarvis.domain.conversation_event_ingest import (
+    MAX_CONVERSATION_EVENT_BATCH_BODY_BYTES, decode_conversation_event_batch, encode_append_results,
+)
+from jarvis.domain.conversation_event_store import ConversationEventStoreError
+from jarvis.domain.conversation_events import ConversationEventError
 from jarvis.domain.v2 import PROTOCOL_VERSION, AddressingDecision, BrainTurnInput, BrainTurnSource, TurnKind, jsonable
 from jarvis.domain.work_state import WorkObservationBatch
 from jarvis.domain.live_lifecycle import LiveCloseEvidence, LiveLifecycleConflict, LiveLifecycleState
@@ -68,7 +73,9 @@ class LocalProtocolServer:
             return web.json_response({"error": {"code": exc.code, "message": exc.code}}, status=status)
 
     def _app(self) -> web.Application:
-        app = web.Application(middlewares=[self._auth])
+        # Largest body of any `/v1` route: a worst-case conversation event batch
+        # (aiohttp's 1 MiB default would answer 413). Applies to every route.
+        app = web.Application(middlewares=[self._auth], client_max_size=MAX_CONVERSATION_EVENT_BATCH_BODY_BYTES)
         app.add_routes([
             web.get("/v1/health", self.health),
             web.post("/v1/conversations", self.create_conversation),
@@ -102,6 +109,7 @@ class LocalProtocolServer:
             web.post("/v1/actions/{action_id}/confirmation", self.confirm_action),
             web.post("/v1/work/observations", self.ingest_work_observations),
             web.get("/v1/work/snapshot", self.work_snapshot),
+            web.post("/v1/conversation-events", self.ingest_conversation_events),
             web.get("/v1/events", self.events),
         ])
         return app
@@ -384,6 +392,9 @@ class LocalProtocolServer:
         if kind == TurnKind.ASSISTANT and await self.core.voice_ledger.has_ledger(request.match_info["conversation_id"]):
             raise ValueError("canonical assistant history requires confirmed voice observations")
         turn = await self.core.conversations.append_turn(request.match_info["conversation_id"], kind, content, correlation_id=correlation_id, reference_id=body.get("reference_id"), metadata=body.get("metadata") or {})
+        # Legacy voice ingress (`VoiceArchitecture.LEGACY`): the durable user
+        # turn is the accepted transcript. Same single producer as admission.
+        self.core.voice_admission.record_user_turn_accepted(turn)
         return web.json_response(jsonable(turn), status=201)
 
     async def submit_brain_turn(self, request: web.Request) -> web.Response:
@@ -504,6 +515,37 @@ class LocalProtocolServer:
             raise ValueError(f"invalid work observation batch: {exc}") from exc
         result = await self.core.work_state.ingest(batch)
         return web.json_response(result.to_payload())
+
+    async def ingest_conversation_events(self, request: web.Request) -> web.Response:
+        """Ingress des Conversation Events produits hors de Core (voix, Control Center).
+
+        Corps : `{"schema_version": 1, "events": [1..32 événements encodés]}`
+        (`conversation_event_ingest.encode_conversation_event_batch`). Strict :
+        un événement invalide, un champ interdit ou un événement réservé à Core
+        (`user.*`, `brain.*`, producteur `core.*`) rend 400 et rien n'est écrit ;
+        le message nomme l'index et la règle, jamais la valeur.
+
+        Réponse 200 : `{"schema_version": 1, "results": [{"event_id",
+        "sequence", "status"}]}` dans l'ordre du lot, `status` parmi `appended`,
+        `duplicate`, `conflict` (le premier exemplaire est gardé). 503
+        `conversation_events_unavailable` : stockage en échec, rien n'est
+        acquitté, rejouer le même lot est sûr.
+        """
+
+        body = await request.json()
+        try:
+            events = decode_conversation_event_batch(body)
+        except ConversationEventError as exc:
+            count = len(body["events"]) if isinstance(body, dict) and isinstance(body.get("events"), list) else None
+            self.core.conversation_event_emitter.note_ingest_rejected(str(exc), event_count=count)
+            raise
+        try:
+            results = await self.core.conversation_event_emitter.append_now(events)
+        except ConversationEventStoreError:
+            return web.json_response({"error": {"code": "conversation_events_unavailable",
+                                                "message": "conversation event store unavailable; retry the same batch"}},
+                                     status=503)
+        return web.json_response(encode_append_results(results))
 
     async def work_snapshot(self, request: web.Request) -> web.Response:
         """État de travail normalisé tenu par Core, indépendant de tout Control Center."""
