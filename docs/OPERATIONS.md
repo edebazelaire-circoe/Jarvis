@@ -825,16 +825,22 @@ définitif garde son signal.
 
 **Scène pleine.** La scène garde au plus 512 objets actifs, et une étoile
 terminée n'est jamais retirée automatiquement : après quelques centaines de
-sous-agents, la scène se remplit. Rien n'est perdu pour autant :
+sous-agents, la scène se remplit. Tant que Core tourne, rien n'est perdu :
 
 - les nouvelles étoiles (et les signaux sur des étoiles existantes) sont mises
-  **en attente** (au plus 1 024 ; au-delà, les plus anciennes sont oubliées) ;
+  **en attente** (au plus 1 024 ; au-delà, les plus anciennes terminées sont
+  oubliées d'abord) ;
+- **limite : cette attente est en mémoire.** Si Core redémarre, elle est
+  perdue ; ne reviennent que les travaux encore connus de Core ou renvoyés par
+  le Control Center (qui renvoie l'état de ses sous-tâches à Core après un
+  redémarrage) ;
 - `/v1/health` le dit : `scene.saturated: true`, `scene.objects` et
   `scene.object_limit` (même bloc dans `/api/scene` du Control Center) ; le
   cerveau et l'utilisateur ne peuvent plus rien créer non plus (`scene_full`) ;
 - **que faire** : archiver des étoiles terminées. Dès qu'une place se libère,
-  les étoiles en attente apparaissent, les plus anciennes d'abord, sans attendre
-  de nouvelle activité (au plus tard 30 s).
+  les étoiles en attente apparaissent sans attendre de nouvelle activité (au
+  plus tard 30 s) : d'abord les sous-agents encore en cours, puis les travaux
+  terminés, les plus anciens d'abord dans chaque groupe.
 
 Vérifier dans `runtime/trace.jsonl` (niveau info sauf mention) :
 
@@ -847,9 +853,9 @@ Vérifier dans `runtime/trace.jsonl` (niveau info sauf mention) :
 | `core.scene.projection_restored` | la scène répond de nouveau ; `suppressed` compte les tentatives manquées ; la projection a tout réconcilié |
 | `core.scene.projection_failed` (erreur, panneau **ERR**, une fois par type) | un travail n'a pas pu être projeté (défaut logiciel) ; les autres continuent |
 | `core.scene.projection_conflict` (avertissement) | un objet du cerveau ou de l'utilisateur porte déjà l'identifiant que la projection voulait utiliser : il est laissé intact |
-| `core.scene.projection_saturated` (avertissement, une fois par épisode) | scène pleine : `objects`, `object_limit`, `pending` ; les créations attendent |
+| `core.scene.projection_saturated` (avertissement, au plus une fois toutes les 10 minutes) | scène pleine : `objects`, `object_limit`, `pending` ; `suppressed_episodes` compte les épisodes de saturation tus depuis le précédent avertissement (par exemple une étoile archivée par nouveau sous-agent) ; les créations attendent |
 | `core.scene.projection_pending_overflow` (avertissement, une fois par épisode) | plus de 1 024 créations en attente : les plus anciennes sont oubliées |
-| `core.scene.projection_desaturated` | toutes les créations en attente ont été rattrapées ; `deferred` et `dropped` comptent l'épisode |
+| `core.scene.projection_desaturated` | plus aucune création en attente (rattrapées, ou abandonnées) ; `deferred` et `dropped` comptent l'épisode ; seulement pour un épisode annoncé par un avertissement |
 
 Dépannage :
 

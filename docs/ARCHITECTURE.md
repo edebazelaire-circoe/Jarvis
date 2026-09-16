@@ -1629,22 +1629,38 @@ failure mix). Saturation is made visible and recoverable instead:
   count; at the limit (or on an `invalid` / `scene_full` refusal raced by another
   writer) it **defers** the creation: the work item's last known state is kept
   in a pending set, ordered by first deferral, updated in place by later events,
-  bounded to `MAX_PENDING_CREATIONS` = 1 024 (beyond, the oldest entry is dropped
-  and counted; it can only come back if its work is still in Core's 64-item
-  snapshot at a reconciliation). Recovery therefore does not depend on Core's
-  work snapshot;
-- `core.scene.projection_saturated` (warning) once per saturation episode, with
-  `objects`, `object_limit`, `pending`; `core.scene.projection_pending_overflow`
-  (warning) at the first drop of an episode; `core.scene.projection_desaturated`
-  (info) once the pending set is empty again, with `objects`, `object_limit`,
-  `deferred` (deferrals during the episode) and `dropped`;
-- while something is pending, a watcher task waits on
-  `SceneService.wait_for_revision` (at most `SATURATION_RETRY_S` = 30 s) and puts an
-  internal space-check marker in the projector's own queue (never on the bus): a
-  user archive therefore triggers the catch-up at once, and the timeout is the
-  periodic retry. Each work event also runs the catch-up first when something is
-  pending. The catch-up creates pending stars and signals **oldest first** while
-  there is room, with their parent links, and stops at the first one that no
+  bounded to `MAX_PENDING_CREATIONS` = 1 024. Beyond the bound the oldest
+  **finished** entry is dropped first (the oldest entry when none is finished),
+  and counted. While Core runs, a deferred creation therefore survives the
+  eviction of its item from Core's 64-item work snapshot;
+- **the pending set lives in memory only.** A Core restart forgets it. After a
+  restart only work that is still in Core's work snapshot (reconciliation) or
+  that a producer re-sends (the Control Center resends its tracker's full state
+  when it sees a new `store_id`) comes back, deferred again if the scene is still
+  full; the rest never gets its star. The same holds for an entry dropped by the
+  bound;
+- `core.scene.projection_saturated` (warning) when a saturation episode opens,
+  **at most once per `SATURATION_WARNING_INTERVAL_S` = 10 minutes**, with
+  `objects`, `object_limit`, `pending` and `suppressed_episodes` (episodes opened
+  silently since the previous warning): at the cap, a user archiving one star per
+  new sub-agent opens an episode per sub-agent. An episode closes whenever the
+  pending set becomes empty, whatever the reason (created, archived meanwhile,
+  failed during catch-up); `core.scene.projection_desaturated` (info, `objects`,
+  `object_limit`, `deferred`, `dropped`) is emitted only for an episode that was
+  announced. `core.scene.projection_pending_overflow` (warning) at the first drop
+  of an episode;
+- while something is pending, a watcher task (`jarvis-scene-projector-space`)
+  waits on `SceneService.wait_for_revision` (at most `SATURATION_RETRY_S` = 30 s)
+  and puts an internal space-check marker in the projector's own queue (never on
+  the bus): a user archive triggers the catch-up at once, the timeout is the
+  periodic retry. The watcher is cancelled as soon as the pending set becomes
+  empty, never started once `stop()` has begun, and cancelled by `stop()` after
+  the drain, so none outlives the projector;
+- catch-up order (PM decision, decision 4): **non-terminal work first**
+  (`pending`, `running`, `blocked`), then terminal work, oldest first within
+  each group; a star's signal is created right after its star when there is
+  room. A work event for non-terminal work is projected before the catch-up
+  runs, a terminal one after it. The catch-up stops at the first entry that no
   longer fits;
 - `SceneService.capacity` (`objects`, `object_limit`, `saturated` =
   `objects >= object_limit`) is exposed in the `scene` block of `/v1/health` and
