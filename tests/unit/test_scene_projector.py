@@ -319,20 +319,39 @@ def batch(producer: str, *observations: WorkObservation):
 
 
 async def test_a_signal_id_taken_by_the_brain_is_left_alone_and_reported_once():
-    async with Stack() as stack:
-        await stack.observe(obs("a"))
-        signal_id = signal_object_id("claude:a")
-        await stack.scene.apply(
-            SceneCommand(op=SceneOp.ATTACH_SIGNAL, actor=SceneActor.BRAIN, object_id=signal_id, target_id="claude:a",
-                         fields=SceneObjectFields(category="note", payload=ScenePayload(title="à regarder")))
+    # Depuis le Slice 06, le domaine refuse cet identifiant au cerveau
+    # (`reserved_id`) : le conflit ne vient plus que d'une scène déjà stockée.
+    from jarvis.domain.scene import (
+        ExecState, PlacedBy, RelationKind, SceneConstraints, SceneObject, SceneObjectKind, SceneRefusal, SceneRelation,
+        SceneSnapshot,
+    )
+
+    signal_id = signal_object_id("claude:a")
+    repository = MemoryRepository()
+    repository.stored = SceneSnapshot(
+        scene_id="scene-memory", revision=2,
+        objects=(
+            SceneObject(object_id="claude:a", kind=SceneObjectKind.AGENT, category="agent", origin=SceneActor.RUNTIME,
+                        constraints=SceneConstraints(placed_by=PlacedBy.RUNTIME), exec_state=ExecState.RUNNING),
+            SceneObject(object_id=signal_id, kind=SceneObjectKind.ATTENTION, category="note", origin=SceneActor.BRAIN,
+                        constraints=SceneConstraints(placed_by=PlacedBy.BRAIN), layer=300, payload=ScenePayload(title="à regarder")),
+        ),
+        relations=(SceneRelation(signal_id, RelationKind.EXPLAINS, signal_id, "claude:a"),),
+    )
+    async with Stack(repository=repository) as stack:
+        refused = await stack.scene.apply(
+            SceneCommand(op=SceneOp.ATTACH_SIGNAL, actor=SceneActor.BRAIN, object_id=signal_object_id("claude:z"),
+                         target_id="claude:a", fields=SceneObjectFields(category="note"))
         )
-        await stack.observe(obs("a", WorkStatus.BLOCKED, at=1), obs("a", at=2), obs("a", WorkStatus.FAILED, at=3))
+        assert refused.reason is SceneRefusal.RESERVED_ID
+        refused_before = len(stack.diagnostics.kinds(SCENE_COMMAND_REFUSED_KIND))
+        await stack.observe(obs("a"), obs("a", WorkStatus.BLOCKED, at=1), obs("a", at=2), obs("a", WorkStatus.FAILED, at=3))
         snapshot = await stack.snapshot()
     note = snapshot.get_object(signal_id)
     assert (note.origin, note.payload.title, note.category) == (SceneActor.BRAIN, "à regarder", "note")
     assert is_live_signal(snapshot, signal_id)
     assert len(stack.diagnostics.kinds(SCENE_PROJECTION_CONFLICT_KIND)) == 1
-    assert stack.diagnostics.kinds(SCENE_COMMAND_REFUSED_KIND) == []
+    assert len(stack.diagnostics.kinds(SCENE_COMMAND_REFUSED_KIND)) == refused_before
 
 
 # --- fin, archivage, composition ---------------------------------------------

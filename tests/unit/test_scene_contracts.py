@@ -64,6 +64,8 @@ from jarvis.domain.scene import (
     apply_scene_command,
     apply_scene_patch,
     is_live_signal,
+    is_runtime_owned_relation,
+    is_runtime_reserved_id,
 )
 from jarvis.domain.work_state import WorkStatus
 
@@ -178,7 +180,8 @@ def matrix_command(op: SceneOp, actor: SceneActor) -> SceneCommand:
         SceneOp.PIN: {"object_id": "star-a"},
         SceneOp.UNPIN: {"object_id": "star-p"},
         SceneOp.LINK: {"relation": SceneRelation("rel-new", RelationKind.PARENT_OF, "star-b", "star-p")},
-        SceneOp.UNLINK: {"relation_id": "rel-ab"},
+        # `rel-ab` appartient au runtime (Slice 06) : brain/user délient un lien à eux.
+        SceneOp.UNLINK: {"relation_id": "rel-ab" if actor is RUNTIME else "rel-note"},
         SceneOp.ARCHIVE: {"object_id": "star-b"},
         SceneOp.ATTACH_SIGNAL: {"object_id": "sig-1", "fields": SceneObjectFields(category="error"), "target_id": "star-a"},
     }[op]
@@ -210,6 +213,8 @@ def test_authority_matrix_table_is_the_contract():
 @pytest.mark.parametrize("op", list(SceneOp))
 def test_every_authority_matrix_cell(actor, op):
     before = scene_with_stars()
+    if op is SceneOp.UNLINK and actor is not RUNTIME:
+        before = run(before, cmd(SceneOp.LINK, BRAIN, relation=SceneRelation("rel-note", RelationKind.EXPLAINS, "art-1", "star-a")))
     update = apply_scene_command(before, matrix_command(op, actor))
     if op in EXPECTED_ALLOWED[actor]:
         assert update.outcome is APPLIED, update.reason
@@ -643,11 +648,12 @@ def test_runtime_cannot_retire_a_brain_or_user_signal(author):
     update = apply_scene_command(before, cmd(SceneOp.UNLINK, RUNTIME, relation_id="note"))
     assert (update.outcome, update.reason) == (REJECTED, SceneRefusal.RUNTIME_ORIGIN)
     assert_unchanged(before, update)
-    # Leurs propres droits ne changent pas, sur leurs signaux comme sur ceux du runtime.
+    # Leurs propres signaux restent à eux ; celui du runtime est au runtime (Slice 06).
     signalled = run(before, runtime_signal())
     for actor in (BRAIN, USER):
-        for relation_id in ("note", "sig-1"):
-            assert apply_scene_command(signalled, cmd(SceneOp.UNLINK, actor, relation_id=relation_id)).outcome is APPLIED
+        assert apply_scene_command(signalled, cmd(SceneOp.UNLINK, actor, relation_id="note")).outcome is APPLIED
+        refused = apply_scene_command(signalled, cmd(SceneOp.UNLINK, actor, relation_id="sig-1"))
+        assert (refused.outcome, refused.reason) == (REJECTED, SceneRefusal.RUNTIME_OWNED)
 
 
 def test_runtime_retires_only_a_signal_link_between_its_attention_and_its_star():
@@ -816,12 +822,100 @@ def test_well_formed_but_inapplicable_commands_are_invalid(command, reason):
 
 
 def test_relation_layer_may_change_and_unlink_is_idempotent():
-    before = scene_with_stars()
+    before = run(scene_with_stars(), cmd(SceneOp.LINK, BRAIN, relation=SceneRelation("rel-note", RelationKind.EXPLAINS, "art-1", "star-a")))
+    # La couche d'un lien runtime reste de la composition, permise.
     relayered = apply_scene_command(before, cmd(SceneOp.LINK, BRAIN, relation=SceneRelation("rel-ab", RelationKind.PARENT_OF, "star-a", "star-b", layer=60)))
     assert relayered.outcome is APPLIED
-    unlinked = apply_scene_command(relayered.snapshot, cmd(SceneOp.UNLINK, USER, relation_id="rel-ab"))
+    relayered = apply_scene_command(relayered.snapshot, cmd(SceneOp.LINK, USER, relation=SceneRelation("rel-note", RelationKind.EXPLAINS, "art-1", "star-a", layer=70)))
+    assert relayered.outcome is APPLIED
+    unlinked = apply_scene_command(relayered.snapshot, cmd(SceneOp.UNLINK, USER, relation_id="rel-note"))
     assert unlinked.outcome is APPLIED
-    assert apply_scene_command(unlinked.snapshot, cmd(SceneOp.UNLINK, USER, relation_id="rel-ab")).outcome is DUPLICATE
+    assert apply_scene_command(unlinked.snapshot, cmd(SceneOp.UNLINK, USER, relation_id="rel-note")).outcome is DUPLICATE
+
+
+# --- topologie et signaux du runtime, identifiants réservés (Slice 06) ---------
+
+
+@pytest.mark.parametrize("actor", [BRAIN, USER])
+def test_brain_and_user_cannot_unlink_runtime_topology_or_signals(actor):
+    before = run(scene_with_stars(), runtime_signal())
+    for relation_id in ("rel-ab", "sig-1"):
+        assert is_runtime_owned_relation(before, before.get_relation(relation_id))
+        update = apply_scene_command(before, cmd(SceneOp.UNLINK, actor, relation_id=relation_id))
+        assert (update.outcome, update.reason) == (REJECTED, SceneRefusal.RUNTIME_OWNED)
+        assert_unchanged(before, update)
+    # Le signal reste masquable par le cerveau comme par l'utilisateur.
+    hidden = apply_scene_command(before, cmd(SceneOp.SET_VISIBILITY, actor, object_id="sig-1", visibility=Visibility.HIDDEN))
+    assert hidden.outcome is APPLIED and is_live_signal(hidden.snapshot, "sig-1")
+    # Relations sans origine : un `parent_of` posé par le cerveau entre deux étoiles runtime a la même forme.
+    drawn = run(before, cmd(SceneOp.LINK, BRAIN, relation=SceneRelation("brain-parent", RelationKind.PARENT_OF, "star-b", "star-p")))
+    assert apply_scene_command(drawn, cmd(SceneOp.UNLINK, actor, relation_id="brain-parent")).reason is SceneRefusal.RUNTIME_OWNED
+    # Toute autre forme reste à eux : un `parent_of` depuis un artefact, un `explains` d'artefact.
+    other = run(
+        before,
+        cmd(SceneOp.LINK, BRAIN, relation=SceneRelation("art-parent", RelationKind.PARENT_OF, "art-1", "star-a")),
+        cmd(SceneOp.LINK, BRAIN, relation=SceneRelation("art-1", RelationKind.EXPLAINS, "art-1", "star-a")),
+    )
+    for relation_id in ("art-parent", "art-1"):
+        assert apply_scene_command(other, cmd(SceneOp.UNLINK, actor, relation_id=relation_id)).outcome is APPLIED
+    # Le runtime garde son retrait ; l'utilisateur écarte par l'archivage, qui emporte les liens.
+    assert apply_scene_command(before, cmd(SceneOp.UNLINK, RUNTIME, relation_id="sig-1")).outcome is APPLIED
+    archived = run(before, cmd(SceneOp.ARCHIVE, USER, object_id="star-a"))
+    assert archived.get_relation("rel-ab") is None and archived.get_relation("sig-1") is None
+    archived_signal = run(before, cmd(SceneOp.ARCHIVE, USER, object_id="sig-1"))
+    assert archived_signal.get_relation("sig-1") is None
+
+
+@pytest.mark.parametrize(
+    "identifier",
+    ["claude:task-1", "claude#0123456789abcdef01234567:task", "attention!claude:task-1", "attention#ab!x",
+     "parent_of!claude:x", "parent_of#ab!x", "a:b"],
+)
+def test_runtime_reserved_ids_are_refused_to_brain_and_user(identifier):
+    assert is_runtime_reserved_id(identifier)
+    before = scene_with_stars()
+    for actor in (BRAIN, USER):
+        commands = (
+            upsert(actor, identifier, kind=SceneObjectKind.ARTIFACT, category="note"),
+            upsert(actor, identifier, kind=SceneObjectKind.ATTENTION, category="note"),
+            cmd(SceneOp.ATTACH_SIGNAL, actor, object_id=identifier, fields=SceneObjectFields(category="note"), target_id="star-a"),
+            cmd(SceneOp.LINK, actor, relation=SceneRelation(identifier, RelationKind.EXPLAINS, "art-1", "star-a")),
+            cmd(SceneOp.LINK, actor, relation=SceneRelation(identifier, RelationKind.GROUPS, "art-1", "star-b", layer=70)),
+        )
+        for command in commands:
+            update = apply_scene_command(before, command)
+            assert (update.outcome, update.reason) == (REJECTED, SceneRefusal.RESERVED_ID), command
+            assert_unchanged(before, update)
+    # Le runtime les fabrique toujours.
+    assert apply_scene_command(before, runtime_signal(object_id="attention!star-a")).outcome is APPLIED
+
+
+def test_ordinary_ids_are_not_reserved():
+    for identifier in ("brain-artifact-0123", "brain-groups-abcd", "art-1", "attention", "parent_of", "attention-x", "note!1"):
+        assert not is_runtime_reserved_id(identifier)
+
+
+def test_reserved_ids_do_not_block_composing_what_the_runtime_created():
+    before = run(
+        SceneSnapshot(scene_id="scene-1"),
+        star("claude:a"),
+        star("claude:b"),
+        cmd(SceneOp.LINK, RUNTIME, relation=SceneRelation("parent_of!claude:b", RelationKind.PARENT_OF, "claude:a", "claude:b")),
+        runtime_signal(object_id="attention!claude:a", target_id="claude:a"),
+    )
+    for actor in (BRAIN, USER):
+        composed = run(
+            before,
+            patch(actor, "claude:a", payload=ScenePayload(title="renommée")),
+            cmd(SceneOp.SET_VISIBILITY, actor, object_id="attention!claude:a", visibility=Visibility.HIDDEN),
+            cmd(SceneOp.LINK, actor, relation=SceneRelation("parent_of!claude:b", RelationKind.PARENT_OF, "claude:a", "claude:b", layer=90)),
+        )
+        assert composed.get_relation("parent_of!claude:b").layer == 90
+        # Un signal runtime retiré ne se ranime que par le runtime.
+        retired = run(before, cmd(SceneOp.UNLINK, RUNTIME, relation_id="attention!claude:a"))
+        revived = apply_scene_command(retired, cmd(SceneOp.ATTACH_SIGNAL, actor, object_id="attention!claude:a",
+                                                   fields=SceneObjectFields(category="failed"), target_id="claude:a"))
+        assert (revived.outcome, revived.reason) == (REJECTED, SceneRefusal.RESERVED_ID)
 
 
 # --- révision -----------------------------------------------------------------

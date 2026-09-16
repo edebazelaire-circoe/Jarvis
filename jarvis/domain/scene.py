@@ -1083,6 +1083,15 @@ class SceneRefusal(StrEnum):
     EXECUTION_NODE = "execution_node"
     PINNED_BY_USER = "pinned_by_user"
     EXPLICIT_PLACEMENT = "explicit_placement"
+    #: `brain`/`user` délient la topologie ou un signal posés par le runtime
+    #: (`parent_of` entre étoiles runtime, lien d'un signal runtime) : le
+    #: runtime en est le maître (Décisions 3, 17, Slice 06). L'utilisateur
+    #: écarte par l'archivage, le cerveau peut masquer le signal.
+    RUNTIME_OWNED = "runtime_owned"
+    #: `brain`/`user` créent un objet ou un lien sous un identifiant de la
+    #: forme que le runtime fabrique (`is_runtime_reserved_id`) : il
+    #: empêcherait la projection de poser l'étoile, le lien ou le signal.
+    RESERVED_ID = "reserved_id"
     # invalid
     UNKNOWN_OBJECT = "unknown_object"
     OBJECT_ARCHIVED = "object_archived"
@@ -1183,6 +1192,43 @@ def apply_scene_command(snapshot: SceneSnapshot, command: SceneCommand) -> Scene
     return SceneUpdate(SceneCommandOutcome.APPLIED, apply_scene_patch(snapshot, patch), patch)
 
 
+#: Têtes des identifiants de signal et de lien `parent_of` du projecteur
+#: runtime (`jarvis/core/scene_projector.py`), forme courte (`!`) ou hachée (`#`).
+_RUNTIME_RESERVED_PREFIXES = ("attention!", "attention#", "parent_of!", "parent_of#")
+
+
+def is_runtime_reserved_id(identifier: str) -> bool:
+    """Vrai pour un identifiant de la forme que le runtime fabrique.
+
+    Étoile : `<source>:<external_id>` ou `<source>#<hachage>:…` (toujours un
+    `:`) ; signal : `attention!…` ; lien de parenté : `parent_of!…` (ou leurs
+    formes hachées en `#`). `brain` et `user` ne créent rien sous ces formes.
+    """
+
+    return ":" in identifier or identifier.startswith(_RUNTIME_RESERVED_PREFIXES)
+
+
+def is_runtime_owned_relation(snapshot: SceneSnapshot, relation: SceneRelation) -> bool:
+    """Lien dont le runtime est le maître : `brain` et `user` ne le délient pas.
+
+    Un `parent_of` entre deux nœuds d'exécution, ou un lien de forme signal
+    (`is_signal_relation`) d'un objet `attention` d'origine `runtime` vers un
+    nœud d'exécution. Décidé sur la forme et les extrémités : les liens n'ont
+    pas d'origine (un nœud d'exécution est toujours d'origine `runtime`).
+    """
+
+    source, target = snapshot.get_object(relation.from_id), snapshot.get_object(relation.to_id)
+    if source is None or target is None or target.kind not in EXECUTION_KINDS:
+        return False
+    if relation.kind is RelationKind.PARENT_OF:
+        return source.kind in EXECUTION_KINDS
+    return (
+        is_signal_relation(relation)
+        and source.kind is SceneObjectKind.ATTENTION
+        and source.origin is SceneActor.RUNTIME
+    )
+
+
 def _require_active(snapshot: SceneSnapshot, object_id: str) -> SceneObject:
     current = snapshot.get_object(object_id)
     if current is not None:
@@ -1218,6 +1264,8 @@ def _plan_object_write(
             raise _invalid(SceneRefusal.INCOMPLETE_OBJECT)
         if actor is not SceneActor.RUNTIME and wanted_kind in EXECUTION_KINDS:
             raise _rejected(SceneRefusal.EXECUTION_NODE)
+        if actor is not SceneActor.RUNTIME and is_runtime_reserved_id(object_id):
+            raise _rejected(SceneRefusal.RESERVED_ID)
         before = SceneObject(
             object_id=object_id,
             kind=wanted_kind,
@@ -1373,6 +1421,9 @@ def _plan_link(snapshot: SceneSnapshot, command: SceneCommand) -> list[ScenePatc
     if runtime:
         _check_runtime_reach(source, EXECUTION_KINDS, SceneRefusal.RUNTIME_RELATION)
         _check_runtime_reach(target, EXECUTION_KINDS, SceneRefusal.RUNTIME_RELATION)
+    elif snapshot.get_relation(relation.relation_id) is None and is_runtime_reserved_id(relation.relation_id):
+        # Changer la couche d'un lien runtime existant reste permis.
+        raise _rejected(SceneRefusal.RESERVED_ID)
     return _plan_relation_put(snapshot, relation, layer_announced=not runtime)
 
 
@@ -1396,6 +1447,8 @@ def _plan_unlink(snapshot: SceneSnapshot, command: SceneCommand) -> list[ScenePa
             raise _rejected(SceneRefusal.RUNTIME_RELATION)
         _check_runtime_reach(_require_active(snapshot, existing.from_id), source_kinds, SceneRefusal.RUNTIME_RELATION)
         _check_runtime_reach(_require_active(snapshot, existing.to_id), EXECUTION_KINDS, SceneRefusal.RUNTIME_RELATION)
+    elif is_runtime_owned_relation(snapshot, existing):
+        raise _rejected(SceneRefusal.RUNTIME_OWNED)
     return [ScenePatchOp(PatchOpKind.DELETE_RELATION, relation_id=command.relation_id)]
 
 
@@ -1426,6 +1479,11 @@ def _plan_attach_signal(snapshot: SceneSnapshot, command: SceneCommand) -> list[
     ops = _plan_object_write(
         snapshot, command.actor, command.object_id, command.fields, create=True, kind=SceneObjectKind.ATTENTION
     )
+    if (command.actor is not SceneActor.RUNTIME and snapshot.get_relation(command.object_id) is None
+            and is_runtime_reserved_id(command.object_id)):
+        # Le lien porte l'identifiant du signal : ranimer un signal runtime
+        # retiré revient au runtime.
+        raise _rejected(SceneRefusal.RESERVED_ID)
     relation = SceneRelation(
         relation_id=command.object_id,
         kind=RelationKind.EXPLAINS,
