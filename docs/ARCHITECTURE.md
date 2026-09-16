@@ -1264,8 +1264,8 @@ would need a replacement route first.
 Handoff `tasks/jarvis-constellation-scene-runtime/`, Slice 02. The scene model
 itself (objects, authority matrix, revisions, patches) is
 [scene-model.md](scene-model.md); this section covers who owns it at runtime and
-how it survives a restart. HTTP transport (Slice 03) and the runtime projector
-(Slice 04) are not wired yet.
+how it survives a restart; *Scene transport* below covers the HTTP routes
+(Slice 03). The runtime projector (Slice 04) is not wired yet.
 
 ```text
 SceneCommand ─► SceneService.apply()  (Core, asyncio lock)
@@ -1301,7 +1301,7 @@ Change notification. The scene is deliberately **not** on `CoreEventBus`:
 would weigh megabytes on the voice socket, and a projector burst could fill a
 non-lossy 128-slot subscriber queue and evict Voice. No component needs a
 broadcast: the projector (Slice 04) writes and never listens, and the transport
-(Slice 03) long-polls locally. `wait_for_revision(after, *, timeout_s)` returns
+(*Scene transport* below) long-polls locally. `wait_for_revision(after, *, timeout_s)` returns
 the current revision as soon as it exceeds `after`, or unchanged at the
 deadline; `timeout_s` is clamped to [0, 30] s (`MAX_REVISION_WAIT_S`). It raises
 `SceneUnavailableError` at once when the scene is unavailable or closed, and
@@ -1406,6 +1406,121 @@ after the brain and the scheduler, before the early returns of the job and back
 brain shutdown. `jarvis/core/v2_app.py` builds the adapter itself, like
 `SQLiteStateRepository`; `sqlite_scene` is listed in the named composition-root
 exception of `tests/unit/test_v2_architecture.py`.
+
+### Scene transport
+
+Handoff Slice 03 (decision 20: full snapshot, then monotonic revision patches,
+resync on any doubt). The browser never talks to Core: it has no token. The
+Control Center relays, without holding any scene state.
+
+```text
+Browser (control_center_scene.js, pure client; rendering is Slice 05)
+  ├─ GET  /api/scene           ─► CoreSceneView.snapshot() ─► GET  /v1/scene/snapshot
+  ├─ GET  /api/scene/patches   ─► CoreSceneView.patches()  ─► GET  /v1/scene/patches   (long-poll)
+  └─ POST /api/scene/commands  ─► CoreSceneView.command()  ─► POST /v1/scene/commands  (actor forced to user)
+Brain display MCP (Slice 06) ───────────────────────────────► POST /v1/scene/commands  (actor brain, bearer token)
+Runtime projector (Slice 04) ─► SceneService.apply() inside Core, never HTTP
+```
+
+| Piece | File | Role |
+| --- | --- | --- |
+| Wire shape | `jarvis/protocol/scene_wire.py` | bounds, stable error codes, query parsing, bounded body reading and response encoding shared by Core, its client and the proxy |
+| Strict JSON | `jarvis/protocol/strict_json.py` | duplicate keys and `NaN`/`Infinity` refused; shared with the canonical voice routes |
+| Core routes | `jarvis/protocol/server.py` | `scene_snapshot`, `scene_patches`, `scene_command`, scene block in `health` |
+| Client | `jarvis/protocol/client.py` | `LocalCoreClient.scene_snapshot/scene_patches/scene_command` (response read bounded to 16 MiB) |
+| Proxy | `jarvis/runtime/scene_view.py` | `CoreSceneView` (stateless relay, degraded payloads), `CoreSceneTransport` (token re-read on 401, like `CoreWorkTransport`) |
+| Pure client | `jarvis/runtime/control_center_scene.js` | `window.JarvisSceneClient`, injected at `/*__CONTROL_CENTER_SCENE_JS__*/`; no DOM, network or timer |
+
+Core routes (bearer token and protocol-version check, like every `/v1` route):
+
+| Route | Success | Errors |
+| --- | --- | --- |
+| `GET /v1/scene/snapshot` | 200 `{scene_id, epoch, revision, snapshot}` (`snapshot` = `SceneSnapshot.to_payload()`), compact UTF-8 JSON encoded off Core's event loop | 401, 426, 400 (query present), 503 `scene_unavailable` |
+| `GET /v1/scene/patches?scene_id=&epoch=&after=&wait_s=` | 200 `{scene_id, epoch, revision, resync_required, more, patches}` | 401, 426, 400 (missing/unknown/repeated parameter, `after` not a non-negative integer, `wait_s` not a plain non-negative number), 503 `scene_unavailable` |
+| `POST /v1/scene/commands` | 200 `{outcome, reason, scene_id, epoch, revision, patch}` for **every** domain outcome (`applied`, `duplicate`, `rejected_authority`, `invalid`); `patch` is `null` unless applied | 401, 426, 400 `invalid_request` (not JSON, duplicate key, non-finite number, any `ValueError`/`TypeError` of `SceneCommand.from_payload`), 403 `scene_actor_forbidden` (actor `runtime`), 413 `payload_too_large` (> 64 KiB, announced or streamed), 503 `scene_unavailable` / `scene_persist_failed` |
+
+A 503 carries `error.scene` (`{state, code}` of `SceneService.availability`) and
+`error.store_code` (`SceneStoreErrorCode`). Malformed input is caught only as
+`ValueError`/`TypeError` and mapped to 400 by the existing middleware; the
+message is the decoder's (received values echoed ≤ 80 characters), never a stack
+trace. `GET /v1/health` keeps `protocol_version`, `ready`, `status`, `detail`
+unchanged and adds `scene: {state, code}`; an unavailable scene never turns
+`ready` false (the scene is a projection).
+
+Long-poll. `GET /v1/scene/patches` answers at once with `resync_required: true`
+(no patch, no snapshot) when `epoch` differs from the current load, `scene_id`
+differs, `after` is ahead of Core, or the 512-patch ring no longer reaches
+`after + 1` (always the case right after a restart). With patches already past
+`after`, it answers at once. Otherwise it waits on
+`SceneService.wait_for_revision` (local wait, never `CoreEventBus`), clamped by
+Core to 30 s, then answers with what arrived (possibly nothing). Stopping the
+server releases pending long-polls immediately (without that, aiohttp's
+shutdown waited for them, up to 30 s). `revision` is the revision the client
+reaches by applying `patches`. The body is bounded to 1 MiB
+(`MAX_PATCH_RESPONSE_BYTES`) but always carries at least one whole patch; when
+the bound cuts the list, `more: true` tells the client to ask again at once.
+
+Epoch. `SceneService.epoch` is a random id generated at each `start()` and
+exposed read-only; every snapshot, patch and command response carries it.
+`(scene_id, revision)` alone is not a safe cache key: restoring an older
+`scene.sqlite3` keeps the `scene_id` and reuses revisions. A client that sees
+another epoch refetches the snapshot, whatever the revision says.
+
+Actor rule. Over HTTP, Core accepts only `brain` and `user`. `runtime` is
+refused with 403 `scene_actor_forbidden`: the runtime writer lives inside Core
+(Slice 04) and needs no network path. The Control Center proxy forces `user`:
+a body without `actor` gets `user`, any other value (`brain`, `runtime`, empty,
+non-string, `USER`) is refused with 403 before Core is called, so the browser
+can never act as the brain. `_origin_guard` applies to the command route like
+every other `POST`. Authority itself is still decided by the reducer: a brain
+archive reaches Core and comes back 200 `rejected_authority/op_not_allowed`.
+
+**Threat-model limit (stated plainly).** The token is a loopback session
+credential, not a boundary between local processes of the same user. The brain
+runs as the Claude CLI with `--permission-mode bypassPermissions` under the same
+OS user, so it can read `runtime/core.token` and call `POST /v1/scene/commands`
+itself claiming `user` — archiving, pinning, anything the user may do. In V1 the
+guarantee that the brain does not archive is the display MCP tool catalog
+(decision 14: the operation is absent from the brain's tools) plus reducer
+authority for honest callers. It is **not** a local security boundary, and the
+actor field is a declaration, not an authentication.
+
+Control Center proxy. `GET /api/scene` and `GET /api/scene/patches` always
+answer 200, shaped like `/api/work`: `source`, `core_reachable`, `scene`
+(`{state, code}` or `null` when unknown), `scene_id`, `epoch`, `revision`,
+`snapshot` (or `patches`, `resync_required`, `more`) and `error` (`null`, or
+`{code, message}` with `not_configured`, `core_unreachable`, `core_refused`,
+`invalid_scene_response`, `scene_unavailable`). Core's answers are decoded with
+the strict domain decoders before reaching the page; an out-of-contract answer
+is journaled `scene.view_invalid_response` (error). A read outage is journaled
+once, `scene.view_unavailable` (warning), and its end once,
+`scene.view_restored` (info). The proxy clamps `wait_s` to 25 s and gives up
+after the wait plus 5 s (HTTP timeout, then a second `asyncio.wait_for` bound),
+so a hung Core cannot hold the page. Snapshot reads time out after 10 s.
+`POST /api/scene/commands` validates the body locally (64 KiB, strict JSON,
+`SceneCommand`) and answers 200 with the domain outcome, 400/413 for form,
+403 for another actor, 503 when Core or the scene is unavailable (`scene` block
+included) or the write failed, 504 `core_timeout` after 10 s — the command may
+have been applied, the client re-reads the scene — and 502 when Core refused
+the call (`core_refused`) or answered out of contract. Relayed commands are
+journaled `scene.command` (info: op, outcome, reason, revision), failures
+`scene.command_failed` (warning), refused actors `scene.command_forbidden`
+(warning).
+
+Pure client (`JarvisSceneClient`). `fromSnapshot(response)` builds
+`{scene_id, epoch, revision, objects: Map, relations: Map, archived_ids: Set}`;
+`acceptSnapshot(held, response)` never rewinds the same scene and epoch;
+`applyPatch(state, patch)` applies one patch with exactly
+`apply_scene_patch`'s semantics (order kept, tombstones evicted beyond 4 096)
+and returns a new state or `{ok: false, reason}` without touching the old one;
+`applyPatchResponse(state, response)` returns `{state, action, reason}` with
+`action` `unavailable` (retry later), `resync` (refetch `/api/scene`: no state,
+`scene_changed`, `epoch_changed`, `resync_required`, `gap`, refused patch),
+`more`, `applied` or `unchanged` (late duplicates are skipped);
+`patchQuery(state, waitS)` and `toSnapshot(state)` complete it.
+`tests/unit/test_scene_transport_client.py` proves parity with the Python
+reducer on random command sequences and convergence under drops, duplicates,
+bounded responses, ring overflow and a Core restart.
 
 ## Telemetry
 

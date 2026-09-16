@@ -260,9 +260,34 @@ state, not a log of patches, so nothing stored is replayed through
 `SCENE_SCHEMA_VERSION` (stored as `wire_schema_version`) or the file's
 `schema_version`; a reader refuses any version it does not know.
 
+## Transport
+
+Slice 03 (`ARCHITECTURE.md` › *Scene transport*). The wire forms above travel
+unchanged: `GET /v1/scene/snapshot` wraps `SceneSnapshot.to_payload()` with
+`scene_id`, `epoch` and `revision`; `GET /v1/scene/patches` returns
+`ScenePatch.to_payload()` items strictly consecutive from `after + 1`, or
+`resync_required` (another epoch or scene, `after` ahead of Core, ring too
+short) and never a snapshot; `POST /v1/scene/commands` takes one
+`SceneCommand.to_payload()` and returns the `SceneUpdate` as `{outcome, reason,
+revision, patch}` — refusals are outcomes, not HTTP errors.
+
+- **Epoch**: `SceneService.epoch`, new at every `start()`. A consumer keys its
+  cache on `(scene_id, epoch, revision)`; any other epoch means refetch.
+- **Actors over HTTP**: `brain` and `user` only; `runtime` is 403. The Control
+  Center proxy forces `user`. The actor is declared, not authenticated: the
+  brain shares the OS user and could read the token, so decision 14 holds
+  through the tool catalog and the reducer, not through the transport.
+- **Browser applier**: `jarvis/runtime/control_center_scene.js` mirrors
+  `apply_scene_patch` (same order, same refusals, same eviction) and signals a
+  resync on a gap, a refused patch, another epoch or scene, or
+  `resync_required`. Its parity with the Python reducer is a test.
+- **Bounds**: command body 64 KiB (413), patch response 1 MiB with `more`,
+  client read of any scene response 16 MiB; responses are compact UTF-8 JSON
+  (a worst-case snapshot stays under 11 MiB).
+
 Validation:
 
 ```powershell
-.venv/Scripts/python.exe -W error::ResourceWarning -m pytest -q -p no:cacheprovider tests/unit/test_scene_contracts.py tests/unit/test_work_state_contracts.py tests/unit/test_v2_architecture.py tests/unit/test_sqlite_scene.py tests/unit/test_scene_service.py tests/integration/test_v2_core_recovery.py
+.venv/Scripts/python.exe -W error::ResourceWarning -m pytest -q -p no:cacheprovider tests/unit/test_scene_contracts.py tests/unit/test_work_state_contracts.py tests/unit/test_v2_architecture.py tests/unit/test_sqlite_scene.py tests/unit/test_scene_service.py tests/integration/test_v2_core_recovery.py tests/unit/test_scene_view.py tests/unit/test_scene_transport_client.py tests/integration/test_scene_transport.py
 .venv/Scripts/python.exe scripts/verify_release.py
 ```

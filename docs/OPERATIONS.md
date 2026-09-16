@@ -781,14 +781,73 @@ et affiche l'archive (`Erreurs archivées`). L'archivage déplace les entrées d
 `runtime/errors.jsonl` vers `runtime/errors-archive.jsonl` en les horodatant :
 le badge se vide, rien n'est perdu, et `runtime/trace.jsonl` reste intact.
 
+### Scène constellation : lecture HTTP et dépannage
+
+Core sert la scène par trois routes (jeton de `runtime\core.token`, comme
+`/v1/work/snapshot`) ; le navigateur passe toujours par le Control Center, qui
+n'a pas besoin du jeton côté page (`docs/ARCHITECTURE.md`, « Scene transport ») :
+
+| Control Center | Core | Rôle |
+| --- | --- | --- |
+| `GET /api/scene` | `GET /v1/scene/snapshot` | instantané complet : `scene_id`, `epoch`, `revision`, `snapshot` |
+| `GET /api/scene/patches?scene_id=…&epoch=…&after=N&wait_s=25` | `GET /v1/scene/patches` | attente longue des patchs après la révision `N` (25 s au plus côté Control Center, 30 s côté Core) |
+| `POST /api/scene/commands` | `POST /v1/scene/commands` | une commande de scène ; côté Control Center l'acteur est toujours `user` |
+
+Voir la scène brute, Core démarré :
+
+```powershell
+$token = Get-Content runtime\core.token
+$h = @{ Authorization = "Bearer $token" }
+Invoke-RestMethod http://127.77.0.1:17653/v1/health -Headers $h            # champ scene : state, code
+$s = Invoke-RestMethod http://127.77.0.1:17653/v1/scene/snapshot -Headers $h
+Invoke-RestMethod "http://127.77.0.1:17653/v1/scene/patches?scene_id=$($s.scene_id)&epoch=$($s.epoch)&after=$($s.revision)&wait_s=5" -Headers $h
+Invoke-RestMethod http://127.0.0.1:17654/api/scene                          # même chose, vue par le Control Center
+```
+
+`epoch` change à **chaque démarrage de Core** : un client qui tenait l'ancienne
+époque reçoit `resync_required: true` et relit l'instantané, même si
+`scene_id` et la révision n'ont pas bougé (cas d'une sauvegarde de
+`scene.sqlite3` restaurée). `revision` d'une réponse de patchs est la révision
+atteinte en les appliquant ; `more: true` veut dire « réponse bornée à 1 Mio,
+redemander tout de suite ».
+
+Acteurs : Core accepte `brain` et `user` ; `runtime` est refusé (403
+`scene_actor_forbidden`), la projection runtime écrit depuis l'intérieur de
+Core. Le Control Center pose `user` quand l'acteur manque et refuse tout autre
+acteur (403). Un refus **du domaine** n'est pas une erreur HTTP : une archive
+demandée par le cerveau rend 200 avec `outcome: rejected_authority`,
+`reason: op_not_allowed`. Limite assumée : le cerveau tourne sous le même
+compte Windows et pourrait lire `runtime\core.token` ; l'interdiction
+d'archiver tient au catalogue d'outils du cerveau et au réducteur, pas à une
+barrière de sécurité locale.
+
+Dépannage, d'après `error.code` (réponses `/api/scene*`, toujours 200 en
+lecture) et la trace :
+
+| Ce que vous voyez | Cause | Que faire |
+| --- | --- | --- |
+| `not_configured` | Control Center lancé sans relais de scène (tests, intégration partielle) | lancer le Control Center par `python -m jarvis control-center` |
+| `core_unreachable`, trace `scene.view_unavailable` (avertissement, une fois) | Core arrêté, jeton absent, ou pas de réponse dans le délai (`n'a pas répondu en N s`) | démarrer Core ; au retour, `scene.view_restored` (info) apparaît et la page relit la scène |
+| `core_refused` | Core a refusé l'appel (jeton périmé encore après relecture, version de protocole) | redémarrer le Control Center après Core ; lire le statut et le code dans le message |
+| `scene_unavailable` avec `scene.code` (`corrupted`, `schema_newer`, `storage_io`…) | Core tourne, mais la scène est refusée au démarrage ou devenue indisponible | voir « Scène constellation : fichier et refus » ci-dessous ; `/v1/health` montre le même `scene` |
+| `invalid_scene_response`, trace `scene.view_invalid_response` (erreur, panneau **ERR**) | Core a répondu hors contrat (versions de Core et du Control Center différentes) | redémarrer les deux sur la même version |
+| commande : 400 `invalid_request` | corps illisible (JSON, clé en double, `NaN`, champ inconnu, valeur hors borne) | lire `error.message` : il nomme le champ |
+| commande : 413 `payload_too_large` | corps de plus de 64 Kio | réduire la charge (16 Kio au plus en UTF-8) |
+| commande : 503 `scene_persist_failed` | écriture SQLite échouée ; `error.scene` dit si la scène reste servie | voir `core.scene.persist_failed` dans la trace |
+| commande : 504 `core_timeout` | pas de réponse de Core en 10 s | **l'issue est inconnue** : relire `/api/scene` avant de renvoyer la commande |
+
+Chaque commande relayée laisse `scene.command` (info : op, issue, motif,
+révision) dans `runtime/trace.jsonl` ; un échec, `scene.command_failed`
+(avertissement) ; un acteur refusé, `scene.command_forbidden`.
+
 ### Scène constellation : fichier et refus
 
 La scène (étoiles, artefacts, positions, épingles, archivage) appartient à Core
 et survit à son redémarrage. Elle vit dans son propre fichier,
 `data/state/scene.sqlite3` (sous `JARVIS_DATA_ROOT`), à côté de
 `jarvis.sqlite3` mais séparé de lui (voir `docs/ARCHITECTURE.md`,
-« Constellation scene store »). Il n'est encore servi par aucune route HTTP
-(Slice 03 du handoff).
+« Constellation scene store »). Il est servi par les routes décrites dans
+« Scène constellation : lecture HTTP et dépannage » ci-dessus.
 
 Au démarrage, `runtime/trace.jsonl` dit ce qui s'est passé :
 
