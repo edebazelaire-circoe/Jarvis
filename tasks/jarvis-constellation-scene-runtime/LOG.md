@@ -322,3 +322,37 @@ Evidence:
 - Full `scripts/verify_release.py`, alone → `3919 passed, 9 skipped in 304.59s` / `Release verification passed.`
 
 Residual risks added: pending creations live in memory only (a Core restart forgets them; reconciliation recovers those still in Core's 64-item work snapshot); beyond 1 024 pending entries the oldest are dropped (journaled once per episode); while saturated, brain and user creations are refused too (`scene_full`, visible in health); orphan attention on archive and bulk archive → Slice 08.
+
+### 2026-09-16 — Slice 04 — final follow-up
+
+QA re-check of `d4a59e9` recommended APPROVE; agent 0 asked for R1–R3, O1, O2. Commits `7b32ed0` (code, tests), `cf7ec8e` (docs).
+
+- **R1 watcher lifetime.** `SceneProjector.stop()` now sets `_stopping`, drains, cancels the loop, and only then cancels and awaits the watcher (`_stop_watch`). `_defer` never starts a watcher once stopping or once `_queue` is `None`. `_pending_changed` cancels the watcher the moment the pending set becomes empty, so it no longer lingers for up to 30 s. Test `test_no_space_watcher_survives_core_stop_even_with_deferrals_during_the_drain` uses QA's `drain` scenario plus a watcher that is already alive before stop; it fails with the pre-R1 order.
+- **R3 episode closure.** Every removal from the pending set goes through `_pending_changed`: created, star archived meanwhile, or failed during catch-up. An empty set closes the episode and stops the watcher. Test `test_the_episode_closes_when_the_last_pending_entry_fails_and_the_next_one_is_announced`.
+- **R2 throttle.** `SATURATION_WARNING_INTERVAL_S` = 600. `projection_saturated` is emitted at most once per interval, with `suppressed_episodes`. `projection_desaturated` is emitted only for an announced episode. The clock is injectable (`monotonic=`). Test `test_saturation_warnings_are_throttled_across_archive_one_create_one_cycles`: 5 cycles give 1 warning, then 1 more after the interval with `suppressed_episodes=4`, plus 1 desaturated and no watcher left.
+- **O1 priority.** Catch-up takes non-terminal work first (`pending`/`running`/`blocked`), then terminal work, oldest first within each group (`_next_pending`). A work event for non-terminal work is projected before the catch-up runs, a terminal one after it. The pending bound drops the oldest terminal entry first. A star and its signal stay together because `_project` creates the signal right after the star. Tests:
+  - `test_running_work_takes_a_freed_slot_before_a_backlog_of_finished_work`
+  - `test_a_new_running_event_is_projected_before_the_finished_backlog_catches_up`
+  - `test_the_pending_bound_drops_the_oldest_finished_work_before_active_work`
+  - `test_a_pending_work_keeps_its_rank_when_it_changes_and_the_oldest_comes_back_first` (now within one group)
+- **O2 docs.** ARCHITECTURE and OPERATIONS now say the pending set is memory-only. After a restart, only work still in Core's snapshot or re-sent by a producer comes back. They also document the priority rule, the throttle, the episode closure and the watcher lifetime.
+
+Evidence:
+- **Mutation checks** (each reverted). Each of these turns its test red:
+  - watcher not cancelled when pending empties
+  - no episode close on catch-up failure
+  - no throttle
+  - no priority
+  - backlog caught up before a running event
+  - bound drops oldest regardless of status
+  - watcher stop after the drain removed
+  - pre-R1 order (cancel before the drain, no stopping guard)
+
+  The stopping guard alone and the after-drain cancel alone are each redundant with the other, so only removing both turns the test red.
+- **`qa04_sat.py drain`:** stop 0.01 s, `p._watch=None`, **live space tasks 0**, alive 0.0 s after stop.
+- **`qa04_sat.py cycles`:** 30 archive-one/create-one cycles in 2.9 s. While deferred: pending 1, 1 task, 1 waiter. After each archive: pending 0, **0 tasks, 0 waiters**, star present. Journal: `projection_saturated` ×1, `projection_desaturated` ×1. Watcher gone after 0.0 s idle; stop 0.01 s, 0 tasks.
+- **`qa04_sat.py failure_last`:** pending 0, `saturation None`, journal saturated 1 / failed 1 / desaturated 1. The second episode opens (pending `['ep2']`) and is not warned: it falls inside the 10-minute window, so it is counted in the next warning's `suppressed_episodes`.
+- **`qa04_sat.py restart`:** 5 pending before restart. After restart with no resend: pending 0, capacity 512/512 saturated. The producer resends 5 running items: pending 5, 1 warning. After 2 archives, `r0` and `r1` are created and 3 stay pending.
+- **`qa04_capacity2.py`:** same numbers as QA's run (saturation at 403, `refused=0`, 37 of 117 missed stars caught up after archive, forced reconcile 37, health `saturated: true`, bus dropped/evicted 0/0). The new sub-agent created after the archive ends `failed` (terminal), so it waits behind older terminal work, per the rule.
+- **Targeted suite** (the 1010 list plus the 6 new tests) under `-W error::ResourceWarning`: **1016 passed**.
+- **Full `scripts/verify_release.py`**, alone: `3925 passed, 9 skipped in 313.01s` / `Release verification passed.`
