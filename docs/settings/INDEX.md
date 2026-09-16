@@ -11,11 +11,20 @@
 | `jarvis/runtime/control_center.py` | `/api/settings` projection/save, alias conflict rejection, active-agent refresh | `_settings_payload`, `save_settings`, `_apply_cli`, `agent_ask` |
 | `jarvis/runtime/agent_settings.py` + `back_brain_worker.py` | Carry and consume behavior choice for owned background agent executions | `resolve_agent_execution`, `execute_with_progress` |
 
+Rollout and compatibility checks are documented in
+[`migration-rollout.md`](migration-rollout.md). The canonical Voice projection
+is documented in [`../voice-settings-schema.md`](../voice-settings-schema.md).
+
 `delegation_mode` is never persisted. `auto` maps to
 `agent_routing.enabled=true`; `duplicate` maps to `false`. Existing profile
 candidates remain the source of truth and keep their order across mode changes.
 Both modes select at most one model for the one sub-agent call requested by the
 caller.
+
+Auto is enforceable only inside the active Claude CLI, whose `Agent`/`Task`
+hook is the verified sub-agent boundary. Codex exposes no equivalent hook in
+the current runtime: when Codex is active, its catalog candidates are
+non-selectable in Auto. No cross-CLI fallback or fan-out is attempted.
 
 ## Control Center surface
 
@@ -76,7 +85,9 @@ combined layer before their atomic writer runs.
 - Composed `/api/agent/ask` and `/api/agent/send`: existing `agent.prompt`,
   level `info`, when agent supports prompt evidence. Payload contains program,
   layer revisions, static/render fingerprints, channel and application only;
-  never prompt text.
+  never prompt text. The composed transport stays in memory: `agent.input` and
+  Agent snapshots retain only the canonical user request, never saved
+  `backend.turn.addition` text or generated behavior instructions.
 - Owned jobs: evidence is passed to `ask(prompt_evidence=...)` when supported.
   Real Claude/Codex wrappers emit existing `agent.prompt`; `_JobJournal`
   projects it to `job.agent.prompt` correlated by `job_id`. Legacy agents

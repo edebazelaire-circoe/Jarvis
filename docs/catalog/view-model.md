@@ -49,6 +49,10 @@ shown by their owning settings API; this view does not delete or rewrite them.
 - Saved model absent from live/fresh account catalog -> `unavailable`.
 - Saved model absent from stale/missing catalog -> `configured_unverified` when
   CLI exists, otherwise `unavailable` because CLI absence itself is current.
+- In Auto, only a candidate belonging to the active host CLI can be selectable.
+  The current verified hook exists on Claude. Codex exposes no equivalent
+  background sub-agent boundary, so Codex candidates remain non-selectable even
+  when its executable and provider model are both present.
 
 ### Voice matrix
 
@@ -79,6 +83,13 @@ Every non-null comparison claim is a `SourcedValue`:
   }
 }
 ```
+
+List-valued claims may additionally carry `provenance_by_value`, keyed by every
+exact value. Role unions use it to keep provider classifier and runtime registry
+evidence distinct. A saved model absent from provider discovery retains its
+`subagent` and `text` roles, but both are attributed only to routing settings;
+it never borrows live provider provenance. `provenance` remains the compatible
+primary source for older consumers.
 
 Freshness values:
 
@@ -151,7 +162,9 @@ ID, create no temporary probe, and introduce no permanent channel. Provider
 failures at the HTTP boundary reuse `provider.models_failed` at warning level,
 with provider and stable code only; response remains HTTP 200 with honest
 unknown/stale evidence. Recovery is a later successful fetch or explicit
-`refresh=true`. No secret, temporary probe, or new channel is introduced.
+`refresh=true`. Cache fallback is credential-bound by an opaque fingerprint;
+neither that fingerprint nor a key hint enters endpoint payloads or logs. No
+secret, temporary probe, or new channel is introduced.
 
 Regression contract lives in `tests/unit/test_catalog_view.py`,
 `tests/unit/test_routing_hook.py`, and `tests/unit/test_settings_endpoints.py`:

@@ -8,19 +8,20 @@
   },
   "navigation": [
     {
-      "id": "agent_cli",
-      "label": "Agent / CLI",
-      "sections": ["technical", "behavior", "catalog"],
-      "replaces": ["cli", "routing"]
-    },
-    {
       "id": "voice",
       "label": "Voix",
       "subtabs": ["architecture", "conversation", "turn_taking", "models", "audio", "advanced", "diagnostic"]
     },
     {"id": "prompts", "label": "Prompts"},
-    {"id": "credentials", "label": "Clés API"},
-    {"id": "shortcuts", "label": "Raccourcis"}
+    {
+      "id": "agent_cli",
+      "label": "Agent / CLI",
+      "sections": ["technical", "behavior", "catalog"],
+      "replaces": ["cli", "routing"]
+    },
+    {"id": "credentials", "label": "API Keys"},
+    {"id": "shortcuts", "label": "Raccourcis"},
+    {"id": "appearance", "label": "Apparence", "persistence": "localStorage:jarvis.ui.theme", "policy": "renderer-only; injected by the bundled theme layer"}
   ],
   "option_metadata_contract": {
     "required": ["id", "label", "type", "default", "help", "destination", "advanced", "runtime_status"],
@@ -38,7 +39,7 @@
         {
           "id": "auto",
           "label": "Auto",
-          "meaning": "Enable the existing profile routing policy. Each Agent/Task call still launches at most the one sub-agent requested by the caller; the hook may replace its requested model with the first allowed and usable candidate on the active host CLI only."
+          "meaning": "Enable the existing profile routing policy on the active Claude host CLI. Each Agent/Task call still launches at most the one sub-agent requested by the caller; the hook may replace its requested model with the first allowed and usable Claude candidate. Codex exposes no equivalent verified sub-agent hook and its candidates remain non-selectable in Auto."
         },
         {
           "id": "duplicate",
@@ -46,13 +47,13 @@
           "meaning": "Compatibility/inheritance mode. Preserve the model selected by the caller or CLI and launch only the requested sub-agent. Never duplicate work and never fan out."
         }
       ],
-      "help": "Auto choisit le modèle selon les profils. Dupliqué hérite du choix du CLI/appelant; ce nom ne signifie jamais deux exécutions.",
+      "help": "Auto choisit le modèle selon les profils sur le CLI Claude hôte; Codex reste non sélectionnable en Auto. Dupliqué hérite du choix du CLI/appelant; ce nom ne signifie jamais deux exécutions.",
       "destination": "agent_cli.technical",
       "advanced": false,
-      "runtime_status": "live-alias",
+      "runtime_status": "live-claude-host-only",
       "persistence": "agent_routing.enabled",
       "mapping": {"auto": true, "duplicate": false},
-      "host_agent_scope": "active_cli_only",
+      "host_agent_scope": "claude_host_only_until_codex_boundary",
       "cross_cli_policy": "self_development_only",
       "max_subagent_calls_per_tool_call": 1
     },
@@ -149,7 +150,8 @@
   "retained_surfaces": [
     {"id": "prompts", "persistence": "prompt_overrides", "destination": "prompts", "policy": "unchanged"},
     {"id": "credentials", "persistence": "credentials + credential_bindings", "destination": "credentials", "policy": "unchanged; never return secrets"},
-    {"id": "ui_shortcuts", "persistence": "shortcuts.* except wake_toggle", "destination": "shortcuts", "policy": "unchanged"}
+    {"id": "ui_shortcuts", "persistence": "shortcuts.* except wake_toggle", "destination": "shortcuts", "policy": "unchanged"},
+    {"id": "appearance", "persistence": "localStorage:jarvis.ui.theme", "destination": "appearance", "policy": "renderer-only; no settings API write"}
   ],
   "migration": {
     "rules": [
@@ -183,6 +185,7 @@
       {"event": "settings.agent.rejected", "level": "warning", "when": "Agent/CLI, routing, self-development or behavior validation rejected by POST /api/settings", "required_data": ["code"], "code_scope": "The owning CliSettingsError, RoutingError, SelfDevError or AgentBehaviorError supplies its stable code. slice_02_stable_codes lists only codes introduced by this Slice, not the pre-existing validator registries.", "slice_02_stable_codes": ["agent_settings_invalid_delegation_mode", "agent_settings_conflicting_delegation_mode", "agent_settings_invalid_behavior", "agent_settings_invalid_verbosity", "agent_settings_invalid_politeness_formality", "agent_settings_behavior_prompt_too_large"]},
       {"event": "prompt.override.rejected", "level": "warning", "when": "Prompt edit would make saved turn addition plus generated behavior exceed 8192 characters", "required_data": ["code", "prompt_id"], "slice_02_stable_codes": ["agent_settings_behavior_prompt_too_large"]},
       {"event": "agent.prompt", "level": "info", "when": "Composed ask/send reaches an agent supporting prompt evidence", "required_data": ["program_id", "prompt_ids", "layer_revisions", "static_fingerprint", "render_fingerprint", "channel", "application"], "secret_policy": "identity only; no prompt text"},
+      {"event": "agent.input", "level": "info", "when": "A direct Agent request is accepted", "required_data": [], "secret_policy": "canonical user request only; never saved backend.turn.addition or generated behavior instructions"},
       {"event": "job.agent.prompt", "level": "info", "when": "Composed owned job reaches a Claude/Codex wrapper supporting prompt evidence", "required_data": ["job_id", "program_id", "prompt_ids", "layer_revisions", "static_fingerprint", "render_fingerprint", "channel", "application"], "secret_policy": "identity only; no prompt text"},
       {"event": "agent.routing.decided", "level": "info-or-warning-on-deny", "when": "Auto handles one Agent/Task call", "required_data": ["tool_use_id", "profile", "requested_model", "model", "reason", "applied"]},
       {"event": "agent.routing.failed", "level": "error", "when": "routing hook fails open", "required_data": ["code", "exception_type"], "stable_codes": ["routing_hook_failed"]}

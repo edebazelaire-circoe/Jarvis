@@ -41,7 +41,9 @@ all handlers and prevents late promises or public methods from restoring DOM.
   `availability.selectable` boolean. The component does not derive
   selectability from state names.
 - Availability state, reason, and evidence remain visible in their own column.
-  Sourced comparison metadata exposes provenance through titles/details.
+  Sourced comparison metadata exposes provenance through titles/details. Each
+  role chip uses its own `provenance_by_value` sources (including a displayed
+  provider/registry union) and falls back to the compatible primary provenance.
 - Missing values render as `Inconnu`; they never become zero, free, unsupported,
   or usable.
 

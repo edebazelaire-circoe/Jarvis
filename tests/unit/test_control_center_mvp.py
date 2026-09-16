@@ -77,8 +77,8 @@ def test_control_center_keeps_pointer_visible_and_explains_configured_voice_togg
     assert "s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`" in html
     assert "`${k} · ANNULER`" in html
     assert "`${k} · INTERROMPRE`" in html
-    assert "Entrée microphone" in html
-    assert "Sortie haut-parleur" in html
+    assert "persistence==='audio_input_device'" in html
+    assert "persistence==='audio_output_device'" in html
     assert "Tester micro + sortie" in html
 
 
@@ -93,8 +93,9 @@ def test_settings_window_is_a_modal_that_closes_on_an_outside_click():
     html = CONTROL_CENTER_HTML.read_text(encoding="utf-8")
     assert ".modal{width:82vw;height:82vh" in html
     assert "overlay.addEventListener('mousedown',event=>{if(event.target===overlay)closeSettings()})" in html
-    for label in ("Mode vocal", "Agent / CLI", "Config", "API Keys", "Raccourcis"):
+    for label in ("Voix", "Prompts", "Agent / CLI", "API Keys", "Raccourcis"):
         assert f"label:'{label}'" in html
+    assert "id:'config'" not in html
     # Les listes de modèles passent par le catalogue du serveur : aucune liste
     # de modèles ne doit être écrite dans la page.
     assert "/api/models?provider=" in html

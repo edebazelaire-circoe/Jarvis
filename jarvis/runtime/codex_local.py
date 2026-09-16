@@ -305,7 +305,13 @@ class CodexLocalAgent:
         )
         return self.snapshot()
 
-    async def _run_turn(self, text: str, *, timeout_s: float) -> dict[str, Any]:
+    async def _run_turn(
+        self,
+        text: str,
+        *,
+        timeout_s: float,
+        prompt_evidence: dict[str, object] | None = None,
+    ) -> dict[str, Any]:
         if not self._started:
             await self.start()
         argv = self._turn_command(resume=True)
@@ -343,10 +349,9 @@ class CodexLocalAgent:
         try:
             process.stdin.write(text.encode("utf-8"))
             await process.stdin.drain()
-            if self._next_prompt_evidence is not None:
-                evidence, self._next_prompt_evidence = self._next_prompt_evidence, None
-                self.prompt_applications.append(dict(evidence))
-                self.journal.emit("agent.prompt", "Prompt application recorded", data=dict(evidence))
+            if prompt_evidence is not None:
+                self.prompt_applications.append(dict(prompt_evidence))
+                self.journal.emit("agent.prompt", "Prompt application recorded", data=dict(prompt_evidence))
             process.stdin.close()
         except (BrokenPipeError, ConnectionResetError, OSError):
             self._next_prompt_evidence = None
@@ -461,16 +466,20 @@ class CodexLocalAgent:
             self.journal.emit("agent.stderr", text, level="error")
 
     async def ask(self, text: str, *, timeout_s: float = 180.0,
-                  prompt_evidence: dict[str, object] | None = None) -> dict[str, Any]:
+                  prompt_evidence: dict[str, object] | None = None,
+                  input_text: str | None = None) -> dict[str, Any]:
+        evidence = dict(prompt_evidence) if prompt_evidence is not None else self._next_prompt_evidence
+        # Consume legacy one-shot state before validation/start so an empty or
+        # failed turn cannot lend its identity to a later prompt.
+        self._next_prompt_evidence = None
         message = text.strip()
+        visible_message = message if input_text is None else str(input_text).strip()
         if not message:
             return {"ok": False, "text": "", "error": "message cannot be empty", "code": "codex_empty"}
         async with self._turn_lock:
-            if prompt_evidence is not None:
-                self._next_prompt_evidence = dict(prompt_evidence)
-            self._record({"type": "user", "text": message})
-            self.journal.emit("agent.input", message)
-            return await self._run_turn(message, timeout_s=timeout_s)
+            self._record({"type": "user", "text": visible_message})
+            self.journal.emit("agent.input", visible_message)
+            return await self._run_turn(message, timeout_s=timeout_s, prompt_evidence=evidence)
 
     def set_next_prompt_evidence(self, evidence: dict[str, object]) -> None:
         self._next_prompt_evidence = dict(evidence)
@@ -479,25 +488,50 @@ class CodexLocalAgent:
         from jarvis.runtime.prompt_runtime import normalize_prompt_overrides
         self._prompt_overrides = normalize_prompt_overrides(overrides)
 
-    async def send(self, text: str) -> dict[str, Any]:
+    async def send(
+        self,
+        text: str,
+        *,
+        prompt_evidence: dict[str, object] | None = None,
+        input_text: str | None = None,
+    ) -> dict[str, Any]:
         """Déposer un message sans attendre : le tour part en arrière-plan.
 
         Chez Claude, `send` écrit dans un processus déjà là. Ici il faut en
         lancer un ; la panneau Agents rafraîchit ensuite l'historique tout seul.
         """
+        evidence = dict(prompt_evidence) if prompt_evidence is not None else self._next_prompt_evidence
+        self._next_prompt_evidence = None
         message = text.strip()
+        visible_message = message if input_text is None else str(input_text).strip()
         if not message:
             raise ValueError("message cannot be empty")
         if self._background is not None and not self._background.done():
             raise RuntimeError("Un tour Codex est déjà en cours.")
         self._background = asyncio.create_task(
-            self._background_turn(message), name="jarvis-codex-turn"
+            self._background_turn(
+                message,
+                prompt_evidence=evidence,
+                input_text=visible_message,
+            ),
+            name="jarvis-codex-turn",
         )
         return self.snapshot()
 
-    async def _background_turn(self, message: str) -> None:
+    async def _background_turn(
+        self,
+        message: str,
+        *,
+        prompt_evidence: dict[str, object] | None = None,
+        input_text: str | None = None,
+    ) -> None:
         try:
-            await self.ask(message, timeout_s=900.0)
+            await self.ask(
+                message,
+                timeout_s=900.0,
+                prompt_evidence=prompt_evidence,
+                input_text=input_text,
+            )
         except Exception as exc:  # noqa: BLE001 - une tâche orpheline ne doit jamais mourir en silence
             self.journal.emit(
                 "agent.error", f"Tour Codex interrompu : {exc}", level="error",

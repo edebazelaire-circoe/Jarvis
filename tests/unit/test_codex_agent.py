@@ -123,6 +123,43 @@ async def test_a_turn_returns_the_agent_message_and_a_verdict(agent, monkeypatch
     assert calls[0][-1] == "-"
 
 
+async def test_composed_prompt_reaches_codex_but_private_layers_stay_out_of_history(agent, monkeypatch, tmp_path):
+    process = FakeProcess(FakeStream(jsonl(*TURN)))
+    spawn(monkeypatch, process)
+    marker = "PRIVATE_BACKEND_TURN_MARKER"
+    composed = f"{marker}\n[Demande]\nquestion publique"
+
+    await agent.ask(
+        composed,
+        timeout_s=5,
+        prompt_evidence={"program_id": "backend.codex.turn", "application": "sent"},
+        input_text="question publique",
+    )
+
+    assert marker in process.stdin.written.decode("utf-8")
+    assert marker not in json.dumps(agent.snapshot(), ensure_ascii=False)
+    assert marker not in json.dumps(read_jsonl_tail(tmp_path / "trace.jsonl"), ensure_ascii=False)
+    assert agent.prompt_applications == [{"program_id": "backend.codex.turn", "application": "sent"}]
+
+
+async def test_busy_codex_send_discards_one_shot_prompt_evidence(agent, monkeypatch):
+    pending = asyncio.create_task(asyncio.Event().wait())
+    agent._background = pending
+    agent.set_next_prompt_evidence({"program_id": "old-turn"})
+    try:
+        with pytest.raises(RuntimeError, match="déjà en cours"):
+            await agent.send("premier tour")
+    finally:
+        pending.cancel()
+        await asyncio.gather(pending, return_exceptions=True)
+
+    assert agent._next_prompt_evidence is None
+    agent._background = None
+    spawn(monkeypatch, FakeProcess(FakeStream(jsonl(*TURN))))
+    await agent.ask("tour suivant", timeout_s=5)
+    assert agent.prompt_applications == []
+
+
 async def test_the_second_question_resumes_the_same_thread(agent, monkeypatch):
     calls = spawn(
         monkeypatch,

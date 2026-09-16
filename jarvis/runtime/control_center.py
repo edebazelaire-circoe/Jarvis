@@ -1171,11 +1171,10 @@ class ControlCenter:
         return report
 
     def _voice_architecture_registry(self, settings: dict[str, Any]):
-        del settings
         if self._voice_registry is not None:
             return self._voice_registry
         try:
-            cached = self.catalog.cached("google") or {}
+            cached = self.catalog.cached_for("google", creds.secret_for(settings, "google")) or {}
         except (TypeError, AttributeError, ValueError):
             # The optional on-disk catalog is not an authority for Settings.
             # Keep known capabilities usable, never expose corrupt raw data.
@@ -1752,6 +1751,12 @@ class ControlCenter:
             raise web.HTTPBadRequest(text="credential must be an object")
         settings = self._settings()
         creds.migrate_legacy(settings)
+        credential_id = str(payload.get("id") or "")
+        previous_providers = {
+            str(item.get("provider") or "").strip().lower()
+            for item in settings.get("credentials", ())
+            if isinstance(item, dict) and str(item.get("id") or "") == credential_id
+        }
         try:
             record = creds.upsert_credential(
                 settings,
@@ -1763,6 +1768,9 @@ class ControlCenter:
         except creds.CredentialError as exc:
             return web.json_response({"ok": False, "code": exc.code, "error": str(exc)}, status=400)
         self._write_settings(settings)
+        for provider in previous_providers | {str(record["provider"])}:
+            if provider:
+                self.catalog.invalidate(provider)
         self.journal.emit(
             "settings.credential",
             f"Clé {record['provider']} enregistrée : {record['name']}",
@@ -1777,9 +1785,17 @@ class ControlCenter:
             raise web.HTTPBadRequest(text="id is required")
         settings = self._settings()
         creds.migrate_legacy(settings)
+        providers = {
+            str(item.get("provider") or "").strip().lower()
+            for item in settings.get("credentials", ())
+            if isinstance(item, dict) and str(item.get("id") or "") == credential_id
+        }
         if not creds.delete_credential(settings, credential_id):
             return web.json_response({"ok": False, "code": "credential_not_found", "error": "Cette clé n'existe plus."}, status=404)
         self._write_settings(settings)
+        for provider in providers:
+            if provider:
+                self.catalog.invalidate(provider)
         self.journal.emit("settings.credential", "Clé API supprimée", data={"id": credential_id})
         return web.json_response({"ok": True, **creds.credentials_state(settings)})
 
@@ -1789,14 +1805,18 @@ class ControlCenter:
             raise web.HTTPBadRequest(text="binding must be an object")
         settings = self._settings()
         creds.migrate_legacy(settings)
+        provider = str(payload.get("provider") or "").strip().lower()
+        credential_id = str(payload.get("id") or "") or None
+        previous_id = (settings.get("credential_bindings") or {}).get(provider)
         try:
-            creds.bind_credential(settings, str(payload.get("provider") or ""), str(payload.get("id") or "") or None)
+            creds.bind_credential(settings, provider, credential_id)
         except creds.CredentialError as exc:
             return web.json_response({"ok": False, "code": exc.code, "error": str(exc)}, status=400)
         self._write_settings(settings)
         # Une clé qui change invalide le catalogue : les modèles visibles
         # dépendent du compte, pas seulement du fournisseur.
-        self.catalog.invalidate(str(payload.get("provider") or "").strip().lower())
+        if previous_id != credential_id:
+            self.catalog.invalidate(provider)
         return web.json_response({"ok": True, **creds.credentials_state(settings)})
 
     # ------------------------------------------------------------- catalogues
@@ -1810,14 +1830,15 @@ class ControlCenter:
     ) -> dict[str, dict[str, Any]]:
         """Measure provider catalogs while preserving failures as evidence."""
         async def fetch(provider: str) -> tuple[str, dict[str, Any]]:
+            api_key = creds.secret_for(settings, provider)
             try:
                 result = await self.catalog.models(
                     provider,
-                    creds.secret_for(settings, provider),
+                    api_key,
                     refresh=refresh,
                 )
             except CatalogError as exc:
-                stale = self.catalog.cached(provider)
+                stale = self.catalog.cached_for(provider, api_key)
                 self.journal.emit(
                     "provider.models_failed",
                     str(exc),
@@ -1866,6 +1887,8 @@ class ControlCenter:
                 catalogs=catalogs,
                 saved=saved,
                 role=role,
+                active_agent=self._agent_id,
+                routing_enabled=policy.enabled,
             )
         else:
             providers = {stack.credential_provider for stack in voice_stack.VOICE_STACKS}
@@ -1886,7 +1909,7 @@ class ControlCenter:
         try:
             result = await self.catalog.models(provider, api_key, refresh=refresh)
         except CatalogError as exc:
-            stale = self.catalog.cached(provider)
+            stale = self.catalog.cached_for(provider, api_key)
             self.journal.emit(
                 "provider.models_failed",
                 str(exc),
@@ -1934,10 +1957,11 @@ class ControlCenter:
         sources: dict[str, str] = {}
         snapshots: dict[str, ProviderCatalogSnapshot] = {}
         for provider in sorted({spec.model_provider for spec in cli_catalog.AGENT_CLIS}):
+            api_key = creds.secret_for(settings, provider)
             try:
-                result = await self.catalog.models(provider, creds.secret_for(settings, provider))
+                result = await self.catalog.models(provider, api_key)
             except CatalogError as exc:
-                stale = self.catalog.cached(provider)
+                stale = self.catalog.cached_for(provider, api_key)
                 sources[provider] = "stale" if stale is not None else exc.code
                 result = (
                     {**stale, "source": "stale", "status_code": exc.code}
@@ -2279,12 +2303,16 @@ class ControlCenter:
         else:
             prompt = text
             evidence = None
-        from jarvis.runtime.prompt_runtime import accepts_prompt_evidence
+        from jarvis.runtime.prompt_runtime import accepts_keyword_argument, accepts_prompt_evidence
         supports_evidence = accepts_prompt_evidence(self.agent.ask)
+        ask_kwargs: dict[str, object] = {"timeout_s": timeout_s}
         if evidence is not None and supports_evidence:
-            result = await self.agent.ask(prompt, timeout_s=timeout_s, prompt_evidence=evidence)
-        else:
-            result = await self.agent.ask(prompt, timeout_s=timeout_s)
+            ask_kwargs["prompt_evidence"] = evidence
+        if evidence is not None and accepts_keyword_argument(self.agent.ask, "input_text"):
+            # The composed model prompt may contain private saved instructions.
+            # Native agents use this canonical input only for trace/UI history.
+            ask_kwargs["input_text"] = text
+        result = await self.agent.ask(prompt, **ask_kwargs)
         return web.json_response(result)
 
     async def agent_notices(self, request: web.Request) -> web.Response:
@@ -2329,10 +2357,15 @@ class ControlCenter:
                 request_text=text.strip() if behavior_active else text,
                 overrides=prompt_override_document(settings), behavior_active=behavior_active,
             )
-            set_evidence = getattr(self.agent, "set_next_prompt_evidence", None)
-            if evidence is not None and callable(set_evidence):
-                set_evidence(evidence)
-            return web.json_response(await self.agent.send(prompt))
+            from jarvis.runtime.prompt_runtime import accepts_keyword_argument, accepts_prompt_evidence
+            send_kwargs: dict[str, object] = {}
+            if evidence is not None and accepts_prompt_evidence(self.agent.send):
+                send_kwargs["prompt_evidence"] = evidence
+            if evidence is not None and accepts_keyword_argument(self.agent.send, "input_text"):
+                # Keep saved/runtime instructions in memory; only the user's
+                # canonical message is allowed into trace and snapshots.
+                send_kwargs["input_text"] = text.strip()
+            return web.json_response(await self.agent.send(prompt, **send_kwargs))
         except ValueError as exc:
             raise web.HTTPBadRequest(text=str(exc)) from exc
         except RuntimeError as exc:

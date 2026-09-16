@@ -219,6 +219,28 @@ def _metadata(registry: CatalogMetadataRegistry, identity: CatalogIdentity) -> d
     }
 
 
+def _role_claim(
+    sources_by_role: Mapping[str, Sequence[CatalogProvenance]],
+    *,
+    fallback: CatalogProvenance | None = None,
+    primary: CatalogProvenance | None = None,
+) -> SourcedValue:
+    """Build one role list while retaining every source for every role."""
+    normalized = {
+        role: tuple(dict.fromkeys(sources))
+        for role, sources in sources_by_role.items()
+        if role and sources
+    }
+    provenances = tuple(source for sources in normalized.values() for source in sources)
+    if not provenances and fallback is None:
+        raise ValueError("Catalog role claim requires provenance")
+    return SourcedValue(
+        tuple(normalized),
+        primary or (provenances[0] if provenances else fallback),
+        provenance_by_value=normalized,
+    )
+
+
 def _subagent_availability(
     *,
     cli_available: bool | None,
@@ -226,6 +248,8 @@ def _subagent_availability(
     model_found: bool,
     snapshot: ProviderCatalogSnapshot,
     cli_evidence: CatalogProvenance,
+    delegation_code: str | None = None,
+    delegation_reason: str = "",
 ) -> CatalogAvailability:
     if cli_available is None:
         return _availability(
@@ -233,6 +257,19 @@ def _subagent_availability(
             "catalog_cli_probe_invalid",
             "Agent CLI availability probe returned an invalid state.",
             cli_evidence,
+        )
+    if delegation_code is not None:
+        state = (
+            CatalogAvailabilityState.AVAILABLE_NOT_CONFIGURED
+            if snapshot.authoritative and model_found
+            else CatalogAvailabilityState.UNAVAILABLE
+        )
+        return _availability(
+            state,
+            delegation_code,
+            delegation_reason,
+            cli_evidence,
+            snapshot.provenance,
         )
     if not model_id:
         if cli_available:
@@ -401,6 +438,8 @@ class CatalogViewService:
         catalogs: Mapping[str, Mapping[str, object]],
         saved: Iterable[CandidateRef] = (),
         role: str = "subagent",
+        active_agent: str | None = None,
+        routing_enabled: bool = False,
         now: datetime | None = None,
     ) -> CatalogView:
         generated = _utc(now or datetime.now(timezone.utc))
@@ -428,6 +467,11 @@ class CatalogViewService:
                 "jarvis.runtime.cli_catalog.AGENT_CLIS",
                 generated,
             )
+            saved_provenance = _runtime_provenance(
+                f"routing_settings:{agent_id}",
+                "agent_routing profile CandidateRef",
+                generated,
+            )
             known: dict[str, dict[str, object] | None] = {"": None}
             for model in snapshot.models:
                 if "text" in model["roles"]:
@@ -436,11 +480,21 @@ class CatalogViewService:
                 if saved_agent == agent_id:
                     known.setdefault(saved_model, None)
             for model_id, model in known.items():
-                roles = (
-                    ("subagent", "text")
-                    if not model_id or model is None
-                    else tuple(dict.fromkeys(("subagent", *tuple(model["roles"]))))
-                )
+                role_sources: dict[str, list[CatalogProvenance]] = {}
+                role_primary = None
+                subagent_source = saved_provenance if model_id and model is None else registry_provenance
+                role_sources["subagent"] = [subagent_source]
+                if not model_id:
+                    role_sources["text"] = [registry_provenance]
+                elif model is not None:
+                    role_primary = _role_provenance(provider, snapshot, generated)
+                    for model_role in model["roles"]:
+                        role_sources.setdefault(str(model_role), []).append(role_primary)
+                else:
+                    # The saved candidate remains text-routable by contract,
+                    # but that claim comes only from settings—not a live provider.
+                    role_sources["text"] = [saved_provenance]
+                roles = tuple(role_sources)
                 if role and role not in roles:
                     continue
                 identity = CatalogIdentity(CatalogSurface.SUBAGENTS, provider, model_id, agent_id)
@@ -461,19 +515,37 @@ class CatalogViewService:
                     SourcedValue(tuple(sorted({str(value) for value in capabilities_raw if str(value)})), registry_provenance)
                     if isinstance(capabilities_raw, (list, tuple)) else None
                 )
+                delegation_code = None
+                delegation_reason = ""
+                capabilities_set = {
+                    str(value)
+                    for value in capabilities_raw
+                    if str(value)
+                } if isinstance(capabilities_raw, (list, tuple)) else set()
+                if routing_enabled and agent_id != active_agent:
+                    delegation_code = "catalog_subagent_not_active_host"
+                    delegation_reason = (
+                        "Auto can enforce one model only inside the active Agent CLI; "
+                        "switch the primary CLI before using this candidate."
+                    )
+                elif routing_enabled and "background" not in capabilities_set:
+                    delegation_code = "catalog_subagent_delegation_unsupported"
+                    delegation_reason = (
+                        "The active Agent CLI exposes no verified background sub-agent boundary; "
+                        "Auto cannot enforce this candidate."
+                    )
                 items.append(CatalogItem(
                     identity=identity,
                     label=label,
-                    roles=SourcedValue(
-                        roles,
-                        _role_provenance(provider, snapshot, generated) if model_id else registry_provenance,
-                    ),
+                    roles=_role_claim(role_sources, primary=role_primary),
                     availability=_subagent_availability(
                         cli_available=cli_available,
                         model_id=model_id,
                         model_found=model is not None,
                         snapshot=snapshot,
                         cli_evidence=cli_provenance,
+                        delegation_code=delegation_code,
+                        delegation_reason=delegation_reason,
                     ),
                     capabilities=capabilities,
                     description=description,
@@ -521,9 +593,15 @@ class CatalogViewService:
                     generated,
                 ) if descriptor is not None else None
             )
-            roles = tuple(model["roles"]) if model is not None else _voice_roles(descriptor) if descriptor is not None else ()
-            if descriptor is not None:
-                roles = tuple(dict.fromkeys((*roles, *_voice_roles(descriptor))))
+            role_sources: dict[str, list[CatalogProvenance]] = {}
+            if model is not None:
+                classifier = _role_provenance(provider, snapshot, generated)
+                for model_role in model["roles"]:
+                    role_sources.setdefault(str(model_role), []).append(classifier)
+            if descriptor is not None and registry_provenance is not None:
+                for descriptor_role in _voice_roles(descriptor):
+                    role_sources.setdefault(descriptor_role, []).append(registry_provenance)
+            roles = tuple(role_sources)
             if role and role not in roles:
                 continue
             identity = CatalogIdentity(CatalogSurface.VOICE, provider, model_id)
@@ -536,21 +614,10 @@ class CatalogViewService:
                     if value
                 ))
                 capabilities = SourcedValue(enabled, registry_provenance)
-            role_provenance = (
-                _role_provenance(provider, snapshot, generated)
-                if model is not None
-                else registry_provenance
-            )
-            if role_provenance is None:
-                role_provenance = _runtime_provenance(
-                    f"catalog_unknown:{provider}:{model_id}",
-                    "catalog identity without role evidence",
-                    generated,
-                )
             items.append(CatalogItem(
                 identity=identity,
                 label=_display_label(model.get("label") if model else None, model_id),
-                roles=SourcedValue(roles, role_provenance),
+                roles=_role_claim(role_sources, fallback=snapshot.provenance),
                 availability=_voice_availability(
                     descriptor=descriptor,
                     model_found=model is not None,

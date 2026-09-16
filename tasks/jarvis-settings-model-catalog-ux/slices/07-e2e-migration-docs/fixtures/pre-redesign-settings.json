@@ -1,0 +1,196 @@
+{
+  "schema_version": 1,
+  "settings_cases": [
+    {
+      "id": "legacy-auto-openai",
+      "expected_mode": "auto",
+      "expected_effective_stack": "openai_realtime",
+      "saved": {
+        "agent_cli": "claude",
+        "agent_cli_settings": {
+          "claude": {
+            "command": "claude",
+            "model": "claude-saved",
+            "permission_mode": "default",
+            "future_cli": {"keep": "claude-nested"}
+          },
+          "codex": {"command": "codex", "model": "codex-saved", "sandbox_mode": "workspace-write"}
+        },
+        "agent_routing": {
+          "enabled": true,
+          "profiles": {
+            "code": {
+              "enabled": true,
+              "candidates": [
+                {"agent": "claude", "model": "available"},
+                {"agent": "claude", "model": "disappeared"},
+                {"agent": "codex", "model": "unknown"}
+              ],
+              "allow_general_fallback": false
+            }
+          }
+        },
+        "voice_stack": "openai_realtime",
+        "voice_arch": "continuous_brain",
+        "voice_stack_settings": {
+          "openai_realtime": {
+            "voice": "ash",
+            "turn_mode": "auto",
+            "ack_delay_ms": 900,
+            "echo_cancellation": true,
+            "future_transport": {"keep": "openai-nested"}
+          },
+          "gemini_live": {
+            "voice": "Kore",
+            "turn_mode": "auto",
+            "future_transport": {"keep": "inactive-gemini"}
+          }
+        },
+        "conversation_mode": "open_room",
+        "speaker_verification": "shadow",
+        "owner_buffer_ms": 2600,
+        "owner_threshold": 0.55,
+        "owner_evidence_ms": 1600,
+        "owner_short_evidence_ms": 650,
+        "owner_short_margin": 0.11,
+        "audio_input_device": "3",
+        "audio_output_device": "7",
+        "active_timeout_s": "120",
+        "shortcuts": {"wake_toggle": "f10", "ui_settings": "s"},
+        "future_extension": {"nested": {"keep": "top-level"}}
+      }
+    },
+    {
+      "id": "legacy-duplicate-gemini",
+      "expected_mode": "duplicate",
+      "expected_effective_stack": "gemini_live",
+      "saved": {
+        "agent_cli": "claude",
+        "agent_routing": {
+          "enabled": false,
+          "profiles": {
+            "general": {
+              "enabled": true,
+              "candidates": [{"agent": "claude", "model": "provider-unknown"}],
+              "allow_general_fallback": true
+            }
+          }
+        },
+        "voice_stack": "gemini_live",
+        "voice_arch": "legacy",
+        "voice_stack_settings": {
+          "openai_realtime": {"voice": "verse", "turn_mode": "manual", "future_transport": {"keep": "inactive-openai"}},
+          "gemini_live": {"model": "gemini-live-saved", "voice": "Aoede", "turn_mode": "auto", "input_transcription": true}
+        },
+        "conversation_mode": "open_room",
+        "speaker_verification": "off",
+        "audio_input_device": "",
+        "audio_output_device": "",
+        "active_timeout_s": "0",
+        "shortcuts": {"wake_toggle": "f9"},
+        "future_extension": {"nested": {"keep": "gemini-case"}}
+      }
+    },
+    {
+      "id": "explicit-simple",
+      "expected_mode": "duplicate",
+      "expected_effective_stack": "openai_realtime",
+      "saved": {
+        "agent_routing": {"enabled": false},
+        "voice_stack": "gemini_live",
+        "voice_arch": "legacy",
+        "voice_architecture": {
+          "schema_version": 1,
+          "config": {"conversation_model": {"provider_id": "openai", "model_id": "gpt-realtime-2.1"}, "architecture": "simple"},
+          "compatibility": null
+        },
+        "voice_stack_settings": {
+          "openai_realtime": {"voice": "cedar", "turn_mode": "auto"},
+          "gemini_live": {"voice": "Puck", "turn_mode": "manual", "future_transport": {"keep": "simple-inactive"}}
+        },
+        "future_extension": {"nested": {"keep": "simple"}}
+      }
+    },
+    {
+      "id": "explicit-front-brain",
+      "expected_mode": "auto",
+      "expected_effective_stack": "openai_realtime",
+      "saved": {
+        "agent_routing": {"enabled": true},
+        "voice_stack": "gemini_live",
+        "voice_architecture": {
+          "schema_version": 1,
+          "config": {
+            "reflex_model": {"provider_id": "openai", "model_id": "gpt-realtime-2.1-mini"},
+            "analysis_model": {"provider_id": "openai", "model_id": "gpt-5.6-luna"},
+            "speculative_deltas": true,
+            "reasoning_effort": "low",
+            "architecture": "front_brain"
+          },
+          "compatibility": null
+        },
+        "voice_stack_settings": {
+          "openai_realtime": {"voice": "marin", "turn_mode": "auto", "ack_delay_ms": 0},
+          "gemini_live": {"voice": "Leda", "turn_mode": "auto", "future_transport": {"keep": "front-inactive"}}
+        },
+        "future_extension": {"nested": {"keep": "front-brain"}}
+      }
+    },
+    {
+      "id": "explicit-duplex",
+      "expected_mode": "duplicate",
+      "expected_effective_stack": "openai_realtime",
+      "saved": {
+        "agent_routing": {"enabled": false},
+        "voice_stack": "gemini_live",
+        "voice_architecture": {
+          "schema_version": 1,
+          "config": {
+            "conversation_model": {"provider_id": "openai", "model_id": "gpt-live-1"},
+            "client_delegation": true,
+            "idle_timeout_s": 75.0,
+            "architecture": "duplex"
+          },
+          "compatibility": null
+        },
+        "voice_stack_settings": {
+          "openai_realtime": {"voice": "coral", "turn_mode": "auto", "echo_cancellation": true},
+          "gemini_live": {"voice": "Zephyr", "turn_mode": "manual", "future_transport": {"keep": "duplex-inactive"}}
+        },
+        "conversation_mode": "open_room",
+        "speaker_verification": "off",
+        "future_extension": {"nested": {"keep": "duplex"}}
+      }
+    }
+  ],
+  "catalog_cases": [
+    {
+      "id": "missing-credentials",
+      "agent": {"id": "claude", "label": "Claude", "model_provider": "anthropic", "available": true, "capabilities": ["code", "semantic"]},
+      "catalog": {"source": "catalog_no_key", "status_code": "catalog_no_key", "models": []},
+      "saved_model": "saved-private-model",
+      "expected_state": "configured_unverified"
+    },
+    {
+      "id": "missing-cli",
+      "agent": {"id": "claude", "label": "Claude", "model_provider": "anthropic", "available": false, "capabilities": ["code", "semantic"]},
+      "catalog": {"source": "live", "fetched_at": 1789387200, "models": [{"id": "available", "roles": ["text"]}]},
+      "saved_model": "available",
+      "expected_state": "available_not_configured"
+    },
+    {
+      "id": "stale-provider",
+      "agent": {"id": "claude", "label": "Claude", "model_provider": "anthropic", "available": true, "capabilities": ["code", "semantic"]},
+      "catalog": {"source": "stale", "fetched_at": 1789200000, "models": [{"id": "saved-stale", "roles": ["text"]}]},
+      "saved_model": "saved-stale",
+      "expected_state": "configured_unverified"
+    },
+    {
+      "id": "unknown-probes",
+      "agent": {"id": "claude", "label": "Claude", "model_provider": "anthropic", "available": null, "capabilities": ["code", "semantic"]},
+      "catalog": {"source": "unknown", "status_code": "catalog_unreachable", "models": []},
+      "saved_model": "saved-unknown",
+      "expected_state": "unknown"
+    }
+  ]
+}

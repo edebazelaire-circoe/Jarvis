@@ -963,9 +963,9 @@ def test_the_page_renders_the_solo_owner_and_aec_status_from_the_api():
     for needle in (
         "async function authSectionHtml()",
         "function aecHtml()",
-        "function authFieldChanged(el)",
-        "${await authSectionHtml()}",
-        "${aecHtml()}",
+        "function authFieldChanged(el,revision)",
+        "function voiceDiagnosticHtml(records)",
+        "'owner_profile_path':((a.verifier_settings||{}).effective||{}).owner_profile_path",
         "verification_modes_by_mode",
         "a.status_source==='voice'",
         "Solo Owner configuré mais NON appliqué",
@@ -979,6 +979,9 @@ def test_the_page_renders_the_solo_owner_and_aec_status_from_the_api():
         "authorization:{}",
     ):
         assert needle in html, needle
+    diagnostic = html[html.index("function voiceDiagnosticHtml(records)") : html.index("function voiceCatalogHtml()")]
+    assert "authVerdictHtml" not in diagnostic and "verifierHtml" not in diagnostic
+    assert "authEffectiveHtml" not in diagnostic and "aecHtml" not in diagnostic
     # Aucune empreinte n'est lue ni affichée par la page.
     assert not re.search(r"embedding|voiceprint", html, re.I)
 

@@ -2,7 +2,7 @@
   "slice_id": "06",
   "task_type": null,
   "work_intent": "voice settings backend schema and frontend categorization",
-  "status": "BACKEND_COMPLETE_UI_PENDING",
+  "status": "COMPLETE",
   "dependencies": [
     "01",
     "04"
@@ -20,8 +20,26 @@
     "command": ".venv/Scripts/python.exe -m pytest tests/unit/test_voice_settings_schema.py tests/unit/test_settings_endpoints.py tests/unit/test_control_center_quality.py tests/unit/test_settings_ia_contract.py tests/unit/test_voice_composition.py tests/unit/test_voice_architecture_config.py tests/unit/test_control_center_voice_architecture_review.py tests/unit/test_control_center_voice_architecture.py tests/unit/test_voice_switch.py -q -W error",
     "result": "285 passed in 9.68s"
   },
-  "remaining": [
-    "Voice category UI and shared voice catalog embedding",
-    "responsive/human validation"
-  ]
+  "frontend_implementation": [
+    "jarvis/runtime/control_center.html",
+    "tests/unit/test_voice_settings_ui.py",
+    "tests/unit/test_control_center_voice_architecture.py",
+    "tests/unit/test_control_center_quality.py",
+    "tests/unit/test_control_center_mvp.py",
+    "docs/voice-settings-schema.md",
+    "docs/OPERATIONS.md"
+  ],
+  "fixture": "tasks/jarvis-settings-model-catalog-ux/slices/06-voice-settings-tabs/fixtures/voice-settings-ui.json",
+  "frontend_routing": "Claude frontend routing and /impeccable were unavailable in the active tool/skill set; existing Control Center design system and accessibility conventions were applied locally.",
+  "frontend_validation": {
+    "command": ".venv/Scripts/python.exe -m pytest -q -p no:cacheprovider -W error -o asyncio_default_fixture_loop_scope=function tests/unit/test_voice_settings_ui.py tests/unit/test_voice_settings_schema.py tests/unit/test_settings_endpoints.py tests/unit/test_control_center_quality.py tests/unit/test_settings_ia_contract.py tests/unit/test_voice_composition.py tests/unit/test_voice_architecture_config.py tests/unit/test_control_center_voice_architecture_review.py tests/unit/test_control_center_voice_architecture.py tests/unit/test_voice_switch.py tests/unit/test_control_center_catalog_ui.py tests/unit/test_catalog_view.py tests/unit/test_agent_cli_settings_ui.py tests/unit/test_control_center_mvp.py tests/unit/test_routing_settings_screen.py tests/unit/test_audio_devices.py",
+    "passed": 380,
+    "failed": 0,
+    "duration_seconds": 14.94,
+    "served_page_node_syntax": "passed through test_control_center_quality.py",
+    "git_diff_check": "passed with repository line-ending warnings only"
+  },
+  "human_validation": "Completed by the orchestrator with a real CUA walkthrough at 390x844 and 1440x900; navigation, persistence, catalog state, audio discovery and browser console were verified.",
+  "remaining": [],
+  "qa_pending": []
 }

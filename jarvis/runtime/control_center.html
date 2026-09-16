@@ -285,6 +285,12 @@ details.rd[open]>summary{margin-bottom:14px}
 .catalog-status.ok{color:var(--ok);border-color:rgba(104,224,160,.45)}.catalog-status.warn{color:var(--warn);border-color:rgba(255,184,92,.45)}.catalog-status.bad{color:var(--danger);border-color:rgba(255,101,119,.45)}
 .catalog-evidence{margin-top:5px;color:var(--muted);font-size:10px}.catalog-evidence summary{cursor:pointer}.catalog-evidence ul{margin:5px 0 0;padding-left:18px}
 .agent-catalog-head{display:flex;align-items:start;justify-content:space-between;gap:12px;margin-bottom:10px}.agent-catalog-head .hint{max-width:620px}
+.voice-tabs{display:flex;gap:6px;overflow-x:auto;padding:2px 1px 10px;margin-bottom:12px;border-bottom:1px solid var(--line);scrollbar-width:thin}
+.voice-tabs button{flex:0 0 auto;border:1px solid var(--line);border-radius:16px;padding:7px 11px;background:#071015;color:var(--muted);font:inherit;font-size:11px;cursor:pointer}
+.voice-tabs button[aria-selected=true]{border-color:var(--accent);color:var(--accent);background:rgba(110,231,255,.07)}
+.voice-tabs button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.voice-category-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.voice-category-head h3{margin-top:0}
+.voice-field-label{display:block;margin-bottom:6px;color:var(--text);font-size:12px}.field output{display:block;color:var(--text)}
 @media(max-width:900px){
   .modal{width:94vw;height:88vh}
   .split{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}
@@ -308,6 +314,7 @@ details.rd[open]>summary{margin-bottom:14px}
   .catalog-table tbody th,.catalog-table td{display:grid;grid-template-columns:minmax(92px,32%) minmax(0,1fr);gap:8px;min-width:0!important;border-bottom:1px solid rgba(113,144,160,.12)}
   .catalog-table tbody th::before,.catalog-table td::before{content:attr(data-label);font-size:9px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
   .catalog-cell-compare{text-align:left}
+  .voice-tabs{margin-left:-4px;margin-right:-4px;padding-left:4px;padding-right:4px}
 }
 </style>
 </head>
@@ -1557,14 +1564,13 @@ function bindSend(after){
    catalogue réel du fournisseur, jamais d'une liste figée.                */
 
 const TABS=[
-  {id:'voice',label:'Mode vocal',save:true},
+  {id:'voice',label:'Voix',save:true},
   {id:'prompts',label:'Prompts',save:false},
   {id:'cli',label:'Agent / CLI',save:true},
-  {id:'config',label:'Config',save:true},
   {id:'keys',label:'API Keys',save:false},
   {id:'shortcuts',label:'Raccourcis',save:false},
 ];
-const SET={open:false,tab:'voice',data:null,draft:null,dirty:false,catalog:{},clis:null,devices:null,capture:null,shortcuts:null,restartNotice:false,rdOpen:false,routingAdvancedOpen:false,routing:null,prompts:null,agentCatalog:null,openGeneration:0,cliGeneration:0,cliModelGeneration:0,routingGeneration:0};
+const SET={open:false,tab:'voice',voiceTab:'architecture',voiceCatalogRole:'realtime',voiceCatalogMountedRole:null,voiceCatalogStates:{},voiceModelSources:{},voiceModelGenerations:{},data:null,draft:null,dirty:false,catalog:{},clis:null,devices:null,capture:null,shortcuts:null,restartNotice:false,rdOpen:false,routingAdvancedOpen:false,routing:null,prompts:null,agentCatalog:null,voiceCatalog:null,openGeneration:0,cliGeneration:0,cliModelGeneration:0,routingGeneration:0,voiceGeneration:0,audioGeneration:0,diagnosticGeneration:0,voiceDiagnosticError:''};
 const overlay=$('#overlay'),modalContent=$('#modalContent'),modalStatus=$('#modalStatus'),modalSave=$('#modalSave'),modalSub=$('#modalSub');
 
 function say(text,kind){modalStatus.className='status'+(kind?' '+kind:'');modalStatus.textContent=text||''}
@@ -1757,59 +1763,151 @@ function voiceArchitectureChanged(key,value){
   }
   SET.architectureDirty=true;SET.dirty=true;
 }
+function voiceOptions(category){
+  const destination=`voice.${category}`
+  return (SET.data.voice.option_metadata||[]).filter(item=>item.category===category&&item.destination===destination)
+}
+function voiceOption(id){return (SET.data.voice.option_metadata||[]).find(item=>item.id===id)}
+function voiceOptionId(meta){return 'voiceOption_'+String(meta.id).replace(/[^a-zA-Z0-9_-]/g,'_')}
+function voiceOptionValue(meta){
+  const persistence=meta.persistence||'';
+  if(persistence==='voice_stack')return SET.draft.voice.stack;
+  if(persistence==='voice_arch')return SET.draft.voice.arch;
+  if(persistence.startsWith('voice_architecture.config.'))return voiceArchitectureConfig()[persistence.slice(26)];
+  if(persistence.startsWith('voice_stack_settings.')){
+    const parts=persistence.split('.');return ((SET.draft.voice.settings[parts[1]]||{})[parts.slice(2).join('.')]);
+  }
+  if(persistence.startsWith('shortcuts.'))return ((SET.shortcuts||{}).values||{})[persistence.slice(10)];
+  if(persistence==='audio_input_device')return SET.draft.audio.input_device;
+  if(persistence==='audio_output_device')return SET.draft.audio.output_device;
+  if(persistence==='active_timeout_s')return SET.draft.audio.active_timeout_s;
+  return authValues(SET.data.voice.authorization||{})[persistence];
+}
+function voiceDependencyVisible(meta){
+  if(!meta.depends_on)return true;
+  const split=String(meta.depends_on).indexOf('='),id=String(meta.depends_on).slice(0,split),expected=String(meta.depends_on).slice(split+1);
+  const parent=voiceOption(id);return !!parent&&String(voiceOptionValue(parent))===expected;
+}
+function voiceChoices(meta){
+  if(meta.persistence==='speaker_verification'){
+    const auth=SET.data.voice.authorization||{},mode=voiceOptionValue(voiceOption('conversation_mode'))||'open_room';
+    const allowed=(auth.verification_modes_by_mode||{})[mode];
+    if(allowed)return (meta.options||[]).filter(item=>allowed.includes(item.id));
+  }
+  return meta.options||[];
+}
+function voiceArchitectureField(meta){
+  const config=voiceArchitectureConfig(),query=SET.data.voice.architecture;
+  const profile=(query.architectures||[]).find(item=>item.id===config.architecture);
+  return profile&&(profile.fields||[]).find(item=>item.key===meta.id);
+}
+function voiceArchitectureOptionHtml(meta){
+  const config=voiceArchitectureConfig(),field=voiceArchitectureField(meta),id=voiceOptionId(meta);
+  if(meta.id==='architecture'){
+    const options=(meta.options||[]).map(item=>`<option value="${esc(item.id)}" ${item.id===config.architecture?'selected':''}>${esc(item.label)}</option>`).join('');
+    return `<div class="field" data-voice-option="${esc(meta.id)}"><label for="${id}">${esc(meta.label)}</label><select id="${id}" data-voice-architecture><option value="" disabled ${config.architecture?'':'selected'}>${esc(meta.placeholder||'Choisir')}</option>${options}</select><div class="hint">${esc(meta.help)}</div></div>`;
+  }
+  if(!field)return `<div class="field" data-voice-option="${esc(meta.id)}"><span class="voice-field-label">${esc(meta.label)}</span><div class="hint">Non applicable à l’architecture ${esc(config.architecture||'de compatibilité')}. ${esc(meta.help)}</div></div>`;
+  const value=config[meta.id]??field.default;let input='';
+  if(field.kind==='model'){
+    const key=modelRefKey(value),found=(field.options||[]).some(option=>modelRefKey(option)===key);
+    const missing=found?'':`<option value="${esc(key||'null')}" selected disabled>${esc(value?value.provider_id+' / '+(value.model_id||'(modèle manquant)'):'Aucun modèle')} — indisponible</option>`;
+    input=`<select id="${id}" data-architecture-field="${esc(meta.id)}" data-architecture-kind="model">${missing}${(field.options||[]).map(option=>`<option value="${esc(modelRefKey(option))}" ${modelRefKey(option)===key?'selected':''} ${option.selectable?'':'disabled'}>${esc(option.label)}${option.reason?' — '+esc(option.reason):''}</option>`).join('')}</select>`;
+    const selected=(field.options||[]).find(option=>modelRefKey(option)===key);
+    if(selected)input+=`<div class="hint">Adaptateur : ${esc(selected.adapter_status)} · Disponibilité : ${esc(selected.availability)}${selected.reason?' — '+esc(selected.reason):''}</div>`;
+  }else if(field.options_from){
+    const source=voiceArchitectureField(voiceOption(field.options_from));
+    const selected=source&&(source.options||[]).find(item=>modelRefKey(item)===modelRefKey(config[field.options_from]));
+    const choices=selected?(selected[field.options_property]||[]):[];
+    input=`<select id="${id}" data-architecture-field="${esc(meta.id)}">${choices.includes(value)?'':`<option value="${esc(value??'')}" selected disabled>${esc(value??'Non configuré')} — indisponible</option>`}${choices.map(item=>`<option value="${esc(item)}" ${item===value?'selected':''}>${esc(item)}</option>`).join('')}</select>`;
+  }else if(field.kind==='toggle')input=`<input id="${id}" type="checkbox" data-architecture-field="${esc(meta.id)}" ${value?'checked':''} ${meta.readonly?'disabled':''}>`;
+  else input=`<input id="${id}" type="number" min="${esc(meta.minimum)}" max="${esc(meta.maximum)}" step="${esc(meta.step||1)}" value="${esc(value)}" data-architecture-field="${esc(meta.id)}">`;
+  return `<div class="field" data-voice-option="${esc(meta.id)}"><label for="${id}">${esc(meta.label)}</label>${input}<div class="hint">${esc(meta.help)}</div></div>`;
+}
+function voiceOptionHtml(meta){
+  if(meta.persistence&&meta.persistence.startsWith('voice_architecture.config.'))return voiceArchitectureOptionHtml(meta);
+  const id=voiceOptionId(meta),value=voiceOptionValue(meta),hidden=!voiceDependencyVisible(meta);
+  if(meta.kind==='key')return `<div class="field" data-voice-option="${esc(meta.id)}"><span class="voice-field-label">${esc(meta.label)}</span><button type="button" class="keycap" data-shortcut="${esc(meta.id)}" data-scope="global">${esc(value??meta.default)}</button><div class="hint" id="shortcutHint">${esc(meta.help)}</div></div>`;
+  if(meta.kind==='device'){
+    const devices=SET.devices,items=meta.persistence==='audio_input_device'?(devices&&devices.inputs||[]):(devices&&devices.outputs||[]),defaults=devices&&devices.defaults||{};
+    const selectedDefault=meta.persistence==='audio_input_device'?defaults.input:defaults.output;
+    const empty=devices&&devices.ok!==false&&items.length===0;
+    const input=devices&&devices.ok!==false?`<select id="${id}" data-voice-persistence="${esc(meta.persistence)}" ${empty?'disabled aria-disabled="true"':''}>${empty?'<option value="">Aucun périphérique détecté</option>':deviceOptions(items,value,selectedDefault)}</select>`:'<div class="hint">Liste des périphériques en chargement…</div>';
+    return `<div class="field" data-voice-option="${esc(meta.id)}"><label for="${id}">${esc(meta.label)}</label>${input}<div class="hint">${esc(meta.help)}</div></div>`;
+  }
+  if(meta.readonly)return `<div class="field" data-voice-option="${esc(meta.id)}"><span class="voice-field-label">${esc(meta.label)}</span><output>${value===undefined||value===null?'—':esc(value)}</output><div class="hint">${esc(meta.help)}</div></div>`;
+  const attrs=`data-voice-persistence="${esc(meta.persistence)}" data-voice-meta="${esc(meta.id)}"`,style=hidden?' hidden':'';let input='';
+  if(meta.kind==='toggle')input=`<input id="${id}" type="checkbox" ${attrs} ${value?'checked':''}>`;
+  else if(meta.kind==='number'||meta.kind==='number-or-empty')input=`<input id="${id}" type="number" ${attrs} value="${esc(value??'')}" ${meta.minimum!==undefined?`min="${esc(meta.minimum)}"`:''} ${meta.maximum!==undefined&&meta.maximum!==null?`max="${esc(meta.maximum)}"`:''} ${meta.step!==undefined?`step="${esc(meta.step)}"`:''}>`;
+  else if(meta.kind==='text')input=`<input id="${id}" ${attrs} value="${esc(value??'')}">`;
+  else{
+    const source=meta.type==='catalog-select'?(SET.voiceModelSources||{})[meta.id]:null;
+    const choices=source&&source.result?(source.result.models||[]):voiceChoices(meta);
+    const sourceUnavailable=!!source&&source.status!=='ready';
+    const normalized=choices.map(item=>({value:item.id,label:item.label&&item.label!==item.id?`${item.id} — ${item.label}`:item.id,disabled:sourceUnavailable||item.selectable===false||(item.availability&&item.availability.selectable===false)}));
+    const missing=value!==undefined&&value!==null&&value!==''&&!normalized.some(item=>String(item.value)===String(value))?`<option value="${esc(value)}" selected disabled>${esc(value)} (conservé — indisponible)</option>`:'';
+    const loading=meta.type==='catalog-select'&&(!source||source.status==='loading'),error=source&&source.status==='error';
+    input=`<select id="${id}" ${attrs} ${loading?'disabled aria-busy="true"':''}>${missing}${meta.placeholder?`<option value="">${esc(meta.placeholder)}</option>`:''}${normalized.map(item=>`<option value="${esc(item.value)}" ${String(item.value)===String(value)?'selected':''} ${item.disabled?'disabled':''}>${esc(item.label)}</option>`).join('')}</select>`;
+    if(meta.type==='catalog-select')input+=loading?'<div class="hint">Chargement du catalogue fournisseur…</div>':error?`<div class="notice bad">${esc(source.error||'Catalogue indisponible.')} <button type="button" class="linkish" data-voice-model-retry="${esc(meta.id)}">réessayer</button></div>`:catalogNote(source.result,String(meta.source||'').split(':')[0]);
+  }
+  return `<div class="field" id="${id}_field" data-voice-option="${esc(meta.id)}"${style}><label for="${id}">${esc(meta.label)}</label>${input}<div class="hint">${esc(meta.help)}</div></div>`;
+}
+function voiceRecordsHtml(records,category){
+  if(category==='advanced')return records.map(voiceOptionHtml).join('');
+  const primary=records.filter(item=>!item.advanced),advanced=records.filter(item=>item.advanced);
+  return primary.map(voiceOptionHtml).join('')+(advanced.length?`<details class="rd"><summary>Options avancées</summary>${advanced.map(voiceOptionHtml).join('')}</details>`:'');
+}
 async function voiceArchitectureHtml(){
-  const query=SET.data.voice.architecture,config=voiceArchitectureConfig();
-  const profile=query.architectures.find(item=>item.id===config.architecture);
-  const options=query.architectures.map(item=>`<option value="${esc(item.id)}" ${item.id===config.architecture?'selected':''}>${esc(item.label)}</option>`).join('');
-  let html=`<h3>Architecture vocale</h3><div class="field"><label for="voiceArchitecture">Architecture</label><select id="voiceArchitecture" data-voice-architecture><option value="" disabled ${profile?'':'selected'}>Choisir une architecture</option>${options}</select></div>`;
-  if(query.compatibility_runtime&&!SET.architectureDirty)html+='<div class="notice">Compatibilité conservée. Enregistrer sans modifier ce choix garde le fonctionnement actuel. Modifier un modèle ou choisir explicitement une architecture prépare le nouveau mode.</div><button class="action" data-architecture-activate>Utiliser explicitement cette architecture</button>';
+  const records=voiceOptions('architecture'),compatibility=records.filter(item=>item.runtime_status==='live-compatibility'),primary=records.filter(item=>item.runtime_status!=='live-compatibility'&&!item.advanced),advanced=records.filter(item=>item.runtime_status!=='live-compatibility'&&item.advanced);
+  const query=SET.data.voice.architecture,config=voiceArchitectureConfig(),profile=(query.architectures||[]).find(item=>item.id===config.architecture);
+  let html=primary.map(voiceOptionHtml).join('');
+  if(profile)html+=`<div class="hint">${esc(profile.description)}</div>`;
+  if(query.compatibility_runtime&&!SET.architectureDirty)html+='<div class="notice">Compatibilité conservée. Enregistrer sans modifier l’architecture garde le fonctionnement actuel.</div><button class="action" data-architecture-activate>Utiliser explicitement cette architecture</button>';
   if(query.problem&&!SET.architectureDirty)html+=`<div class="notice bad">${esc(query.problem.message)}</div>`;
-  if(!profile)return html;
-  html+=`<div class="hint">${esc(profile.description)}</div>`;
-  for(const field of profile.fields){
-    const value=config[field.key]??field.default,id='architecture_'+field.key;
-    let input='';
-    if(field.kind==='model'){
-      const key=modelRefKey(value),found=field.options.some(option=>modelRefKey(option)===key);
-      const missing=found?'':`<option value="${esc(key||'null')}" selected disabled>${esc(value?value.provider_id+' / '+(value.model_id||'(modèle manquant)'):'Aucun modèle')} — modèle non pris en charge</option>`;
-      input=`<select id="${id}" data-architecture-field="${esc(field.key)}" data-architecture-kind="model">${missing}${field.options.map(option=>`<option value="${esc(modelRefKey(option))}" ${modelRefKey(option)===key?'selected':''} ${option.selectable?'':'disabled'}>${esc(option.label)}${option.reason?' — '+esc(option.reason):''}</option>`).join('')}</select>`;
-      const selected=field.options.find(option=>modelRefKey(option)===key);
-      if(selected)input+=`<div class="hint">Adaptateur : ${esc(selected.adapter_status)} · Disponibilité compte : ${esc(selected.availability)}${selected.reason?' — '+esc(selected.reason):''}</div>`;
-    }else if(field.kind==='select'){
-      const sourceField=profile.fields.find(item=>item.key===field.options_from);
-      const selected=sourceField&&sourceField.options.find(item=>modelRefKey(item)===modelRefKey(config[field.options_from]));
-      const values=selected?(selected[field.options_property]||[]):[];
-      input=`<select id="${id}" data-architecture-field="${esc(field.key)}">${values.includes(value)?'':`<option value="${esc(value??'')}" selected disabled>${esc(value??'Non configuré')} — indisponible</option>`}${values.map(item=>`<option value="${esc(item)}" ${item===value?'selected':''}>${esc(item)}</option>`).join('')}</select>`;
-    }else if(field.kind==='toggle')input=`<input id="${id}" type="checkbox" data-architecture-field="${esc(field.key)}" ${value?'checked':''} ${field.readonly?'disabled':''}>`;
-    else if(field.kind==='number')input=`<input id="${id}" type="number" min="${field.min}" max="${field.max}" value="${esc(value)}" data-architecture-field="${esc(field.key)}">`;
-    html+=`<div class="field"><label for="${id}">${esc(field.label)}</label>${input}</div>`;
-  }
-  // Provider settings are projected by the registry, never chosen by a JS model switch.
-  for(const field of profile.fields.filter(item=>item.kind==='model')){
-    const selected=field.options.find(item=>modelRefKey(item)===modelRefKey(config[field.key]));
-    if(!selected||!selected.settings_scope)continue;
-    const scope=selected.settings_scope,values=SET.draft.voice.settings[scope]||{};
-    for(const setting of selected.settings_fields||[])html+=await renderField(setting,values,scope);
-  }
+  html+=`<details class="rd"><summary>Compatibilité et invariants avancés</summary>${advanced.map(voiceOptionHtml).join('')}${compatibility.map(voiceOptionHtml).join('')}</details>`;
   return html;
 }
+function voiceDiagnosticValue(id){
+  const voice=SET.data.voice,a=voice.authorization||{},modelOptions=((voice.architecture||{}).architectures||[]).flatMap(profile=>(profile.fields||[]).filter(field=>field.kind==='model').flatMap(field=>field.options||[])),models=[...new Map(modelOptions.map(item=>[modelRefKey(item),item])).values()];
+  const values={
+    'owner_profile_path':((a.verifier_settings||{}).effective||{}).owner_profile_path,
+    'authorization.status':a.status,'authorization.runtime':a.runtime,'authorization.verifier':a.verifier_detail||a.verifier,
+    'authorization.worker':a.worker,'echo_cancellation.status':voice.echo_cancellation,'switch.status':voice.switch,
+    'catalog.source':Object.fromEntries(Object.entries(SET.voiceCatalogStates||{}).map(([role,state])=>[role,state.envelope||null])),
+    'model.adapter_status':models.map(item=>({id:modelRefKey(item),status:item.adapter_status})),
+    'model.availability':models.map(item=>({id:modelRefKey(item),status:item.availability})),
+  };
+  return values[id];
+}
+function voiceDiagnosticHtml(records){
+  const voice=SET.data.voice,refresh=SET.voiceDiagnosticError?`<div class="notice bad">${esc(SET.voiceDiagnosticError)}</div>`:'';
+  const rows=records.map(meta=>`<div class="field" data-voice-option="${esc(meta.id)}"><span class="voice-field-label">${esc(meta.label)}</span><pre class="log block">${esc(JSON.stringify(voiceDiagnosticValue(meta.id),null,2)??'—')}</pre><div class="hint">${esc(meta.help)}</div></div>`).join('');
+  return `<div class="source">Pile effective : <strong>${esc(voice.effective_stack||'—')}</strong> · pile historique conservée : <strong>${esc(voice.stack||'—')}</strong> <button type="button" class="linkish" id="authRefresh">relire l’état</button></div>${refresh}${rows}`;
+}
+function voiceCatalogHtml(){
+  const roles=[['realtime','Conversation temps réel'],['transcription','Transcription'],['speech','Synthèse vocale']];
+  return `<div class="field"><label for="voiceCatalogRole">Catalogue comparatif</label><select id="voiceCatalogRole">${roles.map(([id,label])=>`<option value="${id}" ${SET.voiceCatalogRole===id?'selected':''}>${label}</option>`).join('')}</select></div><div id="voiceCatalog" aria-label="Catalogue des modèles Voice"></div>`;
+}
+function voiceAudioExtraHtml(){
+  const state=SET.devices,ready=state&&state.ok!==false,hasInput=!!(ready&&(state.inputs||[]).length),hasOutput=!!(ready&&(state.outputs||[]).length);
+  let status='<div class="hint" id="voiceAudioStatus">Détection des périphériques…</div>';
+  if(state&&state.ok===false)status=`<div class="notice bad">${esc(state.error||'Périphériques audio indisponibles.')} <button type="button" class="linkish" id="audioRetry">réessayer</button></div>`;
+  else if(ready&&(!hasInput||!hasOutput))status=`<div class="notice bad">${!hasInput?'Aucun périphérique d’entrée détecté. ':''}${!hasOutput?'Aucun périphérique de sortie détecté. ':''}<button type="button" class="linkish" id="audioRetry">réessayer</button></div>`;
+  else if(ready)status='<div class="hint" id="voiceAudioStatus">Entrée et sortie détectées.</div>';
+  return `${status}<div class="row"><button type="button" class="action" id="testAudio" ${hasInput&&hasOutput?'':'disabled aria-disabled="true"'}>Tester micro + sortie</button></div><div class="test-result" id="audioTestResult">Le test enregistre 2 secondes puis les rejoue.</div>`;
+}
+async function voicePanelHtml(){
+  const category=SET.voiceTab,records=voiceOptions(category),label=((SET.data.voice.categories||[]).find(item=>item.id===category)||{}).label||category;
+  let content=category==='architecture'?await voiceArchitectureHtml():category==='diagnostic'?voiceDiagnosticHtml(records):voiceRecordsHtml(records,category);
+  if(category==='models')content+=voiceCatalogHtml();
+  if(category==='audio')content+=voiceAudioExtraHtml();
+  return `<div class="voice-category-head"><h3>${esc(label)}</h3><span class="tag">${records.length} option(s)</span></div>${content}`;
+}
 async function tabVoice(){
-  let html=await voiceArchitectureHtml();
-  const sw=SET.data.voice.switch||{};
-  if(sw.pending||sw.status==='blocked'||sw.status==='failed')html+=`<div class="notice ${sw.status==='blocked'||sw.status==='failed'?'bad':'warn'}"><strong>Changement vocal ${sw.status==='blocked'?'bloqué':sw.status==='failed'?'en échec':'en cours'}</strong>${sw.message?' : '+esc(sw.message):'. Voice ferme la session courante avant son redémarrage supervisé.'}</div>`;
-  else if(sw.status==='ready_for_restart')html+='<div class="notice">Ancienne session fermée. Redémarrage supervisé de Voice en cours.</div>';
-  else if(sw.status==='applied')html+='<div class="notice ok">Architecture sélectionnée chargée par Voice. Elle sera utilisée à la prochaine activation.</div>';
-  html+=`${await authSectionHtml()}`;
-  if(SET.data.voice.architecture.compatibility_runtime&&!SET.architectureDirty){
-    const draft=SET.draft.voice,stacks=SET.data.voice.stacks,spec=stacks.find(s=>s.id===draft.stack)||stacks[0];
-    html+='<details><summary>Réglages de compatibilité existants</summary>';
-    const archs=SET.data.voice.archs||[];
-    html+=`<select data-voice-arch>${selectOptions(archs.map(a=>({value:a.id,label:a.label})),draft.arch||'','')}</select>`;
-    html+=stacks.map(s=>`<label><input type="radio" name="voicestack" value="${esc(s.id)}" ${s.id===draft.stack?'checked':''}>${esc(s.label)}</label>`).join('');
-    for(const field of spec.fields)html+=await renderField(field,draft.settings[spec.id],spec.id);
-    html+=`${aecHtml()}</details>`;
-  }
-  return `<section>${html}<div class="hint">Un changement d’architecture ou de modèle ferme d’abord la session courante, conserve l’état Core, puis redémarre Voice. Le nouvel adaptateur démarre à la prochaine activation. Une clôture incertaine bloque le remplacement.</div></section>`;
+  const categories=SET.data.voice.categories||[];
+  if(!categories.some(item=>item.id===SET.voiceTab))SET.voiceTab=(categories[0]||{}).id||'architecture';
+  const tabs=categories.map(item=>`<button type="button" role="tab" id="voiceTab_${esc(item.id)}" data-voice-tab="${esc(item.id)}" aria-selected="${item.id===SET.voiceTab?'true':'false'}" aria-controls="voicePanel" tabindex="${item.id===SET.voiceTab?'0':'-1'}">${esc(item.label)}</button>`).join('');
+  return `<section><div class="voice-tabs" role="tablist" aria-label="Catégories des réglages Voice">${tabs}</div><div id="voicePanel" role="tabpanel" aria-labelledby="voiceTab_${esc(SET.voiceTab)}">${await voicePanelHtml()}</div></section>`;
 }
 
 /* --- onglet Prompts -----------------------------------------------------
@@ -2091,22 +2189,6 @@ function deviceOptions(items,selected,defaultId){
   return missing+`<option value="" ${chosen===''?'selected':''}>Système par défaut${def?` (${esc(def.name)})`:''}</option>`+
     items.map(x=>`<option value="${esc(x.id)}" ${chosen===String(x.id)?'selected':''}>${esc(x.name)}${x.hostapi?' · '+esc(x.hostapi):''}</option>`).join('');
 }
-async function tabConfig(){
-  if(!SET.devices)SET.devices=await api('/api/audio/devices').catch(e=>({ok:false,error:e.message,inputs:[],outputs:[]}));
-  const d=SET.devices,a=SET.draft.audio;
-  const failure=d.ok===false?`<div class="notice bad">${esc(d.error||'Périphériques audio indisponibles.')}</div>`:'';
-  return `<section>${failure}<h3>Audio</h3>
-    <div class="field"><label for="f_in">Entrée microphone</label><select id="f_in" data-audio="input_device">${deviceOptions(d.inputs||[],a.input_device,(d.defaults||{}).input)}</select></div>
-    <div class="field"><label for="f_out">Sortie haut-parleur</label><select id="f_out" data-audio="output_device">${deviceOptions(d.outputs||[],a.output_device,(d.defaults||{}).output)}</select></div>
-    <div class="row" style="margin-bottom:8px"><button class="action" id="testAudio">Tester micro + sortie</button></div>
-    <div class="test-result" id="audioTestResult">Le test enregistre 2 secondes au format de la pile vocale active, puis les rejoue.</div>
-    <h3>Session</h3>
-    <div class="field"><label for="f_timeout">Délai d'inactivité avant mise en veille (secondes)</label>
-      <input type="number" min="0" id="f_timeout" data-audio="active_timeout_s" value="${esc(a.active_timeout_s)}">
-      <div class="hint">Passé ce délai sans échange utile, JARVIS repasse en arrière-plan et rend le micro. 0 = jamais : seule la touche de réveil (F9 par défaut) ou « Jarvis mute » met fin à la conversation. Sinon, 5 s minimum.</div></div>
-  </section>`;
-}
-
 /* --- onglet API Keys ---------------------------------------------------- */
 function tabKeys(){
   const state=SET.data.credentials,items=state.credentials||[];
@@ -2139,24 +2221,26 @@ function tabKeys(){
 /* --- onglet Raccourcis --------------------------------------------------- */
 const GLOBAL_KEY_NAMES={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',PageUp:'page_up',PageDown:'page_down',Home:'home',End:'end',Insert:'insert',Delete:'delete',Pause:'pause',ScrollLock:'scroll_lock',ContextMenu:'menu',PrintScreen:'print_screen'};
 function tabShortcuts(){
-  const list=SET.shortcuts.shortcuts||[];
+  const list=(SET.shortcuts.shortcuts||[]).filter(item=>item.id!=='wake_toggle');
   const rows=list.map(s=>`<div class="shortcut">
       <div><div>${esc(s.label)} <span class="tag">${s.scope==='global'?'système':'interface'}</span></div><div class="desc">${esc(s.description)}</div></div>
       <button class="keycap" data-shortcut="${esc(s.id)}" data-scope="${esc(s.scope)}">${esc(s.value)}</button>
     </div>`).join('');
   return `<section><h3>Raccourcis</h3>
     <div class="hint" style="margin-bottom:14px">Cliquez sur une touche puis appuyez sur la combinaison voulue. Les raccourcis <em>système</em> sont captés même quand JARVIS n'a pas le focus, et n'acceptent qu'une touche seule. Les raccourcis <em>interface</em> ne s'appliquent que sur cette page et ignorent la saisie dans un champ.</div>
+    <div class="notice info">Le raccourci Réveiller / envoyer / interrompre se règle dans Voix → Tours &amp; interruptions.</div>
     ${rows}<div class="hint" id="shortcutHint" style="margin-top:14px">Enregistrement immédiat. Le raccourci système prend effet au prochain redémarrage du runtime Voice.</div></section>`;
 }
 
 /* --- rendu et liaisons --------------------------------------------------- */
+function cleanupSettingsSurface(){destroyAgentCatalog();destroyVoiceCatalog()}
 function renderTabs(){
   $('#modalTabs').innerHTML=TABS.map(t=>`<button data-tab="${t.id}" class="${t.id===SET.tab?'active':''}">${esc(t.label)}</button>`).join('');
   document.querySelectorAll('#modalTabs button').forEach(b=>b.addEventListener('click',()=>selectTab(b.dataset.tab)));
 }
 
 async function renderTab(){
-  destroyAgentCatalog();
+  cleanupSettingsSurface();
   const revision=SET.renderRevision=(SET.renderRevision||0)+1;
   modalContent.innerHTML='<div class="empty">Chargement…</div>';
   const tab=TABS.find(t=>t.id===SET.tab);
@@ -2164,7 +2248,6 @@ async function renderTab(){
   modalSub.textContent={
     voice:'Les réglages vocaux sont préparés pour la prochaine activation.',
     cli:'Configuration technique, comportement et modèles des agents.',
-    config:'Audio et session vocale.',
     prompts:'Chaque couche est enregistrée avec son propre bouton.',
     keys:'Les clés sont enregistrées immédiatement sans jamais être relues par la page.',
     shortcuts:'Les raccourcis sont enregistrés immédiatement.',
@@ -2174,29 +2257,18 @@ async function renderTab(){
     if(SET.tab==='voice')content=await tabVoice();
     else if(SET.tab==='prompts')content=await tabPrompts();
     else if(SET.tab==='cli')content=tabCli();
-    else if(SET.tab==='config')content=await tabConfig();
     else if(SET.tab==='keys')content=tabKeys();
     else content=tabShortcuts();
     if(revision!==SET.renderRevision||SET.open===false)return;
     modalContent.innerHTML=content;
   }catch(e){if(revision===SET.renderRevision&&SET.open!==false)modalContent.innerHTML=`<div class="notice bad">${esc(e.message)}</div>`;return}
   bindTab(revision);
+  if(SET.tab==='voice')bindVoiceSurface(revision);
   if(SET.tab==='cli'){mountAgentCatalog(revision);hydrateCliAgents(revision)}
   if(SET.dirty&&tab.save)say('Modifications non enregistrées.','');
 }
 
 function bindTab(revision){
-  modalContent.querySelectorAll('[data-voice-architecture]').forEach(el=>el.addEventListener('change',()=>{
-    voiceArchitectureChanged('architecture',el.value);renderTab()}));
-  modalContent.querySelectorAll('[data-architecture-activate]').forEach(el=>el.addEventListener('click',()=>{
-    voiceArchitectureChanged('architecture',voiceArchitectureConfig().architecture);renderTab()}));
-  modalContent.querySelectorAll('[data-architecture-field]').forEach(el=>el.addEventListener('change',()=>{
-    const value=el.dataset.architectureKind==='model'?JSON.parse(el.value):el.type==='checkbox'?el.checked:el.type==='number'?Number(el.value):el.value;
-    voiceArchitectureChanged(el.dataset.architectureField,value);renderTab()}));
-  modalContent.querySelectorAll('input[name=voicestack]').forEach(el=>el.addEventListener('change',()=>{
-    SET.draft.voice.stack=el.value;SET.dirty=true;renderTab()}));
-  modalContent.querySelectorAll('[data-voice-arch]').forEach(el=>el.addEventListener('change',()=>{
-    SET.draft.voice.arch=el.value;SET.dirty=true;renderTab()}));
   modalContent.querySelectorAll('[data-field]').forEach(el=>el.addEventListener('change',()=>{
     if(el.dataset.scope===AUTH_SCOPE){authFieldChanged(el);return}
     const values=SET.draft.voice.settings[el.dataset.scope];
@@ -2207,14 +2279,6 @@ function bindTab(revision){
     const spec=SET.data.voice.stacks.find(s=>s.id===el.dataset.scope);
     if(spec&&spec.fields.some(f=>f.depends_on===el.dataset.field))renderTab();else say('Modifications non enregistrées.','');
   }));
-  const advanced=$('#authAdvanced');
-  if(advanced)advanced.addEventListener('toggle',()=>{SET.rdOpen=advanced.open});
-  // Relire l'état sans perdre les modifications en cours (le brouillon reste).
-  const authRefresh=$('#authRefresh');
-  if(authRefresh)authRefresh.addEventListener('click',async()=>{
-    authRefresh.textContent='…';
-    try{SET.data=await api('/api/settings')}catch(e){say(e.message,'error')}
-    renderTab()});
   const cliTechnical=$('#cliTechnical');
   if(cliTechnical)bindCliTechnical(cliTechnical,revision);
   const delegationMode=modalContent.querySelector('[data-delegation-mode]');
@@ -2222,8 +2286,6 @@ function bindTab(revision){
     SET.draft.cli.delegation_mode=delegationMode.value;SET.dirty=true;say('Modifications non enregistrées.','')});
   modalContent.querySelectorAll('[data-behavior-field]').forEach(el=>el.addEventListener('change',()=>{
     SET.draft.cli.behavior[el.dataset.behaviorField]=el.value;SET.dirty=true;say('Modifications non enregistrées.','')}));
-  modalContent.querySelectorAll('[data-audio]').forEach(el=>el.addEventListener('change',()=>{
-    SET.draft.audio[el.dataset.audio]=el.value;SET.dirty=true;say('Modifications non enregistrées.','')}));
   modalContent.querySelectorAll('[data-refresh]').forEach(el=>el.addEventListener('click',async()=>{
     const [provider,role]=el.dataset.refresh.split(':');el.textContent='…';
     await catalog(provider,role,true);renderTab()}));
@@ -2239,14 +2301,11 @@ function bindTab(revision){
     else hydrateRoutingAdvanced(revision);
   }
 
-  const test=$('#testAudio');
-  if(test)test.addEventListener('click',runAudioTest);
-
   const form=$('#keyForm');
   if(form)form.addEventListener('submit',addCredential);
   modalContent.querySelectorAll('[data-delete-key]').forEach(el=>el.addEventListener('click',()=>deleteCredential(el.dataset.deleteKey)));
   modalContent.querySelectorAll('[data-bind-provider]').forEach(el=>el.addEventListener('change',()=>bindCredential(el.dataset.bindProvider,el.dataset.bindId)));
-  modalContent.querySelectorAll('[data-shortcut]').forEach(el=>el.addEventListener('click',()=>startCapture(el)));
+  modalContent.querySelectorAll('[data-shortcut]').forEach(el=>{if(!el.closest('#voicePanel'))el.addEventListener('click',()=>startCapture(el))});
   modalContent.querySelectorAll('[data-prompt-save]').forEach(el=>el.addEventListener('click',()=>savePromptLayer(el)));
   modalContent.querySelectorAll('[data-prompt-reset]').forEach(el=>el.addEventListener('click',()=>resetPromptLayer(el)));
 }
@@ -2272,7 +2331,7 @@ async function resetPromptLayer(button){
 }
 
 /* Texte brut : vide = revenir au défaut, et c'est le serveur qui valide. */
-function authFieldChanged(el){
+function authFieldChanged(el,revision){
   const a=SET.data.voice.authorization||{},key=el.dataset.field;
   // Changer de mode ne remet la vérification au défaut du mode que si la
   // valeur enregistrée devient incohérente (solo_owner + shadow…) : une
@@ -2281,7 +2340,7 @@ function authFieldChanged(el){
   SET.draft.voice.authorization=authDraftAfterChange(
     SET.draft.voice.authorization,key,el.value,stored,a.verification_modes_by_mode);
   SET.dirty=true;
-  if(key==='conversation_mode'){renderTab();return}
+  if(key==='conversation_mode'){if(revision!==undefined)renderVoicePanel(revision);else renderTab();return}
   say('Modifications non enregistrées.','');
 }
 
@@ -2312,6 +2371,139 @@ function mountAgentCatalog(revision){
   controller.load();
 }
 
+function currentVoicePanel(revision,category=SET.voiceTab){
+  return SET.open&&SET.tab==='voice'&&SET.voiceTab===category&&revision===SET.renderRevision;
+}
+function destroyVoiceCatalog(){
+  if(!SET.voiceCatalog)return;
+  const state=SET.voiceCatalog.state;
+  SET.voiceCatalogStates[SET.voiceCatalogMountedRole]={envelope:state.envelope,error:state.error,query:state.query,sort:state.sort,filters:{...state.filters},selection:[...state.selection]};
+  SET.voiceCatalog.destroy();SET.voiceCatalog=null;SET.voiceCatalogMountedRole=null;
+}
+function mountVoiceCatalog(revision){
+  if(!currentVoicePanel(revision,'models'))return;
+  const host=$('#voiceCatalog');if(!host)return;
+  destroyVoiceCatalog();
+  const controller=JarvisCatalog.createCatalogTable(host,{surface:'voice',role:SET.voiceCatalogRole,columns:['compare','model','provider','roles','capabilities','guidance','price','availability']});
+  const saved=SET.voiceCatalogStates[SET.voiceCatalogRole];
+  if(saved){controller.state.envelope=saved.envelope;controller.state.error=saved.error||'';controller.state.query=saved.query;controller.state.sort=saved.sort;controller.state.filters={...saved.filters};controller.state.selection=new Set(saved.selection);controller.render()}
+  SET.voiceCatalog=controller;SET.voiceCatalogMountedRole=SET.voiceCatalogRole;controller.load();
+}
+function updateVoiceTabs(){
+  document.querySelectorAll('[data-voice-tab]').forEach(button=>{
+    const active=button.dataset.voiceTab===SET.voiceTab;
+    button.setAttribute('aria-selected',active?'true':'false');button.tabIndex=active?0:-1;
+  });
+}
+async function selectVoiceTab(id,revision,focus=false){
+  if(!(SET.data.voice.categories||[]).some(item=>item.id===id))return;
+  SET.voiceTab=id;updateVoiceTabs();await renderVoicePanel(revision);
+  if(focus){const button=$(`#voiceTab_${id}`);if(button)button.focus()}
+}
+async function renderVoicePanel(revision){
+  if(!currentVoicePanel(revision))return;
+  const requestId=++SET.voiceGeneration;destroyVoiceCatalog();
+  const panel=$('#voicePanel');if(!panel)return;
+  const html=await voicePanelHtml();
+  if(!currentVoicePanel(revision)||requestId!==SET.voiceGeneration)return;
+  panel.setAttribute('aria-labelledby',`voiceTab_${SET.voiceTab}`);panel.innerHTML=html;
+  bindVoicePanel(revision);if(SET.voiceTab==='models')mountVoiceCatalog(revision);
+}
+function bindVoiceSurface(revision){
+  const buttons=[...document.querySelectorAll('[data-voice-tab]')];
+  buttons.forEach((button,index)=>{
+    button.addEventListener('click',()=>selectVoiceTab(button.dataset.voiceTab,revision));
+    button.addEventListener('keydown',event=>{
+      let target=index;
+      if(event.key==='ArrowRight')target=(index+1)%buttons.length;
+      else if(event.key==='ArrowLeft')target=(index-1+buttons.length)%buttons.length;
+      else if(event.key==='Home')target=0;
+      else if(event.key==='End')target=buttons.length-1;
+      else return;
+      event.preventDefault();selectVoiceTab(buttons[target].dataset.voiceTab,revision,true);
+    });
+  });
+  bindVoicePanel(revision);if(SET.voiceTab==='models')mountVoiceCatalog(revision);
+}
+function voiceChanged(element,revision){
+  const meta=voiceOption(element.dataset.voiceMeta),persistence=element.dataset.voicePersistence;
+  if(!meta||!persistence)return;
+  const value=element.type==='checkbox'?element.checked:element.type==='number'&&element.value!==''?Number(element.value):element.value;
+  if(persistence==='voice_stack')SET.draft.voice.stack=value;
+  else if(persistence==='voice_arch')SET.draft.voice.arch=value;
+  else if(persistence.startsWith('voice_stack_settings.')){
+    const parts=persistence.split('.'),scope=parts[1],key=parts.slice(2).join('.');SET.draft.voice.settings[scope][key]=value;
+  }else if(persistence==='audio_input_device')SET.draft.audio.input_device=element.value;
+  else if(persistence==='audio_output_device')SET.draft.audio.output_device=element.value;
+  else if(persistence==='active_timeout_s')SET.draft.audio.active_timeout_s=element.value;
+  else{authFieldChanged({dataset:{field:persistence},value:element.value},revision);return}
+  SET.dirty=true;
+  if((SET.data.voice.option_metadata||[]).some(item=>String(item.depends_on||'').startsWith(meta.id+'=')))renderVoicePanel(revision);
+  else say('Modifications non enregistrées.','');
+}
+function bindVoiceModelField(meta,revision){
+  const field=$(`#${voiceOptionId(meta)}_field`);if(!field)return;
+  const select=field.querySelector('[data-voice-persistence]');
+  if(select)select.addEventListener('change',()=>voiceChanged(select,revision));
+  const retry=field.querySelector('[data-voice-model-retry]');
+  if(retry)retry.addEventListener('click',()=>hydrateVoiceModel(meta,revision,true));
+}
+function renderVoiceModelField(meta,revision){
+  if(!currentVoicePanel(revision,'models'))return;
+  const field=$(`#${voiceOptionId(meta)}_field`);if(!field)return;
+  field.outerHTML=voiceOptionHtml(meta);bindVoiceModelField(meta,revision);
+}
+function voiceProviderModelSource(meta){
+  if(meta.type!=='catalog-select'||!String(meta.persistence||'').startsWith('voice_stack_settings.'))return null;
+  const parts=String(meta.source||'').split(':');
+  if(parts.length!==2||!parts.every(part=>/^[a-z0-9_-]+$/.test(part)))return null;
+  return {provider:parts[0],role:parts[1]};
+}
+async function hydrateVoiceModel(meta,revision,refresh=false){
+  const source=voiceProviderModelSource(meta);if(!currentVoicePanel(revision,'models')||!source)return;
+  const previous=(SET.voiceModelSources||{})[meta.id];if(previous&&previous.status==='ready'&&!refresh)return;
+  const {provider,role}=source,requestId=((SET.voiceModelGenerations||{})[meta.id]||0)+1,panelGeneration=SET.voiceGeneration;
+  SET.voiceModelGenerations[meta.id]=requestId;SET.voiceModelSources[meta.id]={...previous,status:'loading',error:''};renderVoiceModelField(meta,revision);
+  const result=await requestCatalog(provider,role,refresh);
+  if(!currentVoicePanel(revision,'models')||panelGeneration!==SET.voiceGeneration||SET.voiceModelGenerations[meta.id]!==requestId)return;
+  SET.voiceModelSources[meta.id]={status:result.ok?'ready':'error',error:result.error||'',result};renderVoiceModelField(meta,revision);
+}
+function bindVoicePanel(revision){
+  const panel=$('#voicePanel');if(!panel)return;
+  panel.querySelectorAll('[data-voice-persistence]').forEach(element=>element.addEventListener('change',()=>voiceChanged(element,revision)));
+  panel.querySelectorAll('[data-voice-architecture]').forEach(element=>element.addEventListener('change',()=>{voiceArchitectureChanged('architecture',element.value);renderVoicePanel(revision)}));
+  panel.querySelectorAll('[data-architecture-activate]').forEach(element=>element.addEventListener('click',()=>{voiceArchitectureChanged('architecture',voiceArchitectureConfig().architecture);renderVoicePanel(revision)}));
+  panel.querySelectorAll('[data-architecture-field]').forEach(element=>element.addEventListener('change',()=>{
+    const value=element.dataset.architectureKind==='model'?JSON.parse(element.value):element.type==='checkbox'?element.checked:element.type==='number'?Number(element.value):element.value;
+    voiceArchitectureChanged(element.dataset.architectureField,value);renderVoicePanel(revision);
+  }));
+  panel.querySelectorAll('[data-shortcut]').forEach(element=>element.addEventListener('click',()=>startCapture(element)));
+  const role=panel.querySelector('#voiceCatalogRole');
+  if(role)role.addEventListener('change',()=>{SET.voiceCatalogRole=role.value;renderVoicePanel(revision)});
+  const retry=panel.querySelector('#audioRetry');if(retry)retry.addEventListener('click',()=>hydrateAudioDevices(revision,true));
+  const test=panel.querySelector('#testAudio');if(test)test.addEventListener('click',runAudioTest);
+  const refresh=panel.querySelector('#authRefresh');if(refresh)refresh.addEventListener('click',()=>hydrateVoiceDiagnostics(revision));
+  if(SET.voiceTab==='audio'&&!SET.devices)hydrateAudioDevices(revision);
+  if(SET.voiceTab==='models')voiceOptions('models').filter(voiceProviderModelSource).forEach(meta=>hydrateVoiceModel(meta,revision));
+}
+async function hydrateAudioDevices(revision,refresh=false){
+  if(!currentVoicePanel(revision,'audio'))return;
+  if(SET.devices&&SET.devices.ok!==false&&!refresh)return;
+  const requestId=++SET.audioGeneration,status=$('#voiceAudioStatus');if(status)status.textContent='Détection des périphériques…';
+  let state;try{state=await api('/api/audio/devices')}catch(e){state={ok:false,error:e.message,inputs:[],outputs:[]}}
+  if(!currentVoicePanel(revision,'audio')||requestId!==SET.audioGeneration)return;
+  SET.devices=state;renderVoicePanel(revision);
+}
+async function hydrateVoiceDiagnostics(revision){
+  if(!currentVoicePanel(revision,'diagnostic'))return;
+  const requestId=++SET.diagnosticGeneration;SET.voiceDiagnosticError='';
+  let data;try{data=await api('/api/settings')}catch(e){
+    if(currentVoicePanel(revision,'diagnostic')&&requestId===SET.diagnosticGeneration){SET.voiceDiagnosticError=e.message;renderVoicePanel(revision)}return;
+  }
+  if(!currentVoicePanel(revision,'diagnostic')||requestId!==SET.diagnosticGeneration)return;
+  SET.data={...SET.data,voice:data.voice};renderVoicePanel(revision);
+}
+
 async function runAudioTest(){
   const test=$('#testAudio'),result=$('#audioTestResult'),a=SET.draft.audio;
   test.disabled=true;result.className='test-result';result.textContent='Parlez maintenant pendant 2 secondes…';
@@ -2321,7 +2513,7 @@ async function runAudioTest(){
     result.className='test-result ok';
     result.textContent=`Test réussi · pic ${r.peak_dbfs} dBFS · enregistrement rejoué et sélection enregistrée.`;
   }catch(e){result.className='test-result error';result.textContent=e.message}
-  finally{test.disabled=false}
+  finally{test.disabled=!SET.devices||SET.devices.ok===false||!(SET.devices.inputs||[]).length||!(SET.devices.outputs||[]).length}
 }
 
 async function addCredential(event){
@@ -2370,7 +2562,7 @@ function startCapture(button){
     hint.textContent='Enregistrement…';
     try{
       const r=await api('/api/shortcuts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({shortcuts:{[button.dataset.shortcut]:value}})});
-      SET.shortcuts=r;renderTab();$('#shortcutHint').textContent='Raccourci enregistré.';
+      SET.shortcuts=r;await renderTab();const currentHint=$('#shortcutHint');if(currentHint)currentHint.textContent='Raccourci enregistré.';
     }catch(e){button.textContent=previous;hint.textContent=e.message}
   };
   const cleanup=()=>{window.removeEventListener('keydown',onKey,true);button.classList.remove('capturing');SET.capture=null};
@@ -2430,7 +2622,7 @@ async function openSettings(){
   renderTabs();await renderTab();
 }
 
-function closeSettings(){++SET.openGeneration;++SET.cliGeneration;++SET.cliModelGeneration;++SET.routingGeneration;SET.renderRevision=(SET.renderRevision||0)+1;SET.routingAdvancedOpen=false;destroyAgentCatalog();overlay.classList.remove('open');SET.open=false;if(SET.capture)SET.capture.cancel()}
+function closeSettings(){++SET.openGeneration;++SET.cliGeneration;++SET.cliModelGeneration;++SET.routingGeneration;++SET.voiceGeneration;++SET.audioGeneration;++SET.diagnosticGeneration;SET.renderRevision=(SET.renderRevision||0)+1;SET.routingAdvancedOpen=false;cleanupSettingsSurface();overlay.classList.remove('open');SET.open=false;if(SET.capture)SET.capture.cancel()}
 
 async function saveDraft(options){
   const silent=options&&options.silent;

@@ -31,13 +31,14 @@ Every coding Slice must load `/caveman` and `/coding-guideline` before implement
   - Path: `slices/05-agent-cli-settings-ui/SLICE.md`
   - Depends on: 02, 04
   - Unified Agent / CLI tab, guarded async hydration, canonical bindings, lazy advanced profiles and shared catalog complete; QA rework passed.
-- [ ] 06 — Split voice settings into top sub-tabs and embed the voice catalog
+- [x] 06 — Split voice settings into top sub-tabs and embed the voice catalog
   - Path: `slices/06-voice-settings-tabs/SLICE.md`
   - Depends on: 01, 04
-  - Backend schema/effective-stack/AEC projection complete; UI, responsive and human validation pending.
-- [ ] 07 — Prove migration, personalization, catalog UX and rollout
+  - Backend schema plus metadata-driven Voice sub-tabs, generic persistence rendering, guarded audio/diagnostic hydration and shared role-filtered catalog complete. Manual checklist retained.
+- [x] 07 — Prove migration, personalization, catalog UX and rollout
   - Path: `slices/07-e2e-migration-docs/SLICE.md`
   - Depends on: 05, 06
+  - Automated migration/reload, routing, behavior, catalog and seven-category Voice coverage complete; real orchestrator walkthrough confirmed.
 
 ## Planning blocker
 

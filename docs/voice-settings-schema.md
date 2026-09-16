@@ -57,3 +57,28 @@ the settings probe; `restart_required` stays true.
 Contract regression coverage lives in
 `tests/unit/test_voice_settings_schema.py` and the existing Settings endpoint
 suite.
+
+## Control Center rendering
+
+The top-level `Voix` tab renders its seven sub-tabs directly from ordered
+`voice.categories`. Each `voice.option_metadata` entry is rendered exactly once
+under its backend-provided category. Generic persistence adapters update the
+existing `voice`, `audio`, authorization, architecture, and shortcut request
+shapes; the browser does not maintain a second setting-to-category map.
+
+Audio device discovery and diagnostic refresh are local, guarded asynchronous
+operations. A closed or superseded panel cannot publish its response. Device
+errors and successful empty detection expose retry without blocking the
+remaining Voice categories; audio testing stays disabled until both an input
+and an output exist. Provider-backed model selects hydrate locally from
+`/api/models` using each record's `source`, retain saved absent values, expose
+unavailable evidence, and never remount the shared comparison catalog. A
+strict `provider:role` source plus `voice_stack_settings.*` persistence gate
+keeps architecture model selectors on registry-provided options only. A
+diagnostic refresh replaces only read-only server state while preserving the
+draft. The Models panel owns a separate shared catalog controller for the
+backend roles `realtime`, `transcription`, and `speech`; switching sub-tabs,
+rerendering, or closing aborts and destroys that controller. Search, filters,
+sort, and comparison selection are retained per role. Diagnostic metadata is
+the single rendering inventory; its owner profile path comes from the
+effective verifier settings and is not repeated by parallel raw-status blocks.

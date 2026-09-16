@@ -266,13 +266,37 @@ async def test_the_catalogue_is_cached_and_a_new_key_invalidates_it(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_same_suffix_credentials_never_share_a_catalog_or_expose_cache_identity(tmp_path):
+    path = tmp_path / "cache.json"
+    session = FakeSession(
+        FakeResponse(200, {"data": [{"id": "gpt-private-first"}]}),
+        FakeResponse(200, {"data": [{"id": "gpt-private-second"}]}),
+    )
+    catalog = ModelCatalog(path)
+
+    first = await catalog.models("openai", "sk-account-a-1234", session=session)
+    second = await catalog.models("openai", "sk-account-b-1234", session=session)
+
+    assert [item["id"] for item in first["models"]] == ["gpt-private-first"]
+    assert [item["id"] for item in second["models"]] == ["gpt-private-second"]
+    assert len(session.calls) == 2
+    assert "_credential_fingerprint" not in json.dumps(first)
+    assert "_credential_fingerprint" not in json.dumps(second)
+    assert "key_hint" not in path.read_text(encoding="utf-8")
+    assert catalog.cached_for("openai", "sk-account-a-1234") is None
+    assert catalog.cached_for("openai", "sk-account-b-1234")["models"] == second["models"]
+
+
+@pytest.mark.asyncio
 async def test_the_cache_survives_a_restart(tmp_path):
     session = FakeSession(FakeResponse(200, {"data": [{"id": "gpt-5"}]}))
     path = tmp_path / "cache.json"
 
     await ModelCatalog(path).models("openai", "sk-one", session=session)
 
-    assert ModelCatalog(path).cached("openai")["models"][0]["id"] == "gpt-5"
+    restarted = ModelCatalog(path)
+    assert restarted.cached_for("openai", "sk-one")["models"][0]["id"] == "gpt-5"
+    assert "_credential_fingerprint" not in json.dumps(restarted.cached("openai"))
 
 
 # ===========================================================================

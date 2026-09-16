@@ -3,8 +3,13 @@
     {
       "id": "HV-SET-VOICE-01",
       "title": "Validate voice settings navigation",
-      "instructions": "After automated QA passes, open the voice settings page. Confirm the top sub-tabs make the dense settings understandable, turn-taking/interruption controls are easy to find, Models uses the shared comparison table, and advanced/diagnostic options no longer overwhelm primary configuration.",
-      "expected": "Voice configuration is substantially easier to scan and expert controls are categorized without losing access."
+      "instructions": "After automated QA passes, open Voix and traverse Architecture, Conversation, Tours & interruptions, Modèles, Audio, Avancé and Diagnostic by click and keyboard arrows/Home/End. Confirm inactive stack values remain visible, VAD dependencies react to turn mode, wake_toggle appears only under Tours, failed or empty device discovery can retry and disables testing without both sides, provider model selects hydrate without resetting the three catalog roles' search/compare state, and Diagnostic clearly separates effective and historical stacks without duplicate status blocks.",
+      "expected": "All seven backend categories remain understandable and reachable without duplicated controls; expert diagnostics and unavailable model evidence stay explicit."
     }
-  ]
+  ],
+  "execution": {
+    "status": "passed",
+    "performed_by": "orchestrator",
+    "evidence": "Real CUA walkthrough on isolated localhost runtime: all seven tabs, keyboard focus, catalog role state, audio discovery, save/reopen persistence, 390x844 and 1440x900 layouts, and an empty browser console were verified. No microphone test was run."
+  }
 }

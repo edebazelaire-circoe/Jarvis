@@ -28,6 +28,7 @@ from jarvis.runtime.catalog_metadata import (
     token_pricing_value,
 )
 from jarvis.runtime.catalog_view import CatalogViewService, ProviderCatalogSnapshot
+from jarvis.runtime import cli_catalog
 from jarvis.runtime.voice_capabilities import VoiceCapabilityRegistry, default_voice_registry
 
 
@@ -133,6 +134,42 @@ def test_missing_credentials_or_catalog_keep_saved_candidate_unknown_not_removed
     assert view.sources[0].freshness is CatalogFreshness.UNKNOWN
     assert view.to_dict()["sources"][0]["status_code"] == "catalog_no_key"
     assert view.to_dict()["sources"][0]["kind"] == "provider_failure"
+
+
+def test_auto_only_selects_candidates_enforceable_by_the_active_cli_host():
+    agents = [
+        cli_catalog.describe(
+            spec,
+            command=spec.default_command,
+            detection={"available": True, "path": spec.default_command, "version": "test", "error": ""},
+        )
+        for spec in cli_catalog.AGENT_CLIS
+    ]
+    catalogs = {
+        "anthropic": provider({"id": "claude-model", "roles": ["text"]}),
+        "openai": provider({"id": "codex-model", "roles": ["text"]}),
+    }
+
+    claude_host = by_model(CatalogViewService().subagents(
+        agents=agents,
+        catalogs=catalogs,
+        routing_enabled=True,
+        active_agent="claude",
+        now=NOW,
+    ))
+    codex_host = by_model(CatalogViewService().subagents(
+        agents=agents,
+        catalogs=catalogs,
+        routing_enabled=True,
+        active_agent="codex",
+        now=NOW,
+    ))
+
+    assert claude_host["claude-model"]["availability"]["state"] == "usable"
+    assert claude_host["codex-model"]["availability"]["selectable"] is False
+    assert claude_host["codex-model"]["availability"]["reason_code"] == "catalog_subagent_not_active_host"
+    assert codex_host["codex-model"]["availability"]["selectable"] is False
+    assert codex_host["codex-model"]["availability"]["reason_code"] == "catalog_subagent_delegation_unsupported"
 
 
 @pytest.mark.parametrize("malformed", [1, 0, "true", "false", None, [], {}])
@@ -376,3 +413,35 @@ def test_roles_are_attributed_to_classifier_or_registry_not_provider_availabilit
     assert explicit["roles"]["provenance"]["kind"] == "role_classifier"
     assert voice["roles"]["provenance"]["kind"] == "role_classifier"
     assert default["roles"]["provenance"]["kind"] == "runtime_registry"
+
+
+def test_saved_absent_and_voice_union_roles_keep_exact_per_value_provenance():
+    saved = by_model(CatalogViewService().subagents(
+        agents=[agent("claude", "anthropic")],
+        catalogs={"anthropic": provider({"id": "present", "roles": ["text"]})},
+        saved=[CandidateRef("claude", "saved-absent")],
+        now=NOW,
+    ))["saved-absent"]
+    voice = by_model(CatalogViewService().voice(
+        registry=default_voice_registry(),
+        catalogs={"openai": provider({"id": "gpt-live-1", "roles": ["realtime", "duplex"]})},
+        now=NOW,
+    ))["gpt-live-1"]
+
+    assert saved["roles"]["value"] == ["subagent", "text"]
+    assert saved["roles"]["provenance"]["source_id"] == "routing_settings:claude"
+    assert {
+        role: [source["kind"] for source in sources]
+        for role, sources in saved["roles"]["provenance_by_value"].items()
+    } == {
+        "subagent": ["runtime_registry"],
+        "text": ["runtime_registry"],
+    }
+    voice_sources = voice["roles"]["provenance_by_value"]
+    assert [source["kind"] for source in voice_sources["realtime"]] == [
+        "role_classifier", "runtime_registry",
+    ]
+    assert [source["kind"] for source in voice_sources["duplex"]] == [
+        "role_classifier", "runtime_registry",
+    ]
+    assert [source["kind"] for source in voice_sources["conversation"]] == ["runtime_registry"]

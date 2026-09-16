@@ -229,6 +229,8 @@ async def test_owned_real_agents_emit_bounded_prompt_evidence_for_behavior(harne
         assert event["data"]["application"] == "sent"
         assert event["data"]["static_fingerprint"]
         assert "Réponds de façon concise" not in json.dumps(event)
+        assert "Réponds de façon concise" in harness.processes[0].input.decode("utf-8")
+        assert "Réponds de façon concise" not in json.dumps(created[0].snapshot(), ensure_ascii=False)
         turn_evidence = [
             item for item in created[0].prompt_applications
             if item.get("program_id") == f"backend.{provider}.turn"

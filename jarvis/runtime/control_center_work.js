@@ -258,11 +258,21 @@ html[data-jarvis-theme="omega"] .choice.theme-choice.selected{
     return points[points.length-1];
   }
 
+  function stopMediaStream(stream){
+    if(!stream)return;
+    try{stream.getTracks().forEach(track=>{try{track.stop()}catch(_error){}})}catch(_error){}
+  }
+
+  function closeAudioContext(context){
+    if(!context)return;
+    try{const closed=context.close();if(closed&&typeof closed.catch==='function')closed.catch(()=>{})}catch(_error){}
+  }
+
   class OmegaRenderer{
     constructor(){
       this.canvas=null;this.ctx=null;this.raf=0;this.last=0;this.rotation=0;
       this.state='idle';this.online=false;this.micStatus='idle';this.micLevel=0;
-      this.micStream=null;this.audioContext=null;this.analyser=null;this.micData=null;
+      this.micStream=null;this.audioContext=null;this.analyser=null;this.micData=null;this.micGeneration=0;this.mounted=false;
       this.circuits=[];this.resizeBound=()=>this.resize();this.frameBound=t=>this.frame(t);
       this.current={speed:.10,pulseHz:.24,pulseAmp:.07,glow:.56,listening:0,talking:0,circuit:0};
       this.color=[...STATE_COLORS.idle];this.snapshot={state:'idle',online:false};
@@ -271,6 +281,7 @@ html[data-jarvis-theme="omega"] .choice.theme-choice.selected{
     mount(){
       this.canvas=ensureOmegaCanvas();
       if(!this.canvas)return;
+      this.mounted=true;
       this.ctx=this.canvas.getContext('2d');
       window.addEventListener('resize',this.resizeBound);
       this.resize();this.last=performance.now();
@@ -278,6 +289,7 @@ html[data-jarvis-theme="omega"] .choice.theme-choice.selected{
       this.setSnapshot(this.snapshot);
     }
     unmount(){
+      this.mounted=false;
       if(this.raf)cancelAnimationFrame(this.raf);
       this.raf=0;
       window.removeEventListener('resize',this.resizeBound);
@@ -292,41 +304,51 @@ html[data-jarvis-theme="omega"] .choice.theme-choice.selected{
       const c=STATE_COLORS[state]||STATE_COLORS.idle;
       document.documentElement.style.setProperty('--omega-accent',`rgb(${c.join(',')})`);
       if(state==='listening'&&this.online)this.ensureMic();
+      else if(this.micStream||this.audioContext||this.micStatus==='requesting'||this.micStatus==='active')this.stopMic();
       const label=document.getElementById('voiceState');
       if(label&&document.documentElement.dataset.jarvisTheme==='omega'&&this.online)label.textContent=STATE_LABELS[state]||state.toUpperCase();
       if(!this.online&&this.micStream)this.stopMic();
     }
     async ensureMic(){
       if(this.micStatus==='active'||this.micStatus==='requesting')return;
+      if(!this.mounted||this.state!=='listening'||!this.online||document.documentElement.dataset.jarvisTheme!=='omega')return;
       if(!navigator.mediaDevices||typeof navigator.mediaDevices.getUserMedia!=='function'){
         this.micStatus='unavailable';return;
       }
+      const generation=++this.micGeneration;let stream=null,context=null;
       this.micStatus='requesting';
       try{
-        const stream=await navigator.mediaDevices.getUserMedia({
+        stream=await navigator.mediaDevices.getUserMedia({
           audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false},video:false
         });
-        if(document.documentElement.dataset.jarvisTheme!=='omega'){
-          stream.getTracks().forEach(track=>track.stop());this.micStatus='idle';return;
+        if(generation!==this.micGeneration||!this.mounted||this.state!=='listening'||!this.online||document.documentElement.dataset.jarvisTheme!=='omega'){
+          stopMediaStream(stream);if(generation===this.micGeneration)this.micStatus='idle';return;
         }
         const AudioCtx=window.AudioContext||window.webkitAudioContext;
         if(!AudioCtx){
-          stream.getTracks().forEach(track=>track.stop());this.micStatus='unavailable';return;
+          stopMediaStream(stream);this.micStatus='unavailable';return;
         }
-        const context=new AudioCtx();
+        context=new AudioCtx();
         const source=context.createMediaStreamSource(stream);
         const analyser=context.createAnalyser();
         analyser.fftSize=512;analyser.smoothingTimeConstant=.2;
         source.connect(analyser);
+        if(generation!==this.micGeneration||!this.mounted||this.state!=='listening'||!this.online||document.documentElement.dataset.jarvisTheme!=='omega'){
+          stopMediaStream(stream);closeAudioContext(context);if(generation===this.micGeneration)this.micStatus='idle';return;
+        }
         this.micStream=stream;this.audioContext=context;this.analyser=analyser;
         this.micData=new Uint8Array(analyser.fftSize);this.micStatus='active';
-      }catch(_error){this.micStatus='denied';}
+      }catch(_error){
+        if(stream&&this.micStream!==stream)stopMediaStream(stream);
+        if(context&&this.audioContext!==context)closeAudioContext(context);
+        if(generation===this.micGeneration&&this.mounted&&this.state==='listening'&&this.online)this.micStatus='denied';
+      }
     }
     stopMic(){
-      if(this.micStream)this.micStream.getTracks().forEach(track=>track.stop());
-      this.micStream=null;this.analyser=null;this.micData=null;this.micLevel=0;
-      if(this.audioContext){try{this.audioContext.close()}catch(_error){}}
-      this.audioContext=null;
+      ++this.micGeneration;
+      const stream=this.micStream,context=this.audioContext;
+      this.micStream=null;this.audioContext=null;this.analyser=null;this.micData=null;this.micLevel=0;
+      stopMediaStream(stream);closeAudioContext(context);
       if(this.micStatus==='active'||this.micStatus==='requesting')this.micStatus='idle';
     }
     resize(){
@@ -625,6 +647,7 @@ html[data-jarvis-theme="omega"] .choice.theme-choice.selected{
     const baseRenderTab=renderTab;
     renderTab=async function(){
       if(SET.tab!=='appearance')return baseRenderTab();
+      cleanupSettingsSurface();
       SET.renderRevision=(SET.renderRevision||0)+1;
       modalSave.style.display='none';
       modalSub.textContent='Le thème est appliqué immédiatement et peut être changé à chaud.';

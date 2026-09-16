@@ -177,6 +177,41 @@ def _running_agent(tmp_path: Path) -> ClaudeLocalAgent:
     return agent
 
 
+async def test_composed_prompt_reaches_claude_but_private_layers_stay_out_of_history(tmp_path):
+    agent = _running_agent(tmp_path)
+    marker = "PRIVATE_BACKEND_TURN_MARKER"
+    composed = f"{marker}\n[Demande]\nquestion publique"
+
+    await agent.send(
+        composed,
+        prompt_evidence={"program_id": "backend.claude.turn", "application": "sent"},
+        input_text="question publique",
+    )
+
+    payload = json.loads(agent.process.stdin.written[-1].decode("utf-8"))  # type: ignore[union-attr]
+    assert marker in payload["message"]["content"]
+    assert marker not in json.dumps(agent.snapshot(), ensure_ascii=False)
+    assert marker not in json.dumps(read_jsonl_tail(tmp_path / "trace.jsonl"), ensure_ascii=False)
+    assert agent.prompt_applications == [{"program_id": "backend.claude.turn", "application": "sent"}]
+
+
+async def test_failed_claude_start_discards_one_shot_prompt_evidence(tmp_path, monkeypatch):
+    agent = ClaudeLocalAgent(runtime_root=tmp_path, cwd=tmp_path)
+
+    async def fail_start() -> None:
+        raise RuntimeError("cli missing")
+
+    monkeypatch.setattr(agent, "start", fail_start)
+    agent.set_next_prompt_evidence({"program_id": "old-turn"})
+    with pytest.raises(RuntimeError, match="cli missing"):
+        await agent.send("premier tour")
+
+    assert agent._next_prompt_evidence is None
+    agent.process = FakeProcess()  # type: ignore[assignment]
+    await agent.send("tour suivant")
+    assert agent.prompt_applications == []
+
+
 async def _sent_uuid(agent: ClaudeLocalAgent, index: int = -1) -> str:
     for _ in range(100):
         written = agent.process.stdin.written  # type: ignore[union-attr]

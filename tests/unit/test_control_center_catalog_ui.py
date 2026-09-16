@@ -223,6 +223,27 @@ def test_role_specific_columns_reuse_the_same_renderer(tmp_path: Path):
     assert 'class="catalog-cell-actions"' not in result["html"]
 
 
+def test_each_role_chip_displays_its_own_union_of_sources(tmp_path: Path):
+    result = node_result(
+        tmp_path,
+        """
+        const source=(source_id,kind)=>({source_id,kind,freshness:'fresh',status_code:'ok'});
+        const item={...F.items[0],roles:{
+          value:['realtime','conversation'],
+          provenance:source('classifier','role_classifier'),
+          provenance_by_value:{
+            realtime:[source('classifier','role_classifier'),source('registry','runtime_registry')],
+            conversation:[source('registry','runtime_registry')]
+          }
+        }};
+        return C.renderCatalog({...F,items:[item]},{columns:['model','roles']});
+        """,
+    )
+
+    assert 'title="classifier · fresh · ok + registry · fresh · ok">realtime</span>' in result
+    assert 'title="registry · fresh · ok">conversation</span>' in result
+
+
 def test_controller_keeps_live_search_node_focus_and_caret_while_typing(tmp_path: Path):
     result = node_async_result(
         tmp_path,

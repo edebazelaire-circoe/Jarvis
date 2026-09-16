@@ -76,16 +76,24 @@ def compose_agent_turn(
     )
 
 
-def accepts_prompt_evidence(callback: object) -> bool:
-    """Feature-detect new Agent API while retaining legacy test/plugin agents."""
+def accepts_keyword_argument(callback: object, name: str) -> bool:
+    """Feature-detect an optional Agent keyword without breaking legacy agents."""
     try:
-        parameters = inspect.signature(callback).parameters.values()  # type: ignore[arg-type]
+        parameters = inspect.signature(callback).parameters  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return False
-    return any(
-        parameter.name == "prompt_evidence" or parameter.kind is inspect.Parameter.VAR_KEYWORD
-        for parameter in parameters
-    )
+    parameter = parameters.get(name)
+    if parameter is not None and parameter.kind in {
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        inspect.Parameter.KEYWORD_ONLY,
+    }:
+        return True
+    return any(item.kind is inspect.Parameter.VAR_KEYWORD for item in parameters.values())
+
+
+def accepts_prompt_evidence(callback: object) -> bool:
+    """Feature-detect new Agent API while retaining legacy test/plugin agents."""
+    return accepts_keyword_argument(callback, "prompt_evidence")
 
 
 def copy_prompt_evidence(value: Mapping[str, object]) -> dict[str, object]:

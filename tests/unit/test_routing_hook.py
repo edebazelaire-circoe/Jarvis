@@ -18,6 +18,7 @@ from jarvis.domain import routing
 from jarvis.runtime import agent_routing, routing_hook
 from jarvis.runtime.catalog_view import CatalogViewService
 from jarvis.runtime.journal import read_jsonl_tail
+from jarvis.runtime.model_catalog import ModelCatalog
 
 CLAUDE = {
     "id": "claude",
@@ -185,15 +186,24 @@ def test_the_desktop_profile_needs_a_candidate_that_can_drive_the_machine():
 
 
 def _write_settings(tmp_path, payload: dict) -> None:
-    settings: dict = {}
+    settings: dict = {"anthropic_api_key": "sk-ant-test"}
     agent_routing.apply(settings, payload)
     (tmp_path / "control-center-settings.json").write_text(json.dumps(settings), encoding="utf-8")
+
+
+def _cached_models(provider: str, api_key: str, models: list[dict], *, fetched_at: float | None = None) -> dict:
+    return {
+        "provider": provider,
+        "models": models,
+        "fetched_at": time.time() if fetched_at is None else fetched_at,
+        "_credential_fingerprint": ModelCatalog._credential_fingerprint(provider, api_key),
+    }
 
 
 def test_the_hook_reads_the_settings_file_and_answers_on_its_own(tmp_path, monkeypatch):
     monkeypatch.setattr(routing_hook, "local_agents", lambda: [CLAUDE])
     (tmp_path / "model-catalog.json").write_text(
-        json.dumps({"anthropic": {"provider": "anthropic", "models": MODELS["anthropic"], "fetched_at": time.time(), "key_hint": "x"}}),
+        json.dumps({"anthropic": _cached_models("anthropic", "sk-ant-test", MODELS["anthropic"])}),
         encoding="utf-8",
     )
     _write_settings(tmp_path, {"enabled": True, "profiles": {"code": {"candidates": [{"agent": "claude", "model": "petit"}]}}})
@@ -211,21 +221,62 @@ def test_the_hook_reads_the_settings_file_and_answers_on_its_own(tmp_path, monke
     assert "Fais-le." not in json.dumps(event, ensure_ascii=False)
 
 
+@pytest.mark.parametrize("active_key", ["sk-rotated-1234", ""])
+def test_private_cached_model_is_never_routable_after_key_rotation_or_removal(
+    tmp_path, monkeypatch, active_key,
+):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr(routing_hook, "local_agents", lambda: [CLAUDE])
+    (tmp_path / "model-catalog.json").write_text(
+        json.dumps({
+            "anthropic": _cached_models(
+                "anthropic",
+                "sk-original-1234",
+                [{"id": "private-model", "roles": ["text"]}],
+            ),
+        }),
+        encoding="utf-8",
+    )
+    settings: dict = {"anthropic_api_key": active_key}
+    agent_routing.apply(settings, {
+        "enabled": True,
+        "profiles": {"code": {"candidates": [{"agent": "claude", "model": "private-model"}]}},
+    })
+    (tmp_path / "control-center-settings.json").write_text(json.dumps(settings), encoding="utf-8")
+
+    candidates = routing_hook.offline_candidates(
+        tmp_path,
+        agent_routing.load_policy(settings),
+        settings=settings,
+    )
+    private = next(item for item in candidates if item.model == "private-model")
+
+    assert private.available is False
+    assert applied(routing_hook.run(call(), tmp_path)) == "deny"
+
+
 def test_stale_saved_model_is_nonselectable_in_view_and_noneligible_in_hook(tmp_path, monkeypatch):
     now = datetime(2026, 9, 14, 12, 0, tzinfo=timezone.utc)
     stale_payload = {
-        "provider": "anthropic",
-        "models": MODELS["anthropic"],
-        "fetched_at": (now - timedelta(days=1)).timestamp(),
-        "key_hint": "private-hint",
+        **_cached_models(
+            "anthropic",
+            "sk-ant-test",
+            MODELS["anthropic"],
+            fetched_at=(now - timedelta(days=1)).timestamp(),
+        ),
     }
     (tmp_path / "model-catalog.json").write_text(
         json.dumps({"anthropic": stale_payload}), encoding="utf-8",
     )
     chosen = policy({"agent": "claude", "model": "petit"})
     monkeypatch.setattr(routing_hook, "local_agents", lambda: [CLAUDE])
+    settings: dict = {"anthropic_api_key": "sk-ant-test"}
+    agent_routing.apply(settings, {
+        "enabled": True,
+        "profiles": {"code": {"candidates": [{"agent": "claude", "model": "petit"}]}},
+    })
 
-    candidates = routing_hook.offline_candidates(tmp_path, chosen, now=now)
+    candidates = routing_hook.offline_candidates(tmp_path, chosen, now=now, settings=settings)
     stale = next(item for item in candidates if item.model == "petit")
     view = CatalogViewService().subagents(
         agents=[CLAUDE],
@@ -258,10 +309,10 @@ def test_a_byte_order_mark_never_silently_switches_routing_off(tmp_path, monkeyp
 
     monkeypatch.setattr(routing_hook, "local_agents", lambda: [CLAUDE])
     (tmp_path / "model-catalog.json").write_text(
-        json.dumps({"anthropic": {"provider": "anthropic", "models": MODELS["anthropic"], "fetched_at": time.time(), "key_hint": "x"}}),
+        json.dumps({"anthropic": _cached_models("anthropic", "sk-ant-test", MODELS["anthropic"])}),
         encoding="utf-8",
     )
-    settings: dict = {}
+    settings: dict = {"anthropic_api_key": "sk-ant-test"}
     agent_routing.apply(settings, {"enabled": True, "profiles": {"code": {"candidates": [{"agent": "claude", "model": "petit"}]}}})
     # Le fichier tel que le Bloc-notes le réécrit.
     (tmp_path / "control-center-settings.json").write_text(json.dumps(settings), encoding="utf-8-sig")
@@ -273,7 +324,7 @@ def test_a_byte_order_mark_never_silently_switches_routing_off(tmp_path, monkeyp
 def test_the_hook_reads_a_marked_event_from_its_standard_input(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(routing_hook, "local_agents", lambda: [CLAUDE])
     (tmp_path / "model-catalog.json").write_text(
-        json.dumps({"anthropic": {"provider": "anthropic", "models": MODELS["anthropic"], "fetched_at": time.time(), "key_hint": "x"}}),
+        json.dumps({"anthropic": _cached_models("anthropic", "sk-ant-test", MODELS["anthropic"])}),
         encoding="utf-8",
     )
     _write_settings(tmp_path, {"enabled": True, "profiles": {"code": {"candidates": [{"agent": "claude", "model": "petit"}]}}})

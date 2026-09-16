@@ -97,7 +97,7 @@ def test_prompt_tab_renders_server_projection_and_editability_without_inventing_
     control = ControlCenter(runtime_root=tmp_path, project_root=tmp_path)
     fixture = control._prompt_payload(control._settings())
     page = Path("jarvis/runtime/control_center.html").read_text(encoding="utf-8")
-    functions = page[page.index("function promptLayerHtml"):page.index("/* --- onglet CLI")]
+    functions = page[page.index("function promptLayerHtml"):page.index("function tabCli()")]
     script = r'''
 const assert=require('node:assert/strict');
 const fixture=JSON.parse(require('node:fs').readFileSync(process.argv[2],'utf8'));

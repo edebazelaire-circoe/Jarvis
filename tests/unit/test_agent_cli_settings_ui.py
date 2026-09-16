@@ -57,7 +57,10 @@ def test_navigation_fixture_matches_unified_agent_cli_tab_and_legacy_programmati
     expected = json.loads(FIXTURE.read_text(encoding="utf-8"))
 
     tabs = re.findall(r"\{id:'([^']+)',label:'([^']+)',save:(?:true|false)\}", page[page.index("const TABS=") :])
-    assert tabs[: len(expected["tabs"])] == [(tab["id"], tab["label"]) for tab in expected["tabs"]]
+    core_tabs = [tab for tab in expected["tabs"] if tab["id"] != "appearance"]
+    assert tabs[: len(core_tabs)] == [(tab["id"], tab["label"]) for tab in core_tabs]
+    work = PAGE.with_name("control_center_work.js").read_text(encoding="utf-8")
+    assert "{id:'appearance',label:'Apparence',save:false}" in work
     legacy = expected["legacy_programmatic_tab"]
     canonical_id = expected["canonical_programmatic_tab"]
     assert legacy not in [identifier for identifier, _label in tabs]
@@ -233,12 +236,14 @@ def test_agent_catalog_lifecycle_error_and_accessibility_contracts_are_wired():
     catalog_module = (ROOT / "jarvis" / "runtime" / "control_center_catalog.js").read_text(encoding="utf-8")
 
     render = page[page.index("async function renderTab()") : page.index("function bindTab(revision)")]
+    cleanup = page[page.index("function cleanupSettingsSurface()") : page.index("function renderTabs()")]
     close = page[page.index("function closeSettings()") : page.index("async function saveDraft")]
-    assert render.lstrip().startswith("async function renderTab(){\n  destroyAgentCatalog();")
+    assert render.lstrip().startswith("async function renderTab(){\n  cleanupSettingsSurface();")
+    assert "destroyAgentCatalog();destroyVoiceCatalog()" in cleanup
     assert "if(SET.tab==='cli'){mountAgentCatalog(revision);hydrateCliAgents(revision)}" in render
     assert "SET.renderRevision=(SET.renderRevision||0)+1" in close
     assert "SET.routingAdvancedOpen=false" in close
-    assert "destroyAgentCatalog();" in close
+    assert "cleanupSettingsSurface();" in close
     assert 'aria-label="Catalogue des modèles de sous-agents"' in page
     assert 'role="search" aria-label="Recherche et tri du catalogue"' in catalog_module
     assert '<th scope="row"' in catalog_module
@@ -254,10 +259,10 @@ def test_open_close_race_cannot_publish_or_mount_after_settings_response(tmp_pat
         """
         function deferred(){let resolve;const promise=new Promise(done=>{resolve=done});return {promise,resolve}}
         const request=deferred();let rendered=0,destroyed=0,tabs=0;
-        const SET={open:false,dirty:false,data:null,capture:null,openGeneration:0,cliGeneration:0,cliModelGeneration:0,routingGeneration:0,renderRevision:0};
+        const SET={open:false,dirty:false,data:null,capture:null,openGeneration:0,cliGeneration:0,cliModelGeneration:0,routingGeneration:0,voiceGeneration:0,audioGeneration:0,diagnosticGeneration:0,renderRevision:0,routingAdvancedOpen:false};
         const overlay={classList:{add:()=>{},remove:()=>{}}},modalContent={innerHTML:''};
         const api=()=>request.promise,renderTabs=()=>{tabs+=1},renderTab=async()=>{rendered+=1},draftFrom=value=>value;
-        const destroyAgentCatalog=()=>{destroyed+=1};
+        const destroyAgentCatalog=()=>{destroyed+=1},destroyVoiceCatalog=()=>{},cleanupSettingsSurface=()=>{destroyAgentCatalog();destroyVoiceCatalog()};
         """
         + functions
         + "(async()=>{const opening=openSettings();await Promise.resolve();closeSettings();request.resolve({shortcuts:{},marker:'late'});await opening;process.stdout.write(JSON.stringify({rendered,destroyed,tabs,data:SET.data,open:SET.open,content:modalContent.innerHTML}));})().catch(error=>{console.error(error);process.exitCode=1});",

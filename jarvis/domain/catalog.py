@@ -131,14 +131,36 @@ class CatalogProvenance:
 class SourcedValue:
     value: object
     provenance: CatalogProvenance
+    provenance_by_value: Mapping[str, tuple[CatalogProvenance, ...]] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.provenance, CatalogProvenance):
             raise CatalogContractError("catalog_metadata_unsourced", "Catalog claims require provenance")
         object.__setattr__(self, "value", _freeze_json(self.value))
+        if self.provenance_by_value is not None:
+            if not isinstance(self.provenance_by_value, Mapping):
+                raise CatalogContractError("catalog_metadata_unsourced", "Per-value provenance must be an object")
+            available = set(self.value) if isinstance(self.value, tuple) else set()
+            normalized: dict[str, tuple[CatalogProvenance, ...]] = {}
+            for key, sources in self.provenance_by_value.items():
+                if not isinstance(key, str) or key not in available:
+                    raise CatalogContractError("catalog_metadata_unsourced", "Per-value provenance key is invalid")
+                if (not isinstance(sources, tuple) or not sources
+                        or any(not isinstance(source, CatalogProvenance) for source in sources)):
+                    raise CatalogContractError("catalog_metadata_unsourced", "Per-value provenance sources are invalid")
+                normalized[key] = tuple(dict.fromkeys(sources))
+            if set(normalized) != available:
+                raise CatalogContractError("catalog_metadata_unsourced", "Every claim value requires exact provenance")
+            object.__setattr__(self, "provenance_by_value", MappingProxyType(normalized))
 
     def to_dict(self) -> dict[str, object]:
-        return {"value": _thaw_json(self.value), "provenance": self.provenance.to_dict()}
+        result = {"value": _thaw_json(self.value), "provenance": self.provenance.to_dict()}
+        if self.provenance_by_value is not None:
+            result["provenance_by_value"] = {
+                key: [source.to_dict() for source in sources]
+                for key, sources in self.provenance_by_value.items()
+            }
+        return result
 
 
 @dataclass(frozen=True, slots=True)

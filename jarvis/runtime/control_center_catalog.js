@@ -168,15 +168,23 @@
     return {items,selection,facets:catalogFacets(all),state:uiState(envelope,options),total:all.length};
   }
 
-  function provenanceTitle(claim){
-    const p=claim&&claim.provenance;
+  function provenanceEntryTitle(p){
     if(!p||typeof p!=='object')return '';
     return [text(p.source_id),text(p.freshness),text(p.status_code)].filter(Boolean).join(' · ');
   }
+  function provenanceTitle(claim){return provenanceEntryTitle(claim&&claim.provenance)}
+  function valueProvenanceTitle(claim,value){
+    const byValue=claim&&claim.provenance_by_value;
+    const sources=byValue&&typeof byValue==='object'&&Array.isArray(byValue[value])?byValue[value]:[];
+    return sources.map(provenanceEntryTitle).filter(Boolean).join(' + ')||provenanceTitle(claim);
+  }
   function chipList(claim){
-    const values=claimStrings(claim),source=provenanceTitle(claim);
+    const values=claimStrings(claim);
     if(!values.length)return '<span class="catalog-unknown">Inconnu</span>';
-    return values.map(value=>`<span class="catalog-chip"${source?` title="${escapeHtml(source)}"`:''}>${escapeHtml(value)}</span>`).join(' ');
+    return values.map(value=>{
+      const source=valueProvenanceTitle(claim,value);
+      return `<span class="catalog-chip"${source?` title="${escapeHtml(source)}"`:''}>${escapeHtml(value)}</span>`;
+    }).join(' ');
   }
   function guidanceHtml(item){
     const description=text(claimValue(item&&item.description));

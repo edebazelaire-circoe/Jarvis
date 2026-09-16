@@ -42,7 +42,10 @@ DELEGATION_MODES = (
     {
         "id": DELEGATION_AUTO,
         "label": "Auto",
-        "help": "Applique les profils aux candidats du CLI hôte actif; un seul modèle gagne.",
+        "help": (
+            "Applique les profils au sous-agent du CLI Claude hôte; un seul modèle gagne. "
+            "Codex n'expose pas encore cette frontière de délégation."
+        ),
     },
     {
         "id": DELEGATION_DUPLICATE,
@@ -134,10 +137,13 @@ def describe_delegation_modes() -> dict[str, Any]:
         "label": "Mode des sous-agents",
         "type": "enum",
         "default": DELEGATION_DUPLICATE,
-        "help": "Auto choisit sur le CLI hôte actif; Dupliqué hérite du CLI/appelant sans fan-out.",
+        "help": (
+            "Auto choisit sur le CLI Claude hôte; Codex reste non sélectionnable en Auto. "
+            "Dupliqué hérite du CLI/appelant sans fan-out."
+        ),
         "destination": "agent_cli.technical",
         "advanced": False,
-        "runtime_status": "live-alias",
+        "runtime_status": "live-claude-host-only",
         "persistence": "agent_routing.enabled",
         "options": [dict(option) for option in DELEGATION_MODES],
     }

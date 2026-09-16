@@ -517,6 +517,9 @@ class FakeCatalog:
     def cached(self, provider):  # noqa: ANN001
         return self.stale
 
+    def cached_for(self, provider, api_key):  # noqa: ANN001
+        return self.stale
+
     def invalidate(self, provider=None):  # noqa: ANN001
         self.invalidated.append(provider)
 
@@ -591,6 +594,41 @@ async def test_canonical_subagent_catalog_is_sourced_read_only_and_refreshable(c
     assert all(item["actions"] == [] and item["key"].startswith("catalog_v1_") for item in payload["items"])
     assert {call[0] for call in control.catalog.calls} == {"anthropic", "openai"}
     assert all(call[2] is True for call in control.catalog.calls)
+
+
+async def test_auto_catalog_never_offers_cross_host_or_unsupported_codex_candidates(control, monkeypatch):
+    async def detected(_commands):  # noqa: ANN001
+        return [
+            cli_catalog.describe(spec, command=spec.default_command, detection={"available": True})
+            for spec in cli_catalog.AGENT_CLIS
+        ]
+
+    monkeypatch.setattr(cli_catalog, "detect_all", detected)
+    control.catalog = FakeCatalog(result={
+        "models": [{"id": "model-current", "roles": ["text"]}],
+        "source": "live",
+        "fetched_at": time.time(),
+    })
+    await control.save_settings(JsonRequest({"routing": {
+        "enabled": True,
+        "profiles": {"general": {"candidates": [
+            {"agent": "claude", "model": "model-current"},
+            {"agent": "codex", "model": "model-current"},
+        ]}},
+    }}))
+
+    payload = json.loads((await control.catalog_view(QueryRequest(
+        surface="subagents", role="text",
+    ))).text)
+    candidates = {
+        (item["identity"]["agent_id"], item["identity"]["model_id"]): item
+        for item in payload["items"]
+    }
+
+    assert candidates[("claude", "model-current")]["availability"]["state"] == "usable"
+    codex = candidates[("codex", "model-current")]["availability"]
+    assert codex["selectable"] is False
+    assert codex["reason_code"] == "catalog_subagent_not_active_host"
 
 
 async def test_canonical_voice_catalog_uses_same_sourced_contract(control):
@@ -685,13 +723,28 @@ async def test_stale_saved_model_is_noneligible_across_catalog_legacy_and_hook(
     assert hook_item.available is False and "non vérifiée" in (hook_item.unavailable_reason or "")
 
 
-async def test_changing_the_active_key_drops_the_cached_catalogue(control):
+async def test_saving_rotating_binding_and_deleting_credentials_invalidate_only_when_needed(control):
     control.catalog = FakeCatalog(result={"models": [], "source": "live"})
     created = json.loads((await control.save_credential(JsonRequest({"provider": "openai", "name": "Perso", "value": "sk-a"}))).text)
+    credential_id = created["credential"]["id"]
 
-    await control.bind_credential(JsonRequest({"provider": "openai", "id": created["credential"]["id"]}))
+    await control.bind_credential(JsonRequest({"provider": "openai", "id": credential_id}))
 
-    # Les modèles visibles dépendent du compte, pas seulement du fournisseur.
+    # La première clé est déjà liée automatiquement : relier le même
+    # identifiant n'ajoute aucune invalidation artificielle.
+    assert control.catalog.invalidated == ["openai"]
+
+    control.catalog.invalidated.clear()
+    await control.save_credential(JsonRequest({
+        "id": credential_id,
+        "provider": "openai",
+        "name": "Perso",
+        "value": "sk-rotated",
+    }))
+    assert control.catalog.invalidated == ["openai"]
+
+    control.catalog.invalidated.clear()
+    await control.remove_credential(JsonRequest({"id": credential_id}))
     assert control.catalog.invalidated == ["openai"]
 
 
@@ -765,25 +818,54 @@ async def test_a_conflicting_shortcut_names_the_action_that_holds_the_key(contro
 # ===========================================================================
 
 
-def asked_by(control: ControlCenter) -> list[str]:
+def asked_by(
+    control: ControlCenter,
+    *,
+    evidence: list[dict[str, object]] | None = None,
+    input_texts: list[str] | None = None,
+) -> list[str]:
     """Brancher un agent qui note la question qu'on lui pose."""
 
     questions: list[str] = []
 
-    async def fake_ask(text: str, *, timeout_s: float) -> dict:
+    async def fake_ask(
+        text: str,
+        *,
+        timeout_s: float,
+        prompt_evidence: dict[str, object] | None = None,
+        input_text: str | None = None,
+    ) -> dict:
         del timeout_s
         questions.append(text)
+        if prompt_evidence is not None and evidence is not None:
+            evidence.append(prompt_evidence)
+        if input_text is not None and input_texts is not None:
+            input_texts.append(input_text)
         return {"ok": True, "text": "fait"}
 
     control.agent.ask = fake_ask  # type: ignore[assignment]
     return questions
 
 
-def sent_by(control: ControlCenter) -> list[str]:
+def sent_by(
+    control: ControlCenter,
+    *,
+    evidence: list[dict[str, object]] | None = None,
+    input_texts: list[str] | None = None,
+) -> list[str]:
     messages: list[str] = []
 
-    async def fake_send(text: str) -> dict:
+    async def fake_send(
+        text: str,
+        *,
+        prompt_evidence: dict[str, object] | None = None,
+        input_text: str | None = None,
+    ) -> dict:
         messages.append(text)
+        if prompt_evidence is not None and evidence is not None:
+            evidence.append(prompt_evidence)
+        if input_text is not None and input_texts is not None:
+            input_texts.append(input_text)
         return {"ok": True}
 
     control.agent.send = fake_send  # type: ignore[assignment]
@@ -812,13 +894,18 @@ async def test_non_inherited_behavior_is_applied_to_a_context_free_agent_turn(co
     await control.save_settings(JsonRequest({"cli": {"behavior": {
         "response_verbosity": "concise", "politeness_formality": "formal",
     }}}))
-    questions = asked_by(control)
+    evidence: list[dict[str, object]] = []
+    input_texts: list[str] = []
+    questions = asked_by(control, evidence=evidence, input_texts=input_texts)
 
     await control.agent_ask(JsonRequest({"text": "salut"}))
 
     assert "Réponds de façon concise" in questions[0]
     assert "Adopte un ton formel" in questions[0]
     assert questions[0].endswith("[Demande]\nsalut")
+    assert input_texts == ["salut"]
+    assert len(evidence) == 1
+    assert "salut" not in json.dumps(evidence[0])
 
 
 async def test_generated_behavior_does_not_masquerade_as_a_saved_prompt_override(control):
@@ -834,9 +921,9 @@ async def test_generated_behavior_does_not_masquerade_as_a_saved_prompt_override
 
 
 async def test_agent_send_preserves_inherit_and_applies_explicit_behavior(control):
-    messages = sent_by(control)
-    evidence = []
-    control.agent.set_next_prompt_evidence = lambda value: evidence.append(value)  # type: ignore[method-assign]
+    evidence: list[dict[str, object]] = []
+    input_texts: list[str] = []
+    messages = sent_by(control, evidence=evidence, input_texts=input_texts)
     await control.agent_send(JsonRequest({"text": "message brut"}))
     assert messages == ["message brut"]
     assert evidence == []
@@ -854,6 +941,7 @@ async def test_agent_send_preserves_inherit_and_applies_explicit_behavior(contro
     assert evidence[0]["channel"] == "stdin.user_message"
     assert evidence[0]["application"] == "sent"
     assert "message configuré" not in json.dumps(evidence[0])
+    assert input_texts == ["message configuré"]
 
 
 async def test_agent_send_rejects_blank_text_before_behavior_can_make_it_nonempty(control):

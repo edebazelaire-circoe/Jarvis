@@ -95,7 +95,8 @@ def test_delegation_projection_preserves_compatibility_and_single_winner_contrac
 
     assert mode["mapping"] == {"auto": True, "duplicate": False}
     assert mode["default"] == "duplicate"
-    assert mode["host_agent_scope"] == "active_cli_only"
+    assert mode["host_agent_scope"] == "claude_host_only_until_codex_boundary"
+    assert mode["runtime_status"] == "live-claude-host-only"
     assert mode["cross_cli_policy"] == "self_development_only"
     assert mode["max_subagent_calls_per_tool_call"] == 1
 

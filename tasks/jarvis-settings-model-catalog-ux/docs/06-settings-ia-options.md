@@ -4,7 +4,7 @@ Status: canonical input for Slices 02–07. Machine-readable source: `settings-i
 
 ## Product information architecture
 
-Settings keeps five primary destinations: **Agent / CLI**, **Voix**, **Prompts**, **Clés API**, and **Raccourcis**. `Aiguillage` disappears as navigation and user-facing vocabulary. Its working policy remains an internal part of Agent / CLI.
+The assembled Settings page keeps six primary destinations in rendered order: **Voix**, **Prompts**, **Agent / CLI**, **API Keys**, **Raccourcis**, and **Apparence**. `Apparence` is injected by the bundled theme layer and persists only the local renderer choice; it does not alter runtime settings. `Aiguillage` disappears as navigation and user-facing vocabulary. Its working policy remains an internal part of Agent / CLI.
 
 Agent / CLI order is locked:
 
@@ -20,14 +20,14 @@ One source of truth remains `agent_routing.enabled`; no second routing engine or
 
 | UI value | Persisted value | Runtime contract |
 |---|---:|---|
-| `auto` / Auto | `agent_routing.enabled=true` | Existing profile policy handles each `Agent`/`Task` call. It may replace caller model with first allowed, usable candidate from the active/host CLI only. Exactly one candidate wins. |
+| `auto` / Auto | `agent_routing.enabled=true` | Existing profile policy handles each `Agent`/`Task` call on an active Claude host. It may replace caller model with the first allowed, usable Claude candidate. Exactly one candidate wins. Codex exposes no equivalent verified hook, so its candidates are non-selectable in Auto. |
 | `duplicate` / Dupliqué | `agent_routing.enabled=false` | Compatibility/inheritance. Hook does not rewrite caller/CLI model. It does not duplicate task, spawn second agent, or fan out. |
 
 Nuances preserved from live resolver:
 
 - Auto + disabled profile or empty candidate list -> compatibility for that call.
 - Auto + configured list -> first eligible candidate; optional General fallback follows existing policy.
-- Cross-CLI execution is excluded from Auto: only the active/host CLI can execute the call. Cross-CLI work requires the explicit self-development workflow.
+- Cross-CLI execution is excluded from Auto: only the active Claude host CLI can execute the call. Codex has no verified sub-agent hook and is not usable in Auto. Cross-CLI work requires the explicit self-development workflow.
 - Configured candidates all ineligible -> explicit deny, not model outside policy.
 - Hook internal failure -> fail open, keep caller/CLI choice, emit `routing_hook_failed`.
 - Toggling Dupliqué never deletes profile candidates. Toggling Auto later restores them.
@@ -40,7 +40,7 @@ Nuances preserved from live resolver:
 | `agent_cli_settings.<agent>.command` | Technique / advanced | live |
 | `agent_cli_settings.<agent>.model` | Technique | live, catalog-backed |
 | `agent_cli_settings.<agent>.permission_mode` | Technique / advanced | live; CLI-specific enum |
-| `agent_routing.enabled` | Technique / delegation mode | live alias Auto/Dupliqué |
+| `agent_routing.enabled` | Technique / delegation mode | live Claude-host-only alias Auto/Dupliqué; Codex non-selectable in Auto |
 | `agent_routing.profiles.*.enabled` | Technique / routing advanced | live |
 | `agent_routing.profiles.*.candidates` | Sous-agents / Modèles | live, ordered |
 | `agent_routing.profiles.*.allow_general_fallback` | Technique / routing advanced | live |
@@ -97,6 +97,7 @@ Slice 02 verifies, and later Slices must preserve:
 - invalid Agent/CLI/behavior save -> `settings.agent.rejected`, warning, stable code, atomic recovery; combined prompt overflow uses `agent_settings_behavior_prompt_too_large`;
 - prompt edit exceeding the same combined bound -> existing `prompt.override.rejected`, warning, same stable code, no writer call;
 - composed direct Agent turn -> existing `agent.prompt`, info, bounded prompt identity only when evidence API is supported;
+- direct Agent history -> existing `agent.input` and Agent snapshot contain only the canonical user request; saved `backend.turn.addition` and generated behavior remain in-memory transport only;
 - composed owned job -> existing agent evidence projected as `job.agent.prompt`, info, correlated by `job_id`; legacy agent signatures remain compatible;
 - Auto delegation -> existing `agent.routing.decided`, correlated by `tool_use_id`, with profile/requested/chosen/reason/applied;
 - routing hook failure -> existing `agent.routing.failed`, error, `routing_hook_failed`, caller choice preserved;

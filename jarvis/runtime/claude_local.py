@@ -593,10 +593,23 @@ class ClaudeLocalAgent:
             self._stderr_task = asyncio.create_task(self._read_stderr(), name="jarvis-claude-stderr")
             return self.snapshot()
 
-    async def send(self, text: str, *, message_uuid: str | None = None) -> dict[str, Any]:
+    async def send(
+        self,
+        text: str,
+        *,
+        message_uuid: str | None = None,
+        prompt_evidence: dict[str, object] | None = None,
+        input_text: str | None = None,
+    ) -> dict[str, Any]:
         text = text.strip()
+        visible_text = text if input_text is None else str(input_text).strip()
         if not text:
+            self._next_prompt_evidence = None
             raise ValueError("message cannot be empty")
+        evidence = dict(prompt_evidence) if prompt_evidence is not None else self._next_prompt_evidence
+        # Consume the compatibility slot before any await/failure. Evidence is
+        # one-turn state and must never survive a failed start or closed owner.
+        self._next_prompt_evidence = None
         if self.process is None or self.process.returncode is not None:
             await self.start()
         if self._owned_closed:
@@ -610,14 +623,17 @@ class ClaudeLocalAgent:
         self.subtasks.turn_started()
         self.process.stdin.write((json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
         await self.process.stdin.drain()
-        if self._next_prompt_evidence is not None:
-            evidence, self._next_prompt_evidence = self._next_prompt_evidence, None
+        if evidence is not None:
             self.prompt_applications.append(dict(evidence))
             self.journal.emit("agent.prompt", "Prompt application recorded", data=dict(evidence))
         # Le CLI ne réémet pas l'entrée : sans cet écho la console n'afficherait
         # que les réponses, sans la question qui les a provoquées.
-        self._record(payload)
-        self.journal.emit("agent.input", text)
+        recorded_payload = {
+            **payload,
+            "message": {"role": "user", "content": visible_text},
+        }
+        self._record(recorded_payload)
+        self.journal.emit("agent.input", visible_text)
         return self.snapshot()
 
     def set_next_prompt_evidence(self, evidence: dict[str, object]) -> None:
@@ -628,7 +644,8 @@ class ClaudeLocalAgent:
         self._prompt_overrides = normalize_prompt_overrides(overrides)
 
     async def ask(self, text: str, *, timeout_s: float = 180.0,
-                  prompt_evidence: dict[str, object] | None = None) -> dict[str, Any]:
+                  prompt_evidence: dict[str, object] | None = None,
+                  input_text: str | None = None) -> dict[str, Any]:
         """Poser une question et attendre la réponse complète du tour.
 
         C'est le point d'entrée de la boucle vocale : la voix a besoin d'un
@@ -636,14 +653,17 @@ class ClaudeLocalAgent:
         déposer un message.
         """
         async with self._ask_lock:
-            if prompt_evidence is not None:
-                self._next_prompt_evidence = dict(prompt_evidence)
             loop = asyncio.get_running_loop()
             self._pending_result = loop.create_future()
             message_uuid = str(uuid.uuid4())
             self._pending_uuid = message_uuid
             try:
-                await self.send(text, message_uuid=message_uuid)
+                await self.send(
+                    text,
+                    message_uuid=message_uuid,
+                    prompt_evidence=prompt_evidence,
+                    input_text=input_text,
+                )
             except (RuntimeError, ValueError, OSError) as exc:
                 self._next_prompt_evidence = None
                 self._pending_result = None

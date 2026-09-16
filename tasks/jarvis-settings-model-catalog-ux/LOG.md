@@ -362,7 +362,7 @@ State: `COMPLETE`.
 
 ## 2026-09-14 — Slice 06 Voice settings backend projection
 
-State: `BACKEND_COMPLETE_UI_PENDING`.
+State: `COMPLETE`.
 
 ### Additive Settings schema
 
@@ -399,8 +399,8 @@ State: `BACKEND_COMPLETE_UI_PENDING`.
 - Expanded Voice/Settings/architecture suite under warnings-as-errors:
   **285 passed in 9.68 s**, 0 failed. Python compile and scoped diff checks
   passed; diff check reported only the repository line-ending warning.
-- UI implementation, responsive checks and human validation remain pending, so
-  Slice 06 is deliberately not marked complete.
+- Backend validation completed before the UI phase; the final UI validation is
+  recorded below.
 
 ### QA rework — AEC report correlation
 
@@ -416,3 +416,205 @@ State: `BACKEND_COMPLETE_UI_PENDING`.
   `arch=legacy` and real `aec_failed` is reported degraded from Voice. Separate
   checks prove wrong-ID rejection and production publication of both identity
   fields.
+
+### Voice settings UI completion
+
+- Replaced Mode vocal + Config with one `Voix` top-level tab. Its seven ARIA
+  sub-tabs are generated in backend order from `voice.categories`, retain state
+  across renders/openings and support ArrowLeft/ArrowRight/Home/End navigation.
+- One generic persistence renderer consumes `voice.option_metadata` category,
+  persistence, options, dependency, readonly, advanced, source, label and help
+  fields. All 44 persistable options and 9 diagnostic projections render once
+  in their owning category; no browser category map or nested
+  `settings_fields` copy exists.
+- Preserved explicit Simple/Front Brain/Duplex configurations, reasoning/model
+  constraints, client-delegation invariant, compatibility stack/arch disclosure
+  and inactive stack values. Conversation separates `active_timeout_s` from
+  architecture `idle_timeout_s`; VAD and authorization dependencies stay live.
+- Moved device selection/test and noise reduction to Audio. Device discovery is
+  lazy, retryable, local and guarded against closed/stale panels. Empty or
+  partial successful discovery names the missing side, retains retry and keeps
+  testing disabled until both input and output exist. The global
+  wake shortcut appears only under Tours & interruptions and still uses the
+  immediate shortcuts endpoint; its success confirmation now targets the
+  awaited current render safely.
+- Models owns a distinct shared catalog controller with backend-selectable
+  realtime/transcription/speech roles, no request/add action, lifecycle aborts
+  on render/switch/close and per-role preservation of search/filter/sort/compare
+  plus the last backend envelope. Its three provider-backed model selects load
+  their backend-declared `/api/models` sources independently, with local retry,
+  last-request-wins guards, saved-absent values and honest unavailable options;
+  this hydration never destroys or remounts the shared controller. A strict
+  `provider:role` plus `voice_stack_settings.*` gate hydrates exactly the three
+  provider selectors; the three architecture selectors continue to consume
+  capability-registry options and never issue malformed provider requests.
+- Diagnostic distinguishes effective from historical stack and presents
+  authorization/runtime/verifier/worker, AEC, switch, catalog and model states
+  read-only exactly once per metadata record. The owner profile uses the
+  verifier's effective path; the former parallel raw auth/verifier/AEC blocks
+  were removed. Refresh is last-request-wins and never replaces the unsaved draft.
+- Added production-JavaScript tests for exact inventory/XSS/unique IDs,
+  keyboard/state semantics, catalog lifecycle/roles, audio retry/stale guards,
+  diagnostic draft preservation, missing/default devices and full category
+  save/reload including inactive stacks and wake.
+- Final warnings-as-errors Voice/Settings/catalog/Agent regression after
+  provider-select, diagnostic, audio and shortcut QA rework:
+  **380 passed in 14.94 s**, 0 failed. Served-page Node syntax and
+  `git diff --check` passed; diff check reported only line-ending warnings.
+- Manual visual validation remains explicitly available in
+  `slices/06-voice-settings-tabs/human-validation.json`; it was not fabricated
+  as executed. `/impeccable` and Claude frontend routing were unavailable, so
+  the existing Control Center design/accessibility system was used.
+
+## 2026-09-14 — Slice 07 automated migration and rollout gate
+
+State: `AUTOMATED_COMPLETE_RUNTIME_PENDING`.
+
+### Migration and integration evidence
+
+- Added one versioned pre-redesign fixture matrix covering legacy routing true
+  and false, active/disappeared/unknown candidates, legacy OpenAI and Gemini
+  Voice stacks, explicit Simple/Front Brain/Duplex architectures, auth, audio,
+  shortcuts and unknown top-level/nested keys.
+- Added production-path load → `GET /api/settings` projection → browser
+  `draftFrom` → partial Agent/CLI or Voice `POST` → reload coverage. Reads are
+  proven non-mutating; saves retain unknown keys, candidate ordering, inactive
+  stack settings and unrelated architecture values.
+- Auto smoke proves one same-host winner and no Codex/fan-out call. Dupliqué
+  smoke proves the routing hook remains inactive and the caller's selected
+  CLI/model is not replaced. Behavior reload reaches direct `/api/agent/send`
+  through the shared prompt composer; evidence contains prompt identity only,
+  never user or generated instruction text.
+- Catalog fixtures prove missing credentials, missing CLI, stale provider and
+  unknown probe states from source evidence. No surface invents a request/add
+  action. Voice unknown-credential catalogs remain non-selectable.
+- All seven Voice categories are inventoried. A full categorized save/reload
+  preserves inactive stacks; a production-JavaScript probe proves unrelated
+  saves omit architecture until `architectureDirty` is set.
+- Navigation regression proves neither Aiguillage nor Config remains a primary
+  tab. The final checklist was corrected to verify the absence of an
+  unsupported request/add action instead of claiming one exists.
+
+### Documentation and observability
+
+- Added `docs/settings/migration-rollout.md` with projection/storage rules,
+  staged rollout, rollback, availability interpretation and operator
+  troubleshooting. `docs/settings/INDEX.md` links it and the Voice schema.
+- No product path, event, correlation ID, temporary probe or durable mock was
+  added. Tests consume existing API projections, routing outcomes and prompt
+  evidence contracts.
+- Official LogBroker errors, summary and correlation commands were attempted.
+  The repository still lacks `observability.cli` (`ModuleNotFoundError`); raw
+  JSONL was not used as substitute evidence.
+
+### Automated validation
+
+- New Slice 07 integration file: **15 passed in 3.21 s**, warnings as errors.
+- Settings/routing/catalog/Voice/UI targeted regression: **227 passed in
+  15.10 s**, warnings as errors.
+- The first full release-verifier run reached **3306 passed, 5 skipped** and
+  exposed one stale unit-test extraction boundary tied to a removed HTML
+  comment. The harness now uses the stable `function tabCli()` boundary and
+  passes isolated (**1 passed in 1.93 s**); no product change was required.
+- A second full release-verifier run reached **3306 passed, 5 skipped** and one
+  unrelated asynchronous Voice timeout: only two of three assistant turns were
+  visible after ten seconds. That test then failed once isolated in 20.81 s and
+  passed immediately on repeat in 1.66 s, demonstrating timing instability.
+  Product and Voice harness behavior were not changed under Slice 07.
+- The clean final `scripts/verify_release.py` run passed: **3307 passed, 5
+  skipped in 632.53 s**, followed by all static release checks and `Release
+  verification passed.`
+- Fixture, metadata and human-checklist JSON validation passed. `git diff
+  --check` passed with only existing line-ending warnings.
+
+### Runtime evidence supplied by the orchestrator
+
+- Real CUA walkthrough used an isolated server at `127.0.0.1:17664`:
+  status/settings/catalog returned 200, Voice offline was truthful, all seven
+  categories were present and effective stack was `openai_realtime`.
+- Six top tabs rendered (five core plus the existing Appearance injection), no
+  Aiguillage string remained, and End moved Conversation → Diagnostic with
+  correct focus/ARIA. Voice model no-key, search/filter focus, empty
+  transcription role and realtime query restoration were coherent.
+- Agent/CLI rendered Technique → Comportement → Catalog; missing Claude and
+  detected Codex remained truthful. Auto plus balanced behavior and Voice
+  `active_timeout_s=0` persisted; reopening retained the Audio sub-tab.
+- Hardware was detected and the Audio UI was active; the automated suite covers
+  no-hardware behavior. Both 390×844 and 1440×900 layouts fit their containers,
+  with horizontal Voice-tab scrolling at narrow width. Browser console warning
+  and error lists were empty; screenshots were visually coherent.
+- The orchestrator confirmed the final runtime walkthrough after the clean
+  release-verifier run. Slice 07 and the overall task are complete.
+
+## 2026-09-14 — Final Omega privacy and assembled-IA rework
+
+- Omega browser microphone capture now exists only while the semantic Voice
+  phase is `listening` and online. Leaving for thinking, speaking, idle,
+  offline, another theme, or unmount invalidates the request generation and
+  releases the active stream/context. A late `getUserMedia` result is stopped
+  immediately and cannot resurrect capture; track/context cleanup is
+  exception-safe and idempotent.
+- Settings rendering now calls one `cleanupSettingsSurface()` primitive. Both
+  the base renderer and the injected Appearance branch use it, so Agent and
+  Voice catalog controllers abort requests and remove listeners exactly once
+  when Appearance replaces their panel.
+- Canonical IA documentation and fixtures now describe the actually assembled
+  six-tab page, including the injected renderer-only Appearance tab. The
+  migration test executes the served HTML plus injected work script to verify
+  the final order instead of inspecting only the base `TABS` literal.
+- New production-JavaScript Node probes cover listening to thinking/idle,
+  delayed media permission resolution, repeated unmount, exact track/context
+  stop counts, and Agent/Voice catalog cleanup on Appearance renders.
+- Final task-scoped warnings-as-errors suite: **210 passed in 10.73 s**, 0
+  failed. Served-page JavaScript parsing is included in the suite. No runtime
+  log event was added: these are local resource-lifecycle transitions, and a
+  new recurring event would add noise without improving recovery evidence.
+
+## 2026-09-14 — Final backend security and truthfulness rework
+
+- Provider catalog caches are now bound to an opaque SHA-256 fingerprint of
+  provider plus full credential. The fingerprint is never returned or logged;
+  legacy suffix-only entries cannot authenticate a cache hit. Credential
+  rotation and deletion invalidate the affected provider, and stale fallback
+  is credential-scoped.
+- Auto routing is represented truthfully as enforceable only by the active
+  Claude host hook. Codex and cross-host candidates remain visible for
+  diagnosis but are not selectable in Auto and carry stable reason codes;
+  Dupliqué retains caller/CLI inheritance and no path introduces fan-out.
+- Composed behavior and saved prompt layers travel only in memory to native
+  Claude/Codex stdin. Agent history, snapshots and `agent.input` retain only
+  the canonical user request. Prompt evidence is explicit per call and is
+  consumed before validation, start or busy failures, preventing reuse by a
+  later turn.
+- Catalog roles now carry immutable provenance per value. Saved-but-absent
+  candidates use routing-settings evidence; Voice unions preserve classifier
+  and capability-registry evidence separately, and the shared UI renders the
+  corresponding source per role chip.
+- Independent backend/architecture re-review: **APPROVE**. Cross-suite
+  warnings-as-errors validation: **491 passed**. Contract JSON and diff checks
+  passed; only repository line-ending warnings remained.
+
+## 2026-09-14 — Final release and live UI gate
+
+- Final `scripts/verify_release.py`: **3323 passed, 5 skipped in 327.90 s**,
+  followed by all static gates and `Release verification passed.`
+- Live Control Center check at `127.0.0.1:17654` rendered exactly the six
+  canonical tabs. Voice Models and Agent / CLI both loaded their catalog
+  surfaces and transitioned to Appearance without a visible error. Browser
+  warning/error logs were empty. The test did not change the selected theme or
+  request microphone permission.
+- Frontend re-review after contract-order repair: **APPROVE**. The machine
+  contract is asserted against the actually assembled page, preventing the
+  base HTML and injected Appearance layer from drifting again.
+
+### Repository hygiene outside the feature scope
+
+- Commit `4833e62` also enlarged tracked `data/state/jarvis.sqlite3` from the
+  baseline 73,728-byte blob to 311,296 bytes. This is live local state, not a
+  Settings/catalog deliverable.
+- Restoring the exact `f0aec10` blob was attempted after verifying hashes, but
+  Windows refused because active JARVIS Core and Control Center services hold
+  the database open. No service was stopped and no database byte was changed.
+  The current blob remains recoverable from `c53687f`. Once JARVIS is stopped,
+  restore the baseline file and separately decide whether the already-pushed
+  Git history requires scrubbing.

@@ -101,10 +101,13 @@ assert.equal('compatibility' in sent.voice.architecture,false);
 for(const profile of data.voice.architecture.architectures){
  voiceArchitectureChanged('architecture',profile.id);
  const rendered=await voiceArchitectureHtml();
- for(const field of profile.fields)assert.ok(rendered.includes('architecture_'+field.key));
- if(profile.fields.some(f=>f.key==='idle_timeout_s')){
-  assert.ok(!rendered.includes('data-stack-field'));
-  assert.ok(rendered.includes('min="5" max="3600"'));
+ assert.ok(rendered.includes('data-voice-option="architecture"'));
+ assert.ok(!rendered.includes('settings_fields'));
+ for(const field of profile.fields){
+  const meta=data.voice.option_metadata.find(item=>item.id===field.key);
+  const fieldHtml=voiceOptionHtml(meta);
+  assert.ok(fieldHtml.includes(`data-voice-option="${field.key}"`));
+  if(field.key==='idle_timeout_s')assert.ok(fieldHtml.includes('min="5"')&&fieldHtml.includes('max="3600"'));
  }
 }
 assert.equal(JSON.stringify(data.voice.architecture.selection.config),original);
@@ -128,7 +131,7 @@ def test_async_browser_render_does_not_restore_a_previous_panel(tmp_path):
 const assert=require('node:assert/strict');
 const SET={tab:'voice'},TABS=[{id:'voice',save:true},{id:'cli',save:true}];
 const modalContent={},modalSub={},modalSave={style:{}};
-const esc=String,say=()=>{},bindTab=()=>{},destroyAgentCatalog=()=>{},mountAgentCatalog=()=>{},hydrateCliAgents=()=>{};
+const esc=String,say=()=>{},bindTab=()=>{},bindVoiceSurface=()=>{},destroyAgentCatalog=()=>{},destroyVoiceCatalog=()=>{},cleanupSettingsSurface=()=>{destroyAgentCatalog();destroyVoiceCatalog()},mountAgentCatalog=()=>{},hydrateCliAgents=()=>{};
 let finish;
 const tabVoice=()=>new Promise(resolve=>{finish=resolve});
 const tabCli=()=>'<new agent panel>';
