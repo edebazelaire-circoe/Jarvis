@@ -463,6 +463,7 @@ async def test_a_refusal_crosses_the_mcp_protocol_as_an_error_result(core, tools
         assert result.isError is True
         text = result.content[0].text
         assert "reason=pinned_by_user" in text and "Traceback" not in text
+        assert text.startswith("set_geometry refusé par la scène") and "Error executing tool" not in text
         ok = await session.call_tool("scene_inspect", {})
         assert ok.isError is False and json.loads(ok.content[0].text)["o"][0][10] is True
 
@@ -945,3 +946,101 @@ async def test_show_all_hidden_goes_through_the_mcp_schema(core, tools):
         bad = await session.call_tool("scene_set_visibility", {"scope": "everything", "visibility": "visible"})
         assert bad.isError is True and "scope" in bad.content[0].text
     assert BRAIN_DISPLAY_PROMPT.count("scope all_hidden") == 1
+
+
+# ------------------------------------------------------------------ suivi final Slice 06
+
+
+async def test_the_brain_cannot_draw_parent_of_between_runtime_stars(core, tools):
+    await observe(core, {"external_id": "p", "status": "running", "kind": "agent", "label": "p"},
+                  {"external_id": "c", "status": "running", "kind": "agent", "label": "c"})
+    await wait_for(core, lambda snap: {"claude:p", "claude:c"} <= {o["object_id"] for o in snap["objects"]})
+    with pytest.raises(DisplayToolError) as refused:
+        await tools.link(from_id="claude:c", to_id="claude:p", kind="parent_of")
+    assert refused.value.reason == "runtime_owned" and "ni relier deux étoiles par parent_of" in str(refused.value)
+    snap = await wait_for(core, lambda snap: True)
+    assert snap["relations"] == []
+
+
+async def test_the_brain_own_fast_path_actions_are_never_reported_as_external_changes(core, tools):
+    """Séquence « hint attribution » de la QA : masquer, créer, puis une étoile externe."""
+
+    target = (await tools.create_object(kind="artifact", category="note", title="u20"))["object_id"]
+    other = (await tools.create_object(kind="artifact", category="note", title="u21"))["object_id"]
+    json.loads(await tools.inspect())
+    hidden = await tools.set_visibility(object_id=target, visibility="hidden")
+    mine = await tools.create_object(kind="artifact", category="note", title="brain own note")
+    assert "scene_changed" not in hidden and "scene_changed" not in mine
+    await observe(core, {"external_id": "ext1", "status": "running", "kind": "agent", "label": "external star"})
+    await wait_for(core, lambda snap: any(o["object_id"] == "claude:ext1" for o in snap["objects"]))
+
+    result = await tools.update_object(object_id=other, title="touch")
+
+    entries = result["scene_changed"].split("\n")[2:]
+    assert entries == ['+ claude:ext1 (agent, visible, running) "external star"']
+
+
+async def test_a_filtered_inspection_only_marks_the_returned_objects_as_seen(core, tools):
+    note = (await tools.create_object(kind="artifact", category="note", title="note non vue"))["object_id"]
+    group = (await tools.create_object(kind="group", category="plan", title="groupe"))["object_id"]
+    listing = json.loads(await tools.inspect(kind="group"))
+    assert [row[0] for row in listing["o"]] == [group]
+    assert tools._seen_partial is True and note not in tools._seen_index
+
+    # Rien n'a bougé, mais la note n'a jamais été rendue : elle est signalée.
+    moved = await tools.update_object(object_id=group, title="groupe renommé")
+    lines = moved["scene_changed"].split("\n")
+    assert "partielle" in lines[0] or "a changé" in lines[0]
+    assert f'+ {note} (artifact, visible, unknown) "note non vue"' in lines
+    # La scène relue est désormais vue en entier : plus rien à signaler.
+    assert tools._seen_partial is False
+    assert "scene_changed" not in await tools.update_object(object_id=group, title="groupe 2")
+
+    # Filtre encore, puis l'utilisateur masque l'objet non rendu : le changement n'est pas tu.
+    json.loads(await tools.inspect(text="groupe"))
+    await user_command(core, {"op": "set_visibility", "object_id": note, "visibility": "hidden"})
+    hint = (await tools.update_object(object_id=group, title="groupe 3"))["scene_changed"]
+    assert f'~ {note} (artifact) visible → hidden "note non vue"' in hint
+
+
+async def test_show_all_hidden_stops_at_its_deadline_and_reports_the_rest(monkeypatch):
+    objects = [
+        {"object_id": f"o{index}", "kind": "artifact", "category": "note", "constraints": {"placed_by": "user", "pinned_by_user": False},
+         "origin": "user", "exec_state": "unknown", "representation": "point", "geometry": None, "layer": 120, "order": 0,
+         "visibility": "hidden", "disposition": "active", "work_ref": None, "payload": {"title": "", "summary": "", "items": []}}
+        for index in range(10)
+    ]
+
+    async def snapshot():
+        return {"scene_id": "s", "epoch": "e", "revision": 1, "snapshot": {
+            "schema_version": 1, "scene_id": "s", "revision": 1, "objects": objects, "relations": [], "archived_ids": []}}
+
+    revision = [1]
+
+    async def slow(command):  # noqa: ANN001
+        await asyncio.sleep(0.05)
+        revision[0] += 1
+        return {"outcome": "applied", "reason": None, "scene_id": "s", "epoch": "e", "revision": revision[0],
+                "patch": {"schema_version": 1, "revision": revision[0], "ops": [{"op": "delete_relation", "relation_id": "x"}]}}
+
+    spy = SpyTransport(command=slow, snapshot=snapshot)
+    display = SceneDisplayTools(spy, bulk_deadline_s=0.12)
+    result = await display.set_visibility(scope="all_hidden", visibility="visible")
+    assert result["deadline_reached"] is True and 0 < result["applied"] < 10
+    assert result["remaining"] == 10 - result["applied"] == 10 - len(spy.commands)
+    assert "délai" in result["note"] and result["revision"] == revision[0]
+    assert display_mcp.BULK_DEADLINE_S == 15.0
+
+
+def test_the_brain_does_not_read_aloud_what_it_just_displayed():
+    assert ("Ne lis pas à voix haute ce que tu viens d'afficher ; confirme en quelques mots, "
+            "sauf si l'utilisateur demande la lecture.") in BRAIN_DISPLAY_PROMPT
+
+
+def test_core_error_text_only_serves_json_errors():
+    from jarvis.protocol.client import CoreProtocolError
+    from jarvis.runtime.scene_view import classify_scene_call_failure, core_error_text
+
+    assert core_error_text(CoreProtocolError(503, "scene_unavailable", "")) == "503 scene_unavailable"
+    failure = classify_scene_call_failure(CoreProtocolError(500, "http_500", "<html>Traceback</html>"), connect_timeout_s=3, read_timeout_s=10)
+    assert (failure.code, failure.message) == ("core_refused", "Core a refusé la commande (500 http_500).")

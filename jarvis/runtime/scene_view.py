@@ -325,10 +325,12 @@ SCENE_CALL_ERRORS = (aiohttp.ClientError, OSError, TimeoutError, CoreProtocolErr
 
 
 def core_error_text(exc: CoreProtocolError) -> str:
-    """Message d'erreur de Core, jamais un corps non JSON (page HTML, trace) relayé tel quel."""
+    """Message d'une erreur JSON de Core (`scene_unavailable`, 400/413 de Core).
 
-    if exc.code.startswith("http_"):
-        return f"Core a répondu {exc.status} sans erreur lisible."
+    Jamais appelée sur un corps non JSON (code `http_<statut>`) : celui-là est
+    classé `core_refused` avec statut et code seulement.
+    """
+
     return exc.message or f"{exc.status} {exc.code}"
 
 

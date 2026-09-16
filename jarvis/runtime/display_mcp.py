@@ -39,7 +39,7 @@ dépendance facultative.
 # outils définis dans `build_server`, qui nomment des alias locaux.
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import json
 import os
@@ -98,6 +98,9 @@ MAX_CHANGE_TITLE_CHARS = 40
 MAX_BULK_TARGETS = 128
 #: Identifiants listés au plus dans le résultat d'un appel groupé.
 MAX_BULK_REPORTED_IDS = 20
+#: Budget de temps d'un appel `scope="all_hidden"` : au-delà, arrêt entre deux
+#: commandes et comptes vrais (`remaining`, `deadline_reached`).
+BULK_DEADLINE_S = 15.0
 #: Délais : ceux du proxy du Control Center (`scene_view`).
 SNAPSHOT_TIMEOUT_S = 10.0
 COMMAND_CONNECT_TIMEOUT_S = 3.0
@@ -215,8 +218,9 @@ REFUSAL_EXPLANATIONS: dict[str, str] = {
     SceneRefusal.EXECUTION_NODE: "Les étoiles agent/job naissent seulement du runtime : ne les recrée pas, crée un artifact.",
     SceneRefusal.EXECUTION_TRUTH: "exec_state et work_ref reflètent Core : tu ne peux pas les écrire.",
     SceneRefusal.RUNTIME_OWNED: (
-        "Ce lien appartient au runtime (parenté entre étoiles ou signal d'une tâche) : tu ne peux pas le retirer. "
-        "Tu peux masquer le signal avec scene_set_visibility ; l'utilisateur écarte en archivant."
+        "La parenté entre étoiles et le lien d'un signal de tâche appartiennent au runtime : tu ne peux ni les retirer, "
+        "ni relier deux étoiles par parent_of. Tu peux masquer le signal avec scene_set_visibility ; "
+        "l'utilisateur écarte en archivant."
     ),
     SceneRefusal.RESERVED_ID: "Identifiant de la forme réservée au runtime : laisse l'outil générer l'identifiant.",
     SceneRefusal.RESOLVER_ACTOR: "Le placement « resolver » est réservé au navigateur.",
@@ -297,6 +301,10 @@ def _items(values: list[Mapping[str, Any]] | None) -> tuple[ScenePayloadItem, ..
 _ORIGIN_RANK = {SceneActor.BRAIN: 0, SceneActor.USER: 1, SceneActor.RUNTIME: 2}
 
 
+def _index_entry(item: SceneObject) -> tuple[str, str, str, str]:
+    return (item.kind.value, item.visibility.value, item.exec_state.value, _short(item.payload.title, MAX_CHANGE_TITLE_CHARS))
+
+
 def _scene_changes(before: Mapping[str, tuple[str, str, str, str]], current: SceneSnapshot, *, exclude: frozenset[str]) -> list[str]:
     """Objets apparus, sortis (archivés ou retirés) et dont la visibilité ou l'état ont changé.
 
@@ -363,8 +371,10 @@ class SceneDisplayTools:
         command_connect_timeout_s: float = COMMAND_CONNECT_TIMEOUT_S,
         command_timeout_s: float = COMMAND_TIMEOUT_S,
         id_factory: Callable[[], str] | None = None,
+        bulk_deadline_s: float = BULK_DEADLINE_S,
     ) -> None:
         self.transport = transport
+        self.bulk_deadline_s = bulk_deadline_s
         self.journal = journal
         self.snapshot_timeout_s = snapshot_timeout_s
         self.command_connect_timeout_s = command_connect_timeout_s
@@ -375,6 +385,9 @@ class SceneDisplayTools:
         #: Index compact de la scène vue : `id → (kind, visibility, exec_state, titre court)`.
         #: Borné par la scène elle-même (`MAX_SCENE_OBJECTS`), titres coupés.
         self._seen_index: dict[str, tuple[str, str, str, str]] = {}
+        #: Dernière lecture filtrée ou tronquée : des objets n'ont pas été vus, le
+        #: chemin rapide (révision attendue) ne vaut pas, la commande suivante relit.
+        self._seen_partial = False
 
     async def close(self) -> None:
         await self.transport.close()
@@ -508,7 +521,14 @@ class SceneDisplayTools:
         duplicate: list[str] = []
         refused: list[dict[str, str]] = []
         revision = before.revision
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.bulk_deadline_s
+        deadline_reached = False
         for target in targets:
+            if loop.time() >= deadline:
+                # Entre deux commandes seulement : une commande partie a sa propre borne.
+                deadline_reached = True
+                break
             command = SceneCommand(op=SceneOp.SET_VISIBILITY, actor=SceneActor.BRAIN, object_id=target, visibility=Visibility.VISIBLE)
             try:
                 body = await self._post(command.to_payload())
@@ -528,7 +548,7 @@ class SceneDisplayTools:
         self._emit("display.tool", f"scene_set_visibility all_hidden : {len(applied)} réaffiché(s)", data={
             "tool": "scene_set_visibility", "op": "set_visibility", "scope": "all_hidden", "matched": len(hidden),
             "applied": len(applied), "duplicate": len(duplicate), "refused": len(refused), "revision": revision,
-            "scene_changed": hint is not None,
+            "scene_changed": hint is not None, "deadline_reached": deadline_reached,
         })
         result: dict[str, Any] = {
             "scope": "all_hidden", "visibility": "visible", "matched": len(hidden),
@@ -536,9 +556,15 @@ class SceneDisplayTools:
             "applied_ids": applied[:MAX_BULK_REPORTED_IDS], "refused_ids": refused[:MAX_BULK_REPORTED_IDS],
             "revision": revision,
         }
-        if len(hidden) > len(targets):
-            result["remaining"] = len(hidden) - len(targets)
-            result["note"] = "limite d'un appel atteinte : rappelle l'outil pour la suite"
+        processed = len(applied) + len(duplicate) + len(refused)
+        if len(hidden) > processed:
+            result["remaining"] = len(hidden) - processed
+            if deadline_reached:
+                result["deadline_reached"] = True
+                result["note"] = (f"délai de {self.bulk_deadline_s:g} s atteint : arrêt, "
+                                  "rappelle l'outil pour réafficher le reste")
+            else:
+                result["note"] = "limite d'un appel atteinte : rappelle l'outil pour la suite"
         if hint is not None:
             result["scene_changed"] = hint
         return result
@@ -639,8 +665,12 @@ class SceneDisplayTools:
             for rel in snapshot.relations
             if rel.from_id in listed_ids and rel.to_id in listed_ids
         ]
-        listing = self._bounded_listing(header, objects, relations)
-        self._remember(snapshot)
+        listing, returned = self._bounded_listing(header, objects, relations)
+        if returned == len(snapshot.objects):
+            self._remember(snapshot)
+        else:
+            # Filtre ou troncature : seuls les objets rendus sont vus.
+            self._remember_seen_objects(snapshot, {row[0] for row in objects[:returned]})
         return listing
 
     @staticmethod
@@ -664,7 +694,9 @@ class SceneDisplayTools:
         ]
 
     @staticmethod
-    def _bounded_listing(header: dict[str, Any], objects: list[list[Any]], relations: list[list[Any]]) -> str:
+    def _bounded_listing(header: dict[str, Any], objects: list[list[Any]], relations: list[list[Any]]) -> tuple[str, int]:
+        """Le JSON borné et le nombre d'objets effectivement rendus (les premiers de `objects`)."""
+
         def encode(value: object) -> str:
             return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
@@ -699,7 +731,7 @@ class SceneDisplayTools:
                 "relations_omitted": omitted_relations,
                 "hint": "réponse bornée : filtre avec kind, category ou text",
             }
-        return encode(body)
+        return encode(body), len(kept_objects)
 
     # -------------------------------------------------------------- commandes
 
@@ -751,7 +783,7 @@ class SceneDisplayTools:
         body = await self._post(wire)
         outcome, reason = body["outcome"], body["reason"]
         hint = await self._revision_hint(body["scene_id"], body["revision"], applied=outcome == SceneCommandOutcome.APPLIED.value,
-                                         exclude=frozenset({object_id}))
+                                         exclude=frozenset({object_id}), patch=body.get("patch"))
         data = {"tool": tool, "op": op, "outcome": outcome, "reason": reason, "revision": body["revision"], "id": object_id,
                 "scene_changed": hint is not None}
         if outcome in (SceneCommandOutcome.REJECTED_AUTHORITY.value, SceneCommandOutcome.INVALID.value):
@@ -791,7 +823,9 @@ class SceneDisplayTools:
 
         return await self._core_call(call, "command")
 
-    async def _revision_hint(self, scene_id: str, revision: int, *, applied: bool, exclude: frozenset[str]) -> str | None:
+    async def _revision_hint(
+        self, scene_id: str, revision: int, *, applied: bool, exclude: frozenset[str], patch: Mapping[str, Any] | None = None,
+    ) -> str | None:
         """Quand la scène a bougé sans le cerveau depuis sa dernière lecture : la ligne et ce qui a changé.
 
         Le résumé compare l'index gardé de la dernière scène vue à l'instantané
@@ -804,8 +838,13 @@ class SceneDisplayTools:
             self._seen = (scene_id, revision)
             return "Tu n'as pas lu la scène avec scene_inspect depuis le début de cette session : relis-la avant d'en parler ou d'agir encore."
         expected = seen[1] + 1 if applied else seen[1]
-        if seen[0] == scene_id and revision == expected:
+        if seen[0] == scene_id and revision == expected and not self._seen_partial:
+            # Chemin rapide : rien d'autre n'a bougé ; la commande du cerveau
+            # entre dans l'index, sinon elle reviendrait plus tard comme un
+            # changement subi.
             self._seen = (scene_id, revision)
+            if patch is not None:
+                self._apply_own_patch(patch)
             return None
         try:
             current = await self._snapshot()
@@ -823,13 +862,24 @@ class SceneDisplayTools:
                 "relis-la avec scene_inspect avant d'en parler ou d'agir encore.")
 
     def _change_hint(self, current: SceneSnapshot, *, exclude: frozenset[str]) -> str | None:
-        """Ligne + résumé borné des changements entre la scène vue et `current` ; `None` si rien n'a bougé."""
+        """Ligne + résumé borné des changements entre la scène vue et `current` ; `None` si rien n'a bougé.
+
+        Après une lecture partielle (filtre, troncature), les objets jamais
+        rendus comptent comme « apparus » : ils n'ont pas été vus.
+        """
 
         seen = self._seen
-        if seen is None or (seen[0] == current.scene_id and seen[1] == current.revision):
+        if seen is None:
             return None
+        moved = seen[0] != current.scene_id or seen[1] != current.revision
         entries = _scene_changes(self._seen_index, current, exclude=exclude)
-        line = self._changed_line(seen[1], current.revision)
+        if not moved and not (self._seen_partial and entries):
+            return None
+        if moved:
+            line = self._changed_line(seen[1], current.revision)
+        else:
+            line = ("Ta dernière lecture de la scène était partielle (filtre ou réponse tronquée) : "
+                    "voici ce que tu n'as pas vu ; relis-la avec scene_inspect avant d'en parler ou d'agir encore.")
         if not entries:
             return line
         shown = entries[:MAX_CHANGE_ENTRIES]
@@ -841,15 +891,42 @@ class SceneDisplayTools:
         """Retenir la scène vue : révision et index compact (visibilité des objets réaffichés mise à jour)."""
 
         self._seen = (snapshot.scene_id, snapshot.revision if revision is None else revision)
+        self._seen_partial = False
         self._seen_index = {
-            item.object_id: (
-                item.kind.value,
-                Visibility.VISIBLE.value if item.object_id in shown else item.visibility.value,
-                item.exec_state.value,
-                _short(item.payload.title, MAX_CHANGE_TITLE_CHARS),
-            )
+            item.object_id: _index_entry(replace(item, visibility=Visibility.VISIBLE) if item.object_id in shown else item)
             for item in snapshot.objects
         }
+
+    def _remember_seen_objects(self, snapshot: SceneSnapshot, returned: set[str]) -> None:
+        """Lecture partielle : seuls les objets rendus entrent dans l'index ; la suite relira la scène."""
+
+        index = dict(self._seen_index) if self._seen is not None and self._seen[0] == snapshot.scene_id else {}
+        for item in snapshot.objects:
+            if item.object_id in returned:
+                index[item.object_id] = _index_entry(item)
+        # Borné : jamais plus d'entrées que la scène n'a d'objets actifs, plus ceux vus avant.
+        self._seen_index = dict(list(index.items())[-MAX_SCENE_OBJECTS:])
+        self._seen = (snapshot.scene_id, snapshot.revision)
+        self._seen_partial = True
+
+    def _apply_own_patch(self, patch: Mapping[str, Any]) -> None:
+        """Faire entrer dans l'index ce que la commande du cerveau vient d'appliquer."""
+
+        for op in patch.get("ops", ()):
+            obj = op.get("object") if isinstance(op, Mapping) else None
+            if not isinstance(obj, Mapping):
+                continue
+            object_id = obj.get("object_id")
+            if op.get("op") == "archive_object":
+                self._seen_index.pop(object_id, None)
+            elif op.get("op") == "put_object":
+                title = obj.get("payload", {}).get("title", "") if isinstance(obj.get("payload"), Mapping) else ""
+                self._seen_index[object_id] = (
+                    str(obj.get("kind")), str(obj.get("visibility")), str(obj.get("exec_state")),
+                    _short(str(title), MAX_CHANGE_TITLE_CHARS),
+                )
+        if len(self._seen_index) > MAX_SCENE_OBJECTS:
+            self._seen_index = dict(list(self._seen_index.items())[-MAX_SCENE_OBJECTS:])
 
     async def _snapshot(self) -> SceneSnapshot:
         from jarvis.runtime.scene_view import decode_snapshot_response
@@ -981,6 +1058,10 @@ def build_server(target: DisplayMcpTarget | None = None, *, tools: SceneDisplayT
                     text, fields = _argument_error_text(cause)
                     display.report_rejected_arguments(name, "invalid_argument", fields)
                     raise ToolError(f"Argument invalide, rien n'a été envoyé : {text}") from None
+                if isinstance(cause, DisplayToolError):
+                    # Même forme pour toutes les erreurs de ces outils : le message, sans
+                    # le préfixe « Error executing tool … » que FastMCP ajoute ailleurs.
+                    raise ToolError(str(cause)) from None
                 raise
 
     mcp = StrictDisplayMCP(SERVER_NAME, instructions=_SERVER_INSTRUCTIONS)
