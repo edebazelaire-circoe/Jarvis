@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-OBS-E2E-01",
+      "title": "Validate transcript fidelity after a failure",
+      "instructions": "After maximum automated validation, run one controlled session that includes normal speech, an interruption, and a sub-agent task, then terminate/restart Jarvis. Confirm the readable transcript and timeline still reflect what actually happened without model-written reconstruction.",
+      "expected": "The transcript remains faithful and available after restart; interruption and sub-agent timing are visible."
+    }
+  ]
+}

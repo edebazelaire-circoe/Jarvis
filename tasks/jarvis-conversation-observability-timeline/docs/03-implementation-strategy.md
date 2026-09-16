@@ -1,0 +1,3 @@
+# Implementation Strategy
+
+Land the event contract first, then durable persistence, then source instrumentation. Once the contract is stable, the live API and UI can proceed. Instrumentation should initially dual-write where necessary: preserve current RuntimeJournal events while adding canonical conversation events. The timeline UI must never parse raw trace JSON directly. Keep export/search as projections on top of the query service. Cross-handoff note: the separate voice arbitration task should consume this event contract when available, but this task must not wait for arbitration behavior to be fixed before capturing current behavior.

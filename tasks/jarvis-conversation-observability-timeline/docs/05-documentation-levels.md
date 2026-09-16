@@ -1,0 +1,22 @@
+# Documentation Levels
+
+| Concept | Current observed level | Required level | Action |
+|---|---:|---:|---|
+| Runtime diagnostic journal (`trace.jsonl`) | 3 | 3 | Reuse; do not redefine as transcript truth. |
+| Canonical conversation event envelope | 0/1 | 3 | Define schema, serializer, validator, producer API. |
+| Conversation persistence/replay | 0/1 | 3 | Durable adapter + recovery + indexes/query contract. |
+| Trace correlation from conversation events | 1 | 3 | Stable IDs and join contract. |
+| Live transcript/timeline UI | 0 | 3 | Query/stream API + reusable timeline renderer + runtime QA. |
+
+Slice 00 must correct these levels if the live repository has gained equivalent contracts since the inspected snapshot.
+
+## Slice 00 live correction (2026-09-16, `main` 7ed67bb)
+
+| Concept | Corrected observed level | Evidence |
+|---|---:|---|
+| Runtime diagnostic journal (`trace.jsonl`) | 2 | No schema/version/lock/rotation; concurrent writers corrupt lines. Still reuse as telemetry only. |
+| Durable conversation history (`sqlite_state.turns`, `jsonl_history.py`) | 3 | WAL + schema_version, fsync JSONL; source for user / heard-assistant turns. |
+| Canonical conversation event envelope | 0 (patterns at 2–3: `ProtocolEnvelope`, `voice_event_codec.py`) | No conversation event type exists. |
+| Conversation event persistence/replay | 0 (substrate at 3: `sqlite_state.py`) | Reuse SQLite + schema migration. |
+| Trace correlation | 1 | Many IDs, no `trace_id` / span. |
+| Live transcript/timeline UI | 0 | Control Center is polling-only, plain JS. |

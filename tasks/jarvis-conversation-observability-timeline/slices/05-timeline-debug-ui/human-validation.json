@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-OBS-UI-01",
+      "title": "Inspect live conversation timeline",
+      "instructions": "After automated UI/runtime QA passes, open the live Transcript/Debug view during a real voice session. Verify User is readable on the left, Jarvis/Mouth is light blue, Brain is orange, sub-agent spans are red, overlaps/durations are understandable, and clicking non-user events opens useful details/trace links.",
+      "expected": "The timeline is readable during a real conversation, preserves temporal overlap, and provides useful drill-down without exposing hidden reasoning."
+    }
+  ]
+}
