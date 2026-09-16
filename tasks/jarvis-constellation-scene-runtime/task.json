@@ -1,0 +1,14 @@
+{
+  "id": "jarvis-constellation-scene-runtime",
+  "title": "JARVIS - Persistent Constellation Scene Runtime & Brain Display Tools",
+  "project_id": "jarvis",
+  "project_name": "JARVIS",
+  "status": "to-do",
+  "priority": "P1",
+  "domain": "runtime",
+  "assigned_agent": "developer",
+  "task_type": null,
+  "handoff_path": "Jarvis/task/to-do/jarvis-constellation-scene-runtime/README.md",
+  "blockers": ["task_type_unresolved"],
+  "blocker_detail": "Resolve the approved Workspace Task Type vocabulary in Slice 00 before any implementation dispatch."
+}
