@@ -1,7 +1,9 @@
 # Slice 02 — Scene store & persistence
 
 ## Goal
-A Core-owned `SceneService`/`SceneStore` that applies Slice 01 commands, persists the active scene durably, keeps a bounded in-memory patch ring for transport, and publishes `core.scene.updated` on `CoreEventBus`.
+A Core-owned `SceneService`/`SceneStore` that applies Slice 01 commands, persists the active scene durably, keeps a bounded in-memory patch ring for transport, and exposes a local revision wait primitive for long-polling.
+
+PM amendment (Slice 02 review): scene updates are **not** published on `CoreEventBus` — `/v1/events` forwards every bus event unfiltered to all WebSocket clients (voice included), so scene payloads/bursts would bloat the voice socket and risk evicting its non-lossy subscriber.
 
 ## Context
 Audit facts: Core work state is memory-only and gets a new `store_id` each start (`jarvis/core/work_state.py:10-22, :168`). Durable Core state lives in SQLite `data/state/jarvis.sqlite3` via `jarvis/adapters/sqlite_state.py`, whose `schema_version` table refuses newer versions and has no migration framework. The scene, unlike work state, must survive restart (Decision 11).

@@ -13,6 +13,8 @@ Audit facts: the Control Center browser polls full JSON (`/api/status` 1 s, `/ap
 
 PM amendment (Slice 01 QA, F3): worst-case snapshot is ~8 MB (512 objects × 16 KiB payload); measured 1.4 MB / 25 ms decode at realistic bounds. Transport must bound response size (aiohttp `client_max_size` for commands; compact snapshot projection or gzip for the browser if needed) and never re-send full snapshots on every poll; decoders must catch only `ValueError`/`TypeError` and map them to 400.
 
+PM amendment (Slice 02 review): the Core long-poll uses `SceneService.wait_for_revision` (local wait primitive), never `CoreEventBus`/`/v1/events`.
+
 ## Scope
 ### In Scope
 Core routes, Control Center proxy view, pure JS patch-application logic + node tests, `test_documented_routes.py` compliance.
