@@ -12,6 +12,8 @@ Audit facts: the continuous brain is the Claude Code CLI spawned by `ClaudeLocal
 - Repo wiring: `ClaudeLocalAgent` passes a generated `--mcp-config` for the display server on brain profiles that should have it (not `speculative_analysis`), gated by the scene feature flag; user-scope registration stays untouched.
 - Brain prompt: short display guidance appended to `BRAIN_SYSTEM_PROMPT` via `prompt_runtime` (catalogued in `prompt_catalog.py`), respecting the existing delegate-long-work and no-redundant-announcement rules.
 
+PM amendment (Slice 01 QA): relation layer 50 (`DEFAULT_RELATION_LAYER`) means "not announced" for runtime but is an explicit value for brain/user — MCP tool schemas must not default `layer` to 50 (omit when not provided). Surface reducer refusals (`object_archived`, `pinned_by_user`, `execution_node`, `resolver_actor`, ...) as explicit tool errors with the reason code. Relations carry no `origin`; runtime may unlink a brain-created `parent_of` between runtime stars — acceptable (runtime owns topology), document it in the tool guidance.
+
 ## Scope
 ### In Scope
 MCP server, spawn wiring, prompt addition, tests, real-trace validation.

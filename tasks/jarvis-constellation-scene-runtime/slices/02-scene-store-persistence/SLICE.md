@@ -9,6 +9,8 @@ Audit facts: Core work state is memory-only and gets a new `store_id` each start
 ## Canonical Concepts
 Core owns the scene (same process as work truth and bus). Persist to a **separate** SQLite file `data/state/scene.sqlite3` through a new adapter that copies `sqlite_state.py` conventions (schema_version table, JSON `data` columns) so `jarvis.sqlite3` schema stays at 1. A stable `scene_id` persists across restarts (unlike work `store_id`); revision continues from the persisted value. Archived objects are retained in storage but excluded from the active snapshot.
 
+PM amendment (Slice 01 QA re-verification): `apply_scene_patch` does not enforce immutable fields (`origin`, `kind`) on crafted `put_object`. If this Slice replays patches from storage or accepts externally produced patches, add a domain guard (reviewed change in `jarvis/domain/scene.py`) or persist snapshots only. `SceneObject.origin` was added without a `schema_version` bump because nothing was persisted yet: from this Slice on, any wire/storage shape change requires a version bump and explicit refusal of unknown versions.
+
 ## Scope
 ### In Scope
 Port `jarvis/ports/scene.py` (reader/command sink), adapter `jarvis/adapters/sqlite_scene.py`, service `jarvis/core/scene_service.py` (serialized command application via asyncio lock, write-through persistence, patch ring, bus publish), wiring in `jarvis/core/v2_app.py`.

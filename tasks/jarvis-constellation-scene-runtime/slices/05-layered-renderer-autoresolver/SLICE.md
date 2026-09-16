@@ -13,6 +13,8 @@ Audit facts: vanilla JS, no build; JS files injected into `control_center.html` 
 - AutoResolver (pure JS): priority user pins > explicit brain/user placement > resolver; only places unplaced objects or nudges `placed_by=resolver` ones; overlap is allowed across different layers and for explicitly placed objects; deterministic output for the same input. Resolver results are render-local; they are persisted only when committed back via a command (`placed_by=resolver`) — PM decision to keep positions stable across reloads.
 - Honour `prefers-reduced-motion`.
 
+PM amendment (Slice 01 QA): payload text may contain DEL, C1, bidi overrides (U+202E), zero-width and U+2028 characters. Render only via `textContent` (never `innerHTML` for scene payload) and neutralise bidi override/isolate controls so summaries cannot spoof their displayed content.
+
 ## Scope
 ### In Scope
 `control_center_scene.js` renderer + resolver, CSS, marker injection, feature flag gate (render only if enabled, see 11), node tests for resolver.

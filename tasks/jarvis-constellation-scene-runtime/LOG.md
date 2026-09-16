@@ -100,3 +100,10 @@ No deviation from the locked decisions. No temporary/mock behaviour.
 - **n4** — `docs/scene-model.md` Validation block lists `scripts/verify_release.py`.
 - Not done, per agent 0: n3, n5, F1 (runtime retiring its own signals → Slice 04 contract, `origin` now makes it grantable).
 - QA fuzz (`fuzz.py`, seed 20260916 × 6 000 commands and seed 7 × 12 000): **violations: none** (M1 and m1 oracles at 0).
+
+## 2026-09-16 — Slice 01 PM decision: APPROVED
+
+- Commits: `c4a7b48`, `22bdd2a` (PM review rework: runtime-only execution nodes, tombstone archive), `3018cbd` (QA rework).
+- QA (qa-verification + code-review): first pass REWORK (M1 runtime relation layer, M2 OverflowError, m1–m4, n1, n2, n4, F2); re-verification APPROVE with evidence: 490 targeted tests passed; `verify_release.py` 3656 passed / 9 skipped; seeded fuzz 36 000 commands, 0 violations; lockstep old/new reducer diff over 36 591 commands, only intended divergences; `work_state.py` refactor behaviour-identical (0 diffs over 20 014 helper values and 20 000 observation payloads).
+- Remaining nits routed: immutable-field guard on patch replay + schema bump rule → Slice 02 contract; bidi/zero-width text neutralisation → Slice 05; relation layer default and refusal surfacing → Slice 06; runtime signal lifecycle (F1) → Slice 04; snapshot size (F3) → Slice 03; doc message-bound overstatement → `Issues/01-scene-doc-message-bound.md`.
+- runtime-validation / agent-trace-analysis not applicable (pure domain, nothing wired).
