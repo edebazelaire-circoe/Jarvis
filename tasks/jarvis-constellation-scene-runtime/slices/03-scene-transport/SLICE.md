@@ -11,6 +11,8 @@ Audit facts: the Control Center browser polls full JSON (`/api/status` 1 s, `/ap
 - Control Center: `GET /api/scene`, `GET /api/scene/patches`, `POST /api/scene/commands` (actor forced to `user`, origin guard applies). Degraded payload when Core is down, like `/api/work`.
 - Pure JS client logic (`control_center_scene.js` pure part): apply patches in order, detect gap → refetch snapshot.
 
+PM amendment (Slice 01 QA, F3): worst-case snapshot is ~8 MB (512 objects × 16 KiB payload); measured 1.4 MB / 25 ms decode at realistic bounds. Transport must bound response size (aiohttp `client_max_size` for commands; compact snapshot projection or gzip for the browser if needed) and never re-send full snapshots on every poll; decoders must catch only `ValueError`/`TypeError` and map them to 400.
+
 ## Scope
 ### In Scope
 Core routes, Control Center proxy view, pure JS patch-application logic + node tests, `test_documented_routes.py` compliance.

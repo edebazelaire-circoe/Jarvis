@@ -9,9 +9,11 @@ Audit facts: Core `WorkStateStore` publishes `core.work.updated` (`jarvis/core/w
 ## Canonical Concepts
 `SceneProjector` in Core subscribes to `core.work.updated` and issues `actor=runtime` commands. Star rule: `agent` sub-tasks and Core jobs → star; shell/bash/other tool tasks → no star (Decision 4). Identity: `object_id` derived deterministically from `(source, external_id)`. `parent_external_id` → `parent_of` relation. Status → `exec_state` only (never colour, never disposition). `failed`/`interrupted`/`blocked` → `attention` signal object linked to the node, carrying `error_class` and bounded message. On bus eviction or revision gap → full reconciliation from `WorkStateStore.snapshot()`. Initial geometry: none (renderer AutoResolver places unplaced objects; `placed_by=runtime` means "no explicit placement").
 
+PM amendment (Slice 01 QA, F1): the Slice 01 reducer lets runtime create signals but not retire them (no runtime `unlink` of `explains`, no hide/archive; `None` means unchanged so `work_ref`/`geometry` cannot be cleared). This Slice must define and implement the runtime signal lifecycle (e.g. runtime may unlink/resolve `attention` objects whose `origin` is runtime when the underlying work recovers or is superseded) as a reviewed domain change, without granting runtime archive or layout rights. Signals must not accumulate unboundedly per work item (one live attention per `(source, external_id)` updated in place).
+
 ## Scope
 ### In Scope
-Projector, subscription resilience, kind propagation if missing, tests with the fake bus and real `WorkStateStore`.
+Projector, subscription resilience, kind propagation if missing, runtime signal lifecycle (see amendment), tests with the fake bus and real `WorkStateStore`.
 ### Out of Scope
 Restart reconciliation of persisted scene vs empty Core (10); artifacts (07).
 
