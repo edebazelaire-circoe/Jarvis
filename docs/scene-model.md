@@ -3,9 +3,10 @@
 Handoff `tasks/jarvis-constellation-scene-runtime/`, Slice 01 (domain contract).
 Pure types and rules live in `jarvis/domain/scene.py`; the conformance suite is
 `tests/unit/test_scene_contracts.py`. No I/O, no Core, adapter or runtime import:
-the future `SceneStore` (Slice 02) applies these rules, persists the patch and
-publishes it; transport (03), runtime projection (04), renderer (05) and the
-brain display MCP (06) all speak this vocabulary.
+Core's `SceneService` (Slice 02, see *Storage and revision continuity* below)
+applies these rules, persists the result and publishes the patch; transport (03),
+runtime projection (04), renderer (05) and the brain display MCP (06) all speak
+this vocabulary.
 
 The scene is a **projection**. Core work state (`jarvis/domain/work_state.py`,
 see `ARCHITECTURE.md` › *Core work state*) stays the execution truth
@@ -242,9 +243,24 @@ characters of a received value.
 Text, token and identifier checks are shared with `work_state` through the
 private module `jarvis/domain/_checks.py` (same rules, same messages).
 
+## Storage and revision continuity
+
+Slice 02 (`ARCHITECTURE.md` › *Constellation scene store*). Core's `SceneService`
+applies commands with `apply_scene_command`, persists the resulting state to
+`data/state/scene.sqlite3`, then publishes the patch. The `scene_id` is created
+once and kept; the revision continues from its stored value across restarts and
+never regresses (a commit is refused unless the stored revision is the one the
+patch starts from). Archived objects leave `SceneSnapshot.objects` but their
+archived form stays queryable through `SceneReader.archived_history`; tombstones
+are stored and evicted exactly as `apply_scene_patch` does. The store keeps
+state, not a log of patches, so nothing stored is replayed through
+`apply_scene_patch`. Any change to the wire or storage shape requires bumping
+`SCENE_SCHEMA_VERSION` (stored as `wire_schema_version`) or the file's
+`schema_version`; a reader refuses any version it does not know.
+
 Validation:
 
 ```powershell
-.venv/Scripts/python.exe -W error::ResourceWarning -m pytest -q -p no:cacheprovider tests/unit/test_scene_contracts.py tests/unit/test_work_state_contracts.py tests/unit/test_v2_architecture.py
+.venv/Scripts/python.exe -W error::ResourceWarning -m pytest -q -p no:cacheprovider tests/unit/test_scene_contracts.py tests/unit/test_work_state_contracts.py tests/unit/test_v2_architecture.py tests/unit/test_sqlite_scene.py tests/unit/test_scene_service.py tests/integration/test_v2_core_recovery.py
 .venv/Scripts/python.exe scripts/verify_release.py
 ```

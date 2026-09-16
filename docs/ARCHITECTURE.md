@@ -1259,6 +1259,98 @@ possible once parity is confirmed on the workstation (task 14,
 role (prompt, raw trace, brain card) has no Core equivalent by design and
 would need a replacement route first.
 
+## Constellation scene store
+
+Handoff `tasks/jarvis-constellation-scene-runtime/`, Slice 02. The scene model
+itself (objects, authority matrix, revisions, patches) is
+[scene-model.md](scene-model.md); this section covers who owns it at runtime and
+how it survives a restart. HTTP transport (Slice 03) and the runtime projector
+(Slice 04) are not wired yet.
+
+```text
+SceneCommand ─► SceneService.apply()  (Core, asyncio lock)
+                  ├► apply_scene_command()            pure domain decision
+                  ├► SQLiteSceneRepository.commit()   one transaction  ─► data/state/scene.sqlite3
+                  ├► memory snapshot + patch ring (512)
+                  └► core.scene.updated  (CoreEventBus, hence /v1/events)
+```
+
+| Piece | File | Role |
+| --- | --- | --- |
+| Ports | `jarvis/ports/scene.py` | `SceneCommandSink.apply`, `SceneReader` (`snapshot`, `patches_since`, `archived_history`), `SceneRepository`, `SceneStoreError` + stable `SceneStoreErrorCode` |
+| Adapter | `jarvis/adapters/sqlite_scene.py` | `SQLiteSceneRepository`, dedicated SQLite file |
+| Service | `jarvis/core/scene_service.py` | `SceneService` = `JarvisCoreApplication.scene` |
+
+Command path. Commands are serialized by one asyncio lock. The domain decides
+the outcome; a refused (`rejected_authority`, `invalid`) or `duplicate` command
+writes nothing, publishes nothing and returns its `SceneUpdate` (refusals are
+journaled once per actor/op/reason as `core.scene.command_refused`). An applied
+command is **persisted before it is published**: commit, then the in-memory
+snapshot advances, the patch enters the ring, and `core.scene.updated` is
+published with `{"scene_id", "revision", "patch": ScenePatch.to_payload()}`.
+The application runs in a shielded task, so cancelling a caller mid-write never
+leaves the file ahead of memory. `patches_since(revision, scene_id=)` returns the
+patches after `revision`, or `resync_required` when the ring (512 patches, empty
+after a restart) no longer covers the gap, when the revision is ahead of Core or
+when the `scene_id` differs: the consumer then re-reads the snapshot
+(decision 20).
+
+### Persistence
+
+Durable, unlike Core work state: a scene restart restores the identical active
+snapshot, the same `scene_id` and the same revision (decision 11).
+
+Why a **separate file**, `data/state/scene.sqlite3`, rather than tables in
+`jarvis.sqlite3`: the scene gets its own `schema_version` and can evolve without
+touching the operational state schema (still 1, no migration framework), and a
+refused scene file only disables the scene — conversations, jobs and schedules
+live in a file it never touches.
+
+Conventions copied from `sqlite_state.py`: a `schema_version` table, JSON `data`
+columns, one connection serialized by a lock, native work in a thread that
+cancellation cannot interrupt (`run_sqlite_in_thread`, shared), WAL; plus
+`synchronous=FULL`, because a published revision must survive a power cut.
+
+| Table | Content |
+| --- | --- |
+| `schema_version` | one row, `1` |
+| `scene_meta` | singleton row: `scene_id`, `revision`, `wire_schema_version` (= `SCENE_SCHEMA_VERSION` of the JSON columns), `created_at`, `updated_at` |
+| `scene_objects` | `object_id`, `position`, `data` (`SceneObject.to_payload()`) |
+| `scene_relations` | `relation_id`, `position`, `data` |
+| `scene_tombstones` | `object_id`, `position` — `SceneSnapshot.archived_ids`, evicted beyond 4 096 like the domain |
+| `scene_history` | `object_id`, `revision`, `archived_at`, `data` — the archived form written by each `archive_object` op; not pruned in V1 (one row per user archive) |
+
+`position` restores the exact tuple order of the snapshot (a replaced object
+keeps its place, a new one is appended). The store keeps the **state** produced
+by each patch, never a log of patches to replay: `commit` applies the patch ops
+to the tables inside one `BEGIN IMMEDIATE … COMMIT`, checks that the stored
+revision is the one Core started from and that row counts match the resulting
+snapshot, then moves `revision`. A crash leaves the previous or the next
+revision, never half of one. Loading decodes every row through the strict domain
+decoders (`SceneObject.from_payload`, `SceneSnapshot` invariants); nothing is
+replayed, so the immutable-field guard a patch replay would need is not required.
+
+Failure semantics:
+
+| Situation | Result |
+| --- | --- |
+| first start, no file | file created, new `scene_id`, revision 0, `core.scene.loaded` (`created: true`) |
+| `schema_version` newer than 1 | refused `schema_newer`; file not modified |
+| version unreadable/unknown, foreign database, `wire_schema_version` ≠ 1 | refused `schema_unknown` (or `schema_newer` for a newer wire version) |
+| not a SQLite file, `quick_check` failure, missing table, row that does not decode | refused `corrupted`; file not modified |
+| file cannot be opened (directory, rights, lock) | refused `storage_io` |
+| any refusal at start | `core.scene.unavailable` (error); scene unavailable (`SceneUnavailableError`), **rest of Core starts normally**; the file is never wiped |
+| commit fails (I/O, lock) | transaction rolled back; no revision advance, nothing in the ring, no publish; `core.scene.persist_failed` (error); caller gets `ScenePersistenceError`; the next command may succeed |
+| stored revision ≠ Core's (`revision_conflict`) | same, and the scene becomes unavailable until Core restarts |
+| publish fails after commit | revision kept (the file is authoritative); `core.scene.publish_failed` (error); consumers resync on the gap |
+
+Lifecycle: `SceneService.start()` runs right after `jarvis.sqlite3` opens in
+`JarvisCoreApplication.start()` and never raises; `close()` runs in `stop()`
+after the brain and the scheduler, before the early returns of the job and back
+brain shutdown. `jarvis/core/v2_app.py` builds the adapter itself, like
+`SQLiteStateRepository`; `sqlite_scene` is listed in the named composition-root
+exception of `tests/unit/test_v2_architecture.py`.
+
 ## Telemetry
 
 Six latency measures are defined in `jarvis/core/latency.py` and emitted through

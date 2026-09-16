@@ -781,6 +781,38 @@ et affiche l'archive (`Erreurs archivées`). L'archivage déplace les entrées d
 `runtime/errors.jsonl` vers `runtime/errors-archive.jsonl` en les horodatant :
 le badge se vide, rien n'est perdu, et `runtime/trace.jsonl` reste intact.
 
+### Scène constellation : fichier et refus
+
+La scène (étoiles, artefacts, positions, épingles, archivage) appartient à Core
+et survit à son redémarrage. Elle vit dans son propre fichier,
+`data/state/scene.sqlite3` (sous `JARVIS_DATA_ROOT`), à côté de
+`jarvis.sqlite3` mais séparé de lui (voir `docs/ARCHITECTURE.md`,
+« Constellation scene store »). Il n'est encore servi par aucune route HTTP
+(Slice 03 du handoff).
+
+Au démarrage, `runtime/trace.jsonl` dit ce qui s'est passé :
+
+- `core.scene.loaded` (info) : scène créée (`created: true`) ou rechargée, avec
+  `scene_id`, `revision` et le nombre d'objets, de relations et d'archivés ;
+- `core.scene.unavailable` (erreur, aussi dans le panneau **ERR**) : fichier
+  refusé. `data.code` en donne la raison, `data.error` le message exact.
+
+Un refus ne bloque pas Core : conversations, jobs et rappels continuent, seule
+la scène est indisponible. Le fichier n'est **jamais** effacé ni réparé
+automatiquement. Que faire selon `data.code` :
+
+| Code | Cause | Action |
+| --- | --- | --- |
+| `schema_newer` | fichier écrit par une version plus récente de JARVIS | revenir à cette version (ou attendre sa mise à jour) ; ne pas supprimer le fichier |
+| `schema_unknown` | version illisible, ou fichier qui n'est pas une base de scène | vérifier qu'aucun autre fichier n'a été copié à cet emplacement |
+| `corrupted` | fichier illisible par SQLite ou contenu invalide | Core arrêté, déplacer le fichier (et `scene.sqlite3-wal` / `-shm` s'ils existent) hors de `data/state/`, le garder pour analyse, redémarrer Core : une scène vide est recréée |
+| `storage_io` | fichier inaccessible (droits, verrou d'un autre processus, disque) | corriger l'accès, redémarrer Core |
+
+En cours de route, `core.scene.persist_failed` (erreur) signale une commande de
+scène non écrite : la révision n'a pas bougé et rien n'a été diffusé. Avec
+`code: revision_conflict`, la scène devient indisponible jusqu'au prochain
+redémarrage de Core (deux Core sur le même dossier de données, par exemple).
+
 ## Deux architectures vocales : `legacy` et `continuous_brain`
 
 L'architecture choisit le chemin de code de la voix. Voice la lit au démarrage,
