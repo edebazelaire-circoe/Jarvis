@@ -11,7 +11,7 @@ import sys
 from typing import Mapping
 
 from jarvis.adapters import openai_realtime
-from jarvis.domain import conversation_prompt, front_brain_prompt, live_prompt
+from jarvis.domain import conversation_prompt, front_brain_prompt, live_prompt, work_attention_prompt
 from jarvis.domain.prompt_registry import (
     PromptDescriptor,
     PromptOperation,
@@ -143,6 +143,12 @@ def default_prompt_registry() -> PromptRegistry:
                     BACKEND_TURN_ADDITION, editable=True, apply_policy="next_invocation"),
         _descriptor("backend.turn.brief", control_center, "build_agent_brief", "Runtime Core context and admitted request",
                     variables=("context", "request_text"), dynamic=True, apply_policy="read_only"),
+        # Consigne du tour que Core ouvre seul sur un changement de travail de
+        # fond. Elle voyage comme le texte d'un tour, donc par `backend.*.turn` ;
+        # elle est déclarée ici parce qu'elle est visible du modèle.
+        _descriptor("core.work_attention.wake", work_attention_prompt, "WORK_ATTENTION_WAKE_PROMPT",
+                    work_attention_prompt.WORK_ATTENTION_WAKE_PROMPT, editable=True,
+                    apply_policy="next_invocation"),
     )
 
     def session(program_id: str, target: PromptTarget, rules: str, tools: str,

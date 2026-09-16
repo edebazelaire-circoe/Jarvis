@@ -444,25 +444,56 @@ async def test_stopping_the_agent_unblocks_a_waiting_voice_turn(tmp_path):
     assert "arrêté avant de répondre" in result["error"]
 
 
-async def test_opening_the_console_says_it_interrupts_the_running_task(tmp_path, monkeypatch):
+async def test_opening_the_console_no_longer_kills_the_running_task(tmp_path, monkeypatch):
+    """Le 16/09/2026 à 07:38:57, ouvrir la console a tué le tour en cours et
+    deux sous-agents d'arrière-plan — dont un qui tournait depuis 1 min 28 —
+    sans que l'utilisateur en soit averti. Un mode de debug ne détruit pas le
+    travail qu'on vient l'observer : la console s'ouvre à côté."""
     from jarvis.runtime import claude_local
 
+    spawned: list[list[str]] = []
     agent = _running_agent(tmp_path)
     monkeypatch.setattr(claude_local.os, "name", "nt")
-    monkeypatch.setattr(claude_local.subprocess, "Popen", lambda command, **kw: _FakeConsole())
+    monkeypatch.setattr(claude_local.subprocess, "Popen", lambda command, **kw: (spawned.append(list(command)), _FakeConsole())[1])
     monkeypatch.setattr(claude_local, "raise_console_window", lambda pid: True)
 
     waiting = asyncio.get_running_loop().create_task(agent.ask("une longue tâche", timeout_s=30))
     await asyncio.sleep(0)
     await asyncio.sleep(0)
-    await agent.open_console()
-    result = await asyncio.wait_for(waiting, timeout=5)
+    opened = await agent.open_console()
 
-    assert result["code"] == "claude_handover"
-    kinds = [e["kind"] for e in read_jsonl_tail(tmp_path / "trace.jsonl")]
-    assert "agent.console_interrupt" in kinds
-    warning = next(e for e in read_jsonl_tail(tmp_path / "trace.jsonl") if e["kind"] == "agent.console_interrupt")
-    assert warning["level"] == "warning"
+    # Le tour vocal n'est ni interrompu, ni abandonné : il attend toujours.
+    assert not waiting.done()
+    assert opened["handover"] is False and opened["agent_busy"] is True
+    # Une session Claude ne peut pas être écrite par deux processus : la console
+    # part donc sur une session neuve plutôt que de reprendre celle de la voix.
+    assert opened["resumed"] is False and "--resume" not in spawned[0]
+    events = read_jsonl_tail(tmp_path / "trace.jsonl")
+    assert [e["kind"] for e in events if e["kind"] == "agent.console_interrupt"] == []
+    [console] = [e for e in events if e["kind"] == "agent.console_open"]
+    assert console["data"]["agent_busy"] is True and console["data"]["handover"] is False
+
+    # Et le résultat du tour lui parvient encore, console ouverte.
+    agent._resolve_pending({"type": "result", "subtype": "success", "result": "fini quand même"})
+    result = await asyncio.wait_for(waiting, timeout=5)
+    assert (result["ok"], result["text"]) == (True, "fini quand même")
+
+
+async def test_the_console_resumes_the_last_session_when_the_agent_is_idle(tmp_path, monkeypatch):
+    from jarvis.runtime import claude_local
+
+    spawned: list[list[str]] = []
+    agent = _running_agent(tmp_path)
+    agent.process = None  # type: ignore[assignment]
+    agent.session_id = "sess-42"
+    monkeypatch.setattr(claude_local.os, "name", "nt")
+    monkeypatch.setattr(claude_local.subprocess, "Popen", lambda command, **kw: (spawned.append(list(command)), _FakeConsole())[1])
+    monkeypatch.setattr(claude_local, "raise_console_window", lambda pid: True)
+
+    opened = await agent.open_console()
+
+    assert opened["resumed"] is True and opened["agent_busy"] is False
+    assert spawned[0][spawned[0].index("--resume") + 1] == "sess-42"
 
 
 async def test_a_late_result_is_not_handed_to_the_next_question(tmp_path):

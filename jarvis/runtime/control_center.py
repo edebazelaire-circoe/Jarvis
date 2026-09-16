@@ -45,6 +45,7 @@ from jarvis.runtime import (
     voice_settings_schema,
     voice_stack,
 )
+from jarvis.runtime.background_events import MAX_ENTRIES, BackgroundEventLedger, TraceFollower, follow
 from jarvis.runtime.catalog_view import CatalogViewService, ProviderCatalogSnapshot, SUBAGENT_ROLES, VOICE_ROLES
 from jarvis.runtime.claude_local import DEFAULT_PERMISSION_MODE, PERMISSION_MODES, ClaudeLocalAgent, normalize_permission_mode
 from jarvis.runtime.codex_local import CodexLocalAgent, normalize_sandbox_mode
@@ -242,6 +243,11 @@ class ControlCenter:
         self.project_root = project_root
         self.visualizer_url = visualizer_url
         self.journal = RuntimeJournal(runtime_root)
+        # Notification discrète des événements d'arrière-plan (retour
+        # utilisateur du 16/09/2026). Alimentée par la trace, le seul point
+        # où les trois processus — UI, voix, Core — se rejoignent.
+        self.background = BackgroundEventLedger()
+        self._background_trace = TraceFollower(self.journal.trace_path)
         self.audio_diagnostics = audio_diagnostics or SoundDeviceAudioDiagnostics()
         self._audio_test_lock = asyncio.Lock()
         self.settings_path = runtime_root / "control-center-settings.json"
@@ -307,6 +313,8 @@ class ControlCenter:
             web.post("/api/agent/send", self.agent_send),
             web.post("/api/agent/ask", self.agent_ask),
             web.get("/api/agent/notices", self.agent_notices),
+            web.get("/api/background", self.background_events),
+            web.post("/api/background/ack", self.background_ack),
         ])
         self._runner: web.AppRunner | None = None
 
@@ -506,8 +514,25 @@ class ControlCenter:
             # Le badge des sous-agents : le brain n'y est jamais compté.
             "subagents": self.agent.subtasks.counts(),
             "error_count": len(read_jsonl_tail(self.journal.error_path, limit=1000)),
+            # Ce qui s'est passé derrière depuis le dernier coup d'œil. Le
+            # sondage du statut est le seul battement régulier de la page :
+            # c'est lui qui fait avancer le registre.
+            "background": self._background_summary(),
             "live": live,
         })
+
+    def _background_summary(self) -> dict[str, Any]:
+        """Avancer le registre des événements de fond et en rendre le résumé.
+
+        Ne lève jamais : un badge ne doit pas pouvoir faire tomber le statut,
+        dont dépend tout l'affichage de la page.
+        """
+        try:
+            follow(self.background, self._background_trace)
+        except Exception:
+            pass
+        return {"seq": self.background.seq, "unread": self.background.unread,
+                "counts": self.background.counts()}
 
     def _fresh_live_signal(self, name: str, *, voice_online: bool) -> dict[str, object] | None:
         if not voice_online:
@@ -2314,6 +2339,32 @@ class ControlCenter:
             ask_kwargs["input_text"] = text
         result = await self.agent.ask(prompt, **ask_kwargs)
         return web.json_response(result)
+
+    async def background_events(self, request: web.Request) -> web.Response:
+        """Ce qui s'est passé en arrière-plan, du plus récent au plus ancien."""
+        try:
+            limit = min(max(int(request.query.get("limit", "40")), 1), MAX_ENTRIES)
+        except ValueError:
+            limit = 40
+        try:
+            follow(self.background, self._background_trace)
+        except Exception:
+            pass
+        return web.json_response({"ok": True, **self.background.to_payload(limit=limit)})
+
+    async def background_ack(self, request: web.Request) -> web.Response:
+        """Marquer vu. Sans `seq`, tout ce qui est connu à cet instant.
+
+        Un `seq` explicite évite d'effacer un événement arrivé entre le rendu
+        de la liste et le clic : on n'acquitte que ce qui a été affiché.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            body = {}
+        seq = body.get("seq") if isinstance(body, dict) else None
+        cursor = self.background.acknowledge(seq if isinstance(seq, int) and not isinstance(seq, bool) else None)
+        return web.json_response({"ok": True, "acknowledged": cursor, "unread": self.background.unread})
 
     async def agent_notices(self, request: web.Request) -> web.Response:
         """Réponses que le brain a produites sans question : relais de fin de sous-agent.

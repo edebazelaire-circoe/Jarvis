@@ -46,6 +46,8 @@ pre.log{white-space:pre-wrap;word-break:break-word;margin:0;font-size:12px;line-
 .entry{padding:9px 0;border-bottom:1px solid rgba(113,144,160,.12)}
 .entry .meta{font-size:10px;color:var(--muted);margin-bottom:3px}
 .entry.error{color:#ff9eaa}
+.entry.bgrow{display:flex;align-items:flex-start;gap:9px;padding:9px 2px}
+.entry.bgrow.seen{opacity:.55}
 details.entry{padding:0;border-bottom:1px solid rgba(113,144,160,.12)}
 details.entry>summary{display:flex;align-items:flex-start;gap:9px;padding:9px 2px;cursor:pointer;list-style:none}
 details.entry>summary::-webkit-details-marker{display:none}
@@ -330,6 +332,7 @@ details.rd[open]>summary{margin-bottom:14px}
   <div class="voicehint" id="voiceHint">F9 · DÉMARRER</div>
   <nav class="dock" aria-label="Jarvis tools">
     <div class="tool"><button data-panel="errors" title="Errors">ERR</button><span class="badge" id="errorBadge">0</span></div>
+    <div class="tool"><button data-panel="background" title="Arrière-plan : tâches terminées, échecs, points à vérifier">BGD</button><span class="badge" id="bgBadge">0</span></div>
     <div class="tool"><button data-panel="trace" title="Trace">TRC</button></div>
     <div class="tool"><button id="openSettings" title="Réglages">SET</button></div>
     <div class="tool"><button data-panel="agents" id="agentsButton" title="Agents">AGT</button><span class="badge count" id="agentBadge">0</span></div>
@@ -373,9 +376,80 @@ function renderLive(live){const view=JarvisLiveView.project(live),banner=$('#liv
 async function stopLive(){const button=$('#liveStop');button.disabled=true;button.textContent='DEMANDE…';try{const result=await api('/api/live/stop',{method:'POST'});renderLive(result.live)}catch(e){button.disabled=false;button.textContent='RÉESSAYER L’ARRÊT';const meta=$('#liveMeta');meta.innerHTML+=` · <span class="live-warning">${esc(e.message)}</span>`}}
 $('#liveStop').addEventListener('click',stopLive);
 let errorsView='active';
+/* =====================================================================
+   Arrière-plan : ce qui s'est passé derrière, sans interrompre
+   =====================================================================
+   Retour utilisateur du 16/09/2026 : deux demandes vocales sont mortes en
+   silence. La voix est traitée côté Core (le cerveau est réveillé et choisit
+   ses mots) ; ici, la moitié qui n'interrompt pas — un compteur, une liste, et
+   un signal sonore bref quand le compte monte.
+
+   Le son n'est joué que sur une **hausse** du numéro de séquence, jamais au
+   premier sondage : ouvrir la page ne doit pas sonner pour du passé. */
+const BG={seq:0,ctx:null,armed:false};
+
+/* Deux notes courtes, plus graves s'il y a un échec. WebAudio n'est autorisé
+   qu'après un geste de l'utilisateur : tout échec est ignoré en silence — un
+   signal d'agrément ne doit jamais casser la boucle de statut. */
+function bgCue(bad){
+  try{
+    if(!BG.ctx){const C=window.AudioContext||window.webkitAudioContext;if(!C)return;BG.ctx=new C()}
+    if(BG.ctx.state==='suspended')BG.ctx.resume().catch(()=>{});
+    const now=BG.ctx.currentTime,notes=bad?[392,294]:[784,1047];
+    notes.forEach((hz,i)=>{
+      const osc=BG.ctx.createOscillator(),gain=BG.ctx.createGain(),at=now+i*0.11;
+      osc.type='sine';osc.frequency.value=hz;
+      gain.gain.setValueAtTime(0,at);
+      gain.gain.linearRampToValueAtTime(bad?0.06:0.04,at+0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001,at+0.1);
+      osc.connect(gain).connect(BG.ctx.destination);osc.start(at);osc.stop(at+0.12);
+    });
+  }catch(e){/* pas de son : le badge suffit */}
+}
+
+/* Le badge suit le résumé de `/api/status`. Rouge dès qu'un échec figure
+   parmi les non-vus, accent sinon : la couleur dit s'il faut regarder tout de
+   suite ou seulement en passant. */
+function renderBackgroundBadge(bg){
+  const badge=$('#bgBadge');if(!badge)return;
+  const summary=bg||{},unread=Number(summary.unread||0),counts=summary.counts||{};
+  const seq=Number(summary.seq||0),bad=!!(counts.failed||counts.attention);
+  badge.textContent=unread>99?'99+':String(unread);
+  badge.style.display=unread?'flex':'none';
+  badge.classList.toggle('count',!bad);
+  badge.title=Object.entries({failed:'en échec',attention:'à vérifier',done:'terminé(s)',said:'non dit'})
+    .filter(([k])=>counts[k]).map(([k,label])=>`${counts[k]} ${label}`).join(' · ')||'Rien en attente';
+  /* Hausse réelle : on signale. `armed` évite de sonner au tout premier
+     sondage, où tout est « nouveau » par construction. */
+  if(BG.armed&&seq>BG.seq&&unread>0)bgCue(bad);
+  BG.seq=seq;BG.armed=true;
+}
+
+const BG_LABEL={failed:'ÉCHEC',attention:'À VÉRIFIER',done:'TERMINÉ',said:'NON DIT'};
+const BG_DOT={failed:'bad',attention:'warn',done:'ok',said:'warn'};
+
+async function renderBackground(){
+  const data=await api('/api/background?limit=40'),events=data.events||[];
+  const counts=data.counts||{};
+  const summary=Object.entries(BG_LABEL).filter(([k])=>counts[k]).map(([k,label])=>`${counts[k]} ${label.toLowerCase()}`).join(' · ');
+  body.innerHTML=`<div class="row" style="margin-bottom:12px"><button class="action" id="bgAck"${data.unread?'':' disabled'}>Marquer comme vu</button><span class="hint">${data.unread?esc(summary):'Rien en attente'} · ${events.length} événement(s)</span></div>`
+    +(events.length?events.map(e=>{
+        const seen=e.seq<=data.acknowledged;
+        return `<div class="entry bgrow${e.category==='failed'?' error':''}${seen?' seen':''}"><span class="ico">${e.category==='failed'?'⛔':e.category==='attention'?'❓':e.category==='done'?'✅':'🔇'}</span><span class="etxt"><span class="emsg">${esc(e.label)}</span><span class="emeta">${esc(timeOf(e.ts))} · ${esc(BG_LABEL[e.category]||e.category)}${e.detail?' · '+esc(e.detail):''} · ${esc(e.kind)}</span></span><span class="dot ${BG_DOT[e.category]||'ok'}"></span></div>`
+      }).join('')
+      :'<div class="empty">Rien ne s’est passé en arrière-plan.</div>');
+  const ack=$('#bgAck');
+  if(ack)ack.addEventListener('click',async()=>{
+    ack.disabled=true;
+    /* On n'acquitte que ce qui a été affiché : un événement arrivé entre le
+       rendu et le clic reste non vu. */
+    try{await api('/api/background/ack',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({seq:data.seq})});await renderBackground();refreshStatus()}
+    catch(e){ack.disabled=false;alert(e.message)}
+  });
+}
 async function renderErrors(){const archived=errorsView==='archived';title.textContent=archived?'Errors · Archives':'Errors';const items=await api('/api/errors'+(archived?'?archived=1&limit=500':''));body.innerHTML=`<div class="row" style="margin-bottom:12px"><button class="action" id="toggleErrors">${archived?'Erreurs actives':'Erreurs archivées'}</button>${archived?'':'<button class="action danger" id="archiveErrors">Archiver</button>'}<span class="hint">${items.length} entrée(s)</span></div><div>${entries(items)}</div>`;$('#toggleErrors').addEventListener('click',()=>{errorsView=archived?'active':'archived';renderErrors().catch(e=>{body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`})});const archive=$('#archiveErrors');if(archive)archive.addEventListener('click',async()=>{archive.disabled=true;try{await api('/api/errors/archive',{method:'POST'});await renderErrors();refreshStatus()}catch(e){alert(e.message)}finally{archive.disabled=false}})}
-async function refreshStatus(){try{const s=await api('/api/status'),v=s.voice_state||'idle',k=String(s.manual_wake_key||'f9').toUpperCase(),online=s.voice_online===true;renderLive(s.live);$('#voiceState').textContent=online?v.toUpperCase():'OFFLINE';const listening=s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`;$('#voiceHint').textContent=online?({idle:`${k} · DÉMARRER`,listening,thinking:`${k} · ANNULER`,speaking:`${k} · INTERROMPRE`}[v]||`${k} · CONTRÔLER`):`${k} · VOICE HORS LIGNE`;$('.face').style.visibility=online?'visible':'hidden';$('#agentName').textContent=String(s.agent.name||s.agent_cli||'agent').toUpperCase();$('#agentState').textContent=(s.agent.state||'stopped').toUpperCase();const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';AG.agent=s.agent||null;AG.cli=s.agent_cli||'';if(!(current==='agents'&&coreOk()))updateSubagentBadge(s.subagents,false);watchSubagents(s.subagents)}catch(e){$('#voiceState').textContent='OFFLINE';$('#agentState').textContent='OFFLINE';$('#voiceHint').textContent='VOICE HORS LIGNE';$('.face').style.visibility='hidden';updateSubagentBadge(null)}}
-async function openPanel(name){current=name;document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.toggle('active',b.dataset.panel===name));panel.classList.add('open');title.textContent={errors:'Errors',trace:'Trace',agents:'Agents'}[name];closeMenu(false);if(name==='agents'){openAgentsPanel();return}stopAgentsPolling();body.innerHTML='<div class="empty">Chargement…</div>';try{if(name==='errors')await renderErrors();if(name==='trace')body.innerHTML=entries(await api('/api/trace'))}catch(e){body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`}}
+async function refreshStatus(){try{const s=await api('/api/status'),v=s.voice_state||'idle',k=String(s.manual_wake_key||'f9').toUpperCase(),online=s.voice_online===true;renderLive(s.live);$('#voiceState').textContent=online?v.toUpperCase():'OFFLINE';const listening=s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`;$('#voiceHint').textContent=online?({idle:`${k} · DÉMARRER`,listening,thinking:`${k} · ANNULER`,speaking:`${k} · INTERROMPRE`}[v]||`${k} · CONTRÔLER`):`${k} · VOICE HORS LIGNE`;$('.face').style.visibility=online?'visible':'hidden';$('#agentName').textContent=String(s.agent.name||s.agent_cli||'agent').toUpperCase();$('#agentState').textContent=(s.agent.state||'stopped').toUpperCase();const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';renderBackgroundBadge(s.background);AG.agent=s.agent||null;AG.cli=s.agent_cli||'';if(!(current==='agents'&&coreOk()))updateSubagentBadge(s.subagents,false);watchSubagents(s.subagents)}catch(e){$('#voiceState').textContent='OFFLINE';$('#agentState').textContent='OFFLINE';$('#voiceHint').textContent='VOICE HORS LIGNE';$('.face').style.visibility='hidden';updateSubagentBadge(null)}}
+async function openPanel(name){current=name;document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.toggle('active',b.dataset.panel===name));panel.classList.add('open');title.textContent={errors:'Errors',trace:'Trace',agents:'Agents',background:'Arrière-plan'}[name];closeMenu(false);if(name==='agents'){openAgentsPanel();return}stopAgentsPolling();body.innerHTML='<div class="empty">Chargement…</div>';try{if(name==='errors')await renderErrors();if(name==='background')await renderBackground();if(name==='trace')body.innerHTML=entries(await api('/api/trace'))}catch(e){body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`}}
 function closePanel(){current=null;panel.classList.remove('open');document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.remove('active'));closeMenu(false);stopAgentsPolling()}
 
 /* =====================================================================

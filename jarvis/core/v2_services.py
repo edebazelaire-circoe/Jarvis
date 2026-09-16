@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
 from jarvis.domain.v2 import (
-    Conversation, ConversationStatus, ConversationTurn, HistoryRecord, Job, JobProgress, JobStatus,
+    BrainTurnSource, Conversation, ConversationStatus, ConversationTurn, HistoryRecord, Job, JobProgress, JobStatus,
     MissedRunPolicy, Notification, NotificationState, ProtocolEnvelope, ScheduledItem,
     ScheduledStatus, TurnKind, new_id, utc_now,
 )
@@ -25,6 +25,11 @@ from jarvis.ports.work_state import WorkObservationSink
 # legitime — un job qui avance **est** du travail cerveau qui avance — et que
 # `brain_service` importe deja ce module (l'inverse creerait un cycle).
 BRAIN_WORK_PROGRESS = "brain.work.progress"
+
+#: Marque, dans les métadonnées d'un tour, celui que Core a ouvert lui-même
+#: plutôt que reçu d'une surface. Personne ne l'a dit : il ne fait donc pas
+#: partie du contexte de conversation relu par le modèle vocal.
+SYSTEM_TURN_SOURCE = BrainTurnSource.SYSTEM.value
 
 # Canal de diagnostic emis quand de l'avancement a ete coalesce a la source.
 JOB_PROGRESS_COALESCED_KIND = "core.job.progress_coalesced"
@@ -273,10 +278,17 @@ class ConversationService:
         if conversation is None:
             raise KeyError(f"unknown conversation: {conversation_id}")
         turns = await self.state.list_turns(conversation_id, limit=self.recent_turn_limit)
+        # Les tours ouverts par Core lui-même (`BrainTurnSource.SYSTEM` : le
+        # réveil sur un changement de travail de fond) sont persistés comme
+        # tours d'entrée, parce qu'ils font autorité et portent une intention.
+        # Mais personne ne les a dits : les laisser ici les ferait relire au
+        # modèle vocal comme une phrase de l'utilisateur, consigne interne
+        # comprise. Le contexte de conversation ne porte que ce qui a été dit.
+        spoken = [turn for turn in turns if turn.metadata.get("source") != SYSTEM_TURN_SOURCE]
         return {
             "conversation_id": conversation.id,
             "summary": conversation.summary,
-            "recent_turns": [{"kind": t.kind.value, "content": t.content, "created_at": t.created_at.isoformat()} for t in turns],
+            "recent_turns": [{"kind": t.kind.value, "content": t.content, "created_at": t.created_at.isoformat()} for t in spoken],
         }
 
 

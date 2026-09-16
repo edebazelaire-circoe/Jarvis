@@ -8,7 +8,7 @@ from jarvis.domain.speech_presentation import SpeechDependency, semantic_text_sp
 from jarvis.domain.v2 import ProtocolEnvelope, SpeechKind, SpeechRequest
 from tests.fakes.speech_context import context, source
 from tests.unit.test_v2_speech_scheduler import (
-    CONVERSATION, FakeClock, FakeCore, FakeVoiceSession, build_scheduler,
+    CONVERSATION, FakeClock, FakeCore, FakeVoiceSession, RecordingJournal, build_scheduler,
     busy_surface, finish_speech, release_surface, wait_for,
 )
 
@@ -170,3 +170,45 @@ async def test_reconciliation_queries_have_a_hard_bound():
     finally:
         release.set()
         await selected.stop()
+
+
+async def test_a_spontaneous_relay_is_only_speakable_once_it_carries_the_current_intent():
+    """Le canal des relais spontanés était muet de bout en bout.
+
+    `BrainOrchestrator.announce_notice` — la seule voie par laquelle le cerveau
+    annonce la fin d'un sous-agent sans qu'aucun tour l'attende — publiait sa
+    parole sous une corrélation neuve, à laquelle personne n'avait alloué de
+    source. Ici, on voit ce que l'ordonnanceur en faisait : rien, pour
+    toujours. Et ce que corrige l'emprunt de l'intention courante.
+    """
+    selected = build_scheduler(FakeCore(), FakeVoiceSession())
+    selected.update_speech_context(context(CONVERSATION, "corr-7", epoch=7))
+
+    orphan = SpeechRequest(CONVERSATION, "Le sous-agent a fini.", correlation_id="brain-notice:x", kind=SpeechKind.RESULT)
+    selected._enqueue(orphan)
+    assert selected._pop_next() is None
+    assert [item["reason"] for item in selected.presentation_snapshot()["candidates"]] == ["unknown_source"]
+
+    relay = request("Le sous-agent a fini.", correlation="corr-7", epoch=7)
+    selected._enqueue(relay)
+    assert selected._pop_next() == relay
+
+
+async def test_a_withheld_error_is_reported_as_a_warning_instead_of_vanishing():
+    """Le 16/09/2026, l'erreur du handover est restée `deferred`/`stale_source`
+    et personne n'a rien entendu. Différer reste la bonne décision — son
+    intention est passée — mais cela ne doit plus passer pour un silence
+    normal : c'est ainsi qu'une panne devient invisible."""
+    journal = RecordingJournal()
+    selected = build_scheduler(FakeCore(), FakeVoiceSession(), journal=journal)
+    selected.update_speech_context(context(CONVERSATION, "corr-2", epoch=2))
+
+    stale = request("La console a pris la main.", correlation="corr-1", epoch=1, kind=SpeechKind.ERROR)
+    selected._enqueue(stale)
+    assert selected._pop_next() is None
+
+    [withheld] = journal.of("voice.speech.error_withheld")
+    assert withheld["level"] == "warning"
+    assert withheld["data"]["reason"] == "stale_source"
+    # Et la décision de présentation reste bien « différée », pas « retirée ».
+    assert [item["status"] for item in selected.presentation_snapshot()["candidates"]] == ["deferred"]

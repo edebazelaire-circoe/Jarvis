@@ -58,6 +58,7 @@ Tu aiguilles, tu n'exécutes pas. Pendant que tu travailles, l'utilisateur ne pe
 - {PROFILE_RULE}
 - Dès le lancement, réponds en une phrase qui dit ce que tu as lancé, puis termine ton tour.
 - Quand un sous-agent ou une tâche de fond se termine, tu reçois une notification : relaie le résultat en une à trois phrases orales. Si elle ne mérite aucune annonce, réponds exactement {BRAIN_NOT_ADDRESSED_ANSWER} et rien d'autre : rien ne sera dit.
+- Une tâche de fond qui échoue, qui meurt avec son hôte ou qui attend une réponse t'ouvre aussi un tour, sans que l'utilisateur ait parlé. Le détail est dans ton contexte de travail, section « attention ». Dis-le : ce qui est tombé, et ce que tu proposes — relancer, corriger, ou attendre sa décision. Ne relance rien dans ce tour-là, annonce d'abord. Une tâche ne doit jamais mourir en silence.
 - Une nouvelle demande pendant qu'un sous-agent travaille se traite normalement, sans attendre la fin de celui-ci.
 
 FORMAT ORAL
@@ -295,11 +296,21 @@ class ClaudeLocalAgent:
         }
 
     async def open_console(self) -> dict[str, Any]:
-        """Ouvrir la véritable console Windows sur la conversation en cours.
+        """Ouvrir la véritable console Windows, **à côté** de l'agent vocal.
 
-        L'agent piloté par pipes est arrêté au passage : une même session Claude
-        ne peut pas être écrite à la fois par lui et par la console interactive.
-        C'est une passation de main assumée — la console est un mode de debug.
+        Elle ne prend plus la main. Auparavant, l'ouvrir arrêtait l'agent
+        piloté par pipes : le 16/09/2026 à 07:38:57, un clic a tué d'un coup le
+        tour en cours et deux sous-agents d'arrière-plan (dont un qui tournait
+        depuis 1 min 28), et l'utilisateur n'en a rien su — la parole d'erreur
+        rédigée pour l'occasion a été garée par l'ordonnanceur vocal
+        (`stale_source`). Un mode de debug ne doit pas détruire le travail
+        qu'on vient justement observer.
+
+        Une même session Claude ne peut toujours pas être écrite par deux
+        processus. Donc, quand l'agent vocal tourne, la console s'ouvre sur une
+        **session neuve** au lieu de reprendre la sienne : on perd la reprise
+        de conversation, on garde le travail. Agent à l'arrêt, elle reprend la
+        dernière session comme avant.
         """
         if os.name != "nt":
             raise RuntimeError("La console de debug n'est disponible que sous Windows")
@@ -314,28 +325,17 @@ class ClaudeLocalAgent:
             )
             return {**self.console_snapshot(), "already_open": True, "raised": raised, "handover": False}
 
-        session_id = self.session_id
-        handover = self.state == "running"
-        if handover:
-            if self._pending_result is not None and not self._pending_result.done():
-                self.journal.emit(
-                    "agent.console_interrupt",
-                    "La console de debug interrompt la tâche vocale en cours.",
-                    level="warning",
-                    data={"code": "claude_handover", "session_id": session_id},
-                )
-                self._abort_pending(
-                    "La console de debug a pris la main : la tâche en cours a été interrompue.",
-                    "claude_handover",
-                )
-            await self.stop()
+        # L'agent vocal continue de tourner : rien n'est interrompu, rien n'est
+        # arrêté. Sa session reste la sienne, la console en ouvre une autre.
+        busy = self.state == "running"
+        resumed_session_id = "" if busy else self.session_id
         command = [
             resolve_command(self.command),
             "--chrome",
             "--permission-mode",
             self.permission_mode,
             *(["--model", self.model] if self.model else []),
-            *(["--resume", session_id] if session_id else []),
+            *(["--resume", resumed_session_id] if resumed_session_id else []),
         ]
         try:
             self._console = subprocess.Popen(
@@ -354,10 +354,14 @@ class ClaudeLocalAgent:
             raise RuntimeError(f"Impossible d'ouvrir la console Claude: {exc}") from exc
         self.journal.emit(
             "agent.console_open",
-            "Console Claude de debug ouverte" + (" (conversation reprise)" if session_id else " (nouvelle conversation)"),
-            data={"pid": self._console.pid, "session_id": session_id, "handover": handover},
+            "Console Claude de debug ouverte "
+            + ("(session neuve : l'agent vocal garde la sienne et continue)" if busy
+               else ("(conversation reprise)" if resumed_session_id else "(nouvelle conversation)")),
+            data={"pid": self._console.pid, "session_id": resumed_session_id or None,
+                  "voice_session_id": self.session_id, "agent_busy": busy, "handover": False},
         )
-        return {**self.console_snapshot(), "already_open": False, "raised": True, "handover": handover}
+        return {**self.console_snapshot(), "already_open": False, "raised": True,
+                "handover": False, "resumed": bool(resumed_session_id), "agent_busy": busy}
 
     async def close_console(self) -> dict[str, Any]:
         process, self._console = self._console, None
@@ -782,8 +786,18 @@ class ClaudeLocalAgent:
         """Garder une réponse que personne n'a demandée, pour qu'elle soit dite.
 
         C'est la voie du relais : un sous-agent termine, le CLI ouvre un tour,
-        le brain résume. Un échec, un texte vide ou la réponse convenue de
-        silence ne produisent rien à dire.
+        le brain résume. Un texte vide ou la réponse convenue de silence ne
+        produisent rien à dire.
+
+        Un tour spontané **en échec** ne devient pas non plus une parole : son
+        `result` est alors le message du CLI (« API Error… »), pas une phrase
+        du brain, et la Décision 13 interdit de la reformuler autant que de la
+        prononcer telle quelle. Mais il ne disparaît plus en silence : il est
+        consigné sous `agent.unsolicited_failed`, que le Control Center compte
+        comme événement de fond non lu. Le retour vocal d'un échec vient de
+        l'autre voie, celle où le brain choisit ses mots : la mort du
+        sous-agent est un changement d'état de travail, que
+        `WorkAttentionPolicy` relève et dont le réveil ouvre un tour.
         """
         origin = event.get("origin") if isinstance(event.get("origin"), dict) else {}
         text = str(event.get("result") or "").strip()
@@ -795,6 +809,14 @@ class ClaudeLocalAgent:
             "duration_ms": event.get("duration_ms"),
             "spoken": not silent,
         }
+        if failed:
+            self.journal.emit(
+                "agent.unsolicited_failed",
+                "Tour spontané du brain en échec : rien de prononçable, le réveil du travail prendra la suite",
+                level="warning",
+                data={**data, "code": "unsolicited_turn_failed", "subtype": str(event.get("subtype") or "")},
+            )
+            return
         if silent:
             self.journal.emit("agent.unsolicited_result", "Tour spontané du brain, rien à dire", data=data)
             return

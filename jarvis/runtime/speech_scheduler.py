@@ -15,6 +15,7 @@ from jarvis.domain.v2 import (
     TRANSIENT_SPEECH_KINDS,
     PlaybackCursor,
     ProtocolEnvelope,
+    SpeechKind,
     SpeechProvenance,
     SpeechRequest,
 )
@@ -53,6 +54,7 @@ SPEECH_EXPIRED = "voice.speech.expired"
 SPEECH_SUPERSEDED = "voice.speech.superseded"
 SPEECH_IGNORED = "voice.speech.ignored"
 SPEECH_DECIDED = "voice.speech.presentation_decided"
+SPEECH_ERROR_WITHHELD = "voice.speech.error_withheld"
 
 # Accusé de réception de la surface (mode continu) : proposé par le bridge après
 # un tour adressé, prononcé seulement si le cerveau n'a encore rien dit.
@@ -956,6 +958,17 @@ class SpeechScheduler:
         terminal_channel = {SpeechCandidateStatus.EXPIRED: SPEECH_EXPIRED, SpeechCandidateStatus.SUPERSEDED: SPEECH_SUPERSEDED}.get(status)
         if terminal_channel is not None:
             self._trace(terminal_channel, "Speech presentation retired", data={**self._fields(request), "reason": reason})
+        if status is SpeechCandidateStatus.DEFERRED and request.kind is SpeechKind.ERROR:
+            # Une panne muette est le pire des cas : on ne sait pas qu'on ne sait
+            # pas. Le 16/09/2026 à 07:38:57, la parole d'erreur du handover est
+            # restée ici, `deferred`/`stale_source`, et personne n'a rien
+            # entendu. Différer une erreur reste la bonne décision de
+            # présentation — son intention est passée, et le cerveau la redira
+            # sur l'intention courante depuis son contexte de travail — mais
+            # cela ne doit plus jamais passer pour un silence normal.
+            self._trace(SPEECH_ERROR_WITHHELD, "Erreur non prononcée : son intention n'est plus courante",
+                        level="warning", data={**self._fields(request), "reason": reason,
+                                               "outcome_id": request.outcome_id})
         self._trace(SPEECH_DECIDED, "Speech presentation decision", data={**self._fields(request),
             "status": status.value, "reason": reason, "outcome_id": request.outcome_id,
             "intent_id": request.source.intent_id if request.source else None,

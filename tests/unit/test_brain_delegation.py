@@ -38,6 +38,9 @@ from jarvis.core.brain_service import (
 )
 from jarvis.core.v2_app import JarvisCoreApplication
 from jarvis.core.v2_services import ConversationService, CoreEventBus
+from jarvis.domain.brain_context import WorkAttention
+from jarvis.domain.work_attention_prompt import WORK_ATTENTION_WAKE_PROMPT
+from jarvis.domain.work_state import WorkStatus
 from jarvis.domain.v2 import (
     BRAIN_NOT_ADDRESSED_ANSWER,
     AddressingDecision,
@@ -48,6 +51,7 @@ from jarvis.domain.v2 import (
     ProtocolEnvelope,
     SpeechKind,
     SpeechRequest,
+    utc_now,
 )
 from jarvis.runtime import claude_local
 from jarvis.runtime.claude_local import BRAIN_SYSTEM_PROMPT, ClaudeLocalAgent, cli_prompt_argument
@@ -303,11 +307,27 @@ async def test_a_late_answer_is_recognised_by_its_uuid(tmp_path):
 async def test_a_relay_that_deserves_nothing_stays_silent(tmp_path):
     agent = _running_agent(tmp_path)
     agent._resolve_pending(_result(BRAIN_NOT_ADDRESSED_ANSWER, origin="task-notification"))
-    agent._resolve_pending({**_result("boom", origin="task-notification"), "subtype": "error_during_execution", "is_error": True})
 
     assert agent.notices == []
     silent = [e for e in read_jsonl_tail(tmp_path / "trace.jsonl") if e["kind"] == "agent.unsolicited_result"]
-    assert [e["data"]["spoken"] for e in silent] == [False, False]
+    assert [e["data"]["spoken"] for e in silent] == [False]
+
+
+async def test_a_failed_relay_is_not_spoken_but_never_disappears_silently(tmp_path):
+    """Le `result` d'un tour spontané en échec est le message du CLI, pas une
+    phrase du brain : il n'est pas prononcé. Mais il laisse une trace de niveau
+    avertissement, que le Control Center compte comme événement non lu ; le
+    retour vocal, lui, vient du réveil de l'attention de travail."""
+    agent = _running_agent(tmp_path)
+    agent._resolve_pending({**_result("API Error: 500", origin="task-notification"), "subtype": "error_during_execution", "is_error": True})
+
+    assert agent.notices == []
+    events = read_jsonl_tail(tmp_path / "trace.jsonl")
+    assert [e["kind"] for e in events if e["kind"] == "agent.unsolicited_result"] == []
+    [failed] = [e for e in events if e["kind"] == "agent.unsolicited_failed"]
+    assert failed["level"] == "warning"
+    assert failed["data"]["code"] == "unsolicited_turn_failed"
+    assert failed["data"]["spoken"] is False
 
 
 async def test_waiting_for_notices_wakes_up_on_a_relay_and_times_out_quietly(tmp_path):
@@ -632,8 +652,19 @@ async def test_a_relay_is_spoken_in_the_last_conversation_and_becomes_a_public_f
         assert speech.conversation_id == conversation_id
         assert speech.payload["text"] == "Le sous-agent a fini : le silence est facturé."
         assert speech.payload["kind"] == SpeechKind.RESULT.value
-        assert speech.correlation_id.startswith("brain-notice:")
+        # Le relais emprunte l'intention courante, et c'est ce qui le rend
+        # prononçable : une parole sans source est différée pour toujours par
+        # l'ordonnanceur vocal (`unknown_source`), ce qui rendait muet tout le
+        # canal des relais spontanés.
+        current = await state.get_current_brain_source(conversation_id)
+        assert speech.correlation_id == current.correlation_id
+        assert speech.payload["source"] == current.to_payload()
         assert "Le sous-agent a fini : le silence est facturé." in brain.working_state(conversation_id).known_public_facts
+
+        # Sans intention courante, le relais est refusé visiblement plutôt que garé.
+        other = await ConversationService(state, JsonlHistoryStore(tmp_path / "history")).create()
+        assert await brain.announce_notice("Orphelin.", conversation_id=other.id) is False
+        assert sink.of("core.brain.notice_dropped")[-1]["reason"] == "no_current_source"
     finally:
         await brain.stop()
         await state.close()
@@ -832,3 +863,149 @@ async def test_core_speaks_the_relay_as_soon_as_the_backend_hands_it_over(tmp_pa
         assert speech.conversation_id == conversation.id
     finally:
         await core.stop()
+
+
+async def test_a_background_change_wakes_the_brain_unless_a_turn_already_carries_it(tmp_path):
+    """Le réveil de `WorkAttentionPolicy` : Core ouvre un tour, sans rien dire.
+
+    Sans ce tour, un échec de fond n'était appris qu'au prochain tour de
+    l'utilisateur — donc jamais s'il se taisait : les tâches mouraient sans un
+    mot. Core n'écrit pourtant aucune phrase publique (Décision 14) : il pose
+    une consigne interne et laisse le cerveau choisir ses mots.
+    """
+    reply = "Le sous-agent Git est mort avec la console. Je le relance ?"
+    backend = ScriptedBackend(replies={WORK_ATTENTION_WAKE_PROMPT: reply})
+    brain, events, state, conversation_id, sink = await _orchestrator(tmp_path, backend)
+    note = WorkAttention(
+        source="claude", external_id="toolu_A", status=WorkStatus.INTERRUPTED,
+        previous_status=WorkStatus.RUNNING, error_class="process_stopped",
+        noticed_at=utc_now(), revision=9,
+    )
+    try:
+        # Aucune conversation encore vue : rien à réveiller, et c'est visible.
+        assert await brain.wake_for_work_attention((note,)) is False
+        assert sink.of("core.brain.wake_skipped")[0]["reason"] == "no_conversation"
+        # Aucun changement retenu : pas de tour ouvert pour rien.
+        await brain.submit(BrainTurnInput(conversation_id=conversation_id, text="Regarde Git."))
+        await _idle(brain)
+        assert await brain.wake_for_work_attention(()) is False
+        assert sink.of("core.brain.wake_skipped")[-1]["reason"] == "no_notes"
+
+        queue = events.subscribe()
+        assert await brain.wake_for_work_attention((note,)) is True
+        await _idle(brain)
+
+        [woken] = sink.of("core.brain.woken_by_work")
+        assert (woken["conversation_id"], woken["notes"], woken["statuses"]) == (conversation_id, 1, ["interrupted"])
+        # Le cerveau a parlé sur ce tour-là ; la phrase est la sienne.
+        [speech] = [e for e in _drain(queue) if e.message_type == BRAIN_SPEECH_REQUESTED]
+        assert speech.payload["text"] == reply
+        assert speech.correlation_id == woken["correlation_id"]
+    finally:
+        await brain.stop()
+        await state.close()
+
+
+async def test_a_wake_stands_down_while_a_turn_is_in_flight_with_the_same_notes(tmp_path):
+    """Un tour en vol reçoit déjà les mêmes changements dans son contexte :
+    en ouvrir un second ne ferait que périmer sa réponse en la doublant."""
+    backend = ScriptedBackend(release={"Compare les prix.": asyncio.Event()})
+    brain, _events, state, conversation_id, sink = await _orchestrator(tmp_path, backend)
+    note = WorkAttention(
+        source="claude", external_id="toolu_B", status=WorkStatus.FAILED,
+        previous_status=WorkStatus.RUNNING, error_class="timeout",
+        noticed_at=utc_now(), revision=3,
+    )
+    try:
+        await brain.submit(BrainTurnInput(conversation_id=conversation_id, text="Compare les prix."))
+        while not brain.active_turn_count:
+            await asyncio.sleep(0)
+
+        assert await brain.wake_for_work_attention((note,)) is False
+        skipped = sink.of("core.brain.wake_skipped")[-1]
+        assert (skipped["reason"], skipped["turns_in_flight"]) == ("turn_in_flight", 1)
+        assert sink.of("core.brain.woken_by_work") == []
+    finally:
+        backend.release["Compare les prix."].set()
+        await brain.stop()
+        await state.close()
+
+
+class JsonRequest:
+    """Requête minimale : un corps JSON et une chaîne de requête vide."""
+
+    def __init__(self, body=None, **query: str) -> None:
+        self.query = query
+        self._body = body
+
+    async def json(self):
+        if self._body is None:
+            raise ValueError("no body")
+        return self._body
+
+
+async def test_background_events_are_counted_read_and_acknowledged(control):
+    """Notification discrète : ce qui est mort derrière se compte à l'écran.
+
+    Alimentée par la trace, parce que l'UI, la voix et Core sont trois
+    processus qui n'ont que ce fichier en commun — accrocher un seul journal
+    n'en aurait montré qu'un tiers.
+    """
+    # Le registre part de la fin de la trace : ouvrir la page ne réveille pas
+    # des journées d'événements passés.
+    assert json.loads((await control.status(QueryRequest())).text)["background"] == {"seq": 0, "unread": 0, "counts": {}}
+
+    control.journal.emit("agent.subagent.finished", "Sous-agent interrompu après 1 min 28 s : Git branches",
+                         level="warning", data={"status": "interrupted", "description": "Git branches vs main status"})
+    control.journal.emit("core.brain.woken_by_work", "tour ouvert par un changement de travail de fond",
+                         data={"notes": 3})
+    control.journal.emit("voice.state.updated", "bruit de fonctionnement", data={})
+
+    summary = json.loads((await control.status(QueryRequest())).text)["background"]
+    assert (summary["unread"], summary["counts"]) == (2, {"failed": 1, "attention": 1})
+
+    listing = json.loads((await control.background_events(QueryRequest())).text)
+    assert [event["category"] for event in listing["events"]] == ["attention", "failed"]
+    assert listing["events"][-1]["detail"] == "Git branches vs main status"
+
+    # On n'acquitte que ce qui a été affiché : un événement arrivé entre-temps reste.
+    control.journal.emit("agent.subagent.finished", "Sous-agent en échec après 3 s : Tests",
+                         level="warning", data={"status": "failed"})
+    acked = json.loads((await control.background_ack(JsonRequest({"seq": listing["seq"]}))).text)
+    assert acked["acknowledged"] == listing["seq"]
+    assert json.loads((await control.status(QueryRequest())).text)["background"]["unread"] == 1
+
+    # Sans `seq`, tout ce qui est connu à cet instant.
+    assert json.loads((await control.background_ack(JsonRequest())).text)["unread"] == 0
+
+
+async def test_a_wake_turn_stays_out_of_the_conversation_context_it_never_spoke(tmp_path):
+    """Le tour de réveil fait autorité, mais personne ne l'a dit.
+
+    Il est persisté — il porte une intention, et la parole du cerveau en
+    dépend — et il est marqué `source=system`. Le laisser dans le contexte de
+    conversation ferait relire au modèle vocal la consigne interne de Core
+    comme une phrase de l'utilisateur.
+    """
+    backend = ScriptedBackend(replies={"Regarde Git.": "Je lance un agent."})
+    brain, _events, state, conversation_id, _sink = await _orchestrator(tmp_path, backend)
+    note = WorkAttention(
+        source="claude", external_id="toolu_A", status=WorkStatus.INTERRUPTED,
+        previous_status=WorkStatus.RUNNING, error_class="process_stopped",
+        noticed_at=utc_now(), revision=9,
+    )
+    try:
+        await brain.submit(BrainTurnInput(conversation_id=conversation_id, text="Regarde Git."))
+        await _idle(brain)
+        assert await brain.wake_for_work_attention((note,)) is True
+        await _idle(brain)
+
+        persisted = await state.list_turns(conversation_id, limit=50)
+        assert [turn.metadata.get("source") for turn in persisted] == ["realtime", "system"]
+        assert WORK_ATTENTION_WAKE_PROMPT in persisted[-1].content
+
+        context = await ConversationService(state, JsonlHistoryStore(tmp_path / "history")).rehydration_context(conversation_id)
+        assert [turn["content"] for turn in context["recent_turns"]] == ["Regarde Git."]
+    finally:
+        await brain.stop()
+        await state.close()
