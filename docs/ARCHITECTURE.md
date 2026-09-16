@@ -1345,18 +1345,38 @@ revision, never half of one. Loading decodes every row through the strict domain
 decoders (`SceneObject.from_payload`, `SceneSnapshot` invariants); nothing is
 replayed, so the immutable-field guard a patch replay would need is not required.
 
+Opening (`SQLiteSceneRepository.initialize`), in order:
+
+1. **Missing file** (and no orphan `-wal`): created atomically. Schema,
+   `schema_version` and the `scene_meta` row (new `scene_id`, revision 0) are
+   written to a temporary file in the same directory, then renamed onto
+   `scene.sqlite3` (`replace_with_retry`). A crash leaves at worst that
+   temporary file, never an empty or partial `scene.sqlite3`. This is the only
+   path that creates a scene.
+2. **Existing file**: every check (versions, tables, `quick_check`, full decode
+   of the scene) runs on a **private copy** of the file and its `-wal` in a
+   system temporary directory. SQLite never opens the original before it is
+   accepted: even a `mode=ro` connection rewrites `-shm`, creates `-wal`/`-shm`
+   or checkpoints the WAL on close. An empty or table-less file is refused
+   `corrupted`, never recreated.
+3. **Writability**: `os.access` on the file and its directory before opening
+   (so a read-only file leaves no trace), then a rolled-back write under
+   `BEGIN IMMEDIATE` on the real connection (ACLs, another process's lock).
+
 Failure semantics:
 
 | Situation | Result |
 | --- | --- |
-| first start, no file | file created, new `scene_id`, revision 0, `core.scene.loaded` (`created: true`) |
-| `schema_version` newer than 1 | refused `schema_newer`; file not modified |
+| first start, file missing | created atomically (temporary file + rename), new `scene_id`, revision 0, `core.scene.loaded` (`created: true`) |
+| `schema_version` newer than 1 | refused `schema_newer` |
 | version unreadable/unknown, foreign database, `wire_schema_version` ≠ 1 | refused `schema_unknown` (or `schema_newer` for a newer wire version) |
-| not a SQLite file, `quick_check` failure, missing table, row that does not decode | refused `corrupted`; file not modified |
-| file cannot be opened (directory, rights, lock) | refused `storage_io` |
-| any refusal at start | `core.scene.unavailable` (error); scene unavailable (`SceneUnavailableError`), **rest of Core starts normally**; the file is never wiped |
-| commit fails (I/O, lock) | transaction rolled back; no revision advance, nothing in the ring, no waiter woken; `core.scene.persist_failed` (error); caller gets `ScenePersistenceError`; the next command may succeed |
-| stored revision ≠ Core's (`revision_conflict`) | same, and the scene becomes unavailable until Core restarts; current waiters get `SceneUnavailableError` |
+| empty (0 bytes) or table-less file, not a SQLite file, `quick_check` failure, missing table, missing `scene_meta` row, row that does not decode, `-wal` without its database | refused `corrupted` |
+| path is a directory, file or directory not writable (read-only, ACL), locked by another process, unreadable | refused `storage_io` |
+| any refusal at start | `core.scene.unavailable` (error); scene unavailable (`SceneUnavailableError`), **rest of Core starts normally**; the file, its `-wal` and its `-shm` stay byte-identical (validated on a copy) and are never wiped |
+| commit fails (I/O, lock) | transaction rolled back (including a failure right after `BEGIN`); no revision advance, nothing in the ring, no waiter woken; `core.scene.persist_failed` (error); caller gets `ScenePersistenceError`; the next command may succeed |
+| rollback fails, connection left inside a transaction | same, reported `storage_io` with `fatal`; the scene becomes unavailable until Core restarts |
+| stored revision ≠ Core's (`revision_conflict`), or an integrity constraint fails during the write | same, and the scene becomes unavailable until Core restarts; current waiters get `SceneUnavailableError` |
+| `COMMIT` durable on disk but reported as failed (I/O error at the very end) | caller gets `ScenePersistenceError` although the command may already be durable; memory did not advance, so the next command fails closed with `revision_conflict` (scene unavailable) and a restart loads the revision actually written. Nothing is lost silently |
 
 Lifecycle: `SceneService.start()` runs right after `jarvis.sqlite3` opens in
 `JarvisCoreApplication.start()` and never raises; `close()` runs in `stop()`

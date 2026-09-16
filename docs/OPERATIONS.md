@@ -799,19 +799,27 @@ Au démarrage, `runtime/trace.jsonl` dit ce qui s'est passé :
 
 Un refus ne bloque pas Core : conversations, jobs et rappels continuent, seule
 la scène est indisponible. Le fichier n'est **jamais** effacé ni réparé
-automatiquement. Que faire selon `data.code` :
+automatiquement, ni modifié : la vérification se fait sur une copie, le
+fichier, son `-wal` et son `-shm` restent identiques octet pour octet. Seul un
+fichier **absent** fait créer une nouvelle scène ; un fichier vide (0 octet) ou
+sans table est refusé. Que faire selon `data.code` :
 
 | Code | Cause | Action |
 | --- | --- | --- |
 | `schema_newer` | fichier écrit par une version plus récente de JARVIS | revenir à cette version (ou attendre sa mise à jour) ; ne pas supprimer le fichier |
 | `schema_unknown` | version illisible, ou fichier qui n'est pas une base de scène | vérifier qu'aucun autre fichier n'a été copié à cet emplacement |
-| `corrupted` | fichier illisible par SQLite ou contenu invalide | Core arrêté, déplacer le fichier (et `scene.sqlite3-wal` / `-shm` s'ils existent) hors de `data/state/`, le garder pour analyse, redémarrer Core : une scène vide est recréée |
-| `storage_io` | fichier inaccessible (droits, verrou d'un autre processus, disque) | corriger l'accès, redémarrer Core |
+| `corrupted` | fichier vide ou tronqué, illisible par SQLite, contenu invalide, ou `scene.sqlite3-wal` présent sans `scene.sqlite3` | Core arrêté, déplacer le fichier **et** `scene.sqlite3-wal` / `-shm` s'ils existent hors de `data/state/`, les garder pour analyse, redémarrer Core : une scène vide est recréée |
+| `storage_io` | fichier ou dossier non inscriptible (lecture seule, droits), verrou d'un autre processus, chemin qui est un dossier | corriger l'accès (par exemple retirer l'attribut lecture seule), redémarrer Core |
 
 En cours de route, `core.scene.persist_failed` (erreur) signale une commande de
 scène non écrite : la révision n'a pas bougé et aucun lecteur ne l'a vue. Avec
-`code: revision_conflict`, la scène devient indisponible jusqu'au prochain
-redémarrage de Core (deux Core sur le même dossier de données, par exemple).
+`code: revision_conflict` (deux Core sur le même dossier de données, par
+exemple), ou si la connexion reste bloquée dans une transaction (`storage_io`,
+message « left inside a transaction »), la scène devient indisponible jusqu'au
+prochain redémarrage de Core. Cas limite : une erreur d'E/S à la toute fin d'un
+`COMMIT` peut signaler un échec alors que la commande est déjà écrite ; la
+commande suivante échoue alors en `revision_conflict`, et le redémarrage
+recharge ce qui est réellement sur disque.
 
 ## Deux architectures vocales : `legacy` et `continuous_brain`
 
