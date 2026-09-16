@@ -799,17 +799,27 @@ Au démarrage, `runtime/trace.jsonl` dit ce qui s'est passé :
 
 Un refus ne bloque pas Core : conversations, jobs et rappels continuent, seule
 la scène est indisponible. Le fichier n'est **jamais** effacé ni réparé
-automatiquement, ni modifié : la vérification se fait sur une copie, le
-fichier, son `-wal` et son `-shm` restent identiques octet pour octet. Seul un
-fichier **absent** fait créer une nouvelle scène ; un fichier vide (0 octet) ou
-sans table est refusé. Que faire selon `data.code` :
+automatiquement : son contenu (tables, lignes, version) n'est jamais modifié,
+réécrit ni recréé. SQLite peut seulement reverser son journal WAL dans le
+fichier à la fermeture, ce qui ne change rien au contenu. Aucune copie de la
+scène n'est faite. Seul un fichier **absent** fait créer une nouvelle scène ;
+un fichier vide (0 octet) ou sans table est refusé. Que faire selon
+`data.code` :
 
 | Code | Cause | Action |
 | --- | --- | --- |
 | `schema_newer` | fichier écrit par une version plus récente de JARVIS | revenir à cette version (ou attendre sa mise à jour) ; ne pas supprimer le fichier |
 | `schema_unknown` | version illisible, ou fichier qui n'est pas une base de scène | vérifier qu'aucun autre fichier n'a été copié à cet emplacement |
 | `corrupted` | fichier vide ou tronqué, illisible par SQLite, contenu invalide, ou `scene.sqlite3-wal` présent sans `scene.sqlite3` | Core arrêté, déplacer le fichier **et** `scene.sqlite3-wal` / `-shm` s'ils existent hors de `data/state/`, les garder pour analyse, redémarrer Core : une scène vide est recréée |
-| `storage_io` | fichier ou dossier non inscriptible (lecture seule, droits), verrou d'un autre processus, chemin qui est un dossier | corriger l'accès (par exemple retirer l'attribut lecture seule), redémarrer Core |
+| `storage_io` | fichier ou dossier non inscriptible (lecture seule, droits), verrou d'écriture tenu par un autre processus plus de 5 s, erreur d'E/S, chemin qui est un dossier | corriger l'accès (par exemple retirer l'attribut lecture seule, arrêter l'autre Core), redémarrer Core |
+
+Au démarrage, Core retire aussi les restes que ce code a pu laisser :
+fichiers `scene.sqlite3.<aléa>.creating` d'une création interrompue dans
+`data/state/`, et anciens dossiers `jarvis-scene-check-*` (copies de la scène
+d'une version antérieure) dans le dossier temporaire du système. Ce qui a été
+retiré est journalisé `core.scene.swept` (info) ; ce qui n'a pas pu l'être,
+`core.scene.sweep_failed` (avertissement, chemin et cause), à supprimer à la
+main si le message persiste.
 
 En cours de route, `core.scene.persist_failed` (erreur) signale une commande de
 scène non écrite : la révision n'a pas bougé et aucun lecteur ne l'a vue. Avec

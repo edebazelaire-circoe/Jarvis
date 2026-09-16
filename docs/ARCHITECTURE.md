@@ -1345,23 +1345,40 @@ revision, never half of one. Loading decodes every row through the strict domain
 decoders (`SceneObject.from_payload`, `SceneSnapshot` invariants); nothing is
 replayed, so the immutable-field guard a patch replay would need is not required.
 
-Opening (`SQLiteSceneRepository.initialize`), in order:
+Opening, in order:
 
+0. **Sweep** (`sweep_leftovers`, called by `SceneService.start()` first):
+   removes interrupted-creation temporaries `scene.sqlite3.<random>.creating`
+   (and `-journal`) from the scene's own directory, and `jarvis-scene-check-*`
+   directories in the system temporary directory that an earlier version of
+   this Slice left behind, only when they hold nothing but `scene.sqlite3*`
+   files. Removals are journaled `core.scene.swept` (info), failures
+   `core.scene.sweep_failed` (warning); a sweep never blocks the start.
 1. **Missing file** (and no orphan `-wal`): created atomically. Schema,
    `schema_version` and the `scene_meta` row (new `scene_id`, revision 0) are
    written to a temporary file in the same directory, then renamed onto
    `scene.sqlite3` (`replace_with_retry`). A crash leaves at worst that
    temporary file, never an empty or partial `scene.sqlite3`. This is the only
    path that creates a scene.
-2. **Existing file**: every check (versions, tables, `quick_check`, full decode
-   of the scene) runs on a **private copy** of the file and its `-wal` in a
-   system temporary directory. SQLite never opens the original before it is
-   accepted: even a `mode=ro` connection rewrites `-shm`, creates `-wal`/`-shm`
-   or checkpoints the WAL on close. An empty or table-less file is refused
-   `corrupted`, never recreated.
-3. **Writability**: `os.access` on the file and its directory before opening
-   (so a read-only file leaves no trace), then a rolled-back write under
-   `BEGIN IMMEDIATE` on the real connection (ACLs, another process's lock).
+2. **Existing file**: `os.access` on the file and its directory before opening
+   (a read-only file is refused `storage_io` and leaves no trace), then the
+   real file is opened read-write. An empty or table-less file is refused
+   `corrupted` by a read before any write (switching to WAL would write its
+   header), never recreated.
+3. **Validation under the write lock**: `BEGIN IMMEDIATE` on that connection,
+   then `schema_version`, table list, `quick_check`, wire version, full decode
+   of the scene and a write probe (`UPDATE schema_version SET version =
+   version`), then `ROLLBACK`. Holding the lock means a concurrent writer
+   cannot tear what is validated, and nothing can change between validation
+   and use: the accepted connection is the one the store keeps. No copy of
+   the scene is ever made.
+
+Refusal guarantee: a refused file's **logical content** is never modified,
+rewritten, recreated or deleted. SQLite may still perform its normal physical
+WAL checkpoint when the connection closes, so byte identity of `-wal`/`-shm`
+(or of the main file when a WAL was pending) is not promised. What SQLite
+reports as not-a-database or malformed is `corrupted`; lock, permission and
+I/O conditions are `storage_io`.
 
 Failure semantics:
 
@@ -1371,8 +1388,8 @@ Failure semantics:
 | `schema_version` newer than 1 | refused `schema_newer` |
 | version unreadable/unknown, foreign database, `wire_schema_version` ≠ 1 | refused `schema_unknown` (or `schema_newer` for a newer wire version) |
 | empty (0 bytes) or table-less file, not a SQLite file, `quick_check` failure, missing table, missing `scene_meta` row, row that does not decode, `-wal` without its database | refused `corrupted` |
-| path is a directory, file or directory not writable (read-only, ACL), locked by another process, unreadable | refused `storage_io` |
-| any refusal at start | `core.scene.unavailable` (error); scene unavailable (`SceneUnavailableError`), **rest of Core starts normally**; the file, its `-wal` and its `-shm` stay byte-identical (validated on a copy) and are never wiped |
+| path is a directory, file or directory not writable (read-only, ACL), write lock held by another process beyond the 5 s busy timeout, I/O error | refused `storage_io` |
+| any refusal at start | `core.scene.unavailable` (error); scene unavailable (`SceneUnavailableError`), **rest of Core starts normally**; the file's logical content is never modified, rewritten, recreated or deleted (only SQLite's physical WAL checkpoint may run on close) |
 | commit fails (I/O, lock) | transaction rolled back (including a failure right after `BEGIN`); no revision advance, nothing in the ring, no waiter woken; `core.scene.persist_failed` (error); caller gets `ScenePersistenceError`; the next command may succeed |
 | rollback fails, connection left inside a transaction | same, reported `storage_io` with `fatal`; the scene becomes unavailable until Core restarts |
 | stored revision ≠ Core's (`revision_conflict`), or an integrity constraint fails during the write | same, and the scene becomes unavailable until Core restarts; current waiters get `SceneUnavailableError` |
