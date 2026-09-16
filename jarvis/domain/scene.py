@@ -22,6 +22,9 @@ Invariants transverses :
   commande hors droits rend `rejected_authority`, quel que soit le catalogue
   d'outils qui l'a émise (Décision 14) ;
 - `exec_state` et `work_ref` reflètent Core : seul `runtime` les écrit ;
+- un signal d'exécution est vivant tant que son lien `explains` existe :
+  `runtime` retire ses propres signaux en déliant ce lien (Slice 04), sans
+  jamais archiver, masquer ni placer ;
 - seul `runtime` crée un nœud d'exécution (`agent`, `job`) : une étoile naît
   d'un fait d'exécution, jamais d'une composition (Décisions 3, 4, 17) ;
 - une fin d'exécution ne change ni la visibilité ni la disposition
@@ -1147,8 +1150,10 @@ def apply_scene_command(snapshot: SceneSnapshot, command: SceneCommand) -> Scene
     2. existence et disposition des objets visés (`invalid`) ;
     3. autorité sur l'**effet** : `runtime` n'écrit que des nœuds
        d'exécution et des signaux qu'il a lui-même créés (`origin`), jamais un
-       champ de composition ni une couche de relation, et ne relie que des
-       `parent_of` entre nœuds d'exécution ; seul `runtime` crée un
+       champ de composition ni une couche de relation, ne relie que des
+       `parent_of` entre nœuds d'exécution et ne délie, en plus, que le lien
+       `explains` d'un signal qu'il a posé sur un nœud qu'il a créé (retrait
+       du signal, jamais archivage ni masquage) ; seul `runtime` crée un
        `agent`/`job` et change `exec_state` ou `work_ref` ; seul `user`
        déplace ou redimensionne un objet épinglé ; un placement `resolver`
        n'est commis que par `user` et ne remplace ni une épingle ni un
@@ -1379,11 +1384,38 @@ def _plan_unlink(snapshot: SceneSnapshot, command: SceneCommand) -> list[ScenePa
         # un doublon, pas une erreur.
         return []
     if command.actor is SceneActor.RUNTIME:
-        if existing.kind is not RelationKind.PARENT_OF:
+        if existing.kind is RelationKind.PARENT_OF:
+            source_kinds = EXECUTION_KINDS
+        elif is_signal_relation(existing):
+            # Retrait d'un signal (Slice 04, amendement F1) : `runtime` retire
+            # le lien d'un signal qu'il a lui-même posé sur une étoile qu'il a
+            # créée. L'objet `attention` reste, sans lien : ni archivage, ni
+            # visibilité, ni géométrie ne sont accordés.
+            source_kinds = frozenset({SceneObjectKind.ATTENTION})
+        else:
             raise _rejected(SceneRefusal.RUNTIME_RELATION)
-        for endpoint in (existing.from_id, existing.to_id):
-            _check_runtime_reach(_require_active(snapshot, endpoint), EXECUTION_KINDS, SceneRefusal.RUNTIME_RELATION)
+        _check_runtime_reach(_require_active(snapshot, existing.from_id), source_kinds, SceneRefusal.RUNTIME_RELATION)
+        _check_runtime_reach(_require_active(snapshot, existing.to_id), EXECUTION_KINDS, SceneRefusal.RUNTIME_RELATION)
     return [ScenePatchOp(PatchOpKind.DELETE_RELATION, relation_id=command.relation_id)]
+
+
+def is_signal_relation(relation: SceneRelation) -> bool:
+    """Vrai pour le lien `explains` posé par `attach_signal` : il porte l'identifiant du signal."""
+
+    return relation.kind is RelationKind.EXPLAINS and relation.relation_id == relation.from_id
+
+
+def is_live_signal(snapshot: SceneSnapshot, object_id: str) -> bool:
+    """Un signal est **vivant** exactement tant que son lien `explains` existe.
+
+    Retirer un signal (`unlink` de ce lien) le rend inactif sans le supprimer :
+    l'objet `attention` reste dans la scène, et son `exec_state` dit l'état du
+    travail au moment du retrait. `attach_signal` sur le même identifiant le
+    ranime.
+    """
+
+    relation = snapshot.get_relation(object_id)
+    return relation is not None and is_signal_relation(relation)
 
 
 def _plan_attach_signal(snapshot: SceneSnapshot, command: SceneCommand) -> list[ScenePatchOp]:

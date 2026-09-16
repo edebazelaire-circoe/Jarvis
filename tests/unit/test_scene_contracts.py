@@ -63,6 +63,7 @@ from jarvis.domain.scene import (
     WorkRef,
     apply_scene_command,
     apply_scene_patch,
+    is_live_signal,
 )
 from jarvis.domain.work_state import WorkStatus
 
@@ -593,6 +594,96 @@ def test_origin_is_set_once_at_creation_and_travels_on_the_wire():
     assert apply_scene_command(snapshot, patch(RUNTIME, "sig-r", payload=ScenePayload(title="timeout"))).outcome is APPLIED
     with pytest.raises(ValueError, match="an execution node originates from runtime"):
         SceneObject("fake", SceneObjectKind.JOB, "job", SceneConstraints(PlacedBy.BRAIN), BRAIN)
+
+
+# --- retrait des signaux runtime (Slice 04, amendement F1) --------------------
+
+
+def runtime_signal(object_id: str = "sig-1", target_id: str = "star-a", state: ExecState = ExecState.FAILED) -> SceneCommand:
+    return cmd(
+        SceneOp.ATTACH_SIGNAL,
+        RUNTIME,
+        object_id=object_id,
+        fields=SceneObjectFields(category="failed", exec_state=state, payload=ScenePayload(title="boom")),
+        target_id=target_id,
+    )
+
+
+def test_runtime_retires_its_own_signal_by_unlinking_it_and_may_raise_it_again():
+    raised = run(scene_with_stars(), runtime_signal())
+    assert is_live_signal(raised, "sig-1")
+
+    retired = apply_scene_command(raised, cmd(SceneOp.UNLINK, RUNTIME, relation_id="sig-1"))
+    assert retired.outcome is APPLIED
+    assert [op.op for op in retired.patch.ops] == [PatchOpKind.DELETE_RELATION]
+    assert not is_live_signal(retired.snapshot, "sig-1")
+    # L'objet reste, intact : ni archivage, ni masquage, ni géométrie.
+    signal = retired.snapshot.get_object("sig-1")
+    assert signal == raised.get_object("sig-1")
+    assert (signal.disposition, signal.visibility, signal.geometry) == (Disposition.ACTIVE, Visibility.VISIBLE, None)
+    assert retired.snapshot.archived_ids == raised.archived_ids
+
+    resolved = apply_scene_command(retired.snapshot, patch(RUNTIME, "sig-1", exec_state=ExecState.RUNNING))
+    assert resolved.outcome is APPLIED
+    assert apply_scene_command(resolved.snapshot, cmd(SceneOp.UNLINK, RUNTIME, relation_id="sig-1")).outcome is DUPLICATE
+
+    again = apply_scene_command(resolved.snapshot, runtime_signal(state=ExecState.BLOCKED))
+    assert again.outcome is APPLIED
+    assert is_live_signal(again.snapshot, "sig-1")
+    assert [item.object_id for item in again.snapshot.objects].count("sig-1") == 1
+
+
+@pytest.mark.parametrize("author", [BRAIN, USER])
+def test_runtime_cannot_retire_a_brain_or_user_signal(author):
+    before = run(
+        scene_with_stars(),
+        cmd(SceneOp.ATTACH_SIGNAL, author, object_id="note", fields=SceneObjectFields(category="todo"), target_id="star-a"),
+    )
+    assert is_live_signal(before, "note")
+    update = apply_scene_command(before, cmd(SceneOp.UNLINK, RUNTIME, relation_id="note"))
+    assert (update.outcome, update.reason) == (REJECTED, SceneRefusal.RUNTIME_ORIGIN)
+    assert_unchanged(before, update)
+    # Leurs propres droits ne changent pas, sur leurs signaux comme sur ceux du runtime.
+    signalled = run(before, runtime_signal())
+    for actor in (BRAIN, USER):
+        for relation_id in ("note", "sig-1"):
+            assert apply_scene_command(signalled, cmd(SceneOp.UNLINK, actor, relation_id=relation_id)).outcome is APPLIED
+
+
+def test_runtime_retires_only_a_signal_link_between_its_attention_and_its_star():
+    retired = run(scene_with_stars(), runtime_signal(), cmd(SceneOp.UNLINK, RUNTIME, relation_id="sig-1"))
+    cases = {
+        # même identifiant que le signal, mais posé par l'utilisateur vers un artefact du cerveau
+        "artifact target": SceneRelation("sig-1", RelationKind.EXPLAINS, "sig-1", "art-1"),
+        # lien `explains` d'un artefact du cerveau vers une étoile, nommé comme sa source
+        "artifact source": SceneRelation("art-1", RelationKind.EXPLAINS, "art-1", "star-a"),
+        # lien `groups` qui porte l'identifiant de sa source : pas un lien de signal
+        "groups": SceneRelation("sig-1", RelationKind.GROUPS, "sig-1", "star-a"),
+    }
+    for name, relation in cases.items():
+        before = run(retired, cmd(SceneOp.LINK, USER, relation=relation))
+        update = apply_scene_command(before, cmd(SceneOp.UNLINK, RUNTIME, relation_id=relation.relation_id))
+        assert (update.outcome, update.reason) == (REJECTED, SceneRefusal.RUNTIME_RELATION), name
+        assert_unchanged(before, update)
+
+
+def test_retiring_a_signal_grants_runtime_no_archive_visibility_or_layout_right():
+    raised = run(scene_with_stars(), runtime_signal())
+    for command, reason in (
+        (cmd(SceneOp.ARCHIVE, RUNTIME, object_id="sig-1"), SceneRefusal.OP_NOT_ALLOWED),
+        (cmd(SceneOp.SET_VISIBILITY, RUNTIME, object_id="sig-1", visibility=Visibility.HIDDEN), SceneRefusal.OP_NOT_ALLOWED),
+        (cmd(SceneOp.SET_GEOMETRY, RUNTIME, object_id="sig-1", geometry=GEO), SceneRefusal.OP_NOT_ALLOWED),
+        (patch(RUNTIME, "sig-1", visibility=Visibility.HIDDEN), SceneRefusal.RUNTIME_COMPOSITION),
+        (patch(RUNTIME, "sig-1", layer=10), SceneRefusal.RUNTIME_COMPOSITION),
+        (cmd(SceneOp.UNLINK, RUNTIME, relation_id="rel-ab"), None),
+    ):
+        update = apply_scene_command(raised, command)
+        if reason is None:
+            # `parent_of` entre étoiles runtime : droit antérieur, inchangé.
+            assert update.outcome is APPLIED
+        else:
+            assert (update.outcome, update.reason) == (REJECTED, reason), command.op
+    assert ALLOWED_SCENE_OPS[RUNTIME] == EXPECTED_ALLOWED[RUNTIME]
 
 
 # --- AutoResolver : commis par l'utilisateur seulement ------------------------

@@ -14,6 +14,7 @@ from jarvis.core.brain_context import ATTENTION_QUEUE_SIZE, DEFAULT_WAKE_INTERVA
 from jarvis.core.brain_service import DEFAULT_TURN_BUDGET_S, BrainOrchestrator
 from jarvis.core.calendar_service import CalendarService
 from jarvis.core.drive_service import DriveService
+from jarvis.core.scene_projector import SceneProjector
 from jarvis.core.scene_service import SceneService
 from jarvis.core.v2_services import ConversationService, CoreEventBus, JobService, NotificationService, SchedulerService
 from jarvis.core.v2_tools import CoreToolRouter
@@ -71,6 +72,14 @@ class JarvisCoreApplication:
         self.scene = SceneService(
             scene_repository or SQLiteSceneRepository(root / "state" / "scene.sqlite3"),
             diagnostics=diagnostics,
+        )
+        # Projection runtime (Slice 04) : chaque sous-agent et chaque job
+        # deviennent des étoiles sans tour du cerveau. Seul écrivain `runtime`
+        # de la scène ; abonné tolérant de `core.work.updated`, il se
+        # réconcilie depuis l'instantané de travail. Démarré après la scène,
+        # arrêté avant sa fermeture.
+        self.scene_projector = SceneProjector(
+            work=self.work_state, scene=self.scene, events=self.events, diagnostics=diagnostics,
         )
         # Tâche 12 : le cerveau lit ce même magasin à chaque tour, et une
         # politique abonnée à `core.work.updated` retient pour lui les échecs,
@@ -139,6 +148,10 @@ class JarvisCoreApplication:
             # Ne lève pas : un refus est journalisé et la scène reste
             # indisponible pendant que le reste de Core démarre.
             await self.scene.start()
+            # Après la scène (même indisponible : la projection attend et le
+            # journalise), avant `jobs.recover()` dont les interruptions
+            # doivent atteindre la scène.
+            self.scene_projector.start()
             self.live_reaper.start()
             await self.state.save_device(Device())
             # Subscribe before recovery: overdue schedules and interrupted jobs
@@ -166,7 +179,7 @@ class JarvisCoreApplication:
             await self.live_reaper.stop()
             await self._stop_notification_loop()
             await self._stop_work_attention()
-            await self.scene.close()
+            await self._stop_scene()
             try:
                 await self.state.close()
             except Exception:
@@ -288,6 +301,17 @@ class JarvisCoreApplication:
             self.events.unsubscribe(queue)
         await self.work_attention.stop()
 
+    async def _stop_scene(self) -> None:
+        """Arrêter la projection, puis fermer la scène : aucun écrivain ne survit à la fermeture.
+
+        Le cerveau n'écrit pas la scène dans cette Slice ; le transport HTTP
+        (Slice 03) est arrêté par son serveur avant `stop()`, et une commande
+        encore en vol termine sa transaction (`close` attend le verrou).
+        """
+
+        await self.scene_projector.stop()
+        await self.scene.close()
+
     async def stop(self) -> None:
         if self.health.status == "stopped":
             return
@@ -305,19 +329,20 @@ class JarvisCoreApplication:
         await self.brain.stop()
         await self._stop_notification_loop()
         await self.scheduler.stop()
-        # Les écrivains de la scène (cerveau, puis projection et transport des
-        # Slices suivantes) sont arrêtés avant ; une commande encore en vol
-        # termine sa transaction, `close` attend le verrou. Fermée avant les
-        # retours anticipés ci-dessous pour ne jamais laisser le fichier ouvert.
-        await self.scene.close()
-        if not await self.back_brain.stop():
-            self.health.status = "state_persistence_unknown"
-            self.health.detail = "back brain submission remains owned while storage completes"
-            return
-        if not await self.jobs.stop():
-            self.health.status = "state_persistence_unknown" if self.jobs.owned.persistence_failures else "cleanup_unknown"
-            self.health.detail = "back brain finalization remains owned and unconfirmed"
-            return
+        try:
+            if not await self.back_brain.stop():
+                self.health.status = "state_persistence_unknown"
+                self.health.detail = "back brain submission remains owned while storage completes"
+                return
+            if not await self.jobs.stop():
+                self.health.status = "state_persistence_unknown" if self.jobs.owned.persistence_failures else "cleanup_unknown"
+                self.health.detail = "back brain finalization remains owned and unconfirmed"
+                return
+        finally:
+            # Sur tous les chemins, retours anticipés et exceptions compris : la
+            # projection (dernier écrivain runtime) s'arrête après les jobs,
+            # pour que leurs fins atteignent la scène, et avant la fermeture.
+            await self._stop_scene()
         await self.state.close()
         self.health.status = "stopped"
         self._stopped.set()
