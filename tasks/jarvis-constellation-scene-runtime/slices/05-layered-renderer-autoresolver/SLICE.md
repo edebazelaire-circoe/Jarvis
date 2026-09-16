@@ -17,6 +17,8 @@ PM amendment (Slice 01 QA): payload text may contain DEL, C1, bidi overrides (U+
 
 PM amendment (Slice 03 QA): browsers allow ~6 HTTP/1.1 connections per host:port and each tab's 25 s scene long-poll holds one alongside the 1 s `/api/status`/`/api/work` polls. The page loop must: run a single scene long-poll per tab, pause it when `document.visibilityState` is hidden (resume with a snapshot/patch catch-up), honour the Control Center long-poll cap response (`retry`), and back off on errors. Validate with several tabs open. Use `window.JarvisSceneClient` (already injected) rather than re-implementing patch application. Runtime validation must never start the Control Center through the launcher (`webbrowser.open` opens a tab in the user's browser): drive `ControlCenter` in-process or use a dedicated test tab opened and closed by the validator.
 
+PM amendment (Slice 04 QA): `parent_of` cycles can exist — layout/traversal must tolerate them. A retired signal keeps its old category; decide liveness only with `is_live_signal` semantics (an attention is live iff its `explains` relation with `relation_id == from_id` exists). `process_stopped` interruptions produce one signal per running sub-agent at each brain CLI stop — style them as low-urgency.
+
 ## Scope
 ### In Scope
 `control_center_scene.js` renderer + resolver, CSS, marker injection, feature flag gate (render only if enabled, see 11), node tests for resolver.
