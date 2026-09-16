@@ -19,6 +19,7 @@ from jarvis.domain import scene as scene_module
 from jarvis.domain.scene import (
     ALLOWED_SCENE_OPS,
     DEFAULT_LAYERS,
+    MAX_ARCHIVED_IDS,
     MAX_ID_CHARS,
     MAX_LAYER,
     MAX_ORDER,
@@ -139,6 +140,7 @@ def test_closed_enums_hold_exactly_the_contract_values():
         "upsert_object", "patch_object", "set_geometry", "set_representation", "set_visibility",
         "pin", "unpin", "link", "unlink", "archive", "attach_signal",
     }
+    assert {op.value for op in PatchOpKind} == {"put_object", "archive_object", "put_relation", "delete_relation"}
     assert set(DEFAULT_LAYERS) == set(SceneObjectKind)
 
 
@@ -165,7 +167,7 @@ def matrix_command(op: SceneOp, actor: SceneActor) -> SceneCommand:
     """
 
     arguments = {
-        SceneOp.UPSERT_OBJECT: {"object_id": "star-new", "fields": SceneObjectFields(kind=SceneObjectKind.AGENT, category="agent")},
+        SceneOp.UPSERT_OBJECT: {"object_id": "sig-new", "fields": SceneObjectFields(kind=SceneObjectKind.ATTENTION, category="error")},
         SceneOp.PATCH_OBJECT: {"object_id": "star-a", "fields": SceneObjectFields(payload=ScenePayload(title="Nouveau"))},
         SceneOp.SET_GEOMETRY: {"object_id": "star-a", "geometry": GEO_2},
         SceneOp.SET_REPRESENTATION: {"object_id": "star-a", "representation": Representation.CAPSULE},
@@ -211,27 +213,47 @@ def test_archive_is_rejected_for_brain_and_runtime_whatever_the_target(actor, ob
     assert all(item.disposition is Disposition.ACTIVE for item in update.snapshot.objects)
 
 
-def test_user_archive_keeps_the_object_and_drops_its_relations():
+def test_user_archive_moves_the_object_to_history_and_leaves_a_tombstone():
     before = scene_with_stars()
+    known = before.get_object("star-a")
     update = apply_scene_command(before, cmd(SceneOp.ARCHIVE, USER, object_id="star-a"))
     assert update.outcome is APPLIED
-    archived = update.snapshot.get_object("star-a")
-    assert archived.disposition is Disposition.ARCHIVED
-    assert archived.visibility is Visibility.VISIBLE  # caché ≠ archivé
-    assert archived not in update.snapshot.active_objects
+    assert update.snapshot.get_object("star-a") is None
+    assert update.snapshot.archived_ids == ("star-a",)
+    assert update.snapshot.is_archived("star-a")
     assert update.snapshot.get_relation("rel-ab") is None
-    assert [op.op for op in update.patch.ops] == [PatchOpKind.PUT_OBJECT, PatchOpKind.DELETE_RELATION]
+    assert all(item.disposition is Disposition.ACTIVE for item in update.snapshot.objects)
+    assert [op.op for op in update.patch.ops] == [PatchOpKind.ARCHIVE_OBJECT, PatchOpKind.DELETE_RELATION]
+    # Le patch porte la forme historique complète, pour le magasin.
+    history = update.patch.ops[0].object
+    assert history == dataclasses.replace(known, disposition=Disposition.ARCHIVED)
+    assert history.visibility is Visibility.VISIBLE  # caché ≠ archivé
 
     again = apply_scene_command(update.snapshot, cmd(SceneOp.ARCHIVE, USER, object_id="star-a"))
     assert again.outcome is DUPLICATE
-    for command in (
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         patch(RUNTIME, "star-a", exec_state=ExecState.COMPLETED),
+        star("star-a", exec_state=ExecState.COMPLETED),  # observation tardive : pas de résurrection
+        upsert(BRAIN, "star-a", kind=SceneObjectKind.WINDOW, category="note"),
+        upsert(USER, "star-a", kind=SceneObjectKind.GROUP, category="castor"),
         cmd(SceneOp.SET_VISIBILITY, USER, object_id="star-a", visibility=Visibility.HIDDEN),
+        cmd(SceneOp.SET_GEOMETRY, USER, object_id="star-a", geometry=GEO_2),
+        cmd(SceneOp.PIN, USER, object_id="star-a"),
         cmd(SceneOp.LINK, USER, relation=SceneRelation("rel-x", RelationKind.GROUPS, "star-b", "star-a")),
+        cmd(SceneOp.LINK, RUNTIME, relation=SceneRelation("rel-x", RelationKind.PARENT_OF, "star-a", "star-b")),
         cmd(SceneOp.ATTACH_SIGNAL, RUNTIME, object_id="sig-9", fields=SceneObjectFields(category="error"), target_id="star-a"),
-    ):
-        refused = apply_scene_command(update.snapshot, command)
-        assert (refused.outcome, refused.reason) == (INVALID, SceneRefusal.OBJECT_ARCHIVED), command.op
+        cmd(SceneOp.ATTACH_SIGNAL, RUNTIME, object_id="star-a", fields=SceneObjectFields(category="error"), target_id="star-b"),
+    ],
+)
+def test_every_command_on_a_tombstoned_id_is_invalid(command):
+    archived = run(scene_with_stars(), cmd(SceneOp.ARCHIVE, USER, object_id="star-a"))
+    update = apply_scene_command(archived, command)
+    assert (update.outcome, update.reason) == (INVALID, SceneRefusal.OBJECT_ARCHIVED)
+    assert_unchanged(archived, update)
 
 
 def test_archive_of_an_unknown_object_is_invalid_for_the_user():
@@ -503,16 +525,73 @@ def test_only_runtime_writes_execution_truth(actor, fields):
     assert echoed.outcome is DUPLICATE
 
 
-def test_brain_may_create_every_kind_and_compose_runtime_stars():
+#: Création par acteur × nature : seul runtime fait naître une étoile ; runtime
+#: ne crée ni artefact, ni fenêtre, ni groupe ; le signal d'attention est à
+#: tous (le cerveau signale, l'utilisateur marque ce qui mérite attention).
+CREATION_OUTCOMES = {
+    RUNTIME: {
+        SceneObjectKind.AGENT: (APPLIED, None),
+        SceneObjectKind.JOB: (APPLIED, None),
+        SceneObjectKind.ATTENTION: (APPLIED, None),
+        SceneObjectKind.ARTIFACT: (REJECTED, SceneRefusal.RUNTIME_KIND),
+        SceneObjectKind.WINDOW: (REJECTED, SceneRefusal.RUNTIME_KIND),
+        SceneObjectKind.GROUP: (REJECTED, SceneRefusal.RUNTIME_KIND),
+    },
+    **{
+        actor: {
+            SceneObjectKind.AGENT: (REJECTED, SceneRefusal.EXECUTION_NODE),
+            SceneObjectKind.JOB: (REJECTED, SceneRefusal.EXECUTION_NODE),
+            SceneObjectKind.ATTENTION: (APPLIED, None),
+            SceneObjectKind.ARTIFACT: (APPLIED, None),
+            SceneObjectKind.WINDOW: (APPLIED, None),
+            SceneObjectKind.GROUP: (APPLIED, None),
+        }
+        for actor in (BRAIN, USER)
+    },
+}
+
+
+@pytest.mark.parametrize("kind", list(SceneObjectKind))
+@pytest.mark.parametrize("actor", list(SceneActor))
+def test_creation_cell_per_actor_and_kind(actor, kind):
+    before = scene_with_stars()
+    update = apply_scene_command(before, upsert(actor, "new-1", kind=kind, category="cat"))
+    assert (update.outcome, update.reason) == CREATION_OUTCOMES[actor][kind]
+    if update.changed:
+        assert update.snapshot.get_object("new-1").constraints.placed_by is PlacedBy(actor.value)
+    else:
+        assert_unchanged(before, update)
+
+
+@pytest.mark.parametrize("actor", [BRAIN, USER])
+def test_brain_and_user_cannot_fabricate_a_star_by_any_creating_path(actor):
+    before = scene_with_stars()
+    for command in (
+        upsert(actor, "fake", kind=SceneObjectKind.AGENT, category="agent", geometry=GEO),
+        upsert(actor, "fake", kind=SceneObjectKind.JOB, category="job", layer=100, payload=ScenePayload(title="Faux")),
+    ):
+        update = apply_scene_command(before, command)
+        assert (update.outcome, update.reason) == (REJECTED, SceneRefusal.EXECUTION_NODE)
+    signal = apply_scene_command(
+        before, cmd(SceneOp.ATTACH_SIGNAL, actor, object_id="note-1", fields=SceneObjectFields(category="todo"), target_id="art-1")
+    )
+    assert signal.outcome is APPLIED
+    assert signal.snapshot.get_object("note-1").kind is SceneObjectKind.ATTENTION
+
+
+def test_brain_and_user_compose_existing_runtime_stars():
     before = scene_with_stars()
     snapshot = run(
         before,
-        *(upsert(BRAIN, f"obj-{kind.value}", kind=kind, category="brain") for kind in SceneObjectKind),
+        upsert(BRAIN, "grp-1", kind=SceneObjectKind.GROUP, category="castor"),
         patch(BRAIN, "star-a", category="research", layer=150, order=3, payload=ScenePayload(title="Explorer")),
-        cmd(SceneOp.LINK, BRAIN, relation=SceneRelation("rel-grp", RelationKind.GROUPS, "obj-group", "star-a")),
+        upsert(BRAIN, "star-b", kind=SceneObjectKind.JOB, category="job", representation=Representation.CAPSULE),
+        cmd(SceneOp.SET_REPRESENTATION, USER, object_id="star-b", representation=Representation.WINDOW),
+        cmd(SceneOp.LINK, BRAIN, relation=SceneRelation("rel-grp", RelationKind.GROUPS, "grp-1", "star-a")),
     )
-    assert snapshot.revision == before.revision + len(SceneObjectKind) + 2
+    assert snapshot.revision == before.revision + 5
     assert snapshot.get_object("star-a").exec_state is ExecState.RUNNING
+    assert snapshot.get_object("star-b").representation is Representation.WINDOW
 
 
 # --- commandes inapplicables --------------------------------------------------
@@ -596,6 +675,27 @@ def test_patch_refuses_gaps_and_unknown_deletions():
     ghost = ScenePatch(revision=before.revision + 1, ops=(ScenePatchOp(PatchOpKind.DELETE_RELATION, relation_id="ghost"),))
     with pytest.raises(ValueError):
         apply_scene_patch(before, ghost)
+
+    history = dataclasses.replace(before.get_object("art-1"), object_id="ghost", disposition=Disposition.ARCHIVED)
+    with pytest.raises(ValueError):
+        apply_scene_patch(before, ScenePatch(before.revision + 1, (ScenePatchOp(PatchOpKind.ARCHIVE_OBJECT, object=history),)))
+    archived = run(before, cmd(SceneOp.ARCHIVE, USER, object_id="art-1"))
+    resurrect = ScenePatch(archived.revision + 1, (ScenePatchOp(PatchOpKind.PUT_OBJECT, object=before.get_object("art-1")),))
+    with pytest.raises(ValueError):
+        apply_scene_patch(archived, resurrect)
+
+
+def test_patch_ops_carry_the_disposition_that_matches_them():
+    active = scene_with_stars().get_object("art-1")
+    history = dataclasses.replace(active, disposition=Disposition.ARCHIVED)
+    with pytest.raises(ValueError):
+        ScenePatchOp(PatchOpKind.PUT_OBJECT, object=history)
+    with pytest.raises(ValueError):
+        ScenePatchOp(PatchOpKind.ARCHIVE_OBJECT, object=active)
+    with pytest.raises(ValueError):
+        ScenePatchOp(PatchOpKind.ARCHIVE_OBJECT, relation_id="r")
+    op = ScenePatchOp(PatchOpKind.ARCHIVE_OBJECT, object=history)
+    assert ScenePatchOp.from_payload(json.loads(json.dumps(op.to_payload()))) == op
 
 
 def test_update_result_is_consistent():
@@ -708,6 +808,21 @@ def test_snapshot_bounds_uniqueness_and_relation_endpoints():
     many = tuple(dataclasses.replace(agent, object_id=f"a{index}") for index in range(MAX_SCENE_OBJECTS + 1))
     with pytest.raises(ValueError):
         SceneSnapshot("s", objects=many)
+    # Un instantané ne tient que la scène active ; les archivés sont des
+    # pierres tombales uniques, disjointes des objets, bornées.
+    with pytest.raises(ValueError):
+        SceneSnapshot("s", objects=(dataclasses.replace(agent, disposition=Disposition.ARCHIVED),))
+    with pytest.raises(ValueError):
+        SceneSnapshot("s", objects=(agent,), archived_ids=("a",))
+    with pytest.raises(ValueError):
+        SceneSnapshot("s", archived_ids=("x", "x"))
+    with pytest.raises(ValueError):
+        SceneSnapshot("s", archived_ids=(" x",))
+    with pytest.raises(TypeError):
+        SceneSnapshot("s", archived_ids=["x"])  # type: ignore[arg-type]
+    with pytest.raises(ValueError):
+        SceneSnapshot("s", archived_ids=tuple(f"t{index}" for index in range(MAX_ARCHIVED_IDS + 1)))
+    assert len(SceneSnapshot("s", objects=many[:MAX_SCENE_OBJECTS], archived_ids=tuple(f"t{index}" for index in range(MAX_ARCHIVED_IDS))).archived_ids) == MAX_ARCHIVED_IDS
 
 
 def test_reducer_refuses_to_grow_past_the_bounds():
@@ -731,7 +846,38 @@ def test_reducer_refuses_to_grow_past_the_bounds():
     archived = apply_scene_command(linked, cmd(SceneOp.ARCHIVE, USER, object_id="a0"))
     assert archived.outcome is APPLIED
     assert len(archived.patch.ops) == 1 + MAX_SCENE_RELATIONS == MAX_PATCH_OPS
+    assert archived.patch.ops[0].op is PatchOpKind.ARCHIVE_OBJECT
     assert archived.snapshot.relations == ()
+
+
+def test_archiving_frees_capacity_so_a_long_lived_scene_never_fills_up():
+    agent = SceneObject("a0", SceneObjectKind.AGENT, "agent", SceneConstraints(PlacedBy.RUNTIME))
+    snapshot = SceneSnapshot("s", objects=tuple(dataclasses.replace(agent, object_id=f"a{index}") for index in range(MAX_SCENE_OBJECTS)))
+    for turn in range(3 * MAX_SCENE_OBJECTS):
+        full = apply_scene_command(snapshot, star(f"new-{turn}"))
+        assert (full.outcome, full.reason) == (INVALID, SceneRefusal.SCENE_FULL)
+        snapshot = run(snapshot, cmd(SceneOp.ARCHIVE, USER, object_id=snapshot.objects[0].object_id), star(f"new-{turn}"))
+        assert len(snapshot.objects) == MAX_SCENE_OBJECTS
+    assert len(snapshot.archived_ids) == 3 * MAX_SCENE_OBJECTS
+
+
+def test_tombstones_are_bounded_and_the_oldest_drop_deterministically_on_replay():
+    tombstones = tuple(f"old-{index}" for index in range(MAX_ARCHIVED_IDS))
+    before = run(SceneSnapshot("s", revision=7, archived_ids=tombstones), star("star-a"))
+    update = apply_scene_command(before, cmd(SceneOp.ARCHIVE, USER, object_id="star-a"))
+    assert update.outcome is APPLIED
+    assert len(update.snapshot.archived_ids) == MAX_ARCHIVED_IDS
+    assert update.snapshot.archived_ids == (*tombstones[1:], "star-a")
+    # Le rejeu du patch, sur le fil, oublie exactement la même pierre tombale.
+    wire = ScenePatch.from_payload(json.loads(json.dumps(update.patch.to_payload())))
+    assert apply_scene_patch(before, wire) == update.snapshot
+    restored = SceneSnapshot.from_payload(json.loads(json.dumps(update.snapshot.to_payload())))
+    assert restored == update.snapshot
+
+    # Risque résiduel documenté : l'identifiant oublié redevient libre.
+    assert apply_scene_command(update.snapshot, star("old-0")).outcome is APPLIED
+    kept = apply_scene_command(update.snapshot, star("old-1"))
+    assert (kept.outcome, kept.reason) == (INVALID, SceneRefusal.OBJECT_ARCHIVED)
 
 
 # --- forme des commandes ------------------------------------------------------
@@ -802,6 +948,7 @@ def test_snapshot_round_trips_through_json_with_schema_version():
     snapshot = rich_snapshot()
     wire = json.loads(json.dumps(snapshot.to_payload()))
     assert wire["schema_version"] == SCENE_SCHEMA_VERSION == 1
+    assert wire["archived_ids"] == ["old"]
     assert SceneSnapshot.from_payload(wire) == snapshot
 
 
@@ -858,6 +1005,13 @@ def test_decoding_refuses_unknown_or_newer_schema_versions(version, decode):
         (lambda p: p.update(objects=[{}] * (MAX_SCENE_OBJECTS + 1)), ValueError),
         (lambda p: p.update(relations=[{}] * (MAX_SCENE_RELATIONS + 1)), ValueError),
         (lambda p: p.update(revision=True), TypeError),
+        (lambda p: p.pop("archived_ids"), ValueError),
+        (lambda p: p.update(archived_ids="old"), TypeError),
+        (lambda p: p.update(archived_ids=[7]), TypeError),
+        (lambda p: p.update(archived_ids=["old", "old"]), ValueError),
+        (lambda p: p.update(archived_ids=["star-a"]), ValueError),
+        (lambda p: p.update(archived_ids=[f"t{index}" for index in range(MAX_ARCHIVED_IDS + 1)]), ValueError),
+        (lambda p: p["objects"][0].update(disposition="archived"), ValueError),
     ],
 )
 def test_snapshot_decoding_is_strict(mutate, error):

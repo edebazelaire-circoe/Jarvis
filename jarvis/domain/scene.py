@@ -11,7 +11,8 @@ travail Core (`jarvis.domain.work_state`) reste la vérité d'exécution
   coloré par sa catégorie, avec représentation, géométrie, couche, visibilité,
   disposition et contraintes ;
 - `SceneRelation` : un lien typé entre deux objets actifs ;
-- `SceneSnapshot` : la scène complète à une révision ;
+- `SceneSnapshot` : la scène active à une révision, plus les pierres
+  tombales bornées des objets archivés ;
 - `SceneCommand` : une intention d'un acteur (`runtime`, `brain`, `user`) ;
 - `ScenePatch` : le delta exact produit par une commande appliquée.
 
@@ -21,8 +22,11 @@ Invariants transverses :
   commande hors droits rend `rejected_authority`, quel que soit le catalogue
   d'outils qui l'a émise (Décision 14) ;
 - `exec_state` et `work_ref` reflètent Core : seul `runtime` les écrit ;
+- seul `runtime` crée un nœud d'exécution (`agent`, `job`) : une étoile naît
+  d'un fait d'exécution, jamais d'une composition (Décisions 3, 4, 17) ;
 - une fin d'exécution ne change ni la visibilité ni la disposition
-  (Décision 12) ; caché ≠ archivé (Décision 13) ; seul `user` archive ;
+  (Décision 12) ; caché ≠ archivé (Décision 13) ; seul `user` archive, et
+  l'objet archivé quitte la scène pour l'historique ;
 - un objet épinglé par l'utilisateur ne bouge que sous la main de
   l'utilisateur (Décision 9) ;
 - changer de représentation garde l'identité de l'objet (Décision 6) ;
@@ -62,9 +66,16 @@ MAX_ITEM_REF_CHARS = 256
 MAX_URL_CHARS = 2_048
 #: Taille JSON UTF-8 compacte d'une charge. Refusée au-delà, jamais tronquée.
 MAX_PAYLOAD_BYTES = 16_384
-#: Objets d'un instantané, archivés compris. Au-delà, une création est
-#: `invalid` (`scene_full`) : le magasin décide quoi sortir vers l'historique.
+#: Objets actifs d'un instantané. Au-delà, une création est `invalid`
+#: (`scene_full`). Les objets archivés n'y comptent pas : ils sortent de la
+#: scène vers l'historique.
 MAX_SCENE_OBJECTS = 512
+#: Pierres tombales : identifiants archivés retenus pour qu'une mise à jour
+#: tardive ne ressuscite pas un objet. Au-delà, les plus anciennes tombent,
+#: dans `apply_scene_patch` pour que le rejeu reste exact. L'état de travail
+#: Core ne vit qu'une session (64 éléments, nouveau `store_id` au démarrage) :
+#: un travail archivé 4 096 archivages plus tôt ne revient pas en pratique.
+MAX_ARCHIVED_IDS = 4_096
 MAX_SCENE_RELATIONS = 1_024
 #: Un archivage émet l'objet et la suppression de toutes ses relations.
 MAX_PATCH_OPS = 1 + MAX_SCENE_RELATIONS
@@ -144,7 +155,12 @@ class Visibility(StrEnum):
 
 
 class Disposition(StrEnum):
-    """Présence dans la scène active. `archived` : historique seulement."""
+    """Présence dans la scène active.
+
+    Un instantané ne contient que des objets `active`. `archived` ne se lit
+    que sur la forme historique de l'objet, portée par l'opération de patch
+    `archive_object` que le magasin écrit dans l'historique.
+    """
 
     ACTIVE = "active"
     ARCHIVED = "archived"
@@ -620,16 +636,20 @@ class SceneRelation:
 
 @dataclass(frozen=True, slots=True)
 class SceneSnapshot:
-    """Scène complète à une révision : objets actifs et archivés, relations.
+    """Scène active à une révision : objets, relations, pierres tombales.
 
-    Chaque relation relie deux objets actifs : l'archivage supprime les
-    relations de l'objet archivé. La scène active est `active_objects`.
+    `objects` ne contient que des objets actifs ; chaque relation en relie
+    deux. `archived_ids` garde, dans l'ordre d'archivage et borné par
+    `MAX_ARCHIVED_IDS`, l'identifiant des objets archivés : toute commande qui
+    les vise reste `invalid` (`object_archived`). L'objet archivé lui-même vit
+    dans l'historique du magasin, pas ici.
     """
 
     scene_id: str
     revision: int = 0
     objects: tuple[SceneObject, ...] = ()
     relations: tuple[SceneRelation, ...] = ()
+    archived_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         _check_id("scene_id", self.scene_id)
@@ -641,24 +661,34 @@ class SceneSnapshot:
             raise TypeError("objects must be a tuple of SceneObject")
         if not isinstance(self.relations, tuple) or not all(isinstance(item, SceneRelation) for item in self.relations):
             raise TypeError("relations must be a tuple of SceneRelation")
+        if not isinstance(self.archived_ids, tuple):
+            raise TypeError("archived_ids must be a tuple of identifiers")
         if len(self.objects) > MAX_SCENE_OBJECTS:
             raise ValueError(f"a scene holds at most {MAX_SCENE_OBJECTS} objects")
+        if len(self.archived_ids) > MAX_ARCHIVED_IDS:
+            raise ValueError(f"a scene retains at most {MAX_ARCHIVED_IDS} archived ids")
+        for archived_id in self.archived_ids:
+            _check_id("archived_ids[]", archived_id)
         if len(self.relations) > MAX_SCENE_RELATIONS:
             raise ValueError(f"a scene holds at most {MAX_SCENE_RELATIONS} relations")
         by_id = {item.object_id: item for item in self.objects}
         if len(by_id) != len(self.objects):
             raise ValueError("scene objects must be unique per object_id")
+        if any(not item.active for item in self.objects):
+            raise ValueError("a scene snapshot holds active objects only")
+        archived = set(self.archived_ids)
+        if len(archived) != len(self.archived_ids):
+            raise ValueError("archived ids must be unique")
+        if archived & by_id.keys():
+            raise ValueError("an archived id cannot also be an active object")
         if len({relation.relation_id for relation in self.relations}) != len(self.relations):
             raise ValueError("scene relations must be unique per relation_id")
         for relation in self.relations:
-            for endpoint in (relation.from_id, relation.to_id):
-                target = by_id.get(endpoint)
-                if target is None or not target.active:
-                    raise ValueError(f"relation {relation.relation_id} must link active objects")
+            if relation.from_id not in by_id or relation.to_id not in by_id:
+                raise ValueError(f"relation {relation.relation_id} must link active objects")
 
-    @property
-    def active_objects(self) -> tuple[SceneObject, ...]:
-        return tuple(item for item in self.objects if item.active)
+    def is_archived(self, object_id: str) -> bool:
+        return object_id in self.archived_ids
 
     def get_object(self, object_id: str) -> SceneObject | None:
         return next((item for item in self.objects if item.object_id == object_id), None)
@@ -673,19 +703,26 @@ class SceneSnapshot:
             "revision": self.revision,
             "objects": [item.to_payload() for item in self.objects],
             "relations": [item.to_payload() for item in self.relations],
+            "archived_ids": list(self.archived_ids),
         }
 
     @classmethod
     def from_payload(cls, payload: object) -> SceneSnapshot:
         _check_schema_version("scene snapshot", payload)
-        data = _check_keys("scene snapshot", payload, frozenset({"schema_version", "scene_id", "revision", "objects", "relations"}))
+        data = _check_keys(
+            "scene snapshot",
+            payload,
+            frozenset({"schema_version", "scene_id", "revision", "objects", "relations", "archived_ids"}),
+        )
         objects = _list("objects", data["objects"], MAX_SCENE_OBJECTS)
         relations = _list("relations", data["relations"], MAX_SCENE_RELATIONS)
+        archived_ids = _list("archived_ids", data["archived_ids"], MAX_ARCHIVED_IDS)
         return cls(
             scene_id=data["scene_id"],
             revision=data["revision"],
             objects=tuple(SceneObject.from_payload(item) for item in objects),
             relations=tuple(SceneRelation.from_payload(item) for item in relations),
+            archived_ids=tuple(archived_ids),
         )
 
 
@@ -870,9 +907,12 @@ class SceneCommand:
 
 
 class PatchOpKind(StrEnum):
-    """Delta d'état. Un objet n'est jamais supprimé : il est archivé."""
+    """Delta d'état. Un objet ne quitte la scène que par `archive_object`."""
 
     PUT_OBJECT = "put_object"
+    #: Retire l'objet de la scène et ajoute sa pierre tombale ; porte la forme
+    #: historique complète (`disposition = archived`) pour le magasin.
+    ARCHIVE_OBJECT = "archive_object"
     PUT_RELATION = "put_relation"
     DELETE_RELATION = "delete_relation"
 
@@ -888,6 +928,7 @@ class ScenePatchOp:
         _check_enum("op", self.op, PatchOpKind)
         expected = {
             PatchOpKind.PUT_OBJECT: "object",
+            PatchOpKind.ARCHIVE_OBJECT: "object",
             PatchOpKind.PUT_RELATION: "relation",
             PatchOpKind.DELETE_RELATION: "relation_id",
         }[self.op]
@@ -896,6 +937,8 @@ class ScenePatchOp:
             raise ValueError(f"{self.op.value} carries exactly {expected}")
         if self.object is not None:
             _check_instance("object", self.object, SceneObject)
+            if self.object.active is (self.op is PatchOpKind.ARCHIVE_OBJECT):
+                raise ValueError("put_object carries an active object, archive_object an archived one")
         if self.relation is not None:
             _check_instance("relation", self.relation, SceneRelation)
         _check_id("relation_id", self.relation_id, required=False)
@@ -956,16 +999,26 @@ def apply_scene_patch(snapshot: SceneSnapshot, patch: ScenePatch) -> SceneSnapsh
     """Appliquer un patch à l'instantané de la révision précédente. Fonction pure.
 
     Un objet remplacé garde sa place dans l'ordre des objets ; un nouvel objet
-    est ajouté à la fin. Lève `ValueError` sur un saut de révision ou une
-    suppression de relation inconnue : le consommateur doit se resynchroniser.
+    est ajouté à la fin. Un archivage retire l'objet et ajoute sa pierre
+    tombale à la fin ; au-delà de `MAX_ARCHIVED_IDS`, les plus anciennes sont
+    oubliées ici, de façon déterministe. Lève `ValueError` sur un saut de
+    révision, un objet archivé réécrit, un archivage ou une suppression de
+    relation inconnus : le consommateur doit se resynchroniser.
     """
 
     if patch.revision != snapshot.revision + 1:
         raise ValueError(f"patch {patch.revision} does not follow revision {snapshot.revision}")
     objects = {item.object_id: item for item in snapshot.objects}
     relations = {item.relation_id: item for item in snapshot.relations}
+    archived = dict.fromkeys(snapshot.archived_ids)
     for op in patch.ops:
-        if op.object is not None:
+        if op.object is not None and op.op is PatchOpKind.ARCHIVE_OBJECT:
+            if objects.pop(op.object.object_id, None) is None:
+                raise ValueError(f"patch archives unknown object {op.object.object_id}")
+            archived[op.object.object_id] = None
+        elif op.object is not None:
+            if op.object.object_id in archived:
+                raise ValueError(f"patch rewrites archived object {op.object.object_id}")
             objects[op.object.object_id] = op.object
         elif op.relation is not None:
             relations[op.relation.relation_id] = op.relation
@@ -978,6 +1031,7 @@ def apply_scene_patch(snapshot: SceneSnapshot, patch: ScenePatch) -> SceneSnapsh
         revision=patch.revision,
         objects=tuple(objects.values()),
         relations=tuple(relations.values()),
+        archived_ids=tuple(archived)[-MAX_ARCHIVED_IDS:],
     )
 
 
@@ -1007,6 +1061,9 @@ class SceneRefusal(StrEnum):
     RUNTIME_COMPOSITION = "runtime_composition"
     RUNTIME_RELATION = "runtime_relation"
     EXECUTION_TRUTH = "execution_truth"
+    #: Création d'un `agent`/`job` par `brain` ou `user` : une étoile ne naît
+    #: que d'un fait d'exécution.
+    EXECUTION_NODE = "execution_node"
     PINNED_BY_USER = "pinned_by_user"
     EXPLICIT_PLACEMENT = "explicit_placement"
     # invalid
@@ -1074,8 +1131,8 @@ def apply_scene_command(snapshot: SceneSnapshot, command: SceneCommand) -> Scene
     2. existence et disposition des objets visés (`invalid`) ;
     3. autorité sur l'**effet** : `runtime` n'écrit que des nœuds
        d'exécution et des signaux, jamais un champ de composition, et ne relie
-       que des `parent_of` entre nœuds d'exécution ; seul `runtime` change
-       `exec_state` ou `work_ref` ; seul `user` déplace ou redimensionne un
+       que des `parent_of` entre nœuds d'exécution ; seul `runtime` crée un
+       `agent`/`job` et change `exec_state` ou `work_ref` ; seul `user` déplace ou redimensionne un
        objet épinglé ; un placement `resolver` ne remplace ni une épingle ni
        un placement explicite ;
     4. bornes de la scène (`invalid`) ;
@@ -1103,11 +1160,11 @@ def apply_scene_command(snapshot: SceneSnapshot, command: SceneCommand) -> Scene
 
 def _require_active(snapshot: SceneSnapshot, object_id: str) -> SceneObject:
     current = snapshot.get_object(object_id)
-    if current is None:
-        raise _invalid(SceneRefusal.UNKNOWN_OBJECT)
-    if not current.active:
+    if current is not None:
+        return current
+    if snapshot.is_archived(object_id):
         raise _invalid(SceneRefusal.OBJECT_ARCHIVED)
-    return current
+    raise _invalid(SceneRefusal.UNKNOWN_OBJECT)
 
 
 def _plan_object_write(
@@ -1125,10 +1182,17 @@ def _plan_object_write(
     current = snapshot.get_object(object_id)
     wanted_kind = kind or fields.kind
     if current is None:
+        if snapshot.is_archived(object_id):
+            # Même en création : l'identifiant reste pris tant que sa pierre
+            # tombale existe, sinon une observation tardive ressusciterait
+            # l'étoile archivée.
+            raise _invalid(SceneRefusal.OBJECT_ARCHIVED)
         if not create:
             raise _invalid(SceneRefusal.UNKNOWN_OBJECT)
         if wanted_kind is None or fields.category is None:
             raise _invalid(SceneRefusal.INCOMPLETE_OBJECT)
+        if actor is not SceneActor.RUNTIME and wanted_kind in EXECUTION_KINDS:
+            raise _rejected(SceneRefusal.EXECUTION_NODE)
         before = SceneObject(
             object_id=object_id,
             kind=wanted_kind,
@@ -1137,8 +1201,6 @@ def _plan_object_write(
             layer=DEFAULT_LAYERS[wanted_kind],
         )
     else:
-        if not current.active:
-            raise _invalid(SceneRefusal.OBJECT_ARCHIVED)
         if wanted_kind is not None and wanted_kind is not current.kind:
             raise _invalid(SceneRefusal.KIND_IMMUTABLE)
         before = current
@@ -1226,12 +1288,10 @@ def _plan_pin(snapshot: SceneSnapshot, command: SceneCommand, *, pinned: bool) -
 
 def _plan_archive(snapshot: SceneSnapshot, command: SceneCommand) -> list[ScenePatchOp]:
     assert command.object_id is not None
-    current = snapshot.get_object(command.object_id)
-    if current is None:
-        raise _invalid(SceneRefusal.UNKNOWN_OBJECT)
-    if not current.active:
+    if snapshot.is_archived(command.object_id):
         return []
-    ops = [ScenePatchOp(PatchOpKind.PUT_OBJECT, object=replace(current, disposition=Disposition.ARCHIVED))]
+    current = _require_active(snapshot, command.object_id)
+    ops = [ScenePatchOp(PatchOpKind.ARCHIVE_OBJECT, object=replace(current, disposition=Disposition.ARCHIVED))]
     ops.extend(
         ScenePatchOp(PatchOpKind.DELETE_RELATION, relation_id=relation.relation_id)
         for relation in snapshot.relations
