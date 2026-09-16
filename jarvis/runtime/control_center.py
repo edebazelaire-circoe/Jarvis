@@ -39,6 +39,7 @@ from jarvis.runtime.audio_devices import AudioDiagnosticError, SoundDeviceAudioD
 from jarvis.runtime import (
     agent_behavior,
     agent_routing,
+    barehands_test_mode as barehands,
     cli_catalog,
     credentials as creds,
     shortcuts as shortcut_registry,
@@ -99,6 +100,10 @@ LIVE_SCRIPT_FILE = "control_center_live.js"
 LIVE_SCRIPT_MARKER = "/*__CONTROL_CENTER_LIVE_JS__*/"
 CATALOG_SCRIPT_FILE = "control_center_catalog.js"
 CATALOG_SCRIPT_MARKER = "/*__CONTROL_CENTER_CATALOG_JS__*/"
+#: Pointeur à mains nues (Barehands, mode test) : logique pure testée par node,
+#: plus son branchement navigateur. Même insertion que les scripts ci-dessus.
+BAREHANDS_SCRIPT_FILE = "control_center_barehands.js"
+BAREHANDS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_JS__*/"
 
 #: Architectures vocales proposées dans l'onglet « Mode vocal ». Comme le reste
 #: de l'écran, leur libellé vit ici et non dans la page. `{key}` est remplacé
@@ -244,10 +249,16 @@ class ControlCenter:
         work_view: CoreWorkView | None = None,
         live_view: CoreLiveStatusView | None = None,
         voice_registry: VoiceCapabilityRegistry | None = None,
+        barehands_vendor_root: Path | None = None,
     ) -> None:
         self.runtime_root = runtime_root
         self.project_root = project_root
         self.visualizer_url = visualizer_url
+        # Assets MediaPipe vendorisés par le bootstrap Barehands, servis à la
+        # page pour le mode test. Absents, le mode test le dit et ne démarre pas.
+        self.barehands_vendor_root = (
+            barehands_vendor_root if barehands_vendor_root is not None else barehands.vendor_root(project_root)
+        )
         self.journal = RuntimeJournal(runtime_root)
         # Notification discrète des événements d'arrière-plan (retour
         # utilisateur du 16/09/2026). Alimentée par la trace, le seul point
@@ -304,6 +315,9 @@ class ControlCenter:
             web.post("/api/self-dev/deploy", self.self_dev_deploy),
             web.get("/api/shortcuts", self.get_shortcuts),
             web.post("/api/shortcuts", self.save_shortcuts),
+            web.get("/api/barehands", self.get_barehands),
+            web.post("/api/barehands", self.save_barehands),
+            web.get(barehands.ASSET_ROUTE_PREFIX + "{asset:.+}", self.barehands_asset),
             web.get("/api/audio/devices", self.audio_devices),
             web.post("/api/audio/test", self.audio_test),
             web.get("/api/agent", self.agent_status),
@@ -465,6 +479,9 @@ class ControlCenter:
         )
         html = html.replace(
             CATALOG_SCRIPT_MARKER, page.with_name(CATALOG_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            BAREHANDS_SCRIPT_MARKER, page.with_name(BAREHANDS_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         if self.visualizer_url:
             html = html.replace("__VISUALIZER_URL__", self.visualizer_url)
@@ -1336,6 +1353,56 @@ class ControlCenter:
     async def get_settings(self, request: web.Request) -> web.Response:
         del request
         return web.json_response(self._settings_payload(self._settings()))
+
+    # ------------------------------------------------- Barehands (mode test)
+
+    async def get_barehands(self, request: web.Request) -> web.Response:
+        del request
+        return web.json_response(barehands.describe(self._settings(), self.barehands_vendor_root))
+
+    async def save_barehands(self, request: web.Request) -> web.Response:
+        """Enregistrer l'interrupteur seul, dans le fichier de réglages commun.
+
+        Route dédiée, comme les raccourcis : l'interrupteur s'applique à chaud
+        et ne doit pas dépendre de la validité du reste des réglages (voix,
+        CLI) qu'un enregistrement complet revaliderait.
+        """
+
+        try:
+            payload = await request.json()
+        except ValueError:
+            payload = None
+        current = self._settings()
+        try:
+            value = barehands.apply(current, payload)
+        except barehands.BarehandsSettingsError as exc:
+            self.journal.emit(
+                "settings.barehands.rejected", "Barehands test mode setting rejected",
+                level="warning", data={"code": exc.code},
+            )
+            raise web.HTTPBadRequest(text=str(exc), headers={SETTINGS_ERROR_CODE_HEADER: exc.code}) from exc
+        self._write_settings(current)
+        state = barehands.describe(current, self.barehands_vendor_root)
+        self.journal.emit(
+            "settings.barehands",
+            f"Barehands (mode test) {'activé' if value['enabled'] else 'désactivé'}",
+            data={"enabled": value["enabled"], "assets_installed": state["assets"]["installed"]},
+        )
+        return web.json_response(state)
+
+    async def barehands_asset(self, request: web.Request) -> web.StreamResponse:
+        found = barehands.asset_path(self.barehands_vendor_root, request.match_info["asset"])
+        if found is None:
+            raise web.HTTPNotFound(text="asset Barehands inconnu ou non installé")
+        path, content_type = found
+        return web.FileResponse(
+            path,
+            headers={
+                "Content-Type": content_type,
+                "Cache-Control": "no-cache",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
 
     def _prompt_payload(self, settings: dict[str, Any]) -> dict[str, Any]:
         """Project only programs active for the selected architecture and backend."""
