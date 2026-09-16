@@ -45,10 +45,10 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 import json
 import math
-import re
 from typing import Any, Callable
 
-from jarvis.domain.work_state import MAX_ID_CHARS, MAX_SOURCE_CHARS
+from jarvis.domain._checks import MAX_ID_CHARS, check_id, check_text, check_token, preview
+from jarvis.domain.work_state import MAX_SOURCE_CHARS
 
 #: Version des formes sérialisées racines (instantané, commande, patch). Un
 #: lecteur refuse toute autre valeur, plus récente comprise : il ne devine pas
@@ -89,8 +89,9 @@ MAX_LAYER = 1_000
 MAX_ORDER = 1_000_000
 DEFAULT_RELATION_LAYER = 50
 
-# Même forme de jeton que l'état de travail : pas d'espace, pas de `:`.
-_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
+#: Révision : entier signé 64 bits, pour tenir dans un INTEGER SQLite
+#: (Slice 02).
+MAX_REVISION = 2**63 - 1
 
 
 class SceneObjectKind(StrEnum):
@@ -234,34 +235,13 @@ class UnsupportedSceneSchemaVersion(ValueError):
     """Forme sérialisée absente de version, ou d'une version non prise en charge."""
 
     def __init__(self, name: str, version: object) -> None:
-        super().__init__(f"unsupported {name} schema_version {version!r} (expected {SCENE_SCHEMA_VERSION})")
+        super().__init__(f"unsupported {name} schema_version {preview(version)} (expected {SCENE_SCHEMA_VERSION})")
         self.version = version
 
 
 # ------------------------------------------------------------------ validation
-
-
-def _check_text(name: str, value: object, limit: int, *, single_line: bool = True) -> None:
-    if not isinstance(value, str):
-        raise TypeError(f"{name} must be a string")
-    if len(value) > limit:
-        raise ValueError(f"{name} exceeds {limit} characters")
-    if single_line and value and not value.isprintable():
-        raise ValueError(f"{name} must be a single printable line")
-
-
-def _check_token(name: str, value: object, limit: int) -> None:
-    _check_text(name, value, limit)
-    if not _TOKEN.fullmatch(str(value)):
-        raise ValueError(f"{name} must be a short token (letters, digits, '_', '.', '-')")
-
-
-def _check_id(name: str, value: object, *, required: bool = True) -> None:
-    if value is None and not required:
-        return
-    _check_text(name, value, MAX_ID_CHARS)
-    if not str(value).strip() or str(value) != str(value).strip():
-        raise ValueError(f"{name} must be a non-empty identifier without surrounding spaces")
+# Texte, jeton et identifiant : `jarvis.domain._checks`, partagé avec
+# `work_state` (mêmes règles, mêmes messages).
 
 
 def _check_enum(name: str, value: object, enum_type: type[StrEnum]) -> None:
@@ -274,6 +254,18 @@ def _check_int(name: str, value: object, low: int, high: int) -> None:
         raise TypeError(f"{name} must be an integer")
     if not low <= value <= high:
         raise ValueError(f"{name} must be between {low} and {high}")
+
+
+def _check_revision(value: object, low: int) -> None:
+    _check_int("revision", value, low, MAX_REVISION)
+
+
+def _check_multiline_text(name: str, value: object, limit: int) -> None:
+    """Texte sur plusieurs lignes : seuls `\\n` et `\\t` parmi les contrôles C0."""
+
+    check_text(name, value, limit, single_line=False)
+    if any(ch < " " and ch not in "\n\t" for ch in str(value)):
+        raise ValueError(f"{name} must not contain control characters other than newline and tab")
 
 
 def _check_instance(name: str, value: object, expected: type) -> None:
@@ -313,7 +305,12 @@ def _check_schema_version(name: str, payload: object) -> None:
 def _enum(enum_type: type[StrEnum], raw: object, name: str) -> Any:
     if not isinstance(raw, str):
         raise TypeError(f"{name} must be a string")
-    return enum_type(raw)
+    try:
+        return enum_type(raw)
+    except ValueError:
+        # Message propre plutôt que celui de `Enum`, qui recopie la valeur
+        # entière : la valeur reçue est tronquée (`preview`).
+        raise ValueError(f"{name} must be one of {sorted(item.value for item in enum_type)}, got {preview(raw)}") from None
 
 
 def _optional_enum(enum_type: type[StrEnum], payload: dict[str, Any], key: str) -> Any:
@@ -361,9 +358,15 @@ class SceneGeometry:
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise TypeError(f"{name} must be a number")
-            if not math.isfinite(value):
+            try:
+                number = float(value)
+            except OverflowError:
+                # Un entier JSON de 400 chiffres ne tient pas dans un flottant :
+                # erreur de valeur, pas `OverflowError`.
+                raise ValueError(f"{name} is out of range") from None
+            if not math.isfinite(number):
                 raise ValueError(f"{name} must be finite")
-            object.__setattr__(self, name, float(value))
+            object.__setattr__(self, name, number)
         if abs(self.x) > MAX_SCENE_COORDINATE or abs(self.y) > MAX_SCENE_COORDINATE:
             raise ValueError(f"x and y must be within ±{MAX_SCENE_COORDINATE:g}")
         if not (0 < self.w <= MAX_SCENE_EXTENT and 0 < self.h <= MAX_SCENE_EXTENT):
@@ -391,9 +394,9 @@ class WorkRef:
     work_id: str | None = None
 
     def __post_init__(self) -> None:
-        _check_token("source", self.source, MAX_SOURCE_CHARS)
-        _check_id("external_id", self.external_id)
-        _check_id("work_id", self.work_id, required=False)
+        check_token("source", self.source, MAX_SOURCE_CHARS, required=True)
+        check_id("external_id", self.external_id, required=True)
+        check_id("work_id", self.work_id, required=False)
 
     def to_payload(self) -> dict[str, Any]:
         return {"source": self.source, "external_id": self.external_id, "work_id": self.work_id}
@@ -413,11 +416,11 @@ class ScenePayloadItem:
     url: str = ""
 
     def __post_init__(self) -> None:
-        _check_text("label", self.label, MAX_ITEM_LABEL_CHARS)
+        check_text("label", self.label, MAX_ITEM_LABEL_CHARS)
         if not self.label.strip():
             raise ValueError("label is required")
-        _check_text("ref", self.ref, MAX_ITEM_REF_CHARS)
-        _check_text("url", self.url, MAX_URL_CHARS)
+        check_text("ref", self.ref, MAX_ITEM_REF_CHARS)
+        check_text("url", self.url, MAX_URL_CHARS)
         if self.url and not self.url.startswith(("https://", "http://")):
             # Le rendu insère l'URL dans le DOM : pas de `javascript:` ni de
             # `file:`.
@@ -434,15 +437,19 @@ class ScenePayloadItem:
 
 @dataclass(frozen=True, slots=True)
 class ScenePayload:
-    """Contenu affichable borné : titre, résumé, entrées (artefacts surtout)."""
+    """Contenu affichable borné : titre, résumé, entrées (artefacts surtout).
+
+    Titre et libellés : une ligne imprimable. Résumé : plusieurs lignes, sans
+    caractère de contrôle C0 autre que `\\n` et `\\t`.
+    """
 
     title: str = ""
     summary: str = ""
     items: tuple[ScenePayloadItem, ...] = ()
 
     def __post_init__(self) -> None:
-        _check_text("title", self.title, MAX_TITLE_CHARS)
-        _check_text("summary", self.summary, MAX_PAYLOAD_SUMMARY_CHARS, single_line=False)
+        check_text("title", self.title, MAX_TITLE_CHARS)
+        _check_multiline_text("summary", self.summary, MAX_PAYLOAD_SUMMARY_CHARS)
         if not isinstance(self.items, tuple) or not all(isinstance(item, ScenePayloadItem) for item in self.items):
             raise TypeError("items must be a tuple of ScenePayloadItem")
         if len(self.items) > MAX_PAYLOAD_ITEMS:
@@ -504,13 +511,16 @@ class SceneObject:
 
     `geometry` vaut `None` tant que l'objet n'est pas placé : l'AutoResolver
     du navigateur le place alors (Slice 05). `layer` ordonne l'empilement,
-    `order` départage une même couche.
+    `order` départage une même couche. `origin` est l'acteur qui l'a créé :
+    posé une fois par le réducteur, jamais réécrit ; un nœud d'exécution est
+    toujours d'origine `runtime`.
     """
 
     object_id: str
     kind: SceneObjectKind
     category: str
     constraints: SceneConstraints
+    origin: SceneActor
     exec_state: ExecState = ExecState.UNKNOWN
     representation: Representation = Representation.POINT
     geometry: SceneGeometry | None = None
@@ -522,10 +532,13 @@ class SceneObject:
     payload: ScenePayload = field(default_factory=ScenePayload)
 
     def __post_init__(self) -> None:
-        _check_id("object_id", self.object_id)
+        check_id("object_id", self.object_id, required=True)
         _check_enum("kind", self.kind, SceneObjectKind)
-        _check_token("category", self.category, MAX_CATEGORY_CHARS)
+        check_token("category", self.category, MAX_CATEGORY_CHARS, required=True)
         _check_instance("constraints", self.constraints, SceneConstraints)
+        _check_enum("origin", self.origin, SceneActor)
+        if self.kind in EXECUTION_KINDS and self.origin is not SceneActor.RUNTIME:
+            raise ValueError("an execution node originates from runtime")
         _check_enum("exec_state", self.exec_state, ExecState)
         _check_enum("representation", self.representation, Representation)
         if self.geometry is not None:
@@ -550,6 +563,7 @@ class SceneObject:
             "kind": self.kind.value,
             "category": self.category,
             "constraints": self.constraints.to_payload(),
+            "origin": self.origin.value,
             "exec_state": self.exec_state.value,
             "representation": self.representation.value,
             "geometry": _wire(self.geometry),
@@ -569,6 +583,7 @@ class SceneObject:
             kind=_enum(SceneObjectKind, data["kind"], "kind"),
             category=data["category"],
             constraints=SceneConstraints.from_payload(data["constraints"]),
+            origin=_enum(SceneActor, data["origin"], "origin"),
             exec_state=_enum(ExecState, data["exec_state"], "exec_state"),
             representation=_enum(Representation, data["representation"], "representation"),
             geometry=_optional_nested(SceneGeometry, data, "geometry"),
@@ -584,7 +599,7 @@ class SceneObject:
 #: Forme stockée : toutes les clés sont requises.
 _OBJECT_WIRE_KEYS = frozenset(
     {
-        "object_id", "kind", "category", "constraints", "exec_state", "representation", "geometry",
+        "object_id", "kind", "category", "constraints", "origin", "exec_state", "representation", "geometry",
         "layer", "order", "visibility", "disposition", "work_ref", "payload",
     }
 )
@@ -601,10 +616,10 @@ class SceneRelation:
     layer: int = DEFAULT_RELATION_LAYER
 
     def __post_init__(self) -> None:
-        _check_id("relation_id", self.relation_id)
+        check_id("relation_id", self.relation_id, required=True)
         _check_enum("kind", self.kind, RelationKind)
-        _check_id("from_id", self.from_id)
-        _check_id("to_id", self.to_id)
+        check_id("from_id", self.from_id, required=True)
+        check_id("to_id", self.to_id, required=True)
         if self.from_id == self.to_id:
             raise ValueError("a relation cannot link an object to itself")
         _check_layer(self.layer)
@@ -652,11 +667,8 @@ class SceneSnapshot:
     archived_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        _check_id("scene_id", self.scene_id)
-        if isinstance(self.revision, bool) or not isinstance(self.revision, int):
-            raise TypeError("revision must be an integer")
-        if self.revision < 0:
-            raise ValueError("revision must be positive or zero")
+        check_id("scene_id", self.scene_id, required=True)
+        _check_revision(self.revision, 0)
         if not isinstance(self.objects, tuple) or not all(isinstance(item, SceneObject) for item in self.objects):
             raise TypeError("objects must be a tuple of SceneObject")
         if not isinstance(self.relations, tuple) or not all(isinstance(item, SceneRelation) for item in self.relations):
@@ -668,7 +680,7 @@ class SceneSnapshot:
         if len(self.archived_ids) > MAX_ARCHIVED_IDS:
             raise ValueError(f"a scene retains at most {MAX_ARCHIVED_IDS} archived ids")
         for archived_id in self.archived_ids:
-            _check_id("archived_ids[]", archived_id)
+            check_id("archived_ids[]", archived_id, required=True)
         if len(self.relations) > MAX_SCENE_RELATIONS:
             raise ValueError(f"a scene holds at most {MAX_SCENE_RELATIONS} relations")
         by_id = {item.object_id: item for item in self.objects}
@@ -752,7 +764,7 @@ class SceneObjectFields:
         if self.kind is not None:
             _check_enum("kind", self.kind, SceneObjectKind)
         if self.category is not None:
-            _check_token("category", self.category, MAX_CATEGORY_CHARS)
+            check_token("category", self.category, MAX_CATEGORY_CHARS, required=True)
         if self.exec_state is not None:
             _check_enum("exec_state", self.exec_state, ExecState)
         if self.representation is not None:
@@ -849,9 +861,9 @@ class SceneCommand:
             raise ValueError(f"{self.op.value} requires {sorted(required - given)}")
         if given - required - optional:
             raise ValueError(f"{self.op.value} does not take {sorted(given - required - optional)}")
-        _check_id("object_id", self.object_id, required=False)
-        _check_id("relation_id", self.relation_id, required=False)
-        _check_id("target_id", self.target_id, required=False)
+        check_id("object_id", self.object_id, required=False)
+        check_id("relation_id", self.relation_id, required=False)
+        check_id("target_id", self.target_id, required=False)
         for name, expected in (
             ("fields", SceneObjectFields),
             ("geometry", SceneGeometry),
@@ -941,7 +953,7 @@ class ScenePatchOp:
                 raise ValueError("put_object carries an active object, archive_object an archived one")
         if self.relation is not None:
             _check_instance("relation", self.relation, SceneRelation)
-        _check_id("relation_id", self.relation_id, required=False)
+        check_id("relation_id", self.relation_id, required=False)
 
     def to_payload(self) -> dict[str, Any]:
         name = next(name for name in ("object", "relation", "relation_id") if getattr(self, name) is not None)
@@ -971,10 +983,7 @@ class ScenePatch:
     ops: tuple[ScenePatchOp, ...]
 
     def __post_init__(self) -> None:
-        if isinstance(self.revision, bool) or not isinstance(self.revision, int):
-            raise TypeError("revision must be an integer")
-        if self.revision < 1:
-            raise ValueError("a patch revision starts at 1")
+        _check_revision(self.revision, 1)
         if not isinstance(self.ops, tuple) or not all(isinstance(op, ScenePatchOp) for op in self.ops):
             raise TypeError("ops must be a tuple of ScenePatchOp")
         if not 1 <= len(self.ops) <= MAX_PATCH_OPS:
@@ -1060,6 +1069,11 @@ class SceneRefusal(StrEnum):
     RUNTIME_KIND = "runtime_kind"
     RUNTIME_COMPOSITION = "runtime_composition"
     RUNTIME_RELATION = "runtime_relation"
+    #: `runtime` vise un objet créé par `brain` ou `user` (`origin`).
+    RUNTIME_ORIGIN = "runtime_origin"
+    #: `placed_by=resolver` hors de l'acteur `user` : l'AutoResolver vit dans
+    #: le navigateur, qui ne commet que par le proxy utilisateur.
+    RESOLVER_ACTOR = "resolver_actor"
     EXECUTION_TRUTH = "execution_truth"
     #: Création d'un `agent`/`job` par `brain` ou `user` : une étoile ne naît
     #: que d'un fait d'exécution.
@@ -1075,6 +1089,8 @@ class SceneRefusal(StrEnum):
     SCENE_FULL = "scene_full"
     RELATION_LIMIT = "relation_limit"
     RELATION_CONFLICT = "relation_conflict"
+    #: La révision atteindrait `MAX_REVISION`.
+    REVISION_EXHAUSTED = "revision_exhausted"
 
 
 @dataclass(frozen=True, slots=True)
@@ -1130,11 +1146,13 @@ def apply_scene_command(snapshot: SceneSnapshot, command: SceneCommand) -> Scene
        même sur un objet inconnu) ;
     2. existence et disposition des objets visés (`invalid`) ;
     3. autorité sur l'**effet** : `runtime` n'écrit que des nœuds
-       d'exécution et des signaux, jamais un champ de composition, et ne relie
-       que des `parent_of` entre nœuds d'exécution ; seul `runtime` crée un
-       `agent`/`job` et change `exec_state` ou `work_ref` ; seul `user` déplace ou redimensionne un
-       objet épinglé ; un placement `resolver` ne remplace ni une épingle ni
-       un placement explicite ;
+       d'exécution et des signaux qu'il a lui-même créés (`origin`), jamais un
+       champ de composition ni une couche de relation, et ne relie que des
+       `parent_of` entre nœuds d'exécution ; seul `runtime` crée un
+       `agent`/`job` et change `exec_state` ou `work_ref` ; seul `user`
+       déplace ou redimensionne un objet épinglé ; un placement `resolver`
+       n'est commis que par `user` et ne remplace ni une épingle ni un
+       placement explicite ;
     4. bornes de la scène (`invalid`) ;
     5. si rien ne change, `duplicate` ; sinon la révision avance d'un et le
        patch décrit exactement le changement.
@@ -1154,6 +1172,8 @@ def apply_scene_command(snapshot: SceneSnapshot, command: SceneCommand) -> Scene
         return SceneUpdate(refused.outcome, snapshot, reason=refused.reason)
     if not ops:
         return SceneUpdate(SceneCommandOutcome.DUPLICATE, snapshot)
+    if snapshot.revision >= MAX_REVISION:
+        return SceneUpdate(SceneCommandOutcome.INVALID, snapshot, reason=SceneRefusal.REVISION_EXHAUSTED)
     patch = ScenePatch(revision=snapshot.revision + 1, ops=tuple(ops))
     return SceneUpdate(SceneCommandOutcome.APPLIED, apply_scene_patch(snapshot, patch), patch)
 
@@ -1198,6 +1218,7 @@ def _plan_object_write(
             kind=wanted_kind,
             category=fields.category,
             constraints=SceneConstraints(placed_by=PlacedBy(actor.value)),
+            origin=actor,
             layer=DEFAULT_LAYERS[wanted_kind],
         )
     else:
@@ -1225,8 +1246,7 @@ def _check_write_authority(
     actor: SceneActor, before: SceneObject, changed: set[str], placed_by: PlacedBy | None
 ) -> None:
     if actor is SceneActor.RUNTIME:
-        if before.kind not in RUNTIME_KINDS:
-            raise _rejected(SceneRefusal.RUNTIME_KIND)
+        _check_runtime_reach(before, RUNTIME_KINDS, SceneRefusal.RUNTIME_KIND)
         if changed & COMPOSITION_FIELDS:
             raise _rejected(SceneRefusal.RUNTIME_COMPOSITION)
     elif changed & EXECUTION_FIELDS:
@@ -1245,6 +1265,15 @@ def _check_write_authority(
         raise _rejected(SceneRefusal.EXPLICIT_PLACEMENT)
 
 
+def _check_runtime_reach(target: SceneObject, kinds: frozenset[SceneObjectKind], reason: SceneRefusal) -> None:
+    """`runtime` n'atteint que des natures permises, et que ce qu'il a créé."""
+
+    if target.kind not in kinds:
+        raise _rejected(reason)
+    if target.origin is not SceneActor.RUNTIME:
+        raise _rejected(SceneRefusal.RUNTIME_ORIGIN)
+
+
 def _plan_upsert(snapshot: SceneSnapshot, command: SceneCommand) -> list[ScenePatchOp]:
     assert command.object_id is not None and command.fields is not None
     return _plan_object_write(snapshot, command.actor, command.object_id, command.fields, create=True)
@@ -1257,6 +1286,8 @@ def _plan_patch(snapshot: SceneSnapshot, command: SceneCommand) -> list[ScenePat
 
 def _plan_set_geometry(snapshot: SceneSnapshot, command: SceneCommand) -> list[ScenePatchOp]:
     assert command.object_id is not None
+    if command.placed_by is PlacedBy.RESOLVER and command.actor is not SceneActor.USER:
+        raise _rejected(SceneRefusal.RESOLVER_ACTOR)
     fields = SceneObjectFields(geometry=command.geometry)
     return _plan_object_write(
         snapshot, command.actor, command.object_id, fields, create=False, placed_by=command.placed_by
@@ -1300,25 +1331,44 @@ def _plan_archive(snapshot: SceneSnapshot, command: SceneCommand) -> list[SceneP
     return ops
 
 
+def _plan_relation_put(
+    snapshot: SceneSnapshot, relation: SceneRelation, *, layer_announced: bool
+) -> list[ScenePatchOp]:
+    """Plan commun d'une relation posée par `link` ou `attach_signal`.
+
+    Même identifiant, autres extrémités : conflit. Mêmes extrémités : seule la
+    couche peut changer, et seulement si la commande l'annonce ; sinon la
+    couche retenue (choisie par le cerveau ou l'utilisateur) est gardée.
+    """
+
+    existing = snapshot.get_relation(relation.relation_id)
+    if existing is None:
+        if len(snapshot.relations) >= MAX_SCENE_RELATIONS:
+            raise _invalid(SceneRefusal.RELATION_LIMIT)
+        return [ScenePatchOp(PatchOpKind.PUT_RELATION, relation=relation)]
+    if existing.endpoints != relation.endpoints:
+        raise _invalid(SceneRefusal.RELATION_CONFLICT)
+    if not layer_announced or existing.layer == relation.layer:
+        return []
+    return [ScenePatchOp(PatchOpKind.PUT_RELATION, relation=relation)]
+
+
 def _plan_link(snapshot: SceneSnapshot, command: SceneCommand) -> list[ScenePatchOp]:
     relation = command.relation
     assert relation is not None
     runtime = command.actor is SceneActor.RUNTIME
-    if runtime and relation.kind is not RelationKind.PARENT_OF:
-        raise _rejected(SceneRefusal.RUNTIME_RELATION)
+    if runtime:
+        if relation.kind is not RelationKind.PARENT_OF:
+            raise _rejected(SceneRefusal.RUNTIME_RELATION)
+        if relation.layer != DEFAULT_RELATION_LAYER:
+            # La couche est de la composition : `runtime` n'en annonce pas.
+            raise _rejected(SceneRefusal.RUNTIME_COMPOSITION)
     source = _require_active(snapshot, relation.from_id)
     target = _require_active(snapshot, relation.to_id)
-    if runtime and (source.kind not in EXECUTION_KINDS or target.kind not in EXECUTION_KINDS):
-        raise _rejected(SceneRefusal.RUNTIME_RELATION)
-    existing = snapshot.get_relation(relation.relation_id)
-    if existing is not None:
-        if existing.endpoints != relation.endpoints:
-            raise _invalid(SceneRefusal.RELATION_CONFLICT)
-        if existing == relation:
-            return []
-    elif len(snapshot.relations) >= MAX_SCENE_RELATIONS:
-        raise _invalid(SceneRefusal.RELATION_LIMIT)
-    return [ScenePatchOp(PatchOpKind.PUT_RELATION, relation=relation)]
+    if runtime:
+        _check_runtime_reach(source, EXECUTION_KINDS, SceneRefusal.RUNTIME_RELATION)
+        _check_runtime_reach(target, EXECUTION_KINDS, SceneRefusal.RUNTIME_RELATION)
+    return _plan_relation_put(snapshot, relation, layer_announced=not runtime)
 
 
 def _plan_unlink(snapshot: SceneSnapshot, command: SceneCommand) -> list[ScenePatchOp]:
@@ -1329,17 +1379,18 @@ def _plan_unlink(snapshot: SceneSnapshot, command: SceneCommand) -> list[ScenePa
         # un doublon, pas une erreur.
         return []
     if command.actor is SceneActor.RUNTIME:
-        kinds = {snapshot.get_object(endpoint).kind for endpoint in (existing.from_id, existing.to_id)}  # type: ignore[union-attr]
-        if existing.kind is not RelationKind.PARENT_OF or not kinds <= EXECUTION_KINDS:
+        if existing.kind is not RelationKind.PARENT_OF:
             raise _rejected(SceneRefusal.RUNTIME_RELATION)
+        for endpoint in (existing.from_id, existing.to_id):
+            _check_runtime_reach(_require_active(snapshot, endpoint), EXECUTION_KINDS, SceneRefusal.RUNTIME_RELATION)
     return [ScenePatchOp(PatchOpKind.DELETE_RELATION, relation_id=command.relation_id)]
 
 
 def _plan_attach_signal(snapshot: SceneSnapshot, command: SceneCommand) -> list[ScenePatchOp]:
     assert command.object_id is not None and command.fields is not None and command.target_id is not None
     target = _require_active(snapshot, command.target_id)
-    if command.actor is SceneActor.RUNTIME and target.kind not in EXECUTION_KINDS:
-        raise _rejected(SceneRefusal.RUNTIME_KIND)
+    if command.actor is SceneActor.RUNTIME:
+        _check_runtime_reach(target, EXECUTION_KINDS, SceneRefusal.RUNTIME_KIND)
     ops = _plan_object_write(
         snapshot, command.actor, command.object_id, command.fields, create=True, kind=SceneObjectKind.ATTENTION
     )
@@ -1349,14 +1400,7 @@ def _plan_attach_signal(snapshot: SceneSnapshot, command: SceneCommand) -> list[
         from_id=command.object_id,
         to_id=command.target_id,
     )
-    existing = snapshot.get_relation(relation.relation_id)
-    if existing is not None:
-        if existing.endpoints != relation.endpoints:
-            raise _invalid(SceneRefusal.RELATION_CONFLICT)
-        return ops
-    if len(snapshot.relations) >= MAX_SCENE_RELATIONS:
-        raise _invalid(SceneRefusal.RELATION_LIMIT)
-    return [*ops, ScenePatchOp(PatchOpKind.PUT_RELATION, relation=relation)]
+    return [*ops, *_plan_relation_put(snapshot, relation, layer_announced=False)]
 
 
 _PLANNERS: dict[SceneOp, Callable[[SceneSnapshot, SceneCommand], list[ScenePatchOp]]] = {

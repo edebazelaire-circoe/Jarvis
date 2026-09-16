@@ -18,6 +18,7 @@ import pytest
 from jarvis.domain import scene as scene_module
 from jarvis.domain.scene import (
     ALLOWED_SCENE_OPS,
+    DEFAULT_RELATION_LAYER,
     DEFAULT_LAYERS,
     MAX_ARCHIVED_IDS,
     MAX_ID_CHARS,
@@ -27,6 +28,7 @@ from jarvis.domain.scene import (
     MAX_PAYLOAD_BYTES,
     MAX_PAYLOAD_ITEMS,
     MAX_PAYLOAD_SUMMARY_CHARS,
+    MAX_REVISION,
     MAX_SCENE_COORDINATE,
     MAX_SCENE_EXTENT,
     MAX_SCENE_OBJECTS,
@@ -182,6 +184,23 @@ def matrix_command(op: SceneOp, actor: SceneActor) -> SceneCommand:
     return cmd(op, actor, **arguments)
 
 
+PUT_OBJECT = [PatchOpKind.PUT_OBJECT]
+#: Opérations de patch attendues pour chaque cellule permise de la matrice.
+MATRIX_PATCH_OPS = {
+    SceneOp.UPSERT_OBJECT: PUT_OBJECT,
+    SceneOp.PATCH_OBJECT: PUT_OBJECT,
+    SceneOp.SET_GEOMETRY: PUT_OBJECT,
+    SceneOp.SET_REPRESENTATION: PUT_OBJECT,
+    SceneOp.SET_VISIBILITY: PUT_OBJECT,
+    SceneOp.PIN: PUT_OBJECT,
+    SceneOp.UNPIN: PUT_OBJECT,
+    SceneOp.LINK: [PatchOpKind.PUT_RELATION],
+    SceneOp.UNLINK: [PatchOpKind.DELETE_RELATION],
+    SceneOp.ARCHIVE: [PatchOpKind.ARCHIVE_OBJECT, PatchOpKind.DELETE_RELATION],
+    SceneOp.ATTACH_SIGNAL: [PatchOpKind.PUT_OBJECT, PatchOpKind.PUT_RELATION],
+}
+
+
 def test_authority_matrix_table_is_the_contract():
     assert {actor: set(ops) for actor, ops in ALLOWED_SCENE_OPS.items()} == EXPECTED_ALLOWED
 
@@ -194,6 +213,7 @@ def test_every_authority_matrix_cell(actor, op):
     if op in EXPECTED_ALLOWED[actor]:
         assert update.outcome is APPLIED, update.reason
         assert update.snapshot.revision == before.revision + 1
+        assert [item.op for item in update.patch.ops] == MATRIX_PATCH_OPS[op]
     else:
         assert update.outcome is REJECTED
         assert update.reason is SceneRefusal.OP_NOT_ALLOWED
@@ -309,9 +329,8 @@ def test_runtime_cannot_hide_or_archive_even_alongside_a_completion():
         upsert(BRAIN, "star-p", kind=SceneObjectKind.AGENT, category="agent", geometry=GEO_2),
         cmd(SceneOp.SET_REPRESENTATION, BRAIN, object_id="star-p", representation=Representation.WINDOW, geometry=SceneGeometry(10, 20, 400, 300)),
         cmd(SceneOp.SET_GEOMETRY, USER, object_id="star-p", geometry=GEO_2, placed_by=PlacedBy.RESOLVER),
-        cmd(SceneOp.SET_GEOMETRY, BRAIN, object_id="star-p", geometry=GEO_2, placed_by=PlacedBy.RESOLVER),
     ],
-    ids=["brain-move", "brain-resize", "brain-patch", "brain-upsert", "brain-representation-resize", "user-resolver", "brain-resolver"],
+    ids=["brain-move", "brain-resize", "brain-patch", "brain-upsert", "brain-representation-resize", "user-resolver"],
 )
 def test_brain_and_resolver_cannot_move_or_resize_a_user_pinned_object(command):
     before = scene_with_stars()
@@ -363,7 +382,7 @@ def test_pinning_needs_a_placed_object():
     update = apply_scene_command(scene_with_stars(), cmd(SceneOp.PIN, USER, object_id="star-b"))
     assert (update.outcome, update.reason) == (INVALID, SceneRefusal.UNPLACED)
     with pytest.raises(ValueError):
-        SceneObject("x", SceneObjectKind.AGENT, "agent", SceneConstraints(PlacedBy.USER, pinned_by_user=True))
+        SceneObject("x", SceneObjectKind.AGENT, "agent", SceneConstraints(PlacedBy.USER, pinned_by_user=True), RUNTIME)
 
 
 # --- placement : auteur et AutoResolver ----------------------------------------
@@ -379,7 +398,7 @@ def test_placement_author_is_recorded_and_resolver_only_fills_the_gaps():
     assert resolved.snapshot.get_object("star-b").constraints.placed_by is PlacedBy.RESOLVER
 
     nudged = apply_scene_command(
-        resolved.snapshot, cmd(SceneOp.SET_GEOMETRY, BRAIN, object_id="star-b", geometry=GEO, placed_by=PlacedBy.RESOLVER)
+        resolved.snapshot, cmd(SceneOp.SET_GEOMETRY, USER, object_id="star-b", geometry=GEO, placed_by=PlacedBy.RESOLVER)
     )
     assert nudged.outcome is APPLIED
 
@@ -507,6 +526,92 @@ def test_runtime_creates_stars_and_signals_with_kind_defaults():
     assert (moved.outcome, moved.reason) == (INVALID, SceneRefusal.RELATION_CONFLICT)
 
 
+@pytest.mark.parametrize("layer", [0, 60, 999, 1000])
+def test_runtime_never_announces_a_relation_layer(layer):
+    before = scene_with_stars()
+    created = apply_scene_command(before, cmd(SceneOp.LINK, RUNTIME, relation=SceneRelation("rel-x", RelationKind.PARENT_OF, "star-b", "star-p", layer=layer)))
+    assert (created.outcome, created.reason) == (REJECTED, SceneRefusal.RUNTIME_COMPOSITION)
+    assert_unchanged(before, created)
+    relayered = apply_scene_command(before, cmd(SceneOp.LINK, RUNTIME, relation=SceneRelation("rel-ab", RelationKind.PARENT_OF, "star-a", "star-b", layer=layer)))
+    assert (relayered.outcome, relayered.reason) == (REJECTED, SceneRefusal.RUNTIME_COMPOSITION)
+
+
+def test_runtime_relink_keeps_the_layer_the_brain_chose():
+    before = run(scene_with_stars(), cmd(SceneOp.LINK, BRAIN, relation=SceneRelation("rel-ab", RelationKind.PARENT_OF, "star-a", "star-b", layer=77)))
+    # `runtime` ne pose que la couche par défaut, qui vaut « non annoncée ».
+    again = apply_scene_command(before, cmd(SceneOp.LINK, RUNTIME, relation=SceneRelation("rel-ab", RelationKind.PARENT_OF, "star-a", "star-b")))
+    assert again.outcome is DUPLICATE
+    assert again.snapshot.get_relation("rel-ab").layer == 77
+    created = apply_scene_command(before, cmd(SceneOp.LINK, RUNTIME, relation=SceneRelation("rel-bp", RelationKind.PARENT_OF, "star-b", "star-p")))
+    assert created.snapshot.get_relation("rel-bp").layer == DEFAULT_RELATION_LAYER
+
+    signalled = run(before, cmd(SceneOp.ATTACH_SIGNAL, RUNTIME, object_id="sig-1", fields=SceneObjectFields(category="error"), target_id="star-a"))
+    relayered = run(signalled, cmd(SceneOp.LINK, USER, relation=SceneRelation("sig-1", RelationKind.EXPLAINS, "sig-1", "star-a", layer=310)))
+    for actor in (RUNTIME, BRAIN):
+        refreshed = apply_scene_command(
+            relayered, cmd(SceneOp.ATTACH_SIGNAL, actor, object_id="sig-1", fields=SceneObjectFields(category="error"), target_id="star-a")
+        )
+        assert refreshed.outcome is DUPLICATE
+        assert refreshed.snapshot.get_relation("sig-1").layer == 310
+
+
+# --- origine : runtime n'écrit que ce qu'il a créé ----------------------------
+
+
+@pytest.mark.parametrize("author", [BRAIN, USER])
+def test_runtime_cannot_rewrite_or_reuse_brain_or_user_attention(author):
+    before = run(scene_with_stars(), upsert(author, "note", kind=SceneObjectKind.ATTENTION, category="todo", payload=ScenePayload(title="mine")))
+    assert before.get_object("note").origin is author
+    for command in (
+        patch(RUNTIME, "note", payload=ScenePayload(title="runtime")),
+        patch(RUNTIME, "note", category="error", work_ref=WorkRef("job", "x")),
+        upsert(RUNTIME, "note", kind=SceneObjectKind.ATTENTION, category="error"),
+        cmd(SceneOp.ATTACH_SIGNAL, RUNTIME, object_id="note", fields=SceneObjectFields(category="error"), target_id="star-a"),
+    ):
+        update = apply_scene_command(before, command)
+        assert (update.outcome, update.reason) == (REJECTED, SceneRefusal.RUNTIME_ORIGIN), command.op
+        assert_unchanged(before, update)
+    # Le cerveau et l'utilisateur gardent leurs droits, et l'origine ne bouge pas.
+    for actor in (BRAIN, USER):
+        edited = apply_scene_command(before, patch(actor, "note", payload=ScenePayload(title=actor.value)))
+        assert edited.outcome is APPLIED
+        assert edited.snapshot.get_object("note").origin is author
+
+
+def test_origin_is_set_once_at_creation_and_travels_on_the_wire():
+    snapshot = run(
+        scene_with_stars(),
+        cmd(SceneOp.ATTACH_SIGNAL, RUNTIME, object_id="sig-r", fields=SceneObjectFields(category="error"), target_id="star-a"),
+        cmd(SceneOp.ATTACH_SIGNAL, USER, object_id="sig-u", fields=SceneObjectFields(category="todo"), target_id="star-a"),
+        patch(BRAIN, "sig-r", layer=310),
+        patch(USER, "star-a", category="research"),
+    )
+    assert {item.object_id: item.origin for item in snapshot.objects} == {
+        "star-a": RUNTIME, "star-b": RUNTIME, "star-p": RUNTIME, "art-1": BRAIN, "sig-r": RUNTIME, "sig-u": USER,
+    }
+    assert all(item["origin"] in {"runtime", "brain", "user"} for item in snapshot.to_payload()["objects"])
+    assert apply_scene_command(snapshot, patch(RUNTIME, "sig-r", payload=ScenePayload(title="timeout"))).outcome is APPLIED
+    with pytest.raises(ValueError, match="an execution node originates from runtime"):
+        SceneObject("fake", SceneObjectKind.JOB, "job", SceneConstraints(PlacedBy.BRAIN), BRAIN)
+
+
+# --- AutoResolver : commis par l'utilisateur seulement ------------------------
+
+
+def test_resolver_placement_is_accepted_from_the_user_proxy_only():
+    before = scene_with_stars()
+    brain = apply_scene_command(before, cmd(SceneOp.SET_GEOMETRY, BRAIN, object_id="star-b", geometry=GEO, placed_by=PlacedBy.RESOLVER))
+    assert (brain.outcome, brain.reason) == (REJECTED, SceneRefusal.RESOLVER_ACTOR)
+    assert_unchanged(before, brain)
+    unknown = apply_scene_command(before, cmd(SceneOp.SET_GEOMETRY, BRAIN, object_id="absent", geometry=GEO, placed_by=PlacedBy.RESOLVER))
+    assert (unknown.outcome, unknown.reason) == (REJECTED, SceneRefusal.RESOLVER_ACTOR)
+    runtime = apply_scene_command(before, cmd(SceneOp.SET_GEOMETRY, RUNTIME, object_id="star-b", geometry=GEO, placed_by=PlacedBy.RESOLVER))
+    assert (runtime.outcome, runtime.reason) == (REJECTED, SceneRefusal.OP_NOT_ALLOWED)
+    user = apply_scene_command(before, cmd(SceneOp.SET_GEOMETRY, USER, object_id="star-b", geometry=GEO, placed_by=PlacedBy.RESOLVER))
+    assert user.outcome is APPLIED
+    assert user.snapshot.get_object("star-b").constraints.placed_by is PlacedBy.RESOLVER
+
+
 # --- vérité d'exécution -------------------------------------------------------
 
 
@@ -559,6 +664,7 @@ def test_creation_cell_per_actor_and_kind(actor, kind):
     assert (update.outcome, update.reason) == CREATION_OUTCOMES[actor][kind]
     if update.changed:
         assert update.snapshot.get_object("new-1").constraints.placed_by is PlacedBy(actor.value)
+        assert update.snapshot.get_object("new-1").origin is actor
     else:
         assert_unchanged(before, update)
 
@@ -668,20 +774,20 @@ def test_revision_is_strictly_monotonic_and_patches_are_exact_deltas():
 def test_patch_refuses_gaps_and_unknown_deletions():
     before = scene_with_stars()
     update = apply_scene_command(before, cmd(SceneOp.SET_VISIBILITY, BRAIN, object_id="star-a", visibility=Visibility.HIDDEN))
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="does not follow revision"):
         apply_scene_patch(update.snapshot, update.patch)  # rejoué : n'est plus la révision suivante
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="does not follow revision"):
         apply_scene_patch(before, dataclasses.replace(update.patch, revision=before.revision + 2))
     ghost = ScenePatch(revision=before.revision + 1, ops=(ScenePatchOp(PatchOpKind.DELETE_RELATION, relation_id="ghost"),))
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="deletes unknown relation ghost"):
         apply_scene_patch(before, ghost)
 
     history = dataclasses.replace(before.get_object("art-1"), object_id="ghost", disposition=Disposition.ARCHIVED)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="archives unknown object ghost"):
         apply_scene_patch(before, ScenePatch(before.revision + 1, (ScenePatchOp(PatchOpKind.ARCHIVE_OBJECT, object=history),)))
     archived = run(before, cmd(SceneOp.ARCHIVE, USER, object_id="art-1"))
     resurrect = ScenePatch(archived.revision + 1, (ScenePatchOp(PatchOpKind.PUT_OBJECT, object=before.get_object("art-1")),))
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="rewrites archived object art-1"):
         apply_scene_patch(archived, resurrect)
 
 
@@ -751,7 +857,7 @@ def test_geometry_bounds(values, error):
     ],
 )
 def test_object_bounds_and_types(overrides, error):
-    values = {"object_id": "obj-1", "kind": SceneObjectKind.WINDOW, "category": "note", "constraints": SceneConstraints(PlacedBy.BRAIN)}
+    values = {"object_id": "obj-1", "kind": SceneObjectKind.WINDOW, "category": "note", "constraints": SceneConstraints(PlacedBy.BRAIN), "origin": BRAIN}
     values.update(overrides)
     with pytest.raises(error):
         SceneObject(**values)
@@ -759,7 +865,7 @@ def test_object_bounds_and_types(overrides, error):
 
 def test_layer_bands_are_conventions_not_a_closed_list():
     for layer in (0, 50, 100, 120, 137, 150, 220, 300, MAX_LAYER):
-        assert SceneObject("o", SceneObjectKind.WINDOW, "note", SceneConstraints(PlacedBy.BRAIN), layer=layer).layer == layer
+        assert SceneObject("o", SceneObjectKind.WINDOW, "note", SceneConstraints(PlacedBy.BRAIN), BRAIN, layer=layer).layer == layer
 
 
 @pytest.mark.parametrize(
@@ -780,6 +886,35 @@ def test_payload_bounds(build):
         build()
 
 
+@pytest.mark.parametrize("control", ["\x00", "\x07", "\x1b[31m", "\r", "\x1f"])
+def test_payload_text_rejects_control_characters(control):
+    with pytest.raises(ValueError, match="summary must not contain control characters"):
+        ScenePayload(summary=f"avant{control}après")
+    with pytest.raises(ValueError, match="title must be a single printable line"):
+        ScenePayload(title=f"titre{control}")
+    with pytest.raises(ValueError, match="label must be a single printable line"):
+        ScenePayloadItem(label=f"libellé{control}")
+
+
+def test_summary_keeps_newlines_and_tabs():
+    assert ScenePayload(summary="ligne 1\n\tpuce").summary == "ligne 1\n\tpuce"
+
+
+def test_revision_is_bounded_to_a_signed_64_bit_integer():
+    assert MAX_REVISION == 2**63 - 1
+    assert SceneSnapshot("s", revision=MAX_REVISION).revision == MAX_REVISION
+    with pytest.raises(ValueError, match="revision must be between 0 and"):
+        SceneSnapshot("s", revision=MAX_REVISION + 1)
+    with pytest.raises(ValueError, match="revision must be between 1 and"):
+        ScenePatch(MAX_REVISION + 1, (ScenePatchOp(PatchOpKind.DELETE_RELATION, relation_id="r"),))
+    exhausted = run(SceneSnapshot("s", revision=MAX_REVISION - 1), star("star-a"))
+    assert exhausted.revision == MAX_REVISION
+    update = apply_scene_command(exhausted, patch(RUNTIME, "star-a", exec_state=ExecState.COMPLETED))
+    assert (update.outcome, update.reason) == (INVALID, SceneRefusal.REVISION_EXHAUSTED)
+    assert_unchanged(exhausted, update)
+    assert apply_scene_command(exhausted, star("star-a")).outcome is DUPLICATE
+
+
 def test_payload_byte_bound_is_explicit_and_counts_utf8():
     items = tuple(ScenePayloadItem(label="é" * 80, ref="r" * 256, url="https://example.com/" + "u" * 1000) for _ in range(12))
     with pytest.raises(ValueError, match=str(MAX_PAYLOAD_BYTES)):
@@ -788,7 +923,7 @@ def test_payload_byte_bound_is_explicit_and_counts_utf8():
 
 
 def test_snapshot_bounds_uniqueness_and_relation_endpoints():
-    agent = SceneObject("a", SceneObjectKind.AGENT, "agent", SceneConstraints(PlacedBy.RUNTIME))
+    agent = SceneObject("a", SceneObjectKind.AGENT, "agent", SceneConstraints(PlacedBy.RUNTIME), RUNTIME)
     other = dataclasses.replace(agent, object_id="b")
     link = SceneRelation("r", RelationKind.PARENT_OF, "a", "b")
     with pytest.raises(ValueError):
@@ -826,7 +961,7 @@ def test_snapshot_bounds_uniqueness_and_relation_endpoints():
 
 
 def test_reducer_refuses_to_grow_past_the_bounds():
-    agent = SceneObject("a0", SceneObjectKind.AGENT, "agent", SceneConstraints(PlacedBy.RUNTIME))
+    agent = SceneObject("a0", SceneObjectKind.AGENT, "agent", SceneConstraints(PlacedBy.RUNTIME), RUNTIME)
     objects = tuple(dataclasses.replace(agent, object_id=f"a{index}") for index in range(MAX_SCENE_OBJECTS))
     full = SceneSnapshot("s", revision=5, objects=objects)
     update = apply_scene_command(full, star("one-more"))
@@ -851,7 +986,7 @@ def test_reducer_refuses_to_grow_past_the_bounds():
 
 
 def test_archiving_frees_capacity_so_a_long_lived_scene_never_fills_up():
-    agent = SceneObject("a0", SceneObjectKind.AGENT, "agent", SceneConstraints(PlacedBy.RUNTIME))
+    agent = SceneObject("a0", SceneObjectKind.AGENT, "agent", SceneConstraints(PlacedBy.RUNTIME), RUNTIME)
     snapshot = SceneSnapshot("s", objects=tuple(dataclasses.replace(agent, object_id=f"a{index}") for index in range(MAX_SCENE_OBJECTS)))
     for turn in range(3 * MAX_SCENE_OBJECTS):
         full = apply_scene_command(snapshot, star(f"new-{turn}"))
@@ -884,21 +1019,21 @@ def test_tombstones_are_bounded_and_the_oldest_drop_deterministically_on_replay(
 
 
 @pytest.mark.parametrize(
-    "build",
+    ("build", "message"),
     [
-        lambda: SceneCommand(SceneOp.UPSERT_OBJECT, BRAIN, object_id="a"),
-        lambda: SceneCommand(SceneOp.PIN, USER),
-        lambda: SceneCommand(SceneOp.PIN, USER, object_id="a", geometry=GEO),
-        lambda: SceneCommand(SceneOp.SET_VISIBILITY, USER, object_id="a", visibility=Visibility.HIDDEN, target_id="b"),
-        lambda: SceneCommand(SceneOp.SET_GEOMETRY, BRAIN, object_id="a", geometry=GEO, placed_by=PlacedBy.BRAIN),
-        lambda: SceneCommand(SceneOp.SET_GEOMETRY, USER, object_id="a", geometry=GEO, placed_by=PlacedBy.USER),
-        lambda: SceneCommand(SceneOp.ATTACH_SIGNAL, RUNTIME, object_id="s", fields=SceneObjectFields(kind=SceneObjectKind.ARTIFACT, category="x"), target_id="a"),
-        lambda: SceneCommand(SceneOp.ATTACH_SIGNAL, RUNTIME, object_id="a", fields=SceneObjectFields(category="x"), target_id="a"),
-        lambda: SceneCommand(SceneOp.UNLINK, USER, relation_id=""),
+        (lambda: SceneCommand(SceneOp.UPSERT_OBJECT, BRAIN, object_id="a"), r"upsert_object requires \['fields'\]"),
+        (lambda: SceneCommand(SceneOp.PIN, USER), r"pin requires \['object_id'\]"),
+        (lambda: SceneCommand(SceneOp.PIN, USER, object_id="a", geometry=GEO), r"pin does not take \['geometry'\]"),
+        (lambda: SceneCommand(SceneOp.SET_VISIBILITY, USER, object_id="a", visibility=Visibility.HIDDEN, target_id="b"), r"set_visibility does not take \['target_id'\]"),
+        (lambda: SceneCommand(SceneOp.SET_GEOMETRY, BRAIN, object_id="a", geometry=GEO, placed_by=PlacedBy.BRAIN), "placed_by may only announce a resolver placement"),
+        (lambda: SceneCommand(SceneOp.SET_GEOMETRY, USER, object_id="a", geometry=GEO, placed_by=PlacedBy.USER), "placed_by may only announce a resolver placement"),
+        (lambda: SceneCommand(SceneOp.ATTACH_SIGNAL, RUNTIME, object_id="s", fields=SceneObjectFields(kind=SceneObjectKind.ARTIFACT, category="x"), target_id="a"), "a signal is an attention object"),
+        (lambda: SceneCommand(SceneOp.ATTACH_SIGNAL, RUNTIME, object_id="a", fields=SceneObjectFields(category="x"), target_id="a"), "a signal cannot target itself"),
+        (lambda: SceneCommand(SceneOp.UNLINK, USER, relation_id=""), "relation_id must be a non-empty identifier"),
     ],
 )
-def test_malformed_commands_do_not_build(build):
-    with pytest.raises(ValueError):
+def test_malformed_commands_do_not_build(build, message):
+    with pytest.raises(ValueError, match=message):
         build()
 
 
@@ -990,55 +1125,109 @@ def test_decoding_refuses_unknown_or_newer_schema_versions(version, decode):
 
 
 @pytest.mark.parametrize(
-    ("mutate", "error"),
+    ("mutate", "error", "message"),
     [
-        (lambda p: p.update(extra=1), ValueError),
-        (lambda p: p["objects"][0].update(raw={"prompt": "x"}), ValueError),
-        (lambda p: p["objects"][0].pop("layer"), ValueError),
-        (lambda p: p["objects"][0].update(kind="star"), ValueError),
-        (lambda p: p["objects"][0].update(exec_state="exploded"), ValueError),
-        (lambda p: p["objects"][0].update(layer="100"), TypeError),
-        (lambda p: p["objects"][0]["constraints"].update(pinned_by_user="yes"), TypeError),
-        (lambda p: p["objects"][0].update(geometry={"x": 1, "y": 2, "w": 3}), ValueError),
-        (lambda p: p["relations"][0].update(kind="owns"), ValueError),
-        (lambda p: p.update(objects={}), TypeError),
-        (lambda p: p.update(objects=[{}] * (MAX_SCENE_OBJECTS + 1)), ValueError),
-        (lambda p: p.update(relations=[{}] * (MAX_SCENE_RELATIONS + 1)), ValueError),
-        (lambda p: p.update(revision=True), TypeError),
-        (lambda p: p.pop("archived_ids"), ValueError),
-        (lambda p: p.update(archived_ids="old"), TypeError),
-        (lambda p: p.update(archived_ids=[7]), TypeError),
-        (lambda p: p.update(archived_ids=["old", "old"]), ValueError),
-        (lambda p: p.update(archived_ids=["star-a"]), ValueError),
-        (lambda p: p.update(archived_ids=[f"t{index}" for index in range(MAX_ARCHIVED_IDS + 1)]), ValueError),
-        (lambda p: p["objects"][0].update(disposition="archived"), ValueError),
+        (lambda p: p.update(extra=1), ValueError, r"scene snapshot has unknown fields: \['extra'\]"),
+        (lambda p: p["objects"][0].update(raw={"prompt": "x"}), ValueError, r"object has unknown fields: \['raw'\]"),
+        (lambda p: p["objects"][0].pop("layer"), ValueError, r"object is missing fields: \['layer'\]"),
+        (lambda p: p["objects"][0].pop("origin"), ValueError, r"object is missing fields: \['origin'\]"),
+        (lambda p: p["objects"][0].update(kind="star"), ValueError, r"kind must be one of .*got 'star'"),
+        (lambda p: p["objects"][0].update(exec_state="exploded"), ValueError, r"exec_state must be one of .*got 'exploded'"),
+        (lambda p: p["objects"][0].update(origin="admin"), ValueError, r"origin must be one of .*got 'admin'"),
+        (lambda p: p["objects"][0].update(origin="brain"), ValueError, "an execution node originates from runtime"),
+        (lambda p: p["objects"][0].update(layer="100"), TypeError, "layer must be an integer"),
+        (lambda p: p["objects"][0]["constraints"].update(pinned_by_user="yes"), TypeError, "pinned_by_user must be a boolean"),
+        (lambda p: p["objects"][0].update(geometry={"x": 1, "y": 2, "w": 3}), ValueError, r"geometry is missing fields: \['h'\]"),
+        (lambda p: p["relations"][0].update(kind="owns"), ValueError, r"kind must be one of .*got 'owns'"),
+        (lambda p: p.update(objects={}), TypeError, "objects must be a list"),
+        (lambda p: p.update(objects=[{}] * (MAX_SCENE_OBJECTS + 1)), ValueError, f"objects holds at most {MAX_SCENE_OBJECTS} entries"),
+        (lambda p: p.update(relations=[{}] * (MAX_SCENE_RELATIONS + 1)), ValueError, f"relations holds at most {MAX_SCENE_RELATIONS} entries"),
+        (lambda p: p.update(revision=True), TypeError, "revision must be an integer"),
+        (lambda p: p.update(revision=-1), ValueError, "revision must be between 0 and"),
+        (lambda p: p.update(revision=MAX_REVISION + 1), ValueError, "revision must be between 0 and"),
+        (lambda p: p.pop("archived_ids"), ValueError, r"scene snapshot is missing fields: \['archived_ids'\]"),
+        (lambda p: p.update(archived_ids="old"), TypeError, "archived_ids must be a list"),
+        (lambda p: p.update(archived_ids=[7]), TypeError, r"archived_ids\[\] must be a string"),
+        (lambda p: p.update(archived_ids=["old", "old"]), ValueError, "archived ids must be unique"),
+        (lambda p: p.update(archived_ids=["star-a"]), ValueError, "an archived id cannot also be an active object"),
+        (lambda p: p.update(archived_ids=[f"t{index}" for index in range(MAX_ARCHIVED_IDS + 1)]), ValueError, f"archived_ids holds at most {MAX_ARCHIVED_IDS} entries"),
+        (lambda p: p["objects"][0].update(disposition="archived"), ValueError, "a scene snapshot holds active objects only"),
     ],
 )
-def test_snapshot_decoding_is_strict(mutate, error):
+def test_snapshot_decoding_is_strict(mutate, error, message):
     payload = json.loads(json.dumps(rich_snapshot().to_payload()))
     mutate(payload)
-    with pytest.raises(error):
+    with pytest.raises(error, match=message):
         SceneSnapshot.from_payload(payload)
 
 
 @pytest.mark.parametrize(
-    ("payload", "error"),
+    ("payload", "error", "message"),
     [
-        ({"schema_version": 1, "op": "archive", "actor": "user", "object_id": "a", "prompt": "x"}, ValueError),
-        ({"schema_version": 1, "op": "destroy", "actor": "user", "object_id": "a"}, ValueError),
-        ({"schema_version": 1, "op": "archive", "actor": "admin", "object_id": "a"}, ValueError),
-        ({"schema_version": 1, "op": "archive", "object_id": "a"}, ValueError),
-        ({"schema_version": 1, "op": "patch_object", "actor": "brain", "object_id": "a", "fields": {"disposition": "archived"}}, ValueError),
-        ({"schema_version": 1, "op": "patch_object", "actor": "brain", "object_id": "a", "fields": {"constraints": {}}}, ValueError),
-        ({"schema_version": 1, "op": "set_geometry", "actor": "user", "object_id": "a", "geometry": {"x": 1, "y": 2, "w": 3, "h": 4}, "placed_by": "brain"}, ValueError),
-        ({"schema_version": 1, "op": "pin", "actor": "user", "object_id": 7}, TypeError),
-        ({"schema_version": 1, "op": "pin", "actor": ["user"], "object_id": "a"}, TypeError),
-        ([], TypeError),
+        ({"schema_version": 1, "op": "archive", "actor": "user", "object_id": "a", "prompt": "x"}, ValueError, r"scene command has unknown fields: \['prompt'\]"),
+        ({"schema_version": 1, "op": "destroy", "actor": "user", "object_id": "a"}, ValueError, r"op must be one of .*got 'destroy'"),
+        ({"schema_version": 1, "op": "archive", "actor": "admin", "object_id": "a"}, ValueError, r"actor must be one of .*got 'admin'"),
+        ({"schema_version": 1, "op": "archive", "object_id": "a"}, ValueError, r"scene command is missing fields: \['actor'\]"),
+        ({"schema_version": 1, "op": "patch_object", "actor": "brain", "object_id": "a", "fields": {"disposition": "archived"}}, ValueError, r"fields has unknown fields: \['disposition'\]"),
+        ({"schema_version": 1, "op": "patch_object", "actor": "brain", "object_id": "a", "fields": {"origin": "user"}}, ValueError, r"fields has unknown fields: \['origin'\]"),
+        ({"schema_version": 1, "op": "patch_object", "actor": "brain", "object_id": "a", "fields": {"constraints": {}}}, ValueError, r"fields has unknown fields: \['constraints'\]"),
+        ({"schema_version": 1, "op": "set_geometry", "actor": "user", "object_id": "a", "geometry": {"x": 1, "y": 2, "w": 3, "h": 4}, "placed_by": "brain"}, ValueError, "placed_by may only announce a resolver placement"),
+        ({"schema_version": 1, "op": "pin", "actor": "user", "object_id": 7}, TypeError, "object_id must be a string"),
+        ({"schema_version": 1, "op": "pin", "actor": ["user"], "object_id": "a"}, TypeError, "actor must be a string"),
+        ([], TypeError, "scene command must be an object"),
     ],
 )
-def test_command_decoding_is_strict(payload, error):
-    with pytest.raises(error):
+def test_command_decoding_is_strict(payload, error, message):
+    with pytest.raises(error, match=message):
         SceneCommand.from_payload(payload)
+
+
+HUGE = int("9" * 400)
+
+
+@pytest.mark.parametrize(
+    ("decode", "payload"),
+    [
+        (SceneCommand.from_payload, {"schema_version": 1, "op": "set_geometry", "actor": "user", "object_id": "a", "geometry": {"x": HUGE, "y": 0, "w": 1, "h": 1}}),
+        (SceneCommand.from_payload, {"schema_version": 1, "op": "set_geometry", "actor": "user", "object_id": "a", "geometry": {"x": 0, "y": 0, "w": HUGE, "h": 1}}),
+        (SceneCommand.from_payload, {"schema_version": 1, "op": "patch_object", "actor": "user", "object_id": "a", "fields": {"layer": HUGE}}),
+        (SceneCommand.from_payload, {"schema_version": 1, "op": "patch_object", "actor": "user", "object_id": "a", "fields": {"order": -HUGE}}),
+        (SceneSnapshot.from_payload, {"schema_version": 1, "scene_id": "s", "revision": HUGE, "objects": [], "relations": [], "archived_ids": []}),
+        (ScenePatch.from_payload, {"schema_version": 1, "revision": HUGE, "ops": [{"op": "delete_relation", "relation_id": "r"}]}),
+        (SceneCommand.from_payload, {"schema_version": HUGE, "op": "pin", "actor": "user", "object_id": "a"}),
+    ],
+)
+def test_hostile_numbers_raise_value_errors_only(decode, payload):
+    """Un entier JSON de 400 chiffres ne fait jamais sortir `OverflowError`."""
+
+    wire = json.loads(json.dumps(payload))
+    with pytest.raises(ValueError) as caught:
+        decode(wire)
+    assert type(caught.value) in (ValueError, UnsupportedSceneSchemaVersion)
+    assert len(str(caught.value)) < 300
+
+
+MEGABYTE = "x" * 1_000_000
+
+
+@pytest.mark.parametrize(
+    ("decode", "payload"),
+    [
+        (SceneCommand.from_payload, {"schema_version": 1, "op": MEGABYTE, "actor": "user", "object_id": "a"}),
+        (SceneCommand.from_payload, {"schema_version": 1, "op": "pin", "actor": MEGABYTE, "object_id": "a"}),
+        (SceneCommand.from_payload, {"schema_version": [MEGABYTE]}),
+        (SceneCommand.from_payload, {"schema_version": MEGABYTE}),
+        (SceneCommand.from_payload, {"schema_version": 1, "op": "pin", "actor": "user", "object_id": MEGABYTE}),
+        (SceneCommand.from_payload, {"schema_version": 1, "op": "pin", "actor": "user", "object_id": "a", MEGABYTE: 1}),
+        (SceneCommand.from_payload, {"schema_version": 1, "op": "patch_object", "actor": "user", "object_id": "a", "fields": {"kind": MEGABYTE}}),
+        (SceneCommand.from_payload, {"schema_version": 1, "op": "patch_object", "actor": "user", "object_id": "a", "fields": {"payload": {"summary": MEGABYTE}}}),
+        (ScenePatch.from_payload, {"schema_version": 1, "revision": 1, "ops": [{"op": MEGABYTE, "relation_id": "r"}]}),
+    ],
+)
+def test_error_messages_never_echo_unbounded_input(decode, payload):
+    with pytest.raises((TypeError, ValueError)) as caught:
+        decode(payload)
+    assert len(str(caught.value)) < 300, str(caught.value)[:400]
 
 
 def test_patch_decoding_bounds_ops_before_decoding():
@@ -1066,7 +1255,7 @@ def test_scene_module_is_pure_domain():
             imported.add(node.module or "")
         elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
             assert node.func.id not in {"open", "print", "input", "exec", "eval"}, node.func.id
-    assert imported <= {"__future__", "dataclasses", "enum", "json", "math", "re", "typing", "jarvis.domain.work_state"}
+    assert imported <= {"__future__", "dataclasses", "enum", "json", "math", "typing", "jarvis.domain._checks", "jarvis.domain.work_state"}
 
 
 def test_reducer_never_mutates_its_input():

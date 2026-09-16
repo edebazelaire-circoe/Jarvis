@@ -29,8 +29,9 @@ composition, user constraints and the user's disposition of finished work.
 | `visibility` | `visible` \| `hidden`. |
 | `disposition` | `active` in every snapshot; `archived` only on the history form carried by an `archive_object` patch op (see below). |
 | `constraints` | `placed_by` (`runtime` \| `brain` \| `user` \| `resolver`) and `pinned_by_user`. Set by the reducer only. |
+| `origin` | actor that created the object (`runtime` \| `brain` \| `user`). Set once by the reducer, never writable, on the wire. An `agent`/`job` always has `origin = runtime`. |
 | `work_ref` | `{source, external_id, work_id?}` — the Core `WorkItem` identity the node projects. |
-| `payload` | `{title ≤ 160, summary ≤ 2 000 (multi-line), items ≤ 32 [{label, ref, url}]}`; `url` is `http(s)` only; compact UTF-8 JSON ≤ 16 KiB. |
+| `payload` | `{title ≤ 160, summary ≤ 2 000 (multi-line), items ≤ 32 [{label, ref, url}]}`; `url` is `http(s)` only; compact UTF-8 JSON ≤ 16 KiB. `title`, `label`, `ref`, `url` are single printable lines; `summary` accepts `\n` and `\t` but no other C0 control character. |
 
 ## Relations
 
@@ -60,7 +61,11 @@ without an explicit layer, the reducer uses `DEFAULT_LAYERS`:
 | `window` | 220 |
 | `attention` | 300 |
 
-The brain and the user may change layers afterwards; runtime never does.
+The brain and the user may change object and relation layers afterwards;
+runtime never announces a layer. A runtime `link` must carry the default
+relation layer (50), which means "not announced": a new relation gets 50, an
+existing relation keeps the layer the brain or user chose, and any other layer
+is `rejected_authority` (`runtime_composition`).
 
 ## Visibility vs disposition
 
@@ -117,7 +122,7 @@ commands.
 | `set_representation` | `object_id`, `representation`, `geometry?` | change form, optionally with its new size |
 | `set_visibility` | `object_id`, `visibility` | hide/show |
 | `pin` / `unpin` | `object_id` | set/clear `pinned_by_user` (pin needs a placed object) |
-| `link` | `relation` | add a relation, or change the layer of the same relation |
+| `link` | `relation` | add a relation, or change the layer of the same relation (brain/user; runtime never changes a layer) |
 | `unlink` | `relation_id` | remove a relation (absent → `duplicate`) |
 | `archive` | `object_id` | user disposition |
 | `attach_signal` | `object_id`, `fields`, `target_id` | create/update an `attention` object and its `explains` relation |
@@ -160,9 +165,15 @@ Rules:
 
 - **runtime** writes only `agent`/`job`/`attention` objects (`runtime_kind`),
   never a composition field — `representation`, `geometry`, `layer`, `order`,
-  `visibility` (`runtime_composition`); links and unlinks only `parent_of`
-  between execution nodes (`runtime_relation`); attaches signals only to
-  execution nodes. It never creates or edits artifacts.
+  `visibility` — nor a relation layer (`runtime_composition`); links and
+  unlinks only `parent_of` between execution nodes (`runtime_relation`);
+  attaches signals only to execution nodes. It never creates or edits
+  artifacts.
+- **Origin**: runtime patches, upserts, reuses as a signal id, attaches to, or
+  links/unlinks only objects whose `origin` is `runtime` (`runtime_origin`). A
+  note the brain or user created as `attention` is theirs: runtime cannot
+  rewrite it, even with `attach_signal` on the same id. Brain and user keep
+  their rights on runtime-created objects.
 - **Execution nodes**: only runtime creates an `agent` or `job` object;
   brain and user get `execution_node` (decisions 3, 4, 17 — a star comes from
   an execution fact, never from composition). Brain and user may still compose
@@ -175,9 +186,11 @@ Rules:
   (`pinned_by_user`), and never by a resolver placement even when a user
   command carries it. `pin`/`unpin` are user-only because the flag records a
   user decision and a brain `unpin` would bypass the protection.
-- **Resolver** (`set_geometry` with `placed_by = resolver`) only places an
-  unplaced object or nudges one it placed itself (`explicit_placement`,
-  decision 9).
+- **Resolver** (`set_geometry` with `placed_by = resolver`) is accepted from
+  actor `user` only, because the browser AutoResolver commits through the
+  Control Center user proxy; from brain it is `resolver_actor` (runtime has no
+  `set_geometry` at all). It only places an unplaced object or nudges one it
+  placed itself (`explicit_placement`, decision 9).
 - `placed_by` becomes the actor (or `resolver`) whenever geometry changes; on
   creation it is the creating actor.
 
@@ -189,8 +202,8 @@ Rules:
 | --- | --- | --- | --- |
 | `applied` | something changed | `+1` | yes |
 | `duplicate` | nothing would change (replay, echo, unlink of an absent relation) | unchanged | no |
-| `rejected_authority` | matrix or effect rule (`op_not_allowed`, `runtime_kind`, `runtime_composition`, `runtime_relation`, `execution_node`, `execution_truth`, `pinned_by_user`, `explicit_placement`) | unchanged | no |
-| `invalid` | well-formed but inapplicable: `unknown_object`, `object_archived`, `kind_immutable`, `incomplete_object`, `unplaced`, `scene_full`, `relation_limit`, `relation_conflict` | unchanged | no |
+| `rejected_authority` | matrix or effect rule (`op_not_allowed`, `runtime_kind`, `runtime_composition`, `runtime_relation`, `runtime_origin`, `resolver_actor`, `execution_node`, `execution_truth`, `pinned_by_user`, `explicit_placement`) | unchanged | no |
+| `invalid` | well-formed but inapplicable: `unknown_object`, `object_archived`, `kind_immutable`, `incomplete_object`, `unplaced`, `scene_full`, `relation_limit`, `relation_conflict`, `revision_exhausted` | unchanged | no |
 
 `reason` (`SceneRefusal`) is a stable token for the journal and for tool errors
 surfaced to the brain. Refused and duplicate updates return the very snapshot
@@ -213,16 +226,25 @@ deletion — the consumer then re-reads the snapshot (decision 20).
 | relations per snapshot | 1 024 |
 | ops per patch | 1 025 (an archive: the object plus all its relations) |
 | payload | 16 KiB compact UTF-8 JSON |
+| revision | 0 … 2^63 − 1 (SQLite INTEGER); a change at the last revision is `invalid` (`revision_exhausted`) |
+| raw value echoed in an error message | 80 characters, then `…` |
 
 Validation refuses what exceeds; nothing is silently truncated. Snapshot,
 command and patch payloads carry `schema_version: 1`. Decoding checks the
 version first and raises `UnsupportedSceneSchemaVersion` (a `ValueError`) for a
 missing, unknown or newer version, then rejects unknown keys at every level,
 missing stored keys, wrong types and unknown enum values; list lengths are
-checked before decoding.
+checked before decoding. Decoding raises only `ValueError` or `TypeError`: a
+400-digit JSON integer in a geometry, layer, order or revision is a
+`ValueError`, never an `OverflowError`. Error messages never echo more than 80
+characters of a received value.
+
+Text, token and identifier checks are shared with `work_state` through the
+private module `jarvis/domain/_checks.py` (same rules, same messages).
 
 Validation:
 
 ```powershell
-.venv/Scripts/python.exe -W error::ResourceWarning -m pytest -q -p no:cacheprovider tests/unit/test_scene_contracts.py
+.venv/Scripts/python.exe -W error::ResourceWarning -m pytest -q -p no:cacheprovider tests/unit/test_scene_contracts.py tests/unit/test_work_state_contracts.py tests/unit/test_v2_architecture.py
+.venv/Scripts/python.exe scripts/verify_release.py
 ```

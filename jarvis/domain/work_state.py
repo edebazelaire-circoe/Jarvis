@@ -34,14 +34,18 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import StrEnum
 import math
-import re
 from typing import Any
+
+from jarvis.domain._checks import MAX_ID_CHARS
+from jarvis.domain._checks import check_id as _check_id
+from jarvis.domain._checks import check_text as _check_text
+from jarvis.domain._checks import check_token as _check_token
 
 # Bornes des champs publics. Choisies pour contenir ce que `AgentTaskTracker`
 # conserve déjà (libellé 160, résumé 1 000) sans laisser passer une trace.
 MAX_SOURCE_CHARS = 32
 MAX_KIND_CHARS = 64
-MAX_ID_CHARS = 128
+# `MAX_ID_CHARS` (128) vient de `jarvis.domain._checks`, partagé avec la scène.
 MAX_LABEL_CHARS = 160
 MAX_ACTIVITY_CHARS = 160
 MAX_SUMMARY_CHARS = 1_000
@@ -54,10 +58,6 @@ MAX_WORK_ITEMS = 64
 #: refusé.
 MAX_OBSERVATION_BATCH = 64
 
-# Jeton court et stable : source, nature, classe d'erreur. Pas de `:` ni
-# d'espace, pour qu'un couple `(source, external_id)` reste lisible sans
-# ambiguïté dans un journal.
-_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
 _ELLIPSIS = "…"
 
 
@@ -130,33 +130,7 @@ def clip_text(value: str, limit: int, *, single_line: bool = True) -> str:
 
 
 # ------------------------------------------------------------------ validation
-
-
-def _check_text(name: str, value: object, limit: int, *, single_line: bool = True) -> None:
-    if not isinstance(value, str):
-        raise TypeError(f"{name} must be a string")
-    if len(value) > limit:
-        raise ValueError(f"{name} exceeds {limit} characters")
-    if single_line and value and not value.isprintable():
-        raise ValueError(f"{name} must be a single printable line")
-
-
-def _check_token(name: str, value: object, limit: int, *, required: bool) -> None:
-    _check_text(name, value, limit)
-    if not value:
-        if required:
-            raise ValueError(f"{name} is required")
-        return
-    if not _TOKEN.fullmatch(str(value)):
-        raise ValueError(f"{name} must be a short token (letters, digits, '_', '.', '-')")
-
-
-def _check_id(name: str, value: object, *, required: bool) -> None:
-    if value is None and not required:
-        return
-    _check_text(name, value, MAX_ID_CHARS)
-    if not str(value).strip() or str(value) != str(value).strip():
-        raise ValueError(f"{name} must be a non-empty identifier without surrounding spaces")
+# Texte, jeton et identifiant : `jarvis.domain._checks` (importés en tête).
 
 
 def _check_datetime(name: str, value: object, *, required: bool = True) -> None:
