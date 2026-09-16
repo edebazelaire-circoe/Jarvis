@@ -19,6 +19,8 @@ PM amendment (Slice 03 QA): browsers allow ~6 HTTP/1.1 connections per host:port
 
 PM amendment (Slice 04 QA): `parent_of` cycles can exist — layout/traversal must tolerate them. A retired signal keeps its old category; decide liveness only with `is_live_signal` semantics (an attention is live iff its `explains` relation with `relation_id == from_id` exists). `process_stopped` interruptions produce one signal per running sub-agent at each brain CLI stop — style them as low-urgency.
 
+PM amendment (Slice 06 live run): no scene coordinate convention exists — asked "top left", the brain chose geometry (-80,-80,40x15). This Slice must define and document the scene coordinate frame (origin, axis directions, units, visible viewport extent and how it maps to the browser at any window size), render accordingly, and expose the frame to the brain: add it to the `scene_inspect` header/legend in `jarvis/runtime/display_mcp.py` and one line of guidance in the display prompt. Keep brain-given geometry authoritative (Decision 10); the resolver only places unplaced objects.
+
 ## Scope
 ### In Scope
 `control_center_scene.js` renderer + resolver, CSS, marker injection, feature flag gate (render only if enabled, see 11), node tests for resolver.
