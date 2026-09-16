@@ -65,6 +65,8 @@ from jarvis.runtime.self_dev_service import SelfDevelopmentService
 from jarvis.runtime.owner_voice import probe_from_settings as probe_owner_verifier
 from jarvis.runtime.visual_signals import VisualSignalBus
 from jarvis.runtime.work_brief import render_work_brief
+from jarvis.runtime.subagent_conversation import SubagentConversationScope
+from jarvis.runtime.conversation_event_forwarder import ConversationEventForwarder
 from jarvis.runtime.work_ingress import TrackerWorkObserver, WorkIngressForwarder
 from jarvis.runtime.work_view import NOT_CONFIGURED, CoreWorkView, unavailable_payload
 from jarvis.v2_config import (
@@ -246,6 +248,7 @@ class ControlCenter:
         visualizer_url: str | None = None,
         audio_diagnostics: SoundDeviceAudioDiagnostics | None = None,
         work_ingress: WorkIngressForwarder | None = None,
+        conversation_events: ConversationEventForwarder | None = None,
         work_view: CoreWorkView | None = None,
         live_view: CoreLiveStatusView | None = None,
         voice_registry: VoiceCapabilityRegistry | None = None,
@@ -275,6 +278,9 @@ class ControlCenter:
         # work-state, tâche 11). Absent, rien ne part : Core ne connaît pas
         # ces sous-tâches, et `/api/work` le dit (`subtasks_supported`).
         self.work_ingress = work_ingress
+        # Conversation Events des sous-agents Claude (handoff
+        # conversation-observability, Slice 03b). Absent, rien ne part.
+        self.conversation_events = conversation_events
         # Lecture seule de l'état de travail Core pour le panneau Agents
         # (tâche 13). Absent, `/api/work` répond « Core indisponible ».
         self.work_view = work_view
@@ -355,9 +361,10 @@ class ControlCenter:
                 command=os.getenv("JARVIS_CLAUDE_CLI", "claude"),
                 permission_mode=os.getenv("JARVIS_CLAUDE_PERMISSION_MODE", DEFAULT_PERMISSION_MODE),
             )
+            # Seul Claude expose des sous-tâches : aucun format Codex n'est
+            # vérifié, rien n'est inventé pour lui.
+            agent.subtasks.conversation_events = self.conversation_events
             if self.work_ingress is not None:
-                # Seul Claude expose des sous-tâches : aucun format Codex n'est
-                # vérifié, rien n'est inventé pour lui.
                 observer = TrackerWorkObserver(agent.subtasks, self.work_ingress.offer)
                 agent.subtasks.subscribe(observer.sync)
                 self.work_ingress.on_resync = observer.resync
@@ -439,6 +446,8 @@ class ControlCenter:
         self.journal.emit("ui.start", "Jarvis Control Center started", data={"host": host, "port": port})
         if self.work_ingress is not None:
             self.work_ingress.start()
+        if self.conversation_events is not None:
+            self.conversation_events.start()
         try:
             await self.agent.start()
         except RuntimeError as exc:
@@ -454,6 +463,10 @@ class ControlCenter:
             # Après les agents : leurs sous-tâches interrompues partent vers
             # Core dans une dernière tentative bornée.
             await self.work_ingress.aclose()
+        if self.conversation_events is not None:
+            # Après les agents, pour la même raison : leurs sous-agents
+            # interrompus sont des fins de span à remettre à Core.
+            await self.conversation_events.aclose()
         if self.work_view is not None:
             await self.work_view.aclose()
         if self.live_view is not None:
@@ -2410,6 +2423,11 @@ class ControlCenter:
             # The composed model prompt may contain private saved instructions.
             # Native agents use this canonical input only for trace/UI history.
             ask_kwargs["input_text"] = text
+        # Conversation Events (Slice 03b): Core names the conversation of the
+        # question explicitly; never given to the prompt composer above.
+        scope = SubagentConversationScope.from_payload(payload.get("conversation"))
+        if scope is not None and accepts_keyword_argument(self.agent.ask, "conversation_scope"):
+            ask_kwargs["conversation_scope"] = scope
         result = await self.agent.ask(prompt, **ask_kwargs)
         return web.json_response(result)
 

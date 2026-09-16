@@ -210,7 +210,11 @@ reasoning. The Control Center renders it as a short French preamble in front of
 the request; an `uncertain` turn is told it may conclude the words were not for
 it and answer `[pas-pour-moi]`, which the backend turns into silence instead of
 speech. Callers that send no `context` (the legacy `ClaudeGateway`, the browser
-panel) reach the agent with their text unchanged.
+panel) reach the agent with their text unchanged. A second optional field,
+`conversation` (`{conversation_id, correlation_id, work_id}` of the turn), is never
+rendered into the prompt: the Control Center only uses it to attribute the
+sub-agents of that turn to their conversation (Conversation Events, "Sub-agent
+mapping rule").
 
 ```text
 microphone ──► Realtime surface (reflexes only, no tools)
@@ -263,13 +267,27 @@ durable, before any backend work) and Brain events (`core.brain_service`,
 (`jarvis/core/conversation_event_emitter.py`): synchronous enqueue into a bounded
 queue drained by one background task (50 ms linger, batches ≤ 32), newest event dropped on overflow, storage
 failures dropped and diagnosed, never an exception or an await on the turn and
-speech path. Other processes post to Core:
+speech path. Other processes post to Core through one bounded
+`ConversationEventForwarder` each (`jarvis/runtime/conversation_event_forwarder.py`,
+send loop shared with `WorkIngressForwarder` in `jarvis/runtime/core_forwarder.py`):
+the voice runtime records Mouth speech and reflexes (`SpeechScheduler`), tool spans
+and rejected turns (`RealtimeConversationBridge`); the Control Center records
+sub-agent spans (`AgentTaskTracker`, attribution in `jarvis/runtime/subagent_conversation.py`), attributed to a conversation only from the
+explicit `conversation` block Core sends with `/api/agent/ask` and confirmed by the
+turn `result`. Producers call a synchronous `record()` (no await, no I/O, never
+raises) and write the returned id into their existing journal line
+(`conversation_event_id`); the forwarder lingers 0.5 s, posts batches ≤ 32, keeps
+the batch and backs off 1 s → 30 s when Core is unreachable (re-reading the token
+after a 401), drops a refused batch, drops the newest event past 1024 queued, and
+counts every loss.
 
 ```text
 Voice / Control Center                          Core process
 ----------------------                          ------------
-LocalCoreClient.append_conversation_events ---> POST /v1/conversation-events
-  (1..32 events, codec-encoded)                   -> ConversationEventEmitter.append_now -> conversation_events table
+SpeechScheduler / Bridge / AgentTaskTracker
+  -> ConversationEventForwarder.record (bounded deque, own task, batches <= 32)
+  -> LocalCoreClient.append_conversation_events ---> POST /v1/conversation-events
+                                                  -> ConversationEventEmitter.append_now -> conversation_events table
                                                 BrainOrchestrator / VoiceTurnAdmissionService
                                                   -> ConversationEventEmitter.record (bounded queue) -> same table
 ```

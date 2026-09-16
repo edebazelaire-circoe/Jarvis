@@ -104,6 +104,32 @@ def journal_trace(kind: str, *join_keys: str) -> TraceRef:
     return TraceRef(TraceSource.RUNTIME_JOURNAL, kind, tuple(join_keys))
 
 
+def build_conversation_event(event_type: ConversationEventType, *, producer: str, conversation_id: str,
+                             source_ids: tuple[str, ...], occurred_at: datetime, **fields: Any) -> ConversationEvent:
+    """Validated event for a fact: derived id, actor/visibility from the type, span times from `occurred_at`.
+
+    Shared by the Core emitter and the out-of-process forwarder
+    (`jarvis/runtime/conversation_event_forwarder.py`). Span opens get
+    `started_at = occurred_at`, closes `ended_at = occurred_at` (an optional
+    close `started_at` is normalized). Raises `ConversationEventError`
+    (a `ValueError`) or `TypeError` on an invalid fact; never touches I/O.
+    """
+    event_id = derive_conversation_event_id(producer=producer, event_type=event_type,
+                                            conversation_id=conversation_id, source_ids=source_ids)
+    at = to_event_time(occurred_at)
+    shape = event_shape(event_type)
+    if shape is EventShape.SPAN_OPEN:
+        fields["started_at"] = at
+    elif shape is EventShape.SPAN_CLOSE:
+        fields["ended_at"] = at
+        if fields.get("started_at") is not None:
+            fields["started_at"] = to_event_time(fields["started_at"])
+    return ConversationEvent(
+        event_id=event_id, event_type=event_type, actor=event_actor(event_type),
+        conversation_id=conversation_id, producer=producer, visibility=event_visibility(event_type),
+        occurred_at=at, **fields)
+
+
 @dataclass(slots=True)
 class ConversationEventEmitterCounters:
     enqueued: int = 0
@@ -179,20 +205,8 @@ class ConversationEventEmitter:
         `span_id` (and an optional close `started_at`) in `fields`.
         """
         try:
-            event_id = derive_conversation_event_id(producer=producer, event_type=event_type,
-                                                    conversation_id=conversation_id, source_ids=source_ids)
-            at = to_event_time(occurred_at)
-            shape = event_shape(event_type)
-            if shape is EventShape.SPAN_OPEN:
-                fields["started_at"] = at
-            elif shape is EventShape.SPAN_CLOSE:
-                fields["ended_at"] = at
-                if fields.get("started_at") is not None:
-                    fields["started_at"] = to_event_time(fields["started_at"])
-            event = ConversationEvent(
-                event_id=event_id, event_type=event_type, actor=event_actor(event_type),
-                conversation_id=conversation_id, producer=producer, visibility=event_visibility(event_type),
-                occurred_at=at, **fields)
+            event = build_conversation_event(event_type, producer=producer, conversation_id=conversation_id,
+                                             source_ids=source_ids, occurred_at=occurred_at, **fields)
         except (TypeError, ValueError) as exc:
             # Legal capture: an invalid event is an observability defect, never
             # a failure of the turn that produced it.

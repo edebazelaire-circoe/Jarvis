@@ -112,6 +112,18 @@ def _turn_context(
     return context
 
 
+def _turn_conversation(turn: BrainTurnInput, work_id: str) -> dict[str, str]:
+    """Identifiants du tour pour les Conversation Events des sous-agents (Slice 03b).
+
+    Champ `conversation` de `/api/agent/ask`, distinct de `context` : le
+    Control Center ne le donne jamais au modèle. Il permet de rattacher un
+    sous-agent à sa conversation et au `brain.work.started` de ce tour
+    (`work_id`) sans rien deviner.
+    """
+
+    return {"conversation_id": turn.conversation_id, "correlation_id": turn.correlation_id, "work_id": work_id}
+
+
 def _public_answer(raw: object) -> str:
     """Ce que l'agent a écrit, sauf s'il a dit que le tour n'était pas pour lui.
 
@@ -244,7 +256,8 @@ class ControlCenterBrainBackend:
                 public_summary="Demande transmise à l'agent local.",
             )
         )
-        outcome = await self._ask(turn.text, _turn_context(turn, state, work))
+        outcome = await self._ask(turn.text, _turn_context(turn, state, work),
+                                  conversation=_turn_conversation(turn, work_id))
         if outcome.get("ok"):
             return await self._settle_success(turn, work_id, _public_answer(outcome.get("text")), emit)
         return await self._settle_failure(
@@ -335,7 +348,8 @@ class ControlCenterBrainBackend:
 
     # -- transport ----------------------------------------------------------
 
-    async def _ask(self, text: str, context: dict[str, object]) -> dict[str, object]:
+    async def _ask(self, text: str, context: dict[str, object],
+                   conversation: dict[str, str] | None = None) -> dict[str, object]:
         """Aller-retour HTTP vers l'agent, traduit en issue neutre.
 
         Rend toujours un dictionnaire : aucune panne de transport ne remonte en
@@ -353,7 +367,8 @@ class ControlCenterBrainBackend:
             http = await self._session()
             async with http.post(
                 f"{self.base_url}/api/agent/ask",
-                json={"text": request, "timeout_s": self.timeout_s, "context": context},
+                json={"text": request, "timeout_s": self.timeout_s, "context": context,
+                      **({"conversation": conversation} if conversation is not None else {})},
             ) as response:
                 if response.status != 200:
                     return {

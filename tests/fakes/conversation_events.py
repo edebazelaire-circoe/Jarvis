@@ -137,3 +137,63 @@ def worst_case_ingest_batch(count: int = 32) -> list[ConversationEvent]:
                                                                  "speech_id", "outcome_id")),
             content=astral * MAX_CONTENT_CHARS, attributes={"reason": [reason], "code": code}))
     return events
+
+
+# -- Slice 03b: out-of-process producers ------------------------------------------
+
+class FakeEventTransport:
+    """`CoreConversationEventTransport` double: scripted failures, then appended results."""
+
+    def __init__(self) -> None:
+        self.batches: list[tuple[ConversationEvent, ...]] = []
+        self.failures: list[BaseException] = []
+        self.hang = False
+        self.closed = False
+
+    async def post(self, events):
+        import asyncio
+
+        from jarvis.domain.conversation_event_store import AppendResult, AppendStatus
+
+        if self.hang:
+            await asyncio.Event().wait()
+        if self.failures:
+            raise self.failures.pop(0)
+        batch = tuple(events)
+        self.batches.append(batch)
+        start = sum(len(item) for item in self.batches[:-1])
+        return tuple(AppendResult(event.event_id, start + index + 1, AppendStatus.APPENDED)
+                     for index, event in enumerate(batch))
+
+    async def close(self) -> None:
+        self.closed = True
+
+    def sent(self) -> list[ConversationEvent]:
+        return [event for batch in self.batches for event in batch]
+
+
+def recording_forwarder(journal=None, **options):
+    """A real forwarder that is never started: `record()` only queues, tests read `queued()`."""
+    from jarvis.runtime.conversation_event_forwarder import ConversationEventForwarder
+
+    return ConversationEventForwarder(transport=FakeEventTransport(), journal=journal, **options)
+
+
+def queued(forwarder) -> list[ConversationEvent]:
+    return list(forwarder._queue)
+
+
+def journal_matches(event: ConversationEvent, entries) -> list:
+    """Journal entries (`{kind, data}` mappings) that are trace evidence of `event`."""
+    from jarvis.domain.conversation_events import trace_entry_matches
+
+    return [entry for entry in entries if trace_entry_matches(event, entry)]
+
+
+def assert_each_trace_ref_joins_one_line(events, entries) -> None:
+    for event in events:
+        if event.trace_ref is None:
+            continue
+        matches = journal_matches(event, entries)
+        assert len(matches) == 1, (event.event_type, event.trace_ref, len(matches))
+        assert matches[0]["data"]["conversation_event_id"] == event.event_id

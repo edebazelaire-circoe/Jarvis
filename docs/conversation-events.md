@@ -12,21 +12,32 @@ timeline are projections of these events, not separate truths.
 - Producers (Level 3, Core side): emitter `jarvis/core/conversation_event_emitter.py`,
   ingestion wire batch `jarvis/domain/conversation_event_ingest.py`, route
   `POST /v1/conversation-events` (see Producers and ingestion).
+- Producers (Level 3, Voice and Control Center side, Slice 03b): forwarder
+  `jarvis/runtime/conversation_event_forwarder.py` on the shared client batch loop
+  `jarvis/runtime/core_forwarder.py` (also used by `WorkIngressForwarder`);
+  producers `SpeechScheduler`, `RealtimeConversationBridge`, and `AgentTaskTracker`
+  delegating sub-agent attribution to `jarvis/runtime/subagent_conversation.py`
+  (see Forwarder, Sub-agent mapping rule).
 - Conformance tests: `tests/unit/test_conversation_events.py`,
   `tests/unit/test_conversation_event_store.py`,
   `tests/integration/test_conversation_event_store_recovery.py`,
   `tests/unit/test_conversation_event_emitter.py`,
   `tests/unit/test_conversation_event_producers.py`,
   `tests/integration/test_conversation_event_ingest_protocol.py`,
-  `tests/integration/test_conversation_event_production.py`.
+  `tests/integration/test_conversation_event_production.py`,
+  `tests/unit/test_conversation_event_forwarder.py`,
+  `tests/unit/test_conversation_event_mouth_producers.py`,
+  `tests/unit/test_conversation_event_voice_bridge.py`,
+  `tests/unit/test_conversation_event_subagents.py`,
+  `tests/integration/test_conversation_event_timeline.py`.
 - Golden fixture: `tests/fixtures/conversation_events/overlapping_conversation.json`.
 - Handoff: `tasks/jarvis-conversation-observability-timeline/` (Slice 01).
 
-Status 2026-09-16: contract, durable store (Slice 02) and Core-side producers
-plus the ingestion route (Slice 03a). Core records user input and Brain events
-in process; Mouth, reflex, tool and sub-agent producers (voice runtime, Control
-Center) are Slice 03b and will use the ingestion route. Query/stream API is
-Slice 04.
+Status 2026-09-16: contract, durable store (Slice 02), Core-side producers plus
+the ingestion route (Slice 03a), and the out-of-process producers (Slice 03b):
+the voice runtime records Mouth speech, reflexes, tool spans and rejected turns,
+the Control Center records sub-agent spans, both through a bounded forwarder that
+posts batches to the ingestion route. Query/stream API is Slice 04.
 
 ## Relation to existing observability
 
@@ -105,7 +116,7 @@ Shape: **I** instant, **O** span open, **C** span close. Visibility: **P** publi
 | `subagent.stopped` | subagent | C | D | task | opt | journal `agent.subagent.finished`, `status` ∈ killed/stopped/interrupted (kept in `attributes.status`) | `jarvis/runtime/agent_tasks.py` |
 | `tool.call.started` | tool | O | D | — (span = call id) | — | journal `tool.call` (arguments never copied) | `jarvis/runtime/realtime_audio.py` |
 | `tool.call.finished` | tool | C | D | — (span = call id) | — | journal `tool.result` (result never copied) | `jarvis/runtime/realtime_audio.py` |
-| `system.failure` | system | I | D | — | — | journal `core.brain.turn_settlement_failed` (Core); `voice.brain_turn_rejected`, `voice.speech.stream_failed` (03b) | `jarvis/core/brain_service.py`, `jarvis/runtime/realtime_audio.py`, `jarvis/runtime/speech_scheduler.py` |
+| `system.failure` | system | I | D | — | — | journal `core.brain.turn_settlement_failed` (Core); `voice.brain_turn_rejected` (03b) | `jarvis/core/brain_service.py`, `jarvis/runtime/realtime_audio.py` |
 
 Notes:
 
@@ -165,12 +176,12 @@ same id. Recommended source ids:
 | `user.transcript.accepted` | `(turn_id,)`: the Core durable turn id (`brain-turn-` + hash of conversation and correlation on the brain and admission paths, so stable across retries; for direct admission the correlation already encodes session and canonical turn) |
 | `brain.turn.accepted`, `brain.turn.failed` | `(correlation_id,)` |
 | `brain.message.published` | `(correlation_id, outcome_id)` |
-| `brain.speech.requested`, `mouth.speech.*` | `(speech_id,)` |
+| `brain.speech.requested`, `mouth.speech.*` | `(speech_id,)`; for mouth events the played chunk id (see Mouth speech identity) |
 | `brain.work.*` | `(correlation_id, work_id)`: a later turn of the same conversation may reuse a work name |
 | `mouth.reflex.started` | `(correlation_id, output_id)` |
-| `subagent.*` | `(task_id,)` |
+| `subagent.*` | `(task_id,)` = the tracker's `conversation_key`: the task's first public id (`work_key`), frozen at attribution (see Sub-agent mapping rule) |
 | `tool.call.*` | `(call_id,)` |
-| `system.failure` | producer failure identity (e.g. `(correlation_id, code)`) |
+| `system.failure` | producer failure identity (e.g. `(correlation_id, code)`; voice rejected turn: `(correlation_id, "brain_turn_rejected")`) |
 
 ## Time, ordering and idempotency
 
@@ -248,9 +259,12 @@ Source-specific join limits (checked against the live trace, 2026-09-16):
   rejected. **Slice 04 obligation:** the debug view must never render raw
   `tool.call` / `tool.result` trace lines unredacted (they hold raw arguments and
   results).
-- `agent.subagent.*` lines carry no `conversation_id`. Slice 03 must map
-  `task_id` → conversation (and pick a stable sub-agent source id, since
-  `AgentTaskTracker` can re-key a task from `tool_use_id` to `task_id`).
+- `agent.subagent.*` lines carry no `conversation_id`, and their `task_id` is the
+  moving public id. Sub-agent events therefore join them by
+  `conversation_event_id` only (no join keys), and map to a conversation only
+  through Core's explicit scope (Slice 03b, Sub-agent mapping rule). The Control
+  Center agent task trace stays reachable with the event's `task_id`
+  (`AgentTaskTracker.find` falls back to `work_key`).
 
 Events also join each other: user → brain by `correlation_id`/`turn_id`, brain
 speech → mouth by `speech_id`, brain work → sub-agent by `work_id` and
@@ -275,10 +289,26 @@ process through one emitter; other processes post batches to Core.
 | `brain.work.failed` | `_dispatch_backend_event` (`FAILED`); `_settle_failed_turn_work` (orphan work of a failed turn, `code=turn_failed`) | `core.brain_service` | Core | event time / settlement | `core.brain.backend_task_result` `[correlation_id, work_id]`; orphan: none |
 | `brain.work.cancelled` | `_cancel_work` | `core.brain_service` | Core | `BrainEvent.created_at` | `core.brain.work_cancelled` `[correlation_id, work_id]` |
 | `system.failure` | `_run_turn`, settlement failure (`code=brain_turn_settlement_failed`) | `core.brain_service` | Core | failure | `core.brain.turn_settlement_failed` `[conversation_id, correlation_id]` |
-| `mouth.*`, `subagent.*`, `tool.*`, voice `system.failure` | Slice 03b | `voice.*`, `control_center.*` | Voice, Control Center | producer clock | through `POST /v1/conversation-events` |
+| `mouth.speech.queued` | `SpeechScheduler._note_queued` (`_mouth_event`), first time only | `voice.speech_scheduler` | Voice | scheduler clock | `voice.speech.queued` `[]` (id only) |
+| `mouth.speech.started` | `SpeechScheduler._speak`, after `speak_reserved` returned and admission still valid | `voice.speech_scheduler` | Voice | idem | `voice.speech.started` `[]` |
+| `mouth.speech.completed` | `SpeechScheduler._speak` tail, provider status `completed`, only if this attempt recorded `started` | `voice.speech_scheduler` | Voice | idem | `voice.speech.completed` `[]` |
+| `mouth.speech.interrupted` | `SpeechScheduler._speak` tail: barge-in (`reason=user_barge_in`, `played_ms`), provider status ≠ completed or admission invalidated (`reason=delivery_not_complete`); not after a failed start; only if this attempt recorded `started` (Mouth speech identity, span rule). Also the `CancelledError` branch of `_speak`: the voice goes to background while speaking (`SpeechScheduler.stop()`: auto-turn key / `voice.manual_cancel` → `mute()`, idle timeout, shutdown, bridge error) → `reason=voice_background` (`delivery_cancelled` for any other cancellation), provider `status`, `played_ms` when a barge-in cursor measured it; the tail never runs there, so exactly one close | `voice.speech_scheduler` | Voice | idem | `voice.speech.interrupted` `[]`; background cancel: none (no line is written) |
+| `mouth.speech.superseded` | `SpeechScheduler._decision` (terminal status) and `_enqueue` (`superseded_on_arrival`) | `voice.speech_scheduler` | Voice | idem | `voice.speech.superseded` `[]` |
+| `mouth.speech.expired` | `SpeechScheduler._decision` (`ttl`, `voice_background` on stop) | `voice.speech_scheduler` | Voice | idem | `voice.speech.expired` `[]` |
+| `mouth.speech.failed` | `SpeechScheduler._speak` except branch (`code=speech_speak_failed`, `error_class`); no content when no start was recorded | `voice.speech_scheduler` | Voice | idem | `voice.speech.speak_failed` `[]` |
+| `mouth.reflex.started` | `SpeechScheduler._maybe_speak_reflex` (`_reflex_event`) | `voice.speech_scheduler` | Voice | idem | `voice.reflex.started` `[]` |
+| `tool.call.started` / `tool.call.finished` | `RealtimeConversationBridge._handle_tool_call` (`_tool_event`); a raising tool still closes (`status=failed|cancelled`, no `tool.result` line) | `voice.realtime_audio` | Voice | bridge UTC clock (`duration_ms` monotonic) | `tool.call` / `tool.result` `[]`; raised: none |
+| `system.failure` (voice) | `RealtimeConversationBridge._submit_brain_turn`: non-503 refusal or transport error (`_turn_rejected_event`); a 503 deferral is not a failure | `voice.realtime_audio` | Voice | bridge UTC clock | `voice.brain_turn_rejected` `[]` |
+| `subagent.started` | `SubagentConversations._record_start` (`subagent_conversation.py`), from `AgentTaskTracker._maybe_log_start` → `start_logged` (confirmed scope) or at turn confirmation (`settle`) | `control_center.agent_tasks` | Control Center | `AgentTask.started_ms` | `agent.subagent.started` `[]` (when that line was written after attribution) |
+| `subagent.finished` / `failed` / `stopped` | `SubagentConversations._record_close`, from `AgentTaskTracker._log_finished` → `finish_logged` (`_finish`: notification, update, tool result, process start/stop) or at confirmation (`settle`); merge of two recorded halves (`stopped`, `reason=merged`, no line) | `control_center.agent_tasks` | Control Center | `AgentTask.ended_ms` (close `started_at` = recorded start) | `agent.subagent.finished` `[]` |
 
-Every Core journal line named in a `trace_ref` carries `data.conversation_event_id`
-when its event was recorded, so `trace_entry_matches` decides by id. Deliberately
+Every journal line named in a `trace_ref` (Core, Voice, Control Center) carries
+`data.conversation_event_id` when its event was recorded, so `trace_entry_matches`
+decides by id and joins exactly one line. A fact recorded twice (a request queued
+again by `_replan`) is queued once: only the first line carries the id. Voice and
+Control Center `trace_ref`s use no join keys: their lines either lack the
+conversation ids (tools, sub-agents) or repeat them for later lines of the same
+correlation (rejected-turn replays). Deliberately
 not recorded: work progress (`brain.work.progress` has no vocabulary type), work
 supersession (an intent revision, not a work end), a turn cancelled by Core
 shutdown (the stop contract publishes nothing), Core-opened wake turns as user
@@ -364,6 +394,171 @@ for what was committed and `appended` for what a crash lost (never `conflict`).
 - Times are compared as stored ISO text; every Core writer stores UTC. A turn
   written with another offset could be missed by the SQL prefilter.
 
+### Forwarder (Voice and Control Center)
+
+`ConversationEventForwarder` (`jarvis/runtime/conversation_event_forwarder.py`),
+one per process, built in `jarvis/app.py`: the voice process passes it to
+`PersistentVoiceRuntime` (then to every `SpeechScheduler` and
+`RealtimeConversationBridge`), the Control Center to `ControlCenter` (then to the
+Claude agent's `AgentTaskTracker`). Transport: `CoreConversationEventTransport`,
+its own loopback session, the session token file re-read after a 401. The send
+loop, backoff and bounded close are the shared `CoreBatchForwarder`
+(`jarvis/runtime/core_forwarder.py`), the same code as `WorkIngressForwarder`;
+only the queue differs (append-only facts here, coalesced observations there).
+
+- `record(...)`: same signature as the Core emitter
+  (`ports.v2.ConversationEventRecorder`), same builder
+  (`build_conversation_event`). Synchronous: build, validate, append to a deque.
+  No await, no I/O on the normal path, never raises; returns the event id for
+  the producer's journal line, or None when nothing was queued. Measured: p50
+  29 µs / p95 36 µs per `mouth.speech.started` (5000 records).
+- A fact recorded again while its id is among the last 4096 recorded ids is not
+  queued again (`repeated`) and returns None, so only one journal line carries
+  the id. Edge case: a repeat arriving after more than 4096 other events is
+  queued again and its journal line gets the id too; the store answers
+  `duplicate` (identical) or `conflict` (other `occurred_at`, first copy kept),
+  and `trace_entry_matches` may then find two lines for that event. Producers
+  repeat facts only within one speech (`_replan`), far below that window.
+- Bounded queue (`DEFAULT_CAPACITY` = 1024). **Overflow drops the newest event**
+  (`dropped_queue_full`), one `conversation_events.event_dropped` warning per
+  overflow episode. An invalid fact is not queued (`invalid`), one
+  `conversation_events.event_invalid` warning per (event type, producer) with the
+  codec's field-level message.
+- One task: waits for an event, lingers `flush_interval_s` (0.5 s), sends every
+  queued event in batches of at most 32. Each ingestion POST is one FULL-sync
+  commit on Core's shared state lock, so a burst of speech events costs one
+  commit per 32 events instead of one per event (events queued while a POST is
+  in flight follow in the same flush, without a second linger).
+- Core unreachable, 503, 401 (token rotated), 408/429 or network error: the batch
+  stays queued, `conversation_events.forwarder_unavailable` once per outage,
+  retry after 1 s doubling to 30 s (no retry storm), `forwarder_restored` once
+  when a batch is accepted again. Retrying is safe (same ids and `occurred_at`:
+  `duplicate`).
+- Core refuses a batch (400, 413, other 4xx, an event the codec refuses, or a
+  JSON answer that does not match the batch, `ConversationEventAppendResponseError`):
+  the batch is dropped (`dropped_rejected`), `conversation_events.forwarder_rejected`
+  once per refusal series. An undecodable answer (`json.JSONDecodeError`,
+  `UnicodeDecodeError`, e.g. a garbled body while Core restarts) is an
+  unavailability: the batch is retried. `WorkIngressForwarder` already behaved
+  this way (only HTTP 400 is a refusal there).
+- `aclose()` (voice process after `voice.close()`, Control Center after the agents
+  stopped, so interrupted sub-agents and expired speech are sent): refuses new
+  events (`dropped_closed`), one last send bounded by 2 s, the rest counted
+  (`dropped_shutdown`), final counters in `conversation_events.forwarder_stopped`.
+  With Core down, each bounded close waits its full 2 s: the Control Center stop
+  takes up to ~4 s more (work ingress 2 s, then conversation events 2 s), the
+  voice process up to ~2 s more after `voice.close()`.
+- Identity once closed: `enqueued = appended + duplicates + conflicts +
+  dropped_rejected + dropped_shutdown`.
+
+Loss bounds: a hard kill of the voice or Control Center process loses what is
+queued (≤ 1024 events; normally the last 0.5 s of activity plus any Core outage
+backlog); a Core outage keeps up to 1024 events then drops the newest; a Core
+refusal drops that batch. Every loss is counted, and journaled once per episode.
+None of these events is rebuilt after a crash (unlike Core's user-turn backfill).
+
+Hot-path cost (scratch probe, real `SpeechScheduler` with fake session, 3 × 300
+speeches, alternated variants): dispatch latency p50/p95 0.105/0.157 ms without
+recorder, 0.179/0.261 ms with the forwarder (fake Core, 5 ms commits),
+0.185/0.256 ms with a real Core in the same loop; `voice.speech.started` 0.117/0.174 ms
+vs 0.257/0.375 ms and 0.265/0.368 ms. Journal disk writes are excluded in both.
+
+### Mouth speech identity
+
+`SpeechScheduler._enqueue` splits a Core speech request into paragraph chunks:
+a one-paragraph request keeps its `speech_id`, a longer one gets a `uuid5` id per
+chunk. Mouth events use the played chunk id (`speech_id` = `span_id`, source id)
+and set `parent_event_id` to the Core `brain.speech.requested` event id derived
+from the request id (`core.brain_service`, `(speech_id,)`), only for requests
+received from `/v1/events` (Core records every one it publishes). Controller
+speech enqueued locally has no parent.
+
+Span rule for a delivery attempt (`_speak`): its `completed` / `interrupted`
+close (tail or cancellation) is recorded **only if that same attempt recorded
+`mouth.speech.started`**. A cancel landing during `speak_reserved`, or an output
+invalidated before its start, records no close (the `queued` instant stays): a
+close without an open would render as a public `interrupted`/`completed` item
+carrying text the user never heard. `mouth.speech.failed` is kept when the start
+failed before being recorded (diagnostic evidence that the speech was never
+played, joined to `voice.speech.speak_failed`), but then **without content**.
+`superseded` / `expired` closes of speech that was never attempted are
+diagnostic and carry the withheld text.
+
+`content` (the text sent for playback) is on `started`, or on a `superseded` /
+`expired` close whose speech never started, never repeated on the other events;
+text above 8192 characters is omitted, the event is still recorded. Attributes: `kind`,
+`priority`, `output_id`, and on closes `reason`, `status` (provider status),
+`played_ms`, `code`, `error_class` (code-like tokens only).
+
+### Sub-agent mapping rule
+
+A sub-agent span is recorded only when its conversation is explicitly known,
+never inferred from labels, descriptions or timing:
+
+1. `ControlCenterBrainBackend` sends `/api/agent/ask` a `conversation` block
+   `{conversation_id, correlation_id, work_id}` (distinct from `context`; the
+   Control Center never gives it to the prompt composer). The route builds a
+   `SubagentConversationScope` (invalid ids dropped, never repaired) and passes it
+   to `ClaudeLocalAgent.ask(conversation_scope=...)`.
+2. Before writing the message, `AgentTaskTracker.begin_conversation_turn(scope,
+   message_uuid)` opens a pending attribution. It is ambiguous when a brain turn
+   was already running (`busy_at_send`) or another message was written meanwhile
+   (panel/console `send`, a question without scope: `note_unscoped_input`).
+3. A top-level `Agent` call observed while the pending attribution is not
+   ambiguous is attributed **provisionally**; its journal lines already carry
+   the id the event would have. A nested sub-agent inherits its parent task's
+   scope (explicit `parent_tool_use_id`).
+4. At the next top-level `result`: consumed uuids exactly `{message_uuid}` →
+   confirmed, the spans are recorded (start, and close if already finished); our
+   uuid among several (merged turn), a CLI that does not report consumed uuids, or
+   an ambiguous turn → rejected; a result that does not consume our message
+   (spontaneous `task-notification` turn, panel message) → its provisional tasks
+   are rejected and the attribution stays pending for our turn. A brain process
+   start/stop rejects provisional tasks. A new scoped question rejects the
+   previous unresolved one.
+5. A rejected or never-attributed sub-agent records nothing: counted in
+   `AgentTaskTracker.conversation_counts[reason]` (`SubagentConversations.counts`) and journaled once per task as
+   `agent.subagent.conversation_unattributed` (`reason` ∈ `no_conversation_scope`,
+   `other_turn`, `turn_ambiguous`, `turn_unverifiable`, `turn_unresolved`,
+   `process_stopped`). Its journal lines may carry the provisional id of an event
+   that was never recorded (a pointer to nothing, never a wrong join).
+6. A scoped turn whose `result` names no consumed message (`user_message_uuids` /
+   `user_message_uuid` absent) is a CLI regression: counted
+   (`unverifiable_results`) and journaled once per tracker as
+   `agent.subagent.attribution_unverifiable` (warning, with `cli_version` from the
+   `system/init` event's `claude_code_version`), even when no sub-agent was
+   launched. Evidence 2026-09-16: CLI ≥ 2.1.270 carried the uuids on 90/90 scoped
+   results, older CLIs never did.
+
+**PM decision (2026-09-16): the strict rule is kept** (verified on CLI 2.1.273).
+Consequences, accepted and documented: sub-agents launched by spontaneous turns
+(`task-notification`) or by panel/console messages are not recorded; a foreground
+sub-agent's start reaches Core only when its turn `result` arrives (its
+`occurred_at` stays the real start).
+
+Stable source id: `conversation_key`, the task's `work_key` (first public id,
+usually the `tool_use_id`) frozen at attribution. `AgentTask.id` moves to the
+`task_id` when `task_started` arrives; the key does not. When two halves merge,
+the survivor keeps its key (or inherits the absorbed half's); if both halves had
+recorded a start, the absorbed span is closed as `subagent.stopped`,
+`reason=merged`. Parent: `parent_event_id` = Core's `brain.work.started` id derived
+with `core.brain_service` and `(correlation_id, work_id)`, only when both came in
+the scope; a nested sub-agent points to its parent sub-agent's start. Status
+mapping as note 3 (raw status kept in `attributes.status`). Content: the
+description on `subagent.started` only; the summary never leaves the tracker.
+Attributes: `provider`, `background`, `depth`, `subagent_type`, `model`, and on
+closes `status`, `tokens`, `tool_uses`, `duration_ms`.
+
+### Tool redaction
+
+`tool.call` / `tool.result` journal lines keep the raw `arguments` / `result`
+(unchanged telemetry). Tool events carry `tool_name` (a code-like token, else
+`unknown`), `arguments_redacted: true`, and on the close `status` (the result's
+`status` or `disposition` token, else `ok`/`error` from its `ok` flag; `failed` or
+`cancelled` when the call raised, with `error_class`) and `duration_ms`. No
+content, no join keys, no correlation id (the surface does not know which turn a
+tool call belongs to). A call without `call_id` records nothing.
+
 ### Known limits
 
 - **Crash windows.** The queue is memory only. An event is committed about 55-70 ms
@@ -393,6 +588,25 @@ for what was committed and `appended` for what a crash lost (never `conflict`).
   and keeps draining into the still-open repository; the next `stop()` call
   stops it.
 - **Content bound.** Text above 8192 characters is not recorded (diagnosed).
+  Mouth events omit such text and keep the event.
+- **Voice / Control Center loss.** See Forwarder: memory queue, no rebuild after
+  a crash of those processes.
+- **Not recorded (03b).** Direct-conversation architectures (simple, front_brain,
+  duplex) have no mouth lane yet: their `ConversationCandidate` carries no speech
+  text and no Core speech request (tracked limit; the live architecture is
+  continuous_brain). Reflex completion (no terminal
+  signal, note 4; the reflex text is generated by the provider and unknown to
+  the scheduler), `voice.speech.stream_failed` / `stream_closed` (a transport
+  incident with no stable fact identity), `voice.brain_turn_deferred` (503, Core
+  stopping: the provider replay is accepted later), background shell tasks
+  (not sub-agents), Codex (no verified sub-task format).
+- **Sub-agent attribution** needs the Claude CLI to report consumed message uuids
+  in `result`; foreground sub-agents are confirmed when their turn ends, so their
+  start reaches Core at that moment (with its real `occurred_at`). A sub-agent
+  whose brain process dies before the turn result is not recorded.
+- **Slice 04 trace drill-down** must start from stored events and resolve their
+  `trace_ref`; it must never resolve a `conversation_event_id` found in a journal
+  line (a provisional sub-agent line can name an event that was never stored).
 
 ### Ingestion route
 
@@ -695,5 +909,5 @@ version 1 is an unreadable row, never silently reinterpreted.
 ## Validation
 
 ```powershell
-$env:PYTHONDONTWRITEBYTECODE=1; .venv/Scripts/python.exe -W error::ResourceWarning -m pytest -q -p no:cacheprovider tests/unit/test_conversation_events.py tests/unit/test_conversation_event_store.py tests/integration/test_conversation_event_store_recovery.py tests/unit/test_conversation_event_emitter.py tests/unit/test_conversation_event_producers.py tests/integration/test_conversation_event_ingest_protocol.py tests/integration/test_conversation_event_production.py
+$env:PYTHONDONTWRITEBYTECODE=1; .venv/Scripts/python.exe -W error::ResourceWarning -m pytest -q -p no:cacheprovider tests/unit/test_conversation_events.py tests/unit/test_conversation_event_store.py tests/integration/test_conversation_event_store_recovery.py tests/unit/test_conversation_event_emitter.py tests/unit/test_conversation_event_producers.py tests/integration/test_conversation_event_ingest_protocol.py tests/integration/test_conversation_event_production.py tests/unit/test_conversation_event_forwarder.py tests/unit/test_conversation_event_mouth_producers.py tests/unit/test_conversation_event_voice_bridge.py tests/unit/test_conversation_event_subagents.py tests/integration/test_conversation_event_timeline.py
 ```

@@ -19,12 +19,12 @@ Every coding Slice must load `/caveman` and `/coding-guideline` before implement
 - [x] 02 — Add durable append/replay storage for conversation events (2026-09-16, QA APPROVE_WITH_ISSUES → reworked)
   - Path: `slices/02-durable-event-store/SLICE.md`
   - Depends on: 01
-- [ ] 03 — Instrument User, Brain, Mouth, tools and sub-agents at source
+- [x] 03 — Instrument User, Brain, Mouth, tools and sub-agents at source (2026-09-16, 03a + 03b after QA rework)
   - Path: `slices/03-source-instrumentation/SLICE.md`
   - Depends on: 01, 02
   - PM split (2026-09-16), same SLICE.md, see LOG.md:
     - [x] 03a — Core-side producers (user admission, Brain) + Core ingestion endpoint/client + non-blocking emitter
-    - [ ] 03b — Voice/Control Center producers (Mouth, reflex, tools, sub-agents), journal `conversation_event_id` linkage, end-to-end reconstruction + agent-trace analysis
+    - [x] 03b — Voice/Control Center producers (Mouth, reflex, tools, sub-agents), journal `conversation_event_id` linkage, end-to-end reconstruction + agent-trace analysis
 - [ ] 04 — Expose conversation query and live-stream APIs
   - Path: `slices/04-query-live-stream-api/SLICE.md`
   - Depends on: 02, 03

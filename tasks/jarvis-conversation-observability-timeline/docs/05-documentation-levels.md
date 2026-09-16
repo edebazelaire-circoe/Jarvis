@@ -33,3 +33,10 @@ Slice 00 must correct these levels if the live repository has gained equivalent 
 | Concept | Level | Evidence |
 |---|---:|---|
 | Conversation event persistence/replay | 3 | `ConversationEventStore` port, `sqlite_conversation_events.py`, schema v2 migration with `.v1.bak`, crash/restart/migration/retention tests, storage section in `docs/conversation-events.md` + `docs/state-model.md`. |
+
+## After Slice 03 (2026-09-16)
+
+| Concept | Level | Evidence |
+|---|---:|---|
+| Trace correlation from conversation events | 3 | Every emitting site writes `conversation_event_id` into its journal line; end-to-end test asserts each `trace_ref` joins exactly one line across Core, voice and Control Center journals. |
+| Producer ownership (User/Brain/Mouth/tools/sub-agents) | 3 | Ownership table + forwarder/emitter guarantees and known limits in `docs/conversation-events.md`; producer, forwarder, backfill, attribution and timeline tests. |

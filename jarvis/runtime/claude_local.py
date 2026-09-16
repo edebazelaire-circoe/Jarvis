@@ -13,6 +13,7 @@ from jarvis.domain.v2 import BRAIN_NOT_ADDRESSED_ANSWER
 from jarvis.runtime import routing_hook
 from jarvis.runtime.routing_hook import PROFILE_RULE
 from jarvis.runtime.agent_tasks import AgentTaskTracker
+from jarvis.runtime.subagent_conversation import SubagentConversationScope, consumed_message_uuids
 from jarvis.runtime.cli_catalog import resolve_command
 from jarvis.runtime.journal import RuntimeJournal
 
@@ -619,6 +620,10 @@ class ClaudeLocalAgent:
         if self._owned_closed:
             raise RuntimeError("owned_agent_closed")
         assert self.process is not None and self.process.stdin is not None
+        if message_uuid is None:
+            # Message du panneau ou de la console : sans conversation, et le CLI
+            # peut le fusionner au tour d'une question Core en attente.
+            self.subtasks.note_unscoped_input()
         # Le `uuid` revient dans `result.user_message_uuids` : c'est lui qui
         # rattache une réponse à la question qui l'a provoquée.
         payload = {"type": "user", "uuid": message_uuid or str(uuid.uuid4()), "message": {"role": "user", "content": text}}
@@ -649,18 +654,28 @@ class ClaudeLocalAgent:
 
     async def ask(self, text: str, *, timeout_s: float = 180.0,
                   prompt_evidence: dict[str, object] | None = None,
-                  input_text: str | None = None) -> dict[str, Any]:
+                  input_text: str | None = None,
+                  conversation_scope: SubagentConversationScope | None = None) -> dict[str, Any]:
         """Poser une question et attendre la réponse complète du tour.
 
         C'est le point d'entrée de la boucle vocale : la voix a besoin d'un
         texte à prononcer, donc d'un aller-retour, là où `send()` ne fait que
         déposer un message.
+
+        `conversation_scope` (Conversation Events, Slice 03b) : la conversation
+        Core de la question, transmise explicitement. Les sous-agents lancés
+        par ce tour y sont rattachés quand le `result` prouve que le tour était
+        bien celui de ce message (`AgentTaskTracker.begin_conversation_turn`).
         """
         async with self._ask_lock:
             loop = asyncio.get_running_loop()
             self._pending_result = loop.create_future()
             message_uuid = str(uuid.uuid4())
             self._pending_uuid = message_uuid
+            if conversation_scope is not None:
+                self.subtasks.begin_conversation_turn(conversation_scope, message_uuid=message_uuid)
+            else:
+                self.subtasks.note_unscoped_input()
             try:
                 await self.send(
                     text,
@@ -742,21 +757,8 @@ class ClaudeLocalAgent:
 
     @staticmethod
     def _consumed_uuids(event: dict[str, Any]) -> set[str] | None:
-        """Messages utilisateur qu'un tour a consommés, ou None si le CLI ne le dit pas.
-
-        Un tour peut en consommer plusieurs (message écrit pendant le tour et
-        fusionné), ou aucun : le CLI ouvre de lui-même un tour quand une tâche de
-        fond se termine, et le marque d'un `origin`.
-        """
-        uuids = event.get("user_message_uuids")
-        if isinstance(uuids, list):
-            return {str(value) for value in uuids if value}
-        single = event.get("user_message_uuid")
-        if isinstance(single, str) and single:
-            return {single}
-        if isinstance(event.get("origin"), dict):
-            return set()
-        return None
+        """Messages utilisateur qu'un tour a consommés (`agent_tasks.consumed_message_uuids`)."""
+        return consumed_message_uuids(event)
 
     def _resolve_correlated(self, event: dict[str, Any], consumed: set[str]) -> None:
         pending, expected = self._pending_result, self._pending_uuid

@@ -47,6 +47,15 @@ CORE_OWNED_ACTORS = frozenset({ConversationActor.USER, ConversationActor.BRAIN})
 CORE_PRODUCER_NAMESPACE = "core"
 
 
+class ConversationEventAppendResponseError(ValueError):
+    """Core answered with a well-formed JSON body that does not answer the batch.
+
+    Distinct from a transport decode error (`json.JSONDecodeError`, also a
+    `ValueError`): replaying the same batch against the same Core would get the
+    same answer, whereas a garbled body during a restart is worth a retry.
+    """
+
+
 def is_core_owned(event: ConversationEvent) -> bool:
     producer = event.producer
     return (event.actor in CORE_OWNED_ACTORS or producer == CORE_PRODUCER_NAMESPACE
@@ -101,22 +110,22 @@ def encode_append_results(results: Sequence[AppendResult]) -> dict[str, Any]:
 def decode_append_results(payload: object, events: Sequence[ConversationEvent]) -> tuple[AppendResult, ...]:
     """Strict decode of the ingestion response; results must answer `events` one-to-one, in order."""
     if not isinstance(payload, Mapping) or set(payload) != {"schema_version", "results"}:
-        raise ValueError("conversation event append response must have exactly schema_version and results")
+        raise ConversationEventAppendResponseError("conversation event append response must have exactly schema_version and results")
     if payload["schema_version"] != CONVERSATION_EVENT_BATCH_SCHEMA_VERSION or not isinstance(payload["results"], list):
-        raise ValueError("invalid conversation event append response")
+        raise ConversationEventAppendResponseError("invalid conversation event append response")
     results = payload["results"]
     if len(results) != len(events):
-        raise ValueError("conversation event append response does not answer every event")
+        raise ConversationEventAppendResponseError("conversation event append response does not answer every event")
     decoded = []
     for event, item in zip(events, results):
         if not isinstance(item, Mapping) or set(item) != _RESULT_FIELDS:
-            raise ValueError("invalid conversation event append result")
+            raise ConversationEventAppendResponseError("invalid conversation event append result")
         sequence = item["sequence"]
         if item["event_id"] != event.event_id or type(sequence) is not int or sequence < 1:
-            raise ValueError("conversation event append result does not match its event")
+            raise ConversationEventAppendResponseError("conversation event append result does not match its event")
         try:
             status = AppendStatus(item["status"])
         except ValueError:
-            raise ValueError("invalid conversation event append status") from None
+            raise ConversationEventAppendResponseError("invalid conversation event append status") from None
         decoded.append(AppendResult(event.event_id, sequence, status))
     return tuple(decoded)

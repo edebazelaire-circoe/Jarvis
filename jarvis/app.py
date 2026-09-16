@@ -688,7 +688,18 @@ async def _run_voice_v2() -> int:
         switch_handoff.get("conversation_id") if isinstance(switch_handoff, dict)
         else switch_bus.conversation_id()
     )
+    # Conversation Events de la voix (Mouth, réflexes, outils) vers Core
+    # (handoff conversation-observability, Slice 03b) : relais borné, par lots,
+    # jeton relu à chaque reconnexion. Core absent, rien ne bloque la parole.
+    from jarvis.runtime.conversation_event_forwarder import CoreConversationEventTransport, ConversationEventForwarder
+
+    conversation_events = ConversationEventForwarder(
+        transport=CoreConversationEventTransport(host=settings.core_host, port=settings.core_port,
+                                                 token_file=settings.token_file),
+        journal=journal,
+    )
     voice = PersistentVoiceRuntime(
+        conversation_events=conversation_events,
         wakeword=wake,
         core=core,
         realtime_factory=realtime_factory,
@@ -768,10 +779,16 @@ async def _run_voice_v2() -> int:
               f"JARVIS répond dès que vous vous taisez. {key} de nouveau pour interrompre.")
     else:
         print(f"{banner}. {wake_hint} pour activer, puis à nouveau pour envoyer.")
+    conversation_events.start()
     try:
         await voice.run()
     finally:
-        timeout_task.cancel(); await asyncio.gather(timeout_task, return_exceptions=True); await voice.close()
+        timeout_task.cancel(); await asyncio.gather(timeout_task, return_exceptions=True)
+        try:
+            await voice.close()
+        finally:
+            # Après la voix : ses dernières paroles périmées sont des fins de span.
+            await conversation_events.aclose()
     return 0
 
 
@@ -844,11 +861,21 @@ async def _run_control_center_v2() -> int:
         CoreWorkTransport(host=settings.core_host, port=settings.core_port, token_file=settings.token_file),
         journal=journal,
     )
+    # Conversation Events des sous-agents Claude (Slice 03b), par le même
+    # socle que le relais d'état de travail, sur sa propre connexion.
+    from jarvis.runtime.conversation_event_forwarder import CoreConversationEventTransport, ConversationEventForwarder
+
+    conversation_events = ConversationEventForwarder(
+        transport=CoreConversationEventTransport(host=settings.core_host, port=settings.core_port,
+                                                 token_file=settings.token_file),
+        journal=journal,
+    )
     control = ControlCenter(
         runtime_root=runtime_root,
         project_root=ROOT,
         visualizer_url=visualizer_url,
         work_ingress=work_ingress,
+        conversation_events=conversation_events,
         work_view=work_view,
         live_view=live_view,
     )

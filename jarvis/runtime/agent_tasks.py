@@ -27,7 +27,13 @@ import re
 import time
 from typing import Any, Callable
 
+from jarvis.ports.v2 import ConversationEventRecorder
 from jarvis.runtime.journal import RuntimeJournal
+from jarvis.runtime.subagent_conversation import (
+    SubagentConversations,
+    SubagentConversationScope,
+    SubagentSpan,
+)
 
 
 #: Entrées gardées par tâche : un sous-agent bavard produit ~2 entrées par outil.
@@ -200,6 +206,9 @@ class AgentTask:
     # `task_started` arrive ; Core, lui, doit voir un seul travail.
     work_key: str = ""
     trace: deque[dict[str, Any]] = field(default_factory=lambda: deque(maxlen=MAX_TRACE_ENTRIES))
+    # Conversation Events (Slice 03b) : conversation et identité de span de la
+    # tâche, tenues par `subagent_conversation.SubagentConversations`.
+    conversation: SubagentSpan | None = None
 
     @property
     def id(self) -> str:
@@ -251,6 +260,29 @@ class AgentTaskTracker:
         self._listener_failures: set[str] = set()
         # Clés de travail d'une tâche absorbée par `_merge`.
         self._retired_work_keys: deque[str] = deque(maxlen=MAX_RETIRED_WORK_KEYS)
+        # Conversation Events des sous-agents (Slice 03b) : attribution et spans.
+        self.conversations = SubagentConversations(self)
+
+    @property
+    def conversation_events(self) -> ConversationEventRecorder | None:
+        """Enregistreur du processus (`ConversationEventForwarder`), posé par le Control Center."""
+        return self.conversations.recorder
+
+    @conversation_events.setter
+    def conversation_events(self, recorder: ConversationEventRecorder | None) -> None:
+        self.conversations.recorder = recorder
+
+    @property
+    def conversation_counts(self) -> dict[str, int]:
+        return self.conversations.counts
+
+    def begin_conversation_turn(self, scope: SubagentConversationScope, *, message_uuid: str) -> None:
+        """Core va poser une question dont la conversation est `scope` (voir `subagent_conversation`)."""
+        self.conversations.begin_turn(scope, message_uuid=message_uuid)
+
+    def note_unscoped_input(self) -> None:
+        """Un message sans conversation part vers le CLI : le tour en attente devient ambigu."""
+        self.conversations.note_unscoped_input()
 
     def now_ms(self) -> int:
         return int(self.clock() * 1000)
@@ -324,6 +356,7 @@ class AgentTaskTracker:
         # Des tâches encore « en cours » à ce stade appartenaient au processus
         # précédent : elles sont mortes avec lui.
         self._interrupt_all(now)
+        self.conversations.process_boundary()
         self.turn_finished()
         self.started_ms = now
         self._notify()
@@ -331,6 +364,7 @@ class AgentTaskTracker:
     def process_stopped(self, *, now_ms: int | None = None) -> None:
         """Arrêt, redémarrage ou sortie du brain : ses sous-tâches meurent avec lui."""
         self._interrupt_all(self.now_ms() if now_ms is None else now_ms)
+        self.conversations.process_boundary()
         self.turn_finished()
         self.started_ms = None
         self._notify()
@@ -382,6 +416,7 @@ class AgentTaskTracker:
             self._on_user(event, parent, now)
         elif kind == "result":
             if not parent:
+                self.conversations.settle(event)
                 self.turn_finished()
         elif parent:
             # `tool_progress` et consorts : rattachés à leur tâche, s'il y en a une.
@@ -397,6 +432,7 @@ class AgentTaskTracker:
             model = _text(event.get("model"))
             if model:
                 self.brain_model = model
+            self.conversations.note_cli_version(event.get("claude_code_version"))
             return
         if subtype not in TASK_SUBTYPES:
             return
@@ -537,6 +573,9 @@ class AgentTaskTracker:
             parent = self._by_tool_use.get(parent_tool_use_id)
             if parent is not None and task.depth <= parent.depth:
                 task.depth = parent.depth + 1
+        self.conversations.attribute(
+            task, self._by_tool_use.get(parent_tool_use_id) if parent_tool_use_id else None,
+            nested=bool(parent_tool_use_id))
         self._maybe_log_start(task)
 
     def _on_user(self, event: dict[str, Any], parent: str, now: int) -> None:
@@ -677,6 +716,7 @@ class AgentTaskTracker:
             keep.status, keep.ended_ms = drop.status, drop.ended_ms
         entries = sorted([*drop.trace, *keep.trace], key=lambda entry: entry.get("ts_ms") or 0)
         keep.trace = deque(entries, maxlen=MAX_TRACE_ENTRIES)
+        self.conversations.merge(keep, drop)
         self._forget(drop)
         self._index(keep)
 
@@ -726,6 +766,7 @@ class AgentTaskTracker:
         if task.kind != "agent" or task.start_logged or (task.running and not task.model):
             return
         task.start_logged = True
+        event_ref = self.conversations.start_logged(task, journaled=self.journal is not None)
         if self.journal is None:
             return
         details = ", ".join(part for part in (task.subagent_type, task.model) if part)
@@ -733,11 +774,14 @@ class AgentTaskTracker:
         self.journal.emit(
             "agent.subagent.started",
             f"Sous-agent lancé : {label}" + (f" ({details})" if details else ""),
-            data=self._journal_data(task),
+            data={**self._journal_data(task), **event_ref},
         )
 
     def _log_finished(self, task: AgentTask) -> None:
-        if task.kind != "agent" or self.journal is None:
+        if task.kind != "agent":
+            return
+        event_ref = self.conversations.finish_logged(task, journaled=self.journal is not None)
+        if self.journal is None:
             return
         duration = format_duration((task.ended_ms or 0) - task.started_ms)
         label = task.description or "(sans description)"
@@ -760,6 +804,7 @@ class AgentTaskTracker:
                 "tokens": task.tokens,
                 "tool_uses": task.tool_uses,
                 "summary": truncate(task.summary, 300),
+                **event_ref,
             },
         )
 

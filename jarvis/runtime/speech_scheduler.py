@@ -4,10 +4,11 @@ import asyncio
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field, replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 import time
 import uuid
 
+from jarvis.core.conversation_event_emitter import PRODUCER_BRAIN_SERVICE, journal_ref, journal_trace, safe_error_class
 from jarvis.core.latency import FIRST_BRAIN_AUDIO as LATENCY_FIRST_BRAIN_AUDIO, LatencyTracker
 from jarvis.core.v2_services import SystemClock
 from jarvis.domain.v2 import (
@@ -22,7 +23,9 @@ from jarvis.domain.v2 import (
 from jarvis.domain.reflex_policy import ReflexAction, ReflexDecision, decide_reflex
 from jarvis.domain.voice_frontend import VoiceReflexRequest
 from jarvis.domain.speech_presentation import SpeechCandidateStatus, SpeechChunk, SpeechDependency, SpeechSource, SpeechTextSpan, semantic_text_spans
-from jarvis.ports.v2 import Clock, RealtimeOutputControl, supports_reflex
+from jarvis.domain.conversation_events import ConversationEventType, EventShape, event_shape
+from jarvis.ports.v2 import Clock, ConversationEventRecorder, RealtimeOutputControl, supports_reflex
+from jarvis.runtime.conversation_event_forwarder import PRODUCER_SPEECH_SCHEDULER, optional_id, public_text
 from jarvis.runtime.journal import RuntimeJournal
 from jarvis.runtime.output_admission import OutputAdmission, OutputAdmissionState
 from jarvis.runtime.conversation_presentation import ConversationCandidate
@@ -77,6 +80,14 @@ REVISION_GAP = "voice.speech.revision_gap"
 OUTPUT_STALLED = "voice.speech.output_stalled"
 PERSIST_FAILED = "voice.speech.persist_failed"
 SPEAK_FAILED = "voice.speech.speak_failed"
+PRODUCER_FAILED = "voice.conversation_events.producer_failed"
+
+# Conversation Events (handoff conversation-observability, Slice 03b). Mouth
+# events are recorded where the matching journal line is written, and that line
+# carries `conversation_event_id` (`docs/conversation-events.md`). Memory is
+# bounded like `_seen_speech_ids`.
+_T = ConversationEventType
+MAX_MOUTH_EVENT_MEMORY = 4096
 
 # Une progression ou un accusé sont vrais à l'instant où le cerveau les rédige
 # et faux dès que l'intention change ou qu'un trou s'ouvre dans le flux. Un
@@ -217,8 +228,18 @@ class SpeechScheduler:
         transient_ttl_s: float | None = None,
         reflex_delay_s: float = 0.0,
         user_speech_hold_s: float | None = None,
+        conversation_events: ConversationEventRecorder | None = None,
     ) -> None:
         self.core = core
+        # Enregistreur synchrone et borné (`ConversationEventForwarder`) : jamais
+        # d'attente ni d'exception sur le chemin de la parole. None : rien.
+        self.conversation_events = conversation_events
+        # Demandes reçues de Core (`brain.speech.requested`, que Core enregistre
+        # toujours) : seules elles ont un parent Conversation Event certain.
+        self._core_speech_ids: OrderedDict[str, None] = OrderedDict()
+        # Paroles dont `mouth.speech.started` est enregistré, et son heure : la
+        # fermeture du span en reprend le début.
+        self._mouth_started: OrderedDict[str, datetime] = OrderedDict()
         self.conversation_id = conversation_id
         self.session = session
         self.journal = journal
@@ -708,6 +729,7 @@ class SpeechScheduler:
         if message_type == BRAIN_SPEECH_REQUESTED:
             request = self._read_request(payload)
             if request is not None:
+                self._remember(self._core_speech_ids, request.id, None)
                 # Borne de départ de la mesure 3, posée avant la mise en file :
                 # l'attente du silence et le tri des demandes font partie du
                 # délai que l'utilisateur subit, ils ne s'en retranchent pas.
@@ -957,7 +979,9 @@ class SpeechScheduler:
         candidate.status, candidate.reason = status, reason
         terminal_channel = {SpeechCandidateStatus.EXPIRED: SPEECH_EXPIRED, SpeechCandidateStatus.SUPERSEDED: SPEECH_SUPERSEDED}.get(status)
         if terminal_channel is not None:
-            self._trace(terminal_channel, "Speech presentation retired", data={**self._fields(request), "reason": reason})
+            closed = _T.MOUTH_SPEECH_EXPIRED if status is SpeechCandidateStatus.EXPIRED else _T.MOUTH_SPEECH_SUPERSEDED
+            self._trace(terminal_channel, "Speech presentation retired", data={**self._fields(request), "reason": reason,
+                        **self._mouth_event(closed, request, terminal_channel, reason=reason)})
         if status is SpeechCandidateStatus.DEFERRED and request.kind is SpeechKind.ERROR:
             # Une panne muette est le pire des cas : on ne sait pas qu'on ne sait
             # pas. Le 16/09/2026 à 07:38:57, la parole d'erreur du handover est
@@ -1088,7 +1112,9 @@ class SpeechScheduler:
         incoming_status, _ = self._eligibility(request)
         existing = tuple(item for item in self._pending if isinstance(item, SpeechRequest)) + tuple(self._deferred.values())
         if incoming_status is SpeechCandidateStatus.ELIGIBLE and any(queued.source == request.source and queued.supersedes(request) for queued in existing):
-            self._trace(SPEECH_SUPERSEDED, "Speech superseded on arrival", data={**self._fields(request), "reason": "superseded_on_arrival"})
+            self._trace(SPEECH_SUPERSEDED, "Speech superseded on arrival", data={
+                **self._fields(request), "reason": "superseded_on_arrival",
+                **self._mouth_event(_T.MOUTH_SPEECH_SUPERSEDED, request, SPEECH_SUPERSEDED, reason="superseded_on_arrival")})
             return
         for queued in existing:
             if incoming_status is SpeechCandidateStatus.ELIGIBLE and queued.source == request.source and request.supersedes(queued):
@@ -1238,7 +1264,8 @@ class SpeechScheduler:
             "Preamble generation requested",
             data={"conversation_id": self.conversation_id,
                   "session_id": str(getattr(self.session, "session_id", "")) or None,
-                  "correlation_id": reflex.correlation_id, "output_id": str(output_id)},
+                  "correlation_id": reflex.correlation_id, "output_id": str(output_id),
+                  **self._reflex_event(reflex, str(output_id))},
         )
 
     def _expire_reflex(self, reflex: _Reflex) -> None:
@@ -1393,6 +1420,11 @@ class SpeechScheduler:
             self._presentation_expiries[output_id] = asyncio.get_running_loop().call_at(expires, self._expire_presentation, active)
         self._live_outputs.add(output_id)
         self._idle.clear()
+        speak_failed = False
+        # Span rule: this invocation closes the mouth span only if it recorded
+        # `mouth.speech.started`. A close without an open would render as an
+        # `interrupted`/`completed` item carrying text the user never heard.
+        started_recorded = False
         try:
             queued_at = self._queued_at.pop(request.id, None)
             queue_wait_ms = (None if queued_at is None else
@@ -1407,15 +1439,35 @@ class SpeechScheduler:
             self._replan()
             if token.state is not OutputAdmissionState.INVALIDATED:
                 self._decision(request, SpeechCandidateStatus.STARTED, "generation_requested")
-                self._trace(SPEECH_STARTED, "Speech generation requested", data={**self._fields(request), "output_id": output_id})
+                started_ref = self._mouth_event(_T.MOUTH_SPEECH_STARTED, request, SPEECH_STARTED, output_id=output_id)
+                started_recorded = bool(started_ref)
+                self._trace(SPEECH_STARTED, "Speech generation requested", data={
+                    **self._fields(request), "output_id": output_id, **started_ref})
             await self._await_output(active)
         except asyncio.CancelledError:
             self._invalidate_presentation(active, "start_cancelled")
+            # The tail below never runs: without this close a speech playing when
+            # the voice goes to background (mute, idle timeout, shutdown) would
+            # stay `open` forever. No journal line follows, hence no trace_ref.
+            # One close per span: the tail and the failed branch are skipped.
+            # Cancelled before the start was recorded (during `speak_reserved`,
+            # or admission already invalidated): no span, nothing to close.
+            if started_recorded:
+                self._mouth_event(
+                    _T.MOUTH_SPEECH_INTERRUPTED, request, None, output_id=output_id, status=active.status,
+                    played_ms=active.played_ms if active.interrupted else None,
+                    reason="voice_background" if self._stopping else "delivery_cancelled")
             raise
         except Exception as exc:
             self._invalidate_presentation(active, "start_failed")
+            speak_failed = True
             self._trace(SPEAK_FAILED, "Speech request failed", level="error",
-                        data={**self._fields(request), "code": "speech_speak_failed", "exception_type": type(exc).__name__})
+                        data={**self._fields(request), "code": "speech_speak_failed", "exception_type": type(exc).__name__,
+                              # Kept without a recorded start (diagnostic evidence that this speech
+                              # was never played), but then without its text.
+                              **self._mouth_event(_T.MOUTH_SPEECH_FAILED, request, SPEAK_FAILED, output_id=output_id,
+                                                  code="speech_speak_failed", error_class=type(exc).__name__,
+                                                  with_content=False)})
             # Failed commands can still have created an output; retain the fence.
             if self._output_still_alive(output_id):
                 await self._await_output(active)
@@ -1435,15 +1487,23 @@ class SpeechScheduler:
                 self._blocked_chains.add(candidate.chunk.chain_id)
             self._decision(request, SpeechCandidateStatus.INTERRUPTED, "delivery_not_complete")
             self._replan()
+            # A failed start already closed the span (`mouth.speech.failed`): one close per span.
+            interrupted_ref = {} if speak_failed or not started_recorded else self._mouth_event(
+                _T.MOUTH_SPEECH_INTERRUPTED, request, SPEECH_INTERRUPTED, output_id=output_id, status=active.status,
+                played_ms=active.played_ms, reason="user_barge_in" if active.interrupted else "delivery_not_complete")
             self._trace(SPEECH_INTERRUPTED, "Speech interrupted", level="warning", data={**self._fields(request),
-                        "output_id": output_id, "status": active.status, "played_ms": active.played_ms})
+                        "output_id": output_id, "status": active.status, "played_ms": active.played_ms,
+                        **interrupted_ref})
             if active.interrupted and active.played_ms > 0:
                 await self._persist(request, output_id=output_id, played_ms=active.played_ms)
             return
         self._decision(request, SpeechCandidateStatus.COMPLETED, "output_completed")
         if candidate is not None:
             self._chain_next[candidate.chunk.chain_id] = candidate.chunk.index + 1
-        self._trace(SPEECH_COMPLETED, "Speech completed", data={**self._fields(request), "output_id": output_id})
+        self._trace(SPEECH_COMPLETED, "Speech completed", data={
+            **self._fields(request), "output_id": output_id,
+            **(self._mouth_event(_T.MOUTH_SPEECH_COMPLETED, request, SPEECH_COMPLETED, output_id=output_id)
+               if started_recorded else {})})
         await self._persist(request, output_id=output_id)
         self._replan()
 
@@ -1536,7 +1596,95 @@ class SpeechScheduler:
 
     def _note_queued(self, request: SpeechRequest) -> None:
         self._queued_at[request.id] = self._monotonic()
-        self._trace(SPEECH_QUEUED, "Speech queued", data=self._fields(request))
+        self._trace(SPEECH_QUEUED, "Speech queued", data={
+            **self._fields(request), **self._mouth_event(_T.MOUTH_SPEECH_QUEUED, request, SPEECH_QUEUED)})
+
+    # -- Conversation Events (Slice 03b) -------------------------------------
+
+    @staticmethod
+    def _remember(memory: OrderedDict, key: str, value: object) -> None:
+        memory[key] = value
+        memory.move_to_end(key)
+        while len(memory) > MAX_MOUTH_EVENT_MEMORY:
+            memory.popitem(last=False)
+
+    def _mouth_event(self, event_type: ConversationEventType, request: SpeechRequest | ConversationCandidate,
+                     journal_kind: str | None, *, output_id: str | None = None, reason: str | None = None,
+                     status: str | None = None, played_ms: int | None = None, code: str | None = None,
+                     error_class: str | None = None, with_content: bool = True) -> dict[str, object]:
+        """Record one mouth speech fact; return the journal `data` entry that joins it.
+
+        Synchronous and bounded: `record()` only validates and queues. Direct
+        conversation candidates carry no speech text nor Core speech request:
+        they are not mouth speech events (documented limit).
+        """
+
+        recorder = self.conversation_events
+        if recorder is None or not isinstance(request, SpeechRequest):
+            return {}
+        try:
+            now = self.clock.now()
+            speech_id = request.id
+            candidate = self._candidates.get(speech_id)
+            chain_id = candidate.chunk.chain_id if candidate is not None else speech_id
+            parent = (recorder.derive_event_id(_T.BRAIN_SPEECH_REQUESTED, producer=PRODUCER_BRAIN_SERVICE,
+                                               conversation_id=request.conversation_id, source_ids=(chain_id,))
+                      if chain_id in self._core_speech_ids else None)
+            attributes: dict[str, object] = {"kind": request.kind.value, "priority": request.priority.label}
+            if output_id is not None:
+                attributes["output_id"] = output_id
+            for key, value in (("reason", reason), ("status", status), ("code", code), ("error_class", error_class)):
+                token = safe_error_class(value)
+                if token is not None:
+                    attributes[key] = token
+            if played_ms is not None:
+                attributes["played_ms"] = int(played_ms)
+            fields: dict[str, object] = {
+                "session_id": optional_id(str(getattr(self.session, "session_id", "")) or None),
+                "correlation_id": request.correlation_id, "speech_id": speech_id,
+                "work_id": optional_id(request.work_id), "parent_event_id": parent,
+                "trace_ref": journal_trace(journal_kind) if journal_kind else None, "attributes": attributes,
+            }
+            shape = event_shape(event_type)
+            started_at = self._mouth_started.get(speech_id)
+            if shape is not EventShape.INSTANT:
+                fields["span_id"] = speech_id
+            if with_content and (shape is EventShape.SPAN_OPEN
+                                 or (shape is EventShape.SPAN_CLOSE and started_at is None)):
+                # The text sent for playback, once per span: on the open, or on a
+                # close whose speech never started (what was withheld).
+                fields["content"] = public_text(request.text)
+            if shape is EventShape.SPAN_CLOSE and started_at is not None and started_at <= now:
+                fields["started_at"] = started_at
+            event_id = recorder.record(event_type, producer=PRODUCER_SPEECH_SCHEDULER,
+                                       conversation_id=request.conversation_id, source_ids=(speech_id,),
+                                       occurred_at=now, **fields)
+            if event_id is not None and shape is EventShape.SPAN_OPEN:
+                self._remember(self._mouth_started, speech_id, now)
+            return journal_ref(event_id)
+        except Exception as exc:  # noqa: BLE001 - instrumentation never changes speech delivery
+            self._trace(PRODUCER_FAILED, "Conversation event not recorded", level="warning",
+                        data={"conversation_id": self.conversation_id, "event_type": event_type.value,
+                              "exception_type": type(exc).__name__})
+            return {}
+
+    def _reflex_event(self, reflex: _Reflex, output_id: str) -> dict[str, object]:
+        recorder = self.conversation_events
+        if recorder is None:
+            return {}
+        try:
+            event_id = recorder.record(
+                _T.MOUTH_REFLEX_STARTED, producer=PRODUCER_SPEECH_SCHEDULER, conversation_id=self.conversation_id,
+                source_ids=(reflex.correlation_id, output_id), occurred_at=self.clock.now(),
+                session_id=optional_id(str(getattr(self.session, "session_id", "")) or None),
+                correlation_id=reflex.correlation_id, trace_ref=journal_trace(REFLEX_STARTED),
+                attributes={"output_id": output_id})
+            return journal_ref(event_id)
+        except Exception as exc:  # noqa: BLE001 - instrumentation never changes speech delivery
+            self._trace(PRODUCER_FAILED, "Conversation event not recorded", level="warning",
+                        data={"conversation_id": self.conversation_id, "event_type": _T.MOUTH_REFLEX_STARTED.value,
+                              "exception_type": type(exc).__name__})
+            return {}
 
     def _fields(self, request: SpeechRequest) -> dict[str, object]:
         session_id = str(getattr(self.session, "session_id", "")) or None
