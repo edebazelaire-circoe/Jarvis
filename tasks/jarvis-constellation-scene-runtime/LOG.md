@@ -520,3 +520,49 @@ Validation:
 
 - targeted suite under `-W error::ResourceWarning` → **1107 passed** in 105.39 s;
 - full `scripts/verify_release.py`, alone → `4003 passed, 9 skipped in 320.11s` / `Release verification passed.`
+
+### 2026-09-17 — Slice 06 — final follow-up
+
+QA approved `c4b405a`; agent 0 asked for six small fixes first. Commits: `b4015c8` (domain), `670fd7e` (tools, prompt, tests), `6e67174` (docs).
+
+1. **m-a: brain/user `parent_of` between execution nodes.**
+   - `_plan_link` now refuses brain/user **creating** a `parent_of` between two execution nodes, with reason `runtime_owned`. A brain mistake could otherwise leave topology that no brain or user unlink can remove.
+   - Relayering an existing runtime parenté stays allowed.
+   - The tool explanation for `runtime_owned` now covers both directions: « ni les retirer, ni relier deux étoiles par parent_of ».
+   - Tests:
+     - the `link` matrix cell for brain/user now targets an `explains`;
+     - `test_brain_and_user_cannot_draw_execution_topology_but_keep_other_links[brain/user]` covers both directions, a job star, and allowed `parent_of` from an artifact or group; `groups`/`explains` to stars and relayering `rel-ab` stay allowed;
+     - `test_brain_and_user_cannot_unlink_runtime_topology_or_signals` now asserts the link refusal;
+     - tool test `test_the_brain_cannot_draw_parent_of_between_runtime_stars`.
+   - scene-model rule, `link` row and `scene_link` row updated.
+2. **m-b: own actions reported as external.** On the fast path, the command's applied patch is applied to `_seen_index` (`put_object` updates, `archive_object` removes). Test `test_the_brain_own_fast_path_actions_are_never_reported_as_external_changes` reproduces QA's sequence (inspect, hide, create, external star, update): only `+ claude:ext1` is listed. Mutation check: without the patch application the test fails.
+3. **m-c: filtered inspect.**
+   - `_bounded_listing` returns how many objects it actually rendered. A filtered or truncated `scene_inspect` only records those objects, merged into the previous index of the same scene, and sets `_seen_partial`.
+   - While partial, the fast path is skipped: the next command re-reads and lists objects never returned as `+`. When the revision did not move, the first line is « Ta dernière lecture de la scène était partielle … ». A full read clears the flag.
+   - Test `test_a_filtered_inspection_only_marks_the_returned_objects_as_seen`: an unseen note is reported with no scene change; a hide on an unreturned object after a second filtered inspect is reported. Mutation check: keeping the fast path while partial makes the test fail.
+4. **Voice.** Prompt line added after the silence rule: « Ne lis pas à voix haute ce que tu viens d'afficher ; confirme en quelques mots, sauf si l'utilisateur demande la lecture. » Test `test_the_brain_does_not_read_aloud_what_it_just_displayed`.
+5. **Bulk deadline.**
+   - `BULK_DEADLINE_S` = 15 s (`bulk_deadline_s=` injectable), checked between commands; a sent command keeps its own bound.
+   - Past the deadline, the call stops and returns `deadline_reached: true`, `remaining` = matched − processed, and a note to call again. The summary journal entry carries `deadline_reached`.
+   - `remaining` is now computed from processed objects for the 128 cap too.
+   - Test `test_show_all_hidden_stops_at_its_deadline_and_reports_the_rest`: slow fake transport, 0.05 s per command, budget 0.12 s.
+6. **n-d: dead code and error prefix.**
+   - `core_error_text` loses its unreachable `http_` branch. A non-JSON body (`http_<status>`) is classified `core_refused`, « Core a refusé la commande (500 http_500). », and ARCHITECTURE › Errors now says exactly that.
+   - `StrictDisplayMCP.call_tool` rethrows a `DisplayToolError` as a bare `ToolError(message)`, so every error from these tools is the message alone, with no « Error executing tool … : » prefix. Tests assert the refusal text starts with `set_geometry refusé par la scène`, plus `test_core_error_text_only_serves_json_errors`.
+
+Validation:
+
+- **`qa06r_tools.py`**, rerun against the new code:
+  - « brain draws parent_of between runtime stars » is now `isError`, `reason=runtime_owned` with the new explanation; the following unlink is `duplicate` (nothing to remove);
+  - hint attribution: the fast-path results have no hint, and after the external change the list holds only `+ claude:ext1 (agent, visible, running) "external star"` (before: also the brain's own note and hide);
+  - no error text carries the « Error executing tool » prefix anymore;
+  - bulk: 128 + 13 applied, partial failure reports 4 of 10;
+  - re-read failure: first line only, then nothing;
+  - churn: 30 commands, 12 snapshot reads; index size 161;
+  - unchanged findings: an unknown argument named `K…` is journaled as its name clipped to 60 characters.
+- **Domain fuzz** `s6f_fuzz.py` = `qa06r_fuzz.py` with its `runtime_owned` oracle extended to `link`, plus the oracle `S6F_{actor}_created_parent_of_between_execution_nodes`. Seed 20260916 × 30 000 commands:
+  - 7 link refusals, all correctly applied; 0 violations of the new or QA oracles;
+  - the remaining entries are QA's counters of legitimate brain/user unlinks and the pre-existing baseline categories.
+  - The unmodified `qa06r_fuzz.py` flags these 7 link refusals as `QA_runtime_owned_misapplied`, because its oracle only knew `runtime_owned` on `unlink`.
+- **Targeted suite** under `-W error::ResourceWarning`: **1115 passed** in 100.03 s.
+- **Full `scripts/verify_release.py`**, alone: `4011 passed, 9 skipped in 309.68s` / `Release verification passed.`
