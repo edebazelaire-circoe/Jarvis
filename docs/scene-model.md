@@ -125,7 +125,7 @@ commands.
 | `set_representation` | `object_id`, `representation`, `geometry?` | change form, optionally with its new size |
 | `set_visibility` | `object_id`, `visibility` | hide/show |
 | `pin` / `unpin` | `object_id` | set/clear `pinned_by_user` (pin needs a placed object) |
-| `link` | `relation` | add a relation, or change the layer of the same relation (brain/user; runtime never changes a layer) |
+| `link` | `relation` | add a relation, or change the layer of the same relation (brain/user; runtime never changes a layer); brain/user never create a `parent_of` between execution nodes (`runtime_owned`) |
 | `unlink` | `relation_id` | remove a relation (absent → `duplicate`); for runtime, also how it retires its own signal; brain/user cannot remove runtime topology or signal links (`runtime_owned`) |
 | `archive` | `object_id` | user disposition |
 | `attach_signal` | `object_id`, `fields`, `target_id` | create/update an `attention` object and its `explains` relation |
@@ -196,8 +196,10 @@ Rules:
   and user never `unlink` a `parent_of` between two execution nodes, nor a
   signal-shaped `explains` (`relation_id == from_id`) from a runtime `attention`
   to an execution node (`runtime_owned`, `is_runtime_owned_relation`). The rule is
-  on shape and endpoints (relations have no origin), so a `parent_of` the brain
-  itself drew between two runtime stars is covered too. What stays open: the
+  on shape and endpoints (relations have no origin). Brain and user cannot
+  **create** a `parent_of` between two execution nodes either (`runtime_owned`
+  at `link`, Slice 06 final follow-up): such a link could never be removed
+  again, so a brain mistake would leave false topology. What stays open: the
   user dismisses by archiving the star or the signal (archive removes the object's
   relations); brain and user may hide the signal object (`set_visibility`) and
   change a runtime relation's layer (`link` on the same id and endpoints).
@@ -393,8 +395,8 @@ Slice 06 (`ARCHITECTURE.md` › *Brain display MCP*). The brain's MCP tools
 | `scene_inspect` | `kind?`, `category?`, `text?` | `GET /v1/scene/snapshot` (read only) | — (transport errors only) |
 | `scene_create_object` | `kind` ∈ artifact/window/group/attention, `category`, `title?`, `summary?`, `items?`, `representation?`, `geometry?`, `layer?`, `order?` | `upsert_object` on a fresh id `brain-<kind>-<hex>`; unset fields are not announced (kind default layer applies) | `scene_full`, `object_archived` |
 | `scene_update_object` | `object_id`, `category?`, `title?`, `summary?`, `items?`, `representation?`, `geometry?`, `layer?`, `order?`, `visibility?` | geometry only → `set_geometry`; representation (± geometry) only → `set_representation`; visibility only → `set_visibility`; otherwise one `patch_object` with every given field (payload merged with the current one) | `pinned_by_user`, `unknown_object`, `object_archived` |
-| `scene_set_visibility` | `object_id` + `visibility`, or `scope="all_hidden"` + `visibility="visible"` | `set_visibility`; with the scope, one `set_visibility` per object hidden in the current snapshot (≤ 128 per call), counts and ids returned | `unknown_object`, `object_archived` (counted per object with the scope) |
-| `scene_link` | `from_id`, `to_id`, `kind`, `relation_id?` (`brain-…` only), `layer?` | `link`; `layer` key omitted unless given (never a default of 50); an existing identical relation without a layer is a local `duplicate`, nothing sent | `relation_conflict`, `relation_limit`, `unknown_object`, `object_archived`, `reserved_id` (domain side) |
+| `scene_set_visibility` | `object_id` + `visibility`, or `scope="all_hidden"` + `visibility="visible"` | `set_visibility`; with the scope, one `set_visibility` per object hidden in the current snapshot (≤ 128 per call, 15 s budget), counts and ids returned | `unknown_object`, `object_archived` (counted per object with the scope) |
+| `scene_link` | `from_id`, `to_id`, `kind`, `relation_id?` (`brain-…` only), `layer?` | `link`; `layer` key omitted unless given (never a default of 50); an existing identical relation without a layer is a local `duplicate`, nothing sent | `relation_conflict`, `relation_limit`, `unknown_object`, `object_archived`, `reserved_id` (domain side), `runtime_owned` (`parent_of` between execution nodes) |
 | `scene_unlink` | `relation_id` | `unlink` (absent → `duplicate`) | `runtime_owned` |
 
 Refusals come back as MCP tool errors carrying `outcome`, `reason` (the
