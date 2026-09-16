@@ -781,6 +781,65 @@ et affiche l'archive (`Erreurs archivées`). L'archivage déplace les entrées d
 `runtime/errors.jsonl` vers `runtime/errors-archive.jsonl` en les horodatant :
 le badge se vide, rien n'est perdu, et `runtime/trace.jsonl` reste intact.
 
+### Scène constellation : ce que Core y projette tout seul
+
+Sans attendre le cerveau, Core pose dans la scène une **étoile** par travail
+réel (voir `docs/ARCHITECTURE.md`, « Runtime scene projection »). La projection
+tourne dès que Core démarre, que l'affichage de la scène soit activé ou non.
+
+| Ce qui tourne | Dans la scène |
+| --- | --- |
+| un sous-agent lancé par l'agent Claude (outil `Agent`, tâche `local_agent`) | une étoile `agent`, identifiant `claude:<id de la tâche>`, titre = description de la tâche |
+| un job de Core (y compris une tâche de fond du back brain) | une étoile `job`, identifiant `job:<id du job>`, titre = nature du job |
+| un sous-agent lancé par un sous-agent | une étoile de plus, reliée à son parent par un lien `parent_of` |
+| une commande shell de fond (`local_bash` : `npm test`, `git log`…), une lecture de fichier, une recherche, une URL | **rien** |
+| un travail en échec, interrompu ou bloqué | un signal `attention` accroché à son étoile (titre = classe d'erreur, court message) |
+
+**Pourquoi une commande shell n'apparaît pas.** C'est voulu (décision 4 du
+handoff) : une étoile représente un travail que l'on peut suivre et relire, pas
+chaque appel d'outil. Un agent lance des dizaines de commandes par tâche ; les
+dessiner noierait les sous-agents. Elles restent visibles dans le panneau
+**Agents** du Control Center et dans la trace de l'agent. Si une tâche est
+d'abord vue sans nature puis reconnue comme sous-agent, son étoile apparaît à
+ce moment-là.
+
+Ce que la projection **ne fait jamais** :
+
+- elle ne retire pas une étoile terminée : une étoile finie reste en place, son
+  état (`exec_state`) passe à `completed`, `failed`, `cancelled` ou
+  `interrupted` ; seul l'utilisateur l'archive ;
+- elle ne place, ne masque, ne déplace ni n'archive rien : la position est
+  décidée par l'affichage, le cerveau ou l'utilisateur ;
+- elle ne ressuscite pas une étoile archivée, même si le travail donne encore
+  des nouvelles ;
+- elle n'écrase pas un titre ou une catégorie que le cerveau ou l'utilisateur
+  ont réécrits.
+
+Signaux. Un seul signal par travail, mis à jour sur place. Quand le travail
+repart (bloqué puis relancé, interruption levée), le signal est **retiré** : son
+lien vers l'étoile disparaît, l'objet reste avec l'état atteint. Un échec
+définitif garde son signal.
+
+Vérifier dans `runtime/trace.jsonl` (niveau info sauf mention) :
+
+| Entrée | Sens |
+| --- | --- |
+| `core.scene.projection_reconciled` | la projection a relu tout l'état de travail : au démarrage (`reason: start`), après des événements perdus (`revision_gap`), après une réinitialisation du travail (`store_changed`) ou au retour de la scène (`scene_unavailable`) |
+| `core.scene.star_created` | une étoile est née (`object_id`, `kind`, `source`, `status`) |
+| `core.scene.signal_raised` / `core.scene.signal_retired` | un signal posé / retiré |
+| `core.scene.projection_unavailable` (avertissement, une fois par panne) | la scène ne répond pas (fichier refusé au démarrage, écriture en échec) : le travail continue, la projection réessaie jusqu'à 30 s d'intervalle |
+| `core.scene.projection_restored` | la scène répond de nouveau ; `suppressed` compte les tentatives manquées ; la projection a tout réconcilié |
+| `core.scene.projection_failed` (erreur, panneau **ERR**, une fois par type) | un travail n'a pas pu être projeté (défaut logiciel) ; les autres continuent |
+| `core.scene.projection_conflict` (avertissement) | un objet du cerveau ou de l'utilisateur porte déjà l'identifiant que la projection voulait utiliser : il est laissé intact |
+
+Dépannage :
+
+| Symptôme | Cause probable | Que faire |
+| --- | --- | --- |
+| un sous-agent tourne mais aucune étoile | l'agent n'est pas celui du Control Center (Codex, sous-agent interne d'un job : pas d'observation), ou Core ne reçoit pas l'état des sous-tâches (`work.ingress_unavailable` côté Control Center) | vérifier `GET /v1/work/snapshot` : pas d'élément `kind: agent` → problème d'ingestion, pas de scène |
+| l'élément existe dans `/v1/work/snapshot` mais pas d'étoile | `kind` n'est pas `agent`/`job`, ou l'étoile a été archivée (`archived_ids`), ou la scène est indisponible (`projection_unavailable`) | lire `/v1/health` (`scene.state`) et la trace |
+| après un redémarrage de Core, une étoile reste `running` alors que le travail est fini | la scène est durable, l'état de travail ne l'est pas ; le marquage des étoiles non revues au redémarrage viendra avec la Slice 10 | rien à faire ; l'état est corrigé dès que le producteur renvoie ce travail |
+
 ### Scène constellation : lecture HTTP et dépannage
 
 Core sert la scène par trois routes (jeton de `runtime\core.token`, comme

@@ -1166,8 +1166,8 @@ and removing work is still only the brain's explicit `CANCELLED` /
 `SUPERSEDED` naming a `work_id`. The surface stays tool-free and owns no task
 state. The policy loop is stopped before the brain on Core shutdown.
 
-Its subscription is the one `CoreEventBus.subscribe(lossy=True)` in Core:
-nothing re-subscribes the policy, so the default eviction of a saturated
+Its subscription is one of the two `CoreEventBus.subscribe(lossy=True)` in Core
+(the other is the runtime scene projector, for the same reason): nothing re-subscribes the policy, so the default eviction of a saturated
 subscriber would end work attention for the lifetime of the process. A lossy
 subscriber keeps its subscription and drops the **oldest** queued event
 instead — the bus stays just as bounded (the queue never grows past 512) and
@@ -1265,7 +1265,7 @@ Handoff `tasks/jarvis-constellation-scene-runtime/`, Slice 02. The scene model
 itself (objects, authority matrix, revisions, patches) is
 [scene-model.md](scene-model.md); this section covers who owns it at runtime and
 how it survives a restart; *Scene transport* below covers the HTTP routes
-(Slice 03). The runtime projector (Slice 04) is not wired yet.
+(Slice 03); *Runtime scene projection* covers the runtime writer (Slice 04).
 
 ```text
 SceneCommand ─► SceneService.apply()  (Core, asyncio lock)
@@ -1300,7 +1300,7 @@ Change notification. The scene is deliberately **not** on `CoreEventBus`:
 `/v1/events` WebSocket client, Voice included. Scene patches (up to 1 025 ops)
 would weigh megabytes on the voice socket, and a projector burst could fill a
 non-lossy 128-slot subscriber queue and evict Voice. No component needs a
-broadcast: the projector (Slice 04) writes and never listens, and the transport
+broadcast: the projector (Slice 04) listens to work state, never to the scene, and the transport
 (*Scene transport* below) long-polls locally. `wait_for_revision(after, *, timeout_s)` returns
 the current revision as soon as it exceeds `after`, or unchanged at the
 deadline; `timeout_s` is clamped to [0, 30] s (`MAX_REVISION_WAIT_S`). It raises
@@ -1402,8 +1402,9 @@ Failure semantics:
 
 Lifecycle: `SceneService.start()` runs right after `jarvis.sqlite3` opens in
 `JarvisCoreApplication.start()` and never raises; `close()` runs in `stop()`
-after the brain and the scheduler, before the early returns of the job and back
-brain shutdown. `jarvis/core/v2_app.py` builds the adapter itself, like
+after the back brain and job shutdown, in a `finally` that also covers their
+early returns and exceptions, and always right after the runtime projector has
+stopped (see *Runtime scene projection* › *Start and stop ordering*). `jarvis/core/v2_app.py` builds the adapter itself, like
 `SQLiteStateRepository`; `sqlite_scene` is listed in the named composition-root
 exception of `tests/unit/test_v2_architecture.py`.
 
@@ -1545,6 +1546,113 @@ and returns a new state or `{ok: false, reason}` without touching the old one;
 `tests/unit/test_scene_transport_client.py` proves parity with the Python
 reducer on random command sequences and convergence under drops, duplicates,
 bounded responses, ring overflow and a Core restart.
+
+### Runtime scene projection
+
+Handoff Slice 04 (decisions 3, 4, 12, 17). Without any brain turn, every real
+sub-agent and every Core job becomes a star of the scene, parent → child links
+appear, and failures, interruptions and blocks attach a minimal signal. Core work
+state stays the truth; the scene only projects it.
+
+```text
+WorkStateStore ─ core.work.updated ─► CoreEventBus ─ lossy queue (512) ─► SceneProjector  (jarvis/core/scene_projector.py)
+      ▲                                                                       │ actor = runtime, in process
+      └──── snapshot(): at start, on a revision gap, on another store_id ◄────┤
+                                                                              ▼
+                                                                    SceneService.apply()
+```
+
+`JarvisCoreApplication.scene_projector` is the only `runtime` writer of the scene.
+It never publishes anything (the scene stays off the bus) and never goes through
+HTTP (Core refuses `runtime` there).
+
+Projection authority. The projector issues only what decision 3 grants runtime
+(see [scene-model.md](scene-model.md) › *Authority matrix*): it creates `agent`,
+`job` and `attention` objects, touches only objects whose `origin` is
+`runtime`, never writes a composition field (`representation`, `geometry`,
+`layer`, `order`, `visibility`) nor a relation layer, and never archives.
+
+| Work fact (`WorkItem`) | Scene effect |
+| --- | --- |
+| `kind = agent` (Claude sub-agent) or `kind = job` (Core job, back-brain jobs included; speculative jobs are never observed) | star `agent` / `job`, `category` = the kind token, `exec_state` = `status`, `work_ref` = `{source, external_id, work_id}`, `payload.title` = label (clipped to 160, one printable line), `payload.summary` = summary (C0 controls other than `\n`/`\t` replaced, `\r\n` → `\n`); unplaced (`geometry = null`, the renderer places it) |
+| `kind = shell`, `other`, empty | nothing (decision 4); a task whose kind later becomes `agent` gets its star then |
+| status change | `exec_state` only; never visibility nor disposition (decision 12) |
+| label / summary change | payload refreshed only while the star still carries the payload the projector wrote (remembered per star, or same title after a restart); a payload or category the brain or user rewrote is never overwritten. Category is announced at creation only |
+| `parent_external_id` (same source) | `parent_of` parent → child once both stars exist, whichever arrives first (child first: linked when the parent star is born, by scanning the ≤ 64 work items). A parent without a star (a shell task) gives no link and no star |
+| `failed`, `interrupted`, `blocked` | one `attention` signal per work item, updated in place with `attach_signal`: `category` = status, `exec_state` = status, `payload.title` = `error_class` (or the status), `payload.summary` = activity (blocked) or summary, ≤ 240 characters, `work_ref` of the work |
+| leaves that state (`blocked` → `running`, an interruption Core reopens, `blocked` → `completed` / `cancelled`) | the projector retires its signal: `unlink` of the signal's `explains` relation, then `patch_object` of the signal's `exec_state` to the new status. The attention object stays, not live. A later `blocked` / `failed` re-attaches the same id |
+| `completed`, `cancelled` | no signal; the star's `exec_state` says it |
+| star tombstoned (the user archived it) | nothing is sent: the projector reads `archived_ids` before writing, so an archived star never resurrects and produces no `object_archived` refusal |
+
+Identity scheme (`star_object_id`, `signal_object_id`, `parent_relation_id`):
+deterministic, at most 128 characters, collision-safe.
+
+| Object | Short form | Longer than 128 characters |
+| --- | --- | --- |
+| star | `<source>:<external_id>` (`claude:toolu_01…`, `job:<job id>`) | `<source>#<sha256(source NUL external_id)[:24]>:<external_id prefix>` |
+| signal | `attention!<star id>` | `attention#<sha256(star id)[:24]>!<star id prefix>` |
+| `parent_of` relation | `parent_of!<child star id>` (a work item has one parent) | `parent_of#<sha256(child star id)[:24]>!<prefix>` |
+
+A source is a token (no `:`, `#`, `!`), so the text before the first separator
+tells the forms apart: short star ids start with a bare token then `:`, hashed
+ones with `token#`; signal ids carry `!` before any `:`. Two hashed forms collide
+only if 96 bits of SHA-256 collide. A brain or user object already holding one of
+these ids is left alone (`core.scene.projection_conflict`, once per id).
+
+Signal lifecycle. A runtime signal is **live exactly while its `explains`
+relation exists** (`is_live_signal` in `jarvis/domain/scene.py`). The domain
+change of this Slice (PM amendment F1) lets runtime `unlink` that relation when
+its source is an `attention` object of `origin = runtime` and its target a
+runtime `agent` / `job`; nothing else is granted (no archive, no visibility, no
+geometry, no deletion). Retired signals stay in the scene, at most one per star.
+See [scene-model.md](scene-model.md) › *Runtime signal lifecycle* for the rule
+and its residual risk.
+
+Consistency and bounded work. Events carry `{store_id, revision}`; the projector
+applies an event only when `store_id` is the one it reconciled with and
+`revision` is exactly the next one. An older revision is skipped (already
+covered); a jump means the lossy queue dropped events (`revision_gap`); another
+`store_id` means Core work state was reset (`store_changed`); an unreadable
+payload is `invalid_event`. Each leads to one reconciliation from
+`WorkStateStore.snapshot()` (at most 64 items) that projects every item. Stars
+whose work vanished are not touched (marking them after a restart is Slice 10).
+Per event the projector sends at most a star upsert, a parent link, a signal
+command (two to retire) and, only when a star is born, links for children
+already present, the only case where it reads the work snapshot. Replays and
+duplicates are `duplicate` outcomes: no revision, no patch.
+
+Resilience. The subscription is lossy (a full queue drops its oldest event,
+counted in `CoreEventBus.dropped_total`, and keeps the subscription), so the
+projector is never evicted and never slows the bus, Voice's `/v1/events` socket
+or the work attention policy. A `SceneStoreError` (scene refused at start,
+closed, persistence failure) is journaled once per outage
+(`core.scene.projection_unavailable`, warning, `code` and error); the projector
+then drains its queue while it waits, retries a reconciliation with a backoff
+from 1 s to 30 s, and on success journals `core.scene.projection_restored`
+(info, `suppressed` = failed attempts). Any other exception on one work item is
+journaled once per type (`core.scene.projection_failed`, error) and skipped; the
+loop never dies. Refused commands are already journaled once per reason by
+`SceneService` (`core.scene.command_refused`).
+
+Expected path, all `info`, scalar ids only (never labels or summaries):
+`core.scene.projection_reconciled` (`reason` = `start`, `revision_gap`,
+`store_changed`, `invalid_event` or `scene_unavailable`; `store_id`,
+`work_revision`, `items`, `applied`, `refused`), `core.scene.star_created`
+(`object_id`, `kind`, `source`, `status`), `core.scene.signal_raised`
+(`object_id`, `target_id`, `status`, `error_class`), `core.scene.signal_retired`.
+
+Start and stop ordering. `start()`: `scene.start()` (never raises), then
+`scene_projector.start()`, which subscribes before its first reconciliation so
+nothing published meanwhile is missed, then the rest, so `jobs.recover()`
+interruptions reach the scene. `stop()`: brain, attention policy, notifications
+and scheduler stop as before; then `back_brain.stop()` and `jobs.stop()`, whose
+cancellations publish the jobs' final work states; then, in a `finally` that
+covers both early returns (`state_persistence_unknown`, `cleanup_unknown`) and
+exceptions, `_stop_scene()`: the projector unsubscribes, lets what is already
+queued reach the scene for at most 2 s (`stop_drain_s`), is cancelled (a command
+in flight still finishes its transaction, `apply` is shielded), and only then
+`scene.close()` runs. No writer outlives the scene, so shutdown never meets
+`SceneUnavailableError`; a start failure stops them in the same order.
 
 ## Telemetry
 

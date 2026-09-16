@@ -46,7 +46,9 @@ distinct **active** objects.
 | `groups` | group → member |
 
 A signal (`attach_signal`) has exactly one target; its `explains` relation
-carries the signal's own id as `relation_id`.
+carries the signal's own id as `relation_id` (`is_signal_relation`). A signal is
+**live** exactly while that relation exists (`is_live_signal`); see *Runtime
+signal lifecycle* below.
 
 ## Layers
 
@@ -124,7 +126,7 @@ commands.
 | `set_visibility` | `object_id`, `visibility` | hide/show |
 | `pin` / `unpin` | `object_id` | set/clear `pinned_by_user` (pin needs a placed object) |
 | `link` | `relation` | add a relation, or change the layer of the same relation (brain/user; runtime never changes a layer) |
-| `unlink` | `relation_id` | remove a relation (absent → `duplicate`) |
+| `unlink` | `relation_id` | remove a relation (absent → `duplicate`); for runtime, also how it retires its own signal |
 | `archive` | `object_id` | user disposition |
 | `attach_signal` | `object_id`, `fields`, `target_id` | create/update an `attention` object and its `explains` relation |
 
@@ -166,10 +168,14 @@ Rules:
 
 - **runtime** writes only `agent`/`job`/`attention` objects (`runtime_kind`),
   never a composition field — `representation`, `geometry`, `layer`, `order`,
-  `visibility` — nor a relation layer (`runtime_composition`); links and
-  unlinks only `parent_of` between execution nodes (`runtime_relation`);
-  attaches signals only to execution nodes. It never creates or edits
-  artifacts.
+  `visibility` — nor a relation layer (`runtime_composition`); links only
+  `parent_of` between execution nodes; unlinks only such a `parent_of` or the
+  `explains` relation of its own signal, from a runtime `attention` object to a
+  runtime execution node (the retirement of a signal, Slice 04;
+  `runtime_relation` otherwise, `runtime_origin` when an endpoint is a brain or
+  user object); attaches signals only to execution nodes. It never creates or
+  edits artifacts, and never archives, hides or places anything, its own
+  signals included.
 - **Origin**: runtime patches, upserts, reuses as a signal id, attaches to, or
   links/unlinks only objects whose `origin` is `runtime` (`runtime_origin`). A
   note the brain or user created as `attention` is theirs: runtime cannot
@@ -217,6 +223,59 @@ relation), `delete_relation` (`relation_id`). `apply_scene_patch(previous, patch
 reproduces the new snapshot, tombstone eviction included, and raises on a
 revision gap, a `put_object` of a tombstoned id, or an unknown archive or
 deletion — the consumer then re-reads the snapshot (decision 20).
+
+## Runtime signal lifecycle
+
+Slice 04 (PM amendment F1, reviewed domain change). The runtime projector
+(`jarvis/core/scene_projector.py`, `ARCHITECTURE.md` › *Runtime scene
+projection*) raises a signal when a piece of work becomes `failed`,
+`interrupted` or `blocked`, and must be able to retire it when the work leaves
+that state, without receiving archive or layout rights.
+
+Rule:
+
+- **one signal per work item**, id `attention!<star id>`, created and then
+  updated in place by `attach_signal` (`category` and `exec_state` = the work
+  status, `payload.title` = `error_class` or the status, bounded message);
+- **live** = its `explains` relation (`relation_id` = signal id, from the signal
+  to its star) exists. `is_live_signal(snapshot, object_id)` is the only
+  definition consumers use (renderer, brain inspection);
+- **retire** = runtime `unlink` of that relation, then `patch_object` of the
+  signal's `exec_state` to the status the work reached (`running`,
+  `completed`…). The attention object stays in the scene, not live, one per
+  star at most; `attach_signal` on the same id makes it live again;
+- `failed` and `interrupted` that stay terminal keep their signal live;
+  `completed` and `cancelled` never raise one.
+
+Domain change in `_plan_unlink`: runtime may now also delete a relation for
+which `is_signal_relation` holds (`explains` whose `relation_id` equals its
+`from_id`) when the source is an `attention` object of `origin = runtime` and
+the target an `agent` / `job` of `origin = runtime`. Everything else is
+unchanged:
+
+| Runtime `unlink` of… | Before Slice 04 | Now |
+| --- | --- | --- |
+| `parent_of` between runtime execution nodes | applied | applied |
+| its own signal relation (runtime attention → runtime star) | `rejected_authority` / `runtime_relation` | **applied** (`delete_relation`) |
+| a brain or user signal on a runtime star | `runtime_relation` | `runtime_origin` |
+| a relation named like a signal but of another kind, or from an artifact, or towards an artifact | `runtime_relation` | `runtime_relation` |
+| any `explains` whose id is not its source (artifact explanations) | `runtime_relation` | `runtime_relation` |
+
+Rejected alternatives: a new `retire_signal` op (new vocabulary in the command
+wire, the matrix and every future tool catalog for one runtime-only effect); a
+new object-deletion patch op (a patch wire change, hence a schema bump for the
+browser applier and the store); runtime `set_visibility` or `archive` (layout and
+disposition rights decision 3 withholds, and an archived id could never signal
+again); keeping the relation and marking only `exec_state` (a stale `explains`
+edge would still be drawn and read as live).
+
+Residual risk: runtime cannot delete objects, so a retired signal occupies an
+object slot as long as its star lives. When the user archives a star, the
+star's relations go with it, but its attention object (live or retired) stays
+until the user archives it too: a slot leak of at most one object per archived
+star with a signal, towards `MAX_SCENE_OBJECTS` = 512. Cascading a runtime
+signal with its star on archive belongs to the user archive lifecycle
+(Slice 08).
 
 ## Bounds and wire form
 
@@ -288,6 +347,6 @@ revision, patch}` — refusals are outcomes, not HTTP errors.
 Validation:
 
 ```powershell
-.venv/Scripts/python.exe -W error::ResourceWarning -m pytest -q -p no:cacheprovider tests/unit/test_scene_contracts.py tests/unit/test_work_state_contracts.py tests/unit/test_v2_architecture.py tests/unit/test_sqlite_scene.py tests/unit/test_scene_service.py tests/integration/test_v2_core_recovery.py tests/unit/test_scene_view.py tests/unit/test_scene_transport_client.py tests/integration/test_scene_transport.py
+.venv/Scripts/python.exe -W error::ResourceWarning -m pytest -q -p no:cacheprovider tests/unit/test_scene_contracts.py tests/unit/test_work_state_contracts.py tests/unit/test_v2_architecture.py tests/unit/test_sqlite_scene.py tests/unit/test_scene_service.py tests/integration/test_v2_core_recovery.py tests/unit/test_scene_view.py tests/unit/test_scene_transport_client.py tests/integration/test_scene_transport.py tests/unit/test_scene_projector.py tests/integration/test_scene_projection_protocol.py
 .venv/Scripts/python.exe scripts/verify_release.py
 ```
