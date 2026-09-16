@@ -566,3 +566,17 @@ Validation:
   - The unmodified `qa06r_fuzz.py` flags these 7 link refusals as `QA_runtime_owned_misapplied`, because its oracle only knew `runtime_owned` on `unlink`.
 - **Targeted suite** under `-W error::ResourceWarning`: **1115 passed** in 100.03 s.
 - **Full `scripts/verify_release.py`**, alone: `4011 passed, 9 skipped in 309.68s` / `Release verification passed.`
+
+## 2026-09-17 — Slice 06 PM decision: APPROVED
+
+- Commits: `ed9bff8`, `3c7062d`, `3fd8ac9` (implementation); `c3f6e0b`, `d55b940`, `54fb6c1`, `e2de502`, `b74ff08` (QA rework: `runtime_owned`/`reserved_id` domain rules, strict tool args, journaled schema refusals, error-body sanitising, exact turn-budget set, shared classifier, injection mitigation, prompt); `46f06ca`, `4aeff45`, `c4b405a` (M1 follow-up: change diff hint, bulk `scope: all_hidden`, default-model validation); `b4015c8`, `670fd7e`, `6e67174`, `d3c8fe7` (final: no brain/user `parent_of` between execution nodes, own-patch index, partial inspect, silent-display voice line, 15 s bulk budget, doc/dead code).
+- QA (qa-verification + code-review + runtime-validation + agent-trace-analysis), three passes. Evidence: MCP catalog over real stdio has no archive/pin capability; wire always `actor=brain`, never `placed_by`; flag-off argv byte-identical to base; `--mcp-config` merges with user-scope servers (jarvis-drive still connected); no orphan display-mcp after restart/kill; settings flag validation + env override; independent domain fuzz 120k commands 0 violations; Slice 03 degraded/attack reruns unchanged.
+- **Live real-model runs:** haiku 16 turns across QA/implementation exposed stale-memory answers (fixed via prompt + change hint + bulk path); **production default model `claude-opus-5[1m]`**, 4 turns ($0.48): correct inspect-before-act every turn, correct visible/hidden answer ignoring an injected star title, bulk unhide 3/3 truthful, archive refused with no invented gesture and no Bash/HTTP workaround.
+- PM spot-check after final follow-up: 419 display/contract/projector/settings tests passed. `verify_release.py` alone: 4011 passed / 9 skipped.
+- Accepted residual risks:
+  1. Actor is declared, not authenticated; a `bypassPermissions` brain can read `core.token` (SECURITY §13).
+  2. Prompt injection through runtime star titles is mitigated (data marking, prompt line), not bounded; resisted in the exposures tested.
+  3. Brain display quality is model-dependent (haiku needed mechanical aids; Opus passed).
+  4. Payload merge is read-then-write: a concurrent user edit can be lost.
+  5. `ToolSearch` adds 1–2 round trips per conversation (CLI behaviour); first display turn ≈ 9–17 s.
+  6. Legacy scenes with previously squatted reserved ids have no migration (projector reports `projection_conflict`).

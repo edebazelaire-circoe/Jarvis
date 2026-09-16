@@ -15,7 +15,7 @@ Note (PM, Slice 00): 04 needs 01/02 only; 03 is not required for 04.
 - [x] 03 Scene transport — APPROVED (see LOG)
 - [x] 04 Runtime topology projection — APPROVED (see LOG)
 - [ ] 05 Layered renderer & AutoResolver
-- [ ] 06 Brain display MCP
+- [x] 06 Brain display MCP — APPROVED (see LOG)
 - [ ] 07 Semantic artifacts
 - [ ] 08 User interaction & lifecycle
 - [ ] 09 Scene inspection & screenshot
