@@ -1,0 +1,11 @@
+{
+  "slice_id": "10",
+  "task_type": null,
+  "work_intent": "native api, cli, and control center http surface",
+  "dependencies": [
+    "03-diagnostic-bundle",
+    "07-metrics-scoring-sweeps",
+    "09-hardware-guided"
+  ],
+  "task_type_blocker": "Resolve against the current Workspace Task Type vocabulary before dispatch; do not invent a type."
+}

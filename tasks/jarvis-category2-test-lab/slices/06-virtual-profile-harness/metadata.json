@@ -1,0 +1,11 @@
+{
+  "slice_id": "06",
+  "task_type": null,
+  "work_intent": "virtual profile from async conversation harness",
+  "dependencies": [
+    "03-diagnostic-bundle",
+    "04-catalog-scenarios",
+    "05-supervisor-worker"
+  ],
+  "task_type_blocker": "Resolve against the current Workspace Task Type vocabulary before dispatch; do not invent a type."
+}

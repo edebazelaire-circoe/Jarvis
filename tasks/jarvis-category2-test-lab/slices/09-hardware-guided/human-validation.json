@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-TL-HW-01",
+      "title": "Validate guided acoustic diagnostic on workstation",
+      "instructions": "After all automated QA passes, run one hardware:guided scenario with normal speakers and microphone, following silence/speak/interrupt cues.",
+      "expected": "The UI/runner guides each step clearly; timestamps/actions are captured; the run completes without resource leakage and reports meaningful metrics."
+    }
+  ]
+}

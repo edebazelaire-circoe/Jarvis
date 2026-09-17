@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-TL-E2E-01",
+      "title": "Validate real incident-to-diagnostic loop",
+      "instructions": "After maximum automated QA, capture one real voice session, create/inspect its DiagnosticBundle, run a targeted diagnostic, and review the resulting comparison/evidence.",
+      "expected": "The workflow is reproducible end-to-end and does not require an LLM inside Test Lab or permanent setting mutation."
+    }
+  ]
+}

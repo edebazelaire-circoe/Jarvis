@@ -1,0 +1,28 @@
+{
+  "project": "Jarvis",
+  "slug": "jarvis-category2-test-lab",
+  "repository": "edebazelaire-circoe/Jarvis",
+  "source_snapshot": {
+    "branch": "main",
+    "sha": "c33207281a5b6a10a6630b8914f19855ea096473",
+    "inspected_date": "2026-09-12"
+  },
+  "summary": "Build a native deterministic Category 2 Test Lab for targeted diagnosis with persistent isolated runs, normalized session evidence, multi-profile execution, scoring/sweeps, Control Center/CLI access, and no embedded intelligence.",
+  "locked_constraints": [
+    "Test Lab is a native Jarvis subsystem, not a pytest family.",
+    "No embedded LLM/debugging intelligence.",
+    "Persistent isolated TestRuns with supervised workers.",
+    "One diagnostic identity can have specialized profiles.",
+    "Diagnostic-specific metrics/assertions/scoring.",
+    "Catalog plus safe ad-hoc scenarios; no arbitrary code execution.",
+    "Run-local overrides/sweeps never mutate permanent settings.",
+    "DiagnosticBundle is first-class for real sessions.",
+    "hardware:guided is supported.",
+    "Manifest plus specialized implementation is the official diagnostic format.",
+    "Cost/resource permission gates are mechanical.",
+    "MCP is optional, not foundational."
+  ],
+  "planning_blockers": [
+    "Workspace Task Type vocabulary is not exposed; Slice 00 must assign valid existing Task Types before implementation dispatch."
+  ]
+}
