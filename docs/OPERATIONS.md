@@ -1148,6 +1148,7 @@ les changements d'état sont annoncés.
 | `Scène figée · Core injoignable` `42 s · réessai 8 s` | la lecture a échoué ; la dernière scène connue reste affichée ; nouvel essai automatique (1 s, 2 s, 4 s… jusqu'à 30 s), immédiat quand le Control Center répond de nouveau | démarrer Core ; la page reprend seule |
 | `Scène indisponible · …` | même chose, mais aucune scène n'a encore été lue | idem |
 | `Scène pleine — archiver des travaux terminés` `512/512` | 512 objets actifs : Core refuse toute nouvelle étoile ou note | archiver des objets terminés (l'archivage groupé arrive au Slice 08) |
+| `N signaux d'échec sous une fenêtre` / `N signaux à vérifier sous des fenêtres` | un signal d'échec ou de blocage est caché : son étoile est sous une fenêtre de résultat, et le signal suit son étoile | masquer ou déplacer la fenêtre (le cerveau peut le faire), ou ouvrir le panneau Agents |
 | `N objets hors champ` | des objets sont placés au-delà du bord de la fenêtre | agrandir la fenêtre, ou demander au cerveau de les rapprocher |
 
 **Onglets et ressources.** Un navigateur n'ouvre qu'environ six connexions à la
@@ -1159,7 +1160,10 @@ qui se mettent à jour sans requête longue ; elles ne font que de courtes lectu
 quand il leur manque quelque chose (première ouverture, changement manqué,
 redémarrage de Core). Si la meneuse est fermée, masquée, réduite ou quitte la
 page, une autre fenêtre visible prend le relais en moins de deux secondes et
-rattrape ce qui a changé entre-temps. C'est aussi la meneuse, et elle seule, qui
+rattrape ce qui a changé entre-temps. Si la meneuse reste visible mais se fige
+(onglet bloqué), les autres fenêtres le remarquent seules et relisent la scène :
+elles ont au plus une quarantaine de secondes de retard, et les placements
+automatiques attendent que la meneuse reprenne. C'est aussi la meneuse, et elle seule, qui
 enregistre les placements automatiques.
 
 Mesuré avec 5, 6, 8 et 10 fenêtres visibles : statut en 2 à 8 ms, bascule de

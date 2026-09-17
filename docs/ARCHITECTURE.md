@@ -2010,6 +2010,15 @@ when its geometry or stack changes.
   signal maps its error class through the page's `ERROR_CLASSES` wording
   ("processus arrêté", "Core redémarré"…) or a status token through the French
   status labels; an unmapped class ("TimeoutError") stays as is.
+- A **runtime** signal stacks with its star: its z-index is the star's plus one
+  (star found through its live `explains` link, else the same `work_ref`), so a
+  window covering the star covers its signal too, instead of the signal (layer
+  300) drawing over unrelated windows. Brain and user `attention` objects keep
+  their own layer (decision 8). Live high- and medium-urgency runtime signals
+  whose centre lies inside a window drawn above them are counted
+  (`coveredSignals`, rectangle test on the view model at each render) and shown
+  as a quiet chip: "N signal(s) d'échec sous une fenêtre / des fenêtres",
+  "N signal(s) à vérifier sous …".
 - Completed work stays drawn.
 - **Compact rendering** (page only, never committed, the scene representation
   is unchanged): a window whose box is under 180 × 96 px is drawn as a capsule
@@ -2128,7 +2137,10 @@ and hold different revisions can each commit a different box for the same object
 the later one is accepted as a resolver nudge: one visible move, no loop, since
 each page commits an object only once (QA with a 3 s delayed profile: no move
 observed). A leader whose event loop stalls while it stays visible and keeps the
-lock stalls commits (followers still catch up through the 45 s watchdog).
+lock stalls commits until it resumes, and its followers can be up to about 40 s
+behind Core (follower watchdog, see *Page loop*; QA `stall` scenario: render
+delays 4.7–34.8 s, 0 commits while stalled, the 3 pending commits applied on
+resume).
 
 **Page loop** (`createSceneLoop`, Slice 05 QA rework): **one scene long-poll per
 browser profile**, not per tab. Browsers allow about six HTTP/1.1 connections
@@ -2151,6 +2163,11 @@ navigates. The next queued visible tab gets it at once.
 
 Messages (`v: 1`, sender id; any other shape is ignored):
 
+A lock granted while the tab is hidden or the scene is off (the queued request
+raced a visibility change) is given back at once: the tab stays follower and
+journals `scene.leader_declined` to the console (`createLeadership`, pure, tested
+with a fake Web Locks implementation).
+
 - `patches` `{scene_id, epoch, body}`: the leader's patch response, sent after the
   leader applied it. A follower applies it with
   `JarvisSceneClient.applyPatchResponse` (late duplicates skipped); a gap,
@@ -2164,8 +2181,12 @@ Messages (`v: 1`, sender id; any other shape is ignored):
 Catch-up is a short patch read from the held revision; `resync_required` (ring
 too short, Core restarted) turns it into a snapshot read. A follower busy with a
 read, or hidden, records the target revision and catches up when the read ends or
-the tab becomes visible. A follower that heard nothing from a leader for 45 s
-catches up once and re-arms. On handover the new leader polls from its held
+the tab becomes visible. The follower watchdog checks every 5 s, independently
+of the follower's own reads: after 35 s without any leader message it makes one
+short read, then none until another 35 s of silence has passed; a leader that
+keeps ticking never triggers a read. A follower is therefore at most about 40 s
+behind Core when its leader hangs while visible (fake-timer test on QA's
+timeline: 39 s). On handover the new leader polls from its held
 revision, so Core's patch ring returns whatever the old leader never
 broadcast: no gap.
 
@@ -2220,10 +2241,12 @@ composition safe area; raised above the Barehands badge when it is shown; chips
 wrap upwards, two rows at most in practice, never blocking): loading; "Scène
 figée · <raison>" plus a muted "N s · réessai N s" that is never truncated (a 1 s
 ticker runs only while degraded); "Scène pleine — archiver des travaux terminés"
-with "n/512" (bulk archive is Slice 08); "N objets hors champ". The visible chips
+with "n/512" (bulk archive is Slice 08); "N signaux d'échec sous des fenêtres"
+and "N signaux à vérifier sous des fenêtres"; "N objets hors champ". The visible chips
 are not a live region. A separate visually hidden `role=status` region announces
 state changes only ("Scène figée · Core injoignable. Nouvel essai automatique.",
-"Scène pleine…", "Des objets sont hors champ."), never the counters.
+"Scène pleine…", "Des signaux sont cachés sous des fenêtres.", "Des objets sont
+hors champ."), never the counters.
 
 **Keyboard.** One tab stop into the scene (roving `tabindex`): the last focused
 node, else the first in spatial reading order. Arrow keys move to the nearest
