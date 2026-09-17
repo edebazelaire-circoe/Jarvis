@@ -242,9 +242,10 @@ _NODE = shutil.which("node")
 
 HELPERS_FROM, HELPERS_TO = "function candidateKey(", "function routingAdvancedShell("
 FOCUS_FROM, FOCUS_TO = "function routingFocusTarget(", "function renderRoutingAdvanced("
+RENDER_FROM, RENDER_TO = "function renderRoutingAdvanced(", "function bindDelegationMode("
 BIND_FROM, BIND_TO = "function bindRoutingAdvanced(", "async function hydrateRoutingAdvanced"
 
-PRELUDE = """
+PRELUDE = r"""
 const esc=value=>String(value===undefined||value===null?'':value)
   .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 const selectOptions=(values,selected,placeholder)=>
@@ -255,17 +256,51 @@ const says=[];let renders=0,FOCUSED=null;
 const say=text=>{says.push(text)};
 function renderRoutingAdvanced(revision){renders++}
 function hydrateRoutingAdvanced(){}
-function el(dataset,sel){
-  return {dataset:{...dataset},sel:sel||'[data-routing-focus]',value:'',checked:false,disabled:false,
+function el(dataset){
+  return {dataset:{...dataset},value:'',checked:false,disabled:false,
     _h:{},addEventListener(type,fn){(this._h[type]||(this._h[type]=[])).push(fn)},
     fire(type){for(const fn of this._h[type]||[])fn()},focus(){FOCUSED=this}};
 }
-function makeBody(list){
-  return {innerHTML:'',list,
-    querySelectorAll(sel){return list.filter(node=>node.sel===sel)},
-    querySelector(sel){return list.filter(node=>node.sel===sel)[0]||null},
-    contains(){return true}};
+const attrKey=sel=>sel.replace(/^\[data-/,'').replace(/\]$/,'').replace(/-([a-z])/g,(_,c)=>c.toUpperCase());
+/* Reconstituer les commandes à partir du HTML rendu : mêmes attributs, même
+   état `disabled`, dans le même ordre. */
+function parseBody(html){
+  const nodes=[],tags=/<(select|button|input)\b([^>]*)>/g;
+  let tag;
+  while((tag=tags.exec(html))){
+    const attrs=tag[2],dataset={},data=/data-([a-z-]+)="([^"]*)"/g;
+    let found;
+    while((found=data.exec(attrs)))dataset[attrKey('[data-'+found[1]+']')]=found[2];
+    if(!Object.keys(dataset).length)continue;
+    const node=el(dataset);
+    node.disabled=/(^|\s)disabled(\s|>|$)/.test(attrs);
+    node.checked=/(^|\s)checked(\s|>|$)/.test(attrs);
+    nodes.push(node);
+  }
+  return nodes;
 }
+function makeBody(list){
+  const body={list,_html:'',
+    get innerHTML(){return body._html},
+    set innerHTML(html){body._html=html;body.list=parseBody(html)},
+    querySelectorAll(sel){
+      if(sel.charAt(0)!=='[')return [];
+      const key=attrKey(sel);
+      return body.list.filter(node=>node.dataset[key]!==undefined);
+    },
+    querySelector(sel){return body.querySelectorAll(sel)[0]||null},
+    contains(node){return body.list.indexOf(node)>=0}};
+  return body;
+}
+/* Le contenu d'un `<select>` désigné par un de ses attributs : c'est la seule
+   façon de vérifier ce que propose *ce* sélecteur, sans ramasser au passage
+   les options du sélecteur voisin. */
+const selectSlice=(html,attribute)=>{
+  const at=html.indexOf(attribute);
+  if(at<0)return '';
+  return html.slice(html.lastIndexOf('<select',at),html.indexOf('</select>',at)+9);
+};
+const optionValues=html=>[...html.matchAll(/<option value="([^"]*)"/g)].map(m=>m[1]);
 const STATE={ok:true,sources:{anthropic:'live'},profiles:[
     {id:'code',label:'Code avancé',description:'Lire et écrire du code.',requires:['code']}],
   harnesses:[
@@ -276,7 +311,7 @@ const STATE={ok:true,sources:{anthropic:'live'},profiles:[
     {id:'codex',label:'Codex CLI',available:false,unavailable_reason:'« codex » est introuvable dans le PATH.',
      models:[{model:'',label:'Modèle par défaut du CLI',available:false,unavailable_reason:'introuvable'},
              {model:'modele-o',label:'Modèle O',available:false,unavailable_reason:'introuvable'}]}]};
-const SET={routingPick:{},dirty:false,routing:null,open:true,tab:'cli',renderRevision:1,
+const SET={routingPick:{},dirty:false,routing:null,open:true,tab:'cli',renderRevision:1,routingAdvancedOpen:true,
   draft:{routing:{profiles:{code:{candidates:[],enabled:true,allow_general_fallback:true}}}}};
 let BODY=makeBody([]);
 const $=()=>BODY;
@@ -288,13 +323,13 @@ const find=sel=>BODY.querySelector(sel);
 
 BIND_HARNESS = """
 BODY=makeBody([
-  el({routingProfileEnabled:'code'},'[data-routing-profile-enabled]'),
-  el({routingHarness:'code',routingFocus:'harness|code'},'[data-routing-harness]'),
-  el({routingModel:'code',routingFocus:'model|code'},'[data-routing-model]'),
-  el({routingAdd:'code',routingFocus:'add|code'},'[data-routing-add]'),
-  el({routingDrop:'code',routingRank:'0',routingFocus:'drop|code|claude|modele-a'},'[data-routing-drop]'),
-  el({routingUp:'code',routingRank:'1',routingFocus:'up|code|claude|modele-b'},'[data-routing-up]'),
-  el({routingFallback:'code'},'[data-routing-fallback]'),
+  el({routingProfileEnabled:'code'}),
+  el({routingHarness:'code',routingFocus:'harness|code'}),
+  el({routingModel:'code',routingFocus:'model|code'}),
+  el({routingAdd:'code',routingFocus:'add|code'}),
+  el({routingDrop:'code',routingRank:'0',routingFocus:'drop|code|claude|modele-a'}),
+  el({routingUp:'code',routingRank:'1',routingFocus:'up|code|claude|modele-b'}),
+  el({routingFallback:'code'}),
 ]);
 bindRoutingAdvanced(1);
 """
@@ -304,8 +339,12 @@ def slice_of(page: str, start: str, end: str) -> str:
     return page[page.index(start):page.index(end)]
 
 
-def run_routing(tmp_path: Path, source: str):
-    """Exécuter le rendu et les gestes de la section, tirés de la page servie."""
+def run_routing(tmp_path: Path, source: str, *, renderer: bool = False):
+    """Exécuter le rendu et les gestes de la section, tirés de la page servie.
+
+    `renderer` embarque en plus le vrai `renderRoutingAdvanced`, qui remplace
+    alors le compteur du banc : c'est lui qui redessine et rend le focus.
+    """
     if _NODE is None:
         pytest.skip("node absent")
     page = PAGE.read_text(encoding="utf-8")
@@ -316,6 +355,7 @@ def run_routing(tmp_path: Path, source: str):
         + slice_of(page, HELPERS_FROM, HELPERS_TO)
         + slice_of(page, FOCUS_FROM, FOCUS_TO)
         + slice_of(page, BIND_FROM, BIND_TO)
+        + (slice_of(page, RENDER_FROM, RENDER_TO) if renderer else "")
         + "(()=>{" + source + "})();",
         encoding="utf-8",
     )
@@ -341,7 +381,9 @@ def test_the_choice_is_made_in_two_steps_harness_then_model(tmp_path):
       const chosen=routingPicker('code',STATE);
       SET.routingPick={code:{agent:'codex',model:''}};
       const broken=routingPicker('code',STATE);
-      out({nothing,chosen,broken});
+      out({nothing,chosen,broken,
+        chosenModels:optionValues(selectSlice(chosen,'data-routing-model')),
+        chosenHarnesses:optionValues(selectSlice(chosen,'data-routing-harness'))});
     """)
 
     # Tant qu'aucun harness n'est choisi, il n'y a rien à choisir au second cran.
@@ -350,11 +392,15 @@ def test_the_choice_is_made_in_two_steps_harness_then_model(tmp_path):
     assert "data-routing-harness" in result["nothing"]
     for harness in ("Claude Code", "Codex CLI"):
         assert harness in result["nothing"]
-    # Harness choisi : le second sélecteur n'offre que ses modèles, et rien d'autre.
+    # Harness choisi : le second sélecteur n'offre que ses modèles, et rien
+    # d'autre. Les deux assertions portent sur les *valeurs* du seul sélecteur
+    # de modèles : un libellé peut être décoré (« — indisponible ») et les
+    # options du sélecteur de harness ne doivent pas être comptées avec.
     assert "data-routing-model" in result["chosen"]
-    models = re.findall(r'<option value="([^"]*)"[^>]*>([^<]*)</option>', result["chosen"])
-    assert ("modele-o", "Modèle O") not in models
-    assert {"modele-a", "modele-b"} <= {value for value, _label in models}
+    models = set(result["chosenModels"])
+    assert "modele-o" not in models
+    assert {"modele-a", "modele-b"} <= models
+    assert set(result["chosenHarnesses"]) == {"", "claude", "codex"}
     # Un harness éteint reste proposé, dit pourquoi, et prévient avant l'ajout.
     assert "introuvable" in result["broken"] and "data-routing-unusable" in result["broken"]
     # Et la liste plate de toutes les combinaisons n'existe plus.
@@ -460,3 +506,124 @@ def test_a_disabled_profile_says_its_candidates_do_not_serve(tmp_path):
     assert result["said"] == ["Modifications non enregistrées."]
     assert result["off"] and result["inert"]
     assert "ne servent pas tant qu" in result["body"]
+
+
+def test_removing_a_candidate_keeps_the_keyboard_in_the_list(tmp_path):
+    """« Retirer » supprime sa propre commande : sans relais, le focus repart au
+    début du document à chaque suppression, et il faut retraverser la fenêtre
+    pour retirer le candidat suivant."""
+
+    result = run_routing(tmp_path, """
+      const rows=agent=>makeBody([
+        el({routingDrop:'code',routingRank:'0',routingFocus:'drop|code|claude|m1'}),
+        el({routingDrop:'code',routingRank:'1',routingFocus:'drop|code|claude|m2'}),
+        el({routingHarness:'code',routingFocus:'harness|code'}),
+      ]);
+      // La ligne du milieu vient d'être retirée : celle qui prend son rang.
+      const middle=routingFocusTarget(rows(),'drop|code|claude|parti','1');
+      // La dernière ligne retirée : on retombe sur la nouvelle dernière.
+      const last=routingFocusTarget(rows(),'drop|code|claude|parti','7');
+      // Plus aucune ligne : le sélecteur du profil, jamais le document.
+      const alone=routingFocusTarget(makeBody([
+        el({routingHarness:'code',routingFocus:'harness|code'})]),'drop|code|claude|parti','0');
+      // Une commande désactivée n'est jamais un repli.
+      const off=makeBody([el({routingDrop:'code',routingRank:'0',routingFocus:'drop|code|claude|m1'}),
+        el({routingHarness:'code',routingFocus:'harness|code'})]);
+      off.list[0].disabled=true;
+      const skipped=routingFocusTarget(off,'drop|code|claude|parti','0');
+      out({middle:middle&&middle.dataset.routingFocus,last:last&&last.dataset.routingFocus,
+        alone:alone&&alone.dataset.routingFocus,skipped:skipped&&skipped.dataset.routingFocus});
+    """)
+
+    assert result["middle"] == "drop|code|claude|m2"
+    assert result["last"] == "drop|code|claude|m2"
+    assert result["alone"] == "harness|code"
+    assert result["skipped"] == "harness|code"
+
+
+def test_the_renderer_itself_puts_the_focus_back(tmp_path):
+    """La recherche du repli ne suffit pas : c'est le rendu qui doit s'en
+    servir. Sans cette queue de `renderRoutingAdvanced`, tout le reste reste
+    vert et le focus est quand même perdu."""
+
+    result = run_routing(tmp_path, """
+      SET.routing=STATE;
+      SET.draft.routing.profiles.code.candidates=[
+        {agent:'claude',model:'modele-a'},{agent:'claude',model:'modele-b'},{agent:'claude',model:''}];
+      BODY=makeBody([]);
+      BODY.innerHTML=routingAdvancedBody();
+      const before=BODY.querySelectorAll('[data-routing-drop]').map(n=>n.dataset.routingFocus);
+      // On retire la deuxième ligne, comme le ferait un clic clavier dessus.
+      document.activeElement=BODY.querySelectorAll('[data-routing-drop]')[1];
+      SET.draft.routing.profiles.code.candidates.splice(1,1);
+      FOCUSED=null;
+      renderRoutingAdvanced(1);
+      const afterDrop=FOCUSED&&FOCUSED.dataset.routingFocus;
+      // Et « monter » sur la dernière : la ligne devient préférée, « monter »
+      // disparaît, le focus tombe sur « retirer » du même couple.
+      const up=BODY.querySelectorAll('[data-routing-up]');
+      document.activeElement=up[up.length-1];
+      const moved=SET.draft.routing.profiles.code.candidates;
+      moved.splice(0,0,moved.splice(moved.length-1,1)[0]);
+      FOCUSED=null;
+      renderRoutingAdvanced(1);
+      out({before,afterDrop,afterUp:FOCUSED&&FOCUSED.dataset.routingFocus});
+    """, renderer=True)
+
+    assert result["before"] == ["drop|code|claude|modele-a", "drop|code|claude|modele-b",
+                                "drop|code|claude|"]
+    # Le focus reste dans la liste, à la place libérée.
+    assert result["afterDrop"] == "drop|code|claude|"
+    assert result["afterUp"] == "drop|code|claude|"
+
+
+def test_a_disabled_profile_refuses_the_keyboard_too(tmp_path):
+    """`pointer-events:none` n'est qu'une peinture : au clavier, les commandes
+    d'un profil éteint restaient atteignables et modifiaient le brouillon
+    pendant que la page annonçait `aria-disabled`."""
+
+    result = run_routing(tmp_path, """
+      SET.routing=STATE;
+      const candidates=()=>[{agent:'claude',model:'modele-a'},{agent:'claude',model:'modele-b'}];
+      SET.draft.routing.profiles.code.candidates=candidates();
+      SET.draft.routing.profiles.code.enabled=false;
+      SET.routingPick={code:{agent:'claude',model:''}};
+      BODY=makeBody([]);
+      BODY.innerHTML=routingAdvancedBody();
+      bindRoutingAdvanced(1);
+      const locked=['[data-routing-drop]','[data-routing-up]','[data-routing-add]',
+        '[data-routing-harness]','[data-routing-model]','[data-routing-fallback]']
+        .map(sel=>[sel,BODY.querySelectorAll(sel).map(n=>n.disabled)]);
+      // Le clavier atteint quand même une commande : elle ne doit rien faire.
+      for(const sel of ['[data-routing-drop]','[data-routing-up]','[data-routing-add]']){
+        const node=BODY.querySelector(sel);
+        if(node)node.fire('click');
+      }
+      const fallback=BODY.querySelector('[data-routing-fallback]');
+      if(fallback){fallback.checked=false;fallback.fire('change')}
+      const after={draft:copy(),
+        fallback:SET.draft.routing.profiles.code.allow_general_fallback,
+        dirty:SET.dirty,said:[...says]};
+      // La case « Profil actif » reste, elle, utilisable : sinon on ne pourrait
+      // plus rallumer le profil.
+      const toggle=BODY.querySelector('[data-routing-profile-enabled]');
+      const canReenable=!toggle.disabled;
+      SET.draft.routing.profiles.code.enabled=true;
+      BODY.innerHTML=routingAdvancedBody();
+      const restored=['[data-routing-drop]','[data-routing-add]','[data-routing-harness]',
+        '[data-routing-fallback]'].map(sel=>BODY.querySelectorAll(sel).map(n=>n.disabled));
+      out({locked,after,canReenable,restored});
+    """)
+
+    # Toutes les commandes du bloc portent vraiment `disabled`.
+    for selector, flags in result["locked"]:
+        assert flags and all(flags), selector
+    # Et même actionnées, elles ne touchent à rien.
+    assert result["after"]["draft"] == [{"agent": "claude", "model": "modele-a"},
+                                        {"agent": "claude", "model": "modele-b"}]
+    assert result["after"]["fallback"] is True
+    assert result["after"]["dirty"] is False and result["after"]["said"] == []
+    # Rallumer reste possible, et tout redevient utilisable.
+    assert result["canReenable"] is True
+    for flags in result["restored"]:
+        assert flags and not any(flags)
