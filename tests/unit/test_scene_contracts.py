@@ -143,7 +143,7 @@ def test_closed_enums_hold_exactly_the_contract_values():
     assert {value.value for value in SceneCommandOutcome} == {"applied", "duplicate", "rejected_authority", "invalid"}
     assert {op.value for op in SceneOp} == {
         "upsert_object", "patch_object", "set_geometry", "set_representation", "set_visibility",
-        "pin", "unpin", "link", "unlink", "archive", "attach_signal",
+        "pin", "unpin", "link", "unlink", "archive", "archive_many", "attach_signal",
     }
     assert {op.value for op in PatchOpKind} == {"put_object", "archive_object", "put_relation", "delete_relation"}
     assert set(DEFAULT_LAYERS) == set(SceneObjectKind)
@@ -159,7 +159,7 @@ def test_exec_state_mirrors_work_status_plus_unknown():
 
 EXPECTED_ALLOWED = {
     RUNTIME: {SceneOp.UPSERT_OBJECT, SceneOp.PATCH_OBJECT, SceneOp.LINK, SceneOp.UNLINK, SceneOp.ATTACH_SIGNAL},
-    BRAIN: set(SceneOp) - {SceneOp.ARCHIVE, SceneOp.PIN, SceneOp.UNPIN},
+    BRAIN: set(SceneOp) - {SceneOp.ARCHIVE, SceneOp.ARCHIVE_MANY, SceneOp.PIN, SceneOp.UNPIN},
     USER: set(SceneOp),
 }
 
@@ -185,6 +185,8 @@ def matrix_command(op: SceneOp, actor: SceneActor) -> SceneCommand:
         # `rel-ab` appartient au runtime (Slice 06) : brain/user délient un lien à eux.
         SceneOp.UNLINK: {"relation_id": "rel-ab" if actor is RUNTIME else "rel-note"},
         SceneOp.ARCHIVE: {"object_id": "star-b"},
+        # Slice 08 : une étoile terminée (`star-done`, ajoutée par la cellule de matrice).
+        SceneOp.ARCHIVE_MANY: {"object_ids": ("star-done",)},
         SceneOp.ATTACH_SIGNAL: {"object_id": "sig-1", "fields": SceneObjectFields(category="error"), "target_id": "star-a"},
     }[op]
     return cmd(op, actor, **arguments)
@@ -203,6 +205,7 @@ MATRIX_PATCH_OPS = {
     SceneOp.LINK: [PatchOpKind.PUT_RELATION],
     SceneOp.UNLINK: [PatchOpKind.DELETE_RELATION],
     SceneOp.ARCHIVE: [PatchOpKind.ARCHIVE_OBJECT, PatchOpKind.DELETE_RELATION],
+    SceneOp.ARCHIVE_MANY: [PatchOpKind.ARCHIVE_OBJECT],
     SceneOp.ATTACH_SIGNAL: [PatchOpKind.PUT_OBJECT, PatchOpKind.PUT_RELATION],
 }
 
@@ -217,6 +220,8 @@ def test_every_authority_matrix_cell(actor, op):
     before = scene_with_stars()
     if op is SceneOp.UNLINK and actor is not RUNTIME:
         before = run(before, cmd(SceneOp.LINK, BRAIN, relation=SceneRelation("rel-note", RelationKind.EXPLAINS, "art-1", "star-a")))
+    if op is SceneOp.ARCHIVE_MANY:
+        before = run(before, star("star-done", exec_state=ExecState.COMPLETED))
     update = apply_scene_command(before, matrix_command(op, actor))
     if op in EXPECTED_ALLOWED[actor]:
         assert update.outcome is APPLIED, update.reason
@@ -1189,7 +1194,8 @@ def test_reducer_refuses_to_grow_past_the_bounds():
     assert (signal.outcome, signal.reason) == (INVALID, SceneRefusal.RELATION_LIMIT)
     archived = apply_scene_command(linked, cmd(SceneOp.ARCHIVE, USER, object_id="a0"))
     assert archived.outcome is APPLIED
-    assert len(archived.patch.ops) == 1 + MAX_SCENE_RELATIONS == MAX_PATCH_OPS
+    assert len(archived.patch.ops) == 1 + MAX_SCENE_RELATIONS
+    assert MAX_PATCH_OPS == MAX_SCENE_OBJECTS + MAX_SCENE_RELATIONS  # Slice 08 : archivage groupé
     assert archived.patch.ops[0].op is PatchOpKind.ARCHIVE_OBJECT
     assert archived.snapshot.relations == ()
 

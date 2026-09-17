@@ -29,7 +29,9 @@ Invariants transverses :
   d'un fait d'exécution, jamais d'une composition (Décisions 3, 4, 17) ;
 - une fin d'exécution ne change ni la visibilité ni la disposition
   (Décision 12) ; caché ≠ archivé (Décision 13) ; seul `user` archive, et
-  l'objet archivé quitte la scène pour l'historique ;
+  l'objet archivé quitte la scène pour l'historique ; une étoile archivée
+  emporte ses signaux runtime, et l'archivage groupé (`archive_many`) ne
+  prend que du travail terminé (Slice 08) ;
 - un objet épinglé par l'utilisateur ne bouge que sous la main de
   l'utilisateur (Décision 9) ;
 - changer de représentation garde l'identité de l'objet (Décision 6) ;
@@ -80,8 +82,12 @@ MAX_SCENE_OBJECTS = 512
 #: un travail archivé 4 096 archivages plus tôt ne revient pas en pratique.
 MAX_ARCHIVED_IDS = 4_096
 MAX_SCENE_RELATIONS = 1_024
-#: Un archivage émet l'objet et la suppression de toutes ses relations.
-MAX_PATCH_OPS = 1 + MAX_SCENE_RELATIONS
+#: Un archivage émet chaque objet archivé (l'étoile et ses signaux runtime,
+#: Slice 08 ; toute une sélection pour `archive_many`) et la suppression de
+#: toutes leurs relations : au plus la scène entière.
+MAX_PATCH_OPS = MAX_SCENE_OBJECTS + MAX_SCENE_RELATIONS
+#: Identifiants d'un `archive_many` (Slice 08) : au plus la scène active.
+MAX_ARCHIVE_MANY_IDS = MAX_SCENE_OBJECTS
 #: Coordonnées en unités de scène (pas en pixels) ; le rendu met à l'échelle.
 MAX_SCENE_COORDINATE = 100_000.0
 MAX_SCENE_EXTENT = 100_000.0
@@ -230,8 +236,15 @@ class SceneOp(StrEnum):
     LINK = "link"
     UNLINK = "unlink"
     ARCHIVE = "archive"
+    #: Archivage groupé des travaux terminés (Slice 08, amendement PM) :
+    #: utilisateur seulement, liste explicite et bornée, revalidée objet par
+    #: objet, une seule révision.
+    ARCHIVE_MANY = "archive_many"
     ATTACH_SIGNAL = "attach_signal"
 
+
+#: Opérations de disposition : seul l'utilisateur archive (Décision 14).
+ARCHIVE_OPS = frozenset({SceneOp.ARCHIVE, SceneOp.ARCHIVE_MANY})
 
 #: Matrice d'autorité par opération. S'y ajoutent des règles par champ et par
 #: nature, appliquées sur l'effet réel de la commande (voir
@@ -242,7 +255,7 @@ ALLOWED_SCENE_OPS: dict[SceneActor, frozenset[SceneOp]] = {
     SceneActor.RUNTIME: frozenset(
         {SceneOp.UPSERT_OBJECT, SceneOp.PATCH_OBJECT, SceneOp.LINK, SceneOp.UNLINK, SceneOp.ATTACH_SIGNAL}
     ),
-    SceneActor.BRAIN: frozenset(set(SceneOp) - {SceneOp.ARCHIVE, SceneOp.PIN, SceneOp.UNPIN}),
+    SceneActor.BRAIN: frozenset(set(SceneOp) - ARCHIVE_OPS - {SceneOp.PIN, SceneOp.UNPIN}),
     SceneActor.USER: frozenset(SceneOp),
 }
 
@@ -841,10 +854,12 @@ _OP_ARGUMENTS: dict[SceneOp, tuple[frozenset[str], frozenset[str]]] = {
     SceneOp.LINK: (frozenset({"relation"}), frozenset()),
     SceneOp.UNLINK: (frozenset({"relation_id"}), frozenset()),
     SceneOp.ARCHIVE: (frozenset({"object_id"}), frozenset()),
+    SceneOp.ARCHIVE_MANY: (frozenset({"object_ids"}), frozenset()),
     SceneOp.ATTACH_SIGNAL: (frozenset({"object_id", "fields", "target_id"}), frozenset()),
 }
 _COMMAND_ARGUMENTS = (
     "object_id", "fields", "geometry", "placed_by", "representation", "visibility", "relation", "relation_id", "target_id",
+    "object_ids",
 )
 
 
@@ -859,7 +874,10 @@ class SceneCommand:
       nouvelle forme ;
     - `attach_signal` crée ou met à jour le signal `object_id` (nature
       `attention`) et le relie par `explains` à `target_id` ; la relation
-      porte l'identifiant du signal : un signal a une seule cible.
+      porte l'identifiant du signal : un signal a une seule cible ;
+    - `archive_many` archive en une révision les identifiants `object_ids`
+      (1 à `MAX_ARCHIVE_MANY_IDS`, sans doublon), chacun revalidé par le
+      réducteur (`bulk_archivable`).
     """
 
     op: SceneOp
@@ -873,6 +891,7 @@ class SceneCommand:
     relation: SceneRelation | None = None
     relation_id: str | None = None
     target_id: str | None = None
+    object_ids: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         _check_enum("op", self.op, SceneOp)
@@ -886,6 +905,15 @@ class SceneCommand:
         check_id("object_id", self.object_id, required=False)
         check_id("relation_id", self.relation_id, required=False)
         check_id("target_id", self.target_id, required=False)
+        if self.object_ids is not None:
+            if not isinstance(self.object_ids, tuple):
+                raise TypeError("object_ids must be a tuple of identifiers")
+            if not 1 <= len(self.object_ids) <= MAX_ARCHIVE_MANY_IDS:
+                raise ValueError(f"object_ids holds between 1 and {MAX_ARCHIVE_MANY_IDS} identifiers")
+            for object_id in self.object_ids:
+                check_id("object_ids[]", object_id, required=True)
+            if len(set(self.object_ids)) != len(self.object_ids):
+                raise ValueError("object_ids must be unique")
         for name, expected in (
             ("fields", SceneObjectFields),
             ("geometry", SceneGeometry),
@@ -914,6 +942,7 @@ class SceneCommand:
             "op": self.op.value,
             "actor": self.actor.value,
             **{name: _wire(getattr(self, name)) for name in _COMMAND_ARGUMENTS if getattr(self, name) is not None},
+            **({"object_ids": list(self.object_ids)} if self.object_ids is not None else {}),
         }
 
     @classmethod
@@ -922,7 +951,9 @@ class SceneCommand:
         data = _check_keys(
             "scene command", payload, frozenset({"schema_version", "op", "actor"}), frozenset(_COMMAND_ARGUMENTS)
         )
+        raw_ids = data.get("object_ids")
         return cls(
+            object_ids=None if raw_ids is None else tuple(_list("object_ids", raw_ids, MAX_ARCHIVE_MANY_IDS)),
             op=_enum(SceneOp, data["op"], "op"),
             actor=_enum(SceneActor, data["actor"], "actor"),
             object_id=data.get("object_id"),
@@ -1121,6 +1152,11 @@ class SceneRefusal(StrEnum):
     SCENE_FULL = "scene_full"
     RELATION_LIMIT = "relation_limit"
     RELATION_CONFLICT = "relation_conflict"
+    #: `archive_many` : un identifiant n'est ni un nœud d'exécution terminé,
+    #: ni le signal runtime d'un nœud archivé par la même commande, ni un
+    #: signal runtime orphelin (`bulk_archivable`). Toute la commande est
+    #: refusée : la sélection confirmée par l'utilisateur ne vaut plus.
+    NOT_BULK_ARCHIVABLE = "not_bulk_archivable"
     #: La révision atteindrait `MAX_REVISION`.
     REVISION_EXHAUSTED = "revision_exhausted"
 
@@ -1390,18 +1426,144 @@ def _plan_pin(snapshot: SceneSnapshot, command: SceneCommand, *, pinned: bool) -
     return [ScenePatchOp(PatchOpKind.PUT_OBJECT, object=updated)]
 
 
-def _plan_archive(snapshot: SceneSnapshot, command: SceneCommand) -> list[ScenePatchOp]:
-    assert command.object_id is not None
-    if snapshot.is_archived(command.object_id):
-        return []
-    current = _require_active(snapshot, command.object_id)
-    ops = [ScenePatchOp(PatchOpKind.ARCHIVE_OBJECT, object=replace(current, disposition=Disposition.ARCHIVED))]
+#: États d'exécution terminaux : un travail Core terminé ne repart jamais
+#: (`ALLOWED_WORK_TRANSITIONS`), l'archivage groupé ne peut donc pas retirer
+#: un travail qui reprendrait.
+TERMINAL_EXEC_STATES = frozenset({ExecState.COMPLETED, ExecState.CANCELLED, ExecState.FAILED, ExecState.INTERRUPTED})
+
+
+def signal_owners(snapshot: SceneSnapshot) -> dict[str, str | None]:
+    """Étoile de chaque signal runtime actif (`attention` d'origine `runtime`), ou `None` (orphelin).
+
+    L'étoile d'un signal est la cible de son lien de signal vivant quand elle
+    est un nœud d'exécution actif, sinon le premier nœud d'exécution actif qui
+    porte le même travail Core (`work_ref` : source et identifiant externe ;
+    `work_id` peut arriver plus tard) : un signal retiré, sans lien, reste
+    ainsi rattaché à son étoile. Calculé en une passe pour toute la scène.
+    """
+
+    objects = {item.object_id: item for item in snapshot.objects}
+    relations = {relation.relation_id: relation for relation in snapshot.relations}
+    stars_by_work: dict[tuple[str, str], str] = {}
+    for item in snapshot.objects:
+        if item.kind in EXECUTION_KINDS and item.work_ref is not None:
+            stars_by_work.setdefault((item.work_ref.source, item.work_ref.external_id), item.object_id)
+    owners: dict[str, str | None] = {}
+    for item in snapshot.objects:
+        if item.kind is not SceneObjectKind.ATTENTION or item.origin is not SceneActor.RUNTIME:
+            continue
+        relation = relations.get(item.object_id)
+        target = objects.get(relation.to_id) if relation is not None and is_signal_relation(relation) else None
+        if target is not None and target.kind in EXECUTION_KINDS:
+            owners[item.object_id] = target.object_id
+        elif item.work_ref is not None:
+            owners[item.object_id] = stars_by_work.get((item.work_ref.source, item.work_ref.external_id))
+        else:
+            owners[item.object_id] = None
+    return owners
+
+
+def runtime_signals_of(snapshot: SceneSnapshot, object_id: str, owners: dict[str, str | None] | None = None) -> tuple[str, ...]:
+    """Signaux runtime d'une étoile active, dans l'ordre de la scène (Slice 08, cascade d'archivage).
+
+    Vide pour tout objet qui n'est pas un nœud d'exécution : un objet
+    `attention` du cerveau ou de l'utilisateur n'est jamais emporté.
+    """
+
+    owners = signal_owners(snapshot) if owners is None else owners
+    return tuple(signal_id for signal_id, owner in owners.items() if owner == object_id)
+
+
+def bulk_archivable(snapshot: SceneSnapshot, object_id: str, selected: frozenset[str] = frozenset(),
+                    owners: dict[str, str | None] | None = None) -> bool:
+    """Règle de l'archivage groupé (`archive_many`) pour un objet actif.
+
+    Vrai pour un nœud d'exécution (`agent`, `job`) dans un état terminal
+    (`TERMINAL_EXEC_STATES`) ; pour un signal runtime dont l'étoile est dans
+    `selected` et archivable, ou qui n'a plus d'étoile active (orphelin).
+    Jamais un travail en cours, en attente, bloqué ou d'état inconnu, jamais un
+    objet du cerveau ou de l'utilisateur.
+    """
+
+    item = snapshot.get_object(object_id)
+    if item is None:
+        return False
+    if item.kind in EXECUTION_KINDS:
+        return item.exec_state in TERMINAL_EXEC_STATES
+    owners = signal_owners(snapshot) if owners is None else owners
+    if object_id not in owners:
+        return False
+    owner_id = owners[object_id]
+    if owner_id is None:
+        return True
+    owner = snapshot.get_object(owner_id)
+    return owner_id in selected and owner is not None and owner.exec_state in TERMINAL_EXEC_STATES
+
+
+def _archive_ops(snapshot: SceneSnapshot, object_ids: list[str]) -> list[ScenePatchOp]:
+    """Archiver des objets actifs distincts, puis supprimer une fois chaque relation qui les touche."""
+
+    objects = {item.object_id: item for item in snapshot.objects}
+    gone = set(object_ids)
+    ops = [
+        ScenePatchOp(PatchOpKind.ARCHIVE_OBJECT, object=replace(objects[object_id], disposition=Disposition.ARCHIVED))
+        for object_id in object_ids
+    ]
     ops.extend(
         ScenePatchOp(PatchOpKind.DELETE_RELATION, relation_id=relation.relation_id)
         for relation in snapshot.relations
-        if command.object_id in (relation.from_id, relation.to_id)
+        if relation.from_id in gone or relation.to_id in gone
     )
     return ops
+
+
+def _with_cascade(snapshot: SceneSnapshot, object_id: str, owners: dict[str, str | None], into: dict[str, None]) -> None:
+    """Ajouter un objet précédé de ses signaux runtime.
+
+    Les signaux d'abord : la pierre tombale de l'étoile est la plus récente,
+    donc la dernière oubliée (`MAX_ARCHIVED_IDS`) ; tant qu'elle vit, le
+    projecteur ne touche ni l'étoile ni son signal.
+    """
+
+    for signal_id in runtime_signals_of(snapshot, object_id, owners):
+        into.setdefault(signal_id, None)
+    into.setdefault(object_id, None)
+
+
+def _plan_archive(snapshot: SceneSnapshot, command: SceneCommand) -> list[ScenePatchOp]:
+    """Archiver un objet ; une étoile emporte ses signaux runtime, vivants ou retirés (Slice 08)."""
+
+    assert command.object_id is not None
+    if snapshot.is_archived(command.object_id):
+        return []
+    _require_active(snapshot, command.object_id)
+    ordered: dict[str, None] = {}
+    _with_cascade(snapshot, command.object_id, signal_owners(snapshot), ordered)
+    return _archive_ops(snapshot, list(ordered))
+
+
+def _plan_archive_many(snapshot: SceneSnapshot, command: SceneCommand) -> list[ScenePatchOp]:
+    """Archivage groupé : tout ou rien, une révision (Slice 08).
+
+    Un identifiant déjà archivé ne compte pas (un autre onglet a été plus
+    rapide) ; un identifiant inconnu (`unknown_object`) ou hors règle
+    (`not_bulk_archivable`, voir `bulk_archivable`) refuse **toute** la
+    commande : l'utilisateur a confirmé un compte, une sélection devenue
+    fausse se recalcule et se reconfirme au lieu de s'appliquer en partie.
+    """
+
+    assert command.object_ids is not None
+    active = [object_id for object_id in command.object_ids if not snapshot.is_archived(object_id)]
+    selected = frozenset(active)
+    owners = signal_owners(snapshot)
+    for object_id in active:
+        _require_active(snapshot, object_id)
+        if not bulk_archivable(snapshot, object_id, selected, owners):
+            raise _invalid(SceneRefusal.NOT_BULK_ARCHIVABLE)
+    ordered: dict[str, None] = {}
+    for object_id in active:
+        _with_cascade(snapshot, object_id, owners, ordered)
+    return _archive_ops(snapshot, list(ordered))
 
 
 def _plan_relation_put(
@@ -1530,5 +1692,6 @@ _PLANNERS: dict[SceneOp, Callable[[SceneSnapshot, SceneCommand], list[ScenePatch
     SceneOp.LINK: _plan_link,
     SceneOp.UNLINK: _plan_unlink,
     SceneOp.ARCHIVE: _plan_archive,
+    SceneOp.ARCHIVE_MANY: _plan_archive_many,
     SceneOp.ATTACH_SIGNAL: _plan_attach_signal,
 }
