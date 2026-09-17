@@ -17,7 +17,7 @@ Note (PM, Slice 00): 04 needs 01/02 only; 03 is not required for 04.
 - [x] 05 Layered renderer & AutoResolver — APPROVED (see LOG)
 - [x] 06 Brain display MCP — APPROVED (see LOG)
 - [ ] 07 Semantic artifacts
-- [ ] 08 User interaction & lifecycle
+- [x] 08 User interaction & lifecycle — APPROVED (see LOG)
 - [ ] 09 Scene inspection & screenshot
 - [ ] 10 Restart reconciliation
 - [ ] 11 Rollout, quality & docs
