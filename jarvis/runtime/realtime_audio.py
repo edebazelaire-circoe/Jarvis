@@ -1092,7 +1092,6 @@ class SoundDeviceRealtimeAudio:
             raise failure
 
 
-<<<<<<< HEAD
 _PA_STREAM_IS_STOPPED = -9983
 
 
@@ -1100,7 +1099,8 @@ def _is_stream_already_stopped(exc: BaseException) -> bool:
     """`PortAudioError(msg, paStreamIsStopped)`, sans importer sounddevice."""
     args = getattr(exc, "args", ())
     return type(exc).__name__ == "PortAudioError" and len(args) > 1 and args[1] == _PA_STREAM_IS_STOPPED
-=======
+
+
 def _tool_status(result: object) -> str | None:
     """Outcome token of a tool result for its Conversation Event; never the result itself."""
     if not isinstance(result, dict):
@@ -1111,7 +1111,6 @@ def _tool_status(result: object) -> str | None:
             return token
     ok = result.get("ok")
     return ("ok" if ok else "error") if isinstance(ok, bool) else None
->>>>>>> origin/task/jarvis-conversation-observability-timeline
 
 
 class RealtimeConversationBridge:
