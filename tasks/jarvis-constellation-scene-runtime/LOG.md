@@ -1632,3 +1632,64 @@ The timeline holds one long-poll per tab while it is open (main's documented Sli
 - Accepted: both features coexist (combined Core start/stop order, single `_stopping` release for both long-polls, `/v1/health` carries both blocks, prompt flag-off byte-identical to main, scene star `work_ref.external_id` == timeline sub-agent `task_id`).
 - Release gate from now on: **no failure beyond main's 10 baseline failures** (9 tests without implementation + 1 known flaky), see `Issues/03-origin-main-broken-state.md`. Targeted suites 1863 passed / 1 skipped; `verify_release` 4849 passed / 10 failed (all baseline) / 10 skipped; non-pytest release checks pass.
 - Timeline connection budget (main feature, amplified by one scene long-poll) recorded in `Issues/04-timeline-connection-budget.md`; out of this task's scope, surfaced to Human.
+
+## 2026-09-17 — Slice 10 — implementation notes (agent 01)
+
+Commits: `664a99d` (Core reconciler, producer 401 resend, tests), `19f733e` (page cue), `4ad6ec1` (docs), plus this LOG entry.
+
+Delivered:
+
+- **Reconciler in the projector** (`jarvis/core/scene_projector.py`): `reconcile_restart()` (awaited in `JarvisCoreApplication.start()` between `scene.start()` and `scene_projector.start()`), grace timer task `jarvis-scene-restart-grace`, `_expire_grace()` run inside the projector loop, `_interrupt_unobserved()`. Journal `core.scene.restart_marked` / `core.scene.restart_grace_expired` (info, one line each), `core.scene.restart_star` (level `debug`, per star). Stats `restart_marked`, `restart_reobserved`, `restart_interrupted`.
+- `JobService.observe_persisted_outcomes(job_ids)` (`jarvis/core/v2_services.py`): terminal job rows observed into work state, wired as the projector's `job_outcomes`.
+- `CoreWorkTransport.post` (`jarvis/runtime/work_ingress.py`): on 401, token re-read and the same batch resent once, at once.
+- `JarvisCoreApplication(scene_restart_grace_s=)`; env `JARVIS_SCENE_RESTART_GRACE_S` read in `jarvis/app.py` (`_scene_restart_grace_from_env`, `]0, 3600]`, invalid → default + `core.scene.restart_grace_invalid` warning).
+- Page: `restartUnknown` / `RESTART_UNKNOWN_LABEL` in the layout view model, class `sc-restart-unknown` (pale dotted ring, never animated, dimmed mark), « ? » badge on execution nodes only, menu note `state-unknown` « État inconnu depuis le redémarrage de Core » (no stop), archive confirmation line, `ERROR_CLASSES.core_restarted_unobserved` « non revu après le redémarrage de Core ».
+- Tests: `tests/unit/test_scene_restart_reconciliation.py` (26), `tests/integration/test_scene_restart_protocol.py` (6), 2 renderer + 1 interaction node tests; `test_v2_core_recovery.py::test_core_restart_restores_the_identical_scene_twice` updated deliberately (the running star comes back `unknown`, one revision, everything else identical).
+- Docs: ARCHITECTURE › *Runtime scene projection* › *Restart reconciliation* (+ renderer cue, menu row, work-ingress 401, restart table), OPERATIONS › *Scène constellation : redémarrages et « état inconnu »* (+ troubleshooting rows, render cue), scene-model › *Execution state after a Core restart*.
+
+Decisions taken inside the contract (reviewable by PM):
+
+1. **Placement: projector, not a separate module.** The expiry must run in the projector's serialised loop (no observation between read and write) and reuse `_defer` / catch-up priority / signal lifecycle / journal; a `scene_reconciler.py` would need its private state.
+2. **Marking is awaited before `projector.start()`**, not done in the loop: deterministic for callers (no projector write, no HTTP route yet). A `SceneStoreError` leaves it due and the loop retries it before its reconciliation; any other exception abandons marking (`projection_failed`, `where=restart`) without stopping projection.
+3. **Tracked set** = active `agent`/`job`, `origin=runtime`, with `work_ref`, `exec_state` not terminal (pending/running/blocked/**unknown**). Already-unknown stars (hard kill during a grace) are tracked without a write, so a restart is idempotent. Stars without `work_ref` (never produced by the projector) are ignored.
+4. **Signal first, then `exec_state = interrupted`.** A crash between the two leaves the star `unknown`: re-tracked, `attach_signal` is `duplicate`, no second `signal_raised`. Consequence under saturation: without a slot the star stays `unknown` until its signal fits (the interruption is a synthetic terminal `WorkItem` in the pending set, caught up after active work). An existing runtime signal (e.g. `blocked`) is updated in place.
+5. **At expiry, Core's work snapshot wins**: work present there (event lost) is projected instead of interrupted.
+6. **Job truth** (beyond the brief, for truthfulness): a job whose row is already terminal while its star still said running (crash between `save_job` and projection, or drain timeout at stop) gets its real outcome through `observe_persisted_outcomes`, not a false `core_restarted_unobserved`. Speculative, running/pending (left to `recover`) and unknown ids are skipped. These observations happen before the work-attention subscription, so they wake no brain turn.
+7. **Grace = 60 s** (`RESTART_GRACE_S`). The forwarder resends at most 30 s after its last send while idle and its backoff caps at 30 s; with the 401 immediate resend, the first accepted send to a restarted Core comes ≤ ~31 s after Core start (without it, up to ~61 s: 30 s backoff before the 401, 30 s after). 60 s = two resend periods. Measured on a real restart: restored at 27.2 s.
+8. **Domain: no change.** Runtime may already write `unknown` on its own execution node; brain/user stay `execution_truth` (test added).
+9. **Page wording**: label « état inconnu depuis le redémarrage » only for `agent`/`job`; `unknown` on artifacts/windows keeps no label/badge. After the first browser run, point labels of `.sc-restart-unknown` and `.sc-signal` got `max-width:min(64ch,80vw)` (at 42ch the title shrank to « [c… »).
+
+Restart paths (tests + real runs):
+
+| Path | Result |
+| --- | --- |
+| Core restart, CC alive | marked `unknown`, restored by the forwarder resend, no interruption |
+| Core + CC down, Core back alone | `unknown`, then after the grace `interrupted` + live `core_restarted_unobserved` signal |
+| CC restart, Core alive | nothing marked; Core interrupts the old instance's items at the new instance's first batch (`producer_restarted`), the scene follows. **Gap (documented):** until that first batch, Core and the scene keep them `running` (no lease, pre-existing Core behaviour) |
+| Brain CLI restart | tracker `process_started` → `interrupted` + `process_stopped` signal; also when it happens while Core is down (resent state wins, no unobserved signal) |
+| Running job at Core crash | `JobService.recover` → `interrupted` + `core_restarted` signal right at start; the grace reports it `reobserved` |
+| Browser reload during grace | snapshot then patches (new epoch), cue kept, then the interruption signal |
+| Core hard kill mid-grace / between signal and star | re-marked (`already_unknown`), exactly one signal |
+
+Mutation checks (each reverted, `scratchpad/s10_mutate.py`): no 401 resend; star before signal; grace not cancelled at stop; terminal stars marked; re-observation not ending tracking; `job_outcomes` unwired; Core marking removed; no deferral at expiry; Core work snapshot not consulted at expiry → **9/9 red**.
+
+Real restart validation (no model spend; `scratchpad/s10_real.py`, `s10_cc_host.py`, `s10_job_core.py`; results `s10_real_out_full_run1.json` (a, dcc, b, c, e before the label fix) and `s10_real_out_run3_e.json` (e after); snapshots `s10_snap_*.json`; screenshots `scratchpad/s10_shots/` and `s10_shots/run1/`). Setup: real `python -m jarvis core` on scratch `s10_real_root`, hard-killed with `taskkill /T /F`; a Control Center host process (real `ControlCenter`, tracker, `WorkIngressForwarder` with production timings, scene view, agent CLI start suppressed) fed with the 4 731 real `agent.event` lines + 46 starts / 18 stops of the Slice 04 trace copy → 18 agent stars (12 completed, 4 interrupted, 2 running) + one brain artifact on a completed star. Own headless Chrome 152, scratch profile, 1920×1080. All processes killed afterwards (checked by command line: 0 left). Run 2 hit a harness bug (the setup Control Center stayed alive and re-sent the stars, which were correctly re-observed, so the page scenario was invalid); run 3 repeats it cleanly.
+
+- **(a) Core hard kill, CC alive, production grace 60 s:** `restart_marked {marked 2, tracked 2, terminal_untouched 16, grace_s 60}`; both running stars `unknown` at 1.6 s, `running` at 27.2 s (idle resend → 401 → immediate resend); `restart_grace_expired {tracked 2, reobserved 2, interrupted 0}` at 61.6 s; no unobserved signal; completed stars + artifact identical to the pre-kill snapshot; 0 error-level entries.
+- **(d) Control Center hard kill + new instance (35 s):** completed stars + artifact identical; running stars still `running` (Core truth, gap above); 0 errors. Completed stars and artifact were also identical after (a) and (b).
+- **(b) Core + CC hard kill, Core only, grace 10 s:** `unknown` right after start; at 10.0 s two `signal_raised {error_class core_restarted_unobserved}`, then `restart_grace_expired {interrupted 2}`; stars `interrupted`, signals live; kept objects identical.
+- **(c) running job** (helper Core with a blocking `demo` worker, hard-killed) → real Core, grace 10 s: first read star `interrupted` + live `core_restarted` signal; `restart_marked {marked 1}`, `restart_grace_expired {tracked 1, reobserved 1, interrupted 0}`; no unobserved signal.
+- **(e) browser reload during a 45 s grace** (Core + empty CC): first render at 5.7 s with node classes `sc-exec-unknown sc-restart-unknown`, `aria-label` « … · sous-agent · état inconnu depuis le redémarrage »; the menu has `state-unknown` (`aria-disabled`) and no stop; reload at 9.5 s keeps the cue (requests patches → `/api/scene` → patches); at 45 s the signal node is `sc-signal sc-urgency-medium`, label « non revu après le redémarrage de Core · signal · interrompu », star `sc-exec-interrupted`; 0 exceptions, 0 console errors. Screenshots: `s10_e_unknown_full_1920x1080.png`, `s10_e_unknown_hover_zoom.png`, `s10_e_unknown_menu.png`, `s10_e_unknown_after_reload_hover_zoom.png`, `s10_e_interrupted_full_1920x1080.png`, `s10_e_interrupted_signal_hover_zoom.png`, `s10_e_interrupted_star_hover_zoom.png`.
+
+Validation:
+
+- Targeted suite under `-W error::ResourceWarning` (52 files: new tests, every scene unit/integration test, work state/ingress/view/UI projection, agent tasks, jobs, back-brain, owned process tree, Core recovery/notifications, async conversation, orchestrator, health, architecture, documented routes, Control Center MVP/appearance/catalog/quality/timeline, live status, Barehands, brain work context) → **1587 passed** (three runs; one reported 1 warning that recurred in neither of the next two runs nor in 5 runs of the new files; not identified, plausibly the intermittent SQLite leak of `Issues/02`).
+- Full `scripts/verify_release.py`, alone in the foreground → `9 failed, 4885 passed, 10 skipped in 450.54s` / `FAIL: pytest failed`: exactly the 9 main-baseline tests without implementation (`test_agent_routing_settings.py` ×3, `test_brain_card_state.py` ×2, `test_routing_settings_screen.py` ×4); the known flaky `test_three_turns_run_in_one_session_without_a_second_wake` passed this time.
+
+Residual risks / left:
+
+1. Control Center killed while Core stays up: its items stay `running` in Core and in the scene until the new instance's first batch (pre-existing: no lease; an empty tracker sends nothing).
+2. A Control Center down, or unable to reach Core, for longer than the grace gets its live sub-agents shown `interrupted` + `core_restarted_unobserved`; corrected (signal retired) as soon as it resends.
+3. Under saturation, a grace-expired star stays `unknown` until its signal fits (signal-first invariant); pending interruptions are memory-only (a restart re-marks and restarts the grace).
+4. `JARVIS_SCENE_RESTART_GRACE_S` below 30 s interrupts live work of an idle Control Center (documented as diagnostic only).
+5. Page cue verified in headless Chrome only (no real Chrome, DPR ≠ 1, screen reader).
