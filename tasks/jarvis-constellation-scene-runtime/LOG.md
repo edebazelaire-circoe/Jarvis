@@ -1378,3 +1378,106 @@ Residual risks / left:
 5. The brain may still mention the artifact aloud when the user explicitly asked to add to it (observed, minor).
 6. Relations still carry no origin; the brain can unlink an artifact link (by design, not runtime-owned).
 7. Real (non-headless) Chrome, screen reader output and Barehands clicks on links not verified.
+
+### 2026-09-17 — Slice 07 — QA rework
+
+QA on `f8191df` recommended REWORK. Agent 0 listed items 1–12. Commits:
+
+- `e371699` code and tests
+- `bb68229` tighter ring for menu expansion
+- `32be1bd` docs
+- this LOG entry
+
+QA's scripts were rerun as `s7r_*` copies; QA's files were not touched. There was no new live model run: the prompt change stays within item 11.
+
+1. **M1: the printed host shows the destination.**
+   - `itemsOf` never pre-truncates the host (the URL is bounded at 2 048 by the domain). The full host is in the link's accessible name and its `title`.
+   - A link row is now host first, in a non-shrinking `.sc-item-host`, then the label link, the out icon and the ref. The label and ref shrink.
+   - `fitHosts` shortens the host from the left with the pure `hostTail`: at least the last two labels, `…evil-login.example`. It measures with the element's font and re-checks `scrollWidth`, and only recomputes when the row width changes.
+   - Node test: QA's three hostile hosts at 8–200 characters. The tail is always the end of the host and keeps the registrable domain when it fits; the host is untruncated at 143 characters.
+   - Browser (`s7r_browser.py`, QA's `qa07_browser.py` on its own ports and root), both themes, 1920×1080 and 1280×720:
+     - `docs.python.org.evil-login.example` shown whole, not truncated (206 px);
+     - the long Google look-alike shown as `…evil.example`;
+     - a « docs.python.org — … » ref no longer hides `evil.example`, which stays visible;
+     - `hostTruncated` false for every link.
+   - Screenshots: `s7r_shots/s7r_hostile_zoom_{omega,circuit-board}_{1920x1080,1280x720}.png`.
+   - SECURITY §13 and ARCHITECTURE wording corrected.
+2. **m1: parallel calls.** `SceneDisplayTools` keeps one `asyncio.Lock` per (target, lowercase category) around read → decide → attach. An entry is removed with its last call.
+   - Test on a real Core with 2, 3 and 5 parallel calls: exactly one artifact, all items merged, lock table empty afterwards. Another pair does not wait.
+   - `s7r_race.py`: k=2, 3 and 5 × 30 trials → **0/30 duplicates each**; with 30 ms of snapshot latency → **0/30** (QA before: 30/30).
+   - Mutation check (lock removed) → 3 tests red.
+3. **m2: signal shape.**
+   - Domain: brain/user `link` of `explains` with `relation_id == from_id` from a non-`attention` source → `rejected_authority/signal_shape`. The rule applies on creation; relayering an existing relation stays allowed.
+   - Tool: `_grouped_artifact` skips signal-shaped relations.
+   - Tests: authority test for both actors, attention source still allowed, a legacy scene is not reused.
+   - Slice 01 tests that drew an artifact link as `art-1 → art-1` were updated deliberately.
+   - `s7r_race.py` S1–S3: the link is refused `signal_shape`, then `scene_add_artifact` on that star creates a correctly linked artifact (QA before: tool blocked).
+   - Fuzz oracle A12 added. Mutation check (rule removed) → 9 A12 violations.
+4. **m3: tab stop.**
+   - `ul.sc-items` has `tabindex=-1`.
+   - PageUp/PageDown on the focused window scroll the list.
+   - `s7r_browser2.py`: over 30 Tab presses there is no `UL` stop; the sequence is chrome buttons → last scene node → origin button → links → body.
+5. **m4: update keeps form and place.**
+   - On update the tool sends the payload only. `representation` and `geometry` are applied on creation only; when given on update they are listed in `ignored` with a note.
+   - The tool description says so.
+   - Test: after a user window, pin and rename, a brain update with point + geometry changes neither representation, geometry nor constraints. The title is replaced (residual, recorded).
+   - `s7r_race.py` U2: `duplicate`, window kept (QA before: capsule).
+6. **m5: merge.**
+   - Category is normalised to lowercase; grouping is case-insensitive.
+   - Items: the same URL updates label and ref in place; without URL, items are deduplicated on (label, ref). This applies within one call and in replace mode too. The 32 cap is unchanged.
+   - Test covers all of these.
+   - `s7r_race.py` M1: same URL with another label → `applied`, 1 item.
+7. **m6: race message.**
+   - When Core refuses the sent command, the re-read raises one refusal with the target sentence, built from `_refused(..., explanation=)` with the hint kept. There is no second `display.tool_refused` and no « Rien n'a été envoyé ».
+   - Test: exactly one refusal after the mark, with no `sent` field.
+8. **m7: expanding from the menu.**
+   - `changeRepresentation` (page menu, capsule or window) uses `L.placeFor`: the first free box on 10 rings × 24 angles around the anchor, inside the safe area, off the face zone and every visible object. Else it falls back to the AutoResolver search with every other object as an obstacle. Shrinking to a point keeps the centre.
+   - The first browser run found that the resolver's preferred angles bit a neighbouring star (QA scene). That is fixed in `bb68229` and covered by a node test (mutation → red).
+   - Browser: the research window opened through the menu went to `(-105, 20, 64×40)`, below its star, clear of the neighbour star and the face zone. Screenshot `s7r_research_window_via_menu_omega_1920x1080.png`.
+9. **Orphan artifacts.**
+   - Domain: `is_orphan_artifact` means no `explains` relation from the artifact. `bulk_archivable` accepts an orphan artifact, never a linked one; brain is still `op_not_allowed`.
+   - Page: pure `isOrphanArtifact`, `orphanArtifacts`, `artifactsLeftOrphan` (parity test with the domain).
+   - Menu entry « Archiver les artefacts orphelins (N)… » on artifact and star menus.
+   - Its own confirmation: count, up to 3 titles, « Les artefacts encore reliés à une étoile restent. ». One `archive_many`, recomputed once on `not_bulk_archivable`. The bulk send loop is shared (`sendArchiveMany`).
+   - The « travaux terminés » confirmation now says « N artefacts qui les expliquent restent, sans lien : « Archiver les artefacts orphelins » les range ensuite. ».
+   - Slice 08 tests updated deliberately: the fixture artifact `art` is now linked, and the saturated test separates filler artifacts.
+   - Browser (`S7R_ORPHANS=1`): after the user archived star2, the menu offered the entry (2); the dialog listed « Liens à vérifier », « Fichiers modifiés »; confirm → one `archive_many applied`; the research artifact still linked stayed. Screenshots `s7r_orphan_archive_dialog_omega_1920x1080.png`, `s7r_orphan_archive_done_omega_1920x1080.png`.
+10. **Links and menus.**
+    - The scene `contextmenu` handler returns early on `.sc-item-link`, so the native menu stays.
+    - Barehands pinch opens nothing (`s7r_browser.py`: `barehands_new_tabs []`, popups need user activation). Recorded as residual.
+11. **Prompt and trace.**
+    - `BRAIN_ARTIFACT_PROMPT` now says: never speak of the artifact or the grouping (« je l'ai rangé », « ajouté », « ce qui en fait quatre ») unless the user asks about the artifact itself.
+    - New line: if `scene_inspect` shows only the title and the content is gone, say so in one sentence and do not offer to redo the work unless asked. Slice 09 will add object detail reading.
+    - The `rule` result field is now the short code `un_par_cible_et_categorie`; the sentence is in the tool description.
+    - `BRAIN_SYSTEM_PROMPT` and `BRAIN_DISPLAY_PROMPT` are byte-identical (hash test); flag off is unchanged.
+12. **Code quality.**
+    - `check_token` / `check_id` replace throwaway objects.
+    - `_refused` gains `explanation`/`sent` and is reused for local and target refusals (`TARGET_REFUSAL_EXPLANATIONS`).
+    - `_ArtifactRequest` + `_write_artifact(retry=)` remove the duplicated 9-argument call.
+    - `_merged_payload` is shared with `scene_update_object`.
+    - `explainsIndex` is built once per view model.
+
+Validation:
+
+- **Fuzz.**
+  - `s7r_fuzz.py` = `qa07_fuzz.py` + A12 and a revised A11 (orphan applies, linked refused, brain refused, orphan after target archive). Seed 20260917 × 40 × 300: 4 299 `attach_artifact`, **0 violations**; A11 orphan applied 114, linked refused 168, after target archive orphan 128 / still linked 40; A12 `signal_shape` 21 (+19 `reserved_id` first).
+  - Slice 08 fuzz `s7r_s8fuzz.py` (`s8_fuzz.py` with orphan-artifact eligibility and `S7_archive_many_took_linked_artifact`), seed 20260917: 11 orphan artifacts bulk-archived, 0 S7/S8 violations. Only the pre-existing baseline counters `QA_{user,brain}_unlink_removed_relation` remain.
+- **`s7r_links.py`** (44 URLs): 26 openable, same decisions as QA; the long look-alike host is kept whole (143 characters).
+- **Browser.** Own Chrome 55780, host `s7_host.py` on fresh `s7r_root_head` (55781–55783), everything killed afterwards.
+  - Link click: new tab, `opener` null, referrer empty, 0 scene commands.
+  - Drag from a link: no move, no tab. Jitter click opens the link.
+  - Tab stops at rest: 1.
+  - Exceptions 0, console 0.
+- **Targeted suite** under `-W error::ResourceWarning`: every scene test, cancel protocol, display MCP, all Control Center UI, Barehands, live status, documented routes, work view, prompts, debug console, routing hook, voice to Claude, settings, agent settings, v2 jobs/architecture/health, work state → **1607 passed** in 99.20 s.
+- **Full `scripts/verify_release.py`**, alone: `4210 passed, 9 skipped in 333.04s` / `Release verification passed.`
+
+Residual risks (recorded, no change):
+
+1. Phishing through legitimate-looking `https` hosts and ASCII look-alikes, mitigated only by the printed host; punycode is honest but opaque.
+2. The brain's title replaces a user rename on update.
+3. The dictated-task silence rule lives in the user's memory, not in the system prompt.
+4. Relations carry no origin.
+5. Barehands pinch cannot open a link.
+6. The artifact lock is per display-MCP process: two brain processes are not serialised.
+7. A credentialed (non-openable) URL is shown as right-truncated text.
+8. After a brain restart, artifact items are not readable by the brain until Slice 09.
