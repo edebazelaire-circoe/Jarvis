@@ -1104,7 +1104,7 @@ aucun calque, aucune requête de scène.
 - **Capsule** : pastille avec le titre ; **fenêtre** : catégorie, titre,
   résumé et liste d'éléments. Un objet épinglé porte une punaise. Un objet
   masqué n'est pas dessiné. **Un travail terminé reste affiché** : seul
-  l'archivage (Slice 08) le retire.
+  l'archivage le retire (voir « agir sur les objets »).
 - Les couches se superposent comme le cerveau ou l'utilisateur l'ont voulu : une
   fenêtre de couche 240 recouvre une fenêtre de couche 220.
 - **Petite fenêtre du navigateur** : une fenêtre de scène trop petite pour être
@@ -1147,7 +1147,8 @@ les changements d'état sont annoncés.
 | `Scène · chargement…` | première lecture en cours | rien |
 | `Scène figée · Core injoignable` `42 s · réessai 8 s` | la lecture a échoué ; la dernière scène connue reste affichée ; nouvel essai automatique (1 s, 2 s, 4 s… jusqu'à 30 s), immédiat quand le Control Center répond de nouveau | démarrer Core ; la page reprend seule |
 | `Scène indisponible · …` | même chose, mais aucune scène n'a encore été lue | idem |
-| `Scène pleine — archiver des travaux terminés` `512/512` | 512 objets actifs : Core refuse toute nouvelle étoile ou note | archiver des objets terminés (l'archivage groupé arrive au Slice 08) |
+| `Scène pleine — archiver des travaux terminés` `512/512` | 512 objets actifs : Core met les nouvelles étoiles en attente et refuse toute nouvelle note | cliquer la pastille : archivage groupé des travaux terminés, avec confirmation |
+| `N objets masqués` `afficher` | des objets masqués restent dans la scène | cliquer la pastille : liste, « Afficher » ou « Tout réafficher » |
 | `N signaux d'échec sous une fenêtre` / `N signaux à vérifier sous des fenêtres` | un signal d'échec ou de blocage est caché : son étoile est sous une fenêtre de résultat, et le signal suit son étoile | masquer ou déplacer la fenêtre (le cerveau peut le faire), ou ouvrir le panneau Agents |
 | `N objets hors champ` | des objets sont placés au-delà du bord de la fenêtre | agrandir la fenêtre, ou demander au cerveau de les rapprocher |
 
@@ -1189,6 +1190,73 @@ page attend le délai indiqué.
 | le statut ou les agents répondent lentement avec beaucoup de fenêtres | navigateur sans Web Locks/BroadcastChannel (repli par onglet), ou plusieurs profils | fermer des fenêtres, ou utiliser un seul profil ; la console montre `scene.enabled` avec `mode: solo` |
 
 Détail technique : `docs/ARCHITECTURE.md`, « Scene renderer ».
+
+### Scène constellation : agir sur les objets
+
+Vous agissez sur la **même scène** que le cerveau : chaque geste est enregistré
+dans Core, puis retrouvé à l'identique après un rechargement, dans un autre
+onglet ou après un redémarrage. Le geste se dessine tout de suite ; si Core le
+refuse ou ne répond pas, l'objet revient à sa place et une notification dit
+pourquoi. Aucune boîte de dialogue du navigateur : les confirmations
+s'affichent dans la page.
+
+| Pour… | Souris | Clavier (objet sélectionné) |
+| --- | --- | --- |
+| sélectionner | clic | Tab jusqu'à la scène, puis flèches |
+| déplacer | glisser l'objet ; **il est épinglé** : le cerveau ne le bougera plus | Maj+flèches (Ctrl+Maj+flèches : grands pas) |
+| redimensionner une capsule ou une fenêtre | glisser la poignée du coin bas droit | Ctrl+flèches |
+| ouvrir les actions | clic droit, appui long, ou clic sur l'objet déjà sélectionné | touche Menu ou Maj+F10 |
+| annuler un déplacement en cours, fermer un menu | Échap | Échap |
+
+Actions du menu :
+
+- **Afficher en point / capsule / fenêtre** : même objet, autre forme ;
+- **Épingler ici / Désépingler** : un objet épinglé ne bouge que sous votre
+  main ; désépinglé, le cerveau peut de nouveau le déplacer ;
+- **Masquer** : l'objet reste dans la scène mais n'est plus dessiné. La
+  notification propose de l'afficher de nouveau ;
+- **Archiver…** : après confirmation, l'objet quitte la scène active (il reste
+  dans l'historique). Une étoile emporte **son signal d'attention** (vivant ou
+  retiré). Le travail d'une étoile archivée ne la fait plus revenir, même s'il
+  avance encore ;
+- **Arrêter la tâche…** : seulement pour une tâche Core (étoile « tâche »), après
+  confirmation. Le job est annulé ; son étoile reste, marquée annulée. **Un
+  sous-agent du brain ne s'arrête pas seul** : son menu l'indique (« Arrêt
+  impossible : sous-agent du brain ») ; seul l'arrêt du brain entier, depuis le
+  panneau Agents, les interrompt ;
+- **Archiver les travaux terminés (N)…** : voir ci-dessous.
+
+**Retrouver ce qui est masqué.** Tant qu'un objet est masqué, la pastille
+« N objets masqués · afficher » apparaît en bas à gauche. Un clic (ou Entrée)
+ouvre la liste : « Afficher « titre » » pour un objet, « Tout réafficher » pour
+tous.
+
+**Archiver les travaux terminés.** Depuis le menu d'une étoile, ou directement
+depuis la pastille « Scène pleine — archiver des travaux terminés » quand la scène
+atteint 512 objets. La confirmation donne les comptes : étoiles terminées, en
+échec, annulées, interrompues, et les signaux qui partent avec elles. Ne sont
+**jamais** pris : le travail en cours, en attente ou bloqué, les notes et
+fenêtres du cerveau, vos propres objets. Core revérifie chaque objet : si la
+scène a changé pendant la confirmation (une étoile a repris), rien n'est archivé
+et la page propose de reconfirmer avec les nouveaux comptes. La place libérée est
+aussitôt reprise par les étoiles que Core avait mises en attente pendant la
+saturation.
+
+**Plusieurs onglets.** Chaque onglet peut agir ; les autres voient le
+changement en moins d'une seconde. Un objet que vous avez déplacé n'est jamais
+replacé par la page.
+
+**Dépanner.**
+
+| Symptôme | Cause probable | Action |
+| --- | --- | --- |
+| l'objet revient à sa place après un glisser, notification « Déplacement impossible » | Core injoignable (« commande non envoyée ») ou refus (objet archivé entre-temps) | démarrer Core, recommencer ; `runtime/trace.jsonl` : `scene.command_failed` |
+| « Arrêt impossible » grisé dans le menu | l'étoile est un sous-agent du brain | arrêter le brain entier depuis le panneau Agents si nécessaire |
+| « Arrêt impossible : Core ne connaît pas ce job » | job terminé et oublié, ou Core redémarré | rien à arrêter |
+| « Archivage groupé impossible : la scène a changé » deux fois de suite | du travail reprend ou se termine en continu | réessayer un peu plus tard |
+| déplacement au clavier sans effet | la sélection n'est pas sur un objet de la scène, ou un point (qui ne se redimensionne pas) | Tab jusqu'à la scène ; changer la forme depuis le menu |
+
+Détail technique : `docs/ARCHITECTURE.md`, « Scene user interaction ».
 
 ## Deux architectures vocales : `legacy` et `continuous_brain`
 

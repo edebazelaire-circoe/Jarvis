@@ -33,9 +33,11 @@ if TYPE_CHECKING:
 #: échappée en ASCII (`\uXXXX`, paires de substitution) et avec ses autres
 #: champs, elle reste sous 64 KiB. Au-delà : 413, rien n'est lu de plus.
 MAX_SCENE_COMMAND_BYTES = 65_536
-#: Budget d'une réponse de patchs. Un patch seul (une commande) pèse au plus
-#: ~250 KiB ; au-delà du budget, la réponse s'arrête après le dernier patch
-#: entier et dit `more: true`.
+#: Budget d'une réponse de patchs. Un patch courant pèse quelques Kio ; un
+#: archivage groupé (`archive_many`, Slice 08) porte la forme historique de
+#: chaque objet archivé et peut dépasser le budget (au pire ~8 MiB pour 512
+#: charges pleines) : il part alors seul, entier (`more: true` s'il en reste),
+#: sous la borne de lecture `MAX_SCENE_RESPONSE_BYTES`.
 MAX_PATCH_RESPONSE_BYTES = 1_048_576
 #: Lecture d'une réponse de scène par un client. Le pire instantané (512
 #: objets à 16 KiB, 1 024 relations, 4 096 pierres tombales) tient sous 11 MiB

@@ -127,7 +127,8 @@ commands.
 | `pin` / `unpin` | `object_id` | set/clear `pinned_by_user` (pin needs a placed object) |
 | `link` | `relation` | add a relation, or change the layer of the same relation (brain/user; runtime never changes a layer); brain/user never create a `parent_of` between execution nodes (`runtime_owned`) |
 | `unlink` | `relation_id` | remove a relation (absent → `duplicate`); for runtime, also how it retires its own signal; brain/user cannot remove runtime topology or signal links (`runtime_owned`) |
-| `archive` | `object_id` | user disposition |
+| `archive` | `object_id` | user disposition; an execution star takes its runtime signals (cascade, Slice 08) |
+| `archive_many` | `object_ids` (1–512, unique) | user bulk disposition of terminal execution stars and their runtime signals, all or nothing, one revision (Slice 08) |
 | `attach_signal` | `object_id`, `fields`, `target_id` | create/update an `attention` object and its `explains` relation |
 
 `fields` (`SceneObjectFields`) lists what the command announces; `null` means
@@ -151,6 +152,7 @@ Operation level (`ALLOWED_SCENE_OPS`):
 | `link` | ✔ | ✔ | ✔ |
 | `unlink` | ✔ | ✔ | ✔ |
 | `archive` | ✘ | ✘ | ✔ |
+| `archive_many` | ✘ | ✘ | ✔ |
 | `attach_signal` | ✔ | ✔ | ✔ |
 
 Effect level (checked on what actually changes, so echoing a known value is
@@ -234,7 +236,7 @@ Rules:
 | `applied` | something changed | `+1` | yes |
 | `duplicate` | nothing would change (replay, echo, unlink of an absent relation) | unchanged | no |
 | `rejected_authority` | matrix or effect rule (`op_not_allowed`, `runtime_kind`, `runtime_composition`, `runtime_relation`, `runtime_origin`, `runtime_owned`, `reserved_id`, `resolver_actor`, `execution_node`, `execution_truth`, `pinned_by_user`, `explicit_placement`) | unchanged | no |
-| `invalid` | well-formed but inapplicable: `unknown_object`, `object_archived`, `kind_immutable`, `incomplete_object`, `unplaced`, `scene_full`, `relation_limit`, `relation_conflict`, `revision_exhausted` | unchanged | no |
+| `invalid` | well-formed but inapplicable: `unknown_object`, `object_archived`, `kind_immutable`, `incomplete_object`, `unplaced`, `scene_full`, `relation_limit`, `relation_conflict`, `not_bulk_archivable` (`archive_many`, Slice 08), `revision_exhausted` | unchanged | no |
 
 `reason` (`SceneRefusal`) is a stable token for the journal and for tool errors
 surfaced to the brain. Refused and duplicate updates return the very snapshot
@@ -312,11 +314,62 @@ Residual risks (accepted by the PM after Slice 04 QA):
   archives it too: at most one leaked slot per archived star with a signal,
   towards `MAX_SCENE_OBJECTS` = 512. Archive cascade (a star takes its runtime
   signal with it) and bulk archive of completed work are in the Slice 08
-  contract;
+  contract — done, see *Archive cascade and bulk archive*;
 - `parent_of` **cycles** are not validated (Slice 01) and can appear from
   producer data or brain/user links; renderers walking parents must guard
   against them (Slice 05: the AutoResolver's anchor walk stops at the first
   repeated id).
+
+## Archive cascade and bulk archive
+
+Slice 08 (PM amendment on capacity; `ARCHITECTURE.md` › *Scene user
+interaction*). Runtime cannot delete objects, so before this change a user
+archive of a star left its signal behind (one leaked slot per archived star with
+a signal, towards 512).
+
+**Signal owner** (`signal_owners(snapshot)`, one pass): for each `attention`
+object of `origin = runtime`, the target of its live signal link when that
+target is an execution node, else the first active execution node with the same
+`work_ref` `(source, external_id)` (`work_id` may be set later), else `None`
+(orphan). Retired signals, which have no link, are found by their `work_ref`.
+
+**Cascade** (`archive`, user): archiving an execution star also archives every
+runtime signal it owns (`runtime_signals_of`), in the same patch and revision,
+signals first then the star, then one `delete_relation` per relation touching any
+of them. The star's tombstone is therefore the newest and the last to be
+evicted. Brain and user `attention` objects are never cascaded; archiving a signal
+alone keeps its star.
+
+**`archive_many`** (user only): `object_ids`, 1 to `MAX_ARCHIVE_MANY_IDS` (512)
+unique ids, list length checked before decoding. Rule (`bulk_archivable(snapshot,
+id, selected)`):
+
+- an `agent` / `job` whose `exec_state` is terminal (`TERMINAL_EXEC_STATES`:
+  `completed`, `cancelled`, `failed`, `interrupted`); never `running`,
+  `pending`, `blocked` or `unknown`. Core work never leaves a terminal status
+  (`ALLOWED_WORK_TRANSITIONS`), so a terminal star cannot be running again
+  within its store;
+- a runtime signal whose owner is in the selection and terminal, or an orphan
+  runtime signal;
+- nothing else (brain or user objects, windows, artifacts, groups).
+
+Already archived ids are skipped (another tab was faster); if nothing remains,
+`duplicate`. An unknown id is `invalid/unknown_object`, any other id outside the
+rule `invalid/not_bulk_archivable`, and **the whole command is refused**: the user
+confirmed counts, so a selection that became wrong is recomputed and confirmed
+again instead of applying part of it. Otherwise one revision archives the
+selection with each star's cascade. The patch uses the existing op kinds, so the
+wire and storage schema do not change; only `MAX_PATCH_OPS` grows to
+`MAX_SCENE_OBJECTS + MAX_SCENE_RELATIONS` (1 536). Readers written before
+Slice 08 (`ScenePatch.from_payload`) refuse a patch above 1 025 ops; the only
+readers are this repository's Core, Control Center and browser client (which has
+no op bound), updated together.
+
+The projector never resurrects: it reads `archived_ids` before writing a star
+and skips the star and its signal (`skipped_archived`), whatever work update or
+reconciliation follows (test
+`test_an_archived_failed_star_and_its_signal_never_resurrect_after_more_work_updates`,
+browser run: `skipped_archived` 0 → 1, no refusal journaled).
 
 ## Coordinate frame
 
@@ -353,7 +406,8 @@ capsule as a point, without changing the representation stored in the scene.
 | active objects per snapshot | 512 — creation beyond is `invalid` (`scene_full`); archiving frees a slot |
 | tombstones (`archived_ids`) | 4 096 — the oldest are dropped deterministically |
 | relations per snapshot | 1 024 |
-| ops per patch | 1 025 (an archive: the object plus all its relations) |
+| ops per patch | 1 536 (Slice 08: a bulk archive of the whole scene plus all relations; before, 1 025) |
+| ids per `archive_many` | 512 |
 | payload | 16 KiB compact UTF-8 JSON |
 | revision | 0 … 2^63 − 1 (SQLite INTEGER); a change at the last revision is `invalid` (`revision_exhausted`) |
 | raw value echoed in an error message | 80 characters, then `…` |

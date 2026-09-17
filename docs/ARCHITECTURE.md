@@ -1418,7 +1418,8 @@ Control Center relays, without holding any scene state.
 Browser (control_center_scene.js pure client; rendering: see Scene renderer)
   ├─ GET  /api/scene           ─► CoreSceneView.snapshot() ─► GET  /v1/scene/snapshot
   ├─ GET  /api/scene/patches   ─► CoreSceneView.patches()  ─► GET  /v1/scene/patches   (long-poll)
-  └─ POST /api/scene/commands  ─► CoreSceneView.command()  ─► POST /v1/scene/commands  (actor forced to user)
+  ├─ POST /api/scene/commands  ─► CoreSceneView.command()  ─► POST /v1/scene/commands  (actor forced to user)
+  └─ POST /api/work/cancel     ─► CoreSceneView.cancel_work() ─► POST /v1/work/cancel  (job stars only, Slice 08)
 Brain display MCP (Slice 06) ───────────────────────────────► POST /v1/scene/commands  (actor brain, bearer token)
 Runtime projector (Slice 04) ─► SceneService.apply() inside Core, never HTTP
 ```
@@ -2063,8 +2064,8 @@ probe 30 style recalculations in 30 s with the scene on (≈200 objects), the sa
 as with the scene off. Rings are also paused while the tab is hidden.
 `prefers-reduced-motion: reduce` removes every transition and animation (static
 rings). There is no `requestAnimationFrame` loop: one render is scheduled per
-state change, window resize or animation window expiry. Hover (label) is the only pointer
-reflex; drag, menus and archive are Slice 08.
+state change, window resize or animation window expiry. Hover (label) is the only
+reflex of this section; gestures, menus and archive are in *Scene user interaction*.
 
 **AutoResolver** (`resolveLayout(state)`: pure, deterministic for the same
 snapshot, independent of the window size).
@@ -2241,7 +2242,8 @@ composition safe area; raised above the Barehands badge when it is shown; chips
 wrap upwards, two rows at most in practice, never blocking): loading; "Scène
 figée · <raison>" plus a muted "N s · réessai N s" that is never truncated (a 1 s
 ticker runs only while degraded); "Scène pleine — archiver des travaux terminés"
-with "n/512" (bulk archive is Slice 08); "N signaux d'échec sous des fenêtres"
+with "n/512", a button that opens the bulk archive confirmation (Slice 08); "N objets masqués", a button
+listing hidden objects to show them again (Slice 08); "N signaux d'échec sous des fenêtres"
 and "N signaux à vérifier sous des fenêtres"; "N objets hors champ". The visible chips
 are not a live region. A separate visually hidden `role=status` region announces
 state changes only ("Scène figée · Core injoignable. Nouvel essai automatique.",
@@ -2252,6 +2254,149 @@ hors champ."), never the counters.
 node, else the first in spatial reading order. Arrow keys move to the nearest
 node in that direction (`nextFocus`, transverse distance weighted twice), Home and
 End to the first and last, Escape leaves (blur). A focused point shows its label.
+
+### Scene user interaction
+
+Handoff Slice 08. The user acts on the same scene model as the brain (decision
+15): every gesture is one `POST /api/scene/commands` (actor `user`, set by the
+Control Center), reconciled to the revision Core returns. Nothing is decided in
+the browser that Core does not re-check.
+
+Files:
+
+- `jarvis/runtime/control_center_scene_interact.js` (`window.JarvisSceneInteract`,
+  pure, node-tested in `tests/unit/test_scene_interaction_logic.py`): geometry
+  (drag, resize, keyboard steps, representation change, clamped to the frame in
+  whole units), key intents, menu model, bulk selection (parity with the domain
+  rule), `archive_many` chunking, command builders, response classification,
+  optimistic overlay (`createPending`), hidden list. Injected at
+  `/*__CONTROL_CENTER_SCENE_INTERACT_JS__*/`, between the layout and page modules.
+- `jarvis/runtime/control_center_scene_page.js` browser block: pointer, keyboard
+  and context-menu listeners on the scene container (delegation), preview while
+  the hand is on an object, commits, toasts, the actionable status chips.
+- `jarvis/runtime/control_center.html`: the existing context menu becomes a
+  generic component (`showMenu({title, items, pos, origin, run})`; `openMenu`
+  for agent cards is a thin wrapper, same keyboard: arrows, Home, End, Escape,
+  Tab, ContextMenu / Shift+F10) and an in-page confirmation
+  (`confirmDialog({title, lines, confirmLabel, cancelLabel, danger})` → promise,
+  `role="alertdialog"`, Cancel focused, Escape / backdrop cancel, Tab trapped,
+  z-index 85). The page no longer calls `window.alert` or `window.confirm`
+  (brain kill/restart and the two panel errors now use the dialog or a toast).
+
+| Gesture | Keyboard equivalent | Command(s) | Refusal / failure |
+| --- | --- | --- | --- |
+| select | Tab into the scene, arrows (roving `tabindex`, Slice 05) | none | — |
+| drag a node (4 px threshold) | Shift+Arrow (2 units), Ctrl+Shift+Arrow (10) | `set_geometry` (`placed_by` = user), then `pin` if not pinned | preview rolled back, toast; pin refused → position kept, pin flag rolled back, toast |
+| drag the corner grip (capsule, window) | Ctrl+Arrow (±2 units on w/h) | `set_geometry` | rolled back, toast |
+| menu › Afficher en point / capsule / fenêtre | menu | `set_representation` with the new default size around the same centre | rolled back, toast |
+| menu › Épingler ici / Désépingler | menu | `pin` / `unpin` (`set_geometry` + `pin` when the object had no committed place) | rolled back, toast |
+| menu › Masquer | menu | `set_visibility hidden`; toast offers to show it again | rolled back, toast |
+| chip « N objets masqués » › Afficher / Tout réafficher | chip is a button | `set_visibility visible`, one per object (≤ 512) | count of failures in a toast |
+| menu › Archiver… (confirmation) | menu | `archive` (Core cascades the star's runtime signals) | rolled back, toast |
+| menu › Archiver les travaux terminés (N)… or the « Scène pleine » chip (confirmation with counts) | menu / chip button | `archive_many` (one command in practice) | whole selection rolled back; `not_bulk_archivable` → counts recomputed and confirmed again once |
+| menu › Arrêter la tâche… (job stars only, confirmation) | menu | `POST /api/work/cancel` | toast with Core's words |
+| right click, ContextMenu, Shift+F10, long press (550 ms), click on the already selected object | ContextMenu / Shift+F10 | opens the menu | — |
+| Escape | Escape | cancels a drag or keyboard edit, closes a menu or dialog, then leaves the node | — |
+
+Keyboard edits preview immediately and commit when the modifier is released,
+on blur, or after 700 ms without a key. Alt+Arrow and Meta are never intercepted
+(browser navigation).
+
+**Optimistic display.** `createPending` keeps, per object, the fields just sent
+(`geometry`, `representation`, `visibility`, `pinned`, `archived`) and a token.
+The drawn state is `pending.overlay(heldState)`; layout, view model and the
+resolver committer's layout all use it. An entry disappears when the held state
+reaches the revision Core returned, when Core refuses or the call fails
+(rollback, counted `rolledBack`), or after 30 s unconfirmed
+(`[scène] scene.user_change_unconfirmed`). A newer gesture on the same object
+replaces the token: a late answer for the older one can neither confirm nor
+roll it back. While the hand is on a node (drag, keyboard edit) the renderer does
+not reposition it (`record.dragging`), and transitions are off for that node.
+
+**Tabs and the resolver.** User commands are sent from whichever tab the user
+acts in, leader or follower; the follower's change reaches other tabs through
+the leader's long-poll and broadcast like any patch. The resolver never fights a
+user placement: an object with a pending geometry leaves `layout.resolved`, a
+committed user geometry is never a commit candidate again, and Core refuses a
+late resolver commit on it (`explicit_placement`). Measured: drag, then reload
+→ same transform, 0 commands; drag in a follower tab → leader tab at the same
+place at the same revision.
+
+**Menu model** (`menuModel(state, objectId, {title, finished})`):
+
+| Object | Entries |
+| --- | --- |
+| any | the two other representations; Épingler ici or Désépingler; Masquer; Archiver… |
+| execution star with runtime signals | « Archiver avec son signal… » (or « avec ses signaux ») |
+| `job` star with `work_ref.source = job`, running / pending / blocked | Arrêter la tâche… |
+| `agent` star (or `job` of another source), running / pending / blocked | « Arrêt impossible : sous-agent du brain » (disabled) |
+| execution star or runtime signal, when bulk selection is not empty | Archiver les travaux terminés (N)… |
+
+**Barehands.** Its pointer replays `pointerdown`, focus, `pointerup`, `click`
+on the element under the token, without drag. A click on the object that is
+already selected (focused) opens its menu, and a long press does too; menu items,
+chips and dialog buttons are ordinary buttons it can click. Dragging stays
+mouse/keyboard only.
+
+**Errors.** Every command answer goes through `classifyResponse`: domain
+refusals in the user's words (`REFUSALS`), transport failures with the Control
+Center's message (`command_not_sent`: nothing was applied; `core_timeout`:
+outcome unknown, the state re-read decides). Each refusal or failure is a toast
+and a `[scène] scene.user_command_refused` console event; successful actions log
+`scene.user_moved`, `scene.user_resized`, `scene.user_archived`,
+`scene.user_bulk_archived`, `scene.user_stopped`, `scene.user_shown`,
+`scene.user_key_edit`. The Control Center journal records every relayed command
+(`scene.command` / `scene.command_failed`) and every stop
+(`scene.work_cancel`, `scene.work_cancel_refused`, `scene.work_cancel_failed`).
+`JarvisScene.inspect()` adds `pending`, `actions` (counters) and `gesture`.
+
+**Archive cascade** (domain, `jarvis/domain/scene.py`; see
+`docs/scene-model.md` › *Archive cascade and bulk archive*). A user `archive` of
+an execution star archives, in the same patch and revision, every runtime signal
+whose owner is that star (`signal_owners`: the target of its live signal link,
+else the active star with the same `work_ref` source and external id, which
+finds retired signals). Signals come first in the patch, so the star's tombstone
+is the newest and the last evicted; while it lives the projector skips the star
+and its signal (`skipped_archived`, no refusal journaled). Brain and user
+`attention` objects are never cascaded.
+
+**`archive_many`** (user-only `SceneOp`, absent from the brain matrix and the
+display MCP catalog): `object_ids`, 1 to 512 unique ids. Each id is re-validated
+by `bulk_archivable`: an execution star in a terminal state (`completed`,
+`cancelled`, `failed`, `interrupted`), a runtime signal whose owner is selected
+and terminal, or an orphan runtime signal. Already archived ids are skipped;
+an unknown id (`unknown_object`) or any other object (`not_bulk_archivable`)
+refuses the whole command. One revision, cascade included, patch ops reuse
+`archive_object` / `delete_relation` (`MAX_PATCH_OPS` is now 512 + 1 024). The
+browser sends the terminal stars and orphan signals it sees, chunked under 512
+ids and 48 KB of body. Measured at 512 objects: one `archive_many` (revision
+1067 → 1068) removed 22 stars and their 6 signals, and the 20 creations the
+projector had deferred were caught up (`caught_up` 20, 504 objects, no longer
+saturated).
+
+**Job stop route.**
+
+```text
+menu › Arrêter la tâche (job star, work_ref.source = job)
+  └─ POST /api/work/cancel {source, external_id}      Control Center, origin guard, strict body ≤ 4 KiB
+       ├─ source ≠ job → 409 not_cancellable, Core not called
+       └─ CoreSceneView.cancel_work → POST /v1/work/cancel {schema_version: 1, source, external_id}   bearer token
+            ├─ source ≠ job → 409 not_cancellable; unknown or speculative job → 404 not_found; malformed → 400
+            └─ JobService.cancel_for_user(job_id) → cancel(job_id); waits ≤ 5 s for the job to end
+                 → 200 {source, external_id, outcome: cancelled | cancel_requested | already_terminal, status}
+                 → the job's `cancelled` observation reaches the scene through the projector
+```
+
+`JobService.cancel_work(work_id)` was not reused as such: it cancels every job
+linked to a brain `work_id` (a star is one job) and never reaches `back_brain`
+jobs (no `_links` entry). `cancel_for_user` calls the same primitive,
+`cancel(job_id)`, on exactly the job behind the star, and journals
+`core.job.user_cancel` (info). Claude CLI sub-agents have no individual stop
+(only the whole brain, `/api/agent/kill`): their menu never offers it. Relay
+failures are classified like commands (`command_not_sent`, `core_timeout`,
+`core_unreachable`, `invalid_scene_response`); 400/404/409 from Core are relayed
+with their code. Measured: stop from the menu → job `cancelled`, star
+`cancelled`, journal `scene.work_cancel` outcome `cancelled`.
 
 ## Telemetry
 
