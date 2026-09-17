@@ -1088,7 +1088,8 @@ Validation:
   - no object removed without an archive op; no brain/runtime archive; patch-ops bound.
 
   Seeds 20260917, 7 and 4242 × 30 000 commands each: **0 `S8_*` violations**. Per seed: 20 / 21 / 23 applied `archive_many`, 1 538 / 1 578 / 1 599 `not_bulk_archivable`, 437 / 423 / 419 applied archives with 65 / 49 / 52 cascaded signals. The only other entries are the pre-existing baseline counters (`QA_{brain,user}_unlink_removed_relation`, `runtime_edited_attention_authored_by_brain_or_user`).
-- Targeted suite and `verify_release.py`: see the final report of this Slice.
+- **Targeted suite** under `-W error::ResourceWarning`: **1231 passed** in 92.69 s. It covers the new tests, every scene unit and integration test, display MCP, all Control Center, Barehands, appearance and live status UI tests, back-brain tasks/protocol/delegation/worker/speculative, v2 jobs/protocol/health/architecture, work view/UI projection/state contracts, and documented routes.
+- **Full `scripts/verify_release.py`**, alone in the foreground: `4121 passed, 9 skipped in 331.92s` / `Release verification passed.`
 
 Residual risks / left:
 
