@@ -1101,3 +1101,130 @@ Residual risks / left:
 6. **Drag is mouse or keyboard only.** Touch screens get the long-press menu, but touch drag was not verified; `touch-action: none` is set on nodes.
 7. **User drags may leave the safe area.** A drag clamps to the frame, so the user can park an object under the chrome.
 8. **The fuzz exercises few applied `archive_many`** (~20 per 30k commands, since random scenes rarely hold terminal stars). The unit parity and lifecycle tests cover the rule directly.
+
+### 2026-09-17 — Slice 08 — QA rework
+
+QA on `4d8d967` recommended REWORK: two MAJOR defects, thirteen smaller items and two PM decisions. Commits:
+
+- `9036891` Core stop: idempotent, protected write, 413, `cleanup_unknown`
+- `fd9726e` bulk archive answer without its patch
+- `16cd418` page: gestures, modal dialog, focus, stop state, errors, capsule rendering
+- `012aa7b` docs and a second live region
+- `cce1c34` toasts on three lines
+
+QA's repro harnesses were rerun as `s8r_*` copies: `s8r_cdp.py`/`s8r_host.py` on a fresh copy of QA's root (`s8r_root`), own headless Chrome (`s8r_chrome_profile`, port 53580), host ports 53581–53583. QA's files were not touched.
+
+**MAJOR-1: two concurrent stops left the job `running` forever.** Fixed in `jarvis/core/v2_services.py`:
+
+- `cancel(job_id)` is idempotent: `_cancel_requested` means `task.cancel()` runs once, whether the second call comes from a user stop or from the brain's `cancel_work`.
+- The `cancelled` write and its observation run in their own task (`_settle_cancelled`), awaited under `shield`. Any further cancellation (another caller, Core stop) is absorbed until the write ends, then re-raised.
+- A job stopped before `_execute` takes its first step (`_started`) is never executed and ends `cancelled`. Before, a task cancelled before its first step ran no line and stayed `pending`.
+- `save_job(running)` moved inside the `try`, so a cancellation during it also persists `cancelled`.
+- `cancel_for_user` answers `cleanup_unknown` for an owned `back_brain` job whose cleanup is not confirmed.
+- Tests in `tests/integration/test_work_cancel_protocol.py`:
+  - two concurrent user stops (`task.cancel` called once);
+  - `cancel_work` + user stop;
+  - stop before the first step (worker never executed);
+  - raw `task.cancel()` during a slowed `cancelled` write;
+  - two concurrent stops of an owned `back_brain` job (`cancellation = confirmed`);
+  - `back_brain` `cleanup_unknown`.
+- Mutation checks, each reverted:
+  - idempotence guard removed → concurrent test red;
+  - `shield` loop removed → second-cancel test red;
+  - pre-start guard removed → first-step test red.
+- `s8r_double_cancel_http.py` (QA's `qa08_double_cancel_http.py`): **10/10 `cancelled`**, both responses 200 `cancelled`, star `cancelled`, `stuck 0 of 10`. QA before: 10/10 `running`. In process (`s8r_double_cancel.py`): single, user+user and brain `cancel_work`+user all end `cancelled`, 3 runs each. QA before: user+user `running` ×3.
+- Jobs, back-brain, async conversation, orchestrator and work-state suites: 179 + 167 passed.
+
+**MAJOR-2: the resolver committed against the optimistic overlay.**
+
+- `pushCommitter` now passes `serverLayout()`, the layout of the held state. The pure `commitLayout(held, drawn, drawnLayout, resolve)` reuses the drawn layout only when nothing is pending.
+- Node test `test_resolver_commits_are_computed_on_the_held_state_never_on_the_optimistic_overlay`: the overlay version would commit B into A's spot; held-state commits never do.
+- `s8r_b3c.py`:
+  - QA before: the new object took `(40, −20)`, W's freed spot, and the rollback left a 2 560 units² overlap;
+  - after: the new object during the held optimistic archive went to `(−92, −62)`, overlap 0; after the forced rollback, W and D overlap 0.
+  - The follower drag in two visible windows gave rects equal, revision 286/286, 0 follower long-polls.
+
+**Minor items.**
+
+1. **Pin before position.**
+   - `commitUserGeometry` sends `pin`, then `set_geometry`. For an object never placed: `set_geometry`, `pin`, `set_geometry` (the last is `duplicate` if nothing moved it in between).
+   - On failure, both steps roll back: a compensating `unpin` if the object was not pinned before, and the overlay layer is removed.
+   - `s8r_b3.py` T2: a brain move sent between the user's steps is now refused `pinned_by_user`; final geometry and pin are the user's.
+2. **Modal dialog** (`control_center.html`).
+   - The other `body` children are `inert` (the Barehands overlay excepted).
+   - A window-level capture key handler takes Escape (from anywhere), Tab/Shift+Tab (trapped) and Enter/Space on buttons, and swallows every other key. A click on the dialog body focuses the dialog.
+   - `s8r_rework_checks.py`: inert `app`, `ctxMenu`, `toasts`, `bgPop`, `overlay`; focus after a body click is `confirmDialog`; Shift+Tab ×3 stays on `confirmCancel`; « s » shortcut, Shift+→ on the node behind and a click behind produce 0 commands, settings closed, geometry unchanged, dialog still open; Escape closes, 0 inert left, focus back on the node.
+   - `s8r_b2.py` K5: focus after a title click is `confirmDialog`, Escape from the body closes. QA before: `BODY`, did not close, and a move behind the dialog applied.
+3. **Focus after a removal.**
+   - `focusAfterRemoval` picks the reading-order neighbour, focused once drawn (hide, archive, bulk archive); showing hidden objects selects the first one shown.
+   - A second live region (`.sc-sr-actions`) announces outcomes.
+   - `s8r_b2.py`: K3 hide → neighbour node, show-all → shown node; K4 archive → neighbour. QA before: `BODY` for all three.
+   - `s8r_rework_checks2.py`: live « « À masquer » masqué. », « 12 objets archivés. »
+4. **PM decision: clamp to the safe area.**
+   - `clampBox` and `resizeBox` keep the whole box in `SCENE_SAFE_AREA`. Maxima: window 290×140, capsule 160×10. Parity test with the domain and the renderer.
+   - Drag past the top left → `(−152, −72)` in Omega 1280×720 and circuit 1920×1080; the corner and title hit-test the window.
+   - Screenshots `s8r_safe_area_clamp_top_left_{omega_1280x720,circuit-board_1920x1080}`.
+5. **PM decision: resize pins.** Every user geometry edit goes through `commitUserGeometry`. OPERATIONS and ARCHITECTURE updated.
+6. **Stop feedback.**
+   - `sc-stopping`: spinning dashed orange ring; static with reduced motion.
+   - Chip « Arrêt de « … » en cours » with a live seconds counter, until the held state shows a terminal status or the deadline passes (then toast « Arrêt non confirmé … après N s »).
+   - The deadline comes from `/api/status` `scene_limits.job_cancel_timeout_s` = `CoreSceneView.job_cancel_deadline_s` (3 + 20 + 1 = 24 s), also used as the relay's own bound.
+   - Outcome words come from `stopOutcome`. `cleanup_unknown` reads « Arrêt demandé, nettoyage non confirmé »; the old « Core termine l'annulation » is gone (test).
+   - `s8r_rework_checks.py` (Core cancel route delayed 6 s): `limits 24`; during the stop, class `sc-stopping` and chip « … en cours 2 s », then « 5 s »; after, class cancelled, `stopping []`, job and star `cancelled`, toast « Tâche arrêtée ».
+   - Screenshots `s8r_stop_pending_omega_1280x720`, `s8r_stop_done_omega_1280x720`.
+7. **Errors.**
+   - `transportFailure` / `networkFailure` return French sentences keyed on the Control Center code, following the Slice 03 not-sent / unknown split:
+     - `command_not_sent`, and `core_unreachable` carrying « non envoyée » → not sent;
+     - `core_timeout`, a lost link, an unreadable answer, and any `fetch` with no HTTP answer → outcome unknown.
+   - The raw text goes to the console only (`scene.user_command_detail`).
+   - `.catch` handlers now call `actionFailed` (toast + console).
+   - Toast details wrap to three lines at most. Measured: a 112-character refusal took 3 lines, not clipped; the Core-down drag toast reads « Core injoignable : rien n'a été envoyé. ».
+8. **Optimistic layers.**
+   - Confirmed by the static review: `begin` merged all fields into one entry, so a refused newer operation's rollback removed an older accepted change still in flight.
+   - `createPending` now keeps one layer per operation; `rollback(token)` removes that layer only.
+   - Node test `test_a_refused_newer_change_never_undoes_an_older_accepted_one_not_yet_received`: frames show position and pin held throughout, no flicker, then pruned at revision 11.
+9. **Bulk archive.**
+   - Menu label « Archiver les travaux terminés (N objets)… » matches the button « Archiver N objets » (browser: 12/12, 24/24).
+   - The Control Center relays an `archive_many` answer with `patch: null, patch_omitted: true`, after validating Core's patch. Measured page answer: 228 bytes for 12 and 24 objects; QA measured 8.2 MiB before. Other ops keep their patch; the brain path is untouched (test).
+   - After the second `not_bulk_archivable`, a toast « La scène change encore. Cliquer ici pour réessayer. »
+10. **Core cancel body.** Read with `scene_wire.read_bounded_body(limit = MAX_WORK_CANCEL_BYTES = 4 096)`; 413 `payload_too_large` beyond, as at the Control Center (test).
+11. **Accessibility and Barehands.**
+    - « Arrêt impossible… » is a `note` item: focusable, `aria-disabled="true"`, reachable by arrows, inert on Enter.
+    - Drag threshold is 10 px for non-mouse pointers, Barehands `pointerId` 9001 or a visible token; 4 px for a mouse. Browser: a synthetic Barehands move of 7 px gives `moved false`, threshold 10, 0 commands.
+    - Selected objects keep `sc-selected` and their grip visible without hover or focus (grip opacity 0.9); a click elsewhere deselects.
+    - A single archive gives a toast « « … » archivé ».
+    - The capsule grip no longer overlaps the pin icon.
+12. **Capsule rendering.** `drawnBox` draws a capsule whose stored box is taller than `CAPSULE_MAX` (160×10) at natural height, at most 160 wide, centred; render only.
+    - Browser: brain `set_representation capsule` on a user-pinned 64×40 window → stored box unchanged, drawn 256×28 px centred.
+    - Screenshot `s8r_capsule_in_window_box_omega_1280x720`; node test `test_a_capsule_is_drawn_at_capsule_size_inside_a_larger_stored_box`.
+13. **Docs and tests.**
+    - ARCHITECTURE: « up to 1 536 ops »; *Scene user interaction* rewritten.
+    - scene-model: leaked slots in the past tense; CC `patch_omitted`.
+    - SECURITY §13: `/v1/work/cancel` is token-only, not refused to the brain by construction.
+    - Doc: `cancel_for_user` stops exactly one job and never touches the brain work item.
+    - New test `test_the_only_ui_route_that_affects_work_is_the_job_stop`: allowlist `{POST /api/jobs/cancel}`, no observation or ingest route. The existing `test_the_ui_can_never_write_work_state` is unchanged and green.
+    - Slice 05 test `test_the_page_injects_the_renderer_and_gates_it_on_the_status_flag` updated deliberately for `gate(s.scene, s.scene_limits)`.
+
+**QA reruns** (`s8r_*`, same scenarios, state carried over from QA's root):
+
+- `s8r_b1.py`: several steps depend on objects QA's own run had already archived. The rest match: Escape mid-drag 0 commands; Shift+Arrow sends `pin` then `set_geometry`; clamps at `(74, 58)` and `(−152, −72)`, 0 chrome overlaps.
+- `s8r_b3.py`:
+  - T1: brain move during drag refused `pinned_by_user`.
+  - T2: see item 1.
+  - T3: rollback shows the latest server state.
+  - T4, T5: slow Core / stuck patches held then rolled back or expired at 30 s (accepted residual risk).
+  - T6: reproduces QA's own harness shape (the first page hidden), not a product change.
+  - T7, T8: the harness looked for W, which `s8r_b3c` had archived.
+  - T9: churn, 0 exceptions, 0 pending, DOM nodes 245 → 232.
+
+**Fuzz.** `s8r_fuzz.py` (QA's `qa08_fuzz.py` with its own node file), seed 11 × 30 sequences × 3 000 steps, big every 2: `violations: none`. JS parity calls 5 946; applied `archive_many` from the page selection: 2 683 (7 027 objects).
+
+**Validation.** Targeted suite under `-W error::ResourceWarning` (the earlier list plus jobs, async conversation, orchestrator and work-state files): **1383 passed** in 107.52 s. `verify_release.py`: see below.
+
+**Residual risks recorded, per PM, unchanged:**
+
+1. No archive undo in V1.
+2. The optimistic overlay expires after 30 s when patches stall (the change stays applied in Core; the drawing waits for the next read).
+3. The origin guard accepts any localhost port (pre-existing).
+4. Arrow navigation cannot reach fully overlapped objects (Slice 05).
+5. The actor is declared, not authenticated.
