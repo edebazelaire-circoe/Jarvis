@@ -129,6 +129,10 @@ SCENE_LAYOUT_SCRIPT_FILE = "control_center_scene_layout.js"
 SCENE_LAYOUT_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_LAYOUT_JS__*/"
 SCENE_PAGE_SCRIPT_FILE = "control_center_scene_page.js"
 SCENE_PAGE_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_PAGE_JS__*/"
+#: Interactions de l'utilisateur (Slice 08) : géométrie, menu, archivage
+#: groupé, affichage optimiste (`window.JarvisSceneInteract`, logique pure).
+SCENE_INTERACT_SCRIPT_FILE = "control_center_scene_interact.js"
+SCENE_INTERACT_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_INTERACT_JS__*/"
 
 #: Architectures vocales proposées dans l'onglet « Mode vocal ». Comme le reste
 #: de l'écran, leur libellé vit ici et non dans la page. `{key}` est remplacé
@@ -544,6 +548,9 @@ class ControlCenter:
         )
         html = html.replace(
             SCENE_LAYOUT_SCRIPT_MARKER, page.with_name(SCENE_LAYOUT_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            SCENE_INTERACT_SCRIPT_MARKER, page.with_name(SCENE_INTERACT_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         html = html.replace(
             SCENE_PAGE_SCRIPT_MARKER, page.with_name(SCENE_PAGE_SCRIPT_FILE).read_text(encoding="utf-8")

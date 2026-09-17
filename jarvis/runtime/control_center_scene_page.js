@@ -9,8 +9,11 @@
      placements du résolveur. Les tests l'exécutent avec node et de fausses
      minuteries ;
    - un bloc navigateur : conteneur de scène, relations SVG, nœuds DOM, verrou
-     et canal entre onglets, interrupteur `scene.enabled`. Les tests node ne
-     l'exécutent pas.
+     et canal entre onglets, interrupteur `scene.enabled`, et (Slice 08) les
+     gestes de l'utilisateur — sélection, glisser, redimensionner, clavier,
+     menu contextuel, confirmations en page, masqués, archivage, arrêt d'un
+     job — dont la logique pure vit dans `control_center_scene_interact.js`.
+     Les tests node ne l'exécutent pas.
 
    Éteint (`scene.enabled` faux, lu dans `/api/status`), rien n'est créé dans
    la page et aucune requête de scène ne part. */
@@ -536,6 +539,8 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisScenePageCor
   if(typeof window==='undefined'||typeof document==='undefined')return;
   const L=window.JarvisSceneLayout,Client=window.JarvisSceneClient,Core=JarvisScenePageCore;
   if(!L||!Client)return;
+  /* Interactions (Slice 08). Absentes : la scène se dessine sans geste. */
+  const I=window.JarvisSceneInteract||null;
   const SVG_NS='http://www.w3.org/2000/svg';
   /* Un verrou par profil : le meneur tient le long-poll et valide les
      placements. Un seul verrou pour les deux : la validation exige l'état le
@@ -576,7 +581,17 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
 .sc-link-explains{stroke-dasharray:3 4}
 .sc-link-groups{stroke-dasharray:1 5;stroke-linecap:round}
 .sc-link-signal{stroke:color-mix(in srgb,var(--tone) 58%,transparent);stroke-dasharray:none}
-.sc-node{position:absolute;left:0;top:0;pointer-events:auto;outline:none;box-sizing:border-box}
+.sc-node{position:absolute;left:0;top:0;pointer-events:auto;outline:none;box-sizing:border-box;touch-action:none;user-select:none;-webkit-user-select:none}
+/* Gestes (Slice 08) : aucun glissement animé pendant la main de l'utilisateur. */
+.scene .sc-node.sc-dragging{transition:none!important;cursor:grabbing}
+.scene.sc-gesture{cursor:grabbing}
+.sc-capsule,.sc-window{cursor:grab}
+.sc-grip{position:absolute;right:3px;bottom:3px;width:13px;height:13px;display:grid;place-items:center;color:var(--sc-muted);cursor:nwse-resize;
+  opacity:0;transition:opacity .14s ease-out}
+.sc-grip svg{width:9px;height:9px;fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round}
+.sc-capsule .sc-grip{right:5px;bottom:50%;transform:translateY(50%)}
+.sc-node:hover>.sc-grip,.sc-node:focus>.sc-grip,.sc-node.sc-dragging>.sc-grip{opacity:.9}
+.sc-grip:hover{color:var(--sc-ink)}
 /* Seul le déplacement glisse (composition) ; une taille change d'un coup. */
 .scene.sc-ready .sc-node{transition:transform .42s cubic-bezier(.16,1,.3,1)}
 .sc-point{width:${POINT_HIT}px;height:${POINT_HIT}px;border-radius:50%}
@@ -625,7 +640,10 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
 .sc-capsule .sc-badge,.sc-window .sc-badge{position:relative;flex:none}
 .sc-pin{flex:none;width:11px;height:11px;color:var(--sc-muted)}
 .sc-pin svg{width:11px;height:11px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;display:block}
-.sc-capsule:focus-visible,.sc-window:focus-visible{box-shadow:inset 0 0 0 1px var(--sc-ink),0 10px 28px rgba(0,0,0,.34)}
+.sc-capsule:focus,.sc-window:focus{box-shadow:inset 0 0 0 1px var(--sc-ink),0 10px 28px rgba(0,0,0,.34)}
+.sc-point:focus .sc-mark{outline:1px solid var(--sc-ink);outline-offset:5px}
+.sc-point:focus .sc-label{opacity:1;visibility:visible;transform:translate(calc(-50% + var(--sc-dx,0px)),6px);transition:opacity .16s ease-out,transform .16s ease-out}
+.sc-point:focus .sc-label.sc-label-up{transform:translate(calc(-50% + var(--sc-dx,0px)),-6px)}
 .sc-window{display:flex;flex-direction:column;border-radius:var(--sc-radius);background:rgba(4,10,15,.9);overflow:hidden;
   box-shadow:inset 0 1px 0 color-mix(in srgb,var(--tone) 72%,transparent),inset 0 0 0 1px var(--sc-edge),0 24px 64px rgba(0,0,0,.5);
   backdrop-filter:blur(18px)}
@@ -657,6 +675,12 @@ body:has(#jarvisHands .jh-badge) .sc-status{bottom:52px}
 .sc-note::before{content:'';flex:none;width:6px;height:6px;border-radius:50%;background:var(--sc-muted)}
 .sc-note-main{min-width:0;overflow:hidden;text-overflow:ellipsis}
 .sc-note-meta{flex:none;color:var(--sc-muted);font-variant-numeric:tabular-nums}
+/* Indicateur actionnable (Slice 08) : masqués → liste, scène pleine → archivage. */
+button.sc-note{pointer-events:auto;border:0;font:inherit;font-size:10px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;text-align:left}
+button.sc-note:hover{background:rgba(10,24,32,.86);color:#eef6fa}
+button.sc-note:focus-visible{outline:1px solid var(--sc-ink);outline-offset:2px}
+button.sc-note .sc-note-meta{color:color-mix(in srgb,var(--sc-ink) 70%,var(--sc-muted))}
+button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
 .sc-note.sc-warn::before{background:var(--sc-warn)}
 .sc-note.sc-full::before{background:#ff6b7d}
 .sc-note.sc-busy::before{animation:sc-breathe 1.6s ease-in-out infinite;background:var(--sc-ink)}
@@ -678,6 +702,7 @@ body:has(#jarvisHands .jh-badge) .sc-status{bottom:52px}
     blocked:'M6 3v3.4M6 8.8v.2',
     completed:'M3.2 6.3l1.9 1.9 3.7-4.4',
   };
+  const GRIP_PATH='M10.5 4.5l-6 6M10.5 8l-2.5 2.5';
   const PIN_PATH='M7.5 1.5l3 3-2 1-2.2 2.2.4 2.3-1 1-2-2-2.7 2.7M3.7 6.3l-2-2 1-1 2.3.4L7.2 1.5';
   const REASONS={core_unreachable:'Core injoignable',not_configured:'scène non configurée',scene_unavailable:'scène indisponible',
     core_refused:'Core refuse la lecture',invalid_scene_response:'réponse invalide',timeout:'pas de réponse',
@@ -686,6 +711,11 @@ body:has(#jarvisHands .jh-badge) .sc-status{bottom:52px}
   let enabled=false,root=null,linksEl=null,statusEl=null,liveEl=null,raf=0,statusTicker=null;
   let lastView=null,lastState=null,layout=null,layoutState=null,edgesSig='',statusSig='',announced='',readyTimer=0;
   let lastModel=null,focusId=null,tabStopId=null,statusFailed=false,visibilityToken=0,animTimer=0;
+  /* Slice 08 : modifications optimistes, geste en cours, édition au clavier. */
+  const pending=I?I.createPending():null;
+  let viewMemo={state:null,version:-1,value:null},gesture=null,keyEdit=null,kbdMenuAt=0,pruneTimer=0;
+  const actionStats={moves:0,resizes:0,representations:0,visibility:0,pins:0,archives:0,bulkArchives:0,stops:0,menus:0,refused:0,failed:0,rolledBack:0};
+  const inflight=new Set();
   const freshUntil=new Map();
   const nodes=new Map();
   const leader={held:false,mode:'lock'};
@@ -786,7 +816,9 @@ body:has(#jarvisHands .jh-badge) .sc-status{bottom:52px}
     root=document.createElement('div');
     root.id='sceneLayer';root.className='scene';
     root.setAttribute('role','region');
-    root.setAttribute('aria-label','Scène constellation. Flèches pour parcourir, Échap pour sortir.');
+    root.setAttribute('aria-label',I
+      ?'Scène constellation. Flèches pour parcourir, Maj+flèches pour déplacer, Ctrl+flèches pour redimensionner, touche Menu ou Maj+F10 pour les actions, Échap pour sortir.'
+      :'Scène constellation. Flèches pour parcourir, Échap pour sortir.');
     linksEl=document.createElementNS(SVG_NS,'svg');
     linksEl.setAttribute('class','sc-links');linksEl.setAttribute('aria-hidden','true');
     statusEl=document.createElement('div');
@@ -797,8 +829,18 @@ body:has(#jarvisHands .jh-badge) .sc-status{bottom:52px}
     liveEl.className='sc-sr';liveEl.setAttribute('role','status');liveEl.setAttribute('aria-live','polite');
     root.append(linksEl,statusEl,liveEl);
     root.addEventListener('keydown',onKeyDown);
+    root.addEventListener('keyup',onKeyUp);
     root.addEventListener('pointerover',onPointerOver);
     root.addEventListener('focusin',onFocusIn);
+    root.addEventListener('focusout',onFocusOut);
+    if(I){
+      root.addEventListener('pointerdown',onPointerDown);
+      root.addEventListener('pointermove',onPointerMove);
+      root.addEventListener('pointerup',onPointerUp);
+      root.addEventListener('pointercancel',onPointerCancel);
+      root.addEventListener('lostpointercapture',onPointerCancel);
+      root.addEventListener('contextmenu',onContextMenu);
+    }
     (document.getElementById('app')||document.body).appendChild(root);
   }
 
@@ -812,6 +854,10 @@ body:has(#jarvisHands .jh-badge) .sc-status{bottom:52px}
     if(animTimer){window.clearTimeout(animTimer);animTimer=0}
     root=null;linksEl=null;statusEl=null;liveEl=null;nodes.clear();freshUntil.clear();
     lastView=null;lastState=null;layout=null;layoutState=null;lastModel=null;
+    viewMemo={state:null,version:-1,value:null};gesture=null;
+    if(keyEdit&&keyEdit.timer)window.clearTimeout(keyEdit.timer);
+    keyEdit=null;
+    if(pruneTimer){window.clearTimeout(pruneTimer);pruneTimer=0}
     edgesSig='';statusSig='';announced='';focusId=null;tabStopId=null;
   }
 
@@ -819,10 +865,20 @@ body:has(#jarvisHands .jh-badge) .sc-status{bottom:52px}
     if(!raf)raf=requestAnimationFrame(render);
   }
 
-  /* Disposition calculée à la demande, une fois par état. */
+  /* État dessiné : l'état tenu plus les modifications de l'utilisateur pas
+     encore confirmées par Core (affichage optimiste, Slice 08). */
+  function viewState(){
+    if(!lastState||!pending)return lastState;
+    const version=pending.version();
+    if(viewMemo.state!==lastState||viewMemo.version!==version)viewMemo={state:lastState,version,value:pending.overlay(lastState)};
+    return viewMemo.value;
+  }
+
+  /* Disposition calculée à la demande, une fois par état dessiné. */
   function currentLayout(){
-    if(!lastState)return null;
-    if(layoutState!==lastState){layout=L.resolveLayout(lastState);layoutState=lastState}
+    const state=viewState();
+    if(!state)return null;
+    if(layoutState!==state){layout=L.resolveLayout(state);layoutState=state}
     return layout;
   }
 
@@ -846,6 +902,14 @@ body:has(#jarvisHands .jh-badge) .sc-status{bottom:52px}
     if(!BADGE_PATHS[exec]||(exec==='completed'&&shape==='point'))return null;
     const box=element('span','sc-badge');
     box.appendChild(svgIcon(BADGE_PATHS[exec]));
+    return box;
+  }
+
+  /* Poignée de redimensionnement (coin bas droit), capsule et fenêtre. */
+  function grip(){
+    const box=element('span','sc-grip');
+    box.setAttribute('aria-hidden','true');
+    box.appendChild(svgIcon(GRIP_PATH));
     return box;
   }
 
@@ -881,6 +945,7 @@ body:has(#jarvisHands .jh-badge) .sc-status{bottom:52px}
       parts.push(dot,element('span','sc-title',node.title));
       if(node.pinned)parts.push(pin());
       const state=badge(node.exec,node.shape);if(state)parts.push(state);
+      if(I&&(node.representation==='capsule'||node.representation==='window'))parts.push(grip());
     }else{
       const head=element('div','sc-head');
       const dot=element('span','sc-dot');dot.appendChild(element('span','sc-ring'));
@@ -899,6 +964,7 @@ body:has(#jarvisHands .jh-badge) .sc-status{bottom:52px}
         }
         parts.push(list);
       }
+      if(I)parts.push(grip());
     }
     el.append(...parts);
   }
@@ -935,7 +1001,8 @@ body:has(#jarvisHands .jh-badge) .sc-status{bottom:52px}
       if(content!==record.content){fill(record.el,node);record.content=content;record.anim=null}
       if(record.anim!==node.animate){record.el.classList.toggle('sc-anim',node.animate);record.anim=node.animate}
       const place=`${node.shape}|${node.compact}|${node.cx}|${node.cy}|${node.box.left}|${node.box.top}|${node.box.width}|${node.box.height}|${node.stack}`;
-      if(place!==record.place){position(record.el,node);record.place=place}
+      /* Sous la main de l'utilisateur (glisser, clavier) : l'aperçu garde la place. */
+      if(place!==record.place&&!record.dragging){position(record.el,node);record.place=place}
     }
     for(const [id,record] of nodes){
       if(seen.has(id))continue;
@@ -970,14 +1037,36 @@ body:has(#jarvisHands .jh-badge) .sc-status{bottom:52px}
   function onKeyDown(event){
     const el=nodeElement(event.target);
     if(!el||!lastModel)return;
-    if(event.key==='Escape'){event.preventDefault();el.blur();return}
-    if(!['ArrowRight','ArrowLeft','ArrowUp','ArrowDown','Home','End'].includes(event.key))return;
+    if(event.key==='Escape'){
+      event.preventDefault();
+      if(gesture){cancelGesture();return}
+      if(keyEdit){cancelKeyEdit();return}
+      el.blur();return;
+    }
+    const intent=I?I.keyIntent(event):(['ArrowRight','ArrowLeft','ArrowUp','ArrowDown','Home','End'].includes(event.key)?{type:'nav'}:null);
+    if(!intent)return;
+    if(intent.type==='menu'){
+      event.preventDefault();kbdMenuAt=performance.now();
+      openObjectMenu(el.dataset.objectId,anchorOfNode(el),el);
+      return;
+    }
+    if(intent.type==='move'||intent.type==='resize'){event.preventDefault();keyAdjust(el,intent);return}
     event.preventDefault();
     const next=L.nextFocus(lastModel.nodes,el.dataset.objectId,event.key);
     const record=next&&nodes.get(next);
     if(!record||record.el===el)return;
     focusId=next;updateTabStop(lastModel.nodes);
     record.el.focus();
+  }
+
+  function onKeyUp(event){
+    /* Relâcher le modificateur valide l'édition au clavier. */
+    if(keyEdit&&(event.key==='Shift'||event.key==='Control'))flushKeyEdit('keyup');
+  }
+
+  function onFocusOut(event){
+    const el=nodeElement(event.target);
+    if(el&&keyEdit&&keyEdit.id===el.dataset.objectId)flushKeyEdit('blur');
   }
 
   function onFocusIn(event){
@@ -1010,6 +1099,446 @@ body:has(#jarvisHands .jh-badge) .sc-status{bottom:52px}
     label.classList.toggle('sc-label-up',node.bottom+6+height>bounds.bottom-margin);
   }
 
+
+  /* ------------------------------------------------ gestes (Slice 08) */
+
+  const round1=v=>Math.round(v*10)/10;
+
+  function nodeOf(id){return lastModel?lastModel.nodes.find(node=>node.id===id)||null:null}
+  function drawnBox(id){const current=currentLayout();return current?current.placements.get(id)||null:null}
+  function viewportNow(){return L.viewport(root.clientWidth||window.innerWidth,root.clientHeight||window.innerHeight)}
+  function anchorOfNode(el){
+    const r=el.getBoundingClientRect();
+    return {x:r.left+Math.min(r.width/2,44),y:r.bottom+4,above:r.top-4};
+  }
+  function titleOf(id){const node=nodeOf(id);return node?node.title:id}
+  function quoted(id){const text=titleOf(id);return `« ${text.length>60?text.slice(0,59)+'…':text} »`}
+
+  /* Aperçu d'une boîte (unités) sur le nœud, dans sa forme dessinée. */
+  function previewAt(el,node,box){
+    const screen=L.toScreen(viewportNow(),box);
+    position(el,{...node,box:screen,cx:round1(screen.left+screen.width/2),cy:round1(screen.top+screen.height/2)});
+  }
+
+  function holdNode(id,held){
+    const record=nodes.get(id);
+    if(!record)return;
+    record.dragging=held;
+    record.el.classList.toggle('sc-dragging',held);
+    if(!held){record.place='';scheduleRender()}
+  }
+
+  function notify(options){
+    if(typeof toast==='function')try{toast({ms:4500,...options})}catch(error){consoleLog('error','scene.toast_failed',{error:String(error&&error.message||error)})}
+  }
+
+  function pendingChanged(){
+    scheduleRender();pushCommitter();
+    if(pending&&pending.size()&&!pruneTimer){
+      pruneTimer=window.setTimeout(()=>{pruneTimer=0;prunePending();if(pending.size())pendingChanged()},I.PENDING_MAX_MS/3);
+    }
+  }
+
+  /* L'état tenu a rattrapé Core (ou l'attente a trop duré) : l'aperçu optimiste s'efface. */
+  function prunePending(){
+    if(!pending||!pending.size())return;
+    const removed=pending.prune(lastState,Date.now());
+    for(const entry of removed)if(entry.reason==='expired')consoleLog('warn','scene.user_change_unconfirmed',{object_id:entry.id});
+    if(removed.length){scheduleRender();pushCommitter()}
+  }
+
+  /* `POST /api/scene/commands` (acteur `user` posé par le Control Center), depuis
+     n'importe quel onglet : les gestes ne dépendent pas du meneur. */
+  async function sendCommand(command){
+    try{
+      const response=await requestJson('/api/scene/commands',{method:'POST',body:command,timeoutMs:15000});
+      return I.classifyResponse(response.status,response.body);
+    }catch(error){
+      const timeout=error&&error.code==='timeout';
+      return {ok:false,outcome:'failed',reason:'',code:errorCodeOf(error),revision:null,unknown:timeout,
+        message:timeout?`${error.message} : issue inconnue, la scène se relit`:'Control Center injoignable : rien n’a été envoyé'};
+    }
+  }
+  const errorCodeOf=error=>String(error&&(error.code||error.name)||'network_error');
+
+  /* Refus ou échec : toast discret, journal console, compteur. */
+  function reportRefusal(action,id,result){
+    if(result.outcome==='failed')actionStats.failed++;else actionStats.refused++;
+    consoleLog(result.outcome==='failed'?'warn':'info','scene.user_command_refused',
+      {action,object_id:id,outcome:result.outcome,reason:result.reason,code:result.code});
+    notify({title:`${action} impossible`,sub:result.message,kind:result.unknown?'warn':'bad'});
+  }
+
+  /* Envoyer une modification dessinée tout de suite ; annulée sur refus. */
+  async function optimistic(action,id,fields,command){
+    const token=pending.begin(id,fields,Date.now());
+    pendingChanged();
+    const result=await sendCommand(command);
+    if(!result.ok){
+      if(pending.rollback(id,token)){actionStats.rolledBack++;pendingChanged()}
+      reportRefusal(action,id,result);
+      return {result,token};
+    }
+    pending.confirm(id,token,result.revision);
+    prunePending();
+    return {result,token};
+  }
+
+  /* Glisser déposé : position (`placed_by = user`) puis épingle, sauf si déjà épinglé. */
+  async function commitMove(id,box){
+    actionStats.moves++;
+    const item=lastState&&lastState.objects.get(id);
+    const wasPinned=!!(item&&item.constraints&&item.constraints.pinned_by_user);
+    const {result,token}=await optimistic('Déplacement',id,{geometry:box,pinned:true},I.commands.setGeometry(id,box));
+    if(!result.ok)return;
+    consoleLog('info','scene.user_moved',{object_id:id,revision:result.revision,outcome:result.outcome});
+    if(wasPinned)return;
+    const pinned=await sendCommand(I.commands.pin(id));
+    if(!pinned.ok){
+      if(pending.drop(id,token,'pinned'))pendingChanged();
+      reportRefusal('Épinglage',id,pinned);
+      return;
+    }
+    actionStats.pins++;
+    pending.confirm(id,token,pinned.revision);
+    prunePending();
+  }
+
+  async function commitResize(id,box){
+    actionStats.resizes++;
+    const {result}=await optimistic('Redimensionnement',id,{geometry:box},I.commands.setGeometry(id,box));
+    if(result.ok)consoleLog('info','scene.user_resized',{object_id:id,revision:result.revision});
+  }
+
+  function onPointerDown(event){
+    if(event.button!==0||!enabled)return;
+    const el=nodeElement(event.target);
+    if(!el)return;
+    const id=el.dataset.objectId,node=nodeOf(id),box=drawnBox(id),state=viewState();
+    const item=state&&state.objects.get(id);
+    if(!node||!box||!item)return;
+    if(gesture)cancelGesture();
+    if(keyEdit)flushKeyEdit('pointer');
+    if(typeof closeMenu==='function')closeMenu(false);
+    const resize=!!event.target.closest('.sc-grip')&&I.resizable(item.representation);
+    gesture={id,el,node,mode:resize?'resize':'move',pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,
+      box:{x:box.x,y:box.y,w:box.w,h:box.h},representation:item.representation,moved:false,menuOpened:false,preview:null,
+      wasSelected:document.activeElement===el,longTimer:0};
+    /* Appui long sans bouger : menu (Barehands, écran tactile). */
+    const current=gesture;
+    current.longTimer=window.setTimeout(()=>{
+      if(gesture!==current||current.moved)return;
+      current.menuOpened=true;
+      openObjectMenu(id,{x:current.startX,y:current.startY,above:current.startY},el);
+    },I.LONG_PRESS_MS);
+    try{el.setPointerCapture(event.pointerId)}catch(_error){/* pointeur synthétique (Barehands) : pas de capture, les événements arrivent au nœud */}
+    if(document.activeElement!==el)el.focus({preventScroll:true});
+    event.preventDefault();
+  }
+
+  function onPointerMove(event){
+    const g=gesture;
+    if(!g||event.pointerId!==g.pointerId)return;
+    const dx=event.clientX-g.startX,dy=event.clientY-g.startY;
+    if(!g.moved){
+      if(g.menuOpened||Math.hypot(dx,dy)<I.DRAG_THRESHOLD_PX)return;
+      g.moved=true;
+      window.clearTimeout(g.longTimer);
+      holdNode(g.id,true);root.classList.add('sc-gesture');
+    }
+    const units=I.pxToUnits(viewportNow(),dx,dy);
+    g.preview=g.mode==='resize'?I.resizeBox(g.box,units.dx,units.dy,g.representation):I.dragBox(g.box,units.dx,units.dy,g.representation);
+    previewAt(g.el,g.node,g.preview);
+  }
+
+  function endGesture(g){
+    window.clearTimeout(g.longTimer);
+    try{if(g.el.hasPointerCapture&&g.el.hasPointerCapture(g.pointerId))g.el.releasePointerCapture(g.pointerId)}catch(_error){/* capture déjà rendue */}
+    if(root)root.classList.remove('sc-gesture');
+    if(gesture===g)gesture=null;
+  }
+
+  function onPointerUp(event){
+    const g=gesture;
+    if(!g||event.pointerId!==g.pointerId)return;
+    endGesture(g);
+    if(g.menuOpened)return;
+    if(!g.moved){
+      /* Clic sur l'objet déjà sélectionné : ses actions (souris et Barehands). */
+      if(g.wasSelected)openObjectMenu(g.id,{x:event.clientX,y:event.clientY,above:event.clientY},g.el);
+      return;
+    }
+    const box=g.preview;
+    holdNode(g.id,false);
+    if(!box||I.sameBox(box,g.box))return;
+    const commit=g.mode==='resize'?commitResize(g.id,box):commitMove(g.id,box);
+    commit.catch(error=>consoleLog('error','scene.user_gesture_failed',{object_id:g.id,error:String(error&&error.message||error)}));
+  }
+
+  function cancelGesture(){
+    const g=gesture;
+    if(!g)return;
+    endGesture(g);
+    if(g.moved)holdNode(g.id,false);
+  }
+
+  function onPointerCancel(event){
+    if(gesture&&event.pointerId===gesture.pointerId&&(event.type==='pointercancel'||!gesture.moved))cancelGesture();
+  }
+
+  function onContextMenu(event){
+    const el=nodeElement(event.target);
+    if(!el)return;
+    event.preventDefault();
+    if(performance.now()-kbdMenuAt<700)return;  // déjà ouvert par la touche Menu / Maj+F10
+    if(gesture)cancelGesture();
+    if(document.activeElement!==el)el.focus({preventScroll:true});
+    const keyboard=event.clientX===0&&event.clientY===0;
+    openObjectMenu(el.dataset.objectId,keyboard?anchorOfNode(el):{x:event.clientX,y:event.clientY,above:event.clientY},el);
+  }
+
+  /* Maj+flèches / Ctrl+flèches : aperçu tout de suite, validation au relâchement
+     du modificateur, à la perte du focus ou après 700 ms sans touche. */
+  function keyAdjust(el,intent){
+    const id=el.dataset.objectId,state=viewState(),item=state&&state.objects.get(id);
+    if(!item)return;
+    if(intent.type==='resize'&&!I.resizable(item.representation)){
+      if(liveEl)liveEl.textContent='Un point ne se redimensionne pas : changer sa forme depuis le menu.';
+      return;
+    }
+    if(keyEdit&&keyEdit.id!==id)flushKeyEdit('other');
+    if(!keyEdit){
+      const box=drawnBox(id),node=nodeOf(id);
+      if(!box||!node)return;
+      keyEdit={id,el,node,start:{x:box.x,y:box.y,w:box.w,h:box.h},box:{x:box.x,y:box.y,w:box.w,h:box.h},moved:false,timer:0};
+      holdNode(id,true);
+    }
+    keyEdit.box=I.applyKey(keyEdit.box,intent,item.representation);
+    if(intent.type==='move')keyEdit.moved=true;
+    previewAt(keyEdit.el,keyEdit.node,keyEdit.box);
+    window.clearTimeout(keyEdit.timer);
+    keyEdit.timer=window.setTimeout(()=>flushKeyEdit('idle'),700);
+  }
+
+  function flushKeyEdit(why){
+    const edit=keyEdit;
+    if(!edit)return;
+    keyEdit=null;
+    window.clearTimeout(edit.timer);
+    holdNode(edit.id,false);
+    if(I.sameBox(edit.box,edit.start))return;
+    consoleLog('info','scene.user_key_edit',{object_id:edit.id,why});
+    (edit.moved?commitMove(edit.id,edit.box):commitResize(edit.id,edit.box))
+      .catch(error=>consoleLog('error','scene.user_gesture_failed',{object_id:edit.id,error:String(error&&error.message||error)}));
+  }
+
+  function cancelKeyEdit(){
+    const edit=keyEdit;
+    if(!edit)return;
+    keyEdit=null;
+    window.clearTimeout(edit.timer);
+    holdNode(edit.id,false);
+  }
+
+  /* ------------------------------------------------------------ menu */
+
+  function openObjectMenu(id,pos,origin){
+    if(!I)return;
+    if(typeof showMenu!=='function'){consoleLog('warn','scene.menu_unavailable',{});return}
+    const state=viewState();
+    if(!state||!state.objects.has(id))return;
+    const model=I.menuModel(state,id,{title:titleOf(id),finished:lastState?I.bulkSelection(lastState).objects:0});
+    if(!model)return;
+    actionStats.menus++;
+    showMenu({title:model.title,items:model.items,pos,origin,run:act=>{
+      runObjectAction(act,id).catch(error=>{
+        actionStats.failed++;
+        consoleLog('error','scene.user_action_failed',{action:act,object_id:id,error:String(error&&error.message||error)});
+        notify({title:'Action impossible',sub:String(error&&error.message||error),kind:'bad'});
+      });
+    }});
+  }
+
+  async function runObjectAction(act,id){
+    if(act.startsWith('rep:'))return changeRepresentation(id,act.slice(4));
+    if(act==='pin')return pinHere(id);
+    if(act==='unpin'){
+      actionStats.pins++;
+      return optimistic('Désépinglage',id,{pinned:false},I.commands.unpin(id));
+    }
+    if(act==='hide')return hideObject(id);
+    if(act==='stop')return stopJob(id);
+    if(act==='archive')return archiveObject(id);
+    if(act==='archive-finished')return archiveFinished();
+  }
+
+  async function changeRepresentation(id,representation){
+    const state=viewState(),item=state&&state.objects.get(id),box=drawnBox(id);
+    if(!item||!box)return;
+    actionStats.representations++;
+    const next=I.representationBox(box,representation,item.kind);
+    await optimistic('Changement de forme',id,{representation,geometry:next},I.commands.setRepresentation(id,representation,next));
+  }
+
+  async function pinHere(id){
+    const item=lastState&&lastState.objects.get(id),box=drawnBox(id);
+    if(!item||!box)return;
+    /* Pas encore de place validée : la place dessinée devient celle de l'utilisateur. */
+    if(!item.geometry)return commitMove(id,{x:box.x,y:box.y,w:box.w,h:box.h});
+    actionStats.pins++;
+    await optimistic('Épinglage',id,{pinned:true},I.commands.pin(id));
+  }
+
+  async function hideObject(id,{quiet=false}={}){
+    const label=quoted(id);
+    actionStats.visibility++;
+    const {result}=await optimistic('Masquage',id,{visibility:'hidden'},I.commands.setVisibility(id,'hidden'));
+    if(result.ok&&!quiet)notify({title:`${label} masqué`,sub:'Cliquer ici pour le réafficher · pastille « masqués » en bas à gauche',kind:'info',
+      onClick:()=>showObjects([id])});
+  }
+
+  /* Réafficher des objets masqués, un par un (au plus 512). */
+  async function showObjects(ids){
+    let shown=0,failed=null;
+    for(const id of ids.slice(0,512)){
+      actionStats.visibility++;
+      const token=pending.begin(id,{visibility:'visible'},Date.now());pendingChanged();
+      const result=await sendCommand(I.commands.setVisibility(id,'visible'));
+      if(result.ok){pending.confirm(id,token,result.revision);shown++}
+      else{if(pending.rollback(id,token)){actionStats.rolledBack++;pendingChanged()}failed=failed||result;if(result.outcome==='failed')break}
+    }
+    prunePending();
+    consoleLog('info','scene.user_shown',{asked:ids.length,shown});
+    if(failed)reportRefusal(shown?`Réaffichage de ${ids.length-shown} objet(s)`:'Réaffichage',ids[0],failed);
+    else if(ids.length>1)notify({title:`${shown} objets réaffichés`,kind:'ok',ms:3000});
+  }
+
+  function openHiddenMenu(anchor){
+    if(typeof showMenu!=='function'||!I)return;
+    const state=viewState();
+    if(!state)return;
+    const hidden=I.hiddenObjects(state);
+    if(!hidden.length)return;
+    const shown=hidden.slice(0,24);
+    const items=shown.map((entry,index)=>({act:`show:${index}`,label:`Afficher « ${L.cleanLine(entry.title,48)||entry.id} »`}));
+    if(hidden.length>shown.length)items.push({act:'more',label:`… et ${hidden.length-shown.length} autres`,disabled:true});
+    items.push('-',{act:'show-all',label:`Tout réafficher (${hidden.length})`});
+    const r=anchor.getBoundingClientRect();
+    actionStats.menus++;
+    showMenu({title:hidden.length>1?`${hidden.length} objets masqués`:'1 objet masqué',items,
+      pos:{x:r.left,y:r.top-4,above:r.top-4},origin:anchor,run:act=>{
+        const ids=act==='show-all'?hidden.map(entry=>entry.id):act.startsWith('show:')?[shown[Number(act.slice(5))].id]:[];
+        if(ids.length)showObjects(ids).catch(error=>consoleLog('error','scene.user_action_failed',{action:act,error:String(error&&error.message||error)}));
+      }});
+  }
+
+  async function archiveObject(id){
+    const key=`archive:${id}`;
+    if(inflight.has(key))return;
+    const state=viewState(),item=state&&state.objects.get(id);
+    if(!item)return;
+    const signals=['agent','job'].includes(item.kind)?I.cascadeOf(state,id).length:0;
+    const lines=['Il quitte la scène active ; il reste dans l’historique.'];
+    if(signals)lines.push(signals>1?`Ses ${signals} signaux d’attention partent avec lui.`:'Son signal d’attention part avec lui.');
+    if(['running','pending','blocked'].includes(item.exec_state))lines.push('Le travail continue, mais son étoile ne reviendra pas.');
+    if(typeof confirmDialog!=='function'){consoleLog('warn','scene.confirm_unavailable',{});return}
+    if(!await confirmDialog({title:`Archiver ${quoted(id)} ?`,lines,confirmLabel:'Archiver',danger:true}))return;
+    inflight.add(key);
+    try{
+      actionStats.archives++;
+      const cascade=signals?I.cascadeOf(state,id):[];
+      const tokens=[id,...cascade].map(target=>[target,pending.begin(target,{archived:true},Date.now())]);
+      pendingChanged();
+      const result=await sendCommand(I.commands.archive(id));
+      if(!result.ok){
+        for(const [target,token] of tokens)if(pending.rollback(target,token))actionStats.rolledBack++;
+        pendingChanged();
+        return reportRefusal('Archivage',id,result);
+      }
+      for(const [target,token] of tokens)pending.confirm(target,token,result.revision);
+      prunePending();
+      consoleLog('info','scene.user_archived',{object_id:id,signals,revision:result.revision,outcome:result.outcome});
+    }finally{inflight.delete(key)}
+  }
+
+  const STATE_WORDS=Object.freeze({completed:['terminée','terminées'],failed:['en échec','en échec'],cancelled:['annulée','annulées'],interrupted:['interrompue','interrompues']});
+
+  /* « Archiver les travaux terminés » : sélection calculée ici, confirmée avec
+     les comptes par état, revalidée par Core (tout ou rien). Une sélection
+     devenue fausse entre-temps est recalculée et reconfirmée une fois. */
+  async function archiveFinished(retry=false){
+    if(inflight.has('bulk'))return;
+    if(!lastState)return;
+    const selection=I.bulkSelection(lastState);
+    if(!selection.objects){notify({title:'Rien à archiver',sub:'Aucun travail terminé dans la scène.',kind:'info',ms:3000});return}
+    const parts=Object.entries(selection.byState).filter(([,n])=>n).map(([state,n])=>`${n} ${STATE_WORDS[state][n>1?1:0]}`);
+    const lines=[];
+    if(selection.stars)lines.push([`${selection.stars} ${selection.stars>1?'étoiles':'étoile'}`,` quittent la scène : ${parts.join(', ')}.`]);
+    if(selection.cascaded)lines.push([`${selection.cascaded} ${selection.cascaded>1?'signaux':'signal'}`,` d’attention ${selection.cascaded>1?'partent':'part'} avec elles.`]);
+    if(selection.orphans)lines.push([`${selection.orphans} ${selection.orphans>1?'signaux orphelins':'signal orphelin'}`,' (étoile déjà archivée) aussi.']);
+    lines.push('Le travail en cours, en attente ou bloqué reste, comme les notes et fenêtres du brain.');
+    if(retry)lines.unshift('La scène a changé pendant la confirmation : comptes mis à jour.');
+    if(typeof confirmDialog!=='function'){consoleLog('warn','scene.confirm_unavailable',{});return}
+    if(!await confirmDialog({title:'Archiver les travaux terminés ?',lines,confirmLabel:`Archiver ${selection.objects} ${selection.objects>1?'objets':'objet'}`,danger:true}))return;
+    inflight.add('bulk');
+    const started=Date.now();
+    let archived=0,refusal=null;
+    try{
+      actionStats.bulkArchives++;
+      const owners=I.signalOwners(lastState);
+      for(const chunk of I.chunkIds(selection.ids)){
+        const chosen=new Set(chunk);
+        const targets=[...chunk];
+        for(const [signal,owner] of owners)if(owner&&chosen.has(owner))targets.push(signal);
+        const tokens=targets.map(target=>[target,pending.begin(target,{archived:true},Date.now())]);
+        pendingChanged();
+        const result=await sendCommand(I.commands.archiveMany(chunk));
+        if(!result.ok){
+          for(const [target,token] of tokens)if(pending.rollback(target,token))actionStats.rolledBack++;
+          pendingChanged();
+          refusal=result;break;
+        }
+        for(const [target,token] of tokens)pending.confirm(target,token,result.revision);
+        archived+=targets.length;
+      }
+      prunePending();
+    }finally{inflight.delete('bulk')}
+    consoleLog(refusal?'warn':'info','scene.user_bulk_archived',{selected:selection.objects,archived,ms:Date.now()-started,
+      refused:refusal?refusal.reason||refusal.code:null});
+    if(refusal&&refusal.reason==='not_bulk_archivable'&&!retry)return archiveFinished(true);
+    if(refusal)return reportRefusal(archived?`Archivage de ${selection.objects-archived} objet(s)`:'Archivage groupé',null,refusal);
+    notify({title:`${archived} ${archived>1?'objets archivés':'objet archivé'}`,sub:'La place libérée accueille le travail en attente.',kind:'ok',ms:3500});
+  }
+
+  /* Arrêt d'une étoile `job` : `POST /api/work/cancel`. Jamais proposé pour un sous-agent du brain. */
+  async function stopJob(id){
+    const item=lastState&&lastState.objects.get(id);
+    if(!item||item.kind!=='job'||!item.work_ref||item.work_ref.source!=='job')return;
+    const key=`stop:${id}`;
+    if(inflight.has(key))return;
+    if(typeof confirmDialog!=='function'){consoleLog('warn','scene.confirm_unavailable',{});return}
+    if(!await confirmDialog({title:`Arrêter la tâche ${quoted(id)} ?`,
+      lines:['Le job Core est annulé ; son étoile reste, marquée annulée.'],confirmLabel:'Arrêter la tâche',cancelLabel:'Continuer la tâche',danger:true}))return;
+    inflight.add(key);
+    actionStats.stops++;
+    const started=Date.now();
+    notify({title:`Arrêt de ${quoted(id)}…`,sub:'Demande envoyée à Core (au plus 20 s).',kind:'info',ms:2500});
+    try{
+      const response=await requestJson('/api/work/cancel',{method:'POST',body:{source:item.work_ref.source,external_id:item.work_ref.external_id},timeoutMs:30000});
+      const body=response.body||{};
+      if(response.status===200&&typeof body.outcome==='string'){
+        const words={cancelled:['Tâche arrêtée','Le job est annulé.'],cancel_requested:['Arrêt demandé','Core termine l’annulation.'],
+          already_terminal:['Tâche déjà terminée','Rien à arrêter.']}[body.outcome]||['Arrêt',body.outcome];
+        consoleLog('info','scene.user_stopped',{object_id:id,outcome:body.outcome,status:body.status,ms:Date.now()-started});
+        return notify({title:words[0],sub:`${quoted(id)} · ${words[1]}`,kind:body.outcome==='cancelled'?'ok':'info',ms:3500});
+      }
+      reportRefusal('Arrêt',id,I.classifyResponse(response.status,body));
+    }catch(error){
+      reportRefusal('Arrêt',id,{ok:false,outcome:'failed',reason:'',code:errorCodeOf(error),unknown:error&&error.code==='timeout',
+        message:error&&error.code==='timeout'?`${error.message} : issue inconnue`:'Control Center injoignable'});
+    }finally{inflight.delete(key)}
+  }
+
   function applyEdges(edges,vp){
     const sig=`${vp.width}x${vp.height}|`+edges.map(e=>`${e.id},${e.kind},${e.signal},${e.tone},${e.x1},${e.y1},${e.x2},${e.y2}`).join(';');
     if(sig===edgesSig)return;
@@ -1039,7 +1568,7 @@ body:has(#jarvisHands .jh-badge) .sc-status{bottom:52px}
     const vp=L.viewport(root.clientWidth||window.innerWidth,root.clientHeight||window.innerHeight);
     const now=Date.now();
     markFresh(lastState,now);
-    lastModel=L.viewModel(lastState,current,vp,{objectLimit:lastView?lastView.objectLimit:L.OBJECT_LIMIT,errorLabels:errorLabels(),
+    lastModel=L.viewModel(viewState(),current,vp,{objectLimit:lastView?lastView.objectLimit:L.OBJECT_LIMIT,errorLabels:errorLabels(),
       animatable:node=>(freshUntil.get(node.id)||{until:0}).until>now});
     applyNodes(lastModel.nodes);
     applyEdges(lastModel.edges,vp);
@@ -1096,7 +1625,8 @@ body:has(#jarvisHands .jh-badge) .sc-status{bottom:52px}
       if(!lastState&&lastView.phase==='loading')notes.push({cls:'sc-busy',main:'Scène · chargement…',meta:''});
     }
     if(lastModel&&lastModel.capacity.saturated){
-      notes.push({cls:'sc-full',main:'Scène pleine — archiver des travaux terminés',meta:`${lastModel.capacity.objects}/${lastModel.capacity.limit}`});
+      notes.push({cls:'sc-full',main:'Scène pleine — archiver des travaux terminés',meta:`${lastModel.capacity.objects}/${lastModel.capacity.limit}`,
+        action:I?'bulk':'',label:'Scène pleine : archiver les travaux terminés'});
       announce.push('Scène pleine : archiver des travaux terminés.');
     }
     if(lastModel&&(lastModel.coveredSignals.high||lastModel.coveredSignals.medium)){
@@ -1106,21 +1636,34 @@ body:has(#jarvisHands .jh-badge) .sc-status{bottom:52px}
       if(medium)notes.push({cls:'sc-warn',main:`${medium} ${medium>1?'signaux à vérifier':'signal à vérifier'} ${under(medium)}`,meta:''});
       announce.push('Des signaux sont cachés sous des fenêtres.');
     }
+    if(I&&lastModel&&lastModel.hidden){
+      const n=lastModel.hidden;
+      notes.push({cls:'sc-hidden',main:`${n} ${n>1?'objets masqués':'objet masqué'}`,meta:'afficher',action:'hidden',label:`${n} ${n>1?'objets masqués':'objet masqué'} : les lister pour les réafficher`});
+    }
     if(lastModel&&lastModel.offscreen){
       notes.push({cls:'',main:`${lastModel.offscreen} ${lastModel.offscreen>1?'objets':'objet'} hors champ`,meta:''});
       announce.push('Des objets sont hors champ.');
     }
     const text=announce.join(' ');
     if(liveEl&&text!==announced){announced=text;liveEl.textContent=text}
-    const sig=notes.map(n=>`${n.cls}:${n.main}:${n.meta}`).join('|');
+    const sig=notes.map(n=>`${n.cls}:${n.main}:${n.meta}:${n.action||''}`).join('|');
     if(sig===statusSig)return;
     statusSig=sig;
+    const focused=document.activeElement&&statusEl.contains(document.activeElement)?document.activeElement.dataset.action:null;
     statusEl.replaceChildren(...notes.map(n=>{
-      const note=element('div',`sc-note ${n.cls}`.trim());
+      const note=element(n.action?'button':'div',`sc-note ${n.cls}`.trim());
       note.append(element('span','sc-note-main',n.main));
       if(n.meta)note.append(element('span','sc-note-meta',n.meta));
+      if(n.action){
+        note.type='button';note.dataset.action=n.action;note.setAttribute('aria-label',n.label||n.main);
+        note.addEventListener('click',()=>{
+          if(n.action==='hidden')openHiddenMenu(note);
+          else if(n.action==='bulk')archiveFinished().catch(error=>consoleLog('error','scene.user_action_failed',{action:'bulk',error:String(error&&error.message||error)}));
+        });
+      }
       return note;
     }));
+    if(focused){const again=statusEl.querySelector(`[data-action="${focused}"]`);if(again)again.focus({preventScroll:true})}
     statusEl.hidden=!notes.length;
   }
 
@@ -1129,6 +1672,7 @@ body:has(#jarvisHands .jh-badge) .sc-status{bottom:52px}
     lastView=view;
     if(view.state!==lastState){
       lastState=view.state;
+      prunePending();
       scheduleRender();
     }
     renderStatus();
@@ -1200,7 +1744,8 @@ body:has(#jarvisHands .jh-badge) .sc-status{bottom:52px}
       const view=loop.view();
       return {enabled,mode:shared?'shared':'solo',role:view.role,leader:{held:leader.held,mode:leader.mode},loop:view.phase,
         revision:lastState?lastState.revision:null,nodes:nodes.size,commits:committer.stats(),stats:view.stats,
-        health:lastView?lastView.health:null,resolved:layout&&layoutState===lastState?layout.resolved.length:0,
+        health:lastView?lastView.health:null,resolved:layout&&layoutState===viewState()?layout.resolved.length:0,
+        pending:pending?pending.size():0,actions:{...actionStats},gesture:gesture?{id:gesture.id,mode:gesture.mode,moved:gesture.moved}:null,
         tabStops:root?root.querySelectorAll('[tabindex="0"]').length:0,animated:root?root.querySelectorAll('.sc-anim').length:0};
     },
   });

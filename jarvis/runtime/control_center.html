@@ -186,6 +186,22 @@ pre.block{background:#050b10;border:1px solid rgba(113,144,160,.16);border-radiu
 .ctxmenu button:disabled{opacity:.38;cursor:default}
 .ctxmenu kbd{font:inherit;font-size:10px;color:var(--muted)}
 .ctxmenu .sep{height:1px;background:var(--line);margin:5px 4px}
+/* Confirmation en page (Slice 08) : jamais `window.confirm`. Au-dessus du menu
+   (80), sous Barehands. Annuler a le focus : une action destructive se choisit. */
+.cdialog-back{position:fixed;inset:0;z-index:85;display:grid;place-items:center;padding:16px;background:rgba(2,6,10,.58);backdrop-filter:blur(3px)}
+.cdialog-back[hidden]{display:none}
+.cdialog{width:min(440px,100%);padding:18px 18px 14px;background:#08121a;border:1px solid rgba(110,231,255,.3);border-radius:10px;box-shadow:0 24px 70px rgba(0,0,0,.7);animation:toastIn .16s ease-out}
+.cdialog.danger{border-color:rgba(255,101,119,.42)}
+.cdialog h2{margin:0 0 10px;font-size:14px;font-weight:600;letter-spacing:.01em;text-transform:none;color:var(--text);overflow-wrap:anywhere}
+.cdialog ul{margin:0 0 16px;padding:0;list-style:none;display:grid;gap:6px;font-size:12.5px;line-height:1.45;color:#b3cbd6}
+.cdialog li strong{color:var(--text);font-weight:600;font-variant-numeric:tabular-nums}
+.cdialog .crow{display:flex;justify-content:flex-end;gap:8px}
+.cdialog button{padding:7px 14px;border-radius:6px;border:1px solid var(--line);background:rgba(3,14,20,.9);color:var(--text);font:inherit;font-size:13px;cursor:pointer}
+.cdialog button:focus-visible{outline:1px solid var(--accent);outline-offset:2px}
+.cdialog button.go{border-color:rgba(110,231,255,.5);color:var(--accent)}
+.cdialog.danger button.go{border-color:rgba(255,101,119,.55);color:var(--danger)}
+.cdialog button.go:hover{background:rgba(110,231,255,.08)}.cdialog.danger button.go:hover{background:rgba(255,101,119,.1)}
+@media(prefers-reduced-motion:reduce){.cdialog{animation:none}}
 .toasts{position:fixed;right:18px;bottom:18px;z-index:70;display:grid;gap:8px;width:min(340px,calc(100vw - 36px));pointer-events:none}
 .toast{pointer-events:auto;display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 8px 10px 12px;background:rgba(6,13,19,.97);border:1px solid var(--line);border-left:2px solid var(--accent);border-radius:8px;box-shadow:0 14px 40px rgba(0,0,0,.55);animation:toastIn .18s ease-out;transition:opacity .2s,transform .2s}
 .toast.ok{border-left-color:var(--ok)}
@@ -372,6 +388,7 @@ details.rd[open]>summary{margin-bottom:14px}
   <section class="panel" id="panel"><header><h2 id="panelTitle">Panel</h2><button id="closePanel" aria-label="Fermer">×</button></header><div class="body" id="panelBody"></div></section>
 </div>
 <div class="ctxmenu" id="ctxMenu" role="menu" hidden></div>
+<div class="cdialog-back" id="confirmBack" hidden><div class="cdialog" id="confirmDialog" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmBody"><h2 id="confirmTitle"></h2><ul id="confirmBody"></ul><div class="crow"><button type="button" id="confirmCancel">Annuler</button><button type="button" class="go" id="confirmGo">Confirmer</button></div></div></div>
 <div class="toasts" id="toasts" aria-live="polite"></div>
 <div class="bgpop" id="bgPop" role="dialog" aria-label="Notifications d’arrière-plan" hidden></div>
 
@@ -397,6 +414,7 @@ details.rd[open]>summary{margin-bottom:14px}
 /*__CONTROL_CENTER_CATALOG_JS__*/
 /*__CONTROL_CENTER_SCENE_JS__*/
 /*__CONTROL_CENTER_SCENE_LAYOUT_JS__*/
+/*__CONTROL_CENTER_SCENE_INTERACT_JS__*/
 const $=s=>document.querySelector(s);let current=null;const panel=$('#panel'),body=$('#panelBody'),title=$('#panelTitle');
 async function api(path,opts){const r=await fetch(path,opts),text=await r.text();let value={};try{value=text?JSON.parse(text):{}}catch{value={error:text}}if(!r.ok){const e=new Error(value.error||value.code||text||`HTTP ${r.status}`);e.status=r.status;throw e}return value}
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
@@ -545,7 +563,7 @@ async function openBackgroundPop(category,pill){
        un événement arrivé entre le rendu et le clic reste non vu, et regarder
        les tâches terminées n'efface pas un échec en passant. */
     try{await api('/api/background/ack',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({seq:data.seq,category})});closeBackgroundPop();refreshStatus()}
-    catch(e){ack.disabled=false;alert(e.message)}
+    catch(e){ack.disabled=false;toast({title:'Acquittement impossible',sub:e.message,kind:'bad'});console.error('background_ack_failed',e)}
   });
   (pop.querySelector('.bgitem')||ack).focus({preventScroll:true});
 }
@@ -563,7 +581,7 @@ document.addEventListener('keydown',e=>{
   const pill=document.querySelector(`#bgPills [data-bg-cat="${category}"]`);if(pill)pill.focus();
 },true);
 window.addEventListener('resize',()=>{if(BG.open)closeBackgroundPop()});
-async function renderErrors(){const archived=errorsView==='archived';title.textContent=archived?'Errors · Archives':'Errors';const items=await api('/api/errors'+(archived?'?archived=1&limit=500':''));body.innerHTML=`<div class="row" style="margin-bottom:12px"><button class="action" id="toggleErrors">${archived?'Erreurs actives':'Erreurs archivées'}</button>${archived?'':'<button class="action danger" id="archiveErrors">Archiver</button>'}<span class="hint">${items.length} entrée(s)</span></div><div>${entries(items)}</div>`;$('#toggleErrors').addEventListener('click',()=>{errorsView=archived?'active':'archived';renderErrors().catch(e=>{body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`})});const archive=$('#archiveErrors');if(archive)archive.addEventListener('click',async()=>{archive.disabled=true;try{await api('/api/errors/archive',{method:'POST'});await renderErrors();refreshStatus()}catch(e){alert(e.message)}finally{archive.disabled=false}})}
+async function renderErrors(){const archived=errorsView==='archived';title.textContent=archived?'Errors · Archives':'Errors';const items=await api('/api/errors'+(archived?'?archived=1&limit=500':''));body.innerHTML=`<div class="row" style="margin-bottom:12px"><button class="action" id="toggleErrors">${archived?'Erreurs actives':'Erreurs archivées'}</button>${archived?'':'<button class="action danger" id="archiveErrors">Archiver</button>'}<span class="hint">${items.length} entrée(s)</span></div><div>${entries(items)}</div>`;$('#toggleErrors').addEventListener('click',()=>{errorsView=archived?'active':'archived';renderErrors().catch(e=>{body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`})});const archive=$('#archiveErrors');if(archive)archive.addEventListener('click',async()=>{archive.disabled=true;try{await api('/api/errors/archive',{method:'POST'});await renderErrors();refreshStatus()}catch(e){toast({title:'Archivage des erreurs impossible',sub:e.message,kind:'bad'});console.error('errors_archive_failed',e)}finally{archive.disabled=false}})}
 async function refreshStatus(){try{const s=await api('/api/status'),v=s.voice_state||'idle',k=String(s.manual_wake_key||'f9').toUpperCase(),online=s.voice_online===true;renderLive(s.live);$('#voiceState').textContent=online?v.toUpperCase():'OFFLINE';const listening=s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`;$('#voiceHint').textContent=online?({idle:`${k} · DÉMARRER`,listening,thinking:`${k} · ANNULER`,speaking:`${k} · INTERROMPRE`}[v]||`${k} · CONTRÔLER`):`${k} · VOICE HORS LIGNE`;$('.face').style.visibility=online?'visible':'hidden';$('#agentName').textContent=String(s.agent.name||s.agent_cli||'agent').toUpperCase();$('#agentState').textContent=(s.agent.state||'stopped').toUpperCase();const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';renderBackgroundPills(s.background);try{if(window.JarvisScene)JarvisScene.gate(s.scene)}catch(sceneError){console.error('[scène] scene.gate_failed',sceneError)}AG.agent=s.agent||null;AG.cli=s.agent_cli||'';if(!(current==='agents'&&coreOk()))updateSubagentBadge(s.subagents,false);watchSubagents(s.subagents)}catch(e){try{if(window.JarvisScene)JarvisScene.statusLost()}catch(_sceneError){/* la scène ne doit pas casser le statut */}$('#voiceState').textContent='OFFLINE';$('#agentState').textContent='OFFLINE';$('#voiceHint').textContent='VOICE HORS LIGNE';$('.face').style.visibility='hidden';updateSubagentBadge(null)}}
 async function openPanel(name){current=name;document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.toggle('active',b.dataset.panel===name));panel.classList.add('open');title.textContent={errors:'Errors',trace:'Trace',agents:'Agents'}[name];closeMenu(false);if(name==='agents'){openAgentsPanel();return}stopAgentsPolling();body.innerHTML='<div class="empty">Chargement…</div>';try{if(name==='errors')await renderErrors();if(name==='trace')body.innerHTML=entries(await api('/api/trace'))}catch(e){body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`}}
 function closePanel(){current=null;panel.classList.remove('open');document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.remove('active'));closeMenu(false);stopAgentsPolling()}
@@ -1567,14 +1585,16 @@ function anchorBelow(el){
   const r=el.getBoundingClientRect();
   return {x:r.left,y:r.bottom+4,above:r.top-4,alignRight:r.right};
 }
-function openMenu(id,pos,origin){
+/* Menu contextuel générique (cartes d'agents, objets de la scène — Slice 08) :
+   même composant, même clavier (flèches, Début, Fin, Échap, Tab, touche Menu).
+   `run(act)` reçoit l'action choisie, menu déjà fermé ; sans `run`, l'action
+   va aux cartes d'agents (`runMenuAction`). */
+function showMenu({title,items,pos,origin,id=null,run=null}){
   closeMenu(false);
-  const t=findTask(id);
-  if(!t)return;
-  ctxMenu.innerHTML=`<div class="mhead">${esc(t.id==='brain'?'Brain':taskTitle(t))}</div>`+menuItems(id).map(it=>it==='-'
+  ctxMenu.innerHTML=`<div class="mhead">${esc(title)}</div>`+items.map(it=>it==='-'
     ?'<div class="sep" role="separator"></div>'
-    :`<button type="button" role="menuitem" data-act="${it.act}" class="${it.danger?'danger':''}"${it.disabled?' disabled':''}><span>${esc(it.label)}</span>${it.key?`<kbd>${esc(it.key)}</kbd>`:''}</button>`).join('');
-  ctxMenu.setAttribute('aria-label',`Actions : ${t.id==='brain'?'Brain':taskTitle(t)}`);
+    :`<button type="button" role="menuitem" data-act="${esc(it.act)}" class="${it.danger?'danger':''}"${it.disabled?' disabled':''}><span>${esc(it.label)}</span>${it.key?`<kbd>${esc(it.key)}</kbd>`:''}</button>`).join('');
+  ctxMenu.setAttribute('aria-label',`Actions : ${title}`);
   ctxMenu.style.left='0px';ctxMenu.style.top='0px';
   ctxMenu.hidden=false;
   const w=ctxMenu.offsetWidth,h=ctxMenu.offsetHeight,W=window.innerWidth,H=window.innerHeight;
@@ -1583,22 +1603,71 @@ function openMenu(id,pos,origin){
   if(y+h>H-8)y=(pos.above??y)-h;
   ctxMenu.style.left=Math.max(8,x)+'px';
   ctxMenu.style.top=Math.max(8,Math.min(y,H-h-8))+'px';
-  AG.menu={id,origin,at:performance.now()};
+  AG.menu={id,origin,run,at:performance.now()};
   const first=ctxMenu.querySelector('button:not(:disabled)');
   if(first)first.focus({preventScroll:true});
 }
+function openMenu(id,pos,origin){
+  closeMenu(false);
+  const t=findTask(id);
+  if(!t)return;
+  showMenu({title:t.id==='brain'?'Brain':taskTitle(t),items:menuItems(id),pos,origin,id});
+}
 function closeMenu(restore){
   if(!AG.menu){ctxMenu.hidden=true;return}
-  const {id,origin}=AG.menu;
+  const {id,origin,run}=AG.menu;
   AG.menu=null;
   ctxMenu.hidden=true;ctxMenu.innerHTML='';
   if(restore){
-    const el=origin&&origin.isConnected?origin:cardEl(id);
+    const el=origin&&origin.isConnected?origin:(id!==null?cardEl(id):null);
     if(el)el.focus({preventScroll:true});
   }
   // Les mises à jour retenues pendant l'ouverture du menu reprennent.
-  setTimeout(renderAgentsView,0);
+  if(!run)setTimeout(renderAgentsView,0);
 }
+
+/* Confirmation en page (Slice 08), jamais `window.confirm` : rend une promesse
+   vraie si l'utilisateur confirme. `lines` : texte, ou `[texte gras, suite]`.
+   Échap, clic hors du panneau ou « Annuler » : faux. Le focus revient où il
+   était. Une seule à la fois : une nouvelle demande annule la précédente. */
+const CONFIRM={resolve:null,previous:null};
+function confirmDialog({title,lines=[],confirmLabel='Confirmer',cancelLabel='Annuler',danger=false}){
+  if(CONFIRM.resolve)finishConfirm(false);
+  closeMenu(false);
+  const back=$('#confirmBack'),dialog=$('#confirmDialog');
+  $('#confirmTitle').textContent=title;
+  const list=$('#confirmBody');list.replaceChildren();
+  for(const line of lines){
+    const row=document.createElement('li');
+    if(Array.isArray(line)){const strong=document.createElement('strong');strong.textContent=line[0];row.append(strong,document.createTextNode(line[1]||''))}
+    else row.textContent=line;
+    list.append(row);
+  }
+  $('#confirmGo').textContent=confirmLabel;$('#confirmCancel').textContent=cancelLabel;
+  dialog.classList.toggle('danger',!!danger);
+  CONFIRM.previous=document.activeElement;
+  back.hidden=false;
+  $('#confirmCancel').focus({preventScroll:true});
+  return new Promise(resolve=>{CONFIRM.resolve=resolve});
+}
+function finishConfirm(value){
+  const resolve=CONFIRM.resolve,previous=CONFIRM.previous;
+  CONFIRM.resolve=null;CONFIRM.previous=null;
+  $('#confirmBack').hidden=true;
+  if(previous&&previous.isConnected&&typeof previous.focus==='function')try{previous.focus({preventScroll:true})}catch(_error){/* élément disparu */}
+  if(resolve)resolve(value);
+}
+$('#confirmGo').addEventListener('click',()=>finishConfirm(true));
+$('#confirmCancel').addEventListener('click',()=>finishConfirm(false));
+$('#confirmBack').addEventListener('mousedown',e=>{if(e.target===e.currentTarget){e.preventDefault();finishConfirm(false)}});
+$('#confirmBack').addEventListener('keydown',e=>{
+  e.stopPropagation();
+  if(e.key==='Escape'){e.preventDefault();finishConfirm(false)}
+  else if(e.key==='Tab'){
+    const buttons=[$('#confirmCancel'),$('#confirmGo')],i=buttons.indexOf(document.activeElement);
+    e.preventDefault();buttons[(i+(e.shiftKey?-1:1)+2)%2].focus();
+  }
+});
 async function runMenuAction(act,id){
   closeMenu(act!=='trace'&&act!=='details');
   if(act==='trace')return showTrace(id);
@@ -1623,7 +1692,9 @@ async function copyText(text){
 }
 async function brainAction(act){
   const running=activeAgents().length;
-  if((act==='kill'||act==='restart')&&running&&!confirm(`${act==='kill'?'Arrêter':'Redémarrer'} le brain interrompra ${plural(running,'sous-agent en cours','sous-agents en cours')}. Continuer ?`))return;
+  if((act==='kill'||act==='restart')&&running&&!await confirmDialog({title:`${act==='kill'?'Arrêter':'Redémarrer'} le brain ?`,
+    lines:[`Cela interrompra ${plural(running,'sous-agent en cours','sous-agents en cours')}.`],
+    confirmLabel:act==='kill'?'Arrêter le brain':'Redémarrer le brain',danger:true}))return;
   try{
     await api('/api/agent/'+act,{method:'POST'});
     toast({title:{start:'Brain démarré',restart:'Brain redémarré',kill:'Brain arrêté'}[act],kind:act==='kill'?'warn':'ok',ms:3000});
@@ -1649,7 +1720,9 @@ ctxMenu.addEventListener('mousedown',e=>e.preventDefault());  // garder le focus
 ctxMenu.addEventListener('click',e=>{
   const button=e.target.closest('button[data-act]');
   if(!button||button.disabled||!AG.menu)return;
-  runMenuAction(button.dataset.act,AG.menu.id);
+  const menu=AG.menu;
+  if(menu.run){closeMenu(true);menu.run(button.dataset.act);return}
+  runMenuAction(button.dataset.act,menu.id);
 });
 ctxMenu.addEventListener('mouseover',e=>{
   const button=e.target.closest('button[data-act]:not(:disabled)');
