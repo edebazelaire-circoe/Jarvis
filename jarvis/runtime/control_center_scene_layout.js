@@ -396,6 +396,25 @@
      déjà dessiné à sa taille, au centre de sa boîte. */
   const CAPSULE_MAX=Object.freeze({w:160,h:10});
 
+  /* Zone dessinée d'un point (px, carrée, centrée) et hauteur minimale d'une
+     capsule (px) : lues par la page (`position`) et par la capture. */
+  const POINT_HIT_PX=26,CAPSULE_MIN_HEIGHT_PX=24;
+
+  /* Rectangle dessiné d'un nœud du modèle de vue, en pixels de la fenêtre :
+     seule source du placement des nœuds du DOM et de la capture (Slice 09,
+     reprise QA M2). Point : zone `POINT_HIT_PX` centrée. Capsule : sa boîte, au
+     moins `CAPSULE_MIN_HEIGHT_PX` de haut, centrée verticalement ; fenêtre
+     dessinée en capsule faute de place (`compact`) : pilule de 28 px collée en
+     haut de sa boîte. Fenêtre : sa boîte. */
+  function drawnRect(node){
+    if(node.shape==='point')return {left:node.cx-POINT_HIT_PX/2,top:node.cy-POINT_HIT_PX/2,width:POINT_HIT_PX,height:POINT_HIT_PX};
+    if(node.shape==='capsule'){
+      const height=node.compact?CAPSULE_MIN_HEIGHT_PX+4:Math.max(node.box.height,CAPSULE_MIN_HEIGHT_PX);
+      return {left:node.box.left,top:node.compact?node.box.top:node.cy-height/2,width:node.box.width,height};
+    }
+    return {left:node.box.left,top:node.box.top,width:node.box.width,height:node.box.height};
+  }
+
   /* Boîte dessinée d'une représentation dans sa boîte stockée (unités). */
   function drawnBox(representation,box){
     if(representation!=='capsule'||(box.w<=CAPSULE_MAX.w&&box.h<=CAPSULE_MAX.h))return box;
@@ -907,7 +926,7 @@
 
   const api=Object.freeze({FRAME,SAFE_AREA,FACE_ZONE,OBJECT_LIMIT,DEFAULT_SIZE,WORK_BUDGET,COMMIT_MAX_ATTEMPTS,READABLE,MAX_ANIMATED,CAPSULE_MAX,drawnBox,
     RESTART_UNKNOWN_LABEL,restartUnknown,ARTIFACT_CATEGORIES,linkOf,explainedTarget,explainsIndex,artifactsExplaining,itemsOf,hostTail,isOrphanArtifact,orphanArtifacts,
-    artifactsLeftOrphan,placeFor,linkHost,
+    artifactsLeftOrphan,placeFor,linkHost,POINT_HIT_PX,CAPSULE_MIN_HEIGHT_PX,drawnRect,
     viewport,toScreen,cleanLine,cleanText,toneOf,isLiveSignal,signalUrgency,signalErrorClass,anchorsOf,depthOf,resolveLayout,
     stackOf,viewModel,compactShape,spatialOrder,nextFocus,commitKey,commitCommand,commitCandidates,nextRetryAt,classifyCommit,settleCommit});
   root.JarvisSceneLayout=api;

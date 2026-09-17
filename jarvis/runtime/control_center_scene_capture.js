@@ -43,61 +43,87 @@
   }
 
   const toneOf=(palette,key)=>palette.tones&&palette.tones[key]||palette.ink;
+  const FONT_FAMILY='ui-monospace,SFMono-Regular,Consolas,monospace';
+  const layoutApi=()=>root.JarvisSceneLayout||(typeof require==='function'?require('./control_center_scene_layout.js'):null);
 
   /* Commandes de dessin du modèle de vue `model` pour une fenêtre `vp` (pixels CSS).
      Arêtes (déjà triées par couche), puis nœuds par `stack` croissant, chacun
-     sous sa `shape` (compacte ou non) et dans sa `box` écran. */
-  function drawCommands(model,vp,palette){
+     dans son rectangle dessiné `JarvisSceneLayout.drawnRect` (la règle même du
+     DOM : forme compacte, capsule dans une boîte de fenêtre, zone d'un point).
+     Le texte est écrit à sa taille de la page **après** réduction (police
+     divisée par l'échelle) : sa lisibilité se juge comme à l'écran. */
+  function drawCommands(model,vp,palette,layout){
+    const L=layout||layoutApi();
     const size=captureSize(vp.width,vp.height);
+    const k=1/size.scale;
+    const font=(px,bold)=>`${bold?'bold ':''}${Math.round(px*k*10)/10}px ${FONT_FAMILY}`;
+    const textWidth=(text,px)=>String(text||'').length*px*k*.62;
     const commands=[{op:'scale',s:size.scale},{op:'fill',x:0,y:0,w:vp.width,h:vp.height,color:palette.background}];
     for(const edge of model.edges||[]){
       commands.push({op:'line',x1:edge.x1,y1:edge.y1,x2:edge.x2,y2:edge.y2,width:1.5,
         color:edge.signal?palette.error:edge.artifact?toneOf(palette,edge.tone):palette.edge,
-        dash:edge.artifact?[6,5]:edge.signal?[2,4]:[]});
+        dash:edge.artifact?[5,3]:edge.signal?[]:[3,4]});
     }
     const nodes=(model.nodes||[]).map((node,index)=>({node,index}))
       .sort((a,b)=>a.node.stack-b.node.stack||a.index-b.index).map(entry=>entry.node);
     for(const node of nodes){
-      const tone=toneOf(palette,node.tone),b=node.box;
+      const tone=toneOf(palette,node.tone),rect=L.drawnRect(node);
       if(node.shape==='point'){
-        const r=node.signal?5:7;
+        const cx=rect.left+rect.width/2,cy=rect.top+rect.height/2;
         const hollow=node.signal&&!node.live;
-        commands.push({op:'circle',cx:node.cx,cy:node.cy,r,fill:hollow?null:tone,stroke:hollow?tone:null});
-        if(node.live||node.exec==='running'||node.restartUnknown)
-          commands.push({op:'circle',cx:node.cx,cy:node.cy,r:r+4,fill:null,stroke:node.urgency==='high'?palette.error:tone,
-            dash:node.restartUnknown?[2,3]:[]});
-        if(node.pinned)commands.push({op:'circle',cx:node.cx+r+3,cy:node.cy-r-3,r:2.5,fill:palette.warn,stroke:null});
+        commands.push({op:'circle',cx,cy,r:4,fill:hollow?null:tone,stroke:hollow?tone:null,id:node.id});
+        if(node.live||node.exec==='running'||node.restartUnknown||node.exec==='completed')
+          commands.push({op:'circle',cx,cy,r:node.exec==='completed'&&!node.signal?7.5:9,fill:null,
+            stroke:node.urgency==='high'?palette.error:(node.live?tone:palette.muted),dash:node.restartUnknown?[2,3]:[]});
+        if(node.pinned)commands.push({op:'circle',cx:rect.left+rect.width-4,cy:rect.top+4,r:2.5,fill:palette.warn,stroke:null,marker:'pin'});
         continue;
       }
       const windowShape=node.shape==='window';
-      /* Rayon du thème (`--sc-radius` : 14 px Omega, 7 px circuit), comme les fenêtres du DOM. */
-      const radius=windowShape?(Number(palette.radius)>=0?Number(palette.radius):10):Math.min(b.height/2,14);
-      commands.push({op:'rrect',x:b.left,y:b.top,w:b.width,h:b.height,r:radius,fill:palette.surface,stroke:tone});
-      commands.push({op:'clip',x:b.left,y:b.top,w:b.width,h:b.height});
-      const inner=b.width-16;
+      const radius=windowShape?(Number(palette.radius)>=0?Number(palette.radius):10):rect.height/2;
+      commands.push({op:'rrect',x:rect.left,y:rect.top,w:rect.width,h:rect.height,r:radius,fill:palette.surface,stroke:tone,id:node.id});
+      commands.push({op:'clip',x:rect.left,y:rect.top,w:rect.width,h:rect.height});
       if(windowShape){
-        const head=node.itemCount?`${node.category} · ${node.itemCount} ${node.itemCount>1?'entrées':'entrée'}`:node.category;
-        commands.push({op:'text',x:b.left+8,y:b.top+8,text:fit(head,inner,11),font:'bold 11px monospace',color:tone});
-        commands.push({op:'text',x:b.left+8,y:b.top+24,text:fit(node.title,inner,13),font:'bold 13px monospace',color:palette.ink});
-        let y=b.top+44;
+        const left=rect.left+13,right=rect.left+rect.width-13;
+        let y=rect.top+11;
+        commands.push({op:'circle',cx:left+3.5,cy:y+5,r:3.5,fill:tone,stroke:null});
+        const pinSpace=node.pinned?11+8:0;
+        const meta=node.kind==='artifact'&&node.itemCount?`${node.itemCount} ${node.itemCount>1?'entrées':'entrée'}`:'';
+        const metaWidth=meta?textWidth(meta,9.5)+8:0;
+        const head=[node.category,node.execLabel].filter(Boolean).join(' · ').toUpperCase();
+        commands.push({op:'text',x:left+15,y,text:fit(head,right-left-15-metaWidth-pinSpace,9.5*k),font:font(9.5,true),color:tone});
+        if(meta)commands.push({op:'text',x:right-pinSpace-metaWidth+8,y,text:meta,font:font(9.5),color:palette.muted});
+        if(node.pinned)commands.push({op:'circle',cx:right-5.5,cy:y+5,r:3,fill:palette.warn,stroke:null,marker:'pin'});
+        y+=Math.max(17,11*k+6);
+        commands.push({op:'text',x:left,y,text:fit(node.title,right-left,13*k),font:font(13,true),color:palette.ink});
+        y+=13*k*1.35+8;
         for(const line of String(node.summary||'').split('\n')){
-          if(y+14>b.top+b.height)break;
-          commands.push({op:'text',x:b.left+8,y,text:fit(line,inner,12),font:'12px monospace',color:palette.muted});y+=16;
+          if(y+12*k>rect.top+rect.height)break;
+          commands.push({op:'text',x:left,y,text:fit(line,right-left,12*k),font:font(12),color:palette.muted});y+=12*k*1.5;
         }
         for(const item of node.items||[]){
-          if(y+14>b.top+b.height)break;
+          if(y+11*k>rect.top+rect.height)break;
           const text=[item.host,item.label,item.ref].filter(Boolean).join('  ');
-          commands.push({op:'text',x:b.left+8,y,text:fit(text,inner,12),font:'12px monospace',color:tone});y+=16;
+          commands.push({op:'text',x:left,y,text:fit(text,right-left,11*k),font:font(11),color:tone});y+=11*k*1.4+4;
         }
       }else{
-        const category=String(node.category||'').toUpperCase();
-        const y=b.top+Math.max(1,b.height/2-7);
-        commands.push({op:'text',x:b.left+10,y,text:fit(category,inner,11),font:'bold 11px monospace',color:tone});
-        const offset=10+Math.min(category.length*7+10,inner/2);
-        commands.push({op:'text',x:b.left+offset,y,text:fit(node.title,b.width-offset-8,12),font:'12px monospace',color:palette.ink});
+        const middle=rect.top+rect.height/2;
+        const inner=rect.width-11-12-(node.pinned?11+8:0);
+        commands.push({op:'circle',cx:rect.left+11+3.5,cy:middle,r:3.5,fill:tone,stroke:null});
+        let x=rect.left+11+7+8;
+        let room=Math.max(0,inner-7-8);
+        if(node.kind==='artifact'&&node.category){
+          /* Catégorie bornée (38 % comme la page), titre après sa largeur réelle : jamais superposés. */
+          const category=fit(String(node.category).toUpperCase(),Math.min(rect.width*.38,room),9*k);
+          if(category){
+            commands.push({op:'text',x,y:middle-4.5*k,text:category,font:font(9,true),color:tone});
+            const used=textWidth(category,9)+8;x+=used;room-=used;
+          }
+        }
+        const title=fit(node.title,room,12*k);
+        if(title)commands.push({op:'text',x,y:middle-6*k,text:title,font:font(12),color:palette.ink});
+        if(node.pinned)commands.push({op:'circle',cx:rect.left+rect.width-12-5.5,cy:middle,r:3,fill:palette.warn,stroke:null,marker:'pin'});
       }
       commands.push({op:'restore'});
-      if(node.pinned)commands.push({op:'circle',cx:b.left+b.width-8,cy:b.top+8,r:3,fill:palette.warn,stroke:null});
     }
     return {width:size.width,height:size.height,scale:size.scale,commands};
   }

@@ -243,3 +243,80 @@ def test_the_page_receives_the_capture_script_before_the_page_block(tmp_path):
     assert "leader.held&&leader.mode==='lock'" in page and "document.visibilityState!=='hidden'" in page
     del tmp_path
     assert ControlCenter  # le module qui insère le script s'importe
+
+
+# ------------------------------------------------------------------ reprise QA M2 : formes dessinées partagées
+
+
+def test_capture_draws_the_same_rectangles_as_the_page_for_compact_capsule_and_pinned_shapes(tmp_path):
+    result = run_node(tmp_path, r"""
+      const s=state([
+        obj('win','window',{origin:'brain',category:'note',geometry:{x:-30,y:-20,w:64,h:40},payload:{title:'Fenêtre compacte',summary:'x',items:[]}}),
+        obj('cap','artifact',{origin:'brain',category:'research',representation:'capsule',geometry:{x:-150,y:30,w:120,h:40},
+          constraints:{placed_by:'brain',pinned_by_user:true},payload:{title:'Capsule dans une boîte de fenêtre',summary:'',items:[]}}),
+        obj('star','agent',{geometry:{x:60,y:40,w:6,h:6},constraints:{placed_by:'resolver',pinned_by_user:true}}),
+      ]);
+      const out={};
+      for(const [w,h] of [[390,844],[800,600],[1920,1080]]){
+        const vp=L.viewport(w,h);
+        const model=L.viewModel(s,L.resolveLayout(s),vp,{});
+        const plan=C.drawCommands(model,vp,palette,L);
+        const drawn=Object.fromEntries(model.nodes.map(n=>[n.id,{shape:n.shape,compact:n.compact,rect:L.drawnRect(n)}]));
+        const shapes=Object.fromEntries(plan.commands.filter(c=>c.id).map(c=>[c.id,c]));
+        const pins=plan.commands.filter(c=>c.marker==='pin');
+        const texts=plan.commands.filter(c=>c.op==='text');
+        out[`${w}x${h}`]={drawn,shapes,pins,scale:plan.scale,fonts:texts.map(t=>t.font),texts:texts.map(t=>[t.x,t.y,t.text])};
+      }
+      return out;
+    """)
+    for size, view in result.items():
+        for object_id, drawn in view["drawn"].items():
+            command = view["shapes"][object_id]
+            rect = drawn["rect"]
+            if drawn["shape"] == "point":
+                assert command["op"] == "circle"
+                assert (command["cx"], command["cy"]) == (rect["left"] + rect["width"] / 2, rect["top"] + rect["height"] / 2), size
+            else:
+                assert (command["x"], command["y"], command["w"], command["h"]) == (rect["left"], rect["top"], rect["width"], rect["height"]), (size, object_id)
+        # Chaque repère d'épinglage est dans le rectangle dessiné de son objet.
+        rects = [d["rect"] for d in view["drawn"].values()]
+        for pin in view["pins"]:
+            assert any(r["left"] <= pin["cx"] <= r["left"] + r["width"] and r["top"] <= pin["cy"] <= r["top"] + r["height"] for r in rects)
+        # Texte compensé : taille de la page après réduction.
+        for font in view["fonts"]:
+            px = float(font.split("px")[0].split()[-1])
+            assert px * view["scale"] >= 9 - 0.01, (size, font)
+    small = result["390x844"]["drawn"]
+    assert small["win"]["shape"] == "capsule" and small["win"]["compact"] is True
+    assert small["win"]["rect"]["height"] == 28  # pilule collée en haut, pas la boîte entière
+    big = result["1920x1080"]["drawn"]
+    assert big["cap"]["shape"] == "capsule" and big["cap"]["rect"]["height"] >= 24
+
+
+def test_capsule_category_and_title_never_overprint(tmp_path):
+    result = run_node(tmp_path, r"""
+      const out=[];
+      for(const w of [60,90,140,300]){
+        const node={id:'c',shape:'capsule',compact:false,kind:'artifact',category:'research-long-category',title:'Titre assez long pour couper',
+          tone:'research',stack:1,box:{left:10,top:10,width:w,height:24},cx:10+w/2,cy:22,pinned:false,itemCount:0,items:[],summary:''};
+        const plan=C.drawCommands({nodes:[node],edges:[]},{width:1280,height:720},palette,L);
+        const texts=plan.commands.filter(c=>c.op==='text').map(t=>({x:t.x,text:t.text,font:t.font}));
+        out.push({w,texts});
+      }
+      return out;
+    """)
+    for row in result:
+        texts = row["texts"]
+        if len(texts) == 2:
+            category, title = texts
+            px = float(category["font"].split("px")[0].split()[-1])
+            assert title["x"] >= category["x"] + len(category["text"]) * px * 0.62, row
+        for text in texts:
+            assert text["x"] + len(text["text"]) * float(text["font"].split("px")[0].split()[-1]) * 0.62 <= 10 + row["w"] + 1, row
+
+
+def test_the_page_places_nodes_with_the_shared_drawn_rect():
+    page = PAGE_JS.read_text(encoding="utf-8")
+    assert "const rect=L.drawnRect(node);" in page and "CAPSULE_MIN_HEIGHT=24" not in page
+    capture = CAPTURE_JS.read_text(encoding="utf-8")
+    assert "L.drawnRect(node)" in capture

@@ -563,9 +563,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisScenePageCor
   const CHANNEL_NAME='jarvis.scene';
   const TAB_ID=`${Date.now().toString(36)}-${Math.random().toString(36).slice(2,10)}`;
   /* Zone sensible d'un point (étoile, signal), en pixels. */
-  const POINT_HIT=26;
-  /* Hauteur minimale dessinée d'une capsule (px), dans la page seulement. */
-  const CAPSULE_MIN_HEIGHT=24;
+  const POINT_HIT=L.POINT_HIT_PX;
   /* Un anneau ne s'anime que pendant ce délai après l'apparition du nœud ou
      un changement de son état (exécution, urgence) ; ensuite il reste fixe.
      Toute animation CSS en cours coûte un recalcul de style par image : au
@@ -838,14 +836,15 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   }
 
   const timers={setTimeout:(fn,ms)=>window.setTimeout(fn,ms),clearTimeout:id=>window.clearTimeout(id)};
+  /* Seul le meneur du verrou Web Locks, visible, scène allumée, répond (décision PM).
+     Déclaré avant la boucle qui lui remet les demandes. */
+  const capturer=Capture?Capture.createCaptureResponder({now:()=>Date.now(),
+    isLeader:()=>leader.held&&leader.mode==='lock',isVisible:()=>document.visibilityState!=='hidden',isEnabled:()=>enabled,
+    render:renderCapture,upload:uploadCapture,log:consoleLog}):null;
   const loop=Core.createSceneLoop({client:Client,request:getJson,...timers,now:()=>Date.now(),random:Math.random,
     createAbort:()=>new AbortController(),onUpdate:onLoopUpdate,log:consoleLog,
     broadcast:channel?message=>channel.postMessage({...message,from:TAB_ID}):null,
     onCapture:request=>{if(capturer)capturer.offer(request)}});
-  /* Seul le meneur du verrou Web Locks, visible, scène allumée, répond (décision PM). */
-  const capturer=Capture?Capture.createCaptureResponder({now:()=>Date.now(),
-    isLeader:()=>leader.held&&leader.mode==='lock',isVisible:()=>document.visibilityState!=='hidden',isEnabled:()=>enabled,
-    render:renderCapture,upload:uploadCapture,log:consoleLog}):null;
   const committer=Core.createResolverCommitter({layout:L,...timers,now:()=>Date.now(),random:Math.random,log:consoleLog,
     post:command=>requestJson('/api/scene/commands',{method:'POST',body:command,timeoutMs:15000})});
 
@@ -1125,18 +1124,12 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     for(const inner of el.querySelectorAll('.sc-item-link,.sc-origin'))inner.tabIndex=on?0:-1;
   }
 
+  /* Placement d'un nœud : `L.drawnRect`, la même règle que la capture (reprise QA M2). */
   function position(el,node){
-    let x,y,w=null,h=null;
-    if(node.shape==='point'){x=node.cx-POINT_HIT/2;y=node.cy-POINT_HIT/2}
-    else if(node.shape==='capsule'){
-      w=node.box.width;h=Math.max(node.box.height,CAPSULE_MIN_HEIGHT);x=node.box.left;
-      /* Fenêtre dessinée en capsule : collée en haut de sa boîte. */
-      y=node.compact?node.box.top:node.cy-h/2;
-      if(node.compact)h=CAPSULE_MIN_HEIGHT+4;
-    }else{x=node.box.left;y=node.box.top;w=node.box.width;h=node.box.height}
-    el.style.transform=`translate(${x}px,${y}px)`;
-    el.style.width=w===null?'':`${w}px`;
-    el.style.height=h===null?'':`${h}px`;
+    const rect=L.drawnRect(node);
+    el.style.transform=`translate(${rect.left}px,${rect.top}px)`;
+    el.style.width=node.shape==='point'?'':`${rect.width}px`;
+    el.style.height=node.shape==='point'?'':`${rect.height}px`;
     el.style.zIndex=String(node.stack);
   }
 
@@ -2117,11 +2110,9 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
 
   /* ------------------------------------------------------------ capture (Slice 09) */
 
-  let paletteMemo={key:'',value:null};
-  /* Couleurs du thème courant, lues sur la couche de scène (jetons `--sc-*`, `--tone`). */
+  /* Couleurs du thème courant, lues sur la couche de scène (jetons `--sc-*`, `--tone`) à chaque
+     capture : aucun cache, donc jamais une palette d'un autre thème ou d'un autre état (reprise QA). */
   function capturePalette(){
-    const key=`${document.documentElement.getAttribute('data-jarvis-theme')||''}`;
-    if(paletteMemo.key===key&&paletteMemo.value)return paletteMemo.value;
     const style=getComputedStyle(root);
     const read=(name,fallback)=>(style.getPropertyValue(name)||'').trim()||fallback;
     const probe=document.createElement('span');probe.hidden=true;root.appendChild(probe);
@@ -2133,7 +2124,6 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     const value={background:body&&body!=='rgba(0, 0, 0, 0)'?body:'#03080c',ink:read('--sc-ink','#dcecf4'),muted:read('--sc-muted','#8aa5b3'),
       edge:read('--sc-edge','rgba(151,191,209,.3)'),surface:read('--sc-surface','rgba(4,10,15,.9)'),warn:read('--sc-warn','#ffb85c'),
       radius:parseFloat(read('--sc-radius','10'))||0,error:tones.error||'#ff6b7d',tones};
-    paletteMemo={key,value};
     return value;
   }
 
