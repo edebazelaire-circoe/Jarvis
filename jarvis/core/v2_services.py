@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping
 import re
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
@@ -77,6 +77,30 @@ def _persisted_error_class(job: Job) -> str | None:
     if job.status is JobStatus.INTERRUPTED:
         return token
     return None
+
+
+def _persisted_work_link(job: Job) -> WorkLink | None:
+    """Rattachement d'un job `back_brain` relu depuis sa provenance persistée (`recover`, Slice 10)."""
+
+    from jarvis.domain.back_brain import BackBrainWorkPayload
+
+    source = getattr(BackBrainWorkPayload.from_payload(job.payload).provenance, "source", None)
+    if source is None:
+        return None
+    return WorkLink(work_id=job.id, correlation_id=source.correlation_id)
+
+
+def _known_work_link(work_id: str | None) -> WorkLink | None:
+    """`work_id` connu par ailleurs (étoile de la scène), s'il respecte le contrat ; sinon aucun."""
+
+    if work_id is None:
+        return None
+    try:
+        return WorkLink(work_id=work_id)
+    except (TypeError, ValueError):
+        # intentional: un identifiant hors contrat n'invente pas de lien ;
+        # l'étoile garde le sien (`_kept_work_ref`), l'état de travail s'en passe.
+        return None
 
 
 def is_speculative_job(job: Job) -> bool:
@@ -581,27 +605,42 @@ class JobService:
         # jamais `task.cancel()` : il interromprait l'écriture de `cancelled`.
         self._started: set[str] = set()
         self._cancel_requested: set[str] = set()
+        #: Jobs interrompus par `recover` dans cette vie de Core (Slice 10).
+        self._recovered: set[str] = set()
         from jarvis.core.owned_job_execution import OwnedJobExecution
         self.owned = OwnedJobExecution(self)
 
     async def recover(self) -> None:
+        """Interrompre les jobs `pending`/`running` d'une vie précédente de Core.
+
+        Rattachement : un job `back_brain` retrouve son lien depuis sa
+        provenance persistée (`_persisted_work_link`). Un autre job ne le peut
+        pas : `submit(work_id=…)` ne garde le `work_id` du cerveau qu'en mémoire
+        (`_links`, `_work_links`) et la ligne `jobs` n'a pas de colonne pour lui
+        (schéma 1/2 de `jarvis.sqlite3`, hors de cette Slice). Son observation
+        part donc sans `work_id` ; l'étoile de la scène garde le sien, déjà
+        persisté (`scene_projector._kept_work_ref`, Slice 10).
+        """
+
         for job in await self.state.list_jobs():
             if job.status not in {JobStatus.PENDING, JobStatus.RUNNING}:
                 continue
+            # Noté avant toute attente : `observe_persisted_outcomes`, qui peut
+            # tourner en même temps (boucle de la projection), ne le redit pas.
+            self._recovered.add(job.id)
             interrupted = replace(job, status=JobStatus.INTERRUPTED, error="core_restarted", completed_at=utc_now(), revision=job.revision + 1)
             await self.state.save_job(interrupted)
             if job.kind == "back_brain":
-                from jarvis.domain.back_brain import BackBrainWorkPayload
-                source = getattr(BackBrainWorkPayload.from_payload(job.payload).provenance, "source", None)
-                if source is not None:
-                    self._work_links[job.id] = WorkLink(work_id=job.id, correlation_id=source.correlation_id)
+                link = _persisted_work_link(job)
+                if link is not None:
+                    self._work_links[job.id] = link
                 await self.owned._publish(interrupted, "interrupted")
             else:
                 await self.events.publish(ProtocolEnvelope(message_type="job.interrupted", payload={"job_id": job.id, "kind": job.kind}, conversation_id=job.requested_by_conversation_id))
             await self._observe_work(interrupted, WorkStatus.INTERRUPTED, error_class="core_restarted")
             self._work_links.pop(job.id, None)
 
-    async def observe_persisted_outcomes(self, job_ids: Sequence[str]) -> int:
+    async def observe_persisted_outcomes(self, job_ids: Mapping[str, str | None]) -> int:
         """Remettre à l'état de travail l'issue persistée de jobs déjà terminés (Slice 10).
 
         Au redémarrage, la scène peut garder « en cours » l'étoile d'un job
@@ -611,21 +650,38 @@ class JobService:
         ceux-là, déjà terminés, sont observés ici tels qu'ils sont en base,
         pour que la scène dise leur vraie issue plutôt qu'une interruption.
 
-        Seuls les jobs terminaux, non spéculatifs (jamais une étoile) et
-        absents de l'exécution courante sont observés ; un identifiant inconnu est ignoré. Rend le
-        nombre d'issues remises. Ne lève pas pour un job : `_observe_work`
-        journalise son propre échec ; une lecture de base qui échoue lève.
+        Seuls les jobs terminaux, non spéculatifs (jamais une étoile), absents
+        de l'exécution courante et non repris par `recover` dans cette vie de
+        Core (qui les a déjà observés) sont observés ; un identifiant inconnu
+        est ignoré. L'ordre avec `recover` est donc indifférent.
+
+        `job_ids` : `job id → work_id` que l'étoile porte (ou `None`).
+        Rattachement : un job `back_brain` le reconstruit depuis sa provenance,
+        comme `recover` ; un autre reprend le `work_id` de l'étoile, seule trace
+        persistée du rattachement (la ligne `jobs` ne l'a pas).
+
+        Rend le nombre d'issues remises. Ne lève pas pour un job :
+        `_observe_work` journalise son propre échec ; une lecture de base qui
+        échoue lève.
         """
 
         observed = 0
-        for job_id in job_ids:
-            if job_id in self._running:
+        for job_id, known_work_id in job_ids.items():
+            if job_id in self._running or job_id in self._recovered:
                 continue
             job = await self.state.get_job(job_id)
-            if job is None or job.status in {JobStatus.PENDING, JobStatus.RUNNING} or is_speculative_job(job):
+            if (
+                job is None or job.status in {JobStatus.PENDING, JobStatus.RUNNING} or is_speculative_job(job)
+                or job_id in self._recovered
+            ):
                 continue
-            status = WorkStatus(job.status.value)
-            await self._observe_work(job, status, error_class=_persisted_error_class(job))
+            link = _persisted_work_link(job) if job.kind == "back_brain" else _known_work_link(known_work_id)
+            if link is not None:
+                self._work_links[job.id] = link
+            try:
+                await self._observe_work(job, WorkStatus(job.status.value), error_class=_persisted_error_class(job))
+            finally:
+                self._work_links.pop(job.id, None)
             observed += 1
         return observed
 

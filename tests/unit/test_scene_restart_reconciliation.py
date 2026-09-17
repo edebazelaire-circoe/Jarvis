@@ -381,7 +381,7 @@ async def test_stop_cancels_the_grace_timer_before_and_after_start():
     stack = RestartStack(repository=repository, restart_grace_s=RESTART_GRACE_S)
     await stack.scene.start()
     await stack.projector.reconcile_restart()
-    assert len(grace_tasks()) == 1
+    assert stack.projector.restart_marking_pending and grace_tasks() == []  # demandé : rien avant la boucle
     await stack.projector.stop()  # jamais démarrée
     assert grace_tasks() == []
     await stack.scene.close()
@@ -534,6 +534,7 @@ async def test_core_stop_during_the_grace_leaves_no_task_and_closes_the_scene(tm
     await core0.stop()
     core = JarvisCoreApplication(data_root=data)
     await core.start()
+    await until_true(lambda: _marking_done(core.scene_projector))
     assert len(grace_tasks()) == 1
     assert (await core.scene.snapshot()).get_object("claude:a").exec_state is ExecState.UNKNOWN
     await core.stop()
@@ -556,7 +557,7 @@ async def test_observe_persisted_outcomes_only_speaks_for_finished_real_jobs(tmp
         }
         for job in jobs.values():
             await core.state.save_job(job)
-        count = await core.jobs.observe_persisted_outcomes([job.id for job in jobs.values()] + ["absent"])
+        count = await core.jobs.observe_persisted_outcomes({**{job.id: None for job in jobs.values()}, "absent": None})
         items = {item.external_id: item for item in (await core.work_state.snapshot()).items}
     finally:
         await core.stop()
@@ -567,6 +568,201 @@ async def test_observe_persisted_outcomes_only_speaks_for_finished_real_jobs(tmp
     assert (by_name["cut"].status, by_name["cut"].error_class) == (WorkStatus.INTERRUPTED, "core_restarted")
     assert (by_name["stop"].status, by_name["stop"].error_class) == (WorkStatus.CANCELLED, None)
     assert by_name["live"] is None and by_name["spec"] is None
+
+
+async def _marking_done(projector: SceneProjector) -> bool:
+    return not projector.restart_marking_pending and projector.stats.reconciliations > 0
+
+
+# ------------------------------------------------------------------ suivi final : disponibilité, boucle, work_id
+
+
+class _SlowCommits(MemoryRepository):
+    def __init__(self, snapshot: SceneSnapshot, delay: float) -> None:
+        super().__init__()
+        self.stored = snapshot
+        self.commit_delay = delay
+
+
+def running_scene(count: int) -> SceneSnapshot:
+    return SceneSnapshot(scene_id="scene-memory", objects=tuple(star(f"claude:s{index}", ExecState.RUNNING) for index in range(count)))
+
+
+@pytest.mark.parametrize("stars", [0, 60])
+async def test_core_readiness_never_waits_for_the_marking(tmp_path, stars):
+    repository = _SlowCommits(running_scene(stars), delay=0.05)  # 60 étoiles × 50 ms = 3 s de marquage
+    core = JarvisCoreApplication(data_root=tmp_path / "data", scene_repository=repository, scene_restart_grace_s=RESTART_GRACE_S)
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    await core.start()
+    ready_after = loop.time() - started
+    try:
+        assert core.health.ready and ready_after < 1.0
+        if stars:
+            assert core.scene_projector.restart_marking_pending or core.scene_projector.stats.restart_marked < stars
+        await until_true(lambda: _marking_done(core.scene_projector), timeout=15)
+        snapshot = await core.scene.snapshot()
+        assert {item.exec_state for item in snapshot.objects} <= {ExecState.UNKNOWN}
+        assert len(grace_tasks()) == (1 if stars else 0)  # la grâce part après le marquage
+    finally:
+        await core.stop()
+    assert grace_tasks() == []
+
+
+async def test_no_work_event_is_projected_before_the_marking_completes():
+    repository = _SlowCommits(running_scene(20), delay=0.02)
+    async with Stack(repository=repository, restart_grace_s=RESTART_GRACE_S) as stack:
+        await stack.projector.stop()  # repartir d'une projection arrêtée, marquage demandé comme Core
+    stack = Stack(repository=repository, restart_grace_s=RESTART_GRACE_S)
+    await stack.scene.start()
+    await stack.projector.reconcile_restart()
+    stack.projector.start()
+    try:
+        # Pendant le marquage (≈ 0,4 s), deux observations arrivent : l'une redit s0 en cours, l'autre en fait un échec.
+        await asyncio.sleep(0.05)
+        assert stack.projector.restart_marking_pending
+        await stack.work.observe(obs("s0", label="tâche s0"))
+        await stack.work.observe(obs("s1", WorkStatus.FAILED, label="tâche s1", at=1))
+        await settled(stack.projector, timeout=10)
+        snapshot = await stack.snapshot()
+    finally:
+        await stack.projector.stop()
+        await stack.scene.close()
+    assert snapshot.get_object("claude:s0").exec_state is ExecState.RUNNING  # jamais réécrite `unknown` après coup
+    assert snapshot.get_object("claude:s1").exec_state is ExecState.FAILED
+    assert stack.projector.restart_tracked_count == 18
+    assert stack.diagnostics.kinds(SCENE_RESTART_MARKED_KIND)[0][1]["marked"] == 20
+
+
+async def test_stopping_during_the_marking_leaves_no_task_and_no_timer():
+    for delay in (0.0, 0.05, 0.15):
+        repository = _SlowCommits(running_scene(10), delay=0.03)
+        stack = Stack(repository=repository, restart_grace_s=0.05)
+        await stack.scene.start()
+        await stack.projector.reconcile_restart()
+        stack.projector.start()
+        await asyncio.sleep(delay)
+        await stack.projector.stop()
+        await asyncio.sleep(0.1)
+        left = [task.get_name() for task in asyncio.all_tasks() if task.get_name().startswith("jarvis-scene") and not task.done()]
+        await stack.scene.close()
+        assert left == [], delay
+
+
+async def test_a_non_store_failure_at_grace_expiry_backs_off_and_never_starves_the_loop():
+    async with RestartStack(repository=repository_with(seeded_scene()), restart_grace_s=0.05) as stack:
+        real = stack.work.snapshot
+        calls = 0
+
+        async def failing():
+            nonlocal calls
+            calls += 1
+            # Rend la main une fois : une régression qui boucle à vide se voit
+            # alors au compteur (des milliers d'appels) au lieu de figer le test.
+            await asyncio.sleep(0)
+            raise RuntimeError("work snapshot defect (test)")
+
+        ticks = 0
+
+        async def ticker():
+            nonlocal ticks
+            while True:
+                ticks += 1
+                await asyncio.sleep(0.001)
+
+        stack.work.snapshot = failing
+        task = asyncio.create_task(ticker())
+        await asyncio.sleep(0.4)
+        task.cancel()
+        spun = calls
+        stack.work.snapshot = real
+        await grace_expired(stack)
+    assert 1 <= spun <= 20  # attente croissante de 10 à 50 ms (bornes du Stack), réconciliation comprise : pas 20 000
+    assert ticks >= 10  # ~27 sous Windows (horloge de 15 ms) ; une boucle à vide n en laisse passer aucun
+    failed = [data for _, data in stack.diagnostics.kinds(SCENE_PROJECTION_FAILED_KIND)]
+    assert [data["where"] for data in failed].count("restart_grace") == 1
+    assert stack.diagnostics.kinds(SCENE_RESTART_GRACE_EXPIRED_KIND)[0][1]["interrupted"] == len(MARKED)
+
+
+async def test_a_job_outcome_read_back_after_a_restart_keeps_the_brain_work_id(tmp_path):
+    class Done:
+        async def execute(self, job, progress=None):
+            return {}
+
+        async def cancel(self, job_id):
+            return None
+
+    data = tmp_path / "data"
+    core = JarvisCoreApplication(data_root=data, workers={"demo": Done()})
+    await core.start()
+    job = await core.jobs.submit(Job(kind="demo"), work_id="brain-work-42", correlation_id="corr-1")
+    star_id = star_object_id("job", job.id)
+
+    async def completed() -> bool:
+        item = (await core.scene.snapshot()).get_object(star_id)
+        return item is not None and item.exec_state is ExecState.COMPLETED
+    await until_true(completed)
+    running = Job(kind="demo", status=JobStatus.RUNNING, started_at=datetime.now(timezone.utc))
+    await core.state.save_job(running)
+    for object_id, work_id in ((star_id, "brain-work-42"), (star_object_id("job", running.id), "brain-work-43")):
+        await core.scene.apply(SceneCommand(op=SceneOp.UPSERT_OBJECT, actor=SceneActor.RUNTIME, object_id=object_id, fields=SceneObjectFields(
+            kind=SceneObjectKind.JOB, category="job", exec_state=ExecState.RUNNING,
+            work_ref=WorkRef(source="job", external_id=object_id.split(":", 1)[1], work_id=work_id))))
+    await core.stop()  # image d'arrêt brutal : fin écrite en base, étoile restée « en cours »
+
+    core = JarvisCoreApplication(data_root=data, workers={"demo": Done()}, scene_restart_grace_s=0.3)
+    await core.start()
+    try:
+        await until_true(lambda: _marking_done(core.scene_projector))
+        await settled(core.scene_projector)
+        snapshot = await core.scene.snapshot()
+        items = {item.external_id: item for item in (await core.work_state.snapshot()).items}
+    finally:
+        await core.stop()
+    finished = snapshot.get_object(star_id)
+    assert (finished.exec_state, finished.work_ref.work_id) == (ExecState.COMPLETED, "brain-work-42")
+    assert items[job.id].link.work_id == "brain-work-42"  # l'état de travail le retrouve aussi
+    recovered = snapshot.get_object(star_object_id("job", running.id))
+    # `recover` : la ligne `jobs` n'a pas de work_id ; l'étoile garde le sien.
+    assert (recovered.exec_state, recovered.work_ref.work_id) == (ExecState.INTERRUPTED, "brain-work-43")
+    assert snapshot.get_object(signal_object_id(recovered.object_id)).work_ref.work_id == "brain-work-43"
+
+
+async def test_a_back_brain_outcome_read_back_rebuilds_its_link_like_recover(tmp_path):
+    from tests.unit.test_back_brain_tasks import ControlledWorker, admitted, settle, submit
+
+    data = tmp_path / "data"
+    worker = ControlledWorker()
+    core = JarvisCoreApplication(data_root=data, workers={"back_brain": worker})
+    await core.start()
+    _, admission = await admitted(core)
+    accepted = await submit(core, admission)
+    await asyncio.wait_for(worker.started.wait(), 2)
+    worker.release.set()
+    await settle(core, accepted.job_id)
+    star_id = star_object_id("job", accepted.job_id)
+
+    async def completed() -> bool:
+        item = (await core.scene.snapshot()).get_object(star_id)
+        return item is not None and item.exec_state is ExecState.COMPLETED
+    await until_true(completed)
+    before = (await core.scene.snapshot()).get_object(star_id).work_ref
+    await core.scene.apply(SceneCommand(op=SceneOp.PATCH_OBJECT, actor=SceneActor.RUNTIME, object_id=star_id,
+                                        fields=SceneObjectFields(exec_state=ExecState.RUNNING)))
+    await core.stop()
+
+    core = JarvisCoreApplication(data_root=data, workers={"back_brain": ControlledWorker()}, scene_restart_grace_s=0.3)
+    await core.start()
+    try:
+        await until_true(lambda: _marking_done(core.scene_projector))
+        await settled(core.scene_projector)
+        item = {entry.external_id: entry for entry in (await core.work_state.snapshot()).items}[accepted.job_id]
+        after = (await core.scene.snapshot()).get_object(star_id)
+    finally:
+        await core.stop()
+    assert before.work_id == accepted.job_id
+    assert item.link.work_id == accepted.job_id and item.link.correlation_id is not None
+    assert (after.exec_state, after.work_ref.work_id) == (ExecState.COMPLETED, accepted.job_id)
 
 
 def test_the_projector_refuses_a_non_positive_grace():

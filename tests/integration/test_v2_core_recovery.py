@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 
 import pytest
@@ -71,6 +72,12 @@ async def test_core_restart_restores_the_identical_scene_twice(tmp_path):
 
     core2 = JarvisCoreApplication(data_root=tmp_path)
     await core2.start()
+    # Slice 10 (suivi final) : le marquage est le premier travail de la
+    # projection, il ne retient plus le démarrage de Core.
+    for _ in range(500):
+        if not core2.scene_projector.restart_marking_pending and core2.scene_projector.stats.reconciliations:
+            break
+        await asyncio.sleep(0.01)
     restored = await core2.scene.snapshot()
     # Slice 10 (changement délibéré) : l'étoile encore « en cours » d'une vie
     # précédente revient `unknown` en une révision ; tout le reste, géométrie
