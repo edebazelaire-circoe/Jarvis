@@ -558,7 +558,8 @@ async def test_a_long_stream_json_line_never_stops_the_brain_reader(monkeypatch,
     await agent.stop()
     assert seen["limit"] == claude_local.STREAM_LINE_LIMIT_BYTES >= 16 * 1024 * 1024
 
-    image_line = json.dumps({"type": "user", "message": {"content": [{"type": "image", "data": "A" * 200_000}]}}).encode() + b"\n"
+    image_line = json.dumps({"type": "user", "message": {"content": [{"type": "tool_result", "content": [
+        {"type": "text", "text": "{}"}, {"type": "image", "source": {"type": "base64", "data": "A" * 200_000}}]}]}}).encode() + b"\n"
     result_line = json.dumps({"type": "result", "result": "ok"}).encode() + b"\n"
     for limit, expect_skip in ((claude_local.STREAM_LINE_LIMIT_BYTES, False), (4096, True)):
         reader = asyncio.StreamReader(limit=limit)
@@ -573,4 +574,6 @@ async def test_a_long_stream_json_line_never_stops_the_brain_reader(monkeypatch,
         events = [e["data"].get("type") for e in kinds if e["kind"] == "agent.event"]
         assert "result" in events  # la lecture continue après la ligne longue
         assert ("user" in events) is not expect_skip
+        # Image jamais recopiée au journal : type et taille seulement.
+        assert "A" * 1000 not in (runtime / "trace.jsonl").read_text(encoding="utf-8")
         assert any(e["kind"] == "agent.stream_line_too_long" and e["level"] == "error" for e in kinds) is expect_skip

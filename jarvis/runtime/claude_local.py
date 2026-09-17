@@ -170,6 +170,31 @@ DISPLAY_TOOLS = frozenset(f"mcp__{DISPLAY_SERVER_NAME}__{name}" for name in DISP
 # jamais la main.
 STREAM_LINE_LIMIT_BYTES = 16 * 1024 * 1024
 
+def without_image_data(event: dict[str, Any]) -> dict[str, Any]:
+    """L'événement, où chaque bloc `image` de résultat d'outil garde son type et sa taille, sans ses données.
+
+    Seuls les événements qui en portent sont copiés ; les autres sont rendus tels quels.
+    """
+
+    message = event.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, list):
+        return event
+    changed = False
+    blocks = []
+    for block in content:
+        inner = block.get("content") if isinstance(block, dict) else None
+        if isinstance(inner, list) and any(isinstance(item, dict) and item.get("type") == "image" for item in inner):
+            changed = True
+            block = {**block, "content": [
+                {"type": "image", "omitted_bytes": len(json.dumps(item.get("source") or item.get("data") or ""))}
+                if isinstance(item, dict) and item.get("type") == "image" else item
+                for item in inner
+            ]}
+        blocks.append(block)
+    return {**event, "message": {**message, "content": blocks}} if changed else event
+
+
 # Réponses spontanées gardées pour `/api/agent/notices` : assez pour couvrir une
 # coupure du lecteur, trop peu pour devenir un historique.
 NOTICE_LIMIT = 50
@@ -1069,6 +1094,9 @@ class ClaudeLocalAgent:
             except json.JSONDecodeError:
                 event = {"type": "stdout", "text": text}
             if isinstance(event, dict):
+                # Une image rendue par un outil (`scene_capture`) n'entre ni dans le
+                # journal ni dans l'historique en mémoire : sa taille seulement.
+                event = without_image_data(event)
                 self._record(event)
                 try:
                     self._audit_turn(event)
