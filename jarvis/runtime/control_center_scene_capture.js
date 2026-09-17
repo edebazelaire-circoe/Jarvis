@@ -154,6 +154,26 @@
     }
   }
 
+  /* Encodage PNG synchrone (reprise QA finale). `convertToBlob` et `toBlob` ne
+     rendent la main qu'à la prochaine image produite par la page : sur un thème
+     sans animation (circuit-board), une page immobile n'en produit pas et
+     l'encodage attendait de 0,3 à 5 s (l'échéance). `toDataURL` encode tout de
+     suite, sans image, sans boucle d'animation ni worker : environ 20 à 50 ms
+     pour 1280×720, pris seulement pendant une capture. `decode` = `atob`. */
+  const PNG_DATA_URL='data:image/png;base64,';
+  function pngBytes(dataUrl,decode){
+    if(typeof dataUrl!=='string'||!dataUrl.startsWith(PNG_DATA_URL)||dataUrl.length===PNG_DATA_URL.length){
+      throw new Error('PNG non produit par le canevas');
+    }
+    const binary=decode(dataUrl.slice(PNG_DATA_URL.length));
+    const bytes=new Uint8Array(binary.length);
+    for(let index=0;index<binary.length;index++)bytes[index]=binary.charCodeAt(index);
+    return bytes;
+  }
+  function encodePng(canvas,decode){
+    return pngBytes(canvas.toDataURL('image/png'),decode);
+  }
+
   function validRequest(request){
     return !!request&&typeof request==='object'&&typeof request.id==='string'&&CAPTURE_ID.test(request.id)
       &&Number.isInteger(request.remaining_ms)&&request.remaining_ms>=0;
@@ -212,7 +232,7 @@
     return {offer,stats:()=>({...stats})};
   }
 
-  const api=Object.freeze({MAX_CAPTURE_WIDTH,MAX_CAPTURE_HEIGHT,TONE_KEYS,captureSize,fit,drawCommands,paint,validRequest,createCaptureResponder});
+  const api=Object.freeze({MAX_CAPTURE_WIDTH,MAX_CAPTURE_HEIGHT,TONE_KEYS,captureSize,fit,drawCommands,paint,pngBytes,encodePng,validRequest,createCaptureResponder});
   root.JarvisSceneCapture=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

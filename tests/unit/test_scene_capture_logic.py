@@ -320,3 +320,30 @@ def test_the_page_places_nodes_with_the_shared_drawn_rect():
     assert "const rect=L.drawnRect(node);" in page and "CAPSULE_MIN_HEIGHT=24" not in page
     capture = CAPTURE_JS.read_text(encoding="utf-8")
     assert "L.drawnRect(node)" in capture
+
+
+# ------------------------------------------------------------------ reprise QA finale : encodage sans attendre d'image
+
+
+def test_png_is_encoded_synchronously_from_the_canvas_and_checked(tmp_path):
+    result = run_node(tmp_path, r"""
+      const png=Buffer.from('89504e470d0a1a0a0000000d49484452','hex');
+      const calls=[];
+      const canvas={toDataURL:type=>{calls.push(type);return 'data:image/png;base64,'+png.toString('base64')}};
+      const bytes=C.encodePng(canvas,value=>atob(value));
+      const refused=[];
+      for(const url of ['data:,','data:image/png;base64,','data:image/jpeg;base64,AAAA',null]){
+        try{C.pngBytes(url,value=>atob(value));refused.push(false)}catch(_error){refused.push(true)}
+      }
+      return {calls,same:Buffer.from(bytes).equals(png),isUint8:bytes instanceof Uint8Array,refused};
+    """)
+    assert result == {"calls": ["image/png"], "same": True, "isUint8": True, "refused": [True, True, True, True]}
+
+
+def test_the_page_never_waits_for_a_frame_to_encode_a_capture():
+    page = PAGE_JS.read_text(encoding="utf-8")
+    start = page.index("async function renderCapture(){")
+    body = page[start:page.index("async function uploadCapture(", start)]
+    assert "Capture.encodePng(canvas," in body
+    for waiting in ("convertToBlob", "toBlob", "OffscreenCanvas", "requestAnimationFrame", "Worker"):
+        assert waiting not in body

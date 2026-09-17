@@ -2135,17 +2135,16 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(!lastModel)throw new Error('scène pas encore dessinée');
     const vp=L.viewport(root.clientWidth||window.innerWidth,root.clientHeight||window.innerHeight);
     const plan=Capture.drawCommands(lastModel,vp,capturePalette());
-    let blob;
-    if(typeof OffscreenCanvas==='function'){
-      const canvas=new OffscreenCanvas(plan.width,plan.height);
+    /* Canevas hors document, encodé de façon synchrone : ne dépend d'aucune image
+       produite par la page (voir `JarvisSceneCapture.encodePng`). */
+    const canvas=document.createElement('canvas');canvas.width=plan.width;canvas.height=plan.height;
+    try{
       Capture.paint(canvas.getContext('2d'),plan);
-      blob=await canvas.convertToBlob({type:'image/png'});
-    }else{
-      const canvas=document.createElement('canvas');canvas.width=plan.width;canvas.height=plan.height;
-      Capture.paint(canvas.getContext('2d'),plan);
-      blob=await new Promise((resolve,reject)=>canvas.toBlob(value=>value?resolve(value):reject(new Error('PNG non produit')),'image/png'));
+      const blob=new Blob([Capture.encodePng(canvas,value=>window.atob(value))],{type:'image/png'});
+      return {blob,width:plan.width,height:plan.height};
+    }finally{
+      canvas.width=0;canvas.height=0;
     }
-    return {blob,width:plan.width,height:plan.height};
   }
 
   async function uploadCapture(id,blob){
