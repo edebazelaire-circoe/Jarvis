@@ -1910,8 +1910,8 @@ Core stays the owner (decision 11).
 | Piece | File | Role |
 | --- | --- | --- |
 | Pure layout | `jarvis/runtime/control_center_scene_layout.js` (`window.JarvisSceneLayout`, marker `/*__CONTROL_CENTER_SCENE_LAYOUT_JS__*/`) | coordinate frame, text neutralisation, category tones, `isLiveSignal`, AutoResolver, view model, commit ledger |
-| Page core (pure) | `jarvis/runtime/control_center_scene_page.js` › `JarvisScenePageCore` (marker `/*__CONTROL_CENTER_SCENE_PAGE_JS__*/`) | long-poll loop state machine and resolver committer; every dependency injected (requests, timers, clock, random) |
-| Browser block | same file, `installJarvisScene` IIFE (`window.JarvisScene` = `{gate, inspect}`) | scene container, SVG, DOM nodes, Web Locks leadership, gate, status indicator |
+| Page core (pure) | `jarvis/runtime/control_center_scene_page.js` › `JarvisScenePageCore` (marker `/*__CONTROL_CENTER_SCENE_PAGE_JS__*/`) | loop state machine (leader, follower, solo), message validation and resolver committer; every dependency injected (requests, timers, clock, random, broadcast) |
+| Browser block | same file, `installJarvisScene` IIFE (`window.JarvisScene` = `{gate, statusLost, inspect}`) | scene container, SVG, DOM nodes, Web Locks leadership, BroadcastChannel, gate, status indicator, keyboard |
 | Tests | `tests/unit/test_scene_renderer_logic.py` | node runs of the served files with fake timers and requests |
 
 Both files are inserted verbatim by `ControlCenter.index`: the layout file right
@@ -1924,7 +1924,7 @@ overrides the file). `refreshStatus` calls `JarvisScene.gate(s.scene)`. Off (the
 default): no container, no style, no scene request, so the page is the one from
 before Slice 05. Switching on creates the container and starts the loop; switching
 off aborts the long-poll, releases the lock, stops the committer and removes the
-container. A failed status read leaves the gate unchanged.
+container and its style element. A failed status read leaves the gate unchanged.
 
 **Coordinate frame** (also in [scene-model.md](scene-model.md) › *Coordinate
 frame*). Origin (0, 0) at the centre of the scene container (= the window), x
@@ -1937,10 +1937,25 @@ extent: x ∈ ±W/(2s), y ∈ ±H/(2s). `geometry {x, y}` is the top-left corner
 `{w, h}` the size, same units. A `point` is drawn at its box centre with a fixed
 26 px hit area; `capsule` and `window` fill their box (text clipped, box never
 resized). An object outside the window is never moved (decision 10): it is
-clipped and counted in "N objets hors champ". Exposed to the brain by the
-`scene_inspect` legend `frame` line (`SCENE_FRAME_NOTE`), the `geometry` schema
+clipped and counted in "N objets hors champ".
+
+**Composition safe area** (Slice 05 QA rework): x ∈ [−152, 138], y ∈ [−72, 68]
+(`SCENE_SAFE_AREA` in `jarvis/domain/scene.py`, `SAFE_AREA` in the layout file,
+parity test). It is the part of the frame no control covers at 1280 × 720, the
+smallest supported 16:9 size (4 px per unit), in both themes. Measured there: top
+bar bottom y −76.5 (circuit brand and state; Omega state pill −78.5, Omega dock
+−77); circuit dock left edge x 142.5; voice hint top y 76.5; status chips top y 79
+(one row) or 71 (two rows). The margins are 12–18 px. Larger windows give the
+controls fewer units; a window that is not 16:9 but narrower than 1280 px, the
+GPT-Live banner (a transient alert) and the Barehands badge (test mode) can
+still cover the edges. The resolver places only inside the safe area. The brain
+reads it in the `scene_inspect` legend `frame` line (`SCENE_FRAME_NOTE`: "zone
+sûre x -152..138, y -72..68 (haut gauche ≈ x -150, y -70) ; cadre visible … dont
+les bords peuvent passer sous les commandes"), the `geometry` schema
 description, and one line of `BRAIN_DISPLAY_PROMPT` ("haut gauche ≈ x -150,
-y -80").
+y -70 ; bas droite : x + w ≤ 138, y + h ≤ 68"). Browser check: a brain window at
+(−150, −70, 60 × 36) overlaps no control at 1920 × 1080, 1366 × 768 and
+1280 × 720 in both themes (corner and title hit tests return the window).
 
 **Stacking registry.** Theme-independent. The scene container is its own
 stacking context, so scene layers (0–1000) never escape it.
@@ -1966,8 +1981,9 @@ container, the SVG is at 0 and each node at
 `layer × 2 000 001 + (order + 1 000 000) + 1` (monotonic in layer then order,
 below 2³¹; ties follow Core order, which is DOM order); the status indicator
 sits above all nodes. A hovered or focused point is raised so its label stays
-readable. `tests/unit/test_scene_renderer_logic.py` checks the registry against
-the CSS of the three files.
+readable; the status chips and the live region sit above all nodes.
+`tests/unit/test_scene_renderer_logic.py` checks the registry against the CSS of
+the three files.
 
 **View model and visual grammar.** `viewModel(state, layout, viewport)` returns
 the visible nodes in Core order (hidden objects are neither drawn, nor placed,
@@ -1981,13 +1997,31 @@ when its geometry or stack changes.
 - Primary colour = category tone: known families, otherwise a stable
   FNV-hashed tone.
 - `exec_state` is a secondary cue only: breathing ring (running), dashed ring
-  (pending), double ring (blocked), drawn badge (failed, interrupted,
-  cancelled), check on terminated capsules and windows.
+  (pending), double ring (blocked), thin static ring (completed point: finished,
+  not yet put away, decision 12), drawn badge (failed, interrupted, cancelled),
+  check on terminated capsules and windows.
 - Signals are live iff `isLiveSignal`, the same rule as `is_live_signal` (an
   `explains` relation whose id is the signal's id). Urgency: `high` (failed or
   error tone), `medium`, `low` for a `payload.title` of `process_stopped`, and
-  `none` when retired (hollow outline, no ring, no link).
+  `none` when retired (hollow outline, no ring, no link). Low urgency is
+  decided on what the projector writes for a runtime signal: `origin` runtime,
+  `category` `interrupted` and error class `process_stopped` (the projector
+  carries the error class in `payload.title`). The displayed title of a runtime
+  signal maps its error class through the page's `ERROR_CLASSES` wording
+  ("processus arrêté", "Core redémarré"…) or a status token through the French
+  status labels; an unmapped class ("TimeoutError") stays as is.
 - Completed work stays drawn.
+- **Compact rendering** (page only, never committed, the scene representation
+  is unchanged): a window whose box is under 180 × 96 px is drawn as a capsule
+  (title only, 28 px high, at the top of its box); a capsule narrower than 72 px
+  as a point with its hover label; a capsule is at least 24 px high. At
+  800 × 1000 (2.5 px per unit) a default 64 × 40 window becomes a capsule.
+- Window title: two lines at most (margin, not padding, so no third line
+  shows); summary and item list fade out at the bottom instead of cutting a row
+  (no fade when the list fits).
+- Point labels stay inside the scene: shifted horizontally from the node centre
+  and the label's layout width (unaffected by its transition), and placed above
+  the point near the bottom edge.
 - Aesthetic reference: the grilling session's visual grammar and the existing
   Omega theme (dark glass surfaces, thin borders, monospace, `--omega-accent`
   palette). The visual-direction document named by the handoff is not in the
@@ -2009,9 +2043,18 @@ Removing U+200D also splits emoji ZWJ sequences (accepted).
 **Motion.** Only compositor properties move: node `transform` (0.42 s ease-out,
 enabled after the first placement so nothing slides in from the origin), ring
 opacity and scale loops, label fade. A size or representation change is
-immediate. `prefers-reduced-motion: reduce` removes every transition and
-animation (static rings). There is no `requestAnimationFrame` loop: one render
-is scheduled per state change or window resize. Hover (label) is the only pointer
+immediate. Any running CSS animation costs a style recalculation per frame (QA:
+94 per second at 116 objects; measured 140 per second whatever the number of
+rings), so ring animations are bounded twice: at most 24 at once
+(`MAX_ANIMATED`: live high-urgency signals, then medium, then running stars), and
+only during the 12 s after a node appears or its execution state, category or
+signal link changes (`ANIMATE_FOR_MS`; nothing animates on the first render).
+Other rings keep the same cue, static. At rest the scene runs no animation: idle
+probe 30 style recalculations in 30 s with the scene on (≈200 objects), the same
+as with the scene off. Rings are also paused while the tab is hidden.
+`prefers-reduced-motion: reduce` removes every transition and animation (static
+rings). There is no `requestAnimationFrame` loop: one render is scheduled per
+state change, window resize or animation window expiry. Hover (label) is the only pointer
 reflex; drag, menus and archive are Slice 08.
 
 **AutoResolver** (`resolveLayout(state)`: pure, deterministic for the same
@@ -2052,16 +2095,18 @@ snapshot, independent of the window size).
 `POST /api/scene/commands`, whose actor is forced to `user`, the only actor the
 reducer accepts for `resolver`.
 
-- Only the **leader** commits: the tab holding the Web Locks lock
-  `jarvis.scene.resolver`. A tab requests it while visible with the gate on,
-  and releases it when hidden, switched off or unloaded; a waiting visible tab
-  then gets it. Without Web Locks, the tab commits alone. Followers render the
-  same deterministic placement and send nothing.
+- Only the **leader** commits: the tab holding the profile's Web Locks lock
+  `jarvis.scene.leader`, the same lock that owns the long-poll (see *Page
+  loop*). In `solo` mode the tab commits alone. Followers render the same
+  deterministic placement and send nothing.
 - Only while the loop is **polling after a healthy read**, never during a
   snapshot reload, when the held state may be stale.
 - After a settle delay (600 ms plus up to 400 ms of jitter), at most 32 commands
   per batch, one at a time. Just before each send, the object is re-read in the
   latest state: if a patch placed it meanwhile, it is not sent.
+- The ledger keeps at most 2 048 entries; beyond, the oldest are evicted (an
+  evicted object still unplaced in a very long session could be sent once more,
+  which answers `duplicate` or `explicit_placement`).
 - **Once per object per page**, through a ledger keyed by `scene_id` and
   `object_id`:
   - a domain answer (`applied`, `duplicate`, `rejected_authority` such as
@@ -2078,23 +2123,65 @@ reducer accepts for `resolver`.
   `scene.command set_geometry` journal entries, and none after reloads, a Core
   restart or a second tab.
 
-Residual risk: two browsers that share no lock (two profiles or two machines)
-and hold different revisions can each commit a different box for the same object.
-The later one is accepted as a resolver nudge: one visible move, no loop, since
-each page commits an object only once.
+Residual risks: two browsers that share no lock (two profiles or two machines)
+and hold different revisions can each commit a different box for the same object;
+the later one is accepted as a resolver nudge: one visible move, no loop, since
+each page commits an object only once (QA with a 3 s delayed profile: no move
+observed). A leader whose event loop stalls while it stays visible and keeps the
+lock stalls commits (followers still catch up through the 45 s watchdog).
 
-**Page loop** (`createSceneLoop`): one request at a time per tab.
+**Page loop** (`createSceneLoop`, Slice 05 QA rework): **one scene long-poll per
+browser profile**, not per tab. Browsers allow about six HTTP/1.1 connections
+per host; with one long-held request per tab, six visible Control Center windows
+stalled `/api/status` for 16–24 s (QA). Roles:
+
+| Role | Who | Network |
+| --- | --- | --- |
+| `leader` | the visible tab holding the Web Locks lock `jarvis.scene.leader` | snapshot, then the long-poll `GET /api/scene/patches?…&wait_s=25` (40 s deadline); broadcasts on `BroadcastChannel('jarvis.scene')` |
+| `follower` | every other visible tab of the profile, queued on the lock | no long request: `GET /api/scene` on first load or resync, `GET /api/scene/patches?…&wait_s=0` (answered at once, 15 s deadline) to catch up |
+| `solo` | fallback when Web Locks or BroadcastChannel is missing | per-tab long-poll, as before (documented limit: about six windows) |
+
+One lock covers both the long-poll and the resolver commits: commits need the
+freshest state, which only the long-poll holder has, and a single lock gives a
+single handover. The lock is requested with `ifAvailable` first (the role is
+known before the first request, so no request is wasted), then queued. A tab
+releases it when hidden (a frozen page is hidden first), when the gate switches
+off, and on `pagehide`; the browser also drops it when the tab closes or
+navigates. The next queued visible tab gets it at once.
+
+Messages (`v: 1`, sender id; any other shape is ignored):
+
+- `patches` `{scene_id, epoch, body}`: the leader's patch response, sent after the
+  leader applied it. A follower applies it with
+  `JarvisSceneClient.applyPatchResponse` (late duplicates skipped); a gap,
+  another epoch or a refused patch makes it catch up.
+- `tick` `{scene_id, epoch, revision, health, objectLimit}`: after every
+  snapshot, every long-poll answer (at least every 25 s) and every back-off. A
+  follower behind that revision, epoch or scene catches up; a degraded leader
+  health is mirrored, so every window shows the same outage indicator.
+- `health` `{health}`: the leader's state before it holds any scene.
+
+Catch-up is a short patch read from the held revision; `resync_required` (ring
+too short, Core restarted) turns it into a snapshot read. A follower busy with a
+read, or hidden, records the target revision and catches up when the read ends or
+the tab becomes visible. A follower that heard nothing from a leader for 45 s
+catches up once and re-arms. On handover the new leader polls from its held
+revision, so Core's patch ring returns whatever the old leader never
+broadcast: no gap.
 
 | Phase | Entered when | Does |
 | --- | --- | --- |
 | `off` | gate off | nothing; state forgotten, in-flight request aborted |
-| `paused` | `document.visibilityState` is hidden | aborts the long-poll; no request |
+| `paused` | `document.visibilityState` is hidden | aborts the request; no request |
 | `loading` | start without state, or resync | `GET /api/scene` (15 s deadline) |
-| `polling` | snapshot accepted, patches applied | `GET /api/scene/patches?…&wait_s=25` (40 s deadline), through `JarvisSceneClient.applyPatchResponse` |
-| `waiting` | `retry` or failure | timer, then back to `polling` or `loading` |
+| `polling` | leader or solo, snapshot accepted, patches applied | long-poll through `JarvisSceneClient.applyPatchResponse` |
+| `following` | follower up to date | nothing; applies broadcasts |
+| `catching_up` | follower behind | short patch read |
+| `waiting` | `retry` or failure | timer, then back to the interrupted read |
 | `stopped` | `pagehide` (not a bfcache entry) | aborts everything |
 
-- `applied`, `unchanged` or `more`: poll again at once.
+- `applied`, `unchanged` or `more`: poll again at once (leader), or back to
+  `following`.
 - `retry` (`patch_waits_busy`): wait `retry_after_ms` plus up to 250 ms, keep
   the state, no snapshot.
 - `resync` (epoch or scene changed, gap, refused patch, `resync_required`): read
@@ -2102,23 +2189,46 @@ each page commits an object only once.
 - `unavailable`, or a failed request (network, timeout, non-200): health becomes
   `degraded`, with back-off 1 s, 2 s, 4 s … 30 s at ±25 % jitter; the last state
   stays on screen, and the first success restores health.
-- Visible again: patches from the held revision (a snapshot only if Core no
-  longer has them).
+- `/api/status` failing then succeeding again (`JarvisScene.statusLost`, then
+  `gate`) cancels the pending back-off and reads at once (`retryNow`, at most
+  every 2 s), so a Control Center restart does not wait up to 37 s.
+- Changing role aborts the in-flight request and restarts from the held revision.
 - A generation counter drops the answer of any aborted or superseded request.
 
-The loop coexists with the 1 s `/api/status` and `/api/work` polls: one
-long-held connection per tab, none while hidden. Transitions, never individual
-polls, go to the browser console as `[scène]` events: `scene.view_degraded`,
-`scene.view_restored`, `scene.resync`, `scene.snapshot_loaded`,
-`scene.loop_paused`, `scene.resolver_committed`, `scene.resolver_commit_refused`,
-`scene.resolver_commit_retry`. The Control Center journal already records read
-outages (`scene.view_unavailable`, `scene.view_restored`) and every relayed
-command (`scene.command`). The page has no client-log route, and none was added.
+Measured (headless Chrome, one profile, 1280 × 720 windows): at 5, 6, 8 and 10
+visible windows, `/api/status` fetched from the first and last window took 2–8
+ms; exactly one window was leader; every window reached Core's revision with an
+identical layout; switching the gate off or on reached all ten windows within
+1.2 s. Leader closed, navigated away, minimised or frozen during a 40-command
+burst: a new leader within 1.7 s (burst included), every remaining window's DOM
+equal to Core's visible objects. Details: Slice 05 LOG › QA rework.
 
-**Status indicator** (top left, `role=status`, never blocking): loading;
-"Scène figée — <raison> · depuis N s · nouvel essai dans N s" (a 1 s ticker runs
-only while degraded); "Scène pleine (n/512) — archiver des travaux terminés"
-(bulk archive is Slice 08); "N objets hors champ".
+The loop coexists with the 1 s `/api/status` and `/api/work` polls. Transitions,
+never individual polls, go to the browser console as `[scène]` events:
+`scene.view_degraded`, `scene.view_restored`, `scene.resync`,
+`scene.snapshot_loaded`, `scene.loop_paused`, `scene.role`,
+`scene.follower_watchdog`, `scene.retry_now`, `scene.resolver_committed`,
+`scene.resolver_commit_refused`, `scene.resolver_commit_retry`. The Control
+Center journal already records read outages (`scene.view_unavailable`,
+`scene.view_restored`) and every relayed command (`scene.command`). The page has
+no client-log route, and none was added. `JarvisScene.gate` runs in its own
+`try` inside `refreshStatus`: a scene error is logged
+(`[scène] scene.gate_failed`) and never breaks the status display.
+
+**Status indicator** (bottom left, on the voice hint's line, outside the
+composition safe area; raised above the Barehands badge when it is shown; chips
+wrap upwards, two rows at most in practice, never blocking): loading; "Scène
+figée · <raison>" plus a muted "N s · réessai N s" that is never truncated (a 1 s
+ticker runs only while degraded); "Scène pleine — archiver des travaux terminés"
+with "n/512" (bulk archive is Slice 08); "N objets hors champ". The visible chips
+are not a live region. A separate visually hidden `role=status` region announces
+state changes only ("Scène figée · Core injoignable. Nouvel essai automatique.",
+"Scène pleine…", "Des objets sont hors champ."), never the counters.
+
+**Keyboard.** One tab stop into the scene (roving `tabindex`): the last focused
+node, else the first in spatial reading order. Arrow keys move to the nearest
+node in that direction (`nextFocus`, transverse distance weighted twice), Home and
+End to the first and last, Escape leaves (blur). A focused point shows its label.
 
 ## Telemetry
 

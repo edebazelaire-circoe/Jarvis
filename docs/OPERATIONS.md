@@ -1085,28 +1085,47 @@ aucun calque, aucune requête de scène.
   reçoit toujours la même teinte tirée de son nom). L'état d'exécution ne
   change jamais la couleur : il se lit à un **indice secondaire** — anneau qui
   respire (en cours), anneau pointillé (en attente), double anneau (bloqué),
-  pastille « × » (échec), « ‖ » (interrompu), « – » (annulé), « ✓ » sur les
-  capsules et fenêtres terminées.
+  anneau fin et fixe (étoile terminée, pas encore rangée), pastille « × »
+  (échec), « ‖ » (interrompu), « – » (annulé), « ✓ » sur les capsules et
+  fenêtres terminées. Un anneau ne bouge que pendant les 12 secondes qui
+  suivent l'apparition de l'objet ou un changement de son état (24 à la fois
+  au plus, les alertes d'abord) ; ensuite il reste fixe et la scène au repos ne
+  consomme rien.
 - **Étoile** (point) : sous-agent ou tâche, reliée à son parent par un trait.
-  Son titre et son état apparaissent au survol ou au focus clavier (Tab).
+  Son titre et son état apparaissent au survol ou au focus clavier, sans
+  sortir de l'écran.
 - **Signal** (losange près d'une étoile) : **vivant**, il est plein avec un
   anneau qui s'élargit — vite pour un échec, lentement pour un blocage, **sans
   mouvement et plus petit pour `process_stopped`** (arrêt du CLI du cerveau :
   peu urgent). **Retiré** (le travail a repris), il ne reste qu'un contour de
-  losange, sans anneau ni trait.
+  losange, sans anneau ni trait. Son titre reprend les mots des cartes d'agents
+  (« processus arrêté », « Core redémarré ») ; une classe d'erreur technique
+  (`TimeoutError`) reste telle quelle.
 - **Capsule** : pastille avec le titre ; **fenêtre** : catégorie, titre,
   résumé et liste d'éléments. Un objet épinglé porte une punaise. Un objet
   masqué n'est pas dessiné. **Un travail terminé reste affiché** : seul
   l'archivage (Slice 08) le retire.
 - Les couches se superposent comme le cerveau ou l'utilisateur l'ont voulu : une
   fenêtre de couche 240 recouvre une fenêtre de couche 220.
+- **Petite fenêtre du navigateur** : une fenêtre de scène trop petite pour être
+  lue (moins de 180 × 96 pixels) s'affiche en capsule titrée, une capsule trop
+  étroite en point avec son titre au survol. C'est un affichage de la page :
+  la scène enregistrée ne change pas, et une fenêtre plus grande rend la forme
+  d'origine.
+- **Clavier** : Tab entre une seule fois dans la scène ; les flèches passent à
+  l'objet voisin dans leur direction, Début et Fin au premier et au dernier,
+  Échap sort de la scène.
 
 **Repère.** Origine (0, 0) au centre de la fenêtre, x vers la droite, y vers le
 bas. La zone x −160…160, y −90…90 est toujours entièrement visible, quelle que
 soit la taille de la fenêtre (même échelle en largeur et en hauteur) ; une
 fenêtre plus large ou plus haute que 16:9 montre de la scène en plus. Un objet
 placé au-delà du bord n'est jamais déplacé : l'indicateur dit « N objets hors
-champ ».
+champ ». Les commandes de la page (barre du haut, dock, indication vocale,
+indicateurs) couvrent les bords du cadre : la **zone sûre** x −152…138,
+y −72…68 reste toujours dégagée (vérifié à 1920 × 1080, 1366 × 768 et
+1280 × 720 dans les deux thèmes). Le placement automatique n'utilise qu'elle,
+et le cerveau la connaît (« haut gauche ≈ x −150, y −70 »).
 
 **Placement automatique.** Un objet sans position (étoile d'un nouveau
 sous-agent, note créée sans géométrie par le cerveau) est placé par la page :
@@ -1118,20 +1137,39 @@ redémarrage, la disposition est identique. Un objet placé par le cerveau ou pa
 vous, ou épinglé, n'est jamais déplacé par la page. Avec plusieurs onglets
 ouverts, un seul à la fois (un onglet visible) enregistre les placements.
 
-**Indicateur discret** (en haut à gauche, sous la barre) :
+**Indicateur discret** (en bas à gauche, sur la ligne de l'indication vocale ;
+au-dessus du badge Barehands quand il est affiché). Le compteur (durée, prochain
+essai) change chaque seconde mais n'est jamais lu par le lecteur d'écran : seuls
+les changements d'état sont annoncés.
 
 | Texte | Sens | Que faire |
 | --- | --- | --- |
 | `Scène · chargement…` | première lecture en cours | rien |
-| `Scène figée — Core injoignable · depuis 42 s · nouvel essai dans 8 s` | la lecture a échoué ; la dernière scène connue reste affichée ; nouvel essai automatique (1 s, 2 s, 4 s… jusqu'à 30 s) | démarrer Core ; la page reprend seule |
-| `Scène indisponible — …` | même chose, mais aucune scène n'a encore été lue | idem |
-| `Scène pleine (512/512) — archiver des travaux terminés` | 512 objets actifs : Core refuse toute nouvelle étoile ou note | archiver des objets terminés (l'archivage groupé arrive au Slice 08) |
+| `Scène figée · Core injoignable` `42 s · réessai 8 s` | la lecture a échoué ; la dernière scène connue reste affichée ; nouvel essai automatique (1 s, 2 s, 4 s… jusqu'à 30 s), immédiat quand le Control Center répond de nouveau | démarrer Core ; la page reprend seule |
+| `Scène indisponible · …` | même chose, mais aucune scène n'a encore été lue | idem |
+| `Scène pleine — archiver des travaux terminés` `512/512` | 512 objets actifs : Core refuse toute nouvelle étoile ou note | archiver des objets terminés (l'archivage groupé arrive au Slice 08) |
 | `N objets hors champ` | des objets sont placés au-delà du bord de la fenêtre | agrandir la fenêtre, ou demander au cerveau de les rapprocher |
 
-**Onglets et ressources.** Chaque onglet tient une seule requête longue vers
-`/api/scene/patches`. Un onglet caché (arrière-plan, fenêtre réduite) coupe la
-sienne et rattrape les changements en revenant. Si trop de pages sont ouvertes,
-le Control Center répond « réessayer » et la page attend le délai indiqué.
+**Onglets et ressources.** Un navigateur n'ouvre qu'environ six connexions à la
+fois vers le Control Center. Pour que plusieurs fenêtres ouvertes ne bloquent
+pas le reste de la page (statut, agents), **une seule fenêtre visible par profil
+de navigateur tient la requête longue** vers `/api/scene/patches` : la
+« meneuse ». Elle transmet chaque changement aux autres fenêtres du même profil,
+qui se mettent à jour sans requête longue ; elles ne font que de courtes lectures
+quand il leur manque quelque chose (première ouverture, changement manqué,
+redémarrage de Core). Si la meneuse est fermée, masquée, réduite ou quitte la
+page, une autre fenêtre visible prend le relais en moins de deux secondes et
+rattrape ce qui a changé entre-temps. C'est aussi la meneuse, et elle seule, qui
+enregistre les placements automatiques.
+
+Mesuré avec 5, 6, 8 et 10 fenêtres visibles : statut en 2 à 8 ms, bascule de
+l'interrupteur vue par toutes les fenêtres en moins de 1,2 s, dispositions
+identiques. Un onglet caché ne fait aucune requête de scène et rattrape en
+revenant. Deux profils (ou deux navigateurs) différents ont chacun leur meneuse.
+Un navigateur sans Web Locks ou BroadcastChannel revient à une requête longue
+par onglet : au-delà de six fenêtres, le statut ralentit. Si trop de pages sont
+ouvertes (tous profils confondus), le Control Center répond « réessayer » et la
+page attend le délai indiqué.
 
 **Dépanner.**
 
@@ -1142,7 +1180,9 @@ le Control Center répond « réessayer » et la page attend le délai indiqué.
 | un objet apparaît puis bouge une fois | placé localement, puis position enregistrée différente (autre navigateur ou autre profil ouvert en même temps) | sans conséquence ; la position enregistrée fait foi ensuite |
 | `scene.command set_geometry` en grand nombre dans `runtime/trace.jsonl` | première ouverture d'une scène pleine d'objets jamais placés : une commande par objet, une seule fois | normal |
 | la page n'enregistre aucun placement (console : `scene.resolver_commit_retry`) | Core refuse ou ne répond pas ; trois essais par objet au plus (2 s, 8 s) | démarrer Core puis recharger la page |
-| animations absentes | réglage système « réduire les animations » | normal : anneaux fixes, pas de glissement |
+| animations absentes | réglage système « réduire les animations », ou état inchangé depuis plus de 12 s | normal : anneaux fixes, pas de glissement |
+| une fenêtre reste figée alors qu'une autre suit la scène | fenêtre d'un autre profil sans meneuse visible, ou onglet caché | rendre la fenêtre visible : elle rattrape seule ; la console montre `[scène] scene.role` |
+| le statut ou les agents répondent lentement avec beaucoup de fenêtres | navigateur sans Web Locks/BroadcastChannel (repli par onglet), ou plusieurs profils | fermer des fenêtres, ou utiliser un seul profil ; la console montre `scene.enabled` avec `mode: solo` |
 
 Détail technique : `docs/ARCHITECTURE.md`, « Scene renderer ».
 

@@ -334,14 +334,17 @@ rewrites it.
 | Other aspect ratios | the long axis shows extra scene (visible x ∈ ±W/(2s), y ∈ ±H/(2s)); never bars |
 | Outside the window | the object stays in the scene, clipped at the window edge, counted "hors champ"; never moved |
 | Representation | a `point` is drawn at its box centre; `capsule` and `window` fill their box |
-| Unplaced | `geometry = null`: the browser AutoResolver places it inside x ∈ [−154, 144], y ∈ [−80, 80] and commits `set_geometry` with `placed_by = resolver` once |
+| Composition safe area | x ∈ [−152, 138], y ∈ [−72, 68] (`SCENE_SAFE_AREA`): no control of the page covers it at 1280 × 720 in either theme; a box is safe when `x0 ≤ x`, `y0 ≤ y`, `x + w ≤ x1`, `y + h ≤ y1`. Beyond it, up to the frame edges, controls (top bar, docks, voice hint, status chips) may cover the object |
+| Unplaced | `geometry = null`: the browser AutoResolver places it inside the safe area and commits `set_geometry` with `placed_by = resolver` once |
 
-Examples: top left ≈ (−150, −80); the centre, where JARVIS's face sits, is
-(0, 0); a readable note ≈ 60 × 36. At 1920 × 1080, one unit is 6 px; at
+Examples: top left ≈ (−150, −70); bottom right: `x + w ≤ 138`, `y + h ≤ 68`;
+the centre, where JARVIS's face sits, is (0, 0); a readable note ≈ 60 × 36. At 1920 × 1080, one unit is 6 px; at
 1280 × 720, 4 px.
 
-The brain reads this frame in the `scene_inspect` legend (`frame`), in the
-`geometry` argument description, and in one line of its display prompt.
+The brain reads this frame and the safe area in the `scene_inspect` legend
+(`frame`), in the `geometry` argument description, and in one line of its
+display prompt. On small windows the page may draw a window as a capsule, or a
+capsule as a point, without changing the representation stored in the scene.
 
 ## Bounds and wire form
 
