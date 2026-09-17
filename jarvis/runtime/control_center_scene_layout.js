@@ -198,29 +198,87 @@
      catégorie prend une teinte stable tirée de son nom. */
   const ARTIFACT_CATEGORIES=Object.freeze(['research','fichiers','tests','api','roadmap','email','document','autre']);
 
-  /* Mêmes classes que `BIDI` et `INVISIBLE`, sans drapeau `g` (pas d'état). */
-  const UNSAFE_URL=/[\u0000-\u0020\u007F-\u00A0\u00AD\u061C\u180E\u200B-\u200F\u2028-\u202F\u205F-\u206F\u3000\uFEFF]/;
+  /* Blancs, contrôles C0/C1 et DEL, espace insécable, marques bidi, caractères
+     invisibles, séparateurs, points pleine chasse et idéographiques, barre
+     oblique inverse : même classe que `_UNSAFE` de `jarvis/domain/scene_links.py`. */
+  const UNSAFE_URL=/[\u0000-\u0020\u007F-\u00A0\u00AD\u061C\u180E\u200B-\u200F\u2028-\u202F\u205F-\u206F\u3000\u3002\uFEFF\uFF0E\uFF61\\]/;
   const MAX_LINK_CHARS=2048;
+  const NAME_HOST=/^([A-Za-z0-9.-]+)(?::([0-9]{1,5}))?$/;
+  const IPV6_HOST=/^\[([0-9A-Fa-f:]+)\](?::([0-9]{1,5}))?$/;
+  const HOST_LABEL=/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+  const NUMERIC_LABEL=/^(?:[0-9]+|0x[0-9a-f]*)$/;
+  const OCTET=/^(?:0|[1-9][0-9]{0,2})$/;
+
+  /* IPv6 compressée comme le navigateur (RFC 5952), entre crochets, ou `null`. */
+  function ipv6Host(text){
+    if(text.split('::').length>2)return null;
+    let groups;
+    if(text.includes('::')){
+      const [head,tail]=text.split('::');
+      const left=head?head.split(':'):[],right=tail?tail.split(':'):[];
+      if(left.length+right.length>7)return null;
+      groups=[...left,...Array(8-left.length-right.length).fill('0'),...right];
+    }else{
+      groups=text.split(':');
+      if(groups.length!==8)return null;
+    }
+    if(groups.some(group=>!/^[0-9A-Fa-f]{1,4}$/.test(group)))return null;
+    const values=groups.map(group=>parseInt(group,16).toString(16));
+    let bestStart=-1,bestLength=0,start=-1;
+    [...values,'end'].forEach((value,index)=>{
+      if(value==='0'){if(start<0)start=index;return}
+      if(start>=0&&index-start>bestLength){bestStart=start;bestLength=index-start}
+      start=-1;
+    });
+    if(bestLength<2)return `[${values.join(':')}]`;
+    return `[${values.slice(0,bestStart).join(':')}::${values.slice(bestStart+bestLength).join(':')}]`;
+  }
+
+  /* Hôte d'une URL qui peut être un lien, ou `null` : règle unique partagée
+     avec `link_host` (`jarvis/domain/scene_links.py`, corpus commun
+     `tests/fixtures/scene_link_corpus.json`). http(s) exact, aucune barre
+     oblique inverse, aucun blanc/contrôle/bidi/invisible/point pleine chasse,
+     autorité sans `@` ni `%`, hôte ASCII à étiquettes standard (pas de `xn--`)
+     ou IPv4 pointée stricte ou IPv6 entre crochets, port 0–65535. */
+  function linkHost(value){
+    if(typeof value!=='string'||!value||value.length>MAX_LINK_CHARS||UNSAFE_URL.test(value))return null;
+    let rest;
+    if(value.startsWith('https://'))rest=value.slice(8);
+    else if(value.startsWith('http://'))rest=value.slice(7);
+    else return null;
+    const authority=rest.split(/[/?#]/,1)[0];
+    if(authority.includes('@')||authority.includes('%'))return null;
+    let host,port;
+    const v6=IPV6_HOST.exec(authority);
+    if(v6){host=ipv6Host(v6[1]);port=v6[2]}
+    else{
+      const name=NAME_HOST.exec(authority);
+      if(!name)return null;
+      host=name[1].toLowerCase();port=name[2];
+      const labels=host.split('.');
+      if(host.length>253||labels.some(label=>!HOST_LABEL.test(label)||label.startsWith('xn--')))return null;
+      if(NUMERIC_LABEL.test(labels[labels.length-1])&&!(labels.length===4&&labels.every(label=>OCTET.test(label)&&Number(label)<=255)))return null;
+    }
+    if(host===null||(port!==undefined&&Number(port)>65535))return null;
+    return host;
+  }
 
   /* Lien ouvrable d'une entrée d'artefact : `{href, host}` ou `null`.
 
-     Seulement une URL absolue `http:` ou `https:` telle que le domaine l'a
-     acceptée, relue par l'analyseur d'URL : aucun blanc, contrôle, marque
-     bidi ni caractère invisible dans le texte brut, pas d'identifiants
-     (`https://banque@hote` trompe l'œil), un hôte non vide. `href` est la
-     forme normalisée par l'analyseur (hôte international en punycode) ;
-     `host` est affiché à côté du libellé pour que la destination se lise.
-     Tout le reste reste du texte. */
+     `linkHost` décide (même règle que l'hôte rendu au cerveau par
+     `scene_get`) ; l'analyseur d'URL du navigateur doit ensuite lire le même
+     hôte, sans identifiants, sinon pas de lien (défense de plus). `href` est
+     la forme normalisée par l'analyseur ; `host` est affiché avant le libellé
+     pour que la destination se lise. Tout le reste reste du texte. */
   function linkOf(value){
-    if(typeof value!=='string'||!value||value.length>MAX_LINK_CHARS||UNSAFE_URL.test(value))return null;
-    if(!/^https?:\/\//i.test(value))return null;
+    const host=linkHost(value);
+    if(host===null)return null;
     let parsed;
     try{parsed=new URL(value)}catch(_error){return null}
-    if(parsed.protocol!=='https:'&&parsed.protocol!=='http:')return null;
-    if(parsed.username||parsed.password||!parsed.hostname)return null;
+    if((parsed.protocol!=='https:'&&parsed.protocol!=='http:')||parsed.username||parsed.password||parsed.hostname!==host)return null;
     const href=parsed.href;
     if(!/^https?:\/\//.test(href)||href.length>MAX_LINK_CHARS)return null;
-    return {href,host:parsed.hostname};
+    return {href,host};
   }
 
   /* Première cible active de chaque source par `explains` (hors lien de
@@ -849,7 +907,7 @@
 
   const api=Object.freeze({FRAME,SAFE_AREA,FACE_ZONE,OBJECT_LIMIT,DEFAULT_SIZE,WORK_BUDGET,COMMIT_MAX_ATTEMPTS,READABLE,MAX_ANIMATED,CAPSULE_MAX,drawnBox,
     RESTART_UNKNOWN_LABEL,restartUnknown,ARTIFACT_CATEGORIES,linkOf,explainedTarget,explainsIndex,artifactsExplaining,itemsOf,hostTail,isOrphanArtifact,orphanArtifacts,
-    artifactsLeftOrphan,placeFor,
+    artifactsLeftOrphan,placeFor,linkHost,
     viewport,toScreen,cleanLine,cleanText,toneOf,isLiveSignal,signalUrgency,signalErrorClass,anchorsOf,depthOf,resolveLayout,
     stackOf,viewModel,compactShape,spatialOrder,nextFocus,commitKey,commitCommand,commitCandidates,nextRetryAt,classifyCommit,settleCommit});
   root.JarvisSceneLayout=api;

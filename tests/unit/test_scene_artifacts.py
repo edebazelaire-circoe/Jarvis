@@ -622,12 +622,12 @@ def test_only_a_validated_http_url_becomes_a_link(tmp_path):
     links = dict(zip([repr(c) for c in cases], result))
     assert links[repr("https://www.python.org/")] == {"href": "https://www.python.org/", "host": "www.python.org"}
     assert links[repr("http://example.org/a?b=1#c")]["host"] == "example.org"
-    # Hôte international : lu en punycode, la destination réelle se voit.
-    assert links[repr("HTTPS://Exämple.com/ü")] == {"href": "https://xn--exmple-cua.com/%C3%BC", "host": "xn--exmple-cua.com"}
-    assert links[repr("https://evil.example\\@good.example/")]["host"] == "evil.example"  # l'hôte réel, jamais le leurre
+    # Slice 09, reprise QA (M3, décision PM) : règle unique partagée avec `scene_get` ; un hôte international,
+    # un schéma en majuscules et une barre oblique inverse ne font plus de lien (corpus : test_scene_links.py).
+    assert links[repr("HTTPS://Exämple.com/ü")] is None
+    assert links[repr("https://evil.example\\@good.example/")] is None
     openable = {key for key, value in links.items() if value}
-    assert openable == {repr("https://www.python.org/"), repr("http://example.org/a?b=1#c"), repr("HTTPS://Exämple.com/ü"),
-                        repr("https://evil.example\\@good.example/")}
+    assert openable == {repr("https://www.python.org/"), repr("http://example.org/a?b=1#c")}
     for value in result:
         if value:
             assert re.match(r"^https?://", value["href"])
@@ -695,7 +695,9 @@ def test_the_page_builds_links_only_from_validated_urls_and_never_with_markup():
 
 
 #: Les trois cas hostiles de QA (M1) : sous-domaine qui imite, hôte très long, référence qui pousse l'hôte.
-QA_HOSTILE_HOSTS = ["docs.python.org.evil-login.example", "accounts.google.com." + "a" * 100 + ".evil.example", "evil.example"]
+# Slice 09, reprise QA : étiquettes de 63 caractères au plus (règle de lien partagée), hôte toujours > 120 caractères.
+QA_HOSTILE_HOSTS = ["docs.python.org.evil-login.example", "accounts.google.com." + "a" * 50 + "." + "a" * 50 + ".evil.example",
+                    "evil.example"]
 
 
 def test_the_printed_host_keeps_its_registrable_end_and_is_never_pre_truncated(tmp_path):

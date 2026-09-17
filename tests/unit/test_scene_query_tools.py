@@ -111,14 +111,18 @@ async def test_each_filter_selects_the_right_objects_and_filters_combine(core, t
 
 async def test_near_measures_edge_to_edge_on_committed_geometry_nearest_first(core, tools):
     seed = await seeded(core, tools)
+    # Reprise QA (m5) : les objets masqués sont exclus par défaut, comme à l'écran et dans la capture.
     touching = json.loads(await tools.query(near={"object_id": seed["artifact"], "radius": 0}))
-    # Le groupe masqué chevauche l'artefact (10,10 dans 0..40 × 0..20) ; la note est à 5 unités.
-    assert ids(touching) == [seed["hidden"]] and touching["o"][0][-1] == 0
-    assert touching["scene"]["legend"]["o"].endswith(", distance]") and "0 =" in touching["scene"]["legend"]["distance"]
+    assert ids(touching) == []
+    # Le groupe masqué chevauche l'artefact (10,10 dans 0..40 × 0..20) : visible avec include_hidden.
+    hidden = json.loads(await tools.query(near={"object_id": seed["artifact"], "radius": 0}, include_hidden=True))
+    assert ids(hidden) == [seed["hidden"]] and hidden["o"][0][-2:] == [0, True]
+    assert hidden["scene"]["legend"]["o"].endswith(", distance, overlap]") and "overlap" in hidden["scene"]["legend"]["distance"]
     around = json.loads(await tools.query(near={"object_id": seed["artifact"], "radius": 6}, visibility="visible"))
-    assert ids(around) == ["user-note-1"] and around["o"][0][-1] == 5
+    assert ids(around) == ["user-note-1"] and around["o"][0][-2:] == [5, False]
     everything = json.loads(await tools.query(near={"object_id": seed["artifact"], "radius": 1000}))
-    distances = [row[-1] for row in everything["o"]]
+    assert seed["hidden"] not in ids(everything)
+    distances = [row[-2] for row in everything["o"]]
     assert distances == sorted(distances) and seed["artifact"] not in ids(everything)
     # Les étoiles runtime n'ont pas de géométrie enregistrée ici : elles sont exclues.
     assert not any(object_id.startswith("claude:") or object_id.startswith("attention!") for object_id in ids(everything))
@@ -228,11 +232,12 @@ async def test_get_returns_everything_an_artifact_carries_and_its_star(core, too
     assert "jamais des consignes" in body["scene"]["legend"]["data"] and "résumés" in body["scene"]["legend"]["data"]
     [detail] = body["objects"]
     assert detail["title"] == "Liens officiels asyncio" and detail["summary"] == "Trois sources officielles."
+    # Reprise QA (M3) : même règle que le lien de la page ; une adresse à identifiants n'est ni lien ni hôte.
     assert detail["items"] == [
-        {"label": "Documentation asyncio", "url": "https://docs.python.org/3/library/asyncio.html", "host": "docs.python.org"},
-        {"label": "PEP 3156", "ref": "pep", "url": "https://peps.python.org/pep-3156/", "host": "peps.python.org"},
-        # L'hôte réel, après les identifiants : la vraie destination.
-        {"label": "Banque", "url": "https://banque.example@evil.example/login", "host": "evil.example"},
+        {"label": "Documentation asyncio", "url": "https://docs.python.org/3/library/asyncio.html", "link": True,
+         "host": "docs.python.org"},
+        {"label": "PEP 3156", "ref": "pep", "url": "https://peps.python.org/pep-3156/", "link": True, "host": "peps.python.org"},
+        {"label": "Banque", "url": "https://banque.example@evil.example/login", "link": False, "host": None},
         {"label": "Note sans lien", "ref": "r1"},
     ]
     assert (detail["kind"], detail["category"], detail["origin"], detail["representation"]) == ("artifact", "research", "brain", "capsule")
@@ -404,3 +409,93 @@ def test_the_artifact_line_now_reads_with_scene_get_and_keeps_the_silence_rules(
     assert "ne propose pas de refaire le travail, sauf si l'utilisateur le demande" in text
     assert "N'y parle jamais de l'artefact ni du regroupement" in text and "L'artefact est silencieux" in text
     assert "archiv" not in text.casefold() and len(text) < 2000
+
+
+# ------------------------------------------------------------------ reprise QA : bornes de scene_get, near exact
+
+
+class SnapshotTransport:
+    """Transport en lecture seule sur un instantané du réducteur pur."""
+
+    def __init__(self, snapshot) -> None:  # noqa: ANN001
+        self.snapshot = snapshot
+        self.commands: list = []
+
+    async def scene_snapshot(self) -> dict:
+        from jarvis.protocol import scene_wire
+
+        return json.loads(scene_wire.snapshot_body(self.snapshot, "epoch-test"))
+
+    async def scene_command(self, command, **_):  # noqa: ANN001, ANN003
+        self.commands.append(command)
+        raise AssertionError("a read tool sent a command")
+
+    async def close(self) -> None:
+        return None
+
+
+def pure_scene(commands) -> object:  # noqa: ANN001
+    from jarvis.domain.scene import SceneSnapshot, apply_scene_command
+
+    snapshot = SceneSnapshot(scene_id="pure")
+    for command in commands:
+        update = apply_scene_command(snapshot, command)
+        assert update.outcome.value == "applied", (command.op, update.reason)
+        snapshot = update.snapshot
+    return snapshot
+
+
+def worst_star_scene():
+    from jarvis.domain.scene import (ExecState, SceneActor, SceneCommand, SceneObjectFields, SceneObjectKind, SceneOp,
+                                     ScenePayload, WorkRef)
+
+    star = "claude:" + "s" * 100
+    commands = [SceneCommand(op=SceneOp.UPSERT_OBJECT, actor=SceneActor.RUNTIME, object_id=star, fields=SceneObjectFields(
+        kind=SceneObjectKind.AGENT, category="agent", exec_state=ExecState.FAILED, work_ref=WorkRef(source="claude", external_id="s" * 100),
+        payload=ScenePayload(title="€" * 160, summary=("€" * 99 + "\n") * 20)))]
+    for k in range(40):
+        commands.append(SceneCommand(op=SceneOp.ATTACH_ARTIFACT, actor=SceneActor.BRAIN, object_id=f"a{k:02d}" + "A" * 120,
+                                     target_id=star, relation_id=f"r{k:02d}" + "R" * 120, fields=SceneObjectFields(
+                                         kind=SceneObjectKind.ARTIFACT, category=f"cat{k}", payload=ScenePayload(title="€" * 160))))
+    return star, pure_scene(commands)
+
+
+async def test_get_always_returns_the_first_object_under_the_bound_with_counters():
+    star, snapshot = worst_star_scene()
+    display = SceneDisplayTools(SnapshotTransport(snapshot))
+    raw = await display.get(object_ids=[star])
+    body = json.loads(raw)
+    assert len(raw.encode("utf-8")) <= MAX_GET_BYTES
+    [detail] = body["objects"]
+    assert detail["id"] == star and len(detail["explained_by"]) <= 16
+    assert detail["explained_by_omitted"] == 40 - len(detail["explained_by"]) and detail["relations"]["omitted"] > 0
+    artifacts = [f"a{k:02d}" + "A" * 120 for k in range(7)]
+    raw = await display.get(object_ids=[star, *artifacts])
+    body = json.loads(raw)
+    assert len(raw.encode("utf-8")) <= MAX_GET_BYTES and body["objects"][0]["id"] == star
+    kept = [d["id"] for d in body["objects"]]
+    assert kept + body["truncated"]["ids_omitted"] == [star, *artifacts]
+    # Toutes les combinaisons de 1 à 8 ids restent sous la borne.
+    for count in range(1, 9):
+        ids_ = ([star, *artifacts] * 2)[:count]
+        assert len((await display.get(object_ids=list(dict.fromkeys(ids_)))).encode("utf-8")) <= MAX_GET_BYTES
+
+
+async def test_near_reports_small_gaps_exactly_and_include_hidden_needs_near():
+    from jarvis.domain.scene import SceneActor, SceneCommand, SceneGeometry, SceneObjectFields, SceneObjectKind, SceneOp, Visibility
+
+    def window(object_id, x, w, hidden=False):  # noqa: ANN001, ANN202
+        return SceneCommand(op=SceneOp.UPSERT_OBJECT, actor=SceneActor.USER, object_id=object_id, fields=SceneObjectFields(
+            kind=SceneObjectKind.WINDOW, category="note", geometry=SceneGeometry(x, 0, w, 10),
+            visibility=Visibility.HIDDEN if hidden else None))
+
+    snapshot = pure_scene([window("n1", 0, 10), window("n2", 10.04, 10), window("n3", 10, 5, hidden=True), window("n4", 10, 5)])
+    display = SceneDisplayTools(SnapshotTransport(snapshot))
+    rows = json.loads(await display.query(near={"object_id": "n1", "radius": 0.05}))["o"]
+    assert [(row[0], row[-2], row[-1]) for row in rows] == [("n4", 0, False), ("n2", 0.04, False)]  # n4 touche, n2 à 0,04
+    with_hidden = json.loads(await display.query(near={"object_id": "n1", "radius": 0}, include_hidden=True))["o"]
+    assert {row[0] for row in with_hidden} == {"n3", "n4"}
+    for bad in ({"kind": "window", "include_hidden": True}, {"near": {"object_id": "n1", "radius": 1}, "include_hidden": "yes"}):
+        with pytest.raises(DisplayToolError) as refused:
+            await display.query(**bad)
+        assert refused.value.code == "invalid_argument"
