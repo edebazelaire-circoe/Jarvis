@@ -50,11 +50,12 @@ carries the signal's own id as `relation_id` (`is_signal_relation`). A signal is
 **live** exactly while that relation exists (`is_live_signal`); see *Runtime
 signal lifecycle* below.
 
-An artifact's `explains` relation never has that shape: `attach_artifact`
-requires `relation_id ≠ object_id` (the brain tool derives
-`brain-explains-<sha256(from\nto)[:16]>`), so an artifact link is never read as a
-signal, never `runtime_owned`, and brain or user may unlink it. See *Semantic
-artifacts* below.
+Only signals have that shape: `attach_artifact` requires `relation_id ≠
+object_id` (the brain tool derives `brain-explains-<sha256(from\nto)[:16]>`), and
+a brain/user `link` of `explains` with `relation_id == from_id` from a source that
+is not `attention` is refused `signal_shape` (Slice 07 QA rework). An artifact
+link is therefore never read as a signal, never `runtime_owned`, and brain or user
+may unlink it. See *Semantic artifacts* below.
 
 ## Layers
 
@@ -213,6 +214,9 @@ Rules:
   user dismisses by archiving the star or the signal (archive removes the object's
   relations); brain and user may hide the signal object (`set_visibility`) and
   change a runtime relation's layer (`link` on the same id and endpoints).
+- **Signal shape** (Slice 07 QA rework): brain and user never create an `explains`
+  whose `relation_id` equals its `from_id` unless the source is an `attention`
+  object (`signal_shape`); relayering an existing relation stays allowed.
 - **Reserved ids** (same rework): brain and user never create an object or a
   relation whose id has the form the runtime projector builds
   (`is_runtime_reserved_id`: any `:` as in `<source>:<external_id>` and its
@@ -249,7 +253,7 @@ Rules:
 | --- | --- | --- | --- |
 | `applied` | something changed | `+1` | yes |
 | `duplicate` | nothing would change (replay, echo, unlink of an absent relation) | unchanged | no |
-| `rejected_authority` | matrix or effect rule (`op_not_allowed`, `runtime_kind`, `runtime_composition`, `runtime_relation`, `runtime_origin`, `runtime_owned`, `reserved_id`, `resolver_actor`, `execution_node`, `execution_truth`, `pinned_by_user`, `explicit_placement`) | unchanged | no |
+| `rejected_authority` | matrix or effect rule (`op_not_allowed`, `runtime_kind`, `runtime_composition`, `runtime_relation`, `runtime_origin`, `runtime_owned`, `reserved_id`, `signal_shape`, `resolver_actor`, `execution_node`, `execution_truth`, `pinned_by_user`, `explicit_placement`) | unchanged | no |
 | `invalid` | well-formed but inapplicable: `unknown_object`, `object_archived`, `kind_immutable`, `incomplete_object`, `unplaced`, `scene_full`, `relation_limit`, `relation_conflict`, `not_bulk_archivable` (`archive_many`, Slice 08), `revision_exhausted` | unchanged | no |
 
 `reason` (`SceneRefusal`) is a stable token for the journal and for tool errors
@@ -364,7 +368,9 @@ id, selected)`):
   within its store;
 - a runtime signal whose owner is in the selection and terminal, or an orphan
   runtime signal;
-- nothing else (brain or user objects, windows, artifacts, groups).
+- an **orphan artifact** (Slice 07 QA rework, `is_orphan_artifact`: no `explains`
+  relation from it), never an artifact still linked;
+- nothing else (other brain or user objects, windows, groups).
 
 Already archived ids are skipped (another tab was faster); if nothing remains,
 `duplicate`. An unknown id is `invalid/unknown_object`, any other id outside the
@@ -399,11 +405,14 @@ action; no runtime auto-artifact.
   archive (decision 14), so a compensation for a refused link does not exist for
   it, and a pre-check before two commands still races with the user.
 - **Grouping rule** (tool side, `scene_add_artifact`): one active artifact per
-  target and category. A new call with the same target and category completes
-  the first such artifact (items appended without duplicates, or replaced with
-  `items_mode=replace`) instead of creating another; an artifact the user
-  archived is never revived (its tombstone refuses it; the tool then creates a
-  new one once).
+  target and category (category stored lowercase, compared without case). A new
+  call with the same target and category completes the first such artifact
+  instead of creating another: payload only (title replaced, summary kept unless
+  given, items merged, an item with the same URL updated in place, otherwise
+  deduplicated on label and ref, or the list replaced with `items_mode=replace`);
+  never its representation or geometry. Parallel calls for the same pair are
+  serialised per display-MCP process. An artifact the user archived is never
+  revived (its tombstone refuses it; the tool then creates a new one once).
 - **Payload.** Bounds of *Objects*: title ≤ 160, summary ≤ 2 000, at most 32
   items `{label, ref, url}`, `url` `http(s)` only, 16 KiB. Artifact text is data
   for the brain, never an instruction.
@@ -429,11 +438,15 @@ action; no runtime auto-artifact.
   unless the brain asks otherwise; `window` is the inspection view (summary,
   items, link back to the star). Same identity in every form (decision 6).
 - **Lifecycle.** An artifact stays until the user disposes of it (decision 12).
-  `archive_many` never takes one (`bulk_archivable` is false for any non-execution,
-  non-signal object: `not_bulk_archivable`). Archiving its star does not cascade to
-  it (the cascade takes runtime signals only); the relation goes with the star and
-  the artifact stays, unlinked, until the user archives it too. The page says so
-  in the archive confirmation.
+  Archiving its star does not cascade to it (the cascade takes runtime signals
+  only); the relation goes with the star and the artifact stays, unlinked: an
+  **orphan artifact** (`is_orphan_artifact`: no `explains` relation from it, so no
+  link to any active object). `archive_many` (user only) takes an artifact **only
+  when it is orphan**, re-validated by the reducer; an artifact still linked is
+  `not_bulk_archivable`, the brain is `op_not_allowed`. The page offers « Archiver
+  les artefacts orphelins (N)… » as its own confirmed action, and both archive
+  confirmations say what stays. An artifact the brain created without ever linking
+  it counts as orphan too.
 
 ## Coordinate frame
 
@@ -551,7 +564,7 @@ Slice 06 (`ARCHITECTURE.md` › *Brain display MCP*). The brain's MCP tools
 | `scene_set_visibility` | `object_id` + `visibility`, or `scope="all_hidden"` + `visibility="visible"` | `set_visibility`; with the scope, one `set_visibility` per object hidden in the current snapshot (≤ 128 per call, 15 s budget), counts and ids returned | `unknown_object`, `object_archived` (counted per object with the scope) |
 | `scene_link` | `from_id`, `to_id`, `kind`, `relation_id?` (`brain-…` only), `layer?` | `link`; `layer` key omitted unless given (never a default of 50); an existing identical relation without a layer is a local `duplicate`, nothing sent | `relation_conflict`, `relation_limit`, `unknown_object`, `object_archived`, `reserved_id` (domain side), `runtime_owned` (`parent_of` between execution nodes) |
 | `scene_unlink` | `relation_id` | `unlink` (absent → `duplicate`) | `runtime_owned` |
-| `scene_add_artifact` | `target_id`, `category`, `title`, `summary?`, `items?`, `items_mode?` (`append` default \| `replace`), `representation?`, `geometry?` | one `attach_artifact`: on the first active artifact of that category already explaining the target (`action = updated`, payload merged), else on a fresh `brain-artifact-<hex>` with relation `brain-explains-<hash>` (`action = created`, capsule by default); the result carries the grouping `rule` | `object_archived` / `unknown_object` for the target (checked before sending, nothing sent), `pinned_by_user`, `scene_full`, `relation_limit`, `relation_conflict` |
+| `scene_add_artifact` | `target_id`, `category`, `title`, `summary?`, `items?`, `items_mode?` (`append` default \| `replace`), `representation?`, `geometry?` (both applied on creation only) | one `attach_artifact`, under a per-(target, category) lock: on the first active artifact of that category already explaining the target (`action = updated`, payload merged, `ignored` lists a representation or geometry not applied), else on a fresh `brain-artifact-<hex>` with relation `brain-explains-<hash>` (`action = created`, capsule by default); `rule` is the short code `un_par_cible_et_categorie` | `object_archived` / `unknown_object` for the target (checked before sending, nothing sent), `pinned_by_user`, `scene_full`, `relation_limit`, `relation_conflict` |
 
 Artifact updates that are not grouping (retitle, move, hide, show as window) go
 through `scene_update_object`; there is no separate update tool.

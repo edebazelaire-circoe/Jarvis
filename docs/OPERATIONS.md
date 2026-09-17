@@ -1289,8 +1289,12 @@ roadmap ou de Trello, un document produit. C'est le cerveau qui le crée, en
 silence, **un seul par travail et par catégorie** : toutes les URL d'une recherche
 sont les entrées d'un même artefact, jamais un objet par lien. Il est relié à
 l'étoile du sous-agent par un trait pointillé de sa couleur. Une seconde fin de
-travail du même genre complète l'artefact existant au lieu d'en créer un autre.
-Une tâche dictée qui a juste été faite (« note ce retour ») n'en crée pas.
+travail du même genre complète l'artefact existant au lieu d'en créer un autre :
+une adresse déjà présente est mise à jour, pas répétée. Quand le cerveau complète
+un artefact, il ne change jamais sa forme ni sa place (celles que vous avez
+choisies) ; il peut en revanche remplacer son titre. Une tâche dictée qui a juste
+été faite (« note ce retour ») n'en crée pas, et le cerveau ne parle pas de
+l'artefact à l'oral, sauf si vous l'interrogez dessus.
 
 Catégories conseillées, chacune avec sa couleur : `research` (liens et faits),
 `fichiers`, `tests`, `api`, `roadmap`, `email`, `document`, `autre`. Le cerveau
@@ -1302,11 +1306,17 @@ peut en choisir une autre ; elle prend alors une couleur stable tirée de son no
 - En fenêtre (menu de l'objet → « Afficher en fenêtre », ou « montre-moi le
   résultat de la recherche » au cerveau) : catégorie et nombre d'entrées, titre,
   un bouton qui ramène à l'étoile expliquée (titre et état du sous-agent), le
-  résumé, puis la liste des entrées, qui défile à la molette ou au clavier.
-- Une entrée avec une adresse web `http`/`https` est un **lien** : le nom de
-  l'hôte est écrit à côté du libellé, et le lien s'ouvre dans un nouvel onglet,
-  sans transmettre la page d'origine. Une adresse avec identifiants
-  (`https://nom@hôte/`), ou tout autre schéma, reste du texte.
+  résumé, puis la liste des entrées, qui défile à la molette, au clavier (PageBas,
+  PageHaut) ou en passant d'un lien à l'autre. Depuis le menu, la fenêtre s'ouvre
+  dans une place libre près de son étoile, hors du visage et des autres objets.
+- Une entrée avec une adresse web `http`/`https` est un **lien**. Le **nom de
+  l'hôte est écrit en premier** : quand la place manque, il est raccourci par la
+  gauche (« …evil-login.example »), jamais par la droite, pour que la vraie
+  destination reste lisible ; l'hôte complet est dans l'infobulle. Un clic ouvre un
+  nouvel onglet, sans transmettre la page d'origine ; le clic droit donne le menu
+  habituel du navigateur (copier l'adresse). Une adresse avec identifiants
+  (`https://nom@hôte/`), ou tout autre schéma, reste du texte. Le pincement
+  Barehands n'ouvre pas de lien (le navigateur l'interdit sans vrai clic).
 - Au clavier : Tab jusqu'à la scène, flèches jusqu'à la fenêtre, puis Tab parcourt
   le bouton d'origine et les liens ; Échap revient à la fenêtre.
 - On peut aussi demander au cerveau « qu'est-ce que la recherche a donné ? » : il
@@ -1315,9 +1325,14 @@ peut en choisir une autre ; elle prend alors une couleur stable tirée de son no
 **Ranger.** Un artefact reste dans la scène jusqu'à ce que vous l'archiviez
 (menu de l'objet → « Archiver… »). Archiver l'étoile du travail **ne l'emporte
 pas** : la confirmation le dit (« Son artefact reste dans la scène, à archiver à
-part. »), le trait disparaît et l'artefact reste seul. « Archiver les travaux
-terminés » ne prend jamais d'artefact. Le cerveau ne peut ni archiver un artefact
-ni en créer un pour un travail que vous avez déjà archivé.
+part. »), le trait disparaît et l'artefact devient **orphelin**. « Archiver les
+travaux terminés » ne prend jamais d'artefact, mais sa confirmation dit combien
+en resteront sans lien. Pour les ranger d'un coup : menu d'un artefact ou d'une
+étoile → « Archiver les artefacts orphelins (N)… » ; la confirmation donne le
+nombre et quelques titres, et **seuls les artefacts qui n'expliquent plus aucun
+objet** partent (un artefact encore relié à une étoile reste ; un artefact que le
+cerveau n'a jamais relié compte comme orphelin). Le cerveau ne peut ni archiver un
+artefact ni en créer un pour un travail que vous avez déjà archivé.
 
 **Vérifier dans la trace** (`runtime/trace.jsonl`) : `display.artifact` (info :
 `action` `created` ou `updated`, `id`, `target`, `category`, nombre d'entrées,
@@ -1328,8 +1343,11 @@ et une relation `explains` vers l'étoile.
 | Symptôme | Cause probable | Action |
 | --- | --- | --- |
 | un travail terminé n'a pas d'artefact | le cerveau a jugé qu'il n'y avait rien à retrouver, ou la scène est éteinte | normal ; sinon demander « garde le résultat à l'écran » |
-| deux artefacts de même catégorie pour une étoile | créés à la main (`scene_create_object` + `scene_link`) ou par deux appels simultanés | archiver le doublon ; l'outil complète ensuite le premier |
-| `display.tool_refused` `reason=object_archived`, `sent: false` | l'étoile a été archivée avant que le cerveau ajoute l'artefact | normal : rien n'a été créé |
+| deux artefacts de même catégorie pour une étoile | créés à la main (`scene_create_object` + `scene_link`), ou par deux cerveaux (deux processus) en même temps ; les appels simultanés d'un même cerveau sont mis en file | archiver le doublon ; l'outil complète ensuite le premier |
+| `display.tool_refused` `reason=object_archived`, `sent: false` | l'étoile a été archivée avant que le cerveau ajoute l'artefact | normal : rien n'a été envoyé ni créé |
+| `display.tool_refused` `reason=object_archived` sans `sent` | l'étoile a été archivée pendant l'envoi : Core a refusé la commande | normal : un seul refus, rien n'a été créé |
+| `link refusé … reason=signal_shape` | le cerveau a donné à un lien `explains` l'identifiant de sa source | normal : omettre `relation_id` |
+| « Archiver les artefacts orphelins » absent du menu | aucun artefact orphelin, ou menu d'une fenêtre ou d'une note | normal ; l'entrée est sur les artefacts et les étoiles |
 | un libellé d'entrée n'est pas cliquable | adresse non `http(s)`, avec identifiants ou caractères invisibles | normal : lien refusé par sécurité, l'adresse reste lisible |
 | `invalid_argument` « … at most 32 » | l'artefact aurait plus de 32 entrées | le cerveau regroupe ou remplace la liste (`items_mode=replace`) |
 

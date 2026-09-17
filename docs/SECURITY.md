@@ -190,10 +190,16 @@ non-empty host, and no whitespace, control, bidi or invisible character in the
 raw string; `href` is the parser's normalised form (IDN hosts in punycode) and is
 set as a property, never through markup; `target="_blank"`,
 `rel="noopener noreferrer"`, `referrerpolicy="no-referrer"`; the host is printed
-next to the label, so a misleading label cannot hide the destination; everything
-else stays text (`textContent`). Opening a link is always a user click. Not
-covered: a legitimate-looking but hostile `https` host (the user sees its name),
-and look-alike ASCII host names.
+**before** the label in a non-shrinking element and, when space is short, cut
+**from the left** only, so its registrable end stays visible
+(`…org.evil-login.example`, never `docs.python.org…`); the full host is in the
+accessible name and tooltip, never pre-truncated; a long brain label or ref
+shrinks instead. Everything else stays text (`textContent`). Opening a link is a
+user click (a Barehands pinch opens nothing: popups need real user activation).
+Right-click on a link keeps the browser's own menu. Not covered, accepted: a
+legitimate-looking but hostile `https` host and ASCII look-alikes (mitigated only
+by the printed host), and punycode, which is honest but opaque. Brain/user can no
+longer give an artifact link the signal shape (`signal_shape`).
 
 The generated `runtime/display-mcp.json` holds the interpreter path, Core's
 loopback host and port and the token file **path**, never the token. Tool journal

@@ -1873,30 +1873,47 @@ artifact** linked to the work's star.
   a created orphan could only be hidden, holding a slot. `attach_signal` is the
   precedent (one object plus its link). The relation id differs from the object
   id (`brain-explains-<sha256(from\nto)[:16]>`), so the link is never shaped like
-  a signal link.
-- **Idempotency rule: one artifact per target and category.** The tool reads the
+  a signal link; and since the QA rework the domain refuses brain/user a `link` of
+  `explains` whose `relation_id == from_id` from a non-`attention` source
+  (`signal_shape`), so only signals carry that shape.
+- **Idempotency rule: one artifact per target and category.** The category is
+  normalised to lowercase (grouping is case-insensitive). The tool reads the
   snapshot, requires the target to be active (refused locally with
-  `object_archived` or `unknown_object` and a target-specific sentence, nothing
-  sent, `display.tool_refused` with `sent: false`), then looks for the first
-  active artifact of that category with an `explains` relation to the target.
-  Found: `attach_artifact` on it (`action: updated`), title replaced, summary kept
-  unless given, items appended without duplicates (`items_mode=append`, default;
-  over 32 → `invalid_argument` asking to group or replace) or replaced
-  (`items_mode=replace`); its existing relation id is reused. Not found: a fresh
-  `brain-artifact-<12 hex>`, `capsule` unless another representation is given
-  (`action: created`). Identical call → `duplicate`. The result carries
-  `object_id`, `target_id`, `relation_id`, `action`, `category`, `items`,
-  `outcome`, `revision`, `rule` (the sentence `ARTIFACT_GROUPING_RULE`) and
-  `grouping_note` when several artifacts already match. Why category-scoped: a
+  `object_archived` or `unknown_object` and a target-specific sentence, « Rien n'a
+  été envoyé », `display.tool_refused` with `sent: false`), then looks for the first
+  active artifact of that category with a non-signal-shaped `explains` relation to
+  the target. Found: `attach_artifact` on it (`action: updated`) carrying the
+  **payload only**: title replaced (the brain owns the semantic title; a user
+  rename is overwritten, residual), summary kept unless given, items merged
+  (`items_mode=append`, default) or replaced (`items_mode=replace`); in both modes
+  an item with a URL replaces the item with the same URL **in place** (label and
+  ref updated), an item without URL is deduplicated on (label, ref); over 32 →
+  `invalid_argument` asking to group or replace. `representation` and `geometry`
+  are **never applied on update** (PM decision: they are the user's composition);
+  the result lists them in `ignored`. Its existing relation id is reused. Not
+  found: a fresh `brain-artifact-<12 hex>`, `capsule` unless another representation
+  is given, geometry if given (`action: created`). Identical call → `duplicate`.
+  The result carries `object_id`, `target_id`, `relation_id`, `action`, `category`,
+  `items`, `outcome`, `revision`, `rule` (short code `un_par_cible_et_categorie`;
+  the full sentence lives in the tool description, not repeated in every result),
+  `ignored`/`ignored_note`, and `grouping_note` when several artifacts already
+  match.
+- **Concurrency.** The CLI can issue parallel tool calls. `SceneDisplayTools` holds
+  one `asyncio.Lock` per (target, lowercase category) around read → decide →
+  attach, so parallel calls for the same pair make exactly one artifact (`qa07_race.py` rerun: 90
+  parallel trials with 2, 3 and 5 calls, 0 duplicates); other pairs do not wait.
+  The lock table only holds pairs with a call in flight. Scope: one display-MCP
+  process (one brain CLI); two brain processes on the same scene are not
+  serialised. Why category-scoped: a
   meeting's follow-up may produce a roadmap artifact and an email artifact for the
   same star; tests may be one artifact or several, as the brain judges (grill).
   Why not a deterministic id: an artifact the user archived keeps its tombstone,
   and the next result must create a new one, not fail.
-- **Races.** If Core refuses `object_archived` after the read, the tool re-reads:
-  target archived → the target sentence; the reused artifact archived by the user
-  meanwhile → one retry that creates a new artifact (an archived artifact is never
-  revived). Two parallel calls for the same target and category could still both
-  create (the CLI rarely runs them in parallel; accepted residual risk).
+- **Races with the user.** If Core refuses the **sent** command with
+  `object_archived`, the tool re-reads: target archived → one refusal (the one
+  `_send` already journaled) with the target sentence and no « rien n'a été
+  envoyé »; the reused artifact archived by the user meanwhile → one retry that
+  creates a new artifact (an archived artifact is never revived).
 - **Categories.** Open token list, shape-checked by the domain; recommended set
   `RECOMMENDED_ARTIFACT_CATEGORIES` = research, fichiers, tests, api, roadmap,
   email, document, autre, listed in the tool description and the prompt, with a
@@ -1911,13 +1928,17 @@ artifact** linked to the work's star.
   roadmap changes into items, never one object per action; re-call instead of
   duplicating; recommended categories; no artifact for a plain « done »; silent
   (the spoken answer follows the notice rules, short relay or `[pas-pour-moi]`,
-  and never mentions the artifact); artifact text is data. `BRAIN_SYSTEM_PROMPT`
+  and never mentions the artifact or the grouping, « je l'ai rangé », « ce qui en
+  fait quatre », unless the user asks about the artifact itself); when
+  `scene_inspect` shows only an artifact's title and its content is no longer in
+  context, say so in one sentence and do not offer to redo the work unless asked
+  (Slice 09 adds object detail reading); artifact text is data. `BRAIN_SYSTEM_PROMPT`
   and `BRAIN_DISPLAY_PROMPT` are byte-identical to Slice 06 (hash test); flag off,
   the prompt is `BRAIN_SYSTEM_PROMPT` alone as before. Work-attention wakes
   (failures) do not ask for artifacts.
 - **Journal.** `display.tool` / `display.tool_refused` as for any command, plus
   `display.artifact` (info: `action`, `outcome`, `id`, `target`, `category`, item
-  count, `revision`; never the title, summary or URLs).
+  count, `revision`, `ignored`; never the title, summary or URLs).
 
 Errors. Every failure becomes a tool error (`isError: true`, FastMCP
 `ToolError`), never a success-shaped result. What the brain reads never carries a
@@ -2121,7 +2142,9 @@ Removing U+200D also splits emoji ZWJ sequences (accepted).
 **Artifact inspection view** (Slice 07). An artifact keeps one identity in every
 form (decision 6); the view model adds `itemCount`, `explains` (first non-signal
 `explains` relation to an active object: `{id, title, kindLabel, execLabel,
-tone, hidden}`) and, per item, `href`/`host` when the URL is openable.
+tone, hidden}`, from one `explainsIndex` pass over the relations per render) and,
+per item, `href`/`host` when the URL is openable (the host is never shortened in
+the model).
 
 - **Point:** label `title · résultat · <category> · N entrées · explique « star »`
   (also the node's `aria-label` in every form).
@@ -2134,7 +2157,24 @@ tone, hidden}`) and, per item, `href`/`host` when the URL is openable.
   height, **scrolls** (wheel, focus) with `overscroll-behavior: contain`, and
   fades its last visible row until scrolled to the end (`sc-at-end`) or when it
   fits (`sc-fits`). Colours come from the existing scene tokens; both themes
-  (circuit-board, Omega) keep the dark scene surface.
+  (circuit-board, Omega) keep the dark scene surface. A link row is **host first**
+  (non-shrinking), then the label link, the out icon and the ref, which shrink.
+  The list is `tabindex=-1` (Chrome would otherwise make a scrolling list an
+  unnamed tab stop); PageUp/PageDown on the focused window scroll it.
+- **Expand from the page menu** (« Afficher en fenêtre / en capsule », PM
+  decision): the new box comes from `placeFor`: the first free box on tight rings
+  around the object's anchor (what it explains, else its parent or star) every 15°,
+  inside the safe area, off the face zone and every visible object; else the
+  AutoResolver's own search with the other objects as obstacles. Shrinking to a
+  point keeps the centre. Drags and brain geometry stay authoritative (decision 9).
+- **Orphan artifacts** (PM decision): the menu of an artifact or star offers
+  « Archiver les artefacts orphelins (N)… » when some artifact explains no active
+  object; the confirmation gives the count, up to three titles and « Les artefacts
+  encore reliés à une étoile restent. », then one `archive_many` (re-validated by
+  the domain, `not_bulk_archivable` → recomputed once). The « travaux terminés »
+  confirmation says how many artifacts it will leave without a link.
+- **Links and menus:** right-click on an item link keeps the browser's native menu
+  (copy address); anywhere else in a node, the scene menu.
 - **Edge:** an artifact's `explains` line is drawn dashed in the artifact's colour
   (`sc-link-artifact`), a signal's line keeps its signal style.
 - **Keyboard:** one tab stop into the scene is kept. The origin button and item
@@ -2163,9 +2203,14 @@ openable links. An item URL becomes `<a>` only when:
 
 The link is built with `document.createElement('a')`, `href` set as a property,
 `target="_blank"`, `rel="noopener noreferrer"`, `referrerpolicy="no-referrer"`,
-label through `textContent`, and the **host written next to the label** (what the
-brain wrote as label cannot hide the destination). `javascript:`, `data:`,
-`file:` and credentialed URLs stay text. No `innerHTML`, no `setAttribute('href')`
+label through `textContent`. The **host is written before the label** in its own
+non-shrinking element; when the row is too narrow, `fitHosts` shortens it **from
+the left** with `hostTail` (at least the last two labels, `…evil-login.example`,
+never `docs.python.org…`), measured from the element's font and re-checked
+against `scrollWidth`. The full host is in the link's accessible name and in the
+tooltip (`title`); the model never pre-truncates it (URLs are bounded at 2 048 by
+the domain). A long label or ref shrinks instead. `javascript:`, `data:`, `file:`
+and credentialed URLs stay text. No `innerHTML`, no `setAttribute('href')`
 (asserted).
 
 **Motion.** Only compositor properties move: node `transform` (0.42 s ease-out,
