@@ -1544,3 +1544,84 @@ Residuals, added:
 - PM review of artifact window and hostile-host screenshots; spot-check 488 artifact/renderer/interaction/contract/display tests passed. Last full `verify_release.py`: 4210 passed / 9 skipped (final follow-up JS-only; targeted suite 1609 passed).
 - PM decisions: atomic domain op instead of compensation; one artifact per (target, lowercase category); brain updates never change representation/geometry; links openable only with visible host; orphan artifacts bulk-archivable by the user (linked ones never); menu expansion uses free-space placement while drags and brain geometry stay authoritative.
 - Accepted residual risks: phishing via legitimate-looking https hosts / ASCII look-alikes (printed host is the only mitigation; punycode honest but opaque; a registrable domain wider than ~24 chars in the narrowest row shows only its end); brain title replaces a user rename; artifact lock is per display-MCP process; Barehands cannot open links (no user activation); after a brain restart artifact items are unreadable until Slice 09; the dictated-task silence rule lives in user memory, not the system prompt; relations carry no origin; an expanded window's link may cross the face zone when the only free space is opposite; completion turns cost ≈$0.3–0.4 on Opus, mostly the background sub-agent itself.
+
+## 2026-09-17 — Intégration de main f7e33ad (agent d'intégration)
+
+PM decision: merge (not rebase) of `origin/main` `f7e33ad` (conversation observability S0–S6: durable SQLite Conversation Event store, Core emitter and ingestion route, query/long-poll/trace, four-lane timeline, transcript/export/search) into the task branch at `26bb3b8`. Both features preserved.
+
+### Commits
+
+- `586f312` merge commit (`--no-ff`, parents `26bb3b8` + `f7e33ad`), conflict resolutions only.
+- `e68cfdc` main shipped unresolved conflict markers in `jarvis/runtime/realtime_audio.py` (user "sauvegarde" merge `d7e9ca4`): module did not import. Both sides kept (`_is_stream_already_stopped`, `_tool_status`; both used).
+- `c9168bd` z-index registry: `.tl` (55) and `.cdialog-back` (85) added to ARCHITECTURE table and to `test_the_scene_layer_sits_above_the_face_and_below_every_control`.
+- `124ea2a` confirm dialog stays clickable over the timeline (found by the browser smoke, see below) + node test (fails without the fix).
+- this LOG entry and the connection-budget note in ARCHITECTURE (*Page loop*), separate commit.
+
+### Conflict resolutions
+
+| File | Resolution |
+| --- | --- |
+| `jarvis/core/v2_app.py` | both adapter imports; start and stop order below |
+| `jarvis/protocol/server.py` | scene + `/v1/work/cancel` + nine conversation-event routes; one stop event `_stopping` (replaces scene `_closing` and main `_stopping`), recreated in `start()` (an awaited `asyncio.Event` stays bound to its loop, so no `clear()`), set in `stop()`; it releases the scene long-poll, the conversation-event long-poll (`interrupt=`) and `_unless_client_left`. `/v1/health` carries `scene` and `conversation_events`. |
+| `jarvis/runtime/control_center.py` | scene and timeline script constants and marker injection (distinct markers, order irrelevant); `/api/status` carries `scene`, `scene_limits`, `conversation_events` |
+| `jarvis/runtime/control_center.html` | scene page marker, then timeline marker (no duplicate top-level JS names across injected files: checked) |
+| `jarvis/app.py` | conversation-event forwarder + view, then scene view + `DisplayMcpTarget`, all passed to `ControlCenter` |
+| `tests/unit/test_v2_architecture.py` | both adapter exceptions (`sqlite_scene`, `sqlite_conversation_events`) |
+
+Auto-merged and checked: `sqlite_state.py` (`run_sqlite_in_thread` extraction intact; main's `run_serialized` and schema v2 migration go through `_run`/`_thread`, behaviour identical for both stores), `protocol/client.py` (importing it loads `jarvis.protocol.scene_wire` only, no `jarvis.domain.scene`, no `aiohttp.web`), `claude_local.py`, `control_center_work.js`, docs ARCHITECTURE/OPERATIONS/state-model (no overlap in hunks). No shared JSON body helper to merge: main's ingest uses `request.json()` + domain decoder, raises the app-wide `client_max_size` to 6 MiB; scene/cancel routes keep `read_bounded_body` + `loads_strict_json` with their own limits. Follow-up candidate, not done: main's routes could adopt `loads_strict_json`.
+
+### Combined Core order
+
+Start: `state.initialize` → `voice_admission.backfill_user_turns_accepted` (state DB only, never raises) → `scene.start` (never raises) → `scene_projector.start` → `live_reaper` → device → bus subscribers → `notifications.recover` → `jobs.recover` (interruptions reach the scene) → system schedules → scheduler → brain notices. Start failure: reaper, notification loop, work attention, `_stop_scene`, `state.close`.
+
+Stop: reaper → brain notice loop → work attention → brain → notification loop → scheduler → `try: back_brain.stop, jobs.stop` / `finally: _stop_scene()` (projector drain then `scene.close`, every path) → `conversation_event_emitter.stop()` (nominal path only, as on main: an early return for uncertain persistence is not lengthened by the drain) → `state.close`. The scene and the event log live in different files and neither writes the other, so their relative order only matters for latency; the projector drains first so the emitter drain never delays scene closure.
+
+Evidence: server stop with a scene long-poll and a conversation-event long-poll both in flight: `server.stop()` 0.00 s, both answered 200 at 1.5 s (when stop was called), `core.stop()` 0.01 s, status `stopped`.
+
+### Semantic integration (no feature added)
+
+- Sub-agent Conversation Events carry `task_id = span_id = AgentTask.work_key` frozen at attribution; the projector's star is `star_object_id("claude", work_key)` with `work_ref.external_id = work_key`. A star and its timeline block can be joined by that key (future "open in timeline" from a star, or a timeline link to a star). Core job stars carry the Core `work_id`, which main's `brain.work.*` events also carry for brain work, not for back-brain jobs.
+- Main adds no `CoreEventBus` subscriber; the timeline reads through its own `ConversationEventView` sessions, the scene through `CoreSceneView`: no shared Core-side pool.
+- Main's brain changes (`/api/agent/ask` `conversation` field, `AgentTaskTracker.begin_conversation_turn`, `note_unscoped_input`) do not touch the CLI argv; the Slice 06 turn-budget exemption (`DISPLAY_TOOLS`) and `--mcp-config` wiring are unchanged.
+
+### Prompt byte-identity
+
+Conversation brain launched with a fake subprocess in main's tree (`git archive f7e33ad jarvis`) and in the merged tree: flag off, `--append-system-prompt` byte-identical (2 797 bytes) and argv identical (14 args, temp root normalised); flag on, prompt = main's prompt + `\n` + `BRAIN_DISPLAY_PROMPT` + `\n` + `BRAIN_ARTIFACT_PROMPT` (6 306 bytes), argv adds only `--mcp-config <runtime>/display-mcp.json`.
+
+### Browser smoke (headless Chrome 152, scratch profile, real Core + in-process Control Center, fresh roots, 1920×1080, both themes)
+
+- Scene flag off: page loads, no `#sceneLayer`, 0 `/api/scene` requests; timeline opens (17–18 entries), "En direct", a live event appears in 0.11–0.12 s, 1 long-poll; closing leaves no `inert` child; 0 exceptions, 0 console errors.
+- Scene flag on: scene leader polling, nodes drawn; timeline z-index 55 over scene 20, hit-test at centre and over the dock lands in the timeline, live event 0.11 s, 1 timeline + 1 scene long-poll; Agents panel opens; context menu on a scene window lists `rep:point, rep:capsule, pin, hide, archive, archive-orphans`; "Archiver…" opens the confirmation (`Archiver « Intégration main » ?`, rest inert), cancel restores everything and the object stays; 0 exceptions, 0 console errors.
+- **Defect found and fixed (`124ea2a`)**: the timeline inerts every `body` child including the hidden `#confirmBack`; a confirmation opened over it was displayed inert (mouse dead, only Escape closed it) and inerted the timeline, so the timeline could not be closed by click. No user path reaches it today (the rest of the page is inert while the timeline is open). After the fix: confirmation clickable, timeline inert while it is up, everything restored on cancel, timeline closes normally.
+- Safe area with the 5-tool dock (main moved `.bgpills` to `50% + 162px`): corner windows at 1920×1080, 1366×768, 1280×720, both themes, pills shown: 0 overlaps with dock or pills; only the documented GPT-Live banner covers the top-right corner at 1366×768 and 1280×720.
+- Screenshots: scratchpad `int_shots/` (`int_on_*_scene`, `int_on_*_timeline`, `int_on_*_confirm_over_timeline`, `int_on_*_menu`, `int_on_*_confirm`, `int_on_*_agents`, `int_off_*`, `int_safe_*_1280x720`, `int_sockets_6windows_timeline`).
+
+### Connection budget (6 visible 1280×720 windows, one profile)
+
+| Case | Long-polls held | `/api/status` in page (ms) |
+| --- | --- | --- |
+| scene on, no timeline | 1 (leader) | 2–7 |
+| scene on, timeline in 1 window | 2 | 3–7 |
+| scene on, timeline in 4 windows | 5 | 3–6 |
+| scene on, timeline in 5 windows | 6 | 5 147–14 148 |
+| scene on, timeline in 6 windows | 7 | 8 849–18 968; live event reached all 6 in 13.97 s |
+| scene off, timeline in 5 windows | 5 | 3–9 |
+| scene off, timeline in 6 windows | 6 | 8 101–16 201 |
+
+The timeline holds one long-poll per tab while it is open (main's documented Slice 05 guidance). Main alone saturates the ~6 per-host connections at 6 open timelines; with the scene on, the leader's long-poll lowers the threshold to 5. Scene state stayed consistent (all windows at Core revision). Residual risk for PM: a timeline leader/follower share (as the scene does) or closing the timeline long-poll in hidden tabs would remove it; not done (main's feature).
+
+### Tests
+
+- Targeted under `-W error::ResourceWarning` (65 files: scene, display MCP, work cancel, jobs, agent tasks, Control Center UI incl. timeline JS/UI, Barehands, all conversation-event unit/integration, protocol, health, architecture, documented routes, sqlite state): 1863 passed, 1 skipped in 171.8 s (the skip reads live user data, opt-in); the node test added with the confirm fix passes and fails without the fix.
+- `scripts/verify_release.py` alone: **10 failed, 4849 passed, 10 skipped in 450 s, `FAIL: pytest failed`**. None is caused by the integration:
+  - 9 come from main's "sauvegarde" commits (`d7e9ca4`, `56c7892`), tests committed without their implementation: `test_agent_routing_settings.py` (3: `agent_routing.group_by_harness` missing, `harnesses` key), `test_brain_card_state.py` (2: "armed" brain card), `test_routing_settings_screen.py` (4: two-step harness/model UI). The same 9 fail identically in a clean `git archive f7e33ad` tree (9 failed, 25 passed).
+  - 1 is the known timing flake `test_v2_async_conversation.py::test_three_turns_run_in_one_session_without_a_second_wake` (main's Issue `flaky-three-turns-async-conversation.md`): isolated reruns on the merged tree 2/9 failed, pre-merge `26bb3b8` tree 1/6, main tree 0/6.
+  - The script's static checks (core import bans, benchmark allow-list, dangerous primitives, pinned sources, privacy default) run separately with pytest stubbed: `Release verification passed.`.
+
+### Follow-ups / PM
+
+1. Connection budget above (5 open timelines + scene, or 6 timelines on main alone, stall the page).
+2. Main's start-failure path does not stop the conversation-event emitter (a backfill enqueue before a later start failure leaves its drain task running against a closed state DB). Pre-existing on main, untouched.
+3. `data/state/jarvis.sqlite3` is tracked and main's schema v2 migrates it on first Core start (see state-model); integration runs used scratch roots only.
+4. `origin/main` itself still carries the conflict markers in `realtime_audio.py` (fixed on this branch only).
+5. The 9 main tests without implementation keep `verify_release` red on this branch until main's routing/brain-card work lands or they are marked; PM decision.

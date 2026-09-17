@@ -2479,6 +2479,14 @@ stalled `/api/status` for 16–24 s (QA). Roles:
 | `follower` | every other visible tab of the profile, queued on the lock | no long request: `GET /api/scene` on first load or resync, `GET /api/scene/patches?…&wait_s=0` (answered at once, 15 s deadline) to catch up |
 | `solo` | fallback when Web Locks or BroadcastChannel is missing | per-tab long-poll, as before (documented limit: about six windows) |
 
+The conversation timeline (see [Conversation Events](conversation-events.md),
+"Slice 05 guidance") holds its own long-poll per tab while it is open, on the
+same origin. Measured after integrating main (6 visible 1280 × 720 windows, one
+profile): scene leader plus timelines open in 4 windows = 5 long-polls,
+`/api/status` 3–6 ms; in 5 windows = 6 long-polls, 5–14 s; in 6 windows,
+9–19 s (scene off: 6 open timelines alone give 8–16 s). The scene's single
+long-poll lowers the timeline's saturation point by one window; not addressed.
+
 One lock covers both the long-poll and the resolver commits: commits need the
 freshest state, which only the long-poll holder has, and a single lock gives a
 single handover. The lock is requested with `ifAvailable` first (the role is
