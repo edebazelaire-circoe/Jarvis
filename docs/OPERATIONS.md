@@ -1195,18 +1195,26 @@ Détail technique : `docs/ARCHITECTURE.md`, « Scene renderer ».
 
 Vous agissez sur la **même scène** que le cerveau : chaque geste est enregistré
 dans Core, puis retrouvé à l'identique après un rechargement, dans un autre
-onglet ou après un redémarrage. Le geste se dessine tout de suite ; si Core le
+onglet ou après un redémarrage. Le geste se dessine tout de suite. Si Core le
 refuse ou ne répond pas, l'objet revient à sa place et une notification dit
-pourquoi. Aucune boîte de dialogue du navigateur : les confirmations
-s'affichent dans la page.
+pourquoi, en distinguant « rien n'a été envoyé » (réessayer est sûr) de « issue
+inconnue » (la page relit la scène). Aucune boîte de dialogue du navigateur : les
+confirmations s'affichent dans la page, et tant qu'une confirmation est ouverte
+le reste de la page ne réagit plus (ni clic, ni raccourci, ni geste).
 
 | Pour… | Souris | Clavier (objet sélectionné) |
 | --- | --- | --- |
-| sélectionner | clic | Tab jusqu'à la scène, puis flèches |
+| sélectionner | clic ; la poignée d'une capsule ou fenêtre sélectionnée reste visible | Tab jusqu'à la scène, puis flèches |
 | déplacer | glisser l'objet ; **il est épinglé** : le cerveau ne le bougera plus | Maj+flèches (Ctrl+Maj+flèches : grands pas) |
-| redimensionner une capsule ou une fenêtre | glisser la poignée du coin bas droit | Ctrl+flèches |
+| redimensionner une capsule ou une fenêtre | glisser la poignée du coin bas droit ; **l'objet est épinglé aussi** | Ctrl+flèches |
 | ouvrir les actions | clic droit, appui long, ou clic sur l'objet déjà sélectionné | touche Menu ou Maj+F10 |
-| annuler un déplacement en cours, fermer un menu | Échap | Échap |
+| annuler un déplacement en cours, fermer un menu ou une confirmation | Échap | Échap |
+
+Un objet déplacé ou redimensionné reste **dans la zone de composition sûre** (la
+partie de l'écran qu'aucune commande ne recouvre) : on ne peut plus le glisser
+sous la barre du haut, le dock ou les indicateurs du bas. Avec la main de
+Barehands, un appui qui tremble ne déplace rien : il faut glisser nettement
+(10 pixels).
 
 Actions du menu :
 
@@ -1214,17 +1222,23 @@ Actions du menu :
 - **Épingler ici / Désépingler** : un objet épinglé ne bouge que sous votre
   main ; désépinglé, le cerveau peut de nouveau le déplacer ;
 - **Masquer** : l'objet reste dans la scène mais n'est plus dessiné. La
-  notification propose de l'afficher de nouveau ;
+  notification propose de l'afficher de nouveau ; la sélection passe à l'objet
+  voisin ;
 - **Archiver…** : après confirmation, l'objet quitte la scène active (il reste
-  dans l'historique). Une étoile emporte **son signal d'attention** (vivant ou
-  retiré). Le travail d'une étoile archivée ne la fait plus revenir, même s'il
-  avance encore ;
+  dans l'historique ; pas d'annulation en V1). Une étoile emporte **son signal
+  d'attention** (vivant ou retiré). Le travail d'une étoile archivée ne la fait
+  plus revenir, même s'il avance encore ;
 - **Arrêter la tâche…** : seulement pour une tâche Core (étoile « tâche »), après
-  confirmation. Le job est annulé ; son étoile reste, marquée annulée. **Un
-  sous-agent du brain ne s'arrête pas seul** : son menu l'indique (« Arrêt
-  impossible : sous-agent du brain ») ; seul l'arrêt du brain entier, depuis le
-  panneau Agents, les interrompt ;
-- **Archiver les travaux terminés (N)…** : voir ci-dessous.
+  confirmation. Pendant l'arrêt, l'étoile porte un anneau orange en tirets et la
+  pastille « Arrêt de « … » en cours » compte les secondes ; la réponse arrive au
+  plus après le délai réel du Control Center (24 s par défaut). Issues possibles :
+  « Tâche arrêtée » ; « Tâche déjà terminée » ; « Arrêt demandé » (Core n'a pas
+  encore confirmé la fin) ; « Arrêt demandé, nettoyage non confirmé » (tâche de
+  fond du brain dont l'exécution n'a pas pu être nettoyée : elle reste en cours).
+  **Un sous-agent du brain ne s'arrête pas seul** : son menu l'indique
+  (« Arrêt impossible : sous-agent du brain », lu par le lecteur d'écran) ; seul
+  l'arrêt du brain entier, depuis le panneau Agents, les interrompt ;
+- **Archiver les travaux terminés (N objets)…** : voir ci-dessous.
 
 **Retrouver ce qui est masqué.** Tant qu'un objet est masqué, la pastille
 « N objets masqués · afficher » apparaît en bas à gauche. Un clic (ou Entrée)
@@ -1238,8 +1252,9 @@ atteint 512 objets. La confirmation donne les comptes : étoiles terminées, en
 **jamais** pris : le travail en cours, en attente ou bloqué, les notes et
 fenêtres du cerveau, vos propres objets. Core revérifie chaque objet : si la
 scène a changé pendant la confirmation (une étoile a repris), rien n'est archivé
-et la page propose de reconfirmer avec les nouveaux comptes. La place libérée est
-aussitôt reprise par les étoiles que Core avait mises en attente pendant la
+et la page propose de reconfirmer avec les nouveaux comptes ; si elle change
+encore, la notification propose « Cliquer ici pour réessayer ». La place libérée
+est aussitôt reprise par les étoiles que Core avait mises en attente pendant la
 saturation.
 
 **Plusieurs onglets.** Chaque onglet peut agir ; les autres voient le
@@ -1250,13 +1265,17 @@ replacé par la page.
 
 | Symptôme | Cause probable | Action |
 | --- | --- | --- |
-| l'objet revient à sa place après un glisser, notification « Déplacement impossible » | Core injoignable (« commande non envoyée ») ou refus (objet archivé entre-temps) | démarrer Core, recommencer ; `runtime/trace.jsonl` : `scene.command_failed` |
-| « Arrêt impossible » grisé dans le menu | l'étoile est un sous-agent du brain | arrêter le brain entier depuis le panneau Agents si nécessaire |
+| l'objet revient à sa place après un glisser, notification « Déplacement impossible · Core injoignable : rien n'a été envoyé » | Core arrêté | démarrer Core, recommencer ; `runtime/trace.jsonl` : `scene.command_failed` |
+| « … issue inconnue, la scène se relit » | la liaison a été coupée après l'envoi | attendre la relecture : la scène dit ce qui a été appliqué |
+| un objet ne va pas jusqu'au bord de l'écran | zone de composition sûre | normal : le bord est sous les commandes de la page |
+| « Arrêt impossible » dans le menu | l'étoile est un sous-agent du brain | arrêter le brain entier depuis le panneau Agents si nécessaire |
 | « Arrêt impossible : Core ne connaît pas ce job » | job terminé et oublié, ou Core redémarré | rien à arrêter |
-| « Archivage groupé impossible : la scène a changé » deux fois de suite | du travail reprend ou se termine en continu | réessayer un peu plus tard |
-| déplacement au clavier sans effet | la sélection n'est pas sur un objet de la scène, ou un point (qui ne se redimensionne pas) | Tab jusqu'à la scène ; changer la forme depuis le menu |
+| « Arrêt non confirmé … après N s » | Core n'a pas vu la tâche se terminer dans le délai | ouvrir le panneau Agents ; relancer l'arrêt si l'étoile est toujours en cours |
+| « Archivage groupé impossible : la scène change encore » | du travail reprend ou se termine en continu | cliquer la notification pour réessayer un peu plus tard |
+| déplacement au clavier sans effet | la sélection n'est pas sur un objet de la scène, l'objet est déjà au bord de la zone sûre, ou c'est un point (qui ne se redimensionne pas) | Tab jusqu'à la scène ; changer la forme depuis le menu |
 
 Détail technique : `docs/ARCHITECTURE.md`, « Scene user interaction ».
+
 
 ## Deux architectures vocales : `legacy` et `continuous_brain`
 

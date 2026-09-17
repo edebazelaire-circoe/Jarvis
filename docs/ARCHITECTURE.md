@@ -1297,7 +1297,7 @@ when the `scene_id` differs: the consumer then re-reads the snapshot
 
 Change notification. The scene is deliberately **not** on `CoreEventBus`:
 `LocalProtocolServer.events()` forwards every bus event, unfiltered, to every
-`/v1/events` WebSocket client, Voice included. Scene patches (up to 1 025 ops)
+`/v1/events` WebSocket client, Voice included. Scene patches (up to 1 536 ops since Slice 08)
 would weigh megabytes on the voice socket, and a projector burst could fill a
 non-lossy 128-slot subscriber queue and evict Voice. No component needs a
 broadcast: the projector (Slice 04) listens to work state, never to the scene, and the transport
@@ -2257,70 +2257,101 @@ End to the first and last, Escape leaves (blur). A focused point shows its label
 
 ### Scene user interaction
 
-Handoff Slice 08. The user acts on the same scene model as the brain (decision
-15): every gesture is one `POST /api/scene/commands` (actor `user`, set by the
-Control Center), reconciled to the revision Core returns. Nothing is decided in
-the browser that Core does not re-check.
+Handoff Slice 08 (implementation, then QA rework). The user acts on the same
+scene model as the brain (decision 15): every gesture is a
+`POST /api/scene/commands` call (actor `user`, set by the Control Center),
+reconciled to the revision Core returns. Nothing is decided in the browser that
+Core does not re-check.
 
 Files:
 
 - `jarvis/runtime/control_center_scene_interact.js` (`window.JarvisSceneInteract`,
-  pure, node-tested in `tests/unit/test_scene_interaction_logic.py`): geometry
-  (drag, resize, keyboard steps, representation change, clamped to the frame in
-  whole units), key intents, menu model, bulk selection (parity with the domain
-  rule), `archive_many` chunking, command builders, response classification,
-  optimistic overlay (`createPending`), hidden list. Injected at
-  `/*__CONTROL_CENTER_SCENE_INTERACT_JS__*/`, between the layout and page modules.
-- `jarvis/runtime/control_center_scene_page.js` browser block: pointer, keyboard
-  and context-menu listeners on the scene container (delegation), preview while
-  the hand is on an object, commits, toasts, the actionable status chips.
-- `jarvis/runtime/control_center.html`: the existing context menu becomes a
-  generic component (`showMenu({title, items, pos, origin, run})`; `openMenu`
-  for agent cards is a thin wrapper, same keyboard: arrows, Home, End, Escape,
-  Tab, ContextMenu / Shift+F10) and an in-page confirmation
-  (`confirmDialog({title, lines, confirmLabel, cancelLabel, danger})` → promise,
-  `role="alertdialog"`, Cancel focused, Escape / backdrop cancel, Tab trapped,
-  z-index 85). The page no longer calls `window.alert` or `window.confirm`
-  (brain kill/restart and the two panel errors now use the dialog or a toast).
+  pure, node-tested in `tests/unit/test_scene_interaction_logic.py`):
+  - geometry: drag, resize, keyboard steps, representation change, clamped to
+    the **composition safe area** in whole units;
+  - drag threshold per pointer, key intents, menu model;
+  - bulk selection (parity with the domain rule), `archive_many` chunking;
+  - command builders, response and transport classification in French;
+  - stop outcomes, focus after a removal;
+  - layered optimistic overlay (`createPending`), resolver commit layout
+    (`commitLayout`), hidden list.
+
+  It is injected at `/*__CONTROL_CENTER_SCENE_INTERACT_JS__*/`, between the
+  layout and page modules.
+- `jarvis/runtime/control_center_scene_page.js` browser block:
+  - pointer, keyboard and context-menu listeners on the scene container (delegation);
+  - preview while the hand is on an object, commits, toasts;
+  - the actionable status chips, the stop pending state, the second live region.
+- `jarvis/runtime/control_center.html`:
+  - the existing context menu becomes a generic component,
+    `showMenu({title, items, pos, origin, run})`, with the same keyboard
+    (arrows, Home, End, Escape, Tab, ContextMenu / Shift+F10). `openMenu` for
+    agent cards is a thin wrapper;
+  - items may be a `note` (focusable, `aria-disabled="true"`, announced, inert
+    on Enter);
+  - an in-page modal confirmation, `confirmDialog({title, lines, confirmLabel,
+    cancelLabel, danger})`, returns a promise. See *Confirmation* below.
+
+  The page no longer calls `window.alert` or `window.confirm`.
 
 | Gesture | Keyboard equivalent | Command(s) | Refusal / failure |
 | --- | --- | --- | --- |
-| select | Tab into the scene, arrows (roving `tabindex`, Slice 05) | none | — |
-| drag a node (4 px threshold) | Shift+Arrow (2 units), Ctrl+Shift+Arrow (10) | `set_geometry` (`placed_by` = user), then `pin` if not pinned | preview rolled back, toast; pin refused → position kept, pin flag rolled back, toast |
-| drag the corner grip (capsule, window) | Ctrl+Arrow (±2 units on w/h) | `set_geometry` | rolled back, toast |
+| select (click, focus); the grip of a selected capsule or window stays visible without hover | Tab into the scene, arrows (roving `tabindex`, Slice 05) | none | — |
+| drag a node (4 px threshold for a mouse, 10 px for touch, pen or a Barehands token) | Shift+Arrow (2 units), Ctrl+Shift+Arrow (10) | `pin` then `set_geometry`; for an object without geometry: `set_geometry`, `pin`, `set_geometry` again (a `duplicate` if nothing moved in between) | both steps rolled back (compensating `unpin` when needed), toast |
+| drag the corner grip (capsule, window) | Ctrl+Arrow (±2 units on w/h) | same as drag: every user geometry edit pins (decision 9, PM decision in the QA rework) | same |
 | menu › Afficher en point / capsule / fenêtre | menu | `set_representation` with the new default size around the same centre | rolled back, toast |
-| menu › Épingler ici / Désépingler | menu | `pin` / `unpin` (`set_geometry` + `pin` when the object had no committed place) | rolled back, toast |
-| menu › Masquer | menu | `set_visibility hidden`; toast offers to show it again | rolled back, toast |
-| chip « N objets masqués » › Afficher / Tout réafficher | chip is a button | `set_visibility visible`, one per object (≤ 512) | count of failures in a toast |
-| menu › Archiver… (confirmation) | menu | `archive` (Core cascades the star's runtime signals) | rolled back, toast |
-| menu › Archiver les travaux terminés (N)… or the « Scène pleine » chip (confirmation with counts) | menu / chip button | `archive_many` (one command in practice) | whole selection rolled back; `not_bulk_archivable` → counts recomputed and confirmed again once |
-| menu › Arrêter la tâche… (job stars only, confirmation) | menu | `POST /api/jobs/cancel` | toast with Core's words |
+| menu › Épingler ici / Désépingler | menu | `pin` / `unpin` (the drawn place is committed first when the object had none) | rolled back, toast |
+| menu › Masquer | menu | `set_visibility hidden`; toast offers to show it again; the selection moves to the reading neighbour | rolled back, toast |
+| chip « N objets masqués » › Afficher / Tout réafficher | chip is a button | `set_visibility visible`, one per object (≤ 512); the first object shown is selected | count of failures in a toast |
+| menu › Archiver… (confirmation) | menu | `archive` (Core cascades the star's runtime signals); short confirmation toast; selection moves to the neighbour | rolled back, toast |
+| menu › Archiver les travaux terminés (N objets)… or the « Scène pleine » chip (confirmation with counts) | menu / chip button | `archive_many` (one command in practice) | whole selection rolled back; `not_bulk_archivable` → counts recomputed and confirmed again once, then a toast offering « Cliquer ici pour réessayer » |
+| menu › Arrêter la tâche… (job stars only, confirmation) | menu | `POST /api/jobs/cancel`; the star shows « arrêt en cours » until Core says it ended, or until the relay deadline | toast with Core's outcome in French |
 | right click, ContextMenu, Shift+F10, long press (550 ms), click on the already selected object | ContextMenu / Shift+F10 | opens the menu | — |
 | Escape | Escape | cancels a drag or keyboard edit, closes a menu or dialog, then leaves the node | — |
 
-Keyboard edits preview immediately and commit when the modifier is released,
-on blur, or after 700 ms without a key. Alt+Arrow and Meta are never intercepted
-(browser navigation).
+Keyboard edits:
 
-**Optimistic display.** `createPending` keeps, per object, the fields just sent
-(`geometry`, `representation`, `visibility`, `pinned`, `archived`) and a token.
-The drawn state is `pending.overlay(heldState)`; layout, view model and the
-resolver committer's layout all use it. An entry disappears when the held state
-reaches the revision Core returned, when Core refuses or the call fails
-(rollback, counted `rolledBack`), or after 30 s unconfirmed
-(`[scène] scene.user_change_unconfirmed`). A newer gesture on the same object
-replaces the token: a late answer for the older one can neither confirm nor
-roll it back. While the hand is on a node (drag, keyboard edit) the renderer does
-not reposition it (`record.dragging`), and transitions are off for that node.
+- preview immediately;
+- commit when the modifier is released, on blur, or after 700 ms without a key;
+- Alt+Arrow and Meta are never intercepted (browser navigation).
 
-**Tabs and the resolver.** User commands are sent from whichever tab the user
-acts in, leader or follower; the follower's change reaches other tabs through
-the leader's long-poll and broadcast like any patch. The resolver never fights a
-user placement: an object with a pending geometry leaves `layout.resolved`, a
-committed user geometry is never a commit candidate again, and Core refuses a
-late resolver commit on it (`explicit_placement`). Measured: drag, then reload
-→ same transform, 0 commands; drag in a follower tab → leader tab at the same
-place at the same revision.
+**Safe-area clamp** (PM decision, QA rework). Drag, keyboard move, resize and representation changes keep the whole box inside `SCENE_SAFE_AREA` (x −152…138, y −72…68), so a user can no longer park an object under the page chrome.
+
+- The limits are the same as the resolver's: a parity test covers the domain, the renderer and the interaction module.
+- A window is at most 290 × 140 units and a capsule at most 160 × 10.
+- An object the brain placed outside the safe area enters it at the first user edit.
+
+**Optimistic display.** `createPending` keeps one **layer per operation**, in send order, drawn as `pending.overlay(heldState)`.
+
+- `rollback(token)` removes that layer only, so a refused newer change never undoes an older accepted change that has not been received yet. No pin flicker.
+- A layer disappears when the held state reaches the revision Core returned for it, when Core refuses it or the call fails (`rolledBack`), or after 30 s unconfirmed (`[scène] scene.user_change_unconfirmed`).
+- While the hand is on a node (drag, keyboard edit), the renderer does not reposition it (`record.dragging`), and transitions are off for that node.
+
+**Resolver commits use the held state only.** `pushCommitter` passes `serverLayout()`: the layout of the state Core confirmed (`commitLayout`), not the drawn overlay. A place freed only by a pending change (a move or archive that may still be refused) is never committed to another object. With nothing pending, the drawn layout is reused, so there is no second computation.
+
+QA's repro `s8r_b3c.py`:
+
+- before the fix: a new object took the optimistically freed box, and a rollback left a 100 % overlap (2 560 units²);
+- after: the new object went elsewhere, overlap 0.
+
+**Tabs.**
+
+- User commands are sent from whichever tab the user acts in, leader or follower. The follower's change reaches other tabs through the leader's long-poll and broadcast.
+- A committed user geometry is never a resolver candidate again, and Core refuses a late resolver commit on it (`explicit_placement`).
+
+**Confirmation** (`confirmDialog`). While it is open:
+
+- the other children of `body` are `inert`, except the Barehands overlay: no click, no focus, no scene gesture, no clickable toast;
+- one window-level capture listener takes every key. Escape cancels, even with focus on the dialog body. Tab and Shift+Tab stay on the two buttons. Enter or Space activate the focused button, and every other key is swallowed, so no UI shortcut passes;
+- a click on the dialog body keeps focus on the dialog.
+
+Measured: the « s » (settings) shortcut, Shift+Arrow on the node behind and a click behind the backdrop produced 0 commands and left settings closed; Escape from the body closed the dialog; focus came back to the node.
+
+**Focus and announcements.**
+
+- Archiving, hiding or bulk-archiving moves the selection to the next object in reading order (`focusAfterRemoval`), else the previous one, focused as soon as it is drawn.
+- Showing hidden objects selects the first one shown.
+- A second, visually hidden `role=status` region announces action outcomes (« … archivé. », « … masqué. », « Arrêt de … demandé. »), separate from the reading-state region.
 
 **Menu model** (`menuModel(state, objectId, {title, finished})`):
 
@@ -2329,76 +2360,80 @@ place at the same revision.
 | any | the two other representations; Épingler ici or Désépingler; Masquer; Archiver… |
 | execution star with runtime signals | « Archiver avec son signal… » (or « avec ses signaux ») |
 | `job` star with `work_ref.source = job`, running / pending / blocked | Arrêter la tâche… |
-| `agent` star (or `job` of another source), running / pending / blocked | « Arrêt impossible : sous-agent du brain » (disabled) |
-| execution star or runtime signal, when bulk selection is not empty | Archiver les travaux terminés (N)… |
+| `agent` star (or `job` of another source), running / pending / blocked | note « Arrêt impossible : sous-agent du brain » (focusable, `aria-disabled`) |
+| execution star or runtime signal, when bulk selection is not empty | Archiver les travaux terminés (N objets)… (same noun as the confirmation button) |
 
-**Barehands.** Its pointer replays `pointerdown`, focus, `pointerup`, `click`
-on the element under the token, without drag. A click on the object that is
-already selected (focused) opens its menu, and a long press does too; menu items,
-chips and dialog buttons are ordinary buttons it can click. Dragging stays
-mouse/keyboard only.
+**Barehands.**
 
-**Errors.** Every command answer goes through `classifyResponse`: domain
-refusals in the user's words (`REFUSALS`), transport failures with the Control
-Center's message (`command_not_sent`: nothing was applied; `core_timeout`:
-outcome unknown, the state re-read decides). Each refusal or failure is a toast
-and a `[scène] scene.user_command_refused` console event; successful actions log
-`scene.user_moved`, `scene.user_resized`, `scene.user_archived`,
-`scene.user_bulk_archived`, `scene.user_stopped`, `scene.user_shown`,
-`scene.user_key_edit`. The Control Center journal records every relayed command
-(`scene.command` / `scene.command_failed`) and every stop
-(`scene.work_cancel`, `scene.work_cancel_refused`, `scene.work_cancel_failed`).
-`JarvisScene.inspect()` adds `pending`, `actions` (counters) and `gesture`.
+- Its pointer replays `pointerdown`, focus, `pointerup` and `click` on the element under the token, with no drag.
+- A click on the already selected object opens its menu, and so does a long press.
+- A gesture from its pointer (`pointerId` 9001, or a token on screen) needs 10 px before it becomes a drag, so a trembling long press never moves and pins.
+- Menu items, chips and dialog buttons are ordinary buttons.
 
-**Archive cascade** (domain, `jarvis/domain/scene.py`; see
-`docs/scene-model.md` › *Archive cascade and bulk archive*). A user `archive` of
-an execution star archives, in the same patch and revision, every runtime signal
-whose owner is that star (`signal_owners`: the target of its live signal link,
-else the active star with the same `work_ref` source and external id, which
-finds retired signals). Signals come first in the patch, so the star's tombstone
-is the newest and the last evicted; while it lives the projector skips the star
-and its signal (`skipped_archived`, no refusal journaled). Brain and user
-`attention` objects are never cascaded.
+**Errors.**
 
-**`archive_many`** (user-only `SceneOp`, absent from the brain matrix and the
-display MCP catalog): `object_ids`, 1 to 512 unique ids. Each id is re-validated
-by `bulk_archivable`: an execution star in a terminal state (`completed`,
-`cancelled`, `failed`, `interrupted`), a runtime signal whose owner is selected
-and terminal, or an orphan runtime signal. Already archived ids are skipped;
-an unknown id (`unknown_object`) or any other object (`not_bulk_archivable`)
-refuses the whole command. One revision, cascade included, patch ops reuse
-`archive_object` / `delete_relation` (`MAX_PATCH_OPS` is now 512 + 1 024). The
-browser sends the terminal stars and orphan signals it sees, chunked under 512
-ids and 48 KB of body. Measured at 512 objects: one `archive_many` (revision
-1067 → 1068) removed 22 stars and their 6 signals, and the 20 creations the
-projector had deferred were caught up (`caught_up` 20, 504 objects, no longer
-saturated).
+- Every command answer goes through `classifyResponse` and `transportFailure`:
+  - domain refusals come back in the user's words (`REFUSALS`);
+  - transport failures use French sentences keyed on the Control Center code, with the Slice 03 distinction:
+
+    | Code | Meaning |
+    | --- | --- |
+    | `command_not_sent`, `core_unreachable` with « non envoyée » | nothing was sent |
+    | `core_timeout`, a lost link, an unreadable answer | outcome unknown |
+    | a `fetch` with no HTTP answer (reset after sending, page deadline) | outcome **unknown**, never « rien n'a été envoyé » |
+
+  - the raw text (English, host, port) only goes to the console (`scene.user_command_detail`).
+- Each refusal or failure is a toast plus a `[scène] scene.user_command_refused` console event. Toast details wrap to two lines instead of being cut.
+- An unexpected page error during an action (a rejected promise) is a toast too (`actionFailed`), never only a console line.
+- Successful actions log `scene.user_moved`, `scene.user_resized`, `scene.user_archived`, `scene.user_bulk_archived`, `scene.user_stopped`, `scene.user_shown` and `scene.user_key_edit`.
+- The Control Center journal records every relayed command (`scene.command` / `scene.command_failed`) and every stop (`scene.work_cancel`, `scene.work_cancel_refused`, `scene.work_cancel_failed`).
+- `JarvisScene.inspect()` adds `pending`, `actions`, `gesture` (with its threshold), `selected`, `stopping` and `jobCancelTimeoutS`.
+
+**Rendering of a capsule in a larger box** (QA rework). A brain `set_representation capsule` on a user-pinned window keeps the window's stored box, which used to be drawn as a giant capsule. `drawnBox` now draws a capsule whose box is taller than `CAPSULE_MAX` (160 × 10 units) at a capsule's natural height, and at most 160 units wide, centred in the stored box. A point was already drawn at its size, centred. This is render only: the stored geometry does not change.
+
+**Archive cascade** (domain, `jarvis/domain/scene.py`; see `docs/scene-model.md` › *Archive cascade and bulk archive*). A user `archive` of an execution star archives, in the same patch and revision, every runtime signal whose owner is that star.
+
+- The owner (`signal_owners`) is the target of the signal's live link; otherwise it is the active star with the same `work_ref` source and external id, which is how retired signals are found.
+- Signals come first in the patch, so the star's tombstone is the newest and the last evicted. While it lives, the projector skips the star and its signal (`skipped_archived`, no refusal journaled).
+- Brain and user `attention` objects are never cascaded.
+
+**`archive_many`** (user-only `SceneOp`, absent from the brain matrix and the display MCP catalog) takes `object_ids`: 1 to 512 unique ids.
+
+- Each id is re-validated by `bulk_archivable`. Accepted: an execution star in a terminal state (`completed`, `cancelled`, `failed`, `interrupted`); a runtime signal whose owner is selected and terminal; an orphan runtime signal.
+- Already archived ids are skipped.
+- An unknown id (`unknown_object`), or any other object (`not_bulk_archivable`), refuses the whole command.
+- The command produces one revision, cascade included.
+- Patch ops reuse `archive_object` and `delete_relation`; `MAX_PATCH_OPS` is now 512 + 1 024 = 1 536.
+- The browser sends the terminal stars and orphan signals it sees, chunked under 512 ids and 48 KB of body.
+- **The Control Center answer to an `archive_many` omits the patch** (`patch: null`, `patch_omitted: true`). It can weigh up to about 8 MiB (QA measured 8.2 MiB), and the page only reads the outcome and revision; the patch still reaches the page through the long-poll. Other ops keep their patch, and the brain's MCP path talks to Core directly and is unaffected.
+- Measured at 512 objects: one `archive_many` (revision 1067 → 1068) removed 22 stars and their 6 signals, and the 20 creations the projector had deferred were caught up.
 
 **Job stop route.**
 
 ```text
 menu › Arrêter la tâche (job star, work_ref.source = job)
-  └─ POST /api/jobs/cancel {source, external_id}      Control Center, origin guard, strict body ≤ 4 KiB
+  └─ POST /api/jobs/cancel {source, external_id}      Control Center, origin guard, strict body ≤ 4 KiB (413 beyond)
        ├─ source ≠ job → 409 not_cancellable, Core not called
-       └─ CoreSceneView.cancel_work → POST /v1/work/cancel {schema_version: 1, source, external_id}   bearer token
+       └─ CoreSceneView.cancel_work → POST /v1/work/cancel {schema_version: 1, source, external_id}   bearer token, body ≤ 4 KiB (413)
             ├─ source ≠ job → 409 not_cancellable; unknown or speculative job → 404 not_found; malformed → 400
             └─ JobService.cancel_for_user(job_id) → cancel(job_id); waits ≤ 5 s for the job to end
-                 → 200 {source, external_id, outcome: cancelled | cancel_requested | already_terminal, status}
+                 → 200 {source, external_id, outcome: cancelled | cancel_requested | cleanup_unknown | already_terminal, status}
                  → the job's `cancelled` observation reaches the scene through the projector
 ```
 
-`JobService.cancel_work(work_id)` was not reused as such: it cancels every job
-linked to a brain `work_id` (a star is one job) and never reaches `back_brain`
-jobs (no `_links` entry). `cancel_for_user` calls the same primitive,
-`cancel(job_id)`, on exactly the job behind the star, and journals
-`core.job.user_cancel` (info). Claude CLI sub-agents have no individual stop
-(only the whole brain, `/api/agent/kill`): their menu never offers it. The
-Control Center route lives under `/api/jobs`, not `/api/work`: `/api/work` stays
-read-only (the UI never writes work state; the job's own observation does). Relay
-failures are classified like commands (`command_not_sent`, `core_timeout`,
-`core_unreachable`, `invalid_scene_response`); 400/404/409 from Core are relayed
-with their code. Measured: stop from the menu → job `cancelled`, star
-`cancelled`, journal `scene.work_cancel` outcome `cancelled`.
+- **Exactly one job.** `cancel_for_user` stops exactly one job, the one behind the star. It never touches the brain work item that may have requested it; that item's end comes from its own observations.
+- **Why not `cancel_work`.** `JobService.cancel_work(work_id)` cancels every job linked to one brain `work_id`, and never reaches `back_brain` jobs (they have no `_links` entry), so it was not reused as such. `cancel_for_user` calls the same primitive, `cancel(job_id)`, and journals `core.job.user_cancel` (info).
+- **Concurrency** (QA rework, MAJOR-1):
+  - **Before:** two concurrent stops, or a stop racing the brain's `cancel_work`, called `task.cancel()` twice. The second call interrupted the write of `cancelled` in `_execute`, and the job stayed `running` for good (10 of 10 through the Control Center).
+  - **Idempotent cancel.** `cancel(job_id)` is now idempotent: `_cancel_requested` means `task.cancel()` is called once.
+  - **Protected write.** The terminal write (`_settle_cancelled`) runs in its own task, awaited under `shield`; any further cancellation is absorbed until it is written.
+  - **Stop before the first step.** A job stopped before it ever started (`_started`) is never executed and ends `cancelled`.
+  - **Coverage.** Tests cover two concurrent user stops, `cancel_work` plus a user stop, a stop before the first step, a raw second cancel during the write, and two stops of an owned `back_brain` job. QA's HTTP repro now gives 10 of 10 `cancelled`.
+- **`cleanup_unknown`.** An owned `back_brain` job whose execution cleanup is not confirmed answers `cleanup_unknown` (job still `running`, `cancellation = cleanup_unknown`). The page says « Arrêt demandé, nettoyage non confirmé », never that Core is finishing.
+- **Stop pending state.** While a stop is in flight, the star has a spinning dashed orange ring (static with reduced motion). A chip « Arrêt de « … » en cours » shows a live seconds counter. The state ends when the held state shows a terminal status, or at the relay deadline, which is then said in a toast (« Arrêt non confirmé … après N s »). The deadline is the real one: `/api/status` gives `scene_limits.job_cancel_timeout_s` = connect (3 s) + `WORK_CANCEL_TIMEOUT_S` (20 s) + 1 s, or `null` without Core.
+- **Route location.** The Control Center route lives under `/api/jobs`, not `/api/work`: `/api/work` stays read-only, because the UI never writes work state; the job's own observation does. A test pins an allowlist: the only UI route that affects work is `POST /api/jobs/cancel` (`source = job`), and no UI route observes or ingests work.
+- **Relay failures** are classified like commands (`command_not_sent`, `core_timeout`, `core_unreachable`, `invalid_scene_response`); 400, 404, 409 and 413 from Core are relayed with their code.
+
 
 ## Telemetry
 

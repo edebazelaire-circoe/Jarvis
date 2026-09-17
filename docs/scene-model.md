@@ -309,12 +309,11 @@ Residual risks (accepted by the PM after Slice 04 QA):
   payload; only `exec_state` records the new status. Consumers must use
   `is_live_signal`, not the category;
 - runtime cannot delete objects, so a retired signal occupies an object slot as
-  long as its star lives. When the user archives a star, the star's relations go
-  with it, but its attention object (live or retired) stays until the user
-  archives it too: at most one leaked slot per archived star with a signal,
-  towards `MAX_SCENE_OBJECTS` = 512. Archive cascade (a star takes its runtime
-  signal with it) and bulk archive of completed work are in the Slice 08
-  contract — done, see *Archive cascade and bulk archive*;
+  long as its star lives. Before Slice 08, a user archive of a star left its
+  attention object behind (one leaked slot per archived star with a signal).
+  Since Slice 08 the archive cascade takes the star's runtime signals with it, and
+  `archive_many` accepts the orphan signals older scenes still hold (see
+  *Archive cascade and bulk archive*);
 - `parent_of` **cycles** are not validated (Slice 01) and can appear from
   producer data or brain/user links; renderers walking parents must guard
   against them (Slice 05: the AutoResolver's anchor walk stops at the first
@@ -455,6 +454,12 @@ revision, patch}` — refusals are outcomes, not HTTP errors.
 
 - **Epoch**: `SceneService.epoch`, new at every `start()`. A consumer keys its
   cache on `(scene_id, epoch, revision)`; any other epoch means refetch.
+- **Bulk archive answer at the Control Center** (Slice 08, QA rework): Core's
+  answer carries the patch as for any command; the Control Center validates it
+  and then relays an `archive_many` answer to the page with `patch: null` and
+  `patch_omitted: true` (up to ~8 MiB otherwise). The page reads the outcome and
+  revision, and receives the patch through the long-poll; the brain tools talk to
+  Core directly and are unaffected.
 - **Actors over HTTP**: `brain` and `user` only; `runtime` is 403. The Control
   Center proxy forces `user`. The actor is declared, not authenticated: the
   brain shares the OS user and could read the token, so decision 14 holds

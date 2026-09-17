@@ -589,7 +589,8 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
 .sc-grip{position:absolute;right:3px;bottom:3px;width:13px;height:13px;display:grid;place-items:center;color:var(--sc-muted);cursor:nwse-resize;
   opacity:0;transition:opacity .14s ease-out}
 .sc-grip svg{width:9px;height:9px;fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round}
-.sc-capsule .sc-grip{right:5px;bottom:50%;transform:translateY(50%)}
+.sc-capsule .sc-grip{right:1px;bottom:0;width:11px;height:11px}
+.sc-capsule:has(>.sc-grip){padding-right:18px}
 .sc-node:hover>.sc-grip,.sc-node:focus>.sc-grip,.sc-node.sc-selected>.sc-grip,.sc-node.sc-dragging>.sc-grip{opacity:.9}
 .sc-capsule.sc-selected,.sc-window.sc-selected{box-shadow:inset 0 0 0 1px var(--sc-ink),0 10px 28px rgba(0,0,0,.34)}
 .sc-point.sc-selected .sc-mark{outline:1px solid var(--sc-ink);outline-offset:5px}
@@ -722,7 +723,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   let viewMemo={state:null,version:-1,value:null},gesture=null,keyEdit=null,kbdMenuAt=0,pruneTimer=0;
   /* Reprise QA : sélection (poignée visible), focus à rendre après un retrait,
      étoiles en cours d'arrêt, délai réel d'un arrêt (lu dans `/api/status`). */
-  let selectedId=null,pendingFocus=null,jobCancelTimeoutS=null,serverMemo={state:null,value:null};
+  let selectedId=null,pendingFocus=null,jobCancelTimeoutS=null,serverMemo={state:null,value:null},actionLiveEl=null;
   const stopping=new Map();
   const actionStats={moves:0,resizes:0,representations:0,visibility:0,pins:0,archives:0,bulkArchives:0,stops:0,menus:0,refused:0,failed:0,rolledBack:0};
   const inflight=new Set();
@@ -840,7 +841,11 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
        compteurs qui défilent chaque seconde. */
     liveEl=document.createElement('div');
     liveEl.className='sc-sr';liveEl.setAttribute('role','status');liveEl.setAttribute('aria-live','polite');
-    root.append(linksEl,statusEl,liveEl);
+    /* Seconde région vivante (Slice 08) : l'issue des actions de l'utilisateur
+       (archivé, masqué, arrêt demandé), jamais écrasée par l'état de lecture. */
+    actionLiveEl=document.createElement('div');
+    actionLiveEl.className='sc-sr sc-sr-actions';actionLiveEl.setAttribute('role','status');actionLiveEl.setAttribute('aria-live','polite');
+    root.append(linksEl,statusEl,liveEl,actionLiveEl);
     root.addEventListener('keydown',onKeyDown);
     root.addEventListener('keyup',onKeyUp);
     root.addEventListener('pointerover',onPointerOver);
@@ -865,7 +870,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     const style=document.getElementById('jarvisSceneStyle');
     if(style)style.remove();
     if(animTimer){window.clearTimeout(animTimer);animTimer=0}
-    root=null;linksEl=null;statusEl=null;liveEl=null;nodes.clear();freshUntil.clear();
+    root=null;linksEl=null;statusEl=null;liveEl=null;actionLiveEl=null;nodes.clear();freshUntil.clear();
     lastView=null;lastState=null;layout=null;layoutState=null;lastModel=null;
     viewMemo={state:null,version:-1,value:null};serverMemo={state:null,value:null};gesture=null;
     selectedId=null;pendingFocus=null;stopping.clear();
@@ -1179,8 +1184,10 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
 
   /* Annonce d'un changement d'état au lecteur d'écran (région vivante polie). */
   function announce(text){
-    if(!liveEl||!text)return;
-    liveEl.textContent=text;announced=text;
+    if(!actionLiveEl||!text)return;
+    /* Même texte deux fois de suite : vidé puis réécrit, pour être relu. */
+    if(actionLiveEl.textContent===text)actionLiveEl.textContent='';
+    actionLiveEl.textContent=text;
   }
 
   /* Échec imprévu d'une action de l'utilisateur (défaut de la page) : dit à
