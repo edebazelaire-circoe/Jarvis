@@ -51,13 +51,20 @@ class FileSceneCaptureStore:
             return 0
         captures = []
         for entry in self.directory.iterdir():
-            if entry.is_file() and CAPTURE_NAME.match(entry.name):
+            if not CAPTURE_NAME.match(entry.name):
+                continue
+            try:
                 captures.append((entry.stat().st_mtime, entry.name, entry))
+            except FileNotFoundError:
+                continue  # intentional: removed meanwhile (another prune, the user); nothing left to keep or delete
         # Nom horodaté puis mtime : ordre stable même si deux fichiers ont la même mtime.
         captures.sort(key=lambda item: (item[0], item[1]), reverse=True)
         removed = 0
         for index, (mtime, _name, entry) in enumerate(captures):
             if index >= keep or now_epoch_s - mtime > max_age_s:
-                entry.unlink(missing_ok=True)
-                removed += 1
+                try:
+                    entry.unlink()
+                    removed += 1
+                except FileNotFoundError:
+                    continue  # intentional: vanished between listing and deletion; the next file is still pruned
         return removed

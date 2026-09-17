@@ -29,6 +29,8 @@ CAPTURE_REDELIVER_S = 1.0
 #: Rétention des fichiers : les 5 derniers, jamais plus de 24 h.
 CAPTURE_KEEP_FILES = 5
 CAPTURE_MAX_AGE_S = 24 * 3600.0
+#: Blocs d'un PNG accepté au plus (un canevas en produit une poignée).
+MAX_PNG_CHUNKS = 4096
 #: Corps de la demande du cerveau (`POST /v1/scene/captures`).
 MAX_CAPTURE_REQUEST_BYTES = 4_096
 
@@ -61,10 +63,11 @@ def check_capture_id(value: object) -> str:
 def png_dimensions(data: bytes) -> tuple[int, int]:
     """Largeur et hauteur d'un PNG complet et borné ; `ValueError` sinon.
 
-    Vérifie la taille, la signature, un premier bloc `IHDR` de 13 octets au CRC
-    exact, les dimensions (1..`MAX_CAPTURE_WIDTH` × 1..`MAX_CAPTURE_HEIGHT`) et
-    le bloc `IEND` final. Ne décode pas les pixels : ce contrôle suffit à refuser
-    un corps quelconque, tronqué ou surdimensionné.
+    Vérifie la taille, la signature, puis **chaque** bloc : longueur dans le corps,
+    CRC exact ; `IHDR` de 13 octets en premier, dimensions (1..`MAX_CAPTURE_WIDTH` ×
+    1..`MAX_CAPTURE_HEIGHT`) ; au moins un `IDAT` ; aucun `acTL` (PNG animé) ; aucun
+    bloc critique inconnu (majuscule initiale hors `IHDR`, `PLTE`, `IDAT`, `IEND`) ;
+    `IEND` vide en dernier, rien après. Ne décompresse pas les pixels.
     """
 
     if not isinstance(data, (bytes, bytearray)):
@@ -73,16 +76,40 @@ def png_dimensions(data: bytes) -> tuple[int, int]:
         raise ValueError(f"capture exceeds {MAX_CAPTURE_BYTES} bytes")
     if len(data) < len(_PNG_SIGNATURE) + 25 + len(_PNG_END) or not data.startswith(_PNG_SIGNATURE):
         raise ValueError("capture is not a PNG (signature)")
-    length, tag = struct.unpack(">I4s", data[8:16])
-    if length != 13 or tag != b"IHDR":
-        raise ValueError("capture PNG must start with a 13-byte IHDR chunk")
-    header = data[16:29]
-    (crc,) = struct.unpack(">I", data[29:33])
-    if zlib.crc32(tag + header) & 0xFFFFFFFF != crc:
-        raise ValueError("capture PNG IHDR checksum mismatch")
-    width, height = struct.unpack(">II", header[:8])
-    if not (1 <= width <= MAX_CAPTURE_WIDTH and 1 <= height <= MAX_CAPTURE_HEIGHT):
-        raise ValueError(f"capture PNG is {width}x{height}, expected at most {MAX_CAPTURE_WIDTH}x{MAX_CAPTURE_HEIGHT}")
-    if not bytes(data[-len(_PNG_END):]) == _PNG_END:
-        raise ValueError("capture PNG is truncated (no IEND)")
-    return width, height
+    position = len(_PNG_SIGNATURE)
+    width = height = 0
+    seen_idat = False
+    index = 0
+    while True:
+        if position + 12 > len(data):
+            raise ValueError("capture PNG is truncated (no IEND)")
+        length, tag = struct.unpack(">I4s", data[position:position + 8])
+        end = position + 12 + length
+        if end > len(data):
+            raise ValueError("capture PNG chunk runs past the end")
+        body = data[position + 8:position + 8 + length]
+        (crc,) = struct.unpack(">I", data[end - 4:end])
+        if zlib.crc32(tag + body) & 0xFFFFFFFF != crc:
+            raise ValueError(f"capture PNG {tag!r} checksum mismatch")
+        if index == 0:
+            if tag != b"IHDR" or length != 13:
+                raise ValueError("capture PNG must start with a 13-byte IHDR chunk")
+            width, height = struct.unpack(">II", body[:8])
+            if not (1 <= width <= MAX_CAPTURE_WIDTH and 1 <= height <= MAX_CAPTURE_HEIGHT):
+                raise ValueError(f"capture PNG is {width}x{height}, expected at most {MAX_CAPTURE_WIDTH}x{MAX_CAPTURE_HEIGHT}")
+        elif tag == b"acTL":
+            raise ValueError("animated PNG (acTL) is not a capture")
+        elif tag == b"IDAT":
+            seen_idat = True
+        elif tag == b"IEND":
+            if length != 0 or end != len(data):
+                raise ValueError("capture PNG IEND must be empty and last")
+            if not seen_idat:
+                raise ValueError("capture PNG has no IDAT")
+            return width, height
+        elif tag[0:1].isupper() and tag not in (b"PLTE",):
+            raise ValueError(f"capture PNG has an unknown critical chunk {tag!r}")
+        position = end
+        index += 1
+        if index > MAX_PNG_CHUNKS:
+            raise ValueError("capture PNG has too many chunks")

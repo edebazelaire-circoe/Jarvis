@@ -523,3 +523,115 @@ def test_the_capture_tool_is_counted_as_display_work_and_the_catalog_has_no_arch
     assert not any("archiv" in name or "pin" in name for name in claude_local.DISPLAY_TOOLS)
 
 # La lecture du flux du CLI (image, lignes longues) est couverte par tests/unit/test_cli_stream.py (reprise QA).
+
+
+# ------------------------------------------------------------------ reprise QA : PNG, usage unique, client parti, rétention
+
+
+def chunked_png(*chunks: tuple[bytes, bytes], corrupt: bytes | None = None) -> bytes:
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        crc = zlib.crc32(tag + data) & 0xFFFFFFFF
+        if tag == corrupt:
+            crc ^= 1
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", crc)
+
+    return b"\x89PNG\r\n\x1a\n" + b"".join(chunk(tag, data) for tag, data in chunks)
+
+
+def test_png_validation_walks_every_chunk():
+    ihdr = (b"IHDR", struct.pack(">IIBBBBB", 4, 4, 8, 2, 0, 0, 0))
+    idat = (b"IDAT", zlib.compress(b"\x00" * 13 * 4))
+    iend = (b"IEND", b"")
+    assert png_dimensions(chunked_png(ihdr, idat, (b"tEXt", b"k\x00v"), iend)) == (4, 4)
+    refused = {
+        "idat crc": chunked_png(ihdr, idat, iend, corrupt=b"IDAT"),
+        "no idat": chunked_png(ihdr, iend),
+        "apng": chunked_png(ihdr, (b"acTL", b"\x00" * 8), idat, iend),
+        "unknown critical": chunked_png(ihdr, (b"ABCD", b"x"), idat, iend),
+        "second ihdr": chunked_png(ihdr, ihdr, idat, iend),
+        "data after iend": chunked_png(ihdr, idat, iend) + b"trailing",
+        "iend not empty": chunked_png(ihdr, idat, (b"IEND", b"x")),
+        "chunk past end": chunked_png(ihdr, idat)[:-3],
+    }
+    for name, data in refused.items():
+        with pytest.raises(ValueError):
+            png_dimensions(data)
+        assert name
+
+
+async def test_single_use_is_atomic_under_parallel_uploads(capture_core):
+    request = asyncio.ensure_future(capture_core.request("POST", "/v1/scene/captures", json=BRAIN))
+    await asyncio.sleep(0.2)
+    capture_id = capture_core.core.scene_captures._pending.capture_id
+
+    async def put() -> int:
+        async with aiohttp.ClientSession() as session:
+            async with session.put(f"http://127.0.0.1:{capture_core.port}/v1/scene/captures/{capture_id}",
+                                   headers=capture_core.headers(), data=png()) as response:
+                return response.status
+
+    statuses = await asyncio.gather(*(put() for _ in range(4)))
+    assert sorted(statuses) == [200, 404, 404, 404]
+    assert (await request)[0] == 200
+    assert len([p for p in capture_core.capture_dir.iterdir() if CAPTURE_NAME.match(p.name)]) == 1
+
+
+async def test_a_brain_call_that_leaves_frees_the_capture_at_once(capture_core, tmp_path):
+    async with aiohttp.ClientSession() as session:
+        call = asyncio.ensure_future(session.post(f"http://127.0.0.1:{capture_core.port}/v1/scene/captures",
+                                                  headers=capture_core.headers(), json=BRAIN))
+        await asyncio.sleep(0.3)
+        assert capture_core.core.scene_captures._pending is not None
+        call.cancel()
+        await asyncio.gather(call, return_exceptions=True)
+    started = time.monotonic()
+    while capture_core.core.scene_captures._pending is not None and time.monotonic() - started < 2:
+        await asyncio.sleep(0.05)
+    assert capture_core.core.scene_captures._pending is None and time.monotonic() - started < 2
+    leader = asyncio.ensure_future(fake_leader(capture_core, image=png()))
+    await asyncio.sleep(0.05)
+    status, body, _ = await capture_core.request("POST", "/v1/scene/captures", json=BRAIN)
+    await leader
+    assert status == 200, body  # plus de capture_busy
+
+
+async def test_expired_uploads_are_journaled_and_prune_survives_a_vanished_file(tmp_path, monkeypatch):
+    from jarvis.runtime.journal import RuntimeJournal
+
+    journal = RuntimeJournal(tmp_path / "journal")
+    broker = SceneCaptureBroker(MemoryStore(), deadline_s=0.3, diagnostics=journal)
+    request = asyncio.ensure_future(broker.request())
+    await asyncio.sleep(0)
+    capture_id = broker.deliver(long_poll=True)["id"]
+    broker._pending.deadline = asyncio.get_running_loop().time()  # échue, encore en attente
+    with pytest.raises(SceneCaptureError) as expired:
+        await broker.complete(capture_id, png())
+    assert (expired.value.code, expired.value.status) == ("capture_expired", 410)
+    with pytest.raises(SceneCaptureError):
+        await request
+    trace = (tmp_path / "journal" / "trace.jsonl").read_text(encoding="utf-8")
+    assert '"capture_expired"' in trace
+
+    store = FileSceneCaptureStore(tmp_path / "captures")
+    saved = [store.save(png(), now_epoch_s=time.time() + index) for index in range(8)]
+    victim = Path(saved[0].path)
+    real_unlink = Path.unlink
+
+    def flaky_unlink(self, missing_ok=False):  # noqa: ANN001
+        if self == victim:
+            real_unlink(self)
+            raise FileNotFoundError(str(self))
+        return real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", flaky_unlink)
+    store.prune(now_epoch_s=time.time() + 10, keep=5, max_age_s=24 * 3600)
+    assert len([p for p in store.directory.iterdir() if CAPTURE_NAME.match(p.name)]) == 5
+
+
+async def test_a_foreign_origin_on_the_upload_route_gets_the_scene_error_shape(tmp_path):
+    control = ControlCenter(runtime_root=tmp_path, project_root=tmp_path)
+    async with TestClient(TestServer(control._app)) as client:
+        response = await client.post("/api/scene/captures/" + "c" * 32, data=png(), headers={"Origin": "http://evil.example"})
+        assert response.status == 403
+        body = await response.json()
+        assert body["error"]["code"] == "forbidden_origin"

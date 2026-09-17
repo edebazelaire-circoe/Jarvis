@@ -68,6 +68,8 @@ class _Pending:
     result: asyncio.Future
     last_delivered: float = float("-inf")
     deliveries: int = 0
+    #: Un envoi valide a pris l'identifiant (posé avant toute attente) : usage unique atomique.
+    consumed: bool = False
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -112,6 +114,15 @@ class SceneCaptureBroker:
         self._closed = False
         await self._prune("start")
 
+    def cancel(self) -> None:
+        """Le cerveau a abandonné sa demande (client parti) : la capture en attente n'occupe plus la place."""
+
+        pending = self._pending
+        if pending is not None and not pending.result.done():
+            pending.result.cancel()
+            self._emit("core.scene.capture_abandoned", "demande de capture abandonnée par le client",
+                       data={"capture": _short(pending.capture_id), "deliveries": pending.deliveries})
+
     def close(self) -> None:
         """Arrêt de Core : la demande en attente échoue aussitôt (`capture_cancelled`)."""
 
@@ -151,6 +162,12 @@ class SceneCaptureBroker:
                 "(page fermée, onglet caché, ou scène éteinte).",
                 504,
             ) from None
+        except asyncio.CancelledError:
+            # Demande annulée (client parti, `cancel()`) : la place se libère aussitôt.
+            if not pending.result.done():
+                self._emit("core.scene.capture_abandoned", "demande de capture annulée",
+                           data={"capture": _short(pending.capture_id), "deliveries": pending.deliveries})
+            raise
         finally:
             if self._pending is pending:
                 self._pending = None
@@ -175,7 +192,7 @@ class SceneCaptureBroker:
         """Secondes avant que la demande en attente soit (re)donnée au long-poll ; `None` sans demande."""
 
         pending = self._pending
-        if pending is None:
+        if pending is None or pending.consumed:
             return None
         now = asyncio.get_running_loop().time()
         if now >= pending.deadline:
@@ -190,7 +207,7 @@ class SceneCaptureBroker:
         """
 
         pending = self._pending
-        if pending is None or not long_poll:
+        if pending is None or pending.consumed or not long_poll:
             return None
         now = asyncio.get_running_loop().time()
         if now >= pending.deadline or now < pending.last_delivered + self.redeliver_s:
@@ -210,11 +227,13 @@ class SceneCaptureBroker:
             raise SceneCaptureError(UNKNOWN_CAPTURE, str(exc), 404) from None
         pending = self._pending
         loop = asyncio.get_running_loop()
-        if pending is None or pending.capture_id != capture_id or pending.result.done():
+        if pending is None or pending.capture_id != capture_id or pending.consumed or pending.result.done():
             self._emit("core.scene.capture_upload_refused", "envoi de capture refusé : identifiant inconnu ou déjà utilisé",
                        level="warning", data={"code": UNKNOWN_CAPTURE, "capture": _short(capture_id)})
             raise SceneCaptureError(UNKNOWN_CAPTURE, "Aucune capture en attente avec cet identifiant (inconnue, déjà rendue ou échue).", 404)
         if loop.time() >= pending.deadline:
+            self._emit("core.scene.capture_upload_refused", "envoi de capture refusé : échue", level="warning",
+                       data={"code": CAPTURE_EXPIRED, "capture": _short(capture_id)})
             raise SceneCaptureError(CAPTURE_EXPIRED, "Capture échue : trop tard.", 410)
         try:
             width, height = png_dimensions(data)
@@ -222,6 +241,9 @@ class SceneCaptureBroker:
             self._emit("core.scene.capture_upload_refused", "envoi de capture refusé : PNG invalide", level="warning",
                        data={"code": INVALID_PNG, "capture": _short(capture_id), "bytes": len(data)})
             raise SceneCaptureError(INVALID_PNG, str(exc), 400) from None
+        # Usage unique atomique : l'identifiant est pris avant la première attente ;
+        # un envoi concurrent arrive ici après et reçoit `unknown_capture`.
+        pending.consumed = True
         assert self.store is not None
         try:
             stored = await asyncio.to_thread(self.store.save, bytes(data), now_epoch_s=self.wall_clock())
@@ -230,7 +252,7 @@ class SceneCaptureBroker:
                        data={"code": CAPTURE_STORE_FAILED, "capture": _short(capture_id), "error": type(exc).__name__})
             error = SceneCaptureError(CAPTURE_STORE_FAILED, f"Capture non rangée ({type(exc).__name__}).", 500)
             if not pending.result.done():
-                pending.result.set_exception(SceneCaptureError(CAPTURE_STORE_FAILED, str(error), 500))
+                pending.result.set_exception(error)
             raise error from None
         duration_ms = round((loop.time() - pending.created) * 1000)
         result = {"capture_id": capture_id, "name": stored.name, "path": stored.path, "bytes": stored.size,

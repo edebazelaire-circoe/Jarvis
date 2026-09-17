@@ -199,6 +199,8 @@ SCENE_INTERACT_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_INTERACT_JS__*/"
 #: du modèle de vue et réponse du meneur visible, logique pure
 #: (`window.JarvisSceneCapture`), insérée avant le bloc de page qui l'utilise.
 SCENE_CAPTURE_SCRIPT_FILE = "control_center_scene_capture.js"
+#: Route d'envoi des captures : ses refus d'origine ont la forme d'erreur de scène.
+SCENE_CAPTURE_ROUTE_PREFIX = "/api/scene/captures/"
 SCENE_CAPTURE_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_CAPTURE_JS__*/"
 #: Chronologie de conversation plein écran (Slice 05) : logique pure testée par
 #: node et branchement navigateur, insérés comme les scripts ci-dessus.
@@ -583,8 +585,13 @@ class ControlCenter:
                 try:
                     host = urlparse(origin).hostname
                 except ValueError:
-                    raise web.HTTPForbidden(text="invalid origin")
+                    host = None
+                    if not request.path.startswith(SCENE_CAPTURE_ROUTE_PREFIX):
+                        raise web.HTTPForbidden(text="invalid origin")
                 if host not in LOOPBACK_HOSTS:
+                    if request.path.startswith(SCENE_CAPTURE_ROUTE_PREFIX):
+                        # Même forme d'erreur que les autres refus de la route de capture.
+                        return self._scene_error(403, "forbidden_origin", "forbidden origin")
                     raise web.HTTPForbidden(text="forbidden origin")
         return await handler(request)
 

@@ -28,7 +28,7 @@ from jarvis.domain.live_lifecycle import LiveCloseEvidence, LiveLifecycleConflic
 from jarvis.ports.scene import ScenePatchWindow, SceneStoreError, SceneUnavailableError
 from jarvis.protocol import scene_wire
 from jarvis.core.scene_capture import SceneCaptureError
-from jarvis.domain.scene_capture import MAX_CAPTURE_BYTES, MAX_CAPTURE_REQUEST_BYTES
+from jarvis.domain.scene_capture import CAPTURE_CANCELLED, MAX_CAPTURE_BYTES, MAX_CAPTURE_REQUEST_BYTES
 from jarvis.protocol.strict_json import loads_strict_json
 from jarvis.v2_config import validate_loopback_host
 
@@ -977,9 +977,14 @@ class LocalProtocolServer:
                 status=503,
             )
         try:
-            result = await self.core.scene_captures.request()
+            # Client parti (brain abandonné, CLI tué) : la demande est annulée aussitôt,
+            # la place se libère au lieu d'un `capture_busy` jusqu'à l'échéance.
+            result = await self._unless_client_left(request, self.core.scene_captures.request())
         except SceneCaptureError as exc:
             return self._capture_failure(exc)
+        if result is None:
+            self.core.scene_captures.cancel()
+            return self._capture_failure(SceneCaptureError(CAPTURE_CANCELLED, "capture request abandoned by its client", 503))
         return web.json_response(result)
 
     async def scene_capture_upload(self, request: web.Request) -> web.Response:
