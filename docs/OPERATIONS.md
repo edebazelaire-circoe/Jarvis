@@ -990,9 +990,10 @@ recharge ce qui est réellement sur disque.
 
 ### Scène constellation : outils d'affichage du cerveau
 
-Le cerveau conversationnel (Claude CLI) peut lire et composer la scène par six
+Le cerveau conversationnel (Claude CLI) peut lire et composer la scène par sept
 outils MCP du serveur `jarvis-display` : `scene_inspect`, `scene_create_object`,
-`scene_update_object`, `scene_set_visibility`, `scene_link`, `scene_unlink`.
+`scene_update_object`, `scene_set_visibility`, `scene_link`, `scene_unlink` et
+`scene_add_artifact` (artefacts, voir « Scène constellation : les artefacts »).
 « Réaffiche tout » passe par `scene_set_visibility` avec `scope: "all_hidden"` :
 le serveur réaffiche un par un tout ce qui est masqué au moment de l'appel et
 rend les comptes, en 15 s au plus (au-delà : `deadline_reached`, et le reste à
@@ -1058,6 +1059,7 @@ Core et le **chemin** du jeton, jamais le jeton.
 | erreur d'outil avec `reason=pinned_by_user` | objet épinglé par l'utilisateur | normal : le cerveau ne le déplace pas |
 | erreur d'outil avec `reason=scene_full` | 512 objets actifs | archiver des objets terminés ; le cerveau ne peut pas |
 | `display.tool_failed` niveau erreur `display_internal_error` | défaut du serveur | remonter le message (type et texte) |
+| erreur d'outil `attach_artifact refusé … reason=object_archived` | l'utilisateur a archivé l'étoile du travail | normal : pas d'artefact pour un travail rangé, rien n'a été envoyé |
 
 Tous les appels laissent `display.tool` / `display.tool_refused` /
 `display.tool_failed` dans `runtime/trace.jsonl` (identifiants et issues, jamais
@@ -1277,6 +1279,59 @@ replacé par la page.
 | déplacement au clavier sans effet | la sélection n'est pas sur un objet de la scène, l'objet est déjà au bord de la zone sûre, ou c'est un point (qui ne se redimensionne pas) | Tab jusqu'à la scène ; changer la forme depuis le menu |
 
 Détail technique : `docs/ARCHITECTURE.md`, « Scene user interaction ».
+
+### Scène constellation : les artefacts
+
+Un **artefact** est ce que JARVIS garde d'un travail de fond terminé quand le
+résultat mérite d'être retrouvé : les liens trouvés par une recherche, les
+fichiers modifiés, les tests lancés, les e-mails envoyés, les changements de
+roadmap ou de Trello, un document produit. C'est le cerveau qui le crée, en
+silence, **un seul par travail et par catégorie** : toutes les URL d'une recherche
+sont les entrées d'un même artefact, jamais un objet par lien. Il est relié à
+l'étoile du sous-agent par un trait pointillé de sa couleur. Une seconde fin de
+travail du même genre complète l'artefact existant au lieu d'en créer un autre.
+Une tâche dictée qui a juste été faite (« note ce retour ») n'en crée pas.
+
+Catégories conseillées, chacune avec sa couleur : `research` (liens et faits),
+`fichiers`, `tests`, `api`, `roadmap`, `email`, `document`, `autre`. Le cerveau
+peut en choisir une autre ; elle prend alors une couleur stable tirée de son nom.
+
+**Lire un artefact.**
+
+- En capsule (forme par défaut) : sa catégorie puis son titre, près de l'étoile.
+- En fenêtre (menu de l'objet → « Afficher en fenêtre », ou « montre-moi le
+  résultat de la recherche » au cerveau) : catégorie et nombre d'entrées, titre,
+  un bouton qui ramène à l'étoile expliquée (titre et état du sous-agent), le
+  résumé, puis la liste des entrées, qui défile à la molette ou au clavier.
+- Une entrée avec une adresse web `http`/`https` est un **lien** : le nom de
+  l'hôte est écrit à côté du libellé, et le lien s'ouvre dans un nouvel onglet,
+  sans transmettre la page d'origine. Une adresse avec identifiants
+  (`https://nom@hôte/`), ou tout autre schéma, reste du texte.
+- Au clavier : Tab jusqu'à la scène, flèches jusqu'à la fenêtre, puis Tab parcourt
+  le bouton d'origine et les liens ; Échap revient à la fenêtre.
+- On peut aussi demander au cerveau « qu'est-ce que la recherche a donné ? » : il
+  répond en quelques phrases.
+
+**Ranger.** Un artefact reste dans la scène jusqu'à ce que vous l'archiviez
+(menu de l'objet → « Archiver… »). Archiver l'étoile du travail **ne l'emporte
+pas** : la confirmation le dit (« Son artefact reste dans la scène, à archiver à
+part. »), le trait disparaît et l'artefact reste seul. « Archiver les travaux
+terminés » ne prend jamais d'artefact. Le cerveau ne peut ni archiver un artefact
+ni en créer un pour un travail que vous avez déjà archivé.
+
+**Vérifier dans la trace** (`runtime/trace.jsonl`) : `display.artifact` (info :
+`action` `created` ou `updated`, `id`, `target`, `category`, nombre d'entrées,
+jamais le texte) après le tour spontané `agent.unsolicited_result` qui suit la fin
+du sous-agent ; `GET /api/scene` montre l'objet `kind: artifact`, `origin: brain`,
+et une relation `explains` vers l'étoile.
+
+| Symptôme | Cause probable | Action |
+| --- | --- | --- |
+| un travail terminé n'a pas d'artefact | le cerveau a jugé qu'il n'y avait rien à retrouver, ou la scène est éteinte | normal ; sinon demander « garde le résultat à l'écran » |
+| deux artefacts de même catégorie pour une étoile | créés à la main (`scene_create_object` + `scene_link`) ou par deux appels simultanés | archiver le doublon ; l'outil complète ensuite le premier |
+| `display.tool_refused` `reason=object_archived`, `sent: false` | l'étoile a été archivée avant que le cerveau ajoute l'artefact | normal : rien n'a été créé |
+| un libellé d'entrée n'est pas cliquable | adresse non `http(s)`, avec identifiants ou caractères invisibles | normal : lien refusé par sécurité, l'adresse reste lisible |
+| `invalid_argument` « … at most 32 » | l'artefact aurait plus de 32 entrées | le cerveau regroupe ou remplace la liste (`items_mode=replace`) |
 
 
 ## Deux architectures vocales : `legacy` et `continuous_brain`

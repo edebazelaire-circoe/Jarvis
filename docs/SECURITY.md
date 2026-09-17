@@ -178,6 +178,23 @@ already claim `user`, and it can now bulk-archive finished work in one call or
 cancel a Core job through the token route, just as it could archive one object
 at a time or kill processes with its own tools. Same honest-caller limit.
 
+Semantic artifacts and openable links (Slice 07). The brain's
+`scene_add_artifact` writes one artifact and its `explains` link through the
+brain/user-only `attach_artifact` op (runtime is refused). Item URLs are
+brain-chosen and may come from web content, so an artifact link is an **injection
+and phishing surface** on the user's own dashboard. Controls: the domain accepts
+only single-line `http://`/`https://` URLs (≤ 2 048 chars); the renderer
+(`linkOf`, `control_center_scene_layout.js`) makes an `<a>` only after `new URL()`
+parsing with an `http:`/`https:` protocol, **no username or password**, a
+non-empty host, and no whitespace, control, bidi or invisible character in the
+raw string; `href` is the parser's normalised form (IDN hosts in punycode) and is
+set as a property, never through markup; `target="_blank"`,
+`rel="noopener noreferrer"`, `referrerpolicy="no-referrer"`; the host is printed
+next to the label, so a misleading label cannot hide the destination; everything
+else stays text (`textContent`). Opening a link is always a user click. Not
+covered: a legitimate-looking but hostile `https` host (the user sees its name),
+and look-alike ASCII host names.
+
 The generated `runtime/display-mcp.json` holds the interpreter path, Core's
 loopback host and port and the token file **path**, never the token. Tool journal
 entries (`display.*`) carry identifiers and outcomes, never note content. Making

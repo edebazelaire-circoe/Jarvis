@@ -42,13 +42,19 @@ distinct **active** objects.
 | Kind | Typical use |
 | --- | --- |
 | `parent_of` | execution topology (parent sub-agent/job → child), written by runtime |
-| `explains` | artifact → star it explains; also signal → node it is attached to |
+| `explains` | artifact → star (or object) it explains, written with the artifact by `attach_artifact` (Slice 07); also signal → node it is attached to |
 | `groups` | group → member |
 
 A signal (`attach_signal`) has exactly one target; its `explains` relation
 carries the signal's own id as `relation_id` (`is_signal_relation`). A signal is
 **live** exactly while that relation exists (`is_live_signal`); see *Runtime
 signal lifecycle* below.
+
+An artifact's `explains` relation never has that shape: `attach_artifact`
+requires `relation_id ≠ object_id` (the brain tool derives
+`brain-explains-<sha256(from\nto)[:16]>`), so an artifact link is never read as a
+signal, never `runtime_owned`, and brain or user may unlink it. See *Semantic
+artifacts* below.
 
 ## Layers
 
@@ -130,6 +136,7 @@ commands.
 | `archive` | `object_id` | user disposition; an execution star takes its runtime signals (cascade, Slice 08) |
 | `archive_many` | `object_ids` (1–512, unique) | user bulk disposition of terminal execution stars and their runtime signals, all or nothing, one revision (Slice 08) |
 | `attach_signal` | `object_id`, `fields`, `target_id` | create/update an `attention` object and its `explains` relation |
+| `attach_artifact` | `object_id`, `fields`, `target_id`, `relation_id` (≠ `object_id`) | create/update an `artifact` object **and** its `explains` relation to `target_id`, one patch, all or nothing (Slice 07) |
 
 `fields` (`SceneObjectFields`) lists what the command announces; `null` means
 "not announced, unchanged". It cannot carry `constraints` or `disposition`.
@@ -154,6 +161,7 @@ Operation level (`ALLOWED_SCENE_OPS`):
 | `archive` | ✘ | ✘ | ✔ |
 | `archive_many` | ✘ | ✘ | ✔ |
 | `attach_signal` | ✔ | ✔ | ✔ |
+| `attach_artifact` | ✘ | ✔ | ✔ |
 
 Effect level (checked on what actually changes, so echoing a known value is
 never a violation).
@@ -226,6 +234,12 @@ Rules:
   placed itself (`explicit_placement`, decision 9).
 - `placed_by` becomes the actor (or `resolver`) whenever geometry changes; on
   creation it is the creating actor.
+- **Artifacts** (Slice 07, decision 5): runtime has no `attach_artifact`
+  (`op_not_allowed`): an artifact is a brain selection, never a raw event. The
+  command applies the `upsert_object` rules to the artifact (reserved id,
+  `kind_immutable`, `scene_full`, `pinned_by_user` on a geometry change, execution
+  truth) and the `link` rules to its relation (target active, `reserved_id`,
+  `relation_conflict`, `relation_limit`); any refusal refuses both.
 
 ## Outcomes, revision and patches
 
@@ -370,6 +384,57 @@ reconciliation follows (test
 `test_an_archived_failed_star_and_its_signal_never_resurrect_after_more_work_updates`,
 browser run: `skipped_archived` 0 → 1, no refusal journaled).
 
+## Semantic artifacts
+
+Slice 07, decisions 5, 6 and 12. An **artifact** (`kind = artifact`) is a
+brain-selected, grouped explanation of finished work: one research artifact for
+every URL visited, one files artifact for a set of modified files, one email or
+roadmap artifact for what was sent or changed. Never one object per low-level
+action; no runtime auto-artifact.
+
+- **Write.** `attach_artifact` creates or updates the artifact and its `explains`
+  relation to the target (usually the sub-agent's star) in one patch. A refused
+  link leaves no orphan artifact; replaying the command is `duplicate`. Why a
+  domain op rather than `upsert_object` then `link`: the brain cannot delete or
+  archive (decision 14), so a compensation for a refused link does not exist for
+  it, and a pre-check before two commands still races with the user.
+- **Grouping rule** (tool side, `scene_add_artifact`): one active artifact per
+  target and category. A new call with the same target and category completes
+  the first such artifact (items appended without duplicates, or replaced with
+  `items_mode=replace`) instead of creating another; an artifact the user
+  archived is never revived (its tombstone refuses it; the tool then creates a
+  new one once).
+- **Payload.** Bounds of *Objects*: title ≤ 160, summary ≤ 2 000, at most 32
+  items `{label, ref, url}`, `url` `http(s)` only, 16 KiB. Artifact text is data
+  for the brain, never an instruction.
+- **Categories.** Open token list, validated for shape only (`check_token`, ≤ 32).
+  Recommended set, shared by the brain prompt, the tool description and the
+  renderer colour map (`RECOMMENDED_ARTIFACT_CATEGORIES` in
+  `jarvis/runtime/display_mcp.py`, `ARTIFACT_CATEGORIES` in
+  `control_center_scene_layout.js`, parity test):
+
+  | Category | Use | Colour family |
+  | --- | --- | --- |
+  | `research` | links and facts found | research |
+  | `fichiers` | files created or modified | code |
+  | `tests` | test runs and results | code |
+  | `api` | API calls and their outcomes | code |
+  | `roadmap` | roadmap or Trello changes | comms |
+  | `email` | emails sent or drafted | comms |
+  | `document` | document produced | doc |
+  | `autre` | anything else worth keeping | doc |
+
+  Any other token gets a stable hashed colour.
+- **Representation.** Created as a `capsule` (category and title near its star)
+  unless the brain asks otherwise; `window` is the inspection view (summary,
+  items, link back to the star). Same identity in every form (decision 6).
+- **Lifecycle.** An artifact stays until the user disposes of it (decision 12).
+  `archive_many` never takes one (`bulk_archivable` is false for any non-execution,
+  non-signal object: `not_bulk_archivable`). Archiving its star does not cascade to
+  it (the cascade takes runtime signals only); the relation goes with the star and
+  the artifact stays, unlinked, until the user archives it too. The page says so
+  in the archive confirmation.
+
 ## Coordinate frame
 
 Slice 05 (`ARCHITECTURE.md` › *Scene renderer*). Geometry is in scene units and
@@ -486,6 +551,10 @@ Slice 06 (`ARCHITECTURE.md` › *Brain display MCP*). The brain's MCP tools
 | `scene_set_visibility` | `object_id` + `visibility`, or `scope="all_hidden"` + `visibility="visible"` | `set_visibility`; with the scope, one `set_visibility` per object hidden in the current snapshot (≤ 128 per call, 15 s budget), counts and ids returned | `unknown_object`, `object_archived` (counted per object with the scope) |
 | `scene_link` | `from_id`, `to_id`, `kind`, `relation_id?` (`brain-…` only), `layer?` | `link`; `layer` key omitted unless given (never a default of 50); an existing identical relation without a layer is a local `duplicate`, nothing sent | `relation_conflict`, `relation_limit`, `unknown_object`, `object_archived`, `reserved_id` (domain side), `runtime_owned` (`parent_of` between execution nodes) |
 | `scene_unlink` | `relation_id` | `unlink` (absent → `duplicate`) | `runtime_owned` |
+| `scene_add_artifact` | `target_id`, `category`, `title`, `summary?`, `items?`, `items_mode?` (`append` default \| `replace`), `representation?`, `geometry?` | one `attach_artifact`: on the first active artifact of that category already explaining the target (`action = updated`, payload merged), else on a fresh `brain-artifact-<hex>` with relation `brain-explains-<hash>` (`action = created`, capsule by default); the result carries the grouping `rule` | `object_archived` / `unknown_object` for the target (checked before sending, nothing sent), `pinned_by_user`, `scene_full`, `relation_limit`, `relation_conflict` |
+
+Artifact updates that are not grouping (retitle, move, hide, show as window) go
+through `scene_update_object`; there is no separate update tool.
 
 Refusals come back as MCP tool errors carrying `outcome`, `reason` (the
 `SceneRefusal` token) and one explanatory sentence. Unknown arguments are refused
@@ -497,6 +566,6 @@ brain (runtime-owned shape).
 Validation:
 
 ```powershell
-.venv/Scripts/python.exe -W error::ResourceWarning -m pytest -q -p no:cacheprovider tests/unit/test_scene_contracts.py tests/unit/test_work_state_contracts.py tests/unit/test_v2_architecture.py tests/unit/test_sqlite_scene.py tests/unit/test_scene_service.py tests/integration/test_v2_core_recovery.py tests/unit/test_scene_view.py tests/unit/test_scene_transport_client.py tests/integration/test_scene_transport.py tests/unit/test_scene_projector.py tests/integration/test_scene_projection_protocol.py tests/unit/test_display_mcp.py tests/unit/test_scene_settings.py tests/unit/test_scene_renderer_logic.py
+.venv/Scripts/python.exe -W error::ResourceWarning -m pytest -q -p no:cacheprovider tests/unit/test_scene_contracts.py tests/unit/test_work_state_contracts.py tests/unit/test_v2_architecture.py tests/unit/test_sqlite_scene.py tests/unit/test_scene_service.py tests/integration/test_v2_core_recovery.py tests/unit/test_scene_view.py tests/unit/test_scene_transport_client.py tests/integration/test_scene_transport.py tests/unit/test_scene_projector.py tests/integration/test_scene_projection_protocol.py tests/unit/test_display_mcp.py tests/unit/test_scene_settings.py tests/unit/test_scene_renderer_logic.py tests/unit/test_scene_artifacts.py
 .venv/Scripts/python.exe scripts/verify_release.py
 ```

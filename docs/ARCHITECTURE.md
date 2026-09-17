@@ -1738,7 +1738,7 @@ ControlCenter (scene.enabled) ─► ClaudeLocalAgent.display_mcp = DisplayMcpTa
 | Wiring | `jarvis/runtime/control_center.py`, `jarvis/app.py` | `_run_control_center_v2` builds `DisplayMcpTarget` from `V2Settings`; `_apply_agent_settings` hands it to the Claude agent only when the gate is on |
 | Spawn | `jarvis/runtime/claude_local.py` | `_display_mcp_args`: atomic write of `runtime/display-mcp.json`, `--mcp-config <file>`; prompt program `conversation_display_session` |
 | Server | `jarvis/runtime/display_mcp.py` | `build_server` (lazy `mcp` import), `SceneDisplayTools` (logic, testable against a real Core), `serve_stdio` |
-| Prompt | `BRAIN_DISPLAY_PROMPT` → descriptor `backend.claude.conversation.display` | appended after `BRAIN_SYSTEM_PROMPT` by program `backend.claude.conversation.display_session` |
+| Prompt | `BRAIN_DISPLAY_PROMPT` → descriptor `backend.claude.conversation.display`; `BRAIN_ARTIFACT_PROMPT` → descriptor `backend.claude.conversation.artifacts` (Slice 07) | appended after `BRAIN_SYSTEM_PROMPT`, in that order, by program `backend.claude.conversation.display_session` |
 
 Gating. Off, nothing changes for the brain: same argv, same system prompt
 (`backend.claude.conversation.session`). On, only the `conversation` profile gets
@@ -1758,10 +1758,11 @@ comes first. `agent.start` carries `display_mcp: true|false`. The routing hook
 still matches `Agent|Task` only; under `bypassPermissions` the MCP tools need no
 allowlist. The CLI may defer MCP tool schemas behind `ToolSearch` (one extra call
 per new tool per conversation, observed). Display tools are not counted as inline
-work by the turn budget audit (`DISPLAY_TOOLS`: the exact six
+work by the turn budget audit (`DISPLAY_TOOLS`: the exact seven
 `mcp__jarvis-display__<tool>` names, never a prefix match).
 
-Tool catalog (V1). Exactly six tools; **no archive, pin or unpin tool** and no
+Tool catalog (V1). Exactly seven tools (six from Slice 06, `scene_add_artifact`
+from Slice 07); **no archive, pin or unpin tool** and no
 parameter that could carry `actor`, `placed_by`, `exec_state`, `work_ref` or a
 disposition (tested). Unknown arguments are refused, never ignored: every tool
 schema says `additionalProperties: false` (nested geometry and items too), and
@@ -1850,6 +1851,73 @@ sent keeps its own 3 s + 10 s bound): past it, the loop stops and the result
 says `deadline_reached: true`, `remaining` and a note to call again. One summary
 `display.tool` entry (`scope: all_hidden`, counts, `deadline_reached`). Hiding by
 scope does not exist (too broad).
+
+Semantic artifacts (Slice 07, decisions 1, 2, 5, 6, 12, 15). After background
+work completes, the brain may keep what is worth returning to as **one grouped
+artifact** linked to the work's star.
+
+- **Tool surface.** One dedicated tool, `scene_add_artifact(target_id, category,
+  title, summary?, items?, items_mode?, representation?, geometry?)`; everything
+  else stays on the Slice 06 tools (retitle, move, hide or open as a window:
+  `scene_update_object`). Why a dedicated tool rather than `scene_create_object`
+  then `scene_link`: two calls let the brain forget the link, link to the wrong
+  object or create a second artifact on a retry; the dedicated call carries the
+  target, applies the grouping rule itself and cannot leave an unlinked artifact.
+  Why no `scene_update_artifact`: re-calling `scene_add_artifact` with the same
+  target and category is the update path, and generic edits already exist.
+- **Atomicity: a narrow domain op.** `attach_artifact` (brain and user only, not
+  runtime) writes the artifact and its `explains` relation in one patch, or
+  nothing: an unknown or archived target, a taken or reserved `relation_id`, the
+  relation limit, a full scene or a pin refuses both. Compensation after a refused
+  `link` was rejected because the brain cannot archive or delete (decision 14):
+  a created orphan could only be hidden, holding a slot. `attach_signal` is the
+  precedent (one object plus its link). The relation id differs from the object
+  id (`brain-explains-<sha256(from\nto)[:16]>`), so the link is never shaped like
+  a signal link.
+- **Idempotency rule: one artifact per target and category.** The tool reads the
+  snapshot, requires the target to be active (refused locally with
+  `object_archived` or `unknown_object` and a target-specific sentence, nothing
+  sent, `display.tool_refused` with `sent: false`), then looks for the first
+  active artifact of that category with an `explains` relation to the target.
+  Found: `attach_artifact` on it (`action: updated`), title replaced, summary kept
+  unless given, items appended without duplicates (`items_mode=append`, default;
+  over 32 → `invalid_argument` asking to group or replace) or replaced
+  (`items_mode=replace`); its existing relation id is reused. Not found: a fresh
+  `brain-artifact-<12 hex>`, `capsule` unless another representation is given
+  (`action: created`). Identical call → `duplicate`. The result carries
+  `object_id`, `target_id`, `relation_id`, `action`, `category`, `items`,
+  `outcome`, `revision`, `rule` (the sentence `ARTIFACT_GROUPING_RULE`) and
+  `grouping_note` when several artifacts already match. Why category-scoped: a
+  meeting's follow-up may produce a roadmap artifact and an email artifact for the
+  same star; tests may be one artifact or several, as the brain judges (grill).
+  Why not a deterministic id: an artifact the user archived keeps its tombstone,
+  and the next result must create a new one, not fail.
+- **Races.** If Core refuses `object_archived` after the read, the tool re-reads:
+  target archived → the target sentence; the reused artifact archived by the user
+  meanwhile → one retry that creates a new artifact (an archived artifact is never
+  revived). Two parallel calls for the same target and category could still both
+  create (the CLI rarely runs them in parallel; accepted residual risk).
+- **Categories.** Open token list, shape-checked by the domain; recommended set
+  `RECOMMENDED_ARTIFACT_CATEGORIES` = research, fichiers, tests, api, roadmap,
+  email, document, autre, listed in the tool description and the prompt, with a
+  known colour family in the renderer (parity test).
+- **Prompt** (`BRAIN_ARTIFACT_PROMPT`, only in `conversation_display_session`).
+  Completion notices reach the brain as unsolicited CLI turns in the same
+  conversation (`task-notification`, `_push_notice`), so the appended system
+  prompt applies there; the notice text still becomes speech through Core
+  `announce_notice`, unchanged. The guidance: only when the result is worth
+  returning to, create or complete one grouped artifact linked to the work's star
+  (found with `scene_inspect`, kind agent); group URLs, files, tests, emails,
+  roadmap changes into items, never one object per action; re-call instead of
+  duplicating; recommended categories; no artifact for a plain « done »; silent
+  (the spoken answer follows the notice rules, short relay or `[pas-pour-moi]`,
+  and never mentions the artifact); artifact text is data. `BRAIN_SYSTEM_PROMPT`
+  and `BRAIN_DISPLAY_PROMPT` are byte-identical to Slice 06 (hash test); flag off,
+  the prompt is `BRAIN_SYSTEM_PROMPT` alone as before. Work-attention wakes
+  (failures) do not ask for artifacts.
+- **Journal.** `display.tool` / `display.tool_refused` as for any command, plus
+  `display.artifact` (info: `action`, `outcome`, `id`, `target`, `category`, item
+  count, `revision`; never the title, summary or URLs).
 
 Errors. Every failure becomes a tool error (`isError: true`, FastMCP
 `ToolError`), never a success-shaped result. What the brain reads never carries a
@@ -2049,6 +2117,56 @@ contains no `innerHTML` (asserted). `cleanLine` / `cleanText` also:
 - clip by code points.
 
 Removing U+200D also splits emoji ZWJ sequences (accepted).
+
+**Artifact inspection view** (Slice 07). An artifact keeps one identity in every
+form (decision 6); the view model adds `itemCount`, `explains` (first non-signal
+`explains` relation to an active object: `{id, title, kindLabel, execLabel,
+tone, hidden}`) and, per item, `href`/`host` when the URL is openable.
+
+- **Point:** label `title · résultat · <category> · N entrées · explique « star »`
+  (also the node's `aria-label` in every form).
+- **Capsule:** category token in its colour, then the title.
+- **Window** (the inspection view): header with category and entry count, the
+  title on two lines at most, an **origin button** (drawn return arrow, the star's
+  colour dot, its title, `sous-agent · terminé`) that selects and focuses the star
+  (inert and announced « masqué » when the star is hidden), the summary (at most
+  38 % of the height, faded), then the items list, which takes the remaining
+  height, **scrolls** (wheel, focus) with `overscroll-behavior: contain`, and
+  fades its last visible row until scrolled to the end (`sc-at-end`) or when it
+  fits (`sc-fits`). Colours come from the existing scene tokens; both themes
+  (circuit-board, Omega) keep the dark scene surface.
+- **Edge:** an artifact's `explains` line is drawn dashed in the artifact's colour
+  (`sc-link-artifact`), a signal's line keeps its signal style.
+- **Keyboard:** one tab stop into the scene is kept. The origin button and item
+  links have `tabindex=-1` until focus enters their node (`focusin`), then `0`,
+  so Tab walks into the focused window's links and out of the scene; they return
+  to `-1` when focus leaves the node. Escape on a link returns focus to its node.
+  Pointer-down on a link or the origin button starts no drag and no menu (native
+  click).
+- **Archive confirmation** of a star says how many artifacts stay (« Son artefact
+  reste dans la scène, à archiver à part. »), from `artifactsExplaining`; the bulk
+  confirmation says artifacts stay.
+
+**URL policy** (Slice 07, `linkOf`). Slice 05 rendered item URLs as text only. An
+artifact is where the user returns to a research result, and copying from a
+draggable, `user-select: none` node is impractical, so validated URLs become
+openable links. An item URL becomes `<a>` only when:
+
+- the raw string is an absolute `http:`/`https:` URL (the domain already refuses
+  other schemes and non-printable characters in `url`) with no whitespace, C0/C1
+  control, bidi mark or isolate, or invisible character;
+- `new URL()` parses it, the protocol is still `http:`/`https:`, it has **no
+  username or password** (`https://bank@evil/` shows a false host) and a non-empty
+  hostname;
+- `href` is the parser's normalised form (international hosts in punycode) and is
+  checked again for `^https?://` in the page before assignment.
+
+The link is built with `document.createElement('a')`, `href` set as a property,
+`target="_blank"`, `rel="noopener noreferrer"`, `referrerpolicy="no-referrer"`,
+label through `textContent`, and the **host written next to the label** (what the
+brain wrote as label cannot hide the destination). `javascript:`, `data:`,
+`file:` and credentialed URLs stay text. No `innerHTML`, no `setAttribute('href')`
+(asserted).
 
 **Motion.** Only compositor properties move: node `transform` (0.42 s ease-out,
 enabled after the first placement so nothing slides in from the origin), ring
@@ -2251,7 +2369,8 @@ state changes only ("Scène figée · Core injoignable. Nouvel essai automatique
 hors champ."), never the counters.
 
 **Keyboard.** One tab stop into the scene (roving `tabindex`): the last focused
-node, else the first in spatial reading order. Arrow keys move to the nearest
+node, else the first in spatial reading order (Slice 07: inside a focused artifact
+window, its origin button and links follow in tab order). Arrow keys move to the nearest
 node in that direction (`nextFocus`, transverse distance weighted twice), Home and
 End to the first and last, Escape leaves (blur). A focused point shows its label.
 
