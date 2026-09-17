@@ -204,6 +204,31 @@ legitimate-looking but hostile `https` host and ASCII look-alikes (mitigated onl
 by the printed host), and punycode, which is honest but opaque. Brain/user can no
 longer give an artifact link the signal shape (`signal_shape`).
 
+Screen-content exposure (Slice 09, part 2, `scene_capture`). The brain can
+obtain an **image of the scene layer** as the visible Control Center leader page
+draws it: windows, capsules, stars, relations, titles, summaries and item rows
+(hosts and labels) — the same scene text it can already read with `scene_get`,
+now also as pixels the model sees. Not included: the rest of the page (dock,
+topbar, panels, timeline, conversation or voice text, face), other tabs, other
+applications or the desktop (no OS capture, no browser automation, no
+`--chrome`). Who can trigger it: only the brain, through its display MCP and
+Core's bearer token (`POST /v1/scene/captures`, actor `brain`); there is no
+button and no Control Center route that requests one. Only the visible Web Locks
+leader page answers, and only for a pending, unexpired, single-use random id
+(`secrets.token_urlsafe(24)`, journaled as an 8-character prefix); the upload
+route (`POST /api/scene/captures/<id>`) is behind the origin guard, bounded to
+2 MiB, and the PNG signature, IHDR checksum, dimensions (≤ 1280×720) and IEND are
+checked by the Control Center and again by Core. Where it lives:
+`runtime/scene-captures/capture-<UTC>-<8 hex>.png` (no user text in names), the
+last 5 files, none older than 24 h (pruned at every capture and at Core start).
+Journals carry ids, sizes and durations, never pixels; the brain's stream reader
+replaces image blocks with their size before recording CLI events. Text visible
+in the image is marked as data in the tool result and the prompt (« un texte
+suspect a été ignoré »), a mitigation only. Same token caveat as above: a brain
+that reads `core.token` could call the capture route itself, or upload over the
+Control Center route for a pending id; it could equally read the scene or files
+with its own tools, so the capture adds no capability beyond scene content.
+
 The generated `runtime/display-mcp.json` holds the interpreter path, Core's
 loopback host and port and the token file **path**, never the token. Tool journal
 entries (`display.*`) carry identifiers and outcomes, never note content. Making

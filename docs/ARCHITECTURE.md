@@ -1985,11 +1985,12 @@ comes first. `agent.start` carries `display_mcp: true|false`. The routing hook
 still matches `Agent|Task` only; under `bypassPermissions` the MCP tools need no
 allowlist. The CLI may defer MCP tool schemas behind `ToolSearch` (one extra call
 per new tool per conversation, observed). Display tools are not counted as inline
-work by the turn budget audit (`DISPLAY_TOOLS`: the exact nine
+work by the turn budget audit (`DISPLAY_TOOLS`: the exact ten
 `mcp__jarvis-display__<tool>` names, never a prefix match).
 
-Tool catalog (V1). Exactly nine tools (six from Slice 06, `scene_add_artifact`
-from Slice 07, the read-only `scene_query` and `scene_get` from Slice 09); **no
+Tool catalog (V1). Exactly ten tools (six from Slice 06, `scene_add_artifact`
+from Slice 07, the read-only `scene_query`, `scene_get` and `scene_capture` from
+Slice 09); **no
 archive, pin or unpin tool** and no parameter that could carry `actor`,
 `placed_by`, `exec_state`, `work_ref` or a disposition (tested; the read-only tools
 `READ_TOOL_NAMES` may *filter* on `exec_state`, nothing writes it). Unknown arguments are refused, never ignored: every tool
@@ -2026,7 +2027,7 @@ then runtime; cut at `MAX_INSPECT_BYTES` = 20 000 with `truncated`
 `category` (exact), `text` (title or id substring). Capacity is derived from the
 snapshot (same as the Control Center proxy). Summaries, items and the relation
 graph of an object are read with `scene_get` (below); the screenshot is a separate
-Slice 09 decision (`tasks/…/09-scene-inspection-screenshot/SPIKE.md`).
+exceptional `scene_capture` below (Slice 09, part 2).
 The legend's `data` entry, the tool description and the prompt mark ids,
 categories and titles as data, never instructions: runtime star titles come from
 sub-agent labels, which may copy web content (prompt-injection vector, not a
@@ -2082,6 +2083,90 @@ Structured reads (Slice 09, part 1). Two read-only tools, never a command
 - **Journal.** `display.read` (info): `tool`, filter names (never values) or
   requested ids, `matched`/`returned`/`not_found`, `revision`, `truncated`; never
   titles, summaries or URLs. (`scene_inspect` still journals failures only.)
+
+Visual capture (Slice 09, part 2; PM decision after the spike,
+`tasks/…/09-scene-inspection-screenshot/SPIKE.md`, option a1). Decision 16: the
+normal control loop stays structured (`scene_inspect` / `scene_query` /
+`scene_get`; an overlap is `scene_query near radius 0`); `scene_capture` is an
+exceptional visual check. The **visible Web Locks leader page** of the Control
+Center draws its own view model (the one that positions the DOM nodes: resolver
+placements, compact shapes, stacking, clipping at its window) to a canvas; no
+browser automation, no OS capture, no dependency.
+
+```text
+brain ─ scene_capture ─► display MCP ─ POST /v1/scene/captures {schema_version:1, actor:"brain"} ─► Core SceneCaptureBroker
+   (checks scene.enabled in runtime settings first: scene_disabled)          │ one pending capture (else 409 capture_busy),
+                                                                             │ id = secrets.token_urlsafe(24), single use, 5 s
+                                                                             ▼ wakes the scene patches long-poll
+page leader ◄─ /api/scene/patches (Control Center relay) ◄─ GET /v1/scene/patches … "capture_request":{id, remaining_ms}
+   │ only if leader.held && lock mode && visible && scene on; renders ≤ 1280×720 PNG
+   └─ POST /api/scene/captures/{capture_id} (origin guard, ≤ 2 MiB, PNG checked) ─► PUT /v1/scene/captures/<id> ─► broker.complete
+                                    file runtime/scene-captures/capture-<UTC>-<8 hex>.png ◄─┘ ─► 200 {path, width, height, bytes, duration_ms}
+display MCP ◄──────────────────────────────────────────────────────────────────────────────────┘ reads the file ─► [text JSON, image/png]
+```
+
+| Piece | File | Role |
+| --- | --- | --- |
+| Bounds and codes | `jarvis/domain/scene_capture.py` | `MAX_CAPTURE_BYTES` 2 MiB, 1280×720, `CAPTURE_DEADLINE_S` 5, `CAPTURE_REDELIVER_S` 1, keep 5 files, 24 h; `png_dimensions` (signature, 13-byte IHDR with valid CRC, dimensions, trailing IEND), `check_capture_id` |
+| Broker | `jarvis/core/scene_capture.py` | `SceneCaptureBroker`: `request()`, `deliver(long_poll)`, `delivery_due()`, `wake_event()`, `complete()`, `close()`, retention at Core start and after each capture |
+| Store port / adapter | `jarvis/ports/scene.py` `SceneCaptureStore`; `jarvis/adapters/file_scene_captures.py` | atomic write (`replace_with_retry`), names without user content, prune only files of the capture pattern; injected by `jarvis/app.py` (`runtime/scene-captures`); without a store the route answers 503 `capture_unavailable` |
+| Core routes | `jarvis/protocol/server.py` | `POST /v1/scene/captures`, `PUT /v1/scene/captures/{id}`; the patches long-poll also waits on the broker's wake event |
+| Control Center | `jarvis/runtime/control_center.py`, `scene_view.py` | `POST /api/scene/captures/{capture_id}` → `CoreSceneView.upload_capture`; `decode_patches_response` keeps a well-formed `capture_request`; **no route requests a capture** |
+| Page | `jarvis/runtime/control_center_scene_capture.js` (`JarvisSceneCapture`), `control_center_scene_page.js` | pure `drawCommands(model, vp, palette)` / `paint(ctx, plan)` / `createCaptureResponder(deps)`; the loop hands `capture_request` to `onCapture` for the leader only and strips it from the follower broadcast (`withoutCapture`) |
+| Tool | `jarvis/runtime/display_mcp.py` | `scene_capture()` (no argument), `SceneDisplayTools.capture()`, `scene_gate_reader` |
+
+- **Long-poll kept intact.** The request never adds a patch or changes a revision:
+  a woken long-poll answers its normal (usually empty) window plus
+  `capture_request`. Only a long-poll (`wait_s > 0`, the leader) receives it,
+  never a short read (followers, catch-up). A pending request is given at most
+  once per `CAPTURE_REDELIVER_S`: a long-poll that starts while it was delivered
+  less than a second ago waits normally, with its wait cut to the redelivery
+  time. Redelivery covers a lost delivery — a leader that turned hidden, or an
+  orphaned relay long-poll left open by a tab that went away (observed in the
+  browser run: first delivery lost, leader answered at 1.05 s).
+- **Answering page.** `createCaptureResponder` answers only when
+  `isEnabled && isVisible && isLeader` (lock mode, not `solo`), one capture at a
+  time, each id once (16 ids remembered). After rendering it re-checks: past the
+  deadline → `expired`, nothing sent; hidden or leadership lost → `abandoned`
+  (the id is forgotten so a new leader or the same tab later can answer). Upload
+  results are logged to the console (`scene.capture_*`), never thrown.
+- **Rendering.** Scene layer only: edges (dashed artifact edges, signal edges in
+  the error tone), then nodes in `stack` order with the page's `shape` and screen
+  `box`; windows carry category/item count, title, summary lines and item rows
+  (`host label ref`), clipped to their box; theme colours read from the scene
+  layer (`--sc-*`, `--tone`, `--sc-radius`). Not drawn: dock, topbar, panels,
+  timeline, face, voice text, hover labels of points. Scaled with the viewport's
+  aspect ratio to at most 1280×720 (never enlarged); `OffscreenCanvas`
+  (fallback `<canvas>.toBlob`).
+- **Tool result.** `[TextContent JSON {path, width, height, bytes, duration_ms,
+  note}, ImageContent image/png]`. Refusals (tool errors): `scene_disabled`
+  (checked before any call, from `runtime/control-center-settings.json` then
+  `JARVIS_SCENE_ENABLED`), `no_visible_page`, `capture_busy`,
+  `capture_unavailable`, `capture_cancelled`, transport codes as for reads.
+  Verified live on CLI 2.1.274: the image block reaches the model (session
+  transcript `tool_result` = text + image; the reply described what the image
+  showed).
+- **Brain stream reader (found by the live run).** The stream-json line of a
+  tool result carrying the image is 40–80 KiB; asyncio's default 64 KiB
+  `StreamReader` limit made `readline` raise, the stdout reader died silently and
+  the turn timed out after 240 s although the model had answered.
+  `ClaudeLocalAgent` now spawns the CLI with `limit=STREAM_LINE_LIMIT_BYTES`
+  (16 MiB); a longer line is journaled `agent.stream_line_too_long` (error) and
+  skipped without stopping the reader. Image blocks are replaced by
+  `{type: image, omitted_bytes}` before the event is recorded or journaled
+  (`without_image_data`). `codex_local.py` has the same default reader but never
+  receives the display server.
+- **Journal** (identifiers, sizes, durations; never pixels): Core
+  `core.scene.capture_requested`, `capture_stored`, `capture_timeout` (warning),
+  `capture_refused`, `capture_upload_refused` (warning), `capture_store_failed`
+  (error), `capture_pruned`, `capture_prune_failed`; Control Center
+  `scene.capture_uploaded`, `scene.capture_upload_refused`,
+  `scene.capture_upload_failed`; display MCP `display.capture`. Capture ids are
+  journaled as 8-character prefixes only (the id is the upload capability).
+- **Errors of the upload route.** 404 `unknown_capture` (bad form, unknown, used or
+  timed out), 410 `capture_expired`, 400 `invalid_png`, 413 `payload_too_large`,
+  403 origin, 503 `not_configured` / transport codes, all with the scene error
+  shape.
 
 Stale scene memory (QA M1). Decision 4 changes the scene without a brain turn, so
 the prompt and every mutating tool description say to re-read with
@@ -2252,6 +2337,7 @@ same function as the Control Center proxy, `scene_view.classify_scene_call_failu
 Journal (`runtime/trace.jsonl`, identifiers only): `display.server_started`,
 `display.tool` (info: tool, op, outcome, revision, id, `scene_changed`),
 `display.read` (info, Slice 09 reads: tool, filter names or ids, counts, revision, `truncated`),
+`display.capture` (info: capture id prefix, file name, bytes, width, height, `duration_ms`),
 `display.tool_refused` (info, with `reason`; Core also journals
 `core.scene.command_refused`), `display.tool_failed` (warning for transport,
 argument and schema failures with `code` and, for schema refusals, the field

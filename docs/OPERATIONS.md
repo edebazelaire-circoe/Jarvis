@@ -1129,10 +1129,11 @@ recharge ce qui est réellement sur disque.
 
 ### Scène constellation : outils d'affichage du cerveau
 
-Le cerveau conversationnel (Claude CLI) peut lire et composer la scène par neuf
+Le cerveau conversationnel (Claude CLI) peut lire et composer la scène par dix
 outils MCP du serveur `jarvis-display` : trois lectures, `scene_inspect` (toute la
 scène en lignes compactes), `scene_query` (trouver des objets par filtres) et
-`scene_get` (lire le détail d'un objet), puis `scene_create_object`,
+`scene_get` (lire le détail d'un objet), la capture exceptionnelle
+`scene_capture`, puis `scene_create_object`,
 `scene_update_object`, `scene_set_visibility`, `scene_link`, `scene_unlink` et
 `scene_add_artifact` (artefacts, voir « Scène constellation : les artefacts »).
 
@@ -1148,6 +1149,34 @@ entrants et sortants, les artefacts qui l'expliquent, ce qu'il explique et ses
 signaux. Après un redémarrage du cerveau, c'est par là qu'il relit ce qu'une
 recherche a donné. Les deux réponses sont bornées à 20 Ko et disent `truncated`
 quand elles coupent ; elles ne modifient rien.
+
+**Capture visuelle (exceptionnelle).** « Vérifie visuellement… » ou « regarde
+l'écran » : le cerveau peut appeler `scene_capture`. Ce n'est pas une copie
+d'écran du système : la page du Control Center **ouverte et visible** (l'onglet
+meneur) redessine sa couche de scène sur une image PNG de 1280×720 au plus et
+l'envoie à Core, qui la range dans `runtime/scene-captures/` (noms
+`capture-<date UTC>-<8 hex>.png`, sans texte de l'utilisateur ; on garde les 5
+dernières, et rien au-delà de 24 h, nettoyage à chaque capture et au démarrage de
+Core). L'image contient uniquement la scène (fenêtres, capsules, étoiles, liens) :
+ni commandes, ni panneaux, ni chronologie, ni texte vocal, ni visage. Le cerveau
+reçoit le chemin et l'image. Personne d'autre ne peut demander une capture : pas
+de bouton, pas de route du Control Center. Pour un simple chevauchement, le
+cerveau utilise `scene_query` (near, rayon 0), sans image.
+
+| Symptôme | Cause probable | Action |
+| --- | --- | --- |
+| erreur d'outil `no_visible_page` après 5 s | aucune page du Control Center ouverte et visible (fermée, onglet caché, fenêtre réduite, scène éteinte dans la page) | ouvrir le Control Center au premier plan, puis redemander |
+| erreur d'outil `scene_disabled` | `scene.enabled` faux (réglage ou `JARVIS_SCENE_ENABLED`) | allumer la scène |
+| erreur d'outil `capture_busy` | une capture est déjà en cours | attendre quelques secondes |
+| erreur d'outil `capture_unavailable` | Core lancé sans dossier de captures (outil de test) | lancer Core par `python -m jarvis core` |
+| `core.scene.capture_store_failed` (erreur) | `runtime/scene-captures/` non inscriptible | corriger les droits du dossier runtime |
+| `scene.capture_upload_refused` (avertissement) | envoi d'une image invalide, trop grande (> 2 Mio, > 1280×720) ou pour un identifiant inconnu | normal si ce n'est pas la page ; sinon relever le code |
+| `agent.stream_line_too_long` (erreur) | une ligne du CLI dépasse 16 Mio | relever l'outil concerné ; la lecture continue |
+
+Vérifier dans la trace : `core.scene.capture_requested`, puis
+`scene.capture_uploaded` (Control Center), `core.scene.capture_stored` et
+`display.capture` (tailles et durée, jamais l'image) ; dans la console du
+navigateur, `[scène] scene.capture_started` / `scene.capture_sent`.
 « Réaffiche tout » passe par `scene_set_visibility` avec `scope: "all_hidden"` :
 le serveur réaffiche un par un tout ce qui est masqué au moment de l'appel et
 rend les comptes, en 15 s au plus (au-delà : `deadline_reached`, et le reste à
