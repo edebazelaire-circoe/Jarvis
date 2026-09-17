@@ -19,7 +19,7 @@ Note (PM, Slice 00): 04 needs 01/02 only; 03 is not required for 04.
 - [x] 07 Semantic artifacts — APPROVED (see LOG)
 - [x] 08 User interaction & lifecycle — APPROVED (see LOG)
 - [ ] 09 Scene inspection & screenshot
-- [ ] 10 Restart reconciliation
+- [x] 10 Restart reconciliation — APPROVED (see LOG)
 - [ ] 11 Rollout, quality & docs
 
 ## Task done when
