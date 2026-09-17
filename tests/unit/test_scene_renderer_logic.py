@@ -1127,5 +1127,8 @@ def test_the_page_draws_the_unknown_cue_quietly_and_names_the_restart_error_clas
     assert "classes.push('sc-restart-unknown')" in page
     # Navigateur réel : à 42ch, « état inconnu depuis le redémarrage » ne laissait que « [c… » du titre.
     assert ".sc-restart-unknown .sc-label,.sc-signal .sc-label{max-width:min(64ch,80vw)}" in page
+    # Suivi final O-5 : l'état avant le titre, titre borné.
+    assert ".sc-restart-unknown .sc-label span{order:-1}" in page and ".sc-restart-unknown .sc-label strong{max-width:24ch}" in page
+    assert "bloqué ou à l’état inconnu depuis un redémarrage reste" in page
     assert "(exec==='unknown'&&!restartUnknown)" in page  # pas de badge « ? » sur un artefact
     assert "core_restarted_unobserved:'non revu après le redémarrage de Core'" in html

@@ -618,6 +618,10 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
 /* Libellé plus large : « état inconnu depuis le redémarrage » et le titre
    d'un signal de redémarrage ne mangent pas tout le titre (navigateur, S10). */
 .sc-restart-unknown .sc-label,.sc-signal .sc-label{max-width:min(64ch,80vw)}
+/* Suivi final : l'état d'abord, le titre borné à 24ch — « état inconnu depuis
+   le redémarrage » se lit toujours en entier, quelle que soit la longueur du titre. */
+.sc-restart-unknown .sc-label span{order:-1}
+.sc-restart-unknown .sc-label strong{max-width:24ch}
 /* Terminé : anneau fin et fixe — travail achevé, pas encore rangé. */
 .sc-point.sc-exec-completed .sc-ring{width:15px;height:15px;margin:-7.5px 0 0 -7.5px;border:1px solid rgba(220,236,244,.34)}
 .sc-signal .sc-mark{width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:1.5px;transform:rotate(45deg)}
@@ -1781,7 +1785,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(selection.orphans)lines.push([`${selection.orphans} ${selection.orphans>1?'signaux orphelins':'signal orphelin'}`,' (étoile déjà archivée) aussi.']);
     const leftOrphan=L.artifactsLeftOrphan(lastState,selection.ids).length;
     if(leftOrphan)lines.push([`${leftOrphan} ${leftOrphan>1?'artefacts':'artefact'}`,` qui les ${leftOrphan>1?'expliquent restent':'explique reste'}, sans lien : « Archiver les artefacts orphelins » les range ensuite.`]);
-    lines.push('Le travail en cours, en attente ou bloqué reste, comme les artefacts, notes et fenêtres du brain.');
+    lines.push('Le travail en cours, en attente, bloqué ou à l’état inconnu depuis un redémarrage reste, comme les artefacts, notes et fenêtres du brain.');
     if(retry)lines.unshift('La scène a changé pendant la confirmation : comptes mis à jour.');
     if(typeof confirmDialog!=='function'){consoleLog('warn','scene.confirm_unavailable',{});return}
     const noun=`${selection.objects} ${selection.objects>1?'objets':'objet'}`;
