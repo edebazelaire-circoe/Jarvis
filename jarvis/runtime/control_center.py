@@ -63,7 +63,12 @@ from jarvis.runtime.live_status import CoreLiveStatusView, project_live_status
 from jarvis.runtime.model_catalog import CatalogError, ModelCatalog, filter_by_role
 from jarvis.runtime.owner_voice import effective_verifier_settings, probe_remedy
 from jarvis.runtime.self_dev import SelfDevError, apply_gate as apply_self_dev_gate, load_gate as load_self_dev_gate
-from jarvis.runtime.scene_settings import SceneSettingsError, apply_gate as apply_scene_gate, load_gate as load_scene_gate
+from jarvis.runtime.scene_settings import (
+    SceneSettingsError,
+    apply_gate as apply_scene_gate,
+    describe_gate as describe_scene_gate,
+    load_gate as load_scene_gate,
+)
 from jarvis.runtime.self_dev_service import SelfDevelopmentService
 from jarvis.runtime.owner_voice import probe_from_settings as probe_owner_verifier
 from jarvis.runtime.visual_signals import VisualSignalBus
@@ -202,6 +207,11 @@ SCENE_CAPTURE_SCRIPT_FILE = "control_center_scene_capture.js"
 #: Route d'envoi des captures : ses refus d'origine ont la forme d'erreur de scène.
 SCENE_CAPTURE_ROUTE_PREFIX = "/api/scene/captures/"
 SCENE_CAPTURE_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_CAPTURE_JS__*/"
+#: Réglage `scene.enabled` à l'écran (Slice 11) : section de l'onglet
+#: Expérimental (logique pure `window.JarvisSceneSettings` testée par node, puis
+#: son branchement), insérée après Barehands, qui crée cet onglet.
+SCENE_SETTINGS_SCRIPT_FILE = "control_center_scene_settings.js"
+SCENE_SETTINGS_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_SETTINGS_JS__*/"
 #: Chronologie de conversation plein écran (Slice 05) : logique pure testée par
 #: node et branchement navigateur, insérés comme les scripts ci-dessus.
 TIMELINE_SCRIPT_FILE = "control_center_timeline.js"
@@ -673,6 +683,9 @@ class ControlCenter:
         )
         html = html.replace(
             SCENE_PAGE_SCRIPT_MARKER, page.with_name(SCENE_PAGE_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            SCENE_SETTINGS_SCRIPT_MARKER, page.with_name(SCENE_SETTINGS_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         html = html.replace(
             TIMELINE_SCRIPT_MARKER, page.with_name(TIMELINE_SCRIPT_FILE).read_text(encoding="utf-8")
@@ -1539,9 +1552,10 @@ class ControlCenter:
             # Auto-développement : deux crans, éteints tant que l'utilisateur ne
             # les ouvre pas. L'état des worktrees vit sur `/api/self-dev`.
             "self_development": load_self_dev_gate(settings),
-            # Scène constellation (Slice 06) : rendu et outils d'affichage du
-            # cerveau. Effectif au prochain démarrage du cerveau.
-            "scene": load_scene_gate(settings),
+            # Scène constellation (Slice 06, écran Slice 11) : rendu immédiat,
+            # outils d'affichage du cerveau à son prochain démarrage ; `stored`
+            # et `env` disent ce que l'onglet Expérimental doit expliquer.
+            "scene": describe_scene_gate(settings),
             "audio": {
                 "input_device": settings.get("audio_input_device", ""),
                 "output_device": settings.get("audio_output_device", ""),

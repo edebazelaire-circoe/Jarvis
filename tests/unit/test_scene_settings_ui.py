@@ -1,0 +1,288 @@
+"""Écran du réglage `scene.enabled` (handoff jarvis-constellation-scene-runtime, Slice 11).
+
+- aller-retour des réglages : `GET/POST /api/settings` décrivent, écrivent et
+  relisent le bloc `scene` (`enabled`, `source`, `stored`, `env`), et
+  `/api/status` suit ;
+- variable d'environnement : lecture seule côté page, écriture refusée côté
+  serveur (`scene_env_override`), fichier inchangé ;
+- l'état réel du brain en cours (`agent.display_tools`), que l'écran compare au
+  réglage pour proposer un redémarrage ;
+- la logique pure de la section (`control_center_scene_settings.js`) exécutée
+  avec node, et les garanties statiques du bloc navigateur (onglet
+  Expérimental, confirmation en page, pas de `confirm()`, pas d'`innerHTML`).
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import re
+import shutil
+import subprocess
+from typing import Any
+
+from aiohttp import web
+import pytest
+
+from jarvis.runtime import claude_local
+from jarvis.runtime.claude_local import ClaudeLocalAgent
+from jarvis.runtime.control_center import (
+    BAREHANDS_SCRIPT_MARKER,
+    SCENE_PAGE_SCRIPT_MARKER,
+    SCENE_SETTINGS_SCRIPT_MARKER,
+    SETTINGS_ERROR_CODE_HEADER,
+    TIMELINE_SCRIPT_MARKER,
+    ControlCenter,
+)
+from jarvis.runtime.display_mcp import DisplayMcpTarget
+
+RUNTIME = Path(__file__).resolve().parents[2] / "jarvis" / "runtime"
+SETTINGS_JS = RUNTIME / "control_center_scene_settings.js"
+BAREHANDS_JS = RUNTIME / "control_center_barehands.js"
+PAGE_HTML = RUNTIME / "control_center.html"
+_NODE = shutil.which("node")
+
+
+class JsonRequest:
+    def __init__(self, payload: object) -> None:
+        self.payload = payload
+
+    async def json(self) -> object:
+        return self.payload
+
+
+@pytest.fixture(autouse=True)
+def _no_env_override(monkeypatch):
+    monkeypatch.delenv("JARVIS_SCENE_ENABLED", raising=False)
+
+
+def _target(tmp_path: Path) -> DisplayMcpTarget:
+    return DisplayMcpTarget("127.0.0.1", 17999, tmp_path / "core.token", tmp_path)
+
+
+def _settings_file(tmp_path: Path) -> dict[str, Any]:
+    return json.loads((tmp_path / "control-center-settings.json").read_text(encoding="utf-8"))
+
+
+def describe(scene: Any, status: Any) -> dict[str, Any]:
+    if _NODE is None:
+        pytest.skip("node absent")
+    script = (
+        f"const L=require({json.dumps(str(SETTINGS_JS))});"
+        f"console.log(JSON.stringify(L.describe({json.dumps(scene)},{json.dumps(status)})))"
+    )
+    result = subprocess.run([_NODE, "-e", script], capture_output=True, text=True, encoding="utf-8", timeout=60)
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+# ------------------------------------------------------------------ serveur
+
+
+async def test_the_settings_round_trip_describes_writes_and_rereads_the_gate(tmp_path):
+    control = ControlCenter(runtime_root=tmp_path, project_root=tmp_path, display_mcp=_target(tmp_path))
+    described = json.loads((await control.get_settings(None)).text)
+    assert described["scene"] == {"enabled": False, "source": "settings", "stored": False, "env": None}
+    assert json.loads((await control.status(None)).text)["scene"] == {"enabled": False, "source": "settings"}
+
+    saved = json.loads((await control.save_settings(JsonRequest({"scene": {"enabled": True}}))).text)
+    assert saved["scene"] == {"enabled": True, "source": "settings", "stored": True, "env": None}
+    assert _settings_file(tmp_path)["scene"] == {"enabled": True}
+    reread = json.loads((await control.get_settings(None)).text)
+    assert reread["scene"] == saved["scene"]
+    # Le rendu lit le même interrupteur dans le statut, relu chaque seconde par la page.
+    assert json.loads((await control.status(None)).text)["scene"] == {"enabled": True, "source": "settings"}
+    assert control.agent.display_mcp == _target(tmp_path)
+
+    off = json.loads((await control.save_settings(JsonRequest({"scene": {"enabled": False}}))).text)
+    assert off["scene"]["enabled"] is False and _settings_file(tmp_path)["scene"] == {"enabled": False}
+    assert control.agent.display_mcp is None
+
+
+async def test_an_environment_override_is_described_and_refused_without_touching_the_file(tmp_path, monkeypatch):
+    (tmp_path / "control-center-settings.json").write_text(json.dumps({"scene": {"enabled": False}, "other": 1}), encoding="utf-8")
+    monkeypatch.setenv("JARVIS_SCENE_ENABLED", "on")
+    control = ControlCenter(runtime_root=tmp_path, project_root=tmp_path, display_mcp=_target(tmp_path))
+    described = json.loads((await control.get_settings(None)).text)
+    assert described["scene"] == {"enabled": True, "source": "env", "stored": False, "env": "JARVIS_SCENE_ENABLED"}
+    before = (tmp_path / "control-center-settings.json").read_bytes()
+    for enabled in (True, False):
+        with pytest.raises(web.HTTPBadRequest) as refused:
+            await control.save_settings(JsonRequest({"scene": {"enabled": enabled}}))
+        assert refused.value.headers[SETTINGS_ERROR_CODE_HEADER] == "scene_env_override"
+        assert "JARVIS_SCENE_ENABLED" in refused.value.text and "relancez le Control Center" in refused.value.text
+    assert (tmp_path / "control-center-settings.json").read_bytes() == before
+    # Rien d'autre n'est bloqué : un enregistrement sans bloc scene passe.
+    await control.save_settings(JsonRequest({"active_timeout_s": "0"}))
+    assert _settings_file(tmp_path)["scene"] == {"enabled": False}
+
+
+class _Stream:
+    async def readline(self) -> bytes:
+        return b""
+
+    async def read(self, n: int = -1) -> bytes:  # noqa: ARG002
+        return b""
+
+
+class _LiveProcess:
+    pid = 4343
+
+    def __init__(self) -> None:
+        self.returncode: int | None = None
+        self.stdin = None
+        self.stdout = _Stream()
+        self.stderr = _Stream()
+
+    def terminate(self) -> None:
+        self.returncode = 0
+
+    def kill(self) -> None:
+        self.returncode = -9
+
+    async def wait(self) -> int:
+        return self.returncode or 0
+
+
+async def _running(monkeypatch, agent: ClaudeLocalAgent) -> _LiveProcess:
+    process = _LiveProcess()
+
+    async def fake_exec(*args, **kwargs):  # noqa: ANN002, ANN003
+        return process
+
+    monkeypatch.setattr(claude_local.asyncio, "create_subprocess_exec", fake_exec)
+    if agent._process_tree is not None:
+        monkeypatch.setattr(agent._process_tree, "attach_and_resume", lambda pid: None)
+    await agent.start()
+    return process
+
+
+async def test_the_brain_snapshot_says_whether_the_running_process_has_the_display_tools(monkeypatch, tmp_path):
+    agent = ClaudeLocalAgent(runtime_root=tmp_path / "runtime", cwd=tmp_path)
+    assert agent.snapshot()["display_tools"] is False
+    await _running(monkeypatch, agent)
+    assert agent.snapshot()["state"] == "running" and agent.snapshot()["display_tools"] is False
+    # Le réglage change pendant que le brain tourne : le processus en cours, lui, ne change pas.
+    agent.display_mcp = _target(tmp_path)
+    assert agent.snapshot()["display_tools"] is False
+    await agent.stop()
+    await _running(monkeypatch, agent)
+    assert agent.snapshot()["display_tools"] is True
+    agent.display_mcp = None
+    assert agent.snapshot()["display_tools"] is True
+    await agent.stop()
+    assert agent.snapshot()["display_tools"] is False
+    # Réglage allumé mais configuration MCP impossible à écrire : le brain démarre sans outils, et l'écran le dit.
+    agent.display_mcp = _target(tmp_path)
+
+    def refuse(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise OSError("disque plein")
+
+    monkeypatch.setattr("jarvis.runtime.display_mcp.write_mcp_config", refuse)
+    await _running(monkeypatch, agent)
+    assert agent.snapshot()["display_tools"] is False
+    await agent.stop()
+
+
+# ------------------------------------------------------------------ logique pure (node)
+
+
+def test_the_toggle_is_read_only_and_explained_when_the_environment_imposes_it():
+    model = describe({"enabled": True, "source": "env", "stored": False, "env": "JARVIS_SCENE_ENABLED"}, None)
+    assert model["checked"] is True and model["readOnly"] is True
+    assert "JARVIS_SCENE_ENABLED" in model["source"]["title"]
+    detail = model["source"]["detail"]
+    assert "lecture seule" in detail and "relancez le Control Center" in detail and "ignoré tant qu'elle existe : désactivée" in detail
+
+    free = describe({"enabled": False, "source": "settings", "stored": False, "env": None}, None)
+    assert free["readOnly"] is False and free["source"] is None and free["checked"] is False
+    # Réglages illisibles : jamais un interrupteur actif sur une valeur inventée.
+    for broken in (None, {}, {"enabled": "true", "source": "settings"}):
+        unknown = describe(broken, None)
+        assert unknown["known"] is False and unknown["readOnly"] is True and unknown["checked"] is False
+
+
+def test_the_effects_say_render_now_brain_tools_at_next_start_and_core_keeps_projecting():
+    effects = {e["term"]: e["text"] for e in describe({"enabled": False, "source": "settings"}, None)["effects"]}
+    assert list(effects) == ["Affichage", "Outils du brain", "Core"]
+    assert "sans recharger" in effects["Affichage"] and "Immédiat" in effects["Affichage"]
+    assert effects["Outils du brain"].startswith("Au prochain démarrage du brain") and "Jamais archiver" in effects["Outils du brain"]
+    assert "même éteinte" in effects["Core"]
+
+
+def _status(state: str = "running", tools: bool = False, active: int = 0, cli: str = "claude") -> dict[str, Any]:
+    return {"agent_cli": cli, "agent": {"name": "Claude" if cli == "claude" else "Codex", "state": state, "display_tools": tools},
+            "subagents": {"active": active, "running_shell": 0}}
+
+
+ON = {"enabled": True, "source": "settings", "stored": True, "env": None}
+OFF = {"enabled": False, "source": "settings", "stored": False, "env": None}
+
+
+def test_the_brain_state_is_compared_with_the_choice_and_a_restart_is_offered_only_on_mismatch():
+    assert describe(ON, _status(tools=True))["brain"] == {
+        "tone": "ok", "title": "Brain en cours : outils d'affichage présents",
+        "detail": "Il peut lire, composer et capturer la scène.", "restart": False}
+    assert describe(OFF, _status(tools=False))["brain"]["restart"] is False
+
+    enable = describe(ON, _status(tools=False, active=2))["brain"]
+    assert enable["tone"] == "warn" and enable["restart"] is True
+    assert "pas encore d'outils d'affichage" in enable["title"]
+    assert enable["confirm"] == {
+        "title": "Redémarrer le brain ?",
+        "lines": ["Il reprend la même conversation, avec les outils d'affichage.", "Cela interrompra 2 sous-agents en cours."],
+        "confirmLabel": "Redémarrer le brain", "danger": True}
+
+    disable = describe(OFF, _status(tools=True))["brain"]
+    assert disable["restart"] is True and "garde ses outils" in disable["title"]
+    assert disable["confirm"]["lines"] == ["Il reprend la même conversation, sans les outils d'affichage.", "Aucun sous-agent n'est en cours."]
+    assert disable["confirm"]["danger"] is False
+
+
+def test_a_stopped_brain_another_cli_or_an_unread_status_never_offer_a_restart():
+    stopped = describe(ON, _status(state="stopped"))["brain"]
+    assert stopped == {"tone": "info", "title": "Brain arrêté", "detail": "Il recevra les outils d'affichage à son prochain démarrage.", "restart": False}
+    assert describe(OFF, _status(state="exited"))["brain"]["detail"] == "Il démarrera sans outils d'affichage."
+    codex = describe(ON, _status(cli="codex"))["brain"]
+    assert codex["restart"] is False and "Seul le brain Claude" in codex["detail"]
+    for status in (None, {}, {"agent": None}):
+        assert describe(ON, status)["brain"] == {
+            "tone": "info", "title": "État du brain inconnu",
+            "detail": "Le statut du Control Center n'a pas pu être lu. Il est relu à chaque seconde.", "restart": False}
+
+
+# ------------------------------------------------------------------ page (statique)
+
+
+async def test_the_section_is_injected_after_barehands_into_the_experimental_tab(tmp_path):
+    html = PAGE_HTML.read_text(encoding="utf-8")
+    assert html.index(BAREHANDS_SCRIPT_MARKER) < html.index(SCENE_PAGE_SCRIPT_MARKER) < html.index(SCENE_SETTINGS_SCRIPT_MARKER) < html.index(TIMELINE_SCRIPT_MARKER)
+    served = (await ControlCenter(runtime_root=tmp_path, project_root=tmp_path).index(None)).text
+    source = SETTINGS_JS.read_text(encoding="utf-8")
+    assert SCENE_SETTINGS_SCRIPT_MARKER not in served and source in served
+    # Barehands crée l'onglet ; la section s'y ajoute ensuite (installations dans l'ordre d'insertion).
+    assert served.index(BAREHANDS_JS.read_text(encoding="utf-8")) < served.index(source)
+    assert "TABS.push({id:TAB_ID,label:'Expérimental',save:false})" in BAREHANDS_JS.read_text(encoding="utf-8")
+    assert "const TAB_ID='experimental';" in source
+
+
+def test_the_browser_block_saves_through_settings_confirms_in_page_and_stays_accessible():
+    source = SETTINGS_JS.read_text(encoding="utf-8")
+    code = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
+    pure, browser = code.split("installJarvisSceneSettings")
+    for forbidden in ("document.", "window.", "fetch(", "setInterval", "addEventListener", "innerHTML", "localStorage"):
+        assert forbidden not in pure, forbidden
+    # Écriture par le bloc scene de /api/settings, jamais de fetch à la main (api() vérifie le statut HTTP).
+    assert "body:JSON.stringify({scene:{enabled}})" in browser and "fetch(" not in browser
+    assert "await confirmDialog(" in browser and "RESTART_ROUTE" in browser
+    for forbidden in ("confirm(", "alert(", "prompt(", "innerHTML"):
+        assert re.search(r"(?<![\w.])" + re.escape(forbidden), browser.replace("confirmDialog(", "")) is None, forbidden
+    # Accessibilité : case étiquetée, décrite, focus rendu au contrôle après chaque redessin.
+    assert "type:'checkbox',id:'f_scene'" in browser and "node('label',{for:'f_scene'}" in browser
+    assert "'aria-describedby':describedBy" in browser and "role:'status','aria-live':'polite'" in browser
+    assert "focus({preventScroll:true})" in browser and ":focus-visible" in browser
+    # Échec visible (bandeau + notification), journalisé en console, main rendue dans finally.
+    assert "scene.setting_failed" in browser and "scene.brain_restart_failed" in browser
+    assert browser.count("finally{") >= 2 and "RESTART_DEADLINE_MS" in browser
+    # Rendu appliqué tout de suite : le statut est relu après l'écriture.
+    assert "refreshStatus()" in browser

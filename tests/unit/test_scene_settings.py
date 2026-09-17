@@ -65,14 +65,25 @@ def test_applying_is_strict_and_keeps_other_settings():
     assert settings["scene"] == {"enabled": True}
 
 
+def test_applying_is_refused_while_the_environment_imposes_the_gate():
+    settings = {"scene": {"enabled": False}}
+    with pytest.raises(SceneSettingsError) as refused:
+        apply_gate(settings, {"enabled": True}, {"JARVIS_SCENE_ENABLED": "1"})
+    assert refused.value.code == "scene_env_override" and "JARVIS_SCENE_ENABLED impose la scène activée" in str(refused.value)
+    assert settings == {"scene": {"enabled": False}}
+    # Une valeur d'environnement non reconnue n'impose rien : l'écriture passe.
+    assert apply_gate(settings, {"enabled": True}, {"JARVIS_SCENE_ENABLED": "peut-être"}) == {"enabled": True}
+
+
 async def test_settings_endpoints_describe_persist_and_refuse_the_gate(tmp_path):
     control = ControlCenter(runtime_root=tmp_path, project_root=tmp_path, display_mcp=target(tmp_path))
     described = json.loads((await control.get_settings(None)).text)
-    assert described["scene"] == {"enabled": False, "source": "settings"}
+    # Slice 11 : le bloc des réglages dit aussi la valeur enregistrée et la variable qui l'emporte.
+    assert described["scene"] == {"enabled": False, "source": "settings", "stored": False, "env": None}
     assert control.agent.display_mcp is None
 
     saved = json.loads((await control.save_settings(JsonRequest({"scene": {"enabled": True}}))).text)
-    assert saved["scene"] == {"enabled": True, "source": "settings"}
+    assert saved["scene"] == {"enabled": True, "source": "settings", "stored": True, "env": None}
     assert json.loads((tmp_path / "control-center-settings.json").read_text(encoding="utf-8"))["scene"] == {"enabled": True}
     assert control.agent.display_mcp == target(tmp_path)
 

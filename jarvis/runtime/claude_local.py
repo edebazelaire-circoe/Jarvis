@@ -237,6 +237,7 @@ class ClaudeLocalAgent:
         # est vrai ; lu au lancement du processus, donc effectif au prochain
         # (re)démarrage. Ignoré hors du profil `conversation`.
         self.display_mcp = display_mcp
+        self._display_tools_active = False
         from jarvis.runtime.prompt_runtime import normalize_prompt_overrides
         self._prompt_overrides = normalize_prompt_overrides(prompt_overrides)
         self.prompt_applications: list[dict[str, object]] = []
@@ -318,6 +319,10 @@ class ClaudeLocalAgent:
             "permission_mode": self.permission_mode,
             "model": self.model,
             "console": self.console_snapshot(),
+            # Outils d'affichage déclarés au processus en cours (Slice 11) : ce
+            # que l'écran des réglages compare à `scene.enabled`, qui ne
+            # s'applique qu'au prochain démarrage.
+            "display_tools": self._display_tools_active and self.state == "running",
         }
 
     def _record(self, event: dict[str, Any]) -> None:
@@ -655,6 +660,7 @@ class ClaudeLocalAgent:
             except FileNotFoundError as exc:
                 self.journal.emit("agent.start", "Claude CLI not found", level="error", data={"command": self.command})
                 raise RuntimeError("Claude CLI not found; install Claude Code and ensure `claude` is in PATH") from exc
+            self._display_tools_active = bool(display_args)
             self.subtasks.process_started()
             applied = prompt_evidence(
                 prompt_resolution, application="sent",

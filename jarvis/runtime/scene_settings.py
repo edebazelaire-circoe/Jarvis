@@ -11,8 +11,12 @@ Même forme que l'autorisation d'auto-développement (`self_dev.load_gate` /
 (`1/true/yes/on` ou `0/false/no/off`) l'emporte sur le fichier, comme
 `JARVIS_VISUALIZER_ENABLED` pour le visage ; toute autre valeur est ignorée.
 
-Un changement prend effet au prochain (re)démarrage du cerveau : les outils MCP
-et la consigne système sont fixés au lancement du processus CLI.
+Effets d'un changement (Slice 11) : le rendu suit à la seconde, sans
+rechargement (la page relit l'interrupteur dans `/api/status`) ; les outils MCP
+et la consigne système du cerveau sont fixés au lancement du processus CLI et
+ne changent qu'à son prochain (re)démarrage. Tant que la variable
+d'environnement l'impose, l'écriture est refusée (`scene_env_override`) :
+l'interrupteur de la page est en lecture seule et dit pourquoi.
 """
 
 from __future__ import annotations
@@ -56,8 +60,29 @@ def load_gate(settings: Mapping[str, Any], environ: Mapping[str, str] | None = N
     return {"enabled": enabled, "source": "settings"}
 
 
-def apply_gate(settings: dict[str, Any], payload: Any) -> dict[str, bool]:
-    """Écrire `scene.enabled` dans `settings` (en mémoire) ; rend ce qui est stocké."""
+def describe_gate(settings: Mapping[str, Any], environ: Mapping[str, str] | None = None) -> dict[str, Any]:
+    """Bloc `scene` de `GET/POST /api/settings` : `load_gate` plus ce que l'écran explique.
+
+    `stored` : la valeur du fichier, ignorée tant que l'environnement l'impose ;
+    `env` : nom de la variable qui l'emporte quand `source` vaut `env`, sinon `None`.
+    """
+
+    gate = load_gate(settings, environ)
+    stored = settings.get(SETTING_KEY)
+    return {
+        **gate,
+        "stored": isinstance(stored, dict) and stored.get("enabled") is True,
+        "env": ENV_OVERRIDE if gate["source"] == "env" else None,
+    }
+
+
+def apply_gate(settings: dict[str, Any], payload: Any, environ: Mapping[str, str] | None = None) -> dict[str, bool]:
+    """Écrire `scene.enabled` dans `settings` (en mémoire) ; rend ce qui est stocké.
+
+    Refusé (`scene_env_override`) quand `JARVIS_SCENE_ENABLED` impose la valeur :
+    écrire un choix qui ne s'appliquerait pas ferait croire à l'utilisateur
+    qu'il a changé quelque chose.
+    """
 
     if not isinstance(payload, dict):
         raise SceneSettingsError("scene_bad_payload", "Le réglage de scène doit être un objet.")
@@ -66,6 +91,13 @@ def apply_gate(settings: dict[str, Any], payload: Any) -> dict[str, bool]:
         raise SceneSettingsError("scene_unknown_field", f"Réglage de scène inconnu : {', '.join(sorted(map(str, unknown)))}.")
     if "enabled" in payload and not isinstance(payload["enabled"], bool):
         raise SceneSettingsError("scene_bad_value", "scene.enabled doit être vrai ou faux.")
+    override = env_override(environ)
+    if "enabled" in payload and override is not None:
+        raise SceneSettingsError(
+            "scene_env_override",
+            f"{ENV_OVERRIDE} impose la scène {'activée' if override else 'désactivée'} : retirez la variable "
+            "d'environnement et relancez le Control Center pour choisir ici.",
+        )
     current = settings.get(SETTING_KEY)
     enabled = payload["enabled"] if "enabled" in payload else (isinstance(current, dict) and current.get("enabled") is True)
     settings[SETTING_KEY] = {"enabled": enabled}
