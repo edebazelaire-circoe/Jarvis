@@ -1878,7 +1878,7 @@ function closeMenu(restore){
    reste active), et les touches sont prises au niveau de la fenêtre, en
    capture : aucun raccourci d'interface ne passe, Échap ferme même quand le
    focus est sur le corps du panneau. */
-const CONFIRM={resolve:null,previous:null,inert:[],observer:null};
+const CONFIRM={resolve:null,previous:null,inert:[],observer:null,backWasInert:false};
 /* Enfant de `body` à rendre inerte pendant la confirmation : tout sauf le panneau,
    la main de Barehands et les scripts, et seulement s'il ne l'était pas déjà. */
 function confirmInertCandidate(el,back){return el!==back&&el.id!=='jarvisHands'&&el.tagName!=='SCRIPT'&&!el.inert}
@@ -1899,6 +1899,10 @@ function confirmDialog({title,lines=[],confirmLabel='Confirmer',cancelLabel='Ann
   CONFIRM.previous=document.activeElement;
   CONFIRM.inert=[...document.body.children].filter(el=>confirmInertCandidate(el,back));
   for(const el of CONFIRM.inert)el.inert=true;
+  /* Ouverte par-dessus une autre modale qui a rendu `body` inerte (chronologie
+     de conversation) : le panneau lui-même doit rester actif, sinon il
+     s'afficherait sans pouvoir être cliqué. Son état est rendu à la fermeture. */
+  CONFIRM.backWasInert=back.inert;back.inert=false;
   /* Un enfant ajouté pendant la confirmation (conteneur, notification…) suit la même règle. */
   if(typeof MutationObserver==='function'){
     CONFIRM.observer=new MutationObserver(records=>{
@@ -1919,6 +1923,7 @@ function finishConfirm(value){
   for(const el of CONFIRM.inert)el.inert=false;
   CONFIRM.inert=[];
   $('#confirmBack').hidden=true;
+  $('#confirmBack').inert=CONFIRM.backWasInert;CONFIRM.backWasInert=false;
   if(previous&&previous.isConnected&&typeof previous.focus==='function')try{previous.focus({preventScroll:true})}catch(_error){/* élément disparu */}
   if(resolve)resolve(value);
 }

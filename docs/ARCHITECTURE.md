@@ -2205,9 +2205,13 @@ The conversation timeline (`#timeline`, main's conversation-observability
 Slice 05) is a full-screen modal above every control and the scene; toasts,
 background popover, context menu and the Slice 08 confirmation stay above it.
 Both modals make the other `body` children `inert` and skip children already
-inert, so they nest in either order: a confirmation over the timeline inerts
-the timeline and gives it back on close; the timeline closing restores only
-what it inerted.
+inert. A confirmation opened over the timeline (whose opening inerted the
+hidden `#confirmBack` too) clears `inert` on its own backdrop so it stays
+clickable, inerts the timeline, and on close gives the timeline back and
+restores the backdrop's previous `inert` value; the timeline closing then
+restores only what it inerted (`test_a_confirmation_over_the_conversation_timeline_…`).
+No user path opens a confirmation while the timeline is open today (the rest of
+the page is inert); the rule keeps a future one from showing a dead dialog.
 
 Before Slice 05 the face, top bar, voice hint, dock and panel had no z-index
 (DOM order); the explicit values keep their previous relative order. Inside the

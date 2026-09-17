@@ -524,3 +524,52 @@ def test_a_user_geometry_is_confirmed_only_after_its_last_step_so_the_preview_ne
     assert result["unplaced"] == ["geometry", "pin", "geometry"] and result["pinned"] == ["geometry"]
     assert result["sent2"] == ["pin", "set_geometry", "unpin"]
     assert result["failing"] == {"ok": False, "step": "geometry", "rolledBack": True, "undo": True} and result["qSize"] == 0
+
+
+def test_a_confirmation_over_the_conversation_timeline_stays_clickable_and_gives_everything_back(tmp_path):
+    """Intégration de main : deux modales `inert` (chronologie, confirmation Slice 08).
+
+    La chronologie rend inerte chaque enfant de `body` sauf elle, y compris le
+    panneau de confirmation caché. Une confirmation ouverte par-dessus doit
+    rester cliquable, rendre la chronologie inerte, puis tout rendre à la
+    fermeture : la chronologie redevient active et le panneau retrouve l'état
+    que la chronologie lui avait donné (qu'elle rétablira en se fermant).
+    """
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node absent")
+    html = PAGE_HTML.read_text(encoding="utf-8")
+    source = html[html.index("const CONFIRM="):html.index("$('#confirmGo').addEventListener")]
+    script = tmp_path / "confirm-over-timeline.cjs"
+    script.write_text(r"""
+const el=(id,extra)=>Object.assign({id,tagName:'DIV',inert:false,hidden:true,textContent:'',isConnected:true,
+  classList:{toggle(){}},replaceChildren(){},append(){},focus(){}},extra||{});
+const nodes={app:el('app',{hidden:false}),timeline:el('timeline'),confirmBack:el('confirmBack'),confirmDialog:el('confirmDialog'),
+  confirmTitle:el('confirmTitle'),confirmBody:el('confirmBody'),confirmGo:el('confirmGo'),confirmCancel:el('confirmCancel'),
+  toasts:el('toasts'),jarvisHands:el('jarvisHands'),script:el('',{tagName:'SCRIPT'})};
+const children=['app','timeline','confirmBack','toasts','jarvisHands','script'].map(k=>nodes[k]);
+const document={body:{children},activeElement:nodes.app,createElement:()=>el('li')};
+const $=sel=>nodes[sel.slice(1)];
+function closeMenu(){}
+""" + source + r"""
+const inert=()=>children.filter(n=>n.inert).map(n=>n.id||n.tagName);
+/* La chronologie s'ouvre : même règle que control_center_timeline.js. */
+const timelineInerted=children.filter(n=>n!==nodes.timeline&&!n.inert&&n.tagName!=='SCRIPT');
+for(const n of timelineInerted)n.inert=true;
+nodes.timeline.hidden=false;
+const out={timelineOpen:inert()};
+const pending=confirmDialog({title:'t',lines:['l']});
+out.withConfirm=inert();out.backClickable=!nodes.confirmBack.inert&&!nodes.confirmBack.hidden;
+finishConfirm(false);
+out.afterCancel=inert();
+for(const n of timelineInerted)n.inert=false;
+out.afterTimelineClose=inert();
+pending.then(v=>{out.resolved=v;console.log(JSON.stringify(out))});
+""", encoding="utf-8")
+    result = json.loads(subprocess.run([node, str(script)], capture_output=True, text=True, check=True, timeout=60).stdout)
+
+    assert result["timelineOpen"] == ["app", "confirmBack", "toasts", "jarvisHands"]
+    assert result["withConfirm"] == ["app", "timeline", "toasts", "jarvisHands"] and result["backClickable"]
+    assert result["afterCancel"] == result["timelineOpen"]
+    assert result["afterTimelineClose"] == [] and result["resolved"] is False
