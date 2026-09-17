@@ -1219,7 +1219,7 @@ QA's repro harnesses were rerun as `s8r_*` copies: `s8r_cdp.py`/`s8r_host.py` on
 
 **Fuzz.** `s8r_fuzz.py` (QA's `qa08_fuzz.py` with its own node file), seed 11 × 30 sequences × 3 000 steps, big every 2: `violations: none`. JS parity calls 5 946; applied `archive_many` from the page selection: 2 683 (7 027 objects).
 
-**Validation.** Targeted suite under `-W error::ResourceWarning` (the earlier list plus jobs, async conversation, orchestrator and work-state files): **1383 passed** in 107.52 s. `verify_release.py`: see below.
+**Validation.** Targeted suite under `-W error::ResourceWarning` (the earlier list plus jobs, async conversation, orchestrator and work-state files): **1383 passed** in 107.52 s. Full `scripts/verify_release.py`, alone in the foreground: `4136 passed, 9 skipped in 330.25s` / `Release verification passed.`
 
 **Residual risks recorded, per PM, unchanged:**
 
