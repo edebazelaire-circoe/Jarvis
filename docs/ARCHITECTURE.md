@@ -2157,15 +2157,27 @@ the model).
   height, **scrolls** (wheel, focus) with `overscroll-behavior: contain`, and
   fades its last visible row until scrolled to the end (`sc-at-end`) or when it
   fits (`sc-fits`). Colours come from the existing scene tokens; both themes
-  (circuit-board, Omega) keep the dark scene surface. A link row is **host first**
-  (non-shrinking), then the label link, the out icon and the ref, which shrink.
+  (circuit-board, Omega) keep the dark scene surface. A link row is one `<a>` with
+  the **host first** (non-shrinking) then the label, followed by the out icon and
+  the ref; the ref shrinks first, then the label. Below a 260 px row
+  (`HOST_PRIORITY_ROW_PX`, final follow-up N1) the row is `sc-host-first`: the
+  decorative icon is hidden, the host is set at 10 px and may take the whole row,
+  the label can vanish while the link stays clickable through the host (the label
+  stays in the accessible name).
   The list is `tabindex=-1` (Chrome would otherwise make a scrolling list an
   unnamed tab stop); PageUp/PageDown on the focused window scroll it.
 - **Expand from the page menu** (« Afficher en fenêtre / en capsule », PM
-  decision): the new box comes from `placeFor`: the first free box on tight rings
-  around the object's anchor (what it explains, else its parent or star) every 15°,
-  inside the safe area, off the face zone and every visible object; else the
-  AutoResolver's own search with the other objects as obstacles. Shrinking to a
+  decision): the new box comes from `placeFor` → `freeBoxNearest` (final
+  follow-up N2): the safe area is rasterised in 2-unit cells, every visible
+  object (grown by 1 unit) and the face zone mark the cells they touch
+  (conservative, never a false « free »), a 2D prefix sum answers each candidate
+  box in O(1), and the free box whose centre is **nearest the anchor** (what the
+  object explains, else its parent or star, else its current place) wins, ties by
+  y then x. Work is bounded by the safe area (≈ 10 000 cells), not the object
+  count: ≈ 1 ms warm on QA's dense scene and on 510-object scenes. Only when no
+  free box exists does it fall back to the AutoResolver's least-overlap search
+  with the other objects as obstacles. When the only free space is across the
+  face, the window goes there and its link crosses the face (nearest free wins). Shrinking to a
   point keeps the centre. Drags and brain geometry stay authoritative (decision 9).
 - **Orphan artifacts** (PM decision): the menu of an artifact or star offers
   « Archiver les artefacts orphelins (N)… » when some artifact explains no active
@@ -2205,9 +2217,11 @@ The link is built with `document.createElement('a')`, `href` set as a property,
 `target="_blank"`, `rel="noopener noreferrer"`, `referrerpolicy="no-referrer"`,
 label through `textContent`. The **host is written before the label** in its own
 non-shrinking element; when the row is too narrow, `fitHosts` shortens it **from
-the left** with `hostTail` (at least the last two labels, `…evil-login.example`,
-never `docs.python.org…`), measured from the element's font and re-checked
-against `scrollWidth`. The full host is in the link's accessible name and in the
+the left** with `hostTail`: `…` plus the **longest suffix that fits** (a leading
+dot dropped), so a narrow row shows `…ogin-check.co.uk` rather than `…co.uk`
+(final follow-up N1: cutting on label boundaries could show far less than the
+room), never `docs.python.org…`; measured from the element's font and re-checked
+against the row's `scrollWidth`. The full host is in the link's accessible name and in the
 tooltip (`title`); the model never pre-truncates it (URLs are bounded at 2 048 by
 the domain). A long label or ref shrinks instead. `javascript:`, `data:`, `file:`
 and credentialed URLs stay text. No `innerHTML`, no `setAttribute('href')`

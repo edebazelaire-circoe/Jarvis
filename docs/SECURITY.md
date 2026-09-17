@@ -191,8 +191,10 @@ raw string; `href` is the parser's normalised form (IDN hosts in punycode) and i
 set as a property, never through markup; `target="_blank"`,
 `rel="noopener noreferrer"`, `referrerpolicy="no-referrer"`; the host is printed
 **before** the label in a non-shrinking element and, when space is short, cut
-**from the left** only, so its registrable end stays visible
-(`…org.evil-login.example`, never `docs.python.org…`); the full host is in the
+**from the left** only, showing the longest suffix that fits, so its registrable
+end stays visible as far as the room allows (`…ogin-check.co.uk`, never
+`docs.python.org…` nor a bare `…co.uk`; rows under 260 px give the host the whole
+row); the full host is in the
 accessible name and tooltip, never pre-truncated; a long brain label or ref
 shrinks instead. Everything else stays text (`textContent`). Opening a link is a
 user click (a Barehands pinch opens nothing: popups need real user activation).
