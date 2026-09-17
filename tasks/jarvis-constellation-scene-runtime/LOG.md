@@ -1954,3 +1954,9 @@ Residual risks:
 3. PNG checks are structural: a zlib bomb, text chunks or polyglot data inside a valid PNG are accepted (never decompressed by JARVIS; the file is still bounded to 2 MiB and 1280×720 declared).
 4. An orphaned relay long-poll can consume a delivery; the 1 s redelivery covers it (≤ ~1 s).
 5. The capture still draws the view model, not the DOM: shapes and positions are the page's by construction, fonts and inner text layout remain approximations.
+
+## 2026-09-17 — PM: chunked release verification for Slice 09 QA rework (host memory)
+
+- A single `verify_release.py` process was killed for low host memory three times (implementer twice, PM once in background). PM ran the exact equivalent in foreground chunks on HEAD `1554f87`: pytest over `tests/unit` in 6 sorted chunks, `tests/integration`, `tests/e2e tests/replay`, then `scripts/verify_release.py` with only its pytest subprocess stubbed (static checks: "Release verification passed."). Chunk test counts sum to 4 997 = collected tests.
+- Failures: the 9 main-baseline tests (Issue 03) only, plus (a) 54 node/subprocess-backed tests in unit chunk 3 that failed with child exit `0xC0000142` (STATUS_DLL_INIT_FAILED, Windows resource exhaustion) and all passed on rerun (144/144), and (b) `tests/integration/test_scene_projection_protocol.py::test_a_real_stream_reaches_the_scene_with_topology_and_signals` failing once under load (signal not yet projected) and passing 3/3 alone — a Slice 04 wait-too-short test to harden in Slice 11.
+- This chunked foreground method is the release gate on this host from now on; outputs in scratchpad `pm_chunks/`.
