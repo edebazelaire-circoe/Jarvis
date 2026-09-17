@@ -17,6 +17,9 @@
      marques bidi, caractères invisibles) pour un rendu par `textContent`.
    - Registre des validations du résolveur : une commande par objet, jamais de
      boucle.
+   - Artefacts (Slice 07) : vue d'inspection d'un résultat groupé, lien
+     `explains` vers ce qu'il explique, liens http(s) ouvrables seulement après
+     validation par l'analyseur d'URL (`linkOf`).
 
    Aucune dépendance au DOM, au réseau ni à l'horloge : les tests l'exécutent
    avec node (`tests/unit/test_scene_renderer_logic.py`). Inséré tel quel dans
@@ -109,8 +112,10 @@
     agent:'agent',job:'job',
     note:'doc',notes:'doc',doc:'doc',docs:'doc',documentation:'doc',artifact:'doc',summary:'doc',report:'doc',document:'doc',
     research:'research',web:'research',search:'research',history:'research',source:'research',sources:'research',
-    code:'code',diff:'code',files:'code',file:'code',git:'code',test:'code',tests:'code',api:'code',build:'code',
+    code:'code',diff:'code',files:'code',file:'code',fichiers:'code',fichier:'code',git:'code',test:'code',tests:'code',api:'code',build:'code',
     email:'comms',mail:'comms',message:'comms',messages:'comms',trello:'comms',roadmap:'comms',calendar:'comms',meeting:'comms',
+    /* « autre » : artefact sans famille, couleur des documents (Slice 07). */
+    autre:'doc',other:'doc',
     error:'error',errors:'error',failed:'error',failure:'error',alert:'error',
     interrupted:'interrupted',cancelled:'interrupted',
     blocked:'blocked',attention:'blocked',question:'blocked',
@@ -171,6 +176,81 @@
     if(errorLabels&&Object.prototype.hasOwnProperty.call(errorLabels,code))return cleanLine(String(errorLabels[code]),160);
     if(EXEC_LABELS[code])return EXEC_LABELS[code];
     return title;
+  }
+
+  /* ------------------------------------------------------------ artefacts */
+
+  /* Catégories d'artefact conseillées au cerveau (Slice 07,
+     `RECOMMENDED_ARTIFACT_CATEGORIES` de `display_mcp.py`, test de parité) :
+     chacune a une famille de couleur connue. Liste ouverte : une autre
+     catégorie prend une teinte stable tirée de son nom. */
+  const ARTIFACT_CATEGORIES=Object.freeze(['research','fichiers','tests','api','roadmap','email','document','autre']);
+
+  /* Mêmes classes que `BIDI` et `INVISIBLE`, sans drapeau `g` (pas d'état). */
+  const UNSAFE_URL=/[\u0000-\u0020\u007F-\u00A0\u00AD\u061C\u180E\u200B-\u200F\u2028-\u202F\u205F-\u206F\u3000\uFEFF]/;
+  const MAX_LINK_CHARS=2048;
+
+  /* Lien ouvrable d'une entrée d'artefact : `{href, host}` ou `null`.
+
+     Seulement une URL absolue `http:` ou `https:` telle que le domaine l'a
+     acceptée, relue par l'analyseur d'URL : aucun blanc, contrôle, marque
+     bidi ni caractère invisible dans le texte brut, pas d'identifiants
+     (`https://banque@hote` trompe l'œil), un hôte non vide. `href` est la
+     forme normalisée par l'analyseur (hôte international en punycode) ;
+     `host` est affiché à côté du libellé pour que la destination se lise.
+     Tout le reste reste du texte. */
+  function linkOf(value){
+    if(typeof value!=='string'||!value||value.length>MAX_LINK_CHARS||UNSAFE_URL.test(value))return null;
+    if(!/^https?:\/\//i.test(value))return null;
+    let parsed;
+    try{parsed=new URL(value)}catch(_error){return null}
+    if(parsed.protocol!=='https:'&&parsed.protocol!=='http:')return null;
+    if(parsed.username||parsed.password||!parsed.hostname)return null;
+    const href=parsed.href;
+    if(!/^https?:\/\//.test(href)||href.length>MAX_LINK_CHARS)return null;
+    return {href,host:parsed.hostname};
+  }
+
+  /* Ce qu'un artefact explique : première relation `explains` (hors lien de
+     signal) vers un objet actif. Rend `{id, title, kind, execLabel, tone,
+     hidden}` ou `null`. */
+  function explainedTarget(state,objectId,errorLabels){
+    for(const rel of state.relations.values()){
+      if(rel.kind!=='explains'||rel.from_id!==objectId||rel.relation_id===rel.from_id)continue;
+      const target=state.objects.get(rel.to_id);
+      if(!target)continue;
+      const exec=EXEC_LABELS[target.exec_state]!==undefined?target.exec_state:'unknown';
+      const title=displayTitle(target,cleanLine(target.payload&&target.payload.title,160),errorLabels);
+      return {id:target.object_id,title:title||KIND_LABELS[target.kind]||target.kind,kind:target.kind,
+        kindLabel:KIND_LABELS[target.kind]||target.kind,execLabel:EXEC_LABELS[exec],tone:toneOf(target.category),
+        hidden:target.visibility!=='visible'};
+    }
+    return null;
+  }
+
+  /* Artefacts actifs qui expliquent `objectId` (lien `explains`, hors signal),
+     dans l'ordre de Core. L'archivage d'une étoile ne les emporte pas
+     (Slice 08) : la page le dit avant de confirmer. */
+  function artifactsExplaining(state,objectId){
+    const out=[];
+    for(const rel of state.relations.values()){
+      if(rel.kind!=='explains'||rel.to_id!==objectId||rel.relation_id===rel.from_id)continue;
+      const source=state.objects.get(rel.from_id);
+      if(source&&source.kind==='artifact'&&!out.includes(source.object_id))out.push(source.object_id);
+    }
+    return out;
+  }
+
+  /* Entrées affichées d'une charge : texte neutralisé ; `href`/`host` pour
+     une URL ouvrable, sinon l'URL reste un texte (`url`). */
+  function itemsOf(payload){
+    const list=Array.isArray(payload.items)?payload.items.slice(0,32):[];
+    return list.map(entry=>{
+      const raw=entry&&typeof entry.url==='string'?entry.url:'';
+      const link=linkOf(raw);
+      return {label:cleanLine(entry&&entry.label,160),ref:cleanLine(entry&&entry.ref,256),
+        url:link?'':cleanLine(raw,256),href:link?link.href:'',host:link?cleanLine(link.host,120):''};
+    });
   }
 
   /* Seuils de lisibilité (px) : sous eux, une fenêtre se dessine en capsule
@@ -447,6 +527,8 @@
       const signal=item.kind==='attention';
       const urgency=signal?signalUrgency(state,item):'none';
       const shape=compactShape(representation,screen);
+      const artifact=item.kind==='artifact';
+      const count=Array.isArray(payload.items)?Math.min(payload.items.length,32):0;
       const node={
         id:item.object_id,kind:item.kind,representation,shape,compact:shape!==representation,
         category:cleanLine(item.category,32),tone:toneOf(item.category),
@@ -458,11 +540,14 @@
         box:screen,cx:round1(screen.left+screen.width/2),cy:round1(screen.top+screen.height/2),
         title:title||KIND_LABELS[item.kind]||item.kind,
         summary:shape==='window'?cleanText(payload.summary,2000):'',
-        items:shape==='window'&&Array.isArray(payload.items)
-          ?payload.items.slice(0,32).map(entry=>({label:cleanLine(entry&&entry.label,160),ref:cleanLine(entry&&entry.ref,256),url:cleanLine(entry&&entry.url,256)}))
-          :[],
+        items:shape==='window'?itemsOf(payload):[],
+        itemCount:count,
+        explains:artifact?explainedTarget(state,item.object_id,errorLabels):null,
       };
-      node.label=[node.title,KIND_LABELS[item.kind]||item.kind,node.execLabel,signal&&!node.live?'retiré':'',node.pinned?'épinglé':''].filter(Boolean).join(' · ');
+      node.label=artifact
+        ?[node.title,KIND_LABELS.artifact,node.category,count?`${count} ${count>1?'entrées':'entrée'}`:'',
+          node.explains?`explique « ${node.explains.title} »`:'',node.pinned?'épinglé':''].filter(Boolean).join(' · ')
+        :[node.title,KIND_LABELS[item.kind]||item.kind,node.execLabel,signal&&!node.live?'retiré':'',node.pinned?'épinglé':''].filter(Boolean).join(' · ');
       const outside=screen.left+screen.width<0||screen.top+screen.height<0||screen.left>vp.width||screen.top>vp.height;
       if(outside)offscreen++;
       nodes.push(node);centers.set(node.id,node);
@@ -497,8 +582,9 @@
     for(const rel of state.relations.values()){
       const a=centers.get(rel.from_id),b=centers.get(rel.to_id);
       if(!a||!b)continue;
+      const signalEdge=rel.kind==='explains'&&rel.relation_id===rel.from_id;
       edges.push({id:rel.relation_id,kind:rel.kind,layer:Number(rel.layer)||0,
-        signal:rel.kind==='explains'&&rel.relation_id===rel.from_id,tone:a.tone,
+        signal:signalEdge,artifact:!signalEdge&&rel.kind==='explains'&&a.kind==='artifact',tone:a.tone,
         x1:a.cx,y1:a.cy,x2:b.cx,y2:b.cy});
     }
     edges.sort((p,q)=>p.layer-q.layer);
@@ -612,6 +698,7 @@
   }
 
   const api=Object.freeze({FRAME,SAFE_AREA,FACE_ZONE,OBJECT_LIMIT,DEFAULT_SIZE,WORK_BUDGET,COMMIT_MAX_ATTEMPTS,READABLE,MAX_ANIMATED,CAPSULE_MAX,drawnBox,
+    ARTIFACT_CATEGORIES,linkOf,explainedTarget,artifactsExplaining,itemsOf,
     viewport,toScreen,cleanLine,cleanText,toneOf,isLiveSignal,signalUrgency,signalErrorClass,anchorsOf,depthOf,resolveLayout,
     stackOf,viewModel,compactShape,spatialOrder,nextFocus,commitKey,commitCommand,commitCandidates,nextRetryAt,classifyCommit,settleCommit});
   root.JarvisSceneLayout=api;

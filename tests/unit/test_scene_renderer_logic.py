@@ -328,9 +328,10 @@ def test_one_identity_across_point_capsule_and_window(tmp_path):
     assert result["point"]["summary"] == "" and result["point"]["items"] == []
     assert result["capsule"]["title"] == "Recherche Lisbonne" and result["capsule"]["summary"] == ""
     assert result["window"]["summary"] == "Vols\nHôtels"
+    # Slice 07 : une URL validée devient un lien ouvrable (`href` normalisé, hôte affiché), plus un texte.
     assert result["window"]["items"] == [
-        {"label": "TAP", "ref": "TP123", "url": ""},
-        {"label": "Site", "ref": "", "url": "https://example.com"},
+        {"label": "TAP", "ref": "TP123", "url": "", "href": "", "host": ""},
+        {"label": "Site", "ref": "", "url": "", "href": "https://example.com/", "host": "example.com"},
     ]
     assert result["window"]["box"] == {"left": 1020, "top": 600, "width": 360, "height": 216}
     assert result["point"]["cx"] == 1200  # centre de la boîte, même position quelle que soit la forme

@@ -7,7 +7,9 @@ de Core (`/v1/scene/*`) **toujours comme acteur `brain`**, avec le jeton de
 session relu dans son fichier (`CoreSceneTransport`).
 
 Catalogue V1 : `scene_inspect`, `scene_create_object`, `scene_update_object`,
-`scene_set_visibility`, `scene_link`, `scene_unlink`. **Aucun outil d'archivage
+`scene_set_visibility`, `scene_link`, `scene_unlink`, et `scene_add_artifact`
+(Slice 07 : un artefact groupé et son lien `explains`, en une commande
+atomique, un seul par cible et par catégorie). **Aucun outil d'archivage
 ni d'épinglage** (Décision 14) : l'archivage appartient à l'utilisateur, et le
 réducteur de Core le refuse au cerveau de toute façon (`op_not_allowed`).
 
@@ -51,6 +53,7 @@ from typing import Annotated, Any, Literal, TypedDict
 import uuid
 
 from jarvis.domain.scene import (
+    MAX_PAYLOAD_ITEMS,
     MAX_SCENE_OBJECTS,
     SCENE_FRAME_HALF_HEIGHT,
     SCENE_FRAME_HALF_WIDTH,
@@ -87,9 +90,22 @@ TOOL_NAMES = (
     "scene_set_visibility",
     "scene_link",
     "scene_unlink",
+    "scene_add_artifact",
 )
 #: Natures que le cerveau crée ; `agent`/`job` naissent du runtime seul.
 BRAIN_CREATABLE_KINDS = ("artifact", "window", "group", "attention")
+#: Catégories d'artefact conseillées (Slice 07). Liste **ouverte** : toute
+#: catégorie de la forme d'un jeton (`check_token`, ≤ 32) est acceptée ; celles-ci
+#: ont une couleur connue du rendu (`CATEGORY_TONES` de
+#: `control_center_scene_layout.js`, test de parité) et sont celles que le prompt
+#: propose au cerveau.
+RECOMMENDED_ARTIFACT_CATEGORIES = ("research", "fichiers", "tests", "api", "roadmap", "email", "document", "autre")
+#: Règle d'idempotence de `scene_add_artifact`, rendue telle quelle dans son résultat.
+ARTIFACT_GROUPING_RULE = (
+    "un seul artefact par cible et par catégorie : rappeler scene_add_artifact avec la même cible et la même catégorie "
+    "complète cet artefact (entrées ajoutées sans doublon, ou remplacées avec items_mode=replace) au lieu d'en créer un autre ; "
+    "un artefact archivé par l'utilisateur n'est jamais repris"
+)
 #: Taille maximale (UTF-8) de la réponse de `scene_inspect`.
 MAX_INSPECT_BYTES = 20_000
 MAX_INSPECT_TITLE_CHARS = 60
@@ -339,6 +355,44 @@ def _scene_changes(before: Mapping[str, tuple[str, str, str, str]], current: Sce
         if object_id not in now_ids and object_id not in exclude
     ]
     return [*added, *removed, *changed]
+
+
+def _grouped_artifact(
+    snapshot: SceneSnapshot, target_id: str, category: str
+) -> tuple[tuple[SceneObject, SceneRelation] | None, int]:
+    """L'artefact actif de `category` relié par `explains` à `target_id` (le premier de la scène), et leur nombre."""
+
+    explaining: dict[str, SceneRelation] = {}
+    for relation in snapshot.relations:
+        if relation.kind is RelationKind.EXPLAINS and relation.to_id == target_id:
+            explaining.setdefault(relation.from_id, relation)
+    candidates = [
+        (item, explaining[item.object_id])
+        for item in snapshot.objects
+        if item.kind is SceneObjectKind.ARTIFACT and item.category == category and item.object_id in explaining
+    ]
+    return (candidates[0] if candidates else None), len(candidates)
+
+
+def _merged_items(
+    current: tuple[ScenePayloadItem, ...], given: tuple[ScenePayloadItem, ...] | None, mode: str
+) -> tuple[ScenePayloadItem, ...]:
+    """Entrées d'un artefact repris : gardées (rien donné), remplacées, ou complétées sans doublon."""
+
+    if given is None:
+        return current
+    if mode == "replace":
+        return given
+    merged = list(current)
+    for item in given:
+        if item not in merged:
+            merged.append(item)
+    if len(merged) > MAX_PAYLOAD_ITEMS:
+        raise ValueError(
+            f"the artifact would hold {len(merged)} items (at most {MAX_PAYLOAD_ITEMS}): group entries, "
+            "or send the whole list with items_mode=replace"
+        )
+    return tuple(merged)
 
 
 def _short(text: str, limit: int) -> str:
@@ -615,6 +669,140 @@ class SceneDisplayTools:
             return {"relation_id": relation_id, **await self._command("scene_unlink", command, object_id=relation_id)}
 
         return await self._guard("scene_unlink", run)
+
+    async def add_artifact(
+        self,
+        *,
+        target_id: str,
+        category: str,
+        title: str,
+        summary: str | None = None,
+        items: list[Mapping[str, Any]] | None = None,
+        items_mode: str | None = None,
+        representation: str | None = None,
+        geometry: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Créer ou compléter **l'**artefact groupé qui explique `target_id` pour `category` (Slice 07).
+
+        Idempotence : l'artefact actif de cette catégorie déjà relié par
+        `explains` à la cible est repris (le premier dans l'ordre de la scène),
+        sinon un nouveau est créé. Écriture : une seule commande
+        `attach_artifact`, artefact et lien ensemble ou rien (le cerveau ne peut
+        rien retirer : aucune compensation n'est possible, donc aucun orphelin
+        ne doit pouvoir naître). Un artefact repris puis archivé par
+        l'utilisateur entre la lecture et l'écriture est remplacé par un
+        nouveau, une fois.
+        """
+
+        async def run() -> dict[str, Any]:
+            try:
+                if not isinstance(title, str) or not title.strip():
+                    raise ValueError("title is required (one printable line, at most 160 characters)")
+                if items_mode not in (None, "append", "replace"):
+                    raise ValueError("items_mode must be append or replace")
+                SceneObjectFields(category=category)  # forme du jeton, avant toute lecture
+                if not isinstance(target_id, str):
+                    raise TypeError("target_id must be a string")
+                SceneRelation(relation_id="brain-check", kind=RelationKind.EXPLAINS, from_id="brain-check-from", to_id=target_id)
+                parsed_items = _items(items)
+                parsed_representation = Representation(representation) if representation is not None else None
+                parsed_geometry = _geometry(geometry)
+                ScenePayload(title=title, summary=summary or "", items=parsed_items or ())
+            except (TypeError, ValueError) as exc:
+                raise _invalid_argument(exc) from None
+            mode = items_mode or "append"
+            snapshot = await self._snapshot()
+            self._require_target(snapshot, target_id)
+            found, matches = _grouped_artifact(snapshot, target_id, category)
+            try:
+                return await self._attach_artifact(found, matches, target_id, category, title, summary, parsed_items, mode,
+                                                   parsed_representation, parsed_geometry)
+            except DisplayToolError as exc:
+                if exc.reason != SceneRefusal.OBJECT_ARCHIVED.value:
+                    raise
+                # Lecture puis écriture : la cible ou l'artefact repris a pu être
+                # archivé entre-temps. Relire pour dire lequel ; un artefact
+                # archivé est une décision de l'utilisateur, jamais repris.
+                current = await self._snapshot()
+                self._require_target(current, target_id)
+                if found is None or current.get_object(found[0].object_id) is not None:
+                    raise
+                again, again_matches = _grouped_artifact(current, target_id, category)
+                return await self._attach_artifact(again, again_matches, target_id, category, title, summary, parsed_items, mode,
+                                                   parsed_representation, parsed_geometry)
+
+        return await self._guard("scene_add_artifact", run)
+
+    def _require_target(self, snapshot: SceneSnapshot, target_id: str) -> None:
+        """Cible active, sinon un refus clair qui dit pourquoi, sans rien envoyer."""
+
+        if snapshot.get_object(target_id) is not None:
+            return
+        archived = snapshot.is_archived(target_id)
+        reason = SceneRefusal.OBJECT_ARCHIVED.value if archived else SceneRefusal.UNKNOWN_OBJECT.value
+        explanation = (
+            "L'utilisateur a archivé la cible : ce travail est rangé, ne lui crée pas d'artefact et ne le recrée pas ailleurs."
+            if archived else
+            "Aucun objet actif avec cet identifiant : relis la scène avec scene_inspect (kind agent) pour trouver l'étoile du travail."
+        )
+        self._emit("display.tool_refused", f"scene_add_artifact : invalid/{reason}",
+                   data={"tool": "scene_add_artifact", "op": SceneOp.ATTACH_ARTIFACT.value, "outcome": "invalid",
+                         "reason": reason, "revision": snapshot.revision, "id": _short(target_id, 128), "sent": False})
+        raise DisplayToolError(
+            "scene_refused",
+            f"attach_artifact refusé par la scène (outcome=invalid, reason={reason}) : {explanation} Rien n'a été envoyé.",
+            outcome="invalid", reason=reason,
+        )
+
+    async def _attach_artifact(
+        self,
+        found: tuple[SceneObject, SceneRelation] | None,
+        matches: int,
+        target_id: str,
+        category: str,
+        title: str,
+        summary: str | None,
+        items: tuple[ScenePayloadItem, ...] | None,
+        items_mode: str,
+        representation: Representation | None,
+        geometry: SceneGeometry | None,
+    ) -> dict[str, Any]:
+        try:
+            if found is None:
+                object_id = f"brain-artifact-{self._new_id()}"
+                relation_id = self._relation_id(RelationKind.EXPLAINS, object_id, target_id)
+                payload = ScenePayload(title=title, summary=summary or "", items=items or ())
+                # Capsule par défaut : catégorie et titre lisibles près de l'étoile ;
+                # la fenêtre (vue d'inspection) se demande.
+                fields = SceneObjectFields(category=category, payload=payload,
+                                           representation=representation or Representation.CAPSULE, geometry=geometry)
+            else:
+                current, relation = found
+                object_id, relation_id = current.object_id, relation.relation_id
+                payload = ScenePayload(
+                    title=title,
+                    summary=current.payload.summary if summary is None else summary,
+                    items=_merged_items(current.payload.items, items, items_mode),
+                )
+                fields = SceneObjectFields(payload=payload, representation=representation, geometry=geometry)
+            command = SceneCommand(op=SceneOp.ATTACH_ARTIFACT, actor=SceneActor.BRAIN, object_id=object_id, fields=fields,
+                                   target_id=target_id, relation_id=relation_id)
+        except (TypeError, ValueError) as exc:
+            raise _invalid_argument(exc) from None
+        sent = await self._command("scene_add_artifact", command, object_id=object_id)
+        action = "created" if found is None else "updated"
+        self._emit("display.artifact", f"scene_add_artifact : {action} ({sent['outcome']})", data={
+            "tool": "scene_add_artifact", "action": action, "outcome": sent["outcome"], "id": object_id,
+            "target": _short(target_id, 128), "category": category, "items": len(payload.items), "revision": sent["revision"],
+        })
+        result: dict[str, Any] = {
+            "object_id": object_id, "target_id": target_id, "relation_id": relation_id, "action": action,
+            "category": category, "items": len(payload.items), **sent, "rule": ARTIFACT_GROUPING_RULE,
+        }
+        if matches > 1:
+            result["grouping_note"] = (f"{matches} artefacts de cette catégorie expliquent déjà cette cible : "
+                                       "le premier de la scène a été complété")
+        return result
 
     def report_rejected_arguments(self, tool: str, code: str, fields: list[str]) -> None:
         """Refus au niveau du schéma (FastMCP) : journalisé comme les autres, noms de champs seulement."""
@@ -1206,6 +1394,28 @@ peux pas les retirer.""")
         relation_id: Annotated[str, Field(description="Identifiant du lien lu dans scene_inspect (r).")],
     ) -> dict[str, Any]:
         return await display.unlink(relation_id=relation_id)
+
+    @mcp.tool(description=f"""Créer ou compléter l'artefact groupé qui explique un travail terminé, relié à son étoile (lien explains) en une seule opération : les deux ou rien.
+
+Un seul artefact par cible et par catégorie : rappeler l'outil avec la même
+cible et la même catégorie complète l'artefact existant (action=updated) au lieu
+d'en créer un autre. Regroupe dans items tous les liens, fichiers, tests, e-mails
+ou changements de roadmap du travail : jamais un objet par action. Catégories
+conseillées : {", ".join(RECOMMENDED_ARTIFACT_CATEGORIES)}. Silencieux : n'en parle
+pas à l'oral. Si l'utilisateur a archivé la cible, l'outil refuse
+(object_archived) : n'insiste pas. {_READ_FIRST}""")
+    async def scene_add_artifact(
+        target_id: Annotated[str, Field(description="Objet expliqué, en général l'étoile du sous-agent (id lu dans scene_inspect, kind agent).")],
+        category: Annotated[str, Field(description="Catégorie (jeton ≤ 32 : lettres, chiffres, _ . -), ex. " + ", ".join(RECOMMENDED_ARTIFACT_CATEGORIES) + ".")],
+        title: Annotated[str, Field(description="Titre sur une ligne (≤ 160) : ce que le travail a donné.")],
+        summary: Annotated[str | None, Field(description="Résumé, plusieurs lignes (≤ 2000). Absent : gardé si l'artefact existe.")] = None,
+        items: Annotated[list[ItemArg] | None, Field(description="Entrées (≤ 32 au total) : {label, ref?, url? http(s)}. Absent : gardées.")] = None,
+        items_mode: Annotated[Literal["append", "replace"] | None, Field(description="append (défaut) : ajoute sans doublon aux entrées existantes ; replace : remplace toute la liste.")] = None,
+        representation: Annotated[Repr | None, Field(description="point, capsule ou window. Absent : capsule à la création, inchangée ensuite.")] = None,
+        geometry: GeometryField = None,
+    ) -> dict[str, Any]:
+        return await display.add_artifact(target_id=target_id, category=category, title=title, summary=summary, items=items,
+                                          items_mode=items_mode, representation=representation, geometry=geometry)
 
     return mcp
 

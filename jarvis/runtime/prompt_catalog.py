@@ -137,6 +137,9 @@ def default_prompt_registry() -> PromptRegistry:
         # `conversation_display_session`, choisi quand `scene.enabled` est vrai.
         _descriptor("backend.claude.conversation.display", claude_local, "BRAIN_DISPLAY_PROMPT",
                     claude_local.BRAIN_DISPLAY_PROMPT, apply_policy="read_only"),
+        # Artefacts groupés après un travail terminé (Slice 07) : même programme.
+        _descriptor("backend.claude.conversation.artifacts", claude_local, "BRAIN_ARTIFACT_PROMPT",
+                    claude_local.BRAIN_ARTIFACT_PROMPT, apply_policy="read_only"),
         _descriptor("backend.claude.job_result.system", claude_local, "JOB_RESULT_SYSTEM_PROMPT",
                     claude_local.JOB_RESULT_SYSTEM_PROMPT, apply_policy="read_only"),
         _descriptor("backend.claude.speculative.system", claude_local, "SPECULATIVE_SYSTEM_PROMPT",
@@ -214,6 +217,7 @@ def default_prompt_registry() -> PromptRegistry:
                       PromptTarget("backend", None, "claude", None, None, "conversation_display_session"), (
                           PromptStep("backend.claude.conversation.system", "cli.append_system_prompt"),
                           PromptStep("backend.claude.conversation.display", "cli.append_system_prompt", separator="\n"),
+                          PromptStep("backend.claude.conversation.artifacts", "cli.append_system_prompt", separator="\n"),
                           PromptStep("backend.system.addition", "cli.append_system_prompt", separator="\n"),
                       )),
         PromptProgram("backend.claude.job_result.session",

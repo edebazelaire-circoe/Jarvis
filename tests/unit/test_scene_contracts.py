@@ -143,7 +143,7 @@ def test_closed_enums_hold_exactly_the_contract_values():
     assert {value.value for value in SceneCommandOutcome} == {"applied", "duplicate", "rejected_authority", "invalid"}
     assert {op.value for op in SceneOp} == {
         "upsert_object", "patch_object", "set_geometry", "set_representation", "set_visibility",
-        "pin", "unpin", "link", "unlink", "archive", "archive_many", "attach_signal",
+        "pin", "unpin", "link", "unlink", "archive", "archive_many", "attach_signal", "attach_artifact",
     }
     assert {op.value for op in PatchOpKind} == {"put_object", "archive_object", "put_relation", "delete_relation"}
     assert set(DEFAULT_LAYERS) == set(SceneObjectKind)
@@ -188,6 +188,9 @@ def matrix_command(op: SceneOp, actor: SceneActor) -> SceneCommand:
         # Slice 08 : une étoile terminée (`star-done`, ajoutée par la cellule de matrice).
         SceneOp.ARCHIVE_MANY: {"object_ids": ("star-done",)},
         SceneOp.ATTACH_SIGNAL: {"object_id": "sig-1", "fields": SceneObjectFields(category="error"), "target_id": "star-a"},
+        # Slice 07 : un artefact groupé et son lien `explains`, en une commande.
+        SceneOp.ATTACH_ARTIFACT: {"object_id": "art-new", "fields": SceneObjectFields(category="research"),
+                                  "target_id": "star-a", "relation_id": "rel-art-new"},
     }[op]
     return cmd(op, actor, **arguments)
 
@@ -207,6 +210,7 @@ MATRIX_PATCH_OPS = {
     SceneOp.ARCHIVE: [PatchOpKind.ARCHIVE_OBJECT, PatchOpKind.DELETE_RELATION],
     SceneOp.ARCHIVE_MANY: [PatchOpKind.ARCHIVE_OBJECT],
     SceneOp.ATTACH_SIGNAL: [PatchOpKind.PUT_OBJECT, PatchOpKind.PUT_RELATION],
+    SceneOp.ATTACH_ARTIFACT: [PatchOpKind.PUT_OBJECT, PatchOpKind.PUT_RELATION],
 }
 
 

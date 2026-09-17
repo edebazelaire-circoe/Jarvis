@@ -669,6 +669,31 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
 .sc-items li{display:flex;gap:10px;align-items:baseline;min-width:0;font-size:11px}
 .sc-items .sc-item-label{min-width:0;flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#dcecf4}
 .sc-items .sc-item-ref{flex:none;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--sc-muted)}
+/* Artefact (Slice 07) : vue d'inspection d'un résultat groupé. Le résumé cède la
+   place aux entrées, qui défilent (molette, focus des liens) et s'effacent en
+   bas tant qu'il en reste ; l'origine renvoie à l'étoile expliquée. */
+.sc-cat-meta{flex:none;font-size:9.5px;letter-spacing:.06em;color:var(--sc-muted);font-variant-numeric:tabular-nums}
+.sc-origin{flex:none;display:flex;align-items:center;gap:7px;min-width:0;max-width:calc(100% - 26px);margin:-3px 13px 9px;padding:2px 8px 2px 6px;
+  border:0;border-radius:999px;background:rgba(151,191,209,.07);font:inherit;font-size:10.5px;line-height:1.5;color:var(--sc-muted);text-align:left;cursor:pointer;align-self:flex-start}
+.sc-origin:hover{background:rgba(151,191,209,.14);color:var(--sc-ink)}
+.sc-origin:focus-visible{outline:1px solid var(--sc-ink);outline-offset:1px}
+.sc-origin[aria-disabled="true"]{cursor:default;background:transparent}
+.sc-origin svg{flex:none;width:11px;height:11px;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}
+.sc-origin-dot{flex:none;width:6px;height:6px;border-radius:50%;background:var(--tone)}
+.sc-origin-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#c5dae3}
+.sc-origin-state{flex:none;color:var(--sc-muted)}
+.sc-kind-artifact.sc-window .sc-summary{flex:0 1 auto;max-height:38%}
+.sc-kind-artifact.sc-window .sc-items{flex:1 1 auto;max-height:none;min-height:0;overflow-y:auto;overscroll-behavior:contain;
+  scrollbar-width:thin;scrollbar-color:rgba(151,191,209,.28) transparent}
+.sc-items.sc-at-end{-webkit-mask-image:none;mask-image:none}
+.sc-items .sc-item-link{color:#e6f4fa;text-decoration:none;border-radius:3px;cursor:pointer}
+.sc-items .sc-item-link:hover{text-decoration:underline;text-decoration-color:color-mix(in srgb,var(--tone) 70%,transparent);text-underline-offset:3px}
+.sc-items .sc-item-link:focus-visible{outline:1px solid var(--sc-ink);outline-offset:1px}
+.sc-items .sc-item-out{flex:none;width:9px;height:9px;margin-left:-6px;color:var(--sc-muted);fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round}
+.sc-items .sc-item-host{color:color-mix(in srgb,var(--tone) 50%,var(--sc-muted))}
+.sc-ccat{flex:none;max-width:38%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9px;letter-spacing:.1em;text-transform:uppercase;
+  color:color-mix(in srgb,var(--tone) 72%,var(--sc-ink))}
+.sc-link-artifact{stroke:color-mix(in srgb,var(--tone) 50%,transparent);stroke-dasharray:5 3}
 /* Indicateurs : en bas à gauche, sur la ligne de l'indication vocale, hors de
    la zone de composition ; au-dessus du badge Barehands quand il est là. */
 .sc-status{position:absolute;left:18px;bottom:18px;z-index:2147483600;display:flex;flex-wrap:wrap-reverse;align-items:center;gap:6px;
@@ -710,6 +735,9 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     completed:'M3.2 6.3l1.9 1.9 3.7-4.4',
   };
   const GRIP_PATH='M10.5 4.5l-6 6M10.5 8l-2.5 2.5';
+  /* Artefact (Slice 07) : retour à l'étoile expliquée, lien qui s'ouvre ailleurs. */
+  const ORIGIN_PATH='M2.5 2v3.5a2 2 0 0 0 2 2h6M8 5l2.5 2.5L8 10';
+  const OUT_PATH='M5 2.5H2.5v7h7V7M6.5 2.5h3v3M9.5 2.5 5.5 6.5';
   const PIN_PATH='M7.5 1.5l3 3-2 1-2.2 2.2.4 2.3-1 1-2-2-2.7 2.7M3.7 6.3l-2-2 1-1 2.3.4L7.2 1.5';
   const REASONS={core_unreachable:'Core injoignable',not_configured:'scène non configurée',scene_unavailable:'scène indisponible',
     core_refused:'Core refuse la lecture',invalid_scene_response:'réponse invalide',timeout:'pas de réponse',
@@ -851,6 +879,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     root.addEventListener('pointerover',onPointerOver);
     root.addEventListener('focusin',onFocusIn);
     root.addEventListener('focusout',onFocusOut);
+    root.addEventListener('scroll',onScroll,true);
+    root.addEventListener('click',onInnerClick);
     if(I){
       root.addEventListener('pointerdown',onPointerDown);
       root.addEventListener('pointermove',onPointerMove);
@@ -971,7 +1001,10 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       parts.push(label);
     }else if(node.shape==='capsule'){
       const dot=element('span','sc-dot');dot.appendChild(element('span','sc-ring'));
-      parts.push(dot,element('span','sc-title',node.title));
+      parts.push(dot);
+      /* Artefact : sa catégorie (sa couleur) avant son titre. */
+      if(node.kind==='artifact'&&node.category)parts.push(element('span','sc-ccat',node.category));
+      parts.push(element('span','sc-title',node.title));
       if(node.pinned)parts.push(pin());
       const state=badge(node.exec,node.shape);if(state)parts.push(state);
       if(I&&(node.representation==='capsule'||node.representation==='window'))parts.push(grip());
@@ -979,23 +1012,61 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       const head=element('div','sc-head');
       const dot=element('span','sc-dot');dot.appendChild(element('span','sc-ring'));
       head.append(dot,element('span','sc-cat',[node.category,node.execLabel].filter(Boolean).join(' · ')));
+      if(node.kind==='artifact'&&node.itemCount)head.append(element('span','sc-cat-meta',`${node.itemCount} ${node.itemCount>1?'entrées':'entrée'}`));
       if(node.pinned)head.append(pin());
       const state=badge(node.exec,node.shape);if(state)head.append(state);
       parts.push(head,element('div','sc-wtitle',node.title));
+      if(node.explains)parts.push(originButton(node.explains));
       if(node.summary)parts.push(element('div','sc-summary',node.summary));
       if(node.items.length){
         const list=element('ul','sc-items');
-        for(const item of node.items){
-          const row=element('li');
-          row.append(element('span','sc-item-label',item.label));
-          if(item.ref||item.url)row.append(element('span','sc-item-ref',item.ref||item.url));
-          list.append(row);
-        }
+        for(const item of node.items)list.append(itemRow(item));
         parts.push(list);
       }
       if(I)parts.push(grip());
     }
     el.append(...parts);
+  }
+
+  /* Origine d'un artefact : bouton qui sélectionne l'étoile expliquée (masquée :
+     annoncé, inerte). Hors tabulation tant que le focus n'est pas dans la
+     fenêtre (`setInnerTabs`). */
+  function originButton(target){
+    const button=element('button','sc-origin');
+    button.type='button';button.tabIndex=-1;button.dataset.target=target.id;
+    const dot=element('span',`sc-origin-dot sc-tone-${target.tone}`);
+    button.append(svgIcon(ORIGIN_PATH),dot,element('span','sc-origin-title',target.title));
+    const state=[target.kindLabel,target.execLabel,target.hidden?'masqué':''].filter(Boolean).join(' · ');
+    if(state)button.append(element('span','sc-origin-state',state));
+    if(target.hidden)button.setAttribute('aria-disabled','true');
+    button.setAttribute('aria-label',target.hidden?`Explique « ${target.title} » (masqué)`:`Aller à « ${target.title} », ${state}`);
+    return button;
+  }
+
+  /* Entrée d'artefact. Lien seulement pour une URL validée par
+     `JarvisSceneLayout.linkOf` (http/https, sans identifiants) ; nouvel onglet,
+     sans `opener` ni référent ; l'hôte est écrit à côté du libellé. Sinon, du
+     texte. Tout texte passe par `textContent`. */
+  function itemRow(item){
+    const row=element('li');
+    const href=typeof item.href==='string'&&/^https?:\/\//.test(item.href)?item.href:'';
+    if(href){
+      const link=element('a','sc-item-label sc-item-link',item.label||item.host);
+      link.href=href;link.target='_blank';link.rel='noopener noreferrer';link.referrerPolicy='no-referrer';link.tabIndex=-1;
+      link.setAttribute('aria-label',`${item.label||item.host} — ${item.host}, s’ouvre dans un nouvel onglet`);
+      row.append(link,svgIcon(OUT_PATH,'sc-item-out'));
+      row.append(element('span','sc-item-ref sc-item-host',item.ref?`${item.ref} · ${item.host}`:item.host));
+    }else{
+      row.append(element('span','sc-item-label',item.label));
+      if(item.ref||item.url)row.append(element('span','sc-item-ref',item.ref||item.url));
+    }
+    return row;
+  }
+
+  /* Liens et bouton d'origine d'un nœud : dans la tabulation seulement quand le
+     focus est dans ce nœud, pour garder un seul arrêt de tabulation dans la scène. */
+  function setInnerTabs(el,on){
+    for(const inner of el.querySelectorAll('.sc-item-link,.sc-origin'))inner.tabIndex=on?0:-1;
   }
 
   function position(el,node){
@@ -1026,8 +1097,12 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
         nodes.set(node.id,record);
       }
       const content=JSON.stringify([node.shape,node.kind,node.tone,node.exec,node.urgency,node.pinned,node.title,
-        node.category,node.summary,node.items,node.label]);
-      if(content!==record.content){fill(record.el,node);record.content=content;record.anim=null}
+        node.category,node.summary,node.items,node.label,node.itemCount,node.explains]);
+      if(content!==record.content){
+        const inside=record.el.contains(document.activeElement);
+        fill(record.el,node);record.content=content;record.anim=null;
+        if(inside){setInnerTabs(record.el,true);record.el.focus({preventScroll:true})}
+      }
       if(record.anim!==node.animate){record.el.classList.toggle('sc-anim',node.animate);record.anim=node.animate}
       record.el.classList.toggle('sc-selected',node.id===selectedId);
       record.el.classList.toggle('sc-stopping',stopping.has(node.id));
@@ -1060,7 +1135,20 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
 
   /* Liste d'éléments entière : pas de fondu. */
   function markItemsThatFit(){
-    for(const list of root.querySelectorAll('.sc-items'))list.classList.toggle('sc-fits',list.scrollHeight<=list.clientHeight+1);
+    for(const list of root.querySelectorAll('.sc-items')){
+      list.classList.toggle('sc-fits',list.scrollHeight<=list.clientHeight+1);
+      markItemsEnd(list);
+    }
+  }
+
+  /* Liste défilée jusqu'en bas : plus de fondu sur la dernière entrée. */
+  function markItemsEnd(list){
+    list.classList.toggle('sc-at-end',list.scrollTop+list.clientHeight>=list.scrollHeight-1);
+  }
+
+  function onScroll(event){
+    const list=event.target;
+    if(list&&list.classList&&list.classList.contains('sc-items'))markItemsEnd(list);
   }
 
   /* Tabulation itinérante : un seul arrêt de tabulation dans la scène. */
@@ -1087,6 +1175,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       event.preventDefault();
       if(gesture){cancelGesture();return}
       if(keyEdit){cancelKeyEdit();return}
+      if(event.target!==el){el.focus({preventScroll:true});return}
       el.blur();return;
     }
     const intent=I?I.keyIntent(event):(['ArrowRight','ArrowLeft','ArrowUp','ArrowDown','Home','End'].includes(event.key)?{type:'nav'}:null);
@@ -1112,12 +1201,32 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
 
   function onFocusOut(event){
     const el=nodeElement(event.target);
-    if(el&&keyEdit&&keyEdit.id===el.dataset.objectId)flushKeyEdit('blur');
+    if(!el)return;
+    /* Le focus passe du nœud à un de ses liens (ou l'inverse) : rien ne se valide. */
+    if(el.contains(event.relatedTarget))return;
+    setInnerTabs(el,false);
+    if(keyEdit&&keyEdit.id===el.dataset.objectId)flushKeyEdit('blur');
+  }
+
+  /* Bouton d'origine d'un artefact : sélectionner l'étoile expliquée. Un lien
+     d'entrée s'ouvre seul (navigateur) ; rien d'autre ne réagit à un clic. */
+  function onInnerClick(event){
+    const button=event.target&&event.target.closest?event.target.closest('.sc-origin'):null;
+    if(!button||!root.contains(button))return;
+    event.preventDefault();
+    if(button.getAttribute('aria-disabled')==='true')return;
+    const record=nodes.get(button.dataset.target);
+    if(!record){consoleLog('info','scene.artifact_target_not_drawn',{object_id:button.dataset.target});return}
+    focusId=button.dataset.target;select(focusId);
+    if(lastModel)updateTabStop(lastModel.nodes);
+    record.el.focus({preventScroll:true});
+    consoleLog('info','scene.artifact_target_focused',{object_id:focusId});
   }
 
   function onFocusIn(event){
     const el=nodeElement(event.target);
     if(!el)return;
+    setInnerTabs(el,true);
     focusId=el.dataset.objectId;
     if(I)select(focusId);
     if(lastModel)updateTabStop(lastModel.nodes);
@@ -1294,6 +1403,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(event.button!==0||!enabled)return;
     const el=nodeElement(event.target);
     if(!el)return;
+    /* Lien d'entrée ou origine d'un artefact : leur clic natif, pas de geste. */
+    if(event.target.closest('.sc-item-link,.sc-origin'))return;
     const id=el.dataset.objectId,node=nodeOf(id),box=drawnBox(id),state=viewState();
     const item=state&&state.objects.get(id);
     if(!node||!box||!item)return;
@@ -1544,6 +1655,9 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     const lines=['Il quitte la scène active ; il reste dans l’historique.'];
     if(signals)lines.push(signals>1?`Ses ${signals} signaux d’attention partent avec lui.`:'Son signal d’attention part avec lui.');
     if(['running','pending','blocked'].includes(item.exec_state))lines.push('Le travail continue, mais son étoile ne reviendra pas.');
+    /* Slice 07 : les artefacts qui l'expliquent ne partent pas avec elle. */
+    const artifacts=['agent','job'].includes(item.kind)?L.artifactsExplaining(state,id).length:0;
+    if(artifacts)lines.push(artifacts>1?`Ses ${artifacts} artefacts restent dans la scène, à archiver à part.`:'Son artefact reste dans la scène, à archiver à part.');
     if(typeof confirmDialog!=='function'){consoleLog('warn','scene.confirm_unavailable',{});return}
     const label=quoted(id);
     if(!await confirmDialog({title:`Archiver ${label} ?`,lines,confirmLabel:'Archiver',danger:true}))return;
@@ -1583,7 +1697,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(selection.stars)lines.push([`${selection.stars} ${selection.stars>1?'étoiles':'étoile'}`,` quittent la scène : ${parts.join(', ')}.`]);
     if(selection.cascaded)lines.push([`${selection.cascaded} ${selection.cascaded>1?'signaux':'signal'}`,` d’attention ${selection.cascaded>1?'partent':'part'} avec elles.`]);
     if(selection.orphans)lines.push([`${selection.orphans} ${selection.orphans>1?'signaux orphelins':'signal orphelin'}`,' (étoile déjà archivée) aussi.']);
-    lines.push('Le travail en cours, en attente ou bloqué reste, comme les notes et fenêtres du brain.');
+    lines.push('Le travail en cours, en attente ou bloqué reste, comme les artefacts, notes et fenêtres du brain.');
     if(retry)lines.unshift('La scène a changé pendant la confirmation : comptes mis à jour.');
     if(typeof confirmDialog!=='function'){consoleLog('warn','scene.confirm_unavailable',{});return}
     const noun=`${selection.objects} ${selection.objects>1?'objets':'objet'}`;
@@ -1686,14 +1800,15 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   }
 
   function applyEdges(edges,vp){
-    const sig=`${vp.width}x${vp.height}|`+edges.map(e=>`${e.id},${e.kind},${e.signal},${e.tone},${e.x1},${e.y1},${e.x2},${e.y2}`).join(';');
+    const sig=`${vp.width}x${vp.height}|`+edges.map(e=>`${e.id},${e.kind},${e.signal},${e.artifact},${e.tone},${e.x1},${e.y1},${e.x2},${e.y2}`).join(';');
     if(sig===edgesSig)return;
     edgesSig=sig;
     linksEl.setAttribute('viewBox',`0 0 ${vp.width} ${vp.height}`);
     const lines=edges.map(edge=>{
       const line=document.createElementNS(SVG_NS,'line');
       line.setAttribute('x1',edge.x1);line.setAttribute('y1',edge.y1);line.setAttribute('x2',edge.x2);line.setAttribute('y2',edge.y2);
-      line.setAttribute('class',`sc-link sc-link-${edge.kind}`+(edge.signal?` sc-link-signal sc-tone-${edge.tone}`:''));
+      line.setAttribute('class',`sc-link sc-link-${edge.kind}`+(edge.signal?` sc-link-signal sc-tone-${edge.tone}`:'')
+        +(edge.artifact?` sc-link-artifact sc-tone-${edge.tone}`:''));
       return line;
     });
     linksEl.replaceChildren(...lines);

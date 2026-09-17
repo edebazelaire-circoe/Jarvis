@@ -241,6 +241,11 @@ class SceneOp(StrEnum):
     #: objet, une seule révision.
     ARCHIVE_MANY = "archive_many"
     ATTACH_SIGNAL = "attach_signal"
+    #: Artefact groupé qui explique un objet (Slice 07) : créer ou mettre à
+    #: jour l'artefact **et** son lien `explains` vers la cible, en une
+    #: révision, tout ou rien. `runtime` ne l'a pas (Décision 5 : un artefact
+    #: est une sélection du cerveau, jamais un événement brut).
+    ATTACH_ARTIFACT = "attach_artifact"
 
 
 #: Opérations de disposition : seul l'utilisateur archive (Décision 14).
@@ -856,6 +861,7 @@ _OP_ARGUMENTS: dict[SceneOp, tuple[frozenset[str], frozenset[str]]] = {
     SceneOp.ARCHIVE: (frozenset({"object_id"}), frozenset()),
     SceneOp.ARCHIVE_MANY: (frozenset({"object_ids"}), frozenset()),
     SceneOp.ATTACH_SIGNAL: (frozenset({"object_id", "fields", "target_id"}), frozenset()),
+    SceneOp.ATTACH_ARTIFACT: (frozenset({"object_id", "fields", "target_id", "relation_id"}), frozenset()),
 }
 _COMMAND_ARGUMENTS = (
     "object_id", "fields", "geometry", "placed_by", "representation", "visibility", "relation", "relation_id", "target_id",
@@ -875,6 +881,11 @@ class SceneCommand:
     - `attach_signal` crée ou met à jour le signal `object_id` (nature
       `attention`) et le relie par `explains` à `target_id` ; la relation
       porte l'identifiant du signal : un signal a une seule cible ;
+    - `attach_artifact` crée ou met à jour l'artefact `object_id` (nature
+      `artifact`) et pose le lien `explains` `relation_id` vers `target_id`,
+      dans un seul patch : si le lien est refusé, l'artefact n'est pas écrit
+      (Slice 07). `relation_id` diffère de `object_id` : un lien d'artefact
+      n'a jamais la forme d'un lien de signal (`is_signal_relation`) ;
     - `archive_many` archive en une révision les identifiants `object_ids`
       (1 à `MAX_ARCHIVE_MANY_IDS`, sans doublon), chacun revalidé par le
       réducteur (`bulk_archivable`).
@@ -935,6 +946,14 @@ class SceneCommand:
                 raise ValueError("a signal is an attention object")
             if self.object_id == self.target_id:
                 raise ValueError("a signal cannot target itself")
+        if self.op is SceneOp.ATTACH_ARTIFACT and self.fields is not None:
+            if self.fields.kind not in (None, SceneObjectKind.ARTIFACT):
+                raise ValueError("attach_artifact writes an artifact object")
+            if self.object_id == self.target_id:
+                raise ValueError("an artifact cannot explain itself")
+            if self.relation_id == self.object_id:
+                # Sinon le lien aurait la forme d'un signal (`is_signal_relation`).
+                raise ValueError("an artifact relation_id must differ from its object_id")
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -1681,6 +1700,34 @@ def _plan_attach_signal(snapshot: SceneSnapshot, command: SceneCommand) -> list[
     return [*ops, *_plan_relation_put(snapshot, relation, layer_announced=False)]
 
 
+def _plan_attach_artifact(snapshot: SceneSnapshot, command: SceneCommand) -> list[ScenePatchOp]:
+    """Artefact et lien `explains` vers sa cible, tout ou rien (Slice 07).
+
+    Mêmes règles qu'un `upsert_object` d'artefact suivi d'un `link` de
+    `explains`, mais dans un seul patch : cible inconnue ou archivée, lien en
+    conflit, borne de liens, identifiant réservé, épingle ou scène pleine
+    refusent **toute** la commande, jamais d'artefact orphelin. Le cerveau ne
+    peut rien retirer (Décision 14) : une compensation après coup n'existe
+    pas pour lui. Relancer la même commande ne change rien (`duplicate`).
+    """
+
+    assert command.object_id is not None and command.fields is not None
+    assert command.target_id is not None and command.relation_id is not None
+    _require_active(snapshot, command.target_id)
+    ops = _plan_object_write(
+        snapshot, command.actor, command.object_id, command.fields, create=True, kind=SceneObjectKind.ARTIFACT
+    )
+    if snapshot.get_relation(command.relation_id) is None and is_runtime_reserved_id(command.relation_id):
+        raise _rejected(SceneRefusal.RESERVED_ID)
+    relation = SceneRelation(
+        relation_id=command.relation_id,
+        kind=RelationKind.EXPLAINS,
+        from_id=command.object_id,
+        to_id=command.target_id,
+    )
+    return [*ops, *_plan_relation_put(snapshot, relation, layer_announced=False)]
+
+
 _PLANNERS: dict[SceneOp, Callable[[SceneSnapshot, SceneCommand], list[ScenePatchOp]]] = {
     SceneOp.UPSERT_OBJECT: _plan_upsert,
     SceneOp.PATCH_OBJECT: _plan_patch,
@@ -1694,4 +1741,5 @@ _PLANNERS: dict[SceneOp, Callable[[SceneSnapshot, SceneCommand], list[ScenePatch
     SceneOp.ARCHIVE: _plan_archive,
     SceneOp.ARCHIVE_MANY: _plan_archive_many,
     SceneOp.ATTACH_SIGNAL: _plan_attach_signal,
+    SceneOp.ATTACH_ARTIFACT: _plan_attach_artifact,
 }
