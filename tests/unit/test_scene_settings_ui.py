@@ -35,6 +35,7 @@ from jarvis.runtime.control_center import (
     ControlCenter,
 )
 from jarvis.runtime.display_mcp import DisplayMcpTarget
+from jarvis.runtime.journal import read_jsonl_tail
 
 RUNTIME = Path(__file__).resolve().parents[2] / "jarvis" / "runtime"
 SETTINGS_JS = RUNTIME / "control_center_scene_settings.js"
@@ -144,17 +145,14 @@ class _LiveProcess:
         return self.returncode or 0
 
 
-async def _running(monkeypatch, agent: ClaudeLocalAgent) -> _LiveProcess:
-    process = _LiveProcess()
-
+async def _running(monkeypatch, agent: ClaudeLocalAgent) -> None:
     async def fake_exec(*args, **kwargs):  # noqa: ANN002, ANN003
-        return process
+        return _LiveProcess()  # un processus neuf à chaque lancement, comme le vrai CLI
 
     monkeypatch.setattr(claude_local.asyncio, "create_subprocess_exec", fake_exec)
     if agent._process_tree is not None:
         monkeypatch.setattr(agent._process_tree, "attach_and_resume", lambda pid: None)
     await agent.start()
-    return process
 
 
 async def test_the_brain_snapshot_says_whether_the_running_process_has_the_display_tools(monkeypatch, tmp_path):
@@ -184,6 +182,80 @@ async def test_the_brain_snapshot_says_whether_the_running_process_has_the_displ
     await agent.stop()
 
 
+class _RestartRequest:
+    def __init__(self, body: bytes | None) -> None:
+        self.body = body
+        self.content_length = None if body is None else len(body)
+        self.can_read_body = body is not None
+        self.content = self
+
+    async def iter_chunked(self, size: int):  # noqa: ARG002
+        yield self.body
+
+
+class _RestartSpy:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    async def restart(self, *, resume: bool = True) -> dict:
+        self.calls.append({"resume": resume})
+        return {"state": "running"}
+
+
+async def test_the_restart_route_opens_a_new_conversation_only_when_asked(tmp_path, monkeypatch):
+    control = ControlCenter(runtime_root=tmp_path, project_root=tmp_path)
+    spy = _RestartSpy()
+    monkeypatch.setattr(type(control), "agent", property(lambda self: spy))
+    for body, resume in ((None, True), (b"", True), (b"{}", True), (b'{"new_conversation": false}', True), (b'{"new_conversation": true}', False)):
+        await control.agent_restart(_RestartRequest(body))
+        assert spy.calls[-1] == {"resume": resume}, body
+    for bad in (b"[]", b'{"new_conversation": "oui"}', b'{"fresh": true}', b"{", b'{"new_conversation": true, "new_conversation": false}'):
+        with pytest.raises(web.HTTPBadRequest):
+            await control.agent_restart(_RestartRequest(bad))
+    with pytest.raises(web.HTTPRequestEntityTooLarge):
+        await control.agent_restart(_RestartRequest(b" " * 300))
+    assert len(spy.calls) == 5
+    journaled = [e["data"] for e in read_jsonl_tail(tmp_path / "trace.jsonl", limit=50) if e["kind"] == "agent.restart"]
+    assert journaled == [{"new_conversation": False}] * 4 + [{"new_conversation": True}]
+
+
+async def test_a_restart_without_resume_starts_the_cli_without_resume(monkeypatch, tmp_path):
+    started: list[list[str]] = []
+
+    async def fake_exec(*args, **kwargs):  # noqa: ANN002, ANN003
+        started.append([str(a) for a in args])
+        return _LiveProcess()
+
+    agent = ClaudeLocalAgent(runtime_root=tmp_path / "runtime", cwd=tmp_path)
+    monkeypatch.setattr(claude_local.asyncio, "create_subprocess_exec", fake_exec)
+    if agent._process_tree is not None:
+        monkeypatch.setattr(agent._process_tree, "attach_and_resume", lambda pid: None)
+    agent.session_id = "conversation-1"
+    await agent.restart()
+    assert "--resume" in started[-1] and started[-1][started[-1].index("--resume") + 1] == "conversation-1"
+    await agent.restart(resume=False)
+    assert "--resume" not in started[-1]
+    await agent.stop()
+
+
+async def test_the_display_prompt_follows_new_conversations_only(monkeypatch, tmp_path):
+    agent = ClaudeLocalAgent(runtime_root=tmp_path / "runtime", cwd=tmp_path)
+    await _running(monkeypatch, agent)
+    agent.session_id = "conversation-flag-off"
+    assert (agent.snapshot()["display_tools"], agent.snapshot()["display_prompt"]) == (False, False)
+    agent.display_mcp = _target(tmp_path)
+    await agent.restart()  # reprise : outils oui, consigne figée de la conversation
+    assert (agent.snapshot()["display_tools"], agent.snapshot()["display_prompt"]) == (True, False)
+    await agent.restart(resume=False)  # conversation neuve : la consigne suit
+    assert (agent.snapshot()["display_tools"], agent.snapshot()["display_prompt"]) == (True, True)
+    agent.session_id = "conversation-flag-on"
+    agent.display_mcp = None
+    await agent.restart()
+    assert (agent.snapshot()["display_tools"], agent.snapshot()["display_prompt"]) == (False, True)
+    await agent.stop()
+    assert (agent.snapshot()["display_tools"], agent.snapshot()["display_prompt"]) == (False, False)
+
+
 # ------------------------------------------------------------------ logique pure (node)
 
 
@@ -206,12 +278,15 @@ def test_the_effects_say_render_now_brain_tools_at_next_start_and_core_keeps_pro
     effects = {e["term"]: e["text"] for e in describe({"enabled": False, "source": "settings"}, None)["effects"]}
     assert list(effects) == ["Affichage", "Outils du brain", "Core"]
     assert "sans recharger" in effects["Affichage"] and "Immédiat" in effects["Affichage"]
-    assert effects["Outils du brain"].startswith("Au prochain démarrage du brain") and "Jamais archiver" in effects["Outils du brain"]
+    assert effects["Outils du brain"].startswith("Au prochain démarrage du brain sur une nouvelle conversation") and "Jamais archiver" in effects["Outils du brain"]
     assert "même éteinte" in effects["Core"]
 
 
-def _status(state: str = "running", tools: bool = False, active: int = 0, cli: str = "claude") -> dict[str, Any]:
-    return {"agent_cli": cli, "agent": {"name": "Claude" if cli == "claude" else "Codex", "state": state, "display_tools": tools},
+def _status(state: str = "running", tools: bool = False, active: int = 0, cli: str = "claude", prompt: bool | None = None) -> dict[str, Any]:
+    agent = {"name": "Claude" if cli == "claude" else "Codex", "state": state, "display_tools": tools}
+    if prompt is not None:
+        agent["display_prompt"] = prompt
+    return {"agent_cli": cli, "agent": agent,
             "subagents": {"active": active, "running_shell": 0}}
 
 
@@ -230,13 +305,27 @@ def test_the_brain_state_is_compared_with_the_choice_and_a_restart_is_offered_on
     assert "pas encore d'outils d'affichage" in enable["title"]
     assert enable["confirm"] == {
         "title": "Redémarrer le brain ?",
-        "lines": ["Il reprend la même conversation, avec les outils d'affichage.", "Cela interrompra 2 sous-agents en cours."],
+        "lines": ["Il repart sur une nouvelle conversation, avec les outils et la consigne d'affichage.",
+                  "La conversation en cours n'est pas reprise : une conversation reprise garderait son ancienne consigne.",
+                  "Cela interrompra 2 sous-agents en cours."],
         "confirmLabel": "Redémarrer le brain", "danger": True}
 
     disable = describe(OFF, _status(tools=True))["brain"]
     assert disable["restart"] is True and "garde ses outils" in disable["title"]
-    assert disable["confirm"]["lines"] == ["Il reprend la même conversation, sans les outils d'affichage.", "Aucun sous-agent n'est en cours."]
+    assert disable["confirm"]["lines"][0] == "Il repart sur une nouvelle conversation, sans les outils ni la consigne d'affichage."
+    assert disable["confirm"]["lines"][2] == "Aucun sous-agent n'est en cours."
     assert disable["confirm"]["danger"] is False
+
+
+def test_a_resumed_conversation_with_the_old_prompt_is_a_mismatch_even_with_the_tools():
+    """Constaté en E2E (Slice 11) : reprise = outils présents, consigne d'affichage absente, aucun artefact."""
+
+    resumed_on = describe(ON, _status(tools=True, prompt=False))["brain"]
+    assert resumed_on["restart"] is True and resumed_on["title"] == "Conversation reprise : outils présents, consigne d'affichage absente"
+    resumed_off = describe(OFF, _status(tools=False, prompt=True))["brain"]
+    assert resumed_off["restart"] is True and "sans ses outils" in resumed_off["title"]
+    assert describe(ON, _status(tools=True, prompt=True))["brain"]["restart"] is False
+    assert describe(OFF, _status(tools=False, prompt=False))["brain"]["restart"] is False
 
 
 def test_a_stopped_brain_another_cli_or_an_unread_status_never_offer_a_restart():
@@ -274,7 +363,8 @@ def test_the_browser_block_saves_through_settings_confirms_in_page_and_stays_acc
         assert forbidden not in pure, forbidden
     # Écriture par le bloc scene de /api/settings, jamais de fetch à la main (api() vérifie le statut HTTP).
     assert "body:JSON.stringify({scene:{enabled}})" in browser and "fetch(" not in browser
-    assert "await confirmDialog(" in browser and "RESTART_ROUTE" in browser
+    assert "await confirmDialog(" in browser and "body:JSON.stringify(Logic.RESTART_BODY)" in browser
+    assert "const RESTART_BODY=Object.freeze({new_conversation:true});" in pure
     for forbidden in ("confirm(", "alert(", "prompt(", "innerHTML"):
         assert re.search(r"(?<![\w.])" + re.escape(forbidden), browser.replace("confirmDialog(", "")) is None, forbidden
     # Accessibilité : case étiquetée, décrite, focus rendu au contrôle après chaque redessin.

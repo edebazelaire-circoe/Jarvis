@@ -5,7 +5,7 @@
    - `JarvisSceneSettings.describe(scene, status)`, logique pure : à partir du
      bloc `scene` de `/api/settings` (`enabled`, `source`, `stored`, `env`) et
      du statut (`agent_cli`, `agent.state`, `agent.display_tools`,
-     `subagents.active`), ce que l'écran dit — interrupteur en lecture seule
+     `agent.display_prompt`, `subagents.active`), ce que l'écran dit — interrupteur en lecture seule
      quand l'environnement l'impose, effets de l'interrupteur, état réel du
      brain en cours et redémarrage proposé quand il ne correspond pas au
      choix. Les tests l'exécutent avec node
@@ -27,6 +27,8 @@
   const ENV_NAME='JARVIS_SCENE_ENABLED';
   const SETTINGS_ROUTE='/api/settings';
   const RESTART_ROUTE='/api/agent/restart';
+  /* Conversation neuve : seule façon que la consigne d'affichage suive le réglage. */
+  const RESTART_BODY=Object.freeze({new_conversation:true});
   /* Au-delà, l'écran le dit et rend la main (le brain peut encore démarrer). */
   const RESTART_DEADLINE_MS=30000;
 
@@ -45,7 +47,7 @@
   function effects(){
     return [
       {term:'Affichage',text:'Immédiat : la scène apparaît ou disparaît dans toutes les fenêtres ouvertes du Control Center, sans recharger la page.'},
-      {term:'Outils du brain',text:'Au prochain démarrage du brain : lire la scène, y composer des objets et des artefacts, la capturer. Jamais archiver.'},
+      {term:'Outils du brain',text:'Au prochain démarrage du brain sur une nouvelle conversation : lire la scène, y composer des objets et des artefacts, la capturer. Jamais archiver.'},
       {term:'Core',text:'Continue de projeter les travaux dans la scène même éteinte : rien n\'est perdu, tout réapparaît à l\'activation.'},
     ];
   }
@@ -61,20 +63,39 @@
     if(state!=='running')
       return {tone:'info',title:state==='exited'?'Brain terminé':'Brain arrêté',
         detail:wanted?'Il recevra les outils d\'affichage à son prochain démarrage.':'Il démarrera sans outils d\'affichage.',restart:false};
-    const active=status.agent.display_tools===true;
-    if(active===wanted)
+    const tools=status.agent.display_tools===true;
+    /* Consigne de la conversation en cours ; absente (agent plus ancien) : on suppose qu'elle suit les outils. */
+    const prompt=typeof status.agent.display_prompt==='boolean'?status.agent.display_prompt:tools;
+    if(tools===wanted&&prompt===wanted)
       return wanted
         ?{tone:'ok',title:'Brain en cours : outils d\'affichage présents',detail:'Il peut lire, composer et capturer la scène.',restart:false}
         :{tone:'ok',title:'Brain en cours : sans outils d\'affichage',detail:'Il ne voit ni ne modifie la scène.',restart:false};
     const running=Math.max(0,Number(status.subagents&&status.subagents.active)||0);
+    /* Nouvelle conversation : le CLI fige la consigne système d'une conversation
+       reprise, seuls ses outils suivraient (constaté sur un vrai CLI, Slice 11). */
     const lines=[
-      wanted?'Il reprend la même conversation, avec les outils d\'affichage.':'Il reprend la même conversation, sans les outils d\'affichage.',
+      wanted?'Il repart sur une nouvelle conversation, avec les outils et la consigne d\'affichage.':'Il repart sur une nouvelle conversation, sans les outils ni la consigne d\'affichage.',
+      'La conversation en cours n\'est pas reprise : une conversation reprise garderait son ancienne consigne.',
       running?`Cela interrompra ${plural(running,'sous-agent en cours','sous-agents en cours')}.`:'Aucun sous-agent n\'est en cours.',
     ];
+    let title,detail;
+    if(wanted&&!tools){
+      title='Brain lancé avant l\'activation : pas encore d\'outils d\'affichage';
+      detail='Il ne pourra lire ni composer la scène qu\'après un redémarrage.';
+    }else if(wanted){
+      title='Conversation reprise : outils présents, consigne d\'affichage absente';
+      detail='Il ne crée pas d\'artefacts et ne pense pas à lire la scène tant qu\'il ne repart pas sur une nouvelle conversation.';
+    }else if(tools){
+      title='Brain lancé scène allumée : il garde ses outils d\'affichage';
+      detail='Tant qu\'il n\'est pas redémarré, il peut encore lire et modifier la scène, même masquée.';
+    }else{
+      title='Conversation reprise : consigne d\'affichage encore active, sans ses outils';
+      detail='Il pourrait chercher des outils de scène qu\'il n\'a plus.';
+    }
     return {
       tone:'warn',
-      title:wanted?'Brain lancé avant l\'activation : pas encore d\'outils d\'affichage':'Brain lancé scène allumée : il garde ses outils d\'affichage',
-      detail:wanted?'Il ne pourra lire ni composer la scène qu\'après un redémarrage.':'Tant qu\'il n\'est pas redémarré, il peut encore lire et modifier la scène, même masquée.',
+      title,
+      detail,
       restart:true,
       confirm:{title:'Redémarrer le brain ?',lines,confirmLabel:'Redémarrer le brain',danger:running>0},
     };
@@ -97,7 +118,7 @@
   /* Durée lisible d'une attente en cours (compteur du redémarrage). */
   function elapsedLabel(ms){return `${Math.max(0,Math.floor((Number(ms)||0)/1000))} s`}
 
-  const api=Object.freeze({version:1,ENV_NAME,SETTINGS_ROUTE,RESTART_ROUTE,RESTART_DEADLINE_MS,describe,elapsedLabel});
+  const api=Object.freeze({version:1,ENV_NAME,SETTINGS_ROUTE,RESTART_ROUTE,RESTART_BODY,RESTART_DEADLINE_MS,describe,elapsedLabel});
   root.JarvisSceneSettings=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof globalThis!=='undefined'?globalThis:this);
@@ -218,9 +239,9 @@
     refresh();
     log('info','scene.brain_restart_requested',{});
     try{
-      await api(Logic.RESTART_ROUTE,{method:'POST',signal:controller?controller.signal:undefined});
+      await api(Logic.RESTART_ROUTE,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Logic.RESTART_BODY),signal:controller?controller.signal:undefined});
       log('info','scene.brain_restarted',{elapsed_ms:Date.now()-view.restart.startedAt});
-      if(typeof toast==='function')toast({title:'Brain redémarré',sub:'Ses outils d\'affichage suivent maintenant le réglage.',kind:'ok',ms:3500});
+      if(typeof toast==='function')toast({title:'Brain redémarré',sub:'Nouvelle conversation : outils et consigne d\'affichage suivent maintenant le réglage.',kind:'ok',ms:3500});
     }catch(error){
       const aborted=error&&error.name==='AbortError';
       const message=aborted?`Pas de réponse après ${Math.round(Logic.RESTART_DEADLINE_MS/1000)} s : l'état du brain ci-dessous est relu chaque seconde.`:String(error&&error.message||error);

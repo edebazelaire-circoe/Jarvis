@@ -96,7 +96,7 @@ L'écran est une scène 2D persistante que tu peux lire et composer avec les out
 
 # Lecture structurée de la scène (Slice 09), une ligne ajoutée juste après
 # `BRAIN_DISPLAY_PROMPT`, dans le même programme `conversation_display_session` :
-# `BRAIN_DISPLAY_PROMPT` reste octet pour octet celui du Slice 06.
+# `BRAIN_DISPLAY_PROMPT` n'a changé qu'au Slice 09 (lignes de capture et de données, empreinte testée).
 BRAIN_SCENE_READ_PROMPT = """\
 - Pour lire le contenu d'un objet (résumé, entrées d'un artefact), utilise scene_get ; pour trouver des objets (catégorie, état, travail, ce qui explique une étoile, voisins), scene_query.
 """
@@ -237,7 +237,12 @@ class ClaudeLocalAgent:
         # est vrai ; lu au lancement du processus, donc effectif au prochain
         # (re)démarrage. Ignoré hors du profil `conversation`.
         self.display_mcp = display_mcp
+        # Slice 11 : outils MCP d'affichage du processus en cours, et consigne
+        # d'affichage de la conversation en cours. Le CLI fige la consigne d'une
+        # conversation à son premier tour : une reprise (`--resume`) garde celle
+        # d'avant, seuls les outils suivent le nouveau lancement.
         self._display_tools_active = False
+        self._display_prompt_active = False
         from jarvis.runtime.prompt_runtime import normalize_prompt_overrides
         self._prompt_overrides = normalize_prompt_overrides(prompt_overrides)
         self.prompt_applications: list[dict[str, object]] = []
@@ -323,6 +328,7 @@ class ClaudeLocalAgent:
             # que l'écran des réglages compare à `scene.enabled`, qui ne
             # s'applique qu'au prochain démarrage.
             "display_tools": self._display_tools_active and self.state == "running",
+            "display_prompt": self._display_prompt_active and self.state == "running",
         }
 
     def _record(self, event: dict[str, Any]) -> None:
@@ -661,6 +667,8 @@ class ClaudeLocalAgent:
                 self.journal.emit("agent.start", "Claude CLI not found", level="error", data={"command": self.command})
                 raise RuntimeError("Claude CLI not found; install Claude Code and ensure `claude` is in PATH") from exc
             self._display_tools_active = bool(display_args)
+            if not resume_args:
+                self._display_prompt_active = bool(display_args)
             self.subtasks.process_started()
             applied = prompt_evidence(
                 prompt_resolution, application="sent",
@@ -1000,9 +1008,18 @@ class ClaudeLocalAgent:
         if pending is not None and not pending.done():
             pending.set_result({"code": code, "error": reason})
 
-    async def restart(self) -> dict[str, Any]:
+    async def restart(self, *, resume: bool = True) -> dict[str, Any]:
+        """Arrêter puis relancer le CLI ; `resume=False` ouvre une conversation neuve.
+
+        Une conversation reprise (`--resume`) garde la consigne système
+        enregistrée à son premier tour (le CLI la fige dans la session) : seuls
+        les outils MCP suivent le nouveau lancement. Pour qu'un changement de
+        `scene.enabled` change aussi la consigne d'affichage, l'écran des réglages
+        redémarre sans reprise (Slice 11, constaté sur un vrai CLI).
+        """
+
         await self.stop()
-        return await self.start()
+        return await self.start(resume=resume)
 
     async def close_owned(self) -> bool:
         """Permanent job-instance closure; never reuse a stopped job session."""

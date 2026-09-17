@@ -2730,12 +2730,46 @@ class ControlCenter:
         except RuntimeError as exc:
             raise web.HTTPServiceUnavailable(text=str(exc)) from exc
 
+    #: Corps de `POST /api/agent/restart` : `{}` ou `{"new_conversation": bool}`.
+    AGENT_RESTART_MAX_BYTES = 256
+
     async def agent_restart(self, request: web.Request) -> web.Response:
-        del request
+        """Redémarrer le brain. Sans corps : même conversation reprise (comportement historique).
+
+        `{"new_conversation": true}` (écran de la scène, Slice 11) : conversation
+        neuve, seule façon qu'une consigne système changée s'applique ; le CLI
+        fige la consigne d'une conversation reprise.
+        """
+
+        new_conversation = await self._restart_options(request)
+        from jarvis.runtime.prompt_runtime import accepts_keyword_argument
+
+        self.journal.emit("agent.restart", "Brain restart requested", data={"new_conversation": new_conversation})
         try:
+            if new_conversation and accepts_keyword_argument(self.agent.restart, "resume"):
+                return web.json_response(await self.agent.restart(resume=False))
+            # Codex repart toujours sur un fil neuf ; un agent sans l'option garde son redémarrage.
             return web.json_response(await self.agent.restart())
         except RuntimeError as exc:
             raise web.HTTPServiceUnavailable(text=str(exc)) from exc
+
+    async def _restart_options(self, request: web.Request | None) -> bool:
+        if request is None or not request.can_read_body:
+            return False
+        try:
+            raw = await scene_wire.read_bounded_body(request, self.AGENT_RESTART_MAX_BYTES)
+        except scene_wire.SceneBodyTooLarge as exc:
+            raise web.HTTPRequestEntityTooLarge(max_size=self.AGENT_RESTART_MAX_BYTES, actual_size=request.content_length or 0,
+                                                text="restart body too large") from exc
+        if not raw.strip():
+            return False
+        try:
+            payload = loads_strict_json(raw, invalid_message="restart body must be JSON")
+        except ValueError as exc:
+            raise web.HTTPBadRequest(text=str(exc)) from exc
+        if not isinstance(payload, dict) or set(payload) - {"new_conversation"} or not isinstance(payload.get("new_conversation", False), bool):
+            raise web.HTTPBadRequest(text='restart body must be {} or {"new_conversation": true|false}')
+        return payload.get("new_conversation", False)
 
     async def agent_kill(self, request: web.Request) -> web.Response:
         del request
