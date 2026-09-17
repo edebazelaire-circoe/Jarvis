@@ -434,3 +434,41 @@ def test_the_only_ui_route_that_affects_work_is_the_job_stop(tmp_path):
         if path.startswith("/api/work") or path.startswith("/api/jobs"):
             affecting.add((route.method, path))
     assert affecting == {("POST", "/api/jobs/cancel")}
+
+
+async def test_the_control_center_omits_the_bulk_archive_patch_but_not_other_patches():
+    from jarvis.domain.scene import (
+        ExecState as SceneExec, SceneActor, SceneCommand, SceneObjectFields, SceneObjectKind, SceneOp, SceneSnapshot,
+        WorkRef, apply_scene_command,
+    )
+
+    snapshot = SceneSnapshot(scene_id="s")
+    for index in range(3):
+        snapshot = apply_scene_command(snapshot, SceneCommand(
+            op=SceneOp.UPSERT_OBJECT, actor=SceneActor.RUNTIME, object_id=f"claude:{index}",
+            fields=SceneObjectFields(kind=SceneObjectKind.AGENT, category="agent", exec_state=SceneExec.COMPLETED,
+                                     work_ref=WorkRef("claude", str(index))))).snapshot
+    command = SceneCommand(op=SceneOp.ARCHIVE_MANY, actor=SceneActor.USER, object_ids=("claude:0", "claude:1"))
+    update = apply_scene_command(snapshot, command)
+
+    class Transport:
+        async def scene_command(self, payload, **kwargs):
+            return {"outcome": "applied", "reason": None, "scene_id": "s", "epoch": "e", "revision": update.snapshot.revision,
+                    "patch": update.patch.to_payload()}
+
+        async def close(self):
+            return None
+
+    status, body = await CoreSceneView(Transport()).command(command)
+    assert status == 200 and body["outcome"] == "applied" and body["revision"] == update.snapshot.revision
+    assert body["patch"] is None and body["patch_omitted"] is True
+    single = SceneCommand(op=SceneOp.ARCHIVE, actor=SceneActor.USER, object_id="claude:2")
+    one = apply_scene_command(snapshot, single)
+
+    class Single(Transport):
+        async def scene_command(self, payload, **kwargs):
+            return {"outcome": "applied", "reason": None, "scene_id": "s", "epoch": "e", "revision": one.snapshot.revision,
+                    "patch": one.patch.to_payload()}
+
+    _, single_body = await CoreSceneView(Single()).command(single)
+    assert single_body["patch"] == one.patch.to_payload() and "patch_omitted" not in single_body

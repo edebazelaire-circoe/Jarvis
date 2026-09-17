@@ -41,7 +41,7 @@ from typing import Any, Awaitable, Callable, Literal, Protocol
 
 import aiohttp
 
-from jarvis.domain.scene import MAX_SCENE_OBJECTS, SceneActor, SceneCommand, SceneCommandOutcome, ScenePatch, SceneSnapshot
+from jarvis.domain.scene import MAX_SCENE_OBJECTS, SceneActor, SceneCommand, SceneCommandOutcome, SceneOp, ScenePatch, SceneSnapshot
 from jarvis.protocol import scene_wire
 from jarvis.protocol.client import CoreProtocolError, LocalCoreClient
 from jarvis.runtime.agent_tasks import truncate
@@ -572,6 +572,12 @@ class CoreSceneView:
             f"commande de scène {op} : {body['outcome']}",
             data={"op": op, "outcome": body["outcome"], "reason": body["reason"], "revision": body["revision"]},
         )
+        if command.op is SceneOp.ARCHIVE_MANY and body["patch"] is not None:
+            # Slice 08, reprise QA : le patch d'un archivage groupé porte la forme
+            # historique de chaque objet (jusqu'à ~8 Mio). La page ne s'en sert
+            # pas : elle lit l'issue et la révision, le patch lui arrive par le
+            # long-poll. Validé plus haut, puis omis ici (`patch_omitted`).
+            body = {**body, "patch": None, "patch_omitted": True}
         return 200, {"source": SCENE_VIEW_SOURCE, "core_reachable": True, **body, "error": None}
 
     async def cancel_work(self, source: str, external_id: str) -> tuple[int, dict[str, Any]]:
