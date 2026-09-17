@@ -2001,3 +2001,137 @@ Residual risks (added):
 - Pre-existing bugs fixed on the way: brain CLI stream lines > 64 KiB silently killed the reader (asks hung 240 s); Codex reader raised raw `ValueError` or hung past its timeout; supervisor stderr pump died on long lines; main's committed conflict markers already fixed at integration.
 - Verification: PM chunked release run on `1554f87` (baseline failures only; env-induced `0xC0000142` child failures pass on rerun); PM spot-check after final fix 85 capture/links/query/cli_stream tests passed.
 - Accepted residual risks: page side of the capture channel is unauthenticated (any local process/loopback page can feed or swallow a capture — hostile local account is a non-goal); images serialised inside JSON strings are not redacted; non-image CLI events up to 16 MiB are kept and served whole by `/api/agent`/transcript; `read_jsonl_tail` reads at most 64 MiB; structurally valid PNGs with undecodable pixels accepted (never decoded locally); international and uppercase-scheme URLs are no longer links; capture draws the view-model (fonts/inner layout approximate, no hover labels/chips); synchronous encode blocks the page main thread 19–54 ms during a capture; headed Chrome and real DPI not verified.
+
+## 2026-09-17 — Slice 11 — implementation notes (agent 01)
+
+Commits: `0e83397` (settings UI), `6dcd82a` (test hardening, Issue 01), `9385d5a` (brain restart on a new conversation, found by the E2E run), `d9ae6fc` (docs pass), plus this LOG / `HUMAN-CHECKLIST.md` commit.
+
+Scratch evidence (scratchpad of this session): `s11_ui_host.py`, `s11_ui_browser.py` → `s11_ui_browser.json`, `s11_shots/ui_*.png`; `s11_e2e.py` → `s11_e2e_results.json` (run 1), `s11_e2e_run2_results.json` (run 2), traces `s11_e2e_run/runtime/trace.jsonl`, `s11_e2e_run2/runtime/trace.jsonl`, analysis `s11_trace.py` → `s11_trace_s11_e2e_run.json`, `s11_trace_s11_e2e_run2.json`, screenshots `s11_e2e_run2_shots/`; regression `s11_reg_host.py`, `s11_regress_all.py`, `s11_regress.py`, `s11_pix_run.py` → `s11_reg_{base,main,head}.json`, `s11_pixdiff_*.json`, `s11_reg_shots/`; chunked suite `s11_chunks/`.
+
+### 1. Settings UI for `scene.enabled`
+
+Delivered `jarvis/runtime/control_center_scene_settings.js` (marker `/*__CONTROL_CENTER_SCENE_SETTINGS_JS__*/`, injected after Barehands and the scene page), `scene_settings.describe_gate` (`/api/settings` block `scene` gains `stored` and `env`), `apply_gate(..., environ)` refusing `scene_env_override` while `JARVIS_SCENE_ENABLED` is set, `ClaudeLocalAgent.snapshot()` `display_tools` / `display_prompt`, `restart(resume=)`, `POST /api/agent/restart` optional body `{"new_conversation": bool}`. Tests `tests/unit/test_scene_settings_ui.py` (13), `test_scene_settings.py` (+1 test, 2 assertions updated deliberately for the new block fields).
+
+Decisions (reviewable):
+
+1. **Placement: Expérimental tab, first section, above Barehands.** Impeccable (scoped Operate refinement, no PRODUCT/DESIGN.md): experimental features and test modes already live there with the same « enregistré immédiatement » pattern; Apparence is theme-only while this switch also changes the brain; Agent / CLI is a Save-button form, which would contradict an immediate switch. The tab subtitle becomes « Fonctions en test, enregistrées immédiatement ; chaque section dit quand elle prend effet. » because Barehands' « appliquées immédiatement » is false for the brain part.
+2. **Default stays off.** Nothing in the code path changes the default.
+3. **Environment override is enforced server-side too.** The checkbox is `disabled` with « Imposé par la variable d'environnement JARVIS_SCENE_ENABLED » + what it is set to + stored value ignored + « Retirez-la puis relancez le Control Center pour choisir ici » (linked by `aria-describedby`); a write is refused 400 `scene_env_override` rather than stored uselessly.
+4. **Effects stated, not implied.** A three-row list: Affichage (immediate, all windows, no reload), Outils du brain (next start on a new conversation; never archive), Core (keeps projecting while off).
+5. **Brain block from real process state.** Compares the choice with `agent.display_tools` (tools of the running process) and `agent.display_prompt` (display prompt of the running conversation) read from the `/api/status` the page already polls (wrapping `api()` like `control_center_work.js`, zero extra request). Mismatch → warning + « Redémarrer le brain… » → in-page `confirmDialog` (new conversation, sub-agents that will be interrupted, `danger` when any) → `POST /api/agent/restart {"new_conversation": true}` with a live « Redémarrage du brain… N s » counter and a 30 s abort. Codex or a stopped brain never gets a restart offer and says why.
+6. **Restart on a new conversation (defect found by E2E run 1, fixed in `9385d5a`).** Run 1 enabled the scene and restarted the brain with the historical resume: the CLI had the ten tools (`system/init`) but its session transcript holds no new `prompt_snapshot` after `--resume` (the snapshot recorded at the first turn, without « ÉCRAN »/« ARTEFACTS », is kept), and the completion turn created **no artifact** and made no tool call. The settings restart now always opens a new conversation; the Agents panel restart keeps resuming (no body). `display_prompt` is set only on a non-resumed launch, so a resumed conversation is shown as a mismatch (« Conversation reprise : outils présents, consigne d'affichage absente »).
+7. **Accessibility.** Real `<label for>`; description via `aria-describedby`; brain block `role=status` `aria-live=polite`, re-rendered only when its meaning changes; busy states use `aria-disabled` (not `disabled`) so keyboard focus never drops (the first browser pass lost focus to `BODY`: fixed); focus restored to the same control after each re-render; `:focus-visible` outline; 480 px layout stacks the effects list (no horizontal overflow).
+8. **Errors.** Every failure: inline notice with the server's own text + toast + `[scène] scene.setting_failed` / `scene.brain_restart_failed` console entry; `finally` releases busy state and re-reads the status; stale errors are cleared when the tab is redrawn. Detector (`detect.mjs`) on the new JS: `[]`.
+
+Mutation checks (each reverted): read-only ignoring `source=env` → red; restart offered when consistent → red; env refusal removed → 2 red; `display_tools` from the setting instead of the launch args → red (test added: MCP config write failure); `display_prompt` updated on resume → red.
+
+Browser (`s11_ui_browser.py`, own headless Chrome 152, scratch profile, in-process Core + Control Center, brain process simulated so no model spend; everything killed afterwards):
+
+| Check | Result |
+| --- | --- |
+| flag off at load | 0 `/api/scene` requests in 4 s, no `#sceneLayer`; section « Brain en cours : sans outils d'affichage » |
+| Space on the focused checkbox | 1 `POST /api/settings` `{"scene":{"enabled":true}}`; layer drawn **0.11 s** later without reload; focus stays on `f_scene`; brain block « Brain lancé avant l'activation : pas encore d'outils d'affichage » + restart button |
+| Enter on « Redémarrer le brain… » | in-page dialog, focus on Annuler, rest of the page inert, lines « Il repart sur une nouvelle conversation… / La conversation en cours n'est pas reprise… / Cela interrompra 2 sous-agents en cours. », danger style; Escape → no restart, focus back on the button |
+| confirm by keyboard (Tab → Enter), 2.6 s restart | button « Redémarrage du brain… 1 s » (`aria-disabled`, keeps focus), then « Brain en cours : outils d'affichage présents », toast, focus on the checkbox |
+| restart failure (`Claude CLI not found (test)`) | toast with the cause, console `scene.brain_restart_failed`, button back |
+| settings write failure (CDP 400 « Réglages illisibles sur le disque (test) ») | inline « Réglage non enregistré » with the text, toast, checkbox shows the real (unchanged) state |
+| `JARVIS_SCENE_ENABLED=0` set while on | layer gone within 1.5 s; checkbox disabled with the explanation; real click → 0 POST |
+| unchecking in the UI | layer gone **0.11 s**; 0 scene requests in the next 5 s |
+| 480×860 | no horizontal overflow (scrollWidth = clientWidth = 434) |
+| exceptions / unexpected console errors | 0 / 0 |
+
+Screenshots: `s11_shots/ui_01_off_circuit_1440x900.png` … `ui_13_off_again_mismatch_circuit_1440x900.png` (both themes, 1440×900, 1280×720, 480×860).
+
+### 2. Hardening
+
+- `test_a_real_stream_reaches_the_scene_with_topology_and_signals`: the wait condition was « child failed + a `parent_of` exists », but the signal and its `explains` link are written by a later command; it now waits (bounded, 30 s) for the whole expected state (child failed, signal object, `parent_of` and `explains` relations). Proof: with `SceneProjector._raise_signal` delayed 0.5 s, the old test fails with the exact PM symptom (signal missing) and the new one passes; 5/5 passes under 4 busy-loop CPU hogs.
+- Same kind elsewhere (fixed sleep, then a positive assertion), each replaced by a bounded wait on the observable condition: `test_scene_transport.py` ×4 (long-poll registered at Core via the scene waiter count; Control Center `waiting == 4`), `test_scene_view.py` ×2 (`waiting`/calls; handler entered before the pool is considered taken), `test_scene_capture.py` ×4 (`pending_capture()` instead of 0.1–0.3 s sleeps), `test_scene_projector.py` ×4 (outage journaled, retries counted, watcher gone), `test_scene_restart_reconciliation.py` (leftover tasks polled ≤ 5 s), `test_v2_core_recovery.py` (marking wait now fails loudly after 30 s instead of silently continuing after 5 s), helper defaults raised to 30 s (`until` in projection/restart protocol, `settled`/`until_true` in the projector tests, `wait_for` in the display MCP tests). Negative checks (« nothing happened within X ») and deliberate latency bounds (Slice 10 « interrupted within 5 s ») are unchanged. 294 affected tests passed.
+- Issue 01 closed (see the Issue file): exact message bounds in scene-model/ARCHITECTURE; `test_scene_module_is_pure_domain` also parses `_checks.py` (mutation `import os` → red); new test for a 128-character validated id echoed in a replay error (< 300 characters).
+
+### 3. Docs
+
+- OPERATIONS: new entry point « Scène constellation — vue d'ensemble » (what it is, enabling, what appears, brain, user gestures table, restarts, captures, privacy, limits, first troubleshooting, links to the detailed sections); « Activer » rewritten (Expérimental tab, `stored`/`env`, `scene_env_override`, « Quand ça s'applique » with the resume finding and the new-conversation restart); troubleshooting rows for `display_mcp: false`, resumed conversation, env override, « je ne vois que le titre »; routes table gains the capture upload and the job stop; stale « pas encore d'écran de réglage, il arrive au Slice 11 », « trois routes », « 30 s au plus », Slice numbers in user rows removed.
+- ARCHITECTURE: gate row, new Settings UI row and *Scene settings UI* paragraph, gating paragraph (resume evidence, `display_tools`/`display_prompt`, `new_conversation`, tools kept after switching off), transport diagram and Core routes with captures, `scene_history` row count, resolver safe area, `gate(s.scene, s.scene_limits)`, orphan artifacts in `archive_many` and the menu table, stale prompt byte-identity claim.
+- SECURITY §13: env lock, gate timing, privacy/retention paragraph (scene persisted while off, history never pruned, no undo), `--chrome` wording, bulk archive includes orphan artifacts.
+- scene-model: `archive_many` row, brain never `archive_many`, validation command lists the Slice 08–11 test files.
+- Read-only audit of the four docs against the code by a sub-agent (numbers, bounds, journal names all matched; 26 stale/incomplete statements, all addressed above). `test_documented_routes` passes.
+
+### 4. End-to-end real validation (production default model)
+
+Setup: real `python -m jarvis core` (scratch data/runtime), in-process `ControlCenter` wired like `_run_control_center_v2` (work ingress, conversation events forwarder + view, work/live views, scene view, display MCP target), real Claude CLI brain with no model override (`system/init` model `claude-opus-5[1m]`), own headless Chrome page on the Control Center (1920×1080) as the visible leader, asks through `/api/agent/ask` with a voice-turn context (`addressing: addressed`). A completed seed star (« [general] Veille : notes de version Python 3.14 », scratch ingress, producer `s11-seed`) keeps the scene non-empty after step 8. No launcher, no `webbrowser.open`, no user data.
+
+**Two runs, 8 brain turns in total (the budget).** Run 1 (4 turns) stopped at step 8 because step 4 produced no artifact: the resumed-conversation defect above. After the fix, run 2 replayed steps 1–10 on a fresh root with 4 turns: step 1's init-event turn was not repeated (captured in run 1) and step 10's « tools gone » is proven without a turn (launch argv, prompt program, status, processes).
+
+| Step | Run | Brain tools | Spoken reply (short) | Latency | Cost (turn) | Evidence |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 flag off | 1 | — (greeting) | « Oui, je vous entends parfaitement, je suis à votre écoute. » | 1.4 s | $0.1735 | page: 0 `/api/scene` requests, no layer; Agents panel (brain card + 1 terminated), ERR, TRC (12 entries), SET (7 tabs), CNV timeline opened and closed; `system/init`: 0 display tools, servers `jarvis-drive`, `claude-in-chrome`, `claude.ai Claude Docs`; `agent.start display_mcp:false`, program `backend.claude.conversation.session`. Run 2 repeats the page checks (same results) |
+| 2 enable via UI + restart | 1 (resume) / 2 (new conversation) | — | — | layer after 0.22–0.25 s | — | run 1: `agent.start resumed:true display_mcp:true` → defect. Run 2: `agent.restart {new_conversation:true}`, `agent.start resumed:false display_mcp:true`, program `display_session`, `/api/status` `display_tools:true, display_prompt:true`, section « outils d'affichage présents » |
+| 3 research (voice turn) | 2 | `Agent` (background) | « J'ai lancé en arrière-plan la recherche sur la doc officielle d'asyncio et sur la PEP qui l'a introduit. Je te préviens dès que c'est fini. » | 6.2 s | $0.3647 | star `claude:toolu_01Es4v1i…` (runtime, running) created **0.51 s** after the `tool_use` (run 1: 0.51 s), no display call before it |
+| 4 completion | 2 | `ToolSearch` (2 schemas), `scene_inspect {kind: agent}`, `scene_add_artifact` (research, 2 items) → created/applied | « J'ai trouvé la page de documentation officielle d'asyncio sur le site de Python. Le module a été introduit par la PEP 3156 de Guido van Rossum. Il fait partie de la bibliothèque standard depuis Python 3.4, où il est arrivé à l'essai. » | turn 9.2 s (`brain_turn_slow` info, no inline tools); 31 s after the ask | $0.2820 | one artifact `brain-artifact-00e0219b32e7` « asyncio : documentation officielle et PEP 3156 », `explains` → star; star completed; reply never mentions artifact or scene. Run 1 (resumed): no tool call, no artifact |
+| 5 « Qu'est-ce que la recherche a donné ? » | 2 | none | 5 sentences from conversation memory (doc 3.14, PEP 3156, status Final, 3.4, Tulip) | 2.7 s | $0.0269 | **not grounded on `scene_get`** (same in run 1) |
+| 6 browser reload | 2 | — | — | — | — | node transforms identical before/after, 0 `scene.command` after reload |
+| 7 Core hard kill + restart, CC alive | 2 | — | — | Core back in 8.3 s | — | chip « SCÈNE FIGÉE · CORE INJOIGNABLE 3 S · RÉESSAI 2 S » while down; `core.scene.loaded created:false rev 7`; `restart_marked {marked 0, terminal_untouched 2}`; objects and relations identical; page layout identical; `scene.view_restored` |
+| 8 user interactions | 2 | — | — | — | — | drag of the artifact → `pin` rev 8 + `set_geometry` rev 9, Core `placed_by user, pinned_by_user true`; star menu « Archiver… » → confirmation « Son artefact reste dans la scène, à archiver à part. » → `archive` rev 10, artifact stays with no relation; artifact menu « Archiver les artefacts orphelins (1)… » → confirmation → `archive_many` rev 11; only the seed star left |
+| 9 « Regarde l'écran et dis-moi ce qu'il y a » | 2 | `scene_inspect {}` only | « Il ne reste qu'un seul élément à l'écran : l'étoile d'un travail terminé, une veille sur les notes de version de Python 3.14. La recherche sur asyncio et sa fiche de résultats n'y sont plus, elles ont été archivées. » | 4.4 s | $0.0558 | **no `scene_capture`**, no capture file: the brain judged the structured read sufficient (1 object). Answer truthful. Capture-to-model was proven live in Slice 09 QA, not here |
+| 10 flag off via UI | 2 | — | — | layer gone 0.12 s | — | section « Brain lancé scène allumée : il garde ses outils d'affichage » → restart (new conversation) → `agent.start display_mcp:false`, program `backend.claude.conversation.session`, `/api/status` `display_tools:false, display_prompt:false`, no `display-mcp` process, 0 scene requests in 6 s |
+
+Totals: run 1 $0.6711, run 2 $0.7294 (≈ $1.40, 8 turns). Screenshots `s11_e2e_run2_shots/e2e_01…e2e_10_*.png` (circuit-board and Omega for every visual step, dialogs in circuit-board).
+
+### 5. Trace analysis (agent-trace-analysis, both runs)
+
+- **Architecture:** delegation respected (research always in a background sub-agent; the brain itself used no WebFetch/Bash); runtime star without any brain turn (0.51 s); artifact through the canonical `scene_add_artifact` (one grouped object, 2 items, 0 per-URL objects), preceded by `scene_inspect`; archive never attempted by the brain.
+- **Findings:**
+  - **MAJOR (fixed, `9385d5a`)** — resumed conversation keeps its first-turn system prompt: tools without display/artifact rules → no artifact. Now a mismatch the UI shows and restarts away.
+  - **MINOR (open)** — step 5 answered from memory without `scene_get` (both runs), correct content; step 9 used `scene_inspect` instead of `scene_capture` for « regarde l'écran », correct content. Prompt line reads « seulement si l'utilisateur demande de regarder l'écran ou si la structure ne suffit pas » — the model treated it as permission, not instruction. Not changed: a prompt change needs live verification and the turn budget is spent (decision for agent 0).
+  - **MINOR** — voice length: step 3 reply is 2 short sentences (memory rule: one); step 5 is 5 sentences; completion relay 3 sentences (within « une à trois phrases »), no URL, no markdown, no artifact talk.
+  - **OPTIMIZATION** — one `ToolSearch` (2 deferred schemas) on the first display turn of the conversation; completion turn 9.2 s; costs per turn $0.03–0.36 (first turn of a conversation carries cache creation).
+- **Clean:** 0 non-display tools from the brain besides `Agent`/`ToolSearch`; 0 permission denials; 0 error-level journal entries (both runs); 0 trace lines with long base64 (no image was produced in these runs); `display_procs_after: []`, Core killed, Chrome killed, no process left (checked by command line).
+
+### 6. Flag-off regression against base `7ed67bb` (and main `b86f228`)
+
+`s11_reg_host.py` (in-process Core + Control Center from each tree, scene off, 2 seeded work items, agent start suppressed) + `s11_regress.py` (= QA05 script: both themes × 1920×1080 / 1280×720 × idle, Agents panel, context menu, ERR, TRC, background popover, settings, toast, Barehands token; hit-tests) + pixel diff with animation-noise masking. Own headless Chrome, one host at a time, all killed.
+
+- **HEAD vs main `b86f228`** (this task's own effect): hit-tests identical except the voice hint's explicit `z-index: 31` (Slice 05 registry, still not topmost, same hit) and the toast 54 px vs 52 px (Slice 08, accepted). Pixel cells outside noise: toast (same cause), the running sub-agent timer and trace timestamps (time-dependent text), a 2-cell patch in the Omega top-left banner area (animated); settings view 0 px. 0 exceptions, 0 console errors in the three trees.
+- **HEAD vs base `7ed67bb`**: every difference also appears in **main vs base** with the same cells (main's timeline « CNV » dock button shifts the dock and pills by 31 px, main's settings/background changes), plus the two items above. No legacy panel lost a hit target.
+
+### 7. Chunked full suite + static checks (release gate)
+
+Method from the Slice 09 PM entry, HEAD `d9ae6fc`, foreground, one chunk at a time:
+
+| Chunk | Tail |
+| --- | --- |
+| unit 0 | 5 failed, 507 passed in 48.85 s |
+| unit 1 | 866 passed, 1 skipped in 67.85 s |
+| unit 2 | 530 passed, 1 skipped in 28.03 s |
+| unit 3 | 4 failed, 1063 passed, 1 skipped in 69.12 s |
+| unit 4 | 718 passed, 1 skipped in 74.05 s |
+| unit 5 | 915 passed, 2 skipped in 68.15 s |
+| integration | 396 passed, 4 skipped in 127.40 s |
+| e2e + replay | 1 passed in 0.25 s |
+| `verify_release.py`, pytest stubbed | `Release verification passed.` |
+
+Sum 5 015 = `--collect-only` 5 015. Failures: exactly the 9 main-baseline tests of Issue 03 (`test_agent_routing_settings.py` ×3, `test_brain_card_state.py` ×2, `test_routing_settings_screen.py` ×4); the known flaky test passed; no `0xC0000142` child failure this time.
+
+### Residual risks / left
+
+1. « Regarde l'écran » may be answered by structured reading without a capture, and « qu'est-ce que la recherche a donné ? » from memory without `scene_get` (observed on the production model, answers correct). Prompt tightening left to agent 0 (needs live turns).
+2. Enabling the scene through the UI discards the current brain conversation (by design, stated in the confirmation); the Agents-panel restart still resumes and the UI then shows the prompt mismatch.
+3. `display_prompt` is tracked in memory per `ClaudeLocalAgent`: after a Control Center restart the first launch is a new conversation anyway (no persisted session id), so it stays truthful; a console-forked session is also a new conversation.
+4. The settings write goes through the full `POST /api/settings` path: if the stored voice configuration is itself invalid, the scene switch is refused with that voice error (shown inline).
+5. Headless Chrome only (no headed Chrome, real DPI, screen reader): see `HUMAN-CHECKLIST.md`.
+
+## Critères de fin de tâche — preuves
+
+Clauses of `slices/TODO.md` « Task done when ». « Machine » = evidence produced by tests, fuzzers, real processes or real model runs; « Humain » = what only the Human can judge (`HUMAN-CHECKLIST.md`).
+
+| Clause | Slices, approvals, commits | QA evidence | Slice 11 E2E | Not machine-verifiable (Human) |
+| --- | --- | --- | --- | --- |
+| Runtime creates real agent stars / links / errors without the brain | S04 APPROVED (`07f25b7`…`7a51a2a`), S10 APPROVED (`664a99d`…`1d84950`) | real trace replay: 18 agent stars, 0/49 bash stars, 4 signals, 19 ms median; live CLI: star 520 ms after `tool_use`, nested `parent_of`; saturation/catch-up; restart marking/grace (600-seed oracle) | star 0.51 s after `tool_use` in both runs, no brain display call before it; failures/links covered by S04/S10 (not re-exercised live here) | — |
+| Brain inspects / manipulates the same persistent scene via MCP | S06 (`ed9bff8`…`d3c8fe7`), S07 (`1c24858`…`7f140db`), S09 (`6c4ab42`…`78cfa31`) APPROVED | catalog without archive/pin over real stdio; 120k-command fuzz; Opus runs: inspect-before-act, bulk unhide, injection resisted, `scene_get` after restart, capture image reached the model | `scene_inspect` + `scene_add_artifact` applied on the persisted scene; tools absent when off (`agent.start`, program, status, processes) | whether the brain reads/captures when it should (steps 5 and 9 above) is model judgment |
+| Grouped artifacts explain completed work | S07 APPROVED | one artifact per (target, category), race 0/30 duplicates, update-not-duplicate live, no per-URL nodes | one research artifact (2 items) linked to the star, silent relay; run 1 found and `9385d5a` fixed the resumed-prompt gap | usefulness of the grouping to a real user |
+| Renderer honors layered 2D / pins / intentional overlap | S05 APPROVED (`01d926c`…`78a7cf4`), S08 (`6ee5f80`…`8e4d027`) | stacking/z-index registry tests, safe area 0 chrome overlaps at 4 sizes × 2 themes, resolver never moves placed/pinned objects, capture fidelity 0 px | drag → `pin` + `set_geometry` (`placed_by user`, pinned); layout identical after reload and Core restart | visual quality (no visual-direction document), real DPI, headed Chrome |
+| Reload / restart preserve state and reconcile truth | S02 (`10e75d9`…`530ad7f`), S03 (`7f9bf03`…`f68bdc2`), S10 APPROVED | 50+ hard kills with replay-exact snapshots; 10 real restart scenarios; CC killed alone → interrupted in 1.42 s | reload: identical transforms, 0 commits; Core hard kill with CC alive: objects/relations identical, `terminal_untouched 2`, page resynced | long-running session memory |
+| Completed work stays until user disposition | decision 12; S04/S08/S07 APPROVED | no fade/removal path; bulk scope terminal only; saturation defers instead of deleting | completed star and artifact survived reload and Core restart until the user archived them | whether automatic retention is wanted (decision B2) |
+| Archive is user-only | decision 14; S01, S06, S08 APPROVED | reducer matrix (`op_not_allowed` for brain/runtime), catalog test without archive, fuzz 0 violations; live « archive cette note » refused without workaround | archive and `archive_many` only from the page menu (`scene.command` user); brain made no archive attempt | actor is declared, not authenticated (SECURITY §13, decision B7) |
+| Legacy Control Center / voice / work remain operational | every Slice's regression checks; integrations `586f312`, `c12773c` | flag-off pixel/hit-test equivalence (S05, S08 QA); prompt flag-off byte-identical; voice routes unchanged | flag-off regression vs `7ed67bb` and `b86f228` above; legacy panels and timeline exercised in step 1; chunked suite 5 015 tests, only the 9 main-baseline failures | real voice session with the flag on (A2), Barehands camera (A4), touch (A5) |
+| All QA and Human checks pass | S00–S10 APPROVED entries above; Slice 11 QA pending (agent 0) | — | this entry | `HUMAN-CHECKLIST.md` A1–A8 and decisions B1–B7 |

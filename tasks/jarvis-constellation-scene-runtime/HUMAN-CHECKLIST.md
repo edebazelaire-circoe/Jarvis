@@ -1,0 +1,39 @@
+# Scène constellation — vérifications et décisions humaines
+
+Tout ce qu'une machine pouvait vérifier l'a été (voir `LOG.md`, « Critères de fin de tâche — preuves »). Restent ici ce qui demande un humain : du matériel réel, un jugement, ou une décision. Durée estimée des vérifications : 1 h 30 à 2 h.
+
+Préparation commune (sauf mention contraire) :
+
+1. Lancer JARVIS normalement (Core, Control Center, Voice).
+2. Réglages (SET) → **Expérimental** → cocher « Afficher la scène et donner ses outils au brain ».
+3. Si l'encadré orange propose « Redémarrer le brain… », cliquer et confirmer (le brain repart sur une nouvelle conversation : c'est voulu, une conversation reprise garderait son ancienne consigne).
+4. Pour revenir en arrière : décocher, puis redémarrer le brain de la même façon.
+
+Guide utilisateur : `docs/OPERATIONS.md`, « Scène constellation — vue d'ensemble ».
+
+## A. À vérifier à la main
+
+| # | Quoi | Comment (quelques pas) | Attendu |
+| --- | --- | --- | --- |
+| A1 | **Chrome réel, fenêtré, DPI réel** (125 % ou 150 % Windows) — tout n'a été vu qu'en Chrome headless à DPR 1 (1,25 et 3 pour la capture seulement). | 1. Ouvrir le Control Center dans votre Chrome habituel, plein écran puis fenêtre à moitié d'écran. 2. Dire « lance une petite recherche en arrière-plan sur … ». 3. Survoler l'étoile, glisser son artefact, ouvrir le menu (clic droit). | Étoile nette, libellé lisible au survol, glisser précis au pixel, rien sous la barre du haut ni sous le dock ; en demi-écran, noter ce qui passe sous les commandes (limite connue sous 1280×720). |
+| A2 | **Session vocale réelle, scène allumée.** | 1. Par la voix : « fais une recherche en arrière-plan sur la PEP 3156 ». 2. Attendre la fin. 3. « Qu'est-ce que la recherche a donné ? » 4. « Regarde l'écran et dis-moi ce qu'il y a. » | 1 : une phrase courte, l'étoile apparaît sans attendre. 2 : relais court qui ne parle ni d'artefact ni de scène. 3 : réponse concise tirée du contenu. 4 : description fidèle de l'écran ; noter si le brain a vraiment capturé (trace : `display.capture`) — au test machine du Slice 11, sur une scène à un seul objet, il a répondu par la lecture structurée sans capturer. Jamais de lecture d'URL, jamais de markdown à l'oral. |
+| A3 | **Lecteur d'écran** (NVDA ou Narrateur). | 1. Tab jusqu'à la scène (un seul arrêt), flèches entre les objets. 2. Maj+F10 sur une étoile, archiver, confirmer. 3. Ouvrir Réglages → Expérimental, cocher la scène. | Chaque objet annoncé avec sa nature, son état et son titre ; résultat d'action annoncé (« … archivé ») ; case « Afficher la scène… » annoncée avec sa description (effets) ; l'état du brain annoncé quand il change. |
+| A4 | **Caméra Barehands réelle** (Expérimental → Barehands). | 1. Pincer sur une étoile (sélection), pincer de nouveau (menu). 2. Appui long. 3. Pincer « Archiver… » puis « Archiver » dans la confirmation. | Menu ouvert au deuxième pincement ou à l'appui long ; confirmation utilisable ; pas de glisser (limite connue) ; un lien d'artefact ne s'ouvre pas au pincement (limite connue). |
+| A5 | **Écran tactile** (si disponible). | 1. Appui long sur une étoile. 2. Essayer de glisser une capsule au doigt. | Menu à l'appui long. Le glisser tactile n'a jamais été vérifié : noter le résultat. |
+| A6 | **Revue visuelle.** Le document de direction visuelle du handoff n'a jamais été fourni ; le rendu suit la grammaire du grilling (couleur = catégorie, état en signal secondaire) et le thème Omega. | 1. Scène dense (plusieurs recherches), dans les deux thèmes (Réglages → Apparence). 2. Ouvrir un artefact en fenêtre. 3. Provoquer un échec (sous-agent qui échoue) puis un redémarrage de Core. | Juger : lisibilité, hiérarchie, couleurs, signaux d'échec visibles mais pas criards, « état inconnu » compréhensible. Décider si une passe visuelle est nécessaire. |
+| A7 | **Plusieurs fenêtres / plusieurs écrans.** | 1. Ouvrir le Control Center sur deux écrans (DPI différents si possible). 2. Glisser un objet dans l'une. 3. Fermer la fenêtre « meneuse » (celle ouverte en premier). 4. Ouvrir aussi la chronologie (CNV) dans 4 à 5 fenêtres. | 2 : l'autre fenêtre suit en ~1 s. 3 : l'autre reprend la main, rien de perdu. 4 : au-delà de 5 chronologies ouvertes avec la scène allumée, la page ralentit (Issue 04, connu). |
+| A8 | **Mémoire en session longue.** | 1. Laisser JARVIS tourner une demi-journée scène allumée, onglet visible, avec une dizaine de recherches. 2. Gestionnaire des tâches : mémoire de l'onglet Chrome, de `python -m jarvis core`, taille de `data/state/scene.sqlite3`. | Mémoire stable après la première heure (pas de croissance continue) ; fichier de quelques Mo. L'historique d'archive n'est jamais élagué en V1 : noter la taille. |
+
+## B. Décisions à prendre
+
+| # | Décision | Éléments | Options |
+| --- | --- | --- | --- |
+| B1 | **Valeur par défaut de `scene.enabled`.** | Éteinte aujourd'hui. Allumée : le brain reçoit 10 outils d'affichage, une consigne système plus longue (~4 Ko de plus que les 2,8 Ko actuels) et un `ToolSearch` au premier tour d'affichage de chaque conversation. Core projette déjà la scène, allumée ou non. | Garder éteinte (opt-in) · allumer par défaut · allumer seulement le rendu (demande un nouvel interrupteur). |
+| B2 | **Rangement automatique du travail terminé** (modifie la décision 12 : « terminé n'est pas retiré »). | Rien ne part sans vous ; la scène sature à 512 objets (≈ 400 étoiles), la puce « Scène pleine » propose l'archivage groupé ; les créations attendent puis rattrapent. | Garder manuel · archiver automatiquement le terminé plus vieux que N jours · seulement proposer (notification). |
+| B3 | **Issue 03 — main cassé** : 9 tests commités sans implémentation (`test_agent_routing_settings.py`, `test_brain_card_state.py`, `test_routing_settings_screen.py`) ; `verify_release` rouge sur main et sur cette branche. | Hors de cette tâche ; porte de sortie actuelle : « aucun échec au-delà de ces 9 + 1 test instable connu ». | Terminer l'implémentation sur main · marquer les tests `xfail` · les retirer. |
+| B4 | **Issue 04 — budget de connexions de la chronologie.** Chaque chronologie ouverte tient un long-poll par onglet ; la scène en ajoute un par profil ; 5 chronologies + scène (6 sur main seul) bloquent la page 5 à 19 s. | Fonction de main. | Partager le long-poll de la chronologie (meneur Web Lock + BroadcastChannel, comme la scène) · le fermer dans les onglets cachés · accepter. |
+| B5 | **Bail côté Core pour un Control Center mort.** Un Control Center tué et jamais relancé laisse ses sous-agents « en cours » (Core et scène) jusqu'au redémarrage de Core. Relancé, ils passent « interrompu » en ~2 s. | Pas de bail en V1. | Ajouter un bail (battement du producteur, interruption à expiration) · accepter. |
+| B6 | **Stratégie de fusion vers main.** La branche contient ~160 commits depuis `7ed67bb` et deux intégrations de main (`586f312`, `c12773c`) ; l'historique `S0`…`S11` documente chaque Slice. | Tests et vérifications faits sur la branche telle quelle. | Merge commit (garde l'historique et les preuves citées par SHA dans `LOG.md`) · squash (les SHA du LOG ne pointeront plus sur main) · rebase (déconseillé : réécrit les SHA cités). |
+| B7 | **Risques résiduels de sécurité à accepter** (`docs/SECURITY.md` §13). | L'acteur est déclaré, pas authentifié : un brain qui lit `runtime/core.token` pourrait agir comme `user` (archiver, arrêter un job) ; le canal de capture côté page n'est pas authentifié ; injection par les titres et contenus des objets atténuée, pas bornée. | Accepter pour V1 · exiger une authentification par acteur avant d'allumer par défaut. |
+
+Pré-existant, hors tâche, à connaître : `Issues/02` (fuite intermittente de `jarvis.sqlite3` dans un test de capacité) ; `test_three_turns_run_in_one_session_without_a_second_wake` instable sous charge.
