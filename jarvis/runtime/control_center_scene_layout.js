@@ -208,6 +208,26 @@
   const HOST_LABEL=/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
   const NUMERIC_LABEL=/^(?:[0-9]+|0x[0-9a-f]*)$/;
   const OCTET=/^(?:0|[1-9][0-9]{0,2})$/;
+  const URL_ASCII=/^[A-Za-z0-9\-._~:\/?#\[\]@!$&()*+,;=%]$/;
+
+  /* Longueur de l'URL percent-encodée, majorée : même calcul que `link_length`
+     (`jarvis/domain/scene_links.py`), par point de code. ASCII sûr 1, autre
+     ASCII 3, non-ASCII 3 × octets UTF-8, substitut isolé 9 ; + 1 quand le
+     navigateur ajoute `/` après l'autorité. Jamais inférieure à `href.length`. */
+  function linkLength(value){
+    let total=0;
+    for(const char of value){
+      const code=char.codePointAt(0);
+      if(code<0x80)total+=URL_ASCII.test(char)?1:3;
+      else if(code>=0xD800&&code<=0xDFFF)total+=9;
+      else total+=3*(code<0x800?2:code<0x10000?3:4);
+    }
+    const index=value.indexOf('://');
+    const rest=index<0?'':value.slice(index+3);
+    const authority=rest.split(/[/?#]/,1)[0];
+    if(!rest.slice(authority.length).startsWith('/'))total+=1;
+    return total;
+  }
 
   /* IPv6 compressée comme le navigateur (RFC 5952), entre crochets, ou `null`. */
   function ipv6Host(text){
@@ -241,7 +261,9 @@
      autorité sans `@` ni `%`, hôte ASCII à étiquettes standard (pas de `xn--`)
      ou IPv4 pointée stricte ou IPv6 entre crochets, port 0–65535. */
   function linkHost(value){
+    /* `length` (UTF-16) ≤ `linkLength` : le premier test borne le calcul sans changer la règle. */
     if(typeof value!=='string'||!value||value.length>MAX_LINK_CHARS||UNSAFE_URL.test(value))return null;
+    if(linkLength(value)>MAX_LINK_CHARS)return null;
     let rest;
     if(value.startsWith('https://'))rest=value.slice(8);
     else if(value.startsWith('http://'))rest=value.slice(7);
@@ -926,7 +948,7 @@
 
   const api=Object.freeze({FRAME,SAFE_AREA,FACE_ZONE,OBJECT_LIMIT,DEFAULT_SIZE,WORK_BUDGET,COMMIT_MAX_ATTEMPTS,READABLE,MAX_ANIMATED,CAPSULE_MAX,drawnBox,
     RESTART_UNKNOWN_LABEL,restartUnknown,ARTIFACT_CATEGORIES,linkOf,explainedTarget,explainsIndex,artifactsExplaining,itemsOf,hostTail,isOrphanArtifact,orphanArtifacts,
-    artifactsLeftOrphan,placeFor,linkHost,POINT_HIT_PX,CAPSULE_MIN_HEIGHT_PX,drawnRect,
+    artifactsLeftOrphan,placeFor,linkHost,linkLength,POINT_HIT_PX,CAPSULE_MIN_HEIGHT_PX,drawnRect,
     viewport,toScreen,cleanLine,cleanText,toneOf,isLiveSignal,signalUrgency,signalErrorClass,anchorsOf,depthOf,resolveLayout,
     stackOf,viewModel,compactShape,spatialOrder,nextFocus,commitKey,commitCommand,commitCandidates,nextRetryAt,classifyCommit,settleCommit});
   root.JarvisSceneLayout=api;

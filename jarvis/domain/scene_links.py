@@ -7,7 +7,8 @@ règle prudente l'accepte, la même des deux côtés : `link_host` ici, `linkOf`
 
 Acceptée seulement si :
 
-- elle commence exactement par `http://` ou `https://`, et fait au plus 2 048 caractères ;
+- elle commence exactement par `http://` ou `https://`, et sa **longueur encodée** (`link_length`,
+  la forme percent-encodée que le navigateur met dans `href`, majorée) fait au plus 2 048 ;
 - elle ne contient nulle part de barre oblique inverse, de blanc, de caractère de contrôle, de marque
   bidi, de caractère invisible, ni de point pleine chasse ou idéographique (refusés, jamais normalisés) ;
 - son autorité (entre `//` et le premier `/`, `?` ou `#`) n'a ni `@` (identifiants) ni `%` ;
@@ -40,6 +41,33 @@ _IPV6_HOST = re.compile(r"\A\[([0-9A-Fa-f:]+)\](?::([0-9]{1,5}))?\Z")
 _LABEL = re.compile(r"\A[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z")
 _NUMERIC_LABEL = re.compile(r"\A(?:[0-9]+|0x[0-9a-f]*)\Z")
 _OCTET = re.compile(r"\A(?:0|[1-9][0-9]{0,2})\Z")
+#: ASCII gardé tel quel par l'encodage d'URL (RFC 3986 : non réservés, réservés, `%`) ; tout autre
+#: caractère ASCII compte comme `%XX`.
+_URL_ASCII = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~:/?#[]@!$&()*+,;=%")
+
+
+def link_length(url: str) -> int:
+    """Longueur de l'URL percent-encodée, majorée ; calculée à l'identique par `linkLength` (page).
+
+    Par point de code : ASCII de `_URL_ASCII` 1, autre ASCII 3 (`%XX`), non-ASCII 3 × ses octets UTF-8,
+    substitut isolé 9 (encodé comme U+FFFD) ; + 1 si rien ne suit l'autorité ou si elle est suivie de `?`
+    ou `#` (le navigateur ajoute `/`). Jamais inférieure à la longueur de `href`.
+    """
+
+    total = 0
+    for char in url:
+        code = ord(char)
+        if code < 0x80:
+            total += 1 if char in _URL_ASCII else 3
+        elif 0xD800 <= code <= 0xDFFF:
+            total += 9
+        else:
+            total += 3 * (2 if code < 0x800 else 3 if code < 0x10000 else 4)
+    rest = url.split("://", 1)[1] if "://" in url else ""
+    authority = re.split(r"[/?#]", rest, maxsplit=1)[0]
+    if not rest[len(authority):].startswith("/"):
+        total += 1
+    return total
 
 
 def _ipv6(text: str) -> str | None:
@@ -77,7 +105,10 @@ def _ipv6(text: str) -> str | None:
 def link_host(url: object) -> str | None:
     """L'hôte d'une URL qui peut être un lien, ou `None` : alors ni lien ni hôte."""
 
+    # `len` ≤ `link_length` : le premier test borne le calcul sans changer la règle.
     if not isinstance(url, str) or not url or len(url) > MAX_LINK_CHARS or _UNSAFE.search(url):
+        return None
+    if link_length(url) > MAX_LINK_CHARS:
         return None
     if url.startswith("https://"):
         rest = url[len("https://"):]
