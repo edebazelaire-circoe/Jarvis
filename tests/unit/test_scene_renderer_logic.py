@@ -741,8 +741,14 @@ def test_the_scene_layer_sits_above_the_face_and_below_every_control():
     scene = _z(page, ".scene")
     assert scene == 20
     assert _z(html, ".face") < scene and _z(work, "#omegaFace") < scene
-    for selector in (".topbar", ".voicehint", ".dock", ".panel", ".live-banner", ".bgpills", ".overlay", ".toasts", ".bgpop", ".ctxmenu"):
+    for selector in (".topbar", ".voicehint", ".dock", ".panel", ".live-banner", ".bgpills", ".overlay", ".toasts", ".bgpop", ".ctxmenu", ".tl", ".cdialog-back"):
         assert _z(html, selector) > scene, selector
+    # Chronologie de conversation (modale plein écran, intégration de main) :
+    # au-dessus de tous les contrôles de la page, sous les menus, toasts et
+    # confirmations qui peuvent s'ouvrir par-dessus.
+    for selector in (".dock", ".panel", ".live-banner", ".bgpills"):
+        assert _z(html, ".tl") > _z(html, selector) and _z(html, ".tl") > _z(work, f'html[data-jarvis-theme="omega"] {selector}'), selector
+    assert _z(html, ".tl") < _z(html, ".overlay") < _z(html, ".toasts") < _z(html, ".ctxmenu") < _z(html, ".cdialog-back")
     for selector in (".topbar", ".dock", ".panel", ".live-banner", ".bgpills"):
         assert _z(work, f'html[data-jarvis-theme="omega"] {selector}') > scene, selector
     assert _z(barehands, "#jarvisHands") == 2147483000

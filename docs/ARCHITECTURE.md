@@ -2193,11 +2193,21 @@ stacking context, so scene layers (0–1000) never escape it.
 | `.panel` | 33 | 42 |
 | `.live-banner` | 35 | 48 |
 | `.bgpills` | 40 | 50 |
+| `.tl` (conversation timeline, full-screen modal) | 55 | 55 |
 | `.overlay` (settings) | 60 | 60 |
 | `.toasts` | 70 | 70 |
 | `.bgpop` | 75 | 75 |
 | `.ctxmenu` | 80 | 80 |
+| `.cdialog-back` (confirmation, Slice 08) | 85 | 85 |
 | `#jarvisHands` (Barehands) | 2147483000 | 2147483000 |
+
+The conversation timeline (`#timeline`, main's conversation-observability
+Slice 05) is a full-screen modal above every control and the scene; toasts,
+background popover, context menu and the Slice 08 confirmation stay above it.
+Both modals make the other `body` children `inert` and skip children already
+inert, so they nest in either order: a confirmation over the timeline inerts
+the timeline and gives it back on close; the timeline closing restores only
+what it inerted.
 
 Before Slice 05 the face, top bar, voice hint, dock and panel had no z-index
 (DOM order); the explicit values keep their previous relative order. Inside the
