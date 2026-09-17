@@ -1588,6 +1588,20 @@ async def test_a_refused_overlapping_response_does_not_kill_the_session():
     assert journal.count("voice.provider_refused") == 1
 
 
+async def test_a_refused_tool_result_does_not_kill_the_session():
+    """13/09 : l'accusé de délégation refusé fermait Voice alors que le job tournait."""
+    journal = RecordingJournal()
+    bridge = build_bridge(GuardedAudio(guarded=False), journal=journal)
+
+    await feed(
+        bridge,
+        [event("realtime.error", error={"code": "invalid_tool_call_id", "message": "voice_provider_failed"})],
+    )
+
+    assert journal.count("provider.error") == 0
+    assert "invalid_tool_call_id" in {item["data"]["code"] for item in journal.of("voice.provider_refused")}
+
+
 # --------------------------------------------------------------------------
 # 4. L'ordonnanceur : accusé de réception et tour de parole
 

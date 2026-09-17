@@ -40,6 +40,9 @@ CORE_ADAPTER_IMPORT_EXCEPTIONS: dict[str, frozenset[str]] = {
             # Slice 02 de la scène constellation : même rôle que
             # `sqlite_state`, fichier distinct `data/state/scene.sqlite3`.
             "jarvis.adapters.sqlite_scene",
+            # Conversation Event store (Slice 02 of conversation-observability):
+            # shares the `sqlite_state` connection, constructed only.
+            "jarvis.adapters.sqlite_conversation_events",
             "jarvis.adapters.sqlite_state",
             "jarvis.adapters.windows_notifications",
         }

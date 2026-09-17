@@ -7,12 +7,15 @@ from pathlib import Path
 
 from jarvis.adapters.fake_calendar import InMemoryCalendarBackend
 from jarvis.adapters.jsonl_history import JsonlHistoryStore
+from jarvis.adapters.sqlite_conversation_events import SQLiteConversationEventStore
 from jarvis.adapters.sqlite_scene import SQLiteSceneRepository
 from jarvis.adapters.sqlite_state import SQLiteStateRepository
 from jarvis.adapters.windows_notifications import NullNotificationDelivery
 from jarvis.core.brain_context import ATTENTION_QUEUE_SIZE, DEFAULT_WAKE_INTERVAL_S, BrainContextBuilder, WorkAttentionPolicy
 from jarvis.core.brain_service import DEFAULT_TURN_BUDGET_S, BrainOrchestrator
 from jarvis.core.calendar_service import CalendarService
+from jarvis.core.conversation_event_emitter import ConversationEventEmitter
+from jarvis.core.conversation_event_query import ConversationEventQueryService
 from jarvis.core.drive_service import DriveService
 from jarvis.core.scene_projector import SceneProjector
 from jarvis.core.scene_service import SceneService
@@ -47,6 +50,16 @@ class JarvisCoreApplication:
         self.health = CoreHealth()
         self.state = SQLiteStateRepository(root / "state" / "jarvis.sqlite3")
         self.history = JsonlHistoryStore(root / "history")
+        # Conversation Event log (handoff conversation-observability, Slice 02):
+        # same state DB, connection and lifecycle as `self.state` (schema v2).
+        # Core owns it. Slice 03a: Core producers (voice admission, brain,
+        # outcomes) enqueue through one bounded non-blocking emitter, and
+        # `POST /v1/conversation-events` appends batches from other processes.
+        self.conversation_events = SQLiteConversationEventStore(self.state, diagnostics=diagnostics)
+        self.conversation_event_emitter = ConversationEventEmitter(self.conversation_events, diagnostics=diagnostics)
+        # Slice 04: read side for the authenticated `GET /v1/conversation-events...` routes.
+        self.conversation_event_queries = ConversationEventQueryService(self.conversation_events,
+                                                                        diagnostics=diagnostics)
         self.events = CoreEventBus(diagnostics=diagnostics)
         self.conversations = ConversationService(self.state, self.history)
         self.voice_ledger = VoiceLedgerService(self.conversations, diagnostics=diagnostics)
@@ -124,6 +137,7 @@ class JarvisCoreApplication:
             turn_budget_s=brain_turn_budget_s,
             work_context=self.brain_context,
             voice_ledger=self.voice_ledger,
+            conversation_events=self.conversation_event_emitter,
         )
         self.outcomes = self.brain.outcomes
         self.voice_admission = self.brain.admission
@@ -145,8 +159,13 @@ class JarvisCoreApplication:
             return
         try:
             await self.state.initialize()
+            # Before any route or task can admit a turn: repair user events a
+            # crash lost between the durable turn and the emitter commit.
+            # Needs only `state` (same DB); never raises.
+            await self.voice_admission.backfill_user_turns_accepted(self.conversation_events)
             # Ne lève pas : un refus est journalisé et la scène reste
-            # indisponible pendant que le reste de Core démarre.
+            # indisponible pendant que le reste de Core démarre. Fichier
+            # distinct de `state` : indépendante du rattrapage ci-dessus.
             await self.scene.start()
             # Après la scène (même indisponible : la projection attend et le
             # journalise), avant `jobs.recover()` dont les interruptions
@@ -343,6 +362,11 @@ class JarvisCoreApplication:
             # projection (dernier écrivain runtime) s'arrête après les jobs,
             # pour que leurs fins atteignent la scène, et avant la fermeture.
             await self._stop_scene()
+        # Juste avant la fermeture de la base, après les arrêts qui peuvent
+        # rendre la main sur une persistance incertaine (la vidange ne doit pas
+        # allonger ce chemin-là) : vidange bornée, le reste est compté et tracé.
+        # Après la scène : fichier distinct, aucun des deux n'écrit dans l'autre.
+        await self.conversation_event_emitter.stop()
         await self.state.close()
         self.health.status = "stopped"
         self._stopped.set()

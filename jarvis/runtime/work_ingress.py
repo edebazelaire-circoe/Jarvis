@@ -33,8 +33,6 @@ from __future__ import annotations
 import asyncio
 from collections import OrderedDict
 from collections.abc import Callable
-from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 import uuid
 
@@ -49,9 +47,11 @@ from jarvis.domain.work_state import (
     WorkStatus,
     clip_text,
 )
-from jarvis.protocol.client import CoreProtocolError, LocalCoreClient
-from jarvis.runtime.agent_tasks import AgentTask, AgentTaskTracker, truncate
+from jarvis.protocol.client import CoreProtocolError
+from jarvis.runtime.agent_tasks import AgentTask, AgentTaskTracker
+from jarvis.runtime.core_forwarder import CoreBatchForwarder, CoreBatchRejected, CoreLoopbackTransport
 from jarvis.runtime.journal import RuntimeJournal
+from jarvis.runtime.subagent_conversation import utc_from_ms
 
 
 #: Fins d'une tâche Claude demandées par quelqu'un : conservées comme
@@ -66,8 +66,8 @@ MERGED = "merged"
 UNKNOWN_STATUS = "unknown_status"
 
 
-def _utc(ms: int) -> datetime:
-    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
+#: Horodatage UTC d'une milliseconde du tracker (helper partagé avec les spans de sous-agents).
+_utc = utc_from_ms
 
 
 def task_status(raw: str) -> tuple[WorkStatus, str | None]:
@@ -202,22 +202,17 @@ class TrackerWorkObserver:
         return self.sync(retired=retired)
 
 
-class WorkIngressRejected(RuntimeError):
+class WorkIngressRejected(CoreBatchRejected):
     """Core a refusé le lot (400) : le rejouer à l'identique ne servirait à rien."""
 
 
-class CoreWorkTransport:
+class CoreWorkTransport(CoreLoopbackTransport):
     """Accès à l'ingress Core par la boucle locale.
 
     Le jeton de session est relu à chaque (re)connexion : Core écrit un jeton
-    neuf à chaque démarrage, et peut démarrer après le Control Center.
+    neuf à chaque démarrage, et peut démarrer après le Control Center
+    (`CoreLoopbackTransport`).
     """
-
-    def __init__(self, *, host: str, port: int, token_file: Path) -> None:
-        self.host = host
-        self.port = port
-        self.token_file = Path(token_file)
-        self._client: LocalCoreClient | None = None
 
     async def post(self, batch: WorkObservationBatch) -> dict[str, Any]:
         client = self._connect()
@@ -258,29 +253,14 @@ class CoreWorkTransport:
         await self.close()
         return await self._connect().live_session_status()
 
-    def _connect(self) -> LocalCoreClient:
-        if self._client is None:
-            try:
-                token = self.token_file.read_text(encoding="utf-8").strip()
-            except OSError as exc:
-                raise ConnectionError("Core session token is unavailable; is `jarvis core` running?") from exc
-            if not token:
-                raise ConnectionError("Core session token is empty")
-            self._client = LocalCoreClient(host=self.host, port=self.port, token=token)
-        return self._client
 
-    async def close(self) -> None:
-        client, self._client = self._client, None
-        if client is not None:
-            await client.close()
-
-
-class WorkIngressForwarder:
+class WorkIngressForwarder(CoreBatchForwarder):
     """File bornée d'observations vers Core, vidée par lots depuis sa propre tâche.
 
     Son entrée, `offer`, est synchrone parce qu'elle est appelée sur le
     chemin de lecture du flux : ni attente, ni réseau, ni exception de
-    transport.
+    transport. La boucle d'envoi, le délai croissant et l'arrêt borné sont
+    ceux de `CoreBatchForwarder` (`jarvis/runtime/core_forwarder.py`).
 
     Coalescence : une observation remplace celle de la même tâche encore en
     attente — elle porte l'état complet —, sauf qu'une fin n'est jamais
@@ -290,6 +270,14 @@ class WorkIngressForwarder:
     façon : `rejected_total` le compte et le même renvoi complet est armé,
     sans quoi une tâche finie resterait « en cours » dans Core.
     """
+
+    TASK_NAME = "jarvis-work-ingress"
+    UNAVAILABLE_KIND = "work.ingress_unavailable"
+    UNAVAILABLE_MESSAGE = "Core injoignable : l'état des sous-tâches attend, l'agent continue."
+    RESTORED_KIND = "work.ingress_restored"
+    RESTORED_MESSAGE = "Core joint : l'état des sous-tâches lui parvient de nouveau."
+    REJECTED_KIND = "work.ingress_rejected"
+    REJECTED_MESSAGE = "Core a refusé un lot d'état des sous-tâches : lot abandonné."
 
     def __init__(
         self,
@@ -307,21 +295,20 @@ class WorkIngressForwarder:
     ) -> None:
         if max_pending < 1 or not 1 <= max_batch <= MAX_OBSERVATION_BATCH or resync_interval_s <= 0:
             raise ValueError("invalid work ingress bounds")
+        # Au repos, délai avant de renvoyer l'état complet (`idle_interval_s`).
+        # Les doublons sont sans effet dans Core (ni révision, ni événement) :
+        # c'est la sonde qui révèle un Core redémarré, au prix d'un lot borné
+        # par intervalle.
+        super().__init__(
+            transport=transport, journal=journal, flush_interval_s=flush_interval_s, retry_min_s=retry_min_s,
+            retry_max_s=retry_max_s, close_timeout_s=close_timeout_s, idle_interval_s=resync_interval_s,
+        )
         self.source = source
-        self.transport = transport
-        self.journal = journal
         #: Identité de cette instance du producteur : Core interrompt les
         #: travaux encore actifs d'une instance précédente.
         self.producer_id = uuid.uuid4().hex
         self.max_pending = max_pending
         self.max_batch = max_batch
-        self.flush_interval_s = flush_interval_s
-        self.retry_min_s = retry_min_s
-        self.retry_max_s = retry_max_s
-        self.close_timeout_s = close_timeout_s
-        #: Au repos, délai avant de renvoyer l'état complet. Les doublons sont
-        #: sans effet dans Core (ni révision, ni événement) : c'est la sonde
-        #: qui révèle un Core redémarré, au prix d'un lot borné par intervalle.
         self.resync_interval_s = resync_interval_s
         #: Appelé quand Core doit recevoir l'état complet (nouvelle instance de
         #: Core, observations perdues, repos prolongé) : branché sur
@@ -330,12 +317,8 @@ class WorkIngressForwarder:
         self.dropped_total = 0
         self.rejected_total = 0
         self._pending: OrderedDict[str, WorkObservation] = OrderedDict()
-        self._wake = asyncio.Event()
-        self._task: asyncio.Task[None] | None = None
         self._store_id: str | None = None
         self._lost = False
-        self._unavailable = False
-        self._rejected = False
         self._resync_failures: set[str] = set()
 
     @property
@@ -370,53 +353,10 @@ class WorkIngressForwarder:
 
     # ------------------------------------------------------------ cycle
 
-    def start(self) -> None:
-        if self._task is None:
-            self._task = asyncio.get_running_loop().create_task(self._run(), name="jarvis-work-ingress")
-
-    async def aclose(self) -> None:
-        """Arrêter l'envoi, après une dernière tentative bornée (fins d'agent)."""
-
-        task, self._task = self._task, None
-        if task is not None:
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
-        if self._pending:
-            try:
-                await asyncio.wait_for(self.flush(), timeout=self.close_timeout_s)
-            except Exception:  # noqa: BLE001 - délai compris : l'arrêt ne reste jamais bloqué
-                pass
-        try:
-            await self.transport.close()
-        except Exception:  # noqa: BLE001
-            pass
-
-    async def _run(self) -> None:
-        backoff = self.retry_min_s
-        while True:
-            try:
-                if not self._pending:
-                    self._wake.clear()
-                    try:
-                        await asyncio.wait_for(self._wake.wait(), timeout=self.resync_interval_s)
-                    except TimeoutError:
-                        # Rien n'a bougé : l'état complet sert de sonde. Un
-                        # tracker vide n'émet rien, et rien ne part.
-                        self._resync()
-                        if not self._pending:
-                            continue
-                # Regroupe une rafale d'événements en un lot, et borne le débit
-                # vers le bus Core à un envoi par intervalle.
-                await asyncio.sleep(self.flush_interval_s)
-                if await self.flush():
-                    backoff = self.retry_min_s
-                    continue
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:  # noqa: BLE001 - la tâche d'envoi ne meurt jamais
-                self._report_unavailable(exc)
-            await asyncio.sleep(backoff)
-            backoff = min(backoff * 2, self.retry_max_s)
+    def _on_idle(self) -> None:
+        # Rien n'a bougé : l'état complet sert de sonde. Un tracker vide
+        # n'émet rien, et rien ne part.
+        self._resync()
 
     async def flush(self) -> bool:
         """Envoyer tout ce qui attend ; faux si Core est injoignable (rien n'est perdu)."""
@@ -430,7 +370,7 @@ class WorkIngressForwarder:
             except asyncio.CancelledError:
                 self._requeue(batch)
                 raise
-            except WorkIngressRejected as exc:
+            except CoreBatchRejected as exc:
                 self.rejected_total += len(batch)
                 # Le lot est perdu pour Core : sans renvoi complet, une tâche
                 # finie y resterait « en cours » jusqu'au redémarrage.
@@ -449,11 +389,8 @@ class WorkIngressForwarder:
             self._put(observation, newest=False)
 
     def _acknowledge(self, response: Any) -> None:
-        if self._unavailable:
-            self._unavailable = False
-            self._report("work.ingress_restored", "Core joint : l'état des sous-tâches lui parvient de nouveau.", "info")
-        # Un lot accepté clôt la série de refus : la suivante sera consignée.
-        self._rejected = False
+        # Un lot accepté clôt la panne et la série de refus : la suivante sera consignée.
+        self._note_accepted()
         store_id = response.get("store_id") if isinstance(response, dict) else None
         if store_id == self._store_id and not self._lost:
             return
@@ -477,37 +414,5 @@ class WorkIngressForwarder:
 
     # --------------------------------------------------------- diagnostic
 
-    def _report_rejected(self, exc: Exception) -> None:
-        """Consigner un refus une fois par série : le journal écrit sur disque.
-
-        Un Core d'une autre version refuse chaque lot ; sans cette garde, la
-        boucle d'envoi écrirait deux lignes par seconde depuis la boucle
-        d'événements. Le compteur `rejected_total`, lui, compte tout.
-        """
-
-        if self._rejected:
-            return
-        self._rejected = True
-        self._report("work.ingress_rejected", "Core a refusé un lot d'état des sous-tâches : lot abandonné.", "error", exc)
-
-    def _report_unavailable(self, exc: Exception) -> None:
-        if self._unavailable:
-            return
-        self._unavailable = True
-        self._report(
-            "work.ingress_unavailable",
-            "Core injoignable : l'état des sous-tâches attend, l'agent continue.",
-            "warning",
-            exc,
-        )
-
-    def _report(self, kind: str, message: str, level: str, exc: Exception | None = None) -> None:
-        if self.journal is None:
-            return
-        data: dict[str, Any] = {"source": self.source, "pending": len(self._pending), "dropped_total": self.dropped_total}
-        if exc is not None:
-            data.update(exception_type=type(exc).__name__, error=truncate(str(exc), 200))
-        try:
-            self.journal.emit(kind, message, level=level, data=data)
-        except Exception:  # noqa: BLE001 - un journal indisponible n'arrête pas l'envoi
-            pass
+    def _report_data(self) -> dict[str, Any]:
+        return {"source": self.source, "pending": len(self._pending), "dropped_total": self.dropped_total}

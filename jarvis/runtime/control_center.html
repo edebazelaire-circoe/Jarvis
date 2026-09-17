@@ -227,9 +227,9 @@ pre.block{background:#050b10;border:1px solid rgba(113,144,160,.16);border-radiu
 
 /* ---------- Pastilles d'arrière-plan (interface principale) ----------
    Petits boutons ronds accolés au bouton Agents, hors de la barre d'outils :
-   une pastille par catégorie non vue. Dock de 4 outils (4×52 + 3×10 = 238 px,
+   une pastille par catégorie non vue. Dock de 5 outils (5×52 + 4×10 = 300 px,
    centré) : la colonne commence juste sous le bouton Agents. */
-.bgpills{position:absolute;z-index:40;right:30px;top:calc(50% + 131px);display:flex;flex-direction:column;gap:8px}
+.bgpills{position:absolute;z-index:40;right:30px;top:calc(50% + 162px);display:flex;flex-direction:column;gap:8px}
 .bgpill{--pill:var(--accent);position:relative;width:28px;height:28px;padding:0;border-radius:50%;display:grid;place-items:center;border:1px solid var(--pill);background:rgba(3,8,12,.86);color:var(--pill);font:700 11px ui-monospace,SFMono-Regular,Consolas,monospace;cursor:pointer;backdrop-filter:blur(12px);box-shadow:0 0 12px color-mix(in srgb,var(--pill) 35%,transparent);transition:transform .15s,background-color .15s}
 .bgpill.bad{--pill:var(--danger)}.bgpill.warn{--pill:var(--warn)}.bgpill.ok{--pill:var(--ok)}
 .bgpill:hover,.bgpill.active{transform:scale(1.12);background:color-mix(in srgb,var(--pill) 18%,#03080c)}
@@ -369,6 +369,200 @@ details.rd[open]>summary{margin-bottom:14px}
   .catalog-cell-compare{text-align:left}
   .voice-tabs{margin-left:-4px;margin-right:-4px;padding-left:4px;padding-right:4px}
 }
+/* ---------- Chronologie de conversation (plein écran) ----------
+   Quatre lanes sur un même axe vertical : Utilisateur (blanc), Jarvis · voix
+   (bleu clair), Brain (orange), Sous-agents (blocs rouges). La couleur double
+   toujours une étiquette, une icône ou un texte. Logique et rendu des entrées :
+   control_center_timeline.js. */
+.tl{--tl-user:#f4f7f9;--tl-mouth:#8fd0ff;--tl-brain:#ff9b45;--tl-sub:#ff5f5f;--tl-ruler:76px;--tl-lane:132px;
+  position:fixed;inset:0;z-index:55;display:grid;grid-template-rows:auto auto minmax(0,1fr);
+  background:rgba(2,6,10,.82);backdrop-filter:blur(16px) saturate(.85);-webkit-backdrop-filter:blur(16px) saturate(.85)}
+.tl .sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.tl-bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;padding:12px 18px;border-bottom:1px solid var(--line);background:rgba(4,9,13,.72)}
+.tl-title{display:flex;align-items:center;gap:9px;margin:0 6px 0 0;font-size:13px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;white-space:nowrap}
+.tl-title svg{width:17px;height:17px;color:var(--accent)}
+.tl-field{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--muted);letter-spacing:.04em}
+.tl-field select{max-width:300px;background:#071015;border:1px solid var(--line);color:var(--text);padding:6px 8px;border-radius:5px;font:inherit;font-size:12px}
+.tl-field select:focus-visible,.tl-seg input:focus-visible+span,.tl-x:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.tl-seg{display:flex;margin:0;padding:0;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.tl-seg legend{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
+.tl-seg label{position:relative;cursor:pointer}
+.tl-seg input{position:absolute;opacity:0;inset:0;margin:0;cursor:pointer}
+.tl-seg span{display:block;padding:6px 11px;font-size:12px;color:var(--muted)}
+.tl-seg label+label span{border-left:1px solid var(--line)}
+.tl-seg input:checked+span{color:var(--accent);background:rgba(110,231,255,.08)}
+.tl-status{display:flex;align-items:center;gap:8px;flex:1 1 220px;min-width:0;font-size:12px}
+.tl-status strong{font-weight:700;white-space:nowrap}
+.tl-status span:last-child{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+.tl-led{flex:none;width:9px;height:9px;border-radius:50%;background:var(--muted)}
+.tl-status[data-tone=live] .tl-led{background:var(--ok);animation:breathe 1.6s ease-in-out infinite}
+.tl-status[data-tone=live] strong{color:var(--ok)}
+.tl-status[data-tone=busy] .tl-led{background:var(--accent);animation:breathe .9s ease-in-out infinite}
+.tl-status[data-tone=warn] .tl-led{background:var(--warn);animation:pulse 1.2s ease-in-out infinite}
+.tl-status[data-tone=warn] strong{color:var(--warn)}
+.tl-status[data-tone=bad] .tl-led{background:var(--danger)}
+.tl-status[data-tone=bad] strong{color:var(--danger)}
+/* Recherche, transcription, export (Slice 06) : boutons de la barre, panneaux dans le tiroir. */
+.tl-acts{display:flex;gap:6px}
+.tl-act{display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:5px 10px;border:1px solid var(--line);border-radius:6px;background:#071015;color:var(--text);font:inherit;font-size:12px;cursor:pointer;white-space:nowrap}
+.tl-act svg{width:15px;height:15px;flex:none;color:var(--accent)}
+.tl-act:hover,.tl-act[aria-expanded=true]{border-color:var(--accent)}
+.tl-act[aria-expanded=true]{background:rgba(110,231,255,.08)}
+.tl-act:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.tl-sform{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.tl-sfield{flex:1 1 220px;min-width:0}
+.tl-sfield input{box-sizing:border-box;width:100%;background:#071015;border:1px solid var(--line);color:var(--text);padding:7px 9px;border-radius:5px;font:inherit;font-size:13px}
+.tl-sfield input:focus-visible,.tl-check input:focus-visible,.tl-hit:focus-visible,.tl-tx:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.tl-check{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.tl-pstate{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:12px 0 0;font-size:12px;line-height:1.5;font-variant-numeric:tabular-nums}
+.tl-pstate>span{flex:1 1 200px;min-width:0;overflow-wrap:anywhere}
+.tl-pstate[data-tone=bad] strong{color:var(--danger)}.tl-pstate[data-tone=ok] strong{color:var(--ok)}.tl-pstate[data-tone=muted] strong{font-weight:normal;color:var(--muted)}
+.tl-hits{list-style:none;margin:10px 0 0;padding:0;display:grid;gap:6px}
+.tl-hit{display:grid;gap:3px;width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid rgba(113,144,160,.22);border-radius:6px;background:#050b10;color:var(--text);font:inherit;text-align:left;cursor:pointer}
+.tl-hit:hover{border-color:var(--accent)}
+.tl-hmeta{font-size:10.5px;color:var(--muted);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.tl-hwho{color:var(--text)}.tl-hconv{color:var(--warn)}
+.tl-hsnip{font-size:12.5px;line-height:1.5;white-space:normal;overflow-wrap:anywhere}
+.tl-hsnip mark{background:rgba(110,231,255,.22);color:#fff;border-radius:2px;padding:0 1px}
+.tl-hfield{font-size:10.5px;color:#7d97a4}
+.tl-prow{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.tl-pconv code{word-break:break-all}
+.tl-tx{margin:12px 0 0;padding:10px 12px;border:1px solid rgba(113,144,160,.2);border-radius:6px;background:#050b10;font-size:12px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere}
+.tl-e.is-found{box-shadow:0 0 0 2px var(--accent),0 0 0 5px rgba(110,231,255,.25)}
+.tl-bar{position:relative;padding-right:60px}
+.tl-bar>.tl-x{position:absolute;top:4px;right:8px}
+.tl-x{min-width:44px;min-height:44px;background:none;border:1px solid transparent;border-radius:6px;color:var(--muted);font-size:22px;line-height:1;padding:0;cursor:pointer}
+.tl-x:hover{color:var(--text);border-color:var(--line)}
+.tl-notice{grid-row:2;margin:0;padding:8px 18px;font-size:12px;color:#e4d3b8;background:rgba(255,184,92,.07);border-bottom:1px solid rgba(255,184,92,.25)}
+.tl-main{grid-row:3;position:relative;display:grid;grid-template-columns:minmax(0,1fr);min-height:0}
+.tl-scroll{position:relative;overflow:auto;min-height:0;scrollbar-color:#23404f transparent;outline:none}
+.tl-scroll:focus-visible{box-shadow:inset 0 0 0 2px var(--accent)}
+/* Colonnes par défaut ; la page impose ensuite les largeurs pondérées calculées par `layout`. */
+.tl-heads,.tl-canvas{display:grid;grid-template-columns:var(--tl-ruler) repeat(4,minmax(var(--tl-lane),1fr))}
+.tl-heads{position:sticky;top:0;z-index:8;background:rgba(3,8,12,.94);border-bottom:1px solid var(--line)}
+.tl-hcell{--c:var(--muted);display:flex;align-items:center;gap:7px;min-width:0;padding:10px 10px 9px;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--text);box-shadow:inset 0 -2px 0 var(--c)}
+.tl-hcell svg{width:15px;height:15px;flex:none;color:var(--c)}
+.tl-hcell>span:first-of-type{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tl-hruler{position:sticky;left:0;z-index:2;background:rgba(3,8,12,.98);color:var(--muted);box-shadow:none;font-weight:normal}
+.tl-count{margin-left:auto;padding:0 6px;border:1px solid var(--line);border-radius:9px;font-size:10px;font-weight:normal;letter-spacing:.02em;color:var(--muted);font-variant-numeric:tabular-nums}
+.tl [data-lane=user]{--c:var(--tl-user)}.tl [data-lane=mouth]{--c:var(--tl-mouth)}.tl [data-lane=brain]{--c:var(--tl-brain)}.tl [data-lane=subagent]{--c:var(--tl-sub)}
+.tl-canvas{position:relative}
+.tl-ruler{position:sticky;left:0;z-index:6;background:rgba(3,8,12,.9);border-right:1px solid var(--line)}
+.tl-lane{position:relative;border-left:1px solid rgba(113,144,160,.1)}
+.tl-lane[data-lane=subagent]{background:rgba(255,95,95,.018)}
+.tl-lempty{position:sticky;top:52px;margin:10px;font-size:11px;line-height:1.5;color:var(--muted)}
+.tl-grid,.tl-items,.tl-breaks{position:absolute;inset:0;pointer-events:none}
+.tl-items{pointer-events:auto;z-index:2}
+.tl-breaks{z-index:4}
+.tl-tick{position:absolute;right:8px;transform:translateY(-50%);font-size:10px;color:#58727f;font-variant-numeric:tabular-nums;white-space:nowrap}
+.tl-tick.major{color:#a9c5d2}
+.tl-gl{position:absolute;left:var(--tl-ruler);right:0;height:1px;background:rgba(143,208,255,.05)}
+.tl-gl.major{background:rgba(143,208,255,.12)}
+.tl-break{position:absolute;left:var(--tl-ruler);right:0;display:flex;align-items:center;justify-content:center;border-top:1px dashed #23404f;border-bottom:1px dashed #23404f;
+  background:repeating-linear-gradient(-45deg,rgba(3,7,11,.94) 0 7px,rgba(9,17,24,.94) 7px 14px)}
+.tl-break span{padding:2px 9px;border-radius:9px;background:#050b10;font-size:10.5px;color:var(--muted);letter-spacing:.04em}
+.tl-empty{position:absolute;left:50%;top:90px;z-index:7;transform:translateX(-50%);width:min(520px,calc(100% - 32px));display:grid;gap:8px;justify-items:center;padding:22px 24px;text-align:center;
+  background:rgba(5,11,16,.92);border:1px dashed var(--line);border-radius:10px;line-height:1.55}
+.tl-empty strong{font-size:14px;color:var(--text)}.tl-empty span{font-size:12px;color:var(--muted)}
+.tl-empty[data-tone=bad]{border-color:rgba(255,101,119,.5)}.tl-empty[data-tone=bad] strong{color:var(--danger)}
+.tl-empty[data-tone=warn]{border-color:rgba(255,184,92,.5)}.tl-empty[data-tone=warn] strong{color:var(--warn)}
+/* Entrées (control_center_timeline.js, entryKind) :
+   card    texte public jamais coupé : la carte grandit, barre de 3 px = durée exacte ;
+   failure carte rouge, libellé toujours visible ;
+   dot     repère diagnostique sur le rail gauche, libellé au survol ou au focus ;
+   bar     travail du Brain / outil, barre étroite sur le rail droit ;
+   block   sous-agent, bloc rouge de durée exacte, texte à l'intérieur.
+   Les hauteurs d'une carte suivent GEOMETRY : 1 + 5 + 14 + 2 + n×16 + 6 + 1. */
+.tl-e{--c:var(--tl-brain);position:absolute;display:block;box-sizing:border-box;margin:0;padding:0;border:0;background:none;color:var(--text);font:inherit;text-align:left;cursor:pointer}
+.tl-e.tl-user{--c:var(--tl-user);cursor:default}.tl-e.tl-mouth{--c:var(--tl-mouth)}.tl-e.tl-subagent{--c:var(--tl-sub)}
+.tl-e:focus-visible{outline:2px solid var(--accent);outline-offset:2px;z-index:6}
+.tl-measure{position:absolute;visibility:hidden;white-space:pre;font-size:12.5px;line-height:16px}
+.tl-card,.tl-failure{display:flex;flex-direction:column;justify-content:flex-start;padding:5px 8px 6px 12px;border-radius:6px;border:1px solid color-mix(in srgb,var(--c) 38%,transparent);background:color-mix(in srgb,var(--c) 9%,#060c12);transition:border-color .15s}
+.tl-user.tl-card{background:rgba(244,247,249,.07);border-color:rgba(244,247,249,.34)}
+.tl-e:not(.tl-user):hover{border-color:var(--c)}
+.tl-h{display:flex;flex-wrap:wrap;align-items:center;gap:0 6px;margin-bottom:2px;font-size:10.5px;line-height:14px;color:color-mix(in srgb,var(--c) 72%,#9fb6c2);font-variant-numeric:tabular-nums}
+.tl-dl{color:var(--text)}
+.tl-st{padding:0 4px;border:1px solid currentColor;border-radius:3px;font-size:9px;line-height:12px;letter-spacing:.07em;text-transform:uppercase}
+.tl-e.is-warn .tl-st{color:var(--warn)}.tl-e.is-bad .tl-st{color:var(--danger)}.tl-e.is-live .tl-st{color:var(--accent)}
+.tl-t{display:block;font-size:12.5px;line-height:16px;color:#e3eef3;white-space:pre-wrap;overflow-wrap:anywhere}
+.tl-user .tl-t{color:#fff}
+.tl-e.is-diag .tl-t{color:#c8d8e0}
+.tl-e.is-unheard .tl-t{color:#aebfc8;font-style:italic}
+/* Durée exacte d'une parole : barre de 3 px depuis le début ; ambre en bout quand la parole est coupée. */
+.tl-durbar{position:absolute;left:3px;top:0;width:3px;border-radius:2px;background:var(--c);z-index:1}
+.tl-e.st-interrupted .tl-durbar{background:linear-gradient(var(--c),var(--c)) top/100% calc(100% - 5px) no-repeat,var(--warn)}
+.tl-e.st-open .tl-durbar{background:linear-gradient(var(--c) 70%,transparent)}
+.tl-failure{--c:var(--danger);border-color:rgba(255,101,119,.65);background:rgba(255,101,119,.08)}
+.tl-failure .tl-h,.tl-failure .tl-t{color:#ffc7ce}
+.tl-ico{width:12px;height:12px;flex:none;color:var(--danger)}
+/* Repères : un point sur le rail, le libellé apparaît au survol et au focus clavier. */
+.tl-dot{border-radius:50%}
+.tl-d{position:absolute;left:4px;top:4px;width:10px;height:10px;box-sizing:border-box;border-radius:50%;border:1.5px solid var(--c);background:#050b10}
+.tl-dot.dot-diamond .tl-d{border-radius:2px;transform:scale(.85) rotate(45deg)}
+/* Position fixe (le conteneur .tl, flouté, est le bloc de référence) : placée par placeTips() dans la zone visible. */
+.tl-tip{display:none;position:fixed;left:-9999px;top:0;z-index:30;box-sizing:border-box;width:max-content;max-width:min(28rem,calc(100vw - 32px));padding:4px 9px;border-radius:8px;border:1px solid var(--c);background:#050b10;font-size:11px;line-height:15px;color:var(--text);white-space:normal;overflow-wrap:anywhere;overflow:hidden;box-shadow:0 6px 18px rgba(0,0,0,.5);pointer-events:none}
+.tl-dot:hover,.tl-dot:focus-visible{z-index:20}
+.tl-dot:hover .tl-tip,.tl-dot:focus-visible .tl-tip,.tl-dot.is-selected .tl-tip{display:block}
+/* Travaux et outils : barre étroite, libellé vertical quand elle est assez haute. */
+.tl-railbar{border-radius:3px;border:1px solid var(--c);background:color-mix(in srgb,var(--c) 22%,transparent);overflow:hidden}
+.tl-railbar.tl-tool{border-style:dashed;background:color-mix(in srgb,var(--c) 10%,transparent)}
+.tl-railbar.is-bad{border-color:var(--danger);background:repeating-linear-gradient(135deg,rgba(255,101,119,.32) 0 5px,transparent 5px 10px)}
+.tl-railbar.st-open{border-bottom-style:dashed;-webkit-mask:linear-gradient(#000 calc(100% - 18px),rgba(0,0,0,.35));mask:linear-gradient(#000 calc(100% - 18px),rgba(0,0,0,.35))}
+.tl-vl{position:absolute;top:4px;bottom:4px;left:0;width:12px;writing-mode:vertical-rl;font-size:10.5px;line-height:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:color-mix(in srgb,var(--c) 82%,#fff)}
+/* Sous-agents : bloc de durée exacte, nom, description et heure à l'intérieur. */
+.tl-block{display:flex;flex-direction:column;justify-content:flex-start;padding:6px 8px 6px 10px;border-radius:6px;overflow:hidden}
+.tl-fill{position:absolute;left:0;right:0;top:0;box-sizing:border-box;border-radius:6px;border:1px solid var(--tl-sub);background:color-mix(in srgb,var(--tl-sub) 24%,transparent)}
+.tl-block.is-short{border:1px dashed color-mix(in srgb,var(--tl-sub) 55%,transparent)}
+.tl-block.is-bad .tl-fill{background:repeating-linear-gradient(135deg,rgba(255,101,119,.24) 0 6px,transparent 6px 12px),color-mix(in srgb,var(--tl-sub) 12%,transparent);border-color:var(--danger)}
+.tl-block.st-open .tl-fill{border-bottom:0;-webkit-mask:linear-gradient(#000 calc(100% - 26px),transparent);mask:linear-gradient(#000 calc(100% - 26px),transparent)}
+.tl-bn,.tl-bd{position:relative;display:-webkit-box;-webkit-box-orient:vertical;overflow:hidden;font-size:12.5px;line-height:16px;overflow-wrap:anywhere}
+.tl-bn{font-weight:700;color:#fff}.tl-bd{color:#f3d2d2}
+.tl-bm{position:relative;display:flex;flex-wrap:wrap;gap:0 5px;align-items:center;font-size:10.5px;line-height:16px;color:#ffb3b3;font-variant-numeric:tabular-nums;white-space:nowrap}
+.tl-e.is-selected{box-shadow:0 0 0 2px var(--c),0 6px 22px rgba(0,0,0,.45)}
+.tl-new{position:absolute;left:50%;bottom:16px;z-index:9;margin:0;transform:translateX(-50%)}
+.tl-drawer{display:flex;flex-direction:column;min-height:0;background:var(--solid);border-left:1px solid var(--line)}
+.tl-drawer[data-lane=user]{box-shadow:inset 0 2px 0 var(--tl-user)}.tl-drawer[data-lane=mouth]{box-shadow:inset 0 2px 0 var(--tl-mouth)}
+.tl-drawer[data-lane=brain]{box-shadow:inset 0 2px 0 var(--tl-brain)}.tl-drawer[data-lane=subagent]{box-shadow:inset 0 2px 0 var(--tl-sub)}
+.tl-drawer>header{display:flex;align-items:center;gap:10px;padding:12px 14px 11px 16px;border-bottom:1px solid var(--line)}
+.tl-drawer h3{flex:1 1 auto;min-width:0;margin:0;font-size:12px;line-height:16px;letter-spacing:.1em;text-transform:uppercase;overflow:hidden;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2}
+.tl-drawer .tl-x{margin-left:0}
+.tl-dbody{padding:14px 16px 28px;overflow:auto;min-height:0}
+.tl-dhead{display:flex;flex-wrap:wrap;gap:6px}
+.tl-dtext{margin:12px 0 0;font-size:13px;line-height:1.55;white-space:pre-wrap;word-break:break-word}
+.tl-dbody .notice{margin:12px 0 0}
+.tl-dbody code{font-size:11px;color:#a9c5d2;word-break:break-all}
+.tl-links{display:flex;flex-wrap:wrap;gap:6px}
+.tl-list{margin:0;padding-left:18px;font-size:12px;line-height:1.6}
+.tl-trace{margin-top:10px;padding-top:9px;border-top:1px dashed rgba(113,144,160,.2)}
+.tl-trace p{margin:0 0 6px}
+.tl-trace-head{display:grid;gap:3px;font-size:12px}
+.tl-trace-head[data-tone=ok] strong{color:var(--ok)}.tl-trace-head[data-tone=bad] strong{color:var(--danger)}
+.tl-trace-line{margin:8px 0;padding:8px 10px;border:1px solid rgba(113,144,160,.16);border-radius:6px;background:#050b10;font-size:12px}
+.tl-trace-line .kv{margin-top:6px}
+.tl-loading{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+@media(min-width:1100px){.tl.has-drawer .tl-main{grid-template-columns:minmax(0,1fr) min(440px,36vw)}}
+@media(max-width:1099px){.tl-drawer{position:absolute;top:0;right:0;bottom:0;z-index:12;width:min(440px,100%);box-shadow:-18px 0 50px rgba(0,0,0,.6)}}
+@media(max-width:700px){
+  /* Écran étroit : barre d'outils compacte (titre en icône, libellés des champs
+     lus par les lecteurs d'écran seulement), fermeture de 44 px. */
+  .tl{--tl-ruler:54px}
+  .tl-bar{gap:6px 8px;padding:6px 54px 6px 10px}
+  .tl-bar>.tl-x{top:2px;right:4px}
+  .tl-title{margin:0}
+  .tl-tt,.tl-field>span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
+  .tl-field:first-of-type{flex:1 1 120px;min-width:0}
+  .tl-field:first-of-type select{width:100%;max-width:none}
+  #tlSessionWrap select{max-width:110px}
+  /* Boutons en icônes sur la ligne de la conversation (titre, liste, actions) : pas de ligne de plus. */
+  .tl-title{order:-3}.tl-field:first-of-type{order:-2}.tl-acts{order:-1;gap:4px}
+  .tl-act{min-width:36px;min-height:36px;justify-content:center;padding:4px}
+  .tl-al{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
+  .tl-seg span{padding:5px 9px}
+  .tl-status{flex-basis:100%;order:10;font-size:11px}
+  .tl-hcell{padding:8px 6px;letter-spacing:.06em;font-size:10px}
+  .tl-tick{right:4px;font-size:9.5px}
+}
+@media(prefers-reduced-motion:reduce){.tl-status .tl-led{animation:none}.tl-card,.tl-failure{transition:none}}
 </style>
 </head>
 <body>
@@ -384,6 +578,7 @@ details.rd[open]>summary{margin-bottom:14px}
   <nav class="dock" aria-label="Jarvis tools">
     <div class="tool"><button data-panel="errors" title="Errors">ERR</button><span class="badge" id="errorBadge">0</span></div>
     <div class="tool"><button data-panel="trace" title="Trace">TRC</button></div>
+    <div class="tool"><button id="openTimeline" title="Conversation · chronologie en direct" aria-label="Conversation · chronologie en direct" aria-haspopup="dialog" aria-expanded="false" aria-controls="timeline">CNV</button></div>
     <div class="tool"><button id="openSettings" title="Réglages">SET</button></div>
     <div class="tool"><button data-panel="agents" id="agentsButton" title="Agents">AGT</button><span class="badge count" id="agentBadge">0</span></div>
   </nav>
@@ -394,6 +589,49 @@ details.rd[open]>summary{margin-bottom:14px}
 <div class="cdialog-back" id="confirmBack" hidden><div class="cdialog" id="confirmDialog" tabindex="-1" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmBody"><h2 id="confirmTitle"></h2><ul id="confirmBody"></ul><div class="crow"><button type="button" id="confirmCancel">Annuler</button><button type="button" class="go" id="confirmGo">Confirmer</button></div></div></div>
 <div class="toasts" id="toasts" aria-live="polite"></div>
 <div class="bgpop" id="bgPop" role="dialog" aria-label="Notifications d’arrière-plan" hidden></div>
+<section class="tl" id="timeline" role="dialog" aria-modal="true" aria-labelledby="tlTitle" aria-describedby="tlHelp" hidden>
+  <header class="tl-bar">
+    <h2 class="tl-title" id="tlTitle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 4v16M10 4v7M10 15v5M16 4v3M16 11v9M20 4v16"/></svg><span class="tl-tt">Conversation</span></h2>
+    <label class="tl-field"><span>Conversation</span><select id="tlConversation"></select></label>
+    <label class="tl-field" id="tlSessionWrap" hidden><span>Session</span><select id="tlSession"></select></label>
+    <fieldset class="tl-seg"><legend>Événements affichés</legend><label><input type="radio" name="tlFilter" value="all" checked><span>Tout</span></label><label><input type="radio" name="tlFilter" value="public"><span>Public</span></label></fieldset>
+    <label class="tl-field"><span>Échelle</span><select id="tlZoom"><option value="20">20 px/s</option><option value="40">40 px/s</option><option value="60" selected>60 px/s</option><option value="100">100 px/s</option><option value="160">160 px/s</option></select></label>
+    <div class="tl-acts" role="group" aria-label="Recherche, transcription et export"><button type="button" class="tl-act" id="tlSearchOpen" aria-controls="tlDrawer" aria-expanded="false" title="Rechercher dans les conversations"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5.5 5.5"/></svg><span class="tl-al">Rechercher</span></button><button type="button" class="tl-act" id="tlTranscriptOpen" aria-controls="tlDrawer" aria-expanded="false" title="Transcription lisible (rendue par Core)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h9l4 4v14H6Z"/><path d="M14 3v5h5M9 12h7M9 16h7"/></svg><span class="tl-al">Transcription</span></button><button type="button" class="tl-act" id="tlExportOpen" aria-controls="tlDrawer" aria-expanded="false" title="Exporter les événements canoniques (JSONL)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19h14"/></svg><span class="tl-al">Exporter JSONL</span></button></div>
+    <div class="tl-status" id="tlStatus" role="status" data-tone="muted"><span class="tl-led" aria-hidden="true"></span><strong id="tlStatusLabel">En attente</strong><span id="tlStatusDetail"></span></div>
+    <button type="button" class="action small" id="tlRetry" hidden>Réessayer maintenant</button>
+    <button type="button" class="tl-x" id="tlClose" aria-label="Fermer la chronologie (Échap)">×</button>
+  </header>
+  <p class="tl-notice" id="tlNotice" role="note" hidden></p>
+  <div class="tl-main" id="tlMain">
+    <div class="tl-scroll" id="tlScroll" role="region" tabindex="0" aria-label="Chronologie : quatre lanes sur un même axe de temps">
+      <div class="tl-heads" id="tlHeads">
+        <div class="tl-hcell tl-hruler">Heure</div>
+        <div class="tl-hcell" data-lane="user"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"/><path d="M4.5 20.5a7.5 7.5 0 0 1 15 0"/></svg><span>Utilisateur</span><span class="tl-count" data-count="user">0</span></div>
+        <div class="tl-hcell" data-lane="mouth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2"/></svg><span>Jarvis · voix</span><span class="tl-count" data-count="mouth">0</span></div>
+        <div class="tl-hcell" data-lane="brain"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M9 4.5a3 3 0 0 0-3 3 3 3 0 0 0-2 5.2A3 3 0 0 0 7 17.5a3 3 0 0 0 5 1.8V6a3 3 0 0 0-3-1.5Z"/><path d="M15 4.5a3 3 0 0 1 3 3 3 3 0 0 1 2 5.2 3 3 0 0 1-3 4.8 3 3 0 0 1-5 1.8"/></svg><span>Brain</span><span class="tl-count" data-count="brain">0</span></div>
+        <div class="tl-hcell" data-lane="subagent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="6" cy="6" r="2.2"/><circle cx="18" cy="12" r="2.2"/><circle cx="6" cy="18" r="2.2"/><path d="M8.2 6.6 15.8 11M8.2 17.4l7.6-4.4"/></svg><span>Sous-agents</span><span class="tl-count" data-count="subagent">0</span></div>
+      </div>
+      <div class="tl-canvas" id="tlCanvas">
+        <div class="tl-ruler" id="tlRuler" aria-hidden="true"></div>
+        <div class="tl-lane" data-lane="user"><p class="tl-lempty" data-empty="user" hidden>Aucune parole utilisateur admise.</p></div>
+        <div class="tl-lane" data-lane="mouth"><p class="tl-lempty" data-empty="mouth" hidden>Aucune parole de Jarvis enregistrée. Architectures directes (simple, front_brain, duplex) : pas encore de lane voix.</p></div>
+        <div class="tl-lane" data-lane="brain"><p class="tl-lempty" data-empty="brain" hidden>Aucune activité du Brain.</p></div>
+        <div class="tl-lane" data-lane="subagent"><p class="tl-lempty" data-empty="subagent" hidden>Aucun sous-agent attribué à cette conversation (ceux lancés depuis le panneau ou un tour spontané ne sont pas enregistrés).</p></div>
+        <div class="tl-grid" id="tlGrid" aria-hidden="true"></div>
+        <div class="tl-items" id="tlItems"></div>
+        <div class="tl-breaks" id="tlBreaks" aria-hidden="true"></div>
+        <div class="tl-empty" id="tlEmpty" role="status" hidden></div>
+      </div>
+    </div>
+    <button type="button" class="newpill tl-new" id="tlNew" hidden></button>
+    <aside class="tl-drawer" id="tlDrawer" aria-labelledby="tlDrawerTitle" hidden>
+      <header><h3 id="tlDrawerTitle">Détail</h3><button type="button" class="tl-x" id="tlDrawerClose" aria-label="Fermer le détail (Échap)">×</button></header>
+      <div class="tl-dbody" id="tlDrawerBody"></div>
+    </aside>
+  </div>
+  <p class="sr" id="tlHelp">Flèches haut et bas : entrée précédente ou suivante dans le temps. Flèches gauche et droite : lane voisine. Début et Fin : première et dernière entrée. Entrée : détail et trace. Échap : fermer le détail, puis la vue.</p>
+  <div class="sr" id="tlAnnounce" aria-live="polite"></div>
+</section>
 
 <div class="overlay" id="overlay">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
@@ -656,6 +894,8 @@ const STATUS={
 /* Barehands en mode test (pointeur à mains nues) : `control_center_barehands.js`. */
 /*__CONTROL_CENTER_BAREHANDS_JS__*/
 /*__CONTROL_CENTER_SCENE_PAGE_JS__*/
+/* Chronologie de conversation plein écran (Slice 05) : `control_center_timeline.js`. */
+/*__CONTROL_CENTER_TIMELINE_JS__*/
 // `error_class` normalisées par Core ou ses observateurs ; les autres restent brutes.
 const ERROR_CLASSES={process_stopped:'processus arrêté',producer_restarted:'Control Center redémarré',
   core_restarted:'Core redémarré',merged:'doublon fusionné',unknown_status:'statut inconnu',killed:'tué',stopped:'arrêté',cancelled:'annulé'};
@@ -2963,6 +3203,9 @@ function typingInField(target){
 }
 window.addEventListener('keydown',event=>{
   if(SET.capture||typingInField(event.target))return;
+  // Chronologie plein écran ouverte : aucun raccourci de la page ne la traverse (Échap y est géré).
+  const timeline=document.getElementById('timeline');
+  if(timeline&&!timeline.hidden)return;
   const values=(SET.shortcuts&&SET.shortcuts.values)||{};
   const signature=currentSignature(event);
   const match=Object.entries(values).find(([id,value])=>id.startsWith('ui_')&&value===signature);

@@ -395,7 +395,13 @@ class VoiceConversationState:
         pinned = {t.source_turn_id for t in values["tasks"]}
         pinned.update(s.correlation.turn_id for s in values["speeches"] if s.active)
         pinned.add(values.get("active_turn_id", self.snapshot.active_turn_id))
-        trim("users", self._limits["users"], lambda u: u.correlation.turn_id not in pinned and (u.committed or u.correlation.session_id != self.snapshot.current_session_id))
+        pinned.discard(None)  # No turn identity pins nothing; GPT-Live never assigns one.
+        newest_user = values["users"][-1] if values["users"] else None
+        # An uncommitted record superseded by a later one in the same session is an
+        # abandoned provisional epoch: GPT-Live never commits, and trimming only
+        # ever drops the oldest removable record once the bound is exceeded.
+        trim("users", self._limits["users"], lambda u: u.correlation.turn_id not in pinned and (
+            u.committed or u.correlation.session_id != self.snapshot.current_session_id or u is not newest_user))
         pinned.update(u.correlation.turn_id for u in values["users"])
         trim("turns", MAX_TURNS, lambda t: t.turn_id not in pinned)
 

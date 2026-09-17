@@ -12,6 +12,7 @@ from collections.abc import Awaitable, Callable
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
+from jarvis.core.conversation_event_emitter import journal_ref, journal_trace, safe_error_class
 from jarvis.core.latency import (
     BRAIN_TURN_ACCEPTED as LATENCY_BRAIN_TURN_ACCEPTED,
     LOCAL_OUTPUT_STOPPED as LATENCY_LOCAL_OUTPUT_STOPPED,
@@ -19,13 +20,15 @@ from jarvis.core.latency import (
     LatencyTracker,
 )
 from jarvis.domain.speaker import OwnerState, OwnerStateSnapshot, VerifierAvailability
-from jarvis.domain.v2 import AddressingDecision, PlaybackCursor, ProtocolEnvelope, SpeechProvenance, new_id
+from jarvis.domain.v2 import AddressingDecision, PlaybackCursor, ProtocolEnvelope, SpeechProvenance, new_id, utc_now
 from jarvis.domain.voice_playback import (
     VoiceAudioPart, VoiceAudioPartExtent, VoiceDevicePlaybackProof,
     VoiceDevicePlaybackStatus, VoicePlaybackManifest,
 )
-from jarvis.ports.v2 import RealtimeSession, supports_output_control
+from jarvis.domain.conversation_events import ConversationEventType
+from jarvis.ports.v2 import ConversationEventRecorder, RealtimeSession, supports_output_control
 from jarvis.protocol.client import CoreProtocolError, LocalCoreClient
+from jarvis.runtime.conversation_event_forwarder import PRODUCER_REALTIME_AUDIO, optional_id
 from jarvis.runtime.journal import RuntimeJournal
 from jarvis.runtime.output_admission import OutputAdmission, OutputAdmissionState
 from jarvis.runtime.turn_filters import EchoGuard, looks_like_request, mentions_jarvis, noise_reason, words
@@ -109,7 +112,11 @@ BENIGN_PROVIDER_ERRORS = frozenset({"response_cancel_not_active"})
 
 # Erreurs qui perdent une phrase sans condamner la session : une réponse
 # demandée pendant qu'une autre génère encore est refusée, la suivante passera.
-RECOVERABLE_PROVIDER_ERRORS = frozenset({"conversation_already_has_active_response"})
+# `invalid_tool_call_id` (13/09) : le fournisseur refuse le résultat d'un outil,
+# typiquement l'accusé de délégation envoyé après l'acceptation durable du job
+# par Core. Le job continue et l'annonce passe par le scheduler ; seul cet
+# accusé est perdu, ce que `BackBrainDelegationController` tolère déjà.
+RECOVERABLE_PROVIDER_ERRORS = frozenset({"conversation_already_has_active_response", "invalid_tool_call_id"})
 
 # Évènements fournisseur rattachés à l'audio qui les précède : ils ne sont
 # traités qu'une fois cet audio réellement joué (voir `_consume`).
@@ -1071,7 +1078,11 @@ class SoundDeviceRealtimeAudio:
         try:
             stream.abort(ignore_errors=False) if abort else stream.stop(ignore_errors=False)
         except Exception as exc:
-            failure = exc
+            # Un barge-in (`_abort_output`) laisse la sortie arrêtée mais encore
+            # possédée : PortAudio refuse alors le second abort avec
+            # paStreamIsStopped. L'état visé est atteint, seul close() compte.
+            if not _is_stream_already_stopped(exc):
+                failure = exc
         try:
             stream.close(ignore_errors=False)
             self._released_stream_ids.add(id(stream))
@@ -1079,6 +1090,28 @@ class SoundDeviceRealtimeAudio:
             raise
         if failure is not None:
             raise failure
+
+
+<<<<<<< HEAD
+_PA_STREAM_IS_STOPPED = -9983
+
+
+def _is_stream_already_stopped(exc: BaseException) -> bool:
+    """`PortAudioError(msg, paStreamIsStopped)`, sans importer sounddevice."""
+    args = getattr(exc, "args", ())
+    return type(exc).__name__ == "PortAudioError" and len(args) > 1 and args[1] == _PA_STREAM_IS_STOPPED
+=======
+def _tool_status(result: object) -> str | None:
+    """Outcome token of a tool result for its Conversation Event; never the result itself."""
+    if not isinstance(result, dict):
+        return None
+    for key in ("status", "disposition"):
+        token = safe_error_class(result.get(key))
+        if token is not None:
+            return token
+    ok = result.get("ok")
+    return ("ok" if ok else "error") if isinstance(ok, bool) else None
+>>>>>>> origin/task/jarvis-conversation-observability-timeline
 
 
 class RealtimeConversationBridge:
@@ -1171,6 +1204,7 @@ class RealtimeConversationBridge:
         barge_in_authority: BargeInAuthority = BargeInAuthority.ACOUSTIC,
         owner_source: "OwnerStateSource | None" = None,
         on_authorization_refused: Callable[[str, str], object] | None = None,
+        conversation_events: ConversationEventRecorder | None = None,
     ) -> None:
         barge_in_authority = BargeInAuthority(barge_in_authority)
         if barge_in_authority is BargeInAuthority.OWNER and (owner_source is None or not continuous):
@@ -1181,6 +1215,9 @@ class RealtimeConversationBridge:
         self.session = session
         self.conversation_id = conversation_id
         self.audio = audio
+        # Conversation Events (Slice 03b) : spans d'outils et refus de tour,
+        # enregistrés sans attente ni exception (`ConversationEventForwarder`).
+        self.conversation_events = conversation_events
         self.on_addressed = on_addressed
         self.on_mute = on_mute
         self.on_ambient = on_ambient
@@ -1734,6 +1771,82 @@ class RealtimeConversationBridge:
         if self.journal is not None:
             self.journal.emit(kind, message, level=level, data=data)
 
+    # -- Conversation Events (Slice 03b) ---------------------------------------
+
+    def _tool_event(self, event_type: ConversationEventType, call_id: str, name: str, *, at,
+                    started_at=None, started: float | None = None, status: object = None,
+                    error_class: str | None = None, journal_kind: str | None = "") -> dict[str, object]:
+        """Record a tool span edge; journal `data` entry joining it. Never arguments nor results.
+
+        Tool journal lines carry only `{call_id, arguments|result}`: the event joins
+        them by `conversation_event_id` only (no join keys, contract rule).
+        """
+
+        recorder = self.conversation_events
+        span_id = optional_id(call_id)
+        if recorder is None or span_id is None:
+            return {}  # no call id: no stable identity, nothing recorded
+        try:
+            kind = ("tool.call" if event_type is ConversationEventType.TOOL_CALL_STARTED else "tool.result") \
+                if journal_kind == "" else journal_kind
+            attributes: dict[str, object] = {"tool_name": safe_error_class(name) or "unknown", "arguments_redacted": True}
+            for key, value in (("status", status), ("error_class", error_class)):
+                token = safe_error_class(value)
+                if token is not None:
+                    attributes[key] = token
+            fields: dict[str, object] = {"span_id": span_id, "attributes": attributes,
+                                         "session_id": optional_id(str(getattr(self.session, "session_id", "")) or None),
+                                         "trace_ref": journal_trace(kind) if kind else None}
+            if started_at is not None:
+                fields["started_at"] = started_at
+                if started is not None:
+                    attributes["duration_ms"] = max(0, round((time.monotonic() - started) * 1000))
+            event_id = recorder.record(event_type, producer=PRODUCER_REALTIME_AUDIO,
+                                       conversation_id=self.conversation_id, source_ids=(span_id,),
+                                       occurred_at=at, **fields)
+            return journal_ref(event_id)
+        except Exception as exc:  # noqa: BLE001 - instrumentation never changes the tool call
+            self._note_producer_failure(event_type, exc)
+            return {}
+
+    def _turn_rejected_event(self, correlation_id: str, *, code: object, error_class: str,
+                             status: int | None = None) -> dict[str, object]:
+        """`system.failure` for a user turn Core did not take (never the text, never the raw error)."""
+
+        recorder = self.conversation_events
+        correlation = optional_id(correlation_id)
+        if recorder is None or correlation is None:
+            return {}
+        try:
+            code_token = safe_error_class(code) or "brain_turn_rejected"
+            attributes: dict[str, object] = {"code": code_token, "reason": "brain_turn_rejected"}
+            if safe_error_class(error_class) is not None:
+                attributes["error_class"] = error_class
+            if isinstance(status, int) and not isinstance(status, bool):
+                attributes["status"] = status
+            event_id = recorder.record(
+                ConversationEventType.SYSTEM_FAILURE, producer=PRODUCER_REALTIME_AUDIO,
+                conversation_id=self.conversation_id, source_ids=(correlation, "brain_turn_rejected"),
+                occurred_at=utc_now(), correlation_id=correlation,
+                session_id=optional_id(str(getattr(self.session, "session_id", "")) or None),
+                trace_ref=journal_trace("voice.brain_turn_rejected"), attributes=attributes)
+            return journal_ref(event_id)
+        except Exception as exc:  # noqa: BLE001 - instrumentation never changes turn submission
+            self._note_producer_failure(ConversationEventType.SYSTEM_FAILURE, exc)
+            return {}
+
+    def _note_producer_failure(self, event_type: ConversationEventType, exc: Exception) -> None:
+        """Journal a recording bug. Called from `except` branches, including the one that
+        re-raises a failing tool call: a journal failure here must not replace that error."""
+        try:
+            self._trace("voice.conversation_events.producer_failed", "Conversation event not recorded",
+                        level="warning", data={"conversation_id": self.conversation_id,
+                                               "event_type": event_type.value, "exception_type": type(exc).__name__})
+        except Exception:  # noqa: BLE001
+            # intentional: double fault (recorder and journal both failing); the original
+            # tool or turn error, which the caller re-raises or reports, is what matters.
+            pass
+
     def _surface_tools_are_closed(self, name: str, *, call_id: str) -> dict[str, object]:
         """Refuser tout outil Core demandé par la surface en mode continu.
 
@@ -1970,7 +2083,10 @@ class RealtimeConversationBridge:
                 "voice.brain_turn_deferred" if deferred else "voice.brain_turn_rejected",
                 f"Core a refusé le tour cerveau: {exc}",
                 level="warning" if deferred else "error",
-                data={**base, "status": exc.status, "code": exc.code},
+                data={**base, "status": exc.status, "code": exc.code,
+                      **({} if deferred else self._turn_rejected_event(correlation_id, code=exc.code,
+                                                                        error_class=type(exc).__name__,
+                                                                        status=exc.status))},
             )
             return False
         except Exception as exc:
@@ -1980,7 +2096,9 @@ class RealtimeConversationBridge:
                 "voice.brain_turn_rejected",
                 f"Le tour cerveau n'a pas pu être soumis: {type(exc).__name__}: {exc}",
                 level="error",
-                data={**base, "code": "brain_turn_transport_error"},
+                data={**base, "code": "brain_turn_transport_error",
+                      **self._turn_rejected_event(correlation_id, code="brain_turn_transport_error",
+                                                  error_class=type(exc).__name__)},
             )
             return False
         payload = acceptance if isinstance(acceptance, dict) else {}
@@ -3672,7 +3790,10 @@ class RealtimeConversationBridge:
             return
         if call_id:
             self._dispatched_calls.add(call_id)
-        self._trace("tool.call", name, data={"call_id": call_id, "arguments": arguments})
+        tool_started_at, tool_started = utc_now(), time.monotonic()
+        self._trace("tool.call", name, data={"call_id": call_id, "arguments": arguments,
+                                            **self._tool_event(ConversationEventType.TOOL_CALL_STARTED, call_id, name,
+                                                               at=tool_started_at)})
         # Le délai d'activité utile mesure l'attente de l'utilisateur,
         # pas la durée d'un outil : tant que celui-ci travaille, la
         # session ne doit pas pouvoir être coupée sous ses pieds.
@@ -3688,9 +3809,20 @@ class RealtimeConversationBridge:
                 result = self._surface_tools_are_closed(name, call_id=call_id)
             else:
                 result = await self.core.call_tool(name, arguments, conversation_id=self.conversation_id)
+        except BaseException as exc:
+            # No `tool.result` line follows: the span still closes (no trace_ref), then the error goes on.
+            self._tool_event(ConversationEventType.TOOL_CALL_FINISHED, call_id, name, at=utc_now(),
+                             started_at=tool_started_at, started=tool_started, journal_kind=None,
+                             status="cancelled" if isinstance(exc, asyncio.CancelledError) else "failed",
+                             error_class=type(exc).__name__)
+            raise
         finally:
             self.tool_in_flight = False
-        self._trace("tool.result", name, data={"call_id": call_id, "result": result})
+        self._trace("tool.result", name, data={
+            "call_id": call_id, "result": result,
+            **self._tool_event(ConversationEventType.TOOL_CALL_FINISHED, call_id, name, at=utc_now(),
+                               started_at=tool_started_at, started=tool_started,
+                               status=_tool_status(result))})
         action_id = result.get("action_id")
         self._pending_action_id = str(action_id) if result.get("disposition") == "confirm" and action_id else None
         self._tool_result_pending = True

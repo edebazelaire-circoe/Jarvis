@@ -18,6 +18,8 @@ config/jarvis.toml
 data/history/
 data/state/*.sqlite3-shm
 data/state/*.sqlite3-wal
+data/state/*.bak
+data/state/*.bak.partial
 
 # Verification du locuteur : profil vocal du proprietaire (biometrique) et
 # modeles telecharges. Le defaut vit sous /runtime/ ; ces motifs couvrent aussi

@@ -5,13 +5,21 @@ import hashlib
 import json
 from dataclasses import replace
 
+from jarvis.core.conversation_event_emitter import (
+    PRODUCER_BRAIN_OUTCOMES, NullConversationEventEmitter, journal_ref, journal_trace,
+)
+from jarvis.domain.conversation_events import ConversationEventType
 from jarvis.domain.speech_presentation import (
     BackendOutcome, OutcomeKind, OutcomeStatus, SpeechDependency, SpeechSource, speech_id,
 )
 from jarvis.domain.v2 import ProtocolEnvelope, utc_now
-from jarvis.ports.v2 import DiagnosticSink, EventSink, StateRepository
+from jarvis.ports.v2 import ConversationEventRecorder, DiagnosticSink, EventSink, StateRepository
 
 BRAIN_OUTCOME_AVAILABLE = "brain.outcome.available"
+OUTCOME_RETAINED_KIND = "core.brain.outcome_retained"
+#: Same outcome, observation kind matured (speech_result -> turn/work result).
+#: Its own kind so the `brain.message.published` trace join matches one line only.
+OUTCOME_MATURED_KIND = "core.brain.outcome_matured"
 
 
 def stable_identity(*parts: object) -> str:
@@ -21,10 +29,12 @@ def stable_identity(*parts: object) -> str:
 class BrainOutcomeService:
     """Core alone writes outcomes. Reads neither authorize jobs nor request speech."""
 
-    def __init__(self, repository: StateRepository, events: EventSink, diagnostics: DiagnosticSink) -> None:
+    def __init__(self, repository: StateRepository, events: EventSink, diagnostics: DiagnosticSink,
+                 conversation_events: ConversationEventRecorder | None = None) -> None:
         self.repository = repository
         self.events = events
         self.diagnostics = diagnostics
+        self.conversation_events = conversation_events or NullConversationEventEmitter()
 
     async def known_conversation(self, conversation_id: str) -> None:
         speech_id(conversation_id, "conversation_id")
@@ -82,9 +92,28 @@ class BrainOutcomeService:
                                         "error_class": type(exc).__name__})
             raise
         if changed:
-            self.diagnostics.emit("core.brain.outcome_retained", "public outcome retained", data={
+            # `brain.message.published`: first retention of a public outcome only.
+            # A replayed observation or a later kind maturation (speech result
+            # confirmed as turn/work result) is not a new message. Fact time = retention.
+            # The maturation is journaled under its own kind (still naming the
+            # event id): the event's trace_ref join matches the retention line only.
+            source_ids = (correlation_id, stored.id)
+            if existing is None:
+                event_id = self.conversation_events.record(
+                    ConversationEventType.BRAIN_MESSAGE_PUBLISHED, producer=PRODUCER_BRAIN_OUTCOMES,
+                    conversation_id=conversation_id, source_ids=source_ids, occurred_at=stored.created_at,
+                    correlation_id=correlation_id, outcome_id=stored.id, work_id=stored.work_id, content=stored.text,
+                    attributes={"kind": stored.kind.value, "status": stored.status.value},
+                    trace_ref=journal_trace(OUTCOME_RETAINED_KIND, "correlation_id", "outcome_id"))
+            else:
+                event_id = self.conversation_events.derive_event_id(
+                    ConversationEventType.BRAIN_MESSAGE_PUBLISHED, producer=PRODUCER_BRAIN_OUTCOMES,
+                    conversation_id=conversation_id, source_ids=source_ids)
+            self.diagnostics.emit(OUTCOME_RETAINED_KIND if existing is None else OUTCOME_MATURED_KIND,
+                                  "public outcome retained" if existing is None else "public outcome kind matured", data={
                 "conversation_id": conversation_id, "correlation_id": correlation_id,
-                "outcome_id": stored.id, "kind": stored.kind.value, "status": stored.status.value})
+                "outcome_id": stored.id, "kind": stored.kind.value, "status": stored.status.value,
+                **journal_ref(event_id)})
             await self.events.publish(ProtocolEnvelope(
                 message_type=BRAIN_OUTCOME_AVAILABLE, conversation_id=conversation_id, correlation_id=correlation_id,
                 payload={"schema_version": 1, "outcome": stored.to_payload()},

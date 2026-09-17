@@ -1,0 +1,23 @@
+{
+  "project": "Jarvis",
+  "slug": "jarvis-conversation-observability-timeline",
+  "repository": "edebazelaire-circoe/Jarvis",
+  "source_snapshot": {
+    "branch": "main",
+    "sha": "c33207281a5b6a10a6630b8914f19855ea096473",
+    "inspected_date": "2026-09-12"
+  },
+  "summary": "Make conversation history a backend-native, crash-resilient, searchable event record and expose it as a live multi-lane transcript/debug timeline with trace-linked Brain, Mouth and sub-agent activity.",
+  "locked_constraints": [
+    "Transcripts are produced from backend/runtime events, never by asking an LLM to rewrite the conversation.",
+    "The canonical conversation record must survive crashes and remain traceable/searchable.",
+    "The transcript view is live and based on a shared time axis, not a post-hoc text summary.",
+    "The primary timeline shows User, Jarvis Mouth/Reflex, Brain, and sub-agent activity with distinct visual lanes.",
+    "User content is shown on the left; Jarvis/Mouth is light blue, Brain is orange, and sub-agents are red duration blocks.",
+    "Brain/Mouth/sub-agent entries link to diagnostic trace evidence; user entries do not need a diagnostic drill-down.",
+    "A readable text transcript and machine-readable export are projections of the canonical event record, not separate truths."
+  ],
+  "planning_blockers": [
+    "Workspace Task Type vocabulary is not exposed; Slice 00 must assign valid existing Task Types before implementation dispatch."
+  ]
+}

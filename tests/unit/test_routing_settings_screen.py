@@ -131,6 +131,11 @@ async def test_the_candidates_endpoint_measures_instead_of_assuming(control, mon
     assert payload["sources"]["openai"] == "catalog_no_key"
     # Les capacités viennent de la fiche du CLI, pas du modèle.
     assert routing.CODE in claude["capabilities"]
+    # Et le même état, rangé par harness, pour le choix en deux étapes.
+    harnesses = {group["id"]: group for group in payload["harnesses"]}
+    assert set(harnesses) == {"claude", "codex"}
+    assert "m1" in [entry["model"] for entry in harnesses["claude"]["models"]]
+    assert harnesses["codex"]["available"] is False and harnesses["codex"]["unavailable_reason"]
 
 
 async def test_a_saved_candidate_that_vanished_is_still_shown(control, monkeypatch):
@@ -200,8 +205,38 @@ def test_the_page_shows_why_a_candidate_cannot_be_used():
 
     assert "unavailable_reason" in body
     assert "indisponible" in body
-    # Un candidat indisponible reste coché s'il était enregistré.
-    assert "checked" in body and "rank>=0" in body
+    # Les candidats affichés sont ceux qu'on a retenus, disponibles ou non : un
+    # enregistrement devenu inutilisable reste listé, avec sa raison.
+    assert "data-routing-drop" in body
+
+
+def test_the_choice_is_made_in_two_steps_harness_then_model():
+    """Une liste unique de tous les couples harness × modèle est inutilisable :
+    on choisit le harness, puis un modèle parmi les siens."""
+
+    page = PAGE.read_text(encoding="utf-8")
+    body = page[page.index("function routingPicker(") : page.index("async function tabRouting()")]
+
+    assert "data-routing-harness" in body and "data-routing-model" in body
+    # Le second sélecteur ne propose que les modèles du harness choisi.
+    assert "harnessOf(state,pick.agent)" in body
+    assert "harness.models" in body
+    # Tant qu'aucun harness n'est choisi, il n'y a rien à choisir.
+    assert "Choisir d'abord un harness" in body
+    # Et la liste plate de toutes les combinaisons n'existe plus.
+    assert "data-routing-candidate" not in page
+
+
+def test_changing_the_harness_clears_the_model_and_only_adding_changes_the_policy():
+    page = PAGE.read_text(encoding="utf-8")
+    body = page[page.index("const routingOn=modalContent") : page.index("const routingRefresh=")]
+
+    assert "pick.agent=el.value;pick.model=''" in body
+    # Choisir ne modifie pas le brouillon : seul « ajouter » le fait.
+    harness_block = body[body.index("[data-routing-harness]") : body.index("[data-routing-add]")]
+    assert "SET.dirty" not in harness_block
+    add_block = body[body.index("[data-routing-add]") :]
+    assert "agent:pick.agent,model:pick.model" in add_block and "SET.dirty=true" in add_block
 
 
 def test_policy_ui_is_advanced_inside_agent_cli_and_saved_canonically():

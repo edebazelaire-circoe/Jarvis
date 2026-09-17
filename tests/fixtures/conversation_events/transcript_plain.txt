@@ -1,0 +1,17 @@
+Transcription de conversation · conv-t
+Projection déterministe des Conversation Events (contrat v1) ; aucune ligne n'est écrite par un modèle.
+Mode : simple · heures UTC · 25 événements lus
+Parole de Jarvis : texte envoyé à la lecture ; une parole coupée n'indique que la durée entendue.
+
+— 2026-09-16 —
+[10:00:00.000] Utilisateur : Jarvis, prépare le dossier de vol de Paul.
+[10:00:01.000] Jarvis [interrompu après 1,4 s entendues] : Je regarde tous les vols de la semaine.
+[10:00:02.500] Utilisateur : Seulement celui de lundi.
+    Et vite, s'il te plaît.
+[10:00:02.600] Jarvis (réflexe) : D'accord.
+[10:00:04.000] Brain : Le vol de Paul part lundi à 9 h.
+[10:00:04.200] Brain : Rien d'autre à signaler.
+[10:00:04.300] Jarvis : Le vol de Paul part lundi à 9 h.
+[10:00:06.500] Jarvis [lecture en échec] : Je vérifie la météo.
+— 2026-09-17 —
+[10:00:05.000] Jarvis [en cours] : Bonjour, nouvelle journée.

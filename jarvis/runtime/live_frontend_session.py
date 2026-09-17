@@ -44,6 +44,8 @@ class LiveFrontendSession:
         self._delegations: LiveDelegationController | None = None
         self._outputs: OrderedDict[str, VoiceCorrelation] = OrderedDict()
         self._declared_outputs: set[str] = set()
+        self._played_ms: dict[str, int] = {}
+        self._settled_outputs: set[str] = set()
         self._reading = False
         self._reader_ended = asyncio.Event()
         self._reader_ended.set()
@@ -257,29 +259,53 @@ class LiveFrontendSession:
 
     def observe_playback(self, payload: dict, *, played_ms: int | None,
                          written_ms: int | None, terminal: bool = False) -> None:
-        del terminal
         if self._dispatcher is None:
             return
-        correlation = self._outputs.get(str(payload.get("output_id")))
+        key = str(payload.get("output_id"))
+        correlation = self._outputs.get(key)
         if correlation is None:
             return
         if played_ms is not None and played_ms > 0:
-            status = VoicePlaybackStatus.PARTIAL
+            status = VoicePlaybackStatus.UNKNOWN if terminal else VoicePlaybackStatus.PARTIAL
         elif written_ms == 0:
             status, played_ms = VoicePlaybackStatus.UNPLAYED, 0
         else:
             status = VoicePlaybackStatus.UNKNOWN
+        if played_ms is not None:
+            self._played_ms[key] = max(played_ms, self._played_ms.get(key, 0))
+        if terminal:
+            self._settled_outputs.add(key)
         self._dispatcher.local(AssistantPlaybackEvidence(status, played_ms, confirmed_text=None), correlation)
+
+    def _settle_previous_outputs(self) -> None:
+        """Live emits no response final, so Core would keep every speech GENERATING.
+
+        A new output id only appears after an observed input/output alternation:
+        earlier outputs can no longer grow. Settle them as UNKNOWN (no delivery
+        claim) at the last lower bound already sent, which is not a regression.
+        """
+        if self._dispatcher is None:
+            return
+        for key, correlation in self._outputs.items():
+            if key in self._settled_outputs:
+                continue
+            self._settled_outputs.add(key)
+            self._dispatcher.local(AssistantPlaybackEvidence(
+                VoicePlaybackStatus.UNKNOWN, self._played_ms.get(key), confirmed_text=None), correlation)
 
     def _observe(self, event) -> None:
         if isinstance(event.payload, UserTranscriptDelta):
             self.input_observation_revision += 1
         if event.correlation.output_id:
             key = str(event.correlation.output_id)
+            if key not in self._outputs:
+                self._settle_previous_outputs()
             self._outputs[key] = event.correlation
             while len(self._outputs) > 128:
                 expired, _ = self._outputs.popitem(last=False)
                 self._declared_outputs.discard(expired)
+                self._played_ms.pop(expired, None)
+                self._settled_outputs.discard(expired)
         if isinstance(event.payload, VoiceUsageUpdated) and self.journal is not None:
             try:
                 self.journal.emit("voice.live.usage", "Live session usage updated", data={

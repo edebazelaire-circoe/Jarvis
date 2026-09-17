@@ -801,8 +801,13 @@ async def voice_stack(
     *,
     clock: FakeClock | None = None,
     active_timeout_s: float = 90.0,
+    conversation_events_factory=None,
 ):
     """Monter la pile complète, la réveiller, puis tout démonter proprement.
+
+    `conversation_events_factory(port, token)` (Slice 03b de
+    conversation-observability) : rend le `ConversationEventForwarder` du
+    processus Voice, démarré ici, vidé vers Core avant l'arrêt de celui-ci.
 
     Le contrat de démontage compte autant que le montage : une session Realtime
     laissée ouverte ou un abonnement `/v1/events` non fermé transformeraient le
@@ -838,7 +843,11 @@ async def voice_stack(
         return session
 
     wakeword = FakeWakeWord()
+    conversation_events = conversation_events_factory(port, TOKEN) if conversation_events_factory else None
+    if conversation_events is not None:
+        conversation_events.start()
     runtime = PersistentVoiceRuntime(
+        conversation_events=conversation_events,
         wakeword=wakeword,  # type: ignore[arg-type]
         core=client,
         realtime_factory=factory,  # type: ignore[arg-type]
@@ -872,6 +881,9 @@ async def voice_stack(
     finally:
         run_task.cancel()
         await asyncio.gather(run_task, return_exceptions=True)
+        if conversation_events is not None:
+            # Avant l'arrêt du protocole : les dernières fins de span partent vers Core.
+            await conversation_events.aclose()
         # Libérer les tours cerveau encore en vol : un backend qui attend
         # toujours son `release` empêcherait `core.stop()` de se solder.
         for handle in backend.handles:

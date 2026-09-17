@@ -302,7 +302,11 @@ async def test_the_backend_turns_the_agent_answer_into_result_speech():
     # La route est agent-agnostique : rien dans la requête ne nomme un agent.
     # Le contexte part avec le tour, même sans état (contrat inversé : jusqu'à
     # la Décision 44 l'adaptateur n'envoyait que `text` et `timeout_s`).
-    assert seen == {"text": "Relis mes mails.", "timeout_s": 5, "context": {"addressing": "addressed"}}
+    # `conversation` (Conversation Events, Slice 03b) names the turn for the
+    # sub-agent spans; the Control Center never gives it to the model.
+    assert seen == {"text": "Relis mes mails.", "timeout_s": 5, "context": {"addressing": "addressed"},
+                    "conversation": {"conversation_id": "conv-1", "correlation_id": "corr-1",
+                                     "work_id": "brain-turn:corr-1"}}
     assert sink.kinds() == ["accepted", "completed", "speech"]
     speech = sink.events[2].speech
     assert speech.text == "Trois mails attendent une réponse."

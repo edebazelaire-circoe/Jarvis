@@ -177,6 +177,41 @@ def test_a_saved_candidate_that_left_the_catalogue_stays_visible_and_unusable():
     assert all(not (item.available and item.model == "modele-disparu") for item in enriched)
 
 
+def test_the_candidates_are_also_served_grouped_by_harness_for_a_two_step_choice():
+    """L'écran choisit un harness puis un de ses modèles : une liste unique de
+    tous les couples est illisible passé quelques modèles."""
+
+    groups = agent_routing.group_by_harness(agent_routing.build_candidates([CLAUDE, CODEX], MODELS))
+
+    assert [group["id"] for group in groups] == ["claude", "codex"]
+    claude = groups[0]
+    assert claude["label"] == "Claude Code"
+    # Le défaut du CLI d'abord, puis les modèles du fournisseur — et seulement
+    # ceux de ce harness.
+    assert [entry["model"] for entry in claude["models"]] == ["", "modele-a", "modele-b"]
+    assert claude["models"][0]["label"] == agent_routing.DEFAULT_MODEL_LABEL
+    assert claude["models"][1]["label"] == "Modèle A"
+    assert claude["available"] is True
+    # Un CLI absent reste proposé, avec la raison mesurée : le cacher ferait
+    # croire qu'il n'existe pas.
+    codex = groups[1]
+    assert codex["available"] is False and "PATH" in codex["unavailable_reason"]
+    assert [entry["model"] for entry in codex["models"]] == ["", "modele-o"]
+    assert all(not entry["available"] for entry in codex["models"])
+
+
+def test_a_saved_candidate_that_vanished_keeps_its_place_in_the_two_step_choice():
+    policy = agent_routing.load_policy(saved({"agent": "claude", "model": "modele-disparu"}))
+    enriched = agent_routing.with_saved(agent_routing.build_candidates([CLAUDE], MODELS), policy)
+
+    claude = next(group for group in agent_routing.group_by_harness(enriched) if group["id"] == "claude")
+
+    ghost = next(entry for entry in claude["models"] if entry["model"] == "modele-disparu")
+    assert ghost["available"] is False and ghost["unavailable_reason"] == agent_routing.MISSING_MODEL_REASON
+    # Un modèle disparu ne rend pas tout le harness inutilisable.
+    assert claude["available"] is True and claude["unavailable_reason"] == ""
+
+
 def test_a_candidate_alive_in_the_catalogue_is_still_not_eligible_if_it_is_not_allowed():
     """Le catalogue du fournisseur propose ; seuls les réglages autorisent."""
 
@@ -219,3 +254,7 @@ def test_the_described_payload_carries_no_secret_and_no_hardcoded_model():
     assert [entry["id"] for entry in payload["profiles"]] == list(routing.TASK_PROFILE_IDS)
     # Les modèles proposés viennent du catalogue passé, pas du code.
     assert {entry["model"] for entry in payload["candidates"] if entry["model"]} == {"modele-a", "modele-b"}
+    # Les deux niveaux décrivent les mêmes couples : l'écran regroupe, il
+    # n'invente rien.
+    grouped = {(group["id"], entry["model"]) for group in payload["harnesses"] for entry in group["models"]}
+    assert grouped == {(entry["agent"], entry["model"]) for entry in payload["candidates"]}
