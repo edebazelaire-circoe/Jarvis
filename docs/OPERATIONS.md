@@ -952,7 +952,57 @@ Dépannage :
 | un sous-agent tourne mais aucune étoile | l'agent n'est pas celui du Control Center (Codex, sous-agent interne d'un job : pas d'observation), ou Core ne reçoit pas l'état des sous-tâches (`work.ingress_unavailable` côté Control Center) | vérifier `GET /v1/work/snapshot` : pas d'élément `kind: agent` → problème d'ingestion, pas de scène |
 | l'élément existe dans `/v1/work/snapshot` mais pas d'étoile | `kind` n'est pas `agent`/`job`, ou l'étoile a été archivée (`archived_ids`), ou la scène est indisponible (`projection_unavailable`) | lire `/v1/health` (`scene.state`) et la trace |
 | de nouveaux sous-agents tournent mais aucune étoile n'apparaît, `scene.saturated: true` dans `/v1/health` | scène pleine (`core.scene.projection_saturated`) | archiver des étoiles terminées ; les étoiles en attente arrivent aussitôt |
-| après un redémarrage de Core, une étoile reste `running` alors que le travail est fini | la scène est durable, l'état de travail ne l'est pas ; le marquage des étoiles non revues au redémarrage viendra avec la Slice 10 | rien à faire ; l'état est corrigé dès que le producteur renvoie ce travail |
+| après un redémarrage de Core, une étoile affiche « état inconnu depuis le redémarrage » | normal pendant la grâce (60 s) : l'état de travail de Core est reparti vide, le Control Center n'a pas encore redit ses sous-agents | attendre ; si le Control Center tourne, l'état revient en ~30 s au plus. Sinon l'étoile passe « interrompu » avec un signal à la fin de la grâce |
+| une étoile passe « interrompu » avec le signal « non revu après le redémarrage de Core » alors que le sous-agent tournait | le Control Center n'a rien renvoyé pendant la grâce (arrêté, ou Core injoignable pour lui : `work.ingress_unavailable` dans sa trace) | vérifier le Control Center ; dès qu'il redit ce travail, l'étoile reprend son état et le signal est retiré |
+| après un redémarrage du **Control Center** seul, des étoiles restent « en cours » | Core n'a pas redémarré : il garde ce qu'il savait tant que la nouvelle instance ne lui a rien envoyé | au premier sous-agent lancé par la nouvelle instance, Core interrompt les anciens (signal « Control Center redémarré ») |
+
+### Scène constellation : redémarrages et « état inconnu »
+
+La scène est enregistrée sur disque ; l'état des travaux de Core ne l'est pas.
+Voici ce qui se passe à chaque redémarrage (détail : `docs/ARCHITECTURE.md`,
+« Restart reconciliation »).
+
+| Ce qui redémarre | Ce que montre la scène |
+| --- | --- |
+| **le navigateur** (rechargement de la page) | la même scène, relue d'un coup, puis les changements au fil de l'eau |
+| **Core**, le Control Center restant allumé | les étoiles encore en cours passent un instant à « état inconnu depuis le redémarrage » (anneau pointillé pâle, point atténué, badge « ? ») ; le Control Center redit l'état de ses sous-agents en 30 s au plus, et chaque étoile reprend son vrai état, sans signal |
+| **Core et le Control Center**, ou Core seul pendant que le Control Center reste arrêté | « état inconnu » pendant la **grâce** (60 s), puis **interrompu** avec un signal « non revu après le redémarrage de Core » ; si le travail est redit plus tard, l'étoile reprend son état et le signal est retiré |
+| **une tâche de Core** (job) en cours au moment de l'arrêt | **interrompue** avec le signal « Core redémarré », dès le démarrage ; un job qui s'était terminé juste avant l'arrêt garde sa vraie issue (terminé, en échec…) |
+| **le Control Center** seul | rien tant que la nouvelle instance n'a rien envoyé ; à son premier sous-agent, Core interrompt ceux de l'ancienne instance (signal « Control Center redémarré ») |
+| **le cerveau** (CLI Claude) | ses sous-agents en cours passent **interrompu** avec un petit signal « processus arrêté » |
+
+Ce qui **ne change jamais** au redémarrage : une étoile terminée, ses artefacts,
+les notes et fenêtres du cerveau ou de l'utilisateur, les positions, les
+épingles, ce qui est masqué, et ce qui a été archivé. Rien n'est supprimé.
+
+**« État inconnu depuis le redémarrage »** veut dire : Core ne sait plus si ce
+travail tourne, et personne ne le lui a encore redit. Ce n'est ni « en cours »
+ni une panne : pas d'animation, pas d'alerte. Le menu de l'étoile le rappelle
+(« État inconnu depuis le redémarrage de Core ») et ne propose pas d'arrêt ;
+« Archiver les travaux terminés » ne la prend pas, puisque le travail peut
+reprendre. On peut l'archiver seule.
+
+**La grâce** dure 60 s par défaut : deux fois la période à laquelle le Control
+Center renvoie tout son état. Réglage de diagnostic uniquement :
+`JARVIS_SCENE_RESTART_GRACE_S` (secondes, entre 0 et 3600) dans
+l'environnement de `python -m jarvis core` ; sous 30 s, des sous-agents vivants
+seraient interrompus à tort. Une valeur refusée garde 60 s et laisse
+`core.scene.restart_grace_invalid` (avertissement) dans la trace.
+
+Dans `runtime/trace.jsonl` :
+
+| Entrée | Sens |
+| --- | --- |
+| `core.scene.restart_marked` (info, une fois au démarrage) | `marked` étoiles passées à « état inconnu », `already_unknown` déjà inconnues (arrêt brutal pendant une grâce précédente), `tracked` suivies, `terminal_untouched` terminées laissées telles quelles, `job_outcomes` jobs dont l'issue a été relue en base, `grace_s`, `sample` (16 identifiants au plus) |
+| `core.scene.restart_grace_expired` (info, une fois à la fin de la grâce) | `reobserved` redites à temps, `interrupted` interrompues avec signal, `deferred` en attente d'une place (scène pleine), `left` archivées ou tranchées entre-temps, `failed` |
+| `core.scene.restart_star` (niveau `debug`, une par étoile) | le détail : `unknown`, `reobserved`, `interrupted`, `left`, `failed` |
+| `core.scene.signal_raised` avec `error_class: core_restarted_unobserved` | le signal posé à la fin de la grâce |
+
+**Scène pleine au redémarrage.** Le marquage ne prend aucune place. Un signal de
+fin de grâce en demande une : sans place, l'étoile reste « état inconnu » (le
+signal passe toujours avant l'état) et attend un archivage, derrière les
+sous-agents en cours. Cette attente est en mémoire : si Core redémarre encore,
+l'étoile est simplement remarquée et une nouvelle grâce commence.
 
 ### Scène constellation : lecture HTTP et dépannage
 
@@ -1177,7 +1227,8 @@ aucun calque, aucune requête de scène.
   respire (en cours), anneau pointillé (en attente), double anneau (bloqué),
   anneau fin et fixe (étoile terminée, pas encore rangée), pastille « × »
   (échec), « ‖ » (interrompu), « – » (annulé), « ✓ » sur les capsules et
-  fenêtres terminées. Un anneau ne bouge que pendant les 12 secondes qui
+  fenêtres terminées, anneau pointillé pâle et badge « ? » pour une étoile
+  d'« état inconnu depuis le redémarrage » de Core (voir « redémarrages »). Un anneau ne bouge que pendant les 12 secondes qui
   suivent l'apparition de l'objet ou un changement de son état (24 à la fois
   au plus, les alertes d'abord) ; ensuite il reste fixe et la scène au repos ne
   consomme rien.

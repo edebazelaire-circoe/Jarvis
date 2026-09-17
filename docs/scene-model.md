@@ -22,7 +22,7 @@ composition, user constraints and the user's disposition of finished work.
 | `object_id` | stable id (≤ 128 chars, no surrounding spaces). Never changes, whatever the representation. |
 | `kind` | closed: `agent`, `job` (execution nodes, "stars"), `artifact`, `attention` (signals), `window`, `group`. Immutable once created. |
 | `category` | short token (`research`, `error`, `castor`…, ≤ 32). **Primary colour source** (decision 7). |
-| `exec_state` | `WorkStatus` values plus `unknown`. Secondary cue only (halo, ring, badge), never colour. `unknown`: no Core work behind it, or not re-observed yet after a restart. |
+| `exec_state` | `WorkStatus` values plus `unknown`. Secondary cue only (halo, ring, badge), never colour. `unknown`: on an artifact/window/group/brain or user attention, no Core work behind it; on an execution node (`agent`/`job`), **not re-observed yet after a Core restart** (see *Execution state after a Core restart*). |
 | `representation` | `point` \| `capsule` \| `window` (decision 6). |
 | `geometry` | `{x, y, w, h}` in scene units (top-left corner and size, see *Coordinate frame*), or `null` = **unplaced** (the browser AutoResolver places it). `abs(x)`, `abs(y)` ≤ 100 000, `0 < w, h ≤ 100 000`. Cannot be cleared once set. |
 | `layer` | integer 0–1000, stacking inside the scene container. |
@@ -336,6 +336,35 @@ Residual risks (accepted by the PM after Slice 04 QA):
   producer data or brain/user links; renderers walking parents must guard
   against them (Slice 05: the AutoResolver's anchor walk stops at the first
   repeated id).
+
+## Execution state after a Core restart
+
+Slice 10. Core work state lives in memory; the scene is durable. At Core start
+the runtime projector marks every active runtime execution node whose
+`exec_state` is not terminal (`pending`, `running`, `blocked`, or already
+`unknown`) as `unknown`, with one runtime `patch_object`. Semantics of
+`unknown` on an execution node:
+
+- **not running, not failed**: Core no longer knows; a producer may still
+  report it. Renderers show a quiet secondary cue (« état inconnu depuis le
+  redémarrage »), never the running animation nor an alert;
+- **not terminal**: `archive_many` never takes it (`bulk_archivable` requires a
+  terminal state), a user archive is still possible;
+- **re-observation** of the same `(source, external_id)` writes the real
+  status; after a grace (`RESTART_GRACE_S` = 60 s by default) a still-`unknown`
+  node becomes `interrupted` with one runtime signal whose `payload.title` is
+  `core_restarted_unobserved` (signal written before the node's state), retired
+  as usual if the work is reported later.
+
+Domain: no change was needed. Runtime already may write `exec_state` (including
+`unknown`) on its own execution nodes; brain and user writing it stay
+`rejected_authority/execution_truth`, runtime on a non-runtime object stays
+`runtime_origin`/`runtime_kind` (test
+`test_runtime_may_write_unknown_on_its_own_execution_star_and_nobody_else_may`).
+Nothing else changes at restart: no deletion, no disposition, visibility,
+geometry, pin or relation write, and a `store_id` change during Core's life marks
+nothing. Details and restart paths: `ARCHITECTURE.md` › *Runtime scene
+projection* › *Restart reconciliation*.
 
 ## Archive cascade and bulk archive
 
