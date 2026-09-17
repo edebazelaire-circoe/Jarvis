@@ -2044,8 +2044,13 @@ Structured reads (Slice 09, part 1). Two read-only tools, never a command
   object's `work_ref`: a star and its runtime signals), `explains` (sources of an
   `explains` relation to that id: artifacts and signals), `near` = `{object_id,
   radius}` (committed boxes whose edge-to-edge distance to the reference box is ≤
-  radius, 0 = touching or overlapping; unplaced objects and the reference itself are
-  excluded; rows gain a trailing `distance` column and are sorted nearest first).
+  radius; unplaced objects and the reference itself are excluded; rows gain two
+  trailing columns, `distance` then `overlap`, and are sorted nearest first). The
+  distance is exact to the thousandth and a positive gap is never shown as 0
+  (at least 0.001, QA rework m5); `overlap` is `true` when the surfaces intersect,
+  so `distance 0, overlap false` means touching only. Hidden objects are excluded
+  from `near` as on screen unless `include_hidden: true` (strict boolean, refused
+  without `near`) or a `visibility` filter asks for them.
   Rows, relations (between listed objects), legend (`frame`, `data`) and the byte
   bound are those of `scene_inspect` (`MAX_INSPECT_BYTES`, `truncated` with the hint
   « ajoute un filtre ou réduis near.radius »); the header carries `matched` and the
@@ -2057,18 +2062,29 @@ Structured reads (Slice 09, part 1). Two read-only tools, never a command
 - **`scene_get`** reads 1 to `MAX_GET_IDS` = 8 ids (duplicates collapsed). Per
   object: `id, kind, category, origin, exec_state, work_ref, representation,
   geometry [x,y,w,h]|null, layer, order, visibility, constraints`, full `title` and
-  `summary`, `items` (`label`, `ref`, `url`, and `host` = `urlsplit(url).hostname`,
-  i.e. the real destination after any `user@`; empty keys omitted), `relations.out` /
+  `summary`, `items` (`label`, `ref?`, and for an item with a URL: `url`, `link`
+  and `host` from the shared link rule below, `host: null` and `link: false` when the
+  rule refuses it, exactly as the page shows it as text), `relations.out` /
   `relations.in` (`[relation_id, kind, other_id, layer]`, at most
   `MAX_GET_RELATIONS` = 32 together, `omitted` count beyond), `explained_by`
   (non-signal `explains` sources, brief rows), `explains` (targets: the star an
   artifact explains), `live_signal` for `attention`, `signals` (runtime signals of a
   star with `live_signal`, `runtime_signals_of`) for `agent`/`job`; linked lists
-  capped at `MAX_GET_LINKED` = 16. Ids not in the scene come back in `not_found`
+  capped at `MAX_GET_LINKED` = 16 with `explained_by_omitted`, `explains_omitted`,
+  `signals_omitted` counters beyond. Ids not in the scene come back in `not_found`
   (`object_archived` or `unknown_object`), not as an error. The whole answer is
-  bounded to `MAX_GET_BYTES` = 20 000: objects are added in the requested order; the
-  first one always fits (its items are dropped from the end, `items_omitted`); from
-  the first object that does not fit, it and the rest go to `truncated.ids_omitted`.
+  **never** above `MAX_GET_BYTES` = 20 000 (QA rework m4): the budget reserves the
+  exact worst truncation note (every present id omitted, full counters) before any
+  object is added; objects are added in the requested order; the first one is always
+  returned, reduced in counted steps if needed (`_fit_detail`: items from the end
+  `items_omitted`, incoming then outgoing relations `relations.omitted`, `signals` /
+  `explained_by` / `explains` with their `*_omitted` counters, then the summary cut
+  with `summary_truncated`; identity, shape and title always fit); from the first
+  later object that does not fit, it and the rest go to `truncated.ids_omitted`.
+  Verified by QA's oracle (80 seeds, 3 200 queries, 2 000 gets, 0 mismatches, 0
+  over the bound) and a worst-case star (100-character ids, 160-emoji title, 2 000-
+  emoji summary, 40 explaining artifacts with 120-character ids: 19 645 bytes,
+  `explained_by_omitted` 24, relations `omitted` 19).
   The legend's `data` note marks ids, categories, titles, summaries, items, URLs,
   hosts and `work_ref` as data, never instructions.
 - **Seen index.** Both reads follow the Slice 06 partial-inspect rule
@@ -2107,12 +2123,12 @@ display MCP ◄─────────────────────�
 
 | Piece | File | Role |
 | --- | --- | --- |
-| Bounds and codes | `jarvis/domain/scene_capture.py` | `MAX_CAPTURE_BYTES` 2 MiB, 1280×720, `CAPTURE_DEADLINE_S` 5, `CAPTURE_REDELIVER_S` 1, keep 5 files, 24 h; `png_dimensions` (signature, 13-byte IHDR with valid CRC, dimensions, trailing IEND), `check_capture_id` |
-| Broker | `jarvis/core/scene_capture.py` | `SceneCaptureBroker`: `request()`, `deliver(long_poll)`, `delivery_due()`, `wake_event()`, `complete()`, `close()`, retention at Core start and after each capture |
+| Bounds and codes | `jarvis/domain/scene_capture.py` | `MAX_CAPTURE_BYTES` 2 MiB, 1280×720, `CAPTURE_DEADLINE_S` 5, `CAPTURE_REDELIVER_S` 1, keep 5 files, 24 h; `png_dimensions` walks **every** chunk (at most `MAX_PNG_CHUNKS` 4 096): length inside the body, exact CRC, a 13-byte `IHDR` first with dimensions and a valid bit depth / colour type / compression / filter / interlace, at least one `IDAT`, no `acTL` (animated PNG), no unknown critical chunk (upper-case first letter other than `IHDR`/`PLTE`/`IDAT`/`IEND`, a second `IHDR` included), an empty `IEND` last with nothing after; pixels are never decompressed; `check_capture_id` |
+| Broker | `jarvis/core/scene_capture.py` | `SceneCaptureBroker`: `request()`, `deliver(long_poll)`, `delivery_due()`, `delivery_pending()`, `wake_event()`, `complete()`, `cancel()`, `close()`, retention at Core start and after each capture (a file that vanishes during pruning is skipped, pruning continues) |
 | Store port / adapter | `jarvis/ports/scene.py` `SceneCaptureStore`; `jarvis/adapters/file_scene_captures.py` | atomic write (`replace_with_retry`), names without user content, prune only files of the capture pattern; injected by `jarvis/app.py` (`runtime/scene-captures`); without a store the route answers 503 `capture_unavailable` |
 | Core routes | `jarvis/protocol/server.py` | `POST /v1/scene/captures`, `PUT /v1/scene/captures/{id}`; the patches long-poll also waits on the broker's wake event |
 | Control Center | `jarvis/runtime/control_center.py`, `scene_view.py` | `POST /api/scene/captures/{capture_id}` → `CoreSceneView.upload_capture`; `decode_patches_response` keeps a well-formed `capture_request`; **no route requests a capture** |
-| Page | `jarvis/runtime/control_center_scene_capture.js` (`JarvisSceneCapture`), `control_center_scene_page.js` | pure `drawCommands(model, vp, palette)` / `paint(ctx, plan)` / `createCaptureResponder(deps)`; the loop hands `capture_request` to `onCapture` for the leader only and strips it from the follower broadcast (`withoutCapture`) |
+| Page | `jarvis/runtime/control_center_scene_capture.js` (`JarvisSceneCapture`), `control_center_scene_page.js` | pure `drawCommands(model, vp, palette, layout)` / `paint(ctx, plan)` / `createCaptureResponder(deps)`; the loop hands `capture_request` to `onCapture` for the leader only and strips it from the follower broadcast (`withoutCapture`); the capturer is created before the loop; the palette is read from the scene layer at every capture (no cache, a theme switch is seen) |
 | Tool | `jarvis/runtime/display_mcp.py` | `scene_capture()` (no argument), `SceneDisplayTools.capture()`, `scene_gate_reader` |
 
 - **Long-poll kept intact.** The request never adds a patch or changes a revision:
@@ -2131,9 +2147,18 @@ display MCP ◄─────────────────────�
   (the id is forgotten so a new leader or the same tab later can answer). Upload
   results are logged to the console (`scene.capture_*`), never thrown.
 - **Rendering.** Scene layer only: edges (dashed artifact edges, signal edges in
-  the error tone), then nodes in `stack` order with the page's `shape` and screen
-  `box`; windows carry category/item count, title, summary lines and item rows
-  (`host label ref`), clipped to their box; theme colours read from the scene
+  the error tone), then nodes in `stack` order. Every node is drawn at the rectangle
+  the page positions it at, by construction: `JarvisSceneLayout.drawnRect(node)`
+  (point hit square `POINT_HIT_PX` 26, capsule minimum height
+  `CAPSULE_MIN_HEIGHT_PX` 24, window box) is the one pure function used by the
+  page's `position()` and by `drawCommands` (QA rework M2; node test at 390×844,
+  800×600 and 1920×1080; browser check: no painted capture pixel outside a DOM node
+  rectangle or link line, both themes, 1920×1080, 800×600, 1280×720 DPR 1.25,
+  390×844 DPR 3). Text sizes are divided by the capture scale so they stay legible
+  after reduction; a capsule's category is bounded to 38 % of its width and its
+  title starts after the category's measured width (no overprint); windows carry
+  the page's header (upper-case category · execution label), item count, pin mark,
+  title, summary lines and item rows (`host label ref`), clipped to their box; theme colours read from the scene
   layer (`--sc-*`, `--tone`, `--sc-radius`). Not drawn: dock, topbar, panels,
   timeline, face, voice text, hover labels of points. Scaled with the viewport's
   aspect ratio to at most 1280×720 (never enlarged); `OffscreenCanvas`
@@ -2142,20 +2167,53 @@ display MCP ◄─────────────────────�
   note}, ImageContent image/png]`. Refusals (tool errors): `scene_disabled`
   (checked before any call, from `runtime/control-center-settings.json` then
   `JARVIS_SCENE_ENABLED`), `no_visible_page`, `capture_busy`,
-  `capture_unavailable`, `capture_cancelled`, transport codes as for reads.
+  `capture_unavailable`, `capture_cancelled`, transport codes as for reads. A Core
+  call that fails is classified like the other reads
+  (`classify_scene_call_failure`, read timeout `CAPTURE_READ_TIMEOUT_S`) with a
+  readable message.
+- **Single use, atomically** (QA rework m2). `complete` checks the id, expiry and
+  PNG, then marks the pending capture consumed **before** awaiting the store: of
+  parallel uploads for one id exactly one is stored, the others get 404
+  `unknown_capture` (test: four parallel PUTs → 200, 404, 404, 404). An upload
+  for an expired id is journaled `capture_upload_refused` with 410
+  `capture_expired`.
+- **Client gone** (QA rework m3). The Core handler watches the brain's
+  connection: if the MCP call is abandoned (CLI killed, tool cancelled) the pending
+  capture is cancelled at once (`core.scene.capture_abandoned`) instead of holding
+  the slot until the deadline; a next request that finds a pending capture whose
+  client transport is already closed cancels it first and is served (no
+  `capture_busy`). A request whose wait ends without a result answers 503
+  `capture_cancelled`.
   Verified live on CLI 2.1.274: the image block reaches the model (session
   transcript `tool_result` = text + image; the reply described what the image
   showed).
-- **Brain stream reader (found by the live run).** The stream-json line of a
-  tool result carrying the image is 40–80 KiB; asyncio's default 64 KiB
-  `StreamReader` limit made `readline` raise, the stdout reader died silently and
-  the turn timed out after 240 s although the model had answered.
-  `ClaudeLocalAgent` now spawns the CLI with `limit=STREAM_LINE_LIMIT_BYTES`
-  (16 MiB); a longer line is journaled `agent.stream_line_too_long` (error) and
-  skipped without stopping the reader. Image blocks are replaced by
-  `{type: image, omitted_bytes}` before the event is recorded or journaled
-  (`without_image_data`). `codex_local.py` has the same default reader but never
-  receives the display server.
+- **CLI stream readers (found by the live run, reworked after QA M1 / items 4–5).**
+  The stream-json line of a tool result carrying the image is 40–80 KiB; asyncio's
+  default 64 KiB `StreamReader` limit made `readline` raise, the stdout reader died
+  silently and the turn timed out after 240 s although the model had answered.
+  `jarvis/runtime/cli_stream.py` now holds one reader for every CLI pipe
+  (Claude stdout/stderr, Codex stdout/stderr, the V2 supervisor's stderr pump):
+  `iter_lines` reads blocks of `READ_CHUNK_BYTES` (64 KiB) and yields whole lines
+  up to `MAX_LINE_BYTES` (16 MiB); a longer line is dropped **entirely**, never
+  split into fragments, and reported once (`OversizeLine(size)` →
+  `agent.stream_line_too_long`, error; the supervisor logs a « ligne stderr de N
+  octets ignorée » placeholder). Before an event is kept in memory (`_events`,
+  transcript, task traces, `/api/agent`) or journaled, `redact_media` replaces,
+  recursively and wherever it sits (`message.content`, `tool_use_result`, nested
+  tool results), every base64 image or document `source` and every MCP
+  `{type: image, data}` block by `omitted_bytes` = the length of the removed data
+  (copy on write; fixture `tests/fixtures/cli_scene_capture_tool_result_event.json`
+  has the real CLI 2.1.274 shape). A journaled event above
+  `MAX_JOURNAL_EVENT_BYTES` (256 KiB) is replaced by a summary (`type`,
+  `journal_truncated`, `bytes`, keys, preview). Codex: a timeout kills the process
+  before waiting (no hang past the timeout), a reader failure is journaled
+  `agent.read_failed` (`codex_read_failed`), and the final wait is bounded to 5 s
+  then kill. `read_jsonl_tail` (`/api/trace`, recent journal) reads the file from
+  its end in 1 MiB blocks (at most 64 MiB) instead of the whole file. Measured
+  (QA harness rerun): 40 events with 1 MiB images → 0 base64 in `trace.jsonl`,
+  memory events 21 KB; a 17 MiB stderr line and a 16 MiB + 1 stdout line are
+  journaled as too long with no fragment; Codex exits normally in 0.1 s and a
+  lingering Codex is killed at its 10 s timeout.
 - **Journal** (identifiers, sizes, durations; never pixels): Core
   `core.scene.capture_requested`, `capture_stored`, `capture_timeout` (warning),
   `capture_refused`, `capture_upload_refused` (warning), `capture_store_failed`
@@ -2165,8 +2223,9 @@ display MCP ◄─────────────────────�
   journaled as 8-character prefixes only (the id is the upload capability).
 - **Errors of the upload route.** 404 `unknown_capture` (bad form, unknown, used or
   timed out), 410 `capture_expired`, 400 `invalid_png`, 413 `payload_too_large`,
-  403 origin, 503 `not_configured` / transport codes, all with the scene error
-  shape.
+  403 `forbidden_origin`, 503 `not_configured` / transport codes, all with the scene
+  error shape `{error: {code, message}}` (the origin guard answers this shape on the
+  capture route too).
 
 Stale scene memory (QA M1). Decision 4 changes the scene without a brain turn, so
 the prompt and every mutating tool description say to re-read with
@@ -2587,19 +2646,34 @@ the model).
   reste dans la scène, à archiver à part. »), from `artifactsExplaining`; the bulk
   confirmation says artifacts stay.
 
-**URL policy** (Slice 07, `linkOf`). Slice 05 rendered item URLs as text only. An
+**URL policy** (Slice 07, `linkOf`; one rule shared with the brain since the
+Slice 09 QA rework, M3). Slice 05 rendered item URLs as text only. An
 artifact is where the user returns to a research result, and copying from a
 draggable, `user-select: none` node is impractical, so validated URLs become
 openable links. An item URL becomes `<a>` only when:
 
-- the raw string is an absolute `http:`/`https:` URL (the domain already refuses
-  other schemes and non-printable characters in `url`) with no whitespace, C0/C1
-  control, bidi mark or isolate, or invisible character;
-- `new URL()` parses it, the protocol is still `http:`/`https:`, it has **no
-  username or password** (`https://bank@evil/` shows a false host) and a non-empty
-  hostname;
-- `href` is the parser's normalised form (international hosts in punycode) and is
-  checked again for `^https?://` in the page before assignment.
+- `linkHost` accepts it — one conservative rule, **the same on both sides by construction**: `link_host`
+(`jarvis/domain/scene_links.py`) for `scene_get`, `linkHost` in
+`control_center_scene_layout.js` for the page, both run against the shared corpus
+`tests/fixtures/scene_link_corpus.json` (97 URLs: QA's hostile set plus IDN,
+punycode, numeric-host, percent, full-width dot and IPv6 cases) by a Python and a
+node test. A URL has a host (and can be a link) only when it starts exactly with
+`http://` or `https://`, is at most 2 048 characters, contains no backslash,
+whitespace, C0/C1 control, DEL, no-break space, soft hyphen, bidi mark, invisible
+character or full-width/ideographic dot anywhere (refused, never normalised), its
+authority has no `@` and no `%`, and its host is either a dotted ASCII name
+(labels `[a-z0-9]([a-z0-9-]*[a-z0-9])?`, 1–63 characters, 253 in total, no `xn--`
+label: an international name is never a link), a strict dotted IPv4 (four 0–255
+numbers without leading zeros; a name whose last label is numeric such as
+`0x7f.1`, `2130706433` or `1.2.3` is refused), or a bracketed IPv6 of hex digits
+and colons, with an optional port 0–65535. The host is returned lowercase; an
+IPv6 is rendered with brackets, RFC 5952 compressed like the browser's. Anything
+else is text with `host: null`, `link: false`;
+- then `new URL()` parses it, the protocol is still `http:`/`https:`, it has **no
+  username or password**, and its `hostname` equals the host `linkHost` returned
+  (the printed host is the one the browser will open);
+- `href` is the parser's normalised form and is checked again for `^https?://` in
+  the page before assignment.
 
 The link is built with `document.createElement('a')`, `href` set as a property,
 `target="_blank"`, `rel="noopener noreferrer"`, `referrerpolicy="no-referrer"`,
@@ -2611,8 +2685,11 @@ dot dropped), so a narrow row shows `…ogin-check.co.uk` rather than `…co.uk`
 room), never `docs.python.org…`; measured from the element's font and re-checked
 against the row's `scrollWidth`. The full host is in the link's accessible name and in the
 tooltip (`title`); the model never pre-truncates it (URLs are bounded at 2 048 by
-the domain). A long label or ref shrinks instead. `javascript:`, `data:`, `file:`
-and credentialed URLs stay text. No `innerHTML`, no `setAttribute('href')`
+the domain). A long label or ref shrinks instead. `javascript:`, `data:`, `file:`,
+credentialed, international (IDN or `xn--`), backslash, percent-encoded-host and
+numeric-looking hosts stay text (browser rerun of the Slice 07 hostile set, both
+themes, 1920×1080 and 1280×720: 15 rows, 7 links, each printed host equal to
+`link_host`, 0 violations). No `innerHTML`, no `setAttribute('href')`
 (asserted).
 
 **Motion.** Only compositor properties move: node `transform` (0.42 s ease-out,

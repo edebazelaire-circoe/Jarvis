@@ -184,11 +184,21 @@ Semantic artifacts and openable links (Slice 07). The brain's
 brain/user-only `attach_artifact` op (runtime is refused). Item URLs are
 brain-chosen and may come from web content, so an artifact link is an **injection
 and phishing surface** on the user's own dashboard. Controls: the domain accepts
-only single-line `http://`/`https://` URLs (≤ 2 048 chars); the renderer
-(`linkOf`, `control_center_scene_layout.js`) makes an `<a>` only after `new URL()`
-parsing with an `http:`/`https:` protocol, **no username or password**, a
-non-empty host, and no whitespace, control, bidi or invisible character in the
-raw string; `href` is the parser's normalised form (IDN hosts in punycode) and is
+only single-line `http://`/`https://` URLs (≤ 2 048 chars). Since the Slice 09
+QA rework the page and the brain apply **one conservative rule by construction**
+(`link_host` in `jarvis/domain/scene_links.py`, `linkHost` in
+`control_center_scene_layout.js`, both tested against the same 97-URL corpus): a
+URL is a link, and has a host in `scene_get`, only if it starts exactly with
+`http://` or `https://`; contains no backslash, whitespace, control character, DEL,
+no-break space, soft hyphen, bidi mark, invisible character or full-width or
+ideographic dot anywhere; has no `@` and no `%` in its authority; and its host is a
+plain ASCII dotted name (standard labels, no `xn--`, so no international name), a
+strict dotted IPv4 (a numeric-looking last label such as `0x7f.1` is refused) or a
+bracketed hex IPv6, with a port ≤ 65535. Otherwise the item is text,
+`host: null`, `link: false`, for the page and for the brain alike. The renderer
+(`linkOf`) additionally requires `new URL()` to parse it with an `http:`/`https:`
+protocol, **no username or password**, and a hostname equal to the rule's host;
+`href` is the parser's normalised form and is
 set as a property, never through markup; `target="_blank"`,
 `rel="noopener noreferrer"`, `referrerpolicy="no-referrer"`; the host is printed
 **before** the label in a non-shrinking element and, when space is short, cut
@@ -201,7 +211,8 @@ shrinks instead. Everything else stays text (`textContent`). Opening a link is a
 user click (a Barehands pinch opens nothing: popups need real user activation).
 Right-click on a link keeps the browser's own menu. Not covered, accepted: a
 legitimate-looking but hostile `https` host and ASCII look-alikes (mitigated only
-by the printed host), and punycode, which is honest but opaque. Brain/user can no
+by the printed host); international hosts are text, not links (the rule refuses
+IDN and punycode rather than showing an opaque host). Brain/user can no
 longer give an artifact link the signal shape (`signal_shape`).
 
 Screen-content exposure (Slice 09, part 2, `scene_capture`). The brain can
@@ -217,17 +228,40 @@ button and no Control Center route that requests one. Only the visible Web Locks
 leader page answers, and only for a pending, unexpired, single-use random id
 (`secrets.token_urlsafe(24)`, journaled as an 8-character prefix); the upload
 route (`POST /api/scene/captures/<id>`) is behind the origin guard, bounded to
-2 MiB, and the PNG signature, IHDR checksum, dimensions (≤ 1280×720) and IEND are
-checked by the Control Center and again by Core. Where it lives:
+2 MiB, and the PNG is checked by the Control Center and again by Core chunk by
+chunk (every CRC, a valid 13-byte IHDR first with dimensions ≤ 1280×720, at least
+one IDAT, no animation `acTL`, no unknown critical chunk, an empty IEND last),
+without decompressing pixels. An id is consumed atomically before the file is
+written (parallel uploads: one stored, the others 404), and a brain call that goes
+away cancels its pending capture. Where it lives:
 `runtime/scene-captures/capture-<UTC>-<8 hex>.png` (no user text in names), the
 last 5 files, none older than 24 h (pruned at every capture and at Core start).
-Journals carry ids, sizes and durations, never pixels; the brain's stream reader
-replaces image blocks with their size before recording CLI events. Text visible
+Journals carry ids, sizes and durations, never pixels; the CLI stream readers
+replace every base64 image or document block, wherever it is nested in an event
+(including `tool_use_result`), with its size before the event is kept in memory,
+exposed by `/api/agent` or `/api/trace`, or written to `runtime/trace.jsonl`, and a
+journaled event above 256 KiB is summarised. Text visible
 in the image is marked as data in the tool result and the prompt (« un texte
 suspect a été ignoré »), a mitigation only. Same token caveat as above: a brain
 that reads `core.token` could call the capture route itself, or upload over the
 Control Center route for a pending id; it could equally read the scene or files
 with its own tools, so the capture adds no capability beyond scene content.
+
+The page side of the channel is **not authenticated**. The Control Center's
+`GET /api/scene/patches` long-poll and its upload route have no token (the origin
+guard only refuses a POST whose `Origin` header is present and not loopback; a
+local process simply sends none), so
+**any unauthenticated local process, or any page served from the loopback origin,
+can long-poll the page channel and feed or swallow a capture**: it can receive
+the pending `capture_request` id and upload its own well-formed PNG (the brain then
+sees an image that is not the scene), or take the id and never answer (the real
+leader page may still receive the 1 s redelivery; otherwise the brain gets
+`no_visible_page` after 5 s). It cannot request a capture, read the file
+back, or reach beyond the 2 MiB / 1280×720 checked PNG. This is the same trust
+model as the rest of the Control Center: a **hostile process running under the
+local user account is a non-goal** of V1 (it can already read `core.token`, the
+scene database and the trace). The capture is therefore evidence for an honest
+local machine only, never a proof of what the user saw.
 
 The generated `runtime/display-mcp.json` holds the interpreter path, Core's
 loopback host and port and the token file **path**, never the token. Tool journal

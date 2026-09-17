@@ -1141,14 +1141,19 @@ scène en lignes compactes), `scene_query` (trouver des objets par filtres) et
 état d'exécution, origine (runtime, cerveau, utilisateur), visible ou masqué, texte
 du titre, travail Core (`work` : identifiant externe, `work_id` ou
 `source:identifiant`), ce qui explique un objet (`explains`), et les objets placés à
-moins d'une distance d'un autre (`near`, 0 = ils se touchent ou se chevauchent :
-c'est ainsi que le cerveau vérifie un chevauchement). `scene_get` rend, pour 1 à 8
-objets, le titre, le résumé, les entrées d'un artefact avec l'hôte réel de chaque
-adresse, le travail Core, la forme, la place, la couche, l'épinglage, les liens
-entrants et sortants, les artefacts qui l'expliquent, ce qu'il explique et ses
-signaux. Après un redémarrage du cerveau, c'est par là qu'il relit ce qu'une
-recherche a donné. Les deux réponses sont bornées à 20 Ko et disent `truncated`
-quand elles coupent ; elles ne modifient rien.
+moins d'une distance d'un autre (`near` : la distance est donnée au millième, un
+écart réel n'est jamais affiché 0, et la colonne `overlap` dit si les surfaces se
+chevauchent vraiment ; c'est ainsi que le cerveau vérifie un chevauchement). Comme
+à l'écran, `near` ignore les objets masqués, sauf `include_hidden`. `scene_get`
+rend, pour 1 à 8 objets, le titre, le résumé, les entrées d'un artefact avec, pour
+chaque adresse, l'hôte et `link` selon la même règle que la page (une adresse que
+la page affiche en simple texte a `host: null`), le travail Core, la forme, la
+place, la couche, l'épinglage, les liens entrants et sortants, les artefacts qui
+l'expliquent, ce qu'il explique et ses signaux. Après un redémarrage du cerveau,
+c'est par là qu'il relit ce qu'une recherche a donné. Les deux réponses ne
+dépassent jamais 20 Ko et disent ce qu'elles coupent (`truncated`, compteurs
+`*_omitted`, `summary_truncated`) ; le premier objet demandé est toujours rendu.
+Elles ne modifient rien.
 
 **Capture visuelle (exceptionnelle).** « Vérifie visuellement… » ou « regarde
 l'écran » : le cerveau peut appeler `scene_capture`. Ce n'est pas une copie
@@ -1161,17 +1166,29 @@ Core). L'image contient uniquement la scène (fenêtres, capsules, étoiles, lie
 ni commandes, ni panneaux, ni chronologie, ni texte vocal, ni visage. Le cerveau
 reçoit le chemin et l'image. Personne d'autre ne peut demander une capture : pas
 de bouton, pas de route du Control Center. Pour un simple chevauchement, le
-cerveau utilise `scene_query` (near, rayon 0), sans image.
+cerveau utilise `scene_query` (near, rayon 0), sans image. L'image est dessinée
+aux mêmes places et tailles que la page (même calcul des formes), texte lisible
+même réduit.
+
+**Limite de confiance.** Le canal de la page n'a pas de jeton : un autre programme
+local, ou une page servie en local, peut lire la demande de capture et envoyer une
+autre image, ou la garder sans répondre (le cerveau reçoit alors `no_visible_page`).
+Une capture est une vérification sur une machine de confiance, pas une preuve
+(voir `docs/SECURITY.md`).
 
 | Symptôme | Cause probable | Action |
 | --- | --- | --- |
 | erreur d'outil `no_visible_page` après 5 s | aucune page du Control Center ouverte et visible (fermée, onglet caché, fenêtre réduite, scène éteinte dans la page) | ouvrir le Control Center au premier plan, puis redemander |
 | erreur d'outil `scene_disabled` | `scene.enabled` faux (réglage ou `JARVIS_SCENE_ENABLED`) | allumer la scène |
 | erreur d'outil `capture_busy` | une capture est déjà en cours | attendre quelques secondes |
+| erreur d'outil `capture_cancelled` | la capture a été annulée (Core arrêté pendant l'attente, ou appel du cerveau abandonné) | redemander ; un appel abandonné libère la place tout de suite |
+| `core.scene.capture_abandoned` | l'appel du cerveau est parti avant la réponse (CLI tué, outil annulé) | normal ; la capture suivante est servie |
 | erreur d'outil `capture_unavailable` | Core lancé sans dossier de captures (outil de test) | lancer Core par `python -m jarvis core` |
 | `core.scene.capture_store_failed` (erreur) | `runtime/scene-captures/` non inscriptible | corriger les droits du dossier runtime |
-| `scene.capture_upload_refused` (avertissement) | envoi d'une image invalide, trop grande (> 2 Mio, > 1280×720) ou pour un identifiant inconnu | normal si ce n'est pas la page ; sinon relever le code |
-| `agent.stream_line_too_long` (erreur) | une ligne du CLI dépasse 16 Mio | relever l'outil concerné ; la lecture continue |
+| `scene.capture_upload_refused` (avertissement) | envoi d'une image invalide (bloc PNG corrompu, image animée, bloc inconnu), trop grande (> 2 Mio, > 1280×720), pour un identifiant inconnu ou déjà utilisé (404), ou expiré (410 `capture_expired`) | normal si ce n'est pas la page ; sinon relever le code |
+| `agent.stream_line_too_long` (erreur) | une ligne du CLI (Claude ou Codex, sortie ou erreurs) dépasse 16 Mio | relever l'outil concerné ; la ligne est ignorée en entier, la lecture continue |
+| `agent.read_failed` (erreur, `codex_read_failed`) | la lecture de la sortie de Codex a échoué | relever le message ; Codex est arrêté, le tour échoue au lieu de rester bloqué |
+| un `agent.event` porte `journal_truncated: true` | l'événement dépassait 256 Kio : la trace n'en garde que le type, la taille et un aperçu | normal ; les images n'y figurent jamais (`omitted_bytes` à la place) |
 
 Vérifier dans la trace : `core.scene.capture_requested`, puis
 `scene.capture_uploaded` (Control Center), `core.scene.capture_stored` et
@@ -1497,13 +1514,17 @@ peut en choisir une autre ; elle prend alors une couleur stable tirée de son no
   résumé, puis la liste des entrées, qui défile à la molette, au clavier (PageBas,
   PageHaut) ou en passant d'un lien à l'autre. Depuis le menu, la fenêtre s'ouvre
   dans une place libre près de son étoile, hors du visage et des autres objets.
-- Une entrée avec une adresse web `http`/`https` est un **lien**. Le **nom de
+- Une entrée avec une adresse web `http`/`https` simple est un **lien**. Le **nom de
   l'hôte est écrit en premier** : quand la place manque, il est raccourci par la
   gauche (« …evil-login.example »), jamais par la droite, pour que la vraie
   destination reste lisible ; l'hôte complet est dans l'infobulle. Un clic ouvre un
   nouvel onglet, sans transmettre la page d'origine ; le clic droit donne le menu
-  habituel du navigateur (copier l'adresse). Une adresse avec identifiants
-  (`https://nom@hôte/`), ou tout autre schéma, reste du texte. Le pincement
+  habituel du navigateur (copier l'adresse). Reste du texte : une adresse avec
+  identifiants (`https://nom@hôte/`), un nom de domaine international (accents,
+  lettres non latines ou `xn--`), une barre oblique inverse, un `%` ou un point
+  pleine chasse dans l'hôte, un hôte numérique déguisé (`0x7f.1`), ou tout autre
+  schéma. Le cerveau applique exactement la même règle quand il relit les
+  entrées. Le pincement
   Barehands n'ouvre pas de lien (le navigateur l'interdit sans vrai clic).
 - Au clavier : Tab jusqu'à la scène, flèches jusqu'à la fenêtre, puis Tab parcourt
   le bouton d'origine et les liens ; Échap revient à la fenêtre.
