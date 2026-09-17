@@ -1693,3 +1693,87 @@ Residual risks / left:
 3. Under saturation, a grace-expired star stays `unknown` until its signal fits (signal-first invariant); pending interruptions are memory-only (a restart re-marks and restarts the grace).
 4. `JARVIS_SCENE_RESTART_GRACE_S` below 30 s interrupts live work of an idle Control Center (documented as diagnostic only).
 5. Page cue verified in headless Chrome only (no real Chrome, DPR ≠ 1, screen reader).
+
+### 2026-09-17 — Slice 10 — final follow-up
+
+QA on `1ecca76` recommended APPROVE. Agent 0 asked for items 1–9 below. Commits:
+
+- `2eae3fd`: marking in the loop, grace backoff, shared signal write, `work_id` kept (Core, tests)
+- `bb2365c`: empty claim batch at Control Center start, `work.ingress_token_refreshed` (work state, ingress, tests)
+- `03cd75e`: page label order and bulk wording
+- `d18013c`: docs
+- this LOG entry
+
+QA's probes were rerun unchanged from the tree root; outputs `s10f_core_probes.json`. QA's `qa10_real.py` / `qa10_cc_host.py` were copied as `s10f_real.py` / `s10f_cc_host.py` (names only), plus a phase `h2`; outputs `s10f_real_out.json`, `s10f_real.log`, `s10f_snap_*.json`, `s10f_shots/`. QA's files were not touched.
+
+1. **MINOR-1: `work_id` lost.**
+   - `JobService.observe_persisted_outcomes` now takes `{job id: work_id the star carries}`. A `back_brain` job rebuilds `work_id` / `correlation_id` from its persisted provenance through `_persisted_work_link`, now shared with `recover`. Any other job takes the star's `work_id`.
+   - `recover` for non-back-brain jobs cannot do the same: the `jobs` row has no work-id column (`submit(work_id=)` keeps it in `_links` / `_work_links` in memory only). Documented in the `recover` docstring and ARCHITECTURE.
+   - Scene side: `_kept_work_ref` keeps a star's `work_id` when the work item no longer carries one. This is the same "first asserted link wins" rule as work state, and it covers `recover` as well. A different announced `work_id` still replaces it.
+   - `recover` notes each job in `JobService._recovered` before its first await, and `observe_persisted_outcomes` skips those. The loop/`recover` ordering therefore cannot double-observe.
+   - Tests: `test_a_job_outcome_read_back_after_a_restart_keeps_the_brain_work_id` (star and work item keep `brain-work-42`; the recovered job's star and its signal keep `brain-work-43`) and `test_a_back_brain_outcome_read_back_rebuilds_its_link_like_recover`.
+   - Probe `job_work_id`: after restart `completed`, `work_id: brain-work-42`.
+2. **MINOR-2: hot loop at grace expiry.**
+   - A non-store exception from `_expire_grace` is now handled with its own backoff: `projection_failed` (`where=restart_grace`) is journaled once per type, `_grace_due` stays set, `_dirty` forces a reconciliation, and `_wait_outage` waits with its own doubling delay.
+   - Test `test_a_non_store_failure_at_grace_expiry_backs_off_and_never_starves_the_loop`: ≤ 20 failing calls in 0.4 s and the ticker keeps ticking; after the fault clears, expiry interrupts all 5 stars.
+   - Probe `expire_hot_loop`: 7 failing snapshot calls in 0.3 s, ticker 21 ticks (Windows ~15 ms timer), wall 0.309 s for a 0.3 s sleep, journal `restart_grace` then `loop`. QA before the fix: 20 000 calls in 39 ms.
+3. **MINOR-3: Core readiness no longer waits for marking** (PM decision).
+   - `reconcile_restart()` only requests the marking: it sets it due, or when the loop is already running forces a reconciliation with a wake marker.
+   - The loop does the marking as the first step of its first reconciliation, before the work snapshot and before any queued event.
+   - The grace timer is armed at the end of the marking. `observe_persisted_outcomes` runs in the marking and is independent of `recover` order (see 1). No timer is armed once `stop()` has begun.
+   - New public `restart_marking_pending`.
+   - Tests:
+     - `test_core_readiness_never_waits_for_the_marking[0/60]`: 60 stars × 50 ms commits, ready < 1 s, marking finishes afterwards, grace armed afterwards;
+     - `test_no_work_event_is_projected_before_the_marking_completes`: two observations queued mid-marking end `running` / `failed`, never overwritten to `unknown`; tracked 18, marked 20;
+     - `test_stopping_during_the_marking_leaves_no_task_and_no_timer`.
+   - Existing tests that read right after `start()` now wait for the marking (`test_v2_core_recovery`, the protocol `Host.marked()`).
+   - Probe `start_cost`: start 0.015 / 0.029 / 0.068 s for 0 / 100 / 500 running stars; restart 0.011 / 0.024 / 0.044 s. QA before: 1.05 s at 500.
+   - Probe `slow_store` (60 stars, 50 ms commits): start 0.027 s, ready. QA before: 3.7 s.
+   - Probe `stop_races`: 5 stop-during-marking and 9 stop-around-expiry cases, 0 leftover tasks, 0 errors.
+   - Probe `locked_store`: unchanged Slice 02 behaviour; the scene opens behind the lock for 5.5 s, ends `unavailable` / `storage_io`, Core is ready. This is the store open, not the marking.
+4. **O-3: killed Control Center.**
+   - `WorkObservationBatch` now accepts 0–64 observations. An empty batch only claims the source; `ingest` then runs `_claim_producer`.
+   - `WorkIngressForwarder` starts with `_claim_due`. `flush()` sends an empty batch when nothing else is pending, and the base loop now asks `_send_due()`. Any accepted batch drops the claim. A 400 from an older Core drops it without retry. An unreachable Core keeps it with the usual backoff.
+   - Main's tests updated deliberately: `test_the_batch_wire_form_is_strict` (empty case removed, over-bound message `at most`), `test_an_invalid_or_raw_batch_is_refused_and_nothing_is_applied` (`empty` id removed), `test_overflow_drops_the_oldest_and_triggers_a_full_resync` (the first flush now sends the claim: resyncs `[1, 1]`), `test_an_idle_forwarder_with_nothing_to_report_sends_only_its_start_claim` (renamed: exactly one empty batch).
+   - New tests:
+     - protocol `test_an_empty_batch_from_a_new_producer_claims_the_source_and_interrupts_the_old_instance`;
+     - store round trip;
+     - forwarder claim waits for Core and is dropped by a real batch;
+     - a 400 is not retried;
+     - integration `test_a_killed_control_center_replaced_by_an_idle_one_interrupts_its_work_within_seconds` (< 2 s).
+   - Real run `h2`: Control Center hard-killed, new instance with an empty tracker. Both running stars became `interrupted` + live `producer_restarted` 1.42 s after the process spawn (process start included). Journal `core.work.producer_restarted {interrupted 3}` then two `signal_raised`; kept objects identical; 0 errors.
+   - QA's `dh` (15 s sampling): `running` at 3 s, `interrupted` at 18 s (QA before: ≥ 138 s, unbounded).
+   - **Residual:** a Control Center that stays dead still leaves its items `running`; that needs a Core-side lease, not in V1.
+5. **O-1:** `work.ingress_token_refreshed` (info), once per Core `store_id`. Data: `source`, `producer_id`, `store_id`, `pending`, `dropped_total`. The transport sets `token_refreshed` after an accepted resend and the forwarder clears it while journaling. Test `test_a_token_refresh_is_journaled_once_per_core_instance`. Real run a: `work.ingress_token_refreshed` at 26.5 s after the Core restart.
+6. **O-2:** `_raise_signal(scene, item, star_id, work_ref=, payload=, error_class=)` is the single runtime signal write: slot check, `attach_signal`, raced `scene_full` deferral, `signal_raised`. `_project_signal` and `_interrupt_unobserved` both use it. It returns false when deferred, and the interruption then writes nothing else, so the signal still comes first.
+7. **O-4:** the bulk confirmation now reads « Le travail en cours, en attente, bloqué ou à l’état inconnu depuis un redémarrage reste, comme les artefacts, notes et fenêtres du brain. ». Real run e captured it (`s10f_unknown_bulk_confirm.png`).
+8. **O-5:** `.sc-restart-unknown .sc-label span{order:-1}` puts the state first, and `strong{max-width:24ch}` bounds the title. Screenshot `s10f_unknown_circuit-board_hover.png`: « ÉTAT INCONNU DEPUIS LE REDÉMARRAGE [code] Amplitude wave … ». QA's label probe: every unknown and signal label is inside bounds at 1920, 1280 and 480. QA's 480 hover shot lands on a neighbouring signal after the resize (harness position), not on the star.
+9. **Docs.**
+   - OPERATIONS: env range « dans ]0, 3600] », the Control Center restart row and troubleshooting row, `work.ingress_token_refreshed` row.
+   - ARCHITECTURE: start ordering (request only, readiness never waits), restart diagram (marking as the loop's first job), steps table (marking, job truth + link, `work_id` kept, failure incl. grace backoff, stop during marking, shared signal write), restart-path row for the Control Center, `WorkObservationBatch` 0–64, `work.ingress_token_refreshed`, State lifetime rows.
+
+Mutation checks (`s10f_mutate.py`, each reverted; outputs `s10f_mutate_out.txt`, `s10f_mutate_out2.txt`), **18/18 red**:
+
+- the 10 earlier ones, adapted to the helper: `no_401_resend`, `star_before_signal`, `helper_slot_check_removed`, `grace_not_cancelled`, `terminal_marked`, `reobservation_ignored`, `no_job_outcomes`, `no_core_marking`, `no_deferral_at_expiry`, `snapshot_not_consulted_at_expiry`;
+- new: `marking_awaited_at_start`, `grace_failure_no_backoff`, `no_start_claim`, `work_id_not_kept`, `no_star_work_id_hint`, `no_back_brain_link_rebuild`, `recover_not_noted`, `token_refresh_not_journaled`.
+
+The first `grace_failure_no_backoff` attempt hung its test: the loop starved, so no asyncio timeout could fire. The test's failing snapshot now yields once, so a regression shows as thousands of calls instead of a hang.
+
+Real runs (`s10f_real.py a dh h2 e`: real `python -m jarvis core` hard-killed, Control Center host process, trace replay, own headless Chrome; everything killed afterwards):
+
+- **a:** marking seen at the first poll after readiness (0.0 s); both stars `running` at 26.7 s; `work.ingress_token_refreshed` at 26.5 s; `restart_grace_expired {tracked 2, reobserved 2, interrupted 0}` at 60.0 s; kept objects identical; 0 errors.
+- **dh / h2:** see item 4.
+- **e** (grace 50 s): first render 3.9 s with `sc-restart-unknown` and badge; the menu has the `state-unknown` note and no stop; the bulk and single archive confirmations carry the unknown wording; reload at 18.6 s keeps the cue; signal `sc-urgency-medium` « non revu après le redémarrage de Core » at 51.8 s; 0 exceptions, 0 console messages, 0 errors.
+
+Validation:
+
+- Targeted suite under `-W error::ResourceWarning`: QA's 57-file set, which now includes the new tests.
+  - First run: **1672 passed** in 165 s, before the last test tweak.
+  - After the commits: `1 failed, 1671 passed in 174.62s`. The one failure is the known flaky baseline `test_v2_async_conversation.py::test_three_turns_run_in_one_session_without_a_second_wake`, which passed 3/3 when rerun alone.
+- Full `scripts/verify_release.py`, alone in the foreground: `9 failed, 4896 passed, 10 skipped in 451.86s` / `FAIL: pytest failed`. The failures are exactly the 9 main-baseline tests without implementation (`test_agent_routing_settings.py` ×3, `test_brain_card_state.py` ×2, `test_routing_settings_screen.py` ×4).
+
+Residual risks added:
+
+1. A Control Center that stays dead (never restarted) leaves its items `running` until Core restarts (no lease).
+2. An older Core refusing empty batches makes the claim fall back to the first real batch (journaled `work.ingress_rejected` once).
+3. The work state of a recovered non-back-brain job has no `work_id` (not persisted by `JobService`); only the scene keeps it.
