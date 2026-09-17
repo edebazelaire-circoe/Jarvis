@@ -677,3 +677,207 @@ Validation:
 - Full `scripts/verify_release.py`, alone in the foreground → `4038 passed, 9 skipped in 322.27s` / `Release verification passed.`
 
 Left for later Slices: drag, resize, menus, archive and bulk archive (08); screenshot (09); artifact semantics (07).
+
+### 2026-09-17 — Slice 05 — QA rework
+
+QA on `8b2f407` recommended REWORK (MAJOR-1 connection starvation, MAJOR-2 "haut gauche" under the chrome, M3–M12, idle cost, small windows). Commits `1a45d4e` (code, tests), `7d8e8d6` (docs), plus this LOG.
+
+**MAJOR-1: one scene long-poll per browser profile.**
+
+- A single Web Locks lock, `jarvis.scene.leader`, covers both the long-poll and the resolver commits. Commits need the freshest state, which only the long-poll holder has, and one lock means one handover.
+- Requesting the lock:
+  - it is requested first with `ifAvailable`, so the role is known before the first request;
+  - it is then queued;
+  - it is released when the tab is hidden, the gate goes off, or on `pagehide`;
+  - the browser drops it when the tab closes or navigates.
+- The leader long-polls and broadcasts on `BroadcastChannel('jarvis.scene')`, with messages `{v:1, from}`:
+  - `patches`: the applied response body;
+  - `tick`: scene, epoch, revision, health and object limit, after every read and every back-off;
+  - `health`: the leader's state before it holds any scene.
+- Followers never long-poll:
+  - they apply broadcasts through `JarvisSceneClient.applyPatchResponse`;
+  - for a first load or a resync they read `GET /api/scene`;
+  - for a gap, another epoch, a tick ahead of them, or 45 s without a message, they read `GET /api/scene/patches?…&wait_s=0`, which answers at once;
+  - during an in-flight read or while hidden, they record the target revision and catch up afterwards.
+- A new leader polls from its held revision, so Core's patch ring fills whatever the old leader never broadcast.
+- Fallback without Web Locks or BroadcastChannel: `solo`, one long-poll per tab, documented.
+- `refreshStatus` failure calls `JarvisScene.statusLost()`. The next successful status cancels the scene back-off and reads at once (`retryNow`, at most every 2 s). QA risk 4 is fixed.
+- A leader's degraded health is mirrored in followers, so every window shows the same indicator.
+
+**MAJOR-2: composition safe area.**
+
+- `SCENE_SAFE_AREA = (-152, -72, 138, 68)` in `jarvis/domain/scene.py`. `SAFE_AREA` in the layout file has the same value, with a parity test.
+- Measured in real Chrome at 1280 × 720 (4 px/unit), both themes:
+  - top bar bottom: y −76.5 (Omega state −78.5, Omega dock −77);
+  - circuit dock left edge: x 142.5;
+  - voice hint top: y 76.5;
+  - chips top: y 79 for one row, 71 for two.
+  - Clearance is 12–18 px.
+- The resolver places only inside the safe area.
+- The brain-facing text now gives the safe area, safe examples and the warning that the frame edges may sit under controls:
+  - `SCENE_FRAME_NOTE`: "zone sûre x -152..138, y -72..68 (haut gauche ≈ x -150, y -70) ; cadre visible … dont les bords peuvent passer sous les commandes";
+  - the `geometry` schema description;
+  - the prompt line "compose dans la zone sûre x -152..138, y -72..68 (haut gauche ≈ x -150, y -70 ; bas droite : x + w ≤ 138, y + h ≤ 68 ; une note lisible ≈ 60×36) ; les bords du cadre, jusqu'à x ±160 et y ±90, peuvent passer sous les commandes".
+  - A test checks that the prompt example plus a 60×36 note fits inside the safe area.
+- Status chips moved to the bottom left, on the voice hint's line:
+  - they wrap upwards;
+  - `max-width: calc(50vw - 150px)` clears the voice hint;
+  - they are raised to `bottom: 52px` when the Barehands badge exists.
+
+**Cheap defects.**
+
+- **M3:** the window title is clamped by margin, not padding, with `max-height: 2.7em`, so a third line cannot show. Measured: 35 px box for two lines (17.55 px line height), and the summary starts 8 px below.
+- **M4:** the degraded chip is split into a truncatable main part ("Scène figée · Core injoignable") and a meta part ("11 s · réessai 1 s") that never shrinks. Measured at 1280: main not truncated, meta inside the chip.
+- **M5:** the item list fades out at the bottom with the same mask as the summary, and has no fade (`sc-fits`) when it fits.
+- **M6:** labels are clamped from the node centre and the label's `offsetWidth`. A first version measured `getBoundingClientRect` during the label's transform transition and missed by 69 px; this was fixed. A label near the bottom goes above the point.
+- **M7:** the chips are no longer a live region. A visually hidden `role=status` region carries state sentences only. Measured: 0 live-region mutations in 10 s of outage while the chip counter ticked.
+- **M8:** `JarvisScene.gate` runs in its own `try`/`catch` (`[scène] scene.gate_failed`), and `statusLost` also has its own `try`.
+- **M9:** `#jarvisSceneStyle` is removed at teardown. Live gate off gives layer false and style false.
+- **M10:**
+  - What the projector stores: category and `exec_state` = status; `payload.title` = error class. That title is the only carrier of the class.
+  - Low urgency now requires a runtime-origin attention, category `interrupted`, and class `process_stopped`. A brain attention titled `process_stopped` stays medium (test).
+  - Displayed titles map the class through the page's `ERROR_CLASSES`, passed as `options.errorLabels`, or a status token through the French labels. Example: "processus arrêté · signal · interrompu", "bloqué · signal · bloqué".
+  - Unmapped classes (`TimeoutError`) stay raw.
+  - The point label no longer repeats the raw category.
+- **M11:** a completed point gets a thin static ring, `1px solid rgba(220,236,244,.34)`. The colour stays the category.
+- **M12:** roving tabindex, with one tab stop. `nextFocus` / `spatialOrder` are pure and tested. Arrows move to the nearest node in the direction (transverse distance weighted twice), Home and End go to first and last, Escape blurs. Browser: Tab → one node; arrows moved across 5 nodes; Escape → BODY; the focused point's label opacity is 0.97.
+- **Idle cost:**
+  - Any running CSS animation costs about 140 style recalcs per second, whether 4 or 24 rings run. Measured: 24 rings 59 ms/s, 4 rings 28 ms/s, none 0.
+  - The cap is therefore at most 24 animated rings (`MAX_ANIMATED`, urgent signals first), and only during the 12 s after a node appears or its `exec_state`, category or signal link changes (`ANIMATE_FOR_MS`, page side, fed through `options.animatable`). Nothing animates on the first render, and rings pause while the tab is hidden.
+  - QA idle probe on about 200 objects:
+
+    | Scene | RecalcStyleCount in 30 s |
+    | --- | --- |
+    | On, circuit-board | 30 (was 2 813 at 116 objects) |
+    | On, Omega | 30 (was 2 650) |
+    | Off | 30 |
+
+  - Animation window probe: a new running star gives 1 animated ring after 2 s and 0 after 15 s.
+- **Small windows (P2):** `compactShape`, render-local only, tested to change neither representation nor commits:
+  - a window under 180 × 96 px is drawn as a 28 px capsule at the top of its box;
+  - a capsule under 72 px wide is drawn as a point;
+  - capsules are at least 24 px high.
+  - At 800 × 1000, windows become titled capsules (screenshot).
+
+**Browser validation.** The claude-in-chrome extension was still not connected, so validation used headless Chrome 152 with its own profile (`scratchpad/s5r_chrome_profile`). The host was `qa05_host.py` on this worktree with a fresh root `scratchpad/s5r_root`, seeded with QA's `work` and `rich` steps, 96 observations and 60 brain artifacts (about 200 objects). No launcher. QA's `close_target` (`GET /json/close`) left pages open, so `s5r_fix.py` replaces it with `Target.closeTarget`. Everything was killed afterwards (0 processes). Note: the first measurement runs used QA's `qa05_root_head` and added about 150 objects to it, saturating it. Copies `s5r_render.py` / `s5r_a11y.py` / `s5r_loop.py` saved screenshots under QA's file names in `qa05_shots/` (`r_*`, `a11y_*`, `loop_core_down_75s.png`), overwriting QA's originals; their JSON went to `s5r_*.json`.
+
+`s5r_sockets.py` (N windows in one profile, 1280 × 720, 20-object brain burst):
+
+| N | Roles | `/api/status` ms (first / last window) | Revisions = Core | Layouts identical | Gate off → all windows (s) | Gate on → all windows (s) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 5 | 1 leader / 4 followers | 3–4 / 3–6 | yes | yes | ≤ 0.78 | ≤ 1.02 |
+| 6 | 1 / 5 | 3–5 / 3–6 | yes | yes | ≤ 0.88 | ≤ 1.10 |
+| 8 | 1 / 7 | 3–5 / 2–5 | yes | yes | ≤ 0.99 | ≤ 1.02 |
+| 10 | 1 / 9 | 2–4 / 3–5 | yes | yes | ≤ 0.99 | ≤ 1.01 |
+
+- QA's baseline at 6–7 windows was 16–24 s.
+- Exceptions: 0.
+- In the last run the burst was refused `scene_full` because QA's root was saturated. The earlier runs on the same code had a live burst, with Core revision 1796 → 1916 matched by all windows.
+
+`s5r_handover.py` (4 windows, 40-command brain burst, leader acted on 0.8 s into the burst):
+
+| Leader action | New leader after (s, burst included) | Remaining windows' DOM = Core visible objects |
+| --- | --- | --- |
+| close | 1.84 | B, C, D: yes |
+| navigate | 1.68 | C, D: yes |
+| minimise (hidden) | 1.72 | D: yes |
+| freeze | 1.66 | C: yes |
+
+- The minimised window came back as a follower, equal to Core.
+- A frozen page is hidden, so it releases the lock. After unfreezing it stays hidden and paused, revision stale (845 vs 855) until visible, by design (`s5r_freeze.py`).
+
+`s5r_loop.py` (QA's `qa05_loop.py` on the new root):
+
+- **tabs** (30 s per case):
+
+  | Visible tabs | Scene on: `/api/status` max duration | Scene on: poll gap max | Scene off |
+  | --- | --- | --- | --- |
+  | 1 | 0.01 s | 1.00 s | identical |
+  | 4 | 0.01 s | 1.01 s | identical |
+  | 6 | 0.01 s | 1.01 s | identical |
+  | 8 | 0.01 s | 1.01 s | identical |
+
+- **cap:** 40 hogging long-polls gave 9 × `patch_waits_busy`. The page retried about every 1.1 s with 1 snapshot read, and was back to polling.
+- **backoff:** Core down 75 s → gaps 3.3 / 4.4 / 6.0 / 8.2 / 21.8 s. Chip "Scène figée · Core injoignable 1 min 12 s · réessai 6 s". After restart: patches → snapshot → patches.
+- **hidden:** 0 scene requests in 10 s while hidden; catch-up rendered on return. On `pagehide` of one tab, the other became leader.
+- **idle:** see Idle cost above.
+
+`s5r_multi.py`:
+
+| Run | Commits in 20 s | Sends per page | Unplaced after 20 s | Commits in next 30 s | Geometry changes | Layout mismatches |
+| --- | --- | --- | --- | --- | --- | --- |
+| m1 | 40 applied, 60 duplicate | A1 31, A2 0, B 33, C 36 | none | 0 | none | none |
+| m2 (context C delayed 3 s) | 40 applied, 33 duplicate | A1 36, A2 0, B 36, C 1 | — | 0 | none | none |
+
+- A2, a second window of the same profile, sends nothing. B and C are separate browser contexts, so separate profiles, each with its own leader.
+- The duplicates are the accepted separate-profile risk, same as QA's baseline (m1: 40/52).
+
+`s5r_render.py`:
+
+- Hidden object not rendered.
+- DOM identity kept across window → point → capsule.
+- Unhide commits 1, re-hide/unhide commits 0.
+- A brain move of a resolver placement wins, with 0 recommits.
+- Stars: completed stay rendered; signals are static when not fresh.
+- Reduced motion: no animation, 0 s transition.
+- Tab order: a single scene stop between the dock and the body.
+- Exceptions: 0.
+- Its frame check still uses QA's object at the old example (−150, −80), which by design is outside the safe area and meets the top bar at 1366 and 1280.
+
+`s5r_a11y.py`:
+
+- Edge-star hover label at left 8 / right 262 (was cut).
+- Keyboard focus shows the label (opacity 1, outline).
+- 1 tab stop.
+- Barehands click focuses the star.
+
+`s5r_visual.py`:
+
+- Brain window at the prompt example (−150, −70, 60 × 36), with the "1 objet hors champ" chip shown, at 1920 × 1080, 1366 × 768 and 1280 × 720 in both themes. Corner (6 px inset for the border radius) and title hit tests all return the window, and it has no geometric overlap with brand, state, voice hint, dock buttons, pills, chips or the live banner.
+- A first run's corner hits returned QA's overlapping windows and a star. The cause was the rounded corners at 2 px inset plus QA's windows lying under the point, not the chrome. Those two QA windows were hidden for this check.
+- Edge label clamp: dx 69 px at 1920, 91 px at 1280; left edge 8.
+- Gate off live: layer and style removed; back on.
+- Exceptions and console errors: 0.
+
+Screenshots, all in `scratchpad/qa05_shots/`:
+
+- `s5r_safe_circuit-board_1920x1080.png`, `s5r_safe_circuit-board_1366x768.png`, `s5r_safe_circuit-board_1280x720.png`
+- `s5r_safe_omega_1920x1080.png`, `s5r_safe_omega_1366x768.png`, `s5r_safe_omega_1280x720.png`
+- `s5r_hostile_window_1920.png` (M3, M5)
+- `s5r_hover_edge_star_1920.png`, `s5r_hover_edge_star_1280.png` (M6)
+- `s5r_completed_star_zoom.png` (M11)
+- `s5r_keyboard_focus.png` (M12)
+- `s5r_degraded_chip_1280x720.png`, `s5r_degraded_full_1280x720.png` (M4, chips)
+- `s5r_compact_omega_800x1000.png` (small windows)
+- `s5r_10windows_1280x720.png`
+
+Tests:
+
+- New or updated node tests in `tests/unit/test_scene_renderer_logic.py`: 37 in total.
+- Leader and followers:
+  - only the leader long-polls and followers apply its broadcasts, with 120 s of silence giving short `wait_s=0` reads only;
+  - a lost broadcast is caught up with one short read;
+  - handover mid-burst gives the new leader `after=1` then `after=3` with objects p1–p3 and one snapshot;
+  - a new epoch plus a leader outage is mirrored, then the follower does patches `wait_s=0` → snapshot;
+  - `retryNow` after 30 s of back-off;
+  - message validation.
+- Safe area: domain parity and brain text.
+- Urgency and French labels.
+- Animation cap and freshness.
+- Compact shapes.
+- Arrow navigation.
+- Page wiring: isolated gate and `statusLost`.
+
+Validation:
+
+- Targeted suite under `-W error::ResourceWarning` (renderer, all scene unit and integration tests, display MCP, all Control Center/Barehands/appearance/live-status UI tests, documented routes, work view) → **927 passed** in 70.94 s.
+- Full `scripts/verify_release.py`, alone → `4048 passed, 9 skipped in 347.44s` / `Release verification passed.`
+
+Residual risks (Slice 05 after rework):
+
+1. A leader whose event loop stalls while it stays visible keeps the lock. Commits stall, and followers only catch up through the 45 s watchdog. A frozen page is hidden first, so it hands over.
+2. Separate profiles, browsers or machines share no lock. On revision skew each can commit a different box for the same object: one visible move, no loop. QA m2 saw no move.
+3. The commit ledger evicts beyond 2 048 entries. In a very long session an evicted, still unplaced object could be sent once more, answered `duplicate` or `explicit_placement`.
+4. `solo` fallback without Web Locks or BroadcastChannel keeps one long-poll per tab (about 6 windows).
+5. The safe area is computed for 1280 × 720 16:9. Narrower windows, the GPT-Live banner and the Barehands badge can still cover the frame edges.
+6. A hidden follower stays stale until visible. It does no network while hidden, by design.
