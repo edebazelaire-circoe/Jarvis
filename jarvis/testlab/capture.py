@@ -14,7 +14,13 @@ its probes as arguments so tests (and later runners) control every input:
 - `capture_environment` records only non-identifying facts and drops any value
   that contains the user name, host name or home path.
 - `build_config_snapshot` redacts secret and private-content keys before the
-  snapshot is written or fingerprinted.
+  snapshot is written or fingerprinted;
+- `redact_evidence` / `failure_detail` (Slice 05) clean the captured worker output
+  before it is stored. They live here rather than in `redaction.py` because they
+  need `identity_fragments()` (which reads the environment) and the credential
+  vocabulary of `jarvis.runtime.conversation_event_trace`, and `redaction.py` is a
+  pure contract module (`tests/unit/test_testlab_purity.py`) that may import
+  neither.
 """
 
 from __future__ import annotations
@@ -32,6 +38,7 @@ import socket
 from types import MappingProxyType
 from typing import Any
 
+from jarvis.runtime.conversation_event_trace import SECRET_PREFIXES
 from jarvis.runtime.worktrees import WorktreeError, git
 from jarvis.testlab.redaction import (  # noqa: F401 - re-exported: moved to a pure module in Slice 03
     EMAIL_PLACEHOLDER,
@@ -39,7 +46,7 @@ from jarvis.testlab.redaction import (  # noqa: F401 - re-exported: moved to a p
     redact_identifying_text,
     redact_urls,
 )
-from jarvis.testlab.runs import ArtifactKind, ArtifactRef, CodeIdentity
+from jarvis.testlab.runs import MAX_FAILURE_DETAIL_CHARS, ArtifactKind, ArtifactRef, CodeIdentity
 from jarvis.testlab.store import TestRunStore
 from jarvis.testlab.validation import (
     FORBIDDEN_PRIVATE_DATA,
@@ -415,3 +422,58 @@ def store_config_snapshot(store: TestRunStore, run_id: str, snapshot: ConfigSnap
     """Write the snapshot as the run's `config_snapshot` artifact; the caller adds the ref to the record."""
     return store.put_artifact(run_id, CONFIG_SNAPSHOT_PATH, kind=ArtifactKind.CONFIG_SNAPSHOT,
                               media_type=CONFIG_SNAPSHOT_MEDIA_TYPE, data=snapshot.encoded)
+
+
+# -------------------------------------------------------- captured evidence
+
+#: A word long enough to be a credential, checked against the canonical
+#: `SECRET_PREFIXES` of `conversation_event_trace` (imported, never copied).
+#: The 8-character minimum is deliberate: it keeps ordinary prose intact, and it
+#: means a very short secret (`sk-ab`) is not caught by this pass. Short secrets
+#: are the name rule's job, not a text scan's.
+_SECRET_WORD = re.compile(r"[A-Za-z0-9_.\-]{8,}")
+#: A hexadecimal blob: a token, a key or a hash, none of which belongs in evidence.
+_LONG_HEX = re.compile(r"\b[0-9a-fA-F]{32,}\b")
+#: `Authorization:` (with or without a scheme) and the bare `Bearer`/`Basic`
+#: schemes: what follows is the credential, whatever its own shape.
+_AUTH_HEADER = re.compile(r"(?i)\b(authorization\s*[:=]\s*)((?:bearer|basic|token)\s+)?(\S+)")
+#: A bare scheme has no header to disambiguate it, so the value must be at least 8
+#: characters: a credential never is 6 ("basic checks passed" stays prose).
+_AUTH_SCHEME = re.compile(r"(?i)\b(bearer|basic)(\s+)(\S{8,})")
+#: `name=value` / `name: value` where the NAME says the value is a credential.
+#: `token` is only an introducer with a separator, so "the token budget is 500" stays prose.
+_SECRET_ASSIGNMENT = re.compile(
+    r"(?i)\b((?:api[-_]?key|apikey|secret|password|passwd|token|auth[-_]?token|access[-_]?token|"
+    r"refresh[-_]?token|client[-_]?secret)\s*[:=]\s*)(\S+)")
+
+
+def redact_evidence(text: str) -> str:
+    """Everything captured worker output must lose: identity, home path, credentials.
+
+    Four passes, in order: identifying text (URL credentials, SSH users, emails)
+    through `redact_identifying_text`; the current user, host and home fragments;
+    the value FOLLOWING a credential-introducing token (`Authorization:`,
+    `Bearer`, `Basic`, `api_key=`, `password:` …), because a credential has no
+    shape of its own — a real worker printed `Bearer QABEARERTOKEN` and the token
+    survived every shape-based rule; then any word whose own shape is a credential
+    (`SECRET_PREFIXES`) or a hexadecimal blob.
+
+    A worker's stderr is arbitrary text: a traceback can carry the very key its
+    provider call refused.
+    """
+    redacted, _ = redact_identifying_text(str(text))
+    for fragment in identity_fragments():
+        redacted = redacted.replace(fragment, REDACTED)
+    redacted = _AUTH_HEADER.sub(lambda match: f"{match.group(1)}{match.group(2) or ''}{REDACTED}", redacted)
+    redacted = _AUTH_SCHEME.sub(lambda match: f"{match.group(1)}{match.group(2)}{REDACTED}", redacted)
+    redacted = _SECRET_ASSIGNMENT.sub(lambda match: f"{match.group(1)}{REDACTED}", redacted)
+    redacted = _SECRET_WORD.sub(
+        lambda match: REDACTED if match.group(0).lower().startswith(SECRET_PREFIXES) else match.group(0), redacted)
+    return _LONG_HEX.sub(REDACTED, redacted)
+
+
+def failure_detail(text: str, *, max_chars: int = MAX_FAILURE_DETAIL_CHARS) -> str:
+    """A `RunFailure.detail`: one redacted, printable, bounded line, or a neutral fallback."""
+    single = " ".join(redact_evidence(text).split())
+    printable = "".join(char for char in single if char.isprintable())
+    return printable[:max_chars].strip() or "no further detail"

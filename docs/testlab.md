@@ -22,15 +22,22 @@ normal CI.
   - `primitives.py` (Slice 04): `ArgSpec`, `PrimitiveSpec`, `PrimitiveRegistry`, `DEFAULT_PRIMITIVES`, `ScenarioContext`, `check_scenario`, `PrimitiveHandler`;
   - `implementations.py` (Slice 04): `ImplementationEntry`, `ImplementationRegistry`, `default_implementations`;
   - `manifests.py` (Slice 04): `DiagnosticManifest`, `CatalogLock`, `LockEntry`, `check_manifest`, `render_manifest`, `CatalogError`;
-  - `promotion.py` (Slice 04): `promote_scenario`, `PromotionResult`, `PromotionRefused`.
+  - `promotion.py` (Slice 04): `promote_scenario`, `PromotionResult`, `PromotionRefused`;
+  - `jobs.py` (Slice 05): `WorkerJob`, `WorkerResult`, the per-run protocol file names and the failure-code vocabulary.
 - I/O modules (Slices 02, 03 and 04, see Storage, DiagnosticBundle and Catalog):
   - `_fs.py` (private, Slice 03): lock, atomic write, path budget and link helpers shared by both filesystem stores;
   - `filesystem_store.py`: `FilesystemTestRunStore`, the local durable adapter;
-  - `capture.py`: `read_git_revision`, `capture_code_identity`, `capture_environment`, `build_config_snapshot`, `store_config_snapshot`;
+  - `capture.py`: `read_git_revision`, `capture_code_identity`, `capture_environment`, `build_config_snapshot`, `store_config_snapshot`, plus `redact_evidence` / `failure_detail` (Slice 05, captured worker output);
   - `bundle_capture.py` (Slice 03): `capture_diagnostic_bundle`, `read_session_trace`, `read_session_events`, `read_voice_session_reports`, `project_bundle_trace_entry`;
   - `filesystem_bundle_store.py` (Slice 03): `FilesystemBundleStore`;
   - `catalog.py` (Slice 04): `Catalog`, `CatalogEntry`, `ProfileAvailability`, `load_catalog`, `DEFAULT_CATALOG_ROOT`;
-  - `replay.py` (Slice 04): the `jarvis.voice_replay` v1 codec and the scenario adapter.
+  - `replay.py` (Slice 04): the `jarvis.voice_replay` v1 codec and the scenario adapter;
+  - `runners.py` (Slice 05): `DiagnosticRunner`, `RunContext`, `RunOutcome`, `RunCancelled`;
+  - `supervisor.py` (Slice 05): `RunSupervisor`, `RunRequest`, `SupervisorPolicy`, `AdoptionReport`;
+  - `worker_launcher.py` (Slice 05): `SubprocessWorkerLauncher` and the `WorkerLauncher` seam;
+  - `worker.py` (Slice 05): the worker entry point `python -m jarvis.testlab.worker`;
+  - `maintenance.py` (Slice 05): `MaintenancePolicy`, `run_maintenance_pass`;
+  - `selftest.py` (Slice 05): the `selftest.worker` test fixture diagnostic and its runner.
 - Official manifests: `jarvis/testlab/official/<domain>/<name>.v<N>.json` plus `catalog.lock.json`.
 - Conformance tests: `tests/unit/test_testlab_identity.py`,
   `tests/unit/test_testlab_profiles.py`, `tests/unit/test_testlab_diagnostics.py`,
@@ -39,19 +46,23 @@ normal CI.
   `tests/unit/test_testlab_store_retention.py`, `tests/unit/test_testlab_store_capture.py`,
   `tests/unit/test_testlab_bundle.py`, `tests/unit/test_testlab_bundle_capture.py`,
   `tests/unit/test_testlab_primitives.py`, `tests/unit/test_testlab_primitives_replay.py`,
-  `tests/unit/test_testlab_catalog.py`, `tests/unit/test_testlab_catalog_promotion.py`, opt-in
+  `tests/unit/test_testlab_catalog.py`, `tests/unit/test_testlab_catalog_promotion.py`,
+  `tests/unit/test_testlab_supervisor.py`, `tests/unit/test_testlab_supervisor_jobs.py`,
+  `tests/integration/test_testlab_worker.py`, opt-in
   `tests/integration/test_testlab_bundle_real_session.py`; shared builders `tests/fakes/testlab.py`,
   session fixture `tests/fakes/testlab_bundle.py`.
-- Handoff: `tasks/jarvis-category2-test-lab/` (Slices 01, 02, 03, 04).
+- Handoff: `tasks/jarvis-category2-test-lab/` (Slices 01, 02, 03, 04, 05).
 
 Status 2026-09-17: contracts (Slice 01), run persistence (Slice 02), the
-DiagnosticBundle with its capture service and bundle store (Slice 03), and the
-catalog with its manifests, primitive vocabulary and promotion path (Slice 04).
-Nothing executes yet: every seed profile is `unavailable` because no runner is
-registered, and nothing composes the stores (no default root wiring, no scheduled
-retention or temporaries sweep, no CLI or HTTP entry to capture a bundle).
-Supervisor/worker (05), profile runners (06, 08, 09), score computation and sweeps
-(07), API/CLI/HTTP (10) and UI (11) do not exist yet.
+DiagnosticBundle with its capture service and bundle store (Slice 03), the
+catalog with its manifests, primitive vocabulary and promotion path (Slice 04),
+and the run supervisor with its isolated worker process (Slice 05). Runs execute,
+but only the `selftest.worker` test fixture has a runner: every seed profile is
+still `unavailable`, and a run of one is persisted `errored` with
+`runner_unavailable`. The supervisor schedules the store upkeep and owns the run
+store root it is given; nothing composes it into the application yet (no default
+root wiring, no CLI or HTTP entry). Profile runners (06, 08, 09), score
+computation and sweeps (07), API/CLI/HTTP (10) and UI (11) do not exist yet.
 
 ## Invariants
 
@@ -843,14 +854,14 @@ artifact path rule never accepts, so they cannot collide with evidence.
   no longer exists. It never follows a link: a symlink
   or junction at any level (run directory, temp file, subdirectory) is skipped,
   so nothing outside the store is touched, and `storage_usage` does not count a
-  link target's bytes. Nothing schedules it in Slice 02.
+  link target's bytes. Slice 05 schedules it (Supervisor and workers, Maintenance).
 - **Known race (accepted)**: `put_artifact` creates missing parent directories
   just before moving the artifact into place. If a sweep runs at that moment and
   the parent is an old, empty directory being reused, the sweep can remove it
   and the put fails with a retryable error (`testlab_store_io` or
   `testlab_store_path_unsafe`); retrying the put succeeds. This stays documented
-  behaviour: the sweep is unscheduled, and Slice 05 will schedule it outside
-  active runs.
+  behaviour, and the reason the Slice 05 supervisor only sweeps when it has no
+  active run (Supervisor and workers, Maintenance).
 
 ### Concurrency
 
@@ -933,8 +944,8 @@ stored artifacts and deletions. A failing sink never fails a store operation
 ### Retention
 
 `jarvis/testlab/retention.py`. `TestLabRetentionPolicy` is disabled unless
-explicitly enabled (the `ConversationEventRetentionPolicy` idiom); nothing
-schedules it in Slice 02.
+explicitly enabled (the `ConversationEventRetentionPolicy` idiom). The Slice 05
+supervisor schedules it, outside active runs (Supervisor and workers, Maintenance).
 
 | Field | Default |
 |---|---|
@@ -1049,6 +1060,384 @@ rule, never values or local paths. `TestLabCaptureError(TestLabError)` carries
 The bundle store (DiagnosticBundle, Bundle storage) reuses these codes with
 `BundleNotFoundError` (`testlab_store_not_found`), `BundleConflictError`
 (`testlab_store_conflict`) and `BundleRecordCorruptError` (`testlab_store_corrupt`).
+
+## Supervisor and workers
+
+Locked decision 13: a run executes in a supervised isolated worker process,
+never inside the Control Center process. The supervisor turns "run this
+diagnostic, on this profile, with these parameters" into a persisted, isolated,
+observable `TestRun`; the worker executes it and measures.
+
+| Module | Role |
+|---|---|
+| `jobs.py` (pure) | `WorkerJob` / `WorkerResult` documents, the per-run file names, the closed failure-code vocabulary |
+| `runners.py` | `DiagnosticRunner` protocol, `RunContext`, `RunArtifacts`, `RunOutcome`, `RunCancelled`: the seam Slices 06/08/09 implement |
+| `supervisor.py` | `RunSupervisor`, `RunRequest`, `SupervisorPolicy`, `AdoptionReport`: queueing, reservation, bounds, persistence, adoption |
+| `worker_launcher.py` | `SubprocessWorkerLauncher`: process start, stderr capture, tree kill (injectable `WorkerLauncher` seam) |
+| `worker.py` | `python -m jarvis.testlab.worker <job.json>`: the child process |
+| `maintenance.py` | `MaintenancePolicy`, `run_maintenance_pass`: the scheduled store upkeep |
+| `selftest.py` | the `selftest.worker` TEST FIXTURE diagnostic and its runner (never a seed diagnostic) |
+
+### API
+
+```python
+supervisor = RunSupervisor(store=store, work_root=runtime / "testlab" / "work",
+                           catalog_root=DEFAULT_CATALOG_ROOT, settings_path=runtime / "control-center-settings.json")
+await supervisor.start()                        # adopts orphans, then dispatches
+run_id = await supervisor.submit(RunRequest(...))   # returns once the queued record is stored
+run = await supervisor.status(run_id)               # the stored record, whatever its state
+await supervisor.cancel(run_id)                     # cooperative, then killed
+run = await supervisor.wait(run_id, timeout_s=...)  # the terminal record
+await supervisor.aclose()                           # stops every run, then stops dispatching
+```
+
+`RunRequest {diagnostic_id, profile, version = null, parameters, overrides,
+scenario, bundle_id, sweep_id, parent_run_id, grant}`. `version` null means the
+latest published version, and the resolved one is recorded in the run.
+
+`submit` raises `SupervisorError` only when no honest record could be written at
+all — unknown diagnostic, undeclared profile, parameter or override refused by
+the declaration, unreadable settings file, no git identity. Everything else is
+persisted: the record is the evidence, including for a refusal.
+
+### Lifecycle
+
+1. **submit** resolves the catalog entry, the effective parameters, the
+   run-local overrides and the scenario; captures the code identity, the
+   environment facts and the redacted configuration snapshot; stores the
+   `queued` record, then its `config_snapshot` artifact; returns the run id.
+2. **gate**: `check_profile_permission(profile, grant)`. Denied, the run becomes
+   `errored` with `permission_denied` and the denials in the detail, and no
+   worker is ever started.
+3. **dispatch**: the run waits for a free slot and for its declared
+   capabilities. The queue is FIFO but a blocked head does not block the rest.
+4. **start**: `queued -> running`, the per-run scratch is built, the worker is
+   launched and its pid recorded.
+5. **watch**: startup bound, heartbeat bound, declared duration, cancel grace,
+   then the tree kill.
+6. **terminal**: the worker log and the stderr tail are stored as artifacts, the
+   verdict is derived from the metrics, `check_run_against_spec` re-checks the
+   completed run, and the record is updated under the store's compare-and-swap.
+
+Every step emits through the injected `DiagnosticSink`: `testlab.run.queued`,
+`testlab.run.waiting`, `testlab.run.started` (with the pid), `testlab.run.progress`
+(first heartbeat), `testlab.run.timeout`, `testlab.run.cancelling`,
+`testlab.run.finished` (status, failure code, score), plus
+`testlab.supervisor.started` / `.stopped` and `testlab.maintenance.pass`.
+
+### Worker protocol and on-disk layout
+
+Communication is by files in a per-run scratch directory, not by a pipe: the
+result must survive the death of either side. A pipe dies with the worker, so a
+supervisor that crashed mid-run would find nothing to adopt, while `result.json`
+is still on disk. This is the isolated one-shot idiom of
+`jarvis/runtime/speaker_benchmark.py::_run_isolated`, with the job written as a
+file too, so the command line carries no run data.
+
+```text
+<work_root>/<run_id>/job.json            WorkerJob (jarvis.testlab.worker_job v1), written by the supervisor
+<work_root>/<run_id>/result.json         WorkerResult (jarvis.testlab.worker_result v1), written atomically by the worker
+<work_root>/<run_id>/cancel.json         presence means "stop cooperatively"
+<work_root>/<run_id>/heartbeat.json      refreshed by the worker; its mtime is the liveness signal
+<work_root>/<run_id>/worker.lock         held by the worker for its whole life (OS lock, released on death)
+<work_root>/<run_id>/worker.json         pid and supervisor pid, for a human reading the scratch
+<work_root>/<run_id>/worker.log          progress lines; stored as a `worker_log` artifact
+<work_root>/<run_id>/worker-stderr.log   captured stderr; stored as a `worker_log` artifact
+<work_root>/<run_id>/runtime/            the run's JARVIS_RUNTIME_DIR, with its settings copy
+<work_root>/<run_id>/data/               the run's JARVIS_DATA_ROOT
+```
+
+The scratch is removed when the run ends (`keep_scratch` keeps it for
+debugging); a scratch with no non-terminal run is removed by the next `start()`.
+The store's own run directory is never used for protocol files: only committed
+artifacts live there.
+
+The worker is started as `python -m jarvis.testlab.worker <job.json>` with the
+repository root as its working directory. It resolves the diagnostic from the
+catalog named by the job, checks that the declaration still has the fingerprint
+the run was queued against, resolves the implementation in the registry
+(`default_implementations()` plus the self-test fixture names) and calls its
+runner with a `RunContext`.
+
+**The worker reports measurements, never a verdict.** `WorkerResult` carries
+`metrics`, an optional `score`, `join_ids` and the artifact references it
+committed. The supervisor derives every `AssertionResult` with
+`evaluate_assertion` from the declaration, calls `complete_run`, then
+`check_run_against_spec`. A run whose measurements contradict its declaration
+(an undeclared metric, a value outside its unit) is stored `errored` with
+`result_contradicts_spec`, never `passed`.
+
+A runner never receives the store. `RunContext.artifacts` is `RunArtifacts`, a
+facade scoped to its own run: `put`, `read`, `open`, `list`, and nothing else:
+no `update_run`, no `delete_run`, no other run id. The four operations are bound
+at construction and the facade keeps no store attribute (`__slots__`), so no chain
+of attribute accesses from a `RunContext` reaches a record method. A runner that could write the
+record could store a forged `passed` verdict which the supervisor would then find
+already terminal, and could delete another run. If a terminal record appears that
+the supervisor did not write, it does not shrug: it tries to correct it, reports
+the store's refusal (a terminal record is immutable) and logs the incident at
+error level with `run_concluded_out_of_band`.
+
+The result file is read once more after the worker exits and after any kill, so a
+measurement written just before a liveness fault is never lost. What happens to it
+depends on the reason the supervisor had:
+
+- no reason of its own: the metrics decide the verdict, as usual;
+- a liveness fault (`worker_startup_timeout`, `worker_unresponsive`) around a
+  complete, declaration-conforming measurement: the fault was a false alarm and
+  the measurement decides;
+- a deliberate stop (`run_timeout`, `cancelled_by_caller`): the status stays the
+  supervisor's, and the metrics are attached as evidence when the declaration
+  accepts them (otherwise they are dropped and `testlab.run.partial_metrics_dropped`
+  says why). A timed-out run therefore reads `timed_out` and still carries what it
+  measured.
+
+A result file that exists but does not decode is `worker_result_invalid`, never
+`worker_crashed`: a truncated or edited result is a defect to see, not a crash to
+infer. Failure details are English; `describe_exit_code` supplies the facts
+(NTSTATUS, signal, native crash) and its French label is not used.
+
+Exit codes: 0 measured, 1 a failed result was written, 2 no result could be
+written (an unreadable job, a lock another worker holds). The supervisor prefers
+the result file over the exit code, and uses the exit code only when there is no
+result — `describe_exit_code` then names a native crash in the detail.
+
+### Isolation
+
+- The child's environment gets `JARVIS_RUNTIME_DIR` and `JARVIS_DATA_ROOT`
+  inside the run scratch, plus `JARVIS_TESTLAB_RUN_SCRATCH` and
+  `JARVIS_TESTLAB_WORKER=1`. `JARVIS_CORE_TOKEN_FILE` is dropped so it cannot
+  point at the live Core token.
+- Provider credentials (`OPENAI_API_KEY` and the other names in
+  `PROVIDER_ENV_NAMES`) are emptied unless the profile declares a provider
+  capability, and `JARVIS_TESTLAB_NO_PROVIDERS=1` is set. They are emptied
+  rather than removed because `load_project_environment` fills *missing* names
+  from `.env`.
+- Before anything else, the worker checks that `V2Settings.load()` resolves
+  `runtime_root` and `data_root` inside the scratch. It refuses with
+  `isolation_violation` otherwise. This is the mechanical guard: the supervisor
+  sets the environment, the worker proves it landed.
+- The scratch is built through no link. A run id is used once, so anything
+  already at that path is a leftover or a trap: a junction planted at
+  `<run>/runtime` would send the settings copy and the job file outside the run,
+  before the worker's guard can run. The supervisor removes what it finds (a link
+  is removed, never followed, as the Slice 02/03 stores do), creates the three
+  directories fresh and re-checks each one.
+- **The permanent `runtime/control-center-settings.json` is never written**
+  (READINESS B4.2). It is read, the run-local overrides are applied to a copy in
+  memory, and the copy is written into the scratch runtime directory. The
+  snapshot of that effective document is what `TestRun.config_fingerprint`
+  covers.
+- Run-local overrides may only name a setting the manifest allowlists. They come
+  from the scenario's `parameter.override` prelude (`ScenarioCheck.overrides`,
+  the only place a scenario may change configuration) and from
+  `RunRequest.overrides`. A prelude name that is a declared parameter overrides
+  that parameter instead. The same name given twice with two different values is
+  refused, never silently resolved. `apply_overrides` addresses a name that
+  already exists at the top level as a flat key (this is how
+  `control-center-settings.json` names voice settings) and any other dotted name
+  as a path, creating the objects it needs.
+- No device or provider is opened by this Slice: it ships no profile runner.
+  Detecting that a device is actually free, and not held by the running voice
+  process, belongs to Slices 08 and 09 (READINESS B9).
+
+### Threat model
+
+Runners are reviewed in-repo code running inside the worker process: the
+environment, the artifact facade and the scratch rules prevent mistakes, not
+malice. A runner can still open any path it can name, including the store, by
+absolute path, and can still reach the store object through `__self__` of a bound
+method or through `gc`. What the facade removes is the route a runner can take by
+accident: no attribute of what it is handed is a store.
+
+What the Test Lab guarantees is that a correct-looking runner cannot touch the
+live runtime, another run or its own verdict by accident, and that anything which
+does is visible: the record is cross-checked against the declaration, an
+out-of-band conclusion is reported as an incident, and captured evidence is
+redacted before it is stored. The boundary is code review plus the catalog lock,
+not the process.
+
+### Resource reservation
+
+The capabilities of a run are `Catalog.resources_and_cost(diagnostic_id,
+profile).requires`. The supervisor holds them for the whole run, so two runs
+never contend for the provider, an audio device or the human. A `virtual`
+profile declares nothing, so virtual runs never contend and only the
+`max_concurrent_runs` bound applies. A run whose capabilities are held waits
+(`testlab.run.waiting`); after `max_queue_wait_s` it is refused with
+`resource_wait_timeout` rather than waiting forever.
+
+`check_profile_permission` is the authorization gate and reservation is the
+contention gate: a run needs both.
+
+Queue-wait time accrues only while a run is genuinely blocked: no free slot, or
+a capability held. A run that never got a chance to be considered, because an
+upkeep pass or another run's start held the start gate, accrues nothing and can
+never be refused for a wait the supervisor itself caused.
+
+**One supervisor per work root.** `start()` takes an exclusive OS lock on
+`<work_root>/.supervisor.lock` and holds it until `aclose()`; a second supervisor
+on the same work root refuses to start with `testlab_supervisor_work_root_busy`.
+Two supervisors are not supported: between `queued -> running` and the worker
+taking its own lock there is a window in which the second would see a live run as
+abandoned and reap it. The kernel releases the lock when a supervisor dies, so the
+next one starts normally.
+
+### Timeout, cancellation and kill
+
+| Bound | Default | Crossed |
+|---|---|---|
+| `startup_timeout_s` | 60 s | Spawn to first heartbeat: killed, `errored` / `worker_startup_timeout` |
+| `heartbeat_timeout_s` | 30 s | A started worker goes silent: killed, `errored` / `worker_unresponsive` |
+| declared `max_duration_s` | the profile's | Run budget, from the first heartbeat: `timed_out` / `run_timeout` |
+| `cancel_grace_s` | 5 s | Between the stop marker and the tree kill |
+| `max_queue_wait_s` | 600 s | Queued without its resources: `errored` / `resource_wait_timeout` |
+| `max_run_duration_s` | none | Operator cap over the declared duration |
+
+The run budget is measured from the worker's first heartbeat, so interpreter
+startup does not eat into the declared duration. The worker holds the same budget
+from the moment it calls the runner, which is slightly later (its catalog load
+sits in between), so a timed-out run usually produces a real `run_timeout` result
+before the cancel grace expires; the supervisor's kill is the backstop. When the supervisor initiated the stop, its reason decides the status,
+whatever the worker wrote, so the record says what actually stopped the run.
+
+Cancellation is cooperative first: `cancel.json` appears, the worker notices it
+on its next heartbeat tick, `RunContext.cancelled` is set, `RunCancelled`
+propagates out of the runner and the worker writes a `cancelled_by_caller`
+result. A runner that ignores it is killed after the grace, and the detail then
+says the process tree was killed. A queued run is cancelled immediately, with no
+worker started at all.
+
+Containment is `jarvis/runtime/owned_process_tree.py::OwnedProcessTree` on
+Windows: the worker is created suspended, assigned to a Job Object with
+`KILL_ON_JOB_CLOSE` and no breakaway, then resumed. Killing the job kills the
+worker and everything it started, and the kernel kills the whole tree if the
+supervisor itself dies. The documented POSIX fallback is `start_new_session=True`
+plus `os.killpg`; a process group is not killed when the parent dies, so on
+POSIX an orphaned worker can outlive its supervisor — adoption handles that by
+refusing to touch a run whose worker lock is still held.
+
+On this host the venv `python.exe` starts the real interpreter as a further
+process, so the recorded pid may be that launcher's. Liveness therefore never
+rests on a pid (pids are reused anyway): the worker lock is the test.
+
+### Orphan adoption
+
+`start()` lists every `queued` and `running` run and finishes it, so no run is
+left `running` by a supervisor that died:
+
+- the worker lock is acquired with a short timeout. It is an OS lock released by
+  the kernel when its holder dies, so acquiring it proves no worker is running
+  that id;
+- **lock held**: a live worker owns the run. Nothing is touched and nothing is
+  killed by pid; the run is reported in `AdoptionReport.active_elsewhere`;
+- **lock free with a `result.json`**: the run is concluded from that result, as
+  the dead supervisor would have done (`recovered`);
+- **lock free, `running`**: `errored` / `worker_lost`;
+- **lock free, `queued`**: `errored` / `run_abandoned` — it never started, and
+  the grant it was authorized under did not survive its supervisor;
+- scratch directories with no non-terminal run are removed.
+
+A terminal time is clamped up to the run's `started_at`: an adopting supervisor's
+clock may read earlier than the one that started the run, and `TestRun` refuses a
+`finished_at` before `started_at`. `AdoptionReport.reaped` counts only runs whose
+terminal write succeeded; one the store refused is in `failed` with its refusal
+code. A report claiming a run was finished while it is still `running` is worse
+than no report.
+
+### Maintenance
+
+`remove_stale_temporaries` and retention are scheduled here (Slice 02 built both
+and scheduled neither). A pass runs every `maintenance.interval_s`, and only
+when the supervisor has **no active run**: it takes the same lock the dispatcher
+takes to start a run, so no run of this supervisor can be writing while the sweep
+walks the store. A run submitted during a pass therefore waits for it (which is
+why a sweep must stay short) and starts the moment it ends, because the pass
+wakes the dispatcher on its way out. This is what keeps the documented sweep-versus-put race
+(an empty subdirectory removed between the `mkdir` and the write, reported as a
+retryable `testlab_store_io`) out of the run path. Retention selects terminal
+runs only, `apply_retention_plan` re-checks under the run lock, and the
+supervisor additionally removes the ids it holds from the plan before applying
+it. Retention stays disabled unless enabled explicitly.
+
+### Failure codes
+
+`RunFailure.code` values this Slice produces (`jobs.FAILURE_CODES`):
+
+| Code | Status | Meaning |
+|---|---|---|
+| `permission_denied` | `errored` | The grant does not authorize the profile (denials in the detail) |
+| `resource_wait_timeout` | `errored` | Queued too long without its capabilities |
+| `worker_spawn_failed` | `errored` | The scratch or the process could not be created |
+| `worker_startup_timeout` | `errored` | No heartbeat within `startup_timeout_s` |
+| `worker_unresponsive` | `errored` | A started worker stopped beating |
+| `worker_crashed` | `errored` | Exited with no result (the exit code is described in the detail) |
+| `worker_lost` | `errored` | Adopted: `running`, no live worker, no result |
+| `worker_active_elsewhere` | — | Adoption report only: the run was left alone |
+| `run_abandoned` | `errored` | Adopted: queued by a supervisor that is gone |
+| `run_concluded_out_of_band` | — | Diagnostic only: a terminal record the supervisor did not write |
+| `run_timeout` | `timed_out` | The declared duration was exceeded |
+| `cancelled_by_caller` | `cancelled` | A caller, or the supervisor stopping, asked it to stop |
+| `worker_result_invalid` | `errored` | The result file exists but does not decode, or names another run |
+| `result_contradicts_spec` | `errored` | `check_run_against_spec` refused the completed run |
+| `worker_job_invalid` | `errored` | The job file could not be read or decoded |
+| `isolation_violation` | `errored` | The worker's roots are not inside the run scratch |
+| `catalog_unavailable` | `errored` | The catalog could not be loaded, or the declaration drifted |
+| `runner_unavailable` | `errored` | Reserved, unregistered, or mismatched implementation name |
+| `runner_failed` | `errored` | The runner raised, or its measurements are invalid |
+| `supervisor_stopped` | `cancelled` | The supervisor stopped while the run was queued or running |
+
+Supervisor refusals raised to the caller use `testlab_supervisor_request_invalid`,
+`testlab_supervisor_stopped`, `testlab_supervisor_unknown_run` and
+`testlab_supervisor_work_root_busy`.
+
+Captured evidence (the worker log, the stderr tail, every failure detail) is
+redacted before it is stored, by `capture.redact_evidence` / `capture.failure_detail`.
+Four passes: identifying text through the Slice 03 helper; the current user, host
+and home fragments; the value FOLLOWING a credential-introducing token
+(`Authorization:`, a bare `Bearer` / `Basic` scheme, and `api_key`, `secret`,
+`password`, `passwd`, `token`, `client_secret`, `access_token` before a `=` or a
+`:`); then any word whose own shape is a credential (the canonical
+`SECRET_PREFIXES` of `conversation_event_trace`, imported rather than copied) and
+any hexadecimal blob of 32 characters or more. The introducer pass exists because
+a credential has no shape of its own: a real worker printed `Bearer QABEARERTOKEN`
+and the token survived every shape-based rule. A worker's stderr is arbitrary
+text, and a traceback can carry the very key its provider call refused.
+
+Two limits are deliberate. A word must be 8 characters to be judged by its shape,
+and the value after a bare `Bearer` / `Basic` must be 8 characters too, so prose
+("basic checks passed", "the token budget is 500") survives and a very short
+secret does not: short secrets are the name rule's job, not a text scan's. These
+helpers live in `capture.py`, not in `redaction.py`, because they need
+`identity_fragments()` and the credential vocabulary of an I/O module, and
+`redaction.py` is a pure contract module that may import neither.
+
+### Self-test fixture
+
+`jarvis/testlab/selftest.py` declares `selftest.worker` v1 with one `virtual`
+profile and the implementation `testlab.selftest.virtual`. It is a TEST FIXTURE,
+not a seed diagnostic: it ships no manifest under `jarvis/testlab/official/`, and
+a test asserts that no official manifest references a `testlab.selftest.` name.
+Its `mode` parameter selects the path to exercise — `measure`, `sleep`, `hang`
+(ignores the stop), `spawn_child` (starts a grandchild, to prove the tree is
+killed), `crash` (hard exit with no result), `error`, `undeclared_metric` and
+`forge` (tries to write its own verdict and to reach another run, then measures a
+failing value). `write_selftest_catalog(root)` writes a one-diagnostic catalog for
+a test.
+
+Slice 05 registers nothing else: every seed profile is still `unavailable`, and a
+run of one is persisted `errored` with `runner_unavailable` rather than refused
+at submission, so the attempt stays in the record. Slice 06 registers the virtual
+runners.
+
+### Validation
+
+```powershell
+.venv/Scripts/python -m pytest -q -p no:cacheprovider tests/unit/test_testlab_supervisor.py tests/unit/test_testlab_supervisor_jobs.py tests/integration/test_testlab_worker.py
+```
+
+The integration file starts real processes: one per test, two in the tree-kill
+test (the worker and its grandchild).
 
 ## DiagnosticBundle
 
@@ -1569,6 +1958,13 @@ that the bundle exists.
 
 ```powershell
 .venv/Scripts/python -m pytest -q -p no:cacheprovider tests/unit/test_testlab_*.py
+```
+
+Worker processes are real in the Slice 05 integration file (one process per test,
+two in the tree-kill test):
+
+```powershell
+.venv/Scripts/python -m pytest -q -p no:cacheprovider tests/integration/test_testlab_worker.py
 ```
 
 The replay compatibility layer is covered by the existing replay tests, which must

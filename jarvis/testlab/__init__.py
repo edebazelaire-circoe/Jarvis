@@ -34,4 +34,14 @@ primitive vocabulary, a superset of the `jarvis.voice_replay` action DSL),
 I/O modules `jarvis.testlab.catalog` (loads `jarvis/testlab/official/`) and
 `jarvis.testlab.replay` (replay fixture codec and scenario adapter, which
 `tests/replay/voice_replay.py` re-exports).
+
+Slice 05 adds execution: the pure worker protocol `jarvis.testlab.jobs`
+(`WorkerJob`, `WorkerResult`, failure codes), the runner seam
+`jarvis.testlab.runners`, and the I/O modules `jarvis.testlab.supervisor`
+(`RunSupervisor`: queueing, resource reservation, bounds, adoption, upkeep),
+`jarvis.testlab.worker_launcher` (process start and tree kill),
+`jarvis.testlab.worker` (the child process, `python -m jarvis.testlab.worker`),
+`jarvis.testlab.maintenance` (scheduled store upkeep) and
+`jarvis.testlab.selftest` (the `selftest.worker` TEST FIXTURE diagnostic, never a
+seed diagnostic).
 """

@@ -16,9 +16,11 @@ ROOT = Path(__file__).resolve().parents[2]
 #: and promotion, which takes the published history as data instead of importing the catalog.
 #: The replay codec (`replay.py`) and the catalog loader (`catalog.py`) are the I/O modules and
 #: are deliberately absent from both lists below.
+#: Slice 05 adds the worker protocol documents (`jobs.py`), which stay pure: the supervisor and
+#: the worker read and write the files, the codec only describes them.
 CONTRACT_MODULES = ("__init__", "validation", "identity", "profiles", "diagnostics", "scenarios", "runs", "store",
                     "retention", "redaction", "bundle", "bundle_rules", "bundle_builder", "primitives",
-                    "implementations", "manifests", "promotion")
+                    "implementations", "manifests", "promotion", "jobs")
 ALLOWED_IMPORTS = {
     "__future__", "collections.abc", "dataclasses", "datetime", "enum", "hashlib", "json", "math", "re", "types",
     "typing", "jarvis.domain.conversation_events", "jarvis.domain.voice_state", "jarvis.testlab.validation",

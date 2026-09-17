@@ -7,7 +7,7 @@ Start with `00-project-manager`; it is the readiness gate and is not delegated. 
 - [x] `02-run-persistence-artifacts` — Persistent TestRun and artifact store
 - [x] `03-diagnostic-bundle` — DiagnosticBundle normalization and session capture
 - [x] `04-catalog-scenarios` — Diagnostic catalog, manifests, and safe ad-hoc scenarios
-- [ ] `05-supervisor-worker` — Run supervisor and isolated worker lifecycle
+- [x] `05-supervisor-worker` — Run supervisor and isolated worker lifecycle
 - [ ] `06-virtual-profile-harness` — Virtual profile from async conversation harness
 - [ ] `07-metrics-scoring-sweeps` — Metrics, scoring, comparisons, and parameter sweeps
 - [ ] `08-audio-live-profiles` — Controlled audio and live-provider profiles

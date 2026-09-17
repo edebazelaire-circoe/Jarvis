@@ -1437,8 +1437,17 @@ profile whose runner is not written yet is declared `unavailable` with a reason.
 come from a closed registered vocabulary that is a superset of the `jarvis.voice_replay` action
 DSL (now in `jarvis/testlab/replay.py`, with `tests/replay/voice_replay.py` as a thin layer over
 it), and an ad-hoc scenario becomes an official version through a pure promotion function whose
-output a human reviews and publishes. Workers, profile runners and adapters come in later Slices
-of `tasks/jarvis-category2-test-lab/`.
+output a human reviews and publishes. Every run executes in a supervised worker process, never in
+the Control Center: `RunSupervisor` persists the queued record before it returns a run id, reserves
+the capabilities the profile declares so two runs never contend for the provider, a device or the
+human, and bounds the run with a startup, heartbeat, duration and cancel-grace deadline before
+killing the whole process tree (Windows Job Object, POSIX process group). The worker gets a per-run
+scratch directory as its `JARVIS_RUNTIME_DIR` / `JARVIS_DATA_ROOT` with a copy of the settings, so
+the permanent `runtime/control-center-settings.json` is never written; it reports measurements only,
+and the supervisor derives the verdict and re-checks it against the declaration before storing.
+A supervisor that died leaves no run `running`: the next start reaps or recovers them from the
+worker lock and the result file, and schedules the store upkeep. Profile runners and adapters come
+in later Slices of `tasks/jarvis-category2-test-lab/`.
 
 ## Sub-agent routing
 

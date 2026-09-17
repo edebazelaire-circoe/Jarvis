@@ -22,9 +22,11 @@ from jarvis.testlab.capture import (
     build_config_snapshot,
     capture_code_identity,
     capture_environment,
+    failure_detail,
     git_worktree_dirty,
     identity_fragments,
     read_git_revision,
+    redact_evidence,
     redact_identifying_text,
     redact_urls,
     store_config_snapshot,
@@ -361,3 +363,57 @@ def test_snapshot_replaces_emails_and_ssh_users(tmp_path):
                                      home=tmp_path)
     assert snapshot.document["settings"] == {"owner": "Contact <email>", "remote": "github.com:org/repo.git"}
     assert "alice" not in snapshot.encoded.decode("utf-8") and snapshot.redacted == 2
+
+
+# ----------------------------------------------- captured evidence (Slice 05)
+
+#: The exact line a real worker printed during QA: the token survived every
+#: shape-based rule, because a credential has no shape of its own.
+QA_BEARER_LINE = "Authorization: Bearer " + "QA" + "BEARERTOKEN"
+
+
+@pytest.mark.parametrize("line, gone", [
+    (QA_BEARER_LINE, "BEARERTOKEN"),
+    ("Bearer " + "QA" + "BEARERTOKEN", "BEARERTOKEN"),
+    ("Authorization: Bearer x", "Bearer x"),
+    ("basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==", "QWxhZGRpbg"),
+    ("api_key=" + "sk-live" + "-abcdefgh", "abcdefgh"),
+    ("api-key: " + "9" * 12, "9" * 12),
+    ("X-Api-Key: abc", ": abc"),
+    ("password: hunter2", "hunter2"),
+    ("passwd=hunter2", "hunter2"),
+    ("client_secret = " + "z" * 20, "z" * 20),
+    ("token: " + "t" * 20, "t" * 20),
+    ("ghp_" + "A" * 20 + " leaked", "ghp_"),
+    ("digest " + "0123456789abcdef" * 3, "0123456789abcdef"),
+])
+def test_captured_evidence_loses_every_credential_shape(line, gone):
+    redacted = redact_evidence(line)
+    assert gone not in redacted
+    assert REDACTED in redacted
+
+
+@pytest.mark.parametrize("line", [
+    "the token budget is 500",
+    "token budget exceeded",
+    "RuntimeError: the runner failed on purpose",
+    "basic checks passed in 12 ms",
+    "authorization was never requested",
+    "worker pid=1234 run=tlr-20260917T120000000Z-0123456789abcdef",
+])
+def test_captured_evidence_leaves_prose_alone(line):
+    assert redact_evidence(line) == line
+
+
+def test_captured_evidence_loses_the_identity_of_this_host():
+    redacted = redact_evidence("failure at " + str(Path.home()))
+    for fragment in identity_fragments():
+        assert fragment not in redacted
+
+
+def test_a_failure_detail_is_one_printable_bounded_line():
+    detail = failure_detail("first line\nsecond\tline with " + "sk-live" + "-ABCDEFGH1234 " + "x" * 900)
+    assert "\n" not in detail and "\t" not in detail
+    assert "sk-live" not in detail
+    assert len(detail) <= 512
+    assert failure_detail("   ") == "no further detail"
