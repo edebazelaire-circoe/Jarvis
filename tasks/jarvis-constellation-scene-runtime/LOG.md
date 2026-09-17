@@ -1481,3 +1481,57 @@ Residual risks (recorded, no change):
 6. The artifact lock is per display-MCP process: two brain processes are not serialised.
 7. A credentialed (non-openable) URL is shown as right-truncated text.
 8. After a brain restart, artifact items are not readable by the brain until Slice 09.
+
+### 2026-09-17 — Slice 07 — final follow-up
+
+QA re-verified `bd7b34d` and recommended APPROVE. Agent 0 asked for N1 and N2. Commits: `0f948f5` (code and tests), `bc81a2c` (docs), and this LOG entry. The changes are JS only, apart from tests and a JSON fixture, so there was no `verify_release` run, as instructed.
+
+**N1: the host tail showed less than the room allowed.**
+
+- `hostTail` now returns `…` plus the **longest suffix that fits** (`maxChars − 1` characters, a leading dot dropped) instead of whole labels only. QA's cases:
+  - `secure.barclays.co.uk.login-check.co.uk` at 17 → `…ogin-check.co.uk` (was `…co.uk`);
+  - `…github.io` at 18 → `…il-user.github.io`;
+  - `…com.au` at 14 → `…-login.com.au`.
+- Priority for the host on narrow rows (impeccable, scoped):
+  - the link is now one `<a>` with the host first, then the label; the ref shrinks first (`flex-shrink: 100`), then the label;
+  - below a 260 px row (`HOST_PRIORITY_ROW_PX`), the row gets `sc-host-first`: the decorative icon is hidden, the host is set at 10 px and may take the whole row, and the link stays clickable through the host;
+  - the full host and label stay in the accessible name and in `title`.
+- Node test: 4 QA hosts × widths 1–48. Each tail is exactly the longest fitting suffix and a suffix of the host.
+- Browser (`s7f_browser.py` = QA's `qa07r_browser.py` on its own Chrome 57780, host `s7_host.py` 57781–57783 on fresh `s7f_root_head`):
+  - QA's `judge` over 9 hostile hosts in both themes at 1920×1080 and 1280×720, narrow windows (45 u and 52 u at 1280×720; 30 u and 36 u at 1920×1080), a live theme switch and a resize without reload: **0 violations everywhere**. The first rerun, before the host-first row, still had 2: PayPal IDN at 45 u and 30 u.
+  - At 45 u / 1280×720: `…m.secure-account.example`, `…co.uk.login-check.co.uk`, `…n.org.evil-login.example`.
+  - Screenshots: `s7f_shots/s7f_narrow_45u_1280x720.png`, `s7f_narrow_36u_1920x1080.png` (plus 52 u and 30 u, and `s7f_hostile_zoom_{omega,circuit-board}_{1920x1080,1280x720}.png`).
+
+**N2: expanding from the menu covered neighbours while free space existed.**
+
+- `placeFor` now calls `freeBoxNearest`:
+  - the safe area is rasterised in 2-unit cells; each visible object (grown by 1 unit) and the face zone mark the cells they touch (conservative, never a false « free »);
+  - a 2D prefix sum tests each candidate box in O(1);
+  - the free box whose centre is nearest the anchor wins, ties by y then x. The anchor is what the object explains, else its parent or star, else its current place.
+  - Only when no box is free does it fall back to the resolver's least-overlap search.
+- It is deterministic, and its work is bounded by the safe area (≈ 10 000 cells) rather than the number of objects.
+- Timings (`qa07r_place_bench.cjs`, warm): 50 objects 1.8 ms, 200 objects 1.0–1.1 ms, 510 packed objects 1.6–2.7 ms (no free box, fallback), 510 unplaced 0.9–1.7 ms. QA's dense scene: 0.7–0.8 ms warm, 3.4 ms first call.
+- Node test on QA's saved dense scene (`tests/fixtures/scene_dense_expand_qa07r.json`, written by `s7f_probe3.py` from QA's probe):
+  - 0 overlaps and 0 face overlap (QA before: 4 stars covered);
+  - distance equals the nearest free box found by an independent exact scan;
+  - deterministic, and under 16 ms.
+  - Mutation check (free search removed) → 2 tests red.
+- Browser: `brain-artifact-dense2` and `brain-artifact-research` both expand with **0 overlaps**, 0 face overlap, no chrome hits and no long tasks. They land at `(34, −14)` and `(34, 28)`: the nearest free space in that scene is right of the face, so their links cross the face (nearest free box wins). Screenshot `s7f_dense_expand_t-dense2_omega_1920x1080.png`.
+
+Other checks from the same script:
+
+- right-click on a link: native menu, no scene menu;
+- Tab sequence: 0 `UL` stops, lists `tabindex=-1`;
+- orphan bulk archive: one `archive_many applied`, linked artifacts stay;
+- exceptions 0, console errors 0.
+- All processes killed afterwards.
+
+Validation:
+
+- Targeted suite under `-W error::ResourceWarning`: every scene test, cancel protocol, display MCP, all Control Center UI, Barehands, live status, documented routes, work view, prompts, debug console, routing hook, voice to Claude, settings, agent settings, v2 jobs/architecture/health, work state → **1609 passed** in 106.06 s.
+- Impeccable detector on the changed JS: `[]`.
+
+Residuals, added:
+
+1. A registrable domain longer than a 180 px row (≈ 24 characters at 10 px) still shows only its end.
+2. When the only free space is across the face, an expanded window's link crosses the face.
