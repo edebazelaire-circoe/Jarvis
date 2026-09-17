@@ -115,10 +115,26 @@
     };
   }
 
+  /* Ce que la section garde du statut lu par la page : l'état réel du brain.
+     Pur (et testé) parce qu'un champ oublié ici rendrait `brainView` aveugle :
+     `display_prompt` manquant renvoyait toujours au repli « agent plus ancien ». */
+  function statusView(value){
+    if(!value||typeof value!=='object')return null;
+    const agent=value.agent&&typeof value.agent==='object'?value.agent:null;
+    return {
+      agent_cli:value.agent_cli,
+      agent:agent?{name:agent.name,state:agent.state,display_tools:agent.display_tools,display_prompt:agent.display_prompt}:null,
+      subagents:value.subagents,
+    };
+  }
+
+  /* Phrase annoncée par la région vivante : l'état du brain, pas les compteurs. */
+  function brainSentence(model){return `${model.brain.title}. ${model.brain.detail}`}
+
   /* Durée lisible d'une attente en cours (compteur du redémarrage). */
   function elapsedLabel(ms){return `${Math.max(0,Math.floor((Number(ms)||0)/1000))} s`}
 
-  const api=Object.freeze({version:1,ENV_NAME,SETTINGS_ROUTE,RESTART_ROUTE,RESTART_BODY,RESTART_DEADLINE_MS,describe,elapsedLabel});
+  const api=Object.freeze({version:1,ENV_NAME,SETTINGS_ROUTE,RESTART_ROUTE,RESTART_BODY,RESTART_DEADLINE_MS,describe,statusView,brainSentence,elapsedLabel});
   root.JarvisSceneSettings=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof globalThis!=='undefined'?globalThis:this);
@@ -166,12 +182,14 @@
     const hint=node('div',{className:'hint',text:view.busy?'Enregistrement…':(model.readOnly&&model.source?'Lecture seule : voir ci-dessous.':'Désactivée par défaut. Enregistré immédiatement.')});
     section.append(node('div',{className:'field inline'},[input,node('div',{},[label,hint])]));
     if(!model.known)section.append(node('div',{className:'notice bad',role:'alert',text:'Réglage de scène illisible : rouvrez les réglages.'}));
-    if(view.error)section.append(node('div',{className:'notice bad',role:'alert'},[node('strong',{text:'Réglage non enregistré'}),node('div',{className:'hint',text:view.error})]));
+    if(view.error)section.append(node('div',{className:'notice bad',role:'alert'},
+      [node('strong',{text:view.error.startsWith('Redémarrage')?'Redémarrage impossible':'Réglage non enregistré'}),
+       node('div',{className:'hint',text:view.error})]));
     if(model.source)section.append(node('div',{className:'notice',id:'sceneSourceNote'},[node('strong',{text:model.source.title}),node('div',{className:'hint',text:model.source.detail})]));
     const list=node('dl',{className:'scene-effects',id:'sceneEffects'});
     for(const effect of model.effects)list.append(node('dt',{text:effect.term}),node('dd',{text:effect.text}));
     section.append(list);
-    const brain=node('div',{className:`notice ${model.brain.tone==='warn'?'':model.brain.tone}`,id:'sceneBrain',role:'status','aria-live':'polite'},
+    const brain=node('div',{className:`notice ${model.brain.tone==='warn'?'':model.brain.tone}`,id:'sceneBrain'},
       [node('strong',{text:model.brain.title}),node('div',{className:'hint',text:model.brain.detail})]);
     if(model.brain.restart||view.restart){
       const running=!!view.restart;
@@ -195,6 +213,7 @@
     const key=focused?(focused.hasAttribute('data-scene-toggle')?'[data-scene-toggle]':focused.hasAttribute('data-scene-restart')?'[data-scene-restart]':null):null;
     const next=sectionNode();
     if(previous)previous.replaceWith(next);else content.prepend(next);
+    announce(Logic.brainSentence(Logic.describe(view.scene,view.status)));
     if(key){
       const target=next.querySelector(key);
       const fallback=next.querySelector('[data-scene-toggle]:not([disabled])')||next.querySelector('h3');
@@ -214,6 +233,7 @@
       view.scene=data.scene;
       if(typeof SET!=='undefined'&&SET.data)SET.data.scene=data.scene;
       log('info','scene.setting_saved',{enabled:data.scene.enabled,source:data.scene.source});
+      announce(data.scene.enabled?'Scène activée.':'Scène désactivée.');
       if(typeof toast==='function')toast({title:data.scene.enabled?'Scène activée':'Scène désactivée',
         sub:'Affichage appliqué maintenant ; outils du brain au prochain démarrage.',kind:'ok',ms:3500});
     }catch(error){
@@ -233,6 +253,7 @@
     const ok=typeof confirmDialog==='function'&&await confirmDialog(confirmation||{title:'Redémarrer le brain ?',lines:[],confirmLabel:'Redémarrer le brain'});
     if(!ok){log('info','scene.brain_restart_cancelled',{});return}
     const controller=typeof AbortController==='function'?new AbortController():null;
+    view.error='';
     view.restart={startedAt:Date.now(),ticker:null,timer:null};
     view.restart.ticker=setInterval(refresh,1000);
     view.restart.timer=setTimeout(()=>{if(controller)controller.abort()},Logic.RESTART_DEADLINE_MS);
@@ -245,6 +266,8 @@
     }catch(error){
       const aborted=error&&error.name==='AbortError';
       const message=aborted?`Pas de réponse après ${Math.round(Logic.RESTART_DEADLINE_MS/1000)} s : l'état du brain ci-dessous est relu chaque seconde.`:String(error&&error.message||error);
+      // Bandeau rouge dans la section en plus de la notification : elle disparaît, pas lui.
+      view.error=`Redémarrage du brain impossible : ${message}`;
       log('error','scene.brain_restart_failed',{error:message,status:error&&error.status});
       if(typeof toast==='function')toast({title:'Redémarrage du brain impossible',sub:message,kind:'bad',ms:8000});
     }finally{
@@ -255,11 +278,32 @@
     }
   }
 
+  /* Région vivante stable : recréer le nœud à chaque redessin rendait
+     l'annonce imprévisible (certains lecteurs d'écran ne relisent qu'un nœud
+     déjà présent). Un seul nœud, hors de la section redessinée, dont on ne
+     change que le texte, et seulement quand la phrase change. */
+  let liveEl=null;
+  let lastSpoken='';
+
+  function announce(sentence){
+    const text=String(sentence||'');
+    if(!text||text===lastSpoken)return;
+    if(!liveEl||!liveEl.isConnected){
+      liveEl=document.createElement('div');
+      liveEl.id='sceneSettingsLive';liveEl.className='sc-settings-sr';
+      liveEl.setAttribute('role','status');liveEl.setAttribute('aria-live','polite');
+      document.body.appendChild(liveEl);
+    }
+    liveEl.textContent=text;
+    lastSpoken=text;
+  }
+
   const STYLE=`#sceneSettings .scene-effects{display:grid;grid-template-columns:max-content 1fr;gap:6px 14px;margin:0 0 16px;font-size:12px;line-height:1.5}
 #sceneSettings .scene-effects dt{color:var(--muted);letter-spacing:.04em}
 #sceneSettings .scene-effects dd{margin:0}
 #sceneSettings [data-scene-toggle]:focus-visible,#sceneSettings [data-scene-restart]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 #sceneSettings [aria-disabled=true]{opacity:.6;cursor:wait}
+.sc-settings-sr{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 #sceneSettings+section{border-top:1px solid var(--line);padding-top:22px;margin-top:8px}
 @media(max-width:560px){#sceneSettings .scene-effects{grid-template-columns:1fr}#sceneSettings .scene-effects dd{margin-bottom:6px}}`;
 
@@ -299,7 +343,7 @@
       const value=await baseApi(path,opts);
       if(typeof path==='string'&&path.split('?')[0]==='/api/status'&&value&&typeof value==='object'){
         const before=JSON.stringify(Logic.describe(view.scene,view.status).brain);
-        view.status={agent_cli:value.agent_cli,agent:value.agent?{name:value.agent.name,state:value.agent.state,display_tools:value.agent.display_tools}:null,subagents:value.subagents};
+        view.status=Logic.statusView(value);
         if(tabOpen()&&!view.restart&&JSON.stringify(Logic.describe(view.scene,view.status).brain)!==before)refresh();
       }
       return value;

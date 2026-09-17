@@ -65,16 +65,23 @@ def _settings_file(tmp_path: Path) -> dict[str, Any]:
     return json.loads((tmp_path / "control-center-settings.json").read_text(encoding="utf-8"))
 
 
-def describe(scene: Any, status: Any) -> dict[str, Any]:
+def _node(expression: str) -> Any:
     if _NODE is None:
         pytest.skip("node absent")
-    script = (
-        f"const L=require({json.dumps(str(SETTINGS_JS))});"
-        f"console.log(JSON.stringify(L.describe({json.dumps(scene)},{json.dumps(status)})))"
-    )
+    script = f"const L=require({json.dumps(str(SETTINGS_JS))});console.log(JSON.stringify({expression}))"
     result = subprocess.run([_NODE, "-e", script], capture_output=True, text=True, encoding="utf-8", timeout=60)
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
+
+
+def describe(scene: Any, status: Any) -> dict[str, Any]:
+    return _node(f"L.describe({json.dumps(scene)},{json.dumps(status)})")
+
+
+def status_view(payload: Any) -> Any:
+    """La projection du statut que le bloc navigateur garde (pure, donc testée)."""
+
+    return _node(f"L.statusView({json.dumps(payload)})")
 
 
 # ------------------------------------------------------------------ serveur
@@ -317,6 +324,21 @@ def test_the_brain_state_is_compared_with_the_choice_and_a_restart_is_offered_on
     assert disable["confirm"]["danger"] is False
 
 
+def test_the_status_projection_keeps_everything_brain_view_reads():
+    """Sans `display_prompt`, l'écran retombait sur le repli « agent plus ancien » et ne montrait jamais l'écart."""
+
+    payload = {"agent_cli": "claude", "voice_state": "idle", "scene": {"enabled": True},
+               "agent": {"name": "Claude", "state": "running", "display_tools": True, "display_prompt": False, "pid": 42, "events": [1, 2]},
+               "subagents": {"active": 2, "running_shell": 1}}
+    kept = status_view(payload)
+    assert kept == {"agent_cli": "claude", "agent": {"name": "Claude", "state": "running", "display_tools": True, "display_prompt": False},
+                    "subagents": {"active": 2, "running_shell": 1}}
+    # La vue du brain, construite sur cette projection, voit bien l'écart (scénario D de la QA).
+    assert describe(ON, kept)["brain"]["title"] == "Conversation reprise : outils présents, consigne d'affichage absente"
+    for broken in (None, "", {"agent_cli": "claude"}):
+        assert (status_view(broken) or {}).get("agent") is None
+
+
 def test_a_resumed_conversation_with_the_old_prompt_is_a_mismatch_even_with_the_tools():
     """Constaté en E2E (Slice 11) : reprise = outils présents, consigne d'affichage absente, aucun artefact."""
 
@@ -369,7 +391,16 @@ def test_the_browser_block_saves_through_settings_confirms_in_page_and_stays_acc
         assert re.search(r"(?<![\w.])" + re.escape(forbidden), browser.replace("confirmDialog(", "")) is None, forbidden
     # Accessibilité : case étiquetée, décrite, focus rendu au contrôle après chaque redessin.
     assert "type:'checkbox',id:'f_scene'" in browser and "node('label',{for:'f_scene'}" in browser
-    assert "'aria-describedby':describedBy" in browser and "role:'status','aria-live':'polite'" in browser
+    assert "'aria-describedby':describedBy" in browser
+    # Le statut gardé par la page passe par la fonction pure (MAJOR-1 : un champ oublié rendait l'écran aveugle).
+    assert "view.status=Logic.statusView(value)" in browser and "display_prompt" not in browser.split("function statusView")[-1].split("}")[0]
+    # Une seule région vivante, hors de la section redessinée, dont seul le texte change.
+    assert "liveEl.setAttribute('role','status')" in browser and "liveEl.setAttribute('aria-live','polite')" in browser
+    assert "id:'sceneBrain'}" in browser or "id:'sceneBrain'," in browser
+    assert "role:'status'" not in browser.split("const brain=node(")[1].split(");")[0]
+    assert "announce(Logic.brainSentence(" in browser and "if(!text||text===lastSpoken)return;" in browser
+    # Un redémarrage refusé laisse un bandeau, pas seulement une notification.
+    assert "view.error=`Redémarrage du brain impossible" in browser
     assert "focus({preventScroll:true})" in browser and ":focus-visible" in browser
     # Échec visible (bandeau + notification), journalisé en console, main rendue dans finally.
     assert "scene.setting_failed" in browser and "scene.brain_restart_failed" in browser
