@@ -201,6 +201,50 @@ Sur cette branche (après) : **34 passés**.
 Le JavaScript de la page est reparsé entier (`node --check` sur le bloc
 `<script>`) après chaque retouche.
 
-### Suite complète
+### Suite complète, en morceaux
 
-Voir la section « Suite complète » ajoutée en fin de recette.
+L'hôte ne tient pas un pytest entier (≈ 2 Go libres) : six morceaux d'unitaires,
+puis l'intégration, puis e2e + replay.
+
+| morceau | résultat |
+| --- | --- |
+| unitaires 1/6 (30 fichiers) | 502 passés |
+| unitaires 2/6 (23 fichiers) | 556 passés |
+| unitaires 3/6 (27 fichiers) | 610 passés, 1 ignoré (`signals are POSIX-only`) |
+| unitaires 4/6 (29 fichiers) | 575 passés, 2 ignorés (symlinks, modèle owner-voice absent) |
+| unitaires 5/6 (30 fichiers) | 617 passés, 1 ignoré (modèle owner-voice absent) |
+| unitaires 6/6 (28 fichiers) | 867 passés, 2 ignorés (`livekit` absent) |
+| `tests/integration` | 287 passés, 4 ignorés (base d'état vivante, OpenAI en direct) |
+| `tests/e2e` + `tests/replay` | 1 passé |
+
+**3727 unitaires + 287 intégration + 1 e2e : 0 échec.** Tous les tests ignorés
+le sont pour une raison d'environnement (POSIX, modèle non téléchargé, clé
+absente), aucun à cause de ce changement.
+
+`scripts/verify_release.py`, son unique sous-processus pytest neutralisé (la
+suite ayant déjà tourné en morceaux) : `Release verification passed.`
+
+### Recette au navigateur
+
+Chrome à soi, en headless, profil jetable, port CDP à soi ; le ControlCenter
+servi en processus sur un port libre — jamais le lanceur, qui ouvrirait un
+onglet dans le Chrome de l'utilisateur. Les CLI et les catalogues fournisseurs
+sont simulés (Claude Code disponible avec Modèle A / Modèle B, Codex CLI absent
+du PATH), sans quoi l'écran dépendrait de la machine.
+
+Verdict identique dans les deux thèmes (`classic`, `omega`) :
+
+```json
+{"harnesses":["Choisir un harness…","Claude Code","Codex CLI — indisponible"],
+ "models":["Modèle par défaut du CLI","Modèle A","Modèle B"],
+ "retenus":1,"plat":false}
+```
+
+Lu à l'écran : le second sélecteur n'offre que les modèles de Claude Code, le CLI
+absent reste proposé avec sa raison, « ajouter » pose un candidat retenu
+« Claude Code · Modèle B — disponible — préféré » avec « retirer », les autres
+profils affichent « Choisir d'abord un harness », et la liste plate de tous les
+couples (`data-routing-candidate`) a bien disparu.
+
+Captures : `routing-two-step-classic.png`, `routing-two-step-omega.png`
+(répertoire de travail de l'agent, hors dépôt).
