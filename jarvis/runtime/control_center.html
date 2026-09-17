@@ -1122,7 +1122,7 @@ function liveTimer(id,start,cls,hint){
 function timerHtml(t){
   if(t.id==='brain'){
     if(t.busy&&t.turn_started_ms)return liveTimer('brain',t.turn_started_ms,'live',`Tour en cours depuis ${fmtClock(t.turn_started_ms)}`);
-    if(t.started_ms&&t.state==='running')return liveTimer('brain',t.started_ms,'idle',`En service depuis ${fmtClock(t.started_ms)}`);
+    if(t.started_ms&&brainArmed(t))return liveTimer('brain',t.started_ms,'idle',`En service depuis ${fmtClock(t.started_ms)}`);
     return '<span class="timer idle" title="Brain arrêté">—</span>';
   }
   if(isRunning(t)&&t.started_ms)return liveTimer(t.id,t.started_ms,'live',`Démarré à ${fmtClock(t.started_ms)}`);
@@ -1136,10 +1136,17 @@ function tickTimers(){
   });
 }
 
+// « Armé » veut dire prêt à prendre un tour, pas « un processus tourne ».
+// Claude tient un processus permanent (`running`) ; Codex en lance un par tour
+// et se déclare `ready` entre deux. Sans ce second état, un brain Codex
+// s'affichait « arrêté » quoi qu'on fasse : « Redémarrer » réussissait en
+// silence, « Arrêter » restait grisé, et rien ne le disait.
+function brainArmed(b){const state=(b&&b.state)||'';return state==='running'||state==='ready'}
 function brainState(b){
   const state=b.state||'stopped';
   if(b.busy)return {cls:'running',label:'tour en cours'};
   if(state==='running')return {cls:'ok',label:'en attente'};
+  if(state==='ready')return {cls:'ok',label:'prêt'};
   if(state==='exited')return {cls:'bad',label:'processus terminé'};
   return {cls:'',label:'arrêté'};
 }
@@ -1151,7 +1158,7 @@ function cardHtml(t,{level=0,compact=false,head=false}={}){
     const a=AG.agent||{},c=a.console||{};
     st=brainState(t);
     model=prettyModel(t.model);
-    line=t.activity||(t.busy?'Tour en cours…':t.state==='running'?'En attente d’une demande':t.state==='exited'?'Le processus s’est arrêté':'Arrêté · clic droit pour démarrer');
+    line=t.activity||(t.busy?'Tour en cours…':brainArmed(t)?'En attente d’une demande':t.state==='exited'?'Le processus s’est arrêté':'Arrêté · clic droit pour démarrer');
     lineTitle=line;
     meta.push(`<span>${esc(st.label)}</span>`);
     if(a.pid)meta.push(`<span>PID ${esc(a.pid)}</span>`);
@@ -1777,11 +1784,11 @@ function menuItems(id){
     items.push({act:'copy',label:'Copier le prompt',disabled:!t||!t.prompt});
     return items;
   }
-  const a=AG.agent||{},c=a.console||{},running=(a.state||(t&&t.state))==='running';
+  const a=AG.agent||{},c=a.console||{},armed=brainArmed({state:a.state||(t&&t.state)});
   items.push('-',
-    {act:'start',label:'Démarrer',disabled:running},
+    {act:'start',label:'Démarrer',disabled:armed},
     {act:'restart',label:'Redémarrer'},
-    {act:'kill',label:'Arrêter',danger:true,disabled:!running},
+    {act:'kill',label:'Arrêter',danger:true,disabled:!armed},
     '-');
   if(c.open)items.push({act:'console-open',label:'Ramener la console Windows'},{act:'console-close',label:'Fermer la console Windows',danger:true});
   else items.push({act:'console-open',label:'Console Windows',disabled:c.supported===false});
@@ -1991,7 +1998,7 @@ const TABS=[
   {id:'keys',label:'API Keys',save:false},
   {id:'shortcuts',label:'Raccourcis',save:false},
 ];
-const SET={open:false,tab:'voice',voiceTab:'architecture',voiceCatalogRole:'realtime',voiceCatalogMountedRole:null,voiceCatalogStates:{},voiceModelSources:{},voiceModelGenerations:{},data:null,draft:null,dirty:false,catalog:{},clis:null,devices:null,capture:null,shortcuts:null,restartNotice:false,rdOpen:false,routingAdvancedOpen:false,routing:null,prompts:null,agentCatalog:null,voiceCatalog:null,openGeneration:0,cliGeneration:0,cliModelGeneration:0,routingGeneration:0,voiceGeneration:0,audioGeneration:0,diagnosticGeneration:0,voiceDiagnosticError:''};
+const SET={open:false,tab:'voice',voiceTab:'architecture',voiceCatalogRole:'realtime',voiceCatalogMountedRole:null,voiceCatalogStates:{},voiceModelSources:{},voiceModelGenerations:{},data:null,draft:null,dirty:false,catalog:{},clis:null,devices:null,capture:null,shortcuts:null,restartNotice:false,rdOpen:false,routingAdvancedOpen:false,routing:null,routingPick:{},prompts:null,agentCatalog:null,voiceCatalog:null,openGeneration:0,cliGeneration:0,cliModelGeneration:0,routingGeneration:0,voiceGeneration:0,audioGeneration:0,diagnosticGeneration:0,voiceDiagnosticError:''};
 const overlay=$('#overlay'),modalContent=$('#modalContent'),modalStatus=$('#modalStatus'),modalSave=$('#modalSave'),modalSub=$('#modalSub');
 
 function say(text,kind){modalStatus.className='status'+(kind?' '+kind:'');modalStatus.textContent=text||''}
@@ -2446,35 +2453,61 @@ function tabCli(){
 
 /* --- configuration avancée des sous-agents ------------------------------
    Rien de ce qui est affiché ici n'est écrit dans cette page : les profils,
-   les candidats et leur disponibilité viennent tous de /api/routing/candidates.
-   Un candidat enregistré devenu indisponible reste coché et visible — sa
-   disparition serait un réglage perdu en silence.                          */
-function candidateLabel(c){return c.label||(c.model?`${c.agent} · ${c.model}`:c.agent)}
-function candidateKey(c){return JSON.stringify({agent:c.agent,model:c.model||''})}
+   les harness, leurs modèles et leur disponibilité viennent tous de
+   /api/routing/candidates.
 
-function routingRow(profile,candidate,chosen){
-  const key=candidateKey(candidate);
-  const rank=chosen.indexOf(key);
-  const state=candidate.available
-    ? '<span class="tag ok">disponible</span>'
-    : `<span class="tag bad">indisponible</span>`;
-  const why=candidate.available?'':`<div class="hint">${esc(candidate.unavailable_reason||'')}</div>`;
-  const order=rank>=0?`<span class="tag">${rank===0?'préféré':'recours '+rank}</span>`:'';
-  return `<label class="choice ${rank>=0?'selected':''}">
-    <input type="checkbox" data-routing-candidate="${esc(key)}" data-routing-profile="${esc(profile)}" ${rank>=0?'checked':''}>
-    <div><div class="title"><strong>${esc(candidateLabel(candidate))}</strong>${state}${order}</div>${why}</div>
-  </label>`;
+   Le choix se fait en deux temps : d'abord le harness, ensuite un de ses
+   modèles seulement. Une liste unique de tous les couples harness × modèle
+   devient illisible dès qu'un fournisseur en déclare vingt.
+
+   Ce que le profil retient reste une liste ordonnée de couples {agent, model}
+   — le format enregistré ne change pas. Un candidat enregistré devenu
+   indisponible y reste visible et expliqué : sa disparition serait un réglage
+   perdu en silence.                                                        */
+function candidateKey(c){return JSON.stringify({agent:c.agent,model:c.model||''})}
+function harnessOf(state,agent){return (state.harnesses||[]).find(h=>h.id===agent)||null}
+function modelOf(harness,model){return harness?(harness.models||[]).find(m=>(m.model||'')===(model||'')):null}
+/* Le choix en cours d'un profil ne devient un candidat qu'à « Ajouter » :
+   sélectionner un harness ne modifie donc aucun réglage. */
+function routingPick(profile){
+  const picks=SET.routingPick||(SET.routingPick={});
+  return picks[profile]||(picks[profile]={agent:'',model:''});
+}
+/* Le brouillon reçoit tous les profils du serveur ; un profil apparu depuis
+   l'ouverture de la fenêtre est créé vide plutôt que de faire échouer le clic. */
+function routingEntry(profile){
+  const profiles=SET.draft.routing.profiles;
+  return profiles[profile]||(profiles[profile]={candidates:[],enabled:true,allow_general_fallback:true});
+}
+function candidateLabel(state,ref){
+  const harness=harnessOf(state,ref.agent),model=modelOf(harness,ref.model);
+  const left=harness?harness.label:ref.agent;
+  const right=model?model.label:(ref.model||'');
+  return right?`${left} · ${right}`:left;
+}
+
+function routingRow(profile,ref,rank,state){
+  const harness=harnessOf(state,ref.agent),model=modelOf(harness,ref.model);
+  const usable=!!(harness&&model&&model.available);
+  const tag=usable?'<span class="tag ok">disponible</span>':'<span class="tag bad">indisponible</span>';
+  const reason=(model&&model.unavailable_reason)||(harness&&harness.unavailable_reason)||"Ce couple n'est plus proposé sur cette machine.";
+  const why=usable?'':`<div class="hint">${esc(reason)}</div>`;
+  const order=`<span class="tag">${rank===0?'préféré':'recours '+rank}</span>`;
+  const up=rank>0?`<button class="linkish" data-routing-up="${esc(profile)}" data-routing-rank="${rank}">monter</button> `:'';
+  return `<div class="choice selected">
+    <div><div class="title"><strong>${esc(candidateLabel(state,ref))}</strong>${tag}${order}</div>${why}
+      <div class="source">${up}<button class="linkish" data-routing-drop="${esc(profile)}" data-routing-rank="${rank}">retirer</button></div></div>
+  </div>`;
 }
 
 function routingAdvancedBody(){
   if(!SET.routing)return '<div class="hint">Ouvrez cette section pour charger les profils et candidats.</div>';
   const state=SET.routing,draft=SET.draft.routing;
   if(state.ok===false)return `<div class="notice bad">${esc(state.error||'Configuration avancée indisponible.')} <button type="button" class="linkish" id="routingRetry">réessayer</button></div>`;
-  const candidates=state.candidates||[];
   const blocks=(state.profiles||[]).map(profile=>{
     const entry=draft.profiles[profile.id]||{candidates:[],enabled:true,allow_general_fallback:true};
-    const chosen=(entry.candidates||[]).map(candidateKey);
-    const rows=candidates.map(c=>routingRow(profile.id,c,chosen)).join('');
+    const chosen=entry.candidates||[];
+    const rows=chosen.map((ref,rank)=>routingRow(profile.id,ref,rank,state)).join('');
     const empty=chosen.length?'':'<div class="hint">Aucun candidat autorisé : ce profil garde le modèle configuré du CLI.</div>';
     const fallback=profile.id==='general'?'':`<div class="field inline">
       <input type="checkbox" id="f_fb_${esc(profile.id)}" data-routing-fallback="${esc(profile.id)}" ${entry.allow_general_fallback?'checked':''}>
@@ -2484,7 +2517,7 @@ function routingAdvancedBody(){
       <div><label for="f_profile_${esc(profile.id)}">Profil actif</label><div class="hint">Désactivé, ce profil conserve le choix du CLI même en mode Auto.</div></div></div>`;
     return `<h3>${esc(profile.label)}</h3>${enabled}
       <div class="hint" style="margin-bottom:8px">${esc(profile.description)}${profile.requires.length?` · exige : ${profile.requires.map(esc).join(', ')}`:''}</div>
-      <div class="choices">${rows}</div>${empty}${fallback}`;
+      ${rows?`<div class="choices">${rows}</div>`:empty}${routingPicker(profile.id,state)}${fallback}`;
   }).join('');
   const sources=Object.entries(state.sources||{}).map(([provider,source])=>{
     const label=providerLabel(provider);
@@ -2495,7 +2528,24 @@ function routingAdvancedBody(){
   }).join(' ');
   return `<div class="source" style="margin-bottom:10px">${sources} <button class="linkish" id="routingRefresh">rafraîchir</button></div>
     ${blocks}
-    <div class="hint" style="margin-top:14px">L'ordre des candidats est celui de la liste : le premier disponible est choisi, les suivants servent de recours. Les sous-agents s'exécutent dans le CLI vocal actif ; un candidat d'un autre CLI ne peut servir qu'à l'auto-développement.</div>`;
+    <div class="hint" style="margin-top:14px">Un candidat s'ajoute en deux temps : le harness, puis un de ses modèles. L'ordre de la liste est la préférence — le premier disponible est choisi, les suivants servent de recours, et « monter » change le préféré. Les sous-agents s'exécutent dans le CLI vocal actif ; un candidat d'un autre CLI ne peut servir qu'à l'auto-développement.</div>`;
+}
+
+/* Les deux sélecteurs en cascade : le second ne montre que les modèles du
+   harness choisi au premier. */
+function routingPicker(profile,state){
+  const pick=routingPick(profile);
+  const harness=harnessOf(state,pick.agent);
+  const harnesses=(state.harnesses||[]).map(h=>({value:h.id,label:h.available?h.label:`${h.label} — indisponible`}));
+  const models=(harness?harness.models||[]:[]).map(m=>({value:m.model,label:m.available?m.label:`${m.label} — indisponible`}));
+  const modelField=harness
+    ? `<select id="f_rt_model_${esc(profile)}" data-routing-model="${esc(profile)}">${selectOptions(models,pick.model,'')}</select>`
+    : `<select id="f_rt_model_${esc(profile)}" disabled><option>Choisir d'abord un harness</option></select>`;
+  const why=harness&&!harness.available?`<div class="hint">${esc(harness.unavailable_reason||'')}</div>`:'';
+  return `<div class="field"><label for="f_rt_harness_${esc(profile)}">Harness</label>
+      <select id="f_rt_harness_${esc(profile)}" data-routing-harness="${esc(profile)}">${selectOptions(harnesses,pick.agent,'Choisir un harness…')}</select>${why}</div>
+    <div class="field"><label for="f_rt_model_${esc(profile)}">Modèle</label>${modelField}
+      <div class="source"><button class="linkish" data-routing-add="${esc(profile)}" ${harness?'':'disabled'}>ajouter à ce profil</button></div></div>`;
 }
 
 function routingAdvancedShell(){
@@ -2570,23 +2620,55 @@ function renderRoutingAdvanced(revision){
   body.innerHTML=routingAdvancedBody();bindRoutingAdvanced(revision);
 }
 
+/* Le mode des sous-agents est le switch d'aiguillage lui-même : « Auto »
+   applique les profils ci-dessous, « Dupliqué » les laisse dormir. Il vit dans
+   la section Technique, hors du corps rechargé de la configuration avancée —
+   on le retrouve donc depuis la fenêtre, pas depuis ce corps. */
+function bindDelegationMode(){
+  const routingOn=modalContent.querySelector('[data-delegation-mode]');
+  if(!routingOn)return;
+  routingOn.addEventListener('change',()=>{
+    SET.draft.cli.delegation_mode=routingOn.value;SET.dirty=true;say('Modifications non enregistrées.','')});
+}
+
+/* Choisir un harness puis un modèle ne change rien ; seul « ajouter » met le
+   couple en fin de liste (donc en dernier recours). « monter » et « retirer »
+   réordonnent, l'ordre étant la préférence. */
 function bindRoutingAdvanced(revision){
   const body=$('#routingAdvancedBody');
   if(!body)return;
   body.querySelectorAll('[data-routing-profile-enabled]').forEach(el=>el.addEventListener('change',()=>{
-    SET.draft.routing.profiles[el.dataset.routingProfileEnabled].enabled=el.checked;
+    routingEntry(el.dataset.routingProfileEnabled).enabled=el.checked;
     SET.dirty=true;say('Modifications non enregistrées.','')}));
-  body.querySelectorAll('[data-routing-candidate]').forEach(el=>el.addEventListener('change',()=>{
-    const entry=SET.draft.routing.profiles[el.dataset.routingProfile];
-    const value=JSON.parse(el.dataset.routingCandidate);
-    const rest=(entry.candidates||[]).filter(candidate=>candidateKey(candidate)!==el.dataset.routingCandidate);
-    entry.candidates=el.checked?[...rest,value]:rest;
+  body.querySelectorAll('[data-routing-harness]').forEach(el=>el.addEventListener('change',()=>{
+    // Changer de harness invalide le modèle retenu : il appartenait à l'autre.
+    const pick=routingPick(el.dataset.routingHarness);
+    pick.agent=el.value;pick.model='';renderRoutingAdvanced(revision)}));
+  body.querySelectorAll('[data-routing-model]').forEach(el=>el.addEventListener('change',()=>{
+    routingPick(el.dataset.routingModel).model=el.value}));
+  body.querySelectorAll('[data-routing-add]').forEach(el=>el.addEventListener('click',()=>{
+    const profile=el.dataset.routingAdd,pick=routingPick(profile);
+    if(!pick.agent)return;
+    const entry=routingEntry(profile);
+    const value={agent:pick.agent,model:pick.model||''};
+    const rest=(entry.candidates||[]).filter(c=>candidateKey(c)!==candidateKey(value));
+    entry.candidates=[...rest,value];
+    SET.dirty=true;renderRoutingAdvanced(revision)}));
+  body.querySelectorAll('[data-routing-drop]').forEach(el=>el.addEventListener('click',()=>{
+    const entry=routingEntry(el.dataset.routingDrop);
+    entry.candidates=(entry.candidates||[]).filter((c,i)=>i!==Number(el.dataset.routingRank));
+    SET.dirty=true;renderRoutingAdvanced(revision)}));
+  body.querySelectorAll('[data-routing-up]').forEach(el=>el.addEventListener('click',()=>{
+    const entry=routingEntry(el.dataset.routingUp),rank=Number(el.dataset.routingRank);
+    const list=[...(entry.candidates||[])];
+    if(rank>0)list.splice(rank-1,0,list.splice(rank,1)[0]);
+    entry.candidates=list;
     SET.dirty=true;renderRoutingAdvanced(revision)}));
   body.querySelectorAll('[data-routing-fallback]').forEach(el=>el.addEventListener('change',()=>{
-    SET.draft.routing.profiles[el.dataset.routingFallback].allow_general_fallback=el.checked;
+    routingEntry(el.dataset.routingFallback).allow_general_fallback=el.checked;
     SET.dirty=true;say('Modifications non enregistrées.','')}));
-  const refresh=body.querySelector('#routingRefresh');
-  if(refresh)refresh.addEventListener('click',()=>hydrateRoutingAdvanced(revision,true));
+  const routingRefresh=body.querySelector('#routingRefresh');
+  if(routingRefresh)routingRefresh.addEventListener('click',()=>hydrateRoutingAdvanced(revision,true));
   const retry=body.querySelector('#routingRetry');
   if(retry)retry.addEventListener('click',()=>hydrateRoutingAdvanced(revision,true));
 }
@@ -2596,11 +2678,18 @@ async function hydrateRoutingAdvanced(revision,refresh=false){
   if(SET.routing&&SET.routing.ok!==false&&!refresh){renderRoutingAdvanced(revision);return}
   const requestId=++SET.routingGeneration,body=$('#routingAdvancedBody');
   if(body)body.innerHTML='<div class="notice info">Chargement des profils et candidats…</div>';
-  let state;
-  try{state=await api('/api/routing/candidates')}
-  catch(e){state={ok:false,error:e.message,profiles:[],candidates:[]}}
+  const state=await tabRouting();
   if(!currentAgentTab(revision)||!SET.routingAdvancedOpen||requestId!==SET.routingGeneration)return;
   SET.routing=state;renderRoutingAdvanced(revision);
+}
+
+/* L'état de l'écran d'aiguillage, demandé au serveur. Le lister coûte une
+   sonde de chaque CLI et un appel à chaque fournisseur : on ne le paie qu'à
+   l'ouverture de la section. Un échec revient en état affichable — la section
+   dit alors pourquoi et propose de réessayer — jamais en zone vide et muette. */
+async function tabRouting(){
+  try{return await api('/api/routing/candidates')}
+  catch(e){return {ok:false,error:e.message,profiles:[],harnesses:[]}}
 }
 
 /* --- onglet Config ------------------------------------------------------ */
@@ -2702,9 +2791,7 @@ function bindTab(revision){
   }));
   const cliTechnical=$('#cliTechnical');
   if(cliTechnical)bindCliTechnical(cliTechnical,revision);
-  const delegationMode=modalContent.querySelector('[data-delegation-mode]');
-  if(delegationMode)delegationMode.addEventListener('change',()=>{
-    SET.draft.cli.delegation_mode=delegationMode.value;SET.dirty=true;say('Modifications non enregistrées.','')});
+  bindDelegationMode();
   modalContent.querySelectorAll('[data-behavior-field]').forEach(el=>el.addEventListener('change',()=>{
     SET.draft.cli.behavior[el.dataset.behaviorField]=el.value;SET.dirty=true;say('Modifications non enregistrées.','')}));
   modalContent.querySelectorAll('[data-refresh]').forEach(el=>el.addEventListener('click',async()=>{

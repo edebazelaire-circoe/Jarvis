@@ -1527,9 +1527,11 @@ Quatre profils : **Poste de travail** (navigateur, fichiers ouverts), **Code
 avancé**, **Sémantique rapide**, **Général** — ce dernier servant aussi de
 recours aux autres. Les candidats affichés viennent de `GET
 /api/routing/candidates`, qui sonde les CLI installés et demande au fournisseur
-sa liste de modèles ; rien n'est écrit en dur dans la page. **L'ordre des cases
-cochées est la préférence** : le premier disponible gagne, les suivants sont des
-recours.
+sa liste de modèles ; rien n'est écrit en dur dans la page. Un candidat s'ajoute
+**en deux temps — le harness, puis un de ses modèles** : une liste unique de tous
+les couples harness × modèle devient illisible dès qu'un fournisseur en déclare
+vingt. **L'ordre de la liste retenue est la préférence** : le premier disponible
+gagne, les suivants sont des recours, et « monter » change le préféré.
 
 Un candidat enregistré qui disparaît (clé retirée, modèle déprécié) reste
 affiché, marqué indisponible avec la raison. C'est voulu : un réglage qui
