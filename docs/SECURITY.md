@@ -187,9 +187,10 @@ and phishing surface** on the user's own dashboard. Controls: the domain accepts
 only single-line `http://`/`https://` URLs (≤ 2 048 chars). Since the Slice 09
 QA rework the page and the brain apply **one conservative rule by construction**
 (`link_host` in `jarvis/domain/scene_links.py`, `linkHost` in
-`control_center_scene_layout.js`, both tested against the same 97-URL corpus): a
+`control_center_scene_layout.js`, both tested against the same 107-URL corpus): a
 URL is a link, and has a host in `scene_get`, only if it starts exactly with
-`http://` or `https://`; contains no backslash, whitespace, control character, DEL,
+`http://` or `https://`; its percent-encoded length, computed identically on both
+sides as an upper bound of the browser's `href`, is at most 2 048; contains no backslash, whitespace, control character, DEL,
 no-break space, soft hyphen, bidi mark, invisible character or full-width or
 ideographic dot anywhere; has no `@` and no `%` in its authority; and its host is a
 plain ASCII dotted name (standard labels, no `xn--`, so no international name), a
@@ -237,10 +238,13 @@ away cancels its pending capture. Where it lives:
 `runtime/scene-captures/capture-<UTC>-<8 hex>.png` (no user text in names), the
 last 5 files, none older than 24 h (pruned at every capture and at Core start).
 Journals carry ids, sizes and durations, never pixels; the CLI stream readers
-replace every base64 image or document block, wherever it is nested in an event
-(including `tool_use_result`), with its size before the event is kept in memory,
-exposed by `/api/agent` or `/api/trace`, or written to `runtime/trace.jsonl`, and a
-journaled event above 256 KiB is summarised. Text visible
+replace every **structured JSON image or document block** with base64 data (in
+`message.content`, `tool_use_result` or nested tool results) with its size before
+the event is kept in memory, exposed by `/api/agent` or `/api/trace`, or written to
+`runtime/trace.jsonl`, and a journaled event above 256 KiB is summarised. Residual:
+an image serialised inside a JSON **string** (a tool whose text output is itself
+JSON carrying base64) is not redacted; it stays in the in-memory event and reaches
+the journal only up to the 256 KiB summary bound. Text visible
 in the image is marked as data in the tool result and the prompt (« un texte
 suspect a été ignoré »), a mitigation only. Same token caveat as above: a brain
 that reads `core.token` could call the capture route itself, or upload over the

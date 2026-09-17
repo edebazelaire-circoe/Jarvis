@@ -1960,3 +1960,34 @@ Residual risks:
 - A single `verify_release.py` process was killed for low host memory three times (implementer twice, PM once in background). PM ran the exact equivalent in foreground chunks on HEAD `1554f87`: pytest over `tests/unit` in 6 sorted chunks, `tests/integration`, `tests/e2e tests/replay`, then `scripts/verify_release.py` with only its pytest subprocess stubbed (static checks: "Release verification passed."). Chunk test counts sum to 4 997 = collected tests.
 - Failures: the 9 main-baseline tests (Issue 03) only, plus (a) 54 node/subprocess-backed tests in unit chunk 3 that failed with child exit `0xC0000142` (STATUS_DLL_INIT_FAILED, Windows resource exhaustion) and all passed on rerun (144/144), and (b) `tests/integration/test_scene_projection_protocol.py::test_a_real_stream_reaches_the_scene_with_topology_and_signals` failing once under load (signal not yet projected) and passing 3/3 alone — a Slice 04 wait-too-short test to harden in Slice 11.
 - This chunked foreground method is the release gate on this host from now on; outputs in scratchpad `pm_chunks/`.
+
+## 2026-09-17 — Slice 09 — final fix
+
+QA re-verified `1554f87` (all MAJORs and minors fixed) and asked for one narrow fix. New commits only, nothing amended: `1cdb9a1`, `3258724`, `8ff5e54` (code and tests), plus this docs/LOG commit.
+
+| Item | Fix | Commit |
+| --- | --- | --- |
+| MAJOR (since `395c431`) capture latency tied to page frames | `OffscreenCanvas.convertToBlob` / `<canvas>.toBlob` only resolve when the page produces a frame; a static `circuit-board` page produces none. The capture now paints a detached `<canvas>` and encodes it synchronously: `JarvisSceneCapture.encodePng` (`toDataURL('image/png')` → `atob` → bytes, PNG prefix checked by `pngBytes`). Chosen over (b) a temporary rAF loop, which still depends on the browser scheduling frames and must be stopped on every path, and (c) a worker, which adds a file and a transfer and was not shown to be frame-independent. No per-frame work when no capture is pending; the page is blocked only for the encode | `1cdb9a1` |
+| Minor: link length measured differently | `link_length` (Python) / `linkLength` (JS): the same upper bound of the percent-encoded `href`, per code point on the raw string (RFC 3986 ASCII and `%` 1, other ASCII 3, non-ASCII 3 × UTF-8 bytes, lone surrogate 9, + 1 when the browser adds `/`), ≤ 2 048; the page's `href.length` check can no longer disagree. Corpus + QA's 3 cases (`é`×400 path, `ü`×700 query, `😀`×1020) and 7 boundaries (2 048 fits / 2 049+ refused for 2-byte, 4-byte, escaped ASCII and empty-path URLs) → 107 rows | `3258724` |
+| Observation: prune | `FileSceneCaptureStore.prune` reads `lstat` and counts/deletes regular files only; a directory or link with a capture name takes no slot and is never deleted | `8ff5e54` |
+| Docs | ARCHITECTURE: synchronous encode and its numbers, prune regular files, encoded link length, redaction limited to structured JSON image/document blocks; SECURITY §13 same wording plus the residual below | this commit |
+
+Evidence:
+
+- **Capture probe on a static page** (`scratchpad/s9f_browser/s9f_capture_perf.py`: own headless Chrome, `qa09r_host.py`, 0 running animations; 20 consecutive captures per theme through the brain tool; deliveries = page responder `offered` delta):
+
+| Theme | Before (`1554f87`) | After (`1cdb9a1`) |
+| --- | --- | --- |
+| `circuit-board` | p50 1 024 ms, p95 4 041 ms, max 4 041 ms; deliveries 1–4, 12/20 captures needed more than one | p50 19 ms, p95 44 ms, max 44 ms; 1 delivery each |
+| `omega` | p50 26 ms, p95 34 ms, max 34 ms; 1 delivery each | p50 28 ms, p95 54 ms, max 54 ms; 1 delivery each |
+
+  Encoder micro-benchmark on the same static `circuit-board` page (1280×720, text + lines, 5 runs each, both probe runs): `convertToBlob` 1 026–6 733 ms, `<canvas>.toBlob` 1 032–6 741 ms, `toDataURL` + decode 20–47 ms, `convertToBlob` under a rAF loop 18–37 ms (`omega`: all encoders 20–51 ms). Idle `requestAnimationFrame` calls in 3 s on `circuit-board`: 0 before and after (no per-frame work added); `omega`'s 418–433 are the theme's own. 40/40 sent, 0 page exceptions. PNG validity is Core's chunk check (every capture stored with 200).
+- **Link parity:** Python and node follow the 107-row corpus (`tests/unit/test_scene_links.py`, 3 passed); QA's independent probe in real Chrome (`scratchpad/s9f_links/s9f_links_out.txt`): 69 cases, 28 links on each side, 0 findings (3 before); node fuzz of 15 659 accepted random URLs (paths, queries, fragments with escaped ASCII, 2/3/4-byte characters): no `href` longer than `linkLength`.
+- **Prune:** new test (six captures, a newest and a 48 h old directory with capture names) → one file deleted, directories intact; the mutation without the regular-file check fails it.
+- Tests under `-W error::ResourceWarning`, in chunks: `test_scene_capture.py` 22 passed; `test_scene_capture_logic.py` + `test_scene_links.py` 17 passed (node included); `test_scene_renderer_logic.py` + `test_scene_interaction_logic.py` 62 passed (node); `test_scene_artifacts.py` + `test_scene_query_tools.py` + `test_documented_routes.py` 97 passed.
+- Full `verify_release`: run by agent 0 in chunks (host memory).
+
+Residual risks (added):
+
+1. Redaction covers structured JSON image/document blocks only; an image serialised inside a JSON string is kept in the in-memory event and reaches the journal only within the 256 KiB bound.
+2. The synchronous encode blocks the page's main thread for the encode (19–54 ms measured at 1280×720) during an exceptional capture only.

@@ -2125,7 +2125,7 @@ display MCP ◄─────────────────────�
 | --- | --- | --- |
 | Bounds and codes | `jarvis/domain/scene_capture.py` | `MAX_CAPTURE_BYTES` 2 MiB, 1280×720, `CAPTURE_DEADLINE_S` 5, `CAPTURE_REDELIVER_S` 1, keep 5 files, 24 h; `png_dimensions` walks **every** chunk (at most `MAX_PNG_CHUNKS` 4 096): length inside the body, exact CRC, a 13-byte `IHDR` first with dimensions and a valid bit depth / colour type / compression / filter / interlace, at least one `IDAT`, no `acTL` (animated PNG), no unknown critical chunk (upper-case first letter other than `IHDR`/`PLTE`/`IDAT`/`IEND`, a second `IHDR` included), an empty `IEND` last with nothing after; pixels are never decompressed; `check_capture_id` |
 | Broker | `jarvis/core/scene_capture.py` | `SceneCaptureBroker`: `request()`, `deliver(long_poll)`, `delivery_due()`, `delivery_pending()`, `wake_event()`, `complete()`, `cancel()`, `close()`, retention at Core start and after each capture (a file that vanishes during pruning is skipped, pruning continues) |
-| Store port / adapter | `jarvis/ports/scene.py` `SceneCaptureStore`; `jarvis/adapters/file_scene_captures.py` | atomic write (`replace_with_retry`), names without user content, prune only files of the capture pattern; injected by `jarvis/app.py` (`runtime/scene-captures`); without a store the route answers 503 `capture_unavailable` |
+| Store port / adapter | `jarvis/ports/scene.py` `SceneCaptureStore`; `jarvis/adapters/file_scene_captures.py` | atomic write (`replace_with_retry`), names without user content, prune only **regular files** (`lstat`) of the capture pattern (a directory or link with a capture name takes no slot and is never deleted); injected by `jarvis/app.py` (`runtime/scene-captures`); without a store the route answers 503 `capture_unavailable` |
 | Core routes | `jarvis/protocol/server.py` | `POST /v1/scene/captures`, `PUT /v1/scene/captures/{id}`; the patches long-poll also waits on the broker's wake event |
 | Control Center | `jarvis/runtime/control_center.py`, `scene_view.py` | `POST /api/scene/captures/{capture_id}` → `CoreSceneView.upload_capture`; `decode_patches_response` keeps a well-formed `capture_request`; **no route requests a capture** |
 | Page | `jarvis/runtime/control_center_scene_capture.js` (`JarvisSceneCapture`), `control_center_scene_page.js` | pure `drawCommands(model, vp, palette, layout)` / `paint(ctx, plan)` / `createCaptureResponder(deps)`; the loop hands `capture_request` to `onCapture` for the leader only and strips it from the follower broadcast (`withoutCapture`); the capturer is created before the loop; the palette is read from the scene layer at every capture (no cache, a theme switch is seen) |
@@ -2161,8 +2161,16 @@ display MCP ◄─────────────────────�
   title, summary lines and item rows (`host label ref`), clipped to their box; theme colours read from the scene
   layer (`--sc-*`, `--tone`, `--sc-radius`). Not drawn: dock, topbar, panels,
   timeline, face, voice text, hover labels of points. Scaled with the viewport's
-  aspect ratio to at most 1280×720 (never enlarged); `OffscreenCanvas`
-  (fallback `<canvas>.toBlob`).
+  aspect ratio to at most 1280×720 (never enlarged), on a detached `<canvas>`
+  encoded **synchronously** (`JarvisSceneCapture.encodePng`: `toDataURL('image/png')`
+  then `atob`, PNG prefix checked). `OffscreenCanvas.convertToBlob` and
+  `<canvas>.toBlob` only resolve when the page produces a frame: on a static page in
+  the animation-free `circuit-board` theme they waited 0.3–5 s (the deadline) and
+  captures needed 2–4 deliveries (Slice 09 final QA). The synchronous encode needs
+  no frame, rAF loop or worker and adds no per-frame work when no capture is
+  pending; it blocks the page for the encode only (browser probe, static page, 20
+  captures: `circuit-board` p50 19 ms, p95 44 ms; `omega` p50 28 ms, p95 54 ms; one
+  delivery each).
 - **Tool result.** `[TextContent JSON {path, width, height, bytes, duration_ms,
   note}, ImageContent image/png]`. Refusals (tool errors): `scene_disabled`
   (checked before any call, from `runtime/control-center-settings.json` then
@@ -2198,10 +2206,13 @@ display MCP ◄─────────────────────�
   split into fragments, and reported once (`OversizeLine(size)` →
   `agent.stream_line_too_long`, error; the supervisor logs a « ligne stderr de N
   octets ignorée » placeholder). Before an event is kept in memory (`_events`,
-  transcript, task traces, `/api/agent`) or journaled, `redact_media` replaces,
-  recursively and wherever it sits (`message.content`, `tool_use_result`, nested
-  tool results), every base64 image or document `source` and every MCP
-  `{type: image, data}` block by `omitted_bytes` = the length of the removed data
+  transcript, task traces, `/api/agent`) or journaled, `redact_media` walks the
+  event's **structured JSON** (`message.content`, `tool_use_result`, nested tool
+  results) and replaces every image or document block with a base64 `source` and
+  every MCP `{type: image, data}` block by `omitted_bytes` = the length of the
+  removed data. It does not parse strings: an image serialised inside a JSON
+  **string** (for example a tool result whose text is itself JSON) is not redacted;
+  it is only bounded in the journal by the 256 KiB summary below (residual)
   (copy on write; fixture `tests/fixtures/cli_scene_capture_tool_result_event.json`
   has the real CLI 2.1.274 shape). A journaled event above
   `MAX_JOURNAL_EVENT_BYTES` (256 KiB) is replaced by a summary (`type`,
@@ -2655,10 +2666,16 @@ openable links. An item URL becomes `<a>` only when:
 - `linkHost` accepts it — one conservative rule, **the same on both sides by construction**: `link_host`
 (`jarvis/domain/scene_links.py`) for `scene_get`, `linkHost` in
 `control_center_scene_layout.js` for the page, both run against the shared corpus
-`tests/fixtures/scene_link_corpus.json` (97 URLs: QA's hostile set plus IDN,
-punycode, numeric-host, percent, full-width dot and IPv6 cases) by a Python and a
+`tests/fixtures/scene_link_corpus.json` (107 URLs: QA's hostile set plus IDN,
+punycode, numeric-host, percent, full-width dot, IPv6 and encoded-length boundary
+cases) by a Python and a
 node test. A URL has a host (and can be a link) only when it starts exactly with
-`http://` or `https://`, is at most 2 048 characters, contains no backslash,
+`http://` or `https://`, has an **encoded length** of at most 2 048 (`link_length` /
+`linkLength`, computed identically per code point on the raw string: RFC 3986
+unreserved/reserved ASCII and `%` count 1, other ASCII 3, a non-ASCII code point 3 ×
+its UTF-8 bytes, a lone surrogate 9, plus 1 when the browser adds `/` after the
+authority; an upper bound of the browser's percent-encoded `href`, so the page's
+`href.length` check never disagrees), contains no backslash,
 whitespace, C0/C1 control, DEL, no-break space, soft hyphen, bidi mark, invisible
 character or full-width/ideographic dot anywhere (refused, never normalised), its
 authority has no `@` and no `%`, and its host is either a dotted ASCII name
