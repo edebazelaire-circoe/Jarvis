@@ -881,3 +881,76 @@ Residual risks (Slice 05 after rework):
 4. `solo` fallback without Web Locks or BroadcastChannel keeps one long-poll per tab (about 6 windows).
 5. The safe area is computed for 1280 × 720 16:9. Narrower windows, the GPT-Live banner and the Barehands badge can still cover the frame edges.
 6. A hidden follower stays stale until visible. It does no network while hidden, by design.
+
+### 2026-09-17 — Slice 05 — final follow-up
+
+QA re-verified `000b6db` and recommended APPROVE. Agent 0 asked for one last small follow-up. Commits: `c85a309` (code and tests), `6b132f1` (docs), and this LOG entry.
+
+1. **MINOR-A: follower watchdog.**
+   - Before: `armWatchdog` fired 45 s after the follower's own last read and was not re-armed by `receive()`. QA's `qa05r_watchdog.cjs` measured up to about 89 s of staleness.
+   - Now the watchdog checks every 5 s (`FOLLOWER_CHECK_MS`), independently of the follower's reads:
+     - after 35 s without any leader message (`FOLLOWER_SILENCE_MS`), it makes one short `wait_s=0` read;
+     - it makes no further read until another 35 s of silence has passed;
+     - a leader that keeps ticking never triggers a read.
+   - Fake-timer test `test_a_follower_behind_a_silent_leader_is_stale_for_at_most_about_40_seconds`, on QA's timeline:
+     - staleness 39 s;
+     - 120 s of silence gives at most 4 reads;
+     - a leader ticking every 25 s for 300 s gives 0 reads;
+     - mutation check: a 45 s threshold turns it red.
+   - QA's own `qa05r_watchdog.cjs` on the new code: `staleness_s: 39`.
+2. **OBSERVATION-C: hidden tab taking the lead.**
+   - Lock handling moved into the pure `JarvisScenePageCore.createLeadership`.
+   - `hold()` gives the lock back at once, logging `scene.leader_declined`, when the tab is hidden or the scene is off at grant time. The tab stays follower.
+   - Test `test_a_lock_granted_to_a_hidden_tab_is_given_back_at_once` uses a fake Web Locks implementation with an exclusive holder, ordered queue and signal abort. A queued tab turns hidden before the lock arrives: it declines, and the next visible queued tab becomes leader. Mutation check: removing the guard turns it red.
+3. **PM concern (b): runtime signals over unrelated windows.**
+   - In `viewModel`, a signal with `origin` runtime takes its star's stack + 1. The star is found through the live `explains` link, else the same `work_ref`.
+   - Brain and user `attention` objects keep their own layer (Decision 8).
+   - `coveredSignals {high, medium}` counts live urgent runtime signals whose centre is inside a window drawn above them.
+   - Chips « N signal(s) d'échec sous une fenêtre / des fenêtres » and « N signal(s) à vérifier sous … », plus the live-region sentence « Des signaux sont cachés sous des fenêtres. ».
+   - Test `test_runtime_signals_stack_with_their_star_and_covered_alerts_are_counted`:
+     - runtime signal = star + 1;
+     - a window covers the signal;
+     - a brain attention stays at layer 300 above the window;
+     - covered = `{high: 1, medium: 1}`, and the brain attention is not counted.
+   - The optional resolver-cost change was skipped, as asked.
+4. **Records only:** OBSERVATION-B and the safe-area edge cases are in the residual risks below.
+
+Browser run:
+
+- Setup:
+  - headless Chrome 152 with its own profile (`scratchpad/s5f_chrome_profile`); the extension is still not connected;
+  - `qa05_host.py` on this worktree, ports 53370–53372, on a copy of QA's root (`scratchpad/s5f_root`), so QA's root is untouched;
+  - QA scripts driven through `s5f_run.py`, which points `qa05r_cdp.ROOT` at the copy;
+  - everything killed afterwards (0 processes).
+- **QA `stall` scenario** (`s5f_handover.py` = `qa05r_handover.py` with fresh object ids; the copied root already held QA's `stall-*` ids, which gave 0.0 s delays on the first try). The leader was paused in the debugger; changes were made at +0, +10, +30 and +7 s. Delays for the two followers:
+
+  | Change | Follower 1 | Follower 2 |
+  | --- | --- | --- |
+  | 1 | 26.4 s | 21.6 s |
+  | 2 | 25.0 s | 20.0 s |
+  | 3 | 4.7 s | 34.8 s |
+  | 4 | 32.7 s | 27.7 s |
+
+  - Maximum 34.8 s.
+  - Each follower made 5 short reads, 0 long-polls and 0 snapshots.
+  - Commits: 0 while stalled for 20 s, then the 3 pending ones applied after resume.
+  - The script also wrote its JSON to QA's `qa05r_handover_stall.json`, replacing QA's earlier result.
+- **Dense scene, 1280×720:** `qa05r_shots/s5f_dense_signals_circuit-board_1280x720.png` and `qa05r_shots/s5f_dense_signals_omega_1280x720.png`.
+  - 14 runtime signals had their star on screen; 2 of those stars were under a window.
+  - Signals drawn over that window: 0 (QA before: signal on top).
+  - Chips: « 1 signal d'échec sous une fenêtre », « 1 signal à vérifier sous une fenêtre », « 1 objet hors champ ».
+
+Validation:
+
+- Targeted suite under `-W error::ResourceWarning` (the 927 from before plus the new tests) → **930 passed** in 63.73 s.
+- Full `scripts/verify_release.py`, alone → `4051 passed, 9 skipped in 322.17s` / `Release verification passed.`
+
+Residual risks (Slice 05, final):
+
+1. **Hung visible leader.** A leader that stays visible and keeps the lock but whose event loop hangs stalls resolver commits until it resumes. Its followers stay at most about 40 s behind Core (35 s silence + 5 s check); in the QA stall scenario the maximum was 34.8 s.
+2. **Same-origin script can desync followers.** Any script running on the Control Center origin can post forged or suppressed `jarvis.scene` messages and desync followers until they reload, or until the watchdog or a tick catches up. Trust model: same-origin script already has full user command authority over `/api/scene/commands`.
+3. **Safe area limits.** The safe area holds from 1280×720 16:9 upward, in both themes. Half-snapped windows or short viewports (for example 1280×593) can still put the frame edges under the dock or the GPT-Live banner. The Barehands badge (test mode) raises the chips.
+4. **Separate profiles, browsers or machines.** They share no lock. On revision skew, each can commit a different box for one object: one visible move, never a loop.
+5. **Solo fallback.** Without Web Locks or BroadcastChannel, each tab keeps its own long-poll (about six windows).
+6. **Ledger eviction.** The commit ledger evicts beyond 2 048 entries. In a very long session, an evicted, still unplaced object can be sent once more (`duplicate` or `explicit_placement`).
+7. **Hidden followers.** A hidden follower does no network and stays stale until visible, then catches up with a short read.
