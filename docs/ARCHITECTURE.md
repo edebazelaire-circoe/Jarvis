@@ -1412,6 +1412,19 @@ clock; no measure crosses the Core/Voice boundary. `LatencyTracker` builds its
 own message from the measure name, so a caller cannot smuggle transcript content
 into it.
 
+## Category 2 Test Lab
+
+Targeted, opt-in diagnosis after an observed failure, separate from normal CI and
+from `RuntimeJournal`. The domain contracts are in `jarvis/testlab/` (pure: no
+I/O, no clock, no provider import): `DiagnosticSpec` with its profiles
+(`virtual`, `audio`, `live`, `hardware:auto`, `hardware:guided`), parameters,
+metrics, blocking assertions and score declaration; the mechanical capability and
+cost permission check; safe declarative `Scenario` steps of registered
+primitives; and the `TestRun` record with its state machine, joined to
+conversation traces through the Conversation Events `TRACE_JOIN_FIELDS`. Contract:
+[Category 2 Test Lab](testlab.md). Storage, workers, profile runners and adapters
+come in later Slices of `tasks/jarvis-category2-test-lab/`.
+
 ## Sub-agent routing
 
 The brain is a CLI process (`claude -p --input-format stream-json`). It spawns

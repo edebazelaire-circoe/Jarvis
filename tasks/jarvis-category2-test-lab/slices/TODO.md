@@ -3,7 +3,7 @@
 Start with `00-project-manager`; it is the readiness gate and is not delegated. Then execute according to dependencies.
 
 - [x] `00-project-manager` — Project Manager readiness and orchestration gate
-- [ ] `01-testlab-domain-contracts` — Test Lab domain contracts and schemas
+- [x] `01-testlab-domain-contracts` — Test Lab domain contracts and schemas
 - [ ] `02-run-persistence-artifacts` — Persistent TestRun and artifact store
 - [ ] `03-diagnostic-bundle` — DiagnosticBundle normalization and session capture
 - [ ] `04-catalog-scenarios` — Diagnostic catalog, manifests, and safe ad-hoc scenarios

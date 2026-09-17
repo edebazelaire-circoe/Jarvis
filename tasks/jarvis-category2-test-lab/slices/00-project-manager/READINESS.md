@@ -87,7 +87,7 @@ All run in the foreground and in chunks. Background runs and single-process full
 
 - **Narrow (voice regression guard, every Slice):**
   `.venv/Scripts/python -m pytest -q -p no:cacheprovider tests/integration/test_v2_async_conversation.py tests/integration/test_voice_replay_regressions.py tests/integration/test_voice_replay_safety_regressions.py tests/unit/test_v2_speech_scheduler.py tests/integration/test_conversation_event_rollout_gate.py tests/integration/test_control_center_conversation_events.py tests/unit/test_documented_routes.py`
-- **Slice-local:** `tests/unit/testlab/` and `tests/integration/testlab/` (new).
+- **Slice-local:** flat `tests/unit/test_testlab_*.py` and `tests/integration/test_testlab_*.py` (repo convention; decided in Slice 01).
 - **Full baseline:** `tests/unit` split into 5 file chunks, `tests/integration` into 2, plus `tests/e2e`. Expected: the 9 known failures in B2 and nothing else.
 - **Release static checks:** `scripts/verify_release.py` AST/lock checks with its pytest step stubbed (already covered by the chunked run).
 - **Category 2 live/hardware:** only through Test Lab profiles behind explicit gates, never in the commands above.
