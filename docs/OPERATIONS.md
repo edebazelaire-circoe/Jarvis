@@ -1129,10 +1129,25 @@ recharge ce qui est réellement sur disque.
 
 ### Scène constellation : outils d'affichage du cerveau
 
-Le cerveau conversationnel (Claude CLI) peut lire et composer la scène par sept
-outils MCP du serveur `jarvis-display` : `scene_inspect`, `scene_create_object`,
+Le cerveau conversationnel (Claude CLI) peut lire et composer la scène par neuf
+outils MCP du serveur `jarvis-display` : trois lectures, `scene_inspect` (toute la
+scène en lignes compactes), `scene_query` (trouver des objets par filtres) et
+`scene_get` (lire le détail d'un objet), puis `scene_create_object`,
 `scene_update_object`, `scene_set_visibility`, `scene_link`, `scene_unlink` et
 `scene_add_artifact` (artefacts, voir « Scène constellation : les artefacts »).
+
+**Lire la scène en détail.** `scene_query` combine des filtres : nature, catégorie,
+état d'exécution, origine (runtime, cerveau, utilisateur), visible ou masqué, texte
+du titre, travail Core (`work` : identifiant externe, `work_id` ou
+`source:identifiant`), ce qui explique un objet (`explains`), et les objets placés à
+moins d'une distance d'un autre (`near`, 0 = ils se touchent ou se chevauchent :
+c'est ainsi que le cerveau vérifie un chevauchement). `scene_get` rend, pour 1 à 8
+objets, le titre, le résumé, les entrées d'un artefact avec l'hôte réel de chaque
+adresse, le travail Core, la forme, la place, la couche, l'épinglage, les liens
+entrants et sortants, les artefacts qui l'expliquent, ce qu'il explique et ses
+signaux. Après un redémarrage du cerveau, c'est par là qu'il relit ce qu'une
+recherche a donné. Les deux réponses sont bornées à 20 Ko et disent `truncated`
+quand elles coupent ; elles ne modifient rien.
 « Réaffiche tout » passe par `scene_set_visibility` avec `scope: "all_hidden"` :
 le serveur réaffiche un par un tout ce qui est masqué au moment de l'appel et
 rend les comptes, en 15 s au plus (au-delà : `deadline_reached`, et le reste à
@@ -1198,9 +1213,13 @@ Core et le **chemin** du jeton, jamais le jeton.
 | erreur d'outil avec `reason=pinned_by_user` | objet épinglé par l'utilisateur | normal : le cerveau ne le déplace pas |
 | erreur d'outil avec `reason=scene_full` | 512 objets actifs | archiver des objets terminés ; le cerveau ne peut pas |
 | `display.tool_failed` niveau erreur `display_internal_error` | défaut du serveur | remonter le message (type et texte) |
+| erreur d'outil `scene_query (near) … reason=unplaced` | l'objet de référence n'a pas encore de géométrie enregistrée (placement automatique pas encore fait par une page) | normal : ouvrir le Control Center le place en quelques secondes ; sinon `scene_get` |
+| erreur d'outil `scene_query (explains) … reason=object_archived` | l'objet a été archivé | normal : rien à expliquer dans la scène active |
+| le cerveau répond « je ne vois que le titre » d'un artefact | cerveau lancé avant le Slice 09, ou conversation reprise avec l'ancienne consigne | redémarrer l'agent ; la trace doit montrer `mcp__jarvis-display__scene_get` et `display.read` |
 | erreur d'outil `attach_artifact refusé … reason=object_archived` | l'utilisateur a archivé l'étoile du travail | normal : pas d'artefact pour un travail rangé, rien n'a été envoyé |
 
-Tous les appels laissent `display.tool` / `display.tool_refused` /
+Tous les appels laissent `display.tool` / `display.read` (lectures `scene_query`
+et `scene_get` : noms des filtres ou identifiants, comptes) / `display.tool_refused` /
 `display.tool_failed` dans `runtime/trace.jsonl` (identifiants et issues, jamais
 le texte des notes ni un chemin de fichier). `display.server_stopped` n'apparaît
 que si la session se termine proprement : un arrêt du cerveau tue d'ordinaire le
@@ -1460,7 +1479,8 @@ peut en choisir une autre ; elle prend alors une couleur stable tirée de son no
 - Au clavier : Tab jusqu'à la scène, flèches jusqu'à la fenêtre, puis Tab parcourt
   le bouton d'origine et les liens ; Échap revient à la fenêtre.
 - On peut aussi demander au cerveau « qu'est-ce que la recherche a donné ? » : il
-  répond en quelques phrases.
+  répond en quelques phrases, en relisant l'artefact avec `scene_get`, y compris
+  après un redémarrage (il ne propose pas de refaire la recherche).
 
 **Ranger.** Un artefact reste dans la scène jusqu'à ce que vous l'archiviez
 (menu de l'objet → « Archiver… »). Archiver l'étoile du travail **ne l'emporte

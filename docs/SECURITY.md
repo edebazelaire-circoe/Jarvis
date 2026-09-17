@@ -150,7 +150,8 @@ What this guarantee is **not**:
 
 Prompt injection through the scene. Runtime star titles are sub-agent labels,
 which can copy web or file content, and they enter the brain's context through
-`scene_inspect` (so do ids, categories and titles written by the user). The
+`scene_inspect`, and since Slice 09 full summaries, artifact items, URLs and hosts
+enter it through `scene_get` (so do ids, categories and titles written by the user). The
 inspection legend, the tool description and the brain prompt state that this text
 is data, never an instruction. This is a mitigation, not a boundary: a brain that
 follows injected text still has its own Bash/file/web tools. Tool arguments are

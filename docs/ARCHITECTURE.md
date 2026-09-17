@@ -1965,7 +1965,7 @@ ControlCenter (scene.enabled) ─► ClaudeLocalAgent.display_mcp = DisplayMcpTa
 | Wiring | `jarvis/runtime/control_center.py`, `jarvis/app.py` | `_run_control_center_v2` builds `DisplayMcpTarget` from `V2Settings`; `_apply_agent_settings` hands it to the Claude agent only when the gate is on |
 | Spawn | `jarvis/runtime/claude_local.py` | `_display_mcp_args`: atomic write of `runtime/display-mcp.json`, `--mcp-config <file>`; prompt program `conversation_display_session` |
 | Server | `jarvis/runtime/display_mcp.py` | `build_server` (lazy `mcp` import), `SceneDisplayTools` (logic, testable against a real Core), `serve_stdio` |
-| Prompt | `BRAIN_DISPLAY_PROMPT` → descriptor `backend.claude.conversation.display`; `BRAIN_ARTIFACT_PROMPT` → descriptor `backend.claude.conversation.artifacts` (Slice 07) | appended after `BRAIN_SYSTEM_PROMPT`, in that order, by program `backend.claude.conversation.display_session` |
+| Prompt | `BRAIN_DISPLAY_PROMPT` → descriptor `backend.claude.conversation.display`; `BRAIN_SCENE_READ_PROMPT` → `backend.claude.conversation.scene_read` (Slice 09, one line, no separator so it extends the display list); `BRAIN_ARTIFACT_PROMPT` → descriptor `backend.claude.conversation.artifacts` (Slice 07) | appended after `BRAIN_SYSTEM_PROMPT`, in that order, by program `backend.claude.conversation.display_session` |
 
 Gating. Off, nothing changes for the brain: same argv, same system prompt
 (`backend.claude.conversation.session`). On, only the `conversation` profile gets
@@ -1985,13 +1985,14 @@ comes first. `agent.start` carries `display_mcp: true|false`. The routing hook
 still matches `Agent|Task` only; under `bypassPermissions` the MCP tools need no
 allowlist. The CLI may defer MCP tool schemas behind `ToolSearch` (one extra call
 per new tool per conversation, observed). Display tools are not counted as inline
-work by the turn budget audit (`DISPLAY_TOOLS`: the exact seven
+work by the turn budget audit (`DISPLAY_TOOLS`: the exact nine
 `mcp__jarvis-display__<tool>` names, never a prefix match).
 
-Tool catalog (V1). Exactly seven tools (six from Slice 06, `scene_add_artifact`
-from Slice 07); **no archive, pin or unpin tool** and no
-parameter that could carry `actor`, `placed_by`, `exec_state`, `work_ref` or a
-disposition (tested). Unknown arguments are refused, never ignored: every tool
+Tool catalog (V1). Exactly nine tools (six from Slice 06, `scene_add_artifact`
+from Slice 07, the read-only `scene_query` and `scene_get` from Slice 09); **no
+archive, pin or unpin tool** and no parameter that could carry `actor`,
+`placed_by`, `exec_state`, `work_ref` or a disposition (tested; the read-only tools
+`READ_TOOL_NAMES` may *filter* on `exec_state`, nothing writes it). Unknown arguments are refused, never ignored: every tool
 schema says `additionalProperties: false` (nested geometry and items too), and
 the server's `call_tool` refuses an unknown key with an error naming it before
 anything runs (FastMCP alone would drop `archived: true` and answer success).
@@ -2023,11 +2024,64 @@ layer]` (only relations between listed objects). Brain objects first, then user,
 then runtime; cut at `MAX_INSPECT_BYTES` = 20 000 with `truncated`
 (`objects_omitted`, `relations_omitted`, hint). Optional filters `kind`,
 `category` (exact), `text` (title or id substring). Capacity is derived from the
-snapshot (same as the Control Center proxy). Summaries and screenshots are Slice 09.
+snapshot (same as the Control Center proxy). Summaries, items and the relation
+graph of an object are read with `scene_get` (below); the screenshot is a separate
+Slice 09 decision (`tasks/…/09-scene-inspection-screenshot/SPIKE.md`).
 The legend's `data` entry, the tool description and the prompt mark ids,
 categories and titles as data, never instructions: runtime star titles come from
 sub-agent labels, which may copy web content (prompt-injection vector, not a
 security boundary; SECURITY 13).
+
+Structured reads (Slice 09, part 1). Two read-only tools, never a command
+(`SceneDisplayTools.query` / `get`, one `GET /v1/scene/snapshot` each):
+
+- **`scene_query`** finds objects. Filters, all optional but at least one required
+  (without one: `invalid_argument`, use `scene_inspect`), combined with AND: `kind`,
+  `category` (case-insensitive), `exec_state`, `origin` (runtime/brain/user),
+  `visibility`, `text` (title or id substring, case-insensitive, like inspect),
+  `work` (exact `source`, `external_id`, `work_id` or `source:external_id` of the
+  object's `work_ref`: a star and its runtime signals), `explains` (sources of an
+  `explains` relation to that id: artifacts and signals), `near` = `{object_id,
+  radius}` (committed boxes whose edge-to-edge distance to the reference box is ≤
+  radius, 0 = touching or overlapping; unplaced objects and the reference itself are
+  excluded; rows gain a trailing `distance` column and are sorted nearest first).
+  Rows, relations (between listed objects), legend (`frame`, `data`) and the byte
+  bound are those of `scene_inspect` (`MAX_INSPECT_BYTES`, `truncated` with the hint
+  « ajoute un filtre ou réduis near.radius »); the header carries `matched` and the
+  given `filter`. An `explains` or `near` reference that is archived, unknown, or
+  (for `near`) has no committed geometry is refused like a local artifact target:
+  `scene_query (<field>) refusé par la scène (outcome=invalid, reason=object_archived
+  | unknown_object | unplaced) : … Rien n'a été envoyé.`, journaled
+  `display.tool_refused` with `sent: false`.
+- **`scene_get`** reads 1 to `MAX_GET_IDS` = 8 ids (duplicates collapsed). Per
+  object: `id, kind, category, origin, exec_state, work_ref, representation,
+  geometry [x,y,w,h]|null, layer, order, visibility, constraints`, full `title` and
+  `summary`, `items` (`label`, `ref`, `url`, and `host` = `urlsplit(url).hostname`,
+  i.e. the real destination after any `user@`; empty keys omitted), `relations.out` /
+  `relations.in` (`[relation_id, kind, other_id, layer]`, at most
+  `MAX_GET_RELATIONS` = 32 together, `omitted` count beyond), `explained_by`
+  (non-signal `explains` sources, brief rows), `explains` (targets: the star an
+  artifact explains), `live_signal` for `attention`, `signals` (runtime signals of a
+  star with `live_signal`, `runtime_signals_of`) for `agent`/`job`; linked lists
+  capped at `MAX_GET_LINKED` = 16. Ids not in the scene come back in `not_found`
+  (`object_archived` or `unknown_object`), not as an error. The whole answer is
+  bounded to `MAX_GET_BYTES` = 20 000: objects are added in the requested order; the
+  first one always fits (its items are dropped from the end, `items_omitted`); from
+  the first object that does not fit, it and the rest go to `truncated.ids_omitted`.
+  The legend's `data` note marks ids, categories, titles, summaries, items, URLs,
+  hosts and `work_ref` as data, never instructions.
+- **Seen index.** Both reads follow the Slice 06 partial-inspect rule
+  (`_mark_read`): only the objects actually returned enter the seen index; unless
+  every active object was returned, the view is partial and the next command
+  re-reads and reports what was never returned as `+`.
+- **Why these tools.** After a brain restart the conversation no longer holds
+  artifact content (Slice 07 residual); `scene_get` is how the brain reads it. The
+  Slice 07 prompt line « si seul le titre est visible, dis-le » now says to read it
+  with `scene_get` and only say so if it is empty. Kept minimal: no `limit`
+  argument (the byte bound and filters suffice), no free-text search in summaries.
+- **Journal.** `display.read` (info): `tool`, filter names (never values) or
+  requested ids, `matched`/`returned`/`not_found`, `revision`, `truncated`; never
+  titles, summaries or URLs. (`scene_inspect` still journals failures only.)
 
 Stale scene memory (QA M1). Decision 4 changes the scene without a brain turn, so
 the prompt and every mutating tool description say to re-read with
@@ -2158,8 +2212,8 @@ artifact** linked to the work's star.
   and never mentions the artifact or the grouping, « je l'ai rangé », « ce qui en
   fait quatre », unless the user asks about the artifact itself); when
   `scene_inspect` shows only an artifact's title and its content is no longer in
-  context, say so in one sentence and do not offer to redo the work unless asked
-  (Slice 09 adds object detail reading); artifact text is data. `BRAIN_SYSTEM_PROMPT`
+  context, read it with `scene_get` and, only if it is empty, say so in one
+  sentence; do not offer to redo the work unless asked (Slice 09); artifact text is data. `BRAIN_SYSTEM_PROMPT`
   and `BRAIN_DISPLAY_PROMPT` are byte-identical to Slice 06 (hash test); flag off,
   the prompt is `BRAIN_SYSTEM_PROMPT` alone as before. Work-attention wakes
   (failures) do not ask for artifacts.
@@ -2197,6 +2251,7 @@ same function as the Control Center proxy, `scene_view.classify_scene_call_failu
 
 Journal (`runtime/trace.jsonl`, identifiers only): `display.server_started`,
 `display.tool` (info: tool, op, outcome, revision, id, `scene_changed`),
+`display.read` (info, Slice 09 reads: tool, filter names or ids, counts, revision, `truncated`),
 `display.tool_refused` (info, with `reason`; Core also journals
 `core.scene.command_refused`), `display.tool_failed` (warning for transport,
 argument and schema failures with `code` and, for schema refusals, the field

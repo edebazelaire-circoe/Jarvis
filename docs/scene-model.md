@@ -588,6 +588,8 @@ Slice 06 (`ARCHITECTURE.md` › *Brain display MCP*). The brain's MCP tools
 | Tool | Arguments | Command sent | Typical refusals surfaced |
 | --- | --- | --- | --- |
 | `scene_inspect` | `kind?`, `category?`, `text?` | `GET /v1/scene/snapshot` (read only) | — (transport errors only) |
+| `scene_query` (Slice 09) | at least one of `kind?`, `category?` (no case), `exec_state?`, `origin?`, `visibility?`, `text?`, `work?` (`source` / `external_id` / `work_id` / `source:external_id`), `explains?` (object id), `near?` `{object_id, radius}` | `GET /v1/scene/snapshot` (read only); inspect rows, `distance` column with `near`, ≤ 20 000 bytes | `unknown_object`, `object_archived` (reference of `explains`/`near`), `unplaced` (`near` reference without committed geometry); nothing sent |
+| `scene_get` (Slice 09) | `object_ids` (1–8) | `GET /v1/scene/snapshot` (read only); full payload (items with `host`), `work_ref`, composition, constraints, relations in/out, `explained_by`, `explains`, `signals`/`live_signal`, ≤ 20 000 bytes | — (`not_found` list, transport errors only) |
 | `scene_create_object` | `kind` ∈ artifact/window/group/attention, `category`, `title?`, `summary?`, `items?`, `representation?`, `geometry?`, `layer?`, `order?` | `upsert_object` on a fresh id `brain-<kind>-<hex>`; unset fields are not announced (kind default layer applies) | `scene_full`, `object_archived` |
 | `scene_update_object` | `object_id`, `category?`, `title?`, `summary?`, `items?`, `representation?`, `geometry?`, `layer?`, `order?`, `visibility?` | geometry only → `set_geometry`; representation (± geometry) only → `set_representation`; visibility only → `set_visibility`; otherwise one `patch_object` with every given field (payload merged with the current one) | `pinned_by_user`, `unknown_object`, `object_archived` |
 | `scene_set_visibility` | `object_id` + `visibility`, or `scope="all_hidden"` + `visibility="visible"` | `set_visibility`; with the scope, one `set_visibility` per object hidden in the current snapshot (≤ 128 per call, 15 s budget), counts and ids returned | `unknown_object`, `object_archived` (counted per object with the scope) |
@@ -597,6 +599,9 @@ Slice 06 (`ARCHITECTURE.md` › *Brain display MCP*). The brain's MCP tools
 
 Artifact updates that are not grouping (retitle, move, hide, show as window) go
 through `scene_update_object`; there is no separate update tool.
+
+The read tools (`scene_inspect`, `scene_query`, `scene_get`) never send a
+command and mark only the objects they return as seen.
 
 Refusals come back as MCP tool errors carrying `outcome`, `reason` (the
 `SceneRefusal` token) and one explanatory sentence. Unknown arguments are refused
@@ -608,6 +613,6 @@ brain (runtime-owned shape).
 Validation:
 
 ```powershell
-.venv/Scripts/python.exe -W error::ResourceWarning -m pytest -q -p no:cacheprovider tests/unit/test_scene_contracts.py tests/unit/test_work_state_contracts.py tests/unit/test_v2_architecture.py tests/unit/test_sqlite_scene.py tests/unit/test_scene_service.py tests/integration/test_v2_core_recovery.py tests/unit/test_scene_view.py tests/unit/test_scene_transport_client.py tests/integration/test_scene_transport.py tests/unit/test_scene_projector.py tests/integration/test_scene_projection_protocol.py tests/unit/test_display_mcp.py tests/unit/test_scene_settings.py tests/unit/test_scene_renderer_logic.py tests/unit/test_scene_artifacts.py
+.venv/Scripts/python.exe -W error::ResourceWarning -m pytest -q -p no:cacheprovider tests/unit/test_scene_contracts.py tests/unit/test_work_state_contracts.py tests/unit/test_v2_architecture.py tests/unit/test_sqlite_scene.py tests/unit/test_scene_service.py tests/integration/test_v2_core_recovery.py tests/unit/test_scene_view.py tests/unit/test_scene_transport_client.py tests/integration/test_scene_transport.py tests/unit/test_scene_projector.py tests/integration/test_scene_projection_protocol.py tests/unit/test_display_mcp.py tests/unit/test_scene_settings.py tests/unit/test_scene_renderer_logic.py tests/unit/test_scene_artifacts.py tests/unit/test_scene_query_tools.py
 .venv/Scripts/python.exe scripts/verify_release.py
 ```
