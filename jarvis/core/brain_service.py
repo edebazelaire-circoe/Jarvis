@@ -39,11 +39,19 @@ from jarvis.domain.v2 import (
 )
 from jarvis.core.brain_context import BrainContextBuilder
 from jarvis.core.brain_outcomes import BrainOutcomeService, stable_identity
+from jarvis.core.conversation_event_emitter import (
+    PRODUCER_BRAIN_SERVICE,
+    NullConversationEventEmitter,
+    journal_ref,
+    journal_trace,
+    safe_error_class,
+)
+from jarvis.domain.conversation_events import ConversationEventType
 from jarvis.core.voice_admission import VoiceTurnAdmissionService
 from jarvis.domain.speech_presentation import OutcomeKind, OutcomeStatus, SpeechDependency, semantic_text_spans, speech_id
 from jarvis.domain.brain_context import BrainContext, WorkAttention
 from jarvis.domain.work_attention_prompt import WORK_ATTENTION_WAKE_PROMPT
-from jarvis.ports.v2 import BrainBackend, DiagnosticSink, WorkCanceller, supports_brain_context
+from jarvis.ports.v2 import BrainBackend, ConversationEventRecorder, DiagnosticSink, WorkCanceller, supports_brain_context
 
 # Types d'événements publiés sur `CoreEventBus`. Les charges utiles suivent
 # `docs/handoff-realtime-brain/docs/05-event-contracts.md` ; les clés que le
@@ -210,6 +218,7 @@ class BrainOrchestrator:
         turn_budget_s: float = DEFAULT_TURN_BUDGET_S,
         work_context: BrainContextBuilder | None = None,
         voice_ledger=None,
+        conversation_events: ConversationEventRecorder | None = None,
     ) -> None:
         self._conversations = conversations
         self._events = events
@@ -218,14 +227,18 @@ class BrainOrchestrator:
         # d'etat publiee, elle n'arrete simplement aucun job.
         self._jobs = jobs
         self._diagnostics: DiagnosticSink = diagnostics or NullDiagnosticSink()
-        self.outcomes = BrainOutcomeService(conversations.state, events, self._diagnostics)
+        # Conversation Event log (conversation-observability Slice 03a): enqueue
+        # only, never awaited, never raises (`conversation_event_emitter.py`).
+        self._conversation_events = conversation_events or NullConversationEventEmitter()
+        self.outcomes = BrainOutcomeService(conversations.state, events, self._diagnostics, self._conversation_events)
         # Chronomètre des deux mesures dont Core possède les deux bornes : le
         # travail commence et se solde ici, la surface vocale n'en voit rien.
         self._latency = LatencyTracker(self._diagnostics)
         self._transient_speech_ttl_s = transient_speech_ttl_s
         self._lock = asyncio.Lock()
         self.admission = VoiceTurnAdmissionService(conversations, self.outcomes, events, self._diagnostics,
-            lock=self._lock, ledger=voice_ledger, on_activated=self._note_direct_admission)
+            lock=self._lock, ledger=voice_ledger, on_activated=self._note_direct_admission,
+            conversation_events=self._conversation_events)
         self._states: dict[str, BrainWorkingState] = {}
         self._accepted: dict[str, BrainTurnAcceptance] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
@@ -314,10 +327,11 @@ class BrainOrchestrator:
                                    text=outcome.text, kind=SpeechKind.RESULT, source=current, outcome_id=outcome.id,
                                    chunks=semantic_text_spans(outcome.text))
             await self.outcomes.repository.save_brain_selection(conversation_id, selection_id, speech)
+            event_id = self._record_speech_requested(speech, trace_kind="core.brain.outcome_selected")
             await self._publish(BRAIN_SPEECH_REQUESTED, speech.to_payload(), conversation_id, speech.correlation_id)
             self._diagnostics.emit("core.brain.outcome_selected", "available outcome selected for presentation", data={
                 "conversation_id": conversation_id, "outcome_id": outcome.id, "speech_id": speech.id,
-                "correlation_id": speech.correlation_id})
+                "correlation_id": speech.correlation_id, **journal_ref(event_id)})
             return {"schema_version": 1, "outcome_id": outcome_id, "speech": speech.to_payload(), "duplicate": False}
 
     def working_state(self, conversation_id: str) -> BrainWorkingState:
@@ -577,6 +591,14 @@ class BrainOrchestrator:
                 interrupted_speech_id=turn.interrupted_speech_id,
             )
             self._remember(turn, acceptance)
+            if not admitted.duplicate:
+                # Un rejeu durable (redémarrage de Core) n'est pas une nouvelle
+                # acceptation : même règle que `user.transcript.accepted`.
+                self._record(ConversationEventType.BRAIN_TURN_ACCEPTED, conversation_id=turn.conversation_id,
+                             source_ids=(turn.correlation_id,), occurred_at=utc_now(), turn_id=record.id,
+                             correlation_id=turn.correlation_id,
+                             attributes={"source": turn.source.value, "addressing": turn.addressing.value,
+                                         "revision": state.revision})
 
             # L'accusé est dû dans tous les cas : le tour a bien été reçu et
             # persisté. Sur un tour incertain il porte la révision **courante**,
@@ -970,6 +992,9 @@ class BrainOrchestrator:
             )
             raise
         except Exception as exc:
+            event_id = self._record_turn_failed(turn, code="brain_backend_exception",
+                                                error_class=safe_error_class(type(exc).__name__),
+                                                trace_kind=BRAIN_TURN_FAILED_KIND)
             self._diagnostics.emit(
                 BRAIN_TURN_FAILED_KIND,
                 "le backend cerveau a échoué",
@@ -978,6 +1003,7 @@ class BrainOrchestrator:
                     "conversation_id": turn.conversation_id,
                     "correlation_id": turn.correlation_id,
                     "error_class": type(exc).__name__,
+                    **journal_ref(event_id),
                 },
             )
             await self._publish_turn_failure(turn, error_class=type(exc).__name__)
@@ -988,9 +1014,17 @@ class BrainOrchestrator:
                 # Settlement belongs to Core, not to the backend. Do not turn
                 # failed persistence into a false backend failure or leave an
                 # unobserved exception on the owned asyncio task.
+                event_id = self._record(
+                    ConversationEventType.SYSTEM_FAILURE, conversation_id=turn.conversation_id,
+                    source_ids=(turn.correlation_id, "brain_turn_settlement_failed"), occurred_at=utc_now(),
+                    correlation_id=turn.correlation_id,
+                    attributes={"code": "brain_turn_settlement_failed",
+                                **({"error_class": type(exc).__name__} if safe_error_class(type(exc).__name__) else {})},
+                    trace_ref=journal_trace("core.brain.turn_settlement_failed", "conversation_id", "correlation_id"))
                 self._diagnostics.emit("core.brain.turn_settlement_failed", "public result settlement failed", level="error",
                                        data={"conversation_id": turn.conversation_id, "correlation_id": turn.correlation_id,
-                                             "code": "brain_turn_settlement_failed", "error_class": type(exc).__name__})
+                                             "code": "brain_turn_settlement_failed", "error_class": type(exc).__name__,
+                                             **journal_ref(event_id)})
         finally:
             if slow is not None:
                 slow.cancel()
@@ -1051,6 +1085,8 @@ class BrainOrchestrator:
 
     async def _settle(self, turn: BrainTurnInput, result: BrainTurnResult) -> None:
         if result.correlation_id != turn.correlation_id:
+            event_id = self._record_turn_failed(turn, code="backend_correlation_mismatch", error_class=None,
+                                                trace_kind=BRAIN_BACKEND_CONTRACT_KIND)
             self._diagnostics.emit(
                 BRAIN_BACKEND_CONTRACT_KIND,
                 "le backend a rendu un résultat portant une autre corrélation",
@@ -1059,11 +1095,15 @@ class BrainOrchestrator:
                     "conversation_id": turn.conversation_id,
                     "expected_correlation_id": turn.correlation_id,
                     "returned_correlation_id": result.correlation_id,
+                    **journal_ref(event_id),
                 },
             )
             await self._publish_turn_failure(turn, error_class="backend_correlation_mismatch")
             return
         if result.status is BrainRunStatus.FAILED:
+            event_id = self._record_turn_failed(turn, code="brain_backend_failed",
+                                                error_class=safe_error_class(result.error),
+                                                trace_kind=BRAIN_TURN_FAILED_KIND)
             self._diagnostics.emit(
                 BRAIN_TURN_FAILED_KIND,
                 "le backend cerveau a rendu un échec",
@@ -1072,6 +1112,7 @@ class BrainOrchestrator:
                     "conversation_id": turn.conversation_id,
                     "correlation_id": turn.correlation_id,
                     "error": result.error,
+                    **journal_ref(event_id),
                 },
             )
             await self._publish_turn_failure(
@@ -1110,6 +1151,45 @@ class BrainOrchestrator:
                 return
             state = self._revise(turn.conversation_id, known_public_facts=facts + (summary,))
         await self._publish(BRAIN_STATE_UPDATED, state.to_public_payload(), turn.conversation_id, turn.correlation_id)
+
+    def _record_turn_failed(self, turn: BrainTurnInput, *, code: str, error_class: str | None, trace_kind: str) -> str | None:
+        """`brain.turn.failed`: allowlisted `code`/`error_class` only, never the raw error text."""
+
+        attributes = {"code": code}
+        if error_class is not None:
+            attributes["error_class"] = error_class
+        # The contract-violation line has no `correlation_id`: it joins by event id only.
+        keys = () if trace_kind == BRAIN_BACKEND_CONTRACT_KIND else ("conversation_id", "correlation_id")
+        return self._record(ConversationEventType.BRAIN_TURN_FAILED, conversation_id=turn.conversation_id,
+                            source_ids=(turn.correlation_id,), occurred_at=utc_now(),
+                            correlation_id=turn.correlation_id, attributes=attributes,
+                            trace_ref=journal_trace(trace_kind, *keys))
+
+    def _record_speech_requested(self, speech: SpeechRequest, *, trace_kind: str | None = None) -> str | None:
+        """`brain.speech.requested`: the text Core hands to the voice surface, at the request's own time."""
+
+        return self._record(ConversationEventType.BRAIN_SPEECH_REQUESTED, conversation_id=speech.conversation_id,
+                            source_ids=(speech.id,), occurred_at=speech.created_at,
+                            correlation_id=speech.correlation_id, speech_id=speech.id, work_id=speech.work_id,
+                            outcome_id=speech.outcome_id, content=speech.text,
+                            attributes={"kind": speech.kind.value, "priority": speech.priority.value},
+                            trace_ref=journal_trace(trace_kind, "conversation_id", "speech_id") if trace_kind else None)
+
+    def _record_work(self, event_type: ConversationEventType, event: BrainEvent, *, work_id: str,
+                     content: str | None = None, attributes: dict | None = None,
+                     trace_kind: str | None = None) -> str | None:
+        """`brain.work.*`: identity (turn correlation, work name); `span_id` is the work id (contract).
+
+        A backend signal without `work_id` names no span: nothing is recorded.
+        """
+
+        if not work_id:
+            return None
+        return self._record(event_type, conversation_id=event.conversation_id,
+                            source_ids=(event.correlation_id, work_id), occurred_at=event.created_at,
+                            correlation_id=event.correlation_id, work_id=work_id, span_id=work_id,
+                            content=content if content and content.strip() else None, attributes=attributes or {},
+                            trace_ref=journal_trace(trace_kind, "correlation_id", "work_id") if trace_kind else None)
 
     async def _publish_turn_failure(self, turn: BrainTurnInput, *, error_class: str, public_summary: str = "") -> None:
         """Signaler l'échec d'un tour entier, et le faire dire si le cerveau l'a rédigé.
@@ -1163,6 +1243,11 @@ class BrainOrchestrator:
                 if state is not None:
                     settled.append((work_id, state))
         for work_id, state in settled:
+            self._record(ConversationEventType.BRAIN_WORK_FAILED, conversation_id=turn.conversation_id,
+                         source_ids=(turn.correlation_id, work_id), occurred_at=utc_now(),
+                         correlation_id=turn.correlation_id, work_id=work_id, span_id=work_id,
+                         attributes={"code": "turn_failed", **({"error_class": error_class}
+                                                               if safe_error_class(error_class) else {})})
             await self._publish(
                 BRAIN_WORK_FAILED,
                 {"work_id": work_id, "job_id": None, "error_class": error_class, "public_summary": ""},
@@ -1245,12 +1330,14 @@ class BrainOrchestrator:
             # travail qui commence, et c'est de là que l'utilisateur attend.
             self._latency.mark(LATENCY_FIRST_PUBLIC_PROGRESS, work_key)
             self._latency.mark(LATENCY_WORK_COMPLETED, work_key)
+            event_id = self._record_work(ConversationEventType.BRAIN_WORK_STARTED, event, work_id=event.work_id,
+                                         content=event.public_summary, trace_kind=BRAIN_BACKEND_TASK_STARTED_KIND)
             self._diagnostics.emit(
                 BRAIN_BACKEND_TASK_STARTED_KIND,
                 "backend task accepted",
                 data={"conversation_id": event.conversation_id,
                       "correlation_id": event.correlation_id,
-                      "work_id": event.work_id},
+                      "work_id": event.work_id, **journal_ref(event_id)},
             )
             await self._publish(
                 BRAIN_WORK_STARTED,
@@ -1316,12 +1403,14 @@ class BrainOrchestrator:
                 },
             )
             self._latency.forget(LATENCY_FIRST_PUBLIC_PROGRESS, work_key)
+            event_id = self._record_work(ConversationEventType.BRAIN_WORK_COMPLETED, event, work_id=event.work_id,
+                                         content=event.public_summary, trace_kind=BRAIN_BACKEND_TASK_RESULT_KIND)
             self._diagnostics.emit(
                 BRAIN_BACKEND_TASK_RESULT_KIND,
                 "backend task completed",
                 data={"conversation_id": event.conversation_id,
                       "correlation_id": event.correlation_id,
-                      "work_id": event.work_id, "status": "completed"},
+                      "work_id": event.work_id, "status": "completed", **journal_ref(event_id)},
             )
             await self._publish(
                 BRAIN_WORK_COMPLETED,
@@ -1348,12 +1437,17 @@ class BrainOrchestrator:
             # a échoué mélangerait deux populations dans le même chiffre.
             self._latency.forget(LATENCY_FIRST_PUBLIC_PROGRESS, work_key)
             self._latency.forget(LATENCY_WORK_COMPLETED, work_key)
+            error_class = safe_error_class(event.error)
+            event_id = self._record_work(ConversationEventType.BRAIN_WORK_FAILED, event, work_id=event.work_id,
+                                         content=event.public_summary,
+                                         attributes={"error_class": error_class} if error_class else None,
+                                         trace_kind=BRAIN_BACKEND_TASK_RESULT_KIND)
             self._diagnostics.emit(
                 BRAIN_BACKEND_TASK_RESULT_KIND,
                 "backend task failed",
                 data={"conversation_id": event.conversation_id,
                       "correlation_id": event.correlation_id,
-                      "work_id": event.work_id, "status": "failed"},
+                      "work_id": event.work_id, "status": "failed", **journal_ref(event_id)},
             )
             await self._publish(
                 BRAIN_WORK_FAILED,
@@ -1482,6 +1576,8 @@ class BrainOrchestrator:
             retained = tuple(item for item in current.active_work_ids if item != work_id)
             state = self._revise(event.conversation_id, active_work_ids=retained)
         job_ids = await self._cancel_jobs(work_id)
+        event_id = self._record_work(ConversationEventType.BRAIN_WORK_CANCELLED, event, work_id=work_id,
+                                     trace_kind=BRAIN_WORK_CANCELLED_KIND)
         self._diagnostics.emit(
             BRAIN_WORK_CANCELLED_KIND,
             "travail annulé sur décision explicite du cerveau",
@@ -1492,6 +1588,7 @@ class BrainOrchestrator:
                 "work_id": work_id,
                 "job_ids": list(job_ids),
                 "retained_work_ids": list(retained),
+                **journal_ref(event_id),
             },
         )
         self._diagnostics.emit(
@@ -1647,9 +1744,18 @@ class BrainOrchestrator:
         if speech.kind is SpeechKind.QUESTION:
             async with self._lock:
                 state = self._revise_question(speech.conversation_id, speech.text)
+        self._record_speech_requested(speech)
         await self._publish(BRAIN_SPEECH_REQUESTED, speech.to_payload(), speech.conversation_id, speech.correlation_id)
         if state is not None:
             await self._publish(BRAIN_STATE_UPDATED, state.to_public_payload(), speech.conversation_id, speech.correlation_id)
+
+    def _record(self, event_type: ConversationEventType, *, conversation_id: str, source_ids: tuple[str, ...],
+                occurred_at, **fields) -> str | None:
+        """Enqueue one Brain conversation event (never awaits, never raises); returns its id or None."""
+
+        return self._conversation_events.record(event_type, producer=PRODUCER_BRAIN_SERVICE,
+                                                conversation_id=conversation_id, source_ids=source_ids,
+                                                occurred_at=occurred_at, **fields)
 
     async def _publish(self, message_type: str, payload: dict, conversation_id: str, correlation_id: str) -> None:
         if message_type in (BRAIN_TURN_ACCEPTED, BRAIN_INTENT_REVISED):

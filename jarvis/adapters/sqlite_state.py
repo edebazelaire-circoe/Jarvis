@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sqlite3
@@ -21,7 +21,44 @@ from jarvis.domain.back_brain import BackBrainAdvisoryReference, BackBrainUnavai
 from jarvis.domain.live_lifecycle import LiveLifecycleConflict, LiveLifecycleState, LiveSessionRecord
 
 T = TypeVar("T")
-_SCHEMA_VERSION = 1
+#: v1: operational state. v2 (2026-09-16): `conversation_events` log.
+_SCHEMA_VERSION = 2
+
+#: Envelope ids with a partial index `(<id>, sequence)`; mirrors
+#: `conversation_event_store.LOOKUP_FIELDS` (checked by the store tests).
+_CONVERSATION_EVENT_LOOKUP_COLUMNS = ("session_id", "turn_id", "correlation_id", "task_id", "work_id",
+                                      "speech_id", "outcome_id", "span_id")
+
+#: Forward-only migrations, one transaction each, keyed by the version they
+#: produce. Additive only: an older binary refuses the newer file ("newer than
+#: supported") instead of misreading it. Contract: `docs/conversation-events.md`.
+_MIGRATIONS: dict[int, tuple[str, ...]] = {
+    2: (
+        # AUTOINCREMENT: a sequence is never reused, even after the highest row
+        # is pruned by retention, so a consumer cursor can never skip an event.
+        # `data` is the encoded canonical event (source of truth); the other
+        # columns are extracted copies for indexing and are cross-checked on read.
+        # No foreign key to `conversations`: the log records facts even when the
+        # operational conversation row is absent or later removed.
+        """CREATE TABLE IF NOT EXISTS conversation_events (
+            sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT NOT NULL UNIQUE,
+            conversation_id TEXT NOT NULL,
+            session_id TEXT,
+            event_type TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            visibility TEXT NOT NULL,
+            occurred_at TEXT NOT NULL,
+            recorded_at TEXT NOT NULL,
+            span_id TEXT, turn_id TEXT, correlation_id TEXT, task_id TEXT, work_id TEXT, speech_id TEXT,
+            outcome_id TEXT,
+            data TEXT NOT NULL)""",
+        "CREATE INDEX IF NOT EXISTS idx_conversation_events_conversation ON conversation_events(conversation_id, sequence)",
+        "CREATE INDEX IF NOT EXISTS idx_conversation_events_occurred ON conversation_events(occurred_at, sequence)",
+        *(f"CREATE INDEX IF NOT EXISTS idx_conversation_events_{column} ON conversation_events({column}, sequence) "
+          f"WHERE {column} IS NOT NULL" for column in _CONVERSATION_EVENT_LOOKUP_COLUMNS),
+    ),
+}
 
 
 def _dt(value: str | None) -> datetime | None:
@@ -30,6 +67,26 @@ def _dt(value: str | None) -> datetime | None:
 
 def _dump(value: Any) -> str:
     return json.dumps(jsonable(value), ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def rollback_after_failure(conn: sqlite3.Connection, failure: BaseException) -> None:
+    """Roll back an open transaction after `failure` without ever masking it.
+
+    If ROLLBACK itself fails, the caller must still see the original failure; the
+    rollback error is attached to it as a note (visible in the traceback) instead
+    of replacing it. SQLite discards the unfinished transaction at next open.
+    """
+    if not conn.in_transaction:
+        return
+    try:
+        conn.execute("ROLLBACK")
+    except sqlite3.Error as rollback_error:
+        failure.add_note(f"ROLLBACK also failed: {type(rollback_error).__name__}: {rollback_error}")
+
+
+def pre_migration_backup_path(path: Path, version: int) -> Path:
+    """`<db>.v<version>.bak`, next to the DB (see docs/state-model.md, rollback procedure)."""
+    return path.with_name(f"{path.name}.v{version}.bak")
 
 
 class SQLiteStateRepository:
@@ -72,17 +129,30 @@ class SQLiteStateRepository:
 
     def _initialize_sync(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        conn: sqlite3.Connection | None = None
         try:
             conn = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA journal_mode=WAL")
+            # Explicit, not a build default: in WAL mode FULL syncs the WAL at
+            # every commit, so an acknowledged write survives OS crash/power loss.
+            conn.execute("PRAGMA synchronous=FULL")
             conn.execute("PRAGMA foreign_keys=ON")
             conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)")
             row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
             if row is None:
-                conn.execute("INSERT INTO schema_version(version) VALUES (?)", (_SCHEMA_VERSION,))
+                # A fresh file starts at v1 and takes the same migrations as an
+                # upgraded one: there is a single path to every schema version.
+                conn.execute("INSERT INTO schema_version(version) VALUES (1)")
+                version = 1
             elif int(row[0]) > _SCHEMA_VERSION:
                 raise RuntimeError(f"state DB schema {row[0]} is newer than supported {_SCHEMA_VERSION}")
+            else:
+                version = int(row[0])
+                if version < _SCHEMA_VERSION:
+                    # Existing data about to be migrated: copy it first, before
+                    # any schema statement runs on this file.
+                    self._backup_before_migration(conn, version)
             conn.executescript('''
             CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY, data TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS conversations (id TEXT PRIMARY KEY, updated_at TEXT NOT NULL, data TEXT NOT NULL);
@@ -130,12 +200,93 @@ class SQLiteStateRepository:
             CREATE UNIQUE INDEX IF NOT EXISTS idx_one_unresolved_live_session
                 ON live_sessions((1)) WHERE state <> 'stopped';
             ''')
+            self._migrate(conn, version)
             quick = conn.execute("PRAGMA quick_check").fetchone()
             if not quick or quick[0] != "ok":
                 raise RuntimeError(f"state DB quick_check failed: {quick[0] if quick else 'unknown'}")
-        except sqlite3.DatabaseError as exc:
-            raise RuntimeError(f"operational state database unavailable: {exc}") from exc
+        except BaseException as exc:
+            if conn is not None:
+                # The repository never exposes a connection it could not
+                # validate; closing it here keeps the file handle from leaking.
+                conn.close()
+            if isinstance(exc, sqlite3.DatabaseError):
+                raise RuntimeError(f"operational state database unavailable: {exc}") from exc
+            raise
         self._conn = conn
+
+    @staticmethod
+    def _migrate(conn: sqlite3.Connection, version: int) -> None:
+        """Apply each pending migration atomically (DDL + version bump in one transaction).
+
+        A crash mid-migration rolls the step back and the next start retries it.
+        The version is re-read under the write lock, so a concurrent initializer
+        (another process on the same file) cannot apply a step twice.
+        """
+        for target in range(version + 1, _SCHEMA_VERSION + 1):
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                current = int(conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()[0])
+                if current < target:
+                    for statement in _MIGRATIONS[target]:
+                        conn.execute(statement)
+                    conn.execute("UPDATE schema_version SET version=?", (target,))
+                conn.execute("COMMIT")
+            except BaseException as exc:
+                rollback_after_failure(conn, exc)
+                raise
+
+    def _backup_before_migration(self, conn: sqlite3.Connection, version: int) -> None:
+        """One-time online copy of an existing DB to `<db>.v<version>.bak` before migrating it.
+
+        An existing backup is never overwritten (the first pre-migration copy is
+        the one worth keeping). The copy is written to a temporary name and renamed
+        only when complete, so a crash never leaves a truncated `.bak` that looks
+        valid. Any failure aborts initialization before the DB is changed.
+        """
+        target = pre_migration_backup_path(self.path, version)
+        if target.exists():
+            return
+        partial = target.with_name(target.name + ".partial")
+        try:
+            partial.unlink(missing_ok=True)
+            copy = sqlite3.connect(partial)
+            try:
+                conn.backup(copy)
+            finally:
+                copy.close()
+            partial.replace(target)
+        except (OSError, sqlite3.Error) as exc:
+            try:
+                partial.unlink(missing_ok=True)
+            except OSError as cleanup_error:
+                exc.add_note(f"partial backup not removed: {type(cleanup_error).__name__}: {cleanup_error}")
+            raise RuntimeError(
+                f"state DB schema {version} -> {_SCHEMA_VERSION}: pre-migration backup to {target.name} failed, "
+                f"migration aborted and database unchanged: {type(exc).__name__}: {exc}") from exc
+
+    async def run_serialized(self, fn: Callable[[sqlite3.Connection], T]) -> T:
+        """Adapter seam for sibling SQLite adapters sharing this file and connection.
+
+        Runs `fn(connection)` in the worker thread under the repository lock, with
+        the same cancellation guarantee as every repository method. Not part of the
+        `StateRepository` port; `sqlite_conversation_events` is its only user.
+
+        The connection is shared, so a callback may not leave a transaction open:
+        on failure it is rolled back (original error kept); on success it is rolled
+        back and `RuntimeError` is raised, since its outcome was never committed.
+        """
+        def guarded(conn: sqlite3.Connection) -> T:
+            try:
+                result = fn(conn)
+            except BaseException as exc:
+                rollback_after_failure(conn, exc)
+                raise
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+                raise RuntimeError("run_serialized callback left a transaction open; it was rolled back")
+            return result
+
+        return await self._run(guarded)
 
     def _connection(self) -> sqlite3.Connection:
         if self._conn is None:
@@ -205,6 +356,26 @@ class SQLiteStateRepository:
         if checkpoint_order is None or checkpoint_order != order:
             return None
         return turn, binding, source
+
+    async def list_turns_since(self, since: datetime, *, kind: str, limit: int) -> tuple[ConversationTurn, ...]:
+        """Turns of `kind` created at or after `since`, oldest first, at most the `limit` newest.
+
+        Walks `idx_turns_conversation_time` per conversation whose `updated_at`
+        is not older than `since` (`append_turn` keeps it >= its turns). Times
+        are compared as stored ISO text (every Core writer stores UTC), then
+        re-checked as datetimes.
+        """
+        if since.tzinfo is None or since.utcoffset() is None:
+            raise ValueError("since must be timezone aware")
+        if type(limit) is not int or limit < 1:
+            raise ValueError("limit must be a positive integer")
+        bound = since.astimezone(timezone.utc).isoformat()
+        rows = await self._run(lambda c: c.execute(
+            "SELECT data FROM turns WHERE conversation_id IN (SELECT id FROM conversations WHERE updated_at>=?) "
+            "AND created_at>=? AND json_extract(data,'$.kind')=? ORDER BY created_at DESC,id DESC LIMIT ?",
+            (bound, bound, kind, limit)).fetchall())
+        selected = [turn for turn in (self._turn(json.loads(r[0])) for r in rows) if turn.created_at >= since]
+        return tuple(reversed(selected))
 
     async def list_turns(self, conversation_id: str, *, limit: int = 20):
         rows = await self._run(lambda c: c.execute("SELECT data FROM (SELECT data,created_at,id FROM turns WHERE conversation_id=? ORDER BY created_at DESC,id DESC LIMIT ?) ORDER BY created_at,id", (conversation_id, max(1, limit))).fetchall())

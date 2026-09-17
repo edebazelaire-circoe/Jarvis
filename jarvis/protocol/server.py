@@ -1,16 +1,37 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import asdict
 import hmac
 import json
 
 from aiohttp import web
 
 from jarvis.core.v2_app import JarvisCoreApplication
+from jarvis.domain.conversation_event_ingest import (
+    MAX_CONVERSATION_EVENT_BATCH_BODY_BYTES, decode_conversation_event_batch, encode_append_results,
+)
+from jarvis.domain.conversation_event_export import EXPORT_MEDIA_TYPE, export_filename
+from jarvis.domain.conversation_event_query import (
+    CONVERSATIONS_PARAMS, EVENTS_PARAMS, EXPORT_PARAMS, LOOKUP_PARAMS, SESSIONS_PARAMS, TRANSCRIPT_PARAMS,
+    check_event_id, conversations_query, encode_event_page, encode_event_response, encode_summary_page, events_query,
+    export_query, lookup_query, query_params, sessions_query, transcript_query,
+)
+from jarvis.domain.conversation_event_search import SEARCH_PARAMS, encode_search_page, search_query
+from jarvis.core.conversation_event_query import ConversationEventBusyError
+from jarvis.domain.conversation_event_store import ConversationEventStoreError
+from jarvis.domain.conversation_transcript import TranscriptTooLargeError
+from jarvis.domain.conversation_events import ConversationEventError
 from jarvis.domain.v2 import PROTOCOL_VERSION, AddressingDecision, BrainTurnInput, BrainTurnSource, TurnKind, jsonable
 from jarvis.domain.work_state import WorkObservationBatch
 from jarvis.domain.live_lifecycle import LiveCloseEvidence, LiveLifecycleConflict, LiveLifecycleState
 from jarvis.v2_config import validate_loopback_host
+
+
+#: How often a long Core read checks that its HTTP client is still there.
+CLIENT_CHECK_S = 0.25
+#: Characters per streamed transcript chunk.
+TEXT_CHUNK_CHARS = 64 * 1024
 
 
 def _optional_text(value: object, field: str) -> str | None:
@@ -47,6 +68,9 @@ class LocalProtocolServer:
         self.token = token
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
+        # Set by `stop()` before the runner waits for in-flight handlers, so a
+        # conversation event long-poll returns at once instead of holding the shutdown.
+        self._stopping = asyncio.Event()
 
     def _authorized(self, request: web.Request) -> bool:
         return hmac.compare_digest(request.headers.get("Authorization", ""), f"Bearer {self.token}")
@@ -68,7 +92,9 @@ class LocalProtocolServer:
             return web.json_response({"error": {"code": exc.code, "message": exc.code}}, status=status)
 
     def _app(self) -> web.Application:
-        app = web.Application(middlewares=[self._auth])
+        # Largest body of any `/v1` route: a worst-case conversation event batch
+        # (aiohttp's 1 MiB default would answer 413). Applies to every route.
+        app = web.Application(middlewares=[self._auth], client_max_size=MAX_CONVERSATION_EVENT_BATCH_BODY_BYTES)
         app.add_routes([
             web.get("/v1/health", self.health),
             web.post("/v1/conversations", self.create_conversation),
@@ -102,11 +128,21 @@ class LocalProtocolServer:
             web.post("/v1/actions/{action_id}/confirmation", self.confirm_action),
             web.post("/v1/work/observations", self.ingest_work_observations),
             web.get("/v1/work/snapshot", self.work_snapshot),
+            web.post("/v1/conversation-events", self.ingest_conversation_events),
+            web.get("/v1/conversation-events", self.list_conversation_events),
+            web.get("/v1/conversation-events/conversations", self.list_event_conversations),
+            web.get("/v1/conversation-events/sessions", self.list_event_sessions),
+            web.get("/v1/conversation-events/lookup", self.lookup_conversation_events),
+            web.get("/v1/conversation-events/events/{event_id}", self.get_conversation_event),
+            web.get("/v1/conversation-events/transcript", self.conversation_transcript),
+            web.get("/v1/conversation-events/export", self.export_conversation_events),
+            web.get("/v1/conversation-events/search", self.search_conversation_events),
             web.get("/v1/events", self.events),
         ])
         return app
 
     async def start(self) -> None:
+        self._stopping.clear()
         self._runner = web.AppRunner(self._app(), access_log=None)
         await self._runner.setup()
         self._site = web.TCPSite(self._runner, self.host, self.port)
@@ -117,6 +153,7 @@ class LocalProtocolServer:
             raise RuntimeError(f"Jarvis Core cannot bind {self.host}:{self.port}: {exc}") from exc
 
     async def stop(self) -> None:
+        self._stopping.set()
         site, self._site = self._site, None
         runner, self._runner = self._runner, None
         if site is not None:
@@ -125,7 +162,14 @@ class LocalProtocolServer:
             await runner.cleanup()
 
     async def health(self, request: web.Request) -> web.Response:
-        return web.json_response({"protocol_version": PROTOCOL_VERSION, "ready": self.core.health.ready, "status": self.core.health.status, "detail": self.core.health.detail})
+        store = self.core.conversation_events
+        return web.json_response({"protocol_version": PROTOCOL_VERSION, "ready": self.core.health.ready, "status": self.core.health.status, "detail": self.core.health.detail,
+                                  # Loss visibility (Slice 04): Core emitter + ingestion counters, store read health.
+                                  "conversation_events": {
+                                      "emitter": asdict(self.core.conversation_event_emitter.counters),
+                                      "store": {"unreadable_rows": store.unreadable_rows,
+                                                "diagnostic_failures": store.diagnostic_failures},
+                                      "query_failures": self.core.conversation_event_queries.failures}})
 
     async def create_conversation(self, request: web.Request) -> web.Response:
         body = await request.json() if request.can_read_body else {}
@@ -384,6 +428,9 @@ class LocalProtocolServer:
         if kind == TurnKind.ASSISTANT and await self.core.voice_ledger.has_ledger(request.match_info["conversation_id"]):
             raise ValueError("canonical assistant history requires confirmed voice observations")
         turn = await self.core.conversations.append_turn(request.match_info["conversation_id"], kind, content, correlation_id=correlation_id, reference_id=body.get("reference_id"), metadata=body.get("metadata") or {})
+        # Legacy voice ingress (`VoiceArchitecture.LEGACY`): the durable user
+        # turn is the accepted transcript. Same single producer as admission.
+        self.core.voice_admission.record_user_turn_accepted(turn)
         return web.json_response(jsonable(turn), status=201)
 
     async def submit_brain_turn(self, request: web.Request) -> web.Response:
@@ -504,6 +551,220 @@ class LocalProtocolServer:
             raise ValueError(f"invalid work observation batch: {exc}") from exc
         result = await self.core.work_state.ingest(batch)
         return web.json_response(result.to_payload())
+
+    async def ingest_conversation_events(self, request: web.Request) -> web.Response:
+        """Ingress des Conversation Events produits hors de Core (voix, Control Center).
+
+        Corps : `{"schema_version": 1, "events": [1..32 événements encodés]}`
+        (`conversation_event_ingest.encode_conversation_event_batch`). Strict :
+        un événement invalide, un champ interdit ou un événement réservé à Core
+        (`user.*`, `brain.*`, producteur `core.*`) rend 400 et rien n'est écrit ;
+        le message nomme l'index et la règle, jamais la valeur.
+
+        Réponse 200 : `{"schema_version": 1, "results": [{"event_id",
+        "sequence", "status"}]}` dans l'ordre du lot, `status` parmi `appended`,
+        `duplicate`, `conflict` (le premier exemplaire est gardé). 503
+        `conversation_events_unavailable` : stockage en échec, rien n'est
+        acquitté, rejouer le même lot est sûr.
+        """
+
+        body = await request.json()
+        try:
+            events = decode_conversation_event_batch(body)
+        except ConversationEventError as exc:
+            count = len(body["events"]) if isinstance(body, dict) and isinstance(body.get("events"), list) else None
+            self.core.conversation_event_emitter.note_ingest_rejected(str(exc), event_count=count)
+            raise
+        try:
+            results = await self.core.conversation_event_emitter.append_now(events)
+        except ConversationEventStoreError:
+            return web.json_response({"error": {"code": "conversation_events_unavailable",
+                                                "message": "conversation event store unavailable; retry the same batch"}},
+                                     status=503)
+        return web.json_response(encode_append_results(results))
+
+    # -- Conversation Event query API (Slice 04) --------------------------------
+    #
+    # Contract: `docs/conversation-events.md`, "Query and live API". Parameters
+    # are strict (`conversation_event_query`): 400 `invalid_request` naming the
+    # parameter, never its value. Storage failure or Core stopping: 503
+    # `conversation_events_unavailable`. An unknown conversation is an empty page.
+
+    @staticmethod
+    def _events_unavailable() -> web.Response:
+        return web.json_response({"error": {"code": "conversation_events_unavailable",
+                                            "message": "conversation event store unavailable; retry"}}, status=503)
+
+    async def list_event_conversations(self, request: web.Request) -> web.Response:
+        """Conversations by most recent store activity; page with `before_sequence=next_cursor`."""
+        query = conversations_query(query_params(request.query.items(), CONVERSATIONS_PARAMS))
+        try:
+            page = await self.core.conversation_event_queries.conversations(**query)
+        except ConversationEventStoreError:
+            return self._events_unavailable()
+        return web.json_response(encode_summary_page(page))
+
+    async def list_event_sessions(self, request: web.Request) -> web.Response:
+        """Sessions of one conversation by first appearance; page with `after_sequence=next_cursor`."""
+        query = sessions_query(query_params(request.query.items(), SESSIONS_PARAMS))
+        try:
+            page = await self.core.conversation_event_queries.sessions(query.pop("conversation_id"), **query)
+        except ConversationEventStoreError:
+            return self._events_unavailable()
+        return web.json_response(encode_summary_page(page))
+
+    async def list_conversation_events(self, request: web.Request) -> web.Response:
+        """Events of one conversation after `after_sequence` (exclusive), ascending sequence.
+
+        `wait_ms` (0 to 25000) turns the request into a long-poll that returns as
+        soon as a page holds visible events, or after `wait_ms` with the cursor
+        advanced past what was scanned; it also ends when the client disconnects.
+        """
+        query = events_query(query_params(request.query.items(), EVENTS_PARAMS))
+        try:
+            page = await self.core.conversation_event_queries.events(
+                query["conversation_id"], after_sequence=query["after_sequence"], limit=query["limit"],
+                visibility=query["visibility"], wait_s=query["wait_ms"] / 1000, interrupt=self._stopping,
+                # aiohttp does not cancel a handler whose client left: stop holding the wait ourselves.
+                disconnected=lambda: request.transport is None or request.transport.is_closing())
+        except ConversationEventStoreError:
+            return self._events_unavailable()
+        return web.json_response(encode_event_page(page))
+
+    async def lookup_conversation_events(self, request: web.Request) -> web.Response:
+        """Events carrying one lookup id (`field` in `LOOKUP_FIELDS`), ascending sequence."""
+        query = lookup_query(query_params(request.query.items(), LOOKUP_PARAMS))
+        try:
+            page = await self.core.conversation_event_queries.lookup(query.pop("field"), query.pop("value"), **query)
+        except ConversationEventStoreError:
+            return self._events_unavailable()
+        return web.json_response(encode_event_page(page))
+
+    async def get_conversation_event(self, request: web.Request) -> web.Response:
+        """One stored event. 404 `conversation_event_not_found` when absent or unreadable (store diagnosed it)."""
+        query_params(request.query.items(), frozenset())
+        event_id = check_event_id(request.match_info["event_id"])
+        try:
+            stored = await self.core.conversation_event_queries.event(event_id)
+        except ConversationEventStoreError:
+            return self._events_unavailable()
+        if stored is None:
+            return web.json_response({"error": {"code": "conversation_event_not_found",
+                                                "message": "no readable stored conversation event has this id"}},
+                                     status=404)
+        return web.json_response(encode_event_response(stored))
+
+    # -- Slice 06: readable transcript, JSONL export, search -------------------
+    #
+    # Contract: `docs/conversation-events.md`, "Readable transcript", "JSONL
+    # export", "Search". Same strict parameters and error shapes as the reads above.
+
+    @staticmethod
+    def _busy(exc: ConversationEventBusyError) -> web.Response:
+        return web.json_response({"error": {"code": exc.code, "message": str(exc)}}, status=429)
+
+    async def _unless_client_left(self, request: web.Request, work):
+        """Run `work` (a coroutine), cancelling it when the HTTP client disconnects or the server stops.
+
+        aiohttp does not cancel a handler whose client left: an abandoned search or
+        transcript would otherwise keep costing Core CPU. Returns None when cancelled.
+        """
+        task = asyncio.ensure_future(work)
+        try:
+            while True:
+                done, _ = await asyncio.wait({task}, timeout=CLIENT_CHECK_S)
+                if done:
+                    return task.result()
+                if request.transport is None or request.transport.is_closing() or self._stopping.is_set():
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+                    return None
+        finally:
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    async def conversation_transcript(self, request: web.Request) -> web.StreamResponse:
+        """Readable transcript (`text/plain`), rendered by the pure domain renderer.
+
+        `mode` = `plain` (public items) or `detailed` (plus diagnostic items);
+        `utc_offset_minutes` (default 0) shifts the printed times and is stated in
+        the header. 413 `transcript_too_large` above the event or text budget (use
+        the export); 429 `projection_busy` when two builds already run. The text is
+        streamed in 64 KiB chunks; the build stops if the client leaves.
+        """
+        query = transcript_query(query_params(request.query.items(), TRANSCRIPT_PARAMS))
+        try:
+            text = await self._unless_client_left(request, self.core.conversation_event_queries.transcript(
+                query["conversation_id"], mode=query["mode"], utc_offset_minutes=query["utc_offset_minutes"]))
+        except ConversationEventStoreError:
+            return self._events_unavailable()
+        except ConversationEventBusyError as exc:
+            return self._busy(exc)
+        except TranscriptTooLargeError as exc:
+            return web.json_response({"error": {"code": "transcript_too_large", "message": str(exc)}}, status=413)
+        if text is None:
+            return web.Response(status=499)
+        response = web.StreamResponse(headers={"Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store"})
+        await response.prepare(request)
+        for start in range(0, len(text), TEXT_CHUNK_CHARS):
+            await response.write(text[start:start + TEXT_CHUNK_CHARS].encode("utf-8"))
+        await response.write_eof()
+        return response
+
+    async def export_conversation_events(self, request: web.Request) -> web.StreamResponse:
+        """JSONL export streamed page by page: header, stored events, trailer.
+
+        The extent is frozen before the response starts (a storage failure then is
+        a plain 503, 429 `projection_busy` when two builds already run). A failure
+        while streaming closes the connection without a trailer: the receiver sees
+        an incomplete file, never a silently short one. A client that leaves stops
+        the export at its next write and frees its slot.
+        """
+        query = export_query(query_params(request.query.items(), EXPORT_PARAMS))
+        try:
+            export = await self.core.conversation_event_queries.open_export(query["conversation_id"])
+        except ConversationEventStoreError:
+            return self._events_unavailable()
+        except ConversationEventBusyError as exc:
+            return self._busy(exc)
+        chunks = export.chunks()
+        try:
+            filename = export_filename(query["conversation_id"])
+            response = web.StreamResponse(headers={
+                "Content-Type": f"{EXPORT_MEDIA_TYPE}; charset=utf-8",
+                "Content-Disposition": f"attachment; filename=\"{filename}\"",
+                "Cache-Control": "no-store"})
+            await response.prepare(request)
+            try:
+                async for chunk in chunks:
+                    await response.write(chunk)
+            except ConversationEventStoreError:
+                if request.transport is not None:
+                    request.transport.close()  # no trailer, no clean end: the file reads as incomplete
+                return response
+            await response.write_eof()
+            return response
+        finally:
+            await chunks.aclose()
+            export.release()
+
+    async def search_conversation_events(self, request: web.Request) -> web.Response:
+        """Bounded newest-first search over public content and safe metadata; page with `before_sequence`.
+
+        One search at a time (429 `search_busy`); it stops if the client leaves.
+        """
+        query = search_query(query_params(request.query.items(), SEARCH_PARAMS))
+        try:
+            page = await self._unless_client_left(
+                request, self.core.conversation_event_queries.search(query.pop("query"), **query))
+        except ConversationEventStoreError:
+            return self._events_unavailable()
+        except ConversationEventBusyError as exc:
+            return self._busy(exc)
+        if page is None:
+            return web.Response(status=499)
+        return web.json_response(encode_search_page(page))
 
     async def work_snapshot(self, request: web.Request) -> web.Response:
         """État de travail normalisé tenu par Core, indépendant de tout Control Center."""

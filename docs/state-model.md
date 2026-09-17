@@ -74,7 +74,7 @@ Recent task summaries are available through `active_tasks`, separately from rece
 
 ## Observability and validation contract
 
-Use the existing `DiagnosticSink` with `RuntimeJournal`; no new logging subsystem. Normal application/binding, duplicate/stale/session-rejected replay and task/candidate updates emit `voice.state.updated` at info with stable `voice_state_*` code. Generated/intended divergence emits `voice.state.diverged` at info, with code `voice_state_generated_divergence`; divergence is evidence, not a failed operation. Invalid/capacity updates emit `voice.state.rejected` at warning. A canonical frontend failure emits `voice.state.frontend_error` at error with the original stable `VoiceErrorCode`, without the raw exception/message. High-frequency audio receipt does not emit a diagnostic per chunk.
+Use the existing `DiagnosticSink` with `RuntimeJournal`; no new logging subsystem. The canonical, user-visible conversation timeline (as opposed to these diagnostics) is defined by [Conversation Events](conversation-events.md); its events join these journal lines through `trace_ref` and never copy the private fields this section excludes. Normal application/binding, duplicate/stale/session-rejected replay and task/candidate updates emit `voice.state.updated` at info with stable `voice_state_*` code. Generated/intended divergence emits `voice.state.diverged` at info, with code `voice_state_generated_divergence`; divergence is evidence, not a failed operation. Invalid/capacity updates emit `voice.state.rejected` at warning. A canonical frontend failure emits `voice.state.frontend_error` at error with the original stable `VoiceErrorCode`, without the raw exception/message. High-frequency audio receipt does not emit a diagnostic per chunk.
 
 Diagnostics contain conversation/session/revision and event/turn/task/speech IDs where supplied, never transcript, intended/generated/confirmed text, task result, PCM or raw provider payload. Invalid identity is omitted rather than copied into rejection logs. Diagnostic sink failures do not undo applied evidence and are counted in `diagnostic_failures`; the host can inspect that count. There are no temporary probes.
 
@@ -116,6 +116,18 @@ SQLite's indexed `voice_history_projections` table stores `(conversation_id,outp
 Projection follows `first_played_order`, not candidate creation order. Archive `created_at` is range creation time; exact pending retries retain that time and ID. Existing conversation `updated_at` cannot move backward during retry. Canonical context still uses full heard text and its evidence chronology, rather than concatenating archive ranges as repeated assistant messages.
 
 ### Bounded ledger registry and persistence
+
+The state DB runs WAL with `synchronous=FULL` (explicit since schema v2): a committed transaction is on disk before the call returns. `schema_version` migrations are forward-only, one transaction per step (`sqlite_state._MIGRATIONS`); v2 adds the Conversation Event log (`conversation_events`), which shares this connection and lock through `SQLiteStateRepository.run_serialized`. A `run_serialized` callback cannot leave that shared connection inside a transaction: on failure it is rolled back (the original error kept), and a callback that returns with a transaction still open is rolled back and raises `RuntimeError`. Its append/cursor/conflict/recovery/retention guarantees are in [Conversation Events, Storage](conversation-events.md#storage). A binary older than the file refuses to open it (`newer than supported`); the DB is never downgraded or repaired by deletion.
+
+Before migrating an **existing** file, Core writes a one-time online backup `<db>.v<old version>.bak` next to it (for the 1 → 2 step: `jarvis.sqlite3.v1.bak`), never overwriting an existing one; if the backup fails, startup fails and the file is unchanged. Rollback to the pre-migration state (also the way back to an older Core binary):
+
+1. Stop Core (and anything else holding the DB open).
+2. Keep the migrated file aside if its newer data matters (`jarvis.sqlite3` → `jarvis.sqlite3.v2.kept`).
+3. Replace the DB with the backup: copy `jarvis.sqlite3.v1.bak` to `jarvis.sqlite3`.
+4. Delete `jarvis.sqlite3-wal` and `jarvis.sqlite3-shm`; they belong to the replaced file and would corrupt the restored one.
+5. Start the older binary. Everything written after the backup (turns, jobs, conversation events) is lost in the restored file; a newer binary would migrate it again (and, the `.bak` existing, not back it up again).
+
+`data/state/jarvis.sqlite3` is git-tracked and used live. The first Core start with schema v2 migrates it in place, so git shows it modified, and creates `data/state/jarvis.sqlite3.v1.bak`, an untracked copy of the same private data (not covered by `.gitignore`, which only lists `-wal`/`-shm`): never commit it. Restoring the tracked v1 file with `git checkout` is equivalent to step 3 only when the working copy had no newer data.
 
 SQLite initialization, operations and close retain the repository connection lock until native thread work finishes, including repeated caller cancellation. Cancellation is re-raised after that boundary, never translated into successful staging. Native transaction failure still rolls back; a cancelled caller does not permit a second transaction or close to race the worker. This wait preserves connection ownership and does not claim that SQLite thread work can be forcibly cancelled.
 

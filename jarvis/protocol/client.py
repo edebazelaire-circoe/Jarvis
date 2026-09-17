@@ -1,12 +1,25 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
+import io
+import json
 from typing import Any, Callable
 
 import aiohttp
 
 from jarvis.domain.v2 import PROTOCOL_VERSION, ProtocolEnvelope, new_id
 from jarvis.v2_config import validate_loopback_host
+from jarvis.domain.conversation_event_ingest import decode_append_results, encode_conversation_event_batch
+from jarvis.domain.conversation_event_query import (
+    MAX_WAIT_MS, check_event_id, decode_event_page, decode_event_response, decode_summary_page,
+)
+from jarvis.domain.conversation_event_store import (
+    DEFAULT_EVENT_PAGE_LIMIT, DEFAULT_SUMMARY_PAGE_LIMIT, AppendResult, ConversationEventPage,
+    ConversationEventSummaryPage, StoredConversationEvent,
+)
+from jarvis.domain.conversation_event_search import ConversationEventSearchPage, SearchQuery, decode_search_page
+from jarvis.domain.conversation_events import ConversationEvent, ConversationVisibility
+from jarvis.domain.conversation_transcript import TranscriptMode
 from jarvis.domain.voice_admission import VoiceTurnAdmissionAcceptance, VoiceTurnAdmissionRequest
 from jarvis.domain.v2 import AddressingDecision
 from jarvis.domain.live_lifecycle import LiveCloseEvidence, LiveLifecycleState, LiveSessionRecord
@@ -309,6 +322,150 @@ class LocalCoreClient:
         async with session.post(self.base_url + "/v1/work/observations", headers=self.headers, json=batch) as response:
             return await self._json(response)
 
+    async def append_conversation_events(self, events: Sequence[ConversationEvent]) -> tuple[AppendResult, ...]:
+        """Remettre 1 à 32 Conversation Events à Core (`POST /v1/conversation-events`).
+
+        Le lot est encodé par le codec du contrat avant tout envoi : un
+        événement invalide lève `ConversationEventError` sans appel réseau.
+        Rend un `AppendResult` par événement, dans l'ordre (`appended`,
+        `duplicate`, `conflict`). `CoreProtocolError` : `status=400` lot refusé
+        (le rejouer ne sert à rien), `status=503` stockage indisponible (rejouer
+        le même lot, mêmes identifiants et `occurred_at`, est sûr).
+        """
+
+        events = tuple(events)
+        # A contract-valid batch can reach 4.2 MiB: sent as a stream, since
+        # aiohttp warns (ResourceWarning) that a raw body above 1 MiB may block the loop.
+        body = io.BytesIO(json.dumps(encode_conversation_event_batch(events)).encode("utf-8"))
+        session = await self._http()
+        async with session.post(self.base_url + "/v1/conversation-events", data=body,
+                                headers={**self.headers, "Content-Type": "application/json"}) as response:
+            return decode_append_results(await self._json(response), events)
+
+    # -- Conversation Event query API (Slice 04) --------------------------------
+    #
+    # Typed reads of `GET /v1/conversation-events...` (contract:
+    # `docs/conversation-events.md`, "Query and live API"). Responses are decoded
+    # strictly (`conversation_event_query`): an answer out of contract raises
+    # `ValueError`. `CoreProtocolError`: 400 invalid parameter (do not retry),
+    # 401 token rotated, 503 `conversation_events_unavailable` (retry later).
+
+    async def _get_json(self, path: str, params: dict[str, object], *,
+                        timeout: aiohttp.ClientTimeout | None = None) -> dict[str, Any]:
+        query = {name: (value.value if isinstance(value, ConversationVisibility) else str(value))
+                 for name, value in params.items() if value is not None}
+        session = await self._http()
+        kwargs: dict[str, Any] = {"headers": self.headers, "params": query}
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+        async with session.get(self.base_url + path, **kwargs) as response:
+            return await self._json(response)
+
+    async def list_event_conversations(self, *, before_sequence: int | None = None,
+                                       limit: int = DEFAULT_SUMMARY_PAGE_LIMIT) -> ConversationEventSummaryPage:
+        """Conversations by most recent activity; next page with `before_sequence=page.next_cursor`."""
+        return decode_summary_page(await self._get_json("/v1/conversation-events/conversations",
+                                                        {"before_sequence": before_sequence, "limit": limit}))
+
+    async def list_event_sessions(self, conversation_id: str, *, after_sequence: int = 0,
+                                  limit: int = DEFAULT_SUMMARY_PAGE_LIMIT) -> ConversationEventSummaryPage:
+        return decode_summary_page(await self._get_json("/v1/conversation-events/sessions", {
+            "conversation_id": conversation_id, "after_sequence": after_sequence, "limit": limit}))
+
+    async def list_conversation_events(self, conversation_id: str, *, after_sequence: int = 0,
+                                       limit: int = DEFAULT_EVENT_PAGE_LIMIT,
+                                       visibility: ConversationVisibility | None = None,
+                                       wait_ms: int = 0) -> ConversationEventPage:
+        """Events after `after_sequence`; resume with `after_sequence=page.next_cursor`.
+
+        `wait_ms` > 0 long-polls (at most `MAX_WAIT_MS`): the request timeout is
+        extended by that wait, so the session's 10 s total never cuts it short.
+        """
+        if type(wait_ms) is not int or not 0 <= wait_ms <= MAX_WAIT_MS:
+            raise ValueError(f"wait_ms must be an integer between 0 and {MAX_WAIT_MS}")
+        timeout = aiohttp.ClientTimeout(total=10 + wait_ms / 1000) if wait_ms else None
+        payload = await self._get_json("/v1/conversation-events", {
+            "conversation_id": conversation_id, "after_sequence": after_sequence, "limit": limit,
+            "visibility": visibility, "wait_ms": wait_ms or None}, timeout=timeout)
+        return decode_event_page(payload, after_sequence=after_sequence)
+
+    async def lookup_conversation_events(self, field: str, value: str, *, conversation_id: str | None = None,
+                                         after_sequence: int = 0, limit: int = DEFAULT_EVENT_PAGE_LIMIT,
+                                         visibility: ConversationVisibility | None = None) -> ConversationEventPage:
+        payload = await self._get_json("/v1/conversation-events/lookup", {
+            "field": field, "value": value, "conversation_id": conversation_id, "after_sequence": after_sequence,
+            "limit": limit, "visibility": visibility})
+        return decode_event_page(payload, after_sequence=after_sequence)
+
+    async def get_conversation_event(self, event_id: str) -> StoredConversationEvent | None:
+        """The stored event, or None (404 `conversation_event_not_found`: absent or unreadable)."""
+        check_event_id(event_id)
+        try:
+            payload = await self._get_json(f"/v1/conversation-events/events/{event_id}", {})
+        except CoreProtocolError as exc:
+            if exc.status == 404 and exc.code == "conversation_event_not_found":
+                return None
+            raise
+        return decode_event_response(payload)
+
+    # -- Slice 06: transcript, export, search -----------------------------------
+
+    async def stream_conversation_transcript(self, conversation_id: str, *,
+                                             mode: TranscriptMode = TranscriptMode.PLAIN, utc_offset_minutes: int = 0,
+                                             read_timeout_s: float = 60.0) -> AsyncIterator[bytes]:
+        """Readable transcript as UTF-8 byte chunks (never held whole here).
+
+        Errors before the first byte raise `CoreProtocolError` (413
+        `transcript_too_large`, 429 `projection_busy`, 503...).
+        """
+        session = await self._http()
+        async with session.get(self.base_url + "/v1/conversation-events/transcript", headers=self.headers,
+                               params={"conversation_id": conversation_id, "mode": TranscriptMode(mode).value,
+                                       "utc_offset_minutes": str(utc_offset_minutes)},
+                               timeout=aiohttp.ClientTimeout(total=None, sock_read=read_timeout_s)) as response:
+            if response.status >= 400:
+                await self._json(response)
+            if response.content_type != "text/plain":
+                raise ValueError("transcript answer must be text/plain")
+            async for chunk in response.content.iter_chunked(64 * 1024):
+                yield chunk
+
+    async def get_conversation_transcript(self, conversation_id: str, *,
+                                          mode: TranscriptMode = TranscriptMode.PLAIN,
+                                          utc_offset_minutes: int = 0) -> str:
+        """Whole transcript text (tests, tools). The Control Center relays the stream instead."""
+        parts = [chunk async for chunk in self.stream_conversation_transcript(
+            conversation_id, mode=mode, utc_offset_minutes=utc_offset_minutes)]
+        return b"".join(parts).decode("utf-8")
+
+    async def export_conversation_events(self, conversation_id: str, *,
+                                         read_timeout_s: float = 30.0) -> AsyncIterator[bytes]:
+        """Stream the JSONL export as byte chunks (header first, trailer last).
+
+        Errors before the first byte raise `CoreProtocolError`. A stream Core
+        closes early raises `aiohttp.ClientPayloadError`; what was received then
+        has no trailer (`read_export(...).complete` is False).
+        """
+        session = await self._http()
+        async with session.get(self.base_url + "/v1/conversation-events/export", headers=self.headers,
+                               params={"conversation_id": conversation_id},
+                               timeout=aiohttp.ClientTimeout(total=None, sock_read=read_timeout_s)) as response:
+            if response.status >= 400:
+                await self._json(response)
+            async for chunk in response.content.iter_chunked(64 * 1024):
+                yield chunk
+
+    async def search_conversation_events(self, query: str | SearchQuery, *, conversation_id: str | None = None,
+                                         before_sequence: int | None = None, limit: int | None = None,
+                                         visibility: ConversationVisibility | None = None,
+                                         timeout_s: float = 30.0) -> ConversationEventSearchPage:
+        """Newest-first hits; continue with `before_sequence=page.next_cursor` while `has_more`."""
+        text = query.text if isinstance(query, SearchQuery) else SearchQuery.parse(query).text
+        payload = await self._get_json("/v1/conversation-events/search", {
+            "q": text, "conversation_id": conversation_id, "before_sequence": before_sequence, "limit": limit,
+            "visibility": visibility}, timeout=aiohttp.ClientTimeout(total=timeout_s))
+        return decode_search_page(payload)
+
     async def work_snapshot(self) -> dict[str, Any]:
         session = await self._http()
         async with session.get(self.base_url + "/v1/work/snapshot", headers=self.headers) as response:
@@ -337,8 +494,15 @@ class LocalCoreClient:
 
     @staticmethod
     async def _json(response: aiohttp.ClientResponse) -> dict[str, Any]:
-        data = await response.json()
         if response.status >= 400:
+            try:
+                data = await response.json()
+            except (aiohttp.ContentTypeError, ValueError):
+                # aiohttp itself answers some failures in text/plain (413 body
+                # too large, 405...): still a Core refusal with its status.
+                raise CoreProtocolError(response.status, "http_error", response.reason or "") from None
+            if not isinstance(data, dict):
+                raise CoreProtocolError(response.status, "http_error", response.reason or "")
             error = data.get("error") or {}
             raise CoreProtocolError(response.status, str(error.get("code", "unknown")), str(error.get("message", "")))
-        return data
+        return await response.json()

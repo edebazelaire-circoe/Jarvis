@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import AbstractContextManager
 from datetime import datetime
 from typing import Any, Protocol, TypeGuard, runtime_checkable
 
@@ -9,6 +11,15 @@ from jarvis.domain.back_brain import BackBrainAdvisoryReference, BackBrainContex
 from jarvis.domain.voice_state import VoiceConversationSnapshot
 from jarvis.domain.speech_presentation import BackendOutcome, SpeechDependency, SpeechSource
 from jarvis.domain.live_lifecycle import LiveSessionRecord
+from jarvis.domain.conversation_events import ConversationEvent, ConversationEventType, ConversationVisibility
+from jarvis.domain.conversation_event_search import (
+    DEFAULT_SEARCH_LIMIT, MAX_SEARCH_SCAN_ROWS, ConversationEventSearchPage, SearchQuery,
+)
+from jarvis.domain.conversation_event_store import (
+    DEFAULT_EVENT_PAGE_LIMIT, DEFAULT_SUMMARY_PAGE_LIMIT, AppendResult, ConversationEventExtent, ConversationEventPage,
+    ConversationEventRetentionPolicy, ConversationEventSummary, ConversationEventSummaryPage, RetentionReport,
+    StoredConversationEvent,
+)
 from jarvis.domain.v2 import (
     BrainEvent,
     BrainTurnInput,
@@ -53,6 +64,7 @@ class StateRepository(Protocol):
     async def get_brain_selection(self, conversation_id: str, selection_id: str) -> SpeechRequest | None: ...
     async def save_brain_selection(self, conversation_id: str, selection_id: str, speech: SpeechRequest) -> None: ...
     async def list_turns(self, conversation_id: str, *, limit: int = 20) -> Sequence[ConversationTurn]: ...
+    async def list_turns_since(self, since: datetime, *, kind: str, limit: int) -> tuple[ConversationTurn, ...]: ...
     async def get_voice_projection(self, conversation_id: str, output_key: str) -> tuple[int, ConversationTurn | None]: ...
     async def stage_voice_projection(self, conversation_id: str, output_key: str, start: int, turn: ConversationTurn) -> tuple[int, ConversationTurn | None]: ...
     async def complete_voice_projection(self, conversation_id: str, output_key: str, turn_id: str) -> int: ...
@@ -86,6 +98,62 @@ class HistoryStore(Protocol):
     async def append(self, record: HistoryRecord) -> bool: ...
     async def read(self, *, conversation_id: str | None = None) -> Sequence[HistoryRecord]: ...
     async def cleanup(self, *, older_than: datetime) -> int: ...
+
+
+#: Retention archive hook: called before a closed conversation's events are
+#: deleted; it may page them through the store. Raising keeps them.
+ConversationEventArchiver = Callable[[ConversationEventSummary], Awaitable[None]]
+
+
+class ConversationEventStore(Protocol):
+    """Durable append-only Conversation Event log, owned by Core.
+
+    Contract: `docs/conversation-events.md` (Storage). Order and cursor are the
+    store sequence. `append*` returns only after commit; a storage failure
+    raises `ConversationEventStoreError` (not acknowledged, retry is safe). A
+    duplicate or conflicting `event_id` is a result status, never an exception.
+    Reads decode every row through the contract codec and skip (count +
+    diagnose) rows that do not decode. Limits: `conversation_event_store.MAX_*`.
+    """
+
+    async def append(self, event: ConversationEvent) -> AppendResult: ...
+    async def append_many(self, events: Sequence[ConversationEvent]) -> tuple[AppendResult, ...]: ...
+    def watch_appends(self, conversation_id: str) -> AbstractContextManager[asyncio.Event]: ...
+    async def get_event(self, event_id: str) -> StoredConversationEvent | None: ...
+    async def latest_recorded_at(self) -> datetime | None: ...
+    async def list_conversation_events(self, conversation_id: str, *, after_sequence: int = 0,
+                                       limit: int = DEFAULT_EVENT_PAGE_LIMIT,
+                                       until_sequence: int | None = None) -> ConversationEventPage: ...
+    async def conversation_extent(self, conversation_id: str) -> ConversationEventExtent | None: ...
+    async def search_events(self, query: SearchQuery, *, conversation_id: str | None = None,
+                            before_sequence: int | None = None, limit: int = DEFAULT_SEARCH_LIMIT,
+                            visibility: ConversationVisibility | None = None,
+                            max_scan_rows: int = MAX_SEARCH_SCAN_ROWS) -> ConversationEventSearchPage: ...
+    async def list_events_in_time_range(self, start: datetime, end: datetime, *, conversation_id: str | None = None,
+                                        after_sequence: int = 0,
+                                        limit: int = DEFAULT_EVENT_PAGE_LIMIT) -> ConversationEventPage: ...
+    async def list_events_by_id(self, field: str, value: str, *, conversation_id: str | None = None,
+                                after_sequence: int = 0, limit: int = DEFAULT_EVENT_PAGE_LIMIT) -> ConversationEventPage: ...
+    async def list_conversations(self, *, before_sequence: int | None = None,
+                                 limit: int = DEFAULT_SUMMARY_PAGE_LIMIT) -> ConversationEventSummaryPage: ...
+    async def list_sessions(self, conversation_id: str, *, after_sequence: int = 0,
+                            limit: int = DEFAULT_SUMMARY_PAGE_LIMIT) -> ConversationEventSummaryPage: ...
+    async def apply_retention(self, policy: ConversationEventRetentionPolicy, *,
+                              archive: ConversationEventArchiver | None = None) -> RetentionReport: ...
+
+
+class ConversationEventRecorder(Protocol):
+    """What Core producers call to record Conversation Events (never awaits, never raises).
+
+    Implementations: `jarvis/core/conversation_event_emitter.py`
+    (`ConversationEventEmitter`, `NullConversationEventEmitter`).
+    """
+
+    def record(self, event_type: ConversationEventType, *, producer: str, conversation_id: str,
+               source_ids: tuple[str, ...], occurred_at: datetime, **fields: Any) -> str | None: ...
+
+    def derive_event_id(self, event_type: ConversationEventType, *, producer: str, conversation_id: str,
+                        source_ids: tuple[str, ...]) -> str | None: ...
 
 
 class EventSink(Protocol):

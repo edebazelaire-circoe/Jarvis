@@ -210,7 +210,11 @@ reasoning. The Control Center renders it as a short French preamble in front of
 the request; an `uncertain` turn is told it may conclude the words were not for
 it and answer `[pas-pour-moi]`, which the backend turns into silence instead of
 speech. Callers that send no `context` (the legacy `ClaudeGateway`, the browser
-panel) reach the agent with their text unchanged.
+panel) reach the agent with their text unchanged. A second optional field,
+`conversation` (`{conversation_id, correlation_id, work_id}` of the turn), is never
+rendered into the prompt: the Control Center only uses it to attribute the
+sub-agents of that turn to their conversation (Conversation Events, "Sub-agent
+mapping rule").
 
 ```text
 microphone ──► Realtime surface (reflexes only, no tools)
@@ -247,6 +251,136 @@ restart leaves a documented replay window.
 
 `/v1/events` is live-only. There is no replay: a consumer that missed events
 expires stale speech and rehydrates from Core state.
+
+The canonical conversation record is a separate, versioned contract:
+[Conversation Events](conversation-events.md) (`jarvis/domain/conversation_events.py`).
+It maps user transcript admission, the `brain.*` envelopes above, the
+`voice.speech.*` / `voice.reflex.*` delivery telemetry, `agent.subagent.*` and
+tool calls to one strict, redacted envelope with deterministic `event_id`,
+instant/span timing and a `trace_ref` join to `runtime/trace.jsonl`. It never
+ingests `agent.event`. Durable storage: the `conversation_events` table of the
+Core state DB (schema v2), behind the `ConversationEventStore` port.
+
+Producers: Core records user input (`core.voice_admission`, once the user turn is
+durable, before any backend work) and Brain events (`core.brain_service`,
+`core.brain_outcomes`) in process through `ConversationEventEmitter`
+(`jarvis/core/conversation_event_emitter.py`): synchronous enqueue into a bounded
+queue drained by one background task (50 ms linger, batches ≤ 32), newest event dropped on overflow, storage
+failures dropped and diagnosed, never an exception or an await on the turn and
+speech path. Other processes post to Core through one bounded
+`ConversationEventForwarder` each (`jarvis/runtime/conversation_event_forwarder.py`,
+send loop shared with `WorkIngressForwarder` in `jarvis/runtime/core_forwarder.py`):
+the voice runtime records Mouth speech and reflexes (`SpeechScheduler`), tool spans
+and rejected turns (`RealtimeConversationBridge`); the Control Center records
+sub-agent spans (`AgentTaskTracker`, attribution in `jarvis/runtime/subagent_conversation.py`), attributed to a conversation only from the
+explicit `conversation` block Core sends with `/api/agent/ask` and confirmed by the
+turn `result`. Producers call a synchronous `record()` (no await, no I/O, never
+raises) and write the returned id into their existing journal line
+(`conversation_event_id`); the forwarder lingers 0.5 s, posts batches ≤ 32, keeps
+the batch and backs off 1 s → 30 s when Core is unreachable (re-reading the token
+after a 401), drops a refused batch, drops the newest event past 1024 queued, and
+counts every loss.
+
+```text
+Voice / Control Center                          Core process
+----------------------                          ------------
+SpeechScheduler / Bridge / AgentTaskTracker
+  -> ConversationEventForwarder.record (bounded deque, own task, batches <= 32)
+  -> LocalCoreClient.append_conversation_events ---> POST /v1/conversation-events
+                                                  -> ConversationEventEmitter.append_now -> conversation_events table
+                                                BrainOrchestrator / VoiceTurnAdmissionService
+                                                  -> ConversationEventEmitter.record (bounded queue) -> same table
+```
+
+`POST /v1/conversation-events` takes `{"schema_version": 1, "events": [...]}`.
+Invalid batch, codec error or Core-owned event (`user.*`, `brain.*`, producer
+`core.*`) -> 400 `invalid_request`, nothing appended, message names the index and
+rule, never a value. 200 -> `{"schema_version": 1, "results": [{"event_id",
+"sequence", "status"}]}` (`appended` / `duplicate` / `conflict`). Storage failure
+(or Core stopping) -> 503 `conversation_events_unavailable`, retry the same batch.
+Body limit: the Core app's `client_max_size` is 6 MiB for every `/v1` route (the
+largest contract-valid batch is 4.24 MiB on the wire; aiohttp's 1 MiB default
+would answer 413, which `LocalCoreClient` raises as `CoreProtocolError(413)`).
+On start, Core re-records recent durable user turns whose event a crash lost
+(bounded backfill); Brain events lost in the ~60 ms commit window are not rebuilt. Details and the
+producer ownership table: [Conversation Events](conversation-events.md),
+"Producers and ingestion".
+
+Reading the log (Slice 04). Core serves the store over authenticated loopback
+routes; the browser only reads the Control Center, which proxies them through
+`LocalCoreClient` (`ConversationEventView`, own session, token re-read after a
+401). Pages carry each event exactly as stored plus its store `sequence` and
+`recorded_at`; the cursor is the sequence (`next_cursor`, `has_more`,
+`skipped_rows`), so reload and live polling yield the same event set.
+
+| Core route | Control Center route | Purpose |
+|---|---|---|
+| `GET /v1/conversation-events/conversations` | `GET /api/conversations` | conversations by recent activity (`before_sequence`, `limit` ≤ 100) |
+| `GET /v1/conversation-events/sessions` | `GET /api/conversations/sessions` | sessions of a conversation (`conversation_id`, `after_sequence`, `limit` ≤ 100) |
+| `GET /v1/conversation-events` | `GET /api/conversations/events` | events after a cursor (`conversation_id`, `after_sequence`, `limit` ≤ 500, `visibility`, long-poll `wait_ms` ≤ 25 000) |
+| `GET /v1/conversation-events/lookup` | `GET /api/conversations/lookup` | events by `session_id`/`turn_id`/`correlation_id`/`task_id`/`work_id`/`speech_id`/`outcome_id`/`span_id` |
+| `GET /v1/conversation-events/events/{event_id}` | `GET /api/conversations/events/{event_id}` | one stored event (404 `conversation_event_not_found`) |
+| — | `GET /api/conversations/events/{event_id}/trace` | redacted journal evidence of a stored event (bounded newest-first scan of `runtime/trace.jsonl`; user events 404 `trace_not_applicable`; sub-agent/agent-task link to `/api/agent/tasks/{task_id}/trace`) |
+| `GET /v1/conversation-events/transcript` | `GET /api/conversations/transcript` | readable transcript, streamed `text/plain` (`conversation_id`, `mode` = `plain`\|`detailed`, `utc_offset_minutes`; 413 `transcript_too_large` above 50 000 events or 16 MiB of text; 429 `projection_busy`) |
+| `GET /v1/conversation-events/export` | `GET /api/conversations/export` | JSONL export streamed page by page (header, stored events, trailer; frozen at the conversation's last sequence) |
+| `GET /v1/conversation-events/search` | `GET /api/conversations/search` | bounded newest-first search over public content and safe metadata (`q`, `conversation_id`, `before_sequence`, `limit` ≤ 50, `visibility`) |
+
+Errors: 400 `invalid_request` (never echoes a value), 401 `unauthorized` (Core),
+503 `conversation_events_unavailable` (store failing or Core stopping), and on
+the Control Center 503 `core_unreachable`, 502 `core_unauthorized` /
+`core_refused` / `invalid_core_response`, 503 `control_center_stopping` /
+`trace_busy` / `trace_drill_down_failed`, 403 `forbidden_origin` (every method
+under `/api/conversations` requires an exact loopback `Origin` when present and
+`Host`, and no `Sec-Fetch-Site: cross-site`). Long-poll: woken per conversation,
+ended when the client disconnects; the Control Center lets at most 8 wait at
+Core (extras are sent as plain polls) on a Core session separate from list and
+detail reads. Loss visibility: `GET /v1/health` → `conversation_events`
+(emitter counters, unreadable rows, query failures); `GET /api/status` →
+`conversation_events` (Control Center forwarder counters). Contract, cursor and
+long-poll semantics, drill-down bounds and the redaction allowlist:
+[Conversation Events](conversation-events.md), "Query and live API".
+
+Timeline view (Slice 05). The Control Center dock button **CNV** opens a
+full-screen `role="dialog"` over the page: four lanes (Utilisateur, Jarvis ·
+voix, Brain, Sous-agents) on one downward time axis, live. Its logic is
+`jarvis/runtime/control_center_timeline.js`, inserted at
+`/*__CONTROL_CENTER_TIMELINE_JS__*/` like the other page scripts: the pure part
+(`JarvisTimelineCore`: a port of `reconstruct_conversation` tested for parity,
+lane rule, duplicate-message collapse, folded-silence axis, need-weighted lane
+widths, column packing measured at the final column width, viewport windowing, hydration + long-poll state machine, status /
+detail / trace models) runs unchanged under node tests; the browser block holds
+DOM, focus and fetch. It reads only `GET /api/conversations`,
+`GET /api/conversations/sessions`, `GET /api/conversations/events` (one request
+in flight per tab: pages then `wait_ms=25000` long-poll from the last
+`next_cursor`, backoff 1 → 30 s on retryable codes),
+`GET /api/conversations/events/{event_id}` and
+`GET /api/conversations/events/{event_id}/trace`; never `/api/trace`. UX, states
+and troubleshooting: [Conversation Events](conversation-events.md), "Timeline UI".
+
+Projections (Slice 06). The readable transcript, the JSONL export and search
+are derived from the stored events only, never a second record. One pure
+renderer, `jarvis/domain/conversation_transcript.py` (on top of
+`reconstruct_conversation`, with the timeline's duplicate-publication collapse
+rule, parity-tested against the JS), serves Core's transcript route, the
+Control Center (which relays Core's text) and offline readers of an export
+(`jarvis/domain/conversation_event_export.py`: `read_export`,
+`transcript_from_export`, `reconstruct_export`, byte-identical to the live
+rendering). The export streams store pages under a frozen extent
+(`ConversationEventStore.conversation_extent`, `until_sequence`) and ends with a
+trailer whose absence marks an incomplete file. Search
+(`jarvis/domain/conversation_event_search.py`, scan in
+`SQLiteConversationEventStore.search_events`) matches public content and
+allowlisted metadata only, accent- and case-insensitively: 250-row chunks whose
+searchable fields SQLite extracts, matched on the event loop in 2 ms slices that
+yield (≤ 50 000 rows per request; no FTS5, no schema change). Core's hot path
+comes first: one search and two transcript/export builds at a time (429
+`search_busy` / `projection_busy`), cancelled when the client leaves, 50-event
+projection pages; with a search scanning 80 000 rows, append p95 stays at 4 ms. The CNV view adds *Rechercher*,
+*Transcription* and *Exporter JSONL* panels in its drawer; a search result jumps
+to its entry. `tests/integration/test_conversation_event_rollout_gate.py` runs
+the whole path with real stacks, a Core hard crash and a restart. Details,
+sizing and privacy boundaries: [Conversation Events](conversation-events.md),
+"Readable transcript", "JSONL export", "Search", "Operations".
 
 ## Speech, interruption and work
 

@@ -147,8 +147,8 @@ html[data-jarvis-theme="omega"] .dock button.active{
   background:rgba(10,19,26,.72);transform:translateY(-1px)}
 html[data-jarvis-theme="omega"] .dock .badge{right:-4px;top:-4px;transform:scale(.82)}
 /* Pastilles d'arrière-plan : en ligne, juste à gauche du bouton Agents (premier
-   des 4 outils : 4×34 + 3×6 = 154 px depuis right:18px). */
-html[data-jarvis-theme="omega"] .bgpills{top:22px;right:182px;flex-direction:row-reverse;gap:6px;z-index:50}
+   des 5 outils : 5×34 + 4×6 = 194 px depuis right:18px). */
+html[data-jarvis-theme="omega"] .bgpills{top:22px;right:222px;flex-direction:row-reverse;gap:6px;z-index:50}
 html[data-jarvis-theme="omega"] .bgpill{width:26px;height:26px;font-size:10px;background:rgba(5,11,16,.56);backdrop-filter:blur(16px)}
 html[data-jarvis-theme="omega"] .bgpop{border-radius:14px;background:rgba(4,10,15,.92);backdrop-filter:blur(26px)}
 html[data-jarvis-theme="omega"] .panel{
@@ -183,11 +183,12 @@ html[data-jarvis-theme="omega"] .choice.theme-choice.selected{
   left:50%;top:50%;transform:translate(-50%,-50%);background:#43aaff;box-shadow:0 0 16px #43aaff}
 @media(max-width:700px){
   html[data-jarvis-theme="omega"] .dock{right:10px;top:10px}
-  html[data-jarvis-theme="omega"] .bgpills{right:174px;top:14px}
+  /* Étroit : les pastilles passent sous la barre d'outils, l'état vocal reste lisible. */
+  html[data-jarvis-theme="omega"] .bgpills{right:10px;top:52px}
   html[data-jarvis-theme="omega"] .topbar{left:10px;top:10px}
-  html[data-jarvis-theme="omega"] .state{max-width:calc(100vw - 190px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  html[data-jarvis-theme="omega"] .panel{left:10px;right:10px;top:56px;bottom:10px;width:auto}
-  html[data-jarvis-theme="omega"] .live-banner{top:56px;left:10px;right:10px;width:auto;transform:none}
+  html[data-jarvis-theme="omega"] .state{max-width:calc(100vw - 230px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  html[data-jarvis-theme="omega"] .panel{left:10px;right:10px;top:88px;bottom:10px;width:auto}
+  html[data-jarvis-theme="omega"] .live-banner{top:88px;left:10px;right:10px;width:auto;transform:none}
 }
 @media(prefers-reduced-motion:reduce){
   html[data-jarvis-theme="omega"] .dock button{transition:none}
@@ -208,6 +209,7 @@ html[data-jarvis-theme="omega"] .choice.theme-choice.selected{
       settings:`<svg ${common}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.1A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.1A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.1A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9a1.7 1.7 0 0 0 .6 1 1.7 1.7 0 0 0 1.1.4h.1v4h-.1a1.7 1.7 0 0 0-1.7.6Z"/></svg>`,
       trace:`<svg ${common}><path d="M3 12h4l2.2-6 4.1 12 2.2-6H21"/></svg>`,
       errors:`<svg ${common}><path d="M12 3 2.6 20h18.8L12 3Z"/><path d="M12 9v4M12 17h.01"/></svg>`,
+      timeline:`<svg ${common}><path d="M4 4v16M10 4v7M10 15v5M16 4v3M16 11v9M20 4v16"/></svg>`,
     };
     return icons[name]||icons.trace;
   }
@@ -215,9 +217,10 @@ html[data-jarvis-theme="omega"] .choice.theme-choice.selected{
   function setOmegaTools(enabled){
     const specs=[
       ['agentsButton','agents',1],
-      [null,'trace',2],
-      ['openSettings','settings',3],
-      [null,'errors',4],
+      ['openTimeline','timeline',2],
+      [null,'trace',3],
+      ['openSettings','settings',4],
+      [null,'errors',5],
     ];
     for(const [id,name,order] of specs){
       const button=id?document.getElementById(id):document.querySelector(`.dock button[data-panel="${name}"]`);

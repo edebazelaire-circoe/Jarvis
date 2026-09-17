@@ -110,8 +110,13 @@ class PersistentVoiceRuntime:
         switch_handoff: dict[str, object] | None = None,
         switch_bus=None,
         metric_recorder_factory: Callable[[], object] | None = None,
+        conversation_events=None,
     ) -> None:
         self.voice_arch = voice_arch
+        # Conversation Events (Slice 03b) : l'enregistreur borné du processus
+        # (`ConversationEventForwarder`), transmis à chaque ordonnanceur et bridge.
+        # Sa vie est celle du processus Voice, pas celle d'une activation.
+        self.conversation_events = conversation_events
         from jarvis.domain.voice_architecture import VoiceArchitectureId
         if conversation_architecture not in (None, VoiceArchitectureId.SIMPLE, VoiceArchitectureId.FRONT_BRAIN, VoiceArchitectureId.DUPLEX):
             raise ConfigurationError("Unsupported conversational voice architecture")
@@ -432,6 +437,7 @@ class PersistentVoiceRuntime:
                 clock=self.clock,
                 on_brain_activity=self.brain_activity,
                 reflex_delay_s=self.reflex_delay_s,
+                conversation_events=self.conversation_events,
             )
             if self.continuous
             else None
@@ -497,6 +503,7 @@ class PersistentVoiceRuntime:
             # structurelle plutôt que conventionnelle — le bridge n'a
             # simplement plus de quoi appeler Claude.
             claude=None if self.continuous else self.claude,
+            conversation_events=self.conversation_events,
         )
         self._bridge = bridge
         if speech is not None:

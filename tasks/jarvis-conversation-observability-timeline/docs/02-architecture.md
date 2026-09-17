@@ -1,0 +1,7 @@
+# Target Architecture
+
+Jarvis already has `jarvis/runtime/journal.py`, an append-only `runtime/trace.jsonl`, and `trace_summary.py` for scalar voice diagnostics. Those are diagnostic observability primitives, not a canonical conversation transcript. The target introduces a **Conversation Event Log** with a stable JSON envelope and durable append semantics. Runtime producers emit events at the source of truth (user transcript accepted, Brain message/request emitted, Mouth speech lifecycle, sub-agent task lifecycle, relevant tool spans). Each event carries correlation identifiers and may reference a `trace_id`/diagnostic event. The UI consumes the same canonical events through query + live-stream APIs.
+
+The storage adapter is deliberately not locked to a new technology in this handoff: Slice 00/02 must audit existing Core persistence/event-store facilities and reuse them when they satisfy durability, ordering, indexing, and crash-recovery requirements. The canonical schema is storage-independent. `RuntimeJournal` remains appropriate for telemetry and trace-level details; the conversation log must not rely on replaying arbitrary trace lines as its only source of truth.
+
+The frontend renders four synchronized lanes over one chronological axis: User (left/white), Mouth/Reflex/Jarvis (light blue), Brain (orange), and sub-agent spans (red blocks adjacent to Brain). Events preserve `started_at`/`ended_at` where duration exists, allowing overlap to be visible rather than flattened into chat order.
