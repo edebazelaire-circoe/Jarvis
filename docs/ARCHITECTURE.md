@@ -2383,7 +2383,7 @@ Measured: the « s » (settings) shortcut, Shift+Arrow on the node behind and a 
     | a `fetch` with no HTTP answer (reset after sending, page deadline) | outcome **unknown**, never « rien n'a été envoyé » |
 
   - the raw text (English, host, port) only goes to the console (`scene.user_command_detail`).
-- Each refusal or failure is a toast plus a `[scène] scene.user_command_refused` console event. Toast details wrap to two lines instead of being cut.
+- Each refusal or failure is a toast plus a `[scène] scene.user_command_refused` console event. Toast details wrap (up to three lines) instead of being cut on one line.
 - An unexpected page error during an action (a rejected promise) is a toast too (`actionFailed`), never only a console line.
 - Successful actions log `scene.user_moved`, `scene.user_resized`, `scene.user_archived`, `scene.user_bulk_archived`, `scene.user_stopped`, `scene.user_shown` and `scene.user_key_edit`.
 - The Control Center journal records every relayed command (`scene.command` / `scene.command_failed`) and every stop (`scene.work_cancel`, `scene.work_cancel_refused`, `scene.work_cancel_failed`).
