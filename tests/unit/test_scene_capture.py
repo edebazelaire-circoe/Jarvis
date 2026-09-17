@@ -662,3 +662,24 @@ def test_png_header_fields_are_checked_without_decoding():
         header = (b"IHDR", struct.pack(">IIBBBBB", 4, 4, depth, color, compression, filtering, interlace))
         with pytest.raises(ValueError, match="depth, color type or method"):
             png_dimensions(chunked_png(header, idat, iend))
+
+
+def test_prune_counts_and_deletes_regular_files_only(tmp_path):
+    """Un dossier au nom de capture (le plus récent, et un autre trop vieux) ne prend pas de place et n'arrête pas la rétention."""
+
+    store = FileSceneCaptureStore(tmp_path / "scene-captures")
+    now = time.time()
+    saved = [store.save(png(), now_epoch_s=now + index) for index in range(6)]
+    for index, item in enumerate(saved):
+        os.utime(item.path, (now - 100 + index, now - 100 + index))
+    newest_dir = store.directory / "capture-29991231T235959999Z-0000beef.png"
+    old_dir = store.directory / "capture-20000101T000000000Z-0000dead.png"
+    for folder, mtime in ((newest_dir, now), (old_dir, now - 48 * 3600)):
+        folder.mkdir()
+        (folder / "inside.txt").write_text("x", encoding="utf-8")
+        os.utime(folder, (mtime, mtime))
+    assert CAPTURE_NAME.match(newest_dir.name) and CAPTURE_NAME.match(old_dir.name)
+    assert store.prune(now_epoch_s=now, keep=5, max_age_s=24 * 3600) == 1
+    left = sorted(p.name for p in store.directory.iterdir() if p.is_file())
+    assert left == sorted(item.name for item in saved[1:])
+    assert newest_dir.is_dir() and old_dir.is_dir() and (old_dir / "inside.txt").exists()
