@@ -1084,3 +1084,48 @@ def test_runtime_signals_stack_with_their_star_and_covered_alerts_are_counted(tm
     assert result["windowAboveSignal"] is True
     # a (échec) sous la fenêtre 1, b (bloqué) sous la fenêtre 2, c libre ; la note du cerveau ne compte pas.
     assert result["covered"] == {"high": 1, "medium": 1}
+
+
+def test_an_execution_star_of_a_previous_core_life_reads_unknown_since_restart_never_running_nor_alarm(tmp_path):
+    """Slice 10 : `unknown` sur une étoile = état inconnu depuis le redémarrage ; sur un artefact, rien."""
+
+    result = run_node(tmp_path, r"""
+      const objects=[obj('claude:a','agent',{exec_state:'unknown'}),obj('job:j','job',{exec_state:'unknown'}),
+        obj('claude:r','agent',{exec_state:'running'}),obj('note','artifact',{origin:'brain',exec_state:'unknown'}),
+        obj('claude:i','agent',{exec_state:'interrupted'}),
+        obj('attention!claude:i','attention',{category:'interrupted',exec_state:'interrupted',
+          payload:{title:'core_restarted_unobserved',summary:'',items:[]}})];
+      const s=state(objects,[rel('attention!claude:i','explains','attention!claude:i','claude:i'),rel('e','explains','note','claude:a')]);
+      const labels={core_restarted_unobserved:'non revu après le redémarrage de Core'};
+      const vm=L.viewModel(s,L.resolveLayout(s),L.viewport(1280,720),{errorLabels:labels});
+      const byId=Object.fromEntries(vm.nodes.map(n=>[n.id,n]));
+      return {rows:Object.fromEntries(vm.nodes.map(n=>[n.id,[n.exec,n.execLabel,!!n.restartUnknown,n.live,n.urgency]])),
+        labels:{a:byId['claude:a'].label,note:byId['note'].label,signal:byId['attention!claude:i'].title},
+        explains:byId['note'].explains.execLabel};
+    """)
+
+    assert result["rows"] == {
+        "claude:a": ["unknown", "état inconnu depuis le redémarrage", True, False, "none"],
+        "job:j": ["unknown", "état inconnu depuis le redémarrage", True, False, "none"],
+        "claude:r": ["running", "en cours", False, False, "none"],
+        "note": ["unknown", "", False, False, "none"],
+        "claude:i": ["interrupted", "interrompu", False, False, "none"],
+        # Fin de la grâce : un signal à vérifier (pas l'urgence basse d'un arrêt du CLI), titre en mots.
+        "attention!claude:i": ["interrupted", "interrompu", False, True, "medium"],
+    }
+    assert result["labels"]["a"] == "claude:a · sous-agent · état inconnu depuis le redémarrage"
+    assert "inconnu" not in result["labels"]["note"]
+    assert result["labels"]["signal"] == "non revu après le redémarrage de Core"
+    assert result["explains"] == "état inconnu depuis le redémarrage"
+
+
+def test_the_page_draws_the_unknown_cue_quietly_and_names_the_restart_error_class():
+    page = PAGE_JS.read_text(encoding="utf-8")
+    html = PAGE_HTML.read_text(encoding="utf-8")
+    rule = re.search(r"\.sc-restart-unknown \.sc-ring\{([^}]*)\}", page)
+    assert rule is not None and "dotted" in rule.group(1) and "animation:none" in rule.group(1)
+    assert "classes.push('sc-restart-unknown')" in page
+    # Navigateur réel : à 42ch, « état inconnu depuis le redémarrage » ne laissait que « [c… » du titre.
+    assert ".sc-restart-unknown .sc-label,.sc-signal .sc-label{max-width:min(64ch,80vw)}" in page
+    assert "(exec==='unknown'&&!restartUnknown)" in page  # pas de badge « ? » sur un artefact
+    assert "core_restarted_unobserved:'non revu après le redémarrage de Core'" in html

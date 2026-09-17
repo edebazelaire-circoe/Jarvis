@@ -166,6 +166,18 @@
   const EXEC_LABELS=Object.freeze({unknown:'',pending:'en attente',running:'en cours',blocked:'bloqué',
     completed:'terminé',failed:'échec',cancelled:'annulé',interrupted:'interrompu'});
   const KIND_LABELS=Object.freeze({agent:'sous-agent',job:'tâche',artifact:'résultat',attention:'signal',window:'fenêtre',group:'groupe'});
+  /* Slice 10 : une étoile d'exécution `unknown` est une étoile d'une vie
+     précédente de Core que personne n'a encore redite. Indice secondaire
+     (ni « en cours », ni alarme) jusqu'à la fin de la grâce, où Core la dit
+     interrompue avec son signal. Un artefact ou une fenêtre `unknown` n'a
+     simplement pas de travail : aucun libellé. */
+  const RESTART_UNKNOWN_LABEL='état inconnu depuis le redémarrage';
+  function restartUnknown(item){
+    return (item.kind==='agent'||item.kind==='job')&&item.exec_state==='unknown';
+  }
+  function execLabelOf(item,exec){
+    return restartUnknown(item)?RESTART_UNKNOWN_LABEL:EXEC_LABELS[exec];
+  }
 
   /* Titre affiché d'un signal du runtime : sa classe d'erreur dans les mots de
      la page (`errorLabels` = `ERROR_CLASSES` du Control Center), un statut
@@ -233,7 +245,7 @@
     const exec=EXEC_LABELS[target.exec_state]!==undefined?target.exec_state:'unknown';
     const title=displayTitle(target,cleanLine(target.payload&&target.payload.title,160),errorLabels);
     return {id:target.object_id,title:title||KIND_LABELS[target.kind]||target.kind,kind:target.kind,
-      kindLabel:KIND_LABELS[target.kind]||target.kind,execLabel:EXEC_LABELS[exec],tone:toneOf(target.category),
+      kindLabel:KIND_LABELS[target.kind]||target.kind,execLabel:execLabelOf(target,exec),tone:toneOf(target.category),
       hidden:target.visibility!=='visible'};
   }
 
@@ -594,7 +606,7 @@
       const node={
         id:item.object_id,kind:item.kind,representation,shape,compact:shape!==representation,
         category:cleanLine(item.category,32),tone:toneOf(item.category),
-        exec,execLabel:EXEC_LABELS[exec],signal,live:signal&&urgency!=='none',urgency,animate:false,
+        exec,execLabel:execLabelOf(item,exec),restartUnknown:restartUnknown(item),signal,live:signal&&urgency!=='none',urgency,animate:false,
         pinned:!!(item.constraints&&item.constraints.pinned_by_user),
         placedBy:item.geometry?String(item.constraints&&item.constraints.placed_by||''):'resolver',
         committed:!!item.geometry,
@@ -836,7 +848,7 @@
   }
 
   const api=Object.freeze({FRAME,SAFE_AREA,FACE_ZONE,OBJECT_LIMIT,DEFAULT_SIZE,WORK_BUDGET,COMMIT_MAX_ATTEMPTS,READABLE,MAX_ANIMATED,CAPSULE_MAX,drawnBox,
-    ARTIFACT_CATEGORIES,linkOf,explainedTarget,explainsIndex,artifactsExplaining,itemsOf,hostTail,isOrphanArtifact,orphanArtifacts,
+    RESTART_UNKNOWN_LABEL,restartUnknown,ARTIFACT_CATEGORIES,linkOf,explainedTarget,explainsIndex,artifactsExplaining,itemsOf,hostTail,isOrphanArtifact,orphanArtifacts,
     artifactsLeftOrphan,placeFor,
     viewport,toScreen,cleanLine,cleanText,toneOf,isLiveSignal,signalUrgency,signalErrorClass,anchorsOf,depthOf,resolveLayout,
     stackOf,viewModel,compactShape,spatialOrder,nextFocus,commitKey,commitCommand,commitCandidates,nextRetryAt,classifyCommit,settleCommit});

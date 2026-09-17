@@ -235,6 +235,10 @@
     else items.push({act:'pin',label:'Épingler ici'});
     items.push({act:'hide',label:'Masquer'});
     items.push('-');
+    /* Slice 10 : état inconnu depuis le redémarrage de Core. Aucun arrêt
+       (rien ne tourne dans ce Core qui puisse être visé) : une note le dit. */
+    if(execution&&item.exec_state==='unknown')
+      items.push({act:'state-unknown',label:'État inconnu depuis le redémarrage de Core',note:true});
     if(execution&&ACTIVE_WORK.has(item.exec_state)){
       if(item.kind==='job'&&item.work_ref&&item.work_ref.source==='job')items.push({act:'stop',label:'Arrêter la tâche…',danger:true});
       /* Note annoncée (focalisable, `aria-disabled`), pas un bouton désactivé

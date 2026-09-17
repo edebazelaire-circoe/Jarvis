@@ -611,6 +611,13 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
 .sc-exec-running.sc-anim .sc-ring{animation:sc-breathe 2.8s ease-in-out infinite;will-change:transform,opacity}
 .sc-exec-pending .sc-ring{border:1px dashed rgba(220,236,244,.5)}
 .sc-exec-blocked .sc-ring{width:20px;height:20px;margin:-10px 0 0 -10px;border:3px double rgba(220,236,244,.62)}
+/* Slice 10 : état inconnu depuis le redémarrage de Core. Anneau pointillé
+   pâle, jamais animé, point atténué : ni « en cours », ni alarme. */
+.sc-restart-unknown .sc-ring{border:1px dotted rgba(220,236,244,.46);opacity:.9;animation:none}
+.sc-restart-unknown .sc-mark{opacity:.62}
+/* Libellé plus large : « état inconnu depuis le redémarrage » et le titre
+   d'un signal de redémarrage ne mangent pas tout le titre (navigateur, S10). */
+.sc-restart-unknown .sc-label,.sc-signal .sc-label{max-width:min(64ch,80vw)}
 /* Terminé : anneau fin et fixe — travail achevé, pas encore rangé. */
 .sc-point.sc-exec-completed .sc-ring{width:15px;height:15px;margin:-7.5px 0 0 -7.5px;border:1px solid rgba(220,236,244,.34)}
 .sc-signal .sc-mark{width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:1.5px;transform:rotate(45deg)}
@@ -745,6 +752,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     interrupted:'M4.6 3.3v5.4M7.4 3.3v5.4',
     blocked:'M6 3v3.4M6 8.8v.2',
     completed:'M3.2 6.3l1.9 1.9 3.7-4.4',
+    /* Slice 10 : point d'interrogation, étoile d'exécution seulement. */
+    unknown:'M4.4 4.6a1.7 1.7 0 1 1 2.3 1.6c-.5.2-.7.6-.7 1.1v.3M6 9v.1',
   };
   const GRIP_PATH='M10.5 4.5l-6 6M10.5 8l-2.5 2.5';
   /* Artefact (Slice 07) : retour à l'étoile expliquée, lien qui s'ouvre ailleurs. */
@@ -969,8 +978,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     return el;
   }
 
-  function badge(exec,shape){
-    if(!BADGE_PATHS[exec]||(exec==='completed'&&shape==='point'))return null;
+  function badge(exec,shape,restartUnknown){
+    if(!BADGE_PATHS[exec]||(exec==='completed'&&shape==='point')||(exec==='unknown'&&!restartUnknown))return null;
     const box=element('span','sc-badge');
     box.appendChild(svgIcon(BADGE_PATHS[exec]));
     return box;
@@ -995,6 +1004,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
      `textContent`, déjà neutralisé par `JarvisSceneLayout.viewModel`. */
   function fill(el,node){
     const classes=['sc-node',`sc-${node.shape}`,`sc-kind-${node.kind}`,`sc-tone-${node.tone}`,`sc-exec-${node.exec}`];
+    if(node.restartUnknown)classes.push('sc-restart-unknown');
     if(node.signal)classes.push('sc-signal',`sc-urgency-${node.urgency}`);
     if(node.pinned)classes.push('sc-pinned');
     if(node.compact)classes.push('sc-compact');
@@ -1004,7 +1014,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     const parts=[];
     if(node.shape==='point'){
       parts.push(element('span','sc-ring'),element('span','sc-mark'));
-      const state=badge(node.exec,node.shape);
+      const state=badge(node.exec,node.shape,node.restartUnknown);
       if(state&&!node.signal)parts.push(state);
       const label=element('span','sc-label');
       label.append(element('strong','',node.title));
@@ -1018,7 +1028,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       if(node.kind==='artifact'&&node.category)parts.push(element('span','sc-ccat',node.category));
       parts.push(element('span','sc-title',node.title));
       if(node.pinned)parts.push(pin());
-      const state=badge(node.exec,node.shape);if(state)parts.push(state);
+      const state=badge(node.exec,node.shape,node.restartUnknown);if(state)parts.push(state);
       if(I&&(node.representation==='capsule'||node.representation==='window'))parts.push(grip());
     }else{
       const head=element('div','sc-head');
@@ -1026,7 +1036,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       head.append(dot,element('span','sc-cat',[node.category,node.execLabel].filter(Boolean).join(' · ')));
       if(node.kind==='artifact'&&node.itemCount)head.append(element('span','sc-cat-meta',`${node.itemCount} ${node.itemCount>1?'entrées':'entrée'}`));
       if(node.pinned)head.append(pin());
-      const state=badge(node.exec,node.shape);if(state)head.append(state);
+      const state=badge(node.exec,node.shape,node.restartUnknown);if(state)head.append(state);
       parts.push(head,element('div','sc-wtitle',node.title));
       if(node.explains)parts.push(originButton(node.explains));
       if(node.summary)parts.push(element('div','sc-summary',node.summary));
@@ -1725,6 +1735,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     const lines=['Il quitte la scène active ; il reste dans l’historique.'];
     if(signals)lines.push(signals>1?`Ses ${signals} signaux d’attention partent avec lui.`:'Son signal d’attention part avec lui.');
     if(['running','pending','blocked'].includes(item.exec_state))lines.push('Le travail continue, mais son étoile ne reviendra pas.');
+    else if(['agent','job'].includes(item.kind)&&item.exec_state==='unknown')
+      lines.push('Son état est inconnu depuis le redémarrage de Core : s’il reprend, son étoile ne reviendra pas.');
     /* Slice 07 : les artefacts qui l'expliquent ne partent pas avec elle. */
     const artifacts=['agent','job'].includes(item.kind)?L.artifactsExplaining(state,id).length:0;
     if(artifacts)lines.push(artifacts>1?`Ses ${artifacts} artefacts restent dans la scène, à archiver à part.`:'Son artefact reste dans la scène, à archiver à part.');

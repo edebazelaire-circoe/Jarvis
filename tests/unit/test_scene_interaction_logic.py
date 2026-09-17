@@ -573,3 +573,25 @@ pending.then(v=>{out.resolved=v;console.log(JSON.stringify(out))});
     assert result["withConfirm"] == ["app", "timeline", "toasts", "jarvisHands"] and result["backClickable"]
     assert result["afterCancel"] == result["timelineOpen"]
     assert result["afterTimelineClose"] == [] and result["resolved"] is False
+
+
+def test_an_unknown_star_since_restart_offers_no_stop_and_says_why(tmp_path):
+    """Slice 10 : ni arrêt ni « arrêt impossible » sur une étoile d'état inconnu ; une note le dit."""
+
+    result = run_node(tmp_path, r"""
+      const st=state([
+        obj('job:u','job',{exec_state:'unknown',work_ref:{source:'job',external_id:'u'}}),
+        obj('claude:u','agent',{exec_state:'unknown',work_ref:{source:'claude',external_id:'u'}}),
+        obj('note','artifact',{origin:'brain',exec_state:'unknown'}),
+      ]);
+      const acts=id=>I.menuModel(st,id,{finished:2}).items.map(it=>it==='-'?'-':`${it.act}${it.note?'(note)':''}${it.danger?'!':''}`);
+      return {job:acts('job:u'),agent:acts('claude:u'),note:acts('note'),
+        label:I.menuModel(st,'job:u',{}).items.find(it=>it.act==='state-unknown').label,
+        bulk:I.bulkSelection(st).ids};
+    """)
+
+    assert result["job"] == ["rep:capsule", "rep:window", "-", "pin", "hide", "-", "state-unknown(note)", "archive!", "archive-finished!"]
+    assert result["agent"] == result["job"]
+    assert "state-unknown(note)" not in result["note"]
+    assert result["label"] == "État inconnu depuis le redémarrage de Core"
+    assert result["bulk"] == []  # jamais archivé en groupe : son travail peut reprendre
