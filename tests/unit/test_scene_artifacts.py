@@ -783,7 +783,12 @@ def test_menu_offers_orphan_archive_only_when_there_are_orphans(tmp_path):
 def test_the_page_keeps_one_tab_stop_prints_the_host_first_and_leaves_links_their_native_menu():
     page = PAGE_JS.read_text(encoding="utf-8")
     row = page[page.index("function itemRow(item)"):page.index("function setInnerTabs")]
-    assert row.index("row.append(host,link") > 0 and "host.dataset.host=item.host" in row and "link.title=item.host" in row
+    # Reprise finale N1 : l'hôte est le premier enfant du lien ; une ligne étroite garde un lien cliquable sans libellé.
+    assert row.index("link.append(host)") < row.index("link.append(element('span','sc-item-label'")
+    assert "host.dataset.host=item.host" in row and "link.title=item.host" in row and "row.append(link," in row
+    assert "const budget=narrow?width-2:width*0.72;" in page and "row.scrollWidth>row.clientWidth+1" in page
+    assert "row.classList.toggle('sc-host-first',narrow)" in page and ".sc-items li.sc-host-first .sc-item-out{display:none}" in page
+    assert ".sc-items .sc-item-link-ref{flex:0 100 auto" in page
     assert "const list=element('ul','sc-items');list.tabIndex=-1;" in page
     assert "event.key==='PageDown'||event.key==='PageUp'" in page
     menu = page[page.index("function onContextMenu(event)"):page.index("function select(id)")]
@@ -791,3 +796,66 @@ def test_the_page_keeps_one_tab_stop_prints_the_host_first_and_leaves_links_thei
     assert ".sc-items .sc-item-host{flex:none" in page and "L.hostTail(full,max)" in page
     change = page[page.index("async function changeRepresentation"):page.index("async function pinHere")]
     assert "L.placeFor(state,currentLayout(),id,representation)" in change
+
+
+# ------------------------------------------------------------------ reprise finale (QA N1, N2)
+
+
+#: Hôtes de QA (N1) : la frontière de label laissait voir `…co.uk`, `…github.io`, `…com.au`.
+QA_SUFFIX_HOSTS = ["secure.barclays.co.uk.login-check.co.uk", "safe.github.io.evil-user.github.io",
+                   "commbank.com.au.secure-login.com.au", "docs.python.org.evil-login.example"]
+
+
+def test_the_host_tail_always_shows_the_longest_suffix_that_fits(tmp_path):
+    result = run_node(tmp_path, r"""
+      const out={};
+      for(const host of D)for(let n=1;n<=48;n++)out[`${host}|${n}`]=L.hostTail(host,n);
+      return out;
+    """, QA_SUFFIX_HOSTS)
+    for key, tail in result.items():
+        host, width = key.rsplit("|", 1)
+        width = max(int(width), 8)
+        if len(host) <= width:
+            assert tail == host, key
+            continue
+        suffix = host[len(host) - (width - 1):]
+        expected = "…" + (suffix[1:] if suffix.startswith(".") else suffix)
+        assert tail == expected, (key, tail)
+        assert len(tail) in (width, width - 1) and host.endswith(tail[1:])
+    assert result[f"{QA_SUFFIX_HOSTS[0]}|17"] == "…ogin-check.co.uk"
+    assert result[f"{QA_SUFFIX_HOSTS[1]}|18"] == "…il-user.github.io"
+    assert result[f"{QA_SUFFIX_HOSTS[2]}|14"] == "…-login.com.au"
+    # Jamais seulement les deux derniers labels quand la place en montre plus.
+    assert result[f"{QA_SUFFIX_HOSTS[0]}|20"].endswith("login-check.co.uk")
+
+
+def test_expanding_in_the_dense_qa_scene_takes_the_nearest_free_box_and_stays_fast(tmp_path):
+    fixture = Path(__file__).resolve().parents[1] / "fixtures" / "scene_dense_expand_qa07r.json"
+    result = run_node(tmp_path, r"""
+      const s=D;
+      const st={objects:new Map(s.objects.map(o=>[o.object_id,o])),relations:new Map(s.relations.map(r=>[r.relation_id,r])),archived_ids:new Set()};
+      const id='brain-artifact-dense2';
+      const layout=L.resolveLayout(st);
+      const anchor=layout.placements.get(L.anchorsOf(st).get(id).to);
+      const times=[];let box=null;
+      for(let i=0;i<5;i++){const t0=Date.now();box=L.placeFor(st,layout,id,'window');times.push(Date.now()-t0)}
+      const ov=(a,b)=>Math.max(0,Math.min(a.x+a.w,b.x+b.w)-Math.max(a.x,b.x))*Math.max(0,Math.min(a.y+a.h,b.y+b.h)-Math.max(a.y,b.y));
+      const hits=[...layout.placements].filter(([k,b])=>k!==id&&ov(box,b)>0).map(([k])=>k);
+      const face={x:L.FACE_ZONE.x0,y:L.FACE_ZONE.y0,w:L.FACE_ZONE.x1-L.FACE_ZONE.x0,h:L.FACE_ZONE.y1-L.FACE_ZONE.y0};
+      const dist=b=>Math.hypot(b.x+b.w/2-(anchor.x+anchor.w/2),b.y+b.h/2-(anchor.y+anchor.h/2));
+      /* Contrôle indépendant : toutes les boîtes libres au pas de 2, test exact. */
+      let nearest=Infinity,freeCount=0;
+      for(let y=L.SAFE_AREA.y0;y+40<=L.SAFE_AREA.y1;y+=2)for(let x=L.SAFE_AREA.x0;x+64<=L.SAFE_AREA.x1;x+=2){
+        const b={x,y,w:64,h:40};
+        if(ov(b,face)>0)continue;
+        if([...layout.placements].some(([k,o])=>k!==id&&ov({x:x-1,y:y-1,w:66,h:42},o)>0))continue;
+        freeCount++;nearest=Math.min(nearest,dist(b));
+      }
+      return {box,hits,faceOverlap:ov(box,face),distance:dist(box),nearest,freeCount,times,
+        again:JSON.stringify(L.placeFor(st,L.resolveLayout(st),id,'window'))===JSON.stringify(box)};
+    """, json.loads(fixture.read_text(encoding="utf-8")))
+    assert result["freeCount"] > 0
+    assert result["hits"] == [] and result["faceOverlap"] == 0  # QA avant : 4 étoiles recouvertes
+    assert abs(result["distance"] - result["nearest"]) < 1e-9  # la plus proche des places libres
+    assert result["again"] is True
+    assert max(result["times"][1:]) < 16  # bien sous une image (mesuré ≈ 1 ms)

@@ -271,23 +271,19 @@
   }
 
   /* Fin d'hôte affichable en `maxChars` caractères : l'hôte entier s'il tient,
-     sinon `…` suivi des **derniers** labels (le domaine enregistrable, là où
-     une usurpation ne peut pas se cacher : `docs.python.org.evil.example`
-     devient `…org.evil.example`, jamais `docs.python.org…`). Au moins les
-     deux derniers labels ; s'ils ne tiennent pas, leur fin. Jamais coupé à
-     droite. */
+     sinon `…` suivi de la **plus longue fin** qui tient (`maxChars − 1`
+     caractères) : le domaine enregistrable, là où une usurpation ne peut pas se
+     cacher, reste lisible autant que la place le permet
+     (`secure.barclays.co.uk.login-check.co.uk` en 17 → `…gin-check.co.uk`,
+     jamais `…co.uk` ni `secure.barclays…`). Couper sur une frontière de label
+     laissait parfois voir bien moins que la place (reprise QA N1). Un point en
+     tête de la fin est retiré. Jamais coupé à droite. */
   function hostTail(host,maxChars){
     const text=String(host||'');
     const max=Math.max(8,Math.floor(Number(maxChars)||0));
     if(text.length<=max)return text;
-    const labels=text.split('.');
-    let tail=labels.slice(-2).join('.');
-    for(let i=labels.length-3;i>=0;i--){
-      const next=`${labels[i]}.${tail}`;
-      if(next.length+1>max)break;
-      tail=next;
-    }
-    if(tail.length+1>max)tail=tail.slice(tail.length-(max-1));
+    let tail=text.slice(text.length-(max-1));
+    if(tail.startsWith('.'))tail=tail.slice(1);
     return `…${tail}`;
   }
 
@@ -665,34 +661,63 @@
      objets gardent leur boîte dessinée (`layout`) comme obstacles. Rend une
      boîte en unités ou `null`. Un glissement ou une géométrie du cerveau
      restent autoritaires : cette aide ne sert qu'au changement de forme. */
-  /* Angles essayés autour de l'ancre : 0°, ±15°, ±30°… jusqu'à 180° (24 directions). */
-  const EXPAND_ANGLES=Object.freeze([0,...Array.from({length:11},(_,i)=>[15*(i+1),-15*(i+1)]).flat(),180]);
+  /* Pas de la recherche d'espace libre de `placeFor` (unités de scène). */
+  const PLACE_STEP=2;
+
+  /* Boîte libre de taille `size` la plus proche de (acx, acy), ou null.
+     Occupation de la zone sûre en cellules de `PLACE_STEP` : chaque obstacle
+     (boîte dessinée, élargie d'une unité) et le visage marquent les cellules
+     qu'ils touchent (marquage prudent : jamais un faux « libre ») ; une somme
+     cumulée 2D rend chaque test de boîte en temps constant. Candidats alignés
+     sur la grille, du plus proche au plus lointain (distance, y, x) : ordre
+     total, résultat déterministe ; travail borné par la taille de la zone sûre
+     (≈ 10 000 cellules), quel que soit le nombre d'objets. */
+  function freeBoxNearest(layout,objectId,size,acx,acy){
+    const cols=Math.floor((SAFE_AREA.x1-SAFE_AREA.x0)/PLACE_STEP),rows=Math.floor((SAFE_AREA.y1-SAFE_AREA.y0)/PLACE_STEP);
+    const occupied=new Uint8Array(cols*rows);
+    const mark=(bx,by,bw,bh)=>{
+      const c0=Math.max(0,Math.floor((bx-SAFE_AREA.x0)/PLACE_STEP)),c1=Math.min(cols,Math.ceil((bx+bw-SAFE_AREA.x0)/PLACE_STEP));
+      const r0=Math.max(0,Math.floor((by-SAFE_AREA.y0)/PLACE_STEP)),r1=Math.min(rows,Math.ceil((by+bh-SAFE_AREA.y0)/PLACE_STEP));
+      for(let r=r0;r<r1;r++)occupied.fill(1,r*cols+c0,r*cols+Math.max(c0,c1));
+    };
+    for(const [id,box] of layout.placements)if(id!==objectId)mark(box.x-1,box.y-1,box.w+2,box.h+2);
+    mark(faceBox.x,faceBox.y,faceBox.w,faceBox.h);
+    const sums=new Int32Array((cols+1)*(rows+1));
+    for(let r=0;r<rows;r++){
+      let line=0;
+      for(let c=0;c<cols;c++){line+=occupied[r*cols+c];sums[(r+1)*(cols+1)+c+1]=sums[r*(cols+1)+c+1]+line}
+    }
+    const wc=Math.ceil(size.w/PLACE_STEP),hc=Math.ceil(size.h/PLACE_STEP);
+    let best=null;
+    for(let r=0;r+hc<=rows;r++){
+      for(let c=0;c+wc<=cols;c++){
+        const x=SAFE_AREA.x0+c*PLACE_STEP,y=SAFE_AREA.y0+r*PLACE_STEP;
+        const dx=x+size.w/2-acx,dy=y+size.h/2-acy,d=dx*dx+dy*dy;
+        if(best&&(d>best[0]||(d===best[0]&&(y>best[1]||(y===best[1]&&x>=best[2])))))continue;
+        const used=sums[(r+hc)*(cols+1)+c+wc]-sums[r*(cols+1)+c+wc]-sums[(r+hc)*(cols+1)+c]+sums[r*(cols+1)+c];
+        if(used===0)best=[d,y,x];
+      }
+    }
+    return best?{x:best[2],y:best[1],w:size.w,h:size.h}:null;
+  }
 
   function placeFor(state,layout,objectId,representation){
     const current=state.objects.get(objectId);
     if(!current)return null;
-    /* D'abord un anneau serré autour de l'ancre, tous les 15°, du plus proche au
-       plus lointain : la première boîte libre (aucun objet visible, pas le
-       visage, zone sûre). Les angles préférés du résolveur seuls laissent
-       parfois une place qui mord sur une étoile voisine. */
+    /* Balayage de toute la zone sûre au pas de 2 unités (≈ 5 700 boîtes pour
+       une fenêtre, grille spatiale des obstacles) : la boîte **libre** (aucun
+       objet visible à 1 unité près, pas le visage) dont le centre est le plus
+       proche de l'ancre (ce que l'objet explique, son parent ou son étoile ;
+       sans ancre, sa place actuelle). Égalité : plus haut, puis plus à gauche.
+       Déterministe et borné ; seulement si aucune boîte n'est libre, la
+       recherche du résolveur au moindre recouvrement (reprise QA N2 : un
+       anneau fini d'angles pouvait rater 525 places libres). */
     const anchor=anchorsOf(state).get(objectId);
-    const anchorBox=anchor&&layout?layout.placements.get(anchor.to):null;
+    const anchorBox=(anchor&&layout?layout.placements.get(anchor.to):null)||(layout?layout.placements.get(objectId):null);
     if(anchorBox){
       const size=sizeFor({kind:current.kind,representation});
-      const obstacles=[];
-      for(const [id,box] of layout.placements)if(id!==objectId)obstacles.push(box);
-      const acx=anchorBox.x+anchorBox.w/2,acy=anchorBox.y+anchorBox.h/2;
-      const reach=Math.max(anchorBox.w,anchorBox.h)/2+Math.max(size.w,size.h)/2;
-      for(let ring=0;ring<10;ring++){
-        const radius=reach+6+ring*6;
-        for(const deg of EXPAND_ANGLES){
-          const a=deg*Math.PI/180;
-          const box={x:Math.round(acx+Math.cos(a)*radius-size.w/2),y:Math.round(acy+Math.sin(a)*radius-size.h/2),w:size.w,h:size.h};
-          if(!inSafeArea(box)||overlapArea(box,faceBox)>0)continue;
-          const grown={x:box.x-1,y:box.y-1,w:box.w+2,h:box.h+2};
-          if(obstacles.every(other=>overlapArea(grown,other)===0))return box;
-        }
-      }
+      const free=freeBoxNearest(layout,objectId,size,anchorBox.x+anchorBox.w/2,anchorBox.y+anchorBox.h/2);
+      if(free)return free;
     }
     const objects=new Map();
     for(const [id,item] of state.objects){

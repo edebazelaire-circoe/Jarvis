@@ -688,15 +688,21 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
 .sc-items.sc-at-end{-webkit-mask-image:none;mask-image:none}
 /* Résumé entier : pas de fondu sur sa dernière ligne. */
 .sc-summary.sc-fits{-webkit-mask-image:none;mask-image:none}
-.sc-items .sc-item-link{color:#e6f4fa;text-decoration:none;border-radius:3px;cursor:pointer}
-.sc-items .sc-item-link:hover{text-decoration:underline;text-decoration-color:color-mix(in srgb,var(--tone) 70%,transparent);text-underline-offset:3px}
+.sc-items .sc-item-link{display:flex;gap:10px;align-items:baseline;flex:1 1 auto;min-width:0;color:#e6f4fa;text-decoration:none;border-radius:3px;cursor:pointer}
+.sc-items .sc-item-link .sc-item-label{color:inherit}
+.sc-items .sc-item-link:hover .sc-item-label{text-decoration:underline;text-decoration-color:color-mix(in srgb,var(--tone) 70%,transparent);text-underline-offset:3px}
 .sc-items .sc-item-link:focus-visible{outline:1px solid var(--sc-ink);outline-offset:1px}
 .sc-items .sc-item-out{flex:none;width:9px;height:9px;margin-left:-6px;color:var(--sc-muted);fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round}
 /* Hôte d'un lien (reprise QA M1) : d'abord, jamais rétréci ni coupé à droite ;
    raccourci par la gauche en JS (hostTail) quand la place manque. Le libellé
    et la référence, écrits par le cerveau, cèdent la place. */
-.sc-items .sc-item-host{flex:none;max-width:72%;overflow:hidden;white-space:nowrap;color:color-mix(in srgb,var(--tone) 55%,var(--sc-ink))}
-.sc-items .sc-item-link-ref{flex:0 1 auto;min-width:0;max-width:40%}
+.sc-items .sc-item-host{flex:none;overflow:hidden;white-space:nowrap;color:color-mix(in srgb,var(--tone) 55%,var(--sc-ink))}
+/* Ligne étroite : l'hôte passe avant tout, l'icône décorative s'efface et l'hôte
+   prend un corps plus petit pour montrer la plus longue fin possible. */
+.sc-items li.sc-host-first .sc-item-out{display:none}
+.sc-items li.sc-host-first .sc-item-host{font-size:10px;letter-spacing:-.01em}
+/* La référence cède en premier, puis le libellé ; l'hôte, jamais. */
+.sc-items .sc-item-link-ref{flex:0 100 auto;min-width:0;max-width:40%}
 .sc-ccat{flex:none;max-width:38%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9px;letter-spacing:.1em;text-transform:uppercase;
   color:color-mix(in srgb,var(--tone) 72%,var(--sc-ink))}
 .sc-link-artifact{stroke:color-mix(in srgb,var(--tone) 50%,transparent);stroke-dasharray:5 3}
@@ -1060,14 +1066,18 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     const row=element('li');
     const href=typeof item.href==='string'&&/^https?:\/\//.test(item.href)?item.href:'';
     if(href){
-      /* L'hôte d'abord : aucune longueur de libellé ou de référence ne le pousse hors de vue. */
+      /* L'hôte d'abord, dans le lien : aucune longueur de libellé ou de référence
+         ne le pousse hors de vue, et une ligne étroite garde un lien cliquable
+         même quand le libellé a disparu (reprise QA N1). */
       const host=element('span','sc-item-host',item.host);
-      host.dataset.host=item.host;host.title=item.host;host.setAttribute('aria-hidden','true');
-      const link=element('a','sc-item-label sc-item-link',item.label||item.host);
+      host.dataset.host=item.host;host.setAttribute('aria-hidden','true');
+      const link=element('a','sc-item-link');
+      link.append(host);
+      if(item.label)link.append(element('span','sc-item-label',item.label));
       link.href=href;link.target='_blank';link.rel='noopener noreferrer';link.referrerPolicy='no-referrer';link.tabIndex=-1;
       link.title=item.host;
       link.setAttribute('aria-label',`${item.label||item.host} — ${item.host}, s’ouvre dans un nouvel onglet`);
-      row.append(host,link,svgIcon(OUT_PATH,'sc-item-out'));
+      row.append(link,svgIcon(OUT_PATH,'sc-item-out'));
       if(item.ref)row.append(element('span','sc-item-ref sc-item-link-ref',item.ref));
     }else{
       row.append(element('span','sc-item-label',item.label));
@@ -1160,19 +1170,27 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
      jusqu'à tenir (la fin, domaine enregistrable compris, reste visible).
      Recalculé seulement quand la largeur de la ligne change. */
   const measureCanvas=typeof document!=='undefined'?document.createElement('canvas'):null;
+  /* Ligne plus étroite que ce seuil (px) : l'hôte passe avant le libellé et prend
+     toute la ligne (`sc-host-first` : icône masquée, corps 10 px ; le libellé
+     reste dans le nom accessible du lien) ; au-delà, 72 % pour laisser lire le
+     libellé. */
+  const HOST_PRIORITY_ROW_PX=260;
   function fitHosts(){
     for(const el of root.querySelectorAll('.sc-item-host[data-host]')){
-      const row=el.parentElement;
+      const row=el.closest('li');
       const width=row?row.clientWidth:0;
       if(!width||el.dataset.fitWidth===String(width))continue;
       el.dataset.fitWidth=String(width);
       const full=el.dataset.host;
+      const narrow=width<HOST_PRIORITY_ROW_PX;
+      row.classList.toggle('sc-host-first',narrow);
       const context=measureCanvas&&measureCanvas.getContext('2d');
       let charW=6.6;
       if(context){context.font=getComputedStyle(el).font;charW=Math.max(1,context.measureText('0000000000').width/10)}
-      let max=Math.floor(width*0.72/charW);
+      const budget=narrow?width-2:width*0.72;
+      let max=Math.max(8,Math.floor(budget/charW));
       el.textContent=L.hostTail(full,max);
-      for(let guard=0;guard<64&&el.scrollWidth>el.clientWidth+1&&max>8;guard++){max--;el.textContent=L.hostTail(full,max)}
+      for(let guard=0;guard<64&&row.scrollWidth>row.clientWidth+1&&max>8;guard++){max--;el.textContent=L.hostTail(full,max)}
     }
   }
 
