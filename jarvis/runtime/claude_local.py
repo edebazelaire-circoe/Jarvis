@@ -164,6 +164,12 @@ DELEGATION_TOOLS = frozenset({
 # préfixe laisserait passer un outil homonyme d'un autre serveur.
 DISPLAY_TOOLS = frozenset(f"mcp__{DISPLAY_SERVER_NAME}__{name}" for name in DISPLAY_TOOL_NAMES)
 
+# Borne d'une ligne lue sur stdout/stderr du CLI (Slice 09, partie 2) : la
+# borne par défaut d'asyncio (64 Kio) arrêtait la lecture sur la ligne d'un
+# résultat d'outil portant une image (`scene_capture`), et le tour ne rendait
+# jamais la main.
+STREAM_LINE_LIMIT_BYTES = 16 * 1024 * 1024
+
 # Réponses spontanées gardées pour `/api/agent/notices` : assez pour couvrir une
 # coupure du lecteur, trop peu pour devenir un historique.
 NOTICE_LIMIT = 50
@@ -641,6 +647,10 @@ class ClaudeLocalAgent:
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
+                    # Une ligne stream-json peut dépasser 64 Kio (image d'un outil MCP,
+                    # `scene_capture` : ~40–80 Kio ; gros résultat d'outil) : au-delà de
+                    # la borne par défaut, `readline` lève et la lecture s'arrêtait.
+                    limit=STREAM_LINE_LIMIT_BYTES,
                     **({"creationflags": self._process_tree.creationflags} if self._process_tree else {}),
                 )
                 if self._process_tree:
@@ -1037,10 +1047,20 @@ class ClaudeLocalAgent:
             self.journal.emit("agent.stop", "Claude local agent stopped", data={"returncode": process.returncode})
             return self.snapshot()
 
+    def _report_long_line(self, stream: str, exc: ValueError) -> None:
+        # Ligne au-delà de `STREAM_LINE_LIMIT_BYTES` : sautée (asyncio a vidé son
+        # tampon jusqu'au séparateur) et dite, jamais une lecture morte en silence.
+        self.journal.emit("agent.stream_line_too_long", f"Ligne {stream} du CLI trop longue, ignorée", level="error",
+                          data={"stream": stream, "limit_bytes": STREAM_LINE_LIMIT_BYTES, "error": str(exc)[:200]})
+
     async def _read_stdout(self) -> None:
         assert self.process is not None and self.process.stdout is not None
         while True:
-            raw = await self.process.stdout.readline()
+            try:
+                raw = await self.process.stdout.readline()
+            except ValueError as exc:
+                self._report_long_line("stdout", exc)
+                continue
             if not raw:
                 break
             text = raw.decode("utf-8", errors="replace").rstrip()
@@ -1073,7 +1093,11 @@ class ClaudeLocalAgent:
     async def _read_stderr(self) -> None:
         assert self.process is not None and self.process.stderr is not None
         while True:
-            raw = await self.process.stderr.readline()
+            try:
+                raw = await self.process.stderr.readline()
+            except ValueError as exc:
+                self._report_long_line("stderr", exc)
+                continue
             if not raw:
                 break
             text = raw.decode("utf-8", errors="replace").rstrip()

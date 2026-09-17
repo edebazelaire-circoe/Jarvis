@@ -521,3 +521,56 @@ async def test_the_brain_tool_refuses_clearly_without_page_gate_or_core(tmp_path
 def test_the_capture_tool_is_counted_as_display_work_and_the_catalog_has_no_archive_or_pin():
     assert "mcp__jarvis-display__scene_capture" in claude_local.DISPLAY_TOOLS
     assert not any("archiv" in name or "pin" in name for name in claude_local.DISPLAY_TOOLS)
+
+
+# ------------------------------------------------------------------ lecture du flux du CLI (trouvé par le run réel)
+
+
+async def test_a_long_stream_json_line_never_stops_the_brain_reader(monkeypatch, tmp_path):
+    """Run réel : la ligne stream-json du résultat de `scene_capture` (image ≈ 40–80 Kio) dépassait la borne
+    de 64 Kio d'asyncio ; `readline` levait, la lecture mourait et le tour expirait au bout de 240 s."""
+
+    seen: dict = {}
+
+    class _Stream:
+        async def readline(self) -> bytes:
+            return b""
+
+    class _Process:
+        stdin = None
+        stdout = _Stream()
+        stderr = _Stream()
+        pid = 1
+        returncode = 0
+
+        async def wait(self) -> int:
+            return 0
+
+    async def fake_exec(*args, **kwargs):  # noqa: ANN002, ANN003
+        seen.update(kwargs)
+        return _Process()
+
+    agent = claude_local.ClaudeLocalAgent(runtime_root=tmp_path, cwd=tmp_path)
+    monkeypatch.setattr(claude_local.asyncio, "create_subprocess_exec", fake_exec)
+    if agent._process_tree is not None:
+        monkeypatch.setattr(agent._process_tree, "attach_and_resume", lambda pid: None)
+    await agent.start()
+    await agent.stop()
+    assert seen["limit"] == claude_local.STREAM_LINE_LIMIT_BYTES >= 16 * 1024 * 1024
+
+    image_line = json.dumps({"type": "user", "message": {"content": [{"type": "image", "data": "A" * 200_000}]}}).encode() + b"\n"
+    result_line = json.dumps({"type": "result", "result": "ok"}).encode() + b"\n"
+    for limit, expect_skip in ((claude_local.STREAM_LINE_LIMIT_BYTES, False), (4096, True)):
+        reader = asyncio.StreamReader(limit=limit)
+        reader.feed_data(image_line + result_line)
+        reader.feed_eof()
+        runtime = tmp_path / f"reader-{limit}"
+        agent = claude_local.ClaudeLocalAgent(runtime_root=runtime, cwd=tmp_path)
+        agent.process = _Process()
+        agent.process.stdout = reader
+        await asyncio.wait_for(agent._read_stdout(), 5)
+        kinds = [json.loads(line) for line in (runtime / "trace.jsonl").read_text(encoding="utf-8").splitlines()]
+        events = [e["data"].get("type") for e in kinds if e["kind"] == "agent.event"]
+        assert "result" in events  # la lecture continue après la ligne longue
+        assert ("user" in events) is not expect_skip
+        assert any(e["kind"] == "agent.stream_line_too_long" and e["level"] == "error" for e in kinds) is expect_skip
