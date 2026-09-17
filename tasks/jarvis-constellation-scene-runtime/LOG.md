@@ -1272,4 +1272,4 @@ QA re-verified `59f603d`: MAJOR-1, MAJOR-2 and every minor are confirmed. One mo
 **Validation.**
 
 - Targeted suite under `-W error::ResourceWarning`: **1418 passed** in 116.79 s. It adds `test_v2_recovery_notifications`, `test_owned_process_tree` and `test_work_state_protocol` to the earlier list: jobs, back-brain, owned execution, recovery, async conversation and work-state files included.
-- `verify_release.py`: see the next line.
+- Full `scripts/verify_release.py`, alone in the foreground: `4151 passed, 9 skipped in 336.93s` / `Release verification passed.`
