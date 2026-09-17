@@ -10,3 +10,5 @@ Consequence for this task: the release gate is now "no failure beyond these 10 m
 
 
 Update 2026-09-17: item 1 fixed on main by `b86f228` (same resolution as this branch's `e68cfdc`; merged as `c12773c`, no content change). Items 2 (9 tests without implementation) and 3 (flaky) still open on main.
+
+Update 2026-09-18: items 2 and 3 addressed on branch `fix/main-baseline-and-timeline` (worktree C:\Projects\jarvis-mainfix, HEAD `24d32d6`). The 9 tests had lost their implementation in merge `10b455e` (one side dropped: 41 lines in `agent_routing.py`, 94 in `control_center.html`); restored byte-exact from `90d3234` and `56c7892`. Full chunked suite on that branch: 0 failures. Two timing-fragile files remain (`test_live_primary_lease_review.py`, `test_back_brain_tasks.py`), unrelated, each failing once across two QA rounds and passing on every rerun.
