@@ -7,3 +7,6 @@ Found during the 2026-09-17 integration of main into the task branch.
 3. Known flaky `test_three_turns_run_in_one_session_without_a_second_wake` (main already tracks it).
 
 Consequence for this task: the release gate is now "no failure beyond these 10 main-baseline failures". Human action needed on main.
+
+
+Update 2026-09-17: item 1 fixed on main by `b86f228` (same resolution as this branch's `e68cfdc`; merged as `c12773c`, no content change). Items 2 (9 tests without implementation) and 3 (flaky) still open on main.
