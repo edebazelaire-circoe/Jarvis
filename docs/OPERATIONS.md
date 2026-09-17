@@ -513,6 +513,14 @@ bande « N sans événement · axe replié ».
 - **Tout / Public** : *Tout* montre le diagnostic (travaux, sous-agents, outils,
   repères) ; *Public* ne garde que ce qui a été dit, entendu ou montré.
 - **Échelle** : pixels par seconde (60 par défaut).
+- **Plusieurs fenêtres** : une seule d'entre elles interroge Core ; les autres
+  reçoivent les événements par relais et affichent « En direct · … · relayé par
+  un autre onglet ». Un navigateur n'accorde qu'environ six connexions par hôte
+  et une lecture en attente en occupe une : sans ce partage, six chronologies
+  ouvertes suffisaient à ralentir toute l'interface. Une fenêtre cachée ne
+  demande plus rien (« En pause ») et rattrape en revenant au premier plan ;
+  fermer ou masquer la fenêtre qui lisait passe la main à une autre sans perdre
+  d'événement.
 - Clic ou Entrée sur une entrée qui n'est pas de l'utilisateur : détail (ids,
   statut, durée, latence depuis la parole utilisateur, raison d'interruption ou
   d'échec, parent et enfants) et, pour chaque événement, la ligne de trace

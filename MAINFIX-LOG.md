@@ -248,3 +248,167 @@ couples (`data-routing-candidate`) a bien disparu.
 
 Captures : `routing-two-step-classic.png`, `routing-two-step-omega.png`
 (répertoire de travail de l'agent, hors dépôt).
+
+---
+
+# Issue 04 — un seul long-poll par profil pour la chronologie
+
+## 7. Le problème, remesuré ici
+
+Chaque chronologie ouverte tenait son propre long-poll. Un navigateur n'accorde
+qu'environ six connexions par hôte, partagées avec les sondages à 1 s / 250 ms de
+la page : au-delà de cinq ou six fenêtres, il ne reste plus rien pour le reste de
+l'interface.
+
+Le banc rejoue la chaîne complète — Core, serveur de protocole local,
+ControlCenter, Chrome — avec N fenêtres **visibles** de 1280×720 dans un seul
+profil, chronologie ouverte partout. Le nombre de lectures longues est compté
+**sur la route elle-même**, pas d'après ce que la page croit faire ; la latence
+de `/api/status` est mesurée **depuis le navigateur**, puisque c'est là qu'est le
+budget de connexions. Le mode `legacy` sert la version de `b86f228` de
+`control_center_timeline.js` dans la même page, pour comparer à isopérimètre.
+
+### Avant (`b86f228`)
+
+| fenêtres | long-polls tenus | `/api/status` méd./max | événement → toutes | convergence |
+| ---: | ---: | ---: | ---: | :--- |
+| 1 | 1 | 3 / 4 ms | 11 ms | oui |
+| 5 | 5 | 4 / 5 ms | 33 ms | oui |
+| 6 | 6 | **138 / 24 382 ms** | 69 ms | oui |
+| 8 | 6 (pic 8) | **23 233 / 26 029 ms** | 383 ms | oui |
+| 10 | 6 (pic 8) | **18 263 / 24 914 ms** | **26 153 ms** | oui, mais une chronologie n'a jamais fini de se poser |
+
+Le plafond à 6 est le budget du navigateur : les fenêtres suivantes attendent
+qu'une connexion se libère. À dix fenêtres, un événement met 26 s à atteindre
+tout le monde et une fenêtre n'arrive plus à s'ouvrir du tout.
+
+### Après
+
+| fenêtres | long-polls tenus | `/api/status` méd./max | événement → toutes | convergence |
+| ---: | ---: | ---: | ---: | :--- |
+| 1 | 1 | 3 / 2 662 ms* | 70 ms | oui |
+| 5 | 1 | 3 / 4 ms | 520 ms | oui |
+| 6 | 1 | 4 / 4 ms | 234 ms | oui |
+| 8 | 1 | 4 / 4 ms | 17 ms | oui |
+| 10 | 1 (pic 2) | 4 / 4 ms | 20 ms | oui |
+
+\* Chrome démarrait à froid sur le premier cas ; les cinq échantillons suivants
+du même cas sont à 2-6 ms, et tous les autres cas sont stables.
+
+Le pic à 2 sur le cas à dix fenêtres est la bascule : pendant une fraction de
+seconde, l'ancien meneur n'a pas encore rendu sa lecture que le nouveau a déjà
+pris le verrou. C'est borné à deux et transitoire.
+
+**Une seule lecture longue quelle que soit le nombre de fenêtres, `/api/status`
+qui ne bouge plus de 3-4 ms, et un événement qui atteint dix fenêtres en 20 ms
+au lieu de 26 s.**
+
+## 8. La forme retenue
+
+Celle de la scène (Slice 05 de la constellation, approuvée) : meneur élu par
+Web Locks, relais par `BroadcastChannel`. Adaptée, pas recopiée — le fichier de
+la scène n'existe pas sur `main`, et ce flux a son propre transport, son propre
+curseur et ses propres filtres.
+
+**Ce qui est partagé, et pourquoi.** `/api/conversations/events` ne prend que
+`conversation_id`, `after_sequence`, `limit` et `wait_ms`. Aucun filtre de la
+page (Tout/Public, recherche, lanes, échelle, sélection) ne voyage dans la
+requête : ils s'appliquent après, sur les lignes tenues dans l'onglet. Deux
+onglets sur la même conversation veulent donc exactement le même flux d'octets.
+**On partage le flux brut et chaque onglet en dérive sa vue** : le canal ne
+transporte aucun filtre, et un onglet peut filtrer autrement sans rien coûter au
+réseau. C'était le choix le plus simple et le seul qui n'oblige pas le canal à
+connaître l'état de chaque onglet.
+
+**Le verrou est nommé par conversation** (`jarvis.timeline.<conversation_id>`) :
+deux onglets sur deux conversations différentes gardent chacun leur meneur. Ce
+n'est pas réductible — la route ne sait pas servir deux conversations en une
+requête — et le cas courant (tous les onglets sur la conversation vivante) ne
+tient qu'un seul long-poll.
+
+**Rôles.** `leader` tient l'unique long-poll, relaie chaque page acceptée
+(`from`, `cursor`, `events`, `has_more`) et bat toutes les 10 s en annonçant son
+curseur et l'état de sa lecture. `follower` ne fait **jamais** de requête
+longue : une lecture courte bornée (`wait_ms=0`) au premier chargement, sur un
+trou, sur un battement dont le curseur est en avance, et quand le meneur se tait
+depuis 35 s (vérifié toutes les 5 s, donc borné à ≈ 40 s). `solo` — sans Web
+Locks ou sans BroadcastChannel — est exactement le comportement d'avant, un
+long-poll par onglet.
+
+**Passation.** Fermer, masquer, naviguer ou geler le meneur rend le verrou ; le
+navigateur le passe à un onglet visible en file, qui reprend **à son propre
+curseur** : la route rend tout ce qui suit cette séquence, donc aucun événement
+ne se perd et rien n'est retéléchargé. Un onglet caché rend la conduite, ne
+demande plus rien (« En pause ») et rattrape en redevenant visible. Le message
+`bye` ne relance pas d'élection quand l'onglet est déjà en file — le verrou
+suffit, et redemander coûterait une lecture pour rien.
+
+**Ce que l'utilisateur voit.** Un suiveur affiche « En direct · N événements ·
+dernier reçu il y a T · **relayé par un autre onglet** », et jamais « En direct »
+quand le meneur, lui, se reconnecte ou est bloqué : son état réel est diffusé et
+repris tel quel, avec son bouton « Réessayer ». Un onglet caché dit « En pause ·
+onglet en arrière-plan ».
+
+**Un seul onglet ouvert : rien ne change.** Le meneur est seul, il tient son
+long-poll exactement comme avant (mesuré : 1 fenêtre → 1 long-poll, 11 ms puis
+70 ms pour l'événement).
+
+## 9. Recette de la passation, dans un vrai navigateur
+
+Trois fenêtres, vrais Web Locks, vrai BroadcastChannel, des événements publiés
+**pendant** chaque bascule :
+
+| scénario | événements arrivés | verdict |
+| --- | :---: | --- |
+| le meneur est **fermé** | oui | un nouveau meneur, toutes les fenêtres convergent |
+| le meneur est **masqué** | oui | la conduite passe ; l'onglet caché rattrape en revenant |
+| le meneur **navigue** ailleurs | oui | un meneur subsiste, les autres ont tout |
+| le meneur est **gelé** (`Page.setWebLifecycleState`) | oui | supporté et couvert |
+| une **diffusion perdue** (relais coupé sur un suiveur) | oui | il revient seul, sans long-poll |
+| un suiveur **caché pendant un redémarrage de Core** | oui | rattrape au retour, tout le monde converge |
+
+État final : `["leader","follower","follower"]`, lectures longues tenues
+`[1,0,0]`.
+
+## 10. Tests ajoutés
+
+Huit tests node (horloge simulée, registre de verrous partagé, bus de messages,
+`fetch` scripté par onglet) dans `tests/unit/test_control_center_timeline_js.py` :
+un seul meneur et une seule attente longue ; un trou coûte une lecture courte et
+jamais une longue ; passation au masquage avec reprise au curseur tenu ;
+passation à la fermeture sans trou ; un onglet caché ne demande rien et rattrape
+au retour ; un meneur muet coûte une lecture bornée par fenêtre de silence ;
+le repli `solo` ; et le statut d'un suiveur qui ne ment jamais sur l'état du
+meneur. Les 43 tests existants de la chronologie passent sans modification.
+
+## 11. Validation
+
+| morceau | résultat |
+| --- | --- |
+| unitaires 1/6 | 502 passés |
+| unitaires 2/6 | 564 passés |
+| unitaires 3/6 | 610 passés, 1 ignoré |
+| unitaires 4/6 | 575 passés, 2 ignorés |
+| unitaires 5/6 | 617 passés, 1 ignoré |
+| unitaires 6/6 | 867 passés, 2 ignorés |
+| `tests/integration` | 287 passés, 4 ignorés |
+| `tests/e2e` + `tests/replay` | 1 passé |
+
+**3735 unitaires + 287 intégration + 1 e2e : 0 échec.** `verify_release.py`
+(son unique sous-processus pytest neutralisé) : `Release verification passed.`
+
+**Un test instable observé, sans rapport avec ce changement.**
+`tests/unit/test_live_primary_lease_review.py` a échoué une fois sur un
+`asyncio.timeout` (`test_primary_heartbeat_and_concurrent_usage_share_one_cas_owner`,
+puis `test_primary_wire_is_fenced_by_durable_reserve_mark_and_final_receipt`)
+pendant que la machine finissait de libérer les Chrome du banc. Relancé quatre
+fois de suite : 12 passés à chaque fois, en 3,8 s puis 9,0 s puis 17,8 s — le
+même fichier varie d'un facteur cinq selon la charge. Ce fichier ne touche ni la
+chronologie, ni l'aiguillage, ni la carte Brain. À signaler à l'agent 0 comme
+fragilité de la suite sous charge, pas comme régression.
+
+Captures : `timeline-leader-classic.png`, `timeline-follower-classic.png`,
+`timeline-leader-omega.png`, `timeline-follower-omega.png`, plus les vues à dix
+fenêtres `timeline-shared-10w-*.png` et `timeline-legacy-10w-*.png`, et les
+relevés bruts `bench-legacy.json`, `bench-shared.json`, `handover.json`
+(répertoire de travail de l'agent, hors dépôt).

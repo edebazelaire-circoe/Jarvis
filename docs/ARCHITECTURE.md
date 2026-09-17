@@ -351,8 +351,12 @@ widths, column packing measured at the final column width, viewport windowing, h
 detail / trace models) runs unchanged under node tests; the browser block holds
 DOM, focus and fetch. It reads only `GET /api/conversations`,
 `GET /api/conversations/sessions`, `GET /api/conversations/events` (one request
-in flight per tab: pages then `wait_ms=25000` long-poll from the last
-`next_cursor`, backoff 1 → 30 s on retryable codes),
+in flight per *browser profile*, not per tab: a Web Locks leader holds the
+pages then the `wait_ms=25000` long-poll from the last `next_cursor`, backoff
+1 → 30 s on retryable codes, and relays each accepted page over a
+`BroadcastChannel`; followers never long-poll and only ever do one bounded
+`wait_ms=0` read — first load, gap, or a leader silent for ~40 s. Without Web
+Locks or BroadcastChannel the page falls back to `solo`, one long-poll per tab),
 `GET /api/conversations/events/{event_id}` and
 `GET /api/conversations/events/{event_id}/trace`; never `/api/trace`. UX, states
 and troubleshooting: [Conversation Events](conversation-events.md), "Timeline UI".
