@@ -211,21 +211,84 @@
     return {href,host:parsed.hostname};
   }
 
+  /* Première cible active de chaque source par `explains` (hors lien de
+     signal), en une passe sur les relations : `source → objet cible`. */
+  function explainsIndex(state){
+    const index=new Map();
+    for(const rel of state.relations.values()){
+      if(rel.kind!=='explains'||rel.relation_id===rel.from_id||index.has(rel.from_id))continue;
+      const target=state.objects.get(rel.to_id);
+      if(target)index.set(rel.from_id,target);
+    }
+    return index;
+  }
+
   /* Ce qu'un artefact explique : première relation `explains` (hors lien de
      signal) vers un objet actif. Rend `{id, title, kind, execLabel, tone,
-     hidden}` ou `null`. */
-  function explainedTarget(state,objectId,errorLabels){
+     hidden}` ou `null`. `index` (`explainsIndex`) évite de relire toutes les
+     relations pour chaque artefact d'un même rendu. */
+  function explainedTarget(state,objectId,errorLabels,index){
+    const target=(index||explainsIndex(state)).get(objectId);
+    if(!target)return null;
+    const exec=EXEC_LABELS[target.exec_state]!==undefined?target.exec_state:'unknown';
+    const title=displayTitle(target,cleanLine(target.payload&&target.payload.title,160),errorLabels);
+    return {id:target.object_id,title:title||KIND_LABELS[target.kind]||target.kind,kind:target.kind,
+      kindLabel:KIND_LABELS[target.kind]||target.kind,execLabel:EXEC_LABELS[exec],tone:toneOf(target.category),
+      hidden:target.visibility!=='visible'};
+  }
+
+  /* Artefact orphelin : aucun lien `explains` vers un objet actif (son étoile a
+     été archivée, ou il n'a jamais été relié). Même règle que
+     `is_orphan_artifact` (jarvis/domain/scene.py, test de parité) : seul
+     l'archivage groupé « artefacts orphelins » de l'utilisateur le prend. */
+  function isOrphanArtifact(state,objectId){
+    const item=state.objects.get(objectId);
+    if(!item||item.kind!=='artifact')return false;
+    for(const rel of state.relations.values())if(rel.kind==='explains'&&rel.from_id===objectId)return false;
+    return true;
+  }
+
+  /* Artefacts orphelins de la scène, dans l'ordre de Core. */
+  function orphanArtifacts(state){
+    const out=[];
+    for(const item of state.objects.values())if(isOrphanArtifact(state,item.object_id))out.push(item.object_id);
+    return out;
+  }
+
+  /* Artefacts qu'un archivage de `ids` laisserait orphelins : reliés par
+     `explains`, mais seulement à des objets de `ids`. */
+  function artifactsLeftOrphan(state,ids){
+    const gone=new Set(ids),links=new Map();
     for(const rel of state.relations.values()){
-      if(rel.kind!=='explains'||rel.from_id!==objectId||rel.relation_id===rel.from_id)continue;
-      const target=state.objects.get(rel.to_id);
-      if(!target)continue;
-      const exec=EXEC_LABELS[target.exec_state]!==undefined?target.exec_state:'unknown';
-      const title=displayTitle(target,cleanLine(target.payload&&target.payload.title,160),errorLabels);
-      return {id:target.object_id,title:title||KIND_LABELS[target.kind]||target.kind,kind:target.kind,
-        kindLabel:KIND_LABELS[target.kind]||target.kind,execLabel:EXEC_LABELS[exec],tone:toneOf(target.category),
-        hidden:target.visibility!=='visible'};
+      if(rel.kind!=='explains')continue;
+      const source=state.objects.get(rel.from_id);
+      if(!source||source.kind!=='artifact'||gone.has(rel.from_id))continue;
+      const entry=links.get(rel.from_id)||{kept:false};
+      if(!gone.has(rel.to_id))entry.kept=true;
+      links.set(rel.from_id,entry);
     }
-    return null;
+    return [...links].filter(([,entry])=>!entry.kept).map(([id])=>id);
+  }
+
+  /* Fin d'hôte affichable en `maxChars` caractères : l'hôte entier s'il tient,
+     sinon `…` suivi des **derniers** labels (le domaine enregistrable, là où
+     une usurpation ne peut pas se cacher : `docs.python.org.evil.example`
+     devient `…org.evil.example`, jamais `docs.python.org…`). Au moins les
+     deux derniers labels ; s'ils ne tiennent pas, leur fin. Jamais coupé à
+     droite. */
+  function hostTail(host,maxChars){
+    const text=String(host||'');
+    const max=Math.max(8,Math.floor(Number(maxChars)||0));
+    if(text.length<=max)return text;
+    const labels=text.split('.');
+    let tail=labels.slice(-2).join('.');
+    for(let i=labels.length-3;i>=0;i--){
+      const next=`${labels[i]}.${tail}`;
+      if(next.length+1>max)break;
+      tail=next;
+    }
+    if(tail.length+1>max)tail=tail.slice(tail.length-(max-1));
+    return `…${tail}`;
   }
 
   /* Artefacts actifs qui expliquent `objectId` (lien `explains`, hors signal),
@@ -248,8 +311,10 @@
     return list.map(entry=>{
       const raw=entry&&typeof entry.url==='string'?entry.url:'';
       const link=linkOf(raw);
+      /* L'hôte n'est jamais coupé ici : entier dans le nom accessible et
+         l'infobulle, raccourci par la gauche seulement au dessin (`hostTail`). */
       return {label:cleanLine(entry&&entry.label,160),ref:cleanLine(entry&&entry.ref,256),
-        url:link?'':cleanLine(raw,256),href:link?link.href:'',host:link?cleanLine(link.host,120):''};
+        url:link?'':cleanLine(raw,256),href:link?link.href:'',host:link?cleanLine(link.host,MAX_LINK_CHARS):''};
     });
   }
 
@@ -515,6 +580,7 @@
     const errorLabels=options&&options.errorLabels||null;
     const animatable=options&&typeof options.animatable==='function'?options.animatable:()=>true;
     const nodes=[],centers=new Map();let offscreen=0,hidden=0;
+    const explains=explainsIndex(state);
     for(const item of state.objects.values()){
       if(item.visibility!=='visible'){hidden++;continue}
       const stored=layout.placements.get(item.object_id);
@@ -542,7 +608,7 @@
         summary:shape==='window'?cleanText(payload.summary,2000):'',
         items:shape==='window'?itemsOf(payload):[],
         itemCount:count,
-        explains:artifact?explainedTarget(state,item.object_id,errorLabels):null,
+        explains:artifact?explainedTarget(state,item.object_id,errorLabels,explains):null,
       };
       node.label=artifact
         ?[node.title,KIND_LABELS.artifact,node.category,count?`${count} ${count>1?'entrées':'entrée'}`:'',
@@ -590,6 +656,27 @@
     edges.sort((p,q)=>p.layer-q.layer);
     const objects=state.objects.size;
     return {nodes,edges,hidden,offscreen,coveredSignals,capacity:{objects,limit,saturated:objects>=limit}};
+  }
+
+  /* Place d'un objet que la page agrandit (menu « Afficher en fenêtre / en
+     capsule », Slice 07 reprise QA) : la recherche d'espace libre de
+     l'AutoResolver, ancrée près de ce que l'objet explique (ou de son parent,
+     de son étoile), dans la zone sûre, en évitant le visage. Tous les autres
+     objets gardent leur boîte dessinée (`layout`) comme obstacles. Rend une
+     boîte en unités ou `null`. Un glissement ou une géométrie du cerveau
+     restent autoritaires : cette aide ne sert qu'au changement de forme. */
+  function placeFor(state,layout,objectId,representation){
+    const current=state.objects.get(objectId);
+    if(!current)return null;
+    const objects=new Map();
+    for(const [id,item] of state.objects){
+      if(id===objectId){objects.set(id,Object.assign({},item,{representation,geometry:null,visibility:'visible'}));continue}
+      const box=layout&&layout.placements.get(id);
+      objects.set(id,box?Object.assign({},item,{geometry:{x:box.x,y:box.y,w:box.w,h:box.h}}):item);
+    }
+    const probe=resolveLayout(Object.assign({},state,{objects}));
+    const box=probe.placements.get(objectId);
+    return box?{x:box.x,y:box.y,w:box.w,h:box.h}:null;
   }
 
   /* Forme dessinée pour une boîte à l'écran : la représentation, ou plus
@@ -698,7 +785,8 @@
   }
 
   const api=Object.freeze({FRAME,SAFE_AREA,FACE_ZONE,OBJECT_LIMIT,DEFAULT_SIZE,WORK_BUDGET,COMMIT_MAX_ATTEMPTS,READABLE,MAX_ANIMATED,CAPSULE_MAX,drawnBox,
-    ARTIFACT_CATEGORIES,linkOf,explainedTarget,artifactsExplaining,itemsOf,
+    ARTIFACT_CATEGORIES,linkOf,explainedTarget,explainsIndex,artifactsExplaining,itemsOf,hostTail,isOrphanArtifact,orphanArtifacts,
+    artifactsLeftOrphan,placeFor,
     viewport,toScreen,cleanLine,cleanText,toneOf,isLiveSignal,signalUrgency,signalErrorClass,anchorsOf,depthOf,resolveLayout,
     stackOf,viewModel,compactShape,spatialOrder,nextFocus,commitKey,commitCommand,commitCandidates,nextRetryAt,classifyCommit,settleCommit});
   root.JarvisSceneLayout=api;

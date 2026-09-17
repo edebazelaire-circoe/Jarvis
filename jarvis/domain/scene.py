@@ -1162,6 +1162,11 @@ class SceneRefusal(StrEnum):
     #: forme que le runtime fabrique (`is_runtime_reserved_id`) : il
     #: empêcherait la projection de poser l'étoile, le lien ou le signal.
     RESERVED_ID = "reserved_id"
+    #: `brain`/`user` posent un `explains` dont `relation_id` vaut `from_id`
+    #: depuis un objet qui n'est pas `attention` : cette forme est celle d'un
+    #: lien de signal (`is_signal_relation`), réservée aux signaux (Slice 07,
+    #: reprise QA) ; sinon un artefact ainsi relié passerait pour un signal.
+    SIGNAL_SHAPE = "signal_shape"
     # invalid
     UNKNOWN_OBJECT = "unknown_object"
     OBJECT_ARCHIVED = "object_archived"
@@ -1499,9 +1504,11 @@ def bulk_archivable(snapshot: SceneSnapshot, object_id: str, selected: frozenset
 
     Vrai pour un nœud d'exécution (`agent`, `job`) dans un état terminal
     (`TERMINAL_EXEC_STATES`) ; pour un signal runtime dont l'étoile est dans
-    `selected` et archivable, ou qui n'a plus d'étoile active (orphelin).
-    Jamais un travail en cours, en attente, bloqué ou d'état inconnu, jamais un
-    objet du cerveau ou de l'utilisateur.
+    `selected` et archivable, ou qui n'a plus d'étoile active (orphelin) ; pour
+    un **artefact orphelin** (Slice 07, reprise QA : `is_orphan_artifact`, sans
+    lien `explains` vers un objet actif). Jamais un travail en cours, en
+    attente, bloqué ou d'état inconnu, jamais un artefact encore relié, jamais
+    une autre création du cerveau ou de l'utilisateur.
     """
 
     item = snapshot.get_object(object_id)
@@ -1509,6 +1516,8 @@ def bulk_archivable(snapshot: SceneSnapshot, object_id: str, selected: frozenset
         return False
     if item.kind in EXECUTION_KINDS:
         return item.exec_state in TERMINAL_EXEC_STATES
+    if item.kind is SceneObjectKind.ARTIFACT:
+        return is_orphan_artifact(snapshot, object_id)
     owners = signal_owners(snapshot) if owners is None else owners
     if object_id not in owners:
         return False
@@ -1517,6 +1526,24 @@ def bulk_archivable(snapshot: SceneSnapshot, object_id: str, selected: frozenset
         return True
     owner = snapshot.get_object(owner_id)
     return owner_id in selected and owner is not None and owner.exec_state in TERMINAL_EXEC_STATES
+
+
+def is_orphan_artifact(snapshot: SceneSnapshot, object_id: str) -> bool:
+    """Artefact actif qui n'explique plus rien : aucun lien `explains` vers un objet actif.
+
+    C'est l'état d'un artefact dont l'utilisateur a archivé l'étoile (l'archivage
+    emporte les liens, jamais l'artefact), ou d'un artefact jamais relié.
+    L'archivage groupé peut le prendre (Slice 07, reprise QA) ; un artefact
+    encore relié ne l'est jamais.
+    """
+
+    item = snapshot.get_object(object_id)
+    if item is None or item.kind is not SceneObjectKind.ARTIFACT:
+        return False
+    return not any(
+        relation.kind is RelationKind.EXPLAINS and relation.from_id == object_id
+        for relation in snapshot.relations
+    )
 
 
 def _archive_ops(snapshot: SceneSnapshot, object_ids: list[str]) -> list[ScenePatchOp]:
@@ -1631,6 +1658,8 @@ def _plan_link(snapshot: SceneSnapshot, command: SceneCommand) -> list[ScenePatc
             raise _rejected(SceneRefusal.RESERVED_ID)
         if relation.kind is RelationKind.PARENT_OF and source.kind in EXECUTION_KINDS and target.kind in EXECUTION_KINDS:
             raise _rejected(SceneRefusal.RUNTIME_OWNED)
+        if is_signal_relation(relation) and source.kind is not SceneObjectKind.ATTENTION:
+            raise _rejected(SceneRefusal.SIGNAL_SHAPE)
     return _plan_relation_put(snapshot, relation, layer_announced=not runtime)
 
 

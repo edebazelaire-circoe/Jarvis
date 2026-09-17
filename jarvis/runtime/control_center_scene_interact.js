@@ -219,7 +219,7 @@
   /* Entrées du menu d'un objet (`state` : état dessiné, affichage optimiste
      compris). Rend `{title, items}` ; `items` : `'-'` ou
      `{act, label, danger?, disabled?, note?}`. Actions : `rep:<forme>`, `pin`,
-     `unpin`, `hide`, `stop`, `archive`, `archive-finished`. */
+     `unpin`, `hide`, `stop`, `archive`, `archive-finished`, `archive-orphans`. */
   function menuModel(state,objectId,ctx){
     const item=state.objects.get(objectId);
     if(!item)return null;
@@ -246,6 +246,10 @@
     const finished=Number(context.finished)||0;
     if((execution||runtimeSignal)&&finished>0)
       items.push({act:'archive-finished',label:`Archiver les travaux terminés (${finished} ${finished>1?'objets':'objet'})…`,danger:true});
+    /* Slice 07 (reprise QA) : artefacts qui n'expliquent plus rien, depuis le menu d'un artefact ou d'une étoile. */
+    const orphans=Number(context.orphans)||0;
+    if((item.kind==='artifact'||execution)&&orphans>0)
+      items.push({act:'archive-orphans',label:`Archiver les artefacts orphelins (${orphans})…`,danger:true});
     return {title,items};
   }
 

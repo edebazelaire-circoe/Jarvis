@@ -98,7 +98,8 @@ def lifecycle_scene() -> SceneSnapshot:
     - `claude:running`, `claude:pending`, `claude:blocked` (signal vivant), `claude:unknown` ;
     - `claude:gone` échoué puis archivé : la cascade a emporté `attention!claude:gone` ;
     - `note` : attention du cerveau reliée par `explains` à `claude:failed` ;
-    - `mine` : attention de l'utilisateur ; `art` : artefact du cerveau ;
+    - `mine` : attention de l'utilisateur ; `art` : artefact du cerveau, relié par
+      `explains` à `claude:running` (Slice 07 : un artefact relié n'est jamais pris) ;
     - `rel-parent` : `parent_of` runtime `claude:done` → `claude:failed`.
     """
 
@@ -124,6 +125,7 @@ def lifecycle_scene() -> SceneSnapshot:
         cmd(SceneOp.LINK, BRAIN, relation=SceneRelation("note-explains", RelationKind.EXPLAINS, "note", "claude:failed")),
         upsert(USER, "mine", kind=SceneObjectKind.ATTENTION, category="note"),
         upsert(BRAIN, "art", kind=SceneObjectKind.ARTIFACT, category="research"),
+        cmd(SceneOp.LINK, BRAIN, relation=SceneRelation("art-explains", RelationKind.EXPLAINS, "art", "claude:running")),
         cmd(SceneOp.LINK, RUNTIME, relation=SceneRelation("rel-parent", RelationKind.PARENT_OF, "claude:done", "claude:failed")),
     )
 
@@ -247,7 +249,8 @@ def test_bulk_archive_takes_every_terminal_star_with_its_signals_in_one_revision
     ]
     remaining = ids(update.snapshot)
     assert remaining == {"claude:running", "claude:pending", "claude:blocked", "attention!claude:blocked", "claude:unknown", "note", "mine", "art"}
-    assert update.snapshot.relations == (update.snapshot.get_relation("attention!claude:blocked"),)
+    assert set(update.snapshot.relations) == {update.snapshot.get_relation("attention!claude:blocked"),
+                                              update.snapshot.get_relation("art-explains")}
     assert all(owner is not None for owner in signal_owners(update.snapshot).values())
     assert apply_scene_patch(before, ScenePatch.from_payload(json.loads(json.dumps(update.patch.to_payload())))) == update.snapshot
 
@@ -269,7 +272,7 @@ def test_signals_listed_with_their_star_are_accepted_and_archived_once():
         ("claude:unknown",),  # état inconnu : pas terminé
         ("attention!claude:blocked",),  # signal d'un travail bloqué
         ("attention!claude:failed",),  # signal sans son étoile dans la sélection
-        ("claude:done", "art"),  # artefact du cerveau
+        ("claude:done", "art"),  # artefact du cerveau encore relié (Slice 07)
         ("claude:done", "note"),  # attention du cerveau
         ("mine",),  # attention de l'utilisateur
     ],
@@ -401,7 +404,10 @@ async def test_bulk_archive_from_a_saturated_scene_lets_deferred_stars_catch_up(
         for index in range(3):
             await stack.observe(obs(f"late{index}"), obs(f"late{index}", WorkStatus.COMPLETED, at=1))
         assert stack.projector.pending_count >= 3
-        selection = [item.object_id for item in full.objects if bulk_archivable(full, item.object_id)]
+        # Slice 07 : les 508 artefacts de remplissage, jamais reliés, sont des orphelins archivables à part.
+        assert all(bulk_archivable(full, item.object_id) for item in full.objects if item.kind is SceneObjectKind.ARTIFACT)
+        selection = [item.object_id for item in full.objects
+                     if item.kind is not SceneObjectKind.ARTIFACT and bulk_archivable(full, item.object_id)]
         assert sorted(selection) == ["claude:done0", "claude:done1"]
         update = await stack.scene.apply(many(*selection))
         assert update.changed and update.snapshot.revision == full.revision + 1

@@ -692,7 +692,11 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
 .sc-items .sc-item-link:hover{text-decoration:underline;text-decoration-color:color-mix(in srgb,var(--tone) 70%,transparent);text-underline-offset:3px}
 .sc-items .sc-item-link:focus-visible{outline:1px solid var(--sc-ink);outline-offset:1px}
 .sc-items .sc-item-out{flex:none;width:9px;height:9px;margin-left:-6px;color:var(--sc-muted);fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round}
-.sc-items .sc-item-host{color:color-mix(in srgb,var(--tone) 50%,var(--sc-muted))}
+/* Hôte d'un lien (reprise QA M1) : d'abord, jamais rétréci ni coupé à droite ;
+   raccourci par la gauche en JS (hostTail) quand la place manque. Le libellé
+   et la référence, écrits par le cerveau, cèdent la place. */
+.sc-items .sc-item-host{flex:none;max-width:72%;overflow:hidden;white-space:nowrap;color:color-mix(in srgb,var(--tone) 55%,var(--sc-ink))}
+.sc-items .sc-item-link-ref{flex:0 1 auto;min-width:0;max-width:40%}
 .sc-ccat{flex:none;max-width:38%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9px;letter-spacing:.1em;text-transform:uppercase;
   color:color-mix(in srgb,var(--tone) 72%,var(--sc-ink))}
 .sc-link-artifact{stroke:color-mix(in srgb,var(--tone) 50%,transparent);stroke-dasharray:5 3}
@@ -1021,7 +1025,10 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       if(node.explains)parts.push(originButton(node.explains));
       if(node.summary)parts.push(element('div','sc-summary',node.summary));
       if(node.items.length){
-        const list=element('ul','sc-items');
+        /* Un conteneur qui défile deviendrait un arrêt de tabulation sans nom
+           (Chrome) : hors tabulation, défilement par PageHaut/PageBas depuis la
+           fenêtre, ou par le focus des liens. */
+        const list=element('ul','sc-items');list.tabIndex=-1;
         for(const item of node.items)list.append(itemRow(item));
         parts.push(list);
       }
@@ -1053,11 +1060,15 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     const row=element('li');
     const href=typeof item.href==='string'&&/^https?:\/\//.test(item.href)?item.href:'';
     if(href){
+      /* L'hôte d'abord : aucune longueur de libellé ou de référence ne le pousse hors de vue. */
+      const host=element('span','sc-item-host',item.host);
+      host.dataset.host=item.host;host.title=item.host;host.setAttribute('aria-hidden','true');
       const link=element('a','sc-item-label sc-item-link',item.label||item.host);
       link.href=href;link.target='_blank';link.rel='noopener noreferrer';link.referrerPolicy='no-referrer';link.tabIndex=-1;
+      link.title=item.host;
       link.setAttribute('aria-label',`${item.label||item.host} — ${item.host}, s’ouvre dans un nouvel onglet`);
-      row.append(link,svgIcon(OUT_PATH,'sc-item-out'));
-      row.append(element('span','sc-item-ref sc-item-host',item.ref?`${item.ref} · ${item.host}`:item.host));
+      row.append(host,link,svgIcon(OUT_PATH,'sc-item-out'));
+      if(item.ref)row.append(element('span','sc-item-ref sc-item-link-ref',item.ref));
     }else{
       row.append(element('span','sc-item-label',item.label));
       if(item.ref||item.url)row.append(element('span','sc-item-ref',item.ref||item.url));
@@ -1137,10 +1148,31 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
 
   /* Liste d'éléments entière : pas de fondu. */
   function markItemsThatFit(){
+    fitHosts();
     for(const summary of root.querySelectorAll('.sc-summary'))summary.classList.toggle('sc-fits',summary.scrollHeight<=summary.clientHeight+1);
     for(const list of root.querySelectorAll('.sc-items')){
       list.classList.toggle('sc-fits',list.scrollHeight<=list.clientHeight+1);
       markItemsEnd(list);
+    }
+  }
+
+  /* Hôtes des liens : entiers s'ils tiennent, sinon raccourcis par la gauche
+     jusqu'à tenir (la fin, domaine enregistrable compris, reste visible).
+     Recalculé seulement quand la largeur de la ligne change. */
+  const measureCanvas=typeof document!=='undefined'?document.createElement('canvas'):null;
+  function fitHosts(){
+    for(const el of root.querySelectorAll('.sc-item-host[data-host]')){
+      const row=el.parentElement;
+      const width=row?row.clientWidth:0;
+      if(!width||el.dataset.fitWidth===String(width))continue;
+      el.dataset.fitWidth=String(width);
+      const full=el.dataset.host;
+      const context=measureCanvas&&measureCanvas.getContext('2d');
+      let charW=6.6;
+      if(context){context.font=getComputedStyle(el).font;charW=Math.max(1,context.measureText('0000000000').width/10)}
+      let max=Math.floor(width*0.72/charW);
+      el.textContent=L.hostTail(full,max);
+      for(let guard=0;guard<64&&el.scrollWidth>el.clientWidth+1&&max>8;guard++){max--;el.textContent=L.hostTail(full,max)}
     }
   }
 
@@ -1180,6 +1212,15 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       if(keyEdit){cancelKeyEdit();return}
       if(event.target!==el){el.focus({preventScroll:true});return}
       el.blur();return;
+    }
+    if((event.key==='PageDown'||event.key==='PageUp')&&!event.altKey&&!event.ctrlKey&&!event.metaKey){
+      const list=el.querySelector('.sc-items');
+      if(list&&list.scrollHeight>list.clientHeight+1){
+        event.preventDefault();
+        list.scrollTop+=(event.key==='PageDown'?1:-1)*Math.max(20,Math.round(list.clientHeight*0.85));
+        markItemsEnd(list);
+      }
+      return;
     }
     const intent=I?I.keyIntent(event):(['ArrowRight','ArrowLeft','ArrowUp','ArrowDown','Home','End'].includes(event.key)?{type:'nav'}:null);
     if(!intent)return;
@@ -1484,6 +1525,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   function onContextMenu(event){
     const el=nodeElement(event.target);
     if(!el)return;
+    /* Lien d'entrée : menu natif du navigateur (copier l'adresse…). */
+    if(event.target.closest('.sc-item-link'))return;
     event.preventDefault();
     if(performance.now()-kbdMenuAt<700)return;  // déjà ouvert par la touche Menu / Maj+F10
     if(gesture)cancelGesture();
@@ -1561,7 +1604,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(typeof showMenu!=='function'){consoleLog('warn','scene.menu_unavailable',{});return}
     const state=viewState();
     if(!state||!state.objects.has(id))return;
-    const model=I.menuModel(state,id,{title:titleOf(id),finished:lastState?I.bulkSelection(lastState).objects:0});
+    const model=I.menuModel(state,id,{title:titleOf(id),finished:lastState?I.bulkSelection(lastState).objects:0,
+      orphans:lastState?L.orphanArtifacts(lastState).length:0});
     if(!model)return;
     actionStats.menus++;
     showMenu({title:model.title,items:model.items,pos,origin,run:act=>{
@@ -1580,13 +1624,18 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(act==='stop')return stopJob(id);
     if(act==='archive')return archiveObject(id);
     if(act==='archive-finished')return archiveFinished();
+    if(act==='archive-orphans')return archiveOrphanArtifacts();
   }
 
   async function changeRepresentation(id,representation){
     const state=viewState(),item=state&&state.objects.get(id),box=drawnBox(id);
     if(!item||!box)return;
     actionStats.representations++;
-    const next=I.representationBox(box,representation,item.kind);
+    /* Agrandir (capsule, fenêtre) : place libre près de ce que l'objet explique,
+       hors du visage, dans la zone sûre ; réduire en point garde le centre. */
+    const placed=representation==='point'?null:L.placeFor(state,currentLayout(),id,representation);
+    const next=placed?I.clampBox(placed,representation):I.representationBox(box,representation,item.kind);
+    consoleLog('info','scene.user_representation_box',{object_id:id,representation,placed:!!placed});
     await optimistic('Changement de forme',id,{representation,geometry:next},I.commands.setRepresentation(id,representation,next));
   }
 
@@ -1700,6 +1749,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(selection.stars)lines.push([`${selection.stars} ${selection.stars>1?'étoiles':'étoile'}`,` quittent la scène : ${parts.join(', ')}.`]);
     if(selection.cascaded)lines.push([`${selection.cascaded} ${selection.cascaded>1?'signaux':'signal'}`,` d’attention ${selection.cascaded>1?'partent':'part'} avec elles.`]);
     if(selection.orphans)lines.push([`${selection.orphans} ${selection.orphans>1?'signaux orphelins':'signal orphelin'}`,' (étoile déjà archivée) aussi.']);
+    const leftOrphan=L.artifactsLeftOrphan(lastState,selection.ids).length;
+    if(leftOrphan)lines.push([`${leftOrphan} ${leftOrphan>1?'artefacts':'artefact'}`,` qui les ${leftOrphan>1?'expliquent restent':'explique reste'}, sans lien : « Archiver les artefacts orphelins » les range ensuite.`]);
     lines.push('Le travail en cours, en attente ou bloqué reste, comme les artefacts, notes et fenêtres du brain.');
     if(retry)lines.unshift('La scène a changé pendant la confirmation : comptes mis à jour.');
     if(typeof confirmDialog!=='function'){consoleLog('warn','scene.confirm_unavailable',{});return}
@@ -1710,26 +1761,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     let archived=0,refusal=null;
     try{
       actionStats.bulkArchives++;
-      const owners=I.signalOwners(lastState);
-      const everything=[...selection.ids];
-      for(const [signal,owner] of owners)if(owner&&everything.includes(owner))everything.push(signal);
-      planFocusAfterRemoval(everything,`Archivage de ${noun}.`);
-      for(const chunk of I.chunkIds(selection.ids)){
-        const chosen=new Set(chunk);
-        const targets=[...chunk];
-        for(const [signal,owner] of owners)if(owner&&chosen.has(owner))targets.push(signal);
-        const tokens=targets.map(target=>[target,pending.begin(target,{archived:true},Date.now())]);
-        pendingChanged();
-        const result=await sendCommand(I.commands.archiveMany(chunk));
-        if(!result.ok){
-          for(const [target,token] of tokens)if(pending.rollback(target,token))actionStats.rolledBack++;
-          pendingChanged();
-          refusal=result;break;
-        }
-        for(const [target,token] of tokens)pending.confirm(target,token,result.revision);
-        archived+=targets.length;
-      }
-      prunePending();
+      ({archived,refusal}=await sendArchiveMany(selection.ids,noun));
     }finally{inflight.delete('bulk')}
     consoleLog(refusal?'warn':'info','scene.user_bulk_archived',{selected:selection.objects,archived,ms:Date.now()-started,
       refused:refusal?refusal.reason||refusal.code:null});
@@ -1741,6 +1773,70 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       refusal.unknown?{}:{...again,sub:`${refusal.message} Cliquer ici pour réessayer.`});
     announce(`${archived} ${archived>1?'objets archivés':'objet archivé'}.`);
     notify({title:`${archived} ${archived>1?'objets archivés':'objet archivé'}`,sub:'Place libérée pour le travail en attente.',kind:'ok',ms:3500});
+  }
+
+  /* Envoi d'une sélection confirmée en commandes `archive_many` (bornes du
+     transport), avec l'affichage optimiste de chaque objet et de ses signaux
+     runtime ; s'arrête au premier refus. Rend `{archived, refusal}`. */
+  async function sendArchiveMany(ids,noun){
+    let archived=0,refusal=null;
+    const owners=I.signalOwners(lastState);
+    const everything=[...ids];
+    for(const [signal,owner] of owners)if(owner&&everything.includes(owner))everything.push(signal);
+    planFocusAfterRemoval(everything,`Archivage de ${noun}.`);
+    for(const chunk of I.chunkIds(ids)){
+      const chosen=new Set(chunk);
+      const targets=[...chunk];
+      for(const [signal,owner] of owners)if(owner&&chosen.has(owner))targets.push(signal);
+      const tokens=targets.map(target=>[target,pending.begin(target,{archived:true},Date.now())]);
+      pendingChanged();
+      const result=await sendCommand(I.commands.archiveMany(chunk));
+      if(!result.ok){
+        for(const [target,token] of tokens)if(pending.rollback(target,token))actionStats.rolledBack++;
+        pendingChanged();
+        refusal=result;break;
+      }
+      for(const [target,token] of tokens)pending.confirm(target,token,result.revision);
+      archived+=targets.length;
+    }
+    prunePending();
+    return {archived,refusal};
+  }
+
+  /* « Archiver les artefacts orphelins » (Slice 07, reprise QA) : artefacts
+     qui n'expliquent plus aucun objet actif (leur étoile a été archivée).
+     Sélection sur l'état tenu, confirmée avec le compte et quelques titres,
+     revalidée par Core (`archive_many`, tout ou rien) ; recalculée une fois si
+     la scène a changé. Un artefact encore relié n'est jamais pris. */
+  async function archiveOrphanArtifacts(retry=false){
+    if(inflight.has('bulk')||!lastState)return;
+    const ids=L.orphanArtifacts(lastState);
+    if(!ids.length){notify({title:'Rien à archiver',sub:'Aucun artefact orphelin dans la scène.',kind:'info',ms:3000});return}
+    const count=ids.length,noun=`${count} ${count>1?'artefacts':'artefact'}`;
+    const lines=[[noun,` ${count>1?'n’expliquent':'n’explique'} plus aucun objet de la scène (étoile déjà archivée, ou jamais relié).`]];
+    for(const id of ids.slice(0,3)){
+      const payload=(lastState.objects.get(id)||{}).payload||{};
+      lines.push(`« ${L.cleanLine(payload.title,60)||id} »`);
+    }
+    if(count>3)lines.push(`… et ${count-3} ${count-3>1?'autres':'autre'}.`);
+    lines.push('Les artefacts encore reliés à une étoile restent.');
+    if(retry)lines.unshift('La scène a changé pendant la confirmation : liste mise à jour.');
+    if(typeof confirmDialog!=='function'){consoleLog('warn','scene.confirm_unavailable',{});return}
+    if(!await confirmDialog({title:'Archiver les artefacts orphelins ?',lines,confirmLabel:`Archiver ${noun}`,danger:true}))return;
+    inflight.add('bulk');
+    const started=Date.now();
+    let archived=0,refusal=null;
+    try{
+      actionStats.bulkArchives++;
+      ({archived,refusal}=await sendArchiveMany(ids,noun));
+    }finally{inflight.delete('bulk')}
+    consoleLog(refusal?'warn':'info','scene.user_orphans_archived',{selected:count,archived,ms:Date.now()-started,
+      refused:refusal?refusal.reason||refusal.code:null});
+    if(refusal&&refusal.reason==='not_bulk_archivable'&&!retry)return archiveOrphanArtifacts(true);
+    if(refusal)return reportRefusal('Archivage des artefacts orphelins',null,refusal,
+      {onClick:()=>archiveOrphanArtifacts().catch(error=>actionFailed('Archivage des artefacts orphelins',null,error)),ms:8000});
+    announce(`${archived} ${archived>1?'artefacts archivés':'artefact archivé'}.`);
+    notify({title:`${archived} ${archived>1?'artefacts orphelins archivés':'artefact orphelin archivé'}`,kind:'ok',ms:3500});
   }
 
   /* Arrêt d'une étoile `job` : `POST /api/jobs/cancel`. Jamais proposé pour un

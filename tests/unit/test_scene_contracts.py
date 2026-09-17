@@ -678,7 +678,14 @@ def test_runtime_retires_only_a_signal_link_between_its_attention_and_its_star()
         "groups": SceneRelation("sig-1", RelationKind.GROUPS, "sig-1", "star-a"),
     }
     for name, relation in cases.items():
-        before = run(retired, cmd(SceneOp.LINK, USER, relation=relation))
+        if name == "artifact source":
+            # Slice 07 (reprise QA) : cette forme est refusée à la pose (`signal_shape`) ; scène héritée.
+            refused = apply_scene_command(retired, cmd(SceneOp.LINK, USER, relation=relation))
+            assert (refused.outcome, refused.reason) == (REJECTED, SceneRefusal.SIGNAL_SHAPE)
+            before = SceneSnapshot(scene_id=retired.scene_id, revision=retired.revision, objects=retired.objects,
+                                   relations=(*retired.relations, relation), archived_ids=retired.archived_ids)
+        else:
+            before = run(retired, cmd(SceneOp.LINK, USER, relation=relation))
         update = apply_scene_command(before, cmd(SceneOp.UNLINK, RUNTIME, relation_id=relation.relation_id))
         assert (update.outcome, update.reason) == (REJECTED, SceneRefusal.RUNTIME_RELATION), name
         assert_unchanged(before, update)
@@ -866,9 +873,9 @@ def test_brain_and_user_cannot_unlink_runtime_topology_or_signals(actor):
     other = run(
         before,
         cmd(SceneOp.LINK, BRAIN, relation=SceneRelation("art-parent", RelationKind.PARENT_OF, "art-1", "star-a")),
-        cmd(SceneOp.LINK, BRAIN, relation=SceneRelation("art-1", RelationKind.EXPLAINS, "art-1", "star-a")),
+        cmd(SceneOp.LINK, BRAIN, relation=SceneRelation("art-explains", RelationKind.EXPLAINS, "art-1", "star-a")),
     )
-    for relation_id in ("art-parent", "art-1"):
+    for relation_id in ("art-parent", "art-explains"):
         assert apply_scene_command(other, cmd(SceneOp.UNLINK, actor, relation_id=relation_id)).outcome is APPLIED
     # Le runtime garde son retrait ; l'utilisateur écarte par l'archivage, qui emporte les liens.
     assert apply_scene_command(before, cmd(SceneOp.UNLINK, RUNTIME, relation_id="sig-1")).outcome is APPLIED
