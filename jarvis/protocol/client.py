@@ -516,6 +516,32 @@ class LocalCoreClient:
         async with session.post(self.base_url + "/v1/scene/commands", headers=self.headers, json=command, **options) as response:
             return await self._bounded_json(response)
 
+    async def scene_capture(self, *, connect_timeout_s: float, read_timeout_s: float) -> dict[str, Any]:
+        """`POST /v1/scene/captures` (Slice 09, partie 2) : demande du cerveau, rendue quand la page a envoyé le PNG.
+
+        Refus en `CoreProtocolError` : 409 `capture_busy`, 504 `no_visible_page`,
+        503 `capture_unavailable` / `scene_unavailable` / `capture_cancelled`.
+        """
+
+        session = await self._http()
+        timeout = aiohttp.ClientTimeout(total=None, connect=connect_timeout_s, sock_read=read_timeout_s)
+        body = {"schema_version": 1, "actor": "brain"}
+        async with session.post(self.base_url + "/v1/scene/captures", headers=self.headers, json=body, timeout=timeout) as response:
+            return await self._bounded_json(response, 16_384)
+
+    async def scene_capture_upload(
+        self, capture_id: str, png: bytes, *, connect_timeout_s: float, read_timeout_s: float,
+    ) -> dict[str, Any]:
+        """`PUT /v1/scene/captures/<id>` : le PNG rendu par la page meneuse, relayé par le Control Center."""
+
+        session = await self._http()
+        timeout = aiohttp.ClientTimeout(total=None, connect=connect_timeout_s, sock_read=read_timeout_s)
+        headers = {**self.headers, "Content-Type": "image/png"}
+        # Flux plutôt qu'octets bruts : aiohttp avertit (et peut bloquer la boucle) au-delà de 1 MiB.
+        async with session.put(self.base_url + f"/v1/scene/captures/{capture_id}", headers=headers, data=io.BytesIO(png),
+                               timeout=timeout) as response:
+            return await self._bounded_json(response, 16_384)
+
     async def cancel_work(
         self, *, source: str, external_id: str, connect_timeout_s: float | None = None, read_timeout_s: float | None = None,
     ) -> dict[str, Any]:

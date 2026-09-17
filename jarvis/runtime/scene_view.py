@@ -42,6 +42,7 @@ from typing import Any, Awaitable, Callable, Literal, Protocol
 import aiohttp
 
 from jarvis.domain.scene import MAX_SCENE_OBJECTS, SceneActor, SceneCommand, SceneCommandOutcome, SceneOp, ScenePatch, SceneSnapshot
+from jarvis.domain.scene_capture import check_capture_id
 from jarvis.protocol import scene_wire
 from jarvis.protocol.client import CoreProtocolError, LocalCoreClient
 from jarvis.runtime.agent_tasks import truncate
@@ -204,6 +205,17 @@ class CoreSceneTransport(CoreWorkTransport):
             lambda client: client.scene_command(command, connect_timeout_s=connect_timeout_s, read_timeout_s=read_timeout_s),
         )
 
+    async def scene_capture(self, *, connect_timeout_s: float, read_timeout_s: float) -> dict[str, Any]:
+        return await _with_fresh_token(
+            self, lambda client: client.scene_capture(connect_timeout_s=connect_timeout_s, read_timeout_s=read_timeout_s),
+        )
+
+    async def scene_capture_upload(self, capture_id: str, png: bytes, *, connect_timeout_s: float, read_timeout_s: float) -> dict[str, Any]:
+        return await _with_fresh_token(
+            self,
+            lambda client: client.scene_capture_upload(capture_id, png, connect_timeout_s=connect_timeout_s, read_timeout_s=read_timeout_s),
+        )
+
     async def work_cancel(self, *, source: str, external_id: str, connect_timeout_s: float, read_timeout_s: float) -> dict[str, Any]:
         return await _with_fresh_token(
             self,
@@ -291,7 +303,7 @@ def decode_patches_response(raw: Any, *, after: int) -> dict[str, Any]:
         raise ValueError("scene patches do not end at the announced revision")
     if not patches and not resync and revision != after:
         raise ValueError("an empty scene patch response must stay at the requested revision")
-    return {
+    decoded = {
         "scene_id": scene_id,
         "epoch": epoch,
         "revision": revision,
@@ -299,6 +311,16 @@ def decode_patches_response(raw: Any, *, after: int) -> dict[str, Any]:
         "resync_required": resync,
         "more": more,
     }
+    capture = raw.get("capture_request")
+    if capture is not None:
+        # Slice 09 (partie 2) : relayée telle quelle à la page ; seule la meneuse visible y répond.
+        if not isinstance(capture, dict) or set(capture) != {"id", "remaining_ms"}:
+            raise ValueError("scene capture request is malformed")
+        remaining = capture["remaining_ms"]
+        if isinstance(remaining, bool) or not isinstance(remaining, int) or not 0 <= remaining <= 60_000:
+            raise ValueError("scene capture request remaining_ms is out of range")
+        decoded["capture_request"] = {"id": check_capture_id(capture["id"]), "remaining_ms": remaining}
+    return decoded
 
 
 def decode_command_response(raw: Any) -> dict[str, Any]:
@@ -585,6 +607,46 @@ class CoreSceneView:
             # long-poll. Validé plus haut, puis omis ici (`patch_omitted`).
             body = {**body, "patch": None, "patch_omitted": True}
         return 200, {"source": SCENE_VIEW_SOURCE, "core_reachable": True, **body, "error": None}
+
+    async def upload_capture(self, capture_id: str, png: bytes, *, width: int, height: int) -> tuple[int, dict[str, Any]]:
+        """Relayer le PNG d'une capture vers Core (Slice 09, partie 2) ; rend `(statut HTTP, corps)`.
+
+        200 : rangé. 400/404/410/413 de Core relayés avec leur code (PNG refusé,
+        identifiant inconnu ou déjà utilisé, capture échue). Échec d'appel :
+        classement commun (`core_unreachable`, `command_not_sent`, `core_timeout`).
+        Journal : identifiant court, taille, dimensions, durée ; jamais l'image.
+        """
+
+        started = time.monotonic()
+        short = capture_id[:8]
+        try:
+            raw = await asyncio.wait_for(
+                self.transport.scene_capture_upload(
+                    capture_id, png, connect_timeout_s=self.command_connect_timeout_s, read_timeout_s=self.command_timeout_s,
+                ),
+                timeout=self.command_connect_timeout_s + self.command_timeout_s + 1.0,
+            )
+            if not isinstance(raw, dict) or raw.get("capture_id") != capture_id:
+                raise ValueError("scene capture upload response names another capture")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - refus de Core relayés, le reste classé par `classify_scene_call_failure`
+            if isinstance(exc, CoreProtocolError) and exc.status in (400, 404, 410, 413) and not exc.code.startswith("http_"):
+                status, code, message, reachable = exc.status, exc.code, core_error_text(exc), True
+            else:
+                failure = classify_scene_call_failure(exc, connect_timeout_s=self.command_connect_timeout_s,
+                                                      read_timeout_s=self.command_timeout_s)
+                status, code, message, reachable = failure.status, failure.code, failure.message, failure.core_reachable
+            self._emit("scene.capture_upload_failed", f"capture non transmise à Core : {code}", level="warning",
+                       data={"capture": short, "status": status, "code": code, "bytes": len(png),
+                             "error": truncate(message, 300)})
+            return status, {"source": SCENE_VIEW_SOURCE, "core_reachable": reachable,
+                            "error": {"code": code, "message": page_text(message) or code}}
+        duration_ms = round((time.monotonic() - started) * 1000)
+        self._emit("scene.capture_uploaded", "capture de scène transmise à Core", data={
+            "capture": short, "bytes": len(png), "width": width, "height": height, "relay_ms": duration_ms})
+        return 200, {"source": SCENE_VIEW_SOURCE, "core_reachable": True, "capture_id": capture_id, "bytes": raw.get("bytes"),
+                     "width": raw.get("width"), "height": raw.get("height"), "error": None}
 
     async def cancel_work(self, source: str, external_id: str) -> tuple[int, dict[str, Any]]:
         """Relayer l'arrêt d'une étoile `job` ; rend `(statut HTTP, corps)` (Slice 08).

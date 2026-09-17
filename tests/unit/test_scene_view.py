@@ -395,7 +395,9 @@ async def test_scene_routes_are_read_only_except_commands(tmp_path):
     for route in control._app.router.routes():
         if route.resource.canonical.startswith("/api/scene"):
             methods.setdefault(route.resource.canonical, set()).add(route.method)
-    assert methods == {"/api/scene": {"GET", "HEAD"}, "/api/scene/patches": {"GET", "HEAD"}, "/api/scene/commands": {"POST"}}
+    # Slice 09, partie 2 : la page meneuse envoie une capture demandée par le cerveau ; aucune route n'en demande.
+    assert methods == {"/api/scene": {"GET", "HEAD"}, "/api/scene/patches": {"GET", "HEAD"}, "/api/scene/commands": {"POST"},
+                       "/api/scene/captures/{capture_id}": {"POST"}}
     async with TestClient(TestServer(control._app)) as client:
         assert (await client.post("/api/scene", json={})).status == 405
         assert (await client.get("/api/scene?x=1")).status == 400

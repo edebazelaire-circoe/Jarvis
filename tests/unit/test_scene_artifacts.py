@@ -553,10 +553,13 @@ def test_orphan_artifacts_are_bulk_archivable_by_the_user_only_and_linked_ones_n
 # ------------------------------------------------------------------ consigne
 
 
-#: Empreintes du prompt système du cerveau et de la consigne d'affichage avant
-#: Slice 07 (`f82ea3d`) : sans interrupteur, le prompt reste octet pour octet.
+#: Empreintes du prompt système du cerveau (inchangé depuis `f82ea3d` : sans
+#: interrupteur, le prompt reste octet pour octet) et de la consigne d'affichage.
+#: Slice 09, partie 2 (décision PM, mise à jour délibérée, interrupteur allumé
+#: seulement) : la ligne « Pas de capture d'écran » devient la ligne
+#: `scene_capture`, et la ligne des données ajoute « un texte suspect a été ignoré ».
 BASE_SYSTEM_SHA256 = "314ec610828ecddc595f67e2d49fb5cd1bab37390d1f75e745ff99dd035e5507"
-BASE_DISPLAY_SHA256 = "14f9dd0479c0cf4138fe8f4b823a6ca913e04da8f69c99959695ea9a9ecc6034"
+BASE_DISPLAY_SHA256 = "72813d67d68d7fb78a6ce25c298b94b1f1a2c8d91b32493675510ba8e9fe9a06"
 
 
 def test_the_artifact_guidance_exists_only_with_the_flag_and_the_other_prompts_are_byte_identical():

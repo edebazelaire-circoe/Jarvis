@@ -384,6 +384,8 @@ async def _run_core_v2() -> int:
         OpenAILiveSidebandCloser, aiohttp_live_sideband_connector,
     )
     from jarvis.adapters.windows_notifications import NullNotificationDelivery, WindowsNotificationDelivery
+    # Slice 09 (partie 2) : captures visuelles de la scène sous runtime/scene-captures/.
+    from jarvis.adapters.file_scene_captures import SCENE_CAPTURE_DIR, FileSceneCaptureStore
     from jarvis.core.memory_maintenance import MemoryMaintenanceWorker
     from jarvis.runtime.agent_settings import resolve_agent_execution
     from jarvis.runtime.back_brain_worker import BackBrainJobWorker
@@ -415,7 +417,7 @@ async def _run_core_v2() -> int:
             "JARVIS_SCENE_RESTART_GRACE_S refusée : grâce par défaut",
             level="warning", data={"error": scene_grace_error, "grace_s": scene_grace_s},
         )
-    core = JarvisCoreApplication(data_root=settings.data_root, timezone=settings.timezone, calendar_backend=_calendar_backend_from_env(), drive_backend=_drive_backend_from_env(), brain_backend=brain_backend, notification_delivery=delivery, workers=workers, diagnostics=RuntimeJournal(settings.runtime_root), live_sideband_closer=live_closer, scene_restart_grace_s=scene_grace_s, **_brain_availability_from_env())
+    core = JarvisCoreApplication(data_root=settings.data_root, timezone=settings.timezone, calendar_backend=_calendar_backend_from_env(), drive_backend=_drive_backend_from_env(), brain_backend=brain_backend, notification_delivery=delivery, workers=workers, diagnostics=RuntimeJournal(settings.runtime_root), live_sideband_closer=live_closer, scene_restart_grace_s=scene_grace_s, scene_capture_store=FileSceneCaptureStore(settings.runtime_root / SCENE_CAPTURE_DIR), **_brain_availability_from_env())
     server = LocalProtocolServer(core, host=settings.core_host, port=settings.core_port, token=token)
     _announce_calendar_backend(core, settings.runtime_root)
     RuntimeJournal(settings.runtime_root).emit("brain.backend", "Cerveau relié à l'agent du Control Center", data={"url": brain_backend.base_url})

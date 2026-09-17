@@ -17,6 +17,7 @@ from jarvis.core.calendar_service import CalendarService
 from jarvis.core.conversation_event_emitter import ConversationEventEmitter
 from jarvis.core.conversation_event_query import ConversationEventQueryService
 from jarvis.core.drive_service import DriveService
+from jarvis.core.scene_capture import SceneCaptureBroker
 from jarvis.core.scene_projector import RESTART_GRACE_S, SceneProjector
 from jarvis.core.scene_service import SceneService
 from jarvis.core.v2_services import ConversationService, CoreEventBus, JobService, NotificationService, SchedulerService
@@ -26,7 +27,7 @@ from jarvis.core.voice_ledger import VoiceLedgerService
 from jarvis.core.live_lifecycle import LiveLifecycleService
 from jarvis.core.live_reaper import LiveLifecycleWatchdog
 from jarvis.domain.v2 import Device, Job, MissedRunPolicy, Notification, NotificationPriority, ProtocolEnvelope, ScheduledItem, ScheduledStatus, utc_now
-from jarvis.ports.scene import SceneRepository
+from jarvis.ports.scene import SceneCaptureStore, SceneRepository
 from jarvis.ports.v2 import DiagnosticSink
 
 
@@ -45,7 +46,7 @@ class JarvisCoreApplication:
     or Windows UI dependency.
     """
 
-    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = True, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S) -> None:
+    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = True, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None) -> None:
         root = Path(data_root).resolve()
         self.health = CoreHealth()
         self.state = SQLiteStateRepository(root / "state" / "jarvis.sqlite3")
@@ -94,6 +95,10 @@ class JarvisCoreApplication:
         # « état inconnu » les étoiles d'une vie précédente, relit l'issue
         # persistée des jobs terminés, et interrompt après
         # `scene_restart_grace_s` celles qu'aucun producteur n'a redites.
+        # Slice 09 (partie 2) : captures visuelles exceptionnelles, rendues par la
+        # page meneuse visible du Control Center. Sans magasin injecté (tests,
+        # outils), la route répond `capture_unavailable`.
+        self.scene_captures = SceneCaptureBroker(scene_capture_store, diagnostics=diagnostics)
         self.scene_projector = SceneProjector(
             work=self.work_state, scene=self.scene, events=self.events, diagnostics=diagnostics,
             restart_grace_s=scene_restart_grace_s, job_outcomes=self.jobs.observe_persisted_outcomes,
@@ -171,6 +176,8 @@ class JarvisCoreApplication:
             # indisponible pendant que le reste de Core démarre. Fichier
             # distinct de `state` : indépendante du rattrapage ci-dessus.
             await self.scene.start()
+            # Rétention des captures (5 fichiers, 24 h). Ne lève pas.
+            await self.scene_captures.start()
             # Slice 10, avant toute écriture de la projection et toute route :
             # les étoiles non terminées d'une vie précédente passent à
             # `unknown`, la grâce est armée. Ne lève pas (scène indisponible :
@@ -348,6 +355,8 @@ class JarvisCoreApplication:
             return
         self.health.ready = False
         self.health.status = "stopping"
+        # Une capture en attente échoue aussitôt (`capture_cancelled`).
+        self.scene_captures.close()
         self.back_brain.stopping = True
         self.jobs.owned.stopping = True
         await self.live_reaper.stop()

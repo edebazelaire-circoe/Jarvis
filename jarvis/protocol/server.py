@@ -27,6 +27,8 @@ from jarvis.domain.work_state import WorkObservationBatch
 from jarvis.domain.live_lifecycle import LiveCloseEvidence, LiveLifecycleConflict, LiveLifecycleState
 from jarvis.ports.scene import ScenePatchWindow, SceneStoreError, SceneUnavailableError
 from jarvis.protocol import scene_wire
+from jarvis.core.scene_capture import SceneCaptureError
+from jarvis.domain.scene_capture import MAX_CAPTURE_BYTES, MAX_CAPTURE_REQUEST_BYTES
 from jarvis.protocol.strict_json import loads_strict_json
 from jarvis.v2_config import validate_loopback_host
 
@@ -137,6 +139,8 @@ class LocalProtocolServer:
             web.get("/v1/scene/snapshot", self.scene_snapshot),
             web.get("/v1/scene/patches", self.scene_patches),
             web.post("/v1/scene/commands", self.scene_command),
+            web.post("/v1/scene/captures", self.scene_capture),
+            web.put("/v1/scene/captures/{capture_id}", self.scene_capture_upload),
             web.post("/v1/conversation-events", self.ingest_conversation_events),
             web.get("/v1/conversation-events", self.list_conversation_events),
             web.get("/v1/conversation-events/conversations", self.list_event_conversations),
@@ -166,6 +170,8 @@ class LocalProtocolServer:
 
     async def stop(self) -> None:
         self._stopping.set()
+        # Une capture en attente rend la main tout de suite (`capture_cancelled`).
+        self.core.scene_captures.close()
         site, self._site = self._site, None
         runner, self._runner = self._runner, None
         if site is not None:
@@ -868,7 +874,8 @@ class LocalProtocolServer:
             window = await self._scene_window(query)
         except SceneUnavailableError as exc:
             return self._scene_failure(exc)
-        body = scene_wire.patch_window_body(window, epoch=scene.epoch, after=query.after)
+        capture = self.core.scene_captures.deliver(long_poll=query.wait_s > 0) if not window.resync_required else None
+        body = scene_wire.patch_window_body(window, epoch=scene.epoch, after=query.after, capture_request=capture)
         return web.Response(text=body, content_type="application/json")
 
     async def _scene_window(self, query: scene_wire.PatchQuery) -> ScenePatchWindow:
@@ -879,14 +886,23 @@ class LocalProtocolServer:
         window = await scene.patches_since(query.after, scene_id=query.scene_id)
         if window.patches or window.resync_required or query.wait_s <= 0 or self._stopping.is_set():
             return window
-        waiter = asyncio.ensure_future(scene.wait_for_revision(query.after, timeout_s=query.wait_s))
+        # Slice 09 (partie 2) : une demande de capture réveille aussi l'attente ;
+        # une demande déjà donnée n'est redonnée qu'après `CAPTURE_REDELIVER_S`.
+        captures = self.core.scene_captures
+        wake = captures.wake_event()
+        due = captures.delivery_due()
+        if due == 0:
+            return window
+        wait_s = query.wait_s if due is None else min(query.wait_s, due)
+        waiter = asyncio.ensure_future(scene.wait_for_revision(query.after, timeout_s=wait_s))
         closing = asyncio.ensure_future(self._stopping.wait())
+        woken = asyncio.ensure_future(wake.wait())
         try:
-            await asyncio.wait({waiter, closing}, return_when=asyncio.FIRST_COMPLETED)
+            await asyncio.wait({waiter, closing, woken}, return_when=asyncio.FIRST_COMPLETED)
         finally:
-            for task in (waiter, closing):
+            for task in (waiter, closing, woken):
                 task.cancel()
-            await asyncio.gather(waiter, closing, return_exceptions=True)
+            await asyncio.gather(waiter, closing, woken, return_exceptions=True)
         if not waiter.cancelled() and waiter.exception() is not None:
             raise waiter.exception()
         return await scene.patches_since(query.after, scene_id=query.scene_id)
@@ -925,6 +941,64 @@ class LocalProtocolServer:
         except SceneStoreError as exc:
             return self._scene_failure(exc)
         return web.json_response(scene_wire.command_body(update, epoch=scene.epoch), dumps=scene_wire.compact_json)
+
+    # ------------------------------------------------------------ capture (Slice 09, partie 2)
+
+    @staticmethod
+    def _capture_failure(exc: SceneCaptureError) -> web.Response:
+        return web.json_response(scene_wire.error_body(exc.code, str(exc)), status=exc.status)
+
+    async def scene_capture(self, request: web.Request) -> web.Response:
+        """Demande de capture du cerveau : `{schema_version: 1, actor: "brain"}`, rendue quand la page a envoyé le PNG.
+
+        200 `{capture_id, name, path, bytes, width, height, duration_ms}` ;
+        409 `capture_busy` ; 504 `no_visible_page` (échéance 5 s) ; 503
+        `capture_unavailable`, `scene_unavailable` ou `capture_cancelled` ; 403
+        pour un autre acteur. Aucune route du Control Center ne la déclenche.
+        """
+
+        if request.query:
+            raise ValueError("unexpected query")
+        try:
+            raw = await scene_wire.read_bounded_body(request, MAX_CAPTURE_REQUEST_BYTES)
+        except scene_wire.SceneBodyTooLarge:
+            return web.json_response(scene_wire.error_body(scene_wire.PAYLOAD_TOO_LARGE, "capture request too large"), status=413)
+        body = loads_strict_json(raw, invalid_message="invalid capture request JSON")
+        if not isinstance(body, dict) or set(body) != {"schema_version", "actor"} or body["schema_version"] != 1:
+            raise ValueError("capture request must be {schema_version: 1, actor}")
+        if body["actor"] != SceneActor.BRAIN.value:
+            return web.json_response(
+                scene_wire.error_body(scene_wire.SCENE_ACTOR_FORBIDDEN, "only the brain requests a scene capture"), status=403,
+            )
+        if self.core.scene.availability.state.value != "ready":
+            return web.json_response(
+                scene_wire.error_body(scene_wire.SCENE_UNAVAILABLE, "scene is not served: nothing to capture",
+                                      scene=scene_wire.availability_block(self.core.scene.availability, self.core.scene.capacity)),
+                status=503,
+            )
+        try:
+            result = await self.core.scene_captures.request()
+        except SceneCaptureError as exc:
+            return self._capture_failure(exc)
+        return web.json_response(result)
+
+    async def scene_capture_upload(self, request: web.Request) -> web.Response:
+        """PNG d'une capture en attente, relayé par le Control Center depuis la page meneuse (≤ 2 MiB)."""
+
+        if request.query:
+            raise ValueError("unexpected query")
+        capture_id = request.match_info["capture_id"]
+        try:
+            raw = await scene_wire.read_bounded_body(request, MAX_CAPTURE_BYTES)
+        except scene_wire.SceneBodyTooLarge:
+            return web.json_response(
+                scene_wire.error_body(scene_wire.PAYLOAD_TOO_LARGE, f"capture exceeds {MAX_CAPTURE_BYTES} bytes"), status=413,
+            )
+        try:
+            result = await self.core.scene_captures.complete(capture_id, raw)
+        except SceneCaptureError as exc:
+            return self._capture_failure(exc)
+        return web.json_response({key: result[key] for key in ("capture_id", "bytes", "width", "height", "duration_ms")})
 
     async def events(self, request: web.Request) -> web.StreamResponse:
         ws = web.WebSocketResponse(heartbeat=20)

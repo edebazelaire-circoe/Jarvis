@@ -82,6 +82,7 @@ from jarvis.runtime.conversation_event_view import ConversationEventView, Conver
 from jarvis.runtime.work_ingress import TrackerWorkObserver, WorkIngressForwarder
 from jarvis.runtime.work_view import NOT_CONFIGURED, CoreWorkView, unavailable_payload
 from jarvis.protocol import scene_wire
+from jarvis.domain.scene_capture import INVALID_PNG, MAX_CAPTURE_BYTES, UNKNOWN_CAPTURE, check_capture_id, png_dimensions
 from jarvis.protocol.strict_json import loads_strict_json
 from jarvis.runtime.display_mcp import DisplayMcpTarget
 from jarvis.runtime.scene_view import (
@@ -194,6 +195,11 @@ SCENE_PAGE_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_PAGE_JS__*/"
 #: groupé, affichage optimiste (`window.JarvisSceneInteract`, logique pure).
 SCENE_INTERACT_SCRIPT_FILE = "control_center_scene_interact.js"
 SCENE_INTERACT_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_INTERACT_JS__*/"
+#: Capture visuelle exceptionnelle de la scène (Slice 09, partie 2) : dessin
+#: du modèle de vue et réponse du meneur visible, logique pure
+#: (`window.JarvisSceneCapture`), insérée avant le bloc de page qui l'utilise.
+SCENE_CAPTURE_SCRIPT_FILE = "control_center_scene_capture.js"
+SCENE_CAPTURE_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_CAPTURE_JS__*/"
 #: Chronologie de conversation plein écran (Slice 05) : logique pure testée par
 #: node et branchement navigateur, insérés comme les scripts ci-dessus.
 TIMELINE_SCRIPT_FILE = "control_center_timeline.js"
@@ -444,6 +450,7 @@ class ControlCenter:
             web.get("/api/scene/patches", self.scene_patches),
             web.post("/api/scene/commands", self.scene_command),
             web.post("/api/jobs/cancel", self.job_cancel),
+            web.post("/api/scene/captures/{capture_id}", self.scene_capture_upload),
             web.get("/api/agent/tasks", self.agent_tasks),
             web.get("/api/agent/tasks/{task_id}/trace", self.agent_task_trace),
             web.post("/api/agent/console/open", self.agent_console_open),
@@ -653,6 +660,9 @@ class ControlCenter:
         )
         html = html.replace(
             SCENE_INTERACT_SCRIPT_MARKER, page.with_name(SCENE_INTERACT_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            SCENE_CAPTURE_SCRIPT_MARKER, page.with_name(SCENE_CAPTURE_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         html = html.replace(
             SCENE_PAGE_SCRIPT_MARKER, page.with_name(SCENE_PAGE_SCRIPT_FILE).read_text(encoding="utf-8")
@@ -2601,6 +2611,41 @@ class ControlCenter:
         if self.scene_view is None:
             return self._scene_error(503, NOT_CONFIGURED, "Commande de scène Core non configurée.")
         status, body = await self.scene_view.command(command)
+        return web.json_response(body, status=status, dumps=scene_wire.compact_json)
+
+    async def scene_capture_upload(self, request: web.Request) -> web.Response:
+        """PNG rendu par la page meneuse visible pour une capture demandée par le cerveau (Slice 09, partie 2).
+
+        Origine vérifiée par le middleware (`_origin_guard`, comme tout POST).
+        L'identifiant doit avoir la forme d'une capture (404 sinon) ; corps ≤ 2 MiB
+        (413), PNG complet de 1280×720 au plus (400 `invalid_png`), vérifiés ici
+        avant tout appel, puis relayés à Core, qui exige une capture en attente
+        et non échue (404 `unknown_capture`, 410 `capture_expired`). Aucune
+        route ne **demande** une capture : seul le cerveau le peut, par Core.
+        """
+
+        if request.query:
+            return self._scene_error(400, scene_wire.INVALID_REQUEST, "unexpected query")
+        capture_id = request.match_info.get("capture_id", "")
+        try:
+            check_capture_id(capture_id)
+        except ValueError as exc:
+            return self._scene_error(404, UNKNOWN_CAPTURE, str(exc))
+        try:
+            png = await scene_wire.read_bounded_body(request, MAX_CAPTURE_BYTES)
+        except scene_wire.SceneBodyTooLarge:
+            self.journal.emit("scene.capture_upload_refused", "capture refusée : trop grosse", level="warning",
+                              data={"capture": capture_id[:8], "code": scene_wire.PAYLOAD_TOO_LARGE})
+            return self._scene_error(413, scene_wire.PAYLOAD_TOO_LARGE, f"capture exceeds {MAX_CAPTURE_BYTES} bytes")
+        try:
+            width, height = png_dimensions(png)
+        except ValueError as exc:
+            self.journal.emit("scene.capture_upload_refused", "capture refusée : PNG invalide", level="warning",
+                              data={"capture": capture_id[:8], "code": INVALID_PNG, "bytes": len(png)})
+            return self._scene_error(400, INVALID_PNG, str(exc))
+        if self.scene_view is None:
+            return self._scene_error(503, NOT_CONFIGURED, "Capture de scène : Core non configuré.")
+        status, body = await self.scene_view.upload_capture(capture_id, png, width=width, height=height)
         return web.json_response(body, status=status, dumps=scene_wire.compact_json)
 
     async def job_cancel(self, request: web.Request) -> web.Response:

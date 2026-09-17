@@ -157,7 +157,8 @@ def snapshot_body(snapshot: SceneSnapshot, epoch: str | None) -> str:
     })
 
 
-def patch_window_body(window: ScenePatchWindow, *, epoch: str | None, after: int) -> str:
+def patch_window_body(window: ScenePatchWindow, *, epoch: str | None, after: int,
+                      capture_request: dict[str, Any] | None = None) -> str:
     """Réponse de `GET /v1/scene/patches`, bornée à `MAX_PATCH_RESPONSE_BYTES`.
 
     `revision` est la révision atteinte en appliquant `patches` (celle de
@@ -165,6 +166,9 @@ def patch_window_body(window: ScenePatchWindow, *, epoch: str | None, after: int
     `more: true` : le budget est atteint, le client applique ce qu'il a reçu
     et redemande aussitôt à partir de `revision`. Au moins un patch est
     toujours rendu, quelle que soit sa taille.
+
+    `capture_request` (Slice 09, partie 2) : `{id, remaining_ms}` quand une
+    capture attend la page meneuse ; clé absente sinon.
     """
 
     parts: list[str] = []
@@ -179,13 +183,16 @@ def patch_window_body(window: ScenePatchWindow, *, epoch: str | None, after: int
         size += cost
         reached = patch.revision
     more = len(parts) < len(window.patches)
-    head = compact_json({
+    fields: dict[str, Any] = {
         "scene_id": window.scene_id,
         "epoch": epoch,
         "revision": reached,
         "resync_required": window.resync_required,
         "more": more,
-    })
+    }
+    if capture_request is not None:
+        fields["capture_request"] = capture_request
+    head = compact_json(fields)
     return f'{head[:-1]},"patches":[{",".join(parts)}]}}'
 
 

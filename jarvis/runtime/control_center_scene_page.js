@@ -65,6 +65,11 @@ const JarvisScenePageCore=(function(){
   }
 
   const errorCode=error=>String(error&&(error.code||error.name)||'network_error');
+  /* Réponse de patchs diffusée aux suiveurs : sans la demande de capture (Slice 09). */
+  function withoutCapture(body){
+    if(!body||!Object.prototype.hasOwnProperty.call(body,'capture_request'))return body;
+    const copy={...body};delete copy.capture_request;return copy;
+  }
 
   /* Meneur du profil par un verrou Web Locks (`locks`, API de `navigator.locks`).
      `decide()` rend une promesse résolue quand le rôle est connu : meneur si le
@@ -136,7 +141,9 @@ const JarvisScenePageCore=(function(){
      `request(path, {signal, timeoutMs})` → corps JSON (rejette sur échec
      réseau ou HTTP), `setTimeout`, `clearTimeout`, `now`, `random`,
      `createAbort`, `onUpdate(vue)`, `log(level, event, data)`,
-     `broadcast(message)` (meneur).
+     `broadcast(message)` (meneur), `onCapture(demande)` (Slice 09 : une
+     réponse de long-poll qui porte `capture_request`, remise au meneur
+     seulement et jamais diffusée aux suiveurs).
 
      - `retry` (plafond de long-polls du Control Center) : attendre
        `retry_after_ms` (+ jusqu'à 250 ms), sans relire l'instantané.
@@ -284,11 +291,16 @@ const JarvisScenePageCore=(function(){
       const result=client.applyPatchResponse(state,body);
       if(result.state)state=result.state;
       switch(result.action){
-        case 'applied':case 'unchanged':case 'more':
+        case 'applied':case 'unchanged':case 'more':{
           resyncs=0;recover();
-          if(role==='leader'&&state!==before)broadcast({type:'patches',scene_id:state.scene_id,epoch:state.epoch,body});
+          const capture=body.capture_request;
+          if(capture&&role==='leader'&&deps.onCapture){
+            try{deps.onCapture(capture)}catch(error){log('error','scene.capture_hook_failed',{error:errorMessage(error)})}
+          }
+          if(role==='leader'&&state!==before)broadcast({type:'patches',scene_id:state.scene_id,epoch:state.epoch,body:withoutCapture(body)});
           if(result.action==='more')return again();
           return afterRead();
+        }
         case 'retry':
           stats.retries++;
           return wait(Math.max(0,Number(result.retry_after_ms)||0)+Math.round(deps.random()*250),again);
@@ -526,7 +538,7 @@ const JarvisScenePageCore=(function(){
 
   return Object.freeze({LONG_POLL_WAIT_S,SNAPSHOT_TIMEOUT_MS,POLL_TIMEOUT_MS,BACKOFF_BASE_MS,BACKOFF_MAX_MS,
     FOLLOWER_SILENCE_MS,FOLLOWER_CHECK_MS,RETRY_NOW_MIN_MS,MESSAGE_VERSION,
-    backoffDelay,patchPath,gateEnabled,validMessage,createSceneLoop,createResolverCommitter,createLeadership});
+    backoffDelay,patchPath,gateEnabled,validMessage,withoutCapture,createSceneLoop,createResolverCommitter,createLeadership});
 })();
 
 /* Exécution par les tests (node) ; dans la page, `module` n'existe pas. */
@@ -541,6 +553,8 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisScenePageCor
   if(!L||!Client)return;
   /* Interactions (Slice 08). Absentes : la scène se dessine sans geste. */
   const I=window.JarvisSceneInteract||null;
+  /* Capture visuelle (Slice 09, partie 2). Absente : aucune demande n'est servie. */
+  const Capture=window.JarvisSceneCapture||null;
   const SVG_NS='http://www.w3.org/2000/svg';
   /* Un verrou par profil : le meneur tient le long-poll et valide les
      placements. Un seul verrou pour les deux : la validation exige l'état le
@@ -826,7 +840,12 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   const timers={setTimeout:(fn,ms)=>window.setTimeout(fn,ms),clearTimeout:id=>window.clearTimeout(id)};
   const loop=Core.createSceneLoop({client:Client,request:getJson,...timers,now:()=>Date.now(),random:Math.random,
     createAbort:()=>new AbortController(),onUpdate:onLoopUpdate,log:consoleLog,
-    broadcast:channel?message=>channel.postMessage({...message,from:TAB_ID}):null});
+    broadcast:channel?message=>channel.postMessage({...message,from:TAB_ID}):null,
+    onCapture:request=>{if(capturer)capturer.offer(request)}});
+  /* Seul le meneur du verrou Web Locks, visible, scène allumée, répond (décision PM). */
+  const capturer=Capture?Capture.createCaptureResponder({now:()=>Date.now(),
+    isLeader:()=>leader.held&&leader.mode==='lock',isVisible:()=>document.visibilityState!=='hidden',isEnabled:()=>enabled,
+    render:renderCapture,upload:uploadCapture,log:consoleLog}):null;
   const committer=Core.createResolverCommitter({layout:L,...timers,now:()=>Date.now(),random:Math.random,log:consoleLog,
     post:command=>requestJson('/api/scene/commands',{method:'POST',body:command,timeoutMs:15000})});
 
@@ -2096,6 +2115,64 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     pushCommitter();
   }
 
+  /* ------------------------------------------------------------ capture (Slice 09) */
+
+  let paletteMemo={key:'',value:null};
+  /* Couleurs du thème courant, lues sur la couche de scène (jetons `--sc-*`, `--tone`). */
+  function capturePalette(){
+    const key=`${document.documentElement.getAttribute('data-jarvis-theme')||''}`;
+    if(paletteMemo.key===key&&paletteMemo.value)return paletteMemo.value;
+    const style=getComputedStyle(root);
+    const read=(name,fallback)=>(style.getPropertyValue(name)||'').trim()||fallback;
+    const probe=document.createElement('span');probe.hidden=true;root.appendChild(probe);
+    const tones={};
+    try{
+      for(const tone of Capture.TONE_KEYS){probe.className=`sc-tone-${tone}`;tones[tone]=(getComputedStyle(probe).getPropertyValue('--tone')||'').trim()||'#dcecf4'}
+    }finally{probe.remove()}
+    const body=getComputedStyle(document.body).backgroundColor;
+    const value={background:body&&body!=='rgba(0, 0, 0, 0)'?body:'#03080c',ink:read('--sc-ink','#dcecf4'),muted:read('--sc-muted','#8aa5b3'),
+      edge:read('--sc-edge','rgba(151,191,209,.3)'),surface:read('--sc-surface','rgba(4,10,15,.9)'),warn:read('--sc-warn','#ffb85c'),
+      error:tones.error||'#ff6b7d',tones};
+    paletteMemo={key,value};
+    return value;
+  }
+
+  /* Dessiner le modèle de vue courant (celui des nœuds du DOM) sur un canevas réduit. */
+  async function renderCapture(){
+    if(!root||!enabled)throw new Error('scène éteinte');
+    if(raf){cancelAnimationFrame(raf);raf=0}
+    render();
+    if(!lastModel)throw new Error('scène pas encore dessinée');
+    const vp=L.viewport(root.clientWidth||window.innerWidth,root.clientHeight||window.innerHeight);
+    const plan=Capture.drawCommands(lastModel,vp,capturePalette());
+    let blob;
+    if(typeof OffscreenCanvas==='function'){
+      const canvas=new OffscreenCanvas(plan.width,plan.height);
+      Capture.paint(canvas.getContext('2d'),plan);
+      blob=await canvas.convertToBlob({type:'image/png'});
+    }else{
+      const canvas=document.createElement('canvas');canvas.width=plan.width;canvas.height=plan.height;
+      Capture.paint(canvas.getContext('2d'),plan);
+      blob=await new Promise((resolve,reject)=>canvas.toBlob(value=>value?resolve(value):reject(new Error('PNG non produit')),'image/png'));
+    }
+    return {blob,width:plan.width,height:plan.height};
+  }
+
+  async function uploadCapture(id,blob){
+    const controller=new AbortController();
+    const deadline=window.setTimeout(()=>controller.abort(),10000);
+    try{
+      const response=await fetch(`/api/scene/captures/${encodeURIComponent(id)}`,{method:'POST',cache:'no-store',
+        signal:controller.signal,headers:{'Content-Type':'image/png'},body:blob});
+      const text=await response.text();
+      let json=null;
+      try{json=text?JSON.parse(text):null}catch(_error){json=null}
+      return {status:response.status,body:json};
+    }finally{
+      window.clearTimeout(deadline);
+    }
+  }
+
   /* Interrupteur : appelé à chaque lecture réussie de `/api/status`. */
   function gate(scene,limits){
     const timeout=limits&&Number(limits.job_cancel_timeout_s);
@@ -2149,7 +2226,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
         revision:lastState?lastState.revision:null,nodes:nodes.size,commits:committer.stats(),stats:view.stats,
         health:lastView?lastView.health:null,resolved:layout&&layoutState===viewState()?layout.resolved.length:0,
         pending:pending?pending.size():0,actions:{...actionStats},gesture:gesture?{id:gesture.id,mode:gesture.mode,moved:gesture.moved,threshold:gesture.threshold}:null,
-        selected:selectedId,stopping:[...stopping.keys()],jobCancelTimeoutS,
+        selected:selectedId,stopping:[...stopping.keys()],jobCancelTimeoutS,captures:capturer?capturer.stats():null,
         tabStops:root?root.querySelectorAll('[tabindex="0"]').length:0,animated:root?root.querySelectorAll('.sc-anim').length:0};
     },
   });

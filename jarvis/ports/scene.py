@@ -185,3 +185,28 @@ class SceneRepository(Protocol):
     async def archived_history(self, *, object_id: str | None = None, limit: int = 100) -> tuple[ArchivedSceneObject, ...]: ...
 
     async def close(self) -> None: ...
+
+
+# ------------------------------------------------------------------ capture (Slice 09, partie 2)
+
+
+@dataclass(frozen=True, slots=True)
+class StoredSceneCapture:
+    """Fichier d'une capture rangée : nom sans contenu de l'utilisateur, chemin absolu, taille."""
+
+    name: str
+    path: str
+    size: int
+
+
+class SceneCaptureStore(Protocol):
+    """Rangement des captures PNG de la scène, implémenté par `jarvis/adapters/file_scene_captures.py`.
+
+    Appels bloquants (fichiers) : Core les fait hors de sa boucle. `OSError` à l'appelant.
+    """
+
+    def save(self, png: bytes, *, now_epoch_s: float) -> StoredSceneCapture: ...
+
+    def prune(self, *, now_epoch_s: float, keep: int, max_age_s: float) -> int:
+        """Supprimer les captures au-delà des `keep` plus récentes et celles plus vieilles que `max_age_s` ; rend le nombre supprimé."""
+        ...

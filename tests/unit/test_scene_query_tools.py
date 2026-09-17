@@ -370,8 +370,9 @@ async def test_both_tools_go_through_the_strict_mcp_schema(core, tools):
 async def test_the_catalog_adds_two_read_tools_counted_as_display_work():
     server = build_server(DisplayMcpTarget("127.0.0.1", 1, Path("absent.token")))
     names = tuple(tool.name for tool in await server.list_tools())
-    assert names == TOOL_NAMES and len(TOOL_NAMES) == 9
-    assert READ_TOOL_NAMES == ("scene_inspect", "scene_query", "scene_get")
+    # Slice 09, partie 2 : `scene_capture` s'ajoute, lecture seule aussi.
+    assert names == TOOL_NAMES and len(TOOL_NAMES) == 10
+    assert READ_TOOL_NAMES == ("scene_inspect", "scene_query", "scene_get", "scene_capture")
     for name in ("scene_query", "scene_get"):
         assert f"mcp__jarvis-display__{name}" in claude_local.DISPLAY_TOOLS
 
