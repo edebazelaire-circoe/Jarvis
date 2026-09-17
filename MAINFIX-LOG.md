@@ -157,10 +157,13 @@ invariant dans le vocabulaire du choix en deux temps : la section dit ce qu'elle
 retenu, dans quel ordre, et pourquoi un candidat n'est pas utilisable. Aucune
 autre assertion n'a été touchée, et **aucun des neuf tests** n'a été modifié.
 
-Les deux autres échecs de ce fichier ont été réparés côté code, sans toucher aux
-tests : le mot « Aiguillage » ne réapparaît pas dans la page, et `tabRouting` est
-déclarée *après* `hydrateRoutingAdvanced` pour rester dans la tranche que
-`test_advanced_policy_is_lazy_local_and_last_render_wins` exécute sous Node.
+**Correction de rédaction (relevée par la QA).** Ce fichier passait 13/13 sur
+`b86f228` : ses trois échecs ont donc tous été **provoqués par la restauration**,
+aucun n'était préexistant. Deux d'entre eux ont été réparés côté code, sans
+toucher aux tests — le mot « Aiguillage » ne réapparaît pas dans la page, et la
+fonction de chargement de la section est déclarée à l'intérieur de la tranche que
+`test_advanced_policy_is_lazy_local_and_last_render_wins` exécute sous Node. Le
+troisième est l'assertion arbitrée ci-dessus.
 
 ## 5. Documentation
 
@@ -412,3 +415,169 @@ Captures : `timeline-leader-classic.png`, `timeline-follower-classic.png`,
 fenêtres `timeline-shared-10w-*.png` et `timeline-legacy-10w-*.png`, et les
 relevés bruts `bench-legacy.json`, `bench-shared.json`, `handover.json`
 (répertoire de travail de l'agent, hors dépôt).
+
+---
+
+# Reprise après la QA (verdict REWORK sur `02e5b07`)
+
+## 12. BLOCKER : changer de conversation ne faisait plus rien
+
+`createSharedFeed.becomeLeader()` sortait tout de suite quand le rôle était déjà
+`leader`. Or `watch(nouvelleConversation)` passe justement par une élection qui
+rend ce même rôle : la lecture n'était jamais relancée, le flux gardait la
+conversation A pendant que le sélecteur annonçait la B, et le canevas restait sur
+« Chargement de la conversation… » sans fin — le statut, lui, continuait
+d'afficher « En direct », c'est-à-dire la vérité du flux A et un mensonge pour
+l'écran. Le cas le plus courant — une seule fenêtre, donc toujours meneur — était
+exactement le cas cassé ; en `solo`, pour un suiveur, et après fermeture/
+réouverture, le geste marchait, ce qui a masqué le défaut.
+
+Ce que le rôle ne dit pas, l'état du flux le dit : la décision se prend
+maintenant sur `feed.state.conversationId` et la phase courante, pas sur le rôle.
+`becomeLeader` et `becomeFollower` ne sautent la relance que si le flux lit déjà
+la conversation demandée ; `watch(id)` marque l'appel comme forcé dès que la
+conversation change. Le `resume` n'est demandé que pour le même flux : sur un
+changement, lignes et curseur repartent de zéro, la requête en vol est abandonnée
+par `feed.start`, et `merge` refuse de toute façon toute ligne dont le
+`conversation_id` n'est pas celui du flux chargé — une page de A arrivée en
+retard ne peut pas se glisser dans B.
+
+`elect()` ne rend plus le verrou pour le reprendre quand il est déjà le bon :
+cela faisait passer l'onglet par un état de suiveur le temps d'un battement, donc
+par une lecture courte pour rien. Le bouton « Réessayer » appelle désormais
+`shared.restart()` — une reprise réelle, quel que soit le rôle — au lieu d'un
+`watch()` qui ne faisait rien.
+
+**Cinq tests ajoutés pour le geste ordinaire**, celui qu'aucun des huit premiers
+ne couvrait : un meneur qui change de conversation, un suiveur qui change pour
+une conversation déjà menée ailleurs, un aller-retour A → B → A, une page de
+l'ancienne conversation qui arrive après la bascule, et le bouton « Réessayer »
+sur un meneur qui n'a rien à réveiller. C'est la vraie leçon : le partage avait
+été testé sous toutes ses coutures *sauf* le clic que l'utilisateur fait dix fois
+par jour.
+
+## 13. Les autres défauts corrigés
+
+- **« Ajouter » ne rétrograde plus.** Ajouter un candidat déjà listé le renvoyait
+  en fin de liste, donc en dernier recours, et promouvait le suivant au rang de
+  préféré — en un clic, sans un mot. Le doublon est maintenant refusé avec
+  « Déjà dans la liste de ce profil : utilisez « monter » pour le préférer. »
+  L'ordre ne change plus que par « monter » et « retirer ».
+- **Le focus survit aux modifications.** `renderRoutingAdvanced` remplaçait tout
+  le corps de la section : chaque « monter », « retirer », « ajouter » renvoyait
+  le focus au début du document. Chaque commande porte un `data-routing-focus`
+  qui désigne ce qu'elle vise (profil + couple, jamais le rang, qui change
+  justement quand on monte). Après le re-rendu, le focus revient sur la même
+  commande ; quand « monter » disparaît parce que la ligne est devenue préférée,
+  il tombe sur « retirer » du même couple, puis sur le sélecteur du profil.
+- **Les trois modifications les plus lourdes le disent** : « ajouter »,
+  « retirer » et « monter » appellent `say('Modifications non enregistrées.')`
+  comme leurs voisines.
+- **Un lien désactivé se voit désactivé** (`.linkish:disabled` : opacité 0,38,
+  curseur par défaut, `pointer-events:none`), au lieu d'être identique à un lien
+  actif.
+- **Le choix en cours ne survit plus à la fenêtre** : `SET.routingPick` est vidé
+  à la fermeture des réglages, au rechargement, et sur « rafraîchir » — le
+  harness retenu pouvait avoir disparu entre-temps.
+- **Un profil éteint devient visiblement inerte** : bloc à 50 % d'opacité,
+  `aria-disabled`, commandes non cliquables, et une phrase qui dit que ses
+  candidats sont conservés mais ne servent pas. Le décocher redessine le bloc,
+  sinon rien à l'écran ne l'aurait dit.
+- **Un harness ou un modèle connu indisponible prévient avant l'ajout**
+  (`data-routing-unusable`) : garder un réglage qui s'est cassé et en créer un
+  qu'on sait inutilisable ne sont pas le même geste.
+- **Un suiveur ne dit plus « En direct » derrière un silence** : sans battement
+  du meneur depuis 25 s — deux battements manqués, bien avant la lecture du chien
+  de garde à ≈ 40 s — il affiche « Relais en retard » avec depuis combien de
+  temps il n'a rien entendu, et propose « Réessayer ». Un canal définitivement
+  cassé ne se tait donc plus en silence.
+- **Un onglet qui n'arrive pas à se mettre en file sur le verrou réessaie**, avec
+  le même repli exponentiel que le flux (1 s → 30 s) ; sans cela il suivait pour
+  toujours un meneur peut-être disparu.
+
+## 14. Arbitrage sur les deux tests sur-spécifiés — à relire par l'humain
+
+`tests/unit/test_routing_settings_screen.py` découpait le texte source de la page
+par noms d'identifiants et vérifiait des sous-chaînes de code. C'est ce qui avait
+imposé, lors de la restauration, le mauvais nom `routingOn` — un nom qui sonne
+booléen pour une variable qui tient en réalité le `<select>` `auto`/`duplicate` —
+et forcé la fonction de chargement à se placer là où le test voulait la trouver.
+
+Sur décision de l'agent 0, deux tests ont été réécrits :
+
+| test | avant | après |
+| --- | --- | --- |
+| `test_the_choice_is_made_in_two_steps_harness_then_model` | découpait de `function routingPicker(` à `async function tabRouting()` et cherchait `data-routing-harness`, `harnessOf(state,pick.agent)`, `harness.models`, `Choisir d'abord un harness` dans le **source** | exécute `routingPicker` sous node et lit le **HTML rendu** : rien à choisir au second cran tant qu'aucun harness n'est pris, puis seulement les modèles du harness choisi (`modele-o` absent quand Claude est choisi), un CLI éteint proposé avec sa raison, et la liste plate toujours absente de la page |
+| `test_changing_the_harness_clears_the_model_and_only_adding_changes_the_policy` | découpait de `const routingOn=modalContent` à `const routingRefresh=` et cherchait `pick.agent=el.value;pick.model=''`, `SET.dirty` absent d'un bloc, `SET.dirty=true` dans un autre | exécute les vrais gestionnaires sous node avec un DOM simulé : choisir un harness puis un modèle ne salit ni le brouillon ni l'état « non enregistré », « ajouter » seul y touche et le dit, et changer de harness oublie le modèle |
+
+**Aucune exigence de comportement n'a été retirée** — chacune a été rendue plus
+stricte, puisqu'elle porte désormais sur le résultat et non sur l'orthographe du
+code. Les sept autres tests du fichier n'ont pas bougé, et les neuf tests
+protégés de la tâche initiale non plus (`test_agent_routing_settings.py`,
+`test_brain_card_state.py`, et les sept tests intacts de ce fichier).
+
+Trois tests ont été ajoutés dans la foulée, sur le même banc : le refus du
+doublon, le retour du focus après « monter », et le bloc inerte d'un profil
+éteint.
+
+Une fois ces deux tests libérés, les noms ont été remis d'aplomb : `routingOn`
+redevient `delegationMode`, et `tabRouting()` — qui ne rendait plus aucun onglet
+— devient `loadRoutingCandidates()`, déclarée à côté de la fonction qui
+l'utilise.
+
+## 15. Notes de la QA conservées
+
+- **OBSERVATION-12.** `JarvisTimeline.sharing().longPolls` est une **croyance de
+  la page**, pas une mesure : il se déduit du rôle et de la phase. Les chiffres
+  du banc, eux, sont comptés **sur la route du serveur** — c'est la seule source
+  à citer. Laissé tel quel sur décision de l'agent 0.
+- **Pic à deux lectures longues pendant une passation.** Conservé : l'ancien
+  meneur n'abandonne sa lecture qu'à l'abandon effectif, ce qui garantit la
+  continuité. Décision de l'agent 0, la vivacité d'abord.
+- **`createLeadership` est assez générique pour être mutualisée** avec celle de
+  la scène le jour où la scène arrivera sur `main` — pas avant : il n'y a
+  aujourd'hui aucun second appelant dans ce dépôt, et factoriser une abstraction
+  sur un seul usage coûterait plus qu'elle ne rapporte.
+
+## 16. Recette du rework
+
+**Tests.** `test_control_center_timeline_js.py` : 58 tests (43 d'origine
+inchangés, 15 ajoutés — 8 au premier passage, 7 ici, dont les cinq du changement
+de conversation). `test_routing_settings_screen.py` : 14 tests (7 d'origine
+inchangés, 2 réécrits, 5 ajoutés). Tous verts.
+
+**Suite complète, en morceaux** — 502 / 571 / 610+1i / 578+2i / 617+1i / 867+2i
+unitaires, 287 passés + 4 ignorés en intégration, 1 passé en e2e + replay :
+**3745 + 287 + 1, zéro échec**. `verify_release.py` (seul son sous-processus
+pytest neutralisé) : `Release verification passed.` `node --check` : vert sur le
+module de la chronologie comme sur le bloc `<script>` de la page.
+
+**Le partage n'a pas régressé** (banc identique, lectures longues comptées sur la
+route, latence mesurée depuis le navigateur) :
+
+| fenêtres | long-polls tenus | `/api/status` méd./max | événement → toutes | converge |
+| ---: | ---: | ---: | ---: | :--- |
+| 1 | 1 | 2 / 4 ms | 11 ms | oui |
+| 6 | 1 | 4 / 4 ms | 18 ms | oui |
+| 10 | 1 | 3 / 4 ms | 17 ms | oui |
+
+**Navigateur (Chrome à nous, deux fenêtres, deux thèmes).**
+
+| ce qui est vérifié | verdict |
+| --- | --- |
+| le meneur change de conversation | `conv-b` → `conv-a`, phase `live`, 5 lignes, plus de canevas bloqué sur « Chargement… » |
+| un suiveur change de conversation | phase `following`, 5 lignes, statut « … · relayé par un autre onglet » |
+| après les deux bascules | rôles `[leader, follower]`, lectures longues `[1, 0]` |
+| réajouter le candidat préféré | la liste reste à 2, l'ordre ne bouge pas, « Déjà dans la liste de ce profil… » |
+| « monter » | le focus reste sur une commande de la même ligne (`drop|…|modele-b`), et « Modifications non enregistrées. » s'affiche |
+| harness indisponible | `data-routing-unusable` présent avant tout ajout |
+| « ajouter » sans harness | bouton désactivé, opacité 0,38, `pointer-events: none` |
+| profil éteint | bloc `routing-off`, `aria-disabled="true"`, opacité 0,5 |
+
+Captures : `rework-switch-leader-classic.png`, `rework-switch-leader-omega.png`,
+`rework-routing-classic.png`, `rework-routing-omega.png` (répertoire de travail
+de l'agent, hors dépôt) — la dernière montre en une image les quatre correctifs
+de l'écran : les deux candidats retenus dans leur ordre, « Modèle B » promu
+préféré par « monter » avec le focus resté sur sa ligne, le lien « ajouter »
+visiblement désactivé, et « Modifications non enregistrées. » en pied de fenêtre.
+

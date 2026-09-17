@@ -975,7 +975,8 @@ def test_panels_never_promise_an_automatic_retry(tmp_path):
 SHARED_HARNESS = """
 const registry={},bus={tabs:[],post(from,message){for(const t of bus.tabs)if(t!==from)t.deliver(message)}};
 let clock=1000;const timers=[];
-const schedule=(fn,ms)=>{const task={at:clock+ms,fn,dead:false};timers.push(task);return()=>{task.dead=true}};
+const delays=[];
+const schedule=(fn,ms)=>{delays.push(ms);const task={at:clock+ms,fn,dead:false};timers.push(task);return()=>{task.dead=true}};
 const now=()=>clock;
 const advance=async ms=>{
   const target=clock+ms;
@@ -1024,7 +1025,9 @@ function makeTab(name,{shared=true}={}){
   const calls=[],script=[];
   const request=(url,{signal,timeoutMs})=>new Promise((resolve,reject)=>{
     const call={tab:name,url,timeoutMs,resolve,reject,q:q(url)};calls.push(call);
-    if(signal)signal.addEventListener('abort',()=>reject(Object.assign(new Error('aborted'),{name:'AbortError'})));
+    if(signal)signal.addEventListener('abort',()=>{
+      call.aborted=true;reject(Object.assign(new Error('aborted'),{name:'AbortError'}));
+    });
     const next=script.shift();
     if(next===undefined)return;                 // reste en vol : un long-poll tenu
     setImmediate(()=>next instanceof Error?reject(next):resolve(next));
@@ -1237,3 +1240,176 @@ def test_closing_the_leader_tab_hands_the_long_poll_over_without_a_hole(tmp_path
     assert result["resumed"] == ["0", "2", "3"] and result["cursor"] == 3
     assert result["rows"] == ["cev-1", "cev-2", "cev-3"]
     assert result["longPolls"] == 1
+
+
+# -- Changer de conversation, en mode partagé -------------------------------
+# Le geste le plus ordinaire de l'écran, et celui que le partage avait cassé :
+# un onglet déjà meneur restait meneur, donc ne relançait rien, et le flux
+# gardait l'ancienne conversation pendant que le sélecteur annonçait la
+# nouvelle. Ces tests tiennent le geste sous toutes ses formes.
+
+
+def test_a_leader_that_switches_conversation_really_restarts_on_the_new_one(tmp_path):
+    result = run_node(tmp_path, SHARED_HARNESS + """
+      const a=makeTab('a');
+      a.script.push(page([1,2],2,false));
+      await a.shared.watch('conv-a');
+      await until(()=>a.feed.state.phase==='live');
+      const holding=a.calls[a.calls.length-1];          // long-poll en vol sur A
+      a.script.push(page([7],7,false,'conv-b'));
+      await a.shared.watch('conv-b');
+      await until(()=>a.feed.state.conversationId==='conv-b'&&a.feed.state.phase==='live');
+      out({aborted:holding.aborted===true,role:a.shared.view().role,
+        url:a.calls.map(c=>[c.q.conversation_id,c.q.after_sequence]),
+        rows:[...a.feed.state.rows.keys()],cursor:a.feed.state.cursor,
+        waits:a.calls.filter(c=>c.q.wait_ms&&!c.aborted).length});
+    """)
+    assert result["aborted"] is True           # la lecture de A est bien abandonnée
+    assert result["role"] == "leader"
+    assert result["url"][-2:] == [["conv-b", "0"], ["conv-b", "7"]]
+    assert result["rows"] == ["cev-7"] and result["cursor"] == 7
+    assert result["waits"] == 1
+
+
+def test_a_follower_that_switches_conversation_follows_the_other_leader(tmp_path):
+    result = run_node(tmp_path, SHARED_HARNESS + """
+      const a=makeTab('a'),b=makeTab('b'),c=makeTab('c');
+      a.script.push(page([1],1,false));
+      await a.shared.watch('conv-a');
+      await until(()=>a.feed.state.phase==='live');
+      c.script.push(page([7],7,false,'conv-b'));
+      await c.shared.watch('conv-b');
+      await until(()=>c.feed.state.phase==='live');
+      b.script.push(page([1],1,false));
+      await b.shared.watch('conv-a');
+      await until(()=>b.feed.state.phase==='following');
+      // Le suiveur de A passe sur B, déjà menée par un autre onglet.
+      b.script.push(page([7],7,false,'conv-b'));
+      await b.shared.watch('conv-b');
+      await until(()=>b.feed.state.conversationId==='conv-b'&&b.feed.state.phase==='following');
+      const reads=b.calls.length;
+      // Un événement de B : il arrive par le relais, sans nouvelle requête.
+      c.calls[c.calls.length-1].resolve(page([8],8,false,'conv-b'));
+      await until(()=>b.feed.state.rows.size===2);
+      out({role:b.shared.view().role,rows:[...b.feed.state.rows.keys()],
+        waits:b.calls.filter(x=>x.q.wait_ms).length,extraReads:b.calls.length-reads,
+        urls:b.calls.map(x=>x.q.conversation_id),
+        leaders:[a,c].map(t=>t.shared.view().role)});
+    """)
+    assert result["role"] == "follower"
+    assert result["rows"] == ["cev-7", "cev-8"]
+    # Aucun long-poll de ce côté, et rien de plus à demander : le relais suffit.
+    assert result["waits"] == 0 and result["extraReads"] == 0
+    assert result["urls"] == ["conv-a", "conv-b"]
+    # Deux conversations réellement regardées : deux meneurs, c'est irréductible.
+    assert result["leaders"] == ["leader", "leader"]
+
+
+def test_switching_back_and_forth_leaves_exactly_one_read_on_the_shown_conversation(tmp_path):
+    result = run_node(tmp_path, SHARED_HARNESS + """
+      const a=makeTab('a');
+      a.script.push(page([1],1,false));
+      await a.shared.watch('conv-a');
+      await until(()=>a.feed.state.phase==='live');
+      a.script.push(page([7],7,false,'conv-b'));
+      await a.shared.watch('conv-b');
+      await until(()=>a.feed.state.conversationId==='conv-b'&&a.feed.state.phase==='live');
+      a.script.push(page([1,2],2,false));
+      await a.shared.watch('conv-a');
+      await until(()=>a.feed.state.conversationId==='conv-a'&&a.feed.state.phase==='live');
+      out({rows:[...a.feed.state.rows.keys()],cursor:a.feed.state.cursor,
+        live:a.calls.filter(c=>c.q.wait_ms&&!c.aborted).length,
+        conversations:a.calls.map(c=>c.q.conversation_id)});
+    """)
+    # Retour sur A : tout est relu depuis zéro, et rien de B ne subsiste.
+    assert result["rows"] == ["cev-1", "cev-2"] and result["cursor"] == 2
+    assert result["live"] == 1
+    assert result["conversations"] == ["conv-a", "conv-a", "conv-b", "conv-b", "conv-a", "conv-a"]
+
+
+def test_a_page_of_the_old_conversation_can_never_land_in_the_new_one(tmp_path):
+    result = run_node(tmp_path, SHARED_HARNESS + """
+      const a=makeTab('a');
+      a.script.push(page([1],1,false));
+      await a.shared.watch('conv-a');
+      await until(()=>a.feed.state.phase==='live');
+      const stale=a.calls[a.calls.length-1];
+      a.script.push(page([7],7,false,'conv-b'));
+      await a.shared.watch('conv-b');
+      await until(()=>a.feed.state.conversationId==='conv-b'&&a.feed.state.phase==='live');
+      // La rafale de A arrive après coup : elle ne doit rien ajouter à B.
+      stale.resolve(page([2,3,4],4,false));
+      for(let i=0;i<30;i++)await tick();
+      // Et une diffusion de A non plus.
+      const verdict=a.shared.handleMessage({v:TL.SHARED_MESSAGE_VERSION,type:'page',
+        conversation_id:'conv-a',from:1,cursor:4,events:page([2],2,false).events,has_more:false});
+      out({rows:[...a.feed.state.rows.keys()],cursor:a.feed.state.cursor,verdict,
+        conversation:a.feed.state.conversationId});
+    """)
+    assert result["rows"] == ["cev-7"] and result["cursor"] == 7
+    assert result["verdict"] == "other" and result["conversation"] == "conv-b"
+
+
+def test_the_retry_control_restarts_a_leader_that_has_nothing_to_wake(tmp_path):
+    result = run_node(tmp_path, SHARED_HARNESS + """
+      const a=makeTab('a');
+      a.script.push(page([1],1,false));
+      await a.shared.watch('conv-a');
+      await until(()=>a.feed.state.phase==='live');
+      const before=a.calls.length,holding=a.calls[a.calls.length-1];
+      a.script.push(page([1,2],2,false));
+      await a.shared.restart();
+      await until(()=>a.feed.state.rows.size===2);
+      out({aborted:holding.aborted===true,extra:a.calls.length-before,
+        role:a.shared.view().role,rows:a.feed.state.rows.size,
+        url:a.calls[before].q});
+    """)
+    # Le long-poll en cours est abandonné et la lecture repart vraiment.
+    assert result["aborted"] is True and result["role"] == "leader"
+    # Même conversation : on reprend au curseur tenu, on ne retélécharge rien.
+    assert result["url"]["conversation_id"] == "conv-a" and result["url"]["after_sequence"] == "1"
+    assert result["rows"] == 2 and result["extra"] == 2
+
+
+def test_a_follower_says_it_has_lost_the_relay_long_before_the_watchdog(tmp_path):
+    result = run_node(tmp_path, SHARED_HARNESS + """
+      const base={conversationId:'c',rows:new Map([['a',1]]),cursor:3,phase:'following',
+        sharedRole:'follower',hydratedAt:1000,startedAt:1000,lastEventAt:1000};
+      out({fresh:TL.statusView({...base,leaderAt:60000},{},61000),
+        late:TL.statusView({...base,leaderAt:10000},{},60000),
+        never:TL.statusView({...base,leaderAt:null},{},60000),
+        threshold:TL.LEADER_LATE_MS,watchdog:TL.FOLLOWER_SILENCE_MS});
+    """)
+    assert result["fresh"]["tone"] == "live"
+    # Le silence est dit bien avant que le chien de garde ne lise.
+    assert result["late"]["tone"] == "warn" and result["late"]["retry"] is True
+    assert "aucune nouvelle" in result["late"]["detail"]
+    assert result["never"]["tone"] == "warn"
+    assert result["threshold"] < result["watchdog"]
+
+
+def test_a_tab_that_cannot_queue_for_the_lock_tries_again(tmp_path):
+    result = run_node(tmp_path, SHARED_HARNESS + """
+      const a=makeTab('a');
+      a.script.push(page([1],1,false));
+      await a.shared.watch('conv-a');
+      await until(()=>a.feed.state.phase==='live');
+      // Un onglet dont la mise en file échoue : sans reprise, il ne serait
+      // jamais meneur, même une fois le verrou libre.
+      let failures=0;
+      const broken={request(name,options,fn){
+        if(options&&options.ifAvailable)return Promise.resolve().then(()=>fn(null));
+        failures++;return Promise.reject(new Error('lock manager down'));
+      }};
+      const feed=TL.createFeed({request:()=>new Promise(()=>{}),schedule,now});
+      const solo=TL.createSharedFeed({feed,locks:broken,channel:{postMessage:()=>{}},
+        createAbort:()=>new AbortController(),now,schedule});
+      await solo.watch('conv-a');
+      const first=failures;
+      await advance(1000);
+      await advance(2000);
+      out({first,after:failures,delays:delays.filter(d=>d===1000||d===2000).length});
+    """)
+    assert result["first"] == 1
+    # Remise en file avec un délai qui s'allonge, au lieu d'abandonner.
+    assert result["after"] >= 3

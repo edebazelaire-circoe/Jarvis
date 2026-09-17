@@ -258,6 +258,11 @@ nav.tabs button.active{color:var(--accent);border-left-color:var(--accent);backg
 .note.bad{color:var(--danger)}
 .note.warn{color:var(--warn)}
 .linkish{background:none;border:0;color:var(--accent);font:inherit;font-size:11px;cursor:pointer;padding:0;text-decoration:underline dotted}
+.linkish:disabled{opacity:.38;cursor:default;text-decoration:none;pointer-events:none}
+/* Un profil éteint garde ses réglages lisibles mais n'invite plus à les
+   changer : il ne sert plus tant qu'il n'est pas rallumé. */
+.routing-off{opacity:.5}
+.routing-off select,.routing-off .linkish{pointer-events:none}
 table.keys{width:100%;border-collapse:collapse;font-size:13px}
 table.keys th{text-align:left;font-weight:normal;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);padding:0 10px 8px 0;border-bottom:1px solid var(--line)}
 table.keys td{padding:10px 10px 10px 0;border-bottom:1px solid rgba(113,144,160,.12);vertical-align:middle}
@@ -2493,10 +2498,14 @@ function routingRow(profile,ref,rank,state){
   const reason=(model&&model.unavailable_reason)||(harness&&harness.unavailable_reason)||"Ce couple n'est plus proposé sur cette machine.";
   const why=usable?'':`<div class="hint">${esc(reason)}</div>`;
   const order=`<span class="tag">${rank===0?'préféré':'recours '+rank}</span>`;
-  const up=rank>0?`<button class="linkish" data-routing-up="${esc(profile)}" data-routing-rank="${rank}">monter</button> `:'';
+  /* Une commande est retrouvée après le re-rendu par ce qu'elle désigne — le
+     profil et le couple — et non par son rang, qui change justement quand on
+     monte une ligne. */
+  const key=`${profile}|${ref.agent}|${ref.model||''}`;
+  const up=rank>0?`<button class="linkish" data-routing-up="${esc(profile)}" data-routing-rank="${rank}" data-routing-focus="up|${esc(key)}">monter</button> `:'';
   return `<div class="choice selected">
     <div><div class="title"><strong>${esc(candidateLabel(state,ref))}</strong>${tag}${order}</div>${why}
-      <div class="source">${up}<button class="linkish" data-routing-drop="${esc(profile)}" data-routing-rank="${rank}">retirer</button></div></div>
+      <div class="source">${up}<button class="linkish" data-routing-drop="${esc(profile)}" data-routing-rank="${rank}" data-routing-focus="drop|${esc(key)}">retirer</button></div></div>
   </div>`;
 }
 
@@ -2513,11 +2522,14 @@ function routingAdvancedBody(){
       <input type="checkbox" id="f_fb_${esc(profile.id)}" data-routing-fallback="${esc(profile.id)}" ${entry.allow_general_fallback?'checked':''}>
       <div><label for="f_fb_${esc(profile.id)}">Se rabattre sur le profil Général</label>
       <div class="hint">Quand aucun candidat de ce profil n'est utilisable, essayer ceux du profil Général plutôt que d'échouer.</div></div></div>`;
-    const enabled=`<div class="field inline"><input type="checkbox" id="f_profile_${esc(profile.id)}" data-routing-profile-enabled="${esc(profile.id)}" ${entry.enabled?'checked':''}>
+    const enabled=`<div class="field inline"><input type="checkbox" id="f_profile_${esc(profile.id)}" data-routing-profile-enabled="${esc(profile.id)}" data-routing-focus="enabled|${esc(profile.id)}" ${entry.enabled?'checked':''}>
       <div><label for="f_profile_${esc(profile.id)}">Profil actif</label><div class="hint">Désactivé, ce profil conserve le choix du CLI même en mode Auto.</div></div></div>`;
+    const off=entry.enabled?'':' routing-off';
     return `<h3>${esc(profile.label)}</h3>${enabled}
       <div class="hint" style="margin-bottom:8px">${esc(profile.description)}${profile.requires.length?` · exige : ${profile.requires.map(esc).join(', ')}`:''}</div>
-      ${rows?`<div class="choices">${rows}</div>`:empty}${routingPicker(profile.id,state)}${fallback}`;
+      <div class="routing-profile${off}" data-routing-block="${esc(profile.id)}"${entry.enabled?'':' aria-disabled="true"'}>
+      ${entry.enabled?'':'<div class="hint">Profil désactivé : ces candidats sont conservés mais ne servent pas tant qu’il n’est pas rallumé.</div>'}
+      ${rows?`<div class="choices">${rows}</div>`:empty}${routingPicker(profile.id,state)}${fallback}</div>`;
   }).join('');
   const sources=Object.entries(state.sources||{}).map(([provider,source])=>{
     const label=providerLabel(provider);
@@ -2536,16 +2548,22 @@ function routingAdvancedBody(){
 function routingPicker(profile,state){
   const pick=routingPick(profile);
   const harness=harnessOf(state,pick.agent);
+  const model=modelOf(harness,pick.model);
   const harnesses=(state.harnesses||[]).map(h=>({value:h.id,label:h.available?h.label:`${h.label} — indisponible`}));
   const models=(harness?harness.models||[]:[]).map(m=>({value:m.model,label:m.available?m.label:`${m.label} — indisponible`}));
   const modelField=harness
-    ? `<select id="f_rt_model_${esc(profile)}" data-routing-model="${esc(profile)}">${selectOptions(models,pick.model,'')}</select>`
+    ? `<select id="f_rt_model_${esc(profile)}" data-routing-model="${esc(profile)}" data-routing-focus="model|${esc(profile)}">${selectOptions(models,pick.model,'')}</select>`
     : `<select id="f_rt_model_${esc(profile)}" disabled><option>Choisir d'abord un harness</option></select>`;
   const why=harness&&!harness.available?`<div class="hint">${esc(harness.unavailable_reason||'')}</div>`:'';
+  /* Garder un choix enregistré devenu inutilisable et en ajouter un qu'on sait
+     déjà inutilisable ne sont pas la même chose : le premier protège un
+     réglage, le second se ferait en connaissance de cause. On le dit avant. */
+  const broken=harness&&(!harness.available||(model&&!model.available));
+  const warn=broken?`<div class="hint" data-routing-unusable="${esc(profile)}">Ce couple est indisponible sur cette machine : il sera enregistré mais ignoré tant qu'il ne revient pas.</div>`:'';
   return `<div class="field"><label for="f_rt_harness_${esc(profile)}">Harness</label>
-      <select id="f_rt_harness_${esc(profile)}" data-routing-harness="${esc(profile)}">${selectOptions(harnesses,pick.agent,'Choisir un harness…')}</select>${why}</div>
-    <div class="field"><label for="f_rt_model_${esc(profile)}">Modèle</label>${modelField}
-      <div class="source"><button class="linkish" data-routing-add="${esc(profile)}" ${harness?'':'disabled'}>ajouter à ce profil</button></div></div>`;
+      <select id="f_rt_harness_${esc(profile)}" data-routing-harness="${esc(profile)}" data-routing-focus="harness|${esc(profile)}">${selectOptions(harnesses,pick.agent,'Choisir un harness…')}</select>${why}</div>
+    <div class="field"><label for="f_rt_model_${esc(profile)}">Modèle</label>${modelField}${warn}
+      <div class="source"><button class="linkish" data-routing-add="${esc(profile)}" data-routing-focus="add|${esc(profile)}" ${harness?'':'disabled'}>ajouter à ce profil</button></div></div>`;
 }
 
 function routingAdvancedShell(){
@@ -2613,11 +2631,32 @@ async function hydrateCliModel(revision,refresh=false){
   renderCliTechnical(revision);
 }
 
+/* Redessiner la section jette le focus au début du document : la commande sur
+   laquelle on vient de cliquer n'existe plus. On note ce qu'elle désignait et
+   on rend le focus à son équivalent — « monter » surtout, qu'on actionne
+   plusieurs fois de suite et dont le rang change à chaque fois. */
+function routingFocusTarget(body,focused){
+  const [kind,...rest]=focused.split('|'),key=rest.join('|');
+  /* « Monter » disparaît quand la ligne devient la préférée : on retombe sur
+     « retirer » du même couple, puis sur le sélecteur du profil. */
+  const wanted=kind==='up'?[focused,'drop|'+key,'harness|'+key.split('|')[0]]:[focused];
+  for(const candidate of wanted){
+    const target=[...body.querySelectorAll('[data-routing-focus]')]
+      .find(node=>node.dataset.routingFocus===candidate&&!node.disabled);
+    if(target)return target;
+  }
+  return null;
+}
 function renderRoutingAdvanced(revision){
   if(!currentAgentTab(revision)||!SET.routingAdvancedOpen)return;
   const body=$('#routingAdvancedBody');
   if(!body)return;
+  const active=document.activeElement;
+  const focused=active&&body.contains(active)&&active.dataset?active.dataset.routingFocus||'':'';
   body.innerHTML=routingAdvancedBody();bindRoutingAdvanced(revision);
+  if(!focused)return;
+  const target=routingFocusTarget(body,focused);
+  if(target)target.focus();
 }
 
 /* Le mode des sous-agents est le switch d'aiguillage lui-même : « Auto »
@@ -2625,10 +2664,10 @@ function renderRoutingAdvanced(revision){
    la section Technique, hors du corps rechargé de la configuration avancée —
    on le retrouve donc depuis la fenêtre, pas depuis ce corps. */
 function bindDelegationMode(){
-  const routingOn=modalContent.querySelector('[data-delegation-mode]');
-  if(!routingOn)return;
-  routingOn.addEventListener('change',()=>{
-    SET.draft.cli.delegation_mode=routingOn.value;SET.dirty=true;say('Modifications non enregistrées.','')});
+  const delegationMode=modalContent.querySelector('[data-delegation-mode]');
+  if(!delegationMode)return;
+  delegationMode.addEventListener('change',()=>{
+    SET.draft.cli.delegation_mode=delegationMode.value;SET.dirty=true;say('Modifications non enregistrées.','')});
 }
 
 /* Choisir un harness puis un modèle ne change rien ; seul « ajouter » met le
@@ -2639,7 +2678,10 @@ function bindRoutingAdvanced(revision){
   if(!body)return;
   body.querySelectorAll('[data-routing-profile-enabled]').forEach(el=>el.addEventListener('change',()=>{
     routingEntry(el.dataset.routingProfileEnabled).enabled=el.checked;
-    SET.dirty=true;say('Modifications non enregistrées.','')}));
+    /* Éteindre un profil change l'aspect de tout son bloc : il faut le
+       redessiner, sinon rien à l'écran ne dit que ses candidats ne servent
+       plus. Le focus revient sur la case qu'on vient de décocher. */
+    SET.dirty=true;say('Modifications non enregistrées.','');renderRoutingAdvanced(revision)}));
   body.querySelectorAll('[data-routing-harness]').forEach(el=>el.addEventListener('change',()=>{
     // Changer de harness invalide le modèle retenu : il appartenait à l'autre.
     const pick=routingPick(el.dataset.routingHarness);
@@ -2651,43 +2693,53 @@ function bindRoutingAdvanced(revision){
     if(!pick.agent)return;
     const entry=routingEntry(profile);
     const value={agent:pick.agent,model:pick.model||''};
-    const rest=(entry.candidates||[]).filter(c=>candidateKey(c)!==candidateKey(value));
-    entry.candidates=[...rest,value];
-    SET.dirty=true;renderRoutingAdvanced(revision)}));
+    /* Un couple déjà retenu n'est pas réajouté : le remettre en fin de liste le
+       rétrograderait en dernier recours et promouvrait un autre candidat au
+       rang de préféré — en un clic, sans que rien ne le dise. L'ordre ne change
+       que par « monter » et « retirer ». */
+    if((entry.candidates||[]).some(c=>candidateKey(c)===candidateKey(value))){
+      say('Déjà dans la liste de ce profil : utilisez « monter » pour le préférer.','');
+      return;
+    }
+    entry.candidates=[...(entry.candidates||[]),value];
+    SET.dirty=true;say('Modifications non enregistrées.','');renderRoutingAdvanced(revision)}));
   body.querySelectorAll('[data-routing-drop]').forEach(el=>el.addEventListener('click',()=>{
     const entry=routingEntry(el.dataset.routingDrop);
     entry.candidates=(entry.candidates||[]).filter((c,i)=>i!==Number(el.dataset.routingRank));
-    SET.dirty=true;renderRoutingAdvanced(revision)}));
+    SET.dirty=true;say('Modifications non enregistrées.','');renderRoutingAdvanced(revision)}));
   body.querySelectorAll('[data-routing-up]').forEach(el=>el.addEventListener('click',()=>{
     const entry=routingEntry(el.dataset.routingUp),rank=Number(el.dataset.routingRank);
     const list=[...(entry.candidates||[])];
     if(rank>0)list.splice(rank-1,0,list.splice(rank,1)[0]);
     entry.candidates=list;
-    SET.dirty=true;renderRoutingAdvanced(revision)}));
+    SET.dirty=true;say('Modifications non enregistrées.','');renderRoutingAdvanced(revision)}));
   body.querySelectorAll('[data-routing-fallback]').forEach(el=>el.addEventListener('change',()=>{
     routingEntry(el.dataset.routingFallback).allow_general_fallback=el.checked;
     SET.dirty=true;say('Modifications non enregistrées.','')}));
-  const routingRefresh=body.querySelector('#routingRefresh');
-  if(routingRefresh)routingRefresh.addEventListener('click',()=>hydrateRoutingAdvanced(revision,true));
+  const refresh=body.querySelector('#routingRefresh');
+  if(refresh)refresh.addEventListener('click',()=>hydrateRoutingAdvanced(revision,true));
   const retry=body.querySelector('#routingRetry');
   if(retry)retry.addEventListener('click',()=>hydrateRoutingAdvanced(revision,true));
 }
 
 async function hydrateRoutingAdvanced(revision,refresh=false){
   if(!currentAgentTab(revision)||!SET.routingAdvancedOpen)return;
+  /* « Rafraîchir » relit la machine : le harness et le modèle en cours de
+     choix peuvent avoir disparu, on repart d'une page propre. */
+  if(refresh)SET.routingPick={};
   if(SET.routing&&SET.routing.ok!==false&&!refresh){renderRoutingAdvanced(revision);return}
   const requestId=++SET.routingGeneration,body=$('#routingAdvancedBody');
   if(body)body.innerHTML='<div class="notice info">Chargement des profils et candidats…</div>';
-  const state=await tabRouting();
+  const state=await loadRoutingCandidates();
   if(!currentAgentTab(revision)||!SET.routingAdvancedOpen||requestId!==SET.routingGeneration)return;
   SET.routing=state;renderRoutingAdvanced(revision);
 }
 
-/* L'état de l'écran d'aiguillage, demandé au serveur. Le lister coûte une
-   sonde de chaque CLI et un appel à chaque fournisseur : on ne le paie qu'à
-   l'ouverture de la section. Un échec revient en état affichable — la section
-   dit alors pourquoi et propose de réessayer — jamais en zone vide et muette. */
-async function tabRouting(){
+/* L'état de la section, demandé au serveur. Le lister coûte une sonde de
+   chaque CLI et un appel à chaque fournisseur : on ne le paie qu'à l'ouverture
+   de la section. Un échec revient en état affichable — la section dit alors
+   pourquoi et propose de réessayer — jamais en zone vide et muette. */
+async function loadRoutingCandidates(){
   try{return await api('/api/routing/candidates')}
   catch(e){return {ok:false,error:e.message,profiles:[],harnesses:[]}}
 }
@@ -3130,7 +3182,7 @@ async function openSettings(){
   renderTabs();await renderTab();
 }
 
-function closeSettings(){++SET.openGeneration;++SET.cliGeneration;++SET.cliModelGeneration;++SET.routingGeneration;++SET.voiceGeneration;++SET.audioGeneration;++SET.diagnosticGeneration;SET.renderRevision=(SET.renderRevision||0)+1;SET.routingAdvancedOpen=false;cleanupSettingsSurface();overlay.classList.remove('open');SET.open=false;if(SET.capture)SET.capture.cancel()}
+function closeSettings(){SET.routingPick={};++SET.openGeneration;++SET.cliGeneration;++SET.cliModelGeneration;++SET.routingGeneration;++SET.voiceGeneration;++SET.audioGeneration;++SET.diagnosticGeneration;SET.renderRevision=(SET.renderRevision||0)+1;SET.routingAdvancedOpen=false;cleanupSettingsSurface();overlay.classList.remove('open');SET.open=false;if(SET.capture)SET.capture.cancel()}
 
 async function saveDraft(options){
   const silent=options&&options.silent;
@@ -3144,7 +3196,7 @@ async function saveDraft(options){
     if(voiceRestart)SET.restartNotice=true;
     SET.data=data;SET.shortcuts=data.shortcuts;SET.draft=draftFrom(data);SET.dirty=false;
     // Le CLI actif a pu changer : sa détection est refaite à l'ouverture de l'onglet.
-    SET.clis=null;SET.routing=null;SET.prompts=null;
+    SET.clis=null;SET.routing=null;SET.routingPick={};SET.prompts=null;
     if(!silent){say('Enregistré.','ok');await renderTab()}
     return data;
   }catch(e){

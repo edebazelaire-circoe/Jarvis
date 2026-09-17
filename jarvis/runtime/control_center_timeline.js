@@ -1029,6 +1029,9 @@ const JarvisTimelineCore=(function(){
   const LEADER_TICK_MS=10000;      // battement du meneur : son silence se voit
   const FOLLOWER_CHECK_MS=5000;    // granularité de la surveillance du suiveur
   const FOLLOWER_SILENCE_MS=35000; // silence toléré ; borne réelle ≈ 40 s
+  //: Deux battements manqués : au-delà, le suiveur ne peut plus affirmer qu'il
+  //: est à jour, et il le dit — bien avant que le chien de garde ne lise.
+  const LEADER_LATE_MS=25000;
   const RESYNC_MIN_MS=1000;        // deux trous coup sur coup ne font qu'une lecture
 
   /* Élection du meneur du profil par Web Locks. `decide()` rend une promesse
@@ -1036,8 +1039,9 @@ const JarvisTimelineCore=(function(){
      suiveur mis en file — le navigateur passe le verrou dès qu'il est rendu,
      y compris quand l'onglet qui le tenait est fermé ou navigue ailleurs.
      Un verrou accordé à un onglet devenu caché ou arrêté est rendu aussitôt. */
-  function createLeadership({locks,name,createAbort,onRole,wanted=()=>true,log=()=>{}}){
-    const state={held:false,release:null,abort:null};
+  function createLeadership({locks,name,createAbort,onRole,wanted=()=>true,log=()=>{},
+    schedule=(fn,ms)=>{const t=setTimeout(fn,ms);return()=>clearTimeout(t)}}){
+    const state={held:false,release:null,abort:null,retry:null,attempt:0};
     function hold(){
       if(!wanted()){state.abort=null;onRole('follower');return Promise.resolve()}
       return new Promise(release=>{state.abort=null;state.held=true;state.release=release;onRole('leader')});
@@ -1048,7 +1052,16 @@ const JarvisTimelineCore=(function(){
       locks.request(name,{signal:controller.signal},()=>hold()).catch(error=>{
         if(error&&error.name==='AbortError')return;
         if(state.abort===controller)state.abort=null;
-        log('warn','timeline.leader_lock_failed',{error:String(error&&error.message||error)});
+        state.attempt++;
+        log('warn','timeline.leader_lock_failed',{error:String(error&&error.message||error),attempt:state.attempt});
+        /* Un onglet qui n'arrive pas à se mettre en file ne serait jamais
+           meneur : il suivrait indéfiniment un meneur qui n'existe peut-être
+           plus. On se remet en file, en espaçant les tentatives. */
+        if(state.retry)state.retry();
+        state.retry=schedule(()=>{
+          state.retry=null;
+          if(wanted()&&!state.held&&!state.abort)queue();
+        },backoffMs(state.attempt));
       });
     }
     return {
@@ -1063,12 +1076,16 @@ const JarvisTimelineCore=(function(){
         });
       },
       release(){
+        if(state.retry){state.retry();state.retry=null}
+        state.attempt=0;
         if(state.abort){const pending=state.abort;state.abort=null;pending.abort()}
         if(state.release){const release=state.release;state.release=null;release()}
         state.held=false;
       },
+      name,
       held:()=>state.held,
-      queued:()=>!!state.abort,
+      queued:()=>!!state.abort||!!state.retry,
+      attempts:()=>state.attempt,
     };
   }
 
@@ -1087,7 +1104,7 @@ const JarvisTimelineCore=(function(){
     const shared=!!locks&&!!channel&&typeof locks.request==='function';
     const stats={broadcasts:0,received:0,resyncs:0,gaps:0,promotions:0,watchdogReads:0};
     let role=shared?'follower':'solo',conversationId=null,leadership=null;
-    let visible=true,stopped=false,heartbeat=null,watchdog=null,lastResyncAt=-Infinity,resyncing=false,followerSince=0;
+    let visible=true,stopped=false,heartbeat=null,watchdog=null,lastResyncAt=-Infinity,resyncing=false,followerSince=0,forced=false;
 
     const post=message=>{
       if(!channel)return;
@@ -1140,24 +1157,42 @@ const JarvisTimelineCore=(function(){
       return running;
     }
 
+    /* Le flux lit-il déjà, en ce moment, la conversation demandée ? C'est la
+       seule question qui dit s'il faut le relancer. Se fier au rôle ne suffit
+       pas : un onglet déjà meneur qui change de conversation reste meneur, et
+       il doit pourtant tout recommencer — sans quoi le sélecteur annonce B
+       pendant que le flux tient toujours A. */
+    function alreadyReading(phases){
+      return feed.state.conversationId===conversationId&&phases.includes(feed.state.phase);
+    }
     function becomeLeader(){
-      if(role==='leader')return;
-      role='leader';stats.promotions++;stopTimers();
-      feed.setRole('leader');
-      log('info','timeline.leader',{conversation_id:conversationId});
-      if(conversationId)feed.start(conversationId,{resume:true});
+      const again=role==='leader'&&alreadyReading(['hydrating','catching_up','live'])&&!forced;
+      role='leader';
+      if(!again){
+        stats.promotions++;
+        /* `resume` seulement si c'est le même flux : sur un changement de
+           conversation, tout repart de la séquence 0 — lignes, curseur — et la
+           lecture en vol de l'ancienne est abandonnée par `feed.start`. */
+        const resume=feed.state.conversationId===conversationId;
+        log('info','timeline.leader',{conversation_id:conversationId,resume});
+        stopTimers();
+        feed.setRole('leader');
+        if(conversationId)feed.start(conversationId,{resume});
+      }
+      forced=false;
       tick();armHeartbeat();
     }
     function becomeFollower(){
-      const was=role;
+      const was=role,again=was==='follower'&&alreadyReading(['hydrating','catching_up','following'])&&!forced;
       role='follower';stopTimers();followerSince=now();
       feed.setRole('follower');
+      forced=false;
       if(!conversationId||!visible)return;
       if(was==='leader')post({type:'bye',conversation_id:conversationId});
       /* La lecture de rattrapage part d'abord : le « bonjour » ci-dessous fait
          répondre le meneur tout de suite, et il ne doit pas trouver un flux
          encore à l'arrêt — il déclencherait une seconde lecture pour rien. */
-      feed.follow(conversationId,{resume:true});
+      if(!again)feed.follow(conversationId,{resume:feed.state.conversationId===conversationId});
       /* Un suiveur qui arrive demande au meneur où il en est : sans cela il
          attendrait le prochain battement pour le savoir. */
       post({type:'hello',conversation_id:conversationId});
@@ -1166,8 +1201,13 @@ const JarvisTimelineCore=(function(){
 
     function elect(){
       if(!shared||stopped||!conversationId)return Promise.resolve();
+      const name=LOCK_PREFIX+conversationId;
+      /* Déjà meneur du bon verrou : le rendre pour le reprendre ferait passer
+         cet onglet par un état de suiveur le temps d'un battement — et donc
+         par une lecture courte pour rien. On applique le rôle directement. */
+      if(leadership&&leadership.held()&&leadership.name===name){becomeLeader();return Promise.resolve()}
       if(leadership)leadership.release();
-      leadership=createLeadership({locks,name:LOCK_PREFIX+conversationId,createAbort,log,
+      leadership=createLeadership({locks,name,createAbort,log,schedule,
         wanted:()=>!stopped&&visible&&!!conversationId,
         onRole:next=>{if(next==='leader')becomeLeader();else becomeFollower()}});
       return leadership.decide();
@@ -1180,11 +1220,25 @@ const JarvisTimelineCore=(function(){
         leader:!!(leadership&&leadership.held()),queued:!!(leadership&&leadership.queued()),stats:{...stats}}},
       /* Suivre une conversation : c'est ici qu'on décide qui tient le
          long-poll. Sans partage possible, le comportement d'avant. */
-      watch(id){
+      watch(id,{force=false}={}){
+        const changed=conversationId!==id;
         conversationId=id;stopped=false;
+        forced=force||changed;
         if(!shared){role='solo';feed.setRole('solo');feed.start(id);return Promise.resolve()}
-        if(!visible){feed.setRole('follower');feed.pause();return Promise.resolve()}
+        if(!visible){
+          /* Caché : rien n'est demandé, mais le flux ne doit pas rester sur
+             l'ancienne conversation — au retour, l'élection le relancera sur
+             la bonne, et entre-temps la page ne montre les lignes de personne. */
+          feed.setRole('follower');feed.pause();
+          return Promise.resolve();
+        }
         return elect();
+      },
+      /* « Réessayer » quand il n'y a rien à réveiller : tout reprendre sur la
+         conversation courante, quel que soit le rôle tenu. */
+      restart(){
+        if(!conversationId)return Promise.resolve();
+        return this.watch(conversationId,{force:true});
       },
       /* Onglet caché : la conduite est rendue tout de suite — un autre onglet
          visible prend le relais — et plus rien n'est demandé ici. */
@@ -1277,6 +1331,14 @@ const JarvisTimelineCore=(function(){
         detail:[trouble.message,'relayé par un autre onglet'].filter(Boolean).join(' · '),hint:trouble.hint||'',retry:true};
       if(feed.leaderPhase==='reconnecting'&&trouble)return {tone:'warn',label:trouble.title||'Reconnexion',
         detail:[trouble.message,'relayé par un autre onglet'].filter(Boolean).join(' · '),hint:trouble.hint||'',retry:true};
+      /* Le relais est-il encore vivant ? Sans nouvelle de l'onglet qui lit, on
+         n'a aucun moyen d'affirmer qu'on est à jour : on dit depuis quand on
+         n'a rien entendu plutôt que d'afficher un « en direct » de confiance. */
+      const heard=feed.leaderAt||feed.hydratedAt||feed.startedAt;
+      const silence=heard?now-heard:null;
+      if(silence!==null&&silence>=LEADER_LATE_MS)return {tone:'warn',label:'Relais en retard',
+        detail:`${n} · aucune nouvelle de l'onglet qui lit depuis ${ago(silence)}`,
+        hint:'Une lecture de contrôle part d’elle-même ; « Réessayer » la déclenche tout de suite.',retry:true};
       const freshness=feed.lastEventAt?`dernier reçu il y a ${ago(now-feed.lastEventAt)}`:'en attente';
       return {tone:'live',label:'En direct',detail:`${n} · ${freshness} · relayé par un autre onglet`,retry:false};
     }
@@ -1570,7 +1632,7 @@ const JarvisTimelineCore=(function(){
     laneOf,isSpan,entryKind,displayText,typeLabel,statusLabel,toneOf,playbackNote,fmtDuration,fmtClock,durationOf,
     wrapLines,cardHeight,subagentName,layout,visibleRange,tickStep,ticks,neighbor,entryHtml,ariaLabel,iconSvg,escapeHtml,classifyError,backoffMs,
     createFetchJson,createFetchText,createOpenStream,createFeed,createLeadership,createSharedFeed,statusView,emptyView,indexItems,detailModel,traceModel,
-    SHARED_CHANNEL,SHARED_MESSAGE_VERSION,LOCK_PREFIX,LEADER_TICK_MS,FOLLOWER_CHECK_MS,FOLLOWER_SILENCE_MS,
+    SHARED_CHANNEL,SHARED_MESSAGE_VERSION,LOCK_PREFIX,LEADER_TICK_MS,FOLLOWER_CHECK_MS,FOLLOWER_SILENCE_MS,LEADER_LATE_MS,
     EXPORT_FORMAT,SEARCH_LIMIT,SEARCH_MAX_CHARS,transcriptUrl,exportUrl,searchUrl,exportFilename,transcriptFilename,fmtBytes,
     exportSummary,searchQueryProblem,snippetHtml,hitView,searchStateView,jobStateView,itemForEvent,
     localOffsetMinutes,offsetLabel,localDay,fnv1a,exportFailure,trackNewEntries,panelHint};
@@ -2358,7 +2420,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisTimelineCore
   el.zoom.addEventListener('change',()=>{S.pps=Number(el.zoom.value)||T.DEFAULT_PPS;S.zoomChanged=true;scheduleRebuild()});
   el.retry.addEventListener('click',()=>{
     if(!feed.state.conversationId){loadConversations();return}
-    if(!shared.retryNow())shared.watch(feed.state.conversationId);
+    if(!shared.retryNow())shared.restart();
   });
   el.newPill.addEventListener('click',()=>{el.scroll.scrollTop=el.scroll.scrollHeight;S.pendingNew=0;el.newPill.hidden=true});
   el.scroll.addEventListener('scroll',()=>{

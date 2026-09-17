@@ -1103,12 +1103,21 @@ One flow per tab (`createFeed`), and at most one request in flight:
 5. `following`: this tab is a follower — rows arrive by relay and no request is
    held. `paused`: the tab is hidden and asks for nothing. A follower shows the
    leader's own state, so "En direct" is never displayed while the leader is
-   reconnecting or blocked.
+   reconnecting or blocked, and after 25 s without a tick (two missed
+   heartbeats, well before the ~40 s watchdog read) it says "Relais en retard"
+   with how long it has heard nothing, rather than claiming to be up to date.
 
 Rows are keyed by `event_id`: a replayed page adds nothing. Switching
 conversation aborts the held long-poll once the selection has been stable for
 350 ms (so arrowing through the list does not churn connections; the Control
 Center frees its slot within 0.25 s) and hydrates the new one from cursor 0.
+This holds in `shared` mode too: the lock is named per conversation, so the tab
+releases the old conversation's lock and elects again on the new one, and taking
+the lead always (re)starts the read — a tab that is already the leader is the
+case that must restart, not the case to skip. Rows, cursor and the in-flight
+request of the old conversation are dropped, and `merge` refuses any row whose
+`conversation_id` is not the loaded one, so a late page of the old conversation
+cannot land in the new one.
 While the selected conversation is not the one loaded, the canvas says
 "Chargement de la conversation…" and never shows the previous rows. Going back
 to the current conversation within the settle window cancels the pending
