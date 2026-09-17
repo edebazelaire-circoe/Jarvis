@@ -665,9 +665,35 @@
      objets gardent leur boîte dessinée (`layout`) comme obstacles. Rend une
      boîte en unités ou `null`. Un glissement ou une géométrie du cerveau
      restent autoritaires : cette aide ne sert qu'au changement de forme. */
+  /* Angles essayés autour de l'ancre : 0°, ±15°, ±30°… jusqu'à 180° (24 directions). */
+  const EXPAND_ANGLES=Object.freeze([0,...Array.from({length:11},(_,i)=>[15*(i+1),-15*(i+1)]).flat(),180]);
+
   function placeFor(state,layout,objectId,representation){
     const current=state.objects.get(objectId);
     if(!current)return null;
+    /* D'abord un anneau serré autour de l'ancre, tous les 15°, du plus proche au
+       plus lointain : la première boîte libre (aucun objet visible, pas le
+       visage, zone sûre). Les angles préférés du résolveur seuls laissent
+       parfois une place qui mord sur une étoile voisine. */
+    const anchor=anchorsOf(state).get(objectId);
+    const anchorBox=anchor&&layout?layout.placements.get(anchor.to):null;
+    if(anchorBox){
+      const size=sizeFor({kind:current.kind,representation});
+      const obstacles=[];
+      for(const [id,box] of layout.placements)if(id!==objectId)obstacles.push(box);
+      const acx=anchorBox.x+anchorBox.w/2,acy=anchorBox.y+anchorBox.h/2;
+      const reach=Math.max(anchorBox.w,anchorBox.h)/2+Math.max(size.w,size.h)/2;
+      for(let ring=0;ring<10;ring++){
+        const radius=reach+6+ring*6;
+        for(const deg of EXPAND_ANGLES){
+          const a=deg*Math.PI/180;
+          const box={x:Math.round(acx+Math.cos(a)*radius-size.w/2),y:Math.round(acy+Math.sin(a)*radius-size.h/2),w:size.w,h:size.h};
+          if(!inSafeArea(box)||overlapArea(box,faceBox)>0)continue;
+          const grown={x:box.x-1,y:box.y-1,w:box.w+2,h:box.h+2};
+          if(obstacles.every(other=>overlapArea(grown,other)===0))return box;
+        }
+      }
+    }
     const objects=new Map();
     for(const [id,item] of state.objects){
       if(id===objectId){objects.set(id,Object.assign({},item,{representation,geometry:null,visibility:'visible'}));continue}

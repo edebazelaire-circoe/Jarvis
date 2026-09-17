@@ -745,7 +745,9 @@ def test_expanding_from_the_menu_finds_free_space_near_the_star_outside_the_face
       const other=obj('brain-window-1','window',{origin:'brain',geometry:{x:-60,y:-50,w:64,h:40},constraints:{placed_by:'brain',pinned_by_user:false}});
       const art=obj('brain-artifact-1','artifact',{origin:'brain',category:'research',geometry:{x:-107,y:11,w:40,h:7},
         constraints:{placed_by:'resolver',pinned_by_user:false}});
-      const s=state([star,other,art],[rel('brain-explains-1','explains','brain-artifact-1','claude:s')]);
+      /* Scène de QA (m7) : une étoile voisine juste à gauche, qu'un angle préféré du résolveur mordait. */
+      const neighbour=obj('claude:n','agent',{exec_state:'completed',geometry:{x:-81,y:-3,w:6,h:6},constraints:{placed_by:'resolver',pinned_by_user:false}});
+      const s=state([star,neighbour,other,art],[rel('brain-explains-1','explains','brain-artifact-1','claude:s')]);
       const layout=L.resolveLayout(s);
       const box=L.placeFor(s,layout,'brain-artifact-1','window');
       const capsule=L.placeFor(s,layout,'brain-artifact-1','capsule');
@@ -753,7 +755,7 @@ def test_expanding_from_the_menu_finds_free_space_near_the_star_outside_the_face
       const face={x:L.FACE_ZONE.x0,y:L.FACE_ZONE.y0,w:L.FACE_ZONE.x1-L.FACE_ZONE.x0,h:L.FACE_ZONE.y1-L.FACE_ZONE.y0};
       const middle=b=>[b.x+b.w/2,b.y+b.h/2];
       const far=(a,b)=>{const p=middle(a),q=middle(b);return Math.hypot(p[0]-q[0],p[1]-q[1])};
-      return {box,capsule,inside:inside(box),overStar:overlap(box,star.geometry),overOther:overlap(box,other.geometry),
+      return {box,capsule,inside:inside(box),overStar:overlap(box,star.geometry)||overlap(box,neighbour.geometry),overOther:overlap(box,other.geometry),
         overFace:overlap(box,face),dist:far(box,star.geometry)};
     """)
     box = result["box"]
