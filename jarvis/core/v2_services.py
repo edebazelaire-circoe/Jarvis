@@ -553,6 +553,12 @@ class JobService:
         # synthetique `job:<id>` de `_links` : ce repli n'est pas un travail
         # cerveau et ne doit jamais apparaitre comme tel dans l'etat de travail.
         self._work_links: dict[str, WorkLink] = {}
+        # Annulation idempotente (Slice 08, reprise QA) : `_started` note les
+        # jobs dont `_execute` a commencé, `_cancel_requested` ceux dont
+        # l'annulation est déjà demandée. Un second `cancel()` ne relance
+        # jamais `task.cancel()` : il interromprait l'écriture de `cancelled`.
+        self._started: set[str] = set()
+        self._cancel_requested: set[str] = set()
         from jarvis.core.owned_job_execution import OwnedJobExecution
         self.owned = OwnedJobExecution(self)
 
@@ -664,11 +670,13 @@ class JobService:
         return job
 
     async def _execute(self, job: Job) -> None:
+        # Première instruction, synchrone : dès ici `cancel()` annule la tâche
+        # au lieu de seulement noter la demande (une tâche annulée avant son
+        # premier pas n'exécuterait aucune ligne, et le job resterait `pending`).
+        self._started.add(job.id)
         worker = self.workers[job.kind]
         link = self._links.get(job.id) or _WorkLink(work_id=f"job:{job.id}", correlation_id=new_id())
         running = replace(job, status=JobStatus.RUNNING, started_at=utc_now())
-        await self.state.save_job(running)
-        await self._observe_work(running, WorkStatus.RUNNING)
         channel = _JobProgressChannel(
             job=running,
             events=self.events,
@@ -678,15 +686,19 @@ class JobService:
             on_published=lambda progress: self._observe_progress(running, progress),
         )
         try:
+            if job.id in self._cancel_requested:
+                # Annulé avant de démarrer : jamais exécuté, terminé annulé.
+                await self._settle_cancelled(replace(job, status=JobStatus.CANCELLED, completed_at=utc_now()))
+                return
+            await self.state.save_job(running)
+            await self._observe_work(running, WorkStatus.RUNNING)
             result = await self._run_worker(worker, running, channel)
             completed = replace(running, status=JobStatus.COMPLETED, result=dict(result), completed_at=utc_now())
             await self.state.save_job(completed)
             await self.events.publish(ProtocolEnvelope(message_type="job.completed", payload={"job_id": job.id, "kind": job.kind, "result": result}, correlation_id=link.correlation_id, conversation_id=job.requested_by_conversation_id))
             await self._observe_work(running, WorkStatus.COMPLETED)
         except asyncio.CancelledError:
-            cancelled = replace(running, status=JobStatus.CANCELLED, completed_at=utc_now())
-            await self.state.save_job(cancelled)
-            await self._observe_work(running, WorkStatus.CANCELLED)
+            await self._settle_cancelled(replace(running, status=JobStatus.CANCELLED, completed_at=utc_now()))
             raise
         except Exception as exc:
             failed = replace(running, status=JobStatus.FAILED, error=f"{type(exc).__name__}: {exc}", completed_at=utc_now())
@@ -697,8 +709,33 @@ class JobService:
             channel.close()
             self._report_progress_budget(job, link, channel)
             self._running.pop(job.id, None)
+            self._started.discard(job.id)
+            self._cancel_requested.discard(job.id)
             self._links.pop(job.id, None)
             self._work_links.pop(job.id, None)
+
+    async def _settle_cancelled(self, cancelled: Job) -> None:
+        """Écrire la fin annulée et l'observer, sans qu'une annulation de plus ne la coupe.
+
+        La persistance tourne dans sa propre tâche, attendue sous `shield` :
+        une annulation qui arrive pendant l'écriture (second arrêt, arrêt de
+        Core) est absorbée jusqu'à la fin de l'écriture ; l'appelant relève
+        ensuite sa propre `CancelledError`. Jamais un job `running` à jamais.
+        """
+
+        async def persist() -> None:
+            await self.state.save_job(cancelled)
+            await self._observe_work(cancelled, WorkStatus.CANCELLED)
+
+        write = asyncio.ensure_future(persist())
+        while not write.done():
+            try:
+                await asyncio.shield(write)
+            except asyncio.CancelledError:
+                if write.done():
+                    break
+                continue
+        write.result()
 
     async def _run_worker(self, worker: JobWorker, job: Job, progress: JobProgressSink) -> dict[str, object]:
         """Executer le worker, avec la couture d'avancement s'il la declare.
@@ -770,8 +807,13 @@ class JobService:
 
         Rend `(issue, job relu)` : `cancelled` (terminé annulé dans le délai),
         `cancel_requested` (annulation demandée, fin pas encore observée dans
-        `settle_s`), `already_terminal` (rien à arrêter). Job inconnu ou
-        analyse spéculative (jamais une étoile) : `KeyError`.
+        `settle_s`), `cleanup_unknown` (job `back_brain` : annulation demandée,
+        nettoyage de l'exécution non confirmé), `already_terminal` (rien à
+        arrêter). Job inconnu ou analyse spéculative (jamais une étoile) :
+        `KeyError`. Arrête **ce** job seulement : l'élément de travail du
+        cerveau qui l'aurait demandé n'est pas touché (sa fin vient de ses
+        propres observations). Deux arrêts concurrents, ou un arrêt pendant
+        `cancel_work`, n'annulent la tâche qu'une fois (`cancel`).
         """
 
         job = await self.state.get_job(job_id)
@@ -785,7 +827,12 @@ class JobService:
             # Attendre la fin sans jamais l'annuler une seconde fois : `wait` ne touche pas la tâche.
             await asyncio.wait({task}, timeout=max(0.0, settle_s))
         latest = await self.state.get_job(job_id) or job
-        outcome = "cancelled" if latest.status is JobStatus.CANCELLED else "cancel_requested"
+        if latest.status is JobStatus.CANCELLED:
+            outcome = "cancelled"
+        elif latest.cancellation == "cleanup_unknown":
+            outcome = "cleanup_unknown"
+        else:
+            outcome = "cancel_requested"
         self.diagnostics.emit(
             JOB_USER_CANCEL_KIND,
             "arrêt d'un job demandé par l'utilisateur",
@@ -800,8 +847,11 @@ class JobService:
             await self.owned.cancel(job_id)
             return
         task = self._running.get(job_id)
-        if task:
-            task.cancel()
+        if task and not task.done() and job_id not in self._cancel_requested:
+            self._cancel_requested.add(job_id)
+            if job_id in self._started:
+                task.cancel()
+            # Pas encore démarrée : `_execute` voit la demande à son premier pas.
         for worker in self.workers.values():
             try:
                 await worker.cancel(job_id)

@@ -43,6 +43,8 @@ MAX_PATCH_RESPONSE_BYTES = 1_048_576
 #: objets à 16 KiB, 1 024 relations, 4 096 pierres tombales) tient sous 11 MiB
 #: en UTF-8 compact.
 MAX_SCENE_RESPONSE_BYTES = 16 * 1_048_576
+#: Corps d'un arrêt de job (`POST /v1/work/cancel`, `POST /api/jobs/cancel`, Slice 08).
+MAX_WORK_CANCEL_BYTES = 4_096
 #: Longueur d'un `scene_id` ou d'une époque reçus en paramètre.
 MAX_TOKEN_CHARS = 128
 

@@ -76,7 +76,7 @@ CANCELLABLE_WORK_SOURCE = "job"
 #: Refus : ce travail n'a pas d'arrêt individuel.
 NOT_CANCELLABLE = "not_cancellable"
 #: Issues d'arrêt que Core peut rendre.
-WORK_CANCEL_OUTCOMES = frozenset({"cancelled", "cancel_requested", "already_terminal"})
+WORK_CANCEL_OUTCOMES = frozenset({"cancelled", "cancel_requested", "cleanup_unknown", "already_terminal"})
 #: Délai pour obtenir la connexion à Core. Au-delà, la commande n'est pas partie.
 COMMAND_CONNECT_TIMEOUT_S = 3.0
 #: Long-polls relayés en même temps. Au-delà : réponse immédiate `patch_waits_busy`.

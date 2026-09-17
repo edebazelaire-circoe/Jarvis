@@ -266,3 +266,171 @@ async def test_the_stop_relay_never_calls_core_for_a_claude_star():
     transport = ScriptedCancel({"source": "claude", "external_id": "t", "outcome": "cancelled", "status": "cancelled"})
     status, body = await CoreSceneView(transport).cancel_work("claude", "t")
     assert status == 409 and body["error"]["code"] == NOT_CANCELLABLE and transport.calls == []
+
+
+# ------------------------------------------------------------ arrêts concurrents (reprise QA, MAJOR-1)
+
+
+class CountingWorker(BlockingWorker):
+    def __init__(self) -> None:
+        super().__init__()
+        self.executed: list[str] = []
+
+    async def execute(self, job):
+        self.executed.append(job.id)
+        return await super().execute(job)
+
+
+async def settled_cancelled(process: JobCore, job_id: str) -> None:
+    assert (await process.core.state.get_job(job_id)).status is JobStatus.CANCELLED
+    await star_state(process.core, star_object_id("job", job_id), ExecState.CANCELLED)
+    assert job_id not in process.core.jobs._running
+    assert job_id not in process.core.jobs._cancel_requested and job_id not in process.core.jobs._started
+
+
+async def test_two_concurrent_user_stops_end_cancelled_and_cancel_the_task_once(jobs):
+    job = await running_job(jobs)
+    task = jobs.core.jobs._running[job.id]
+    calls = []
+    original = task.cancel
+    task.cancel = lambda *args, **kwargs: (calls.append(1), original(*args, **kwargs))[1]  # type: ignore[method-assign]
+
+    results = await asyncio.wait_for(asyncio.gather(jobs.core.jobs.cancel_for_user(job.id), jobs.core.jobs.cancel_for_user(job.id)), 10)
+
+    assert [(outcome, stored.status) for outcome, stored in results] == [("cancelled", JobStatus.CANCELLED)] * 2
+    assert len(calls) == 1
+    await settled_cancelled(jobs, job.id)
+
+
+async def test_a_brain_cancel_work_racing_a_user_stop_ends_cancelled(jobs):
+    job = await jobs.core.jobs.submit(Job(kind="demo", payload={}), work_id="brain-work-1")
+    await star_state(jobs.core, star_object_id("job", job.id), ExecState.RUNNING)
+
+    cancelled, (outcome, stored) = await asyncio.wait_for(
+        asyncio.gather(jobs.core.jobs.cancel_work("brain-work-1"), jobs.core.jobs.cancel_for_user(job.id)), 10)
+
+    assert cancelled == (job.id,) and outcome == "cancelled" and stored.status is JobStatus.CANCELLED
+    await settled_cancelled(jobs, job.id)
+
+
+async def test_a_stop_before_the_first_step_never_runs_the_worker_and_ends_cancelled(tmp_path):
+    process = JobCore(tmp_path)
+    process.worker = CountingWorker()
+    await process.start()
+    try:
+        job = await process.core.jobs.submit(Job(kind="demo", payload={}))
+        # Aucune attente : la tâche existe mais n'a pas fait son premier pas.
+        # La lecture du job par `cancel_for_user` ne rend pas la main (lecture
+        # sans attente), pour que l'arrêt arrive vraiment avant ce premier pas.
+        stored_job = job  # l'état écrit par `submit`, lu sans rendre la main
+        read = process.core.state.get_job
+
+        instant = [2]  # `cancel_for_user` puis `cancel` lisent le job avant de toucher la tâche
+
+        async def instant_read(job_id):
+            if job_id == job.id and instant[0]:
+                instant[0] -= 1
+                return stored_job
+            return await read(job_id)
+
+        process.core.state.get_job = instant_read
+        assert job.id not in process.core.jobs._started
+        try:
+            outcome, stored = await asyncio.wait_for(process.core.jobs.cancel_for_user(job.id), 10)
+        finally:
+            process.core.state.get_job = read
+        assert (outcome, stored.status) == ("cancelled", JobStatus.CANCELLED)
+        assert process.worker.executed == []
+        await settled_cancelled(process, job.id)
+    finally:
+        await process.stop()
+
+
+async def test_a_second_cancel_during_the_cancelled_write_cannot_leave_the_job_running(jobs, monkeypatch):
+    job = await running_job(jobs)
+    task = jobs.core.jobs._running[job.id]
+    writing = asyncio.Event()
+    release = asyncio.Event()
+    save = jobs.core.state.save_job
+
+    async def slow_save(value):
+        if value.id == job.id and value.status is JobStatus.CANCELLED:
+            writing.set()
+            await release.wait()
+        return await save(value)
+
+    monkeypatch.setattr(jobs.core.state, "save_job", slow_save)
+    first = asyncio.create_task(jobs.core.jobs.cancel_for_user(job.id, settle_s=5))
+    await asyncio.wait_for(writing.wait(), 5)
+    task.cancel()  # annulation brute pendant l'écriture (arrêt de Core, autre appelant)
+    await asyncio.sleep(0.05)
+    release.set()
+    outcome, stored = await asyncio.wait_for(first, 10)
+
+    assert (outcome, stored.status) == ("cancelled", JobStatus.CANCELLED)
+    await settled_cancelled(jobs, job.id)
+
+
+async def test_two_concurrent_user_stops_of_an_owned_back_brain_job_end_cancelled(tmp_path):
+    from tests.unit.test_back_brain_tasks import ControlledWorker, admitted, submit
+
+    worker = ControlledWorker()
+    core = JarvisCoreApplication(data_root=tmp_path, workers={"back_brain": worker})
+    await core.start()
+    try:
+        _, admission = await admitted(core)
+        accepted = await submit(core, admission)
+        await asyncio.wait_for(worker.started.wait(), 5)
+        results = await asyncio.wait_for(
+            asyncio.gather(core.jobs.cancel_for_user(accepted.job_id), core.jobs.cancel_for_user(accepted.job_id)), 10)
+        assert [(outcome, stored.status) for outcome, stored in results] == [("cancelled", JobStatus.CANCELLED)] * 2
+        stored = await core.state.get_job(accepted.job_id)
+        assert stored.status is JobStatus.CANCELLED and stored.cancellation == "confirmed"
+    finally:
+        worker.release.set()
+        await core.stop()
+
+
+async def test_core_refuses_an_oversize_cancel_body_with_413(jobs):
+    job = await running_job(jobs)
+    status, body, _ = await jobs.request("POST", "/v1/work/cancel", data=b"{" + b" " * 5000 + b"}",
+                                         headers={**jobs.headers(), "Content-Type": "application/json"})
+    assert status == 413 and body["error"]["code"] == "payload_too_large"
+    assert (await jobs.core.state.get_job(job.id)).status is JobStatus.RUNNING
+
+
+async def test_a_back_brain_cleanup_that_is_not_confirmed_is_reported_as_such(tmp_path):
+    from tests.unit.test_back_brain_tasks import ControlledWorker, admitted, submit
+
+    worker = ControlledWorker()
+    worker.cleanup_confirmed = False
+    core = JarvisCoreApplication(data_root=tmp_path, workers={"back_brain": worker})
+    await core.start()
+    try:
+        _, admission = await admitted(core)
+        accepted = await submit(core, admission)
+        await asyncio.wait_for(worker.started.wait(), 5)
+        outcome, stored = await asyncio.wait_for(core.jobs.cancel_for_user(accepted.job_id), 15)
+        assert outcome == "cleanup_unknown" and stored.status is JobStatus.RUNNING and stored.cancellation == "cleanup_unknown"
+    finally:
+        worker.cleanup_confirmed = True
+        worker.release.set()
+        await core.stop()
+
+
+def test_the_only_ui_route_that_affects_work_is_the_job_stop(tmp_path):
+    """Liste blanche : l'interface n'écrit jamais l'état de travail (`/api/work` en lecture seule,
+    aucune route d'observation ou d'ingestion) ; seul `POST /api/jobs/cancel` agit sur du travail, et
+    seulement pour `source = job` (les autres cas sont prouvés plus haut)."""
+
+    control = ControlCenter(runtime_root=tmp_path, project_root=tmp_path)
+    affecting = set()
+    for route in control._app.router.routes():
+        path = route.resource.canonical
+        if any(word in path for word in ("observation", "ingest")):
+            affecting.add(("forbidden", path))
+        if route.method in {"GET", "HEAD", "OPTIONS"}:
+            continue
+        if path.startswith("/api/work") or path.startswith("/api/jobs"):
+            affecting.add((route.method, path))
+    assert affecting == {("POST", "/api/jobs/cancel")}

@@ -2496,9 +2496,9 @@ class ControlCenter:
         if request.query:
             return self._scene_error(400, scene_wire.INVALID_REQUEST, "unexpected query")
         try:
-            raw = await scene_wire.read_bounded_body(request, limit=4096)
+            raw = await scene_wire.read_bounded_body(request, limit=scene_wire.MAX_WORK_CANCEL_BYTES)
         except scene_wire.SceneBodyTooLarge:
-            return self._scene_error(413, scene_wire.PAYLOAD_TOO_LARGE, "work cancel request exceeds 4096 bytes")
+            return self._scene_error(413, scene_wire.PAYLOAD_TOO_LARGE, f"work cancel request exceeds {scene_wire.MAX_WORK_CANCEL_BYTES} bytes")
         try:
             body = loads_strict_json(raw, invalid_message="invalid work cancel JSON")
             if not isinstance(body, dict) or set(body) != {"source", "external_id"}:

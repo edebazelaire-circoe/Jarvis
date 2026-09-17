@@ -521,7 +521,8 @@ class LocalProtocolServer:
         un sous-agent Claude n'a aucun arrêt individuel (409 `not_cancellable`,
         rien n'est touché). Job inconnu : 404. Réponse 200
         `{source, external_id, outcome, status}` avec `outcome` ∈ `cancelled`,
-        `cancel_requested`, `already_terminal` (`JobService.cancel_for_user`).
+        `cancel_requested`, `cleanup_unknown`, `already_terminal`
+        (`JobService.cancel_for_user`). Corps au-delà de 4 Kio : 413.
         """
 
         from jarvis.core.v2_services import JOB_WORK_SOURCE
@@ -529,12 +530,14 @@ class LocalProtocolServer:
 
         if request.query:
             raise ValueError("unexpected cancel query")
-        raw = bytearray()
-        async for chunk in request.content.iter_chunked(4096):
-            raw.extend(chunk)
-            if len(raw) > 4096:
-                raise ValueError("work cancel request exceeds byte bound")
-        value = loads_strict_json(bytes(raw), invalid_message="invalid work cancel JSON")
+        try:
+            raw = await scene_wire.read_bounded_body(request, limit=scene_wire.MAX_WORK_CANCEL_BYTES)
+        except scene_wire.SceneBodyTooLarge:
+            return web.json_response(
+                scene_wire.error_body(scene_wire.PAYLOAD_TOO_LARGE, f"work cancel request exceeds {scene_wire.MAX_WORK_CANCEL_BYTES} bytes"),
+                status=413,
+            )
+        value = loads_strict_json(raw, invalid_message="invalid work cancel JSON")
         if not isinstance(value, dict) or set(value) != {"schema_version", "source", "external_id"}:
             raise ValueError("work cancel request must be {schema_version, source, external_id}")
         if type(value["schema_version"]) is not int or value["schema_version"] != 1:
