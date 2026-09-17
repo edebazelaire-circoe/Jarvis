@@ -682,10 +682,12 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
 .sc-origin-dot{flex:none;width:6px;height:6px;border-radius:50%;background:var(--tone)}
 .sc-origin-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#c5dae3}
 .sc-origin-state{flex:none;color:var(--sc-muted)}
-.sc-kind-artifact.sc-window .sc-summary{flex:0 1 auto;max-height:38%}
-.sc-kind-artifact.sc-window .sc-items{flex:1 1 auto;max-height:none;min-height:0;overflow-y:auto;overscroll-behavior:contain;
+.sc-kind-artifact.sc-window .sc-summary{flex:0 0 auto;max-height:38%}
+.sc-kind-artifact.sc-window .sc-items{flex:1 1 auto;max-height:none;min-height:0;align-content:start;overflow-y:auto;overscroll-behavior:contain;
   scrollbar-width:thin;scrollbar-color:rgba(151,191,209,.28) transparent}
 .sc-items.sc-at-end{-webkit-mask-image:none;mask-image:none}
+/* Résumé entier : pas de fondu sur sa dernière ligne. */
+.sc-summary.sc-fits{-webkit-mask-image:none;mask-image:none}
 .sc-items .sc-item-link{color:#e6f4fa;text-decoration:none;border-radius:3px;cursor:pointer}
 .sc-items .sc-item-link:hover{text-decoration:underline;text-decoration-color:color-mix(in srgb,var(--tone) 70%,transparent);text-underline-offset:3px}
 .sc-items .sc-item-link:focus-visible{outline:1px solid var(--sc-ink);outline-offset:1px}
@@ -1135,6 +1137,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
 
   /* Liste d'éléments entière : pas de fondu. */
   function markItemsThatFit(){
+    for(const summary of root.querySelectorAll('.sc-summary'))summary.classList.toggle('sc-fits',summary.scrollHeight<=summary.clientHeight+1);
     for(const list of root.querySelectorAll('.sc-items')){
       list.classList.toggle('sc-fits',list.scrollHeight<=list.clientHeight+1);
       markItemsEnd(list);
