@@ -39,18 +39,24 @@ from jarvis.testlab.diagnostics import (
     ScoreMethod,
 )
 from jarvis.testlab.implementations import (
+    RUNNER_NOT_REGISTERED,
     ImplementationEntry,
     ImplementationRegistry,
     default_implementations,
     registered,
+    reserved,
 )
 from jarvis.testlab.manifests import CatalogLock, DiagnosticManifest, lock_entry_for, render_manifest
 from jarvis.testlab.profiles import CostBounds, ProfileName, ProfileSpec
 from jarvis.testlab.runners import RunContext, RunOutcome
 from jarvis.testlab.runs import ArtifactKind
+from jarvis.testlab.virtual.registry import virtual_implementations
 
 SELFTEST_DIAGNOSTIC_ID = "selftest.worker"
 SELFTEST_IMPLEMENTATION = "testlab.selftest.virtual"
+#: A fixture name that is declared and never registered, so the `runner_unavailable`
+#: path stays testable once every real reservation has been implemented by its Slice.
+SELFTEST_RESERVED_IMPLEMENTATION = "testlab.selftest.reserved"
 #: Prefix of every fixture implementation name, so the catalog test can assert that no
 #: official manifest references one.
 SELFTEST_IMPLEMENTATION_PREFIX = "testlab.selftest."
@@ -147,7 +153,9 @@ class SelfTestRunner:
 
 def selftest_implementations() -> tuple[ImplementationEntry, ...]:
     """The fixture implementation entries a worker composes on top of `default_implementations()`."""
-    return (registered(SELFTEST_IMPLEMENTATION, ProfileName.VIRTUAL, SelfTestRunner),)
+    return (registered(SELFTEST_IMPLEMENTATION, ProfileName.VIRTUAL, SelfTestRunner),
+            reserved(SELFTEST_RESERVED_IMPLEMENTATION, ProfileName.VIRTUAL, RUNNER_NOT_REGISTERED,
+                     "Fixture reservation: a declared name no Slice implements, on purpose."))
 
 
 def catalog_implementations() -> ImplementationRegistry:
@@ -155,21 +163,27 @@ def catalog_implementations() -> ImplementationRegistry:
 
     One definition for both sides: a worker must resolve exactly the names its
     supervisor resolved, or a run could be queued against a declaration the worker
-    reads differently. The fixture names are always present and always harmless:
+    reads differently. It is the declared catalog, with the reserved names a Slice
+    has implemented turned into registrations (Slice 06: the five `virtual` names),
+    plus the fixture names. The fixture names are always present and always harmless:
     only a manifest can reference one, and official manifests are locked.
     """
-    return default_implementations().with_entries(selftest_implementations())
+    return default_implementations().registering(virtual_implementations()).with_entries(selftest_implementations())
 
 
-def selftest_spec(*, max_duration_s: float = 60.0) -> DiagnosticSpec:
-    """The fixture declaration. `max_duration_s` is the run timeout the supervisor enforces."""
+def selftest_spec(*, max_duration_s: float = 60.0, implementation: str = SELFTEST_IMPLEMENTATION) -> DiagnosticSpec:
+    """The fixture declaration. `max_duration_s` is the run timeout the supervisor enforces.
+
+    `implementation` lets a test point the profile at `SELFTEST_RESERVED_IMPLEMENTATION`
+    and exercise the `runner_unavailable` path.
+    """
     return DiagnosticSpec(
         diagnostic_id=SELFTEST_DIAGNOSTIC_ID,
         version=1,
         title="Supervisor and worker self-test",
         domain="selftest",
         description="Fixture diagnostic of the Test Lab supervisor; measures a supplied number.",
-        profiles={ProfileName.VIRTUAL: ProfileSpec(ProfileName.VIRTUAL, SELFTEST_IMPLEMENTATION,
+        profiles={ProfileName.VIRTUAL: ProfileSpec(ProfileName.VIRTUAL, implementation,
                                                    CostBounds(max_duration_s, 0))},
         parameters=(
             ParameterSpec("mode", ParameterType.ENUM, SelfTestMode.MEASURE.value,
@@ -196,16 +210,19 @@ def selftest_spec(*, max_duration_s: float = 60.0) -> DiagnosticSpec:
     )
 
 
-def selftest_manifest(*, max_duration_s: float = 60.0,
-                      override_allowlist: tuple[ParameterSpec, ...] = ()) -> DiagnosticManifest:
+def selftest_manifest(*, max_duration_s: float = 60.0, override_allowlist: tuple[ParameterSpec, ...] = (),
+                      implementation: str = SELFTEST_IMPLEMENTATION) -> DiagnosticManifest:
     """The fixture manifest. `override_allowlist` lets a test exercise run-local setting overrides."""
-    return DiagnosticManifest(selftest_spec(max_duration_s=max_duration_s), override_allowlist)
+    return DiagnosticManifest(selftest_spec(max_duration_s=max_duration_s, implementation=implementation),
+                              override_allowlist)
 
 
 def write_selftest_catalog(root: Path | str, *, max_duration_s: float = 60.0,
-                           override_allowlist: tuple[ParameterSpec, ...] = ()) -> Path:
+                           override_allowlist: tuple[ParameterSpec, ...] = (),
+                           implementation: str = SELFTEST_IMPLEMENTATION) -> Path:
     """Write a one-diagnostic catalog (manifest + lock) under `root`, ready for `load_catalog`."""
-    manifest = selftest_manifest(max_duration_s=max_duration_s, override_allowlist=override_allowlist)
+    manifest = selftest_manifest(max_duration_s=max_duration_s, override_allowlist=override_allowlist,
+                                 implementation=implementation)
     base = Path(root)
     path = base / manifest.relative_path
     path.parent.mkdir(parents=True, exist_ok=True)

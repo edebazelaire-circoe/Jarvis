@@ -127,6 +127,34 @@ class ImplementationRegistry:
         """A registry with more names (tests and later Slices compose; never mutates)."""
         return ImplementationRegistry((*self._entries.values(), *entries))
 
+    def registering(self, entries: Iterable[ImplementationEntry]) -> ImplementationRegistry:
+        """A registry where each entry REPLACES the reserved name it implements.
+
+        This is how a Slice turns its reservations into runners (Slice 06 for `virtual`,
+        08 and 09 for the others) without the declaration module importing the runner:
+        the name, its profile and its review stay here; the factory comes from the
+        profile's own package. Replacing anything but a reserved entry of the same
+        profile is refused, so a registration can never silently take over another
+        diagnostic's name or change the profile a manifest was checked against.
+        """
+        replacements: dict[str, ImplementationEntry] = {}
+        for entry in entries:
+            if entry.name in replacements:
+                # Same rule as the constructor: a name given twice is a mistake, not a
+                # last-one-wins precedence, and silently keeping one of two reviewed
+                # factories is exactly the kind of accident this registry exists to stop.
+                raise fail(f"implementation {entry.name} is registered twice")
+            existing = self.get(entry.name)
+            if existing.factory is not None:
+                raise fail(f"implementation {entry.name} is already registered")
+            if existing.profile is not entry.profile:
+                raise fail(f"implementation {entry.name} is declared for profile {existing.profile.value}",
+                           REFERENCE_INVALID)
+            if entry.factory is None:
+                raise fail(f"implementation {entry.name} must bring a factory to be registered")
+            replacements[entry.name] = entry
+        return ImplementationRegistry([replacements.get(name, entry) for name, entry in self._entries.items()])
+
 
 #: Reason codes (closed, documented in docs/testlab.md).
 RUNNER_NOT_REGISTERED = "runner_not_registered"

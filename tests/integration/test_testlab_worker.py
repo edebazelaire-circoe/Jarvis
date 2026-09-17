@@ -32,6 +32,7 @@ from jarvis.testlab.selftest import (
     CHILD_PID_FILE,
     FIXTURE_CREDENTIAL,
     SELFTEST_DIAGNOSTIC_ID,
+    SELFTEST_RESERVED_IMPLEMENTATION,
     SelfTestMode,
     write_selftest_catalog,
 )
@@ -210,29 +211,27 @@ async def test_a_real_result_contradicting_the_declaration_is_refused(tmp_path):
     assert dict(run.metrics) == {}
 
 
-async def test_a_reserved_runner_of_the_official_catalog_fails_the_run_structurally(tmp_path):
-    """The real catalog, whose seed runners are reserved until Slice 06."""
-    supervisor, store = _official(tmp_path)
+async def test_a_reserved_runner_fails_the_run_structurally(tmp_path):
+    """A declared name with no registered runner: `errored` / `runner_unavailable`, not refused.
+
+    Slice 06 registered every `virtual` name the shipped catalog uses, so no official
+    manifest can exercise this path any more; the fixture reservation
+    `testlab.selftest.reserved` is what keeps it covered. That the shipped seeds are now
+    `available` to a supervisor is asserted in
+    `tests/unit/test_testlab_catalog.py::test_the_seed_virtual_profiles_are_available_to_a_supervisor_and_its_workers`.
+    """
+    root = write_selftest_catalog(tmp_path / "reserved-catalog",
+                                  implementation=SELFTEST_RESERVED_IMPLEMENTATION)
+    supervisor, store = build(tmp_path, catalog_root=root)
     await supervisor.start()
     try:
-        run_id = await supervisor.submit(RunRequest(diagnostic_id="voice.self_echo", profile=ProfileName.VIRTUAL))
+        run_id = await supervisor.submit(request())
         run = await supervisor.wait(run_id, timeout_s=90)
     finally:
         await supervisor.aclose()
     assert run.status is RunStatus.ERRORED
     assert run.failure.code == FAILURE_RUNNER_UNAVAILABLE
     assert "runner_not_registered" in run.failure.detail
-
-
-def _official(tmp_path: Path):
-    """A supervisor on the shipped catalog (no fixture manifest), in a private store."""
-    store = FilesystemTestRunStore(tmp_path / "official-store")
-    policy = SupervisorPolicy(max_concurrent_runs=1, startup_timeout_s=STARTUP_TIMEOUT_S, heartbeat_timeout_s=30.0,
-                              cancel_grace_s=3.0, poll_interval_s=0.05, maintenance=MaintenancePolicy(enabled=False))
-    supervisor = RunSupervisor(store=store, work_root=tmp_path / "official-work", policy=policy,
-                               clock=_clock(), nonce=_nonce(), code_probe=_code,
-                               environment={"os": "windows", "python_version": "3.14.6"})
-    return supervisor, store
 
 
 async def test_a_real_runner_cannot_write_its_own_verdict_or_reach_another_run(tmp_path):

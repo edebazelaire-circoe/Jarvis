@@ -1446,8 +1446,21 @@ scratch directory as its `JARVIS_RUNTIME_DIR` / `JARVIS_DATA_ROOT` with a copy o
 the permanent `runtime/control-center-settings.json` is never written; it reports measurements only,
 and the supervisor derives the verdict and re-checks it against the declaration before storing.
 A supervisor that died leaves no run `running`: the next start reaps or recovers them from the
-worker lock and the result file, and schedules the store upkeep. Profile runners and adapters come
-in later Slices of `tasks/jarvis-category2-test-lab/`.
+worker lock and the result file, and schedules the store upkeep. The first execution profile is
+`virtual` (`jarvis/testlab/virtual/`): the production voice path — Core, the local protocol, the
+brain orchestrator, the speech scheduler, the voice runtime and the Realtime bridge — mounted in
+memory with five named doubles (Realtime session, audio streams, brain backend, duplex echo guard,
+wake word). It is the async conversation harness moved into the product, so
+`tests/integration/async_conversation_harness.py` and `tests/fakes/audio_device.py` are re-exports
+and their tests keep passing unchanged. A virtual run writes the live runtime's own `trace.jsonl`
+with a `session_id` derived from the run id, stores it as evidence, and a `DiagnosticBundle`
+captured over it segments into exactly one voice session. Its waits are conditions bounded by the
+run's remaining time, never a wall clock, so a cancel or a deadline ends a run cooperatively, and no
+part of the profile reads a clock to decide anything. A seed refuses to certify silence: a stimulus
+the stack never answers, or a latency join that never happened, ends the run inconclusive or failed
+rather than passing on absent evidence. The
+`audio`, `live` and `hardware` profiles come in later Slices of
+`tasks/jarvis-category2-test-lab/`.
 
 ## Sub-agent routing
 

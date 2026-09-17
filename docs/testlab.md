@@ -257,7 +257,8 @@ has no index, so it says `step.args.<name>`.
 
 A scenario is inert data. Slice 04 adds the vocabulary that gives its steps meaning
 (Scenario primitives) and the catalog that publishes official ones (Catalog); the
-executor is Slice 06.
+executor of the `virtual` profile is `jarvis/testlab/virtual/executor.py` (Virtual
+profile).
 
 ## Scenario primitives
 
@@ -344,10 +345,11 @@ Rules that span steps:
   guards run on top of that (`testlab_forbidden_code`,
   `testlab_forbidden_private_data`).
 
-`PrimitiveHandler` is the executor-facing seam: a profile runner (Slice 06 onwards)
-registers one handler per primitive it supports; the executor advances its virtual
-clock to `step.args["at_ms"]` and calls it. `missing_handlers(primitives, profile,
-handlers)` names what a runner still has to cover. Slice 04 implements no executor.
+`PrimitiveHandler` is the executor-facing seam: a profile runner registers one handler
+per primitive it supports; the executor advances its virtual clock to
+`step.args["at_ms"]` and calls it. `missing_handlers(primitives, profile, handlers)`
+names what a runner still has to cover; it is empty for `virtual` (Virtual profile)
+and names everything for the profiles Slices 08 and 09 will add.
 
 ## Replay fixtures
 
@@ -355,8 +357,8 @@ handlers)` names what a runner still has to cover. Slice 04 implements no execut
 codec (schema, size bound, provenance, timeline) that `tests/replay/voice_replay.py`
 introduced. That test module is now a thin compatibility layer: it re-exports the
 codec unchanged — same names, same stable `fixture_*` error codes, same immutability
-— and keeps only `ReplayClock` and `ReplayDriver`, the execution half, until Slice 06
-productizes an executor. Every fixture in `tests/fixtures/voice_replay/` and the
+— and keeps only `ReplayClock` and `ReplayDriver`, the execution half used by the
+existing replay tests; the productized executor is `jarvis/testlab/virtual/executor.py`. Every fixture in `tests/fixtures/voice_replay/` and the
 tests `tests/unit/test_voice_replay_fixture.py`,
 `tests/integration/test_voice_replay_regressions.py` and
 `tests/integration/test_voice_replay_safety_regressions.py` keep passing unchanged.
@@ -435,8 +437,11 @@ is *reserved* in the registry with a reason code (`runner_not_registered`) and a
 detail naming the Slice that will register it. The catalog then declares the profile
 with its requirements and cost and reports `availability: "unavailable"`, so callers
 see that the diagnostic supports the profile and why it cannot run today. Slice 06
-turns the virtual reservations into registrations, Slices 08 and 09 the others; that
-is a code change only, with no manifest edit and therefore no version bump.
+turned the five `virtual` reservations into registrations with
+`ImplementationRegistry.registering(entries)`, which replaces a *reserved* entry of
+the same name and profile and refuses anything else; Slices 08 and 09 do the same for
+theirs. That is a code change only, with no manifest edit and therefore no version
+bump.
 
 **The lock proves nothing was edited in place.** `catalog.lock.json`
 (`jarvis.testlab.catalog_lock` v1) holds one entry per published version:
@@ -521,8 +526,9 @@ a new diagnostic — so it never imports the catalog and stays pure.
 ## Seed diagnostics
 
 The catalog ships the four Slice 12 seeds, all at version 1, all with the `virtual`
-profile only, all `unavailable` until Slice 06 registers their runners. Slices 08, 09
-and 12 add other profiles through a version bump, which keeps v1 in the history.
+profile only. Slice 06 registered their runners (Virtual profile), so all four are
+`available` and runnable today. Slices 08, 09 and 12 add other profiles through a
+version bump, which keeps v1 in the history.
 
 | Diagnostic | Blocking assertions | Notes |
 |---|---|---|
@@ -1425,10 +1431,18 @@ killed), `crash` (hard exit with no result), `error`, `undeclared_metric` and
 failing value). `write_selftest_catalog(root)` writes a one-diagnostic catalog for
 a test.
 
-Slice 05 registers nothing else: every seed profile is still `unavailable`, and a
-run of one is persisted `errored` with `runner_unavailable` rather than refused
-at submission, so the attempt stays in the record. Slice 06 registers the virtual
-runners.
+`testlab.selftest.reserved` is a second fixture name, declared and deliberately
+never registered. Once a Slice has implemented every real reservation of a profile
+(Slice 06 did for `virtual`), it is what keeps the `errored` / `runner_unavailable`
+path covered: `write_selftest_catalog(root, implementation=...)` points the fixture
+profile at it.
+
+Slice 06 turned the five `virtual` reservations into registrations through
+`ImplementationRegistry.registering` (see "Virtual profile"). The four remaining
+names (`testlab.scenario.audio`, `.live`, `.hardware_auto`, `.hardware_guided`)
+are still `unavailable`, and a run of one is persisted `errored` with
+`runner_unavailable` rather than refused at submission, so the attempt stays in
+the record.
 
 ### Validation
 
@@ -1438,6 +1452,328 @@ runners.
 
 The integration file starts real processes: one per test, two in the tree-kill
 test (the worker and its grandchild).
+
+## Virtual profile
+
+`jarvis/testlab/virtual/` is the `virtual` execution profile: the **production
+voice path**, mounted in memory and off the network, with a small, named set of
+controlled doubles. It is the async conversation harness
+(`tests/integration/async_conversation_harness.py`) moved into the product, because
+production code may not import from `tests.`
+(`tests/unit/test_v2_architecture.py::test_production_never_imports_test_frontends`).
+The test module is now a re-export: same names, same semantics, same
+`voice_stack(tmp_path, monkeypatch, ...)` call. `tests/fakes/audio_device.py` is a
+re-export of `jarvis/testlab/virtual/devices.py` for the same reason.
+
+| Module | Role |
+|---|---|
+| `patching.py` | `PatchStack`: `setattr` + restore with no pytest. `voice_stack` accepts it or a `monkeypatch`. |
+| `devices.py` | `BufferedOutputStream` / `BufferedInputStream`, the controlled native streams. |
+| `harness.py` | The doubles, `VoiceStack` and `voice_stack(...)`. |
+| `echo_guard.py` | `VirtualEchoGuard`, the duplex-capture double (acoustic state only). |
+| `journal.py` | `TraceRecordingJournal`: the in-memory view **and** `runtime/trace.jsonl`. |
+| `executor.py` | `VirtualExecutor`: the primitive-to-harness mapping. |
+| `runners.py` | The four seed runners and the generic scenario runner. |
+| `registry.py` | The lazy factories `catalog_implementations()` registers. |
+
+### What is real and what is a double
+
+Real: `JarvisCoreApplication`, the local HTTP/WebSocket protocol, `BrainOrchestrator`,
+`SpeechScheduler`, `PersistentVoiceRuntime`, `RealtimeConversationBridge`,
+`SoundDeviceRealtimeAudio`'s admission, epochs, gain and byte accounting, the
+conversation state store, and the `RuntimeJournal` format.
+
+Doubles, and only these:
+
+| Double | Replaces | What it decides |
+|---|---|---|
+| `FakeRealtimeSession` | the provider Realtime session | nothing: it relays the events the scenario pushes and records `speak()` |
+| `FakeAudio` + `ImmediateOutputStream` | the PortAudio streams | nothing: the native write consumes immediately |
+| `ScriptedBrainBackend` | the strong model | nothing: `run_turn` returns only when the scenario releases it |
+| `VirtualEchoGuard` | the duplex capture (`jarvis/audio/duplex.py`) | nothing: it reports whether Jarvis is the far end |
+| `FakeWakeWord` | the wake-word detector | nothing: it yields the keyword the run pushes |
+
+`VirtualEchoGuard` deserves its own note. `_barge_in_allowed()` has no witness when
+the audio has no capture (`has_echo_guard` false) and then believes the provider,
+so a harness without a guard confirms **every** echo candidate and
+`voice.self_echo` could not tell a correct stack from a broken one. The double is
+fed by the production writer (`push_reference` per output block, `clear_reference`
+on an output stop), so "Jarvis is audible" is observed rather than declared; the
+decision that follows — `voice.barge_in` or `voice.barge_in_ignored` /
+`speech_started_behind_echo_guard` — stays entirely in `realtime_audio.py`.
+
+**The guard reads no clock.** It first held the gate closed for 2 s of
+`time.monotonic` after the last output block, which made it the one part of the
+profile that depended on wall time: a 2.2 s stall of a loaded host between the last
+block and the candidate reopened the gate and turned a correct stack into a
+`voice.self_echo` failure. The far end is now pure state — on from the first
+reference block, off on `clear_reference()` — so no pause can change a verdict.
+Nothing is lost: the bridge consults the guard only `if self.continuous and
+self._output_live()`, so "is an output live" is already its own precondition, and a
+conservative `far_end_recent` outside a live output only tightens input admission.
+
+**The consequence, stated plainly: the latched state never decays.** The real duplex
+guard reopens on its own once the far end goes quiet; this one only reopens on
+`clear_reference()`, which the production writer calls when an output is *stopped* and
+not when one simply finishes. After the first written block a virtual run therefore
+reads "Jarvis is the far end" for the rest of the session. That is safe for what reads
+it today — `_barge_in_allowed()` is gated on a live output, `near_playback` only becomes
+more conservative, and the capture report is descriptive — and it is what makes the
+verdict independent of host load. A later Slice that reads `echo_guard_open`,
+`far_end_recent` or `near_end_observed` for anything else must know that in a virtual
+run those fields are latched, not observed moment to moment, and must not read a closed
+gate as evidence that Jarvis is audible *right now*.
+
+### Primitive-to-harness mapping
+
+Every primitive the `virtual` profile declares has a handler, so
+`missing_handlers(DEFAULT_PRIMITIVES, VIRTUAL, HANDLED)` is empty (pinned by a
+test). `audio.inject` is acoustic and is not a virtual primitive; Slice 08 owns it.
+
+| Primitive | What the virtual profile does |
+|---|---|
+| `user.turn` | commits a transcript built from `content_tag`, waits for the turn submission, takes the brain turn |
+| `user.speech` | same, with the authored `text` |
+| `user.interrupt` | `realtime.speech_started`, then the authored turn |
+| `brain.hold` | `start_work(work_id)` on the brain turn in flight |
+| `brain.ready` | `say(result_tag, RESULT)` + `complete_work` |
+| `brain.release` | `finish()` on the held turn, then settles |
+| `scheduler.enqueue` | through the brain turn in flight (Core stamps the real source); with no turn, publishes `brain.speech.requested` on Core's bus with the scenario's own `SpeechSource` |
+| `provider.output_started` | `realtime.output_started` |
+| `provider.transcript_final` | `realtime.assistant_transcript` built from `generated_tag` |
+| `provider.output_done` | `realtime.audio_done` + `realtime.response_done` with the declared status |
+| `provider.cancel_rejected` | arms the fake provider to refuse the next cancel of that output (observed later as `voice.barge_in_degraded` / `barge_in_cancel_failed`) |
+| `provider.session_closed` | closes the fake session; any later stimulus fails the run |
+| `owner.candidate` | `realtime.speech_started` (a barge-in candidate opens) |
+| `owner.rejected` | **observation**: waits for `voice.barge_in_rejected` / `voice.barge_in_ignored` |
+| `owner.confirmed` | **observation**: waits for `voice.barge_in` / `voice.barge_in.owner_confirmed` |
+| `device.output_busy` | opens the named output on the surface, optionally plays `played_ms` |
+| `device.consume` | feeds `played_ms` of provider audio in 100 ms blocks |
+| `device.release` | `realtime.audio_done` (unless `provider_still_active`) + `realtime.response_done` |
+| `control.stop` | stops the voice runtime the way production does |
+| `control.checkpoint` | settles and records the checkpoint id |
+| `time.wait` | advances the virtual clock, then settles |
+| `parameter.override` | verifies the prelude was actually applied to this run |
+| `expect.event` | counts Conversation Events of that type at the end of the run |
+| `expect.metric` | evaluates the ad-hoc assertion on the final metrics |
+| `expect.assertion` | compares the declared assertion's outcome |
+
+Two rules make the mapping honest:
+
+- `owner.rejected` and `owner.confirmed` are **not stimuli**. The owner decision is
+  the code under test, so the executor waits for it and fails the run when the stack
+  decided otherwise. A scenario that declares a confirmation the stack never makes
+  ends `steps[i] owner.confirmed: a confirmed barge-in never happened within Ns of
+  run budget`, never a silent pass.
+- Any step the harness cannot perform raises `testlab_virtual_step_failed` naming
+  the step index, the primitive, what was expected and what was observed.
+
+The same rule governs the scripted runners: **a stimulus the stack never answers is
+not evidence of correctness.** `voice.self_echo` waits, after each injected onset, for
+the stack to record a decision (`voice.barge_in`, `voice.barge_in.owner_confirmed`,
+`voice.barge_in_rejected` or `voice.barge_in_ignored`) and fails the run when none
+comes. Without that wait the seed passed vacuously on a bridge that ignores provider
+VAD entirely: nothing confirmed, nothing rejected, every assertion green — a stack
+that can never be interrupted looked perfect on the barge-in diagnostic.
+
+Two limits of that wait, both deliberate:
+
+- **It counts decision lines globally, from a snapshot taken just before the onset, not
+  per onset.** The journal's barge-in lines carry no onset correlation id, so there is
+  nothing to join them on. In principle a straggler decision belonging to the *previous*
+  onset could arrive late and satisfy the next wait; the candidates are injected one at
+  a time and each wait returns on the first new line, so this needs a decision that
+  outlives its own injection. The guard is a check against *silence*, not a per-onset
+  accounting.
+- **It is satisfied by the journal, not by the reasoning behind it.** A stack that emits
+  a `voice.barge_in_ignored` line without ever consulting the echo guard passes: the
+  onset was answered, the output genuinely was not cut, and both metrics are what the
+  manifest asks for. That is the diagnostic's contract — it judges the decision lines
+  and the output's fate, not the code path that produced them. Proving that the guard
+  is what *caused* the refusal is a code-level claim, and the mutations that remove the
+  guard (`a`, `a2`) are what cover it.
+
+`BARGE_IN_DECISION_KINDS` also does not cover the **Solo Owner** path. Under
+`BargeInAuthority.OWNER` the bridge answers a provider onset with
+`voice.barge_in.provider_advisory` (it correlates, it never cuts), which is not in the
+set, so the wait would time out and the run would fail structurally instead of
+measuring. That is unreachable today — owner authority needs an `owner_source` the
+harness does not provide, so a virtual run is always in the acoustic-authority branch —
+but a later profile or scenario that runs with owner authority must widen the set (and
+rethink what "a false barge-in" means there) before `voice.self_echo` can judge it.
+
+### Journal and session shape
+
+Both sinks — the voice runtime's and Core's — are `TraceRecordingJournal`, which
+appends to `<runtime_dir>/trace.jsonl` through the real `RuntimeJournal`. A run
+therefore leaves the live runtime's own evidence: `voice.start`, `voice.connecting`,
+`voice.active`, the `voice.speech.*` stages, `voice.latency.*`, `voice.barge_in*`,
+`core.brain.*`, and `voice.stop` when the run closes the session. Every line the
+scheduler and the bridge write carries `session_id`, set from the run id
+(`<run_id>-s<n>`), because the Realtime session double now has one.
+
+The trace is committed as a `trace_excerpt` artifact named `trace.jsonl`, **after**
+the stack is torn down, so it holds the lines Core writes while stopping.
+
+A `DiagnosticBundle` captured over that trace with
+`SessionSelector(session_id=f"{run_id}-s1")` segments into exactly one voice
+session, with no coverage warning (pinned by a test). Capturing the bundle and
+setting `TestRun.bundle_id` is **not** done by a runner: a runner may not write the
+run record, and `WorkerResult` carries no bundle id. That composition belongs to
+Slice 10/12, and it has everything it needs — the stored `trace.jsonl` and the
+session id derived from the run id.
+
+### Determinism, cancellation and deadlines
+
+- No `sleep` is ever a synchronization. Every wait is a condition:
+  `VirtualExecutor.wait_for`, `runners.wait_condition`, and `_settle()`, which waits
+  for the journal to go quiet rather than for a duration.
+- Budgets come from the run: `min(STEP_TIMEOUT_S, RunContext.remaining_s)`. A loaded
+  host makes a virtual run slower, not wrong, and only the supervisor's deadline ends
+  it. The harness's own `TIMEOUT_S` (30 s) bounds the pytest tests, not Test Lab runs.
+- The only real waits are stimuli a metric measures: the scripted brain's thinking
+  time in `voice.queue_latency`. It goes through `RunContext.sleep`, which returns on
+  a cancel.
+- `RunContext.check_cancelled()` runs between scenario steps, inside every wait and
+  inside every playback block, so a cancel ends a run cooperatively (seconds) long
+  before the cancel grace and the forced tree kill, and an exhausted deadline ends it
+  as `timed_out` — both proven with real workers.
+- `at_ms` is the scenario's virtual timeline: it orders steps and dates what the
+  scenario authored (for example `speech.stale_wait_ms`). It advances the injected
+  clock; it never waits.
+
+Two known heuristics, deliberate and documented rather than hidden:
+
+- **`_settle()` waits for quiescence**, defined as `SETTLE_QUIET_POLLS` consecutive
+  polls with no new journal line. It is a "the stack has finished reacting" proxy, not
+  a proof; a stack that pauses longer than the poll window between two lines would be
+  considered settled early. Every step that has an observable outcome waits for *that*
+  outcome instead, so quiescence only ever backs steps with none (`time.wait`,
+  `control.checkpoint`).
+- **`voice.self_echo` spreads its echo candidates** over the output blocks with a
+  plain `blocks // echoes` stride. Where in the output a candidate lands is not a
+  contract; what the diagnostic asserts is the decision the stack made on each one.
+
+### Seed runners and their metrics
+
+Each runner emits exactly the metrics its manifest declares, with the declared
+units, and nothing else — the supervisor stores a run with an undeclared metric as
+`errored` / `result_contradicts_spec`.
+
+| Diagnostic | Implementation | Metrics |
+|---|---|---|
+| `voice.self_echo` | `voice.self_echo.virtual` | `barge_in.false_confirmed_count` (count, `voice.barge_in` + `voice.barge_in.owner_confirmed`), `barge_in.rejected_count` (count, `voice.barge_in_rejected` + `voice.barge_in_ignored`), `output.completed` (boolean, terminal is `voice.speech.completed`), `output.played_ms` (ms, the device's own `played_output_ms`) |
+| `speech.payload_integrity` | `speech.payload_integrity.virtual` | `speech.scripted_count`, `speech.delivered_count`, `speech.payload_mismatch_count`, `speech.replayed_payload_count`, `speech.undelivered_count` (all counts), from the scripted `SpeechRequest`s against what the surface received |
+| `speech.stale_supersession` | `speech.stale_supersession.virtual` | `speech.superseded_count` (count, what the stack **admitted**), `speech.stale_delivered_count` (count, keyed on candidate identity — see below), `speech.latest_intent_delivered` (boolean, highest `intent_epoch`), `speech.stale_wait_ms` (ms, **virtual** time from the candidate's enqueue to the moment its staleness was resolved — its supersession, or its delivery when it was spoken anyway) |
+| `voice.queue_latency` | `voice.queue_latency.virtual` | `speech.queue_free_to_started_ms` (ms, worst case from the later of the speech's queueing and the previous delivered speech's terminal, to its start), `speech.started_to_first_audio_ms` (ms, start to `voice.latency.provider_first_pcm`), `user_turn.end_to_first_audio_ms` (ms, `voice.brain_turn_submitted` to the first PCM, brain time included), `speech.delivered_count` (count of speeches that reached `voice.speech.completed` **and** have a `voice.latency.provider_first_pcm` line — see the note below on what that does and does not prove) |
+
+**A missing join is omitted, never reported as 0.** A run where no provider audio was
+ever relayed used to measure `started_to_first_audio_ms = 0` and pass every
+assertion — the worst possible stack scored the best possible number. An omitted
+metric makes its assertion `missing`, the verdict inconclusive and the run `errored`
+(`assertions_inconclusive`): a diagnostic that could not measure says so instead of
+certifying silence.
+
+**`speech.delivered_count` is an evidence count, not an acoustic one.** It means
+"completed, and the journal carries a `voice.latency.provider_first_pcm` line for it" —
+no more. Suppress only that line while the audio really is relayed and the count reads
+0 and the run is inconclusive: the metric cannot tell "nothing was played" from "the
+producer stopped saying that something was played". That verdict is the honest one —
+the diagnostic could not measure — but the number must not be read as proof that a user
+heard, or did not hear, anything. Whether sound actually left a speaker is the `audio`
+and `hardware` profiles' question.
+
+**Staleness is keyed on candidate identity, not on the label the stack applied.**
+`speech.stale_delivered_count` counts a candidate delivered after it became stale,
+where stale means either the stack admitted it (`voice.speech.superseded` / `.expired`)
+**or** the scheduler had already seen a candidate of a later `intent_epoch` — the
+epochs are the scenario's own declaration and the moment the later candidate reached
+the scheduler is a journal line, so both halves are observed fact. Counting only the
+admitted half made the seed blind to its own incident: a stack that never noticed the
+revision and spoke the old acknowledgement 35.9 s late measured 0. A candidate already
+spoken before the revision reached the scheduler was never stale and is not counted.
+`superseded_count` stays the count the stack admitted; the two disagreeing —
+`superseded_count = 0` with `stale_delivered_count = 1` — is itself the finding.
+
+Two boundaries a scenario author has to know:
+
+- **A revision counts only once the later candidate has reached the scheduler**, that
+  is, once the journal shows a `voice.speech.queued` or
+  `voice.speech.presentation_decided` line for it. A candidate declared in the scenario
+  but never seen by the scheduler revises nothing, and a candidate delivered before that
+  moment was still current when it spoke and is not counted stale. This is what keeps
+  the measure grounded in observed fact rather than in the scenario's text, and it is
+  also why arrival order alone cannot fool it.
+- **A scenario whose `scheduler.enqueue` steps declare no `intent_epoch` silently
+  disables the identity half of the rule**: with no epochs there is no "later intent",
+  so only the supersessions the stack admitted are counted. The seed cannot pass by
+  accident in that state — `speech.latest_intent_delivered` derives from the same
+  epochs and is `false` with none, so `latest_intent_wins` fails — but the failure then
+  names the wrong thing. `intent_epoch` is optional in the primitive schema because the
+  replay DSL made it so; for this diagnostic, treat it as required.
+
+`speech.payload_integrity` compares the scripted payload with the delivered one and
+never uses `voice.state.spoken_diverged`: that producer signal compares raw strings
+and fires on ordinary transcription noise (see
+`tasks/jarvis-category2-test-lab/Issues/speech-payload-integrity-needs-normalized-measure.md`).
+
+`testlab.scenario.virtual` is the generic ad-hoc runner. It performs any scenario and
+reports `scenario.steps_performed` and `scenario.checkpoints_reached`; a diagnostic
+declaring anything else fails with `testlab_virtual_run_failed` rather than storing a
+verdict derived from nothing. Slice 07 owns its measurement contract.
+
+Each seed's failure path is proven, not assumed: a real confirmed barge-in, a
+corrupted delivered payload, an intent that is never delivered, and a first audio
+past the declared threshold each turn the corresponding blocking assertion `failed`.
+
+### What the virtual profile cannot prove
+
+- **Acoustics.** No room, no speaker, no microphone, no real echo canceller. The
+  virtual echo guard states whether Jarvis is the far end; whether a real AEC would
+  have separated a real voice from real echo is the `audio` and `hardware` profiles'
+  question.
+- **Real provider timing.** `speech.started_to_first_audio_ms` measures the path from
+  the speech start to the first PCM the bridge relayed. The provider's own generation
+  latency, its jitter and its cancel behaviour are the `live` profile's.
+- **Device contention and native failures.** The output stream consumes immediately
+  and never fails unless a test asks it to. Real device ownership, the running
+  Jarvis holding the laptop microphone, drains and underruns belong to
+  `hardware:auto` (READINESS B9).
+- **Transcription and addressing.** The provider transcript is authored text, so an
+  addressing classification is the production classifier's answer on that text, not
+  evidence about real speech. `user.turn` / `user.speech` therefore *verify* a
+  declared `addressing`, and never impose it.
+- **That a measure means what its name suggests.** Three of them are narrower than they
+  read, and each says so where it is defined: `speech.delivered_count` counts evidence
+  lines, not sound; the unanswered-onset guard checks that the stack answered, not why;
+  and `VirtualEchoGuard`'s far-end state is latched for the session rather than decaying
+  like the real duplex guard.
+- **A verdict beyond its metrics.** An `expect.*` step that fails raises
+  `testlab_virtual_expectation_failed`, which the supervisor stores as `errored`, not
+  `failed`. Slice 07 owns the richer verdict. The same is true of a run the profile
+  refuses to judge: a missing latency join ends `errored` / `assertions_inconclusive`
+  and an unanswered barge-in onset ends `errored` / `runner_failed`. Both are correct
+  today — the run produced no verdict — but a reader has to open the failure detail to
+  see which, and Slice 07 should give "the diagnostic could not measure" its own shape.
+
+### Validation
+
+```powershell
+.venv/Scripts/python -m pytest -q -p no:cacheprovider tests/unit/test_testlab_virtual.py
+.venv/Scripts/python -m pytest -q -p no:cacheprovider tests/integration/test_testlab_virtual_runners.py tests/integration/test_testlab_virtual_runs.py
+```
+
+`test_testlab_virtual_runners.py` runs the stack in process (no subprocess) and owns
+the failure paths, the cancel and the journal/bundle shape.
+`test_testlab_virtual_runs.py` starts one real worker process per test.
+
+The harness's existing consumers must keep passing unchanged, in their own
+foreground chunk (see
+`tasks/jarvis-category2-test-lab/Issues/voice-harness-wall-clock-flake-under-load.md`):
+
+```powershell
+.venv/Scripts/python -m pytest -q -p no:cacheprovider tests/integration/test_v2_async_conversation.py tests/integration/test_voice_replay_regressions.py tests/integration/test_voice_replay_safety_regressions.py
+```
 
 ## DiagnosticBundle
 

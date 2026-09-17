@@ -27,6 +27,7 @@ from jarvis.testlab.implementations import (
     registered,
     reserved,
 )
+from jarvis.testlab.selftest import catalog_implementations
 from jarvis.testlab.manifests import (
     CATALOG_DUPLICATE,
     CATALOG_FINGERPRINT_DRIFT,
@@ -123,8 +124,28 @@ def test_the_official_catalog_loads_with_its_four_seed_diagnostics():
         assert (DEFAULT_CATALOG_ROOT / entry.path).is_file()
         virtual = entry.resources_and_cost(ProfileName.VIRTUAL)
         assert virtual.requires == frozenset() and virtual.cost.max_cost_usd == 0
-        assert not virtual.available and virtual.implementation.unavailable_reason == "runner_not_registered"
         assert entry.diagnostic.assertions and any(item.blocking for item in entry.diagnostic.assertions)
+
+
+def test_the_seed_virtual_profiles_are_available_to_a_supervisor_and_its_workers():
+    """Slice 06 registered the four seed runners, so the catalog a run resolves says `available`.
+
+    `default_implementations()` is the DECLARATION view: it holds the reviewed names and,
+    for the profiles no Slice has implemented yet, the reason they cannot run.
+    `catalog_implementations()` is the EXECUTION view a supervisor and its workers share.
+    Both are asserted here so the docs, the tests and the code cannot drift apart.
+    """
+    declared = load_catalog(implementations=default_implementations())
+    executed = load_catalog(implementations=catalog_implementations())
+    for entry in executed.list_diagnostics():
+        virtual = entry.resources_and_cost(ProfileName.VIRTUAL)
+        assert virtual.available, entry.diagnostic_id
+        assert virtual.implementation.unavailable_reason is None
+        assert virtual.implementation.name.endswith(".virtual")
+    for entry in declared.list_diagnostics():
+        virtual = entry.resources_and_cost(ProfileName.VIRTUAL)
+        assert not virtual.available
+        assert virtual.implementation.unavailable_reason == "runner_not_registered"
 
 
 def test_the_seed_stale_supersession_reuses_the_replay_fixture_scenario():
