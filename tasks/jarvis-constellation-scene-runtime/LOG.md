@@ -1625,3 +1625,10 @@ The timeline holds one long-poll per tab while it is open (main's documented Sli
 3. `data/state/jarvis.sqlite3` is tracked and main's schema v2 migrates it on first Core start (see state-model); integration runs used scratch roots only.
 4. `origin/main` itself still carries the conflict markers in `realtime_audio.py` (fixed on this branch only).
 5. The 9 main tests without implementation keep `verify_release` red on this branch until main's routing/brain-card work lands or they are marked; PM decision.
+
+## 2026-09-17 — PM decision on the integration of main f7e33ad
+
+- Integrated by merge (`586f312`) with follow-ups `e68cfdc` (main's committed conflict markers in `realtime_audio.py`), `c9168bd` (z-index registry: timeline 55, confirm dialog 85), `124ea2a` (confirm dialog interactive over the inert timeline + node test), `7a67273` (LOG + connection budget note). Details in the integration agent's LOG entry.
+- Accepted: both features coexist (combined Core start/stop order, single `_stopping` release for both long-polls, `/v1/health` carries both blocks, prompt flag-off byte-identical to main, scene star `work_ref.external_id` == timeline sub-agent `task_id`).
+- Release gate from now on: **no failure beyond main's 10 baseline failures** (9 tests without implementation + 1 known flaky), see `Issues/03-origin-main-broken-state.md`. Targeted suites 1863 passed / 1 skipped; `verify_release` 4849 passed / 10 failed (all baseline) / 10 skipped; non-pytest release checks pass.
+- Timeline connection budget (main feature, amplified by one scene long-poll) recorded in `Issues/04-timeline-connection-budget.md`; out of this task's scope, surfaced to Human.
