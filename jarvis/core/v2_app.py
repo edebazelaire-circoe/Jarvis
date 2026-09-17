@@ -17,7 +17,7 @@ from jarvis.core.calendar_service import CalendarService
 from jarvis.core.conversation_event_emitter import ConversationEventEmitter
 from jarvis.core.conversation_event_query import ConversationEventQueryService
 from jarvis.core.drive_service import DriveService
-from jarvis.core.scene_projector import SceneProjector
+from jarvis.core.scene_projector import RESTART_GRACE_S, SceneProjector
 from jarvis.core.scene_service import SceneService
 from jarvis.core.v2_services import ConversationService, CoreEventBus, JobService, NotificationService, SchedulerService
 from jarvis.core.v2_tools import CoreToolRouter
@@ -45,7 +45,7 @@ class JarvisCoreApplication:
     or Windows UI dependency.
     """
 
-    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = True, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None) -> None:
+    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = True, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S) -> None:
         root = Path(data_root).resolve()
         self.health = CoreHealth()
         self.state = SQLiteStateRepository(root / "state" / "jarvis.sqlite3")
@@ -90,9 +90,13 @@ class JarvisCoreApplication:
         # deviennent des étoiles sans tour du cerveau. Seul écrivain `runtime`
         # de la scène ; abonné tolérant de `core.work.updated`, il se
         # réconcilie depuis l'instantané de travail. Démarré après la scène,
-        # arrêté avant sa fermeture.
+        # arrêté avant sa fermeture. Slice 10 : au démarrage, il marque
+        # « état inconnu » les étoiles d'une vie précédente, relit l'issue
+        # persistée des jobs terminés, et interrompt après
+        # `scene_restart_grace_s` celles qu'aucun producteur n'a redites.
         self.scene_projector = SceneProjector(
             work=self.work_state, scene=self.scene, events=self.events, diagnostics=diagnostics,
+            restart_grace_s=scene_restart_grace_s, job_outcomes=self.jobs.observe_persisted_outcomes,
         )
         # Tâche 12 : le cerveau lit ce même magasin à chaque tour, et une
         # politique abonnée à `core.work.updated` retient pour lui les échecs,
@@ -167,6 +171,11 @@ class JarvisCoreApplication:
             # indisponible pendant que le reste de Core démarre. Fichier
             # distinct de `state` : indépendante du rattrapage ci-dessus.
             await self.scene.start()
+            # Slice 10, avant toute écriture de la projection et toute route :
+            # les étoiles non terminées d'une vie précédente passent à
+            # `unknown`, la grâce est armée. Ne lève pas (scène indisponible :
+            # la boucle reprend le marquage).
+            await self.scene_projector.reconcile_restart()
             # Après la scène (même indisponible : la projection attend et le
             # journalise), avant `jobs.recover()` dont les interruptions
             # doivent atteindre la scène.
@@ -322,6 +331,9 @@ class JarvisCoreApplication:
 
     async def _stop_scene(self) -> None:
         """Arrêter la projection, puis fermer la scène : aucun écrivain ne survit à la fermeture.
+
+        `scene_projector.stop()` annule aussi la minuterie de grâce de
+        redémarrage (Slice 10) : aucune tâche ne lui survit.
 
         Le cerveau n'écrit pas la scène dans cette Slice ; le transport HTTP
         (Slice 03) est arrêté par son serveur avant `stop()`, et une commande

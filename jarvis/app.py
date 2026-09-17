@@ -224,6 +224,35 @@ def _brain_availability_from_env() -> dict[str, object]:
             "work_attention_wake_interval_s": wake if wake >= 0 else DEFAULT_WAKE_INTERVAL_S}
 
 
+#: Borne haute de `JARVIS_SCENE_RESTART_GRACE_S` : au-delà, une étoile morte
+#: resterait « état inconnu » plus d'une heure.
+MAX_SCENE_RESTART_GRACE_S = 3600.0
+
+
+def _scene_restart_grace_from_env() -> tuple[float, str | None]:
+    """Grâce de redémarrage de la scène (Slice 10) et, si la valeur est refusée, pourquoi.
+
+    `JARVIS_SCENE_RESTART_GRACE_S` (défaut `RESTART_GRACE_S` = 60) : délai
+    après le démarrage de Core avant qu'une étoile encore « état inconnu »
+    soit interrompue. Réservé à la validation et au diagnostic : sous la
+    période de renvoi des producteurs (30 s), un travail vivant serait
+    interrompu à tort. Hors de ]0, 3600] ou illisible → défaut, et la raison
+    est rendue pour être journalisée.
+    """
+    from jarvis.core.scene_projector import RESTART_GRACE_S
+
+    raw = os.getenv("JARVIS_SCENE_RESTART_GRACE_S")
+    if raw is None or not raw.strip():
+        return RESTART_GRACE_S, None
+    try:
+        value = float(raw)
+    except ValueError:
+        return RESTART_GRACE_S, f"valeur illisible {raw[:40]!r}"
+    if not 0 < value <= MAX_SCENE_RESTART_GRACE_S:
+        return RESTART_GRACE_S, f"hors de ]0, {MAX_SCENE_RESTART_GRACE_S:g}] : {value:g}"
+    return value, None
+
+
 def _control_settings(runtime_root: Path) -> dict[str, object]:
     path = runtime_root / "control-center-settings.json"
     if not path.is_file():
@@ -379,7 +408,14 @@ async def _run_core_v2() -> int:
     openai_key = creds.secret_for(_control_settings(settings.runtime_root), "openai")
     live_closer = (OpenAILiveSidebandCloser(aiohttp_live_sideband_connector(openai_key))
                    if openai_key else None)
-    core = JarvisCoreApplication(data_root=settings.data_root, timezone=settings.timezone, calendar_backend=_calendar_backend_from_env(), drive_backend=_drive_backend_from_env(), brain_backend=brain_backend, notification_delivery=delivery, workers=workers, diagnostics=RuntimeJournal(settings.runtime_root), live_sideband_closer=live_closer, **_brain_availability_from_env())
+    scene_grace_s, scene_grace_error = _scene_restart_grace_from_env()
+    if scene_grace_error is not None:
+        RuntimeJournal(settings.runtime_root).emit(
+            "core.scene.restart_grace_invalid",
+            "JARVIS_SCENE_RESTART_GRACE_S refusée : grâce par défaut",
+            level="warning", data={"error": scene_grace_error, "grace_s": scene_grace_s},
+        )
+    core = JarvisCoreApplication(data_root=settings.data_root, timezone=settings.timezone, calendar_backend=_calendar_backend_from_env(), drive_backend=_drive_backend_from_env(), brain_backend=brain_backend, notification_delivery=delivery, workers=workers, diagnostics=RuntimeJournal(settings.runtime_root), live_sideband_closer=live_closer, scene_restart_grace_s=scene_grace_s, **_brain_availability_from_env())
     server = LocalProtocolServer(core, host=settings.core_host, port=settings.core_port, token=token)
     _announce_calendar_backend(core, settings.runtime_root)
     RuntimeJournal(settings.runtime_root).emit("brain.backend", "Cerveau relié à l'agent du Control Center", data={"url": brain_backend.base_url})

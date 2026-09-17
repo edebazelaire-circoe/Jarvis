@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from jarvis.core.scene_service import SCENE_UNAVAILABLE_KIND, SceneState
@@ -70,11 +72,18 @@ async def test_core_restart_restores_the_identical_scene_twice(tmp_path):
     core2 = JarvisCoreApplication(data_root=tmp_path)
     await core2.start()
     restored = await core2.scene.snapshot()
-    assert restored == first
-    assert restored.revision == 7 and restored.archived_ids == ("star-b",)
+    # Slice 10 (changement délibéré) : l'étoile encore « en cours » d'une vie
+    # précédente revient `unknown` en une révision ; tout le reste, géométrie
+    # et épingle comprises, est identique.
+    star_a = first.get_object("star-a")
+    assert restored.get_object("star-a") == replace(star_a, exec_state=ExecState.UNKNOWN)
+    assert replace(restored, revision=first.revision, objects=first.objects) == first
+    assert [item.object_id for item in restored.objects] == [item.object_id for item in first.objects]
+    assert all(restored.get_object(item.object_id) == item for item in first.objects if item.object_id != "star-a")
+    assert restored.revision == 8 and restored.archived_ids == ("star-b",)
     assert [entry.object.object_id for entry in await core2.scene.archived_history()] == ["star-b"]
     update = await core2.scene.apply(SceneCommand(op=SceneOp.SET_VISIBILITY, actor=SceneActor.BRAIN, object_id="art-1", visibility=Visibility.HIDDEN))
-    assert update.snapshot.revision == 8
+    assert update.snapshot.revision == 9
     second = await core2.scene.snapshot()
     await core2.stop()
 

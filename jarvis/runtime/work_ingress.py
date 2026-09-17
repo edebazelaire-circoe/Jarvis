@@ -215,15 +215,36 @@ class CoreWorkTransport(CoreLoopbackTransport):
     """
 
     async def post(self, batch: WorkObservationBatch) -> dict[str, Any]:
-        client = self._connect()
+        """Envoyer un lot ; un jeton refusé est relu et le lot renvoyé une fois.
+
+        Un 401 veut dire que Core a redémarré avec un autre jeton, et que rien
+        du lot n'a été appliqué : le renvoyer aussitôt avec le jeton relu est
+        sûr (Slice 10). Sans cela, le relais attendait son délai croissant
+        (jusqu'à 30 s) avant de redire son état au nouveau Core, et la grâce de
+        redémarrage de la scène devait couvrir deux délais au lieu d'un.
+        """
+
+        payload = batch.to_payload()
         try:
-            return await client.ingest_work_observations(batch.to_payload())
+            return await self._post_once(payload)
+        except CoreProtocolError as exc:
+            if exc.status != 401:
+                raise
+        # Core a redémarré avec un autre jeton : relu, une seule nouvelle tentative.
+        await self.close()
+        try:
+            return await self._post_once(payload)
+        except CoreProtocolError as exc:
+            if exc.status == 401:
+                await self.close()  # relu encore au prochain envoi
+            raise
+
+    async def _post_once(self, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return await self._connect().ingest_work_observations(payload)
         except CoreProtocolError as exc:
             if exc.status == 400:
                 raise WorkIngressRejected(str(exc)) from exc
-            if exc.status == 401:
-                # Core a redémarré avec un autre jeton : relu au prochain envoi.
-                await self.close()
             raise
 
     async def snapshot(self) -> dict[str, Any]:

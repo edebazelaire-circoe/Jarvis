@@ -33,6 +33,15 @@ Règles (voir `docs/ARCHITECTURE.md` › *Runtime scene projection*) :
   l'état du travail dans l'`exec_state` du signal ;
 - **archivé** : une étoile archivée par l'utilisateur ne renaît jamais ; la
   projection lit la pierre tombale avant d'écrire et n'envoie rien ;
+- **redémarrage de Core** (Slice 10) : au démarrage, avant la première
+  réconciliation, chaque étoile runtime dont l'`exec_state` n'est pas
+  terminal passe à `unknown` (« état inconnu depuis le redémarrage ») : l'état
+  de travail de Core, en mémoire, est reparti vide. Une observation du même
+  `(source, external_id)` rend l'état réel. Après `restart_grace_s` (au moins
+  deux renvois complets d'un producteur), une étoile encore `unknown` passe à
+  `interrupted` avec un signal `core_restarted_unobserved`, signal d'abord.
+  Rien n'est supprimé, aucune disposition ne change, et un changement de
+  `store_id` en cours de vie ne marque rien ;
 - **saturation** : scène pleine (`MAX_SCENE_OBJECTS`), une création d'étoile
   ou de signal est différée, pas perdue tant que Core tourne. Le travail est
   retenu en mémoire (dernier état connu, au plus `MAX_PENDING_CREATIONS` ; au-delà
@@ -57,12 +66,14 @@ from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict
+from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import hashlib
 import time
 from typing import Callable, Protocol
 
-from jarvis.core.v2_services import CoreEventBus, NullDiagnosticSink
+from jarvis.core.v2_services import JOB_WORK_SOURCE, CoreEventBus, NullDiagnosticSink
 from jarvis.core.work_state import CORE_WORK_UPDATED
 from jarvis.domain._checks import MAX_ID_CHARS
 from jarvis.domain.scene import (
@@ -84,6 +95,7 @@ from jarvis.domain.scene import (
     SceneRelation,
     SceneSnapshot,
     SceneUpdate,
+    TERMINAL_EXEC_STATES,
     WorkRef,
     is_live_signal,
 )
@@ -103,6 +115,31 @@ SCENE_SIGNAL_RETIRED_KIND = "core.scene.signal_retired"
 SCENE_PROJECTION_SATURATED_KIND = "core.scene.projection_saturated"
 SCENE_PROJECTION_DESATURATED_KIND = "core.scene.projection_desaturated"
 SCENE_PROJECTION_PENDING_OVERFLOW_KIND = "core.scene.projection_pending_overflow"
+#: Slice 10 : une ligne de synthèse au marquage (démarrage), une à la fin de
+#: la grâce ; le détail par étoile au niveau `debug`.
+SCENE_RESTART_MARKED_KIND = "core.scene.restart_marked"
+SCENE_RESTART_GRACE_EXPIRED_KIND = "core.scene.restart_grace_expired"
+SCENE_RESTART_STAR_KIND = "core.scene.restart_star"
+
+#: `error_class` (titre du signal) d'une étoile jamais revue après un
+#: redémarrage de Core, au terme de la grâce.
+CORE_RESTARTED_UNOBSERVED = "core_restarted_unobserved"
+#: Grâce entre le marquage `unknown` et l'interruption des étoiles non revues.
+#: Alignée sur le renvoi des producteurs : le relais du Control Center renvoie
+#: tout son état au plus tard toutes les 30 s au repos, et son délai croissant
+#: plafonne à 30 s quand Core est resté longtemps injoignable ; son premier
+#: envoi à un Core redémarré réussit alors en ~31 s (jeton relu et renvoyé
+#: aussitôt). 60 s couvrent deux périodes de renvoi : un renvoi manqué ou lent
+#: ne fait pas interrompre à tort. Surchargée par
+#: `JARVIS_SCENE_RESTART_GRACE_S` (validation réelle, tests).
+RESTART_GRACE_S = 60.0
+#: Au plus tant d'identifiants d'étoile dans une ligne de synthèse.
+_RESTART_SAMPLE = 16
+#: Résumé du signal posé à la fin de la grâce (texte de l'utilisateur).
+_UNOBSERVED_SUMMARY = (
+    "Core a redémarré et aucun producteur n'a redit ce travail pendant la grâce : "
+    "il est considéré comme interrompu."
+)
 
 #: `WorkItem.kind` qui devient une étoile. `shell` et `other` : jamais
 #: (Décision 4). La catégorie de l'étoile reprend ce jeton.
@@ -131,6 +168,8 @@ SATURATION_WARNING_INTERVAL_S = 600.0
 #: Type interne que la veille d'espace met dans la file de la projection ;
 #: jamais publié sur le bus.
 _SPACE_CHECK = "scene.projection.space_check"
+#: Réveil de la boucle au terme de la grâce de redémarrage (même file, jamais le bus).
+_RESTART_GRACE = "scene.projection.restart_grace"
 _MAX_REPORTED = 64
 _HASH_CHARS = 24
 
@@ -198,6 +237,11 @@ class WorkProjectionSource(Protocol):
     async def snapshot(self) -> WorkSnapshot: ...
 
 
+#: Remet à l'état de travail l'issue persistée de jobs terminés ; rend le
+#: nombre d'issues remises (`JobService.observe_persisted_outcomes`).
+JobOutcomeSource = Callable[[Sequence[str]], Awaitable[int]]
+
+
 class SceneProjectionTarget(Protocol):
     """Ce que la projection utilise de la scène : `SceneService` le fournit."""
 
@@ -226,6 +270,9 @@ class SceneProjectionStats:
     deferred: int = 0
     caught_up: int = 0
     pending_dropped: int = 0
+    restart_marked: int = 0
+    restart_reobserved: int = 0
+    restart_interrupted: int = 0
 
 
 # ------------------------------------------------------------------ texte
@@ -291,10 +338,13 @@ class SceneProjector:
         saturation_retry_s: float = SATURATION_RETRY_S,
         saturation_warning_interval_s: float = SATURATION_WARNING_INTERVAL_S,
         monotonic: Callable[[], float] = time.monotonic,
+        restart_grace_s: float = RESTART_GRACE_S,
+        job_outcomes: JobOutcomeSource | None = None,
     ) -> None:
         if (
             queue_size < 1 or retry_min_s <= 0 or retry_max_s < retry_min_s or stop_drain_s < 0
             or max_pending < 1 or saturation_retry_s <= 0 or saturation_warning_interval_s < 0
+            or not restart_grace_s > 0
         ):
             raise ValueError("invalid scene projector bounds")
         self._work = work
@@ -332,6 +382,22 @@ class SceneProjector:
         self._deferred_key: tuple[str, str] | None = None
         self._watch: asyncio.Task[None] | None = None
         self._stopping = False
+        # Réconciliation de redémarrage (Slice 10).
+        self._restart_grace_s = restart_grace_s
+        self._job_outcomes = job_outcomes
+        #: Marquage demandé et pas encore mené à bout (scène indisponible,
+        #: écriture échouée) : la boucle le reprend avant de réconcilier.
+        self._restart_due = False
+        #: Étoiles marquées `unknown` et pas encore revues : travail → étoile.
+        self._restart_tracked: dict[tuple[str, str], str] = {}
+        #: Compteurs de l'épisode de redémarrage, journalisés en synthèse.
+        self._restart_counts: dict[str, int] = {}
+        self._grace: asyncio.Task[None] | None = None
+        #: La grâce a expiré : les étoiles encore suivies sont à interrompre.
+        self._grace_due = False
+        #: Interruptions en cours (signal différé faute de place) : travail →
+        #: (constat synthétique, étoile). Le constat est l'entrée de l'attente.
+        self._unobserved: dict[tuple[str, str], tuple[WorkItem, str]] = {}
         self.stats = SceneProjectionStats()
 
     @property
@@ -343,6 +409,12 @@ class SceneProjector:
         """Créations d'étoile ou de signal en attente de place."""
 
         return len(self._pending)
+
+    @property
+    def restart_tracked_count(self) -> int:
+        """Étoiles marquées `unknown` au redémarrage et pas encore revues ni interrompues."""
+
+        return len(self._restart_tracked)
 
     # ------------------------------------------------------------ cycle de vie
 
@@ -366,6 +438,7 @@ class SceneProjector:
             self._events.unsubscribe(queue)
         if task is None:
             await self._stop_watch()
+            await self._stop_grace()
             return
         if not task.done() and self._stop_drain_s > 0:
             # Les fins posées pendant l'arrêt (jobs annulés) sont déjà en file :
@@ -379,8 +452,15 @@ class SceneProjector:
                 pass
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
-        # Après le vidage et la boucle : aucune veille ne leur survit.
+        # Après le vidage et la boucle : aucune veille ni minuterie de grâce ne leur survit.
         await self._stop_watch()
+        await self._stop_grace()
+
+    async def _stop_grace(self) -> None:
+        grace, self._grace = self._grace, None
+        if grace is not None:
+            grace.cancel()
+            await asyncio.gather(grace, return_exceptions=True)
 
     async def _stop_watch(self) -> None:
         watch, self._watch = self._watch, None
@@ -400,6 +480,14 @@ class SceneProjector:
                         retry = min(retry * 2, self._retry_max_s)
                         continue
                     retry = self._retry_min_s
+                if self._grace_due:
+                    try:
+                        await self._expire_grace()
+                    except SceneStoreError as exc:
+                        # Les étoiles non traitées restent suivies et
+                        # `_grace_due` reste vrai : reprise après réconciliation.
+                        self._outage(exc)
+                        continue
                 if queue.empty():
                     self._idle.set()
                 envelope = await queue.get()
@@ -430,6 +518,8 @@ class SceneProjector:
                 return
 
     async def _handle(self, envelope: ProtocolEnvelope) -> None:
+        if envelope.message_type == _RESTART_GRACE:
+            return  # simple réveil : la boucle traite `_grace_due` en tête de tour
         if envelope.message_type == _SPACE_CHECK:
             if self._pending and self._dirty is None:
                 try:
@@ -491,6 +581,17 @@ class SceneProjector:
     async def _reconcile(self, reason: str) -> bool:
         """Projeter tout l'instantané de travail ; faux si la scène ne répond pas."""
 
+        if self._restart_due:
+            # Marquage de redémarrage resté en suspens : avant l'instantané,
+            # pour que tout travail déjà présent rende aussitôt l'état réel.
+            try:
+                await self._mark_restart()
+            except SceneStoreError as exc:
+                self._outage(exc)
+                return False
+            except Exception as exc:
+                # Un défaut du marquage ne doit pas arrêter la projection.
+                self._restart_abandoned(exc)
         store_id = self._work.store_id
         work = await self._work.snapshot()
         before = (self.stats.applied, self.stats.refused)
@@ -532,13 +633,279 @@ class SceneProjector:
         )
         return True
 
+    # ------------------------------------------------------------ redémarrage (Slice 10)
+
+    async def reconcile_restart(self) -> None:
+        """Au démarrage de Core, avant `start()` : marquer `unknown` les étoiles d'une vie précédente.
+
+        L'état de travail de Core vit en mémoire : après un redémarrage il est
+        vide, et une étoile persistée « en cours » ne dit plus rien de vrai.
+        Chaque étoile d'exécution d'origine `runtime` dont l'`exec_state` n'est
+        pas terminal (en attente, en cours, bloquée, ou déjà inconnue après un
+        arrêt brutal pendant une grâce) est suivie ; celles qui n'étaient pas
+        encore `unknown` le deviennent. Les étoiles terminées, les signaux, les
+        objets du cerveau ou de l'utilisateur, les artefacts, les pierres
+        tombales, la géométrie, l'épingle, la visibilité et la disposition ne
+        sont pas touchés : seul `exec_state` change. Aucune place n'est prise.
+
+        Les jobs suivis dont la base garde une issue terminale la redisent à
+        l'état de travail (`job_outcomes`), et la grâce est armée.
+
+        Ne lève jamais : une scène indisponible laisse le marquage en suspens,
+        repris par la boucle avant sa première réconciliation (qui journalise
+        la panne une fois) ; un défaut inattendu est journalisé et abandonne le
+        marquage sans arrêter la projection.
+        """
+
+        self._restart_due = True
+        try:
+            await self._mark_restart()
+        except SceneStoreError:
+            # intentional: la première réconciliation de la boucle reprend le
+            # marquage et journalise la panne (`projection_unavailable`) ; la
+            # dire ici la doublerait.
+            return
+        except Exception as exc:
+            self._restart_abandoned(exc)
+
+    def _restart_abandoned(self, exc: Exception) -> None:
+        """Marquage interrompu par un défaut : journalisé, ce qui est suivi garde sa grâce."""
+
+        self._restart_due = False
+        self._failed("restart", exc)
+        if self._restart_tracked:
+            self._arm_grace()
+
+    async def _mark_restart(self) -> None:
+        """Marquer et suivre ; idempotent (une reprise après panne ne recompte rien)."""
+
+        scene = await self._scene.snapshot()
+        counts = self._restart_counts
+        terminal = 0
+        for star in scene.objects:
+            if star.kind not in EXECUTION_KINDS or star.origin is not SceneActor.RUNTIME or star.work_ref is None:
+                continue
+            if star.exec_state in TERMINAL_EXEC_STATES:
+                terminal += 1
+                continue
+            key = (star.work_ref.source, star.work_ref.external_id)
+            if key in self._restart_tracked:
+                continue  # déjà compté par une tentative précédente
+            previous = star.exec_state
+            if previous is not ExecState.UNKNOWN:
+                update = await self._apply(
+                    SceneCommand(
+                        op=SceneOp.PATCH_OBJECT, actor=SceneActor.RUNTIME, object_id=star.object_id,
+                        fields=SceneObjectFields(exec_state=ExecState.UNKNOWN),
+                    )
+                )
+                if update.outcome is not SceneCommandOutcome.APPLIED:
+                    continue  # refus déjà journalisé par `SceneService` : étoile laissée telle quelle
+                counts["marked"] = counts.get("marked", 0) + 1
+                self.stats.restart_marked += 1
+            else:
+                counts["already_unknown"] = counts.get("already_unknown", 0) + 1
+            self._restart_tracked[key] = star.object_id
+            self._emit(
+                SCENE_RESTART_STAR_KIND,
+                "étoile marquée : état inconnu depuis le redémarrage",
+                level="debug",
+                data={"object_id": star.object_id, "action": "unknown", "previous": previous.value},
+            )
+        self._restart_due = False
+        job_ids = tuple(external_id for source, external_id in self._restart_tracked if source == JOB_WORK_SOURCE)
+        if job_ids and self._job_outcomes is not None:
+            try:
+                counts["job_outcomes"] = await self._job_outcomes(job_ids)
+            except Exception as exc:
+                # Sans l'issue persistée, ces étoiles suivent la grâce comme les autres.
+                self._failed("job_outcomes", exc)
+        counts["tracked"] = len(self._restart_tracked)
+        self._emit(
+            SCENE_RESTART_MARKED_KIND,
+            "redémarrage de Core : étoiles en cours marquées « état inconnu » jusqu'à ce qu'un producteur les redise",
+            data={
+                "marked": counts.get("marked", 0),
+                "already_unknown": counts.get("already_unknown", 0),
+                "tracked": len(self._restart_tracked),
+                "terminal_untouched": terminal,
+                "job_outcomes": counts.get("job_outcomes", 0),
+                "grace_s": self._restart_grace_s,
+                "sample": sorted(self._restart_tracked.values())[:_RESTART_SAMPLE],
+            },
+        )
+        if self._restart_tracked:
+            self._arm_grace()
+        else:
+            self._restart_counts = {}
+
+    def _arm_grace(self) -> None:
+        if self._stopping or (self._grace is not None and not self._grace.done()):
+            return
+        self._grace = asyncio.get_running_loop().create_task(self._grace_timer(), name="jarvis-scene-restart-grace")
+
+    async def _grace_timer(self) -> None:
+        await asyncio.sleep(self._restart_grace_s)
+        self._grace_due = True
+        queue = self._queue
+        if queue is None:
+            return  # boucle pas encore démarrée : elle lit `_grace_due` à son premier tour
+        try:
+            queue.put_nowait(ProtocolEnvelope(message_type=_RESTART_GRACE, payload={}))
+        except asyncio.QueueFull:
+            # intentional: une file pleine veut dire une boucle occupée, qui
+            # relit `_grace_due` en tête de son prochain tour.
+            pass
+
+    async def _expire_grace(self) -> None:
+        """Fin de la grâce : l'état réel s'il est dans Core, sinon `interrupted` et un signal.
+
+        Tourne dans la boucle, comme toute écriture de la projection : une
+        observation ne peut pas s'intercaler entre la lecture et l'écriture.
+        Une étoile dont le travail est dans l'instantané de Core (projection
+        manquée) reçoit cet état. Les autres reçoivent d'abord leur signal
+        `core_restarted_unobserved`, puis `exec_state = interrupted` : un
+        arrêt brutal entre les deux laisse l'étoile `unknown`, reprise au
+        démarrage suivant sans second signal. Sans place pour le signal,
+        l'interruption entière attend dans l'attente de saturation (travail
+        terminé : après le travail actif). Une `SceneStoreError` remonte : les
+        étoiles pas encore traitées restent suivies.
+        """
+
+        work = await self._work.snapshot()
+        by_key = {item.key: item for item in work.items}
+        for key in list(self._restart_tracked):
+            star_id = self._restart_tracked.get(key)
+            if star_id is None:
+                continue  # revue pendant ce parcours
+            try:
+                item = by_key.get(key)
+                if item is not None:
+                    await self._project(item)
+                    continue
+                now = datetime.now(timezone.utc)
+                synthetic = WorkItem(
+                    source=key[0], external_id=key[1], status=WorkStatus.INTERRUPTED, revision=1,
+                    started_at=now, updated_at=now, ended_at=now, error_class=CORE_RESTARTED_UNOBSERVED,
+                )
+                self._unobserved[key] = (synthetic, star_id)
+                await self._project(synthetic)
+                self._restart_tracked.pop(key, None)
+            except SceneStoreError:
+                raise
+            except Exception as exc:
+                self._restart_tracked.pop(key, None)
+                self._unobserved.pop(key, None)
+                self._restart_note("failed", star_id)
+                self._failed("restart_grace", exc)
+        self._grace_due = False
+        counts, self._restart_counts = self._restart_counts, {}
+        self._emit(
+            SCENE_RESTART_GRACE_EXPIRED_KIND,
+            "fin de la grâce de redémarrage : étoiles non revues interrompues",
+            data={
+                "tracked": counts.get("tracked", 0),
+                "reobserved": counts.get("reobserved", 0),
+                "interrupted": counts.get("interrupted", 0),
+                "deferred": len(self._unobserved),
+                "left": counts.get("left", 0),
+                "failed": counts.get("failed", 0),
+                "grace_s": self._restart_grace_s,
+            },
+        )
+
+    async def _interrupt_unobserved(self, item: WorkItem, star_id: str) -> None:
+        """Interrompre une étoile jamais revue : signal d'abord, puis `exec_state`."""
+
+        scene = await self._scene.snapshot()
+        star = scene.get_object(star_id)
+        if (
+            star is None or star.kind not in EXECUTION_KINDS or star.origin is not SceneActor.RUNTIME
+            or star.exec_state is not ExecState.UNKNOWN
+        ):
+            # Archivée par l'utilisateur, ou un état réel écrit entre-temps :
+            # plus rien à interrompre.
+            self._unobserved.pop(item.key, None)
+            self._restart_note("left", star_id)
+            return
+        signal_id = signal_object_id(star_id)
+        existing = scene.get_object(signal_id)
+        if scene.is_archived(signal_id):
+            pass  # l'utilisateur a rangé ce signal : il ne renaît pas, l'étoile dit l'interruption
+        elif existing is not None and (existing.kind is not SceneObjectKind.ATTENTION or existing.origin is not SceneActor.RUNTIME):
+            self._conflict(signal_id, existing)
+        else:
+            if existing is None and len(scene.objects) >= MAX_SCENE_OBJECTS:
+                self._defer(item, len(scene.objects))
+                return
+            live = is_live_signal(scene, signal_id)
+            update = await self._apply(
+                SceneCommand(
+                    op=SceneOp.ATTACH_SIGNAL,
+                    actor=SceneActor.RUNTIME,
+                    object_id=signal_id,
+                    target_id=star_id,
+                    fields=SceneObjectFields(
+                        kind=SceneObjectKind.ATTENTION,
+                        category=WorkStatus.INTERRUPTED.value,
+                        exec_state=ExecState.INTERRUPTED,
+                        work_ref=star.work_ref,
+                        payload=ScenePayload(title=CORE_RESTARTED_UNOBSERVED, summary=_UNOBSERVED_SUMMARY),
+                    ),
+                )
+            )
+            if update.reason is SceneRefusal.SCENE_FULL:
+                self._defer(item, MAX_SCENE_OBJECTS)
+                return
+            if update.changed and not live:
+                self._emit(
+                    SCENE_SIGNAL_RAISED_KIND,
+                    "signal posé sur une étoile",
+                    data={
+                        "object_id": signal_id, "target_id": star_id, "status": WorkStatus.INTERRUPTED.value,
+                        "error_class": CORE_RESTARTED_UNOBSERVED,
+                    },
+                )
+        await self._apply(
+            SceneCommand(
+                op=SceneOp.PATCH_OBJECT, actor=SceneActor.RUNTIME, object_id=star_id,
+                fields=SceneObjectFields(exec_state=ExecState.INTERRUPTED),
+            )
+        )
+        self._unobserved.pop(item.key, None)
+        self._restart_note("interrupted", star_id)
+
+    def _restart_note(self, action: str, star_id: str) -> None:
+        counts = self._restart_counts
+        counts[action] = counts.get(action, 0) + 1
+        if action == "reobserved":
+            self.stats.restart_reobserved += 1
+        elif action == "interrupted":
+            self.stats.restart_interrupted += 1
+        self._emit(
+            SCENE_RESTART_STAR_KIND,
+            "étoile de redémarrage : état tranché",
+            level="debug",
+            data={"object_id": star_id, "action": action},
+        )
+
     # ------------------------------------------------------------ projection
 
     async def _project(self, item: WorkItem) -> None:
         """Projeter un travail ; s'il reste différé faute de place, il reste en attente."""
 
         self._deferred_key = None
-        await self._project_item(item)
+        unobserved = self._unobserved.get(item.key)
+        if unobserved is not None and unobserved[0] is item:
+            await self._interrupt_unobserved(item, unobserved[1])
+        else:
+            # Une observation réelle fait foi : elle clôt le suivi de
+            # redémarrage et remplace une interruption encore en attente.
+            self._unobserved.pop(item.key, None)
+            star_id = self._restart_tracked.pop(item.key, None)
+            if star_id is not None:
+                self._restart_note("reobserved", star_id)
+            await self._project_item(item)
         if self._deferred_key == item.key or self._pending.pop(item.key, None) is None:
             return
         await self._pending_changed()

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
+import re
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
@@ -55,6 +56,27 @@ def _work_error_class(exc: BaseException) -> str:
 
     name = type(exc).__name__.lstrip("_")[:MAX_ERROR_CLASS_CHARS]
     return name if name.isascii() and name else "error"
+
+
+_ERROR_CLASS_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
+
+
+def _persisted_error_class(job: Job) -> str | None:
+    """`error_class` d'une issue relue en base (Slice 10) : jamais inventée.
+
+    `failed` : le nom d'exception en tête de `job.error` (« Type: message »,
+    écrit par `_execute`), sinon `error`. `interrupted` : `job.error` s'il
+    est un jeton (`core_restarted`). `completed` n'en porte pas ; `cancelled`
+    n'en a jamais eu dans l'exécution normale.
+    """
+
+    raw = (job.error or "").split(":", 1)[0].strip().lstrip("_")[:MAX_ERROR_CLASS_CHARS]
+    token = raw if raw.isascii() and _ERROR_CLASS_TOKEN.fullmatch(raw) else None
+    if job.status is JobStatus.FAILED:
+        return token or "error"
+    if job.status is JobStatus.INTERRUPTED:
+        return token
+    return None
 
 
 def is_speculative_job(job: Job) -> bool:
@@ -578,6 +600,34 @@ class JobService:
                 await self.events.publish(ProtocolEnvelope(message_type="job.interrupted", payload={"job_id": job.id, "kind": job.kind}, conversation_id=job.requested_by_conversation_id))
             await self._observe_work(interrupted, WorkStatus.INTERRUPTED, error_class="core_restarted")
             self._work_links.pop(job.id, None)
+
+    async def observe_persisted_outcomes(self, job_ids: Sequence[str]) -> int:
+        """Remettre à l'état de travail l'issue persistée de jobs déjà terminés (Slice 10).
+
+        Au redémarrage, la scène peut garder « en cours » l'étoile d'un job
+        dont la fin a été écrite en base sans atteindre la projection (arrêt
+        brutal entre l'écriture et l'observation, vidage de la projection
+        borné à l'arrêt). `recover` ne traite que les jobs `pending`/`running` :
+        ceux-là, déjà terminés, sont observés ici tels qu'ils sont en base,
+        pour que la scène dise leur vraie issue plutôt qu'une interruption.
+
+        Seuls les jobs terminaux, non spéculatifs (jamais une étoile) et
+        absents de l'exécution courante sont observés ; un identifiant inconnu est ignoré. Rend le
+        nombre d'issues remises. Ne lève pas pour un job : `_observe_work`
+        journalise son propre échec ; une lecture de base qui échoue lève.
+        """
+
+        observed = 0
+        for job_id in job_ids:
+            if job_id in self._running:
+                continue
+            job = await self.state.get_job(job_id)
+            if job is None or job.status in {JobStatus.PENDING, JobStatus.RUNNING} or is_speculative_job(job):
+                continue
+            status = WorkStatus(job.status.value)
+            await self._observe_work(job, status, error_class=_persisted_error_class(job))
+            observed += 1
+        return observed
 
     async def _observe_work(
         self,
