@@ -516,7 +516,7 @@ capsule as a point, without changing the representation stored in the scene.
 | ids per `archive_many` | 512 |
 | payload | 16 KiB compact UTF-8 JSON |
 | revision | 0 … 2^63 − 1 (SQLite INTEGER); a change at the last revision is `invalid` (`revision_exhausted`) |
-| raw value echoed in an error message | 80 characters, then `…` |
+| text echoed in an error message | an unvalidated received value: 80 characters, then `…`; unknown field names: 40 characters each, five at most; an identifier that already passed validation (patch replay, relation errors): whole, so ≤ 128 characters. Every message for hostile input stays under 300 characters (tested) |
 
 Validation refuses what exceeds; nothing is silently truncated. Snapshot,
 command and patch payloads carry `schema_version: 1`. Decoding checks the
@@ -525,8 +525,9 @@ missing, unknown or newer version, then rejects unknown keys at every level,
 missing stored keys, wrong types and unknown enum values; list lengths are
 checked before decoding. Decoding raises only `ValueError` or `TypeError`: a
 400-digit JSON integer in a geometry, layer, order or revision is a
-`ValueError`, never an `OverflowError`. Error messages never echo more than 80
-characters of a received value.
+`ValueError`, never an `OverflowError`. Error messages echo at most 80
+characters of an unvalidated received value; identifiers are echoed whole only
+once validated (≤ 128 characters), so every message stays bounded.
 
 Text, token and identifier checks are shared with `work_state` through the
 private module `jarvis/domain/_checks.py` (same rules, same messages).

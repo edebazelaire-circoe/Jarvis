@@ -22,7 +22,9 @@ from jarvis.runtime.work_ingress import CoreWorkTransport, TrackerWorkObserver, 
 from tests.integration.test_work_state_protocol import TOKEN, free_port
 
 
-async def until(condition, *, timeout: float = 10.0) -> None:
+async def until(condition, *, timeout: float = 30.0) -> None:
+    """Attendre une condition observable, bornée : jamais une durée fixe (sous charge, la projection prend son temps)."""
+
     async def poll() -> None:
         while not await condition():
             await asyncio.sleep(0.02)
@@ -107,17 +109,23 @@ async def test_a_real_stream_reaches_the_scene_with_topology_and_signals(tmp_pat
 
         parent_id, child_id = star_object_id("claude", "toolu_P"), star_object_id("claude", "toolu_C")
 
+        signal_id = signal_object_id(child_id)
+
         async def projected() -> bool:
+            # Tout l'état attendu, pas seulement l'échec de l'enfant : le signal
+            # est écrit par une commande distincte, après l'état d'exécution.
             body = await client.scene_snapshot()
             objects = objects_by_id(body)
-            return child_id in objects and objects[child_id]["exec_state"] == "failed" and any(
-                relation["kind"] == "parent_of" for relation in body["snapshot"]["relations"]
+            relations = {(item["kind"], item["from_id"], item["to_id"]) for item in body["snapshot"]["relations"]}
+            return (
+                child_id in objects and objects[child_id]["exec_state"] == "failed" and signal_id in objects
+                and ("parent_of", parent_id, child_id) in relations and ("explains", signal_id, child_id) in relations
             )
 
         await until(projected)
         body = await client.scene_snapshot()
         objects = objects_by_id(body)
-        assert set(objects) == {parent_id, child_id, signal_object_id(child_id)}
+        assert set(objects) == {parent_id, child_id, signal_id}
         relations = {(item["kind"], item["from_id"], item["to_id"]) for item in body["snapshot"]["relations"]}
         assert relations == {("parent_of", parent_id, child_id), ("explains", signal_object_id(child_id), child_id)}
         assert "secret" not in str(body)

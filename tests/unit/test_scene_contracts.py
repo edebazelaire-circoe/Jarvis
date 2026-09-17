@@ -1469,10 +1469,8 @@ def test_patch_decoding_bounds_ops_before_decoding():
 # --- pureté et immuabilité ----------------------------------------------------
 
 
-def test_scene_module_is_pure_domain():
-    """Aucune E/S, aucune boucle, aucune couche d'implémentation (Slice 01)."""
-
-    tree = ast.parse(Path(scene_module.__file__).read_text(encoding="utf-8"))
+def _imports_and_calls(module_file: str) -> set[str]:
+    tree = ast.parse(Path(module_file).read_text(encoding="utf-8"))
     imported = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -1480,8 +1478,32 @@ def test_scene_module_is_pure_domain():
         elif isinstance(node, ast.ImportFrom):
             imported.add(node.module or "")
         elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            assert node.func.id not in {"open", "print", "input", "exec", "eval"}, node.func.id
-    assert imported <= {"__future__", "dataclasses", "enum", "json", "math", "typing", "jarvis.domain._checks", "jarvis.domain.work_state"}
+            assert node.func.id not in {"open", "print", "input", "exec", "eval"}, (module_file, node.func.id)
+    return imported
+
+
+def test_scene_module_is_pure_domain():
+    """Aucune E/S, aucune boucle, aucune couche d'implémentation (Slice 01).
+
+    Slice 11 (Issue 01) : `_checks.py`, que la scène a le droit d'importer, est
+    lui aussi analysé ; sinon une E/S ajoutée là passerait inaperçue.
+    """
+
+    from jarvis.domain import _checks
+
+    assert _imports_and_calls(scene_module.__file__) <= {
+        "__future__", "dataclasses", "enum", "json", "math", "typing", "jarvis.domain._checks", "jarvis.domain.work_state"}
+    assert _imports_and_calls(_checks.__file__) <= {"__future__", "re"}
+
+
+def test_validated_identifiers_echoed_in_replay_errors_stay_bounded():
+    """Issue 01 : une erreur de rejeu cite l'identifiant entier, déjà borné à 128 caractères."""
+
+    longest = "o" * MAX_ID_CHARS
+    patch = ScenePatch.from_payload({"schema_version": 1, "revision": 1, "ops": [{"op": "delete_relation", "relation_id": longest}]})
+    with pytest.raises(ValueError) as caught:
+        apply_scene_patch(SceneSnapshot(scene_id="scene-1"), patch)
+    assert longest in str(caught.value) and len(str(caught.value)) < 300
 
 
 def test_reducer_never_mutates_its_input():

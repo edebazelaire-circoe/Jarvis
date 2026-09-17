@@ -110,7 +110,7 @@ class ControlCenter:
         await self.forwarder.transport.close()
 
 
-async def until(predicate, *, timeout: float = 10.0) -> None:
+async def until(predicate, *, timeout: float = 30.0) -> None:
     async def poll() -> None:
         while not await predicate():
             await asyncio.sleep(0.02)

@@ -467,12 +467,17 @@ def test_the_patch_body_always_carries_at_least_one_whole_patch(monkeypatch):
 # ------------------------------------------------------------ QA Slice 03 : charge, journal, messages
 
 
+async def _until(condition) -> None:
+    while not condition():
+        await asyncio.sleep(0.005)
+
+
 async def test_long_polls_beyond_the_cap_answer_at_once_without_calling_core():
     journal = Journal()
     transport = ScriptedTransport(hang=True)
     view = CoreSceneView(transport, journal=journal, max_concurrent_waits=2)
     held = [asyncio.create_task(view.patches(QUERY)) for _ in range(2)]
-    await asyncio.sleep(0.05)
+    await asyncio.wait_for(_until(lambda: view.waiting == 2 and len(transport.calls) == 2), 30)
 
     started = time.monotonic()
     busy = [await view.patches(QUERY) for _ in range(4)]
@@ -509,9 +514,11 @@ async def test_the_client_tells_a_connection_wait_from_a_response_wait():
     """aiohttp réel : attendre une place du pool = non envoyée ; attendre la réponse = issue inconnue."""
 
     release = asyncio.Event()
+    entered = asyncio.Event()
 
     async def slow(request):  # noqa: ANN001
         await request.read()
+        entered.set()
         await release.wait()
         return aiohttp.web.json_response({})
 
@@ -522,7 +529,7 @@ async def test_the_client_tells_a_connection_wait_from_a_response_wait():
         client = LocalCoreClient(host="127.0.0.1", port=server.port, token="t" * 48, session=session)
         try:
             holder = asyncio.create_task(client.scene_command({"op": "hold"}))
-            await asyncio.sleep(0.2)
+            await asyncio.wait_for(entered.wait(), 30)  # la seule connexion du pool est prise
             with pytest.raises(aiohttp.ConnectionTimeoutError):
                 await client.scene_command({"op": "queued"}, connect_timeout_s=0.2, read_timeout_s=5)
             release.set()

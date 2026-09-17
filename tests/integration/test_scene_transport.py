@@ -40,6 +40,24 @@ from jarvis.runtime.scene_view import CORE_UNREACHABLE, CoreSceneTransport, Core
 from tests.unit.test_scene_service import MemoryRepository
 
 
+async def core_waiting(app: JarvisCoreApplication, count: int = 1, *, timeout: float = 30.0) -> None:
+    """Attendre qu'au moins `count` long-polls attendent une révision dans Core (borné, pas une durée fixe)."""
+
+    async def poll() -> None:
+        while len(getattr(app.scene._changed, "_waiters", ())) < count:
+            await asyncio.sleep(0.01)
+
+    await asyncio.wait_for(poll(), timeout)
+
+
+async def until(condition, *, timeout: float = 30.0) -> None:
+    async def poll() -> None:
+        while not condition():
+            await asyncio.sleep(0.01)
+
+    await asyncio.wait_for(poll(), timeout)
+
+
 def free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
@@ -236,7 +254,7 @@ async def test_a_long_poll_wakes_on_commit(core):
     snap = await snapshot_of(core)
     started = time.monotonic()
     poll = asyncio.create_task(core.request("GET", patches_path(snap, wait_s=20)))
-    await asyncio.sleep(0.3)
+    await core_waiting(core.core)
     assert not poll.done()
 
     status, command, _ = await core.request("POST", "/v1/scene/commands", json=artifact("art-1"))
@@ -346,7 +364,7 @@ async def test_a_core_restart_changes_the_epoch_and_forces_resync(tmp_path):
 async def test_stopping_the_server_releases_a_pending_long_poll(core):
     snap = await snapshot_of(core)
     poll = asyncio.create_task(core.request("GET", patches_path(snap, wait_s=25)))
-    await asyncio.sleep(0.3)
+    await core_waiting(core.core)
 
     started = time.monotonic()
     await core.server.stop()
@@ -435,7 +453,7 @@ async def test_the_control_center_serves_snapshot_long_poll_and_user_commands(st
 
     query = f"/api/scene/patches?scene_id={scene['scene_id']}&epoch={scene['epoch']}&after=0&wait_s=20"
     poll = asyncio.create_task(client.get(query))
-    await asyncio.sleep(0.3)
+    await core_waiting(process.core)
     assert not poll.done()
     command = await client.post("/api/scene/commands", json={"schema_version": 1, "op": "upsert_object", "object_id": "art-1",
                                                               "fields": {"kind": "artifact", "category": "research"}})
@@ -477,7 +495,8 @@ async def test_long_polls_beyond_the_control_center_cap_are_told_to_retry(stack)
     scene = await (await client.get("/api/scene")).json()
     query = f"/api/scene/patches?scene_id={scene['scene_id']}&epoch={scene['epoch']}&after=0&wait_s=20"
     held = [asyncio.create_task(client.get(query)) for _ in range(4)]
-    await asyncio.sleep(0.5)
+    await until(lambda: control.scene_view.waiting == 4)
+    await core_waiting(process.core, 4)
 
     started = time.monotonic()
     busy = await client.get(query)

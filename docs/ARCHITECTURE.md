@@ -1580,7 +1580,7 @@ Core routes (bearer token and protocol-version check, like every `/v1` route):
 A 503 carries `error.scene` (`{state, code}` of `SceneService.availability`) and
 `error.store_code` (`SceneStoreErrorCode`). Malformed input is caught only as
 `ValueError`/`TypeError` and mapped to 400 by the existing middleware; the
-message is the decoder's (received values echoed ≤ 80 characters), never a stack
+message is the decoder's (unvalidated values echoed ≤ 80 characters, validated ids ≤ 128), never a stack
 trace. `GET /v1/health` keeps `protocol_version`, `ready`, `status`, `detail`
 unchanged and adds `scene: {state, code, saturated, objects, object_limit}`
 (`objects` is `null` when the scene is not served; the capacity fields were

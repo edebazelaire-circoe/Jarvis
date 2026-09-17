@@ -231,6 +231,17 @@ async def capture_core(tmp_path):
 BRAIN = {"schema_version": 1, "actor": "brain"}
 
 
+async def pending_capture(core: CoreProcess, *, timeout: float = 30.0):
+    """La capture demandée est enregistrée par Core (borné, pas une durée fixe)."""
+
+    async def poll():
+        while core.core.scene_captures._pending is None:
+            await asyncio.sleep(0.01)
+        return core.core.scene_captures._pending
+
+    return await asyncio.wait_for(poll(), timeout)
+
+
 async def scene_head(core: CoreProcess) -> tuple[str, str, int]:
     status, body, _ = await core.request("GET", "/v1/scene/snapshot")
     assert status == 200
@@ -295,7 +306,7 @@ async def test_capture_route_refusals(capture_core, tmp_path):
     # Occupé : une seule capture en attente.
     capture_core.core.scene_captures.deadline_s = 1.0
     first = asyncio.ensure_future(capture_core.request("POST", "/v1/scene/captures", json=BRAIN))
-    await asyncio.sleep(0.2)
+    await pending_capture(capture_core)
     status, body, _ = await capture_core.request("POST", "/v1/scene/captures", json=BRAIN)
     assert status == 409 and body["error"]["code"] == "capture_busy"
     capture_id = capture_core.core.scene_captures._pending.capture_id
@@ -322,7 +333,7 @@ async def test_capture_route_refusals(capture_core, tmp_path):
 async def test_a_pending_capture_is_redelivered_to_a_new_long_poll_but_never_to_a_short_read(capture_core):
     capture_core.core.scene_captures.deadline_s = 4.0
     request = asyncio.ensure_future(capture_core.request("POST", "/v1/scene/captures", json=BRAIN))
-    await asyncio.sleep(0.1)
+    await pending_capture(capture_core)
     scene_id, epoch, revision = await scene_head(capture_core)
     base = f"/v1/scene/patches?scene_id={scene_id}&epoch={epoch}&after={revision}"
     _, short, _ = await capture_core.request("GET", base + "&wait_s=0")
@@ -561,8 +572,7 @@ def test_png_validation_walks_every_chunk():
 
 async def test_single_use_is_atomic_under_parallel_uploads(capture_core):
     request = asyncio.ensure_future(capture_core.request("POST", "/v1/scene/captures", json=BRAIN))
-    await asyncio.sleep(0.2)
-    capture_id = capture_core.core.scene_captures._pending.capture_id
+    capture_id = (await pending_capture(capture_core)).capture_id
 
     async def put() -> int:
         async with aiohttp.ClientSession() as session:
@@ -580,8 +590,7 @@ async def test_a_brain_call_that_leaves_frees_the_capture_at_once(capture_core, 
     async with aiohttp.ClientSession() as session:
         call = asyncio.ensure_future(session.post(f"http://127.0.0.1:{capture_core.port}/v1/scene/captures",
                                                   headers=capture_core.headers(), json=BRAIN))
-        await asyncio.sleep(0.3)
-        assert capture_core.core.scene_captures._pending is not None
+        assert await pending_capture(capture_core) is not None
         call.cancel()
         await asyncio.gather(call, return_exceptions=True)
     # Nouvelle demande aussitôt (sans attendre le contrôle périodique) : jamais capture_busy.

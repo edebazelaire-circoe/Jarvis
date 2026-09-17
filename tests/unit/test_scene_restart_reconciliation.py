@@ -643,8 +643,15 @@ async def test_stopping_during_the_marking_leaves_no_task_and_no_timer():
         stack.projector.start()
         await asyncio.sleep(delay)
         await stack.projector.stop()
-        await asyncio.sleep(0.1)
-        left = [task.get_name() for task in asyncio.all_tasks() if task.get_name().startswith("jarvis-scene") and not task.done()]
+
+        def leftovers() -> list[str]:
+            return [task.get_name() for task in asyncio.all_tasks() if task.get_name().startswith("jarvis-scene") and not task.done()]
+
+        # Borné : une tâche annulée finit en quelques tours de boucle ; une tâche oubliée resterait au-delà.
+        deadline = asyncio.get_running_loop().time() + 5
+        while leftovers() and asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(0.01)
+        left = leftovers()
         await stack.scene.close()
         assert left == [], delay
 

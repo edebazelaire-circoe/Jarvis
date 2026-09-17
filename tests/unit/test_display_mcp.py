@@ -677,7 +677,7 @@ async def observe(core: CoreProcess, *observations: dict) -> None:
     assert status == 200, answer
 
 
-async def wait_for(core: CoreProcess, predicate, timeout: float = 5.0) -> dict:
+async def wait_for(core: CoreProcess, predicate, timeout: float = 30.0) -> dict:
     deadline = asyncio.get_running_loop().time() + timeout
     while True:
         status, body, _ = await core.request("GET", "/v1/scene/snapshot")

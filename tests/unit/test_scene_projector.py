@@ -117,7 +117,7 @@ class Stack:
         return await self.scene.snapshot()
 
 
-async def settled(projector: SceneProjector, *, timeout: float = 5.0) -> None:
+async def settled(projector: SceneProjector, *, timeout: float = 30.0) -> None:
     """Attendre que la projection ait tout traité (file vide, rien à réconcilier, boucle au repos)."""
 
     async def idle() -> None:
@@ -492,7 +492,11 @@ async def test_a_failing_scene_write_is_journaled_once_then_the_projection_recov
         repository.fail_commit = SceneStoreError(SceneStoreErrorCode.STORAGE_IO, "disk is full")
         for index in range(5):
             await stack.work.observe(obs(f"t{index}"))
-        await asyncio.sleep(0.2)
+
+        async def outage_seen() -> bool:
+            return len(stack.diagnostics.kinds(SCENE_PROJECTION_UNAVAILABLE_KIND)) >= 1
+
+        await until_true(outage_seen, timeout=30)
         assert (await stack.snapshot()).objects == ()
         assert stack.scene.availability.state is SceneState.READY
         assert len(stack.diagnostics.kinds(SCENE_PROJECTION_UNAVAILABLE_KIND)) == 1
@@ -518,7 +522,11 @@ async def test_a_scene_refused_at_start_is_journaled_once_and_never_breaks_the_w
     try:
         for index in range(20):
             await stack.work.observe(obs(f"t{index}"))
-        await asyncio.sleep(0.2)
+
+        async def retried() -> bool:
+            return stack.projector.stats.outages > 1 and other.qsize() == 20
+
+        await until_true(retried, timeout=30)
         assert stack.work.revision == 20 and other.qsize() == 20 and stack.events.evicted_total == 0
         assert stack.projector.running
         assert len(stack.diagnostics.kinds(SCENE_PROJECTION_UNAVAILABLE_KIND)) == 1
@@ -613,7 +621,7 @@ async def archive(stack: Stack, *object_ids: str) -> None:
         assert update.changed
 
 
-async def until_true(predicate, *, timeout: float = 5.0) -> None:
+async def until_true(predicate, *, timeout: float = 30.0) -> None:
     async def poll() -> None:
         while not await predicate():
             await asyncio.sleep(0.01)
@@ -794,8 +802,11 @@ async def test_the_episode_closes_when_the_last_pending_entry_fails_and_the_next
         await settled(stack.projector)
         stack.projector._project_item = original
         assert stack.projector._saturation is None
-        await asyncio.sleep(0.05)
-        assert space_tasks() == []
+
+        async def watcher_gone() -> bool:
+            return space_tasks() == []
+
+        await until_true(watcher_gone, timeout=30)
         assert len(stack.diagnostics.kinds(SCENE_PROJECTION_DESATURATED_KIND)) == 1
 
         await stack.observe(obs("fill"), obs("next"))
@@ -820,8 +831,11 @@ async def test_saturation_warnings_are_throttled_across_archive_one_create_one_c
             await until_true(caught)
             await settled(stack.projector)
             clock[0] += 60
-        await asyncio.sleep(0.05)
-        assert space_tasks() == []  # la veille s'arrête à chaque fin d'épisode
+
+        async def watcher_gone() -> bool:
+            return space_tasks() == []
+
+        await until_true(watcher_gone, timeout=30)  # la veille s'arrête à chaque fin d'épisode
         clock[0] += 600
         await stack.observe(obs("late"))
     saturated = stack.diagnostics.kinds(SCENE_PROJECTION_SATURATED_KIND)
