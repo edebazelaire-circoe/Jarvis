@@ -1,0 +1,96 @@
+{
+  "schema": "jarvis.testlab.manifest",
+  "schema_version": 1,
+  "diagnostic": {
+    "schema": "jarvis.testlab.diagnostic",
+    "schema_version": 1,
+    "diagnostic_id": "voice.self_echo",
+    "version": 1,
+    "title": "No false self barge-in on Jarvis's own output",
+    "domain": "voice",
+    "description": "Jarvis speaks while its own output returns as input; no candidate may be confirmed as a barge-in.",
+    "profiles": [
+      {
+        "name": "virtual",
+        "implementation": "voice.self_echo.virtual",
+        "requires": [],
+        "cost": {
+          "max_duration_s": 120,
+          "max_cost_usd": 0
+        }
+      }
+    ],
+    "parameters": [
+      {
+        "name": "output.duration_ms",
+        "type": "int",
+        "default": 8000,
+        "minimum": 500,
+        "maximum": 120000,
+        "choices": [],
+        "max_length": null,
+        "description": "How long Jarvis speaks in the scenario."
+      },
+      {
+        "name": "echo.candidate_count",
+        "type": "int",
+        "default": 7,
+        "minimum": 0,
+        "maximum": 64,
+        "choices": [],
+        "max_length": null,
+        "description": "Echo barge-in candidates injected while the output plays."
+      }
+    ],
+    "metrics": [
+      {
+        "name": "barge_in.false_confirmed_count",
+        "unit": "count",
+        "direction": "lower_better",
+        "description": "Barge-ins confirmed while Jarvis spoke with no user activity in the window."
+      },
+      {
+        "name": "barge_in.rejected_count",
+        "unit": "count",
+        "direction": "neutral",
+        "description": "Echo candidates the owner decision rejected."
+      },
+      {
+        "name": "output.completed",
+        "unit": "boolean",
+        "direction": "higher_better",
+        "description": "The scripted output reached its terminal status."
+      },
+      {
+        "name": "output.played_ms",
+        "unit": "ms",
+        "direction": "neutral",
+        "description": "Audio actually played before the output ended."
+      }
+    ],
+    "assertions": [
+      {
+        "assertion_id": "no_false_barge_in",
+        "metric": "barge_in.false_confirmed_count",
+        "comparator": "eq",
+        "threshold": 0,
+        "blocking": true,
+        "description": "Jarvis never interrupts itself on its own echo."
+      },
+      {
+        "assertion_id": "output_completes",
+        "metric": "output.completed",
+        "comparator": "eq",
+        "threshold": true,
+        "blocking": true,
+        "description": "The output plays to its terminal status."
+      }
+    ],
+    "score": {
+      "method": "none",
+      "components": []
+    }
+  },
+  "override_allowlist": [],
+  "scenario": null
+}

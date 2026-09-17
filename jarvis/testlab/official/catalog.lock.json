@@ -1,0 +1,30 @@
+{
+  "schema": "jarvis.testlab.catalog_lock",
+  "schema_version": 1,
+  "entries": [
+    {
+      "diagnostic_id": "speech.payload_integrity",
+      "version": 1,
+      "path": "speech/payload_integrity.v1.json",
+      "manifest_fingerprint": "f5ccf81aea2f0cdb8efa6d3e9694586884e1b45f6187100c26e6710b911e855b"
+    },
+    {
+      "diagnostic_id": "speech.stale_supersession",
+      "version": 1,
+      "path": "speech/stale_supersession.v1.json",
+      "manifest_fingerprint": "5be195b3c51d39de1951ea4b7882e6b6ffe0ceb4fba5eca810898052c5532c30"
+    },
+    {
+      "diagnostic_id": "voice.queue_latency",
+      "version": 1,
+      "path": "voice/queue_latency.v1.json",
+      "manifest_fingerprint": "7f4a08ce80ec187c6e0a1499ce12f5fd0aeb6369d9ca7c7fd5d9f4de84310bd8"
+    },
+    {
+      "diagnostic_id": "voice.self_echo",
+      "version": 1,
+      "path": "voice/self_echo.v1.json",
+      "manifest_fingerprint": "310a98db03fb881674da23e113930f15c05fad72ac804c5df6c4993fcd32a1a7"
+    }
+  ]
+}

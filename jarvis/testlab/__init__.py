@@ -25,4 +25,13 @@ Slice 03 adds the DiagnosticBundle: pure `jarvis.testlab.bundle` (schema, codec)
 (builder), `jarvis.testlab.redaction`, and the I/O modules
 `jarvis.testlab.bundle_capture` (capture service) and
 `jarvis.testlab.filesystem_bundle_store` (bundle store).
+
+Slice 04 adds the catalog: `jarvis.testlab.primitives` (registered scenario
+primitive vocabulary, a superset of the `jarvis.voice_replay` action DSL),
+`jarvis.testlab.implementations` (in-code registry of implementation names),
+`jarvis.testlab.manifests` (manifest and catalog-lock codec),
+`jarvis.testlab.promotion` (ad-hoc scenario -> official manifest content), plus the
+I/O modules `jarvis.testlab.catalog` (loads `jarvis/testlab/official/`) and
+`jarvis.testlab.replay` (replay fixture codec and scenario adapter, which
+`tests/replay/voice_replay.py` re-exports).
 """

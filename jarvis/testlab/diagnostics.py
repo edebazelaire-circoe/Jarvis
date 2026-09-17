@@ -404,6 +404,18 @@ def _check_threshold_fits(assertion: AssertionSpec, metric: MetricSpec) -> None:
                    REFERENCE_INVALID)
 
 
+def check_assertion_threshold(assertion: AssertionSpec, metric: MetricSpec) -> None:
+    """Public form of the threshold rule: the assertion's threshold and comparator fit its metric.
+
+    Slice 04 checks ad-hoc `expect.metric` steps with it, before anything is measured.
+    """
+    if not isinstance(assertion, AssertionSpec) or not isinstance(metric, MetricSpec):
+        raise fail("check_assertion_threshold takes an AssertionSpec and its MetricSpec")
+    if assertion.metric != metric.name:
+        raise fail(f"assertion {assertion.assertion_id} does not measure metric {metric.name}", REFERENCE_INVALID)
+    _check_threshold_fits(assertion, metric)
+
+
 def evaluate_assertion(assertion: AssertionSpec, metric: MetricSpec, value: MetricValue | None) -> AssertionResult:
     """Pure comparison of one measured value (None: not measured) against its assertion."""
     if not isinstance(assertion, AssertionSpec) or not isinstance(metric, MetricSpec):

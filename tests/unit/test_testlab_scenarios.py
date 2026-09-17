@@ -40,6 +40,7 @@ def payload(**changes) -> dict:
         "scenario_id": "echo.interrupt_basic",
         "title": "User interrupts Jarvis",
         "description": "Jarvis speaks, the user says stop.",
+        "provenance": None,
         "steps": [
             {"primitive": "provider.output_started", "args": {"output_id": "out-1", "at_ms": 0}},
             {"primitive": "user.turn", "args": {"turn_id": "t1", "content_tag": "stop",

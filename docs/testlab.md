@@ -18,29 +18,40 @@ normal CI.
   - `redaction.py` (Slice 03): `redact_urls`, `redact_identifying_text` (moved from `capture.py`, which re-exports them);
   - `bundle.py` (Slice 03): `DiagnosticBundle` schema and strict codec, vocabularies, `SECTION_LIMITS`;
   - `bundle_rules.py` (Slice 03): `AnomalyRule`, `DEFAULT_RULES`, `RULE_EVALUATORS`, `evaluate_rules`;
-  - `bundle_builder.py` (Slice 03): `SessionSelector`, evidence inputs, `BundleOptions`, `build_diagnostic_bundle`.
-- I/O modules (Slices 02 and 03, see Storage and DiagnosticBundle):
+  - `bundle_builder.py` (Slice 03): `SessionSelector`, evidence inputs, `BundleOptions`, `build_diagnostic_bundle`;
+  - `primitives.py` (Slice 04): `ArgSpec`, `PrimitiveSpec`, `PrimitiveRegistry`, `DEFAULT_PRIMITIVES`, `ScenarioContext`, `check_scenario`, `PrimitiveHandler`;
+  - `implementations.py` (Slice 04): `ImplementationEntry`, `ImplementationRegistry`, `default_implementations`;
+  - `manifests.py` (Slice 04): `DiagnosticManifest`, `CatalogLock`, `LockEntry`, `check_manifest`, `render_manifest`, `CatalogError`;
+  - `promotion.py` (Slice 04): `promote_scenario`, `PromotionResult`, `PromotionRefused`.
+- I/O modules (Slices 02, 03 and 04, see Storage, DiagnosticBundle and Catalog):
   - `_fs.py` (private, Slice 03): lock, atomic write, path budget and link helpers shared by both filesystem stores;
   - `filesystem_store.py`: `FilesystemTestRunStore`, the local durable adapter;
   - `capture.py`: `read_git_revision`, `capture_code_identity`, `capture_environment`, `build_config_snapshot`, `store_config_snapshot`;
   - `bundle_capture.py` (Slice 03): `capture_diagnostic_bundle`, `read_session_trace`, `read_session_events`, `read_voice_session_reports`, `project_bundle_trace_entry`;
-  - `filesystem_bundle_store.py` (Slice 03): `FilesystemBundleStore`.
+  - `filesystem_bundle_store.py` (Slice 03): `FilesystemBundleStore`;
+  - `catalog.py` (Slice 04): `Catalog`, `CatalogEntry`, `ProfileAvailability`, `load_catalog`, `DEFAULT_CATALOG_ROOT`;
+  - `replay.py` (Slice 04): the `jarvis.voice_replay` v1 codec and the scenario adapter.
+- Official manifests: `jarvis/testlab/official/<domain>/<name>.v<N>.json` plus `catalog.lock.json`.
 - Conformance tests: `tests/unit/test_testlab_identity.py`,
   `tests/unit/test_testlab_profiles.py`, `tests/unit/test_testlab_diagnostics.py`,
   `tests/unit/test_testlab_scenarios.py`, `tests/unit/test_testlab_runs.py`,
   `tests/unit/test_testlab_purity.py`, `tests/unit/test_testlab_store.py`,
   `tests/unit/test_testlab_store_retention.py`, `tests/unit/test_testlab_store_capture.py`,
-  `tests/unit/test_testlab_bundle.py`, `tests/unit/test_testlab_bundle_capture.py`, opt-in
+  `tests/unit/test_testlab_bundle.py`, `tests/unit/test_testlab_bundle_capture.py`,
+  `tests/unit/test_testlab_primitives.py`, `tests/unit/test_testlab_primitives_replay.py`,
+  `tests/unit/test_testlab_catalog.py`, `tests/unit/test_testlab_catalog_promotion.py`, opt-in
   `tests/integration/test_testlab_bundle_real_session.py`; shared builders `tests/fakes/testlab.py`,
   session fixture `tests/fakes/testlab_bundle.py`.
-- Handoff: `tasks/jarvis-category2-test-lab/` (Slices 01, 02, 03).
+- Handoff: `tasks/jarvis-category2-test-lab/` (Slices 01, 02, 03, 04).
 
-Status 2026-09-17: contracts (Slice 01), run persistence (Slice 02), and the
-DiagnosticBundle with its capture service and bundle store (Slice 03). Nothing
-composes the stores yet (no default root wiring, no scheduled retention or
-temporaries sweep, no CLI or HTTP entry to capture a bundle). Catalog, manifests and primitive
-vocabulary (04), supervisor/worker (05), profile runners (06, 08, 09), score
-computation and sweeps (07), API/CLI/HTTP (10) and UI (11) do not exist yet.
+Status 2026-09-17: contracts (Slice 01), run persistence (Slice 02), the
+DiagnosticBundle with its capture service and bundle store (Slice 03), and the
+catalog with its manifests, primitive vocabulary and promotion path (Slice 04).
+Nothing executes yet: every seed profile is `unavailable` because no runner is
+registered, and nothing composes the stores (no default root wiring, no scheduled
+retention or temporaries sweep, no CLI or HTTP entry to capture a bundle).
+Supervisor/worker (05), profile runners (06, 08, 09), score computation and sweeps
+(07), API/CLI/HTTP (10) and UI (11) do not exist yet.
 
 ## Invariants
 
@@ -196,12 +207,29 @@ score is the weight-weighted mean. The score is a UI synthesis, never a verdict.
 
 ## Scenarios
 
-`Scenario {schema, schema_version, scenario_id, title, description, steps}`:
-`scenario_id` dotted lowercase ≤ 64; title ≤ 120, description ≤ 512 (or null);
-1..256 steps; ≤ 64 KiB canonical JSON (the `jarvis.voice_replay` fixture bound).
+`Scenario {schema, schema_version, scenario_id, title, description, provenance,
+steps}`: `scenario_id` dotted lowercase ≤ 64; title ≤ 120, description ≤ 512 (or
+null); 1..256 steps; ≤ 64 KiB canonical JSON (the `jarvis.voice_replay` fixture
+bound).
 
-`ScenarioStep {primitive, args}`: `primitive` is a dotted lowercase name
-registered by the catalog (vocabulary owned by Slice 04). `Scenario.from_dict(payload,
+The `provenance` **key is required on the wire** (its value may be null), like every
+other field of a strict codec: a scenario document written before Slice 04, without
+that key, is refused with `testlab_fields_mismatch` and must gain `"provenance":
+null`. Nothing had been stored when the field was added.
+
+`provenance` (null for a scenario authored from scratch) is where an
+incident-derived scenario comes from: `ScenarioProvenance {source_path, source_kind,
+origin, reported, derived, constructed}`. `source_path` is repo-relative POSIX (no
+parent segment, drive or backslash); `source_kind` is `human_trace_reconstruction`
+or `sanitized_trace`; `origin` is the UTC millisecond instant of `at_ms` 0 in the
+source; the three evidence categories hold each
+category ≤ 32 `ScenarioEvidence {source_ref ≤ 160, fact ≤ 512}`. It is the
+`jarvis.voice_replay` provenance, productized, so every replay fixture converts
+with its evidence intact. It is inside `scenario.fingerprint()`: a scenario with
+other evidence is a different declaration.
+
+`ScenarioStep {primitive, args}`: `primitive` is a dotted lowercase name of the
+registered vocabulary (Scenario primitives). `Scenario.from_dict(payload,
 *, primitives)` requires `primitives`: the registered names (an unregistered step
 fails with `testlab_reference_invalid`), or the explicit sentinel `SHAPE_ONLY` to
 check shape and safety only (fixture tooling, catalog lint). There is no permissive
@@ -210,6 +238,287 @@ default; a scenario that will execute is decoded against the registry
 at every depth, nesting ≤ 6, ≤ 64 keys per object, ≤ 64 list items, strings ≤ 512,
 integers within ±2⁵³, finite numbers, ≤ 4 KiB encoded. `scenario.fingerprint()`
 identifies exactly what executed (order matters).
+
+Error paths name a step by its index: `steps[<i>].args.<name>` in a decoded scenario
+(`scenario.steps[<i>].…` when the whole document is scanned) and the same
+`steps[<i>].args.<name>` in the primitive checks. A `ScenarioStep` built on its own
+has no index, so it says `step.args.<name>`.
+
+A scenario is inert data. Slice 04 adds the vocabulary that gives its steps meaning
+(Scenario primitives) and the catalog that publishes official ones (Catalog); the
+executor is Slice 06.
+
+## Scenario primitives
+
+`jarvis/testlab/primitives.py` holds the closed registered vocabulary. It is a
+**superset-compatible productization of the `jarvis.voice_replay` v1 action DSL**:
+every replay action is a primitive of the same name with the same argument schema
+(the replay codec validates its action data through this module), plus the common
+`at_ms` argument and the primitives the replay DSL lacks.
+
+Every step carries `at_ms`: the virtual time of the step, an integer from 0 to
+604 800 000 ms (7 days, the replay bound), non-decreasing across the scenario.
+`check_scenario(scenario, *, primitives, profiles=(), context=None)` checks
+registration, argument schemas, the timeline, the override prelude, profile support
+and (with a `ScenarioContext`) declared parameter, metric and assertion names. It
+returns `ScenarioCheck {end_ms, primitives, supported_profiles, overrides}`.
+
+| Primitive | Required args | Optional args | Profiles | Notes |
+|---|---|---|---|---|
+| `user.turn` | `turn_id`, `content_tag` | `addressing` | virtual | Committed user turn by opaque content tag (replay). |
+| `user.speech` | `turn_id`, `text` | `addressing` | virtual, live, hw:guided | Authored utterance: virtual transcript, live text input, guided means the human says it. |
+| `user.interrupt` | `turn_id`, `text` | – | virtual, live, hw:guided | The user starts speaking over Jarvis output. |
+| `brain.hold` | `work_id` | – | virtual | The scripted brain starts holding work (replay). |
+| `brain.ready` | `work_id`, `result_tag` | – | virtual | Scripted brain result, as an opaque tag (replay). |
+| `brain.release` | `work_id` | – | virtual | The scripted brain releases held work (replay). |
+| `scheduler.enqueue` | `candidate_id`, `kind` | `work_id`, `intent_id`, `intent_epoch`, `ttl_ms` | virtual | A speech candidate enters the scheduler (replay). |
+| `provider.output_started` | `output_id` | – | virtual | Fake provider starts an output (replay). |
+| `provider.transcript_final` | `output_id`, `generated_tag` | – | virtual | Generated words as an opaque tag (replay). |
+| `provider.output_done` | `output_id`, `status` | – | virtual | Terminal status of an output (replay). |
+| `provider.cancel_rejected` | `output_id`, `reason_code` | – | virtual | The provider refuses a cancel (replay). |
+| `provider.session_closed` | `reason` | – | virtual | The provider session closes (replay). |
+| `owner.candidate` | `candidate_id` | – | virtual | A barge-in owner candidate opens (replay). |
+| `owner.rejected` | `candidate_id` | `reason_code` | virtual | The candidate is rejected (replay). |
+| `owner.confirmed` | `candidate_id`, `played_ms` | `provider_item_id` | virtual | The candidate is confirmed (replay). |
+| `device.output_busy` | – | `output_id`, `playback_id`, `played_ms` | virtual | The device is playing; needs `output_id` or `playback_id` (replay). |
+| `device.consume` | `output_id`, `played_ms` | – | virtual | The device consumes played audio (replay). |
+| `device.release` | `output_id` | `provider_still_active` | virtual | The device releases an output (replay). |
+| `control.stop` | `reason` | – | all | The session is stopped (replay). |
+| `control.checkpoint` | `checkpoint_id` | – | all | The executor settles and records a named point (replay). |
+| `time.wait` | – | – | all | Virtual time advances to `at_ms` with no stimulus (timers, TTLs, queues). |
+| `audio.inject` | `audio_ref` | `gain_db` | audio, live, hw:auto, hw:guided | A known audio fixture, by reference, never bytes. Not a virtual primitive. |
+| `parameter.override` | `parameter`, `value` | – | all | Run-local value; prelude only (see below). |
+| `expect.event` | `event` | `count_min`, `count_max` | all | A Conversation Events type must appear `count_min` (default 1) to `count_max` times. |
+| `expect.metric` | `metric`, `comparator`, `threshold` | – | all | Ad-hoc check on a declared metric, evaluated on the final run metrics. |
+| `expect.assertion` | `assertion_id`, `outcome` | – | all | A declared assertion must end `passed`, `failed` or `missing` (a reproduction expects `failed`). |
+
+Argument types are global: one name has one type everywhere (as in the replay DSL),
+declared in `ARG_SPECS` and validated in that order, so a document with several
+faults always reports the same first fault.
+
+| Type | Rule |
+|---|---|
+| identifier (`turn_id`, `work_id`, `candidate_id`, `intent_id`, `output_id`, `playback_id`, `content_tag`, `result_tag`, `generated_tag`, `checkpoint_id`, `provider_item_id`) | `[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}`, opaque; `provider_item_id` may be null |
+| time in ms (`ttl_ms`, `played_ms`) and `intent_epoch` | non-negative integer (never a bool), within the timeline bound |
+| boolean (`provider_still_active`) | strict bool |
+| choice (`addressing`, `kind`, `status`, `reason`, `reason_code`, `comparator`, `outcome`) | closed vocabulary of that name |
+| `text` | authored utterance ≤ 280 chars, single line, printable |
+| `audio_ref` | relative POSIX path of a `.wav` fixture (the `ArtifactRef` path rule) |
+| `gain_db` | −60..20 |
+| `parameter` | name of a declared parameter or an allowlisted setting (name rules apply) |
+| `value` | JSON scalar, checked against that declaration |
+| `event` | a `ConversationEventType` value |
+| `metric`, `assertion_id` | declared metric / assertion name |
+| `threshold` | boolean or finite number fitting the metric unit |
+| `count_min`, `count_max` | integers 0..10 000, `count_min ≤ count_max` |
+
+Rules that span steps:
+
+- **Profiles.** Each primitive declares the profiles that can perform it, and a
+  scenario is validated against the profiles it will run on
+  (`testlab_primitive_profile_unsupported`). Replay primitives drive controlled
+  doubles, which only `virtual` has today; Slices 08 and 09 widen a set only
+  together with a runner that really performs it on that profile.
+- **Override prelude.** `parameter.override` steps come first, all at `at_ms` 0,
+  never twice for one name: overrides are applied to the run snapshot before the
+  run starts (Slice 05), never mid-run.
+- **Privacy of `text`.** Scenario text is an authored test input, not user data: it
+  stays short, single-line and printable, and anything the identifying-text
+  redaction would change (an email address, URL credentials, an SSH remote user) is
+  refused instead of silently rewritten. To reproduce a real utterance, use the
+  opaque `content_tag` of `user.turn`, not a paste.
+- **No code, structurally.** A step names a registered primitive and passes JSON
+  data; no primitive carries code, an import path, a command or a file to execute,
+  and nothing in a Test Lab document is evaluated. The Slice 01 name and value
+  guards run on top of that (`testlab_forbidden_code`,
+  `testlab_forbidden_private_data`).
+
+`PrimitiveHandler` is the executor-facing seam: a profile runner (Slice 06 onwards)
+registers one handler per primitive it supports; the executor advances its virtual
+clock to `step.args["at_ms"]` and calls it. `missing_handlers(primitives, profile,
+handlers)` names what a runner still has to cover. Slice 04 implements no executor.
+
+## Replay fixtures
+
+`jarvis/testlab/replay.py` is the production home of the `jarvis.voice_replay` v1
+codec (schema, size bound, provenance, timeline) that `tests/replay/voice_replay.py`
+introduced. That test module is now a thin compatibility layer: it re-exports the
+codec unchanged — same names, same stable `fixture_*` error codes, same immutability
+— and keeps only `ReplayClock` and `ReplayDriver`, the execution half, until Slice 06
+productizes an executor. Every fixture in `tests/fixtures/voice_replay/` and the
+tests `tests/unit/test_voice_replay_fixture.py`,
+`tests/integration/test_voice_replay_regressions.py` and
+`tests/integration/test_voice_replay_safety_regressions.py` keep passing unchanged.
+
+`replay_fixture_to_scenario(fixture)` / `scenario_to_replay_fixture(scenario)`
+convert 1:1: one scenario step per replay step, `args = {at_ms, **data}`, fixture
+provenance and `origin` into the scenario provenance. `load_replay_scenario(path)`
+does both at once. Two documented narrowings are refused rather than silently
+rewritten: an integer above 2⁵³ (the Test Lab JSON bound, e.g. a huge
+`intent_epoch`) and an origin with sub-millisecond precision.
+
+## Catalog
+
+The catalog is the introspectable list of official diagnostics. Manifests live in
+`jarvis/testlab/official/<domain>/<name>.v<N>.json`, beside `catalog.lock.json` and
+beside `implementations.py`, which registers what their profiles name. They ship
+inside the package (like `jarvis/runtime/control_center.html`), because the catalog
+is production data read by production code, not test or benchmark input.
+
+`load_catalog(root=DEFAULT_CATALOG_ROOT, *, primitives, implementations, sink=None)`
+reads the lock and every manifest in sorted path order, validates each one and
+returns a `Catalog`. The layout is closed: only the lock at the root, only
+`<domain>/` directories, only `<name>.v<N>.json` files, no links. Anything else
+fails (`testlab_catalog_path_invalid`) instead of being skipped, so a manifest can
+never be silently ignored. On success it emits `testlab.catalog.loaded` (counts
+only) through the optional diagnostic sink.
+
+| Call | Returns |
+|---|---|
+| `list_diagnostics()` | the latest version of every diagnostic, by id |
+| `describe(diagnostic_id, version=None)` | one `CatalogEntry`, latest version by default |
+| `history(diagnostic_id)` | every published version, oldest first |
+| `versions(diagnostic_id)` | the published version numbers |
+| `resources_and_cost(diagnostic_id, profile, version=None)` | `ProfileAvailability {profile, requires, cost, implementation, availability, unavailable_reason, detail}` |
+| `check_run(run)` | `check_run_against_spec` against the exact version the run was judged by |
+| `to_dict()` / `CatalogEntry.to_dict()` | introspection form for the CLI, HTTP API and UI (Slice 10) |
+
+Versions are never removed and must be 1..N with no hole
+(`testlab_catalog_history_gap`), so a stored `TestRun` always finds the declaration
+it was judged by.
+
+## Manifests
+
+A manifest is a declarative JSON document (no YAML anywhere in the repository, and
+none added):
+
+```json
+{
+  "schema": "jarvis.testlab.manifest",
+  "schema_version": 1,
+  "diagnostic": { "schema": "jarvis.testlab.diagnostic", "...": "the DiagnosticSpec wire form" },
+  "override_allowlist": [ { "name": "speech.stale_ttl_ms", "type": "int", "...": "a ParameterSpec" } ],
+  "scenario": null
+}
+```
+
+- `diagnostic` decodes to the Slice 01 `DiagnosticSpec`, including one `ProfileSpec`
+  per supported profile, each with its `implementation` **name**.
+- `override_allowlist` declares the settings a run may override run-locally
+  (`ParameterSpec` describing the setting); a name may not repeat a declared
+  parameter.
+- `scenario` is the declarative scenario this diagnostic executes, or null when its
+  implementations script it in code. It is validated against every declared profile
+  and against the diagnostic's parameters, metrics and assertions; on a non-virtual
+  profile its timeline must fit that profile's `max_duration_s`.
+
+**Implementations are names, never code.** `jarvis/testlab/implementations.py` holds
+the in-code registry: `ImplementationEntry {name, profile, factory | (unavailable_reason,
+detail)}`. A manifest naming something the registry does not hold fails at load time
+(`testlab_catalog_implementation_unknown`), and a name declared for another profile
+fails too (`testlab_catalog_implementation_profile_mismatch`). No import path, module
+name or code string is ever read from a manifest.
+
+**A profile whose runner does not exist yet is `unavailable`, not missing.** The name
+is *reserved* in the registry with a reason code (`runner_not_registered`) and a
+detail naming the Slice that will register it. The catalog then declares the profile
+with its requirements and cost and reports `availability: "unavailable"`, so callers
+see that the diagnostic supports the profile and why it cannot run today. Slice 06
+turns the virtual reservations into registrations, Slices 08 and 09 the others; that
+is a code change only, with no manifest edit and therefore no version bump.
+
+**The lock proves nothing was edited in place.** `catalog.lock.json`
+(`jarvis.testlab.catalog_lock` v1) holds one entry per published version:
+`{diagnostic_id, version, path, manifest_fingerprint}`. `manifest.fingerprint()`
+covers the semantic diagnostic fingerprint (which excludes cosmetic wording), the
+override allowlist without its descriptions, and the scenario content fingerprint —
+the scenario exactly, because `TestRun.scenario_fingerprint` records what executed.
+Loading compares every manifest with its lock entry:
+
+| Situation | Error |
+|---|---|
+| a published manifest changed without a version bump | `testlab_catalog_fingerprint_drift` |
+| a manifest nobody published | `testlab_catalog_unlocked` |
+| a locked version whose manifest is gone | `testlab_catalog_lock_orphan` |
+| the lock itself is malformed or locks a version twice | `testlab_catalog_lock_invalid` |
+
+A wording edit (title, any description) is not drift: stored runs stay conforming.
+
+Publishing or republishing a version (by promotion or by hand) always ends with the
+lock, which is data the human writes, never a generated side effect of loading:
+
+```python
+from pathlib import Path
+from jarvis.testlab.catalog import DEFAULT_CATALOG_ROOT, LOCK_FILE_NAME
+from jarvis.testlab.manifests import CatalogLock, decode_manifest_text, lock_entry_for
+
+path = DEFAULT_CATALOG_ROOT / "voice" / "self_echo.v2.json"
+entry = lock_entry_for(decode_manifest_text(path.read_text(encoding="utf-8")))
+lock_path = DEFAULT_CATALOG_ROOT / LOCK_FILE_NAME
+lock = CatalogLock.decode_text(lock_path.read_text(encoding="utf-8")).with_entry(entry)
+lock_path.write_text(lock.render(), encoding="utf-8")
+```
+
+## Promotion
+
+`promote_scenario(scenario, skeleton, *, catalog, version=None, primitives,
+implementations)` turns a working ad-hoc scenario plus a declared skeleton (id,
+title, description, profiles with their implementation names, parameters, metrics,
+assertions, score, override allowlist) into the CONTENT of an official manifest.
+
+It is pure. It returns `PromotionResult {manifest, path, manifest_text,
+manifest_fingerprint, lock_entry, existing}` and **writes nothing**: no file in the
+repository, no lock edit. The human review step is the gate:
+
+1. run the ad-hoc scenario until it is meaningful, and keep its run ids as evidence;
+2. call `promote_scenario` and read the returned `manifest_text` as a diff;
+3. write it at `jarvis/testlab/official/<path>` and add `lock_entry` to
+   `catalog.lock.json` (`CatalogLock.with_entry(entry).render()`);
+4. register or reserve the implementation names the skeleton uses;
+5. run `tests/unit/test_testlab_catalog.py`, then commit. The catalog test is what
+   proves the published content, its lock and its implementations agree.
+
+Version choice: `version=None` targets the next version (1 for a new id), except
+that re-promoting content identical to the latest version returns that version with
+`existing: true`, so re-running the flow is idempotent. An explicit `version` must be
+published already or be exactly the next one.
+
+`existing: true` compares the *semantic* fingerprint, which excludes the diagnostic's
+cosmetic wording: a re-promotion that only rewords the skeleton title, description or a
+parameter/metric/assertion description also returns the published version, with
+`manifest_text` carrying the new wording. Publishing that text overwrites the file at
+the same version and leaves the lock untouched — exactly the wording edit the drift
+rule allows. A scenario edit (including its own title or description) is inside the
+fingerprint and therefore needs the next version.
+
+`promote_scenario` takes the published history as data — `published={version:
+manifest_fingerprint}`, from `Catalog.published_fingerprints(diagnostic_id)`, empty for
+a new diagnostic — so it never imports the catalog and stays pure.
+
+| Refusal | Code |
+|---|---|
+| that version exists with different semantics | `testlab_promotion_version_conflict` |
+| the version is neither published nor the next one | `testlab_promotion_version_gap` |
+| a step a declared profile cannot perform | `testlab_promotion_profile_unsupported` |
+| an assertion or an `expect.metric` on an undeclared metric | `testlab_promotion_metric_undeclared` |
+| an `expect.assertion` on an undeclared assertion | `testlab_promotion_assertion_undeclared` |
+| a step naming an unregistered primitive | `testlab_promotion_primitive_unknown` |
+| an unknown or mismatched implementation name | `testlab_promotion_implementation_unknown` |
+| the skeleton itself is invalid (carries `cause_code`) | `testlab_promotion_skeleton_invalid` |
+| the scenario is otherwise invalid for the manifest | `testlab_promotion_scenario_invalid` |
+
+## Seed diagnostics
+
+The catalog ships the four Slice 12 seeds, all at version 1, all with the `virtual`
+profile only, all `unavailable` until Slice 06 registers their runners. Slices 08, 09
+and 12 add other profiles through a version bump, which keeps v1 in the history.
+
+| Diagnostic | Blocking assertions | Notes |
+|---|---|---|
+| `voice.self_echo` | `barge_in.false_confirmed_count = 0`, `output.completed = true` | Jarvis speaks while its own output returns as input; parameters `output.duration_ms`, `echo.candidate_count`. |
+| `speech.payload_integrity` | `speech.payload_mismatch_count = 0`, `speech.replayed_payload_count = 0`, `speech.undelivered_count = 0` | Virtual measure only: scripted payload vs the payload the harness delivered. The producer signal `voice.state.spoken_diverged` compares raw strings and is **not** used (Issue `speech-payload-integrity-needs-normalized-measure.md`). |
+| `speech.stale_supersession` | `speech.stale_delivered_count = 0`, `speech.latest_intent_delivered = true` | Carries the converted replay fixture `stale_ack_35_9s` as its scenario, provenance included. |
+| `voice.queue_latency` | `speech.queue_free_to_started_ms ≤ 3000`, `speech.started_to_first_audio_ms ≤ 4000` | Thresholds match the `latency.above_threshold` bundle rule; `user_turn.end_to_first_audio_ms ≤ 8000` is non-blocking (brain time, Slice 07). Virtual time measures scheduler delays, never provider or device latency. |
 
 ## TestRun
 
@@ -401,6 +710,31 @@ field and rule (`str(error)` is `"<code>: <detail>"`). Subclasses:
 | `testlab_forbidden_code` | Code-carrying key or value, non-JSON value |
 | `testlab_json_invalid` | Malformed JSON text, duplicate key, NaN |
 | `testlab_transition_illegal` | Status change outside the state machine |
+
+Slice 04 adds the vocabulary, catalog and promotion families. `PrimitiveError`
+(and `PrimitiveArgError`, which carries the failed `rule`), `CatalogError` (with
+`path` and `cause_code`) and `PromotionRefused` (with `cause_code`) are all
+`TestLabError` subclasses.
+
+| Code | Meaning |
+|---|---|
+| `testlab_primitive_unknown` | A step names a primitive the registry does not hold |
+| `testlab_primitive_args_invalid` | Step arguments against the primitive schema |
+| `testlab_primitive_profile_unsupported` | A declared profile cannot perform a step |
+| `testlab_scenario_timeline_invalid` | `at_ms` missing, out of range, going backwards, or an override outside the prelude |
+| `testlab_implementation_unknown` | An implementation name is not registered |
+| `testlab_catalog_read_failed` | A catalog file could not be read |
+| `testlab_catalog_json_invalid` | Malformed manifest JSON |
+| `testlab_catalog_schema_invalid` | Manifest shape or contract (`cause_code` keeps the inner rule) |
+| `testlab_catalog_path_invalid` | Wrong file name, stray entry, link or nested directory |
+| `testlab_catalog_duplicate` | One `(diagnostic_id, version)` declared twice |
+| `testlab_catalog_history_gap` | Versions are not 1..N |
+| `testlab_catalog_primitive_unknown` / `testlab_catalog_primitive_unsupported` | Manifest scenario against the vocabulary or a declared profile |
+| `testlab_catalog_scenario_invalid` | Manifest scenario against its diagnostic or a profile budget |
+| `testlab_catalog_implementation_unknown` / `testlab_catalog_implementation_profile_mismatch` | Implementation name resolution |
+| `testlab_catalog_fingerprint_drift` / `testlab_catalog_unlocked` / `testlab_catalog_lock_orphan` / `testlab_catalog_lock_invalid` | Catalog lock |
+| `testlab_catalog_not_found` | Unknown diagnostic, version or profile |
+| `testlab_promotion_*` | Promotion refusals (see Promotion) |
 
 ## Storage
 
@@ -1234,7 +1568,14 @@ that the bundle exists.
 ## Validation
 
 ```powershell
-.venv/Scripts/python -m pytest -q -p no:cacheprovider tests/unit/test_testlab_identity.py tests/unit/test_testlab_profiles.py tests/unit/test_testlab_diagnostics.py tests/unit/test_testlab_scenarios.py tests/unit/test_testlab_runs.py tests/unit/test_testlab_purity.py tests/unit/test_testlab_store.py tests/unit/test_testlab_store_retention.py tests/unit/test_testlab_store_capture.py tests/unit/test_testlab_bundle.py tests/unit/test_testlab_bundle_capture.py
+.venv/Scripts/python -m pytest -q -p no:cacheprovider tests/unit/test_testlab_*.py
+```
+
+The replay compatibility layer is covered by the existing replay tests, which must
+keep passing unchanged:
+
+```powershell
+.venv/Scripts/python -m pytest -q -p no:cacheprovider tests/unit/test_voice_replay_fixture.py tests/integration/test_voice_replay_regressions.py tests/integration/test_voice_replay_safety_regressions.py
 ```
 
 Opt-in real-session smoke test. It reads the local `runtime/trace.jsonl`, opens

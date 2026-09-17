@@ -1430,7 +1430,15 @@ compare-and-swap, bounded opt-in audio, retention planner), never in
 Conversation Events and bounded, redacted `RuntimeJournal` lines (turns, speech delivery,
 playback, barge-in, provider events, latency joins, deterministic anomaly rules), with
 provenance on every item and explicit source coverage, stored under `<root>/bundles/`.
-Workers, profile runners and adapters come in later Slices of `tasks/jarvis-category2-test-lab/`.
+Official diagnostics are declarative manifests under `jarvis/testlab/official/`, locked by
+`catalog.lock.json` (editing a published version without bumping it fails the catalog test).
+Their profiles name an implementation registered in code — never an import path from data — and a
+profile whose runner is not written yet is declared `unavailable` with a reason. Scenario steps
+come from a closed registered vocabulary that is a superset of the `jarvis.voice_replay` action
+DSL (now in `jarvis/testlab/replay.py`, with `tests/replay/voice_replay.py` as a thin layer over
+it), and an ad-hoc scenario becomes an official version through a pure promotion function whose
+output a human reviews and publishes. Workers, profile runners and adapters come in later Slices
+of `tasks/jarvis-category2-test-lab/`.
 
 ## Sub-agent routing
 

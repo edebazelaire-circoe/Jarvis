@@ -1,0 +1,149 @@
+{
+  "schema": "jarvis.testlab.manifest",
+  "schema_version": 1,
+  "diagnostic": {
+    "schema": "jarvis.testlab.diagnostic",
+    "schema_version": 1,
+    "diagnostic_id": "speech.stale_supersession",
+    "version": 1,
+    "title": "Superseded speech is never delivered",
+    "domain": "speech",
+    "description": "Reproduces the 2026-09-11 stale acknowledgement: an ack queued behind a busy output while a new turn revises the intent.",
+    "profiles": [
+      {
+        "name": "virtual",
+        "implementation": "speech.stale_supersession.virtual",
+        "requires": [],
+        "cost": {
+          "max_duration_s": 120,
+          "max_cost_usd": 0
+        }
+      }
+    ],
+    "parameters": [],
+    "metrics": [
+      {
+        "name": "speech.superseded_count",
+        "unit": "count",
+        "direction": "neutral",
+        "description": "Candidates superseded or expired during the run."
+      },
+      {
+        "name": "speech.stale_delivered_count",
+        "unit": "count",
+        "direction": "lower_better",
+        "description": "Candidates started or completed after their own supersession or expiry."
+      },
+      {
+        "name": "speech.latest_intent_delivered",
+        "unit": "boolean",
+        "direction": "higher_better",
+        "description": "The candidate of the latest intent epoch was delivered."
+      },
+      {
+        "name": "speech.stale_wait_ms",
+        "unit": "ms",
+        "direction": "lower_better",
+        "description": "How long a superseded candidate stayed queued."
+      }
+    ],
+    "assertions": [
+      {
+        "assertion_id": "no_stale_delivery",
+        "metric": "speech.stale_delivered_count",
+        "comparator": "eq",
+        "threshold": 0,
+        "blocking": true,
+        "description": "A revised or expired answer is never spoken."
+      },
+      {
+        "assertion_id": "latest_intent_wins",
+        "metric": "speech.latest_intent_delivered",
+        "comparator": "eq",
+        "threshold": true,
+        "blocking": true,
+        "description": "The answer of the latest intent is the one delivered."
+      }
+    ],
+    "score": {
+      "method": "none",
+      "components": []
+    }
+  },
+  "override_allowlist": [],
+  "scenario": {
+    "schema": "jarvis.testlab.scenario",
+    "schema_version": 1,
+    "scenario_id": "stale_ack_35_9s",
+    "title": "Stale acknowledgement behind a busy output",
+    "description": "An ack queued behind a playing output while a later turn revises the intent.",
+    "provenance": {
+      "source_path": "tasks/jarvis_voice_architectures_handoff/sources/transcript-2026-09-11.md",
+      "source_kind": "human_trace_reconstruction",
+      "origin": "2026-09-11T13:43:38.000Z",
+      "reported": [
+        {
+          "source_ref": "lines 50 and 289-305",
+          "fact": "A ready acknowledgement waited 35900 ms before output."
+        }
+      ],
+      "derived": [
+        {
+          "source_ref": "TASK.md lines 47-50",
+          "fact": "A superseded candidate must not become spoken at the historical delay."
+        }
+      ],
+      "constructed": [
+        {
+          "source_ref": "fixture design",
+          "fact": "Intent epochs, identifiers, and the 28000 ms supersession point are synthetic."
+        }
+      ]
+    },
+    "steps": [
+      {
+        "primitive": "device.output_busy",
+        "args": {
+          "at_ms": 0,
+          "output_id": "prior-output"
+        }
+      },
+      {
+        "primitive": "scheduler.enqueue",
+        "args": {
+          "at_ms": 0,
+          "candidate_id": "old-ack",
+          "intent_id": "intent-old",
+          "intent_epoch": 1,
+          "kind": "ack",
+          "ttl_ms": 60000
+        }
+      },
+      {
+        "primitive": "user.turn",
+        "args": {
+          "at_ms": 28000,
+          "turn_id": "new-turn",
+          "content_tag": "new_intent"
+        }
+      },
+      {
+        "primitive": "scheduler.enqueue",
+        "args": {
+          "at_ms": 28000,
+          "candidate_id": "new-result",
+          "intent_id": "intent-new",
+          "intent_epoch": 2,
+          "kind": "result"
+        }
+      },
+      {
+        "primitive": "device.release",
+        "args": {
+          "at_ms": 35900,
+          "output_id": "prior-output"
+        }
+      }
+    ]
+  }
+}

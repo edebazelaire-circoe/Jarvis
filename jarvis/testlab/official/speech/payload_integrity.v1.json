@@ -1,0 +1,100 @@
+{
+  "schema": "jarvis.testlab.manifest",
+  "schema_version": 1,
+  "diagnostic": {
+    "schema": "jarvis.testlab.diagnostic",
+    "schema_version": 1,
+    "diagnostic_id": "speech.payload_integrity",
+    "version": 1,
+    "title": "Brain speech payloads are delivered faithfully",
+    "domain": "speech",
+    "description": "Virtual measure only: the scripted payload against the payload the harness delivered. The provider divergence signal (voice.state.spoken_diverged) compares raw strings and is not usable as a metric.",
+    "profiles": [
+      {
+        "name": "virtual",
+        "implementation": "speech.payload_integrity.virtual",
+        "requires": [],
+        "cost": {
+          "max_duration_s": 120,
+          "max_cost_usd": 0
+        }
+      }
+    ],
+    "parameters": [
+      {
+        "name": "speech.request_count",
+        "type": "int",
+        "default": 3,
+        "minimum": 1,
+        "maximum": 32,
+        "choices": [],
+        "max_length": null,
+        "description": "Payloads the scripted brain requests in the scenario."
+      }
+    ],
+    "metrics": [
+      {
+        "name": "speech.scripted_count",
+        "unit": "count",
+        "direction": "neutral",
+        "description": "Payloads the scripted brain requested."
+      },
+      {
+        "name": "speech.delivered_count",
+        "unit": "count",
+        "direction": "neutral",
+        "description": "Payloads the harness observed as delivered."
+      },
+      {
+        "name": "speech.payload_mismatch_count",
+        "unit": "count",
+        "direction": "lower_better",
+        "description": "Delivered payloads that differ from the payload scripted for that request."
+      },
+      {
+        "name": "speech.replayed_payload_count",
+        "unit": "count",
+        "direction": "lower_better",
+        "description": "Deliveries repeating a payload already delivered in the run."
+      },
+      {
+        "name": "speech.undelivered_count",
+        "unit": "count",
+        "direction": "lower_better",
+        "description": "Scripted payloads never delivered."
+      }
+    ],
+    "assertions": [
+      {
+        "assertion_id": "payload_is_faithful",
+        "metric": "speech.payload_mismatch_count",
+        "comparator": "eq",
+        "threshold": 0,
+        "blocking": true,
+        "description": "What the harness delivered is exactly what the brain scripted."
+      },
+      {
+        "assertion_id": "no_replayed_payload",
+        "metric": "speech.replayed_payload_count",
+        "comparator": "eq",
+        "threshold": 0,
+        "blocking": true,
+        "description": "No previous payload is spoken again."
+      },
+      {
+        "assertion_id": "nothing_lost",
+        "metric": "speech.undelivered_count",
+        "comparator": "eq",
+        "threshold": 0,
+        "blocking": true,
+        "description": "Every scripted payload is delivered."
+      }
+    ],
+    "score": {
+      "method": "none",
+      "components": []
+    }
+  },
+  "override_allowlist": [],
+  "scenario": null
+}
