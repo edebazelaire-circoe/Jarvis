@@ -20,7 +20,7 @@ Note (PM, Slice 00): 04 needs 01/02 only; 03 is not required for 04.
 - [x] 08 User interaction & lifecycle — APPROVED (see LOG)
 - [x] 09 Scene inspection & screenshot — APPROVED (see LOG)
 - [x] 10 Restart reconciliation — APPROVED (see LOG)
-- [ ] 11 Rollout, quality & docs
+- [x] 11 Rollout, quality & docs — APPROVED (see LOG)
 
 ## Task done when
 Runtime creates real agent stars/links/errors without brain; brain can inspect/manipulate same persistent scene via MCP; grouped artifacts explain completed work; renderer honors layered 2D/pins/intentional overlap; reload/restart preserves state and reconciles truth; completed work stays until user disposition; archive is user-only; legacy Control Center/voice/work behavior remains operational; all QA and Human checks pass.
