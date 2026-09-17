@@ -4,12 +4,13 @@
 
    Deux parties, comme `control_center_barehands.js` :
    - `JarvisScenePageCore`, logique pure à dépendances injectées (requêtes,
-     minuteries, horloge, hasard) : machine d'états de la boucle de long-poll
-     et validation « une fois par objet » des placements du résolveur. Les
-     tests l'exécutent avec node et de fausses minuteries ;
+     minuteries, horloge, hasard, diffusion) : machine d'états de la boucle
+     (meneur, suiveur, seul) et validation « une fois par objet » des
+     placements du résolveur. Les tests l'exécutent avec node et de fausses
+     minuteries ;
    - un bloc navigateur : conteneur de scène, relations SVG, nœuds DOM, verrou
-     entre onglets, interrupteur `scene.enabled`. Les tests node ne l'exécutent
-     pas.
+     et canal entre onglets, interrupteur `scene.enabled`. Les tests node ne
+     l'exécutent pas.
 
    Éteint (`scene.enabled` faux, lu dans `/api/status`), rien n'est créé dans
    la page et aucune requête de scène ne part. */
@@ -24,6 +25,13 @@ const JarvisScenePageCore=(function(){
   const POLL_TIMEOUT_MS=(LONG_POLL_WAIT_S+15)*1000;
   const BACKOFF_BASE_MS=1000;
   const BACKOFF_MAX_MS=30000;
+  /* Un suiveur sans nouvelle du meneur relit les patchs manqués (lecture
+     courte) : le meneur annonce sa révision au moins toutes les 25 s. */
+  const FOLLOWER_WATCHDOG_MS=45000;
+  /* `retryNow` (le Control Center répond de nouveau) au plus une fois par
+     intervalle. */
+  const RETRY_NOW_MIN_MS=2000;
+  const MESSAGE_VERSION=1;
 
   /* Délai avant le n-ième nouvel essai : 1 s, 2 s, 4 s… plafonné à 30 s, à
      ±25 % au hasard pour que plusieurs onglets ne repartent pas ensemble. */
@@ -41,38 +49,70 @@ const JarvisScenePageCore=(function(){
   /* L'interrupteur tel que `/api/status` le donne (`{enabled, source}`). */
   function gateEnabled(scene){return !!scene&&scene.enabled===true}
 
+  /* Message du canal entre onglets : forme attendue, sinon ignoré. */
+  function validMessage(msg){
+    if(!msg||typeof msg!=='object'||msg.v!==MESSAGE_VERSION)return false;
+    if(msg.type==='patches')return typeof msg.scene_id==='string'&&typeof msg.epoch==='string'&&!!msg.body&&typeof msg.body==='object';
+    if(msg.type==='tick')return typeof msg.scene_id==='string'&&typeof msg.epoch==='string'&&Number.isSafeInteger(msg.revision)&&!!msg.health&&typeof msg.health==='object';
+    if(msg.type==='health')return !!msg.health&&typeof msg.health==='object';
+    return false;
+  }
+
   const errorCode=error=>String(error&&(error.code||error.name)||'network_error');
   const errorMessage=error=>String(error&&error.message||'');
 
-  /* Boucle d'une page : un seul long-poll à la fois.
+  /* Boucle d'une page. Rôles :
+     - `leader` : l'onglet qui tient le verrou du profil ; seul à tenir le
+       long-poll, il diffuse chaque réponse de patchs appliquée, sa révision
+       (`tick`) et son état de lecture ;
+     - `follower` : aucune requête longue ; applique les patchs diffusés par
+       `JarvisSceneClient`, et ne lit Core que par des lectures courtes :
+       instantané au premier chargement ou à la resynchronisation, patchs
+       manqués (`wait_s=0`) sur un trou, un `tick` en avance ou un meneur muet
+       depuis 45 s ;
+     - `solo` : sans verrou ni canal (navigateur ancien), long-poll par onglet.
 
      Phases : `off` (interrupteur éteint), `paused` (onglet caché), `loading`
-     (instantané), `polling` (long-poll), `waiting` (délai avant nouvel essai),
-     `stopped` (page quittée). `deps` : `client` (JarvisSceneClient),
+     (instantané), `polling` (long-poll), `following` (suiveur à jour, aucune
+     requête), `catching_up` (lecture courte des patchs manqués), `waiting`
+     (délai avant nouvel essai), `stopped` (page quittée). `deps` : `client`,
      `request(path, {signal, timeoutMs})` → corps JSON (rejette sur échec
      réseau ou HTTP), `setTimeout`, `clearTimeout`, `now`, `random`,
-     `createAbort`, `onUpdate(vue)`, `log(level, event, data)`.
+     `createAbort`, `onUpdate(vue)`, `log(level, event, data)`,
+     `broadcast(message)` (meneur).
 
-     - Instantané au démarrage et à chaque resynchronisation ; patchs ensuite.
      - `retry` (plafond de long-polls du Control Center) : attendre
        `retry_after_ms` (+ jusqu'à 250 ms), sans relire l'instantané.
      - `unavailable` ou erreur : garder l'état, attendre avec repli exponentiel.
      - Plus de deux resynchronisations de suite : repli avant de relire.
      - Onglet caché : requête en cours abandonnée ; au retour, reprise par les
-       patchs depuis la révision tenue (resynchronisation si Core ne les a
-       plus).
+       patchs depuis la révision tenue.
+     - Changement de rôle : la requête en cours est abandonnée, le nouveau
+       rôle repart de la révision tenue (un nouveau meneur relit les patchs
+       depuis là : aucun trou).
      - Toute réponse d'une requête abandonnée est ignorée (génération). */
   function createSceneLoop(deps){
     const client=deps.client;
     const okHealth=()=>({level:'ok',code:null,message:'',since:null,retryAt:null});
-    let enabled=false,visible=true,stopped=false;
+    let enabled=false,visible=true,stopped=false,role='solo';
     let phase='off',generation=0,timer=null,abort=null,state=null;
     let failures=0,resyncs=0,objectLimit=512,health=okHealth();
-    const stats={snapshots:0,polls:0,resyncs:0,retries:0,errors:0};
+    let watchTimer=null,lastLeaderAt=0,target=null,lastRetryNow=-Infinity,mirrored=false;
+    const stats={snapshots:0,polls:0,catchUps:0,resyncs:0,retries:0,errors:0,received:0,broadcasts:0};
 
     const log=(level,event,data)=>{if(deps.log)deps.log(level,event,data||{})};
-    const view=()=>({phase,state,health:{...health},objectLimit,stats:{...stats}});
+    const view=()=>({phase,role,state,health:{...health},objectLimit,stats:{...stats}});
     function emit(){if(deps.onUpdate)deps.onUpdate(view())}
+
+    function broadcast(message){
+      if(role!=='leader'||!deps.broadcast)return;
+      try{deps.broadcast({v:MESSAGE_VERSION,...message});stats.broadcasts++}
+      catch(error){log('warn','scene.broadcast_failed',{error:errorMessage(error)})}
+    }
+    function tick(){
+      if(state)broadcast({type:'tick',scene_id:state.scene_id,epoch:state.epoch,revision:state.revision,health:{...health},objectLimit});
+      else broadcast({type:'health',health:{...health}});
+    }
 
     function cancel(){
       generation++;
@@ -81,18 +121,34 @@ const JarvisScenePageCore=(function(){
       health.retryAt=null;
     }
 
+    function stopWatchdog(){if(watchTimer!==null){deps.clearTimeout(watchTimer);watchTimer=null}}
+    function armWatchdog(){
+      stopWatchdog();
+      if(role!=='follower'||!enabled||!visible||stopped)return;
+      watchTimer=deps.setTimeout(()=>{
+        watchTimer=null;
+        if(role!=='follower'||!enabled||!visible||stopped)return;
+        if(deps.now()-lastLeaderAt>=FOLLOWER_WATCHDOG_MS&&phase==='following'){
+          log('info','scene.follower_watchdog',{revision:state?state.revision:null});
+          catchUp();
+        }
+        armWatchdog();
+      },FOLLOWER_WATCHDOG_MS);
+    }
+
     function wait(ms,next){
       const current=++generation;
       phase='waiting';health.retryAt=deps.now()+ms;
       timer=deps.setTimeout(()=>{if(current!==generation)return;timer=null;health.retryAt=null;next()},ms);
+      if(role==='leader')tick();
       emit();
     }
 
     function degrade(code,message){
-      failures++;stats.errors++;
+      failures++;stats.errors++;mirrored=false;
       if(health.level!=='degraded'){
         health={level:'degraded',code,message:message||'',since:deps.now(),retryAt:null};
-        log('warn','scene.view_degraded',{code,message:message||''});
+        log('warn','scene.view_degraded',{code,message:message||'',role});
       }else{
         health={...health,code,message:message||health.message};
       }
@@ -101,8 +157,8 @@ const JarvisScenePageCore=(function(){
     function recover(){
       failures=0;
       if(health.level==='ok')return;
-      log('info','scene.view_restored',{code:health.code,after_ms:deps.now()-health.since});
-      health=okHealth();
+      if(!mirrored)log('info','scene.view_restored',{code:health.code,after_ms:deps.now()-health.since,role});
+      health=okHealth();mirrored=false;
     }
 
     /* Une requête à la fois ; `onBody` qui lève (défaut de la page) est traité
@@ -123,6 +179,8 @@ const JarvisScenePageCore=(function(){
         });
     }
 
+    /* Instantané (tous rôles) ; ensuite long-poll (meneur, seul) ou attente
+       des diffusions (suiveur). */
     function load(){
       phase='loading';stats.snapshots++;
       emit();
@@ -136,65 +194,169 @@ const JarvisScenePageCore=(function(){
         if(client.acceptSnapshot(state,body))state=result.state;
         if(body.scene&&Number.isInteger(body.scene.object_limit))objectLimit=body.scene.object_limit;
         recover();
-        log('info','scene.snapshot_loaded',{revision:state.revision,objects:state.objects.size});
-        poll();
+        log('info','scene.snapshot_loaded',{revision:state.revision,objects:state.objects.size,role});
+        afterRead();
       },error=>{
         degrade(errorCode(error),errorMessage(error));
         wait(backoffDelay(failures,deps.random),load);
       });
     }
 
+    /* Après une lecture réussie. */
+    function afterRead(){
+      if(role==='follower'){
+        const wanted=target;target=null;
+        if(wanted&&behind(wanted))return catchUp();
+        phase='following';resyncs=0;
+        armWatchdog();
+        return emit();
+      }
+      tick();
+      poll();
+    }
+
+    /* Réponse de patchs (long-poll du meneur ou lecture courte du suiveur). */
+    function onPatches(body,again){
+      const before=state;
+      const result=client.applyPatchResponse(state,body);
+      if(result.state)state=result.state;
+      switch(result.action){
+        case 'applied':case 'unchanged':case 'more':
+          resyncs=0;recover();
+          if(role==='leader'&&state!==before)broadcast({type:'patches',scene_id:state.scene_id,epoch:state.epoch,body});
+          if(result.action==='more')return again();
+          return afterRead();
+        case 'retry':
+          stats.retries++;
+          return wait(Math.max(0,Number(result.retry_after_ms)||0)+Math.round(deps.random()*250),again);
+        case 'resync':
+          stats.resyncs++;resyncs++;
+          log('info','scene.resync',{reason:result.reason,role});
+          if(resyncs>2)return wait(backoffDelay(resyncs-2,deps.random),load);
+          return load();
+        default:
+          degrade(result.reason,String(body&&body.error&&body.error.message||''));
+          return wait(backoffDelay(failures,deps.random),again);
+      }
+    }
+
     function poll(){
       if(!state)return load();
       phase='polling';stats.polls++;
       emit();
-      request(patchPath(client.patchQuery(state,LONG_POLL_WAIT_S)),POLL_TIMEOUT_MS,body=>{
-        const result=client.applyPatchResponse(state,body);
-        if(result.state)state=result.state;
-        switch(result.action){
-          case 'applied':case 'unchanged':case 'more':
-            resyncs=0;recover();return poll();
-          case 'retry':
-            stats.retries++;
-            return wait(Math.max(0,Number(result.retry_after_ms)||0)+Math.round(deps.random()*250),poll);
-          case 'resync':
-            stats.resyncs++;resyncs++;
-            log('info','scene.resync',{reason:result.reason});
-            if(resyncs>2)return wait(backoffDelay(resyncs-2,deps.random),load);
-            return load();
-          default:
-            degrade(result.reason,String(body&&body.error&&body.error.message||''));
-            return wait(backoffDelay(failures,deps.random),poll);
-        }
-      },error=>{
+      request(patchPath(client.patchQuery(state,LONG_POLL_WAIT_S)),POLL_TIMEOUT_MS,body=>onPatches(body,poll),error=>{
         degrade(errorCode(error),errorMessage(error));
         wait(backoffDelay(failures,deps.random),poll);
       });
+    }
+
+    /* Suiveur : patchs manqués par une lecture qui répond aussitôt. */
+    function catchUp(){
+      if(!state)return load();
+      phase='catching_up';stats.catchUps++;
+      emit();
+      request(patchPath(client.patchQuery(state,0)),SNAPSHOT_TIMEOUT_MS,body=>onPatches(body,catchUp),error=>{
+        degrade(errorCode(error),errorMessage(error));
+        wait(backoffDelay(failures,deps.random),catchUp);
+      });
+    }
+
+    function start(){
+      log('info','scene.loop_started',{catch_up:!!state,role});
+      if(role==='follower'){lastLeaderAt=deps.now();return state?catchUp():load()}
+      if(state)poll();else load();
     }
 
     function evaluate(){
       if(stopped)return;
       if(!enabled){
         if(phase==='off')return;
-        cancel();phase='off';state=null;failures=0;resyncs=0;health=okHealth();
+        cancel();stopWatchdog();phase='off';state=null;failures=0;resyncs=0;health=okHealth();target=null;
         log('info','scene.loop_off',{});
         return emit();
       }
       if(!visible){
         if(phase==='paused')return;
-        cancel();phase='paused';
-        log('info','scene.loop_paused',{revision:state?state.revision:null});
+        cancel();stopWatchdog();phase='paused';
+        log('info','scene.loop_paused',{revision:state?state.revision:null,role});
         return emit();
       }
       if(phase!=='off'&&phase!=='paused')return;
-      log('info','scene.loop_started',{catch_up:!!state});
-      if(state)poll();else load();
+      start();
+    }
+
+    /* Diffusion reçue d'un meneur (suiveur, ou onglet caché qui garde son
+       état au plus près). */
+    function receive(message){
+      if(stopped||!enabled||role==='leader'||role==='solo'||!validMessage(message))return;
+      stats.received++;lastLeaderAt=deps.now();
+      if(message.type==='health'||message.type==='tick'){
+        const next=message.health;
+        if(health.level!==next.level||health.code!==next.code){
+          if(next.level==='degraded'){health={level:'degraded',code:next.code||null,message:String(next.message||''),since:Number(next.since)||deps.now(),retryAt:next.retryAt||null};mirrored=true}
+          else if(mirrored||phase==='following'){health=okHealth();mirrored=false}
+          emit();
+        }else if(next.level==='degraded'&&mirrored){health={...health,retryAt:next.retryAt||null};emit()}
+        if(message.type==='health')return;
+        if(Number.isInteger(message.objectLimit))objectLimit=message.objectLimit;
+        return lagging({scene_id:message.scene_id,epoch:message.epoch,revision:message.revision});
+      }
+      /* patches */
+      const wanted={scene_id:message.scene_id,epoch:message.epoch,
+        revision:Number.isSafeInteger(message.body.revision)?message.body.revision:(state?state.revision+1:0)};
+      if(!state||phase!=='following')return lagging(wanted);
+      const result=client.applyPatchResponse(state,message.body);
+      if(result.action==='applied'||result.action==='unchanged'||result.action==='more'){
+        if(result.state!==state){state=result.state;emit()}
+        return;
+      }
+      lagging(wanted);
+    }
+
+    /* L'état tenu est-il en retard sur `wanted` (scène, époque, révision) ? */
+    function behind(wanted){
+      return !state||state.scene_id!==wanted.scene_id||state.epoch!==wanted.epoch||wanted.revision>state.revision;
+    }
+
+    /* Retard constaté : rattraper tout de suite si le suiveur est au repos,
+       sinon retenir la cible pour la fin de la lecture en cours (ou le retour
+       de l'onglet). */
+    function lagging(wanted){
+      if(!behind(wanted))return;
+      if(phase==='following')return catchUp();
+      if(!target||target.epoch!==wanted.epoch||target.revision<wanted.revision)target=wanted;
     }
 
     return {
       setEnabled(value){enabled=!!value;evaluate()},
-      setVisible(value){visible=!!value;evaluate()},
-      stop(){if(stopped)return;cancel();stopped=true;phase='stopped';emit()},
+      setVisible(value){
+        visible=!!value;
+        evaluate();
+      },
+      /* Changer de rôle repart de la révision tenue. */
+      setRole(next){
+        if(next!==role&&['leader','follower','solo'].includes(next)){
+          const previous=role;role=next;
+          log('info','scene.role',{from:previous,to:next,revision:state?state.revision:null});
+          if(!enabled||!visible||stopped)return;
+          cancel();stopWatchdog();
+          if(health.level==='degraded'&&mirrored){health=okHealth();mirrored=false}
+          start();
+        }
+      },
+      receive,
+      /* Le Control Center répond de nouveau (`/api/status` après une panne) :
+         oublier le repli et relire tout de suite. */
+      retryNow(){
+        if(stopped||!enabled||!visible||phase!=='waiting')return false;
+        if(deps.now()-lastRetryNow<RETRY_NOW_MIN_MS)return false;
+        lastRetryNow=deps.now();
+        cancel();failures=0;
+        log('info','scene.retry_now',{role});
+        if(role==='follower')return (state?catchUp():load()),true;
+        return (state?poll():load()),true;
+      },
+      stop(){if(stopped)return;cancel();stopWatchdog();stopped=true;phase='stopped';emit()},
       view,
     };
   }
@@ -202,9 +364,9 @@ const JarvisScenePageCore=(function(){
   /* Validation des placements du résolveur (`set_geometry`,
      `placed_by = resolver`, par le relais utilisateur du Control Center).
 
-     - Seul l'onglet qui tient le verrou (`input.leader`) valide, et seulement
-       quand sa lecture est à jour (`input.healthy`) ; les autres dessinent le
-       même placement (résolveur déterministe) sans rien envoyer.
+     - Seul l'onglet meneur (`input.leader`) valide, et seulement quand sa
+       lecture est à jour (`input.healthy`) ; les autres dessinent le même
+       placement (résolveur déterministe) sans rien envoyer.
      - Un objet n'est validé qu'une fois par page : le registre retient chaque
        envoi ; réponse du domaine (appliqué, doublon, `explicit_placement`,
        `pinned_by_user`, objet inconnu ou archivé) ou erreur de forme → plus
@@ -300,23 +462,36 @@ const JarvisScenePageCore=(function(){
   }
 
   return Object.freeze({LONG_POLL_WAIT_S,SNAPSHOT_TIMEOUT_MS,POLL_TIMEOUT_MS,BACKOFF_BASE_MS,BACKOFF_MAX_MS,
-    backoffDelay,patchPath,gateEnabled,createSceneLoop,createResolverCommitter});
+    FOLLOWER_WATCHDOG_MS,RETRY_NOW_MIN_MS,MESSAGE_VERSION,
+    backoffDelay,patchPath,gateEnabled,validMessage,createSceneLoop,createResolverCommitter});
 })();
 
 /* Exécution par les tests (node) ; dans la page, `module` n'existe pas. */
 if(typeof module!=='undefined'&&module.exports)module.exports=JarvisScenePageCore;
 
 /* --------------------------------------------------------------------------
-   Bloc navigateur : conteneur, relations, nœuds, verrou, interrupteur.
+   Bloc navigateur : conteneur, relations, nœuds, verrou, canal, interrupteur.
    -------------------------------------------------------------------------- */
 (function installJarvisScene(){
   if(typeof window==='undefined'||typeof document==='undefined')return;
   const L=window.JarvisSceneLayout,Client=window.JarvisSceneClient,Core=JarvisScenePageCore;
   if(!L||!Client)return;
   const SVG_NS='http://www.w3.org/2000/svg';
-  const LOCK_NAME='jarvis.scene.resolver';
+  /* Un verrou par profil : le meneur tient le long-poll et valide les
+     placements. Un seul verrou pour les deux : la validation exige l'état le
+     plus frais, que seul le long-poll garantit. */
+  const LOCK_NAME='jarvis.scene.leader';
+  const CHANNEL_NAME='jarvis.scene';
+  const TAB_ID=`${Date.now().toString(36)}-${Math.random().toString(36).slice(2,10)}`;
   /* Zone sensible d'un point (étoile, signal), en pixels. */
   const POINT_HIT=26;
+  /* Hauteur minimale dessinée d'une capsule (px), dans la page seulement. */
+  const CAPSULE_MIN_HEIGHT=24;
+  /* Un anneau ne s'anime que pendant ce délai après l'apparition du nœud ou
+     un changement de son état (exécution, urgence) ; ensuite il reste fixe.
+     Toute animation CSS en cours coûte un recalcul de style par image : au
+     repos, la scène n'en fait aucun. */
+  const ANIMATE_FOR_MS=12000;
 
   /* Registre d'empilement de la page (voir `control_center.html`) : visage 0,
      canevas Omega 0, **scène 20**, barre du haut et indication vocale 31,
@@ -349,16 +524,24 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
 .sc-mark{position:absolute;left:50%;top:50%;width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:50%;background:var(--tone);
   box-shadow:0 0 0 1px rgba(0,0,0,.4),0 0 14px color-mix(in srgb,var(--tone) 42%,transparent)}
 .sc-ring{position:absolute;left:50%;top:50%;width:18px;height:18px;margin:-9px 0 0 -9px;border-radius:50%;border:1px solid transparent;pointer-events:none}
-.sc-exec-running .sc-ring{border-color:var(--sc-ring);animation:sc-breathe 2.8s ease-in-out infinite}
+/* État d'exécution : indice secondaire. Au plus 24 anneaux animés (.sc-anim) ;
+   les autres gardent le même anneau, fixe. */
+.sc-exec-running .sc-ring{border-color:var(--sc-ring);opacity:.72}
+.sc-exec-running.sc-anim .sc-ring{animation:sc-breathe 2.8s ease-in-out infinite;will-change:transform,opacity}
 .sc-exec-pending .sc-ring{border:1px dashed rgba(220,236,244,.5)}
 .sc-exec-blocked .sc-ring{width:20px;height:20px;margin:-10px 0 0 -10px;border:3px double rgba(220,236,244,.62)}
+/* Terminé : anneau fin et fixe — travail achevé, pas encore rangé. */
+.sc-point.sc-exec-completed .sc-ring{width:15px;height:15px;margin:-7.5px 0 0 -7.5px;border:1px solid rgba(220,236,244,.34)}
 .sc-signal .sc-mark{width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:1.5px;transform:rotate(45deg)}
 .sc-signal.sc-urgency-none .sc-mark{background:transparent;box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--tone) 80%,transparent)}
-.sc-signal .sc-ring{border:0;animation:none}
-.sc-signal.sc-urgency-high .sc-ring{border:1.5px solid var(--tone);animation:sc-alert 1.9s cubic-bezier(.2,.7,.3,1) infinite}
-.sc-signal.sc-urgency-medium .sc-ring{border:1px solid var(--tone);animation:sc-alert 3.2s cubic-bezier(.2,.7,.3,1) infinite}
+.sc-signal .sc-ring,.sc-signal.sc-exec-completed .sc-ring{width:18px;height:18px;margin:-9px 0 0 -9px;border:0;animation:none;opacity:1}
+.sc-signal.sc-urgency-high .sc-ring{border:1.5px solid var(--tone);opacity:.8;transform:scale(1.25)}
+.sc-signal.sc-urgency-medium .sc-ring{border:1px solid var(--tone);opacity:.8;transform:scale(1.25)}
+.sc-signal.sc-urgency-high.sc-anim .sc-ring{animation:sc-alert 1.9s cubic-bezier(.2,.7,.3,1) infinite;will-change:transform,opacity}
+.sc-signal.sc-urgency-medium.sc-anim .sc-ring{animation:sc-alert 3.2s cubic-bezier(.2,.7,.3,1) infinite;will-change:transform,opacity}
 .sc-signal.sc-urgency-low .sc-mark{width:6px;height:6px;margin:-3px 0 0 -3px;box-shadow:none}
-.sc-signal.sc-urgency-low .sc-ring{width:14px;height:14px;margin:-7px 0 0 -7px;border:1px solid color-mix(in srgb,var(--tone) 38%,transparent)}
+.sc-signal.sc-urgency-low .sc-ring{width:14px;height:14px;margin:-7px 0 0 -7px;border:1px solid color-mix(in srgb,var(--tone) 38%,transparent);transform:none}
+.scene.sc-paused .sc-ring{animation-play-state:paused}
 .sc-badge{position:absolute;right:0;top:0;width:12px;height:12px;border-radius:50%;background:#061017;display:grid;place-items:center;
   color:var(--sc-ink);box-shadow:0 0 0 1px rgba(220,236,244,.46)}
 /* Sur un point, en bas à droite : le haut droit est la place du signal. */
@@ -366,10 +549,13 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
 .sc-badge svg{width:8px;height:8px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .sc-label{position:absolute;left:50%;top:100%;display:flex;gap:7px;align-items:baseline;white-space:nowrap;max-width:min(42ch,70vw);
   padding:4px 10px;border-radius:999px;background:rgba(3,8,12,.92);box-shadow:inset 0 0 0 1px var(--sc-edge),0 8px 22px rgba(0,0,0,.4);
-  font-size:11px;opacity:0;visibility:hidden;transform:translate(-50%,2px);transition:opacity .16s ease-out,transform .16s ease-out,visibility 0s .16s;pointer-events:none}
+  font-size:11px;opacity:0;visibility:hidden;transform:translate(calc(-50% + var(--sc-dx,0px)),2px);
+  transition:opacity .16s ease-out,transform .16s ease-out,visibility 0s .16s;pointer-events:none}
+.sc-label.sc-label-up{top:auto;bottom:100%}
 .sc-label strong{min-width:0;overflow:hidden;text-overflow:ellipsis;font-weight:600;color:#f1f8fb}
 .sc-label span{flex:none;font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--sc-muted)}
-.sc-point:hover .sc-label,.sc-point:focus-visible .sc-label{opacity:1;visibility:visible;transform:translate(-50%,6px);transition:opacity .16s ease-out,transform .16s ease-out}
+.sc-point:hover .sc-label,.sc-point:focus-visible .sc-label{opacity:1;visibility:visible;transform:translate(calc(-50% + var(--sc-dx,0px)),6px);transition:opacity .16s ease-out,transform .16s ease-out}
+.sc-point:hover .sc-label.sc-label-up,.sc-point:focus-visible .sc-label.sc-label-up{transform:translate(calc(-50% + var(--sc-dx,0px)),-6px)}
 .sc-point:focus-visible .sc-mark{outline:1px solid var(--sc-ink);outline-offset:5px}
 .sc-capsule{display:flex;align-items:center;gap:8px;padding:0 12px 0 11px;border-radius:999px;background:var(--sc-surface);overflow:hidden;
   box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--tone) 32%,rgba(151,191,209,.14)),0 10px 28px rgba(0,0,0,.34)}
@@ -386,29 +572,41 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
 .sc-head{display:flex;align-items:center;gap:8px;padding:11px 13px 3px;flex:none}
 .sc-cat{min-width:0;flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;
   color:color-mix(in srgb,var(--tone) 72%,var(--sc-ink))}
-.sc-wtitle{flex:none;padding:0 13px 8px;font-size:13px;font-weight:600;line-height:1.35;color:#f1f8fb;overflow:hidden;
+/* Deux lignes au plus : la marge (hors de la boîte bornée) ne laisse pas
+   passer de troisième ligne. */
+.sc-wtitle{flex:none;margin:0 13px 8px;padding:0;font-size:13px;font-weight:600;line-height:1.35;max-height:2.7em;color:#f1f8fb;overflow:hidden;
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere}
-.sc-summary{flex:1 1 auto;min-height:0;padding:0 13px 10px;-webkit-mask-image:linear-gradient(#000 calc(100% - 22px),transparent);mask-image:linear-gradient(#000 calc(100% - 22px),transparent);font-size:12px;line-height:1.5;color:#b3cbd6;white-space:pre-wrap;overflow:hidden;overflow-wrap:anywhere}
-.sc-items{flex:none;list-style:none;margin:0;padding:8px 13px 11px;display:grid;gap:4px;border-top:1px solid var(--sc-edge);max-height:45%;overflow:hidden}
+.sc-summary{flex:1 1 auto;min-height:0;padding:0 13px 10px;font-size:12px;line-height:1.5;color:#b3cbd6;white-space:pre-wrap;overflow:hidden;overflow-wrap:anywhere;
+  -webkit-mask-image:linear-gradient(#000 calc(100% - 22px),transparent);mask-image:linear-gradient(#000 calc(100% - 22px),transparent)}
+/* Liste bornée : la dernière ligne visible s'efface au lieu d'être coupée net. */
+.sc-items{flex:none;list-style:none;margin:0;padding:8px 13px 11px;display:grid;gap:4px;border-top:1px solid var(--sc-edge);max-height:45%;overflow:hidden;
+  -webkit-mask-image:linear-gradient(#000 calc(100% - 20px),transparent);mask-image:linear-gradient(#000 calc(100% - 20px),transparent)}
+.sc-items.sc-fits{-webkit-mask-image:none;mask-image:none}
 .sc-items li{display:flex;gap:10px;align-items:baseline;min-width:0;font-size:11px}
 .sc-items .sc-item-label{min-width:0;flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#dcecf4}
 .sc-items .sc-item-ref{flex:none;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--sc-muted)}
-.sc-status{position:absolute;left:18px;top:64px;z-index:2147483600;display:grid;gap:5px;justify-items:start;pointer-events:none}
+/* Indicateurs : en bas à gauche, sur la ligne de l'indication vocale, hors de
+   la zone de composition ; au-dessus du badge Barehands quand il est là. */
+.sc-status{position:absolute;left:18px;bottom:18px;z-index:2147483600;display:flex;flex-wrap:wrap-reverse;align-items:center;gap:6px;
+  max-width:calc(50vw - 150px);pointer-events:none}
+body:has(#jarvisHands .jh-badge) .sc-status{bottom:52px}
 .sc-status[hidden]{display:none}
-.sc-note{display:flex;align-items:center;gap:8px;max-width:min(460px,calc(100vw - 110px));padding:6px 12px 6px 10px;border-radius:999px;
-  background:rgba(3,8,12,.66);box-shadow:inset 0 0 0 1px var(--sc-edge);backdrop-filter:blur(14px);
-  font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:rgba(214,232,240,.8);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sc-note{display:flex;align-items:center;gap:8px;min-width:0;max-width:100%;padding:6px 12px 6px 10px;border-radius:999px;
+  background:rgba(3,8,12,.7);box-shadow:inset 0 0 0 1px var(--sc-edge);backdrop-filter:blur(14px);
+  font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:rgba(214,232,240,.82);white-space:nowrap}
 .sc-note::before{content:'';flex:none;width:6px;height:6px;border-radius:50%;background:var(--sc-muted)}
+.sc-note-main{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.sc-note-meta{flex:none;color:var(--sc-muted);font-variant-numeric:tabular-nums}
 .sc-note.sc-warn::before{background:var(--sc-warn)}
 .sc-note.sc-full::before{background:#ff6b7d}
 .sc-note.sc-busy::before{animation:sc-breathe 1.6s ease-in-out infinite;background:var(--sc-ink)}
+.sc-sr{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 @keyframes sc-breathe{0%,100%{opacity:.32;transform:scale(.86)}50%{opacity:.9;transform:scale(1.08)}}
 @keyframes sc-alert{0%{opacity:.95;transform:scale(.62)}80%,100%{opacity:0;transform:scale(1.75)}}
-@media(max-width:700px){.sc-status{left:10px;top:56px}}
+@media(max-width:700px){.sc-status{left:10px;bottom:12px;max-width:calc(100vw - 90px)}}
 @media(prefers-reduced-motion:reduce){
   .scene .sc-node{transition:none!important}
   .scene .sc-ring,.scene .sc-note::before{animation:none!important}
-  .scene .sc-signal.sc-urgency-high .sc-ring,.scene .sc-signal.sc-urgency-medium .sc-ring{opacity:.8;transform:scale(1.25)}
   .scene .sc-label{transition:none}
 }`;
 
@@ -421,15 +619,18 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
     completed:'M3.2 6.3l1.9 1.9 3.7-4.4',
   };
   const PIN_PATH='M7.5 1.5l3 3-2 1-2.2 2.2.4 2.3-1 1-2-2-2.7 2.7M3.7 6.3l-2-2 1-1 2.3.4L7.2 1.5';
-  const REASONS={core_unreachable:'Core injoignable',not_configured:'scène non configurée',scene_unavailable:'scène indisponible dans Core',
-    core_refused:'Core refuse la lecture',invalid_scene_response:'réponse de scène invalide',timeout:'pas de réponse',
+  const REASONS={core_unreachable:'Core injoignable',not_configured:'scène non configurée',scene_unavailable:'scène indisponible',
+    core_refused:'Core refuse la lecture',invalid_scene_response:'réponse invalide',timeout:'pas de réponse',
     patch_waits_busy:'trop de pages ouvertes',TypeError:'Control Center injoignable',network_error:'Control Center injoignable'};
 
-  let enabled=false,root=null,linksEl=null,statusEl=null,raf=0,statusTicker=null;
-  let lastView=null,lastState=null,layout=null,edgesSig='',statusSig='',readyTimer=0;
+  let enabled=false,root=null,linksEl=null,statusEl=null,liveEl=null,raf=0,statusTicker=null;
+  let lastView=null,lastState=null,layout=null,layoutState=null,edgesSig='',statusSig='',announced='',readyTimer=0;
+  let lastModel=null,focusId=null,tabStopId=null,statusFailed=false,visibilityToken=0,animTimer=0;
+  const freshUntil=new Map();
   const nodes=new Map();
   const leader={held:false,release:null,abort:null,mode:'lock'};
-
+  const channel=typeof BroadcastChannel==='function'?new BroadcastChannel(CHANNEL_NAME):null;
+  const shared=!!channel&&!!(navigator.locks&&typeof navigator.locks.request==='function');
   const SNAPSHOT_TIMEOUT=Core.SNAPSHOT_TIMEOUT_MS;
 
   function consoleLog(level,event,data){
@@ -457,6 +658,7 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
       if(signal)signal.removeEventListener('abort',relay);
     }
   }
+
   async function getJson(path,options){
     const response=await requestJson(path,options);
     if(response.status!==200||!response.body){
@@ -469,50 +671,71 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
 
   const timers={setTimeout:(fn,ms)=>window.setTimeout(fn,ms),clearTimeout:id=>window.clearTimeout(id)};
   const loop=Core.createSceneLoop({client:Client,request:getJson,...timers,now:()=>Date.now(),random:Math.random,
-    createAbort:()=>new AbortController(),onUpdate:onLoopUpdate,log:consoleLog});
+    createAbort:()=>new AbortController(),onUpdate:onLoopUpdate,log:consoleLog,
+    broadcast:channel?message=>channel.postMessage({...message,from:TAB_ID}):null});
   const committer=Core.createResolverCommitter({layout:L,...timers,now:()=>Date.now(),random:Math.random,log:consoleLog,
     post:command=>requestJson('/api/scene/commands',{method:'POST',body:command,timeoutMs:15000})});
 
-  /* ------------------------------------------------------------ verrou */
+  if(channel)channel.addEventListener('message',event=>{
+    const message=event.data;
+    if(!enabled||!message||message.from===TAB_ID)return;
+    try{loop.receive(message)}catch(error){consoleLog('error','scene.receive_failed',{error:String(error&&error.message||error)})}
+  });
+
+  /* ------------------------------------------------------------ meneur */
 
   function pushCommitter(){
     if(!enabled||!lastView)return committer.update(null);
     /* Seulement en long-poll sain : pendant une relecture, l'état tenu peut
        être périmé et un objet déjà placé ailleurs paraître libre. */
-    const healthy=!!lastView.state&&lastView.health.level==='ok'&&lastView.phase==='polling';
-    committer.update({state:lastView.state,layout,leader:leader.held,healthy});
+    const healthy=!!lastView.state&&lastView.health.level==='ok'&&lastView.phase==='polling'&&lastView.role!=='follower';
+    committer.update({state:lastView.state,layout:currentLayout(),leader:leader.held,healthy});
   }
 
-  /* Un seul onglet valide les placements : verrou Web Locks du navigateur,
-     tenu tant que l'onglet est visible et la scène allumée. Sans Web Locks,
-     l'onglet valide seul (le résolveur est déterministe et chaque objet n'est
-     envoyé qu'une fois par page). */
-  function acquireLeadership(){
-    if(leader.held||leader.abort)return;
-    const locks=navigator.locks;
-    if(!locks||typeof locks.request!=='function'){
-      leader.held=true;leader.mode='solo';
-      consoleLog('info','scene.resolver_leader',{mode:'solo'});
-      return pushCommitter();
-    }
-    const controller=new AbortController();
-    leader.abort=controller;
-    locks.request(LOCK_NAME,{signal:controller.signal},()=>new Promise(release=>{
+  function hold(){
+    return new Promise(release=>{
       leader.abort=null;leader.held=true;leader.release=release;leader.mode='lock';
-      consoleLog('info','scene.resolver_leader',{mode:'lock'});
+      loop.setRole('leader');
       pushCommitter();
-    })).catch(error=>{
-      if(error&&error.name==='AbortError')return;
-      leader.abort=null;leader.held=true;leader.mode='solo';
-      consoleLog('warn','scene.resolver_lock_failed',{error:String(error&&error.message||error)});
-      pushCommitter();
+    });
+  }
+
+  /* Rôle de l'onglet visible : meneur si le verrou est libre, sinon suiveur en
+     file d'attente (le navigateur lui passe le verrou dès que le meneur le
+     rend : fermeture, onglet caché, interrupteur éteint, navigation). La
+     promesse rendue se résout quand le rôle est connu. Sans Web Locks ou
+     BroadcastChannel : `solo`, long-poll par onglet. */
+  function decideRole(){
+    if(!shared){
+      leader.held=true;leader.mode='solo';loop.setRole('solo');
+      return Promise.resolve();
+    }
+    if(leader.held||leader.abort)return Promise.resolve();
+    return new Promise(resolve=>{
+      navigator.locks.request(LOCK_NAME,{ifAvailable:true},lock=>{
+        if(lock){const held=hold();resolve();return held}
+        loop.setRole('follower');
+        const controller=new AbortController();
+        leader.abort=controller;
+        navigator.locks.request(LOCK_NAME,{signal:controller.signal},()=>hold()).catch(error=>{
+          if(error&&error.name==='AbortError')return;
+          leader.abort=null;
+          consoleLog('warn','scene.leader_lock_failed',{error:String(error&&error.message||error)});
+        });
+        resolve();
+        return undefined;
+      }).catch(error=>{
+        consoleLog('warn','scene.leader_lock_failed',{error:String(error&&error.message||error)});
+        leader.held=true;leader.mode='solo';loop.setRole('solo');resolve();
+      });
     });
   }
 
   function releaseLeadership(){
     if(leader.abort){const pending=leader.abort;leader.abort=null;pending.abort()}
     if(leader.release){const release=leader.release;leader.release=null;release()}
-    leader.held=false;
+    if(shared){leader.held=false;loop.setRole('follower')}
+    else leader.held=false;
   }
 
   /* ------------------------------------------------------------ rendu */
@@ -526,12 +749,20 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
     if(root)return;
     root=document.createElement('div');
     root.id='sceneLayer';root.className='scene';
-    root.setAttribute('role','region');root.setAttribute('aria-label','Scène constellation');
+    root.setAttribute('role','region');
+    root.setAttribute('aria-label','Scène constellation. Flèches pour parcourir, Échap pour sortir.');
     linksEl=document.createElementNS(SVG_NS,'svg');
     linksEl.setAttribute('class','sc-links');linksEl.setAttribute('aria-hidden','true');
     statusEl=document.createElement('div');
-    statusEl.className='sc-status';statusEl.setAttribute('role','status');statusEl.setAttribute('aria-live','polite');statusEl.hidden=true;
-    root.append(linksEl,statusEl);
+    statusEl.className='sc-status';statusEl.hidden=true;
+    /* Région vivante à part : annonce les changements d'état, jamais les
+       compteurs qui défilent chaque seconde. */
+    liveEl=document.createElement('div');
+    liveEl.className='sc-sr';liveEl.setAttribute('role','status');liveEl.setAttribute('aria-live','polite');
+    root.append(linksEl,statusEl,liveEl);
+    root.addEventListener('keydown',onKeyDown);
+    root.addEventListener('pointerover',onPointerOver);
+    root.addEventListener('focusin',onFocusIn);
     (document.getElementById('app')||document.body).appendChild(root);
   }
 
@@ -540,12 +771,23 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
     if(readyTimer){cancelAnimationFrame(readyTimer);readyTimer=0}
     stopStatusTicker();
     if(root)root.remove();
-    root=null;linksEl=null;statusEl=null;nodes.clear();
-    lastView=null;lastState=null;layout=null;edgesSig='';statusSig='';
+    const style=document.getElementById('jarvisSceneStyle');
+    if(style)style.remove();
+    if(animTimer){window.clearTimeout(animTimer);animTimer=0}
+    root=null;linksEl=null;statusEl=null;liveEl=null;nodes.clear();freshUntil.clear();
+    lastView=null;lastState=null;layout=null;layoutState=null;lastModel=null;
+    edgesSig='';statusSig='';announced='';focusId=null;tabStopId=null;
   }
 
   function scheduleRender(){
     if(!raf)raf=requestAnimationFrame(render);
+  }
+
+  /* Disposition calculée à la demande, une fois par état. */
+  function currentLayout(){
+    if(!lastState)return null;
+    if(layoutState!==lastState){layout=L.resolveLayout(lastState);layoutState=lastState}
+    return layout;
   }
 
   function svgIcon(path,className){
@@ -564,8 +806,8 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
     return el;
   }
 
-  function badge(exec,representation){
-    if(!BADGE_PATHS[exec]||(exec==='completed'&&representation==='point'))return null;
+  function badge(exec,shape){
+    if(!BADGE_PATHS[exec]||(exec==='completed'&&shape==='point'))return null;
     const box=element('span','sc-badge');
     box.appendChild(svgIcon(BADGE_PATHS[exec]));
     return box;
@@ -577,36 +819,38 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
     return box;
   }
 
-  /* Contenu d'un nœud. Tout texte de la scène passe par `textContent`, déjà
-     neutralisé par `JarvisSceneLayout.viewModel`. */
+  /* Contenu d'un nœud, selon sa forme dessinée (`shape`, compacte quand la
+     boîte est trop petite pour son texte). Tout texte de la scène passe par
+     `textContent`, déjà neutralisé par `JarvisSceneLayout.viewModel`. */
   function fill(el,node){
-    const classes=['sc-node',`sc-${node.representation}`,`sc-kind-${node.kind}`,`sc-tone-${node.tone}`,`sc-exec-${node.exec}`];
+    const classes=['sc-node',`sc-${node.shape}`,`sc-kind-${node.kind}`,`sc-tone-${node.tone}`,`sc-exec-${node.exec}`];
     if(node.signal)classes.push('sc-signal',`sc-urgency-${node.urgency}`);
     if(node.pinned)classes.push('sc-pinned');
+    if(node.compact)classes.push('sc-compact');
     el.className=classes.join(' ');
     el.setAttribute('aria-label',node.label);
     el.replaceChildren();
     const parts=[];
-    if(node.representation==='point'){
+    if(node.shape==='point'){
       parts.push(element('span','sc-ring'),element('span','sc-mark'));
-      const state=badge(node.exec,node.representation);
+      const state=badge(node.exec,node.shape);
       if(state&&!node.signal)parts.push(state);
       const label=element('span','sc-label');
       label.append(element('strong','',node.title));
-      const detail=[node.signal?node.category:'',node.execLabel,node.signal&&!node.live?'retiré':'',node.pinned?'épinglé':''].filter(Boolean).join(' · ');
+      const detail=[node.signal?'signal':'',node.execLabel,node.signal&&!node.live?'retiré':'',node.pinned?'épinglé':''].filter(Boolean).join(' · ');
       if(detail)label.append(element('span','',detail));
       parts.push(label);
-    }else if(node.representation==='capsule'){
+    }else if(node.shape==='capsule'){
       const dot=element('span','sc-dot');dot.appendChild(element('span','sc-ring'));
       parts.push(dot,element('span','sc-title',node.title));
       if(node.pinned)parts.push(pin());
-      const state=badge(node.exec,node.representation);if(state)parts.push(state);
+      const state=badge(node.exec,node.shape);if(state)parts.push(state);
     }else{
       const head=element('div','sc-head');
       const dot=element('span','sc-dot');dot.appendChild(element('span','sc-ring'));
       head.append(dot,element('span','sc-cat',[node.category,node.execLabel].filter(Boolean).join(' · ')));
       if(node.pinned)head.append(pin());
-      const state=badge(node.exec,node.representation);if(state)head.append(state);
+      const state=badge(node.exec,node.shape);if(state)head.append(state);
       parts.push(head,element('div','sc-wtitle',node.title));
       if(node.summary)parts.push(element('div','sc-summary',node.summary));
       if(node.items.length){
@@ -625,8 +869,13 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
 
   function position(el,node){
     let x,y,w=null,h=null;
-    if(node.representation==='point'){x=node.cx-POINT_HIT/2;y=node.cy-POINT_HIT/2}
-    else{x=node.box.left;y=node.box.top;w=node.box.width;h=node.box.height}
+    if(node.shape==='point'){x=node.cx-POINT_HIT/2;y=node.cy-POINT_HIT/2}
+    else if(node.shape==='capsule'){
+      w=node.box.width;h=Math.max(node.box.height,CAPSULE_MIN_HEIGHT);x=node.box.left;
+      /* Fenêtre dessinée en capsule : collée en haut de sa boîte. */
+      y=node.compact?node.box.top:node.cy-h/2;
+      if(node.compact)h=CAPSULE_MIN_HEIGHT+4;
+    }else{x=node.box.left;y=node.box.top;w=node.box.width;h=node.box.height}
     el.style.transform=`translate(${x}px,${y}px)`;
     el.style.width=w===null?'':`${w}px`;
     el.style.height=h===null?'':`${h}px`;
@@ -640,21 +889,89 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
       let record=nodes.get(node.id);
       if(!record){
         const el=document.createElement('div');
-        el.tabIndex=0;el.dataset.objectId=node.id;el.setAttribute('role','group');
+        el.tabIndex=-1;el.dataset.objectId=node.id;el.setAttribute('role','group');
         root.appendChild(el);
-        record={el,content:'',place:''};
+        record={el,content:'',place:'',anim:null};
         nodes.set(node.id,record);
       }
-      const content=JSON.stringify([node.representation,node.kind,node.tone,node.exec,node.urgency,node.pinned,node.title,
+      const content=JSON.stringify([node.shape,node.kind,node.tone,node.exec,node.urgency,node.pinned,node.title,
         node.category,node.summary,node.items,node.label]);
-      if(content!==record.content){fill(record.el,node);record.content=content}
-      const place=`${node.representation}|${node.cx}|${node.cy}|${node.box.left}|${node.box.top}|${node.box.width}|${node.box.height}|${node.stack}`;
+      if(content!==record.content){fill(record.el,node);record.content=content;record.anim=null}
+      if(record.anim!==node.animate){record.el.classList.toggle('sc-anim',node.animate);record.anim=node.animate}
+      const place=`${node.shape}|${node.compact}|${node.cx}|${node.cy}|${node.box.left}|${node.box.top}|${node.box.width}|${node.box.height}|${node.stack}`;
       if(place!==record.place){position(record.el,node);record.place=place}
     }
     for(const [id,record] of nodes){
       if(seen.has(id))continue;
       record.el.remove();nodes.delete(id);
     }
+    markItemsThatFit();
+    updateTabStop(list);
+  }
+
+  /* Liste d'éléments entière : pas de fondu. */
+  function markItemsThatFit(){
+    for(const list of root.querySelectorAll('.sc-items'))list.classList.toggle('sc-fits',list.scrollHeight<=list.clientHeight+1);
+  }
+
+  /* Tabulation itinérante : un seul arrêt de tabulation dans la scène. */
+  function updateTabStop(list){
+    if(!list.length){tabStopId=null;return}
+    let wanted=focusId&&nodes.has(focusId)?focusId:null;
+    if(!wanted)wanted=L.spatialOrder(list)[0].id;
+    if(wanted===tabStopId&&nodes.get(wanted).el.tabIndex===0)return;
+    const previous=tabStopId&&nodes.get(tabStopId);
+    if(previous)previous.el.tabIndex=-1;
+    nodes.get(wanted).el.tabIndex=0;
+    tabStopId=wanted;
+  }
+
+  function nodeElement(target){
+    const el=target&&target.closest?target.closest('.sc-node'):null;
+    return el&&root&&root.contains(el)?el:null;
+  }
+
+  function onKeyDown(event){
+    const el=nodeElement(event.target);
+    if(!el||!lastModel)return;
+    if(event.key==='Escape'){event.preventDefault();el.blur();return}
+    if(!['ArrowRight','ArrowLeft','ArrowUp','ArrowDown','Home','End'].includes(event.key))return;
+    event.preventDefault();
+    const next=L.nextFocus(lastModel.nodes,el.dataset.objectId,event.key);
+    const record=next&&nodes.get(next);
+    if(!record||record.el===el)return;
+    focusId=next;updateTabStop(lastModel.nodes);
+    record.el.focus();
+  }
+
+  function onFocusIn(event){
+    const el=nodeElement(event.target);
+    if(!el)return;
+    focusId=el.dataset.objectId;
+    if(lastModel)updateTabStop(lastModel.nodes);
+    clampLabel(el);
+  }
+
+  function onPointerOver(event){
+    const el=nodeElement(event.target);
+    if(el)clampLabel(el);
+  }
+
+  /* Étiquette de survol gardée dans la scène : décalée à l'horizontale, passée
+     au-dessus du point près du bas. Mesure sans transformation (la transition
+     de l'étiquette fausserait `getBoundingClientRect`) : centre du nœud et
+     largeur de mise en page. */
+  function clampLabel(el){
+    const label=el.querySelector(':scope > .sc-label');
+    if(!label||!root)return;
+    const bounds=root.getBoundingClientRect(),node=el.getBoundingClientRect(),margin=8;
+    const width=label.offsetWidth,height=label.offsetHeight;
+    const left=node.left+node.width/2-width/2;
+    let dx=0;
+    if(left<bounds.left+margin)dx=bounds.left+margin-left;
+    else if(left+width>bounds.right-margin)dx=bounds.right-margin-(left+width);
+    label.style.setProperty('--sc-dx',`${Math.round(dx)}px`);
+    label.classList.toggle('sc-label-up',node.bottom+6+height>bounds.bottom-margin);
   }
 
   function applyEdges(edges,vp){
@@ -671,14 +988,23 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
     linksEl.replaceChildren(...lines);
   }
 
-  let lastModel=null;
+  function errorLabels(){
+    /* `ERROR_CLASSES` du Control Center (même page) : les mots des cartes
+       d'agents. Absente (page de test) : titres bruts. */
+    try{return typeof ERROR_CLASSES==='object'?ERROR_CLASSES:null}catch(_error){return null}
+  }
 
   function render(){
     raf=0;
     if(!enabled||!root)return;
-    if(!lastState||!layout){applyNodes([]);applyEdges([],{width:1,height:1});lastModel=null;return renderStatus()}
+    if(document.visibilityState==='hidden')return;
+    const current=currentLayout();
+    if(!lastState||!current){applyNodes([]);applyEdges([],{width:1,height:1});lastModel=null;return renderStatus()}
     const vp=L.viewport(root.clientWidth||window.innerWidth,root.clientHeight||window.innerHeight);
-    lastModel=L.viewModel(lastState,layout,vp,{objectLimit:lastView?lastView.objectLimit:L.OBJECT_LIMIT});
+    const now=Date.now();
+    markFresh(lastState,now);
+    lastModel=L.viewModel(lastState,current,vp,{objectLimit:lastView?lastView.objectLimit:L.OBJECT_LIMIT,errorLabels:errorLabels(),
+      animatable:node=>(freshUntil.get(node.id)||{until:0}).until>now});
     applyNodes(lastModel.nodes);
     applyEdges(lastModel.edges,vp);
     renderStatus();
@@ -686,6 +1012,25 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
        glissement depuis l'origine au chargement. */
     if(!root.classList.contains('sc-ready')&&!readyTimer)
       readyTimer=requestAnimationFrame(()=>{readyTimer=requestAnimationFrame(()=>{readyTimer=0;if(root)root.classList.add('sc-ready')})});
+  }
+
+  /* Nœuds apparus ou dont l'état d'exécution ou l'urgence vient de changer : animables
+     pendant `ANIMATE_FOR_MS`. Un rendu est prévu à la première échéance. */
+  function markFresh(state,now){
+    let next=Infinity;
+    /* Premier rendu (chargement, interrupteur allumé) : rien de neuf, rien
+       n'anime ; les indices fixes suffisent. */
+    const first=freshUntil.size===0;
+    for(const item of state.objects.values()){
+      const sig=`${item.exec_state}|${item.category}|${state.relations.has(item.object_id)}`;
+      const entry=freshUntil.get(item.object_id);
+      if(!entry||entry.sig!==sig)freshUntil.set(item.object_id,{sig,until:first?0:now+ANIMATE_FOR_MS});
+      const until=freshUntil.get(item.object_id).until;
+      if(until>now&&until<next)next=until;
+    }
+    if(freshUntil.size>state.objects.size)for(const id of freshUntil.keys())if(!state.objects.has(id))freshUntil.delete(id);
+    if(animTimer){window.clearTimeout(animTimer);animTimer=0}
+    if(next!==Infinity)animTimer=window.setTimeout(()=>{animTimer=0;scheduleRender()},next-now+50);
   }
 
   function elapsed(ms){
@@ -697,28 +1042,42 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
 
   /* Indicateur discret, jamais bloquant : chargement, lecture en panne (depuis
      combien de temps, nouvel essai automatique), scène pleine, objets hors
-     champ. Réécrit seulement si son texte change. */
+     champ. Réécrit seulement si son texte change ; la région vivante
+     n'annonce que les changements d'état. */
   function renderStatus(){
     if(!statusEl||!lastView)return;
-    const notes=[];
+    const notes=[],announce=[];
     const health=lastView.health;
     if(health.level==='degraded'){
       const reason=REASONS[health.code]||health.code||'erreur';
-      const retry=health.retryAt?` · nouvel essai dans ${elapsed(health.retryAt-Date.now())}`:' · nouvel essai…';
-      notes.push({cls:'sc-warn',text:`${lastState?'Scène figée':'Scène indisponible'} — ${reason} · depuis ${elapsed(Date.now()-health.since)}${retry}`});
+      const title=`${lastState?'Scène figée':'Scène indisponible'} · ${reason}`;
+      const retry=health.retryAt?`réessai ${elapsed(health.retryAt-Date.now())}`:'réessai…';
+      notes.push({cls:'sc-warn',main:title,meta:`${elapsed(Date.now()-health.since)} · ${retry}`});
+      announce.push(`${title}. Nouvel essai automatique.`);
       if(!statusTicker)statusTicker=window.setInterval(renderStatus,1000);
     }else{
       stopStatusTicker();
-      if(!lastState&&lastView.phase==='loading')notes.push({cls:'sc-busy',text:'Scène · chargement…'});
+      if(!lastState&&lastView.phase==='loading')notes.push({cls:'sc-busy',main:'Scène · chargement…',meta:''});
     }
-    if(lastModel&&lastModel.capacity.saturated)
-      notes.push({cls:'sc-full',text:`Scène pleine (${lastModel.capacity.objects}/${lastModel.capacity.limit}) — archiver des travaux terminés`});
-    if(lastModel&&lastModel.offscreen)
-      notes.push({cls:'',text:`${lastModel.offscreen} ${lastModel.offscreen>1?'objets':'objet'} hors champ`});
-    const sig=notes.map(n=>`${n.cls}:${n.text}`).join('|');
+    if(lastModel&&lastModel.capacity.saturated){
+      notes.push({cls:'sc-full',main:'Scène pleine — archiver des travaux terminés',meta:`${lastModel.capacity.objects}/${lastModel.capacity.limit}`});
+      announce.push('Scène pleine : archiver des travaux terminés.');
+    }
+    if(lastModel&&lastModel.offscreen){
+      notes.push({cls:'',main:`${lastModel.offscreen} ${lastModel.offscreen>1?'objets':'objet'} hors champ`,meta:''});
+      announce.push('Des objets sont hors champ.');
+    }
+    const text=announce.join(' ');
+    if(liveEl&&text!==announced){announced=text;liveEl.textContent=text}
+    const sig=notes.map(n=>`${n.cls}:${n.main}:${n.meta}`).join('|');
     if(sig===statusSig)return;
     statusSig=sig;
-    statusEl.replaceChildren(...notes.map(n=>element('div',`sc-note ${n.cls}`.trim(),n.text)));
+    statusEl.replaceChildren(...notes.map(n=>{
+      const note=element('div',`sc-note ${n.cls}`.trim());
+      note.append(element('span','sc-note-main',n.main));
+      if(n.meta)note.append(element('span','sc-note-meta',n.meta));
+      return note;
+    }));
     statusEl.hidden=!notes.length;
   }
 
@@ -727,7 +1086,6 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
     lastView=view;
     if(view.state!==lastState){
       lastState=view.state;
-      layout=lastState?L.resolveLayout(lastState):null;
       scheduleRender();
     }
     renderStatus();
@@ -736,27 +1094,45 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
 
   function onResize(){scheduleRender()}
 
-  function onVisibility(){
+  async function onVisibility(){
+    const token=++visibilityToken;
     const visible=document.visibilityState!=='hidden';
-    loop.setVisible(visible);
-    if(enabled&&visible)acquireLeadership();else releaseLeadership();
+    if(root)root.classList.toggle('sc-paused',!visible);
+    if(!enabled)return;
+    if(!visible){
+      loop.setVisible(false);
+      releaseLeadership();
+      return pushCommitter();
+    }
+    await decideRole();
+    if(token!==visibilityToken||!enabled)return;
+    loop.setVisible(true);
+    scheduleRender();
     pushCommitter();
   }
 
   /* Interrupteur : appelé à chaque lecture réussie de `/api/status`. */
   function gate(scene){
+    if(statusFailed){
+      /* Le Control Center répond de nouveau : pas d'attente du repli. */
+      statusFailed=false;
+      if(enabled&&loop.retryNow())consoleLog('info','scene.status_back',{});
+    }
     const next=Core.gateEnabled(scene);
     if(next===enabled)return;
     enabled=next;
     if(next){
-      consoleLog('info','scene.enabled',{source:scene&&scene.source||''});
+      consoleLog('info','scene.enabled',{source:scene&&scene.source||'',mode:shared?'shared':'solo'});
       ensureRoot();
       window.addEventListener('resize',onResize);
       document.addEventListener('visibilitychange',onVisibility);
-      onVisibility();
-      loop.setEnabled(true);
+      loop.setVisible(document.visibilityState!=='hidden');
+      const visible=document.visibilityState!=='hidden';
+      const start=()=>{if(enabled)loop.setEnabled(true)};
+      if(visible)decideRole().then(start);else{if(!shared)loop.setRole('solo');else loop.setRole('follower');start()}
     }else{
       consoleLog('info','scene.disabled',{});
+      visibilityToken++;
       loop.setEnabled(false);
       committer.update(null);
       releaseLeadership();
@@ -769,13 +1145,20 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
   window.addEventListener('pagehide',event=>{
     if(event.persisted){releaseLeadership();return}
     loop.stop();committer.stop();releaseLeadership();
+    if(channel)try{channel.close()}catch(_error){/* déjà fermé */}
   });
 
   window.JarvisScene=Object.freeze({
-    version:1,gate,
+    version:2,gate,
+    /* `/api/status` a échoué : la prochaine réussite relance la lecture. */
+    statusLost(){statusFailed=true},
     /* Diagnostic (console, validation) : aucune écriture. */
-    inspect:()=>({enabled,leader:{held:leader.held,mode:leader.mode},loop:loop.view().phase,
-      revision:lastState?lastState.revision:null,nodes:nodes.size,commits:committer.stats(),
-      health:lastView?lastView.health:null,resolved:layout?layout.resolved.length:0}),
+    inspect:()=>{
+      const view=loop.view();
+      return {enabled,mode:shared?'shared':'solo',role:view.role,leader:{held:leader.held,mode:leader.mode},loop:view.phase,
+        revision:lastState?lastState.revision:null,nodes:nodes.size,commits:committer.stats(),stats:view.stats,
+        health:lastView?lastView.health:null,resolved:layout&&layoutState===lastState?layout.resolved.length:0,
+        tabStops:root?root.querySelectorAll('[tabindex="0"]').length:0,animated:root?root.querySelectorAll('.sc-anim').length:0};
+    },
   });
 })();

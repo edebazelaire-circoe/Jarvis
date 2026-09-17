@@ -27,9 +27,14 @@
   /* ------------------------------------------------------------------ repère */
 
   const FRAME=Object.freeze({halfWidth:160,halfHeight:90});
-  /* Zone où le résolveur pose : le cadre moins les marges des commandes de la
-     page (barre du haut, dock à droite, indication vocale en bas). */
-  const SAFE_AREA=Object.freeze({x0:-154,x1:144,y0:-80,y1:80});
+  /* Zone de composition sûre : la partie du cadre qu'aucune commande de la page
+     ne recouvre à la plus petite taille 16:9 prise en charge (1280 × 720, 4 px
+     par unité), dans les deux thèmes — barre du haut et dock Omega en haut,
+     dock du thème circuit à droite, indication vocale et indicateurs de scène
+     en bas. Plus grande fenêtre : les commandes y occupent encore moins
+     d'unités. Le résolveur ne pose qu'ici ; le cerveau en reçoit les bornes.
+     Même valeur dans `jarvis/domain/scene.py` (test de parité). */
+  const SAFE_AREA=Object.freeze({x0:-152,x1:138,y0:-72,y1:68});
   /* Le visage (iframe ou canevas Omega) occupe le centre : le résolveur
      l'évite de préférence, sans l'interdire. */
   const FACE_ZONE=Object.freeze({x0:-34,x1:34,y0:-34,y1:34});
@@ -130,15 +135,25 @@
     return !!rel&&rel.kind==='explains'&&rel.relation_id===rel.from_id;
   }
 
-  /* Titres posés par Core pour une interruption due à l'arrêt du CLI du
-     cerveau : un signal par sous-agent à chaque arrêt, peu urgent. */
-  const LOW_URGENCY_TITLES=new Set(['process_stopped']);
+  /* Interruptions dues au cycle de vie de l'hôte, pas au travail : l'arrêt du
+     CLI du cerveau pose un signal par sous-agent en cours. Le projecteur de
+     Core (Slice 04) écrit un signal runtime dont la catégorie et
+     l'`exec_state` sont le statut du travail et dont `payload.title` est la
+     classe d'erreur (seul champ où elle voyage). */
+  const LOW_URGENCY_ERRORS=new Set(['process_stopped']);
 
-  /* Urgence d'un signal : `none` (retiré), `low`, `medium`, `high`. */
+  /* Classe d'erreur portée par un signal du runtime, ou ''. */
+  function signalErrorClass(item){
+    if(item.kind!=='attention'||item.origin!=='runtime')return '';
+    return String(item.payload&&item.payload.title||'');
+  }
+
+  /* Urgence d'un signal : `none` (retiré), `low`, `medium`, `high`. Basse :
+     signal du runtime de catégorie `interrupted` et de classe
+     `process_stopped`. */
   function signalUrgency(state,item){
     if(!isLiveSignal(state,item.object_id))return 'none';
-    const title=String(item.payload&&item.payload.title||'');
-    if(LOW_URGENCY_TITLES.has(title))return 'low';
+    if(item.category==='interrupted'&&LOW_URGENCY_ERRORS.has(signalErrorClass(item)))return 'low';
     if(item.exec_state==='failed'||toneOf(item.category)==='error')return 'high';
     return 'medium';
   }
@@ -146,6 +161,27 @@
   const EXEC_LABELS=Object.freeze({unknown:'',pending:'en attente',running:'en cours',blocked:'bloqué',
     completed:'terminé',failed:'échec',cancelled:'annulé',interrupted:'interrompu'});
   const KIND_LABELS=Object.freeze({agent:'sous-agent',job:'tâche',artifact:'résultat',attention:'signal',window:'fenêtre',group:'groupe'});
+
+  /* Titre affiché d'un signal du runtime : sa classe d'erreur dans les mots de
+     la page (`errorLabels` = `ERROR_CLASSES` du Control Center), un statut
+     brut dans sa forme française, sinon le titre tel quel. */
+  function displayTitle(item,title,errorLabels){
+    const code=signalErrorClass(item);
+    if(!code)return title;
+    if(errorLabels&&Object.prototype.hasOwnProperty.call(errorLabels,code))return cleanLine(String(errorLabels[code]),160);
+    if(EXEC_LABELS[code])return EXEC_LABELS[code];
+    return title;
+  }
+
+  /* Seuils de lisibilité (px) : sous eux, une fenêtre se dessine en capsule
+     et une capsule en point, dans la page seulement (jamais validé, la
+     représentation de la scène ne change pas). */
+  const READABLE=Object.freeze({windowWidth:180,windowHeight:96,capsuleWidth:72});
+  /* Anneaux animés au plus (coût de style) : signaux vivants urgents d'abord,
+     puis étoiles en cours, dans l'ordre de Core ; les autres restent fixes.
+     La page ne propose que les nœuds dont l'état vient de changer
+     (`options.animatable`) : au repos, aucune animation ne tourne. */
+  const MAX_ANIMATED=24;
 
   /* ----------------------------------------------------------- AutoResolver */
 
@@ -382,6 +418,8 @@
      Core, sans objet caché. */
   function viewModel(state,layout,vp,options){
     const limit=options&&Number.isInteger(options.objectLimit)?options.objectLimit:OBJECT_LIMIT;
+    const errorLabels=options&&options.errorLabels||null;
+    const animatable=options&&typeof options.animatable==='function'?options.animatable:()=>true;
     const nodes=[],centers=new Map();let offscreen=0,hidden=0;
     for(const item of state.objects.values()){
       if(item.visibility!=='visible'){hidden++;continue}
@@ -390,22 +428,23 @@
       const screen=toScreen(vp,box);
       const representation=['point','capsule','window'].includes(item.representation)?item.representation:'point';
       const payload=item.payload||{};
-      const title=cleanLine(payload.title,160);
+      const title=displayTitle(item,cleanLine(payload.title,160),errorLabels);
       const exec=EXEC_LABELS[item.exec_state]!==undefined?item.exec_state:'unknown';
       const signal=item.kind==='attention';
       const urgency=signal?signalUrgency(state,item):'none';
+      const shape=compactShape(representation,screen);
       const node={
-        id:item.object_id,kind:item.kind,representation,
+        id:item.object_id,kind:item.kind,representation,shape,compact:shape!==representation,
         category:cleanLine(item.category,32),tone:toneOf(item.category),
-        exec,execLabel:EXEC_LABELS[exec],signal,live:signal&&urgency!=='none',urgency,
+        exec,execLabel:EXEC_LABELS[exec],signal,live:signal&&urgency!=='none',urgency,animate:false,
         pinned:!!(item.constraints&&item.constraints.pinned_by_user),
         placedBy:item.geometry?String(item.constraints&&item.constraints.placed_by||''):'resolver',
         committed:!!item.geometry,
         stack:stackOf(item.layer,item.order),
         box:screen,cx:round1(screen.left+screen.width/2),cy:round1(screen.top+screen.height/2),
         title:title||KIND_LABELS[item.kind]||item.kind,
-        summary:representation==='window'?cleanText(payload.summary,2000):'',
-        items:representation==='window'&&Array.isArray(payload.items)
+        summary:shape==='window'?cleanText(payload.summary,2000):'',
+        items:shape==='window'&&Array.isArray(payload.items)
           ?payload.items.slice(0,32).map(entry=>({label:cleanLine(entry&&entry.label,160),ref:cleanLine(entry&&entry.ref,256),url:cleanLine(entry&&entry.url,256)}))
           :[],
       };
@@ -413,6 +452,11 @@
       const outside=screen.left+screen.width<0||screen.top+screen.height<0||screen.left>vp.width||screen.top>vp.height;
       if(outside)offscreen++;
       nodes.push(node);centers.set(node.id,node);
+    }
+    /* Borne des animations : urgence haute, moyenne, puis exécution en cours. */
+    let budget=MAX_ANIMATED;
+    for(const pass of [n=>n.urgency==='high',n=>n.urgency==='medium',n=>!n.signal&&n.exec==='running']){
+      for(const node of nodes){if(budget<=0)break;if(!node.animate&&pass(node)&&animatable(node)){node.animate=true;budget--}}
     }
     const edges=[];
     for(const rel of state.relations.values()){
@@ -425,6 +469,48 @@
     edges.sort((p,q)=>p.layer-q.layer);
     const objects=state.objects.size;
     return {nodes,edges,hidden,offscreen,capacity:{objects,limit,saturated:objects>=limit}};
+  }
+
+  /* Forme dessinée pour une boîte à l'écran : la représentation, ou plus
+     compacte quand son texte n'y serait pas lisible. */
+  function compactShape(representation,screen){
+    let shape=representation;
+    if(shape==='window'&&(screen.width<READABLE.windowWidth||screen.height<READABLE.windowHeight))shape='capsule';
+    if(shape==='capsule'&&screen.width<READABLE.capsuleWidth)shape='point';
+    return shape;
+  }
+
+  /* ------------------------------------------------ navigation au clavier */
+
+  /* Ordre de lecture spatial (bandes de 24 px de haut en bas, puis de gauche
+     à droite) : premier arrêt de tabulation, Début et Fin. */
+  function spatialOrder(nodes){
+    return [...nodes].sort((a,b)=>Math.floor(a.cy/24)-Math.floor(b.cy/24)||a.cx-b.cx||(a.id<b.id?-1:a.id>b.id?1:0));
+  }
+
+  /* Nœud suivant pour une touche : une flèche mène au plus proche dans sa
+     direction (écart transversal pénalisé), Début / Fin au premier / dernier
+     de l'ordre spatial. Rend un identifiant (`currentId` s'il n'y a rien). */
+  function nextFocus(nodes,currentId,key){
+    if(!nodes.length)return null;
+    const ordered=spatialOrder(nodes);
+    if(key==='Home')return ordered[0].id;
+    if(key==='End')return ordered[ordered.length-1].id;
+    const current=nodes.find(n=>n.id===currentId);
+    if(!current)return ordered[0].id;
+    const dirs={ArrowRight:[1,0],ArrowLeft:[-1,0],ArrowDown:[0,1],ArrowUp:[0,-1]};
+    const dir=dirs[key];
+    if(!dir)return currentId;
+    let best=null,bestScore=Infinity;
+    for(const node of nodes){
+      if(node.id===current.id)continue;
+      const dx=node.cx-current.cx,dy=node.cy-current.cy;
+      const along=dx*dir[0]+dy*dir[1],across=Math.abs(dx*dir[1])+Math.abs(dy*dir[0]);
+      if(along<=0)continue;
+      const score=along+2*across;
+      if(score<bestScore||(score===bestScore&&node.id<best.id)){best=node;bestScore=score}
+    }
+    return best?best.id:currentId;
   }
 
   /* ------------------------------------------- validation des placements */
@@ -490,9 +576,9 @@
     return entry;
   }
 
-  const api=Object.freeze({FRAME,SAFE_AREA,FACE_ZONE,OBJECT_LIMIT,DEFAULT_SIZE,WORK_BUDGET,COMMIT_MAX_ATTEMPTS,
-    viewport,toScreen,cleanLine,cleanText,toneOf,isLiveSignal,signalUrgency,anchorsOf,depthOf,resolveLayout,
-    stackOf,viewModel,commitKey,commitCommand,commitCandidates,nextRetryAt,classifyCommit,settleCommit});
+  const api=Object.freeze({FRAME,SAFE_AREA,FACE_ZONE,OBJECT_LIMIT,DEFAULT_SIZE,WORK_BUDGET,COMMIT_MAX_ATTEMPTS,READABLE,MAX_ANIMATED,
+    viewport,toScreen,cleanLine,cleanText,toneOf,isLiveSignal,signalUrgency,signalErrorClass,anchorsOf,depthOf,resolveLayout,
+    stackOf,viewModel,compactShape,spatialOrder,nextFocus,commitKey,commitCommand,commitCandidates,nextRetryAt,classifyCommit,settleCommit});
   root.JarvisSceneLayout=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

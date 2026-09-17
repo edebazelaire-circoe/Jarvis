@@ -95,6 +95,15 @@ MAX_SCENE_EXTENT = 100_000.0
 #: `control_center_scene_layout.js` (test de parité).
 SCENE_FRAME_HALF_WIDTH = 160
 SCENE_FRAME_HALF_HEIGHT = 90
+#: Zone de composition sûre (Slice 05, reprise QA) : la partie du cadre qu'aucune
+#: commande de la page ne recouvre à 1280 × 720 (plus petite taille 16:9 prise
+#: en charge, 4 px par unité), dans les deux thèmes : barre du haut et dock
+#: Omega en haut, dock du thème circuit à droite, indication vocale et
+#: indicateurs de scène en bas. Le résolveur ne pose qu'ici ; les bords du cadre
+#: au-delà peuvent passer sous les commandes. `(x0, y0, x1, y1)` : une boîte est
+#: sûre si `x0 ≤ x`, `y0 ≤ y`, `x + w ≤ x1`, `y + h ≤ y1`. Même valeur dans
+#: `control_center_scene_layout.js` (`SAFE_AREA`, test de parité).
+SCENE_SAFE_AREA = (-152, -72, 138, 68)
 #: Couches : tout entier de la plage est valide ; 50/100/120/150/220/300 sont
 #: des conventions (Décision 8), pas des valeurs imposées.
 MIN_LAYER = 0

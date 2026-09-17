@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from jarvis.domain.scene import SCENE_FRAME_HALF_HEIGHT, SCENE_FRAME_HALF_WIDTH
+from jarvis.domain.scene import SCENE_FRAME_HALF_HEIGHT, SCENE_FRAME_HALF_WIDTH, SCENE_SAFE_AREA
 from jarvis.runtime.claude_local import BRAIN_DISPLAY_PROMPT
 from jarvis.runtime.control_center import (
     SCENE_LAYOUT_SCRIPT_MARKER,
@@ -149,12 +149,27 @@ def test_the_frame_matches_the_domain_and_maps_any_window_without_distortion(tmp
 
 
 def test_the_frame_is_told_to_the_brain_in_the_inspect_legend_and_the_prompt():
+    x0, y0, x1, y1 = SCENE_SAFE_AREA
     for text in (SCENE_FRAME_NOTE, BRAIN_DISPLAY_PROMPT):
-        assert f"x -{SCENE_FRAME_HALF_WIDTH}..{SCENE_FRAME_HALF_WIDTH}" in text
-        assert f"y -{SCENE_FRAME_HALF_HEIGHT}..{SCENE_FRAME_HALF_HEIGHT}" in text
-        assert "centre" in text and "coin haut gauche" in text
+        assert f"zone sûre x {x0}..{x1}, y {y0}..{y1}" in text
+        assert "centre" in text and "coin haut gauche" in text and "sous les commandes" in text
+    assert f"x -{SCENE_FRAME_HALF_WIDTH}..{SCENE_FRAME_HALF_WIDTH}, y -{SCENE_FRAME_HALF_HEIGHT}..{SCENE_FRAME_HALF_HEIGHT}" in SCENE_FRAME_NOTE
     frame_lines = [line for line in BRAIN_DISPLAY_PROMPT.splitlines() if "Repère" in line]
-    assert len(frame_lines) == 1 and "haut gauche ≈ x -150, y -80" in frame_lines[0]
+    assert len(frame_lines) == 1
+    line = frame_lines[0]
+    assert f"x + w ≤ {x1}, y + h ≤ {y1}" in line and "x ±160 et y ±90" in line
+    # L'exemple « haut gauche » du prompt et une note lisible tiennent dans la zone sûre.
+    example = re.search(r"haut gauche ≈ x (-?\d+), y (-?\d+)", line)
+    ex, ey = int(example.group(1)), int(example.group(2))
+    assert x0 <= ex and y0 <= ey and ex + 60 <= x1 and ey + 36 <= y1
+
+
+def test_the_safe_area_matches_the_domain_and_sits_inside_the_frame(tmp_path):
+    result = run_node(tmp_path, "return {safe:L.SAFE_AREA,frame:L.FRAME,face:L.FACE_ZONE};")
+    x0, y0, x1, y1 = SCENE_SAFE_AREA
+    assert result["safe"] == {"x0": x0, "y0": y0, "x1": x1, "y1": y1}
+    assert -SCENE_FRAME_HALF_WIDTH < x0 < x1 < SCENE_FRAME_HALF_WIDTH
+    assert -SCENE_FRAME_HALF_HEIGHT < y0 < y1 < SCENE_FRAME_HALF_HEIGHT
 
 
 # ----------------------------------------------------------- AutoResolver
@@ -243,8 +258,8 @@ def test_a_signal_sits_next_to_its_star_live_or_retired(tmp_path):
 def test_a_full_scene_is_placed_inside_the_safe_area_without_same_layer_overlap(tmp_path):
     result = run_node(tmp_path, r"""
       const objects=[];
-      for(let i=0;i<400;i++)objects.push(obj(`claude:${i}`,'agent'));
-      for(let i=0;i<100;i++)objects.push(obj(`brain-artifact-${i}`,'artifact',{origin:'brain'}));
+      for(let i=0;i<448;i++)objects.push(obj(`claude:${i}`,'agent'));
+      for(let i=0;i<60;i++)objects.push(obj(`brain-artifact-${i}`,'artifact',{origin:'brain'}));
       for(let i=0;i<4;i++)objects.push(obj(`brain-window-${i}`,'window',{origin:'brain'}));
       const started=Date.now();
       const layout=L.resolveLayout(state(objects));
@@ -258,7 +273,7 @@ def test_a_full_scene_is_placed_inside_the_safe_area_without_same_layer_overlap(
       return {ms,work:layout.work,placed:layout.resolved.length,overlaps,outside,budget:L.WORK_BUDGET};
     """)
 
-    assert result["placed"] == 504 and result["outside"] == 0
+    assert result["placed"] == 512 and result["outside"] == 0
     assert result["overlaps"] == 0
     assert result["work"] < result["budget"]
     assert result["ms"] < 2000
@@ -329,19 +344,25 @@ def test_live_signals_follow_the_relation_and_process_stopped_is_low_urgency(tmp
         sig('a1',{category:'failed',exec_state:'failed',payload:{title:'TimeoutError',summary:'',items:[]}}),
         sig('a2',{category:'failed',exec_state:'running',payload:{title:'TimeoutError',summary:'',items:[]}}),
         sig('a3',{category:'interrupted',exec_state:'interrupted',payload:{title:'process_stopped',summary:'',items:[]}}),
-        sig('a4',{category:'blocked',exec_state:'blocked',payload:{title:'blocked',summary:'',items:[]}})];
+        sig('a4',{category:'blocked',exec_state:'blocked',payload:{title:'blocked',summary:'',items:[]}}),
+        star('s5'),sig('a5',{category:'interrupted',exec_state:'interrupted',origin:'brain',payload:{title:'process_stopped',summary:'',items:[]}}),
+        star('s6'),sig('a6',{category:'failed',exec_state:'failed',payload:{title:'process_stopped',summary:'',items:[]}})];
       const relations=[rel('a1','explains','a1','s1'),rel('a3','explains','a3','s3'),rel('a4','explains','a4','s4'),
-        rel('not-a-signal','explains','a2','s2')];
+        rel('not-a-signal','explains','a2','s2'),rel('a5','explains','a5','s5'),rel('a6','explains','a6','s6')];
       const s=state(objects,relations);
-      const vm=L.viewModel(s,L.resolveLayout(s),L.viewport(1280,720));
-      return Object.fromEntries(vm.nodes.filter(n=>n.signal).map(n=>[n.id,[n.live,n.urgency,n.tone]]));
+      const labels={process_stopped:'processus arrêté'};
+      const vm=L.viewModel(s,L.resolveLayout(s),L.viewport(1280,720),{errorLabels:labels});
+      return Object.fromEntries(vm.nodes.filter(n=>n.signal).map(n=>[n.id,[n.live,n.urgency,n.tone,n.title]]));
     """)
 
     assert result == {
-        "a1": [True, "high", "error"],
-        "a2": [False, "none", "error"],  # retiré : garde sa catégorie, n'est plus vivant
-        "a3": [True, "low", "interrupted"],
-        "a4": [True, "medium", "blocked"],
+        "a1": [True, "high", "error", "TimeoutError"],
+        "a2": [False, "none", "error", "TimeoutError"],  # retiré : garde sa catégorie, n'est plus vivant
+        "a3": [True, "low", "interrupted", "processus arrêté"],
+        "a4": [True, "medium", "blocked", "bloqué"],
+        # Basse urgence : signal du runtime, catégorie interrompue et classe process_stopped.
+        "a5": [True, "medium", "interrupted", "process_stopped"],
+        "a6": [True, "high", "error", "processus arrêté"],
     }
 
 
@@ -676,7 +697,10 @@ async def test_the_page_injects_the_renderer_and_gates_it_on_the_status_flag(tmp
     html = PAGE_HTML.read_text(encoding="utf-8")
     assert SCENE_LAYOUT_SCRIPT_MARKER in html and SCENE_PAGE_SCRIPT_MARKER in html
     # La page ne touche à la scène que par l'interrupteur lu dans /api/status.
-    assert "if(window.JarvisScene)JarvisScene.gate(s.scene);" in html
+    # Isolé : une erreur de la scène ne casse jamais le statut ; un échec du
+    # statut prévient la scène (reprise immédiate au retour).
+    assert "try{if(window.JarvisScene)JarvisScene.gate(s.scene)}catch(sceneError){console.error('[scène] scene.gate_failed',sceneError)}" in html
+    assert "try{if(window.JarvisScene)JarvisScene.statusLost()}catch(_sceneError)" in html
     assert 'id="sceneLayer"' not in html
 
     control = ControlCenter(runtime_root=tmp_path, project_root=tmp_path)
@@ -723,3 +747,229 @@ def test_the_scene_layer_sits_above_the_face_and_below_every_control():
     assert _z(barehands, "#jarvisHands") == 2147483000
     # Relative order of the controls kept from before the registry.
     assert _z(html, ".topbar") <= _z(html, ".dock") < _z(html, ".panel") < _z(html, ".live-banner") < _z(html, ".bgpills")
+
+
+def test_animations_are_bounded_with_urgent_signals_first(tmp_path):
+    result = run_node(tmp_path, r"""
+      const objects=[],relations=[];
+      for(let i=0;i<60;i++)objects.push(obj(`claude:${i}`,'agent',{exec_state:'running'}));
+      for(let i=0;i<5;i++){objects.push(obj(`attention!claude:${i}`,'attention',{category:'failed',exec_state:'failed'}));relations.push(rel(`attention!claude:${i}`,'explains',`attention!claude:${i}`,`claude:${i}`))}
+      for(let i=5;i<8;i++){objects.push(obj(`attention!claude:${i}`,'attention',{category:'blocked',exec_state:'blocked'}));relations.push(rel(`attention!claude:${i}`,'explains',`attention!claude:${i}`,`claude:${i}`))}
+      const s=state(objects,relations);
+      const vm=L.viewModel(s,L.resolveLayout(s),L.viewport(1920,1080));
+      const animated=vm.nodes.filter(n=>n.animate);
+      /* La page ne propose que les nœuds dont l'état vient de changer. */
+      const fresh=new Set(['claude:59','attention!claude:6']);
+      const quiet=L.viewModel(s,L.resolveLayout(s),L.viewport(1920,1080),{animatable:n=>fresh.has(n.id)});
+      return {count:animated.length,max:L.MAX_ANIMATED,signals:animated.filter(n=>n.signal).length,
+        firstStar:animated.find(n=>!n.signal).id,stillRunning:vm.nodes.filter(n=>!n.signal&&!n.animate).length,
+        freshOnly:quiet.nodes.filter(n=>n.animate).map(n=>n.id).sort(),none:L.viewModel(s,L.resolveLayout(s),L.viewport(1920,1080),{animatable:()=>false}).nodes.filter(n=>n.animate).length};
+    """)
+
+    assert result == {"count": 24, "max": 24, "signals": 8, "firstStar": "claude:0", "stillRunning": 44,
+                      "freshOnly": ["attention!claude:6", "claude:59"], "none": 0}
+
+
+def test_small_boxes_are_drawn_compact_without_touching_the_scene(tmp_path):
+    result = run_node(tmp_path, r"""
+      const win=obj('w','window',{origin:'brain',geometry:{x:0,y:0,w:64,h:40},constraints:{placed_by:'brain',pinned_by_user:false}});
+      const cap=obj('c','artifact',{origin:'brain',geometry:{x:-100,y:0,w:24,h:7},constraints:{placed_by:'brain',pinned_by_user:false}});
+      const s=state([win,cap]);
+      const at=(w,h)=>Object.fromEntries(L.viewModel(s,L.resolveLayout(s),L.viewport(w,h)).nodes.map(n=>[n.id,[n.representation,n.shape,n.compact,n.summary===''&&n.items.length===0]]));
+      return {big:at(1920,1080),small:at(800,1000),tiny:at(400,600),
+        commits:L.commitCandidates(s,L.resolveLayout(s),new Map(),0).length,repr:[...s.objects.values()].map(o=>o.representation)};
+    """)
+
+    assert result["big"] == {"w": ["window", "window", False, True], "c": ["capsule", "capsule", False, True]}
+    assert result["small"] == {"w": ["window", "capsule", True, True], "c": ["capsule", "point", True, True]}
+    assert result["tiny"]["w"][1] == "capsule" and result["tiny"]["c"][1] == "point"
+    assert result["commits"] == 0 and result["repr"] == ["window", "capsule"]
+
+
+def test_arrow_keys_move_between_nodes_in_spatial_order(tmp_path):
+    result = run_node(tmp_path, r"""
+      const n=(id,cx,cy)=>({id,cx,cy});
+      const nodes=[n('c',500,100),n('a',100,100),n('b',300,110),n('d',100,400),n('e',320,390)];
+      return {order:L.spatialOrder(nodes).map(x=>x.id),
+        right:L.nextFocus(nodes,'a','ArrowRight'),rightAgain:L.nextFocus(nodes,'b','ArrowRight'),end:L.nextFocus(nodes,'c','ArrowRight'),
+        down:L.nextFocus(nodes,'a','ArrowDown'),up:L.nextFocus(nodes,'e','ArrowUp'),left:L.nextFocus(nodes,'e','ArrowLeft'),
+        home:L.nextFocus(nodes,'e','Home'),last:L.nextFocus(nodes,'a','End'),missing:L.nextFocus(nodes,'gone','ArrowDown'),
+        none:L.nextFocus([],'a','ArrowDown')};
+    """)
+
+    assert result == {"order": ["a", "b", "c", "d", "e"], "right": "b", "rightAgain": "c", "end": "c", "down": "d",
+                      "up": "b", "left": "d", "home": "a", "last": "e", "missing": "a", "none": None}
+
+
+# ------------------------------------------------- meneur et suiveurs
+
+
+ROLES = r"""
+function tabHarness(bus,name){
+  const h=loopHarness();
+  /* Reconstruire la boucle avec diffusion vers le bus partagé. */
+  const calls=h.calls,views=h.views,logs=h.logs;
+  const loop=P.createSceneLoop({client:S,
+    request:(path,options)=>new Promise((resolve,reject)=>{
+      const call={path,timeoutMs:options.timeoutMs,resolve,reject,aborted:false,tab:name};
+      options.signal.addEventListener('abort',()=>{call.aborted=true;const e=new Error('aborted');e.name='AbortError';reject(e)});
+      calls.push(call);
+    }),
+    setTimeout:(fn,ms)=>T.set(fn,ms),clearTimeout:id=>T.clear(id),now:()=>T.now,random:()=>.5,
+    createAbort:()=>new AbortController(),onUpdate:v=>views.push(v),log:(level,event,data)=>logs.push([level,event]),
+    broadcast:message=>bus.push({...message,from:name})});
+  return {...h,loop,name};
+}
+function deliver(bus,tabs){
+  const pending=bus.splice(0);
+  for(const message of pending)for(const tab of tabs)if(tab.name!==message.from)tab.loop.receive(message);
+  return pending.length;
+}
+const longPolls=tab=>tab.calls.filter(c=>c.path.includes('/api/scene/patches')&&c.path.endsWith('wait_s=25'));
+const shortReads=tab=>tab.calls.filter(c=>!c.path.endsWith('wait_s=25')).map(c=>c.path.replace(/scene_id=scene&epoch=e\d&/,''));
+"""
+
+
+def test_only_the_leader_long_polls_and_followers_apply_its_broadcasts(tmp_path):
+    result = run_node(tmp_path, ROLES + r"""
+      const bus=[];
+      const leader=tabHarness(bus,'A'),follower=tabHarness(bus,'B'),other=tabHarness(bus,'C');
+      leader.loop.setRole('leader');follower.loop.setRole('follower');other.loop.setRole('follower');
+      for(const t of [leader,follower,other])t.loop.setEnabled(true);
+      await flush();
+      await leader.answer(snapshotBody([],0));
+      await follower.answer(snapshotBody([],0));
+      await other.answer(snapshotBody([],0));
+      deliver(bus,[leader,follower,other]);await flush();
+      const idle={follower:follower.loop.view().phase,open:[leader.open().length,follower.open().length,other.open().length]};
+      /* Rafale : 3 réponses de patchs du meneur. */
+      for(let r=0;r<3;r++){
+        await leader.answer(patchesBody(r,[obj(`claude:${r}`,'agent')]));
+        deliver(bus,[leader,follower,other]);await flush();
+      }
+      await T.advance(120000);deliver(bus,[leader,follower,other]);await flush();
+      return {idle,
+        revisions:[leader,follower,other].map(t=>t.loop.view().state.revision),
+        objects:[follower,other].map(t=>[...t.loop.view().state.objects.keys()]),
+        longPolls:[leader,follower,other].map(t=>longPolls(t).length),
+        followerRequests:shortReads(follower),
+        leaderBroadcasts:leader.loop.view().stats.broadcasts,
+        received:follower.loop.view().stats.received};
+    """)
+
+    assert result["idle"] == {"follower": "following", "open": [1, 0, 0]}
+    assert result["revisions"] == [3, 3, 3]
+    assert result["objects"] == [["claude:0", "claude:1", "claude:2"]] * 2
+    assert result["longPolls"][1:] == [0, 0]  # jamais de requête longue chez un suiveur
+    assert result["longPolls"][0] >= 4
+    # 120 s sans message du meneur (sa requête pend) : le chien de garde relit
+    # les patchs manqués par une lecture courte, jamais un instantané.
+    assert result["followerRequests"][0] == "/api/scene"
+    assert all(path.endswith("after=3&wait_s=0") for path in result["followerRequests"][1:])
+    assert result["received"] >= 6
+
+
+def test_a_follower_catches_up_a_gap_with_a_short_read(tmp_path):
+    result = run_node(tmp_path, ROLES + r"""
+      const bus=[];
+      const leader=tabHarness(bus,'A'),follower=tabHarness(bus,'B');
+      leader.loop.setRole('leader');follower.loop.setRole('follower');
+      leader.loop.setEnabled(true);follower.loop.setEnabled(true);await flush();
+      await leader.answer(snapshotBody([],0));await follower.answer(snapshotBody([],0));
+      deliver(bus,[leader,follower]);await flush();
+      /* Deux réponses du meneur ; la première diffusion est perdue. */
+      await leader.answer(patchesBody(0,[obj('x1','agent')]));bus.splice(0);
+      await leader.answer(patchesBody(1,[obj('x2','agent')]));
+      deliver(bus,[leader,follower]);await flush();
+      const catching=follower.open().map(c=>c.path.replace(/scene_id=scene&epoch=e1&/,''));
+      await follower.answer(patchesBody(0,[obj('x1','agent'),obj('x2','agent')]));
+      return {catching,phase:follower.loop.view().phase,revision:follower.loop.view().state.revision,
+        objects:[...follower.loop.view().state.objects.keys()],longPolls:longPolls(follower).length};
+    """)
+
+    assert result["catching"] == ["/api/scene/patches?after=0&wait_s=0"]
+    assert result == {**result, "phase": "following", "revision": 2, "objects": ["x1", "x2"], "longPolls": 0}
+
+
+def test_leader_handover_mid_burst_misses_no_patch(tmp_path):
+    result = run_node(tmp_path, ROLES + r"""
+      const bus=[];
+      const a=tabHarness(bus,'A'),b=tabHarness(bus,'B');
+      a.loop.setRole('leader');b.loop.setRole('follower');
+      a.loop.setEnabled(true);b.loop.setEnabled(true);await flush();
+      await a.answer(snapshotBody([],0));await b.answer(snapshotBody([],0));deliver(bus,[a,b]);await flush();
+      await a.answer(patchesBody(0,[obj('p1','agent')]));deliver(bus,[a,b]);await flush();
+      /* Rafale en cours : le meneur disparaît avant de diffuser la révision 2. */
+      await a.answer(patchesBody(1,[obj('p2','agent')]));bus.splice(0);
+      a.loop.stop();
+      b.loop.setRole('leader');await flush();
+      const takeover=b.open().map(c=>c.path.replace(/scene_id=scene&epoch=e1&/,''));
+      await b.answer(patchesBody(1,[obj('p2','agent'),obj('p3','agent')]));
+      return {takeover,revision:b.loop.view().state.revision,objects:[...b.loop.view().state.objects.keys()],
+        next:b.open().map(c=>c.path.replace(/scene_id=scene&epoch=e1&/,'')),role:b.loop.view().role,
+        snapshots:b.calls.filter(c=>c.path==='/api/scene').length};
+    """)
+
+    assert result["takeover"] == ["/api/scene/patches?after=1&wait_s=25"]
+    assert result["revision"] == 3 and result["objects"] == ["p1", "p2", "p3"]
+    assert result["next"] == ["/api/scene/patches?after=3&wait_s=25"]
+    assert result["role"] == "leader" and result["snapshots"] == 1
+
+
+def test_followers_resync_on_a_new_epoch_and_mirror_the_leader_outage(tmp_path):
+    result = run_node(tmp_path, ROLES + r"""
+      const bus=[];
+      const a=tabHarness(bus,'A'),b=tabHarness(bus,'B');
+      a.loop.setRole('leader');b.loop.setRole('follower');
+      a.loop.setEnabled(true);b.loop.setEnabled(true);await flush();
+      await a.answer(snapshotBody([obj('k','agent')],5));await b.answer(snapshotBody([obj('k','agent')],5));deliver(bus,[a,b]);await flush();
+      /* Core injoignable : le meneur se replie et le dit. */
+      await a.answer({source:'core',core_reachable:false,scene:null,error:{code:'core_unreachable',message:'Core injoignable'}});
+      deliver(bus,[a,b]);await flush();
+      const mirrored=[b.loop.view().health.level,b.loop.view().health.code,b.open().length];
+      /* Core redémarré : nouvelle époque. */
+      await T.advance(T.pending()[0]);
+      await a.answer({...patchesBody(5,[],'e2'),revision:1});
+      await a.answer(snapshotBody([obj('k','agent')],1,'e2'));
+      deliver(bus,[a,b]);await flush();
+      const followerRead=b.open().map(c=>c.path.replace(/scene_id=scene&/,''));
+      await b.answer({...patchesBody(5,[],'e2'),revision:1});
+      await b.answer(snapshotBody([obj('k','agent')],1,'e2'));
+      return {mirrored,followerRead,epoch:b.loop.view().state.epoch,health:b.loop.view().health.level,
+        followerRequests:b.calls.map(c=>c.path.split('?')[0]+(c.path.includes('wait_s=')?'?wait_s='+c.path.split('wait_s=')[1]:''))};
+    """)
+
+    assert result["mirrored"] == ["degraded", "core_unreachable", 0]
+    assert result["followerRead"] == ["/api/scene/patches?epoch=e1&after=5&wait_s=0"]
+    assert result["epoch"] == "e2" and result["health"] == "ok"
+    assert result["followerRequests"] == ["/api/scene", "/api/scene/patches?wait_s=0", "/api/scene"]
+
+
+def test_status_back_retries_at_once_instead_of_waiting_the_backoff(tmp_path):
+    result = run_node(tmp_path, r"""
+      const h=loopHarness();
+      h.loop.setEnabled(true);await flush();
+      for(let i=0;i<6;i++){const e=new Error('Failed to fetch');e.name='TypeError';await h.fail(e);if(i<5)await T.advance(T.pending()[0])}
+      const waitingFor=T.pending()[0];
+      const first=h.loop.retryNow();await flush();
+      const open=h.open().map(c=>c.path);
+      const second=h.loop.retryNow();
+      await h.answer(snapshotBody([],0));
+      return {waitingFor,first,open,second,phase:h.loop.view().phase,health:h.loop.view().health.level};
+    """)
+
+    assert result["waitingFor"] == 30000
+    assert result["first"] is True and result["open"] == ["/api/scene"]
+    assert result["second"] is False  # rien en attente
+    assert result["phase"] == "polling" and result["health"] == "ok"
+
+
+def test_messages_of_another_shape_are_ignored(tmp_path):
+    result = run_node(tmp_path, r"""
+      return [P.validMessage(null),P.validMessage({v:2,type:'tick'}),P.validMessage({v:1,type:'patches',scene_id:'s',epoch:'e'}),
+        P.validMessage({v:1,type:'tick',scene_id:'s',epoch:'e',revision:'3',health:{}}),
+        P.validMessage({v:1,type:'tick',scene_id:'s',epoch:'e',revision:3,health:{level:'ok'}}),
+        P.validMessage({v:1,type:'patches',scene_id:'s',epoch:'e',body:{patches:[]}}),P.validMessage({v:1,type:'eval',code:'x'})];
+    """)
+
+    assert result == [False, False, False, False, True, True, False]
