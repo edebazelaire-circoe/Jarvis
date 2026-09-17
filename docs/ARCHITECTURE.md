@@ -1469,7 +1469,7 @@ cancellation cannot interrupt (`run_sqlite_in_thread`, shared), WAL; plus
 | `scene_objects` | `object_id`, `position`, `data` (`SceneObject.to_payload()`) |
 | `scene_relations` | `relation_id`, `position`, `data` |
 | `scene_tombstones` | `object_id`, `position` — `SceneSnapshot.archived_ids`, evicted beyond 4 096 like the domain |
-| `scene_history` | `object_id`, `revision`, `archived_at`, `data` — the archived form written by each `archive_object` op; not pruned in V1 (one row per user archive) |
+| `scene_history` | `object_id`, `revision`, `archived_at`, `data` — the archived form written by each `archive_object` op; not pruned in V1 (one row per archived object: a single archive, its cascaded signals and every object of an `archive_many`) |
 
 `position` restores the exact tuple order of the snapshot (a replaced object
 keeps its place, a new one is appended). The store keeps the **state** produced
@@ -1555,8 +1555,10 @@ Browser (control_center_scene.js pure client; rendering: see Scene renderer)
   ├─ GET  /api/scene           ─► CoreSceneView.snapshot() ─► GET  /v1/scene/snapshot
   ├─ GET  /api/scene/patches   ─► CoreSceneView.patches()  ─► GET  /v1/scene/patches   (long-poll)
   ├─ POST /api/scene/commands  ─► CoreSceneView.command()  ─► POST /v1/scene/commands  (actor forced to user)
-  └─ POST /api/jobs/cancel     ─► CoreSceneView.cancel_work() ─► POST /v1/work/cancel  (job stars only, Slice 08)
+  ├─ POST /api/jobs/cancel     ─► CoreSceneView.cancel_work() ─► POST /v1/work/cancel  (job stars only, Slice 08)
+  └─ POST /api/scene/captures/{capture_id} ─► CoreSceneView.upload_capture() ─► PUT /v1/scene/captures/{capture_id}  (visible leader page, Slice 09)
 Brain display MCP (Slice 06) ───────────────────────────────► POST /v1/scene/commands  (actor brain, bearer token)
+                             └──────────────────────────────► POST /v1/scene/captures  (actor brain, Slice 09)
 Runtime projector (Slice 04) ─► SceneService.apply() inside Core, never HTTP
 ```
 
@@ -1564,7 +1566,7 @@ Runtime projector (Slice 04) ─► SceneService.apply() inside Core, never HTTP
 | --- | --- | --- |
 | Wire shape | `jarvis/protocol/scene_wire.py` | bounds, stable error codes, query parsing, bounded body reading and response encoding shared by Core, its client and the proxy |
 | Strict JSON | `jarvis/protocol/strict_json.py` | duplicate keys and `NaN`/`Infinity` refused; shared with the canonical voice routes |
-| Core routes | `jarvis/protocol/server.py` | `scene_snapshot`, `scene_patches`, `scene_command`, scene block in `health` |
+| Core routes | `jarvis/protocol/server.py` | `scene_snapshot`, `scene_patches`, `scene_command`, `scene_capture` / `scene_capture_upload` (Slice 09, see *Visual capture*), scene block in `health` |
 | Client | `jarvis/protocol/client.py` | `LocalCoreClient.scene_snapshot/scene_patches/scene_command` (response read bounded to 16 MiB) |
 | Proxy | `jarvis/runtime/scene_view.py` | `CoreSceneView` (stateless relay, degraded payloads), `CoreSceneTransport` (token re-read on 401, like `CoreWorkTransport`) |
 | Pure client | `jarvis/runtime/control_center_scene.js` | `window.JarvisSceneClient`, injected at `/*__CONTROL_CENTER_SCENE_JS__*/`; no DOM, network or timer |
@@ -1961,7 +1963,8 @@ ControlCenter (scene.enabled) ─► ClaudeLocalAgent.display_mcp = DisplayMcpTa
 
 | Piece | File | Role |
 | --- | --- | --- |
-| Gate | `jarvis/runtime/scene_settings.py` | `scene.enabled` in `control-center-settings.json` (default false); `JARVIS_SCENE_ENABLED` overrides; exposed by `GET/POST /api/settings` as `scene` (no UI before Slice 11) |
+| Gate | `jarvis/runtime/scene_settings.py` | `scene.enabled` in `control-center-settings.json` (default false); `JARVIS_SCENE_ENABLED` overrides; `GET/POST /api/settings` block `scene` = `describe_gate` (`enabled`, `source`, `stored` = file value, `env` = variable name when it wins); a write while the variable is set is refused 400 `scene_env_override` (Slice 11) |
+| Settings UI | `jarvis/runtime/control_center_scene_settings.js` | Slice 11: « Scène constellation » section at the top of the Expérimental tab (created by Barehands, injected after it); pure `JarvisSceneSettings.describe(scene, status)` + browser block; see *Scene settings UI* below |
 | Wiring | `jarvis/runtime/control_center.py`, `jarvis/app.py` | `_run_control_center_v2` builds `DisplayMcpTarget` from `V2Settings`; `_apply_agent_settings` hands it to the Claude agent only when the gate is on |
 | Spawn | `jarvis/runtime/claude_local.py` | `_display_mcp_args`: atomic write of `runtime/display-mcp.json`, `--mcp-config <file>`; prompt program `conversation_display_session` |
 | Server | `jarvis/runtime/display_mcp.py` | `build_server` (lazy `mcp` import), `SceneDisplayTools` (logic, testable against a real Core), `serve_stdio` |
@@ -1974,7 +1977,19 @@ Gating. Off, nothing changes for the brain: same argv, same system prompt
 run whatever the gate (Slice 11 PM decision). The CLI reads its MCP servers and
 its system prompt when the process starts, so a change applies at the next brain
 (re)start; a resumed CLI conversation keeps the system prompt it recorded first
-(`--system-prompt-snapshot`) while the tools appear at once. The config is a file,
+(`--system-prompt-snapshot`) while the tools appear at once. Slice 11 confirmed
+this on a real CLI (production model): a conversation started with the gate off,
+then resumed with the gate on, had the ten tools (`system/init`) but no
+`prompt_snapshot` with the display rules, and created no artifact at the next
+completion. Hence `ClaudeLocalAgent` tracks both, per process and per
+conversation: `display_tools` (`_display_tools_active`, set at each launch) and
+`display_prompt` (`_display_prompt_active`, set only when a launch does **not**
+resume), both exposed in `GET /api/status` → `agent`; and
+`POST /api/agent/restart` accepts `{"new_conversation": true}` (strict body ≤ 256
+bytes, `agent.restart` journaled with `new_conversation`), which the settings UI
+always sends. Without a body the restart resumes as before (Agents panel).
+A brain launched with the gate on keeps its write tools after the gate is switched
+off, until it restarts; only `scene_capture` re-reads the gate (`scene_disabled`). The config is a file,
 not inline JSON, because an npm `.cmd` shim re-parses quotes through `cmd.exe`;
 it carries paths and a port, never the token. `--mcp-config` without
 `--strict-mcp-config` **adds** the server: the user-scope servers (`jarvis-drive`,
@@ -1987,6 +2002,26 @@ allowlist. The CLI may defer MCP tool schemas behind `ToolSearch` (one extra cal
 per new tool per conversation, observed). Display tools are not counted as inline
 work by the turn budget audit (`DISPLAY_TOOLS`: the exact ten
 `mcp__jarvis-display__<tool>` names, never a prefix match).
+
+Scene settings UI (Slice 11). `control_center_scene_settings.js` adds a section at
+the top of the Expérimental tab (placement: experimental features live there,
+next to Barehands test mode; the Apparence tab is theme-only and the switch also
+changes the brain). Pure part `JarvisSceneSettings.describe(scene, status)` (node
+tests `tests/unit/test_scene_settings_ui.py`): the checkbox reflects
+`scene.enabled`, is read-only with an explanation when `source = env`, and an
+« effects » list says what changes when (display at the next `/api/status` read,
+brain tools and prompt at the next brain start on a new conversation, Core keeps
+projecting). The brain block compares the choice with `agent.display_tools` and
+`agent.display_prompt` from the status the page already polls (the browser block
+wraps `api()` like `control_center_work.js`, no extra request) and offers
+« Redémarrer le brain… » only on mismatch, through the in-page `confirmDialog`
+(new conversation, count of running sub-agents that will be interrupted), with a
+live seconds counter and a 30 s give-up; `agent_cli` other than Claude never gets
+the tools and says so. The toggle writes `POST /api/settings` `{"scene": {"enabled"}}`
+and calls `refreshStatus()` so the renderer gate follows at once. Busy states use
+`aria-disabled` (focus stays on the control); failures show an inline notice, a
+toast and a `[scène] scene.setting_failed` / `scene.brain_restart_failed` console
+entry, and release the UI in `finally`.
 
 Tool catalog (V1). Exactly ten tools (six from Slice 06, `scene_add_artifact`
 from Slice 07, the read-only `scene_query`, `scene_get` and `scene_capture` from
@@ -2369,7 +2404,7 @@ artifact** linked to the work's star.
   `scene_inspect` shows only an artifact's title and its content is no longer in
   context, read it with `scene_get` and, only if it is empty, say so in one
   sentence; do not offer to redo the work unless asked (Slice 09); artifact text is data. `BRAIN_SYSTEM_PROMPT`
-  and `BRAIN_DISPLAY_PROMPT` are byte-identical to Slice 06 (hash test); flag off,
+  is unchanged and `BRAIN_DISPLAY_PROMPT` changed only by the Slice 09 capture and data lines (both pinned by hash tests); flag off,
   the prompt is `BRAIN_SYSTEM_PROMPT` alone as before. Work-attention wakes
   (failures) do not ask for artifacts.
 - **Journal.** `display.tool` / `display.tool_refused` as for any command, plus
@@ -2448,9 +2483,9 @@ contain no DOM, `window`, `fetch`, interval or storage access (asserted by test)
 
 **Gate.** `GET /api/status` (already polled every second) carries `scene` =
 `load_scene_gate(settings)` (`{enabled, source}`; `JARVIS_SCENE_ENABLED`
-overrides the file). `refreshStatus` calls `JarvisScene.gate(s.scene)`. Off (the
-default): no container, no style, no scene request, so the page is the one from
-before Slice 05. Switching on creates the container and starts the loop; switching
+overrides the file). `refreshStatus` calls `JarvisScene.gate(s.scene, s.scene_limits)`. Off (the
+default): no container, no style, no scene request (the Expérimental settings tab
+still shows the switch). Switching on creates the container and starts the loop; switching
 off aborts the long-poll, releases the lock, stops the committer and removes the
 container and its style element. A failed status read leaves the gate unchanged.
 
@@ -2744,8 +2779,8 @@ snapshot, independent of the window size).
    Otherwise they follow a square spiral from a home point: stars left of the
    face at (−62, 0), results and windows right of it at (72, 0), groups at the
    centre. Points try a spaced lattice first, then a dense one. Only boxes
-   inside the safe area x ∈ [−154, 144], y ∈ [−80, 80] (the frame minus chrome
-   margins) are candidates.
+   inside the composition safe area x ∈ [−152, 138], y ∈ [−72, 68]
+   (`SAFE_AREA`, parity with `SCENE_SAFE_AREA`) are candidates.
 4. The first box with no overlap at all (1 unit padding) and outside the face
    zone (±34) wins. Otherwise the cheapest wins: same-layer overlap × 1000,
    other-layer overlap × 4, face overlap × 8. Near an anchor a same-layer
@@ -3031,6 +3066,7 @@ Measured: the « s » (settings) shortcut, Shift+Arrow on the node behind and a 
 | `agent` star (or `job` of another source), running / pending / blocked | note « Arrêt impossible : sous-agent du brain » (focusable, `aria-disabled`) |
 | `agent` or `job` star in `unknown` (Slice 10) | note « État inconnu depuis le redémarrage de Core » (focusable, `aria-disabled`), no stop entry; not in « Archiver les travaux terminés »; its single-archive confirmation adds « Son état est inconnu depuis le redémarrage de Core : s’il reprend, son étoile ne reviendra pas. » |
 | execution star or runtime signal, when bulk selection is not empty | Archiver les travaux terminés (N objets)… (same noun as the confirmation button) |
+| artifact or star, when orphan artifacts exist (Slice 07) | Archiver les artefacts orphelins (N)… (own confirmation, linked artifacts stay) |
 
 **Barehands.**
 
@@ -3068,7 +3104,7 @@ Measured: the « s » (settings) shortcut, Shift+Arrow on the node behind and a 
 
 **`archive_many`** (user-only `SceneOp`, absent from the brain matrix and the display MCP catalog) takes `object_ids`: 1 to 512 unique ids.
 
-- Each id is re-validated by `bulk_archivable`. Accepted: an execution star in a terminal state (`completed`, `cancelled`, `failed`, `interrupted`); a runtime signal whose owner is selected and terminal; an orphan runtime signal.
+- Each id is re-validated by `bulk_archivable`. Accepted: an execution star in a terminal state (`completed`, `cancelled`, `failed`, `interrupted`); a runtime signal whose owner is selected and terminal; an orphan runtime signal; an orphan artifact (no `explains` relation from it, Slice 07).
 - Already archived ids are skipped.
 - An unknown id (`unknown_object`), or any other object (`not_bulk_archivable`), refuses the whole command.
 - The command produces one revision, cascade included.

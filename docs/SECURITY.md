@@ -122,8 +122,9 @@ STT, agent and TTS failures are typed. Provider errors transition through visibl
 
 ### 13. Brain scene display tool (constellation, v0.2 path)
 
-With `scene.enabled` (off by default), the conversational Claude CLI brain gets a
-**write-capable** MCP server, `jarvis-display` (`python -m jarvis display-mcp`,
+With `scene.enabled` (off by default; `JARVIS_SCENE_ENABLED` overrides it and then
+locks the setting: writes are refused `scene_env_override`), the conversational
+Claude CLI brain launched afterwards gets a **write-capable** MCP server, `jarvis-display` (`python -m jarvis display-mcp`,
 declared per launch through `--mcp-config`; `docs/ARCHITECTURE.md` › *Brain
 display MCP*). It can create, edit, move, hide and link scene objects in Core's
 persistent scene. It cannot archive, pin or unpin: those tools do not exist in
@@ -166,7 +167,7 @@ signal. Same honest-caller limit as above.
 
 User controls (Slice 08). Two new write paths exist, neither in the brain's tool
 catalog. `archive_many` is a user-only scene op (one command can archive every
-terminal star and its signals, at most 512 ids): the reducer refuses it to actor
+terminal star, its signals and orphan artifacts, at most 512 ids): the reducer refuses it to actor
 `brain` (`op_not_allowed`). `POST /v1/work/cancel` is **not** refused to the brain
 by construction: it has no actor at all and is protected by the bearer token only,
 like every Core route; it cancels exactly one Core job (never a Claude sub-agent,
@@ -222,8 +223,10 @@ draws it: windows, capsules, stars, relations, titles, summaries and item rows
 (hosts and labels) — the same scene text it can already read with `scene_get`,
 now also as pixels the model sees. Not included: the rest of the page (dock,
 topbar, panels, timeline, conversation or voice text, face), other tabs, other
-applications or the desktop (no OS capture, no browser automation, no
-`--chrome`). Who can trigger it: only the brain, through its display MCP and
+applications or the desktop: the capture mechanism uses no OS capture and no
+browser automation. (Separately, the conversational brain is launched with
+`--chrome` browser tools, so it can already see pages it drives; the capture adds
+nothing there.) Who can trigger it: only the brain, through its display MCP and
 Core's bearer token (`POST /v1/scene/captures`, actor `brain`); there is no
 button and no Control Center route that requests one. Only the visible Web Locks
 leader page answers, and only for a pending, unexpired, single-use random id
@@ -266,6 +269,23 @@ model as the rest of the Control Center: a **hostile process running under the
 local user account is a non-goal** of V1 (it can already read `core.token`, the
 scene database and the trace). The capture is therefore evidence for an honest
 local machine only, never a proof of what the user saw.
+
+Gate timing (Slice 11). The gate is read when the brain CLI starts: a brain
+started with it on keeps its write tools after it is switched off, until it
+restarts (only `scene_capture` re-checks the gate). The Expérimental settings tab
+shows this through `agent.display_tools` / `agent.display_prompt` and offers a
+confirmed restart on a new conversation. `POST /api/settings` can flip the gate
+for any local process that sends no `Origin` header: same trust model as the rest
+of the Control Center.
+
+Privacy and retention. Core projects the scene whether or not the display is on:
+sub-agent labels, runtime failure summaries, brain notes, artifact summaries and
+URLs are persisted in `data/state/scene.sqlite3` (local, not encrypted, like
+`jarvis.sqlite3`). Archived objects move to `scene_history`, which is **never
+pruned in V1**; there is no archive undo and no purge command. Captures stay in
+`runtime/scene-captures/` (5 files, 24 h). Nothing of the scene leaves the machine
+except what the brain itself sends to its model provider (scene text it reads,
+capture images).
 
 The generated `runtime/display-mcp.json` holds the interpreter path, Core's
 loopback host and port and the token file **path**, never the token. Tool journal

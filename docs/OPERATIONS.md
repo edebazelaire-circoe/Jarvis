@@ -124,7 +124,7 @@ duration, without storing raw audio.
 Le bouton **SET** du Control Center (ou la touche `s`) ouvre une fenêtre
 centrée, fermée par un clic à l'extérieur ou par `Échap`. Elle a six onglets :
 Mode vocal, Prompts, Agent / CLI, Config, API Keys et Raccourcis, plus
-Apparence (couche de thèmes) et Expérimental (Barehands en mode test).
+Apparence (couche de thèmes) et Expérimental (scène constellation et Barehands en mode test).
 
 Un principe la traverse : **la page ne connaît aucun réglage**. Le serveur
 décrit ce qui existe — les piles vocales, leurs champs, les CLI, leurs modes,
@@ -869,6 +869,111 @@ et affiche l'archive (`Erreurs archivées`). L'archivage déplace les entrées d
 `runtime/errors.jsonl` vers `runtime/errors-archive.jsonl` en les horodatant :
 le badge se vide, rien n'est perdu, et `runtime/trace.jsonl` reste intact.
 
+### Scène constellation — vue d'ensemble
+
+Point d'entrée pour l'utilisateur ; chaque paragraphe renvoie à la section qui
+détaille.
+
+**Ce que c'est.** Une carte persistante du travail de JARVIS, dessinée derrière
+les commandes du Control Center : chaque sous-agent devient une **étoile**, ses
+résultats deviennent des **artefacts** reliés à l'étoile (liens trouvés,
+fichiers, e-mails…), et le cerveau peut y montrer une note ou une fenêtre. La
+scène appartient à Core (fichier `data/state/scene.sqlite3`) : un rechargement,
+un autre onglet ou un redémarrage retrouvent la même scène. Le travail terminé
+**reste** jusqu'à ce que vous le rangiez.
+
+**L'activer.** Éteinte par défaut.
+
+1. **SET** → onglet **Expérimental** → section « Scène constellation » → cocher
+   « Afficher la scène et donner ses outils au brain ». L'affichage apparaît dans
+   toutes les fenêtres ouvertes en une seconde, sans recharger.
+2. L'encadré dit alors si le brain en cours a les outils **et** la consigne
+   d'affichage. Sinon, « Redémarrer le brain… » puis confirmer : le brain repart
+   sur une **nouvelle conversation** (la conversation en cours n'est pas reprise,
+   parce qu'une conversation reprise garde son ancienne consigne) ; les
+   sous-agents en cours sont interrompus, la confirmation dit combien.
+3. Pour éteindre : décocher (la scène disparaît aussitôt de la page), puis même
+   redémarrage pour retirer les outils au brain.
+
+Si la case est grisée avec « Imposé par la variable d'environnement
+JARVIS_SCENE_ENABLED », la variable du Control Center décide : la retirer et
+relancer le Control Center pour choisir dans l'onglet. Seul le brain **Claude**
+reçoit les outils ; avec Codex, seul l'affichage suit la case. Détail :
+« Scène constellation : outils d'affichage du cerveau », paragraphe **Activer**.
+
+**Ce qui apparaît tout seul** (sans tour du cerveau, allumée ou non) : une étoile
+par sous-agent Claude et par tâche de fond de Core, reliée à son parent ; son
+état en signal secondaire (anneau, pastille) ; un signal d'attention en cas
+d'échec, de blocage ou d'interruption. Jamais une étoile par commande shell,
+fichier ou URL. Voir « ce que Core y projette tout seul » et « ce que l'on voit
+dans le Control Center ».
+
+**Ce que le brain peut faire** (outils `jarvis-display`) : lire la scène et le
+détail d'un objet, trouver des objets, créer et modifier notes, fenêtres et
+capsules, les masquer ou les relier, grouper le résultat d'un travail terminé en
+**un** artefact par travail et par catégorie, et, pour une vérification
+visuelle (« regarde l'écran »), capturer la scène. Il **n'archive pas, n'épingle pas**, ne
+déplace pas un objet épinglé et n'arrête rien depuis la scène. Voir « outils
+d'affichage du cerveau » et « les artefacts ».
+
+**Ce que vous pouvez faire** (souris, clavier, Barehands ; détail : « agir sur les
+objets ») :
+
+| Geste | Comment |
+| --- | --- |
+| déplacer (et donc épingler) | glisser, ou Maj+flèches |
+| épingler / désépingler | menu (clic droit, appui long, Maj+F10) |
+| masquer, puis réafficher | menu « Masquer » ; pastille « N objets masqués · afficher » |
+| changer de forme | menu « Afficher en point / capsule / fenêtre » |
+| archiver un objet | menu « Archiver… » ; une étoile emporte ses signaux, **pas** ses artefacts |
+| archiver en groupe | « Archiver les travaux terminés (N objets)… » (terminés, en échec, annulés, interrompus) et « Archiver les artefacts orphelins (N)… » (artefacts dont l'étoile est archivée) |
+| arrêter | « Arrêter la tâche… » pour une tâche de Core seulement ; un sous-agent du brain ne s'arrête qu'avec le brain entier |
+
+Aucune archive ne s'annule en V1.
+
+**Redémarrages.** Rechargement : même scène, rien n'est replacé. Core redémarré,
+Control Center allumé : les étoiles en cours passent un instant « état inconnu »,
+puis reprennent leur vrai état ; le travail terminé et les artefacts restent
+identiques. Voir « redémarrages et « état inconnu » ».
+
+**Captures.** Seul le brain en demande une, jamais un bouton ; seule une page du
+Control Center **ouverte et visible** la dessine (sans page : refus au bout de
+5 s). Image de la scène seule (ni dock, ni panneaux, ni chronologie), au plus
+1280×720, gardée dans `runtime\scene-captures\` (5 fichiers, 24 h). Voir
+« outils d'affichage du cerveau », **Capture visuelle**.
+
+**Confidentialité.** Tout reste sur la machine : titres des sous-agents, résumés,
+adresses des artefacts sont enregistrés dans `data/state/scene.sqlite3` même
+quand l'affichage est éteint, et l'historique des objets archivés n'est jamais
+élagué en V1. La trace (`runtime/trace.jsonl`) ne garde que des identifiants et
+des comptes, jamais le texte d'une note ni une image. Ce que le brain lit de la
+scène (texte, capture) part vers son modèle comme le reste de la conversation.
+Limites de confiance : `docs/SECURITY.md` §13.
+
+**Limites connues.** 512 objets actifs (≈ 400 étoiles) : au-delà, la pastille
+« Scène pleine » propose l'archivage groupé et les nouvelles étoiles attendent.
+Zone de composition prévue à partir de 1280×720 : une fenêtre plus petite peut
+cacher des bords sous les commandes. Glisser au doigt jamais vérifié ; Barehands
+ne glisse pas et n'ouvre pas les liens. Une page par profil de navigateur tient
+la lecture de la scène : avec la chronologie ouverte dans cinq fenêtres ou plus,
+la page ralentit. Un Control Center arrêté sans être relancé laisse ses
+sous-agents « en cours ». Le brain juge lui-même : il peut parler d'un résultat
+de mémoire plutôt qu'en relisant l'artefact, et répondre à « regarde l'écran » par
+la lecture structurée de la scène, sans capture, quand elle lui suffit (constaté
+au Slice 11 sur une scène à un seul objet).
+
+**Dépanner en premier.**
+
+| Symptôme | Que faire |
+| --- | --- |
+| rien ne s'affiche, case cochée | recharger la page ; si la case est grisée, voir la variable d'environnement ci-dessus |
+| l'encadré « brain » reste orange | « Redémarrer le brain… » ; un échec s'affiche en rouge avec la cause, et dans la console `[scène] scene.brain_restart_failed` |
+| « Réglage de scène non enregistré » | lire la cause affichée ; les réglages refusés sont aussi dans `runtime/trace.jsonl` (`settings.agent.rejected`) |
+| le brain a les outils mais ne crée aucun artefact | conversation reprise avec l'ancienne consigne (`agent.start` `resumed: true`) : « Redémarrer le brain… » depuis l'onglet Expérimental, pas depuis le panneau Agents |
+| « Scène figée — Core injoignable » | démarrer Core ; la page reprend seule |
+
+Tables complètes : dans chaque section « Scène constellation » ci-dessous.
+
 ### Scène constellation : ce que Core y projette tout seul
 
 Sans attendre le cerveau, Core pose dans la scène une **étoile** par travail
@@ -952,7 +1057,7 @@ Dépannage :
 | un sous-agent tourne mais aucune étoile | l'agent n'est pas celui du Control Center (Codex, sous-agent interne d'un job : pas d'observation), ou Core ne reçoit pas l'état des sous-tâches (`work.ingress_unavailable` côté Control Center) | vérifier `GET /v1/work/snapshot` : pas d'élément `kind: agent` → problème d'ingestion, pas de scène |
 | l'élément existe dans `/v1/work/snapshot` mais pas d'étoile | `kind` n'est pas `agent`/`job`, ou l'étoile a été archivée (`archived_ids`), ou la scène est indisponible (`projection_unavailable`) | lire `/v1/health` (`scene.state`) et la trace |
 | de nouveaux sous-agents tournent mais aucune étoile n'apparaît, `scene.saturated: true` dans `/v1/health` | scène pleine (`core.scene.projection_saturated`) | archiver des étoiles terminées ; les étoiles en attente arrivent aussitôt |
-| après un redémarrage de Core, une étoile affiche « état inconnu depuis le redémarrage » | normal pendant la grâce (60 s) : l'état de travail de Core est reparti vide, le Control Center n'a pas encore redit ses sous-agents | attendre ; si le Control Center tourne, l'état revient en ~30 s au plus. Sinon l'étoile passe « interrompu » avec un signal à la fin de la grâce |
+| après un redémarrage de Core, une étoile affiche « état inconnu depuis le redémarrage » | normal pendant la grâce (60 s) : l'état de travail de Core est reparti vide, le Control Center n'a pas encore redit ses sous-agents | attendre ; si le Control Center tourne, l'état revient en une trentaine de secondes. Sinon l'étoile passe « interrompu » avec un signal à la fin de la grâce |
 | une étoile passe « interrompu » avec le signal « non revu après le redémarrage de Core » alors que le sous-agent tournait | le Control Center n'a rien renvoyé pendant la grâce (arrêté, ou Core injoignable pour lui : `work.ingress_unavailable` dans sa trace) | vérifier le Control Center ; dès qu'il redit ce travail, l'étoile reprend son état et le signal est retiré |
 | après un arrêt brutal du **Control Center**, des étoiles restent « en cours » | le Control Center n'a pas été relancé (Core n'a aucun délai d'expiration pour lui), ou la nouvelle instance ne joint pas Core (`work.ingress_unavailable` dans sa trace) | relancer le Control Center : sa première connexion à Core interrompt les anciens sous-agents en une seconde environ |
 
@@ -965,7 +1070,7 @@ Voici ce qui se passe à chaque redémarrage (détail : `docs/ARCHITECTURE.md`,
 | Ce qui redémarre | Ce que montre la scène |
 | --- | --- |
 | **le navigateur** (rechargement de la page) | la même scène, relue d'un coup, puis les changements au fil de l'eau |
-| **Core**, le Control Center restant allumé | les étoiles encore en cours passent un instant à « état inconnu depuis le redémarrage » (anneau pointillé pâle, point atténué, badge « ? ») ; le Control Center redit l'état de ses sous-agents en 30 s au plus, et chaque étoile reprend son vrai état, sans signal |
+| **Core**, le Control Center restant allumé | les étoiles encore en cours passent un instant à « état inconnu depuis le redémarrage » (anneau pointillé pâle, point atténué, badge « ? ») ; le Control Center redit l'état de ses sous-agents en une trentaine de secondes, et chaque étoile reprend son vrai état, sans signal |
 | **Core et le Control Center**, ou Core seul pendant que le Control Center reste arrêté | « état inconnu » pendant la **grâce** (60 s), puis **interrompu** avec un signal « non revu après le redémarrage de Core » ; si le travail est redit plus tard, l'étoile reprend son état et le signal est retiré |
 | **une tâche de Core** (job) en cours au moment de l'arrêt | **interrompue** avec le signal « Core redémarré », dès le démarrage ; un job qui s'était terminé juste avant l'arrêt garde sa vraie issue (terminé, en échec…) |
 | **le Control Center** seul | dès que la nouvelle instance joint Core (environ une seconde), Core interrompt les sous-agents de l'ancienne (signal « Control Center redémarré »), même si rien n'a encore été relancé ; si le Control Center reste arrêté, ils restent « en cours » |
@@ -1007,7 +1112,8 @@ l'étoile est simplement remarquée et une nouvelle grâce commence.
 
 ### Scène constellation : lecture HTTP et dépannage
 
-Core sert la scène par trois routes (jeton de `runtime\core.token`, comme
+Core sert la scène par trois routes de lecture et de commande, plus deux routes
+de capture (voir « Capture visuelle ») (jeton de `runtime\core.token`, comme
 `/v1/work/snapshot`) ; le navigateur passe toujours par le Control Center, qui
 n'a pas besoin du jeton côté page (`docs/ARCHITECTURE.md`, « Scene transport ») :
 
@@ -1016,6 +1122,8 @@ n'a pas besoin du jeton côté page (`docs/ARCHITECTURE.md`, « Scene transport 
 | `GET /api/scene` | `GET /v1/scene/snapshot` | instantané complet : `scene_id`, `epoch`, `revision`, `snapshot` |
 | `GET /api/scene/patches?scene_id=…&epoch=…&after=N&wait_s=25` | `GET /v1/scene/patches` | attente longue des patchs après la révision `N` (25 s au plus côté Control Center, 30 s côté Core) |
 | `POST /api/scene/commands` | `POST /v1/scene/commands` | une commande de scène ; côté Control Center l'acteur est toujours `user` |
+| `POST /api/scene/captures/{capture_id}` | `PUT /v1/scene/captures/{capture_id}` | envoi de l'image d'une capture par la page meneuse visible (la demande, `POST /v1/scene/captures`, ne vient que du brain) |
+| `POST /api/jobs/cancel` | `POST /v1/work/cancel` | arrêt d'une tâche de Core depuis le menu de son étoile |
 
 Voir la scène brute, Core démarré :
 
@@ -1204,24 +1312,38 @@ Il agit toujours comme acteur `brain`. **Aucun outil n'archive ni n'épingle** :
 l'archivage reste à l'utilisateur (et Core le refuse au cerveau de toute façon).
 Détail technique : `docs/ARCHITECTURE.md`, « Brain display MCP ».
 
-**Activer.** Interrupteur `scene.enabled`, éteint par défaut, dans
-`runtime/control-center-settings.json` (pas encore d'écran de réglage, il
-arrive au Slice 11) :
+**Activer.** Interrupteur `scene.enabled`, éteint par défaut : **SET → Expérimental
+→ « Scène constellation »** (enregistré immédiatement), ou dans
+`runtime/control-center-settings.json` :
 
 ```json
 { "scene": { "enabled": true } }
 ```
 
 ou par l'API du Control Center, `POST /api/settings` avec
-`{"scene": {"enabled": true}}` (lecture : `GET /api/settings`, bloc `scene`,
-`source` = `settings` ou `env`). `JARVIS_SCENE_ENABLED=1` (ou `0`) dans
-l'environnement du Control Center l'emporte sur le fichier. **Effet au prochain
-démarrage du cerveau** (bouton Redémarrer de l'agent, ou redémarrage de JARVIS) :
-le CLI lit ses serveurs MCP et sa consigne système à son lancement. Une
-conversation reprise (`--resume`) voit les outils tout de suite mais garde la
-consigne système enregistrée à son premier tour ; un redémarrage complet de
-JARVIS ouvre une conversation neuve qui a la consigne. Éteint, le cerveau est
-lancé exactement comme avant.
+`{"scene": {"enabled": true}}` (lecture : `GET /api/settings`, bloc `scene` :
+`enabled`, `source` = `settings` ou `env`, `stored` = valeur du fichier, `env` = nom
+de la variable quand elle l'emporte). `JARVIS_SCENE_ENABLED=1` (ou `0`) dans
+l'environnement du Control Center l'emporte sur le fichier ; tant qu'elle est
+posée, toute écriture est refusée (400, en-tête `X-Jarvis-Error-Code:
+scene_env_override`, trace `settings.agent.rejected`) et la case de l'onglet est
+en lecture seule, avec l'explication.
+
+**Quand ça s'applique.** L'affichage suit en une seconde (la page relit
+l'interrupteur dans `/api/status`). Les outils **et** la consigne du cerveau ne
+changent qu'à son prochain démarrage : le CLI lit ses serveurs MCP et sa consigne
+système à son lancement, et **une conversation reprise (`--resume`) garde la
+consigne enregistrée à son premier tour** — seuls les outils suivent. Constaté au
+Slice 11 sur le vrai CLI : conversation commencée scène éteinte, reprise scène
+allumée → dix outils présents, aucun artefact créé à la fin d'une recherche.
+C'est pourquoi « Redémarrer le brain… » de l'onglet Expérimental repart sur une
+**nouvelle conversation** (`POST /api/agent/restart` avec
+`{"new_conversation": true}`), alors que « Redémarrer » du panneau Agents reprend
+la conversation. L'onglet compare le réglage à `GET /api/status` → `agent` :
+`display_tools` (outils du processus en cours) et `display_prompt` (consigne de
+la conversation en cours), et ne propose le redémarrage que s'ils diffèrent.
+Éteint, le cerveau est lancé exactement comme avant ; un cerveau lancé scène
+allumée garde ses outils après extinction, jusqu'à son redémarrage.
 
 Rien à enregistrer avec `claude mcp add` : JARVIS écrit
 `runtime/display-mcp.json` à chaque lancement du cerveau et le passe en
@@ -1246,7 +1368,9 @@ Core et le **chemin** du jeton, jamais le jeton.
 
 | Symptôme | Cause probable | Action |
 | --- | --- | --- |
-| `agent.start` dit `display_mcp: false` alors que l'interrupteur est vrai | cerveau pas redémarré, ou `JARVIS_SCENE_ENABLED=0` | redémarrer l'agent ; lire `GET /api/settings` → `scene.source` |
+| `agent.start` dit `display_mcp: false` alors que l'interrupteur est vrai | cerveau pas redémarré, `JARVIS_SCENE_ENABLED=0`, ou brain non Claude (Codex n'a jamais ces outils) | SET → Expérimental → « Redémarrer le brain… » ; lire `GET /api/status` → `agent.display_tools` et `GET /api/settings` → `scene.source` |
+| le cerveau a les outils mais ne crée pas d'artefact et ne relit pas la scène (ou cherche des outils de scène alors qu'elle est éteinte) | conversation reprise (`agent.start` `resumed: true`) qui garde la consigne de son premier tour ; `GET /api/status` → `agent.display_prompt` différent du réglage | SET → Expérimental → « Redémarrer le brain… » (nouvelle conversation), ou redémarrer JARVIS |
+| « Réglage de scène non enregistré » dans l'onglet Expérimental, code `scene_env_override` | `JARVIS_SCENE_ENABLED` est posée pour le Control Center | la retirer et relancer le Control Center, ou garder la valeur imposée |
 | `scene.display_mcp_unconfigured` (avertissement) | Control Center lancé sans coordonnées de Core (hors `python -m jarvis control-center`) | lancer par la commande normale |
 | `agent.display_mcp_failed` (erreur, panneau ERR) | `runtime/display-mcp.json` non inscriptible | corriger les droits du dossier runtime, redémarrer l'agent ; la voix marche sans l'écran en attendant |
 | `mcp_servers` montre `jarvis-display` en `failed` | interpréteur introuvable, paquet `mcp` absent (`pip install -e .[mcp]`), variable d'environnement invalide | lancer à la main la commande de `runtime/display-mcp.json` avec son `env` : l'erreur s'affiche |
@@ -1261,7 +1385,7 @@ Core et le **chemin** du jeton, jamais le jeton.
 | `display.tool_failed` niveau erreur `display_internal_error` | défaut du serveur | remonter le message (type et texte) |
 | erreur d'outil `scene_query (near) … reason=unplaced` | l'objet de référence n'a pas encore de géométrie enregistrée (placement automatique pas encore fait par une page) | normal : ouvrir le Control Center le place en quelques secondes ; sinon `scene_get` |
 | erreur d'outil `scene_query (explains) … reason=object_archived` | l'objet a été archivé | normal : rien à expliquer dans la scène active |
-| le cerveau répond « je ne vois que le titre » d'un artefact | cerveau lancé avant le Slice 09, ou conversation reprise avec l'ancienne consigne | redémarrer l'agent ; la trace doit montrer `mcp__jarvis-display__scene_get` et `display.read` |
+| le cerveau répond « je ne vois que le titre » d'un artefact | cerveau lancé avec une version plus ancienne, ou conversation reprise (`agent.start` `resumed: true`) qui garde l'ancienne consigne | SET → Expérimental → « Redémarrer le brain… » ; la trace doit montrer `mcp__jarvis-display__scene_get` et `display.read` |
 | erreur d'outil `attach_artifact refusé … reason=object_archived` | l'utilisateur a archivé l'étoile du travail | normal : pas d'artefact pour un travail rangé, rien n'a été envoyé |
 
 Tous les appels laissent `display.tool` / `display.read` (lectures `scene_query`
@@ -1274,14 +1398,15 @@ cerveau ne décrit pas ce qu'il place.
 
 ### Scène constellation : ce que l'on voit dans le Control Center
 
-Quand `scene.enabled` est vrai (voir « outils d'affichage du cerveau » pour
-l'activer), la page du Control Center dessine la scène **par-dessus le visage**
+Quand `scene.enabled` est vrai (case de l'onglet Expérimental, voir « outils
+d'affichage du cerveau » pour le détail), la page du Control Center dessine la scène **par-dessus le visage**
 (circuit imprimé ou Omega) et **sous toutes les commandes** : barre du haut,
 dock, panneaux, pastilles, réglages, notifications, menu contextuel et
 Barehands restent cliquables au-dessus. L'interrupteur est relu à chaque
 sondage de `/api/status` (chaque seconde) : l'allumer ou l'éteindre agit sur la
 page ouverte sans la recharger. Éteint, la page est exactement celle d'avant :
-aucun calque, aucune requête de scène.
+aucun calque, aucune requête de scène (seul l'onglet Expérimental des réglages
+montre l'interrupteur).
 
 **Ce qui est dessiné.**
 
@@ -1387,7 +1512,7 @@ page attend le délai indiqué.
 
 | Symptôme | Cause probable | Action |
 | --- | --- | --- |
-| aucune scène alors que l'interrupteur est vrai | page servie avant la mise à jour, ou `JARVIS_SCENE_ENABLED=0` | recharger la page ; `GET /api/status` → bloc `scene` (`enabled`, `source`) |
+| aucune scène alors que l'interrupteur est vrai | page servie avant la mise à jour, ou `JARVIS_SCENE_ENABLED=0` | recharger la page ; l'onglet Expérimental dit si la variable impose l'état (`GET /api/status` → `scene.source`) |
 | la scène reste figée après le retour de Core | la page attend son prochain essai (≤ 30 s) | attendre ; la console du navigateur montre `[scène] scene.view_restored` puis `scene.snapshot_loaded` |
 | un objet apparaît puis bouge une fois | placé localement, puis position enregistrée différente (autre navigateur ou autre profil ouvert en même temps) | sans conséquence ; la position enregistrée fait foi ensuite |
 | `scene.command set_geometry` en grand nombre dans `runtime/trace.jsonl` | première ouverture d'une scène pleine d'objets jamais placés : une commande par objet, une seule fois | normal |

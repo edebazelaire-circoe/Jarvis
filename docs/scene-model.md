@@ -135,7 +135,7 @@ commands.
 | `link` | `relation` | add a relation, or change the layer of the same relation (brain/user; runtime never changes a layer); brain/user never create a `parent_of` between execution nodes (`runtime_owned`) |
 | `unlink` | `relation_id` | remove a relation (absent → `duplicate`); for runtime, also how it retires its own signal; brain/user cannot remove runtime topology or signal links (`runtime_owned`) |
 | `archive` | `object_id` | user disposition; an execution star takes its runtime signals (cascade, Slice 08) |
-| `archive_many` | `object_ids` (1–512, unique) | user bulk disposition of terminal execution stars and their runtime signals, all or nothing, one revision (Slice 08) |
+| `archive_many` | `object_ids` (1–512, unique) | user bulk disposition of terminal execution stars, their runtime signals, orphan runtime signals and orphan artifacts (Slice 07), all or nothing, one revision (Slice 08) |
 | `attach_signal` | `object_id`, `fields`, `target_id` | create/update an `attention` object and its `explains` relation |
 | `attach_artifact` | `object_id`, `fields`, `target_id`, `relation_id` (≠ `object_id`) | create/update an `artifact` object **and** its `explains` relation to `target_id`, one patch, all or nothing (Slice 07) |
 
@@ -584,7 +584,7 @@ revision, patch}` — refusals are outcomes, not HTTP errors.
 
 Slice 06 (`ARCHITECTURE.md` › *Brain display MCP*). The brain's MCP tools
 (`jarvis/runtime/display_mcp.py`) speak this vocabulary as actor `brain`, one
-`SceneCommand` per call, never `placed_by`, never `archive` / `pin` / `unpin`.
+`SceneCommand` per call, never `placed_by`, never `archive`, `archive_many`, `pin` or `unpin`.
 
 | Tool | Arguments | Command sent | Typical refusals surfaced |
 | --- | --- | --- | --- |
@@ -617,6 +617,6 @@ brain (runtime-owned shape).
 Validation:
 
 ```powershell
-.venv/Scripts/python.exe -W error::ResourceWarning -m pytest -q -p no:cacheprovider tests/unit/test_scene_contracts.py tests/unit/test_work_state_contracts.py tests/unit/test_v2_architecture.py tests/unit/test_sqlite_scene.py tests/unit/test_scene_service.py tests/integration/test_v2_core_recovery.py tests/unit/test_scene_view.py tests/unit/test_scene_transport_client.py tests/integration/test_scene_transport.py tests/unit/test_scene_projector.py tests/integration/test_scene_projection_protocol.py tests/unit/test_display_mcp.py tests/unit/test_scene_settings.py tests/unit/test_scene_renderer_logic.py tests/unit/test_scene_artifacts.py tests/unit/test_scene_query_tools.py tests/unit/test_scene_capture.py tests/unit/test_scene_capture_logic.py tests/unit/test_scene_links.py tests/unit/test_cli_stream.py
+.venv/Scripts/python.exe -W error::ResourceWarning -m pytest -q -p no:cacheprovider tests/unit/test_scene_contracts.py tests/unit/test_work_state_contracts.py tests/unit/test_v2_architecture.py tests/unit/test_sqlite_scene.py tests/unit/test_scene_service.py tests/integration/test_v2_core_recovery.py tests/unit/test_scene_view.py tests/unit/test_scene_transport_client.py tests/integration/test_scene_transport.py tests/unit/test_scene_projector.py tests/integration/test_scene_projection_protocol.py tests/unit/test_display_mcp.py tests/unit/test_scene_settings.py tests/unit/test_scene_renderer_logic.py tests/unit/test_scene_artifacts.py tests/unit/test_scene_query_tools.py tests/unit/test_scene_capture.py tests/unit/test_scene_capture_logic.py tests/unit/test_scene_links.py tests/unit/test_cli_stream.py tests/unit/test_scene_restart_reconciliation.py tests/integration/test_scene_restart_protocol.py tests/unit/test_scene_interaction_logic.py tests/unit/test_scene_user_lifecycle.py tests/integration/test_work_cancel_protocol.py tests/unit/test_scene_settings_ui.py tests/unit/test_documented_routes.py
 .venv/Scripts/python.exe scripts/verify_release.py
 ```
