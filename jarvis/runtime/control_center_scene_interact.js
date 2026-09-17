@@ -44,19 +44,20 @@
   const TERMINAL=Object.freeze(['completed','failed','cancelled','interrupted']);
   const ACTIVE_WORK=new Set(['running','pending','blocked']);
 
-  const round1=v=>Math.round(v*10)/10;
   const clamp=(v,lo,hi)=>Math.min(hi,Math.max(lo,v));
 
   /* ----------------------------------------------------------- géométrie */
 
-  /* Boîte bornée au cadre : taille ≥ minimum de la forme et ≤ cadre, coin
-     haut gauche gardé dans le cadre. */
+  /* Boîte bornée au cadre, en unités entières : taille ≥ minimum de la forme
+     et ≤ cadre, coin haut gauche gardé dans le cadre. Des entiers : ce que le
+     cerveau relit (`scene_inspect`) reste lisible, et un geste d'un pixel ne
+     fabrique pas une nouvelle révision. */
   function clampBox(box,representation){
     const min=MIN_SIZE[representation]||{w:1,h:1};
-    const w=round1(clamp(Number(box.w)||min.w,min.w,2*FRAME.halfWidth));
-    const h=round1(clamp(Number(box.h)||min.h,min.h,2*FRAME.halfHeight));
-    const x=round1(clamp(Number(box.x)||0,-FRAME.halfWidth,FRAME.halfWidth-w));
-    const y=round1(clamp(Number(box.y)||0,-FRAME.halfHeight,FRAME.halfHeight-h));
+    const w=Math.round(clamp(Number(box.w)||min.w,min.w,2*FRAME.halfWidth));
+    const h=Math.round(clamp(Number(box.h)||min.h,min.h,2*FRAME.halfHeight));
+    const x=Math.round(clamp(Number(box.x)||0,-FRAME.halfWidth,FRAME.halfWidth-w));
+    const y=Math.round(clamp(Number(box.y)||0,-FRAME.halfHeight,FRAME.halfHeight-h));
     return {x,y,w,h};
   }
 

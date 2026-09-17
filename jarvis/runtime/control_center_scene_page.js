@@ -1393,7 +1393,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     const label=quoted(id);
     actionStats.visibility++;
     const {result}=await optimistic('Masquage',id,{visibility:'hidden'},I.commands.setVisibility(id,'hidden'));
-    if(result.ok&&!quiet)notify({title:`${label} masqué`,sub:'Cliquer ici pour le réafficher · pastille « masqués » en bas à gauche',kind:'info',
+    if(result.ok&&!quiet)notify({title:`${label} masqué`,sub:'Cliquer ici pour le réafficher.',kind:'info',
       onClick:()=>showObjects([id])});
   }
 
@@ -1507,7 +1507,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       refused:refusal?refusal.reason||refusal.code:null});
     if(refusal&&refusal.reason==='not_bulk_archivable'&&!retry)return archiveFinished(true);
     if(refusal)return reportRefusal(archived?`Archivage de ${selection.objects-archived} objet(s)`:'Archivage groupé',null,refusal);
-    notify({title:`${archived} ${archived>1?'objets archivés':'objet archivé'}`,sub:'La place libérée accueille le travail en attente.',kind:'ok',ms:3500});
+    notify({title:`${archived} ${archived>1?'objets archivés':'objet archivé'}`,sub:'Place libérée pour le travail en attente.',kind:'ok',ms:3500});
   }
 
   /* Arrêt d'une étoile `job` : `POST /api/work/cancel`. Jamais proposé pour un sous-agent du brain. */

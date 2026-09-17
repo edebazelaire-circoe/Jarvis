@@ -116,7 +116,7 @@ def test_drag_and_resize_stay_inside_the_frame_with_minimum_sizes(tmp_path):
     assert result["shrinkBelowMin"] == {"x": 0, "y": 0, "w": 40, "h": 24}
     assert result["capsuleMin"] == {"x": 0, "y": 0, "w": 16, "h": 5}
     assert result["huge"] == {"x": -160, "y": -90, "w": 320, "h": 180}
-    assert result["noisy"] == {"x": 0.2, "y": 1.2, "w": 6, "h": 6}
+    assert result["noisy"] == {"x": 0, "y": 1, "w": 6, "h": 6}  # unités entières
 
 
 def test_keyboard_intents_move_resize_open_the_menu_or_navigate(tmp_path):
