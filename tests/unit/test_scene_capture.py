@@ -635,3 +635,19 @@ async def test_a_foreign_origin_on_the_upload_route_gets_the_scene_error_shape(t
         assert response.status == 403
         body = await response.json()
         assert body["error"]["code"] == "forbidden_origin"
+
+
+async def test_a_capture_that_times_out_names_the_capture_deadline(tmp_path):
+    class Hanging:
+        async def scene_capture(self, **kwargs):  # noqa: ANN003, ANN201
+            raise TimeoutError()
+
+        async def close(self) -> None:
+            return None
+
+    tools = SceneDisplayTools(Hanging(), scene_gate=lambda: True)
+    with pytest.raises(DisplayToolError) as timeout:
+        await tools.capture()
+    from jarvis.runtime.display_mcp import CAPTURE_READ_TIMEOUT_S
+
+    assert timeout.value.code == "core_timeout" and f"{CAPTURE_READ_TIMEOUT_S:g} s" in str(timeout.value)

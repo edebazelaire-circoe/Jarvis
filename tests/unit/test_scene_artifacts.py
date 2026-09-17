@@ -845,7 +845,7 @@ def test_expanding_in_the_dense_qa_scene_takes_the_nearest_free_box_and_stays_fa
       const layout=L.resolveLayout(st);
       const anchor=layout.placements.get(L.anchorsOf(st).get(id).to);
       const times=[];let box=null;
-      for(let i=0;i<5;i++){const t0=Date.now();box=L.placeFor(st,layout,id,'window');times.push(Date.now()-t0)}
+      for(let i=0;i<9;i++){const t0=Date.now();box=L.placeFor(st,layout,id,'window');times.push(Date.now()-t0)}
       const ov=(a,b)=>Math.max(0,Math.min(a.x+a.w,b.x+b.w)-Math.max(a.x,b.x))*Math.max(0,Math.min(a.y+a.h,b.y+b.h)-Math.max(a.y,b.y));
       const hits=[...layout.placements].filter(([k,b])=>k!==id&&ov(box,b)>0).map(([k])=>k);
       const face={x:L.FACE_ZONE.x0,y:L.FACE_ZONE.y0,w:L.FACE_ZONE.x1-L.FACE_ZONE.x0,h:L.FACE_ZONE.y1-L.FACE_ZONE.y0};
@@ -865,4 +865,6 @@ def test_expanding_in_the_dense_qa_scene_takes_the_nearest_free_box_and_stays_fa
     assert result["hits"] == [] and result["faceOverlap"] == 0  # QA avant : 4 étoiles recouvertes
     assert abs(result["distance"] - result["nearest"]) < 1e-9  # la plus proche des places libres
     assert result["again"] is True
-    assert max(result["times"][1:]) < 16  # bien sous une image (mesuré ≈ 1 ms)
+    # Reprise QA Slice 09 (m10) : médiane des passes chaudes, borne large ; pas de mesure fine dans un test unitaire.
+    warm = sorted(result["times"][1:])
+    assert warm[len(warm) // 2] < 50

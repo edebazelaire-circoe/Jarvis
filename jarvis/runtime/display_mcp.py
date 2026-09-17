@@ -1306,27 +1306,27 @@ class SceneDisplayTools:
 
     async def _capture(self) -> tuple[dict[str, Any], bytes]:
         from jarvis.protocol.client import CoreProtocolError
+        from jarvis.runtime.scene_view import SCENE_CALL_ERRORS, classify_scene_call_failure
 
         if self.scene_gate is not None and not self.scene_gate():
             raise DisplayToolError(SCENE_DISABLED, CAPTURE_EXPLANATIONS[SCENE_DISABLED])
-
-        async def call() -> dict[str, Any]:
-            return await asyncio.wait_for(
+        try:
+            body = await asyncio.wait_for(
                 self.transport.scene_capture(connect_timeout_s=self.command_connect_timeout_s,
                                              read_timeout_s=CAPTURE_READ_TIMEOUT_S),
                 timeout=self.command_connect_timeout_s + CAPTURE_READ_TIMEOUT_S + 1.0,
             )
-
-        try:
-            body = await call()
-        except CoreProtocolError as exc:
-            if exc.code in CAPTURE_EXPLANATIONS:
-                raise DisplayToolError(exc.code, CAPTURE_EXPLANATIONS[exc.code]) from None
-            body = await self._core_call(lambda: _reraise(exc), "read")
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # noqa: BLE001 - classé comme toute lecture de scène (`_core_call`)
-            body = await self._core_call(lambda: _reraise(exc), "read")
+        except SCENE_CALL_ERRORS as exc:
+            if isinstance(exc, CoreProtocolError) and exc.code in CAPTURE_EXPLANATIONS:
+                raise DisplayToolError(exc.code, CAPTURE_EXPLANATIONS[exc.code]) from None
+            # Même classement que toute lecture de scène, avec l'échéance réelle de la capture.
+            failure = classify_scene_call_failure(exc, connect_timeout_s=self.command_connect_timeout_s,
+                                                  read_timeout_s=CAPTURE_READ_TIMEOUT_S, call="read")
+            raise DisplayToolError(failure.code, _redacted(failure.message)) from None
+        if not isinstance(body, dict):
+            raise DisplayToolError("invalid_scene_response", "Réponse de capture de Core illisible.")
         try:
             path = Path(str(body["path"]))
             png = await asyncio.to_thread(path.read_bytes)
@@ -1732,10 +1732,6 @@ def scene_gate_reader(runtime_root: Path | None) -> Callable[[], bool] | None:
         return bool(load_gate(settings if isinstance(settings, dict) else {})["enabled"])
 
     return read
-
-
-async def _reraise(exc: BaseException) -> dict[str, Any]:
-    raise exc
 
 
 #: Refus d'une capture, écrits pour le cerveau (Slice 09, partie 2).
