@@ -21,9 +21,11 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import StrEnum
 from types import MappingProxyType
 from typing import BinaryIO, Protocol
 
+from jarvis.testlab.bundle import DiagnosticBundle
 from jarvis.testlab.identity import (
     check_bundle_id,
     check_diagnostic_id,
@@ -150,9 +152,9 @@ class RunQuery:
 
 @dataclass(frozen=True, slots=True)
 class CorruptRunEntry:
-    """A stored entry that is not a readable run: reported distinctly, never skipped in silence."""
+    """A stored entry that is not a readable run (or bundle): reported distinctly, never skipped in silence."""
 
-    #: Directory name (a run id when it has that shape).
+    #: Directory name (a run or bundle id when it has that shape).
     entry: str
     code: str
     detail: str
@@ -361,3 +363,94 @@ class TestRunStore(Protocol):
         ...
 
     def storage_usage(self) -> StorageUsage: ...
+
+
+# ------------------------------------------------------------ bundle port
+
+class BundleNotFoundError(TestLabStoreError):
+    """No bundle directory exists for this bundle id."""
+
+
+class BundleConflictError(TestLabStoreError):
+    """A bundle id is already stored with a different content fingerprint."""
+
+
+class BundleRecordCorruptError(TestLabStoreError):
+    """The stored bundle cannot be read or decoded. Never silently skipped."""
+
+
+class BundlePutStatus(StrEnum):
+    #: New bundle written.
+    STORED = "stored"
+    #: Same id and same content fingerprint already stored; nothing written (the first capture is kept).
+    DUPLICATE = "duplicate"
+
+
+@dataclass(frozen=True, slots=True)
+class BundlePutResult:
+    bundle_id: str
+    status: BundlePutStatus
+    content_fingerprint: str
+
+
+@dataclass(frozen=True, slots=True)
+class BundleQuery:
+    """Filters for `list_bundles`. Order is by bundle id (session start time, then fingerprint prefix)."""
+
+    limit: int = DEFAULT_PAGE_LIMIT
+    newest_first: bool = True
+    after_bundle_id: str | None = None
+    conversation_id: str | None = None
+
+    def __post_init__(self) -> None:
+        check_number(self.limit, "limit", minimum=1, maximum=MAX_PAGE_LIMIT, integer=True)
+        if type(self.newest_first) is not bool:
+            raise fail("newest_first must be a boolean")
+        check_bundle_id(self.after_bundle_id, "after_bundle_id", optional=True)
+        if self.conversation_id is not None and (not isinstance(self.conversation_id, str) or not self.conversation_id):
+            raise fail("conversation_id must be a nonempty identifier")
+
+
+@dataclass(frozen=True, slots=True)
+class BundleSummary:
+    bundle_id: str
+    captured_at: datetime
+    started_at: datetime | None
+    ended_at: datetime | None
+    conversation_ids: tuple[str, ...]
+    session_ids: tuple[str, ...]
+    finding_count: int
+    content_fingerprint: str
+
+    @classmethod
+    def of(cls, bundle: DiagnosticBundle) -> BundleSummary:
+        return cls(bundle.bundle_id, bundle.captured_at, bundle.started_at, bundle.ended_at,
+                   tuple(bundle.conversation_ids), tuple(bundle.session_ids), len(bundle.findings),
+                   bundle.content_fingerprint)
+
+
+@dataclass(frozen=True, slots=True)
+class BundlePage:
+    bundles: tuple[BundleSummary, ...]
+    #: Unreadable bundle directories and stray entries met while scanning (never counted toward `limit`).
+    corrupt: tuple[CorruptRunEntry, ...] = ()
+    next_cursor: str | None = None
+
+
+class BundleStore(Protocol):
+    """Durable DiagnosticBundles (docs/testlab.md, "DiagnosticBundle", "Storage").
+
+    Every method raises `TestLabStoreError` (or a subclass) with a stable code;
+    `OSError` never escapes. Bundles are decoded through the strict
+    `DiagnosticBundle` codec on every read. `TestRun.bundle_id` references them.
+    """
+
+    def put_bundle(self, bundle: DiagnosticBundle) -> BundlePutResult:
+        """Store a bundle once. Same id and fingerprint: `duplicate`; same id, other fingerprint: `BundleConflictError`."""
+        ...
+
+    def get_bundle(self, bundle_id: str) -> DiagnosticBundle:
+        """`BundleNotFoundError` or `BundleRecordCorruptError` instead of a bundle."""
+        ...
+
+    def list_bundles(self, query: BundleQuery = BundleQuery()) -> BundlePage: ...

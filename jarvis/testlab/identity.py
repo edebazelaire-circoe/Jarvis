@@ -17,6 +17,7 @@ TESTLAB_SCHEMA_VERSION = 1
 DIAGNOSTIC_SPEC_SCHEMA = "jarvis.testlab.diagnostic"
 SCENARIO_SCHEMA = "jarvis.testlab.scenario"
 TEST_RUN_SCHEMA = "jarvis.testlab.run"
+DIAGNOSTIC_BUNDLE_SCHEMA = "jarvis.testlab.bundle"
 
 MAX_DIAGNOSTIC_ID_CHARS = 64
 MAX_DIAGNOSTIC_VERSION = 2**31 - 1

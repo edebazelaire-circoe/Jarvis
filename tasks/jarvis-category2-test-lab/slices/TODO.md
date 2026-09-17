@@ -5,7 +5,7 @@ Start with `00-project-manager`; it is the readiness gate and is not delegated. 
 - [x] `00-project-manager` — Project Manager readiness and orchestration gate
 - [x] `01-testlab-domain-contracts` — Test Lab domain contracts and schemas
 - [x] `02-run-persistence-artifacts` — Persistent TestRun and artifact store
-- [ ] `03-diagnostic-bundle` — DiagnosticBundle normalization and session capture
+- [x] `03-diagnostic-bundle` — DiagnosticBundle normalization and session capture
 - [ ] `04-catalog-scenarios` — Diagnostic catalog, manifests, and safe ad-hoc scenarios
 - [ ] `05-supervisor-worker` — Run supervisor and isolated worker lifecycle
 - [ ] `06-virtual-profile-harness` — Virtual profile from async conversation harness

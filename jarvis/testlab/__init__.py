@@ -19,4 +19,10 @@ contracts only (no I/O, no implicit clock, no provider/transport import):
 Slice 02 adds the I/O modules `jarvis.testlab.filesystem_store` (durable
 filesystem adapter) and `jarvis.testlab.capture` (git identity, environment,
 redacted configuration snapshot).
+
+Slice 03 adds the DiagnosticBundle: pure `jarvis.testlab.bundle` (schema, codec),
+`jarvis.testlab.bundle_rules` (anomaly rules), `jarvis.testlab.bundle_builder`
+(builder), `jarvis.testlab.redaction`, and the I/O modules
+`jarvis.testlab.bundle_capture` (capture service) and
+`jarvis.testlab.filesystem_bundle_store` (bundle store).
 """

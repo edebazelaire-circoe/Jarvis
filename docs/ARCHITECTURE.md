@@ -1425,8 +1425,12 @@ conversation traces through the Conversation Events `TRACE_JOIN_FIELDS`. Contrac
 [Category 2 Test Lab](testlab.md). Runs persist through a filesystem store meant to be rooted at
 `<runtime>/testlab/` (one directory per run, atomic writes, per-run writer lock and
 compare-and-swap, bounded opt-in audio, retention planner), never in
-`data/state/jarvis.sqlite3`. Workers, profile runners and adapters come in later
-Slices of `tasks/jarvis-category2-test-lab/`.
+`data/state/jarvis.sqlite3`. A real session enters the Test Lab as a
+`DiagnosticBundle` (`jarvis.testlab.bundle`): a versioned document built mechanically from
+Conversation Events and bounded, redacted `RuntimeJournal` lines (turns, speech delivery,
+playback, barge-in, provider events, latency joins, deterministic anomaly rules), with
+provenance on every item and explicit source coverage, stored under `<root>/bundles/`.
+Workers, profile runners and adapters come in later Slices of `tasks/jarvis-category2-test-lab/`.
 
 ## Sub-agent routing
 

@@ -14,21 +14,31 @@ normal CI.
   - `scenarios.py`: `Scenario`, `ScenarioStep`;
   - `runs.py`: `TestRun`, `RunStatus` state machine, `ArtifactRef`, `CodeIdentity`, `RunFailure`;
   - `store.py` (Slice 02): `TestRunStore` port, `RunQuery`/`RunPage`, usage types, `ArtifactWriteLimits`, store errors, `check_run_update`;
-  - `retention.py` (Slice 02): `TestLabRetentionPolicy`, `plan_retention`, `apply_retention_plan`.
-- I/O modules (Slice 02, see Storage):
+  - `retention.py` (Slice 02): `TestLabRetentionPolicy`, `plan_retention`, `apply_retention_plan`;
+  - `redaction.py` (Slice 03): `redact_urls`, `redact_identifying_text` (moved from `capture.py`, which re-exports them);
+  - `bundle.py` (Slice 03): `DiagnosticBundle` schema and strict codec, vocabularies, `SECTION_LIMITS`;
+  - `bundle_rules.py` (Slice 03): `AnomalyRule`, `DEFAULT_RULES`, `RULE_EVALUATORS`, `evaluate_rules`;
+  - `bundle_builder.py` (Slice 03): `SessionSelector`, evidence inputs, `BundleOptions`, `build_diagnostic_bundle`.
+- I/O modules (Slices 02 and 03, see Storage and DiagnosticBundle):
+  - `_fs.py` (private, Slice 03): lock, atomic write, path budget and link helpers shared by both filesystem stores;
   - `filesystem_store.py`: `FilesystemTestRunStore`, the local durable adapter;
-  - `capture.py`: `read_git_revision`, `capture_code_identity`, `capture_environment`, `build_config_snapshot`, `store_config_snapshot`.
+  - `capture.py`: `read_git_revision`, `capture_code_identity`, `capture_environment`, `build_config_snapshot`, `store_config_snapshot`;
+  - `bundle_capture.py` (Slice 03): `capture_diagnostic_bundle`, `read_session_trace`, `read_session_events`, `read_voice_session_reports`, `project_bundle_trace_entry`;
+  - `filesystem_bundle_store.py` (Slice 03): `FilesystemBundleStore`.
 - Conformance tests: `tests/unit/test_testlab_identity.py`,
   `tests/unit/test_testlab_profiles.py`, `tests/unit/test_testlab_diagnostics.py`,
   `tests/unit/test_testlab_scenarios.py`, `tests/unit/test_testlab_runs.py`,
   `tests/unit/test_testlab_purity.py`, `tests/unit/test_testlab_store.py`,
-  `tests/unit/test_testlab_store_retention.py`, `tests/unit/test_testlab_store_capture.py`;
-  shared builders `tests/fakes/testlab.py`.
-- Handoff: `tasks/jarvis-category2-test-lab/` (Slices 01, 02).
+  `tests/unit/test_testlab_store_retention.py`, `tests/unit/test_testlab_store_capture.py`,
+  `tests/unit/test_testlab_bundle.py`, `tests/unit/test_testlab_bundle_capture.py`, opt-in
+  `tests/integration/test_testlab_bundle_real_session.py`; shared builders `tests/fakes/testlab.py`,
+  session fixture `tests/fakes/testlab_bundle.py`.
+- Handoff: `tasks/jarvis-category2-test-lab/` (Slices 01, 02, 03).
 
-Status 2026-09-17: contracts (Slice 01) and run persistence (Slice 02). Nothing
-composes the store yet (no default root wiring, no scheduled retention or
-temporaries sweep). DiagnosticBundle (03), catalog, manifests and primitive
+Status 2026-09-17: contracts (Slice 01), run persistence (Slice 02), and the
+DiagnosticBundle with its capture service and bundle store (Slice 03). Nothing
+composes the stores yet (no default root wiring, no scheduled retention or
+temporaries sweep, no CLI or HTTP entry to capture a bundle). Catalog, manifests and primitive
 vocabulary (04), supervisor/worker (05), profile runners (06, 08, 09), score
 computation and sweeps (07), API/CLI/HTTP (10) and UI (11) do not exist yet.
 
@@ -55,7 +65,7 @@ computation and sweeps (07), API/CLI/HTTP (10) and UI (11) do not exist yet.
 | Item | Rule |
 |---|---|
 | `TESTLAB_SCHEMA_VERSION` | `1`, shared by all Test Lab documents. |
-| Document names | `jarvis.testlab.diagnostic`, `jarvis.testlab.scenario`, `jarvis.testlab.run`. |
+| Document names | `jarvis.testlab.diagnostic`, `jarvis.testlab.scenario`, `jarvis.testlab.run`, `jarvis.testlab.bundle`. |
 | Diagnostic id | `<domain>.<name>`, dotted lowercase snake_case segments, ≥ 2 segments, ≤ 64 chars (`voice.self_echo`, `speech.payload_integrity`). The first segment is the diagnostic `domain`. |
 | Diagnostic version | Integer 1..2³¹−1. Bump it for any change of parameters, metrics, assertions, thresholds or meaning. Runs compare only within one `(diagnostic_id, version)`. |
 | Run id | `tlr-YYYYMMDDTHHMMSSmmmZ-<16 lowercase hex>` from `format_run_id(created_at, nonce)`. |
@@ -495,7 +505,8 @@ artifact path rule never accepts, so they cannot collide with evidence.
   unfinished deletions (at any age), temp files and staging directories older
   than the threshold, empty subdirectories left inside a run (their age taken
   before the sweep empties them; never the run directory, record or manifest),
-  and lock files whose run no longer exists. It never follows a link: a symlink
+  and run lock files (`tlr-` names only; bundle locks are never touched) whose run
+  no longer exists. It never follows a link: a symlink
   or junction at any level (run directory, temp file, subdirectory) is skipped,
   so nothing outside the store is touched, and `storage_usage` does not count a
   link target's bytes. Nothing schedules it in Slice 02.
@@ -701,8 +712,534 @@ rule, never values or local paths. `TestLabCaptureError(TestLabError)` carries
 | `testlab_limit_exceeded` | Record over 256 KiB |
 | `testlab_capture_unavailable` | Git identity not determinable |
 
+The bundle store (DiagnosticBundle, Bundle storage) reuses these codes with
+`BundleNotFoundError` (`testlab_store_not_found`), `BundleConflictError`
+(`testlab_store_conflict`) and `BundleRecordCorruptError` (`testlab_store_corrupt`).
+
+## DiagnosticBundle
+
+A normalized, versioned evidence document built mechanically from one real
+Jarvis session, so humans and agents read sections instead of re-reading raw
+logs. No model is involved: every field is a deterministic function of the
+evidence read, and every derived item names the evidence that produced it.
+
+Modules: `bundle.py` (schema, codec), `bundle_rules.py` (anomaly rules),
+`bundle_builder.py` (pure builder), `bundle_capture.py` (I/O capture service),
+`filesystem_bundle_store.py` (storage), port `store.BundleStore`.
+
+### Document (`jarvis.testlab.bundle`, schema version 1)
+
+Every object has exactly its fields (strict codec: unknown or missing fields are
+rejected). Times are wire times, ids are opaque ids (`voice_state.state_id`),
+codes are `[a-z][a-z0-9_.-]{0,63}`. The encoding is canonical JSON, at most 8 MiB.
+
+| Field | Content |
+|---|---|
+| `schema`, `schema_version` | `jarvis.testlab.bundle`, `1` |
+| `bundle_id` | `format_bundle_id(<id time>, content_fingerprint[:16])` (Identity and determinism) |
+| `content_fingerprint` | `content_fingerprint` of the document without `bundle_id`, `content_fingerprint` and `capture` |
+| `capture` | Capture context, outside the fingerprint: `captured_at` (injected), `code {status: capture_time\|unknown, git_revision, dirty}`, `config {status: capture_time\|unknown, fingerprint}` (the Slice 02 `CodeIdentity` and `ConfigSnapshot.fingerprint` when the caller supplies them; they describe the capturing checkout, not necessarily the session's) |
+| `session` | `selector {conversation_id, session_id, start, end}`, `conversation_ids`, `session_ids` (≤ 64 each), `started_at`, `ended_at`, `duration_ms` (extent of all evidence read) |
+| `identity` | Configuration found in the evidence: `status evidence\|unknown`, `voice_configuration_ids` (64 hex, from `voice.stack` and reports), `architectures` (`arch` of `voice.stack`/`voice.active`, reports), `evidence` |
+| `coverage` | What was read (Coverage) |
+| `turns` | `{item_id, actor user\|mouth\|brain, kind user_turn\|turn_accepted\|turn_failed\|message_published\|speech\|reflex, at, status, conversation_id, session_id, turn_id, correlation_id, speech_id, outcome_id, content, content_truncated, evidence}` |
+| `speech` | `{speech_id, conversation_id, correlation_id, work_id, parent_speech_id, chunk_speech_ids, output_ids, kind, priority, outcome, reason, played_ms, queue_wait_ms, requested_at, queued_at, dispatched_at, started_at, ended_at, codes, terminals [{outcome, at, reason, evidence}], spoken_divergences, state_divergences, spoken_diverged_at, evidence}` |
+| `playback` | `{output_id, speech_id, conversation_id, source, started_at, provider_chunk_at, first_write_at, ended_at, end_status, drain_ms, evidence}` |
+| `barge_in` | `{episode_id, started_at, ended_at, outcome, authority, trigger, speech_id, output_id, played_ms, stop_latency_ms, device_stopped, codes, jarvis_speaking, audible, next_user_activity_ms, next_user_activity_basis, evidence}`. `audible`: `played_ms > 0`, or a `voice.latency.first_audible_write` / `output_first_write` on the episode's output (or its speech's outputs) before the episode; false when neither and the episode names an output or a `played_ms`. `next_user_activity_ms` and `next_user_activity_basis`: User activity below |
+| `provider` | `{at, event, code, status, provider, conversation_id, evidence}` |
+| `user_activity` | `{at, event speech_started\|input_submitted\|transcript\|turn_submitted\|turn_completed\|transcript_dropped\|manual_submit, conversation_id, code, near_playback, evidence}` (timing, ids and code tokens such as `addressing`; never text) |
+| `lifecycle` | `{at, event started\|stopped\|output_stopped\|device_closed\|native_failed\|stream_closed\|timeout, code, conversation_id, session_id, evidence}` |
+| `brain` | `{at, event replies_superseded\|turn_slow\|turn_over_budget\|work_completed, conversation_id, correlation_id, work_ids, measure, ms, budget_ms, evidence}` |
+| `usage` | `{at, conversation_id, session_id, input_tokens, output_tokens, duration_seconds, source, evidence}` (token counts only) |
+| `latency` | `{join_id, speech_id, correlation_id, stages [{stage, at, evidence}], measures [{name, ms, from_stage, to_stage}], reported [{measure, ms, evidence}]}` |
+| `aggregates` | `trace_summary`: `trace_summary.summarize` output flattened to `[{path, value}]` (≤ 512, or null); `voice_session_reports`: `[{session_id, architecture, configuration_id, session_fingerprint, terminal_status, trace_evidence_complete, latency [{name, count, min_ms, max_ms, mean_ms}], counts [{name, value}], evidence}]` |
+| `anomalies` | `rules [{rule_id, version, evaluated, skipped_reason, thresholds [{name, value}]}]`, `findings [{rule_id, rule_version, at, subject_kind, subject_id, measured [{name, value}], evidence}]` |
+| `references` | `conversation_events [{ref, sequence, event_type, occurred_at, visibility}]`, `trace_lines [{ref, offset, ts, kind, level}]`, `voice_session_reports [{ref, sha256}]` |
+
+Vocabularies:
+
+- speech `outcome`: `dropped` (brain request, no voice-side record although
+  voice-side evidence was read: the journal, or any `mouth.*` event), `unknown`
+  (request only, no voice-side evidence), `chunked` (delivered as paragraph
+  chunks, see `chunk_speech_ids`), `queued`, `started`, `spoken`,
+  `interrupted`, `superseded`, `stale` (`*.speech.expired`), `failed`. A speech
+  with terminals takes the earliest one; all are listed in `terminals`, one
+  entry per outcome with every reference that observed it;
+- barge-in `outcome`: `confirmed`, `rejected`, `ignored`, `degraded`,
+  `advisory`, `unresolved` (a pending candidate never resolved);
+- provider `event`: `connecting`, `connected`, `disconnected`, `error`,
+  `keepalive_failed`, `refused`, `failure`, `response_silent`,
+  `cancel_requested`, `models_failed`.
+
+Section caps (`SECTION_LIMITS`): turns 4096, speech 2048, playback 2048,
+barge_in 1024, provider 1024, user_activity 4096, lifecycle 1024, brain 2048,
+usage 1024, latency 2048, findings 1024, segments 256, conversation event
+references 20000, trace line references 20000. Evidence lists hold at most 32
+references. Items past a cap are dropped after sorting and counted in
+`coverage.limits` (`{section, kept, dropped}`). Every list is sorted (turns by
+`at` then id, speech by first known time then id, episodes by start, references
+by sequence or offset), so equal inputs give equal bytes.
+
+### Provenance
+
+A reference is one of:
+
+- `cev-<64 hex>`: a Conversation Event id;
+- `trace:<byte offset>`: the `RuntimeJournal` line starting at that offset (the
+  journal is append-only, so an offset is stable);
+- `report:<16 hex>`: a voice session report (first 16 hex of its sha256).
+
+Every turn, speech, terminal, playback, episode, provider, user activity,
+lifecycle, brain and usage item, latency stage, reported measure, report
+aggregate and finding carries at least one reference, and every reference
+resolves in `references` (codec, `testlab_reference_invalid`). A reference record
+holds ids, offsets, times, kinds and levels only, never a journal message or
+`data` payload.
+
+### Codec consistency
+
+Beyond shapes, the codec refuses (`testlab_reference_invalid`) a document whose
+parts disagree, even when its fingerprint and id were recomputed after the edit:
+
+- a rule row repeated, or whose `skipped_reason` is not set exactly when
+  `evaluated` is false;
+- a finding whose `rule_id` has no row, whose row is not evaluated, or whose
+  `rule_version` differs from the row's; a `measured.threshold_ms` that differs
+  from the row threshold named by its `measure`;
+- a speech whose `outcome` contradicts its terminals and stages (a terminal
+  outcome must be the earliest terminal with `ended_at` at its time; `chunked`
+  needs chunk ids; `started` a start; `queued` a queue stage and no start;
+  `dropped`/`unknown` only a request); `spoken_diverged_at` set without a
+  spoken divergence, or the reverse;
+- references to a source whose coverage status is not `available`, `empty` or
+  `truncated`; a conversation event count that differs from its references; a
+  segment count that differs from the listed plus dropped segments;
+- segments out of time order, overlapping, ending before they start, with an
+  index other than their position, or without items; warnings that disagree with
+  the coverage they summarize (`multi_session_selection` exactly when an id-only
+  selector has more than one segment, `long_selection` exactly when it spans more
+  than 6 h, `open_window` exactly when `window_open`, `torn_tail` exactly when
+  `torn_tail`);
+- a finding whose subject does not show the rule's signature: `voice.self_barge_in`
+  on an episode that is not a confirmed, speaking, audible episode with no user
+  activity within the window (and the same `next_user_activity_ms`);
+  `speech.missing_delivery_outcome` on a speech with a terminal, another state, or
+  a `segment_end` other than its segment's closing kind;
+  `speech.delivered_after_supersession` on a speech never superseded or expired;
+  `speech.duplicate_payload` on a speech never started; `latency.above_threshold`
+  on a join without that measure, another `ms`, or a value not above the row
+  threshold; `events.reconstruction_anomaly` on an unreferenced event;
+- a list out of its documented order (turns, speech, playback, barge-in, provider,
+  user activity, lifecycle, brain, usage, latency, findings, references), latency
+  stages out of `LATENCY_STAGES` order, or a measure whose stages or `ms` differ
+  from the difference of its stages.
+
+### Coverage
+
+Coverage makes absence of evidence explicit, so it is never read as evidence of
+absence.
+
+| Field | Content |
+|---|---|
+| `conversation_events` | `status`, `origin store\|export`, `events`, `skipped_rows` (stored rows that did not decode), `export_complete` (export trailer), `truncated`, `reason` |
+| `runtime_journal` | `status`, `lines_in_window` (timed lines inside the window, or between the first and last line carrying the selected id), `lines_selected` (lines kept under the selection budget), `corrupt_lines`, `oversized_lines`, `untimed_lines` (counted over the physical scan range, see Capture service), `truncated`, `start_truncated` (older bytes not read), `torn_tail` (the file ends with a line without newline, not decoded), `window_open`, `stopped_by` (`window_end`, `file_end`, `max_bytes`, `max_lines`, `max_selected`), `reason` |
+| `voice_session_reports` | `status`, `reports`, `reason` |
+| `content` | `included`, `max_chars`, `items`, `truncated_items`, `redactions` |
+| `limits` | Section caps hit |
+| `segments` | `count`, `idle_gap_ms`, `dropped`, `items [{index, session_id, started_at, ended_at, end_kind, items}]` (Voice session segments) |
+| `warnings` | `multi_session_selection`, `long_selection`, `open_window`, `torn_tail` (below) |
+
+Source `status`:
+
+| Status | Meaning |
+|---|---|
+| `available` | Read whole, something matched |
+| `empty` | Read whole, nothing matched |
+| `truncated` | A bound stopped the read |
+| `missing` | File or database absent |
+| `unavailable` | Present but unreadable: I/O error, invalid export, `conversation_events` table absent, a journal with no decodable line (`no_decodable_lines`) or no timed line (`no_timed_lines`) |
+| `not_requested` | The caller did not ask for this source |
+
+Reason codes: `trace_file_missing`, `trace_unreadable`,
+`state_database_missing`, `state_database_unreadable`,
+`conversation_events_table_absent`, `store_read_failed`, `export_file_missing`,
+`export_unreadable`, `export_too_large`, `export_invalid`,
+`reports_directory_missing`, `reports_directory_unreadable`,
+`some_reports_unreadable`, `no_decodable_lines`, `no_timed_lines`.
+
+Warnings:
+
+| Warning | Meaning |
+|---|---|
+| `multi_session_selection` | An id-only selector (no window) spans more than one voice session segment. The bundle is built; rules stay inside each segment, but read it as several sessions. |
+| `long_selection` | An id-only selector spans more than `MAX_SELECTION_HOURS` (6 h). |
+| `open_window` | The requested window ends after the last journal line read (no line later than end plus tolerance yet), or after `captured_at`. A recapture may differ. |
+| `torn_tail` | The journal ended with a line without newline, which was not decoded. |
+
+### Voice session segments
+
+The evidence (events and selected journal lines, in time order) is split into
+voice session segments, and every rule horizon stays inside the segment of its
+subject: the window after a barge-in, the grace before a missing outcome, the
+next user activity, the previous output of a queued speech, the pair of a
+duplicate payload. Evidence of a later session never decides a finding.
+
+A new segment starts when:
+
+- the previous segment was closed by a session end kind (`voice.stop`,
+  `voice.failure`, `audio.device_closed`; consecutive end kinds of one shutdown
+  close the same segment);
+- an item carries a `session_id` other than the segment's;
+- a session start kind (`voice.start`, `voice.connecting`) follows other
+  evidence in the segment;
+- the gap to the previous item exceeds `SEGMENT_IDLE_GAP_MS` (10 min) and the
+  item does not belong to the segment's known session. An item belongs to it when
+  it carries that `session_id`, when it carries none and the next identified item
+  carries that `session_id` (`voice.speech_started` has no session id), or when it
+  is an unidentified session end kind (`voice.stop` carries no ids). A long silence
+  inside one identified session therefore stays one segment, and a speech left
+  without outcome stays decidable up to the session end. The idle gap still splits
+  segments whose session is unknown.
+
+Segmentation reads the selected evidence only: it depends on the selection filter
+(Selection budget), so an unselected kind never opens, closes or extends a
+segment.
+
+`coverage.segments` lists every segment (up to 256) with its session id, extent,
+closing kind and item count. The thresholds are declared data in
+`bundle_builder.py` (`SEGMENT_START_KINDS`, `SEGMENT_END_KINDS`,
+`SEGMENT_IDLE_GAP_MS`, `MAX_SELECTION_HOURS`).
+
+### Evidence sources
+
+Journal kinds were inventoried on the live `runtime/trace.jsonl` (13 123 lines,
+2026-09-03 to 2026-09-16) and in the current producers.
+
+| Source | Kind or event type | Section |
+|---|---|---|
+| Conversation Events | `user.transcript.accepted` | turn `user:<correlation>` (public content) |
+| | `brain.turn.accepted`, `brain.turn.failed` | turns `brain_accepted:<correlation>` and `brain_failed:<correlation>` (status: `source` or `code` attribute) |
+| | `brain.message.published` | turn `brain_message:<outcome>` (public content) |
+| | `brain.speech.requested` | speech `requested_at`, kind, priority. Its diagnostic text is read in memory for the duplicate rule only. |
+| | `mouth.speech.queued`, `mouth.speech.started` | speech `queued_at`, `started_at`; turn `mouth:<speech>` (public content); `parent_event_id` links chunks to their request |
+| | `mouth.speech.completed`, `interrupted`, `superseded`, `expired`, `failed` | terminals `spoken`, `interrupted` (`reason`, `played_ms`), `superseded`, `stale`, `failed` |
+| | `mouth.reflex.started` | turn `reflex:<correlation>:<output>` |
+| | every event | `reconstruct_conversation` anomalies (rule `events.reconstruction_anomaly`) |
+| `RuntimeJournal` | `voice.speech.queued`, `voice.speech.dispatched` (`queue_wait_ms`), `voice.speech.started` | speech stages, turn `mouth:<speech>` |
+| | `voice.speech.completed`, `interrupted` (`played_ms`), `superseded`, `expired`, `speak_failed` | speech terminals (a line without `speech_id` is attached through its `output_id`) |
+| | `voice.speech.output_stalled` | speech `codes` |
+| | `voice.brain_turn_submitted` | turn `user:<correlation>` (never content) |
+| | `core.brain.turn_failed`, `core.brain.outcome_retained` | turns `brain_failed:`, `brain_message:` |
+| | `voice.reflex.started` | turn `reflex:` |
+| | `voice.output_started`, `voice.latency.provider_first_pcm`, `voice.latency.playback_attempted`, `voice.latency.output_first_write`, `voice.latency.first_audible_write`, `audio.drain_requested`, `audio.drain_result` | playback by `output_id`: `audio.drain_result` gives `end_status` and `drain_ms`; a `voice.barge_in` on the output ends it as `interrupted` |
+| | `voice.barge_in_pending`, `voice.barge_in`, `voice.barge_in_rejected`, `voice.barge_in_ignored`, `voice.barge_in_degraded`, `voice.barge_in.owner_confirmed`, `voice.barge_in.provider_advisory` | barge-in episodes: the next confirmation or rejection within 30 s resolves a pending candidate; degraded, owner and advisory lines attach to a confirmed episode within 5 s, otherwise they stand alone |
+| | `voice.connecting`, `voice.active`, `provider.disconnected`, `provider.error`, `voice.provider_error`, `provider.keepalive_failed`, `voice.provider_refused`, `voice.failure`, `voice.response_silent`, `voice.manual_cancel` | provider events |
+| | `voice.latency.*` with `speech_id` and `elapsed_ms` | latency `reported` (measured by the producer) |
+| | `voice.latency.brain_turn_accepted` | latency stage `brain_turn_accepted` |
+| | `voice.stack`, `voice.active` | identity |
+| | `provider.models_failed` | provider event `models_failed` (`provider`, `code`) |
+| | `voice.speech_started` (server VAD, at the START of user speech, logged when no Jarvis output is live), `voice.input_submitted` (commit at the end of the utterance), `voice.transcript` (timing and `addressing` only), `voice.brain_turn_submitted` (also a turn), `voice.turn_completed`, `voice.transcript_dropped`, `voice.manual_submit` | `user_activity`; onset `speech_started`; closing facts `input_submitted`, `transcript`, `turn_submitted` |
+| | `voice.start`, `voice.stop`, `audio.output_stopped`, `audio.device_closed`, `audio.native_failed`, `voice.speech.stream_closed`, `voice.timeout` | `lifecycle`; segmentation; missing-outcome `cause` |
+| | `core.brain.replies_superseded` (`work_ids`), `core.brain.turn_slow`, `core.brain.turn_over_budget` (`duration_ms`, `budget_ms`), `core.brain.latency.work_completed` (`elapsed_ms`, `measure`) | `brain` |
+| | `voice.realtime.usage` | `usage` (token counts, duration, source) |
+| | `voice.state.spoken_diverged`, `voice.state.diverged` | speech `spoken_divergences` / `state_divergences` when the line names a `speech_id` (counts only, never a finding: Why no payload divergence rule); a line without `speech_id` is not attributed |
+| `VoiceSessionMetricRecorder` reports (`jarvis.voice_benchmark.session` v1) | reports of the selected session ids | `aggregates.voice_session_reports`, identity |
+| `trace_summary.summarize` | the selected raw lines (scalars only) | `aggregates.trace_summary` |
+
+Selection budget: the journal reader keeps only mapped kinds
+(`bundle_builder.MAPPED_JOURNAL_KINDS`, plus the `voice.latency.` prefix) and the
+kinds `trace_summary.summarize` reads (`bundle_capture.TRACE_SUMMARY_KINDS`:
+`voice.owner.*`, `voice.barge_in.authority/owner_confirmed/provider_advisory`,
+`voice.input.non_owner_dropped`, `voice.authorization_*`,
+`core.brain.work_context`, `core.work.attention`, `core.work.updated`).
+`max_selected_lines` and `max_selected_bytes` count those lines only; other kinds
+are counted in `lines_in_window` and never kept. Consequently the per-kind
+counts of `aggregates.trace_summary` cover the selected kinds only.
+
+Deliberately unmapped kinds of the live inventory:
+
+| Kinds | Why not mapped |
+|---|---|
+| `voice.state.updated` (3678 live lines), `voice.speech.presentation_decided`, `voice.ledger.projected` | Internal state and presentation bookkeeping, one line per state step; the delivery facts they lead to are mapped (`voice.speech.*`, divergences) |
+| `voice.assistant`, `voice.prompt` | Carry text (assistant words, prompt fingerprints tied to instructions); no timing the mapped kinds lack. (`voice.transcript` is mapped for its timing only; its message is never read.) |
+| `voice.reflex.decided`, `voice.reflex.skipped` | Reflex gate decisions; the reflex that played is mapped (`voice.reflex.started`) |
+| `voice.background`, `voice.wake`, `voice.duplex`, `voice.input_submit_requested`, `voice.state.frontend_error` | Surface mode and UI state; session boundaries come from `voice.start`/`voice.stop`/`voice.connecting` |
+| `audio.start`, `audio.stop`, `audio.devices.listed`, `audio.test.*` | Device enumeration and the Control Center audio test, not a conversation |
+| `core.brain.backend_task_started`, `core.brain.backend_task_result`, `core.brain.notice_relayed`, `core.brain.woken_by_work` | Backend work lifecycle is carried by Conversation Events `brain.work.*`; not a speech or turn timing |
+| `agent.*` (including `agent.event`, raw provider stream), `tool.call`, `tool.result` | Raw provider stream, prompts, tool arguments and results: private by contract |
+| `process.*`, `settings.*`, `ui.*`, `calendar.backend`, `claude.*`, `brain.backend`, `errors.archived` | Process, settings and UI plumbing outside the voice conversation |
+
+The bundle reuses the existing aggregators instead of re-deriving them. Session
+latency summaries come from the recorder's reports, and owner, barge-in and
+replay percentiles and per-kind counts come from `trace_summary`. The bundle adds
+the per-item join with provenance, which no existing aggregate keeps.
+
+### Latency joins
+
+There is one join per non-chunked speech (`join_id` `speech:<speech_id>`). The
+stages, in order:
+
+1. `user_turn_end`: the user turn with the same `correlation_id`;
+2. `brain_turn_accepted`;
+3. `speech_requested` (a chunk takes its request's);
+4. `speech_queued`;
+5. `speech_queue_free`: the latest of `speech_queued`, the end of the latest
+   other output (speech or playback) of the same segment that was still live
+   after the queueing and ended before this start (the voice output is serial),
+   and the end of the user's floor: when a user onset was open at the queueing
+   (a `speech_started` not yet closed), the first closing fact
+   (`input_submitted`, `transcript`, `turn_submitted`) after the queueing and
+   before this start. Waiting for either is not queueing latency;
+6. `speech_dispatched`;
+7. `speech_started`;
+8. `provider_first_pcm` and 9. `first_audio`: earliest
+   `voice.latency.provider_first_pcm`, and earliest `output_first_write` or
+   `first_audible_write`, over the speech's outputs;
+10. `speech_ended`: the first terminal.
+
+A stage is the earliest observation across sources and lists all of them.
+A measure exists when both of its stages exist:
+
+| Measure | From | To |
+|---|---|---|
+| `user_turn_end_to_brain_turn_accepted_ms` | `user_turn_end` | `brain_turn_accepted` |
+| `brain_turn_accepted_to_speech_requested_ms` | `brain_turn_accepted` | `speech_requested` |
+| `speech_requested_to_queued_ms` | `speech_requested` | `speech_queued` |
+| `speech_queued_to_started_ms` | `speech_queued` | `speech_started` (raw, serial playback included) |
+| `speech_queue_free_to_started_ms` | `speech_queue_free` | `speech_started` (thresholded) |
+| `speech_started_to_first_audio_ms` | `speech_started` | `first_audio` |
+| `user_turn_end_to_first_audio_ms` | `user_turn_end` | `first_audio`, only on the join whose first audio is the earliest of its `correlation_id` (the turn's first audio) |
+| `first_audio_to_speech_ended_ms` | `first_audio` | `speech_ended` |
+
+Joined stages come from several processes, whose clocks are only advisory
+(Conversation Events, "Time, ordering and idempotency"). A joined measure can be
+off by the clock skew, even negative. `reported` measures are the producers' own
+durations measured within one process, so prefer them when both exist.
+
+### Anomaly rules
+
+Rules are table-driven (`DEFAULT_RULES` plus `RULE_EVALUATORS`) and
+deterministic, and their thresholds are declared data: pass other thresholds
+with `BundleOptions(rules=...)`. Each finding carries `rule_id`, `rule_version`
+and the evidence of its subject. A rule is `evaluated` only when one of its
+sources was read (`available`, `empty` or `truncated`). Otherwise its row says
+`skipped_reason: source_unavailable`.
+
+| Rule id | Version | Needs (any) | Signature | Thresholds |
+|---|---|---|---|---|
+| `voice.self_barge_in` | 1 | journal | Confirmed barge-in of **audible** Jarvis output (`audible`: played audio or an audible write before the episode) while output was live, with no user activity (User activity: an open onset, an onset after, or a closing fact of an utterance under way) in its segment within the window. Skipped when the segment ends before the window closes. Known blind spot: self-echo that was transcribed and submitted as a user turn is not flagged, so no finding is not evidence of no self-echo (User activity). | `user_activity_window_ms` 20000 |
+| `speech.delivered_after_supersession` | 1 | events, journal | A start, completion or interruption of a speech later than its own `superseded` or `stale` terminal | none |
+| `speech.duplicate_payload` | 1 | events | Two started speeches of one conversation and one segment with the same normalized payload (case-folded, whitespace collapsed; the played text, else the requested text, compared in memory) within the window | `window_ms` 120000, `min_chars` 12 |
+| `speech.missing_delivery_outcome` | 1 | events, journal | A speech `queued`, `started` or `dropped` whose segment continues at least the grace after its last stage, or was closed by a session end kind. `measured`: `state`, `silent_ms` (to the segment end, never past it), `cause` (first `native_failed`, `device_closed`, `stream_closed`, `stopped`, `timeout`, provider `error`, `disconnected`, `failure`, `keepalive_failed` or `refused` after the last stage in the segment, else null), `segment_end` (closing kind or null) | `grace_ms` 30000 |
+| `latency.above_threshold` | 1 | events, journal | A joined measure strictly above its threshold (thresholds are named after measures) | `user_turn_end_to_first_audio_ms` 8000, `speech_queue_free_to_started_ms` 3000, `speech_started_to_first_audio_ms` 4000 |
+| `events.reconstruction_anomaly` | 1 | events | `reconstruct_conversation` absorbed a `duplicate_span_open`, `duplicate_span_close`, `close_before_open` or `conflicting_duplicate` | none |
+
+To add a rule, add its `AnomalyRule` row, its evaluator under the same id, its
+required thresholds in `REQUIRED_THRESHOLDS`, a row in this table and a test.
+Changing a rule's meaning or a default threshold bumps its `version`. (Both Slice 03
+reworks changed rules before any bundle was stored outside QA probes: nothing stored
+yet, so every rule is still version 1.)
+
+#### User activity
+
+`next_user_activity_ms` and `next_user_activity_basis` of an episode, computed in
+its segment from user onsets (`speech_started`) and closing facts
+(`input_submitted`, `transcript`, `turn_submitted`):
+
+| Basis | Evidence | `next_user_activity_ms` |
+|---|---|---|
+| `ongoing_onset` | An onset at or before the episode with no closing fact since: the user was speaking | 0 |
+| `onset` | The first activity after the episode is an onset | its delay |
+| `closed_without_onset` | The first activity after the episode is a closing fact, within `MAX_UTTERANCE_MS` (60 s), with no onset in between: it closes an utterance already under way at the episode (the VAD start that triggers a barge-in is not logged separately) | 0 |
+| `closing` | Same, but later than `MAX_UTTERANCE_MS` | its delay |
+| null | No activity after the episode in its segment | null |
+
+Known limit: a closing fact that belongs to an utterance committed before the
+episode but transcribed or submitted after it also reads as `closed_without_onset`.
+
+Known blind spot of `voice.self_barge_in`: real acoustic self-echo is usually
+transcribed and submitted as a user turn (`voice.transcript` and
+`voice.brain_turn_submitted` within seconds of the barge-in). The journal
+carries no text and no speaker attribution, so that closing fact reads as
+`closed_without_onset` and the rule does not flag the episode. The bundle rule
+therefore only catches echo barge-ins that produced no user turn, and the
+absence of a finding is not evidence that there was no self-echo. Confirming
+self-echo is the job of the `voice.self_echo` diagnostic and its profiles
+(virtual, audio, hardware; Slices 06 to 09 and 12), not of the bundle.
+
+#### Why no payload divergence rule
+
+`voice.state.spoken_diverged` is emitted by `jarvis/core/voice_state.py` when the
+provider's confirmed transcript is not exactly equal, as a string, to the
+intended text. Any punctuation, casing or transcription difference triggers it:
+on the live trace it flags about 40 % of normal, complete playbacks. It is
+therefore counted on speech items (`spoken_divergences`, `state_divergences`,
+`spoken_diverged_at`) and never reported as a finding. Payload integrity needs a
+normalized producer measure (similarity or word error rate plus lengths, never
+text); see `tasks/jarvis-category2-test-lab/Issues/speech-payload-integrity-needs-normalized-measure.md`.
+
+### Privacy
+
+- Only Conversation Events with `public` visibility (`user.transcript.accepted`,
+  `brain.message.published`, `mouth.speech.*`, `mouth.reflex.started`) may fill
+  `turns[].content`, and only when `BundleOptions.include_public_content` is
+  true (the default). The text goes through `redact_identifying_text` (URL
+  userinfo, query and fragment; SSH users; emails) and is cut at
+  `max_content_chars` (default 512, at most 8192; `content_truncated`). With
+  `include_public_content=False`, every content is null.
+- Never copied: diagnostic content (speech requests, withheld speech, sub-agent
+  descriptions), journal messages, journal `data` outside the allowlist, tool
+  arguments and results, provider error text, `agent.event` lines, prompts,
+  hidden reasoning, raw audio and secrets.
+- Journal lines are projected before they reach the builder. The base is
+  `conversation_event_trace.project_trace_entry` (the drill-down allowlist and
+  value rules, credential prefixes refused). On top of it, a closed set of extra
+  scalar keys has its own value rules:
+  - numbers: `elapsed_ms`, `queue_wait_ms`, `stop_latency_ms`, `budget_ms`,
+    `duration_seconds`, `input_tokens`, `output_tokens`;
+  - code tokens: `measure`, `authority`, `trigger`, `addressing`, `arch`,
+    `delivery`, `delivery_boundary`;
+  - ids: `segment_id`, `interrupted_speech_id`;
+  - booleans: `device_stopped`, `near_playback`, `cleanup_pending`,
+    `still_active`;
+  - 64 hex: `configuration_id`;
+  - lists of at most 16 ids: `work_ids`.
+- The codec applies the Test Lab Name rule at every depth (`scan_private`), so
+  no private field name can be stored.
+- Known limit: a secret shaped like a code token (`[a-z][a-z0-9_.-]{0,63}`, for
+  example `hunter2pass`) written by a producer under an allowlisted code key
+  (`code`, `status`, `reason`, ...) passes the value rule and is copied. The
+  allowlisted keys are written by Jarvis code, never by providers or users, and
+  credential prefixes (`sk-`, `ghp_`, ...) are refused.
+
+### Identity and determinism
+
+- The builder reads no clock and no entropy; `captured_at` is an input.
+- The id time is `session.started_at`, else `selector.start`, else `captured_at`
+  (a bundle with no evidence). The nonce is `content_fingerprint[:16]`. The
+  capture context (`capture`) is outside the fingerprint, so capturing the same
+  evidence again (later, from other code) gives the same `bundle_id` and
+  `content_fingerprint`, and the store keeps the first copy (`duplicate`).
+- Inputs are deduplicated (events by id, keeping the lowest sequence; lines by
+  offset) and sorted before derivation, so their order does not matter.
+- Determinism holds for closed evidence. A window is closed once the journal
+  holds a line later than the window end plus the tolerance (`stopped_by:
+  window_end`); a bundle captured before that (`window_open`, warning
+  `open_window`) can change on recapture. An id-only capture is stable once its
+  session has ended and the journal after it gets no new undecodable lines (its
+  damage counts cover the scan to the file end) and stays within `max_bytes`.
+- Lines with equal timestamps keep file order; their references are offsets, so
+  a file with the same lines in another order gives another bundle.
+
+### Capture service
+
+`capture_diagnostic_bundle(selector, *, captured_at, trace_path, event_source,
+reports_directory, code, config_fingerprint, options, store, trace_limits,
+event_limits, diagnostics)` is async. A source left `None` is `not_requested`.
+
+- Selector (`SessionSelector`): a `conversation_id`, a `session_id`, and/or a
+  window `start`..`end`. It needs at least one id or both times.
+- Conversation Events (`read_session_events`), bounded by `EventReadLimits`
+  (20000 events, pages of 500, 8 conversations for a session, 64 MiB of export):
+  - `StoreEventSource(store)` reads through the `ConversationEventStore` port.
+    For a conversation it calls `list_conversation_events`. For a session it
+    calls `list_events_by_id(session_id)`, then adds the untagged events of
+    those conversations inside their extent. For a window it calls
+    `list_events_in_time_range`.
+  - `StateDatabaseEventSource(path)` opens a Core state database read-only
+    (`ReadOnlyStateDatabase`: `file:<db>?mode=ro` URI, `PRAGMA query_only=ON`,
+    one connection per read, closed afterwards) behind
+    `SQLiteConversationEventStore`, so the store's own code decodes and
+    cross-checks the rows. A v1 database without the table is `unavailable`.
+  - `ExportEventSource(path)` reads the file with `read_export` and filters it
+    by the selector.
+- Journal window: the selector's, else the events' extent widened by
+  `trace_margin` (30 s), else none.
+- `read_session_trace`, bounded by `TraceReadLimits` (64 MiB read, 500000 lines,
+  lines over 256 KiB skipped, 20000 selected lines, 16 MiB selected, 5 s
+  tolerance):
+  - With a window, it bisects the file on line timestamps to the window start
+    minus the tolerance, reads forward, and stops at the first line later than
+    the window end plus the tolerance. Without a window, it reads the last
+    64 MiB (`start_truncated` when older bytes exist).
+  - It keeps a line that is timed inside the window, is of a selected kind
+    (Selection budget; never `agent.event`), and carries no other conversation or
+    session id than the selector's.
+  - A line carrying the selected id is `matched`. With ids and no window, lines
+    without ids are kept only inside the extent of the matched lines.
+  - Damage is counted over the physical scan range: from the scan start (id
+    mode) or from the first line timed at or after the window start minus the
+    tolerance (window mode), to the stop point. Non-JSON lines (including
+    non-UTF-8) count as `corrupt_lines`, lines without a valid `ts` as
+    `untimed_lines`, lines over 256 KiB as `oversized_lines`. A file whose read
+    range holds no decodable line is `unavailable` with `no_decodable_lines`
+    (never `empty`); decodable but untimed only, `no_timed_lines`.
+  - A UTF-8 BOM at the file start is skipped (the first reference offset is 3).
+    A carriage return separates records (CRLF and CR-only files decode; a
+    CR-only file larger than 256 KiB reads as one oversized line). A final line
+    without newline is never decoded: `torn_tail` plus the `torn_tail` warning.
+  - `window_open` is set when a window was given and the read stopped at the
+    file end.
+- Voice session reports (`read_voice_session_reports`): the `*.json` files of
+  the reports directory (at most 2048 files, 1 MiB each), kept when their
+  `session_id` belongs to the selector, the events or the matched lines.
+- `trace_summary.summarize` runs on the selected raw lines, which are then
+  discarded.
+- A missing or unreadable source never fails the capture. It becomes its
+  coverage status plus one `testlab_bundle_source_degraded` warning (`source`,
+  `status`, `reason`). A selector error raises `TestLabError`, and a store error
+  propagates. The expected path emits `testlab_bundle_captured` (info:
+  `bundle_id`, `stored`, counts, statuses, segment count and warnings, never
+  content). Emission goes through the private `_diagnostics.SafeDiagnostics`
+  shared with both filesystem stores (a failing sink is counted, never raised).
+- Read-only database, known effects: SQLite opens a WAL database through its
+  `-shm` index, so a read-only open of a database with no live owner can create
+  or rewrite `<db>-shm` (the database and WAL content stay unchanged). When a
+  writer holds an exclusive lock, the read waits for SQLite's busy timeout
+  (about 5 s per statement, 7.4 s measured for a capture) and the source becomes
+  `unavailable` / `state_database_unreadable`.
+
+### Bundle storage
+
+Port `store.BundleStore`, synchronous like `TestRunStore`:
+
+| Method | Contract |
+|---|---|
+| `put_bundle(bundle)` | Writes a new bundle and returns `BundlePutResult` with status `stored`. For the same id with the same `content_fingerprint`, it returns `duplicate` and writes nothing. For the same id with another fingerprint, it raises `BundleConflictError` (`testlab_store_conflict`). An unreadable stored copy raises `BundleRecordCorruptError` and is never overwritten. |
+| `get_bundle(bundle_id)` | Returns the bundle decoded with the strict codec, or raises `BundleNotFoundError` (`testlab_store_not_found`) or `BundleRecordCorruptError` (`testlab_store_corrupt`). |
+| `list_bundles(query)` | `BundlePage {bundles: BundleSummary[], corrupt, next_cursor}` for `BundleQuery {limit 1..500, newest_first, after_bundle_id, conversation_id}`, ordered by bundle id. Each listed bundle is read and decoded, so the cost grows with the number of bundles. |
+
+`FilesystemBundleStore(root)` shares the run store's root and conventions
+(`_fs.py`: the same lock, atomic write, path budget and link rules):
+
+```text
+<root>/bundles/<bundle_id>/bundle.json      canonical JSON (DiagnosticBundle.encode)
+<root>/bundles/<bundle_id>/.bundle-*.tmp    write in progress or crash leftover
+<root>/bundles/.staging-<bundle_id>-*       bundle being created (renamed into place)
+<root>/locks/<bundle_id>.lock               writer lock of the bundle
+```
+
+Both stores share `<root>/locks/`. Each store only ever treats its own lock
+names as orphans: `FilesystemTestRunStore.remove_stale_temporaries` removes a
+lock only when its name is a run id (`tlr-`) whose run is gone, never a bundle
+lock (`tlb-`).
+
+A bundle is immutable. Stray names, links and unreadable bundles are listed in
+`corrupt` (`CorruptRunEntry`) and diagnosed as `testlab_bundle_listing_corrupt`;
+nothing is deleted automatically. No sweep removes bundle staging leftovers yet
+(readers ignore these hidden entries), and bundles have no retention yet.
+`TestRun.bundle_id` references a stored bundle, but the run store does not check
+that the bundle exists.
+
 ## Validation
 
 ```powershell
-.venv/Scripts/python -m pytest -q -p no:cacheprovider tests/unit/test_testlab_identity.py tests/unit/test_testlab_profiles.py tests/unit/test_testlab_diagnostics.py tests/unit/test_testlab_scenarios.py tests/unit/test_testlab_runs.py tests/unit/test_testlab_purity.py tests/unit/test_testlab_store.py tests/unit/test_testlab_store_retention.py tests/unit/test_testlab_store_capture.py
+.venv/Scripts/python -m pytest -q -p no:cacheprovider tests/unit/test_testlab_identity.py tests/unit/test_testlab_profiles.py tests/unit/test_testlab_diagnostics.py tests/unit/test_testlab_scenarios.py tests/unit/test_testlab_runs.py tests/unit/test_testlab_purity.py tests/unit/test_testlab_store.py tests/unit/test_testlab_store_retention.py tests/unit/test_testlab_store_capture.py tests/unit/test_testlab_bundle.py tests/unit/test_testlab_bundle_capture.py
+```
+
+Opt-in real-session smoke test. It reads the local `runtime/trace.jsonl`, opens
+`data/state/jarvis.sqlite3` read-only, and prints counts only:
+
+```powershell
+$env:JARVIS_TESTLAB_REAL_SESSION=1; .venv/Scripts/python -m pytest -q -s -p no:cacheprovider tests/integration/test_testlab_bundle_real_session.py
 ```

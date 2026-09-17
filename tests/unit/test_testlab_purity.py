@@ -9,14 +9,17 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 #: Slice 02 adds the store port and the retention planner, which stay pure (the
-#: filesystem adapter and the capturers are the I/O modules).
+#: filesystem adapter and the capturers are the I/O modules). Slice 03 adds the
+#: DiagnosticBundle schema, rules, builder and the shared redaction helpers (the
+#: capture service and the bundle store adapter are the I/O modules).
 CONTRACT_MODULES = ("__init__", "validation", "identity", "profiles", "diagnostics", "scenarios", "runs", "store",
-                    "retention")
+                    "retention", "redaction", "bundle", "bundle_rules", "bundle_builder")
 ALLOWED_IMPORTS = {
     "__future__", "collections.abc", "dataclasses", "datetime", "enum", "hashlib", "json", "math", "re", "types",
     "typing", "jarvis.domain.conversation_events", "jarvis.domain.voice_state", "jarvis.testlab.validation",
     "jarvis.testlab.identity", "jarvis.testlab.profiles", "jarvis.testlab.diagnostics", "jarvis.testlab.runs",
-    "jarvis.testlab.store",
+    "jarvis.testlab.store", "urllib.parse", "jarvis.domain.conversation_event_store", "jarvis.testlab.redaction",
+    "jarvis.testlab.bundle", "jarvis.testlab.bundle_rules", "bisect",
 }
 #: Clock, entropy, filesystem, process and dynamic execution entry points.
 FORBIDDEN_CALLS = {"now", "utcnow", "today", "time", "monotonic", "perf_counter", "uuid4", "token_hex", "urandom",

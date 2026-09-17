@@ -23,17 +23,28 @@ hidden segments), so protocol files never collide with evidence.
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
-import errno
 import hashlib
 import os
 from pathlib import Path
 import secrets
 import shutil
-import threading
 import time
 from typing import Any, BinaryIO
 
 from jarvis.adapters.file_replace import replace_with_retry
+from jarvis.testlab._diagnostics import SafeDiagnostics
+from jarvis.testlab._fs import (
+    DEFAULT_LOCK_TIMEOUT_S,
+    TMP_SUFFIX,
+    WINDOWS_MAX_PATH_CHARS,  # noqa: F401 - re-exported (Slice 02 public constant)
+    EntryLock,
+    check_path_budget,
+    default_max_path_chars,
+    is_link as _is_link,
+    store_error,
+    tmp_name,
+    write_atomic,
+)
 from jarvis.ports.v2 import DiagnosticSink
 from jarvis.testlab.identity import check_run_id
 from jarvis.testlab.runs import (
@@ -80,11 +91,6 @@ from jarvis.testlab.validation import (
     name_for_message,
 )
 
-if os.name == "nt":
-    import msvcrt
-else:
-    import fcntl
-
 RECORD_NAME = "record.json"
 #: Hidden per-run manifest of what `put_artifact` wrote (the authority for kind and media type).
 MANIFEST_NAME = ".artifacts.json"
@@ -98,123 +104,30 @@ STAGING_PREFIX = ".staging-"
 DELETING_PREFIX = ".deleting-"
 RECORD_TMP_PREFIX = ".record-"
 ARTIFACT_TMP_PREFIX = ".artifact-"
-TMP_SUFFIX = ".tmp"
 
-#: Lock wait before `testlab_store_busy`. The lock only covers read-compare-write
-#: (milliseconds), never a stream, so a long wait means a stuck writer.
-DEFAULT_LOCK_TIMEOUT_S = 5.0
-LOCK_POLL_S = 0.01
 #: Protocol temporaries older than this are crash leftovers (an active stream
 #: refreshes its temporary's mtime on every chunk).
 DEFAULT_STALE_TEMPORARY_S = 3600.0
 STREAM_CHUNK_BYTES = 256 * 1024
-#: Temp names have a fixed length: `.record-` / `.artifact-` + 16 hex + `.tmp`.
-_TMP_TOKEN_HEX = 16
-#: Windows `MAX_PATH` is 260 including the terminating NUL; `CreateDirectoryW`
-#: also keeps 12 characters for an 8.3 file name inside the new directory.
-WINDOWS_MAX_PATH_CHARS = 259
-_DIRECTORY_RESERVE_CHARS = 12
-
 #: Device names Windows resolves in any directory, with any extension.
 _WINDOWS_RESERVED = frozenset({"con", "prn", "aux", "nul", "conin$", "conout$",
                                *(f"com{i}" for i in range(10)), *(f"lpt{i}" for i in range(10))})
 
 
-#: errno values meaning "another handle holds the lock" (msvcrt: EACCES/EDEADLOCK, flock: EWOULDBLOCK).
-_LOCK_CONTENTION_ERRNOS = frozenset({errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK, errno.EDEADLK})
+_RUN_ERROR_KINDS = {STORE_NOT_FOUND: RunNotFoundError, STORE_CONFLICT: RunConflictError,
+                    STORE_CORRUPT: RunRecordCorruptError}
 
 
 def _store_error(code: str, detail: str, exc: BaseException | None = None) -> TestLabStoreError:
-    kind = {STORE_NOT_FOUND: RunNotFoundError, STORE_CONFLICT: RunConflictError,
-            STORE_CORRUPT: RunRecordCorruptError}.get(code, TestLabStoreError)
-    if exc is not None:
-        detail = f"{detail} ({type(exc).__name__})"
-    return kind(code, detail)
+    return store_error(code, detail, exc, kinds=_RUN_ERROR_KINDS)
 
 
-def default_max_path_chars() -> int | None:
-    """The path budget of this host: 259 on Windows unless `LongPathsEnabled` is 1, else unbounded (None)."""
-    if os.name != "nt":
-        return None
-    import winreg
-
+def _is_run_id(name: str) -> bool:
     try:
-        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\FileSystem") as key:
-            enabled, _ = winreg.QueryValueEx(key, "LongPathsEnabled")
-    except OSError:
-        return WINDOWS_MAX_PATH_CHARS  # intentional: no policy value means the legacy limit applies
-    return None if enabled == 1 else WINDOWS_MAX_PATH_CHARS
-
-
-def _is_link(path: Path) -> bool:
-    return path.is_symlink() or path.is_junction()
-
-
-class _RunLock:
-    """Exclusive OS lock on `<root>/locks/<run_id>.lock` (msvcrt on Windows, flock elsewhere).
-
-    The OS releases it when the holder dies, so a crashed writer never leaves a
-    stale lock. Locks are per open handle: two threads of one process exclude
-    each other as two processes do.
-    """
-
-    def __init__(self, path: Path, run_id: str, timeout_s: float) -> None:
-        self._path = path
-        self._run_id = run_id
-        self._timeout_s = timeout_s
-        self._fd: int | None = None
-
-    def __enter__(self) -> _RunLock:
-        try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            fd = os.open(self._path, os.O_RDWR | os.O_CREAT, 0o600)
-        except OSError as exc:
-            raise _store_error(STORE_IO, f"run {self._run_id}: writer lock cannot be opened", exc) from exc
-        deadline = time.monotonic() + self._timeout_s
-        while True:
-            try:
-                _lock_fd(fd)
-            except OSError as exc:
-                if exc.errno not in _LOCK_CONTENTION_ERRNOS:
-                    os.close(fd)
-                    raise _store_error(STORE_IO, f"run {self._run_id}: writer lock failed", exc) from exc
-                if time.monotonic() >= deadline:
-                    os.close(fd)
-                    raise _store_error(STORE_BUSY, f"run {self._run_id}: another writer holds the run lock "
-                                                   f"for more than {self._timeout_s:g} s") from None
-                time.sleep(LOCK_POLL_S)
-                continue
-            self._fd = fd
-            return self
-
-    def __exit__(self, *_: object) -> None:
-        fd, self._fd = self._fd, None
-        if fd is None:
-            return
-        try:
-            _unlock_fd(fd)
-        except OSError:
-            # intentional: closing the handle below releases an OS file lock anyway, and
-            # the protected write has already committed or raised its own error.
-            pass
-        finally:
-            os.close(fd)
-
-
-def _lock_fd(fd: int) -> None:
-    if os.name == "nt":
-        os.lseek(fd, 0, os.SEEK_SET)
-        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
-    else:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-
-
-def _unlock_fd(fd: int) -> None:
-    if os.name == "nt":
-        os.lseek(fd, 0, os.SEEK_SET)
-        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
-    else:
-        fcntl.flock(fd, fcntl.LOCK_UN)
+        check_run_id(name)
+    except TestLabError:
+        return False
+    return True
 
 
 def _chunks(data: bytes | Iterable[bytes] | BinaryIO) -> Iterator[bytes]:
@@ -253,23 +166,17 @@ class FilesystemTestRunStore:
         self.locks_dir = self.root / LOCKS_DIR
         self.limits = limits
         self.lock_timeout_s = lock_timeout_s
-        self._diagnostics = diagnostics
-        #: Emissions the diagnostic sink refused (a broken sink never fails a store operation).
-        self.diagnostic_failures = 0
-        self._counter_lock = threading.Lock()
+        self._diagnostics = SafeDiagnostics(diagnostics)
 
     # ------------------------------------------------------------ plumbing
 
+    @property
+    def diagnostic_failures(self) -> int:
+        """Emissions the diagnostic sink refused (a broken sink never fails a store operation)."""
+        return self._diagnostics.failures
+
     def _diagnose(self, kind: str, message: str, *, level: str = "info", **data: Any) -> None:
-        if self._diagnostics is None:
-            return
-        try:
-            self._diagnostics.emit(kind, message, level=level, data=data)
-        except Exception:
-            # A broken diagnostic sink cannot undo a committed write or turn a
-            # read into a failure; the host inspects `diagnostic_failures`.
-            with self._counter_lock:
-                self.diagnostic_failures += 1
+        self._diagnostics.emit(kind, message, level=level, **data)
 
     def _run_dir(self, run_id: str) -> Path:
         try:
@@ -280,20 +187,14 @@ class FilesystemTestRunStore:
 
     def _check_path_budget(self, path: Path, run_id: str, *, directory: bool = False) -> None:
         """Refuse, before any write, a path the host cannot create (legacy Windows `MAX_PATH`)."""
-        if self.max_path_chars is None:
-            return
-        budget = self.max_path_chars - (_DIRECTORY_RESERVE_CHARS if directory else 0)
-        length = len(os.path.abspath(path))
-        if length > budget:
-            raise TestLabStoreError(STORE_PATH_UNSAFE, f"run {run_id}: path of {length} characters exceeds the "
-                                                       f"{budget}-character path budget of this host")
+        check_path_budget(path, f"run {run_id}", self.max_path_chars, directory=directory)
 
     @staticmethod
     def _tmp_name(prefix: str) -> str:
-        return f"{prefix}{secrets.token_hex(_TMP_TOKEN_HEX // 2)}{TMP_SUFFIX}"
+        return tmp_name(prefix)
 
-    def _lock(self, run_id: str) -> _RunLock:
-        return _RunLock(self.locks_dir / f"{run_id}.lock", run_id, self.lock_timeout_s)
+    def _lock(self, run_id: str) -> EntryLock:
+        return EntryLock(self.locks_dir / f"{run_id}.lock", f"run {run_id}", self.lock_timeout_s)
 
     def _existing_run_dir(self, run_id: str) -> Path:
         run_dir = self._run_dir(run_id)
@@ -308,24 +209,8 @@ class FilesystemTestRunStore:
 
     def _write_atomic(self, directory: Path, target_name: str, payload: bytes, run_id: str) -> None:
         """Temp file + flush + fsync + `replace_with_retry`: the target is old or new, never partial."""
-        tmp = directory / self._tmp_name(RECORD_TMP_PREFIX)
-        self._check_path_budget(tmp, run_id)
-        try:
-            with open(tmp, "xb") as handle:
-                handle.write(payload)
-                handle.flush()
-                os.fsync(handle.fileno())
-            replace_with_retry(tmp, directory / target_name)
-        except OSError as exc:
-            try:
-                tmp.unlink(missing_ok=True)
-            except OSError:
-                # intentional: the leftover is a hidden `.tmp` that readers ignore and
-                # `remove_stale_temporaries` deletes; the write failure below is the error.
-                pass
-            raise _store_error(STORE_IO, f"run {run_id}: record write failed, previous record intact", exc) from exc
-        # Directory fsync is not available on Windows (a directory cannot be opened
-        # for writing); NTFS journals the rename itself, so it is not attempted.
+        write_atomic(directory, target_name, payload, label=f"run {run_id}", tmp_prefix=RECORD_TMP_PREFIX,
+                     max_path_chars=self.max_path_chars, replace=replace_with_retry)
 
     def _read_record(self, run_dir: Path, run_id: str) -> TestRun:
         record = run_dir / RECORD_NAME
@@ -814,7 +699,9 @@ class FilesystemTestRunStore:
             raise _store_error(STORE_IO, "locks directory cannot be listed", exc) from exc
         for lock in locks:
             run_id = lock.name.removesuffix(".lock")
-            if run_id != lock.name and not (self.runs_dir / run_id).exists():
+            if run_id == lock.name or not _is_run_id(run_id):
+                continue  # another store's lock (bundle locks share `locks/`): never this store's orphan
+            if not (self.runs_dir / run_id).exists():
                 try:
                     os.unlink(lock.path)
                     removed += 1
