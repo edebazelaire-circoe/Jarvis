@@ -1945,7 +1945,7 @@ Live model run: none. Redaction only changes what JARVIS keeps and journals; the
 Validation:
 
 - Targeted suite under `-W error::ResourceWarning` (scene contracts/service/view/transport/projection/restart/interaction/renderer/artifacts/query/capture/capture logic/links, `test_cli_stream.py`, display MCP, codex agent, agent tasks/behaviour/routing, Claude debug console, voice to Claude, Windows supervision, error reporting, deployment, environment, voice switch, Control Center MVP/quality/prompts/catalog/timeline/appearance, documented routes, prompt registry/wiring, app, work view/store, conversation events; node tests included): `3 failed, 1705 passed in 155.50s` — the 3 are `test_agent_routing_settings.py` `group_by_harness` baseline tests.
-- Full `scripts/verify_release.py`, alone: **not completed**. Three attempts on this host, nothing else running: two were stopped by the harness for low system memory at 5 % and 33 % (every test up to 33 % passed, 0 failures); the third, a detached process, crawled to 1 % under memory pressure and was killed at hand-off. To be rerun by agent 0.
+- Full `scripts/verify_release.py`, alone: **not completed**. Three attempts on this host, nothing else running: two were stopped by the harness for low system memory at 5 % and 33 % (5 failures by 33 %, at 10 % and 15 %; names are only printed at the end, so they are not identified — the main baseline has 9 such failures, 3 of them in `test_agent_routing_settings.py`, which also fail in the targeted suite); the third, a detached process, crawled to 1 % under memory pressure and was killed at hand-off. To be rerun by agent 0.
 
 Residual risks:
 
