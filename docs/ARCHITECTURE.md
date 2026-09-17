@@ -1419,7 +1419,7 @@ Browser (control_center_scene.js pure client; rendering: see Scene renderer)
   ├─ GET  /api/scene           ─► CoreSceneView.snapshot() ─► GET  /v1/scene/snapshot
   ├─ GET  /api/scene/patches   ─► CoreSceneView.patches()  ─► GET  /v1/scene/patches   (long-poll)
   ├─ POST /api/scene/commands  ─► CoreSceneView.command()  ─► POST /v1/scene/commands  (actor forced to user)
-  └─ POST /api/work/cancel     ─► CoreSceneView.cancel_work() ─► POST /v1/work/cancel  (job stars only, Slice 08)
+  └─ POST /api/jobs/cancel     ─► CoreSceneView.cancel_work() ─► POST /v1/work/cancel  (job stars only, Slice 08)
 Brain display MCP (Slice 06) ───────────────────────────────► POST /v1/scene/commands  (actor brain, bearer token)
 Runtime projector (Slice 04) ─► SceneService.apply() inside Core, never HTTP
 ```
@@ -2294,7 +2294,7 @@ Files:
 | chip « N objets masqués » › Afficher / Tout réafficher | chip is a button | `set_visibility visible`, one per object (≤ 512) | count of failures in a toast |
 | menu › Archiver… (confirmation) | menu | `archive` (Core cascades the star's runtime signals) | rolled back, toast |
 | menu › Archiver les travaux terminés (N)… or the « Scène pleine » chip (confirmation with counts) | menu / chip button | `archive_many` (one command in practice) | whole selection rolled back; `not_bulk_archivable` → counts recomputed and confirmed again once |
-| menu › Arrêter la tâche… (job stars only, confirmation) | menu | `POST /api/work/cancel` | toast with Core's words |
+| menu › Arrêter la tâche… (job stars only, confirmation) | menu | `POST /api/jobs/cancel` | toast with Core's words |
 | right click, ContextMenu, Shift+F10, long press (550 ms), click on the already selected object | ContextMenu / Shift+F10 | opens the menu | — |
 | Escape | Escape | cancels a drag or keyboard edit, closes a menu or dialog, then leaves the node | — |
 
@@ -2378,7 +2378,7 @@ saturated).
 
 ```text
 menu › Arrêter la tâche (job star, work_ref.source = job)
-  └─ POST /api/work/cancel {source, external_id}      Control Center, origin guard, strict body ≤ 4 KiB
+  └─ POST /api/jobs/cancel {source, external_id}      Control Center, origin guard, strict body ≤ 4 KiB
        ├─ source ≠ job → 409 not_cancellable, Core not called
        └─ CoreSceneView.cancel_work → POST /v1/work/cancel {schema_version: 1, source, external_id}   bearer token
             ├─ source ≠ job → 409 not_cancellable; unknown or speculative job → 404 not_found; malformed → 400
@@ -2392,7 +2392,9 @@ linked to a brain `work_id` (a star is one job) and never reaches `back_brain`
 jobs (no `_links` entry). `cancel_for_user` calls the same primitive,
 `cancel(job_id)`, on exactly the job behind the star, and journals
 `core.job.user_cancel` (info). Claude CLI sub-agents have no individual stop
-(only the whole brain, `/api/agent/kill`): their menu never offers it. Relay
+(only the whole brain, `/api/agent/kill`): their menu never offers it. The
+Control Center route lives under `/api/jobs`, not `/api/work`: `/api/work` stays
+read-only (the UI never writes work state; the job's own observation does). Relay
 failures are classified like commands (`command_not_sent`, `core_timeout`,
 `core_unreachable`, `invalid_scene_response`); 400/404/409 from Core are relayed
 with their code. Measured: stop from the menu → job `cancelled`, star

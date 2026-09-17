@@ -367,7 +367,7 @@ class ControlCenter:
             web.get("/api/scene", self.scene),
             web.get("/api/scene/patches", self.scene_patches),
             web.post("/api/scene/commands", self.scene_command),
-            web.post("/api/work/cancel", self.work_cancel),
+            web.post("/api/jobs/cancel", self.job_cancel),
             web.get("/api/agent/tasks", self.agent_tasks),
             web.get("/api/agent/tasks/{task_id}/trace", self.agent_task_trace),
             web.post("/api/agent/console/open", self.agent_console_open),
@@ -2484,7 +2484,7 @@ class ControlCenter:
         status, body = await self.scene_view.command(command)
         return web.json_response(body, status=status, dumps=scene_wire.compact_json)
 
-    async def work_cancel(self, request: web.Request) -> web.Response:
+    async def job_cancel(self, request: web.Request) -> web.Response:
         """Arrêt d'une étoile `job` depuis son menu (Slice 08) : `{source, external_id}`.
 
         Origine vérifiée par le middleware (`_origin_guard`, comme tout POST).

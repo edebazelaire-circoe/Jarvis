@@ -169,7 +169,7 @@ refused to the brain by construction and neither in its tool catalog:
 and its signals, at most 512 ids) and `POST /v1/work/cancel` (bearer token; cancels
 exactly one Core job, never a Claude sub-agent, 409 `not_cancellable` for any
 other source). The Control Center exposes them to the page only through
-`POST /api/scene/commands` (actor forced to `user`) and `POST /api/work/cancel`
+`POST /api/scene/commands` (actor forced to `user`) and `POST /api/jobs/cancel`
 (origin guard like every POST, strict 4 KiB body, only `source = job` relayed).
 The threat model does not change in kind: a brain that reads `core.token` can
 already claim `user`, and it can now bulk-archive finished work in one call or

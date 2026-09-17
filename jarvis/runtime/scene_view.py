@@ -9,7 +9,7 @@ Core possède la scène (Décision 11). Le navigateur la lit et la commande
 - `POST /api/scene/commands` → `POST /v1/scene/commands` : l'acteur est
   **toujours `user`**. Un corps sans acteur le reçoit ; un autre acteur est
   refusé (403) : le navigateur ne parle jamais au nom du cerveau ;
-- `POST /api/work/cancel` → `POST /v1/work/cancel` (Slice 08) : l'arrêt
+- `POST /api/jobs/cancel` → `POST /v1/work/cancel` (Slice 08) : l'arrêt
   d'une étoile `job` depuis son menu. Toute autre source (sous-agent Claude)
   est refusée ici (409 `not_cancellable`), sans appeler Core : aucun arrêt
   individuel n'existe pour elle.

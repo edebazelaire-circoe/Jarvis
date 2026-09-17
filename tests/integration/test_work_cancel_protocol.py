@@ -1,6 +1,6 @@
 """Arrêt d'une étoile `job` depuis la scène (handoff jarvis-constellation-scene-runtime, Slice 08).
 
-Chaîne réelle : Control Center (`POST /api/work/cancel`, garde d'origine) →
+Chaîne réelle : Control Center (`POST /api/jobs/cancel`, garde d'origine) →
 `CoreSceneView.cancel_work` → `CoreSceneTransport` → Core
 (`POST /v1/work/cancel`, jeton) → `JobService.cancel_for_user` → job annulé →
 projection runtime → étoile `cancelled`.
@@ -180,7 +180,7 @@ async def test_the_control_center_relays_a_job_stop_and_journals_it(center):
     process, client, runtime = center
     job = await running_job(process)
 
-    response = await client.post("/api/work/cancel", json={"source": "job", "external_id": job.id})
+    response = await client.post("/api/jobs/cancel", json={"source": "job", "external_id": job.id})
     body = await response.json()
 
     assert response.status == 200, body
@@ -193,13 +193,13 @@ async def test_the_control_center_refuses_claude_stars_origin_and_shape_before_c
     process, client, _ = center
     job = await running_job(process)
 
-    claude = await client.post("/api/work/cancel", json={"source": "claude", "external_id": "toolu_01"})
-    foreign = await client.post("/api/work/cancel", json={"source": "job", "external_id": job.id}, headers={"Origin": "http://evil.example"})
-    extra = await client.post("/api/work/cancel", json={"source": "job", "external_id": job.id, "actor": "brain"})
-    garbage = await client.post("/api/work/cancel", data=b"{nope")
-    oversize = await client.post("/api/work/cancel", data=b"{" + b" " * 5000 + b"}")
-    query = await client.post("/api/work/cancel?x=1", json={"source": "job", "external_id": job.id})
-    get = await client.get("/api/work/cancel")
+    claude = await client.post("/api/jobs/cancel", json={"source": "claude", "external_id": "toolu_01"})
+    foreign = await client.post("/api/jobs/cancel", json={"source": "job", "external_id": job.id}, headers={"Origin": "http://evil.example"})
+    extra = await client.post("/api/jobs/cancel", json={"source": "job", "external_id": job.id, "actor": "brain"})
+    garbage = await client.post("/api/jobs/cancel", data=b"{nope")
+    oversize = await client.post("/api/jobs/cancel", data=b"{" + b" " * 5000 + b"}")
+    query = await client.post("/api/jobs/cancel?x=1", json={"source": "job", "external_id": job.id})
+    get = await client.get("/api/jobs/cancel")
 
     assert claude.status == 409 and (await claude.json())["error"]["code"] == NOT_CANCELLABLE
     assert foreign.status == 403
@@ -212,9 +212,9 @@ async def test_the_control_center_refuses_claude_stars_origin_and_shape_before_c
 
 async def test_the_control_center_relays_unknown_jobs_and_says_when_core_is_down(center):
     process, client, _ = center
-    unknown = await client.post("/api/work/cancel", json={"source": "job", "external_id": "no-such-job"})
+    unknown = await client.post("/api/jobs/cancel", json={"source": "job", "external_id": "no-such-job"})
     await process.stop()
-    down = await client.post("/api/work/cancel", json={"source": "job", "external_id": "any"})
+    down = await client.post("/api/jobs/cancel", json={"source": "job", "external_id": "any"})
 
     assert unknown.status == 404 and (await unknown.json())["error"]["code"] == "not_found"
     down_body = await down.json()
@@ -224,7 +224,7 @@ async def test_the_control_center_relays_unknown_jobs_and_says_when_core_is_down
 async def test_without_a_scene_view_the_stop_route_says_it_is_not_configured(tmp_path):
     control = ControlCenter(runtime_root=tmp_path, project_root=tmp_path)
     async with TestClient(TestServer(control._app)) as client:
-        response = await client.post("/api/work/cancel", json={"source": "job", "external_id": "x"})
+        response = await client.post("/api/jobs/cancel", json={"source": "job", "external_id": "x"})
         assert response.status == 503 and (await response.json())["error"]["code"] == "not_configured"
 
 

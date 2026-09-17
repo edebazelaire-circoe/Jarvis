@@ -1510,7 +1510,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     notify({title:`${archived} ${archived>1?'objets archivés':'objet archivé'}`,sub:'Place libérée pour le travail en attente.',kind:'ok',ms:3500});
   }
 
-  /* Arrêt d'une étoile `job` : `POST /api/work/cancel`. Jamais proposé pour un sous-agent du brain. */
+  /* Arrêt d'une étoile `job` : `POST /api/jobs/cancel`. Jamais proposé pour un sous-agent du brain. */
   async function stopJob(id){
     const item=lastState&&lastState.objects.get(id);
     if(!item||item.kind!=='job'||!item.work_ref||item.work_ref.source!=='job')return;
@@ -1524,7 +1524,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     const started=Date.now();
     notify({title:`Arrêt de ${quoted(id)}…`,sub:'Demande envoyée à Core (au plus 20 s).',kind:'info',ms:2500});
     try{
-      const response=await requestJson('/api/work/cancel',{method:'POST',body:{source:item.work_ref.source,external_id:item.work_ref.external_id},timeoutMs:30000});
+      const response=await requestJson('/api/jobs/cancel',{method:'POST',body:{source:item.work_ref.source,external_id:item.work_ref.external_id},timeoutMs:30000});
       const body=response.body||{};
       if(response.status===200&&typeof body.outcome==='string'){
         const words={cancelled:['Tâche arrêtée','Le job est annulé.'],cancel_requested:['Arrêt demandé','Core termine l’annulation.'],
