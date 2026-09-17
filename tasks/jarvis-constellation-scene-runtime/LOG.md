@@ -962,3 +962,141 @@ Residual risks (Slice 05, final):
 - PM visual review of screenshots (Omega and circuit-board, dense and saturated scenes) and spot-check after final follow-up: 128 renderer/display/Control Center tests passed. `verify_release.py` alone: 4051 passed / 9 skipped.
 - Aesthetic reference: the handoff's visual-direction document was never provided; implemented from the grilling visual grammar + existing Omega theme. Human should review visuals at acceptance.
 - Accepted residual risks: see "Slice 05 — final follow-up" (hung visible leader stalls commits, followers ≤ ~40 s stale; same-origin script can desync followers; safe area holds from 1280×720 16:9 upward; separate profiles may cause one visible move; solo fallback without Web Locks/BroadcastChannel; ledger eviction past 2048; hidden followers stale until visible). Real (non-headless) Chrome, DPR ≠ 1 and screen-reader output not verified.
+
+## 2026-09-17 — Slice 08 — implementation notes (agent 01)
+
+Delivered:
+
+- **Domain** (`jarvis/domain/scene.py`): archive cascade in `_plan_archive`; user-only `SceneOp.ARCHIVE_MANY` (`object_ids`, 1–512 unique, `MAX_ARCHIVE_MANY_IDS`); `SceneRefusal.NOT_BULK_ARCHIVABLE`; public `signal_owners`, `runtime_signals_of`, `bulk_archivable`, `TERMINAL_EXEC_STATES`, `ARCHIVE_OPS`; `MAX_PATCH_OPS` = 512 + 1 024.
+- **Core**: `JobService.cancel_for_user(job_id)` (`jarvis/core/v2_services.py`, journal `core.job.user_cancel`); `POST /v1/work/cancel` (`jarvis/protocol/server.py`); `LocalCoreClient.cancel_work`.
+- **Control Center**: `POST /api/jobs/cancel` → `CoreSceneView.cancel_work` → `CoreSceneTransport.work_cancel` (`jarvis/runtime/scene_view.py`, `control_center.py`).
+- **Page**:
+  - `jarvis/runtime/control_center_scene_interact.js` (`window.JarvisSceneInteract`, pure), injected at `/*__CONTROL_CENTER_SCENE_INTERACT_JS__*/`;
+  - gestures, menu, chips and commits in the browser block of `control_center_scene_page.js`;
+  - generic `showMenu` and in-page `confirmDialog` in `control_center.html`.
+- **Tests**: `tests/unit/test_scene_user_lifecycle.py` (33), `tests/unit/test_scene_interaction_logic.py` (12), `tests/integration/test_work_cancel_protocol.py` (21); Slice 01 matrix cells updated.
+- **Docs**: ARCHITECTURE › *Scene user interaction* (+ transport diagram, renderer status chips), OPERATIONS › *Scène constellation : agir sur les objets* (+ chip rows), scene-model › *Archive cascade and bulk archive* (+ commands, matrix, outcomes, bounds), SECURITY › 13 (user controls paragraph).
+
+Decisions taken inside the contract (reviewable by PM):
+
+1. **Cascade rule = signal owner.** A runtime `attention` belongs to the target of its live signal link when that target is an execution node, else to the active star with the same `work_ref` `(source, external_id)`; `work_id` is ignored because it can arrive later. This finds retired signals, which have no link, with no dependency on the projector's `attention!` id scheme.
+   - One patch, one revision.
+   - Signals come first, so the star's tombstone is the newest and the last evicted; while it lives, the projector skips both the star and its signal.
+   - Brain and user attention objects are never cascaded. Archiving a signal alone keeps its star.
+2. **`archive_many`: all or nothing.**
+   - Already archived ids are skipped (another tab was faster). If nothing remains, the result is `duplicate`.
+   - An unknown id refuses the whole command with `unknown_object`; any id outside the rule refuses it with `not_bulk_archivable`.
+   - Why refuse rather than skip: the user confirmed counts, so applying a different set would break that confirmation. The page recomputes and asks again once.
+   - Stale selections are rare anyway: Core work never leaves a terminal status (`ALLOWED_WORK_TRANSITIONS`).
+3. **Bulk scope = all four terminal states** (`completed`, `cancelled`, `failed`, `interrupted`), with a count per state in the confirmation.
+   - Failed and interrupted work is where the capacity problem comes from (measured failure mix, Slice 04), and a terminal star cannot restart.
+   - The user sees « 5 en échec » before confirming, so nothing unreviewed goes silently.
+   - Also accepted: signals whose star is selected, and **orphan runtime signals**, which are the leaked slots left by archives made before Slice 08.
+   - Never `running`, `pending`, `blocked` or `unknown`; never brain or user objects.
+4. **Patch bound.** `MAX_PATCH_OPS` rises from 1 025 to 1 536. Op kinds are unchanged (`archive_object`, `delete_relation`), so neither the wire schema nor the storage schema changes. Effect on readers:
+   - an old `ScenePatch.from_payload` refuses a patch above 1 025 ops; all readers are in this repository and updated together;
+   - the JS client has no op bound;
+   - a worst-case bulk patch (512 full payloads, about 8 MiB) goes out alone under the 16 MiB read bound. The `scene_wire` comment was corrected accordingly.
+5. **Cancel route: by job, not by `work_id`.**
+   - `JobService.cancel_work(work_id)` does not fit: it cancels every job linked to one brain work, and it never reaches `back_brain` jobs, which have no `_links` entry.
+   - `cancel_for_user` calls the same primitive, `cancel(job_id)`, on exactly the job behind the star. It waits up to 5 s for the job to end and answers `cancelled`, `cancel_requested` or `already_terminal`.
+   - Unknown or speculative jobs get 404. Any source other than `job` gets 409 `not_cancellable`, at Core and again at the Control Center, which then never calls Core.
+   - **Control Center path `/api/jobs/cancel`, not `/api/work/cancel`.** The existing invariant `test_the_ui_can_never_write_work_state` keeps `/api/work*` read-only; a first version under `/api/work` turned it red, and the route was moved.
+6. **User drag pins; resize does not.** The contract says "drag → set_geometry then pin". Resize commits only `set_geometry` (`placed_by = user`). That already protects the object from the resolver (`explicit_placement`); the brain can still move it until the user pins it. « Épingler ici » on an object with no committed geometry first commits the drawn box.
+7. **Geometry is clamped to the reference frame** (x ±160, y ±90), as the contract says, not to the composition safe area: the user may deliberately park an object at the edge. Values are **whole units**, so the brain reads clean numbers and a 1 px jitter makes no revision.
+8. **Keyboard.**
+   - Maj+flèches move by 2 units; Ctrl+Maj+flèches by 10.
+   - Ctrl+flèches resize by ±2 units (capsule and window only).
+   - The menu opens with the ContextMenu key or Maj+F10.
+   - Alt+Arrow and Meta are never intercepted, because Alt+Left is the browser's Back.
+   - A keyboard edit commits when the modifier is released, on blur, or after 700 ms without a key; Escape cancels it.
+   - Plain arrows keep the Slice 05 navigation.
+9. **Barehands** cannot drag. Two cheap paths open the menu for it: a click on the already selected (focused) object, and a long press (550 ms). Barehands' `pointerdown` → focus → `click` sequence was verified in the browser. The menu, chips and dialog use ordinary buttons.
+10. **Menu component reused.** `openMenu` became a thin wrapper over a generic `showMenu({title, items, pos, origin, run})` with the same keyboard handling. The new `confirmDialog` replaced the page's remaining browser dialogs:
+    - `confirm()` for brain kill/restart;
+    - two `alert()` calls in panel error handlers, now toasts.
+11. **Stop entry for Claude sub-agents.** A disabled « Arrêt impossible : sous-agent du brain » is shown (running/pending/blocked `agent` stars, or `job` stars of another source), rather than hiding the entry, so the missing capability is explained.
+12. **Logging.** The page still has no client-log route. Refusals and failures produce a toast plus a `[scène] scene.user_command_refused` console event; the expected path logs `scene.user_*`. The Control Center journals every relayed command (`scene.command`, `scene.command_failed`) and every stop (`scene.work_cancel*`). `JarvisScene.inspect()` gains `pending`, `actions` and `gesture`.
+13. **Impeccable.** No PRODUCT.md or DESIGN.md exists, so this was a scoped refinement on the incumbent Operate UI (Omega and circuit themes, existing menu and toast styles). Detector on the changed JS: `[]`. The HTML findings (2 side-tab, 1 dark-glow) are identical on base `b4dd2c5`.
+
+Browser evidence. The claude-in-chrome extension is not connected. Setup:
+
+- headless Chrome 152 with its own profile (`scratchpad/s8_chrome_profile`, CDP port 53380);
+- host `scratchpad/s8_host.py`: in-process Core with a blocking `demo` job worker, and in-process ControlCenter; no launcher, no `webbrowser.open`; fresh root `scratchpad/s8_root`, ports 53381–53383;
+- scripts `s8_seed.py` and `s8_a_drag.py` through `s8_g_stop.py`, JSON results `s8_*.json`, screenshots `scratchpad/s8_shots/s8_*.png`;
+- Chrome and host killed afterwards (0 processes left).
+
+Results:
+
+- **Drag + reload** (`s8_a_drag`, circuit 1920×1080):
+  - brain window at resolver `(40, −20)` dragged to `(−30, −50)`;
+  - journal `set_geometry applied rev 17` then `pin applied rev 18`; Core `placed_by user`, `pinned_by_user true`;
+  - after reload: same transform `translate(780px, 240px)`, pin class present, **0 commands**, revision 18 → 18, resolver committer `sent 0`.
+  - Resize by grip: `w/h 64×40 → 82.9×53.9` (before whole-unit rounding), 1 `set_geometry`.
+  - Maj+→ ×3: x −30 → −24, 1 commit. Ctrl+↓ ×2: h +4, 1 commit.
+  - 0 exceptions or console errors.
+- **Menus** (`s8_b_menu`, circuit 1920×1080 and Omega 1280×720):
+  - right click on the capsule → menu, first item focused → « Afficher en fenêtre » → Core `representation window`, `placed_by user`, centre kept;
+  - Maj+F10 on the window, ArrowDown ×3, Enter on « Masquer » → Core `hidden`, chip « 1 objet masqué · afficher » (a button);
+  - ContextMenu key opens the menu; Escape closes it with focus back on the node;
+  - chip click → « Afficher « Compte rendu CASTOR » » → Core `visible`, chip gone.
+- **Archive + cascade + no resurrection** (`s8_c_lifecycle`, Omega 1920×1080):
+  - confirmation « Archiver « Mettre à jour le Trello » ? / Son signal d'attention part avec lui. », with Cancel focused; Escape → nothing sent;
+  - after confirming: one `archive applied rev 30`; `claude:bad` and `attention!claude:bad` both gone; archived tail `[attention!claude:bad, claude:bad]`; 0 relations; 0 runtime attention left; neither drawn;
+  - then a new `failed` observation for the same work plus a new sub-agent → revision 32, still archived, the new star appears, projector `skipped_archived` 0 → 1, 0 `core.scene.command_refused`.
+- **No stop on a Claude sub-agent**: the `claude:run` menu shows « Arrêt impossible : sous-agent du brain » (disabled) and no `stop` entry.
+- **Stop a job star**:
+  - circuit 1280×720, mouse: confirmation « Arrêter la tâche « demo » ? », then job `cancelled`, star `cancelled`, `scene.work_cancel outcome cancelled`, toasts « Arrêt de « demo »… » then « Tâche arrêtée »; afterwards the menu has no `stop`;
+  - re-run after the route rename (`s8_g_stop`, Omega 1920×1080, keyboard only: Maj+F10, Tab to « Arrêter la tâche », Enter): request `/api/jobs/cancel`, job `cancelled`, star `cancelled`.
+- **Two tabs**:
+  - drag in the leader tab: follower at the same rect, revisions 35/35/35;
+  - drag in the **follower** tab (`s8_e_edges`): commands `set_geometry` + `pin` applied, leader tab rect equal, revisions 1110/1110; the follower made 0 long-polls and received 4 broadcasts.
+- **Edges** (`s8_e_edges`, `s8_e2_clamp`, `s8_f_shots`):
+  - Barehands-style synthetic sequence: first click selects (no menu), second opens it;
+  - long press 800 ms opens the menu, which stays open after release;
+  - drag past the bottom-right corner → `(118, 83)`; past the top-left → `(−160, −90)`;
+  - with Core stopped, the drag draws at once (`translate(152px…)`), then rolls back to `translate(0px…)`: toast « Déplacement impossible · Core injoignable, commande non envoyée », `rolledBack 1`, `pending 0`, journal `scene.command_failed core_unreachable`;
+  - Escape mid-drag → 0 commands, node back in place, in both themes at both sizes;
+  - dock hit tests 4/4, one tab stop.
+- **Bulk archive at 512** (`s8_d_bulk`):
+  - scene: 32 objects + 480 brain notes = 512; 20 new sub-agents deferred (pending 20); page placed 506 unplaced objects (`commits applied 506`);
+  - chip « Scène pleine — archiver des travaux terminés 512/512 » (a button);
+  - confirmation: « 22 étoiles quittent la scène : 13 terminées, 5 en échec, 3 annulées, 1 interrompue. / 6 signaux d'attention partent avec elles. / Le travail en cours, en attente ou bloqué reste… », button « Archiver 28 objets »;
+  - one `archive_many applied` (rev 1067 → 1068): 0 terminal stars and 0 runtime signals left, 480 brain notes kept;
+  - projector `caught_up` 20, pending 0, all 20 late stars present, 504 objects, `saturated false`; toast « 28 objets archivés ».
+
+Screenshots (`scratchpad/s8_shots/`):
+
+- drag and resize: `s8_drag_window_circuit_1920x1080`, `s8_drag_window_after_reload_circuit_1920x1080`, `s8_resize_window_circuit_1920x1080`, `s8_mid_drag_{circuit-board,omega}_{1920x1080,1280x720}`, `s8_selected_window_grip_{…}`, `s8_drag_clamped_top_left_1280x720`
+- menus and hidden objects: `s8_menu_mouse_{circuit-board_1920x1080,omega_1280x720}`, `s8_menu_keyboard_{…}`, `s8_representation_toggle_{…}`, `s8_hidden_chip_{…}`, `s8_hidden_menu_{…}`
+- archive and stop: `s8_archive_confirm_omega_1920x1080`, `s8_archive_done_omega_1920x1080`, `s8_claude_star_menu_no_stop_omega_1920x1080`, `s8_stop_confirm_{circuit_1280x720,omega_1920x1080}`, `s8_stop_done_{…}`
+- bulk archive: `s8_saturated_chip_{omega_1920x1080,circuit_1280x720}`, `s8_bulk_confirm_{circuit_1280x720,omega_1920x1080}`, `s8_bulk_done_caught_up_omega_1920x1080`
+- other: `s8_two_tabs_other_tab_after_drag_1280x720`, `s8_barehands_click_menu_1280x720`, `s8_core_down_drag_rolled_back_1280x720`
+
+Validation:
+
+- **Mutation checks** (each reverted):
+  - JS menu offering stop to any running star → menu test red;
+  - Core route without the source check → Claude test red;
+  - overlay ignoring `archived` → optimistic test red;
+  - fuzz with the cascade removed → `S8_orphan_signal_left` 45;
+  - fuzz with the terminal check removed → `S8_archive_many_took_live_work` 91.
+- **Domain fuzz** `scratchpad/s8_fuzz.py`, built by `s8_make_fuzz.py` from `s6f_fuzz.py`. It adds `archive_many` generation (random and scene-biased) and independent oracles:
+  - no over-refusal or misapplied `unknown_object` / `duplicate`;
+  - only eligible objects taken; no live work; no brain/user object; nothing selected left behind;
+  - no cascade overreach; no orphan signal; star tombstone after its signals;
+  - no object removed without an archive op; no brain/runtime archive; patch-ops bound.
+
+  Seeds 20260917, 7 and 4242 × 30 000 commands each: **0 `S8_*` violations**. Per seed: 20 / 21 / 23 applied `archive_many`, 1 538 / 1 578 / 1 599 `not_bulk_archivable`, 437 / 423 / 419 applied archives with 65 / 49 / 52 cascaded signals. The only other entries are the pre-existing baseline counters (`QA_{brain,user}_unlink_removed_relation`, `runtime_edited_attention_authored_by_brain_or_user`).
+- Targeted suite and `verify_release.py`: see the final report of this Slice.
+
+Residual risks / left:
+
+1. **Actor is declared, not authenticated.** A brain reading `core.token` can bulk-archive all terminal work in one call, or cancel a Core job through `/v1/work/cancel` (SECURITY 13).
+2. **`archive_many` is atomic per command.** A selection whose ids exceed 48 KB (very long or non-ASCII ids) is sent as several commands, each atomic and re-validated.
+3. **Resize does not pin.** The brain may still move a resized, unpinned object.
+4. **No undo for archive.** Archived objects are in `archived_history` only, with no restore path in V1.
+5. **Optimistic preview is per tab.** Another tab sees the change only once Core applies it.
+6. **Drag is mouse or keyboard only.** Touch screens get the long-press menu, but touch drag was not verified; `touch-action: none` is set on nodes.
+7. **User drags may leave the safe area.** A drag clamps to the frame, so the user can park an object under the chrome.
+8. **The fuzz exercises few applied `archive_many`** (~20 per 30k commands, since random scenes rarely hold terminal stars). The unit parity and lifecycle tests cover the rule directly.
