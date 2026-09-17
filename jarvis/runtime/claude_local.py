@@ -15,6 +15,7 @@ from jarvis.runtime.routing_hook import PROFILE_RULE
 from jarvis.runtime.agent_tasks import AgentTaskTracker
 from jarvis.runtime.subagent_conversation import SubagentConversationScope, consumed_message_uuids
 from jarvis.runtime.cli_catalog import resolve_command
+from jarvis.runtime.cli_stream import MAX_LINE_BYTES, OversizeLine, clip_text, iter_lines, journal_view, may_carry_media, redact_media
 from jarvis.runtime.display_mcp import (
     RECOMMENDED_ARTIFACT_CATEGORIES as DISPLAY_ARTIFACT_CATEGORIES,
     SERVER_NAME as DISPLAY_SERVER_NAME,
@@ -164,36 +165,10 @@ DELEGATION_TOOLS = frozenset({
 # préfixe laisserait passer un outil homonyme d'un autre serveur.
 DISPLAY_TOOLS = frozenset(f"mcp__{DISPLAY_SERVER_NAME}__{name}" for name in DISPLAY_TOOL_NAMES)
 
-# Borne d'une ligne lue sur stdout/stderr du CLI (Slice 09, partie 2) : la
-# borne par défaut d'asyncio (64 Kio) arrêtait la lecture sur la ligne d'un
-# résultat d'outil portant une image (`scene_capture`), et le tour ne rendait
-# jamais la main.
-STREAM_LINE_LIMIT_BYTES = 16 * 1024 * 1024
-
-def without_image_data(event: dict[str, Any]) -> dict[str, Any]:
-    """L'événement, où chaque bloc `image` de résultat d'outil garde son type et sa taille, sans ses données.
-
-    Seuls les événements qui en portent sont copiés ; les autres sont rendus tels quels.
-    """
-
-    message = event.get("message")
-    content = message.get("content") if isinstance(message, dict) else None
-    if not isinstance(content, list):
-        return event
-    changed = False
-    blocks = []
-    for block in content:
-        inner = block.get("content") if isinstance(block, dict) else None
-        if isinstance(inner, list) and any(isinstance(item, dict) and item.get("type") == "image" for item in inner):
-            changed = True
-            block = {**block, "content": [
-                {"type": "image", "omitted_bytes": len(json.dumps(item.get("source") or item.get("data") or ""))}
-                if isinstance(item, dict) and item.get("type") == "image" else item
-                for item in inner
-            ]}
-        blocks.append(block)
-    return {**event, "message": {**message, "content": blocks}} if changed else event
-
+# Lecture du flux du CLI (Slice 09, reprise QA) : `jarvis/runtime/cli_stream.py`
+# (lignes bornées lues par blocs, ligne trop longue écartée entière, images
+# retirées partout, journal borné). Borne gardée ici pour les messages.
+STREAM_LINE_LIMIT_BYTES = MAX_LINE_BYTES
 
 # Réponses spontanées gardées pour `/api/agent/notices` : assez pour couvrir une
 # coupure du lecteur, trop peu pour devenir un historique.
@@ -672,10 +647,6 @@ class ClaudeLocalAgent:
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
-                    # Une ligne stream-json peut dépasser 64 Kio (image d'un outil MCP,
-                    # `scene_capture` : ~40–80 Kio ; gros résultat d'outil) : au-delà de
-                    # la borne par défaut, `readline` lève et la lecture s'arrêtait.
-                    limit=STREAM_LINE_LIMIT_BYTES,
                     **({"creationflags": self._process_tree.creationflags} if self._process_tree else {}),
                 )
                 if self._process_tree:
@@ -1072,31 +1043,30 @@ class ClaudeLocalAgent:
             self.journal.emit("agent.stop", "Claude local agent stopped", data={"returncode": process.returncode})
             return self.snapshot()
 
-    def _report_long_line(self, stream: str, exc: ValueError) -> None:
-        # Ligne au-delà de `STREAM_LINE_LIMIT_BYTES` : sautée (asyncio a vidé son
-        # tampon jusqu'au séparateur) et dite, jamais une lecture morte en silence.
+    def _report_long_line(self, stream: str, size: int) -> None:
+        # Ligne au-delà de `STREAM_LINE_LIMIT_BYTES` : écartée entière (aucun
+        # fragment ne revient comme ligne) et dite, jamais une lecture morte en silence.
         self.journal.emit("agent.stream_line_too_long", f"Ligne {stream} du CLI trop longue, ignorée", level="error",
-                          data={"stream": stream, "limit_bytes": STREAM_LINE_LIMIT_BYTES, "error": str(exc)[:200]})
+                          data={"stream": stream, "limit_bytes": STREAM_LINE_LIMIT_BYTES, "bytes": size})
 
     async def _read_stdout(self) -> None:
         assert self.process is not None and self.process.stdout is not None
-        while True:
-            try:
-                raw = await self.process.stdout.readline()
-            except ValueError as exc:
-                self._report_long_line("stdout", exc)
+        async for raw in iter_lines(self.process.stdout):
+            if isinstance(raw, OversizeLine):
+                self._report_long_line("stdout", raw.size)
                 continue
-            if not raw:
-                break
             text = raw.decode("utf-8", errors="replace").rstrip()
             try:
                 event = json.loads(text)
             except json.JSONDecodeError:
-                event = {"type": "stdout", "text": text}
+                event = {"type": "stdout", "text": clip_text(text)}
             if isinstance(event, dict):
-                # Une image rendue par un outil (`scene_capture`) n'entre ni dans le
-                # journal ni dans l'historique en mémoire : sa taille seulement.
-                event = without_image_data(event)
+                # Une image rendue par un outil (`scene_capture`), où qu'elle soit
+                # dans l'événement (contenu du résultat, `tool_use_result`…),
+                # n'entre ni dans le journal, ni dans l'historique, ni dans les
+                # traces de sous-tâches : sa taille seulement.
+                if may_carry_media(raw):
+                    event = redact_media(event)
                 self._record(event)
                 try:
                     self._audit_turn(event)
@@ -1106,7 +1076,7 @@ class ClaudeLocalAgent:
                     self.subtasks.report_failure(exc, event)
                 if event.get("type") == "result":
                     self._resolve_pending(event)
-                self.journal.emit("agent.event", str(event.get("type") or "event"), data=event)
+                self.journal.emit("agent.event", str(event.get("type") or "event"), data=journal_view(event, size=len(raw)))
         if self.process is not None:
             await self.process.wait()
             # Un `ask()` en vol ne recevra jamais son `result` : le débloquer
@@ -1120,14 +1090,10 @@ class ClaudeLocalAgent:
 
     async def _read_stderr(self) -> None:
         assert self.process is not None and self.process.stderr is not None
-        while True:
-            try:
-                raw = await self.process.stderr.readline()
-            except ValueError as exc:
-                self._report_long_line("stderr", exc)
+        async for raw in iter_lines(self.process.stderr):
+            if isinstance(raw, OversizeLine):
+                self._report_long_line("stderr", raw.size)
                 continue
-            if not raw:
-                break
-            text = raw.decode("utf-8", errors="replace").rstrip()
+            text = clip_text(raw.decode("utf-8", errors="replace").rstrip())
             self._record({"type": "stderr", "text": text})
             self.journal.emit("agent.stderr", text, level="error")

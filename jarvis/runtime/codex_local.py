@@ -25,6 +25,7 @@ import subprocess
 import time
 from typing import Any
 
+from jarvis.runtime.cli_stream import MAX_LINE_BYTES, OversizeLine, clip_text, iter_lines, journal_view, may_carry_media, redact_media
 from jarvis.runtime.agent_tasks import AgentTaskTracker, describe_tool
 from jarvis.runtime.claude_local import CREATE_NEW_CONSOLE, raise_console_window
 from jarvis.runtime.cli_catalog import CODEX_SANDBOX_MODES, resolve_command
@@ -360,8 +361,9 @@ class CodexLocalAgent:
         try:
             outcome = await asyncio.wait_for(self._read_stdout(process), timeout=timeout_s)
         except asyncio.TimeoutError:
-            process.kill()
-            await process.wait()
+            # Tuer d'abord : attendre un processus vivant dont personne ne lit plus
+            # stdout bloquerait sur un tube plein (reprise QA Slice 09).
+            self._kill(process)
             self.journal.emit(
                 "agent.ask_timeout",
                 f"Codex n'a pas répondu en {timeout_s:.0f} s",
@@ -374,6 +376,12 @@ class CodexLocalAgent:
                 "error": f"Codex n'a pas répondu en {timeout_s:.0f} secondes.",
                 "code": "codex_timeout",
             }
+        except Exception as exc:  # noqa: BLE001 - un défaut de lecture devient un tour raté dit, jamais un ask pendu
+            self._kill(process)
+            self.journal.emit("agent.read_failed", f"Lecture de Codex interrompue : {type(exc).__name__}", level="error",
+                              data={"code": "codex_read_failed", "error": str(exc)[:300]})
+            outcome = {"ok": False, "text": "", "error": f"Lecture de la réponse de Codex impossible ({type(exc).__name__}).",
+                       "code": "codex_read_failed"}
         finally:
             # stdout se ferme souvent avant que la tâche stderr n'ait été
             # planifiée. L'annuler ici perdrait précisément les lignes qui
@@ -383,7 +391,12 @@ class CodexLocalAgent:
             except (asyncio.TimeoutError, asyncio.CancelledError):
                 stderr_task.cancel()
             await asyncio.gather(stderr_task, return_exceptions=True)
-            await process.wait()
+            # Jamais d'attente sans borne d'un processus encore vivant : tué d'abord.
+            try:
+                await asyncio.wait_for(process.wait(), timeout=5.0)
+            except asyncio.TimeoutError:
+                self._kill(process)
+                await process.wait()
             self._last_returncode = process.returncode
             self.process = None
             self.subtasks.turn_finished()
@@ -411,25 +424,39 @@ class CodexLocalAgent:
         )
         return result
 
+    @staticmethod
+    def _kill(process: asyncio.subprocess.Process) -> None:
+        if process.returncode is None:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass  # intentional: it exited between the check and the kill; nothing left to stop
+
+    def _report_long_line(self, stream: str, size: int) -> None:
+        self.journal.emit("agent.stream_line_too_long", f"Ligne {stream} de Codex trop longue, ignorée", level="error",
+                          data={"stream": stream, "limit_bytes": MAX_LINE_BYTES, "bytes": size})
+
     async def _read_stdout(self, process: asyncio.subprocess.Process) -> dict[str, Any]:
         assert process.stdout is not None
         answer = ""
         outcome: dict[str, Any] = {"ok": None, "text": ""}
-        while True:
-            raw = await process.stdout.readline()
-            if not raw:
-                break
+        async for raw in iter_lines(process.stdout):
+            if isinstance(raw, OversizeLine):
+                self._report_long_line("stdout", raw.size)
+                continue
             line = raw.decode("utf-8", errors="replace").rstrip()
             if not line:
                 continue
             try:
                 event = json.loads(line)
             except json.JSONDecodeError:
-                event = {"type": "stdout", "text": line}
+                event = {"type": "stdout", "text": clip_text(line)}
             if not isinstance(event, dict):
                 continue
+            if may_carry_media(raw):
+                event = redact_media(event)
             self._record(event)
-            self.journal.emit("agent.event", str(event.get("type") or "event"), data=event)
+            self.journal.emit("agent.event", str(event.get("type") or "event"), data=journal_view(event, size=len(raw)))
             kind = str(event.get("type") or "")
             if kind == "item.completed":
                 item = event.get("item") if isinstance(event.get("item"), dict) else {}
@@ -455,11 +482,11 @@ class CodexLocalAgent:
 
     async def _read_stderr(self, process: asyncio.subprocess.Process) -> None:
         assert process.stderr is not None
-        while True:
-            raw = await process.stderr.readline()
-            if not raw:
-                break
-            text = raw.decode("utf-8", errors="replace").rstrip()
+        async for raw in iter_lines(process.stderr):
+            if isinstance(raw, OversizeLine):
+                self._report_long_line("stderr", raw.size)
+                continue
+            text = clip_text(raw.decode("utf-8", errors="replace").rstrip())
             if not text:
                 continue
             self._record({"type": "stderr", "text": text})
