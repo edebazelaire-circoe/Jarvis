@@ -27,6 +27,7 @@ from jarvis.domain.v2 import (
     BrainTurnAcceptance,
     BrainTurnInput,
     BrainTurnResult,
+    BrainTurnSource,
     BrainWorkingState,
     ProtocolEnvelope,
     SpeechKind,
@@ -34,14 +35,14 @@ from jarvis.domain.v2 import (
     SpeechProvenance,
     SpeechRequest,
     TurnKind,
-    new_id,
     utc_now,
 )
 from jarvis.core.brain_context import BrainContextBuilder
 from jarvis.core.brain_outcomes import BrainOutcomeService, stable_identity
 from jarvis.core.voice_admission import VoiceTurnAdmissionService
 from jarvis.domain.speech_presentation import OutcomeKind, OutcomeStatus, SpeechDependency, semantic_text_spans, speech_id
-from jarvis.domain.brain_context import BrainContext
+from jarvis.domain.brain_context import BrainContext, WorkAttention
+from jarvis.domain.work_attention_prompt import WORK_ATTENTION_WAKE_PROMPT
 from jarvis.ports.v2 import BrainBackend, DiagnosticSink, WorkCanceller, supports_brain_context
 
 # Types d'événements publiés sur `CoreEventBus`. Les charges utiles suivent
@@ -75,6 +76,8 @@ BRAIN_NOTICE_RELAYED_KIND = "core.brain.notice_relayed"
 BRAIN_NOTICE_DROPPED_KIND = "core.brain.notice_dropped"
 BRAIN_BACKEND_TASK_STARTED_KIND = "core.brain.backend_task_started"
 BRAIN_BACKEND_TASK_RESULT_KIND = "core.brain.backend_task_result"
+BRAIN_WOKEN_KIND = "core.brain.woken_by_work"
+BRAIN_WAKE_SKIPPED_KIND = "core.brain.wake_skipped"
 
 #: Budget d'un tour cerveau, en secondes : au-delà, la conversation attend.
 DEFAULT_TURN_BUDGET_S = 8.0
@@ -623,9 +626,18 @@ class BrainOrchestrator:
 
         Le texte est celui du cerveau, jamais reformulé (Décision 13) ; Core
         n'en fabrique aucun (Décision 14). Il part vers la conversation du
-        dernier tour reçu, avec sa propre corrélation, et devient un fait
-        public comme le résumé d'un tour terminé. La réponse convenue de
-        silence (`[pas-pour-moi]`) et un texte vide ne produisent rien.
+        dernier tour reçu et devient un fait public comme le résumé d'un tour
+        terminé. La réponse convenue de silence (`[pas-pour-moi]`) et un texte
+        vide ne produisent rien.
+
+        Provenance : le relais emprunte la corrélation de l'**intention
+        courante**, comme `select_outcome` le fait d'un résultat disponible.
+        C'est ce qui le rend prononçable : une `SpeechRequest` sans source est
+        différée pour toujours par l'ordonnanceur vocal (`unknown_source`,
+        `jarvis/runtime/speech_scheduler.py`), et une corrélation propre n'a
+        aucune source — personne ne lui en allouerait. Emprunter l'intention
+        courante, plutôt qu'en activer une nouvelle, évite aussi de périmer une
+        réponse encore en vol : le relais se range derrière elle.
 
         Rend True si une parole a été publiée.
         """
@@ -642,7 +654,19 @@ class BrainOrchestrator:
                 data={"reason": "stopping" if self._stopping else "no_conversation", "text": summary[:300]},
             )
             return False
-        correlation_id = f"brain-notice:{new_id()}"
+        current = await self.outcomes.repository.get_current_brain_source(target)
+        if current is None:
+            # Aucune intention n'a encore été activée : rien ne porterait cette
+            # parole. Visible, jamais silencieux — c'est précisément le défaut
+            # que ce chemin corrige.
+            self._diagnostics.emit(
+                BRAIN_NOTICE_DROPPED_KIND,
+                "relais du cerveau sans intention courante où le dire",
+                level="warning",
+                data={"reason": "no_current_source", "conversation_id": target, "text": summary[:300]},
+            )
+            return False
+        correlation_id = current.correlation_id
         await self._emit_speech(
             SpeechRequest(
                 conversation_id=target,
@@ -663,6 +687,85 @@ class BrainOrchestrator:
             "relais spontané du cerveau transmis à la voix",
             level="info",
             data={"conversation_id": target, "correlation_id": correlation_id},
+        )
+        return True
+
+    # -- réveil par un changement de travail --------------------------------
+
+    async def wake_for_work_attention(self, notes: tuple[WorkAttention, ...]) -> bool:
+        """Ouvrir un tour parce qu'un travail de fond a changé sans qu'on demande.
+
+        C'est le `wake` de `WorkAttentionPolicy` (voir
+        `jarvis/core/brain_context.py`). Sans lui, un échec, une interruption
+        ou une attente n'était apprise par le cerveau qu'au prochain tour de
+        l'utilisateur — donc jamais, s'il ne reparlait pas. Les tâches
+        mouraient sans un mot.
+
+        Core ne dit rien ici : il ouvre un tour et le cerveau choisit ses mots,
+        ou se tait par la réponse convenue (Décisions 13 et 14). Le détail des
+        changements n'est pas recopié dans la consigne : il arrive par le
+        contexte de travail du tour, que `BrainContextBuilder` lit et borne, et
+        que seul un tour effectivement remis consomme.
+
+        Le réveil est abandonné — jamais rattrapé — quand un tour est déjà en
+        vol : ce tour-là recevra les mêmes changements dans son contexte, et en
+        ouvrir un second ne ferait que périmer sa réponse en la doublant.
+
+        Un tour porte une intention, et celle-ci périme la parole des tours
+        précédents encore en file (retour n° 8). C'est assumé : le réveil ne se
+        déclenche que sur un échec, une interruption ou une attente, et un
+        résultat qui n'a pas encore été dit reste lisible — l'issue publique
+        est durable, et le cerveau la retrouve dans son contexte. Contrairement
+        à `announce_notice`, qui emprunte l'intention courante parce qu'il n'a
+        rien à faire penser, un réveil demande bien au cerveau de réfléchir :
+        il lui faut son propre tour.
+
+        Rend True si un tour a été soumis.
+        """
+
+        target = self._last_conversation_id
+        if self._stopping or not target or not notes:
+            self._diagnostics.emit(
+                BRAIN_WAKE_SKIPPED_KIND,
+                "réveil abandonné : rien à réveiller",
+                level="info",
+                data={"reason": "stopping" if self._stopping else ("no_conversation" if not target else "no_notes"),
+                      "notes": len(notes)},
+            )
+            return False
+        if self.active_turn_count:
+            self._diagnostics.emit(
+                BRAIN_WAKE_SKIPPED_KIND,
+                "réveil abandonné : un tour en vol porte déjà ces changements",
+                level="info",
+                data={"reason": "turn_in_flight", "conversation_id": target,
+                      "notes": len(notes), "turns_in_flight": self.active_turn_count},
+            )
+            return False
+        turn = BrainTurnInput(
+            conversation_id=target,
+            text=WORK_ATTENTION_WAKE_PROMPT,
+            source=BrainTurnSource.SYSTEM,
+            addressing=AddressingDecision.ADDRESSED,
+        )
+        try:
+            acceptance = await self.submit(turn)
+        except (KeyError, RuntimeError, ValueError) as exc:
+            self._diagnostics.emit(
+                BRAIN_WAKE_SKIPPED_KIND,
+                "réveil refusé par l'orchestrateur ; les changements attendent le prochain tour",
+                level="warning",
+                data={"reason": "submit_refused", "conversation_id": target,
+                      "notes": len(notes), "error_class": type(exc).__name__},
+            )
+            return False
+        self._diagnostics.emit(
+            BRAIN_WOKEN_KIND,
+            "tour ouvert par un changement de travail de fond",
+            level="info",
+            data={"conversation_id": target, "correlation_id": turn.correlation_id,
+                  "turn_id": acceptance.turn_id, "notes": len(notes),
+                  "statuses": sorted({note.status.value for note in notes})},
         )
         return True
 

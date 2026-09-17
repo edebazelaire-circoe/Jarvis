@@ -1,0 +1,57 @@
+{
+  "slice_id": "02",
+  "task_type": null,
+  "work_intent": "backend settings implementation",
+  "dependencies": [
+    "01"
+  ],
+  "task_type_blocker": "Waived by explicit global user authorization on 2026-09-14; task_type remains null rather than inventing a value.",
+  "status": "COMPLETE",
+  "implementation": {
+    "behavior_module": "jarvis/runtime/agent_behavior.py",
+    "settings_api": "jarvis/runtime/control_center.py",
+    "runtime_consumers": [
+      "jarvis/runtime/control_center.py",
+      "jarvis/runtime/back_brain_worker.py",
+      "jarvis/runtime/prompt_runtime.py"
+    ],
+    "architecture_index": "docs/settings/INDEX.md"
+  },
+  "validation": {
+    "command": ".venv/Scripts/python.exe -m pytest -q -p no:cacheprovider tests/unit/test_settings_ia_contract.py tests/unit/test_agent_behavior.py tests/unit/test_agent_routing.py tests/unit/test_agent_routing_settings.py tests/unit/test_routing_hook.py tests/unit/test_routing_settings_screen.py tests/unit/test_settings_workbench.py tests/unit/test_settings_endpoints.py tests/unit/test_control_center_quality.py tests/unit/test_prompt_registry.py tests/unit/test_prompt_registry_review.py tests/unit/test_back_brain_worker.py tests/unit/test_control_center_voice_architecture.py tests/unit/test_control_center_voice_architecture_review.py tests/unit/test_control_center_voice_architecture_ui_review.py",
+    "passed": 375,
+    "failed": 0,
+    "duration_seconds": 10.93,
+    "observability_cli": "unavailable: ModuleNotFoundError: No module named observability (errors, summary and correlation query attempted)"
+  },
+  "qa_rework": {
+    "status": "COMPLETE",
+    "fixes": [
+      "8192-character combined behavior/turn override bound validated before settings and prompt writers",
+      "settings rejection preserves disk and active-agent prompt memory",
+      "shared compose_agent_turn covers ask, direct send and owned Claude/Codex jobs",
+      "inherit paths preserve original prompt bytes",
+      "settings.agent.rejected code scope distinguishes new Slice 02 codes from existing validator registries"
+    ],
+    "targeted_validation": {
+      "passed": 30,
+      "failed": 0,
+      "duration_seconds": 1.49
+    },
+    "expanded_validation": {
+      "passed": 375,
+      "failed": 0,
+      "deselected": 0,
+      "duration_seconds": 10.93
+    },
+    "observability_cli": "unavailable: ModuleNotFoundError: No module named observability (errors, summary and correlation query re-attempted)"
+  },
+  "qa_observability_rereview": {
+    "status": "COMPLETE",
+    "direct_send": "forwards evidence through set_next_prompt_evidence when supported",
+    "owned_jobs": "passes prompt_evidence after signature capability detection; legacy signatures remain compatible",
+    "real_agent_validation": "controlled Claude and Codex wrappers consumed evidence and emitted matching job.agent.prompt identity",
+    "combined_validation_passed": 375,
+    "combined_validation_failed": 0
+  }
+}

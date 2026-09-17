@@ -74,7 +74,7 @@ def test_browser_renderer_and_draft_preserve_same_mode_and_only_post_explicit_ch
     query['selection']['config']['conversation_model'] = {
         k: query['architectures'][0]['fields'][0]['options'][1][k] for k in ('provider_id', 'model_id')}
     page = Path('jarvis/runtime/control_center.html').read_text(encoding='utf-8')
-    functions = page[page.index('function voiceArchitectureConfig()'):page.index('/* --- onglet CLI')]
+    functions = page[page.index('function voiceArchitectureConfig()'):page.index('/* --- onglet Agent / CLI')]
     functions += page[page.index('function draftFrom(data)'):page.index('async function openSettings()')]
     functions += page[page.index('async function saveDraft(options)'):page.index("modalSave.addEventListener('click'")]
     script = r'''
@@ -101,10 +101,13 @@ assert.equal('compatibility' in sent.voice.architecture,false);
 for(const profile of data.voice.architecture.architectures){
  voiceArchitectureChanged('architecture',profile.id);
  const rendered=await voiceArchitectureHtml();
- for(const field of profile.fields)assert.ok(rendered.includes('architecture_'+field.key));
- if(profile.fields.some(f=>f.key==='idle_timeout_s')){
-  assert.ok(!rendered.includes('data-stack-field'));
-  assert.ok(rendered.includes('min="5" max="3600"'));
+ assert.ok(rendered.includes('data-voice-option="architecture"'));
+ assert.ok(!rendered.includes('settings_fields'));
+ for(const field of profile.fields){
+  const meta=data.voice.option_metadata.find(item=>item.id===field.key);
+  const fieldHtml=voiceOptionHtml(meta);
+  assert.ok(fieldHtml.includes(`data-voice-option="${field.key}"`));
+  if(field.key==='idle_timeout_s')assert.ok(fieldHtml.includes('min="5"')&&fieldHtml.includes('max="3600"'));
  }
 }
 assert.equal(JSON.stringify(data.voice.architecture.selection.config),original);
@@ -123,23 +126,23 @@ def test_async_browser_render_does_not_restore_a_previous_panel(tmp_path):
     if node is None:
         pytest.skip('Node required to execute browser rendering')
     page = Path('jarvis/runtime/control_center.html').read_text(encoding='utf-8')
-    render = page[page.index('async function renderTab()'):page.index('function bindTab()')]
+    render = page[page.index('async function renderTab()'):page.index('function bindTab(revision)')]
     script = r'''
 const assert=require('node:assert/strict');
-const SET={tab:'voice'},TABS=[{id:'voice',save:true},{id:'routing',save:true}];
+const SET={tab:'voice'},TABS=[{id:'voice',save:true},{id:'cli',save:true}];
 const modalContent={},modalSub={},modalSave={style:{}};
-const esc=String,say=()=>{},bindTab=()=>{};
+const esc=String,say=()=>{},bindTab=()=>{},bindVoiceSurface=()=>{},destroyAgentCatalog=()=>{},destroyVoiceCatalog=()=>{},cleanupSettingsSurface=()=>{destroyAgentCatalog();destroyVoiceCatalog()},mountAgentCatalog=()=>{},hydrateCliAgents=()=>{};
 let finish;
 const tabVoice=()=>new Promise(resolve=>{finish=resolve});
-const tabRouting=async()=>'<new routing panel>';
+const tabCli=()=>'<new agent panel>';
 ''' + render + r'''
 (async()=>{
 const first=renderTab();
-SET.tab='routing';
+SET.tab='cli';
 await renderTab();
 finish('<old voice panel>');
 await first;
-assert.equal(modalContent.innerHTML,'<new routing panel>');
+assert.equal(modalContent.innerHTML,'<new agent panel>');
 })().catch(error=>{console.error(error);process.exitCode=1});
 '''
     path = tmp_path / 'settings-render.cjs'

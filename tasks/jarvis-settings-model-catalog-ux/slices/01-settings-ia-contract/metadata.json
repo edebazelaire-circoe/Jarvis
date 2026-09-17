@@ -1,0 +1,30 @@
+{
+  "slice_id": "01",
+  "task_type": null,
+  "work_intent": "product/domain contract",
+  "dependencies": [
+    "00"
+  ],
+  "task_type_blocker": "Waived by explicit user authorization on 2026-09-14; task_type remains null rather than inventing a value.",
+  "status": "COMPLETE",
+  "canonical_contract": "docs/settings-ia-contract.json",
+  "canonical_documentation": "docs/06-settings-ia-options.md",
+  "validation": {
+    "command": ".venv/Scripts/python.exe -m pytest -q -p no:cacheprovider tests/unit/test_settings_ia_contract.py tests/unit/test_agent_routing.py tests/unit/test_agent_routing_settings.py tests/unit/test_routing_hook.py tests/unit/test_settings_workbench.py tests/unit/test_settings_endpoints.py tests/unit/test_control_center_voice_architecture.py tests/unit/test_control_center_voice_architecture_review.py tests/unit/test_control_center_voice_architecture_ui_review.py",
+    "passed": 206,
+    "failed": 0,
+    "duration_seconds": 3.53,
+    "logbroker_cli": "unavailable: ModuleNotFoundError: No module named observability"
+  },
+  "review_rework": {
+    "status": "COMPLETE",
+    "changes": [
+      "Auto restricted to active host CLI; cross-CLI reserved for self-development",
+      "explicit voice_stack and voice_arch metadata plus explicit/compatibility projection",
+      "valid enum defaults/placeholders and exclusive owner_threshold lower bound",
+      "production projections and exact live-field inventories in contract tests",
+      "global Workspace Task Type waiver reflected in TODO"
+    ],
+    "combined_slice_01_02_validation_passed": 375
+  }
+}

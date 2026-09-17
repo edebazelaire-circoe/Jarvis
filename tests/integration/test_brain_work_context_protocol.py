@@ -4,8 +4,9 @@ Chaîne réelle : `POST /v1/work/observations` → `WorkStateStore` →
 `GET /v1/work/snapshot` (ce que lira l'UI) d'un côté, tour cerveau soumis par
 `POST /v1/conversations/{id}/brain-turns` → `BrainOrchestrator` → backend
 déclarant `run_turn_with_context` de l'autre. Même `store_id`, même révision.
-Un échec observé ensuite est retenu par la politique de Core et remis au tour
-suivant, sans qu'aucune parole ne soit publiée.
+Un échec observé ensuite est retenu par la politique de Core, qui **réveille**
+le cerveau : Core lui ouvre un tour portant ce changement, sans prononcer lui-même
+la moindre parole (Décision D17).
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from jarvis.core.brain_context import ATTENTION_QUEUE_SIZE, WORK_ATTENTION_KIND
-from jarvis.core.brain_service import BRAIN_SPEECH_REQUESTED
+from jarvis.core.brain_service import BRAIN_SPEECH_REQUESTED, BRAIN_WOKEN_KIND
 from jarvis.core.v2_app import JarvisCoreApplication
 from jarvis.core.work_state import CORE_WORK_UPDATED
 from jarvis.domain.brain_context import BrainContext
@@ -96,25 +97,33 @@ async def test_the_brain_and_the_ui_read_the_same_work_state(core_stack):
     assert [entry.external_id for entry in first.work.items] == [item["external_id"] for item in snapshot["items"]]
     assert first.work.items[0].activity == "Lecture de x.py" and first.work.items[0].model == "claude-sonnet"
 
-    # Échec inattendu d'une sous-tâche active, hors de tout tour.
+    # Échec inattendu d'une sous-tâche active, hors de tout tour. La politique
+    # le relève et **réveille** le cerveau : sans ce réveil, l'échec n'aurait
+    # été appris qu'au prochain tour de l'utilisateur — donc jamais s'il se
+    # taisait, et la tâche mourait sans un mot.
     await client.ingest_work_observations(batch("toolu_B", "failed", "2026-09-11T15:01:00+00:00", error_class="timeout"))
-    for _ in range(50):
-        if core.work_attention.pending:
-            break
-        await asyncio.sleep(0.01)
+    wake = await asyncio.wait_for(backend.arrived.get(), timeout=5)
+
+    assert [data["external_id"] for kind, data in diagnostics.events if kind == WORK_ATTENTION_KIND] == ["toolu_B"]
+    assert [data["notes"] for kind, data in diagnostics.events if kind == BRAIN_WOKEN_KIND] == [1]
+    # Le tour de réveil porte le changement, et vient de Core, pas de la voix.
+    assert [(note.external_id, note.status.value, note.error_class) for note in wake.work.attention] == [("toolu_B", "failed", "timeout")]
+    assert wake.state.conversation_id == conversation["id"]
+    # Core n'a toujours prononcé aucune parole de lui-même (Décision D17) :
+    # c'est le cerveau qui parlera, sur le tour qu'on vient de lui ouvrir.
     published = []
     while not watcher.empty():
         published.append(watcher.get_nowait().message_type)
     assert BRAIN_SPEECH_REQUESTED not in published and CORE_WORK_UPDATED in published
-    assert [data["external_id"] for kind, data in diagnostics.events if kind == WORK_ATTENTION_KIND] == ["toolu_B"]
+    # Remis une fois, consommé : le tour suivant ne réannonce pas le même échec.
+    assert core.work_attention.pending == ()
 
     await client.submit_brain_turn(conversation["id"], content="Et la recherche ?", correlation_id="corr-2")
     second = await asyncio.wait_for(backend.arrived.get(), timeout=5)
     snapshot = await client.work_snapshot()
 
     assert second.work.revision == snapshot["revision"]
-    assert [(note.external_id, note.status.value, note.error_class) for note in second.work.attention] == [("toolu_B", "failed", "timeout")]
-    assert core.work_attention.pending == ()
+    assert second.work.attention == ()
 
 
 async def test_a_burst_of_core_events_never_ends_work_attention(core_stack):

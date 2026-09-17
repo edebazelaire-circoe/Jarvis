@@ -1,0 +1,44 @@
+{
+  "slice_id": "07",
+  "task_type": null,
+  "work_intent": "integration validation and rollout",
+  "status": "COMPLETE",
+  "dependencies": [
+    "05",
+    "06"
+  ],
+  "task_type_blocker": "Waived globally by the user/orchestrator; task_type remains null because no canonical vocabulary was provided.",
+  "implementation": [
+    "tasks/jarvis-settings-model-catalog-ux/slices/07-e2e-migration-docs/fixtures/pre-redesign-settings.json",
+    "tests/integration/test_settings_redesign_migration.py",
+    "tests/unit/test_control_center_prompts.py",
+    "tests/unit/test_control_center_appearance.py",
+    "jarvis/runtime/control_center_work.js",
+    "jarvis/runtime/control_center.html",
+    "tasks/jarvis-settings-model-catalog-ux/docs/settings-ia-contract.json",
+    "tasks/jarvis-settings-model-catalog-ux/docs/06-settings-ia-options.md",
+    "docs/settings/migration-rollout.md",
+    "docs/settings/INDEX.md"
+  ],
+  "automated_validation": {
+    "fixture_integration": "15 passed in 3.21s",
+    "targeted_warnings_as_errors": "227 passed in 15.10s",
+    "final_appearance_privacy_rework": "210 passed in 10.73s with warnings as errors; production Node probes cover microphone transition/late resolution/unmount, shared catalog cleanup, and assembled six-tab navigation",
+    "final_backend_security_rework": "491 passed with warnings as errors; credential-scoped cache, truthful Auto availability, private prompt trace separation, one-shot evidence cleanup, and per-role provenance were independently re-reviewed",
+    "release_verifier": "passed on the final tree: 3323 passed, 5 skipped in 327.90s; static release checks passed",
+    "logbroker": "Official errors, summary and correlation commands attempted; observability.cli is not installed. No raw JSONL substitute was used."
+  },
+  "runtime_evidence": {
+    "source": "orchestrator-supplied real CUA walkthrough against isolated localhost server",
+    "api": "status/settings/catalog returned 200; Voice offline was represented truthfully; seven categories and openai_realtime effective stack projected",
+    "navigation": "six top tabs rendered (five core plus existing Appearance injection), no Aiguillage; seven Voice sub-tabs in contract order with keyboard focus/ARIA",
+    "catalogs": "missing Claude and detected Codex remained truthful; Voice no-key/search/role state behaved without fabricated actions",
+    "persistence": "Auto plus balanced behavior, active_timeout_s=0, and Voice Audio sub-tab state survived save/reopen",
+    "responsive": "390x844 and 1440x900 layouts fit their containers; Voice sub-tabs scroll horizontally at narrow width",
+    "console": "no browser warnings or errors",
+    "final_live_check": "live Control Center at 127.0.0.1:17654 rendered the six canonical tabs; Voice and Agent/CLI catalogs both transitioned to Appearance without a visible error; browser warn/error log remained empty; no theme or microphone permission was changed",
+    "confirmation": "confirmed complete by the orchestrator after the real CUA walkthrough"
+  },
+  "remaining": [],
+  "repository_hygiene_note": "Commit 4833e62 also changed tracked data/state/jarvis.sqlite3 outside task scope. Restoring the f0aec10 blob was attempted but Windows refused because active JARVIS core/control-center services hold the file open. No process was stopped and no database bytes were changed. The current blob remains recoverable from c53687f; after services are stopped, restore the baseline and assess whether remote history must be scrubbed."
+}

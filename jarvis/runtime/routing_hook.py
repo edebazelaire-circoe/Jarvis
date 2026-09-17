@@ -24,6 +24,7 @@ Conduite en cas de doute :
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import re
@@ -41,7 +42,8 @@ from jarvis.domain.routing import (
     RoutingIntent,
     RoutingPolicy,
 )
-from jarvis.runtime import agent_routing, cli_catalog
+from jarvis.runtime import agent_routing, cli_catalog, credentials
+from jarvis.runtime.catalog_view import ProviderCatalogSnapshot
 from jarvis.runtime.journal import RuntimeJournal
 from jarvis.runtime.model_catalog import ModelCatalog, filter_by_role
 
@@ -184,14 +186,37 @@ def local_agents() -> list[dict[str, Any]]:
     return agents
 
 
-def offline_candidates(runtime_root: Path, policy: RoutingPolicy) -> list[ModelCandidate]:
-    """Les candidats connus sans toucher au réseau : dernier catalogue en cache."""
+def offline_candidates(
+    runtime_root: Path,
+    policy: RoutingPolicy,
+    *,
+    now: datetime | None = None,
+    settings: dict[str, Any] | None = None,
+) -> list[ModelCandidate]:
+    """Offline candidates require a fresh cache for the active credential."""
     catalog = ModelCatalog(runtime_root / "model-catalog.json")
     models: dict[str, list[dict[str, Any]]] = {}
+    reasons: dict[str, str] = {}
+    current = now or datetime.now(timezone.utc)
+    current_settings = settings if settings is not None else load_settings(runtime_root)
     for spec in cli_catalog.AGENT_CLIS:
-        cached = catalog.cached(spec.model_provider) or {}
-        models[spec.model_provider] = filter_by_role(list(cached.get("models") or []), "text")
-    return agent_routing.with_saved(agent_routing.build_candidates(local_agents(), models), policy)
+        cached = catalog.cached_for(
+            spec.model_provider,
+            credentials.secret_for(current_settings, spec.model_provider),
+        ) or {}
+        # `cached_for()` labels every direct cache read stale because callers
+        # often use it after a failed refresh. Here age is revalidated
+        # explicitly by the same source envelope used by the comparison catalog.
+        payload = {**cached, "source": "cache"} if cached else {}
+        snapshot = ProviderCatalogSnapshot.from_payload(spec.model_provider, payload, now=current)
+        models[spec.model_provider] = filter_by_role(list(snapshot.current_models("text")), "text")
+        if not snapshot.authoritative:
+            reasons[spec.id] = "Disponibilité non vérifiée : catalogue fournisseur absent ou périmé."
+    return agent_routing.with_saved(
+        agent_routing.build_candidates(local_agents(), models),
+        policy,
+        unavailable_reasons_by_agent=reasons,
+    )
 
 
 def load_settings(runtime_root: Path) -> dict[str, Any]:
@@ -240,7 +265,7 @@ def run(event: Mapping[str, Any], runtime_root: Path) -> dict[str, Any]:
         policy = agent_routing.load_policy(settings)
         if not policy.enabled:
             return _allow()
-        candidates = offline_candidates(runtime_root, policy)
+        candidates = offline_candidates(runtime_root, policy, settings=settings)
         output, decision = decide(event, policy, candidates)
     except Exception as exc:  # noqa: BLE001 - un hook qui lève bloquerait l'outil
         try:

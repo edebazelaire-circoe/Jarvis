@@ -1,0 +1,24 @@
+{
+  "project": "Jarvis",
+  "slug": "jarvis-settings-model-catalog-ux",
+  "repository": "edebazelaire-circoe/Jarvis",
+  "source_snapshot": {
+    "branch": "main",
+    "sha": "c33207281a5b6a10a6630b8914f19855ea096473",
+    "inspected_date": "2026-09-12"
+  },
+  "summary": "Replace the current routing-centric/dense settings experience with technical-first Agent/CLI configuration, rich personalization, reusable model/sub-agent comparison catalogs, and categorized voice settings while preserving backend routing correctness.",
+  "locked_constraints": [
+    "Remove the user-facing “Aiguillage” section; keep routing implementation internally if still required by the runtime.",
+    "Move sub-agent delegation configuration into the agent/CLI configuration area, with technical options shown before personality/behavior options.",
+    "Expose an Auto vs Dupliqué sub-agent mode switch, bound to the live runtime semantics rather than inventing a second routing engine.",
+    "Provide extensive personalization, including verbosity and politeness/formality, while keeping technical controls visually prioritized.",
+    "Reorganize the overloaded voice-model settings page into top sub-tabs/categories.",
+    "Provide interactive catalog/comparison tables for sub-agents/models and voice models, with sorting, filtering, tags/descriptions, prices/capabilities when trustworthy, and clear availability state.",
+    "Distinguish loaded/usable models from models that are discoverable/relevant but not currently configured, and provide an explicit “request/add model” workflow rather than pretending unavailable models are usable.",
+    "Reuse shared catalog/table components across text/sub-agent and voice model surfaces."
+  ],
+  "planning_blockers": [
+    "Workspace Task Type vocabulary is not exposed; Slice 00 must assign valid existing Task Types before implementation dispatch."
+  ]
+}

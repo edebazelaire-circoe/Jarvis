@@ -36,6 +36,23 @@ from jarvis.domain.routing import (
 #: ont leurs propres clés : un modèle de voix n'est pas un candidat de
 #: sous-agent, et rien ici ne doit les attraper.
 SETTING_KEY = "agent_routing"
+DELEGATION_AUTO = "auto"
+DELEGATION_DUPLICATE = "duplicate"
+DELEGATION_MODES = (
+    {
+        "id": DELEGATION_AUTO,
+        "label": "Auto",
+        "help": (
+            "Applique les profils au sous-agent du CLI Claude hôte; un seul modèle gagne. "
+            "Codex n'expose pas encore cette frontière de délégation."
+        ),
+    },
+    {
+        "id": DELEGATION_DUPLICATE,
+        "label": "Dupliqué",
+        "help": "Hérite du modèle CLI/appelant; ne duplique jamais l'exécution.",
+    },
+)
 
 #: Modèle absent du catalogue : le candidat reste, marqué.
 MISSING_MODEL_REASON = "Ce modèle n'est plus proposé par le fournisseur."
@@ -90,6 +107,45 @@ def store(settings: dict[str, Any], policy: RoutingPolicy) -> None:
     settings[SETTING_KEY] = {
         "enabled": policy.enabled,
         "profiles": {entry.profile: entry.as_dict() for entry in policy.profiles},
+    }
+
+
+def delegation_mode(settings: Mapping[str, Any]) -> str:
+    """Project the existing routing switch without writing a migration field."""
+    return DELEGATION_AUTO if load_policy(settings).enabled else DELEGATION_DUPLICATE
+
+
+def delegation_enabled(value: object) -> bool:
+    if value == DELEGATION_AUTO:
+        return True
+    if value == DELEGATION_DUPLICATE:
+        return False
+    raise RoutingError(
+        "agent_settings_invalid_delegation_mode",
+        "Mode de sous-agents inconnu; utilisez auto ou duplicate.",
+    )
+
+
+def apply_delegation_mode(settings: dict[str, Any], value: object) -> RoutingPolicy:
+    """Write only `agent_routing.enabled`, preserving every profile choice."""
+    return apply(settings, {"enabled": delegation_enabled(value)})
+
+
+def describe_delegation_modes() -> dict[str, Any]:
+    return {
+        "id": "delegation_mode",
+        "label": "Mode des sous-agents",
+        "type": "enum",
+        "default": DELEGATION_DUPLICATE,
+        "help": (
+            "Auto choisit sur le CLI Claude hôte; Codex reste non sélectionnable en Auto. "
+            "Dupliqué hérite du CLI/appelant sans fan-out."
+        ),
+        "destination": "agent_cli.technical",
+        "advanced": False,
+        "runtime_status": "live-claude-host-only",
+        "persistence": "agent_routing.enabled",
+        "options": [dict(option) for option in DELEGATION_MODES],
     }
 
 
@@ -209,32 +265,32 @@ def build_candidates(
                 capabilities=capabilities,
                 available=available,
                 unavailable_reason=reason,
-                agent_label=label,
-                model_label=DEFAULT_MODEL_LABEL,
             )
         )
         for model in models.get(provider) or ():
             model_id = str(model.get("id") or "")
             if not model_id:
                 continue
-            model_label = str(model.get("label") or "") or model_id
             candidates.append(
                 ModelCandidate(
                     agent=agent_id,
                     model=model_id,
-                    label=f"{label} · {model_label}",
+                    label=f"{label} · {model.get('label') or model_id}",
                     provider=provider,
                     capabilities=capabilities,
                     available=available,
                     unavailable_reason=reason,
-                    agent_label=label,
-                    model_label=model_label,
                 )
             )
     return candidates
 
 
-def with_saved(candidates: Sequence[ModelCandidate], policy: RoutingPolicy) -> list[ModelCandidate]:
+def with_saved(
+    candidates: Sequence[ModelCandidate],
+    policy: RoutingPolicy,
+    *,
+    unavailable_reasons_by_agent: Mapping[str, str] | None = None,
+) -> list[ModelCandidate]:
     """Ajouter, marqués indisponibles, les candidats enregistrés qui ont disparu.
 
     Sans cela, une clé API retirée ferait taire un choix de l'utilisateur : le
@@ -244,6 +300,7 @@ def with_saved(candidates: Sequence[ModelCandidate], policy: RoutingPolicy) -> l
     """
     known = {(item.agent, item.model) for item in candidates}
     enriched = list(candidates)
+    reasons = unavailable_reasons_by_agent or {}
     for entry in policy.profiles:
         for ref in entry.candidates:
             if (ref.agent, ref.model) in known:
@@ -256,57 +313,13 @@ def with_saved(candidates: Sequence[ModelCandidate], policy: RoutingPolicy) -> l
                     label=ref.key,
                     capabilities=frozenset(),
                     available=False,
-                    unavailable_reason=MISSING_MODEL_REASON if ref.model else MISSING_AGENT_REASON,
-                    agent_label=ref.agent,
-                    model_label=ref.model or DEFAULT_MODEL_LABEL,
+                    unavailable_reason=(
+                        reasons.get(ref.agent)
+                        or (MISSING_MODEL_REASON if ref.model else MISSING_AGENT_REASON)
+                    ),
                 )
             )
     return enriched
-
-
-def group_by_harness(candidates: Sequence[ModelCandidate]) -> list[dict[str, Any]]:
-    """Les mêmes candidats, rangés par harness : un choix en deux temps.
-
-    Une seule liste de tous les couples CLI × modèle est illisible dès que le
-    fournisseur déclare vingt modèles. L'écran choisit donc le harness, puis
-    un modèle parmi ceux de ce harness — c'est un regroupement d'affichage,
-    pas une autre vérité : les couples sont exactement ceux de `candidates`,
-    dans le même ordre, y compris ceux devenus indisponibles.
-
-    Un harness est utilisable si au moins un de ses modèles l'est ; sinon il
-    reste affiché avec la raison mesurée, jamais retiré.
-    """
-    groups: dict[str, dict[str, Any]] = {}
-    for item in candidates:
-        group = groups.get(item.agent)
-        if group is None:
-            group = groups[item.agent] = {
-                "id": item.agent,
-                "label": item.agent_label or item.agent,
-                "provider": item.provider,
-                "capabilities": sorted(item.capabilities),
-                "available": False,
-                "unavailable_reason": "",
-                "models": [],
-            }
-        group["models"].append(
-            {
-                "model": item.model,
-                "label": item.model_label or item.model or DEFAULT_MODEL_LABEL,
-                "available": item.available,
-                "unavailable_reason": item.unavailable_reason,
-            }
-        )
-        if item.available:
-            group["available"] = True
-            group["unavailable_reason"] = ""
-        elif not group["available"] and not group["unavailable_reason"]:
-            group["unavailable_reason"] = item.unavailable_reason
-        if item.provider and not group["provider"]:
-            group["provider"] = item.provider
-        if item.capabilities and not group["capabilities"]:
-            group["capabilities"] = sorted(item.capabilities)
-    return list(groups.values())
 
 
 def describe(policy: RoutingPolicy, candidates: Sequence[ModelCandidate]) -> dict[str, Any]:
@@ -314,17 +327,11 @@ def describe(policy: RoutingPolicy, candidates: Sequence[ModelCandidate]) -> dic
 
     Aucun secret ne passe ici — ni clé, ni indice de clé : un candidat dit
     seulement s'il est utilisable, et sinon pourquoi, en clair.
-
-    `harnesses` est la même information que `candidates`, en deux niveaux, pour
-    l'écran qui fait choisir le harness avant son modèle. `candidates` reste
-    servi tel quel : la politique enregistrée, elle, désigne toujours un couple
-    {agent, model} et son format ne change pas.
     """
     return {
         "enabled": policy.enabled,
         "profiles": routing.describe_profiles(),
         "policy": {entry.profile: entry.as_dict() for entry in policy.profiles},
         "candidates": [item.as_dict() for item in candidates],
-        "harnesses": group_by_harness(candidates),
         "capabilities": list(routing.CAPABILITIES),
     }

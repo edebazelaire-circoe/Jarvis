@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-SET-AGENT-01",
+      "title": "Validate Agent/CLI settings hierarchy",
+      "instructions": "After automated QA passes, open the Agent/CLI configuration. Confirm the “Aiguillage” section is gone, Auto/Dupliqué is immediately discoverable among technical options, technical controls appear before personality controls, verbosity/politeness are understandable, and the model/sub-agent catalog is easy to explore.",
+      "expected": "The page feels like agent configuration, not routing internals; technical controls are primary and the catalog is useful."
+    }
+  ]
+}

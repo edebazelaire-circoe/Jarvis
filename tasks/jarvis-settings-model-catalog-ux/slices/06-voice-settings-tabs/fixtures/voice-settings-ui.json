@@ -1,0 +1,18 @@
+{
+  "top_tabs": ["Voix", "Prompts", "Agent / CLI", "API Keys", "Raccourcis", "Apparence"],
+  "voice_categories": [
+    "architecture",
+    "conversation",
+    "turn_taking",
+    "models",
+    "audio",
+    "advanced",
+    "diagnostic"
+  ],
+  "catalog": {
+    "surface": "voice",
+    "roles": ["realtime", "transcription", "speech"]
+  },
+  "removed_top_tab": "config",
+  "unique_shortcut": "wake_toggle"
+}

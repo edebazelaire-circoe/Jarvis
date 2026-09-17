@@ -48,7 +48,12 @@ BRAIN_WORK_CONTEXT_FAILED_KIND = "core.brain.work_context_failed"
 
 #: Écart minimal entre deux réveils de la cognition. Pendant ce délai, les
 #: changements s'accumulent et le prochain tour les reçoit quand même.
-DEFAULT_WAKE_INTERVAL_S = 60.0
+#: Dix secondes : un réveil doit suivre la mort d'un sous-agent d'assez près
+#: pour que l'utilisateur relie l'annonce à ce qu'il attendait. Une rafale
+#: n'en produit pas dix pour autant — un réveil emporte **tous** les
+#: changements retenus, et aucun second réveil ne part tant que le premier
+#: est en vol ou qu'un tour l'est (voir `BrainOrchestrator.wake_for_work_attention`).
+DEFAULT_WAKE_INTERVAL_S = 10.0
 #: Diagnostics `core.work.attention` par minute ; au-delà ils sont comptés
 #: (`suppressed`) : une interruption de processus peut en produire des dizaines.
 DEFAULT_ATTENTION_DIAGNOSTICS_PER_MINUTE = 20

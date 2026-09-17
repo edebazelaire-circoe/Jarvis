@@ -1,0 +1,16 @@
+{
+  "legacy_programmatic_tab": "routing",
+  "canonical_programmatic_tab": "cli",
+  "tabs": [
+    {"id": "voice", "label": "Voix"},
+    {"id": "prompts", "label": "Prompts"},
+    {"id": "cli", "label": "Agent / CLI"},
+    {"id": "keys", "label": "API Keys"},
+    {"id": "shortcuts", "label": "Raccourcis"},
+    {"id": "appearance", "label": "Apparence"}
+  ],
+  "agent_section_order": ["Technique", "Comportement", "Sous-agents / Modèles"],
+  "cli_payload_keys": ["agent", "settings", "delegation_mode", "behavior"],
+  "routing_payload_keys": ["profiles"],
+  "catalog": {"surface": "subagents", "role": "subagent"}
+}

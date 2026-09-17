@@ -12,17 +12,51 @@ from jarvis.domain.prompt_registry import (
     MAX_OVERRIDE_TEXT, PromptError, PromptRegistry, _text, decode_prompt_overrides,
     fingerprint, prompt_id, validate_template,
 )
+from jarvis.runtime.agent_behavior import AgentBehaviorError
 
 PROMPT_OVERRIDES_SETTING = "prompt_overrides"
 
 
-def prompt_override_document(settings: dict) -> dict | None:
-    """Return a validated detached document, or None when defaults are active."""
+def stored_prompt_override_document(settings: dict) -> dict | None:
+    """Return only user-persisted prompt edits for the Prompts workbench."""
     if not isinstance(settings, dict):
         raise PromptError("prompt_settings_invalid", "Settings must be an object")
     if PROMPT_OVERRIDES_SETTING not in settings:
         return None
     entries = decode_prompt_overrides(settings[PROMPT_OVERRIDES_SETTING])
+    return {"schema_version": 1, "overrides": entries}
+
+
+def prompt_override_document(settings: dict) -> dict | None:
+    """Return detached effective overrides, including Agent behavior at runtime.
+
+    Inheritance takes the original byte-for-byte path. Non-inherited response
+    preferences extend the shared backend-turn layer without changing the
+    persisted prompt override document.
+    """
+    stored_document = stored_prompt_override_document(settings)
+    entries = stored_document["overrides"] if stored_document is not None else {}
+
+    from jarvis.runtime.agent_behavior import prompt_instruction
+    behavior = prompt_instruction(settings)
+    if not behavior:
+        return stored_document
+
+    from jarvis.runtime.prompt_catalog import default_prompt_registry
+    registry = default_prompt_registry()
+    descriptor = registry.require("backend.turn.addition")
+    inspected = registry.inspect({"schema_version": 1, "overrides": entries})
+    layer = next(item for item in inspected["layers"] if item["prompt_id"] == descriptor.prompt_id)
+    current_text = layer["current_text"]
+    combined = current_text + ("\n" if current_text else "") + behavior
+    try:
+        _text(combined, MAX_OVERRIDE_TEXT)
+    except PromptError as exc:
+        raise AgentBehaviorError(
+            "agent_settings_behavior_prompt_too_large",
+            f"Les préférences de réponse et l'ajout de tour dépassent {MAX_OVERRIDE_TEXT} caractères.",
+        ) from exc
+    entries[descriptor.prompt_id] = {"base_revision": descriptor.default_revision, "text": combined}
     return {"schema_version": 1, "overrides": entries}
 
 
@@ -71,7 +105,7 @@ class PromptOverrideStore:
                 else:
                     entries[identifier] = {"base_revision": base_revision, "text": text}
                 return self._persist(settings, entries, identifier, "edit")
-            except PromptError as exc:
+            except (PromptError, AgentBehaviorError) as exc:
                 self._emit("prompt.override.rejected", code=exc.code, level="warning")
                 raise
 
@@ -83,7 +117,7 @@ class PromptOverrideStore:
                 # Unknown future IDs can be explicitly removed, never executed.
                 entries.pop(identifier, None)
                 return self._persist(settings, entries, identifier, "reset")
-            except PromptError as exc:
+            except (PromptError, AgentBehaviorError) as exc:
                 self._emit("prompt.override.rejected", code=exc.code, level="warning")
                 raise
 
@@ -95,6 +129,9 @@ class PromptOverrideStore:
             settings[PROMPT_OVERRIDES_SETTING] = envelope
         else:
             settings.pop(PROMPT_OVERRIDES_SETTING, None)
+        # Behavior extends backend.turn.addition only at runtime. Prove the
+        # combined bound before the atomic writer sees this candidate state.
+        prompt_override_document(settings)
         changed = before != settings.get(PROMPT_OVERRIDES_SETTING)
         revision = fingerprint(envelope)
         if changed:

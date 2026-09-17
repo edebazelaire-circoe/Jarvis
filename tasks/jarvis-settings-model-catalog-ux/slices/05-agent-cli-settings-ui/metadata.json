@@ -1,0 +1,38 @@
+{
+  "slice_id": "05",
+  "task_type": null,
+  "work_intent": "frontend settings implementation",
+  "dependencies": [
+    "02",
+    "04"
+  ],
+  "task_type_blocker": "Waived by explicit user authorization on 2026-09-14; task_type remains null rather than inventing a value.",
+  "status": "COMPLETE",
+  "canonical_contracts": [
+    "tasks/jarvis-settings-model-catalog-ux/docs/settings-ia-contract.json",
+    "docs/settings/INDEX.md",
+    "docs/catalog/table-component.md"
+  ],
+  "implementation": [
+    "jarvis/runtime/control_center.html",
+    "tests/unit/test_agent_cli_settings_ui.py",
+    "tests/unit/test_routing_settings_screen.py",
+    "tests/unit/test_control_center_mvp.py",
+    "tests/unit/test_control_center_voice_architecture.py",
+    "tests/unit/test_control_center_catalog_ui.py",
+    "docs/OPERATIONS.md",
+    "docs/settings/INDEX.md"
+  ],
+  "fixture": "tasks/jarvis-settings-model-catalog-ux/slices/05-agent-cli-settings-ui/fixtures/agent-cli-ui.json",
+  "frontend_routing": "Claude frontend routing and /impeccable were unavailable in the active tool/skill set; existing Control Center design system and accessibility conventions were applied locally.",
+  "validation": {
+    "command": ".venv/Scripts/python.exe -m pytest -q -p no:cacheprovider -W error -o asyncio_default_fixture_loop_scope=function tests/unit/test_agent_cli_settings_ui.py tests/unit/test_control_center_catalog_ui.py tests/unit/test_routing_settings_screen.py tests/unit/test_settings_endpoints.py tests/unit/test_agent_behavior.py tests/unit/test_agent_routing.py tests/unit/test_agent_routing_settings.py tests/unit/test_routing_hook.py tests/unit/test_control_center_mvp.py tests/unit/test_control_center_quality.py tests/unit/test_control_center_voice_architecture.py tests/unit/test_settings_ia_contract.py",
+    "passed": 281,
+    "failed": 0,
+    "duration_seconds": 12.73,
+    "served_page_node_syntax": "passed through test_control_center_quality.py",
+    "git_diff_check": "passed with repository line-ending warnings only",
+    "logbroker_cli": "unavailable: ModuleNotFoundError: No module named observability"
+  },
+  "qa_pending": []
+}

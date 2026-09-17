@@ -1,0 +1,51 @@
+{
+  "cases": [
+    {
+      "name": "missing routing block keeps compatibility",
+      "saved": {"agent_cli": "claude"},
+      "expected_delegation_mode": "duplicate",
+      "preserve": ["agent_cli"]
+    },
+    {
+      "name": "disabled routing preserves candidate preferences",
+      "saved": {
+        "agent_routing": {
+          "enabled": false,
+          "profiles": {
+            "code": {
+              "enabled": true,
+              "candidates": [{"agent": "claude", "model": "opus"}],
+              "allow_general_fallback": true
+            }
+          }
+        }
+      },
+      "expected_delegation_mode": "duplicate",
+      "preserve": ["agent_routing.profiles.code.candidates"]
+    },
+    {
+      "name": "enabled routing projects to Auto without rewrite",
+      "saved": {
+        "agent_routing": {
+          "enabled": true,
+          "profiles": {
+            "fast": {
+              "enabled": true,
+              "candidates": [{"agent": "claude", "model": "haiku"}],
+              "allow_general_fallback": false
+            }
+          }
+        },
+        "unrelated_future_setting": {"keep": true},
+        "voice_stack": "gemini_live",
+        "voice_stack_settings": {
+          "openai_realtime": {"voice": "ash"},
+          "gemini_live": {"voice": "Kore", "future_transport_flag": "sentinel"}
+        },
+        "future_root": {"nested": ["sentinel"]}
+      },
+      "expected_delegation_mode": "auto",
+      "preserve": ["agent_routing", "unrelated_future_setting", "voice_stack", "voice_stack_settings", "future_root"]
+    }
+  ]
+}

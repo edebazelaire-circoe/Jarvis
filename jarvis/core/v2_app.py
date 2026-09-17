@@ -9,7 +9,7 @@ from jarvis.adapters.fake_calendar import InMemoryCalendarBackend
 from jarvis.adapters.jsonl_history import JsonlHistoryStore
 from jarvis.adapters.sqlite_state import SQLiteStateRepository
 from jarvis.adapters.windows_notifications import NullNotificationDelivery
-from jarvis.core.brain_context import ATTENTION_QUEUE_SIZE, BrainContextBuilder, WorkAttentionPolicy
+from jarvis.core.brain_context import ATTENTION_QUEUE_SIZE, DEFAULT_WAKE_INTERVAL_S, BrainContextBuilder, WorkAttentionPolicy
 from jarvis.core.brain_service import DEFAULT_TURN_BUDGET_S, BrainOrchestrator
 from jarvis.core.calendar_service import CalendarService
 from jarvis.core.drive_service import DriveService
@@ -38,7 +38,7 @@ class JarvisCoreApplication:
     or Windows UI dependency.
     """
 
-    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = True, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None) -> None:
+    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = True, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S) -> None:
         root = Path(data_root).resolve()
         self.health = CoreHealth()
         self.state = SQLiteStateRepository(root / "state" / "jarvis.sqlite3")
@@ -60,9 +60,19 @@ class JarvisCoreApplication:
         self.jobs = JobService(self.state, self.events, workers or {}, diagnostics=diagnostics, work_state=self.work_state)
         # Tâche 12 : le cerveau lit ce même magasin à chaque tour, et une
         # politique abonnée à `core.work.updated` retient pour lui les échecs,
-        # interruptions et blocages. Aucun réveil n'est câblé : le prochain tour
-        # les reçoit (voir `jarvis/core/brain_context.py`).
-        self.work_attention = WorkAttentionPolicy(diagnostics=diagnostics)
+        # interruptions et blocages (voir `jarvis/core/brain_context.py`).
+        #
+        # Le réveil est câblé. Sans lui, la politique n'était qu'un tampon :
+        # un sous-agent pouvait mourir sans un mot, et l'utilisateur ne
+        # l'apprenait qu'en reparlant de lui-même — donc jamais s'il se taisait.
+        # Le rappel arrive par une fermeture, car `self.brain` n'existe que
+        # plus bas ; il ne dit rien lui-même, il ouvre un tour et laisse le
+        # cerveau choisir ses mots.
+        self.work_attention = WorkAttentionPolicy(
+            diagnostics=diagnostics,
+            wake=self._wake_brain_for_work,
+            wake_interval_s=work_attention_wake_interval_s,
+        )
         self.brain_context = BrainContextBuilder(
             reader=self.work_state,
             store_id=self.work_state.store_id,
@@ -144,6 +154,19 @@ class JarvisCoreApplication:
             except Exception:
                 pass
             raise
+
+    async def _wake_brain_for_work(self, notes) -> None:
+        """Rappel de `WorkAttentionPolicy` : ouvrir un tour sur un changement de fond.
+
+        Rien n'est dit ici, et rien n'est consommé : le cerveau décide s'il
+        parle, et seuls les changements qu'un contexte de tour a vraiment
+        portés sont retirés de l'attente (`take_delivered`). Une exception est
+        déjà absorbée et signalée par la politique appelante
+        (`core.work.attention_wake_failed`) ; le changement attend alors le
+        tour suivant plutôt que d'éteindre la boucle.
+        """
+
+        await self.brain.wake_for_work_attention(tuple(notes))
 
     async def _ensure_system_schedules(self) -> None:
         if "memory_maintenance" not in self.jobs.workers:

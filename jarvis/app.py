@@ -192,7 +192,12 @@ def _brain_availability_from_env() -> dict[str, object]:
       périme la parole des tours précédents encore en file (retour n° 8).
     - `JARVIS_BRAIN_TURN_BUDGET_S` (défaut 8) : au-delà, le tour est signalé
       dans la trace (`core.brain.turn_slow`, `core.brain.turn_over_budget`).
+    - `JARVIS_WORK_WAKE_INTERVAL_S` (défaut 10) : écart minimal entre deux
+      réveils du cerveau par un changement de travail de fond. `0` réveille
+      aussi vite que les changements arrivent ; une valeur négative est
+      ignorée. Le réveil ne se déclenche jamais pendant un tour en vol.
     """
+    from jarvis.core.brain_context import DEFAULT_WAKE_INTERVAL_S
     from jarvis.core.brain_service import DEFAULT_TURN_BUDGET_S
 
     supersede = os.getenv("JARVIS_SUPERSEDE_STALE_REPLIES", "1").strip().lower() not in {"0", "false", "no", "off"}
@@ -200,7 +205,14 @@ def _brain_availability_from_env() -> dict[str, object]:
         budget = float(os.getenv("JARVIS_BRAIN_TURN_BUDGET_S") or DEFAULT_TURN_BUDGET_S)
     except ValueError:
         budget = DEFAULT_TURN_BUDGET_S
-    return {"supersede_stale_replies": supersede, "brain_turn_budget_s": budget if budget > 0 else DEFAULT_TURN_BUDGET_S}
+    raw_wake = os.getenv("JARVIS_WORK_WAKE_INTERVAL_S")
+    try:
+        wake = DEFAULT_WAKE_INTERVAL_S if raw_wake is None or not raw_wake.strip() else float(raw_wake)
+    except ValueError:
+        wake = DEFAULT_WAKE_INTERVAL_S
+    return {"supersede_stale_replies": supersede,
+            "brain_turn_budget_s": budget if budget > 0 else DEFAULT_TURN_BUDGET_S,
+            "work_attention_wake_interval_s": wake if wake >= 0 else DEFAULT_WAKE_INTERVAL_S}
 
 
 def _control_settings(runtime_root: Path) -> dict[str, object]:

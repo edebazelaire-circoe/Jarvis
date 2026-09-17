@@ -1,0 +1,15 @@
+{
+  "checks": [
+    {
+      "id": "HV-SET-E2E-01",
+      "title": "Final settings personalization walkthrough",
+      "instructions": "After maximum machine QA passes, perform one end-to-end walkthrough: switch Auto/Dupliqué, adjust verbosity and politeness/formality, compare/filter model catalogs, inspect an unavailable model and confirm that no unsupported request/add action is offered, navigate all voice tabs, reload Jarvis/Control Center, and confirm values/state remain coherent.",
+      "expected": "The new settings architecture persists correctly, never misrepresents availability, and is materially easier to navigate than the removed Aiguillage/dense voice pages."
+    }
+  ],
+  "execution": {
+    "status": "passed",
+    "performed_by": "orchestrator",
+    "evidence": "Real CUA walkthrough confirmed Agent/CLI and Voice persistence, truthful unavailable catalog states, search and role-state retention, keyboard navigation, responsive layouts, save/reopen behavior, and zero browser console warnings/errors. Unsupported request/add actions were absent."
+  }
+}

@@ -46,6 +46,8 @@ pre.log{white-space:pre-wrap;word-break:break-word;margin:0;font-size:12px;line-
 .entry{padding:9px 0;border-bottom:1px solid rgba(113,144,160,.12)}
 .entry .meta{font-size:10px;color:var(--muted);margin-bottom:3px}
 .entry.error{color:#ff9eaa}
+.entry.bgrow{display:flex;align-items:flex-start;gap:9px;padding:9px 2px}
+.entry.bgrow.seen{opacity:.55}
 details.entry{padding:0;border-bottom:1px solid rgba(113,144,160,.12)}
 details.entry>summary{display:flex;align-items:flex-start;gap:9px;padding:9px 2px;cursor:pointer;list-style:none}
 details.entry>summary::-webkit-details-marker{display:none}
@@ -195,6 +197,28 @@ pre.block{background:#050b10;border:1px solid rgba(113,144,160,.16);border-radiu
 @media(min-width:940px){#app:has(.panel.open)~.toasts{right:calc(98px + min(560px,100vw - 120px));width:min(340px,calc(100vw - 676px))}}
 @media(prefers-reduced-motion:reduce){.adot.running,.toast{animation:none}}
 
+/* ---------- Pastilles d'arrière-plan (interface principale) ----------
+   Petits boutons ronds accolés au bouton Agents, hors de la barre d'outils :
+   une pastille par catégorie non vue. Dock de 4 outils (4×52 + 3×10 = 238 px,
+   centré) : la colonne commence juste sous le bouton Agents. */
+.bgpills{position:absolute;z-index:40;right:30px;top:calc(50% + 131px);display:flex;flex-direction:column;gap:8px}
+.bgpill{--pill:var(--accent);position:relative;width:28px;height:28px;padding:0;border-radius:50%;display:grid;place-items:center;border:1px solid var(--pill);background:rgba(3,8,12,.86);color:var(--pill);font:700 11px ui-monospace,SFMono-Regular,Consolas,monospace;cursor:pointer;backdrop-filter:blur(12px);box-shadow:0 0 12px color-mix(in srgb,var(--pill) 35%,transparent);transition:transform .15s,background-color .15s}
+.bgpill.bad{--pill:var(--danger)}.bgpill.warn{--pill:var(--warn)}.bgpill.ok{--pill:var(--ok)}
+.bgpill:hover,.bgpill.active{transform:scale(1.12);background:color-mix(in srgb,var(--pill) 18%,#03080c)}
+.bgpill:focus-visible{outline:1px solid var(--pill);outline-offset:3px}
+.bgpill.bad::after{content:'';position:absolute;inset:-4px;border-radius:50%;border:1px solid var(--pill);opacity:.5;animation:pulse 1.6s ease-in-out infinite;pointer-events:none}
+.bgpop{position:fixed;z-index:75;width:min(360px,calc(100vw - 24px));max-height:min(420px,calc(100vh - 24px));display:flex;flex-direction:column;background:rgba(6,13,19,.97);border:1px solid var(--line);border-top:2px solid var(--accent);border-radius:10px;box-shadow:0 18px 50px rgba(0,0,0,.65)}
+.bgpop.bad{border-top-color:var(--danger)}.bgpop.warn{border-top-color:var(--warn)}.bgpop.ok{border-top-color:var(--ok)}
+.bgpop header{display:flex;align-items:center;gap:8px;padding:10px 10px 8px 12px;border-bottom:1px solid var(--line);font-size:11px;letter-spacing:.1em;text-transform:uppercase}
+.bgpop header .dot{margin-top:0}
+.bgpop header strong{flex:1 1 auto;min-width:0}
+.bgpop .bglist{overflow:auto;min-height:0;padding:4px}
+.bgitem{display:flex;align-items:flex-start;gap:9px;width:100%;padding:8px;background:none;border:0;border-radius:6px;color:var(--text);font:inherit;font-size:13px;text-align:left;cursor:pointer}
+.bgitem:hover,.bgitem:focus-visible{outline:none;background:rgba(110,231,255,.08)}
+.bgpop footer{display:flex;gap:8px;justify-content:flex-end;padding:8px 10px;border-top:1px solid var(--line)}
+.bgpop footer .action{padding:6px 10px;font-size:12px}
+@media(prefers-reduced-motion:reduce){.bgpill,.bgpill.bad::after{animation:none;transition:none}}
+
 /* ---------- Fenêtre de réglages ---------- */
 .overlay{position:fixed;inset:0;z-index:60;display:none;place-items:center;padding:3vh 3vw;background:rgba(2,6,10,.68);backdrop-filter:blur(7px)}
 .overlay.open{display:grid}
@@ -260,6 +284,37 @@ details.rd{border:1px solid var(--line);border-radius:6px;padding:10px 14px;marg
 details.rd>summary{cursor:pointer;font-size:12px;color:var(--muted);letter-spacing:.04em}
 details.rd[open]>summary{margin-bottom:14px}
 .hint.agsource{margin:0 2px 8px}
+/* ---------- Catalogue partagé (Agent/CLI + Voice) ---------- */
+.catalog-shell{display:grid;gap:14px;max-width:none}
+.catalog-toolbar{display:grid;grid-template-columns:minmax(220px,1fr) minmax(170px,240px);gap:12px;align-items:end}
+.catalog-toolbar label{display:grid;gap:6px;font-size:11px;color:var(--muted)}
+.catalog-toolbar input,.catalog-toolbar select{width:100%;background:#071015;border:1px solid var(--line);color:var(--text);padding:9px;border-radius:5px;font:inherit}
+.catalog-toolbar input:focus-visible,.catalog-toolbar select:focus-visible,.catalog-filter input:focus-visible,.catalog-table button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.catalog-filters{display:flex;gap:8px;overflow-x:auto;padding:1px 1px 5px}
+.catalog-filter{display:flex;gap:8px;align-items:center;min-width:max-content;margin:0;padding:7px 9px;border:1px solid var(--line);border-radius:6px}
+.catalog-filter legend{padding:0 4px;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.catalog-filter label{font-size:11px;color:var(--text);white-space:nowrap}.catalog-filter input{accent-color:var(--accent)}
+.catalog-summary{font-size:11px;color:var(--muted)}
+.catalog-notice,.catalog-empty{border-left:2px solid var(--line);padding:11px 13px;background:rgba(113,144,160,.06);font-size:12px;line-height:1.5}
+.catalog-notice.error{border-left-color:var(--danger);color:#f0c3c9}.catalog-notice.no_credentials,.catalog-notice.partial{border-left-color:var(--warn);color:#e4d3b8}
+.catalog-table-wrap{width:100%;overflow:auto;border:1px solid var(--line);border-radius:7px}
+.catalog-table{width:100%;border-collapse:collapse;font-size:12px}.catalog-table caption{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.catalog-table thead th{position:sticky;top:0;z-index:1;text-align:left;font-weight:normal;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);background:#071015;padding:9px;border-bottom:1px solid var(--line)}
+.catalog-table tbody th,.catalog-table td{min-width:110px;padding:10px 9px;border-bottom:1px solid rgba(113,144,160,.12);vertical-align:top;text-align:left;font-weight:normal}.catalog-table tr:last-child :is(th,td){border-bottom:0}
+.catalog-table tr:hover :is(th,td){background:rgba(110,231,255,.025)}.catalog-table input[type=checkbox]{accent-color:var(--accent)}
+.catalog-cell-compare{min-width:76px!important;width:76px;text-align:center}.catalog-cell-model{min-width:180px!important}.catalog-cell-availability{min-width:210px!important}
+.catalog-model-id,.catalog-reason{display:block;margin-top:4px;color:var(--muted);font-size:10px;line-height:1.4;word-break:break-word}
+.catalog-chip{display:inline-block;margin:0 3px 3px 0;padding:1px 5px;border:1px solid var(--line);border-radius:3px;color:#a9c5d2;font-size:10px}
+.catalog-unknown{color:var(--muted)}.catalog-status{display:inline-block;padding:2px 6px;border:1px solid var(--line);border-radius:10px;font-size:10px;white-space:nowrap}
+.catalog-status.ok{color:var(--ok);border-color:rgba(104,224,160,.45)}.catalog-status.warn{color:var(--warn);border-color:rgba(255,184,92,.45)}.catalog-status.bad{color:var(--danger);border-color:rgba(255,101,119,.45)}
+.catalog-evidence{margin-top:5px;color:var(--muted);font-size:10px}.catalog-evidence summary{cursor:pointer}.catalog-evidence ul{margin:5px 0 0;padding-left:18px}
+.agent-catalog-head{display:flex;align-items:start;justify-content:space-between;gap:12px;margin-bottom:10px}.agent-catalog-head .hint{max-width:620px}
+.voice-tabs{display:flex;gap:6px;overflow-x:auto;padding:2px 1px 10px;margin-bottom:12px;border-bottom:1px solid var(--line);scrollbar-width:thin}
+.voice-tabs button{flex:0 0 auto;border:1px solid var(--line);border-radius:16px;padding:7px 11px;background:#071015;color:var(--muted);font:inherit;font-size:11px;cursor:pointer}
+.voice-tabs button[aria-selected=true]{border-color:var(--accent);color:var(--accent);background:rgba(110,231,255,.07)}
+.voice-tabs button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.voice-category-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.voice-category-head h3{margin-top:0}
+.voice-field-label{display:block;margin-bottom:6px;color:var(--text);font-size:12px}.field output{display:block;color:var(--text)}
 @media(max-width:900px){
   .modal{width:94vw;height:88vh}
   .split{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}
@@ -271,10 +326,20 @@ details.rd[open]>summary{margin-bottom:14px}
 @media(max-width:700px){
   .panel{left:12px;right:76px;top:12px;bottom:12px;width:auto}
   .dock{right:10px}
+  .bgpills{right:22px}
   .topbar{left:10px;right:74px}
   .live-banner{top:62px;left:10px;right:74px;width:auto;transform:none;grid-template-columns:auto minmax(0,1fr)}
   .live-stop{grid-column:1/-1;width:100%}
   .brand{display:none}
+  .catalog-toolbar{grid-template-columns:1fr}
+  .catalog-table-wrap{overflow:visible;border:0}
+  .catalog-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
+  .catalog-table,.catalog-table tbody,.catalog-table tr,.catalog-table tbody th,.catalog-table td{display:block;width:100%}
+  .catalog-table tr{margin-bottom:10px;border:1px solid var(--line);border-radius:7px;background:#060d12;overflow:hidden}
+  .catalog-table tbody th,.catalog-table td{display:grid;grid-template-columns:minmax(92px,32%) minmax(0,1fr);gap:8px;min-width:0!important;border-bottom:1px solid rgba(113,144,160,.12)}
+  .catalog-table tbody th::before,.catalog-table td::before{content:attr(data-label);font-size:9px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+  .catalog-cell-compare{text-align:left}
+  .voice-tabs{margin-left:-4px;margin-right:-4px;padding-left:4px;padding-right:4px}
 }
 </style>
 </head>
@@ -294,10 +359,12 @@ details.rd[open]>summary{margin-bottom:14px}
     <div class="tool"><button id="openSettings" title="Réglages">SET</button></div>
     <div class="tool"><button data-panel="agents" id="agentsButton" title="Agents">AGT</button><span class="badge count" id="agentBadge">0</span></div>
   </nav>
+  <div class="bgpills" id="bgPills" role="group" aria-label="Notifications d’arrière-plan" hidden></div>
   <section class="panel" id="panel"><header><h2 id="panelTitle">Panel</h2><button id="closePanel" aria-label="Fermer">×</button></header><div class="body" id="panelBody"></div></section>
 </div>
 <div class="ctxmenu" id="ctxMenu" role="menu" hidden></div>
 <div class="toasts" id="toasts" aria-live="polite"></div>
+<div class="bgpop" id="bgPop" role="dialog" aria-label="Notifications d’arrière-plan" hidden></div>
 
 <div class="overlay" id="overlay">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
@@ -318,6 +385,7 @@ details.rd[open]>summary{margin-bottom:14px}
 
 <script>
 /*__CONTROL_CENTER_LIVE_JS__*/
+/*__CONTROL_CENTER_CATALOG_JS__*/
 const $=s=>document.querySelector(s);let current=null;const panel=$('#panel'),body=$('#panelBody'),title=$('#panelTitle');
 async function api(path,opts){const r=await fetch(path,opts),text=await r.text();let value={};try{value=text?JSON.parse(text):{}}catch{value={error:text}}if(!r.ok){const e=new Error(value.error||value.code||text||`HTTP ${r.status}`);e.status=r.status;throw e}return value}
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
@@ -332,8 +400,160 @@ function renderLive(live){const view=JarvisLiveView.project(live),banner=$('#liv
 async function stopLive(){const button=$('#liveStop');button.disabled=true;button.textContent='DEMANDE…';try{const result=await api('/api/live/stop',{method:'POST'});renderLive(result.live)}catch(e){button.disabled=false;button.textContent='RÉESSAYER L’ARRÊT';const meta=$('#liveMeta');meta.innerHTML+=` · <span class="live-warning">${esc(e.message)}</span>`}}
 $('#liveStop').addEventListener('click',stopLive);
 let errorsView='active';
+/* =====================================================================
+   Arrière-plan : ce qui s'est passé derrière, sans interrompre
+   =====================================================================
+   Retour utilisateur du 16/09/2026 : deux demandes vocales sont mortes en
+   silence. La voix est traitée côté Core (le cerveau est réveillé et choisit
+   ses mots) ; ici, la moitié qui n'interrompt pas — des pastilles, et un signal
+   sonore bref quand le compte monte.
+
+   Second retour du même jour : pas de bouton « BGD » rangé parmi les outils.
+   Le bouton Agents reste le lieu où l'on gère les sous-agents ; ce qui mérite
+   un coup d'œil s'affiche dans l'interface principale, en **petites pastilles
+   rondes** accolées au bouton Agents — une par catégorie non vue (échec, à
+   vérifier, terminé, non dit). Un clic ouvre la liste de la catégorie, d'où
+   l'on ouvre la carte du sous-agent ou marque la pastille comme vue.
+
+   Le son n'est joué que sur une **hausse** du numéro de séquence, jamais au
+   premier sondage : ouvrir la page ne doit pas sonner pour du passé. */
+const BG={seq:0,ctx:null,armed:false,sig:'',open:null};
+
+/* Deux notes courtes, plus graves s'il y a un échec. WebAudio n'est autorisé
+   qu'après un geste de l'utilisateur : tout échec est ignoré en silence — un
+   signal d'agrément ne doit jamais casser la boucle de statut. */
+function bgCue(bad){
+  try{
+    if(!BG.ctx){const C=window.AudioContext||window.webkitAudioContext;if(!C)return;BG.ctx=new C()}
+    if(BG.ctx.state==='suspended')BG.ctx.resume().catch(()=>{});
+    const now=BG.ctx.currentTime,notes=bad?[392,294]:[784,1047];
+    notes.forEach((hz,i)=>{
+      const osc=BG.ctx.createOscillator(),gain=BG.ctx.createGain(),at=now+i*0.11;
+      osc.type='sine';osc.frequency.value=hz;
+      gain.gain.setValueAtTime(0,at);
+      gain.gain.linearRampToValueAtTime(bad?0.06:0.04,at+0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001,at+0.1);
+      osc.connect(gain).connect(BG.ctx.destination);osc.start(at);osc.stop(at+0.12);
+    });
+  }catch(e){/* pas de son : les pastilles suffisent */}
+}
+
+/* Catégories dans l'ordre du registre : la plus urgente d'abord, au plus près
+   du bouton Agents. `one`/`many` : libellés accordés au compte. */
+const BG_CATS=[
+  {id:'failed',one:'échec',many:'échecs',icon:'⛔',tone:'bad'},
+  {id:'attention',one:'point à vérifier',many:'points à vérifier',icon:'❓',tone:'warn'},
+  {id:'done',one:'tâche terminée',many:'tâches terminées',icon:'✅',tone:'ok'},
+  {id:'said',one:'résultat non dit',many:'résultats non dits',icon:'🔇',tone:'info'},
+];
+const bgCat=id=>BG_CATS.find(c=>c.id===id)||{id,one:id,many:id,icon:'•',tone:'info'};
+const bgCount=(cat,n)=>`${n} ${n>1?cat.many:cat.one}`;
+
+/* Les pastilles suivent le résumé de `/api/status` (sondé chaque seconde) :
+   le DOM n'est réécrit que si un compte change, pour ne pas voler le focus. */
+function renderBackgroundPills(bg){
+  const box=$('#bgPills');if(!box)return;
+  const summary=bg||{},counts=summary.counts||{},unread=Number(summary.unread||0);
+  const seq=Number(summary.seq||0),bad=!!(counts.failed||counts.attention);
+  const shown=BG_CATS.filter(c=>Number(counts[c.id])>0);
+  const sig=shown.map(c=>`${c.id}:${counts[c.id]}`).join('|');
+  if(sig!==BG.sig){
+    BG.sig=sig;
+    box.innerHTML=shown.map(c=>{
+      const n=Number(counts[c.id]),label=`Arrière-plan · ${bgCount(c,n)}`,open=BG.open===c.id;
+      return `<button type="button" class="bgpill ${c.tone}${open?' active':''}" data-bg-cat="${c.id}" title="${esc(label)}" aria-label="${esc(label)}" aria-haspopup="dialog" aria-expanded="${open}">${n>9?'9+':n}</button>`;
+    }).join('');
+    box.hidden=!shown.length;
+  }
+  // La catégorie ouverte a été vue ailleurs (autre fenêtre) : rien à montrer.
+  if(BG.open&&!Number(counts[BG.open]))closeBackgroundPop();
+  /* Hausse réelle : on signale. `armed` évite de sonner au tout premier
+     sondage, où tout est « nouveau » par construction. */
+  if(BG.armed&&seq>BG.seq&&unread>0)bgCue(bad);
+  BG.seq=seq;BG.armed=true;
+}
+
+/* Carte Agents d'un événement : la trace nomme l'id du tracker, la carte Core
+   porte le work_key — les deux sont essayés. */
+function bgTaskFor(id){
+  if(!id)return null;
+  return allTasks().find(t=>t.id===id||t.provider_id===id)||AG.cache.get(id)||null;
+}
+
+function placeBackgroundPop(pill){
+  const pop=$('#bgPop'),r=pill.getBoundingClientRect(),w=window.innerWidth,h=window.innerHeight;
+  const row=getComputedStyle($('#bgPills')).flexDirection.startsWith('row');
+  if(row){
+    // Pastilles en ligne (thème Omega) : la liste tombe sous la pastille.
+    pop.style.top=`${Math.round(r.bottom+10)}px`;
+    pop.style.right=`${Math.max(10,Math.round(w-r.right-12))}px`;
+  }else{
+    // Pastilles en colonne : la liste s'ouvre à leur gauche, bornée à l'écran.
+    pop.style.right=`${Math.round(w-r.left+12)}px`;
+    pop.style.top=`${Math.round(Math.max(12,Math.min(r.top-12,h-pop.offsetHeight-12)))}px`;
+  }
+}
+
+function closeBackgroundPop(){
+  const pop=$('#bgPop');
+  BG.open=null;
+  if(pop){pop.hidden=true;pop.innerHTML=''}
+  document.querySelectorAll('#bgPills .bgpill').forEach(p=>{p.classList.remove('active');p.setAttribute('aria-expanded','false')});
+}
+
+async function openBackgroundPop(category,pill){
+  if(BG.open===category){closeBackgroundPop();return}
+  closeBackgroundPop();
+  const cat=bgCat(category),pop=$('#bgPop');
+  BG.open=category;
+  pill.classList.add('active');pill.setAttribute('aria-expanded','true');
+  pop.className=`bgpop ${cat.tone}`;
+  pop.innerHTML='<div class="empty">Chargement…</div>';
+  pop.hidden=false;placeBackgroundPop(pill);
+  let data;
+  try{data=await api('/api/background?limit=60')}
+  catch(e){if(BG.open===category){pop.innerHTML=`<div class="entry error">${esc(e.message)}</div>`;placeBackgroundPop(pill)}return}
+  if(BG.open!==category)return;
+  const events=(data.events||[]).filter(e=>e.category===category&&e.unread);
+  pop.innerHTML=`<header><span class="dot ${cat.tone==='info'?'busy':cat.tone}"></span><strong>${esc(bgCount(cat,events.length))}</strong><button type="button" class="tclose" data-bg-close aria-label="Fermer">×</button></header>`
+    +`<div class="bglist">${events.length?events.map(e=>{
+        const task=bgTaskFor(e.task_id);
+        return `<button type="button" class="bgitem" data-bg-task="${esc(task?task.id:'')}" title="${task?'Ouvrir la trace de ce sous-agent':'Ouvrir le panneau Agents'}"><span class="ico">${cat.icon}</span><span class="etxt"><span class="emsg">${esc(e.label)}</span><span class="emeta">${esc(timeOf(e.ts))}${e.detail?' · '+esc(e.detail):''}</span></span></button>`;
+      }).join(''):'<div class="empty">Rien en attente.</div>'}</div>`
+    +`<footer><button type="button" class="action primary" data-bg-ack>Marquer comme vu</button><button type="button" class="action" data-bg-agents>Agents →</button></footer>`;
+  placeBackgroundPop(pill);
+  pop.querySelector('[data-bg-close]').addEventListener('click',()=>{closeBackgroundPop();pill.focus()});
+  pop.querySelector('[data-bg-agents]').addEventListener('click',()=>{closeBackgroundPop();openAgentsAt('list')});
+  pop.querySelectorAll('[data-bg-task]').forEach(item=>item.addEventListener('click',()=>{
+    const id=item.dataset.bgTask;closeBackgroundPop();openAgentsAt(id?'trace':'list',id||null);
+  }));
+  const ack=pop.querySelector('[data-bg-ack]');
+  ack.addEventListener('click',async()=>{
+    ack.disabled=true;
+    /* On n'acquitte que ce qui a été affiché, et seulement cette catégorie :
+       un événement arrivé entre le rendu et le clic reste non vu, et regarder
+       les tâches terminées n'efface pas un échec en passant. */
+    try{await api('/api/background/ack',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({seq:data.seq,category})});closeBackgroundPop();refreshStatus()}
+    catch(e){ack.disabled=false;alert(e.message)}
+  });
+  (pop.querySelector('.bgitem')||ack).focus({preventScroll:true});
+}
+
+$('#bgPills').addEventListener('click',e=>{
+  const pill=e.target.closest('.bgpill');if(pill)openBackgroundPop(pill.dataset.bgCat,pill);
+});
+document.addEventListener('mousedown',e=>{
+  if(BG.open&&!e.target.closest('#bgPop')&&!e.target.closest('#bgPills'))closeBackgroundPop();
+});
+// Échap ferme la liste avant tout raccourci d'interface (fermeture du panneau).
+document.addEventListener('keydown',e=>{
+  if(e.key!=='Escape'||!BG.open)return;
+  const category=BG.open;closeBackgroundPop();e.stopPropagation();
+  const pill=document.querySelector(`#bgPills [data-bg-cat="${category}"]`);if(pill)pill.focus();
+},true);
+window.addEventListener('resize',()=>{if(BG.open)closeBackgroundPop()});
 async function renderErrors(){const archived=errorsView==='archived';title.textContent=archived?'Errors · Archives':'Errors';const items=await api('/api/errors'+(archived?'?archived=1&limit=500':''));body.innerHTML=`<div class="row" style="margin-bottom:12px"><button class="action" id="toggleErrors">${archived?'Erreurs actives':'Erreurs archivées'}</button>${archived?'':'<button class="action danger" id="archiveErrors">Archiver</button>'}<span class="hint">${items.length} entrée(s)</span></div><div>${entries(items)}</div>`;$('#toggleErrors').addEventListener('click',()=>{errorsView=archived?'active':'archived';renderErrors().catch(e=>{body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`})});const archive=$('#archiveErrors');if(archive)archive.addEventListener('click',async()=>{archive.disabled=true;try{await api('/api/errors/archive',{method:'POST'});await renderErrors();refreshStatus()}catch(e){alert(e.message)}finally{archive.disabled=false}})}
-async function refreshStatus(){try{const s=await api('/api/status'),v=s.voice_state||'idle',k=String(s.manual_wake_key||'f9').toUpperCase(),online=s.voice_online===true;renderLive(s.live);$('#voiceState').textContent=online?v.toUpperCase():'OFFLINE';const listening=s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`;$('#voiceHint').textContent=online?({idle:`${k} · DÉMARRER`,listening,thinking:`${k} · ANNULER`,speaking:`${k} · INTERROMPRE`}[v]||`${k} · CONTRÔLER`):`${k} · VOICE HORS LIGNE`;$('.face').style.visibility=online?'visible':'hidden';$('#agentName').textContent=String(s.agent.name||s.agent_cli||'agent').toUpperCase();$('#agentState').textContent=(s.agent.state||'stopped').toUpperCase();const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';AG.agent=s.agent||null;AG.cli=s.agent_cli||'';if(!(current==='agents'&&coreOk()))updateSubagentBadge(s.subagents,false);watchSubagents(s.subagents)}catch(e){$('#voiceState').textContent='OFFLINE';$('#agentState').textContent='OFFLINE';$('#voiceHint').textContent='VOICE HORS LIGNE';$('.face').style.visibility='hidden';updateSubagentBadge(null)}}
+async function refreshStatus(){try{const s=await api('/api/status'),v=s.voice_state||'idle',k=String(s.manual_wake_key||'f9').toUpperCase(),online=s.voice_online===true;renderLive(s.live);$('#voiceState').textContent=online?v.toUpperCase():'OFFLINE';const listening=s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`;$('#voiceHint').textContent=online?({idle:`${k} · DÉMARRER`,listening,thinking:`${k} · ANNULER`,speaking:`${k} · INTERROMPRE`}[v]||`${k} · CONTRÔLER`):`${k} · VOICE HORS LIGNE`;$('.face').style.visibility=online?'visible':'hidden';$('#agentName').textContent=String(s.agent.name||s.agent_cli||'agent').toUpperCase();$('#agentState').textContent=(s.agent.state||'stopped').toUpperCase();const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';renderBackgroundPills(s.background);AG.agent=s.agent||null;AG.cli=s.agent_cli||'';if(!(current==='agents'&&coreOk()))updateSubagentBadge(s.subagents,false);watchSubagents(s.subagents)}catch(e){$('#voiceState').textContent='OFFLINE';$('#agentState').textContent='OFFLINE';$('#voiceHint').textContent='VOICE HORS LIGNE';$('.face').style.visibility='hidden';updateSubagentBadge(null)}}
 async function openPanel(name){current=name;document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.toggle('active',b.dataset.panel===name));panel.classList.add('open');title.textContent={errors:'Errors',trace:'Trace',agents:'Agents'}[name];closeMenu(false);if(name==='agents'){openAgentsPanel();return}stopAgentsPolling();body.innerHTML='<div class="empty">Chargement…</div>';try{if(name==='errors')await renderErrors();if(name==='trace')body.innerHTML=entries(await api('/api/trace'))}catch(e){body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`}}
 function closePanel(){current=null;panel.classList.remove('open');document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.remove('active'));closeMenu(false);stopAgentsPolling()}
 
@@ -401,6 +621,8 @@ const STATUS={
    mode/vérification) : `jarvis/runtime/control_center_work.js`, inséré ici tel
    quel par le serveur et exécuté tel quel par les tests node. */
 /*__CONTROL_CENTER_WORK_JS__*/
+/* Barehands en mode test (pointeur à mains nues) : `control_center_barehands.js`. */
+/*__CONTROL_CENTER_BAREHANDS_JS__*/
 // `error_class` normalisées par Core ou ses observateurs ; les autres restent brutes.
 const ERROR_CLASSES={process_stopped:'processus arrêté',producer_restarted:'Control Center redémarré',
   core_restarted:'Core redémarré',merged:'doublon fusionné',unknown_status:'statut inconnu',killed:'tué',stopped:'arrêté',cancelled:'annulé'};
@@ -660,7 +882,7 @@ function liveTimer(id,start,cls,hint){
 function timerHtml(t){
   if(t.id==='brain'){
     if(t.busy&&t.turn_started_ms)return liveTimer('brain',t.turn_started_ms,'live',`Tour en cours depuis ${fmtClock(t.turn_started_ms)}`);
-    if(t.started_ms&&brainArmed(t))return liveTimer('brain',t.started_ms,'idle',`En service depuis ${fmtClock(t.started_ms)}`);
+    if(t.started_ms&&t.state==='running')return liveTimer('brain',t.started_ms,'idle',`En service depuis ${fmtClock(t.started_ms)}`);
     return '<span class="timer idle" title="Brain arrêté">—</span>';
   }
   if(isRunning(t)&&t.started_ms)return liveTimer(t.id,t.started_ms,'live',`Démarré à ${fmtClock(t.started_ms)}`);
@@ -674,17 +896,10 @@ function tickTimers(){
   });
 }
 
-// « Armé » veut dire prêt à prendre un tour, pas « un processus tourne ».
-// Claude tient un processus permanent (`running`) ; Codex en lance un par tour
-// et se déclare `ready` entre deux. Sans ce second état, un brain Codex
-// s'affichait « arrêté » quoi qu'on fasse : « Redémarrer » réussissait en
-// silence, « Arrêter » restait grisé, et rien ne le disait.
-function brainArmed(b){const state=(b&&b.state)||'';return state==='running'||state==='ready'}
 function brainState(b){
   const state=b.state||'stopped';
   if(b.busy)return {cls:'running',label:'tour en cours'};
   if(state==='running')return {cls:'ok',label:'en attente'};
-  if(state==='ready')return {cls:'ok',label:'prêt'};
   if(state==='exited')return {cls:'bad',label:'processus terminé'};
   return {cls:'',label:'arrêté'};
 }
@@ -696,7 +911,7 @@ function cardHtml(t,{level=0,compact=false,head=false}={}){
     const a=AG.agent||{},c=a.console||{};
     st=brainState(t);
     model=prettyModel(t.model);
-    line=t.activity||(t.busy?'Tour en cours…':brainArmed(t)?'En attente d’une demande':t.state==='exited'?'Le processus s’est arrêté':'Arrêté · clic droit pour démarrer');
+    line=t.activity||(t.busy?'Tour en cours…':t.state==='running'?'En attente d’une demande':t.state==='exited'?'Le processus s’est arrêté':'Arrêté · clic droit pour démarrer');
     lineTitle=line;
     meta.push(`<span>${esc(st.label)}</span>`);
     if(a.pid)meta.push(`<span>PID ${esc(a.pid)}</span>`);
@@ -1322,11 +1537,11 @@ function menuItems(id){
     items.push({act:'copy',label:'Copier le prompt',disabled:!t||!t.prompt});
     return items;
   }
-  const a=AG.agent||{},c=a.console||{},armed=brainArmed({state:a.state||(t&&t.state)});
+  const a=AG.agent||{},c=a.console||{},running=(a.state||(t&&t.state))==='running';
   items.push('-',
-    {act:'start',label:'Démarrer',disabled:armed},
+    {act:'start',label:'Démarrer',disabled:running},
     {act:'restart',label:'Redémarrer'},
-    {act:'kill',label:'Arrêter',danger:true,disabled:!armed},
+    {act:'kill',label:'Arrêter',danger:true,disabled:!running},
     '-');
   if(c.open)items.push({act:'console-open',label:'Ramener la console Windows'},{act:'console-close',label:'Fermer la console Windows',danger:true});
   else items.push({act:'console-open',label:'Console Windows',disabled:c.supported===false});
@@ -1530,28 +1745,31 @@ function bindSend(after){
    catalogue réel du fournisseur, jamais d'une liste figée.                */
 
 const TABS=[
-  {id:'voice',label:'Mode vocal',save:true},
+  {id:'voice',label:'Voix',save:true},
   {id:'prompts',label:'Prompts',save:false},
-  {id:'cli',label:'CLI agent',save:true},
-  {id:'routing',label:'Aiguillage',save:true},
-  {id:'config',label:'Config',save:true},
+  {id:'cli',label:'Agent / CLI',save:true},
   {id:'keys',label:'API Keys',save:false},
   {id:'shortcuts',label:'Raccourcis',save:false},
 ];
-const SET={open:false,tab:'voice',data:null,draft:null,dirty:false,catalog:{},clis:null,devices:null,capture:null,shortcuts:null,restartNotice:false,rdOpen:false,routing:null,prompts:null,routingPick:{}};
+const SET={open:false,tab:'voice',voiceTab:'architecture',voiceCatalogRole:'realtime',voiceCatalogMountedRole:null,voiceCatalogStates:{},voiceModelSources:{},voiceModelGenerations:{},data:null,draft:null,dirty:false,catalog:{},clis:null,devices:null,capture:null,shortcuts:null,restartNotice:false,rdOpen:false,routingAdvancedOpen:false,routing:null,prompts:null,agentCatalog:null,voiceCatalog:null,openGeneration:0,cliGeneration:0,cliModelGeneration:0,routingGeneration:0,voiceGeneration:0,audioGeneration:0,diagnosticGeneration:0,voiceDiagnosticError:''};
 const overlay=$('#overlay'),modalContent=$('#modalContent'),modalStatus=$('#modalStatus'),modalSave=$('#modalSave'),modalSub=$('#modalSub');
 
 function say(text,kind){modalStatus.className='status'+(kind?' '+kind:'');modalStatus.textContent=text||''}
 
 /* Catalogue de modèles : une entrée par (fournisseur, usage), gardée le temps
    de la session pour ne pas rappeler l'API à chaque changement d'onglet. */
-async function catalog(provider,role,refresh){
-  const key=provider+':'+role;
-  if(SET.catalog[key]&&!refresh)return SET.catalog[key];
+async function requestCatalog(provider,role,refresh){
   let value;
   try{
     value=await api(`/api/models?provider=${encodeURIComponent(provider)}&role=${encodeURIComponent(role)}${refresh?'&refresh=1':''}`);
   }catch(e){value={ok:false,error:e.message,models:[]}}
+  return value;
+}
+
+async function catalog(provider,role,refresh){
+  const key=provider+':'+role;
+  if(SET.catalog[key]&&!refresh)return SET.catalog[key];
+  const value=await requestCatalog(provider,role,refresh);
   SET.catalog[key]=value;return value;
 }
 
@@ -1726,59 +1944,151 @@ function voiceArchitectureChanged(key,value){
   }
   SET.architectureDirty=true;SET.dirty=true;
 }
+function voiceOptions(category){
+  const destination=`voice.${category}`
+  return (SET.data.voice.option_metadata||[]).filter(item=>item.category===category&&item.destination===destination)
+}
+function voiceOption(id){return (SET.data.voice.option_metadata||[]).find(item=>item.id===id)}
+function voiceOptionId(meta){return 'voiceOption_'+String(meta.id).replace(/[^a-zA-Z0-9_-]/g,'_')}
+function voiceOptionValue(meta){
+  const persistence=meta.persistence||'';
+  if(persistence==='voice_stack')return SET.draft.voice.stack;
+  if(persistence==='voice_arch')return SET.draft.voice.arch;
+  if(persistence.startsWith('voice_architecture.config.'))return voiceArchitectureConfig()[persistence.slice(26)];
+  if(persistence.startsWith('voice_stack_settings.')){
+    const parts=persistence.split('.');return ((SET.draft.voice.settings[parts[1]]||{})[parts.slice(2).join('.')]);
+  }
+  if(persistence.startsWith('shortcuts.'))return ((SET.shortcuts||{}).values||{})[persistence.slice(10)];
+  if(persistence==='audio_input_device')return SET.draft.audio.input_device;
+  if(persistence==='audio_output_device')return SET.draft.audio.output_device;
+  if(persistence==='active_timeout_s')return SET.draft.audio.active_timeout_s;
+  return authValues(SET.data.voice.authorization||{})[persistence];
+}
+function voiceDependencyVisible(meta){
+  if(!meta.depends_on)return true;
+  const split=String(meta.depends_on).indexOf('='),id=String(meta.depends_on).slice(0,split),expected=String(meta.depends_on).slice(split+1);
+  const parent=voiceOption(id);return !!parent&&String(voiceOptionValue(parent))===expected;
+}
+function voiceChoices(meta){
+  if(meta.persistence==='speaker_verification'){
+    const auth=SET.data.voice.authorization||{},mode=voiceOptionValue(voiceOption('conversation_mode'))||'open_room';
+    const allowed=(auth.verification_modes_by_mode||{})[mode];
+    if(allowed)return (meta.options||[]).filter(item=>allowed.includes(item.id));
+  }
+  return meta.options||[];
+}
+function voiceArchitectureField(meta){
+  const config=voiceArchitectureConfig(),query=SET.data.voice.architecture;
+  const profile=(query.architectures||[]).find(item=>item.id===config.architecture);
+  return profile&&(profile.fields||[]).find(item=>item.key===meta.id);
+}
+function voiceArchitectureOptionHtml(meta){
+  const config=voiceArchitectureConfig(),field=voiceArchitectureField(meta),id=voiceOptionId(meta);
+  if(meta.id==='architecture'){
+    const options=(meta.options||[]).map(item=>`<option value="${esc(item.id)}" ${item.id===config.architecture?'selected':''}>${esc(item.label)}</option>`).join('');
+    return `<div class="field" data-voice-option="${esc(meta.id)}"><label for="${id}">${esc(meta.label)}</label><select id="${id}" data-voice-architecture><option value="" disabled ${config.architecture?'':'selected'}>${esc(meta.placeholder||'Choisir')}</option>${options}</select><div class="hint">${esc(meta.help)}</div></div>`;
+  }
+  if(!field)return `<div class="field" data-voice-option="${esc(meta.id)}"><span class="voice-field-label">${esc(meta.label)}</span><div class="hint">Non applicable à l’architecture ${esc(config.architecture||'de compatibilité')}. ${esc(meta.help)}</div></div>`;
+  const value=config[meta.id]??field.default;let input='';
+  if(field.kind==='model'){
+    const key=modelRefKey(value),found=(field.options||[]).some(option=>modelRefKey(option)===key);
+    const missing=found?'':`<option value="${esc(key||'null')}" selected disabled>${esc(value?value.provider_id+' / '+(value.model_id||'(modèle manquant)'):'Aucun modèle')} — indisponible</option>`;
+    input=`<select id="${id}" data-architecture-field="${esc(meta.id)}" data-architecture-kind="model">${missing}${(field.options||[]).map(option=>`<option value="${esc(modelRefKey(option))}" ${modelRefKey(option)===key?'selected':''} ${option.selectable?'':'disabled'}>${esc(option.label)}${option.reason?' — '+esc(option.reason):''}</option>`).join('')}</select>`;
+    const selected=(field.options||[]).find(option=>modelRefKey(option)===key);
+    if(selected)input+=`<div class="hint">Adaptateur : ${esc(selected.adapter_status)} · Disponibilité : ${esc(selected.availability)}${selected.reason?' — '+esc(selected.reason):''}</div>`;
+  }else if(field.options_from){
+    const source=voiceArchitectureField(voiceOption(field.options_from));
+    const selected=source&&(source.options||[]).find(item=>modelRefKey(item)===modelRefKey(config[field.options_from]));
+    const choices=selected?(selected[field.options_property]||[]):[];
+    input=`<select id="${id}" data-architecture-field="${esc(meta.id)}">${choices.includes(value)?'':`<option value="${esc(value??'')}" selected disabled>${esc(value??'Non configuré')} — indisponible</option>`}${choices.map(item=>`<option value="${esc(item)}" ${item===value?'selected':''}>${esc(item)}</option>`).join('')}</select>`;
+  }else if(field.kind==='toggle')input=`<input id="${id}" type="checkbox" data-architecture-field="${esc(meta.id)}" ${value?'checked':''} ${meta.readonly?'disabled':''}>`;
+  else input=`<input id="${id}" type="number" min="${esc(meta.minimum)}" max="${esc(meta.maximum)}" step="${esc(meta.step||1)}" value="${esc(value)}" data-architecture-field="${esc(meta.id)}">`;
+  return `<div class="field" data-voice-option="${esc(meta.id)}"><label for="${id}">${esc(meta.label)}</label>${input}<div class="hint">${esc(meta.help)}</div></div>`;
+}
+function voiceOptionHtml(meta){
+  if(meta.persistence&&meta.persistence.startsWith('voice_architecture.config.'))return voiceArchitectureOptionHtml(meta);
+  const id=voiceOptionId(meta),value=voiceOptionValue(meta),hidden=!voiceDependencyVisible(meta);
+  if(meta.kind==='key')return `<div class="field" data-voice-option="${esc(meta.id)}"><span class="voice-field-label">${esc(meta.label)}</span><button type="button" class="keycap" data-shortcut="${esc(meta.id)}" data-scope="global">${esc(value??meta.default)}</button><div class="hint" id="shortcutHint">${esc(meta.help)}</div></div>`;
+  if(meta.kind==='device'){
+    const devices=SET.devices,items=meta.persistence==='audio_input_device'?(devices&&devices.inputs||[]):(devices&&devices.outputs||[]),defaults=devices&&devices.defaults||{};
+    const selectedDefault=meta.persistence==='audio_input_device'?defaults.input:defaults.output;
+    const empty=devices&&devices.ok!==false&&items.length===0;
+    const input=devices&&devices.ok!==false?`<select id="${id}" data-voice-persistence="${esc(meta.persistence)}" ${empty?'disabled aria-disabled="true"':''}>${empty?'<option value="">Aucun périphérique détecté</option>':deviceOptions(items,value,selectedDefault)}</select>`:'<div class="hint">Liste des périphériques en chargement…</div>';
+    return `<div class="field" data-voice-option="${esc(meta.id)}"><label for="${id}">${esc(meta.label)}</label>${input}<div class="hint">${esc(meta.help)}</div></div>`;
+  }
+  if(meta.readonly)return `<div class="field" data-voice-option="${esc(meta.id)}"><span class="voice-field-label">${esc(meta.label)}</span><output>${value===undefined||value===null?'—':esc(value)}</output><div class="hint">${esc(meta.help)}</div></div>`;
+  const attrs=`data-voice-persistence="${esc(meta.persistence)}" data-voice-meta="${esc(meta.id)}"`,style=hidden?' hidden':'';let input='';
+  if(meta.kind==='toggle')input=`<input id="${id}" type="checkbox" ${attrs} ${value?'checked':''}>`;
+  else if(meta.kind==='number'||meta.kind==='number-or-empty')input=`<input id="${id}" type="number" ${attrs} value="${esc(value??'')}" ${meta.minimum!==undefined?`min="${esc(meta.minimum)}"`:''} ${meta.maximum!==undefined&&meta.maximum!==null?`max="${esc(meta.maximum)}"`:''} ${meta.step!==undefined?`step="${esc(meta.step)}"`:''}>`;
+  else if(meta.kind==='text')input=`<input id="${id}" ${attrs} value="${esc(value??'')}">`;
+  else{
+    const source=meta.type==='catalog-select'?(SET.voiceModelSources||{})[meta.id]:null;
+    const choices=source&&source.result?(source.result.models||[]):voiceChoices(meta);
+    const sourceUnavailable=!!source&&source.status!=='ready';
+    const normalized=choices.map(item=>({value:item.id,label:item.label&&item.label!==item.id?`${item.id} — ${item.label}`:item.id,disabled:sourceUnavailable||item.selectable===false||(item.availability&&item.availability.selectable===false)}));
+    const missing=value!==undefined&&value!==null&&value!==''&&!normalized.some(item=>String(item.value)===String(value))?`<option value="${esc(value)}" selected disabled>${esc(value)} (conservé — indisponible)</option>`:'';
+    const loading=meta.type==='catalog-select'&&(!source||source.status==='loading'),error=source&&source.status==='error';
+    input=`<select id="${id}" ${attrs} ${loading?'disabled aria-busy="true"':''}>${missing}${meta.placeholder?`<option value="">${esc(meta.placeholder)}</option>`:''}${normalized.map(item=>`<option value="${esc(item.value)}" ${String(item.value)===String(value)?'selected':''} ${item.disabled?'disabled':''}>${esc(item.label)}</option>`).join('')}</select>`;
+    if(meta.type==='catalog-select')input+=loading?'<div class="hint">Chargement du catalogue fournisseur…</div>':error?`<div class="notice bad">${esc(source.error||'Catalogue indisponible.')} <button type="button" class="linkish" data-voice-model-retry="${esc(meta.id)}">réessayer</button></div>`:catalogNote(source.result,String(meta.source||'').split(':')[0]);
+  }
+  return `<div class="field" id="${id}_field" data-voice-option="${esc(meta.id)}"${style}><label for="${id}">${esc(meta.label)}</label>${input}<div class="hint">${esc(meta.help)}</div></div>`;
+}
+function voiceRecordsHtml(records,category){
+  if(category==='advanced')return records.map(voiceOptionHtml).join('');
+  const primary=records.filter(item=>!item.advanced),advanced=records.filter(item=>item.advanced);
+  return primary.map(voiceOptionHtml).join('')+(advanced.length?`<details class="rd"><summary>Options avancées</summary>${advanced.map(voiceOptionHtml).join('')}</details>`:'');
+}
 async function voiceArchitectureHtml(){
-  const query=SET.data.voice.architecture,config=voiceArchitectureConfig();
-  const profile=query.architectures.find(item=>item.id===config.architecture);
-  const options=query.architectures.map(item=>`<option value="${esc(item.id)}" ${item.id===config.architecture?'selected':''}>${esc(item.label)}</option>`).join('');
-  let html=`<h3>Architecture vocale</h3><div class="field"><label for="voiceArchitecture">Architecture</label><select id="voiceArchitecture" data-voice-architecture><option value="" disabled ${profile?'':'selected'}>Choisir une architecture</option>${options}</select></div>`;
-  if(query.compatibility_runtime&&!SET.architectureDirty)html+='<div class="notice">Compatibilité conservée. Enregistrer sans modifier ce choix garde le fonctionnement actuel. Modifier un modèle ou choisir explicitement une architecture prépare le nouveau mode.</div><button class="action" data-architecture-activate>Utiliser explicitement cette architecture</button>';
+  const records=voiceOptions('architecture'),compatibility=records.filter(item=>item.runtime_status==='live-compatibility'),primary=records.filter(item=>item.runtime_status!=='live-compatibility'&&!item.advanced),advanced=records.filter(item=>item.runtime_status!=='live-compatibility'&&item.advanced);
+  const query=SET.data.voice.architecture,config=voiceArchitectureConfig(),profile=(query.architectures||[]).find(item=>item.id===config.architecture);
+  let html=primary.map(voiceOptionHtml).join('');
+  if(profile)html+=`<div class="hint">${esc(profile.description)}</div>`;
+  if(query.compatibility_runtime&&!SET.architectureDirty)html+='<div class="notice">Compatibilité conservée. Enregistrer sans modifier l’architecture garde le fonctionnement actuel.</div><button class="action" data-architecture-activate>Utiliser explicitement cette architecture</button>';
   if(query.problem&&!SET.architectureDirty)html+=`<div class="notice bad">${esc(query.problem.message)}</div>`;
-  if(!profile)return html;
-  html+=`<div class="hint">${esc(profile.description)}</div>`;
-  for(const field of profile.fields){
-    const value=config[field.key]??field.default,id='architecture_'+field.key;
-    let input='';
-    if(field.kind==='model'){
-      const key=modelRefKey(value),found=field.options.some(option=>modelRefKey(option)===key);
-      const missing=found?'':`<option value="${esc(key||'null')}" selected disabled>${esc(value?value.provider_id+' / '+(value.model_id||'(modèle manquant)'):'Aucun modèle')} — modèle non pris en charge</option>`;
-      input=`<select id="${id}" data-architecture-field="${esc(field.key)}" data-architecture-kind="model">${missing}${field.options.map(option=>`<option value="${esc(modelRefKey(option))}" ${modelRefKey(option)===key?'selected':''} ${option.selectable?'':'disabled'}>${esc(option.label)}${option.reason?' — '+esc(option.reason):''}</option>`).join('')}</select>`;
-      const selected=field.options.find(option=>modelRefKey(option)===key);
-      if(selected)input+=`<div class="hint">Adaptateur : ${esc(selected.adapter_status)} · Disponibilité compte : ${esc(selected.availability)}${selected.reason?' — '+esc(selected.reason):''}</div>`;
-    }else if(field.kind==='select'){
-      const sourceField=profile.fields.find(item=>item.key===field.options_from);
-      const selected=sourceField&&sourceField.options.find(item=>modelRefKey(item)===modelRefKey(config[field.options_from]));
-      const values=selected?(selected[field.options_property]||[]):[];
-      input=`<select id="${id}" data-architecture-field="${esc(field.key)}">${values.includes(value)?'':`<option value="${esc(value??'')}" selected disabled>${esc(value??'Non configuré')} — indisponible</option>`}${values.map(item=>`<option value="${esc(item)}" ${item===value?'selected':''}>${esc(item)}</option>`).join('')}</select>`;
-    }else if(field.kind==='toggle')input=`<input id="${id}" type="checkbox" data-architecture-field="${esc(field.key)}" ${value?'checked':''} ${field.readonly?'disabled':''}>`;
-    else if(field.kind==='number')input=`<input id="${id}" type="number" min="${field.min}" max="${field.max}" value="${esc(value)}" data-architecture-field="${esc(field.key)}">`;
-    html+=`<div class="field"><label for="${id}">${esc(field.label)}</label>${input}</div>`;
-  }
-  // Provider settings are projected by the registry, never chosen by a JS model switch.
-  for(const field of profile.fields.filter(item=>item.kind==='model')){
-    const selected=field.options.find(item=>modelRefKey(item)===modelRefKey(config[field.key]));
-    if(!selected||!selected.settings_scope)continue;
-    const scope=selected.settings_scope,values=SET.draft.voice.settings[scope]||{};
-    for(const setting of selected.settings_fields||[])html+=await renderField(setting,values,scope);
-  }
+  html+=`<details class="rd"><summary>Compatibilité et invariants avancés</summary>${advanced.map(voiceOptionHtml).join('')}${compatibility.map(voiceOptionHtml).join('')}</details>`;
   return html;
 }
+function voiceDiagnosticValue(id){
+  const voice=SET.data.voice,a=voice.authorization||{},modelOptions=((voice.architecture||{}).architectures||[]).flatMap(profile=>(profile.fields||[]).filter(field=>field.kind==='model').flatMap(field=>field.options||[])),models=[...new Map(modelOptions.map(item=>[modelRefKey(item),item])).values()];
+  const values={
+    'owner_profile_path':((a.verifier_settings||{}).effective||{}).owner_profile_path,
+    'authorization.status':a.status,'authorization.runtime':a.runtime,'authorization.verifier':a.verifier_detail||a.verifier,
+    'authorization.worker':a.worker,'echo_cancellation.status':voice.echo_cancellation,'switch.status':voice.switch,
+    'catalog.source':Object.fromEntries(Object.entries(SET.voiceCatalogStates||{}).map(([role,state])=>[role,state.envelope||null])),
+    'model.adapter_status':models.map(item=>({id:modelRefKey(item),status:item.adapter_status})),
+    'model.availability':models.map(item=>({id:modelRefKey(item),status:item.availability})),
+  };
+  return values[id];
+}
+function voiceDiagnosticHtml(records){
+  const voice=SET.data.voice,refresh=SET.voiceDiagnosticError?`<div class="notice bad">${esc(SET.voiceDiagnosticError)}</div>`:'';
+  const rows=records.map(meta=>`<div class="field" data-voice-option="${esc(meta.id)}"><span class="voice-field-label">${esc(meta.label)}</span><pre class="log block">${esc(JSON.stringify(voiceDiagnosticValue(meta.id),null,2)??'—')}</pre><div class="hint">${esc(meta.help)}</div></div>`).join('');
+  return `<div class="source">Pile effective : <strong>${esc(voice.effective_stack||'—')}</strong> · pile historique conservée : <strong>${esc(voice.stack||'—')}</strong> <button type="button" class="linkish" id="authRefresh">relire l’état</button></div>${refresh}${rows}`;
+}
+function voiceCatalogHtml(){
+  const roles=[['realtime','Conversation temps réel'],['transcription','Transcription'],['speech','Synthèse vocale']];
+  return `<div class="field"><label for="voiceCatalogRole">Catalogue comparatif</label><select id="voiceCatalogRole">${roles.map(([id,label])=>`<option value="${id}" ${SET.voiceCatalogRole===id?'selected':''}>${label}</option>`).join('')}</select></div><div id="voiceCatalog" aria-label="Catalogue des modèles Voice"></div>`;
+}
+function voiceAudioExtraHtml(){
+  const state=SET.devices,ready=state&&state.ok!==false,hasInput=!!(ready&&(state.inputs||[]).length),hasOutput=!!(ready&&(state.outputs||[]).length);
+  let status='<div class="hint" id="voiceAudioStatus">Détection des périphériques…</div>';
+  if(state&&state.ok===false)status=`<div class="notice bad">${esc(state.error||'Périphériques audio indisponibles.')} <button type="button" class="linkish" id="audioRetry">réessayer</button></div>`;
+  else if(ready&&(!hasInput||!hasOutput))status=`<div class="notice bad">${!hasInput?'Aucun périphérique d’entrée détecté. ':''}${!hasOutput?'Aucun périphérique de sortie détecté. ':''}<button type="button" class="linkish" id="audioRetry">réessayer</button></div>`;
+  else if(ready)status='<div class="hint" id="voiceAudioStatus">Entrée et sortie détectées.</div>';
+  return `${status}<div class="row"><button type="button" class="action" id="testAudio" ${hasInput&&hasOutput?'':'disabled aria-disabled="true"'}>Tester micro + sortie</button></div><div class="test-result" id="audioTestResult">Le test enregistre 2 secondes puis les rejoue.</div>`;
+}
+async function voicePanelHtml(){
+  const category=SET.voiceTab,records=voiceOptions(category),label=((SET.data.voice.categories||[]).find(item=>item.id===category)||{}).label||category;
+  let content=category==='architecture'?await voiceArchitectureHtml():category==='diagnostic'?voiceDiagnosticHtml(records):voiceRecordsHtml(records,category);
+  if(category==='models')content+=voiceCatalogHtml();
+  if(category==='audio')content+=voiceAudioExtraHtml();
+  return `<div class="voice-category-head"><h3>${esc(label)}</h3><span class="tag">${records.length} option(s)</span></div>${content}`;
+}
 async function tabVoice(){
-  let html=await voiceArchitectureHtml();
-  const sw=SET.data.voice.switch||{};
-  if(sw.pending||sw.status==='blocked'||sw.status==='failed')html+=`<div class="notice ${sw.status==='blocked'||sw.status==='failed'?'bad':'warn'}"><strong>Changement vocal ${sw.status==='blocked'?'bloqué':sw.status==='failed'?'en échec':'en cours'}</strong>${sw.message?' : '+esc(sw.message):'. Voice ferme la session courante avant son redémarrage supervisé.'}</div>`;
-  else if(sw.status==='ready_for_restart')html+='<div class="notice">Ancienne session fermée. Redémarrage supervisé de Voice en cours.</div>';
-  else if(sw.status==='applied')html+='<div class="notice ok">Architecture sélectionnée chargée par Voice. Elle sera utilisée à la prochaine activation.</div>';
-  html+=`${await authSectionHtml()}`;
-  if(SET.data.voice.architecture.compatibility_runtime&&!SET.architectureDirty){
-    const draft=SET.draft.voice,stacks=SET.data.voice.stacks,spec=stacks.find(s=>s.id===draft.stack)||stacks[0];
-    html+='<details><summary>Réglages de compatibilité existants</summary>';
-    const archs=SET.data.voice.archs||[];
-    html+=`<select data-voice-arch>${selectOptions(archs.map(a=>({value:a.id,label:a.label})),draft.arch||'','')}</select>`;
-    html+=stacks.map(s=>`<label><input type="radio" name="voicestack" value="${esc(s.id)}" ${s.id===draft.stack?'checked':''}>${esc(s.label)}</label>`).join('');
-    for(const field of spec.fields)html+=await renderField(field,draft.settings[spec.id],spec.id);
-    html+=`${aecHtml()}</details>`;
-  }
-  return `<section>${html}<div class="hint">Un changement d’architecture ou de modèle ferme d’abord la session courante, conserve l’état Core, puis redémarre Voice. Le nouvel adaptateur démarre à la prochaine activation. Une clôture incertaine bloque le remplacement.</div></section>`;
+  const categories=SET.data.voice.categories||[];
+  if(!categories.some(item=>item.id===SET.voiceTab))SET.voiceTab=(categories[0]||{}).id||'architecture';
+  const tabs=categories.map(item=>`<button type="button" role="tab" id="voiceTab_${esc(item.id)}" data-voice-tab="${esc(item.id)}" aria-selected="${item.id===SET.voiceTab?'true':'false'}" aria-controls="voicePanel" tabindex="${item.id===SET.voiceTab?'0':'-1'}">${esc(item.label)}</button>`).join('');
+  return `<section><div class="voice-tabs" role="tablist" aria-label="Catégories des réglages Voice">${tabs}</div><div id="voicePanel" role="tabpanel" aria-labelledby="voiceTab_${esc(SET.voiceTab)}">${await voicePanelHtml()}</div></section>`;
 }
 
 /* --- onglet Prompts -----------------------------------------------------
@@ -1824,12 +2134,34 @@ async function tabPrompts(){
   </section>`;
 }
 
-/* --- onglet CLI --------------------------------------------------------- */
-async function tabCli(){
-  if(!SET.clis)SET.clis=await api('/api/cli/agents').catch(e=>({ok:false,error:e.message,agents:[]}));
+/* --- onglet Agent / CLI ------------------------------------------------- */
+function metadataOptions(field,value){
+  return (field.options||[]).map(option=>`<option value="${esc(option.id)}" ${option.id===value?'selected':''}>${esc(option.label)}</option>`).join('');
+}
+
+function delegationModeHtml(){
+  const field=SET.data.cli.delegation_mode_metadata||{},value=SET.draft.cli.delegation_mode;
+  const selected=(field.options||[]).find(option=>option.id===value);
+  return `<div class="field"><label for="f_delegation_mode">${esc(field.label||'Mode des sous-agents')}</label>
+    <select id="f_delegation_mode" data-delegation-mode>${metadataOptions(field,value)}</select>
+    <div class="hint">${esc(field.help||'')}${selected&&selected.help?` ${esc(selected.help)}`:''}</div></div>`;
+}
+
+function behaviorHtml(){
+  const behavior=SET.data.cli.behavior||{},values=SET.draft.cli.behavior||{};
+  return (behavior.fields||[]).map(field=>{
+    const value=values[field.id];
+    return `<div class="field"><label for="f_behavior_${esc(field.id)}">${esc(field.label)}</label>
+      <select id="f_behavior_${esc(field.id)}" data-behavior-field="${esc(field.id)}">${metadataOptions(field,value)}</select>
+      <div class="hint">${esc(field.help||'')}</div></div>`;
+  }).join('');
+}
+
+function cliTechnicalHtml(){
+  if(!SET.clis)return '<div class="notice info" id="cliStatus">Détection des CLI…</div>';
   const draft=SET.draft.cli,detected=SET.clis.agents||[];
   const spec=detected.find(a=>a.id===draft.agent)||detected[0];
-  if(!spec)return `<section><div class="notice bad">${esc(SET.clis.error||'Aucun CLI détecté.')}</div></section>`;
+  if(!spec)return `<div class="notice bad" id="cliStatus">${esc(SET.clis.error||'Aucun CLI détecté.')} <button type="button" class="linkish" data-cli-retry>réessayer</button></div>`;
   const choices=detected.map(a=>{
     const tag=a.available?`<span class="tag ok">${esc(a.version||'installé')}</span>`:`<span class="tag bad">introuvable</span>`;
     return `<label class="choice ${a.id===draft.agent?'selected':''}">
@@ -1839,107 +2171,80 @@ async function tabCli(){
       <div class="hint" style="margin-top:4px">${a.available?esc(a.path):esc(a.error||'')}</div></div>
     </label>`}).join('');
   const values=SET.draft.cli.settings[spec.id];
-  const modelResult=await catalog(spec.model_provider,'text');
-  const modelOptions=(modelResult.models||[]).map(m=>({value:m.id,label:m.label&&m.label!==m.id?`${m.id} — ${m.label}`:m.id}));
+  const modelResult=SET.catalog[spec.model_provider+':text'];
+  const modelOptions=((modelResult&&modelResult.models)||[]).map(m=>({value:m.id,label:m.label&&m.label!==m.id?`${m.id} — ${m.label}`:m.id}));
   const permission=`<div class="field"><label for="f_cli_perm">${esc(spec.permission_label)}</label>
     <select id="f_cli_perm" data-cli-field="permission_mode" data-scope="${esc(spec.id)}">${selectOptions((spec.permission_modes||[]).map(m=>({value:m,label:m})),values.permission_mode,'')}</select>
     <div class="hint">En vocal, personne ne peut répondre à une demande d'autorisation : hors mode permissif, l'agent refusera d'écrire ou d'exécuter.</div></div>`;
   const unavailable=spec.available?'':`<div class="notice bad">${esc(spec.error||'CLI introuvable.')} Tant que la commande n'est pas résolue, cet agent ne peut pas démarrer.</div>`;
-  return `<section><h3>Agent piloté par la voix</h3><div class="choices">${choices}</div>${unavailable}
-    <h3>Réglages de ${esc(spec.label)}</h3>
+  const modelSource=modelResult
+    ? `${catalogNote(modelResult,spec.model_provider)} <button class="linkish" data-cli-model-refresh>rafraîchir</button>`
+    : '<span class="note">Chargement du catalogue du CLI…</span>';
+  return `<div class="notice info"><strong>Agent piloté</strong> — CLI principal utilisé par JARVIS pour les demandes directes et les sous-agents.</div>
+    <div class="choices">${choices}</div>${unavailable}
+    <h3>Réglages techniques de ${esc(spec.label)}</h3>
     <div class="field"><label for="f_cli_cmd">Commande</label>
       <input id="f_cli_cmd" data-cli-field="command" data-scope="${esc(spec.id)}" value="${esc(values.command)}">
       <div class="source">${spec.available?`<span class="tag ok">résolu</span> ${esc(spec.path)}`:`<span class="tag bad">non résolu</span>`} <button class="linkish" id="reprobe">re-détecter</button></div>
       <div class="hint">Nom dans le PATH ou chemin complet. Documentation : <code>${esc(spec.docs)}</code></div></div>
     <div class="field"><label for="f_cli_model">Modèle</label>
       <select id="f_cli_model" data-cli-field="model" data-scope="${esc(spec.id)}">${selectOptions(modelOptions,values.model,'Modèle par défaut du CLI')}</select>
-      <div class="source">${catalogNote(modelResult,spec.model_provider)} <button class="linkish" data-refresh="${esc(spec.model_provider)}:text">rafraîchir</button></div>
+      <div class="source">${modelSource}</div>
       <div class="hint">Liste demandée à l'API ${esc(providerLabel(spec.model_provider))}. Sans clé de ce fournisseur, aucun modèle ne peut être listé : le CLI garde alors son modèle par défaut.</div></div>
-    ${permission}</section>`;
+    ${permission}`;
 }
 
-/* --- onglet Aiguillage ---------------------------------------------------
+function tabCli(){
+  return `<section><h3>Technique</h3>${delegationModeHtml()}<div id="cliTechnical">${cliTechnicalHtml()}</div>
+    <h3>Comportement</h3>${behaviorHtml()}
+    <h3>Sous-agents / Modèles</h3>
+    <div class="agent-catalog-head"><div class="hint">Inventaire sourcé de comparaison. La disponibilité et les actions viennent uniquement du backend.</div><button type="button" class="linkish" id="agentCatalogRefresh">rafraîchir</button></div>
+    <div id="agentCatalog" aria-label="Catalogue des modèles de sous-agents"></div>
+    ${routingAdvancedShell()}
+  </section>`;
+}
+
+/* --- configuration avancée des sous-agents ------------------------------
    Rien de ce qui est affiché ici n'est écrit dans cette page : les profils,
-   les harness, leurs modèles et leur disponibilité viennent tous de
-   /api/routing/candidates.
-
-   Le choix se fait en deux temps : d'abord le harness, ensuite un de ses
-   modèles seulement. Une liste unique de tous les couples harness × modèle
-   devient illisible dès qu'un fournisseur en déclare vingt.
-
-   Ce que le profil retient reste une liste ordonnée de couples {agent, model}
-   — le format enregistré ne change pas. Un candidat enregistré devenu
-   indisponible y reste visible et expliqué : sa disparition serait un réglage
-   perdu en silence.                                                        */
+   les candidats et leur disponibilité viennent tous de /api/routing/candidates.
+   Un candidat enregistré devenu indisponible reste coché et visible — sa
+   disparition serait un réglage perdu en silence.                          */
+function candidateLabel(c){return c.label||(c.model?`${c.agent} · ${c.model}`:c.agent)}
 function candidateKey(c){return JSON.stringify({agent:c.agent,model:c.model||''})}
-function harnessOf(state,agent){return (state.harnesses||[]).find(h=>h.id===agent)||null}
-function modelOf(harness,model){return harness?(harness.models||[]).find(m=>(m.model||'')===(model||'')):null}
-/* Le choix en cours d'un profil ne devient un candidat qu'à « Ajouter » :
-   sélectionner un harness ne modifie donc aucun réglage. */
-function routingPick(profile){
-  const picks=SET.routingPick||(SET.routingPick={});
-  return picks[profile]||(picks[profile]={agent:'',model:''});
-}
-/* Le brouillon reçoit tous les profils du serveur ; un profil apparu depuis
-   l'ouverture de la fenêtre est créé vide plutôt que de faire échouer le clic. */
-function routingEntry(profile){
-  const profiles=SET.draft.routing.profiles;
-  return profiles[profile]||(profiles[profile]={candidates:[],enabled:true,allow_general_fallback:true});
-}
-function candidateLabel(state,ref){
-  const harness=harnessOf(state,ref.agent),model=modelOf(harness,ref.model);
-  const left=harness?harness.label:ref.agent;
-  const right=model?model.label:(ref.model||'');
-  return right?`${left} · ${right}`:left;
+
+function routingRow(profile,candidate,chosen){
+  const key=candidateKey(candidate);
+  const rank=chosen.indexOf(key);
+  const state=candidate.available
+    ? '<span class="tag ok">disponible</span>'
+    : `<span class="tag bad">indisponible</span>`;
+  const why=candidate.available?'':`<div class="hint">${esc(candidate.unavailable_reason||'')}</div>`;
+  const order=rank>=0?`<span class="tag">${rank===0?'préféré':'recours '+rank}</span>`:'';
+  return `<label class="choice ${rank>=0?'selected':''}">
+    <input type="checkbox" data-routing-candidate="${esc(key)}" data-routing-profile="${esc(profile)}" ${rank>=0?'checked':''}>
+    <div><div class="title"><strong>${esc(candidateLabel(candidate))}</strong>${state}${order}</div>${why}</div>
+  </label>`;
 }
 
-function routingRow(profile,ref,rank,state){
-  const harness=harnessOf(state,ref.agent),model=modelOf(harness,ref.model);
-  const usable=!!(harness&&model&&model.available);
-  const tag=usable?'<span class="tag ok">disponible</span>':'<span class="tag bad">indisponible</span>';
-  const reason=(model&&model.unavailable_reason)||(harness&&harness.unavailable_reason)||"Ce couple n'est plus proposé sur cette machine.";
-  const why=usable?'':`<div class="hint">${esc(reason)}</div>`;
-  const order=`<span class="tag">${rank===0?'préféré':'recours '+rank}</span>`;
-  const up=rank>0?`<button class="linkish" data-routing-up="${esc(profile)}" data-routing-rank="${rank}">monter</button> `:'';
-  return `<div class="choice selected">
-    <div><div class="title"><strong>${esc(candidateLabel(state,ref))}</strong>${tag}${order}</div>${why}
-      <div class="source">${up}<button class="linkish" data-routing-drop="${esc(profile)}" data-routing-rank="${rank}">retirer</button></div></div>
-  </div>`;
-}
-
-/* Les deux sélecteurs en cascade : le second ne montre que les modèles du
-   harness choisi au premier. */
-function routingPicker(profile,state){
-  const pick=routingPick(profile);
-  const harness=harnessOf(state,pick.agent);
-  const harnesses=(state.harnesses||[]).map(h=>({value:h.id,label:h.available?h.label:`${h.label} — indisponible`}));
-  const models=(harness?harness.models||[]:[]).map(m=>({value:m.model,label:m.available?m.label:`${m.label} — indisponible`}));
-  const modelField=harness
-    ? `<select id="f_rt_model_${esc(profile)}" data-routing-model="${esc(profile)}">${selectOptions(models,pick.model,'')}</select>`
-    : `<select id="f_rt_model_${esc(profile)}" disabled><option>Choisir d'abord un harness</option></select>`;
-  const why=harness&&!harness.available?`<div class="hint">${esc(harness.unavailable_reason||'')}</div>`:'';
-  return `<div class="field"><label for="f_rt_harness_${esc(profile)}">Harness</label>
-      <select id="f_rt_harness_${esc(profile)}" data-routing-harness="${esc(profile)}">${selectOptions(harnesses,pick.agent,'Choisir un harness…')}</select>${why}</div>
-    <div class="field"><label for="f_rt_model_${esc(profile)}">Modèle</label>${modelField}
-      <div class="source"><button class="linkish" data-routing-add="${esc(profile)}" ${harness?'':'disabled'}>ajouter à ce profil</button></div></div>`;
-}
-
-async function tabRouting(){
-  if(!SET.routing)SET.routing=await api('/api/routing/candidates').catch(e=>({ok:false,error:e.message,profiles:[],harnesses:[]}));
+function routingAdvancedBody(){
+  if(!SET.routing)return '<div class="hint">Ouvrez cette section pour charger les profils et candidats.</div>';
   const state=SET.routing,draft=SET.draft.routing;
-  if(state.ok===false)return `<section><div class="notice bad">${esc(state.error||'Aiguillage indisponible.')}</div></section>`;
+  if(state.ok===false)return `<div class="notice bad">${esc(state.error||'Configuration avancée indisponible.')} <button type="button" class="linkish" id="routingRetry">réessayer</button></div>`;
+  const candidates=state.candidates||[];
   const blocks=(state.profiles||[]).map(profile=>{
     const entry=draft.profiles[profile.id]||{candidates:[],enabled:true,allow_general_fallback:true};
-    const chosen=entry.candidates||[];
-    const rows=chosen.map((ref,rank)=>routingRow(profile.id,ref,rank,state)).join('');
+    const chosen=(entry.candidates||[]).map(candidateKey);
+    const rows=candidates.map(c=>routingRow(profile.id,c,chosen)).join('');
     const empty=chosen.length?'':'<div class="hint">Aucun candidat autorisé : ce profil garde le modèle configuré du CLI.</div>';
     const fallback=profile.id==='general'?'':`<div class="field inline">
       <input type="checkbox" id="f_fb_${esc(profile.id)}" data-routing-fallback="${esc(profile.id)}" ${entry.allow_general_fallback?'checked':''}>
       <div><label for="f_fb_${esc(profile.id)}">Se rabattre sur le profil Général</label>
       <div class="hint">Quand aucun candidat de ce profil n'est utilisable, essayer ceux du profil Général plutôt que d'échouer.</div></div></div>`;
-    return `<h3>${esc(profile.label)}</h3>
+    const enabled=`<div class="field inline"><input type="checkbox" id="f_profile_${esc(profile.id)}" data-routing-profile-enabled="${esc(profile.id)}" ${entry.enabled?'checked':''}>
+      <div><label for="f_profile_${esc(profile.id)}">Profil actif</label><div class="hint">Désactivé, ce profil conserve le choix du CLI même en mode Auto.</div></div></div>`;
+    return `<h3>${esc(profile.label)}</h3>${enabled}
       <div class="hint" style="margin-bottom:8px">${esc(profile.description)}${profile.requires.length?` · exige : ${profile.requires.map(esc).join(', ')}`:''}</div>
-      ${rows?`<div class="choices">${rows}</div>`:empty}${routingPicker(profile.id,state)}${fallback}`;
+      <div class="choices">${rows}</div>${empty}${fallback}`;
   }).join('');
   const sources=Object.entries(state.sources||{}).map(([provider,source])=>{
     const label=providerLabel(provider);
@@ -1948,14 +2253,114 @@ async function tabRouting(){
     if(source==='stale')return `<span class="note warn">${esc(label)} : dernière liste connue</span>`;
     return `<span class="note bad">${esc(label)} : ${esc(source)}</span>`;
   }).join(' ');
-  return `<section>
-    <div class="field inline"><input type="checkbox" id="f_routing_on" data-routing-enabled ${draft.enabled?'checked':''}>
-      <div><label for="f_routing_on">Choisir le modèle des sous-agents selon la tâche</label>
-      <div class="hint">Décoché, rien ne change : chaque sous-agent garde le modèle par défaut du CLI. Coché, JARVIS impose pour chaque profil le premier candidat autorisé et utilisable, et corrige le modèle demandé par le cerveau si besoin.</div></div></div>
-    <div class="source" style="margin-bottom:10px">${sources} <button class="linkish" id="routingRefresh">rafraîchir</button></div>
+  return `<div class="source" style="margin-bottom:10px">${sources} <button class="linkish" id="routingRefresh">rafraîchir</button></div>
     ${blocks}
-    <div class="hint" style="margin-top:14px">Un candidat s'ajoute en deux temps : le harness, puis un de ses modèles. L'ordre de la liste est la préférence — le premier disponible est choisi, les suivants servent de recours, et « monter » change le préféré. Les sous-agents s'exécutent dans le CLI vocal actif ; un candidat d'un autre CLI ne peut servir qu'à l'auto-développement.</div>
-  </section>`;
+    <div class="hint" style="margin-top:14px">L'ordre des candidats est celui de la liste : le premier disponible est choisi, les suivants servent de recours. Les sous-agents s'exécutent dans le CLI vocal actif ; un candidat d'un autre CLI ne peut servir qu'à l'auto-développement.</div>`;
+}
+
+function routingAdvancedShell(){
+  return `<details class="rd" id="routingAdvanced" ${SET.routingAdvancedOpen?'open':''}><summary>Configuration avancée des sous-agents</summary>
+    <div id="routingAdvancedBody">${routingAdvancedBody()}</div></details>`;
+}
+
+function currentAgentTab(revision){
+  return SET.open&&SET.tab==='cli'&&revision===SET.renderRevision;
+}
+
+function renderCliTechnical(revision){
+  if(!currentAgentTab(revision))return;
+  const host=$('#cliTechnical');
+  if(!host)return;
+  host.innerHTML=cliTechnicalHtml();bindCliTechnical(host,revision);
+}
+
+function bindCliTechnical(host,revision){
+  host.querySelectorAll('input[name=clicagent]').forEach(el=>el.addEventListener('change',()=>{
+    SET.draft.cli.agent=el.value;SET.dirty=true;renderCliTechnical(revision);hydrateCliModel(revision);
+    say('Modifications non enregistrées.','');
+  }));
+  host.querySelectorAll('[data-cli-field]').forEach(el=>el.addEventListener('change',()=>{
+    SET.draft.cli.settings[el.dataset.scope][el.dataset.cliField]=el.value;SET.dirty=true;
+    say('Modifications non enregistrées.','');
+  }));
+  const modelRefresh=host.querySelector('[data-cli-model-refresh]');
+  if(modelRefresh)modelRefresh.addEventListener('click',()=>hydrateCliModel(revision,true));
+  const retry=host.querySelector('[data-cli-retry]');
+  if(retry)retry.addEventListener('click',()=>hydrateCliAgents(revision,true));
+  const reprobe=host.querySelector('#reprobe');
+  if(reprobe)reprobe.addEventListener('click',async()=>{
+    reprobe.textContent='…';
+    try{await saveDraft({silent:true})}catch(e){say(e.message,'error');return}
+    if(!currentAgentTab(revision))return;
+    SET.clis=null;renderCliTechnical(revision);hydrateCliAgents(revision,true);
+  });
+}
+
+async function hydrateCliAgents(revision,refresh=false){
+  if(!currentAgentTab(revision))return;
+  if(SET.clis&&SET.clis.ok!==false&&!refresh){await hydrateCliModel(revision);return}
+  if(refresh||SET.clis&&SET.clis.ok===false){SET.clis=null;renderCliTechnical(revision)}
+  const requestId=++SET.cliGeneration;
+  let state;
+  try{state=await api('/api/cli/agents')}
+  catch(e){state={ok:false,error:e.message,agents:[]}}
+  if(!currentAgentTab(revision)||requestId!==SET.cliGeneration)return;
+  SET.clis=state;renderCliTechnical(revision);
+  if(state.ok!==false&&(state.agents||[]).length)await hydrateCliModel(revision);
+}
+
+async function hydrateCliModel(revision,refresh=false){
+  if(!currentAgentTab(revision)||!SET.clis)return;
+  const detected=SET.clis.agents||[],draft=SET.draft.cli;
+  const spec=detected.find(agent=>agent.id===draft.agent)||detected[0];
+  if(!spec)return;
+  const key=spec.model_provider+':text';
+  if(SET.catalog[key]&&!refresh)return;
+  const requestId=++SET.cliModelGeneration;
+  const state=await requestCatalog(spec.model_provider,'text',refresh);
+  if(!currentAgentTab(revision)||requestId!==SET.cliModelGeneration)return;
+  SET.catalog[key]=state;
+  renderCliTechnical(revision);
+}
+
+function renderRoutingAdvanced(revision){
+  if(!currentAgentTab(revision)||!SET.routingAdvancedOpen)return;
+  const body=$('#routingAdvancedBody');
+  if(!body)return;
+  body.innerHTML=routingAdvancedBody();bindRoutingAdvanced(revision);
+}
+
+function bindRoutingAdvanced(revision){
+  const body=$('#routingAdvancedBody');
+  if(!body)return;
+  body.querySelectorAll('[data-routing-profile-enabled]').forEach(el=>el.addEventListener('change',()=>{
+    SET.draft.routing.profiles[el.dataset.routingProfileEnabled].enabled=el.checked;
+    SET.dirty=true;say('Modifications non enregistrées.','')}));
+  body.querySelectorAll('[data-routing-candidate]').forEach(el=>el.addEventListener('change',()=>{
+    const entry=SET.draft.routing.profiles[el.dataset.routingProfile];
+    const value=JSON.parse(el.dataset.routingCandidate);
+    const rest=(entry.candidates||[]).filter(candidate=>candidateKey(candidate)!==el.dataset.routingCandidate);
+    entry.candidates=el.checked?[...rest,value]:rest;
+    SET.dirty=true;renderRoutingAdvanced(revision)}));
+  body.querySelectorAll('[data-routing-fallback]').forEach(el=>el.addEventListener('change',()=>{
+    SET.draft.routing.profiles[el.dataset.routingFallback].allow_general_fallback=el.checked;
+    SET.dirty=true;say('Modifications non enregistrées.','')}));
+  const refresh=body.querySelector('#routingRefresh');
+  if(refresh)refresh.addEventListener('click',()=>hydrateRoutingAdvanced(revision,true));
+  const retry=body.querySelector('#routingRetry');
+  if(retry)retry.addEventListener('click',()=>hydrateRoutingAdvanced(revision,true));
+}
+
+async function hydrateRoutingAdvanced(revision,refresh=false){
+  if(!currentAgentTab(revision)||!SET.routingAdvancedOpen)return;
+  if(SET.routing&&SET.routing.ok!==false&&!refresh){renderRoutingAdvanced(revision);return}
+  const requestId=++SET.routingGeneration,body=$('#routingAdvancedBody');
+  if(body)body.innerHTML='<div class="notice info">Chargement des profils et candidats…</div>';
+  let state;
+  try{state=await api('/api/routing/candidates')}
+  catch(e){state={ok:false,error:e.message,profiles:[],candidates:[]}}
+  if(!currentAgentTab(revision)||!SET.routingAdvancedOpen||requestId!==SET.routingGeneration)return;
+  SET.routing=state;renderRoutingAdvanced(revision);
 }
 
 /* --- onglet Config ------------------------------------------------------ */
@@ -1965,22 +2370,6 @@ function deviceOptions(items,selected,defaultId){
   return missing+`<option value="" ${chosen===''?'selected':''}>Système par défaut${def?` (${esc(def.name)})`:''}</option>`+
     items.map(x=>`<option value="${esc(x.id)}" ${chosen===String(x.id)?'selected':''}>${esc(x.name)}${x.hostapi?' · '+esc(x.hostapi):''}</option>`).join('');
 }
-async function tabConfig(){
-  if(!SET.devices)SET.devices=await api('/api/audio/devices').catch(e=>({ok:false,error:e.message,inputs:[],outputs:[]}));
-  const d=SET.devices,a=SET.draft.audio;
-  const failure=d.ok===false?`<div class="notice bad">${esc(d.error||'Périphériques audio indisponibles.')}</div>`:'';
-  return `<section>${failure}<h3>Audio</h3>
-    <div class="field"><label for="f_in">Entrée microphone</label><select id="f_in" data-audio="input_device">${deviceOptions(d.inputs||[],a.input_device,(d.defaults||{}).input)}</select></div>
-    <div class="field"><label for="f_out">Sortie haut-parleur</label><select id="f_out" data-audio="output_device">${deviceOptions(d.outputs||[],a.output_device,(d.defaults||{}).output)}</select></div>
-    <div class="row" style="margin-bottom:8px"><button class="action" id="testAudio">Tester micro + sortie</button></div>
-    <div class="test-result" id="audioTestResult">Le test enregistre 2 secondes au format de la pile vocale active, puis les rejoue.</div>
-    <h3>Session</h3>
-    <div class="field"><label for="f_timeout">Délai d'inactivité avant mise en veille (secondes)</label>
-      <input type="number" min="0" id="f_timeout" data-audio="active_timeout_s" value="${esc(a.active_timeout_s)}">
-      <div class="hint">Passé ce délai sans échange utile, JARVIS repasse en arrière-plan et rend le micro. 0 = jamais : seule la touche de réveil (F9 par défaut) ou « Jarvis mute » met fin à la conversation. Sinon, 5 s minimum.</div></div>
-  </section>`;
-}
-
 /* --- onglet API Keys ---------------------------------------------------- */
 function tabKeys(){
   const state=SET.data.credentials,items=state.credentials||[];
@@ -2013,58 +2402,54 @@ function tabKeys(){
 /* --- onglet Raccourcis --------------------------------------------------- */
 const GLOBAL_KEY_NAMES={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',PageUp:'page_up',PageDown:'page_down',Home:'home',End:'end',Insert:'insert',Delete:'delete',Pause:'pause',ScrollLock:'scroll_lock',ContextMenu:'menu',PrintScreen:'print_screen'};
 function tabShortcuts(){
-  const list=SET.shortcuts.shortcuts||[];
+  const list=(SET.shortcuts.shortcuts||[]).filter(item=>item.id!=='wake_toggle');
   const rows=list.map(s=>`<div class="shortcut">
       <div><div>${esc(s.label)} <span class="tag">${s.scope==='global'?'système':'interface'}</span></div><div class="desc">${esc(s.description)}</div></div>
       <button class="keycap" data-shortcut="${esc(s.id)}" data-scope="${esc(s.scope)}">${esc(s.value)}</button>
     </div>`).join('');
   return `<section><h3>Raccourcis</h3>
     <div class="hint" style="margin-bottom:14px">Cliquez sur une touche puis appuyez sur la combinaison voulue. Les raccourcis <em>système</em> sont captés même quand JARVIS n'a pas le focus, et n'acceptent qu'une touche seule. Les raccourcis <em>interface</em> ne s'appliquent que sur cette page et ignorent la saisie dans un champ.</div>
+    <div class="notice info">Le raccourci Réveiller / envoyer / interrompre se règle dans Voix → Tours &amp; interruptions.</div>
     ${rows}<div class="hint" id="shortcutHint" style="margin-top:14px">Enregistrement immédiat. Le raccourci système prend effet au prochain redémarrage du runtime Voice.</div></section>`;
 }
 
 /* --- rendu et liaisons --------------------------------------------------- */
+function cleanupSettingsSurface(){destroyAgentCatalog();destroyVoiceCatalog()}
 function renderTabs(){
   $('#modalTabs').innerHTML=TABS.map(t=>`<button data-tab="${t.id}" class="${t.id===SET.tab?'active':''}">${esc(t.label)}</button>`).join('');
   document.querySelectorAll('#modalTabs button').forEach(b=>b.addEventListener('click',()=>selectTab(b.dataset.tab)));
 }
 
 async function renderTab(){
+  cleanupSettingsSurface();
   const revision=SET.renderRevision=(SET.renderRevision||0)+1;
   modalContent.innerHTML='<div class="empty">Chargement…</div>';
   const tab=TABS.find(t=>t.id===SET.tab);
   modalSave.style.display=tab.save?'':'none';
-  modalSub.textContent=tab.save?'Les réglages vocaux sont préparés pour la prochaine activation.':'Les modifications de cet onglet sont enregistrées immédiatement.';
+  modalSub.textContent={
+    voice:'Les réglages vocaux sont préparés pour la prochaine activation.',
+    cli:'Configuration technique, comportement et modèles des agents.',
+    prompts:'Chaque couche est enregistrée avec son propre bouton.',
+    keys:'Les clés sont enregistrées immédiatement sans jamais être relues par la page.',
+    shortcuts:'Les raccourcis sont enregistrés immédiatement.',
+  }[SET.tab]||'';
   try{
     let content;
     if(SET.tab==='voice')content=await tabVoice();
     else if(SET.tab==='prompts')content=await tabPrompts();
-    else if(SET.tab==='cli')content=await tabCli();
-    else if(SET.tab==='routing')content=await tabRouting();
-    else if(SET.tab==='config')content=await tabConfig();
+    else if(SET.tab==='cli')content=tabCli();
     else if(SET.tab==='keys')content=tabKeys();
     else content=tabShortcuts();
-    if(revision!==SET.renderRevision)return;
+    if(revision!==SET.renderRevision||SET.open===false)return;
     modalContent.innerHTML=content;
-  }catch(e){if(revision===SET.renderRevision)modalContent.innerHTML=`<div class="notice bad">${esc(e.message)}</div>`;return}
-  bindTab();
+  }catch(e){if(revision===SET.renderRevision&&SET.open!==false)modalContent.innerHTML=`<div class="notice bad">${esc(e.message)}</div>`;return}
+  bindTab(revision);
+  if(SET.tab==='voice')bindVoiceSurface(revision);
+  if(SET.tab==='cli'){mountAgentCatalog(revision);hydrateCliAgents(revision)}
   if(SET.dirty&&tab.save)say('Modifications non enregistrées.','');
 }
 
-function bindTab(){
-  modalContent.querySelectorAll('[data-voice-architecture]').forEach(el=>el.addEventListener('change',()=>{
-    voiceArchitectureChanged('architecture',el.value);renderTab()}));
-  modalContent.querySelectorAll('[data-architecture-activate]').forEach(el=>el.addEventListener('click',()=>{
-    voiceArchitectureChanged('architecture',voiceArchitectureConfig().architecture);renderTab()}));
-  modalContent.querySelectorAll('[data-architecture-field]').forEach(el=>el.addEventListener('change',()=>{
-    const value=el.dataset.architectureKind==='model'?JSON.parse(el.value):el.type==='checkbox'?el.checked:el.type==='number'?Number(el.value):el.value;
-    voiceArchitectureChanged(el.dataset.architectureField,value);renderTab()}));
-  modalContent.querySelectorAll('input[name=voicestack]').forEach(el=>el.addEventListener('change',()=>{
-    SET.draft.voice.stack=el.value;SET.dirty=true;renderTab()}));
-  modalContent.querySelectorAll('[data-voice-arch]').forEach(el=>el.addEventListener('change',()=>{
-    SET.draft.voice.arch=el.value;SET.dirty=true;renderTab()}));
-  modalContent.querySelectorAll('input[name=clicagent]').forEach(el=>el.addEventListener('change',()=>{
-    SET.draft.cli.agent=el.value;SET.dirty=true;renderTab()}));
+function bindTab(revision){
   modalContent.querySelectorAll('[data-field]').forEach(el=>el.addEventListener('change',()=>{
     if(el.dataset.scope===AUTH_SCOPE){authFieldChanged(el);return}
     const values=SET.draft.voice.settings[el.dataset.scope];
@@ -2075,73 +2460,33 @@ function bindTab(){
     const spec=SET.data.voice.stacks.find(s=>s.id===el.dataset.scope);
     if(spec&&spec.fields.some(f=>f.depends_on===el.dataset.field))renderTab();else say('Modifications non enregistrées.','');
   }));
-  const advanced=$('#authAdvanced');
-  if(advanced)advanced.addEventListener('toggle',()=>{SET.rdOpen=advanced.open});
-  // Relire l'état sans perdre les modifications en cours (le brouillon reste).
-  const authRefresh=$('#authRefresh');
-  if(authRefresh)authRefresh.addEventListener('click',async()=>{
-    authRefresh.textContent='…';
-    try{SET.data=await api('/api/settings')}catch(e){say(e.message,'error')}
-    renderTab()});
-  modalContent.querySelectorAll('[data-cli-field]').forEach(el=>el.addEventListener('change',()=>{
-    SET.draft.cli.settings[el.dataset.scope][el.dataset.cliField]=el.value;SET.dirty=true;say('Modifications non enregistrées.','')}));
-  modalContent.querySelectorAll('[data-audio]').forEach(el=>el.addEventListener('change',()=>{
-    SET.draft.audio[el.dataset.audio]=el.value;SET.dirty=true;say('Modifications non enregistrées.','')}));
+  const cliTechnical=$('#cliTechnical');
+  if(cliTechnical)bindCliTechnical(cliTechnical,revision);
+  const delegationMode=modalContent.querySelector('[data-delegation-mode]');
+  if(delegationMode)delegationMode.addEventListener('change',()=>{
+    SET.draft.cli.delegation_mode=delegationMode.value;SET.dirty=true;say('Modifications non enregistrées.','')});
+  modalContent.querySelectorAll('[data-behavior-field]').forEach(el=>el.addEventListener('change',()=>{
+    SET.draft.cli.behavior[el.dataset.behaviorField]=el.value;SET.dirty=true;say('Modifications non enregistrées.','')}));
   modalContent.querySelectorAll('[data-refresh]').forEach(el=>el.addEventListener('click',async()=>{
     const [provider,role]=el.dataset.refresh.split(':');el.textContent='…';
     await catalog(provider,role,true);renderTab()}));
 
-  // Aiguillage : choisir un harness puis un modèle ne change rien ; seul
-  // « ajouter » met le couple en fin de liste (donc en dernier recours).
-  // « monter » et « retirer » réordonnent, l'ordre étant la préférence.
-  const routingOn=modalContent.querySelector('[data-routing-enabled]');
-  if(routingOn)routingOn.addEventListener('change',()=>{
-    SET.draft.routing.enabled=routingOn.checked;SET.dirty=true;renderTab()});
-  modalContent.querySelectorAll('[data-routing-harness]').forEach(el=>el.addEventListener('change',()=>{
-    // Changer de harness invalide le modèle retenu : il appartenait à l'autre.
-    const pick=routingPick(el.dataset.routingHarness);
-    pick.agent=el.value;pick.model='';renderTab()}));
-  modalContent.querySelectorAll('[data-routing-model]').forEach(el=>el.addEventListener('change',()=>{
-    routingPick(el.dataset.routingModel).model=el.value}));
-  modalContent.querySelectorAll('[data-routing-add]').forEach(el=>el.addEventListener('click',()=>{
-    const profile=el.dataset.routingAdd,pick=routingPick(profile);
-    if(!pick.agent)return;
-    const entry=routingEntry(profile);
-    const value={agent:pick.agent,model:pick.model||''};
-    const rest=(entry.candidates||[]).filter(c=>candidateKey(c)!==candidateKey(value));
-    entry.candidates=[...rest,value];
-    SET.dirty=true;renderTab()}));
-  modalContent.querySelectorAll('[data-routing-drop]').forEach(el=>el.addEventListener('click',()=>{
-    const entry=routingEntry(el.dataset.routingDrop);
-    entry.candidates=(entry.candidates||[]).filter((c,i)=>i!==Number(el.dataset.routingRank));
-    SET.dirty=true;renderTab()}));
-  modalContent.querySelectorAll('[data-routing-up]').forEach(el=>el.addEventListener('click',()=>{
-    const entry=routingEntry(el.dataset.routingUp),rank=Number(el.dataset.routingRank);
-    const list=[...(entry.candidates||[])];
-    if(rank>0)list.splice(rank-1,0,list.splice(rank,1)[0]);
-    entry.candidates=list;
-    SET.dirty=true;renderTab()}));
-  modalContent.querySelectorAll('[data-routing-fallback]').forEach(el=>el.addEventListener('change',()=>{
-    routingEntry(el.dataset.routingFallback).allow_general_fallback=el.checked;
-    SET.dirty=true;say('Modifications non enregistrées.','')}));
-  const routingRefresh=$('#routingRefresh');
-  if(routingRefresh)routingRefresh.addEventListener('click',async()=>{
-    routingRefresh.textContent='…';SET.routing=null;SET.catalog={};renderTab()});
-
-  const reprobe=$('#reprobe');
-  if(reprobe)reprobe.addEventListener('click',async()=>{
-    reprobe.textContent='…';
-    try{await saveDraft({silent:true})}catch(e){say(e.message,'error');return}
-    SET.clis=null;renderTab()});
-
-  const test=$('#testAudio');
-  if(test)test.addEventListener('click',runAudioTest);
+  const routingAdvanced=$('#routingAdvanced');
+  if(routingAdvanced)routingAdvanced.addEventListener('toggle',()=>{
+    SET.routingAdvancedOpen=routingAdvanced.open;
+    if(routingAdvanced.open)hydrateRoutingAdvanced(revision);
+    else ++SET.routingGeneration;
+  });
+  if(routingAdvanced&&routingAdvanced.open){
+    if(SET.routing)bindRoutingAdvanced(revision);
+    else hydrateRoutingAdvanced(revision);
+  }
 
   const form=$('#keyForm');
   if(form)form.addEventListener('submit',addCredential);
   modalContent.querySelectorAll('[data-delete-key]').forEach(el=>el.addEventListener('click',()=>deleteCredential(el.dataset.deleteKey)));
   modalContent.querySelectorAll('[data-bind-provider]').forEach(el=>el.addEventListener('change',()=>bindCredential(el.dataset.bindProvider,el.dataset.bindId)));
-  modalContent.querySelectorAll('[data-shortcut]').forEach(el=>el.addEventListener('click',()=>startCapture(el)));
+  modalContent.querySelectorAll('[data-shortcut]').forEach(el=>{if(!el.closest('#voicePanel'))el.addEventListener('click',()=>startCapture(el))});
   modalContent.querySelectorAll('[data-prompt-save]').forEach(el=>el.addEventListener('click',()=>savePromptLayer(el)));
   modalContent.querySelectorAll('[data-prompt-reset]').forEach(el=>el.addEventListener('click',()=>resetPromptLayer(el)));
 }
@@ -2167,7 +2512,7 @@ async function resetPromptLayer(button){
 }
 
 /* Texte brut : vide = revenir au défaut, et c'est le serveur qui valide. */
-function authFieldChanged(el){
+function authFieldChanged(el,revision){
   const a=SET.data.voice.authorization||{},key=el.dataset.field;
   // Changer de mode ne remet la vérification au défaut du mode que si la
   // valeur enregistrée devient incohérente (solo_owner + shadow…) : une
@@ -2176,11 +2521,169 @@ function authFieldChanged(el){
   SET.draft.voice.authorization=authDraftAfterChange(
     SET.draft.voice.authorization,key,el.value,stored,a.verification_modes_by_mode);
   SET.dirty=true;
-  if(key==='conversation_mode'){renderTab();return}
+  if(key==='conversation_mode'){if(revision!==undefined)renderVoicePanel(revision);else renderTab();return}
   say('Modifications non enregistrées.','');
 }
 
-function selectTab(id){SET.tab=id;renderTabs();renderTab()}
+function canonicalSettingsTab(id){return id==='routing'?'cli':id}
+function selectTab(id){
+  const next=canonicalSettingsTab(id);
+  if(SET.tab==='cli'&&next!=='cli'){SET.routingAdvancedOpen=false;++SET.routingGeneration}
+  SET.tab=next;renderTabs();renderTab();
+}
+
+function destroyAgentCatalog(){
+  if(!SET.agentCatalog)return;
+  SET.agentCatalog.destroy();SET.agentCatalog=null;
+}
+
+function mountAgentCatalog(revision){
+  if(!currentAgentTab(revision))return;
+  const host=$('#agentCatalog');
+  if(!host)return;
+  destroyAgentCatalog();
+  const controller=JarvisCatalog.createCatalogTable(host,{
+    surface:'subagents',role:'subagent',
+    columns:['compare','model','provider','capabilities','guidance','price','availability']
+  });
+  SET.agentCatalog=controller;
+  const refresh=$('#agentCatalogRefresh');
+  if(refresh)refresh.addEventListener('click',()=>controller.refresh());
+  controller.load();
+}
+
+function currentVoicePanel(revision,category=SET.voiceTab){
+  return SET.open&&SET.tab==='voice'&&SET.voiceTab===category&&revision===SET.renderRevision;
+}
+function destroyVoiceCatalog(){
+  if(!SET.voiceCatalog)return;
+  const state=SET.voiceCatalog.state;
+  SET.voiceCatalogStates[SET.voiceCatalogMountedRole]={envelope:state.envelope,error:state.error,query:state.query,sort:state.sort,filters:{...state.filters},selection:[...state.selection]};
+  SET.voiceCatalog.destroy();SET.voiceCatalog=null;SET.voiceCatalogMountedRole=null;
+}
+function mountVoiceCatalog(revision){
+  if(!currentVoicePanel(revision,'models'))return;
+  const host=$('#voiceCatalog');if(!host)return;
+  destroyVoiceCatalog();
+  const controller=JarvisCatalog.createCatalogTable(host,{surface:'voice',role:SET.voiceCatalogRole,columns:['compare','model','provider','roles','capabilities','guidance','price','availability']});
+  const saved=SET.voiceCatalogStates[SET.voiceCatalogRole];
+  if(saved){controller.state.envelope=saved.envelope;controller.state.error=saved.error||'';controller.state.query=saved.query;controller.state.sort=saved.sort;controller.state.filters={...saved.filters};controller.state.selection=new Set(saved.selection);controller.render()}
+  SET.voiceCatalog=controller;SET.voiceCatalogMountedRole=SET.voiceCatalogRole;controller.load();
+}
+function updateVoiceTabs(){
+  document.querySelectorAll('[data-voice-tab]').forEach(button=>{
+    const active=button.dataset.voiceTab===SET.voiceTab;
+    button.setAttribute('aria-selected',active?'true':'false');button.tabIndex=active?0:-1;
+  });
+}
+async function selectVoiceTab(id,revision,focus=false){
+  if(!(SET.data.voice.categories||[]).some(item=>item.id===id))return;
+  SET.voiceTab=id;updateVoiceTabs();await renderVoicePanel(revision);
+  if(focus){const button=$(`#voiceTab_${id}`);if(button)button.focus()}
+}
+async function renderVoicePanel(revision){
+  if(!currentVoicePanel(revision))return;
+  const requestId=++SET.voiceGeneration;destroyVoiceCatalog();
+  const panel=$('#voicePanel');if(!panel)return;
+  const html=await voicePanelHtml();
+  if(!currentVoicePanel(revision)||requestId!==SET.voiceGeneration)return;
+  panel.setAttribute('aria-labelledby',`voiceTab_${SET.voiceTab}`);panel.innerHTML=html;
+  bindVoicePanel(revision);if(SET.voiceTab==='models')mountVoiceCatalog(revision);
+}
+function bindVoiceSurface(revision){
+  const buttons=[...document.querySelectorAll('[data-voice-tab]')];
+  buttons.forEach((button,index)=>{
+    button.addEventListener('click',()=>selectVoiceTab(button.dataset.voiceTab,revision));
+    button.addEventListener('keydown',event=>{
+      let target=index;
+      if(event.key==='ArrowRight')target=(index+1)%buttons.length;
+      else if(event.key==='ArrowLeft')target=(index-1+buttons.length)%buttons.length;
+      else if(event.key==='Home')target=0;
+      else if(event.key==='End')target=buttons.length-1;
+      else return;
+      event.preventDefault();selectVoiceTab(buttons[target].dataset.voiceTab,revision,true);
+    });
+  });
+  bindVoicePanel(revision);if(SET.voiceTab==='models')mountVoiceCatalog(revision);
+}
+function voiceChanged(element,revision){
+  const meta=voiceOption(element.dataset.voiceMeta),persistence=element.dataset.voicePersistence;
+  if(!meta||!persistence)return;
+  const value=element.type==='checkbox'?element.checked:element.type==='number'&&element.value!==''?Number(element.value):element.value;
+  if(persistence==='voice_stack')SET.draft.voice.stack=value;
+  else if(persistence==='voice_arch')SET.draft.voice.arch=value;
+  else if(persistence.startsWith('voice_stack_settings.')){
+    const parts=persistence.split('.'),scope=parts[1],key=parts.slice(2).join('.');SET.draft.voice.settings[scope][key]=value;
+  }else if(persistence==='audio_input_device')SET.draft.audio.input_device=element.value;
+  else if(persistence==='audio_output_device')SET.draft.audio.output_device=element.value;
+  else if(persistence==='active_timeout_s')SET.draft.audio.active_timeout_s=element.value;
+  else{authFieldChanged({dataset:{field:persistence},value:element.value},revision);return}
+  SET.dirty=true;
+  if((SET.data.voice.option_metadata||[]).some(item=>String(item.depends_on||'').startsWith(meta.id+'=')))renderVoicePanel(revision);
+  else say('Modifications non enregistrées.','');
+}
+function bindVoiceModelField(meta,revision){
+  const field=$(`#${voiceOptionId(meta)}_field`);if(!field)return;
+  const select=field.querySelector('[data-voice-persistence]');
+  if(select)select.addEventListener('change',()=>voiceChanged(select,revision));
+  const retry=field.querySelector('[data-voice-model-retry]');
+  if(retry)retry.addEventListener('click',()=>hydrateVoiceModel(meta,revision,true));
+}
+function renderVoiceModelField(meta,revision){
+  if(!currentVoicePanel(revision,'models'))return;
+  const field=$(`#${voiceOptionId(meta)}_field`);if(!field)return;
+  field.outerHTML=voiceOptionHtml(meta);bindVoiceModelField(meta,revision);
+}
+function voiceProviderModelSource(meta){
+  if(meta.type!=='catalog-select'||!String(meta.persistence||'').startsWith('voice_stack_settings.'))return null;
+  const parts=String(meta.source||'').split(':');
+  if(parts.length!==2||!parts.every(part=>/^[a-z0-9_-]+$/.test(part)))return null;
+  return {provider:parts[0],role:parts[1]};
+}
+async function hydrateVoiceModel(meta,revision,refresh=false){
+  const source=voiceProviderModelSource(meta);if(!currentVoicePanel(revision,'models')||!source)return;
+  const previous=(SET.voiceModelSources||{})[meta.id];if(previous&&previous.status==='ready'&&!refresh)return;
+  const {provider,role}=source,requestId=((SET.voiceModelGenerations||{})[meta.id]||0)+1,panelGeneration=SET.voiceGeneration;
+  SET.voiceModelGenerations[meta.id]=requestId;SET.voiceModelSources[meta.id]={...previous,status:'loading',error:''};renderVoiceModelField(meta,revision);
+  const result=await requestCatalog(provider,role,refresh);
+  if(!currentVoicePanel(revision,'models')||panelGeneration!==SET.voiceGeneration||SET.voiceModelGenerations[meta.id]!==requestId)return;
+  SET.voiceModelSources[meta.id]={status:result.ok?'ready':'error',error:result.error||'',result};renderVoiceModelField(meta,revision);
+}
+function bindVoicePanel(revision){
+  const panel=$('#voicePanel');if(!panel)return;
+  panel.querySelectorAll('[data-voice-persistence]').forEach(element=>element.addEventListener('change',()=>voiceChanged(element,revision)));
+  panel.querySelectorAll('[data-voice-architecture]').forEach(element=>element.addEventListener('change',()=>{voiceArchitectureChanged('architecture',element.value);renderVoicePanel(revision)}));
+  panel.querySelectorAll('[data-architecture-activate]').forEach(element=>element.addEventListener('click',()=>{voiceArchitectureChanged('architecture',voiceArchitectureConfig().architecture);renderVoicePanel(revision)}));
+  panel.querySelectorAll('[data-architecture-field]').forEach(element=>element.addEventListener('change',()=>{
+    const value=element.dataset.architectureKind==='model'?JSON.parse(element.value):element.type==='checkbox'?element.checked:element.type==='number'?Number(element.value):element.value;
+    voiceArchitectureChanged(element.dataset.architectureField,value);renderVoicePanel(revision);
+  }));
+  panel.querySelectorAll('[data-shortcut]').forEach(element=>element.addEventListener('click',()=>startCapture(element)));
+  const role=panel.querySelector('#voiceCatalogRole');
+  if(role)role.addEventListener('change',()=>{SET.voiceCatalogRole=role.value;renderVoicePanel(revision)});
+  const retry=panel.querySelector('#audioRetry');if(retry)retry.addEventListener('click',()=>hydrateAudioDevices(revision,true));
+  const test=panel.querySelector('#testAudio');if(test)test.addEventListener('click',runAudioTest);
+  const refresh=panel.querySelector('#authRefresh');if(refresh)refresh.addEventListener('click',()=>hydrateVoiceDiagnostics(revision));
+  if(SET.voiceTab==='audio'&&!SET.devices)hydrateAudioDevices(revision);
+  if(SET.voiceTab==='models')voiceOptions('models').filter(voiceProviderModelSource).forEach(meta=>hydrateVoiceModel(meta,revision));
+}
+async function hydrateAudioDevices(revision,refresh=false){
+  if(!currentVoicePanel(revision,'audio'))return;
+  if(SET.devices&&SET.devices.ok!==false&&!refresh)return;
+  const requestId=++SET.audioGeneration,status=$('#voiceAudioStatus');if(status)status.textContent='Détection des périphériques…';
+  let state;try{state=await api('/api/audio/devices')}catch(e){state={ok:false,error:e.message,inputs:[],outputs:[]}}
+  if(!currentVoicePanel(revision,'audio')||requestId!==SET.audioGeneration)return;
+  SET.devices=state;renderVoicePanel(revision);
+}
+async function hydrateVoiceDiagnostics(revision){
+  if(!currentVoicePanel(revision,'diagnostic'))return;
+  const requestId=++SET.diagnosticGeneration;SET.voiceDiagnosticError='';
+  let data;try{data=await api('/api/settings')}catch(e){
+    if(currentVoicePanel(revision,'diagnostic')&&requestId===SET.diagnosticGeneration){SET.voiceDiagnosticError=e.message;renderVoicePanel(revision)}return;
+  }
+  if(!currentVoicePanel(revision,'diagnostic')||requestId!==SET.diagnosticGeneration)return;
+  SET.data={...SET.data,voice:data.voice};renderVoicePanel(revision);
+}
 
 async function runAudioTest(){
   const test=$('#testAudio'),result=$('#audioTestResult'),a=SET.draft.audio;
@@ -2191,7 +2694,7 @@ async function runAudioTest(){
     result.className='test-result ok';
     result.textContent=`Test réussi · pic ${r.peak_dbfs} dBFS · enregistrement rejoué et sélection enregistrée.`;
   }catch(e){result.className='test-result error';result.textContent=e.message}
-  finally{test.disabled=false}
+  finally{test.disabled=!SET.devices||SET.devices.ok===false||!(SET.devices.inputs||[]).length||!(SET.devices.outputs||[]).length}
 }
 
 async function addCredential(event){
@@ -2240,7 +2743,7 @@ function startCapture(button){
     hint.textContent='Enregistrement…';
     try{
       const r=await api('/api/shortcuts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({shortcuts:{[button.dataset.shortcut]:value}})});
-      SET.shortcuts=r;renderTab();$('#shortcutHint').textContent='Raccourci enregistré.';
+      SET.shortcuts=r;await renderTab();const currentHint=$('#shortcutHint');if(currentHint)currentHint.textContent='Raccourci enregistré.';
     }catch(e){button.textContent=previous;hint.textContent=e.message}
   };
   const cleanup=()=>{window.removeEventListener('keydown',onKey,true);button.classList.remove('capturing');SET.capture=null};
@@ -2270,30 +2773,37 @@ function draftFrom(data){
   return {
     // `authorization` : seules les clés touchées, jamais la description reçue.
     voice:{stack:data.voice.stack,arch:data.voice.arch||'',settings:JSON.parse(JSON.stringify(data.voice.settings)),authorization:{}},
-    cli:{agent:data.cli.agent,settings:JSON.parse(JSON.stringify(data.cli.settings))},
+    cli:{
+      agent:data.cli.agent,
+      settings:JSON.parse(JSON.stringify(data.cli.settings)),
+      delegation_mode:data.cli.delegation_mode,
+      behavior:JSON.parse(JSON.stringify(data.cli.behavior.values)),
+    },
     // La politique complète, telle que le serveur la décrit : la page ne
     // connaît ni les profils ni les candidats, elle les reçoit.
-    routing:{enabled:data.routing.enabled,profiles:JSON.parse(JSON.stringify(data.routing.policy))},
+    routing:{profiles:JSON.parse(JSON.stringify(data.routing.policy))},
     audio:{...data.audio},
   };
 }
 
 async function openSettings(){
+  const generation=++SET.openGeneration;
   overlay.classList.add('open');SET.open=true;
   // Sans modification en cours, relire : l'état de Voice (Solo Owner,
   // annulation d'écho) a pu changer depuis la dernière ouverture.
   if(!SET.data||!SET.dirty){
     modalContent.innerHTML='<div class="empty">Chargement…</div>';renderTabs();
     try{
-      SET.data=await api('/api/settings');
-      SET.shortcuts=SET.data.shortcuts;
-      SET.draft=draftFrom(SET.data);
-    }catch(e){modalContent.innerHTML=`<div class="notice bad">${esc(e.message)}</div>`;return}
+      const data=await api('/api/settings');
+      if(!SET.open||generation!==SET.openGeneration)return;
+      SET.data=data;SET.shortcuts=data.shortcuts;SET.draft=draftFrom(data);
+    }catch(e){if(SET.open&&generation===SET.openGeneration)modalContent.innerHTML=`<div class="notice bad">${esc(e.message)}</div>`;return}
   }
+  if(!SET.open||generation!==SET.openGeneration)return;
   renderTabs();await renderTab();
 }
 
-function closeSettings(){overlay.classList.remove('open');SET.open=false;if(SET.capture)SET.capture.cancel()}
+function closeSettings(){++SET.openGeneration;++SET.cliGeneration;++SET.cliModelGeneration;++SET.routingGeneration;++SET.voiceGeneration;++SET.audioGeneration;++SET.diagnosticGeneration;SET.renderRevision=(SET.renderRevision||0)+1;SET.routingAdvancedOpen=false;cleanupSettingsSurface();overlay.classList.remove('open');SET.open=false;if(SET.capture)SET.capture.cancel()}
 
 async function saveDraft(options){
   const silent=options&&options.silent;

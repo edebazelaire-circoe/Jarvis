@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-SET-CAT-01",
+      "title": "Evaluate catalog comparison usability",
+      "instructions": "After automated frontend QA passes, compare several usable and unavailable models in the catalog. Verify sorting/filtering is understandable, availability is unambiguous, unknown prices/capabilities are not presented as facts, and the table remains useful without provider credentials.",
+      "expected": "The catalog supports real comparison without implying unavailable or unknown data is usable/factual."
+    }
+  ]
+}

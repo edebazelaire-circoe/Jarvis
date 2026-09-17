@@ -13,6 +13,8 @@ menu est un piège, pas un secours.
 from __future__ import annotations
 
 import asyncio
+from hashlib import sha256
+import hmac
 import json
 from pathlib import Path
 import time
@@ -20,7 +22,7 @@ from typing import Any
 
 import aiohttp
 
-from jarvis.runtime.credentials import provider_spec, redact
+from jarvis.runtime.credentials import provider_spec
 
 # Un catalogue bouge à l'échelle de la semaine ; dix minutes suffisent à éviter
 # un aller-retour réseau à chaque ouverture des réglages.
@@ -189,7 +191,40 @@ class ModelCatalog:
             raw = json.loads(self.cache_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return {}
-        return raw if isinstance(raw, dict) else {}
+        if not isinstance(raw, dict):
+            return {}
+        # Pre-fingerprint caches stored the last four credential characters as
+        # ``key_hint``.  They remain useful as non-authoritative history, but
+        # must never authenticate a cache hit after an upgrade.
+        cleaned: dict[str, dict[str, Any]] = {}
+        for provider, value in raw.items():
+            if isinstance(value, dict):
+                cleaned[str(provider)] = {key: item for key, item in value.items() if key != "key_hint"}
+        return cleaned
+
+    @staticmethod
+    def _credential_fingerprint(provider: str, api_key: str) -> str:
+        """Opaque account discriminator; never returned or written to logs."""
+        material = f"jarvis-model-catalog-v1\0{provider}\0{api_key}".encode("utf-8")
+        return sha256(material).hexdigest()
+
+    @staticmethod
+    def _public_entry(entry: dict[str, Any], *, source: str) -> dict[str, Any]:
+        return {
+            key: value
+            for key, value in {**entry, "source": source}.items()
+            if key not in {"_credential_fingerprint", "key_hint"}
+        }
+
+    @classmethod
+    def _matches_credential(cls, entry: dict[str, Any] | None, provider: str, api_key: str) -> bool:
+        if entry is None or not api_key:
+            return False
+        stored = entry.get("_credential_fingerprint")
+        return isinstance(stored, str) and hmac.compare_digest(
+            stored,
+            cls._credential_fingerprint(provider, api_key),
+        )
 
     def _save(self) -> None:
         try:
@@ -225,22 +260,20 @@ class ModelCatalog:
                 f"Ajoutez une clé {provider_spec(name).label} dans l'onglet API Keys "
                 "pour lister les modèles réels.",
             )
-        hint = redact(key)
         cached = self._cache.get(name)
         fresh = (
-            cached is not None
-            and cached.get("key_hint") == hint
+            self._matches_credential(cached, name, key)
             and (time.time() - float(cached.get("fetched_at") or 0)) < self.ttl_s
         )
         if fresh and not refresh:
-            return {**cached, "source": "cache"}
+            return self._public_entry(cached, source="cache")
 
         lock = self._locks.setdefault(name, asyncio.Lock())
         async with lock:
             cached = self._cache.get(name)
-            if not refresh and cached is not None and cached.get("key_hint") == hint:
+            if not refresh and self._matches_credential(cached, name, key):
                 if (time.time() - float(cached.get("fetched_at") or 0)) < self.ttl_s:
-                    return {**cached, "source": "cache"}
+                    return self._public_entry(cached, source="cache")
             owns = session is None
             http = session or aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_S)
@@ -261,16 +294,25 @@ class ModelCatalog:
                 "provider": name,
                 "models": models,
                 "fetched_at": time.time(),
-                "key_hint": hint,
+                "_credential_fingerprint": self._credential_fingerprint(name, key),
             }
             self._cache[name] = entry
             self._save()
-            return {**entry, "source": "live"}
+            return self._public_entry(entry, source="live")
 
     def cached(self, provider: str) -> dict[str, Any] | None:
         """Dernier catalogue connu, même périmé : mieux qu'un menu vide."""
         entry = self._cache.get(str(provider or "").strip().lower())
-        return {**entry, "source": "stale"} if entry else None
+        return self._public_entry(entry, source="stale") if entry else None
+
+    def cached_for(self, provider: str, api_key: str) -> dict[str, Any] | None:
+        """Last catalog only when it belongs to the currently selected credential."""
+        name = str(provider or "").strip().lower()
+        key = str(api_key or "").strip()
+        entry = self._cache.get(name)
+        if not self._matches_credential(entry, name, key):
+            return None
+        return self._public_entry(entry, source="stale")
 
 
 def filter_by_role(models: list[dict[str, Any]], role: str) -> list[dict[str, Any]]:

@@ -156,7 +156,19 @@ class BackBrainJobWorker:
         # JSON distinguishes admitted task from contextual data without promoting
         # any contextual instruction into the result-only system profile.
         prompt = json.dumps({"request": payload.request_text, "context_data": payload.context_text}, ensure_ascii=False)
-        run = asyncio.create_task(agent.ask(prompt, timeout_s=self.timeout_s), name=f"back-brain-agent-{job.id}")
+        input_text = prompt
+        from jarvis.runtime.prompt_runtime import compose_agent_turn
+        prompt, evidence = compose_agent_turn(
+            agent_id=settings.agent_cli, model=settings.model or None, request_text=prompt,
+            overrides=settings.prompt_overrides, behavior_active=settings.behavior_active,
+        )
+        from jarvis.runtime.prompt_runtime import accepts_keyword_argument, accepts_prompt_evidence
+        ask_kwargs: dict[str, object] = {"timeout_s": self.timeout_s}
+        if evidence is not None and accepts_prompt_evidence(agent.ask):
+            ask_kwargs["prompt_evidence"] = evidence
+        if evidence is not None and accepts_keyword_argument(agent.ask, "input_text"):
+            ask_kwargs["input_text"] = input_text
+        run = asyncio.create_task(agent.ask(prompt, **ask_kwargs), name=f"back-brain-agent-{job.id}")
         owner = _Owner(job, settings, agent, run,
                        None if speculative else payload.provenance.source.correlation_id,
                        payload.provenance.session_id)

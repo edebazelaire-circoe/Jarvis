@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import re
+import time
 
 import pytest
 from aiohttp import web
@@ -74,9 +75,11 @@ async def test_a_routing_policy_is_saved_and_read_back_without_touching_the_rest
 
     assert after["routing"]["enabled"] is True
     assert after["routing"]["policy"]["code"]["candidates"] == [{"agent": "claude", "model": "m1"}]
-    # Rien d'autre n'a bougé : ni la voix, ni le CLI, ni l'audio.
-    for section in ("voice", "cli", "audio"):
+    # Rien d'autre n'a bougé : ni la voix, ni l'audio. Le CLI expose la
+    # projection canonique du même switch routing, sans second stockage.
+    for section in ("voice", "audio"):
         assert after[section] == before[section]
+    assert after["cli"] == {**before["cli"], "delegation_mode": "auto"}
     # Et c'est bien écrit sur le disque, pas seulement en mémoire.
     stored = json.loads((control.runtime_root / "control-center-settings.json").read_text(encoding="utf-8"))
     assert agent_routing.load_policy(stored).enabled is True
@@ -105,7 +108,12 @@ async def test_the_candidates_endpoint_measures_instead_of_assuming(control, mon
     async def fake_models(provider, api_key, **kwargs):
         if provider != "anthropic":
             raise __import__("jarvis.runtime.model_catalog", fromlist=["x"]).CatalogError("catalog_no_key", "pas de clé")
-        return {"provider": provider, "models": [{"id": "m1", "label": "M1", "roles": ("text",)}], "source": "live"}
+        return {
+            "provider": provider,
+            "models": [{"id": "m1", "label": "M1", "roles": ("text",)}],
+            "source": "live",
+            "fetched_at": time.time(),
+        }
 
     monkeypatch.setattr(cli_catalog, "detect_all", fake_detect)
     monkeypatch.setattr(control.catalog, "models", fake_models)
@@ -137,7 +145,12 @@ async def test_a_saved_candidate_that_vanished_is_still_shown(control, monkeypat
         return [{"id": "claude", "label": "Claude", "model_provider": "anthropic", "available": True, "error": ""}]
 
     async def fake_models(provider, api_key, **kwargs):
-        return {"provider": provider, "models": [{"id": "m1", "label": "M1", "roles": ("text",)}], "source": "live"}
+        return {
+            "provider": provider,
+            "models": [{"id": "m1", "label": "M1", "roles": ("text",)}],
+            "source": "live",
+            "fetched_at": time.time(),
+        }
 
     monkeypatch.setattr(cli_catalog, "detect_all", fake_detect)
     monkeypatch.setattr(control.catalog, "models", fake_models)
@@ -153,7 +166,13 @@ async def test_no_secret_ever_reaches_the_routing_payload(control, monkeypatch):
         return [{"id": "claude", "label": "Claude", "model_provider": "anthropic", "available": True, "error": ""}]
 
     async def fake_models(provider, api_key, **kwargs):
-        return {"provider": provider, "models": [{"id": "m1", "roles": ("text",)}], "source": "live", "key_hint": "…9ab"}
+        return {
+            "provider": provider,
+            "models": [{"id": "m1", "roles": ("text",)}],
+            "source": "live",
+            "fetched_at": time.time(),
+            "key_hint": "…9ab",
+        }
 
     monkeypatch.setattr(cli_catalog, "detect_all", fake_detect)
     monkeypatch.setattr(control.catalog, "models", fake_models)
@@ -166,11 +185,11 @@ async def test_no_secret_ever_reaches_the_routing_payload(control, monkeypatch):
 # ------------------------------------------------------------------- page
 
 
-def test_the_page_never_writes_a_model_or_a_profile_of_its_own():
+def test_the_advanced_agent_section_never_writes_a_model_or_profile_of_its_own():
     """Un nom de modèle codé dans le HTML périmerait sans que personne le voie."""
 
     page = PAGE.read_text(encoding="utf-8")
-    start = page.index("async function tabRouting()")
+    start = page.index("function routingAdvancedBody()")
     body = page[start : page.index("/* --- onglet Config", start)]
 
     for invented in ("opus", "sonnet", "haiku", "gpt-", "astra", "luna", "claude-"):
@@ -182,7 +201,7 @@ def test_the_page_never_writes_a_model_or_a_profile_of_its_own():
 
 def test_the_page_shows_why_a_candidate_cannot_be_used():
     page = PAGE.read_text(encoding="utf-8")
-    body = page[page.index("function routingRow(") : page.index("async function tabRouting()")]
+    body = page[page.index("function routingRow(") : page.index("function routingAdvancedBody()")]
 
     assert "unavailable_reason" in body
     assert "indisponible" in body
@@ -220,13 +239,17 @@ def test_changing_the_harness_clears_the_model_and_only_adding_changes_the_polic
     assert "agent:pick.agent,model:pick.model" in add_block and "SET.dirty=true" in add_block
 
 
-def test_the_routing_tab_is_declared_and_rendered_and_saved():
+def test_policy_ui_is_advanced_inside_agent_cli_and_saved_canonically():
     page = PAGE.read_text(encoding="utf-8")
 
-    assert re.search(r"\{id:'routing',label:'Aiguillage',save:true\}", page)
+    assert re.search(r"\{id:'cli',label:'Agent / CLI',save:true\}", page)
+    assert "id:'routing'" not in page
+    assert "Configuration avancée des sous-agents" in page
     # Awaited panels publish only after the render revision guard; an older
     # catalog response cannot overwrite a newly selected voice architecture.
-    assert "else if(SET.tab==='routing')content=await tabRouting()" in page
-    assert "if(revision!==SET.renderRevision)return" in page
-    # Le brouillon envoyé au serveur contient la politique complète.
-    assert "routing:{enabled:data.routing.enabled" in page
+    assert "else if(SET.tab==='cli')content=tabCli()" in page
+    assert "if(revision!==SET.renderRevision||SET.open===false)return" in page
+    # Le brouillon envoie le mode via cli, jamais le switch historique en double.
+    assert "delegation_mode:data.cli.delegation_mode" in page
+    assert "routing:{profiles:JSON.parse(JSON.stringify(data.routing.policy))}" in page
+    assert "routing:{enabled:data.routing.enabled" not in page

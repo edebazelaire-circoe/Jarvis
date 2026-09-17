@@ -1,0 +1,36 @@
+{
+  "slice_id": "04",
+  "task_type": null,
+  "work_intent": "frontend component",
+  "dependencies": [
+    "03"
+  ],
+  "task_type_blocker": "Waived by explicit user authorization on 2026-09-14; task_type remains null rather than inventing a value.",
+  "status": "COMPLETE",
+  "canonical_contract": "docs/catalog/table-component.md",
+  "implementation": [
+    "jarvis/runtime/control_center_catalog.js",
+    "jarvis/runtime/control_center.html",
+    "jarvis/runtime/control_center.py",
+    "tests/unit/test_control_center_catalog_ui.py"
+  ],
+  "frontend_routing": "Claude frontend routing and /impeccable were unavailable in the active tool/skill set; existing Control Center design system and accessibility conventions were applied locally.",
+  "validation": {
+    "command": ".venv/Scripts/python.exe -m pytest -q -p no:cacheprovider -W error -o asyncio_default_fixture_loop_scope=function tests/unit/test_control_center_catalog_ui.py tests/unit/test_catalog_view.py tests/unit/test_settings_endpoints.py tests/unit/test_control_center_quality.py tests/unit/test_control_center_mvp.py",
+    "passed": 192,
+    "failed": 0,
+    "duration_seconds": 9.6,
+    "node_syntax": "passed",
+    "python_compile": "passed",
+    "git_diff_check": "passed with repository line-ending warnings only",
+    "logbroker_cli": "unavailable: ModuleNotFoundError: No module named observability"
+  },
+  "qa_rework": [
+    "Search input remains mounted while result and summary regions update.",
+    "Monotonic request generation plus AbortController enforce last-request-wins for results and errors.",
+    "Destroy aborts pending work, removes named handlers and blocks late DOM/state resurrection.",
+    "Fake-DOM Node tests exercise typing/caret, deferred races, destroy and clean recreation.",
+    "Model cells are semantic row headers; search and filter groups are labelled."
+  ],
+  "qa_pending": []
+}

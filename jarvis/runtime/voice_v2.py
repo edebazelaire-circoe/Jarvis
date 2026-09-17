@@ -579,6 +579,17 @@ class PersistentVoiceRuntime:
                     "speaker_verification": (
                         None if self.authorization_error is not None else self.authorization.verification.value
                     ),
+                    # `voice_arch` reste le champ opérationnel historique et
+                    # vaut donc `legacy` pour une architecture explicite. Ces
+                    # deux identifiants permettent au lecteur d'attribuer le
+                    # constat à la composition exacte sans réinterpréter ce
+                    # champ de compatibilité.
+                    "configuration_id": self.configuration_id,
+                    "architecture": (
+                        self.conversation_architecture.value
+                        if self.conversation_architecture is not None
+                        else self.voice_arch.value
+                    ),
                     "arch": self.voice_arch.value,
                     "phase": phase,
                 }
