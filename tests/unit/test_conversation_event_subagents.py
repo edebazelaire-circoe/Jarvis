@@ -186,6 +186,14 @@ def test_terminal_statuses_map_to_the_contract_and_keep_the_raw_status(agent, st
     assert reconstruct_conversation(events_of(agent))[0].status != "open"
 
 
+def test_usage_the_cli_never_reported_is_left_out_not_recorded_as_zero(agent):
+    ask(agent)
+    feed(agent, agent_call("toolu_U", "Sans usage", model="claude-sonnet-5"), async_launched("toolu_U", "u1"),
+         result("msg-1"), notification("u1", "toolu_U", "completed"))
+    close = dict(events_of(agent)[-1].attributes)
+    assert "tokens" not in close and "tool_uses" not in close and close["status"] == "completed"
+
+
 def test_stopping_the_brain_closes_confirmed_spans_and_forgets_provisional_ones(agent, tmp_path):
     ask(agent)
     feed(agent, agent_call("toolu_1", "Confirmé", model="claude-sonnet-5"), async_launched("toolu_1", "c1"),

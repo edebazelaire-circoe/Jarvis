@@ -374,6 +374,33 @@ details.rd[open]>summary{margin-bottom:14px}
 .tl-status[data-tone=warn] strong{color:var(--warn)}
 .tl-status[data-tone=bad] .tl-led{background:var(--danger)}
 .tl-status[data-tone=bad] strong{color:var(--danger)}
+/* Recherche, transcription, export (Slice 06) : boutons de la barre, panneaux dans le tiroir. */
+.tl-acts{display:flex;gap:6px}
+.tl-act{display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:5px 10px;border:1px solid var(--line);border-radius:6px;background:#071015;color:var(--text);font:inherit;font-size:12px;cursor:pointer;white-space:nowrap}
+.tl-act svg{width:15px;height:15px;flex:none;color:var(--accent)}
+.tl-act:hover,.tl-act[aria-expanded=true]{border-color:var(--accent)}
+.tl-act[aria-expanded=true]{background:rgba(110,231,255,.08)}
+.tl-act:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.tl-sform{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.tl-sfield{flex:1 1 220px;min-width:0}
+.tl-sfield input{box-sizing:border-box;width:100%;background:#071015;border:1px solid var(--line);color:var(--text);padding:7px 9px;border-radius:5px;font:inherit;font-size:13px}
+.tl-sfield input:focus-visible,.tl-check input:focus-visible,.tl-hit:focus-visible,.tl-tx:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.tl-check{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.tl-pstate{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:12px 0 0;font-size:12px;line-height:1.5;font-variant-numeric:tabular-nums}
+.tl-pstate>span{flex:1 1 200px;min-width:0;overflow-wrap:anywhere}
+.tl-pstate[data-tone=bad] strong{color:var(--danger)}.tl-pstate[data-tone=ok] strong{color:var(--ok)}.tl-pstate[data-tone=muted] strong{font-weight:normal;color:var(--muted)}
+.tl-hits{list-style:none;margin:10px 0 0;padding:0;display:grid;gap:6px}
+.tl-hit{display:grid;gap:3px;width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid rgba(113,144,160,.22);border-radius:6px;background:#050b10;color:var(--text);font:inherit;text-align:left;cursor:pointer}
+.tl-hit:hover{border-color:var(--accent)}
+.tl-hmeta{font-size:10.5px;color:var(--muted);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.tl-hwho{color:var(--text)}.tl-hconv{color:var(--warn)}
+.tl-hsnip{font-size:12.5px;line-height:1.5;white-space:normal;overflow-wrap:anywhere}
+.tl-hsnip mark{background:rgba(110,231,255,.22);color:#fff;border-radius:2px;padding:0 1px}
+.tl-hfield{font-size:10.5px;color:#7d97a4}
+.tl-prow{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.tl-pconv code{word-break:break-all}
+.tl-tx{margin:12px 0 0;padding:10px 12px;border:1px solid rgba(113,144,160,.2);border-radius:6px;background:#050b10;font-size:12px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere}
+.tl-e.is-found{box-shadow:0 0 0 2px var(--accent),0 0 0 5px rgba(110,231,255,.25)}
 .tl-bar{position:relative;padding-right:60px}
 .tl-bar>.tl-x{position:absolute;top:4px;right:8px}
 .tl-x{min-width:44px;min-height:44px;background:none;border:1px solid transparent;border-radius:6px;color:var(--muted);font-size:22px;line-height:1;padding:0;cursor:pointer}
@@ -495,9 +522,13 @@ details.rd[open]>summary{margin-bottom:14px}
   .tl-bar>.tl-x{top:2px;right:4px}
   .tl-title{margin:0}
   .tl-tt,.tl-field>span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
-  .tl-field:first-of-type{flex:1 1 calc(100% - 44px);min-width:0}
+  .tl-field:first-of-type{flex:1 1 120px;min-width:0}
   .tl-field:first-of-type select{width:100%;max-width:none}
   #tlSessionWrap select{max-width:110px}
+  /* Boutons en icônes sur la ligne de la conversation (titre, liste, actions) : pas de ligne de plus. */
+  .tl-title{order:-3}.tl-field:first-of-type{order:-2}.tl-acts{order:-1;gap:4px}
+  .tl-act{min-width:36px;min-height:36px;justify-content:center;padding:4px}
+  .tl-al{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
   .tl-seg span{padding:5px 9px}
   .tl-status{flex-basis:100%;order:10;font-size:11px}
   .tl-hcell{padding:8px 6px;letter-spacing:.06em;font-size:10px}
@@ -536,6 +567,7 @@ details.rd[open]>summary{margin-bottom:14px}
     <label class="tl-field" id="tlSessionWrap" hidden><span>Session</span><select id="tlSession"></select></label>
     <fieldset class="tl-seg"><legend>Événements affichés</legend><label><input type="radio" name="tlFilter" value="all" checked><span>Tout</span></label><label><input type="radio" name="tlFilter" value="public"><span>Public</span></label></fieldset>
     <label class="tl-field"><span>Échelle</span><select id="tlZoom"><option value="20">20 px/s</option><option value="40">40 px/s</option><option value="60" selected>60 px/s</option><option value="100">100 px/s</option><option value="160">160 px/s</option></select></label>
+    <div class="tl-acts" role="group" aria-label="Recherche, transcription et export"><button type="button" class="tl-act" id="tlSearchOpen" aria-controls="tlDrawer" aria-expanded="false" title="Rechercher dans les conversations"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5.5 5.5"/></svg><span class="tl-al">Rechercher</span></button><button type="button" class="tl-act" id="tlTranscriptOpen" aria-controls="tlDrawer" aria-expanded="false" title="Transcription lisible (rendue par Core)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h9l4 4v14H6Z"/><path d="M14 3v5h5M9 12h7M9 16h7"/></svg><span class="tl-al">Transcription</span></button><button type="button" class="tl-act" id="tlExportOpen" aria-controls="tlDrawer" aria-expanded="false" title="Exporter les événements canoniques (JSONL)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19h14"/></svg><span class="tl-al">Exporter JSONL</span></button></div>
     <div class="tl-status" id="tlStatus" role="status" data-tone="muted"><span class="tl-led" aria-hidden="true"></span><strong id="tlStatusLabel">En attente</strong><span id="tlStatusDetail"></span></div>
     <button type="button" class="action small" id="tlRetry" hidden>Réessayer maintenant</button>
     <button type="button" class="tl-x" id="tlClose" aria-label="Fermer la chronologie (Échap)">×</button>

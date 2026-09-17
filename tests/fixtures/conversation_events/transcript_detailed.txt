@@ -1,0 +1,26 @@
+Transcription de conversation · conv-t
+Projection déterministe des Conversation Events (contrat v1) ; aucune ligne n'est écrite par un modèle.
+Mode : détaillé · heures UTC · 25 événements lus · 2 lignes illisibles ignorées par Core
+Parole de Jarvis : texte envoyé à la lecture ; une parole coupée n'indique que la durée entendue.
+Lignes « -- » : diagnostic (travaux, sous-agents, outils, échecs), jamais entendu tel quel.
+
+— 2026-09-16 —
+[10:00:00.000] Utilisateur : Jarvis, prépare le dossier de vol de Paul.
+[10:00:00.200] -- Brain : tour accepté
+[10:00:00.400] -- Brain · travail « Recherche des vols » : terminé en 8,6 s
+[10:00:00.600] -- Sous-agent « Rassemble les vols » : terminé en 1 min 34 s · type flight-finder · modèle claude-sonnet-5 · 1234 jetons · 5 outils
+[10:00:00.900] -- Brain : parole demandée : Je regarde tous les vols de la semaine.
+[10:00:01.000] Jarvis [interrompu après 1,4 s entendues] : Je regarde tous les vols de la semaine.
+[10:00:02.500] Utilisateur : Seulement celui de lundi.
+    Et vite, s'il te plaît.
+[10:00:02.600] Jarvis (réflexe) : D'accord.
+[10:00:02.700] -- Outil get_time : terminé en 300 ms · statut ok
+[10:00:04.000] Brain [publié 2 fois] : Le vol de Paul part lundi à 9 h.
+[10:00:04.200] Brain : Rien d'autre à signaler.
+[10:00:04.300] Jarvis : Le vol de Paul part lundi à 9 h.
+[10:00:06.500] Jarvis [lecture en échec] [code speech_speak_failed, classe RuntimeError] : Je vérifie la météo.
+[10:00:06.900] -- Jarvis : parole non prononcée [remplacé] : Autre annonce jamais dite.
+[10:00:07.000] -- Brain : tour en échec (code brain_backend_exception, classe ConnectionResetError)
+[10:00:07.100] -- Système (voix) : échec (code brain_turn_rejected, raison http_error)
+— 2026-09-17 —
+[10:00:05.000] Jarvis [en cours] : Bonjour, nouvelle journée.

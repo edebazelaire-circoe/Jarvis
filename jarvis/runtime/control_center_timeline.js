@@ -643,13 +643,14 @@ const JarvisTimelineCore=(function(){
   }
   const DOT_SHAPES=Object.freeze({'brain.speech.requested':'diamond'});
   const TIP_CHARS=240;
-  function entryHtml(entry,{rulerPx=GEOMETRY.rulerPx,now=null,selected=false,tabindex=-1,blockLinePx=GEOMETRY.linePx,charPx=GEOMETRY.charPx}={}){
+  function entryHtml(entry,{rulerPx=GEOMETRY.rulerPx,now=null,selected=false,found=false,tabindex=-1,blockLinePx=GEOMETRY.linePx,charPx=GEOMETRY.charPx}={}){
     const item=entry.item,tone=toneOf(item),user=item.actor==='user',kind=entry.kind;
     const left=Math.round(rulerPx+entry.x),width=Math.max(8,Math.round(entry.w)),top=Math.round(entry.y0);
     const classes=['tl-e',`tl-${entry.lane}`,`tl-${kind==='bar'?'railbar':kind}`,`is-${tone}`,`st-${item.status}`];
     if(item.actor==='tool')classes.push('tl-tool');
     if(item.visibility===D)classes.push('is-diag');
     if(selected)classes.push('is-selected');
+    if(found)classes.push('is-found');
     const note=playbackNote(item);
     if(note&&item.status!=='open')classes.push('is-unheard');
     const tag=user?'div':'button';
@@ -716,11 +717,16 @@ const JarvisTimelineCore=(function(){
     trace_drill_down_failed:{title:'Lecture de trace en échec',hint:'Erreur inattendue journalisée par le Control Center.'},
     trace_not_applicable:{title:'Pas de trace pour un événement utilisateur',hint:''},
     conversation_event_not_found:{title:'Événement introuvable dans Core',hint:'Absent ou illisible dans le journal de conversation.'},
+    transcript_too_large:{title:'Conversation trop longue pour la transcription',hint:'Utilisez « Exporter JSONL » : l’export n’a pas de limite de taille.'},
+    export_incomplete:{title:'Export incomplet',hint:'Le flux s’est interrompu avant la ligne finale : rien n’a été enregistré, relancez l’export.'},
+    search_busy:{title:'Recherche déjà en cours',hint:'Core n’exécute qu’une recherche à la fois (un autre onglet ?). Réessayez dans un instant.'},
+    projection_busy:{title:'Core est occupé',hint:'Deux transcriptions ou exports sont déjà en cours. Réessayez dans un instant.'},
   });
   const RETRYABLE=new Set(['core_unreachable','conversation_events_unavailable','control_center_stopping','core_unauthorized',
     'core_refused','invalid_core_response','invalid_page','network','timeout','http_error','trace_busy']);
   const BLOCKING=new Set(['invalid_request','forbidden_origin','not_configured','missing_route','trace_not_applicable',
-    'conversation_event_not_found','trace_unreadable','trace_drill_down_failed']);
+    'conversation_event_not_found','trace_unreadable','trace_drill_down_failed','transcript_too_large','export_incomplete',
+    'search_busy','projection_busy']);
   function classifyError(error){
     const err=error||{};
     if(err.name==='AbortError'&&!err.timeout)return {aborted:true};
@@ -772,6 +778,51 @@ const JarvisTimelineCore=(function(){
         if(timer!==null)timers.clearTimeout(timer);
         if(signal)signal.removeEventListener('abort',relay);
       }
+    };
+  }
+
+  /* Texte brut (transcription) : même contrat d'erreur que `fetchJson` (un
+     4xx/5xx lève avec le code et le message JSON du serveur). */
+  function createFetchText(fetchImpl,timers={setTimeout:(f,ms)=>setTimeout(f,ms),clearTimeout:id=>clearTimeout(id)}){
+    return async function fetchText(path,{signal=null,timeoutMs=70000}={}){
+      const controller=new AbortController();
+      let timedOut=false;
+      const relay=()=>controller.abort();
+      if(signal){if(signal.aborted)controller.abort();else signal.addEventListener('abort',relay,{once:true})}
+      const timer=timeoutMs?timers.setTimeout(()=>{timedOut=true;controller.abort()},timeoutMs):null;
+      try{
+        const response=await fetchImpl(path,{signal:controller.signal,headers:{Accept:'text/plain, application/json'},cache:'no-store'});
+        const raw=await response.text();
+        if(!response.ok){
+          let body=null;
+          try{body=raw?JSON.parse(raw):null}catch(parseError){body=null /* argued: a non-JSON error body keeps its raw text as the message */}
+          const failure=new Error((body&&body.error)||(raw&&raw.slice(0,200))||`HTTP ${response.status}`);
+          failure.status=response.status;failure.code=(body&&body.code)||'';
+          throw failure;
+        }
+        return raw;
+      }catch(error){
+        if(timedOut){const late=new Error(`Aucune réponse en ${Math.round(timeoutMs/1000)} s`);late.name='TimeoutError';late.timeout=true;late.code='timeout';throw late}
+        throw error;
+      }finally{
+        if(timer!==null)timers.clearTimeout(timer);
+        if(signal)signal.removeEventListener('abort',relay);
+      }
+    };
+  }
+
+  /* Flux long (export JSONL) : la réponse n'est rendue que si elle est 2xx ;
+     sinon lève comme `fetchJson` (statut, code et message du serveur). */
+  function createOpenStream(fetchImpl){
+    return async function openStream(path,{signal=null}={}){
+      const response=await fetchImpl(path,{signal,cache:'no-store'});
+      if(response.ok)return response;
+      const raw=await response.text();
+      let body=null;
+      try{body=raw?JSON.parse(raw):null}catch(parseError){body=null /* argued: a non-JSON error body keeps its raw text as the message */}
+      const failure=new Error((body&&body.error)||(raw&&raw.slice(0,200))||`HTTP ${response.status}`);
+      failure.status=response.status;failure.code=(body&&body.code)||'';
+      throw failure;
     };
   }
 
@@ -1018,10 +1069,168 @@ const JarvisTimelineCore=(function(){
     }
   }
 
+  /* ------------------------------ transcription, export, recherche (Slice 06) */
+  /* Un seul moteur de rendu : la transcription et l'export sont produits par Core
+     (Python, `conversation_transcript.py` / `conversation_event_export.py`). La
+     page les demande, les montre et les télécharge ; elle ne réécrit rien. */
+  const EXPORT_FORMAT='jarvis.conversation-events.export';
+  const SEARCH_LIMIT=20,SEARCH_MAX_CHARS=200;
+  /* Décalage local du navigateur, en minutes (UTC+02:00 → 120) : Core écrit les heures
+     de la transcription dans ce fuseau et le dit dans l'en-tête. */
+  function localOffsetMinutes(date=new Date()){return -date.getTimezoneOffset()}
+  function offsetLabel(minutes){
+    if(!minutes)return 'UTC';
+    const a=Math.abs(minutes),p=n=>String(n).padStart(2,'0');
+    return `UTC${minutes>0?'+':'-'}${p(Math.floor(a/60))}:${p(a%60)}`;
+  }
+  function transcriptUrl(conversationId,mode,utcOffsetMinutes=0){
+    const offset=Number.isInteger(utcOffsetMinutes)?utcOffsetMinutes:0;
+    return `/api/conversations/transcript?conversation_id=${encodeURIComponent(conversationId)}&mode=${mode==='detailed'?'detailed':'plain'}&utc_offset_minutes=${offset}`;
+  }
+  function exportUrl(conversationId){return `/api/conversations/export?conversation_id=${encodeURIComponent(conversationId)}`}
+  function searchUrl({q,conversationId=null,beforeSequence=null,limit=SEARCH_LIMIT}){
+    const params=[`q=${encodeURIComponent(q)}`,`limit=${limit}`];
+    if(conversationId)params.push(`conversation_id=${encodeURIComponent(conversationId)}`);
+    if(Number.isInteger(beforeSequence))params.push(`before_sequence=${beforeSequence}`);
+    return `/api/conversations/search?${params.join('&')}`;
+  }
+  /* Même règle que `export_filename` (Python), testée à l'identique. */
+  /* FNV-1a 32 bits des octets UTF-8, en 8 chiffres hexadécimaux (même calcul que Python). */
+  function fnv1a(text){
+    let h=0x811c9dc5;
+    for(const byte of new TextEncoder().encode(String(text))){h^=byte;h=Math.imul(h,0x01000193)>>>0}
+    return h.toString(16).padStart(8,'0');
+  }
+  function fileStem(conversationId){
+    const id=String(conversationId);
+    const mapped=Array.from(id).map(c=>/^[A-Za-z0-9._-]$/.test(c)?c:'_').join('');
+    const stem=mapped.slice(0,80).replace(/^[._]+|[._]+$/g,'');
+    /* Deux ids qui ne diffèrent que par des caractères remplacés gardent des noms distincts. */
+    return `conversation-${stem||'sans-id'}${mapped===id?'':`-${fnv1a(id)}`}`;
+  }
+  function exportFilename(conversationId){return `${fileStem(conversationId)}.events.jsonl`}
+  function transcriptFilename(conversationId,mode){return `${fileStem(conversationId)}.transcription${mode==='detailed'?'-detaillee':''}.txt`}
+  function fmtBytes(n){
+    const v=Math.max(0,Number(n)||0);
+    if(v<1024)return `${v} o`;
+    if(v<1048576)return `${(v/1024).toFixed(1).replace('.',',')} Ko`;
+    return `${(v/1048576).toFixed(1).replace('.',',')} Mo`;
+  }
+  /* Dernière ligne d'un export : la ligne finale prouve qu'il est complet. */
+  function exportSummary(tailText){
+    const lines=String(tailText||'').split('\n').filter(l=>l.trim());
+    const last=lines.length?lines[lines.length-1]:'';
+    let record=null;
+    try{record=JSON.parse(last)}catch(e){record=null /* argued: a torn last line is exactly an incomplete export */}
+    const counts=record&&record.counts;
+    if(record&&record.format===EXPORT_FORMAT&&record.complete===true&&counts&&Number.isInteger(counts.events)&&Number.isInteger(counts.skipped_rows))
+      return {complete:true,events:counts.events,skippedRows:counts.skipped_rows};
+    return {complete:false,events:null,skippedRows:null};
+  }
+  function searchQueryProblem(q){
+    const text=String(q??'');
+    if(!text.trim())return 'Saisissez au moins un mot.';
+    if(Array.from(text).length>SEARCH_MAX_CHARS)return `${SEARCH_MAX_CHARS} caractères au plus.`;
+    return null;
+  }
+  const ACTOR_LABELS=Object.freeze({user:'Utilisateur',mouth:'Jarvis · voix',brain:'Brain',subagent:'Sous-agent',tool:'Outil',system:'Système'});
+  const MATCHED_LABELS=Object.freeze({content:'texte',event_type:'type',actor:'acteur'});
+  /* Extrait surligné : `marks` sont des positions en points de code (Python),
+     donc découpées sur `Array.from`, jamais sur les unités UTF-16. */
+  function snippetHtml(snippet,marks){
+    const chars=Array.from(String(snippet||'')),out=[];
+    let at=0;
+    for(const [start,end] of (Array.isArray(marks)?marks:[])){
+      if(!Number.isInteger(start)||!Number.isInteger(end)||start<at||end<=start||end>chars.length)continue;
+      out.push(escapeHtml(chars.slice(at,start).join('')),`<mark>${escapeHtml(chars.slice(start,end).join(''))}</mark>`);
+      at=end;
+    }
+    out.push(escapeHtml(chars.slice(at).join('')));
+    return out.join('');
+  }
+  /* Jour local (comme fmtClock), jamais le jour UTC : 00:30 à Paris reste le bon jour. */
+  function localDay(ms){
+    const d=new Date(ms),p=n=>String(n).padStart(2,'0');
+    return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`;
+  }
+  function hitView(hit,{currentConversationId=null}={}){
+    const at=timeMs(hit.occurred_at);
+    const matched=(hit.matched||[]).map(f=>MATCHED_LABELS[f]||String(f).replace(/^attributes\./,''));
+    return {event_id:hit.event_id,conversation_id:hit.conversation_id,visibility:hit.visibility,
+      who:ACTOR_LABELS[hit.actor]||hit.actor,what:typeLabel({event_type:hit.event_type}),
+      when:at===null?'—':fmtClock(at,{millis:false}),day:at===null?'':localDay(at),
+      elsewhere:!!currentConversationId&&hit.conversation_id!==currentConversationId,
+      conversation:String(hit.conversation_id),matched:matched.join(', '),snippet:snippetHtml(hit.snippet,hit.marks)};
+  }
+  /* Ce que dit la zone de recherche : ce qui se passe, depuis quand, comment en sortir. */
+  /* Les panneaux ne relancent rien d'eux-mêmes : une indication qui promet une
+     « reprise automatique » (écrite pour le flux direct) est remplacée. */
+  function panelHint(error){
+    const hint=String((error&&error.hint)||'');
+    const kept=hint.split(/(?<=\.)\s+/).filter(sentence=>sentence&&!/automatique/i.test(sentence)).join(' ');
+    return /automatique/i.test(hint)?[kept,'Rien ne se relance tout seul ici : utilisez « Réessayer ».'].filter(Boolean).join(' '):hint;
+  }
+  function searchStateView(search,now){
+    const s=search||{};
+    if(s.loading)return {tone:'busy',text:`Recherche en cours · ${ago(now-(s.startedAt||now))}`,cancel:true};
+    if(s.error)return {tone:'bad',text:s.error.title,detail:[s.error.message,panelHint(s.error)].filter(Boolean).join(' · '),retry:true};
+    if(!s.done)return {tone:'muted',text:'Texte dit ou montré, identifiants, types et codes d’état. Jamais la trace ni le diagnostic privé.'};
+    const n=(s.hits||[]).length,parts=[n?plural(n,'résultat','résultats'):'Aucun résultat'];
+    if(s.scanLimited)parts.push(`recherche arrêtée après ${plural(s.scanned||0,'événement parcouru','événements parcourus')}`);
+    if(s.skippedRows)parts.push(`${plural(s.skippedRows,'ligne illisible ignorée','lignes illisibles ignorées')}`);
+    return {tone:n?'ok':'muted',text:parts.join(' · '),more:!!s.hasMore};
+  }
+  /* État d'une transcription ou d'un export : en cours (quoi, depuis quand,
+     combien reçu, Annuler), échec (cause réelle, Réessayer) ou résultat. */
+  function jobStateView(kind,job,now){
+    const j=job||{},since=ago(now-(j.startedAt||now));
+    if(j.loading){
+      const text=kind==='export'?`Export en cours · ${fmtBytes(j.received||0)} reçus · ${since}`:`Transcription rendue par Core… · ${since}`;
+      return {tone:'busy',text,cancel:true};
+    }
+    if(j.error)return {tone:'bad',text:j.error.title,detail:[j.error.message,panelHint(j.error)].filter(Boolean).join(' · '),retry:true};
+    if(!j.done)return {tone:'muted',text:kind==='export'?'Aucun export lancé.':'Aucune transcription chargée.'};
+    if(kind==='export'){
+      if(j.events===0)return {tone:'muted',text:'Aucun événement dans cette conversation : aucun fichier enregistré.',retry:true};
+      const skipped=j.skippedRows?` · ${plural(j.skippedRows,'ligne illisible ignorée','lignes illisibles ignorées')} par Core`:'';
+      return {tone:'ok',text:`Export complet : ${plural(j.events||0,'événement','événements')}${skipped} · ${fmtBytes(j.received||0)} · ${j.filename}`,retry:true};
+    }
+    const lines=String(j.text||'').split('\n').filter(Boolean).length;
+    return {tone:'ok',text:`${plural(lines,'ligne','lignes')} · ${fmtBytes(j.bytes||0)} · rendue en ${fmtDuration(j.elapsedMs||0)}`,retry:true};
+  }
+  /* Échec d'un export : une fois des octets reçus, toute coupure (réseau, délai,
+     ligne finale absente) est un export incomplet, rien n'est enregistré ; avant,
+     l'erreur du serveur est montrée telle quelle. */
+  function exportFailure(error,{received=0,timedOut=false}={}){
+    const base=timedOut?Object.assign(new Error('Aucune donnée reçue depuis 30 s'),{code:'timeout',timeout:true}):error;
+    const info=classifyError(base);
+    if(info.aborted)return {aborted:true,title:'Export annulé',message:'',hint:''};
+    if(received>0&&info.code!=='export_incomplete'){
+      return {...classifyError({code:'export_incomplete'}),
+        message:`Flux interrompu après ${fmtBytes(received)} reçus (${info.message||info.title}). Aucun fichier enregistré.`};
+    }
+    return info;
+  }
+  /* « ↓ N nouveaux » : ne compte que des entrées arrivées après une hydratation déjà
+     vue pour la même conversation (la dernière page d'un changement ou d'un saut
+     n'est pas « nouvelle ») ; suivre le bas remet le compteur à zéro. */
+  function trackNewEntries(memo,{conversationId,hydrated,follow,visibleCount,previousCount}){
+    const liveBefore=memo.liveConversation===conversationId;
+    let pending=memo.pending||0;
+    if(!follow&&liveBefore&&visibleCount>previousCount&&previousCount>0)pending+=visibleCount-previousCount;
+    if(follow)pending=0;
+    return {pending,liveConversation:hydrated?conversationId:null};
+  }
+  /* Élément de la chronologie qui porte un événement (fusionné compris), ou null. */
+  function itemForEvent(ctx,eventId){return ctx&&ctx.byEvent?ctx.byEvent.get(eventId)||null:null}
+
   return {SPECS,SPAN_OPENER,ANOMALY,LANES,LANE_INDEX,GEOMETRY,DEFAULT_PPS,ERROR_TEXT,readableEvents,reconstruct,toRow,collapseMessages,filterItems,
     laneOf,isSpan,entryKind,displayText,typeLabel,statusLabel,toneOf,playbackNote,fmtDuration,fmtClock,durationOf,
     wrapLines,cardHeight,subagentName,layout,visibleRange,tickStep,ticks,neighbor,entryHtml,ariaLabel,iconSvg,escapeHtml,classifyError,backoffMs,
-    createFetchJson,createFeed,statusView,emptyView,indexItems,detailModel,traceModel};
+    createFetchJson,createFetchText,createOpenStream,createFeed,statusView,emptyView,indexItems,detailModel,traceModel,
+    EXPORT_FORMAT,SEARCH_LIMIT,SEARCH_MAX_CHARS,transcriptUrl,exportUrl,searchUrl,exportFilename,transcriptFilename,fmtBytes,
+    exportSummary,searchQueryProblem,snippetHtml,hitView,searchStateView,jobStateView,itemForEvent,
+    localOffsetMinutes,offsetLabel,localDay,fnv1a,exportFailure,trackNewEntries,panelHint};
 })();
 
 /* Exécution par les tests (node) ; dans la page, `module` n'existe pas. */
@@ -1044,13 +1253,18 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisTimelineCore
     heads:q('#tlHeads'),canvas:q('#tlCanvas'),grid:q('#tlGrid'),ruler:q('#tlRuler'),breaks:q('#tlBreaks'),items:q('#tlItems'),
     empty:q('#tlEmpty'),newPill:q('#tlNew'),drawer:q('#tlDrawer'),drawerTitle:q('#tlDrawerTitle'),
     drawerBody:q('#tlDrawerBody'),drawerClose:q('#tlDrawerClose'),announce:q('#tlAnnounce'),
+    searchOpen:q('#tlSearchOpen'),transcriptOpen:q('#tlTranscriptOpen'),exportOpen:q('#tlExportOpen'),
   };
   const fetchJson=T.createFetchJson(window.fetch.bind(window));
+  const fetchText=T.createFetchText(window.fetch.bind(window));
+  const openStream=T.createOpenStream(window.fetch.bind(window));
   const OVERSCAN=700,CONVERSATIONS_EVERY_MS=15000,CONVERSATIONS_RETRY_MS=5000,SWITCH_SETTLE_MS=350;
   const S={open:false,pinned:false,selectedId:null,rulerPx:T.GEOMETRY.rulerPx,charPx:T.GEOMETRY.charPx,heightFix:new Map(),inerted:[],unreadable:0,returnFocus:null,conversations:[],conv:{loading:false,error:null,loadedAt:0,startedAt:0},
     sessions:[],mode:'all',pps:T.DEFAULT_PPS,items:[],ctx:null,version:-1,model:null,visibleCount:0,pool:new Map(),
     raf:0,tick:null,switchTimer:null,selected:null,focusId:null,pendingNew:0,traces:new Map(),parents:new Map(),
-    lastPhase:'',lastAnnounceAt:0,announcedCount:0,sessionReq:0};
+    lastPhase:'',lastAnnounceAt:0,announcedCount:0,sessionReq:0,
+    /* Slice 06 : panneau du tiroir (recherche, transcription, export), saut vers un résultat. */
+    panel:null,panelReturn:null,search:{q:'',all:true},transcript:{mode:'plain'},exportJob:{},jump:null,foundId:null};
 
   const feed=T.createFeed({request:fetchJson,onChange:onFeed});
 
@@ -1088,6 +1302,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisTimelineCore
     feed.stop();
     clearInterval(S.tick);S.tick=null;clearTimeout(S.switchTimer);
     S.switchTimer=null;
+    closePanel(false);
     closeDrawer(false);
     for(const node of S.inerted)node.inert=false;
     S.inerted=[];
@@ -1137,6 +1352,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisTimelineCore
       renderConversationSelect();scheduleRebuild(true);return;
     }
     closeDrawer(false);
+    if(!S.jump||S.jump.conversationId!==id)S.foundId=null;
     S.selected=null;S.focusId=null;S.traces.clear();S.parents.clear();S.pendingNew=0;S.version=-1;
     for(const node of S.pool.values())node.remove();
     S.pool.clear();
@@ -1169,6 +1385,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisTimelineCore
   /* ----------------------------------------------------------------- flux */
   function onFeed(state,reason){
     if(!S.open)return;
+    if(reason==='start'&&S.panel==='search')renderPanel();  // "autre conversation" follows the shown one
     if(reason==='events'||reason==='start'){
       if(state.hydrated&&reason==='events'){
         const fresh=state.rows.size-S.announcedCount;
@@ -1205,6 +1422,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisTimelineCore
     if(!c.loading&&Date.now()-c.loadedAt>(c.error?CONVERSATIONS_RETRY_MS:CONVERSATIONS_EVERY_MS))loadConversations();
     if(S.model&&S.model.openCount>0)scheduleRebuild();
     root.querySelectorAll('[data-since]').forEach(node=>{node.textContent=T.fmtDuration(Date.now()-Number(node.dataset.since))});
+    if(S.panel&&(S.search.loading||S.transcript.loading||S.exportJob.loading))renderPanel();
   }
 
   /* ------------------------------------------------------------- rendu */
@@ -1247,14 +1465,16 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisTimelineCore
     if(follow&&visible.length)el.scroll.scrollTop=el.scroll.scrollHeight;
     else if(anchorTime!==null&&S.zoomChanged)el.scroll.scrollTop=S.model.toY(anchorTime)+canvasTop()-el.scroll.clientHeight/2;
     S.zoomChanged=false;
-    if(!follow&&state.hydrated&&visible.length>previous&&previous>0)S.pendingNew+=visible.length-previous;
-    if(follow)S.pendingNew=0;
+    const counted=T.trackNewEntries({pending:S.pendingNew,liveConversation:S.liveConversation},
+      {conversationId:state.conversationId,hydrated:state.hydrated,follow,visibleCount:visible.length,previousCount:previous});
+    S.pendingNew=counted.pending;S.liveConversation=counted.liveConversation;
     el.newPill.hidden=!S.pendingNew;
     el.newPill.textContent=`↓ ${S.pendingNew} nouveau${S.pendingNew>1?'x':''}`;
     renderEmpty(pending?{tone:'busy',title:'Chargement de la conversation…',body:''}
       :T.emptyView({feed:state,conversations:S.conv,total:S.items.length,visible:visible.length,mode:S.mode}));
     renderWindow();
     if(S.selected)refreshDrawer();
+    if(S.jump)tryJump();
   }
   function renderHeads(visible){
     const counts=Object.fromEntries(T.LANES.map(l=>[l.id,0]));
@@ -1279,7 +1499,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisTimelineCore
     if(!S.focusId||!m.index.has(S.focusId))S.focusId=visible.length?visible[0].item.item_id:(m.entries[0]&&m.entries[0].item.item_id)||null;
     for(const entry of visible){
       const id=entry.item.item_id;keep.add(id);
-      const html=T.entryHtml(entry,{rulerPx:S.rulerPx,charPx:S.charPx,now,selected:S.selected===id,tabindex:S.focusId===id?0:-1});
+      const html=T.entryHtml(entry,{rulerPx:S.rulerPx,charPx:S.charPx,now,selected:S.selected===id,found:S.foundId===id,tabindex:S.focusId===id?0:-1});
       let node=S.pool.get(id);
       if(node&&node._html===html)continue;
       const holder=document.createElement('div');holder.innerHTML=html;
@@ -1372,6 +1592,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisTimelineCore
   function openDetail(id){
     const item=S.ctx&&S.ctx.byItem.get(id);
     if(!item||item.actor==='user')return;
+    if(S.panel)closePanel(false);
     const previous=S.selected;
     S.selected=id;
     el.drawer.hidden=false;
@@ -1383,7 +1604,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisTimelineCore
     scheduleRebuild();
   }
   function closeDrawer(restore){
-    if(!S.selected){el.drawer.hidden=true;root.classList.remove('has-drawer');return}
+    if(!S.selected){if(!S.panel){el.drawer.hidden=true;root.classList.remove('has-drawer')}return}
     const id=S.selected;S.selected=null;
     el.drawer.hidden=true;el.drawerBody.innerHTML='';el.drawerBody._html='';
     root.classList.remove('has-drawer');
@@ -1498,7 +1719,261 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisTimelineCore
       if(typeof openAgentsAt==='function')openAgentsAt('trace',task);
     }
   });
-  el.drawerClose.addEventListener('click',()=>closeDrawer(true));
+  el.drawerClose.addEventListener('click',()=>{if(S.panel)closePanel(true);else closeDrawer(true)});
+
+
+  /* --------------------------------------- recherche, transcription, export */
+  /* Trois panneaux dans le tiroir de détail (un à la fois, comme le détail).
+     Le texte et l'export sont produits par Core ; chaque attente montre ce qui
+     se passe, depuis quand, avec Annuler, et se termine par le résultat ou la
+     cause réelle de l'échec avec Réessayer. */
+  const PANEL_TITLES={search:'Recherche',transcript:'Transcription',export:'Export JSONL'};
+  const PANEL_BUTTONS={search:el.searchOpen,transcript:el.transcriptOpen,export:el.exportOpen};
+  function currentConversation(){return S.selectedId||feed.state.conversationId||null}
+  function stateHtml(view){
+    const busy=view.tone==='busy';
+    return `<p class="tl-pstate" data-tone="${view.tone}">${busy?'<span class="adot running" aria-hidden="true"></span>':''}<span><strong>${T.escapeHtml(view.text)}</strong>${view.detail?` <span class="hint">${T.escapeHtml(view.detail)}</span>`:''}</span>`
+      +`${view.cancel?'<button type="button" class="action small" data-tl-cancel>Annuler</button>':''}${view.retry&&view.tone==='bad'?'<button type="button" class="action small" data-tl-retry-job>Réessayer</button>':''}</p>`;
+  }
+  function openPanel(kind){
+    if(S.panel===kind){renderPanel();return}
+    if(S.selected)closeDrawer(false);
+    if(S.panel)closePanel(false);
+    S.panel=kind;S.panelReturn=PANEL_BUTTONS[kind]||null;
+    for(const [name,button] of Object.entries(PANEL_BUTTONS))if(button)button.setAttribute('aria-expanded',String(name===kind));
+    el.drawer.hidden=false;root.classList.add('has-drawer');
+    el.drawer.dataset.lane='';
+    el.drawerTitle.textContent=PANEL_TITLES[kind];el.drawerTitle.title=PANEL_TITLES[kind];
+    el.drawerBody._html='';
+    const conv=currentConversation();
+    if(kind==='search'){
+      el.drawerBody.innerHTML=`<form class="tl-sform" id="tlSearchForm" role="search" novalidate>
+        <label class="tl-sfield"><span class="sr">Texte à chercher</span><input id="tlSearchInput" type="search" autocomplete="off" spellcheck="false" placeholder="Mot, phrase, identifiant, code…" value="${T.escapeHtml(S.search.q||'')}"></label>
+        <button type="submit" class="action small">Chercher</button>
+        <label class="tl-check"><input type="checkbox" id="tlSearchAll"${S.search.all!==false?' checked':''}><span>Toutes les conversations</span></label>
+      </form><div id="tlPanelState"></div><ol class="tl-hits" id="tlHits" aria-label="Résultats de recherche"></ol><div id="tlPanelMore"></div>`;
+    }else if(kind==='transcript'){
+      el.drawerBody.innerHTML=`<div class="tl-prow"><fieldset class="tl-seg"><legend>Mode de transcription</legend><label><input type="radio" name="tlTxMode" value="plain"${S.transcript.mode!=='detailed'?' checked':''}><span>Simple</span></label><label><input type="radio" name="tlTxMode" value="detailed"${S.transcript.mode==='detailed'?' checked':''}><span>Détaillé</span></label></fieldset>
+        <button type="button" class="action small" data-tl-tx-download>Télécharger .txt</button></div>
+        <p class="hint">Rendue par Core à partir des seuls Conversation Events : la même que celle d’un export ré-importé avec le même fuseau. Heures locales (${T.escapeHtml(T.offsetLabel(T.localOffsetMinutes()))}), comme la chronologie. Parole de Jarvis = texte envoyé à la lecture.</p>
+        <div id="tlPanelState"></div><pre class="tl-tx" id="tlTxText" tabindex="0" aria-label="Texte de la transcription" hidden></pre>`;
+    }else{
+      el.drawerBody.innerHTML=`<p class="hint">Événements canoniques tels que stockés dans Core, une ligne JSON chacun, entre une ligne d’en-tête et une ligne finale de contrôle. Ré-importables hors ligne (<code>read_export</code>).</p>
+        <p class="tl-pconv">Conversation <code>${T.escapeHtml(conv||'—')}</code></p><div id="tlPanelState"></div>`;
+    }
+    renderPanel();
+    requestAnimationFrame(()=>{
+      const target=kind==='search'?q('#tlSearchInput'):kind==='transcript'?q('input[name="tlTxMode"]:checked'):el.drawerClose;
+      if(target)target.focus({preventScroll:true});
+    });
+    if(kind==='transcript'&&(!S.transcript.done||S.transcript.conversationId!==conv||S.transcript.loadedMode!==S.transcript.mode))loadTranscript();
+    if(kind==='export'&&!S.exportJob.loading)runExport();
+  }
+  function closePanel(restore){
+    if(!S.panel)return;
+    const kind=S.panel,back=S.panelReturn;
+    if(kind==='search'&&S.search.controller)S.search.controller.abort();
+    if(kind==='transcript'&&S.transcript.controller)S.transcript.controller.abort();
+    if(kind==='export'&&S.exportJob.controller)S.exportJob.controller.abort();
+    S.panel=null;S.panelReturn=null;
+    for(const button of Object.values(PANEL_BUTTONS))if(button)button.setAttribute('aria-expanded','false');
+    if(!S.selected){el.drawer.hidden=true;root.classList.remove('has-drawer');el.drawerBody.innerHTML='';el.drawerBody._html=''}
+    if(restore&&back&&back.isConnected)back.focus({preventScroll:true});
+  }
+  function renderPanel(){
+    if(!S.panel)return;
+    const now=Date.now(),state=q('#tlPanelState');
+    if(S.panel==='search'){
+      const view=T.searchStateView(S.search,now);
+      if(state)state.innerHTML=stateHtml(view);
+      const list=q('#tlHits'),more=q('#tlPanelMore');
+      if(list){
+        const current=feed.state.conversationId;
+        const html=(S.search.hits||[]).map((hit,i)=>{
+          const v=T.hitView(hit,{currentConversationId:current});
+          return `<li><button type="button" class="tl-hit" data-tl-hit="${i}" aria-label="${T.escapeHtml(`${v.who}, ${v.what}, ${v.day} ${v.when}${v.elsewhere?', autre conversation':''} : ${hit.snippet}`)}">`
+            +`<span class="tl-hmeta"><span class="tl-hwho">${T.escapeHtml(v.who)}</span> · ${T.escapeHtml(v.what)} · <time>${T.escapeHtml(v.day)} ${T.escapeHtml(v.when)}</time>${v.elsewhere?` · <span class="tl-hconv" title="${T.escapeHtml(v.conversation)}">autre conversation</span>`:''}</span>`
+            +`<span class="tl-hsnip">${v.snippet}</span>${v.matched?`<span class="tl-hfield">trouvé dans : ${T.escapeHtml(v.matched)}</span>`:''}</button></li>`;
+        }).join('');
+        if(list._html!==html){list.innerHTML=html;list._html=html}
+      }
+      if(more)more.innerHTML=view.more&&!S.search.loading?`<button type="button" class="action small" data-tl-more>${S.search.scanLimited?'Continuer la recherche':'Plus de résultats'}</button>`:'';
+    }else if(S.panel==='transcript'){
+      const job=S.transcript;
+      if(state)state.innerHTML=stateHtml(T.jobStateView('transcript',job,now));
+      const pre=q('#tlTxText'),download=q('[data-tl-tx-download]');
+      if(pre){
+        const text=job.done&&!job.loading?job.text:'';
+        if(pre._text!==text){pre.textContent=text;pre._text=text}
+        pre.hidden=!text;
+      }
+      if(download)download.disabled=!(job.done&&!job.loading&&job.text);
+    }else if(state){
+      state.innerHTML=stateHtml(T.jobStateView('export',S.exportJob,now));
+    }
+  }
+
+  async function runSearch(more){
+    const input=q('#tlSearchInput'),all=q('#tlSearchAll');
+    const text=more?S.search.q:(input?input.value:'');
+    const problem=T.searchQueryProblem(text);
+    if(problem){S.search={...S.search,q:text,error:{title:'Recherche impossible',message:problem,hint:''},done:false,loading:false};renderPanel();if(input)input.focus();return}
+    if(S.search.controller)S.search.controller.abort();
+    const controller=new AbortController();
+    const scope=more?S.search.scope:(all&&!all.checked?currentConversation():null);
+    const previous=more?S.search.hits||[]:[];
+    S.search={q:text,all:!scope,scope,loading:true,startedAt:Date.now(),controller,hits:previous,
+      cursor:more?S.search.cursor:null,done:more,scanLimited:false,scanned:0,skippedRows:more?S.search.skippedRows:0,error:null};
+    renderPanel();
+    try{
+      const page=await fetchJson(T.searchUrl({q:text,conversationId:scope,beforeSequence:more?S.search.cursor:null}),{signal:controller.signal,timeoutMs:40000});
+      if(S.search.controller!==controller)return;
+      if(!Array.isArray(page.hits))throw Object.assign(new Error('page de recherche hors contrat'),{code:'invalid_page'});
+      S.search={...S.search,loading:false,done:true,hits:[...previous,...page.hits],cursor:page.next_cursor,hasMore:!!page.has_more,
+        scanLimited:!!page.scan_limited,scanned:Number(page.scanned_rows)||0,skippedRows:(S.search.skippedRows||0)+(Number(page.skipped_rows)||0),controller:null};
+      const n=S.search.hits.length;
+      announce(n?`${n} résultat${n>1?'s':''}`:'Aucun résultat');
+    }catch(error){
+      if(S.search.controller!==controller)return;
+      const info=T.classifyError(error);
+      S.search={...S.search,loading:false,controller:null,error:info.aborted?{title:'Recherche annulée',message:'',hint:''}:info};
+      if(!info.aborted&&typeof console!=='undefined')console.error('timeline search failed',info.code,info.message);
+    }finally{
+      if(S.search.controller===controller)S.search.controller=null;
+      renderPanel();
+    }
+  }
+  function jumpTo(index){
+    const hit=(S.search.hits||[])[index];
+    if(!hit)return;
+    if(S.mode==='public'&&hit.visibility!=='public'){
+      const all=root.querySelector('input[name="tlFilter"][value="all"]');
+      all.checked=true;S.mode='all';
+    }
+    S.jump={eventId:hit.event_id,conversationId:hit.conversation_id,startedAt:Date.now()};
+    S.foundId=null;
+    if(S.selectedId!==hit.conversation_id||feed.state.conversationId!==hit.conversation_id)selectConversation(hit.conversation_id,true);
+    scheduleRebuild(true);
+  }
+  /* Appelé après chaque reconstruction : l'événement est-il déjà chargé ? */
+  function tryJump(){
+    const jump=S.jump,state=feed.state;
+    if(!jump||state.conversationId!==jump.conversationId||S.selectedId!==jump.conversationId)return;
+    const item=T.itemForEvent(S.ctx,jump.eventId);
+    if(item&&S.model&&S.model.index.has(item.item_id)){
+      S.jump=null;S.foundId=item.item_id;
+      /* Écran où le tiroir recouvre la chronologie : il se referme pour montrer
+         l'entrée trouvée (les résultats restent, « Rechercher » les rouvre). */
+      if(S.panel&&window.matchMedia&&window.matchMedia('(max-width:1099px)').matches)closePanel(false);
+      focusEntry(item.item_id);
+      announce('Événement trouvé dans la chronologie');
+      return;
+    }
+    if(state.hydrated&&state.phase==='live'){
+      S.jump=null;
+      S.search={...S.search,error:{title:'Événement absent de la chronologie',message:'Il n’est plus lisible dans cette conversation (ligne illisible ou retirée par la rétention).',hint:''}};
+      renderPanel();
+    }
+  }
+
+  async function loadTranscript(){
+    const conv=currentConversation();
+    if(S.transcript.controller)S.transcript.controller.abort();
+    if(!conv){S.transcript={mode:S.transcript.mode,error:{title:'Aucune conversation',message:'Choisissez une conversation.',hint:''}};renderPanel();return}
+    const controller=new AbortController(),mode=S.transcript.mode;
+    S.transcript={mode,loading:true,startedAt:Date.now(),controller,conversationId:conv};
+    renderPanel();
+    try{
+      const offset=T.localOffsetMinutes();
+      const text=await fetchText(T.transcriptUrl(conv,mode,offset),{signal:controller.signal,timeoutMs:70000});
+      if(S.transcript.controller!==controller)return;
+      S.transcript={mode,done:true,text,bytes:new Blob([text]).size,elapsedMs:Date.now()-S.transcript.startedAt,conversationId:conv,loadedMode:mode,offset};
+      announce('Transcription chargée');
+    }catch(error){
+      if(S.transcript.controller!==controller)return;
+      const info=T.classifyError(error);
+      S.transcript={mode,conversationId:conv,error:info.aborted?{title:'Transcription annulée',message:'',hint:''}:info};
+      if(!info.aborted&&typeof console!=='undefined')console.error('timeline transcript failed',info.code,info.message);
+    }finally{
+      renderPanel();
+    }
+  }
+  function saveBlob(blob,filename){
+    const url=URL.createObjectURL(blob),link=document.createElement('a');
+    link.href=url;link.download=filename;link.hidden=true;
+    root.appendChild(link);link.click();link.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),60000);
+  }
+  async function runExport(){
+    const conv=currentConversation();
+    if(S.exportJob.controller)S.exportJob.controller.abort();
+    if(!conv){S.exportJob={error:{title:'Aucune conversation',message:'Choisissez une conversation à exporter.',hint:''}};renderPanel();return}
+    const controller=new AbortController(),filename=T.exportFilename(conv);
+    const job={loading:true,startedAt:Date.now(),controller,received:0,filename,conversationId:conv};
+    S.exportJob=job;renderPanel();
+    let idle=null;
+    const arm=()=>{clearTimeout(idle);idle=setTimeout(()=>{job.timedOut=true;controller.abort()},30000)};
+    try{
+      arm();
+      const response=await openStream(T.exportUrl(conv),{signal:controller.signal});
+      const reader=response.body.getReader(),parts=[];
+      for(;;){
+        const {done,value}=await reader.read();
+        if(done)break;
+        parts.push(value);job.received+=value.byteLength;arm();
+        if(S.panel==='export'&&S.exportJob===job)renderPanel();
+      }
+      const blob=new Blob(parts,{type:'application/x-ndjson'});
+      const summary=T.exportSummary(await blob.slice(Math.max(0,blob.size-4096)).text());
+      if(!summary.complete)throw Object.assign(new Error('Ligne finale de contrôle absente.'),{code:'export_incomplete'});
+      if(S.exportJob!==job)return;
+      S.exportJob={done:true,received:blob.size,events:summary.events,skippedRows:summary.skippedRows,filename,conversationId:conv,saved:summary.events>0};
+      if(summary.events>0){saveBlob(blob,filename);announce('Export JSONL téléchargé')}
+      else announce('Aucun événement à exporter');
+    }catch(error){
+      if(S.exportJob!==job)return;
+      const info=T.exportFailure(error,{received:job.received,timedOut:!!job.timedOut});
+      S.exportJob={conversationId:conv,filename,received:job.received,error:info};
+      if(!info.aborted&&typeof console!=='undefined')console.error('timeline export failed',info.code,info.message);
+    }finally{
+      clearTimeout(idle);
+      renderPanel();
+    }
+  }
+
+  el.drawerBody.addEventListener('submit',event=>{
+    if(event.target.id!=='tlSearchForm')return;
+    event.preventDefault();runSearch(false);
+  });
+  el.drawerBody.addEventListener('change',event=>{
+    if(event.target.name==='tlTxMode'&&event.target.checked){S.transcript={...S.transcript,mode:event.target.value};loadTranscript()}
+    if(event.target.id==='tlSearchAll')S.search.all=event.target.checked;
+  });
+  el.drawerBody.addEventListener('click',event=>{
+    const target=event.target.closest('button');
+    if(!target||!S.panel)return;
+    if(target.dataset.tlHit!==undefined){jumpTo(Number(target.dataset.tlHit));return}
+    if(target.hasAttribute('data-tl-more')){runSearch(true);return}
+    if(target.hasAttribute('data-tl-cancel')){
+      const job=S.panel==='search'?S.search:S.panel==='transcript'?S.transcript:S.exportJob;
+      if(job&&job.controller)job.controller.abort();
+      return;
+    }
+    if(target.hasAttribute('data-tl-retry-job')){
+      if(S.panel==='search')runSearch(false);else if(S.panel==='transcript')loadTranscript();else runExport();
+      return;
+    }
+    if(target.hasAttribute('data-tl-tx-download')&&S.transcript.done&&S.transcript.text){
+      saveBlob(new Blob([S.transcript.text],{type:'text/plain;charset=utf-8'}),T.transcriptFilename(S.transcript.conversationId,S.transcript.loadedMode));
+    }
+  });
+  for(const [kind,button] of Object.entries(PANEL_BUTTONS)){
+    if(!button)continue;
+    button.addEventListener('click',()=>{
+      if(S.panel===kind&&kind!=='export'){closePanel(true);return}
+      openPanel(kind);
+    });
+  }
 
   /* ---------------------------------------------------------- commandes */
   if(el.open)el.open.addEventListener('click',()=>{if(S.open)closeView();else openView()});
@@ -1546,7 +2021,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisTimelineCore
   document.addEventListener('keydown',event=>{
     if(!S.open||event.key!=='Escape')return;
     event.preventDefault();event.stopPropagation();
-    if(S.selected)closeDrawer(true);else closeView();
+    if(S.selected)closeDrawer(true);else if(S.panel)closePanel(true);else closeView();
   },true);
   /* Les autres raccourcis de la page (panneaux, réglages) ne traversent pas la
      vue plein écran ; Tab reste dans la boîte de dialogue. */

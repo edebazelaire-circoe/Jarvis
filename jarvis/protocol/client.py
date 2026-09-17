@@ -17,7 +17,9 @@ from jarvis.domain.conversation_event_store import (
     DEFAULT_EVENT_PAGE_LIMIT, DEFAULT_SUMMARY_PAGE_LIMIT, AppendResult, ConversationEventPage,
     ConversationEventSummaryPage, StoredConversationEvent,
 )
+from jarvis.domain.conversation_event_search import ConversationEventSearchPage, SearchQuery, decode_search_page
 from jarvis.domain.conversation_events import ConversationEvent, ConversationVisibility
+from jarvis.domain.conversation_transcript import TranscriptMode
 from jarvis.domain.voice_admission import VoiceTurnAdmissionAcceptance, VoiceTurnAdmissionRequest
 from jarvis.domain.v2 import AddressingDecision
 from jarvis.domain.live_lifecycle import LiveCloseEvidence, LiveLifecycleState, LiveSessionRecord
@@ -405,6 +407,64 @@ class LocalCoreClient:
                 return None
             raise
         return decode_event_response(payload)
+
+    # -- Slice 06: transcript, export, search -----------------------------------
+
+    async def stream_conversation_transcript(self, conversation_id: str, *,
+                                             mode: TranscriptMode = TranscriptMode.PLAIN, utc_offset_minutes: int = 0,
+                                             read_timeout_s: float = 60.0) -> AsyncIterator[bytes]:
+        """Readable transcript as UTF-8 byte chunks (never held whole here).
+
+        Errors before the first byte raise `CoreProtocolError` (413
+        `transcript_too_large`, 429 `projection_busy`, 503...).
+        """
+        session = await self._http()
+        async with session.get(self.base_url + "/v1/conversation-events/transcript", headers=self.headers,
+                               params={"conversation_id": conversation_id, "mode": TranscriptMode(mode).value,
+                                       "utc_offset_minutes": str(utc_offset_minutes)},
+                               timeout=aiohttp.ClientTimeout(total=None, sock_read=read_timeout_s)) as response:
+            if response.status >= 400:
+                await self._json(response)
+            if response.content_type != "text/plain":
+                raise ValueError("transcript answer must be text/plain")
+            async for chunk in response.content.iter_chunked(64 * 1024):
+                yield chunk
+
+    async def get_conversation_transcript(self, conversation_id: str, *,
+                                          mode: TranscriptMode = TranscriptMode.PLAIN,
+                                          utc_offset_minutes: int = 0) -> str:
+        """Whole transcript text (tests, tools). The Control Center relays the stream instead."""
+        parts = [chunk async for chunk in self.stream_conversation_transcript(
+            conversation_id, mode=mode, utc_offset_minutes=utc_offset_minutes)]
+        return b"".join(parts).decode("utf-8")
+
+    async def export_conversation_events(self, conversation_id: str, *,
+                                         read_timeout_s: float = 30.0) -> AsyncIterator[bytes]:
+        """Stream the JSONL export as byte chunks (header first, trailer last).
+
+        Errors before the first byte raise `CoreProtocolError`. A stream Core
+        closes early raises `aiohttp.ClientPayloadError`; what was received then
+        has no trailer (`read_export(...).complete` is False).
+        """
+        session = await self._http()
+        async with session.get(self.base_url + "/v1/conversation-events/export", headers=self.headers,
+                               params={"conversation_id": conversation_id},
+                               timeout=aiohttp.ClientTimeout(total=None, sock_read=read_timeout_s)) as response:
+            if response.status >= 400:
+                await self._json(response)
+            async for chunk in response.content.iter_chunked(64 * 1024):
+                yield chunk
+
+    async def search_conversation_events(self, query: str | SearchQuery, *, conversation_id: str | None = None,
+                                         before_sequence: int | None = None, limit: int | None = None,
+                                         visibility: ConversationVisibility | None = None,
+                                         timeout_s: float = 30.0) -> ConversationEventSearchPage:
+        """Newest-first hits; continue with `before_sequence=page.next_cursor` while `has_more`."""
+        text = query.text if isinstance(query, SearchQuery) else SearchQuery.parse(query).text
+        payload = await self._get_json("/v1/conversation-events/search", {
+            "q": text, "conversation_id": conversation_id, "before_sequence": before_sequence, "limit": limit,
+            "visibility": visibility}, timeout=aiohttp.ClientTimeout(total=timeout_s))
+        return decode_search_page(payload)
 
     async def work_snapshot(self) -> dict[str, Any]:
         session = await self._http()

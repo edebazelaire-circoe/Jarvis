@@ -73,3 +73,12 @@ def test_the_trace_route_template_names_the_segment_the_server_declares(register
     assert "/api/agent/tasks/{task_id}/trace" in registered
     for page in PAGES:
         assert "/api/agent/tasks/{external_id}/trace" not in page.read_text(encoding="utf-8"), page.name
+
+
+def test_every_conversation_history_route_is_documented(registered):
+    """Slice 04/06: each `/api/conversations...` route the server registers is described in the pages."""
+
+    quoted = quoted_paths()
+    undocumented = sorted(route for route in registered
+                          if route.startswith("/api/conversations") and route not in quoted)
+    assert not undocumented, f"routes de conversation non documentées : {undocumented}"

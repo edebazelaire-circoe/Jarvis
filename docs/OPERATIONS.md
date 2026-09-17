@@ -521,6 +521,24 @@ bande « N sans événement · axe replié ».
   ←/→ : lane voisine ; Échap : ferme le détail puis la vue.
 - Une parole interrompue affiche le **texte envoyé à la lecture**, en italique,
   avec « coupé après N s entendues » : ce n'est pas le texte entendu.
+- **Rechercher** (barre d'outils) : cherche dans ce qui a été dit, entendu ou
+  montré, et dans les identifiants, types d'événement et codes d'état (jamais
+  dans la trace ni dans le texte diagnostique) ; sans accents ni majuscules
+  (« reunion » trouve « Réunion »). Toutes les conversations par défaut. Un
+  résultat ouvre sa conversation et place le focus sur l'entrée, entourée.
+- **Occupé** : Core ne fait qu'une recherche et deux transcriptions ou exports à
+  la fois, pour ne jamais ralentir la voix ; au-delà il répond « Recherche déjà
+  en cours » ou « Core est occupé » : réessayer un instant après. Fermer l'onglet
+  pendant une recherche l'annule dans Core.
+- **Transcription** : texte lisible rendu par Core depuis les seuls événements, aux heures locales du navigateur (fuseau écrit dans l'en-tête),
+  *Simple* (ce qui a été dit et montré) ou *Détaillé* (plus travaux,
+  sous-agents, outils et échecs avec leurs codes, lignes « -- ») ;
+  **Télécharger .txt**. Une parole coupée y est annotée
+  « [interrompu après N s entendues] ».
+- **Exporter JSONL** : télécharge les événements canoniques de la conversation
+  tels que stockés, une ligne JSON chacun, avec une ligne finale de contrôle. Le
+  fichier n'est enregistré que s'il est complet ; sinon « Export incomplet » et
+  **Réessayer**.
 
 La pastille d'état dit toujours ce qui se passe : « Chargement », « En direct ·
 N événements · dernier reçu il y a T », ou le problème réel (« Core
@@ -530,6 +548,37 @@ coupure et **Réessayer maintenant**. Rien n'est perdu pendant une coupure : la
 vue reprend à son dernier curseur, sans doublon. Dépannage détaillé (lane voix
 vide, sous-agent absent, trace non trouvée, lignes illisibles) :
 [Conversation Events](conversation-events.md), « Timeline UI ».
+
+#### Exporter, chercher, récupérer une conversation
+
+- **Adresses directes** (Control Center, boucle locale uniquement) :
+  `http://127.0.0.1:17654/api/conversations/export?conversation_id=<id>`,
+  `/api/conversations/transcript?conversation_id=<id>&mode=detailed`,
+  `/api/conversations/search?q=<mots>`. Sans Control Center : les routes Core
+  `GET /v1/conversation-events/{export,transcript,search}` avec le jeton de
+  `runtime/core.token`.
+- **Lire un export hors ligne** : `read_export` puis `transcript_from_export`
+  ou `reconstruct_export` (`jarvis/domain/conversation_event_export.py`) ;
+  vérifier `complete` et `invalid_lines` avant de s'y fier. La transcription
+  obtenue est identique octet pour octet à celle du Control Center.
+- **Après un crash de Core** : rien à faire. Les événements acquittés sont
+  durables ; au redémarrage Core réenregistre les tours utilisateur dont
+  l'événement a été perdu. Les événements Brain des ~60 ms précédant le crash
+  sont perdus (décision documentée). Les compteurs de pertes :
+  `GET /v1/health` et `/api/status`, champ `conversation_events`.
+- **Lignes illisibles** : jamais réparées ni supprimées ; comptées dans la
+  vue, l'export (`skipped_rows`) et la transcription.
+- **Ce qui est privé** : tout le journal (paroles de l'utilisateur et de
+  Jarvis). Il ne quitte Core que par des routes locales authentifiées. Aucun
+  événement ne contient de raisonnement caché, prompt, argument ou résultat
+  d'outil, texte d'erreur de fournisseur ni secret : ni la transcription, ni
+  l'export, ni la recherche ne peuvent en montrer. Un fichier exporté ou
+  téléchargé est une copie hors de ces protections.
+- **Taille et rétention** : environ 1,8 Ko par événement sur disque, 5 à 6
+  événements par tour (≈ 400 Mo par an à 100 tours par jour). La rétention
+  existe mais **n'est pas planifiée** : rien n'est supprimé aujourd'hui.
+  Exporter avant de l'activer. Détails : [Conversation Events](conversation-events.md),
+  « Operations ».
 
 ### Agenda : réel ou en mémoire
 

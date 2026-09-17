@@ -321,6 +321,9 @@ routes; the browser only reads the Control Center, which proxies them through
 | `GET /v1/conversation-events/lookup` | `GET /api/conversations/lookup` | events by `session_id`/`turn_id`/`correlation_id`/`task_id`/`work_id`/`speech_id`/`outcome_id`/`span_id` |
 | `GET /v1/conversation-events/events/{event_id}` | `GET /api/conversations/events/{event_id}` | one stored event (404 `conversation_event_not_found`) |
 | — | `GET /api/conversations/events/{event_id}/trace` | redacted journal evidence of a stored event (bounded newest-first scan of `runtime/trace.jsonl`; user events 404 `trace_not_applicable`; sub-agent/agent-task link to `/api/agent/tasks/{task_id}/trace`) |
+| `GET /v1/conversation-events/transcript` | `GET /api/conversations/transcript` | readable transcript, streamed `text/plain` (`conversation_id`, `mode` = `plain`\|`detailed`, `utc_offset_minutes`; 413 `transcript_too_large` above 50 000 events or 16 MiB of text; 429 `projection_busy`) |
+| `GET /v1/conversation-events/export` | `GET /api/conversations/export` | JSONL export streamed page by page (header, stored events, trailer; frozen at the conversation's last sequence) |
+| `GET /v1/conversation-events/search` | `GET /api/conversations/search` | bounded newest-first search over public content and safe metadata (`q`, `conversation_id`, `before_sequence`, `limit` ≤ 50, `visibility`) |
 
 Errors: 400 `invalid_request` (never echoes a value), 401 `unauthorized` (Core),
 503 `conversation_events_unavailable` (store failing or Core stopping), and on
@@ -353,6 +356,31 @@ in flight per tab: pages then `wait_ms=25000` long-poll from the last
 `GET /api/conversations/events/{event_id}` and
 `GET /api/conversations/events/{event_id}/trace`; never `/api/trace`. UX, states
 and troubleshooting: [Conversation Events](conversation-events.md), "Timeline UI".
+
+Projections (Slice 06). The readable transcript, the JSONL export and search
+are derived from the stored events only, never a second record. One pure
+renderer, `jarvis/domain/conversation_transcript.py` (on top of
+`reconstruct_conversation`, with the timeline's duplicate-publication collapse
+rule, parity-tested against the JS), serves Core's transcript route, the
+Control Center (which relays Core's text) and offline readers of an export
+(`jarvis/domain/conversation_event_export.py`: `read_export`,
+`transcript_from_export`, `reconstruct_export`, byte-identical to the live
+rendering). The export streams store pages under a frozen extent
+(`ConversationEventStore.conversation_extent`, `until_sequence`) and ends with a
+trailer whose absence marks an incomplete file. Search
+(`jarvis/domain/conversation_event_search.py`, scan in
+`SQLiteConversationEventStore.search_events`) matches public content and
+allowlisted metadata only, accent- and case-insensitively: 250-row chunks whose
+searchable fields SQLite extracts, matched on the event loop in 2 ms slices that
+yield (≤ 50 000 rows per request; no FTS5, no schema change). Core's hot path
+comes first: one search and two transcript/export builds at a time (429
+`search_busy` / `projection_busy`), cancelled when the client leaves, 50-event
+projection pages; with a search scanning 80 000 rows, append p95 stays at 4 ms. The CNV view adds *Rechercher*,
+*Transcription* and *Exporter JSONL* panels in its drawer; a search result jumps
+to its entry. `tests/integration/test_conversation_event_rollout_gate.py` runs
+the whole path with real stacks, a Core hard crash and a restart. Details,
+sizing and privacy boundaries: [Conversation Events](conversation-events.md),
+"Readable transcript", "JSONL export", "Search", "Operations".
 
 ## Speech, interruption and work
 

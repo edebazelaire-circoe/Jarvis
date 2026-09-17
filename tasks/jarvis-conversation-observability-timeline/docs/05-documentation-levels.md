@@ -52,3 +52,9 @@ Slice 00 must correct these levels if the live repository has gained equivalent 
 | Concept | Level | Evidence |
 |---|---:|---|
 | Live transcript/timeline UI | 3 | `control_center_timeline.js` (pure logic + browser glue), Timeline UI section in `docs/conversation-events.md` + OPERATIONS CNV section, 40 timeline tests (JS parity with Python reconstruction), headless-Chrome QA evidence (readability, keyboard, switch races, security, performance). |
+
+## After Slice 06 (2026-09-17)
+
+| Concept | Level | Evidence |
+|---|---:|---|
+| Readable transcript / JSONL export / search projections | 3 | `conversation_transcript.py`, `conversation_event_export.py`, `conversation_event_search.py`; transcript/export/search/operations/hot-path sections in `docs/conversation-events.md` + OPERATIONS; golden transcripts, JS↔Python collapse parity, independent oracle, crash/restart rollout gate. |

@@ -111,6 +111,15 @@ class ConversationEventSummaryPage:
     skipped_summaries: int = 0
 
 
+@dataclass(frozen=True, slots=True)
+class ConversationEventExtent:
+    """Raw stored rows of one conversation and their sequence bounds (no row is decoded)."""
+
+    stored_rows: int
+    first_sequence: int
+    last_sequence: int
+
+
 class RetentionSkipReason(StrEnum):
     #: Conversation row missing, or status not `closed` (active history is never removed).
     NOT_CLOSED = "not_closed"

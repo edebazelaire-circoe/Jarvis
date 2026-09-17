@@ -29,17 +29,24 @@ from datetime import datetime
 import json
 import re
 import sqlite3
+import time
 from typing import Any, TypeVar
 
 from jarvis.adapters.sqlite_state import SQLiteStateRepository, rollback_after_failure
 from jarvis.domain.conversation_event_store import (
     DEFAULT_EVENT_PAGE_LIMIT, DEFAULT_SUMMARY_PAGE_LIMIT, MAX_APPEND_BATCH, MAX_EVENT_PAGE_LIMIT,
-    MAX_SUMMARY_PAGE_LIMIT, AppendResult, AppendStatus, ConversationEventPage, ConversationEventRetentionPolicy,
+    MAX_SUMMARY_PAGE_LIMIT, AppendResult, AppendStatus, ConversationEventExtent, ConversationEventPage,
+    ConversationEventRetentionPolicy,
     ConversationEventStoreError, ConversationEventSummary, ConversationEventSummaryPage, RetentionReport,
     RetentionSkipReason, StoredConversationEvent, check_cursor, check_limit, check_lookup,
 )
+from jarvis.domain.conversation_event_search import (
+    DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT, MAX_SEARCH_SCAN_ROWS, SEARCH_ATTRIBUTE_KEYS, SEARCH_ID_FIELDS,
+    SEARCH_SCAN_CHUNK, SEARCH_SLICE_S, ConversationEventSearchPage, SearchQuery, build_hit, match_payload,
+    warm_search_tables,
+)
 from jarvis.domain.conversation_events import (
-    SPAN_OPENER, ConversationEvent, ConversationEventConflictError, ConversationEventError, ConversationEventType,
+    SPAN_OPENER, ConversationVisibility, ConversationEvent, ConversationEventConflictError, ConversationEventError, ConversationEventType,
     decode_conversation_event, encode_conversation_event, format_event_time,
     is_duplicate_event, parse_event_time,
 )
@@ -111,6 +118,27 @@ def _summary(row: Sequence[Any], conversation_id: str, session_id: str | None) -
                                     parse_event_time(first_at, "first_occurred_at"),
                                     parse_event_time(last_at, "last_occurred_at"),
                                     parse_event_time(recorded, "last_recorded_at"))
+
+
+#: Search candidate columns: extracted columns plus what SQLite pulls out of the
+#: JSON (content only for public rows), so Python never parses the stored document
+#: of a row that does not match. `valid` = 0 marks a row whose JSON does not parse.
+_SEARCH_SELECT = (
+    "SELECT sequence, visibility, event_type, actor, " + ", ".join(SEARCH_ID_FIELDS)
+    + ", json_valid(data) AS valid, CASE WHEN json_valid(data) THEN "
+    + "CASE WHEN visibility = 'public' THEN data ->> '$.content' END END AS content, "
+    + ", ".join(f"CASE WHEN json_valid(data) THEN data ->> '$.attributes.{key}' END AS attr_{key}"
+                for key in SEARCH_ATTRIBUTE_KEYS)
+    + " FROM conversation_events")
+
+
+def _search_payload(row: sqlite3.Row) -> dict[str, Any]:
+    """The searchable fields of a candidate row, shaped like an encoded event for `match_payload`."""
+    payload = {name: row[name] for name in ("visibility", "event_type", "actor", *SEARCH_ID_FIELDS)}
+    payload["content"] = row["content"]
+    payload["attributes"] = {key: row[f"attr_{key}"] for key in SEARCH_ATTRIBUTE_KEYS
+                             if row[f"attr_{key}"] is not None}
+    return payload
 
 
 class SQLiteConversationEventStore:
@@ -336,9 +364,119 @@ class SQLiteConversationEventStore:
             return None
 
     async def list_conversation_events(self, conversation_id: str, *, after_sequence: int = 0,
-                                       limit: int = DEFAULT_EVENT_PAGE_LIMIT) -> ConversationEventPage:
+                                       limit: int = DEFAULT_EVENT_PAGE_LIMIT,
+                                       until_sequence: int | None = None) -> ConversationEventPage:
+        """Events after `after_sequence`; with `until_sequence`, never past it (a frozen export)."""
         state_id(conversation_id, "conversation_id")
-        return await self._read_page("conversation_id=?", (conversation_id,), after_sequence, limit, "query")
+        if until_sequence is None:
+            return await self._read_page("conversation_id=?", (conversation_id,), after_sequence, limit, "query")
+        check_cursor(until_sequence, "until_sequence")
+        return await self._read_page("conversation_id=? AND sequence <= ?", (conversation_id, until_sequence),
+                                     after_sequence, limit, "query")
+
+    async def conversation_extent(self, conversation_id: str) -> ConversationEventExtent | None:
+        """Raw row count and sequence bounds of one conversation (index only, nothing decoded); None when empty."""
+        state_id(conversation_id, "conversation_id")
+
+        def read(conn: sqlite3.Connection):
+            return conn.execute("SELECT count(*), min(sequence), max(sequence) FROM conversation_events "
+                                "WHERE conversation_id=?", (conversation_id,)).fetchone()
+
+        count, first, last = await self._run(read, "lookup")
+        return None if not count else ConversationEventExtent(int(count), int(first), int(last))
+
+    async def search_events(self, query: SearchQuery, *, conversation_id: str | None = None,
+                            before_sequence: int | None = None, limit: int = DEFAULT_SEARCH_LIMIT,
+                            visibility: ConversationVisibility | None = None,
+                            max_scan_rows: int = MAX_SEARCH_SCAN_ROWS) -> ConversationEventSearchPage:
+        """Newest-first bounded scan (contract: "Search"), cooperative with Core's hot path.
+
+        Each chunk of `SEARCH_SCAN_CHUNK` rows is one short read on the repository
+        lock that returns only the searchable columns (SQLite extracts content and
+        status codes from the JSON, releasing the GIL). Matching runs on the event
+        loop in slices of at most `SEARCH_SLICE_S`, yielding between slices and
+        chunks, so appends and every other task keep running (no worker thread
+        competing for the GIL). Only matched rows are re-read whole and decoded
+        through the codec; a row that does not decode (or whose JSON does not
+        parse) is skipped, counted and diagnosed, never returned. The request
+        stops at `limit` hits, at the start of the log, or after `max_scan_rows`
+        rows (`scan_limited`); `next_cursor` is the last scanned sequence. Being
+        a plain coroutine, it stops at its next yield when cancelled.
+        """
+        if not isinstance(query, SearchQuery):
+            raise ValueError("query must be a SearchQuery")
+        check_limit(limit, MAX_SEARCH_LIMIT)
+        check_limit(max_scan_rows, MAX_SEARCH_SCAN_ROWS, "max_scan_rows")
+        if before_sequence is not None:
+            check_cursor(before_sequence, "before_sequence")
+        where: list[str] = []
+        params: list[Any] = []
+        if conversation_id is not None:
+            state_id(conversation_id, "conversation_id")
+            where.append("conversation_id=?")
+            params.append(conversation_id)
+        if visibility is not None:
+            where.append("visibility=?")
+            params.append(ConversationVisibility(visibility).value)
+        await asyncio.to_thread(warm_search_tables)  # one-time table build, off the loop
+        hits, unreadable = [], []
+        cursor, scanned, exhausted = before_sequence, 0, False
+        slice_started = time.perf_counter()
+        while len(hits) < limit and scanned < max_scan_rows:
+            chunk = min(SEARCH_SCAN_CHUNK, max_scan_rows - scanned)
+            clauses = [*where, "sequence < ?"] if cursor is not None else list(where)
+            sql = f"{_SEARCH_SELECT} WHERE {' AND '.join(clauses) or '1'} ORDER BY sequence DESC LIMIT ?"
+            args = (*params, *((cursor,) if cursor is not None else ()), chunk)
+
+            def read(conn: sqlite3.Connection, sql: str = sql, args: tuple = args):
+                return conn.execute(sql, args).fetchall()
+
+            rows = await self._run(read, "search")
+            if not rows:
+                exhausted = True
+                break
+            matched: list[tuple[int, Any]] = []
+            last_index = len(rows) - 1
+            for index, row in enumerate(rows):
+                if index % 8 == 0 and time.perf_counter() - slice_started >= SEARCH_SLICE_S:
+                    await asyncio.sleep(0)
+                    slice_started = time.perf_counter()
+                if not row["valid"]:
+                    unreadable.append(_UnreadableRow(row["sequence"], "invalid_json", "data is not valid JSON"))
+                    continue
+                match = match_payload(query, _search_payload(row))
+                if match is not None:
+                    matched.append((row["sequence"], match))
+                    if len(hits) + len(matched) >= limit:
+                        last_index = index  # stop here: later rows are read by the next page
+                        break
+            if matched:
+                wanted = [sequence for sequence, _ in matched]
+
+                def read_whole(conn: sqlite3.Connection, wanted: list[int] = wanted):
+                    marks = ",".join("?" * len(wanted))
+                    return {row["sequence"]: row for row in
+                            conn.execute(f"{_SELECT} WHERE sequence IN ({marks})", wanted).fetchall()}
+
+                whole = await self._run(read_whole, "search")
+                for sequence, match in matched:
+                    try:
+                        hits.append(build_hit(query, _decode_row(whole[sequence]), match))
+                    except _UnreadableRow as exc:
+                        unreadable.append(exc)
+                    except KeyError:  # removed by retention between the two reads: nothing to show
+                        continue
+            scanned += last_index + 1
+            cursor = rows[last_index]["sequence"]
+            if last_index == len(rows) - 1 and len(rows) < chunk:
+                exhausted = True
+                break
+            await asyncio.sleep(0)
+            slice_started = time.perf_counter()
+        self._report_unreadable(unreadable)
+        has_more = not exhausted
+        return ConversationEventSearchPage(tuple(hits), cursor, has_more, len(unreadable), scanned,
+                                          has_more and len(hits) < limit)
 
     async def list_events_in_time_range(self, start: datetime, end: datetime, *, conversation_id: str | None = None,
                                         after_sequence: int = 0,

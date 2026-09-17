@@ -31,7 +31,7 @@ Every coding Slice must load `/caveman` and `/coding-guideline` before implement
 - [x] 05 — Build the live four-lane transcript/debug timeline (2026-09-16, QA REWORK → reworked → re-QA APPROVE_WITH_ISSUES → follow-up)
   - Path: `slices/05-timeline-debug-ui/SLICE.md`
   - Depends on: 04
-- [ ] 06 — Add readable transcript/export/search and end-to-end rollout gates
+- [x] 06 — Add readable transcript/export/search and end-to-end rollout gates (2026-09-17, QA REWORK → reworked; Human runtime validation pending)
   - Path: `slices/06-transcript-export-search-rollout/SLICE.md`
   - Depends on: 03, 04, 05
 

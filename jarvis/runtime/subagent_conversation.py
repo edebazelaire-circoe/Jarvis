@@ -373,8 +373,11 @@ class SubagentConversations:
         event_type = subagent_close_type(raw)
         try:
             event_id = self._event_id(task, event_type)
-            attributes = {**self._attributes(task), "status": _bounded_label(raw) or "unknown",
-                          "tokens": task.tokens, "tool_uses": task.tool_uses}
+            attributes = {**self._attributes(task), "status": _bounded_label(raw) or "unknown"}
+            # The tracker starts usage at 0 and only overwrites it when the CLI reports it:
+            # 0 means "not reported", never recorded as a measured value.
+            attributes.update({key: value for key, value in (("tokens", task.tokens), ("tool_uses", task.tool_uses))
+                               if value})
             fields: dict[str, Any] = {}
             if span.start_recorded and span.started_ms is not None and span.started_ms <= end:
                 fields["started_at"] = utc_from_ms(span.started_ms)

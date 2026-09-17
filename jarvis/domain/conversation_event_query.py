@@ -38,6 +38,7 @@ from jarvis.domain.conversation_events import (
     ConversationEventError, ConversationVisibility, decode_conversation_event, encode_conversation_event,
     format_event_time, parse_event_time,
 )
+from jarvis.domain.conversation_transcript import TranscriptMode, check_utc_offset
 from jarvis.domain.voice_state import state_id
 
 QUERY_SCHEMA_VERSION = 1
@@ -49,6 +50,7 @@ MAX_SEQUENCE = 2**63 - 1
 
 _EVENT_ID = re.compile(r"cev-[0-9a-f]{64}")
 _DECIMAL = re.compile(r"[0-9]{1,19}")
+_SIGNED = re.compile(r"-?[0-9]{1,4}")
 _PAGE_FIELDS = frozenset({"schema_version", "events", "next_cursor", "has_more", "skipped_rows"})
 _STORED_FIELDS = frozenset({"sequence", "recorded_at", "event"})
 _SUMMARY_PAGE_FIELDS = frozenset({"schema_version", "summaries", "next_cursor", "has_more", "skipped_summaries"})
@@ -61,6 +63,9 @@ CONVERSATIONS_PARAMS = frozenset({"before_sequence", "limit"})
 SESSIONS_PARAMS = frozenset({"conversation_id", "after_sequence", "limit"})
 EVENTS_PARAMS = frozenset({"conversation_id", "after_sequence", "limit", "visibility", "wait_ms"})
 LOOKUP_PARAMS = frozenset({"field", "value", "conversation_id", "after_sequence", "limit", "visibility"})
+#: Slice 06 projections (search parameters: `conversation_event_search.SEARCH_PARAMS`).
+TRANSCRIPT_PARAMS = frozenset({"conversation_id", "mode", "utc_offset_minutes"})
+EXPORT_PARAMS = frozenset({"conversation_id"})
 
 
 # ----------------------------------------------------------------- parameters
@@ -152,6 +157,23 @@ def lookup_query(params: Mapping[str, str]) -> dict[str, Any]:
             "visibility": visibility_param(params)}
 
 
+def transcript_query(params: Mapping[str, str]) -> dict[str, Any]:
+    raw = params.get("mode", TranscriptMode.PLAIN.value)
+    try:
+        mode = TranscriptMode(raw)
+    except ValueError:
+        raise ValueError(f"mode must be one of {', '.join(m.value for m in TranscriptMode)}") from None
+    offset = params.get("utc_offset_minutes", "0")
+    if not _SIGNED.fullmatch(offset):
+        check_utc_offset(None)  # raises the rule message, never the value
+    return {"conversation_id": id_param(params, "conversation_id", required=True), "mode": mode,
+            "utc_offset_minutes": check_utc_offset(int(offset))}
+
+
+def export_query(params: Mapping[str, str]) -> dict[str, Any]:
+    return {"conversation_id": id_param(params, "conversation_id", required=True)}
+
+
 def filter_visibility(page: ConversationEventPage, visibility: ConversationVisibility | None) -> ConversationEventPage:
     """Keep only `visibility` events; cursor, `has_more` and `skipped_rows` describe the scan, unchanged."""
     if visibility is None:
@@ -220,6 +242,11 @@ def _decode_stored(payload: object, name: str, fields: frozenset[str] = _STORED_
     except ConversationEventError as exc:
         raise ValueError(f"{name}: {exc}") from None
     return StoredConversationEvent(_count(item["sequence"], f"{name}.sequence", minimum=1), recorded_at, event)
+
+
+def decode_stored_event(payload: object, name: str = "stored event") -> StoredConversationEvent:
+    """Strict decode of one `{"sequence", "recorded_at", "event"}` item (page row, export line)."""
+    return _decode_stored(payload, name)
 
 
 def decode_event_response(payload: object) -> StoredConversationEvent:

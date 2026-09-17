@@ -233,3 +233,76 @@ def assert_drill_down_joins_one_line(events, entries, trace_path: Path, *, priva
         assert body["status"] == "found", (event.event_type, body["scan"])
         [entry] = body["scan"]["entries"]
         assert entry["data"]["conversation_event_id"] == event.event_id and not body["scan"]["truncated"]
+
+
+# -- Slice 06: projections (transcript, export, search) ----------------------------
+
+def transcript_scenario(conversation_id: str = "conv-t") -> list[ConversationEvent]:
+    """A conversation exercising every transcript rule, in scrambled store order.
+
+    Interrupted speech overlapping a sub-agent span, a reflex, a multi-line user
+    turn, a tool span, duplicate Brain publications (collapsed), a failed and a
+    never-played speech, turn and system failures, an open speech the next day.
+    """
+    from datetime import timedelta
+
+    T = ConversationEventType
+    voice, core_brain, outcomes = "voice.speech_scheduler", "core.brain_service", "core.brain_outcomes"
+    c = dict(conversation_id=conversation_id)
+
+    def speech(kind, source, ms, speech_id, **fields):
+        if kind is not T.MOUTH_SPEECH_QUEUED:
+            fields.setdefault("span_id", speech_id)
+        return make_event(kind, source, ms=ms, producer=voice, speech_id=speech_id,
+                          correlation_id=fields.pop("correlation_id", "c1"), **c, **fields)
+
+    events = [
+        make_event(T.USER_TRANSCRIPT_ACCEPTED, "u1", ms=0, producer="core.voice_admission", correlation_id="c1",
+                   content="Jarvis, prépare le dossier de vol de Paul.", **c),
+        make_event(T.BRAIN_TURN_ACCEPTED, "c1", ms=200, producer=core_brain, correlation_id="c1", **c),
+        make_event(T.BRAIN_WORK_STARTED, "w1", ms=400, producer=core_brain, correlation_id="c1", work_id="work-1",
+                   span_id="work-1", content="Recherche des vols", **c),
+        make_event(T.SUBAGENT_STARTED, "t1", ms=600, producer="control_center.agent_tasks", correlation_id=None,
+                   task_id="task-1", span_id="task-1", content="Rassemble les vols",
+                   attributes={"subagent_type": "flight-finder", "model": "claude-sonnet-5"}, **c),
+        make_event(T.BRAIN_SPEECH_REQUESTED, "r1", ms=900, producer=core_brain, correlation_id="c1", speech_id="sp1",
+                   content="Je regarde tous les vols de la semaine.", **c),
+        speech(T.MOUTH_SPEECH_STARTED, "sp1", 1000, "sp1", content="Je regarde tous les vols de la semaine."),
+        speech(T.MOUTH_SPEECH_INTERRUPTED, "sp1", 2400, "sp1", started_at=BASE + timedelta(milliseconds=1000),
+               attributes={"played_ms": 1400, "reason": "user_barge_in", "status": "cancelled"}),
+        make_event(T.USER_TRANSCRIPT_ACCEPTED, "u2", ms=2500, producer="core.voice_admission", correlation_id="c2",
+                   content="Seulement celui de lundi.\nEt vite, s'il te plaît.", **c),
+        make_event(T.MOUTH_REFLEX_STARTED, "x1", ms=2600, producer=voice, correlation_id="c2", content="D'accord.", **c),
+        make_event(T.TOOL_CALL_STARTED, "call-7", ms=2700, producer="voice.realtime_audio", correlation_id=None,
+                   span_id="call-7", attributes={"tool_name": "get_time", "arguments_redacted": True}, **c),
+        make_event(T.TOOL_CALL_FINISHED, "call-7", ms=3000, producer="voice.realtime_audio", correlation_id=None,
+                   span_id="call-7", attributes={"tool_name": "get_time", "status": "ok", "duration_ms": 300}, **c),
+        make_event(T.BRAIN_MESSAGE_PUBLISHED, "o1", ms=4000, producer=outcomes, correlation_id="c1", outcome_id="o1",
+                   content="Le vol de Paul part lundi à 9 h.", **c),
+        make_event(T.BRAIN_MESSAGE_PUBLISHED, "o2", ms=4100, producer=outcomes, correlation_id="c1", outcome_id="o2",
+                   content="Le vol de Paul part lundi à 9 h.", **c),
+        make_event(T.BRAIN_MESSAGE_PUBLISHED, "o3", ms=4200, producer=outcomes, correlation_id="c2", outcome_id="o3",
+                   content="Rien d'autre à signaler.", **c),
+        speech(T.MOUTH_SPEECH_QUEUED, "sp2", 4250, "sp2"),
+        speech(T.MOUTH_SPEECH_STARTED, "sp2", 4300, "sp2", content="Le vol de Paul part lundi à 9 h."),
+        speech(T.MOUTH_SPEECH_COMPLETED, "sp2", 6300, "sp2", attributes={"status": "completed"}),
+        speech(T.MOUTH_SPEECH_STARTED, "sp3", 6500, "sp3", content="Je vérifie la météo."),
+        speech(T.MOUTH_SPEECH_FAILED, "sp3", 6800, "sp3",
+               attributes={"code": "speech_speak_failed", "error_class": "RuntimeError"}),
+        speech(T.MOUTH_SPEECH_SUPERSEDED, "sp4", 6900, "sp4", content="Autre annonce jamais dite.",
+               attributes={"reason": "superseded_on_arrival"}),
+        make_event(T.BRAIN_TURN_FAILED, "c3", ms=7000, producer=core_brain, correlation_id="c3",
+                   attributes={"code": "brain_backend_exception", "error_class": "ConnectionResetError"}, **c),
+        make_event(T.SYSTEM_FAILURE, "c4", ms=7100, producer="voice.realtime_audio", correlation_id="c4",
+                   attributes={"code": "brain_turn_rejected", "reason": "http_error"}, **c),
+        make_event(T.BRAIN_WORK_COMPLETED, "w1", ms=9000, producer=core_brain, correlation_id="c1", work_id="work-1",
+                   span_id="work-1", **c),
+        make_event(T.SUBAGENT_FINISHED, "t1", ms=95000, producer="control_center.agent_tasks", correlation_id=None,
+                   task_id="task-1", span_id="task-1", started_at=BASE + timedelta(milliseconds=600),
+                   attributes={"status": "completed", "tokens": 1234, "tool_uses": 5, "duration_ms": 94400}, **c),
+        speech(T.MOUTH_SPEECH_STARTED, "sp5", 86_400_000 + 5000, "sp5", correlation_id="c5",
+               content="Bonjour, nouvelle journée."),
+    ]
+    order = [5, 0, 17, 3, 12, 1, 22, 8, 14, 2, 19, 6, 11, 23, 4, 9, 16, 21, 7, 13, 24, 10, 18, 15, 20]
+    assert sorted(order) == list(range(len(events)))
+    return [events[i] for i in order]

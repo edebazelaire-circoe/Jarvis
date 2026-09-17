@@ -12,6 +12,7 @@ from typing import Any
 from urllib.parse import urlparse
 import uuid
 
+import aiohttp
 from aiohttp import web
 
 from jarvis.adapters.file_replace import replace_with_retry
@@ -68,11 +69,13 @@ from jarvis.runtime.visual_signals import VisualSignalBus
 from jarvis.runtime.work_brief import render_work_brief
 from jarvis.runtime.subagent_conversation import SubagentConversationScope
 from jarvis.runtime.conversation_event_forwarder import ConversationEventForwarder
+from jarvis.domain.conversation_event_export import EXPORT_MEDIA_TYPE, export_filename
 from jarvis.domain.conversation_event_query import (
-    CONVERSATIONS_PARAMS, EVENTS_PARAMS, LOOKUP_PARAMS, SESSIONS_PARAMS, check_event_id, conversations_query,
-    encode_event_page, encode_event_response, encode_summary_page, events_query, lookup_query, query_params,
-    sessions_query,
+    CONVERSATIONS_PARAMS, EVENTS_PARAMS, EXPORT_PARAMS, LOOKUP_PARAMS, SESSIONS_PARAMS, TRANSCRIPT_PARAMS,
+    check_event_id, conversations_query, encode_event_page, encode_event_response, encode_summary_page, events_query,
+    export_query, lookup_query, query_params, sessions_query, transcript_query,
 )
+from jarvis.domain.conversation_event_search import SEARCH_PARAMS, encode_search_page, search_query
 from jarvis.runtime.conversation_event_trace import TraceNotApplicable, drill_down
 from jarvis.runtime.conversation_event_view import ConversationEventView, ConversationEventViewError
 from jarvis.runtime.work_ingress import TrackerWorkObserver, WorkIngressForwarder
@@ -414,6 +417,9 @@ class ControlCenter:
             web.get("/api/conversations/lookup", self.conversation_events_lookup),
             web.get("/api/conversations/events/{event_id}", self.conversation_event_detail),
             web.get("/api/conversations/events/{event_id}/trace", self.conversation_event_trace),
+            web.get("/api/conversations/transcript", self.conversation_transcript),
+            web.get("/api/conversations/export", self.conversation_export),
+            web.get("/api/conversations/search", self.conversation_search),
         ])
         self._runner: web.AppRunner | None = None
 
@@ -2604,6 +2610,92 @@ class ControlCenter:
         view = self.conversation_event_view
         return await self._conversation_read(request, LOOKUP_PARAMS, lookup_query, lambda q: self._encode(
             encode_event_page, view.lookup(q.pop("field"), q.pop("value"), **q)))
+
+    # -- Slice 06 : transcription lisible, export JSONL, recherche --------------
+    #
+    # Contrat : `docs/conversation-events.md`, « Readable transcript », « JSONL
+    # export », « Search ». Le texte et l'export viennent de Core tels quels :
+    # aucun second rendu ici ni dans la page.
+
+    @staticmethod
+    def _client_left(request: web.Request):
+        return lambda: request.transport is None or request.transport.is_closing()
+
+    async def conversation_transcript(self, request: web.Request) -> web.StreamResponse:
+        """Transcription texte rendue par Core, relayée au fil de l'eau (jamais recopiée en entier).
+
+        `mode` = `plain` ou `detailed`, `utc_offset_minutes` = décalage de l'heure
+        locale du navigateur (écrit dans l'en-tête du texte). Un navigateur qui part
+        annule la construction dans Core.
+        """
+        try:
+            query = transcript_query(query_params(request.query.items(), TRANSCRIPT_PARAMS))
+        except ValueError as exc:
+            return self._conversation_error(400, "invalid_request", str(exc))
+        try:
+            stream = await self.conversation_event_view.open_transcript(
+                query["conversation_id"], mode=query["mode"], utc_offset_minutes=query["utc_offset_minutes"],
+                disconnected=self._client_left(request))
+        except ConversationEventViewError as exc:
+            return web.json_response(exc.to_payload(), status=exc.status)
+        return await self._relay(request, stream, "transcript",
+                                 {"Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store"})
+
+    async def conversation_search(self, request: web.Request) -> web.Response:
+        """Recherche bornée (contenu public, métadonnées sûres), du plus récent au plus ancien.
+
+        Un navigateur qui part annule la recherche dans Core ; une seule à la fois (429 `search_busy`).
+        """
+        view = self.conversation_event_view
+        return await self._conversation_read(request, SEARCH_PARAMS, search_query, lambda q: self._encode(
+            encode_search_page, view.search(q.pop("query"), **q, disconnected=self._client_left(request))))
+
+    async def conversation_export(self, request: web.Request) -> web.StreamResponse:
+        """Export JSONL relayé de Core au fil de l'eau (jamais chargé en entier en mémoire).
+
+        Erreur avant l'en-tête : réponse JSON explicite. Coupure de Core ensuite :
+        une ligne de journal par épisode et connexion du navigateur fermée, pour
+        qu'un fichier incomplet ne passe jamais pour complet (pas de ligne finale).
+        """
+        try:
+            query = export_query(query_params(request.query.items(), EXPORT_PARAMS))
+        except ValueError as exc:
+            return self._conversation_error(400, "invalid_request", str(exc))
+        try:
+            stream = await self.conversation_event_view.open_export(query["conversation_id"])
+        except ConversationEventViewError as exc:
+            return web.json_response(exc.to_payload(), status=exc.status)
+        filename = export_filename(query["conversation_id"])
+        return await self._relay(request, stream, "export", {
+            "Content-Type": f"{EXPORT_MEDIA_TYPE}; charset=utf-8",
+            "Content-Disposition": f"attachment; filename=\"{filename}\"", "Cache-Control": "no-store"})
+
+    async def _relay(self, request: web.Request, stream, operation: str, headers: dict[str, str]) -> web.StreamResponse:
+        """Relay Core's chunks to the browser; a Core break closes the browser connection (never a clean end)."""
+        response = web.StreamResponse(headers=headers)
+        try:
+            await response.prepare(request)
+            if stream.first:
+                await response.write(stream.first)
+            chunks = stream.rest.__aiter__()
+            while True:
+                try:
+                    chunk = await chunks.__anext__()
+                except StopAsyncIteration:
+                    break
+                except (aiohttp.ClientError, TimeoutError, OSError) as exc:  # Core's side of the relay broke
+                    self.conversation_event_view.stream_interrupted(operation, exc)
+                    if request.transport is not None:
+                        request.transport.close()
+                    return response
+                await response.write(chunk)  # the browser's side: a reset propagates below
+            await response.write_eof()
+        except ConnectionResetError:
+            # argued: the browser cancelled or closed the download; Core's stream is closed below
+            pass
+        finally:
+            await stream.aclose()
+        return response
 
     @staticmethod
     async def _encode(encode, read) -> dict[str, Any]:

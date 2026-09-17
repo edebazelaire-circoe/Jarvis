@@ -107,7 +107,8 @@ def test_every_element_the_browser_block_looks_up_exists():
     browser = source[source.index("(function installJarvisTimeline(){"):]
     wanted = set(re.findall(r"q\('#(\w+)'\)", browser)) | set(re.findall(r"getElementById\('(\w+)'\)", browser))
     assert {"timeline", "openTimeline", "tlConversation", "tlDrawer", "tlItems", "tlScroll"} <= wanted
-    missing = sorted(i for i in wanted if f'id="{i}"' not in html)
+    # Slice 06 panels are built inside the drawer by the module itself.
+    missing = sorted(i for i in wanted if f'id="{i}"' not in html and f'id="{i}"' not in browser)
     assert not missing, missing
     for selector in re.findall(r"\[data-(count|empty)=\"\$\{lane\.id\}\"\]", browser):
         assert f'data-{selector}="subagent"' in html
@@ -167,3 +168,47 @@ def test_dot_labels_are_bounded_and_never_widen_the_scroll_area():
     assert "min-width:0" in title and "overflow-wrap:anywhere" in title and "white-space:nowrap" not in title
     source = MODULE.read_text(encoding="utf-8")
     assert "function placeTips(){" in source and "area.right-margin-w" in source
+
+
+def test_the_toolbar_offers_search_transcript_and_export_as_labelled_disclosure_buttons():
+    html = PAGE.read_text(encoding="utf-8")
+    view = section(html)
+    group = re.search(r'<div class="tl-acts" role="group" aria-label="[^"]+">(.*?)</div>', view, re.S)
+    assert group, "Slice 06 action group missing from the timeline toolbar"
+    buttons = re.findall(r'<button type="button" class="tl-act" id="(\w+)" aria-controls="tlDrawer" aria-expanded="false" '
+                         r'title="[^"]+"><svg[^>]*aria-hidden="true">.*?</svg><span class="tl-al">([^<]+)</span></button>',
+                         group.group(1), re.S)
+    assert buttons == [("tlSearchOpen", "Rechercher"), ("tlTranscriptOpen", "Transcription"),
+                       ("tlExportOpen", "Exporter JSONL")]
+    narrow = html[html.index("@media(max-width:700px){\n  /* Écran étroit"):]
+    narrow = narrow[: narrow.index("\n}")]
+    assert ".tl-al{position:absolute;width:1px" in narrow  # icon-only on a phone, label kept for screen readers
+    assert re.search(r"\.tl-act\{min-width:36px;min-height:36px", narrow)
+    assert ".tl-acts{order:-1" in narrow  # icons join the conversation row instead of adding a toolbar row
+
+
+def test_panels_share_the_drawer_escape_and_focus_rules():
+    source = MODULE.read_text(encoding="utf-8")
+    browser = source[source.index("(function installJarvisTimeline(){"):]
+    assert "if(S.selected)closeDrawer(true);else if(S.panel)closePanel(true);else closeView();" in browser
+    assert "if(S.panel)closePanel(false);" in browser[browser.index("function openDetail(id){"):]
+    close_view = browser[browser.index("function closeView(){"):browser.index("async function loadConversations")]
+    assert "closePanel(false);" in close_view  # closing the view aborts in-flight search/transcript/export
+    assert 'role="search"' in browser and 'aria-label="Résultats de recherche"' in browser
+    close_panel = browser[browser.index("function closePanel("):browser.index("function renderPanel(")]
+    for job in ("S.search.controller.abort()", "S.transcript.controller.abort()", "S.exportJob.controller.abort()"):
+        assert job in close_panel
+    assert "data-tl-cancel" in browser and "data-tl-retry-job" in browser
+    assert "T.exportSummary(" in browser and "export_incomplete" in browser  # a download without trailer is an error
+    try_jump = browser[browser.index("function tryJump(){"):browser.index("async function loadTranscript(")]
+    assert "matchMedia('(max-width:1099px)')" in try_jump and "closePanel(false)" in try_jump  # drawer never hides it
+    assert "T.trackNewEntries(" in browser  # behaviour tested in test_control_center_timeline_js.py
+
+
+def test_transcript_panel_requests_the_local_offset_and_export_panel_maps_broken_streams():
+    source = MODULE.read_text(encoding="utf-8")
+    browser = source[source.index("(function installJarvisTimeline(){"):]
+    load = browser[browser.index("async function loadTranscript("):browser.index("function saveBlob(")]
+    assert "T.transcriptUrl(conv,mode,offset)" in load and "T.localOffsetMinutes()" in load
+    export = browser[browser.index("async function runExport("):]
+    assert "T.exportFailure(error,{received:job.received,timedOut:!!job.timedOut})" in export

@@ -27,6 +27,13 @@ timeline are projections of these events, not separate truths.
 - Timeline UI (Slice 05): `jarvis/runtime/control_center_timeline.js`
   (pure logic + browser block) and the `#timeline` view of
   `jarvis/runtime/control_center.html` (see Timeline UI).
+- Projections (Slice 06): readable transcript
+  `jarvis/domain/conversation_transcript.py`, JSONL export and offline importer
+  `jarvis/domain/conversation_event_export.py`, bounded search
+  `jarvis/domain/conversation_event_search.py` (scan in the SQLite adapter),
+  Core routes `GET /v1/conversation-events/{transcript,export,search}`, Control
+  Center `GET /api/conversations/{transcript,export,search}`, timeline panels
+  (see Readable transcript, JSONL export, Search, Operations).
 - Conformance tests: `tests/unit/test_conversation_events.py`,
   `tests/unit/test_conversation_event_store.py`,
   `tests/integration/test_conversation_event_store_recovery.py`,
@@ -44,8 +51,17 @@ timeline are projections of these events, not separate truths.
   `tests/integration/test_conversation_event_query_protocol.py`,
   `tests/integration/test_control_center_conversation_events.py`,
   `tests/unit/test_control_center_timeline_js.py`,
-  `tests/unit/test_control_center_timeline_ui.py`.
-- Golden fixture: `tests/fixtures/conversation_events/overlapping_conversation.json`.
+  `tests/unit/test_control_center_timeline_ui.py`,
+  `tests/unit/test_conversation_transcript.py`,
+  `tests/unit/test_conversation_event_export.py`,
+  `tests/unit/test_conversation_event_search.py`,
+  `tests/integration/test_conversation_event_projections_protocol.py`,
+  `tests/integration/test_control_center_conversation_projections.py`,
+  `tests/integration/test_conversation_event_rollout_gate.py` (end-to-end rollout gate),
+  `tests/unit/test_conversation_event_query_limits.py` (hot-path admission).
+- Golden fixtures: `tests/fixtures/conversation_events/overlapping_conversation.json`,
+  `transcript_plain.txt`, `transcript_detailed.txt` (rendering of
+  `tests/fakes/conversation_events.transcript_scenario`).
 - Handoff: `tasks/jarvis-conversation-observability-timeline/` (Slice 01).
 
 Status 2026-09-16: contract, durable store (Slice 02), Core-side producers plus
@@ -55,7 +71,10 @@ the Control Center records sub-agent spans, both through a bounded forwarder tha
 posts batches to the ingestion route. Slice 04 adds the authenticated query
 routes, a bounded long-poll, the Control Center proxy and the redacted trace
 drill-down (Query and live API). Slice 05 adds the live four-lane timeline in
-the Control Center (Timeline UI).
+the Control Center (Timeline UI). Slice 06 adds the readable transcript, the
+JSONL export with its offline importer, bounded search, and the end-to-end
+rollout gate (real stacks, Core hard crash and restart); operations, sizing and
+privacy boundaries are in Operations.
 
 ## Relation to existing observability
 
@@ -166,8 +185,11 @@ Notes:
    becomes a span only when such a terminal signal exists.
 5. **Mouth content** is the text sent for playback (decided 2026-09-16). How
    much was heard stays in `attributes.played_ms` and in the durable heard
-   projection; the readable transcript (Slice 06) must use the heard projection
-   for Jarvis lines, not mouth `content`.
+   projection. **PM decision, Slice 06:** the readable transcript is derived
+   from events only (never from a second record); a Jarvis line shows the text
+   sent for playback and an interrupted one is annotated with the heard
+   duration the events carry (`[interrompu après 1,4 s entendues]`), never with
+   a guess of the words heard. The header of every transcript says so.
 
 `public` = what the user said, heard or was shown. `diagnostic` = execution
 evidence for the debug timeline. A `brain.speech.requested` is diagnostic because
@@ -1137,6 +1159,50 @@ Control Center runs at most two):
   screen), the close button is a 44 px target, lanes keep their need and scroll
   horizontally under a sticky time ruler and sticky lane headers.
 
+### Search, transcript and export panels (Slice 06)
+
+Three toolbar buttons (`#tlSearchOpen` *Rechercher*, `#tlTranscriptOpen`
+*Transcription*, `#tlExportOpen` *Exporter JSONL*; icon-only below 700 px,
+label kept for screen readers; `aria-controls="tlDrawer"` + `aria-expanded`)
+open a panel in the detail drawer; the drawer holds one thing at a time
+(opening an entry's detail closes a panel and vice versa). Esc closes the
+panel (focus back to its button), then the view; closing the view aborts any
+request in flight. Every wait shows motion, what, a live counter and *Annuler*;
+every failure shows the server's title, message and hint with *Réessayer*.
+
+- **Recherche**: `role="search"` form (text, *Toutes les conversations*
+  checked by default, otherwise the selected conversation), results newest
+  first with who · what · day time, "autre conversation" when it is not the one
+  shown, the highlighted snippet and the matched fields; *Plus de résultats* /
+  *Continuer la recherche* (after `scan_limited`) follows `next_cursor`.
+  Choosing a result switches conversation if needed (pinned), switches the
+  filter to *Tout* when the event is diagnostic, waits for the rows, scrolls
+  to the entry (a merged publication resolves to the entry that absorbed it),
+  focuses it and outlines it (`is-found`). Below 1 100 px, where the drawer
+  covers the timeline, the panel closes to show the entry (the results are
+  kept: *Rechercher* reopens them). If the conversation is live and the event
+  is not in it, the panel says so. The "↓ N nouveaux" pill counts only events
+  arriving after the conversation was already hydrated (a switch or a jump no
+  longer reports the last hydration page as new).
+- **Toolbar cost** (headless Chrome, 2026-09-17): 390×844, the three icon
+  buttons sit on the conversation row, lane headers end at 136 px (130 px
+  without them); 1440×900, labelled buttons push the status to a second row,
+  lane headers end at 116 px (90 px without them) or 132 px with the session
+  selector (114 px).
+- **Transcription**: *Simple* / *Détaillé*, fetches
+  `/api/conversations/transcript` (70 s deadline), shows Core's text in a
+  focusable `pre` (line count, size, render time) and *Télécharger .txt*
+  (`conversation-….transcription[-detaillee].txt`, from the same bytes).
+- **Export JSONL**: streams `/api/conversations/export` with the byte counter,
+  30 s idle deadline and *Annuler*; the file is saved only when its last line
+  is the complete trailer (`exportSummary`), otherwise the panel shows "Export
+  incomplet" and *Réessayer*. The result line gives events, unreadable rows,
+  size and file name.
+
+The page never renders transcript text or export lines itself; tests assert
+that the module holds no transcript wording and reads only the canonical
+`/api/conversations...` routes.
+
 ### Performance and readability (measured 2026-09-16)
 
 Real Core + Control Center on temp dirs, headless Chrome. 1440×900: demo
@@ -1160,7 +1226,290 @@ after the Core append. Node: 5 000 events reconstructed and laid out under the
 | A sub-agent seen in the Agents panel is missing | it was launched by a panel/console message or a spontaneous turn, or its attribution was rejected (`agent.subagent.conversation_unattributed` in the trace) |
 | "Aucune ligne de trace jointe" | the journal line is outside the ±15 min window, beyond the scan budget, or the trace file was rotated; the scan stats say which |
 | "N lignes illisibles ignorées par Core" | damaged rows skipped by the store (`core.conversation_events.row_unreadable`) |
+| "Conversation trop longue pour la transcription" | more than 50 000 events to hold: use *Exporter JSONL* |
+| "Export incomplet" | the stream stopped before its trailer after bytes were received (Core stopped, storage failure, network): *Réessayer*; nothing was saved |
+| "Recherche déjà en cours" / "Core est occupé" | Core runs one search and two transcript/export builds at a time (another tab?): retry in a moment |
+| A search result "absent de la chronologie" | its row became unreadable or was pruned since the search |
 | Speech text longer than what was heard | expected: mouth text is the playback text; read "coupé après N s" |
+
+## Readable transcript
+
+Slice 06. A plain-text projection of one conversation, produced by one pure
+renderer (`jarvis/domain/conversation_transcript.py`) for every surface: Core
+renders it, the Control Center relays Core's bytes, the timeline shows and
+downloads them, and an offline reader of an export calls the same function. No
+model writes or rewrites a line; the same events always give the same bytes
+(times in UTC, fixed French number format, no locale, no clock).
+
+- **Basis**: `reconstruct_conversation`. *Plain* mode (`mode=plain`, default)
+  keeps public items only: `Utilisateur` (user transcript), `Jarvis` (mouth
+  speech span), `Jarvis (réflexe)` (public reflex), `Brain` (published
+  message). *Detailed* mode (`mode=detailed`) adds diagnostic items, marked
+  `--`: turn accepted (with `source`), speech requested (its text), Brain work,
+  sub-agent and tool spans with status and duration (sub-agent type, model,
+  tokens, tool uses; tool name and status), turn and system failures with
+  `code`, `reason`, `error_class`, and speech that was never played. Only
+  `mouth.speech.queued` is left out (its speech is the Jarvis line). Nothing
+  outside the event envelope appears, so no prompt, tool argument, provider
+  error text or journal line can.
+- **Jarvis speech** is the text sent for playback (note 5). Annotations come
+  from the close event: `[interrompu après N s entendues]` (`played_ms`),
+  `[interrompu, durée entendue inconnue]`, `[en cours]`, `[lecture en échec]`
+  (detailed: plus its codes), `[remplacé avant la fin]`, `[expiré avant la fin]`.
+  A line without recorded text says `(texte non enregistré)`.
+- **Duplicate publications** collapse with exactly the timeline rule
+  (`collapseMessages`): a `brain.message.published` whose text equals the
+  previous published message of the same `correlation_id` is merged (A, B, A
+  stays three). Detailed mode writes `[publié N fois]`. Parity is tested by
+  running the JS module under node on shared fixtures
+  (`test_python_collapse_keeps_exactly_the_timeline_semantics`). The rollout
+  gate also compares the plain body with QA's independent oracle
+  (`tests/fakes/transcript_oracle.py`: raw stored JSON, no reconstruction).
+- **Format**: a 4-line header (conversation id, "projection déterministe…",
+  mode · heures UTC (or `UTC+02:00`) · N événements lus · K lignes illisibles
+  ignorées par Core, the playback-text notice; detailed adds the `--` legend), a
+  blank line, then one `— YYYY-MM-DD —` line per day and one line per item
+  `[HH:MM:SS.mmm] Label [annotations] : text`; continuation lines of a
+  multi-line text are indented by 4 spaces. Durations: `850 ms`, `1,4 s`,
+  `2 min 05 s`, `1 h 02 min`. An empty conversation ends with
+  `(aucun échange public enregistré)`.
+- **Anomalies** (`close_before_open`…) are named in detailed mode only.
+- **Local time (rework)**: `utc_offset_minutes` (integer, ±840, default 0)
+  shifts every printed time and day line and is written in the header
+  (`heures UTC+02:00`). It is a rendering input like `mode`: exports and
+  offline reproduction default to UTC and reproduce a local rendering byte for
+  byte when given the same offset (`transcript_from_export(…, utc_offset_minutes=120)`).
+  The CNV panel sends the browser's current offset, so its times match the
+  timeline's local clock (a daylight-saving change inside a conversation is not
+  applied per event).
+- **Unknown usage**: the Control Center tracker starts `tokens` / `tool_uses` at
+  0 and only overwrites them when the CLI reports usage; the producer now
+  leaves them out when they are still 0, and the renderer never prints a 0.
+
+Sample (plain, from the rollout gate):
+
+```text
+Transcription de conversation · 38b2ad0d-15d6-4bb7-9162-0a1361eaff89
+Projection déterministe des Conversation Events (contrat v1) ; aucune ligne n'est écrite par un modèle.
+Mode : simple · heures UTC · 23 événements lus
+Parole de Jarvis : texte envoyé à la lecture ; une parole coupée n'indique que la durée entendue.
+
+— 2026-09-16 —
+[22:34:33.585] Utilisateur : Prépare mon dossier de vol pour Lisbonne.
+[22:34:33.604] Jarvis [interrompu après 400 ms entendues] : Je regarde tous les vols de la semaine vers Lisbonne.
+[22:34:33.650] Utilisateur : Seulement le vol de Paul, s'il te plaît.
+[22:34:33.660] Brain : Le vol de Paul pour Lisbonne part lundi à 9 heures.
+[22:34:33.664] Jarvis : Le vol de Paul pour Lisbonne part lundi à 9 heures.
+[22:34:33.686] Utilisateur : Et réserve l'hôtel aussi.
+[22:34:34.360] Utilisateur : Question pendant la panne : le vol est-il confirmé ?
+```
+
+Detailed lines look like
+`[10:00:00.600] -- Sous-agent « Rassemble les vols » : terminé en 1 min 34 s · type flight-finder · modèle claude-sonnet-5 · 1234 jetons · 5 outils`
+and `[10:00:07.000] -- Brain : tour en échec (code brain_backend_exception, classe ConnectionResetError)`
+(golden files `tests/fixtures/conversation_events/transcript_{plain,detailed}.txt`).
+
+Rendering: `TranscriptBuilder` accumulates store pages (`PROJECTION_PAGE_LIMIT`
+= 50 events per read, yielding to the loop between pages), keeps only the event
+types the mode needs (it counts all of them), and renders in a worker thread.
+Two budgets, checked at each kept event so a refusal is cheap: `MAX_TRANSCRIPT_EVENTS`
+= 50 000 kept events and `MAX_TRANSCRIPT_CONTENT_BYTES` = 16 MiB of text (UTF-8
+content + 64 bytes per kept event); past either, 413 `transcript_too_large`:
+use the export. Core streams the rendered text in 64 KiB chunks and the Control
+Center relays them (no second copy there); a client that leaves cancels the
+build (the render itself, once started in its thread, runs to its end).
+Measured: a 1 000-event conversation renders (paging + detailed rendering) in
+0.12 s.
+
+## JSONL export
+
+Slice 06 (`jarvis/domain/conversation_event_export.py`). A projection of the
+store, never a second record, UTF-8, one compact JSON object per line (keys
+sorted):
+
+```text
+{"conversation_id", "counts": {"first_sequence", "last_sequence", "stored_rows"}, "export_version": 1,
+ "exported_at", "format": "jarvis.conversation-events.export", "schema_version": 1, "through_sequence"}
+{"event": <encoded canonical event, codec output>, "recorded_at", "sequence"}      (0..n, ascending sequence)
+{"complete": true, "counts": {"events", "skipped_rows"}, "format": "jarvis.conversation-events.export"}
+```
+
+- Event lines are exactly the query API's stored-event items
+  (`encode_stored_event`).
+- **Frozen extent**: before the first byte Core reads the conversation's raw
+  row count and last sequence (`ConversationEventStore.conversation_extent`,
+  index only) into the header; pages are then read with
+  `until_sequence=through_sequence`, so events appended while the file streams
+  are not in it and the header describes exactly what follows.
+- **Streaming**: 500 events per store read, one HTTP chunk per page; nothing
+  holds the conversation in memory (tested with 1 234 events: exactly three
+  reads of 500). The Control Center relays Core's chunks.
+- **Trailer**: its presence proves the file is whole. A storage failure while
+  streaming (Core) or a broken Core stream (Control Center, journaled once per
+  episode as `ui.conversation_events_unavailable` with `code=export_interrupted`)
+  closes the connection without trailer: the receiver gets a transport error
+  and a file that reads as incomplete, never a silently short one.
+- Unreadable stored rows are skipped by the store (diagnosed) and counted in
+  the trailer's `skipped_rows`; `events + skipped_rows == stored_rows`.
+- Download name: `conversation-<id with [A-Za-z0-9._-] kept, others as _>.events.jsonl`;
+  when a character had to be replaced, `-<FNV-1a 32 of the UTF-8 id>` is
+  appended so `réunion` and `rèunion` never share a name (`export_filename`,
+  same rule and hash in the page, tested).
+- **No integrity check**: the header/trailer counts detect a truncated or torn
+  file, not a deliberate edit. A removed event line with edited counts, or an
+  edited content that stays codec-valid, reads as complete. Keep exports where
+  they cannot be modified if they serve as evidence.
+- The page saves nothing for a conversation without events ("Aucun événement
+  dans cette conversation"), although Core still answers a complete empty export.
+
+**Offline importer.** `read_export(lines)` decodes a file line by line through
+the codec: the header must be first (else `ExportFormatError`; a UTF-8 BOM
+before it is accepted); every other
+invalid line is skipped and reported with its number and a reason naming the
+rule, never the value (`invalid_json`, `invalid_event` (codec or redaction
+error), `other_conversation`, `sequence_out_of_order`, `oversized_line`
+(> 1 MiB), `invalid_trailer`, `after_trailer`). `complete` is true only with a
+trailer whose counts match the lines read and no invalid line.
+`reconstruct_export(result)` and `transcript_from_export(result, mode=…)` use
+the live functions, so they are byte-identical to the live rendering of the
+same stored events (tested in unit, protocol, Control Center and rollout-gate
+tests, including an unreadable stored row).
+
+```python
+from pathlib import Path
+from jarvis.domain.conversation_event_export import read_export, reconstruct_export, transcript_from_export
+from jarvis.domain.conversation_transcript import TranscriptMode
+
+result = read_export(Path("conversation-….events.jsonl").read_bytes().splitlines(keepends=True))
+print(result.complete, len(result.events), result.skipped_rows, result.invalid_lines)
+items = reconstruct_export(result)
+print(transcript_from_export(result, mode=TranscriptMode.DETAILED))
+```
+
+## Search
+
+Slice 06 (`jarvis/domain/conversation_event_search.py`, scan in
+`SQLiteConversationEventStore.search_events`).
+
+- **Searched, per stored event, and nothing else**: `content` only when the
+  event is **public**; `event_type`, `actor`, `event_id`, `conversation_id`,
+  `session_id`, `turn_id`, `correlation_id`, `task_id`, `work_id`,
+  `speech_id`, `outcome_id`, `span_id`; the status-code attributes `status`,
+  `code`, `reason`, `error_class`. **Never**: diagnostic content (speech
+  requests, sub-agent descriptions, work labels, never-played speech), other
+  attributes (`tool_name`, `model`, `subagent_type`…), `producer`,
+  `trace_ref`, times, journal lines (`runtime/trace.jsonl` is not read). A row
+  that does not decode through the codec is never returned (skipped, counted,
+  diagnosed); a redaction-violating row cannot decode.
+- **Matching**: case- and accent-insensitive without dependency (`fold`: NFKD,
+  combining marks removed, `casefold`, `œ æ ø ł đ` expanded, typographic
+  apostrophes `’ ‘ ʼ` read as `'`); the query (1..200 characters, at most 8
+  distinct terms) is split on whitespace and every term must occur in at least
+  one searched field of the same event:
+  - public content and status codes: substring;
+  - ids: the whole id, or a substring of at least 6 characters
+    (`MIN_ID_SUBSTRING`), otherwise `17` would match almost every event through
+    the hex digits of its `event_id` (found by the browser probe);
+  - `event_type` / `actor`: the whole value or a run of whole dotted tokens
+    (`accepted`, `speech.interrupted`), never a fragment, so a short term such
+    as `re` does not match every `…accepted` event.
+- **Results**: newest first (descending store sequence). Hit =
+  `{conversation_id, event_id, sequence, occurred_at, event_type, actor,
+  visibility, matched: [field…], snippet, marks: [[start, end)…]}`; the
+  snippet is ±60/120 characters of public content around the first term, or
+  `event_type · field = value` for a metadata match; `marks` are code-point
+  ranges (the page slices with `Array.from`). Page =
+  `{schema_version: 1, hits, next_cursor, has_more, skipped_rows, scanned_rows,
+  scan_limited}`; continue with `before_sequence=next_cursor` while `has_more`.
+- **Bounds**: `limit` 1..50 (20); at most `MAX_SEARCH_SCAN_ROWS` = 50 000 rows
+  scanned per request (`scan_limited: true` then, with the cursor to
+  continue). Optional `conversation_id` (uses its index) and `visibility`.
+- **How it scans (rework, Core's hot path first)**: each chunk of
+  `SEARCH_SCAN_CHUNK` = 250 rows is one short read on the repository lock that
+  returns only the searchable columns; SQLite extracts content (public rows
+  only) and status codes from the JSON itself (`json_valid`, `->>`), so the
+  stored document is never parsed in Python for a row that does not match.
+  Matching then runs on the event loop in slices of at most `SEARCH_SLICE_S` =
+  2 ms, with `await asyncio.sleep(0)` between slices and chunks; there is no
+  worker thread competing for the GIL. Folding is C-level (`lower()` for ASCII;
+  NFKD, one regex for U+0300–U+036F, a translate table for other combining
+  marks), tested equal to the reference definition. Only matched rows are
+  re-read whole and decoded. A cancelled search stops at its next yield. When the log ends exactly at the scan budget the page still
+  says `has_more`; the next request returns an empty final page. A hit whose
+  row no longer decodes ends the scan at that row, so rows after it are read by
+  the next page, never skipped.
+- **Decision: no FTS5, no schema change.** At Jarvis scale (thousands of
+  events per week) a bounded cooperative scan is enough; FTS5 would need a
+  state migration (v3), an accent-folding tokenizer and triggers. Revisit when
+  the log passes several hundred thousand rows. Measurements are in Hot path.
+
+## Hot path
+
+Heavy reads must never slow what the user hears: appends (every Brain and Mouth
+event, user turns) share the state repository lock and Core's event loop with
+them.
+
+- **Admission**: `ConversationEventQueryService` runs at most one search
+  (`MAX_CONCURRENT_SEARCHES`) and two transcript/export builds
+  (`MAX_CONCURRENT_PROJECTIONS`) at once. Over capacity the request is refused
+  at once with 429 `search_busy` / `projection_busy` (Core and Control Center;
+  not a failure episode; the page says a search or build is already running and
+  offers *Réessayer*). Nothing is queued. Every exit gives the slot back:
+  success, error, cancellation, a client that leaves mid-export, an export never
+  iterated.
+- **Cancellation**: aiohttp does not cancel a handler whose client left. Core's
+  search and transcript routes run their work as a task and check the client
+  connection every 0.25 s (`CLIENT_CHECK_S`), cancelling it when the client
+  left or the server stops; an export stops at its next write. The Control
+  Center watches the browser connection (as for long-polls) and cancels its
+  Core request, which closes that connection, so an abandoned browser search is
+  cancelled in Core within about a second (probe: 3 browser searches aborted
+  after 0.5 s → the first cancelled in Core after 0.8 s, the other two refused 429).
+- **Yielding**: search as above; transcript and export read 50 events per store
+  read and yield between pages; export encoding yields every 2 ms.
+
+Measured 2026-09-17 (scratch `slice06/hot/hotprobe.py` on a copy of QA's
+80 001-row store, rows ≈1.4 KB; one-event appends every 5 ms; loop lag = time
+for `await asyncio.sleep(0)` to return, sampled every 2 ms):
+
+| Case | Before (append p50 / p95 / max, loop lag p95 / max) | After |
+|---|---|---|
+| idle | 2.1 / 3.4 / 45 ms, 0.7 / 0.9 ms | 2.7 / 3.5 / 19 ms, 0.7 / 1.6 ms |
+| one search scanning 50 000 rows, repeated | 11.4 / 204.7 / 292 ms, 0.7 / 47 ms; 7.5 s per scan | 2.0 / 4.2 / 14 ms, 1.5 / 4.5 ms; 2.1 s per scan |
+| 4 concurrent searches | 2.4 / 904 / 1 053 ms, lag max 62 ms (all 4 ran) | 2.1 / 3.8 / 19 ms, lag max 2.4 ms (1 runs, 3 refused 429) |
+| transcript of 30 000 events (≈21 MiB of text) | 2.1 / 29.8 / 160 ms; rendered in 3.5 s | 1.9 / 2.4 / 11 ms; refused 413 after 2.7 s (text budget) |
+| same, budget raised to 64 MiB (render cost) | — | 1.8 / 3.4 / 125 ms, lag max 16 ms; rendered in 5.1 s |
+| export of 50 001 events (75 MB) | 13.0 / 87.3 / 105 ms; 10.7 s | 7.4 / 9.2 / 27 ms; 13.6 s |
+
+QA's own probe (`qa06/lockprobe.py`, rerun on the copy): one search append p50 /
+p95 2.0 / 4.2 ms (worst loop lag 18 ms); four searches started directly on the
+store, bypassing the service cap, 30.7 / 37.8 ms. Search latency was traded for
+nothing: the cooperative scan is faster than the threaded one (2.1 s vs 7.4 s
+for 50 000 rows ≈ 1.4 KB) because SQLite extracts the fields and folding runs in
+C. Known limit: rendering a transcript near its 16 MiB budget runs in a thread
+and can still delay single appends by about 100 ms (p95 unaffected).
+
+## Projection routes and errors
+
+| Core route | Control Center route | Answer |
+|---|---|---|
+| `GET /v1/conversation-events/transcript?conversation_id=&mode=plain\|detailed&utc_offset_minutes=` | `GET /api/conversations/transcript` | 200 `text/plain; charset=utf-8`, streamed |
+| `GET /v1/conversation-events/export?conversation_id=` | `GET /api/conversations/export` | 200 `application/x-ndjson; charset=utf-8`, `Content-Disposition: attachment`, streamed |
+| `GET /v1/conversation-events/search?q=&conversation_id=&before_sequence=&limit=&visibility=` | `GET /api/conversations/search` | 200 search page |
+
+Typed client: `LocalCoreClient.stream_conversation_transcript` (async iterator
+of byte chunks; `get_conversation_transcript` joins them),
+`export_conversation_events` (async iterator of byte chunks),
+`search_conversation_events`. Errors follow the query API table: 400
+`invalid_request` (strict parameters, message names the rule never the value),
+401, 503 `conversation_events_unavailable` (diagnosed once per episode), plus
+413 `transcript_too_large` and 429 `search_busy` / `projection_busy` (Core and
+Control Center, see Hot path). Control Center: same
+origin guard as every `/api/conversations...` route, 503 `core_unreachable` /
+`not_configured` / `control_center_stopping`, 502 `core_unauthorized` (after one
+token re-read, also before an export's first byte) / `core_refused` /
+`invalid_core_response`; read budgets 60 s (transcript), 30 s (search), 15 s to
+the export header then 30 s between chunks.
 
 ## Visibility and redaction
 
@@ -1315,7 +1664,9 @@ indexing only.
 |---|---|
 | `get_event(event_id)` | `StoredConversationEvent(sequence, recorded_at, event)` or None (absent **or** unreadable, the latter diagnosed) |
 | `latest_recorded_at()` | `recorded_at` of the highest sequence, or None (empty store, or unparseable: diagnosed as `row_unreadable`); used by the start-up backfill |
-| `list_conversation_events(conversation_id, after_sequence, limit)` | event page |
+| `list_conversation_events(conversation_id, after_sequence, limit, until_sequence?)` | event page (`until_sequence`: never past it, used by the frozen export) |
+| `conversation_extent(conversation_id)` | `ConversationEventExtent(stored_rows, first_sequence, last_sequence)` or None (index only, nothing decoded) |
+| `search_events(query, conversation_id?, before_sequence?, limit, visibility?, max_scan_rows)` | search page (see Search) |
 | `list_events_in_time_range(start, end, conversation_id?, after_sequence, limit)` | event page, `start <= occurred_at < end` (producer clock, ms), sequence order |
 | `list_events_by_id(field, value, conversation_id?, after_sequence, limit)` | event page; `field` in `LOOKUP_FIELDS` = session, turn, correlation, task, work, speech, outcome, span id |
 | `list_conversations(before_sequence?, limit)` | summaries by most recent store activity; `next_cursor` = last row's `last_sequence`, pass as `before_sequence` |
@@ -1425,8 +1776,76 @@ Changing the event payload schema (event `schema_version` 2) will need a state
 migration or a read-time upcaster; until then a stored row that is not event
 version 1 is an unreadable row, never silently reinterpreted.
 
+## Operations
+
+### Export, search, read
+
+- **Browser**: Control Center → **CNV** → *Exporter JSONL* (saved only when
+  complete), *Transcription* (simple/détaillé, *Télécharger .txt*),
+  *Rechercher* (jump to the entry). Direct URLs on the Control Center
+  (loopback only): `http://127.0.0.1:17654/api/conversations/export?conversation_id=<id>`,
+  `/api/conversations/transcript?conversation_id=<id>&mode=detailed`,
+  `/api/conversations/search?q=<words>`.
+- **Without the Control Center**: Core routes with the session bearer token
+  (`runtime/core.token`, or `JARVIS_CORE_TOKEN_FILE`; rewritten at every Core start; Core listens on
+  `JARVIS_CORE_HOST`, default `127.77.0.1`) and
+  `X-Jarvis-Protocol: 1`, or `LocalCoreClient` (see Projection routes).
+- **Offline**: `read_export` + `transcript_from_export` / `reconstruct_export`
+  (snippet in JSONL export). Always check `result.complete` and
+  `result.invalid_lines` before trusting a file.
+
+### Recovery
+
+- **Core crash**: acknowledged events are durable (WAL, `synchronous=FULL`).
+  At start Core re-records user turns whose event a crash lost (Start-up
+  backfill); Brain events in the ~60 ms commit window are lost by decision.
+  Proven end to end by `test_conversation_event_rollout_gate.py` (child Core
+  killed with `os._exit` while the user event is queued; restart; export,
+  transcript, search and drill-down all consistent).
+- **Voice / Control Center crash**: their forwarder queue (≤ 1024 events) is
+  lost; nothing to recover (Forwarder, loss bounds). Counters:
+  `GET /v1/health` → `conversation_events`, `GET /api/status` →
+  `conversation_events`, voice `conversation_events.forwarder_*` journal lines.
+- **Damaged rows**: never repaired or deleted; skipped, counted
+  (`skipped_rows`, `unreadable_rows`) and diagnosed
+  (`core.conversation_events.row_unreadable`). An export of the conversation
+  keeps every readable event and states the skipped count.
+- **Migration rollback**: `<db>.v1.bak`, procedure in
+  [state model](state-model.md). Take a JSONL export of the conversations you
+  care about first: a v1 binary cannot read the log.
+
+### Storage size and retention
+
+Measured 2026-09-17 on a scratch store filled with 23 000 copies of the
+rollout-gate conversation's real events (voice, Brain, sub-agent, tool): stored
+`data` averages **845 bytes** per event and the database grows by **≈1.8 KB per
+event** after checkpoint (row, extracted columns, 10 indexes; ids are UUIDs).
+An export line averages 923 bytes. That conversation stores 23 events for 4
+user turns plus a crashed one, i.e. **≈5–6 events per turn** with work, a
+sub-agent and a tool call. Estimate: 100 turns a day ≈ 600 events ≈ 1.1 MB/day
+≈ 400 MB/year; a quiet day of 20 turns ≈ 80 MB/year. Retention exists
+(`ConversationEventRetentionPolicy`, closed and idle conversations only) but is
+**disabled and not scheduled**: nothing is ever deleted today. Export before
+enabling it.
+
+### Privacy boundaries
+
+- The log holds user transcripts and what Jarvis said: private by nature. It
+  lives only in the Core state DB (`data/state/jarvis.sqlite3`, git-tracked in
+  this workstation layout: do not push it) and leaves Core only through
+  authenticated loopback routes; the Control Center routes refuse any
+  non-loopback `Host`/`Origin` and `Sec-Fetch-Site: cross-site`.
+- Never in an event (so never in a transcript, export or search result): hidden
+  reasoning, prompts (including sub-agent prompts), raw tool arguments and
+  results, provider error text, audio, secrets (contract allowlist + recursive
+  forbidden-key scan). Sub-agent summaries never leave the tracker.
+- Search never reads diagnostic content or journal lines; the trace drill-down
+  returns allowlisted, value-checked journal fields only.
+- An exported file and a downloaded transcript are copies outside Jarvis's
+  guards: store them like the conversation itself.
+
 ## Validation
 
 ```powershell
-$env:PYTHONDONTWRITEBYTECODE=1; .venv/Scripts/python.exe -W error::ResourceWarning -m pytest -q -p no:cacheprovider tests/unit/test_conversation_events.py tests/unit/test_conversation_event_store.py tests/integration/test_conversation_event_store_recovery.py tests/unit/test_conversation_event_emitter.py tests/unit/test_conversation_event_producers.py tests/integration/test_conversation_event_ingest_protocol.py tests/integration/test_conversation_event_production.py tests/unit/test_conversation_event_forwarder.py tests/unit/test_conversation_event_mouth_producers.py tests/unit/test_conversation_event_voice_bridge.py tests/unit/test_conversation_event_subagents.py tests/integration/test_conversation_event_timeline.py tests/unit/test_conversation_event_query_contract.py tests/unit/test_conversation_event_trace.py tests/integration/test_conversation_event_query_protocol.py tests/integration/test_control_center_conversation_events.py tests/unit/test_control_center_timeline_js.py tests/unit/test_control_center_timeline_ui.py
+$env:PYTHONDONTWRITEBYTECODE=1; .venv/Scripts/python.exe -W error::ResourceWarning -m pytest -q -p no:cacheprovider tests/unit/test_conversation_events.py tests/unit/test_conversation_event_store.py tests/integration/test_conversation_event_store_recovery.py tests/unit/test_conversation_event_emitter.py tests/unit/test_conversation_event_producers.py tests/integration/test_conversation_event_ingest_protocol.py tests/integration/test_conversation_event_production.py tests/unit/test_conversation_event_forwarder.py tests/unit/test_conversation_event_mouth_producers.py tests/unit/test_conversation_event_voice_bridge.py tests/unit/test_conversation_event_subagents.py tests/integration/test_conversation_event_timeline.py tests/unit/test_conversation_event_query_contract.py tests/unit/test_conversation_event_trace.py tests/integration/test_conversation_event_query_protocol.py tests/integration/test_control_center_conversation_events.py tests/unit/test_control_center_timeline_js.py tests/unit/test_control_center_timeline_ui.py tests/unit/test_conversation_transcript.py tests/unit/test_conversation_event_export.py tests/unit/test_conversation_event_search.py tests/integration/test_conversation_event_projections_protocol.py tests/integration/test_control_center_conversation_projections.py tests/integration/test_conversation_event_rollout_gate.py tests/unit/test_conversation_event_query_limits.py
 ```

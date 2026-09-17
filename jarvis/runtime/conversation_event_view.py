@@ -27,6 +27,16 @@ Long-polls (`events(wait_ms > 0)`) are bounded on this side too:
   `disconnected()` every `DISCONNECT_CHECK_S` and cancels the Core request, which
   closes that connection; Core stops its own wait the same way.
 
+Slice 06 reads use the same mapping (Core 413 stays 413 `transcript_too_large`,
+Core 429 stays 429 `search_busy` / `projection_busy`, not a failure episode):
+`search`, and the streams `open_transcript` / `open_export`, which return once
+Core sent their first chunk (errors before it map as above). Search and
+transcript watch the browser connection like long-polls: a browser that leaves
+cancels the Core request, and Core stops the work. A Core stream that breaks
+after its first chunk is reported by `stream_interrupted` (same
+once-per-episode journal line) and the browser connection is closed, so a
+download never ends as a silently short file.
+
 Diagnostics: one `ui.conversation_events_unavailable` warning per failure
 episode (code and `exception_type`, never a value), one
 `ui.conversation_events_recovered` info when a read succeeds again, one
@@ -37,7 +47,8 @@ polling every second therefore cannot flood the journal.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -46,13 +57,20 @@ import aiohttp
 from jarvis.domain.conversation_event_store import (
     ConversationEventPage, ConversationEventSummaryPage, StoredConversationEvent,
 )
+from jarvis.domain.conversation_event_search import ConversationEventSearchPage, SearchQuery
 from jarvis.domain.conversation_events import ConversationVisibility
+from jarvis.domain.conversation_transcript import TranscriptMode
 from jarvis.protocol.client import CoreProtocolError, LocalCoreClient
 from jarvis.runtime.journal import RuntimeJournal
 from jarvis.v2_config import validate_loopback_host
 
 #: Budget of a plain read; a long-poll adds its own `wait_ms`.
 DEFAULT_READ_TIMEOUT_S = 5.0
+#: Extra budget of the Slice 06 reads (a transcript renders a whole conversation,
+#: a search scans up to 50 000 rows).
+TRANSCRIPT_EXTRA_S = 55.0
+SEARCH_EXTRA_S = 25.0
+EXPORT_OPEN_EXTRA_S = 10.0
 #: Long-polls allowed to wait at Core at the same time; more are sent as plain polls.
 MAX_LONG_POLLS = 8
 #: Connection pools of the two Core sessions (aiohttp's default is 100 shared).
@@ -70,6 +88,13 @@ CORE_UNAUTHORIZED = "core_unauthorized"
 CORE_REFUSED = "core_refused"
 INVALID_CORE_RESPONSE = "invalid_core_response"
 CLIENT_DISCONNECTED = "client_disconnected"
+TRANSCRIPT_TOO_LARGE = "transcript_too_large"
+#: Core refuses a heavy read while others run (429): a normal answer, not a failure episode.
+BUSY_MESSAGES = {
+    "search_busy": "Une recherche est déjà en cours dans Core (un autre onglet ?). Réessayez dans un instant.",
+    "projection_busy": "Deux transcriptions ou exports sont déjà en cours dans Core. Réessayez dans un instant.",
+}
+EXPORT_INTERRUPTED = "export_interrupted"
 
 UNAVAILABLE_KIND = "ui.conversation_events_unavailable"
 RECOVERED_KIND = "ui.conversation_events_recovered"
@@ -85,6 +110,19 @@ class ConversationEventViewError(Exception):
         return {"ok": False, "code": self.code, "error": self.message, "core_status": self.core_status}
 
 
+@dataclass(slots=True)
+class ExportStream:
+    """An export Core already started answering: its first chunk, then the rest."""
+
+    first: bytes
+    rest: AsyncIterator[bytes]
+
+    async def aclose(self) -> None:
+        close = getattr(self.rest, "aclose", None)
+        if close is not None:
+            await close()
+
+
 class ConversationEventReader(Protocol):
     """Typed Core reads (`CoreConversationEventReader` in production)."""
 
@@ -93,6 +131,10 @@ class ConversationEventReader(Protocol):
     async def list_conversation_events(self, conversation_id: str, **query: Any) -> ConversationEventPage: ...
     async def lookup_conversation_events(self, field: str, value: str, **query: Any) -> ConversationEventPage: ...
     async def get_conversation_event(self, event_id: str) -> StoredConversationEvent | None: ...
+    async def open_transcript(self, conversation_id: str, *, mode: TranscriptMode,
+                              utc_offset_minutes: int) -> ExportStream: ...
+    async def search_conversation_events(self, query: SearchQuery, **query_args: Any) -> ConversationEventSearchPage: ...
+    async def open_export(self, conversation_id: str) -> ExportStream: ...
     async def close(self) -> None: ...
 
 
@@ -163,6 +205,41 @@ class CoreConversationEventReader:
     async def get_conversation_event(self, event_id: str) -> StoredConversationEvent | None:
         return await self._call("read", "get_conversation_event", event_id)
 
+    async def open_transcript(self, conversation_id: str, *, mode: TranscriptMode,
+                              utc_offset_minutes: int) -> ExportStream:
+        """Start Core's transcript stream and wait for its first chunk; one retry after a 401."""
+        return await self._open_stream("stream_conversation_transcript", conversation_id, mode=mode,
+                                       utc_offset_minutes=utc_offset_minutes)
+
+    async def search_conversation_events(self, query: SearchQuery, **query_args: Any) -> ConversationEventSearchPage:
+        return await self._call("read", "search_conversation_events", query, **query_args)
+
+    async def open_export(self, conversation_id: str) -> ExportStream:
+        """Start Core's export and wait for its first chunk (the header); one retry after a 401."""
+        return await self._open_stream("export_conversation_events", conversation_id)
+
+    async def _open_stream(self, method: str, *args: Any, **kwargs: Any) -> ExportStream:
+        client = self._client("read")
+        for attempt in (1, 2):
+            chunks = getattr(client, method)(*args, **kwargs)
+            try:
+                first = await chunks.__anext__()
+            except StopAsyncIteration:
+                return ExportStream(b"", chunks)
+            except CoreProtocolError as exc:
+                await chunks.aclose()
+                if exc.status != 401 or attempt == 2:
+                    raise
+                token = self._token()
+                for other, _ in self._lanes.values():
+                    other.token = token
+                continue
+            except BaseException:
+                await chunks.aclose()
+                raise
+            return ExportStream(first, chunks)
+        raise AssertionError("unreachable")  # pragma: no cover - the loop returns or raises
+
     async def close(self) -> None:
         self._closed = True
         lanes, self._lanes = self._lanes, {}
@@ -223,6 +300,29 @@ class ConversationEventView:
 
     async def event(self, event_id: str) -> StoredConversationEvent | None:
         return await self._read("event", lambda r: r.get_conversation_event(event_id))
+
+    async def open_transcript(self, conversation_id: str, *, mode: TranscriptMode, utc_offset_minutes: int = 0,
+                              disconnected: Callable[[], bool] | None = None) -> ExportStream:
+        """Core's transcript stream once its first chunk arrived; a browser that leaves cancels the build."""
+        return await self._read("transcript", lambda r: r.open_transcript(
+            conversation_id, mode=mode, utc_offset_minutes=utc_offset_minutes), extra_s=TRANSCRIPT_EXTRA_S,
+            disconnected=disconnected)
+
+    async def search(self, query: SearchQuery, *, conversation_id: str | None, before_sequence: int | None,
+                     limit: int, visibility: ConversationVisibility | None,
+                     disconnected: Callable[[], bool] | None = None) -> ConversationEventSearchPage:
+        """A browser that leaves cancels the Core request, and Core then stops the scan."""
+        return await self._read("search", lambda r: r.search_conversation_events(
+            query, conversation_id=conversation_id, before_sequence=before_sequence, limit=limit,
+            visibility=visibility), extra_s=SEARCH_EXTRA_S, disconnected=disconnected)
+
+    async def open_export(self, conversation_id: str) -> ExportStream:
+        return await self._read("export", lambda r: r.open_export(conversation_id), extra_s=EXPORT_OPEN_EXTRA_S)
+
+    def stream_interrupted(self, operation: str, exc: BaseException) -> None:
+        """Core's export or transcript stream broke after its first chunk: one journal line per failure episode."""
+        self._episode(operation, ConversationEventViewError(503, EXPORT_INTERRUPTED,
+                                                            "Flux interrompu par Core."), type(exc).__name__)
 
     async def aclose(self) -> None:
         self._closed = True
@@ -290,6 +390,12 @@ class ConversationEventView:
     def _refused(self, operation: str, exc: CoreProtocolError) -> ConversationEventViewError:
         if exc.status == 400:
             return ConversationEventViewError(400, INVALID_REQUEST, str(exc), core_status=400)
+        if exc.status == 429 and exc.code in BUSY_MESSAGES:
+            return ConversationEventViewError(429, exc.code, BUSY_MESSAGES[exc.code], core_status=429)
+        if exc.status == 413 and exc.code == TRANSCRIPT_TOO_LARGE:
+            return ConversationEventViewError(413, TRANSCRIPT_TOO_LARGE,
+                                              "Conversation trop longue pour une transcription : utilisez l'export JSONL.",
+                                              core_status=413)
         if exc.status == 503:
             error = ConversationEventViewError(503, EVENTS_UNAVAILABLE,
                                                "Core ne peut pas lire les Conversation Events pour l'instant.",

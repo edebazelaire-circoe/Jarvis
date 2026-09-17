@@ -11,9 +11,12 @@ from jarvis.domain.back_brain import BackBrainAdvisoryReference, BackBrainContex
 from jarvis.domain.voice_state import VoiceConversationSnapshot
 from jarvis.domain.speech_presentation import BackendOutcome, SpeechDependency, SpeechSource
 from jarvis.domain.live_lifecycle import LiveSessionRecord
-from jarvis.domain.conversation_events import ConversationEvent, ConversationEventType
+from jarvis.domain.conversation_events import ConversationEvent, ConversationEventType, ConversationVisibility
+from jarvis.domain.conversation_event_search import (
+    DEFAULT_SEARCH_LIMIT, MAX_SEARCH_SCAN_ROWS, ConversationEventSearchPage, SearchQuery,
+)
 from jarvis.domain.conversation_event_store import (
-    DEFAULT_EVENT_PAGE_LIMIT, DEFAULT_SUMMARY_PAGE_LIMIT, AppendResult, ConversationEventPage,
+    DEFAULT_EVENT_PAGE_LIMIT, DEFAULT_SUMMARY_PAGE_LIMIT, AppendResult, ConversationEventExtent, ConversationEventPage,
     ConversationEventRetentionPolicy, ConversationEventSummary, ConversationEventSummaryPage, RetentionReport,
     StoredConversationEvent,
 )
@@ -119,7 +122,13 @@ class ConversationEventStore(Protocol):
     async def get_event(self, event_id: str) -> StoredConversationEvent | None: ...
     async def latest_recorded_at(self) -> datetime | None: ...
     async def list_conversation_events(self, conversation_id: str, *, after_sequence: int = 0,
-                                       limit: int = DEFAULT_EVENT_PAGE_LIMIT) -> ConversationEventPage: ...
+                                       limit: int = DEFAULT_EVENT_PAGE_LIMIT,
+                                       until_sequence: int | None = None) -> ConversationEventPage: ...
+    async def conversation_extent(self, conversation_id: str) -> ConversationEventExtent | None: ...
+    async def search_events(self, query: SearchQuery, *, conversation_id: str | None = None,
+                            before_sequence: int | None = None, limit: int = DEFAULT_SEARCH_LIMIT,
+                            visibility: ConversationVisibility | None = None,
+                            max_scan_rows: int = MAX_SEARCH_SCAN_ROWS) -> ConversationEventSearchPage: ...
     async def list_events_in_time_range(self, start: datetime, end: datetime, *, conversation_id: str | None = None,
                                         after_sequence: int = 0,
                                         limit: int = DEFAULT_EVENT_PAGE_LIMIT) -> ConversationEventPage: ...

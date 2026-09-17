@@ -32,7 +32,7 @@ MODULE = ROOT / "jarvis" / "runtime" / "control_center_timeline.js"
 FIXTURE = ROOT / "tests" / "fixtures" / "conversation_events" / "overlapping_conversation.json"
 
 
-def run_node(tmp_path: Path, source: str, data: object = None) -> object:
+def run_node(tmp_path: Path, source: str, data: object = None, *, tz: str = "UTC") -> object:
     node = shutil.which("node")
     if node is None:
         pytest.skip("node absent")
@@ -50,7 +50,7 @@ def run_node(tmp_path: Path, source: str, data: object = None) -> object:
     )
     completed = subprocess.run(
         [node, str(script)], capture_output=True, text=True, encoding="utf-8", timeout=60, check=False,
-        env={**os.environ, "TZ": "UTC"},
+        env={**os.environ, "TZ": tz},
     )
     assert completed.returncode == 0, completed.stderr
     return json.loads(completed.stdout)
@@ -699,7 +699,8 @@ def test_the_timeline_reads_only_canonical_conversation_routes():
     code = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
     routes = set(re.findall(r"/api/[A-Za-z0-9_/.-]*", code))
     assert routes == {"/api/conversations", "/api/conversations/events", "/api/conversations/events/",
-                      "/api/conversations/sessions"}, routes
+                      "/api/conversations/sessions", "/api/conversations/transcript", "/api/conversations/export",
+                      "/api/conversations/search"}, routes
     assert "/api/trace" not in code and "agent.event" not in code and "thinking" not in code.lower()
     assert "fetch(" not in code.replace("fetchImpl(", "")  # every read goes through the checked fetchJson
 
@@ -741,3 +742,225 @@ def test_a_long_dot_label_is_shortened_in_its_tooltip_but_complete_for_screen_re
     """, {"events": [encode_conversation_event(event)]})
     assert result["tip"].startswith("Parole demandée : LLL") and "…" in result["tip"] and len(result["tip"]) < 300
     assert "L" * 3000 in result["aria"]
+
+
+# ------------------------------------------- Slice 06: transcript, export, search
+
+def test_projection_urls_encode_ids_and_never_render_text_themselves(tmp_path):
+    result = run_node(tmp_path, """
+      out({
+        plain:TL.transcriptUrl('conv/é 1','plain'),detailed:TL.transcriptUrl('c','detailed'),odd:TL.transcriptUrl('c','<x>'),
+        export:TL.exportUrl('a&b'),
+        search:TL.searchUrl({q:'réunion & co',conversationId:'c 1',beforeSequence:42}),
+        searchAll:TL.searchUrl({q:'x'}),
+        names:[TL.transcriptFilename('c/1','plain'),TL.transcriptFilename('c','detailed'),TL.exportFilename('')],
+        bytes:[0,1023,1024,1536,1048576*3.25].map(TL.fmtBytes),
+      });
+    """)
+    assert result["plain"] == ("/api/conversations/transcript?conversation_id=conv%2F%C3%A9%201&mode=plain"
+                               "&utc_offset_minutes=0")
+    assert result["detailed"].endswith("&mode=detailed&utc_offset_minutes=0")
+    assert result["odd"].endswith("&mode=plain&utc_offset_minutes=0")
+    assert result["export"] == "/api/conversations/export?conversation_id=a%26b"
+    assert result["search"] == "/api/conversations/search?q=r%C3%A9union%20%26%20co&limit=20&conversation_id=c%201&before_sequence=42"
+    assert result["searchAll"] == "/api/conversations/search?q=x&limit=20"
+    from jarvis.domain.conversation_event_export import file_stem
+    assert result["names"] == [f"{file_stem('c/1')}.transcription.txt", "conversation-c.transcription-detaillee.txt",
+                               "conversation-sans-id.events.jsonl"]
+    assert result["names"][0].startswith("conversation-c_1-")  # a replaced character adds the id hash
+    assert result["bytes"] == ["0 o", "1023 o", "1,0 Ko", "1,5 Ko", "3,3 Mo"]
+    source = MODULE.read_text(encoding="utf-8")
+    assert "Transcription de conversation" not in source  # the text is Core's rendering, never rebuilt here
+
+
+def test_an_export_is_complete_only_with_its_final_control_line(tmp_path):
+    trailer = json.dumps({"format": "jarvis.conversation-events.export", "complete": True,
+                          "counts": {"events": 12, "skipped_rows": 1}})
+    incomplete = json.dumps({"format": "jarvis.conversation-events.export", "complete": False,
+                             "counts": {"events": 1, "skipped_rows": 0}})
+    samples = ['{"sequence":1}\n' + trailer + "\n", trailer, '{"sequence":1}\n{"sequence":2}\n',
+               '{"format":"jarvis.conversation-events.export"', incomplete, ""]
+    result = run_node(tmp_path, "out(DATA.map(TL.exportSummary));", samples)
+    assert result[0] == {"complete": True, "events": 12, "skippedRows": 1} and result[1]["complete"] is True
+    assert all(r == {"complete": False, "events": None, "skippedRows": None} for r in result[2:])
+
+
+def test_search_hits_are_escaped_highlighted_by_code_point_and_labelled(tmp_path):
+    hit = {"conversation_id": "conv-b", "event_id": "cev-" + "1" * 64, "sequence": 9,
+           "occurred_at": "2026-09-16T10:00:04.000Z", "event_type": "mouth.speech.interrupted", "actor": "mouth",
+           "visibility": "public", "matched": ["content", "attributes.code"],
+           "snippet": "\U0001F600 <b>Réunion</b> & co", "marks": [[5, 12], [99, 120], [3, 2]]}
+    result = run_node(tmp_path, """
+      out({view:TL.hitView(DATA,{currentConversationId:'conv-a'}),same:TL.hitView(DATA,{currentConversationId:'conv-b'}).elsewhere,
+        problems:['',' ','x'.repeat(201),'é'.repeat(200),'ok'].map(TL.searchQueryProblem)});
+    """, hit)
+    view = result["view"]
+    assert view["snippet"] == "\U0001F600 &lt;b&gt;<mark>Réunion</mark>&lt;/b&gt; &amp; co"
+    assert (view["who"], view["what"], view["when"], view["day"]) == ("Jarvis · voix", "Parole de Jarvis", "10:00:04",
+                                                                      "2026-09-16")
+    assert view["elsewhere"] is True and result["same"] is False and view["matched"] == "texte, code"
+    assert result["problems"][0] and result["problems"][1] and result["problems"][2]
+    assert result["problems"][3] is None and result["problems"][4] is None
+
+
+def test_search_and_job_states_say_what_happens_for_how_long_and_how_to_get_out(tmp_path):
+    result = run_node(tmp_path, """
+      const now=100000;
+      const err=TL.classifyError({status:413,code:'transcript_too_large',message:'Conversation trop longue'});
+      out({
+        idle:TL.searchStateView({},now),
+        searching:TL.searchStateView({loading:true,startedAt:97500},now),
+        failed:TL.searchStateView({error:TL.classifyError({status:503,code:'core_unreachable',message:'Core injoignable'})},now),
+        none:TL.searchStateView({done:true,hits:[]},now),
+        partial:TL.searchStateView({done:true,hits:[{},{}],hasMore:true,scanLimited:true,scanned:50000,skippedRows:1},now),
+        exporting:TL.jobStateView('export',{loading:true,startedAt:95000,received:1536000},now),
+        exported:TL.jobStateView('export',{done:true,events:1234,skippedRows:2,received:2048,filename:'conversation-c.events.jsonl'},now),
+        rendering:TL.jobStateView('transcript',{loading:true,startedAt:99000},now),
+        rendered:TL.jobStateView('transcript',{done:true,text:'a\\nb\\n\\nc\\n',bytes:9,elapsedMs:420},now),
+        tooLarge:TL.jobStateView('transcript',{error:err},now),
+        errRetryable:err.retryable,
+      });
+    """)
+    nnbsp = " "
+    assert result["idle"]["tone"] == "muted" and "Jamais la trace" in result["idle"]["text"]
+    assert result["searching"] == {"tone": "busy", "text": "Recherche en cours · 2 s", "cancel": True}
+    assert result["failed"]["tone"] == "bad" and result["failed"]["retry"] and "Core injoignable" in result["failed"]["text"]
+    assert result["none"]["text"] == "Aucun résultat"
+    assert result["partial"]["text"] == (f"2 résultats · recherche arrêtée après 50{nnbsp}000 événements parcourus · "
+                                         "1 ligne illisible ignorée")
+    assert result["partial"]["more"] is True
+    assert result["exporting"] == {"tone": "busy", "text": "Export en cours · 1,5 Mo reçus · 5 s", "cancel": True}
+    assert f"1{nnbsp}234 événements" in result["exported"]["text"]
+    assert "2 lignes illisibles ignorées par Core" in result["exported"]["text"]
+    assert result["rendering"]["cancel"] and result["rendered"]["text"] == "3 lignes · 9 o · rendue en 420 ms"
+    assert result["tooLarge"]["tone"] == "bad" and "Exporter JSONL" in result["tooLarge"]["detail"]
+    assert result["errRetryable"] is False
+
+
+def test_fetch_text_and_open_stream_surface_the_server_error(tmp_path):
+    result = run_node(tmp_path, """
+      const answer=(status,text)=>async()=>({ok:status<400,status,text:async()=>text});
+      const grab=async p=>{try{const v=await p;return ['ok',typeof v==='string'?v:v.status]}catch(e){return ['err',e.status??null,e.code,e.message,e.name]}};
+      const hang=(path,{signal})=>new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(Object.assign(new Error('aborted'),{name:'AbortError'}))));
+      out({
+        text:await grab(TL.createFetchText(answer(200,'Transcription\\n'))('/t')),
+        tooLarge:await grab(TL.createFetchText(answer(413,'{"ok":false,"code":"transcript_too_large","error":"Trop longue"}'))('/t')),
+        plain:await grab(TL.createFetchText(answer(502,'Bad Gateway'))('/t')),
+        timeout:await grab(TL.createFetchText(hang)('/t',{timeoutMs:20})),
+        stream:await grab(TL.createOpenStream(answer(200,''))('/e')),
+        refused:await grab(TL.createOpenStream(answer(403,'{"ok":false,"code":"forbidden_origin","error":"forbidden host"}'))('/e')),
+      });
+    """)
+    assert result["text"] == ["ok", "Transcription\n"]
+    assert result["tooLarge"][:4] == ["err", 413, "transcript_too_large", "Trop longue"]
+    assert result["plain"][:4] == ["err", 502, "", "Bad Gateway"]
+    assert result["timeout"][2] == "timeout" and result["timeout"][4] == "TimeoutError"
+    assert result["stream"] == ["ok", 200] and result["refused"][:3] == ["err", 403, "forbidden_origin"]
+
+
+def test_a_search_jump_resolves_merged_publications_and_marks_the_entry(tmp_path):
+    from tests.fakes.conversation_events import transcript_scenario
+
+    events = transcript_scenario()
+    merged = next(e for e in events if e.outcome_id == "o2")
+    kept = next(e for e in events if e.outcome_id == "o1")
+    result = run_node(tmp_path, """
+      const items=TL.collapseMessages(TL.reconstruct(DATA.events)),ctx=TL.indexItems(items);
+      const model=TL.layout(items,{width:1200});
+      const entry=model.entries[model.index.get(TL.itemForEvent(ctx,DATA.merged).item_id)];
+      out({item:TL.itemForEvent(ctx,DATA.merged).item_id,missing:TL.itemForEvent(ctx,'cev-'+'0'.repeat(64)),noctx:TL.itemForEvent(null,'x'),
+        found:TL.entryHtml(entry,{found:true}).includes('is-found'),plain:TL.entryHtml(entry).includes('is-found')});
+    """, {"events": [encode_conversation_event(e) for e in events], "merged": merged.event_id})
+    assert result["item"] == kept.event_id and result["missing"] is None and result["noctx"] is None
+    assert result["found"] is True and result["plain"] is False
+
+
+# ------------------------------------------------------- Slice 06 rework (QA findings)
+
+def test_search_hit_day_and_time_are_both_local(tmp_path):
+    hit = {"conversation_id": "c", "event_id": "cev-" + "2" * 64, "sequence": 1, "occurred_at": "2026-09-16T22:47:02.170Z",
+           "event_type": "user.transcript.accepted", "actor": "user", "visibility": "public", "matched": ["content"],
+           "snippet": "x", "marks": []}
+    paris = run_node(tmp_path, "out(TL.hitView(DATA))", hit, tz="Europe/Paris")
+    utc = run_node(tmp_path, "out(TL.hitView(DATA))", hit, tz="UTC")
+    assert (paris["day"], paris["when"]) == ("2026-09-17", "00:47:02")  # was 2026-09-16 00:47 before the fix
+    assert (utc["day"], utc["when"]) == ("2026-09-16", "22:47:02")
+
+
+def test_the_transcript_request_carries_the_browser_offset_and_labels_it(tmp_path):
+    result = run_node(tmp_path, """
+      out({offset:TL.localOffsetMinutes(new Date('2026-09-16T12:00:00Z')),winter:TL.localOffsetMinutes(new Date('2026-01-16T12:00:00Z')),
+        labels:[0,120,-330,60].map(TL.offsetLabel),url:TL.transcriptUrl('c','plain',120),bad:TL.transcriptUrl('c','plain',1.5)});
+    """, tz="Europe/Paris")
+    assert (result["offset"], result["winter"]) == (120, 60)
+    assert result["labels"] == ["UTC", "UTC+02:00", "UTC-05:30", "UTC+01:00"]
+    assert result["url"].endswith("&utc_offset_minutes=120") and result["bad"].endswith("&utc_offset_minutes=0")
+
+
+def test_a_broken_export_stream_is_an_incomplete_export_never_a_reconnection(tmp_path):
+    result = run_node(tmp_path, """
+      const net=Object.assign(new TypeError('network error'),{});
+      out({
+        afterBytes:TL.exportFailure(net,{received:1536000}),
+        idleAfterBytes:TL.exportFailure(null,{received:10,timedOut:true}),
+        noTrailer:TL.exportFailure(Object.assign(new Error('Ligne finale de contrôle absente.'),{code:'export_incomplete'}),{received:99}),
+        beforeBytes:TL.exportFailure(Object.assign(new Error('Core injoignable'),{status:503,code:'core_unreachable'}),{received:0}),
+        cancelled:TL.exportFailure(Object.assign(new Error('x'),{name:'AbortError'}),{received:500}),
+        busy:TL.classifyError({status:429,code:'projection_busy',message:'occupé'}),
+      });
+    """)
+    after = result["afterBytes"]
+    assert after["code"] == "export_incomplete" and after["title"] == "Export incomplet"
+    assert "1,5 Mo reçus" in after["message"] and "Aucun fichier enregistré" in after["message"]
+    assert "automatique" not in (after["hint"] + after["message"])  # never promises a retry that will not happen
+    assert result["idleAfterBytes"]["code"] == "export_incomplete" and "30 s" in result["idleAfterBytes"]["message"]
+    assert result["noTrailer"]["code"] == "export_incomplete" and result["noTrailer"]["message"] == "Ligne finale de contrôle absente."
+    assert result["beforeBytes"]["code"] == "core_unreachable"
+    assert result["cancelled"] == {"aborted": True, "title": "Export annulé", "message": "", "hint": ""}
+    assert result["busy"]["title"] == "Core est occupé" and result["busy"]["retryable"] is False
+
+
+def test_an_empty_export_says_there_is_nothing_to_save(tmp_path):
+    result = run_node(tmp_path, "out(TL.jobStateView('export',{done:true,events:0,received:220,filename:'f'},1000))")
+    assert result["text"].startswith("Aucun événement dans cette conversation") and result["tone"] == "muted"
+    source = MODULE.read_text(encoding="utf-8")
+    assert "if(summary.events>0){saveBlob(blob,filename)" in source
+
+
+def test_new_entries_are_counted_only_after_a_hydration_already_seen(tmp_path):
+    result = run_node(tmp_path, """
+      let memo={pending:0,liveConversation:null};const steps=[];
+      const step=(args)=>{memo=TL.trackNewEntries(memo,args);steps.push({...memo})};
+      step({conversationId:'a',hydrated:false,follow:false,visibleCount:500,previousCount:0});   // hydrating
+      step({conversationId:'a',hydrated:true,follow:false,visibleCount:900,previousCount:500});  // last hydration page
+      step({conversationId:'a',hydrated:true,follow:false,visibleCount:903,previousCount:900});  // live: 3 new
+      step({conversationId:'b',hydrated:true,follow:false,visibleCount:40,previousCount:903});   // switch / jump
+      step({conversationId:'b',hydrated:true,follow:false,visibleCount:41,previousCount:40});    // live in b
+      step({conversationId:'b',hydrated:true,follow:true,visibleCount:42,previousCount:41});     // at the bottom
+      out(steps);
+    """)
+    assert [s["pending"] for s in result] == [0, 0, 3, 3, 4, 0]
+    assert [s["liveConversation"] for s in result] == [None, "a", "a", "b", "b", "b"]
+
+
+def test_download_hash_is_the_same_in_the_page_and_in_python(tmp_path):
+    from jarvis.domain.conversation_event_export import _fnv1a, export_filename
+
+    ids = ["é", "è", "conv 1", "conv_1", "\U0001F642", ""]
+    result = run_node(tmp_path, "out({hash:DATA.map(TL.fnv1a),names:DATA.map(TL.exportFilename)})", ids)
+    assert result["hash"] == [_fnv1a(value) for value in ids]
+    assert result["names"] == [export_filename(value) for value in ids]
+    assert len(set(result["names"][:2])) == 2 and result["names"][2] != result["names"][3]
+
+
+def test_panels_never_promise_an_automatic_retry(tmp_path):
+    result = run_node(tmp_path, """
+      const down=TL.classifyError({status:503,code:'core_unreachable',message:'Core injoignable'});
+      out({transcript:TL.jobStateView('transcript',{error:down},0),search:TL.searchStateView({error:down},0),
+        busy:TL.jobStateView('export',{error:TL.classifyError({status:429,code:'projection_busy'})},0),
+        live:TL.statusView({conversationId:'c',rows:new Map(),phase:'reconnecting',attempt:1,retryAt:5000,error:down},{},0)});
+    """)
+    for view in (result["transcript"], result["search"]):
+        assert "automatique" not in view["detail"] and "Réessayer" in view["detail"] and view["retry"]
+    assert "Réessayez dans un instant" in result["busy"]["detail"]
+    assert "automatique" in (result["live"]["hint"] + result["live"]["detail"])  # the live feed really does retry
