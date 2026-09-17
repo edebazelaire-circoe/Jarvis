@@ -8,11 +8,15 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-CONTRACT_MODULES = ("__init__", "validation", "identity", "profiles", "diagnostics", "scenarios", "runs")
+#: Slice 02 adds the store port and the retention planner, which stay pure (the
+#: filesystem adapter and the capturers are the I/O modules).
+CONTRACT_MODULES = ("__init__", "validation", "identity", "profiles", "diagnostics", "scenarios", "runs", "store",
+                    "retention")
 ALLOWED_IMPORTS = {
     "__future__", "collections.abc", "dataclasses", "datetime", "enum", "hashlib", "json", "math", "re", "types",
     "typing", "jarvis.domain.conversation_events", "jarvis.domain.voice_state", "jarvis.testlab.validation",
-    "jarvis.testlab.identity", "jarvis.testlab.profiles", "jarvis.testlab.diagnostics",
+    "jarvis.testlab.identity", "jarvis.testlab.profiles", "jarvis.testlab.diagnostics", "jarvis.testlab.runs",
+    "jarvis.testlab.store",
 }
 #: Clock, entropy, filesystem, process and dynamic execution entry points.
 FORBIDDEN_CALLS = {"now", "utcnow", "today", "time", "monotonic", "perf_counter", "uuid4", "token_hex", "urandom",

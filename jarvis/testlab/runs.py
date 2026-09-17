@@ -145,6 +145,17 @@ class CodeIdentity:
         return cls(data["git_revision"], data["dirty"])
 
 
+def check_artifact_path(path: object, name: str = "artifact.path") -> None:
+    """Relative POSIX path of safe segments inside the run directory (no absolute, drive, `..` or hidden segment).
+
+    Shared by `ArtifactRef` and the run store (docs/testlab.md, "Storage"), which adds the filesystem checks.
+    """
+    if (not isinstance(path, str) or not path or len(path) > MAX_ARTIFACT_PATH_CHARS
+            or len(path.split("/")) > MAX_ARTIFACT_PATH_SEGMENTS
+            or any(not _PATH_SEGMENT.fullmatch(segment) or segment.endswith(".") for segment in path.split("/"))):
+        raise fail(f"{name} must be a relative POSIX path of safe segments inside the run directory")
+
+
 class ArtifactKind(StrEnum):
     CONFIG_SNAPSHOT = "config_snapshot"
     SCENARIO = "scenario"
@@ -170,11 +181,7 @@ class ArtifactRef:
 
     def __post_init__(self) -> None:
         check_enum(ArtifactKind, self.kind, "artifact.kind")
-        path = self.path
-        if (not isinstance(path, str) or not path or len(path) > MAX_ARTIFACT_PATH_CHARS
-                or len(path.split("/")) > MAX_ARTIFACT_PATH_SEGMENTS
-                or any(not _PATH_SEGMENT.fullmatch(segment) or segment.endswith(".") for segment in path.split("/"))):
-            raise fail("artifact.path must be a relative POSIX path of safe segments inside the run directory")
+        check_artifact_path(self.path)
         if not isinstance(self.media_type, str) or len(self.media_type) > 64 or not _MEDIA_TYPE.fullmatch(self.media_type):
             raise fail("artifact.media_type must be a lowercase type/subtype")
         check_hex(self.sha256, "artifact.sha256", lengths=(64,))

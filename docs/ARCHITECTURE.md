@@ -1422,8 +1422,11 @@ metrics, blocking assertions and score declaration; the mechanical capability an
 cost permission check; safe declarative `Scenario` steps of registered
 primitives; and the `TestRun` record with its state machine, joined to
 conversation traces through the Conversation Events `TRACE_JOIN_FIELDS`. Contract:
-[Category 2 Test Lab](testlab.md). Storage, workers, profile runners and adapters
-come in later Slices of `tasks/jarvis-category2-test-lab/`.
+[Category 2 Test Lab](testlab.md). Runs persist through a filesystem store meant to be rooted at
+`<runtime>/testlab/` (one directory per run, atomic writes, per-run writer lock and
+compare-and-swap, bounded opt-in audio, retention planner), never in
+`data/state/jarvis.sqlite3`. Workers, profile runners and adapters come in later
+Slices of `tasks/jarvis-category2-test-lab/`.
 
 ## Sub-agent routing
 

@@ -12,5 +12,11 @@ contracts only (no I/O, no implicit clock, no provider/transport import):
 - `jarvis.testlab.diagnostics`: parameters, metrics, assertions, score
   declaration and `DiagnosticSpec`;
 - `jarvis.testlab.scenarios`: safe declarative `Scenario`;
-- `jarvis.testlab.runs`: `TestRun` record and its state machine.
+- `jarvis.testlab.runs`: `TestRun` record and its state machine;
+- `jarvis.testlab.store`: run store port, query/usage types, update rule (pure);
+- `jarvis.testlab.retention`: retention policy, planner and apply step (pure).
+
+Slice 02 adds the I/O modules `jarvis.testlab.filesystem_store` (durable
+filesystem adapter) and `jarvis.testlab.capture` (git identity, environment,
+redacted configuration snapshot).
 """
