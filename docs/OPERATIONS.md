@@ -1232,7 +1232,9 @@ Actions du menu :
   confirmation. Pendant l'arrêt, l'étoile porte un anneau orange en tirets et la
   pastille « Arrêt de « … » en cours » compte les secondes ; la réponse arrive au
   plus après le délai réel du Control Center (24 s par défaut). Issues possibles :
-  « Tâche arrêtée » ; « Tâche déjà terminée » ; « Arrêt demandé » (Core n'a pas
+  « Tâche arrêtée » ; « La tâche s'était déjà terminée » (elle a fini, normalement
+  ou en échec, avant que l'arrêt ne l'atteigne : son résultat est gardé) ;
+  « Arrêt demandé » (Core n'a pas
   encore confirmé la fin) ; « Arrêt demandé, nettoyage non confirmé » (tâche de
   fond du brain dont l'exécution n'a pas pu être nettoyée : elle reste en cours).
   **Un sous-agent du brain ne s'arrête pas seul** : son menu l'indique

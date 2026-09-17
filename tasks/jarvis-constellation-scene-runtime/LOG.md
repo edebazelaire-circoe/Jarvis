@@ -1228,3 +1228,48 @@ QA's repro harnesses were rerun as `s8r_*` copies: `s8r_cdp.py`/`s8r_host.py` on
 3. The origin guard accepts any localhost port (pre-existing).
 4. Arrow navigation cannot reach fully overlapped objects (Slice 05).
 5. The actor is declared, not authenticated.
+
+### 2026-09-17 — Slice 08 — final fix
+
+QA re-verified `59f603d`: MAJOR-1, MAJOR-2 and every minor are confirmed. One more defect in shared Core job code, one page flicker and one dialog residual remained. Commit `7a01af8` (code and tests), then docs and this LOG. QA's probes were rerun as `s8f_*` copies: `s8f_jobs.py` from `qa08r_jobs.py`, `s8f_g1b.py`, `s8f_b3.py`, `s8f_cdp.py`, `s8f_common.py`, on a fresh copy of QA's root (`s8f_root`), own Chrome (port 53680) and host (53681–53683). All were killed afterwards (0 processes). QA's files were not touched.
+
+**MAJOR-R1: a stop racing a job failure (or completion) left the job `running`.**
+
+- **Cause.** The `CancelledError` landed inside `_execute`'s `except Exception` handler (lock wait, publish, observe), so `failed` was never written nor observed, and `finally` cleared `_running`. A stop racing completion ended `cancelled`, overwriting `completed` and dropping the result and `job.completed`.
+- **Fix** (`jarvis/core/v2_services.py`):
+  - `_settle_terminal(terminal, observed, status, event=, error_class=)` replaces `_settle_cancelled` and settles every terminal outcome atomically. Persist, publish and observe run in their own task, awaited under `shield`. A cancellation arriving meanwhile is absorbed until settled, then re-raised.
+  - `_execute` separates the phases: the worker (and the `running` write) under `try`; `except CancelledError` → settle `cancelled` and re-raise; `except Exception` → settle `failed`; `else` → settle `completed`. A cancellation can no longer hit a handler.
+  - **PM decision: the worker's outcome wins.** A stop that races an outcome already produced never writes `cancelled` over it, and there is exactly one terminal write. `cancel_for_user` answers `already_terminal` with the real status (`completed`, `failed`, `interrupted`).
+  - The page (`stopOutcome(outcome, status)`) says « La tâche s'était déjà terminée · Elle a fini normalement / en échec ».
+- **Tests** (`tests/integration/test_work_cancel_protocol.py`):
+  - cancellation during the terminal settlement × {completed, failed} × {lock wait, after the write, during publish, during observe}, 8 cases. Each asserts: outcome kept, a single terminal write, one `job.*` event, no `job.cancelled`, star terminal, a later user stop answers `already_terminal` with the real status;
+  - a user stop that read `running` just before the worker's outcome, ×2;
+  - a bounded unhooked timing sweep of 24 trials per mode: never stuck, a single terminal write, answer consistent with the final status, event present exactly when the outcome won;
+  - Core `stop()` during a settling terminal write, ×2: outcome persisted across a restart, a single terminal write.
+- **Mutation checks**, each reverted: settlement without `shield` → 12 tests red; outcome check in `cancel_for_user` removed → 4 red.
+- **`s8f_jobs.py`**, every scenario (label `final`):
+  - `unhooked_sweep`, 150 trials each: **fail** → 0 stuck, final cancelled 114 / failed 36, answers cancelled 114 / `already_terminal` 36 (one-to-one); **ok** → 0 stuck, cancelled 123 / completed 27, answers cancelled 123 / `already_terminal` 27. QA before: 10/150 stuck on failure.
+  - `inject` (write waiting for the lock, after the write, publish, observe × ok/fail): **flagged 0 of 8**. Each row keeps its outcome with one terminal write and one event; the stop answers `already_terminal/completed` or `already_terminal/failed`. QA before: 4/4 stuck on failure; completion overwritten by `cancelled`.
+  - `race_complete`, `race_fail`, `race_complete_contention`, `race_fail_contention`: 24 trials each; final 24 completed / 24 failed; all stops `already_terminal/<status>`; flagged 0.
+  - `many_concurrent` ×3/×5/×10: 0 flagged.
+  - `settle_under_shutdown`: Core stop 1.22 s, not hung, persisted `cancelled`.
+  - `prestart` 10/10 cancelled; `growth` 60 jobs with all internal sets back to 0; `recovery`, `brain_cancel_work` and `back_brain_unknown` unchanged; no asyncio warning.
+
+**MINOR-R2: dragged object snapped back while the pin was unconfirmed.**
+
+- **Cause.** `commitUserGeometry` confirmed the optimistic layer after the intermediate `pin` step. The pin patch arrived, pruning removed the layer, and the object returned to its origin until `set_geometry` landed.
+- **Fix.** Pure `commitGeometry` / `geometrySteps` (`control_center_scene_interact.js`), used by the page. The layer is confirmed only after the **last** step, at the highest returned revision. On failure: compensating `unpin`, then the layer is removed.
+- **Node test** `test_a_user_geometry_is_confirmed_only_after_its_last_step_so_the_preview_never_snaps_back`: pruning at the pin revision (21) removes nothing, frames stay at x=30, the layer is pruned at 22. It also covers the failure path (`pin`, `set_geometry` failed, `unpin`, layer removed). Mutation (confirm after pin) → red.
+- **`s8f_g1b.py`**: **0/12** flickers (QA before: 2/12); keyboard resize caps unchanged (capsule 160×10, window 238×118).
+- **Slow Core.** `s8f_slow_core_drag.py`: Core answers every scene command 1.5 s late, object unpinned. **6/6** valid drags kept their drop position for 4.5 s, with `pin` then `set_geometry` and a final pinned user geometry. QA before: back at the origin for 1.5 s. Two further trials are excluded: the harness's pointer landed on an overlapping window, so no drag happened.
+- `s8f_b3.py T2` rerun: the brain move between the steps is refused `pinned_by_user`. The drag itself did not move in that run, because QA's root already held the object at the dragged position.
+
+**QA residual 5: `inert` computed at open.**
+
+- A `MutationObserver` on `body` (`childList`), while the dialog is open, applies the same rule to added children (the Barehands overlay excepted), and is disconnected on close.
+- Browser (`s8f_dialog_inert.py`): a child added mid-dialog → inert `true`; a `#jarvisHands` added mid-dialog → `false`; after close, both `false`.
+
+**Validation.**
+
+- Targeted suite under `-W error::ResourceWarning`: **1418 passed** in 116.79 s. It adds `test_v2_recovery_notifications`, `test_owned_process_tree` and `test_work_state_protocol` to the earlier list: jobs, back-brain, owned execution, recovery, async conversation and work-state files included.
+- `verify_release.py`: see the next line.
