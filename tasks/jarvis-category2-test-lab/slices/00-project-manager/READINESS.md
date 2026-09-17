@@ -7,9 +7,12 @@
 
 ## Declared state
 
-**`HUMAN_DECISION_REQUIRED`**
+**`READY`** (2026-09-17, after Human decisions)
 
-No implementation Slice is dispatched until decisions D1 and D2 below are answered.
+First declared `HUMAN_DECISION_REQUIRED`. The Human then chose:
+- D1: fix `main`. The conflict resolution was pushed as `b86f228` ("fix: resolve committed merge conflict markers in realtime_audio"), and the task branch was replayed onto it. `jarvis.runtime.realtime_audio` imports again, and the narrow voice set passes (52/52 on the fix commit).
+- D2: Workspace Task Type gate waived; `task_type` stays `null` in every Slice metadata file.
+- D3: filesystem TestRun store under `runtime/testlab/` accepted by default.
 
 ## Blind audit — live facts that change the plan
 
