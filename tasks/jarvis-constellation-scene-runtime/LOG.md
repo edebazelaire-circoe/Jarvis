@@ -1904,3 +1904,53 @@ Residual risks:
 4. Screen-content exposure = scene content as pixels; a token-reading brain could call or feed the capture routes itself (same honest-caller limit as SECURITY §13).
 5. `codex_local.py` still reads its CLI with the default 64 KiB line limit.
 6. The dense-scene placement timing test is load-sensitive (23 ms against a 16 ms bound, once).
+
+## 2026-09-17 — Slice 09 — QA rework
+
+QA on `395c431` recommended REWORK (3 MAJOR + minors). New commits only, nothing amended:
+`e7aaa9e`, `73a822d`, `8f1edd6`, `7ba3b5b`, `65c936d`, `025c207` (code and tests), `8035bf6` (docs), plus this LOG entry.
+
+| Item | Fix | Commit |
+| --- | --- | --- |
+| M1 image data still in memory/trace (`tool_use_result`) | `jarvis/runtime/cli_stream.py` `redact_media`: recursive, every base64 `source` and MCP `{type: image, data}` → `omitted_bytes = len(data)`, applied before `_events`, transcript, task traces, `/api/agent`, `/api/trace`, `trace.jsonl`; real CLI 2.1.274 event shape fixture `tests/fixtures/cli_scene_capture_tool_result_event.json` | `e7aaa9e` |
+| M2 capture shapes differ from the page, label overprint, text illegible | `JarvisSceneLayout.drawnRect` shared by page `position()` and `drawCommands`; fonts divided by the capture scale; capsule category bounded to 38 % and title after its measured width; window header like the page | `7ba3b5b` |
+| M3 page link rule ≠ brain host | one rule by construction: `jarvis/domain/scene_links.py` `link_host` and `linkHost`/`linkOf`; shared 97-URL corpus `tests/fixtures/scene_link_corpus.json` run in Python and node; refused → `host: null`, `link: false` | `73a822d` |
+| 4 Codex reader / hang past timeout | `iter_lines` readers, kill before any wait on timeout, `codex_read_failed` journaled, final wait bounded 5 s | `e7aaa9e` |
+| 5 (m1) fragments of oversize lines, unbounded journal, `/api/trace` whole-file read, supervisor pump | block reader drops an oversize line whole (Claude, Codex, stdout, stderr, `scripts/supervisor_v2.py`); journaled event > 256 KiB summarised (`journal_truncated`); `read_jsonl_tail` reads 1 MiB blocks from the end (≤ 64 MiB) | `e7aaa9e` |
+| m2 single use not atomic | `pending.consumed = True` before the store await; 4 parallel PUTs test | `8f1edd6` |
+| m3 abandoned brain call holds the slot | `_unless_client_left` cancels; next request cancels a pending capture whose client transport is closed; `capture_abandoned` journal; `capture_cancelled` 503 | `8f1edd6`, `025c207` |
+| m4 `scene_get` over the bound, silent caps | exact worst truncation reserve, first object always returned via `_fit_detail`, `explained_by_omitted` / `explains_omitted` / `signals_omitted`, `summary_truncated` | `73a822d` |
+| m5 `near` distance rounding, hidden objects | distance to 0.001 (a gap never 0), `overlap` column, hidden excluded unless `include_hidden` (strict, `near` only) or a `visibility` filter; description updated | `73a822d` |
+| m6 SECURITY trust model of the page channel | SECURITY §13: any unauthenticated local process or loopback page can long-poll the page channel and feed or swallow a capture; hostile local account is a non-goal | `8035bf6` |
+| m7 PNG checks | every chunk CRC, IHDR first with valid depth/colour/methods, ≥ 1 IDAT, no `acTL`, no unknown critical chunk, empty IEND last, no decompression | `8f1edd6`, `025c207` |
+| m8 capture text legibility | with M2 | `7ba3b5b` |
+| m9 prompts | artifact line accepted; suspect-text line unchanged | — |
+| m10 dense placement timing test | median of 9 warm runs < 50 ms | `65c936d` |
+| review: prune past a vanished file; palette cache; CC 403 scene shape; 410 journaled; `capture_cancelled` in scene-model; `_reraise` readable with the capture timeout; capturer before the loop | `file_scene_captures.prune` skips vanished files; palette read at every capture; `_origin_guard` scene error shape on the capture route; `capture_upload_refused` 410; scene-model table; `classify_scene_call_failure(read_timeout_s=CAPTURE_READ_TIMEOUT_S)`; declaration order | `8f1edd6`, `7ba3b5b`, `65c936d`, `8035bf6` |
+
+QA harness reruns (scratchpad, `s9r_` outputs):
+
+- **Stream, Claude** (`s9r_stream_out.txt`, fake CLI): 15 scenarios, `trace_lines_with_base64` 0 everywhere, no transcript/task-trace base64; 40 × 1 MiB image events → 44 events retained, 21 092 B; `stderr17m`, `line16m1`, `text40m`, `img40m` each journaled once `agent.stream_line_too_long`, no fragment event; `line16m_exact` read (16.9 MB retained in memory, residual 1). Fragment events seen only for `invalid_utf8` (a non-JSON line, recorded as such) and `partial_eof` (last line without newline).
+- **Stream, Codex** (`s9r_codex_repro_out.txt`): exit variant ok in 0.1 s; linger variant `codex_timeout` in 10.0 s (its timeout), journaled, process killed.
+- **Hosts parity** (`s9r_hosts_out.txt`): 97 rows, 31 links, 0 mismatches between Python `link_host`, node `linkHost` and `linkOf`.
+- **Oracle** (`s9r_oracle80_out.txt`): 80 scenes, 3 200 queries, 2 000 gets, 0 mismatches; `get_over_bound` 0, `first_object_not_returned` 0, `linked_cap_silent` 0, `hidden_in_near_zero` 0, `near_zero_displayed_but_not_touching` 0, `journal_content_leaks` 0.
+- **Worst case** (`s9r_worst_out.txt`): star with 40 artifacts → 19 645 B, star returned, `explained_by` 16 + `explained_by_omitted` 24, relations `omitted` 19; star + 7 artifacts 19 842 B; `near` radius 0.05 → `n2` distance 0.04 (was 0), hidden `n3` only with `include_hidden`.
+- **Capture attacks** (`s9r_capture_attacks_out.txt`): all OK; parallel PUT `[200, 404, 404, 404]`; abandoned call then new request served (504 `no_visible_page`, not busy); IDAT bad CRC, no IDAT, APNG, invalid depth/colour → 400; CC 403 in the scene error shape; swallowing long-polls (0/2/6) → leader answers ≤ 2.04 s; accepted by design: tEXt chunk, zip polyglot, zlib bomb (never decoded), CC forgery (trust model, SECURITY §13).
+- **Browser fidelity** (`s9r_browser/s9r_browser.json`, own headless Chrome): both themes × 1920×1080, 800×600, 1280×720 DPR 1.25, 390×844 DPR 3: 12/12 nodes found, 0 stray painted samples outside a DOM node rectangle or link line; hidden exclusion diff 39 112 → 0 after re-hide; handover 1 060 ms; `no_visible_page` 5 017 ms; `scene_disabled` 3 ms; no PNG data in the journal; 0 page exceptions.
+- **Slice 07 hostile hosts retaken** (`s9r_browser/s9r_hostile.py`, `s9r_shots/s9r_hostile_zoom_{omega,circuit-board}_{1920x1080,1280x720}.png`): 15 rows, 7 links (IDN, `xn--`, 100-char label, backslash, credentials, `0x7f.1`, full-width dot are text), each printed host = `link_host`, registrable end visible, not clipped: 0 violations, 0 exceptions.
+- **Mutation checks** (`s9r_mutate_out.txt`, each reverted): redaction not recursive; oversize tail yielded as a fragment; id consumed after the store await; capture draws the raw box instead of `drawnRect`; JS rule accepts a numeric last label; Python rule accepts `xn--`; APNG accepted; `near` keeps hidden objects — 8/8 killed (a first JS mutation removing the `@` check survived because it is equivalent: the host character class already refuses `@`).
+
+Live model run: none. Redaction only changes what JARVIS keeps and journals; the CLI forwards the tool result (text + image) to the model before JARVIS reads its stdout, so what the model receives is unchanged.
+
+Validation:
+
+- Targeted suite under `-W error::ResourceWarning` (scene contracts/service/view/transport/projection/restart/interaction/renderer/artifacts/query/capture/capture logic/links, `test_cli_stream.py`, display MCP, codex agent, agent tasks/behaviour/routing, Claude debug console, voice to Claude, Windows supervision, error reporting, deployment, environment, voice switch, Control Center MVP/quality/prompts/catalog/timeline/appearance, documented routes, prompt registry/wiring, app, work view/store, conversation events; node tests included): `3 failed, 1705 passed in 155.50s` — the 3 are `test_agent_routing_settings.py` `group_by_harness` baseline tests.
+- Full `scripts/verify_release.py`, alone: **not completed**. Three attempts on this host, nothing else running: two were stopped by the harness for low system memory at 5 % and 33 % (every test up to 33 % passed, 0 failures); the third, a detached process, crawled to 1 % under memory pressure and was killed at hand-off. To be rerun by agent 0.
+
+Residual risks:
+
+1. A line up to 16 MiB of plain text (no image) is still kept whole in `_events` memory (bounded by the event history); only the journal copy is summarised.
+2. The Control Center page channel is unauthenticated: a local process or loopback page can feed or swallow a capture (documented trust model, hostile local account out of scope).
+3. PNG checks are structural: a zlib bomb, text chunks or polyglot data inside a valid PNG are accepted (never decompressed by JARVIS; the file is still bounded to 2 MiB and 1280×720 declared).
+4. An orphaned relay long-poll can consume a delivery; the 1 s redelivery covers it (≤ ~1 s).
+5. The capture still draws the view model, not the DOM: shapes and positions are the page's by construction, fonts and inner text layout remain approximations.
