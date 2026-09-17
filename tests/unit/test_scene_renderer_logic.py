@@ -973,3 +973,107 @@ def test_messages_of_another_shape_are_ignored(tmp_path):
     """)
 
     assert result == [False, False, False, False, True, True, False]
+
+
+def test_a_follower_behind_a_silent_leader_is_stale_for_at_most_about_40_seconds(tmp_path):
+    result = run_node(tmp_path, r"""
+      /* Chronologie de qa05r_watchdog.cjs : suiveur chargé à t=0, dernier
+         message du meneur à t=1 s, changement dans Core à t=1,1 s. */
+      const h=loopHarness();
+      h.loop.setRole('follower');h.loop.setEnabled(true);await flush();
+      await h.answer(snapshotBody([],0));
+      const tickMsg=rev=>({v:1,type:'tick',scene_id:'scene',epoch:'e1',revision:rev,health:{level:'ok',code:null},objectLimit:512});
+      await T.advance(1000);h.loop.receive(tickMsg(0));
+      await T.advance(100);
+      const changeAt=T.now;let seenAt=null;
+      for(let i=0;i<200&&seenAt===null;i++){
+        await T.advance(500);
+        if(h.open().length){seenAt=T.now;await h.answer(patchesBody(0,[obj('x','agent')]))}
+      }
+      const stalenessS=(seenAt-changeAt)/1000;
+      /* Meneur toujours muet : au plus une lecture par tranche de 35 s. */
+      const before=h.calls.length;
+      for(let i=0;i<240;i++){await T.advance(500);if(h.open().length)await h.answer({...patchesBody(1,[]),revision:1})}
+      const silentReads=h.calls.length-before;
+      /* Meneur qui annonce sa révision toutes les 25 s : aucune lecture. */
+      const g=loopHarness();
+      g.loop.setRole('follower');g.loop.setEnabled(true);await flush();
+      await g.answer(snapshotBody([],0));
+      for(let s=0;s<300;s+=25){await T.advance(25000);g.loop.receive(tickMsg(0))}
+      return {stalenessS,revision:h.loop.view().state.revision,silentReads,tickingReads:g.calls.length-1,
+        timers:[P.FOLLOWER_SILENCE_MS,P.FOLLOWER_CHECK_MS]};
+    """)
+
+    assert result["stalenessS"] <= 40 and result["revision"] == 1
+    assert result["silentReads"] <= 4  # 120 s de silence : lectures espacées de 35 s au moins
+    assert result["tickingReads"] == 0
+    assert result["timers"] == [35000, 5000]
+
+
+def test_a_lock_granted_to_a_hidden_tab_is_given_back_at_once(tmp_path):
+    result = run_node(tmp_path, r"""
+      /* Faux Web Locks : un seul détenteur, file dans l'ordre, abandon par signal. */
+      function fakeLocks(){
+        let holder=null;const queue=[];
+        const grant=entry=>{holder=entry;Promise.resolve(entry.cb({name:'l'})).then(()=>{holder=null;next()})};
+        const next=()=>{while(!holder&&queue.length){const e=queue.shift();if(!e.aborted){grant(e);e.resolve()}}};
+        return {request(name,opts,cb){
+          return new Promise((resolve,reject)=>{
+            if(opts.ifAvailable){if(holder){Promise.resolve(cb(null)).then(resolve);return}grant({cb});resolve();return}
+            const entry={cb,resolve,aborted:false};
+            if(opts.signal)opts.signal.addEventListener('abort',()=>{entry.aborted=true;const e=new Error('aborted');e.name='AbortError';reject(e)});
+            queue.push(entry);next();
+          });
+        },held:()=>!!holder};
+      }
+      const locks=fakeLocks();
+      const tab=(name,visible)=>{const t={name,visible,roles:[],logs:[]};
+        t.lead=P.createLeadership({locks,name:'jarvis.scene.leader',createAbort:()=>new AbortController(),log:(l,e)=>t.logs.push(e),
+          isVisible:()=>t.visible,isEnabled:()=>true,onRole:r=>t.roles.push(r)});return t};
+      const a=tab('A',true),b=tab('B',true);
+      await a.lead.decide();await flush();
+      await b.lead.decide();await flush();
+      const start={a:[a.lead.held(),[...a.roles]],b:[b.lead.held(),b.lead.queued(),[...b.roles]]};
+      /* B devient caché avant que A rende le verrou : le verrou lui arrive quand même
+         (course), il doit le rendre aussitôt et rester suiveur. */
+      b.visible=false;
+      const c=tab('C',true);await c.lead.decide();await flush();
+      a.lead.release();await flush();await flush();
+      return {start,afterRelease:{b:[b.lead.held(),b.roles,b.logs],c:[c.lead.held(),c.roles]}};
+    """)
+
+    assert result["start"] == {"a": [True, ["leader"]], "b": [False, True, ["follower"]]}
+    b_held, b_roles, b_logs = result["afterRelease"]["b"]
+    assert b_held is False and b_roles == ["follower", "follower"] and "scene.leader_declined" in b_logs
+    assert result["afterRelease"]["c"] == [True, ["follower", "leader"]]  # le suivant visible prend le relais
+
+
+def test_runtime_signals_stack_with_their_star_and_covered_alerts_are_counted(tmp_path):
+    result = run_node(tmp_path, r"""
+      const g=(x,y,w,h)=>({geometry:{x,y,w,h},constraints:{placed_by:'brain',pinned_by_user:false}});
+      const objects=[
+        obj('claude:a','agent',{exec_state:'failed',...g(-100,-10,6,6)}),
+        obj('attention!claude:a','attention',{category:'failed',exec_state:'failed',...g(-96,-14,4,4)}),
+        obj('claude:b','agent',{exec_state:'blocked',...g(60,-10,6,6)}),
+        obj('attention!claude:b','attention',{category:'blocked',exec_state:'blocked',...g(64,-14,4,4)}),
+        obj('claude:c','agent',{exec_state:'failed',...g(100,40,6,6)}),
+        obj('attention!claude:c','attention',{category:'failed',exec_state:'failed',...g(104,36,4,4)}),
+        obj('brain-note','attention',{origin:'brain',category:'failed',exec_state:'unknown',layer:300,...g(-98,-8,4,4)}),
+        obj('brain-window-1','window',{origin:'brain',layer:220,...g(-120,-30,60,40)}),
+        obj('brain-window-2','window',{origin:'brain',layer:220,...g(40,-30,60,40)}),
+      ];
+      const relations=[rel('attention!claude:a','explains','attention!claude:a','claude:a'),rel('attention!claude:b','explains','attention!claude:b','claude:b'),
+        rel('attention!claude:c','explains','attention!claude:c','claude:c'),rel('brain-explains','explains','brain-note','claude:a')];
+      const s=state(objects,relations);
+      const vm=L.viewModel(s,L.resolveLayout(s),L.viewport(1280,720));
+      const n=id=>vm.nodes.find(x=>x.id===id);
+      return {signalA:n('attention!claude:a').stack-n('claude:a').stack,signalC:n('attention!claude:c').stack-n('claude:c').stack,
+        brainNote:n('brain-note').stack===L.stackOf(300,0),windowAboveSignal:n('brain-window-1').stack>n('attention!claude:a').stack,
+        brainAboveWindow:n('brain-note').stack>n('brain-window-1').stack,covered:vm.coveredSignals};
+    """)
+
+    assert result["signalA"] == 1 and result["signalC"] == 1
+    assert result["brainNote"] is True and result["brainAboveWindow"] is True  # attention du cerveau : sa couche
+    assert result["windowAboveSignal"] is True
+    # a (échec) sous la fenêtre 1, b (bloqué) sous la fenêtre 2, c libre ; la note du cerveau ne compte pas.
+    assert result["covered"] == {"high": 1, "medium": 1}

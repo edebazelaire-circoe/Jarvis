@@ -453,6 +453,27 @@
       if(outside)offscreen++;
       nodes.push(node);centers.set(node.id,node);
     }
+    /* Un signal du runtime s'empile avec son étoile (juste au-dessus d'elle) :
+       une fenêtre qui recouvre l'étoile recouvre aussi son signal. Les objets
+       `attention` du cerveau ou de l'utilisateur gardent leur couche
+       (Décision 8). */
+    const anchors=anchorsOf(state);
+    for(const node of nodes){
+      if(!node.signal||state.objects.get(node.id).origin!=='runtime')continue;
+      const anchor=anchors.get(node.id);
+      const star=anchor&&anchor.kind==='signal'?centers.get(anchor.to):null;
+      if(star)node.stack=star.stack+1;
+    }
+    /* Signaux vivants urgents recouverts par une fenêtre dessinée au-dessus
+       d'eux : comptés pour l'indicateur (test de rectangles, à chaque rendu). */
+    const coveredSignals={high:0,medium:0};
+    const windows=nodes.filter(n=>n.shape==='window');
+    for(const node of nodes){
+      if(node.urgency!=='high'&&node.urgency!=='medium')continue;
+      if(state.objects.get(node.id).origin!=='runtime')continue;
+      const covered=windows.some(w=>w.stack>node.stack&&node.cx>=w.box.left&&node.cx<=w.box.left+w.box.width&&node.cy>=w.box.top&&node.cy<=w.box.top+w.box.height);
+      if(covered)coveredSignals[node.urgency]++;
+    }
     /* Borne des animations : urgence haute, moyenne, puis exécution en cours. */
     let budget=MAX_ANIMATED;
     for(const pass of [n=>n.urgency==='high',n=>n.urgency==='medium',n=>!n.signal&&n.exec==='running']){
@@ -468,7 +489,7 @@
     }
     edges.sort((p,q)=>p.layer-q.layer);
     const objects=state.objects.size;
-    return {nodes,edges,hidden,offscreen,capacity:{objects,limit,saturated:objects>=limit}};
+    return {nodes,edges,hidden,offscreen,coveredSignals,capacity:{objects,limit,saturated:objects>=limit}};
   }
 
   /* Forme dessinée pour une boîte à l'écran : la représentation, ou plus

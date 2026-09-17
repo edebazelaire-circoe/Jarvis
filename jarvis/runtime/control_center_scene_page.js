@@ -25,9 +25,12 @@ const JarvisScenePageCore=(function(){
   const POLL_TIMEOUT_MS=(LONG_POLL_WAIT_S+15)*1000;
   const BACKOFF_BASE_MS=1000;
   const BACKOFF_MAX_MS=30000;
-  /* Un suiveur sans nouvelle du meneur relit les patchs manqués (lecture
-     courte) : le meneur annonce sa révision au moins toutes les 25 s. */
-  const FOLLOWER_WATCHDOG_MS=45000;
+  /* Un suiveur sans nouvelle du meneur depuis 35 s relit les patchs manqués
+     (une lecture courte) : le meneur annonce sa révision au moins toutes les
+     25 s. Vérifié toutes les 5 s, d'où un retard borné à environ 40 s derrière
+     un meneur bloqué ; au plus une lecture par période de silence de 35 s. */
+  const FOLLOWER_SILENCE_MS=35000;
+  const FOLLOWER_CHECK_MS=5000;
   /* `retryNow` (le Control Center répond de nouveau) au plus une fois par
      intervalle. */
   const RETRY_NOW_MIN_MS=2000;
@@ -59,6 +62,57 @@ const JarvisScenePageCore=(function(){
   }
 
   const errorCode=error=>String(error&&(error.code||error.name)||'network_error');
+
+  /* Meneur du profil par un verrou Web Locks (`locks`, API de `navigator.locks`).
+     `decide()` rend une promesse résolue quand le rôle est connu : meneur si le
+     verrou est libre, sinon suiveur en file d'attente (le navigateur passe le
+     verrou dès qu'il est rendu). Un verrou accordé alors que l'onglet est
+     caché ou la scène éteinte est rendu aussitôt : l'onglet reste suiveur.
+     `onRole(role)` reçoit `leader` ou `follower`. */
+  function createLeadership(deps){
+    const state={held:false,release:null,abort:null};
+    const log=(level,event,data)=>{if(deps.log)deps.log(level,event,data||{})};
+    function hold(){
+      if(!deps.isVisible()||!deps.isEnabled()){
+        state.abort=null;
+        log('info','scene.leader_declined',{visible:deps.isVisible(),enabled:deps.isEnabled()});
+        deps.onRole('follower');
+        return Promise.resolve();
+      }
+      return new Promise(release=>{
+        state.abort=null;state.held=true;state.release=release;
+        deps.onRole('leader');
+      });
+    }
+    function queue(){
+      const controller=deps.createAbort();
+      state.abort=controller;
+      deps.locks.request(deps.name,{signal:controller.signal},()=>hold()).catch(error=>{
+        if(error&&error.name==='AbortError')return;
+        if(state.abort===controller)state.abort=null;
+        log('warn','scene.leader_lock_failed',{error:errorMessage(error)});
+      });
+    }
+    return {
+      decide(){
+        if(state.held||state.abort)return Promise.resolve();
+        return new Promise(resolve=>{
+          deps.locks.request(deps.name,{ifAvailable:true},lock=>{
+            if(lock){const held=hold();resolve();return held}
+            deps.onRole('follower');queue();resolve();
+            return undefined;
+          }).catch(error=>{log('warn','scene.leader_lock_failed',{error:errorMessage(error)});resolve()});
+        });
+      },
+      release(){
+        if(state.abort){const pending=state.abort;state.abort=null;pending.abort()}
+        if(state.release){const release=state.release;state.release=null;release()}
+        state.held=false;
+      },
+      held:()=>state.held,
+      queued:()=>!!state.abort,
+    };
+  }
   const errorMessage=error=>String(error&&error.message||'');
 
   /* Boucle d'une page. Rôles :
@@ -97,7 +151,7 @@ const JarvisScenePageCore=(function(){
     let enabled=false,visible=true,stopped=false,role='solo';
     let phase='off',generation=0,timer=null,abort=null,state=null;
     let failures=0,resyncs=0,objectLimit=512,health=okHealth();
-    let watchTimer=null,lastLeaderAt=0,target=null,lastRetryNow=-Infinity,mirrored=false;
+    let watchTimer=null,lastLeaderAt=0,lastWatchReadAt=-Infinity,target=null,lastRetryNow=-Infinity,mirrored=false;
     const stats={snapshots:0,polls:0,catchUps:0,resyncs:0,retries:0,errors:0,received:0,broadcasts:0};
 
     const log=(level,event,data)=>{if(deps.log)deps.log(level,event,data||{})};
@@ -122,18 +176,24 @@ const JarvisScenePageCore=(function(){
     }
 
     function stopWatchdog(){if(watchTimer!==null){deps.clearTimeout(watchTimer);watchTimer=null}}
+    /* Contrôle périodique du suiveur, indépendant de ses propres lectures :
+       silence du meneur ≥ 35 s → une lecture courte, puis plus rien tant que
+       le silence n'a pas encore duré 35 s de plus. Un meneur qui annonce sa
+       révision ne déclenche jamais de lecture. */
     function armWatchdog(){
-      stopWatchdog();
+      if(watchTimer!==null)return;
       if(role!=='follower'||!enabled||!visible||stopped)return;
       watchTimer=deps.setTimeout(()=>{
         watchTimer=null;
         if(role!=='follower'||!enabled||!visible||stopped)return;
-        if(deps.now()-lastLeaderAt>=FOLLOWER_WATCHDOG_MS&&phase==='following'){
-          log('info','scene.follower_watchdog',{revision:state?state.revision:null});
+        const now=deps.now();
+        if(phase==='following'&&now-lastLeaderAt>=FOLLOWER_SILENCE_MS&&now-lastWatchReadAt>=FOLLOWER_SILENCE_MS){
+          lastWatchReadAt=now;
+          log('info','scene.follower_watchdog',{revision:state?state.revision:null,silent_ms:now-lastLeaderAt});
           catchUp();
         }
         armWatchdog();
-      },FOLLOWER_WATCHDOG_MS);
+      },FOLLOWER_CHECK_MS);
     }
 
     function wait(ms,next){
@@ -462,8 +522,8 @@ const JarvisScenePageCore=(function(){
   }
 
   return Object.freeze({LONG_POLL_WAIT_S,SNAPSHOT_TIMEOUT_MS,POLL_TIMEOUT_MS,BACKOFF_BASE_MS,BACKOFF_MAX_MS,
-    FOLLOWER_WATCHDOG_MS,RETRY_NOW_MIN_MS,MESSAGE_VERSION,
-    backoffDelay,patchPath,gateEnabled,validMessage,createSceneLoop,createResolverCommitter});
+    FOLLOWER_SILENCE_MS,FOLLOWER_CHECK_MS,RETRY_NOW_MIN_MS,MESSAGE_VERSION,
+    backoffDelay,patchPath,gateEnabled,validMessage,createSceneLoop,createResolverCommitter,createLeadership});
 })();
 
 /* Exécution par les tests (node) ; dans la page, `module` n'existe pas. */
@@ -628,7 +688,7 @@ body:has(#jarvisHands .jh-badge) .sc-status{bottom:52px}
   let lastModel=null,focusId=null,tabStopId=null,statusFailed=false,visibilityToken=0,animTimer=0;
   const freshUntil=new Map();
   const nodes=new Map();
-  const leader={held:false,release:null,abort:null,mode:'lock'};
+  const leader={held:false,mode:'lock'};
   const channel=typeof BroadcastChannel==='function'?new BroadcastChannel(CHANNEL_NAME):null;
   const shared=!!channel&&!!(navigator.locks&&typeof navigator.locks.request==='function');
   const SNAPSHOT_TIMEOUT=Core.SNAPSHOT_TIMEOUT_MS;
@@ -692,49 +752,25 @@ body:has(#jarvisHands .jh-badge) .sc-status{bottom:52px}
     committer.update({state:lastView.state,layout:currentLayout(),leader:leader.held,healthy});
   }
 
-  function hold(){
-    return new Promise(release=>{
-      leader.abort=null;leader.held=true;leader.release=release;leader.mode='lock';
-      loop.setRole('leader');
-      pushCommitter();
-    });
-  }
-
   /* Rôle de l'onglet visible : meneur si le verrou est libre, sinon suiveur en
      file d'attente (le navigateur lui passe le verrou dès que le meneur le
      rend : fermeture, onglet caché, interrupteur éteint, navigation). La
      promesse rendue se résout quand le rôle est connu. Sans Web Locks ou
      BroadcastChannel : `solo`, long-poll par onglet. */
+  const leadership=shared?Core.createLeadership({locks:navigator.locks,name:LOCK_NAME,createAbort:()=>new AbortController(),log:consoleLog,
+    isVisible:()=>document.visibilityState!=='hidden',isEnabled:()=>enabled,
+    onRole:role=>{leader.held=role==='leader';leader.mode='lock';loop.setRole(role);pushCommitter()}}):null;
+
   function decideRole(){
     if(!shared){
       leader.held=true;leader.mode='solo';loop.setRole('solo');
       return Promise.resolve();
     }
-    if(leader.held||leader.abort)return Promise.resolve();
-    return new Promise(resolve=>{
-      navigator.locks.request(LOCK_NAME,{ifAvailable:true},lock=>{
-        if(lock){const held=hold();resolve();return held}
-        loop.setRole('follower');
-        const controller=new AbortController();
-        leader.abort=controller;
-        navigator.locks.request(LOCK_NAME,{signal:controller.signal},()=>hold()).catch(error=>{
-          if(error&&error.name==='AbortError')return;
-          leader.abort=null;
-          consoleLog('warn','scene.leader_lock_failed',{error:String(error&&error.message||error)});
-        });
-        resolve();
-        return undefined;
-      }).catch(error=>{
-        consoleLog('warn','scene.leader_lock_failed',{error:String(error&&error.message||error)});
-        leader.held=true;leader.mode='solo';loop.setRole('solo');resolve();
-      });
-    });
+    return leadership.decide();
   }
 
   function releaseLeadership(){
-    if(leader.abort){const pending=leader.abort;leader.abort=null;pending.abort()}
-    if(leader.release){const release=leader.release;leader.release=null;release()}
-    if(shared){leader.held=false;loop.setRole('follower')}
+    if(shared){leadership.release();leader.held=false;loop.setRole('follower')}
     else leader.held=false;
   }
 
@@ -1062,6 +1098,13 @@ body:has(#jarvisHands .jh-badge) .sc-status{bottom:52px}
     if(lastModel&&lastModel.capacity.saturated){
       notes.push({cls:'sc-full',main:'Scène pleine — archiver des travaux terminés',meta:`${lastModel.capacity.objects}/${lastModel.capacity.limit}`});
       announce.push('Scène pleine : archiver des travaux terminés.');
+    }
+    if(lastModel&&(lastModel.coveredSignals.high||lastModel.coveredSignals.medium)){
+      const {high,medium}=lastModel.coveredSignals;
+      const under=n=>n>1?'sous des fenêtres':'sous une fenêtre';
+      if(high)notes.push({cls:'sc-full',main:`${high} ${high>1?"signaux d'échec":"signal d'échec"} ${under(high)}`,meta:''});
+      if(medium)notes.push({cls:'sc-warn',main:`${medium} ${medium>1?'signaux à vérifier':'signal à vérifier'} ${under(medium)}`,meta:''});
+      announce.push('Des signaux sont cachés sous des fenêtres.');
     }
     if(lastModel&&lastModel.offscreen){
       notes.push({cls:'',main:`${lastModel.offscreen} ${lastModel.offscreen>1?'objets':'objet'} hors champ`,meta:''});
