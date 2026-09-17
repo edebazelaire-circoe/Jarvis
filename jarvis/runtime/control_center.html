@@ -1638,7 +1638,10 @@ function closeMenu(restore){
    reste active), et les touches sont prises au niveau de la fenêtre, en
    capture : aucun raccourci d'interface ne passe, Échap ferme même quand le
    focus est sur le corps du panneau. */
-const CONFIRM={resolve:null,previous:null,inert:[]};
+const CONFIRM={resolve:null,previous:null,inert:[],observer:null};
+/* Enfant de `body` à rendre inerte pendant la confirmation : tout sauf le panneau,
+   la main de Barehands et les scripts, et seulement s'il ne l'était pas déjà. */
+function confirmInertCandidate(el,back){return el!==back&&el.id!=='jarvisHands'&&el.tagName!=='SCRIPT'&&!el.inert}
 function confirmDialog({title,lines=[],confirmLabel='Confirmer',cancelLabel='Annuler',danger=false}){
   if(CONFIRM.resolve)finishConfirm(false);
   closeMenu(false);
@@ -1654,8 +1657,17 @@ function confirmDialog({title,lines=[],confirmLabel='Confirmer',cancelLabel='Ann
   $('#confirmGo').textContent=confirmLabel;$('#confirmCancel').textContent=cancelLabel;
   dialog.classList.toggle('danger',!!danger);
   CONFIRM.previous=document.activeElement;
-  CONFIRM.inert=[...document.body.children].filter(el=>el!==back&&el.id!=='jarvisHands'&&el.tagName!=='SCRIPT'&&!el.inert);
+  CONFIRM.inert=[...document.body.children].filter(el=>confirmInertCandidate(el,back));
   for(const el of CONFIRM.inert)el.inert=true;
+  /* Un enfant ajouté pendant la confirmation (conteneur, notification…) suit la même règle. */
+  if(typeof MutationObserver==='function'){
+    CONFIRM.observer=new MutationObserver(records=>{
+      for(const record of records)for(const el of record.addedNodes){
+        if(el.nodeType===1&&el.parentNode===document.body&&confirmInertCandidate(el,back)){el.inert=true;CONFIRM.inert.push(el)}
+      }
+    });
+    CONFIRM.observer.observe(document.body,{childList:true});
+  }
   back.hidden=false;
   $('#confirmCancel').focus({preventScroll:true});
   return new Promise(resolve=>{CONFIRM.resolve=resolve});
@@ -1663,6 +1675,7 @@ function confirmDialog({title,lines=[],confirmLabel='Confirmer',cancelLabel='Ann
 function finishConfirm(value){
   const resolve=CONFIRM.resolve,previous=CONFIRM.previous;
   CONFIRM.resolve=null;CONFIRM.previous=null;
+  if(CONFIRM.observer){CONFIRM.observer.disconnect();CONFIRM.observer=null}
   for(const el of CONFIRM.inert)el.inert=false;
   CONFIRM.inert=[];
   $('#confirmBack').hidden=true;

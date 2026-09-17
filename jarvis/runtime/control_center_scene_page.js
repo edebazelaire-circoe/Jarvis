@@ -1279,26 +1279,15 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     const action=kind==='resize'?'Redimensionnement':'Déplacement';
     const token=pending.begin(id,{geometry:box,pinned:true},Date.now());
     pendingChanged();
-    const steps=[];
-    if(!wasPinned&&placed)steps.push('pin');
-    steps.push('geometry');
-    if(!wasPinned&&!placed)steps.push('pin','geometry');
-    let pinnedNow=false;
-    for(const step of steps){
-      const result=await sendCommand(step==='pin'?I.commands.pin(id):I.commands.setGeometry(id,box));
-      if(!result.ok){
-        if(pinnedNow&&!wasPinned){
-          const undo=await sendCommand(I.commands.unpin(id));
-          if(!undo.ok)consoleLog('warn','scene.user_unpin_compensation_failed',{object_id:id,code:undo.code,reason:undo.reason});
-        }
-        if(pending.rollback(id,token)){actionStats.rolledBack++;pendingChanged()}
-        return reportRefusal(step==='pin'?'Épinglage':action,id,result);
-      }
-      if(step==='pin'){pinnedNow=true;actionStats.pins++}
-      pending.confirm(id,token,result.revision);
+    const outcome=await I.commitGeometry({id,box,wasPinned,placed,send:sendCommand,pending,token});
+    if(outcome.pinned)actionStats.pins++;
+    if(!outcome.ok){
+      if(outcome.undo&&!outcome.undo.ok)consoleLog('warn','scene.user_unpin_compensation_failed',{object_id:id,code:outcome.undo.code,reason:outcome.undo.reason});
+      if(outcome.rolledBack){actionStats.rolledBack++;pendingChanged()}
+      return reportRefusal(outcome.step==='pin'?'Épinglage':action,id,outcome.result);
     }
     prunePending();
-    consoleLog('info',kind==='resize'?'scene.user_resized':'scene.user_moved',{object_id:id,steps:steps.join('+')});
+    consoleLog('info',kind==='resize'?'scene.user_resized':'scene.user_moved',{object_id:id,steps:outcome.steps.join('+'),revision:outcome.revision});
   }
 
   function onPointerDown(event){
@@ -1661,7 +1650,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
         timeoutMs:1000*((limitS||30)+5)});
       const body=response.body||{};
       if(response.status===200&&typeof body.outcome==='string'){
-        const words=I.stopOutcome(body.outcome);
+        const words=I.stopOutcome(body.outcome,body.status);
         consoleLog(words.kind==='warn'?'warn':'info','scene.user_stopped',{object_id:id,outcome:body.outcome,status:body.status,ms:Date.now()-started});
         if(words.terminal)stopping.delete(id);
         notify({title:words.title,sub:`${label} · ${words.sub}`,kind:words.kind,ms:words.terminal?3500:6000});

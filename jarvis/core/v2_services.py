@@ -688,23 +688,36 @@ class JobService:
         try:
             if job.id in self._cancel_requested:
                 # Annulé avant de démarrer : jamais exécuté, terminé annulé.
-                await self._settle_cancelled(replace(job, status=JobStatus.CANCELLED, completed_at=utc_now()))
+                cancelled = replace(job, status=JobStatus.CANCELLED, completed_at=utc_now())
+                await self._settle_terminal(cancelled, cancelled, WorkStatus.CANCELLED)
                 return
-            await self.state.save_job(running)
-            await self._observe_work(running, WorkStatus.RUNNING)
-            result = await self._run_worker(worker, running, channel)
-            completed = replace(running, status=JobStatus.COMPLETED, result=dict(result), completed_at=utc_now())
-            await self.state.save_job(completed)
-            await self.events.publish(ProtocolEnvelope(message_type="job.completed", payload={"job_id": job.id, "kind": job.kind, "result": result}, correlation_id=link.correlation_id, conversation_id=job.requested_by_conversation_id))
-            await self._observe_work(running, WorkStatus.COMPLETED)
-        except asyncio.CancelledError:
-            await self._settle_cancelled(replace(running, status=JobStatus.CANCELLED, completed_at=utc_now()))
-            raise
-        except Exception as exc:
-            failed = replace(running, status=JobStatus.FAILED, error=f"{type(exc).__name__}: {exc}", completed_at=utc_now())
-            await self.state.save_job(failed)
-            await self.events.publish(ProtocolEnvelope(message_type="job.failed", payload={"job_id": job.id, "kind": job.kind, "error_class": type(exc).__name__}, correlation_id=link.correlation_id, conversation_id=job.requested_by_conversation_id))
-            await self._observe_work(running, WorkStatus.FAILED, error_class=_work_error_class(exc))
+            try:
+                await self.state.save_job(running)
+                await self._observe_work(running, WorkStatus.RUNNING)
+                result = await self._run_worker(worker, running, channel)
+            except asyncio.CancelledError:
+                # Annulé avant que le worker n'ait rendu son issue : la fin est `cancelled`.
+                await self._settle_terminal(
+                    replace(running, status=JobStatus.CANCELLED, completed_at=utc_now()), running, WorkStatus.CANCELLED,
+                )
+                raise
+            except Exception as exc:
+                # Le worker a échoué : cette issue gagne, même si un arrêt arrive pendant son écriture.
+                await self._settle_terminal(
+                    replace(running, status=JobStatus.FAILED, error=f"{type(exc).__name__}: {exc}", completed_at=utc_now()),
+                    running,
+                    WorkStatus.FAILED,
+                    event=ProtocolEnvelope(message_type="job.failed", payload={"job_id": job.id, "kind": job.kind, "error_class": type(exc).__name__}, correlation_id=link.correlation_id, conversation_id=job.requested_by_conversation_id),
+                    error_class=_work_error_class(exc),
+                )
+            else:
+                # Le worker a rendu son résultat : `completed` gagne (décision PM, reprise QA finale).
+                await self._settle_terminal(
+                    replace(running, status=JobStatus.COMPLETED, result=dict(result), completed_at=utc_now()),
+                    running,
+                    WorkStatus.COMPLETED,
+                    event=ProtocolEnvelope(message_type="job.completed", payload={"job_id": job.id, "kind": job.kind, "result": result}, correlation_id=link.correlation_id, conversation_id=job.requested_by_conversation_id),
+                )
         finally:
             channel.close()
             self._report_progress_budget(job, link, channel)
@@ -714,28 +727,44 @@ class JobService:
             self._links.pop(job.id, None)
             self._work_links.pop(job.id, None)
 
-    async def _settle_cancelled(self, cancelled: Job) -> None:
-        """Écrire la fin annulée et l'observer, sans qu'une annulation de plus ne la coupe.
+    async def _settle_terminal(
+        self,
+        terminal: Job,
+        observed: Job,
+        status: WorkStatus,
+        *,
+        event: ProtocolEnvelope | None = None,
+        error_class: str | None = None,
+    ) -> None:
+        """Régler une fin de job d'un bloc : écrire, publier, observer (Slice 08, reprises QA).
 
-        La persistance tourne dans sa propre tâche, attendue sous `shield` :
-        une annulation qui arrive pendant l'écriture (second arrêt, arrêt de
-        Core) est absorbée jusqu'à la fin de l'écriture ; l'appelant relève
-        ensuite sa propre `CancelledError`. Jamais un job `running` à jamais.
+        Une fois qu'un job a son issue (annulé, échoué, terminé), cette issue
+        est réglée atomiquement : la persistance, l'événement `job.*` et
+        l'observation de travail tournent dans leur propre tâche, attendue sous
+        `shield`. Une annulation qui arrive pendant ce règlement (arrêt de
+        l'utilisateur, `cancel_work` du cerveau, arrêt de Core) est absorbée
+        jusqu'à la fin, puis relevée : l'issue du worker n'est jamais écrasée,
+        jamais écrite deux fois, et le job ne reste jamais `running`.
         """
 
-        async def persist() -> None:
-            await self.state.save_job(cancelled)
-            await self._observe_work(cancelled, WorkStatus.CANCELLED)
+        async def settle() -> None:
+            await self.state.save_job(terminal)
+            if event is not None:
+                await self.events.publish(event)
+            await self._observe_work(observed, status, error_class=error_class)
 
-        write = asyncio.ensure_future(persist())
+        write = asyncio.ensure_future(settle())
+        absorbed = False
         while not write.done():
             try:
                 await asyncio.shield(write)
             except asyncio.CancelledError:
+                absorbed = True
                 if write.done():
                     break
-                continue
         write.result()
+        if absorbed:
+            raise asyncio.CancelledError()
 
     async def _run_worker(self, worker: JobWorker, job: Job, progress: JobProgressSink) -> dict[str, object]:
         """Executer le worker, avec la couture d'avancement s'il la declare.
@@ -806,6 +835,8 @@ class JobService:
         n'atteint pas les jobs `back_brain` (sans lien `_links`).
 
         Rend `(issue, job relu)` : `cancelled` (terminé annulé dans le délai),
+        `already_terminal` aussi quand le worker a rendu son issue pendant
+        l'arrêt (`completed` ou `failed` gagne, avec le vrai statut),
         `cancel_requested` (annulation demandée, fin pas encore observée dans
         `settle_s`), `cleanup_unknown` (job `back_brain` : annulation demandée,
         nettoyage de l'exécution non confirmé), `already_terminal` (rien à
@@ -827,7 +858,10 @@ class JobService:
             # Attendre la fin sans jamais l'annuler une seconde fois : `wait` ne touche pas la tâche.
             await asyncio.wait({task}, timeout=max(0.0, settle_s))
         latest = await self.state.get_job(job_id) or job
-        if latest.status is JobStatus.CANCELLED:
+        if latest.status in {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.INTERRUPTED}:
+            # Le worker avait déjà son issue : elle gagne, l'arrêt n'a rien arrêté.
+            outcome = "already_terminal"
+        elif latest.status is JobStatus.CANCELLED:
             outcome = "cancelled"
         elif latest.cancellation == "cleanup_unknown":
             outcome = "cleanup_unknown"

@@ -486,3 +486,234 @@ async def test_the_status_gives_the_page_the_real_stop_deadline(tmp_path):
         assert limits == {"job_cancel_timeout_s": view.job_cancel_deadline_s} and view.job_cancel_deadline_s == 2.0 + 20.0 + 1.0
     finally:
         await view.aclose()
+
+
+
+# ------------------------------------------------------------ arrêt contre fin du worker (reprise QA finale, MAJOR-R1)
+
+
+class OutcomeWorker:
+    """Worker dont la fin est pilotée par le test : `finish(job_id, "ok" | "fail")`."""
+
+    def __init__(self) -> None:
+        self.gates: dict[str, list] = {}
+        self.started: dict[str, asyncio.Event] = {}
+
+    def _gate(self, job_id):
+        return self.gates.setdefault(job_id, [asyncio.Event(), None])
+
+    def finish(self, job_id, mode):
+        gate = self._gate(job_id)
+        gate[1] = mode
+        gate[0].set()
+
+    async def execute(self, job):
+        self.started.setdefault(job.id, asyncio.Event()).set()
+        gate = self._gate(job.id)
+        await gate[0].wait()
+        if gate[1] == "fail":
+            raise RuntimeError("worker failure")
+        return {"ok": True}
+
+    async def cancel(self, job_id):
+        return None
+
+
+async def outcome_core(tmp_path):
+    process = JobCore(tmp_path)
+    process.worker = OutcomeWorker()
+    await process.start()
+    writes: dict[str, list[str]] = {}
+    save = process.core.state.save_job
+
+    async def recording_save(value):
+        writes.setdefault(value.id, []).append(value.status.value)
+        return await save(value)
+
+    process.core.state.save_job = recording_save
+    events: dict[str, list[str]] = {}
+    publish = process.core.events.publish
+
+    async def recording_publish(envelope):
+        job_id = envelope.payload.get("job_id") if isinstance(envelope.payload, dict) else None
+        if job_id:
+            events.setdefault(job_id, []).append(envelope.message_type)
+        return await publish(envelope)
+
+    process.core.events.publish = recording_publish
+    return process, writes, events
+
+
+async def started_job(process):
+    job = await process.core.jobs.submit(Job(kind="demo", payload={}))
+    await asyncio.wait_for(process.worker.started.setdefault(job.id, asyncio.Event()).wait(), 5)
+    return job
+
+
+def terminal_writes(writes, job_id):
+    return [value for value in writes.get(job_id, []) if value not in ("pending", "running")]
+
+
+TERMINAL = {"ok": (JobStatus.COMPLETED, ExecState.COMPLETED, "job.completed"), "fail": (JobStatus.FAILED, ExecState.FAILED, "job.failed")}
+
+
+@pytest.mark.parametrize("mode", ["ok", "fail"])
+@pytest.mark.parametrize("where", ["lock_wait", "after_save", "publish", "observe"])
+async def test_a_cancellation_during_the_terminal_settlement_never_overwrites_the_worker_outcome(tmp_path, mode, where):
+    process, writes, events = await outcome_core(tmp_path)
+    try:
+        job = await started_job(process)
+        task = process.core.jobs._running[job.id]
+        status, exec_state, event_name = TERMINAL[mode]
+        reached, release = asyncio.Event(), asyncio.Event()
+        save = process.core.state.save_job
+
+        async def hooked_save(value):
+            if value.id == job.id and value.status is status and where == "lock_wait":
+                holder = process.core.state._lock
+                await holder.acquire()  # un autre appelant tient le verrou : l'écriture attendra
+                reached.set()
+
+                async def free_lock():
+                    await release.wait()
+                    holder.release()
+
+                asyncio.get_running_loop().create_task(free_lock())
+                return await save(value)
+            if value.id == job.id and value.status is status and where == "after_save":
+                result = await save(value)
+                reached.set()
+                await release.wait()
+                return result
+            return await save(value)
+
+        process.core.state.save_job = hooked_save
+        if where == "publish":
+            publish = process.core.events.publish
+
+            async def hooked_publish(envelope):
+                if envelope.message_type == event_name:
+                    reached.set()
+                    await release.wait()
+                return await publish(envelope)
+
+            process.core.events.publish = hooked_publish
+        if where == "observe":
+            observe = process.core.jobs._observe_work
+
+            async def hooked_observe(value, work_status, **kwargs):
+                if value.id == job.id and work_status.value == status.value:
+                    reached.set()
+                    await release.wait()
+                return await observe(value, work_status, **kwargs)
+
+            process.core.jobs._observe_work = hooked_observe
+
+        process.worker.finish(job.id, mode)
+        await asyncio.wait_for(reached.wait(), 5)
+        await asyncio.sleep(0.01)
+        if where == "lock_wait":
+            # Le verrou du dépôt est tenu : `cancel()` (qui relit le job) attendrait lui aussi.
+            # L'annulation arrive donc brute, deux fois, pendant l'attente du verrou.
+            task.cancel()
+            task.cancel()
+        else:
+            await process.core.jobs.cancel(job.id)  # l'annulation tombe pendant le règlement
+            await process.core.jobs.cancel(job.id)  # et une seconde, idempotente
+        assert task.cancelling() >= 1
+        release.set()
+        await asyncio.wait({task}, timeout=5)
+
+        stored = await process.core.state.get_job(job.id)
+        assert task.done() and stored.status is status
+        assert terminal_writes(writes, job.id) == [status.value]
+        assert events.get(job.id, []).count(event_name) == 1 and "job.cancelled" not in events.get(job.id, [])
+        await star_state(process.core, star_object_id("job", job.id), exec_state)
+        outcome, again = await process.core.jobs.cancel_for_user(job.id)
+        assert (outcome, again.status) == ("already_terminal", status)
+    finally:
+        await process.stop()
+
+
+@pytest.mark.parametrize("mode", ["ok", "fail"])
+async def test_a_user_stop_that_read_running_answers_already_terminal_with_the_real_status(tmp_path, mode):
+    process, writes, _ = await outcome_core(tmp_path)
+    try:
+        job = await started_job(process)
+        status = TERMINAL[mode][0]
+        read = process.core.state.get_job
+        first = [True]
+
+        async def read_then_finish(job_id):
+            value = await read(job_id)
+            if job_id == job.id and first[0]:
+                first[0] = False
+                process.worker.finish(job.id, mode)  # le worker rend son issue juste après la lecture « running »
+                for _ in range(5):
+                    await asyncio.sleep(0)
+            return value
+
+        process.core.state.get_job = read_then_finish
+        outcome, stored = await asyncio.wait_for(process.core.jobs.cancel_for_user(job.id, settle_s=5), 10)
+        process.core.state.get_job = read
+        final = await process.core.state.get_job(job.id)
+        assert terminal_writes(writes, job.id) == [final.status.value]
+        assert final.status is status  # l'issue était rendue : elle gagne
+        assert (outcome, stored.status) == ("already_terminal", status)
+    finally:
+        await process.stop()
+
+
+@pytest.mark.parametrize("mode", ["ok", "fail"])
+async def test_an_unhooked_timing_sweep_of_stop_against_the_worker_end_is_never_stuck_nor_inconsistent(tmp_path, mode):
+    process, writes, events = await outcome_core(tmp_path)
+    status = TERMINAL[mode][0]
+    seen = set()
+    try:
+        for index in range(24):
+            job = await started_job(process)
+            stop = asyncio.create_task(process.core.jobs.cancel_for_user(job.id, settle_s=2))
+            await asyncio.sleep((index % 6) / 1000)
+            process.worker.finish(job.id, mode)
+            outcome, stored = await asyncio.wait_for(stop, 10)
+            await asyncio.sleep(0.02)
+            final = await process.core.state.get_job(job.id)
+            assert final.status in (status, JobStatus.CANCELLED), (index, final.status)
+            assert terminal_writes(writes, job.id) == [final.status.value], (index, writes.get(job.id))
+            assert (outcome, stored.status) == ("already_terminal" if final.status is status else "cancelled", final.status)
+            assert events.get(job.id, []).count(TERMINAL[mode][2]) == (1 if final.status is status else 0)
+            assert job.id not in process.core.jobs._running
+            seen.add(final.status)
+    finally:
+        await process.stop()
+    assert seen  # au moins une issue observée ; les deux selon la machine
+
+
+@pytest.mark.parametrize("mode", ["ok", "fail"])
+async def test_core_stop_during_a_settling_terminal_write_keeps_the_worker_outcome(tmp_path, mode):
+    process, writes, _ = await outcome_core(tmp_path)
+    status = TERMINAL[mode][0]
+    job = await started_job(process)
+    reached, release = asyncio.Event(), asyncio.Event()
+    save = process.core.state.save_job
+
+    async def slow_terminal_save(value):
+        if value.id == job.id and value.status is status:
+            reached.set()
+            await release.wait()
+        return await save(value)
+
+    process.core.state.save_job = slow_terminal_save
+    process.worker.finish(job.id, mode)
+    await asyncio.wait_for(reached.wait(), 5)
+    stopping = asyncio.create_task(process.stop())
+    await asyncio.sleep(0.2)
+    release.set()
+    await asyncio.wait_for(stopping, 20)
+    reopened = JarvisCoreApplication(data_root=process.data_root, workers={"demo": OutcomeWorker()})
+    await reopened.start()
+    try:
+        assert (await reopened.state.get_job(job.id)).status is status
+    finally:
+        await reopened.stop()
+    assert terminal_writes(writes, job.id) == [status.value]

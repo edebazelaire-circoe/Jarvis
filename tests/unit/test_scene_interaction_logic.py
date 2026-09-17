@@ -373,9 +373,13 @@ def test_command_responses_are_read_in_user_words(tmp_path):
 
 
 def test_stop_outcomes_are_worded_honestly(tmp_path):
-    result = run_node(tmp_path, r"""return Object.fromEntries(['cancelled','already_terminal','cancel_requested','cleanup_unknown','odd'].map(o=>[o,I.stopOutcome(o)]));""")
+    result = run_node(tmp_path, r"""const out=Object.fromEntries(['cancelled','already_terminal','cancel_requested','cleanup_unknown','odd'].map(o=>[o,I.stopOutcome(o)]));
+      out.completedWon=I.stopOutcome('already_terminal','completed');out.failedWon=I.stopOutcome('already_terminal','failed');return out;""")
     assert result["cancelled"]["terminal"] is True and result["cancelled"]["title"] == "Tâche arrêtée"
     assert result["already_terminal"]["terminal"] is True
+    # L'issue du worker a gagné la course contre l'arrêt : dite telle quelle (décision PM).
+    assert result["completedWon"] == {"title": "La tâche s’était déjà terminée", "sub": "Elle a fini normalement.", "kind": "info", "terminal": True}
+    assert result["failedWon"]["sub"] == "Elle a fini en échec."
     assert result["cancel_requested"]["terminal"] is False and "pas encore confirmé" in result["cancel_requested"]["sub"]
     assert result["cleanup_unknown"] == {"title": "Arrêt demandé, nettoyage non confirmé",
                                          "sub": "Le job reste en cours tant que son exécution n’est pas nettoyée.", "kind": "warn", "terminal": False}
@@ -479,3 +483,44 @@ def test_the_interaction_module_touches_no_dom_network_or_clock():
     source = INTERACT_JS.read_text(encoding="utf-8")
     for forbidden in ("document.", "window.add", "window.set", "fetch(", "XMLHttpRequest", "setTimeout", "Date.now", "performance.now", "localStorage"):
         assert forbidden not in source, forbidden
+
+
+def test_a_user_geometry_is_confirmed_only_after_its_last_step_so_the_preview_never_snaps_back(tmp_path):
+    """Reprise QA finale (MINOR-R2) : épingle (révision 21) puis position (révision 22). Tant que la
+    position n'est pas rendue, l'élagage à la révision 21 ne retire pas l'aperçu."""
+
+    result = run_node(tmp_path, r"""
+      const base=state([obj('w','window',{geometry:{x:0,y:0,w:64,h:40},constraints:{placed_by:'brain',pinned_by_user:false}})],[],20);
+      const P=I.createPending(30000);
+      const token=P.begin('w',{geometry:{x:30,y:10,w:64,h:40},pinned:true},0);
+      const sent=[],frames=[];let revision=20;let releaseGeometry;
+      const gate=new Promise(r=>{releaseGeometry=r});
+      const send=async command=>{
+        sent.push(command.op);revision++;const mine=revision;
+        if(command.op==='set_geometry')await gate;
+        return {ok:true,outcome:'applied',revision:mine};
+      };
+      const running=I.commitGeometry({id:'w',box:{x:30,y:10,w:64,h:40},wasPinned:false,placed:true,send,pending:P,token});
+      for(let i=0;i<5;i++)await Promise.resolve();
+      const held={...base,revision:21};                  // le patch de l'épingle est arrivé
+      const pruned=P.prune(held,10).length;
+      frames.push(P.overlay(held).objects.get('w').geometry.x);
+      releaseGeometry();
+      const outcome=await running;
+      frames.push(P.overlay(held).objects.get('w').geometry.x);
+      const early=P.prune(held,20).length;
+      const reached=P.prune({...base,revision:22},30).length;
+      const unplaced=I.geometrySteps(false,false),pinned=I.geometrySteps(true,true);
+      // échec de la position après l'épingle : désépinglage compensatoire et retrait de la couche
+      const Q=I.createPending(30000);const t2=Q.begin('w',{geometry:{x:1,y:1,w:64,h:40},pinned:true},0);const sent2=[];
+      const failing=await I.commitGeometry({id:'w',box:{x:1,y:1,w:64,h:40},wasPinned:false,placed:true,pending:Q,token:t2,
+        send:async c=>{sent2.push(c.op);return c.op==='set_geometry'?{ok:false,outcome:'failed',code:'core_timeout',unknown:true}:{ok:true,outcome:'applied',revision:40}}});
+      return {sent,pruned,frames,outcome,early,reached,unplaced,pinned,sent2,failing:{ok:failing.ok,step:failing.step,rolledBack:failing.rolledBack,undo:!!failing.undo},qSize:Q.size()};
+    """)
+    assert result["sent"] == ["pin", "set_geometry"]
+    assert result["pruned"] == 0 and result["frames"] == [30, 30]  # jamais de retour à x = 0
+    assert result["outcome"] == {"ok": True, "steps": ["pin", "geometry"], "revision": 22, "pinned": True}
+    assert result["early"] == 0 and result["reached"] == 1
+    assert result["unplaced"] == ["geometry", "pin", "geometry"] and result["pinned"] == ["geometry"]
+    assert result["sent2"] == ["pin", "set_geometry", "unpin"]
+    assert result["failing"] == {"ok": False, "step": "geometry", "rolledBack": True, "undo": True} and result["qSize"] == 0

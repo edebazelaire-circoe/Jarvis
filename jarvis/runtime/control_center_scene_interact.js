@@ -330,7 +330,12 @@
 
   /* Issue d'un arrêt de job (`POST /api/jobs/cancel`) : titre, précision,
      ton, et si l'étoile doit encore attendre sa fin (`terminal` faux). */
-  function stopOutcome(outcome){
+  function stopOutcome(outcome,status){
+    /* Le worker avait déjà rendu son issue : elle gagne, dite telle quelle. */
+    if(outcome==='already_terminal'){
+      const words={completed:'Elle a fini normalement.',failed:'Elle a fini en échec.',cancelled:'Elle était déjà annulée.',interrupted:'Elle avait été interrompue.'};
+      return {title:'La tâche s’était déjà terminée',sub:words[status]||'Rien à arrêter.',kind:'info',terminal:true};
+    }
     return ({
       cancelled:{title:'Tâche arrêtée',sub:'Le job est annulé.',kind:'ok',terminal:true},
       already_terminal:{title:'Tâche déjà terminée',sub:'Rien à arrêter.',kind:'info',terminal:true},
@@ -433,6 +438,38 @@
     };
   }
 
+  /* Étapes d'une géométrie de l'utilisateur (toute géométrie épingle) :
+     l'épingle d'abord, puis la position ; un objet sans géométrie ne
+     s'épingle pas : position, épingle, position de nouveau. */
+  function geometrySteps(wasPinned,placed){
+    if(wasPinned)return ['geometry'];
+    return placed?['pin','geometry']:['geometry','pin','geometry'];
+  }
+
+  /* Envoyer les étapes d'une géométrie de l'utilisateur sur la couche
+     optimiste `token`. La couche n'est confirmée qu'après la **dernière**
+     étape, à la plus grande révision rendue : confirmer après une étape
+     intermédiaire laisserait l'élagage retirer l'aperçu avant que la position
+     n'arrive (retour visuel à l'origine). Échec : désépinglage compensatoire
+     si l'épingle venait de cette opération, puis retrait de la couche.
+     `send(command)` rend la réponse classée (`classifyResponse`). */
+  async function commitGeometry({id,box,wasPinned,placed,send,pending,token}){
+    const steps=geometrySteps(wasPinned,placed);
+    let pinnedNow=false,revision=null;
+    for(const step of steps){
+      const result=await send(step==='pin'?commands.pin(id):commands.setGeometry(id,box));
+      if(!result.ok){
+        const undo=pinnedNow&&!wasPinned?await send(commands.unpin(id)):null;
+        const rolledBack=pending.rollback(id,token);
+        return {ok:false,step,result,undo,rolledBack,steps,pinned:pinnedNow};
+      }
+      if(step==='pin')pinnedNow=true;
+      if(Number.isSafeInteger(result.revision))revision=Math.max(revision||0,result.revision);
+    }
+    pending.confirm(id,token,revision);
+    return {ok:true,steps,revision,pinned:pinnedNow};
+  }
+
   /* Disposition sur laquelle le résolveur valide ses placements : celle de
      l'état tenu (`held`), jamais celle de l'état dessiné avec les
      modifications optimistes (`drawn`), qui peuvent encore être refusées.
@@ -455,7 +492,7 @@
     LONG_PRESS_MS,PENDING_MAX_MS,MAX_ARCHIVE_IDS,MAX_COMMAND_BYTES,TERMINAL,REFUSALS,TRANSPORT,
     clampBox,dragThreshold,pxToUnits,dragBox,resizeBox,resizable,keyIntent,applyKey,representationBox,sameBox,
     signalOwners,cascadeOf,bulkSelection,chunkIds,menuModel,commands,transportFailure,networkFailure,classifyResponse,stopOutcome,
-    focusAfterRemoval,commitLayout,createPending,hiddenObjects});
+    focusAfterRemoval,commitLayout,geometrySteps,commitGeometry,createPending,hiddenObjects});
   root.JarvisSceneInteract=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof globalThis!=='undefined'?globalThis:this);
