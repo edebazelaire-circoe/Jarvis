@@ -535,8 +535,9 @@ class LocalProtocolServer:
     async def ingest_work_observations(self, request: web.Request) -> web.Response:
         """Ingress des observateurs de travail d'un autre processus (handoff work-state, tâche 11).
 
-        Corps : `WorkObservationBatch` (`source`, `producer_id`, 1 à 64
-        `observations`). Strict : un champ inconnu, à l'enveloppe comme dans
+        Corps : `WorkObservationBatch` (`source`, `producer_id`, 0 à 64
+        `observations` ; un lot vide revendique seulement la source pour ce
+        producteur, Slice 10). Strict : un champ inconnu, à l'enveloppe comme dans
         une observation, rend 400 et rien n'est appliqué — une trace brute de
         fournisseur n'entre pas dans Core. Une observation valide mais périmée,
         en double ou contredisant une fin n'est pas une erreur : elle est

@@ -419,6 +419,11 @@ class WorkObservationBatch:
     les éléments encore actifs de cette source appartenaient à l'instance
     disparue : Core les interrompt (tâche 11).
 
+    Un lot **vide** est permis (handoff constellation, Slice 10) : c'est la
+    revendication d'une nouvelle instance qui n'a encore rien à dire. Sans
+    lui, un Control Center redémarré au tracker vide ne parlait pas à Core, et
+    les travaux de l'instance tuée restaient « en cours » sans borne.
+
     Contrairement à `WorkObservation.from_payload`, qui ignore les clés
     inconnues, le lot est strict : c'est la frontière de confiance entre
     processus, et un champ inconnu (trace brute, `prompt`...) y trahit un
@@ -436,8 +441,8 @@ class WorkObservationBatch:
             isinstance(observation, WorkObservation) for observation in self.observations
         ):
             raise TypeError("observations must be a tuple of WorkObservation")
-        if not 1 <= len(self.observations) <= MAX_OBSERVATION_BATCH:
-            raise ValueError(f"a batch holds between 1 and {MAX_OBSERVATION_BATCH} observations")
+        if len(self.observations) > MAX_OBSERVATION_BATCH:
+            raise ValueError(f"a batch holds at most {MAX_OBSERVATION_BATCH} observations")
         if any(observation.source != self.source for observation in self.observations):
             raise ValueError("every observation of a batch must come from the batch source")
 
@@ -458,7 +463,7 @@ class WorkObservationBatch:
             raise TypeError("observations must be a list")
         if len(raw) > MAX_OBSERVATION_BATCH:
             # Refusé avant de décoder, comme `WorkSnapshot.from_payload`.
-            raise ValueError(f"a batch holds between 1 and {MAX_OBSERVATION_BATCH} observations")
+            raise ValueError(f"a batch holds at most {MAX_OBSERVATION_BATCH} observations")
         observations: list[WorkObservation] = []
         for index, item in enumerate(raw):
             name = f"observations[{index}]"

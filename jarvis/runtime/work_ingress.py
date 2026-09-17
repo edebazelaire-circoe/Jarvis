@@ -211,8 +211,12 @@ class CoreWorkTransport(CoreLoopbackTransport):
 
     Le jeton de session est relu à chaque (re)connexion : Core écrit un jeton
     neuf à chaque démarrage, et peut démarrer après le Control Center
-    (`CoreLoopbackTransport`).
+    (`CoreLoopbackTransport`). `token_refreshed` passe à vrai quand un lot a
+    été accepté après relecture du jeton ; le relais le remet à faux en le
+    journalisant.
     """
+
+    token_refreshed = False
 
     async def post(self, batch: WorkObservationBatch) -> dict[str, Any]:
         """Envoyer un lot ; un jeton refusé est relu et le lot renvoyé une fois.
@@ -233,11 +237,13 @@ class CoreWorkTransport(CoreLoopbackTransport):
         # Core a redémarré avec un autre jeton : relu, une seule nouvelle tentative.
         await self.close()
         try:
-            return await self._post_once(payload)
+            response = await self._post_once(payload)
         except CoreProtocolError as exc:
             if exc.status == 401:
                 await self.close()  # relu encore au prochain envoi
             raise
+        self.token_refreshed = True
+        return response
 
     async def _post_once(self, payload: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -293,6 +299,10 @@ class WorkIngressForwarder(CoreBatchForwarder):
     """
 
     TASK_NAME = "jarvis-work-ingress"
+    #: Lot accepté après relecture du jeton (Core redémarré) : une ligne info
+    #: par instance de Core (`store_id`), identifiants seulement.
+    TOKEN_REFRESHED_KIND = "work.ingress_token_refreshed"
+    TOKEN_REFRESHED_MESSAGE = "Core a changé de jeton : jeton relu, lot renvoyé aussitôt."
     UNAVAILABLE_KIND = "work.ingress_unavailable"
     UNAVAILABLE_MESSAGE = "Core injoignable : l'état des sous-tâches attend, l'agent continue."
     RESTORED_KIND = "work.ingress_restored"
@@ -341,6 +351,12 @@ class WorkIngressForwarder(CoreBatchForwarder):
         self._store_id: str | None = None
         self._lost = False
         self._resync_failures: set[str] = set()
+        #: Slice 10 : la nouvelle instance revendique la source dès son
+        #: démarrage, même sans rien à dire (lot vide). Core interrompt alors
+        #: aussitôt ce que l'instance précédente (tuée) laissait « en cours ».
+        #: Tombe dès qu'un lot, vide ou non, est accepté.
+        self._claim_due = True
+        self._token_reported_store: str | None = None
 
     @property
     def pending_count(self) -> int:
@@ -379,9 +395,34 @@ class WorkIngressForwarder(CoreBatchForwarder):
         # n'émet rien, et rien ne part.
         self._resync()
 
-    async def flush(self) -> bool:
-        """Envoyer tout ce qui attend ; faux si Core est injoignable (rien n'est perdu)."""
+    def _send_due(self) -> bool:
+        return bool(self._pending) or self._claim_due
 
+    async def flush(self) -> bool:
+        """Envoyer tout ce qui attend ; faux si Core est injoignable (rien n'est perdu).
+
+        Tant que la revendication de démarrage n'est pas faite et que rien
+        n'attend, un lot vide part : il suffit à Core pour reconnaître la
+        nouvelle instance (`producer_restarted` sur les travaux de l'ancienne).
+        """
+
+        if self._claim_due and not self._pending:
+            try:
+                response = await self.transport.post(
+                    WorkObservationBatch(source=self.source, producer_id=self.producer_id, observations=())
+                )
+            except asyncio.CancelledError:
+                raise
+            except CoreBatchRejected as exc:
+                # Core plus ancien qui refuse le lot vide : la revendication
+                # attend le premier vrai lot, comme avant.
+                self._claim_due = False
+                self._report_rejected(exc)
+                return True
+            except Exception as exc:  # noqa: BLE001 - Core arrêté, jeton absent, réseau
+                self._report_unavailable(exc)
+                return False
+            self._acknowledge(response)
         while self._pending:
             batch = [self._pending.pop(key) for key in list(self._pending)[: self.max_batch]]
             try:
@@ -412,7 +453,14 @@ class WorkIngressForwarder(CoreBatchForwarder):
     def _acknowledge(self, response: Any) -> None:
         # Un lot accepté clôt la panne et la série de refus : la suivante sera consignée.
         self._note_accepted()
+        self._claim_due = False
         store_id = response.get("store_id") if isinstance(response, dict) else None
+        if getattr(self.transport, "token_refreshed", False):
+            self.transport.token_refreshed = False
+            if store_id != self._token_reported_store:
+                self._token_reported_store = store_id
+                self._report(self.TOKEN_REFRESHED_KIND, self.TOKEN_REFRESHED_MESSAGE, "info",
+                             extra={"producer_id": self.producer_id, "store_id": store_id})
         if store_id == self._store_id and not self._lost:
             return
         # Instance de Core inconnue (premier contact, redémarrage) ou pertes :

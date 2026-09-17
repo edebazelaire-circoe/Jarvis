@@ -480,7 +480,8 @@ async def test_overflow_drops_the_oldest_and_triggers_a_full_resync():
     forwarder = WorkIngressForwarder(source="claude", transport=transport, max_pending=3)
     resyncs: list[int] = []
     forwarder.on_resync = lambda: resyncs.append(1)
-    await forwarder.flush()  # rien à envoyer
+    await forwarder.flush()  # rien à envoyer : la revendication vide seule (Slice 10), premier contact
+    assert resyncs == [1]
 
     for index in range(5):
         forwarder.offer(observation(f"a{index}"))
@@ -488,7 +489,7 @@ async def test_overflow_drops_the_oldest_and_triggers_a_full_resync():
     assert forwarder.pending_count == 3 and forwarder.dropped_total == 2
     await forwarder.flush()
     assert [item.external_id for item in transport.sent()] == ["a2", "a3", "a4"]
-    assert resyncs == [1]  # premier contact et pertes : l'état complet repart
+    assert resyncs == [1, 1]  # pertes : l'état complet repart
 
 
 async def test_core_unavailable_keeps_everything_and_reports_once(tmp_path):
@@ -639,15 +640,56 @@ async def test_an_idle_forwarder_lets_a_restarted_core_relearn_silent_work(agent
     await forwarder.aclose()
 
 
-async def test_an_idle_forwarder_with_nothing_to_report_sends_nothing(agent):
+async def test_an_idle_forwarder_with_nothing_to_report_sends_only_its_start_claim(agent):
+    # Slice 10 (changement délibéré) : un lot vide revendique la source au
+    # démarrage ; ensuite, rien à dire, rien ne part.
     transport = FakeTransport()
     forwarder = wired(agent, transport, resync_interval_s=0.01)
     forwarder.start()
 
     await asyncio.sleep(0.1)
 
-    assert transport.batches == []
+    assert [len(batch.observations) for batch in transport.batches] == [0]
+    assert transport.batches[0].producer_id == forwarder.producer_id
     await forwarder.aclose()
+
+
+async def test_the_start_claim_waits_for_core_and_is_dropped_by_any_accepted_batch():
+    transport = FakeTransport()
+    transport.failures = [ConnectionError("refused")]
+    forwarder = WorkIngressForwarder(source="claude", transport=transport)
+    assert await forwarder.flush() is False and transport.batches == []  # Core absent : la revendication attend
+    forwarder.offer(observation("a1"))
+    assert await forwarder.flush() is True
+    assert [len(batch.observations) for batch in transport.batches] == [1]  # le vrai lot revendique : pas de lot vide
+    assert await forwarder.flush() is True and len(transport.batches) == 1
+
+
+async def test_a_core_refusing_the_empty_claim_is_not_retried():
+    from jarvis.runtime.work_ingress import WorkIngressRejected
+
+    transport = FakeTransport()
+    transport.failures = [WorkIngressRejected("400 invalid work observation batch")]
+    forwarder = WorkIngressForwarder(source="claude", transport=transport)
+    assert await forwarder.flush() is True
+    assert await forwarder.flush() is True and transport.batches == []
+    assert forwarder.rejected_total == 0
+
+
+async def test_a_token_refresh_is_journaled_once_per_core_instance(tmp_path):
+    from jarvis.runtime.journal import RuntimeJournal
+
+    transport = FakeTransport(store_id="core-1")
+    forwarder = WorkIngressForwarder(source="claude", transport=transport, journal=RuntimeJournal(tmp_path))
+    for store_id in ("core-1", "core-1", "core-2"):
+        transport.store_id = store_id
+        transport.token_refreshed = True
+        forwarder.offer(observation("a1", t=len(transport.batches)))
+        assert await forwarder.flush() is True
+    lines = [item for item in read_jsonl_tail(tmp_path / "trace.jsonl", limit=100) if item["kind"] == "work.ingress_token_refreshed"]
+    assert [(item["level"], item["data"]["store_id"]) for item in lines] == [("info", "core-1"), ("info", "core-2")]
+    assert set(lines[0]["data"]) == {"source", "pending", "dropped_total", "producer_id", "store_id"}
+    assert transport.token_refreshed is False
 
 
 async def test_a_resync_failing_at_every_probe_is_reported_once(tmp_path):

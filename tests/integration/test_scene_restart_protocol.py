@@ -59,6 +59,11 @@ class Host:
         await self.server.start()
         return self.core
 
+    async def marked(self) -> None:
+        """Le marquage est le premier travail de la projection, après la disponibilité de Core."""
+
+        await until(lambda: _marked(self))
+
     async def stop(self) -> None:
         if self.server is not None:
             await self.server.stop()
@@ -131,6 +136,7 @@ async def test_a_restarted_core_gets_the_star_back_from_the_control_center_witho
         await host.stop()  # arrêt de Core : le tracker, lui, sait toujours a1 en cours
 
         await host.start(grace_s=1.0)
+        await host.marked()
         assert host.kinds(SCENE_RESTART_MARKED_KIND)[0] | {"sample": None} == {
             "marked": 1, "already_unknown": 0, "tracked": 1, "terminal_untouched": 1, "job_outcomes": 0, "grace_s": 1.0, "sample": None,
         }
@@ -162,6 +168,7 @@ async def test_without_any_producer_the_star_is_unknown_then_interrupted_with_it
         completed_before = (await _read_scene(tmp_path)).get_object("claude:b1")
 
         await host.start(grace_s=0.4)
+        await host.marked()
         assert state_of(await host.core.scene.snapshot(), "claude:a1") is ExecState.UNKNOWN
         await until(lambda: _expired(host))
         snapshot = await host.scene()
@@ -196,6 +203,31 @@ async def test_a_control_center_restart_interrupts_what_the_new_instance_does_no
     for star_id in ("claude:a1", "claude:a2"):
         assert snapshot.get_object(signal_object_id(star_id)).payload.title == "producer_restarted"
     assert host.kinds(SCENE_RESTART_GRACE_EXPIRED_KIND) == []  # Core n'a pas redémarré : rien à trancher
+
+
+async def test_a_killed_control_center_replaced_by_an_idle_one_interrupts_its_work_within_seconds(tmp_path):
+    """Suivi final O-3 : la nouvelle instance revendique la source par un lot vide dès son démarrage."""
+
+    host = Host(tmp_path)
+    await host.start()
+    first = ControlCenter(host, resync_interval_s=30.0)
+    first.forwarder.start()
+    second = ControlCenter(host, resync_interval_s=30.0)
+    try:
+        first.agent("a1", "Recherche")
+        await until(lambda: _states(host, {"claude:a1": ExecState.RUNNING}))
+        await first.kill()
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        second.forwarder.start()  # tracker vide : rien d'autre que la revendication
+        await until(lambda: _states(host, {"claude:a1": ExecState.INTERRUPTED}), timeout=5)
+        elapsed = loop.time() - started
+        snapshot = await host.scene()
+    finally:
+        await second.forwarder.aclose()
+        await host.stop()
+    assert elapsed < 2.0
+    assert snapshot.get_object(signal_object_id("claude:a1")).payload.title == "producer_restarted"
 
 
 async def test_a_brain_cli_restart_interrupts_its_sub_agents_in_the_scene(tmp_path):
@@ -265,6 +297,10 @@ async def _states(host: Host, expected: dict[str, ExecState]) -> bool:
         return False
     snapshot = await host.core.scene.snapshot()
     return all(state_of(snapshot, object_id) is state for object_id, state in expected.items())
+
+
+async def _marked(host: Host) -> bool:
+    return bool(host.kinds(SCENE_RESTART_MARKED_KIND))
 
 
 async def _expired(host: Host) -> bool:

@@ -86,10 +86,9 @@ async def test_an_ingested_batch_is_readable_from_core_alone(core_stack):
         batch(observation={"observed_at": "hier"}),
         batch(observation={"tokens": "beaucoup"}),
         batch(observation={"source": "codex"}),
-        batch(observations=[]),
         ["pas", "un", "objet"],
     ],
-    ids=["prompt", "raw", "envelope-trace", "status", "date", "tokens-type", "source-mismatch", "empty", "not-object"],
+    ids=["prompt", "raw", "envelope-trace", "status", "date", "tokens-type", "source-mismatch", "not-object"],
 )
 async def test_an_invalid_or_raw_batch_is_refused_and_nothing_is_applied(core_stack, payload):
     core, _, port = core_stack
@@ -207,3 +206,17 @@ async def test_the_transport_waits_for_a_missing_token_without_failing_the_agent
     assert await forwarder.flush() is False
     assert forwarder.pending_count == 1
     await forwarder.aclose()
+
+
+async def test_an_empty_batch_from_a_new_producer_claims_the_source_and_interrupts_the_old_instance(core_stack):
+    """Slice 10 : un Control Center redémarré au tracker vide revendique la source par un lot vide."""
+
+    core, _, port = core_stack
+    status, _ = await raw_post(port, batch())  # instance cc-1 : toolu_A en cours
+    assert status == 200
+    status, body = await raw_post(port, {"source": "claude", "producer_id": "cc-2", "observations": []})
+    assert status == 200 and body["interrupted"] == 1 and body["outcomes"] == {}
+    item = core.work_state.current_snapshot().items[0]
+    assert (item.status.value, item.error_class) == ("interrupted", "producer_restarted")
+    status, body = await raw_post(port, {"source": "claude", "producer_id": "cc-2", "observations": []})
+    assert status == 200 and body["interrupted"] == 0  # même instance : rien de plus
