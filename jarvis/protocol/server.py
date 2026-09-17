@@ -78,6 +78,8 @@ class LocalProtocolServer:
         #: (`_unless_client_left`) rendent la main sans attendre leur échéance.
         #: Un seul signal pour les deux fonctionnalités ; recréé par `start()`.
         self._stopping = asyncio.Event()
+        #: Requête HTTP du cerveau dont la capture occupe la place (client parti : place rendue au suivant).
+        self._capture_client: web.Request | None = None
 
     def _authorized(self, request: web.Request) -> bool:
         return hmac.compare_digest(request.headers.get("Authorization", ""), f"Bearer {self.token}")
@@ -159,6 +161,8 @@ class LocalProtocolServer:
         # attendu reste lié à sa boucle, un redémarrage sur une autre boucle
         # lèverait `RuntimeError`.
         self._stopping = asyncio.Event()
+        #: Requête HTTP du cerveau dont la capture occupe la place (client parti : place rendue au suivant).
+        self._capture_client: web.Request | None = None
         self._runner = web.AppRunner(self._app(), access_log=None)
         await self._runner.setup()
         self._site = web.TCPSite(self._runner, self.host, self.port)
@@ -976,10 +980,22 @@ class LocalProtocolServer:
                                       scene=scene_wire.availability_block(self.core.scene.availability, self.core.scene.capacity)),
                 status=503,
             )
+        captures = self.core.scene_captures
+        previous = self._capture_client
+        if captures.delivery_pending() and previous is not None and (previous.transport is None or previous.transport.is_closing()):
+            # Le client de la demande en attente est parti entre deux contrôles : place libérée tout de suite.
+            captures.cancel()
+            for _ in range(20):
+                if not captures.delivery_pending():
+                    break
+                await asyncio.sleep(0)
         try:
-            # Client parti (brain abandonné, CLI tué) : la demande est annulée aussitôt,
-            # la place se libère au lieu d'un `capture_busy` jusqu'à l'échéance.
-            result = await self._unless_client_left(request, self.core.scene_captures.request())
+            # Client parti (brain abandonné, CLI tué) : la demande est annulée dans le
+            # quart de seconde, la place se libère au lieu d'un `capture_busy` jusqu'à l'échéance.
+            work = captures.request()
+            if not captures.delivery_pending():
+                self._capture_client = request
+            result = await self._unless_client_left(request, work)
         except SceneCaptureError as exc:
             return self._capture_failure(exc)
         if result is None:

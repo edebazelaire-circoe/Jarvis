@@ -50,6 +50,8 @@ SCENE_DISABLED = "scene_disabled"
 _CAPTURE_ID = re.compile(r"\A[A-Za-z0-9_-]{32,64}\Z")
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _PNG_END = b"\x00\x00\x00\x00IEND\xaeB`\x82"
+#: Profondeurs admises par type de couleur (spécification PNG, tableau 11.1).
+_PNG_DEPTHS = {0: (1, 2, 4, 8, 16), 2: (8, 16), 3: (1, 2, 4, 8), 4: (8, 16), 6: (8, 16)}
 
 
 def check_capture_id(value: object) -> str:
@@ -97,6 +99,9 @@ def png_dimensions(data: bytes) -> tuple[int, int]:
             width, height = struct.unpack(">II", body[:8])
             if not (1 <= width <= MAX_CAPTURE_WIDTH and 1 <= height <= MAX_CAPTURE_HEIGHT):
                 raise ValueError(f"capture PNG is {width}x{height}, expected at most {MAX_CAPTURE_WIDTH}x{MAX_CAPTURE_HEIGHT}")
+            depth, color, compression, filtering, interlace = body[8], body[9], body[10], body[11], body[12]
+            if depth not in _PNG_DEPTHS.get(color, ()) or compression != 0 or filtering != 0 or interlace not in (0, 1):
+                raise ValueError("capture PNG header has an invalid depth, color type or method")
         elif tag == b"acTL":
             raise ValueError("animated PNG (acTL) is not a capture")
         elif tag == b"IDAT":

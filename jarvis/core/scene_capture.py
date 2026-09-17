@@ -114,6 +114,11 @@ class SceneCaptureBroker:
         self._closed = False
         await self._prune("start")
 
+    def delivery_pending(self) -> bool:
+        """Une demande occupe la place (en attente d'une page ou d'un envoi)."""
+
+        return self._pending is not None
+
     def cancel(self) -> None:
         """Le cerveau a abandonné sa demande (client parti) : la capture en attente n'occupe plus la place."""
 

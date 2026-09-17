@@ -584,13 +584,11 @@ async def test_a_brain_call_that_leaves_frees_the_capture_at_once(capture_core, 
         assert capture_core.core.scene_captures._pending is not None
         call.cancel()
         await asyncio.gather(call, return_exceptions=True)
-    started = time.monotonic()
-    while capture_core.core.scene_captures._pending is not None and time.monotonic() - started < 2:
-        await asyncio.sleep(0.05)
-    assert capture_core.core.scene_captures._pending is None and time.monotonic() - started < 2
+    # Nouvelle demande aussitôt (sans attendre le contrôle périodique) : jamais capture_busy.
+    second = asyncio.ensure_future(capture_core.request("POST", "/v1/scene/captures", json=BRAIN))
+    await asyncio.sleep(0.1)
     leader = asyncio.ensure_future(fake_leader(capture_core, image=png()))
-    await asyncio.sleep(0.05)
-    status, body, _ = await capture_core.request("POST", "/v1/scene/captures", json=BRAIN)
+    status, body, _ = await second
     await leader
     assert status == 200, body  # plus de capture_busy
 
@@ -651,3 +649,16 @@ async def test_a_capture_that_times_out_names_the_capture_deadline(tmp_path):
     from jarvis.runtime.display_mcp import CAPTURE_READ_TIMEOUT_S
 
     assert timeout.value.code == "core_timeout" and f"{CAPTURE_READ_TIMEOUT_S:g} s" in str(timeout.value)
+
+
+def test_png_header_fields_are_checked_without_decoding():
+    idat = (b"IDAT", zlib.compress(b"\x00" * 13))
+    iend = (b"IEND", b"")
+    for depth, color, compression, filtering, interlace in ((8, 2, 0, 0, 0), (8, 6, 0, 0, 1), (1, 3, 0, 0, 0)):
+        header = (b"IHDR", struct.pack(">IIBBBBB", 4, 4, depth, color, compression, filtering, interlace))
+        assert png_dimensions(chunked_png(header, idat, iend)) == (4, 4)
+    for depth, color, compression, filtering, interlace in ((7, 2, 0, 0, 0), (16, 3, 0, 0, 0), (8, 5, 0, 0, 0), (8, 2, 1, 0, 0),
+                                                            (8, 2, 0, 1, 0), (8, 2, 0, 0, 2)):
+        header = (b"IHDR", struct.pack(">IIBBBBB", 4, 4, depth, color, compression, filtering, interlace))
+        with pytest.raises(ValueError, match="depth, color type or method"):
+            png_dimensions(chunked_png(header, idat, iend))
