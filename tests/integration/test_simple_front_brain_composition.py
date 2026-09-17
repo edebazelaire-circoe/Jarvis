@@ -138,7 +138,9 @@ async def test_explicit_conversation_is_direct_while_optional_luna_is_blocked(tm
                 if snapshot["speeches"][0]["confirmed_text"] == "Quatre.":
                     break
                 await asyncio.sleep(.002)
-        wire.push("input_audio_buffer.committed", item_id="rejected", previous_item_id="input-a")
+        # OpenAI rattache une entrée au dernier élément de la conversation : ici la
+        # réponse de l'assistant, jamais connue comme entrée utilisateur.
+        wire.push("input_audio_buffer.committed", item_id="rejected", previous_item_id="message-a")
         wire.push("conversation.item.input_audio_transcription.completed", item_id="rejected", transcript="Thank you for watching")
         wire.push("input_audio_buffer.speech_started", item_id="input-b", audio_start_ms=600)
         wire.push("input_audio_buffer.speech_stopped", item_id="input-b", audio_end_ms=1000)
@@ -148,6 +150,19 @@ async def test_explicit_conversation_is_direct_while_optional_luna_is_blocked(tm
         followup = [item["response"] for item in wire.sent if item["type"] == "response.create"][-1]
         assert followup["input"] == [{"type": "item_reference", "id": item} for item in ("input-a", "message-a", "input-b")]
         assert not any(item["type"] == "conversation.item.create" for item in wire.sent)
+        # Troisième échange, sans rejet entre deux : le parent annoncé par
+        # OpenAI est directement la réponse précédente de l'assistant.
+        wire.push("response.created", response={"id": "response-b", "metadata": followup["metadata"]})
+        wire.push("response.output_item.added", response_id="response-b", output_index=0,
+                  item={"type": "message", "id": "message-b", "role": "assistant"})
+        wire.push("response.output_audio_transcript.done", response_id="response-b", item_id="message-b", content_index=0, output_index=0, transcript="Cinq.")
+        wire.push("response.done", response={"id": "response-b", "status": "completed", "output": [
+            {"id": "message-b", "type": "message", "role": "assistant", "status": "completed", "content": [{"type": "audio", "transcript": "Cinq."}]}]})
+        wire.push("input_audio_buffer.speech_started", item_id="input-c", audio_start_ms=1200)
+        wire.push("input_audio_buffer.speech_stopped", item_id="input-c", audio_end_ms=1600)
+        wire.push("input_audio_buffer.committed", item_id="input-c", previous_item_id="message-b")
+        wire.push("conversation.item.input_audio_transcription.completed", item_id="input-c", transcript="Jarvis, et encore un ?")
+        await until(lambda: sum(item["type"] == "response.create" for item in wire.sent) == 3)
         assert not backend_calls
         await runtime.mute()
     monkeypatch.setattr(PersistentVoiceRuntime, "run", drive)
@@ -164,7 +179,8 @@ async def test_explicit_conversation_is_direct_while_optional_luna_is_blocked(tm
         assert wire.readers == 1
         turns = await core.conversations.list_turns(runtimes[0].runtime.conversation_id)
         assert [(turn.kind.value, turn.content) for turn in turns] == [
-            ("user", "Jarvis, combien font deux plus deux ?"), ("assistant", "Quatre."), ("user", "Jarvis, ajoute un au résultat.")]
+            ("user", "Jarvis, combien font deux plus deux ?"), ("assistant", "Quatre."), ("user", "Jarvis, ajoute un au résultat."),
+            ("user", "Jarvis, et encore un ?")]
         events = [json.loads(line) for line in (runtime_root / "trace.jsonl").read_text(encoding="utf-8").splitlines()]
         stack = next(item["data"] for item in events if item["kind"] == "voice.stack")
         assert stack["arch"] == mode and stack["arch_source"] == "voice_architecture" and stack["compatibility"] is False
