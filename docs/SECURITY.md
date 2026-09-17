@@ -268,7 +268,10 @@ back, or reach beyond the 2 MiB / 1280×720 checked PNG. This is the same trust
 model as the rest of the Control Center: a **hostile process running under the
 local user account is a non-goal** of V1 (it can already read `core.token`, the
 scene database and the trace). The capture is therefore evidence for an honest
-local machine only, never a proof of what the user saw.
+local machine only, never a proof of what the user saw. Conversely, the stored
+geometry is not evidence of what is drawn: a compact or resized object is redrawn
+differently (Slice 11), so a claim about the screen rests on the capture, not on
+coordinates — the display prompt says so.
 
 Gate timing (Slice 11). The gate is read when the brain CLI starts: a brain
 started with it on keeps its write tools after it is switched off, until it

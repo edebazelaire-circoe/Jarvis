@@ -958,9 +958,10 @@ ne glisse pas et n'ouvre pas les liens. Une page par profil de navigateur tient
 la lecture de la scène : avec la chronologie ouverte dans cinq fenêtres ou plus,
 la page ralentit. Un Control Center arrêté sans être relancé laisse ses
 sous-agents « en cours ». Le brain juge lui-même : il peut parler d'un résultat
-de mémoire plutôt qu'en relisant l'artefact, et répondre à « regarde l'écran » par
-la lecture structurée de la scène, sans capture, quand elle lui suffit (constaté
-au Slice 11 sur une scène à un seul objet).
+de mémoire plutôt qu'en relisant l'artefact. Une question sur l'écran
+(« regarde l'écran », « est-ce que ça se chevauche à l'écran ») demande une
+capture, une question de structure passe par la lecture ; la consigne le dit
+depuis le Slice 11, mais c'est le modèle qui tranche.
 
 **Dépanner en premier.**
 
@@ -1264,7 +1265,14 @@ dépassent jamais 20 Ko et disent ce qu'elles coupent (`truncated`, compteurs
 Elles ne modifient rien.
 
 **Capture visuelle (exceptionnelle).** « Vérifie visuellement… » ou « regarde
-l'écran » : le cerveau peut appeler `scene_capture`. Ce n'est pas une copie
+l'écran » : le cerveau appelle `scene_capture`. Sa consigne sépare les deux cas :
+une question de **structure** (voisinage, place, « est-ce que X chevauche Y »)
+passe par `scene_query near` ou `scene_inspect` ; une question sur **l'écran**
+(« regarde l'écran », « est-ce lisible », « est-ce que ça se chevauche à
+l'écran ») passe par la capture, parce que la géométrie enregistrée et les pixels
+dessinés peuvent différer — une capsule plus haute que sa forme dessinée, un
+objet compact — et qu'une affirmation sur ce que vous voyez doit s'appuyer sur
+l'image. Ce n'est pas une copie
 d'écran du système : la page du Control Center **ouverte et visible** (l'onglet
 meneur) redessine sa couche de scène sur une image PNG de 1280×720 au plus et
 l'envoie à Core, qui la range dans `runtime/scene-captures/` (noms
@@ -1303,9 +1311,10 @@ Vérifier dans la trace : `core.scene.capture_requested`, puis
 `display.capture` (tailles et durée, jamais l'image) ; dans la console du
 navigateur, `[scène] scene.capture_started` / `scene.capture_sent`.
 « Réaffiche tout » passe par `scene_set_visibility` avec `scope: "all_hidden"` :
-le serveur réaffiche un par un tout ce qui est masqué au moment de l'appel et
-rend les comptes, en 15 s au plus (au-delà : `deadline_reached`, et le reste à
-rappeler) ; il n'existe pas de « tout masquer ». Quand la scène a bougé
+le serveur réaffiche un par un ce qui est masqué au moment de l'appel et rend les
+comptes, **128 objets au plus par appel** et 15 s au plus (au-delà :
+`remaining` ou `deadline_reached`, et le reste à rappeler — le cerveau relance
+l'outil jusqu'à `remaining: 0`) ; il n'existe pas de « tout masquer ». Quand la scène a bougé
 depuis la dernière lecture du cerveau, les résultats de commande listent ce qui
 a changé (apparu, archivé, masqué ou réaffiché, état), dix lignes au plus.
 Il agit toujours comme acteur `brain`. **Aucun outil n'archive ni n'épingle** :
