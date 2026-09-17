@@ -2132,7 +2132,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     const body=getComputedStyle(document.body).backgroundColor;
     const value={background:body&&body!=='rgba(0, 0, 0, 0)'?body:'#03080c',ink:read('--sc-ink','#dcecf4'),muted:read('--sc-muted','#8aa5b3'),
       edge:read('--sc-edge','rgba(151,191,209,.3)'),surface:read('--sc-surface','rgba(4,10,15,.9)'),warn:read('--sc-warn','#ffb85c'),
-      error:tones.error||'#ff6b7d',tones};
+      radius:parseFloat(read('--sc-radius','10'))||0,error:tones.error||'#ff6b7d',tones};
     paletteMemo={key,value};
     return value;
   }

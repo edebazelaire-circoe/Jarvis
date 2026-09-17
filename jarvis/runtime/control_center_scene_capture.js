@@ -70,7 +70,8 @@
         continue;
       }
       const windowShape=node.shape==='window';
-      const radius=windowShape?10:Math.min(b.height/2,14);
+      /* Rayon du thème (`--sc-radius` : 14 px Omega, 7 px circuit), comme les fenêtres du DOM. */
+      const radius=windowShape?(Number(palette.radius)>=0?Number(palette.radius):10):Math.min(b.height/2,14);
       commands.push({op:'rrect',x:b.left,y:b.top,w:b.width,h:b.height,r:radius,fill:palette.surface,stroke:tone});
       commands.push({op:'clip',x:b.left,y:b.top,w:b.width,h:b.height});
       const inner=b.width-16;
