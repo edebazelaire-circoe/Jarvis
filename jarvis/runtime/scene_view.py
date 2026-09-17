@@ -8,7 +8,11 @@ Core possède la scène (Décision 11). Le navigateur la lit et la commande
   attente bornée ici aussi (un Core figé ne tient pas la page) ;
 - `POST /api/scene/commands` → `POST /v1/scene/commands` : l'acteur est
   **toujours `user`**. Un corps sans acteur le reçoit ; un autre acteur est
-  refusé (403) : le navigateur ne parle jamais au nom du cerveau.
+  refusé (403) : le navigateur ne parle jamais au nom du cerveau ;
+- `POST /api/work/cancel` → `POST /v1/work/cancel` (Slice 08) : l'arrêt
+  d'une étoile `job` depuis son menu. Toute autre source (sous-agent Claude)
+  est refusée ici (409 `not_cancellable`), sans appeler Core : aucun arrêt
+  individuel n'existe pour elle.
 
 Même forme dégradée que `GET /api/work` (`jarvis/runtime/work_view.py`) : Core
 injoignable, réponse illisible ou scène indisponible sont dits tels quels
@@ -64,6 +68,15 @@ PATCH_WAIT_GRACE_S = 5.0
 #: Une commande écrit en une transaction SQLite (verrou ≤ 5 s côté Core) :
 #: délai de réponse une fois la requête partie.
 COMMAND_TIMEOUT_S = 10.0
+#: Arrêt d'un job (Slice 08) : Core attend jusqu'à 5 s la fin du job, plus le
+#: nettoyage d'un job `back_brain` ; au-delà, issue inconnue.
+WORK_CANCEL_TIMEOUT_S = 20.0
+#: Seule source de travail qui s'arrête individuellement (`JOB_WORK_SOURCE` de Core).
+CANCELLABLE_WORK_SOURCE = "job"
+#: Refus : ce travail n'a pas d'arrêt individuel.
+NOT_CANCELLABLE = "not_cancellable"
+#: Issues d'arrêt que Core peut rendre.
+WORK_CANCEL_OUTCOMES = frozenset({"cancelled", "cancel_requested", "already_terminal"})
 #: Délai pour obtenir la connexion à Core. Au-delà, la commande n'est pas partie.
 COMMAND_CONNECT_TIMEOUT_S = 3.0
 #: Long-polls relayés en même temps. Au-delà : réponse immédiate `patch_waits_busy`.
@@ -142,6 +155,10 @@ class SceneTransport(Protocol):
         """`aiohttp.ConnectionTimeoutError` : connexion non obtenue, commande **non envoyée**."""
         ...
 
+    async def work_cancel(self, *, source: str, external_id: str, connect_timeout_s: float, read_timeout_s: float) -> dict[str, Any]:
+        """`POST /v1/work/cancel` ; `aiohttp.ConnectionTimeoutError` : requête **non envoyée**."""
+        ...
+
     async def close(self) -> None: ...
 
 
@@ -185,6 +202,14 @@ class CoreSceneTransport(CoreWorkTransport):
         return await _with_fresh_token(
             self,
             lambda client: client.scene_command(command, connect_timeout_s=connect_timeout_s, read_timeout_s=read_timeout_s),
+        )
+
+    async def work_cancel(self, *, source: str, external_id: str, connect_timeout_s: float, read_timeout_s: float) -> dict[str, Any]:
+        return await _with_fresh_token(
+            self,
+            lambda client: client.cancel_work(
+                source=source, external_id=external_id, connect_timeout_s=connect_timeout_s, read_timeout_s=read_timeout_s,
+            ),
         )
 
     async def close(self) -> None:
@@ -300,6 +325,19 @@ def decode_command_response(raw: Any) -> dict[str, Any]:
         "revision": revision,
         "patch": decoded.to_payload() if decoded is not None else None,
     }
+
+
+def decode_work_cancel_response(raw: Any, *, source: str, external_id: str) -> dict[str, Any]:
+    """Valider `POST /v1/work/cancel` : même travail, issue connue, statut textuel."""
+
+    if not isinstance(raw, dict):
+        raise TypeError("work cancel response must be an object")
+    if raw.get("source") != source or raw.get("external_id") != external_id:
+        raise ValueError("work cancel response names another work")
+    outcome, status = raw.get("outcome"), raw.get("status")
+    if outcome not in WORK_CANCEL_OUTCOMES or not isinstance(status, str) or not status:
+        raise ValueError("work cancel response has no valid outcome/status")
+    return {"source": source, "external_id": external_id, "outcome": outcome, "status": status}
 
 
 @dataclass(frozen=True, slots=True)
@@ -535,6 +573,82 @@ class CoreSceneView:
             data={"op": op, "outcome": body["outcome"], "reason": body["reason"], "revision": body["revision"]},
         )
         return 200, {"source": SCENE_VIEW_SOURCE, "core_reachable": True, **body, "error": None}
+
+    async def cancel_work(self, source: str, external_id: str) -> tuple[int, dict[str, Any]]:
+        """Relayer l'arrêt d'une étoile `job` ; rend `(statut HTTP, corps)` (Slice 08).
+
+        409 `not_cancellable` sans appeler Core pour toute autre source (un
+        sous-agent Claude n'a pas d'arrêt individuel). 200 : issue de Core
+        (`cancelled`, `cancel_requested`, `already_terminal`). 400/404/409 de
+        Core relayés avec leur code. Échec d'appel : même classement que les
+        commandes (`command_not_sent` = rien n'est parti, `core_timeout` =
+        issue inconnue).
+        """
+
+        if source != CANCELLABLE_WORK_SOURCE:
+            self._emit(
+                "scene.work_cancel_refused",
+                "arrêt refusé : ce travail n'a pas d'arrêt individuel",
+                data={"source": truncate(str(source), 40), "code": NOT_CANCELLABLE},
+            )
+            return 409, {
+                "source": SCENE_VIEW_SOURCE,
+                "core_reachable": None,
+                "error": {
+                    "code": NOT_CANCELLABLE,
+                    "message": "Ce travail n'a pas d'arrêt individuel : seuls les jobs Core s'arrêtent, pas un sous-agent Claude.",
+                },
+            }
+        read_timeout_s = WORK_CANCEL_TIMEOUT_S
+        try:
+            raw = await asyncio.wait_for(
+                self.transport.work_cancel(
+                    source=source, external_id=external_id,
+                    connect_timeout_s=self.command_connect_timeout_s, read_timeout_s=read_timeout_s,
+                ),
+                timeout=self.command_connect_timeout_s + read_timeout_s + 1.0,
+            )
+            body = decode_work_cancel_response(raw, source=source, external_id=external_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - refus de Core relayés, le reste classé par `classify_scene_call_failure`
+            if isinstance(exc, CoreProtocolError) and exc.status in (400, 404, 409) and not exc.code.startswith("http_"):
+                messages = {
+                    404: "Core ne connaît pas ce job (déjà oublié, ou Core redémarré).",
+                    409: "Core refuse cet arrêt : ce travail n'a pas d'arrêt individuel.",
+                }
+                return self._work_cancel_failed(
+                    exc.status, exc.code, messages.get(exc.status, core_error_text(exc)), external_id=external_id, core_reachable=True,
+                )
+            failure = classify_scene_call_failure(exc, connect_timeout_s=self.command_connect_timeout_s, read_timeout_s=read_timeout_s)
+            if failure.invalid_response:
+                self._report_invalid(exc, "work_cancel")
+            return self._work_cancel_failed(
+                failure.status, failure.code, failure.message, external_id=external_id, core_reachable=failure.core_reachable,
+            )
+        self._emit(
+            "scene.work_cancel",
+            f"arrêt de job demandé depuis la scène : {body['outcome']}",
+            data={"external_id": truncate(external_id, 128), "outcome": body["outcome"], "status": body["status"]},
+        )
+        return 200, {"source": SCENE_VIEW_SOURCE, "core_reachable": True, **body, "error": None}
+
+    def _work_cancel_failed(
+        self, status: int, code: str, message: str, *, external_id: str, core_reachable: bool,
+    ) -> tuple[int, dict[str, Any]]:
+        """Message complet au journal ; la page reçoit la version sans chemin (`page_text`)."""
+
+        self._emit(
+            "scene.work_cancel_failed",
+            f"arrêt de job non abouti : {truncate(message, 500)}",
+            level="warning",
+            data={"external_id": truncate(external_id, 128), "status": status, "code": code, "error": truncate(message, 500)},
+        )
+        return status, {
+            "source": SCENE_VIEW_SOURCE,
+            "core_reachable": core_reachable,
+            "error": {"code": code, "message": page_text(message) or code},
+        }
 
     def _command_failed(
         self, status: int, code: str, message: str, *, op: str, core_reachable: bool, scene: dict[str, Any] | None = None,

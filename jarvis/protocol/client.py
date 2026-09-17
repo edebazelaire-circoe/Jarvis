@@ -359,6 +359,24 @@ class LocalCoreClient:
         async with session.post(self.base_url + "/v1/scene/commands", headers=self.headers, json=command, **options) as response:
             return await self._bounded_json(response)
 
+    async def cancel_work(
+        self, *, source: str, external_id: str, connect_timeout_s: float | None = None, read_timeout_s: float | None = None,
+    ) -> dict[str, Any]:
+        """`POST /v1/work/cancel` (Slice 08) : arrêter le travail d'une étoile, jobs Core seulement.
+
+        409 `not_cancellable` pour toute autre source, 404 pour un job inconnu
+        (`CoreProtocolError`). Délais comme `scene_command` : connexion non
+        obtenue = requête **non partie**.
+        """
+
+        session = await self._http()
+        options: dict[str, Any] = {}
+        if connect_timeout_s is not None or read_timeout_s is not None:
+            options["timeout"] = aiohttp.ClientTimeout(total=None, connect=connect_timeout_s, sock_read=read_timeout_s)
+        body = {"schema_version": 1, "source": source, "external_id": external_id}
+        async with session.post(self.base_url + "/v1/work/cancel", headers=self.headers, json=body, **options) as response:
+            return await self._bounded_json(response)
+
     @staticmethod
     async def _bounded_json(response: aiohttp.ClientResponse, limit: int = MAX_SCENE_RESPONSE_BYTES) -> dict[str, Any]:
         """Lire au plus `limit` octets puis décoder ; au-delà ou illisible : `ValueError`.

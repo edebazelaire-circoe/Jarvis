@@ -363,6 +363,7 @@ class ControlCenter:
             web.get("/api/scene", self.scene),
             web.get("/api/scene/patches", self.scene_patches),
             web.post("/api/scene/commands", self.scene_command),
+            web.post("/api/work/cancel", self.work_cancel),
             web.get("/api/agent/tasks", self.agent_tasks),
             web.get("/api/agent/tasks/{task_id}/trace", self.agent_task_trace),
             web.post("/api/agent/console/open", self.agent_console_open),
@@ -2475,6 +2476,35 @@ class ControlCenter:
             return self._scene_error(503, NOT_CONFIGURED, "Commande de scène Core non configurée.")
         status, body = await self.scene_view.command(command)
         return web.json_response(body, status=status, dumps=scene_wire.compact_json)
+
+    async def work_cancel(self, request: web.Request) -> web.Response:
+        """Arrêt d'une étoile `job` depuis son menu (Slice 08) : `{source, external_id}`.
+
+        Origine vérifiée par le middleware (`_origin_guard`, comme tout POST).
+        Seule la source `job` part vers Core (`POST /v1/work/cancel`) ; toute
+        autre est refusée ici (409 `not_cancellable`) : un sous-agent Claude n'a
+        pas d'arrêt individuel. Corps borné et strict (400), 503 sans Core.
+        """
+
+        if request.query:
+            return self._scene_error(400, scene_wire.INVALID_REQUEST, "unexpected query")
+        try:
+            raw = await scene_wire.read_bounded_body(request, limit=4096)
+        except scene_wire.SceneBodyTooLarge:
+            return self._scene_error(413, scene_wire.PAYLOAD_TOO_LARGE, "work cancel request exceeds 4096 bytes")
+        try:
+            body = loads_strict_json(raw, invalid_message="invalid work cancel JSON")
+            if not isinstance(body, dict) or set(body) != {"source", "external_id"}:
+                raise ValueError("work cancel request must be {source, external_id}")
+            source, external_id = body["source"], body["external_id"]
+            if not isinstance(source, str) or not isinstance(external_id, str) or not external_id.strip() or len(external_id) > 128:
+                raise ValueError("source and external_id must be short non-empty strings")
+        except ValueError as exc:
+            return self._scene_error(400, scene_wire.INVALID_REQUEST, str(exc))
+        if self.scene_view is None:
+            return self._scene_error(503, NOT_CONFIGURED, "Arrêt de job : Core non configuré.")
+        status, payload = await self.scene_view.cancel_work(source, external_id)
+        return web.json_response(payload, status=status, dumps=scene_wire.compact_json)
 
     async def agent_tasks(self, request: web.Request) -> web.Response:
         """Le brain et ses sous-tâches. Toujours ceux de l'agent actif : après

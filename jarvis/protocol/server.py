@@ -108,6 +108,7 @@ class LocalProtocolServer:
             web.post("/v1/actions/{action_id}/confirmation", self.confirm_action),
             web.post("/v1/work/observations", self.ingest_work_observations),
             web.get("/v1/work/snapshot", self.work_snapshot),
+            web.post("/v1/work/cancel", self.cancel_work),
             web.get("/v1/scene/snapshot", self.scene_snapshot),
             web.get("/v1/scene/patches", self.scene_patches),
             web.post("/v1/scene/commands", self.scene_command),
@@ -511,6 +512,46 @@ class LocalProtocolServer:
 
         snapshot = await self.core.work_state.snapshot()
         return web.json_response({"store_id": self.core.work_state.store_id, **snapshot.to_payload()})
+
+    async def cancel_work(self, request: web.Request) -> web.Response:
+        """Arrêter le travail d'une étoile de la scène, à la demande de l'utilisateur (Slice 08).
+
+        Corps strict `{"schema_version": 1, "source", "external_id"}` : le
+        `work_ref` de l'étoile. Seuls les jobs Core (`source = job`) s'arrêtent :
+        un sous-agent Claude n'a aucun arrêt individuel (409 `not_cancellable`,
+        rien n'est touché). Job inconnu : 404. Réponse 200
+        `{source, external_id, outcome, status}` avec `outcome` ∈ `cancelled`,
+        `cancel_requested`, `already_terminal` (`JobService.cancel_for_user`).
+        """
+
+        from jarvis.core.v2_services import JOB_WORK_SOURCE
+        from jarvis.domain._checks import check_id
+
+        if request.query:
+            raise ValueError("unexpected cancel query")
+        raw = bytearray()
+        async for chunk in request.content.iter_chunked(4096):
+            raw.extend(chunk)
+            if len(raw) > 4096:
+                raise ValueError("work cancel request exceeds byte bound")
+        value = loads_strict_json(bytes(raw), invalid_message="invalid work cancel JSON")
+        if not isinstance(value, dict) or set(value) != {"schema_version", "source", "external_id"}:
+            raise ValueError("work cancel request must be {schema_version, source, external_id}")
+        if type(value["schema_version"]) is not int or value["schema_version"] != 1:
+            raise ValueError("unsupported work cancel schema_version")
+        source, external_id = value["source"], value["external_id"]
+        if not isinstance(source, str) or not isinstance(external_id, str):
+            raise ValueError("source and external_id must be strings")
+        check_id("external_id", external_id, required=True)
+        if source != JOB_WORK_SOURCE:
+            return web.json_response(
+                {"error": {"code": "not_cancellable", "message": "only Core jobs can be stopped; this work has no individual stop"}},
+                status=409,
+            )
+        if not self.core.health.ready:
+            return web.json_response({"error": {"code": "core_unavailable", "message": "core is not ready"}}, status=503)
+        outcome, job = await self.core.jobs.cancel_for_user(external_id)
+        return web.json_response({"source": source, "external_id": external_id, "outcome": outcome, "status": job.status.value})
 
     # ------------------------------------------------------------ scène (Slice 03)
 

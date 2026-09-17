@@ -38,6 +38,11 @@ JOB_PROGRESS_COALESCED_KIND = "core.job.progress_coalesced"
 # handoff work-state), et diagnostic d'une observation qui n'a pas pu partir.
 JOB_WORK_SOURCE = "job"
 JOB_WORK_STATE_FAILED_KIND = "core.job.work_state_failed"
+#: Arrêt demandé par l'utilisateur (Slice 08) : attente de la fin du job avant
+#: de répondre `cancel_requested` plutôt que `cancelled`.
+USER_CANCEL_SETTLE_S = 5.0
+#: Journal d'un arrêt de job demandé par l'utilisateur (issue, statut relu).
+JOB_USER_CANCEL_KIND = "core.job.user_cancel"
 
 
 def _work_error_class(exc: BaseException) -> str:
@@ -753,6 +758,41 @@ class JobService:
         for job_id in targets:
             await self.cancel(job_id)
         return targets
+
+    async def cancel_for_user(self, job_id: str, *, settle_s: float = USER_CANCEL_SETTLE_S) -> tuple[str, Job]:
+        """Arrêt d'un job demandé par l'utilisateur depuis la scène (Slice 08).
+
+        Même primitive que `cancel_work` (`cancel(job_id)`), mais sur **un**
+        job désigné par son identifiant : l'étoile `job` porte
+        `work_ref = (job, <job id>)`. `cancel_work(work_id)` ne convient pas
+        ici : il annulerait tous les jobs d'un même travail du cerveau, et
+        n'atteint pas les jobs `back_brain` (sans lien `_links`).
+
+        Rend `(issue, job relu)` : `cancelled` (terminé annulé dans le délai),
+        `cancel_requested` (annulation demandée, fin pas encore observée dans
+        `settle_s`), `already_terminal` (rien à arrêter). Job inconnu ou
+        analyse spéculative (jamais une étoile) : `KeyError`.
+        """
+
+        job = await self.state.get_job(job_id)
+        if job is None or is_speculative_job(job):
+            raise KeyError(f"job {job_id} not found")
+        if job.status not in {JobStatus.PENDING, JobStatus.RUNNING}:
+            return "already_terminal", job
+        await self.cancel(job_id)
+        task = self._running.get(job_id)
+        if task is not None and not task.done():
+            # Attendre la fin sans jamais l'annuler une seconde fois : `wait` ne touche pas la tâche.
+            await asyncio.wait({task}, timeout=max(0.0, settle_s))
+        latest = await self.state.get_job(job_id) or job
+        outcome = "cancelled" if latest.status is JobStatus.CANCELLED else "cancel_requested"
+        self.diagnostics.emit(
+            JOB_USER_CANCEL_KIND,
+            "arrêt d'un job demandé par l'utilisateur",
+            level="info",
+            data={"job_id": job_id, "kind": job.kind, "outcome": outcome, "status": latest.status.value},
+        )
+        return outcome, latest
 
     async def cancel(self, job_id: str) -> None:
         job = await self.state.get_job(job_id)
