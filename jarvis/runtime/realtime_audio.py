@@ -109,7 +109,11 @@ BENIGN_PROVIDER_ERRORS = frozenset({"response_cancel_not_active"})
 
 # Erreurs qui perdent une phrase sans condamner la session : une réponse
 # demandée pendant qu'une autre génère encore est refusée, la suivante passera.
-RECOVERABLE_PROVIDER_ERRORS = frozenset({"conversation_already_has_active_response"})
+# `invalid_tool_call_id` (13/09) : le fournisseur refuse le résultat d'un outil,
+# typiquement l'accusé de délégation envoyé après l'acceptation durable du job
+# par Core. Le job continue et l'annonce passe par le scheduler ; seul cet
+# accusé est perdu, ce que `BackBrainDelegationController` tolère déjà.
+RECOVERABLE_PROVIDER_ERRORS = frozenset({"conversation_already_has_active_response", "invalid_tool_call_id"})
 
 # Évènements fournisseur rattachés à l'audio qui les précède : ils ne sont
 # traités qu'une fois cet audio réellement joué (voir `_consume`).
