@@ -1856,7 +1856,17 @@ class ControlCenter:
         voice = payload.get("voice")
         if not isinstance(voice, dict):
             return
-        if "architecture" in voice:
+        if voice.get("brain_compatibility") is True:
+            # Retour au mode continu où chaque tour part au cerveau Claude du
+            # Control Center (sous-agents, historique de console). Le choix
+            # explicite est retiré : sans lui, `load_voice_architecture`
+            # reprend la projection de compatibilité. Aucun autre choix de
+            # l'onglet ne mène à ce mode ; sans ce chemin, un clic sur
+            # « Utiliser explicitement cette architecture » le perdait pour
+            # de bon (17/09/2026).
+            current.pop("voice_architecture", None)
+            self._store_voice_arch(current, "continuous_brain")
+        elif "architecture" in voice:
             registry = self._voice_architecture_registry(current)
             config = parse_voice_mode(voice["architecture"], registry)
             registry.validate(config, require_ready=True)

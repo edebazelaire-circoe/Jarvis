@@ -1199,6 +1199,7 @@ class RealtimeConversationBridge:
         engagement_window_s: float = 30.0,
         barge_in_confirm_s: float = 0.8,
         barge_in_duck_gain: float = 0.3,
+        barge_in_sustain_s: float = 0.6,
         clock: Callable[[], float] | None = None,
         barge_in_authority: BargeInAuthority = BargeInAuthority.ACOUSTIC,
         owner_source: "OwnerStateSource | None" = None,
@@ -1312,6 +1313,7 @@ class RealtimeConversationBridge:
         self.engagement_window_s = engagement_window_s
         self.barge_in_confirm_s = barge_in_confirm_s
         self.barge_in_duck_gain = barge_in_duck_gain
+        self.barge_in_sustain_s = barge_in_sustain_s
         # Le réveil vaut engagement : la première phrase après F9 est adressée.
         self._last_engaged = self._clock()
         self._echo = EchoGuard(clock=self._clock)
@@ -1330,6 +1332,10 @@ class RealtimeConversationBridge:
         # Le candidat en attente a-t-il baissé la voix ? Toujours en salle
         # ouverte, jamais en Solo Owner (voir `_note_owner_candidate`).
         self._barge_pending_ducked = False
+        # Confirmation fournisseur d'un candidat acoustique en cours de preuve :
+        # la voix est baissée, la coupure attend que la parole dure
+        # `barge_in_sustain_s` (voir `_confirm_sustained_barge_in`).
+        self._barge_confirming = False
         # -- Solo Owner : autorité du propriétaire (voir `BargeInAuthority`) --
         self.barge_in_authority = barge_in_authority
         self._owner_source = owner_source if barge_in_authority is BargeInAuthority.OWNER else None
@@ -1508,6 +1514,7 @@ class RealtimeConversationBridge:
         # d'être coupé : la tâche de lecture le jettera au lieu de le jouer.
         self._drop_audio_before = self._seq
         self._barge_pending = False
+        self._barge_confirming = False
         self._barge_pending_token += 1
         self._last_engaged = self._clock()
         if self._live_output_identity in self._received_outputs:
@@ -1518,6 +1525,11 @@ class RealtimeConversationBridge:
             targets.add(interrupted)
         self._interrupted_outputs.update(targets)
         stopped = await self.audio.stop_output()
+        if self._barge_pending_ducked:
+            # Voix baissée pendant la confirmation : la sortie est coupée, la
+            # prochaine réponse repart à plein volume.
+            self._set_output_gain(1.0)
+            self._barge_pending_ducked = False
         stop_stream_ms = self._capture_stream_ms() if owner is not None and stopped is not False else None
         if owner is not None:
             self._owner_stop_stream_ms = stop_stream_ms
@@ -2558,6 +2570,8 @@ class RealtimeConversationBridge:
                         await self._on_near_end()
                     elif kind == "barge_timeout":
                         await self._on_barge_timeout(item)
+                    elif kind == "barge_sustain":
+                        await self._on_barge_sustain(item)
                     elif kind == "owner_state":
                         await self._on_owner_state(item)
                     elif kind == "owner_replay":
@@ -2645,11 +2659,15 @@ class RealtimeConversationBridge:
             if self._owner_authority():
                 self._note_owner_candidate()
             return
-        if self._user_speaking:
-            # Le VAD du fournisseur est déjà en parole : c'est confirmé.
-            await self._barge_in()
-            return
         if self._barge_pending:
+            return
+        if self._user_speaking:
+            # Le VAD du fournisseur est déjà en parole. Seul, ce n'est pas une
+            # preuve : l'écho de JARVIS le déclenche aussi. La parole doit durer.
+            self._barge_pending = True
+            self._barge_pending_ducked = False
+            self._barge_pending_token += 1
+            await self._confirm_sustained_barge_in()
             return
         self._barge_pending = True
         self._barge_pending_ducked = False
@@ -2663,7 +2681,7 @@ class RealtimeConversationBridge:
         asyncio.get_running_loop().call_later(self.barge_in_confirm_s, self._post, "barge_timeout", token)
 
     async def _on_barge_timeout(self, token: object) -> None:
-        if not self._barge_pending or token != self._barge_pending_token:
+        if not self._barge_pending or token != self._barge_pending_token or self._barge_confirming:
             return
         if self._owner_gated and self._owner_authority() and self._owner_state_value() not in (None, OwnerState.IDLE.value):
             # Solo Owner, garde au propriétaire (tâche 06) : le fournisseur
@@ -2701,6 +2719,61 @@ class RealtimeConversationBridge:
                     "authority": self.barge_in_authority.value,
                 },
             )
+
+    async def _confirm_sustained_barge_in(self) -> None:
+        """Le fournisseur confirme un candidat acoustique : baisser, puis couper si ça dure.
+
+        Le 17/09/2026, l'écho résiduel de JARVIS ouvrait un candidat, la garde
+        laissait passer sa propre voix, et le VAD du fournisseur « confirmait »
+        en moins d'une seconde : JARVIS se coupait lui-même (« Merci. »,
+        transcript vide). Une bouffée d'écho est brève ; une vraie interruption
+        dure. La voix baisse tout de suite — l'utilisateur est entendu — et la
+        coupure n'a lieu que si la parole tient `barge_in_sustain_s`.
+        """
+
+        if self._barge_confirming:
+            return
+        if self.barge_in_sustain_s <= 0:
+            await self._barge_in()
+            return
+        self._barge_confirming = True
+        if not self._barge_pending_ducked:
+            self._set_output_gain(self.barge_in_duck_gain)
+            self._barge_pending_ducked = True
+        self._trace(
+            "voice.barge_in_confirming",
+            "Parole confirmée par le fournisseur : volume baissé, coupure si elle dure",
+            data={"conversation_id": self.conversation_id, "sustain_ms": round(self.barge_in_sustain_s * 1000)},
+        )
+        asyncio.get_running_loop().call_later(self.barge_in_sustain_s, self._post, "barge_sustain", self._barge_pending_token)
+
+    async def _on_barge_sustain(self, token: object) -> None:
+        if not self._barge_confirming or token != self._barge_pending_token:
+            return
+        if self._user_speaking and self._output_live():
+            await self._barge_in()
+            return
+        await self._reject_barge_confirmation("barge_in_output_finished" if not self._output_live() else "barge_in_speech_too_short")
+
+    async def _reject_barge_confirmation(self, code: str) -> None:
+        """Parole trop brève (ou plus rien à couper) : c'était l'écho, JARVIS reprend."""
+
+        self._barge_confirming = False
+        self._barge_pending = False
+        self._barge_pending_token += 1
+        if self._barge_pending_ducked:
+            self._set_output_gain(1.0)
+        self._barge_pending_ducked = False
+        release = getattr(self.audio, "release_near_end", None)
+        if release is not None:
+            release()
+        self._trace(
+            "voice.barge_in_rejected",
+            "Parole trop brève pour une interruption : JARVIS reprend à plein volume",
+            data={"conversation_id": self.conversation_id,
+                  "session_id": str(getattr(self.session, "session_id", "")) or None,
+                  "code": code},
+        )
 
     # -- Solo Owner : la confirmation du propriétaire coupe (tâche 05) --------
 
@@ -3441,6 +3514,11 @@ class RealtimeConversationBridge:
                     # perdu, il ne coupe pas davantage (tâche 07).
                     if self._owner_authority():
                         self._note_provider_speech(jarvis_audible=True)
+                elif self._barge_pending:
+                    # Confirmation d'un candidat acoustique : c'est lui qui a
+                    # ouvert la garde, donc le fournisseur a pu n'entendre que
+                    # l'écho. Couper seulement si la parole dure.
+                    await self._confirm_sustained_barge_in()
                 elif self._barge_in_allowed():
                     # Barge-in : JARVIS parle et l'utilisateur enchaîne. Le
                     # chemin legacy, half-duplex, ne peut pas se trouver
@@ -3469,6 +3547,8 @@ class RealtimeConversationBridge:
         elif event.message_type == "realtime.speech_stopped":
             if self.continuous:
                 await self._note_user_speech(False)
+            if self._barge_confirming:
+                await self._reject_barge_confirmation("barge_in_speech_too_short")
         elif event.message_type == "realtime.input_committed":
             if self.continuous:
                 # Sans parole, pas de commit : si `speech_stopped` s'est
@@ -3696,6 +3776,15 @@ class RealtimeConversationBridge:
             # dans les deux modes ; UNCERTAIN ne parvient ici qu'en
             # legacy, où la surface possède les outils et garde son
             # rôle d'arbitre (Décisions 20 et 44).
+            if self.continuous and self.direct_conversation and decision is AddressingDecision.UNCERTAIN:
+                # Conversation directe : pas de cerveau pour trancher le doute,
+                # la phrase n'est pas traitée. Le dire, au lieu de se taire.
+                self._trace(
+                    "voice.transcript_dropped",
+                    text[:300],
+                    data={"conversation_id": self.conversation_id, "reason": "uncertain_direct",
+                          "code": "transcript_uncertain_direct"},
+                )
             await self._call(self.on_ambient)
             if self.continuous:
                 # Segment sans parole : plus rien ne ramènerait l'écran de

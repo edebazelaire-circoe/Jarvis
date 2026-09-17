@@ -60,9 +60,10 @@ async def test_real_openai_direct_conversation_answers_every_turn(tmp_path, monk
     from jarvis.adapters import wakeword_keyboard
 
     real_settings = app._control_settings(ROOT / "runtime")
-    architecture = dict((real_settings.get("voice_architecture") or {}).get("config") or {})
-    assert architecture.get("architecture") == "simple", "ce test couvre la conversation directe"
-    overrides = {**real_settings, "voice_stack": "openai_realtime"}
+    # Conversation directe imposée, quel que soit le mode choisi sur ce poste.
+    overrides = {**real_settings, "voice_stack": "openai_realtime", "voice_architecture": {
+        "schema_version": 1, "compatibility": None,
+        "config": {"architecture": "simple", "conversation_model": {"provider_id": "openai", "model_id": "gpt-realtime-2.1-mini"}}}}
     stack = dict((overrides.get("voice_stack_settings") or {}).get("openai_realtime") or {})
     overrides["voice_stack_settings"] = {**(overrides.get("voice_stack_settings") or {}),
                                          "openai_realtime": {**stack, "turn_mode": "auto", "echo_cancellation": False}}
@@ -101,11 +102,24 @@ async def test_real_openai_direct_conversation_answers_every_turn(tmp_path, monk
     phrases = [await synthesize_pcm24(key, text) for text in PHRASES]
     chunk = 2400  # 50 ms
 
-    async def say(audio, pcm: bytes, trailing_silence_s: float) -> None:
-        payload = pcm + b"\0\0" * int(24000 * trailing_silence_s)
-        for start in range(0, len(payload), chunk * 2):
-            audio._enqueue(payload[start:start + chunk * 2])
+    pending: asyncio.Queue[bytes] = asyncio.Queue()
+
+    async def microphone():
+        """Un vrai micro ne se tait jamais : silence entre les phrases, en temps réel."""
+        buffer = b""
+        while True:
+            if not buffer and not pending.empty():
+                buffer = pending.get_nowait()
+            block, buffer = (buffer[:chunk * 2], buffer[chunk * 2:]) if buffer else (b"\0\0" * chunk, b"")
+            if audios:
+                audios[0]._enqueue(block.ljust(chunk * 2, b"\0"))
             await asyncio.sleep(chunk / 24000)
+
+    async def say(pcm: bytes) -> None:
+        await pending.put(pcm)
+        async with asyncio.timeout(30):
+            while not pending.empty():
+                await asyncio.sleep(.05)
 
     async def drain_speakers():
         while True:
@@ -120,20 +134,21 @@ async def test_real_openai_direct_conversation_answers_every_turn(tmp_path, monk
 
     async def drive(runtime):
         drainer = asyncio.create_task(drain_speakers())
+        mic = asyncio.create_task(microphone())
         try:
             await runtime.activate()
             async with asyncio.timeout(20):
                 while not audios:
                     await asyncio.sleep(.05)
-            await say(audios[0], b"\0\0" * 12000, 0)
             for turn, speech in enumerate(phrases, start=1):
-                await say(audios[0], speech, 1.5)
+                await say(speech)
                 await wait_for("voice.conversation.requested", turn, 30)
                 await wait_for("voice.turn_completed", turn, 45)
             await runtime.mute()
         finally:
             drainer.cancel()
-            await asyncio.gather(drainer, return_exceptions=True)
+            mic.cancel()
+            await asyncio.gather(drainer, mic, return_exceptions=True)
 
     monkeypatch.setattr(PersistentVoiceRuntime, "run", drive)
     try:

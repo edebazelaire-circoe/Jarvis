@@ -444,6 +444,27 @@ async def test_stopping_the_agent_unblocks_a_waiting_voice_turn(tmp_path):
     assert "arrêté avant de répondre" in result["error"]
 
 
+async def test_console_shows_the_voice_conversation_as_a_fork_while_the_agent_runs(tmp_path, monkeypatch):
+    """17/09/2026 : la console s'ouvrait vide, « comme un nouveau Claude Code ».
+    Agent vocal occupé, elle doit montrer tout l'historique sans jamais écrire
+    dans la session de la voix : reprise dupliquée (`--fork-session`)."""
+    from jarvis.runtime import claude_local
+
+    spawned: list[list[str]] = []
+    agent = _running_agent(tmp_path)
+    agent.session_id = "voice-session-1"
+    monkeypatch.setattr(claude_local.os, "name", "nt")
+    monkeypatch.setattr(claude_local.subprocess, "Popen", lambda command, **kw: (spawned.append(list(command)), _FakeConsole())[1])
+    monkeypatch.setattr(claude_local, "raise_console_window", lambda pid: True)
+
+    opened = await agent.open_console()
+
+    command = spawned[0]
+    assert command[command.index("--resume") + 1] == "voice-session-1" and "--fork-session" in command
+    assert opened["resumed"] is True and opened["forked"] is True and opened["handover"] is False
+    assert agent.state == "running" and agent.session_id == "voice-session-1"
+
+
 async def test_opening_the_console_no_longer_kills_the_running_task(tmp_path, monkeypatch):
     """Le 16/09/2026 à 07:38:57, ouvrir la console a tué le tour en cours et
     deux sous-agents d'arrière-plan — dont un qui tournait depuis 1 min 28 —
@@ -465,8 +486,7 @@ async def test_opening_the_console_no_longer_kills_the_running_task(tmp_path, mo
     # Le tour vocal n'est ni interrompu, ni abandonné : il attend toujours.
     assert not waiting.done()
     assert opened["handover"] is False and opened["agent_busy"] is True
-    # Une session Claude ne peut pas être écrite par deux processus : la console
-    # part donc sur une session neuve plutôt que de reprendre celle de la voix.
+    # Aucun tour encore traité : il n'existe aucune session à montrer.
     assert opened["resumed"] is False and "--resume" not in spawned[0]
     events = read_jsonl_tail(tmp_path / "trace.jsonl")
     assert [e["kind"] for e in events if e["kind"] == "agent.console_interrupt"] == []

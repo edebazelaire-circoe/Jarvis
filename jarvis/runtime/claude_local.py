@@ -308,10 +308,11 @@ class ClaudeLocalAgent:
         qu'on vient justement observer.
 
         Une même session Claude ne peut toujours pas être écrite par deux
-        processus. Donc, quand l'agent vocal tourne, la console s'ouvre sur une
-        **session neuve** au lieu de reprendre la sienne : on perd la reprise
-        de conversation, on garde le travail. Agent à l'arrêt, elle reprend la
-        dernière session comme avant.
+        processus. Donc, quand l'agent vocal tourne, la console reprend sa
+        session en la **dupliquant** (`--resume <id> --fork-session`) : tout
+        l'historique est visible, mais sous un nouvel identifiant, et la
+        session de la voix n'est jamais écrite par la console. Agent à l'arrêt,
+        elle reprend la dernière session comme avant.
         """
         if os.name != "nt":
             raise RuntimeError("La console de debug n'est disponible que sous Windows")
@@ -329,7 +330,8 @@ class ClaudeLocalAgent:
         # L'agent vocal continue de tourner : rien n'est interrompu, rien n'est
         # arrêté. Sa session reste la sienne, la console en ouvre une autre.
         busy = self.state == "running"
-        resumed_session_id = "" if busy else self.session_id
+        resumed_session_id = self.session_id or ""
+        forked = busy and bool(resumed_session_id)
         command = [
             resolve_command(self.command),
             "--chrome",
@@ -337,6 +339,7 @@ class ClaudeLocalAgent:
             self.permission_mode,
             *(["--model", self.model] if self.model else []),
             *(["--resume", resumed_session_id] if resumed_session_id else []),
+            *(["--fork-session"] if forked else []),
         ]
         try:
             self._console = subprocess.Popen(
@@ -356,13 +359,14 @@ class ClaudeLocalAgent:
         self.journal.emit(
             "agent.console_open",
             "Console Claude de debug ouverte "
-            + ("(session neuve : l'agent vocal garde la sienne et continue)" if busy
-               else ("(conversation reprise)" if resumed_session_id else "(nouvelle conversation)")),
+            + ("(copie de la conversation vocale : l'agent vocal garde la sienne et continue)" if forked
+               else "(conversation reprise)" if resumed_session_id
+               else "(nouvelle conversation : l'agent vocal n'a encore traité aucun tour)"),
             data={"pid": self._console.pid, "session_id": resumed_session_id or None,
-                  "voice_session_id": self.session_id, "agent_busy": busy, "handover": False},
+                  "voice_session_id": self.session_id, "agent_busy": busy, "handover": False, "forked": forked},
         )
         return {**self.console_snapshot(), "already_open": False, "raised": True,
-                "handover": False, "resumed": bool(resumed_session_id), "agent_busy": busy}
+                "handover": False, "resumed": bool(resumed_session_id), "forked": forked, "agent_busy": busy}
 
     async def close_console(self) -> dict[str, Any]:
         process, self._console = self._console, None
