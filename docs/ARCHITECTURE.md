@@ -1028,7 +1028,7 @@ Neutral types in `jarvis/domain/work_state.py`, ports in
 | --- | --- |
 | `WorkStatus` | `pending`, `running`, `blocked` (waits for the user), then four ends: `completed`, `failed`, `cancelled`, `interrupted` (its host vanished). `ALLOWED_WORK_TRANSITIONS` / `can_transition` define the allowed moves. |
 | `WorkObservation` | one observer's statement at one instant: `source`, `external_id`, `status`, `observed_at` and, when known, `kind`, `label`, `activity`, `summary`, `model`, `parent_external_id`, `link`, `progress_fraction` ∈ [0, 1], `error_class`, `tool_uses`, `tokens`, `background`, `started_at`. |
-| `WorkObservationBatch` | what crosses the process boundary: `source`, `producer_id` (one observer instance), 1–64 observations of that source. |
+| `WorkObservationBatch` | what crosses the process boundary: `source`, `producer_id` (one observer instance), 0–64 observations of that source. An empty batch (Slice 10) only claims the source for that producer. |
 | `WorkItem` | the state Core keeps for one piece of work: same public fields, plus `revision`, `started_at`, `updated_at`, `ended_at` (set exactly when the status is terminal). |
 | `WorkSnapshot` | global `revision`, `items` (at most `MAX_WORK_ITEMS` = 64, unique per `(source, external_id)`), `updated_at`. |
 | `WorkLink` | explicit link to the brain: `work_id` (the one of `brain.work.*`) and `correlation_id` (the turn). |
@@ -1160,6 +1160,7 @@ provider content:
 | `agent.work_state_failed` | Control Center | a tracker listener raised (once per exception type) |
 | `work.ingress_unavailable` / `work.ingress_restored` | Control Center | Core unreachable (warning, once per outage) / reachable again |
 | `work.ingress_rejected` / `work.ingress_resync_failed` | Control Center | Core refused a batch (dropped, not replayed; once per run of refusals, reset by the next accepted batch) / full resend failed |
+| `work.ingress_token_refreshed` | Control Center | info, Slice 10: a batch was accepted after a 401 made the transport re-read the token and resend at once (Core restarted); once per Core `store_id`; data = `source`, `producer_id`, `store_id`, `pending`, `dropped_total` |
 | `core.event_bus.event_dropped` | Core | a lossy subscriber's queue was full: oldest event dropped, subscription kept (once per message type) |
 
 Failure isolation. The stream reader never waits for Core:
@@ -1193,10 +1194,10 @@ snapshot.
 | Claude process stops, exits or crashes (Control Center alive) | `AgentTaskTracker.process_stopped()` → every running subtask `interrupted` / `process_stopped`, forwarded to Core |
 | Claude process started again | `process_started()` interrupts leftovers the same way |
 | Core restarts | empty store, new `store_id`, revision 0. Jobs running at the crash: `JobService.recover()` → `interrupted` / `core_restarted`. Claude subtasks: the forwarder sees the new `store_id` at its next send — at worst its 30 s idle resend or a 30 s backoff, then one immediate resend after the 401 token re-read — and resends the tracker's full state (running tasks and its last 30 finished ones); older finished items are gone. The scene marks its unfinished stars `unknown` meanwhile (*Restart reconciliation*) |
-| Control Center restarts | new `producer_id`; Core claims the source **after** applying that first batch and interrupts only the still-active `claude` items **Core attributes to the replaced instance** and that the batch does not mention (`interrupted` / `producer_restarted`). A later batch that reports such an item still active reopens it — the one narrow exception to "terminal is final". Reopening is authorised by Core alone: the key must be one Core itself interrupted while claiming the source, and the batch must come from the source's current claimant. No field a producer writes on the wire (`error_class` included) grants it, and the observation is still ordered like any other, so one older than the interruption stays `stale`. Core keeps the owning `producer_id` per item and the set of keys it interrupted as private state: neither reaches `WorkItem.to_payload`, `core.work.updated` or the snapshot |
+| Control Center restarts | new `producer_id`. Its forwarder sends a first batch **at start, even with an empty tracker** (Slice 10: an empty batch, about 0.5 s after start once Core answers, retried with the usual backoff; dropped as soon as any batch is accepted; a Core that refuses empty batches with 400 is not retried). Core claims the source **after** applying that first batch and interrupts only the still-active `claude` items **Core attributes to the replaced instance** and that the batch does not mention (`interrupted` / `producer_restarted`). A later batch that reports such an item still active reopens it — the one narrow exception to "terminal is final". Reopening is authorised by Core alone: the key must be one Core itself interrupted while claiming the source, and the batch must come from the source's current claimant. No field a producer writes on the wire (`error_class` included) grants it, and the observation is still ordered like any other, so one older than the interruption stays `stale`. Core keeps the owning `producer_id` per item and the set of keys it interrupted as private state: neither reaches `WorkItem.to_payload`, `core.work.updated` or the snapshot |
 | Two Control Centers on one Core (unsupported, but survivable) | each takeover interrupts the other instance's items once (`producer_restarted`) and neither can reopen the other's, so the flapping is bounded: with two items each and alternating batches, revision settles after the second exchange and the brain sees one attention note per item instead of a permanent stream. The price of that bound is stated plainly: **every item ends `interrupted` / `producer_restarted` and stays there** — whichever instance spoke last has had its items taken over by the other, and only the source's current claimant could reopen them. Each *new* item costs one more (true, but useless) attention note. The work itself keeps running in its Control Center; only Core's view of it is dead. Run one Control Center |
 | Control Center stops gracefully | agents stop first (subtasks interrupted), then one last flush bounded by 2 s |
-| Control Center killed and not restarted, or Core down during its graceful stop | its active items stay `running` in Core until a Control Center starts again or Core restarts. There is deliberately no lease: expiring after a timeout would end work irreversibly after a laptop sleep. Core's brain backend lives in that same Control Center, so brain turns fail meanwhile anyway |
+| Control Center killed and not restarted, or Core down during its graceful stop | its active items stay `running` in Core until a Control Center starts again (its empty start batch interrupts them within about a second) or Core restarts. There is deliberately no lease: expiring after a timeout would end work irreversibly after a laptop sleep. Core's brain backend lives in that same Control Center, so brain turns fail meanwhile anyway |
 
 ### Brain work context and event policy
 
@@ -1840,10 +1841,12 @@ Expected path, all `info`, scalar ids only (never labels or summaries):
 (`object_id`, `target_id`, `status`, `error_class`), `core.scene.signal_retired`.
 
 Start and stop ordering. `start()`: `scene.start()` (never raises), then
-`await scene_projector.reconcile_restart()` (Slice 10, never raises), then
-`scene_projector.start()`, which subscribes before its first reconciliation so
-nothing published meanwhile is missed, then the rest, so `jobs.recover()`
-interruptions reach the scene. `stop()`: brain, attention policy, notifications
+`await scene_projector.reconcile_restart()` (Slice 10: only **requests** the
+marking, returns at once, never raises), then `scene_projector.start()`, which
+subscribes before its first reconciliation so nothing published meanwhile is
+missed, then the rest, so `jobs.recover()` interruptions reach the scene. Core
+readiness never waits for the marking (PM decision after QA: one commit per
+star cost 1.05 s for 500 stars, 3.7 s for 60 stars on a slow store). `stop()`: brain, attention policy, notifications
 and scheduler stop as before; then `back_brain.stop()` and `jobs.stop()`, whose
 cancellations publish the jobs' final work states; then, in a `finally` that
 covers both early returns (`state_persistence_unknown`, `cleanup_unknown`) and
@@ -1869,24 +1872,29 @@ priority, signal lifecycle and journal; a separate module would have had to
 reach into that private state or duplicate the serialisation.
 
 ```text
-Core start ─ scene.start() ─ reconcile_restart() ─ projector.start() ─ … ─ jobs.recover()
-                               │ runtime agent/job stars, exec_state pending|running|blocked|unknown
-                               │   → patch exec_state = unknown, tracked by (source, external_id)
-                               │ job stars → JobService.observe_persisted_outcomes(ids)
-                               └ grace timer (restart_grace_s, default 60 s)
+Core start ─ scene.start() ─ reconcile_restart() (request) ─ projector.start() ─ … ─ jobs.recover() ─ ready
+projector loop, first job (first reconciliation, before any queued work event):
+    runtime agent/job stars, exec_state pending|running|blocked|unknown
+      → patch exec_state = unknown, tracked by (source, external_id)
+    job stars → JobService.observe_persisted_outcomes({job id: star work_id})
+    grace timer (restart_grace_s, default 60 s) armed after the marking
+    then the work snapshot is projected, then queued events
 any projection of (source, external_id)  → real exec_state, tracking ends ("reobserved")
 grace expiry (in the loop) → in Core's work snapshot? project it : attach_signal(core_restarted_unobserved) then exec_state = interrupted
 ```
 
 | Step | Behaviour |
 | --- | --- |
-| Marking (Core start, before the projector's first reconciliation) | every active object with `kind ∈ {agent, job}`, `origin = runtime`, a `work_ref` and a non-terminal `exec_state` is tracked; those not yet `unknown` get one runtime `patch_object(exec_state = unknown)`. Nothing else is written: terminal stars, signals (live or retired), brain/user objects, artifacts, tombstones, geometry, pin, visibility, representation, layer, disposition and relations stay byte-identical. No slot is needed. Already-`unknown` stars (hard kill during a previous grace) are tracked without a write |
-| Job truth | for tracked `job` stars, `JobService.observe_persisted_outcomes` observes into work state the outcome of jobs whose row is already terminal (`completed`, `failed` with the exception name from `job.error`, `cancelled`, `interrupted`), skipping running/pending rows (`jobs.recover()` handles them: `interrupted` / `core_restarted` with its signal through the normal projection), speculative jobs and unknown ids. It covers a crash between a job's terminal write and its projection |
+| Marking (the projector loop's first job, inside its first reconciliation, before any work event and before the work snapshot is read; Core is already ready) | every active object with `kind ∈ {agent, job}`, `origin = runtime`, a `work_ref` and a non-terminal `exec_state` is tracked; those not yet `unknown` get one runtime `patch_object(exec_state = unknown)`. Nothing else is written: terminal stars, signals (live or retired), brain/user objects, artifacts, tombstones, geometry, pin, visibility, representation, layer, disposition and relations stay byte-identical. No slot is needed. Already-`unknown` stars (hard kill during a previous grace) are tracked without a write |
+| Job truth | for tracked `job` stars, `JobService.observe_persisted_outcomes` observes into work state the outcome of jobs whose row is already terminal (`completed`, `failed` with the exception name from `job.error`, `cancelled`, `interrupted`), skipping running/pending rows, jobs `recover()` interrupted in this Core life (`JobService._recovered`, set before its first await, so the order between the loop and `recover()` does not matter), speculative jobs and unknown ids. It covers a crash between a job's terminal write and its projection. Link: a `back_brain` job rebuilds `work_id`/`correlation_id` from its persisted provenance exactly as `recover()` does (`_persisted_work_link`); another job takes the `work_id` its star carries, because the `jobs` row has no work-id column (`submit(work_id=)` keeps it in memory only) |
+| `work_id` kept | an update of an existing star whose work item carries no `work_id` keeps the star's `work_id` (`_kept_work_ref`, same "first asserted link wins" rule as Core work state); this also covers `recover()` of a non-back-brain job. A different announced `work_id` still replaces it |
 | Re-observation | any `_project` of the same `(source, external_id)` (bus event, reconciliation, catch-up) restores the real state and ends tracking; a live signal is retired as usual if the work left `failed`/`interrupted`/`blocked` |
 | Grace expiry | runs in the projector loop (`_grace_due`, woken by an internal marker in its own queue). Work present in Core's snapshot (event missed) is projected. Otherwise the star gets its signal **first** (`attach_signal`, id `attention!<star>`, `category`/`exec_state` `interrupted`, `payload.title` = `core_restarted_unobserved`, a French summary, the star's `work_ref`), **then** `exec_state = interrupted`. An existing runtime signal (e.g. `blocked`) is updated in place: still one signal per item. A star archived meanwhile or no longer `unknown` is left alone (`left`); a signal id archived by the user is not revived (the star is still interrupted); a conflicting brain/user object is reported (`projection_conflict`) |
 | Later re-observation | a producer that reports the work after the grace (e.g. `running`) restores it and retires the signal (`unlink` + signal `exec_state`), exactly as Slice 04 |
 | Saturation | marking uses existing objects only. An expiry signal that needs a new slot goes through `_defer`: the interruption is kept as a synthetic terminal `WorkItem` in the pending set, so it is caught up **after** active work, oldest first, and the star stays `unknown` until its signal fits (signal first). A real observation of that work replaces the pending interruption. Like all pending creations it lives in memory; a Core restart re-marks the still-`unknown` star and restarts its grace |
-| Failure | `SceneStoreError` during marking → marking stays due and the loop retries it before its reconciliation (outage journaled once by `projection_unavailable`); during expiry → untreated stars stay tracked, retried after the reconciliation. Any other exception → `projection_failed` (`where = restart` / `restart_grace` / `job_outcomes`), that step is abandoned, projection continues |
+| Failure | `SceneStoreError` during marking → marking stays due and the loop retries it before its reconciliation (outage journaled once by `projection_unavailable`); during expiry → untreated stars stay tracked, retried after the reconciliation. Any other exception during marking or job truth → `projection_failed` (`where = restart` / `job_outcomes`), that step is abandoned, projection continues. Any other exception during expiry (e.g. the work snapshot read) → `projection_failed` (`where = restart_grace`, once per type), `_grace_due` stays set, and the loop waits with its own backoff (retry bounds, doubling) and reconciles before retrying: never a busy loop (QA measured 20 000 spins in 39 ms before the fix) |
+| Stop during marking | the loop is cancelled (a command in flight still commits, `apply` is shielded); no grace timer is armed once `stop()` began; no task survives |
+| Shared signal write | `_raise_signal` is the one place that writes a runtime signal (slot check, `attach_signal`, raced `scene_full` deferral, `signal_raised` journal) for both the Slice 04 projection and the expiry interruption; returning false means deferred, and the expiry then writes nothing else (signal first) |
 
 Crash safety and idempotence. A hard kill during the grace leaves stars
 `unknown` on disk: the next start tracks them again (`already_unknown`) with a
@@ -1917,7 +1925,7 @@ Restart paths.
 | --- | --- | --- |
 | Core restart, Control Center alive | marking; the forwarder sees the new `store_id` (401 → token re-read → resend) and resends the tracker's full state; Core's first batch from that producer claims the source without interrupting anything | stars restored to the tracker's state before the grace; nothing interrupted |
 | Core and Control Center down, only Core back (or Core restarted while the Control Center stays down) | marking; nobody resends | `unknown` for the grace, then `interrupted` + `core_restarted_unobserved` signal |
-| Control Center restart, Core alive | Core does not restart, nothing is marked. The new tracker is empty; its first batch (a new sub-agent) makes Core interrupt the replaced instance's still-active items it does not mention (`producer_restarted`) | stars follow Core: `interrupted` + `producer_restarted` signal. Until the new instance sends a first batch, Core (and the scene) keep them `running` (no lease, see *State lifetime and restart behaviour*) |
+| Control Center restart, Core alive | Core does not restart, nothing is marked. The new forwarder sends an empty claim batch at start; Core interrupts the replaced instance's still-active items (`producer_restarted`) | stars follow Core within about a second: `interrupted` + `producer_restarted` signal. A Control Center that stays dead leaves them `running` (that needs a Core-side lease, not in V1) |
 | Brain (Claude CLI) restart | `AgentTaskTracker.process_started/stopped` interrupts running tasks (`process_stopped`), forwarded | `interrupted` + low-urgency `process_stopped` signal; after a Core restart the resent tracker state carries it, so no `core_restarted_unobserved` |
 | Core job running at the crash | `JobService.recover()` → `interrupted` / `core_restarted` observation | `interrupted` + `core_restarted` signal through the normal projection |
 | Job finished in the database but not in the scene | `observe_persisted_outcomes` at marking | its real outcome (e.g. `completed`, no signal) |

@@ -954,7 +954,7 @@ Dépannage :
 | de nouveaux sous-agents tournent mais aucune étoile n'apparaît, `scene.saturated: true` dans `/v1/health` | scène pleine (`core.scene.projection_saturated`) | archiver des étoiles terminées ; les étoiles en attente arrivent aussitôt |
 | après un redémarrage de Core, une étoile affiche « état inconnu depuis le redémarrage » | normal pendant la grâce (60 s) : l'état de travail de Core est reparti vide, le Control Center n'a pas encore redit ses sous-agents | attendre ; si le Control Center tourne, l'état revient en ~30 s au plus. Sinon l'étoile passe « interrompu » avec un signal à la fin de la grâce |
 | une étoile passe « interrompu » avec le signal « non revu après le redémarrage de Core » alors que le sous-agent tournait | le Control Center n'a rien renvoyé pendant la grâce (arrêté, ou Core injoignable pour lui : `work.ingress_unavailable` dans sa trace) | vérifier le Control Center ; dès qu'il redit ce travail, l'étoile reprend son état et le signal est retiré |
-| après un redémarrage du **Control Center** seul, des étoiles restent « en cours » | Core n'a pas redémarré : il garde ce qu'il savait tant que la nouvelle instance ne lui a rien envoyé | au premier sous-agent lancé par la nouvelle instance, Core interrompt les anciens (signal « Control Center redémarré ») |
+| après un arrêt brutal du **Control Center**, des étoiles restent « en cours » | le Control Center n'a pas été relancé (Core n'a aucun délai d'expiration pour lui), ou la nouvelle instance ne joint pas Core (`work.ingress_unavailable` dans sa trace) | relancer le Control Center : sa première connexion à Core interrompt les anciens sous-agents en une seconde environ |
 
 ### Scène constellation : redémarrages et « état inconnu »
 
@@ -968,7 +968,7 @@ Voici ce qui se passe à chaque redémarrage (détail : `docs/ARCHITECTURE.md`,
 | **Core**, le Control Center restant allumé | les étoiles encore en cours passent un instant à « état inconnu depuis le redémarrage » (anneau pointillé pâle, point atténué, badge « ? ») ; le Control Center redit l'état de ses sous-agents en 30 s au plus, et chaque étoile reprend son vrai état, sans signal |
 | **Core et le Control Center**, ou Core seul pendant que le Control Center reste arrêté | « état inconnu » pendant la **grâce** (60 s), puis **interrompu** avec un signal « non revu après le redémarrage de Core » ; si le travail est redit plus tard, l'étoile reprend son état et le signal est retiré |
 | **une tâche de Core** (job) en cours au moment de l'arrêt | **interrompue** avec le signal « Core redémarré », dès le démarrage ; un job qui s'était terminé juste avant l'arrêt garde sa vraie issue (terminé, en échec…) |
-| **le Control Center** seul | rien tant que la nouvelle instance n'a rien envoyé ; à son premier sous-agent, Core interrompt ceux de l'ancienne instance (signal « Control Center redémarré ») |
+| **le Control Center** seul | dès que la nouvelle instance joint Core (environ une seconde), Core interrompt les sous-agents de l'ancienne (signal « Control Center redémarré »), même si rien n'a encore été relancé ; si le Control Center reste arrêté, ils restent « en cours » |
 | **le cerveau** (CLI Claude) | ses sous-agents en cours passent **interrompu** avec un petit signal « processus arrêté » |
 
 Ce qui **ne change jamais** au redémarrage : une étoile terminée, ses artefacts,
@@ -984,7 +984,7 @@ reprendre. On peut l'archiver seule.
 
 **La grâce** dure 60 s par défaut : deux fois la période à laquelle le Control
 Center renvoie tout son état. Réglage de diagnostic uniquement :
-`JARVIS_SCENE_RESTART_GRACE_S` (secondes, entre 0 et 3600) dans
+`JARVIS_SCENE_RESTART_GRACE_S` (secondes, dans ]0, 3600] : plus de 0, au plus 3600) dans
 l'environnement de `python -m jarvis core` ; sous 30 s, des sous-agents vivants
 seraient interrompus à tort. Une valeur refusée garde 60 s et laisse
 `core.scene.restart_grace_invalid` (avertissement) dans la trace.
@@ -993,7 +993,8 @@ Dans `runtime/trace.jsonl` :
 
 | Entrée | Sens |
 | --- | --- |
-| `core.scene.restart_marked` (info, une fois au démarrage) | `marked` étoiles passées à « état inconnu », `already_unknown` déjà inconnues (arrêt brutal pendant une grâce précédente), `tracked` suivies, `terminal_untouched` terminées laissées telles quelles, `job_outcomes` jobs dont l'issue a été relue en base, `grace_s`, `sample` (16 identifiants au plus) |
+| `work.ingress_token_refreshed` (info, côté Control Center, une fois par redémarrage de Core) | le Control Center a relu le jeton de Core et renvoyé aussitôt l'état de ses sous-agents |
+| `core.scene.restart_marked` (info, une fois au démarrage, juste après que Core est prêt) | `marked` étoiles passées à « état inconnu », `already_unknown` déjà inconnues (arrêt brutal pendant une grâce précédente), `tracked` suivies, `terminal_untouched` terminées laissées telles quelles, `job_outcomes` jobs dont l'issue a été relue en base, `grace_s`, `sample` (16 identifiants au plus) |
 | `core.scene.restart_grace_expired` (info, une fois à la fin de la grâce) | `reobserved` redites à temps, `interrupted` interrompues avec signal, `deferred` en attente d'une place (scène pleine), `left` archivées ou tranchées entre-temps, `failed` |
 | `core.scene.restart_star` (niveau `debug`, une par étoile) | le détail : `unknown`, `reobserved`, `interrupted`, `left`, `failed` |
 | `core.scene.signal_raised` avec `error_class: core_restarted_unobserved` | le signal posé à la fin de la grâce |
