@@ -83,7 +83,7 @@ def test_agent_cli_sections_are_in_locked_order_and_advanced_policy_is_disclosed
     assert positions == sorted(positions)
     assert '<details class="rd" id="routingAdvanced"' in body
     assert "Configuration avancée des sous-agents" in body
-    assert "unavailable_reason" in body and "rank>=0?'checked'" in body
+    assert "unavailable_reason" in body and "data-routing-harness" in body and "data-routing-drop" in body
     tab = body[body.index("function tabCli()") : body.index("/* --- configuration avancée")]
     assert "await " not in tab and "api(" not in tab and "catalog(" not in tab
 

@@ -215,7 +215,7 @@ def test_the_choice_is_made_in_two_steps_harness_then_model():
     on choisit le harness, puis un modèle parmi les siens."""
 
     page = PAGE.read_text(encoding="utf-8")
-    body = page[page.index("function routingPicker(") : page.index("async function tabRouting()")]
+    body = page[page.index("function routingPicker(") : page.index("function routingAdvancedBody()")]
 
     assert "data-routing-harness" in body and "data-routing-model" in body
     # Le second sélecteur ne propose que les modèles du harness choisi.
@@ -229,7 +229,7 @@ def test_the_choice_is_made_in_two_steps_harness_then_model():
 
 def test_changing_the_harness_clears_the_model_and_only_adding_changes_the_policy():
     page = PAGE.read_text(encoding="utf-8")
-    body = page[page.index("const routingOn=modalContent") : page.index("const routingRefresh=")]
+    body = page[page.index("function bindRoutingAdvanced(") : page.index("async function hydrateRoutingAdvanced(")]
 
     assert "pick.agent=el.value;pick.model=''" in body
     # Choisir ne modifie pas le brouillon : seul « ajouter » le fait.
