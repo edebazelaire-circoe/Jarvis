@@ -472,3 +472,17 @@ async def test_the_control_center_omits_the_bulk_archive_patch_but_not_other_pat
 
     _, single_body = await CoreSceneView(Single()).command(single)
     assert single_body["patch"] == one.patch.to_payload() and "patch_omitted" not in single_body
+
+
+async def test_the_status_gives_the_page_the_real_stop_deadline(tmp_path):
+    import json as _json
+
+    bare = ControlCenter(runtime_root=tmp_path / "bare", project_root=tmp_path)
+    assert _json.loads((await bare.status(None)).text)["scene_limits"] == {"job_cancel_timeout_s": None}
+    view = CoreSceneView(CoreSceneTransport(host="127.0.0.1", port=1, token_file=tmp_path / "none.token"), command_connect_timeout_s=2.0)
+    wired = ControlCenter(runtime_root=tmp_path / "wired", project_root=tmp_path, scene_view=view)
+    try:
+        limits = _json.loads((await wired.status(None)).text)["scene_limits"]
+        assert limits == {"job_cancel_timeout_s": view.job_cancel_deadline_s} and view.job_cancel_deadline_s == 2.0 + 20.0 + 1.0
+    finally:
+        await view.aclose()

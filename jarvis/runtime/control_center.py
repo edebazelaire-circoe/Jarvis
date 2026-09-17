@@ -618,6 +618,11 @@ class ControlCenter:
             # calque et n'ouvre sa lecture que s'il est vrai. Lu à chaque
             # sondage, sans E/S de plus que les réglages déjà lus.
             "scene": load_scene_gate(settings),
+            # Bornes que la page affiche (Slice 08, reprise QA) : délai réel de
+            # l'arrêt d'un job à travers ce Control Center, `null` sans Core.
+            "scene_limits": {
+                "job_cancel_timeout_s": self.scene_view.job_cancel_deadline_s if self.scene_view is not None else None,
+            },
         })
 
     def _background_summary(self) -> dict[str, Any]:

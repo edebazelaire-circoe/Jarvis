@@ -177,6 +177,20 @@
      et une capsule en point, dans la page seulement (jamais validé, la
      représentation de la scène ne change pas). */
   const READABLE=Object.freeze({windowWidth:180,windowHeight:96,capsuleWidth:72});
+  /* Capsule dessinée au plus à cette taille (unités, reprise QA Slice 08) :
+     une boîte plus haute (fenêtre passée en capsule par le cerveau, objet
+     épinglé qui garde sa boîte de fenêtre) est dessinée à la hauteur naturelle
+     d'une capsule et au plus à cette largeur, centrée dans la boîte stockée.
+     Rendu seulement : la géométrie de la scène ne change pas. Un point est
+     déjà dessiné à sa taille, au centre de sa boîte. */
+  const CAPSULE_MAX=Object.freeze({w:160,h:10});
+
+  /* Boîte dessinée d'une représentation dans sa boîte stockée (unités). */
+  function drawnBox(representation,box){
+    if(representation!=='capsule'||(box.w<=CAPSULE_MAX.w&&box.h<=CAPSULE_MAX.h))return box;
+    const w=Math.min(box.w,CAPSULE_MAX.w),h=box.h>CAPSULE_MAX.h?DEFAULT_SIZE.capsule.h:box.h;
+    return {x:box.x+(box.w-w)/2,y:box.y+(box.h-h)/2,w,h};
+  }
   /* Anneaux animés au plus (coût de style) : signaux vivants urgents d'abord,
      puis étoiles en cours, dans l'ordre de Core ; les autres restent fixes.
      La page ne propose que les nœuds dont l'état vient de changer
@@ -423,10 +437,10 @@
     const nodes=[],centers=new Map();let offscreen=0,hidden=0;
     for(const item of state.objects.values()){
       if(item.visibility!=='visible'){hidden++;continue}
-      const box=layout.placements.get(item.object_id);
-      if(!box)continue;
-      const screen=toScreen(vp,box);
+      const stored=layout.placements.get(item.object_id);
+      if(!stored)continue;
       const representation=['point','capsule','window'].includes(item.representation)?item.representation:'point';
+      const screen=toScreen(vp,drawnBox(representation,stored));
       const payload=item.payload||{};
       const title=displayTitle(item,cleanLine(payload.title,160),errorLabels);
       const exec=EXEC_LABELS[item.exec_state]!==undefined?item.exec_state:'unknown';
@@ -597,7 +611,7 @@
     return entry;
   }
 
-  const api=Object.freeze({FRAME,SAFE_AREA,FACE_ZONE,OBJECT_LIMIT,DEFAULT_SIZE,WORK_BUDGET,COMMIT_MAX_ATTEMPTS,READABLE,MAX_ANIMATED,
+  const api=Object.freeze({FRAME,SAFE_AREA,FACE_ZONE,OBJECT_LIMIT,DEFAULT_SIZE,WORK_BUDGET,COMMIT_MAX_ATTEMPTS,READABLE,MAX_ANIMATED,CAPSULE_MAX,drawnBox,
     viewport,toScreen,cleanLine,cleanText,toneOf,isLiveSignal,signalUrgency,signalErrorClass,anchorsOf,depthOf,resolveLayout,
     stackOf,viewModel,compactShape,spatialOrder,nextFocus,commitKey,commitCommand,commitCandidates,nextRetryAt,classifyCommit,settleCommit});
   root.JarvisSceneLayout=api;

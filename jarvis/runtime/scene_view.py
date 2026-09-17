@@ -468,6 +468,12 @@ class CoreSceneView:
         #: contrat est déjà journalisée ; oublié au retour à la normale.
         self._invalid_reported: set[str] = set()
 
+    @property
+    def job_cancel_deadline_s(self) -> float:
+        """Attente maximale d'un arrêt de job relayé (connexion + réponse + marge), montrée par la page."""
+
+        return self.command_connect_timeout_s + WORK_CANCEL_TIMEOUT_S + 1.0
+
     # ------------------------------------------------------------ lectures
 
     async def snapshot(self) -> dict[str, Any]:
@@ -612,7 +618,7 @@ class CoreSceneView:
                     source=source, external_id=external_id,
                     connect_timeout_s=self.command_connect_timeout_s, read_timeout_s=read_timeout_s,
                 ),
-                timeout=self.command_connect_timeout_s + read_timeout_s + 1.0,
+                timeout=self.job_cancel_deadline_s,
             )
             body = decode_work_cancel_response(raw, source=source, external_id=external_id)
         except asyncio.CancelledError:

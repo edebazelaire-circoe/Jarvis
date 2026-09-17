@@ -699,7 +699,7 @@ async def test_the_page_injects_the_renderer_and_gates_it_on_the_status_flag(tmp
     # La page ne touche à la scène que par l'interrupteur lu dans /api/status.
     # Isolé : une erreur de la scène ne casse jamais le statut ; un échec du
     # statut prévient la scène (reprise immédiate au retour).
-    assert "try{if(window.JarvisScene)JarvisScene.gate(s.scene)}catch(sceneError){console.error('[scène] scene.gate_failed',sceneError)}" in html
+    assert "try{if(window.JarvisScene)JarvisScene.gate(s.scene,s.scene_limits)}catch(sceneError){console.error('[scène] scene.gate_failed',sceneError)}" in html
     assert "try{if(window.JarvisScene)JarvisScene.statusLost()}catch(_sceneError)" in html
     assert 'id="sceneLayer"' not in html
 

@@ -25,6 +25,7 @@ from typing import Any
 import pytest
 
 from jarvis.domain.scene import (
+    SCENE_SAFE_AREA,
     MAX_ARCHIVE_MANY_IDS,
     MAX_SCENE_OBJECTS,
     SCENE_FRAME_HALF_HEIGHT,
@@ -85,12 +86,15 @@ def run_node(tmp_path: Path, body: str, data: Any = None) -> Any:
 # ---------------------------------------------------------------- géométrie
 
 
-def test_the_frame_matches_the_domain(tmp_path):
-    result = run_node(tmp_path, "return I.FRAME;")
-    assert result == {"halfWidth": SCENE_FRAME_HALF_WIDTH, "halfHeight": SCENE_FRAME_HALF_HEIGHT}
+def test_the_frame_and_safe_area_match_the_domain_and_the_renderer(tmp_path):
+    result = run_node(tmp_path, "return {frame:I.FRAME,safe:I.SAFE_AREA,layoutSafe:Lay.SAFE_AREA,max:I.MAX_SIZE.capsule,capsuleMax:Lay.CAPSULE_MAX};")
+    assert result["frame"] == {"halfWidth": SCENE_FRAME_HALF_WIDTH, "halfHeight": SCENE_FRAME_HALF_HEIGHT}
+    x0, y0, x1, y1 = SCENE_SAFE_AREA
+    assert result["safe"] == {"x0": x0, "y0": y0, "x1": x1, "y1": y1} == result["layoutSafe"]
+    assert result["max"] == result["capsuleMax"]
 
 
-def test_drag_and_resize_stay_inside_the_frame_with_minimum_sizes(tmp_path):
+def test_drag_and_resize_stay_inside_the_safe_area_with_minimum_and_maximum_sizes(tmp_path):
     result = run_node(tmp_path, r"""
       const vp=Lay.viewport(1920,1080);   // 6 px par unité
       const start={x:-20,y:-10,w:40,h:7};
@@ -99,23 +103,29 @@ def test_drag_and_resize_stay_inside_the_frame_with_minimum_sizes(tmp_path):
         moved:I.dragBox(start,10,-5,'capsule'),
         pastRight:I.dragBox(start,1000,0,'capsule'),
         pastTopLeft:I.dragBox(start,-1000,-1000,'capsule'),
+        pastBottom:I.dragBox({x:0,y:0,w:64,h:40},0,1000,'window'),
         grow:I.resizeBox({x:-40,y:-20,w:64,h:40},20,10,'window'),
-        growPastEdge:I.resizeBox({x:100,y:40,w:40,h:30},500,500,'window'),
+        growPastEdge:I.resizeBox({x:100,y:40,w:30,h:24},500,500,'window'),
         shrinkBelowMin:I.resizeBox({x:0,y:0,w:64,h:40},-500,-500,'window'),
         capsuleMin:I.resizeBox({x:0,y:0,w:40,h:7},-500,-500,'capsule'),
+        capsuleMax:I.resizeBox({x:-100,y:0,w:40,h:7},500,500,'capsule'),
+        fromFrameEdge:I.resizeBox({x:-160,y:-90,w:64,h:40},4,0,'window'),
         huge:I.clampBox({x:-500,y:-500,w:5000,h:5000},'window'),
         noisy:I.dragBox({x:0.1,y:0.2,w:6,h:6},0.123456,0.987654,'point'),
       };
     """)
     assert result["units"] == {"dx": 10, "dy": -5}
     assert result["moved"] == {"x": -10, "y": -15, "w": 40, "h": 7}
-    assert result["pastRight"] == {"x": 120, "y": -10, "w": 40, "h": 7}  # 120 + 40 = 160
-    assert result["pastTopLeft"] == {"x": -160, "y": -90, "w": 40, "h": 7}
+    assert result["pastRight"] == {"x": 98, "y": -10, "w": 40, "h": 7}  # 98 + 40 = 138 (zone sûre)
+    assert result["pastTopLeft"] == {"x": -152, "y": -72, "w": 40, "h": 7}
+    assert result["pastBottom"] == {"x": 0, "y": 28, "w": 64, "h": 40}  # 28 + 40 = 68
     assert result["grow"] == {"x": -40, "y": -20, "w": 84, "h": 50}
-    assert result["growPastEdge"] == {"x": 100, "y": 40, "w": 60, "h": 50}  # bord du cadre : 160, 90
+    assert result["growPastEdge"] == {"x": 98, "y": 40, "w": 40, "h": 28}  # largeur minimale gardée, coin ramené
     assert result["shrinkBelowMin"] == {"x": 0, "y": 0, "w": 40, "h": 24}
     assert result["capsuleMin"] == {"x": 0, "y": 0, "w": 16, "h": 5}
-    assert result["huge"] == {"x": -160, "y": -90, "w": 320, "h": 180}
+    assert result["capsuleMax"] == {"x": -100, "y": 0, "w": 160, "h": 10}
+    assert result["fromFrameEdge"] == {"x": -152, "y": -72, "w": 68, "h": 40}
+    assert result["huge"] == {"x": -152, "y": -72, "w": 290, "h": 140}
     assert result["noisy"] == {"x": 0, "y": 1, "w": 6, "h": 6}  # unités entières
 
 
@@ -131,7 +141,7 @@ def test_keyboard_intents_move_resize_open_the_menu_or_navigate(tmp_path):
         applied:I.applyKey(box,k('ArrowUp',{shiftKey:true}),'capsule'),
         grown:I.applyKey(box,k('ArrowRight',{ctrlKey:true}),'capsule'),
         pointNoResize:I.applyKey({x:0,y:0,w:6,h:6},k('ArrowRight',{ctrlKey:true}),'point'),
-        edge:I.applyKey({x:150,y:0,w:10,h:6},k('ArrowRight',{shiftKey:true,ctrlKey:true}),'point'),
+        edge:I.applyKey({x:120,y:0,w:10,h:6},k('ArrowRight',{shiftKey:true,ctrlKey:true}),'point'),
       };
     """)
     assert result["nav"] == {"type": "nav"} and result["home"] == {"type": "nav"} and result["shiftHome"] is None
@@ -145,7 +155,7 @@ def test_keyboard_intents_move_resize_open_the_menu_or_navigate(tmp_path):
     assert result["applied"] == {"x": 0, "y": -2, "w": 40, "h": 7}
     assert result["grown"] == {"x": 0, "y": 0, "w": 42, "h": 7}
     assert result["pointNoResize"] == {"x": 0, "y": 0, "w": 6, "h": 6}
-    assert result["edge"] == {"x": 150, "y": 0, "w": 10, "h": 6}
+    assert result["edge"] == {"x": 128, "y": 0, "w": 10, "h": 6}  # bord droit de la zone sûre : 138
 
 
 def test_a_representation_change_keeps_the_centre_and_takes_the_default_size(tmp_path):
@@ -163,7 +173,7 @@ def test_a_representation_change_keeps_the_centre_and_takes_the_default_size(tmp
     assert result["toWindow"] == {"x": -32, "y": -20, "w": 64, "h": 40}
     assert result["toPoint"] == {"x": -3, "y": -3, "w": 6, "h": 6}
     assert result["signal"] == {"x": -2, "y": -2, "w": 4, "h": 4}
-    assert result["edge"] == {"x": 96, "y": 50, "w": 64, "h": 40}
+    assert result["edge"] == {"x": 74, "y": 28, "w": 64, "h": 40}
 
 
 # ---------------------------------------------------------------- menu
@@ -181,18 +191,19 @@ def test_menu_entries_depend_on_kind_origin_and_state(tmp_path):
         obj('note','window',{origin:'brain',exec_state:'unknown'}),
         obj('odd:job','job',{exec_state:'blocked',work_ref:{source:'claude',external_id:'odd'}}),
       ],[rel('attention!claude:bad','explains','attention!claude:bad','claude:bad')]);
-      const acts=id=>{const m=I.menuModel(st,id,{finished:3});return m.items.map(it=>it==='-'?'-':`${it.act}${it.disabled?'(off)':''}${it.danger?'!':''}`)};
+      const acts=id=>{const m=I.menuModel(st,id,{finished:3});return m.items.map(it=>it==='-'?'-':`${it.act}${it.disabled?'(off)':''}${it.note?'(note)':''}${it.danger?'!':''}`)};
       return {jobRun:acts('job:run'),jobDone:acts('job:done'),claudeRun:acts('claude:run'),claudeBad:acts('claude:bad'),
         signal:acts('attention!claude:bad'),note:acts('note'),oddJob:acts('odd:job'),
         noFinished:I.menuModel(st,'job:done',{finished:0}).items.filter(it=>it!=='-').map(it=>it.act),
         title:I.menuModel(st,'note',{title:'Résumé'}).title,missing:I.menuModel(st,'absent',{}),
         badLabel:I.menuModel(st,'claude:bad',{}).items.find(it=>it.act==='archive').label,
-        claudeRunLabel:I.menuModel(st,'claude:run',{}).items.find(it=>it.act==='stop-unavailable').label};
+        claudeRunLabel:I.menuModel(st,'claude:run',{}).items.find(it=>it.act==='stop-unavailable').label,
+        finishedLabels:[1,3].map(n=>I.menuModel(st,'job:done',{finished:n}).items.find(it=>it.act==='archive-finished').label)};
     """)
     assert result["jobRun"] == ["rep:capsule", "rep:window", "-", "pin", "hide", "-", "stop!", "archive!", "archive-finished!"]
     assert result["jobDone"] == ["rep:capsule", "rep:window", "-", "pin", "hide", "-", "archive!", "archive-finished!"]
     # Sous-agent du brain en cours : jamais d'arrêt, une entrée désactivée le dit.
-    assert result["claudeRun"] == ["rep:capsule", "rep:window", "-", "pin", "hide", "-", "stop-unavailable(off)", "archive!", "archive-finished!"]
+    assert result["claudeRun"] == ["rep:capsule", "rep:window", "-", "pin", "hide", "-", "stop-unavailable(note)", "archive!", "archive-finished!"]
     assert "stop" not in result["claudeRun"]
     assert result["claudeBad"] == ["rep:capsule", "rep:window", "-", "unpin", "hide", "-", "archive!", "archive-finished!"]
     assert result["badLabel"] == "Archiver avec son signal…"
@@ -200,10 +211,12 @@ def test_menu_entries_depend_on_kind_origin_and_state(tmp_path):
     # Fenêtre du brain : pas d'arrêt ni d'archivage groupé depuis son menu.
     assert result["note"] == ["rep:point", "rep:capsule", "-", "pin", "hide", "-", "archive!"]
     # Un job dont le travail n'est pas un job Core (source claude) n'a pas d'arrêt.
-    assert "stop-unavailable(off)" in result["oddJob"] and "stop!" not in result["oddJob"]
+    assert "stop-unavailable(note)" in result["oddJob"] and "stop!" not in result["oddJob"]
     assert "archive-finished" not in result["noFinished"]
     assert result["title"] == "Résumé" and result["missing"] is None
     assert result["claudeRunLabel"] == "Arrêt impossible : sous-agent du brain"
+    # Même nom que la confirmation (« Archiver 3 objets »).
+    assert result["finishedLabels"] == ["Archiver les travaux terminés (1 objet)…", "Archiver les travaux terminés (3 objets)…"]
 
 
 # ---------------------------------------------------------------- archivage groupé
@@ -269,21 +282,16 @@ def test_optimistic_changes_draw_at_once_then_yield_to_the_state_or_roll_back(tm
       const drawn=P.overlay(base);
       out.drawn={a:drawn.objects.get('a').geometry,aPinned:drawn.objects.get('a').constraints.pinned_by_user,
         b:drawn.objects.get('b').visibility,c:drawn.objects.has('c'),baseUntouched:base.objects.get('a').geometry.x===0&&base.objects.get('b').visibility==='visible'};
-      // Placement refusé : l'objet revient à sa place.
       out.rollback=P.rollback('b',t2);
       out.afterRollback=P.overlay(base).objects.get('b').visibility;
-      // Déplacement accepté à la révision 11, épinglage refusé : seul l'épinglage s'efface.
       P.confirm('a',t1,11);
       out.drop=P.drop('a',t1,'pinned');
       out.aAfterDrop=P.overlay(base).objects.get('a').constraints.pinned_by_user;
-      // Un geste plus récent remplace le jeton : l'ancien ne peut plus rien annuler.
-      const t4=P.begin('a',{geometry:{x:60,y:5,w:40,h:7}},1100);
-      out.staleRollback=P.rollback('a',t1);out.staleConfirm=P.confirm('a',t1,11);
-      P.confirm('a',t4,12);P.confirm('c',t3,12);
-      out.pruneEarly=P.prune({...base,revision:11},2000);
-      out.pruneReached=P.prune({...base,revision:12},2000);
-      const t5=P.begin('b',{visibility:'hidden'},2000);
-      out.pruneExpired=P.prune({...base,revision:12},2000+30001);
+      P.confirm('c',t3,12);
+      out.pruneEarly=P.prune({...base,revision:10},2000);
+      out.pruneReached=P.prune({...base,revision:12},2000).map(e=>e.id).sort();
+      P.begin('b',{visibility:'hidden'},2000);
+      out.pruneExpired=P.prune({...base,revision:12},2000+30001).map(e=>[e.id,e.reason]);
       out.size=P.size();
       const v=P.version();P.begin('zz',{visibility:'hidden'},0);
       out.missingIgnored=P.overlay(base)===base;out.versionMoves=P.version()>v;
@@ -293,11 +301,37 @@ def test_optimistic_changes_draw_at_once_then_yield_to_the_state_or_roll_back(tm
     assert result["drawn"] == {"a": {"x": 50, "y": 5, "w": 40, "h": 7}, "aPinned": True, "b": "hidden", "c": False, "baseUntouched": True}
     assert result["rollback"] is True and result["afterRollback"] == "visible"
     assert result["drop"] is True and result["aAfterDrop"] is False
-    assert result["staleRollback"] is False and result["staleConfirm"] is False
     assert result["pruneEarly"] == []
-    assert sorted(entry["id"] for entry in result["pruneReached"]) == ["a", "c"]
-    assert result["pruneExpired"] == [{"id": "b", "reason": "expired"}]
+    assert result["pruneReached"] == ["a", "c"]
+    assert result["pruneExpired"] == [["b", "expired"]]
     assert result["size"] == 0 and result["missingIgnored"] is True and result["versionMoves"] is True
+
+
+def test_a_refused_newer_change_never_undoes_an_older_accepted_one_not_yet_received(tmp_path):
+    """Reprise QA (point 8) : une opération par couche. Déplacement accepté à la révision 11 mais pas
+    encore reçu, puis masquage refusé : la position et l'épingle restent dessinées, sans clignoter,
+    jusqu'à ce que l'état tenu atteigne 11."""
+
+    result = run_node(tmp_path, r"""
+      const base=state([obj('a','window',{geometry:{x:0,y:0,w:64,h:40}})],[],10);
+      const P=I.createPending(30000);
+      const frames=[];
+      const snap=()=>{const o=P.overlay(base).objects.get('a');frames.push([o.geometry.x,o.constraints.pinned_by_user,o.visibility])};
+      const move=P.begin('a',{geometry:{x:30,y:0,w:64,h:40},pinned:true},0);snap();
+      P.confirm('a',move,11);snap();
+      const hide=P.begin('a',{visibility:'hidden'},10);snap();
+      out={refusedRollback:P.rollback('a',hide)};snap();
+      out.staleConfirm=P.confirm('a',hide,12);
+      out.early=P.prune({...base,revision:10},20).length;snap();
+      out.reached=P.prune({...base,revision:11},30).map(e=>e.id);
+      out.frames=frames;out.size=P.size();
+      return out;
+    """)
+    assert result["refusedRollback"] is True and result["staleConfirm"] is False
+    assert result["frames"] == [
+        [30, True, "visible"], [30, True, "visible"], [30, True, "hidden"], [30, True, "visible"], [30, True, "visible"],
+    ]
+    assert result["early"] == 0 and result["reached"] == ["a"] and result["size"] == 0
 
 
 def test_command_responses_are_read_in_user_words(tmp_path):
@@ -308,21 +342,111 @@ def test_command_responses_are_read_in_user_words(tmp_path):
         refused:c(200,{outcome:'rejected_authority',reason:'pinned_by_user',revision:7}),
         bulk:c(200,{outcome:'invalid',reason:'not_bulk_archivable',revision:7}),
         unknownReason:c(200,{outcome:'invalid',reason:'something_new',revision:7}),
-        timeout:c(504,{error:{code:'core_timeout',message:'Core n’a pas répondu'}}),
-        down:c(503,{error:{code:'core_unreachable',message:'Core injoignable'}}),
-        garbage:c(502,null),network:c(0,null),
+        timeout:c(504,{error:{code:'core_timeout',message:'Core n’a pas répondu en 10 s'}}),
+        notSentConnect:c(503,{error:{code:'core_unreachable',message:'Core injoignable, commande non envoyée : Cannot connect to host 127.0.0.1:53381 ssl:default'}}),
+        lost:c(503,{error:{code:'core_unreachable',message:'Liaison à Core perdue (Connection reset) : issue inconnue, relire la scène.'}}),
+        notSent:c(503,{error:{code:'command_not_sent',message:'Commande non envoyée'}}),
+        garbage:c(502,null),teapot:c(418,{error:{code:'odd',message:'I am a teapot'}}),
+        network:I.networkFailure(new TypeError('Failed to fetch')),
+        pageTimeout:I.networkFailure(Object.assign(new Error('pas de réponse en 15 s'),{code:'timeout'})),
       };
     """)
     assert result["applied"]["ok"] is True and result["applied"]["revision"] == 7 and result["applied"]["message"] == ""
     assert result["duplicate"]["ok"] is True
-    assert result["refused"] == {"ok": False, "outcome": "rejected_authority", "reason": "pinned_by_user", "code": "",
-                                 "revision": 7, "unknown": False, "message": "refusé : l'objet est épinglé"}
+    assert result["refused"]["message"] == "refusé : l'objet est épinglé" and result["refused"]["unknown"] is False
     assert "n’est plus un travail terminé" in result["bulk"]["message"]
     assert result["unknownReason"]["message"] == "refusé : something_new"
     assert result["timeout"]["unknown"] is True and result["timeout"]["code"] == "core_timeout"
-    assert result["down"] == {"ok": False, "outcome": "failed", "reason": "", "code": "core_unreachable", "message": "Core injoignable",
-                              "revision": None, "unknown": False}
-    assert result["garbage"]["code"] == "http_502" and result["network"]["code"] == "network_error"
+    # Connexion refusée : rien n'est parti. Liaison coupée après l'envoi : issue inconnue.
+    assert result["notSentConnect"]["unknown"] is False and result["notSentConnect"]["message"] == "Core injoignable : rien n’a été envoyé."
+    assert result["lost"]["unknown"] is True and "issue inconnue" in result["lost"]["message"]
+    assert result["notSent"]["unknown"] is False and "rien n’a été envoyé" in result["notSent"]["message"]
+    # Le texte brut (anglais, adresses) ne va jamais à l'écran, seulement dans `detail`.
+    for key in ("timeout", "notSentConnect", "lost", "notSent", "garbage", "teapot", "network", "pageTimeout"):
+        assert "Cannot connect" not in result[key]["message"] and "teapot" not in result[key]["message"], key
+    assert "Cannot connect" in result["notSentConnect"]["detail"]
+    assert result["garbage"]["code"] == "http_502" and result["garbage"]["unknown"] is True
+    assert result["teapot"]["message"] == "Erreur 418 du Control Center." and result["teapot"]["unknown"] is False
+    # Une requête `fetch` sans réponse a pu partir : jamais « rien n'a été envoyé ».
+    assert result["network"]["unknown"] is True and "issue inconnue" in result["network"]["message"]
+    assert result["pageTimeout"]["unknown"] is True and result["pageTimeout"]["code"] == "timeout"
+
+
+def test_stop_outcomes_are_worded_honestly(tmp_path):
+    result = run_node(tmp_path, r"""return Object.fromEntries(['cancelled','already_terminal','cancel_requested','cleanup_unknown','odd'].map(o=>[o,I.stopOutcome(o)]));""")
+    assert result["cancelled"]["terminal"] is True and result["cancelled"]["title"] == "Tâche arrêtée"
+    assert result["already_terminal"]["terminal"] is True
+    assert result["cancel_requested"]["terminal"] is False and "pas encore confirmé" in result["cancel_requested"]["sub"]
+    assert result["cleanup_unknown"] == {"title": "Arrêt demandé, nettoyage non confirmé",
+                                         "sub": "Le job reste en cours tant que son exécution n’est pas nettoyée.", "kind": "warn", "terminal": False}
+    assert "termine l’annulation" not in json.dumps(result, ensure_ascii=False)
+    assert result["odd"]["kind"] == "warn" and result["odd"]["terminal"] is False
+
+
+def test_focus_moves_to_the_reading_neighbour_after_a_removal_and_coarse_pointers_need_a_longer_drag(tmp_path):
+    result = run_node(tmp_path, r"""
+      const order=['a','b','c','d'];
+      return {
+        middle:I.focusAfterRemoval(order,['b'],'b'),last:I.focusAfterRemoval(order,['d'],'d'),
+        cascade:I.focusAfterRemoval(order,['b','c'],'b'),all:I.focusAfterRemoval(order,order,'a'),
+        unknownCurrent:I.focusAfterRemoval(order,['a'],'zz'),
+        mouse:I.dragThreshold('mouse',false),barehands:I.dragThreshold('mouse',true),touch:I.dragThreshold('touch',false),pen:I.dragThreshold('pen',false),
+      };
+    """)
+    assert (result["middle"], result["last"], result["cascade"], result["all"], result["unknownCurrent"]) == ("c", "c", "d", None, "b")
+    assert (result["mouse"], result["barehands"], result["touch"], result["pen"]) == (4, 10, 10, 10)
+
+
+def test_resolver_commits_are_computed_on_the_held_state_never_on_the_optimistic_overlay(tmp_path):
+    """Reprise QA (MAJOR-2) : une place libérée seulement par une modification en attente (qui peut être
+    refusée) n'est jamais validée par le résolveur."""
+
+    result = run_node(tmp_path, r"""
+      const b=obj('b','agent');
+      const alone=Lay.resolveLayout(state([b]));
+      const spot=alone.placements.get('b');                        // place préférée de B quand elle est libre
+      const held=state([obj('a','agent',{geometry:{...spot},constraints:{placed_by:'user',pinned_by_user:false}}),b],[],20);
+      const P=I.createPending(30000);
+      P.begin('a',{geometry:{x:100,y:40,w:6,h:6},pinned:true},0);  // l'utilisateur éloigne A (pas encore confirmé)
+      const drawn=P.overlay(held);
+      const drawnLayout=Lay.resolveLayout(drawn);
+      const commitOn=I.commitLayout(held,drawn,drawnLayout,Lay.resolveLayout);
+      const same=I.commitLayout(held,held,Lay.resolveLayout(held),()=>{throw new Error('pas de nouveau calcul')});
+      const candidates=Lay.commitCandidates(held,commitOn,new Map(),0);
+      const overlay=Lay.commitCandidates(held,drawnLayout,new Map(),0);
+      return {spot,drawnB:drawnLayout.placements.get('b'),committed:candidates.map(c=>c.command.geometry),wouldHave:overlay.map(c=>c.command.geometry),
+        reused:!!same,nullHeld:I.commitLayout(null,null,null,Lay.resolveLayout)};
+    """)
+    spot = {key: result["spot"][key] for key in ("x", "y", "w", "h")}
+    assert result["drawnB"] == spot and result["wouldHave"] == [spot]  # ce que la version fautive validait
+    assert len(result["committed"]) == 1 and result["committed"][0] != spot
+    assert result["reused"] is True and result["nullHeld"] is None
+
+
+def test_a_capsule_is_drawn_at_capsule_size_inside_a_larger_stored_box(tmp_path):
+    """Reprise QA (point 12) : fenêtre épinglée passée en capsule par le cerveau → capsule de hauteur
+    naturelle, centrée dans la boîte stockée ; rendu seulement."""
+
+    result = run_node(tmp_path, r"""
+      const box={x:-32,y:-20,w:64,h:40};
+      const st=state([obj('w','window',{representation:'capsule',geometry:{...box},constraints:{placed_by:'user',pinned_by_user:true}}),
+        obj('c','artifact',{representation:'capsule',geometry:{x:0,y:30,w:80,h:7}}),
+        obj('wide','artifact',{representation:'capsule',geometry:{x:-150,y:50,w:280,h:8}}),
+        obj('p','agent',{representation:'point',geometry:{...box}})]);
+      const layout=Lay.resolveLayout(st),vp=Lay.viewport(1920,1080);
+      const model=Lay.viewModel(st,layout,vp,{});
+      const by=Object.fromEntries(model.nodes.map(n=>[n.id,{shape:n.shape,box:n.box,cx:n.cx,cy:n.cy}]));
+      return {by,drawn:Lay.drawnBox('capsule',box),window:Lay.drawnBox('window',box),stored:st.objects.get('w').geometry};
+    """)
+    assert result["drawn"] == {"x": -32, "y": -3.5, "w": 64, "h": 7}
+    assert result["window"] == {"x": -32, "y": -20, "w": 64, "h": 40}
+    by = result["by"]
+    assert by["w"]["shape"] == "capsule" and by["w"]["box"]["height"] == 42 and by["w"]["box"]["width"] == 384
+    assert (by["w"]["cx"], by["w"]["cy"]) == (960, 540)  # centre de la boîte stockée
+    assert by["c"]["box"] == {"left": 960, "top": 720, "width": 480, "height": 42}  # capsule ordinaire inchangée
+    assert by["wide"]["box"]["width"] == 960 and by["wide"]["box"]["left"] == 960 - 150 * 6 + (280 - 160) / 2 * 6
+    assert (by["p"]["cx"], by["p"]["cy"]) == (960, 540)
+    assert result["stored"] == {"x": -32, "y": -20, "w": 64, "h": 40}
 
 
 def test_hidden_objects_are_listed_in_core_order(tmp_path):

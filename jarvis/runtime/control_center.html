@@ -184,6 +184,8 @@ pre.block{background:#050b10;border:1px solid rgba(113,144,160,.16);border-radiu
 .ctxmenu button:focus{outline:none;background:rgba(110,231,255,.1);color:var(--accent)}
 .ctxmenu button.danger:focus{background:rgba(255,101,119,.1);color:var(--danger)}
 .ctxmenu button:disabled{opacity:.38;cursor:default}
+.ctxmenu button[aria-disabled="true"]{color:var(--muted);cursor:default;white-space:normal}
+.ctxmenu button[aria-disabled="true"]:focus{background:rgba(110,231,255,.05);color:var(--text)}
 .ctxmenu kbd{font:inherit;font-size:10px;color:var(--muted)}
 .ctxmenu .sep{height:1px;background:var(--line);margin:5px 4px}
 /* Confirmation en page (Slice 08) : jamais `window.confirm`. Au-dessus du menu
@@ -192,6 +194,7 @@ pre.block{background:#050b10;border:1px solid rgba(113,144,160,.16);border-radiu
 .cdialog-back[hidden]{display:none}
 .cdialog{width:min(440px,100%);padding:18px 18px 14px;background:#08121a;border:1px solid rgba(110,231,255,.3);border-radius:10px;box-shadow:0 24px 70px rgba(0,0,0,.7);animation:toastIn .16s ease-out}
 .cdialog.danger{border-color:rgba(255,101,119,.42)}
+.cdialog:focus{outline:none}
 .cdialog h2{margin:0 0 10px;font-size:14px;font-weight:600;letter-spacing:.01em;text-transform:none;color:var(--text);overflow-wrap:anywhere}
 .cdialog ul{margin:0 0 16px;padding:0;list-style:none;display:grid;gap:6px;font-size:12.5px;line-height:1.45;color:#b3cbd6}
 .cdialog li strong{color:var(--text);font-weight:600;font-variant-numeric:tabular-nums}
@@ -211,7 +214,7 @@ pre.block{background:#050b10;border:1px solid rgba(113,144,160,.16);border-radiu
 .toast.clickable:hover{border-color:rgba(110,231,255,.4)}
 .toast .ttxt{min-width:0}
 .toast .ttxt strong{display:block;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.toast .ttxt span{display:block;font-size:11px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.toast .ttxt span{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;font-size:11px;line-height:1.4;color:var(--muted);margin-top:2px;overflow:hidden;overflow-wrap:anywhere}
 .tclose{background:none;border:0;color:var(--muted);font-size:16px;line-height:1;cursor:pointer;padding:0 4px;align-self:start}
 .tclose:hover{color:var(--text)}
 .toast.out{opacity:0;transform:translateY(6px)}
@@ -388,7 +391,7 @@ details.rd[open]>summary{margin-bottom:14px}
   <section class="panel" id="panel"><header><h2 id="panelTitle">Panel</h2><button id="closePanel" aria-label="Fermer">×</button></header><div class="body" id="panelBody"></div></section>
 </div>
 <div class="ctxmenu" id="ctxMenu" role="menu" hidden></div>
-<div class="cdialog-back" id="confirmBack" hidden><div class="cdialog" id="confirmDialog" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmBody"><h2 id="confirmTitle"></h2><ul id="confirmBody"></ul><div class="crow"><button type="button" id="confirmCancel">Annuler</button><button type="button" class="go" id="confirmGo">Confirmer</button></div></div></div>
+<div class="cdialog-back" id="confirmBack" hidden><div class="cdialog" id="confirmDialog" tabindex="-1" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmBody"><h2 id="confirmTitle"></h2><ul id="confirmBody"></ul><div class="crow"><button type="button" id="confirmCancel">Annuler</button><button type="button" class="go" id="confirmGo">Confirmer</button></div></div></div>
 <div class="toasts" id="toasts" aria-live="polite"></div>
 <div class="bgpop" id="bgPop" role="dialog" aria-label="Notifications d’arrière-plan" hidden></div>
 
@@ -582,7 +585,7 @@ document.addEventListener('keydown',e=>{
 },true);
 window.addEventListener('resize',()=>{if(BG.open)closeBackgroundPop()});
 async function renderErrors(){const archived=errorsView==='archived';title.textContent=archived?'Errors · Archives':'Errors';const items=await api('/api/errors'+(archived?'?archived=1&limit=500':''));body.innerHTML=`<div class="row" style="margin-bottom:12px"><button class="action" id="toggleErrors">${archived?'Erreurs actives':'Erreurs archivées'}</button>${archived?'':'<button class="action danger" id="archiveErrors">Archiver</button>'}<span class="hint">${items.length} entrée(s)</span></div><div>${entries(items)}</div>`;$('#toggleErrors').addEventListener('click',()=>{errorsView=archived?'active':'archived';renderErrors().catch(e=>{body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`})});const archive=$('#archiveErrors');if(archive)archive.addEventListener('click',async()=>{archive.disabled=true;try{await api('/api/errors/archive',{method:'POST'});await renderErrors();refreshStatus()}catch(e){toast({title:'Archivage des erreurs impossible',sub:e.message,kind:'bad'});console.error('errors_archive_failed',e)}finally{archive.disabled=false}})}
-async function refreshStatus(){try{const s=await api('/api/status'),v=s.voice_state||'idle',k=String(s.manual_wake_key||'f9').toUpperCase(),online=s.voice_online===true;renderLive(s.live);$('#voiceState').textContent=online?v.toUpperCase():'OFFLINE';const listening=s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`;$('#voiceHint').textContent=online?({idle:`${k} · DÉMARRER`,listening,thinking:`${k} · ANNULER`,speaking:`${k} · INTERROMPRE`}[v]||`${k} · CONTRÔLER`):`${k} · VOICE HORS LIGNE`;$('.face').style.visibility=online?'visible':'hidden';$('#agentName').textContent=String(s.agent.name||s.agent_cli||'agent').toUpperCase();$('#agentState').textContent=(s.agent.state||'stopped').toUpperCase();const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';renderBackgroundPills(s.background);try{if(window.JarvisScene)JarvisScene.gate(s.scene)}catch(sceneError){console.error('[scène] scene.gate_failed',sceneError)}AG.agent=s.agent||null;AG.cli=s.agent_cli||'';if(!(current==='agents'&&coreOk()))updateSubagentBadge(s.subagents,false);watchSubagents(s.subagents)}catch(e){try{if(window.JarvisScene)JarvisScene.statusLost()}catch(_sceneError){/* la scène ne doit pas casser le statut */}$('#voiceState').textContent='OFFLINE';$('#agentState').textContent='OFFLINE';$('#voiceHint').textContent='VOICE HORS LIGNE';$('.face').style.visibility='hidden';updateSubagentBadge(null)}}
+async function refreshStatus(){try{const s=await api('/api/status'),v=s.voice_state||'idle',k=String(s.manual_wake_key||'f9').toUpperCase(),online=s.voice_online===true;renderLive(s.live);$('#voiceState').textContent=online?v.toUpperCase():'OFFLINE';const listening=s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`;$('#voiceHint').textContent=online?({idle:`${k} · DÉMARRER`,listening,thinking:`${k} · ANNULER`,speaking:`${k} · INTERROMPRE`}[v]||`${k} · CONTRÔLER`):`${k} · VOICE HORS LIGNE`;$('.face').style.visibility=online?'visible':'hidden';$('#agentName').textContent=String(s.agent.name||s.agent_cli||'agent').toUpperCase();$('#agentState').textContent=(s.agent.state||'stopped').toUpperCase();const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';renderBackgroundPills(s.background);try{if(window.JarvisScene)JarvisScene.gate(s.scene,s.scene_limits)}catch(sceneError){console.error('[scène] scene.gate_failed',sceneError)}AG.agent=s.agent||null;AG.cli=s.agent_cli||'';if(!(current==='agents'&&coreOk()))updateSubagentBadge(s.subagents,false);watchSubagents(s.subagents)}catch(e){try{if(window.JarvisScene)JarvisScene.statusLost()}catch(_sceneError){/* la scène ne doit pas casser le statut */}$('#voiceState').textContent='OFFLINE';$('#agentState').textContent='OFFLINE';$('#voiceHint').textContent='VOICE HORS LIGNE';$('.face').style.visibility='hidden';updateSubagentBadge(null)}}
 async function openPanel(name){current=name;document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.toggle('active',b.dataset.panel===name));panel.classList.add('open');title.textContent={errors:'Errors',trace:'Trace',agents:'Agents'}[name];closeMenu(false);if(name==='agents'){openAgentsPanel();return}stopAgentsPolling();body.innerHTML='<div class="empty">Chargement…</div>';try{if(name==='errors')await renderErrors();if(name==='trace')body.innerHTML=entries(await api('/api/trace'))}catch(e){body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`}}
 function closePanel(){current=null;panel.classList.remove('open');document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.remove('active'));closeMenu(false);stopAgentsPolling()}
 
@@ -1593,7 +1596,7 @@ function showMenu({title,items,pos,origin,id=null,run=null}){
   closeMenu(false);
   ctxMenu.innerHTML=`<div class="mhead">${esc(title)}</div>`+items.map(it=>it==='-'
     ?'<div class="sep" role="separator"></div>'
-    :`<button type="button" role="menuitem" data-act="${esc(it.act)}" class="${it.danger?'danger':''}"${it.disabled?' disabled':''}><span>${esc(it.label)}</span>${it.key?`<kbd>${esc(it.key)}</kbd>`:''}</button>`).join('');
+    :`<button type="button" role="menuitem" data-act="${esc(it.act)}" class="${it.danger?'danger':''}"${it.disabled?' disabled':''}${it.note?' aria-disabled="true"':''}><span>${esc(it.label)}</span>${it.key?`<kbd>${esc(it.key)}</kbd>`:''}</button>`).join('');
   ctxMenu.setAttribute('aria-label',`Actions : ${title}`);
   ctxMenu.style.left='0px';ctxMenu.style.top='0px';
   ctxMenu.hidden=false;
@@ -1604,7 +1607,7 @@ function showMenu({title,items,pos,origin,id=null,run=null}){
   ctxMenu.style.left=Math.max(8,x)+'px';
   ctxMenu.style.top=Math.max(8,Math.min(y,H-h-8))+'px';
   AG.menu={id,origin,run,at:performance.now()};
-  const first=ctxMenu.querySelector('button:not(:disabled)');
+  const first=ctxMenu.querySelector('button:not(:disabled):not([aria-disabled="true"])')||ctxMenu.querySelector('button:not(:disabled)');
   if(first)first.focus({preventScroll:true});
 }
 function openMenu(id,pos,origin){
@@ -1629,8 +1632,13 @@ function closeMenu(restore){
 /* Confirmation en page (Slice 08), jamais `window.confirm` : rend une promesse
    vraie si l'utilisateur confirme. `lines` : texte, ou `[texte gras, suite]`.
    Échap, clic hors du panneau ou « Annuler » : faux. Le focus revient où il
-   était. Une seule à la fois : une nouvelle demande annule la précédente. */
-const CONFIRM={resolve:null,previous:null};
+   était. Une seule à la fois : une nouvelle demande annule la précédente.
+   Vraiment modale (reprise QA) : le reste de la page est `inert` (ni clic, ni
+   focus, ni geste de scène, ni notification cliquable ; la main de Barehands
+   reste active), et les touches sont prises au niveau de la fenêtre, en
+   capture : aucun raccourci d'interface ne passe, Échap ferme même quand le
+   focus est sur le corps du panneau. */
+const CONFIRM={resolve:null,previous:null,inert:[]};
 function confirmDialog({title,lines=[],confirmLabel='Confirmer',cancelLabel='Annuler',danger=false}){
   if(CONFIRM.resolve)finishConfirm(false);
   closeMenu(false);
@@ -1646,6 +1654,8 @@ function confirmDialog({title,lines=[],confirmLabel='Confirmer',cancelLabel='Ann
   $('#confirmGo').textContent=confirmLabel;$('#confirmCancel').textContent=cancelLabel;
   dialog.classList.toggle('danger',!!danger);
   CONFIRM.previous=document.activeElement;
+  CONFIRM.inert=[...document.body.children].filter(el=>el!==back&&el.id!=='jarvisHands'&&el.tagName!=='SCRIPT'&&!el.inert);
+  for(const el of CONFIRM.inert)el.inert=true;
   back.hidden=false;
   $('#confirmCancel').focus({preventScroll:true});
   return new Promise(resolve=>{CONFIRM.resolve=resolve});
@@ -1653,6 +1663,8 @@ function confirmDialog({title,lines=[],confirmLabel='Confirmer',cancelLabel='Ann
 function finishConfirm(value){
   const resolve=CONFIRM.resolve,previous=CONFIRM.previous;
   CONFIRM.resolve=null;CONFIRM.previous=null;
+  for(const el of CONFIRM.inert)el.inert=false;
+  CONFIRM.inert=[];
   $('#confirmBack').hidden=true;
   if(previous&&previous.isConnected&&typeof previous.focus==='function')try{previous.focus({preventScroll:true})}catch(_error){/* élément disparu */}
   if(resolve)resolve(value);
@@ -1660,14 +1672,20 @@ function finishConfirm(value){
 $('#confirmGo').addEventListener('click',()=>finishConfirm(true));
 $('#confirmCancel').addEventListener('click',()=>finishConfirm(false));
 $('#confirmBack').addEventListener('mousedown',e=>{if(e.target===e.currentTarget){e.preventDefault();finishConfirm(false)}});
-$('#confirmBack').addEventListener('keydown',e=>{
-  e.stopPropagation();
-  if(e.key==='Escape'){e.preventDefault();finishConfirm(false)}
-  else if(e.key==='Tab'){
+window.addEventListener('keydown',e=>{
+  if(!CONFIRM.resolve)return;
+  e.stopImmediatePropagation();
+  const dialog=$('#confirmDialog');
+  if(e.key==='Escape'){e.preventDefault();finishConfirm(false);return}
+  if(e.key==='Tab'){
     const buttons=[$('#confirmCancel'),$('#confirmGo')],i=buttons.indexOf(document.activeElement);
-    e.preventDefault();buttons[(i+(e.shiftKey?-1:1)+2)%2].focus();
+    e.preventDefault();buttons[i<0?0:(i+(e.shiftKey?-1:1)+2)%2].focus();
+    return;
   }
-});
+  // Entrée ou Espace sur un bouton du panneau : action par défaut du bouton ; tout le reste est avalé.
+  if(!(dialog.contains(e.target)&&e.target.tagName==='BUTTON'&&(e.key==='Enter'||e.key===' ')))e.preventDefault();
+},true);
+$('#confirmDialog').addEventListener('mousedown',e=>{if(!e.target.closest('button')){e.preventDefault();$('#confirmDialog').focus({preventScroll:true})}});
 async function runMenuAction(act,id){
   closeMenu(act!=='trace'&&act!=='details');
   if(act==='trace')return showTrace(id);
@@ -1719,7 +1737,7 @@ async function consoleAction(act){
 ctxMenu.addEventListener('mousedown',e=>e.preventDefault());  // garder le focus clavier dans le menu
 ctxMenu.addEventListener('click',e=>{
   const button=e.target.closest('button[data-act]');
-  if(!button||button.disabled||!AG.menu)return;
+  if(!button||button.disabled||button.getAttribute('aria-disabled')==='true'||!AG.menu)return;
   const menu=AG.menu;
   if(menu.run){closeMenu(true);menu.run(button.dataset.act);return}
   runMenuAction(button.dataset.act,menu.id);

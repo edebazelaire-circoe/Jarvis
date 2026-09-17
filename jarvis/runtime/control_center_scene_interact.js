@@ -2,7 +2,9 @@
    jarvis-constellation-scene-runtime, Slice 08).
 
    - Géométrie : glisser, redimensionner, flèches du clavier, changement de
-     représentation ; toujours bornée au cadre de référence (x ±160, y ±90).
+     représentation ; toujours bornée à la zone de composition sûre
+     (`SAFE_AREA`, x -152..138, y -72..68 : aucune commande de la page ne la
+     recouvre), en unités entières.
    - Menu : entrées selon la nature, l'origine et l'état de l'objet. « Arrêter »
      seulement pour une étoile `job` (`work_ref.source = job`) ; jamais pour un
      sous-agent du brain, qui n'a pas d'arrêt individuel (entrée désactivée
@@ -23,17 +25,26 @@
   'use strict';
 
   const FRAME=Object.freeze({halfWidth:160,halfHeight:90});
+  /* Zone de composition sûre (Slice 05) : même valeur que `SCENE_SAFE_AREA`
+     du domaine et `SAFE_AREA` du rendu (tests de parité). Décision PM (reprise
+     QA) : toute géométrie de l'utilisateur y reste. */
+  const SAFE_AREA=Object.freeze({x0:-152,x1:138,y0:-72,y1:68});
   /* Pas du clavier, en unités de scène : Maj+flèche (2), Ctrl+Maj+flèche (10),
      Ctrl+flèche redimensionne de 2. */
   const KEY_STEP=2,KEY_STEP_LARGE=10;
   /* Tailles minimales et par défaut, en unités (défauts = `DEFAULT_SIZE` du
      rendu : une forme changée prend la taille que le résolveur lui donnerait). */
   const MIN_SIZE=Object.freeze({capsule:Object.freeze({w:16,h:5}),window:Object.freeze({w:40,h:24})});
+  /* Taille maximale d'une capsule (même valeur que `CAPSULE_MAX` du rendu) :
+     au-delà, le rendu la dessine à sa hauteur naturelle, centrée. */
+  const MAX_SIZE=Object.freeze({capsule:Object.freeze({w:160,h:10})});
   const DEFAULT_SIZE=Object.freeze({point:Object.freeze({w:6,h:6}),signal:Object.freeze({w:4,h:4}),
     capsule:Object.freeze({w:40,h:7}),window:Object.freeze({w:64,h:40})});
-  /* Seuil (px) au-delà duquel un appui devient un glissement ; appui long
-     (ms) qui ouvre le menu (Barehands, écran tactile). */
-  const DRAG_THRESHOLD_PX=4,LONG_PRESS_MS=550;
+  /* Seuil (px) au-delà duquel un appui devient un glissement : 4 px à la
+     souris, 10 px pour un pointeur grossier (tactile, stylet) ou la main de
+     Barehands, pour qu'un appui long qui tremble n'épingle rien ; appui long
+     (ms) qui ouvre le menu. */
+  const DRAG_THRESHOLD_PX=4,COARSE_DRAG_THRESHOLD_PX=10,LONG_PRESS_MS=550;
   /* Un affichage optimiste jamais confirmé par l'état tenu s'efface au plus
      tard après ce délai (lecture en panne, patch perdu). */
   const PENDING_MAX_MS=30000;
@@ -48,17 +59,25 @@
 
   /* ----------------------------------------------------------- géométrie */
 
-  /* Boîte bornée au cadre, en unités entières : taille ≥ minimum de la forme
-     et ≤ cadre, coin haut gauche gardé dans le cadre. Des entiers : ce que le
-     cerveau relit (`scene_inspect`) reste lisible, et un geste d'un pixel ne
-     fabrique pas une nouvelle révision. */
+  /* Boîte bornée à la zone sûre, en unités entières : taille ≥ minimum et ≤
+     maximum de la forme (et ≤ zone), coin haut gauche gardé pour que la boîte
+     entière tienne dans la zone. Des entiers : ce que le cerveau relit
+     (`scene_inspect`) reste lisible, et un geste d'un pixel ne fabrique pas
+     une nouvelle révision. */
   function clampBox(box,representation){
     const min=MIN_SIZE[representation]||{w:1,h:1};
-    const w=Math.round(clamp(Number(box.w)||min.w,min.w,2*FRAME.halfWidth));
-    const h=Math.round(clamp(Number(box.h)||min.h,min.h,2*FRAME.halfHeight));
-    const x=Math.round(clamp(Number(box.x)||0,-FRAME.halfWidth,FRAME.halfWidth-w));
-    const y=Math.round(clamp(Number(box.y)||0,-FRAME.halfHeight,FRAME.halfHeight-h));
+    const areaW=SAFE_AREA.x1-SAFE_AREA.x0,areaH=SAFE_AREA.y1-SAFE_AREA.y0;
+    const max=MAX_SIZE[representation]||{w:areaW,h:areaH};
+    const w=Math.round(clamp(Number(box.w)||min.w,min.w,Math.min(max.w,areaW)));
+    const h=Math.round(clamp(Number(box.h)||min.h,min.h,Math.min(max.h,areaH)));
+    const x=Math.round(clamp(Number(box.x)||0,SAFE_AREA.x0,SAFE_AREA.x1-w));
+    const y=Math.round(clamp(Number(box.y)||0,SAFE_AREA.y0,SAFE_AREA.y1-h));
     return {x,y,w,h};
+  }
+
+  /* Seuil de glissement pour un pointeur. */
+  function dragThreshold(pointerType,barehands){
+    return pointerType==='mouse'&&!barehands?DRAG_THRESHOLD_PX:COARSE_DRAG_THRESHOLD_PX;
   }
 
   /* Écart en pixels → écart en unités pour la fenêtre `vp` (`JarvisSceneLayout.viewport`). */
@@ -71,13 +90,15 @@
     return clampBox({x:start.x+dx,y:start.y+dy,w:start.w,h:start.h},representation);
   }
 
-  /* Redimensionner par le coin bas droit : le coin haut gauche ne bouge pas,
-     la taille ne dépasse ni le minimum ni le bord du cadre. */
+  /* Redimensionner par le coin bas droit : le coin haut gauche ne bouge pas
+     (sauf s'il était hors de la zone sûre), la taille ne dépasse ni le minimum,
+     ni le maximum de la forme, ni le bord de la zone. */
   function resizeBox(start,dw,dh,representation){
     const min=MIN_SIZE[representation]||{w:1,h:1};
-    const w=clamp(start.w+dw,min.w,FRAME.halfWidth-start.x);
-    const h=clamp(start.h+dh,min.h,FRAME.halfHeight-start.y);
-    return clampBox({x:start.x,y:start.y,w,h},representation);
+    const x=clamp(start.x,SAFE_AREA.x0,SAFE_AREA.x1-min.w),y=clamp(start.y,SAFE_AREA.y0,SAFE_AREA.y1-min.h);
+    const w=clamp(start.w+dw,min.w,SAFE_AREA.x1-x);
+    const h=clamp(start.h+dh,min.h,SAFE_AREA.y1-y);
+    return clampBox({x,y,w,h},representation);
   }
 
   const resizable=representation=>representation==='capsule'||representation==='window';
@@ -197,7 +218,7 @@
 
   /* Entrées du menu d'un objet (`state` : état dessiné, affichage optimiste
      compris). Rend `{title, items}` ; `items` : `'-'` ou
-     `{act, label, danger?, disabled?}`. Actions : `rep:<forme>`, `pin`,
+     `{act, label, danger?, disabled?, note?}`. Actions : `rep:<forme>`, `pin`,
      `unpin`, `hide`, `stop`, `archive`, `archive-finished`. */
   function menuModel(state,objectId,ctx){
     const item=state.objects.get(objectId);
@@ -216,13 +237,15 @@
     items.push('-');
     if(execution&&ACTIVE_WORK.has(item.exec_state)){
       if(item.kind==='job'&&item.work_ref&&item.work_ref.source==='job')items.push({act:'stop',label:'Arrêter la tâche…',danger:true});
-      else items.push({act:'stop-unavailable',label:'Arrêt impossible : sous-agent du brain',disabled:true});
+      /* Note annoncée (focalisable, `aria-disabled`), pas un bouton désactivé
+         que le clavier et le lecteur d'écran sautent. */
+      else items.push({act:'stop-unavailable',label:'Arrêt impossible : sous-agent du brain',note:true});
     }
     const signals=execution?cascadeOf(state,objectId).length:0;
     items.push({act:'archive',label:signals?(signals>1?'Archiver avec ses signaux…':'Archiver avec son signal…'):'Archiver…',danger:true});
     const finished=Number(context.finished)||0;
     if((execution||runtimeSignal)&&finished>0)
-      items.push({act:'archive-finished',label:`Archiver les travaux terminés (${finished})…`,danger:true});
+      items.push({act:'archive-finished',label:`Archiver les travaux terminés (${finished} ${finished>1?'objets':'objet'})…`,danger:true});
     return {title,items};
   }
 
@@ -251,92 +274,173 @@
     revision_exhausted:'la scène ne peut plus changer',
   });
 
+  /* Échecs de transport dans les mots de l'utilisateur, comme le classement
+     de Slice 03 (`classify_scene_call_failure`) : `unknown` vrai quand la
+     demande a pu partir (issue inconnue, l'état relu dira ce qui s'est
+     passé), faux quand rien n'a été appliqué. Le texte brut (anglais,
+     adresses) ne va qu'à la console. */
+  const TRANSPORT=Object.freeze({
+    command_not_sent:['Core ne répond pas : rien n’a été envoyé, réessayer est sûr.',false],
+    core_timeout:['Core n’a pas répondu à temps : issue inconnue, la scène se relit.',true],
+    scene_unavailable:['Scène indisponible dans Core : rien n’a été appliqué.',false],
+    scene_persist_failed:['Core n’a pas pu enregistrer : rien n’a été appliqué.',false],
+    invalid_scene_response:['Réponse de Core illisible : issue inconnue, la scène se relit.',true],
+    core_refused:['Core a refusé la demande.',false],
+    invalid_request:['Demande refusée : forme invalide.',false],
+    payload_too_large:['Demande trop grosse : rien n’a été envoyé.',false],
+    scene_actor_forbidden:['Demande refusée : acteur non permis.',false],
+    not_configured:['Scène non reliée à Core dans ce Control Center.',false],
+    not_found:['Core ne connaît pas ce job (déjà oublié, ou Core redémarré).',false],
+    not_cancellable:['Ce travail n’a pas d’arrêt individuel.',false],
+    timeout:['Pas de réponse du Control Center : issue inconnue, la scène se relit.',true],
+    network_error:['Control Center injoignable : issue inconnue, la scène se relit.',true],
+  });
+
+  function transportFailure(status,body){
+    const payload=body&&typeof body==='object'?body:{};
+    const error=payload.error&&typeof payload.error==='object'?payload.error:{};
+    const code=typeof error.code==='string'?error.code:(status?`http_${status}`:'network_error');
+    const detail=typeof error.message==='string'?error.message:'';
+    let words=TRANSPORT[code];
+    if(code==='core_unreachable')
+      words=/non envoy/i.test(detail)?['Core injoignable : rien n’a été envoyé.',false]:['Liaison à Core perdue : issue inconnue, la scène se relit.',true];
+    if(!words)words=[status?`Erreur ${status} du Control Center.`:'Control Center injoignable : issue inconnue, la scène se relit.',status===0||status>=500];
+    return {code,message:words[0],unknown:words[1],detail};
+  }
+
+  /* Échec d'un `fetch` (aucune réponse HTTP) : délai de la page, ou réseau. La
+     page ne sait pas si la demande est partie : issue inconnue. */
+  function networkFailure(error){
+    return transportFailure(0,{error:{code:error&&error.code==='timeout'?'timeout':'network_error',message:String(error&&error.message||'')}});
+  }
+
   /* Réponse de `POST /api/scene/commands` → `{ok, outcome, reason, code,
-     message, revision, unknown}`. `ok` : appliquée ou sans effet ; `unknown` :
-     issue inconnue (504), l'état relu dira ce qui s'est passé. */
+     message, revision, unknown, detail}`. `ok` : appliquée ou sans effet. */
   function classifyResponse(status,body){
     const payload=body&&typeof body==='object'?body:{};
     if(status===200&&typeof payload.outcome==='string'){
       const ok=payload.outcome==='applied'||payload.outcome==='duplicate';
       const reason=typeof payload.reason==='string'?payload.reason:'';
       return {ok,outcome:payload.outcome,reason,code:'',revision:Number.isSafeInteger(payload.revision)?payload.revision:null,unknown:false,
-        message:ok?'':`refusé : ${REFUSALS[reason]||reason||payload.outcome}`};
+        message:ok?'':`refusé : ${REFUSALS[reason]||reason||payload.outcome}`,detail:''};
     }
-    const error=payload.error&&typeof payload.error==='object'?payload.error:{};
-    const code=typeof error.code==='string'?error.code:(status?`http_${status}`:'network_error');
-    const message=typeof error.message==='string'&&error.message?error.message:(status?`HTTP ${status}`:'Control Center injoignable');
-    return {ok:false,outcome:'failed',reason:'',code,message,revision:null,unknown:status===504||code==='core_timeout'};
+    const failure=transportFailure(status,payload);
+    return {ok:false,outcome:'failed',reason:'',revision:null,...failure};
+  }
+
+  /* Issue d'un arrêt de job (`POST /api/jobs/cancel`) : titre, précision,
+     ton, et si l'étoile doit encore attendre sa fin (`terminal` faux). */
+  function stopOutcome(outcome){
+    return ({
+      cancelled:{title:'Tâche arrêtée',sub:'Le job est annulé.',kind:'ok',terminal:true},
+      already_terminal:{title:'Tâche déjà terminée',sub:'Rien à arrêter.',kind:'info',terminal:true},
+      cancel_requested:{title:'Arrêt demandé',sub:'Core n’a pas encore confirmé la fin du job.',kind:'info',terminal:false},
+      cleanup_unknown:{title:'Arrêt demandé, nettoyage non confirmé',sub:'Le job reste en cours tant que son exécution n’est pas nettoyée.',kind:'warn',terminal:false},
+    })[outcome]||{title:'Arrêt : issue inattendue',sub:String(outcome||''),kind:'warn',terminal:false};
+  }
+
+  /* Objet à sélectionner quand `removed` quitte le dessin : le suivant dans
+     l'ordre de lecture (`orderedIds`, ordre spatial), sinon le précédent. */
+  function focusAfterRemoval(orderedIds,removed,currentId){
+    const gone=new Set(removed);
+    const index=orderedIds.indexOf(currentId);
+    const start=index<0?0:index;
+    for(let i=start+1;i<orderedIds.length;i++)if(!gone.has(orderedIds[i]))return orderedIds[i];
+    for(let i=Math.min(start,orderedIds.length)-1;i>=0;i--)if(!gone.has(orderedIds[i]))return orderedIds[i];
+    if(index<0)for(const id of orderedIds)if(!gone.has(id))return id;
+    return null;
   }
 
   /* ---------------------------------------------------- affichage optimiste */
 
-  /* Modifications envoyées, dessinées avant que Core ne les confirme.
-     `begin` fusionne les champs d'un objet (`geometry`, `representation`,
-     `visibility`, `pinned`, `archived`) et rend un jeton ; `confirm` note la
-     révision rendue ; `rollback` retire l'entrée (si le jeton est le dernier) ;
-     `prune(state, now)` efface ce que l'état tenu montre déjà (révision
-     atteinte) ou ce qui a trop attendu ; `overlay(state)` rend l'état à
-     dessiner. `version` change à chaque modification (mémoïsation). */
+  /* Modifications envoyées, dessinées avant que Core ne les confirme. Une
+     **couche** par opération (`geometry`, `representation`, `visibility`,
+     `pinned`, `archived`), dans l'ordre d'envoi : `begin` ajoute une couche et
+     rend son jeton ; `confirm` note la révision rendue pour cette couche ;
+     `drop` retire un champ d'une couche ; `rollback` retire **cette couche
+     seulement** (une opération plus récente refusée ne défait jamais une plus
+     ancienne acceptée mais pas encore reçue) ; `prune(state, now)` retire les
+     couches que l'état tenu montre déjà (révision atteinte) ou qui ont trop
+     attendu ; `overlay(state)` applique les couches dans l'ordre. `version`
+     change à chaque modification (mémoïsation). */
   function createPending(maxAgeMs=PENDING_MAX_MS){
-    const entries=new Map();let seq=0,version=0;
+    const layers=new Map();let seq=0,version=0;
+    const find=(id,token)=>{const list=layers.get(id);return list?list.find(layer=>layer.token===token)||null:null};
+    const remove=(id,layer)=>{
+      const list=layers.get(id);
+      const at=list?list.indexOf(layer):-1;
+      if(at<0)return false;
+      list.splice(at,1);if(!list.length)layers.delete(id);version++;
+      return true;
+    };
     return {
       begin(id,fields,now){
-        const previous=entries.get(id);
-        const entry={fields:{...(previous?previous.fields:{}),...fields},token:++seq,revision:null,at:now};
-        entries.set(id,entry);version++;
-        return entry.token;
+        const layer={fields:{...fields},token:++seq,revision:null,at:now};
+        if(!layers.has(id))layers.set(id,[]);
+        layers.get(id).push(layer);version++;
+        return layer.token;
       },
       confirm(id,token,revision){
-        const entry=entries.get(id);
-        if(!entry||entry.token!==token)return false;
-        if(Number.isSafeInteger(revision))entry.revision=Math.max(entry.revision||0,revision);
+        const layer=find(id,token);
+        if(!layer)return false;
+        if(Number.isSafeInteger(revision))layer.revision=Math.max(layer.revision||0,revision);
         return true;
       },
-      /* Retirer un seul champ (épinglage refusé après un déplacement accepté). */
       drop(id,token,field){
-        const entry=entries.get(id);
-        if(!entry||entry.token!==token||!(field in entry.fields))return false;
-        delete entry.fields[field];version++;
+        const layer=find(id,token);
+        if(!layer||!(field in layer.fields))return false;
+        delete layer.fields[field];version++;
+        if(!Object.keys(layer.fields).length)remove(id,layer);
         return true;
       },
       rollback(id,token){
-        const entry=entries.get(id);
-        if(!entry||(token!==undefined&&entry.token!==token))return false;
-        entries.delete(id);version++;
-        return true;
+        if(token===undefined){if(!layers.delete(id))return false;version++;return true}
+        const layer=find(id,token);
+        return layer?remove(id,layer):false;
       },
       prune(state,now){
         const removed=[];
-        for(const [id,entry] of entries){
-          const reached=entry.revision!==null&&state&&state.revision>=entry.revision;
-          const expired=now-entry.at>maxAgeMs;
-          if(reached||expired){entries.delete(id);removed.push({id,reason:reached?'reached':'expired'})}
+        for(const [id,list] of [...layers]){
+          for(const layer of [...list]){
+            const reached=layer.revision!==null&&!!state&&state.revision>=layer.revision;
+            const expired=now-layer.at>maxAgeMs;
+            if(reached||expired){remove(id,layer);removed.push({id,token:layer.token,reason:reached?'reached':'expired'})}
+          }
         }
-        if(removed.length)version++;
         return removed;
       },
       overlay(state){
-        if(!state||!entries.size)return state;
+        if(!state||!layers.size)return state;
         let objects=null;
-        for(const [id,entry] of entries){
+        for(const [id,list] of layers){
           const item=state.objects.get(id);
           if(!item)continue;
           if(!objects)objects=new Map(state.objects);
-          if(entry.fields.archived){objects.delete(id);continue}
+          const fields=Object.assign({},...list.map(layer=>layer.fields));
+          if(fields.archived){objects.delete(id);continue}
           const next={...item};
-          if(entry.fields.geometry)next.geometry={...entry.fields.geometry};
-          if(entry.fields.representation)next.representation=entry.fields.representation;
-          if(entry.fields.visibility)next.visibility=entry.fields.visibility;
-          if(typeof entry.fields.pinned==='boolean')next.constraints={...item.constraints,pinned_by_user:entry.fields.pinned};
+          if(fields.geometry)next.geometry={...fields.geometry};
+          if(fields.representation)next.representation=fields.representation;
+          if(fields.visibility)next.visibility=fields.visibility;
+          if(typeof fields.pinned==='boolean')next.constraints={...item.constraints,pinned_by_user:fields.pinned};
           objects.set(id,next);
         }
         return objects?{...state,objects}:state;
       },
-      has:id=>entries.has(id),
-      size:()=>entries.size,
+      has:id=>layers.has(id),
+      size:()=>layers.size,
       version:()=>version,
-      oldestAt(){let at=null;for(const entry of entries.values())if(at===null||entry.at<at)at=entry.at;return at},
     };
+  }
+
+  /* Disposition sur laquelle le résolveur valide ses placements : celle de
+     l'état tenu (`held`), jamais celle de l'état dessiné avec les
+     modifications optimistes (`drawn`), qui peuvent encore être refusées.
+     Sans modification en attente (`drawn === held`), la disposition dessinée
+     sert telle quelle. `resolve` : `JarvisSceneLayout.resolveLayout`. */
+  function commitLayout(held,drawn,drawnLayout,resolve){
+    if(!held)return null;
+    return drawn===held&&drawnLayout?drawnLayout:resolve(held);
   }
 
   /* Objets masqués, dans l'ordre de Core. */
@@ -347,10 +451,11 @@
     return out;
   }
 
-  const api=Object.freeze({FRAME,KEY_STEP,KEY_STEP_LARGE,MIN_SIZE,DEFAULT_SIZE,DRAG_THRESHOLD_PX,LONG_PRESS_MS,PENDING_MAX_MS,
-    MAX_ARCHIVE_IDS,MAX_COMMAND_BYTES,TERMINAL,REFUSALS,
-    clampBox,pxToUnits,dragBox,resizeBox,resizable,keyIntent,applyKey,representationBox,sameBox,
-    signalOwners,cascadeOf,bulkSelection,chunkIds,menuModel,commands,classifyResponse,createPending,hiddenObjects});
+  const api=Object.freeze({FRAME,SAFE_AREA,KEY_STEP,KEY_STEP_LARGE,MIN_SIZE,MAX_SIZE,DEFAULT_SIZE,DRAG_THRESHOLD_PX,COARSE_DRAG_THRESHOLD_PX,
+    LONG_PRESS_MS,PENDING_MAX_MS,MAX_ARCHIVE_IDS,MAX_COMMAND_BYTES,TERMINAL,REFUSALS,TRANSPORT,
+    clampBox,dragThreshold,pxToUnits,dragBox,resizeBox,resizable,keyIntent,applyKey,representationBox,sameBox,
+    signalOwners,cascadeOf,bulkSelection,chunkIds,menuModel,commands,transportFailure,networkFailure,classifyResponse,stopOutcome,
+    focusAfterRemoval,commitLayout,createPending,hiddenObjects});
   root.JarvisSceneInteract=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

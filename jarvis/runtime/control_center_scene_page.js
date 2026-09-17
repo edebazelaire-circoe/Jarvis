@@ -590,7 +590,12 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
   opacity:0;transition:opacity .14s ease-out}
 .sc-grip svg{width:9px;height:9px;fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round}
 .sc-capsule .sc-grip{right:5px;bottom:50%;transform:translateY(50%)}
-.sc-node:hover>.sc-grip,.sc-node:focus>.sc-grip,.sc-node.sc-dragging>.sc-grip{opacity:.9}
+.sc-node:hover>.sc-grip,.sc-node:focus>.sc-grip,.sc-node.sc-selected>.sc-grip,.sc-node.sc-dragging>.sc-grip{opacity:.9}
+.sc-capsule.sc-selected,.sc-window.sc-selected{box-shadow:inset 0 0 0 1px var(--sc-ink),0 10px 28px rgba(0,0,0,.34)}
+.sc-point.sc-selected .sc-mark{outline:1px solid var(--sc-ink);outline-offset:5px}
+/* Arrêt en cours (reprise QA) : anneau en tirets orange qui tourne, jusqu'à la fin dite par Core. */
+.sc-node.sc-stopping .sc-ring{border:1.5px dashed var(--sc-warn)!important;opacity:1!important;animation:sc-spin 1.6s linear infinite!important}
+.sc-capsule.sc-stopping,.sc-window.sc-stopping{box-shadow:inset 0 0 0 1px var(--sc-warn),0 10px 28px rgba(0,0,0,.34)}
 .sc-grip:hover{color:var(--sc-ink)}
 /* Seul le déplacement glisse (composition) ; une taille change d'un coup. */
 .scene.sc-ready .sc-node{transition:transform .42s cubic-bezier(.16,1,.3,1)}
@@ -685,12 +690,13 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
 .sc-note.sc-full::before{background:#ff6b7d}
 .sc-note.sc-busy::before{animation:sc-breathe 1.6s ease-in-out infinite;background:var(--sc-ink)}
 .sc-sr{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+@keyframes sc-spin{to{transform:rotate(360deg)}}
 @keyframes sc-breathe{0%,100%{opacity:.32;transform:scale(.86)}50%{opacity:.9;transform:scale(1.08)}}
 @keyframes sc-alert{0%{opacity:.95;transform:scale(.62)}80%,100%{opacity:0;transform:scale(1.75)}}
 @media(max-width:700px){.sc-status{left:10px;bottom:12px;max-width:calc(100vw - 90px)}}
 @media(prefers-reduced-motion:reduce){
   .scene .sc-node{transition:none!important}
-  .scene .sc-ring,.scene .sc-note::before{animation:none!important}
+  .scene .sc-ring,.scene .sc-note::before,.scene .sc-node.sc-stopping .sc-ring{animation:none!important}
   .scene .sc-label{transition:none}
 }`;
 
@@ -714,6 +720,10 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   /* Slice 08 : modifications optimistes, geste en cours, édition au clavier. */
   const pending=I?I.createPending():null;
   let viewMemo={state:null,version:-1,value:null},gesture=null,keyEdit=null,kbdMenuAt=0,pruneTimer=0;
+  /* Reprise QA : sélection (poignée visible), focus à rendre après un retrait,
+     étoiles en cours d'arrêt, délai réel d'un arrêt (lu dans `/api/status`). */
+  let selectedId=null,pendingFocus=null,jobCancelTimeoutS=null,serverMemo={state:null,value:null};
+  const stopping=new Map();
   const actionStats={moves:0,resizes:0,representations:0,visibility:0,pins:0,archives:0,bulkArchives:0,stops:0,menus:0,refused:0,failed:0,rolledBack:0};
   const inflight=new Set();
   const freshUntil=new Map();
@@ -779,7 +789,10 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     /* Seulement en long-poll sain : pendant une relecture, l'état tenu peut
        être périmé et un objet déjà placé ailleurs paraître libre. */
     const healthy=!!lastView.state&&lastView.health.level==='ok'&&lastView.phase==='polling'&&lastView.role!=='follower';
-    committer.update({state:lastView.state,layout:currentLayout(),leader:leader.held,healthy});
+    /* Disposition de l'état tenu, jamais de l'état dessiné : une place libérée
+       seulement par une modification optimiste (qui peut être refusée) n'est
+       jamais validée par le résolveur (reprise QA, MAJOR-2). */
+    committer.update({state:lastView.state,layout:serverLayout(),leader:leader.held,healthy});
   }
 
   /* Rôle de l'onglet visible : meneur si le verrou est libre, sinon suiveur en
@@ -854,7 +867,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(animTimer){window.clearTimeout(animTimer);animTimer=0}
     root=null;linksEl=null;statusEl=null;liveEl=null;nodes.clear();freshUntil.clear();
     lastView=null;lastState=null;layout=null;layoutState=null;lastModel=null;
-    viewMemo={state:null,version:-1,value:null};gesture=null;
+    viewMemo={state:null,version:-1,value:null};serverMemo={state:null,value:null};gesture=null;
+    selectedId=null;pendingFocus=null;stopping.clear();
     if(keyEdit&&keyEdit.timer)window.clearTimeout(keyEdit.timer);
     keyEdit=null;
     if(pruneTimer){window.clearTimeout(pruneTimer);pruneTimer=0}
@@ -872,6 +886,16 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     const version=pending.version();
     if(viewMemo.state!==lastState||viewMemo.version!==version)viewMemo={state:lastState,version,value:pending.overlay(lastState)};
     return viewMemo.value;
+  }
+
+  /* Disposition de l'état tenu (validations du résolveur). Sans modification
+     en attente, c'est la disposition dessinée elle-même. */
+  function serverLayout(){
+    if(!lastState)return null;
+    const drawn=viewState();
+    if(drawn===lastState)return currentLayout();
+    if(serverMemo.state!==lastState)serverMemo={state:lastState,value:I.commitLayout(lastState,drawn,null,L.resolveLayout)};
+    return serverMemo.value;
   }
 
   /* Disposition calculée à la demande, une fois par état dessiné. */
@@ -1000,6 +1024,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
         node.category,node.summary,node.items,node.label]);
       if(content!==record.content){fill(record.el,node);record.content=content;record.anim=null}
       if(record.anim!==node.animate){record.el.classList.toggle('sc-anim',node.animate);record.anim=node.animate}
+      record.el.classList.toggle('sc-selected',node.id===selectedId);
+      record.el.classList.toggle('sc-stopping',stopping.has(node.id));
       const place=`${node.shape}|${node.compact}|${node.cx}|${node.cy}|${node.box.left}|${node.box.top}|${node.box.width}|${node.box.height}|${node.stack}`;
       /* Sous la main de l'utilisateur (glisser, clavier) : l'aperçu garde la place. */
       if(place!==record.place&&!record.dragging){position(record.el,node);record.place=place}
@@ -1010,6 +1036,21 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     }
     markItemsThatFit();
     updateTabStop(list);
+    restorePendingFocus();
+  }
+
+  /* Après un retrait (archivage, masquage) ou un réaffichage : la sélection va
+     à l'objet prévu dès qu'il est dessiné (2 s au plus). */
+  function restorePendingFocus(){
+    if(!pendingFocus)return;
+    if(Date.now()-pendingFocus.at>2000){pendingFocus=null;return}
+    const record=pendingFocus.id&&nodes.get(pendingFocus.id);
+    if(!pendingFocus.id){pendingFocus=null;return}
+    if(!record)return;
+    const id=pendingFocus.id;pendingFocus=null;
+    focusId=id;select(id);
+    updateTabStop(lastModel?lastModel.nodes:[]);
+    if(!(typeof CONFIRM==='object'&&CONFIRM&&CONFIRM.resolve))record.el.focus({preventScroll:true});
   }
 
   /* Liste d'éléments entière : pas de fondu. */
@@ -1073,6 +1114,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     const el=nodeElement(event.target);
     if(!el)return;
     focusId=el.dataset.objectId;
+    if(I)select(focusId);
     if(lastModel)updateTabStop(lastModel.nodes);
     clampLabel(el);
   }
@@ -1105,6 +1147,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   const round1=v=>Math.round(v*10)/10;
 
   function nodeOf(id){return lastModel?lastModel.nodes.find(node=>node.id===id)||null:null}
+  /* Boîte stockée (ou placée par le résolveur) de l'objet, dans l'état dessiné. */
   function drawnBox(id){const current=currentLayout();return current?current.placements.get(id)||null:null}
   function viewportNow(){return L.viewport(root.clientWidth||window.innerWidth,root.clientHeight||window.innerHeight)}
   function anchorOfNode(el){
@@ -1113,10 +1156,12 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   }
   function titleOf(id){const node=nodeOf(id);return node?node.title:id}
   function quoted(id){const text=titleOf(id);return `« ${text.length>60?text.slice(0,59)+'…':text} »`}
+  const errorText=error=>String(error&&error.message||error);
+  const barehandsActive=()=>!!document.querySelector('#jarvisHands .jh-token');
 
   /* Aperçu d'une boîte (unités) sur le nœud, dans sa forme dessinée. */
   function previewAt(el,node,box){
-    const screen=L.toScreen(viewportNow(),box);
+    const screen=L.toScreen(viewportNow(),L.drawnBox(node.representation,box));
     position(el,{...node,box:screen,cx:round1(screen.left+screen.width/2),cy:round1(screen.top+screen.height/2)});
   }
 
@@ -1129,7 +1174,21 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   }
 
   function notify(options){
-    if(typeof toast==='function')try{toast({ms:4500,...options})}catch(error){consoleLog('error','scene.toast_failed',{error:String(error&&error.message||error)})}
+    if(typeof toast==='function')try{toast({ms:4500,...options})}catch(error){consoleLog('error','scene.toast_failed',{error:errorText(error)})}
+  }
+
+  /* Annonce d'un changement d'état au lecteur d'écran (région vivante polie). */
+  function announce(text){
+    if(!liveEl||!text)return;
+    liveEl.textContent=text;announced=text;
+  }
+
+  /* Échec imprévu d'une action de l'utilisateur (défaut de la page) : dit à
+     l'écran, journalisé en console, jamais silencieux. */
+  function actionFailed(action,id,error){
+    actionStats.failed++;
+    consoleLog('error','scene.user_action_failed',{action,object_id:id,error:errorText(error)});
+    notify({title:`${action} impossible`,sub:'Erreur de la page ; recharger si cela se répète.',kind:'bad'});
   }
 
   function pendingChanged(){
@@ -1147,26 +1206,39 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(removed.length){scheduleRender();pushCommitter()}
   }
 
+  /* Sélection à déplacer quand des objets quittent le dessin (archivage,
+     masquage) : le voisin dans l'ordre de lecture, focalisé au prochain rendu. */
+  function planFocusAfterRemoval(removedIds,message){
+    const list=lastModel?lastModel.nodes:[];
+    const active=nodeElement(document.activeElement);
+    const current=active?active.dataset.objectId:(focusId||removedIds[0]);
+    const next=I.focusAfterRemoval(L.spatialOrder(list).map(node=>node.id),removedIds,current);
+    pendingFocus={id:next,at:Date.now()};
+    announce(message);
+    scheduleRender();
+  }
+
   /* `POST /api/scene/commands` (acteur `user` posé par le Control Center), depuis
-     n'importe quel onglet : les gestes ne dépendent pas du meneur. */
+     n'importe quel onglet : les gestes ne dépendent pas du meneur. Le texte
+     brut d'un échec ne va qu'à la console. */
   async function sendCommand(command){
+    let result;
     try{
       const response=await requestJson('/api/scene/commands',{method:'POST',body:command,timeoutMs:15000});
-      return I.classifyResponse(response.status,response.body);
+      result=I.classifyResponse(response.status,response.body);
     }catch(error){
-      const timeout=error&&error.code==='timeout';
-      return {ok:false,outcome:'failed',reason:'',code:errorCodeOf(error),revision:null,unknown:timeout,
-        message:timeout?`${error.message} : issue inconnue, la scène se relit`:'Control Center injoignable : rien n’a été envoyé'};
+      result={ok:false,outcome:'failed',reason:'',revision:null,...I.networkFailure(error)};
     }
+    if(!result.ok&&result.detail)consoleLog('warn','scene.user_command_detail',{op:command.op,code:result.code,detail:result.detail});
+    return result;
   }
-  const errorCodeOf=error=>String(error&&(error.code||error.name)||'network_error');
 
   /* Refus ou échec : toast discret, journal console, compteur. */
-  function reportRefusal(action,id,result){
+  function reportRefusal(action,id,result,extra){
     if(result.outcome==='failed')actionStats.failed++;else actionStats.refused++;
     consoleLog(result.outcome==='failed'?'warn':'info','scene.user_command_refused',
-      {action,object_id:id,outcome:result.outcome,reason:result.reason,code:result.code});
-    notify({title:`${action} impossible`,sub:result.message,kind:result.unknown?'warn':'bad'});
+      {action,object_id:id,outcome:result.outcome,reason:result.reason,code:result.code,unknown:!!result.unknown});
+    notify({title:`${action} impossible`,sub:result.message,kind:result.unknown?'warn':'bad',...(extra||{})});
   }
 
   /* Envoyer une modification dessinée tout de suite ; annulée sur refus. */
@@ -1184,30 +1256,42 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     return {result,token};
   }
 
-  /* Glisser déposé : position (`placed_by = user`) puis épingle, sauf si déjà épinglé. */
-  async function commitMove(id,box){
-    actionStats.moves++;
+  /* Toute géométrie de l'utilisateur (glisser, redimensionner, clavier) épingle
+     l'objet (Décision 9 ; décision PM, reprise QA). Ordre : l'épingle d'abord,
+     puis la position — l'utilisateur peut déplacer un objet épinglé, et le
+     cerveau ne peut plus rien placer entre les deux. Un objet encore sans
+     géométrie ne s'épingle pas : position, épingle, puis position de nouveau
+     (sans effet, `duplicate`, si personne n'a bougé l'objet entre-temps).
+     Échec : les deux étapes reviennent (désépinglage si l'objet ne l'était pas). */
+  async function commitUserGeometry(id,box,kind){
+    if(kind==='resize')actionStats.resizes++;else actionStats.moves++;
     const item=lastState&&lastState.objects.get(id);
-    const wasPinned=!!(item&&item.constraints&&item.constraints.pinned_by_user);
-    const {result,token}=await optimistic('Déplacement',id,{geometry:box,pinned:true},I.commands.setGeometry(id,box));
-    if(!result.ok)return;
-    consoleLog('info','scene.user_moved',{object_id:id,revision:result.revision,outcome:result.outcome});
-    if(wasPinned)return;
-    const pinned=await sendCommand(I.commands.pin(id));
-    if(!pinned.ok){
-      if(pending.drop(id,token,'pinned'))pendingChanged();
-      reportRefusal('Épinglage',id,pinned);
-      return;
+    if(!item)return;
+    const wasPinned=!!(item.constraints&&item.constraints.pinned_by_user);
+    const placed=!!item.geometry;
+    const action=kind==='resize'?'Redimensionnement':'Déplacement';
+    const token=pending.begin(id,{geometry:box,pinned:true},Date.now());
+    pendingChanged();
+    const steps=[];
+    if(!wasPinned&&placed)steps.push('pin');
+    steps.push('geometry');
+    if(!wasPinned&&!placed)steps.push('pin','geometry');
+    let pinnedNow=false;
+    for(const step of steps){
+      const result=await sendCommand(step==='pin'?I.commands.pin(id):I.commands.setGeometry(id,box));
+      if(!result.ok){
+        if(pinnedNow&&!wasPinned){
+          const undo=await sendCommand(I.commands.unpin(id));
+          if(!undo.ok)consoleLog('warn','scene.user_unpin_compensation_failed',{object_id:id,code:undo.code,reason:undo.reason});
+        }
+        if(pending.rollback(id,token)){actionStats.rolledBack++;pendingChanged()}
+        return reportRefusal(step==='pin'?'Épinglage':action,id,result);
+      }
+      if(step==='pin'){pinnedNow=true;actionStats.pins++}
+      pending.confirm(id,token,result.revision);
     }
-    actionStats.pins++;
-    pending.confirm(id,token,pinned.revision);
     prunePending();
-  }
-
-  async function commitResize(id,box){
-    actionStats.resizes++;
-    const {result}=await optimistic('Redimensionnement',id,{geometry:box},I.commands.setGeometry(id,box));
-    if(result.ok)consoleLog('info','scene.user_resized',{object_id:id,revision:result.revision});
+    consoleLog('info',kind==='resize'?'scene.user_resized':'scene.user_moved',{object_id:id,steps:steps.join('+')});
   }
 
   function onPointerDown(event){
@@ -1223,7 +1307,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     const resize=!!event.target.closest('.sc-grip')&&I.resizable(item.representation);
     gesture={id,el,node,mode:resize?'resize':'move',pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,
       box:{x:box.x,y:box.y,w:box.w,h:box.h},representation:item.representation,moved:false,menuOpened:false,preview:null,
-      wasSelected:document.activeElement===el,longTimer:0};
+      wasSelected:document.activeElement===el,longTimer:0,
+      threshold:I.dragThreshold(event.pointerType,event.pointerId===9001||barehandsActive())};
     /* Appui long sans bouger : menu (Barehands, écran tactile). */
     const current=gesture;
     current.longTimer=window.setTimeout(()=>{
@@ -1232,6 +1317,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       openObjectMenu(id,{x:current.startX,y:current.startY,above:current.startY},el);
     },I.LONG_PRESS_MS);
     try{el.setPointerCapture(event.pointerId)}catch(_error){/* pointeur synthétique (Barehands) : pas de capture, les événements arrivent au nœud */}
+    select(id);
     if(document.activeElement!==el)el.focus({preventScroll:true});
     event.preventDefault();
   }
@@ -1241,7 +1327,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(!g||event.pointerId!==g.pointerId)return;
     const dx=event.clientX-g.startX,dy=event.clientY-g.startY;
     if(!g.moved){
-      if(g.menuOpened||Math.hypot(dx,dy)<I.DRAG_THRESHOLD_PX)return;
+      if(g.menuOpened||Math.hypot(dx,dy)<g.threshold)return;
       g.moved=true;
       window.clearTimeout(g.longTimer);
       holdNode(g.id,true);root.classList.add('sc-gesture');
@@ -1271,8 +1357,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     const box=g.preview;
     holdNode(g.id,false);
     if(!box||I.sameBox(box,g.box))return;
-    const commit=g.mode==='resize'?commitResize(g.id,box):commitMove(g.id,box);
-    commit.catch(error=>consoleLog('error','scene.user_gesture_failed',{object_id:g.id,error:String(error&&error.message||error)}));
+    commitUserGeometry(g.id,box,g.mode).catch(error=>actionFailed(g.mode==='resize'?'Redimensionnement':'Déplacement',g.id,error));
   }
 
   function cancelGesture(){
@@ -1292,9 +1377,28 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     event.preventDefault();
     if(performance.now()-kbdMenuAt<700)return;  // déjà ouvert par la touche Menu / Maj+F10
     if(gesture)cancelGesture();
+    select(el.dataset.objectId);
     if(document.activeElement!==el)el.focus({preventScroll:true});
     const keyboard=event.clientX===0&&event.clientY===0;
     openObjectMenu(el.dataset.objectId,keyboard?anchorOfNode(el):{x:event.clientX,y:event.clientY,above:event.clientY},el);
+  }
+
+  /* Objet sélectionné : dernier objet touché ou focalisé ; sa poignée reste
+     visible sans survol. Un appui ailleurs dans la page le désélectionne. */
+  function select(id){
+    if(selectedId===id)return;
+    const previous=selectedId&&nodes.get(selectedId);
+    if(previous)previous.el.classList.remove('sc-selected');
+    selectedId=id;
+    const record=id&&nodes.get(id);
+    if(record)record.el.classList.add('sc-selected');
+  }
+
+  function onDocumentPointerDown(event){
+    if(!selectedId||!root)return;
+    const target=event.target;
+    if(target&&target.closest&&(target.closest('#sceneLayer .sc-node')||target.closest('#ctxMenu')||target.closest('#confirmBack')))return;
+    select(null);
   }
 
   /* Maj+flèches / Ctrl+flèches : aperçu tout de suite, validation au relâchement
@@ -1303,7 +1407,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     const id=el.dataset.objectId,state=viewState(),item=state&&state.objects.get(id);
     if(!item)return;
     if(intent.type==='resize'&&!I.resizable(item.representation)){
-      if(liveEl)liveEl.textContent='Un point ne se redimensionne pas : changer sa forme depuis le menu.';
+      announce('Un point ne se redimensionne pas : changer sa forme depuis le menu.');
       return;
     }
     if(keyEdit&&keyEdit.id!==id)flushKeyEdit('other');
@@ -1311,7 +1415,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       const box=drawnBox(id),node=nodeOf(id);
       if(!box||!node)return;
       keyEdit={id,el,node,start:{x:box.x,y:box.y,w:box.w,h:box.h},box:{x:box.x,y:box.y,w:box.w,h:box.h},moved:false,timer:0};
-      holdNode(id,true);
+      holdNode(id,true);select(id);
     }
     keyEdit.box=I.applyKey(keyEdit.box,intent,item.representation);
     if(intent.type==='move')keyEdit.moved=true;
@@ -1328,8 +1432,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     holdNode(edit.id,false);
     if(I.sameBox(edit.box,edit.start))return;
     consoleLog('info','scene.user_key_edit',{object_id:edit.id,why});
-    (edit.moved?commitMove(edit.id,edit.box):commitResize(edit.id,edit.box))
-      .catch(error=>consoleLog('error','scene.user_gesture_failed',{object_id:edit.id,error:String(error&&error.message||error)}));
+    const kind=edit.moved?'move':'resize';
+    commitUserGeometry(edit.id,edit.box,kind).catch(error=>actionFailed(kind==='resize'?'Redimensionnement':'Déplacement',edit.id,error));
   }
 
   function cancelKeyEdit(){
@@ -1351,11 +1455,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(!model)return;
     actionStats.menus++;
     showMenu({title:model.title,items:model.items,pos,origin,run:act=>{
-      runObjectAction(act,id).catch(error=>{
-        actionStats.failed++;
-        consoleLog('error','scene.user_action_failed',{action:act,object_id:id,error:String(error&&error.message||error)});
-        notify({title:'Action impossible',sub:String(error&&error.message||error),kind:'bad'});
-      });
+      runObjectAction(act,id).catch(error=>actionFailed('Action',id,error));
     }});
   }
 
@@ -1384,31 +1484,38 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     const item=lastState&&lastState.objects.get(id),box=drawnBox(id);
     if(!item||!box)return;
     /* Pas encore de place validée : la place dessinée devient celle de l'utilisateur. */
-    if(!item.geometry)return commitMove(id,{x:box.x,y:box.y,w:box.w,h:box.h});
+    if(!item.geometry)return commitUserGeometry(id,I.clampBox(box,item.representation),'move');
     actionStats.pins++;
     await optimistic('Épinglage',id,{pinned:true},I.commands.pin(id));
   }
 
-  async function hideObject(id,{quiet=false}={}){
+  async function hideObject(id){
     const label=quoted(id);
     actionStats.visibility++;
+    planFocusAfterRemoval([id],`${label} masqué.`);
     const {result}=await optimistic('Masquage',id,{visibility:'hidden'},I.commands.setVisibility(id,'hidden'));
-    if(result.ok&&!quiet)notify({title:`${label} masqué`,sub:'Cliquer ici pour le réafficher.',kind:'info',
-      onClick:()=>showObjects([id])});
+    if(result.ok)notify({title:`${label} masqué`,sub:'Cliquer ici pour le réafficher.',kind:'info',
+      onClick:()=>showObjects([id]).catch(error=>actionFailed('Réaffichage',id,error))});
   }
 
-  /* Réafficher des objets masqués, un par un (au plus 512). */
+  /* Réafficher des objets masqués, un par un (au plus 512). Le premier
+     réaffiché reçoit la sélection (la pastille disparaît avec le dernier). */
   async function showObjects(ids){
     let shown=0,failed=null;
     for(const id of ids.slice(0,512)){
       actionStats.visibility++;
       const token=pending.begin(id,{visibility:'visible'},Date.now());pendingChanged();
       const result=await sendCommand(I.commands.setVisibility(id,'visible'));
-      if(result.ok){pending.confirm(id,token,result.revision);shown++}
+      if(result.ok){
+        pending.confirm(id,token,result.revision);
+        if(!shown)pendingFocus={id,at:Date.now()};
+        shown++;
+      }
       else{if(pending.rollback(id,token)){actionStats.rolledBack++;pendingChanged()}failed=failed||result;if(result.outcome==='failed')break}
     }
-    prunePending();
+    prunePending();scheduleRender();
     consoleLog('info','scene.user_shown',{asked:ids.length,shown});
+    if(shown)announce(shown>1?`${shown} objets réaffichés.`:`${quoted(ids[0])} réaffiché.`);
     if(failed)reportRefusal(shown?`Réaffichage de ${ids.length-shown} objet(s)`:'Réaffichage',ids[0],failed);
     else if(ids.length>1)notify({title:`${shown} objets réaffichés`,kind:'ok',ms:3000});
   }
@@ -1428,7 +1535,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     showMenu({title:hidden.length>1?`${hidden.length} objets masqués`:'1 objet masqué',items,
       pos:{x:r.left,y:r.top-4,above:r.top-4},origin:anchor,run:act=>{
         const ids=act==='show-all'?hidden.map(entry=>entry.id):act.startsWith('show:')?[shown[Number(act.slice(5))].id]:[];
-        if(ids.length)showObjects(ids).catch(error=>consoleLog('error','scene.user_action_failed',{action:act,error:String(error&&error.message||error)}));
+        if(ids.length)showObjects(ids).catch(error=>actionFailed('Réaffichage',ids[0],error));
       }});
   }
 
@@ -1442,11 +1549,13 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(signals)lines.push(signals>1?`Ses ${signals} signaux d’attention partent avec lui.`:'Son signal d’attention part avec lui.');
     if(['running','pending','blocked'].includes(item.exec_state))lines.push('Le travail continue, mais son étoile ne reviendra pas.');
     if(typeof confirmDialog!=='function'){consoleLog('warn','scene.confirm_unavailable',{});return}
-    if(!await confirmDialog({title:`Archiver ${quoted(id)} ?`,lines,confirmLabel:'Archiver',danger:true}))return;
+    const label=quoted(id);
+    if(!await confirmDialog({title:`Archiver ${label} ?`,lines,confirmLabel:'Archiver',danger:true}))return;
     inflight.add(key);
     try{
       actionStats.archives++;
       const cascade=signals?I.cascadeOf(state,id):[];
+      planFocusAfterRemoval([id,...cascade],`${label} archivé.`);
       const tokens=[id,...cascade].map(target=>[target,pending.begin(target,{archived:true},Date.now())]);
       pendingChanged();
       const result=await sendCommand(I.commands.archive(id));
@@ -1458,14 +1567,16 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       for(const [target,token] of tokens)pending.confirm(target,token,result.revision);
       prunePending();
       consoleLog('info','scene.user_archived',{object_id:id,signals,revision:result.revision,outcome:result.outcome});
+      notify({title:`${label} archivé`,sub:signals?(signals>1?`Avec ses ${signals} signaux.`:'Avec son signal.'):'',kind:'ok',ms:2500});
     }finally{inflight.delete(key)}
   }
 
   const STATE_WORDS=Object.freeze({completed:['terminée','terminées'],failed:['en échec','en échec'],cancelled:['annulée','annulées'],interrupted:['interrompue','interrompues']});
 
-  /* « Archiver les travaux terminés » : sélection calculée ici, confirmée avec
-     les comptes par état, revalidée par Core (tout ou rien). Une sélection
-     devenue fausse entre-temps est recalculée et reconfirmée une fois. */
+  /* « Archiver les travaux terminés » : sélection calculée sur l'état tenu,
+     confirmée avec les comptes par état, revalidée par Core (tout ou rien).
+     Une sélection devenue fausse est recalculée et reconfirmée une fois ; au
+     second refus, la notification propose de réessayer. */
   async function archiveFinished(retry=false){
     if(inflight.has('bulk'))return;
     if(!lastState)return;
@@ -1479,13 +1590,17 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     lines.push('Le travail en cours, en attente ou bloqué reste, comme les notes et fenêtres du brain.');
     if(retry)lines.unshift('La scène a changé pendant la confirmation : comptes mis à jour.');
     if(typeof confirmDialog!=='function'){consoleLog('warn','scene.confirm_unavailable',{});return}
-    if(!await confirmDialog({title:'Archiver les travaux terminés ?',lines,confirmLabel:`Archiver ${selection.objects} ${selection.objects>1?'objets':'objet'}`,danger:true}))return;
+    const noun=`${selection.objects} ${selection.objects>1?'objets':'objet'}`;
+    if(!await confirmDialog({title:'Archiver les travaux terminés ?',lines,confirmLabel:`Archiver ${noun}`,danger:true}))return;
     inflight.add('bulk');
     const started=Date.now();
     let archived=0,refusal=null;
     try{
       actionStats.bulkArchives++;
       const owners=I.signalOwners(lastState);
+      const everything=[...selection.ids];
+      for(const [signal,owner] of owners)if(owner&&everything.includes(owner))everything.push(signal);
+      planFocusAfterRemoval(everything,`Archivage de ${noun}.`);
       for(const chunk of I.chunkIds(selection.ids)){
         const chosen=new Set(chunk);
         const targets=[...chunk];
@@ -1506,37 +1621,72 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     consoleLog(refusal?'warn':'info','scene.user_bulk_archived',{selected:selection.objects,archived,ms:Date.now()-started,
       refused:refusal?refusal.reason||refusal.code:null});
     if(refusal&&refusal.reason==='not_bulk_archivable'&&!retry)return archiveFinished(true);
-    if(refusal)return reportRefusal(archived?`Archivage de ${selection.objects-archived} objet(s)`:'Archivage groupé',null,refusal);
+    const again={onClick:()=>archiveFinished().catch(error=>actionFailed('Archivage groupé',null,error)),ms:8000};
+    if(refusal&&refusal.reason==='not_bulk_archivable')
+      return reportRefusal('Archivage groupé',null,{...refusal,message:'La scène change encore. Cliquer ici pour réessayer.'},again);
+    if(refusal)return reportRefusal(archived?`Archivage de ${selection.objects-archived} objet(s)`:'Archivage groupé',null,refusal,
+      refusal.unknown?{}:{...again,sub:`${refusal.message} Cliquer ici pour réessayer.`});
+    announce(`${archived} ${archived>1?'objets archivés':'objet archivé'}.`);
     notify({title:`${archived} ${archived>1?'objets archivés':'objet archivé'}`,sub:'Place libérée pour le travail en attente.',kind:'ok',ms:3500});
   }
 
-  /* Arrêt d'une étoile `job` : `POST /api/jobs/cancel`. Jamais proposé pour un sous-agent du brain. */
+  /* Arrêt d'une étoile `job` : `POST /api/jobs/cancel`. Jamais proposé pour un
+     sous-agent du brain. L'étoile montre « arrêt en cours » jusqu'à ce que
+     Core la dise terminée, ou jusqu'au délai réel du relais (`/api/status`). */
   async function stopJob(id){
     const item=lastState&&lastState.objects.get(id);
     if(!item||item.kind!=='job'||!item.work_ref||item.work_ref.source!=='job')return;
     const key=`stop:${id}`;
-    if(inflight.has(key))return;
+    if(inflight.has(key)||stopping.has(id))return;
     if(typeof confirmDialog!=='function'){consoleLog('warn','scene.confirm_unavailable',{});return}
-    if(!await confirmDialog({title:`Arrêter la tâche ${quoted(id)} ?`,
+    const label=quoted(id);
+    if(!await confirmDialog({title:`Arrêter la tâche ${label} ?`,
       lines:['Le job Core est annulé ; son étoile reste, marquée annulée.'],confirmLabel:'Arrêter la tâche',cancelLabel:'Continuer la tâche',danger:true}))return;
     inflight.add(key);
     actionStats.stops++;
     const started=Date.now();
-    notify({title:`Arrêt de ${quoted(id)}…`,sub:'Demande envoyée à Core (au plus 20 s).',kind:'info',ms:2500});
+    const limitS=jobCancelTimeoutS;
+    stopping.set(id,{label,started,deadline:started+1000*(limitS||30)});
+    announce(`Arrêt de ${label} demandé.`);
+    scheduleRender();ensureStatusTicker();
     try{
-      const response=await requestJson('/api/jobs/cancel',{method:'POST',body:{source:item.work_ref.source,external_id:item.work_ref.external_id},timeoutMs:30000});
+      const response=await requestJson('/api/jobs/cancel',{method:'POST',body:{source:item.work_ref.source,external_id:item.work_ref.external_id},
+        timeoutMs:1000*((limitS||30)+5)});
       const body=response.body||{};
       if(response.status===200&&typeof body.outcome==='string'){
-        const words={cancelled:['Tâche arrêtée','Le job est annulé.'],cancel_requested:['Arrêt demandé','Core termine l’annulation.'],
-          already_terminal:['Tâche déjà terminée','Rien à arrêter.']}[body.outcome]||['Arrêt',body.outcome];
-        consoleLog('info','scene.user_stopped',{object_id:id,outcome:body.outcome,status:body.status,ms:Date.now()-started});
-        return notify({title:words[0],sub:`${quoted(id)} · ${words[1]}`,kind:body.outcome==='cancelled'?'ok':'info',ms:3500});
+        const words=I.stopOutcome(body.outcome);
+        consoleLog(words.kind==='warn'?'warn':'info','scene.user_stopped',{object_id:id,outcome:body.outcome,status:body.status,ms:Date.now()-started});
+        if(words.terminal)stopping.delete(id);
+        notify({title:words.title,sub:`${label} · ${words.sub}`,kind:words.kind,ms:words.terminal?3500:6000});
+        announce(`${words.title}.`);
+        return;
       }
+      stopping.delete(id);
       reportRefusal('Arrêt',id,I.classifyResponse(response.status,body));
     }catch(error){
-      reportRefusal('Arrêt',id,{ok:false,outcome:'failed',reason:'',code:errorCodeOf(error),unknown:error&&error.code==='timeout',
-        message:error&&error.code==='timeout'?`${error.message} : issue inconnue`:'Control Center injoignable'});
-    }finally{inflight.delete(key)}
+      stopping.delete(id);
+      reportRefusal('Arrêt',id,{ok:false,outcome:'failed',reason:'',revision:null,...I.networkFailure(error)});
+    }finally{inflight.delete(key);scheduleRender()}
+  }
+
+  /* Étoiles en arrêt : terminées dans l'état tenu → fin de l'attente ;
+     délai dépassé → dit tel quel, sans inventer d'issue. */
+  function settleStopping(){
+    if(!stopping.size)return;
+    const now=Date.now();
+    for(const [id,entry] of [...stopping]){
+      const item=lastState&&lastState.objects.get(id);
+      if(!item||I.TERMINAL.includes(item.exec_state)){stopping.delete(id);scheduleRender();continue}
+      if(now>entry.deadline){
+        stopping.delete(id);scheduleRender();
+        consoleLog('warn','scene.user_stop_unconfirmed',{object_id:id,waited_ms:now-entry.started});
+        notify({title:'Arrêt non confirmé',sub:`${entry.label} · toujours en cours après ${Math.round((now-entry.started)/1000)} s.`,kind:'warn',ms:6000});
+      }
+    }
+  }
+
+  function ensureStatusTicker(){
+    if(!statusTicker)statusTicker=window.setInterval(renderStatus,1000);
   }
 
   function applyEdges(edges,vp){
@@ -1620,7 +1770,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       notes.push({cls:'sc-warn',main:title,meta:`${elapsed(Date.now()-health.since)} · ${retry}`});
       announce.push(`${title}. Nouvel essai automatique.`);
       if(!statusTicker)statusTicker=window.setInterval(renderStatus,1000);
-    }else{
+    }else if(!stopping.size){
       stopStatusTicker();
       if(!lastState&&lastView.phase==='loading')notes.push({cls:'sc-busy',main:'Scène · chargement…',meta:''});
     }
@@ -1635,6 +1785,9 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       if(high)notes.push({cls:'sc-full',main:`${high} ${high>1?"signaux d'échec":"signal d'échec"} ${under(high)}`,meta:''});
       if(medium)notes.push({cls:'sc-warn',main:`${medium} ${medium>1?'signaux à vérifier':'signal à vérifier'} ${under(medium)}`,meta:''});
       announce.push('Des signaux sont cachés sous des fenêtres.');
+    }
+    for(const entry of stopping.values()){
+      notes.push({cls:'sc-busy',main:`Arrêt de ${entry.label} en cours`,meta:elapsed(Date.now()-entry.started)});
     }
     if(I&&lastModel&&lastModel.hidden){
       const n=lastModel.hidden;
@@ -1673,6 +1826,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(view.state!==lastState){
       lastState=view.state;
       prunePending();
+      settleStopping();
       scheduleRender();
     }
     renderStatus();
@@ -1699,7 +1853,10 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   }
 
   /* Interrupteur : appelé à chaque lecture réussie de `/api/status`. */
-  function gate(scene){
+  function gate(scene,limits){
+    const timeout=limits&&Number(limits.job_cancel_timeout_s);
+    jobCancelTimeoutS=Number.isFinite(timeout)&&timeout>0?timeout:null;
+    if(stopping.size)settleStopping();
     if(statusFailed){
       /* Le Control Center répond de nouveau : pas d'attente du repli. */
       statusFailed=false;
@@ -1713,6 +1870,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       ensureRoot();
       window.addEventListener('resize',onResize);
       document.addEventListener('visibilitychange',onVisibility);
+      document.addEventListener('pointerdown',onDocumentPointerDown,true);
       loop.setVisible(document.visibilityState!=='hidden');
       const visible=document.visibilityState!=='hidden';
       const start=()=>{if(enabled)loop.setEnabled(true)};
@@ -1725,6 +1883,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       releaseLeadership();
       window.removeEventListener('resize',onResize);
       document.removeEventListener('visibilitychange',onVisibility);
+      document.removeEventListener('pointerdown',onDocumentPointerDown,true);
       teardown();
     }
   }
@@ -1745,7 +1904,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       return {enabled,mode:shared?'shared':'solo',role:view.role,leader:{held:leader.held,mode:leader.mode},loop:view.phase,
         revision:lastState?lastState.revision:null,nodes:nodes.size,commits:committer.stats(),stats:view.stats,
         health:lastView?lastView.health:null,resolved:layout&&layoutState===viewState()?layout.resolved.length:0,
-        pending:pending?pending.size():0,actions:{...actionStats},gesture:gesture?{id:gesture.id,mode:gesture.mode,moved:gesture.moved}:null,
+        pending:pending?pending.size():0,actions:{...actionStats},gesture:gesture?{id:gesture.id,mode:gesture.mode,moved:gesture.moved,threshold:gesture.threshold}:null,
+        selected:selectedId,stopping:[...stopping.keys()],jobCancelTimeoutS,
         tabStops:root?root.querySelectorAll('[tabindex="0"]').length:0,animated:root?root.querySelectorAll('.sc-anim').length:0};
     },
   });
