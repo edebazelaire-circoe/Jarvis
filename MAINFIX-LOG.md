@@ -543,8 +543,9 @@ l'utilise.
 
 **Tests.** `test_control_center_timeline_js.py` : 58 tests (43 d'origine
 inchangés, 15 ajoutés — 8 au premier passage, 7 ici, dont les cinq du changement
-de conversation). `test_routing_settings_screen.py` : 14 tests (7 d'origine
-inchangés, 2 réécrits, 5 ajoutés). Tous verts.
+de conversation). `test_routing_settings_screen.py` : 14 tests — **9 d'origine
+inchangés, 2 réécrits, 3 ajoutés** (le fichier en comptait 11 sur `b86f228`).
+Tous verts.
 
 **Suite complète, en morceaux** — 502 / 571 / 610+1i / 578+2i / 617+1i / 867+2i
 unitaires, 287 passés + 4 ignorés en intégration, 1 passé en e2e + replay :
@@ -580,4 +581,105 @@ de l'agent, hors dépôt) — la dernière montre en une image les quatre correc
 de l'écran : les deux candidats retenus dans leur ordre, « Modèle B » promu
 préféré par « monter » avec le focus resté sur sa ligne, le lien « ajouter »
 visiblement désactivé, et « Modifications non enregistrées. » en pied de fenêtre.
+
+---
+
+# Troisième passe : ce que la seconde QA a encore trouvé
+
+## 17. Une assertion qui ne pouvait pas échouer
+
+`test_the_choice_is_made_in_two_steps_harness_then_model` vérifiait
+`("modele-o", "Modèle O") not in models`. Or un modèle de harness indisponible
+s'affiche « Modèle O — indisponible » : le couple ne pouvait jamais correspondre,
+que le modèle ait fuité ou non. Pire, la regex ramassait les options des **deux**
+sélecteurs à la fois, si bien que l'assertion complémentaire
+`{"modele-a","modele-b"} <= …` était vraie sans rien prouver sur le sélecteur de
+modèles.
+
+Les deux assertions portent maintenant sur les **valeurs** du seul `<select>` des
+modèles, découpé par son attribut, plus une troisième sur le contenu exact du
+sélecteur de harness. **Mutation (a)** — mettre dans le second sélecteur les
+modèles de tous les harness — rend le test **rouge**, alors qu'elle passait
+inaperçue avant.
+
+## 18. « Retirer » perdait le focus à tous les coups
+
+La chaîne de repli de `routingFocusTarget` n'existait que pour `up`. Pour `drop`,
+le seul candidat était le bouton que le clic venait de supprimer : le focus
+retombait au début du document à chaque suppression, et il fallait retraverser la
+fenêtre pour retirer le candidat suivant.
+
+`drop` a maintenant sa chaîne : la ligne qui a pris le rang libéré, sinon la
+dernière de la liste, sinon le sélecteur du profil — et jamais une commande
+désactivée. Le rang est relu sur la commande au moment du rendu (`data-routing-rank`),
+la clé de focus continuant, elle, de désigner le couple et pas le rang.
+
+**Et le rendu lui-même est désormais éprouvé.** La QA avait montré qu'en
+supprimant la queue de `renderRoutingAdvanced` qui rend le focus, les 72 tests
+restaient verts : les tests n'appelaient que la fonction de recherche. Le banc
+node reconstruit maintenant les commandes à partir du **HTML réellement rendu**
+(mêmes attributs, même état `disabled`, même ordre), et un test exerce
+`renderRoutingAdvanced` de bout en bout. **Mutations (b)** — plus de repli pour
+`drop` — et **(c)** — plus de rattrapage dans le rendu — rendent chacune un test
+**rouge**.
+
+## 19. Un profil éteint n'était inerte qu'à la souris
+
+`.routing-off select,.routing-off .linkish{pointer-events:none}` est de la
+peinture, pas de la sémantique : les commandes gardaient leur ordre de
+tabulation et restaient activables. Au clavier ou au lecteur d'écran, on pouvait
+ajouter, réordonner, retirer et changer le recours d'un profil que l'écran
+annonçait désactivé — `aria-disabled="true"` disant exactement le contraire de ce
+que la page permettait.
+
+La règle CSS `pointer-events` a été retirée. Chaque commande du bloc porte
+maintenant un vrai `disabled` : les deux sélecteurs, « ajouter », « monter »,
+« retirer » et la case de repli. Le gris ne fait plus que le montrer. La case
+« Profil actif » reste, elle, utilisable — sinon on ne pourrait plus rallumer le
+profil — et rallumer rend tout le bloc utilisable. Un garde-fou dans les
+gestionnaires (`serving(profile)`) couvre le cas restant : un profil éteint
+pendant qu'un geste est en vol, ou une commande atteinte autrement que par
+l'interface. **Mutation (d)** — retirer les `disabled` et ne garder que le
+gris — rend le test **rouge**.
+
+## 20. Recette de la troisième passe
+
+**Mutations** (fichier restauré octet pour octet après chaque essai) :
+
+| mutation | test visé | verdict |
+| --- | --- | --- |
+| (a) le second sélecteur propose les modèles de tous les harness | `…two_steps_harness_then_model` | **rouge** |
+| (b) « retirer » n'a plus de chaîne de repli | `…keeps_the_keyboard_in_the_list` | **rouge** |
+| (c) le rendu ne rend plus le focus | `…renderer_itself_puts_the_focus_back` | **rouge** |
+| (d) un profil éteint n'est inerte qu'à la souris | `…refuses_the_keyboard_too` | **rouge** |
+
+**Tests.** `test_routing_settings_screen.py` : **17** tests — 9 d'origine
+inchangés, 2 réécrits, 6 ajoutés (3 à la passe précédente, 3 ici : le focus après
+« retirer », le rendu qui rend vraiment le focus, et le refus du clavier sur un
+profil éteint). `test_control_center_timeline_js.py` : 58, inchangés.
+
+**Navigateur, au clavier seulement** (frappes envoyées par
+`Input.dispatchKeyEvent`, Chrome à nous, profil jetable, deux thèmes) :
+
+| ce qui est vérifié | verdict |
+| --- | --- |
+| Entrée sur le « retirer » de la ligne du milieu | la ligne part, le focus reste **dans la liste** sur `drop|…|claude|` (celle qui a pris le rang), et « Modifications non enregistrées. » s'affiche |
+| profil éteint | les sept commandes du bloc portent `disabled`, `aria-disabled="true"`, `routing-off` |
+| `focus()` sur une commande du bloc éteint | refusé |
+| Tab puis Entrée sur le bloc éteint | la liste est identique, le focus est **hors** du bloc |
+| case « Profil actif » | reste utilisable : le profil peut être rallumé |
+
+Captures : `rework3-focus-{classic,omega}.png`, `rework3-disabled-{classic,omega}.png`,
+relevé `rework3.json` (répertoire de travail de l'agent, hors dépôt).
+
+## 21. Note permanente de la QA sur la suite
+
+Deux fichiers sont **fragiles au temps**, tous deux parce qu'ils vérifient des
+délais d'attente : `tests/unit/test_live_primary_lease_review.py` et
+`tests/unit/test_back_brain_tasks.py`. Ils échouent par intermittence quand la
+machine est chargée — le premier a été vu rouge une fois pendant cette tâche,
+puis vert quatre fois de suite avec des durées allant du simple au quintuple.
+Aucun des deux ne touche à la chronologie, à l'aiguillage ou à la carte Brain :
+c'est une fragilité de la suite, pas une régression de cette branche, et elle
+mérite sa propre correction.
 
