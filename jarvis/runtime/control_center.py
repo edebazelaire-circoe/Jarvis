@@ -262,6 +262,42 @@ def _brief_value(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _seconds(ms: object) -> str:
+    return f"{float(ms) / 1000:.1f}".replace(".", ",") + " s"
+
+
+def render_interrupted_speech(items: object) -> list[str]:
+    """Dire au cerveau ce que l'utilisateur a coupé, et ce qu'il en a entendu.
+
+    Sa propre session garde le texte entier de ses réponses : sans ces lignes,
+    il répond comme si tout avait été dit (17/09/2026).
+    """
+
+    lines: list[str] = []
+    for item in items if isinstance(items, list) else ():
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        heard = str(item.get("heard_text") or "").strip()
+        played, total = item.get("played_ms") or 0, item.get("total_ms")
+        if not heard:
+            lines.append(
+                f"COUPÉ : ta réponse « {text} » n'a pas été entendue du tout. "
+                "L'utilisateur ne la connaît pas."
+            )
+            continue
+        duration = f"au bout de {_seconds(played)}" + (f" sur environ {_seconds(total)}" if total else "")
+        lines.append(
+            f"COUPÉ : l'utilisateur t'a interrompu {duration} pendant ta réponse « {text} ». "
+            f"Il n'en a entendu que le début, à peu près : « {heard}… ». "
+            "La suite n'a PAS été dite : ne la tiens pas pour connue, et ne prends pas ce qu'il dit "
+            "maintenant pour une réponse à ce qu'il n'a pas entendu. Redis ce qui compte encore, si c'est utile."
+        )
+    return lines
+
+
 def build_agent_brief(context: dict[str, Any], text: str) -> str:
     """Préfixer la demande de ce que Core sait, et de ce dont il doute.
 
@@ -285,6 +321,7 @@ def build_agent_brief(context: dict[str, Any], text: str) -> str:
         )
     else:
         lines.append("Adressage : direct. La demande t'est adressée.")
+    lines.extend(render_interrupted_speech(context.get("interrupted_speech")))
     state = context.get("state")
     if isinstance(state, dict):
         for key, label in _BRIEF_STATE_FIELDS:

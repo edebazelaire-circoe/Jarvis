@@ -49,7 +49,7 @@ from jarvis.core.conversation_event_emitter import (
 from jarvis.domain.conversation_events import ConversationEventType
 from jarvis.core.voice_admission import VoiceTurnAdmissionService
 from jarvis.domain.speech_presentation import OutcomeKind, OutcomeStatus, SpeechDependency, semantic_text_spans, speech_id
-from jarvis.domain.brain_context import BrainContext, WorkAttention
+from jarvis.domain.brain_context import MAX_BRAIN_INTERRUPTIONS, BrainContext, BrainSpeechInterruption, WorkAttention
 from jarvis.domain.work_attention_prompt import WORK_ATTENTION_WAKE_PROMPT
 from jarvis.ports.v2 import BrainBackend, ConversationEventRecorder, DiagnosticSink, WorkCanceller, supports_brain_context
 
@@ -240,6 +240,10 @@ class BrainOrchestrator:
             lock=self._lock, ledger=voice_ledger, on_activated=self._note_direct_admission,
             conversation_events=self._conversation_events)
         self._states: dict[str, BrainWorkingState] = {}
+        # Réponses coupées déjà signalées au cerveau, par conversation (clé de
+        # sortie du registre vocal). Bornées : seule la session en cours compte.
+        self._voice_ledger = voice_ledger
+        self._reported_interruptions: dict[str, dict[str, None]] = {}
         self._accepted: dict[str, BrainTurnAcceptance] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
         # Seul le tour qui active un travail en devient propriétaire. Un tour
@@ -1062,12 +1066,69 @@ class BrainOrchestrator:
         transmette.
         """
 
+        interruptions, state = await self._take_interruptions(turn.conversation_id, state, turn.correlation_id)
         if not supports_brain_context(self._backend):
             return await self._backend.run_turn(turn, state, sink)
         work = None
         if self._work_context is not None:
             work = await self._work_context.work_context(correlation_id=turn.correlation_id)
-        return await self._backend.run_turn_with_context(turn, BrainContext(state=state, work=work), sink)
+        return await self._backend.run_turn_with_context(
+            turn, BrainContext(state=state, work=work, interruptions=interruptions), sink)
+
+    #: Libellé d'un fait public dont l'utilisateur n'a entendu que le début.
+    INTERRUPTED_FACT_SUFFIX = "… [coupé par l'utilisateur : la suite n'a pas été entendue]"
+
+    async def _take_interruptions(
+        self, conversation_id: str, state: BrainWorkingState, correlation_id: str,
+    ) -> tuple[tuple[BrainSpeechInterruption, ...], BrainWorkingState]:
+        """Relever les réponses coupées depuis le dernier tour, une seule fois chacune.
+
+        Le 17/09/2026, l'utilisateur coupait JARVIS au milieu d'une réponse et
+        le cerveau la tenait pour dite en entier : `known_public_facts` la
+        portait dès sa rédaction, et sa propre session en garde le texte. Le
+        registre vocal de Core sait ce qui a été joué ; le cerveau le reçoit
+        (`BrainContext.interruptions`), et le fait public est ramené au début
+        entendu — retiré s'il n'a rien été entendu.
+        """
+
+        ledger = self._voice_ledger
+        reader = getattr(ledger, "interrupted_speeches", None)
+        if reader is None:
+            return (), state
+        try:
+            found = await reader(conversation_id)
+        except Exception as exc:
+            self._diagnostics.emit("core.brain.interruptions_unavailable", "réponses coupées illisibles dans le registre vocal",
+                                   level="warning", data={"conversation_id": conversation_id, "error_class": type(exc).__name__})
+            return (), state
+        reported = self._reported_interruptions.setdefault(conversation_id, {})
+        fresh = [(key, item) for key, item in found if key not in reported]
+        if not fresh:
+            return (), state
+        for key, _item in fresh:
+            reported[key] = None
+        while len(reported) > 256:
+            reported.pop(next(iter(reported)))
+        interruptions = tuple(item for _key, item in fresh[-MAX_BRAIN_INTERRUPTIONS:])
+        revised = None
+        async with self._lock:
+            facts = list(self.working_state(conversation_id).known_public_facts)
+            changed = False
+            for item in interruptions:
+                for index, fact in enumerate(facts):
+                    if fact is not None and fact.strip() == item.text.strip():
+                        facts[index] = item.heard_text + self.INTERRUPTED_FACT_SUFFIX if item.heard_text else None
+                        changed = True
+            if changed:
+                revised = self._revise(conversation_id, known_public_facts=tuple(fact for fact in facts if fact))
+        if revised is not None:
+            await self._publish(BRAIN_STATE_UPDATED, revised.to_public_payload(), conversation_id, correlation_id)
+            state = revised
+        self._diagnostics.emit("core.brain.interruptions_reported", "réponses coupées signalées au cerveau",
+                               data={"conversation_id": conversation_id, "count": len(interruptions),
+                                     "played_ms": [item.played_ms for item in interruptions],
+                                     "facts_revised": revised is not None})
+        return interruptions, state
 
     def _note_slow_turn(self, turn: BrainTurnInput) -> None:
         self._diagnostics.emit(

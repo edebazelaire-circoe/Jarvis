@@ -8,9 +8,10 @@ import hashlib
 
 from jarvis.core.v2_services import ConversationService
 from jarvis.core.voice_state import VoiceConversationState
+from jarvis.domain.brain_context import BrainSpeechInterruption, estimate_heard_text
 from jarvis.domain.v2 import utc_now
 from jarvis.domain.voice_event_codec import decode_voice_correlation, decode_voice_event
-from jarvis.domain.voice_events import VoicePlaybackStatus
+from jarvis.domain.voice_events import VoiceGenerationStatus, VoicePlaybackStatus
 from jarvis.domain.voice_frontend import FrontendState
 from jarvis.domain.voice_state import VoiceSpeechRecord, VoiceSpeechState, VoiceTurnOrder, state_id
 from jarvis.domain.voice_admission import VoiceTurnAdmissionRequest
@@ -169,6 +170,44 @@ class VoiceLedgerService:
                 "recent_turns": [{"kind": message.role.value, "content": message.text, "created_at": None} for message in context.messages],
                 "voice_ledger": {"session_id": snapshot.current_session_id, "revision": snapshot.revision},
             }
+
+    #: Audio reçu mais pas joué au-delà duquel une parole close `unknown` est
+    #: une parole coupée. Le 17/09/2026, trois coupures réelles sont restées
+    #: `unknown` (2,0 s joués sur 10,1 ; 7,7 sur 10,7 ; 13,4 sur 19,3), à côté
+    #: d'une parole entière elle aussi `unknown` (9,9 s sur 10,1).
+    UNHEARD_TAIL_MS = 700
+
+    async def interrupted_speeches(self, conversation_id: str) -> tuple[tuple[str, BrainSpeechInterruption], ...]:
+        """Réponses du cerveau coupées dans la session vocale en cours, avec ce qui en a été joué.
+
+        Seules comptent les paroles enregistrées avec leur texte (`register_speech`,
+        donc celles du cerveau) que le réducteur a closes `interrupted` ou
+        `cancelled`, ou closes `unknown` avec un reste non joué nettement audible
+        (`UNHEARD_TAIL_MS`). Le texte entendu est estimé sur ce que la voix a réellement
+        généré, au prorata de l'audio joué (`estimate_heard_text`). Chaque entrée
+        porte sa clé stable, pour qu'un appelant ne la signale qu'une fois.
+        """
+        async with self._lock:
+            ledger = self._ledgers.get(conversation_id)
+            if ledger is None:
+                return ()
+            snapshot = ledger.state.snapshot
+            found: list[tuple[str, BrainSpeechInterruption]] = []
+            for speech in snapshot.speeches:
+                if speech.correlation.session_id != snapshot.current_session_id or not speech.intended_text or speech.local_active:
+                    continue
+                played = max(0, int(speech.played_ms or 0))
+                if not (speech.state in (VoiceSpeechState.INTERRUPTED, VoiceSpeechState.CANCELLED)
+                        or (speech.state == VoiceSpeechState.UNKNOWN
+                            and speech.received_audio_ms - played > self.UNHEARD_TAIL_MS)):
+                    continue
+                generated = " ".join(item.text.strip() for item in speech.generated if item.text.strip())
+                heard = estimate_heard_text(generated or speech.intended_text, played, speech.received_audio_ms)
+                complete = speech.generation_status == VoiceGenerationStatus.COMPLETED
+                found.append((self._output_key(conversation_id, speech), BrainSpeechInterruption(
+                    text=speech.intended_text, heard_text=heard, played_ms=played,
+                    total_ms=int(speech.received_audio_ms) if complete else None)))
+            return tuple(found)
 
     async def back_brain_projection(self, conversation_id: str, *, binding=None, session_id=None) -> dict:
         """Capture server evidence under the same observation barrier, not client context."""

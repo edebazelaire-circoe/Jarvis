@@ -437,11 +437,11 @@ class SoundDeviceRealtimeAudio:
 
         return self.capture is not None and self.capture.far_recent
 
-    def release_near_end(self) -> None:
+    def release_near_end(self, *, learn: bool = True) -> None:
         """Refermer la garde : la parole locale n'a pas été confirmée."""
 
         if self.capture is not None:
-            self.capture.release_near_end()
+            self.capture.release_near_end(learn=learn)
 
     # -- Solo Owner : flux ouvert par le propriétaire (tâche 06) -------------
 
@@ -1197,7 +1197,7 @@ class RealtimeConversationBridge:
         journal: RuntimeJournal | None = None,
         claude=None,
         engagement_window_s: float = 30.0,
-        barge_in_confirm_s: float = 0.8,
+        barge_in_confirm_s: float = 1.5,
         barge_in_duck_gain: float = 0.3,
         barge_in_sustain_s: float = 0.6,
         clock: Callable[[], float] | None = None,
@@ -1336,6 +1336,11 @@ class RealtimeConversationBridge:
         # la voix est baissée, la coupure attend que la parole dure
         # `barge_in_sustain_s` (voir `_confirm_sustained_barge_in`).
         self._barge_confirming = False
+        # Candidat acoustique refermé faute de confirmation : quand (horloge de
+        # la boucle), et combien d'affilée sur la parole en cours de JARVIS.
+        # Voir `_on_barge_timeout` et `_late_barge_confirmation`.
+        self._barge_rejected_at: float | None = None
+        self._barge_rejections = 0
         # -- Solo Owner : autorité du propriétaire (voir `BargeInAuthority`) --
         self.barge_in_authority = barge_in_authority
         self._owner_source = owner_source if barge_in_authority is BargeInAuthority.OWNER else None
@@ -1516,6 +1521,8 @@ class RealtimeConversationBridge:
         self._barge_pending = False
         self._barge_confirming = False
         self._barge_pending_token += 1
+        self._barge_rejected_at = None
+        self._barge_rejections = 0
         self._last_engaged = self._clock()
         if self._live_output_identity in self._received_outputs:
             self._canonical_playback(self._received_outputs[self._live_output_identity], terminal=True)
@@ -2697,9 +2704,14 @@ class RealtimeConversationBridge:
         self._barge_pending = False
         if self._barge_pending_ducked:
             self._set_output_gain(1.0)
-        release = getattr(self.audio, "release_near_end", None)
-        if release is not None:
-            release()
+        # Le fournisseur confirme parfois une vraie voix juste après la fenêtre
+        # (mesuré le 17/09/2026 : 225 à 818 ms contre le vrai Realtime, et en
+        # session 140 ms trop tard). Le premier rejet sur une même parole de
+        # JARVIS n'apprend donc pas cette voix comme de l'écho ; un écho qui
+        # rouvre la garde en boucle, lui, finit toujours par être appris.
+        self._barge_rejections += 1
+        self._barge_rejected_at = asyncio.get_running_loop().time()
+        self._release_near_end(learn=self._barge_rejections > 1)
         if self._barge_pending_ducked:
             self._trace(
                 "voice.barge_in_rejected",
@@ -2719,6 +2731,36 @@ class RealtimeConversationBridge:
                     "authority": self.barge_in_authority.value,
                 },
             )
+
+    #: Après un candidat refermé faute de confirmation, délai pendant lequel un
+    #: `speech_started` du fournisseur vaut encore confirmation de ce candidat.
+    BARGE_IN_LATE_CONFIRM_S = 0.6
+
+    def _release_near_end(self, *, learn: bool) -> None:
+        release = getattr(self.audio, "release_near_end", None)
+        if release is None:
+            return
+        if learn:
+            release()
+            return
+        try:
+            release(learn=False)
+        except TypeError:
+            # Capture sans apprentissage réglable (piles de test) : la garde
+            # se referme comme avant.
+            release()
+
+    def _late_barge_confirmation(self) -> bool:
+        """Ce `speech_started` confirme-t-il le candidat qu'on vient de refermer ?
+
+        La garde est fermée, mais le fournisseur a entendu ce qu'elle a laissé
+        passer pendant la fenêtre : c'est la voix du candidat, pas l'écho.
+        """
+
+        rejected_at = self._barge_rejected_at
+        if rejected_at is None or self.barge_in_authority is not BargeInAuthority.ACOUSTIC:
+            return False
+        return asyncio.get_running_loop().time() - rejected_at <= self.BARGE_IN_LATE_CONFIRM_S
 
     async def _confirm_sustained_barge_in(self) -> None:
         """Le fournisseur confirme un candidat acoustique : baisser, puis couper si ça dure.
@@ -2764,9 +2806,7 @@ class RealtimeConversationBridge:
         if self._barge_pending_ducked:
             self._set_output_gain(1.0)
         self._barge_pending_ducked = False
-        release = getattr(self.audio, "release_near_end", None)
-        if release is not None:
-            release()
+        self._release_near_end(learn=True)
         self._trace(
             "voice.barge_in_rejected",
             "Parole trop brève pour une interruption : JARVIS reprend à plein volume",
@@ -3431,6 +3471,8 @@ class RealtimeConversationBridge:
                 if self._barge_pending:
                     self._barge_pending = False
                     self._barge_pending_token += 1
+                self._barge_rejected_at = None
+                self._barge_rejections = 0
                 self._set_output_gain(1.0)
                 if response_had_audio:
                     self._last_playback_end = self._clock()
@@ -3524,6 +3566,21 @@ class RealtimeConversationBridge:
                     # chemin legacy, half-duplex, ne peut pas se trouver
                     # dans cet état — il garde donc exactement sa trace.
                     await self._barge_in()
+                elif self._late_barge_confirmation():
+                    # Confirmation arrivée juste après la fenêtre du candidat :
+                    # c'est encore lui. Même preuve de durée qu'à l'heure.
+                    self._trace(
+                        "voice.barge_in_late_confirmation",
+                        "Parole confirmée par le fournisseur juste après la fenêtre : candidat repris",
+                        data={"conversation_id": self.conversation_id,
+                              "session_id": str(getattr(self.session, "session_id", "")) or None,
+                              "late_ms": round((asyncio.get_running_loop().time() - (self._barge_rejected_at or 0.0)) * 1000)},
+                    )
+                    self._barge_rejected_at = None
+                    self._barge_pending = True
+                    self._barge_pending_ducked = False
+                    self._barge_pending_token += 1
+                    await self._confirm_sustained_barge_in()
                 else:
                     # Garde fermée : le fournisseur n'a entendu que du
                     # silence ou de l'écho. Couper JARVIS ici, c'est le
