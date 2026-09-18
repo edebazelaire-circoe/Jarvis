@@ -221,7 +221,9 @@ async def test_control_center_audio_test_uses_selected_devices_and_emits_trace(t
     assert response.status == 200
     assert payload["ok"] is True
     assert diagnostics.tests == [(3, 7)]
-    trace = read_jsonl_tail(control.journal.trace_path)
+    # `scene.display_mcp_unconfigured` : ce harnais ne donne pas les coordonnées de Core
+    # et la scène est allumée par défaut ; ce n'est pas la trace observée ici.
+    trace = [item for item in read_jsonl_tail(control.journal.trace_path) if item["kind"].startswith("audio.")]
     assert [item["kind"] for item in trace] == ["audio.test.started", "audio.test.completed"]
     assert trace[0]["data"]["correlation_id"] == trace[1]["data"]["correlation_id"]
 

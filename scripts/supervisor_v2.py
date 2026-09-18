@@ -12,6 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from jarvis.runtime.cli_stream import OversizeLine, clip_text, iter_lines  # noqa: E402 - après le chemin du dépôt
+
 # Un enfant qui meurt en boucle doit finir par se taire : relancer indéfiniment
 # un crash natif noie le journal et masque la panne d'origine.
 MAX_RESTARTS_PER_WINDOW = 5
@@ -77,11 +79,12 @@ class Supervisor:
         except OSError:
             handle = None
         try:
-            while True:
-                raw = await stream.readline()
-                if not raw:
-                    return
-                line = raw.decode("utf-8", errors="replace").rstrip()
+            async for raw in iter_lines(stream):
+                if isinstance(raw, OversizeLine):
+                    # Ligne entière écartée (jamais un fragment), dite dans la console et le log.
+                    line = f"[ligne stderr de {raw.size} octets ignorée : trop longue]"
+                else:
+                    line = clip_text(raw.decode("utf-8", errors="replace").rstrip())
                 self._tails.setdefault(role, deque(maxlen=STDERR_TAIL_LINES)).append(line)
                 print(f"[{role}] {line}", file=sys.stderr, flush=True)
                 if handle is not None:

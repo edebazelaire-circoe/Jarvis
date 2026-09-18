@@ -799,12 +799,36 @@ long-poll, and long-poll and plain poll converge on the same cursor.
 - The client extends its request timeout by `wait_ms`; the Control Center read
   budget is 5 s + `wait_ms`.
 
-**Slice 05 guidance.** One long-poll per tab (for the selected conversation);
-do not abort and reissue it on every conversation switch (a new one after the
-current returns, or let the old one finish: the cap downgrades extras to plain
-polls, which is correct but not live). Browsers allow about 6 connections per
-host, shared with the existing 1 s / 250 ms polls of the page: a held
-long-poll takes one of them. Resume from the last `next_cursor` received.
+**Slice 05 guidance, amended.** One long-poll per **browser profile**, not per
+tab. Browsers allow about 6 connections per host, shared with the existing
+1 s / 250 ms polls of the page, so one held long-poll per open timeline
+saturated the budget: measured at 6 open timelines, `/api/status` went from
+3-7 ms to 5-14 s and a live event took 14 s to reach every window.
+
+The page therefore elects a leader per profile with `navigator.locks`, keyed by
+conversation (`jarvis.timeline.<conversation_id>`), and relays over
+`BroadcastChannel('jarvis.timeline')`:
+
+- the **leader** holds the only long-poll and broadcasts each accepted page
+  (`from`, `cursor`, `events`, `has_more`) plus a 10 s tick carrying its cursor
+  and the state of its read;
+- a **follower** never long-polls. It does one bounded `wait_ms=0` read on first
+  load, on a gap (a relayed page starting past its cursor), on a tick whose
+  cursor is ahead, and when the leader has been silent for 35 s (checked every
+  5 s, so bounded at ~40 s);
+- hiding a tab releases leadership and pauses it; it catches up on becoming
+  visible. Closing, navigating or freezing the leader releases the lock and the
+  browser hands it to a queued tab, which resumes at **its own** cursor — the
+  route returns everything after that sequence, so no event is missed;
+- without Web Locks or BroadcastChannel the page runs `solo`: one long-poll per
+  tab, exactly the previous behaviour.
+
+Nothing per-tab travels on the channel: the route takes only `conversation_id`,
+`after_sequence`, `limit` and `wait_ms`, and every page filter (Tout/Public,
+search, lanes, scale, selection) is applied afterwards on the rows held in the
+tab. Tabs share the raw stream and each derives its own view. Two tabs on two
+different conversations keep one leader each — the route cannot serve two
+conversations in one request. Resume from the last `next_cursor` received.
 
 ### Errors
 
@@ -1075,12 +1099,25 @@ One flow per tab (`createFeed`), and at most one request in flight:
    `invalid_core_response`, network, timeout, any 5xx/408/429): state
    `reconnecting`, backoff 1 s doubling to 30 s, resume from the last cursor;
 4. blocking failure (`invalid_request`, `forbidden_origin`, `not_configured`,
-   HTTP 404 `missing_route`): state `blocked` until "Réessayer maintenant".
+   HTTP 404 `missing_route`): state `blocked` until "Réessayer maintenant";
+5. `following`: this tab is a follower — rows arrive by relay and no request is
+   held. `paused`: the tab is hidden and asks for nothing. A follower shows the
+   leader's own state, so "En direct" is never displayed while the leader is
+   reconnecting or blocked, and after 25 s without a tick (two missed
+   heartbeats, well before the ~40 s watchdog read) it says "Relais en retard"
+   with how long it has heard nothing, rather than claiming to be up to date.
 
 Rows are keyed by `event_id`: a replayed page adds nothing. Switching
 conversation aborts the held long-poll once the selection has been stable for
 350 ms (so arrowing through the list does not churn connections; the Control
 Center frees its slot within 0.25 s) and hydrates the new one from cursor 0.
+This holds in `shared` mode too: the lock is named per conversation, so the tab
+releases the old conversation's lock and elects again on the new one, and taking
+the lead always (re)starts the read — a tab that is already the leader is the
+case that must restart, not the case to skip. Rows, cursor and the in-flight
+request of the old conversation are dropped, and `merge` refuses any row whose
+`conversation_id` is not the loaded one, so a late page of the old conversation
+cannot land in the new one.
 While the selected conversation is not the one loaded, the canvas says
 "Chargement de la conversation…" and never shows the previous rows. Going back
 to the current conversation within the settle window cancels the pending

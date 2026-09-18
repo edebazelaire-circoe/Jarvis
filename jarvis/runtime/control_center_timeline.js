@@ -840,10 +840,15 @@ const JarvisTimelineCore=(function(){
     pageLimit=500,waitMs=25000,pageTimeoutMs=15000,pollGraceMs=10000,onChange=()=>{}}={}){
     const feed={conversationId:null,phase:'idle',cursor:0,rows:new Map(),version:0,attempt:0,retryAt:null,error:null,
       skippedRows:0,requests:0,hydrated:false,startedAt:null,hydratedAt:null,lastContactAt:null,lastEventAt:null,
-      disconnectedAt:null,lastWaitMs:0,listenerError:null};
+      disconnectedAt:null,lastWaitMs:0,listenerError:null,
+      /* Partage entre onglets : qui tient le long-poll, et ce que le meneur
+         dit de sa lecture. Un suiveur n'a aucune requête longue à montrer —
+         mais il doit montrer l'état réel du flux, pas un « en direct » de
+         façade pendant que le meneur, lui, se reconnecte. */
+      sharedRole:'solo',leaderPhase:null,leaderError:null,leaderAt:null,shortReads:0};
     let generation=0,controller=null,wake=null;
-    const emit=reason=>{
-      try{onChange(feed,reason)}
+    const emit=(reason,detail)=>{
+      try{onChange(feed,reason,detail)}
       catch(error){feed.listenerError=error;if(typeof console!=='undefined')console.error('timeline listener failed',error)}
     };
     const abort=()=>{if(controller){try{controller.abort()}catch(e){/* argued: aborting an already settled request is a no-op */}controller=null}};
@@ -868,12 +873,17 @@ const JarvisTimelineCore=(function(){
       }
       return added;
     }
-    async function loop(mine){
+    /* `short` : lecture courte et bornée d'un suiveur (jamais de `wait_ms`),
+       qui s'arrête dès que le serveur n'a plus rien en réserve. C'est la seule
+       requête qu'un suiveur émet — au premier chargement, sur un trou, ou
+       quand le meneur se tait. */
+    async function loop(mine,{short=false}={}){
       let catchUp=true;
       while(mine===generation){
-        const live=feed.phase==='live'&&!catchUp,wait=live?waitMs:0;
+        const live=!short&&feed.phase==='live'&&!catchUp,wait=live?waitMs:0;
         controller=typeof AbortController!=='undefined'?new AbortController():null;
         feed.requests++;feed.lastWaitMs=wait;
+        if(short)feed.shortReads++;
         let page;
         try{
           page=await request(url(wait),{signal:controller?controller.signal:null,timeoutMs:wait+(live?pollGraceMs:pageTimeoutMs)});
@@ -901,6 +911,7 @@ const JarvisTimelineCore=(function(){
           catchUp=true;
           continue;
         }
+        const from=feed.cursor;
         const added=merge(page),recovered=feed.error!==null;
         feed.cursor=page.next_cursor;
         feed.skippedRows+=Number(page.skipped_rows)||0;
@@ -908,22 +919,393 @@ const JarvisTimelineCore=(function(){
         if(added){feed.version++;feed.lastEventAt=now()}
         catchUp=page.has_more;
         if(page.has_more)feed.phase=feed.hydrated?'catching_up':'hydrating';
-        else{if(!feed.hydrated){feed.hydrated=true;feed.hydratedAt=now()}feed.phase='live'}
-        emit(added?'events':recovered?'recovered':'page');
+        else{if(!feed.hydrated){feed.hydrated=true;feed.hydratedAt=now()}feed.phase=short?'following':'live'}
+        emit(added?'events':recovered?'recovered':'page',{page,added,from,short});
+        if(short&&!page.has_more)return;
       }
+    }
+    /* Repartir sur une conversation. `resume` garde les lignes et le curseur
+       déjà tenus : c'est exactement ce dont a besoin un suiveur promu meneur —
+       il reprend au dernier `next_cursor` reçu, sans retélécharger la
+       conversation et sans trou possible, puisque le serveur rend tout ce qui
+       suit cette séquence. */
+    function reset(conversationId,{resume=false,phase='hydrating'}={}){
+      generation++;abort();if(wake)wake();
+      const keep=resume&&feed.conversationId===conversationId;
+      Object.assign(feed,{conversationId,phase,cursor:keep?feed.cursor:0,rows:keep?feed.rows:new Map(),
+        version:feed.version+1,attempt:0,retryAt:null,error:null,skippedRows:keep?feed.skippedRows:0,
+        hydrated:keep?feed.hydrated:false,startedAt:now(),hydratedAt:keep?feed.hydratedAt:null,
+        lastContactAt:keep?feed.lastContactAt:null,lastEventAt:keep?feed.lastEventAt:null,disconnectedAt:null});
+      return generation;
     }
     return {
       state:feed,
-      start(conversationId){
-        generation++;abort();if(wake)wake();
-        Object.assign(feed,{conversationId,phase:'hydrating',cursor:0,rows:new Map(),version:feed.version+1,attempt:0,
-          retryAt:null,error:null,skippedRows:0,hydrated:false,startedAt:now(),hydratedAt:null,lastContactAt:null,
-          lastEventAt:null,disconnectedAt:null});
+      /* Meneur (ou onglet seul) : hydratation puis long-poll. */
+      start(conversationId,{resume=false}={}){
+        const mine=reset(conversationId,{resume,phase:resume&&feed.hydrated?'catching_up':'hydrating'});
         emit('start');
-        return loop(generation);
+        return loop(mine);
       },
-      stop(){generation++;abort();if(wake)wake();feed.phase='stopped';emit('stop')},
+      /* Suiveur : une lecture courte et bornée, puis plus rien — les
+         événements suivants arrivent par le meneur. */
+      follow(conversationId,{resume=false}={}){
+        const mine=reset(conversationId,{resume,phase:resume&&feed.hydrated?'catching_up':'hydrating'});
+        emit('start');
+        return loop(mine,{short:true});
+      },
+      /* Rattraper maintenant : trou dans le relais, meneur muet, ou retour
+         d'un onglet caché. Une seule lecture courte, bornée. */
+      resync(){
+        if(feed.conversationId===null)return null;
+        const mine=reset(feed.conversationId,{resume:true,phase:'catching_up'});
+        emit('resync');
+        return loop(mine,{short:true});
+      },
+      /* Une page relayée par le meneur. Rend `applied`, `gap` (des séquences
+         manquent entre ce qu'on tient et ce qui arrive : il faut lire),
+         `stale` (déjà vu) ou `other` (une autre conversation). */
+      ingest(message){
+        if(!message||message.conversation_id!==feed.conversationId)return 'other';
+        feed.leaderAt=now();
+        const incoming=Number(message.cursor);
+        if(Number(message.from)>feed.cursor)return 'gap';
+        const events=Array.isArray(message.events)?message.events:[];
+        if(!events.length&&!(incoming>feed.cursor))return 'stale';
+        const from=feed.cursor;
+        const added=merge({events});
+        if(incoming>feed.cursor)feed.cursor=incoming;
+        feed.skippedRows+=Number(message.skipped_rows)||0;
+        feed.lastContactAt=now();
+        if(added){feed.version++;feed.lastEventAt=now()}
+        if(feed.hydrated&&feed.phase!=='paused')feed.phase=message.has_more?'catching_up':'following';
+        emit(added?'events':'page',{added,from,shared:true});
+        return 'applied';
+      },
+      /* Onglet caché : la requête en vol est abandonnée et plus rien n'est
+         demandé. Au retour, `resync()` rattrape. */
+      pause(){generation++;abort();if(wake)wake();feed.phase='paused';emit('pause')},
+      setRole(role){if(feed.sharedRole===role)return;feed.sharedRole=role;emit('role')},
+      /* Ce que le meneur dit de sa propre lecture : un suiveur affiche l'état
+         réel du flux, jamais un « en direct » de façade pendant que le meneur
+         se reconnecte. */
+      noteLeader(report){
+        feed.leaderAt=now();
+        feed.leaderPhase=report&&report.phase||null;
+        feed.leaderError=report&&report.error||null;
+        emit('leader');
+      },
+      stop(){generation++;abort();if(wake)wake();feed.phase='stopped';feed.leaderPhase=null;feed.leaderError=null;emit('stop')},
       retryNow(){if(wake){wake();return true}return false},
+    };
+  }
+
+  /* --------------------------------------------- un seul long-poll par profil */
+  /* Le problème mesuré : chaque chronologie ouverte tenait son propre
+     long-poll. Un navigateur n'accorde qu'environ six connexions par hôte, si
+     bien qu'à six chronologies ouvertes `/api/status` passait de 3-7 ms à
+     5-14 s et qu'un événement mettait 14 s à atteindre toutes les fenêtres.
+
+     La forme retenue est celle de la scène (Slice 05 de la constellation,
+     `control_center_scene_page.js`, approuvée) : un meneur élu par Web Locks,
+     et un `BroadcastChannel` pour le relais. Adaptée, pas recopiée — ce flux a
+     son propre transport, son propre curseur et ses propres filtres.
+
+     Ce qui est partagé, et pourquoi : `/api/conversations/events` ne prend que
+     `conversation_id`, `after_sequence`, `limit` et `wait_ms`. Aucun filtre de
+     la page (public/tout, recherche, lanes, zoom, sélection) ne voyage dans la
+     requête : ils s'appliquent après, sur `feed.rows`. Deux onglets qui
+     regardent la même conversation veulent donc exactement le même flux
+     d'octets. On partage le flux brut et chaque onglet en dérive sa vue : le
+     canal ne transporte aucun filtre, et un onglet peut filtrer autrement sans
+     rien coûter au réseau.
+
+     Le verrou est nommé par conversation : deux onglets sur deux conversations
+     différentes gardent chacun leur meneur — c'est irréductible, le serveur ne
+     sait pas servir deux conversations en une requête. Le cas courant (tous
+     les onglets sur la conversation vivante) ne tient qu'un seul long-poll. */
+  const SHARED_CHANNEL='jarvis.timeline';
+  const SHARED_MESSAGE_VERSION=1;
+  const LOCK_PREFIX='jarvis.timeline.';
+  const LEADER_TICK_MS=10000;      // battement du meneur : son silence se voit
+  const FOLLOWER_CHECK_MS=5000;    // granularité de la surveillance du suiveur
+  const FOLLOWER_SILENCE_MS=35000; // silence toléré ; borne réelle ≈ 40 s
+  //: Deux battements manqués : au-delà, le suiveur ne peut plus affirmer qu'il
+  //: est à jour, et il le dit — bien avant que le chien de garde ne lise.
+  const LEADER_LATE_MS=25000;
+  const RESYNC_MIN_MS=1000;        // deux trous coup sur coup ne font qu'une lecture
+
+  /* Élection du meneur du profil par Web Locks. `decide()` rend une promesse
+     résolue quand le rôle est connu : meneur si le verrou est libre, sinon
+     suiveur mis en file — le navigateur passe le verrou dès qu'il est rendu,
+     y compris quand l'onglet qui le tenait est fermé ou navigue ailleurs.
+     Un verrou accordé à un onglet devenu caché ou arrêté est rendu aussitôt. */
+  function createLeadership({locks,name,createAbort,onRole,wanted=()=>true,log=()=>{},
+    schedule=(fn,ms)=>{const t=setTimeout(fn,ms);return()=>clearTimeout(t)}}){
+    const state={held:false,release:null,abort:null,retry:null,attempt:0};
+    function hold(){
+      if(!wanted()){state.abort=null;onRole('follower');return Promise.resolve()}
+      return new Promise(release=>{state.abort=null;state.held=true;state.release=release;onRole('leader')});
+    }
+    function queue(){
+      const controller=createAbort();
+      state.abort=controller;
+      locks.request(name,{signal:controller.signal},()=>hold()).catch(error=>{
+        if(error&&error.name==='AbortError')return;
+        if(state.abort===controller)state.abort=null;
+        state.attempt++;
+        log('warn','timeline.leader_lock_failed',{error:String(error&&error.message||error),attempt:state.attempt});
+        /* Un onglet qui n'arrive pas à se mettre en file ne serait jamais
+           meneur : il suivrait indéfiniment un meneur qui n'existe peut-être
+           plus. On se remet en file, en espaçant les tentatives. */
+        if(state.retry)state.retry();
+        state.retry=schedule(()=>{
+          state.retry=null;
+          if(wanted()&&!state.held&&!state.abort)queue();
+        },backoffMs(state.attempt));
+      });
+    }
+    return {
+      decide(){
+        if(state.held||state.abort)return Promise.resolve();
+        return new Promise(resolve=>{
+          locks.request(name,{ifAvailable:true},lock=>{
+            if(lock){const held=hold();resolve();return held}
+            onRole('follower');queue();resolve();
+            return undefined;
+          }).catch(error=>{log('warn','timeline.leader_lock_failed',{error:String(error&&error.message||error)});resolve()});
+        });
+      },
+      release(){
+        if(state.retry){state.retry();state.retry=null}
+        state.attempt=0;
+        if(state.abort){const pending=state.abort;state.abort=null;pending.abort()}
+        if(state.release){const release=state.release;state.release=null;release()}
+        state.held=false;
+      },
+      name,
+      held:()=>state.held,
+      queued:()=>!!state.abort||!!state.retry,
+      attempts:()=>state.attempt,
+    };
+  }
+
+  /* La machine à états qui relie le flux, le verrou et le canal.
+     - `leader`  : tient le seul long-poll et relaie chaque page acceptée, plus
+                   un battement portant son curseur et l'état de sa lecture ;
+     - `follower`: aucune requête longue ; applique les pages relayées, et ne
+                   lit le serveur qu'en lectures courtes bornées — premier
+                   chargement, trou, curseur du meneur en avance, meneur muet ;
+     - `solo`    : sans Web Locks ni BroadcastChannel (navigateur ancien), le
+                   comportement d'avant, un long-poll par onglet.
+     Un seul onglet ouvert : `solo` de fait côté réseau — le meneur est seul,
+     il tient son long-poll exactement comme avant. */
+  function createSharedFeed({feed,locks=null,channel=null,createAbort=()=>new AbortController(),
+    now=()=>Date.now(),schedule=(fn,ms)=>{const t=setTimeout(fn,ms);return()=>clearTimeout(t)},log=()=>{}}={}){
+    const shared=!!locks&&!!channel&&typeof locks.request==='function';
+    const stats={broadcasts:0,received:0,resyncs:0,gaps:0,promotions:0,watchdogReads:0};
+    let role=shared?'follower':'solo',conversationId=null,leadership=null;
+    let visible=true,stopped=false,heartbeat=null,watchdog=null,lastResyncAt=-Infinity,resyncing=false,followerSince=0,forced=false;
+
+    const post=message=>{
+      if(!channel)return;
+      try{channel.postMessage({v:SHARED_MESSAGE_VERSION,...message});stats.broadcasts++}
+      catch(error){log('warn','timeline.broadcast_failed',{error:String(error&&error.message||error)})}
+    };
+    const report=()=>({phase:feed.state.phase,error:feed.state.error,cursor:feed.state.cursor});
+    const tick=()=>{if(role==='leader'&&conversationId)post({type:'tick',conversation_id:conversationId,...report()})};
+
+    function stopTimers(){
+      if(heartbeat){heartbeat();heartbeat=null}
+      if(watchdog){watchdog();watchdog=null}
+    }
+    function armHeartbeat(){
+      if(heartbeat||role!=='leader'||stopped)return;
+      heartbeat=schedule(()=>{heartbeat=null;if(role!=='leader'||stopped)return;tick();armHeartbeat()},LEADER_TICK_MS);
+    }
+    /* Surveillance du suiveur, indépendante de ses propres lectures : un
+       meneur muet depuis 35 s vaut une lecture courte, et pas plus d'une par
+       tranche de 35 s. Un meneur qui bat ne déclenche jamais rien. */
+    function armWatchdog(){
+      if(watchdog||role!=='follower'||!visible||stopped||!conversationId)return;
+      watchdog=schedule(()=>{
+        watchdog=null;
+        if(role!=='follower'||!visible||stopped||!conversationId)return;
+        /* Le silence se compte depuis le dernier signe du meneur, ou depuis
+           l'instant où l'on est devenu suiveur si l'on n'a rien entendu. */
+        const silence=now()-Math.max(feed.state.leaderAt||0,followerSince);
+        if(silence>=FOLLOWER_SILENCE_MS&&now()-lastResyncAt>=FOLLOWER_SILENCE_MS){
+          stats.watchdogReads++;
+          log('info','timeline.follower_watchdog',{silent_ms:silence,cursor:feed.state.cursor});
+          resync('watchdog');
+        }
+        armWatchdog();
+      },FOLLOWER_CHECK_MS);
+    }
+
+    function resync(reason){
+      if(stopped||!conversationId||!visible||resyncing||!feed.state.conversationId)return null;
+      /* Une lecture est déjà en vol : elle part du curseur tenu, donc elle
+         couvre le trou. En lancer une seconde ne ferait que doubler la
+         requête qu'on cherche justement à économiser. */
+      if(['hydrating','catching_up'].includes(feed.state.phase))return null;
+      if(now()-lastResyncAt<RESYNC_MIN_MS)return null;
+      lastResyncAt=now();resyncing=true;stats.resyncs++;
+      log('info','timeline.resync',{reason,cursor:feed.state.cursor});
+      const done=()=>{resyncing=false;armWatchdog()};
+      const running=feed.resync();
+      if(running&&typeof running.then==='function')running.then(done,done);else done();
+      return running;
+    }
+
+    /* Le flux lit-il déjà, en ce moment, la conversation demandée ? C'est la
+       seule question qui dit s'il faut le relancer. Se fier au rôle ne suffit
+       pas : un onglet déjà meneur qui change de conversation reste meneur, et
+       il doit pourtant tout recommencer — sans quoi le sélecteur annonce B
+       pendant que le flux tient toujours A. */
+    function alreadyReading(phases){
+      return feed.state.conversationId===conversationId&&phases.includes(feed.state.phase);
+    }
+    function becomeLeader(){
+      const again=role==='leader'&&alreadyReading(['hydrating','catching_up','live'])&&!forced;
+      role='leader';
+      if(!again){
+        stats.promotions++;
+        /* `resume` seulement si c'est le même flux : sur un changement de
+           conversation, tout repart de la séquence 0 — lignes, curseur — et la
+           lecture en vol de l'ancienne est abandonnée par `feed.start`. */
+        const resume=feed.state.conversationId===conversationId;
+        log('info','timeline.leader',{conversation_id:conversationId,resume});
+        stopTimers();
+        feed.setRole('leader');
+        if(conversationId)feed.start(conversationId,{resume});
+      }
+      forced=false;
+      tick();armHeartbeat();
+    }
+    function becomeFollower(){
+      const was=role,again=was==='follower'&&alreadyReading(['hydrating','catching_up','following'])&&!forced;
+      role='follower';stopTimers();followerSince=now();
+      feed.setRole('follower');
+      forced=false;
+      if(!conversationId||!visible)return;
+      if(was==='leader')post({type:'bye',conversation_id:conversationId});
+      /* La lecture de rattrapage part d'abord : le « bonjour » ci-dessous fait
+         répondre le meneur tout de suite, et il ne doit pas trouver un flux
+         encore à l'arrêt — il déclencherait une seconde lecture pour rien. */
+      if(!again)feed.follow(conversationId,{resume:feed.state.conversationId===conversationId});
+      /* Un suiveur qui arrive demande au meneur où il en est : sans cela il
+         attendrait le prochain battement pour le savoir. */
+      post({type:'hello',conversation_id:conversationId});
+      armWatchdog();
+    }
+
+    function elect(){
+      if(!shared||stopped||!conversationId)return Promise.resolve();
+      const name=LOCK_PREFIX+conversationId;
+      /* Déjà meneur du bon verrou : le rendre pour le reprendre ferait passer
+         cet onglet par un état de suiveur le temps d'un battement — et donc
+         par une lecture courte pour rien. On applique le rôle directement. */
+      if(leadership&&leadership.held()&&leadership.name===name){becomeLeader();return Promise.resolve()}
+      if(leadership)leadership.release();
+      leadership=createLeadership({locks,name,createAbort,log,schedule,
+        wanted:()=>!stopped&&visible&&!!conversationId,
+        onRole:next=>{if(next==='leader')becomeLeader();else becomeFollower()}});
+      return leadership.decide();
+    }
+
+    return {
+      mode:shared?'shared':'solo',
+      stats,
+      view(){return {mode:shared?'shared':'solo',role,conversationId,visible,
+        leader:!!(leadership&&leadership.held()),queued:!!(leadership&&leadership.queued()),stats:{...stats}}},
+      /* Suivre une conversation : c'est ici qu'on décide qui tient le
+         long-poll. Sans partage possible, le comportement d'avant. */
+      watch(id,{force=false}={}){
+        const changed=conversationId!==id;
+        conversationId=id;stopped=false;
+        forced=force||changed;
+        if(!shared){role='solo';feed.setRole('solo');feed.start(id);return Promise.resolve()}
+        if(!visible){
+          /* Caché : rien n'est demandé, mais le flux ne doit pas rester sur
+             l'ancienne conversation — au retour, l'élection le relancera sur
+             la bonne, et entre-temps la page ne montre les lignes de personne. */
+          feed.setRole('follower');feed.pause();
+          return Promise.resolve();
+        }
+        return elect();
+      },
+      /* « Réessayer » quand il n'y a rien à réveiller : tout reprendre sur la
+         conversation courante, quel que soit le rôle tenu. */
+      restart(){
+        if(!conversationId)return Promise.resolve();
+        return this.watch(conversationId,{force:true});
+      },
+      /* Onglet caché : la conduite est rendue tout de suite — un autre onglet
+         visible prend le relais — et plus rien n'est demandé ici. */
+      setVisible(next){
+        if(next===visible)return Promise.resolve();
+        visible=next;
+        if(!shared||!conversationId)return Promise.resolve();
+        if(!visible){
+          if(role==='leader')post({type:'bye',conversation_id:conversationId});
+          if(leadership)leadership.release();
+          role='follower';stopTimers();feed.setRole('follower');feed.pause();
+          return Promise.resolve();
+        }
+        return elect();
+      },
+      /* Un message du canal. Rien de ce qui arrive n'est cru sur parole : une
+         page dont le début dépasse notre curseur est un trou, pas une page. */
+      handleMessage(message){
+        if(stopped||!shared||!message||message.v!==SHARED_MESSAGE_VERSION)return 'ignored';
+        if(message.conversation_id!==conversationId)return 'other';
+        stats.received++;
+        if(message.type==='hello'){if(role==='leader')tick();return 'hello'}
+        /* Le meneur s'en va. Un suiveur est déjà en file sur le verrou : le
+           navigateur le lui passe tout seul, il n'y a rien à redemander. On ne
+           relance une élection que si, pour une raison quelconque, cet onglet
+           n'est pas en file — sinon on paierait une lecture pour rien. */
+        if(message.type==='bye'){
+          if(role!=='leader'&&!(leadership&&leadership.queued()))elect();
+          armWatchdog();
+          return 'bye';
+        }
+        if(role==='leader')return 'ignored';
+        if(message.type==='tick'){
+          feed.noteLeader(message);
+          if(Number(message.cursor)>feed.state.cursor)resync('tick-ahead');
+          armWatchdog();
+          return 'tick';
+        }
+        if(message.type!=='page')return 'ignored';
+        const verdict=feed.ingest(message);
+        if(verdict==='gap'){stats.gaps++;resync('gap')}
+        armWatchdog();
+        return verdict;
+      },
+      /* Appelé par la page à chaque changement du flux : le meneur relaie. */
+      observe(state,reason,detail){
+        if(role!=='leader'||!conversationId)return;
+        if((reason==='events'||reason==='page'||reason==='recovered')&&detail&&detail.page){
+          post({type:'page',conversation_id:conversationId,from:detail.from,cursor:state.cursor,
+            events:detail.page.events||[],has_more:!!detail.page.has_more,
+            skipped_rows:Number(detail.page.skipped_rows)||0});
+          return;
+        }
+        if(['start','error','retry','retrying','blocked','stop','resync'].includes(reason))tick();
+      },
+      /* « Réessayer » : le meneur relance sa lecture, un suiveur rattrape. */
+      retryNow(){
+        if(role==='follower'&&shared){lastResyncAt=-Infinity;resync('manual');return true}
+        return feed.retryNow();
+      },
+      stop(){
+        stopped=true;stopTimers();
+        if(shared&&role==='leader'&&conversationId)post({type:'bye',conversation_id:conversationId});
+        if(leadership)leadership.release();
+        leadership=null;conversationId=null;role=shared?'follower':'solo';
+        feed.stop();
+      },
     };
   }
 
@@ -940,7 +1322,29 @@ const JarvisTimelineCore=(function(){
       return {tone:'muted',label:'Aucune conversation',detail:'',retry:false};
     }
     const n=plural(feed.rows.size,'événement','événements');
+    /* Suiveur : le flux vit dans un autre onglet du même profil. On dit d'où
+       vient la fraîcheur, et on n'invente pas « en direct » quand le meneur
+       annonce qu'il se reconnecte ou qu'il est bloqué. */
+    if(feed.sharedRole==='follower'&&['following','live','catching_up'].includes(feed.phase)){
+      const trouble=feed.leaderError||null;
+      if(feed.leaderPhase==='blocked'&&trouble)return {tone:'bad',label:trouble.title||'Bloqué',
+        detail:[trouble.message,'relayé par un autre onglet'].filter(Boolean).join(' · '),hint:trouble.hint||'',retry:true};
+      if(feed.leaderPhase==='reconnecting'&&trouble)return {tone:'warn',label:trouble.title||'Reconnexion',
+        detail:[trouble.message,'relayé par un autre onglet'].filter(Boolean).join(' · '),hint:trouble.hint||'',retry:true};
+      /* Le relais est-il encore vivant ? Sans nouvelle de l'onglet qui lit, on
+         n'a aucun moyen d'affirmer qu'on est à jour : on dit depuis quand on
+         n'a rien entendu plutôt que d'afficher un « en direct » de confiance. */
+      const heard=feed.leaderAt||feed.hydratedAt||feed.startedAt;
+      const silence=heard?now-heard:null;
+      if(silence!==null&&silence>=LEADER_LATE_MS)return {tone:'warn',label:'Relais en retard',
+        detail:`${n} · aucune nouvelle de l'onglet qui lit depuis ${ago(silence)}`,
+        hint:'Une lecture de contrôle part d’elle-même ; « Réessayer » la déclenche tout de suite.',retry:true};
+      const freshness=feed.lastEventAt?`dernier reçu il y a ${ago(now-feed.lastEventAt)}`:'en attente';
+      return {tone:'live',label:'En direct',detail:`${n} · ${freshness} · relayé par un autre onglet`,retry:false};
+    }
     switch(feed.phase){
+      case 'following':return {tone:'live',label:'En direct',detail:`${n} · relayé par un autre onglet`,retry:false};
+      case 'paused':return {tone:'muted',label:'En pause',detail:`${n} · onglet en arrière-plan`,retry:false};
       case 'hydrating':return {tone:'busy',label:'Chargement',detail:`${n} · ${ago(now-(feed.startedAt||now))}`,retry:false};
       case 'catching_up':return {tone:'busy',label:'Rattrapage',detail:n,retry:false};
       case 'live':return {tone:'live',label:'En direct',detail:feed.lastEventAt?`${n} · dernier reçu il y a ${ago(now-feed.lastEventAt)}`:`${n} · en attente`,retry:false};
@@ -1227,7 +1631,8 @@ const JarvisTimelineCore=(function(){
   return {SPECS,SPAN_OPENER,ANOMALY,LANES,LANE_INDEX,GEOMETRY,DEFAULT_PPS,ERROR_TEXT,readableEvents,reconstruct,toRow,collapseMessages,filterItems,
     laneOf,isSpan,entryKind,displayText,typeLabel,statusLabel,toneOf,playbackNote,fmtDuration,fmtClock,durationOf,
     wrapLines,cardHeight,subagentName,layout,visibleRange,tickStep,ticks,neighbor,entryHtml,ariaLabel,iconSvg,escapeHtml,classifyError,backoffMs,
-    createFetchJson,createFetchText,createOpenStream,createFeed,statusView,emptyView,indexItems,detailModel,traceModel,
+    createFetchJson,createFetchText,createOpenStream,createFeed,createLeadership,createSharedFeed,statusView,emptyView,indexItems,detailModel,traceModel,
+    SHARED_CHANNEL,SHARED_MESSAGE_VERSION,LOCK_PREFIX,LEADER_TICK_MS,FOLLOWER_CHECK_MS,FOLLOWER_SILENCE_MS,LEADER_LATE_MS,
     EXPORT_FORMAT,SEARCH_LIMIT,SEARCH_MAX_CHARS,transcriptUrl,exportUrl,searchUrl,exportFilename,transcriptFilename,fmtBytes,
     exportSummary,searchQueryProblem,snippetHtml,hitView,searchStateView,jobStateView,itemForEvent,
     localOffsetMinutes,offsetLabel,localDay,fnv1a,exportFailure,trackNewEntries,panelHint};
@@ -1267,6 +1672,16 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisTimelineCore
     panel:null,panelReturn:null,search:{q:'',all:true},transcript:{mode:'plain'},exportJob:{},jump:null,foundId:null};
 
   const feed=T.createFeed({request:fetchJson,onChange:onFeed});
+  /* Un seul long-poll par profil : le meneur du profil tient la lecture et la
+     relaie aux autres onglets. Sans Web Locks ou sans BroadcastChannel, le
+     partage n'a pas lieu et chaque onglet lit pour lui — c'est le repli
+     `solo`, exactement le comportement d'avant. */
+  const tlChannel=typeof BroadcastChannel==='function'?new BroadcastChannel(T.SHARED_CHANNEL):null;
+  const tlLocks=navigator.locks&&typeof navigator.locks.request==='function'?navigator.locks:null;
+  const shared=T.createSharedFeed({feed,locks:tlLocks,channel:tlChannel,
+    createAbort:()=>new AbortController(),
+    log:(level,event,data)=>{if(typeof console!=='undefined'&&console[level==='warn'?'warn':'info'])console[level==='warn'?'warn':'info'](event,data)}});
+  if(tlChannel)tlChannel.onmessage=event=>shared.handleMessage(event.data);
 
   /* Largeur réelle d'un caractère du texte des cartes (police monospace de la machine). */
   function measureText(){
@@ -1293,13 +1708,13 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisTimelineCore
     loadConversations();
     /* Rouverte : la conversation choisie, même si l'échange était encore en attente. */
     const wanted=S.selectedId||feed.state.conversationId;
-    if(wanted&&(feed.state.phase==='stopped'||feed.state.conversationId!==wanted))feed.start(wanted);
+    if(wanted&&(feed.state.phase==='stopped'||feed.state.conversationId!==wanted))shared.watch(wanted);
     requestAnimationFrame(()=>{el.conv.focus({preventScroll:true});scheduleRebuild(true)});
   }
   function closeView(){
     if(!S.open)return;
     S.open=false;
-    feed.stop();
+    shared.stop();
     clearInterval(S.tick);S.tick=null;clearTimeout(S.switchTimer);
     S.switchTimer=null;
     closePanel(false);
@@ -1360,7 +1775,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisTimelineCore
     /* Une seule requête en vol par onglet : le long-poll en cours n'est
        abandonné qu'une fois la sélection stable (flèches dans la liste). */
     clearTimeout(S.switchTimer);
-    const begin=()=>{S.switchTimer=null;if(S.open){feed.start(id);el.scroll.scrollTop=0}};
+    const begin=()=>{S.switchTimer=null;if(S.open){shared.watch(id);el.scroll.scrollTop=0}};
     if(feed.state.conversationId)S.switchTimer=setTimeout(begin,SWITCH_SETTLE_MS);else begin();
     renderConversationSelect();scheduleRebuild(true);
   }
@@ -1383,7 +1798,8 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisTimelineCore
   }
 
   /* ----------------------------------------------------------------- flux */
-  function onFeed(state,reason){
+  function onFeed(state,reason,detail){
+    shared.observe(state,reason,detail);
     if(!S.open)return;
     if(reason==='start'&&S.panel==='search')renderPanel();  // "autre conversation" follows the shown one
     if(reason==='events'||reason==='start'){
@@ -2004,7 +2420,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisTimelineCore
   el.zoom.addEventListener('change',()=>{S.pps=Number(el.zoom.value)||T.DEFAULT_PPS;S.zoomChanged=true;scheduleRebuild()});
   el.retry.addEventListener('click',()=>{
     if(!feed.state.conversationId){loadConversations();return}
-    if(!feed.retryNow())feed.start(feed.state.conversationId);
+    if(!shared.retryNow())shared.restart();
   });
   el.newPill.addEventListener('click',()=>{el.scroll.scrollTop=el.scroll.scrollHeight;S.pendingNew=0;el.newPill.hidden=true});
   el.scroll.addEventListener('scroll',()=>{
@@ -2038,5 +2454,28 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisTimelineCore
     event.stopPropagation();
   });
 
-  window.JarvisTimeline={open:openView,close:closeView,state:S,feed};
+  /* Passation. Fermer, cacher, naviguer ou geler l'onglet meneur rend le
+     verrou : un autre onglet visible du même profil le reçoit aussitôt et
+     reprend la lecture à son propre curseur — aucun événement ne se perd,
+     puisque le serveur rend tout ce qui suit cette séquence.
+     Un onglet caché ne lit plus rien et rattrape en redevenant visible. */
+  document.addEventListener('visibilitychange',()=>{
+    if(!S.open)return;
+    shared.setVisible(document.visibilityState!=='hidden');
+    renderStatus();
+  });
+  const handOver=()=>{if(S.open)shared.setVisible(false)};
+  window.addEventListener('pagehide',handOver);
+  window.addEventListener('freeze',handOver);
+
+  window.JarvisTimeline={open:openView,close:closeView,state:S,feed,shared,
+    /* Ce que la recette regarde : le mode réel, le rôle de cet onglet, et
+       s'il tient une requête longue. */
+    sharing(){
+      const f=feed.state;
+      const holding=(f.sharedRole==='leader'||f.sharedRole==='solo')&&['live','hydrating','catching_up'].includes(f.phase);
+      return {...shared.view(),phase:f.phase,cursor:f.cursor,rows:f.rows.size,
+        longPolls:holding&&f.lastWaitMs>0?1:0,requests:f.requests,shortReads:f.shortReads};
+    },
+  };
 })();

@@ -32,6 +32,9 @@ from jarvis.domain.voice_frontend import (
 )
 from jarvis.runtime.voice_capabilities import default_voice_registry
 
+# Erreurs fournisseur qui ne décrivent aucune panne de la session.
+BENIGN_PROVIDER_CODES = frozenset({"response_cancel_not_active"})
+
 
 class _ProviderFailure(Exception):
     def __init__(self, code: VoiceErrorCode):
@@ -390,6 +393,10 @@ class OpenAIRealtimeFrontend:
                       VoiceErrorCode.RATE_LIMIT if code == "rate_limit_exceeded" else VoiceErrorCode.PROVIDER)
             if self.state is FrontendState.STARTING:
                 raise _ProviderFailure(mapped)
+            if code in BENIGN_PROVIDER_CODES:
+                # Refus sans conséquence (annulation d'une réponse déjà
+                # terminée) : l'état visé est atteint, ce n'est pas une panne.
+                return
             payload = VoiceFrontendFailed(VoiceFrontendError(mapped, None, self.state, retryable=True, provider_code=safe_code))
         if payload is not None:
             self._emit(payload, correlation=correlation, provider_event_id=provider_event_id)

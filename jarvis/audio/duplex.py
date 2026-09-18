@@ -255,7 +255,7 @@ class NearEndDetector:
 
         return self._frames_since_far <= self.tail_frames
 
-    def release(self) -> None:
+    def release(self, *, learn: bool = True) -> None:
         """Lever le verrou : la parole supposée n'en était pas.
 
         C'était donc de l'écho que le couplage appris sous-estimait — après un
@@ -264,9 +264,14 @@ class NearEndDetector:
         correction, cet écho resterait proche pour toujours, et JARVIS se
         couperait lui-même en boucle. Le couplage remonte donc au niveau
         observé, juste assez pour que ce même écho ne franchisse plus la marge.
+
+        `learn=False` lève le verrou sans rien apprendre : le fournisseur a pu
+        confirmer trop tard une vraie voix (17/09/2026, confirmation 140 ms
+        après la fenêtre). Apprendre cette voix comme de l'écho rendait JARVIS
+        de plus en plus dur à couper, rejet après rejet.
         """
 
-        if self._recent_excess:
+        if learn and self._recent_excess:
             observed = max(self._recent_excess) - self.echo_margin_db + 2.0
             self.coupling_db = min(20.0, max(self.coupling_db, observed))
         self.latched = False
@@ -413,6 +418,7 @@ class CaptureProcessor:
         self._lock = threading.Lock()
         self._reference = bytearray()
         self._release_requested = False
+        self._release_learn = False
         self._carry = b""
         self._gate_open = True
         self.canceller_failed = False
@@ -459,11 +465,16 @@ class CaptureProcessor:
         with self._lock:
             self._reference.clear()
 
-    def release_near_end(self) -> None:
-        """Refermer la garde : le bridge n'a pas confirmé de parole."""
+    def release_near_end(self, *, learn: bool = True) -> None:
+        """Refermer la garde : le bridge n'a pas confirmé de parole.
+
+        `learn` : le détecteur remonte-t-il son couplage au niveau entendu ?
+        Deux demandes avant la trame suivante apprennent si l'une l'exige.
+        """
 
         with self._lock:
             self._release_requested = True
+            self._release_learn = self._release_learn or learn
 
     def reset(self) -> None:
         """Repartir pour une nouvelle session vocale.
@@ -486,6 +497,7 @@ class CaptureProcessor:
         with self._lock:
             self._reference.clear()
             self._release_requested = False
+            self._release_learn = False
             self._owner_gate_wanted = False
             self._owner_flow_request = None
             self._owner_replays.clear()
@@ -627,10 +639,11 @@ class CaptureProcessor:
         self._carry = data[usable:]
         with self._lock:
             release, self._release_requested = self._release_requested, False
+            learn, self._release_learn = self._release_learn, False
             owner_gate = self._owner_gate_wanted
             flow_request, self._owner_flow_request = self._owner_flow_request, None
         if release:
-            self.detector.release()
+            self.detector.release(learn=learn)
         out = bytearray()
         signals: list[str] = []
         ring = self._owner_ring

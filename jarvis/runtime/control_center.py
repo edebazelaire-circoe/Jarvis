@@ -63,6 +63,12 @@ from jarvis.runtime.live_status import CoreLiveStatusView, project_live_status
 from jarvis.runtime.model_catalog import CatalogError, ModelCatalog, filter_by_role
 from jarvis.runtime.owner_voice import effective_verifier_settings, probe_remedy
 from jarvis.runtime.self_dev import SelfDevError, apply_gate as apply_self_dev_gate, load_gate as load_self_dev_gate
+from jarvis.runtime.scene_settings import (
+    SceneSettingsError,
+    apply_gate as apply_scene_gate,
+    describe_gate as describe_scene_gate,
+    load_gate as load_scene_gate,
+)
 from jarvis.runtime.self_dev_service import SelfDevelopmentService
 from jarvis.runtime.owner_voice import probe_from_settings as probe_owner_verifier
 from jarvis.runtime.visual_signals import VisualSignalBus
@@ -80,6 +86,18 @@ from jarvis.runtime.conversation_event_trace import TraceNotApplicable, drill_do
 from jarvis.runtime.conversation_event_view import ConversationEventView, ConversationEventViewError
 from jarvis.runtime.work_ingress import TrackerWorkObserver, WorkIngressForwarder
 from jarvis.runtime.work_view import NOT_CONFIGURED, CoreWorkView, unavailable_payload
+from jarvis.protocol import scene_wire
+from jarvis.domain.scene_capture import INVALID_PNG, MAX_CAPTURE_BYTES, UNKNOWN_CAPTURE, check_capture_id, png_dimensions
+from jarvis.protocol.strict_json import loads_strict_json
+from jarvis.runtime.display_mcp import DisplayMcpTarget
+from jarvis.runtime.scene_view import (
+    CoreSceneView,
+    ReportThrottle,
+    SceneActorForbidden,
+    unavailable_patches_payload,
+    unavailable_snapshot_payload,
+    user_command,
+)
 from jarvis.v2_config import (
     CONVERSATION_AUTHORIZATION_SETTINGS,
     MIN_ACTIVE_TIMEOUT_S,
@@ -165,6 +183,35 @@ CATALOG_SCRIPT_MARKER = "/*__CONTROL_CENTER_CATALOG_JS__*/"
 #: plus son branchement navigateur. Même insertion que les scripts ci-dessus.
 BAREHANDS_SCRIPT_FILE = "control_center_barehands.js"
 BAREHANDS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_JS__*/"
+#: Client pur de la scène constellation (Slice 03) : application ordonnée des
+#: patchs et détection de resynchronisation. Il n'expose que
+#: `window.JarvisSceneClient` et ne touche pas au DOM ; le rendu vient en Slice 05.
+SCENE_SCRIPT_FILE = "control_center_scene.js"
+SCENE_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_JS__*/"
+#: Rendu de la scène (Slice 05) : repère, AutoResolver et modèle de vue purs
+#: (`window.JarvisSceneLayout`), puis boucle de lecture, validation des
+#: placements et dessin (`window.JarvisScene`), inerte tant que `scene.enabled`
+#: est faux dans `/api/status`.
+SCENE_LAYOUT_SCRIPT_FILE = "control_center_scene_layout.js"
+SCENE_LAYOUT_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_LAYOUT_JS__*/"
+SCENE_PAGE_SCRIPT_FILE = "control_center_scene_page.js"
+SCENE_PAGE_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_PAGE_JS__*/"
+#: Interactions de l'utilisateur (Slice 08) : géométrie, menu, archivage
+#: groupé, affichage optimiste (`window.JarvisSceneInteract`, logique pure).
+SCENE_INTERACT_SCRIPT_FILE = "control_center_scene_interact.js"
+SCENE_INTERACT_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_INTERACT_JS__*/"
+#: Capture visuelle exceptionnelle de la scène (Slice 09, partie 2) : dessin
+#: du modèle de vue et réponse du meneur visible, logique pure
+#: (`window.JarvisSceneCapture`), insérée avant le bloc de page qui l'utilise.
+SCENE_CAPTURE_SCRIPT_FILE = "control_center_scene_capture.js"
+#: Route d'envoi des captures : ses refus d'origine ont la forme d'erreur de scène.
+SCENE_CAPTURE_ROUTE_PREFIX = "/api/scene/captures/"
+SCENE_CAPTURE_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_CAPTURE_JS__*/"
+#: Réglage `scene.enabled` à l'écran (Slice 11) : section de l'onglet
+#: Expérimental (logique pure `window.JarvisSceneSettings` testée par node, puis
+#: son branchement), insérée après Barehands, qui crée cet onglet.
+SCENE_SETTINGS_SCRIPT_FILE = "control_center_scene_settings.js"
+SCENE_SETTINGS_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_SETTINGS_JS__*/"
 #: Chronologie de conversation plein écran (Slice 05) : logique pure testée par
 #: node et branchement navigateur, insérés comme les scripts ci-dessus.
 TIMELINE_SCRIPT_FILE = "control_center_timeline.js"
@@ -262,6 +309,42 @@ def _brief_value(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _seconds(ms: object) -> str:
+    return f"{float(ms) / 1000:.1f}".replace(".", ",") + " s"
+
+
+def render_interrupted_speech(items: object) -> list[str]:
+    """Dire au cerveau ce que l'utilisateur a coupé, et ce qu'il en a entendu.
+
+    Sa propre session garde le texte entier de ses réponses : sans ces lignes,
+    il répond comme si tout avait été dit (17/09/2026).
+    """
+
+    lines: list[str] = []
+    for item in items if isinstance(items, list) else ():
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        heard = str(item.get("heard_text") or "").strip()
+        played, total = item.get("played_ms") or 0, item.get("total_ms")
+        if not heard:
+            lines.append(
+                f"COUPÉ : ta réponse « {text} » n'a pas été entendue du tout. "
+                "L'utilisateur ne la connaît pas."
+            )
+            continue
+        duration = f"au bout de {_seconds(played)}" + (f" sur environ {_seconds(total)}" if total else "")
+        lines.append(
+            f"COUPÉ : l'utilisateur t'a interrompu {duration} pendant ta réponse « {text} ». "
+            f"Il n'en a entendu que le début, à peu près : « {heard}… ». "
+            "La suite n'a PAS été dite : ne la tiens pas pour connue, et ne prends pas ce qu'il dit "
+            "maintenant pour une réponse à ce qu'il n'a pas entendu. Redis ce qui compte encore, si c'est utile."
+        )
+    return lines
+
+
 def build_agent_brief(context: dict[str, Any], text: str) -> str:
     """Préfixer la demande de ce que Core sait, et de ce dont il doute.
 
@@ -285,6 +368,7 @@ def build_agent_brief(context: dict[str, Any], text: str) -> str:
         )
     else:
         lines.append("Adressage : direct. La demande t'est adressée.")
+    lines.extend(render_interrupted_speech(context.get("interrupted_speech")))
     state = context.get("state")
     if isinstance(state, dict):
         for key, label in _BRIEF_STATE_FIELDS:
@@ -315,6 +399,8 @@ class ControlCenter:
         conversation_event_view: ConversationEventView | None = None,
         work_view: CoreWorkView | None = None,
         live_view: CoreLiveStatusView | None = None,
+        scene_view: CoreSceneView | None = None,
+        display_mcp: DisplayMcpTarget | None = None,
         voice_registry: VoiceCapabilityRegistry | None = None,
         barehands_vendor_root: Path | None = None,
     ) -> None:
@@ -358,6 +444,16 @@ class ControlCenter:
         # non terminal lors d'une panne de lecture afin de ne jamais afficher
         # OFF tant qu'une clôture n'est pas prouvée.
         self.live_view = live_view
+        # Proxy de la scène constellation tenue par Core (Slice 03). Absent,
+        # `/api/scene*` répondent « non configuré ».
+        self.scene_view = scene_view
+        # Acteurs refusés : un avertissement par valeur par minute, avec le
+        # nombre d'occurrences tues (une page en boucle ne remplit pas la trace).
+        self._scene_forbidden_reports = ReportThrottle()
+        # Où le serveur MCP d'affichage du cerveau joint Core (Slice 06). Remis
+        # à l'agent Claude seulement quand `scene.enabled` est vrai.
+        self.display_mcp = display_mcp
+        self._display_unconfigured_reported = False
 
         settings = self._settings()
         self._agent_id = cli_catalog.normalize_agent_cli(settings.get("agent_cli"))
@@ -399,6 +495,11 @@ class ControlCenter:
             web.get("/api/agent", self.agent_status),
             web.get("/api/agent/transcript", self.agent_transcript),
             web.get("/api/work", self.work),
+            web.get("/api/scene", self.scene),
+            web.get("/api/scene/patches", self.scene_patches),
+            web.post("/api/scene/commands", self.scene_command),
+            web.post("/api/jobs/cancel", self.job_cancel),
+            web.post("/api/scene/captures/{capture_id}", self.scene_capture_upload),
             web.get("/api/agent/tasks", self.agent_tasks),
             web.get("/api/agent/tasks/{task_id}/trace", self.agent_task_trace),
             web.post("/api/agent/console/open", self.agent_console_open),
@@ -465,6 +566,19 @@ class ControlCenter:
         agent.command = values["command"]
         agent.model = values["model"]
         agent.permission_mode = values["permission_mode"]
+        if hasattr(agent, "display_mcp"):
+            # Effectif au prochain (re)démarrage du cerveau : le CLI lit ses
+            # serveurs MCP et sa consigne système à son lancement.
+            scene = load_scene_gate(settings)
+            agent.display_mcp = self.display_mcp if scene["enabled"] else None
+            if scene["enabled"] and self.display_mcp is None and not self._display_unconfigured_reported:
+                self._display_unconfigured_reported = True
+                self.journal.emit(
+                    "scene.display_mcp_unconfigured",
+                    "scene.enabled est vrai mais le Control Center ne connaît pas Core : outils d'affichage non déclarés au cerveau",
+                    level="warning",
+                    data={"code": "display_mcp_unconfigured", "source": scene["source"]},
+                )
         if callable(getattr(agent, "set_prompt_overrides", None)):
             agent.set_prompt_overrides(prompt_override_document(settings))
 
@@ -518,8 +632,13 @@ class ControlCenter:
                 try:
                     host = urlparse(origin).hostname
                 except ValueError:
-                    raise web.HTTPForbidden(text="invalid origin")
+                    host = None
+                    if not request.path.startswith(SCENE_CAPTURE_ROUTE_PREFIX):
+                        raise web.HTTPForbidden(text="invalid origin")
                 if host not in LOOPBACK_HOSTS:
+                    if request.path.startswith(SCENE_CAPTURE_ROUTE_PREFIX):
+                        # Même forme d'erreur que les autres refus de la route de capture.
+                        return self._scene_error(403, "forbidden_origin", "forbidden origin")
                     raise web.HTTPForbidden(text="forbidden origin")
         return await handler(request)
 
@@ -560,6 +679,8 @@ class ControlCenter:
             await self.work_view.aclose()
         if self.live_view is not None:
             await self.live_view.aclose()
+        if self.scene_view is not None:
+            await self.scene_view.aclose()
         if self._runner is not None:
             await self._runner.cleanup()
             self._runner = None
@@ -584,6 +705,24 @@ class ControlCenter:
         )
         html = html.replace(
             BAREHANDS_SCRIPT_MARKER, page.with_name(BAREHANDS_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            SCENE_SCRIPT_MARKER, page.with_name(SCENE_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            SCENE_LAYOUT_SCRIPT_MARKER, page.with_name(SCENE_LAYOUT_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            SCENE_INTERACT_SCRIPT_MARKER, page.with_name(SCENE_INTERACT_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            SCENE_CAPTURE_SCRIPT_MARKER, page.with_name(SCENE_CAPTURE_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            SCENE_PAGE_SCRIPT_MARKER, page.with_name(SCENE_PAGE_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            SCENE_SETTINGS_SCRIPT_MARKER, page.with_name(SCENE_SETTINGS_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         html = html.replace(
             TIMELINE_SCRIPT_MARKER, page.with_name(TIMELINE_SCRIPT_FILE).read_text(encoding="utf-8")
@@ -647,6 +786,15 @@ class ControlCenter:
             # c'est lui qui fait avancer le registre.
             "background": self._background_summary(),
             "live": live,
+            # Interrupteur du rendu de la scène (Slice 05) : la page ne crée son
+            # calque et n'ouvre sa lecture que s'il est vrai. Lu à chaque
+            # sondage, sans E/S de plus que les réglages déjà lus.
+            "scene": load_scene_gate(settings),
+            # Bornes que la page affiche (Slice 08, reprise QA) : délai réel de
+            # l'arrêt d'un job à travers ce Control Center, `null` sans Core.
+            "scene_limits": {
+                "job_cancel_timeout_s": self.scene_view.job_cancel_deadline_s if self.scene_view is not None else None,
+            },
             # Pertes visibles (Slice 04) : compteurs du relais des Conversation
             # Events de ce processus ; ceux de Core sont dans `GET /v1/health`.
             "conversation_events": self._conversation_event_counters(),
@@ -1441,6 +1589,10 @@ class ControlCenter:
             # Auto-développement : deux crans, éteints tant que l'utilisateur ne
             # les ouvre pas. L'état des worktrees vit sur `/api/self-dev`.
             "self_development": load_self_dev_gate(settings),
+            # Scène constellation (Slice 06, écran Slice 11) : rendu immédiat,
+            # outils d'affichage du cerveau à son prochain démarrage ; `stored`
+            # et `env` disent ce que l'onglet Expérimental doit expliquer.
+            "scene": describe_scene_gate(settings),
             "audio": {
                 "input_device": settings.get("audio_input_device", ""),
                 "output_device": settings.get("audio_output_device", ""),
@@ -1695,6 +1847,8 @@ class ControlCenter:
                 agent_routing.apply(current, payload["routing"])
             if payload.get("self_development") is not None:
                 apply_self_dev_gate(current, payload["self_development"])
+            if payload.get("scene") is not None:
+                apply_scene_gate(current, payload["scene"])
             # Behavior extends an editable prompt layer. Validate their
             # combined bound before any atomic settings replacement.
             from jarvis.runtime.prompt_overrides import prompt_override_document
@@ -1707,12 +1861,13 @@ class ControlCenter:
             creds.CredentialError,
             RoutingError,
             SelfDevError,
+            SceneSettingsError,
             VoiceConfigError,
         ) as exc:
             # Le corps reste le message en clair (ce que la page affiche) ; le
             # code stable voyage à côté, pour les clients et les tests.
             agent_error = isinstance(
-                exc, (cli_catalog.CliSettingsError, agent_behavior.AgentBehaviorError, RoutingError, SelfDevError)
+                exc, (cli_catalog.CliSettingsError, agent_behavior.AgentBehaviorError, RoutingError, SelfDevError, SceneSettingsError)
             )
             self.journal.emit(
                 "settings.agent.rejected" if agent_error else "voice.settings.rejected",
@@ -1856,7 +2011,17 @@ class ControlCenter:
         voice = payload.get("voice")
         if not isinstance(voice, dict):
             return
-        if "architecture" in voice:
+        if voice.get("brain_compatibility") is True:
+            # Retour au mode continu où chaque tour part au cerveau Claude du
+            # Control Center (sous-agents, historique de console). Le choix
+            # explicite est retiré : sans lui, `load_voice_architecture`
+            # reprend la projection de compatibilité. Aucun autre choix de
+            # l'onglet ne mène à ce mode ; sans ce chemin, un clic sur
+            # « Utiliser explicitement cette architecture » le perdait pour
+            # de bon (17/09/2026).
+            current.pop("voice_architecture", None)
+            self._store_voice_arch(current, "continuous_brain")
+        elif "architecture" in voice:
             registry = self._voice_architecture_registry(current)
             config = parse_voice_mode(voice["architecture"], registry)
             registry.validate(config, require_ready=True)
@@ -2443,6 +2608,143 @@ class ControlCenter:
         body["subtasks_supported"] = self._agent_id == "claude" and self.work_ingress is not None
         return web.json_response(body)
 
+    # ------------------------------------------------------------------ scène
+
+    @staticmethod
+    def _scene_error(status: int, code: str, message: str) -> web.Response:
+        return web.json_response(scene_wire.error_body(code, message), status=status)
+
+    async def scene(self, request: web.Request) -> web.Response:
+        """Instantané de la scène constellation tenue par Core (Slice 03).
+
+        Toujours 200, comme `/api/work` : Core injoignable, réponse illisible
+        ou scène indisponible donnent `snapshot: null` et `error` (`code`,
+        `message`), avec `core_reachable` et `scene` (`state`, `code`).
+        """
+
+        if request.query:
+            return self._scene_error(400, scene_wire.INVALID_REQUEST, "unexpected query")
+        if self.scene_view is None:
+            body = unavailable_snapshot_payload(NOT_CONFIGURED, "Lecture de la scène Core non configurée.")
+        else:
+            body = await self.scene_view.snapshot()
+        return web.json_response(body, dumps=scene_wire.compact_json)
+
+    async def scene_patches(self, request: web.Request) -> web.Response:
+        """Long-poll des patchs de scène (`scene_id`, `epoch`, `after`, `wait_s` ≤ 25 s ici).
+
+        Paramètres invalides : 400. Sinon 200 : patchs, `resync_required`
+        (relire `/api/scene`), `more` (redemander aussitôt), ou forme dégradée
+        avec `error`. L'attente est bornée côté Control Center aussi : un
+        Core figé rend la main après l'attente demandée plus une marge.
+        """
+
+        try:
+            query = scene_wire.parse_patch_query(request.query)
+        except ValueError as exc:
+            return self._scene_error(400, scene_wire.INVALID_REQUEST, str(exc))
+        if self.scene_view is None:
+            body = unavailable_patches_payload(NOT_CONFIGURED, "Lecture de la scène Core non configurée.")
+        else:
+            body = await self.scene_view.patches(query)
+        return web.json_response(body, dumps=scene_wire.compact_json)
+
+    async def scene_command(self, request: web.Request) -> web.Response:
+        """Commande de scène du navigateur, relayée à Core avec l'acteur `user` imposé.
+
+        Sans `actor`, `user` est posé ; tout autre acteur est refusé (403
+        `scene_actor_forbidden`) : la page ne parle jamais au nom du cerveau.
+        Corps illisible : 400 ; trop gros : 413. Refus du domaine : 200 avec
+        `outcome`/`reason`. Voir `CoreSceneView.command` pour 502/503/504.
+        """
+
+        if request.query:
+            return self._scene_error(400, scene_wire.INVALID_REQUEST, "unexpected query")
+        try:
+            raw = await scene_wire.read_bounded_body(request)
+        except scene_wire.SceneBodyTooLarge:
+            return self._scene_error(413, scene_wire.PAYLOAD_TOO_LARGE, f"scene command exceeds {scene_wire.MAX_SCENE_COMMAND_BYTES} bytes")
+        try:
+            command = user_command(loads_strict_json(raw, invalid_message="invalid scene command JSON"))
+        except SceneActorForbidden as exc:
+            suppressed = self._scene_forbidden_reports.admit(exc.actor)
+            if suppressed is not None:
+                self.journal.emit(
+                    "scene.command_forbidden", f"commande de scène refusée : acteur {exc.actor} au lieu de user", level="warning",
+                    data={"code": scene_wire.SCENE_ACTOR_FORBIDDEN, "actor": exc.actor, "suppressed": suppressed},
+                )
+            return self._scene_error(403, scene_wire.SCENE_ACTOR_FORBIDDEN, str(exc))
+        except (TypeError, ValueError) as exc:
+            return self._scene_error(400, scene_wire.INVALID_REQUEST, f"invalid scene command: {exc}")
+        if self.scene_view is None:
+            return self._scene_error(503, NOT_CONFIGURED, "Commande de scène Core non configurée.")
+        status, body = await self.scene_view.command(command)
+        return web.json_response(body, status=status, dumps=scene_wire.compact_json)
+
+    async def scene_capture_upload(self, request: web.Request) -> web.Response:
+        """PNG rendu par la page meneuse visible pour une capture demandée par le cerveau (Slice 09, partie 2).
+
+        Origine vérifiée par le middleware (`_origin_guard`, comme tout POST).
+        L'identifiant doit avoir la forme d'une capture (404 sinon) ; corps ≤ 2 MiB
+        (413), PNG complet de 1280×720 au plus (400 `invalid_png`), vérifiés ici
+        avant tout appel, puis relayés à Core, qui exige une capture en attente
+        et non échue (404 `unknown_capture`, 410 `capture_expired`). Aucune
+        route ne **demande** une capture : seul le cerveau le peut, par Core.
+        """
+
+        if request.query:
+            return self._scene_error(400, scene_wire.INVALID_REQUEST, "unexpected query")
+        capture_id = request.match_info.get("capture_id", "")
+        try:
+            check_capture_id(capture_id)
+        except ValueError as exc:
+            return self._scene_error(404, UNKNOWN_CAPTURE, str(exc))
+        try:
+            png = await scene_wire.read_bounded_body(request, MAX_CAPTURE_BYTES)
+        except scene_wire.SceneBodyTooLarge:
+            self.journal.emit("scene.capture_upload_refused", "capture refusée : trop grosse", level="warning",
+                              data={"capture": capture_id[:8], "code": scene_wire.PAYLOAD_TOO_LARGE})
+            return self._scene_error(413, scene_wire.PAYLOAD_TOO_LARGE, f"capture exceeds {MAX_CAPTURE_BYTES} bytes")
+        try:
+            width, height = png_dimensions(png)
+        except ValueError as exc:
+            self.journal.emit("scene.capture_upload_refused", "capture refusée : PNG invalide", level="warning",
+                              data={"capture": capture_id[:8], "code": INVALID_PNG, "bytes": len(png)})
+            return self._scene_error(400, INVALID_PNG, str(exc))
+        if self.scene_view is None:
+            return self._scene_error(503, NOT_CONFIGURED, "Capture de scène : Core non configuré.")
+        status, body = await self.scene_view.upload_capture(capture_id, png, width=width, height=height)
+        return web.json_response(body, status=status, dumps=scene_wire.compact_json)
+
+    async def job_cancel(self, request: web.Request) -> web.Response:
+        """Arrêt d'une étoile `job` depuis son menu (Slice 08) : `{source, external_id}`.
+
+        Origine vérifiée par le middleware (`_origin_guard`, comme tout POST).
+        Seule la source `job` part vers Core (`POST /v1/work/cancel`) ; toute
+        autre est refusée ici (409 `not_cancellable`) : un sous-agent Claude n'a
+        pas d'arrêt individuel. Corps borné et strict (400), 503 sans Core.
+        """
+
+        if request.query:
+            return self._scene_error(400, scene_wire.INVALID_REQUEST, "unexpected query")
+        try:
+            raw = await scene_wire.read_bounded_body(request, limit=scene_wire.MAX_WORK_CANCEL_BYTES)
+        except scene_wire.SceneBodyTooLarge:
+            return self._scene_error(413, scene_wire.PAYLOAD_TOO_LARGE, f"work cancel request exceeds {scene_wire.MAX_WORK_CANCEL_BYTES} bytes")
+        try:
+            body = loads_strict_json(raw, invalid_message="invalid work cancel JSON")
+            if not isinstance(body, dict) or set(body) != {"source", "external_id"}:
+                raise ValueError("work cancel request must be {source, external_id}")
+            source, external_id = body["source"], body["external_id"]
+            if not isinstance(source, str) or not isinstance(external_id, str) or not external_id.strip() or len(external_id) > 128:
+                raise ValueError("source and external_id must be short non-empty strings")
+        except ValueError as exc:
+            return self._scene_error(400, scene_wire.INVALID_REQUEST, str(exc))
+        if self.scene_view is None:
+            return self._scene_error(503, NOT_CONFIGURED, "Arrêt de job : Core non configuré.")
+        status, payload = await self.scene_view.cancel_work(source, external_id)
+        return web.json_response(payload, status=status, dumps=scene_wire.compact_json)
+
     async def agent_tasks(self, request: web.Request) -> web.Response:
         """Le brain et ses sous-tâches. Toujours ceux de l'agent actif : après
         une bascule Claude ↔ Codex, c'est le nouvel agent qui répond.
@@ -2475,12 +2777,46 @@ class ControlCenter:
         except RuntimeError as exc:
             raise web.HTTPServiceUnavailable(text=str(exc)) from exc
 
+    #: Corps de `POST /api/agent/restart` : `{}` ou `{"new_conversation": bool}`.
+    AGENT_RESTART_MAX_BYTES = 256
+
     async def agent_restart(self, request: web.Request) -> web.Response:
-        del request
+        """Redémarrer le brain. Sans corps : même conversation reprise (comportement historique).
+
+        `{"new_conversation": true}` (écran de la scène, Slice 11) : conversation
+        neuve, seule façon qu'une consigne système changée s'applique ; le CLI
+        fige la consigne d'une conversation reprise.
+        """
+
+        new_conversation = await self._restart_options(request)
+        from jarvis.runtime.prompt_runtime import accepts_keyword_argument
+
+        self.journal.emit("agent.restart", "Brain restart requested", data={"new_conversation": new_conversation})
         try:
+            if new_conversation and accepts_keyword_argument(self.agent.restart, "resume"):
+                return web.json_response(await self.agent.restart(resume=False))
+            # Codex repart toujours sur un fil neuf ; un agent sans l'option garde son redémarrage.
             return web.json_response(await self.agent.restart())
         except RuntimeError as exc:
             raise web.HTTPServiceUnavailable(text=str(exc)) from exc
+
+    async def _restart_options(self, request: web.Request | None) -> bool:
+        if request is None or not request.can_read_body:
+            return False
+        try:
+            raw = await scene_wire.read_bounded_body(request, self.AGENT_RESTART_MAX_BYTES)
+        except scene_wire.SceneBodyTooLarge as exc:
+            raise web.HTTPRequestEntityTooLarge(max_size=self.AGENT_RESTART_MAX_BYTES, actual_size=request.content_length or 0,
+                                                text="restart body too large") from exc
+        if not raw.strip():
+            return False
+        try:
+            payload = loads_strict_json(raw, invalid_message="restart body must be JSON")
+        except ValueError as exc:
+            raise web.HTTPBadRequest(text=str(exc)) from exc
+        if not isinstance(payload, dict) or set(payload) - {"new_conversation"} or not isinstance(payload.get("new_conversation", False), bool):
+            raise web.HTTPBadRequest(text='restart body must be {} or {"new_conversation": true|false}')
+        return payload.get("new_conversation", False)
 
     async def agent_kill(self, request: web.Request) -> web.Response:
         del request

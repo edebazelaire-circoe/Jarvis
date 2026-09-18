@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
+import re
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
@@ -38,6 +39,11 @@ JOB_PROGRESS_COALESCED_KIND = "core.job.progress_coalesced"
 # handoff work-state), et diagnostic d'une observation qui n'a pas pu partir.
 JOB_WORK_SOURCE = "job"
 JOB_WORK_STATE_FAILED_KIND = "core.job.work_state_failed"
+#: Arrêt demandé par l'utilisateur (Slice 08) : attente de la fin du job avant
+#: de répondre `cancel_requested` plutôt que `cancelled`.
+USER_CANCEL_SETTLE_S = 5.0
+#: Journal d'un arrêt de job demandé par l'utilisateur (issue, statut relu).
+JOB_USER_CANCEL_KIND = "core.job.user_cancel"
 
 
 def _work_error_class(exc: BaseException) -> str:
@@ -50,6 +56,57 @@ def _work_error_class(exc: BaseException) -> str:
 
     name = type(exc).__name__.lstrip("_")[:MAX_ERROR_CLASS_CHARS]
     return name if name.isascii() and name else "error"
+
+
+_ERROR_CLASS_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
+
+
+def _persisted_error_class(job: Job) -> str | None:
+    """`error_class` d'une issue relue en base (Slice 10) : jamais inventée.
+
+    `failed` : le nom d'exception en tête de `job.error` (« Type: message »,
+    écrit par `_execute`), sinon `error`. `interrupted` : `job.error` s'il
+    est un jeton (`core_restarted`). `completed` n'en porte pas ; `cancelled`
+    n'en a jamais eu dans l'exécution normale.
+    """
+
+    raw = (job.error or "").split(":", 1)[0].strip().lstrip("_")[:MAX_ERROR_CLASS_CHARS]
+    token = raw if raw.isascii() and _ERROR_CLASS_TOKEN.fullmatch(raw) else None
+    if job.status is JobStatus.FAILED:
+        return token or "error"
+    if job.status is JobStatus.INTERRUPTED:
+        return token
+    return None
+
+
+def _persisted_work_link(job: Job) -> WorkLink | None:
+    """Rattachement d'un job `back_brain` relu depuis sa provenance persistée (`recover`, Slice 10)."""
+
+    from jarvis.domain.back_brain import BackBrainWorkPayload
+
+    source = getattr(BackBrainWorkPayload.from_payload(job.payload).provenance, "source", None)
+    if source is None:
+        return None
+    return WorkLink(work_id=job.id, correlation_id=source.correlation_id)
+
+
+def _known_work_link(work_id: str | None) -> WorkLink | None:
+    """`work_id` connu par ailleurs (étoile de la scène), s'il respecte le contrat ; sinon aucun."""
+
+    if work_id is None:
+        return None
+    try:
+        return WorkLink(work_id=work_id)
+    except (TypeError, ValueError):
+        # intentional: un identifiant hors contrat n'invente pas de lien ;
+        # l'étoile garde le sien (`_kept_work_ref`), l'état de travail s'en passe.
+        return None
+
+
+def is_speculative_job(job: Job) -> bool:
+    """Vrai pour une analyse spéculative du back brain (`scope = speculative_analysis`)."""
+
+    return isinstance(job.payload, dict) and job.payload.get("scope") == "speculative_analysis"
 
 
 class SystemClock:
@@ -542,25 +599,91 @@ class JobService:
         # synthetique `job:<id>` de `_links` : ce repli n'est pas un travail
         # cerveau et ne doit jamais apparaitre comme tel dans l'etat de travail.
         self._work_links: dict[str, WorkLink] = {}
+        # Annulation idempotente (Slice 08, reprise QA) : `_started` note les
+        # jobs dont `_execute` a commencé, `_cancel_requested` ceux dont
+        # l'annulation est déjà demandée. Un second `cancel()` ne relance
+        # jamais `task.cancel()` : il interromprait l'écriture de `cancelled`.
+        self._started: set[str] = set()
+        self._cancel_requested: set[str] = set()
+        #: Jobs interrompus par `recover` dans cette vie de Core (Slice 10).
+        self._recovered: set[str] = set()
         from jarvis.core.owned_job_execution import OwnedJobExecution
         self.owned = OwnedJobExecution(self)
 
     async def recover(self) -> None:
+        """Interrompre les jobs `pending`/`running` d'une vie précédente de Core.
+
+        Rattachement : un job `back_brain` retrouve son lien depuis sa
+        provenance persistée (`_persisted_work_link`). Un autre job ne le peut
+        pas : `submit(work_id=…)` ne garde le `work_id` du cerveau qu'en mémoire
+        (`_links`, `_work_links`) et la ligne `jobs` n'a pas de colonne pour lui
+        (schéma 1/2 de `jarvis.sqlite3`, hors de cette Slice). Son observation
+        part donc sans `work_id` ; l'étoile de la scène garde le sien, déjà
+        persisté (`scene_projector._kept_work_ref`, Slice 10).
+        """
+
         for job in await self.state.list_jobs():
             if job.status not in {JobStatus.PENDING, JobStatus.RUNNING}:
                 continue
+            # Noté avant toute attente : `observe_persisted_outcomes`, qui peut
+            # tourner en même temps (boucle de la projection), ne le redit pas.
+            self._recovered.add(job.id)
             interrupted = replace(job, status=JobStatus.INTERRUPTED, error="core_restarted", completed_at=utc_now(), revision=job.revision + 1)
             await self.state.save_job(interrupted)
             if job.kind == "back_brain":
-                from jarvis.domain.back_brain import BackBrainWorkPayload
-                source = getattr(BackBrainWorkPayload.from_payload(job.payload).provenance, "source", None)
-                if source is not None:
-                    self._work_links[job.id] = WorkLink(work_id=job.id, correlation_id=source.correlation_id)
+                link = _persisted_work_link(job)
+                if link is not None:
+                    self._work_links[job.id] = link
                 await self.owned._publish(interrupted, "interrupted")
             else:
                 await self.events.publish(ProtocolEnvelope(message_type="job.interrupted", payload={"job_id": job.id, "kind": job.kind}, conversation_id=job.requested_by_conversation_id))
             await self._observe_work(interrupted, WorkStatus.INTERRUPTED, error_class="core_restarted")
             self._work_links.pop(job.id, None)
+
+    async def observe_persisted_outcomes(self, job_ids: Mapping[str, str | None]) -> int:
+        """Remettre à l'état de travail l'issue persistée de jobs déjà terminés (Slice 10).
+
+        Au redémarrage, la scène peut garder « en cours » l'étoile d'un job
+        dont la fin a été écrite en base sans atteindre la projection (arrêt
+        brutal entre l'écriture et l'observation, vidage de la projection
+        borné à l'arrêt). `recover` ne traite que les jobs `pending`/`running` :
+        ceux-là, déjà terminés, sont observés ici tels qu'ils sont en base,
+        pour que la scène dise leur vraie issue plutôt qu'une interruption.
+
+        Seuls les jobs terminaux, non spéculatifs (jamais une étoile), absents
+        de l'exécution courante et non repris par `recover` dans cette vie de
+        Core (qui les a déjà observés) sont observés ; un identifiant inconnu
+        est ignoré. L'ordre avec `recover` est donc indifférent.
+
+        `job_ids` : `job id → work_id` que l'étoile porte (ou `None`).
+        Rattachement : un job `back_brain` le reconstruit depuis sa provenance,
+        comme `recover` ; un autre reprend le `work_id` de l'étoile, seule trace
+        persistée du rattachement (la ligne `jobs` ne l'a pas).
+
+        Rend le nombre d'issues remises. Ne lève pas pour un job :
+        `_observe_work` journalise son propre échec ; une lecture de base qui
+        échoue lève.
+        """
+
+        observed = 0
+        for job_id, known_work_id in job_ids.items():
+            if job_id in self._running or job_id in self._recovered:
+                continue
+            job = await self.state.get_job(job_id)
+            if (
+                job is None or job.status in {JobStatus.PENDING, JobStatus.RUNNING} or is_speculative_job(job)
+                or job_id in self._recovered
+            ):
+                continue
+            link = _persisted_work_link(job) if job.kind == "back_brain" else _known_work_link(known_work_id)
+            if link is not None:
+                self._work_links[job.id] = link
+            try:
+                await self._observe_work(job, WorkStatus(job.status.value), error_class=_persisted_error_class(job))
+            finally:
+                self._work_links.pop(job.id, None)
+            observed += 1
+        return observed
 
     async def _observe_work(
         self,
@@ -577,7 +700,11 @@ class JobService:
         job, ni empecher sa persistance ou ses evenements `job.*`.
         """
 
-        if self.work_state is None:
+        if self.work_state is None or is_speculative_job(job):
+            # Une analyse spéculative n'est pas un travail du cerveau : ni
+            # pendant son exécution (`OwnedJobExecution._observe_work`) ni à la
+            # reprise après redémarrage (`recover`), elle n'entre dans l'état de
+            # travail, donc jamais dans la scène.
             return
         try:
             await self.work_state.observe(
@@ -649,11 +776,13 @@ class JobService:
         return job
 
     async def _execute(self, job: Job) -> None:
+        # Première instruction, synchrone : dès ici `cancel()` annule la tâche
+        # au lieu de seulement noter la demande (une tâche annulée avant son
+        # premier pas n'exécuterait aucune ligne, et le job resterait `pending`).
+        self._started.add(job.id)
         worker = self.workers[job.kind]
         link = self._links.get(job.id) or _WorkLink(work_id=f"job:{job.id}", correlation_id=new_id())
         running = replace(job, status=JobStatus.RUNNING, started_at=utc_now())
-        await self.state.save_job(running)
-        await self._observe_work(running, WorkStatus.RUNNING)
         channel = _JobProgressChannel(
             job=running,
             events=self.events,
@@ -663,27 +792,85 @@ class JobService:
             on_published=lambda progress: self._observe_progress(running, progress),
         )
         try:
-            result = await self._run_worker(worker, running, channel)
-            completed = replace(running, status=JobStatus.COMPLETED, result=dict(result), completed_at=utc_now())
-            await self.state.save_job(completed)
-            await self.events.publish(ProtocolEnvelope(message_type="job.completed", payload={"job_id": job.id, "kind": job.kind, "result": result}, correlation_id=link.correlation_id, conversation_id=job.requested_by_conversation_id))
-            await self._observe_work(running, WorkStatus.COMPLETED)
-        except asyncio.CancelledError:
-            cancelled = replace(running, status=JobStatus.CANCELLED, completed_at=utc_now())
-            await self.state.save_job(cancelled)
-            await self._observe_work(running, WorkStatus.CANCELLED)
-            raise
-        except Exception as exc:
-            failed = replace(running, status=JobStatus.FAILED, error=f"{type(exc).__name__}: {exc}", completed_at=utc_now())
-            await self.state.save_job(failed)
-            await self.events.publish(ProtocolEnvelope(message_type="job.failed", payload={"job_id": job.id, "kind": job.kind, "error_class": type(exc).__name__}, correlation_id=link.correlation_id, conversation_id=job.requested_by_conversation_id))
-            await self._observe_work(running, WorkStatus.FAILED, error_class=_work_error_class(exc))
+            if job.id in self._cancel_requested:
+                # Annulé avant de démarrer : jamais exécuté, terminé annulé.
+                cancelled = replace(job, status=JobStatus.CANCELLED, completed_at=utc_now())
+                await self._settle_terminal(cancelled, cancelled, WorkStatus.CANCELLED)
+                return
+            try:
+                await self.state.save_job(running)
+                await self._observe_work(running, WorkStatus.RUNNING)
+                result = await self._run_worker(worker, running, channel)
+            except asyncio.CancelledError:
+                # Annulé avant que le worker n'ait rendu son issue : la fin est `cancelled`.
+                await self._settle_terminal(
+                    replace(running, status=JobStatus.CANCELLED, completed_at=utc_now()), running, WorkStatus.CANCELLED,
+                )
+                raise
+            except Exception as exc:
+                # Le worker a échoué : cette issue gagne, même si un arrêt arrive pendant son écriture.
+                await self._settle_terminal(
+                    replace(running, status=JobStatus.FAILED, error=f"{type(exc).__name__}: {exc}", completed_at=utc_now()),
+                    running,
+                    WorkStatus.FAILED,
+                    event=ProtocolEnvelope(message_type="job.failed", payload={"job_id": job.id, "kind": job.kind, "error_class": type(exc).__name__}, correlation_id=link.correlation_id, conversation_id=job.requested_by_conversation_id),
+                    error_class=_work_error_class(exc),
+                )
+            else:
+                # Le worker a rendu son résultat : `completed` gagne (décision PM, reprise QA finale).
+                await self._settle_terminal(
+                    replace(running, status=JobStatus.COMPLETED, result=dict(result), completed_at=utc_now()),
+                    running,
+                    WorkStatus.COMPLETED,
+                    event=ProtocolEnvelope(message_type="job.completed", payload={"job_id": job.id, "kind": job.kind, "result": result}, correlation_id=link.correlation_id, conversation_id=job.requested_by_conversation_id),
+                )
         finally:
             channel.close()
             self._report_progress_budget(job, link, channel)
             self._running.pop(job.id, None)
+            self._started.discard(job.id)
+            self._cancel_requested.discard(job.id)
             self._links.pop(job.id, None)
             self._work_links.pop(job.id, None)
+
+    async def _settle_terminal(
+        self,
+        terminal: Job,
+        observed: Job,
+        status: WorkStatus,
+        *,
+        event: ProtocolEnvelope | None = None,
+        error_class: str | None = None,
+    ) -> None:
+        """Régler une fin de job d'un bloc : écrire, publier, observer (Slice 08, reprises QA).
+
+        Une fois qu'un job a son issue (annulé, échoué, terminé), cette issue
+        est réglée atomiquement : la persistance, l'événement `job.*` et
+        l'observation de travail tournent dans leur propre tâche, attendue sous
+        `shield`. Une annulation qui arrive pendant ce règlement (arrêt de
+        l'utilisateur, `cancel_work` du cerveau, arrêt de Core) est absorbée
+        jusqu'à la fin, puis relevée : l'issue du worker n'est jamais écrasée,
+        jamais écrite deux fois, et le job ne reste jamais `running`.
+        """
+
+        async def settle() -> None:
+            await self.state.save_job(terminal)
+            if event is not None:
+                await self.events.publish(event)
+            await self._observe_work(observed, status, error_class=error_class)
+
+        write = asyncio.ensure_future(settle())
+        absorbed = False
+        while not write.done():
+            try:
+                await asyncio.shield(write)
+            except asyncio.CancelledError:
+                absorbed = True
+                if write.done():
+                    break
+        write.result()
+        if absorbed:
+            raise asyncio.CancelledError()
 
     async def _run_worker(self, worker: JobWorker, job: Job, progress: JobProgressSink) -> dict[str, object]:
         """Executer le worker, avec la couture d'avancement s'il la declare.
@@ -744,14 +931,67 @@ class JobService:
             await self.cancel(job_id)
         return targets
 
+    async def cancel_for_user(self, job_id: str, *, settle_s: float = USER_CANCEL_SETTLE_S) -> tuple[str, Job]:
+        """Arrêt d'un job demandé par l'utilisateur depuis la scène (Slice 08).
+
+        Même primitive que `cancel_work` (`cancel(job_id)`), mais sur **un**
+        job désigné par son identifiant : l'étoile `job` porte
+        `work_ref = (job, <job id>)`. `cancel_work(work_id)` ne convient pas
+        ici : il annulerait tous les jobs d'un même travail du cerveau, et
+        n'atteint pas les jobs `back_brain` (sans lien `_links`).
+
+        Rend `(issue, job relu)` : `cancelled` (terminé annulé dans le délai),
+        `already_terminal` aussi quand le worker a rendu son issue pendant
+        l'arrêt (`completed` ou `failed` gagne, avec le vrai statut),
+        `cancel_requested` (annulation demandée, fin pas encore observée dans
+        `settle_s`), `cleanup_unknown` (job `back_brain` : annulation demandée,
+        nettoyage de l'exécution non confirmé), `already_terminal` (rien à
+        arrêter). Job inconnu ou analyse spéculative (jamais une étoile) :
+        `KeyError`. Arrête **ce** job seulement : l'élément de travail du
+        cerveau qui l'aurait demandé n'est pas touché (sa fin vient de ses
+        propres observations). Deux arrêts concurrents, ou un arrêt pendant
+        `cancel_work`, n'annulent la tâche qu'une fois (`cancel`).
+        """
+
+        job = await self.state.get_job(job_id)
+        if job is None or is_speculative_job(job):
+            raise KeyError(f"job {job_id} not found")
+        if job.status not in {JobStatus.PENDING, JobStatus.RUNNING}:
+            return "already_terminal", job
+        await self.cancel(job_id)
+        task = self._running.get(job_id)
+        if task is not None and not task.done():
+            # Attendre la fin sans jamais l'annuler une seconde fois : `wait` ne touche pas la tâche.
+            await asyncio.wait({task}, timeout=max(0.0, settle_s))
+        latest = await self.state.get_job(job_id) or job
+        if latest.status in {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.INTERRUPTED}:
+            # Le worker avait déjà son issue : elle gagne, l'arrêt n'a rien arrêté.
+            outcome = "already_terminal"
+        elif latest.status is JobStatus.CANCELLED:
+            outcome = "cancelled"
+        elif latest.cancellation == "cleanup_unknown":
+            outcome = "cleanup_unknown"
+        else:
+            outcome = "cancel_requested"
+        self.diagnostics.emit(
+            JOB_USER_CANCEL_KIND,
+            "arrêt d'un job demandé par l'utilisateur",
+            level="info",
+            data={"job_id": job_id, "kind": job.kind, "outcome": outcome, "status": latest.status.value},
+        )
+        return outcome, latest
+
     async def cancel(self, job_id: str) -> None:
         job = await self.state.get_job(job_id)
         if job is not None and job.kind == "back_brain":
             await self.owned.cancel(job_id)
             return
         task = self._running.get(job_id)
-        if task:
-            task.cancel()
+        if task and not task.done() and job_id not in self._cancel_requested:
+            self._cancel_requested.add(job_id)
+            if job_id in self._started:
+                task.cancel()
+            # Pas encore démarrée : `_execute` voit la demande à son premier pas.
         for worker in self.workers.values():
             try:
                 await worker.cancel(job_id)

@@ -278,6 +278,7 @@ async def open_room_run(*, verifier: bool) -> dict[str, object]:
         authority=BargeInAuthority.ACOUSTIC,
         clock=clock,
         barge_in_confirm_s=0.05,
+        barge_in_sustain_s=0.05,
     )
     forwarded = bytearray()
     mic = mix(tone(2.0, amplitude=0.02), bytes(RATE * 2) + tone(1.0, amplitude=0.4, freq=180.0))
@@ -289,6 +290,7 @@ async def open_room_run(*, verifier: bool) -> dict[str, object]:
                 bridge._on_capture_signal(signal)
             await live.idle()
             await live.send(event("realtime.speech_started", item_id="item-1"))
+            await asyncio.sleep(0.15)
             await live.idle()
     finally:
         if worker is not None:
@@ -310,7 +312,9 @@ async def test_rolling_back_to_open_room_restores_the_previous_chain_byte_for_by
     with_verifier = await open_room_run(verifier=True)
 
     assert with_verifier["forwarded"] == baseline["forwarded"]
-    assert with_verifier["gains"] == baseline["gains"] == []  # Même candidat sans duck dans les deux chemins.
+    # Même chemin dans les deux cas : candidat sans duck, voix baissée à la
+    # confirmation du fournisseur, rétablie après la coupure (parole soutenue).
+    assert with_verifier["gains"] == baseline["gains"] == [0.3, 1.0]
     assert with_verifier["calls"] == baseline["calls"]
     assert with_verifier["kinds"] == baseline["kinds"]
     assert with_verifier["stops"] == baseline["stops"] == 1  # coupé sur la confirmation du fournisseur

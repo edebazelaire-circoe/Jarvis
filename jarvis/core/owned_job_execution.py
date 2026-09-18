@@ -5,6 +5,7 @@ import asyncio
 import math
 from dataclasses import replace
 
+from jarvis.core.v2_services import is_speculative_job
 from jarvis.domain.back_brain import BackBrainProgress, BackBrainResult, BackBrainUnavailable, BackBrainWorkPayload
 from jarvis.domain.v2 import JobStatus, ProtocolEnvelope, utc_now
 from jarvis.domain.work_state import WorkLink, WorkStatus
@@ -134,7 +135,7 @@ class OwnedJobExecution:
                                           data={"job_id": job.id, "event": suffix, "exception_type": type(exc).__name__})
 
     async def _observe_work(self, job, status, **kwargs):
-        if job.payload.get("scope") == "speculative_analysis":
+        if is_speculative_job(job):
             return  # No committed turn or Brain work generation is invented.
         try:
             await self.service._observe_work(job, status, **kwargs)

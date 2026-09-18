@@ -72,15 +72,40 @@ class RuntimeJournal:
             handle.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
 
 
+#: Lecture de la fin d'un journal par blocs depuis la fin (Slice 09, reprise QA) :
+#: `/api/trace` ne charge jamais tout un `trace.jsonl` de plusieurs dizaines de Mio.
+TAIL_BLOCK_BYTES = 1024 * 1024
+#: Au plus ce volume est relu pour trouver `limit` lignes.
+MAX_TAIL_BYTES = 64 * 1024 * 1024
+
+
+def _tail_lines(path: Path, limit: int) -> list[str]:
+    with path.open("rb") as stream:
+        stream.seek(0, 2)
+        position = stream.tell()
+        data = b""
+        read = 0
+        while position > 0 and data.count(b"\n") <= limit and read < MAX_TAIL_BYTES:
+            step = min(TAIL_BLOCK_BYTES, position)
+            position -= step
+            stream.seek(position)
+            data = stream.read(step) + data
+            read += step
+    lines = data.split(b"\n")
+    if position > 0:
+        lines = lines[1:]  # première ligne coupée par le bloc
+    return [line.decode("utf-8", errors="replace") for line in lines if line.strip()][-limit:]
+
+
 def read_jsonl_tail(path: Path, *, limit: int = 100) -> list[dict[str, Any]]:
     if limit <= 0 or not path.is_file():
         return []
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        lines = _tail_lines(path, limit)
     except OSError:
         return []
     out: list[dict[str, Any]] = []
-    for raw in lines[-limit:]:
+    for raw in lines:
         try:
             item = json.loads(raw)
         except json.JSONDecodeError:

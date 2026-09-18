@@ -314,6 +314,38 @@ async def test_activation_never_overwrites_a_metric_report_that_still_cannot_com
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("status, recovers", [(404, True), (503, False)])
+async def test_remembered_conversation_unknown_to_core_starts_a_new_one(status, recovers):
+    from jarvis.protocol.client import CoreProtocolError
+
+    class StaleCore(FakeCore):
+        async def context(self, conversation_id: str) -> dict[str, object]:
+            if conversation_id == "lost-conversation":
+                raise CoreProtocolError(status, "not_found", "unknown conversation")
+            return await super().context(conversation_id)
+
+    contexts: list[dict[str, object]] = []
+
+    async def realtime_factory(context):
+        contexts.append(context)
+        raise RuntimeError("stop after context")
+
+    journal = RecordingJournal()
+    runtime = PersistentVoiceRuntime(
+        wakeword=FakeWakeWord(), core=StaleCore(), realtime_factory=realtime_factory,
+        journal=journal, voice_arch=VoiceArchitecture.LEGACY, initial_conversation_id="lost-conversation",
+    )
+    with pytest.raises((RuntimeError, CoreProtocolError)) as raised:
+        await runtime.activate()
+    if recovers:
+        assert runtime.runtime.conversation_id == "conversation-1"
+        assert contexts and "stop after context" in str(raised.value)
+        assert any(e["kind"] == "voice.conversation_unknown" for e in journal.events)
+    else:
+        assert isinstance(raised.value, CoreProtocolError) and not contexts
+
+
+@pytest.mark.asyncio
 async def test_second_f9_submits_audio_and_returns_to_background_after_response(monkeypatch):
     import jarvis.runtime.realtime_audio as realtime_audio
 
@@ -803,3 +835,41 @@ async def test_a_function_call_announced_twice_is_only_dispatched_once():
 
     assert [event.message_type for event in events] == ["realtime.tool_call"]
     assert events[0].payload["call_id"] == "call_1"
+
+
+@pytest.mark.asyncio
+async def test_real_core_404_on_remembered_conversation_does_not_kill_voice(tmp_path):
+    """Base d'état restaurée : `.voice_conversation` pointe vers une conversation
+    que le vrai Core ne connaît plus. L'activation doit en ouvrir une neuve."""
+    from aiohttp.test_utils import TestServer
+
+    from jarvis.core.v2_app import JarvisCoreApplication
+    from jarvis.protocol.client import LocalCoreClient
+    from jarvis.protocol.server import LocalProtocolServer
+
+    core = JarvisCoreApplication(data_root=tmp_path / "data")
+    await core.start()
+    server = TestServer(LocalProtocolServer(core, host="127.0.0.1", port=0, token="t" * 32)._app())
+    await server.start_server()
+    client = LocalCoreClient(host="127.0.0.1", port=server.port, token="t" * 32)
+    contexts: list[dict[str, object]] = []
+
+    async def realtime_factory(context):
+        contexts.append(context)
+        raise RuntimeError("stop after context")
+
+    try:
+        runtime = PersistentVoiceRuntime(
+            wakeword=FakeWakeWord(), core=client, realtime_factory=realtime_factory,
+            journal=RecordingJournal(), voice_arch=VoiceArchitecture.LEGACY,
+            initial_conversation_id="cafa4ad6-e1cd-4ab5-9484-27e57064fbea",
+        )
+        with pytest.raises(RuntimeError, match="stop after context"):
+            await runtime.activate()
+        assert contexts
+        assert runtime.runtime.conversation_id != "cafa4ad6-e1cd-4ab5-9484-27e57064fbea"
+        await client.context(runtime.runtime.conversation_id)
+    finally:
+        await client.close()
+        await server.close()
+        await core.stop()
