@@ -195,6 +195,9 @@ class PersistentVoiceRuntime:
         # et meurt au mute, tandis que le travail continue dans Core.
         self._speech: SpeechScheduler | None = None
         self._turn_submitted = False
+        # Fait d'écran, indépendant de la bouche : le cerveau a reçu un tour
+        # adressé et n'a pas encore ouvert la bouche. Voir `_displayed`.
+        self._brain_working = False
         self._stop = asyncio.Event()
         self._visual("idle")
 
@@ -206,7 +209,34 @@ class PersistentVoiceRuntime:
 
     def _visual(self, state: str) -> None:
         if self.signals is not None:
-            self.signals.state(state)
+            self.signals.state(self._displayed(state))
+
+    def _displayed(self, state: str) -> str:
+        """Dériver la couleur à partir de deux faits, au lieu d'un seul champ.
+
+        Le bus n'a qu'un état, et jusqu'ici le dernier émetteur l'écrasait :
+        la fin de la parole du cerveau réflexe rendait l'écran à l'écoute
+        alors que le cerveau principal réfléchissait toujours, et le violet ne
+        revenait jamais. Les deux faits sont désormais tenus séparément — le
+        cerveau réfléchit (`_brain_working`), quelque chose est en train
+        d'être dit (« speaking ») — et la couleur en découle : on parle, donc
+        orange ; sinon le cerveau travaille, donc violet ; sinon l'écoute ou
+        la veille. L'alternance peut donc se répéter autant de fois qu'il le
+        faut, sans rester coincée.
+        """
+
+        if self._brain_working and state in {"idle", "listening"}:
+            return "thinking"
+        return state
+
+    async def brain_pending(self, pending: bool) -> None:
+        """Le bridge annonce que le cerveau doit encore répondre, ou non.
+
+        Ne publie rien : l'évènement de bouche qui suit (`thinking`,
+        `speaking`, retour à l'écoute) portera la couleur dérivée.
+        """
+
+        self._brain_working = bool(pending)
 
     def _trace(self, kind: str, message: str, *, level: str = "info", data: dict[str, object] | None = None) -> None:
         if self.journal is not None:
@@ -412,6 +442,7 @@ class PersistentVoiceRuntime:
         await self.wakeword.suspend_for_active_session()
         self.activity.reset()
         self._turn_submitted = False
+        self._brain_working = False
         self.runtime.state = VoiceLifecycleState.ACTIVE
         if self.signals is not None:
             self.signals.alert(None)
@@ -494,6 +525,9 @@ class PersistentVoiceRuntime:
             # Décision 08 : en continu, une réponse terminée rouvre l'écoute au
             # lieu de rendre la main au mot d'éveil.
             on_response_done=self.turn_completed if self.continuous else self.mute,
+            # Fait tenu à part de la bouche : sans lui, la fin du préambule du
+            # cerveau réflexe rendrait l'écran à l'écoute au lieu du violet.
+            on_brain_pending=self.brain_pending,
             on_output_event=speech.note_output_event if speech is not None else None,
             # Tâche 09 : le bridge coupe la lecture, l'ordonnanceur sait quelle
             # demande de parole y était rattachée. Sans ce fil, l'historique
@@ -891,6 +925,9 @@ class PersistentVoiceRuntime:
         if not self._stop.is_set():
             await self.wakeword.resume()
         self._turn_submitted = False
+        # La session s'en va : plus personne ne réfléchit pour cet écran, et
+        # la veille qui suit ne doit pas être repeinte en violet.
+        self._brain_working = False
         self.runtime.state = VoiceLifecycleState.BACKGROUND
         if self._metrics is not None:
             self._finish_metrics("stopped", live_record=live_record)

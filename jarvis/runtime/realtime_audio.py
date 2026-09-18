@@ -1297,6 +1297,7 @@ class RealtimeConversationBridge:
         on_thinking: Callable[[], object] | None = None,
         on_speaking: Callable[[], object] | None = None,
         on_response_done: Callable[[], object] | None = None,
+        on_brain_pending: Callable[[bool], object] | None = None,
         on_output_event: Callable[[ProtocolEnvelope], object] | None = None,
         on_interruption: Callable[[PlaybackCursor | None], object] | None = None,
         on_user_speech: Callable[[bool], object] | None = None,
@@ -1348,6 +1349,12 @@ class RealtimeConversationBridge:
         self.on_thinking = on_thinking
         self.on_speaking = on_speaking
         self.on_response_done = on_response_done
+        # Fait indépendant de la parole : « le cerveau doit encore répondre ».
+        # Il est publié à part pour que la surface puisse dériver sa couleur
+        # au lieu de la recevoir écrasée par le dernier évènement de bouche —
+        # sans quoi le préambule du cerveau réflexe, une fois dit, rendrait
+        # l'écran à l'écoute alors que le cerveau travaille toujours.
+        self.on_brain_pending = on_brain_pending
         # Notifie l'ordonnanceur de parole du cycle de vie des sorties vocales.
         # Le bridge reste le seul lecteur de `session.events()` : ouvrir un
         # second flux ferait que les deux boucles se voleraient les évènements.
@@ -1372,6 +1379,10 @@ class RealtimeConversationBridge:
         self._input_task: asyncio.Task[None] | None = None
         self._input_submitted = False
         self._response_had_audio = False
+        # Le cerveau a reçu un tour adressé et n'a pas encore ouvert la bouche.
+        # Vrai indépendamment de ce qui joue au haut-parleur : un préambule du
+        # cerveau réflexe se dit **pendant** que ce fait reste vrai.
+        self._brain_pending = False
         # Une réponse qui a appelé un outil n'est pas la fin du tour : le
         # résultat en déclenche une seconde, qui portera la parole finale.
         self._tool_result_pending = False
@@ -1549,6 +1560,21 @@ class RealtimeConversationBridge:
         value = callback()
         if hasattr(value, "__await__"):
             await value
+
+    async def _note_brain_pending(self, pending: bool) -> None:
+        """Publier le fait « le cerveau doit encore répondre », à sa transition.
+
+        Deux faits vivent côte à côte pendant un tour : le cerveau réfléchit,
+        et quelque chose est en train d'être dit. Les mélanger dans un seul
+        état laissait la fin d'un préambule décider de l'écran à la place du
+        cerveau ; ici chacun est publié pour lui-même, et la surface dérive la
+        couleur qu'elle affiche.
+        """
+
+        if self._brain_pending == pending:
+            return
+        self._brain_pending = pending
+        await self._call_with(self.on_brain_pending, pending)
 
     async def _call_with(self, callback: Callable[[object], object] | None, argument: object) -> None:
         """Comme `_call`, pour un rappel qui reçoit une valeur."""
@@ -3698,6 +3724,12 @@ class RealtimeConversationBridge:
             # JARVIS commence à parler : de la parole utile, donc du
             # temps rendu à l'utilisateur pour répondre (Décision 10).
             self._track_playback_output(event)
+            if _optional_text((event.payload or {}).get("speech_id")) is not None:
+                # Une sortie portant une demande de parole est celle du
+                # cerveau : il vient de rendre sa réponse, il ne réfléchit
+                # plus. Une sortie sans `speech_id` est un réflexe de surface,
+                # et ne dit rien de l'état du cerveau.
+                await self._note_brain_pending(False)
             await self._notify_output(event)
             self._trace(
                 "voice.output_started",
@@ -4201,8 +4233,14 @@ class RealtimeConversationBridge:
             self._admit_canonical_transcript(item_id)
         if self.continuous and not submitted:
             # Core a refusé le tour : aucune réponse ne viendra.
+            await self._note_brain_pending(False)
             await self._call(self.on_listening)
             return False
+        if self.continuous:
+            # Le tour est parti au cerveau : à partir d'ici, et jusqu'à ce que
+            # sa propre parole s'ouvre, il réfléchit — quoi qu'il se dise
+            # entre-temps.
+            await self._note_brain_pending(True)
         await self._call(self.on_thinking)
         if self._pending_action_id is not None and normalized in {"oui", "non", "yes", "no"}:
             result = await self.core.confirm_action(self._pending_action_id, text)
