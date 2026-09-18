@@ -638,11 +638,12 @@ these tools follow the gate.
 | Tool | Arguments | Command sent | Typical refusals surfaced |
 | --- | --- | --- | --- |
 | `scene_inspect` | `kind?`, `category?`, `text?` | `GET /v1/scene/snapshot` (read only) | — (transport errors only) |
-| `scene_query` (Slice 09) | at least one of `kind?`, `category?` (no case), `exec_state?`, `origin?`, `visibility?`, `text?`, `work?` (`source` / `external_id` / `work_id` / `source:external_id`), `explains?` (object id), `near?` `{object_id, radius}` | `GET /v1/scene/snapshot` (read only); inspect rows, `distance` (exact to 0.001, a gap never 0) and `overlap` columns with `near`; `include_hidden?` (strict boolean, only with `near`: hidden objects are excluded from `near` otherwise, unless a `visibility` filter is given); ≤ 20 000 bytes | `unknown_object`, `object_archived` (reference of `explains`/`near`), `unplaced` (`near` reference without committed geometry); nothing sent |
+| `scene_query` (Slice 09) | at least one of `kind?`, `category?` (no case), `exec_state?`, `origin?`, `visibility?`, `text?`, `work?` (`source` / `external_id` / `work_id` / `source:external_id`), `explains?` (object id), `connected?` `{object_id, depth?}` (the constellation: the object and everything linked to it, up to `depth` hops, 6 max), `near?` `{object_id, radius}` | `GET /v1/scene/snapshot` (read only); inspect rows, `distance` (exact to 0.001, a gap never 0) and `overlap` columns with `near`; `include_hidden?` (strict boolean, only with `near`: hidden objects are excluded from `near` otherwise, unless a `visibility` filter is given); ≤ 20 000 bytes | `unknown_object`, `object_archived` (reference of `explains`/`near`), `unplaced` (`near` reference without committed geometry); nothing sent |
 | `scene_capture` (Slice 09, part 2) | none | `POST /v1/scene/captures` (actor brain) → visible leader page renders its view model → PNG under `runtime/scene-captures/`; returns path + image | `scene_disabled`, `no_visible_page` (5 s), `capture_busy`, `capture_unavailable`, `capture_cancelled` (Core closing, or the brain call abandoned) |
 | `scene_get` (Slice 09) | `object_ids` (1–8) | `GET /v1/scene/snapshot` (read only); full payload (items with `url`, `link` and `host` from the shared link rule `jarvis/domain/scene_links.py`, `host: null` / `link: false` when refused), `work_ref`, composition, constraints, relations in/out, `explained_by`, `explains`, `signals`/`live_signal` (`*_omitted` counters), never above 20 000 bytes, first object always returned (`summary_truncated` in the extreme) | — (`not_found` list, transport errors only) |
-| `scene_create_object` | `kind` ∈ artifact/window/group/attention, `category`, `title?`, `summary?`, `items?`, `representation?`, `geometry?`, `layer?`, `order?` | `upsert_object` on a fresh id `brain-<kind>-<hex>`; unset fields are not announced (kind default layer applies) | `scene_full`, `object_archived` |
-| `scene_update_object` | `object_id`, `category?`, `title?`, `summary?`, `items?`, `representation?`, `geometry?`, `layer?`, `order?`, `visibility?` | geometry only → `set_geometry`; representation (± geometry) only → `set_representation`; visibility only → `set_visibility`; otherwise one `patch_object` with every given field (payload merged with the current one) | `pinned_by_user`, `unknown_object`, `object_archived` |
+| `scene_create_object` | `kind` ∈ artifact/window/group/attention, `category`, `title?`, `summary?`, `items?`, `representation?`, `geometry?`, `layer?`, `order?`, `annotation?` | `upsert_object` on a fresh id `brain-<kind>-<hex>`; unset fields are not announced (kind default layer applies) | `scene_full`, `object_archived` |
+| `scene_update_object` | `object_id`, `category?`, `title?`, `summary?`, `items?`, `representation?`, `geometry?`, `layer?`, `order?`, `visibility?`, `annotation?` (`""` removes the label) | geometry only → `set_geometry`; representation (± geometry) only → `set_representation`; visibility only → `set_visibility`; otherwise one `patch_object` with every given field (payload merged with the current one) | `pinned_by_user`, `unknown_object`, `object_archived` |
+| `scene_update_many` (Slice 13) | `select?` (the very filters of `scene_query`) **or** `object_ids?` (1–32), never both; at least one change among `visibility?`, `representation?`, `category?`, `layer?`, `order?`, `annotation?`; `confirm?` | one `set_visibility` / `set_representation` / `patch_object` per target (same routing as `scene_update_object`), best-effort, in order, no rollback; returns `matched`, `targets`, `applied`, `duplicate`, `refused` with a reason per id, `atomicity: best_effort` | **`pinned_by_user` objects are dropped from the batch before anything is sent** (reported as refused); `selection_too_large` above 32 designated objects and `selection_too_broad` when hiding covers half or more of the visible objects without `confirm` (both refuse the whole call, nothing sent); per object `unknown_object`, `object_archived` |
 | `scene_set_visibility` | `object_id` + `visibility`, or `scope="all_hidden"` + `visibility="visible"` | `set_visibility`; with the scope, one `set_visibility` per object hidden in the current snapshot (≤ 128 per call, 15 s budget), counts and ids returned | `unknown_object`, `object_archived` (counted per object with the scope) |
 | `scene_link` | `from_id`, `to_id`, `kind`, `relation_id?` (`brain-…` only), `layer?` | `link`; `layer` key omitted unless given (never a default of 50); an existing identical relation without a layer is a local `duplicate`, nothing sent | `relation_conflict`, `relation_limit`, `unknown_object`, `object_archived`, `reserved_id` (domain side), `runtime_owned` (`parent_of` between execution nodes) |
 | `scene_unlink` | `relation_id` | `unlink` (absent → `duplicate`) | `runtime_owned` |
@@ -650,6 +651,18 @@ these tools follow the gate.
 
 Artifact updates that are not grouping (retitle, move, hide, show as window) go
 through `scene_update_object`; there is no separate update tool.
+
+Actions on **several** objects go through `scene_update_many` rather than one
+call per object: one selector vocabulary (that of `scene_query`, so the brain
+can preview the set by reading before acting), one change, one report. No
+batch tool archives or pins — both stay with the user (Decision 14).
+
+An `annotation` is the short caption drawn beside an object and tied to it by a
+leader line. It lives in the object's payload (`ScenePayload.annotation`,
+≤ 60 characters, one printable line, key emitted on the wire only when set):
+it therefore follows the object when it moves and disappears with it, and it is
+scene data — never an instruction. `scene_get` returns it, `text` filters match
+it, and `scene_update_many` sets it on a whole set at once.
 
 The read tools (`scene_inspect`, `scene_query`, `scene_get`, `scene_capture`)
 never send a scene command; the three structured reads mark only the objects they
