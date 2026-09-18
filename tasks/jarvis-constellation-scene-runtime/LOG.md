@@ -2171,3 +2171,109 @@ Ranges such as `a`…`b` in the second column are the chronological span of that
 - Accepted model-judgement items: same-session recall without `scene_get` (the brain had the content); the earlier no-capture answer on « dis-moi ce qu'il y a » (Decision 16 keeps the capture exceptional) — now tightened for explicit on-screen questions.
 - Residual risks added: model-vs-render divergence for stored geometry vs drawn pixels; restart-failure feedback; live-region announcement reliability; a broken stored voice config blocks every settings write (pre-existing route guard); `data/state/jarvis.sqlite3` tracked on main rides along.
 - **Status: all 12 Slices closed (00 READY, 01–11 APPROVED). The handoff is ready for Human acceptance; nothing merged to `main`, nothing pushed, Drive archive left in `to-do` per the Human's 2026-09-16 decision.**
+
+## 2026-09-18 — Intégration de la réparation de main et défaut activé (agent d'intégration)
+
+Deux décisions humaines appliquées avant la remontée vers main : `scene.enabled` **allumé par défaut** (B1) et **fusion** de `fix/main-baseline-and-timeline` dans la branche de tâche (B6, merge commit, sans `push`).
+
+### 1. `scene.enabled` par défaut (commit `ba4bfff`)
+
+`jarvis/runtime/scene_settings.py` : `DEFAULT_ENABLED = True` et un nouveau `stored_gate(settings)` qui ne retient qu'un **booléen** enregistré. Conséquences voulues : une installation neuve (pas de clé `scene`, pas de variable) est allumée ; un `false` enregistré l'emporte sur le défaut ; une valeur illisible (`"true"`, `1`, `null`, `scene` qui n'est pas un objet) retombe sur le défaut au lieu d'éteindre la scène sur un fichier abîmé ; `JARVIS_SCENE_ENABLED` l'emporte toujours sur les deux et l'écriture reste refusée `scene_env_override`. `describe_gate().stored` dit désormais *ce que vaudrait l'interrupteur sans la variable* (fichier ou défaut), ce que la note d'environnement de l'écran affiche.
+
+Autres points touchés : `display_mcp.scene_gate_reader` (fichier absent ou illisible → défaut allumé) ; texte de la case de l'onglet Expérimental « **Activée par défaut.** Enregistré immédiatement. ».
+
+Deux retombées trouvées par la suite de tests, corrigées :
+
+- `scene.display_mcp_unconfigured` (avertissement légitime : interrupteur vrai, coordonnées de Core inconnues) est maintenant émis par tout harnais qui construit un `ControlCenter` sans `display_mcp`. Le seul montage de production (`jarvis/app.py`) passe toujours la cible, donc l'avertissement ne peut pas apparaître en usage normal. Le test `test_control_center_audio_test_uses_selected_devices_and_emits_trace` filtre désormais les entrées `audio.*`.
+- `test_corrupt_optional_catalog_cannot_break_all_settings` patchait `catalog.cached` alors que `_voice_architecture_registry` lit `cached_for` : son assertion sur `voice.settings.catalog_rejected` ne pouvait pas échouer, cachée derrière un `if trace_path.exists()` qui était faux tant que rien n'écrivait dans la trace. Le nouveau journal l'a réveillée. Le test patche les deux et n'a plus de garde.
+
+Tests : défaut allumé + lecture tolérante, `false` enregistré gagnant (y compris sur une réécriture sans `enabled`), environnement dans les deux sens × trois états du fichier, **Control Center démarré sans aucun fichier de réglages** (rendu + cerveau armé, et rien n'est écrit sur le disque), et la conséquence de bout en bout (interrupteur → `--mcp-config` et consigne d'affichage / consigne système octet pour octet). Les tests de la consigne éteinte disent `display_mcp=None` explicitement.
+
+Docs : ARCHITECTURE (ligne du gate, paragraphe *Gate* du rendu), OPERATIONS (« Scène constellation — vue d'ensemble » et « Activer »), SECURITY §13, scene-model (*Brain tool mapping*), décision 2 du Slice 11 marquée dépassée, `HUMAN-CHECKLIST.md` (préparation commune, B1 tranchée, B8 reformulée).
+
+### 2. Fusion de `fix/main-baseline-and-timeline`
+
+Base de fusion `b86f228` (= `origin/main`), donc une fusion à trois branches propre. **Git n'a signalé aucun conflit textuel** : la branche de réparation ne touche `control_center.html`, `ARCHITECTURE.md` et `OPERATIONS.md` qu'à des endroits disjoints de ceux de la tâche. Les « conflits » attendus étaient **sémantiques** ; chacun a été vérifié à la main sur l'arbre fusionné :
+
+| Point de contact | Résolution vérifiée |
+| --- | --- |
+| `refreshStatus` | garde tout : `JarvisScene.gate(s.scene,s.scene_limits)` dans son `try`, `JarvisScene.statusLost()` dans le `catch`, et `AG.agent`/`AG.cli` que la carte Brain restaurée lit |
+| carte Brain | `brainArmed()` (états `running` **et** `ready`) revient et sert dans `menuItems` (`start` désactivé si armé, `kill` si non armé), le minuteur et la ligne d'état ; le menu passe par `showMenu({…})` de la tâche ; `brainAction` garde `confirmDialog` au lieu de `window.confirm` |
+| deux redémarrages | panneau Agents : `POST /api/agent/restart` **sans corps** → la conversation est reprise ; onglet Expérimental : `POST /api/agent/restart {"new_conversation":true}` → conversation neuve. Les deux coexistent, vérifiés par test et au navigateur |
+| onglet des sections | l'aiguillage vit dans l'onglet **Agent / CLI** (`<details id="routingAdvanced">`, chargé à l'ouverture, compteur `SET.routingGeneration`, remis à zéro par `closeSettings` et au changement d'onglet), le réglage de scène dans **Expérimental** (injecté par-dessus `renderTab` après Barehands). Deux onglets, deux chargements paresseux, deux compteurs : aucun recouvrement. `SET.routingPick` s'ajoute à l'état et est vidé par `closeSettings` |
+| `confirmDialog` + `inert` | l'écran d'aiguillage est bien inerte derrière le panneau : `#overlay` passe `inert` (relevé au navigateur : `app, ctxMenu, toasts, bgPop, timeline, overlay, sceneSettingsLive`), le harness n'est plus atteignable, le point central du viewport tombe dans le panneau, et l'inertie est rendue à la fermeture |
+| chronologie vs panneau | la chronologie rend déjà `body` inerte ; `CONFIRM.backWasInert` garde le panneau actif par-dessus et rend son état ensuite — vérifié dans les deux sens |
+| registre d'empilement | l'aiguillage n'a gagné **aucune** couche (un profil éteint se marque par `.routing-off` et par `disabled`, jamais par superposition). Le commentaire du registre a été complété : chronologie 55 et confirmation 85 y figuraient dans le test mais pas dans le texte |
+| docs | les deux jeux de sections coexistent (`ARCHITECTURE` : long-poll « per browser profile » ; `OPERATIONS` : « plusieurs fenêtres » de la chronologie et l'ajout en deux temps) ; `test_documented_routes` passe |
+
+### 3. Deux meneurs dans la même page
+
+Noms disjoints, donc aucune collision possible : verrous `jarvis.scene.leader` contre `jarvis.timeline.<conversation_id>`, canaux `jarvis.scene` contre `jarvis.timeline`. Web Locks autorise une même page à tenir plusieurs verrous de noms différents ; observé, une fenêtre est meneuse des deux à la fois sans rien perdre.
+
+Budget de connexions mesuré pour la première fois avec les deux fonctions vivantes (Chrome à nous, headless, profil jetable, fenêtres **visibles** de 1280×720 dans un seul profil, scène allumée par le défaut et chronologie ouverte partout ; les lectures longues sont comptées **sur les routes elles-mêmes**, la latence de `/api/status` **depuis le navigateur**) :
+
+| fenêtres | long-polls chronologie | long-polls scène | total tenu | `/api/status` p50 / max | événement → toutes |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 1 | 1 | 2 | 3 / 3 ms | 15 ms |
+| 6 | 1 | 1 | 2 | 3 / 4 ms | 50 ms |
+| 10 | 1 | 1 | 2 | 3 / 4 ms | 19 ms (2 558 ms sur un tirage, une fenêtre encore en train de se poser) |
+
+Deux connexions tenues sur les ~6 par hôte, quel que soit le nombre de fenêtres ; rôles `leader`/`follower` indépendants par fonction ; 0 exception de page, 0 erreur console. **Aucune saturation** : Issue 04 close (le relevé y est reporté). (Mesure faite aussi en enchaînant les cas dans le même serveur : on y voit jusqu'à 3-4 lectures longues en vol, ce sont les lectures abandonnées des cas précédents qui n'ont pas encore expiré côté serveur, pas des meneurs supplémentaires ; chaque cas relancé seul donne 2.)
+
+### 4. Recette au navigateur (les deux thèmes)
+
+Chrome à nous (headless, profil jetable, tout tué), vrai Core + Control Center en processus, **aucun fichier de réglages** au départ.
+
+| Vérification | `circuit-board` | `omega` |
+| --- | --- | --- |
+| scène rendue sans fichier de réglages | oui (`#sceneLayer`, 2 nœuds, `mode: shared`, `role: leader`) | oui |
+| `/api/status` → `scene` | `{enabled: true, source: settings}` | idem |
+| case de l'onglet Expérimental | cochée, active, « Activée par défaut. Enregistré immédiatement. » | idem |
+| aiguillage en deux temps | 4 profils, sélecteur Harness (`claude`, `codex`), Modèle désactivé tant qu'aucun harness n'est choisi, « ajouter à ce profil » → 1 candidat, « retirer » présent | idem |
+| confirmation par-dessus l'aiguillage | `#overlay` inerte, harness inatteignable, focus sur Annuler, inertie rendue ensuite | idem |
+| chronologie | ouverte, 12 entrées, `mode: shared`, `role: leader`, 1 lecture longue, au-dessus du dock ; événement en direct affiché en **0,13 s** | idem |
+| confirmation par-dessus la chronologie | chronologie inerte, panneau actif, réponse rendue, inertie rendue | idem |
+| menu contextuel sur un objet de scène | 6 entrées (point, capsule, épingler, masquer, archiver, archiver les orphelins) | idem |
+| archivage confirmé | panneau « Archiver « … » ? », scène inerte, focus Annuler, puis 2 → 1 nœud | idem |
+| décocher / recocher l'interrupteur | scène retirée, `{"enabled": false}` écrit, scène revenue au recochage | idem |
+| exceptions de page / erreurs console | 0 / 0 | 0 / 0 |
+
+Captures `int2_shots/int2_0*_{circuit-board,omega}.png` (scène par défaut, onglet Expérimental, aiguillage, chronologie, confirmations, menu, scène éteinte, final) et `int2_bench_{1,6,10}w_*.png` ; relevés `int2_smoke_*.json`, `int2_bench.json`, `int2_prompt*` (répertoire de travail de l'agent, hors dépôt).
+
+### 5. Consigne du cerveau, avant et après l'interrupteur
+
+Capturée sur l'`argv` réellement passé au CLI (`--append-system-prompt`), avec l'arbre de main extrait à `b86f228` pour référence :
+
+| Arbre / réglage | `--mcp-config` | sha256 | octets | ÉCRAN / ARTEFACTS |
+| --- | :---: | --- | ---: | :---: |
+| main `b86f228` | non | `314ec610…5507` | 2 737 | non |
+| fusion, aucun réglage (défaut) | **oui** | `996a9fff…a4ed` | 7 099 | **oui** |
+| fusion, `scene.enabled=false` enregistré | non | `314ec610…5507` | 2 737 | non |
+| fusion, `scene.enabled=true` enregistré | oui | `996a9fff…a4ed` | 7 099 | oui |
+
+Éteint, la consigne est **octet pour octet celle de main**.
+
+### 6. Suite complète et contrôles statiques
+
+Méthode en morceaux du poste (mémoire), au premier plan, un morceau à la fois, sur l'arbre fusionné :
+
+| Morceau | Sortie |
+| --- | --- |
+| unitaires 0/6 | 511 passés, 1 échec `test_back_brain_tasks.py` (instable sous charge) → **34 passés** au réessai seul |
+| unitaires 1/6 | 882 passés, 1 ignoré |
+| unitaires 2/6 | 530 passés, 1 ignoré |
+| unitaires 3/6 | 1 091 passés, 1 ignoré |
+| unitaires 4/6 | 718 passés, 1 ignoré |
+| unitaires 5/6 | 915 passés, 2 ignorés |
+| `tests/integration` | 396 passés, 4 ignorés |
+| `tests/e2e` + `tests/replay` | 1 passé |
+| `verify_release.py`, son unique sous-processus pytest neutralisé | `Release verification passed.` |
+
+Somme 5 055 = `--collect-only` 5 055. **0 échec** après réessai du fichier instable. Les 9 tests de base de main (Issue 03) sont **verts** grâce à la fusion : `test_agent_routing_settings.py` ×3, `test_brain_card_state.py` ×2, `test_routing_settings_screen.py` ×4. Le second fichier fragile signalé par la branche de réparation, `test_live_primary_lease_review.py`, n'a pas échoué cette fois.
+
+### 7. Ce qui reste à décider (agent 0)
+
+1. Le défaut allumé rend les risques de SECURITY §13 (acteur déclaré, pas authentifié) ceux de la configuration normale : décision B8 à trancher avec cet éclairage.
+2. `data/state/jarvis.sqlite3` reste suivi par git (décision B7), inchangé.
+3. `MAINFIX-LOG.md` arrive à la racine du dépôt avec la fusion : à laisser là, à déplacer sous `tasks/`, ou à retirer avant la remontée vers main.
+4. La remontée vers `main` elle-même n'a **pas** été faite (aucun `push`, `main` n'est sorti nulle part) : elle revient à l'agent 0.

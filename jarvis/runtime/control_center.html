@@ -14,10 +14,15 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
    control_center_scene_page.js seulement si scene.enabled) passe au-dessus ;
    toute commande de la page reste au-dessus de la scène : barre du haut et
    indication vocale 31, dock 32, panneau 33, bandeau GPT-Live 35, pastilles
-   40, fond des réglages 60, notifications 70, liste des pastilles 75, menu
-   contextuel 80, Barehands 2147483000. Thème Omega : panneau 42, barre 45,
-   bandeau 48, dock et pastilles 50. Les couches de la scène (0–1000) ne
-   s'empilent qu'à l'intérieur de son conteneur. */
+   40, chronologie de conversation 55 (modale plein écran `.tl`), fond des
+   réglages 60, notifications 70, liste des pastilles 75, menu
+   contextuel 80, confirmation en page 85, Barehands 2147483000. Thème Omega :
+   panneau 42, barre 45, bandeau 48, dock et pastilles 50. Les couches de la
+   scène (0–1000) ne s'empilent qu'à l'intérieur de son conteneur ; les rangs
+   internes de la chronologie (`.tl-*`, 1–30) et de l'écran d'aiguillage (aucun :
+   un profil éteint se marque par `.routing-off` et par `disabled`, jamais par
+   une superposition) restent dans leur propre conteneur. L'ordre est vérifié
+   par `tests/unit/test_scene_renderer_logic.py`. */
 .face{position:absolute;inset:0;z-index:0;width:100%;height:100%;border:0;background:#000;pointer-events:none;cursor:default}
 .topbar{position:absolute;z-index:31;top:18px;left:18px;right:18px;display:flex;justify-content:space-between;align-items:center;pointer-events:none}
 .brand,.state,.voicehint{background:rgba(3,8,12,.72);border:1px solid rgba(110,231,255,.18);backdrop-filter:blur(10px);padding:8px 12px;letter-spacing:.14em;text-transform:uppercase}
@@ -286,6 +291,12 @@ nav.tabs button.active{color:var(--accent);border-left-color:var(--accent);backg
 .note.bad{color:var(--danger)}
 .note.warn{color:var(--warn)}
 .linkish{background:none;border:0;color:var(--accent);font:inherit;font-size:11px;cursor:pointer;padding:0;text-decoration:underline dotted}
+.linkish:disabled{opacity:.38;cursor:default;text-decoration:none;pointer-events:none}
+/* Un profil éteint garde ses réglages lisibles mais n'invite plus à les
+   changer : il ne sert plus tant qu'il n'est pas rallumé. Le gris ne fait que
+   le montrer — ce sont les attributs `disabled` posés sur chaque commande qui
+   l'imposent, au clavier comme à la souris. */
+.routing-off{opacity:.5}
 table.keys{width:100%;border-collapse:collapse;font-size:13px}
 table.keys th{text-align:left;font-weight:normal;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);padding:0 10px 8px 0;border-bottom:1px solid var(--line)}
 table.keys td{padding:10px 10px 10px 0;border-bottom:1px solid rgba(113,144,160,.12);vertical-align:middle}
@@ -1158,7 +1169,7 @@ function liveTimer(id,start,cls,hint){
 function timerHtml(t){
   if(t.id==='brain'){
     if(t.busy&&t.turn_started_ms)return liveTimer('brain',t.turn_started_ms,'live',`Tour en cours depuis ${fmtClock(t.turn_started_ms)}`);
-    if(t.started_ms&&t.state==='running')return liveTimer('brain',t.started_ms,'idle',`En service depuis ${fmtClock(t.started_ms)}`);
+    if(t.started_ms&&brainArmed(t))return liveTimer('brain',t.started_ms,'idle',`En service depuis ${fmtClock(t.started_ms)}`);
     return '<span class="timer idle" title="Brain arrêté">—</span>';
   }
   if(isRunning(t)&&t.started_ms)return liveTimer(t.id,t.started_ms,'live',`Démarré à ${fmtClock(t.started_ms)}`);
@@ -1172,10 +1183,17 @@ function tickTimers(){
   });
 }
 
+// « Armé » veut dire prêt à prendre un tour, pas « un processus tourne ».
+// Claude tient un processus permanent (`running`) ; Codex en lance un par tour
+// et se déclare `ready` entre deux. Sans ce second état, un brain Codex
+// s'affichait « arrêté » quoi qu'on fasse : « Redémarrer » réussissait en
+// silence, « Arrêter » restait grisé, et rien ne le disait.
+function brainArmed(b){const state=(b&&b.state)||'';return state==='running'||state==='ready'}
 function brainState(b){
   const state=b.state||'stopped';
   if(b.busy)return {cls:'running',label:'tour en cours'};
   if(state==='running')return {cls:'ok',label:'en attente'};
+  if(state==='ready')return {cls:'ok',label:'prêt'};
   if(state==='exited')return {cls:'bad',label:'processus terminé'};
   return {cls:'',label:'arrêté'};
 }
@@ -1187,7 +1205,7 @@ function cardHtml(t,{level=0,compact=false,head=false}={}){
     const a=AG.agent||{},c=a.console||{};
     st=brainState(t);
     model=prettyModel(t.model);
-    line=t.activity||(t.busy?'Tour en cours…':t.state==='running'?'En attente d’une demande':t.state==='exited'?'Le processus s’est arrêté':'Arrêté · clic droit pour démarrer');
+    line=t.activity||(t.busy?'Tour en cours…':brainArmed(t)?'En attente d’une demande':t.state==='exited'?'Le processus s’est arrêté':'Arrêté · clic droit pour démarrer');
     lineTitle=line;
     meta.push(`<span>${esc(st.label)}</span>`);
     if(a.pid)meta.push(`<span>PID ${esc(a.pid)}</span>`);
@@ -1813,11 +1831,11 @@ function menuItems(id){
     items.push({act:'copy',label:'Copier le prompt',disabled:!t||!t.prompt});
     return items;
   }
-  const a=AG.agent||{},c=a.console||{},running=(a.state||(t&&t.state))==='running';
+  const a=AG.agent||{},c=a.console||{},armed=brainArmed({state:a.state||(t&&t.state)});
   items.push('-',
-    {act:'start',label:'Démarrer',disabled:running},
+    {act:'start',label:'Démarrer',disabled:armed},
     {act:'restart',label:'Redémarrer'},
-    {act:'kill',label:'Arrêter',danger:true,disabled:!running},
+    {act:'kill',label:'Arrêter',danger:true,disabled:!armed},
     '-');
   if(c.open)items.push({act:'console-open',label:'Ramener la console Windows'},{act:'console-close',label:'Fermer la console Windows',danger:true});
   else items.push({act:'console-open',label:'Console Windows',disabled:c.supported===false});
@@ -2115,7 +2133,7 @@ const TABS=[
   {id:'keys',label:'API Keys',save:false},
   {id:'shortcuts',label:'Raccourcis',save:false},
 ];
-const SET={open:false,tab:'voice',voiceTab:'architecture',voiceCatalogRole:'realtime',voiceCatalogMountedRole:null,voiceCatalogStates:{},voiceModelSources:{},voiceModelGenerations:{},data:null,draft:null,dirty:false,catalog:{},clis:null,devices:null,capture:null,shortcuts:null,restartNotice:false,rdOpen:false,routingAdvancedOpen:false,routing:null,prompts:null,agentCatalog:null,voiceCatalog:null,openGeneration:0,cliGeneration:0,cliModelGeneration:0,routingGeneration:0,voiceGeneration:0,audioGeneration:0,diagnosticGeneration:0,voiceDiagnosticError:''};
+const SET={open:false,tab:'voice',voiceTab:'architecture',voiceCatalogRole:'realtime',voiceCatalogMountedRole:null,voiceCatalogStates:{},voiceModelSources:{},voiceModelGenerations:{},data:null,draft:null,dirty:false,catalog:{},clis:null,devices:null,capture:null,shortcuts:null,restartNotice:false,rdOpen:false,routingAdvancedOpen:false,routing:null,routingPick:{},prompts:null,agentCatalog:null,voiceCatalog:null,openGeneration:0,cliGeneration:0,cliModelGeneration:0,routingGeneration:0,voiceGeneration:0,audioGeneration:0,diagnosticGeneration:0,voiceDiagnosticError:''};
 const overlay=$('#overlay'),modalContent=$('#modalContent'),modalStatus=$('#modalStatus'),modalSave=$('#modalSave'),modalSub=$('#modalSub');
 
 function say(text,kind){modalStatus.className='status'+(kind?' '+kind:'');modalStatus.textContent=text||''}
@@ -2570,45 +2588,79 @@ function tabCli(){
 
 /* --- configuration avancée des sous-agents ------------------------------
    Rien de ce qui est affiché ici n'est écrit dans cette page : les profils,
-   les candidats et leur disponibilité viennent tous de /api/routing/candidates.
-   Un candidat enregistré devenu indisponible reste coché et visible — sa
-   disparition serait un réglage perdu en silence.                          */
-function candidateLabel(c){return c.label||(c.model?`${c.agent} · ${c.model}`:c.agent)}
-function candidateKey(c){return JSON.stringify({agent:c.agent,model:c.model||''})}
+   les harness, leurs modèles et leur disponibilité viennent tous de
+   /api/routing/candidates.
 
-function routingRow(profile,candidate,chosen){
-  const key=candidateKey(candidate);
-  const rank=chosen.indexOf(key);
-  const state=candidate.available
-    ? '<span class="tag ok">disponible</span>'
-    : `<span class="tag bad">indisponible</span>`;
-  const why=candidate.available?'':`<div class="hint">${esc(candidate.unavailable_reason||'')}</div>`;
-  const order=rank>=0?`<span class="tag">${rank===0?'préféré':'recours '+rank}</span>`:'';
-  return `<label class="choice ${rank>=0?'selected':''}">
-    <input type="checkbox" data-routing-candidate="${esc(key)}" data-routing-profile="${esc(profile)}" ${rank>=0?'checked':''}>
-    <div><div class="title"><strong>${esc(candidateLabel(candidate))}</strong>${state}${order}</div>${why}</div>
-  </label>`;
+   Le choix se fait en deux temps : d'abord le harness, ensuite un de ses
+   modèles seulement. Une liste unique de tous les couples harness × modèle
+   devient illisible dès qu'un fournisseur en déclare vingt.
+
+   Ce que le profil retient reste une liste ordonnée de couples {agent, model}
+   — le format enregistré ne change pas. Un candidat enregistré devenu
+   indisponible y reste visible et expliqué : sa disparition serait un réglage
+   perdu en silence.                                                        */
+function candidateKey(c){return JSON.stringify({agent:c.agent,model:c.model||''})}
+function harnessOf(state,agent){return (state.harnesses||[]).find(h=>h.id===agent)||null}
+function modelOf(harness,model){return harness?(harness.models||[]).find(m=>(m.model||'')===(model||'')):null}
+/* Le choix en cours d'un profil ne devient un candidat qu'à « Ajouter » :
+   sélectionner un harness ne modifie donc aucun réglage. */
+function routingPick(profile){
+  const picks=SET.routingPick||(SET.routingPick={});
+  return picks[profile]||(picks[profile]={agent:'',model:''});
+}
+/* Le brouillon reçoit tous les profils du serveur ; un profil apparu depuis
+   l'ouverture de la fenêtre est créé vide plutôt que de faire échouer le clic. */
+function routingEntry(profile){
+  const profiles=SET.draft.routing.profiles;
+  return profiles[profile]||(profiles[profile]={candidates:[],enabled:true,allow_general_fallback:true});
+}
+function candidateLabel(state,ref){
+  const harness=harnessOf(state,ref.agent),model=modelOf(harness,ref.model);
+  const left=harness?harness.label:ref.agent;
+  const right=model?model.label:(ref.model||'');
+  return right?`${left} · ${right}`:left;
+}
+
+function routingRow(profile,ref,rank,state,off){
+  const harness=harnessOf(state,ref.agent),model=modelOf(harness,ref.model);
+  const stop=off?' disabled':'';
+  const usable=!!(harness&&model&&model.available);
+  const tag=usable?'<span class="tag ok">disponible</span>':'<span class="tag bad">indisponible</span>';
+  const reason=(model&&model.unavailable_reason)||(harness&&harness.unavailable_reason)||"Ce couple n'est plus proposé sur cette machine.";
+  const why=usable?'':`<div class="hint">${esc(reason)}</div>`;
+  const order=`<span class="tag">${rank===0?'préféré':'recours '+rank}</span>`;
+  /* Une commande est retrouvée après le re-rendu par ce qu'elle désigne — le
+     profil et le couple — et non par son rang, qui change justement quand on
+     monte une ligne. */
+  const key=`${profile}|${ref.agent}|${ref.model||''}`;
+  const up=rank>0?`<button class="linkish" data-routing-up="${esc(profile)}" data-routing-rank="${rank}" data-routing-focus="up|${esc(key)}"${stop}>monter</button> `:'';
+  return `<div class="choice selected">
+    <div><div class="title"><strong>${esc(candidateLabel(state,ref))}</strong>${tag}${order}</div>${why}
+      <div class="source">${up}<button class="linkish" data-routing-drop="${esc(profile)}" data-routing-rank="${rank}" data-routing-focus="drop|${esc(key)}"${stop}>retirer</button></div></div>
+  </div>`;
 }
 
 function routingAdvancedBody(){
   if(!SET.routing)return '<div class="hint">Ouvrez cette section pour charger les profils et candidats.</div>';
   const state=SET.routing,draft=SET.draft.routing;
   if(state.ok===false)return `<div class="notice bad">${esc(state.error||'Configuration avancée indisponible.')} <button type="button" class="linkish" id="routingRetry">réessayer</button></div>`;
-  const candidates=state.candidates||[];
   const blocks=(state.profiles||[]).map(profile=>{
     const entry=draft.profiles[profile.id]||{candidates:[],enabled:true,allow_general_fallback:true};
-    const chosen=(entry.candidates||[]).map(candidateKey);
-    const rows=candidates.map(c=>routingRow(profile.id,c,chosen)).join('');
+    const chosen=entry.candidates||[];
+    const off=!entry.enabled;
+    const rows=chosen.map((ref,rank)=>routingRow(profile.id,ref,rank,state,off)).join('');
     const empty=chosen.length?'':'<div class="hint">Aucun candidat autorisé : ce profil garde le modèle configuré du CLI.</div>';
     const fallback=profile.id==='general'?'':`<div class="field inline">
-      <input type="checkbox" id="f_fb_${esc(profile.id)}" data-routing-fallback="${esc(profile.id)}" ${entry.allow_general_fallback?'checked':''}>
+      <input type="checkbox" id="f_fb_${esc(profile.id)}" data-routing-fallback="${esc(profile.id)}" ${entry.allow_general_fallback?'checked':''}${off?' disabled':''}>
       <div><label for="f_fb_${esc(profile.id)}">Se rabattre sur le profil Général</label>
       <div class="hint">Quand aucun candidat de ce profil n'est utilisable, essayer ceux du profil Général plutôt que d'échouer.</div></div></div>`;
-    const enabled=`<div class="field inline"><input type="checkbox" id="f_profile_${esc(profile.id)}" data-routing-profile-enabled="${esc(profile.id)}" ${entry.enabled?'checked':''}>
+    const enabled=`<div class="field inline"><input type="checkbox" id="f_profile_${esc(profile.id)}" data-routing-profile-enabled="${esc(profile.id)}" data-routing-focus="enabled|${esc(profile.id)}" ${entry.enabled?'checked':''}>
       <div><label for="f_profile_${esc(profile.id)}">Profil actif</label><div class="hint">Désactivé, ce profil conserve le choix du CLI même en mode Auto.</div></div></div>`;
     return `<h3>${esc(profile.label)}</h3>${enabled}
       <div class="hint" style="margin-bottom:8px">${esc(profile.description)}${profile.requires.length?` · exige : ${profile.requires.map(esc).join(', ')}`:''}</div>
-      <div class="choices">${rows}</div>${empty}${fallback}`;
+      <div class="routing-profile${off?' routing-off':''}" data-routing-block="${esc(profile.id)}"${off?' aria-disabled="true"':''}>
+      ${off?'<div class="hint">Profil désactivé : ces candidats sont conservés mais ne servent pas tant qu’il n’est pas rallumé.</div>':''}
+      ${rows?`<div class="choices">${rows}</div>`:empty}${routingPicker(profile.id,state,off)}${fallback}</div>`;
   }).join('');
   const sources=Object.entries(state.sources||{}).map(([provider,source])=>{
     const label=providerLabel(provider);
@@ -2619,7 +2671,31 @@ function routingAdvancedBody(){
   }).join(' ');
   return `<div class="source" style="margin-bottom:10px">${sources} <button class="linkish" id="routingRefresh">rafraîchir</button></div>
     ${blocks}
-    <div class="hint" style="margin-top:14px">L'ordre des candidats est celui de la liste : le premier disponible est choisi, les suivants servent de recours. Les sous-agents s'exécutent dans le CLI vocal actif ; un candidat d'un autre CLI ne peut servir qu'à l'auto-développement.</div>`;
+    <div class="hint" style="margin-top:14px">Un candidat s'ajoute en deux temps : le harness, puis un de ses modèles. L'ordre de la liste est la préférence — le premier disponible est choisi, les suivants servent de recours, et « monter » change le préféré. Les sous-agents s'exécutent dans le CLI vocal actif ; un candidat d'un autre CLI ne peut servir qu'à l'auto-développement.</div>`;
+}
+
+/* Les deux sélecteurs en cascade : le second ne montre que les modèles du
+   harness choisi au premier. */
+function routingPicker(profile,state,off){
+  const stop=off?' disabled':'';
+  const pick=routingPick(profile);
+  const harness=harnessOf(state,pick.agent);
+  const model=modelOf(harness,pick.model);
+  const harnesses=(state.harnesses||[]).map(h=>({value:h.id,label:h.available?h.label:`${h.label} — indisponible`}));
+  const models=(harness?harness.models||[]:[]).map(m=>({value:m.model,label:m.available?m.label:`${m.label} — indisponible`}));
+  const modelField=harness
+    ? `<select id="f_rt_model_${esc(profile)}" data-routing-model="${esc(profile)}" data-routing-focus="model|${esc(profile)}"${stop}>${selectOptions(models,pick.model,'')}</select>`
+    : `<select id="f_rt_model_${esc(profile)}" disabled><option>Choisir d'abord un harness</option></select>`;
+  const why=harness&&!harness.available?`<div class="hint">${esc(harness.unavailable_reason||'')}</div>`:'';
+  /* Garder un choix enregistré devenu inutilisable et en ajouter un qu'on sait
+     déjà inutilisable ne sont pas la même chose : le premier protège un
+     réglage, le second se ferait en connaissance de cause. On le dit avant. */
+  const broken=harness&&(!harness.available||(model&&!model.available));
+  const warn=broken?`<div class="hint" data-routing-unusable="${esc(profile)}">Ce couple est indisponible sur cette machine : il sera enregistré mais ignoré tant qu'il ne revient pas.</div>`:'';
+  return `<div class="field"><label for="f_rt_harness_${esc(profile)}">Harness</label>
+      <select id="f_rt_harness_${esc(profile)}" data-routing-harness="${esc(profile)}" data-routing-focus="harness|${esc(profile)}"${stop}>${selectOptions(harnesses,pick.agent,'Choisir un harness…')}</select>${why}</div>
+    <div class="field"><label for="f_rt_model_${esc(profile)}">Modèle</label>${modelField}${warn}
+      <div class="source"><button class="linkish" data-routing-add="${esc(profile)}" data-routing-focus="add|${esc(profile)}" ${harness&&!off?'':'disabled'}>ajouter à ce profil</button></div></div>`;
 }
 
 function routingAdvancedShell(){
@@ -2687,27 +2763,106 @@ async function hydrateCliModel(revision,refresh=false){
   renderCliTechnical(revision);
 }
 
+/* Redessiner la section jette le focus au début du document : la commande sur
+   laquelle on vient de cliquer n'existe plus. On note ce qu'elle désignait et
+   on rend le focus à son équivalent — « monter » surtout, qu'on actionne
+   plusieurs fois de suite et dont le rang change à chaque fois. */
+function routingFocusTarget(body,focused,rank){
+  const [kind,...rest]=focused.split('|'),key=rest.join('|'),profile=key.split('|')[0];
+  const all=[...body.querySelectorAll('[data-routing-focus]')].filter(node=>!node.disabled);
+  const named=name=>all.find(node=>node.dataset.routingFocus===name)||null;
+  const exact=named(focused);
+  if(exact)return exact;
+  /* « Monter » disparaît quand la ligne devient la préférée : on retombe sur
+     « retirer » du même couple, puis sur le sélecteur du profil. */
+  if(kind==='up')return named('drop|'+key)||named('harness|'+profile);
+  /* « Retirer » a supprimé sa propre ligne : on reste à la même place dans la
+     liste — la ligne qui a pris ce rang — sinon la dernière, sinon le
+     sélecteur du profil. Sans cela le focus repart au début du document à
+     chaque suppression. */
+  if(kind==='drop'){
+    const drops=all.filter(node=>String(node.dataset.routingFocus||'').indexOf('drop|'+profile+'|')===0);
+    if(drops.length)return drops[Math.min(Math.max(Number(rank)||0,0),drops.length-1)];
+    return named('harness|'+profile);
+  }
+  return null;
+}
 function renderRoutingAdvanced(revision){
   if(!currentAgentTab(revision)||!SET.routingAdvancedOpen)return;
   const body=$('#routingAdvancedBody');
   if(!body)return;
+  const active=document.activeElement;
+  const focused=active&&body.contains(active)&&active.dataset?active.dataset.routingFocus||'':'';
+  const rank=active&&active.dataset?active.dataset.routingRank:undefined;
   body.innerHTML=routingAdvancedBody();bindRoutingAdvanced(revision);
+  if(!focused)return;
+  const target=routingFocusTarget(body,focused,rank);
+  if(target)target.focus();
 }
 
+/* Le mode des sous-agents est le switch d'aiguillage lui-même : « Auto »
+   applique les profils ci-dessous, « Dupliqué » les laisse dormir. Il vit dans
+   la section Technique, hors du corps rechargé de la configuration avancée —
+   on le retrouve donc depuis la fenêtre, pas depuis ce corps. */
+function bindDelegationMode(){
+  const delegationMode=modalContent.querySelector('[data-delegation-mode]');
+  if(!delegationMode)return;
+  delegationMode.addEventListener('change',()=>{
+    SET.draft.cli.delegation_mode=delegationMode.value;SET.dirty=true;say('Modifications non enregistrées.','')});
+}
+
+/* Choisir un harness puis un modèle ne change rien ; seul « ajouter » met le
+   couple en fin de liste (donc en dernier recours). « monter » et « retirer »
+   réordonnent, l'ordre étant la préférence. */
 function bindRoutingAdvanced(revision){
   const body=$('#routingAdvancedBody');
   if(!body)return;
   body.querySelectorAll('[data-routing-profile-enabled]').forEach(el=>el.addEventListener('change',()=>{
-    SET.draft.routing.profiles[el.dataset.routingProfileEnabled].enabled=el.checked;
-    SET.dirty=true;say('Modifications non enregistrées.','')}));
-  body.querySelectorAll('[data-routing-candidate]').forEach(el=>el.addEventListener('change',()=>{
-    const entry=SET.draft.routing.profiles[el.dataset.routingProfile];
-    const value=JSON.parse(el.dataset.routingCandidate);
-    const rest=(entry.candidates||[]).filter(candidate=>candidateKey(candidate)!==el.dataset.routingCandidate);
-    entry.candidates=el.checked?[...rest,value]:rest;
-    SET.dirty=true;renderRoutingAdvanced(revision)}));
+    routingEntry(el.dataset.routingProfileEnabled).enabled=el.checked;
+    /* Éteindre un profil change l'aspect de tout son bloc : il faut le
+       redessiner, sinon rien à l'écran ne dit que ses candidats ne servent
+       plus. Le focus revient sur la case qu'on vient de décocher. */
+    SET.dirty=true;say('Modifications non enregistrées.','');renderRoutingAdvanced(revision)}));
+  /* Une commande désactivée ne s'active ni à la souris ni au clavier ; ce
+     garde-fou tient le cas restant — un profil éteint pendant qu'un geste est
+     en vol, ou une commande atteinte autrement que par l'interface. */
+  const serving=profile=>routingEntry(profile).enabled!==false;
+  body.querySelectorAll('[data-routing-harness]').forEach(el=>el.addEventListener('change',()=>{
+    // Changer de harness invalide le modèle retenu : il appartenait à l'autre.
+    const pick=routingPick(el.dataset.routingHarness);
+    pick.agent=el.value;pick.model='';renderRoutingAdvanced(revision)}));
+  body.querySelectorAll('[data-routing-model]').forEach(el=>el.addEventListener('change',()=>{
+    routingPick(el.dataset.routingModel).model=el.value}));
+  body.querySelectorAll('[data-routing-add]').forEach(el=>el.addEventListener('click',()=>{
+    const profile=el.dataset.routingAdd,pick=routingPick(profile);
+    if(!pick.agent||!serving(profile))return;
+    const entry=routingEntry(profile);
+    const value={agent:pick.agent,model:pick.model||''};
+    /* Un couple déjà retenu n'est pas réajouté : le remettre en fin de liste le
+       rétrograderait en dernier recours et promouvrait un autre candidat au
+       rang de préféré — en un clic, sans que rien ne le dise. L'ordre ne change
+       que par « monter » et « retirer ». */
+    if((entry.candidates||[]).some(c=>candidateKey(c)===candidateKey(value))){
+      say('Déjà dans la liste de ce profil : utilisez « monter » pour le préférer.','');
+      return;
+    }
+    entry.candidates=[...(entry.candidates||[]),value];
+    SET.dirty=true;say('Modifications non enregistrées.','');renderRoutingAdvanced(revision)}));
+  body.querySelectorAll('[data-routing-drop]').forEach(el=>el.addEventListener('click',()=>{
+    if(!serving(el.dataset.routingDrop))return;
+    const entry=routingEntry(el.dataset.routingDrop);
+    entry.candidates=(entry.candidates||[]).filter((c,i)=>i!==Number(el.dataset.routingRank));
+    SET.dirty=true;say('Modifications non enregistrées.','');renderRoutingAdvanced(revision)}));
+  body.querySelectorAll('[data-routing-up]').forEach(el=>el.addEventListener('click',()=>{
+    if(!serving(el.dataset.routingUp))return;
+    const entry=routingEntry(el.dataset.routingUp),rank=Number(el.dataset.routingRank);
+    const list=[...(entry.candidates||[])];
+    if(rank>0)list.splice(rank-1,0,list.splice(rank,1)[0]);
+    entry.candidates=list;
+    SET.dirty=true;say('Modifications non enregistrées.','');renderRoutingAdvanced(revision)}));
   body.querySelectorAll('[data-routing-fallback]').forEach(el=>el.addEventListener('change',()=>{
-    SET.draft.routing.profiles[el.dataset.routingFallback].allow_general_fallback=el.checked;
+    if(!serving(el.dataset.routingFallback))return;
+    routingEntry(el.dataset.routingFallback).allow_general_fallback=el.checked;
     SET.dirty=true;say('Modifications non enregistrées.','')}));
   const refresh=body.querySelector('#routingRefresh');
   if(refresh)refresh.addEventListener('click',()=>hydrateRoutingAdvanced(revision,true));
@@ -2717,14 +2872,24 @@ function bindRoutingAdvanced(revision){
 
 async function hydrateRoutingAdvanced(revision,refresh=false){
   if(!currentAgentTab(revision)||!SET.routingAdvancedOpen)return;
+  /* « Rafraîchir » relit la machine : le harness et le modèle en cours de
+     choix peuvent avoir disparu, on repart d'une page propre. */
+  if(refresh)SET.routingPick={};
   if(SET.routing&&SET.routing.ok!==false&&!refresh){renderRoutingAdvanced(revision);return}
   const requestId=++SET.routingGeneration,body=$('#routingAdvancedBody');
   if(body)body.innerHTML='<div class="notice info">Chargement des profils et candidats…</div>';
-  let state;
-  try{state=await api('/api/routing/candidates')}
-  catch(e){state={ok:false,error:e.message,profiles:[],candidates:[]}}
+  const state=await loadRoutingCandidates();
   if(!currentAgentTab(revision)||!SET.routingAdvancedOpen||requestId!==SET.routingGeneration)return;
   SET.routing=state;renderRoutingAdvanced(revision);
+}
+
+/* L'état de la section, demandé au serveur. Le lister coûte une sonde de
+   chaque CLI et un appel à chaque fournisseur : on ne le paie qu'à l'ouverture
+   de la section. Un échec revient en état affichable — la section dit alors
+   pourquoi et propose de réessayer — jamais en zone vide et muette. */
+async function loadRoutingCandidates(){
+  try{return await api('/api/routing/candidates')}
+  catch(e){return {ok:false,error:e.message,profiles:[],harnesses:[]}}
 }
 
 /* --- onglet Config ------------------------------------------------------ */
@@ -2826,9 +2991,7 @@ function bindTab(revision){
   }));
   const cliTechnical=$('#cliTechnical');
   if(cliTechnical)bindCliTechnical(cliTechnical,revision);
-  const delegationMode=modalContent.querySelector('[data-delegation-mode]');
-  if(delegationMode)delegationMode.addEventListener('change',()=>{
-    SET.draft.cli.delegation_mode=delegationMode.value;SET.dirty=true;say('Modifications non enregistrées.','')});
+  bindDelegationMode();
   modalContent.querySelectorAll('[data-behavior-field]').forEach(el=>el.addEventListener('change',()=>{
     SET.draft.cli.behavior[el.dataset.behaviorField]=el.value;SET.dirty=true;say('Modifications non enregistrées.','')}));
   modalContent.querySelectorAll('[data-refresh]').forEach(el=>el.addEventListener('click',async()=>{
@@ -3167,7 +3330,7 @@ async function openSettings(){
   renderTabs();await renderTab();
 }
 
-function closeSettings(){++SET.openGeneration;++SET.cliGeneration;++SET.cliModelGeneration;++SET.routingGeneration;++SET.voiceGeneration;++SET.audioGeneration;++SET.diagnosticGeneration;SET.renderRevision=(SET.renderRevision||0)+1;SET.routingAdvancedOpen=false;cleanupSettingsSurface();overlay.classList.remove('open');SET.open=false;if(SET.capture)SET.capture.cancel()}
+function closeSettings(){SET.routingPick={};++SET.openGeneration;++SET.cliGeneration;++SET.cliModelGeneration;++SET.routingGeneration;++SET.voiceGeneration;++SET.audioGeneration;++SET.diagnosticGeneration;SET.renderRevision=(SET.renderRevision||0)+1;SET.routingAdvancedOpen=false;cleanupSettingsSurface();overlay.classList.remove('open');SET.open=false;if(SET.capture)SET.capture.cancel()}
 
 async function saveDraft(options){
   const silent=options&&options.silent;
@@ -3181,7 +3344,7 @@ async function saveDraft(options){
     if(voiceRestart)SET.restartNotice=true;
     SET.data=data;SET.shortcuts=data.shortcuts;SET.draft=draftFrom(data);SET.dirty=false;
     // Le CLI actif a pu changer : sa détection est refaite à l'ouverture de l'onglet.
-    SET.clis=null;SET.routing=null;SET.prompts=null;
+    SET.clis=null;SET.routing=null;SET.routingPick={};SET.prompts=null;
     if(!silent){say('Enregistré.','ok');await renderTab()}
     return data;
   }catch(e){

@@ -513,6 +513,14 @@ bande « N sans événement · axe replié ».
 - **Tout / Public** : *Tout* montre le diagnostic (travaux, sous-agents, outils,
   repères) ; *Public* ne garde que ce qui a été dit, entendu ou montré.
 - **Échelle** : pixels par seconde (60 par défaut).
+- **Plusieurs fenêtres** : une seule d'entre elles interroge Core ; les autres
+  reçoivent les événements par relais et affichent « En direct · … · relayé par
+  un autre onglet ». Un navigateur n'accorde qu'environ six connexions par hôte
+  et une lecture en attente en occupe une : sans ce partage, six chronologies
+  ouvertes suffisaient à ralentir toute l'interface. Une fenêtre cachée ne
+  demande plus rien (« En pause ») et rattrape en revenant au premier plan ;
+  fermer ou masquer la fenêtre qui lisait passe la main à une autre sans perdre
+  d'événement.
 - Clic ou Entrée sur une entrée qui n'est pas de l'utilisateur : détail (ids,
   statut, durée, latence depuis la parole utilisateur, raison d'interruption ou
   d'échec, parent et enfants) et, pour chaque événement, la ligne de trace
@@ -1530,6 +1538,19 @@ par onglet : au-delà de six fenêtres, le statut ralentit. Si trop de pages son
 ouvertes (tous profils confondus), le Control Center répond « réessayer » et la
 page attend le délai indiqué.
 
+**Budget de connexions avec la chronologie.** La chronologie de conversation
+partage sa lecture longue de la même façon (meneur Web Lock, relais
+`BroadcastChannel`) : un verrou par conversation, un canal à part. Les deux
+meneurs ne se gênent pas — les noms de verrous (`jarvis.scene.leader` et
+`jarvis.timeline.<conversation>`) et de canaux (`jarvis.scene`,
+`jarvis.timeline`) sont distincts, et une même fenêtre peut tenir les deux.
+Mesuré avec la scène allumée **et** la chronologie ouverte partout : deux
+lectures longues tenues (une par fonction) à 1, 6 et 10 fenêtres, `/api/status`
+à 3-4 ms, un événement qui atteint les dix fenêtres en quelques dizaines de
+millisecondes. Sans partage (vieux navigateur), c'est une lecture longue par
+onglet **et par fonction** : le budget d'environ six connexions par hôte tombe
+alors dès trois fenêtres.
+
 **Dépanner.**
 
 | Symptôme | Cause probable | Action |
@@ -2367,9 +2388,11 @@ Quatre profils : **Poste de travail** (navigateur, fichiers ouverts), **Code
 avancé**, **Sémantique rapide**, **Général** — ce dernier servant aussi de
 recours aux autres. Les candidats affichés viennent de `GET
 /api/routing/candidates`, qui sonde les CLI installés et demande au fournisseur
-sa liste de modèles ; rien n'est écrit en dur dans la page. **L'ordre des cases
-cochées est la préférence** : le premier disponible gagne, les suivants sont des
-recours.
+sa liste de modèles ; rien n'est écrit en dur dans la page. Un candidat s'ajoute
+**en deux temps — le harness, puis un de ses modèles** : une liste unique de tous
+les couples harness × modèle devient illisible dès qu'un fournisseur en déclare
+vingt. **L'ordre de la liste retenue est la préférence** : le premier disponible
+gagne, les suivants sont des recours, et « monter » change le préféré.
 
 Un candidat enregistré qui disparaît (clé retirée, modèle déprécié) reste
 affiché, marqué indisponible avec la raison. C'est voulu : un réglage qui
