@@ -561,7 +561,11 @@ def test_orphan_artifacts_are_bulk_archivable_by_the_user_only_and_linked_ones_n
 #: Slice 11 (décision PM, mise à jour délibérée) : la ligne de capture se dédouble
 #: en « structure → scene_query near / écran → scene_capture », avec l'écart entre
 #: géométrie enregistrée et pixels dessinés.
-BASE_SYSTEM_SHA256 = "314ec610828ecddc595f67e2d49fb5cd1bab37390d1f75e745ff99dd035e5507"
+#: Intégration de main `668e2b7` (changement délibéré venu de main, hors scène) :
+#: le prompt système gagne la section « RETOURS UTILISATEUR » — où déposer la
+#: fiche quand l'utilisateur signale un dysfonctionnement constaté en usage.
+#: La consigne d'affichage, elle, ne bouge pas.
+BASE_SYSTEM_SHA256 = "add22d48f8569dca855df941fed1097b071c3a119b4086e3ec88d2932aed3eef"
 BASE_DISPLAY_SHA256 = "e8c0cdaeeaee41d2143a2149e184957bebc974dcbe4550dbc838d8f4328b28d1"
 
 
