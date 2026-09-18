@@ -1843,7 +1843,11 @@ Expected path, all `info`, scalar ids only (never labels or summaries):
 `core.scene.projection_reconciled` (`reason` = `start`, `revision_gap`,
 `store_changed`, `invalid_event` or `scene_unavailable`; `store_id`,
 `work_revision`, `items`, `applied`, `refused`), `core.scene.star_created`
-(`object_id`, `kind`, `source`, `status`), `core.scene.signal_raised`
+(`object_id`, `kind`, `source`, `status`), `core.scene.star_finished`
+(`object_id`, `source`, `status`: the terminal state the work reached, once per
+star; the page turns it into a green ring and a check mark, or a red ring and a
+cross for a failure — see `scene-model.md` › *Finish marker*),
+`core.scene.signal_raised`
 (`object_id`, `target_id`, `status`, `error_class`), `core.scene.signal_retired`.
 
 Start and stop ordering. `start()`: `scene.start()` (never raises), then
@@ -2366,7 +2370,7 @@ artifact** linked to the work's star.
   `invalid_argument` asking to group or replace. `representation` and `geometry`
   are **never applied on update** (PM decision: they are the user's composition);
   the result lists them in `ignored`. Its existing relation id is reused. Not
-  found: a fresh `brain-artifact-<12 hex>`, `capsule` unless another representation
+  found: a fresh `brain-artifact-<12 hex>`, `point` unless another representation
   is given, geometry if given (`action: created`). Identical call → `duplicate`.
   The result carries `object_id`, `target_id`, `relation_id`, `action`, `category`,
   `items`, `outcome`, `revision`, `rule` (short code `un_par_cible_et_categorie`;
@@ -2478,12 +2482,15 @@ Core stays the owner (decision 11).
 | --- | --- | --- |
 | Pure layout | `jarvis/runtime/control_center_scene_layout.js` (`window.JarvisSceneLayout`, marker `/*__CONTROL_CENTER_SCENE_LAYOUT_JS__*/`) | coordinate frame, text neutralisation, category tones, `isLiveSignal`, AutoResolver, view model, commit ledger |
 | Page core (pure) | `jarvis/runtime/control_center_scene_page.js` › `JarvisScenePageCore` (marker `/*__CONTROL_CENTER_SCENE_PAGE_JS__*/`) | loop state machine (leader, follower, solo), message validation and resolver committer; every dependency injected (requests, timers, clock, random, broadcast) |
-| Browser block | same file, `installJarvisScene` IIFE (`window.JarvisScene` = `{gate, statusLost, inspect}`) | scene container, SVG, DOM nodes, Web Locks leadership, BroadcastChannel, gate, status indicator, keyboard |
+| Browser block | same file, `installJarvisScene` IIFE (`window.JarvisScene` = `{gate, statusLost, inspect}`) | scene container, SVG, DOM nodes, Web Locks leadership, BroadcastChannel, gate, status indicator, keyboard, display preferences button |
+| Display preferences | `jarvis/runtime/control_center_scene_view.js` (`window.JarvisSceneView`, marker `/*__CONTROL_CENTER_SCENE_VIEW_JS__*/`) | Slice 12: the settings behind the « Affichage des étoiles » button — fields, normalisation, CSS variables, classes, orbit options; see *Display preferences* below |
 | Tests | `tests/unit/test_scene_renderer_logic.py` | node runs of the served files with fake timers and requests |
 
-Both files are inserted verbatim by `ControlCenter.index`: the layout file right
-after `control_center_scene.js`, the page file after Barehands. Their pure parts
-contain no DOM, `window`, `fetch`, interval or storage access (asserted by test).
+All three files are inserted verbatim by `ControlCenter.index`: the layout file
+right after `control_center_scene.js`, the display preferences after the capture
+module (the page reads `window.JarvisSceneView`), the page file after Barehands.
+Their pure parts contain no DOM, `window`, `fetch`, interval or storage access
+(asserted by test).
 
 **Gate.** `GET /api/status` (already polled every second) carries `scene` =
 `load_scene_gate(settings)` (`{enabled, source}`; `JARVIS_SCENE_ENABLED`
@@ -2782,11 +2789,18 @@ snapshot, independent of the window size).
 3. Default sizes: point 6 × 6, signal 4 × 4, capsule 40 × 7, window 64 × 40.
    Around a placed anchor, candidates sit on five rings of preferred angles (a
    signal touches its star at the top right, children go below the parent).
-   Otherwise they follow a square spiral from a home point: stars left of the
-   face at (−62, 0), results and windows right of it at (72, 0), groups at the
-   centre. Points try a spaced lattice first, then a dense one. Only boxes
-   inside the composition safe area x ∈ [−152, 138], y ∈ [−72, 68]
-   (`SAFE_AREA`, parity with `SCENE_SAFE_AREA`) are candidates.
+   Otherwise they follow a square spiral from a home point: **stars from the
+   centre (0, 0)**, like the sun they surround, results and windows right of the
+   face at (72, 0), groups at the centre. Points try a spaced lattice first,
+   then a dense one. Only boxes inside the composition safe area
+   x ∈ [−152, 138], y ∈ [−72, 68] (`SAFE_AREA`, parity with `SCENE_SAFE_AREA`)
+   are candidates. Since the first rings all fall on the face zone (±34), they
+   are never free, and a star lands just outside it: the candidates of one ring
+   are sorted by distance then by angle (`atan2`, with `j = 0` normalised to
+   `+0` so the fan starts at the top, not at −π), so twelve stars open into a
+   corona — top, right, bottom, left, then filling in between — instead of
+   piling up on one side. Slice 12 changed this home from (−62, 0), where every
+   star gathered to the left of the face.
 4. The first box with no overlap at all (1 unit padding) and outside the face
    zone (±34) wins. Otherwise the cheapest wins: same-layer overlap × 1000,
    other-layer overlap × 4, face overlap × 8. Near an anchor a same-layer
@@ -2799,6 +2813,38 @@ snapshot, independent of the window size).
    pass (beyond it, each remaining object takes its first admissible candidate).
    Tests place 504 objects with no same-layer overlap under budget, and bound a
    pathological scene of 256 windows on one spot.
+
+**Display preferences** (Slice 12, `control_center_scene_view.js`). A 34 px
+button at the bottom right of the scene (inside the container, so the gate takes
+it away with everything else) opens a small dialog that tunes how the
+constellation *looks*, without ever touching the scene: star size, halo size,
+breathing halo, gravity (the slow orbital drift), its amplitude and speed, and
+the relation threads. They are **this browser's** preferences, stored as one
+`jarvis.scene.view` JSON entry in `localStorage`: no Core command, no
+`set_geometry`, and `scene_capture` keeps drawing the reference sizes, so what
+the brain sees never changes.
+
+- Pure part `JarvisSceneView` (node tests `tests/unit/test_scene_view_prefs.py`):
+  `FIELDS` (id, type `range`/`toggle`, label, hint, bounds, default), `normalize`
+  (unknown keys dropped, missing ones defaulted, ranges clamped and rounded to
+  their step, so a hand-edited store can never hide the scene), `decode`/`encode`,
+  `describe` (rows, value labels, greying, « Réinitialiser » enabled),
+  `cssVars`, `classes` and `orbitOptions`.
+- The page applies them as two CSS custom properties on the container
+  (`--sc-star-scale`, `--sc-halo-scale`, which the mark, its halo and the
+  execution rings read through `calc`) and classes `sc-no-halo`,
+  `sc-still-halo`, `sc-no-orbit`, `sc-no-links` — immediate, without waiting for
+  a render — then schedules one render for the drift.
+- Gravity off computes **no** drift at all (`orbitOptions` returns `null`);
+  otherwise `orbitOf(node, vp, {gain, rate})` multiplies the angular amplitude
+  **before** the safe-area clamp, so a wider orbit never pushes a star out of
+  it, and divides the period by the rate (both factors clamped to 0.25–4, a
+  missing or unreadable one reading as 1).
+- A setting whose condition is off (halo at zero, gravity off) is greyed and
+  disabled but keeps its value. `storage` events keep every open tab on the same
+  look; a refused `localStorage` (private window) falls back to the reference
+  values and logs `scene.view_not_saved`. Escape or a click outside closes the
+  dialog, which returns focus to its button.
 
 **Commit policy** (PM decision: resolver placements persist). The browser commits
 `{op: set_geometry, object_id, geometry, placed_by: resolver}` through

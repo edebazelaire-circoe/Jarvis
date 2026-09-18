@@ -463,17 +463,33 @@
   const ORBIT_RADIAL=.34;              /* part radiale : l'arc devient une ellipse */
   const ORBIT_PERIOD_MS=24000,ORBIT_PERIOD_PER_PX=44,ORBIT_PERIOD_MAX_MS=72000;
 
+  /* Ampleur et vitesse réglables par l'utilisateur (fenêtre « Affichage des
+     étoiles », `JarvisSceneView`) : bornes du multiplicateur, le défaut étant 1.
+     L'ampleur est multipliée **avant** la borne de la zone sûre : une orbite
+     plus large ne fait donc jamais sortir une étoile de la zone. */
+  const ORBIT_GAIN_MIN=.25,ORBIT_GAIN_MAX=4;
+
+  /* Absent, nul ou illisible : la valeur de référence (1), jamais une orbite
+     figée par accident. */
+  function orbitFactor(value){
+    const n=Number(value);
+    return Number.isFinite(n)&&n>0?Math.min(ORBIT_GAIN_MAX,Math.max(ORBIT_GAIN_MIN,n)):1;
+  }
+
   /* Dérive d'un nœud du modèle de vue dans la fenêtre `vp`, ou `null` (immobile) :
      objet épinglé, autre forme qu'un point, confondu avec le centre, ou pas la
      place de dériver sans sortir de la zone de composition sûre (une étoile
      posée hors de cette zone par l'utilisateur reste donc fixe).
+     `options` (facultatif) : `{gain, rate}`, l'ampleur et la vitesse voulues
+     par l'utilisateur, 1 par défaut.
      Rend `{tx,ty,rx,ry,ms,delay}` : vecteur tangent et vecteur radial en
      pixels, période en ms, décalage de phase négatif (l'animation commence là
      où l'étoile se trouve déjà sur son orbite). */
-  function orbitOf(node,vp){
+  function orbitOf(node,vp,options){
     if(!node||node.pinned||node.shape!=='point')return null;
     const dx=node.cx-vp.cx,dy=node.cy-vp.cy,r=Math.hypot(dx,dy);
     if(!(r>1))return null;
+    const gain=orbitFactor(options&&options.gain),rate=orbitFactor(options&&options.rate);
     const ux=dx/r,uy=dy/r;
     /* Encombrement de l'ellipse sur chaque axe, pour une amplitude de 1 px. */
     const ex=Math.hypot(uy,ORBIT_RADIAL*ux),ey=Math.hypot(ux,ORBIT_RADIAL*uy);
@@ -481,11 +497,11 @@
     const area=toScreen(vp,{x:SAFE_AREA.x0,y:SAFE_AREA.y0,w:SAFE_AREA.x1-SAFE_AREA.x0,h:SAFE_AREA.y1-SAFE_AREA.y0});
     const slackX=Math.min(rect.left-area.left,area.left+area.width-(rect.left+rect.width));
     const slackY=Math.min(rect.top-area.top,area.top+area.height-(rect.top+rect.height));
-    let amp=Math.min(r*ORBIT_ARC_RAD,ORBIT_MAX_PX);
+    let amp=Math.min(r*ORBIT_ARC_RAD*gain,ORBIT_MAX_PX*gain);
     if(ex>0)amp=Math.min(amp,slackX/ex);
     if(ey>0)amp=Math.min(amp,slackY/ey);
     if(!(amp>=ORBIT_MIN_PX))return null;
-    const ms=Math.round(Math.min(ORBIT_PERIOD_MAX_MS,ORBIT_PERIOD_MS+r*ORBIT_PERIOD_PER_PX));
+    const ms=Math.round(Math.min(ORBIT_PERIOD_MAX_MS,ORBIT_PERIOD_MS+r*ORBIT_PERIOD_PER_PX)/rate);
     const phase=(Math.atan2(dy,dx)+Math.PI)/(2*Math.PI);
     return {tx:round1(-uy*amp),ty:round1(ux*amp),rx:round1(ux*amp*ORBIT_RADIAL),ry:round1(uy*amp*ORBIT_RADIAL),
       ms,delay:-Math.round(ms*phase)};
@@ -608,10 +624,14 @@
     return out;
   }
 
-  /* Points d'origine des objets sans ancre : les étoiles à gauche du visage,
-     les résultats et fenêtres à droite, les groupes au centre. */
+  /* Points d'origine des objets sans ancre : les étoiles **autour du visage**
+     (origine au centre, comme le soleil qu'elles entourent : les candidats
+     s'ouvrent en couronne, haut, droite, bas, gauche, et non plus en tas d'un
+     seul côté), les résultats et fenêtres à droite, les groupes au centre.
+     Les premiers anneaux tombent tous sur le visage : ils ne sont jamais
+     libres, et la première étoile se pose donc juste au-dehors. */
   function homeOf(item){
-    if(item.kind==='agent'||item.kind==='job'||item.kind==='attention')return {x:-62,y:0};
+    if(item.kind==='agent'||item.kind==='job'||item.kind==='attention')return {x:0,y:0};
     if(item.kind==='group')return {x:0,y:0};
     return {x:72,y:0};
   }
@@ -631,7 +651,10 @@
         const cells=[];
         const push=(i,j)=>{
           const box={x:Math.round(home.x+i*stepX-size.w/2),y:Math.round(home.y+j*stepY-size.h/2),w:size.w,h:size.h};
-          if(inSafeArea(box))cells.push({box,d:Math.hypot(i*stepX,j*stepY),a:Math.atan2(j,i)});
+          /* `j === 0` ramené au zéro positif : `atan2(-0, -3)` vaut -π et
+             mettrait la gauche avant le haut à distance égale. La couronne
+             commence donc en haut, puis tourne (droite, bas, gauche). */
+          if(inSafeArea(box))cells.push({box,d:Math.hypot(i*stepX,j*stepY),a:Math.atan2(j===0?0:j,i)});
         };
         if(ring===0)push(0,0);
         for(let k=-ring;k<ring;k++){push(k,-ring);push(ring,k);push(-k,ring);push(-ring,-k)}
@@ -754,6 +777,7 @@
         id:item.object_id,kind:item.kind,representation,shape,compact:shape!==representation,
         category:cleanLine(item.category,32),tone:toneOf(item.category),
         exec,execLabel:execLabelOf(item,exec),restartUnknown:restartUnknown(item),signal,live:signal&&urgency!=='none',urgency,animate:false,
+        alerted:false,
         pinned:!!(item.constraints&&item.constraints.pinned_by_user),
         placedBy:item.geometry?String(item.constraints&&item.constraints.placed_by||''):'resolver',
         committed:!!item.geometry,
@@ -779,10 +803,14 @@
        (Décision 8). */
     const anchors=anchorsOf(state);
     for(const node of nodes){
-      if(!node.signal||state.objects.get(node.id).origin!=='runtime')continue;
+      if(!node.signal)continue;
       const anchor=anchors.get(node.id);
       const star=anchor&&anchor.kind==='signal'?centers.get(anchor.to):null;
-      if(star)node.stack=star.stack+1;
+      if(!star)continue;
+      /* Signal vivant (de qui que ce soit) : son étoile le sait. La page en
+         retire d'un cran la marque de fin, qui ne se bat pas avec l'alerte. */
+      if(node.live)star.alerted=true;
+      if(state.objects.get(node.id).origin==='runtime')node.stack=star.stack+1;
     }
     /* Signaux vivants urgents recouverts par une fenêtre dessinée au-dessus
        d'eux : comptés pour l'indicateur (test de rectangles, à chaque rendu). */

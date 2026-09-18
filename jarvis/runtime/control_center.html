@@ -668,6 +668,7 @@ details.rd[open]>summary{margin-bottom:14px}
 /*__CONTROL_CENTER_SCENE_LAYOUT_JS__*/
 /*__CONTROL_CENTER_SCENE_INTERACT_JS__*/
 /*__CONTROL_CENTER_SCENE_CAPTURE_JS__*/
+/*__CONTROL_CENTER_SCENE_VIEW_JS__*/
 const $=s=>document.querySelector(s);let current=null;const panel=$('#panel'),body=$('#panelBody'),title=$('#panelTitle');
 async function api(path,opts){const r=await fetch(path,opts),text=await r.text();let value={};try{value=text?JSON.parse(text):{}}catch{value={error:text}}if(!r.ok){const e=new Error(value.error||value.code||text||`HTTP ${r.status}`);e.status=r.status;throw e}return value}
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}

@@ -38,6 +38,7 @@ from jarvis.core.scene_projector import (
     SCENE_SIGNAL_RAISED_KIND,
     SCENE_SIGNAL_RETIRED_KIND,
     SCENE_STAR_CREATED_KIND,
+    SCENE_STAR_FINISHED_KIND,
     SceneProjector,
     parent_relation_id,
     signal_object_id,
@@ -154,6 +155,47 @@ async def test_a_sub_agent_becomes_a_runtime_star_carrying_work_truth():
     assert stack.diagnostics.kinds(SCENE_STAR_CREATED_KIND) == [
         ("info", {"object_id": "claude:toolu_A", "kind": "agent", "source": "claude", "status": "running"})
     ]
+
+
+async def test_the_end_of_a_work_item_is_journaled_once_as_a_finished_star():
+    """Pendant de `star_created` : la fin pose la marque, une seule fois, et ne déplace rien."""
+
+    async with Stack() as stack:
+        await stack.observe(obs("toolu_A", label="Audit"), obs("toolu_A", WorkStatus.COMPLETED, at=1, label="Audit"))
+        first = await stack.snapshot()
+        # Réobservation du même état terminal : rien de neuf à dire.
+        await stack.observe(obs("toolu_A", WorkStatus.COMPLETED, at=2, label="Audit", summary="fini"))
+        snapshot = await stack.snapshot()
+
+    star = snapshot.get_object("claude:toolu_A")
+    assert star.exec_state is ExecState.COMPLETED
+    # Décision 12 : une fin ne change ni la visibilité, ni la place.
+    assert (star.visibility, star.geometry) == (first.get_object("claude:toolu_A").visibility, None)
+    assert stack.diagnostics.kinds(SCENE_STAR_FINISHED_KIND) == [
+        ("info", {"object_id": "claude:toolu_A", "source": "claude", "status": "completed"})
+    ]
+
+
+@pytest.mark.parametrize(
+    "status, expected",
+    [(WorkStatus.COMPLETED, "completed"), (WorkStatus.FAILED, "failed"),
+     (WorkStatus.CANCELLED, "cancelled"), (WorkStatus.INTERRUPTED, "interrupted")],
+)
+async def test_every_terminal_state_says_which_end_it_was(status, expected):
+    """La page distingue une fin normale d'un échec : le statut atteint voyage tel quel."""
+
+    async with Stack() as stack:
+        await stack.observe(obs("toolu_A"), obs("toolu_A", status, at=1))
+        snapshot = await stack.snapshot()
+
+    assert snapshot.get_object("claude:toolu_A").exec_state is ExecState(expected)
+    assert [data["status"] for _level, data in stack.diagnostics.kinds(SCENE_STAR_FINISHED_KIND)] == [expected]
+
+
+async def test_work_that_never_ends_never_says_it_finished():
+    async with Stack() as stack:
+        await stack.observe(obs("toolu_A"), obs("toolu_A", WorkStatus.BLOCKED, at=1), obs("toolu_A", at=2))
+    assert stack.diagnostics.kinds(SCENE_STAR_FINISHED_KIND) == []
 
 
 @pytest.mark.parametrize("kind", ["shell", "other", ""])

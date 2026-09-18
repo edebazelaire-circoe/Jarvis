@@ -337,6 +337,40 @@ Residual risks (accepted by the PM after Slice 04 QA):
   against them (Slice 05: the AutoResolver's anchor walk stops at the first
   repeated id).
 
+## Finish marker
+
+The counterpart of star creation, for the end of the work. When a runtime work
+item reaches a terminal `exec_state` (`completed`, `failed`, `cancelled`,
+`interrupted`), the projector's regular `upsert_object` already carries the new
+state; it now also journals `core.scene.star_finished` (`object_id`, `source`,
+`status`), once per star — a terminal state never becomes terminal again. No
+visibility, disposition or layout change follows (decision 12): the star stays
+exactly where it is until the user archives it.
+
+The renderer reads only `exec_state`, like every other cue:
+
+| `exec_state` on a star drawn as a point | Ring | Badge |
+| --- | --- | --- |
+| `completed` | thin, fixed, tight (15 px), green `--sc-done` with a faint glow | check mark, tinted green |
+| `failed` | same ring in red `--sc-fail` | cross, tinted red |
+| `cancelled`, `interrupted` | unchanged (neutral, no ring) | unchanged badge |
+
+The distinction success / failure comes straight from the data model
+(`ExecState`), not from a new field. The finish ring is never animated: the
+star's slow halo keeps breathing and its orbit keeps turning underneath, and
+the pulsing belongs to attention signals only.
+
+**Alerts win.** `failed`, `interrupted` and `blocked` also raise a live
+attention signal next to the star (see above). When a star carries a live
+signal, the view model marks it `alerted` and the page adds `sc-alerted`: the
+finish ring drops its glow and fades to 45 %, the badge to 72 %. The signal
+stays what the eye catches first, and the two marks never fight for the same
+star. The signal's own point is unaffected — signals carry no badge and keep
+their urgency ring.
+
+`scene_capture` draws the same marker (tight ring, green or red) so a captured
+scene reads like the screen.
+
 ## Execution state after a Core restart
 
 Slice 10. Core work state lives in memory; the scene is durable. At Core start
@@ -463,9 +497,10 @@ action; no runtime auto-artifact.
   | `autre` | anything else worth keeping | doc |
 
   Any other token gets a stable hashed colour.
-- **Representation.** Created as a `capsule` (category and title near its star)
-  unless the brain asks otherwise; `window` is the inspection view (summary,
-  items, link back to the star). Same identity in every form (decision 6).
+- **Representation.** Created as a `point` (a star of its category's colour,
+  next to the star it explains) unless the brain asks otherwise; `capsule` shows
+  category and title, `window` is the inspection view (summary, items, link back
+  to the star). Same identity in every form (decision 6).
 - **Lifecycle.** An artifact stays until the user disposes of it (decision 12).
   Archiving its star does not cascade to it (the cascade takes runtime signals
   only); the relation goes with the star and the artifact stays, unlinked: an
@@ -494,7 +529,7 @@ rewrites it.
 | Outside the window | the object stays in the scene, clipped at the window edge, counted "hors champ"; never moved |
 | Representation | a `point` is drawn at its box centre; `capsule` and `window` fill their box |
 | Composition safe area | x ∈ [−152, 138], y ∈ [−72, 68] (`SCENE_SAFE_AREA`): no control of the page covers it at 1280 × 720 in either theme; a box is safe when `x0 ≤ x`, `y0 ≤ y`, `x + w ≤ x1`, `y + h ≤ y1`. Beyond it, up to the frame edges, controls (top bar, docks, voice hint, status chips) may cover the object |
-| Unplaced | `geometry = null`: the browser AutoResolver places it inside the safe area and commits `set_geometry` with `placed_by = resolver` once |
+| Unplaced | `geometry = null`: the browser AutoResolver places it inside the safe area and commits `set_geometry` with `placed_by = resolver` once. Stars without an anchor open into a corona around the face (home (0, 0), first free ring outside the face zone ±34), results and windows to its right |
 
 Examples: top left ≈ (−150, −70); bottom right: `x + w ≤ 138`, `y + h ≤ 68`;
 the centre, where JARVIS's face sits, is (0, 0); a readable note ≈ 60 × 36. At 1920 × 1080, one unit is 6 px; at
@@ -504,6 +539,12 @@ The brain reads this frame and the safe area in the `scene_inspect` legend
 (`frame`), in the `geometry` argument description, and in one line of its
 display prompt. On small windows the page may draw a window as a capsule, or a
 capsule as a point, without changing the representation stored in the scene.
+
+The viewer's own display preferences (star size, halo, gravity, threads — the
+« Affichage des étoiles » button, `ARCHITECTURE.md` › *Display preferences*) are
+a browser-local skin over this frame: they change no geometry, write no command
+and are absent from `scene_capture`, so two viewers of the same scene still see
+the same objects in the same places.
 
 ## Bounds and wire form
 
@@ -605,7 +646,7 @@ these tools follow the gate.
 | `scene_set_visibility` | `object_id` + `visibility`, or `scope="all_hidden"` + `visibility="visible"` | `set_visibility`; with the scope, one `set_visibility` per object hidden in the current snapshot (≤ 128 per call, 15 s budget), counts and ids returned | `unknown_object`, `object_archived` (counted per object with the scope) |
 | `scene_link` | `from_id`, `to_id`, `kind`, `relation_id?` (`brain-…` only), `layer?` | `link`; `layer` key omitted unless given (never a default of 50); an existing identical relation without a layer is a local `duplicate`, nothing sent | `relation_conflict`, `relation_limit`, `unknown_object`, `object_archived`, `reserved_id` (domain side), `runtime_owned` (`parent_of` between execution nodes) |
 | `scene_unlink` | `relation_id` | `unlink` (absent → `duplicate`) | `runtime_owned` |
-| `scene_add_artifact` | `target_id`, `category`, `title`, `summary?`, `items?`, `items_mode?` (`append` default \| `replace`), `representation?`, `geometry?` (both applied on creation only) | one `attach_artifact`, under a per-(target, category) lock: on the first active artifact of that category already explaining the target (`action = updated`, payload merged, `ignored` lists a representation or geometry not applied), else on a fresh `brain-artifact-<hex>` with relation `brain-explains-<hash>` (`action = created`, capsule by default); `rule` is the short code `un_par_cible_et_categorie` | `object_archived` / `unknown_object` for the target (checked before sending, nothing sent), `pinned_by_user`, `scene_full`, `relation_limit`, `relation_conflict` |
+| `scene_add_artifact` | `target_id`, `category`, `title`, `summary?`, `items?`, `items_mode?` (`append` default \| `replace`), `representation?`, `geometry?` (both applied on creation only) | one `attach_artifact`, under a per-(target, category) lock: on the first active artifact of that category already explaining the target (`action = updated`, payload merged, `ignored` lists a representation or geometry not applied), else on a fresh `brain-artifact-<hex>` with relation `brain-explains-<hash>` (`action = created`, point by default); `rule` is the short code `un_par_cible_et_categorie` | `object_archived` / `unknown_object` for the target (checked before sending, nothing sent), `pinned_by_user`, `scene_full`, `relation_limit`, `relation_conflict` |
 
 Artifact updates that are not grouping (retitle, move, hide, show as window) go
 through `scene_update_object`; there is no separate update tool.

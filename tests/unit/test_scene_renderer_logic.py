@@ -255,6 +255,77 @@ def test_a_signal_sits_next_to_its_star_live_or_retired(tmp_path):
     assert result["retired"] <= 16 and result["retired"] == result["retiredNearest"]
 
 
+def test_stars_without_a_place_surround_the_face_instead_of_piling_up_on_one_side(tmp_path):
+    result = run_node(tmp_path, r"""
+      const objects=[];
+      for(let i=0;i<12;i++)objects.push(obj(`claude:${i}`,'agent'));
+      const s=state(objects);
+      const layout=L.resolveLayout(s);
+      const boxes=objects.map(o=>layout.placements.get(o.object_id));
+      const centers=boxes.map(center);
+      const quadrant=p=>(p.y<0?'haut':'bas')+(p.x<0?'-gauche':'-droite');
+      return {first:centers.slice(0,4),
+        quadrants:[...new Set(centers.map(quadrant))].sort(),
+        radii:centers.map(p=>Math.round(Math.hypot(p.x,p.y))),
+        onFace:boxes.filter(b=>overlap(b,{x:L.FACE_ZONE.x0,y:L.FACE_ZONE.y0,
+          w:L.FACE_ZONE.x1-L.FACE_ZONE.x0,h:L.FACE_ZONE.y1-L.FACE_ZONE.y0})).length};
+    """)
+
+    # Les quatre premières s'ouvrent en couronne : haut, droite, bas, gauche.
+    assert result["first"] == [{"x": 0, "y": -48}, {"x": 48, "y": 0}, {"x": 0, "y": 48}, {"x": -48, "y": 0}]
+    # Douze étoiles occupent les quatre coins du ciel, jamais le visage.
+    assert result["quadrants"] == ["bas-droite", "bas-gauche", "haut-droite", "haut-gauche"]
+    assert result["onFace"] == 0
+    # Toutes à peu près à la même distance du centre : un anneau, pas un tas.
+    assert max(result["radii"]) - min(result["radii"]) <= 12
+
+
+def test_the_orbit_follows_the_user_setting_without_leaving_the_safe_area(tmp_path):
+    result = run_node(tmp_path, r"""
+      const s=state([obj('star','agent',{geometry:{x:60,y:-30,w:6,h:6},constraints:{placed_by:'user',pinned_by_user:false}}),
+        obj('pinned','agent',{geometry:{x:-60,y:30,w:6,h:6},constraints:{placed_by:'user',pinned_by_user:true}}),
+        obj('edge','agent',{geometry:{x:132,y:62,w:6,h:6},constraints:{placed_by:'user',pinned_by_user:false}})]);
+      const vp=L.viewport(1920,1080);
+      const vm=L.viewModel(s,L.resolveLayout(s),vp);
+      const of=id=>vm.nodes.find(n=>n.id===id);
+      const drift=(id,options)=>L.orbitOf(of(id),vp,options);
+      const amp=d=>d&&Math.round(Math.hypot(d.tx,d.ty)*10)/10;
+      return {base:drift('star'),wide:drift('star',{gain:2}),narrow:drift('star',{gain:.3}),
+        slow:drift('star',{rate:.5}).ms,fast:drift('star',{rate:4}).ms,
+        absurd:amp(drift('star',{gain:1e6})),clamped:amp(drift('star',{gain:2})),
+        pinned:drift('pinned',{gain:2}),
+        /* Étoile posée au coin de la zone sûre : sa dérive doit y rester. */
+        edge:(()=>{const d=drift('edge',{gain:4});if(!d)return null;
+          const rect=L.drawnRect(of('edge'));
+          const area=L.toScreen(vp,{x:L.SAFE_AREA.x0,y:L.SAFE_AREA.y0,w:L.SAFE_AREA.x1-L.SAFE_AREA.x0,h:L.SAFE_AREA.y1-L.SAFE_AREA.y0});
+          /* Excursion maximale de l'ellipse sur chaque axe (tangente · sin +
+             radial · cos) : l'hypoténuse des deux composantes. */
+          return {outX:Math.round((rect.left+rect.width+Math.hypot(d.tx,d.rx)-(area.left+area.width))*10)/10,
+            outY:Math.round((rect.top+rect.height+Math.hypot(d.ty,d.ry)-(area.top+area.height))*10)/10};})(),
+        /* Un réglage illisible ne casse rien : c'est la valeur de référence. */
+        broken:JSON.stringify(drift('star',{gain:'grand',rate:null}))===JSON.stringify(drift('star'))};
+    """)
+
+    base, wide, narrow = result["base"], result["wide"], result["narrow"]
+    # L'ampleur suit le réglage (au dixième de pixel près, l'arrondi du rendu) ;
+    # la période, elle, ne bouge pas avec elle.
+    assert wide["tx"] == pytest.approx(base["tx"] * 2, abs=0.2)
+    assert wide["ty"] == pytest.approx(base["ty"] * 2, abs=0.2)
+    assert narrow["tx"] == pytest.approx(base["tx"] * 0.3, abs=0.2)
+    assert wide["ms"] == base["ms"] == narrow["ms"]
+    # La vitesse divise la période : deux fois plus lente, quatre fois plus vive.
+    assert result["slow"] == pytest.approx(base["ms"] * 2, abs=2)
+    assert result["fast"] == pytest.approx(base["ms"] / 4, abs=2)
+    # Bornée : une ampleur absurde ne fait pas sortir l'étoile de la zone sûre.
+    assert result["absurd"] is not None and result["absurd"] >= result["clamped"]
+    # Épinglé : aucune dérive, quel que soit le réglage.
+    assert result["pinned"] is None
+    # Au coin de la zone sûre : l'ampleur est rognée par la place libre, et une
+    # orbite réglée quatre fois plus large n'en fait pas sortir l'étoile.
+    assert result["edge"]["outX"] <= 0.1 and result["edge"]["outY"] <= 0.1
+    assert result["broken"] is True
+
+
 def test_a_full_scene_is_placed_inside_the_safe_area_without_same_layer_overlap(tmp_path):
     result = run_node(tmp_path, r"""
       const objects=[];
@@ -1135,3 +1206,67 @@ def test_the_page_draws_the_unknown_cue_quietly_and_names_the_restart_error_clas
     assert "bloqué ou à l’état inconnu depuis un redémarrage reste" in page
     assert "(exec==='unknown'&&!restartUnknown)" in page  # pas de badge « ? » sur un artefact
     assert "core_restarted_unobserved:'non revu après le redémarrage de Core'" in html
+
+
+# --- marque de fin (événement runtime de fin) ---------------------------------
+
+
+def test_the_view_model_tells_a_star_when_a_live_signal_still_burns_on_it(tmp_path):
+    """Une fin et une alerte sur la même étoile : la page doit pouvoir départager."""
+
+    result = run_node(tmp_path, r"""
+      const objects=[obj('claude:ok','agent',{exec_state:'completed'}),
+        obj('claude:ko','agent',{exec_state:'failed'}),
+        obj('attention!claude:ko','attention',{exec_state:'failed',category:'error',
+          payload:{title:'tool_error',summary:'',items:[]}}),
+        obj('claude:old','agent',{exec_state:'failed'}),
+        obj('attention!claude:old','attention',{exec_state:'failed',category:'error',
+          payload:{title:'tool_error',summary:'',items:[]}})];
+      const s=state(objects,[rel('attention!claude:ko','explains','attention!claude:ko','claude:ko')]);
+      const vm=L.viewModel(s,L.resolveLayout(s),L.viewport(1280,720),{});
+      return Object.fromEntries(vm.nodes.map(n=>[n.id,[n.exec,n.alerted,n.live,n.urgency]]));
+    """)
+
+    assert result == {
+        # Fin normale, personne ne l'alerte : la marque de fin est pleine.
+        "claude:ok": ["completed", False, False, "none"],
+        # Échec encore signalé : l'étoile le sait, le signal garde l'œil.
+        "claude:ko": ["failed", True, False, "none"],
+        "attention!claude:ko": ["failed", False, True, "high"],
+        # Signal retiré (plus de lien vivant) : l'étoile reprend sa marque pleine.
+        "claude:old": ["failed", False, False, "none"],
+        "attention!claude:old": ["failed", False, False, "none"],
+    }
+
+
+def test_the_page_rings_a_finished_star_green_and_a_failed_one_red():
+    page = PAGE_JS.read_text(encoding="utf-8")
+    assert "--sc-done:#6fe3a4" in page and "--sc-fail:#ff6b7d" in page
+    # Anneau serré, jamais animé : le halo respire et l'orbite tourne par-dessous.
+    # Sa taille suit celle de l'étoile (réglage « Taille des étoiles »).
+    shared = re.search(r"\.sc-point\.sc-exec-completed \.sc-ring,\.sc-point\.sc-exec-failed \.sc-ring\{([^}]*)\}", page)
+    assert shared is not None and "--sc-rings:calc(15px * var(--sc-star-scale,1))" in shared.group(1)
+    assert "animation:none" in shared.group(1)
+    done = re.search(r"\n\.sc-point\.sc-exec-completed \.sc-ring\{([^}]*)\}", page)
+    fail = re.search(r"\n\.sc-point\.sc-exec-failed \.sc-ring\{([^}]*)\}", page)
+    assert done is not None and "var(--sc-done)" in done.group(1)
+    assert fail is not None and "var(--sc-fail)" in fail.group(1)
+    # La petite icône : la coche vaut maintenant aussi sur une étoile.
+    assert "if(!BADGE_PATHS[exec]||(exec==='unknown'&&!restartUnknown))return null;" in page
+    assert "completed:'M3.2 6.3l1.9 1.9 3.7-4.4'" in page
+    assert ".sc-exec-completed .sc-badge{color:var(--sc-done)" in page
+    assert ".sc-exec-failed .sc-badge{color:var(--sc-fail)" in page
+
+
+def test_a_live_alert_stays_louder_than_the_finish_mark_on_the_same_star():
+    page = PAGE_JS.read_text(encoding="utf-8")
+    assert "if(node.alerted)classes.push('sc-alerted')" in page
+    # L'alerte qui s'éteint redessine l'étoile : `alerted` est dans la signature du contenu.
+    assert "node.itemCount,node.explains,node.alerted]);" in page
+    dimmed = re.search(
+        r"\.sc-point\.sc-alerted\.sc-exec-completed \.sc-ring,\.sc-point\.sc-alerted\.sc-exec-failed \.sc-ring\{([^}]*)\}", page
+    )
+    assert dimmed is not None and "opacity:.45" in dimmed.group(1) and "box-shadow:none" in dimmed.group(1)
+    # Le signal lui-même garde son anneau d'urgence : la marque de fin ne le touche pas.
+    assert ".sc-signal.sc-exec-failed .sc-ring" in page
+    assert ".sc-signal.sc-urgency-high .sc-ring{border:1.5px solid var(--tone)" in page

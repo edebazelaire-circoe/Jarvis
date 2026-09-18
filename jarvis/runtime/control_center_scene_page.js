@@ -555,6 +555,9 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisScenePageCor
   const I=window.JarvisSceneInteract||null;
   /* Capture visuelle (Slice 09, partie 2). Absente : aucune demande n'est servie. */
   const Capture=window.JarvisSceneCapture||null;
+  /* Réglages d'affichage de l'utilisateur (Slice 12). Absents : les valeurs de
+     référence, et aucun bouton dans la page. */
+  const V=window.JarvisSceneView||null;
   const SVG_NS='http://www.w3.org/2000/svg';
   /* Un verrou par profil : le meneur tient le long-poll et valide les
      placements. Un seul verrou pour les deux : la validation exige l'état le
@@ -588,7 +591,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisScenePageCor
 .scene{position:absolute;inset:0;z-index:20;pointer-events:none;overflow:hidden;contain:layout paint style;
   font:12px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--sc-ink);
   --sc-ink:#dcecf4;--sc-muted:#8aa5b3;--sc-edge:rgba(151,191,209,.16);--sc-ring:rgba(220,236,244,.66);
-  --sc-surface:rgba(4,10,15,.88);--sc-radius:14px;--sc-warn:#ffb85c}
+  --sc-surface:rgba(4,10,15,.88);--sc-radius:14px;--sc-warn:#ffb85c;--sc-done:#6fe3a4;--sc-fail:#ff6b7d}
 html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc-radius:7px}
 .scene .sc-tone-agent{--tone:#eef6fa}.scene .sc-tone-job{--tone:#a8c1ff}.scene .sc-tone-doc{--tone:#6fe3a4}
 .scene .sc-tone-research{--tone:#6ee7ff}.scene .sc-tone-code{--tone:#c6a0ff}.scene .sc-tone-comms{--tone:#f0cf78}
@@ -646,32 +649,45 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
    composition par étoile). La lecture prime sur le mouvement. */
 .scene.sc-calm .sc-orbit{animation:none;translate:none}
 .scene.sc-calm .sc-mark::after{animation:none}
+/* Réglages d'affichage de l'utilisateur ('JarvisSceneView', fenêtre « Affichage
+   des étoiles ») : la gravitation éteinte s'arrête tout de suite, sans attendre
+   le prochain rendu ; halo éteint, halo fixe, fils masqués. */
+.scene.sc-no-orbit .sc-orbit{animation:none;translate:none}
+.scene.sc-no-halo .sc-mark::after{display:none}
+.scene.sc-still-halo .sc-mark::after{animation:none}
+.scene.sc-no-links .sc-links{display:none}
 .sc-point{width:${POINT_HIT}px;height:${POINT_HIT}px;border-radius:50%}
 .sc-point:hover,.sc-point:focus-visible{z-index:2147483000!important}
 /* Étoile : point lumineux plutôt que pastille plate — cœur blanc chaud, couleur
    de la catégorie, fondu vers le vide ; même dégradé que le cœur du visage
    ('control_center_work.js', 'coreGlow'/'disc'). */
-.sc-mark{position:absolute;left:50%;top:50%;width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:50%;
+.sc-mark{position:absolute;left:50%;top:50%;--sc-star:calc(8px * var(--sc-star-scale,1));
+  width:var(--sc-star);height:var(--sc-star);margin:calc(var(--sc-star) * -.5) 0 0 calc(var(--sc-star) * -.5);border-radius:50%;
   background:radial-gradient(circle,#fff 0 10%,color-mix(in srgb,var(--tone) 78%,#fff) 30%,var(--tone) 62%,
     color-mix(in srgb,var(--tone) 58%,transparent) 100%);
-  box-shadow:0 0 7px color-mix(in srgb,var(--tone) 68%,transparent),0 0 18px color-mix(in srgb,var(--tone) 30%,transparent)}
+  box-shadow:0 0 calc(var(--sc-star) * .875) color-mix(in srgb,var(--tone) 68%,transparent),
+    0 0 calc(var(--sc-star) * 2.25) color-mix(in srgb,var(--tone) 30%,transparent)}
 /* Halo : voile large et doux qui respire lentement, jamais clignotant (la
    galaxie du visage : ~3 rayons, une dizaine de pour cent d'opacité). Le
    décalage '--sc-glow-delay', lu dans la place de l'étoile, évite que tous les
    halos battent ensemble. Opacité et échelle seulement : le navigateur compose
    sans recalculer de style. */
-.sc-mark::after{content:'';position:absolute;left:50%;top:50%;width:28px;height:28px;margin:-14px 0 0 -14px;border-radius:50%;
+.sc-mark::after{content:'';position:absolute;left:50%;top:50%;border-radius:50%;
+  --sc-halo:calc(28px * var(--sc-halo-scale,1) * var(--sc-star-scale,1));
+  width:var(--sc-halo);height:var(--sc-halo);margin:calc(var(--sc-halo) * -.5) 0 0 calc(var(--sc-halo) * -.5);
   pointer-events:none;
   background:radial-gradient(circle,color-mix(in srgb,var(--tone) 54%,transparent) 0,
     color-mix(in srgb,var(--tone) 21%,transparent) 34%,transparent 74%);
   animation:sc-glow 6.4s ease-in-out infinite;animation-delay:var(--sc-glow-delay,0ms)}
-.sc-ring{position:absolute;left:50%;top:50%;width:18px;height:18px;margin:-9px 0 0 -9px;border-radius:50%;border:1px solid transparent;pointer-events:none}
+.sc-ring{position:absolute;left:50%;top:50%;--sc-rings:calc(18px * var(--sc-star-scale,1));
+  width:var(--sc-rings);height:var(--sc-rings);margin:calc(var(--sc-rings) * -.5) 0 0 calc(var(--sc-rings) * -.5);
+  border-radius:50%;border:1px solid transparent;pointer-events:none}
 /* État d'exécution : indice secondaire. Au plus 24 anneaux animés (.sc-anim) ;
    les autres gardent le même anneau, fixe. */
 .sc-exec-running .sc-ring{border-color:var(--sc-ring);opacity:.72}
 .sc-exec-running.sc-anim .sc-ring{animation:sc-breathe 2.8s ease-in-out infinite;will-change:transform,opacity}
 .sc-exec-pending .sc-ring{border:1px dashed rgba(220,236,244,.5)}
-.sc-exec-blocked .sc-ring{width:20px;height:20px;margin:-10px 0 0 -10px;border:3px double rgba(220,236,244,.62)}
+.sc-exec-blocked .sc-ring{--sc-rings:calc(20px * var(--sc-star-scale,1));border:3px double rgba(220,236,244,.62)}
 /* Slice 10 : état inconnu depuis le redémarrage de Core. Anneau pointillé
    pâle, jamais animé, point atténué : ni « en cours », ni alarme. */
 .sc-restart-unknown .sc-ring{border:1px dotted rgba(220,236,244,.46);opacity:.9;animation:none}
@@ -683,13 +699,28 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
    le redémarrage » se lit toujours en entier, quelle que soit la longueur du titre. */
 .sc-restart-unknown .sc-label span{order:-1}
 .sc-restart-unknown .sc-label strong{max-width:24ch}
-/* Terminé : anneau fin et fixe — travail achevé, pas encore rangé. */
-.sc-point.sc-exec-completed .sc-ring{width:15px;height:15px;margin:-7.5px 0 0 -7.5px;border:1px solid rgba(220,236,244,.34)}
+/* Fin de travail (événement 'core.scene.star_finished') : anneau fin, fixe et
+   serré autour de l'étoile — vert pour une fin normale, rouge pour un échec —
+   plus la petite icône du badge, comme un signal d'attention. Jamais animé :
+   le halo continue de respirer et l'orbite de tourner par-dessous, et c'est
+   l'alerte, elle, qui garde le battement. */
+.sc-point.sc-exec-completed .sc-ring,.sc-point.sc-exec-failed .sc-ring{--sc-rings:calc(15px * var(--sc-star-scale,1));animation:none}
+.sc-point.sc-exec-completed .sc-ring{border:1px solid color-mix(in srgb,var(--sc-done) 72%,transparent);
+  box-shadow:0 0 6px color-mix(in srgb,var(--sc-done) 22%,transparent)}
+.sc-point.sc-exec-failed .sc-ring{border:1px solid color-mix(in srgb,var(--sc-fail) 72%,transparent);
+  box-shadow:0 0 6px color-mix(in srgb,var(--sc-fail) 22%,transparent)}
+/* Icône de fin : même pastille que les autres badges, teintée de l'anneau. */
+.sc-exec-completed .sc-badge{color:var(--sc-done);box-shadow:0 0 0 1px color-mix(in srgb,var(--sc-done) 52%,transparent)}
+.sc-exec-failed .sc-badge{color:var(--sc-fail);box-shadow:0 0 0 1px color-mix(in srgb,var(--sc-fail) 52%,transparent)}
+/* Alerte vivante sur la même étoile : sa marque de fin s'efface d'un cran pour
+   ne pas se battre avec le signal, qui reste ce que l'œil attrape d'abord. */
+.sc-point.sc-alerted.sc-exec-completed .sc-ring,.sc-point.sc-alerted.sc-exec-failed .sc-ring{opacity:.45;box-shadow:none}
+.sc-point.sc-alerted.sc-exec-completed .sc-badge,.sc-point.sc-alerted.sc-exec-failed .sc-badge{opacity:.72}
 .sc-signal .sc-mark{width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:1.5px;transform:rotate(45deg)}
 /* Signal retiré : marque creuse, et pas de lueur — plus rien ne l'anime. */
 .sc-signal.sc-urgency-none .sc-mark{background:transparent;box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--tone) 80%,transparent)}
 .sc-signal.sc-urgency-none .sc-mark::after{display:none}
-.sc-signal .sc-ring,.sc-signal.sc-exec-completed .sc-ring{width:18px;height:18px;margin:-9px 0 0 -9px;border:0;animation:none;opacity:1}
+.sc-signal .sc-ring,.sc-signal.sc-exec-completed .sc-ring,.sc-signal.sc-exec-failed .sc-ring{width:18px;height:18px;margin:-9px 0 0 -9px;border:0;box-shadow:none;animation:none;opacity:1}
 .sc-signal.sc-urgency-high .sc-ring{border:1.5px solid var(--tone);opacity:.8;transform:scale(1.25)}
 .sc-signal.sc-urgency-medium .sc-ring{border:1px solid var(--tone);opacity:.8;transform:scale(1.25)}
 .sc-signal.sc-urgency-high.sc-anim .sc-ring{animation:sc-alert 1.9s cubic-bezier(.2,.7,.3,1) infinite;will-change:transform,opacity}
@@ -801,13 +832,51 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
 .sc-note.sc-warn::before{background:var(--sc-warn)}
 .sc-note.sc-full::before{background:#ff6b7d}
 .sc-note.sc-busy::before{animation:sc-breathe 1.6s ease-in-out infinite;background:var(--sc-ink)}
+/* Bouton « Affichage des étoiles » (Slice 12) : en bas à droite, hors de la
+   zone de composition, sous la colonne du dock qui s'arrête bien plus haut.
+   Il ne part jamais dans une capture : la capture dessine le modèle de vue,
+   jamais le DOM. */
+.sc-view-btn{position:absolute;right:18px;bottom:18px;z-index:2147483600;width:34px;height:34px;padding:0;
+  display:grid;place-items:center;border:0;border-radius:50%;background:rgba(3,8,12,.7);
+  box-shadow:inset 0 0 0 1px var(--sc-edge);backdrop-filter:blur(14px);color:rgba(214,232,240,.82);
+  cursor:pointer;pointer-events:auto}
+.sc-view-btn:hover{background:rgba(10,24,32,.86);color:#eef6fa}
+.sc-view-btn:focus-visible{outline:1px solid var(--sc-ink);outline-offset:2px}
+.sc-view-btn.sc-open{color:#eef6fa;box-shadow:inset 0 0 0 1px var(--sc-ring)}
+.sc-view-btn svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.2;stroke-linejoin:round}
+/* Fenêtre des réglages : au-dessus du bouton, décalée de la colonne du dock. */
+.sc-view{position:absolute;right:78px;bottom:18px;z-index:2147483600;width:272px;max-height:min(64vh,460px);overflow:auto;
+  padding:13px 15px 12px;border-radius:var(--sc-radius);background:var(--sc-surface);
+  box-shadow:inset 0 0 0 1px var(--sc-edge),0 18px 44px rgba(0,0,0,.5);backdrop-filter:blur(18px);pointer-events:auto}
+.sc-view[hidden]{display:none}
+.sc-view-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}
+.sc-view-head h2{margin:0;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:rgba(214,232,240,.82)}
+button.sc-view-x{border:0;background:none;color:var(--sc-muted);font:inherit;font-size:16px;line-height:1;padding:2px 4px;cursor:pointer}
+button.sc-view-x:hover{color:var(--sc-ink)}
+.sc-view-row{display:grid;grid-template-columns:1fr auto;align-items:center;gap:4px 10px;padding:8px 0;border-top:1px solid var(--sc-edge)}
+.sc-view-row label{font-size:11.5px;color:var(--sc-ink);cursor:pointer}
+.sc-view-val{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--sc-muted);font-variant-numeric:tabular-nums}
+.sc-view-row input[type=range]{grid-column:1 / -1;width:100%;height:14px;margin:0;accent-color:#9fd8ea;cursor:pointer}
+.sc-view-row input[type=checkbox]{width:14px;height:14px;margin:0;accent-color:#9fd8ea;cursor:pointer}
+.sc-view-row input:focus-visible{outline:1px solid var(--sc-ink);outline-offset:3px}
+/* Réglage sans effet tant que celui dont il dépend est éteint : grisé, jamais
+   oublié — il reprend sa valeur au rallumage. */
+.sc-view-row.sc-off{opacity:.42}
+.sc-view-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px;padding-top:10px;border-top:1px solid var(--sc-edge)}
+button.sc-view-reset{border:0;border-radius:999px;padding:5px 11px;background:rgba(151,191,209,.1);color:var(--sc-ink);
+  font:inherit;font-size:10px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer}
+button.sc-view-reset:hover:not(:disabled){background:rgba(151,191,209,.2)}
+button.sc-view-reset:disabled{opacity:.4;cursor:default}
+.sc-view-note{font-size:9.5px;line-height:1.45;color:var(--sc-muted);text-align:right;flex:1 1 auto}
 .sc-sr{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 @keyframes sc-spin{to{transform:rotate(360deg)}}
 @keyframes sc-breathe{0%,100%{opacity:.32;transform:scale(.86)}50%{opacity:.9;transform:scale(1.08)}}
 @keyframes sc-alert{0%{opacity:.95;transform:scale(.62)}80%,100%{opacity:0;transform:scale(1.75)}}
 /* Respiration d'un halo : lente, bornée, sans extinction ni éclat. */
 @keyframes sc-glow{0%,100%{opacity:.58;transform:scale(.9)}50%{opacity:1;transform:scale(1.13)}}
-@media(max-width:700px){.sc-status{left:10px;bottom:12px;max-width:calc(100vw - 90px)}}
+@media(max-width:700px){.sc-status{left:10px;bottom:12px;max-width:calc(100vw - 90px)}
+  .sc-view-btn{right:10px;bottom:12px}
+  .sc-view{right:10px;left:10px;bottom:56px;width:auto}}
 @media(prefers-reduced-motion:reduce){
   .scene .sc-node{transition:none!important}
   .scene .sc-ring,.scene .sc-note::before,.scene .sc-node.sc-stopping .sc-ring{animation:none!important}
@@ -839,6 +908,9 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   let enabled=false,root=null,linksEl=null,statusEl=null,liveEl=null,raf=0,statusTicker=null;
   let lastView=null,lastState=null,layout=null,layoutState=null,edgesSig='',statusSig='',announced='',readyTimer=0;
   let lastModel=null,focusId=null,tabStopId=null,statusFailed=false,visibilityToken=0,animTimer=0;
+  /* Slice 12 : réglages d'affichage de l'utilisateur (ce navigateur), bouton et
+     fenêtre qui les règlent. `viewPrefs` vaut toujours des réglages complets. */
+  let viewPrefs=V?V.normalize(null):null,viewBtn=null,viewEl=null,viewRows=[];
   /* Slice 08 : modifications optimistes, geste en cours, édition au clavier. */
   const pending=I?I.createPending():null;
   let viewMemo={state:null,version:-1,value:null},gesture=null,keyEdit=null,kbdMenuAt=0,pruneTimer=0;
@@ -850,6 +922,9 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   const inflight=new Set();
   const freshUntil=new Map();
   const nodes=new Map();
+  /* Fils dessinés (`{edge,line}`, dans l'ordre de `applyEdges`) et nœud tenu
+     par l'utilisateur dont ils suivent le mouvement, image par image. */
+  let edgeLines=[],follow=null;
   const leader={held:false,mode:'lock'};
   const channel=typeof BroadcastChannel==='function'?new BroadcastChannel(CHANNEL_NAME):null;
   const shared=!!channel&&!!(navigator.locks&&typeof navigator.locks.request==='function');
@@ -947,6 +1022,162 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
 
   /* ------------------------------------------------------------ rendu */
 
+  /* ------------------------------------ affichage réglé par l'utilisateur */
+
+  /* Taille des étoiles, halo, gravitation, fils : réglés depuis la page même
+     (petit bouton en bas à droite), enregistrés dans ce navigateur. Rien ne part
+     vers Core : la scène enregistrée, la capture et ce que voit le cerveau ne
+     changent pas. Les autres onglets suivent par l'événement `storage`. */
+
+  /* Réglages enregistrés. Stockage refusé (navigation privée, site bloqué) :
+     les valeurs de référence, sans erreur. */
+  function loadViewPrefs(){
+    if(!V)return null;
+    let text=null;
+    try{text=window.localStorage.getItem(V.KEY)}catch(_error){/* stockage refusé : les défauts */}
+    return V.decode(text);
+  }
+
+  function saveViewPrefs(){
+    if(!V)return;
+    try{window.localStorage.setItem(V.KEY,V.encode(viewPrefs))}
+    catch(error){consoleLog('warn','scene.view_not_saved',{error:errorText(error)})}
+  }
+
+  /* Ce que les réglages changent dans le dessin : des variables CSS et des
+     classes sur le conteneur — effet immédiat, sans attendre un rendu — puis la
+     dérive orbitale, recalculée au rendu suivant. */
+  function applyViewPrefs(){
+    if(!root||!V)return;
+    const vars=V.cssVars(viewPrefs);
+    for(const name of Object.keys(vars))root.style.setProperty(name,vars[name]);
+    const on=new Set(V.classes(viewPrefs));
+    for(const name of V.CLASSES)root.classList.toggle(name,on.has(name));
+    scheduleRender();
+  }
+
+  /* Un autre onglet a réglé l'affichage : le même écran partout. */
+  function onViewStorage(event){
+    if(!V||!root||(event.key!==null&&event.key!==V.KEY))return;
+    viewPrefs=loadViewPrefs();
+    applyViewPrefs();syncViewPanel();
+  }
+
+  /* Étoile à cinq branches du bouton (repère 12 × 12 de `svgIcon`). */
+  const VIEW_STAR_PATH='M6 1.4 7.12 4.46 10.37 4.58 7.81 6.59 8.7 9.72 6 7.9 3.3 9.72 4.19 6.59 1.63 4.58 4.88 4.46Z';
+
+  function buildViewControls(){
+    if(!V||!root)return;
+    viewBtn=element('button','sc-view-btn');
+    viewBtn.type='button';viewBtn.title='Affichage des étoiles';
+    viewBtn.setAttribute('aria-label','Affichage des étoiles');
+    viewBtn.setAttribute('aria-haspopup','dialog');
+    viewBtn.setAttribute('aria-expanded','false');
+    viewBtn.setAttribute('aria-controls','sceneViewPanel');
+    viewBtn.appendChild(svgIcon(VIEW_STAR_PATH));
+    viewBtn.addEventListener('click',()=>toggleViewPanel());
+    viewEl=element('div','sc-view');
+    viewEl.id='sceneViewPanel';viewEl.hidden=true;
+    viewEl.setAttribute('role','dialog');
+    viewEl.setAttribute('aria-label','Affichage des étoiles');
+    const close=element('button','sc-view-x','×');
+    close.type='button';close.setAttribute('aria-label','Fermer');
+    close.addEventListener('click',()=>toggleViewPanel(false));
+    const head=element('div','sc-view-head');
+    head.append(element('h2','','Affichage des étoiles'),close);
+    const note=element('div','sc-view-note','Ce navigateur seulement : ni la scène enregistrée ni ce que voit le cerveau ne changent.');
+    note.id='sceneViewNote';
+    viewEl.append(head);
+    viewRows=V.FIELDS.map(field=>{
+      const row=element('div','sc-view-row');
+      row.title=field.hint;
+      const input=document.createElement('input');
+      input.id=`scView_${field.id}`;
+      input.setAttribute('aria-describedby','sceneViewNote');
+      const label=element('label','',field.label);
+      label.htmlFor=input.id;
+      const value=element('span','sc-view-val');
+      if(field.type==='toggle'){
+        input.type='checkbox';
+        row.append(label,input);
+      }else{
+        input.type='range';
+        input.min=String(field.min);input.max=String(field.max);input.step=String(field.step);
+        row.append(label,value,input);
+      }
+      /* `input` applique pendant le glissement (le réglage se voit tout de
+         suite) ; `change` seul est journalisé et annoncé, une fois posé. */
+      input.addEventListener('input',()=>setViewField(field,field.type==='toggle'?input.checked:Number(input.value)));
+      input.addEventListener('change',()=>{
+        announce(V.changeSentence(field,viewPrefs[field.id]));
+        consoleLog('info','scene.view_changed',{field:field.id,value:viewPrefs[field.id]});
+      });
+      viewEl.append(row);
+      return {field,row,input,value};
+    });
+    const reset=element('button','sc-view-reset','Réinitialiser');
+    reset.type='button';
+    reset.addEventListener('click',()=>{
+      viewPrefs=V.normalize(null);
+      saveViewPrefs();applyViewPrefs();syncViewPanel();
+      announce('Affichage des étoiles réinitialisé.');
+      consoleLog('info','scene.view_reset',{});
+    });
+    const foot=element('div','sc-view-foot');
+    foot.append(reset,note);
+    viewEl.append(foot);
+    /* Échap ferme la fenêtre sans remonter à la scène (qui rendrait le focus). */
+    viewEl.addEventListener('keydown',event=>{
+      if(event.key!=='Escape')return;
+      event.preventDefault();event.stopPropagation();
+      toggleViewPanel(false);
+    });
+    root.append(viewBtn,viewEl);
+    syncViewPanel();
+  }
+
+  function setViewField(field,value){
+    if(!V)return;
+    const next=Object.assign({},viewPrefs);
+    next[field.id]=value;
+    viewPrefs=V.normalize(next);
+    saveViewPrefs();applyViewPrefs();syncViewPanel();
+  }
+
+  /* Valeurs, grisés et bouton « Réinitialiser » d'après les réglages courants. */
+  function syncViewPanel(){
+    if(!viewEl||!V)return;
+    const model=V.describe(viewPrefs);
+    model.rows.forEach((row,index)=>{
+      const target=viewRows[index];
+      if(!target)return;
+      if(target.field.type==='toggle')target.input.checked=!!row.value;
+      else{target.input.value=String(row.value);target.value.textContent=row.label}
+      target.row.classList.toggle('sc-off',!row.enabled);
+      /* Grisé mais jamais vidé : le réglage reprend sa valeur au rallumage. */
+      target.input.disabled=!row.enabled;
+    });
+    const reset=viewEl.querySelector('.sc-view-reset');
+    if(reset)reset.disabled=!model.custom;
+  }
+
+  /* Ouvrir ou fermer la fenêtre (sans argument : l'inverse de l'état courant).
+     Fermée alors qu'elle tenait le focus, il revient au bouton. */
+  function toggleViewPanel(open){
+    if(!viewEl||!viewBtn)return;
+    const next=open===undefined?!!viewEl.hidden:!!open;
+    if(next===!viewEl.hidden)return;
+    const held=viewEl.contains(document.activeElement);
+    viewEl.hidden=!next;
+    viewBtn.classList.toggle('sc-open',next);
+    viewBtn.setAttribute('aria-expanded',next?'true':'false');
+    if(next){
+      syncViewPanel();
+      const first=viewEl.querySelector('input:not([disabled])');
+      if(first)try{first.focus({preventScroll:true})}catch(_error){/* retiré entre-temps */}
+    }else if(held)try{viewBtn.focus({preventScroll:true})}catch(_error){/* bouton retiré */}
+  }
+
   function ensureRoot(){
     if(!document.getElementById('jarvisSceneStyle')){
       const style=document.createElement('style');
@@ -973,6 +1204,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     actionLiveEl=document.createElement('div');
     actionLiveEl.className='sc-sr sc-sr-actions';actionLiveEl.setAttribute('role','status');actionLiveEl.setAttribute('aria-live','polite');
     root.append(linksEl,statusEl,liveEl,actionLiveEl);
+    /* Réglages d'affichage : lus avant le premier dessin, puis leur bouton. */
+    if(V){viewPrefs=loadViewPrefs();buildViewControls();applyViewPrefs()}
     root.addEventListener('keydown',onKeyDown);
     root.addEventListener('keyup',onKeyUp);
     root.addEventListener('pointerover',onPointerOver);
@@ -994,12 +1227,14 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   function teardown(){
     if(raf){cancelAnimationFrame(raf);raf=0}
     if(readyTimer){cancelAnimationFrame(readyTimer);readyTimer=0}
+    stopFollow();edgeLines=[];
     stopStatusTicker();
     if(root)root.remove();
     const style=document.getElementById('jarvisSceneStyle');
     if(style)style.remove();
     if(animTimer){window.clearTimeout(animTimer);animTimer=0}
     root=null;linksEl=null;statusEl=null;liveEl=null;actionLiveEl=null;nodes.clear();freshUntil.clear();
+    viewBtn=null;viewEl=null;viewRows=[];
     lastView=null;lastState=null;layout=null;layoutState=null;lastModel=null;
     viewMemo={state:null,version:-1,value:null};serverMemo={state:null,value:null};gesture=null;
     selectedId=null;pendingFocus=null;stopping.clear();
@@ -1056,8 +1291,12 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     return el;
   }
 
-  function badge(exec,shape,restartUnknown){
-    if(!BADGE_PATHS[exec]||(exec==='completed'&&shape==='point')||(exec==='unknown'&&!restartUnknown))return null;
+  /* Icône d'état. Une fin (`completed`, `failed`) la porte sur toutes les
+     formes, y compris l'étoile : c'est la petite icône de la marque de fin,
+     avec l'anneau vert ou rouge. Un artefact `unknown` n'a pas de travail :
+     pas de « ? ». */
+  function badge(exec,restartUnknown){
+    if(!BADGE_PATHS[exec]||(exec==='unknown'&&!restartUnknown))return null;
     const box=element('span','sc-badge');
     box.appendChild(svgIcon(BADGE_PATHS[exec]));
     return box;
@@ -1083,6 +1322,9 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   function fill(el,node){
     const classes=['sc-node',`sc-${node.shape}`,`sc-kind-${node.kind}`,`sc-tone-${node.tone}`,`sc-exec-${node.exec}`];
     if(node.restartUnknown)classes.push('sc-restart-unknown');
+    /* Signal d'attention vivant sur cette étoile : sa marque de fin se retire
+       d'un cran (voir la feuille de style). */
+    if(node.alerted)classes.push('sc-alerted');
     if(node.signal)classes.push('sc-signal',`sc-urgency-${node.urgency}`);
     if(node.pinned)classes.push('sc-pinned');
     if(node.compact)classes.push('sc-compact');
@@ -1092,7 +1334,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     const parts=[];
     if(node.shape==='point'){
       parts.push(element('span','sc-ring'),element('span','sc-mark'));
-      const state=badge(node.exec,node.shape,node.restartUnknown);
+      const state=badge(node.exec,node.restartUnknown);
       if(state&&!node.signal)parts.push(state);
       const label=element('span','sc-label');
       label.append(element('strong','',node.title));
@@ -1106,7 +1348,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       if(node.kind==='artifact'&&node.category)parts.push(element('span','sc-ccat',node.category));
       parts.push(element('span','sc-title',node.title));
       if(node.pinned)parts.push(pin());
-      const state=badge(node.exec,node.shape,node.restartUnknown);if(state)parts.push(state);
+      const state=badge(node.exec,node.restartUnknown);if(state)parts.push(state);
       if(I&&(node.representation==='capsule'||node.representation==='window'))parts.push(grip());
     }else{
       const head=element('div','sc-head');
@@ -1114,7 +1356,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       head.append(dot,element('span','sc-cat',[node.category,node.execLabel].filter(Boolean).join(' · ')));
       if(node.kind==='artifact'&&node.itemCount)head.append(element('span','sc-cat-meta',`${node.itemCount} ${node.itemCount>1?'entrées':'entrée'}`));
       if(node.pinned)head.append(pin());
-      const state=badge(node.exec,node.shape,node.restartUnknown);if(state)head.append(state);
+      const state=badge(node.exec,node.restartUnknown);if(state)head.append(state);
       parts.push(head,element('div','sc-wtitle',node.title));
       if(node.explains)parts.push(originButton(node.explains));
       if(node.summary)parts.push(element('div','sc-summary',node.summary));
@@ -1221,8 +1463,12 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
      par les liens. */
   function drifts(list,vp){
     const map=new Map();
+    /* Gravitation éteinte par l'utilisateur : aucune dérive n'est calculée, et
+       la classe `sc-no-orbit` a déjà arrêté celles qui tournaient. */
+    const options=V?V.orbitOptions(viewPrefs):undefined;
+    if(options===null)return map;
     for(const node of list){
-      const drift=L.orbitOf(node,vp);
+      const drift=L.orbitOf(node,vp,options);
       if(drift)map.set(node.id,drift);
     }
     return map;
@@ -1253,10 +1499,16 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
         nodes.set(node.id,record);
       }
       const content=JSON.stringify([node.shape,node.kind,node.tone,node.exec,node.urgency,node.pinned,node.title,
-        node.category,node.summary,node.items,node.label,node.itemCount,node.explains]);
+        node.category,node.summary,node.items,node.label,node.itemCount,node.explains,node.alerted]);
       if(content!==record.content){
         const inside=record.el.contains(document.activeElement);
         fill(record.el,node);record.content=content;record.anim=null;
+        /* `fill` réécrit `className` en entier : la classe de gravitation est
+           tombée avec le reste. La place n'ayant pas bougé, rien ne la
+           reposerait — l'étoile s'arrêterait d'orbiter dès son premier
+           changement d'état. On oublie donc la place connue pour que le
+           placement ci-dessous refasse une passe complète. */
+        record.place='';
         if(inside){setInnerTabs(record.el,true);record.el.focus({preventScroll:true})}
       }
       if(record.anim!==node.animate){record.el.classList.toggle('sc-anim',node.animate);record.anim=node.animate}
@@ -1483,6 +1735,10 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(!record)return;
     record.dragging=held;
     record.el.classList.toggle('sc-dragging',held);
+    /* Le fil suit le point tant que la main le tient : ses extrémités sont
+       recalculées à chaque image, et rien n'est écrit dans la scène — la place
+       ne part à Core qu'au relâchement (`commitUserGeometry`). */
+    if(held)startFollow(id);else stopFollow(id);
     if(!held){record.place='';scheduleRender()}
   }
 
@@ -1703,9 +1959,12 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   }
 
   function onDocumentPointerDown(event){
-    if(!selectedId||!root)return;
-    const target=event.target;
-    if(target&&target.closest&&(target.closest('#sceneLayer .sc-node')||target.closest('#ctxMenu')||target.closest('#confirmBack')))return;
+    if(!root)return;
+    const target=event.target&&event.target.closest?event.target:null;
+    /* Fenêtre des réglages d'affichage : un clic ailleurs la ferme. */
+    if(viewEl&&!viewEl.hidden&&(!target||!target.closest('.sc-view,.sc-view-btn')))toggleViewPanel(false);
+    if(!selectedId)return;
+    if(target&&(target.closest('#sceneLayer .sc-node')||target.closest('#ctxMenu')||target.closest('#confirmBack')))return;
     select(null);
   }
 
@@ -2055,6 +2314,60 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(!statusTicker)statusTicker=window.setInterval(renderStatus,1000);
   }
 
+  /* ------------------------------------------ fils pendant un geste */
+
+  /* Ancre d'un nœud dans le repère de la scène : le centre de sa zone dessinée
+     **telle qu'elle est à l'écran**. La place est dans `transform`, la dérive
+     orbitale dans `translate` : la boîte rendue est le seul endroit qui porte
+     les deux à la fois — et, pendant un geste, l'aperçu qui n'est encore écrit
+     nulle part. `null` : nœud plus dessiné. */
+  function anchorOf(id,origin){
+    const record=nodes.get(id);
+    if(!record)return null;
+    const r=record.el.getBoundingClientRect();
+    if(!r.width&&!r.height)return null;
+    return {x:round1(r.left+r.width/2-origin.left),y:round1(r.top+r.height/2-origin.top)};
+  }
+
+  /* Extrémités des fils qui touchent le nœud tenu, pour cette image. */
+  function followEdges(){
+    if(!follow||!root)return;
+    if(!nodes.has(follow.id)){stopFollow();return}
+    const origin=root.getBoundingClientRect();
+    for(const {edge,line} of edgeLines){
+      if(edge.from!==follow.id&&edge.to!==follow.id)continue;
+      const a=anchorOf(edge.from,origin),b=anchorOf(edge.to,origin);
+      if(!a||!b)continue;
+      /* La dérive des deux bouts est déjà dans les ancres : le fil ne la rejoue
+         pas par-dessus (sinon elle compterait deux fois). */
+      setOrbit(line,null);
+      line.setAttribute('x1',a.x);line.setAttribute('y1',a.y);
+      line.setAttribute('x2',b.x);line.setAttribute('y2',b.y);
+    }
+  }
+
+  function followFrame(){
+    if(!follow)return;
+    follow.raf=requestAnimationFrame(followFrame);
+    followEdges();
+  }
+
+  function startFollow(id){
+    if(follow&&follow.id===id)return;
+    stopFollow();
+    follow={id,raf:0};
+    followFrame();
+  }
+
+  /* Fin du geste (ou nœud parti) : les extrémités posées à la main ne valent
+     plus rien, la passe suivante redessine tous les fils, dérive comprise. */
+  function stopFollow(id){
+    if(!follow||(id!==undefined&&follow.id!==id))return;
+    if(follow.raf)cancelAnimationFrame(follow.raf);
+    follow=null;
+    edgesSig='';
+  }
+
   function applyEdges(edges,vp,map){
     const drift=edges.map(edge=>map?edgeDrift(edge,map):null);
     const sig=`${vp.width}x${vp.height}|`+edges.map((e,i)=>`${e.id},${e.kind},${e.signal},${e.artifact},${e.tone},${e.x1},${e.y1},${e.x2},${e.y2}`
@@ -2071,6 +2384,10 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       return line;
     });
     linksEl.replaceChildren(...lines);
+    edgeLines=edges.map((edge,i)=>({edge,line:lines[i]}));
+    /* Passe pendant un geste : les fils du nœud tenu reprennent tout de suite
+       leurs extrémités vivantes, sans une image de retard. */
+    if(follow)followEdges();
   }
 
   function errorLabels(){
@@ -2242,6 +2559,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     const body=getComputedStyle(document.body).backgroundColor;
     const value={background:body&&body!=='rgba(0, 0, 0, 0)'?body:'#03080c',ink:read('--sc-ink','#dcecf4'),muted:read('--sc-muted','#8aa5b3'),
       edge:read('--sc-edge','rgba(151,191,209,.3)'),surface:read('--sc-surface','rgba(4,10,15,.9)'),warn:read('--sc-warn','#ffb85c'),
+      done:read('--sc-done','#6fe3a4'),
       radius:parseFloat(read('--sc-radius','10'))||0,error:tones.error||'#ff6b7d',tones};
     return value;
   }
@@ -2298,6 +2616,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       consoleLog('info','scene.enabled',{source:scene&&scene.source||'',mode:shared?'shared':'solo'});
       ensureRoot();
       window.addEventListener('resize',onResize);
+      window.addEventListener('storage',onViewStorage);
       document.addEventListener('visibilitychange',onVisibility);
       document.addEventListener('pointerdown',onDocumentPointerDown,true);
       loop.setVisible(document.visibilityState!=='hidden');
@@ -2311,6 +2630,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       committer.update(null);
       releaseLeadership();
       window.removeEventListener('resize',onResize);
+      window.removeEventListener('storage',onViewStorage);
       document.removeEventListener('visibilitychange',onVisibility);
       document.removeEventListener('pointerdown',onDocumentPointerDown,true);
       teardown();

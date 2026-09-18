@@ -71,10 +71,15 @@
       if(node.shape==='point'){
         const cx=rect.left+rect.width/2,cy=rect.top+rect.height/2;
         const hollow=node.signal&&!node.live;
+        /* Marque de fin, comme la page (`.sc-exec-completed` / `.sc-exec-failed`) :
+           anneau serré, vert pour une fin normale, rouge pour un échec. */
+        const finished=!node.signal&&(node.exec==='completed'||node.exec==='failed');
+        const finishColor=node.exec==='completed'?(palette.done||palette.ink):palette.error;
         commands.push({op:'circle',cx,cy,r:4,fill:hollow?null:tone,stroke:hollow?tone:null,id:node.id});
-        if(node.live||node.exec==='running'||node.restartUnknown||node.exec==='completed')
-          commands.push({op:'circle',cx,cy,r:node.exec==='completed'&&!node.signal?7.5:9,fill:null,
-            stroke:node.urgency==='high'?palette.error:(node.live?tone:palette.muted),dash:node.restartUnknown?[2,3]:[]});
+        if(node.live||node.exec==='running'||node.restartUnknown||finished)
+          commands.push({op:'circle',cx,cy,r:finished?7.5:9,fill:null,
+            stroke:node.urgency==='high'?palette.error:node.live?tone:finished?finishColor:palette.muted,
+            dash:node.restartUnknown?[2,3]:[]});
         if(node.pinned)commands.push({op:'circle',cx:rect.left+rect.width-4,cy:rect.top+4,r:2.5,fill:palette.warn,stroke:null,marker:'pin'});
         continue;
       }

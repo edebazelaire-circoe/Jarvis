@@ -240,7 +240,7 @@ async def test_get_returns_everything_an_artifact_carries_and_its_star(core, too
         {"label": "Banque", "url": "https://banque.example@evil.example/login", "link": False, "host": None},
         {"label": "Note sans lien", "ref": "r1"},
     ]
-    assert (detail["kind"], detail["category"], detail["origin"], detail["representation"]) == ("artifact", "research", "brain", "capsule")
+    assert (detail["kind"], detail["category"], detail["origin"], detail["representation"]) == ("artifact", "research", "brain", "point")
     assert detail["geometry"] == [0, 0, 40, 20] and detail["layer"] == 120 and detail["order"] == 0
     assert detail["constraints"] == {"placed_by": "brain", "pinned_by_user": False}
     assert detail["work_ref"] is None and detail["exec_state"] == "unknown" and detail["visibility"] == "visible"

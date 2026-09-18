@@ -1056,6 +1056,7 @@ Vérifier dans `runtime/trace.jsonl` (niveau info sauf mention) :
 | --- | --- |
 | `core.scene.projection_reconciled` | la projection a relu tout l'état de travail : au démarrage (`reason: start`), après des événements perdus (`revision_gap`), après une réinitialisation du travail (`store_changed`) ou au retour de la scène (`scene_unavailable`) |
 | `core.scene.star_created` | une étoile est née (`object_id`, `kind`, `source`, `status`) |
+| `core.scene.star_finished` | une étoile a fini (`object_id`, `source`, `status`) : à l'écran, anneau vert et coche pour une fin normale, rouge et croix pour un échec ; une seule ligne par étoile, rien d'autre ne bouge |
 | `core.scene.signal_raised` / `core.scene.signal_retired` | un signal posé / retiré |
 | `core.scene.projection_unavailable` (avertissement, une fois par panne) | la scène ne répond pas (fichier refusé au démarrage, écriture en échec) : le travail continue, la projection réessaie jusqu'à 30 s d'intervalle |
 | `core.scene.projection_restored` | la scène répond de nouveau ; `suppressed` compte les tentatives manquées ; la projection a tout réconcilié |
@@ -1491,13 +1492,43 @@ et le cerveau la connaît (« haut gauche ≈ x −150, y −70 »).
 
 **Placement automatique.** Un objet sans position (étoile d'un nouveau
 sous-agent, note créée sans géométrie par le cerveau) est placé par la page :
-les étoiles à gauche du visage, un enfant près de son parent, un signal contre
-son étoile, les résultats à droite. La page **enregistre ce placement une seule
+les étoiles **autour du visage**, en couronne (la première en haut, puis à
+droite, en bas, à gauche, et ainsi de suite : le ciel se remplit de partout, pas
+d'un seul côté), un enfant près de son parent, un signal contre son étoile, les
+résultats à droite. La page **enregistre ce placement une seule
 fois dans Core** (commande `set_geometry`, `placed_by = resolver`, journalisée
 `scene.command`) : après un rechargement, dans un autre onglet ou après un
 redémarrage, la disposition est identique. Un objet placé par le cerveau ou par
 vous, ou épinglé, n'est jamais déplacé par la page. Avec plusieurs onglets
 ouverts, un seul à la fois (un onglet visible) enregistre les placements.
+
+**Affichage des étoiles** (petit bouton en forme d'étoile, en bas à droite de
+l'écran, dès que la scène est allumée). Il ouvre une fenêtre qui règle *comment*
+la constellation se montre ; chaque changement se voit tout de suite et reste
+enregistré dans ce navigateur.
+
+| Réglage | Ce qu'il change |
+| --- | --- |
+| `Taille des étoiles` | le cœur lumineux, sa lueur et les anneaux d'état (0,6 × à 2,4 ×). La zone sensible au clic ne change pas : une étoile minuscule reste aussi facile à attraper |
+| `Halo` | le voile large autour de l'étoile (0 × = plus de halo du tout) |
+| `Halo qui respire` | éteint, le halo garde une seule intensité |
+| `Gravitation` | éteinte, les étoiles sont parfaitement immobiles (aucune animation ne tourne) |
+| `Ampleur de l'orbite` | la taille de l'ellipse parcourue (0,3 × à 2,5 ×). Elle reste bornée par la place libre : une étoile ne sort jamais de la zone sûre |
+| `Vitesse de l'orbite` | 0,25 × à 4 × ; un tour dure environ trente secondes à 1 × |
+| `Fils entre les objets` | masque ou montre les traits qui relient une étoile à son parent, à son signal, à ses résultats |
+
+« Réinitialiser » revient aux valeurs livrées (tout à 1 ×, tout allumé) et ne
+s'allume que si quelque chose a été changé. Un réglage sans effet (l'ampleur de
+l'orbite quand la gravitation est éteinte) est grisé mais garde sa valeur.
+Échap ou un clic ailleurs ferme la fenêtre.
+
+Ce sont des préférences **de ce navigateur** : rien n'est envoyé à Core. Ni la
+scène enregistrée, ni les positions, ni ce que voit le cerveau (`scene_capture`
+dessine toujours les tailles de référence) ne changent — deux écrans de la même
+scène montrent les mêmes objets aux mêmes places. Les autres fenêtres du même
+navigateur suivent le réglage aussitôt. En navigation privée, ou si le site n'a
+pas le droit d'enregistrer, les réglages fonctionnent mais repartent des valeurs
+livrées à chaque ouverture (`[scène] scene.view_not_saved` en console).
 
 **Indicateur discret** (en bas à gauche, sur la ligne de l'indication vocale ;
 au-dessus du badge Barehands quand il est affiché). Le compteur (durée, prochain
@@ -1675,7 +1706,10 @@ peut en choisir une autre ; elle prend alors une couleur stable tirée de son no
 
 **Lire un artefact.**
 
-- En capsule (forme par défaut) : sa catégorie puis son titre, près de l'étoile.
+- En point (forme par défaut) : une étoile de la couleur de sa catégorie, près
+  de l'étoile qu'il explique ; son titre au survol.
+- En capsule (menu de l'objet → « Afficher en capsule ») : sa catégorie puis son
+  titre, près de l'étoile.
 - En fenêtre (menu de l'objet → « Afficher en fenêtre », ou « montre-moi le
   résultat de la recherche » au cerveau) : catégorie et nombre d'entrées, titre,
   un bouton qui ramène à l'étoile expliquée (titre et état du sous-agent), le
