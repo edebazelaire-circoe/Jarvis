@@ -28,7 +28,9 @@ room would do. Those are the `hardware:auto` and `hardware:guided` questions
 
 from __future__ import annotations
 
+from array import array
 from dataclasses import dataclass, field
+import random
 from typing import Any
 
 from jarvis.audio.duplex import CaptureProcessor
@@ -183,6 +185,39 @@ class InjectionReport:
         return {"ref": self.ref, "blocks": self.blocks, "bytes": self.bytes_injected,
                 "duration_ms": self.duration_ms, "gain_db": self.gain_db,
                 "source_sample_rate": self.source_sample_rate, "signals": list(self.signals)}
+
+
+#: What a room adds to what the speaker played, on top of the declared coupling. These are
+#: not decoration: a delay-free, exactly-scaled, noiseless copy is CANCELLABLE in a way no
+#: room is, and an echo canceller given one converges until the near-end detector learns an
+#: expectation no real room could produce. Measured on the `audio` profile at the seed's own
+#: default (8 000 ms): with the ideal copy the gate opens on the residual at ~3.4 s and the
+#: run FAILS a healthy product; with delay, drift and noise together it plays all 8 000 ms
+#: with zero false confirmations. See `Issues/self-barge-in-after-seconds-of-speech.md`.
+ECHO_DELAY_BLOCKS = 1
+ECHO_DRIFT_DB = 3.0
+ECHO_NOISE_AMPLITUDE = 40
+
+
+def room_response(pcm: bytes, *, seed: int, drift_db: float = ECHO_DRIFT_DB,
+                  noise: int = ECHO_NOISE_AMPLITUDE) -> bytes:
+    """Shape one block the way a room does: slow level drift plus a little broadband noise.
+
+    Deterministic for a given `seed`, so a run is reproducible; the delay is the caller's,
+    because only the caller knows its own block schedule.
+    """
+    generator = random.Random(seed)
+    samples = array("h")
+    samples.frombytes(pcm[:len(pcm) - len(pcm) % 2])
+    for index in range(len(samples)):
+        gain = 10 ** ((drift_db * (index % _DRIFT_PERIOD) / _DRIFT_PERIOD - drift_db / 2) / 20)
+        value = int(samples[index] * gain) + (generator.randint(-noise, noise) if noise else 0)
+        samples[index] = max(-32768, min(32767, value))
+    return samples.tobytes()
+
+
+#: Samples over which the drift completes one cycle: about two seconds at the voice rate.
+_DRIFT_PERIOD = VOICE_SAMPLE_RATE * 2
 
 
 def split_blocks(pcm: bytes, block_bytes: int = INPUT_BLOCK_BYTES) -> list[bytes]:

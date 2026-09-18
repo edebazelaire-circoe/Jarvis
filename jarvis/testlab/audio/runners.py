@@ -29,6 +29,7 @@ from typing import Any
 from jarvis.domain.v2 import SpeechKind
 from jarvis.testlab.audio.chain import (
     INPUT_BLOCK_BYTES,
+    room_response,
     ChainMetadata,
     InjectedSourceAudio,
     InjectionReport,
@@ -71,6 +72,9 @@ OUTPUT_BLOCK_BYTES = VOICE_SAMPLE_RATE // 10 * 2
 #: (`echo.coupling_db`) so it can be swept and overridden like any other. This constant
 #: is only the fallback for a declaration that predates it.
 DEFAULT_ECHO_GAIN_DB = -12.0
+#: The first output block a barge-in candidate may be raised over: the canceller's own
+#: 400 ms pre-roll, the same rule the hardware runners apply.
+FIRST_CANDIDATE_BLOCK = 400 // CHUNK_MS
 ECHO_COUPLING_PARAMETER = "echo.coupling_db"
 #: The fixture every audio seed plays when a scenario names none.
 DEFAULT_CLIP_REF = "reference-tone-1s.wav"
@@ -286,34 +290,51 @@ class SelfEchoAudioRunner:
 
     async def _play_with_echo(self, context: RunContext, stack: VoiceStack, journal, injector: AudioInjector,
                               speech_id: str, duration_ms: int, echoes: int, clip: bytes, echo: bytes) -> int:
-        """Play the fixture 100 ms at a time and return the SAME audio as microphone input.
+        """Play the fixture 100 ms at a time; the room returns it, shaped and one block late.
 
-        Reference and capture advance together, one output block for one output block
-        of echo: letting the reference run ahead would leave the canceller aligning
-        frames against audio that had not been played yet, which is a property of this
-        harness and not of the product.
+        Reference and capture advance together, one output block for one block of echo:
+        letting the reference run ahead would leave the canceller aligning frames against
+        audio that had not been played yet, which is a property of this harness and not of
+        the product.
+
+        The echo is NOT a copy of what was played (`room_response`, `ECHO_DELAY_BLOCKS`).
+        It used to be, and that was a defect of the diagnostic: measured at this seed's own
+        declared default of 8 000 ms, an exact delay-free copy let the canceller converge
+        until the near-end detector expected a residual no real room produces, the gate
+        opened at ~3.4 s, and the run FAILED a healthy product. The first candidate also
+        waits for the canceller's 400 ms pre-roll, for the same reason the hardware runner
+        does: before that, what a candidate measures is convergence, not the gate.
         """
         blocks = max(1, duration_ms // CHUNK_MS)
         every = max(1, blocks // echoes) if echoes else 0
         injected = 0
+        delayed: bytes | None = None
         for block in range(blocks):
             context.check_cancelled()
             if _terminal_of(journal, speech_id) is not None:
                 break
             offset = (block * OUTPUT_BLOCK_BYTES) % max(OUTPUT_BLOCK_BYTES, len(clip))
-            await stack.session.play_audio(pcm=_slice(clip, offset, OUTPUT_BLOCK_BYTES))
+            await stack.session.play_audio(pcm=wrap_slice(clip, offset, OUTPUT_BLOCK_BYTES))
             audible = (block + 1) * CHUNK_MS
             await wait_condition(context,
                                  lambda: (stack.audio.played_output_ms >= audible
                                           or _terminal_of(journal, speech_id) is not None),
                                  f"{audible} ms of Jarvis output reaching the device")
-            injector.inject_pcm(_slice(echo, offset, OUTPUT_BLOCK_BYTES))
-            if echoes and injected < echoes and block % every == 0:
+            # The room returns the PREVIOUS block, shaped. One block of delay, drift and
+            # noise, and none of the three is decoration: see `room_response`.
+            shaped = room_response(wrap_slice(echo, offset, OUTPUT_BLOCK_BYTES), seed=block)
+            if delayed is not None:
+                injector.inject_pcm(delayed)
+            delayed = shaped
+            if (echoes and injected < echoes and block >= FIRST_CANDIDATE_BLOCK
+                    and (block - FIRST_CANDIDATE_BLOCK) % every == 0):
                 await self._await_decision(context, stack, journal)
                 injected += 1
+        if delayed is not None:
+            injector.inject_pcm(delayed)
         while injected < echoes and _terminal_of(journal, speech_id) is None:
             context.check_cancelled()
-            injector.inject_pcm(_slice(echo, 0, OUTPUT_BLOCK_BYTES))
+            injector.inject_pcm(room_response(wrap_slice(echo, 0, OUTPUT_BLOCK_BYTES), seed=blocks))
             await self._await_decision(context, stack, journal)
             injected += 1
         return injected
@@ -338,8 +359,12 @@ class SelfEchoAudioRunner:
         await stack.session.interrupt()
 
 
-def _slice(pcm: bytes, offset: int, size: int) -> bytes:
-    """`size` bytes from `offset`, wrapping, so a short fixture still fills a long output."""
+def wrap_slice(pcm: bytes, offset: int, size: int) -> bytes:
+    """`size` bytes from `offset`, wrapping, so a short fixture still fills a long output.
+
+    Public because the `hardware:*` runners (Slice 09) play the same fixtures through a
+    real speaker and need the same wrap.
+    """
     if not pcm:
         return bytes(size)
     out = bytearray()

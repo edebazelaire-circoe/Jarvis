@@ -27,10 +27,22 @@
       "manifest_fingerprint": "7f4a08ce80ec187c6e0a1499ce12f5fd0aeb6369d9ca7c7fd5d9f4de84310bd8"
     },
     {
+      "diagnostic_id": "voice.queue_latency",
+      "version": 2,
+      "path": "voice/queue_latency.v2.json",
+      "manifest_fingerprint": "6f32cd9e6c85fb8a895255c5f4d89d38ee6ce7cf1c6f6f51f2084d256ed23e07"
+    },
+    {
       "diagnostic_id": "voice.self_echo",
       "version": 1,
       "path": "voice/self_echo.v1.json",
       "manifest_fingerprint": "310a98db03fb881674da23e113930f15c05fad72ac804c5df6c4993fcd32a1a7"
+    },
+    {
+      "diagnostic_id": "voice.self_echo",
+      "version": 2,
+      "path": "voice/self_echo.v2.json",
+      "manifest_fingerprint": "044aea1ad0ba425add02930bbd4440bf47d5745b89419473debc9270158372e4"
     }
   ]
 }

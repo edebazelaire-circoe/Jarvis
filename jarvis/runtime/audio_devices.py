@@ -153,6 +153,19 @@ class SoundDeviceAudioDiagnostics:
             "rms_dbfs": round(rms_dbfs, 1),
         }
 
+    def check_input_format(self, device: int | str | None) -> None:
+        """Does this input accept the Voice capture format? Asks PortAudio; opens nothing.
+
+        Public because the Test Lab hardware profiles need the format question on its
+        own, without recording the user's microphone as `test_record_and_playback` does.
+        Same call, same `AudioDiagnosticError` codes.
+        """
+        self._check_input(self._sounddevice(), device)
+
+    def check_output_format(self, device: int | str | None) -> None:
+        """Does this output accept the Voice playback format? Asks PortAudio; opens nothing."""
+        self._check_output(self._sounddevice(), device)
+
     @staticmethod
     def _default_index(defaults: tuple[Any, ...], offset: int) -> int | None:
         try:

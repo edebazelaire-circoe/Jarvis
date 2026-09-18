@@ -184,6 +184,10 @@ DEFAULT_IMPLEMENTATIONS: tuple[ImplementationEntry, ...] = (
              "Self-echo over the real duplex capture and echo canceller; Slice 08 registers it."),
     reserved("voice.queue_latency.live", ProfileName.LIVE, RUNNER_NOT_REGISTERED,
              "Measures the real provider's own generation latency; Slice 08 registers it."),
+    reserved("voice.self_echo.hardware_auto", ProfileName.HARDWARE_AUTO, RUNNER_NOT_REGISTERED,
+             "Self-echo through the workstation's real speaker and microphone; Slice 09 registers it."),
+    reserved("voice.self_echo.hardware_guided", ProfileName.HARDWARE_GUIDED, RUNNER_NOT_REGISTERED,
+             "Self-echo with the human asked to stay silent, then to interrupt; Slice 09 registers it."),
 )
 
 

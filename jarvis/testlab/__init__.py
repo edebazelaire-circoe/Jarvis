@@ -59,4 +59,16 @@ its expansion and its record), plus the I/O modules
 `jarvis.testlab.sweep_runner` (`SweepRunner`: bounded fan-out over a supervisor,
 partial failure, cancellation, the summary artifact) and
 `jarvis.testlab.filesystem_sweep_store` (`FilesystemSweepStore`).
+
+Slice 08 adds two more execution profiles and the device gate:
+`jarvis.testlab.audio` (the real local audio chain over an injected fixture; no
+device, no provider), `jarvis.testlab.live` (a real provider session, behind four
+mechanical gates) and `jarvis.testlab.devices` (READINESS B9: is the live Jarvis
+using the workstation's microphone, and the shared Test Lab device lease).
+
+Slice 09 adds the two profiles that open real devices,
+`jarvis.testlab.hardware`: device selection and the honest failure mapping
+(`devices`), the guided interaction contract with the human as a scenario actor
+(`prompts`), the file channel a worker addresses a human through (`channel`), and
+the four registered runners (`runners`, `registry`).
 """

@@ -153,8 +153,11 @@ capabilities (vocabulary order, `capability_missing`), then
 `cost_budget_exceeded`, then `duration_budget_exceeded` (each with `required`
 and `granted`). It compares declarations only. Checking that a device is really free, and not held
 by the running voice process, is the SUPERVISOR's job, in the reservation path
-(Slice 08, "Device contention"); a runner runs in a process that has already been
-spawned, and by then the microphone is a fraction of a second from being opened.
+("Device contention"); a runner runs in a process that has already been
+spawned, and by then the microphone is a fraction of a second from being opened. A
+`hardware:guided` run needs one more thing the declaration cannot express — a person at
+the keyboard right now — and that is the `JARVIS_TESTLAB_GUIDED=1` opt-in the supervisor
+checks in the same path ("Guided runs").
 
 ## Diagnostics
 
@@ -293,8 +296,8 @@ returns `ScenarioCheck {end_ms, primitives, supported_profiles, overrides}`.
 | Primitive | Required args | Optional args | Profiles | Notes |
 |---|---|---|---|---|
 | `user.turn` | `turn_id`, `content_tag` | `addressing` | virtual | Committed user turn by opaque content tag (replay). |
-| `user.speech` | `turn_id`, `text` | `addressing` | virtual, live, hw:guided | Authored utterance: virtual transcript, live text input, guided means the human says it. |
-| `user.interrupt` | `turn_id`, `text` | – | virtual, live, hw:guided | The user starts speaking over Jarvis output. |
+| `user.speech` | `turn_id`, `text` | `addressing` | virtual, live | Authored utterance: a virtual transcript, or a live text input. On `hardware:guided` a PERSON says the words, and that needs an id, a deadline and an acknowledgement — the `human.*` family. |
+| `user.interrupt` | `turn_id`, `text` | – | virtual, live | The user starts speaking over Jarvis output. |
 | `brain.hold` | `work_id` | – | virtual | The scripted brain starts holding work (replay). |
 | `brain.ready` | `work_id`, `result_tag` | – | virtual | Scripted brain result, as an opaque tag (replay). |
 | `brain.release` | `work_id` | – | virtual | The scripted brain releases held work (replay). |
@@ -313,7 +316,11 @@ returns `ScenarioCheck {end_ms, primitives, supported_profiles, overrides}`.
 | `control.stop` | `reason` | – | all | The session is stopped (replay). |
 | `control.checkpoint` | `checkpoint_id` | – | all | The executor settles and records a named point (replay). |
 | `time.wait` | – | – | all | Virtual time advances to `at_ms` with no stimulus (timers, TTLs, queues). |
-| `audio.inject` | `audio_ref` | `gain_db` | audio, live, hw:auto, hw:guided | A known audio fixture, by reference, never bytes, resolved inside the Slice 08 fixture root ("Audio profile"). Not a virtual primitive. |
+| `audio.inject` | `audio_ref` | `gain_db` | audio, live, hw:auto, hw:guided | A known audio fixture, by reference, never bytes, resolved inside the Slice 08 fixture root ("Audio profile"). On `audio`/`live` it enters the CAPTURE path; on `hardware:*` it is played through the real output device, because that profile has a speaker. Not a virtual primitive. |
+| `human.silence` | `prompt_id` | `text`, `deadline_ms` | hw:guided | The human is asked to stay completely silent until the step ends ("Guided runs"). |
+| `human.speak` | `prompt_id`, `text` | `deadline_ms` | hw:guided | The human is asked to say `text` out loud, at a normal volume. |
+| `human.interrupt` | `prompt_id`, `text` | `deadline_ms` | hw:guided | The human is asked to cut Jarvis off with `text` while it is speaking. |
+| `human.acknowledge` | `prompt_id` | `text`, `deadline_ms` | hw:guided | The human is asked to confirm that the previous step happened as described. |
 | `parameter.override` | `parameter`, `value` | – | all | Run-local value; prelude only (see below). |
 | `expect.event` | `event` | `count_min`, `count_max` | all | A Conversation Events type must appear `count_min` (default 1) to `count_max` times. |
 | `expect.metric` | `metric`, `comparator`, `threshold` | – | all | Ad-hoc check on a declared metric, evaluated on the final run metrics. |
@@ -325,8 +332,8 @@ faults always reports the same first fault.
 
 | Type | Rule |
 |---|---|
-| identifier (`turn_id`, `work_id`, `candidate_id`, `intent_id`, `output_id`, `playback_id`, `content_tag`, `result_tag`, `generated_tag`, `checkpoint_id`, `provider_item_id`) | `[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}`, opaque; `provider_item_id` may be null |
-| time in ms (`ttl_ms`, `played_ms`) and `intent_epoch` | non-negative integer (never a bool), within the timeline bound |
+| identifier (`turn_id`, `work_id`, `candidate_id`, `intent_id`, `output_id`, `playback_id`, `content_tag`, `result_tag`, `generated_tag`, `checkpoint_id`, `provider_item_id`, `prompt_id`) | `[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}`, opaque; `provider_item_id` may be null |
+| time in ms (`ttl_ms`, `played_ms`, `deadline_ms`) and `intent_epoch` | non-negative integer (never a bool), within the timeline bound; `deadline_ms` is also bounded by `MAX_PROMPT_DEADLINE_S` (10 min), pinned equal by a test |
 | boolean (`provider_still_active`) | strict bool |
 | choice (`addressing`, `kind`, `status`, `reason`, `reason_code`, `comparator`, `outcome`) | closed vocabulary of that name |
 | `text` | authored utterance ≤ 280 chars, single line, printable |
@@ -344,8 +351,15 @@ Rules that span steps:
 - **Profiles.** Each primitive declares the profiles that can perform it, and a
   scenario is validated against the profiles it will run on
   (`testlab_primitive_profile_unsupported`). Replay primitives drive controlled
-  doubles, which only `virtual` has today; Slices 08 and 09 widen a set only
-  together with a runner that really performs it on that profile.
+  doubles, which only `virtual` has today; Slices 08 and 09 widened a set only
+  together with a runner that really performs it on that profile. Slice 09 also
+  NARROWED one: `user.speech` and `user.interrupt` no longer claim `hardware:guided`.
+  That was a declaration written before anything implemented it, and it is wrong in a
+  way that matters — on a guided run a person says the words, and a step that asks a
+  person for something is not measurable without a stable id, a deadline and an
+  acknowledgement, none of which those two carry. The `human.*` family replaces them,
+  so there is exactly one way to address a person. No published manifest referenced
+  either primitive on that profile.
 - **Override prelude.** `parameter.override` steps come first, all at `at_ms` 0,
   never twice for one name: overrides are applied to the run snapshot before the
   run starts (Slice 05), never mid-run.
@@ -363,8 +377,9 @@ Rules that span steps:
 `PrimitiveHandler` is the executor-facing seam: a profile runner registers one handler
 per primitive it supports; the executor advances its virtual clock to
 `step.args["at_ms"]` and calls it. `missing_handlers(primitives, profile, handlers)`
-names what a runner still has to cover; it is empty for `virtual` (Virtual profile)
-and names everything for the profiles Slices 08 and 09 will add.
+names what a runner still has to cover; it is empty for `virtual` (Virtual profile),
+for `audio`/`live` (Audio profile) and for `hardware:auto`/`hardware:guided`
+(Hardware profiles).
 
 ## Replay fixtures
 
@@ -1112,6 +1127,13 @@ field and rule (`str(error)` is `"<code>: <detail>"`). Subclasses:
 | `testlab_json_invalid` | Malformed JSON text, duplicate key, NaN |
 | `testlab_transition_illegal` | Status change outside the state machine |
 
+Slice 09 adds two families, both of them `MeasurementUnavailable` subclasses and so all
+reading `inconclusive`: the device codes (`testlab_device_*`, "Hardware profiles") and
+the guided codes (`testlab_guided_prompt_timed_out`, `testlab_guided_prompt_refused`,
+`testlab_guided_prompt_late`, `testlab_guided_prompter_failed`,
+`testlab_guided_prompt_limit`, `testlab_guided_step_not_followed`,
+`testlab_guided_claim_unmeasured`, "Guided runs").
+
 Slice 04 adds the vocabulary, catalog and promotion families. `PrimitiveError`
 (and `PrimitiveArgError`, which carries the failed `rule`), `CatalogError` (with
 `path` and `cause_code`) and `PromotionRefused` (with `cause_code`) are all
@@ -1842,6 +1864,8 @@ it. Retention stays disabled unless enabled explicitly.
 | `device_contention_during_run` | `errored` | Slice 08: the live Jarvis took the devices back while the run was executing; the run was stopped |
 | `live_opt_in_missing` | `errored` | Slice 08: a provider run without the explicit `JARVIS_TESTLAB_LIVE=1`; nothing was called and nothing was spent |
 | `cost_budget_exceeded` | `errored` | Slice 08: the estimated provider spend crossed the run's budget mid-run and the session was stopped |
+| `supervisor_fault` | `errored` | Slice 08: the supervisor's own gate or supervision loop raised; never the worker's fault |
+| `human_presence_missing` | `errored` | Slice 09: a guided run without the explicit `JARVIS_TESTLAB_GUIDED=1`; nobody's time was spent |
 
 Supervisor refusals raised to the caller use `testlab_supervisor_request_invalid`,
 `testlab_supervisor_stopped`, `testlab_supervisor_unknown_run` and
@@ -2333,6 +2357,17 @@ two tests that prove it are the same run with one difference: injected audio tha
 correlates with what Jarvis played (0 confirmed barge-ins, the run passes) versus a
 loud uncorrelated voice (1 confirmed, the blocking assertion fails).
 
+The injected echo is a **room response**, not a copy of what was played: one block of
+delay, a slow level drift and a little broadband noise (`room_response`,
+`ECHO_DELAY_BLOCKS` in `jarvis/testlab/audio/chain.py`), and the first candidate waits for
+the canceller's 400 ms pre-roll. None of that is decoration. A delay-free, exactly-scaled,
+noiseless copy is cancellable in a way no room is: the canceller converges until the
+near-end detector learns to expect a residual no room produces, and after the detector's
+three-second warm-up clamp lifts, the gate opens on its own arithmetic. Measured at this
+seed's own declared default of 8 000 ms, the old copy made the diagnostic FAIL a healthy
+product at ~3.4 s; the room response plays all 8 000 ms clean, 5/5. Full measurements and
+the residual open question: `Issues/self-barge-in-after-seconds-of-speech.md`.
+
 **Cannot prove.** No PortAudio stream is opened, so: no room, no speaker, no
 microphone, no clock drift, no underrun, no device contention and no native failure.
 The acoustic coupling is whatever the run states: `echo.coupling_db` is a DECLARED
@@ -2407,6 +2442,378 @@ in a routine suite.
 it with doubles; the first real call is the human gate of Slices 09 and 12. The opt-in
 test that would make it is
 `tests/integration/test_testlab_live_runners.py::test_a_real_provider_session_measures_real_latency`.
+
+## Hardware profiles
+
+`jarvis/testlab/hardware/`. `hardware:auto` and `hardware:guided` are the only Test Lab
+profiles that open this workstation's microphone and speaker. They are the `audio`
+profile with ONE substitution, exactly as `audio` is `virtual` with one:
+
+| Piece | `audio` | `hardware:auto` / `hardware:guided` |
+|---|---|---|
+| Audio bridge | `InjectedSourceAudio` (production writer, no PortAudio) | `DeviceAudio`: the PRODUCTION `SoundDeviceRealtimeAudio`, opening real streams |
+| Microphone | a fixture pushed into `capture.process` | the room, through PortAudio's own callback |
+| Speaker | `ImmediateOutputStream` | the workstation's output device |
+| Echo coupling | the declared `echo.coupling_db` | whatever the room does |
+| Duplex capture, canceller, near-end detector | production | production, unchanged |
+| Realtime session | the deterministic double | the deterministic double (no hardware profile calls a provider) |
+
+**What `hardware:auto` adds over `audio`.** The coupling stops being a number the run
+states and becomes what the speaker, the room and the microphone actually do: real
+delay, real reverberation, real drift between the two clocks, real underruns, and real
+device failure. An `audio` run proves the production canceller keeps the echo gate closed
+against an echo the run itself constructed; a `hardware:auto` run proves it against an
+echo nobody designed. No human is involved, so it can only make the NEGATIVE claim —
+nothing confirmed a barge-in while the room was *assumed* quiet.
+
+**What `hardware:guided` adds over `auto`.** A human, and exactly two things follow. The
+silence becomes DECLARED instead of assumed: the person was asked to be quiet and the run
+recorded whether they were. And a real voice can be asked to interrupt, which is the only
+way to measure the TRUE positive. "The echo gate never fires" and "the echo gate fires for
+a person" are different claims, and a gate that never opens satisfies the first one
+perfectly while being completely broken. The two profiles are meant to be read together.
+
+### Device selection
+
+Declared parameter, else the workstation's configured device, else PortAudio's own
+default — and the `source` of each choice is recorded in the run metadata, so a reader
+knows whether a measurement was taken on a pinned device or on whatever the machine
+happened to default to.
+
+1. the diagnostic's declared `device.input` / `device.output` parameters (a device id or
+   name; empty means "no preference");
+2. `audio_input_device` / `audio_output_device` from the run's OWN settings copy
+   (`<runtime_dir>/control-center-settings.json`), the same keys the Control Center
+   writes — never the live `runtime/`, which the worker's isolation check forbids;
+3. `None`, which is what Realtime Voice uses when nothing is configured.
+
+Ids are normalised by the product's own `normalize_device_id`, so "1", `1` and a device
+name mean here what they mean to Voice. Before anything is mounted, the selection is
+pre-flighted with `SoundDeviceAudioDiagnostics.check_input_format` /
+`check_output_format` — the same PortAudio question the Control Center audio test asks,
+which opens nothing.
+
+### The device failure mapping
+
+**Every way a device can fail is `MeasurementUnavailable`, which reads `inconclusive`.**
+Never `crashed` (that would blame the lab for the workstation) and never `failed` (that
+would blame Jarvis). This is the Slice 08 carry-over made mechanical: the contention
+detector answers "is the live Jarvis using the devices", never "can this device be
+opened", and a third application holding the microphone is invisible to it.
+
+| What happened | Product code | Test Lab code |
+|---|---|---|
+| `sounddevice` is not installed | `audio_backend_unavailable` | `testlab_device_backend_unavailable` |
+| PortAudio could not enumerate | `audio_device_enumeration_failed` | `testlab_device_backend_unavailable` |
+| The microphone refuses 24 kHz mono, or somebody holds it | `audio_input_unavailable` | `testlab_device_input_unavailable` |
+| The output refuses 24 kHz mono, or somebody holds it | `audio_output_unavailable` | `testlab_device_output_unavailable` |
+| The microphone stream could not record | `audio_input_capture_failed` | `testlab_device_input_capture_failed` |
+| Nothing above the noise floor was captured | `audio_input_no_signal` | `testlab_device_input_no_signal` |
+| Playback failed | `audio_output_playback_failed` | `testlab_device_output_playback_failed` |
+| A supplied device id cannot exist | — | `testlab_device_id_invalid` |
+| Anything else the product raises | any other code | `testlab_device_unmapped`, with the product's code in the detail |
+| The pre-flight passed and the open failed anyway | — | `testlab_device_open_failed` |
+| The microphone delivered nothing during the run | — | `testlab_device_input_no_signal` |
+| Nothing reached the output device during the run | — | `testlab_device_output_not_played` |
+
+A product code this table does not list still becomes `MeasurementUnavailable`, on ONE
+stable code, `testlab_device_unmapped`, with the product's own code in the detail. Never
+on a code synthesised from the message: a `RunFailure.code` is an identifier callers
+branch on and the Slice 01 name rules validate, and `f"testlab_device_{exc.code}"` would
+happily produce `testlab_device_AUDIO WEIRD/code` from a product that grew a new message.
+The detail is bounded, printable and single-line whatever the code contained.
+
+`testlab_device_output_not_played` and `testlab_device_input_no_signal` are the
+**anti-vacuity rule**. "No false barge-in" measured through a microphone that delivered
+nothing is not a passing run, it is an empty one — and an empty run that reads `passed` is
+worse than an inconclusive one, because somebody will believe it. A hardware run that
+played nothing, or captured nothing, refuses to report.
+
+Counting bytes is not enough for the input half: a driver that streams digital silence
+delivers as many bytes as a working one. So the run also requires that something was above
+the **digital** floor over its whole length — one LSB, -90.3 dBFS, read from the raw
+microphone by `LevelledCapture`. That is a bound on "the microphone is wired to nothing",
+not a judgement about the room: a quiet room still carries Jarvis's own echo, which is the
+whole stimulus. A guided phase that played nothing fails the same way and NAMES the phase,
+because reporting "they did not interrupt" for a sentence Jarvis never said would blame
+the person for our defect.
+
+### Releasing the device
+
+Always, on every path: success, `MeasurementUnavailable`, `RunCancelled`, the run
+deadline, and an unforeseen exception. `hardware_voice_stack` closes every `DeviceAudio`
+it finds in its own `finally`, after the voice runtime's teardown has already closed it
+once; closing twice is safe and leaving a microphone open is not. If the worker is killed
+instead (the supervisor's forced tree kill), the operating system closes the streams with
+the process — which is the backstop, not the plan.
+
+### What a hardware run records
+
+`hardware_profile.json` (`jarvis.testlab.profile_metadata` v1, a bounded `report`): the
+same fields an `audio` run writes, with `device_opened: true`, the device **ids** that
+were requested, the `source` of each choice, and `echo_source: "room"`. Device ids, never
+an enumeration of the machine: a device name is a fact about the user's hardware. A
+guided run adds `guided: true` and `prompt_count`, and commits `guided_prompts.json`
+beside it.
+
+`capture.wav` follows the Slice 08 rule unchanged, and it matters more here: on a
+hardware profile a clip is a recording of the user's ROOM. All three conditions must hold
+(the caller asked, the profile can produce audio, the store was built with
+`ArtifactWriteLimits(allow_audio=True)`), and the store still refuses at write time.
+
+### The stimulus schedule, and why it is shaped that way
+
+Two rules in `play_through_the_room`, and both exist so the runner does not manufacture
+its own result:
+
+- **No barge-in candidate before 400 ms of output.** The production canceller keeps a
+  400 ms pre-roll and learns the room's coupling from the first frames. A candidate
+  raised before that measures the canceller's convergence, not the gate.
+- **The output never stops while a decision is pending.** An onset is raised and the next
+  block is played immediately; the decisions are collected after the last block. Stopping
+  to wait would let Jarvis fall silent mid-sentence, the far-end window would expire, and
+  the gate would open for a reason that has nothing to do with the room.
+
+- **The far end must exist in the DETECTOR before the first candidate.** The canceller's
+  far-end window is filled by what the room RETURNS, not by what was written, so the run
+  waits for one microphone block before its first candidate and only the first. Fifty
+  milliseconds against 400 ms already playing: the output does not fall silent for it.
+
+Each block must also reach the device before the next is queued, and the wait is on
+`DeviceAudio.written_output_ms` rather than on the audible `played_output_ms`: on a device
+whose latency exceeds one block the audible figure is still zero when two blocks have been
+written, and a run that waited on it would raise its stimulus before Jarvis was playing.
+`played_output_ms` is likewise sampled WHILE the utterance plays, because it is the cursor
+of the current output and returns to zero when the device releases it — which is exactly
+what a confirmed barge-in does, so reading it afterwards reported "nothing was played" for
+the one case the run wants.
+
+`barge_in.first_candidate_offset_ms` records where the first candidate actually landed, so
+the 400 ms gap is evidence a reader can check rather than a constant buried in the runner,
+and a sweep can move it. It is declared by the proposed manifests only: a runner offers
+its measurements and the DECLARATION selects them (`declared_metrics`), because reporting
+a metric a declaration never mentioned makes `check_run_against_spec` refuse the completed
+run.
+
+### What the hardware profiles still cannot prove
+
+- **Nothing about a provider.** The Realtime session is the deterministic double on both
+  profiles, so the provider's VAD onsets are raised by the runner. What is real is the
+  microphone, the room, the canceller and the gate that decides on them.
+- **Nothing repeatable about a room.** A measurement taken in this room, on this machine,
+  at this volume is evidence about that. A hardware run is a sample, not a regression
+  gate, which is why no hardware profile belongs in a routine suite.
+- **`hardware:auto` cannot prove the gate opens.** Only a human can, which is the guided
+  profile.
+- **They have never been executed against a real device.** Slice 09 implemented and tested
+  both over a `sounddevice` double with a simulated room
+  (`tests/fakes/sounddevice_double.py`); the first real open is the Human gate
+  HV-TL-HW-01. Everything under `tests/integration/test_testlab_hardware_devices.py` is
+  written and left skipped, and its result is "unverified", not "passed".
+
+## Guided runs
+
+`jarvis/testlab/hardware/prompts.py` and `channel.py`. Locked decision 11: on
+`hardware:guided` the human is an explicit scenario actor. This is the whole contract of
+that, and it contains no terminal, no HTTP and no UI — a runner executes inside a worker
+process with no console attached, so it cannot assume one.
+
+### The prompter contract
+
+```
+GuidedPrompt {prompt_id, action, text, deadline_s, phrase, expects_voice, strict_timing}
+GuidedPrompter.present(prompt) -> PromptReply {acknowledged, refused, note}
+```
+
+| Piece | Rule |
+|---|---|
+| `prompt_id` | Stable and authored. It is how the CLI, the UI and the stored evidence name the same step, and how an acknowledgement is matched to what it answers. Same type as `turn_id`. |
+| `action` | Closed: `remain_silent`, `say_phrase`, `interrupt`, `acknowledge`. A presenter renders one affordance per action. |
+| `text` | The sentence shown to the human. Authored, bounded (240 chars), never user data. |
+| `deadline_s` | Part of the CONTRACT, not a hint. A presenter must show how long the human has and how much is left: a step with no visible countdown is indistinguishable from a frozen run. |
+| `phrase` | The exact words to say. Required for `say_phrase` and `interrupt`. |
+| `strict_timing` | A late answer voids this step's measurement. True for `interrupt`, where the timing IS the measurement. |
+
+**The presenter reports the answer; it never reports the timing.** `GuidedSession` stamps
+the call on both sides, so no presenter can understate how long a human took, and a slow
+presenter cannot be mistaken for a slow human — the run measures the whole round trip,
+which is what the person experienced. `GuidedSession` also owns the deadline, so every
+presenter is bounded identically.
+
+Implementations:
+
+| Presenter | Where |
+|---|---|
+| `HeadlessPrompter` | the test double: answers at once, after a delay, never, or refusing |
+| `FilePrompter` / `PromptWatcher` | what a worker really uses, and the half Slices 10 and 11 render |
+| a CLI | Slice 10 |
+| the Control Center panel | Slice 11 |
+
+### The channel
+
+Two files in the run scratch, beside `job.json`, `heartbeat.json` and `cancel.json`:
+
+| File | Written by | Says |
+|---|---|---|
+| `prompt.json` (`jarvis.testlab.guided_prompt` v1) | the worker | "show this to the human, they have this long" |
+| `prompt-ack.json` (`jarvis.testlab.guided_ack` v1) | the presenter | "they answered, here is what they said" |
+
+A `sequence` number matches the two, so a stale acknowledgement left by a previous step
+can never answer the current one — the failure a naive "is the ack file there?" poll would
+produce on every second prompt. Files rather than a socket, for the same reason
+`result.json` is a file: the record has to survive either side dying. A presenter killed
+mid-prompt leaves the prompt on disk for the next one; a worker killed leaves no ack to be
+misread. Both files are removed when the step ends, including when its deadline passes.
+
+### Human-as-actor rules
+
+**A human is never a defect.** Only the product can fail a diagnostic.
+
+| What the human did | Outcome | Reads as |
+|---|---|---|
+| Answered within the deadline | `acknowledged` | the step happened |
+| Answered within the deadline + `LATE_GRACE_S` (15 s) | `late` | evidence; voids the step only when it declares `strict_timing` (`testlab_guided_prompt_late`) |
+| Never answered | `timed_out` | `testlab_guided_prompt_timed_out` → `inconclusive` |
+| Declined | `refused` | `testlab_guided_prompt_refused` → `inconclusive` |
+| The presenter broke | `prompter_failed` | `testlab_guided_prompter_failed` → `inconclusive` |
+| Did something OTHER than what was asked | recorded as an observation | the DIAGNOSTIC decides |
+
+That last row is the interesting one, and it is deliberately not decided here. Each
+`PromptRecord` carries what the microphone observed while the step was open, and
+`followed` compares it with `expects_voice`. The same observation means opposite things:
+speech during `remain_silent` voids a self-echo measurement, speech during `interrupt` IS
+the measurement. `jarvis.testlab.hardware.prompts` records; the runner decides
+(`require_silent_phase`).
+
+"Did the human make a sound?" is one object, `RoomVoice`, built the same way in every
+phase, from three measurements. What separates them is whether they can be Jarvis:
+
+| Measurement | Can it be Jarvis? | Catches | Blind to |
+|---|---|---|---|
+| the room with NOTHING playing, before the step | no | somebody already talking | somebody who starts during the step |
+| the same, after the step | no | somebody who started during it and kept going | a sound shorter than the step |
+| the product's `near_end` signal, during the step | **yes** — it also rises on the canceller's residual | somebody who starts and stops inside the step | — |
+| the microphone's in-window peak | **yes** — it carries the echo at a voice's level | nothing it can be trusted for | — |
+
+So `RoomVoice.certain` is the two silent-window measurements and nothing else, and
+`RoomVoice.suspected` is the near-end signal. A CLAIM then takes what it needs:
+
+- **"nobody spoke"** (the `remain_silent` step) is voided by `certain`; a suspicion voids
+  it only when the phase also confirmed a barge-in, because then the confirmation cannot
+  be attributed to either. A bare suspicion must not void it: over several seconds of
+  continuous speech the detector raises on its own residual in an empty room, and voiding
+  every long run for that would make the diagnostic unusable at its declared default.
+- **"somebody DID speak"** (the `interrupt` step) needs `certain` and never `suspected`.
+
+That last line is the fix for a defect that would have certified the one claim only a
+person can make, with nobody in the room. Both gates used to be satisfiable by Jarvis's own
+sound: the in-window peak carries the echo at a voice's level, and the near-end signal also
+rises on the canceller's residual over a long utterance. Empty room, no human, scripted
+acknowledgements: clean at 1 000/1 500/2 000 ms, and from **2 500 ms upward**
+deterministically `barge_in.true_confirmed_count = 1` with the run reading `passed`. The
+proposed guided manifest's default is 8 000 ms, so the Human gate at defaults would have
+certified it. What remains blind is stated rather than papered over: a sound shorter than
+the step, which the product itself did not call, is not detected — tell the operator to
+keep speaking until the step ends, which the script does.
+
+**The provider reports speech when there is speech.** On the interrupt step the run raises
+the provider's VAD onset only once the capture has reported a near-end voice **above the
+echo-only level measured in the silent phase of the same run**, plus `ECHO_MARGIN_DB`
+(6 dB). The bare signal was not enough, for the reason above. With nothing in the room it
+declines, `barge_in.true_confirmed_count` stays zero, and the claim is reported as
+unmeasured. `DeviceAudio.heard_voice_since(mark, above_dbfs=...)` is the one place that
+question is asked.
+
+**And a zero is never a silent pass.** When the human acknowledged the interrupt step and
+the stack confirmed nothing, the claim the guided profile exists to make was not made.
+Whether that reads as a VERDICT or as a measurement failure is a property of the
+DECLARATION, exactly as it is for scenario expectations: a diagnostic that declares a
+BLOCKING assertion on `barge_in.true_confirmed_count` has said "zero is a product
+failure", and the metric is reported so the supervisor can fail the run on it; a
+diagnostic that has not said that cannot express the verdict, so the run ends
+`testlab_guided_claim_unmeasured` -> `inconclusive`.
+
+### The evidence
+
+`guided_prompts.json` (`jarvis.testlab.guided_transcript` v1, a bounded `report`),
+committed in a `finally` — the transcript of a run a human abandoned is exactly the
+evidence worth keeping. Per prompt: the declaration, `shown_at` and `acknowledged_at`
+(UTC ms, the Conversation Events wire form), `response_ms`, the outcome, the free note,
+`observed_voice`, `observed_peak_dbfs` and `followed`. Plus the run totals:
+`prompt_count`, `acknowledged_count`, `late_count` and the `unfollowed` ids.
+
+**And the PROVENANCE of `observed_voice`** (`RoomVoice.to_dict`): `room_before_dbfs`,
+`room_after_dbfs`, `window_peak_dbfs`, `near_end_seen`, `voice_floor_dbfs` and `certain`.
+Without it a record said `voice: true` and a reader had no way to tell a person from
+Jarvis's own echo — which is precisely how an empty room certified a human interrupt. A
+stored guided record now carries the numbers the decision was made on.
+
+A guided run may address the human at most `MAX_PROMPTS_PER_RUN` (64) times. A scenario
+that needs more is not a diagnostic, it is a chore.
+
+**Deadlines are derived, so watch the parameter.** The guided seed's per-phase deadline is
+`output.duration_ms` plus `DEFAULT_PROMPT_DEADLINE_S` (30 s), capped by
+`MAX_PROMPT_DEADLINE_S` and by what is left of the run budget. A declaration that sets
+`output.duration_ms` to two minutes therefore asks a person to hold still for two and a
+half, which is a long time to be silent on purpose. The manifests that declare it say so
+on the parameter.
+
+### Presence: the fifth mechanical gate
+
+A guided run spends a PERSON's attention, and a prompt nobody is there to see times out
+into `inconclusive` after burning the whole run budget. So, beside the four `live` gates:
+
+| Gate | Where | Refusal |
+|---|---|---|
+| Capability | `check_profile_permission` at `submit` | `permission_denied` (`human_presence` missing), outcome `refused` |
+| Presence | the supervisor's reservation path: `JARVIS_TESTLAB_GUIDED=1` in its environment | `human_presence_missing`, outcome `refused` |
+
+The declared `human_presence` capability says the DIAGNOSTIC needs a person; the opt-in
+says one is at this keyboard right now. Nothing derives it and nothing defaults it on,
+exactly as for `JARVIS_TESTLAB_LIVE`. It is checked before the device contention gate and
+before the device lease, so a refusal names the first cause and the one thing the gate
+TAKES is still taken last.
+
+### The guided vocabulary
+
+Four primitives, `hardware:guided` only, data like every other
+(see "Scenario primitives"): `human.silence`, `human.speak`, `human.interrupt`,
+`human.acknowledge`. Each carries a `prompt_id` and an optional `deadline_ms`; the spoken
+two require the `text` the person says. `GuidedExecutor` adds them to the shared handler
+table and replaces nothing, which `resolve_handler` enforces.
+
+On a hardware profile `time.wait` is a REAL wait: there is a room, a driver and possibly a
+person, and pretending three seconds passed when they did not would measure nothing.
+
+### Registered implementations
+
+| Name | Profile | Runner | Measures |
+|---|---|---|---|
+| `testlab.scenario.hardware_auto` | `hardware:auto` | `HardwareScenarioRunner` | `scenario.steps_performed`, `.checkpoints_reached`, the two expectation metrics, `audio.played_ms`, `audio.captured_ms` |
+| `testlab.scenario.hardware_guided` | `hardware:guided` | `GuidedScenarioRunner` | the same, plus `guided.prompt_count`, `guided.late_prompt_count`, `guided.unfollowed_count` |
+| `voice.self_echo.hardware_auto` | `hardware:auto` | `SelfEchoHardwareRunner` | the four `voice.self_echo` metrics, with the gate decided in a real room |
+| `voice.self_echo.hardware_guided` | `hardware:guided` | `SelfEchoGuidedRunner` | the same, plus `barge_in.true_confirmed_count` and the two guided counts |
+
+The last two are registered but **not published**: no official manifest declares a
+hardware profile yet. Two are rendered and awaiting approval in
+`tasks/jarvis-category2-test-lab/slices/09-hardware-guided/`:
+
+| Manifest | Claim | Assertion |
+|---|---|---|
+| `proposed-voice.self_echo.v3.json` | `hardware:auto` — Jarvis does not interrupt itself on its own echo in a real room | the existing blocking `no_false_barge_in` |
+| `proposed-voice.barge_in_response.v1.json` | `hardware:guided` — a real human voice DOES get through the gate, and the echo still does not | blocking `real_voice_interrupts` (`ge 1`) and blocking `no_false_barge_in` |
+
+Two diagnostics and not one version of one, because the positive claim needs a BLOCKING
+assertion and assertions are diagnostic-level: a blocking assertion on a guided-only
+metric would make every `virtual` and `audio` run of the same diagnostic inconclusive.
+Registering a name makes a diagnostic runnable, never permitted.
+
+`SelfEchoGuidedRunner` speaks TWICE, one whole turn per phase: the first while the human
+is asked to be silent (every confirmation is FALSE), the second while they are asked to
+interrupt (a confirmation is TRUE). Two turns and not two answers to one question, because
+the first utterance ends when it is interrupted or runs out, and a second phase sharing it
+would have nothing left to interrupt. The phases are counted separately, so a barge-in the
+human caused can never be reported as a false positive.
 
 ## Device contention
 
@@ -2514,9 +2921,15 @@ respect a shared lease is a change to `jarvis/runtime/` that Slice 08 may not ma
   to at most one poll interval and ends the run `inconclusive`; making it impossible
   needs a lock the live runtime takes.
 - **Not an authority on the device itself.** The detector answers "is the live Jarvis
-  using the audio devices", not "can this device be opened". A third application
-  holding the microphone is invisible to it; only Slice 09's real open will find that,
-  and it must report it as `MeasurementUnavailable`.
+  using the audio devices", not "can this device be opened". A third application holding
+  the microphone is invisible to it; only the real open finds that, and it reports it as
+  `MeasurementUnavailable` — "Hardware profiles", the device failure mapping.
+- **`AudioBackendProbe` is offered, not imposed.** `hardware_contention_detector`
+  composes the live-voice probe with one that asks PortAudio whether this host has any
+  device at all, fail-closed and never raising. `RunSupervisor` still builds
+  `default_contention_detector`, because adding a native query to every device
+  reservation is a cost a caller should choose; Slice 10 composes the other one for a
+  workstation that runs hardware profiles.
 - **Rejected alternative: probing the Core port.** Binding `core_host:core_port` would
   detect a running Jarvis Core, but Core can run with voice stopped, so it would refuse
   runs that were perfectly safe. The heartbeat is the signal that means "voice".
@@ -2585,9 +2998,21 @@ clip, retention `max_bytes_by_kind` 256 MiB), and the paths stay far inside the
 ### Validation
 
 ```powershell
-.venv/Scripts/python -m pytest -q -p no:cacheprovider tests/unit/test_testlab_devices.py tests/unit/test_testlab_audio.py
-.venv/Scripts/python -m pytest -q -p no:cacheprovider tests/integration/test_testlab_audio_runners.py tests/integration/test_testlab_live_runners.py
+.venv/Scripts/python -m pytest -q -p no:cacheprovider tests/unit/test_testlab_devices.py tests/unit/test_testlab_audio.py tests/unit/test_testlab_hardware.py
+.venv/Scripts/python -m pytest -q -p no:cacheprovider tests/integration/test_testlab_audio_runners.py tests/integration/test_testlab_live_runners.py tests/integration/test_testlab_hardware_runners.py
+
+# the acoustic seeds at their DECLARED DEFAULTS, which is what a real caller gets
+.venv/Scripts/python -m pytest -q -p no:cacheprovider -s tests/integration/test_testlab_audio_runners.py tests/integration/test_testlab_hardware_runners.py -k defaults
 ```
+
+**Run the acoustic seeds at their declared defaults, not only at a fast duration.** Both
+of the defects above lived in the gap between the ~1.2 s every test used and the 8 000 ms
+the manifests declare, and neither was visible at 1.2 s. The defaults cases are part of
+the default suite (about 2 s for `audio`, about 7 s for each hardware profile) and they
+assert the DIAGNOSTIC — that it measures, decides on every candidate it raises, honours
+the pre-roll and reports a verdict derived from its metrics — never a particular acoustic
+outcome, because that outcome is the measurement and on a long utterance it is still an
+open question (`Issues/self-barge-in-after-seconds-of-speech.md`).
 
 Opt-in, never in the default suite. Each switch is a deliberate act:
 
@@ -2603,6 +3028,15 @@ $env:JARVIS_TESTLAB_AUDIO_PLAYBACK = "1"
 # a REAL, PAID provider session
 $env:JARVIS_TESTLAB_LIVE = "1"
 .venv/Scripts/python -m pytest -q -p no:cacheprovider tests/integration/test_testlab_live_runners.py
+
+# the hardware profiles on the REAL speaker and microphone. Plays a tone out loud and
+# records the room; it SKIPS rather than runs unless the detector says they are free.
+$env:JARVIS_TESTLAB_HARDWARE = "1"
+.venv/Scripts/python -m pytest -q -p no:cacheprovider tests/integration/test_testlab_hardware_devices.py
+
+# additionally the guided flow, which needs a HUMAN at the keyboard following the prompts
+# (HV-TL-HW-01; the operator script is in slices/09-hardware-guided/operator-script.md).
+$env:JARVIS_TESTLAB_GUIDED = "1"
 ```
 
 ## DiagnosticBundle

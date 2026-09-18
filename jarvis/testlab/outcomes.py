@@ -43,6 +43,7 @@ from jarvis.testlab.jobs import (
     FAILURE_COST_BUDGET_EXCEEDED,
     FAILURE_DEVICE_CONTENTION,
     FAILURE_DEVICE_CONTENTION_DURING_RUN,
+    FAILURE_HUMAN_PRESENCE_MISSING,
     FAILURE_ISOLATION_VIOLATION,
     FAILURE_JOB_INVALID,
     FAILURE_LIVE_OPT_IN_MISSING,
@@ -116,6 +117,9 @@ FAILURE_OUTCOMES: Mapping[str, RunOutcomeClass] = MappingProxyType({
     #: refusing is the point: the laptop microphone belongs to the live conversation.
     FAILURE_DEVICE_CONTENTION: RunOutcomeClass.REFUSED,
     FAILURE_LIVE_OPT_IN_MISSING: RunOutcomeClass.REFUSED,
+    #: Slice 09: a guided run with nobody declared present. Refusing costs nothing;
+    #: running would burn the whole run budget showing prompts to an empty chair.
+    FAILURE_HUMAN_PRESENCE_MISSING: RunOutcomeClass.REFUSED,
     # the lab broke
     FAILURE_WORKER_SPAWN_FAILED: RunOutcomeClass.CRASHED,
     FAILURE_WORKER_STARTUP_TIMEOUT: RunOutcomeClass.CRASHED,

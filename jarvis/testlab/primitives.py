@@ -8,7 +8,8 @@ The vocabulary productizes the `jarvis.voice_replay` v1 action DSL
 the replay codec validates its action data through this module. The Test Lab adds
 the common `at_ms` argument (virtual time of the step) and primitives the replay DSL
 lacks: user speech by bounded text, interruption, virtual wait, audio injection by
-fixture reference, run-local parameter override and expectations.
+fixture reference, run-local parameter override, expectations, and the `human.*` family
+(Slice 09) with which a `hardware:guided` scenario addresses the person in the room.
 
 A primitive is data: a name, typed arguments and the profiles that can perform it.
 Nothing here executes a step. `PrimitiveHandler` is the executor-facing seam that a
@@ -68,6 +69,10 @@ MAX_SPEECH_TEXT_CHARS = 280
 MAX_EXPECTED_EVENT_COUNT = 10_000
 MIN_GAIN_DB = -60
 MAX_GAIN_DB = 20
+#: A human may be asked to hold a step for at most ten minutes. Pinned equal to
+#: `jarvis.testlab.hardware.prompts.MAX_PROMPT_DEADLINE_S` by a test: the declaration and
+#: the runtime bound must agree, or a scenario could author a deadline no session honours.
+MAX_PROMPT_DEADLINE_MS = 600_000
 #: Common argument of every Test Lab step (not part of replay action data).
 AT_MS = "at_ms"
 
@@ -191,6 +196,12 @@ ARG_SPECS: Mapping[str, ArgSpec] = MappingProxyType({spec.name: spec for spec in
     _arg("assertion_id", ArgKind.ASSERTION_ID, "Declared diagnostic assertion."),
     _arg("outcome", ArgKind.CHOICE, "Expected assertion outcome.",
          choices=tuple(item.value for item in AssertionOutcome)),
+    # Slice 09, `hardware:guided`: the human is an explicit actor. Appended, never
+    # inserted: the order of this mapping is the validation order, and the first twenty
+    # rows are the `jarvis.voice_replay` v1 order a fixture's first fault depends on.
+    _arg("prompt_id", _I, "Stable id of one instruction addressed to the human."),
+    _arg("deadline_ms", _T, "How long the human has to perform the step (default: the profile's).",
+         maximum=MAX_PROMPT_DEADLINE_MS),
 )})
 _ORDER = {name: index for index, name in enumerate(ARG_SPECS)}
 
@@ -312,6 +323,8 @@ class PrimitiveFamily(StrEnum):
     AUDIO = "audio"
     PARAMETER = "parameter"
     EXPECT = "expect"
+    #: Slice 09: an instruction addressed to the human, on `hardware:guided` only.
+    HUMAN = "human"
 
 
 @dataclass(frozen=True, slots=True)
@@ -392,8 +405,15 @@ def _primitive(name: str, required: tuple[str, ...], optional: tuple[str, ...], 
 
 
 _VIRTUAL = (ProfileName.VIRTUAL,)
-_SPOKEN = (ProfileName.VIRTUAL, ProfileName.LIVE, ProfileName.HARDWARE_GUIDED)
+#: Profiles where the USER's words are data the run supplies (a scripted transcript, a
+#: text input to a provider). `hardware:guided` used to be here, which was a declaration
+#: written before anything implemented it: on a guided run a human says the words, and a
+#: step that asks a person for something needs an id, a deadline and an acknowledgement
+#: — none of which `user.speech` carries. Slice 09 narrowed this set and gave the guided
+#: profile the `human.*` family instead, so there is exactly one way to address a person.
+_SPOKEN = (ProfileName.VIRTUAL, ProfileName.LIVE)
 _ACOUSTIC = (ProfileName.AUDIO, ProfileName.LIVE, ProfileName.HARDWARE_AUTO, ProfileName.HARDWARE_GUIDED)
+_GUIDED = (ProfileName.HARDWARE_GUIDED,)
 
 #: The `jarvis.voice_replay` v1 actions. They drive controlled doubles (scripted brain,
 #: fake provider, owner decisions, fake device), which only the `virtual` profile has;
@@ -436,13 +456,23 @@ REPLAY_PRIMITIVES: tuple[PrimitiveSpec, ...] = (
 
 TESTLAB_PRIMITIVES: tuple[PrimitiveSpec, ...] = (
     _primitive("user.speech", ("turn_id", "text"), ("addressing",), _SPOKEN,
-               "The user says an authored utterance (virtual transcript, live text input, guided: the human says it)."),
+               "The user says an authored utterance (virtual transcript, or live text input)."),
     _primitive("user.interrupt", ("turn_id", "text"), (), _SPOKEN,
                "The user starts speaking over Jarvis output with an authored utterance."),
     _primitive("time.wait", (), (), ALL_PROFILES,
-               "Virtual time advances to at_ms with no stimulus (lets timers, TTLs and queues act)."),
+               "Virtual time advances to at_ms with no stimulus (lets timers, TTLs and queues act). "
+               "On a hardware profile the wait is real."),
     _primitive("audio.inject", ("audio_ref",), ("gain_db",), _ACOUSTIC,
-               "A known audio fixture is played into the audio input path (reference only, never bytes)."),
+               "A known audio fixture enters the audio path (reference only, never bytes): the capture "
+               "path on audio/live, the real output device on hardware."),
+    _primitive("human.silence", ("prompt_id",), ("text", "deadline_ms"), _GUIDED,
+               "The human is asked to stay completely silent until the step ends."),
+    _primitive("human.speak", ("prompt_id", "text"), ("deadline_ms",), _GUIDED,
+               "The human is asked to say the given phrase out loud, at a normal volume."),
+    _primitive("human.interrupt", ("prompt_id", "text"), ("deadline_ms",), _GUIDED,
+               "The human is asked to cut Jarvis off with the given phrase while it is speaking."),
+    _primitive("human.acknowledge", ("prompt_id",), ("text", "deadline_ms"), _GUIDED,
+               "The human is asked to confirm that the previous step happened as described."),
     _primitive("parameter.override", ("parameter", "value"), (), ALL_PROFILES,
                "Run-local value of a declared parameter or allowlisted setting, applied before the run starts."),
     _primitive("expect.event", ("event",), ("count_min", "count_max"), ALL_PROFILES,

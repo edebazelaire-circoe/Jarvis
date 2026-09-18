@@ -114,16 +114,27 @@ def double_factory(session_class=UsageEmittingSession):
 
 # ------------------------------------------------------------------- fixtures
 
-def queue_latency_live_spec(*, max_cost_usd: float = 0.50) -> DiagnosticSpec:
-    """`voice.queue_latency` with the `live` profile added: the v2 proposed for approval."""
-    base = load_catalog(CATALOG_ROOT,
-                        implementations=catalog_implementations()).describe("voice.queue_latency").diagnostic
-    live = ProfileSpec(ProfileName.LIVE, "voice.queue_latency.live", CostBounds(600, max_cost_usd),
-                       frozenset({Capability.REALTIME_PROVIDER}))
-    return DiagnosticSpec(diagnostic_id=base.diagnostic_id, version=2, title=base.title, domain=base.domain,
-                          description=base.description, profiles={**dict(base.profiles), ProfileName.LIVE: live},
-                          parameters=base.parameters, metrics=base.metrics, assertions=base.assertions,
-                          score=base.score)
+def queue_latency_live_spec(*, max_cost_usd: float | None = None) -> DiagnosticSpec:
+    """`voice.queue_latency` with the `live` profile: v2, PUBLISHED by Slice 09.
+
+    Read from the catalog rather than restated, so the runner and the declaration it is
+    judged by cannot drift apart. `max_cost_usd` narrows the published bound for the test
+    that proves the mid-run budget stops a session; it never widens it.
+    """
+    catalog = load_catalog(CATALOG_ROOT, implementations=catalog_implementations())
+    spec = catalog.describe("voice.queue_latency", version=2).diagnostic
+    assert ProfileName.LIVE in spec.profiles, "v2 is the version that adds the live profile"
+    if max_cost_usd is None:
+        return spec
+    published = spec.profiles[ProfileName.LIVE]
+    assert max_cost_usd <= published.cost.max_cost_usd, "a test may tighten the budget, never widen it"
+    live = ProfileSpec(published.name, published.implementation,
+                       CostBounds(published.cost.max_duration_s, max_cost_usd), published.requires)
+    return DiagnosticSpec(diagnostic_id=spec.diagnostic_id, version=spec.version, title=spec.title,
+                          domain=spec.domain, description=spec.description,
+                          profiles={**dict(spec.profiles), ProfileName.LIVE: live},
+                          parameters=spec.parameters, metrics=spec.metrics, assertions=spec.assertions,
+                          score=spec.score)
 
 
 def build_context(tmp_path: Path, spec: DiagnosticSpec, *, parameters=None, scenario=None,

@@ -76,15 +76,14 @@ def test_every_reserved_virtual_name_is_now_registered():
         assert entry.unavailable_reason is None
 
 
-def test_the_other_profiles_stay_reserved_until_their_slice():
+def test_every_declared_name_is_registered_except_the_deliberate_fixture():
     registry = catalog_implementations()
     reserved_names = sorted(name for name, entry in registry.entries.items() if entry.factory is None)
-    # Slice 08 registered the `audio` and `live` names, so only the two `hardware`
-    # profiles are still waiting for Slice 09. `testlab.selftest.reserved` is the
-    # deliberate fixture reservation that keeps the `runner_unavailable` worker path
-    # testable now that every other declared name is registered.
-    assert reserved_names == ["testlab.scenario.hardware_auto", "testlab.scenario.hardware_guided",
-                              "testlab.selftest.reserved"]
+    # Slice 06 registered the five `virtual` names, Slice 08 the `audio` and `live` ones,
+    # Slice 09 the four `hardware:*` ones. `testlab.selftest.reserved` is the deliberate
+    # fixture reservation that keeps the `runner_unavailable` worker path testable now
+    # that every other declared name is registered.
+    assert reserved_names == ["testlab.selftest.reserved"]
 
 
 @pytest.mark.parametrize("name,class_name", sorted(VIRTUAL_RUNNERS.items()))

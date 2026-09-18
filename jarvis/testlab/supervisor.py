@@ -80,6 +80,7 @@ from jarvis.testlab.jobs import (
     FAILURE_CANCELLED,
     FAILURE_DEVICE_CONTENTION,
     FAILURE_DEVICE_CONTENTION_DURING_RUN,
+    FAILURE_HUMAN_PRESENCE_MISSING,
     FAILURE_LIVE_OPT_IN_MISSING,
     FAILURE_PERMISSION_DENIED,
     FAILURE_RESOURCE_WAIT_TIMEOUT,
@@ -120,6 +121,7 @@ from jarvis.testlab.devices import (
     default_contention_detector,
     needs_device,
 )
+from jarvis.testlab.hardware.prompts import GUIDED_OPT_IN_ENV, guided_opt_in
 from jarvis.testlab.live.session import LIVE_OPT_IN_ENV, live_opt_in
 from jarvis.testlab.profiles import (
     Capability,
@@ -869,6 +871,14 @@ class RunSupervisor:
             return worker_failure(FAILURE_LIVE_OPT_IN_MISSING, failure_detail(
                 f"a run that calls a real provider needs the explicit opt-in {LIVE_OPT_IN_ENV}=1 in the "
                 "supervisor's environment; it is not set, so nothing was called and nothing was spent"))
+        # Slice 09: a guided run spends a PERSON's attention, and a prompt nobody is
+        # there to see times out into `inconclusive` after burning the whole run budget.
+        # The declared `human_presence` capability says the diagnostic needs a human; this
+        # says one is at the keyboard right now, and nothing derives or defaults it.
+        if Capability.HUMAN_PRESENCE in pending.capabilities and not guided_opt_in(self._base_environ):
+            return worker_failure(FAILURE_HUMAN_PRESENCE_MISSING, failure_detail(
+                f"a guided run needs a human present: set {GUIDED_OPT_IN_ENV}=1 in the supervisor's "
+                "environment when somebody is at this workstation and ready to follow the prompts"))
         if not needs_device(pending.capabilities):
             return None
         report = await asyncio.to_thread(self._contention.detect)

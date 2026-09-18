@@ -137,6 +137,11 @@ FAILURE_LIVE_OPT_IN_MISSING = "live_opt_in_missing"
 #: Slice 08: the estimated provider spend crossed the run's budget mid-run and the
 #: session was stopped. Partial measurements, no verdict — `inconclusive`.
 FAILURE_COST_BUDGET_EXCEEDED = "cost_budget_exceeded"
+#: Slice 09: a `hardware:guided` run was submitted without `JARVIS_TESTLAB_GUIDED=1`, the
+#: operator declaring that a human is at this workstation now. Nothing was opened and
+#: nobody's time was spent — `refused`. The declared `human_presence` capability says the
+#: diagnostic needs a person; this says one is actually there.
+FAILURE_HUMAN_PRESENCE_MISSING = "human_presence_missing"
 #: Slice 08: the SUPERVISOR broke around this run — an injected resource gate or the
 #: supervision loop raised. Never the worker's fault, so never the worker's code, and
 #: it reads `crashed` because it is a defect of ours, not a finding about the product.
@@ -151,7 +156,7 @@ FAILURE_CODES = frozenset({
     FAILURE_CATALOG_UNAVAILABLE, FAILURE_RUNNER_UNAVAILABLE, FAILURE_RUNNER_FAILED, FAILURE_SUPERVISOR_STOPPED,
     FAILURE_MEASUREMENT_UNAVAILABLE, FAILURE_SCENARIO_EXPECTATION_UNMET,
     FAILURE_DEVICE_CONTENTION, FAILURE_DEVICE_CONTENTION_DURING_RUN, FAILURE_LIVE_OPT_IN_MISSING,
-    FAILURE_COST_BUDGET_EXCEEDED, FAILURE_SUPERVISOR_FAULT,
+    FAILURE_COST_BUDGET_EXCEEDED, FAILURE_SUPERVISOR_FAULT, FAILURE_HUMAN_PRESENCE_MISSING,
 })
 
 

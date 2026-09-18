@@ -165,19 +165,22 @@ def catalog_implementations() -> ImplementationRegistry:
     supervisor resolved, or a run could be queued against a declaration the worker
     reads differently. It is the declared catalog, with the reserved names a Slice
     has implemented turned into registrations (Slice 06: the five `virtual` names;
-    Slice 08: two `audio` and two `live` names), plus the fixture names. The fixture
-    names are always present and always harmless: only a manifest can reference one,
-    and official manifests are locked.
+    Slice 08: two `audio` and two `live` names; Slice 09: the four `hardware:*` names),
+    plus the fixture names. The fixture names are always present and always harmless:
+    only a manifest can reference one, and official manifests are locked.
 
-    Registering an `audio` or `live` name makes it RUNNABLE, never PERMITTED: the
-    capability gate, the cost budget, device-contention detection and the live opt-in
-    all live in the supervisor's reservation path, and none of them is affected here.
+    Registering an `audio`, `live` or `hardware` name makes it RUNNABLE, never
+    PERMITTED: the capability gate, the cost budget, device-contention detection, the
+    device lease, the live opt-in and the guided presence opt-in all live in the
+    supervisor's reservation path, and none of them is affected here.
     """
     from jarvis.testlab.audio.registry import audio_implementations
+    from jarvis.testlab.hardware.registry import hardware_implementations
     from jarvis.testlab.live.registry import live_implementations
 
     return (default_implementations()
-            .registering((*virtual_implementations(), *audio_implementations(), *live_implementations()))
+            .registering((*virtual_implementations(), *audio_implementations(), *live_implementations(),
+                          *hardware_implementations()))
             .with_entries(selftest_implementations()))
 
 

@@ -75,13 +75,17 @@ ECHO_COUPLING_SPEC = ParameterSpec(
 
 
 def self_echo_audio_spec() -> DiagnosticSpec:
-    """`voice.self_echo` with the `audio` profile added: the v2 proposed for approval."""
-    base = load_catalog(CATALOG_ROOT, implementations=catalog_implementations()).describe("voice.self_echo").diagnostic
-    audio = ProfileSpec(ProfileName.AUDIO, "voice.self_echo.audio", CostBounds(300, 0))
-    return DiagnosticSpec(diagnostic_id=base.diagnostic_id, version=2, title=base.title, domain=base.domain,
-                          description=base.description, profiles={**dict(base.profiles), ProfileName.AUDIO: audio},
-                          parameters=(*base.parameters, ECHO_COUPLING_SPEC), metrics=base.metrics,
-                          assertions=base.assertions, score=base.score)
+    """`voice.self_echo` with the `audio` profile: v2, PUBLISHED by Slice 09.
+
+    Read from the catalog rather than restated, so the runner and the declaration it is
+    judged by cannot drift apart. It was the proposal this helper used to build by hand
+    while it waited for approval.
+    """
+    catalog = load_catalog(CATALOG_ROOT, implementations=catalog_implementations())
+    spec = catalog.describe("voice.self_echo", version=2).diagnostic
+    assert ProfileName.AUDIO in spec.profiles, "v2 is the version that adds the audio profile"
+    assert ECHO_COUPLING_SPEC in spec.parameters, "and the declared coupling the runner reads"
+    return spec
 
 
 def scenario_audio_spec() -> DiagnosticSpec:
@@ -353,3 +357,33 @@ async def test_an_out_of_range_coupling_is_refused_by_the_declaration(tmp_path):
     spec = self_echo_audio_spec()
     with pytest.raises(TestLabError):
         resolve_parameters(spec.parameters, {ECHO_COUPLING_PARAMETER: 20.0})
+
+
+# ------------------------------------------------- at the DECLARED DEFAULTS
+
+async def test_self_echo_at_its_declared_defaults(tmp_path, capsys):
+    """8 000 ms, the duration a real caller gets. `FAST_PARAMETERS` is 1 000.
+
+    Two defects lived in the gap between them and no test anywhere covered it: at the
+    default, an echo that was a delay-free, exactly-scaled copy of what was played let the
+    canceller converge until the near-end detector expected a residual no room produces,
+    the gate opened at about 3.4 s, and this diagnostic FAILED a healthy product. The echo
+    is now a room response (`jarvis.testlab.audio.chain.room_response`, one block of delay,
+    drift and noise) and the first candidate waits for the canceller's 400 ms pre-roll.
+
+    See `tasks/jarvis-category2-test-lab/Issues/self-barge-in-after-seconds-of-speech.md`:
+    what a REAL room does at this duration is still an open question for HV-TL-HW-01.
+    """
+    spec = self_echo_audio_spec()
+    defaults = {item.name: item.default for item in spec.parameters
+                if item.name in ("output.duration_ms", "echo.candidate_count")}
+    assert defaults["output.duration_ms"] >= 8000, "the default is what this test is for"
+    context = build_context(tmp_path, spec, parameters=defaults, budget_s=300.0)
+    outcome = await SelfEchoAudioRunner().run(context)
+    metrics = dict(outcome.metrics)
+    with capsys.disabled():
+        print(f"\naudio self_echo at declared defaults -> {metrics}")
+    assert metrics["barge_in.false_confirmed_count"] == 0, "Jarvis interrupted itself on its own echo"
+    assert metrics["barge_in.rejected_count"] >= 1, "the stack must DECIDE, not stay silent"
+    assert metrics["output.played_ms"] >= defaults["output.duration_ms"] - 200
+    assert verdict_of(spec, metrics) == "passed"
