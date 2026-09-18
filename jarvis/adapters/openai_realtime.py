@@ -161,7 +161,7 @@ NOISE_REDUCTION_TYPES = ("far_field", "near_field")
 # parce que le cerveau tarde.
 REFLEX_INSTRUCTION = (
     "{persona}\n"
-    "Core a attesté un travail en cours et la politique JARVIS autorise ce seul préambule "
+    "Le cerveau n'a encore rien répondu et la politique JARVIS autorise ce seul préambule "
     "après une attente notable. La réponse utile arrivera séparément. "
     "Formule une phrase naturelle de trois à dix mots, au présent, sur le temps consacré à "
     "examiner la demande. Varie la formulation, sans accusé générique du type « je comprends "

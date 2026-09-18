@@ -449,7 +449,10 @@ async def _run_voice_v2() -> int:
     from jarvis.runtime.voice_v2 import PersistentVoiceRuntime
     from jarvis.runtime.voice_switch import VoiceSwitchBus, VoiceSwitchCoordinator
     from jarvis.domain.errors import ConfigurationError
-    from jarvis.v2_config import V2Settings, VoiceArchitecture, parse_voice_arch, recommended_realtime_model
+    from jarvis.v2_config import (DEFAULT_REFLEX_DELAY_MS, REFLEX_DELAY_SETTING, REFLEX_ENABLED_SETTING,
+                                 V2Settings, VoiceArchitecture, parse_voice_arch,
+                                 recommended_realtime_model, reflex_delay_s, reflex_enabled,
+                                 reflex_requires_confirmed_work)
     from jarvis.runtime.voice_composition import resolve_voice_composition
     from jarvis.domain.voice_architecture import DuplexVoiceConfig, FrontBrainVoiceConfig, VoiceConfigError
     settings = V2Settings.load()
@@ -704,10 +707,21 @@ async def _run_voice_v2() -> int:
                 owner_buffer_ms=authorization.owner_buffer_ms if authorization.owner_enforced else None,
             )
 
+    # Cerveau réflexe : la phrase courte qui fait patienter pendant que le
+    # cerveau réfléchit. Le réglage du Control Center prime, la variable
+    # d'environnement n'est que le défaut de secours (`jarvis/v2_config.py`) —
+    # et le réglage jamais enregistré laisse la variable décider.
+    stored_stack_values = voice_stack.stored_for(overrides, stack.id)
     try:
-        ack_delay_s = max(0.0, float(stack_values.get("ack_delay_ms", 1200) or 0) / 1000.0)
-    except (TypeError, ValueError):
-        ack_delay_s = 1.2
+        ack_delay_s = (reflex_delay_s(stored_stack_values.get(REFLEX_DELAY_SETTING))
+                       if reflex_enabled(stored_stack_values.get(REFLEX_ENABLED_SETTING)) else 0.0)
+        reflex_require_work = reflex_requires_confirmed_work()
+    except ConfigurationError as exc:
+        # Un réglage illisible ne doit pas empêcher la voix de démarrer : on
+        # retombe sur le comportement par défaut, et on le dit dans le journal.
+        journal.emit("voice.reflex.setting_invalid", str(exc), level="warning",
+                     data={"code": "reflex_setting_invalid"})
+        ack_delay_s, reflex_require_work = DEFAULT_REFLEX_DELAY_MS / 1000.0, False
     authorization, authorization_error = _conversation_authorization(overrides, journal)
     from jarvis.runtime.voice_metrics import VoiceSessionMetricRecorder
     metric_components = [{
@@ -778,6 +792,7 @@ async def _run_voice_v2() -> int:
         ),
         capture_factory=capture_factory,
         reflex_delay_s=ack_delay_s if continuous_brain else 0.0,
+        reflex_require_work=reflex_require_work,
         authorization=authorization,
         authorization_error=authorization_error,
         # Ce qui a été demandé, face à ce que la capture applique : publié au

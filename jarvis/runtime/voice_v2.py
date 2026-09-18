@@ -99,6 +99,7 @@ class PersistentVoiceRuntime:
         voice_arch: VoiceArchitecture = VoiceArchitecture.LEGACY,
         capture_factory: Callable[[], object] | None = None,
         reflex_delay_s: float = 0.0,
+        reflex_require_work: bool = False,
         engagement_window_s: float = 30.0,
         authorization: ConversationAuthorization | None = None,
         authorization_error: ConversationAuthorizationError | None = None,
@@ -181,6 +182,7 @@ class PersistentVoiceRuntime:
         # Délai laissé au cerveau avant que la surface n'accuse réception
         # (0 = jamais), et fenêtre de conversation pour l'adressage.
         self.reflex_delay_s = reflex_delay_s
+        self.reflex_require_work = reflex_require_work
         self.engagement_window_s = engagement_window_s
         self._session: RealtimeSession | None = None
         self._pending_canonical_close: RealtimeSession | None = None
@@ -451,6 +453,7 @@ class PersistentVoiceRuntime:
                 clock=self.clock,
                 on_brain_activity=self.brain_activity,
                 reflex_delay_s=self.reflex_delay_s,
+                reflex_require_work=self.reflex_require_work,
                 conversation_events=self.conversation_events,
             )
             if self.continuous

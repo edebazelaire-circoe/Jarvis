@@ -56,7 +56,7 @@ class VoiceCapabilityRegistry:
                                     "selectable": reason is None, "reason": reason,
                                     "settings_scope": OPENAI_REALTIME.id if model.ref.provider_id == "openai" and mode is not VoiceArchitectureId.DUPLEX and role == "conversation" else None,
                                     "settings_fields": [field.describe() for field in OPENAI_REALTIME.fields
-                                                        if field.key not in {"model", "ack_delay_ms"}]
+                                                        if field.key not in {"model", "ack_delay_ms", "reflex_enabled"}]
                                     if model.ref.provider_id == "openai" and mode is not VoiceArchitectureId.DUPLEX and role == "conversation" else []})
                 chosen = next((item for item in options if item["selectable"]), None)
                 default = {name: chosen[name] for name in ("provider_id", "model_id")} if chosen else None

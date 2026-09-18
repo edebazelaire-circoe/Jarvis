@@ -383,6 +383,9 @@ Main environment overrides:
 | `JARVIS_VOICE_TURN_MODE` | `auto` (server VAD, default) or `manual` (second key press) |
 | `JARVIS_VOICE_STACK` | `openai_realtime` (default) or `gemini_live` |
 | `JARVIS_VOICE_ARCH` | `legacy` (default, computed) or `continuous_brain`; see "Deux architectures vocales" below. The **Architecture** choice of the Control Center (tab Mode vocal) takes precedence; this variable only applies while that choice is left on "Par défaut" |
+| `JARVIS_REFLEX_ENABLED` | cerveau réflexe du mode continu : `1` (défaut) ou `0`. La case **Cerveau réflexe (mode continu)** des réglages Voice passe devant ; la variable ne s'applique que tant que cette case n'a jamais été enregistrée |
+| `JARVIS_REFLEX_DELAY_MS` | silence toléré avant que le réflexe parle ; défaut 1200. `0` = jamais. Le champ **Délai avant accusé de réception** du Control Center passe devant |
+| `JARVIS_REFLEX_REQUIRE_WORK` | retour arrière : `1` n'autorise le réflexe que si Core a publié un `brain.work.started` corrélé. Défaut `0` depuis la remise en route du 18 septembre 2026 — cette exigence rendait le réflexe muet dès que le cerveau répondait sans déclarer de travail de fond |
 | `JARVIS_ACTIVE_TIMEOUT_S` | useful-inactivity timeout of an ACTIVE voice session; default 90. `0` = jamais : seule la touche de réveil (F9) ou « Jarvis mute » met fin à la conversation. Toute autre valeur doit être >= 5. Le champ « Délai d'inactivité » des réglages du Control Center passe devant |
 | `JARVIS_AGENT_CLI` | `claude` (default) or `codex` |
 | `JARVIS_CLAUDE_MODEL` | model passed to `claude --model`; empty means the CLI default |
@@ -1814,6 +1817,32 @@ fournisseur ensuite, et le tour suivant porte simplement
 `interrupted_speech_id` — c'est le cerveau qui décide de retenir, remplacer ou
 annuler. `Jarvis Mute` arrête la voix, jamais le travail de Core, et ne réveille
 jamais la voix pour prononcer un résultat que vous avez coupé.
+
+### Le cerveau réflexe : faire patienter pendant que le cerveau réfléchit
+
+En mode continu, la surface prononce au plus **une** phrase courte par tour
+(« Je regarde ça. ») quand le cerveau n'a toujours rien dit au bout du délai
+d'accusé. Le déclencheur est le silence, pas une déclaration de travail : le
+cerveau répond le plus souvent lui-même, sans tâche de fond, et exiger un
+`brain.work.started` corrélé l'a laissé muet du 13 au 18 septembre 2026
+(51 décisions `work_unconfirmed` dans `runtime/trace.jsonl`, aucun réflexe
+prononcé).
+
+Ce qui l'empêche de parler à contretemps n'a pas changé : une réponse du cerveau
+déjà prête annule le préambule avant qu'il ne commence à jouer
+(`useful_content_ready`), un travail déjà terminé le retient (`work_terminal`),
+un seul par tour (`already_used`), rien avant l'échéance
+(`answer_may_arrive_quickly`), rien pendant que l'utilisateur parle, et rien sur
+un simple « OK », une correction ou un « attends je réfléchis ». Chaque décision
+est journalisée en `voice.reflex.decided` (action, `reason`, `phase`).
+
+Trois réglages, dans cet ordre de précédence : le Control Center (onglet
+**Mode vocal**, section Conversation : la case **Cerveau réflexe (mode continu)**
+et le champ **Délai avant accusé de réception**), puis `JARVIS_REFLEX_ENABLED`
+et `JARVIS_REFLEX_DELAY_MS`, puis les défauts (activé, 1200 ms). Un délai de `0`
+ou la case décochée rendent le silence complet. `JARVIS_REFLEX_REQUIRE_WORK=1`
+restaure l'ancienne porte. Le mode `legacy` n'a pas de réflexe : il reçoit
+toujours un délai nul.
 
 ### Basculer, et revenir
 

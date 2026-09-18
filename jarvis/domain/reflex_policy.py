@@ -41,8 +41,22 @@ def conversational_wait_reason(text: str) -> str | None:
 
 def decide_reflex(*, text: str, enabled: bool, admitted: bool, user_speaking: bool,
                   useful_ready: bool, work_confirmed: bool, work_terminal: bool,
-                  noticeable_wait: bool, already_used: bool, stale: bool) -> ReflexDecision:
-    """No execution, prompt generation, timers or mutable conversation state."""
+                  noticeable_wait: bool, already_used: bool, stale: bool,
+                  require_work: bool = False) -> ReflexDecision:
+    """No execution, prompt generation, timers or mutable conversation state.
+
+    Le déclencheur est **temporel**, pas contractuel : le silence du cerveau
+    au-delà du délai d'accusé suffit. Exiger en plus un `brain.work.started`
+    corrélé (`require_work`) a rendu le réflexe muet dès que le cerveau
+    répondait sans déclarer de travail de fond — c'est-à-dire presque toujours.
+    `require_work=True` restaure cette porte, et n'est plus qu'un retour arrière.
+
+    Ce que la porte évitait reste évité par les contrôles qui l'entourent, et
+    qui n'ont pas bougé : `useful_ready` (le cerveau a déjà de quoi parler),
+    `work_terminal` (le travail est fini, la réponse arrive), `already_used`
+    (un seul préambule par tour), `noticeable_wait` (l'échéance n'est pas
+    atteinte) et les motifs conversationnels ci-dessus.
+    """
     checks = ((not enabled, "disabled"), (not admitted, "not_admitted"), (stale, "stale"),
               (user_speaking, "user_speaking"), (already_used, "already_used"))
     for condition, reason in checks:
@@ -54,8 +68,9 @@ def decide_reflex(*, text: str, enabled: bool, admitted: bool, user_speaking: bo
         return ReflexDecision(ReflexAction.SPEAK, "useful_content_ready")
     if work_terminal:
         return ReflexDecision(ReflexAction.WAIT, "work_terminal")
-    if not work_confirmed:
+    if require_work and not work_confirmed:
         return ReflexDecision(ReflexAction.WAIT, "work_unconfirmed")
     if not noticeable_wait:
         return ReflexDecision(ReflexAction.WAIT, "answer_may_arrive_quickly")
-    return ReflexDecision(ReflexAction.PREAMBLE, "confirmed_work_wait")
+    return ReflexDecision(ReflexAction.PREAMBLE,
+                          "confirmed_work_wait" if work_confirmed else "brain_silent_wait")
