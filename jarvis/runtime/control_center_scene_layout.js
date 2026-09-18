@@ -450,18 +450,29 @@
      JARVIS, dessiné par le visage, auquel la scène ne touche pas. Rendu
      seulement : la géométrie stockée reste la place de référence, l'étoile ne
      fait que parcourir une petite ellipse autour d'elle (l'arc de son orbite).
-     Rien n'est écrit dans la scène, et un objet épinglé par l'utilisateur ne
-     dérive pas du tout.
+     Rien n'est jamais écrit dans la scène.
+
+     **Un objet épinglé dérive comme les autres** (correction du retour
+     utilisateur du 18/09/2026 : toute géométrie posée à la main épingle, donc
+     une scène rangée par l'utilisateur était entièrement immobile). L'épingle
+     dit « ne déplace pas ma place » — au résolveur et au cerveau ; elle ne dit
+     pas « ne dessine aucun mouvement », et la place de référence ne change pas
+     d'un pixel. Qui veut une scène figée éteint la gravitation dans la fenêtre
+     « Affichage des étoiles ».
 
      Amplitude angulaire constante : la dérive est donc proportionnelle au
-     rayon. Période et phase se lisent elles aussi dans la place (rayon, angle)
-     et jamais dans l'identifiant : deux objets voisins — une étoile et son
-     signal — ont la même orbite et dérivent ensemble, le champ tourne d'un
-     bloc sans que rien ne se détache. */
-  const ORBIT_ARC_RAD=.024;            /* ~1,4° de part et d'autre de la place */
-  const ORBIT_MAX_PX=9,ORBIT_MIN_PX=.6;
+     rayon. **Une seule période** pour toutes les étoiles (Slice 12 : elle
+     dépendait du rayon, et deux voisines s'éloignaient lentement l'une de
+     l'autre) ; la phase se lit dans l'angle de la place, jamais dans
+     l'identifiant. Deux objets à la même place — une étoile et son signal — ont
+     donc exactement la même dérive et ne se séparent jamais ; sur la couronne,
+     le mouvement fait le tour comme une onde plutôt que d'un bloc. La page fait
+     suivre un fil par la dérive moyenne de ses deux bouts : exact pour une
+     étoile et son signal, une petite approximation pour un long fil. */
+  const ORBIT_ARC_RAD=.06;             /* ~3,4° de part et d'autre de la place */
+  const ORBIT_MAX_PX=38,ORBIT_MIN_PX=.6;
   const ORBIT_RADIAL=.34;              /* part radiale : l'arc devient une ellipse */
-  const ORBIT_PERIOD_MS=24000,ORBIT_PERIOD_PER_PX=44,ORBIT_PERIOD_MAX_MS=72000;
+  const ORBIT_PERIOD_MS=26000;
 
   /* Ampleur et vitesse réglables par l'utilisateur (fenêtre « Affichage des
      étoiles », `JarvisSceneView`) : bornes du multiplicateur, le défaut étant 1.
@@ -477,16 +488,16 @@
   }
 
   /* Dérive d'un nœud du modèle de vue dans la fenêtre `vp`, ou `null` (immobile) :
-     objet épinglé, autre forme qu'un point, confondu avec le centre, ou pas la
-     place de dériver sans sortir de la zone de composition sûre (une étoile
-     posée hors de cette zone par l'utilisateur reste donc fixe).
+     autre forme qu'un point, confondu avec le centre, ou pas la place de
+     dériver sans sortir de la zone de composition sûre (une étoile posée hors
+     de cette zone par l'utilisateur reste donc fixe).
      `options` (facultatif) : `{gain, rate}`, l'ampleur et la vitesse voulues
      par l'utilisateur, 1 par défaut.
      Rend `{tx,ty,rx,ry,ms,delay}` : vecteur tangent et vecteur radial en
      pixels, période en ms, décalage de phase négatif (l'animation commence là
      où l'étoile se trouve déjà sur son orbite). */
   function orbitOf(node,vp,options){
-    if(!node||node.pinned||node.shape!=='point')return null;
+    if(!node||node.shape!=='point')return null;
     const dx=node.cx-vp.cx,dy=node.cy-vp.cy,r=Math.hypot(dx,dy);
     if(!(r>1))return null;
     const gain=orbitFactor(options&&options.gain),rate=orbitFactor(options&&options.rate);
@@ -501,7 +512,7 @@
     if(ex>0)amp=Math.min(amp,slackX/ex);
     if(ey>0)amp=Math.min(amp,slackY/ey);
     if(!(amp>=ORBIT_MIN_PX))return null;
-    const ms=Math.round(Math.min(ORBIT_PERIOD_MAX_MS,ORBIT_PERIOD_MS+r*ORBIT_PERIOD_PER_PX)/rate);
+    const ms=Math.round(ORBIT_PERIOD_MS/rate);
     const phase=(Math.atan2(dy,dx)+Math.PI)/(2*Math.PI);
     return {tx:round1(-uy*amp),ty:round1(ux*amp),rx:round1(ux*amp*ORBIT_RADIAL),ry:round1(uy*amp*ORBIT_RADIAL),
       ms,delay:-Math.round(ms*phase)};

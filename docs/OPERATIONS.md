@@ -1513,9 +1513,18 @@ enregistré dans ce navigateur.
 | `Halo` | le voile large autour de l'étoile (0 × = plus de halo du tout) |
 | `Halo qui respire` | éteint, le halo garde une seule intensité |
 | `Gravitation` | éteinte, les étoiles sont parfaitement immobiles (aucune animation ne tourne) |
-| `Ampleur de l'orbite` | la taille de l'ellipse parcourue (0,3 × à 2,5 ×). Elle reste bornée par la place libre : une étoile ne sort jamais de la zone sûre |
-| `Vitesse de l'orbite` | 0,25 × à 4 × ; un tour dure environ trente secondes à 1 × |
+| `Ampleur de l'orbite` | la taille de l'ellipse parcourue (0,3 × à 2,5 ×). À 1 ×, d'une dizaine de pixels à 38 px selon l'éloignement du centre. Elle reste bornée par la place libre : une étoile ne sort jamais de la zone sûre |
+| `Vitesse de l'orbite` | 0,25 × à 4 × ; un tour dure 26 s à 1 ×, la même durée pour toutes les étoiles — une étoile et son signal ne se séparent donc jamais |
 | `Fils entre les objets` | masque ou montre les traits qui relient une étoile à son parent, à son signal, à ses résultats |
+
+Seules les **étoiles** (les points) gravitent : une capsule ou une fenêtre reste
+fixe. Un objet **épinglé gravite comme les autres** — l'épingle protège sa place
+(ni le résolveur ni le cerveau ne la changent), pas son dessin, et la dérive
+n'écrit jamais rien. Comme tout déplacement à la main épingle l'objet, une scène
+rangée par vous serait sinon entièrement immobile (retour utilisateur du
+18/09/2026). Si Windows a les effets d'animation désactivés
+(`prefers-reduced-motion`), la gravitation et la respiration du halo ne tournent
+pas, quel que soit le réglage : c'est voulu.
 
 « Réinitialiser » revient aux valeurs livrées (tout à 1 ×, tout allumé) et ne
 s'allume que si quelque chose a été changé. Un réglage sans effet (l'ampleur de

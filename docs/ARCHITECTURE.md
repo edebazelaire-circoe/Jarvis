@@ -2840,6 +2840,23 @@ the brain sees never changes.
   **before** the safe-area clamp, so a wider orbit never pushes a star out of
   it, and divides the period by the rate (both factors clamped to 0.25–4, a
   missing or unreadable one reading as 1).
+- The drift itself (Slice 12 rework of the Slice 11 numbers, from the user
+  report of 18/09/2026 « les étoiles ne bougent pas »): a constant angular
+  amplitude `ORBIT_ARC_RAD` = 0.06 rad (≈ 3.4° either side of the stored place),
+  so the excursion grows with the radius — 10 to 38 px (`ORBIT_MAX_PX`) on a real
+  scene — with a **single** period for every star (`ORBIT_PERIOD_MS` = 26 s, no
+  radius term any more, which used to let two neighbours slowly separate) and
+  the phase read from the place's angle, so the corona drifts like a wave. Two
+  objects at the same place (a star and its signal) get exactly the same drift
+  and never come apart; a thread still follows the average drift of its two
+  ends, exact for that pair and a small approximation for a long thread. The former numbers (0.024 rad capped at 9 px, period
+  24–72 s by radius) moved a real star by ~9 px per 40 s — technically animated,
+  visually immobile. **A pinned object drifts like any other**: every geometry the
+  user sets by hand also pins it (decision 9), so excluding pins — as Slice 11
+  did — froze any scene the user had arranged; the pin protects the *place* from
+  the resolver and the brain, not the rendering, and the drift writes nothing.
+  Only points drift (a capsule or a window never does), and
+  `prefers-reduced-motion` still cancels the animation whatever the setting.
 - A setting whose condition is off (halo at zero, gravity off) is greyed and
   disabled but keeps its value. `storage` events keep every open tab on the same
   look; a refused `localStorage` (private window) falls back to the reference

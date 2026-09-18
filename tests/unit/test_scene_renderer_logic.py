@@ -255,6 +255,35 @@ def test_a_signal_sits_next_to_its_star_live_or_retired(tmp_path):
     assert result["retired"] <= 16 and result["retired"] == result["retiredNearest"]
 
 
+def test_every_star_shares_one_period_so_the_field_turns_as_one_block(tmp_path):
+    result = run_node(tmp_path, r"""
+      const objects=[];
+      for(let i=0;i<10;i++)objects.push(obj(`claude:${i}`,'agent'));
+      const s=state(objects);
+      const vp=L.viewport(1920,1080);
+      const vm=L.viewModel(s,L.resolveLayout(s),vp);
+      const drifts=vm.nodes.map(n=>L.orbitOf(n,vp)).filter(Boolean);
+      const amp=d=>Math.round(Math.hypot(d.tx,d.ty)*10)/10;
+      return {moving:drifts.length,of:vm.nodes.length,
+        periods:[...new Set(drifts.map(d=>d.ms))],
+        /* Phase lue dans l'angle de la place : des étoiles réparties en couronne
+           ne battent pas toutes ensemble. */
+        phases:new Set(drifts.map(d=>d.delay)).size,
+        amplitudes:[Math.min(...drifts.map(amp)),Math.max(...drifts.map(amp))],
+        /* Vitesse de pointe (px/s) : visible à l'œil, jamais brusque. */
+        speed:Math.round(2*Math.PI*Math.max(...drifts.map(amp))/(drifts[0].ms/1000)*10)/10};
+    """)
+
+    assert result["moving"] == result["of"] == 10
+    # Une seule période : les fils tendus entre deux étoiles suivent leurs bouts.
+    assert result["periods"] == [26000]
+    assert result["phases"] > 1
+    # Une dérive qu'on voit : plus d'un pixel par seconde, moins d'une dizaine.
+    low, high = result["amplitudes"]
+    assert low >= 8 and high <= 38
+    assert 2 <= result["speed"] <= 10
+
+
 def test_stars_without_a_place_surround_the_face_instead_of_piling_up_on_one_side(tmp_path):
     result = run_node(tmp_path, r"""
       const objects=[];
@@ -283,7 +312,8 @@ def test_stars_without_a_place_surround_the_face_instead_of_piling_up_on_one_sid
 def test_the_orbit_follows_the_user_setting_without_leaving_the_safe_area(tmp_path):
     result = run_node(tmp_path, r"""
       const s=state([obj('star','agent',{geometry:{x:60,y:-30,w:6,h:6},constraints:{placed_by:'user',pinned_by_user:false}}),
-        obj('pinned','agent',{geometry:{x:-60,y:30,w:6,h:6},constraints:{placed_by:'user',pinned_by_user:true}}),
+        /* Même place que `star`, mais épinglée : la dérive doit être la même. */
+        obj('pinned','agent',{geometry:{x:60,y:-30,w:6,h:6},constraints:{placed_by:'user',pinned_by_user:true}}),
         obj('edge','agent',{geometry:{x:132,y:62,w:6,h:6},constraints:{placed_by:'user',pinned_by_user:false}})]);
       const vp=L.viewport(1920,1080);
       const vm=L.viewModel(s,L.resolveLayout(s),vp);
@@ -293,7 +323,8 @@ def test_the_orbit_follows_the_user_setting_without_leaving_the_safe_area(tmp_pa
       return {base:drift('star'),wide:drift('star',{gain:2}),narrow:drift('star',{gain:.3}),
         slow:drift('star',{rate:.5}).ms,fast:drift('star',{rate:4}).ms,
         absurd:amp(drift('star',{gain:1e6})),clamped:amp(drift('star',{gain:2})),
-        pinned:drift('pinned',{gain:2}),
+        pinnedSameAsFree:JSON.stringify(drift('pinned'))===JSON.stringify(drift('star')),
+        pinnedIsPinned:of('pinned').pinned,
         /* Étoile posée au coin de la zone sûre : sa dérive doit y rester. */
         edge:(()=>{const d=drift('edge',{gain:4});if(!d)return null;
           const rect=L.drawnRect(of('edge'));
@@ -318,8 +349,11 @@ def test_the_orbit_follows_the_user_setting_without_leaving_the_safe_area(tmp_pa
     assert result["fast"] == pytest.approx(base["ms"] / 4, abs=2)
     # Bornée : une ampleur absurde ne fait pas sortir l'étoile de la zone sûre.
     assert result["absurd"] is not None and result["absurd"] >= result["clamped"]
-    # Épinglé : aucune dérive, quel que soit le réglage.
-    assert result["pinned"] is None
+    # Épinglé : la même dérive que n'importe quelle étoile (retour utilisateur du
+    # 18/09/2026 : toute géométrie posée à la main épingle, donc une scène rangée
+    # par l'utilisateur était entièrement immobile). La dérive ne touche pas à la
+    # place : l'épingle protège la géométrie, pas le dessin.
+    assert result["pinnedIsPinned"] is True and result["pinnedSameAsFree"] is True
     # Au coin de la zone sûre : l'ampleur est rognée par la place libre, et une
     # orbite réglée quatre fois plus large n'en fait pas sortir l'étoile.
     assert result["edge"]["outX"] <= 0.1 and result["edge"]["outY"] <= 0.1

@@ -628,8 +628,9 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
    dans la propriété 'translate', appliquée en plus, jamais enregistrée. Les
    huit étapes échantillonnent l'ellipse 'tangente · sin + radial · cos', en
    'linear' : le mouvement tourne sans jamais s'arrêter ni repartir en arrière.
-   Un objet épinglé, une capsule ou une fenêtre n'ont pas de dérive (aucune
-   variable posée) et ne bougent donc pas. */
+   Une capsule ou une fenêtre n'a pas de dérive (aucune variable posée) et ne
+   bouge donc pas ; une étoile épinglée dérive comme les autres — sa place, elle,
+   ne change pas. */
 .scene .sc-orbit{animation:sc-orbit var(--sc-orbit-ms,36000ms) linear infinite;animation-delay:var(--sc-orbit-delay,0ms)}
 @keyframes sc-orbit{
   0%{translate:var(--sc-rx) var(--sc-ry)}
@@ -1443,8 +1444,8 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
   }
 
   /* Variables de la dérive sur un élément (nœud ou lien), ou retrait de
-     l'animation quand il n'en a pas : épinglé, autre forme qu'un point, ou pas
-     la place de dériver dans la zone sûre. */
+     l'animation quand il n'en a pas : autre forme qu'un point, ou pas la place
+     de dériver dans la zone sûre. */
   function setOrbit(el,drift){
     if(!drift){el.classList.remove('sc-orbit');return}
     const style=el.style;
