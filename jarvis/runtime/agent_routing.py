@@ -265,21 +265,26 @@ def build_candidates(
                 capabilities=capabilities,
                 available=available,
                 unavailable_reason=reason,
+                agent_label=label,
+                model_label=DEFAULT_MODEL_LABEL,
             )
         )
         for model in models.get(provider) or ():
             model_id = str(model.get("id") or "")
             if not model_id:
                 continue
+            model_label = str(model.get("label") or "") or model_id
             candidates.append(
                 ModelCandidate(
                     agent=agent_id,
                     model=model_id,
-                    label=f"{label} · {model.get('label') or model_id}",
+                    label=f"{label} · {model_label}",
                     provider=provider,
                     capabilities=capabilities,
                     available=available,
                     unavailable_reason=reason,
+                    agent_label=label,
+                    model_label=model_label,
                 )
             )
     return candidates
@@ -317,9 +322,56 @@ def with_saved(
                         reasons.get(ref.agent)
                         or (MISSING_MODEL_REASON if ref.model else MISSING_AGENT_REASON)
                     ),
+                    agent_label=ref.agent,
+                    model_label=ref.model or DEFAULT_MODEL_LABEL,
                 )
             )
     return enriched
+
+
+def group_by_harness(candidates: Sequence[ModelCandidate]) -> list[dict[str, Any]]:
+    """Les mêmes candidats, rangés par harness : un choix en deux temps.
+
+    Une seule liste de tous les couples CLI × modèle est illisible dès que le
+    fournisseur déclare vingt modèles. L'écran choisit donc le harness, puis
+    un modèle parmi ceux de ce harness — c'est un regroupement d'affichage,
+    pas une autre vérité : les couples sont exactement ceux de `candidates`,
+    dans le même ordre, y compris ceux devenus indisponibles.
+
+    Un harness est utilisable si au moins un de ses modèles l'est ; sinon il
+    reste affiché avec la raison mesurée, jamais retiré.
+    """
+    groups: dict[str, dict[str, Any]] = {}
+    for item in candidates:
+        group = groups.get(item.agent)
+        if group is None:
+            group = groups[item.agent] = {
+                "id": item.agent,
+                "label": item.agent_label or item.agent,
+                "provider": item.provider,
+                "capabilities": sorted(item.capabilities),
+                "available": False,
+                "unavailable_reason": "",
+                "models": [],
+            }
+        group["models"].append(
+            {
+                "model": item.model,
+                "label": item.model_label or item.model or DEFAULT_MODEL_LABEL,
+                "available": item.available,
+                "unavailable_reason": item.unavailable_reason,
+            }
+        )
+        if item.available:
+            group["available"] = True
+            group["unavailable_reason"] = ""
+        elif not group["available"] and not group["unavailable_reason"]:
+            group["unavailable_reason"] = item.unavailable_reason
+        if item.provider and not group["provider"]:
+            group["provider"] = item.provider
+        if item.capabilities and not group["capabilities"]:
+            group["capabilities"] = sorted(item.capabilities)
+    return list(groups.values())
 
 
 def describe(policy: RoutingPolicy, candidates: Sequence[ModelCandidate]) -> dict[str, Any]:
@@ -327,11 +379,17 @@ def describe(policy: RoutingPolicy, candidates: Sequence[ModelCandidate]) -> dic
 
     Aucun secret ne passe ici — ni clé, ni indice de clé : un candidat dit
     seulement s'il est utilisable, et sinon pourquoi, en clair.
+
+    `harnesses` est la même information que `candidates`, en deux niveaux, pour
+    l'écran qui fait choisir le harness avant son modèle. `candidates` reste
+    servi tel quel : la politique enregistrée, elle, désigne toujours un couple
+    {agent, model} et son format ne change pas.
     """
     return {
         "enabled": policy.enabled,
         "profiles": routing.describe_profiles(),
         "policy": {entry.profile: entry.as_dict() for entry in policy.profiles},
         "candidates": [item.as_dict() for item in candidates],
+        "harnesses": group_by_harness(candidates),
         "capabilities": list(routing.CAPABILITIES),
     }

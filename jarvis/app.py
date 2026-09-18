@@ -40,6 +40,9 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("control-center", help="Run Jarvis visualizer + Control Center + local Claude agent")
     sub.add_parser("drive-auth", help="Authorize Google Drive access once and store the token")
     sub.add_parser("drive-mcp", help="Serve the Google Drive MCP tools over stdio")
+    # Lancée par le CLI du cerveau via `--mcp-config` (scene.enabled), pas par
+    # un humain : stdout est le protocole MCP.
+    sub.add_parser("display-mcp", help="Serve the brain scene display MCP tools over stdio")
     # Appelée par le CLI d'agent lui-même, pas par un humain : elle lit
     # l'appel d'outil sur stdin et rend la décision d'aiguillage sur stdout.
     routing_hook = sub.add_parser("routing-hook", help="Apply the sub-agent routing policy to one agent CLI tool call")
@@ -73,6 +76,12 @@ async def _drive_mcp() -> int:
     # que la boucle du CLI rendrait invalide.
     await build_server().run_stdio_async()
     return 0
+
+
+async def _display_mcp() -> int:
+    from jarvis.runtime.display_mcp import serve_stdio
+
+    return await serve_stdio()
 
 
 async def _run_voice(config: AppConfig, *, no_preflight: bool) -> int:
@@ -215,6 +224,35 @@ def _brain_availability_from_env() -> dict[str, object]:
             "work_attention_wake_interval_s": wake if wake >= 0 else DEFAULT_WAKE_INTERVAL_S}
 
 
+#: Borne haute de `JARVIS_SCENE_RESTART_GRACE_S` : au-delà, une étoile morte
+#: resterait « état inconnu » plus d'une heure.
+MAX_SCENE_RESTART_GRACE_S = 3600.0
+
+
+def _scene_restart_grace_from_env() -> tuple[float, str | None]:
+    """Grâce de redémarrage de la scène (Slice 10) et, si la valeur est refusée, pourquoi.
+
+    `JARVIS_SCENE_RESTART_GRACE_S` (défaut `RESTART_GRACE_S` = 60) : délai
+    après le démarrage de Core avant qu'une étoile encore « état inconnu »
+    soit interrompue. Réservé à la validation et au diagnostic : sous la
+    période de renvoi des producteurs (30 s), un travail vivant serait
+    interrompu à tort. Hors de ]0, 3600] ou illisible → défaut, et la raison
+    est rendue pour être journalisée.
+    """
+    from jarvis.core.scene_projector import RESTART_GRACE_S
+
+    raw = os.getenv("JARVIS_SCENE_RESTART_GRACE_S")
+    if raw is None or not raw.strip():
+        return RESTART_GRACE_S, None
+    try:
+        value = float(raw)
+    except ValueError:
+        return RESTART_GRACE_S, f"valeur illisible {raw[:40]!r}"
+    if not 0 < value <= MAX_SCENE_RESTART_GRACE_S:
+        return RESTART_GRACE_S, f"hors de ]0, {MAX_SCENE_RESTART_GRACE_S:g}] : {value:g}"
+    return value, None
+
+
 def _control_settings(runtime_root: Path) -> dict[str, object]:
     path = runtime_root / "control-center-settings.json"
     if not path.is_file():
@@ -346,6 +384,8 @@ async def _run_core_v2() -> int:
         OpenAILiveSidebandCloser, aiohttp_live_sideband_connector,
     )
     from jarvis.adapters.windows_notifications import NullNotificationDelivery, WindowsNotificationDelivery
+    # Slice 09 (partie 2) : captures visuelles de la scène sous runtime/scene-captures/.
+    from jarvis.adapters.file_scene_captures import SCENE_CAPTURE_DIR, FileSceneCaptureStore
     from jarvis.core.memory_maintenance import MemoryMaintenanceWorker
     from jarvis.runtime.agent_settings import resolve_agent_execution
     from jarvis.runtime.back_brain_worker import BackBrainJobWorker
@@ -370,7 +410,14 @@ async def _run_core_v2() -> int:
     openai_key = creds.secret_for(_control_settings(settings.runtime_root), "openai")
     live_closer = (OpenAILiveSidebandCloser(aiohttp_live_sideband_connector(openai_key))
                    if openai_key else None)
-    core = JarvisCoreApplication(data_root=settings.data_root, timezone=settings.timezone, calendar_backend=_calendar_backend_from_env(), drive_backend=_drive_backend_from_env(), brain_backend=brain_backend, notification_delivery=delivery, workers=workers, diagnostics=RuntimeJournal(settings.runtime_root), live_sideband_closer=live_closer, **_brain_availability_from_env())
+    scene_grace_s, scene_grace_error = _scene_restart_grace_from_env()
+    if scene_grace_error is not None:
+        RuntimeJournal(settings.runtime_root).emit(
+            "core.scene.restart_grace_invalid",
+            "JARVIS_SCENE_RESTART_GRACE_S refusée : grâce par défaut",
+            level="warning", data={"error": scene_grace_error, "grace_s": scene_grace_s},
+        )
+    core = JarvisCoreApplication(data_root=settings.data_root, timezone=settings.timezone, calendar_backend=_calendar_backend_from_env(), drive_backend=_drive_backend_from_env(), brain_backend=brain_backend, notification_delivery=delivery, workers=workers, diagnostics=RuntimeJournal(settings.runtime_root), live_sideband_closer=live_closer, scene_restart_grace_s=scene_grace_s, scene_capture_store=FileSceneCaptureStore(settings.runtime_root / SCENE_CAPTURE_DIR), **_brain_availability_from_env())
     server = LocalProtocolServer(core, host=settings.core_host, port=settings.core_port, token=token)
     _announce_calendar_backend(core, settings.runtime_root)
     RuntimeJournal(settings.runtime_root).emit("brain.backend", "Cerveau relié à l'agent du Control Center", data={"url": brain_backend.base_url})
@@ -878,6 +925,18 @@ async def _run_control_center_v2() -> int:
         CoreConversationEventReader(host=settings.core_host, port=settings.core_port, token_file=settings.token_file),
         journal=journal,
     )
+    # Scène constellation (Slice 03) : relais sans état, par sa propre
+    # connexion ; les long-polls n'occupent pas celle du panneau Agents.
+    from jarvis.runtime.scene_view import CoreSceneTransport, CoreSceneView
+
+    scene_view = CoreSceneView(
+        CoreSceneTransport(host=settings.core_host, port=settings.core_port, token_file=settings.token_file),
+        journal=journal,
+    )
+    # Outils d'affichage du cerveau (Slice 06) : déclarés au CLI seulement si
+    # `scene.enabled` ; le serveur MCP joint Core avec ces coordonnées.
+    from jarvis.runtime.display_mcp import DisplayMcpTarget
+
     control = ControlCenter(
         runtime_root=runtime_root,
         project_root=ROOT,
@@ -887,6 +946,11 @@ async def _run_control_center_v2() -> int:
         conversation_event_view=conversation_event_view,
         work_view=work_view,
         live_view=live_view,
+        scene_view=scene_view,
+        display_mcp=DisplayMcpTarget(
+            core_host=settings.core_host, core_port=settings.core_port,
+            token_file=settings.token_file, runtime_root=runtime_root,
+        ),
     )
     await control.start(port=ui_port)
     url = f"http://127.0.0.1:{ui_port}/"
@@ -1058,6 +1122,7 @@ async def _amain(argv: list[str] | None = None) -> int:
     if command == "control-center": return await _run_control_center_v2()
     if command == "drive-auth": return await _drive_auth()
     if command == "drive-mcp": return await _drive_mcp()
+    if command == "display-mcp": return await _display_mcp()
     if command == "routing-hook":
         from jarvis.runtime.routing_hook import main as routing_hook_main
 

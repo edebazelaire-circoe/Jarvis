@@ -612,6 +612,15 @@ def test_the_wire_keys_are_exactly_those_of_an_observation_payload():
     assert OBSERVATION_WIRE_KEYS == set(obs().to_payload())
 
 
+def test_an_empty_batch_is_a_producer_claim_and_round_trips():
+    # Slice 10 (changement délibéré) : 0 observation est permis, pas plus de MAX_OBSERVATION_BATCH.
+    batch = WorkObservationBatch("claude", "cc-2", ())
+
+    assert WorkObservationBatch.from_payload(batch.to_payload()) == batch
+    with pytest.raises(ValueError, match="at most"):
+        WorkObservationBatch("claude", "cc-2", tuple(obs(f"a{index}", t=0) for index in range(MAX_OBSERVATION_BATCH + 1)))
+
+
 def test_a_batch_round_trips_through_the_wire():
     batch = WorkObservationBatch("claude", "cc-1", (obs("a1", t=0, label="Persist", started_at=at(-1)),))
 
@@ -625,8 +634,7 @@ def test_a_batch_round_trips_through_the_wire():
         (lambda payload: payload["observations"][0].update(prompt="Rends le réglage persistant."), "unknown fields"),
         (lambda payload: payload["observations"][0].update(raw={"type": "system"}), "unknown fields"),
         (lambda payload: payload["observations"][0].update(subagent_type="general-purpose"), "unknown fields"),
-        (lambda payload: payload.update(observations=[]), "between 1 and"),
-        (lambda payload: payload.update(observations=payload["observations"] * (MAX_OBSERVATION_BATCH + 1)), "between 1 and"),
+        (lambda payload: payload.update(observations=payload["observations"] * (MAX_OBSERVATION_BATCH + 1)), "at most"),
         (lambda payload: payload["observations"][0].update(status="exploded"), r"observations\[0\]"),
         (lambda payload: payload["observations"][0].update(source="codex"), "batch source"),
         (lambda payload: payload.update(producer_id=""), "producer_id"),

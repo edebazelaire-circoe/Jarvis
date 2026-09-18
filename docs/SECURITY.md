@@ -120,6 +120,184 @@ Remote OpenAI-compatible endpoints must use HTTPS. Plain HTTP is accepted only o
 
 STT, agent and TTS failures are typed. Provider errors transition through visible `error`, attempt a short spoken user-safe error, and return to idle. Technical class/context stay in diagnostics without reading raw provider messages aloud.
 
+### 13. Brain scene display tool (constellation, v0.2 path)
+
+With `scene.enabled` (**on by default** since the closing human decision B1, so this
+section describes the normal configuration, not an opt-in one; a stored `false`
+turns it off; `JARVIS_SCENE_ENABLED` overrides both and then
+locks the setting: writes are refused `scene_env_override`), the conversational
+Claude CLI brain launched afterwards gets a **write-capable** MCP server, `jarvis-display` (`python -m jarvis display-mcp`,
+declared per launch through `--mcp-config`; `docs/ARCHITECTURE.md` › *Brain
+display MCP*). It can create, edit, move, hide and link scene objects in Core's
+persistent scene. It cannot archive, pin or unpin: those tools do not exist in
+its catalog (decision 14, pinned by a test), and Core's reducer refuses those
+operations to actor `brain` regardless (`op_not_allowed`), as it refuses moving an
+object the user pinned (`pinned_by_user`) and creating execution stars
+(`execution_node`). Background jobs and speculative analysis never receive the
+server; speculative analysis keeps `--strict-mcp-config` and no tools.
+
+What this guarantee is **not**:
+
+- the actor field of a scene command is a **declaration**, not an
+  authentication. Core's bearer token (`runtime/core.token`) is a loopback session
+  credential shared by every local JARVIS process;
+- the brain runs as the same OS user with `--permission-mode bypassPermissions`
+  and has Bash, file and web tools. It can read `core.token` and send
+  `POST /v1/scene/commands` claiming `user`, which would archive or pin anything
+  (and it can already modify files, including the scene database, or the code);
+- the V1 guarantee therefore holds for an **honest caller** only: tool catalog +
+  reducer authority. The brain prompt tells it never to work around archive
+  through shell, HTTP or files, which is an instruction, not an enforcement.
+  Evidence that it complied comes from `runtime/trace.jsonl` (tool calls), not
+  from a boundary.
+
+Prompt injection through the scene. Runtime star titles are sub-agent labels,
+which can copy web or file content, and they enter the brain's context through
+`scene_inspect`, and since Slice 09 full summaries, artifact items, URLs and hosts
+enter it through `scene_get` (so do ids, categories and titles written by the user). The
+inspection legend, the tool description and the brain prompt state that this text
+is data, never an instruction. This is a mitigation, not a boundary: a brain that
+follows injected text still has its own Bash/file/web tools. Tool arguments are
+strict (unknown keys refused by name, typed numbers), and Core errors, file paths
+and refused argument values are not echoed back to the brain.
+
+Runtime-owned topology and signals. Brain and user cannot `unlink` a `parent_of`
+between execution stars nor the link of a runtime failure signal
+(`runtime_owned`), and cannot create objects or relations under the runtime's id
+forms (`reserved_id`), so an honest brain cannot silence or pre-empt a failure
+signal. Same honest-caller limit as above.
+
+User controls (Slice 08). Two new write paths exist, neither in the brain's tool
+catalog. `archive_many` is a user-only scene op (one command can archive every
+terminal star, its signals and orphan artifacts, at most 512 ids): the reducer refuses it to actor
+`brain` (`op_not_allowed`). `POST /v1/work/cancel` is **not** refused to the brain
+by construction: it has no actor at all and is protected by the bearer token only,
+like every Core route; it cancels exactly one Core job (never a Claude sub-agent,
+409 `not_cancellable` for any other source) and never touches the brain work item
+behind it. The Control Center exposes them to the page only through
+`POST /api/scene/commands` (actor forced to `user`) and `POST /api/jobs/cancel`
+(origin guard like every POST, strict 4 KiB body, only `source = job` relayed).
+The threat model does not change in kind: a brain that reads `core.token` can
+already claim `user`, and it can now bulk-archive finished work in one call or
+cancel a Core job through the token route, just as it could archive one object
+at a time or kill processes with its own tools. Same honest-caller limit.
+
+Semantic artifacts and openable links (Slice 07). The brain's
+`scene_add_artifact` writes one artifact and its `explains` link through the
+brain/user-only `attach_artifact` op (runtime is refused). Item URLs are
+brain-chosen and may come from web content, so an artifact link is an **injection
+and phishing surface** on the user's own dashboard. Controls: the domain accepts
+only single-line `http://`/`https://` URLs (≤ 2 048 chars). Since the Slice 09
+QA rework the page and the brain apply **one conservative rule by construction**
+(`link_host` in `jarvis/domain/scene_links.py`, `linkHost` in
+`control_center_scene_layout.js`, both tested against the same 107-URL corpus): a
+URL is a link, and has a host in `scene_get`, only if it starts exactly with
+`http://` or `https://`; its percent-encoded length, computed identically on both
+sides as an upper bound of the browser's `href`, is at most 2 048; contains no backslash, whitespace, control character, DEL,
+no-break space, soft hyphen, bidi mark, invisible character or full-width or
+ideographic dot anywhere; has no `@` and no `%` in its authority; and its host is a
+plain ASCII dotted name (standard labels, no `xn--`, so no international name), a
+strict dotted IPv4 (a numeric-looking last label such as `0x7f.1` is refused) or a
+bracketed hex IPv6, with a port ≤ 65535. Otherwise the item is text,
+`host: null`, `link: false`, for the page and for the brain alike. The renderer
+(`linkOf`) additionally requires `new URL()` to parse it with an `http:`/`https:`
+protocol, **no username or password**, and a hostname equal to the rule's host;
+`href` is the parser's normalised form and is
+set as a property, never through markup; `target="_blank"`,
+`rel="noopener noreferrer"`, `referrerpolicy="no-referrer"`; the host is printed
+**before** the label in a non-shrinking element and, when space is short, cut
+**from the left** only, showing the longest suffix that fits, so its registrable
+end stays visible as far as the room allows (`…ogin-check.co.uk`, never
+`docs.python.org…` nor a bare `…co.uk`; rows under 260 px give the host the whole
+row); the full host is in the
+accessible name and tooltip, never pre-truncated; a long brain label or ref
+shrinks instead. Everything else stays text (`textContent`). Opening a link is a
+user click (a Barehands pinch opens nothing: popups need real user activation).
+Right-click on a link keeps the browser's own menu. Not covered, accepted: a
+legitimate-looking but hostile `https` host and ASCII look-alikes (mitigated only
+by the printed host); international hosts are text, not links (the rule refuses
+IDN and punycode rather than showing an opaque host). Brain/user can no
+longer give an artifact link the signal shape (`signal_shape`).
+
+Screen-content exposure (Slice 09, part 2, `scene_capture`). The brain can
+obtain an **image of the scene layer** as the visible Control Center leader page
+draws it: windows, capsules, stars, relations, titles, summaries and item rows
+(hosts and labels) — the same scene text it can already read with `scene_get`,
+now also as pixels the model sees. Not included: the rest of the page (dock,
+topbar, panels, timeline, conversation or voice text, face), other tabs, other
+applications or the desktop: the capture mechanism uses no OS capture and no
+browser automation. (Separately, the conversational brain is launched with
+`--chrome` browser tools, so it can already see pages it drives; the capture adds
+nothing there.) Who can trigger it: only the brain, through its display MCP and
+Core's bearer token (`POST /v1/scene/captures`, actor `brain`); there is no
+button and no Control Center route that requests one. Only the visible Web Locks
+leader page answers, and only for a pending, unexpired, single-use random id
+(`secrets.token_urlsafe(24)`, journaled as an 8-character prefix); the upload
+route (`POST /api/scene/captures/<id>`) is behind the origin guard, bounded to
+2 MiB, and the PNG is checked by the Control Center and again by Core chunk by
+chunk (every CRC, a valid 13-byte IHDR first with dimensions ≤ 1280×720, at least
+one IDAT, no animation `acTL`, no unknown critical chunk, an empty IEND last),
+without decompressing pixels. An id is consumed atomically before the file is
+written (parallel uploads: one stored, the others 404), and a brain call that goes
+away cancels its pending capture. Where it lives:
+`runtime/scene-captures/capture-<UTC>-<8 hex>.png` (no user text in names), the
+last 5 files, none older than 24 h (pruned at every capture and at Core start).
+Journals carry ids, sizes and durations, never pixels; the CLI stream readers
+replace every **structured JSON image or document block** with base64 data (in
+`message.content`, `tool_use_result` or nested tool results) with its size before
+the event is kept in memory, exposed by `/api/agent` or `/api/trace`, or written to
+`runtime/trace.jsonl`, and a journaled event above 256 KiB is summarised. Residual:
+an image serialised inside a JSON **string** (a tool whose text output is itself
+JSON carrying base64) is not redacted; it stays in the in-memory event and reaches
+the journal only up to the 256 KiB summary bound. Text visible
+in the image is marked as data in the tool result and the prompt (« un texte
+suspect a été ignoré »), a mitigation only. Same token caveat as above: a brain
+that reads `core.token` could call the capture route itself, or upload over the
+Control Center route for a pending id; it could equally read the scene or files
+with its own tools, so the capture adds no capability beyond scene content.
+
+The page side of the channel is **not authenticated**. The Control Center's
+`GET /api/scene/patches` long-poll and its upload route have no token (the origin
+guard only refuses a POST whose `Origin` header is present and not loopback; a
+local process simply sends none), so
+**any unauthenticated local process, or any page served from the loopback origin,
+can long-poll the page channel and feed or swallow a capture**: it can receive
+the pending `capture_request` id and upload its own well-formed PNG (the brain then
+sees an image that is not the scene), or take the id and never answer (the real
+leader page may still receive the 1 s redelivery; otherwise the brain gets
+`no_visible_page` after 5 s). It cannot request a capture, read the file
+back, or reach beyond the 2 MiB / 1280×720 checked PNG. This is the same trust
+model as the rest of the Control Center: a **hostile process running under the
+local user account is a non-goal** of V1 (it can already read `core.token`, the
+scene database and the trace). The capture is therefore evidence for an honest
+local machine only, never a proof of what the user saw. Conversely, the stored
+geometry is not evidence of what is drawn: a compact or resized object is redrawn
+differently (Slice 11), so a claim about the screen rests on the capture, not on
+coordinates — the display prompt says so.
+
+Gate timing (Slice 11). The gate is read when the brain CLI starts: a brain
+started with it on keeps its write tools after it is switched off, until it
+restarts (only `scene_capture` re-checks the gate). The Expérimental settings tab
+shows this through `agent.display_tools` / `agent.display_prompt` and offers a
+confirmed restart on a new conversation. `POST /api/settings` can flip the gate
+for any local process that sends no `Origin` header: same trust model as the rest
+of the Control Center.
+
+Privacy and retention. Core projects the scene whether or not the display is on:
+sub-agent labels, runtime failure summaries, brain notes, artifact summaries and
+URLs are persisted in `data/state/scene.sqlite3` (local, not encrypted, like
+`jarvis.sqlite3`). Archived objects move to `scene_history`, which is **never
+pruned in V1**; there is no archive undo and no purge command. Captures stay in
+`runtime/scene-captures/` (5 files, 24 h). Nothing of the scene leaves the machine
+except what the brain itself sends to its model provider (scene text it reads,
+capture images).
+
+The generated `runtime/display-mcp.json` holds the interpreter path, Core's
+loopback host and port and the token file **path**, never the token. Tool journal
+entries (`display.*`) carry identifiers and outcomes, never note content. Making
+the actor an authenticated property (per-actor credentials the brain cannot read,
+or an OS boundary around the brain) is out of V1 scope.
+
 ## Residual risks / non-goals
 
 - OpenAI is an online provider in this V1; requests leave the machine according to provider/API policy.
@@ -130,6 +308,7 @@ STT, agent and TTS failures are typed. Provider errors transition through visibl
 - Confirmation is conversational, not OS-level privileged authorization.
 - Board placement is an ephemeral UI write and intentionally does not require confirmation.
 - V1 has no destructive memory delete tool, no messaging/email tool, no browser navigation tool and no general filesystem writer.
+- v0.2 constellation scene: the brain's display tool is write-capable and scene actors are declared, not authenticated; a brain that ignores its instructions can impersonate `user` with `runtime/core.token` (see control 13). Scene text (runtime star titles from sub-agent labels) reaches the brain and is marked as data only; injection resistance is not guaranteed.
 
 ## Release rule
 

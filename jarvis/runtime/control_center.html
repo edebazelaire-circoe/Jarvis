@@ -9,12 +9,26 @@
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px ui-monospace,SFMono-Regular,Consolas,monospace;overflow:hidden;cursor:default}
 #app{position:relative;width:100%;height:100%}
-.face{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000;pointer-events:none;cursor:default}
-.topbar{position:absolute;top:18px;left:18px;right:18px;display:flex;justify-content:space-between;align-items:center;pointer-events:none}
+/* Registre d'empilement (Slice 05). Le visage (0) et le canevas Omega (0) sont
+   au fond ; la scène constellation (20, conteneur #sceneLayer créé par
+   control_center_scene_page.js seulement si scene.enabled) passe au-dessus ;
+   toute commande de la page reste au-dessus de la scène : barre du haut et
+   indication vocale 31, dock 32, panneau 33, bandeau GPT-Live 35, pastilles
+   40, chronologie de conversation 55 (modale plein écran `.tl`), fond des
+   réglages 60, notifications 70, liste des pastilles 75, menu
+   contextuel 80, confirmation en page 85, Barehands 2147483000. Thème Omega :
+   panneau 42, barre 45, bandeau 48, dock et pastilles 50. Les couches de la
+   scène (0–1000) ne s'empilent qu'à l'intérieur de son conteneur ; les rangs
+   internes de la chronologie (`.tl-*`, 1–30) et de l'écran d'aiguillage (aucun :
+   un profil éteint se marque par `.routing-off` et par `disabled`, jamais par
+   une superposition) restent dans leur propre conteneur. L'ordre est vérifié
+   par `tests/unit/test_scene_renderer_logic.py`. */
+.face{position:absolute;inset:0;z-index:0;width:100%;height:100%;border:0;background:#000;pointer-events:none;cursor:default}
+.topbar{position:absolute;z-index:31;top:18px;left:18px;right:18px;display:flex;justify-content:space-between;align-items:center;pointer-events:none}
 .brand,.state,.voicehint{background:rgba(3,8,12,.72);border:1px solid rgba(110,231,255,.18);backdrop-filter:blur(10px);padding:8px 12px;letter-spacing:.14em;text-transform:uppercase}
 .state{font-size:12px;color:var(--muted)}
 .state strong{color:var(--accent)}
-.voicehint{position:absolute;left:50%;bottom:22px;transform:translateX(-50%);font-size:12px;color:var(--accent);pointer-events:none;box-shadow:0 0 30px rgba(0,0,0,.35)}
+.voicehint{position:absolute;z-index:31;left:50%;bottom:22px;transform:translateX(-50%);font-size:12px;color:var(--accent);pointer-events:none;box-shadow:0 0 30px rgba(0,0,0,.35)}
 .live-banner{position:absolute;z-index:35;top:68px;left:50%;transform:translateX(-50%);width:min(720px,calc(100vw - 170px));display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:14px;align-items:center;padding:12px 14px;background:rgba(35,7,12,.94);border:2px solid var(--danger);border-radius:10px;box-shadow:0 0 32px rgba(255,101,119,.28);pointer-events:auto}
 .live-banner.uncertain{border-color:var(--warn);background:rgba(38,23,5,.96);box-shadow:0 0 32px rgba(255,184,92,.24)}
 .live-led{width:13px;height:13px;border-radius:50%;background:var(--danger);box-shadow:0 0 15px var(--danger);animation:pulse 1.2s ease-in-out infinite}
@@ -23,12 +37,12 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
 .live-banner.uncertain .live-title strong{color:var(--warn)}
 .live-meta{margin-top:4px;font-size:11px;color:#d9b9bf;line-height:1.45}.live-banner.uncertain .live-meta{color:#ead1ae}.live-warning{display:block;color:var(--warn);margin-top:3px}
 .live-stop{border:1px solid var(--danger);background:#26070c;color:#fff;padding:9px 13px;border-radius:7px;font:700 12px inherit;letter-spacing:.08em;cursor:pointer}.live-stop:hover{background:#3c0a12}.live-stop:disabled{opacity:.6;cursor:wait}
-.dock{position:absolute;right:18px;top:50%;transform:translateY(-50%);display:grid;gap:10px}
+.dock{position:absolute;z-index:32;right:18px;top:50%;transform:translateY(-50%);display:grid;gap:10px}
 .dock button{width:52px;height:52px;border:1px solid rgba(110,231,255,.26);background:rgba(3,8,12,.82);color:var(--text);border-radius:10px;cursor:pointer;font:12px inherit;backdrop-filter:blur(12px)}
 .dock button:hover,.dock button.active{border-color:var(--accent);color:var(--accent)}
 .badge{position:absolute;right:-5px;top:-5px;min-width:18px;height:18px;border-radius:9px;background:var(--danger);color:white;font-size:10px;display:none;align-items:center;justify-content:center}
 .tool{position:relative}
-.panel{position:absolute;top:18px;right:86px;bottom:18px;width:min(560px,calc(100% - 120px));background:var(--panel);border:1px solid var(--line);backdrop-filter:blur(18px);display:none;flex-direction:column;box-shadow:0 0 50px rgba(0,0,0,.45)}
+.panel{position:absolute;z-index:33;top:18px;right:86px;bottom:18px;width:min(560px,calc(100% - 120px));background:var(--panel);border:1px solid var(--line);backdrop-filter:blur(18px);display:none;flex-direction:column;box-shadow:0 0 50px rgba(0,0,0,.45)}
 .panel.open{display:flex}
 .panel header{display:flex;justify-content:space-between;align-items:center;padding:15px 17px;border-bottom:1px solid var(--line)}
 .panel header h2{font-size:14px;margin:0;letter-spacing:.12em;text-transform:uppercase}
@@ -175,8 +189,27 @@ pre.block{background:#050b10;border:1px solid rgba(113,144,160,.16);border-radiu
 .ctxmenu button:focus{outline:none;background:rgba(110,231,255,.1);color:var(--accent)}
 .ctxmenu button.danger:focus{background:rgba(255,101,119,.1);color:var(--danger)}
 .ctxmenu button:disabled{opacity:.38;cursor:default}
+.ctxmenu button[aria-disabled="true"]{color:var(--muted);cursor:default;white-space:normal}
+.ctxmenu button[aria-disabled="true"]:focus{background:rgba(110,231,255,.05);color:var(--text)}
 .ctxmenu kbd{font:inherit;font-size:10px;color:var(--muted)}
 .ctxmenu .sep{height:1px;background:var(--line);margin:5px 4px}
+/* Confirmation en page (Slice 08) : jamais `window.confirm`. Au-dessus du menu
+   (80), sous Barehands. Annuler a le focus : une action destructive se choisit. */
+.cdialog-back{position:fixed;inset:0;z-index:85;display:grid;place-items:center;padding:16px;background:rgba(2,6,10,.58);backdrop-filter:blur(3px)}
+.cdialog-back[hidden]{display:none}
+.cdialog{width:min(440px,100%);padding:18px 18px 14px;background:#08121a;border:1px solid rgba(110,231,255,.3);border-radius:10px;box-shadow:0 24px 70px rgba(0,0,0,.7);animation:toastIn .16s ease-out}
+.cdialog.danger{border-color:rgba(255,101,119,.42)}
+.cdialog:focus{outline:none}
+.cdialog h2{margin:0 0 10px;font-size:14px;font-weight:600;letter-spacing:.01em;text-transform:none;color:var(--text);overflow-wrap:anywhere}
+.cdialog ul{margin:0 0 16px;padding:0;list-style:none;display:grid;gap:6px;font-size:12.5px;line-height:1.45;color:#b3cbd6}
+.cdialog li strong{color:var(--text);font-weight:600;font-variant-numeric:tabular-nums}
+.cdialog .crow{display:flex;justify-content:flex-end;gap:8px}
+.cdialog button{padding:7px 14px;border-radius:6px;border:1px solid var(--line);background:rgba(3,14,20,.9);color:var(--text);font:inherit;font-size:13px;cursor:pointer}
+.cdialog button:focus-visible{outline:1px solid var(--accent);outline-offset:2px}
+.cdialog button.go{border-color:rgba(110,231,255,.5);color:var(--accent)}
+.cdialog.danger button.go{border-color:rgba(255,101,119,.55);color:var(--danger)}
+.cdialog button.go:hover{background:rgba(110,231,255,.08)}.cdialog.danger button.go:hover{background:rgba(255,101,119,.1)}
+@media(prefers-reduced-motion:reduce){.cdialog{animation:none}}
 .toasts{position:fixed;right:18px;bottom:18px;z-index:70;display:grid;gap:8px;width:min(340px,calc(100vw - 36px));pointer-events:none}
 .toast{pointer-events:auto;display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 8px 10px 12px;background:rgba(6,13,19,.97);border:1px solid var(--line);border-left:2px solid var(--accent);border-radius:8px;box-shadow:0 14px 40px rgba(0,0,0,.55);animation:toastIn .18s ease-out;transition:opacity .2s,transform .2s}
 .toast.ok{border-left-color:var(--ok)}
@@ -186,7 +219,7 @@ pre.block{background:#050b10;border:1px solid rgba(113,144,160,.16);border-radiu
 .toast.clickable:hover{border-color:rgba(110,231,255,.4)}
 .toast .ttxt{min-width:0}
 .toast .ttxt strong{display:block;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.toast .ttxt span{display:block;font-size:11px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.toast .ttxt span{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;font-size:11px;line-height:1.4;color:var(--muted);margin-top:2px;overflow:hidden;overflow-wrap:anywhere}
 .tclose{background:none;border:0;color:var(--muted);font-size:16px;line-height:1;cursor:pointer;padding:0 4px;align-self:start}
 .tclose:hover{color:var(--text)}
 .toast.out{opacity:0;transform:translateY(6px)}
@@ -258,6 +291,12 @@ nav.tabs button.active{color:var(--accent);border-left-color:var(--accent);backg
 .note.bad{color:var(--danger)}
 .note.warn{color:var(--warn)}
 .linkish{background:none;border:0;color:var(--accent);font:inherit;font-size:11px;cursor:pointer;padding:0;text-decoration:underline dotted}
+.linkish:disabled{opacity:.38;cursor:default;text-decoration:none;pointer-events:none}
+/* Un profil éteint garde ses réglages lisibles mais n'invite plus à les
+   changer : il ne sert plus tant qu'il n'est pas rallumé. Le gris ne fait que
+   le montrer — ce sont les attributs `disabled` posés sur chaque commande qui
+   l'imposent, au clavier comme à la souris. */
+.routing-off{opacity:.5}
 table.keys{width:100%;border-collapse:collapse;font-size:13px}
 table.keys th{text-align:left;font-weight:normal;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);padding:0 10px 8px 0;border-bottom:1px solid var(--line)}
 table.keys td{padding:10px 10px 10px 0;border-bottom:1px solid rgba(113,144,160,.12);vertical-align:middle}
@@ -558,6 +597,7 @@ details.rd[open]>summary{margin-bottom:14px}
   <section class="panel" id="panel"><header><h2 id="panelTitle">Panel</h2><button id="closePanel" aria-label="Fermer">×</button></header><div class="body" id="panelBody"></div></section>
 </div>
 <div class="ctxmenu" id="ctxMenu" role="menu" hidden></div>
+<div class="cdialog-back" id="confirmBack" hidden><div class="cdialog" id="confirmDialog" tabindex="-1" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmBody"><h2 id="confirmTitle"></h2><ul id="confirmBody"></ul><div class="crow"><button type="button" id="confirmCancel">Annuler</button><button type="button" class="go" id="confirmGo">Confirmer</button></div></div></div>
 <div class="toasts" id="toasts" aria-live="polite"></div>
 <div class="bgpop" id="bgPop" role="dialog" aria-label="Notifications d’arrière-plan" hidden></div>
 <section class="tl" id="timeline" role="dialog" aria-modal="true" aria-labelledby="tlTitle" aria-describedby="tlHelp" hidden>
@@ -624,6 +664,10 @@ details.rd[open]>summary{margin-bottom:14px}
 <script>
 /*__CONTROL_CENTER_LIVE_JS__*/
 /*__CONTROL_CENTER_CATALOG_JS__*/
+/*__CONTROL_CENTER_SCENE_JS__*/
+/*__CONTROL_CENTER_SCENE_LAYOUT_JS__*/
+/*__CONTROL_CENTER_SCENE_INTERACT_JS__*/
+/*__CONTROL_CENTER_SCENE_CAPTURE_JS__*/
 const $=s=>document.querySelector(s);let current=null;const panel=$('#panel'),body=$('#panelBody'),title=$('#panelTitle');
 async function api(path,opts){const r=await fetch(path,opts),text=await r.text();let value={};try{value=text?JSON.parse(text):{}}catch{value={error:text}}if(!r.ok){const e=new Error(value.error||value.code||text||`HTTP ${r.status}`);e.status=r.status;throw e}return value}
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
@@ -772,7 +816,7 @@ async function openBackgroundPop(category,pill){
        un événement arrivé entre le rendu et le clic reste non vu, et regarder
        les tâches terminées n'efface pas un échec en passant. */
     try{await api('/api/background/ack',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({seq:data.seq,category})});closeBackgroundPop();refreshStatus()}
-    catch(e){ack.disabled=false;alert(e.message)}
+    catch(e){ack.disabled=false;toast({title:'Acquittement impossible',sub:e.message,kind:'bad'});console.error('background_ack_failed',e)}
   });
   (pop.querySelector('.bgitem')||ack).focus({preventScroll:true});
 }
@@ -790,8 +834,8 @@ document.addEventListener('keydown',e=>{
   const pill=document.querySelector(`#bgPills [data-bg-cat="${category}"]`);if(pill)pill.focus();
 },true);
 window.addEventListener('resize',()=>{if(BG.open)closeBackgroundPop()});
-async function renderErrors(){const archived=errorsView==='archived';title.textContent=archived?'Errors · Archives':'Errors';const items=await api('/api/errors'+(archived?'?archived=1&limit=500':''));body.innerHTML=`<div class="row" style="margin-bottom:12px"><button class="action" id="toggleErrors">${archived?'Erreurs actives':'Erreurs archivées'}</button>${archived?'':'<button class="action danger" id="archiveErrors">Archiver</button>'}<span class="hint">${items.length} entrée(s)</span></div><div>${entries(items)}</div>`;$('#toggleErrors').addEventListener('click',()=>{errorsView=archived?'active':'archived';renderErrors().catch(e=>{body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`})});const archive=$('#archiveErrors');if(archive)archive.addEventListener('click',async()=>{archive.disabled=true;try{await api('/api/errors/archive',{method:'POST'});await renderErrors();refreshStatus()}catch(e){alert(e.message)}finally{archive.disabled=false}})}
-async function refreshStatus(){try{const s=await api('/api/status'),v=s.voice_state||'idle',k=String(s.manual_wake_key||'f9').toUpperCase(),online=s.voice_online===true;renderLive(s.live);$('#voiceState').textContent=online?v.toUpperCase():'OFFLINE';const listening=s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`;$('#voiceHint').textContent=online?({idle:`${k} · DÉMARRER`,listening,thinking:`${k} · ANNULER`,speaking:`${k} · INTERROMPRE`}[v]||`${k} · CONTRÔLER`):`${k} · VOICE HORS LIGNE`;$('.face').style.visibility=online?'visible':'hidden';$('#agentName').textContent=String(s.agent.name||s.agent_cli||'agent').toUpperCase();$('#agentState').textContent=(s.agent.state||'stopped').toUpperCase();const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';renderBackgroundPills(s.background);AG.agent=s.agent||null;AG.cli=s.agent_cli||'';if(!(current==='agents'&&coreOk()))updateSubagentBadge(s.subagents,false);watchSubagents(s.subagents)}catch(e){$('#voiceState').textContent='OFFLINE';$('#agentState').textContent='OFFLINE';$('#voiceHint').textContent='VOICE HORS LIGNE';$('.face').style.visibility='hidden';updateSubagentBadge(null)}}
+async function renderErrors(){const archived=errorsView==='archived';title.textContent=archived?'Errors · Archives':'Errors';const items=await api('/api/errors'+(archived?'?archived=1&limit=500':''));body.innerHTML=`<div class="row" style="margin-bottom:12px"><button class="action" id="toggleErrors">${archived?'Erreurs actives':'Erreurs archivées'}</button>${archived?'':'<button class="action danger" id="archiveErrors">Archiver</button>'}<span class="hint">${items.length} entrée(s)</span></div><div>${entries(items)}</div>`;$('#toggleErrors').addEventListener('click',()=>{errorsView=archived?'active':'archived';renderErrors().catch(e=>{body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`})});const archive=$('#archiveErrors');if(archive)archive.addEventListener('click',async()=>{archive.disabled=true;try{await api('/api/errors/archive',{method:'POST'});await renderErrors();refreshStatus()}catch(e){toast({title:'Archivage des erreurs impossible',sub:e.message,kind:'bad'});console.error('errors_archive_failed',e)}finally{archive.disabled=false}})}
+async function refreshStatus(){try{const s=await api('/api/status'),v=s.voice_state||'idle',k=String(s.manual_wake_key||'f9').toUpperCase(),online=s.voice_online===true;renderLive(s.live);$('#voiceState').textContent=online?v.toUpperCase():'OFFLINE';const listening=s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`;$('#voiceHint').textContent=online?({idle:`${k} · DÉMARRER`,listening,thinking:`${k} · ANNULER`,speaking:`${k} · INTERROMPRE`}[v]||`${k} · CONTRÔLER`):`${k} · VOICE HORS LIGNE`;$('.face').style.visibility=online?'visible':'hidden';$('#agentName').textContent=String(s.agent.name||s.agent_cli||'agent').toUpperCase();$('#agentState').textContent=(s.agent.state||'stopped').toUpperCase();const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';renderBackgroundPills(s.background);try{if(window.JarvisScene)JarvisScene.gate(s.scene,s.scene_limits)}catch(sceneError){console.error('[scène] scene.gate_failed',sceneError)}AG.agent=s.agent||null;AG.cli=s.agent_cli||'';if(!(current==='agents'&&coreOk()))updateSubagentBadge(s.subagents,false);watchSubagents(s.subagents)}catch(e){try{if(window.JarvisScene)JarvisScene.statusLost()}catch(_sceneError){/* la scène ne doit pas casser le statut */}$('#voiceState').textContent='OFFLINE';$('#agentState').textContent='OFFLINE';$('#voiceHint').textContent='VOICE HORS LIGNE';$('.face').style.visibility='hidden';updateSubagentBadge(null)}}
 async function openPanel(name){current=name;document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.toggle('active',b.dataset.panel===name));panel.classList.add('open');title.textContent={errors:'Errors',trace:'Trace',agents:'Agents'}[name];closeMenu(false);if(name==='agents'){openAgentsPanel();return}stopAgentsPolling();body.innerHTML='<div class="empty">Chargement…</div>';try{if(name==='errors')await renderErrors();if(name==='trace')body.innerHTML=entries(await api('/api/trace'))}catch(e){body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`}}
 function closePanel(){current=null;panel.classList.remove('open');document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.remove('active'));closeMenu(false);stopAgentsPolling()}
 
@@ -861,11 +905,14 @@ const STATUS={
 /*__CONTROL_CENTER_WORK_JS__*/
 /* Barehands en mode test (pointeur à mains nues) : `control_center_barehands.js`. */
 /*__CONTROL_CENTER_BAREHANDS_JS__*/
+/*__CONTROL_CENTER_SCENE_PAGE_JS__*/
+/* Réglage de la scène dans l'onglet Expérimental (Slice 11), après Barehands qui crée l'onglet : `control_center_scene_settings.js`. */
+/*__CONTROL_CENTER_SCENE_SETTINGS_JS__*/
 /* Chronologie de conversation plein écran (Slice 05) : `control_center_timeline.js`. */
 /*__CONTROL_CENTER_TIMELINE_JS__*/
 // `error_class` normalisées par Core ou ses observateurs ; les autres restent brutes.
 const ERROR_CLASSES={process_stopped:'processus arrêté',producer_restarted:'Control Center redémarré',
-  core_restarted:'Core redémarré',merged:'doublon fusionné',unknown_status:'statut inconnu',killed:'tué',stopped:'arrêté',cancelled:'annulé'};
+  core_restarted:'Core redémarré',core_restarted_unobserved:'non revu après le redémarrage de Core',merged:'doublon fusionné',unknown_status:'statut inconnu',killed:'tué',stopped:'arrêté',cancelled:'annulé'};
 // Sources dont les travaux sont des sous-agents du brain ; les autres (jobs Core…) ont leur section.
 const AGENT_SOURCES=new Set(['claude','codex']);
 const MODEL_FAMILIES={opus:'Opus',sonnet:'Sonnet',haiku:'Haiku',fable:'Fable'};
@@ -1122,7 +1169,7 @@ function liveTimer(id,start,cls,hint){
 function timerHtml(t){
   if(t.id==='brain'){
     if(t.busy&&t.turn_started_ms)return liveTimer('brain',t.turn_started_ms,'live',`Tour en cours depuis ${fmtClock(t.turn_started_ms)}`);
-    if(t.started_ms&&t.state==='running')return liveTimer('brain',t.started_ms,'idle',`En service depuis ${fmtClock(t.started_ms)}`);
+    if(t.started_ms&&brainArmed(t))return liveTimer('brain',t.started_ms,'idle',`En service depuis ${fmtClock(t.started_ms)}`);
     return '<span class="timer idle" title="Brain arrêté">—</span>';
   }
   if(isRunning(t)&&t.started_ms)return liveTimer(t.id,t.started_ms,'live',`Démarré à ${fmtClock(t.started_ms)}`);
@@ -1136,10 +1183,17 @@ function tickTimers(){
   });
 }
 
+// « Armé » veut dire prêt à prendre un tour, pas « un processus tourne ».
+// Claude tient un processus permanent (`running`) ; Codex en lance un par tour
+// et se déclare `ready` entre deux. Sans ce second état, un brain Codex
+// s'affichait « arrêté » quoi qu'on fasse : « Redémarrer » réussissait en
+// silence, « Arrêter » restait grisé, et rien ne le disait.
+function brainArmed(b){const state=(b&&b.state)||'';return state==='running'||state==='ready'}
 function brainState(b){
   const state=b.state||'stopped';
   if(b.busy)return {cls:'running',label:'tour en cours'};
   if(state==='running')return {cls:'ok',label:'en attente'};
+  if(state==='ready')return {cls:'ok',label:'prêt'};
   if(state==='exited')return {cls:'bad',label:'processus terminé'};
   return {cls:'',label:'arrêté'};
 }
@@ -1151,7 +1205,7 @@ function cardHtml(t,{level=0,compact=false,head=false}={}){
     const a=AG.agent||{},c=a.console||{};
     st=brainState(t);
     model=prettyModel(t.model);
-    line=t.activity||(t.busy?'Tour en cours…':t.state==='running'?'En attente d’une demande':t.state==='exited'?'Le processus s’est arrêté':'Arrêté · clic droit pour démarrer');
+    line=t.activity||(t.busy?'Tour en cours…':brainArmed(t)?'En attente d’une demande':t.state==='exited'?'Le processus s’est arrêté':'Arrêté · clic droit pour démarrer');
     lineTitle=line;
     meta.push(`<span>${esc(st.label)}</span>`);
     if(a.pid)meta.push(`<span>PID ${esc(a.pid)}</span>`);
@@ -1777,11 +1831,11 @@ function menuItems(id){
     items.push({act:'copy',label:'Copier le prompt',disabled:!t||!t.prompt});
     return items;
   }
-  const a=AG.agent||{},c=a.console||{},running=(a.state||(t&&t.state))==='running';
+  const a=AG.agent||{},c=a.console||{},armed=brainArmed({state:a.state||(t&&t.state)});
   items.push('-',
-    {act:'start',label:'Démarrer',disabled:running},
+    {act:'start',label:'Démarrer',disabled:armed},
     {act:'restart',label:'Redémarrer'},
-    {act:'kill',label:'Arrêter',danger:true,disabled:!running},
+    {act:'kill',label:'Arrêter',danger:true,disabled:!armed},
     '-');
   if(c.open)items.push({act:'console-open',label:'Ramener la console Windows'},{act:'console-close',label:'Fermer la console Windows',danger:true});
   else items.push({act:'console-open',label:'Console Windows',disabled:c.supported===false});
@@ -1795,14 +1849,16 @@ function anchorBelow(el){
   const r=el.getBoundingClientRect();
   return {x:r.left,y:r.bottom+4,above:r.top-4,alignRight:r.right};
 }
-function openMenu(id,pos,origin){
+/* Menu contextuel générique (cartes d'agents, objets de la scène — Slice 08) :
+   même composant, même clavier (flèches, Début, Fin, Échap, Tab, touche Menu).
+   `run(act)` reçoit l'action choisie, menu déjà fermé ; sans `run`, l'action
+   va aux cartes d'agents (`runMenuAction`). */
+function showMenu({title,items,pos,origin,id=null,run=null}){
   closeMenu(false);
-  const t=findTask(id);
-  if(!t)return;
-  ctxMenu.innerHTML=`<div class="mhead">${esc(t.id==='brain'?'Brain':taskTitle(t))}</div>`+menuItems(id).map(it=>it==='-'
+  ctxMenu.innerHTML=`<div class="mhead">${esc(title)}</div>`+items.map(it=>it==='-'
     ?'<div class="sep" role="separator"></div>'
-    :`<button type="button" role="menuitem" data-act="${it.act}" class="${it.danger?'danger':''}"${it.disabled?' disabled':''}><span>${esc(it.label)}</span>${it.key?`<kbd>${esc(it.key)}</kbd>`:''}</button>`).join('');
-  ctxMenu.setAttribute('aria-label',`Actions : ${t.id==='brain'?'Brain':taskTitle(t)}`);
+    :`<button type="button" role="menuitem" data-act="${esc(it.act)}" class="${it.danger?'danger':''}"${it.disabled?' disabled':''}${it.note?' aria-disabled="true"':''}><span>${esc(it.label)}</span>${it.key?`<kbd>${esc(it.key)}</kbd>`:''}</button>`).join('');
+  ctxMenu.setAttribute('aria-label',`Actions : ${title}`);
   ctxMenu.style.left='0px';ctxMenu.style.top='0px';
   ctxMenu.hidden=false;
   const w=ctxMenu.offsetWidth,h=ctxMenu.offsetHeight,W=window.innerWidth,H=window.innerHeight;
@@ -1811,22 +1867,104 @@ function openMenu(id,pos,origin){
   if(y+h>H-8)y=(pos.above??y)-h;
   ctxMenu.style.left=Math.max(8,x)+'px';
   ctxMenu.style.top=Math.max(8,Math.min(y,H-h-8))+'px';
-  AG.menu={id,origin,at:performance.now()};
-  const first=ctxMenu.querySelector('button:not(:disabled)');
+  AG.menu={id,origin,run,at:performance.now()};
+  const first=ctxMenu.querySelector('button:not(:disabled):not([aria-disabled="true"])')||ctxMenu.querySelector('button:not(:disabled)');
   if(first)first.focus({preventScroll:true});
+}
+function openMenu(id,pos,origin){
+  closeMenu(false);
+  const t=findTask(id);
+  if(!t)return;
+  showMenu({title:t.id==='brain'?'Brain':taskTitle(t),items:menuItems(id),pos,origin,id});
 }
 function closeMenu(restore){
   if(!AG.menu){ctxMenu.hidden=true;return}
-  const {id,origin}=AG.menu;
+  const {id,origin,run}=AG.menu;
   AG.menu=null;
   ctxMenu.hidden=true;ctxMenu.innerHTML='';
   if(restore){
-    const el=origin&&origin.isConnected?origin:cardEl(id);
+    const el=origin&&origin.isConnected?origin:(id!==null?cardEl(id):null);
     if(el)el.focus({preventScroll:true});
   }
   // Les mises à jour retenues pendant l'ouverture du menu reprennent.
-  setTimeout(renderAgentsView,0);
+  if(!run)setTimeout(renderAgentsView,0);
 }
+
+/* Confirmation en page (Slice 08), jamais `window.confirm` : rend une promesse
+   vraie si l'utilisateur confirme. `lines` : texte, ou `[texte gras, suite]`.
+   Échap, clic hors du panneau ou « Annuler » : faux. Le focus revient où il
+   était. Une seule à la fois : une nouvelle demande annule la précédente.
+   Vraiment modale (reprise QA) : le reste de la page est `inert` (ni clic, ni
+   focus, ni geste de scène, ni notification cliquable ; la main de Barehands
+   reste active), et les touches sont prises au niveau de la fenêtre, en
+   capture : aucun raccourci d'interface ne passe, Échap ferme même quand le
+   focus est sur le corps du panneau. */
+const CONFIRM={resolve:null,previous:null,inert:[],observer:null,backWasInert:false};
+/* Enfant de `body` à rendre inerte pendant la confirmation : tout sauf le panneau,
+   la main de Barehands et les scripts, et seulement s'il ne l'était pas déjà. */
+function confirmInertCandidate(el,back){return el!==back&&el.id!=='jarvisHands'&&el.tagName!=='SCRIPT'&&!el.inert}
+function confirmDialog({title,lines=[],confirmLabel='Confirmer',cancelLabel='Annuler',danger=false}){
+  if(CONFIRM.resolve)finishConfirm(false);
+  closeMenu(false);
+  const back=$('#confirmBack'),dialog=$('#confirmDialog');
+  $('#confirmTitle').textContent=title;
+  const list=$('#confirmBody');list.replaceChildren();
+  for(const line of lines){
+    const row=document.createElement('li');
+    if(Array.isArray(line)){const strong=document.createElement('strong');strong.textContent=line[0];row.append(strong,document.createTextNode(line[1]||''))}
+    else row.textContent=line;
+    list.append(row);
+  }
+  $('#confirmGo').textContent=confirmLabel;$('#confirmCancel').textContent=cancelLabel;
+  dialog.classList.toggle('danger',!!danger);
+  CONFIRM.previous=document.activeElement;
+  CONFIRM.inert=[...document.body.children].filter(el=>confirmInertCandidate(el,back));
+  for(const el of CONFIRM.inert)el.inert=true;
+  /* Ouverte par-dessus une autre modale qui a rendu `body` inerte (chronologie
+     de conversation) : le panneau lui-même doit rester actif, sinon il
+     s'afficherait sans pouvoir être cliqué. Son état est rendu à la fermeture. */
+  CONFIRM.backWasInert=back.inert;back.inert=false;
+  /* Un enfant ajouté pendant la confirmation (conteneur, notification…) suit la même règle. */
+  if(typeof MutationObserver==='function'){
+    CONFIRM.observer=new MutationObserver(records=>{
+      for(const record of records)for(const el of record.addedNodes){
+        if(el.nodeType===1&&el.parentNode===document.body&&confirmInertCandidate(el,back)){el.inert=true;CONFIRM.inert.push(el)}
+      }
+    });
+    CONFIRM.observer.observe(document.body,{childList:true});
+  }
+  back.hidden=false;
+  $('#confirmCancel').focus({preventScroll:true});
+  return new Promise(resolve=>{CONFIRM.resolve=resolve});
+}
+function finishConfirm(value){
+  const resolve=CONFIRM.resolve,previous=CONFIRM.previous;
+  CONFIRM.resolve=null;CONFIRM.previous=null;
+  if(CONFIRM.observer){CONFIRM.observer.disconnect();CONFIRM.observer=null}
+  for(const el of CONFIRM.inert)el.inert=false;
+  CONFIRM.inert=[];
+  $('#confirmBack').hidden=true;
+  $('#confirmBack').inert=CONFIRM.backWasInert;CONFIRM.backWasInert=false;
+  if(previous&&previous.isConnected&&typeof previous.focus==='function')try{previous.focus({preventScroll:true})}catch(_error){/* élément disparu */}
+  if(resolve)resolve(value);
+}
+$('#confirmGo').addEventListener('click',()=>finishConfirm(true));
+$('#confirmCancel').addEventListener('click',()=>finishConfirm(false));
+$('#confirmBack').addEventListener('mousedown',e=>{if(e.target===e.currentTarget){e.preventDefault();finishConfirm(false)}});
+window.addEventListener('keydown',e=>{
+  if(!CONFIRM.resolve)return;
+  e.stopImmediatePropagation();
+  const dialog=$('#confirmDialog');
+  if(e.key==='Escape'){e.preventDefault();finishConfirm(false);return}
+  if(e.key==='Tab'){
+    const buttons=[$('#confirmCancel'),$('#confirmGo')],i=buttons.indexOf(document.activeElement);
+    e.preventDefault();buttons[i<0?0:(i+(e.shiftKey?-1:1)+2)%2].focus();
+    return;
+  }
+  // Entrée ou Espace sur un bouton du panneau : action par défaut du bouton ; tout le reste est avalé.
+  if(!(dialog.contains(e.target)&&e.target.tagName==='BUTTON'&&(e.key==='Enter'||e.key===' ')))e.preventDefault();
+},true);
+$('#confirmDialog').addEventListener('mousedown',e=>{if(!e.target.closest('button')){e.preventDefault();$('#confirmDialog').focus({preventScroll:true})}});
 async function runMenuAction(act,id){
   closeMenu(act!=='trace'&&act!=='details');
   if(act==='trace')return showTrace(id);
@@ -1851,7 +1989,9 @@ async function copyText(text){
 }
 async function brainAction(act){
   const running=activeAgents().length;
-  if((act==='kill'||act==='restart')&&running&&!confirm(`${act==='kill'?'Arrêter':'Redémarrer'} le brain interrompra ${plural(running,'sous-agent en cours','sous-agents en cours')}. Continuer ?`))return;
+  if((act==='kill'||act==='restart')&&running&&!await confirmDialog({title:`${act==='kill'?'Arrêter':'Redémarrer'} le brain ?`,
+    lines:[`Cela interrompra ${plural(running,'sous-agent en cours','sous-agents en cours')}.`],
+    confirmLabel:act==='kill'?'Arrêter le brain':'Redémarrer le brain',danger:true}))return;
   try{
     await api('/api/agent/'+act,{method:'POST'});
     toast({title:{start:'Brain démarré',restart:'Brain redémarré',kill:'Brain arrêté'}[act],kind:act==='kill'?'warn':'ok',ms:3000});
@@ -1876,8 +2016,10 @@ async function consoleAction(act){
 ctxMenu.addEventListener('mousedown',e=>e.preventDefault());  // garder le focus clavier dans le menu
 ctxMenu.addEventListener('click',e=>{
   const button=e.target.closest('button[data-act]');
-  if(!button||button.disabled||!AG.menu)return;
-  runMenuAction(button.dataset.act,AG.menu.id);
+  if(!button||button.disabled||button.getAttribute('aria-disabled')==='true'||!AG.menu)return;
+  const menu=AG.menu;
+  if(menu.run){closeMenu(true);menu.run(button.dataset.act);return}
+  runMenuAction(button.dataset.act,menu.id);
 });
 ctxMenu.addEventListener('mouseover',e=>{
   const button=e.target.closest('button[data-act]:not(:disabled)');
@@ -1991,7 +2133,7 @@ const TABS=[
   {id:'keys',label:'API Keys',save:false},
   {id:'shortcuts',label:'Raccourcis',save:false},
 ];
-const SET={open:false,tab:'voice',voiceTab:'architecture',voiceCatalogRole:'realtime',voiceCatalogMountedRole:null,voiceCatalogStates:{},voiceModelSources:{},voiceModelGenerations:{},data:null,draft:null,dirty:false,catalog:{},clis:null,devices:null,capture:null,shortcuts:null,restartNotice:false,rdOpen:false,routingAdvancedOpen:false,routing:null,prompts:null,agentCatalog:null,voiceCatalog:null,openGeneration:0,cliGeneration:0,cliModelGeneration:0,routingGeneration:0,voiceGeneration:0,audioGeneration:0,diagnosticGeneration:0,voiceDiagnosticError:''};
+const SET={open:false,tab:'voice',voiceTab:'architecture',voiceCatalogRole:'realtime',voiceCatalogMountedRole:null,voiceCatalogStates:{},voiceModelSources:{},voiceModelGenerations:{},data:null,draft:null,dirty:false,catalog:{},clis:null,devices:null,capture:null,shortcuts:null,restartNotice:false,rdOpen:false,routingAdvancedOpen:false,routing:null,routingPick:{},prompts:null,agentCatalog:null,voiceCatalog:null,openGeneration:0,cliGeneration:0,cliModelGeneration:0,routingGeneration:0,voiceGeneration:0,audioGeneration:0,diagnosticGeneration:0,voiceDiagnosticError:''};
 const overlay=$('#overlay'),modalContent=$('#modalContent'),modalStatus=$('#modalStatus'),modalSave=$('#modalSave'),modalSub=$('#modalSub');
 
 function say(text,kind){modalStatus.className='status'+(kind?' '+kind:'');modalStatus.textContent=text||''}
@@ -2446,45 +2588,79 @@ function tabCli(){
 
 /* --- configuration avancée des sous-agents ------------------------------
    Rien de ce qui est affiché ici n'est écrit dans cette page : les profils,
-   les candidats et leur disponibilité viennent tous de /api/routing/candidates.
-   Un candidat enregistré devenu indisponible reste coché et visible — sa
-   disparition serait un réglage perdu en silence.                          */
-function candidateLabel(c){return c.label||(c.model?`${c.agent} · ${c.model}`:c.agent)}
-function candidateKey(c){return JSON.stringify({agent:c.agent,model:c.model||''})}
+   les harness, leurs modèles et leur disponibilité viennent tous de
+   /api/routing/candidates.
 
-function routingRow(profile,candidate,chosen){
-  const key=candidateKey(candidate);
-  const rank=chosen.indexOf(key);
-  const state=candidate.available
-    ? '<span class="tag ok">disponible</span>'
-    : `<span class="tag bad">indisponible</span>`;
-  const why=candidate.available?'':`<div class="hint">${esc(candidate.unavailable_reason||'')}</div>`;
-  const order=rank>=0?`<span class="tag">${rank===0?'préféré':'recours '+rank}</span>`:'';
-  return `<label class="choice ${rank>=0?'selected':''}">
-    <input type="checkbox" data-routing-candidate="${esc(key)}" data-routing-profile="${esc(profile)}" ${rank>=0?'checked':''}>
-    <div><div class="title"><strong>${esc(candidateLabel(candidate))}</strong>${state}${order}</div>${why}</div>
-  </label>`;
+   Le choix se fait en deux temps : d'abord le harness, ensuite un de ses
+   modèles seulement. Une liste unique de tous les couples harness × modèle
+   devient illisible dès qu'un fournisseur en déclare vingt.
+
+   Ce que le profil retient reste une liste ordonnée de couples {agent, model}
+   — le format enregistré ne change pas. Un candidat enregistré devenu
+   indisponible y reste visible et expliqué : sa disparition serait un réglage
+   perdu en silence.                                                        */
+function candidateKey(c){return JSON.stringify({agent:c.agent,model:c.model||''})}
+function harnessOf(state,agent){return (state.harnesses||[]).find(h=>h.id===agent)||null}
+function modelOf(harness,model){return harness?(harness.models||[]).find(m=>(m.model||'')===(model||'')):null}
+/* Le choix en cours d'un profil ne devient un candidat qu'à « Ajouter » :
+   sélectionner un harness ne modifie donc aucun réglage. */
+function routingPick(profile){
+  const picks=SET.routingPick||(SET.routingPick={});
+  return picks[profile]||(picks[profile]={agent:'',model:''});
+}
+/* Le brouillon reçoit tous les profils du serveur ; un profil apparu depuis
+   l'ouverture de la fenêtre est créé vide plutôt que de faire échouer le clic. */
+function routingEntry(profile){
+  const profiles=SET.draft.routing.profiles;
+  return profiles[profile]||(profiles[profile]={candidates:[],enabled:true,allow_general_fallback:true});
+}
+function candidateLabel(state,ref){
+  const harness=harnessOf(state,ref.agent),model=modelOf(harness,ref.model);
+  const left=harness?harness.label:ref.agent;
+  const right=model?model.label:(ref.model||'');
+  return right?`${left} · ${right}`:left;
+}
+
+function routingRow(profile,ref,rank,state,off){
+  const harness=harnessOf(state,ref.agent),model=modelOf(harness,ref.model);
+  const stop=off?' disabled':'';
+  const usable=!!(harness&&model&&model.available);
+  const tag=usable?'<span class="tag ok">disponible</span>':'<span class="tag bad">indisponible</span>';
+  const reason=(model&&model.unavailable_reason)||(harness&&harness.unavailable_reason)||"Ce couple n'est plus proposé sur cette machine.";
+  const why=usable?'':`<div class="hint">${esc(reason)}</div>`;
+  const order=`<span class="tag">${rank===0?'préféré':'recours '+rank}</span>`;
+  /* Une commande est retrouvée après le re-rendu par ce qu'elle désigne — le
+     profil et le couple — et non par son rang, qui change justement quand on
+     monte une ligne. */
+  const key=`${profile}|${ref.agent}|${ref.model||''}`;
+  const up=rank>0?`<button class="linkish" data-routing-up="${esc(profile)}" data-routing-rank="${rank}" data-routing-focus="up|${esc(key)}"${stop}>monter</button> `:'';
+  return `<div class="choice selected">
+    <div><div class="title"><strong>${esc(candidateLabel(state,ref))}</strong>${tag}${order}</div>${why}
+      <div class="source">${up}<button class="linkish" data-routing-drop="${esc(profile)}" data-routing-rank="${rank}" data-routing-focus="drop|${esc(key)}"${stop}>retirer</button></div></div>
+  </div>`;
 }
 
 function routingAdvancedBody(){
   if(!SET.routing)return '<div class="hint">Ouvrez cette section pour charger les profils et candidats.</div>';
   const state=SET.routing,draft=SET.draft.routing;
   if(state.ok===false)return `<div class="notice bad">${esc(state.error||'Configuration avancée indisponible.')} <button type="button" class="linkish" id="routingRetry">réessayer</button></div>`;
-  const candidates=state.candidates||[];
   const blocks=(state.profiles||[]).map(profile=>{
     const entry=draft.profiles[profile.id]||{candidates:[],enabled:true,allow_general_fallback:true};
-    const chosen=(entry.candidates||[]).map(candidateKey);
-    const rows=candidates.map(c=>routingRow(profile.id,c,chosen)).join('');
+    const chosen=entry.candidates||[];
+    const off=!entry.enabled;
+    const rows=chosen.map((ref,rank)=>routingRow(profile.id,ref,rank,state,off)).join('');
     const empty=chosen.length?'':'<div class="hint">Aucun candidat autorisé : ce profil garde le modèle configuré du CLI.</div>';
     const fallback=profile.id==='general'?'':`<div class="field inline">
-      <input type="checkbox" id="f_fb_${esc(profile.id)}" data-routing-fallback="${esc(profile.id)}" ${entry.allow_general_fallback?'checked':''}>
+      <input type="checkbox" id="f_fb_${esc(profile.id)}" data-routing-fallback="${esc(profile.id)}" ${entry.allow_general_fallback?'checked':''}${off?' disabled':''}>
       <div><label for="f_fb_${esc(profile.id)}">Se rabattre sur le profil Général</label>
       <div class="hint">Quand aucun candidat de ce profil n'est utilisable, essayer ceux du profil Général plutôt que d'échouer.</div></div></div>`;
-    const enabled=`<div class="field inline"><input type="checkbox" id="f_profile_${esc(profile.id)}" data-routing-profile-enabled="${esc(profile.id)}" ${entry.enabled?'checked':''}>
+    const enabled=`<div class="field inline"><input type="checkbox" id="f_profile_${esc(profile.id)}" data-routing-profile-enabled="${esc(profile.id)}" data-routing-focus="enabled|${esc(profile.id)}" ${entry.enabled?'checked':''}>
       <div><label for="f_profile_${esc(profile.id)}">Profil actif</label><div class="hint">Désactivé, ce profil conserve le choix du CLI même en mode Auto.</div></div></div>`;
     return `<h3>${esc(profile.label)}</h3>${enabled}
       <div class="hint" style="margin-bottom:8px">${esc(profile.description)}${profile.requires.length?` · exige : ${profile.requires.map(esc).join(', ')}`:''}</div>
-      <div class="choices">${rows}</div>${empty}${fallback}`;
+      <div class="routing-profile${off?' routing-off':''}" data-routing-block="${esc(profile.id)}"${off?' aria-disabled="true"':''}>
+      ${off?'<div class="hint">Profil désactivé : ces candidats sont conservés mais ne servent pas tant qu’il n’est pas rallumé.</div>':''}
+      ${rows?`<div class="choices">${rows}</div>`:empty}${routingPicker(profile.id,state,off)}${fallback}</div>`;
   }).join('');
   const sources=Object.entries(state.sources||{}).map(([provider,source])=>{
     const label=providerLabel(provider);
@@ -2495,7 +2671,31 @@ function routingAdvancedBody(){
   }).join(' ');
   return `<div class="source" style="margin-bottom:10px">${sources} <button class="linkish" id="routingRefresh">rafraîchir</button></div>
     ${blocks}
-    <div class="hint" style="margin-top:14px">L'ordre des candidats est celui de la liste : le premier disponible est choisi, les suivants servent de recours. Les sous-agents s'exécutent dans le CLI vocal actif ; un candidat d'un autre CLI ne peut servir qu'à l'auto-développement.</div>`;
+    <div class="hint" style="margin-top:14px">Un candidat s'ajoute en deux temps : le harness, puis un de ses modèles. L'ordre de la liste est la préférence — le premier disponible est choisi, les suivants servent de recours, et « monter » change le préféré. Les sous-agents s'exécutent dans le CLI vocal actif ; un candidat d'un autre CLI ne peut servir qu'à l'auto-développement.</div>`;
+}
+
+/* Les deux sélecteurs en cascade : le second ne montre que les modèles du
+   harness choisi au premier. */
+function routingPicker(profile,state,off){
+  const stop=off?' disabled':'';
+  const pick=routingPick(profile);
+  const harness=harnessOf(state,pick.agent);
+  const model=modelOf(harness,pick.model);
+  const harnesses=(state.harnesses||[]).map(h=>({value:h.id,label:h.available?h.label:`${h.label} — indisponible`}));
+  const models=(harness?harness.models||[]:[]).map(m=>({value:m.model,label:m.available?m.label:`${m.label} — indisponible`}));
+  const modelField=harness
+    ? `<select id="f_rt_model_${esc(profile)}" data-routing-model="${esc(profile)}" data-routing-focus="model|${esc(profile)}"${stop}>${selectOptions(models,pick.model,'')}</select>`
+    : `<select id="f_rt_model_${esc(profile)}" disabled><option>Choisir d'abord un harness</option></select>`;
+  const why=harness&&!harness.available?`<div class="hint">${esc(harness.unavailable_reason||'')}</div>`:'';
+  /* Garder un choix enregistré devenu inutilisable et en ajouter un qu'on sait
+     déjà inutilisable ne sont pas la même chose : le premier protège un
+     réglage, le second se ferait en connaissance de cause. On le dit avant. */
+  const broken=harness&&(!harness.available||(model&&!model.available));
+  const warn=broken?`<div class="hint" data-routing-unusable="${esc(profile)}">Ce couple est indisponible sur cette machine : il sera enregistré mais ignoré tant qu'il ne revient pas.</div>`:'';
+  return `<div class="field"><label for="f_rt_harness_${esc(profile)}">Harness</label>
+      <select id="f_rt_harness_${esc(profile)}" data-routing-harness="${esc(profile)}" data-routing-focus="harness|${esc(profile)}"${stop}>${selectOptions(harnesses,pick.agent,'Choisir un harness…')}</select>${why}</div>
+    <div class="field"><label for="f_rt_model_${esc(profile)}">Modèle</label>${modelField}${warn}
+      <div class="source"><button class="linkish" data-routing-add="${esc(profile)}" data-routing-focus="add|${esc(profile)}" ${harness&&!off?'':'disabled'}>ajouter à ce profil</button></div></div>`;
 }
 
 function routingAdvancedShell(){
@@ -2563,27 +2763,106 @@ async function hydrateCliModel(revision,refresh=false){
   renderCliTechnical(revision);
 }
 
+/* Redessiner la section jette le focus au début du document : la commande sur
+   laquelle on vient de cliquer n'existe plus. On note ce qu'elle désignait et
+   on rend le focus à son équivalent — « monter » surtout, qu'on actionne
+   plusieurs fois de suite et dont le rang change à chaque fois. */
+function routingFocusTarget(body,focused,rank){
+  const [kind,...rest]=focused.split('|'),key=rest.join('|'),profile=key.split('|')[0];
+  const all=[...body.querySelectorAll('[data-routing-focus]')].filter(node=>!node.disabled);
+  const named=name=>all.find(node=>node.dataset.routingFocus===name)||null;
+  const exact=named(focused);
+  if(exact)return exact;
+  /* « Monter » disparaît quand la ligne devient la préférée : on retombe sur
+     « retirer » du même couple, puis sur le sélecteur du profil. */
+  if(kind==='up')return named('drop|'+key)||named('harness|'+profile);
+  /* « Retirer » a supprimé sa propre ligne : on reste à la même place dans la
+     liste — la ligne qui a pris ce rang — sinon la dernière, sinon le
+     sélecteur du profil. Sans cela le focus repart au début du document à
+     chaque suppression. */
+  if(kind==='drop'){
+    const drops=all.filter(node=>String(node.dataset.routingFocus||'').indexOf('drop|'+profile+'|')===0);
+    if(drops.length)return drops[Math.min(Math.max(Number(rank)||0,0),drops.length-1)];
+    return named('harness|'+profile);
+  }
+  return null;
+}
 function renderRoutingAdvanced(revision){
   if(!currentAgentTab(revision)||!SET.routingAdvancedOpen)return;
   const body=$('#routingAdvancedBody');
   if(!body)return;
+  const active=document.activeElement;
+  const focused=active&&body.contains(active)&&active.dataset?active.dataset.routingFocus||'':'';
+  const rank=active&&active.dataset?active.dataset.routingRank:undefined;
   body.innerHTML=routingAdvancedBody();bindRoutingAdvanced(revision);
+  if(!focused)return;
+  const target=routingFocusTarget(body,focused,rank);
+  if(target)target.focus();
 }
 
+/* Le mode des sous-agents est le switch d'aiguillage lui-même : « Auto »
+   applique les profils ci-dessous, « Dupliqué » les laisse dormir. Il vit dans
+   la section Technique, hors du corps rechargé de la configuration avancée —
+   on le retrouve donc depuis la fenêtre, pas depuis ce corps. */
+function bindDelegationMode(){
+  const delegationMode=modalContent.querySelector('[data-delegation-mode]');
+  if(!delegationMode)return;
+  delegationMode.addEventListener('change',()=>{
+    SET.draft.cli.delegation_mode=delegationMode.value;SET.dirty=true;say('Modifications non enregistrées.','')});
+}
+
+/* Choisir un harness puis un modèle ne change rien ; seul « ajouter » met le
+   couple en fin de liste (donc en dernier recours). « monter » et « retirer »
+   réordonnent, l'ordre étant la préférence. */
 function bindRoutingAdvanced(revision){
   const body=$('#routingAdvancedBody');
   if(!body)return;
   body.querySelectorAll('[data-routing-profile-enabled]').forEach(el=>el.addEventListener('change',()=>{
-    SET.draft.routing.profiles[el.dataset.routingProfileEnabled].enabled=el.checked;
-    SET.dirty=true;say('Modifications non enregistrées.','')}));
-  body.querySelectorAll('[data-routing-candidate]').forEach(el=>el.addEventListener('change',()=>{
-    const entry=SET.draft.routing.profiles[el.dataset.routingProfile];
-    const value=JSON.parse(el.dataset.routingCandidate);
-    const rest=(entry.candidates||[]).filter(candidate=>candidateKey(candidate)!==el.dataset.routingCandidate);
-    entry.candidates=el.checked?[...rest,value]:rest;
-    SET.dirty=true;renderRoutingAdvanced(revision)}));
+    routingEntry(el.dataset.routingProfileEnabled).enabled=el.checked;
+    /* Éteindre un profil change l'aspect de tout son bloc : il faut le
+       redessiner, sinon rien à l'écran ne dit que ses candidats ne servent
+       plus. Le focus revient sur la case qu'on vient de décocher. */
+    SET.dirty=true;say('Modifications non enregistrées.','');renderRoutingAdvanced(revision)}));
+  /* Une commande désactivée ne s'active ni à la souris ni au clavier ; ce
+     garde-fou tient le cas restant — un profil éteint pendant qu'un geste est
+     en vol, ou une commande atteinte autrement que par l'interface. */
+  const serving=profile=>routingEntry(profile).enabled!==false;
+  body.querySelectorAll('[data-routing-harness]').forEach(el=>el.addEventListener('change',()=>{
+    // Changer de harness invalide le modèle retenu : il appartenait à l'autre.
+    const pick=routingPick(el.dataset.routingHarness);
+    pick.agent=el.value;pick.model='';renderRoutingAdvanced(revision)}));
+  body.querySelectorAll('[data-routing-model]').forEach(el=>el.addEventListener('change',()=>{
+    routingPick(el.dataset.routingModel).model=el.value}));
+  body.querySelectorAll('[data-routing-add]').forEach(el=>el.addEventListener('click',()=>{
+    const profile=el.dataset.routingAdd,pick=routingPick(profile);
+    if(!pick.agent||!serving(profile))return;
+    const entry=routingEntry(profile);
+    const value={agent:pick.agent,model:pick.model||''};
+    /* Un couple déjà retenu n'est pas réajouté : le remettre en fin de liste le
+       rétrograderait en dernier recours et promouvrait un autre candidat au
+       rang de préféré — en un clic, sans que rien ne le dise. L'ordre ne change
+       que par « monter » et « retirer ». */
+    if((entry.candidates||[]).some(c=>candidateKey(c)===candidateKey(value))){
+      say('Déjà dans la liste de ce profil : utilisez « monter » pour le préférer.','');
+      return;
+    }
+    entry.candidates=[...(entry.candidates||[]),value];
+    SET.dirty=true;say('Modifications non enregistrées.','');renderRoutingAdvanced(revision)}));
+  body.querySelectorAll('[data-routing-drop]').forEach(el=>el.addEventListener('click',()=>{
+    if(!serving(el.dataset.routingDrop))return;
+    const entry=routingEntry(el.dataset.routingDrop);
+    entry.candidates=(entry.candidates||[]).filter((c,i)=>i!==Number(el.dataset.routingRank));
+    SET.dirty=true;say('Modifications non enregistrées.','');renderRoutingAdvanced(revision)}));
+  body.querySelectorAll('[data-routing-up]').forEach(el=>el.addEventListener('click',()=>{
+    if(!serving(el.dataset.routingUp))return;
+    const entry=routingEntry(el.dataset.routingUp),rank=Number(el.dataset.routingRank);
+    const list=[...(entry.candidates||[])];
+    if(rank>0)list.splice(rank-1,0,list.splice(rank,1)[0]);
+    entry.candidates=list;
+    SET.dirty=true;say('Modifications non enregistrées.','');renderRoutingAdvanced(revision)}));
   body.querySelectorAll('[data-routing-fallback]').forEach(el=>el.addEventListener('change',()=>{
-    SET.draft.routing.profiles[el.dataset.routingFallback].allow_general_fallback=el.checked;
+    if(!serving(el.dataset.routingFallback))return;
+    routingEntry(el.dataset.routingFallback).allow_general_fallback=el.checked;
     SET.dirty=true;say('Modifications non enregistrées.','')}));
   const refresh=body.querySelector('#routingRefresh');
   if(refresh)refresh.addEventListener('click',()=>hydrateRoutingAdvanced(revision,true));
@@ -2593,14 +2872,24 @@ function bindRoutingAdvanced(revision){
 
 async function hydrateRoutingAdvanced(revision,refresh=false){
   if(!currentAgentTab(revision)||!SET.routingAdvancedOpen)return;
+  /* « Rafraîchir » relit la machine : le harness et le modèle en cours de
+     choix peuvent avoir disparu, on repart d'une page propre. */
+  if(refresh)SET.routingPick={};
   if(SET.routing&&SET.routing.ok!==false&&!refresh){renderRoutingAdvanced(revision);return}
   const requestId=++SET.routingGeneration,body=$('#routingAdvancedBody');
   if(body)body.innerHTML='<div class="notice info">Chargement des profils et candidats…</div>';
-  let state;
-  try{state=await api('/api/routing/candidates')}
-  catch(e){state={ok:false,error:e.message,profiles:[],candidates:[]}}
+  const state=await loadRoutingCandidates();
   if(!currentAgentTab(revision)||!SET.routingAdvancedOpen||requestId!==SET.routingGeneration)return;
   SET.routing=state;renderRoutingAdvanced(revision);
+}
+
+/* L'état de la section, demandé au serveur. Le lister coûte une sonde de
+   chaque CLI et un appel à chaque fournisseur : on ne le paie qu'à l'ouverture
+   de la section. Un échec revient en état affichable — la section dit alors
+   pourquoi et propose de réessayer — jamais en zone vide et muette. */
+async function loadRoutingCandidates(){
+  try{return await api('/api/routing/candidates')}
+  catch(e){return {ok:false,error:e.message,profiles:[],harnesses:[]}}
 }
 
 /* --- onglet Config ------------------------------------------------------ */
@@ -2702,9 +2991,7 @@ function bindTab(revision){
   }));
   const cliTechnical=$('#cliTechnical');
   if(cliTechnical)bindCliTechnical(cliTechnical,revision);
-  const delegationMode=modalContent.querySelector('[data-delegation-mode]');
-  if(delegationMode)delegationMode.addEventListener('change',()=>{
-    SET.draft.cli.delegation_mode=delegationMode.value;SET.dirty=true;say('Modifications non enregistrées.','')});
+  bindDelegationMode();
   modalContent.querySelectorAll('[data-behavior-field]').forEach(el=>el.addEventListener('change',()=>{
     SET.draft.cli.behavior[el.dataset.behaviorField]=el.value;SET.dirty=true;say('Modifications non enregistrées.','')}));
   modalContent.querySelectorAll('[data-refresh]').forEach(el=>el.addEventListener('click',async()=>{
@@ -3043,7 +3330,7 @@ async function openSettings(){
   renderTabs();await renderTab();
 }
 
-function closeSettings(){++SET.openGeneration;++SET.cliGeneration;++SET.cliModelGeneration;++SET.routingGeneration;++SET.voiceGeneration;++SET.audioGeneration;++SET.diagnosticGeneration;SET.renderRevision=(SET.renderRevision||0)+1;SET.routingAdvancedOpen=false;cleanupSettingsSurface();overlay.classList.remove('open');SET.open=false;if(SET.capture)SET.capture.cancel()}
+function closeSettings(){SET.routingPick={};++SET.openGeneration;++SET.cliGeneration;++SET.cliModelGeneration;++SET.routingGeneration;++SET.voiceGeneration;++SET.audioGeneration;++SET.diagnosticGeneration;SET.renderRevision=(SET.renderRevision||0)+1;SET.routingAdvancedOpen=false;cleanupSettingsSurface();overlay.classList.remove('open');SET.open=false;if(SET.capture)SET.capture.cancel()}
 
 async function saveDraft(options){
   const silent=options&&options.silent;
@@ -3057,7 +3344,7 @@ async function saveDraft(options){
     if(voiceRestart)SET.restartNotice=true;
     SET.data=data;SET.shortcuts=data.shortcuts;SET.draft=draftFrom(data);SET.dirty=false;
     // Le CLI actif a pu changer : sa détection est refaite à l'ouverture de l'onglet.
-    SET.clis=null;SET.routing=null;SET.prompts=null;
+    SET.clis=null;SET.routing=null;SET.routingPick={};SET.prompts=null;
     if(!silent){say('Enregistré.','ok');await renderTab()}
     return data;
   }catch(e){

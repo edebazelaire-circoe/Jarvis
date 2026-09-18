@@ -712,6 +712,9 @@ async def test_restart_interrupts_accepted_nonterminal_job_without_replay(stack,
     # Controlled durable crash image: no process exists and no restart execution is claimed.
     await core.state.save_job(replace(job, status=status, cancellation="none", completed_at=None))
     await core.state.close()
+    # Même image de crash pour la scène (Slice 02) : sa connexion est fermée
+    # comme celle de l'état, sinon elle fuit au lieu de disparaître avec le processus.
+    await core.scene.close()
     core.health.status = "stopped"
     restarted_worker = ControlledWorker()
     restarted = JarvisCoreApplication(data_root=root, workers={"back_brain": restarted_worker})

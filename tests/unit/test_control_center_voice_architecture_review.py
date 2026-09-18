@@ -260,17 +260,21 @@ async def test_corrupt_optional_catalog_cannot_break_all_settings(control, monke
     seed(control)
     before = control.settings_path.read_bytes()
     secret = "review-cache-private-value"
+    # `_voice_architecture_registry` lit `cached_for` : patcher `cached` ne
+    # touchait rien et le journal restait vide (le garde `exists()` ci-dessous
+    # le cachait tant que rien d'autre n'écrivait dans la trace).
     monkeypatch.setattr(control.catalog, "cached", lambda _provider: {"models": models, "private": secret})
+    monkeypatch.setattr(control.catalog, "cached_for", lambda _provider, _key: {"models": models, "private": secret})
     payload = await settings_of(control)
     architecture = payload["voice"]["architecture"]
     assert {item["id"] for item in architecture["architectures"]} == {"simple", "front_brain", "duplex"}
     assert secret not in json.dumps(payload)
-    if control.journal.trace_path.exists():
-        trace = control.journal.trace_path.read_text(encoding="utf-8")
-        assert secret not in trace
-        records = [json.loads(line) for line in trace.splitlines()]
-        assert any(item["kind"] == "voice.settings.catalog_rejected"
-                   and item["data"].get("code") == "voice_catalog_invalid" for item in records)
+    assert control.journal.trace_path.exists()
+    trace = control.journal.trace_path.read_text(encoding="utf-8")
+    assert secret not in trace
+    records = [json.loads(line) for line in trace.splitlines()]
+    assert any(item["kind"] == "voice.settings.catalog_rejected"
+               and item["data"].get("code") == "voice_catalog_invalid" for item in records)
     assert control.settings_path.read_bytes() == before
 
 

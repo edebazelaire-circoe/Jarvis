@@ -145,14 +145,14 @@ class CoreBatchForwarder:
         backoff = self.retry_min_s
         while True:
             try:
-                if not self.pending_count:
+                if not self._send_due():
                     self._wake.clear()
                     try:
                         await asyncio.wait_for(self._wake.wait(), timeout=self.idle_interval_s)
                     except TimeoutError:
                         # Rien n'a bougé : sonde de repos du relais concret.
                         self._on_idle()
-                        if not self.pending_count:
+                        if not self._send_due():
                             continue
                 # Regroupe une rafale d'événements en un lot, et borne le débit
                 # vers Core à un envoi par intervalle.
@@ -174,6 +174,11 @@ class CoreBatchForwarder:
 
     def _on_idle(self) -> None:
         """Sonde de repos (`idle_interval_s` écoulé sans réveil)."""
+
+    def _send_due(self) -> bool:
+        """Y a-t-il un envoi à faire ? Par défaut : la file n'est pas vide."""
+
+        return bool(self.pending_count)
 
     # --------------------------------------------------------- diagnostic
 

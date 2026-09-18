@@ -8,6 +8,7 @@ from pathlib import Path
 from jarvis.adapters.fake_calendar import InMemoryCalendarBackend
 from jarvis.adapters.jsonl_history import JsonlHistoryStore
 from jarvis.adapters.sqlite_conversation_events import SQLiteConversationEventStore
+from jarvis.adapters.sqlite_scene import SQLiteSceneRepository
 from jarvis.adapters.sqlite_state import SQLiteStateRepository
 from jarvis.adapters.windows_notifications import NullNotificationDelivery
 from jarvis.core.brain_context import ATTENTION_QUEUE_SIZE, DEFAULT_WAKE_INTERVAL_S, BrainContextBuilder, WorkAttentionPolicy
@@ -16,6 +17,9 @@ from jarvis.core.calendar_service import CalendarService
 from jarvis.core.conversation_event_emitter import ConversationEventEmitter
 from jarvis.core.conversation_event_query import ConversationEventQueryService
 from jarvis.core.drive_service import DriveService
+from jarvis.core.scene_capture import SceneCaptureBroker
+from jarvis.core.scene_projector import RESTART_GRACE_S, SceneProjector
+from jarvis.core.scene_service import SceneService
 from jarvis.core.v2_services import ConversationService, CoreEventBus, JobService, NotificationService, SchedulerService
 from jarvis.core.v2_tools import CoreToolRouter
 from jarvis.core.work_state import WorkStateStore
@@ -23,6 +27,7 @@ from jarvis.core.voice_ledger import VoiceLedgerService
 from jarvis.core.live_lifecycle import LiveLifecycleService
 from jarvis.core.live_reaper import LiveLifecycleWatchdog
 from jarvis.domain.v2 import Device, Job, MissedRunPolicy, Notification, NotificationPriority, ProtocolEnvelope, ScheduledItem, ScheduledStatus, utc_now
+from jarvis.ports.scene import SceneCaptureStore, SceneRepository
 from jarvis.ports.v2 import DiagnosticSink
 
 
@@ -41,7 +46,7 @@ class JarvisCoreApplication:
     or Windows UI dependency.
     """
 
-    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = True, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S) -> None:
+    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = True, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None) -> None:
         root = Path(data_root).resolve()
         self.health = CoreHealth()
         self.state = SQLiteStateRepository(root / "state" / "jarvis.sqlite3")
@@ -71,6 +76,33 @@ class JarvisCoreApplication:
         # en mémoire seulement (voir `jarvis/core/work_state.py`).
         self.work_state = WorkStateStore(events=self.events, diagnostics=diagnostics)
         self.jobs = JobService(self.state, self.events, workers or {}, diagnostics=diagnostics, work_state=self.work_state)
+        # Scène constellation (handoff jarvis-constellation-scene-runtime,
+        # Slice 02) : durable, contrairement à l'état de travail, dans son
+        # propre fichier pour garder `jarvis.sqlite3` au schéma 1. Un fichier
+        # de scène refusé rend la scène indisponible, jamais Core. Hors du bus
+        # à dessein : `/v1/events` relaie tout le bus à Voice (voir
+        # `jarvis/core/scene_service.py`). `scene_repository` : injection de
+        # test uniquement.
+        self.scene = SceneService(
+            scene_repository or SQLiteSceneRepository(root / "state" / "scene.sqlite3"),
+            diagnostics=diagnostics,
+        )
+        # Projection runtime (Slice 04) : chaque sous-agent et chaque job
+        # deviennent des étoiles sans tour du cerveau. Seul écrivain `runtime`
+        # de la scène ; abonné tolérant de `core.work.updated`, il se
+        # réconcilie depuis l'instantané de travail. Démarré après la scène,
+        # arrêté avant sa fermeture. Slice 10 : au démarrage, il marque
+        # « état inconnu » les étoiles d'une vie précédente, relit l'issue
+        # persistée des jobs terminés, et interrompt après
+        # `scene_restart_grace_s` celles qu'aucun producteur n'a redites.
+        # Slice 09 (partie 2) : captures visuelles exceptionnelles, rendues par la
+        # page meneuse visible du Control Center. Sans magasin injecté (tests,
+        # outils), la route répond `capture_unavailable`.
+        self.scene_captures = SceneCaptureBroker(scene_capture_store, diagnostics=diagnostics)
+        self.scene_projector = SceneProjector(
+            work=self.work_state, scene=self.scene, events=self.events, diagnostics=diagnostics,
+            restart_grace_s=scene_restart_grace_s, job_outcomes=self.jobs.observe_persisted_outcomes,
+        )
         # Tâche 12 : le cerveau lit ce même magasin à chaque tour, et une
         # politique abonnée à `core.work.updated` retient pour lui les échecs,
         # interruptions et blocages (voir `jarvis/core/brain_context.py`).
@@ -138,7 +170,23 @@ class JarvisCoreApplication:
             await self.state.initialize()
             # Before any route or task can admit a turn: repair user events a
             # crash lost between the durable turn and the emitter commit.
+            # Needs only `state` (same DB); never raises.
             await self.voice_admission.backfill_user_turns_accepted(self.conversation_events)
+            # Ne lève pas : un refus est journalisé et la scène reste
+            # indisponible pendant que le reste de Core démarre. Fichier
+            # distinct de `state` : indépendante du rattrapage ci-dessus.
+            await self.scene.start()
+            # Rétention des captures (5 fichiers, 24 h). Ne lève pas.
+            await self.scene_captures.start()
+            # Slice 10, avant toute écriture de la projection et toute route :
+            # les étoiles non terminées d'une vie précédente passent à
+            # `unknown`, la grâce est armée. Ne lève pas (scène indisponible :
+            # la boucle reprend le marquage).
+            await self.scene_projector.reconcile_restart()
+            # Après la scène (même indisponible : la projection attend et le
+            # journalise), avant `jobs.recover()` dont les interruptions
+            # doivent atteindre la scène.
+            self.scene_projector.start()
             self.live_reaper.start()
             await self.state.save_device(Device())
             # Subscribe before recovery: overdue schedules and interrupted jobs
@@ -166,6 +214,7 @@ class JarvisCoreApplication:
             await self.live_reaper.stop()
             await self._stop_notification_loop()
             await self._stop_work_attention()
+            await self._stop_scene()
             try:
                 await self.state.close()
             except Exception:
@@ -287,11 +336,27 @@ class JarvisCoreApplication:
             self.events.unsubscribe(queue)
         await self.work_attention.stop()
 
+    async def _stop_scene(self) -> None:
+        """Arrêter la projection, puis fermer la scène : aucun écrivain ne survit à la fermeture.
+
+        `scene_projector.stop()` annule aussi la minuterie de grâce de
+        redémarrage (Slice 10) : aucune tâche ne lui survit.
+
+        Le cerveau n'écrit pas la scène dans cette Slice ; le transport HTTP
+        (Slice 03) est arrêté par son serveur avant `stop()`, et une commande
+        encore en vol termine sa transaction (`close` attend le verrou).
+        """
+
+        await self.scene_projector.stop()
+        await self.scene.close()
+
     async def stop(self) -> None:
         if self.health.status == "stopped":
             return
         self.health.ready = False
         self.health.status = "stopping"
+        # Une capture en attente échoue aussitôt (`capture_cancelled`).
+        self.scene_captures.close()
         self.back_brain.stopping = True
         self.jobs.owned.stopping = True
         await self.live_reaper.stop()
@@ -304,17 +369,24 @@ class JarvisCoreApplication:
         await self.brain.stop()
         await self._stop_notification_loop()
         await self.scheduler.stop()
-        if not await self.back_brain.stop():
-            self.health.status = "state_persistence_unknown"
-            self.health.detail = "back brain submission remains owned while storage completes"
-            return
-        if not await self.jobs.stop():
-            self.health.status = "state_persistence_unknown" if self.jobs.owned.persistence_failures else "cleanup_unknown"
-            self.health.detail = "back brain finalization remains owned and unconfirmed"
-            return
+        try:
+            if not await self.back_brain.stop():
+                self.health.status = "state_persistence_unknown"
+                self.health.detail = "back brain submission remains owned while storage completes"
+                return
+            if not await self.jobs.stop():
+                self.health.status = "state_persistence_unknown" if self.jobs.owned.persistence_failures else "cleanup_unknown"
+                self.health.detail = "back brain finalization remains owned and unconfirmed"
+                return
+        finally:
+            # Sur tous les chemins, retours anticipés et exceptions compris : la
+            # projection (dernier écrivain runtime) s'arrête après les jobs,
+            # pour que leurs fins atteignent la scène, et avant la fermeture.
+            await self._stop_scene()
         # Juste avant la fermeture de la base, après les arrêts qui peuvent
         # rendre la main sur une persistance incertaine (la vidange ne doit pas
         # allonger ce chemin-là) : vidange bornée, le reste est compté et tracé.
+        # Après la scène : fichier distinct, aucun des deux n'écrit dans l'autre.
         await self.conversation_event_emitter.stop()
         await self.state.close()
         self.health.status = "stopped"
