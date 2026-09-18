@@ -134,7 +134,7 @@
     return out;
   }
 
-  /* Options de `JarvisSceneLayout.orbitSwing`, ou `null` quand la gravitation
+  /* Options de `JarvisSceneLayout.orbitDrift`, ou `null` quand la gravitation
      est éteinte : la page ne calcule alors aucun angle. */
   function orbitOptions(settings){
     const value=normalize(settings);
