@@ -444,41 +444,65 @@
     return {x:box.x+(box.w-w)/2,y:box.y+(box.h-h)/2,w,h};
   }
 
-  /* -------------------------------------------------------- dérive orbitale */
+  /* ------------------------------------------------------- rotation du champ */
 
-  /* Les étoiles gravitent lentement autour du centre de la fenêtre — le soleil
-     JARVIS, dessiné par le visage, auquel la scène ne touche pas. Rendu
-     seulement : la géométrie stockée reste la place de référence, l'étoile ne
-     fait que parcourir une petite ellipse autour d'elle (l'arc de son orbite).
-     Rien n'est jamais écrit dans la scène.
+  /* La constellation tourne autour du centre de la fenêtre — le soleil JARVIS,
+     dessiné par le visage, auquel la scène ne touche pas.
 
-     **Un objet épinglé dérive comme les autres** (correction du retour
-     utilisateur du 18/09/2026 : toute géométrie posée à la main épingle, donc
-     une scène rangée par l'utilisateur était entièrement immobile). L'épingle
-     dit « ne déplace pas ma place » — au résolveur et au cerveau ; elle ne dit
-     pas « ne dessine aucun mouvement », et la place de référence ne change pas
-     d'un pixel. Qui veut une scène figée éteint la gravitation dans la fenêtre
-     « Affichage des étoiles ».
+     **Une seule rotation, partagée par tout le champ** : le même angle, au même
+     instant, pour chaque étoile, chaque capsule, chaque fenêtre et chaque fil
+     (Slice 12, reprise du retour utilisateur du 18/09/2026). Deux propriétés en
+     découlent, les deux demandées :
+     - le mouvement se lit comme une orbite — chaque objet parcourt un arc de
+       cercle centré sur le visage, tous dans le même sens à la fois. La version
+       précédente donnait à chacun sa propre petite ellipse et sa propre phase :
+       le champ ne tournait pas, et comme la scène est large (320 × 180) la
+       plupart des étoiles sont à gauche ou à droite du visage, où la tangente
+       est verticale — on n'y voyait qu'un flottement de haut en bas ;
+     - les fils restent ancrés de centre à centre, sans rattrapage : une
+       rotation rigide envoie le segment qui joint deux objets sur le segment
+       qui joint leurs deux nouvelles places. La page fait donc tourner d'un
+       bloc le calque des fils, du même angle (`orbitSwing`), autour du même
+       centre. Plus de dérive moyennée par fil, qui décrochait les extrémités
+       dès que les deux bouts ne partageaient pas la même orbite.
 
-     Amplitude angulaire constante : la dérive est donc proportionnelle au
-     rayon. **Une seule période** pour toutes les étoiles (Slice 12 : elle
-     dépendait du rayon, et deux voisines s'éloignaient lentement l'une de
-     l'autre) ; la phase se lit dans l'angle de la place, jamais dans
-     l'identifiant. Deux objets à la même place — une étoile et son signal — ont
-     donc exactement la même dérive et ne se séparent jamais ; sur la couronne,
-     le mouvement fait le tour comme une onde plutôt que d'un bloc. La page fait
-     suivre un fil par la dérive moyenne de ses deux bouts : exact pour une
-     étoile et son signal, une petite approximation pour un long fil. */
-  const ORBIT_ARC_RAD=.06;             /* ~3,4° de part et d'autre de la place */
-  const ORBIT_MAX_PX=38,ORBIT_MIN_PX=.6;
-  const ORBIT_RADIAL=.34;              /* part radiale : l'arc devient une ellipse */
-  const ORBIT_PERIOD_MS=26000;
+     Rendu seulement : rien n'est écrit dans la scène, la place de référence ne
+     bouge pas d'un pixel, la capture ne voit que les places. Un objet épinglé
+     tourne comme les autres — l'épingle protège la géométrie, pas le dessin ;
+     qui veut une scène figée éteint la gravitation dans « Affichage des
+     étoiles ».
+
+     Va-et-vient plutôt qu'un tour complet : un tour emmènerait les objets
+     éloignés sous la barre du haut puis hors du cadre, et rendrait
+     méconnaissable un ciel rangé à la main. Le champ oscille donc lentement
+     d'un côté puis de l'autre, d'un angle assez large pour se voir
+     (`ORBIT_SWING_RAD`), assez court pour que chacun reste chez lui. La page
+     échantillonne `sin` sur la période : la vitesse angulaire est maximale au
+     passage par la place de référence et s'annule aux deux extrêmes, comme un
+     pendule. */
+  const ORBIT_SWING_RAD=.09;           /* ~5,2° de part et d'autre de la place */
+  const ORBIT_SWING_MAX_RAD=.25;
+  /* En dessous, le champ est tenu pour immobile : la page n'anime rien. */
+  const ORBIT_SWING_MIN_RAD=.004;
+  /* Un aller-retour complet à vitesse 1. */
+  const ORBIT_PERIOD_MS=32000;
+  /* Place libre accordée d'office à chaque objet, en pixels, avant de rogner
+     l'angle du champ. Sans elle, un seul objet posé au bord de la zone sûre
+     figerait tout le ciel — la rotation étant rigide, l'angle est celui du plus
+     contraint. La zone sûre est elle-même prise au plus large (calculée pour la
+     plus petite fenêtre prise en charge) : ces quelques pixels y sont encore
+     couverts par les commandes de la page. Le plancher suit l'ampleur voulue
+     par l'utilisateur, borné : sans cela, dans une scène où un objet touche le
+     bord, le curseur « Ampleur de l'orbite » ne servirait à rien (l'angle
+     serait déjà rogné avant lui). */
+  const ORBIT_SLACK_FLOOR=18,ORBIT_SLACK_FLOOR_MAX=32;
 
   /* Ampleur et vitesse réglables par l'utilisateur (fenêtre « Affichage des
      étoiles », `JarvisSceneView`) : bornes du multiplicateur, le défaut étant 1.
      L'ampleur est multipliée **avant** la borne de la zone sûre : une orbite
-     plus large ne fait donc jamais sortir une étoile de la zone. */
+     plus large ne fait donc jamais sortir un objet de la zone. */
   const ORBIT_GAIN_MIN=.25,ORBIT_GAIN_MAX=4;
+  const RAD_TO_DEG=180/Math.PI;
 
   /* Absent, nul ou illisible : la valeur de référence (1), jamais une orbite
      figée par accident. */
@@ -487,35 +511,55 @@
     return Number.isFinite(n)&&n>0?Math.min(ORBIT_GAIN_MAX,Math.max(ORBIT_GAIN_MIN,n)):1;
   }
 
-  /* Dérive d'un nœud du modèle de vue dans la fenêtre `vp`, ou `null` (immobile) :
-     autre forme qu'un point, confondu avec le centre, ou pas la place de
-     dériver sans sortir de la zone de composition sûre (une étoile posée hors
-     de cette zone par l'utilisateur reste donc fixe).
-     `options` (facultatif) : `{gain, rate}`, l'ampleur et la vitesse voulues
-     par l'utilisateur, 1 par défaut.
-     Rend `{tx,ty,rx,ry,ms,delay}` : vecteur tangent et vecteur radial en
-     pixels, période en ms, décalage de phase négatif (l'animation commence là
-     où l'étoile se trouve déjà sur son orbite). */
-  function orbitOf(node,vp,options){
-    if(!node||node.shape!=='point')return null;
-    const dx=node.cx-vp.cx,dy=node.cy-vp.cy,r=Math.hypot(dx,dy);
-    if(!(r>1))return null;
+  /* Plus grand angle `a` tel que `quad · a² + lin · a ≤ slack` (tous positifs
+     ou nuls), l'infini quand rien ne le borne. */
+  function maxAngle(quad,lin,slack){
+    if(!(slack>0))return 0;
+    if(quad>0)return (Math.sqrt(lin*lin+4*quad*slack)-lin)/(2*quad);
+    if(lin>0)return slack/lin;
+    return Infinity;
+  }
+
+  /* Rayon d'un nœud du modèle de vue : le vecteur qui va du centre de la
+     fenêtre à **l'ancre du nœud** (`cx`, `cy`), celle où se nouent ses fils.
+     C'est lui que la page donne à l'animation : le déplacement d'une rotation
+     d'angle `a` autour du centre vaut `(cos a − 1) · rayon + sin a · rayon⊥`.
+     `null` : nœud confondu avec le centre, donc immobile. */
+  function orbitPivot(node,vp){
+    if(!node)return null;
+    const x=round1(node.cx-vp.cx),y=round1(node.cy-vp.cy);
+    return x||y?{x,y}:null;
+  }
+
+  /* Angle du va-et-vient pour tout le champ dessiné, ou `null` (champ
+     immobile) : le plus grand qui garde chaque nœud dans la zone de composition
+     sûre, au plancher de place libre près, borné par le réglage de
+     l'utilisateur.
+     `options` (facultatif) : `{gain, rate}`, l'ampleur et la vitesse voulues,
+     1 par défaut. Rend `{deg, ms}` : l'amplitude en degrés (l'angle va de
+     `−deg` à `+deg`) et la durée d'un aller-retour. */
+  function orbitSwing(nodes,vp,options){
     const gain=orbitFactor(options&&options.gain),rate=orbitFactor(options&&options.rate);
-    const ux=dx/r,uy=dy/r;
-    /* Encombrement de l'ellipse sur chaque axe, pour une amplitude de 1 px. */
-    const ex=Math.hypot(uy,ORBIT_RADIAL*ux),ey=Math.hypot(ux,ORBIT_RADIAL*uy);
-    const rect=drawnRect(node);
+    let swing=Math.min(ORBIT_SWING_RAD*gain,ORBIT_SWING_MAX_RAD);
+    const floor=Math.min(ORBIT_SLACK_FLOOR*gain,ORBIT_SLACK_FLOOR_MAX);
     const area=toScreen(vp,{x:SAFE_AREA.x0,y:SAFE_AREA.y0,w:SAFE_AREA.x1-SAFE_AREA.x0,h:SAFE_AREA.y1-SAFE_AREA.y0});
-    const slackX=Math.min(rect.left-area.left,area.left+area.width-(rect.left+rect.width));
-    const slackY=Math.min(rect.top-area.top,area.top+area.height-(rect.top+rect.height));
-    let amp=Math.min(r*ORBIT_ARC_RAD*gain,ORBIT_MAX_PX*gain);
-    if(ex>0)amp=Math.min(amp,slackX/ex);
-    if(ey>0)amp=Math.min(amp,slackY/ey);
-    if(!(amp>=ORBIT_MIN_PX))return null;
-    const ms=Math.round(ORBIT_PERIOD_MS/rate);
-    const phase=(Math.atan2(dy,dx)+Math.PI)/(2*Math.PI);
-    return {tx:round1(-uy*amp),ty:round1(ux*amp),rx:round1(ux*amp*ORBIT_RADIAL),ry:round1(uy*amp*ORBIT_RADIAL),
-      ms,delay:-Math.round(ms*phase)};
+    for(const node of nodes||[]){
+      const pivot=orbitPivot(node,vp);
+      if(!pivot)continue;
+      const rect=drawnRect(node);
+      /* Place libre autour de la boîte dessinée, jamais moins que le plancher :
+         un objet déjà hors de la zone sûre ne retient donc pas le champ. */
+      const slackX=Math.max(floor,Math.min(rect.left-area.left,area.left+area.width-(rect.left+rect.width)));
+      const slackY=Math.max(floor,Math.min(rect.top-area.top,area.top+area.height-(rect.top+rect.height)));
+      /* Excursion de la boîte sous une rotation d'angle `a` :
+         |dx| ≤ |y| · sin a + |x| · (1 − cos a) ≤ |y| · a + |x| · a² / 2,
+         et l'axe opposé pour |dy|. */
+      const ax=Math.abs(pivot.x),ay=Math.abs(pivot.y);
+      swing=Math.min(swing,maxAngle(ax/2,ay,slackX),maxAngle(ay/2,ax,slackY));
+      if(!(swing>ORBIT_SWING_MIN_RAD))return null;
+    }
+    if(!(swing>ORBIT_SWING_MIN_RAD))return null;
+    return {deg:Math.round(swing*RAD_TO_DEG*1000)/1000,ms:Math.round(ORBIT_PERIOD_MS/rate)};
   }
 
   /* Anneaux animés au plus (coût de style) : signaux vivants urgents d'abord,
@@ -845,8 +889,8 @@
       const signalEdge=rel.kind==='explains'&&rel.relation_id===rel.from_id;
       edges.push({id:rel.relation_id,kind:rel.kind,layer:Number(rel.layer)||0,
         signal:signalEdge,artifact:!signalEdge&&rel.kind==='explains'&&a.kind==='artifact',tone:a.tone,
-        /* Extrémités nommées : la page fait suivre au lien la dérive orbitale
-           des deux nœuds qu'il joint. */
+        /* Extrémités nommées : la page y noue le fil pendant un geste, et les
+           retrouve pour lire l'ancre vivante des deux nœuds qu'il joint. */
         from:a.id,to:b.id,x1:a.cx,y1:a.cy,x2:b.cx,y2:b.cy});
     }
     edges.sort((p,q)=>p.layer-q.layer);
@@ -1037,7 +1081,7 @@
 
   const api=Object.freeze({FRAME,SAFE_AREA,FACE_ZONE,OBJECT_LIMIT,DEFAULT_SIZE,WORK_BUDGET,COMMIT_MAX_ATTEMPTS,READABLE,MAX_ANIMATED,CAPSULE_MAX,drawnBox,
     RESTART_UNKNOWN_LABEL,restartUnknown,ARTIFACT_CATEGORIES,linkOf,explainedTarget,explainsIndex,artifactsExplaining,itemsOf,hostTail,isOrphanArtifact,orphanArtifacts,
-    artifactsLeftOrphan,placeFor,linkHost,linkLength,POINT_HIT_PX,CAPSULE_MIN_HEIGHT_PX,drawnRect,orbitOf,
+    artifactsLeftOrphan,placeFor,linkHost,linkLength,POINT_HIT_PX,CAPSULE_MIN_HEIGHT_PX,drawnRect,orbitPivot,orbitSwing,
     viewport,toScreen,cleanLine,cleanText,toneOf,isLiveSignal,signalUrgency,signalErrorClass,anchorsOf,depthOf,resolveLayout,
     stackOf,viewModel,compactShape,spatialOrder,nextFocus,commitKey,commitCommand,commitCandidates,nextRetryAt,classifyCommit,settleCommit});
   root.JarvisSceneLayout=api;

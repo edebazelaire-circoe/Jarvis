@@ -580,6 +580,30 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisScenePageCor
      aussi peuplée se lit mieux immobile. */
   const CALM_POINTS=96;
 
+  /* Étapes du va-et-vient du champ : `sin` échantillonné sur la période, seize
+     pas, interpolation linéaire entre deux pas. Les nœuds (le déplacement de
+     leur arc, dans `translate`) et le calque des fils (une rotation) lisent les
+     **mêmes** fractions de temps : à chaque pas les deux sont exacts, et entre
+     deux pas l'écart entre la corde et l'arc reste au centième de pixel
+     (rayon × Δangle² / 8). `--sc-swing` est l'amplitude de la rotation, posée
+     par la page sur le conteneur ; `--sc-px`/`--sc-py` le rayon du nœud, du
+     centre de la fenêtre à son ancre. Déplacement d'une rotation d'angle `a` :
+     `(cos a − 1) · rayon + sin a · rayon⊥`. */
+  const SWING_STEPS=16;
+  function swingKeyframes(){
+    const nodes=[],field=[];
+    for(let k=0;k<=SWING_STEPS;k++){
+      const at=Math.round(k/SWING_STEPS*1e4)/100;
+      const s=Math.round(Math.sin(2*Math.PI*k/SWING_STEPS)*1e4)/1e4||0;
+      if(!s){nodes.push(`${at}%{translate:0 0}`);field.push(`${at}%{transform:rotate(0deg)}`);continue}
+      const a=`var(--sc-swing,0deg) * ${s}`,px='var(--sc-px,0px)',py='var(--sc-py,0px)';
+      nodes.push(`${at}%{translate:calc(${px} * (cos(${a}) - 1) - ${py} * sin(${a})) calc(${py} * (cos(${a}) - 1) + ${px} * sin(${a}))}`);
+      field.push(`${at}%{transform:rotate(calc(${a}))}`);
+    }
+    return `@keyframes sc-orbit{${nodes.join('')}}
+@keyframes sc-field{${field.join('')}}`;
+  }
+
   /* Registre d'empilement de la page (voir `control_center.html`) : visage 0,
      canevas Omega 0, **scène 20**, barre du haut et indication vocale 31,
      dock 32, panneau 33, bandeau GPT-Live 35, pastilles 40 (Omega : panneau
@@ -622,33 +646,26 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
 .sc-grip:hover{color:var(--sc-ink)}
 /* Seul le déplacement glisse (composition) ; une taille change d'un coup. */
 .scene.sc-ready .sc-node{transition:transform .42s cubic-bezier(.16,1,.3,1)}
-/* Gravitation (dérive orbitale, 'JarvisSceneLayout.orbitOf') : l'étoile
-   parcourt une petite ellipse autour de sa place, très lentement. La place
-   elle-même reste dans 'transform' (la géométrie de la scène) ; la dérive tient
-   dans la propriété 'translate', appliquée en plus, jamais enregistrée. Les
-   huit étapes échantillonnent l'ellipse 'tangente · sin + radial · cos', en
-   'linear' : le mouvement tourne sans jamais s'arrêter ni repartir en arrière.
-   Une capsule ou une fenêtre n'a pas de dérive (aucune variable posée) et ne
-   bouge donc pas ; une étoile épinglée dérive comme les autres — sa place, elle,
-   ne change pas. */
-.scene .sc-orbit{animation:sc-orbit var(--sc-orbit-ms,36000ms) linear infinite;animation-delay:var(--sc-orbit-delay,0ms)}
-@keyframes sc-orbit{
-  0%{translate:var(--sc-rx) var(--sc-ry)}
-  12.5%{translate:calc(var(--sc-tx) * .707 + var(--sc-rx) * .707) calc(var(--sc-ty) * .707 + var(--sc-ry) * .707)}
-  25%{translate:var(--sc-tx) var(--sc-ty)}
-  37.5%{translate:calc(var(--sc-tx) * .707 - var(--sc-rx) * .707) calc(var(--sc-ty) * .707 - var(--sc-ry) * .707)}
-  50%{translate:calc(var(--sc-rx) * -1) calc(var(--sc-ry) * -1)}
-  62.5%{translate:calc(var(--sc-tx) * -.707 - var(--sc-rx) * .707) calc(var(--sc-ty) * -.707 - var(--sc-ry) * .707)}
-  75%{translate:calc(var(--sc-tx) * -1) calc(var(--sc-ty) * -1)}
-  87.5%{translate:calc(var(--sc-tx) * -.707 + var(--sc-rx) * .707) calc(var(--sc-ty) * -.707 + var(--sc-ry) * .707)}
-  100%{translate:var(--sc-rx) var(--sc-ry)}
-}
-/* Un lien porte la même classe : il suit les deux étoiles qu'il joint par la
-   dérive moyenne de ses extrémités (exacte pour une étoile et son signal, qui
-   partagent la même orbite). */
+/* Gravitation : **tout le champ tourne du même angle** autour du centre de la
+   fenêtre ('JarvisSceneLayout.orbitSwing'), lentement, d'un côté puis de
+   l'autre. Chaque nœud porte son rayon ('--sc-px', '--sc-py') et parcourt l'arc
+   correspondant dans la propriété 'translate' ; le calque des fils, lui, tourne
+   d'un bloc du même angle autour du même centre ('.sc-field'). La rotation
+   étant rigide, l'extrémité d'un fil tombe exactement sur le centre de son
+   étoile, à tout instant — et une étoile suit un arc de cercle centré sur le
+   visage, pas un flottement. La place elle-même reste dans 'transform' (la
+   géométrie de la scène) : la rotation s'ajoute par-dessus et n'est jamais
+   enregistrée. Capsules et fenêtres tournent avec le champ : c'est ce qui garde
+   leurs fils noués, et l'arrangement, lui, ne change pas d'un pixel. Une étoile
+   épinglée tourne comme les autres — sa place, elle, ne change pas. */
+.scene .sc-orbit{animation:sc-orbit var(--sc-orbit-ms,32000ms) linear infinite}
+.scene .sc-field{animation:sc-field var(--sc-orbit-ms,32000ms) linear infinite;transform-box:view-box;transform-origin:50% 50%}
+${swingKeyframes()}
 /* Scène très peuplée : la gravitation et les halos s'arrêtent (une couche de
-   composition par étoile). La lecture prime sur le mouvement. */
-.scene.sc-calm .sc-orbit{animation:none;translate:none}
+   composition par étoile). La lecture prime sur le mouvement. 'sc-still' : pas
+   la place de tourner sans sortir de la zone sûre — le champ reste immobile. */
+.scene.sc-calm .sc-orbit,.scene.sc-still .sc-orbit,.scene.sc-no-orbit .sc-orbit{animation:none;translate:none}
+.scene.sc-calm .sc-field,.scene.sc-still .sc-field,.scene.sc-no-orbit .sc-field{animation:none;transform:none}
 .scene.sc-calm .sc-mark::after{animation:none}
 /* Réglages d'affichage de l'utilisateur ('JarvisSceneView', fenêtre « Affichage
    des étoiles ») : la gravitation éteinte s'arrête tout de suite, sans attendre
@@ -728,7 +745,7 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
 .sc-signal.sc-urgency-medium.sc-anim .sc-ring{animation:sc-alert 3.2s cubic-bezier(.2,.7,.3,1) infinite;will-change:transform,opacity}
 .sc-signal.sc-urgency-low .sc-mark{width:6px;height:6px;margin:-3px 0 0 -3px;box-shadow:none}
 .sc-signal.sc-urgency-low .sc-ring{width:14px;height:14px;margin:-7px 0 0 -7px;border:1px solid color-mix(in srgb,var(--tone) 38%,transparent);transform:none}
-.scene.sc-paused .sc-ring,.scene.sc-paused .sc-orbit,.scene.sc-paused .sc-mark::after{animation-play-state:paused}
+.scene.sc-paused .sc-ring,.scene.sc-paused .sc-orbit,.scene.sc-paused .sc-field,.scene.sc-paused .sc-mark::after{animation-play-state:paused}
 .sc-badge{position:absolute;right:0;top:0;width:12px;height:12px;border-radius:50%;background:#061017;display:grid;place-items:center;
   color:var(--sc-ink);box-shadow:0 0 0 1px rgba(220,236,244,.46)}
 /* Sur un point, en bas à droite : le haut droit est la place du signal. */
@@ -882,8 +899,9 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
   .scene .sc-node{transition:none!important}
   .scene .sc-ring,.scene .sc-note::before,.scene .sc-node.sc-stopping .sc-ring{animation:none!important}
   /* Ni gravitation ni respiration : l'étoile garde sa lueur, immobile. */
-  .scene .sc-orbit,.scene .sc-mark::after{animation:none!important}
+  .scene .sc-orbit,.scene .sc-field,.scene .sc-mark::after{animation:none!important}
   .scene .sc-orbit{translate:none!important}
+  .scene .sc-field{transform:none!important}
   .scene .sc-label{transition:none}
 }`;
 
@@ -906,7 +924,7 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     core_refused:'Core refuse la lecture',invalid_scene_response:'réponse invalide',timeout:'pas de réponse',
     patch_waits_busy:'trop de pages ouvertes',TypeError:'Control Center injoignable',network_error:'Control Center injoignable'};
 
-  let enabled=false,root=null,linksEl=null,statusEl=null,liveEl=null,raf=0,statusTicker=null;
+  let enabled=false,root=null,linksEl=null,fieldEl=null,statusEl=null,liveEl=null,raf=0,statusTicker=null;
   let lastView=null,lastState=null,layout=null,layoutState=null,edgesSig='',statusSig='',announced='',readyTimer=0;
   let lastModel=null,focusId=null,tabStopId=null,statusFailed=false,visibilityToken=0,animTimer=0;
   /* Slice 12 : réglages d'affichage de l'utilisateur (ce navigateur), bouton et
@@ -926,6 +944,9 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
   /* Fils dessinés (`{edge,line}`, dans l'ordre de `applyEdges`) et nœud tenu
      par l'utilisateur dont ils suivent le mouvement, image par image. */
   let edgeLines=[],follow=null;
+  /* Champ immobile ou non au dernier rendu : sert à resynchroniser les
+     animations de la rotation quand il repart (`syncField`). */
+  let fieldFrozen=null;
   const leader={held:false,mode:'lock'};
   const channel=typeof BroadcastChannel==='function'?new BroadcastChannel(CHANNEL_NAME):null;
   const shared=!!channel&&!!(navigator.locks&&typeof navigator.locks.request==='function');
@@ -1194,6 +1215,13 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
       :'Scène constellation. Flèches pour parcourir, Échap pour sortir.');
     linksEl=document.createElementNS(SVG_NS,'svg');
     linksEl.setAttribute('class','sc-links');linksEl.setAttribute('aria-hidden','true');
+    /* Les fils vivent dans un groupe à part : c'est lui qui tourne avec le
+       champ, d'un bloc, autour du centre de la fenêtre. Il est créé une fois
+       pour toutes — son animation ne repart donc jamais de zéro quand les fils
+       sont redessinés, et reste en phase avec celle des nœuds. */
+    fieldEl=document.createElementNS(SVG_NS,'g');
+    fieldEl.setAttribute('class','sc-field');
+    linksEl.appendChild(fieldEl);
     statusEl=document.createElement('div');
     statusEl.className='sc-status';statusEl.hidden=true;
     /* Région vivante à part : annonce les changements d'état, jamais les
@@ -1228,13 +1256,13 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
   function teardown(){
     if(raf){cancelAnimationFrame(raf);raf=0}
     if(readyTimer){cancelAnimationFrame(readyTimer);readyTimer=0}
-    stopFollow();edgeLines=[];
+    stopFollow();edgeLines=[];fieldFrozen=null;
     stopStatusTicker();
     if(root)root.remove();
     const style=document.getElementById('jarvisSceneStyle');
     if(style)style.remove();
     if(animTimer){window.clearTimeout(animTimer);animTimer=0}
-    root=null;linksEl=null;statusEl=null;liveEl=null;actionLiveEl=null;nodes.clear();freshUntil.clear();
+    root=null;linksEl=null;fieldEl=null;statusEl=null;liveEl=null;actionLiveEl=null;nodes.clear();freshUntil.clear();
     viewBtn=null;viewEl=null;viewRows=[];
     lastView=null;lastState=null;layout=null;layoutState=null;lastModel=null;
     viewMemo={state:null,version:-1,value:null};serverMemo={state:null,value:null};gesture=null;
@@ -1424,35 +1452,62 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
   }
 
   /* Placement d'un nœud : `L.drawnRect`, la même règle que la capture (reprise QA M2).
-     `drift` est sa dérive orbitale : elle s'ajoute par la propriété `translate`
-     et ne touche ni au placement dessiné, ni à la géométrie de la scène, ni à
-     la capture. `null` : aucune dérive ; absent : aperçu d'un geste, la dérive
-     en cours est gardée telle quelle. */
-  function position(el,node,drift){
+     `pivot` est son rayon — le vecteur qui va du centre de la fenêtre à son
+     ancre : l'animation du champ en tire l'arc que le nœud parcourt, par la
+     propriété `translate`. Elle ne touche ni au placement dessiné, ni à la
+     géométrie de la scène, ni à la capture. `null` : nœud immobile (confondu
+     avec le centre). */
+  function position(el,node,pivot){
     const rect=L.drawnRect(node);
     el.style.transform=`translate(${rect.left}px,${rect.top}px)`;
     el.style.width=node.shape==='point'?'':`${rect.width}px`;
     el.style.height=node.shape==='point'?'':`${rect.height}px`;
     el.style.zIndex=String(node.stack);
-    /* Aperçu d'un geste (`drift` absent) : les animations en cours ne bougent
-       pas — l'étoile suit le curseur sans sauter ni resynchroniser son halo. */
-    if(drift===undefined)return;
-    setOrbit(el,drift);
+    setPivot(el,pivot);
     /* Respiration du halo décalée par la place de l'étoile : stable d'un rendu
        à l'autre, et tous les halos ne battent pas ensemble. */
     if(node.shape==='point')el.style.setProperty('--sc-glow-delay',`${glowDelay(node)}ms`);
   }
 
-  /* Variables de la dérive sur un élément (nœud ou lien), ou retrait de
-     l'animation quand il n'en a pas : autre forme qu'un point, ou pas la place
-     de dériver dans la zone sûre. */
-  function setOrbit(el,drift){
-    if(!drift){el.classList.remove('sc-orbit');return}
-    const style=el.style;
-    style.setProperty('--sc-tx',`${drift.tx}px`);style.setProperty('--sc-ty',`${drift.ty}px`);
-    style.setProperty('--sc-rx',`${drift.rx}px`);style.setProperty('--sc-ry',`${drift.ry}px`);
-    style.setProperty('--sc-orbit-ms',`${drift.ms}ms`);style.setProperty('--sc-orbit-delay',`${drift.delay}ms`);
+  /* Rayon du nœud sur son élément, ou retrait de l'animation quand il n'en a
+     pas. Reposer le rayon seul ne relance rien : la valeur change sous
+     l'animation qui tourne, et le nœud suit sa nouvelle place sans perdre la
+     phase du champ (c'est ce qui tient l'étoile sous le curseur pendant un
+     geste). Le champ, lui, est arrêté ou non par le conteneur. */
+  function setPivot(el,pivot){
+    if(!pivot){el.classList.remove('sc-orbit');return}
+    el.style.setProperty('--sc-px',`${pivot.x}px`);el.style.setProperty('--sc-py',`${pivot.y}px`);
+    if(el.classList.contains('sc-orbit'))return;
     el.classList.add('sc-orbit');
+    syncOrbit(el);
+  }
+
+  /* Toutes les animations de la rotation partagent l'origine du temps du
+     document : un nœud qui apparaît, un nœud dont `fill` a réécrit les classes
+     ou le calque des fils reprend le champ exactement là où il est, jamais au
+     début de son propre cycle. Sans cela, deux animations lancées à dix
+     secondes d'écart tourneraient en opposition et les fils décrocheraient.
+     Appelé au moment où la classe est posée, jamais à chaque image. */
+  function syncOrbit(el){
+    if(!el||!el.getAnimations)return;
+    try{
+      for(const anim of el.getAnimations()){
+        if(anim.animationName!=='sc-orbit'&&anim.animationName!=='sc-field')continue;
+        if(anim.startTime!==0)anim.startTime=0;
+      }
+    }catch(_error){/* animation sans horloge (page cachée) : la passe suivante réessaie. */}
+  }
+
+  /* Champ arrêté puis relancé (scène trop peuplée, réglage de l'utilisateur,
+     plus la place de tourner) : le conteneur relance d'un coup toutes les
+     animations, mais chacune avec sa propre origine — elles sont donc toutes
+     remises sur l'horloge du document. Rien à faire à l'arrêt. */
+  function syncField(frozen){
+    if(frozen===fieldFrozen)return;
+    fieldFrozen=frozen;
+    if(frozen)return;
+    syncOrbit(fieldEl);
+    for(const record of nodes.values())syncOrbit(record.el);
   }
 
   function glowDelay(node){
@@ -1460,34 +1515,7 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     return -Math.round(seed/97*GLOW_MS);
   }
 
-  /* Dérive de chaque nœud dessiné, une fois par rendu : lue par les nœuds puis
-     par les liens. */
-  function drifts(list,vp){
-    const map=new Map();
-    /* Gravitation éteinte par l'utilisateur : aucune dérive n'est calculée, et
-       la classe `sc-no-orbit` a déjà arrêté celles qui tournaient. */
-    const options=V?V.orbitOptions(viewPrefs):undefined;
-    if(options===null)return map;
-    for(const node of list){
-      const drift=L.orbitOf(node,vp,options);
-      if(drift)map.set(node.id,drift);
-    }
-    return map;
-  }
-
-  /* Dérive d'un lien : moyenne de celles de ses deux extrémités (exacte pour
-     une étoile et son signal, qui partagent la même orbite ; une extrémité
-     immobile freine le lien d'autant). */
-  function edgeDrift(edge,map){
-    const a=map.get(edge.from),b=map.get(edge.to);
-    if(!a&&!b)return null;
-    const mid=(p,q)=>Math.round(((p||0)+(q||0))/2*10)/10;
-    const base=a||b;
-    return {tx:mid(a&&a.tx,b&&b.tx),ty:mid(a&&a.ty,b&&b.ty),rx:mid(a&&a.rx,b&&b.rx),ry:mid(a&&a.ry,b&&b.ry),
-      ms:base.ms,delay:base.delay};
-  }
-
-  function applyNodes(list,map){
+  function applyNodes(list,vp){
     const seen=new Set();
     for(const node of list){
       seen.add(node.id);
@@ -1515,13 +1543,11 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
       if(record.anim!==node.animate){record.el.classList.toggle('sc-anim',node.animate);record.anim=node.animate}
       record.el.classList.toggle('sc-selected',node.id===selectedId);
       record.el.classList.toggle('sc-stopping',stopping.has(node.id));
-      const drift=map.get(node.id)||null;
-      const place=`${node.shape}|${node.compact}|${node.cx}|${node.cy}|${node.box.left}|${node.box.top}|${node.box.width}|${node.box.height}|${node.stack}`
-        +`|${drift?`${drift.tx},${drift.ty},${drift.ms}`:''}`;
+      const place=`${node.shape}|${node.compact}|${node.cx}|${node.cy}|${node.box.left}|${node.box.top}|${node.box.width}|${node.box.height}|${node.stack}`;
       /* Sous la main de l'utilisateur (glisser, clavier) : l'aperçu garde la
-         place, et l'étoile garde la dérive qu'elle avait — elle suit le
-         curseur sans sauter. */
-      if(place!==record.place&&!record.dragging){position(record.el,node,drift);record.place=place}
+         place — c'est le geste qui pose le placement et le rayon, image par
+         image. */
+      if(place!==record.place&&!record.dragging){position(record.el,node,L.orbitPivot(node,vp));record.place=place}
     }
     for(const [id,record] of nodes){
       if(seen.has(id))continue;
@@ -1725,10 +1751,14 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
   const errorText=error=>String(error&&error.message||error);
   const barehandsActive=()=>!!document.querySelector('#jarvisHands .jh-token');
 
-  /* Aperçu d'une boîte (unités) sur le nœud, dans sa forme dessinée. */
+  /* Aperçu d'une boîte (unités) sur le nœud, dans sa forme dessinée. Le rayon
+     suit l'aperçu : l'étoile reste sous le curseur au lieu de garder l'arc de
+     son ancienne place, et son fil reste noué à son centre. */
   function previewAt(el,node,box){
-    const screen=L.toScreen(viewportNow(),L.drawnBox(node.representation,box));
-    position(el,{...node,box:screen,cx:round1(screen.left+screen.width/2),cy:round1(screen.top+screen.height/2)});
+    const vp=viewportNow();
+    const screen=L.toScreen(vp,L.drawnBox(node.representation,box));
+    const preview={...node,box:screen,cx:round1(screen.left+screen.width/2),cy:round1(screen.top+screen.height/2)};
+    position(el,preview,L.orbitPivot(preview,vp));
   }
 
   function holdNode(id,held){
@@ -2317,31 +2347,35 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
 
   /* ------------------------------------------ fils pendant un geste */
 
-  /* Ancre d'un nœud dans le repère de la scène : le centre de sa zone dessinée
-     **telle qu'elle est à l'écran**. La place est dans `transform`, la dérive
-     orbitale dans `translate` : la boîte rendue est le seul endroit qui porte
-     les deux à la fois — et, pendant un geste, l'aperçu qui n'est encore écrit
-     nulle part. `null` : nœud plus dessiné. */
-  function anchorOf(id,origin){
+  /* Ancre d'un nœud dans le repère du calque des fils : le centre de sa zone
+     dessinée **telle qu'elle est à l'écran**, ramené par `matrix` dans le
+     repère du groupe qui tourne. La place est dans `transform`, l'arc du champ
+     dans `translate` : la boîte rendue est le seul endroit qui porte les deux à
+     la fois — et, pendant un geste, l'aperçu qui n'est encore écrit nulle part.
+     `null` : nœud plus dessiné. */
+  function anchorOf(id,matrix){
     const record=nodes.get(id);
     if(!record)return null;
     const r=record.el.getBoundingClientRect();
     if(!r.width&&!r.height)return null;
-    return {x:round1(r.left+r.width/2-origin.left),y:round1(r.top+r.height/2-origin.top)};
+    const point=new DOMPoint(r.left+r.width/2,r.top+r.height/2).matrixTransform(matrix);
+    return {x:round1(point.x),y:round1(point.y)};
   }
 
   /* Extrémités des fils qui touchent le nœud tenu, pour cette image. */
   function followEdges(){
-    if(!follow||!root)return;
+    if(!follow||!root||!fieldEl)return;
     if(!nodes.has(follow.id)){stopFollow();return}
-    const origin=root.getBoundingClientRect();
+    /* De l'écran vers le repère du groupe : les extrémités posées ici passent
+       ensuite par la rotation du champ, comme celles des autres fils, et
+       retombent donc exactement sur les centres lus à l'écran. */
+    const screen=fieldEl.getScreenCTM();
+    if(!screen)return;
+    const matrix=screen.inverse();
     for(const {edge,line} of edgeLines){
       if(edge.from!==follow.id&&edge.to!==follow.id)continue;
-      const a=anchorOf(edge.from,origin),b=anchorOf(edge.to,origin);
+      const a=anchorOf(edge.from,matrix),b=anchorOf(edge.to,matrix);
       if(!a||!b)continue;
-      /* La dérive des deux bouts est déjà dans les ancres : le fil ne la rejoue
-         pas par-dessus (sinon elle compterait deux fois). */
-      setOrbit(line,null);
       line.setAttribute('x1',a.x);line.setAttribute('y1',a.y);
       line.setAttribute('x2',b.x);line.setAttribute('y2',b.y);
     }
@@ -2369,22 +2403,22 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     edgesSig='';
   }
 
-  function applyEdges(edges,vp,map){
-    const drift=edges.map(edge=>map?edgeDrift(edge,map):null);
-    const sig=`${vp.width}x${vp.height}|`+edges.map((e,i)=>`${e.id},${e.kind},${e.signal},${e.artifact},${e.tone},${e.x1},${e.y1},${e.x2},${e.y2}`
-      +`,${drift[i]?`${drift[i].tx}:${drift[i].ty}:${drift[i].ms}`:''}`).join(';');
+  /* Les fils sont posés à la place de référence de leurs deux bouts : c'est le
+     groupe qui les porte qui tourne avec le champ, du même angle que les nœuds
+     et autour du même centre. Rien à rejouer fil par fil. */
+  function applyEdges(edges,vp){
+    const sig=`${vp.width}x${vp.height}|`+edges.map(e=>`${e.id},${e.kind},${e.signal},${e.artifact},${e.tone},${e.x1},${e.y1},${e.x2},${e.y2}`).join(';');
     if(sig===edgesSig)return;
     edgesSig=sig;
     linksEl.setAttribute('viewBox',`0 0 ${vp.width} ${vp.height}`);
-    const lines=edges.map((edge,i)=>{
+    const lines=edges.map(edge=>{
       const line=document.createElementNS(SVG_NS,'line');
       line.setAttribute('x1',edge.x1);line.setAttribute('y1',edge.y1);line.setAttribute('x2',edge.x2);line.setAttribute('y2',edge.y2);
       line.setAttribute('class',`sc-link sc-link-${edge.kind}`+(edge.signal?` sc-link-signal sc-tone-${edge.tone}`:'')
         +(edge.artifact?` sc-link-artifact sc-tone-${edge.tone}`:''));
-      setOrbit(line,drift[i]);
       return line;
     });
-    linksEl.replaceChildren(...lines);
+    fieldEl.replaceChildren(...lines);
     edgeLines=edges.map((edge,i)=>({edge,line:lines[i]}));
     /* Passe pendant un geste : les fils du nœud tenu reprennent tout de suite
        leurs extrémités vivantes, sans une image de retard. */
@@ -2402,19 +2436,26 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     if(!enabled||!root)return;
     if(document.visibilityState==='hidden')return;
     const current=currentLayout();
-    if(!lastState||!current){applyNodes([],new Map());applyEdges([],{width:1,height:1},null);lastModel=null;return renderStatus()}
+    if(!lastState||!current){applyNodes([],{cx:0,cy:0});applyEdges([],{width:1,height:1});lastModel=null;return renderStatus()}
     const vp=L.viewport(root.clientWidth||window.innerWidth,root.clientHeight||window.innerHeight);
     const now=Date.now();
     markFresh(lastState,now);
     lastModel=L.viewModel(viewState(),current,vp,{objectLimit:lastView?lastView.objectLimit:L.OBJECT_LIMIT,errorLabels:errorLabels(),
       animatable:node=>(freshUntil.get(node.id)||{until:0}).until>now});
-    /* Gravitation : dérive de chaque étoile autour du centre, calculée pour ce
-       rendu seulement. Scène très peuplée : tout s'immobilise. */
+    /* Gravitation : **un seul angle** pour tout le champ, calculé pour ce rendu
+       seulement. Scène très peuplée : tout s'immobilise. Gravitation éteinte
+       par l'utilisateur : aucun angle n'est calculé, la classe `sc-no-orbit` a
+       déjà arrêté ce qui tournait. */
     const points=lastModel.nodes.reduce((n,node)=>n+(node.shape==='point'?1:0),0);
-    root.classList.toggle('sc-calm',points>CALM_POINTS);
-    const map=drifts(lastModel.nodes,vp);
-    applyNodes(lastModel.nodes,map);
-    applyEdges(lastModel.edges,vp,map);
+    const options=V?V.orbitOptions(viewPrefs):undefined;
+    const swing=options===null?null:L.orbitSwing(lastModel.nodes,vp,options);
+    if(swing){root.style.setProperty('--sc-swing',`${swing.deg}deg`);root.style.setProperty('--sc-orbit-ms',`${swing.ms}ms`)}
+    const calm=points>CALM_POINTS;
+    root.classList.toggle('sc-calm',calm);
+    root.classList.toggle('sc-still',!swing);
+    applyNodes(lastModel.nodes,vp);
+    applyEdges(lastModel.edges,vp);
+    syncField(calm||!swing||options===null);
     renderStatus();
     /* Transitions actives seulement après le premier placement : pas de
        glissement depuis l'origine au chargement. */
