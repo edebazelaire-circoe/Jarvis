@@ -50,7 +50,7 @@ from jarvis.domain.v2 import (
     SpeechPriority,
     SpeechRequest,
 )
-from jarvis.domain.brain_context import BrainContext, BrainWorkContext
+from jarvis.domain.brain_context import BrainContext, BrainSpeechInterruption, BrainWorkContext
 from jarvis.ports.v2 import BrainEventSink
 
 # Jetons d'erreur stables publiés dans `brain.work.failed.error_class`. Ils
@@ -80,6 +80,7 @@ def _turn_context(
     turn: BrainTurnInput,
     state: BrainWorkingState | None,
     work: BrainWorkContext | None = None,
+    interruptions: tuple[BrainSpeechInterruption, ...] = (),
 ) -> dict[str, object]:
     """Le contexte public que Core joint au tour, et rien d'autre.
 
@@ -109,6 +110,10 @@ def _turn_context(
         # tient, borné par `build_brain_work_context`. Absent quand Core ne l'a
         # pas lu (backend appelé par `run_turn`, ou lecture en échec).
         context["work"] = work.to_payload()
+    if interruptions:
+        # Réponses que l'utilisateur a coupées : ce qu'il en a entendu, pour que
+        # l'agent ne tienne pas pour dit ce qui ne l'a pas été.
+        context["interrupted_speech"] = [item.to_payload() for item in interruptions]
     return context
 
 
@@ -237,7 +242,7 @@ class ControlCenterBrainBackend:
         """Même tour, avec le travail en cours que Core a lu pour lui (capacité
         `ContextAwareBrainBackend`, tâche 12) : il part dans `context.work`."""
 
-        return await self._run(turn, context.state, context.work, emit)
+        return await self._run(turn, context.state, context.work, emit, interruptions=context.interruptions)
 
     async def _run(
         self,
@@ -245,6 +250,8 @@ class ControlCenterBrainBackend:
         state: BrainWorkingState | None,
         work: BrainWorkContext | None,
         emit: BrainEventSink,
+        *,
+        interruptions: tuple[BrainSpeechInterruption, ...] = (),
     ) -> BrainTurnResult:
         work_id = f"brain-turn:{turn.correlation_id}"
         await emit.emit(
@@ -256,7 +263,7 @@ class ControlCenterBrainBackend:
                 public_summary="Demande transmise à l'agent local.",
             )
         )
-        outcome = await self._ask(turn.text, _turn_context(turn, state, work),
+        outcome = await self._ask(turn.text, _turn_context(turn, state, work, interruptions),
                                   conversation=_turn_conversation(turn, work_id))
         if outcome.get("ok"):
             return await self._settle_success(turn, work_id, _public_answer(outcome.get("text")), emit)

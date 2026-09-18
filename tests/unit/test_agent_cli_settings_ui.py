@@ -88,6 +88,7 @@ def test_agent_cli_sections_are_in_locked_order_and_advanced_policy_is_disclosed
     # couple. L'invariant tenu ici ne change pas : la section dit ce qu'elle a
     # retenu, dans quel ordre, et pourquoi un candidat n'est pas utilisable.
     assert "unavailable_reason" in body and "rank===0?'préféré'" in body
+    assert "data-routing-harness" in body and "data-routing-drop" in body
     tab = body[body.index("function tabCli()") : body.index("/* --- configuration avancée")]
     assert "await " not in tab and "api(" not in tab and "catalog(" not in tab
 

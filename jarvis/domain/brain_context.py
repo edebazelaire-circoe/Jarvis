@@ -339,6 +339,72 @@ def build_brain_work_context(
     )
 
 
+#: Texte d'une réponse coupée rendu au cerveau : assez pour qu'il s'y retrouve.
+MAX_INTERRUPTED_TEXT_CHARS = 1200
+#: Réponses coupées remises au cerveau en un tour.
+MAX_BRAIN_INTERRUPTIONS = 4
+
+
+def estimate_heard_text(text: str, played_ms: float, total_ms: float) -> str:
+    """Début d'une réponse qui a été joué, estimé au prorata de l'audio.
+
+    `total_ms` est l'audio reçu pour ce texte, `played_ms` ce qui en a été joué
+    avant la coupure. Le fournisseur ne donne pas l'alignement mot à mot : la
+    coupe est une estimation, reculée au mot entier précédent. Rien de joué,
+    rien d'entendu.
+    """
+
+    text = text.strip()
+    if played_ms <= 0 or not text or total_ms <= 0:
+        return ""
+    ratio = min(1.0, played_ms / total_ms)
+    cut = int(len(text) * ratio)
+    if cut >= len(text):
+        return text
+    space = text.rfind(" ", 0, cut + 1)
+    if space > 0:
+        cut = space
+    return text[:cut].rstrip(" ,;:.!?…")
+
+
+@dataclass(frozen=True, slots=True)
+class BrainSpeechInterruption:
+    """Une réponse du cerveau que l'utilisateur n'a pas entendue jusqu'au bout.
+
+    Le cerveau garde dans sa propre session le texte entier qu'il a écrit ;
+    sans ce constat, il tient pour dit ce que l'utilisateur a coupé, et prend
+    un « oui » à la première phrase pour un « oui » à tout le reste.
+
+    - `text` : la réponse écrite par le cerveau ;
+    - `heard_text` : le début effectivement joué, estimé (vide si rien) ;
+    - `played_ms` / `total_ms` : audio joué et audio reçu (`total_ms` vaut
+      `None` quand la génération a elle-même été coupée : durée totale inconnue).
+    """
+
+    text: str
+    heard_text: str
+    played_ms: int
+    total_ms: int | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.text, str) or not self.text.strip():
+            raise ValueError("interrupted speech needs its text")
+        if not isinstance(self.heard_text, str):
+            raise TypeError("heard_text must be text")
+        if type(self.played_ms) is not int or self.played_ms < 0:
+            raise ValueError("played_ms must be a non-negative integer")
+        if self.total_ms is not None and (type(self.total_ms) is not int or self.total_ms < 0):
+            raise ValueError("total_ms must be a non-negative integer")
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "text": clip_text(self.text, MAX_INTERRUPTED_TEXT_CHARS),
+            "heard_text": clip_text(self.heard_text, MAX_INTERRUPTED_TEXT_CHARS),
+            "played_ms": self.played_ms,
+            "total_ms": self.total_ms,
+        }
+
+
 @dataclass(frozen=True, slots=True)
 class BrainContext:
     """Ce que Core remet au backend pour un tour, en plus du tour lui-même.
@@ -351,9 +417,15 @@ class BrainContext:
 
     state: BrainWorkingState
     work: BrainWorkContext | None = None
+    #: Réponses coupées depuis le tour précédent (voir `BrainSpeechInterruption`).
+    interruptions: tuple[BrainSpeechInterruption, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.state, BrainWorkingState):
             raise TypeError("state must be a BrainWorkingState")
         if self.work is not None and not isinstance(self.work, BrainWorkContext):
             raise TypeError("work must be a BrainWorkContext")
+        if not isinstance(self.interruptions, tuple) or len(self.interruptions) > MAX_BRAIN_INTERRUPTIONS:
+            raise ValueError("interruptions must be a bounded tuple")
+        if not all(isinstance(item, BrainSpeechInterruption) for item in self.interruptions):
+            raise TypeError("interruptions must be BrainSpeechInterruption")

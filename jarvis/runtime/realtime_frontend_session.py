@@ -387,8 +387,17 @@ class RealtimeFrontendSession:
             self._pending_users[str(event.correlation.provider_input_id)] = event
         elif isinstance(event.payload, UserTurnOpened):
             key = str(event.correlation.provider_input_id)
+            previous = event.correlation.previous_provider_input_id
+            if previous is not None and previous not in self._input_order:
+                # OpenAI donne le dernier élément de la conversation, le plus
+                # souvent la réponse de l'assistant : ce n'est pas une entrée.
+                # L'entrée qui précède est alors la dernière observée ; sans
+                # cela le tour pointe vers un parent que Core ne connaîtra
+                # jamais et toute la suite de la session reste sans réponse.
+                previous = next((item for item in reversed(self._input_order) if item != key), None)
+                event = replace(event, correlation=replace(event.correlation, previous_provider_input_id=previous))
             self._pending_open[key] = event
-            self._input_order[key] = (event.correlation.previous_provider_input_id, "pending")
+            self._input_order[key] = (previous, "pending")
             while len(self._input_order) > 256:
                 self._input_order.popitem(last=False)
             while len(self._pending_open) > 128:

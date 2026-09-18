@@ -149,3 +149,28 @@ assert.equal(modalContent.innerHTML,'<new agent panel>');
     path.write_text(script, encoding='utf-8')
     run = subprocess.run([node, str(path)], capture_output=True, text=True, timeout=15)
     assert run.returncode == 0, run.stderr
+
+
+async def test_explicit_simple_selection_can_return_to_continuous_brain(tmp_path, monkeypatch):
+    """17/09/2026 : un clic sur « Utiliser explicitement cette architecture » avait
+    figé `simple`, ignoré `JARVIS_VOICE_ARCH=continuous_brain`, et aucun choix de
+    l'onglet ne ramenait le cerveau Claude (plus de sous-agents, console vide)."""
+    from jarvis.runtime.voice_architecture_config import load_voice_architecture
+    from jarvis.runtime.voice_composition import resolve_voice_composition
+
+    monkeypatch.setenv('JARVIS_VOICE_ARCH', 'continuous_brain')
+    control = ControlCenter(runtime_root=tmp_path, project_root=tmp_path)
+    control._write_settings({'voice_stack': 'openai_realtime', 'voice_arch': '', 'voice_architecture': {
+        'schema_version': 1, 'compatibility': None,
+        'config': {'architecture': 'simple', 'conversation_model': {'provider_id': 'openai', 'model_id': 'gpt-realtime-2.1-mini'}}}})
+    assert load_voice_architecture(control._settings()).compatibility is None
+    async with TestClient(TestServer(control._app)) as client:
+        response = await client.post('/api/settings', json={'voice': {'brain_compatibility': True}})
+        assert response.status == 200, await response.text()
+    stored = json.loads(control.settings_path.read_text())
+    assert 'voice_architecture' not in stored and stored['voice_arch'] == 'continuous_brain'
+    selection = load_voice_architecture(stored)
+    assert selection.compatibility is not None and selection.compatibility.execution_mode == 'continuous_brain'
+    assert resolve_voice_composition(stored).direct_conversation is False
+    page = (Path(__file__).parents[2] / 'jarvis' / 'runtime' / 'control_center.html').read_text(encoding='utf-8')
+    assert 'data-architecture-brain' in page and 'brain_compatibility=true' in page

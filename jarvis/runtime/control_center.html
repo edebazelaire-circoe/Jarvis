@@ -2006,7 +2006,7 @@ async function consoleAction(act){
       toast({title:'Console Windows fermée',kind:'info',ms:3000});
     }else{
       const r=await api('/api/agent/console/open',{method:'POST'});
-      const text=r.already_open?(r.raised?'Console existante ramenée au premier plan.':'Console déjà ouverte : fenêtre à retrouver dans la barre des tâches.'):(r.handover?'Conversation reprise. L’agent piloté a été arrêté.':'Console ouverte sur cette conversation.');
+      const text=r.already_open?(r.raised?'Console existante ramenée au premier plan.':'Console déjà ouverte : fenêtre à retrouver dans la barre des tâches.'):(r.handover?'Conversation reprise. L’agent piloté a été arrêté.':r.forked?'Console ouverte sur une copie de la conversation vocale.':r.resumed?'Console ouverte sur cette conversation.':'Nouvelle console : l’agent vocal n’a encore traité aucun tour.');
       toast({title:'Console Windows',sub:text,kind:'info'});
     }
   }catch(e){toast({title:'Console Windows',sub:e.message,kind:'bad'})}
@@ -2324,7 +2324,7 @@ function voiceArchitectureChanged(key,value){
     SET.draft.voice.architecture=JSON.parse(JSON.stringify(voiceArchitectureConfig()));
     SET.draft.voice.architecture[key]=value;
   }
-  SET.architectureDirty=true;SET.dirty=true;
+  delete SET.draft.voice.brain_compatibility;SET.architectureDirty=true;SET.dirty=true;
 }
 function voiceOptions(category){
   const destination=`voice.${category}`
@@ -2427,6 +2427,9 @@ async function voiceArchitectureHtml(){
   if(profile)html+=`<div class="hint">${esc(profile.description)}</div>`;
   if(query.compatibility_runtime&&!SET.architectureDirty)html+='<div class="notice">Compatibilité conservée. Enregistrer sans modifier l’architecture garde le fonctionnement actuel.</div><button class="action" data-architecture-activate>Utiliser explicitement cette architecture</button>';
   if(query.problem&&!SET.architectureDirty)html+=`<div class="notice bad">${esc(query.problem.message)}</div>`;
+  if(!query.compatibility_runtime)html+=SET.draft.voice.brain_compatibility
+    ?'<div class="notice">Retour au mode continu avec le cerveau Claude à l’enregistrement : chaque tour part au cerveau, qui lance ses sous-agents.</div>'
+    :'<div class="hint">Ces architectures répondent sans le cerveau Claude du Control Center : ni sous-agents pilotés, ni historique dans sa console.</div><button class="action" data-architecture-brain>Revenir au mode continu avec le cerveau Claude</button>';
   html+=`<details class="rd"><summary>Compatibilité et invariants avancés</summary>${advanced.map(voiceOptionHtml).join('')}${compatibility.map(voiceOptionHtml).join('')}</details>`;
   return html;
 }
@@ -3180,6 +3183,7 @@ function bindVoicePanel(revision){
   const panel=$('#voicePanel');if(!panel)return;
   panel.querySelectorAll('[data-voice-persistence]').forEach(element=>element.addEventListener('change',()=>voiceChanged(element,revision)));
   panel.querySelectorAll('[data-voice-architecture]').forEach(element=>element.addEventListener('change',()=>{voiceArchitectureChanged('architecture',element.value);renderVoicePanel(revision)}));
+  panel.querySelectorAll('[data-architecture-brain]').forEach(element=>element.addEventListener('click',()=>{SET.draft.voice.brain_compatibility=true;SET.architectureDirty=false;SET.dirty=true;say('Modifications non enregistrées.','');renderVoicePanel(revision)}));
   panel.querySelectorAll('[data-architecture-activate]').forEach(element=>element.addEventListener('click',()=>{voiceArchitectureChanged('architecture',voiceArchitectureConfig().architecture);renderVoicePanel(revision)}));
   panel.querySelectorAll('[data-architecture-field]').forEach(element=>element.addEventListener('change',()=>{
     const value=element.dataset.architectureKind==='model'?JSON.parse(element.value):element.type==='checkbox'?element.checked:element.type==='number'?Number(element.value):element.value;

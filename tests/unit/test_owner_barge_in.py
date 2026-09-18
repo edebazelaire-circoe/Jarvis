@@ -579,7 +579,8 @@ async def test_open_room_keeps_the_acoustic_barge_in_even_with_a_verifier():
     """Retour arrière : autorité acoustique, l'état du propriétaire n'est même pas écouté."""
 
     audio, source, journal = RecordingAudio(), FakeOwnerSource(), RecordingJournal()
-    bridge = build_bridge(audio, source=source, journal=journal, authority=BargeInAuthority.ACOUSTIC)
+    bridge = build_bridge(audio, source=source, journal=journal, authority=BargeInAuthority.ACOUSTIC,
+                          barge_in_sustain_s=0.05)
 
     async with Live(bridge) as live:
         await live.send(*jarvis_speaking())
@@ -588,8 +589,14 @@ async def test_open_room_keeps_the_acoustic_barge_in_even_with_a_verifier():
         await live.idle()
         assert audio.gains == []
         await live.send(event("realtime.speech_started"))
+        # Confirmée, la parole baisse la voix ; elle ne coupe que si elle dure
+        # (17/09/2026 : l'écho de JARVIS se confirmait lui-même).
+        assert audio.gains == [bridge.barge_in_duck_gain]
+        await asyncio.sleep(0.15)
+        await live.idle()
 
     assert audio.stop_output_calls == 1
+    assert audio.gains == [bridge.barge_in_duck_gain, 1.0]
     assert "trigger" not in journal.of("voice.barge_in")[0]["data"]
     assert journal.of(BARGE_IN_AUTHORITY_KIND) == [] and journal.of(BARGE_IN_PROVIDER_ADVISORY_KIND) == []
 

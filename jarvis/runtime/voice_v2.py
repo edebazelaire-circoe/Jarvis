@@ -16,7 +16,7 @@ from jarvis.domain.speaker import (
 from jarvis.domain.v2 import AddressingDecision, VoiceLifecycleState
 from jarvis.domain.voice_frontend import FrontendState, VoiceOperationResult, VoiceOperationStatus
 from jarvis.ports.v2 import Clock, RealtimeSession, WakeWordBackend, supports_output_control
-from jarvis.protocol.client import LocalCoreClient
+from jarvis.protocol.client import CoreProtocolError, LocalCoreClient
 from jarvis.runtime.journal import RuntimeJournal
 from jarvis.runtime.speech_scheduler import SpeechScheduler
 from jarvis.runtime.visual_signals import VisualSignalBus
@@ -315,12 +315,26 @@ class PersistentVoiceRuntime:
         self.runtime.state = VoiceLifecycleState.CONNECTING
         self._visual("thinking")
         self._trace("voice.connecting", "Opening Realtime session")
+        context = None
+        if self.runtime.conversation_id is not None:
+            try:
+                context = await self.core.context(self.runtime.conversation_id)
+            except CoreProtocolError as exc:
+                # Pointeur mémorisé (`.voice_conversation`, handoff) vers une
+                # conversation que Core ne connaît plus — base restaurée ou
+                # réinitialisée. Le 404 est définitif : on repart d'une
+                # conversation neuve plutôt que de faire tomber la voix.
+                if exc.status != 404:
+                    raise
+                self._trace("voice.conversation_unknown", "Remembered conversation unknown to Core; starting a new one",
+                            level="warning", data={"conversation_id": self.runtime.conversation_id})
+                self.runtime.conversation_id = None
         if self.runtime.conversation_id is None:
             conversation = await self.core.create_conversation()
             self.runtime.conversation_id = str(conversation["id"])
+            context = await self.core.context(self.runtime.conversation_id)
         if self.switch_bus is not None and self.configuration_id is not None:
             self.switch_bus.remember_conversation(self.runtime.conversation_id, self.configuration_id)
-        context = await self.core.context(self.runtime.conversation_id)
         if self.switch_handoff is not None:
             from jarvis.runtime.voice_switch import active_task_context
             try:

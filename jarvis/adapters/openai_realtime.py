@@ -742,10 +742,13 @@ class OpenAIRealtimeSession:
         # c'est elle qui enverrait encore de l'audio. Le curseur peut désigner
         # une phrase déjà générée — celle qui jouait —, alors qu'une réponse
         # plus récente est en train de naître.
-        active = self._outputs.get(self._active_output_id) if self._active_output_id else None
-        output = active or self._resolve_output(cursor)
-        if output is None and self._active_output_id is None:
+        # Rien ne génère plus (`response.done` reçu) : il n'y a rien à annuler,
+        # seul `truncate()` reste utile. Envoyer `response.cancel` sur une
+        # réponse terminée vaut à coup sûr `response_cancel_not_active`.
+        if self._active_output_id is None:
             return
+        active = self._outputs.get(self._active_output_id)
+        output = active or self._resolve_output(cursor)
         payload: dict[str, object] = {"type": "response.cancel"}
         if output is not None and output.response_id:
             payload["response_id"] = output.response_id
