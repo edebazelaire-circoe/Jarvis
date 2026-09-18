@@ -1963,7 +1963,7 @@ ControlCenter (scene.enabled) ─► ClaudeLocalAgent.display_mcp = DisplayMcpTa
 
 | Piece | File | Role |
 | --- | --- | --- |
-| Gate | `jarvis/runtime/scene_settings.py` | `scene.enabled` in `control-center-settings.json` (default false); `JARVIS_SCENE_ENABLED` overrides; `GET/POST /api/settings` block `scene` = `describe_gate` (`enabled`, `source`, `stored` = file value, `env` = variable name when it wins); a write while the variable is set is refused 400 `scene_env_override` (Slice 11) |
+| Gate | `jarvis/runtime/scene_settings.py` | `scene.enabled` in `control-center-settings.json` (**default true**, `DEFAULT_ENABLED`; only a stored boolean counts, so a stored `false` wins over the default and anything unreadable falls back to it); `JARVIS_SCENE_ENABLED` overrides both; `GET/POST /api/settings` block `scene` = `describe_gate` (`enabled`, `source`, `stored` = `stored_gate(settings)` — what the switch would be without the variable, `env` = variable name when it wins); a write while the variable is set is refused 400 `scene_env_override` (Slice 11) |
 | Settings UI | `jarvis/runtime/control_center_scene_settings.js` | Slice 11: « Scène constellation » section at the top of the Expérimental tab (created by Barehands, injected after it); pure `JarvisSceneSettings.describe(scene, status)` + browser block; see *Scene settings UI* below |
 | Wiring | `jarvis/runtime/control_center.py`, `jarvis/app.py` | `_run_control_center_v2` builds `DisplayMcpTarget` from `V2Settings`; `_apply_agent_settings` hands it to the Claude agent only when the gate is on |
 | Spawn | `jarvis/runtime/claude_local.py` | `_display_mcp_args`: atomic write of `runtime/display-mcp.json`, `--mcp-config <file>`; prompt program `conversation_display_session` |
@@ -2483,8 +2483,10 @@ contain no DOM, `window`, `fetch`, interval or storage access (asserted by test)
 
 **Gate.** `GET /api/status` (already polled every second) carries `scene` =
 `load_scene_gate(settings)` (`{enabled, source}`; `JARVIS_SCENE_ENABLED`
-overrides the file). `refreshStatus` calls `JarvisScene.gate(s.scene, s.scene_limits)`. Off (the
-default): no container, no style, no scene request (the Expérimental settings tab
+overrides the file and the default). `refreshStatus` calls `JarvisScene.gate(s.scene, s.scene_limits)`.
+On is the default, so a fresh install draws the scene at the first status read. Off
+(a stored `false`, or `JARVIS_SCENE_ENABLED=0`): no container, no style, no scene
+request (the Expérimental settings tab
 still shows the switch). Switching on creates the container and starts the loop; switching
 off aborts the long-poll, releases the lock, stops the committer and removes the
 container and its style element. A failed status read leaves the gate unchanged.

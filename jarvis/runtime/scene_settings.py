@@ -1,6 +1,10 @@
 """Interrupteur de la scène constellation côté Control Center (handoff jarvis-constellation-scene-runtime, Slice 06).
 
-`scene.enabled` (défaut **faux**) dans `runtime/control-center-settings.json`.
+`scene.enabled` (défaut **vrai** depuis la décision humaine B1 de fin de tâche)
+dans `runtime/control-center-settings.json` : une installation neuve, sans
+fichier de réglages ni variable d'environnement, rend la scène et donne au
+cerveau ses outils d'affichage. Un `false` **enregistré** l'emporte sur ce
+défaut ; `JARVIS_SCENE_ENABLED` l'emporte sur les deux.
 Décision PM consignée au Slice 11 : Core projette et stocke la scène quel que
 soit l'interrupteur ; seuls le rendu (Slice 05/11) et l'outil MCP d'affichage du
 cerveau (`jarvis/runtime/display_mcp.py`) en dépendent. Éteint, le cerveau est
@@ -27,6 +31,8 @@ from typing import Any
 
 SETTING_KEY = "scene"
 ENV_OVERRIDE = "JARVIS_SCENE_ENABLED"
+#: Valeur d'une installation neuve : rien d'enregistré, rien dans l'environnement.
+DEFAULT_ENABLED = True
 _TRUE = frozenset({"1", "true", "yes", "on"})
 _FALSE = frozenset({"0", "false", "no", "off"})
 
@@ -48,30 +54,42 @@ def env_override(environ: Mapping[str, str] | None = None) -> bool | None:
     return None
 
 
+def stored_gate(settings: Mapping[str, Any]) -> bool:
+    """Ce que le fichier dit, ou `DEFAULT_ENABLED` quand il n'en dit rien de lisible.
+
+    Lecture tolérante : seul un booléen enregistré compte. Un `false` explicite
+    l'emporte donc sur le défaut, tandis qu'une valeur absente, nulle ou d'un
+    autre type (`"true"`, `1`, une chaîne à la place de l'objet) retombe sur le
+    défaut plutôt que d'éteindre la scène sur un fichier abîmé.
+    """
+
+    stored = settings.get(SETTING_KEY)
+    value = stored.get("enabled") if isinstance(stored, dict) else None
+    return value if isinstance(value, bool) else DEFAULT_ENABLED
+
+
 def load_gate(settings: Mapping[str, Any], environ: Mapping[str, str] | None = None) -> dict[str, Any]:
     """`{"enabled", "source"}` : valeur effective et d'où elle vient (`settings`, `env`)."""
 
-    stored = settings.get(SETTING_KEY)
-    stored = stored if isinstance(stored, dict) else {}
-    enabled = stored.get("enabled") is True
     override = env_override(environ)
     if override is not None:
         return {"enabled": override, "source": "env"}
-    return {"enabled": enabled, "source": "settings"}
+    return {"enabled": stored_gate(settings), "source": "settings"}
 
 
 def describe_gate(settings: Mapping[str, Any], environ: Mapping[str, str] | None = None) -> dict[str, Any]:
     """Bloc `scene` de `GET/POST /api/settings` : `load_gate` plus ce que l'écran explique.
 
-    `stored` : la valeur du fichier, ignorée tant que l'environnement l'impose ;
-    `env` : nom de la variable qui l'emporte quand `source` vaut `env`, sinon `None`.
+    `stored` : ce que vaudrait l'interrupteur sans l'environnement (valeur du
+    fichier, ou le défaut quand il n'en dit rien), ignoré tant que
+    l'environnement l'impose ; `env` : nom de la variable qui l'emporte quand
+    `source` vaut `env`, sinon `None`.
     """
 
     gate = load_gate(settings, environ)
-    stored = settings.get(SETTING_KEY)
     return {
         **gate,
-        "stored": isinstance(stored, dict) and stored.get("enabled") is True,
+        "stored": stored_gate(settings),
         "env": ENV_OVERRIDE if gate["source"] == "env" else None,
     }
 
@@ -98,7 +116,6 @@ def apply_gate(settings: dict[str, Any], payload: Any, environ: Mapping[str, str
             f"{ENV_OVERRIDE} impose la scène {'activée' if override else 'désactivée'} : retirez la variable "
             "d'environnement et relancez le Control Center pour choisir ici.",
         )
-    current = settings.get(SETTING_KEY)
-    enabled = payload["enabled"] if "enabled" in payload else (isinstance(current, dict) and current.get("enabled") is True)
+    enabled = payload["enabled"] if "enabled" in payload else stored_gate(settings)
     settings[SETTING_KEY] = {"enabled": enabled}
     return {"enabled": enabled}

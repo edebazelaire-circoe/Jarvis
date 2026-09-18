@@ -90,21 +90,23 @@ def status_view(payload: Any) -> Any:
 async def test_the_settings_round_trip_describes_writes_and_rereads_the_gate(tmp_path):
     control = ControlCenter(runtime_root=tmp_path, project_root=tmp_path, display_mcp=_target(tmp_path))
     described = json.loads((await control.get_settings(None)).text)
-    assert described["scene"] == {"enabled": False, "source": "settings", "stored": False, "env": None}
-    assert json.loads((await control.status(None)).text)["scene"] == {"enabled": False, "source": "settings"}
-
-    saved = json.loads((await control.save_settings(JsonRequest({"scene": {"enabled": True}}))).text)
-    assert saved["scene"] == {"enabled": True, "source": "settings", "stored": True, "env": None}
-    assert _settings_file(tmp_path)["scene"] == {"enabled": True}
-    reread = json.loads((await control.get_settings(None)).text)
-    assert reread["scene"] == saved["scene"]
-    # Le rendu lit le même interrupteur dans le statut, relu chaque seconde par la page.
+    # Défaut allumé (décision B1) : rien d'enregistré, la scène est rendue et le cerveau armé.
+    assert described["scene"] == {"enabled": True, "source": "settings", "stored": True, "env": None}
     assert json.loads((await control.status(None)).text)["scene"] == {"enabled": True, "source": "settings"}
     assert control.agent.display_mcp == _target(tmp_path)
 
-    off = json.loads((await control.save_settings(JsonRequest({"scene": {"enabled": False}}))).text)
-    assert off["scene"]["enabled"] is False and _settings_file(tmp_path)["scene"] == {"enabled": False}
+    saved = json.loads((await control.save_settings(JsonRequest({"scene": {"enabled": False}}))).text)
+    assert saved["scene"] == {"enabled": False, "source": "settings", "stored": False, "env": None}
+    assert _settings_file(tmp_path)["scene"] == {"enabled": False}
+    reread = json.loads((await control.get_settings(None)).text)
+    assert reread["scene"] == saved["scene"]
+    # Le rendu lit le même interrupteur dans le statut, relu chaque seconde par la page.
+    assert json.loads((await control.status(None)).text)["scene"] == {"enabled": False, "source": "settings"}
     assert control.agent.display_mcp is None
+
+    on = json.loads((await control.save_settings(JsonRequest({"scene": {"enabled": True}}))).text)
+    assert on["scene"]["enabled"] is True and _settings_file(tmp_path)["scene"] == {"enabled": True}
+    assert control.agent.display_mcp == _target(tmp_path)
 
 
 async def test_an_environment_override_is_described_and_refused_without_touching_the_file(tmp_path, monkeypatch):
@@ -407,3 +409,6 @@ def test_the_browser_block_saves_through_settings_confirms_in_page_and_stays_acc
     assert browser.count("finally{") >= 2 and "RESTART_DEADLINE_MS" in browser
     # Rendu appliqué tout de suite : le statut est relu après l'écriture.
     assert "refreshStatus()" in browser
+    # Le texte de la case dit le défaut réel (allumé) : sinon l'écran contredirait le code.
+    assert "'Activée par défaut. Enregistré immédiatement.'" in browser
+    assert "Désactivée par défaut" not in browser

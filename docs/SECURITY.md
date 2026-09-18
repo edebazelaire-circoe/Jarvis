@@ -122,7 +122,9 @@ STT, agent and TTS failures are typed. Provider errors transition through visibl
 
 ### 13. Brain scene display tool (constellation, v0.2 path)
 
-With `scene.enabled` (off by default; `JARVIS_SCENE_ENABLED` overrides it and then
+With `scene.enabled` (**on by default** since the closing human decision B1, so this
+section describes the normal configuration, not an opt-in one; a stored `false`
+turns it off; `JARVIS_SCENE_ENABLED` overrides both and then
 locks the setting: writes are refused `scene_env_override`), the conversational
 Claude CLI brain launched afterwards gets a **write-capable** MCP server, `jarvis-display` (`python -m jarvis display-mcp`,
 declared per launch through `--mcp-config`; `docs/ARCHITECTURE.md` › *Brain

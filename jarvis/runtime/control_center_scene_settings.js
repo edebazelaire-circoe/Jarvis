@@ -179,7 +179,7 @@
     input.checked=model.checked;
     input.addEventListener('click',event=>{if(view.busy)event.preventDefault()});
     const label=node('label',{for:'f_scene'},[document.createTextNode('Afficher la scène et donner ses outils au brain '),node('span',{className:'tag warn',text:'TEST'})]);
-    const hint=node('div',{className:'hint',text:view.busy?'Enregistrement…':(model.readOnly&&model.source?'Lecture seule : voir ci-dessous.':'Désactivée par défaut. Enregistré immédiatement.')});
+    const hint=node('div',{className:'hint',text:view.busy?'Enregistrement…':(model.readOnly&&model.source?'Lecture seule : voir ci-dessous.':'Activée par défaut. Enregistré immédiatement.')});
     section.append(node('div',{className:'field inline'},[input,node('div',{},[label,hint])]));
     if(!model.known)section.append(node('div',{className:'notice bad',role:'alert',text:'Réglage de scène illisible : rouvrez les réglages.'}));
     if(view.error)section.append(node('div',{className:'notice bad',role:'alert'},

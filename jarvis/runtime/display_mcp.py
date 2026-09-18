@@ -1715,7 +1715,8 @@ def scene_gate_reader(runtime_root: Path | None) -> Callable[[], bool] | None:
     """Lecteur de `scene.enabled` pour `scene_capture` : fichier de réglages du Control Center, puis `JARVIS_SCENE_ENABLED`.
 
     Sans dossier runtime : `None` (inconnu). Fichier absent ou illisible : réglage
-    vide, l'environnement seul décide (éteint par défaut), comme au Control Center.
+    vide, donc le défaut (`scene_settings.DEFAULT_ENABLED`, allumé) à moins que
+    l'environnement n'impose l'inverse, comme au Control Center.
     """
 
     if runtime_root is None:

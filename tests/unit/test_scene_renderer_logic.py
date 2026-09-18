@@ -712,7 +712,10 @@ async def test_the_page_injects_the_renderer_and_gates_it_on_the_status_flag(tmp
     assert served.index(CLIENT_JS.read_text(encoding="utf-8")) < served.index(LAYOUT_JS.read_text(encoding="utf-8")) < served.index(PAGE_JS.read_text(encoding="utf-8"))
 
     status = json.loads((await control.status(None)).text)
-    assert status["scene"] == {"enabled": False, "source": "settings"}
+    # Sans fichier de réglages : le défaut (allumé), donc la page rend la scène dès la première lecture.
+    assert status["scene"] == {"enabled": True, "source": "settings"}
+    (tmp_path / "control-center-settings.json").write_text(json.dumps({"scene": {"enabled": False}}), encoding="utf-8")
+    assert json.loads((await control.status(None)).text)["scene"] == {"enabled": False, "source": "settings"}
     (tmp_path / "control-center-settings.json").write_text(json.dumps({"scene": {"enabled": True}}), encoding="utf-8")
     assert json.loads((await control.status(None)).text)["scene"] == {"enabled": True, "source": "settings"}
 

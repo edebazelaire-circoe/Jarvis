@@ -882,16 +882,22 @@ scène appartient à Core (fichier `data/state/scene.sqlite3`) : un rechargement
 un autre onglet ou un redémarrage retrouvent la même scène. Le travail terminé
 **reste** jusqu'à ce que vous le rangiez.
 
-**L'activer.** Éteinte par défaut.
+**L'activer.** **Allumée par défaut** : sur une installation neuve, sans réglage
+enregistré ni variable d'environnement, la scène est rendue et le cerveau reçoit
+ses outils d'affichage à son prochain démarrage. Rien à faire pour s'en servir.
 
-1. **SET** → onglet **Expérimental** → section « Scène constellation » → cocher
-   « Afficher la scène et donner ses outils au brain ». L'affichage apparaît dans
-   toutes les fenêtres ouvertes en une seconde, sans recharger.
-2. L'encadré dit alors si le brain en cours a les outils **et** la consigne
+1. **SET** → onglet **Expérimental** → section « Scène constellation » : la case
+   « Afficher la scène et donner ses outils au brain » est déjà cochée. La
+   décocher éteint la scène dans toutes les fenêtres ouvertes en une seconde,
+   sans recharger ; la recocher la rallume aussi vite. Le choix est enregistré,
+   et un `false` enregistré l'emporte sur le défaut.
+2. L'encadré dit si le brain en cours a les outils **et** la consigne
    d'affichage. Sinon, « Redémarrer le brain… » puis confirmer : le brain repart
    sur une **nouvelle conversation** (la conversation en cours n'est pas reprise,
    parce qu'une conversation reprise garde son ancienne consigne) ; les
-   sous-agents en cours sont interrompus, la confirmation dit combien.
+   sous-agents en cours sont interrompus, la confirmation dit combien. Un brain
+   lancé avant la première lecture du réglage n'a pas besoin de ce redémarrage :
+   avec le défaut allumé, il part déjà avec ses outils.
 3. Pour éteindre : décocher (la scène disparaît aussitôt de la page), puis même
    redémarrage pour retirer les outils au brain.
 
@@ -1321,18 +1327,25 @@ Il agit toujours comme acteur `brain`. **Aucun outil n'archive ni n'épingle** :
 l'archivage reste à l'utilisateur (et Core le refuse au cerveau de toute façon).
 Détail technique : `docs/ARCHITECTURE.md`, « Brain display MCP ».
 
-**Activer.** Interrupteur `scene.enabled`, éteint par défaut : **SET → Expérimental
-→ « Scène constellation »** (enregistré immédiatement), ou dans
-`runtime/control-center-settings.json` :
+**Activer.** Interrupteur `scene.enabled`, **allumé par défaut** : une
+installation neuve, sans clé `scene` dans `runtime/control-center-settings.json`
+et sans variable d'environnement, est allumée. Pour l'éteindre : **SET →
+Expérimental → « Scène constellation »**, décocher (enregistré immédiatement),
+ou dans `runtime/control-center-settings.json` :
 
 ```json
-{ "scene": { "enabled": true } }
+{ "scene": { "enabled": false } }
 ```
 
 ou par l'API du Control Center, `POST /api/settings` avec
-`{"scene": {"enabled": true}}` (lecture : `GET /api/settings`, bloc `scene` :
-`enabled`, `source` = `settings` ou `env`, `stored` = valeur du fichier, `env` = nom
-de la variable quand elle l'emporte). `JARVIS_SCENE_ENABLED=1` (ou `0`) dans
+`{"scene": {"enabled": false}}` (lecture : `GET /api/settings`, bloc `scene` :
+`enabled`, `source` = `settings` ou `env`, `stored` = ce que vaudrait
+l'interrupteur sans la variable — la valeur du fichier, ou le défaut quand le
+fichier n'en dit rien de lisible —, `env` = nom de la variable quand elle
+l'emporte). Seul un booléen enregistré compte : une clé `scene` absente, nulle
+ou d'un autre type (`"true"`, `1`) retombe sur le défaut allumé plutôt que
+d'éteindre la scène sur un fichier abîmé ; seul un `false` enregistré
+l'éteint. `JARVIS_SCENE_ENABLED=1` (ou `0`) dans
 l'environnement du Control Center l'emporte sur le fichier ; tant qu'elle est
 posée, toute écriture est refusée (400, en-tête `X-Jarvis-Error-Code:
 scene_env_override`, trace `settings.agent.rejected`) et la case de l'onglet est

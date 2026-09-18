@@ -522,8 +522,11 @@ async def test_the_brain_tool_refuses_clearly_without_page_gate_or_core(tmp_path
     finally:
         await dead.close()
     # Interrupteur lu dans le fichier de réglages du Control Center, puis l'environnement.
+    # Fichier absent : le défaut du Control Center (allumé), comme sur une installation neuve.
     runtime.mkdir(parents=True, exist_ok=True)
     reader = scene_gate_reader(runtime)
+    assert reader() is True
+    (runtime / "control-center-settings.json").write_text(json.dumps({"scene": {"enabled": False}}), encoding="utf-8")
     assert reader() is False
     (runtime / "control-center-settings.json").write_text(json.dumps({"scene": {"enabled": True}}), encoding="utf-8")
     assert reader() is True and scene_gate_reader(None) is None

@@ -558,7 +558,9 @@ async def test_the_conversation_brain_gets_the_display_server_only_when_enabled(
     token_file.write_text("secret-" * 8, encoding="utf-8")
     target = DisplayMcpTarget("127.0.0.1", 17999, token_file, runtime)
 
-    off = await _launch(monkeypatch, ClaudeLocalAgent(runtime_root=runtime, cwd=tmp_path))
+    # Chemin « interrupteur éteint » énoncé explicitement (`display_mcp` absent),
+    # jamais déduit du défaut de `scene.enabled`, qui vaut maintenant vrai.
+    off = await _launch(monkeypatch, ClaudeLocalAgent(runtime_root=runtime, cwd=tmp_path, display_mcp=None))
     assert "--mcp-config" not in off and "--strict-mcp-config" not in off
     assert _prompt(off, "--append-system-prompt") == BRAIN_SYSTEM_PROMPT
 

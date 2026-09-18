@@ -586,6 +586,14 @@ Slice 06 (`ARCHITECTURE.md` › *Brain display MCP*). The brain's MCP tools
 (`jarvis/runtime/display_mcp.py`) speak this vocabulary as actor `brain`, one
 `SceneCommand` per call, never `placed_by`, never `archive`, `archive_many`, `pin` or `unpin`.
 
+The tools are declared to the CLI only when the gate `scene.enabled` is true
+(`jarvis/runtime/scene_settings.py`). That gate is **true by default** since the
+closing human decision B1: a fresh install, with no stored setting and no
+`JARVIS_SCENE_ENABLED`, launches the brain with these tools and the display
+guidance. A stored `false` turns them off; `JARVIS_SCENE_ENABLED` overrides
+both. Core projects and stores the scene either way — only the rendering and
+these tools follow the gate.
+
 | Tool | Arguments | Command sent | Typical refusals surfaced |
 | --- | --- | --- | --- |
 | `scene_inspect` | `kind?`, `category?`, `text?` | `GET /v1/scene/snapshot` (read only) | — (transport errors only) |
