@@ -255,7 +255,8 @@ async def test_a_grouped_artifact_is_created_linked_to_its_star_and_completed_no
     assert created["object_id"].startswith("brain-artifact-") and created["rule"] == ARTIFACT_GROUPING_RULE
     assert created["relation_id"].startswith("brain-explains-") and "scene_changed" not in created
     stored = await scene_object(core, created["object_id"])
-    assert stored["origin"] == "brain" and stored["representation"] == "capsule" and stored["geometry"] is None
+    # Point par défaut : une étoile de plus dans la constellation, pas une capsule.
+    assert stored["origin"] == "brain" and stored["representation"] == "point" and stored["geometry"] is None
     assert stored["category"] == "research" and [i["label"] for i in stored["payload"]["items"]] == ["Site officiel", "Documentation"]
     snap = await snapshot(core)
     assert [(r["kind"], r["from_id"], r["to_id"]) for r in snap["relations"] if r["from_id"] == created["object_id"]] == [
@@ -276,7 +277,7 @@ async def test_a_grouped_artifact_is_created_linked_to_its_star_and_completed_no
     replaced = await tools.add_artifact(target_id=star_id, category="research", title="Python : liens", items=LINKS[:1],
                                         items_mode="replace", representation="window")
     assert replaced["items"] == 1 and replaced["ignored"] == ["representation"]
-    assert (await scene_object(core, created["object_id"]))["representation"] == "capsule"
+    assert (await scene_object(core, created["object_id"]))["representation"] == "point"
     # Une autre catégorie pour la même étoile : un autre artefact.
     tests = await tools.add_artifact(target_id=star_id, category="tests", title="Tests verts")
     assert tests["action"] == "created" and tests["object_id"] != created["object_id"]

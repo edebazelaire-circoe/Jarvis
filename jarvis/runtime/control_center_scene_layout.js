@@ -443,6 +443,54 @@
     const w=Math.min(box.w,CAPSULE_MAX.w),h=box.h>CAPSULE_MAX.h?DEFAULT_SIZE.capsule.h:box.h;
     return {x:box.x+(box.w-w)/2,y:box.y+(box.h-h)/2,w,h};
   }
+
+  /* -------------------------------------------------------- dérive orbitale */
+
+  /* Les étoiles gravitent lentement autour du centre de la fenêtre — le soleil
+     JARVIS, dessiné par le visage, auquel la scène ne touche pas. Rendu
+     seulement : la géométrie stockée reste la place de référence, l'étoile ne
+     fait que parcourir une petite ellipse autour d'elle (l'arc de son orbite).
+     Rien n'est écrit dans la scène, et un objet épinglé par l'utilisateur ne
+     dérive pas du tout.
+
+     Amplitude angulaire constante : la dérive est donc proportionnelle au
+     rayon. Période et phase se lisent elles aussi dans la place (rayon, angle)
+     et jamais dans l'identifiant : deux objets voisins — une étoile et son
+     signal — ont la même orbite et dérivent ensemble, le champ tourne d'un
+     bloc sans que rien ne se détache. */
+  const ORBIT_ARC_RAD=.024;            /* ~1,4° de part et d'autre de la place */
+  const ORBIT_MAX_PX=9,ORBIT_MIN_PX=.6;
+  const ORBIT_RADIAL=.34;              /* part radiale : l'arc devient une ellipse */
+  const ORBIT_PERIOD_MS=24000,ORBIT_PERIOD_PER_PX=44,ORBIT_PERIOD_MAX_MS=72000;
+
+  /* Dérive d'un nœud du modèle de vue dans la fenêtre `vp`, ou `null` (immobile) :
+     objet épinglé, autre forme qu'un point, confondu avec le centre, ou pas la
+     place de dériver sans sortir de la zone de composition sûre (une étoile
+     posée hors de cette zone par l'utilisateur reste donc fixe).
+     Rend `{tx,ty,rx,ry,ms,delay}` : vecteur tangent et vecteur radial en
+     pixels, période en ms, décalage de phase négatif (l'animation commence là
+     où l'étoile se trouve déjà sur son orbite). */
+  function orbitOf(node,vp){
+    if(!node||node.pinned||node.shape!=='point')return null;
+    const dx=node.cx-vp.cx,dy=node.cy-vp.cy,r=Math.hypot(dx,dy);
+    if(!(r>1))return null;
+    const ux=dx/r,uy=dy/r;
+    /* Encombrement de l'ellipse sur chaque axe, pour une amplitude de 1 px. */
+    const ex=Math.hypot(uy,ORBIT_RADIAL*ux),ey=Math.hypot(ux,ORBIT_RADIAL*uy);
+    const rect=drawnRect(node);
+    const area=toScreen(vp,{x:SAFE_AREA.x0,y:SAFE_AREA.y0,w:SAFE_AREA.x1-SAFE_AREA.x0,h:SAFE_AREA.y1-SAFE_AREA.y0});
+    const slackX=Math.min(rect.left-area.left,area.left+area.width-(rect.left+rect.width));
+    const slackY=Math.min(rect.top-area.top,area.top+area.height-(rect.top+rect.height));
+    let amp=Math.min(r*ORBIT_ARC_RAD,ORBIT_MAX_PX);
+    if(ex>0)amp=Math.min(amp,slackX/ex);
+    if(ey>0)amp=Math.min(amp,slackY/ey);
+    if(!(amp>=ORBIT_MIN_PX))return null;
+    const ms=Math.round(Math.min(ORBIT_PERIOD_MAX_MS,ORBIT_PERIOD_MS+r*ORBIT_PERIOD_PER_PX));
+    const phase=(Math.atan2(dy,dx)+Math.PI)/(2*Math.PI);
+    return {tx:round1(-uy*amp),ty:round1(ux*amp),rx:round1(ux*amp*ORBIT_RADIAL),ry:round1(uy*amp*ORBIT_RADIAL),
+      ms,delay:-Math.round(ms*phase)};
+  }
+
   /* Anneaux animés au plus (coût de style) : signaux vivants urgents d'abord,
      puis étoiles en cours, dans l'ordre de Core ; les autres restent fixes.
      La page ne propose que les nœuds dont l'état vient de changer
@@ -758,7 +806,9 @@
       const signalEdge=rel.kind==='explains'&&rel.relation_id===rel.from_id;
       edges.push({id:rel.relation_id,kind:rel.kind,layer:Number(rel.layer)||0,
         signal:signalEdge,artifact:!signalEdge&&rel.kind==='explains'&&a.kind==='artifact',tone:a.tone,
-        x1:a.cx,y1:a.cy,x2:b.cx,y2:b.cy});
+        /* Extrémités nommées : la page fait suivre au lien la dérive orbitale
+           des deux nœuds qu'il joint. */
+        from:a.id,to:b.id,x1:a.cx,y1:a.cy,x2:b.cx,y2:b.cy});
     }
     edges.sort((p,q)=>p.layer-q.layer);
     const objects=state.objects.size;
@@ -948,7 +998,7 @@
 
   const api=Object.freeze({FRAME,SAFE_AREA,FACE_ZONE,OBJECT_LIMIT,DEFAULT_SIZE,WORK_BUDGET,COMMIT_MAX_ATTEMPTS,READABLE,MAX_ANIMATED,CAPSULE_MAX,drawnBox,
     RESTART_UNKNOWN_LABEL,restartUnknown,ARTIFACT_CATEGORIES,linkOf,explainedTarget,explainsIndex,artifactsExplaining,itemsOf,hostTail,isOrphanArtifact,orphanArtifacts,
-    artifactsLeftOrphan,placeFor,linkHost,linkLength,POINT_HIT_PX,CAPSULE_MIN_HEIGHT_PX,drawnRect,
+    artifactsLeftOrphan,placeFor,linkHost,linkLength,POINT_HIT_PX,CAPSULE_MIN_HEIGHT_PX,drawnRect,orbitOf,
     viewport,toScreen,cleanLine,cleanText,toneOf,isLiveSignal,signalUrgency,signalErrorClass,anchorsOf,depthOf,resolveLayout,
     stackOf,viewModel,compactShape,spatialOrder,nextFocus,commitKey,commitCommand,commitCandidates,nextRetryAt,classifyCommit,settleCommit});
   root.JarvisSceneLayout=api;

@@ -569,6 +569,13 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisScenePageCor
      Toute animation CSS en cours coûte un recalcul de style par image : au
      repos, la scène n'en fait aucun. */
   const ANIMATE_FOR_MS=12000;
+  /* Respiration d'un halo d'étoile (même durée que `sc-glow`) : sert à décaler
+     la phase de chaque étoile. */
+  const GLOW_MS=6400;
+  /* Au-delà de ce nombre d'étoiles dessinées, la gravitation et les halos
+     s'arrêtent (`sc-calm`) : une couche de composition par étoile, et une scène
+     aussi peuplée se lit mieux immobile. */
+  const CALM_POINTS=96;
 
   /* Registre d'empilement de la page (voir `control_center.html`) : visage 0,
      canevas Omega 0, **scène 20**, barre du haut et indication vocale 31,
@@ -612,10 +619,52 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
 .sc-grip:hover{color:var(--sc-ink)}
 /* Seul le déplacement glisse (composition) ; une taille change d'un coup. */
 .scene.sc-ready .sc-node{transition:transform .42s cubic-bezier(.16,1,.3,1)}
+/* Gravitation (dérive orbitale, 'JarvisSceneLayout.orbitOf') : l'étoile
+   parcourt une petite ellipse autour de sa place, très lentement. La place
+   elle-même reste dans 'transform' (la géométrie de la scène) ; la dérive tient
+   dans la propriété 'translate', appliquée en plus, jamais enregistrée. Les
+   huit étapes échantillonnent l'ellipse 'tangente · sin + radial · cos', en
+   'linear' : le mouvement tourne sans jamais s'arrêter ni repartir en arrière.
+   Un objet épinglé, une capsule ou une fenêtre n'ont pas de dérive (aucune
+   variable posée) et ne bougent donc pas. */
+.scene .sc-orbit{animation:sc-orbit var(--sc-orbit-ms,36000ms) linear infinite;animation-delay:var(--sc-orbit-delay,0ms)}
+@keyframes sc-orbit{
+  0%{translate:var(--sc-rx) var(--sc-ry)}
+  12.5%{translate:calc(var(--sc-tx) * .707 + var(--sc-rx) * .707) calc(var(--sc-ty) * .707 + var(--sc-ry) * .707)}
+  25%{translate:var(--sc-tx) var(--sc-ty)}
+  37.5%{translate:calc(var(--sc-tx) * .707 - var(--sc-rx) * .707) calc(var(--sc-ty) * .707 - var(--sc-ry) * .707)}
+  50%{translate:calc(var(--sc-rx) * -1) calc(var(--sc-ry) * -1)}
+  62.5%{translate:calc(var(--sc-tx) * -.707 - var(--sc-rx) * .707) calc(var(--sc-ty) * -.707 - var(--sc-ry) * .707)}
+  75%{translate:calc(var(--sc-tx) * -1) calc(var(--sc-ty) * -1)}
+  87.5%{translate:calc(var(--sc-tx) * -.707 + var(--sc-rx) * .707) calc(var(--sc-ty) * -.707 + var(--sc-ry) * .707)}
+  100%{translate:var(--sc-rx) var(--sc-ry)}
+}
+/* Un lien porte la même classe : il suit les deux étoiles qu'il joint par la
+   dérive moyenne de ses extrémités (exacte pour une étoile et son signal, qui
+   partagent la même orbite). */
+/* Scène très peuplée : la gravitation et les halos s'arrêtent (une couche de
+   composition par étoile). La lecture prime sur le mouvement. */
+.scene.sc-calm .sc-orbit{animation:none;translate:none}
+.scene.sc-calm .sc-mark::after{animation:none}
 .sc-point{width:${POINT_HIT}px;height:${POINT_HIT}px;border-radius:50%}
 .sc-point:hover,.sc-point:focus-visible{z-index:2147483000!important}
-.sc-mark{position:absolute;left:50%;top:50%;width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:50%;background:var(--tone);
-  box-shadow:0 0 0 1px rgba(0,0,0,.4),0 0 14px color-mix(in srgb,var(--tone) 42%,transparent)}
+/* Étoile : point lumineux plutôt que pastille plate — cœur blanc chaud, couleur
+   de la catégorie, fondu vers le vide ; même dégradé que le cœur du visage
+   ('control_center_work.js', 'coreGlow'/'disc'). */
+.sc-mark{position:absolute;left:50%;top:50%;width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:50%;
+  background:radial-gradient(circle,#fff 0 10%,color-mix(in srgb,var(--tone) 78%,#fff) 30%,var(--tone) 62%,
+    color-mix(in srgb,var(--tone) 58%,transparent) 100%);
+  box-shadow:0 0 7px color-mix(in srgb,var(--tone) 68%,transparent),0 0 18px color-mix(in srgb,var(--tone) 30%,transparent)}
+/* Halo : voile large et doux qui respire lentement, jamais clignotant (la
+   galaxie du visage : ~3 rayons, une dizaine de pour cent d'opacité). Le
+   décalage '--sc-glow-delay', lu dans la place de l'étoile, évite que tous les
+   halos battent ensemble. Opacité et échelle seulement : le navigateur compose
+   sans recalculer de style. */
+.sc-mark::after{content:'';position:absolute;left:50%;top:50%;width:28px;height:28px;margin:-14px 0 0 -14px;border-radius:50%;
+  pointer-events:none;
+  background:radial-gradient(circle,color-mix(in srgb,var(--tone) 54%,transparent) 0,
+    color-mix(in srgb,var(--tone) 21%,transparent) 34%,transparent 74%);
+  animation:sc-glow 6.4s ease-in-out infinite;animation-delay:var(--sc-glow-delay,0ms)}
 .sc-ring{position:absolute;left:50%;top:50%;width:18px;height:18px;margin:-9px 0 0 -9px;border-radius:50%;border:1px solid transparent;pointer-events:none}
 /* État d'exécution : indice secondaire. Au plus 24 anneaux animés (.sc-anim) ;
    les autres gardent le même anneau, fixe. */
@@ -637,7 +686,9 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
 /* Terminé : anneau fin et fixe — travail achevé, pas encore rangé. */
 .sc-point.sc-exec-completed .sc-ring{width:15px;height:15px;margin:-7.5px 0 0 -7.5px;border:1px solid rgba(220,236,244,.34)}
 .sc-signal .sc-mark{width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:1.5px;transform:rotate(45deg)}
+/* Signal retiré : marque creuse, et pas de lueur — plus rien ne l'anime. */
 .sc-signal.sc-urgency-none .sc-mark{background:transparent;box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--tone) 80%,transparent)}
+.sc-signal.sc-urgency-none .sc-mark::after{display:none}
 .sc-signal .sc-ring,.sc-signal.sc-exec-completed .sc-ring{width:18px;height:18px;margin:-9px 0 0 -9px;border:0;animation:none;opacity:1}
 .sc-signal.sc-urgency-high .sc-ring{border:1.5px solid var(--tone);opacity:.8;transform:scale(1.25)}
 .sc-signal.sc-urgency-medium .sc-ring{border:1px solid var(--tone);opacity:.8;transform:scale(1.25)}
@@ -645,7 +696,7 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
 .sc-signal.sc-urgency-medium.sc-anim .sc-ring{animation:sc-alert 3.2s cubic-bezier(.2,.7,.3,1) infinite;will-change:transform,opacity}
 .sc-signal.sc-urgency-low .sc-mark{width:6px;height:6px;margin:-3px 0 0 -3px;box-shadow:none}
 .sc-signal.sc-urgency-low .sc-ring{width:14px;height:14px;margin:-7px 0 0 -7px;border:1px solid color-mix(in srgb,var(--tone) 38%,transparent);transform:none}
-.scene.sc-paused .sc-ring{animation-play-state:paused}
+.scene.sc-paused .sc-ring,.scene.sc-paused .sc-orbit,.scene.sc-paused .sc-mark::after{animation-play-state:paused}
 .sc-badge{position:absolute;right:0;top:0;width:12px;height:12px;border-radius:50%;background:#061017;display:grid;place-items:center;
   color:var(--sc-ink);box-shadow:0 0 0 1px rgba(220,236,244,.46)}
 /* Sur un point, en bas à droite : le haut droit est la place du signal. */
@@ -754,10 +805,15 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
 @keyframes sc-spin{to{transform:rotate(360deg)}}
 @keyframes sc-breathe{0%,100%{opacity:.32;transform:scale(.86)}50%{opacity:.9;transform:scale(1.08)}}
 @keyframes sc-alert{0%{opacity:.95;transform:scale(.62)}80%,100%{opacity:0;transform:scale(1.75)}}
+/* Respiration d'un halo : lente, bornée, sans extinction ni éclat. */
+@keyframes sc-glow{0%,100%{opacity:.58;transform:scale(.9)}50%{opacity:1;transform:scale(1.13)}}
 @media(max-width:700px){.sc-status{left:10px;bottom:12px;max-width:calc(100vw - 90px)}}
 @media(prefers-reduced-motion:reduce){
   .scene .sc-node{transition:none!important}
   .scene .sc-ring,.scene .sc-note::before,.scene .sc-node.sc-stopping .sc-ring{animation:none!important}
+  /* Ni gravitation ni respiration : l'étoile garde sa lueur, immobile. */
+  .scene .sc-orbit,.scene .sc-mark::after{animation:none!important}
+  .scene .sc-orbit{translate:none!important}
   .scene .sc-label{transition:none}
 }`;
 
@@ -1124,16 +1180,67 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     for(const inner of el.querySelectorAll('.sc-item-link,.sc-origin'))inner.tabIndex=on?0:-1;
   }
 
-  /* Placement d'un nœud : `L.drawnRect`, la même règle que la capture (reprise QA M2). */
-  function position(el,node){
+  /* Placement d'un nœud : `L.drawnRect`, la même règle que la capture (reprise QA M2).
+     `drift` est sa dérive orbitale : elle s'ajoute par la propriété `translate`
+     et ne touche ni au placement dessiné, ni à la géométrie de la scène, ni à
+     la capture. `null` : aucune dérive ; absent : aperçu d'un geste, la dérive
+     en cours est gardée telle quelle. */
+  function position(el,node,drift){
     const rect=L.drawnRect(node);
     el.style.transform=`translate(${rect.left}px,${rect.top}px)`;
     el.style.width=node.shape==='point'?'':`${rect.width}px`;
     el.style.height=node.shape==='point'?'':`${rect.height}px`;
     el.style.zIndex=String(node.stack);
+    /* Aperçu d'un geste (`drift` absent) : les animations en cours ne bougent
+       pas — l'étoile suit le curseur sans sauter ni resynchroniser son halo. */
+    if(drift===undefined)return;
+    setOrbit(el,drift);
+    /* Respiration du halo décalée par la place de l'étoile : stable d'un rendu
+       à l'autre, et tous les halos ne battent pas ensemble. */
+    if(node.shape==='point')el.style.setProperty('--sc-glow-delay',`${glowDelay(node)}ms`);
   }
 
-  function applyNodes(list){
+  /* Variables de la dérive sur un élément (nœud ou lien), ou retrait de
+     l'animation quand il n'en a pas : épinglé, autre forme qu'un point, ou pas
+     la place de dériver dans la zone sûre. */
+  function setOrbit(el,drift){
+    if(!drift){el.classList.remove('sc-orbit');return}
+    const style=el.style;
+    style.setProperty('--sc-tx',`${drift.tx}px`);style.setProperty('--sc-ty',`${drift.ty}px`);
+    style.setProperty('--sc-rx',`${drift.rx}px`);style.setProperty('--sc-ry',`${drift.ry}px`);
+    style.setProperty('--sc-orbit-ms',`${drift.ms}ms`);style.setProperty('--sc-orbit-delay',`${drift.delay}ms`);
+    el.classList.add('sc-orbit');
+  }
+
+  function glowDelay(node){
+    const seed=Math.abs(Math.round(node.cx)*31+Math.round(node.cy)*17)%97;
+    return -Math.round(seed/97*GLOW_MS);
+  }
+
+  /* Dérive de chaque nœud dessiné, une fois par rendu : lue par les nœuds puis
+     par les liens. */
+  function drifts(list,vp){
+    const map=new Map();
+    for(const node of list){
+      const drift=L.orbitOf(node,vp);
+      if(drift)map.set(node.id,drift);
+    }
+    return map;
+  }
+
+  /* Dérive d'un lien : moyenne de celles de ses deux extrémités (exacte pour
+     une étoile et son signal, qui partagent la même orbite ; une extrémité
+     immobile freine le lien d'autant). */
+  function edgeDrift(edge,map){
+    const a=map.get(edge.from),b=map.get(edge.to);
+    if(!a&&!b)return null;
+    const mid=(p,q)=>Math.round(((p||0)+(q||0))/2*10)/10;
+    const base=a||b;
+    return {tx:mid(a&&a.tx,b&&b.tx),ty:mid(a&&a.ty,b&&b.ty),rx:mid(a&&a.rx,b&&b.rx),ry:mid(a&&a.ry,b&&b.ry),
+      ms:base.ms,delay:base.delay};
+  }
+
+  function applyNodes(list,map){
     const seen=new Set();
     for(const node of list){
       seen.add(node.id);
@@ -1155,9 +1262,13 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       if(record.anim!==node.animate){record.el.classList.toggle('sc-anim',node.animate);record.anim=node.animate}
       record.el.classList.toggle('sc-selected',node.id===selectedId);
       record.el.classList.toggle('sc-stopping',stopping.has(node.id));
-      const place=`${node.shape}|${node.compact}|${node.cx}|${node.cy}|${node.box.left}|${node.box.top}|${node.box.width}|${node.box.height}|${node.stack}`;
-      /* Sous la main de l'utilisateur (glisser, clavier) : l'aperçu garde la place. */
-      if(place!==record.place&&!record.dragging){position(record.el,node);record.place=place}
+      const drift=map.get(node.id)||null;
+      const place=`${node.shape}|${node.compact}|${node.cx}|${node.cy}|${node.box.left}|${node.box.top}|${node.box.width}|${node.box.height}|${node.stack}`
+        +`|${drift?`${drift.tx},${drift.ty},${drift.ms}`:''}`;
+      /* Sous la main de l'utilisateur (glisser, clavier) : l'aperçu garde la
+         place, et l'étoile garde la dérive qu'elle avait — elle suit le
+         curseur sans sauter. */
+      if(place!==record.place&&!record.dragging){position(record.el,node,drift);record.place=place}
     }
     for(const [id,record] of nodes){
       if(seen.has(id))continue;
@@ -1944,16 +2055,19 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(!statusTicker)statusTicker=window.setInterval(renderStatus,1000);
   }
 
-  function applyEdges(edges,vp){
-    const sig=`${vp.width}x${vp.height}|`+edges.map(e=>`${e.id},${e.kind},${e.signal},${e.artifact},${e.tone},${e.x1},${e.y1},${e.x2},${e.y2}`).join(';');
+  function applyEdges(edges,vp,map){
+    const drift=edges.map(edge=>map?edgeDrift(edge,map):null);
+    const sig=`${vp.width}x${vp.height}|`+edges.map((e,i)=>`${e.id},${e.kind},${e.signal},${e.artifact},${e.tone},${e.x1},${e.y1},${e.x2},${e.y2}`
+      +`,${drift[i]?`${drift[i].tx}:${drift[i].ty}:${drift[i].ms}`:''}`).join(';');
     if(sig===edgesSig)return;
     edgesSig=sig;
     linksEl.setAttribute('viewBox',`0 0 ${vp.width} ${vp.height}`);
-    const lines=edges.map(edge=>{
+    const lines=edges.map((edge,i)=>{
       const line=document.createElementNS(SVG_NS,'line');
       line.setAttribute('x1',edge.x1);line.setAttribute('y1',edge.y1);line.setAttribute('x2',edge.x2);line.setAttribute('y2',edge.y2);
       line.setAttribute('class',`sc-link sc-link-${edge.kind}`+(edge.signal?` sc-link-signal sc-tone-${edge.tone}`:'')
         +(edge.artifact?` sc-link-artifact sc-tone-${edge.tone}`:''));
+      setOrbit(line,drift[i]);
       return line;
     });
     linksEl.replaceChildren(...lines);
@@ -1970,14 +2084,19 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(!enabled||!root)return;
     if(document.visibilityState==='hidden')return;
     const current=currentLayout();
-    if(!lastState||!current){applyNodes([]);applyEdges([],{width:1,height:1});lastModel=null;return renderStatus()}
+    if(!lastState||!current){applyNodes([],new Map());applyEdges([],{width:1,height:1},null);lastModel=null;return renderStatus()}
     const vp=L.viewport(root.clientWidth||window.innerWidth,root.clientHeight||window.innerHeight);
     const now=Date.now();
     markFresh(lastState,now);
     lastModel=L.viewModel(viewState(),current,vp,{objectLimit:lastView?lastView.objectLimit:L.OBJECT_LIMIT,errorLabels:errorLabels(),
       animatable:node=>(freshUntil.get(node.id)||{until:0}).until>now});
-    applyNodes(lastModel.nodes);
-    applyEdges(lastModel.edges,vp);
+    /* Gravitation : dérive de chaque étoile autour du centre, calculée pour ce
+       rendu seulement. Scène très peuplée : tout s'immobilise. */
+    const points=lastModel.nodes.reduce((n,node)=>n+(node.shape==='point'?1:0),0);
+    root.classList.toggle('sc-calm',points>CALM_POINTS);
+    const map=drifts(lastModel.nodes,vp);
+    applyNodes(lastModel.nodes,map);
+    applyEdges(lastModel.edges,vp,map);
     renderStatus();
     /* Transitions actives seulement après le premier placement : pas de
        glissement depuis l'origine au chargement. */

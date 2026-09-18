@@ -999,10 +999,12 @@ class SceneDisplayTools:
                 object_id = f"brain-artifact-{self._new_id()}"
                 relation_id = self._relation_id(RelationKind.EXPLAINS, object_id, request.target_id)
                 payload = ScenePayload(title=request.title, summary=request.summary or "", items=request.items or ())
-                # Capsule par défaut : catégorie et titre lisibles près de l'étoile ;
-                # la fenêtre (vue d'inspection) se demande.
+                # Point par défaut : l'artefact est une étoile de plus dans la
+                # constellation, de la couleur de sa catégorie, reliée à la sienne.
+                # La capsule (catégorie et titre lisibles) et la fenêtre (vue
+                # d'inspection) se demandent.
                 fields = SceneObjectFields(category=request.category, payload=payload,
-                                           representation=request.representation or Representation.CAPSULE,
+                                           representation=request.representation or Representation.POINT,
                                            geometry=request.geometry)
             else:
                 current, relation = found
@@ -2050,7 +2052,7 @@ pas à l'oral. Si l'utilisateur a archivé la cible, l'outil refuse
         summary: Annotated[str | None, Field(description="Résumé, plusieurs lignes (≤ 2000). Absent : gardé si l'artefact existe.")] = None,
         items: Annotated[list[ItemArg] | None, Field(description="Entrées (≤ 32 au total) : {label, ref?, url? http(s)}. Absent : gardées.")] = None,
         items_mode: Annotated[Literal["append", "replace"] | None, Field(description="append (défaut) : ajoute sans doublon aux entrées existantes ; replace : remplace toute la liste.")] = None,
-        representation: Annotated[Repr | None, Field(description="point, capsule ou window, à la création seulement. Absent : capsule.")] = None,
+        representation: Annotated[Repr | None, Field(description="point, capsule ou window, à la création seulement. Absent : point.")] = None,
         geometry: GeometryField = None,
     ) -> dict[str, Any]:
         return await display.add_artifact(target_id=target_id, category=category, title=title, summary=summary, items=items,
