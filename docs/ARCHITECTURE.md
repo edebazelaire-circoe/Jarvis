@@ -3237,8 +3237,26 @@ real provider. Before an audio DEVICE is ever reserved, the supervisor reads the
 voice heartbeat and state files and refuses unless they positively say the workstation Jarvis is
 not using them (READINESS B9) — fail-closed, so "unknown" refuses too, and a run that loses the
 devices mid-flight is stopped as inconclusive rather than sharing a microphone with a live
-conversation. The `hardware` profiles come in a later Slice of
-`tasks/jarvis-category2-test-lab/`.
+conversation. The two `hardware` profiles (`jarvis/testlab/hardware/`) are the `audio` profile
+with the product's own `SoundDeviceRealtimeAudio` put back, so the microphone, the speaker and the
+room are real; `hardware:guided` adds the human as an explicit scenario actor through a prompt file
+channel, and every device failure reads `inconclusive`, never a product verdict.
+
+All of it is composed and exposed in one place. `jarvis/testlab/composition.py` builds the whole
+subsystem from `V2Settings` / `JARVIS_RUNTIME_DIR` — one shared run store, the sweep and bundle
+stores, the catalog, the supervisor with its work root and contention detector, and the retention
+policy — under `<runtime>/testlab/`, creating nothing until first use. `jarvis/testlab/api.py` is
+the one facade above it, and the CLI (`python -m jarvis.testlab`, human-readable or `--json`, with
+exit codes that tell `passed` from `failed`, `inconclusive`, `refused`, `crashed` and `cancelled`)
+and the Control Center routes under `/api/testlab` both call it, so the three surfaces cannot
+disagree. The routes live in `jarvis/testlab/http.py` and are registered by one call from
+`ControlCenter.__init__`; `/api/testlab` is a read-guarded prefix, submitting a run or a sweep
+answers at once with its id, and progress is a poll or a bounded long poll. A capability is granted
+only by the process environment (`JARVIS_TESTLAB_LIVE`, `JARVIS_TESTLAB_HARDWARE`,
+`JARVIS_TESTLAB_GUIDED`, `JARVIS_TESTLAB_MAX_COST_USD`): a caller may narrow that grant and can
+never widen it, and every other gate stays inside the supervisor. A guided run is presented on a
+terminal with the prompt, its deadline and a live countdown taken from the worker's own clock,
+because a step with no visible countdown is indistinguishable from a frozen run.
 
 ## Sub-agent routing
 

@@ -2695,14 +2695,30 @@ phase, from three measurements. What separates them is whether they can be Jarvi
 | the product's `near_end` signal, during the step | **yes** — it also rises on the canceller's residual | somebody who starts and stops inside the step | — |
 | the microphone's in-window peak | **yes** — it carries the echo at a voice's level | nothing it can be trusted for | — |
 
-So `RoomVoice.certain` is the two silent-window measurements and nothing else, and
-`RoomVoice.suspected` is the near-end signal. A CLAIM then takes what it needs:
+So `RoomVoice.certain` is any of the three sources that cannot be Jarvis — a level with
+nothing playing, a sustained near-end run with nothing playing, or a level measurably above
+the CONTROL step — and `RoomVoice.suspected` is the near-end verdict while he was speaking.
+The control is the silent phase of the same run: it plays the same utterance at the same
+volume into the same room with nobody in it, so its in-window peak IS this room's echo, and
+`VOICE_OVER_ECHO_DB` (10 dB) above that is something the stimulus does not explain. The
+measured separation is about 21 dB (an empty room reads about -21 dBFS in-window, a person
+about -0.0), so the margin is wide on both sides. The near-end run is counted as an
+UNBROKEN run and not a total: an empty room produces 3 to 6 isolated near-alone frames over
+a thousand while the floor re-settles, and six of those scattered across eight seconds
+certified a person who was not there.
 
-- **"nobody spoke"** (the `remain_silent` step) is voided by `certain`; a suspicion voids
-  it only when the phase also confirmed a barge-in, because then the confirmation cannot
-  be attributed to either. A bare suspicion must not void it: over several seconds of
-  continuous speech the detector raises on its own residual in an empty room, and voiding
-  every long run for that would make the diagnostic unusable at its declared default.
+A CLAIM then takes what it needs:
+
+- **"nobody spoke"** (the `remain_silent` step) is voided by `certain`, and by nothing
+  else. It used to be voided by a suspicion whenever the phase had also confirmed a
+  barge-in — which reads as caution and was the opposite. A confirmation REQUIRES a
+  near-end candidate, so `confirmed > 0` implies `near_end_seen`, and that branch fired on
+  every run where the gate opened on Jarvis's own echo: 2 to 5 runs in 10 at the declared
+  default. The blocking `no_false_barge_in` assertion was therefore only ever evaluated
+  against zero, and the one finding this diagnostic exists to produce could not be
+  reported. When the silent windows are below the voice floor, the confirmation IS Jarvis's
+  own echo, `barge_in.false_confirmed_count` is reported, and the declared assertion
+  decides. That is the finding, not a reason to abort.
 - **"somebody DID speak"** (the `interrupt` step) needs `certain` and never `suspected`.
 
 That last line is the fix for a defect that would have certified the one claim only a
@@ -2712,9 +2728,21 @@ rises on the canceller's residual over a long utterance. Empty room, no human, s
 acknowledgements: clean at 1 000/1 500/2 000 ms, and from **2 500 ms upward**
 deterministically `barge_in.true_confirmed_count = 1` with the run reading `passed`. The
 proposed guided manifest's default is 8 000 ms, so the Human gate at defaults would have
-certified it. What remains blind is stated rather than papered over: a sound shorter than
-the step, which the product itself did not call, is not detected — tell the operator to
-keep speaking until the step ends, which the script does.
+certified it. A short phrase is covered too, and it took a third source to do it: a confirmed barge-in
+STOPS the playback, so a person who said their phrase is silent again long before the
+silent windows are sampled — the better the barge-in worked, the emptier its own evidence
+was. Five runs of a one-phrase interrupt produced zero measurements, one of them with the
+gate open and the person plainly heard.
+
+**The two halves get the same number of chances.** The silent phase raises
+`echo.candidate_count` candidates and the stack rejects each one, which teaches the
+detector that this near-end is echo (`_release_near_end(learn=...)` after more than one
+rejection). Giving the positive half a single onset to overturn that made the verdict a
+coin flip at the declared default: 10 replays gave 4 measured, 3 failed with the person at
+full scale for the whole 8 s and 807-857 near-end frames, 3 refused. The interrupt phase
+now raises the same count, stopping as soon as the gate opens, and each one is still gated
+on the person being audible so an empty room gets none of them. After: 19 of 20 replays
+measured the claim, every one of them with `barge_in.true_confirmed_count >= 1`.
 
 **The provider reports speech when there is speech.** On the interrupt step the run raises
 the provider's VAD onset only once the capture reports a voice this stack would act on;
@@ -2763,7 +2791,13 @@ evidence worth keeping. Per prompt: the declaration, `shown_at` and `acknowledge
 
 **And the PROVENANCE of `observed_voice`** (`RoomVoice.to_dict`): `room_before_dbfs`,
 `room_after_dbfs`, `window_peak_dbfs`, `near_end_seen`, `near_end_frames`,
-`voice_floor_dbfs` and `certain`.
+`near_alone_frames`, `alone_run_frames`, `window_frames` (so a frame count reads as a
+rate — 61 frames of 8 s and of 1 s are not the same fact), `heard_alone`,
+`louder_than_control`, `control_peak_dbfs` and `voice_over_echo_db` where they apply,
+`barge_in_decided`, `barge_in_confirmed`, `voice_floor_dbfs` and `certain`. The two levels
+are kept apart: `window_peak_dbfs` carries the echo, `observed_peak_dbfs` is the quiet-room
+level, and merging them into one field left a reader unable to tell a loud room from an
+echo-triggered confirmation — which is exactly what the operator's triage turns on.
 Without it a record said `voice: true` and a reader had no way to tell a person from
 Jarvis's own echo — which is precisely how an empty room certified a human interrupt. A
 stored guided record now carries the numbers the decision was made on.
@@ -3574,6 +3608,375 @@ nothing is deleted automatically. No sweep removes bundle staging leftovers yet
 `TestRun.bundle_id` references a stored bundle, but the run store does not check
 that the bundle exists.
 
+## Native API, CLI and HTTP
+
+Slices 01-09 built every piece of the Test Lab and deliberately wired none of them: the
+run store took an injected root, the supervisor took an injected work root, catalog root,
+settings path and diagnostics sink, and nothing decided where any of them lived. This
+section is that decision, made once, plus the three surfaces that read it.
+
+```text
+jarvis/testlab/composition.py   what the Test Lab IS: roots, policies, stores, catalog,
+                                supervisor, sweep runner, and the capability grant
+jarvis/testlab/api.py           TestLabApi: every operation, once, as async calls
+                                returning documented JSON-ready shapes
+jarvis/testlab/cli.py           python -m jarvis.testlab (humans and agents)
+jarvis/testlab/presenter.py     the guided presenter: prompt, deadline, live countdown
+jarvis/testlab/http.py          /api/testlab/... on the Control Center's aiohttp app
+```
+
+One rule holds the three together: **the CLI and the HTTP routes call the same facade**,
+so they cannot disagree about a record, an outcome or a comparison. A second rule holds
+the whole Slice: **nothing here decides anything**. The outcome of a run is
+`RunOutcomeSummary` derived by the domain, the comparison is `compare_runs`, the sweep
+summary is the stored document, the retention plan is `plan_retention`. There is no
+threshold, no heuristic and no judgement in this layer.
+
+### Composition
+
+`TestLabConfig.from_environment()` resolves every root from `V2Settings` /
+`JARVIS_RUNTIME_DIR`, and `TestLab` builds the pieces lazily:
+
+```text
+<runtime>/testlab/runs/<run_id>/     run records and artifacts       (Slice 02)
+<runtime>/testlab/sweeps/<id>/       sweep records and summaries     (Slice 07)
+<runtime>/testlab/bundles/<id>/      DiagnosticBundles               (Slice 03)
+<runtime>/testlab/locks/             per-entry writer locks (ids are prefixed, so runs,
+                                     sweeps and bundles share this directory)
+<runtime>/testlab/work/              supervisor work root: one scratch per run, the
+                                     work-root lock, the device lease (Slices 05, 08)
+```
+
+Four properties are load bearing:
+
+- **The work root is never the store root.** `RunSupervisor` removes every directory
+  directly under its work root that no live run claims, so sharing the path would delete
+  `runs/` on the first `start()`.
+- **Nothing is created until first use.** Building a `TestLab` reads no file and makes no
+  directory; `python -m jarvis.testlab --help` touches nothing.
+- **One store instance is shared** by the supervisor, the CLI and the routes. The Slice 07
+  listing cache is per instance, so a second one would answer from cold disk and the two
+  could disagree about a record that became corrupt.
+- **The contention detector reads the LIVE runtime root**, never a run scratch (which is
+  empty of voice signals by construction and would always read "free").
+
+```python
+from jarvis.testlab.api import TestLabApi
+from jarvis.testlab.composition import build_test_lab
+
+api = TestLabApi(build_test_lab())          # reads nothing yet
+await api.start()                           # takes the work root, adopts orphan runs
+run_id = (await api.submit_run("voice.self_echo", "virtual"))["run_id"]
+view = await api.show_run(run_id, wait_s=30)
+await api.aclose()
+```
+
+### Where a capability grant comes from
+
+Never from a request, and never from a CLI flag: a caller that can grant itself
+`realtime_provider` has no gate left. The grant is read by the composition layer from the
+**process environment**, using the switches the supervisor already enforces in its own
+reservation path, plus one name for the device capabilities (the supervisor gates devices
+by contention detection and a lease, not by a variable):
+
+| Environment variable | Grants | Default |
+|---|---|---|
+| `JARVIS_TESTLAB_LIVE=1` | `realtime_provider`, `llm_provider` | off |
+| `JARVIS_TESTLAB_HARDWARE=1` | `audio_input_device`, `audio_output_device`, and the native PortAudio reachability probe in the contention detector | off |
+| `JARVIS_TESTLAB_GUIDED=1` | `human_presence` | off |
+| `JARVIS_TESTLAB_MAX_COST_USD` | the money budget of ONE run | `0` |
+| `JARVIS_TESTLAB_AUDIO_ARTIFACTS=1` | lets the store keep `audio_clip` artifacts | off |
+
+The default grant is empty, which is exactly the `virtual` profile: free, no device, no
+provider, no human. A caller may only NARROW it: `TestLabApi.submit_run(grant=...)` and
+the HTTP `grant` field are intersected with the environment's by `narrow_grant`, so the
+worst a request body can do is ask for less. Setting a variable for the process is the
+operator's act, it is visible in the process that will spend the money or take the
+microphone, and it gives the CLI and the Control Center the same authority by
+construction.
+
+**A narrowing grant is a complete document.** `ResourceGrant.from_dict` requires all
+three fields; a partial object is refused with `testlab_fields_mismatch`, not silently
+completed, because a missing `max_cost_usd` would have to mean either "zero" or
+"whatever you allow" and guessing either way is wrong:
+
+```json
+{"grant": {"capabilities": ["realtime_provider"], "max_cost_usd": 0.5, "max_duration_s": null}}
+```
+
+**Reading the environment can never fail.** `install_testlab_routes` is called from
+`ControlCenter.__init__`, so an exception while reading a Test Lab variable would stop the
+whole Control Center from being constructed — and would take the CLI away exactly when
+somebody is trying to look at a run. So every unusable value falls back to a usable one,
+in the refusing direction, and SAYS SO: an unreadable, negative or non-finite budget reads
+`0`; a budget above the `MAX_PROFILE_COST_USD` ceiling a run may declare (1000 USD) is
+clamped to it, because `ResourceGrant` would otherwise refuse it outright. The sentence
+travels on `TestLabConfig.grant_refusal`, appears as `config.grant_refusal` in
+`/api/testlab/status`, and the CLI prints it before every command — a grant quietly
+reduced is a surprise waiting to be blamed on the diagnostic.
+
+Everything else is inherited, not re-decided. The live opt-in, the guided presence opt-in,
+device contention, the device lease, the cost budget and the audio opt-in stay in the
+supervisor's reservation path (Slices 05, 08, 09); no CLI flag and no route reaches
+around them, and a refusal is persisted as an `errored` run with its own failure code.
+
+### CLI
+
+`python -m jarvis.testlab [global options] <command>`, human-readable by default and
+`--json` for agents. The global options are `--json`, `--runtime-root PATH` and
+`--data-root PATH`, and they go BEFORE the command (argparse's own convention): after it
+they are an unrecognized argument and the program exits 2 with its usage.
+
+<!-- cli-commands -->
+
+| Command | Does |
+|---|---|
+| `list` | every official diagnostic, latest version, with its profiles |
+| `describe ID [--version N]` | one version: profiles, parameters, metrics, assertions, scenario |
+| `run ID [--profile P] [-p N=V] [-o N=V] [--scenario FILE] [--guided] [--no-wait] [--timeout S]` | queue one run, follow it, report its outcome |
+| `status [RUN_ID]` | one run, or the Test Lab itself (roots, grant, queue, devices, storage) |
+| `cancel RUN_ID [--reason ...]` | ask a run to stop (cooperative, then the supervisor kills it) |
+| `runs [--diagnostic-id ...] [--status S] [--profile P] [--sweep-id ...] [--limit N] [--after CURSOR]` | query stored runs |
+| `show RUN_ID` | one run with metrics, assertions, outcome, artifacts and its declaration |
+| `artifact RUN_ID PATH [--output FILE]` | read one stored artifact, verified against its sha256 |
+| `compare BASELINE CANDIDATE` | per-metric deltas, assertion changes, incomparabilities |
+| `sweep [ID] [--spec FILE] [--axis N=V1,V2] [--repetitions N]` | execute a sweep and report every point |
+| `sweeps [--id TLS] [--limit N]` | stored sweeps, or one with its summary |
+| `capture [--conversation-id ...] [--session-id ...] [--start T] [--end T] [--no-events] [--no-store]` | normalize a real session into a DiagnosticBundle |
+| `bundles [--id TLB] [--document]` | stored DiagnosticBundles, or one with its coverage and findings |
+| `retention [--apply]` | what retention would delete; `--apply` runs one upkeep pass |
+| `guided RUN_ID` | attach this terminal to a running guided run's prompts |
+
+<!-- /cli-commands -->
+
+`--axis` sweeps a parameter by default and a setting with the `override:` prefix
+(`--axis override:audio_input_device=1,2`). Values of `-p`, `-o` and `--axis` are read as
+JSON and fall back to plain text, so `-p value=3` is the number 3 and `-p mode=measure` is
+the string.
+
+Only `run`, `sweep`, `cancel`, `guided` and `retention --apply` ever take the work root;
+every other command reads the stores and keeps working while the Control Center holds it.
+A work root somebody else holds is reported as `testlab_supervisor_work_root_busy`, never
+as a hang.
+
+**And they take it as late as they can.** `preflight()` refuses, before a Test Lab is
+composed at all, everything the command line alone justifies: a malformed `-p`/`-o`/
+`--axis`, and the guided tty rule. Each command then asks the catalog and the store —
+neither of which needs a lock — before `_take_work_root()`. So a command that refuses
+creates NO directory and holds NO lock: an unknown diagnostic, an unreadable scenario
+file, an unknown run id, a bad argument and a guided run with no terminal all leave
+`<runtime>/testlab/` absent on a machine where the Test Lab has never been used.
+`tests/integration/test_testlab_cli_e2e.py` runs each of those command lines against a
+fresh root and asserts nothing appeared.
+
+**Exit codes.** An agent reads them before it reads anything else.
+
+| Code | Means |
+|---|---|
+| 0 | the run passed, or the command succeeded |
+| 1 | the run failed (a product verdict) |
+| 2 | usage error (an argument this program cannot read) |
+| 3 | inconclusive: could not measure |
+| 4 | refused: a gate declined to run it |
+| 5 | crashed: the Test Lab broke around the run |
+| 6 | cancelled |
+| 7 | the command itself failed (unknown id, store error, no such artifact) |
+| 8 | no verdict yet (`--no-wait`, or the wait expired while the run continues) |
+
+A sweep exits on its own status: `completed` 0, `failed` 1, `cancelled` 6. Anything the
+command itself could not do — an unknown id, a store error, a body it could not read, and
+any failure this program did not foresee (`testlab_cli_failed`, with its traceback on
+stderr) — exits 7. Nothing reaches the shell as a bare traceback, and nothing that is not
+a product verdict ever exits 1.
+
+**Streams.** The report goes to stdout; every live line — the queued id, the progress
+ticker, the guided countdown, warnings and the real cause of a failure — goes to stderr.
+`--json` therefore produces a stdout that is parseable as it is. Under `--json` EVERY
+failure prints a refusal document, including a usage refusal
+(`{"ok": false, "code": "testlab_cli_usage", ...}`), so an agent never gets an empty
+stdout for one class of failure; the exception is argparse's own exit 2 for an unknown
+flag or a missing positional, which argparse prints on stderr before this program runs.
+A failure the program did not foresee answers `testlab_cli_failed` with a FIXED sentence
+— its type, message and traceback are on stderr only, because an agent forwarding the
+document must not carry a path or a token out of a message the code happened to hold.
+The progress ticker and the guided countdown are redrawn in place (``) on a terminal
+and appended as plain lines when stderr is not one, so a 30-second step never scrolls its
+own instruction off the screen.
+
+**Progress.** Anything that waits shows what it is doing, how long it has been doing it
+and how to get out: `| running - 12.3 s of at most 1800 s (Ctrl-C asks the run to stop)`.
+`Ctrl-C` cancels the run rather than abandoning it. The wait has a deadline it cannot
+outlive: when `--timeout` passes, the CLI says how long it waited, leaves the run alone
+(the supervisor owns the run's own bounds) and exits 8.
+
+**The guided presenter** (`jarvis/testlab/presenter.py`) is what `--guided` and the
+`guided` command attach. For as long as a step is open it shows the authored text, the
+phrase to say, a bar and a spinner that move, the seconds left and `[Enter] done  [r]
+refuse`. The countdown is computed from the WORKER's `shown_at`
+(`PromptWatcher.pending_shown()`), never from when the presenter happened to look, so it
+can never promise time the run will not wait. When the deadline passes it sends nothing,
+says how long it waited, and refuses to let a keystroke typed afterwards answer the NEXT
+step:
+
+```text
+GUIDED STEP  say_it  [say_phrase]
+Dites la phrase a voix haute, puis appuyez sur Entree.
+Phrase to say: "jarvis quelle heure est-il"
+You have 20 s.  [Enter] done   [r] refuse
+  / [##################------]  15.2 s left of 20 s   [Enter] done   [r] refuse
+  -> say_it: acknowledged.
+```
+
+`--guided` attaches a presenter; it grants nothing. A guided run without
+`JARVIS_TESTLAB_GUIDED=1` is refused by the supervisor with `human_presence_missing`, and
+the CLI prints that code and its sentence.
+
+**A presenter is only attached where somebody can answer it.** With stdin at end of file —
+a script, a pipe, CI — a reader returns immediately, and a presenter that read an empty
+line as "Enter" would confirm every step the instant it appeared and record that a human
+performed steps nobody performed: the one claim a guided run exists to make. Two things
+prevent it. `NO_INPUT` is a distinct value from an empty line, and a reader that reaches
+it answers nothing and takes the presenter out of the answering business for the rest of
+the run (each step then ends on its own deadline, which is the honest outcome). And
+`--guided` is REFUSED, before anything is queued, when stdin is not a terminal; `--headless`
+is the operator saying they are feeding the answers in deliberately. An expired step is
+announced once, not on every poll.
+
+**The reader contract, for the next presenter.** A reader returns the line WITH its
+newline: `"
+"` is a human pressing Enter. `NO_INPUT`, a raised reader, a cancelled one,
+a non-string, and the EMPTY STRING all mean "nobody answered" — `""` included, because a
+real `readline()` gives it only at end of file and every other reader that will exist (a
+websocket, an SSH session, the Slice 11 UI, a test double) ends its stream with it. The
+seam is `_read_result`, and it is where B1 is prevented once for every presenter rather
+than once per presenter.
+
+### HTTP
+
+Registered on the Control Center's existing aiohttp application by one call from
+`ControlCenter.__init__` (`install_testlab_routes`). `/api/testlab` is one of the Control
+Center's read-guarded prefixes, so EVERY method — not only writes — needs a loopback
+`Host`, a loopback `Origin` when one is sent, and a request that is not `Sec-Fetch-Site:
+cross-site`. The run store is synchronous, so every call into it runs in
+`asyncio.to_thread`; no handler blocks the event loop.
+
+<!-- testlab-routes -->
+
+| Route | Method | Answers |
+|---|---|---|
+| `/api/testlab/status` | GET | composition, grant, queue, reservations, device contention, storage |
+| `/api/testlab/diagnostics` | GET | `{diagnostics: [CatalogEntry]}` |
+| `/api/testlab/diagnostics/{diagnostic_id}` | GET | one version (`?version=`) plus every published version |
+| `/api/testlab/runs` | GET | a page of runs (`diagnostic_id`, `version`, `profile`, `status`, `sweep_id`, `bundle_id`, `limit`, `after`, `oldest_first`) |
+| `/api/testlab/runs` | POST | queue a run; **202** with `{run_id}` |
+| `/api/testlab/runs/{run_id}` | GET | one run with its outcome, artifacts and declaration; `?wait_s=` long-polls (at most 30 s) |
+| `/api/testlab/runs/{run_id}/cancel` | POST | ask it to stop; `{held}` is false when this supervisor does not own it |
+| `/api/testlab/runs/{run_id}/artifacts/{path}` | GET | the artifact bytes, verified against the recorded sha256 |
+| `/api/testlab/runs/{run_id}/prompt` | GET | the open guided prompt with `remaining_s`, or `{prompt: null}` |
+| `/api/testlab/runs/{run_id}/prompt` | POST | acknowledge or refuse it (`prompt_id`, `sequence`, `refused`, `note`) |
+| `/api/testlab/compare` | GET | `?baseline=&candidate=`: a `RunComparison` |
+| `/api/testlab/sweeps` | GET | a page of sweep records |
+| `/api/testlab/sweeps` | POST | start a sweep in the background; **202** with `{sweep_id}` |
+| `/api/testlab/sweeps/{sweep_id}` | GET | one sweep record plus its summary when it has one |
+| `/api/testlab/sweeps/{sweep_id}/cancel` | POST | stop a sweep this process is running |
+| `/api/testlab/bundles` | GET | a page of bundle summaries |
+| `/api/testlab/bundles` | POST | capture a session into a DiagnosticBundle |
+| `/api/testlab/bundles/{bundle_id}` | GET | one bundle summary, its coverage and its findings (`?document=1` for the whole document) |
+| `/api/testlab/retention` | GET | the retention plan (nothing is deleted by reading it) |
+| `/api/testlab/retention` | POST | run one upkeep pass |
+
+<!-- /testlab-routes -->
+
+**A request that will be refused takes nothing.** Every POST validates first and calls
+`_supervised()` last, exactly as the CLI does: an unknown diagnostic, an unsupported
+profile, a scenario outside the primitive vocabulary, a body over the limit, an unknown
+run id on `cancel` — all answer without `<runtime>/testlab/` ever existing. Cancelling a
+sweep takes no work root at all: a sweep in flight already started the supervisor, and one
+that is not gets an honest `held: false`.
+
+**Long work never holds a request open.** `POST /api/testlab/runs` answers `202` with the
+run id as soon as the run is queued; progress is `GET /api/testlab/runs/{run_id}`,
+optionally with `?wait_s=` (bounded at 30 s), which always answers with the current record
+rather than with nothing. `POST /api/testlab/sweeps` answers `202` with the sweep id and
+runs the sweep in a background task the application cancels on cleanup.
+
+**The supervisor is started by the first request that needs it**, not when the Control
+Center boots: taking the work root at boot would refuse a CLI sweep that is already
+running, and an operator would find the Control Center unable to start for a reason that
+has nothing to do with it. Read routes never start it.
+
+**Every failure is a coded payload and a journal line.** Each handler is wrapped in one
+boundary that answers the Control Center's own refusal shape, carrying the Test Lab's
+stable code and the sentence whatever produced the failure wrote — never a generic one:
+
+```json
+{"ok": false, "code": "testlab_store_not_found", "error": "run tlr-... does not exist"}
+```
+
+The one exception is a **5xx**, which answers a fixed sentence and the code
+`testlab_internal_error`. Below 500 the message is one this package wrote on purpose; the
+message of a failure we did not foresee is whatever the code was holding — a path, a
+token, the contents of a file — so it goes to the journal (`testlab.http.failed`, which is
+local and redacted) and never into a response body.
+
+| Status | When |
+|---|---|
+| 400 | a request we could not honour (bad body, unknown profile, invalid parameter) |
+| 404 | an unknown run, sweep, bundle, diagnostic or artifact path |
+| 413 | a body past the 256 KiB limit (`testlab_http_too_large`), said as a size and not as bad syntax |
+| 409 | a lock somebody else holds (`testlab_supervisor_work_root_busy`, a store conflict) |
+| 503 | a piece that did not come up |
+| 500 | our own defect — an unmapped failure is 500 on purpose, never the caller's mistake |
+
+### JSON shapes
+
+Stable, and render-ready: Slice 11 displays them and derives nothing. Successful HTTP
+responses are the shape below with `"ok": true` added.
+
+| Shape | Fields |
+|---|---|
+| `run view` | `{"run": TestRun.to_dict(), "outcome": RunOutcomeSummary.to_dict()}` |
+| `run detail` | the run view plus `"artifacts": [ArtifactRef]` and `"declaration": CatalogEntry or null` |
+| `runs page` | `{"runs": [run view], "corrupt": [{entry, code, detail}], "next_cursor": str or null}` |
+| `diagnostics` | `{"diagnostics": [CatalogEntry.to_dict()]}` |
+| `declaration` | `{"diagnostic": CatalogEntry.to_dict(), "versions": [int]}` |
+| `comparison` | `RunComparison.to_dict()` |
+| `sweep` | `{"sweep": SweepRecord.to_dict(), "summary": the sweep summary document or null}` |
+| `sweeps page` | `{"sweeps": [SweepRecord], "corrupt": [...], "next_cursor": ...}` |
+| `bundle` | `{"bundle": summary, "coverage": ..., "findings": [...], "stored": status or null}` |
+| `prompt` | `{"run_id", "prompt": GuidedPrompt or null, "sequence", "shown_at", "elapsed_s", "remaining_s"}` |
+| `status` | `{"config", "started", "active_runs", "pending_runs", "reserved_capabilities", "active_sweeps", "contention", "storage"}` |
+| `retention plan` | `{"enabled", "cutoff", "deletions", "deferred", "blocked_active", "blocked_corrupt", "unmet"}` |
+| `upkeep pass` | `{"ran", "swept", "sweep_error", "skipped_active", "deleted", "delete_failures"}` |
+| refusal | `{"ok": false, "code": <stable code>, "error": <sentence>}` |
+
+`outcome` is derived ONCE, by `classify_run`, and carries `outcome`, `failure_code`,
+`verdict`, `failed_assertions`, `missing_assertions`, `measured` and `score`. A caller
+that re-derives a verdict from `status` is reimplementing the Slice 07 table and will get
+`errored` wrong, because only the failure code says whether a run could not measure, was
+refused, or crashed.
+
+### Limits, stated plainly
+
+- **`cancel` only reaches the supervisor of this process.** A run the Control Center is
+  executing cannot be cancelled from a CLI process, and the answer says so (`held: false`)
+  instead of pretending. Cancelling it means asking the process that owns it.
+- **The guided channel is per run scratch**, so a presenter can only reach a run whose
+  supervisor uses the same work root. Two work roots on one workstation are two labs.
+- **`?wait_s=` is bounded at 30 s** so a browser or a proxy does not drop the connection;
+  it answers with the current record when the bound expires, never with nothing.
+- **The CLI does not expose the catalog root.** Pointing the Test Lab at another set of
+  manifests is a composition decision (`TestLabConfig(catalog_root=...)`), not a flag, so
+  a run is always judged by a declaration the catalog lock covers.
+- **`retention` reads without the work root and `retention --apply` takes it.** Applying
+  sweeps stale temporaries and deletes runs, so it must not race a run another process is
+  executing; reading the plan touches nothing.
+- **Paths in `status` are shown with the home directory as `~`.** That document reaches a
+  browser and an agent's stdout, and the absolute form carries the account name.
+- **An artifact is served as an opaque download** (`Content-Disposition: attachment`,
+  `X-Content-Type-Options: nosniff`): artifacts are machine output, and some of them are
+  logs a worker wrote.
+
 ## Validation
 
 ```powershell
@@ -3600,6 +4003,21 @@ keep passing unchanged:
 
 ```powershell
 .venv/Scripts/python -m pytest -q -p no:cacheprovider tests/unit/test_voice_replay_fixture.py tests/integration/test_voice_replay_regressions.py tests/integration/test_voice_replay_safety_regressions.py
+```
+
+The Slice 10 surfaces: the composition layer, the facade, the CLI (parsing, output shapes,
+exit codes, the documented command table) and the guided presenter against a fake
+`PromptWatcher`:
+
+```powershell
+.venv/Scripts/python -m pytest -q -p no:cacheprovider tests/unit/test_testlab_composition.py tests/unit/test_testlab_cli.py tests/unit/test_testlab_presenter.py tests/unit/test_testlab_http.py
+```
+
+End to end, with real worker processes (one at a time, the cheap `selftest.worker`
+fixture, no voice stack and no device):
+
+```powershell
+.venv/Scripts/python -m pytest -q -p no:cacheprovider tests/integration/test_testlab_cli_e2e.py tests/integration/test_testlab_http_routes.py
 ```
 
 Opt-in real-session smoke test. It reads the local `runtime/trace.jsonl`, opens

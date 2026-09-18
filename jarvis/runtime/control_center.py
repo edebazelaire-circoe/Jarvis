@@ -123,6 +123,14 @@ VOICE_HEARTBEAT_MAX_AGE_S = 5.0
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 #: Préfixe des routes de lecture des Conversation Events (Slice 04).
 CONVERSATIONS_ROUTE = "/api/conversations"
+#: Préfixe des routes du Test Lab Catégorie 2 (`jarvis.testlab.http.TESTLAB_ROUTE`,
+#: épinglé égal par `tests/unit/test_testlab_http.py`). Répété ici pour que le
+#: middleware ne dépende pas de l'import du paquet testlab.
+TESTLAB_ROUTE = "/api/testlab"
+#: Préfixes dont TOUTES les méthodes sont gardées (Host de bouclage, Origin de
+#: bouclage, jamais `Sec-Fetch-Site: cross-site`) : ils exposent des transcriptions
+#: et des preuves de session, donc une lecture est aussi sensible qu'une écriture.
+READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE)
 
 
 #: Characters that never belong to a plain `host[:port]` authority (userinfo,
@@ -522,6 +530,11 @@ class ControlCenter:
             web.get("/api/conversations/export", self.conversation_export),
             web.get("/api/conversations/search", self.conversation_search),
         ])
+        # Test Lab Catégorie 2 (Slice 10) : ses routes, sa composition et son cycle de
+        # vie vivent dans `jarvis/testlab/http.py` (contrat `docs/testlab.md`). Import
+        # local : le paquet testlab n'est chargé que si un Control Center existe.
+        from jarvis.testlab.http import install_testlab_routes
+        install_testlab_routes(self._app, runtime_root=runtime_root, journal=self.journal)
         self._runner: web.AppRunner | None = None
 
     # ------------------------------------------------------------------ agent
@@ -619,9 +632,10 @@ class ControlCenter:
 
     @web.middleware
     async def _origin_guard(self, request: web.Request, handler):  # noqa: ANN001
-        if request.path == CONVERSATIONS_ROUTE or request.path.startswith(CONVERSATIONS_ROUTE + "/"):
-            # Conversation history (user transcripts) is read-sensitive: every
-            # method is guarded, and the Host must be loopback too (DNS rebinding).
+        if any(request.path == route or request.path.startswith(route + "/") for route in READ_GUARDED_ROUTES):
+            # Conversation history (user transcripts) and Test Lab evidence are
+            # read-sensitive: every method is guarded, and the Host must be loopback
+            # too (DNS rebinding).
             refusal = _loopback_refusal(request.headers.get("Origin"), request.headers.get("Host"),
                                         request.headers.get("Sec-Fetch-Site"))
             if refusal is not None:

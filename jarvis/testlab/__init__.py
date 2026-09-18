@@ -71,4 +71,16 @@ Slice 09 adds the two profiles that open real devices,
 (`devices`), the guided interaction contract with the human as a scenario actor
 (`prompts`), the file channel a worker addresses a human through (`channel`), and
 the four registered runners (`runners`, `registry`).
+
+Slice 10 composes and exposes the whole subsystem: `jarvis.testlab.composition`
+(`TestLabConfig` / `TestLab`: roots under `<runtime>/testlab/`, policies, the one
+shared store, and the capability grant read from the process environment),
+`jarvis.testlab.api` (`TestLabApi`: every operation once, as documented
+JSON-ready shapes, with every synchronous store call in `asyncio.to_thread`),
+`jarvis.testlab.cli` + `__main__` (`python -m jarvis.testlab`, human-readable or
+`--json`, with exit codes that tell the outcomes apart),
+`jarvis.testlab.presenter` (the guided presenter: prompt, deadline, live
+countdown) and `jarvis.testlab.http` (`/api/testlab/...` on the Control Center's
+aiohttp application). Nothing in that layer decides anything: it exposes what
+Slices 01-09 derive.
 """

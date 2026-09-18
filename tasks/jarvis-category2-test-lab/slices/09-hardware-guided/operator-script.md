@@ -10,6 +10,11 @@ something. **What you need:** the room reasonably quiet, normal speakers (not he
 — the point is that the microphone hears the speaker), and nothing else using the
 microphone.
 
+> **If a run ends with no result, do not debug it — jump to
+> [If it stops without a result](#if-it-stops-without-a-result) and do what the table
+> says.** About one session in ten simply measures nothing, and the only correct response
+> is to run it again. That is expected, not a fault of yours and not a fault of Jarvis.
+
 ---
 
 ## Before you start
@@ -56,6 +61,18 @@ keystroke; without it pytest swallows both and every step will time out.
 
 Nothing else is required of you — no id to type, no file to touch.
 
+### If it stops without a result
+
+**Read the code it printed and act on this table** — you should not have to read the rest
+of this page to know what just happened:
+
+| What it printed | What it means | What to do |
+|---|---|---|
+| `testlab_hardware_run_failed` … *answered none of the N provider onsets* | Nothing was measured. Not your fault and not a Jarvis defect. Happens about one session in ten. | **Run it again.** Nothing else. |
+| `testlab_guided_claim_unmeasured` | Your voice was not picked up. | Run it again, louder and squarely at the microphone. |
+| `testlab_guided_step_not_followed` | A voice was measured in the room while you were asked to be silent. | Find somewhere quieter, then run it again. |
+| the run says **`failed`** with `barge_in.false_confirmed_count` ≥ 1 | Jarvis interrupted himself on his own echo. **This is a RESULT, not a broken test.** | Do not retry to make it go away. Report it — see "What a result you should report looks like". |
+
 ---
 
 ## What you will be asked to do
@@ -66,7 +83,7 @@ Four steps. Each one prints what to do, how long you have, and waits for **Enter
 |---|---|---|---|
 | 1 | *(automatic)* `hardware:auto` runs first | Nothing. Stay quiet for a few seconds while a short tone plays. | The no-human baseline: Jarvis's own sound in this room, and nothing confirmed as a barge-in. |
 | 2 | **REMAIN_SILENT** | Press Enter, then **say nothing at all** until Jarvis stops talking. Do not move the laptop. | Every barge-in confirmed in this window is a FALSE one. The run also measures the room's own level first: if it is already as loud as a voice, it says so instead of pretending. |
-| 3 | **INTERRUPT** | Press Enter. Jarvis starts talking again — **cut it off out loud**, at a normal voice, with the phrase shown (by default *"jarvis arrete toi"*). | The only claim a machine cannot make: a real voice DOES get through the echo gate. |
+| 3 | **INTERRUPT** | Press Enter. Jarvis starts talking again — **cut it off out loud**, at a normal voice, with the phrase shown (by default *"jarvis arrete toi"*). Saying it once is enough; you do not have to keep talking. | The only claim a machine cannot make: a real voice DOES get through the echo gate. |
 | 4 | **ACKNOWLEDGE** | Press Enter if the session sounded right: Jarvis spoke twice, it did not stammer or cut itself off, and it stopped when you spoke over it. | The one judgement no metric makes. |
 
 Each step shows how long you have. That deadline is **derived from the diagnostic's
@@ -109,19 +126,32 @@ And the assertions:
 
 Any of these is worth writing down rather than re-running:
 
-- **`barge_in.false_confirmed_count` is 1 or more.** Jarvis interrupted itself on its own
-  voice in this room. This is the defect the whole diagnostic exists to find. Note the
-  speaker volume, because it matters.
+- **`barge_in.false_confirmed_count` is 1 or more, and the run reads `failed`.** Jarvis
+  interrupted itself on its own voice in this room. **This is the defect the whole
+  diagnostic exists to find, and a `failed` run here is a RESULT, not a broken test.**
+  Note the speaker volume, because it matters, and read
+  `Issues/self-barge-in-after-seconds-of-speech.md` — this is precisely the open question
+  your session settles. The transcript says which it was: `room_before_dbfs` and
+  `room_after_dbfs` near -65 dBFS with `certain: false` mean the room was quiet and the
+  confirmation was Jarvis's own echo; a loud figure there means something in the room
+  triggered it and the run will have said so instead.
 - **`barge_in.true_confirmed_count` is 0 although you spoke**, or the run ends
   `inconclusive` with `testlab_guided_claim_unmeasured`. The echo gate did not open for a
   real person. That is the opposite defect, and it is the one the `audio` and
   `hardware:auto` profiles cannot see at all. The run says "could not measure" rather than
   passing quietly, which is the point: try once more, a little louder and squarely at the
   microphone, and if it still does not open, that is the finding.
-- **The run ends `inconclusive` with `testlab_guided_step_not_followed`.** The microphone
-  heard a voice while you were asked to be silent. Usually the room, occasionally a
-  neighbour: try again somewhere quieter, and if it keeps happening the printed dBFS
-  figure is the number to report.
+- **The run ends `inconclusive` with `testlab_guided_step_not_followed`.** A voice was
+  *measured* in the room — with nothing playing, so it cannot have been Jarvis — while you
+  were asked to be silent. A neighbour, a fan that started, a chair. Try again somewhere
+  quieter; the printed dBFS figure is the number to report if it persists. Note this is
+  NOT the echo case above: an echo-triggered confirmation is reported as a finding, never
+  as this.
+- **The run ends `inconclusive` with `testlab_guided_claim_unmeasured` or
+  `testlab_hardware_run_failed`.** The run could not measure the thing it came for —
+  usually because your voice was not picked up, occasionally because the stack answered
+  none of the stimuli. Honest, and cheap: run it again. About one attempt in ten ends this
+  way at the default, and a retry is the right response.
 - **The run ends `inconclusive` with a `testlab_device_*` code.** Something about the
   devices: the message names which end and why. Not a Jarvis defect.
 

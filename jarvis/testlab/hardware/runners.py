@@ -35,6 +35,7 @@ holds is a fact about the workstation, not a defect of Jarvis and not a defect o
 
 from __future__ import annotations
 
+import asyncio
 from array import array
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
@@ -97,7 +98,6 @@ from jarvis.testlab.virtual.runners import (
     open_session,
     submit_user_turn,
     virtual_voice_stack,
-    wait_condition,
 )
 
 HARDWARE_RUN_FAILED = "testlab_hardware_run_failed"
@@ -130,6 +130,12 @@ VOICE_FLOOR_DBFS = -50.0
 #: the microphone heard literally nothing — not "a quiet room", which still carries the
 #: echo of what Jarvis played.
 SILENCE_FLOOR_DBFS = -90.0
+#: How far above the CONTROL step's microphone level a step has to read before the extra
+#: sound is attributed to a person. The control is the silent phase of the same run, so
+#: both windows carry the same echo at the same volume; measured, the gap between them is
+#: about 21 dB (an empty room reads about -21 dBFS in-window, a person about -0.0), so ten
+#: leaves a wide margin on both sides.
+VOICE_OVER_ECHO_DB = 10.0
 #: Frames of the detector's own per-frame near-end verdict that count as speech rather
 #: than a click. It is `NearEndDetector.min_run_frames` — the product's number, not ours —
 #: and 6 frames is 60 ms.
@@ -142,6 +148,14 @@ SETTLE_BLOCKS = 1
 #: Pause between two guided utterances, so the scheduler releases the floor before the
 #: next turn asks for it. A human pauses far longer than this between two questions.
 PHASE_SETTLE_S = 0.5
+#: How long a hardware step may wait for something observable. Longer than the virtual
+#: `STEP_TIMEOUT_S`, because a hardware step is a real utterance with real decisions in it
+#: rather than a simulated instant.
+HARDWARE_STEP_TIMEOUT_S = 45.0
+HARDWARE_POLL_S = 0.02
+#: How long to wait for EVERY raised onset to be answered before settling for the
+#: anti-vacuity bar of at least one. Short: by this point the utterance is over.
+ALL_DECIDED_TIMEOUT_S = 5.0
 
 #: Prompt ids of the guided self-echo seed. Stable: they are what the stored evidence,
 #: the CLI and the UI all call the same step.
@@ -229,13 +243,29 @@ class NearEndWatch:
     touches the audio.
     """
 
-    __slots__ = ("near_frames", "far_frames", "frames", "latched_frames", "latched")
+    __slots__ = ("near_frames", "far_frames", "frames", "latched_frames", "latched",
+                 "near_alone_frames", "alone_run", "longest_alone_run")
 
     def __init__(self) -> None:
         self.frames = 0
         self.near_frames = 0
         self.far_frames = 0
         self.latched_frames = 0
+        #: Frames where the detector judged a near-end voice present AND Jarvis was not the
+        #: far end. Those cannot be his echo by construction — there was nothing playing to
+        #: echo — so they CERTIFY a person, live, without waiting for a silent window. This
+        #: is what makes a one-phrase interrupt measurable: a confirmed barge-in stops the
+        #: playback, and a person who said their phrase is silent again long before the
+        #: silent-window levels are sampled, so the better the barge-in worked the emptier
+        #: its own evidence used to be.
+        self.near_alone_frames = 0
+        #: The LONGEST unbroken run of those, and the current one. A total is the wrong
+        #: shape: with nothing in the room a handful of isolated frames still read near
+        #: while the floor re-settles between utterances (3 to 6 over a thousand, measured),
+        #: and six of those scattered across eight seconds are noise, not a phrase. A run is
+        #: `NearEndDetector`'s own test for speech rather than a click.
+        self.alone_run = 0
+        self.longest_alone_run = 0
         #: The detector's CURRENT verdict: it has confirmed a near-end voice and is holding
         #: that until Jarvis falls silent. Sticky state, which is what "will this stack let
         #: a barge-in through right now" actually depends on.
@@ -246,6 +276,12 @@ class NearEndWatch:
         self.frames += 1
         if context.near_end:
             self.near_frames += 1
+        if context.near_end and not context.far_end:
+            self.near_alone_frames += 1
+            self.alone_run += 1
+            self.longest_alone_run = max(self.longest_alone_run, self.alone_run)
+        else:
+            self.alone_run = 0
         if context.far_end:
             self.far_frames += 1
         self.latched = context.near_end_latched
@@ -255,6 +291,7 @@ class NearEndWatch:
     def reset(self) -> None:
         """Follows `CaptureProcessor.reset`; the counters are per capture, not per run."""
         self.frames = self.near_frames = self.far_frames = self.latched_frames = 0
+        self.near_alone_frames = self.alone_run = self.longest_alone_run = 0
         self.latched = False
 
     def close(self) -> None:
@@ -361,6 +398,28 @@ class DeviceAudio(SoundDeviceRealtimeAudio):
         watch = self._watch
         return 0 if watch is None else max(0, watch.near_frames - (mark[2] if len(mark) > 2 else 0))
 
+    def near_alone_frames_since(self, mark: tuple[int, ...]) -> int:
+        """Near-end frames since `mark` with NO far end: a voice that cannot be Jarvis."""
+        watch = self._watch
+        return 0 if watch is None else max(0, watch.near_alone_frames - (mark[3] if len(mark) > 3 else 0))
+
+    def longest_alone_run(self) -> int:
+        """The longest UNBROKEN run of those in this capture, which is what certifies."""
+        watch = self._watch
+        return 0 if watch is None else watch.longest_alone_run
+
+    def reset_alone_run(self) -> None:
+        """Start a fresh longest-run measurement for the step about to begin."""
+        watch = self._watch
+        if watch is not None:
+            watch.longest_alone_run = 0
+            watch.alone_run = 0
+
+    def frames_since(self, mark: tuple[int, ...]) -> int:
+        """Capture frames processed since `mark`, so a frame count can be read as a rate."""
+        watch = self._watch
+        return 0 if watch is None else max(0, watch.frames - (mark[4] if len(mark) > 4 else 0))
+
     def heard_voice_since(self, mark: tuple[int, ...], *,
                           min_frames: int = NEAR_END_FRAMES) -> bool:
         """Did the capture judge a near-end voice present for long enough to be speech?
@@ -410,14 +469,17 @@ class DeviceAudio(SoundDeviceRealtimeAudio):
         return probe.watch if isinstance(probe, LevelledCapture) else None
 
     # A "window" is one guided step: mark it open, read what was heard while it was.
-    def mark(self) -> tuple[int, int, int]:
+    def mark(self) -> tuple[int, int, int, int, int]:
         self._peak_sample = 0
         probe = self.capture
         if isinstance(probe, LevelledCapture):
             probe.reset_peak()
+        self.reset_alone_run()
         watch = self._watch
         return (len(self.capture_signals), int(self.captured_bytes),
-                0 if watch is None else watch.near_frames)
+                0 if watch is None else watch.near_frames,
+                0 if watch is None else watch.near_alone_frames,
+                0 if watch is None else watch.frames)
 
     def heard_since(self, mark: tuple[int, ...]) -> tuple[float, tuple[str, ...], int]:
         """`(peak dBFS, capture signals, bytes captured)` since `mark`.
@@ -657,8 +719,8 @@ class SelfEchoHardwareRunner:
             await handle.start_work("self-echo", label="self echo")
             request = await handle.say("voici le recit complet de la journee que jarvis prononce",
                                        kind=SpeechKind.RESULT, work_id="self-echo")
-            await wait_condition(context, lambda: len(stack.session.spoken) >= 1,
-                                 "the scheduler dispatching the speech to the surface")
+            await hardware_wait(context, lambda: len(stack.session.spoken) >= 1,
+                                "the scheduler dispatching the speech to the surface")
             playback = await play_through_the_room(context, stack, journal, audio, request.id,
                                                    duration_ms, echoes, clip,
                                                    onset=self.raise_onset)
@@ -667,8 +729,8 @@ class SelfEchoHardwareRunner:
                 await stack.session.finish_output(status="completed", transcript=request.text)
             await handle.complete_work("self-echo", summary=request.text)
             handle.finish(public_summary=request.text)
-            await wait_condition(context, lambda: bool(_terminal_of(journal, request.id)),
-                                 "a terminal status for the speech")
+            await hardware_wait(context, lambda: bool(_terminal_of(journal, request.id)),
+                                "a terminal status for the speech")
             confirmed = journal.counts(*BARGE_IN_CONFIRMED_KINDS)
             refused = journal.counts(*BARGE_IN_REFUSED_KINDS)
             completed = _terminal_of(journal, request.id) == "voice.speech.completed"
@@ -708,7 +770,7 @@ class SelfEchoHardwareRunner:
 
 async def play_through_the_room(context: RunContext, stack: VoiceStack, journal, audio: DeviceAudio,
                                 speech_id: str, duration_ms: int, candidates: int, clip: bytes,
-                                *, onset: Any = None) -> RoomPlayback:
+                                *, onset: Any = None, stop_on_confirm: bool = False) -> RoomPlayback:
     """Play the fixture block by block through the REAL speaker, raising provider onsets.
 
     No echo is injected: the room is what returns the sound, which is the whole point of
@@ -736,6 +798,7 @@ async def play_through_the_room(context: RunContext, stack: VoiceStack, journal,
     blocks = max(1, duration_ms // CHUNK_MS)
     every = max(1, blocks // candidates) if candidates else 0
     before = journal.counts(*BARGE_IN_DECISION_KINDS)
+    confirmed_before = journal.counts(*BARGE_IN_CONFIRMED_KINDS)
     raised = 0
     first_onset_ms: int | None = None
     played_ms = 0
@@ -746,11 +809,15 @@ async def play_through_the_room(context: RunContext, stack: VoiceStack, journal,
         offset = (block * OUTPUT_BLOCK_BYTES) % max(OUTPUT_BLOCK_BYTES, len(clip))
         await stack.session.play_audio(pcm=wrap_slice(clip, offset, OUTPUT_BLOCK_BYTES))
         written = (block + 1) * CHUNK_MS
-        await wait_condition(context,
-                             lambda: (audio.written_output_ms >= written
-                                      or _terminal_of(journal, speech_id) is not None),
-                             f"{written} ms of Jarvis output reaching the output device")
+        await hardware_wait(context,
+                            lambda: (audio.written_output_ms >= written
+                                     or _terminal_of(journal, speech_id) is not None),
+                            f"{written} ms of Jarvis output reaching the output device")
         played_ms = max(played_ms, int(audio.played_output_ms))
+        if stop_on_confirm and journal.counts(*BARGE_IN_CONFIRMED_KINDS) > confirmed_before:
+            # The claim this phase exists to make is made. Raising more candidates would
+            # only ask the same question again, of a person who has already been heard.
+            break
         if (candidates and raised < candidates and block >= FIRST_ONSET_BLOCK
                 and (block - FIRST_ONSET_BLOCK) % every == 0):
             if first_onset_ms is None:
@@ -773,19 +840,59 @@ async def play_through_the_room(context: RunContext, stack: VoiceStack, journal,
             break
         first_onset_ms = first_onset_ms if first_onset_ms is not None else audio.written_output_ms
         raised += 1
-    await wait_condition(context, lambda: audio.played_output_ms > 0 or played_ms > 0
-                         or _terminal_of(journal, speech_id) is not None,
-                         "Jarvis's output reaching the output device")
+    await hardware_wait(context, lambda: audio.played_output_ms > 0 or played_ms > 0
+                        or _terminal_of(journal, speech_id) is not None,
+                        "Jarvis's output reaching the output device")
     played_ms = max(played_ms, int(audio.played_output_ms))
     if raised:
-        await wait_condition(
-            context,
-            lambda: (journal.counts(*BARGE_IN_DECISION_KINDS) >= before + raised
-                     or _terminal_of(journal, speech_id) is not None),
-            "a barge-in decision for every provider onset raised over the room's echo")
+        try:
+            await hardware_wait(
+                context,
+                # A CONFIRMATION is a decision, and it is the one this phase wanted: when
+                # the loop stops early because the gate opened, the onsets it had already
+                # raised may never be answered individually.
+                lambda: (journal.counts(*BARGE_IN_DECISION_KINDS) >= before + raised
+                         or journal.counts(*BARGE_IN_CONFIRMED_KINDS) > confirmed_before
+                         or _terminal_of(journal, speech_id) is not None),
+                "a barge-in decision for every provider onset raised over the room's echo",
+                budget_s=ALL_DECIDED_TIMEOUT_S)
+        except HardwareRunError:
+            # The ANTI-VACUITY rule is "this stack is not deaf", and one decision proves
+            # that; one decision PER onset is stricter than the claim needs, and an onset
+            # raised after the output has ended is simply never answered. Demanding all of
+            # them failed runs that had measured exactly what they came for, about one in
+            # ten at the declared default. Zero decisions is still the failure.
+            if journal.counts(*BARGE_IN_DECISION_KINDS) <= before:
+                raise _failed(
+                    f"the stack answered none of the {raised} provider onsets raised over the room's "
+                    "echo, so nothing about barge-in was measured") from None
+            context.log(f"{journal.counts(*BARGE_IN_DECISION_KINDS) - before} of {raised} provider "
+                        "onsets were answered; the rest arrived after the output had ended")
     return RoomPlayback(decided=journal.counts(*BARGE_IN_DECISION_KINDS) - before,
                         first_onset_ms=first_onset_ms,
                         played_ms=max(played_ms, int(audio.played_output_ms)))
+
+
+async def hardware_wait(context: RunContext, predicate: Any, what: str,
+                        *, budget_s: float = HARDWARE_STEP_TIMEOUT_S) -> None:
+    """`wait_condition` with a hardware budget and a hardware failure code.
+
+    Two differences from the virtual helper, both because this profile spends real time:
+    a step here covers an 8 s utterance and several decisions rather than a simulated
+    instant, so `STEP_TIMEOUT_S` (15 s) is tight enough to fire on a loaded host; and a
+    hardware run that gave up reported `testlab_virtual_run_failed`, which reads as a
+    mis-routed failure to anyone triaging it.
+    """
+    loop = asyncio.get_running_loop()
+    budget = max(0.0, min(budget_s, context.remaining_s))
+    deadline = loop.time() + budget
+    while True:
+        context.check_cancelled()
+        if predicate():
+            return
+        if loop.time() >= deadline:
+            raise _failed(f"{what} never happened within {budget:.1f}s of the run budget")
+        await asyncio.sleep(HARDWARE_POLL_S)
 
 
 async def raise_provider_onset(context: RunContext, stack: VoiceStack, onset: Any = None) -> bool:
@@ -830,8 +937,8 @@ async def measure_room(context: RunContext, audio: DeviceAudio) -> float:
 async def wait_for_capture(context: RunContext, audio: DeviceAudio) -> None:
     """Wait for one more microphone block to come back through the production capture path."""
     before = int(audio.captured_bytes)
-    await wait_condition(context, lambda: int(audio.captured_bytes) > before,
-                         "a microphone block reaching the duplex capture")
+    await hardware_wait(context, lambda: int(audio.captured_bytes) > before,
+                        "a microphone block reaching the duplex capture")
 
 
 # ----------------------------------------------- voice.self_echo.hardware_guided
@@ -886,32 +993,53 @@ class SelfEchoGuidedRunner:
                 quiet_room = RoomVoice(before_dbfs=baseline,
                                        after_dbfs=await measure_room(context, audio),
                                        near_end_frames=audio.near_frames_since(mark),
-                                       window_peak_dbfs=peak)
+                                       near_alone_frames=audio.near_alone_frames_since(mark),
+                                       alone_run_frames=audio.longest_alone_run(),
+                                       window_frames=audio.frames_since(mark),
+                                       window_peak_dbfs=peak,
+                                       decided=quiet.decided, confirmed=quiet.confirmed)
                 # `certain` in BOTH steps: "a person made a sound" means the same thing
                 # and is measured the same way, whichever claim needs it. A suspicion is
                 # recorded (`near_end_seen`) and never decides on its own — that is the
                 # whole lesson of the empty room that certified a human interrupt.
                 session.observe(PROMPT_SILENCE, voice=quiet_room.certain,
-                                peak_dbfs=max(peak, baseline, quiet_room.after_dbfs),
-                                **quiet_room.to_dict())
+                                peak_dbfs=quiet_room.quiet_room_dbfs, **quiet_room.to_dict())
                 context.log(f"silent phase: peak={peak:.1f} dBFS room before={baseline:.1f} "
                             f"after={quiet_room.after_dbfs:.1f} captured={captured} B "
-                            f"near_frames={quiet_room.near_end_frames} decided={quiet.decided} "
-                            f"confirmed={quiet.confirmed} first_onset_ms={quiet.first_onset_ms}")
+                            f"near_frames={quiet_room.near_end_frames}/{quiet_room.window_frames} "
+                            f"alone={quiet_room.near_alone_frames}/run={quiet_room.alone_run_frames} "
+                            f"decided={quiet.decided} "
+                            f"confirmed={quiet.confirmed} first_onset_ms={quiet.first_onset_ms} "
+                            f"voice_certain={quiet_room.certain}")
 
                 # --- phase 2: the human is asked to interrupt; a confirmation is the measurement.
                 await session.ask(prompt_for(GuidedAction.INTERRUPT, PROMPT_INTERRUPT, phrase=phrase,
                                              deadline_s=_phase_deadline(context, duration_ms)))
                 mark = audio.mark()
+                # AS MANY CHANCES AS THE NEGATIVE HALF HAD, and that is the point rather
+                # than a tuning knob. Phase 1 raises `echoes` candidates and the stack
+                # rejects each one, which teaches the detector that this near-end is echo
+                # (`_release_near_end(learn=...)` after more than one rejection). Giving the
+                # positive half a single onset to overturn that made the verdict a coin
+                # flip at the declared default: 10 replays of the repo's own defaults gave
+                # 4 measured, 3 FAILED with the person at full scale for the whole 8 s and
+                # 807-857 near-end frames, 3 refused. An onset is only raised while the
+                # person is measurably audible, so an empty room still gets none of them.
                 cut_in = await self._speak(context, stack, journal, audio, clip, CUT_IN_WORK_ID,
                                            "jarvis continue ton recit s il te plait",
                                            "jarvis poursuit son recit pour laisser le temps de le couper",
-                                           duration_ms, 1, onset=heard_voice_onset(mark))
+                                           duration_ms, max(1, echoes),
+                                           onset=heard_voice_onset(mark), stop_on_confirm=True)
                 peak, signals, captured = audio.heard_since(mark)
                 spoken_room = RoomVoice(before_dbfs=quiet_room.after_dbfs,
                                         after_dbfs=await measure_room(context, audio),
                                         near_end_frames=audio.near_frames_since(mark),
-                                        window_peak_dbfs=peak)
+                                        near_alone_frames=audio.near_alone_frames_since(mark),
+                                        alone_run_frames=audio.longest_alone_run(),
+                                        window_frames=audio.frames_since(mark),
+                                        window_peak_dbfs=peak,
+                                        control_peak_dbfs=quiet_room.window_peak_dbfs,
+                                        decided=cut_in.decided, confirmed=cut_in.confirmed)
                 # The SAME object, the same measurements and the same predicate as phase 1.
                 # The window peak carries Jarvis's echo at a voice's level, and the near-end
                 # signal also rises on the canceller's residual, so either of them alone
@@ -919,13 +1047,16 @@ class SelfEchoGuidedRunner:
                 # from 2 500 ms of speech upwards. Only a silent-window measurement can say
                 # a person was there.
                 session.observe(PROMPT_INTERRUPT, voice=spoken_room.certain,
-                                peak_dbfs=max(peak, spoken_room.after_dbfs),
-                                **spoken_room.to_dict())
+                                peak_dbfs=spoken_room.quiet_room_dbfs, **spoken_room.to_dict())
                 context.log(f"interrupt phase: peak={peak:.1f} dBFS room after="
-                            f"{spoken_room.after_dbfs:.1f} near_frames={spoken_room.near_end_frames} "
-                            f"captured={captured} B signals={sorted(set(signals))} "
+                            f"{spoken_room.after_dbfs:.1f} near_frames="
+                            f"{spoken_room.near_end_frames}/{spoken_room.window_frames} "
+                            f"alone={spoken_room.near_alone_frames}/run={spoken_room.alone_run_frames} "
+                            f"captured={captured} B "
                             f"decided={cut_in.decided} confirmed={cut_in.confirmed} "
-                            f"voice_certain={spoken_room.certain}")
+                            f"voice_certain={spoken_room.certain} (alone={spoken_room.heard_alone} "
+                            f"over_control={spoken_room.louder_than_control} "
+                            f"control={spoken_room.control_peak_dbfs:.1f})")
 
                 await session.ask(prompt_for(GuidedAction.ACKNOWLEDGE, PROMPT_DONE))
             finally:
@@ -957,7 +1088,8 @@ class SelfEchoGuidedRunner:
 
     async def _speak(self, context: RunContext, stack: VoiceStack, journal, audio: DeviceAudio,
                      clip: bytes, work_id: str, asked: str, text: str, duration_ms: int,
-                     candidates: int, *, onset: Any = None) -> SpokenPhase:
+                     candidates: int, *, onset: Any = None,
+                     stop_on_confirm: bool = False) -> SpokenPhase:
         """One TURN: the user asks, Jarvis answers through the real speaker, onsets are raised.
 
         A whole turn per phase, and that is not a stylistic choice: a second result under a
@@ -973,15 +1105,16 @@ class SelfEchoGuidedRunner:
         handle = await submit_user_turn(context, stack, asked)
         await handle.start_work(work_id, label="self echo")
         request = await handle.say(text, kind=SpeechKind.RESULT, work_id=work_id)
-        await wait_condition(context, lambda: len(stack.session.spoken) > dispatched,
-                             "the scheduler dispatching the speech to the surface")
+        await hardware_wait(context, lambda: len(stack.session.spoken) > dispatched,
+                            "the scheduler dispatching the speech to the surface")
         playback = await play_through_the_room(context, stack, journal, audio, request.id,
-                                               duration_ms, candidates, clip, onset=onset)
+                                               duration_ms, candidates, clip, onset=onset,
+                                               stop_on_confirm=stop_on_confirm)
         played_ms = playback.played_ms
         if _terminal_of(journal, request.id) is None:
             await stack.session.finish_output(status="completed", transcript=request.text)
-        await wait_condition(context, lambda: bool(_terminal_of(journal, request.id)),
-                             "a terminal status for the speech")
+        await hardware_wait(context, lambda: bool(_terminal_of(journal, request.id)),
+                            "a terminal status for the speech")
         await handle.complete_work(work_id, summary=request.text)
         handle.finish(public_summary=request.text)
         if played_ms <= 0:
@@ -1008,15 +1141,22 @@ class SelfEchoGuidedRunner:
 class RoomVoice:
     """What the run knows about whether a PERSON made a sound during one guided step.
 
-    Three measurements, and what separates them is whether they can be Jarvis:
+    What separates the measurements is whether they can be Jarvis:
 
     - `before_dbfs` / `after_dbfs` are taken with NOTHING playing, at either end of the
-      step. Nothing Jarvis does can raise them, so they are the only evidence that can
-      CERTIFY a voice.
-    - `near_end_seen` is the product's live judgement while Jarvis was speaking. It is the
-      only thing that can catch somebody who starts and stops inside the step, and it is
-      the only thing that can be the canceller's own residual. It SUSPECTS; it never
-      certifies.
+      step. Nothing Jarvis does can raise them, so they CERTIFY a voice.
+    - `near_alone_frames` are frames the detector judged near-end while Jarvis was NOT the
+      far end. There was nothing playing to echo, so they cannot be his either, and they
+      CERTIFY too — live, without waiting for a window. This is what makes a one-phrase
+      interrupt measurable: a confirmed barge-in stops the playback and a person who said
+      their phrase is silent again long before the silent windows are sampled, so the
+      better the barge-in worked, the emptier its own evidence used to be. Five runs of a
+      one-phrase interrupt produced zero measurements, one of them with the gate open and
+      the person plainly heard.
+    - `near_end_frames` is the product's live judgement while Jarvis WAS speaking. It is
+      the only thing that can catch somebody who starts and stops inside the utterance,
+      and it is the only thing that can be the canceller's own residual. It SUSPECTS; it
+      never certifies.
 
     Both guided steps use this same object. What differs is which predicate each CLAIM
     needs, and that is a property of the claim rather than an asymmetry: proving nobody
@@ -1031,18 +1171,78 @@ class RoomVoice:
     #: count and not a flag, because the near-end SIGNAL is an edge that fires once and
     #: then goes quiet for the rest of the utterance (see `NearEndWatch`).
     near_end_frames: int
-    #: What the microphone read during the step, echo included. Evidence for an operator,
-    #: never a decision: on a hardware profile it carries Jarvis at a voice's level.
+    #: Of those, the ones where Jarvis was NOT the far end. Nothing was playing, so
+    #: nothing could echo.
+    near_alone_frames: int
+    #: The longest UNBROKEN run of them, which is what certifies. A total certifies noise
+    #: too: an empty room produced 3 to 6 isolated ones over a thousand frames, and six of
+    #: those scattered across eight seconds certified a person who was not there.
+    alone_run_frames: int
+    #: Capture frames the step lasted, so a frame count reads as a rate rather than a
+    #: bare number — 61 frames of an 8 s step and of a 1 s step are not the same fact.
+    window_frames: int
+    #: What the microphone read during the step, echo included.
     window_peak_dbfs: float
+    #: The same measurement over the CONTROL step — the silent phase, same room, same
+    #: volume, same utterance, no person. `None` for the control itself.
+    control_peak_dbfs: float | None = None
+    #: Barge-in candidates the stack DECIDED on during the step, and how many it confirmed.
+    #: Provenance: without them a transcript cannot tell a loud room from a confirmation
+    #: triggered by the echo, which is exactly what the operator's triage turns on.
+    decided: int = 0
+    confirmed: int = 0
 
     @property
     def near_end_seen(self) -> bool:
         return self.near_end_frames >= NEAR_END_FRAMES
 
     @property
+    def heard_alone(self) -> bool:
+        """An unbroken near-end voice with no far end to explain it."""
+        return self.alone_run_frames >= NEAR_END_FRAMES
+
+    @property
+    def louder_than_control(self) -> bool:
+        """Did this step's microphone read measurably louder than the SAME step without a person?
+
+        A within-run control, not a threshold anybody chose: the silent phase plays the same
+        utterance at the same volume into the same room, so its in-window peak IS this room's
+        echo. Anything `VOICE_OVER_ECHO_DB` above that, in a window with the identical
+        stimulus, is something the stimulus does not explain.
+
+        This is the only source that can certify a person who says one phrase and stops —
+        which is exactly what the operator script asks for. The silent-window levels miss
+        them because a confirmed barge-in stops the playback and they are quiet again long
+        before the window is sampled, and the far-end-silent frames miss them because they
+        spoke while Jarvis was still the far end. Five runs of a one-phrase interrupt
+        produced zero measurements, one with the gate open and the person plainly heard.
+        """
+        if self.control_peak_dbfs is None:
+            return False
+        return self.window_peak_dbfs > self.control_peak_dbfs + VOICE_OVER_ECHO_DB
+
+    @property
+    def quiet_room_dbfs(self) -> float:
+        """The loudest the room measured with NOTHING playing, at either end of the step."""
+        return max(self.before_dbfs, self.after_dbfs)
+
+    @property
     def certain(self) -> bool:
-        """A voice was in the room, on evidence that cannot be Jarvis."""
-        return max(self.before_dbfs, self.after_dbfs) > VOICE_FLOOR_DBFS
+        """A voice was in the room, on evidence that cannot be Jarvis.
+
+        THREE independent sources, any one of which is enough, and none of which Jarvis can
+        produce:
+
+        - a level measured with NOTHING playing, at either end of the step: catches a person
+          still talking when the step ends;
+        - a sustained near-end run with NOTHING playing: catches one who stopped earlier but
+          spoke in a gap;
+        - a level measurably above the CONTROL step, which played the same utterance into the
+          same room with nobody in it: catches one who said a single phrase over Jarvis and
+          stopped, whom neither of the others can see.
+        """
+        return (self.quiet_room_dbfs > VOICE_FLOOR_DBFS or self.heard_alone
+                or self.louder_than_control)
 
     @property
     def suspected(self) -> bool:
@@ -1051,13 +1251,26 @@ class RoomVoice:
 
     def to_dict(self) -> dict[str, Any]:
         """The provenance of the decision, stored with the prompt record."""
-        return {"room_before_dbfs": round(self.before_dbfs, 1),
+        document = {"room_before_dbfs": round(self.before_dbfs, 1),
                 "room_after_dbfs": round(self.after_dbfs, 1),
                 "window_peak_dbfs": round(self.window_peak_dbfs, 1),
                 "near_end_seen": self.near_end_seen,
                 "near_end_frames": self.near_end_frames,
+                "near_alone_frames": self.near_alone_frames,
+                "alone_run_frames": self.alone_run_frames,
+                "window_frames": self.window_frames,
+                "heard_alone": self.heard_alone,
+                "louder_than_control": self.louder_than_control,
+                "barge_in_decided": self.decided,
+                "barge_in_confirmed": self.confirmed,
                 "voice_floor_dbfs": VOICE_FLOOR_DBFS,
                 "certain": self.certain}
+        if self.control_peak_dbfs is not None:
+            # Omitted, not null, on the CONTROL step itself: the evidence map holds JSON
+            # scalars and "this step is the control" is said by the key being absent.
+            document["control_peak_dbfs"] = round(self.control_peak_dbfs, 1)
+            document["voice_over_echo_db"] = VOICE_OVER_ECHO_DB
+        return document
 
 
 def heard_voice_onset(mark: tuple[int, ...], *, min_frames: int = NEAR_END_FRAMES) -> Any:
@@ -1098,13 +1311,22 @@ def require_silent_phase(session: GuidedSession, confirmed: int) -> None:
     observation on the `interrupt` step is not a problem at all, it is the point. The
     module that records prompts never makes this call.
 
-    Two ways in, and the second is narrow on purpose. A voice CERTAIN to have been in the
-    room voids the claim outright. A mere suspicion — the capture reported a near-end that
-    may equally have been the canceller's residual — voids it only if the phase actually
-    confirmed a barge-in, because then the confirmation cannot be attributed to either. A
-    suspicion on its own must not: over several seconds of continuous speech the detector
-    raises on its own residual in an empty room, and voiding every long run for that would
-    make the diagnostic unusable at its own declared default.
+    ONE way in, and the narrowing is the fix for a defect that hid the diagnostic's whole
+    finding. The claim is void when a person CERTAINLY made a sound — the same standard
+    phase 2 uses to certify one, applied here to discredit one.
+
+    It used to be void on a suspicion too, whenever the phase had also confirmed a
+    barge-in. That reads as caution and was the opposite: a confirmation REQUIRES a
+    near-end candidate, so `confirmed > 0` implies `near_end_seen`, and the branch fired on
+    every run where the gate opened on Jarvis's own echo — 2 to 5 runs in 10 at the
+    declared default. The blocking `no_false_barge_in` assertion was therefore only ever
+    evaluated against zero, and the ONE finding this diagnostic exists to produce could
+    not be reported. In every one of those aborts the run's own evidence said nobody had
+    made a sound: the room at -65 dBFS, `certain` false.
+
+    So: when the silent windows are below the voice floor and no voice was heard without a
+    far end, the confirmation is Jarvis's own echo, `barge_in.false_confirmed_count` is
+    REPORTED, and the declared blocking assertion decides. That is the finding.
     """
     record = session.record_of(PROMPT_SILENCE)
     if record is None or not record.usable:
@@ -1112,15 +1334,11 @@ def require_silent_phase(session: GuidedSession, confirmed: int) -> None:
     if record.followed is False:
         raise GuidedPromptUnavailable(
             GUIDED_STEP_NOT_FOLLOWED,
-            f"the room measured {record.evidence.get('room_after_dbfs')} dBFS with nothing playing "
-            "while the human was asked to stay silent, so a barge-in confirmed in that window cannot "
-            "be attributed to Jarvis's own echo")
-    if confirmed and record.evidence.get("near_end_seen"):
-        raise GuidedPromptUnavailable(
-            GUIDED_STEP_NOT_FOLLOWED,
-            f"the capture reported a near-end voice during the silent step and {confirmed} barge-in(s) "
-            "were confirmed in that window, so the confirmation cannot be attributed to Jarvis's own "
-            "echo rather than to somebody in the room")
+            f"a voice was measured in the room (quiet windows up to "
+            f"{record.evidence.get('room_after_dbfs')} dBFS, "
+            f"{record.evidence.get('near_alone_frames')} near-end frames with nothing playing) while "
+            f"the human was asked to stay silent, so the {confirmed} barge-in(s) confirmed in that "
+            "window cannot be attributed to Jarvis's own echo")
 
 
 def require_measurable_interrupt(context: RunContext, session: GuidedSession, confirmed: int, *,

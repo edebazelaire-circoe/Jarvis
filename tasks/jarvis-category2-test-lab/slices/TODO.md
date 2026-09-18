@@ -11,8 +11,8 @@ Start with `00-project-manager`; it is the readiness gate and is not delegated. 
 - [x] `06-virtual-profile-harness` — Virtual profile from async conversation harness
 - [x] `07-metrics-scoring-sweeps` — Metrics, scoring, comparisons, and parameter sweeps
 - [x] `08-audio-live-profiles` — Controlled audio and live-provider profiles
-- [ ] `09-hardware-guided` — Hardware auto/guided profiles and resource gates
-- [ ] `10-control-center-api-cli` — Native API, CLI, and Control Center HTTP surface
+- [x] `09-hardware-guided` — Hardware auto/guided profiles and resource gates
+- [x] `10-control-center-api-cli` — Native API, CLI, and Control Center HTTP surface
 - [ ] `11-control-center-ui` — Control Center Test Lab UI
 - [ ] `12-seed-diagnostics-rollout` — Seed diagnostics, end-to-end rollout, docs, and retention
 

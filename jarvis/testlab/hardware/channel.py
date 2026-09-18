@@ -163,14 +163,25 @@ class PromptWatcher:
 
     def pending(self) -> tuple[GuidedPrompt, int] | None:
         """The prompt awaiting a human, with its sequence, or `None` when there is none."""
+        shown = self.pending_shown()
+        return None if shown is None else (shown[0], shown[1])
+
+    def pending_shown(self) -> tuple[GuidedPrompt, int, float] | None:
+        """`pending()` plus the epoch seconds the WORKER published the prompt at.
+
+        Slice 10: a presenter must show how much of the deadline is left, and only the
+        worker knows when the clock started. Taking `shown_at` from the same document
+        keeps the countdown and the deadline `GuidedSession` enforces on one origin, so a
+        presenter that opened late can never show a human more time than the run will wait.
+        """
         document = _read(self._scratch / PROMPT_FILE_NAME)
         if document is None or document.get("schema") != PROMPT_SCHEMA:
             return None
-        sequence = document.get("sequence")
-        if type(sequence) is not int:
+        sequence, shown_at = document.get("sequence"), document.get("shown_at")
+        if type(sequence) is not int or type(shown_at) is not int:
             return None
         try:
-            return GuidedPrompt.from_dict(document.get("prompt")), sequence
+            return GuidedPrompt.from_dict(document.get("prompt")), sequence, shown_at / 1000
         except Exception:
             # Captured: a prompt document we cannot decode is one we must not show, and
             # the worker's deadline will end the step honestly as `timed_out`. Raising

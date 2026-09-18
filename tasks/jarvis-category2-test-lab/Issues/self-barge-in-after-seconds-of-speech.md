@@ -19,7 +19,8 @@ why nobody had seen it.
 | `audio` | exact copy, no delay (as shipped before this Slice) | 0 confirmed, passed | 0 confirmed, passed | **1 confirmed, FAILED**, cut off at 3 400 ms |
 | `audio` | delay only, or drift only, or noise only | — | — | **1 confirmed, FAILED**, cut off at 3 200–3 500 ms |
 | `audio` | delay **and** drift **and** noise (as shipped now) | 0, passed | 0, passed | 0, passed, full 8 000 ms — 5/5 repeats |
-| `hardware:auto` (double: room noise floor, one block of delay, drift, noise) | — | 0 | 0 | 0 **usually**, 1 **intermittently** (about 1 run in 4) |
+| `hardware:auto` (double: room noise floor, one block of delay, drift, noise) | — | 0 | 0 | 0 **usually**, 1 **intermittently** |
+| `hardware:guided`, silent phase (same double, 8 000 ms, 3 candidates) | — | — | **1 in about half of runs** (10 in 20 replays) |
 
 The learned near-end coupling reaches about −49 dB in every failing case, against an
 initial clamp of −15 dB that `NearEndDetector` holds for its first `warmup_frames` (300
@@ -49,6 +50,14 @@ profile, 5/5 at 8 000 ms.
 No room does that, and giving an adaptive canceller one drives it into a state no room can
 produce. Fixed in this Slice (`jarvis.testlab.audio.chain.room_response`,
 `ECHO_DELAY_BLOCKS`, and the same model in the hardware double's `FakeRoom`).
+
+**The rate is higher than first recorded, and the first figure was an artefact of the
+measurement.** "About 1 run in 4" was measured while `require_silent_phase` still aborted
+the run whenever the silent phase both suspected a near-end and confirmed a barge-in —
+which is every run where the gate opened on the echo. Those runs were counted as refusals
+rather than as findings. With that branch removed (Slice 09 rework 3, item S2), the silent
+phase reports `barge_in.false_confirmed_count` and the blocking assertion decides: **10 of
+20 replays at the declared default**. The defect did not get worse; it became visible.
 
 **Not settled: whether a real room at −12 dB coupling trips it too.** The hardware double
 still produces an occasional confirmation at 8 000 ms with a more realistic room, and a

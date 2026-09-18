@@ -66,6 +66,7 @@ from jarvis.testlab.hardware.prompts import (
 )
 from jarvis.testlab.hardware.runners import (
     FIRST_ONSET_BLOCK,
+    HARDWARE_RUN_FAILED,
     FIRST_ONSET_METRIC,
     GUIDED_CLAIM_UNMEASURED,
     GUIDED_STEP_NOT_FOLLOWED,
@@ -104,6 +105,46 @@ RUN_ID = format_run_id(T0, NONCE)
 RUN_BUDGET_S = 120.0
 #: Short on purpose: the point is the acoustic decision, not the length of the output.
 FAST = {"output.duration_ms": 1200, "echo.candidate_count": 2}
+#: Repeats behind the defaults distribution assertions. One run cannot tell a coin flip
+#: from a measurement, which is the whole reason those assertions exist.
+DEFAULTS_REPEATS = 3
+#: Attempts a test gets to reach the situation it describes. Some guided runs end in the
+#: ANTI-VACUITY refusal instead — the stack answered none of the provider onsets, about one
+#: in ten at these settings. That is an honest `inconclusive` and a property of this room's
+#: acoustics, not of the rule under test, so a test that asserted one outcome was measuring
+#: the double. Retrying past it, and asserting the situation was reached at least once,
+#: keeps the assertion sharp instead of widening it.
+GUIDED_ATTEMPTS = 4
+
+
+def is_anti_vacuity(exc: MeasurementUnavailable) -> bool:
+    """Did this run refuse because the stack decided on none of the onsets it was given?"""
+    return exc.code == HARDWARE_RUN_FAILED and "answered none of" in exc.detail
+
+
+async def guided_attempts(build_run, *, attempts: int = GUIDED_ATTEMPTS):
+    """Run a guided scenario repeatedly; return every result that is not an anti-vacuity refusal.
+
+    `build_run` is an async callable taking the attempt index and returning the run's
+    outcome, or raising. Results come back as `("outcome", metrics, context, store)` or
+    `("refused", exc, context, store)`, anti-vacuity refusals dropped.
+    """
+    results = []
+    skipped = 0
+    for index in range(attempts):
+        context, store, coroutine = build_run(index)
+        try:
+            outcome = await coroutine
+        except MeasurementUnavailable as exc:
+            if is_anti_vacuity(exc):
+                skipped += 1
+                continue
+            results.append(("refused", exc, context, store))
+        else:
+            results.append(("outcome", outcome, context, store))
+    assert results, (f"all {attempts} attempts ended in the anti-vacuity refusal; the situation "
+                     "this test describes was never reached")
+    return results, skipped
 
 
 def self_echo_spec() -> DiagnosticSpec:
@@ -502,19 +543,32 @@ async def test_a_human_who_speaks_during_the_silent_step_voids_the_measurement(t
     there before the run began is that room's noise floor; the runner catches that one
     with its baseline measurement, which `test_a_noisy_room_cannot_support_the_silent_claim`
     covers.
+
+    Repeated, because some attempts end in the anti-vacuity refusal instead and that is a
+    property of the room rather than of this rule. Every attempt that DID reach the
+    situation must void the claim, and at least one must have reached it.
     """
-    room = FakeRoom(coupling=0.25)
-    install(monkeypatch, FakeSoundDevice(room=room))
-    human = ScriptedHuman(room, speaks_on=(PROMPT_SILENCE, PROMPT_INTERRUPT))
-    context, store = guided_context(tmp_path)
-    with pytest.raises(GuidedPromptUnavailable) as caught:
-        await SelfEchoGuidedRunner(prompter=human).run(context)
-    assert caught.value.code == GUIDED_STEP_NOT_FOLLOWED
-    records = {item["prompt_id"]: item for item in artifact(context, store, TRANSCRIPT_ARTIFACT)["records"]}
-    assert records[PROMPT_SILENCE]["observed_voice"] is True
-    assert records[PROMPT_SILENCE]["followed"] is False
-    # The SAME observation on the interrupt step is not a problem: it is the measurement.
-    assert records[PROMPT_INTERRUPT]["followed"] is True
+    rooms: list[FakeRoom] = []
+
+    def build(index):
+        room = FakeRoom(coupling=0.25)
+        rooms.append(room)
+        install(monkeypatch, FakeSoundDevice(room=room))
+        human = ScriptedHuman(room, speaks_on=(PROMPT_SILENCE, PROMPT_INTERRUPT))
+        context, store = guided_context(tmp_path / f"run{index}")
+        return context, store, SelfEchoGuidedRunner(prompter=human).run(context)
+
+    results, _skipped = await guided_attempts(build)
+    for kind, value, context, store in results:
+        assert kind == "refused", "a human who broke the silence must never reach a verdict"
+        assert value.code == GUIDED_STEP_NOT_FOLLOWED
+        records = {item["prompt_id"]: item
+                   for item in artifact(context, store, TRANSCRIPT_ARTIFACT)["records"]}
+        assert records[PROMPT_SILENCE]["observed_voice"] is True
+        assert records[PROMPT_SILENCE]["followed"] is False
+        # The SAME observation on the interrupt step is not a problem: it is the measurement.
+        if PROMPT_INTERRUPT in records:
+            assert records[PROMPT_INTERRUPT]["followed"] is True
 
 
 async def test_a_presenter_that_breaks_is_inconclusive_not_a_crash(tmp_path, monkeypatch):
@@ -706,22 +760,87 @@ async def test_a_declaration_that_blocks_on_the_positive_claim_reports_the_zero_
     """Whether a zero is a VERDICT or a measurement failure is the declaration's call.
 
     Declare a blocking assertion on `barge_in.true_confirmed_count` and the runner reports
-    the zero so the supervisor can FAIL the run on it; declare none and it cannot express
-    the verdict, so it says `inconclusive` rather than passing quietly.
+    the zero so the supervisor can FAIL the run on it. Its pair,
+    `test_an_interrupt_nothing_confirmed_is_inconclusive_not_a_silent_pass`, holds the other
+    end: with no such assertion the runner cannot express the verdict, so it says
+    `inconclusive` rather than passing quietly.
+
+    REPEATED, AND ASSERTED AS A DISTRIBUTION, because the situation cannot be dialled in.
+    A person quiet enough that the gate never opens on them and a person loud enough to be
+    certifiably in the room are separated by only a few dB — the two are the SAME
+    microphone measurement — so at the margin an attempt sometimes lands on "they were
+    heard" instead, and an attempt can also end in the anti-vacuity refusal. Lowering the
+    voice does not fix it: at -40 dBFS, 19 dB under this room's echo, three suite runs in
+    ten still had an attempt where the gate opened, and a person who predates or outlives
+    the utterance is confirmed 16 times out of 16.
+
+    So the test asserts the SHAPE instead of one outcome, which is stronger than the
+    single-run version it replaces:
+
+    * the person is certifiably in the room on EVERY attempt — the zero is a result, never
+      a failure to observe;
+    * the branch this test exists for must OCCUR at least once;
+    * wherever the gate stayed shut, the declaration must turn the zero into `failed`;
+    * and wherever it opened, the same declaration must return `passed`.
+
+    The last one is what keeps this from being "accept both outcomes": a runner that failed
+    every guided run, or one that passed every one, is caught by one of the two halves.
     """
-    room = FakeRoom(coupling=0.25)
-    install(monkeypatch, FakeSoundDevice(room=room))
     spec = guided_spec(blocking=True)
     assert any(item.metric == TRUE_CONFIRMED_METRIC and item.blocking for item in spec.assertions)
-    context, store = build_context(tmp_path, spec, ProfileName.HARDWARE_GUIDED, parameters=FAST)
-    # A person who speaks too quietly to beat their own room's echo: audibly in the room,
-    # so the claim IS measurable, but never loud enough for the gate to open on them.
-    # "They spoke and were not heard" is the measurement, and the declaration judges it.
-    human = ScriptedHuman(room, speaks_on=(PROMPT_INTERRUPT,), voice_peak=0.03)
-    outcome = await SelfEchoGuidedRunner(prompter=human).run(context)
-    assert outcome.metrics[TRUE_CONFIRMED_METRIC] == 0
-    assert verdict_of(spec, outcome.metrics) == "failed", "the declaration makes the zero a verdict"
-    del store
+
+    def build(index):
+        room = FakeRoom(coupling=0.25)
+        install(monkeypatch, FakeSoundDevice(room=room))
+        # A person who speaks too quietly to beat their own room's echo: audibly in the
+        # room, so the claim IS measurable, but usually not loud enough for the gate to
+        # open on them. "They spoke and were not heard" is the measurement, and the
+        # declaration judges it.
+        #
+        # The level buys MARGIN, not certainty. This voice lands near -40 dBFS: 10 dB clear
+        # of VOICE_FLOOR_DBFS (-50), so the person is always certifiably present, and about
+        # 19 dB under this room's in-window echo (~-21 dBFS), which makes the gate staying
+        # shut the common case rather than a guaranteed one. It is not guaranteed because
+        # the near-end verdict accumulates over the window and the window's length moves
+        # with the machine's scheduling; the assertions below are written for that.
+        human = ScriptedHuman(room, speaks_on=(PROMPT_INTERRUPT,), voice_peak=0.01)
+        context, store = build_context(tmp_path / f"run{index}", spec, ProfileName.HARDWARE_GUIDED,
+                                       parameters=FAST)
+        return context, store, SelfEchoGuidedRunner(prompter=human).run(context)
+
+    results, _skipped = await guided_attempts(build)
+    unheard: list[str] = []
+    heard: list[str] = []
+    for kind, value, context, store in results:
+        assert kind == "outcome", (
+            f"a measurable person must produce a verdict, not {getattr(value, 'code', value)}")
+        # The premise, checked rather than assumed: this person WAS measurably in the room
+        # on every attempt. That is what makes the zero a RESULT rather than a failure to
+        # observe, and it is the part that must never drift.
+        record = {item["prompt_id"]: item
+                  for item in artifact(context, store, TRANSCRIPT_ARTIFACT)["records"]}[
+                      PROMPT_INTERRUPT]
+        assert record["certain"] is True, record
+        assert record["room_after_dbfs"] > record["voice_floor_dbfs"], record
+        verdict = verdict_of(spec, value.metrics)
+        if value.metrics[TRUE_CONFIRMED_METRIC] == 0:
+            unheard.append(verdict)
+        else:
+            heard.append(verdict)
+
+    # THE assertion, and it is about the declaration rather than about the room: the branch
+    # this test exists for must actually occur, and wherever it occurs the zero must come
+    # back as `failed`.
+    assert unheard, (
+        "a person the gate never opened on did not occur in any of the "
+        f"{len(results)} attempts, so the rule under test was never exercised; verdicts {heard}")
+    assert all(item == "failed" for item in unheard), (
+        f"the declaration must turn the zero into a verdict, got {unheard}")
+    # And the other direction, on the attempts where the quiet voice did beat the echo: the
+    # same declaration must PASS them. Asserting only the first half would be satisfied by a
+    # runner that failed every guided run.
+    assert all(item == "passed" for item in heard), (
+        f"the same declaration must pass a person who WAS heard, got {heard}")
 
 
 async def test_the_first_candidate_offset_is_measured_when_the_declaration_asks_for_it(tmp_path,
@@ -822,55 +941,75 @@ async def test_an_empty_room_never_certifies_a_human_interrupt_at_the_defaults(t
     Deterministic from 2 500 ms of speech upward, because both gates were satisfied by
     Jarvis's own sound — the in-window microphone peak carries the echo at a voice's level,
     and the near-end detector raises on the canceller's residual over a long utterance. The
-    claim now needs a silent-window measurement, which nothing Jarvis does can produce.
+    claim now needs evidence Jarvis cannot produce, and an empty room has none of it.
+
+    Two assertions, and the second is why this is not a widened test. The INVARIANT holds
+    on every attempt: an empty room never reaches a verdict. And across the attempts the
+    described branch must actually occur — the run must at least once refuse BECAUSE the
+    claim was unmeasurable, not only because the stack happened to decide nothing.
     """
-    room = FakeRoom(coupling=0.25)
-    install(monkeypatch, FakeSoundDevice(room=room))
     spec = guided_spec(blocking=True)
-    context, store = build_context(tmp_path, spec, ProfileName.HARDWARE_GUIDED,
-                                   parameters=declared_defaults(spec), budget_s=300.0)
-    # The INVARIANT: an empty room never reaches a verdict. Which honest refusal it is
-    # depends on what this room's residual did — nobody spoke, a confirmation in the silent
-    # step that could not be attributed, or a stack that never decided on an onset at all.
-    # All three are `MeasurementUnavailable`. Pinning one of them would pin the double's
-    # acoustics; what must never happen is `barge_in.true_confirmed_count >= 1`.
-    with pytest.raises(MeasurementUnavailable) as caught:
-        await SelfEchoGuidedRunner(prompter=HeadlessPrompter()).run(context)
-    assert caught.value.code in (GUIDED_CLAIM_UNMEASURED, GUIDED_STEP_NOT_FOLLOWED,
-                                 "testlab_virtual_run_failed")
-    records = {item["prompt_id"]: item for item in artifact(context, store, TRANSCRIPT_ARTIFACT)["records"]}
-    interrupt = records.get(PROMPT_INTERRUPT)
-    if interrupt is not None and interrupt.get("certain") is not None:
-        assert interrupt["observed_voice"] is False
-        assert interrupt["certain"] is False
-        assert interrupt["room_after_dbfs"] <= interrupt["voice_floor_dbfs"]
+
+    def build(index):
+        room = FakeRoom(coupling=0.25)
+        install(monkeypatch, FakeSoundDevice(room=room))
+        context, store = build_context(tmp_path / f"run{index}", spec, ProfileName.HARDWARE_GUIDED,
+                                       parameters=declared_defaults(spec), budget_s=300.0)
+        return context, store, SelfEchoGuidedRunner(prompter=HeadlessPrompter()).run(context)
+
+    results, _skipped = await guided_attempts(build)
+    codes = []
+    for kind, value, context, store in results:
+        assert kind == "refused", "an empty room must never reach a verdict"
+        codes.append(value.code)
+        records = {item["prompt_id"]: item
+                   for item in artifact(context, store, TRANSCRIPT_ARTIFACT)["records"]}
+        interrupt = records.get(PROMPT_INTERRUPT)
+        if interrupt is not None and interrupt.get("certain") is not None:
+            assert interrupt["observed_voice"] is False
+            assert interrupt["certain"] is False
+            assert interrupt["room_after_dbfs"] <= interrupt["voice_floor_dbfs"]
+    assert GUIDED_CLAIM_UNMEASURED in codes or GUIDED_STEP_NOT_FOLLOWED in codes, codes
 
 
-async def test_a_real_voice_is_measurable_at_the_declared_defaults(tmp_path, monkeypatch):
-    """And the matching positive, at the same duration: a person in the room IS measurable."""
-    room = FakeRoom(coupling=0.25)
-    install(monkeypatch, FakeSoundDevice(room=room))
+async def test_a_real_voice_is_measurable_at_the_declared_defaults(tmp_path, monkeypatch, capsys):
+    """A compliant human must get a MEASUREMENT at the defaults, not a coin flip.
+
+    This is the deliverable: HV-TL-HW-01 puts a person in front of the run once, and the
+    report they sign has to distinguish "Jarvis is deaf to me" from harness noise. So the
+    assertion is on the DISTRIBUTION over repeats, not on one run — and it asserts the
+    claim was measured, never that a particular verdict came out, because the verdict is
+    the measurement.
+
+    It used to early-return on two refusal codes and otherwise accept any verdict, which
+    made three genuine "a real human voice did not get through" failures green.
+    """
     spec = guided_spec(blocking=True)
-    context, store = build_context(tmp_path, spec, ProfileName.HARDWARE_GUIDED,
-                                   parameters=declared_defaults(spec), budget_s=300.0)
-    human = ScriptedHuman(room, speaks_on=(PROMPT_INTERRUPT,))
-    try:
-        outcome = await SelfEchoGuidedRunner(prompter=human).run(context)
-    except MeasurementUnavailable as exc:
-        # An honest refusal at this duration, and which one depends on what this room's
-        # residual did: the silent phase could not be attributed, or the stack never
-        # decided on an onset (the runner's own anti-vacuity rule). Both are the open
-        # question in Issues/self-barge-in-after-seconds-of-speech.md, and neither is a
-        # test failure. What must never happen is a silent pass, which is asserted below.
-        assert exc.code in (GUIDED_STEP_NOT_FOLLOWED, "testlab_virtual_run_failed")
-        return
-    # The INVARIANT at the default duration: with a person in the room the claim is
-    # MEASURED — the metric is reported and the declaration judges it — instead of the run
-    # saying "could not measure". Whether the gate opened is the measurement itself, and
-    # at 8 s it is the open question in Issues/self-barge-in-after-seconds-of-speech.md;
-    # `test_a_guided_run_addresses_the_human_at_every_step_and_records_each_one` pins the
-    # gate opening at the fast duration, where it is deterministic.
-    assert TRUE_CONFIRMED_METRIC in outcome.metrics
-    assert verdict_of(spec, outcome.metrics) in ("passed", "failed"), "a verdict, not a shrug"
-    records = {item["prompt_id"]: item for item in artifact(context, store, TRANSCRIPT_ARTIFACT)["records"]}
-    assert records[PROMPT_INTERRUPT]["certain"] is True, "the room was audibly not empty"
+    defaults = declared_defaults(spec)
+    measured: list[int] = []
+    refused: list[str] = []
+    for index in range(DEFAULTS_REPEATS):
+        room = FakeRoom(coupling=0.25)
+        install(monkeypatch, FakeSoundDevice(room=room))
+        context, store = build_context(tmp_path / f"run{index}", spec, ProfileName.HARDWARE_GUIDED,
+                                       parameters=defaults, budget_s=300.0)
+        human = ScriptedHuman(room, speaks_on=(PROMPT_INTERRUPT,))
+        try:
+            outcome = await SelfEchoGuidedRunner(prompter=human).run(context)
+        except MeasurementUnavailable as exc:
+            refused.append(exc.code)
+            continue
+        assert TRUE_CONFIRMED_METRIC in outcome.metrics, "a measured run reports the claim"
+        measured.append(int(outcome.metrics[TRUE_CONFIRMED_METRIC]))
+        record = {item["prompt_id"]: item
+                  for item in artifact(context, store, TRANSCRIPT_ARTIFACT)["records"]}[PROMPT_INTERRUPT]
+        assert record["certain"] is True, "the person must be certified by evidence that cannot be Jarvis"
+        del store
+    with capsys.disabled():
+        print(f"\nguided defaults x{DEFAULTS_REPEATS}: measured={measured} refused={refused}")
+    # The distribution, asserted rather than described. A refusal is honest and the
+    # operator retries; a measured run that did not hear the person is the defect this
+    # whole Slice exists to make impossible.
+    assert len(measured) >= DEFAULTS_REPEATS - 1, f"too many refusals: {refused}"
+    assert all(count >= 1 for count in measured), (
+        f"a compliant human was not heard in {measured.count(0)} of {len(measured)} measured runs")
