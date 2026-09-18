@@ -46,6 +46,7 @@ Rien n'est persisté : l'audio ne vit que dans des tampons bornés en mémoire.
 from __future__ import annotations
 
 import math
+import os
 import threading
 from collections import deque
 from dataclasses import dataclass
@@ -67,6 +68,25 @@ OWNER_REPLAY_MARGIN_MS = 150
 FRAME_MS = 10
 _BYTES_PER_SAMPLE = 2  # int16 mono
 _SILENCE_DB = -120.0
+
+
+def _env_float(name: str, default: float, *, minimum: float = 0.0, maximum: float | None = None) -> float:
+    """Seuil réglable par l'environnement, borné, sans jamais lever.
+
+    Une valeur illisible ou hors bornes retombe sur le défaut : un `.env` mal
+    tapé ne doit pas rendre le micro sourd.
+    """
+
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = float(raw.strip().replace(",", "."))
+    except ValueError:
+        return default
+    if value != value or value < minimum:  # NaN inclus
+        return default
+    return value if maximum is None or value <= maximum else default
 
 
 def frame_db(frame: bytes) -> float:
@@ -275,6 +295,18 @@ class NearEndDetector:
     ) -> None:
         self.coupling_db = float(initial_coupling_db)
         self.initial_coupling_db = float(initial_coupling_db)
+        #: Trames intégrées depuis la création, proches ou non. Sert au bridge
+        #: à distinguer « le micro se tait » de « la capture ne tourne plus » :
+        #: sans trame, il n'a aucune preuve à exiger.
+        self.frames = 0
+        #: Compteur cumulé des trames « proches » depuis la création.
+        #: Monotone, jamais remis à zéro par `release()` : le bridge en prend
+        #: deux instantanés (début et fin de sa fenêtre de confirmation) et la
+        #: différence lui dit combien de millisecondes de voix locale ont
+        #: réellement été entendues pendant qu'il baissait le volume. Sans lui,
+        #: la « parole soutenue » se réduisait à l'état verrouillé du VAD du
+        #: fournisseur, que l'écho de JARVIS suffit à tenir ouvert.
+        self.voiced_frames = 0
         self.warmup_frames = warmup_frames
         # Écart micro − référence des dernières trames où JARVIS parlait : si
         # une parole supposée est récusée, c'est qu'il s'agissait d'écho, et
@@ -375,6 +407,7 @@ class NearEndDetector:
     def update(self, mic_db: float, ref_db: float) -> bool:
         """Intégrer une trame ; rend True à l'instant où la parole est confirmée."""
 
+        self.frames += 1
         self._references.append(ref_db)
         ref_env = max(self._references)
         self.last_mic_db, self.last_ref_env_db = mic_db, ref_env
@@ -384,6 +417,7 @@ class NearEndDetector:
             self.last_margin_db = mic_db - (self.floor_db + self.floor_margin_db)
             self._update_floor(mic_db)
             self.last_near = mic_db > self.floor_db + self.floor_margin_db
+            self.voiced_frames += 1 if self.last_near else 0
             self.latched = False
             self._reset_window()
             self._refractory = 0
@@ -399,6 +433,7 @@ class NearEndDetector:
         predicted = ref_env + coupling if far_now else -math.inf
         near = mic_db > self.floor_db + self.floor_margin_db and mic_db > predicted + self.echo_margin_db
         self.last_near = near
+        self.voiced_frames += 1 if near else 0
         # Ce qui manque à la trame pour franchir la plus contraignante des deux
         # bornes : positif, elle est proche. Diagnostic seul.
         self.last_margin_db = min(
@@ -500,7 +535,16 @@ class CaptureProcessor:
         # prudente suffit, l'apprentissage fait le reste. Sans annuleur, l'écho
         # peut égaler ce qui est joué ; partir plus bas ferait prendre JARVIS
         # pour l'utilisateur dès la première phrase.
-        self.detector = detector or NearEndDetector(initial_coupling_db=-15.0 if canceller is not None else 5.0)
+        self.detector = detector or NearEndDetector(
+            initial_coupling_db=-15.0 if canceller is not None else 5.0,
+            # Barre du détecteur, réglable sans toucher au code (18/09/2026) :
+            # sur un poste où les haut-parleurs reviennent fort dans le micro,
+            # la monter de quelques dB suffit à ce que l'écho de JARVIS n'ouvre
+            # plus de candidat. Défauts inchangés.
+            floor_margin_db=_env_float("JARVIS_NEAR_END_FLOOR_MARGIN_DB", 12.0, minimum=0.0, maximum=60.0),
+            echo_margin_db=_env_float("JARVIS_NEAR_END_ECHO_MARGIN_DB", 10.0, minimum=0.0, maximum=60.0),
+            min_run_frames=max(1, round(_env_float("JARVIS_NEAR_END_MIN_RUN_MS", 60.0, minimum=10.0, maximum=1000.0) / FRAME_MS)),
+        )
         # Sans annuleur, le pré-roll est surtout de l'écho : on n'en garde que
         # le strict nécessaire pour ne pas couper la première syllabe.
         default_preroll = 400 if canceller is not None else 150
@@ -647,6 +691,28 @@ class CaptureProcessor:
     @property
     def far_recent(self) -> bool:
         return self.detector.far_recent
+
+    @property
+    def processed_frames(self) -> int:
+        """Trames de 10 ms intégrées par le détecteur depuis sa création.
+
+        Compteur monotone : figé, il dit que la capture ne tourne pas, et non
+        que l'utilisateur se tait.
+        """
+
+        return self.detector.frames
+
+    @property
+    def voiced_frames(self) -> int:
+        """Trames de 10 ms jugées « proches » depuis la création du détecteur.
+
+        Compteur monotone, lu depuis la boucle asyncio sans verrou (entier
+        écrit par le thread de capture) : le bridge en fait la différence entre
+        deux instants pour savoir si la voix locale a vraiment duré. Voir
+        `NearEndDetector.voiced_frames`.
+        """
+
+        return self.detector.voiced_frames
 
     def near_end_diagnostics(self) -> NearEndDiagnostics:
         """Niveaux de la dernière trame traitée, pour la trace du bridge.

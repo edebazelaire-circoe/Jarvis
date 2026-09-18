@@ -33,6 +33,7 @@ from jarvis.audio.speaker_shadow import OWNER_INPUT_DROPPED, SpeakerVerification
 from jarvis.domain.speaker import SpeakerVerification, VerificationStatus
 from jarvis.domain.v2 import VoiceLifecycleState
 from jarvis.runtime.realtime_audio import (
+    BARGE_IN_DUCK_GAIN,
     BARGE_IN_OWNER_CONFIRMED_KIND,
     OWNER_REPLAY_KIND,
     BargeInAuthority,
@@ -314,7 +315,7 @@ async def test_rolling_back_to_open_room_restores_the_previous_chain_byte_for_by
     assert with_verifier["forwarded"] == baseline["forwarded"]
     # Même chemin dans les deux cas : candidat sans duck, voix baissée à la
     # confirmation du fournisseur, rétablie après la coupure (parole soutenue).
-    assert with_verifier["gains"] == baseline["gains"] == [0.3, 1.0]
+    assert with_verifier["gains"] == baseline["gains"] == [BARGE_IN_DUCK_GAIN, 1.0]
     assert with_verifier["calls"] == baseline["calls"]
     assert with_verifier["kinds"] == baseline["kinds"]
     assert with_verifier["stops"] == baseline["stops"] == 1  # coupé sur la confirmation du fournisseur
