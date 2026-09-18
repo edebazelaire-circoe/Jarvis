@@ -3977,6 +3977,77 @@ refused, or crashed.
   `X-Content-Type-Options: nosniff`): artifacts are machine output, and some of them are
   logs a worker wrote.
 
+## Control Center panel
+
+The third surface, and the only one a person uses without a terminal: the **LAB** tool of
+the Control Center dock opens a full-screen Test Lab panel
+(`jarvis/runtime/control_center_testlab.js`, spliced into `control_center.html` at
+`/*__CONTROL_CENTER_TESTLAB_JS__*/`). It calls the routes above and nothing else.
+
+```text
+TEST LAB   [ accordé : … · budget … · appareils audio … · N exécutions ]   Actualiser  ×
+┌──────────────┬──────────────────────────────────────────────────────────┐
+│ Diagnostics  │  (suivi de l'exécution en cours + étape guidée)           │
+│  · filtre    ├──────────────────────────────────────────────────────────┤
+│  · une carte │  <titre du diagnostic, id, version, domaine>              │
+│    par       │  [ Préparer | Résultats | Comparer ]                      │
+│    diagnostic│  …                                                        │
+└──────────────┴──────────────────────────────────────────────────────────┘
+```
+
+| Onglet | Rend | Depuis |
+|---|---|---|
+| Préparer | une carte par profil : ce qu'il EXIGE, ce qu'il COÛTE, et ce qui l'empêche de tourner ici — avant le bouton ; les paramètres déclarés ; ce qui sera mesuré | `GET /diagnostics/{id}` + `GET /status` |
+| Résultats | la liste des exécutions du diagnostic, puis pour l'une d'elles le verdict, chaque assertion avec son seuil et sa mesure, les métriques avec leurs unités, le score, les artefacts en liens | `GET /runs?diagnostic_id=` puis `GET /runs/{id}` |
+| Comparer | écarts par métrique avec leur sens, changements d'assertion, et ce qui n'est PAS comparable avec la raison | `GET /compare?baseline=&candidate=` |
+
+Four properties are load bearing, and each is pinned by
+`tests/unit/test_control_center_testlab_js.py`:
+
+- **The panel renders, it never decides.** The verdict is `outcome.outcome`
+  (`RunOutcomeSummary`), the comparison is `RunComparison`, the reason a run could not be
+  measured is `run.failure.detail` — the sentence the worker wrote — with its stable code
+  beside it. No verdict, no threshold and no diagnosis is computed in JavaScript. The
+  comparison template renders a sweep summary's `points[].comparison_to_baseline`
+  unchanged, because that is the same document.
+- **The one derivation is the permission gate, and it is a replay, not a guess.**
+  `profileGate` runs exactly the arithmetic of `check_profile_permission` (missing
+  capabilities in vocabulary order, then the money budget, then the duration budget) over
+  `GET /diagnostics/{id}` and `GET /status`, and a test compares its answer to the Python
+  function's, case by case. A blocked profile names the environment switch that lifts it
+  (`JARVIS_TESTLAB_LIVE=1`, …). Device contention is shown as a WARNING and never blocks:
+  the supervisor probes the devices again when it reserves them, and it remains the
+  authority — the panel says so on the page.
+- **A guided step is never acknowledged without a human click.** `createPromptGate` is the
+  only path in the file to a `POST /runs/{id}/prompt`. It requires a trusted event
+  (`event.isTrusted`, which a scripted `element.click()` does not carry), an open prompt,
+  and a `run|prompt_id|sequence` key that has never been answered. Reading the server
+  (`observe`) returns a view model and has no access to the posting function at all, so a
+  poll that returns the same prompt twice, a re-render, a reconnect or a timer cannot
+  answer in a person's name. A send that fails re-arms the step, because the worker
+  received nothing and replaying the same `(prompt_id, sequence)` rewrites the same
+  acknowledgement file. **The gate is not exported.** `window.JarvisTestLab` hands out
+  `open`, `close`, `state` and a read-only `gateView()`; the gate object itself stays in
+  its closure, because `isTrusted` means nothing on an object typed at a console and an
+  exported gate would let any script in the page acknowledge a step in a person's name.
+  Queuing a run and cancelling one are deliberately NOT gated the same way: neither claims
+  that a human was present, and the guided step is the only claim the lab measures.
+- **An outcome this screen does not know reads as unknown, never as running.** `readOutcome`
+  falls back in the alarming direction, exactly as `outcome_of` does on the Python side
+  (an unmapped failure code reads `crashed`): a panel older than the server must not
+  report a finished run as still in flight. The raw value and the failure code stay on
+  screen so the run can still be identified.
+- **The deadline belongs to the run.** The countdown starts from the server's
+  `remaining_s` (computed from the worker's own `shown_at`) and ticks down locally between
+  polls so the line moves; it is clamped to `[0, deadline_s]` so the panel never promises
+  time the run will not wait. At zero it says the run decides the step and that nothing was
+  sent — and it does NOT disable the buttons. Two deadlines would eventually disagree.
+
+What the panel deliberately does not do: it never starts a sweep and never captures a
+bundle (both exist on the CLI), and it shows no per-step progress for a non-guided run —
+`TestRun` carries no step or progress field, so the honest answer is the status, the
+elapsed time and the open guided prompt when there is one.
+
 ## Validation
 
 ```powershell
@@ -4011,6 +4082,14 @@ exit codes, the documented command table) and the guided presenter against a fak
 
 ```powershell
 .venv/Scripts/python -m pytest -q -p no:cacheprovider tests/unit/test_testlab_composition.py tests/unit/test_testlab_cli.py tests/unit/test_testlab_presenter.py tests/unit/test_testlab_http.py
+```
+
+The Slice 11 panel: its pure rendering run by node against documents the Python domain
+built, the permission gate compared to `check_profile_permission`, and the rule that no
+acknowledgement leaves without a click:
+
+```powershell
+.venv/Scripts/python -m pytest -q -p no:cacheprovider tests/unit/test_control_center_testlab_js.py
 ```
 
 End to end, with real worker processes (one at a time, the cheap `selftest.worker`

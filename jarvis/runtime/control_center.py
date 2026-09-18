@@ -224,6 +224,11 @@ SCENE_SETTINGS_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_SETTINGS_JS__*/"
 #: node et branchement navigateur, insérés comme les scripts ci-dessus.
 TIMELINE_SCRIPT_FILE = "control_center_timeline.js"
 TIMELINE_SCRIPT_MARKER = "/*__CONTROL_CENTER_TIMELINE_JS__*/"
+#: Test Lab plein écran (Slice 11 de jarvis-category2-test-lab) : logique pure
+#: testée par node et branchement navigateur. Inséré APRÈS la chronologie, dont
+#: le bloc navigateur réutilise le client HTTP de la page.
+TESTLAB_SCRIPT_FILE = "control_center_testlab.js"
+TESTLAB_SCRIPT_MARKER = "/*__CONTROL_CENTER_TESTLAB_JS__*/"
 
 #: Architectures vocales proposées dans l'onglet « Mode vocal ». Comme le reste
 #: de l'écran, leur libellé vit ici et non dans la page. `{key}` est remplacé
@@ -740,6 +745,9 @@ class ControlCenter:
         )
         html = html.replace(
             TIMELINE_SCRIPT_MARKER, page.with_name(TIMELINE_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            TESTLAB_SCRIPT_MARKER, page.with_name(TESTLAB_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         if self.visualizer_url:
             html = html.replace("__VISUALIZER_URL__", self.visualizer_url)

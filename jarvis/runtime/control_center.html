@@ -232,9 +232,10 @@ pre.block{background:#050b10;border:1px solid rgba(113,144,160,.16);border-radiu
 
 /* ---------- Pastilles d'arrière-plan (interface principale) ----------
    Petits boutons ronds accolés au bouton Agents, hors de la barre d'outils :
-   une pastille par catégorie non vue. Dock de 5 outils (5×52 + 4×10 = 300 px,
-   centré) : la colonne commence juste sous le bouton Agents. */
-.bgpills{position:absolute;z-index:40;right:30px;top:calc(50% + 162px);display:flex;flex-direction:column;gap:8px}
+   une pastille par catégorie non vue. Dock de 6 outils (6×52 + 5×10 = 362 px,
+   centré, bas à 50% + 181 px) : la colonne commence 12 px sous le dernier
+   bouton. */
+.bgpills{position:absolute;z-index:40;right:30px;top:calc(50% + 193px);display:flex;flex-direction:column;gap:8px}
 .bgpill{--pill:var(--accent);position:relative;width:28px;height:28px;padding:0;border-radius:50%;display:grid;place-items:center;border:1px solid var(--pill);background:rgba(3,8,12,.86);color:var(--pill);font:700 11px ui-monospace,SFMono-Regular,Consolas,monospace;cursor:pointer;backdrop-filter:blur(12px);box-shadow:0 0 12px color-mix(in srgb,var(--pill) 35%,transparent);transition:transform .15s,background-color .15s}
 .bgpill.bad{--pill:var(--danger)}.bgpill.warn{--pill:var(--warn)}.bgpill.ok{--pill:var(--ok)}
 .bgpill:hover,.bgpill.active{transform:scale(1.12);background:color-mix(in srgb,var(--pill) 18%,#03080c)}
@@ -388,7 +389,7 @@ details.rd[open]>summary{margin-bottom:14px}
 .tl{--tl-user:#f4f7f9;--tl-mouth:#8fd0ff;--tl-brain:#ff9b45;--tl-sub:#ff5f5f;--tl-ruler:76px;--tl-lane:132px;
   position:fixed;inset:0;z-index:55;display:grid;grid-template-rows:auto auto minmax(0,1fr);
   background:rgba(2,6,10,.82);backdrop-filter:blur(16px) saturate(.85);-webkit-backdrop-filter:blur(16px) saturate(.85)}
-.tl .sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.tl .sr,.tlab .sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .tl-bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;padding:12px 18px;border-bottom:1px solid var(--line);background:rgba(4,9,13,.72)}
 .tl-title{display:flex;align-items:center;gap:9px;margin:0 6px 0 0;font-size:13px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;white-space:nowrap}
 .tl-title svg{width:17px;height:17px;color:var(--accent)}
@@ -574,6 +575,138 @@ details.rd[open]>summary{margin-bottom:14px}
   .tl-tick{right:4px;font-size:9.5px}
 }
 @media(prefers-reduced-motion:reduce){.tl-status .tl-led{animation:none}.tl-card,.tl-failure{transition:none}}
+
+/* ---------- Test Lab (plein écran) ----------
+   Diagnostics ciblés de la catégorie 2 : choisir un diagnostic, voir AVANT de
+   lancer ce que le profil exige et coûte, suivre l'exécution (invite guidée
+   comprise), lire la preuve, comparer deux exécutions. Aucun verdict n'est
+   calculé ici : l'écran affiche les documents du serveur (`docs/testlab.md`,
+   « Control Center panel »). Rendu et logique : control_center_testlab.js.
+
+   La coquille est celle de la chronologie (`.tl-bar`, `.tl-title`, `.tl-x`,
+   `.tl-notice`, `.tl-loading`, rang 55) et le contenu réutilise les idiomes de
+   la page (`.choice`, `.field`, `.notice`, `.chip`, `.tag`, `.kv`, `.empty`,
+   `.catalog-table`) : le Test Lab ajoute une mise en page, pas un second style. */
+.tlab{position:fixed;inset:0;z-index:55;display:grid;grid-template-rows:auto auto minmax(0,1fr);
+  background:rgba(2,6,10,.82);backdrop-filter:blur(16px) saturate(.85);-webkit-backdrop-filter:blur(16px) saturate(.85)}
+.tlab-env{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;flex:1 1 300px;min-width:0;font-size:11px}
+.tlab-env .chip{margin:0}
+.tlab-sub{display:block;margin-top:3px;font-size:10.5px;line-height:1.45;color:var(--muted);overflow-wrap:anywhere}
+/* La phrase que le serveur a écrite, citée : elle est en anglais comme ses
+   codes, et elle ne doit pas se lire comme la suite de la phrase française qui
+   l'introduit. C'est la preuve, pas un commentaire. */
+.tlab-quote{display:block;margin-top:5px;padding-left:9px;border-left:1px solid currentColor;font-style:italic;opacity:.92;overflow-wrap:anywhere}
+.tlab-bad{color:var(--danger)}
+.tlab-notice-bad{color:#f0c3c9;background:rgba(255,101,119,.07);border-bottom-color:rgba(255,101,119,.3)}
+.tlab-main{grid-row:3;display:grid;grid-template-columns:288px minmax(0,1fr);min-height:0}
+.tlab-side{display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--line);background:rgba(4,9,13,.55)}
+.tlab-search{display:block;padding:12px 14px 10px;border-bottom:1px solid var(--line)}
+.tlab-search input{width:100%;box-sizing:border-box;background:#071015;border:1px solid var(--line);color:var(--text);padding:8px 9px;border-radius:5px;font:inherit;font-size:12px}
+.tlab-search input:focus-visible,.tlab-item:focus-visible,.tlab-tabs button:focus-visible,.tlab-run-row:focus-visible,.tlab-compare-form select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.tlab-list{overflow:auto;min-height:0;padding:8px}
+.tlab-item{display:block;width:100%;margin-bottom:6px;padding:10px 11px;border:1px solid var(--line);border-left:2px solid transparent;border-radius:7px;background:#060d12;color:var(--text);font:inherit;text-align:left;cursor:pointer}
+.tlab-item:hover{border-color:rgba(110,231,255,.35);background:#08121a}
+.tlab-item.is-selected{border-color:var(--accent);border-left-color:var(--accent);background:rgba(110,231,255,.06)}
+.tlab-iname{display:block;font-size:13px;line-height:1.35;overflow-wrap:anywhere}
+.tlab-iprof{display:block;margin-top:6px}
+.tlab-iprof .chip{margin:0 4px 0 0}
+.tlab-right{display:grid;grid-template-rows:auto minmax(0,1fr);min-height:0}
+/* Suivi d'une exécution : hors de la zone qui défile, donc jamais perdu de vue
+   pendant qu'on lit la preuve — une invite guidée que l'on fait défiler hors de
+   l'écran est une étape que personne ne voit. */
+.tlab-live{padding:13px 22px;border-bottom:1px solid var(--line);background:rgba(4,9,13,.72);max-height:56vh;overflow:auto}
+.tlab-body{overflow:auto;min-height:0;padding:16px 22px 40px}
+.tlab-body>*{max-width:940px}
+.tlab-head h2{margin:0 0 6px;font-size:15px;letter-spacing:.02em}
+.tlab-head p{margin:0 0 4px}
+.tlab-tabs{display:flex;gap:6px;margin:16px 0 4px;padding-bottom:10px;border-bottom:1px solid var(--line)}
+.tlab-tabs button{border:1px solid var(--line);border-radius:16px;padding:7px 13px;background:#071015;color:var(--muted);font:inherit;font-size:12px;cursor:pointer}
+.tlab-tabs button[aria-selected=true]{border-color:var(--accent);color:var(--accent);background:rgba(110,231,255,.07)}
+.tlab-sect{margin:18px 0 0}
+.tlab-sect>h4{display:flex;align-items:center;gap:10px;margin:0 0 10px;font-size:10px;font-weight:normal;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.tlab-progress{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:12px;align-items:center;padding:11px 13px;border:1px solid var(--line);border-radius:9px;background:#060d12}
+.tlab-progress[data-tone=busy]{border-color:rgba(110,231,255,.4)}
+.tlab-progress[data-tone=ok]{border-color:rgba(104,224,160,.45)}
+.tlab-progress[data-tone=bad]{border-color:rgba(255,101,119,.45)}
+.tlab-progress[data-tone=warn]{border-color:rgba(255,184,92,.45)}
+.tlab-pmain{min-width:0}
+.tlab-led{width:9px;height:9px;border-radius:50%;background:var(--muted)}
+.tlab-progress[data-tone=busy] .tlab-led{background:var(--accent);animation:breathe 1.6s ease-in-out infinite}
+.tlab-progress[data-tone=ok] .tlab-led{background:var(--ok)}
+.tlab-progress[data-tone=bad] .tlab-led{background:var(--danger)}
+.tlab-progress[data-tone=warn] .tlab-led{background:var(--warn)}
+.tlab-elapsed{font-variant-numeric:tabular-nums;font-size:12px;color:#b9d0dc;white-space:nowrap}
+/* Étape guidée : la personne EST l'instrument. Elle doit voir d'un coup d'œil
+   quoi faire, quoi dire, combien de temps il reste et comment sortir. Le
+   compte à rebours n'est qu'un affichage : le délai appartient à l'exécution,
+   et les deux boutons restent actifs tant que l'invite est ouverte. */
+.tlab-step{margin-top:10px;padding:14px 16px;border:1px solid rgba(255,184,92,.45);border-radius:9px;background:rgba(255,184,92,.06)}
+.tlab-shead{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:13px}
+.tlab-shead .chip,.tlab-shead .tag{margin:0}
+.tlab-shead code{font-size:11px;color:var(--muted)}
+.tlab-stext{margin:10px 0 0;font-size:15px;line-height:1.5;color:#fff}
+.tlab-phrase{margin:9px 0 0;padding:9px 13px;border-left:2px solid var(--warn);background:rgba(0,0,0,.28);font-size:17px;line-height:1.4;color:#ffe2b8;overflow-wrap:anywhere}
+.tlab-count{display:flex;align-items:center;gap:10px;margin:12px 0 6px;font-size:12px;font-variant-numeric:tabular-nums}
+.tlab-gauge{flex:1 1 auto;height:6px;border-radius:3px;background:rgba(113,144,160,.22);overflow:hidden}
+/* La jauge se contracte par `transform` et non par `width` : le compte à
+   rebours est redessiné deux fois par seconde et ne doit rien faire remettre
+   en page. */
+.tlab-gauge span{display:block;width:100%;height:100%;background:var(--warn);transform-origin:left center;transition:transform .5s linear}
+.tlab-snote{margin:0 0 10px;min-height:16px;font-size:11.5px;line-height:1.5;color:#e4d3b8}
+/* Profils : ce que chacun exige à gauche, ce qu'il coûte à droite, et le refus
+   à sa place quand il ne peut pas tourner ici. */
+.tlab-profile .hint{margin-top:3px}
+.tlab-profile.tlab-blocked{opacity:.8}
+.tlab-req{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px 18px;margin-top:10px}
+.tlab-req ul{margin:3px 0 0;padding-left:16px;font-size:11.5px;line-height:1.6;color:#a9c5d2}
+.tlab-req code{font-size:10.5px;color:var(--muted)}
+.tlab-k{font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.tlab-profile .notice{margin:10px 0 0}
+.tlab-param{margin-bottom:14px}
+.tlab-launch{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-top:22px;padding-top:16px;border-top:1px solid var(--line)}
+/* Verdict : le mot d'abord, ce qu'il veut dire ensuite, les faits après. */
+.tlab-verdict{padding:13px 15px;border:1px solid var(--line);border-radius:9px;background:#060d12}
+.tlab-verdict[data-tone=ok]{border-color:rgba(104,224,160,.5);background:rgba(104,224,160,.05)}
+.tlab-verdict[data-tone=bad]{border-color:rgba(255,101,119,.5);background:rgba(255,101,119,.05)}
+.tlab-verdict[data-tone=warn]{border-color:rgba(255,184,92,.5);background:rgba(255,184,92,.05)}
+.tlab-verdict[data-tone=busy]{border-color:rgba(110,231,255,.45)}
+.tlab-verdict strong{display:block;font-size:19px;letter-spacing:.01em}
+.tlab-verdict>span{display:block;margin-top:4px;font-size:12.5px;line-height:1.55;color:#a9c5d2}
+.tlab-vmeta{display:flex;flex-wrap:wrap;gap:4px;margin-top:9px}
+.tlab-vmeta .chip{margin:0}
+.tlab-evidence .notice{margin:12px 0 0}
+.tlab-ehead{margin-bottom:12px}
+.tlab-ehead h3{margin:0;font-size:13px;letter-spacing:.06em}
+.tlab-num{font-variant-numeric:tabular-nums;white-space:nowrap}
+.tlab-none{color:var(--warn)}
+.tlab-artifacts{margin:0;padding:0;list-style:none;display:grid;gap:6px}
+.tlab-artifacts li{padding:8px 10px;border:1px solid rgba(113,144,160,.22);border-radius:6px;background:#050b10;font-size:12px}
+.tlab-artifacts a{color:var(--accent);word-break:break-all}
+.tlab-inputs{margin-top:16px}
+.tlab-loading{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)}
+.tlab-two{display:grid;grid-template-columns:minmax(0,306px) minmax(0,1fr);gap:20px;align-items:start}
+.tlab-runs{display:grid;gap:6px}
+.tlab-run-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:9px;align-items:center;width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:7px;background:#060d12;color:var(--text);font:inherit;text-align:left;cursor:pointer}
+.tlab-run-row:hover{border-color:rgba(110,231,255,.35)}
+.tlab-run-row.is-selected{border-color:var(--accent);background:rgba(110,231,255,.06)}
+.tlab-run-row .dot{margin-top:0}
+.tlab-rmain{min-width:0}
+.tlab-rid{font-size:12px}
+.tlab-rout{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
+.tlab-compare-form{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:12px;align-items:end;margin-bottom:16px}
+.tlab-compare-form .field{margin:0}
+.tlab-compare-form select{width:100%;background:#071015;border:1px solid var(--line);color:var(--text);padding:9px;border-radius:5px;font:inherit;font-size:12px}
+@media(max-width:1180px){.tlab-two{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:900px){
+  .tlab-main{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
+  .tlab-side{border-right:0;border-bottom:1px solid var(--line);max-height:32vh}
+  .tlab-body{padding:14px 14px 32px}
+  .tlab-live{padding:12px 14px;max-height:62vh}
+  .tlab-compare-form{grid-template-columns:minmax(0,1fr)}
+  .tlab-progress{grid-template-columns:auto minmax(0,1fr);row-gap:8px}
+  .tlab-elapsed,.tlab-progress .action{grid-column:2}
+}
+@media(prefers-reduced-motion:reduce){.tlab-progress[data-tone=busy] .tlab-led{animation:none}.tlab-gauge span{transition:none}}
 </style>
 </head>
 <body>
@@ -589,6 +722,7 @@ details.rd[open]>summary{margin-bottom:14px}
   <nav class="dock" aria-label="Jarvis tools">
     <div class="tool"><button data-panel="errors" title="Errors">ERR</button><span class="badge" id="errorBadge">0</span></div>
     <div class="tool"><button data-panel="trace" title="Trace">TRC</button></div>
+    <div class="tool"><button id="openTestLab" title="Test Lab · diagnostics ciblés" aria-label="Test Lab · diagnostics ciblés" aria-haspopup="dialog" aria-expanded="false" aria-controls="testlab">LAB</button></div>
     <div class="tool"><button id="openTimeline" title="Conversation · chronologie en direct" aria-label="Conversation · chronologie en direct" aria-haspopup="dialog" aria-expanded="false" aria-controls="timeline">CNV</button></div>
     <div class="tool"><button id="openSettings" title="Réglages">SET</button></div>
     <div class="tool"><button data-panel="agents" id="agentsButton" title="Agents">AGT</button><span class="badge count" id="agentBadge">0</span></div>
@@ -642,6 +776,39 @@ details.rd[open]>summary{margin-bottom:14px}
   </div>
   <p class="sr" id="tlHelp">Flèches haut et bas : entrée précédente ou suivante dans le temps. Flèches gauche et droite : lane voisine. Début et Fin : première et dernière entrée. Entrée : détail et trace. Échap : fermer le détail, puis la vue.</p>
   <div class="sr" id="tlAnnounce" aria-live="polite"></div>
+</section>
+
+<section class="tlab" id="testlab" role="dialog" aria-modal="true" aria-labelledby="tlabTitle" aria-describedby="tlabHelp" hidden>
+  <header class="tl-bar">
+    <h2 class="tl-title" id="tlabTitle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3h4M10.5 3v6.2L5.2 18a2 2 0 0 0 1.7 3h10.2a2 2 0 0 0 1.7-3l-5.3-8.8V3"/><path d="M8 15h8"/></svg><span class="tl-tt">Test Lab</span></h2>
+    <div class="tlab-env" id="tlabEnv"></div>
+    <button type="button" class="action small" id="tlabRefresh">Actualiser</button>
+    <button type="button" class="tl-x" id="tlabClose" aria-label="Fermer le Test Lab (Échap)">×</button>
+  </header>
+  <p class="tl-notice" id="tlabNotice" role="note" hidden></p>
+  <div class="tlab-main">
+    <nav class="tlab-side" aria-label="Diagnostics du Test Lab">
+      <label class="tlab-search"><span class="sr">Filtrer les diagnostics</span><input type="search" id="tlabFilter" placeholder="Filtrer les diagnostics" autocomplete="off"></label>
+      <div class="tlab-list" id="tlabList" role="listbox" aria-label="Diagnostics"></div>
+    </nav>
+    <div class="tlab-right">
+      <div class="tlab-live" id="tlabLive" hidden>
+        <div id="tlabRun"></div>
+        <div id="tlabPrompt" hidden></div>
+      </div>
+      <div class="tlab-body">
+        <header class="tlab-head" id="tlabHead"></header>
+        <div class="tlab-tabs" id="tlabTabs" role="tablist" aria-label="Vues du diagnostic" hidden>
+          <button type="button" role="tab" id="tlabTabPrepare" data-tab="prepare" aria-selected="true" aria-controls="tlabPane">Préparer</button>
+          <button type="button" role="tab" id="tlabTabRuns" data-tab="runs" aria-selected="false" aria-controls="tlabPane">Résultats</button>
+          <button type="button" role="tab" id="tlabTabCompare" data-tab="compare" aria-selected="false" aria-controls="tlabPane">Comparer</button>
+        </div>
+        <div class="tlab-pane" id="tlabPane" role="tabpanel" aria-labelledby="tlabTabPrepare"></div>
+      </div>
+    </div>
+  </div>
+  <p class="sr" id="tlabHelp">Choisissez un diagnostic à gauche, lisez ce que le profil exige et coûte, puis lancez. Échap ferme la vue. Une étape guidée n'est jamais confirmée sans votre clic.</p>
+  <div class="sr" id="tlabAnnounce" aria-live="polite"></div>
 </section>
 
 <div class="overlay" id="overlay">
@@ -910,6 +1077,8 @@ const STATUS={
 /*__CONTROL_CENTER_SCENE_SETTINGS_JS__*/
 /* Chronologie de conversation plein écran (Slice 05) : `control_center_timeline.js`. */
 /*__CONTROL_CENTER_TIMELINE_JS__*/
+/* Test Lab plein écran (Slice 11 de jarvis-category2-test-lab) : `control_center_testlab.js`. */
+/*__CONTROL_CENTER_TESTLAB_JS__*/
 // `error_class` normalisées par Core ou ses observateurs ; les autres restent brutes.
 const ERROR_CLASSES={process_stopped:'processus arrêté',producer_restarted:'Control Center redémarré',
   core_restarted:'Core redémarré',core_restarted_unobserved:'non revu après le redémarrage de Core',merged:'doublon fusionné',unknown_status:'statut inconnu',killed:'tué',stopped:'arrêté',cancelled:'annulé'};
@@ -3381,6 +3550,9 @@ window.addEventListener('keydown',event=>{
   // Chronologie plein écran ouverte : aucun raccourci de la page ne la traverse (Échap y est géré).
   const timeline=document.getElementById('timeline');
   if(timeline&&!timeline.hidden)return;
+  // Test Lab plein écran ouvert : même règle (Échap y est géré par son propre bloc).
+  const testlab=document.getElementById('testlab');
+  if(testlab&&!testlab.hidden)return;
   const values=(SET.shortcuts&&SET.shortcuts.values)||{};
   const signature=currentSignature(event);
   const match=Object.entries(values).find(([id,value])=>id.startsWith('ui_')&&value===signature);

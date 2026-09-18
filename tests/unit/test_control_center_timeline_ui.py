@@ -114,13 +114,27 @@ def test_every_element_the_browser_block_looks_up_exists():
         assert f'data-{selector}="subagent"' in html
 
 
-def test_the_omega_theme_knows_the_fifth_tool_and_moves_the_pills():
+def test_the_omega_theme_knows_every_dock_tool_and_moves_the_pills():
+    """Le thème Omega connaît CHAQUE outil du dock, et les pastilles passent sous lui.
+
+    Slice 11 du Test Lab : un sixième outil (`openTestLab`) a rejoint le dock. Un
+    outil que `setOmegaTools` ignore garde son libellé texte au milieu d'une rangée
+    d'icônes, et une rangée plus large recouvre les pastilles — donc les deux
+    constantes se recalculent ici plutôt que de se découvrir à l'écran.
+    """
     work = WORK.read_text(encoding="utf-8")
-    assert "['openTimeline','timeline',2]" in work and "[null,'errors',5]" in work
-    assert "timeline:`<svg ${common}>" in work
-    assert 'html[data-jarvis-theme="omega"] .bgpills{top:22px;right:222px;' in work
     html = PAGE.read_text(encoding="utf-8")
-    assert ".bgpills{position:absolute;z-index:40;right:30px;top:calc(50% + 162px);" in html
+    dock = html[html.index('<nav class="dock"') : html.index("</nav>")]
+    tools = re.findall(r"<button (?:id|data-panel)=\"([^\"]+)\"", dock)
+    assert len(tools) == 6, tools
+    for name in ("timeline", "testlab", "trace", "settings", "errors", "agents"):
+        assert f"{name}:`<svg ${{common}}>" in work or f"'{name}'," in work, name
+    assert "['openTimeline','timeline',2]" in work and "['openTestLab','testlab',3]" in work
+    assert "[null,'errors',6]" in work
+    # 6 × 34 px + 5 × 6 px = 234 px de rangée depuis right:18px, puis 10 px de marge.
+    assert 'html[data-jarvis-theme="omega"] .bgpills{top:22px;right:262px;' in work
+    # Dock vertical : 6 × 52 px + 5 × 10 px = 362 px, centré, plus 12 px de marge.
+    assert ".bgpills{position:absolute;z-index:40;right:30px;top:calc(50% + 193px);" in html
 
 
 def test_the_timeline_module_parses_with_node():

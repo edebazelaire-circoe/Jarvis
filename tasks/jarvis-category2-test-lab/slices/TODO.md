@@ -13,7 +13,7 @@ Start with `00-project-manager`; it is the readiness gate and is not delegated. 
 - [x] `08-audio-live-profiles` — Controlled audio and live-provider profiles
 - [x] `09-hardware-guided` — Hardware auto/guided profiles and resource gates
 - [x] `10-control-center-api-cli` — Native API, CLI, and Control Center HTTP surface
-- [ ] `11-control-center-ui` — Control Center Test Lab UI
+- [x] `11-control-center-ui` — Control Center Test Lab UI
 - [ ] `12-seed-diagnostics-rollout` — Seed diagnostics, end-to-end rollout, docs, and retention
 
 Do not dispatch any implementation Slice until Slice 00 declares `READY`.
