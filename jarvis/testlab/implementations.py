@@ -180,6 +180,10 @@ DEFAULT_IMPLEMENTATIONS: tuple[ImplementationEntry, ...] = (
              "Drives the stale/superseded speech scenario; Slice 06 registers it."),
     reserved("voice.queue_latency.virtual", ProfileName.VIRTUAL, RUNNER_NOT_REGISTERED,
              "Measures queue and speech-to-audio delays on virtual time; Slice 06 registers it."),
+    reserved("voice.self_echo.audio", ProfileName.AUDIO, RUNNER_NOT_REGISTERED,
+             "Self-echo over the real duplex capture and echo canceller; Slice 08 registers it."),
+    reserved("voice.queue_latency.live", ProfileName.LIVE, RUNNER_NOT_REGISTERED,
+             "Measures the real provider's own generation latency; Slice 08 registers it."),
 )
 
 

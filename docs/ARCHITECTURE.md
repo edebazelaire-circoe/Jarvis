@@ -1467,7 +1467,21 @@ compare as per-metric deltas with direction awareness, everything else being lis
 incomparable; and a parameter sweep fans isolated runs out over declared values under one sweep id,
 tolerating a failing point, cancellable as a whole, persisted as a replayable record plus a summary
 artifact — and it never writes a winning value into permanent settings, because the sweep reports
-and the human decides. The `audio`, `live` and `hardware` profiles come in later Slices of
+and the human decides. Two more profiles now exist. The `audio` profile
+(`jarvis/testlab/audio/`) is the virtual stack with the REAL duplex capture, the real WebRTC echo
+canceller and the real near-end detector put back, driven by a synthetic fixture injected through
+the production capture callback instead of a microphone: it opens no device and calls no provider,
+and it proves the one acoustic claim the virtual profile cannot — the gate stays closed on Jarvis's
+own echo and opens for a real near-end voice. The `live` profile (`jarvis/testlab/live/`) is the
+same chain with a REAL provider session, behind four mechanical gates (capability, declared budget,
+an explicit `JARVIS_TESTLAB_LIVE=1` opt-in checked in the supervisor's reservation path, and an API
+key in the worker), folding the provider's own `voice.realtime.usage` lines into a mid-run cost
+budget that aborts the session the moment the estimate crosses; it has never been run against a
+real provider. Before an audio DEVICE is ever reserved, the supervisor reads the live runtime's own
+voice heartbeat and state files and refuses unless they positively say the workstation Jarvis is
+not using them (READINESS B9) — fail-closed, so "unknown" refuses too, and a run that loses the
+devices mid-flight is stopped as inconclusive rather than sharing a microphone with a live
+conversation. The `hardware` profiles come in a later Slice of
 `tasks/jarvis-category2-test-lab/`.
 
 ## Sub-agent routing

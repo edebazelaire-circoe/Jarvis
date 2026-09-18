@@ -24,7 +24,7 @@ from jarvis.testlab.virtual.executor import HANDLED, HANDLERS, unhandled_virtual
 from jarvis.testlab.virtual.journal import TraceRecordingJournal, merged_timeline
 from jarvis.testlab.virtual.patching import PatchStack
 from jarvis.testlab.virtual.registry import VIRTUAL_RUNNERS, virtual_implementations
-from jarvis.testlab.virtual.runners import _latency_metrics, _payload_metrics, _supersession_metrics
+from jarvis.testlab.virtual.runners import latency_metrics, _payload_metrics, _supersession_metrics
 
 
 # ------------------------------------------------------------------ patch shim
@@ -79,10 +79,11 @@ def test_every_reserved_virtual_name_is_now_registered():
 def test_the_other_profiles_stay_reserved_until_their_slice():
     registry = catalog_implementations()
     reserved_names = sorted(name for name, entry in registry.entries.items() if entry.factory is None)
-    # `testlab.selftest.reserved` is the deliberate fixture reservation that keeps the
-    # `runner_unavailable` worker path testable now that every virtual name is registered.
-    assert reserved_names == ["testlab.scenario.audio", "testlab.scenario.hardware_auto",
-                              "testlab.scenario.hardware_guided", "testlab.scenario.live",
+    # Slice 08 registered the `audio` and `live` names, so only the two `hardware`
+    # profiles are still waiting for Slice 09. `testlab.selftest.reserved` is the
+    # deliberate fixture reservation that keeps the `runner_unavailable` worker path
+    # testable now that every other declared name is registered.
+    assert reserved_names == ["testlab.scenario.hardware_auto", "testlab.scenario.hardware_guided",
                               "testlab.selftest.reserved"]
 
 
@@ -341,7 +342,7 @@ def test_latency_measures_join_the_stages_of_each_speech(tmp_path):
     journal.emit("voice.speech.started", "", data={"speech_id": "s1"})
     journal.emit("voice.latency.provider_first_pcm", "", data={"speech_id": "s1"})
     journal.emit("voice.speech.completed", "", data={"speech_id": "s1"})
-    metrics = _latency_metrics(journal)
+    metrics = latency_metrics(journal)
     assert set(metrics) == {"speech.queue_free_to_started_ms", "speech.started_to_first_audio_ms",
                             "user_turn.end_to_first_audio_ms", "speech.delivered_count"}
     assert metrics["speech.delivered_count"] == 1
@@ -361,7 +362,7 @@ def test_latency_measures_omit_a_missing_join_instead_of_scoring_it_zero(tmp_pat
     journal.emit("voice.speech.queued", "", data={"speech_id": "s1"})
     journal.emit("voice.speech.started", "", data={"speech_id": "s1"})
     journal.emit("voice.speech.completed", "", data={"speech_id": "s1"})
-    metrics = _latency_metrics(journal)
+    metrics = latency_metrics(journal)
     assert "speech.started_to_first_audio_ms" not in metrics
     assert "user_turn.end_to_first_audio_ms" not in metrics
     assert metrics["speech.queue_free_to_started_ms"] >= 0  # this join did happen
@@ -383,7 +384,7 @@ def test_a_missing_latency_metric_makes_its_blocking_assertion_inconclusive(tmp_
     journal.emit("voice.speech.queued", "", data={"speech_id": "s1"})
     journal.emit("voice.speech.started", "", data={"speech_id": "s1"})
     journal.emit("voice.speech.completed", "", data={"speech_id": "s1"})
-    metrics = _latency_metrics(journal)
+    metrics = latency_metrics(journal)
     by_name = {metric.name: metric for metric in spec.metrics}
     results = [evaluate_assertion(item, by_name[item.metric], metrics.get(item.metric))
                for item in spec.assertions]
@@ -739,3 +740,54 @@ def test_a_well_typed_expect_assertion_still_reads_its_outcome():
     executor.check_measured_expectations({}, {"expectations_met": "passed"})
     assert executor.expectations_failed == 1
     assert "expected 'failed'" in executor.expectation_results[0].detail
+
+
+def test_a_profile_executor_may_add_a_primitive_but_never_redefine_one():
+    """Slice 08 rework: the add-only rule is ENFORCED, not a docstring convention.
+
+    A profile that quietly redefined, say, `provider.output_done` would change what a
+    shipped scenario means on that profile alone, and every stored run of it would be
+    incomparable with the others. It is a defect of ours, so it is NOT
+    `MeasurementUnavailable`: it reads `crashed`, not `inconclusive`.
+    """
+    from jarvis.testlab.runners import MeasurementUnavailable
+    from jarvis.testlab.validation import TestLabError
+    from jarvis.testlab.virtual.executor import (
+        HANDLERS,
+        VIRTUAL_PROFILE_HANDLER_INVALID,
+        VirtualExecutor,
+    )
+
+    class Shadowing(VirtualExecutor):
+        def handler_for(self, primitive: str):
+            if primitive == "provider.output_done":
+                return lambda executor, index, step: None
+            return super().handler_for(primitive)
+
+    class Adding(VirtualExecutor):
+        def handler_for(self, primitive: str):
+            if primitive == "audio.inject":
+                return lambda executor, index, step: None
+            return super().handler_for(primitive)
+
+    shadowing = Shadowing(stack=None, context=None, journal=None)
+    with pytest.raises(TestLabError) as caught:
+        shadowing.resolve_handler("provider.output_done")
+    assert caught.value.code == VIRTUAL_PROFILE_HANDLER_INVALID
+    assert "may add a primitive, never redefine one" in caught.value.detail
+    assert not isinstance(caught.value, MeasurementUnavailable), "a lab defect is crashed, not inconclusive"
+
+    adding = Adding(stack=None, context=None, journal=None)
+    assert adding.resolve_handler("audio.inject") is not None
+    assert adding.resolve_handler("provider.output_done") is HANDLERS["provider.output_done"]
+
+
+def test_the_audio_executor_passes_the_add_only_rule_for_every_shared_primitive():
+    """The shipped `audio` executor adds exactly one name and shadows none."""
+    from jarvis.testlab.audio.runners import AudioExecutor
+    from jarvis.testlab.virtual.executor import HANDLERS
+
+    executor = AudioExecutor(stack=None, context=None, journal=None)
+    for primitive in HANDLERS:
+        assert executor.resolve_handler(primitive) is HANDLERS[primitive], primitive
+    assert executor.resolve_handler("audio.inject") is not None

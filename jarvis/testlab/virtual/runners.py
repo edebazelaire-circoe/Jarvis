@@ -71,8 +71,14 @@ def _failed(detail: str) -> VirtualRunError:
 # --------------------------------------------------------------------- socle
 
 @asynccontextmanager
-async def virtual_voice_stack(context: RunContext):
+async def virtual_voice_stack(context: RunContext, *, capture_factory=None, audio_class=None,
+                              realtime_factory=None):
     """Mount the production voice path with the harness doubles, inside the run scratch.
+
+    The three keyword seams are what the `audio` and `live` profiles (Slice 08) change,
+    and nothing else: a real duplex capture instead of `VirtualEchoGuard`, an audio class
+    that injects a controlled stimulus into the production capture path, and a factory
+    that opens a REAL provider session. A `virtual` run passes none of them.
 
     The journals write `<runtime_dir>/trace.jsonl` with the live runtime's own kinds and
     ids, so a `DiagnosticBundle` captured over a run reads the evidence it reads from a
@@ -82,11 +88,12 @@ async def virtual_voice_stack(context: RunContext):
     patches = PatchStack()
     journal = TraceRecordingJournal(context.runtime_dir)
     core_journal = TraceRecordingJournal(context.runtime_dir)
-    guard = VirtualEchoGuard()
-    context.log(f"virtual stack: runtime={context.runtime_dir} data={context.data_root}")
+    capture = capture_factory if capture_factory is not None else (lambda: VirtualEchoGuard())
+    context.log(f"voice stack: runtime={context.runtime_dir} data={context.data_root} profile={context.profile.value}")
     try:
         async with voice_stack(context.data_root, patches, active_timeout_s=SESSION_IDLE_TIMEOUT_S,
-                               journal=journal, core_journal=core_journal, capture_factory=lambda: guard,
+                               journal=journal, core_journal=core_journal, capture_factory=capture,
+                               audio_class=audio_class, realtime_factory=realtime_factory,
                                session_id_factory=lambda index: f"{context.run_id}-s{index}") as stack:
             yield stack, journal, core_journal
     finally:
@@ -186,7 +193,8 @@ def _ms_between(start: TraceLine | None, end: TraceLine | None) -> int | None:
     return max(0, round((end.monotonic - start.monotonic) * 1000))
 
 
-def _speech_lines(journal: TraceRecordingJournal, kind: str, speech_id: str) -> list[TraceLine]:
+def speech_lines(journal: TraceRecordingJournal, kind: str, speech_id: str) -> list[TraceLine]:
+    """Journal lines of one kind for one speech. Public: the `live` profile measures on the same joins."""
     return [line for line in journal.lines(kind) if line.data.get("speech_id") == speech_id]
 
 
@@ -518,15 +526,15 @@ class QueueLatencyRunner:
                 context.check_cancelled()
                 request = await handle.say(f"point {index + 1} de la reponse du jour",
                                            kind=SpeechKind.RESULT, work_id="latency")
-                await wait_condition(context, lambda: bool(_speech_lines(journal, "voice.speech.started", request.id)),
+                await wait_condition(context, lambda: bool(speech_lines(journal, "voice.speech.started", request.id)),
                                      f"speech {index + 1} starting")
                 await self.play_first_audio(context, stack)
                 await stack.session.finish_output(status="completed", transcript=request.text)
                 await wait_condition(context,
-                                     lambda: bool(_speech_lines(journal, "voice.speech.completed", request.id)),
+                                     lambda: bool(speech_lines(journal, "voice.speech.completed", request.id)),
                                      f"speech {index + 1} completing")
             handle.finish(public_summary="")
-            metrics = _latency_metrics(journal)
+            metrics = latency_metrics(journal)
             context.log(f"latency: {metrics}")
             await close_session(context, stack)
         # After the teardown: the last lines of a run are written while Core stops, and an
@@ -544,7 +552,7 @@ class QueueLatencyRunner:
         await stack.session.play_audio(chunks=1)
 
 
-def _latency_metrics(journal: TraceRecordingJournal) -> dict[str, MetricValue]:
+def latency_metrics(journal: TraceRecordingJournal) -> dict[str, MetricValue]:
     """Per-speech stage joins, reported as the run's worst case.
 
     `queue_free_to_started` is measured from the later of the speech's own queueing and
@@ -569,16 +577,16 @@ def _latency_metrics(journal: TraceRecordingJournal) -> dict[str, MetricValue]:
     missing_audio = False
     for started in started_lines:
         speech_id = str(started.data.get("speech_id") or "")
-        queued = next(iter(_speech_lines(journal, "voice.speech.queued", speech_id)), None)
+        queued = next(iter(speech_lines(journal, "voice.speech.queued", speech_id)), None)
         free = max((line for line in (queued, previous_terminal) if line is not None),
                    key=lambda line: line.monotonic, default=None)
         queue_free = max(queue_free, _ms_between(free, started) or 0)
-        first_audio = next(iter(_speech_lines(journal, "voice.latency.provider_first_pcm", speech_id)), None)
+        first_audio = next(iter(speech_lines(journal, "voice.latency.provider_first_pcm", speech_id)), None)
         if first_audio is None:
             missing_audio = True
         else:
             started_to_audio = max(started_to_audio, _ms_between(started, first_audio) or 0)
-        completed = next(iter(_speech_lines(journal, "voice.speech.completed", speech_id)), None)
+        completed = next(iter(speech_lines(journal, "voice.speech.completed", speech_id)), None)
         if completed is not None:
             previous_terminal = completed
             if first_audio is not None:

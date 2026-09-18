@@ -41,6 +41,7 @@ from jarvis.testlab.jobs import (
     DATA_DIR_NAME,
     FAILURE_CATALOG_UNAVAILABLE,
     FAILURE_CANCELLED,
+    FAILURE_COST_BUDGET_EXCEEDED,
     FAILURE_ISOLATION_VIOLATION,
     FAILURE_JOB_INVALID,
     FAILURE_MEASUREMENT_UNAVAILABLE,
@@ -60,6 +61,7 @@ from jarvis.testlab.jobs import (
 )
 from jarvis.testlab.primitives import DEFAULT_PRIMITIVES, ScenarioContext, check_scenario
 from jarvis.testlab.runners import (
+    CostBudgetExceeded,
     MeasurementUnavailable,
     RunArtifacts,
     RunCancelled,
@@ -68,6 +70,7 @@ from jarvis.testlab.runners import (
     ScenarioExpectationUnmet,
 )
 from jarvis.testlab.runs import ArtifactRef
+from jarvis.testlab.store import ArtifactWriteLimits
 from jarvis.testlab.selftest import catalog_implementations
 from jarvis.testlab.validation import TestLabError, canonical_json, decode_json_document
 
@@ -240,6 +243,11 @@ def runner_failure_code(exc: BaseException) -> str:
     """
     if isinstance(exc, ScenarioExpectationUnmet):
         return FAILURE_SCENARIO_EXPECTATION_UNMET
+    if isinstance(exc, CostBudgetExceeded):
+        # Before the general `MeasurementUnavailable` branch it subclasses: "we stopped
+        # paying" and "the product could not be measured" are both inconclusive, and a
+        # reader must still be able to tell which one happened.
+        return FAILURE_COST_BUDGET_EXCEEDED
     if isinstance(exc, MeasurementUnavailable):
         return FAILURE_MEASUREMENT_UNAVAILABLE
     return FAILURE_RUNNER_FAILED
@@ -293,7 +301,11 @@ async def execute(job: WorkerJob, log: WorkerLog) -> WorkerResult:
             raise WorkerRefusal(FAILURE_RUNNER_UNAVAILABLE, f"scenario refused ({exc.code})") from exc
     # The runner gets the artifact-only facade, never this store: the record is the
     # supervisor's, and another run is none of its business.
-    store = FilesystemTestRunStore(Path(job.store_root))
+    # Audio artifacts are opt-in per RUN (Slice 08): the supervisor sets `allow_audio`
+    # only when the caller asked for it, the profile can produce audio and its own store
+    # allows it. Everything else about the limits is the store's default.
+    store = FilesystemTestRunStore(Path(job.store_root),
+                                   limits=ArtifactWriteLimits(allow_audio=job.allow_audio))
     loop = asyncio.get_running_loop()
     context = RunContext(
         run_id=job.run_id,

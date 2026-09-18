@@ -151,9 +151,10 @@ a caller authorizes; the default grant allows only free, capability-less work
 allowed, denials}` returns every denial at once, in this order: missing
 capabilities (vocabulary order, `capability_missing`), then
 `cost_budget_exceeded`, then `duration_budget_exceeded` (each with `required`
-and `granted`). It compares declarations only: checking that a device or
-provider is really available, and not held by the running voice process, is the
-runner's job (Slices 05, 08, 09).
+and `granted`). It compares declarations only. Checking that a device is really free, and not held
+by the running voice process, is the SUPERVISOR's job, in the reservation path
+(Slice 08, "Device contention"); a runner runs in a process that has already been
+spawned, and by then the microphone is a fraction of a second from being opened.
 
 ## Diagnostics
 
@@ -312,7 +313,7 @@ returns `ScenarioCheck {end_ms, primitives, supported_profiles, overrides}`.
 | `control.stop` | `reason` | – | all | The session is stopped (replay). |
 | `control.checkpoint` | `checkpoint_id` | – | all | The executor settles and records a named point (replay). |
 | `time.wait` | – | – | all | Virtual time advances to `at_ms` with no stimulus (timers, TTLs, queues). |
-| `audio.inject` | `audio_ref` | `gain_db` | audio, live, hw:auto, hw:guided | A known audio fixture, by reference, never bytes. Not a virtual primitive. |
+| `audio.inject` | `audio_ref` | `gain_db` | audio, live, hw:auto, hw:guided | A known audio fixture, by reference, never bytes, resolved inside the Slice 08 fixture root ("Audio profile"). Not a virtual primitive. |
 | `parameter.override` | `parameter`, `value` | – | all | Run-local value; prelude only (see below). |
 | `expect.event` | `event` | `count_min`, `count_max` | all | A Conversation Events type must appear `count_min` (default 1) to `count_max` times. |
 | `expect.metric` | `metric`, `comparator`, `threshold` | – | all | Ad-hoc check on a declared metric, evaluated on the final run metrics. |
@@ -558,6 +559,12 @@ registered their runners (Virtual profile), so all four are `available` and runn
 today. Slices 08, 09 and 12 add other profiles through a version bump, which keeps the
 earlier version in the history.
 
+Slice 08 registered `audio` and `live` runners and PROPOSED two version bumps, neither
+published: `voice.self_echo` v2 (adds the `audio` profile) and `voice.queue_latency` v2
+(adds the `live` profile). Both are rendered and validated in
+`tasks/jarvis-category2-test-lab/slices/08-audio-live-profiles/`; nothing about v1
+changes, and `catalog.lock.json` is untouched until a human publishes them.
+
 `speech.stale_supersession` is published at **v1 and v2**; every other seed is at v1. A
 request without an explicit version resolves to the latest, so a plain
 `RunRequest("speech.stale_supersession", VIRTUAL)` runs v2.
@@ -728,6 +735,14 @@ caller comparing runs excludes them rather than counting them as failures.
 `assertions_inconclusive`, and a test asserts that coverage. A code that is
 **not** in the table reads `crashed`, because an unmapped failure is one we did
 not foresee, and a run we cannot explain must never read as a measurement.
+
+Five Slice 08 codes join it too: `device_contention` and `live_opt_in_missing` are
+`refused` (nothing was started, and refusing is the point — the laptop microphone
+belongs to the live conversation), `device_contention_during_run` and
+`cost_budget_exceeded` are `inconclusive` (the run produced partial evidence and no
+verdict), and `supervisor_fault` is `crashed` (our own resource gate or supervision
+loop broke, which is a defect of ours and not a finding about the product). See
+"Device contention" and "Cost and budget".
 
 Two Slice 07 codes join the vocabulary, both `inconclusive`:
 
@@ -1353,6 +1368,12 @@ stored artifacts and deletions. A failing sink never fails a store operation
   `default_max_path_chars()` (259, or None when long paths are enabled or off
   Windows). The `\\?\` prefix is not used, because `replace_with_retry`,
   `shutil.rmtree` and the lock would all have to be proven with it.
+- **Audio is opt-in per RUN as well as per store (Slice 08).** `WorkerJob.allow_audio`
+  is set by the supervisor only when the caller asked
+  (`RunRequest.allow_audio_artifacts`), the profile can produce audio (`audio`,
+  `hardware:auto`, `hardware:guided`) AND its own store allows audio; the worker builds
+  its store from it. A job that claims `true` against a store built without audio is
+  still refused at write time. See "Audio artifacts".
 - `ArtifactWriteLimits {max_bytes_by_kind, allow_audio=False}`. Default caps:
   `config_snapshot` and `scenario` 1 MiB, `metrics` 4 MiB, `report` 16 MiB,
   `event_log`, `trace_excerpt` and `worker_log` 64 MiB, `audio_clip` 32 MiB.
@@ -1686,7 +1707,18 @@ profile declares nothing, so virtual runs never contend and only the
 `resource_wait_timeout` rather than waiting forever.
 
 `check_profile_permission` is the authorization gate and reservation is the
-contention gate: a run needs both.
+contention gate: a run needs both. Slice 08 adds two EXTERNAL gates in the same
+path, evaluated before the reservation is taken and before any worker is spawned: a
+run that needs an audio device is refused unless device-contention detection
+positively reports the devices free (`device_contention`), and a run that needs a
+provider is refused unless the explicit live opt-in is set in the supervisor's
+environment (`live_opt_in_missing`). Neither is a wait: no amount of queueing changes
+a live conversation or a missing flag, so both are refusals.
+
+A dispatch pass that raises is captured and emitted at `error`
+(`testlab.supervisor.dispatch_failed`, with the exception type and message) and the
+loop survives it. An unforeseen fault used to end the dispatcher task silently, and
+every queued run then waited forever with nothing in the log saying why.
 
 Queue-wait time accrues only while a run is genuinely blocked: no free slot, or
 a capability held. A run that never got a chance to be considered, because an
@@ -1806,6 +1838,10 @@ it. Retention stays disabled unless enabled explicitly.
 | `supervisor_stopped` | `cancelled` | The supervisor stopped while the run was queued or running |
 | `measurement_unavailable` | `errored` | Slice 07: the runner could not obtain a measurement the declaration needs (it raised `MeasurementUnavailable`) |
 | `scenario_expectation_unmet` | `errored` | Slice 07: an evaluable `expect.*` step disagreed in a diagnostic that cannot carry the count |
+| `device_contention` | `errored` | Slice 08: the audio devices are held, or their availability could not be established; nothing was started |
+| `device_contention_during_run` | `errored` | Slice 08: the live Jarvis took the devices back while the run was executing; the run was stopped |
+| `live_opt_in_missing` | `errored` | Slice 08: a provider run without the explicit `JARVIS_TESTLAB_LIVE=1`; nothing was called and nothing was spent |
+| `cost_budget_exceeded` | `errored` | Slice 08: the estimated provider spend crossed the run's budget mid-run and the session was stopped |
 
 Supervisor refusals raised to the caller use `testlab_supervisor_request_invalid`,
 `testlab_supervisor_stopped`, `testlab_supervisor_unknown_run` and
@@ -1942,7 +1978,8 @@ gate as evidence that Jarvis is audible *right now*.
 
 Every primitive the `virtual` profile declares has a handler, so
 `missing_handlers(DEFAULT_PRIMITIVES, VIRTUAL, HANDLED)` is empty (pinned by a
-test). `audio.inject` is acoustic and is not a virtual primitive; Slice 08 owns it.
+test). `audio.inject` is acoustic and is not a virtual primitive; Slice 08 owns it
+("Audio profile"), through `VirtualExecutor.handler_for`.
 
 | Primitive | What the virtual profile does |
 |---|---|
@@ -2150,10 +2187,14 @@ past the declared threshold each turn the corresponding blocking assertion `fail
 - **Acoustics.** No room, no speaker, no microphone, no real echo canceller. The
   virtual echo guard states whether Jarvis is the far end; whether a real AEC would
   have separated a real voice from real echo is the `audio` and `hardware` profiles'
-  question.
+  question. Slice 08 answered the first half: the `audio` profile runs the real
+  canceller and the real near-end detector over injected audio, and proves they keep
+  the gate closed on echo and open it for a real near-end voice. The room, the speaker
+  and the microphone are still `hardware:*`.
 - **Real provider timing.** `speech.started_to_first_audio_ms` measures the path from
   the speech start to the first PCM the bridge relayed. The provider's own generation
-  latency, its jitter and its cancel behaviour are the `live` profile's.
+  latency, its jitter and its cancel behaviour are the `live` profile's, which Slice 08
+  implements (`voice.queue_latency.live`) and which no one has yet run for real.
 - **Device contention and native failures.** The output stream consumes immediately
   and never fails unless a test asks it to. Real device ownership, the running
   Jarvis holding the laptop microphone, drains and underruns belong to
@@ -2194,6 +2235,374 @@ foreground chunk (see
 
 ```powershell
 .venv/Scripts/python -m pytest -q -p no:cacheprovider tests/integration/test_v2_async_conversation.py tests/integration/test_voice_replay_regressions.py tests/integration/test_voice_replay_safety_regressions.py
+```
+
+## Audio profile
+
+`jarvis/testlab/audio/`. The `audio` profile runs the **real local audio chain** over
+a controlled stimulus: the production writer, the production duplex capture
+(`jarvis/audio/duplex.py::CaptureProcessor`), the real WebRTC echo canceller
+(`jarvis/adapters/webrtc_echo.py`, when `livekit.rtc` is installed) and the real
+near-end detector, working on real samples. It opens **no device** and calls **no
+provider**, which is why it runs in an ordinary pytest chunk and why it declares no
+capability.
+
+It is the `virtual` profile with two substitutions and nothing else
+(`virtual_voice_stack(context, capture_factory=, audio_class=)`):
+
+| Piece | `virtual` | `audio` |
+|---|---|---|
+| Duplex capture | `VirtualEchoGuard` (states acoustic state, performs no acoustics) | `CaptureProcessor` + the real canceller |
+| Microphone | the harness's canned block | `InjectedSourceAudio.inject_block`, running the production callback body (`capture.process` then `_deliver_capture` then `_put_input`) |
+| Realtime session | `FakeRealtimeSession` | `FakeRealtimeSession` (unchanged: this profile needs no provider) |
+| Output stream | `ImmediateOutputStream` | `ImmediateOutputStream` (no PortAudio) |
+
+### Fixture root
+
+`audio.inject` finally has a home: `jarvis/testlab/fixtures/audio/`, resolved by
+`AudioFixtureRoot`. An `audio_ref` is a relative POSIX path inside that one root:
+
+- the Slice 02 artifact-path rule first (`check_artifact_path`, already applied to the
+  `audio_ref` argument by `jarvis.testlab.primitives`), so a scenario carrying `..`, a
+  drive, a backslash or a hidden segment is refused **when the scenario is checked**,
+  before a run exists (`testlab_primitive_args_invalid`, and the worker refuses the run);
+- then, at resolution time, every path component is checked for a symlink **or a
+  Windows junction** (`_fs.is_link`) and the resolved target must still be inside the
+  root, so a planted link cannot move the subtree out (`testlab_audio_fixture_unsafe`);
+- a ref naming nothing is `testlab_audio_fixture_unknown`, and a file that is not a
+  mono 16-bit PCM WAV is `testlab_audio_fixture_invalid` — never silently converted.
+  All three are `MeasurementUnavailable` when a run hits them, so the run reads
+  `inconclusive`.
+
+Shipped fixtures are **synthetic and reproducible**: `SHIPPED_FIXTURES` declares each
+one, `build_reference_clip` / `build_silence` generate it from its parameters, and
+`tests/unit/test_testlab_audio.py` regenerates both, compares bytes, and pins their
+sha256 — that test, not the repository's unenforced `MANIFEST.sha256`, is what holds
+these two binaries to their declaration. There is no recording of a human
+voice in the root, so an injected clip cannot leak one.
+
+| Fixture | Content |
+|---|---|
+| `reference-tone-1s.wav` | 1 s, 24 kHz mono PCM16: 220/440/880 Hz partials under a trapezoid envelope, peak about -12 dBFS |
+| `silence-500ms.wav` | 500 ms of digital silence, the control stimulus of a level or gate measurement |
+
+A clip at another rate is resampled to 24 kHz on load (`resample_pcm16`, linear
+interpolation, standard library only — `audioop` was removed in Python 3.13), and
+`gain_db` is applied with clipping, never wrapping.
+
+### What the run records
+
+Every audio run commits `audio_profile.json` (a bounded `report` artifact,
+`jarvis.testlab.profile_metadata` v1): profile, `sample_rate`, `output_sample_rate`,
+`input_block_ms`, `input_device`, `output_device`, `device_opened`, `duplex_engaged`,
+`aec_engaged`, `aec_unavailable_reason`, `canceller`, and one entry per `audio.inject`
+(ref, blocks, bytes, duration, gain, source rate, signals). Device ids are what the run
+**requested** (always `null` here, because nothing is opened), never an enumeration of
+the workstation's hardware: a device name is a fact about the user's machine.
+
+A report artifact rather than metrics, because these are facts about the run, not
+measurements of the product — and a manifest that had to declare them would need a new
+version every time a probe is added.
+
+### Registered implementations
+
+| Name | Runner | Measures |
+|---|---|---|
+| `voice.self_echo.audio` | `SelfEchoAudioRunner` | the four `voice.self_echo` metrics, with the gate computed by the real detector |
+| `testlab.scenario.audio` | `AudioScenarioRunner` | `scenario.steps_performed`, `.checkpoints_reached`, the two expectation metrics, `audio.injected_block_count`, `audio.injected_ms` |
+
+`AudioScenarioRunner` is `VirtualExecutor` plus one primitive: `audio.inject`, through
+the `handler_for` hook. A profile may **add** a handler, never replace one, or a shipped
+scenario would quietly mean something else — and `resolve_handler` ENFORCES that rather
+than asking politely: an executor returning anything but the shared handler for a
+primitive the shared table performs is refused with
+`testlab_virtual_profile_handler_invalid`, which reads `crashed` because it is a defect
+of ours, not a measurement. Widening the replay primitives
+(`provider.*`, `scheduler.*`, `owner.*`, `user.speech`) to `audio` is a deliberate
+**non-goal** of Slice 08: they drive doubles the `audio` profile still has, so widening
+them is defensible, but which of them should stay doubles on a real chain is a decision
+for the manifest that needs them, not a side effect of adding a runner.
+
+### What the audio profile can and cannot prove
+
+**Can prove.** That the production writer's reference (`push_reference` per played
+block), the production canceller and the near-end detector, on real samples, keep the
+echo gate closed while Jarvis is the far end — and open it for a real near-end voice.
+That is the acoustic discrimination the `virtual` profile explicitly cannot make. The
+two tests that prove it are the same run with one difference: injected audio that
+correlates with what Jarvis played (0 confirmed barge-ins, the run passes) versus a
+loud uncorrelated voice (1 confirmed, the blocking assertion fails).
+
+**Cannot prove.** No PortAudio stream is opened, so: no room, no speaker, no
+microphone, no clock drift, no underrun, no device contention and no native failure.
+The acoustic coupling is whatever the run states: `echo.coupling_db` is a DECLARED
+parameter of the diagnostic (float, -60..0 dB, default -12), so it can be overridden and
+swept like any other and is bounded by the declaration — it is not what a room would do. Those are `hardware:auto` and `hardware:guided` (Slice 09).
+Nor does it say anything about a provider: the Realtime session is still the
+deterministic double.
+
+**Without the canceller** (`livekit.rtc` absent, or `echo_cancellation=False`) the run
+still executes, with the production fallback (a more conservative initial coupling and
+a shorter pre-roll) — and `aec_engaged: false` plus `aec_unavailable_reason` are
+recorded, because a measurement taken without the AEC must never be read as a
+measurement of the AEC.
+
+## Live profile
+
+`jarvis/testlab/live/`. The `live` profile is the `audio` profile with **one** thing
+swapped: the deterministic Realtime double becomes a real provider session
+(`voice_stack(realtime_factory=)`). Writer, duplex capture and canceller are
+identical, so a difference between an `audio` run and a `live` run of the same
+diagnostic is a difference the **provider** made.
+
+### Four gates, all mechanical
+
+| Gate | Where | Refusal |
+|---|---|---|
+| Capability | `check_profile_permission` at `submit` | `permission_denied` (`capability_missing`), outcome `refused` |
+| Budget | the same gate: declared `max_cost_usd` against the grant's | `permission_denied` (`cost_budget_exceeded`), outcome `refused` |
+| Explicit opt-in | the supervisor's reservation path: `JARVIS_TESTLAB_LIVE=1` in its environment | `live_opt_in_missing`, outcome `refused` |
+| A key | the worker: `OPENAI_API_KEY` | `testlab_live_opt_in_missing`, outcome `inconclusive` |
+
+Nothing derives the opt-in and nothing defaults it on. The supervisor refuses the
+reservation **before a worker is spawned**, so a live run cannot happen because a test
+forgot a flag. Slice 05 already empties provider keys in a worker's environment unless
+the profile declares a provider capability, so a `virtual` or `audio` worker physically
+cannot reach a provider.
+
+Registering `voice.queue_latency.live` or `testlab.scenario.live` makes a diagnostic
+**runnable**, never **permitted**: availability is a property of the code, the four
+gates are properties of the request.
+
+### Registered implementations
+
+| Name | Runner | Measures |
+|---|---|---|
+| `voice.queue_latency.live` | `QueueLatencyLiveRunner` | the four `voice.queue_latency` metrics, with the real provider's own generation latency |
+| `testlab.scenario.live` | `LiveScenarioRunner` | the same set as `testlab.scenario.audio` |
+
+`QueueLatencyLiveRunner` reuses `latency_metrics`, the seed's own measurement function,
+so a `virtual` run and a `live` run of `voice.queue_latency` are computed by the same
+code on the same journal joins. The difference is that nothing in the live runner plays
+the audio or closes the output: the provider does both, and how long that takes is the
+measurement.
+
+`arm_session` is the documented double seam: a real provider session needs nothing
+there, and a test double receives the run's journal so it can emit the
+`voice.realtime.usage` lines a real session emits. Nothing in a real run overrides it.
+
+### What the live profile can and cannot prove
+
+**Can prove.** That the provider accepts this session shape, and what its real
+generation latency, jitter and terminal behaviour are —
+`speech.started_to_first_audio_ms` measured against a real session is the number the
+`virtual` profile explicitly cannot produce.
+
+**Cannot prove.** Nothing acoustic beyond what `audio` proves (still no device), and
+nothing repeatable: a provider's latency on the day is evidence about that day. A
+`live` run is a sample, not a regression gate, which is why no `live` profile belongs
+in a routine suite.
+
+**It has never been executed against a real provider.** Slice 08 implemented and tested
+it with doubles; the first real call is the human gate of Slices 09 and 12. The opt-in
+test that would make it is
+`tests/integration/test_testlab_live_runners.py::test_a_real_provider_session_measures_real_latency`.
+
+## Device contention
+
+`jarvis/testlab/devices.py`. READINESS B9: the workstation Jarvis owns the laptop
+microphone and speakers continuously (`continuous_brain`), so a Test Lab run that needs
+an audio device must detect that and **refuse** — never open the device, never
+interrupt a live conversation.
+
+### The mechanism
+
+Read-only evidence the live runtime already publishes in its runtime root
+(`jarvis/runtime/visual_signals.py`). Nothing in the Test Lab writes, resets or deletes
+any of it: the Control Center already resets the signal bus when it observes a stale
+heartbeat, and a second resetter would race it.
+
+| File | Read as |
+|---|---|
+| `.voice_heartbeat` | a float `time.time()` rewritten every second while Voice runs. Fresh (age at most 5 s, the Control Center's own `VOICE_HEARTBEAT_MAX_AGE_S`, pinned equal by a test) means **busy** |
+| `.voice_runtime` | `architecture` and `runtime_state`, quoted in the refusal so a human knows who holds the device |
+| `.voice_state` | `listening` / `speaking` / `thinking`, and recent (at most 60 s): **busy** even when the heartbeat is stale, because a crash mid-sentence leaves it behind |
+
+`LiveVoiceRuntimeProbe` returns `free`, `busy` or `unknown`;
+`DeviceContentionDetector` combines probes **fail-closed**: one `busy` decides, one
+`unknown` is enough to refuse, and only unanimous `free` frees. A probe that raises
+becomes `unknown`, so a broken probe makes the detector more careful, never less.
+`ContentionReport.available` is true for `free` alone: not knowing whether the user is
+talking to Jarvis is not a licence to take the microphone.
+
+The supervisor derives the runtime root from its `settings_path`
+(`control-center-settings.json` lives in the runtime root) and never from
+`JARVIS_RUNTIME_DIR` — a worker's environment points at its own scratch, and a
+supervisor that inherited one would probe an empty directory and cheerfully report the
+microphone free.
+
+### Where it is enforced
+
+In the **supervisor's reservation path** (`_start_ready`, then `_external_gate`), before
+`self._reserved |= capabilities` and before any worker is spawned. Not in a runner: by
+the time a runner runs, a process has been started and the microphone is a fraction of
+a second from being opened.
+
+| Situation | Failure code | Outcome |
+|---|---|---|
+| Devices held, or availability unknown, at reservation | `device_contention` | `refused` |
+| A second Test Lab supervisor holds the shared lease | `device_contention` | `refused` |
+| The live Jarvis appears WHILE a device run executes | `device_contention_during_run` | `inconclusive` |
+| The gate itself raises (an injected detector breaks) | `supervisor_fault` | `crashed` |
+
+**A gate that breaks refuses its run.** The detector is injected — Slice 10 composes
+one — so an exception there is code the supervisor does not own. Letting it escape left
+the run `queued` with no `blocked_since`, so `max_queue_wait_s` never applied and nothing
+would ever make it terminal; the same exception on the mid-run probe killed the
+`_execute` task with no diagnostic at any level and recorded `worker_result_invalid`, a
+supervisor fault blamed on the worker. Both are now wrapped, emit
+`testlab.run.gate_failed` / `testlab.run.supervision_failed` at `error`, and conclude the
+run `supervisor_fault` — `crashed`, because it is a defect of ours and not a finding
+about the product. A test asserts the invariant behind both: no submitted run can remain
+non-terminal after a gate or supervision fault.
+
+A run holding a device capability is re-probed every `device_probe_interval_s` (1 s)
+**from the moment the worker is spawned**, not from its first heartbeat, and stopped
+cooperatively the moment contention appears; the failure detail names what was seen. The
+startup window matters: the reservation is held while the worker starts, and on a loaded
+host that is up to `startup_timeout_s` (60 s by default) during which the live Jarvis
+could come back. The worker has opened nothing yet, so it is also the cheapest moment to
+give the devices back. A stop asked for during startup is ended by the cancel grace,
+because a worker that has not begun cannot read the cancel marker. A `live` run declares no device capability, so none of this applies to it, and the
+`audio` profile as proposed declares none either — the gate exists for the
+`hardware:auto` and `hardware:guided` profiles of Slice 09, and for any manifest that
+gives an `audio` profile a device capability.
+
+### The Test Lab device lease
+
+`DeviceLease` is an exclusive OS lock file (the `EntryLock` idiom), taken for the whole
+of a device run and released by the kernel if the supervisor dies. Its default path is
+`<work_root>/.device.lock`, where it only excludes a supervisor from itself — which
+reservation already does. It earns its place when **two work roots** (two worktrees of
+this repository) are pointed at one path: the second run is then refused instead of
+racing for the one laptop microphone. `RunSupervisor(device_lease_path=...)` sets it,
+and `None` disables it.
+
+It is **not** protection against the live Jarvis or the Control Center audio test:
+neither takes this lock, and the Control Center's own `_audio_test_lock` is an
+in-process `asyncio.Lock` that no other process can see. Teaching the live runtime to
+respect a shared lease is a change to `jarvis/runtime/` that Slice 08 may not make
+(other worktrees hold uncommitted work there), and it is the obvious follow-up.
+
+### Limits, stated plainly
+
+- **"We could not look" is never "free".** An ABSENT signal file is evidence — the live
+  runtime never wrote it. A signal file that is oversized (over `MAX_SIGNAL_BYTES`),
+  locked by another process, a directory in the file's place, or unreadable for any
+  other reason is the ABSENCE of evidence, and reads `unknown`, which refuses the run.
+  The two collapsed into one `None` until the Slice 08 rework, which was a fail-OPEN
+  hole in a fail-closed detector: a 100 KiB `.voice_heartbeat`, or one replaced by a
+  directory, reported the microphone free. A runtime directory that does not exist at
+  all is a configuration error and also reads `unknown`.
+- **False "busy".** A Voice process that is alive but whose device failed to open still
+  beats, and we refuse. Refusing a run we could have made is the safe direction.
+- **False "free".** A Voice process holding the device while its heartbeat loop is
+  wedged (the loop and the audio callback are different threads) looks free after 5 s.
+  So does a Jarvis writing to a different runtime root than the one the supervisor was
+  given. Neither can be closed without a change to the live runtime.
+- **Jarvis starting mid-run.** Nothing here prevents it. Re-probing bounds the overlap
+  to at most one poll interval and ends the run `inconclusive`; making it impossible
+  needs a lock the live runtime takes.
+- **Not an authority on the device itself.** The detector answers "is the live Jarvis
+  using the audio devices", not "can this device be opened". A third application
+  holding the microphone is invisible to it; only Slice 09's real open will find that,
+  and it must report it as `MeasurementUnavailable`.
+- **Rejected alternative: probing the Core port.** Binding `core_host:core_port` would
+  detect a running Jarvis Core, but Core can run with voice stopped, so it would refuse
+  runs that were perfectly safe. The heartbeat is the signal that means "voice".
+- **Rejected alternative: an exclusive device open.** It is authoritative, and it is
+  exactly what the Slice may not do: a successful exclusive open takes the device, and
+  a WASAPI shared-mode open succeeds even while Jarvis holds it, so a shared probe
+  proves nothing.
+
+## Cost and budget
+
+Three separate things, kept separate (`jarvis/testlab/live/cost.py`).
+
+**Usage is measured.** `UsageTotals` folds the `voice.realtime.usage` journal lines the
+Realtime session already emits (`input_tokens`, `output_tokens`, `duration_seconds`,
+`source`, plus the conversation and session ids). The provider reports **cumulative**
+session totals, so each update replaces the counters; adding them would multiply the
+bill by the number of updates and abort every run on its third line. A malformed
+payload contributes what it can and raises nothing.
+
+**Price is configuration.** There is no built-in price table and this Slice does not
+add one: prices change, and a stale hard-coded table is worse than none because it
+reads as authority. `CostModel.from_settings` parses the Control Center `live_pricing`
+setting through `jarvis/runtime/pricing.py` (`TokenPricingMetadata`, else
+`PricingMetadata`), so a Test Lab estimate uses the same arithmetic and the same
+provenance fields (source, effective date, schema version) the Live status surface
+uses. The run reads it from the **settings copy in its own scratch**
+(`<runtime_dir>/control-center-settings.json`), not from a diagnostic parameter: a
+price is configuration of the workstation, not an input of the experiment. Anything
+that does not parse leaves the model unpriced rather than guessing.
+
+**Budget is the declared bound.** `CostBounds.max_cost_usd` of the profile, already
+compared to the caller's `ResourceGrant` before the run is queued. `CostBudget` is the
+mid-run half: it recomputes the estimate on every usage update and raises
+`CostBudgetExceeded` the moment it crosses. That exception lives on the runner seam
+(`jarvis.testlab.runners`) and subclasses `MeasurementUnavailable`, with its own
+failure code `cost_budget_exceeded` reading `inconclusive`, so "we stopped paying" is
+never confused with "the product could not be measured" and never reads as a crash.
+
+**Without a price, the money bound is the time bound.** An unpriced model records
+`cost_usd: null` and `cost_basis: "unpriced"`, and the only thing bounding spend is the
+profile's `max_duration_s`, which the supervisor enforces by killing the worker. That
+is a real limit, stated here rather than papered over.
+
+Every live run commits `live_profile.json` (a bounded `report` artifact,
+`jarvis.testlab.provider_metadata` v1): `provider` (provider, `model_id`, `voice`,
+`config_fingerprint`, the provider's own `session_id`), `cost` (budget, estimate,
+basis, model id, folded usage) and `chain` (the same audio-chain facts an `audio` run
+records). No key, no transcript, no host path.
+
+## Audio artifacts
+
+An `audio_clip` is written only when **all three** hold: the caller asked
+(`RunRequest.allow_audio_artifacts`), the profile can produce one (`audio`,
+`hardware:auto`, `hardware:guided`) and the supervisor's own store was built with
+`ArtifactWriteLimits(allow_audio=True)`. The supervisor sets `WorkerJob.allow_audio`
+from those three, and the worker builds its store with it; a job that claims `true`
+against a store built without audio is still refused at write time, which is the point
+of having the limit on the store as well.
+
+`store_clip` turns a refusal into a logged fact instead of a failed run: losing the
+optional evidence must not lose the measurement. Caps are the Slice 02 ones (32 MiB per
+clip, retention `max_bytes_by_kind` 256 MiB), and the paths stay far inside the
+171-character artifact budget (`capture.wav`, `audio_profile.json`,
+`live_profile.json`).
+
+### Validation
+
+```powershell
+.venv/Scripts/python -m pytest -q -p no:cacheprovider tests/unit/test_testlab_devices.py tests/unit/test_testlab_audio.py
+.venv/Scripts/python -m pytest -q -p no:cacheprovider tests/integration/test_testlab_audio_runners.py tests/integration/test_testlab_live_runners.py
+```
+
+Opt-in, never in the default suite. Each switch is a deliberate act:
+
+```powershell
+# enumerate the real devices and run the contention detector against the live runtime root
+$env:JARVIS_TESTLAB_AUDIO = "1"
+.venv/Scripts/python -m pytest -q -p no:cacheprovider tests/integration/test_testlab_audio_devices.py
+
+# additionally open the real microphone and speaker for two seconds. A SECOND switch, and
+# the test skips rather than running unless the detector says the devices are free.
+$env:JARVIS_TESTLAB_AUDIO_PLAYBACK = "1"
+
+# a REAL, PAID provider session
+$env:JARVIS_TESTLAB_LIVE = "1"
+.venv/Scripts/python -m pytest -q -p no:cacheprovider tests/integration/test_testlab_live_runners.py
 ```
 
 ## DiagnosticBundle

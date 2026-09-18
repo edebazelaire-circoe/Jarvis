@@ -164,11 +164,21 @@ def catalog_implementations() -> ImplementationRegistry:
     One definition for both sides: a worker must resolve exactly the names its
     supervisor resolved, or a run could be queued against a declaration the worker
     reads differently. It is the declared catalog, with the reserved names a Slice
-    has implemented turned into registrations (Slice 06: the five `virtual` names),
-    plus the fixture names. The fixture names are always present and always harmless:
-    only a manifest can reference one, and official manifests are locked.
+    has implemented turned into registrations (Slice 06: the five `virtual` names;
+    Slice 08: two `audio` and two `live` names), plus the fixture names. The fixture
+    names are always present and always harmless: only a manifest can reference one,
+    and official manifests are locked.
+
+    Registering an `audio` or `live` name makes it RUNNABLE, never PERMITTED: the
+    capability gate, the cost budget, device-contention detection and the live opt-in
+    all live in the supervisor's reservation path, and none of them is affected here.
     """
-    return default_implementations().registering(virtual_implementations()).with_entries(selftest_implementations())
+    from jarvis.testlab.audio.registry import audio_implementations
+    from jarvis.testlab.live.registry import live_implementations
+
+    return (default_implementations()
+            .registering((*virtual_implementations(), *audio_implementations(), *live_implementations()))
+            .with_entries(selftest_implementations()))
 
 
 def selftest_spec(*, max_duration_s: float = 60.0, implementation: str = SELFTEST_IMPLEMENTATION) -> DiagnosticSpec:

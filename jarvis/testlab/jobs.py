@@ -123,6 +123,24 @@ FAILURE_MEASUREMENT_UNAVAILABLE = "measurement_unavailable"
 #: no metric able to carry it. The authored situation did not materialise, so the run is
 #: not the experiment that was asked for; also `inconclusive`.
 FAILURE_SCENARIO_EXPECTATION_UNMET = "scenario_expectation_unmet"
+#: Slice 08 (READINESS B9): the workstation's audio devices are held, or their
+#: availability could not be established, so the run was never started. The Test Lab
+#: refuses rather than taking a device the live Jarvis may be using — `refused`.
+FAILURE_DEVICE_CONTENTION = "device_contention"
+#: Slice 08: contention appeared WHILE a device run was executing (the live Jarvis
+#: started). The run is stopped; what it measured happened next to another user of the
+#: device, so it is `inconclusive`, never a verdict.
+FAILURE_DEVICE_CONTENTION_DURING_RUN = "device_contention_during_run"
+#: Slice 08: a `live` run was submitted without the explicit `JARVIS_TESTLAB_LIVE=1`
+#: opt-in. Nothing was called and nothing was spent — `refused`.
+FAILURE_LIVE_OPT_IN_MISSING = "live_opt_in_missing"
+#: Slice 08: the estimated provider spend crossed the run's budget mid-run and the
+#: session was stopped. Partial measurements, no verdict — `inconclusive`.
+FAILURE_COST_BUDGET_EXCEEDED = "cost_budget_exceeded"
+#: Slice 08: the SUPERVISOR broke around this run — an injected resource gate or the
+#: supervision loop raised. Never the worker's fault, so never the worker's code, and
+#: it reads `crashed` because it is a defect of ours, not a finding about the product.
+FAILURE_SUPERVISOR_FAULT = "supervisor_fault"
 
 FAILURE_CODES = frozenset({
     FAILURE_PERMISSION_DENIED, FAILURE_RESOURCE_WAIT_TIMEOUT, FAILURE_WORKER_SPAWN_FAILED,
@@ -132,6 +150,8 @@ FAILURE_CODES = frozenset({
     FAILURE_RESULT_INVALID, FAILURE_RESULT_CONTRADICTS_SPEC, FAILURE_JOB_INVALID, FAILURE_ISOLATION_VIOLATION,
     FAILURE_CATALOG_UNAVAILABLE, FAILURE_RUNNER_UNAVAILABLE, FAILURE_RUNNER_FAILED, FAILURE_SUPERVISOR_STOPPED,
     FAILURE_MEASUREMENT_UNAVAILABLE, FAILURE_SCENARIO_EXPECTATION_UNMET,
+    FAILURE_DEVICE_CONTENTION, FAILURE_DEVICE_CONTENTION_DURING_RUN, FAILURE_LIVE_OPT_IN_MISSING,
+    FAILURE_COST_BUDGET_EXCEEDED, FAILURE_SUPERVISOR_FAULT,
 })
 
 
@@ -172,6 +192,12 @@ class WorkerJob:
     #: Wall-clock budget of the run itself, from the profile's declared `max_duration_s`.
     max_duration_s: float = 60.0
     heartbeat_interval_s: float = 2.0
+    #: Slice 08: may this run's store write `audio_clip` artifacts? The supervisor sets
+    #: it only when the caller asked, the profile can produce audio AND its own store
+    #: allows audio; the worker builds `ArtifactWriteLimits(allow_audio=...)` from it.
+    #: A job that says True against a store built without audio still gets a refusal at
+    #: write time, which is the point of having the limit on the store as well.
+    allow_audio: bool = False
     schema_version: int = TESTLAB_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -192,6 +218,8 @@ class WorkerJob:
             raise fail("job.scenario must be a Scenario or null")
         check_number(self.max_duration_s, "job.max_duration_s", minimum=0.001, maximum=24 * 60 * 60)
         check_number(self.heartbeat_interval_s, "job.heartbeat_interval_s", minimum=0.01, maximum=60)
+        if type(self.allow_audio) is not bool:
+            raise fail("job.allow_audio must be a boolean")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -211,6 +239,7 @@ class WorkerJob:
             "scenario": None if self.scenario is None else self.scenario.to_dict(),
             "max_duration_s": self.max_duration_s,
             "heartbeat_interval_s": self.heartbeat_interval_s,
+            "allow_audio": self.allow_audio,
         }
 
     @classmethod
@@ -235,13 +264,14 @@ class WorkerJob:
             scenario=scenario,
             max_duration_s=data["max_duration_s"],
             heartbeat_interval_s=data["heartbeat_interval_s"],
+            allow_audio=data["allow_audio"],
         )
 
 
 _JOB_FIELDS = frozenset({
     "schema", "schema_version", "run_id", "diagnostic_id", "diagnostic_version", "diagnostic_fingerprint",
     "profile", "implementation", "store_root", "scratch_root", "catalog_root", "parameters", "overrides",
-    "scenario", "max_duration_s", "heartbeat_interval_s",
+    "scenario", "max_duration_s", "heartbeat_interval_s", "allow_audio",
 })
 
 

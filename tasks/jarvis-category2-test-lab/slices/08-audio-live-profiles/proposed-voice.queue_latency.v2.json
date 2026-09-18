@@ -1,0 +1,128 @@
+{
+  "schema": "jarvis.testlab.manifest",
+  "schema_version": 1,
+  "diagnostic": {
+    "schema": "jarvis.testlab.diagnostic",
+    "schema_version": 1,
+    "diagnostic_id": "voice.queue_latency",
+    "version": 2,
+    "title": "Speech queueing and time to first audio",
+    "domain": "voice",
+    "description": "Virtual time measures the scheduler's own delays, never provider or device latency.",
+    "profiles": [
+      {
+        "name": "virtual",
+        "implementation": "voice.queue_latency.virtual",
+        "requires": [],
+        "cost": {
+          "max_duration_s": 120,
+          "max_cost_usd": 0
+        }
+      },
+      {
+        "name": "live",
+        "implementation": "voice.queue_latency.live",
+        "requires": [
+          "realtime_provider"
+        ],
+        "cost": {
+          "max_duration_s": 600,
+          "max_cost_usd": 0.5
+        }
+      }
+    ],
+    "parameters": [
+      {
+        "name": "speech.request_count",
+        "type": "int",
+        "default": 4,
+        "minimum": 1,
+        "maximum": 32,
+        "choices": [],
+        "max_length": null,
+        "description": "Speeches requested in the scenario."
+      },
+      {
+        "name": "brain.result_delay_ms",
+        "type": "int",
+        "default": 1500,
+        "minimum": 0,
+        "maximum": 60000,
+        "choices": [],
+        "max_length": null,
+        "description": "Scripted brain thinking time before each result."
+      }
+    ],
+    "metrics": [
+      {
+        "name": "speech.queue_free_to_started_ms",
+        "unit": "ms",
+        "direction": "lower_better",
+        "description": "From the moment the queue and the floor are free to the speech start."
+      },
+      {
+        "name": "speech.started_to_first_audio_ms",
+        "unit": "ms",
+        "direction": "lower_better",
+        "description": "From the speech start to its first audio."
+      },
+      {
+        "name": "user_turn.end_to_first_audio_ms",
+        "unit": "ms",
+        "direction": "lower_better",
+        "description": "From the end of the user turn to Jarvis's first audio (includes brain time)."
+      },
+      {
+        "name": "speech.delivered_count",
+        "unit": "count",
+        "direction": "neutral",
+        "description": "Speeches delivered during the run."
+      }
+    ],
+    "assertions": [
+      {
+        "assertion_id": "queue_free_to_started",
+        "metric": "speech.queue_free_to_started_ms",
+        "comparator": "le",
+        "threshold": 3000,
+        "blocking": true,
+        "description": "A free queue starts the next speech promptly (bundle rule threshold)."
+      },
+      {
+        "assertion_id": "started_to_first_audio",
+        "metric": "speech.started_to_first_audio_ms",
+        "comparator": "le",
+        "threshold": 4000,
+        "blocking": true,
+        "description": "A started speech becomes audible promptly (bundle rule threshold)."
+      },
+      {
+        "assertion_id": "turn_to_first_audio",
+        "metric": "user_turn.end_to_first_audio_ms",
+        "comparator": "le",
+        "threshold": 8000,
+        "blocking": false,
+        "description": "End-to-end reaction, dominated by brain time; informational, never a verdict of this diagnostic."
+      }
+    ],
+    "score": {
+      "method": "weighted_mean",
+      "components": [
+        {
+          "metric": "speech.queue_free_to_started_ms",
+          "weight": 1,
+          "best": 100,
+          "worst": 3000
+        },
+        {
+          "metric": "speech.started_to_first_audio_ms",
+          "weight": 1,
+          "best": 200,
+          "worst": 4000
+        }
+      ]
+    }
+  },
+  "override_allowlist": [],
+  "scenario": null
+}

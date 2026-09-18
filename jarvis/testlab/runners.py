@@ -103,6 +103,20 @@ class MeasurementUnavailable(TestLabError):
     """
 
 
+class CostBudgetExceeded(MeasurementUnavailable):
+    """The run's estimated provider spend crossed the budget it was granted, mid-run.
+
+    A `MeasurementUnavailable` because the run stopped before it finished measuring,
+    with its own failure code (`cost_budget_exceeded`) so "we stopped paying" is never
+    confused with "the product could not be measured". The runner raises it, stops the
+    session and lets it propagate; the supervisor records the partial evidence.
+
+    The declared bound itself is checked BEFORE the run is queued, by
+    `check_profile_permission` against the caller's `ResourceGrant`. This is the
+    second gate, for the case the estimate turns out higher than the declaration.
+    """
+
+
 class ScenarioExpectationUnmet(TestLabError):
     """An evaluable `expect.*` step disagreed, in a diagnostic that cannot carry it as a metric.
 

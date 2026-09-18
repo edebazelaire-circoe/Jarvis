@@ -232,7 +232,8 @@ async def _code():
 
 def build(tmp_path: Path, *, policy: SupervisorPolicy = FAST, launcher=None, catalog=None,
           settings_path: Path | None = None, sink=None, max_duration_s: float = 60.0,
-          override_allowlist: tuple[ParameterSpec, ...] = (), clock_offset_ms: int = 0):
+          override_allowlist: tuple[ParameterSpec, ...] = (), clock_offset_ms: int = 0,
+          base_environ: dict[str, str] | None = None):
     catalog_root = write_selftest_catalog(tmp_path / "catalog", max_duration_s=max_duration_s,
                                           override_allowlist=override_allowlist)
     store = FilesystemTestRunStore(tmp_path / "store")
@@ -240,7 +241,8 @@ def build(tmp_path: Path, *, policy: SupervisorPolicy = FAST, launcher=None, cat
     supervisor = RunSupervisor(store=store, work_root=tmp_path / "work", catalog_root=catalog_root,
                                catalog=catalog, policy=policy, launcher=launcher, settings_path=settings_path,
                                diagnostics=sink, clock=_clock(clock_offset_ms), nonce=_nonce(), code_probe=_code,
-                               environment={"os": "windows", "python_version": "3.14.6"})
+                               environment={"os": "windows", "python_version": "3.14.6"},
+                               base_environ=base_environ)
     return supervisor, store, launcher
 
 
@@ -417,6 +419,12 @@ async def test_cancel_of_an_unknown_run_says_so(tmp_path):
 
 # -------------------------------------------------------------- resources
 
+#: Slice 08: a provider reservation now also needs the explicit live opt-in. These two
+#: tests are about RESERVATION, so they carry it; the opt-in itself is tested in
+#: `tests/unit/test_testlab_devices.py`.
+LIVE_ENVIRON = {"JARVIS_TESTLAB_LIVE": "1", "OPENAI_API_KEY": "test-key"}
+
+
 def _live_catalog() -> Catalog:
     """A catalog whose only profile is `live`, so its runs declare a provider capability."""
     base = selftest_manifest()
@@ -432,7 +440,8 @@ def _live_catalog() -> Catalog:
 async def test_two_runs_never_hold_the_same_declared_resource(tmp_path):
     sink = RecordingSink()
     supervisor, _, launcher = build(tmp_path, catalog=_live_catalog(), launcher=FakeLauncher("hang"),
-                                    policy=_with(FAST, max_concurrent_runs=4), sink=sink)
+                                    policy=_with(FAST, max_concurrent_runs=4), sink=sink,
+                                    base_environ=LIVE_ENVIRON)
     grant = ResourceGrant(frozenset({Capability.REALTIME_PROVIDER}), max_cost_usd=1)
     async with supervisor:
         first = await supervisor.submit(request(profile=ProfileName.LIVE, grant=grant))
@@ -481,7 +490,7 @@ async def test_a_run_that_waits_too_long_for_a_resource_is_refused(tmp_path):
 
 
 async def test_a_denied_grant_is_persisted_and_never_started(tmp_path):
-    supervisor, _, launcher = build(tmp_path, catalog=_live_catalog())
+    supervisor, _, launcher = build(tmp_path, catalog=_live_catalog(), base_environ=LIVE_ENVIRON)
     async with supervisor:
         run_id = await supervisor.submit(request(profile=ProfileName.LIVE))
         run = await supervisor.status(run_id)

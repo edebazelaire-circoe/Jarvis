@@ -417,12 +417,18 @@ class FakeRealtimeSession:
     async def push(self, message_type: str, **payload: object) -> None:
         await self.inbox.put(ProtocolEnvelope(message_type=message_type, payload=payload))
 
-    async def play_audio(self, *, chunks: int = 1) -> None:
-        """Play `chunks` blocks of 100 ms for the open output."""
+    async def play_audio(self, *, chunks: int = 1, pcm: bytes | None = None) -> None:
+        """Play `chunks` blocks of 100 ms for the open output, or exactly `pcm`.
+
+        `pcm` (Slice 08) lets the `audio` profile play a REAL signal: the canned
+        block is amplitude 1, about -90 dBFS, which a real echo canceller and a
+        real near-end detector correctly read as silence — so a diagnostic that
+        needs Jarvis to be audibly the far end must supply its own samples.
+        """
 
         await self.push(
             "realtime.audio",
-            pcm_b64=audio_chunk_b64(chunks),
+            pcm_b64=base64.b64encode(pcm).decode() if pcm is not None else audio_chunk_b64(chunks),
             output_id=self.active_output_id,
             speech_id=self.active_speech_id,
             item_id=f"{self.active_output_id}-item",
@@ -870,6 +876,8 @@ async def voice_stack(
     core_journal: RecordingJournal | None = None,
     session_id_factory=None,
     capture_factory=None,
+    audio_class=None,
+    realtime_factory=None,
 ):
     """Mount the whole stack, wake it, then tear everything down cleanly.
 
@@ -885,6 +893,16 @@ async def voice_stack(
     means "no echo guard" - the bridge then takes the provider's VAD at its word. The
     `virtual` profile passes `VirtualEchoGuard`.
 
+    `audio_class`: the class mounted in place of `SoundDeviceRealtimeAudio`. `None`
+    means `FakeAudio` (no PortAudio stream, production writer). The `audio` and `live`
+    profiles pass a subclass that adds an injected capture source, so the production
+    duplex path runs over a controlled stimulus instead of a microphone.
+
+    `realtime_factory(context)`: the Realtime session factory. `None` means the
+    deterministic `FakeRealtimeSession`; the `live` profile passes one that opens a
+    REAL provider session, which is the only difference between the two profiles at
+    this seam.
+
     `journal` / `core_journal`: the observability sinks of the voice and of Core. Two
     in-memory `RecordingJournal`s by default; the `virtual` profile passes a journal
     that also writes `trace.jsonl`, so a DiagnosticBundle can be captured over the run.
@@ -897,7 +915,7 @@ async def voice_stack(
     import jarvis.runtime.realtime_audio as realtime_audio
 
     FakeAudio.instances.clear()
-    patches.setattr(realtime_audio, "SoundDeviceRealtimeAudio", FakeAudio)
+    patches.setattr(realtime_audio, "SoundDeviceRealtimeAudio", audio_class if audio_class is not None else FakeAudio)
     patches.setattr(SpeechScheduler, "RECONNECT_DELAY_S", FAST_RECONNECT_DELAY_S)
     patches.setattr(protocol_server.web, "AppRunner", FastShutdownRunner)
 
@@ -917,11 +935,13 @@ async def voice_stack(
     recorder = CoreEventRecorder(core)
 
     async def factory(context):
-        del context
         index = len(sessions) + 1
         name = f"s{index}"
-        session = FakeRealtimeSession(
-            name=name, session_id=session_id_factory(index) if session_id_factory is not None else name)
+        session_id = session_id_factory(index) if session_id_factory is not None else name
+        if realtime_factory is not None:
+            session = await realtime_factory(context, session_id)
+        else:
+            session = FakeRealtimeSession(name=name, session_id=session_id)
         sessions.append(session)
         return session
 

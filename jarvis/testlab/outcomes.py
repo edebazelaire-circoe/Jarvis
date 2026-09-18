@@ -40,8 +40,12 @@ from jarvis.testlab.diagnostics import AssertionOutcome, AssertionVerdict
 from jarvis.testlab.jobs import (
     FAILURE_CANCELLED,
     FAILURE_CATALOG_UNAVAILABLE,
+    FAILURE_COST_BUDGET_EXCEEDED,
+    FAILURE_DEVICE_CONTENTION,
+    FAILURE_DEVICE_CONTENTION_DURING_RUN,
     FAILURE_ISOLATION_VIOLATION,
     FAILURE_JOB_INVALID,
+    FAILURE_LIVE_OPT_IN_MISSING,
     FAILURE_MEASUREMENT_UNAVAILABLE,
     FAILURE_PERMISSION_DENIED,
     FAILURE_RESOURCE_WAIT_TIMEOUT,
@@ -53,6 +57,7 @@ from jarvis.testlab.jobs import (
     FAILURE_RUN_CONCLUDED_OUT_OF_BAND,
     FAILURE_RUN_TIMEOUT,
     FAILURE_SCENARIO_EXPECTATION_UNMET,
+    FAILURE_SUPERVISOR_FAULT,
     FAILURE_SUPERVISOR_STOPPED,
     FAILURE_WORKER_ACTIVE_ELSEWHERE,
     FAILURE_WORKER_CRASHED,
@@ -95,6 +100,10 @@ FAILURE_OUTCOMES: Mapping[str, RunOutcomeClass] = MappingProxyType({
     FAILURE_MEASUREMENT_UNAVAILABLE: RunOutcomeClass.INCONCLUSIVE,
     FAILURE_SCENARIO_EXPECTATION_UNMET: RunOutcomeClass.INCONCLUSIVE,
     FAILURE_RUN_TIMEOUT: RunOutcomeClass.INCONCLUSIVE,
+    #: Slice 08: the live Jarvis took the device back, or the money ran out, while the
+    #: run was executing. Partial evidence, no verdict.
+    FAILURE_DEVICE_CONTENTION_DURING_RUN: RunOutcomeClass.INCONCLUSIVE,
+    FAILURE_COST_BUDGET_EXCEEDED: RunOutcomeClass.INCONCLUSIVE,
     # structural refusal: the lab declined before it could measure anything
     FAILURE_PERMISSION_DENIED: RunOutcomeClass.REFUSED,
     FAILURE_RESOURCE_WAIT_TIMEOUT: RunOutcomeClass.REFUSED,
@@ -103,6 +112,10 @@ FAILURE_OUTCOMES: Mapping[str, RunOutcomeClass] = MappingProxyType({
     FAILURE_JOB_INVALID: RunOutcomeClass.REFUSED,
     FAILURE_ISOLATION_VIOLATION: RunOutcomeClass.REFUSED,
     FAILURE_WORKER_ACTIVE_ELSEWHERE: RunOutcomeClass.REFUSED,
+    #: Slice 08 (READINESS B9): nothing was started, so nothing was learned — and
+    #: refusing is the point: the laptop microphone belongs to the live conversation.
+    FAILURE_DEVICE_CONTENTION: RunOutcomeClass.REFUSED,
+    FAILURE_LIVE_OPT_IN_MISSING: RunOutcomeClass.REFUSED,
     # the lab broke
     FAILURE_WORKER_SPAWN_FAILED: RunOutcomeClass.CRASHED,
     FAILURE_WORKER_STARTUP_TIMEOUT: RunOutcomeClass.CRASHED,
@@ -114,6 +127,8 @@ FAILURE_OUTCOMES: Mapping[str, RunOutcomeClass] = MappingProxyType({
     FAILURE_RESULT_INVALID: RunOutcomeClass.CRASHED,
     FAILURE_RESULT_CONTRADICTS_SPEC: RunOutcomeClass.CRASHED,
     FAILURE_RUNNER_FAILED: RunOutcomeClass.CRASHED,
+    #: Slice 08: the supervisor's own gate or supervision loop raised.
+    FAILURE_SUPERVISOR_FAULT: RunOutcomeClass.CRASHED,
     # a caller, or the supervisor, stopped it
     FAILURE_CANCELLED: RunOutcomeClass.CANCELLED,
     FAILURE_SUPERVISOR_STOPPED: RunOutcomeClass.CANCELLED,

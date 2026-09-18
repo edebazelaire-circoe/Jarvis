@@ -45,6 +45,7 @@ from jarvis.testlab.primitives import AT_MS, DEFAULT_PRIMITIVES, missing_handler
 from jarvis.testlab.profiles import ProfileName
 from jarvis.testlab.runners import MeasurementUnavailable, RunContext, ScenarioExpectationUnmet
 from jarvis.testlab.scenarios import Scenario, ScenarioStep
+from jarvis.testlab.validation import fail
 from jarvis.testlab.virtual.harness import CHUNK_MS, BrainTurnHandle, VoiceStack
 from jarvis.testlab.virtual.journal import TraceRecordingJournal
 
@@ -66,6 +67,9 @@ VIRTUAL_STEP_FAILED = "testlab_virtual_step_failed"
 #: or structural problem, never a statement about the product: it is "could not
 #: measure" (docs/testlab.md, "The expect.* verdict rule").
 VIRTUAL_EXPECTATION_UNEVALUABLE = "testlab_virtual_expectation_unevaluable"
+#: A profile executor redefined a primitive the shared table already performs. A defect
+#: of ours, not a finding: it is NOT a `MeasurementUnavailable`, so it reads `crashed`.
+VIRTUAL_PROFILE_HANDLER_INVALID = "testlab_virtual_profile_handler_invalid"
 
 #: `_expect_arg` sentinel: this argument has no default and the step must carry it.
 _REQUIRED = object()
@@ -167,14 +171,40 @@ class VirtualExecutor:
 
     # ------------------------------------------------------------- pilotage
 
+    def handler_for(self, primitive: str):
+        """Which handler performs one primitive.
+
+        The table stays a module constant (`HANDLERS`), reviewed in one place; this
+        hook is how a PROFILE adds the primitives it, and only it, can perform —
+        Slice 08's `audio.inject` on the real capture path. A profile may add, never
+        replace, and `resolve_handler` ENFORCES that: a subclass that shadowed an
+        existing name would silently change what a shipped scenario means.
+        """
+        return HANDLERS.get(primitive)
+
+    def resolve_handler(self, primitive: str):
+        """`handler_for`, checked against the shared table. Add-only, mechanically.
+
+        A docstring convention is not a rule. A profile that returns something other
+        than `HANDLERS[primitive]` for a primitive the shared table already performs is
+        refused here, loudly, rather than quietly redefining `provider.output_done` for
+        one profile and leaving every stored run of it uncomparable.
+        """
+        handler = self.handler_for(primitive)
+        shared = HANDLERS.get(primitive)
+        if shared is not None and handler is not shared:
+            raise fail(f"{type(self).__name__} replaces the shared handler for {primitive}; a profile "
+                       "executor may add a primitive, never redefine one", VIRTUAL_PROFILE_HANDLER_INVALID)
+        return handler
+
     async def run(self, scenario: Scenario) -> None:
         """Perform every step in order. The first failure ends the run."""
         for index, step in enumerate(scenario.steps):
             self.context.check_cancelled()
             await self._advance_to(int(step.args[AT_MS]))
-            handler = HANDLERS.get(step.primitive)
+            handler = self.resolve_handler(step.primitive)
             if handler is None:  # pragma: no cover - HANDLED covers the registry, proven by a test
-                raise _step_error(index, step, "the virtual profile registers no handler for this primitive")
+                raise _step_error(index, step, "this profile registers no handler for this primitive")
             result = handler(self, index, step)
             if isinstance(result, Awaitable):
                 await result

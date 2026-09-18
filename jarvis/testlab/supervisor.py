@@ -78,6 +78,9 @@ from jarvis.testlab.jobs import (
     CANCEL_FILE_NAME,
     DATA_DIR_NAME,
     FAILURE_CANCELLED,
+    FAILURE_DEVICE_CONTENTION,
+    FAILURE_DEVICE_CONTENTION_DURING_RUN,
+    FAILURE_LIVE_OPT_IN_MISSING,
     FAILURE_PERMISSION_DENIED,
     FAILURE_RESOURCE_WAIT_TIMEOUT,
     FAILURE_RESULT_CONTRADICTS_SPEC,
@@ -85,6 +88,7 @@ from jarvis.testlab.jobs import (
     FAILURE_RUN_ABANDONED,
     FAILURE_RUN_CONCLUDED_OUT_OF_BAND,
     FAILURE_RUN_TIMEOUT,
+    FAILURE_SUPERVISOR_FAULT,
     FAILURE_SUPERVISOR_STOPPED,
     FAILURE_WORKER_ACTIVE_ELSEWHERE,
     FAILURE_WORKER_CRASHED,
@@ -109,9 +113,18 @@ from jarvis.testlab.jobs import (
 )
 from jarvis.testlab.maintenance import MaintenancePolicy, MaintenanceReport, run_maintenance_pass
 from jarvis.testlab.primitives import DEFAULT_PRIMITIVES, PrimitiveRegistry, ScenarioContext, check_scenario
+from jarvis.testlab.devices import (
+    DeviceContentionDetector,
+    DeviceLease,
+    DeviceLeaseBusy,
+    default_contention_detector,
+    needs_device,
+)
+from jarvis.testlab.live.session import LIVE_OPT_IN_ENV, live_opt_in
 from jarvis.testlab.profiles import (
     Capability,
     PermissionDecision,
+    PROVIDER_CAPABILITIES,
     ProfileName,
     ResourceGrant,
     check_profile_permission,
@@ -151,6 +164,13 @@ SUPERVISOR_WORK_ROOT_BUSY = "testlab_supervisor_work_root_busy"
 
 #: One supervisor per work root, enforced by an OS lock the kernel releases on death.
 WORK_ROOT_LOCK_NAME = ".supervisor.lock"
+#: Slice 08: the cross-supervisor audio device lease. Two work roots (two worktrees)
+#: pointed at the same path exclude each other; the default keeps it inside the work
+#: root, where it only excludes this supervisor from itself, which reservation already
+#: does. An operator who runs two work roots on one workstation gives them one path.
+DEVICE_LEASE_NAME = ".device.lock"
+#: Profiles whose runs can legitimately produce an audio clip.
+AUDIO_CAPABLE_PROFILES = frozenset({ProfileName.AUDIO, ProfileName.HARDWARE_AUTO, ProfileName.HARDWARE_GUIDED})
 
 #: Provider credentials removed from a worker environment unless the profile declares a
 #: provider capability. They are set to "" rather than dropped, because
@@ -201,6 +221,11 @@ class RunRequest:
     sweep_id: str | None = None
     parent_run_id: str | None = None
     grant: ResourceGrant = field(default_factory=ResourceGrant)
+    #: Slice 08: let this run store `audio_clip` artifacts. Three conditions, all
+    #: required: the caller asks here, the profile is one that can produce audio
+    #: (`audio`, `hardware:*`), and the supervisor's own store allows audio. Off by
+    #: default, because raw audio is the one artifact kind that can carry a voice.
+    allow_audio_artifacts: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,6 +253,9 @@ class SupervisorPolicy:
     adopt_lock_timeout_s: float = 1.0
     #: Wait for the work-root lock at `start()`; another live supervisor holds it forever.
     work_root_lock_s: float = 1.0
+    #: Slice 08: how often a run holding an audio device re-checks that the live Jarvis has
+    #: not come back. It bounds how long the two could overlap; it cannot prevent the overlap.
+    device_probe_interval_s: float = 1.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -284,6 +312,8 @@ class _Pending:
     settings: Mapping[str, Any]
     max_duration_s: float
     queued_at: float
+    #: Slice 08: whether this run's worker store may write `audio_clip` artifacts.
+    allow_audio: bool = False
     #: Loop time from which this run has been genuinely blocked (no free slot, or a
     #: capability held). None while it has not been evaluated yet — a run that never got
     #: a chance to start, because an upkeep pass held the start gate, accrues no queue wait.
@@ -296,6 +326,9 @@ class _Active:
     scratch: Path
     worker: WorkerProcess | None = None
     stop_reason: str | None = None
+    #: One English line saying WHY, when the code alone is not enough (Slice 08's
+    #: device contention names what was seen holding the device).
+    stop_detail: str | None = None
     stop_at: float | None = None
     cancel_requested: bool = False
     #: True once THIS supervisor wrote the terminal record. A terminal record without
@@ -316,6 +349,7 @@ class _Supervision:
     result_problem: str | None
     exit_code: int | None
     stop_reason: str | None
+    stop_detail: str | None
     killed: bool
     stderr_tail: str
     started: bool
@@ -331,7 +365,9 @@ class RunSupervisor:
                  primitives: PrimitiveRegistry = DEFAULT_PRIMITIVES, diagnostics: DiagnosticSink | None = None,
                  clock: Any = None, nonce: Any = None, code_probe: Any = None,
                  environment: Mapping[str, Any] | None = None, base_environ: Mapping[str, str] | None = None,
-                 max_path_chars: int | None | object = ...) -> None:
+                 max_path_chars: int | None | object = ...,
+                 contention: DeviceContentionDetector | None = None,
+                 device_lease_path: Path | None | object = ...) -> None:
         self._store = store
         self._catalog_root = Path(catalog_root)
         #: Supervisor and worker resolve implementation names with the same registry, so a run
@@ -361,6 +397,13 @@ class RunSupervisor:
         self._maintainer: asyncio.Task[None] | None = None
         self._work_lock: EntryLock | None = None
         self._closing = False
+        # Slice 08 (READINESS B9). The detector reads the LIVE runtime root — the one the
+        # workstation Jarvis publishes its heartbeat in — never the per-run scratch, which
+        # is empty of its signals by construction and would always read "free".
+        self._contention = contention if contention is not None else default_contention_detector(
+            self._live_runtime_root())
+        lease = (self._work_root / DEVICE_LEASE_NAME) if device_lease_path is ... else device_lease_path
+        self._device_lease = DeviceLease(Path(lease)) if lease is not None else None
 
     # -------------------------------------------------------------- lifecycle
 
@@ -499,6 +542,7 @@ class RunSupervisor:
             run_id=run_id, entry=entry, profile=request.profile, capabilities=availability.requires,
             parameters=parameters, overrides=overrides, scenario=scenario, settings=settings,
             max_duration_s=self._run_budget(availability.cost.max_duration_s),
+            allow_audio=self._audio_allowed(request),
             queued_at=asyncio.get_running_loop().time()))
         self._wake.set()
         return run_id
@@ -685,8 +729,23 @@ class RunSupervisor:
             except asyncio.TimeoutError:
                 pass
             self._wake.clear()
-            await self._expire_pending()
-            await self._start_ready()
+            try:
+                await self._expire_pending()
+                await self._start_ready()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                # Captured deliberately, and loudly. An unforeseen fault in one pass used
+                # to end the dispatcher task with nothing in the log: every queued run then
+                # waited forever, `wait()` timed out, and nothing said why. The loop
+                # survives the pass, the fault is emitted at `error`, and the next wake
+                # tries again — a stuck queue is a worse failure than a repeated one.
+                self._diagnostics.emit("testlab.supervisor.dispatch_failed",
+                                       "Test Lab dispatch pass failed", level="error",
+                                       error=type(exc).__name__, code=getattr(exc, "code", None),
+                                       detail=str(exc)[:200],
+                                       pending=len(self._pending), active=len(self._active))
+                await asyncio.sleep(self._policy.poll_interval_s)
 
     def _next_delay(self) -> float:
         blocked = [pending.blocked_since for pending in self._pending if pending.blocked_since is not None]
@@ -736,11 +795,122 @@ class RunSupervisor:
                                        requires=sorted(item.value for item in pending.capabilities),
                                        reserved=sorted(item.value for item in self._reserved))
                 continue
+            # Slice 08: the two external gates, both BEFORE the reservation. A run that
+            # fails one is refused outright rather than queued again: neither a live
+            # conversation nor a missing opt-in is something waiting will change.
+            refusal = await self._gate_or_fault(pending)
+            if refusal is not None:
+                self._pending.remove(pending)
+                await self._refuse(pending, RunStatus.ERRORED, refusal)
+                continue
             self._pending.remove(pending)
             self._reserved |= pending.capabilities
             active = _Active(pending, self._work_root / pending.run_id)
             self._active[pending.run_id] = active
             asyncio.create_task(self._execute(active), name=f"testlab-run-{pending.run_id}")
+
+    def _live_runtime_root(self) -> Path:
+        """The LIVE runtime directory, where the workstation Jarvis publishes its voice signals.
+
+        Derived from the settings path when one was given (`control-center-settings.json`
+        lives in the runtime root, which is how the Control Center finds it) and from the
+        repository otherwise. Never from `JARVIS_RUNTIME_DIR`: a worker's environment
+        points at its own scratch, and a supervisor that inherited one would probe an
+        empty directory and cheerfully report the microphone free.
+        """
+        if self._settings_path is not None:
+            return Path(self._settings_path).parent
+        return self._repo_root / "runtime"
+
+    @property
+    def contention(self) -> DeviceContentionDetector:
+        """The device-contention detector this supervisor gates on (Slice 10 exposes it)."""
+        return self._contention
+
+    # ---------------------------------------------------- external gates (08)
+
+    async def _gate_or_fault(self, pending: _Pending) -> RunFailure | None:
+        """`_external_gate`, with a gate that BREAKS turned into a refusal of that run.
+
+        The gate calls an injected `DeviceContentionDetector` (Slice 10 composes one),
+        so an exception here is code we do not control. Letting it escape ended the
+        dispatch pass: the run kept its place in the queue with no `blocked_since`, so
+        `max_queue_wait_s` never applied to it and NOTHING would ever make it terminal.
+        A queued run nobody will ever finish is worse than a refused one, and a
+        supervisor fault must not be recorded against the worker.
+        """
+        try:
+            return await self._external_gate(pending)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._diagnostics.emit("testlab.run.gate_failed",
+                                   f"Test Lab could not evaluate the resource gates for {pending.run_id}",
+                                   level="error", run_id=pending.run_id, error=type(exc).__name__,
+                                   code=getattr(exc, "code", None), detail=str(exc)[:200])
+            return worker_failure(FAILURE_SUPERVISOR_FAULT, failure_detail(
+                f"the supervisor could not evaluate this run's resource gates ({type(exc).__name__}); "
+                "nothing was started, and no device or provider was taken"))
+
+    async def _external_gate(self, pending: _Pending) -> RunFailure | None:
+        """Refuse a device or provider run the workstation cannot safely give it.
+
+        Both checks belong HERE, in the reservation path, and not in a runner:
+        a runner runs in another process that has already been spawned, and by then
+        the microphone would be a fraction of a second from being opened. The
+        supervisor is the only place that can decline before anything is started.
+
+        Order matters: everything that only OBSERVES runs first, and the one step that
+        TAKES something — the device lease — runs last. A lease taken before a later
+        refusal would leak, because only `_release` gives it back and a refused run
+        never becomes active.
+        """
+        if pending.capabilities & PROVIDER_CAPABILITIES and not live_opt_in(self._base_environ):
+            return worker_failure(FAILURE_LIVE_OPT_IN_MISSING, failure_detail(
+                f"a run that calls a real provider needs the explicit opt-in {LIVE_OPT_IN_ENV}=1 in the "
+                "supervisor's environment; it is not set, so nothing was called and nothing was spent"))
+        if not needs_device(pending.capabilities):
+            return None
+        report = await asyncio.to_thread(self._contention.detect)
+        self._diagnostics.emit("testlab.device.probed", f"Test Lab probed the audio devices for {pending.run_id}",
+                               level="info" if report.available else "warning", run_id=pending.run_id,
+                               state=report.state.value, holder=report.holder)
+        if not report.available:
+            return worker_failure(FAILURE_DEVICE_CONTENTION, failure_detail(report.reason()))
+        if self._device_lease is not None:
+            try:
+                await asyncio.to_thread(self._device_lease.acquire)
+            except DeviceLeaseBusy as exc:
+                return worker_failure(FAILURE_DEVICE_CONTENTION, failure_detail(exc.detail))
+        return None
+
+    def _check_contention_during(self, active: _Active) -> RunFailure | None:
+        """Has the live Jarvis taken the device back while this run was executing?
+
+        Bounded by the poll interval, and that is the honest limit of it: nothing
+        here can stop Jarvis from starting, only notice quickly and stop the run.
+        The measurement is void either way — a run that shared the microphone with a
+        live conversation measured both of them.
+        """
+        if not needs_device(active.pending.capabilities):
+            return None
+        report = self._contention.detect()
+        if report.available:
+            return None
+        return worker_failure(FAILURE_DEVICE_CONTENTION_DURING_RUN, failure_detail(
+            f"the audio devices were taken while the run was executing: {report.reason()}"))
+
+    def _audio_allowed(self, request: RunRequest) -> bool:
+        """May this run store `audio_clip` artifacts? All three conditions, or no.
+
+        Asked for by the caller, possible on this profile, and permitted by the store
+        this supervisor writes through. The last one is what makes the opt-in real: a
+        store built with `allow_audio=False` refuses the write whatever the job says.
+        """
+        if not request.allow_audio_artifacts or request.profile not in AUDIO_CAPABLE_PROFILES:
+            return False
+        limits = getattr(self._store, "limits", None)
+        return bool(getattr(limits, "allow_audio", False))
 
     # --------------------------------------------------------------- execute
 
@@ -773,6 +943,21 @@ class RunSupervisor:
         except (TestLabError, OSError, ValueError) as exc:
             failure = worker_failure(FAILURE_WORKER_SPAWN_FAILED,
                                      failure_detail(f"{type(exc).__name__}: {getattr(exc, 'detail', exc)}"))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            # The backstop for everything supervision itself can raise — today, an
+            # injected contention detector failing on the mid-run probe. Without it the
+            # task died with "Task exception was never retrieved" on stderr, no
+            # diagnostic at any level, and the run concluded `worker_result_invalid`:
+            # a supervisor fault recorded against the worker. Loud, and its own code.
+            self._diagnostics.emit("testlab.run.supervision_failed",
+                                   f"Test Lab supervision of run {run_id} failed", level="error",
+                                   run_id=run_id, error=type(exc).__name__,
+                                   code=getattr(exc, "code", None), detail=str(exc)[:200])
+            failure = worker_failure(FAILURE_SUPERVISOR_FAULT, failure_detail(
+                f"the supervisor failed while watching this run ({type(exc).__name__}); "
+                "the measurement, if any, is not trustworthy"))
         finally:
             try:
                 await self._conclude(active, supervision, failure)
@@ -804,6 +989,8 @@ class RunSupervisor:
     def _release(self, active: _Active) -> None:
         """Free the reservation, forget the run, remove its scratch and wake every waiter."""
         self._reserved -= active.pending.capabilities
+        if self._device_lease is not None and needs_device(active.pending.capabilities):
+            self._device_lease.release()
         self._active.pop(active.run_id, None)
         self._cleanup_scratch(active.scratch)
         self._finished.setdefault(active.run_id, asyncio.Event()).set()
@@ -819,6 +1006,7 @@ class RunSupervisor:
         spawned = loop.time()
         started: float | None = None
         last_beat = spawned
+        last_probe = spawned
         seen = 0.0
         waiter = asyncio.ensure_future(worker.wait())
         killed = False
@@ -836,9 +1024,32 @@ class RunSupervisor:
                         self._diagnostics.emit("testlab.run.progress", f"Test Lab run {active.run_id} is running",
                                                run_id=active.run_id, pid=worker.pid,
                                                elapsed_s=round(now - spawned, 1))
+                # Probed from SPAWN, not from the first heartbeat: the reservation is
+                # already held while the worker starts, and on a loaded host that window
+                # is `startup_timeout_s` (60 s by default) during which the live Jarvis
+                # could come back unnoticed. The worker has opened nothing yet, so this
+                # is the cheapest moment to give the devices back.
+                if (active.stop_reason is None and needs_device(active.pending.capabilities)
+                        and now - last_probe >= policy.device_probe_interval_s):
+                    last_probe = now
+                    contention = await asyncio.to_thread(self._check_contention_during, active)
+                    if contention is not None:
+                        # The live Jarvis came back while we held the device. Stop at once,
+                        # politely first: the measurement is void either way, and a run that
+                        # keeps the microphone is exactly what B9 forbids.
+                        self._diagnostics.emit("testlab.device.contended",
+                                               f"Test Lab run {active.run_id} lost the audio devices",
+                                               level="warning", run_id=active.run_id,
+                                               started=started is not None)
+                        self._request_stop(active, contention.code, contention.detail)
                 if started is None:
+                    # A stop asked for during startup is acted on here: the worker may not
+                    # be able to read the cancel marker yet, so the grace is what ends it.
+                    if active.stop_at is not None and now - active.stop_at > policy.cancel_grace_s:
+                        killed = True
+                        break
                     if now - spawned > policy.startup_timeout_s:
-                        active.stop_reason = FAILURE_WORKER_STARTUP_TIMEOUT
+                        active.stop_reason = active.stop_reason or FAILURE_WORKER_STARTUP_TIMEOUT
                         killed = True
                         break
                     continue
@@ -865,11 +1076,14 @@ class RunSupervisor:
         # heartbeat lapsed has written it by now, and losing those metrics would be a defect.
         result, problem = _read_result(active.scratch, active.run_id)
         return _Supervision(result=result, result_problem=problem, exit_code=exit_code,
-                            stop_reason=active.stop_reason, killed=killed, stderr_tail=worker.stderr_tail(),
+                            stop_reason=active.stop_reason, stop_detail=active.stop_detail,
+                            killed=killed, stderr_tail=worker.stderr_tail(),
                             started=started is not None)
 
-    def _request_stop(self, active: _Active, reason: str) -> None:
+    def _request_stop(self, active: _Active, reason: str, detail: str | None = None) -> None:
         """Write the cooperative stop marker the worker polls on its heartbeat tick."""
+        if active.stop_reason is None:
+            active.stop_detail = detail
         active.stop_reason = active.stop_reason or reason
         if active.stop_at is None:
             active.stop_at = asyncio.get_running_loop().time()
@@ -1069,7 +1283,7 @@ class RunSupervisor:
             store_root=str(_store_root(self._store)), scratch_root=str(scratch),
             catalog_root=str(self._catalog_root),
             parameters=pending.parameters, overrides=pending.overrides, scenario=pending.scenario,
-            max_duration_s=pending.max_duration_s)
+            max_duration_s=pending.max_duration_s, allow_audio=pending.allow_audio)
         write_atomic(scratch, JOB_FILE_NAME, canonical_json(job.to_dict()).encode("utf-8"),
                      label=f"run {pending.run_id}", tmp_prefix=JOB_TMP_PREFIX, max_path_chars=self.max_path_chars,
                      replace=replace_with_retry)
@@ -1102,7 +1316,7 @@ class RunSupervisor:
     def _worker_environment(self, active: _Active) -> Mapping[str, str]:
         """The child's environment: run-local roots, no live token, no provider key it may not use."""
         return worker_environment(self._base_environ, active.scratch,
-                                  allow_providers=bool(active.pending.capabilities & _PROVIDER_CAPABILITIES))
+                                  allow_providers=bool(active.pending.capabilities & PROVIDER_CAPABILITIES))
 
     def _cleanup_scratch(self, scratch: Path) -> None:
         if self._policy.keep_scratch:
@@ -1166,6 +1380,7 @@ class RunSupervisor:
         entry = self._entry_or_none(run)
         if result is not None and run.status is RunStatus.RUNNING and entry is not None:
             supervision = _Supervision(result, result_problem=None, exit_code=None, stop_reason=None,
+                                       stop_detail=None,
                                        killed=False, stderr_tail="", started=True)
             await self._conclude(_Active(_orphan_pending(run, entry), scratch), supervision, None)
             stored = await asyncio.to_thread(self._store.get_run, run.run_id)
@@ -1241,9 +1456,6 @@ class RunSupervisor:
 
 
 # ---------------------------------------------------------------- helpers
-
-_PROVIDER_CAPABILITIES = frozenset({Capability.REALTIME_PROVIDER, Capability.LLM_PROVIDER})
-
 
 def _utc_now() -> datetime:
     return to_event_time(datetime.now(timezone.utc))
@@ -1338,7 +1550,8 @@ def _outcome(supervision: _Supervision) -> tuple[RunStatus | None, RunFailure | 
     result = supervision.result
     if supervision.stop_reason is not None:
         status = TERMINAL_BY_FAILURE.get(supervision.stop_reason, RunStatus.ERRORED)
-        detail = "the supervisor stopped this run" + (" and killed its process tree" if supervision.killed else "")
+        detail = supervision.stop_detail or (
+            "the supervisor stopped this run" + (" and killed its process tree" if supervision.killed else ""))
         return status, worker_failure(supervision.stop_reason, detail), result
     if result is not None:
         if result.status is WorkerStatus.MEASURED:
