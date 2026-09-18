@@ -438,3 +438,50 @@ def test_manifest_text_round_trips_with_a_stable_fingerprint():
     assert decoded.to_dict() == original.to_dict()
     assert decoded.fingerprint() == original.fingerprint()
     assert decoded.fingerprint() != manifest(2).fingerprint()
+
+
+# ---------------------------------- the shipped speech.stale_supersession v2
+
+def test_the_shipped_catalog_publishes_both_versions_of_stale_supersession():
+    """v2 adds the expectation metrics and one blocking assertion; v1 keeps its history slot."""
+    catalog = load_catalog(implementations=catalog_implementations())
+    versions = catalog.versions("speech.stale_supersession")
+    assert versions == (1, 2)
+    assert catalog.describe("speech.stale_supersession").version == 2  # no version means the latest
+    v1, v2 = (catalog.describe("speech.stale_supersession", version).diagnostic for version in versions)
+    assert [metric.name for metric in v2.metrics] == [metric.name for metric in v1.metrics] + [
+        "scenario.expectations_declared", "scenario.expectations_failed_count"]
+    assert [item.assertion_id for item in v2.assertions] == [item.assertion_id for item in v1.assertions] + [
+        "scenario_expectations_met"]
+    blocking = v2.assertion_index["scenario_expectations_met"]
+    assert (blocking.metric, blocking.comparator.value, blocking.threshold, blocking.blocking) == (
+        "scenario.expectations_failed_count", "eq", 0, True)
+    # Everything else is the same declaration: same profiles, parameters and scenario.
+    assert v2.profiles.keys() == v1.profiles.keys()
+    assert v2.parameters == v1.parameters
+    entries = {entry.version: entry for entry in catalog.history("speech.stale_supersession")}
+    assert entries[1].manifest.scenario == entries[2].manifest.scenario
+
+
+def test_a_stored_v1_run_still_validates_against_v1_after_v2_is_published():
+    """Publishing a version never invalidates the runs judged by an earlier one."""
+    from jarvis.testlab.identity import format_run_id
+    from jarvis.testlab.runs import CodeIdentity, RunStatus, TestRun
+    from tests.fakes.testlab import CONFIG, ENVIRONMENT, NONCE, REVISION, T0
+
+    catalog = load_catalog(implementations=catalog_implementations())
+    v1 = catalog.describe("speech.stale_supersession", 1).diagnostic
+    v2 = catalog.describe("speech.stale_supersession", 2).diagnostic
+    run = TestRun(run_id=format_run_id(T0, NONCE), diagnostic_id=v1.diagnostic_id, diagnostic_version=1,
+                  profile=ProfileName.VIRTUAL, status=RunStatus.QUEUED, created_at=T0,
+                  code=CodeIdentity(REVISION, False), config_fingerprint=CONFIG,
+                  diagnostic_fingerprint=v1.fingerprint(),
+                  parameters=resolve_parameters(v1.parameters, {}), environment=ENVIRONMENT)
+    catalog.check_run(run)  # the declaration it was judged by is still in the history
+    assert run.diagnostic_fingerprint == v1.fingerprint() != v2.fingerprint()
+    # And the run is NOT silently re-judged by v2: the fingerprints differ, so it would be refused.
+    from jarvis.testlab.runs import check_run_against_spec
+    from jarvis.testlab.validation import TestLabError
+
+    with pytest.raises(TestLabError, match="diagnostic_id/diagnostic_version"):
+        check_run_against_spec(run, v2)

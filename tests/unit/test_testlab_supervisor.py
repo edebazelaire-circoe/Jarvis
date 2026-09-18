@@ -873,6 +873,9 @@ async def test_a_timed_out_run_keeps_its_measurements_but_stays_timed_out(tmp_pa
     assert run.failure.code == FAILURE_RUN_TIMEOUT
     assert dict(run.metrics) == PASSING_METRICS
     assert run.assertion_results == ()  # a verdict belongs to a run that finished
+    # Slice 07: no score either. A synthesis over partial evidence would be comparable
+    # with a complete one, which it is not (docs/testlab.md, "Scoring").
+    assert run.score is None
 
 
 async def test_partial_measurements_the_declaration_refuses_are_dropped(tmp_path):

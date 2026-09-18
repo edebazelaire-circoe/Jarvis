@@ -88,13 +88,36 @@ class RunCancelled(TestLabError):
         super().__init__("testlab_run_cancelled", detail)
 
 
+class MeasurementUnavailable(TestLabError):
+    """The runner reached the product but could not obtain a measurement the declaration needs.
+
+    "Could not measure", not "the product is wrong" and not "the lab crashed": a
+    stimulus the stack never answered, a step the authored situation could not
+    perform, an expectation there was nothing to evaluate against. The worker
+    turns it into `measurement_unavailable` and
+    `jarvis.testlab.outcomes` reads it as `inconclusive`, beside the
+    `assertions_inconclusive` of a metric that was simply never reported.
+
+    A runner raises this instead of returning empty metrics: an empty measurement
+    would end the run `errored`/`assertions_inconclusive` with no clue why.
+    """
+
+
+class ScenarioExpectationUnmet(TestLabError):
+    """An evaluable `expect.*` step disagreed, in a diagnostic that cannot carry it as a metric.
+
+    The authored situation did not materialise, so this run is not the experiment
+    that was asked for. It reads `inconclusive`, never `failed`: a diagnostic's
+    own blocking assertions are what fail a run (docs/testlab.md, "Outcomes").
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class RunOutcome:
-    """What a runner measured. The verdict is derived from `metrics` by the supervisor."""
+    """What a runner measured. The verdict AND the score are derived from `metrics`
+    by the supervisor: a runner reports no score (Slice 07, `jarvis.testlab.scoring`)."""
 
     metrics: Mapping[str, MetricValue] = field(default_factory=dict)
-    #: 0..100 synthesis when the runner computes one; Slice 07 owns the score contract.
-    score: float | None = None
     #: Conversation Events join values (`TRACE_JOIN_FIELDS` names -> opaque ids).
     join_ids: Mapping[str, str] = field(default_factory=dict)
     #: Extra references committed outside `RunContext.put_artifact` (rare).

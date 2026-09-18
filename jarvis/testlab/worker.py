@@ -35,6 +35,7 @@ from jarvis.adapters.file_replace import replace_with_retry
 from jarvis.testlab._fs import EntryLock, write_atomic
 from jarvis.testlab.catalog import load_catalog
 from jarvis.testlab.filesystem_store import FilesystemTestRunStore
+from jarvis.testlab.capture import failure_detail
 from jarvis.testlab.jobs import (
     CANCEL_FILE_NAME,
     DATA_DIR_NAME,
@@ -42,9 +43,11 @@ from jarvis.testlab.jobs import (
     FAILURE_CANCELLED,
     FAILURE_ISOLATION_VIOLATION,
     FAILURE_JOB_INVALID,
+    FAILURE_MEASUREMENT_UNAVAILABLE,
     FAILURE_RUNNER_FAILED,
     FAILURE_RUNNER_UNAVAILABLE,
     FAILURE_RUN_TIMEOUT,
+    FAILURE_SCENARIO_EXPECTATION_UNMET,
     HEARTBEAT_FILE_NAME,
     RESULT_FILE_NAME,
     RUNTIME_DIR_NAME,
@@ -56,7 +59,14 @@ from jarvis.testlab.jobs import (
     worker_failure,
 )
 from jarvis.testlab.primitives import DEFAULT_PRIMITIVES, ScenarioContext, check_scenario
-from jarvis.testlab.runners import RunArtifacts, RunCancelled, RunContext, RunOutcome
+from jarvis.testlab.runners import (
+    MeasurementUnavailable,
+    RunArtifacts,
+    RunCancelled,
+    RunContext,
+    RunOutcome,
+    ScenarioExpectationUnmet,
+)
 from jarvis.testlab.runs import ArtifactRef
 from jarvis.testlab.selftest import catalog_implementations
 from jarvis.testlab.validation import TestLabError, canonical_json, decode_json_document
@@ -220,6 +230,28 @@ def resolve_runner(job: WorkerJob) -> tuple[Any, Any]:
     return spec, runner
 
 
+def runner_failure_code(exc: BaseException) -> str:
+    """Which closed failure code a runner exception becomes.
+
+    Typed and closed on purpose: a runner declares "I could not measure" by
+    raising `MeasurementUnavailable` (or `ScenarioExpectationUnmet`), not by a
+    string the worker would have to recognise. Anything else is `runner_failed`,
+    which reads `crashed` — an exception we did not foresee is a defect of ours.
+    """
+    if isinstance(exc, ScenarioExpectationUnmet):
+        return FAILURE_SCENARIO_EXPECTATION_UNMET
+    if isinstance(exc, MeasurementUnavailable):
+        return FAILURE_MEASUREMENT_UNAVAILABLE
+    return FAILURE_RUNNER_FAILED
+
+
+def runner_failure_detail(exc: BaseException) -> str:
+    """One bounded, redacted line naming the real cause; never a re-labelled generic one."""
+    if isinstance(exc, TestLabError):
+        return failure_detail(f"{exc.code}: {exc.detail}")
+    return failure_detail(f"the runner raised {type(exc).__name__}: {exc}")
+
+
 @dataclass(slots=True)
 class _Stop:
     """Why the cooperative stop was requested. Kept by the heartbeat, read once the runner returns."""
@@ -289,13 +321,14 @@ async def execute(job: WorkerJob, log: WorkerLog) -> WorkerResult:
             code, f"the runner stopped on {code.replace('_', ' ')}"))
     except Exception as exc:
         # Captured, not swallowed: the failure becomes this run's terminal record, with
-        # the exception type in the detail and the traceback on stderr for the artifact.
-        code = getattr(exc, "code", None) if isinstance(exc, TestLabError) else None
-        log.write(f"runner failed: {code or type(exc).__name__}")
+        # the cause in the detail and the traceback on stderr for the artifact. The CODE
+        # separates "could not measure" from "the lab broke" (docs/testlab.md, "Outcomes"):
+        # a runner that says so with a typed exception is inconclusive, anything else crashed.
+        code = runner_failure_code(exc)
+        log.write(f"runner failed: {code} ({getattr(exc, 'code', type(exc).__name__)})")
         traceback.print_exc()  # the stderr tail becomes an artifact, so the cause stays readable
         return WorkerResult(job.run_id, WorkerStatus.FAILED,
-                            failure=worker_failure(FAILURE_RUNNER_FAILED,
-                                                   f"runner raised {code or type(exc).__name__}"))
+                            failure=worker_failure(code, runner_failure_detail(exc)))
     finally:
         heartbeat.cancel()
         await asyncio.gather(heartbeat, return_exceptions=True)
@@ -305,7 +338,7 @@ async def execute(job: WorkerJob, log: WorkerLog) -> WorkerResult:
                             failure=worker_failure(FAILURE_RUNNER_FAILED, "the runner did not return a RunOutcome"))
     artifacts = tuple(dict.fromkeys((*context.committed, *outcome.artifacts)))
     try:
-        return WorkerResult(job.run_id, WorkerStatus.MEASURED, metrics=outcome.metrics, score=outcome.score,
+        return WorkerResult(job.run_id, WorkerStatus.MEASURED, metrics=outcome.metrics,
                             join_ids=outcome.join_ids, artifacts=_refs(artifacts))
     except TestLabError as exc:
         return WorkerResult(job.run_id, WorkerStatus.FAILED,

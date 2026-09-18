@@ -12,10 +12,16 @@ one-shot idiom of `jarvis/runtime/speaker_benchmark.py::_run_isolated`
 (READINESS B3), with the job also written as a file so the command line carries
 no run data.
 
-The worker reports MEASUREMENTS, never a verdict: `metrics`, an optional score
-and the artifacts it wrote. The supervisor derives every `AssertionResult` from
-those metrics with `evaluate_assertion` and checks the completed run with
+The worker reports MEASUREMENTS, never a verdict: `metrics`, the join ids it
+observed and the artifacts it wrote. The supervisor derives every
+`AssertionResult` from those metrics with `evaluate_assertion`, computes the
+declared score with `jarvis.testlab.scoring`, and checks the completed run with
 `check_run_against_spec`, so a worker cannot declare itself passed.
+
+`WorkerResult` carries NO score (Slice 07). It used to declare one that nothing
+ever computed; a field the supervisor would have to ignore is dead contract data
+and a way for a runner to publish a judgement it has no declaration to justify.
+The score is now derived where the declaration lives, in the supervisor.
 """
 
 from __future__ import annotations
@@ -26,7 +32,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Any
 
-from jarvis.testlab.diagnostics import MAX_METRICS, SCORE_MAX, SCORE_MIN, freeze_scalar_map
+from jarvis.testlab.diagnostics import MAX_METRICS, freeze_scalar_map
 from jarvis.testlab.identity import (
     TESTLAB_SCHEMA_VERSION,
     check_diagnostic_id,
@@ -108,6 +114,15 @@ FAILURE_CATALOG_UNAVAILABLE = "catalog_unavailable"
 FAILURE_RUNNER_UNAVAILABLE = "runner_unavailable"
 FAILURE_RUNNER_FAILED = "runner_failed"
 FAILURE_SUPERVISOR_STOPPED = "supervisor_stopped"
+#: Slice 07: the runner reached the stack but could not obtain a measurement the
+#: declaration needs (a stimulus the stack never answered, a step the situation could
+#: not perform, an expectation that could not be evaluated). "Could not measure", which
+#: `jarvis.testlab.outcomes` reads as `inconclusive` — not a crash and not a verdict.
+FAILURE_MEASUREMENT_UNAVAILABLE = "measurement_unavailable"
+#: Slice 07: an evaluable scenario expectation disagreed, in a diagnostic that declares
+#: no metric able to carry it. The authored situation did not materialise, so the run is
+#: not the experiment that was asked for; also `inconclusive`.
+FAILURE_SCENARIO_EXPECTATION_UNMET = "scenario_expectation_unmet"
 
 FAILURE_CODES = frozenset({
     FAILURE_PERMISSION_DENIED, FAILURE_RESOURCE_WAIT_TIMEOUT, FAILURE_WORKER_SPAWN_FAILED,
@@ -116,6 +131,7 @@ FAILURE_CODES = frozenset({
     FAILURE_RUN_TIMEOUT, FAILURE_CANCELLED,
     FAILURE_RESULT_INVALID, FAILURE_RESULT_CONTRADICTS_SPEC, FAILURE_JOB_INVALID, FAILURE_ISOLATION_VIOLATION,
     FAILURE_CATALOG_UNAVAILABLE, FAILURE_RUNNER_UNAVAILABLE, FAILURE_RUNNER_FAILED, FAILURE_SUPERVISOR_STOPPED,
+    FAILURE_MEASUREMENT_UNAVAILABLE, FAILURE_SCENARIO_EXPECTATION_UNMET,
 })
 
 
@@ -259,7 +275,6 @@ class WorkerResult:
     run_id: str
     status: WorkerStatus
     metrics: Mapping[str, bool | int | float] = field(default_factory=dict)
-    score: float | None = None
     #: Conversation Events join values the runner observed (`TRACE_JOIN_FIELDS` names).
     join_ids: Mapping[str, str] = field(default_factory=dict)
     #: References the worker already committed through `put_artifact`.
@@ -273,8 +288,6 @@ class WorkerResult:
         check_run_id(self.run_id)
         check_enum(WorkerStatus, self.status, "result.status")
         object.__setattr__(self, "metrics", _freeze_metrics(self.metrics))
-        if self.score is not None:
-            check_number(self.score, "result.score", minimum=SCORE_MIN, maximum=SCORE_MAX)
         if not isinstance(self.join_ids, Mapping):
             raise fail("result.join_ids must be an object")
         object.__setattr__(self, "join_ids", MappingProxyType(dict(sorted(self.join_ids.items()))))
@@ -286,8 +299,8 @@ class WorkerResult:
             raise fail("result.failure must be a RunFailure or null")
         if (self.status is WorkerStatus.FAILED) != (self.failure is not None):
             raise fail("result.failure is set exactly when the status is failed")
-        if self.status is WorkerStatus.FAILED and (self.metrics or self.score is not None):
-            raise fail("a failed result carries no metrics and no score")
+        if self.status is WorkerStatus.FAILED and self.metrics:
+            raise fail("a failed result carries no metrics")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -296,7 +309,6 @@ class WorkerResult:
             "run_id": self.run_id,
             "status": self.status.value,
             "metrics": dict(self.metrics),
-            "score": self.score,
             "join_ids": dict(self.join_ids),
             "artifacts": [artifact.to_dict() for artifact in self.artifacts],
             "failure": None if self.failure is None else self.failure.to_dict(),
@@ -312,14 +324,13 @@ class WorkerResult:
             run_id=data["run_id"],
             status=decode_enum(WorkerStatus, data["status"], "result.status"),
             metrics=data["metrics"],
-            score=data["score"],
             join_ids=data["join_ids"],
             artifacts=tuple(ArtifactRef.from_dict(item) for item in data["artifacts"]),
             failure=None if data["failure"] is None else RunFailure.from_dict(data["failure"]),
         )
 
 
-_RESULT_FIELDS = frozenset({"schema", "schema_version", "run_id", "status", "metrics", "score", "join_ids",
+_RESULT_FIELDS = frozenset({"schema", "schema_version", "run_id", "status", "metrics", "join_ids",
                             "artifacts", "failure"})
 
 

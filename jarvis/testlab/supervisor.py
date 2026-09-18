@@ -16,6 +16,9 @@ process. This module owns everything that is not process mechanics
   a tree kill. A run never stays `running`, whatever the worker does;
 - it derives the verdict itself, from the worker's metrics, and refuses to store
   a completed run that `check_run_against_spec` contradicts;
+- it computes the declared score (`jarvis.testlab.scoring`) from those metrics,
+  because the score belongs where the declaration is; the worker never sends one
+  and the score never changes the verdict;
 - it adopts the runs of a supervisor that died, and schedules the store upkeep
   Slice 02 left unscheduled.
 
@@ -126,6 +129,7 @@ from jarvis.testlab.runs import (
     transition_run,
 )
 from jarvis.testlab.scenarios import Scenario
+from jarvis.testlab.scoring import compute_score
 from jarvis.testlab.selftest import catalog_implementations
 from jarvis.testlab.store import MAX_PAGE_LIMIT, RunQuery, TestLabStoreError, TestRunStore
 from jarvis.testlab.validation import TestLabError, canonical_json, decode_json_document
@@ -536,6 +540,25 @@ class RunSupervisor:
         return run
 
     @property
+    def catalog(self) -> Catalog:
+        """The declarations this supervisor resolves runs against (Slice 07 sweeps read it)."""
+        return self._catalog
+
+    @property
+    def policy(self) -> SupervisorPolicy:
+        return self._policy
+
+    @property
+    def clock(self) -> Any:
+        """The injected UTC clock, so a caller minting related ids uses the same time source."""
+        return self._clock
+
+    @property
+    def nonce(self) -> Any:
+        """The injected id nonce source (same reason as `clock`)."""
+        return self._nonce
+
+    @property
     def active_run_ids(self) -> tuple[str, ...]:
         return tuple(self._active)
 
@@ -903,7 +926,9 @@ class RunSupervisor:
         if result is None or not result.metrics:
             return run
         try:
-            enriched = replace(run, metrics=result.metrics, score=result.score, join_ids=result.join_ids)
+            # No score: the declared synthesis of a run the supervisor stopped would compare
+            # partial evidence with complete evidence (docs/testlab.md, "Scoring").
+            enriched = replace(run, metrics=result.metrics, join_ids=result.join_ids)
             check_run_against_spec(enriched, active.pending.entry.diagnostic)
             return enriched
         except TestLabError as exc:
@@ -925,9 +950,12 @@ class RunSupervisor:
         spec = active.pending.entry.diagnostic
         artifacts = _merge_refs(stored.artifacts, (*refs, *result.artifacts))
         try:
+            # The score is computed HERE, from the declaration the run was queued against:
+            # the worker measures and never judges (docs/testlab.md, "Scoring").
             completed = complete_run(replace(stored, join_ids=result.join_ids), at=finished_at,
                                      assertion_results=derive_assertion_results(spec, result.metrics),
-                                     metrics=result.metrics, score=result.score, artifacts=artifacts)
+                                     metrics=result.metrics, score=compute_score(spec.score, result.metrics),
+                                     artifacts=artifacts)
             check_run_against_spec(completed, spec)
         except TestLabError as exc:
             if active.stop_reason is not None:

@@ -32,6 +32,7 @@ from datetime import timedelta
 import math
 from typing import Any
 
+from jarvis.domain.conversation_event_store import MAX_EVENT_PAGE_LIMIT
 from jarvis.domain.speech_presentation import SpeechSource
 from jarvis.domain.v2 import (
     AddressingDecision,
@@ -42,9 +43,8 @@ from jarvis.domain.v2 import (
 )
 from jarvis.testlab.primitives import AT_MS, DEFAULT_PRIMITIVES, missing_handlers
 from jarvis.testlab.profiles import ProfileName
-from jarvis.testlab.runners import RunContext
+from jarvis.testlab.runners import MeasurementUnavailable, RunContext, ScenarioExpectationUnmet
 from jarvis.testlab.scenarios import Scenario, ScenarioStep
-from jarvis.testlab.validation import TestLabError
 from jarvis.testlab.virtual.harness import CHUNK_MS, BrainTurnHandle, VoiceStack
 from jarvis.testlab.virtual.journal import TraceRecordingJournal
 
@@ -55,13 +55,32 @@ STEP_TIMEOUT_S = 15.0
 POLL_S = 0.005
 #: Consecutive quiet polls that mean "the stack settled" for a checkpoint.
 SETTLE_QUIET_POLLS = 8
+#: Pages one `expect.event` step may scan (`MAX_EVENT_PAGE_LIMIT` events each). 10 000
+#: events is far past any scenario; beyond it the count is a lower bound and the step
+#: refuses to judge rather than truncating silently.
+MAX_EVENT_PAGES = 20
 
 VIRTUAL_STEP_FAILED = "testlab_virtual_step_failed"
-VIRTUAL_EXPECTATION_FAILED = "testlab_virtual_expectation_failed"
+#: An `expect.*` step there was nothing to evaluate against (the metric was never
+#: measured, the assertion is not declared, no conversation was opened). An authoring
+#: or structural problem, never a statement about the product: it is "could not
+#: measure" (docs/testlab.md, "The expect.* verdict rule").
+VIRTUAL_EXPECTATION_UNEVALUABLE = "testlab_virtual_expectation_unevaluable"
+
+#: `_expect_arg` sentinel: this argument has no default and the step must carry it.
+_REQUIRED = object()
 
 
-class VirtualStepError(TestLabError):
-    """A scenario step could not be performed, or the stack did not do what it declared."""
+class VirtualStepError(MeasurementUnavailable):
+    """A scenario step could not be performed, or an expectation could not be evaluated.
+
+    It is a `MeasurementUnavailable`, so the worker records
+    `measurement_unavailable` and the run reads `inconclusive`: the authored
+    situation was not established, which says nothing about the product. An
+    expectation that WAS evaluated and disagreed is not this — it is recorded as
+    an `ExpectationResult` and carried by a metric, or raised as
+    `ScenarioExpectationUnmet` by the runner.
+    """
 
 
 def _step_error(index: int, step: ScenarioStep, detail: str, code: str = VIRTUAL_STEP_FAILED) -> VirtualStepError:
@@ -74,6 +93,16 @@ class Expectation:
 
     index: int
     step: ScenarioStep
+
+
+@dataclass(frozen=True, slots=True)
+class ExpectationResult:
+    """The verdict of one evaluated `expect.*` step: what it wanted, what happened."""
+
+    index: int
+    primitive: str
+    met: bool
+    detail: str
 
 
 @dataclass(slots=True)
@@ -108,8 +137,33 @@ class VirtualExecutor:
     work_handles: dict[str, BrainTurnHandle] = field(default_factory=dict)
     checkpoints: list[str] = field(default_factory=list)
     expectations: list[Expectation] = field(default_factory=list)
+    #: One entry per EVALUATED expectation, in step order. An expectation that could not
+    #: be evaluated raises instead, so this list never silently omits a verdict.
+    expectation_results: list[ExpectationResult] = field(default_factory=list)
     session_closed: bool = False
     stopped: bool = False
+
+    @property
+    def expectations_failed(self) -> int:
+        """Evaluated expectations the run did not meet. This is a MEASUREMENT, not a verdict."""
+        return sum(1 for result in self.expectation_results if not result.met)
+
+    def require_expectations_met(self) -> None:
+        """Raise `ScenarioExpectationUnmet` when an evaluated expectation disagreed.
+
+        For a diagnostic that declares no metric able to carry the count (every
+        specialized runner): the authored situation did not materialise, so the run
+        is not the experiment that was asked for, and it must not be stored as if the
+        scenario had run as written. A diagnostic that DOES declare
+        `scenario.expectations_failed_count` reports the count instead and lets its own
+        blocking assertion turn it into `failed`.
+        """
+        unmet = [result for result in self.expectation_results if not result.met]
+        if unmet:
+            raise ScenarioExpectationUnmet(
+                "testlab_scenario_expectation_unmet",
+                f"{len(unmet)} scenario expectation(s) not met: "
+                + "; ".join(f"steps[{result.index}] {result.primitive}: {result.detail}" for result in unmet[:4]))
 
     # ------------------------------------------------------------- pilotage
 
@@ -416,46 +470,131 @@ class VirtualExecutor:
             # `expect.metric` and `expect.assertion` read the final measurements, which only
             # the runner has; it calls `check_measured_expectations` once it has them.
 
+    def _record(self, expectation: Expectation, met: bool, detail: str) -> None:
+        self.expectation_results.append(ExpectationResult(expectation.index, expectation.step.primitive, met, detail))
+
+    def _expect_arg(self, expectation: Expectation, name: str, kind: type | tuple[type, ...],
+                    default: Any = _REQUIRED) -> Any:
+        """One argument of an `expect.*` step, read WITHOUT coercing it.
+
+        Every argument here comes from the primitive schema, which `check_scenario`
+        enforces before a run — so a missing or wrongly typed one means the scenario was
+        never checked. That is an authoring fault, and it must read `inconclusive`, not
+        `crashed`: coercing with `int(...)` or `str(...)` was the last of the F1 class,
+        where a `ValueError` from a scenario's own data ended the run as a lab defect.
+        """
+        step = expectation.step
+        if name not in step.args:
+            if default is _REQUIRED:
+                raise _step_error(expectation.index, step, f"the step declares no {name}",
+                                  VIRTUAL_EXPECTATION_UNEVALUABLE)
+            return default
+        value = step.args[name]
+        # `bool` is an `int` in Python and must never stand in for a count or a name.
+        if type(value) is bool or not isinstance(value, kind):
+            raise _step_error(expectation.index, step,
+                              f"{name} is not a {getattr(kind, '__name__', 'valid value')} in this step",
+                              VIRTUAL_EXPECTATION_UNEVALUABLE)
+        return value
+
     async def _check_event_expectation(self, expectation: Expectation) -> None:
         step = expectation.step
-        wanted = str(step.args["event"])
-        low = int(step.args.get("count_min", 1))
-        high = step.args.get("count_max")
+        wanted = self._expect_arg(expectation, "event", str)
+        low = self._expect_arg(expectation, "count_min", int, 1)
+        high = self._expect_arg(expectation, "count_max", int, None)
         conversation_id = self.stack.runtime.runtime.conversation_id
         if not conversation_id:
-            raise _step_error(expectation.index, step, "no conversation was opened, so no Conversation Event exists")
-        page = await self.stack.core.conversation_events.list_conversation_events(conversation_id, limit=1000)
-        count = sum(1 for item in page.events if item.event.event_type.value == wanted)
-        if count < low or (high is not None and count > int(high)):
-            raise _step_error(expectation.index, step,
-                              f"{count} {wanted} event(s) recorded, expected {low}..{high if high is not None else '*'}",
-                              VIRTUAL_EXPECTATION_FAILED)
+            # Structural: with no conversation there is no evidence to be right or wrong about.
+            raise _step_error(expectation.index, step, "no conversation was opened, so no Conversation Event exists",
+                              VIRTUAL_EXPECTATION_UNEVALUABLE)
+        count = await self._count_events(expectation, conversation_id, wanted)
+        met = low <= count and (high is None or count <= high)
+        self._record(expectation, met, f"{count} {wanted} event(s) recorded, expected "
+                                       f"{low}..{high if high is not None else '*'}")
+
+    async def _count_events(self, expectation: Expectation, conversation_id: str, wanted: str) -> int:
+        """Count one event type over the whole conversation, by paging the event store.
+
+        The store caps a page at `MAX_EVENT_PAGE_LIMIT`, and asking for more raises —
+        which used to make EVERY `expect.event` step end `crashed`, met or not. Paging
+        is therefore the contract, and so is refusing to answer from a partial scan: a
+        conversation longer than `MAX_EVENT_PAGES` pages, or one whose window holds rows
+        the store could not decode, yields a LOWER BOUND, and a count that may be short
+        cannot say whether `count_min`/`count_max` holds. Both refuse with
+        `testlab_virtual_expectation_unevaluable` ("could not measure") rather than
+        judging the product on a truncated count.
+        """
+        events = self.stack.core.conversation_events
+        count = 0
+        cursor = 0
+        for _ in range(MAX_EVENT_PAGES):
+            page = await events.list_conversation_events(conversation_id, after_sequence=cursor,
+                                                         limit=MAX_EVENT_PAGE_LIMIT)
+            count += sum(1 for item in page.events if item.event.event_type.value == wanted)
+            if page.skipped_rows:
+                raise _step_error(expectation.index, expectation.step,
+                                  f"{page.skipped_rows} Conversation Event row(s) could not be decoded, so the "
+                                  f"{wanted} count is only a lower bound", VIRTUAL_EXPECTATION_UNEVALUABLE)
+            if not page.has_more:
+                return count
+            cursor = page.next_cursor
+        raise _step_error(expectation.index, expectation.step,
+                          f"the conversation holds more than {MAX_EVENT_PAGES * MAX_EVENT_PAGE_LIMIT} events, so "
+                          f"the {wanted} count is only a lower bound", VIRTUAL_EXPECTATION_UNEVALUABLE)
 
     def check_measured_expectations(self, metrics: Mapping[str, Any],
                                     assertion_outcomes: Mapping[str, str]) -> None:
-        """Evaluate the `expect.metric` / `expect.assertion` steps against the final run evidence."""
-        from jarvis.testlab.diagnostics import AssertionSpec, Comparator, evaluate_assertion
+        """Evaluate the `expect.metric` / `expect.assertion` steps against the final run evidence.
+
+        An expectation that CAN be evaluated is recorded as an `ExpectationResult`,
+        met or not: that is a product verdict, and the caller decides how to express
+        it (a metric, or `require_expectations_met`). An expectation there is nothing
+        to evaluate against raises `VirtualStepError` with
+        `testlab_virtual_expectation_unevaluable`, which is "could not measure".
+        """
+        from jarvis.testlab.diagnostics import AssertionSpec, Comparator, AssertionOutcome, evaluate_assertion
+        from jarvis.testlab.validation import TestLabError
 
         declared = {spec.name: spec for spec in self.context.diagnostic.metrics}
         for expectation in self.expectations:
             step = expectation.step
             if step.primitive == "expect.metric":
-                name = str(step.args["metric"])
-                result = evaluate_assertion(
-                    AssertionSpec(f"expect_step_{expectation.index}", name, Comparator(str(step.args["comparator"])),
-                                  step.args["threshold"], True), declared[name], metrics.get(name))
-                if result.outcome.value != "passed":
+                name = self._expect_arg(expectation, "metric", str)
+                comparator = self._expect_arg(expectation, "comparator", str)
+                threshold = self._expect_arg(expectation, "threshold", (int, float))
+                wanted = f"{comparator} {threshold!r}"
+                if name not in declared:
                     raise _step_error(expectation.index, step,
-                                      f"{name} measured {metrics.get(name)!r}, expected "
-                                      f"{step.args['comparator']} {step.args['threshold']!r}",
-                                      VIRTUAL_EXPECTATION_FAILED)
+                                      f"{name} is not declared by this diagnostic, so it can never be measured",
+                                      VIRTUAL_EXPECTATION_UNEVALUABLE)
+                try:
+                    result = evaluate_assertion(
+                        AssertionSpec(f"expect_step_{expectation.index}", name, Comparator(comparator),
+                                      threshold, True),
+                        declared[name], metrics.get(name))
+                except (TestLabError, ValueError) as exc:
+                    # An unknown comparator, or a threshold that does not fit the metric's unit.
+                    # `check_scenario` refuses both before a run, so reaching this means the
+                    # scenario was never checked: an AUTHORING fault, not a defect of the lab,
+                    # and it must not read `crashed` (same class as the F1 page-limit defect).
+                    raise _step_error(expectation.index, step,
+                                      f"{name} cannot be compared as written ({getattr(exc, 'code', 'invalid')})",
+                                      VIRTUAL_EXPECTATION_UNEVALUABLE) from None
+                if result.outcome is AssertionOutcome.MISSING:
+                    raise _step_error(expectation.index, step, f"{name} was never measured, so {wanted} cannot be "
+                                                               "checked", VIRTUAL_EXPECTATION_UNEVALUABLE)
+                self._record(expectation, result.outcome is AssertionOutcome.PASSED,
+                             f"{name} measured {metrics.get(name)!r}, expected {wanted}")
             elif step.primitive == "expect.assertion":
-                assertion_id = str(step.args["assertion_id"])
+                assertion_id = self._expect_arg(expectation, "assertion_id", str)
+                expected = self._expect_arg(expectation, "outcome", str)
                 observed = assertion_outcomes.get(assertion_id)
-                if observed != str(step.args["outcome"]):
+                if observed is None:
                     raise _step_error(expectation.index, step,
-                                      f"assertion {assertion_id} ended {observed!r}, expected "
-                                      f"{step.args['outcome']!r}", VIRTUAL_EXPECTATION_FAILED)
+                                      f"assertion {assertion_id} was not evaluated by this run",
+                                      VIRTUAL_EXPECTATION_UNEVALUABLE)
+                self._record(expectation, observed == expected,
+                             f"assertion {assertion_id} ended {observed!r}, expected {expected!r}")
 
 
 #: Replay `addressing` vocabulary -> the classification the journal reports.

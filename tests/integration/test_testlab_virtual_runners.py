@@ -50,14 +50,15 @@ RUN_ID = format_run_id(T0, NONCE)
 RUN_BUDGET_S = 120.0
 
 
-def _entry(diagnostic_id: str):
-    return load_catalog(CATALOG_ROOT, implementations=catalog_implementations()).describe(diagnostic_id)
+def _entry(diagnostic_id: str, version: int | None = None):
+    """One published version, the latest by default (what a versionless request resolves to)."""
+    return load_catalog(CATALOG_ROOT, implementations=catalog_implementations()).describe(diagnostic_id, version)
 
 
 def build_context(tmp_path: Path, diagnostic_id: str, *, parameters=None, scenario="manifest",
-                  budget_s: float = RUN_BUDGET_S, overrides=None) -> RunContext:
+                  budget_s: float = RUN_BUDGET_S, overrides=None, version: int | None = None) -> RunContext:
     """A `RunContext` on a real run store, exactly as a worker builds one."""
-    entry = _entry(diagnostic_id)
+    entry = _entry(diagnostic_id, version)
     spec = entry.diagnostic
     parameters = resolve_parameters(spec.parameters, dict(parameters or {}))
     store = FilesystemTestRunStore(tmp_path / "store")
@@ -76,6 +77,22 @@ def build_context(tmp_path: Path, diagnostic_id: str, *, parameters=None, scenar
         runtime_dir=runtime_dir, data_root=data_root,
         artifacts=RunArtifacts(store, RUN_ID), cancelled=asyncio.Event(),
         deadline=asyncio.get_running_loop().time() + budget_s, log=lambda message: None)
+
+
+def stored_run_for(context: RunContext, metrics) -> TestRun:
+    """The terminal record the SUPERVISOR would store from these metrics, for reading its shape."""
+    from jarvis.testlab.runs import complete_run, transition_run
+    from jarvis.testlab.supervisor import derive_assertion_results
+
+    spec = context.diagnostic
+    queued = TestRun(run_id=RUN_ID, diagnostic_id=spec.diagnostic_id, diagnostic_version=spec.version,
+                     profile=ProfileName.VIRTUAL, status=RunStatus.QUEUED, created_at=T0,
+                     code=CodeIdentity(REVISION, False), config_fingerprint=CONFIG,
+                     diagnostic_fingerprint=spec.fingerprint(), parameters=context.parameters,
+                     environment=ENVIRONMENT)
+    running = transition_run(queued, RunStatus.RUNNING, at=T0)
+    return complete_run(running, at=T0, assertion_results=derive_assertion_results(spec, dict(metrics)),
+                        metrics=dict(metrics))
 
 
 def verdict_of(context: RunContext, metrics) -> tuple[str, dict[str, str]]:
@@ -157,10 +174,11 @@ NEVER_DELIVERED = Scenario(
 
 
 async def test_speech_stale_supersession_passes_the_seed_and_fails_an_undelivered_intent(tmp_path):
-    context = build_context(tmp_path / "ok", "speech.stale_supersession")
+    """Pinned to v1: the four measurements of the situation itself, without the v2 expectation pair."""
+    context = build_context(tmp_path / "ok", "speech.stale_supersession", version=1)
     good = await StaleSupersessionRunner().run(context)
     bad = await StaleSupersessionRunner().run(
-        build_context(tmp_path / "ko", "speech.stale_supersession", scenario=NEVER_DELIVERED))
+        build_context(tmp_path / "ko", "speech.stale_supersession", version=1, scenario=NEVER_DELIVERED))
 
     assert dict(good.metrics) == {"speech.superseded_count": 1, "speech.stale_delivered_count": 0,
                                   "speech.latest_intent_delivered": True, "speech.stale_wait_ms": 28000}
@@ -211,13 +229,24 @@ class _DeafToProviderVad(SelfEchoRunner):
 
 
 async def test_voice_self_echo_refuses_to_pass_when_the_stack_never_decides(tmp_path):
-    """Two zero counts are not a clean bill of health: a stimulus with no answer is no evidence."""
+    """Two zero counts are not a clean bill of health: a stimulus with no answer is no evidence.
+
+    Slice 07 reads that refusal as `measurement_unavailable` / `inconclusive` — the
+    diagnostic saying it could not measure — instead of `runner_failed` / `crashed`,
+    which claimed the lab had broken.
+    """
+    from jarvis.testlab.outcomes import RunOutcomeClass, outcome_of
+    from jarvis.testlab.worker import runner_failure_code
+
     context = build_context(tmp_path, "voice.self_echo",
                             parameters={"output.duration_ms": 500, "echo.candidate_count": 1}, budget_s=20.0)
     with pytest.raises(TestLabError) as error:
         await _DeafToProviderVad().run(context)
     assert "barge-in decision" in error.value.detail
     assert "voice.barge_in_ignored" in error.value.detail
+    code = runner_failure_code(error.value)
+    assert code == "measurement_unavailable"
+    assert outcome_of(RunStatus.ERRORED, code) is RunOutcomeClass.INCONCLUSIVE
 
 
 class _NoProviderAudio(QueueLatencyRunner):
@@ -239,6 +268,15 @@ async def test_voice_queue_latency_is_inconclusive_when_no_audio_is_ever_deliver
     verdict, results = verdict_of(context, metrics)
     assert verdict == "inconclusive"
     assert results["started_to_first_audio"] == "missing"
+    # Slice 07: the stored shape a caller reads, and a detail that names what was missing.
+    from jarvis.testlab.outcomes import RunOutcomeClass, classify_run
+
+    stored = stored_run_for(context, metrics)
+    summary = classify_run(stored)
+    assert summary.outcome is RunOutcomeClass.INCONCLUSIVE
+    assert stored.failure.code == "assertions_inconclusive"
+    assert stored.failure.detail == "no measurement for blocking assertion(s): started_to_first_audio"
+    assert summary.missing_assertions == ("started_to_first_audio",)
 
 
 # -------------------------------------------------- refusals, cancel, deadline
@@ -340,3 +378,150 @@ async def test_a_run_leaves_a_live_shaped_journal_that_a_bundle_segments_into_on
     assert segments["count"] == 1
     assert segments["items"][0]["session_id"] == f"{RUN_ID}-s1"
     assert result.bundle.document["coverage"]["warnings"] == ()
+
+
+# ------------------------------------ expect.* as a verdict (Slice 07 rework F1/F3)
+
+#: A Conversation Event type a one-turn scenario really records (probed, not guessed).
+RECORDED_EVENT = "user.transcript.accepted"
+WAKE_STEPS = (ScenarioStep("user.turn", {"at_ms": 0, "turn_id": "t1", "content_tag": "hello"}),
+              ScenarioStep("control.checkpoint", {"at_ms": 400, "checkpoint_id": "settled"}))
+
+
+def _metric(name, unit="count", direction="lower_better", description="QA metric"):
+    from jarvis.testlab.diagnostics import MetricDirection, MetricSpec, MetricUnit
+
+    return MetricSpec(name, MetricUnit(unit), MetricDirection(direction), description)
+
+
+def expectation_spec(diagnostic_id: str, implementation: str, *extra, carries_count: bool):
+    """An AD-HOC diagnostic whose expectations are (or are not) expressible as a metric.
+
+    The specialized cases use the published `speech.stale_supersession` v1 and v2 instead,
+    which is the real declaration pair and therefore the stronger evidence.
+    """
+    from jarvis.testlab.diagnostics import AssertionSpec, Comparator, DiagnosticSpec, ScoreContract
+    from jarvis.testlab.profiles import CostBounds, ProfileSpec
+
+    metrics = list(extra)
+    assertions = [AssertionSpec("declared_metric_sane", metric.name, Comparator.GE, 0, True)
+                  for metric in extra if metric.unit.value == "count"][:1]
+    if carries_count:
+        metrics.append(_metric("scenario.expectations_failed_count", description="Unmet scenario expectations."))
+        assertions.append(AssertionSpec("expectations_met", "scenario.expectations_failed_count",
+                                        Comparator.EQ, 0, True, "Every scenario expectation held."))
+    return DiagnosticSpec(
+        diagnostic_id=diagnostic_id, version=1, title="QA expectation probe",
+        domain=diagnostic_id.split(".")[0], description="Built by the test to exercise the expect rule.",
+        profiles={ProfileName.VIRTUAL: ProfileSpec(ProfileName.VIRTUAL, implementation, CostBounds(120, 0))},
+        metrics=tuple(metrics), assertions=tuple(assertions), score=ScoreContract())
+
+
+def context_for(tmp_path: Path, spec, scenario) -> RunContext:
+    """`build_context`, for a declaration the catalog does not publish."""
+    store = FilesystemTestRunStore(tmp_path / "store")
+    store.create_run(TestRun(run_id=RUN_ID, diagnostic_id=spec.diagnostic_id, diagnostic_version=spec.version,
+                             profile=ProfileName.VIRTUAL, status=RunStatus.QUEUED, created_at=T0,
+                             code=CodeIdentity(REVISION, False), config_fingerprint=CONFIG,
+                             diagnostic_fingerprint=spec.fingerprint(), parameters={}, environment=ENVIRONMENT))
+    runtime_dir, data_root = tmp_path / "runtime", tmp_path / "data"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    data_root.mkdir(parents=True, exist_ok=True)
+    return RunContext(run_id=RUN_ID, diagnostic=spec, profile=ProfileName.VIRTUAL, parameters={}, overrides={},
+                      scenario=scenario, runtime_dir=runtime_dir, data_root=data_root,
+                      artifacts=RunArtifacts(store, RUN_ID), cancelled=asyncio.Event(),
+                      deadline=asyncio.get_running_loop().time() + RUN_BUDGET_S, log=lambda message: None)
+
+
+def event_scenario(scenario_id: str, **args) -> Scenario:
+    return Scenario(scenario_id, title="one expect event step", description="A recorded event type, counted.",
+                    steps=(*WAKE_STEPS, ScenarioStep("expect.event", {"at_ms": 500, "event": RECORDED_EVENT,
+                                                                      **args})))
+
+
+def adhoc_spec(*, carries_count: bool):
+    return expectation_spec("qa.adhoc", "testlab.scenario.virtual",
+                            _metric("scenario.steps_performed", direction="neutral", description="Steps performed."),
+                            carries_count=carries_count)
+
+
+def stale_scenario(scenario_id: str, shipped, **args) -> Scenario:
+    return Scenario(scenario_id, title="the shipped scenario plus one expectation",
+                    description="The stale-supersession situation with an event expectation appended.",
+                    steps=(*shipped.manifest.scenario.steps,
+                           ScenarioStep("expect.event", {"at_ms": 36000, "event": RECORDED_EVENT, **args})),
+                    provenance=shipped.manifest.scenario.provenance)
+
+
+async def test_an_expect_event_step_actually_runs_and_is_met(tmp_path):
+    """It used to raise on every path: `limit=1000` exceeds the store's own page cap.
+
+    A met expectation must now be an ordinary measured 0, and the run must pass.
+    """
+    spec = adhoc_spec(carries_count=True)
+    context = context_for(tmp_path, spec, event_scenario("qa_event_met", count_min=1, count_max=9))
+    outcome = await ScenarioRunner().run(context)
+    assert dict(outcome.metrics)["scenario.expectations_failed_count"] == 0
+    verdict, outcomes = verdict_of(context, outcome.metrics)
+    assert verdict == "passed" and outcomes["expectations_met"] == "passed"
+
+
+async def test_an_expect_event_step_that_disagrees_fails_the_run(tmp_path):
+    """The product verdict: an unmet expectation is a measured 1 and the run FAILS."""
+    spec = adhoc_spec(carries_count=True)
+    context = context_for(tmp_path, spec, event_scenario("qa_event_unmet", count_min=99))
+    outcome = await ScenarioRunner().run(context)
+    assert dict(outcome.metrics)["scenario.expectations_failed_count"] == 1
+    verdict, outcomes = verdict_of(context, outcome.metrics)
+    assert verdict == "failed" and outcomes["expectations_met"] == "failed"
+
+
+async def test_a_trivially_satisfiable_expect_event_no_longer_crashes(tmp_path):
+    """QA's sharpest repro: `count_min 0` cannot be unmet, yet it used to end `crashed`."""
+    spec = adhoc_spec(carries_count=True)
+    context = context_for(tmp_path, spec, event_scenario("qa_event_zero", count_min=0, count_max=99))
+    outcome = await ScenarioRunner().run(context)
+    assert dict(outcome.metrics)["scenario.expectations_failed_count"] == 0
+
+
+async def test_a_specialized_runner_carries_an_unmet_expectation_as_a_verdict(tmp_path):
+    """F3: the rule is a property of the DECLARATION, not of the runner.
+
+    A `speech.stale_supersession`-shaped diagnostic that declares the count metric fails
+    on an unmet `expect.event`, instead of reporting "could not measure".
+    """
+    shipped = _entry("speech.stale_supersession", 2)
+    context = context_for(tmp_path, shipped.diagnostic,
+                          stale_scenario("qa_stale_unmet", shipped, count_min=99))
+    outcome = await StaleSupersessionRunner().run(context)
+    assert dict(outcome.metrics)["scenario.expectations_failed_count"] == 1
+    verdict, outcomes = verdict_of(context, outcome.metrics)
+    assert verdict == "failed" and outcomes["scenario_expectations_met"] == "failed"
+
+
+async def test_a_specialized_runner_that_cannot_carry_the_count_is_inconclusive_by_design(tmp_path):
+    """The shipped v1 declares no expectation metric, so an unmet one refuses the run."""
+    from jarvis.testlab.outcomes import RunOutcomeClass, outcome_of
+    from jarvis.testlab.runners import ScenarioExpectationUnmet
+    from jarvis.testlab.worker import runner_failure_code
+
+    shipped = _entry("speech.stale_supersession", 1)
+    context = build_context(tmp_path, "speech.stale_supersession", version=1,
+                            scenario=stale_scenario("qa_stale_v1_unmet", shipped, count_min=99))
+    with pytest.raises(ScenarioExpectationUnmet) as failure:
+        await StaleSupersessionRunner().run(context)
+    code = runner_failure_code(failure.value)
+    assert code == "scenario_expectation_unmet"
+    assert outcome_of(RunStatus.ERRORED, code) is RunOutcomeClass.INCONCLUSIVE
+
+
+async def test_a_specialized_runner_keeps_its_own_metrics_when_the_expectation_holds(tmp_path):
+    """The expectation metrics are added, never instead of the diagnostic's own."""
+    shipped = _entry("speech.stale_supersession", 2)
+    v1_metrics = {item.name for item in _entry("speech.stale_supersession", 1).diagnostic.metrics}
+    context = context_for(tmp_path, shipped.diagnostic, stale_scenario("qa_stale_met", shipped, count_min=0))
+    outcome = await StaleSupersessionRunner().run(context)
+    metrics = dict(outcome.metrics)
+    assert metrics["scenario.expectations_failed_count"] == 0
+    assert metrics["scenario.expectations_declared"] == 1
+    assert set(metrics) >= v1_metrics

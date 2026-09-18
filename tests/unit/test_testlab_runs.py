@@ -13,6 +13,7 @@ from jarvis.testlab.identity import format_bundle_id, format_run_id, format_swee
 from jarvis.testlab.profiles import ProfileName
 from jarvis.testlab.runs import (
     FAILURE_ASSERTIONS_INCONCLUSIVE,
+    MAX_FAILURE_DETAIL_CHARS,
     RUN_TRANSITIONS,
     TERMINAL_STATUSES,
     TRANSITION_ILLEGAL,
@@ -139,7 +140,28 @@ def test_blocking_failure_fails_whatever_the_score():
 def test_missing_blocking_measurement_is_errored_not_passed():
     metrics = {"barge_in.false_count": 0, "speech.ready_to_play_ms": 100}
     run = finished_run(metrics)
-    assert run.status is S.ERRORED and run.failure == RunFailure(FAILURE_ASSERTIONS_INCONCLUSIVE)
+    assert run.status is S.ERRORED and run.failure.code == FAILURE_ASSERTIONS_INCONCLUSIVE
+    # The detail names the blocking assertion that had no measurement: an empty one made
+    # this shape indistinguishable from any other "could not measure" without re-deriving.
+    assert run.failure.detail == "no measurement for blocking assertion(s): output_stops"
+
+
+def test_a_run_with_no_blocking_assertion_evaluated_says_so():
+    run = complete_run(transition_run(queued_run(), S.RUNNING, at=at(10)), at=at(900), assertion_results=(),
+                       metrics={})
+    assert run.failure.code == FAILURE_ASSERTIONS_INCONCLUSIVE
+    assert run.failure.detail == "the diagnostic evaluated no blocking assertion, so nothing could conclude"
+
+
+def test_the_inconclusive_detail_abbreviates_a_long_list():
+    from jarvis.testlab.diagnostics import AssertionOutcome, AssertionResult
+    from jarvis.testlab.runs import MAX_NAMED_MISSING_ASSERTIONS, inconclusive_detail
+
+    results = tuple(AssertionResult(f"a_{index:02d}", AssertionOutcome.MISSING, True) for index in range(12))
+    detail = inconclusive_detail(results)
+    assert detail.endswith(f"and {12 - MAX_NAMED_MISSING_ASSERTIONS} more")
+    assert "a_00" in detail and "a_11" not in detail
+    assert len(detail) <= MAX_FAILURE_DETAIL_CHARS
 
 
 def test_status_cannot_contradict_assertions():

@@ -15,6 +15,12 @@
       "manifest_fingerprint": "5be195b3c51d39de1951ea4b7882e6b6ffe0ceb4fba5eca810898052c5532c30"
     },
     {
+      "diagnostic_id": "speech.stale_supersession",
+      "version": 2,
+      "path": "speech/stale_supersession.v2.json",
+      "manifest_fingerprint": "9cbb198ffff51c3c1c13c1ebc73c00290de2bb5b9d3dcba01bd2c9a754db3e87"
+    },
+    {
       "diagnostic_id": "voice.queue_latency",
       "version": 1,
       "path": "voice/queue_latency.v1.json",

@@ -939,3 +939,97 @@ def test_sweep_shortens_a_long_deletion_leftover_before_removing_it(store):
     (store.runs_dir / long_name / "sub" / "f.txt").write_bytes(b"x")
     assert store.remove_stale_temporaries() == 1
     assert list(store.runs_dir.iterdir()) == []
+
+
+# ------------------------------------- listing cache (Slice 07, QA F2 repros)
+
+def test_the_listing_cache_notices_a_terminal_record_that_became_corrupt(store, tmp_path):
+    """A cache that trusted immutability switched the Slice 02 corruption mechanism off.
+
+    A terminal record is immutable THROUGH the store, but the file is an ordinary file:
+    truncated by a crash, edited by hand or restored from a backup, it becomes corrupt.
+    The long-lived supervisor process is exactly where that must still be reported.
+    """
+    good = passed(store, run_at(0, "0000000000000001"))
+    bad = passed(store, run_at(1000, "0000000000000002"))
+    first = store.list_runs()
+    assert sorted(run.run_id for run in first.runs) == sorted((good.run_id, bad.run_id))
+    assert first.corrupt == ()
+
+    (store.runs_dir / bad.run_id / RECORD_NAME).write_bytes(b'{"schema": "jarvis.testlab.run"')
+
+    same_instance = store.list_runs()
+    fresh = FilesystemTestRunStore(tmp_path / "testlab").list_runs()
+    assert [run.run_id for run in same_instance.runs] == [run.run_id for run in fresh.runs] == [good.run_id]
+    assert [entry.entry for entry in same_instance.corrupt] == [entry.entry for entry in fresh.corrupt] == [
+        bad.run_id]
+
+
+def test_the_listing_cache_never_gives_one_process_two_truths(store):
+    """`list_runs` must not serve a record that `get_run` in the same process refuses."""
+    run = passed(store, run_at(0, "0000000000000003"))
+    store.list_runs()  # populates the cache
+    (store.runs_dir / run.run_id / RECORD_NAME).write_bytes(b"{}")
+    with pytest.raises(RunRecordCorruptError):
+        store.get_run(run.run_id)
+    page = store.list_runs()
+    assert page.runs == () and [entry.entry for entry in page.corrupt] == [run.run_id]
+
+
+def test_the_listing_cache_reflects_an_edited_terminal_record(store):
+    """An edit that still decodes is served as the NEW record, never as the cached one."""
+    run = passed(store, run_at(0, "0000000000000004"))
+    assert store.list_runs().runs[0].score == 50.0
+    edited = json.loads((store.runs_dir / run.run_id / RECORD_NAME).read_text(encoding="utf-8"))
+    edited["score"] = 1.0
+    (store.runs_dir / run.run_id / RECORD_NAME).write_text(canonical_json(edited), encoding="utf-8")
+    assert store.list_runs().runs[0].score == 1.0 == store.get_run(run.run_id).score
+
+
+def test_the_listing_cache_serves_an_untouched_terminal_record_without_re_reading(store, monkeypatch):
+    """The point of the cache: the second listing decodes nothing it already decoded."""
+    run = passed(store, run_at(0, "0000000000000005"))
+    assert store.list_runs().runs[0].run_id == run.run_id
+    reads: list[str] = []
+    original = FilesystemTestRunStore._read_record
+
+    def counted(self, run_dir, run_id):
+        reads.append(run_id)
+        return original(self, run_dir, run_id)
+
+    monkeypatch.setattr(FilesystemTestRunStore, "_read_record", counted)
+    assert store.list_runs().runs[0].run_id == run.run_id
+    assert reads == []
+
+
+def test_a_non_terminal_record_is_never_cached(store):
+    run = started(store, run_at(0, "0000000000000006"))
+    assert store.list_runs().runs[0].status is S.RUNNING
+    done = complete_run(run, at=at(200), assertion_results=results_for(PASSING), metrics=PASSING)
+    store.update_run(done, expected=run)
+    assert store.list_runs().runs[0].status is S.PASSED
+
+
+def test_a_deleted_run_leaves_the_listing_cache(store):
+    run = passed(store, run_at(0, "0000000000000007"))
+    store.list_runs()
+    store.delete_run(run.run_id)
+    assert store.list_runs().runs == ()
+
+
+def test_the_listing_cache_can_be_switched_off(tmp_path):
+    off = FilesystemTestRunStore(tmp_path / "off", listing_cache_size=0)
+    run = passed(off, run_at(0, "0000000000000008"))
+    off.list_runs()
+    assert off._listing_cache == {}
+    assert off.list_runs().runs[0].run_id == run.run_id
+    with pytest.raises(TypeError):
+        FilesystemTestRunStore(tmp_path / "bad", listing_cache_size=-1)
+
+
+def test_the_listing_cache_is_bounded(tmp_path):
+    small = FilesystemTestRunStore(tmp_path / "small", listing_cache_size=2)
+    for index in range(4):
+        passed(small, run_at(index * 10, f"{index:016x}"))
+    small.list_runs()
+    assert len(small._listing_cache) == 2

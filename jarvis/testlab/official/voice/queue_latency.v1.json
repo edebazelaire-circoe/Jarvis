@@ -91,7 +91,7 @@
         "comparator": "le",
         "threshold": 8000,
         "blocking": false,
-        "description": "End-to-end reaction, dominated by brain time (Slice 07 decides the brain budget)."
+        "description": "End-to-end reaction, dominated by brain time; informational, never a verdict of this diagnostic."
       }
     ],
     "score": {

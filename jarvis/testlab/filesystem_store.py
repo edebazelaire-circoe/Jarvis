@@ -22,6 +22,7 @@ hidden segments), so protocol files never collide with evidence.
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from collections.abc import Iterable, Iterator
 import hashlib
 import os
@@ -109,6 +110,13 @@ ARTIFACT_TMP_PREFIX = ".artifact-"
 #: refreshes its temporary's mtime on every chunk).
 DEFAULT_STALE_TEMPORARY_S = 3600.0
 STREAM_CHUNK_BYTES = 256 * 1024
+#: Terminal records kept decoded in memory for `list_runs` (0 disables it). A listing
+#: decodes every run in the store, and a sweep makes listings hot; 2048 covers a store
+#: well past the retention cap for a few MB (docs/testlab.md, "Storage", "Listing cache").
+DEFAULT_LISTING_CACHE = 2048
+
+#: What identifies the bytes a cached record was decoded from: `(st_mtime_ns, st_size)`.
+_Stamp = tuple[int, int]
 #: Device names Windows resolves in any directory, with any extension.
 _WINDOWS_RESERVED = frozenset({"con", "prn", "aux", "nul", "conin$", "conout$",
                                *(f"com{i}" for i in range(10)), *(f"lpt{i}" for i in range(10))})
@@ -156,9 +164,11 @@ class FilesystemTestRunStore:
 
     def __init__(self, root: Path, *, limits: ArtifactWriteLimits = ArtifactWriteLimits(),
                  lock_timeout_s: float = DEFAULT_LOCK_TIMEOUT_S, diagnostics: DiagnosticSink | None = None,
-                 max_path_chars: int | None | object = ...) -> None:
+                 max_path_chars: int | None | object = ..., listing_cache_size: int = DEFAULT_LISTING_CACHE) -> None:
         if not isinstance(limits, ArtifactWriteLimits):
             raise TypeError("limits must be ArtifactWriteLimits")
+        if type(listing_cache_size) is not int or listing_cache_size < 0:
+            raise TypeError("listing_cache_size must be a non-negative integer")
         #: Longest absolute path the store may create (None: unbounded). Default: `default_max_path_chars()`.
         self.max_path_chars: int | None = default_max_path_chars() if max_path_chars is ... else max_path_chars  # type: ignore[assignment]
         self.root = Path(root)
@@ -167,8 +177,54 @@ class FilesystemTestRunStore:
         self.limits = limits
         self.lock_timeout_s = lock_timeout_s
         self._diagnostics = SafeDiagnostics(diagnostics)
+        self._listing_cache_size = listing_cache_size
+        #: run_id -> (record stamp, record, manifest defect). TERMINAL runs only.
+        self._listing_cache: OrderedDict[str, tuple[_Stamp, TestRun, CorruptRunEntry | None]] = OrderedDict()
 
     # ------------------------------------------------------------ plumbing
+
+    def _record_stamp(self, run_id: str) -> _Stamp | None:
+        """`(st_mtime_ns, st_size)` of a run's record, or None when it cannot be stated."""
+        try:
+            status = os.stat(self.runs_dir / run_id / RECORD_NAME, follow_symlinks=False)
+        except OSError:
+            return None  # intentional: a vanished or unreadable record is decided by the reader below
+        return (status.st_mtime_ns, status.st_size)
+
+    def _cache_get(self, run_id: str, stamp: _Stamp | None) -> tuple[TestRun, CorruptRunEntry | None] | None:
+        """A previously decoded TERMINAL record whose bytes have not changed, or None.
+
+        Two reasons this revalidates instead of trusting immutability. A terminal record
+        is immutable *through this store*, but the file is an ordinary file: truncated by
+        a crash, edited by hand, or restored from a backup, it BECOMES corrupt — and a
+        cache that never looks again would keep listing the old decoded record and report
+        `corrupt` empty, switching off the Slice 02 corruption mechanism in exactly the
+        long-lived supervisor process it was built for. It would also give one process two
+        truths, `list_runs` serving a record that `get_run` refuses. One `os.stat` per
+        listed run is noise against reading and decoding them.
+
+        A non-terminal record is never cached (it changes under the reader), and
+        `get_run` / `update_run` never consult this cache at all, so the compare-and-swap
+        still reads the bytes on disk every time.
+        """
+        entry = self._listing_cache.get(run_id)
+        if entry is None:
+            return None
+        cached_stamp, run, defect = entry
+        if stamp is None or stamp != cached_stamp:
+            del self._listing_cache[run_id]  # the file changed (or vanished): re-read and re-decide
+            return None
+        self._listing_cache.move_to_end(run_id)
+        return run, defect
+
+    def _cache_put(self, run_id: str, stamp: _Stamp | None, run: TestRun,
+                   defect: CorruptRunEntry | None) -> None:
+        if not self._listing_cache_size or stamp is None or run.status not in TERMINAL_STATUSES:
+            return
+        self._listing_cache[run_id] = (stamp, run, defect)
+        self._listing_cache.move_to_end(run_id)
+        while len(self._listing_cache) > self._listing_cache_size:
+            self._listing_cache.popitem(last=False)
 
     @property
     def diagnostic_failures(self) -> int:
@@ -343,7 +399,20 @@ class FilesystemTestRunStore:
         return RunPage(runs=tuple(runs), corrupt=tuple(corrupt), next_cursor=runs[-1].run_id if more else None)
 
     def _scan_record(self, run_id: str, corrupt: list[CorruptRunEntry]) -> TestRun | None:
-        """Read one listed run; an unreadable one is appended to `corrupt`, a vanished one is skipped."""
+        """Read one listed run; an unreadable one is appended to `corrupt`, a vanished one is skipped.
+
+        A terminal record already decoded in this process is served from
+        `_listing_cache`, but only after one `os.stat` confirms its bytes are the ones
+        that were decoded: decoding a record costs milliseconds (strict codec plus the
+        redaction scan) and a listing decodes every run in the store, so a sweep's own
+        listings used to re-pay the whole store on every page, while a stat does not.
+        """
+        stamp = self._record_stamp(run_id)
+        cached = self._cache_get(run_id, stamp)
+        if cached is not None:
+            if cached[1] is not None:
+                corrupt.append(cached[1])
+            return cached[0]
         run_dir = self.runs_dir / run_id
         try:
             run = self._read_record(run_dir, run_id)
@@ -352,13 +421,16 @@ class FilesystemTestRunStore:
                 return None  # intentional: deleted by retention between listing and reading; not corrupt
             corrupt.append(CorruptRunEntry(run_id, exc.code, exc.detail))
             return None
+        defect: CorruptRunEntry | None = None
         try:
             self._read_manifest(run_dir, run_id)
         except TestLabStoreError as exc:
             # The record stays readable and listed; the manifest defect is reported next
             # to it, because no new artifact can be put or committed until it is repaired.
             if run_dir.is_dir():
-                corrupt.append(CorruptRunEntry(run_id, exc.code, exc.detail))
+                defect = CorruptRunEntry(run_id, exc.code, exc.detail)
+                corrupt.append(defect)
+        self._cache_put(run_id, stamp, run, defect)
         return run
 
     def _entries(self) -> tuple[list[str], list[CorruptRunEntry]]:
@@ -393,6 +465,7 @@ class FilesystemTestRunStore:
         return names, stray
 
     def delete_run(self, run_id: str) -> None:
+        self._listing_cache.pop(run_id, None)  # a deleted run must not linger in the listing cache
         self._existing_run_dir(run_id)  # not found before any lock file is created
         with self._lock(run_id):
             run_dir = self._existing_run_dir(run_id)

@@ -390,3 +390,352 @@ def test_a_missing_latency_metric_makes_its_blocking_assertion_inconclusive(tmp_
     outcomes = {item.assertion_id: item.outcome for item in results}
     assert outcomes["started_to_first_audio"] is AssertionOutcome.MISSING
     assert assertions_verdict(results) is AssertionVerdict.INCONCLUSIVE
+
+
+# ------------------------------------------------- the expect.* verdict rule
+
+def _expectation_executor(spec, steps):
+    """A `VirtualExecutor` with no stack: `check_measured_expectations` reads only the
+    declaration and the expectations, so the rule can be exercised without a voice stack."""
+    from jarvis.testlab.scenarios import ScenarioStep
+    from jarvis.testlab.virtual.executor import Expectation, VirtualExecutor
+
+    executor = VirtualExecutor(stack=None, context=SimpleNamespace(diagnostic=spec), journal=None)
+    executor.expectations = [Expectation(index, ScenarioStep(primitive, args))
+                             for index, (primitive, args) in enumerate(steps)]
+    return executor
+
+
+def _scenario_spec(*metric_names):
+    """An ad-hoc diagnostic declaring a subset of the generic runner's measurement contract."""
+    from jarvis.testlab.diagnostics import (
+        AssertionSpec,
+        Comparator,
+        DiagnosticSpec,
+        MetricDirection,
+        MetricSpec,
+        MetricUnit,
+    )
+    from jarvis.testlab.profiles import CostBounds, ProfileSpec
+
+    metrics = tuple(MetricSpec(name, MetricUnit.COUNT, MetricDirection.LOWER_BETTER) for name in metric_names)
+    blocking = AssertionSpec("expectations_met", metric_names[0], Comparator.EQ, 0, True)
+    return DiagnosticSpec(diagnostic_id="adhoc.probe", version=1, title="ad-hoc probe", domain="adhoc",
+                          profiles={ProfileName.VIRTUAL: ProfileSpec(ProfileName.VIRTUAL,
+                                                                     "testlab.scenario.virtual", CostBounds(60, 0))},
+                          metrics=metrics, assertions=(blocking,))
+
+
+def test_an_evaluable_expectation_that_disagrees_is_a_recorded_verdict_not_an_error():
+    """A product verdict: the count is a MEASUREMENT the declaration turns into `failed`."""
+    spec = _scenario_spec("scenario.expectations_failed_count", "scenario.steps_performed")
+    executor = _expectation_executor(spec, [
+        ("expect.metric", {"at_ms": 0, "metric": "scenario.steps_performed", "comparator": "ge",
+                           "threshold": 10})])
+    executor.check_measured_expectations({"scenario.steps_performed": 2}, {})
+    assert executor.expectations_failed == 1
+    assert executor.expectation_results[0].met is False
+    assert "expected ge 10" in executor.expectation_results[0].detail
+
+
+def test_an_expectation_that_holds_is_recorded_as_met():
+    spec = _scenario_spec("scenario.expectations_failed_count", "scenario.steps_performed")
+    executor = _expectation_executor(spec, [
+        ("expect.metric", {"at_ms": 0, "metric": "scenario.steps_performed", "comparator": "ge", "threshold": 1})])
+    executor.check_measured_expectations({"scenario.steps_performed": 2}, {})
+    assert executor.expectations_failed == 0 and executor.expectation_results[0].met is True
+
+
+def test_an_expectation_on_a_metric_nobody_measured_could_not_be_evaluated():
+    """Authoring/structural, not a product verdict: `could not measure`."""
+    from jarvis.testlab.runners import MeasurementUnavailable
+    from jarvis.testlab.virtual.executor import VIRTUAL_EXPECTATION_UNEVALUABLE
+
+    spec = _scenario_spec("scenario.expectations_failed_count", "scenario.steps_performed")
+    executor = _expectation_executor(spec, [
+        ("expect.metric", {"at_ms": 0, "metric": "scenario.steps_performed", "comparator": "ge", "threshold": 1})])
+    with pytest.raises(MeasurementUnavailable) as failure:
+        executor.check_measured_expectations({}, {})
+    assert failure.value.code == VIRTUAL_EXPECTATION_UNEVALUABLE
+    assert executor.expectation_results == []
+
+
+def test_an_expectation_on_an_undeclared_metric_could_not_be_evaluated():
+    from jarvis.testlab.runners import MeasurementUnavailable
+
+    spec = _scenario_spec("scenario.expectations_failed_count")
+    executor = _expectation_executor(spec, [
+        ("expect.metric", {"at_ms": 0, "metric": "scenario.steps_performed", "comparator": "ge", "threshold": 1})])
+    with pytest.raises(MeasurementUnavailable, match="never be measured"):
+        executor.check_measured_expectations({"scenario.steps_performed": 3}, {})
+
+
+def test_an_expectation_on_an_assertion_nobody_evaluated_could_not_be_evaluated():
+    from jarvis.testlab.runners import MeasurementUnavailable
+
+    spec = _scenario_spec("scenario.expectations_failed_count")
+    executor = _expectation_executor(spec, [
+        ("expect.assertion", {"at_ms": 0, "assertion_id": "expectations_met", "outcome": "passed"})])
+    with pytest.raises(MeasurementUnavailable, match="was not evaluated"):
+        executor.check_measured_expectations({}, {})
+    executor.expectation_results.clear()
+    executor.check_measured_expectations({}, {"expectations_met": "failed"})
+    assert executor.expectations_failed == 1
+
+
+def test_a_diagnostic_that_cannot_carry_the_count_ends_inconclusive_instead_of_dropping_it():
+    """`require_expectations_met` is what a specialized runner uses: never a silent drop."""
+    from jarvis.testlab.runners import ScenarioExpectationUnmet
+
+    spec = _scenario_spec("scenario.expectations_failed_count", "scenario.steps_performed")
+    executor = _expectation_executor(spec, [
+        ("expect.metric", {"at_ms": 0, "metric": "scenario.steps_performed", "comparator": "le", "threshold": 1})])
+    executor.check_measured_expectations({"scenario.steps_performed": 9}, {})
+    with pytest.raises(ScenarioExpectationUnmet, match="not met"):
+        executor.require_expectations_met()
+
+
+def test_a_run_with_every_expectation_met_requires_nothing():
+    spec = _scenario_spec("scenario.expectations_failed_count", "scenario.steps_performed")
+    executor = _expectation_executor(spec, [])
+    executor.check_measured_expectations({}, {})
+    executor.require_expectations_met()
+
+
+def test_the_generic_runner_measurement_contract_is_the_declared_set():
+    from jarvis.testlab.virtual.runners import SCENARIO_METRICS
+
+    assert set(SCENARIO_METRICS) == {"scenario.steps_performed", "scenario.checkpoints_reached",
+                                     "scenario.expectations_declared", "scenario.expectations_failed_count"}
+
+
+def test_a_virtual_step_failure_is_a_measurement_problem_not_a_crash():
+    """The worker maps it to `measurement_unavailable`, which reads `inconclusive`."""
+    from jarvis.testlab.outcomes import RunOutcomeClass, outcome_of
+    from jarvis.testlab.runs import RunStatus
+    from jarvis.testlab.runners import MeasurementUnavailable
+    from jarvis.testlab.virtual.executor import VirtualStepError
+    from jarvis.testlab.virtual.runners import VirtualRunError
+    from jarvis.testlab.worker import runner_failure_code
+
+    assert issubclass(VirtualStepError, MeasurementUnavailable)
+    assert issubclass(VirtualRunError, MeasurementUnavailable)
+    code = runner_failure_code(VirtualRunError("testlab_virtual_run_failed", "the stack never answered"))
+    assert outcome_of(RunStatus.ERRORED, code) is RunOutcomeClass.INCONCLUSIVE
+
+
+def test_an_unforeseen_runner_exception_still_reads_as_a_crash():
+    from jarvis.testlab.jobs import FAILURE_RUNNER_FAILED
+    from jarvis.testlab.worker import runner_failure_code
+
+    assert runner_failure_code(ValueError("boom")) == FAILURE_RUNNER_FAILED
+
+
+# ------------------------------------ expect.event paging (Slice 07 rework F1)
+
+class _FakeEvents:
+    """A Conversation Event store that refuses an over-large page, exactly like the real one."""
+
+    def __init__(self, pages):
+        self.pages = list(pages)
+        self.requests: list[tuple[int, int]] = []
+
+    async def list_conversation_events(self, conversation_id, *, after_sequence=0, limit=100, **_):
+        from jarvis.domain.conversation_event_store import MAX_EVENT_PAGE_LIMIT
+
+        del conversation_id
+        if limit > MAX_EVENT_PAGE_LIMIT:
+            raise ValueError(f"limit must be <= {MAX_EVENT_PAGE_LIMIT}")
+        self.requests.append((after_sequence, limit))
+        index = min(len(self.requests) - 1, len(self.pages) - 1)
+        return self.pages[index]
+
+
+def _page(types, *, has_more=False, cursor=0, skipped=0):
+    from jarvis.domain.conversation_event_store import ConversationEventPage
+
+    events = tuple(SimpleNamespace(event=SimpleNamespace(event_type=SimpleNamespace(value=name)))
+                   for name in types)
+    return ConversationEventPage(events=events, next_cursor=cursor, has_more=has_more, skipped_rows=skipped)
+
+
+def _event_executor(pages, *, conversation_id="c-1", **args):
+    from jarvis.testlab.virtual.executor import Expectation, VirtualExecutor
+    from jarvis.testlab.scenarios import ScenarioStep
+
+    events = _FakeEvents(pages)
+    stack = SimpleNamespace(core=SimpleNamespace(conversation_events=events),
+                            runtime=SimpleNamespace(runtime=SimpleNamespace(conversation_id=conversation_id)))
+    executor = VirtualExecutor(stack=stack, context=None, journal=None)
+    step = ScenarioStep("expect.event", {"at_ms": 0, "event": "user.transcript.accepted",
+                                         "count_min": 1, **args})
+    executor.expectations = [Expectation(0, step)]
+    return executor, events
+
+
+async def test_expect_event_never_asks_for_a_page_larger_than_the_store_allows():
+    """The F1 defect: `limit=1000` exceeds MAX_EVENT_PAGE_LIMIT and raised on every path."""
+    from jarvis.domain.conversation_event_store import MAX_EVENT_PAGE_LIMIT
+
+    executor, events = _event_executor([_page(["user.transcript.accepted"])])
+    await executor._check_expectations()
+    assert events.requests == [(0, MAX_EVENT_PAGE_LIMIT)]
+    assert [(result.met, result.primitive) for result in executor.expectation_results] == [(True, "expect.event")]
+
+
+async def test_expect_event_pages_through_the_whole_conversation():
+    executor, events = _event_executor([
+        _page(["user.transcript.accepted"] * 3, has_more=True, cursor=500),
+        _page(["user.transcript.accepted"] * 2, has_more=False, cursor=900),
+    ], count_min=5, count_max=5)
+    await executor._check_expectations()
+    assert [request[0] for request in events.requests] == [0, 500]
+    assert executor.expectation_results[0].met is True
+    assert "5 user.transcript.accepted event(s)" in executor.expectation_results[0].detail
+
+
+async def test_expect_event_refuses_to_judge_a_conversation_it_could_not_finish_scanning():
+    """A lower bound cannot say whether count_min/count_max holds: refuse, never truncate."""
+    from jarvis.testlab.runners import MeasurementUnavailable
+    from jarvis.testlab.virtual.executor import MAX_EVENT_PAGES, VIRTUAL_EXPECTATION_UNEVALUABLE
+
+    executor, events = _event_executor([_page(["user.transcript.accepted"], has_more=True, cursor=1)])
+    with pytest.raises(MeasurementUnavailable) as failure:
+        await executor._check_expectations()
+    assert failure.value.code == VIRTUAL_EXPECTATION_UNEVALUABLE
+    assert "lower bound" in failure.value.detail
+    assert len(events.requests) == MAX_EVENT_PAGES
+    assert executor.expectation_results == []
+
+
+async def test_expect_event_refuses_to_judge_when_rows_could_not_be_decoded():
+    from jarvis.testlab.runners import MeasurementUnavailable
+    from jarvis.testlab.virtual.executor import VIRTUAL_EXPECTATION_UNEVALUABLE
+
+    executor, _events = _event_executor([_page(["user.transcript.accepted"], skipped=2)])
+    with pytest.raises(MeasurementUnavailable) as failure:
+        await executor._check_expectations()
+    assert failure.value.code == VIRTUAL_EXPECTATION_UNEVALUABLE
+    assert "could not be decoded" in failure.value.detail
+
+
+async def test_expect_event_without_a_conversation_could_not_be_evaluated():
+    from jarvis.testlab.runners import MeasurementUnavailable
+    from jarvis.testlab.virtual.executor import VIRTUAL_EXPECTATION_UNEVALUABLE
+
+    executor, _events = _event_executor([_page([])], conversation_id="")
+    with pytest.raises(MeasurementUnavailable) as failure:
+        await executor._check_expectations()
+    assert failure.value.code == VIRTUAL_EXPECTATION_UNEVALUABLE
+
+
+def test_an_expect_metric_the_declaration_cannot_compare_is_unevaluable_not_a_crash():
+    """The same class as F1, found by grepping the other two handlers: an authoring fault.
+
+    `check_scenario` refuses a bad comparator or an ill-fitting threshold before a run, so
+    this only happens to an unchecked scenario — and it must read `inconclusive`, not `crashed`.
+    """
+    from jarvis.testlab.runners import MeasurementUnavailable
+    from jarvis.testlab.virtual.executor import VIRTUAL_EXPECTATION_UNEVALUABLE
+
+    spec = _scenario_spec("scenario.expectations_failed_count", "scenario.steps_performed")
+    # `eq` on a non-exact unit, and an unknown comparator: both refused by the declaration.
+    for args in ({"at_ms": 0, "metric": "scenario.steps_performed", "comparator": "wat", "threshold": 1},
+                 {"at_ms": 0, "metric": "scenario.steps_performed", "comparator": "le", "threshold": 1.5}):
+        executor = _expectation_executor(spec, [("expect.metric", args)])
+        with pytest.raises(MeasurementUnavailable) as failure:
+            executor.check_measured_expectations({"scenario.steps_performed": 2}, {})
+        assert failure.value.code == VIRTUAL_EXPECTATION_UNEVALUABLE
+
+
+# ----------------------------- expect.* arguments are read, never coerced (Slice 07 rework)
+
+@pytest.mark.parametrize("args", [
+    {"count_min": "3"},          # a string that int() would happily accept
+    {"count_min": 1.5},          # a float
+    {"count_max": "9"},
+    {"count_max": 2.0},
+    {"count_min": True},         # bool is an int in Python and must not stand in for a count
+    {"event": 42},               # str() would have turned this into "42" and counted nothing
+])
+async def test_an_expect_event_argument_of_the_wrong_type_is_unevaluable_not_a_crash(args):
+    """The last of the F1 class: `int(...)` / `str(...)` on a scenario's own data.
+
+    `check_scenario` refuses every one of these before a run, so reaching them means the
+    scenario was never checked — an authoring fault, which must read `inconclusive`.
+    """
+    from jarvis.testlab.runners import MeasurementUnavailable
+    from jarvis.testlab.virtual.executor import VIRTUAL_EXPECTATION_UNEVALUABLE
+
+    executor, events = _event_executor([_page(["user.transcript.accepted"])], **args)
+    with pytest.raises(MeasurementUnavailable) as failure:
+        await executor._check_expectations()
+    assert failure.value.code == VIRTUAL_EXPECTATION_UNEVALUABLE
+    assert events.requests == []  # refused before it read a single page
+    assert executor.expectation_results == []
+
+
+async def test_an_expect_event_step_without_its_required_event_is_unevaluable():
+    from jarvis.testlab.runners import MeasurementUnavailable
+    from jarvis.testlab.virtual.executor import Expectation, VIRTUAL_EXPECTATION_UNEVALUABLE
+    from jarvis.testlab.scenarios import ScenarioStep
+
+    executor, _events = _event_executor([_page([])])
+    executor.expectations = [Expectation(0, ScenarioStep("expect.event", {"at_ms": 0, "count_min": 1}))]
+    with pytest.raises(MeasurementUnavailable) as failure:
+        await executor._check_expectations()
+    assert failure.value.code == VIRTUAL_EXPECTATION_UNEVALUABLE
+    assert "declares no event" in failure.value.detail
+
+
+async def test_count_max_still_bites_once_the_arguments_are_typed():
+    """The guard must not have turned `count_max` into a no-op: an over-count is unmet."""
+    executor, _events = _event_executor([_page(["user.transcript.accepted"] * 3)], count_min=0, count_max=2)
+    await executor._check_expectations()
+    assert executor.expectation_results[0].met is False
+    assert executor.expectations_failed == 1
+
+
+@pytest.mark.parametrize("args", [
+    {"metric": 7, "comparator": "le", "threshold": 1},
+    {"metric": "scenario.steps_performed", "comparator": 3, "threshold": 1},
+    {"metric": "scenario.steps_performed", "comparator": "le", "threshold": "1"},
+    {"metric": "scenario.steps_performed", "comparator": "le"},               # no threshold
+    {"comparator": "le", "threshold": 1},                                      # no metric
+])
+def test_an_expect_metric_argument_of_the_wrong_type_is_unevaluable_not_a_crash(args):
+    from jarvis.testlab.runners import MeasurementUnavailable
+    from jarvis.testlab.virtual.executor import VIRTUAL_EXPECTATION_UNEVALUABLE
+
+    spec = _scenario_spec("scenario.expectations_failed_count", "scenario.steps_performed")
+    executor = _expectation_executor(spec, [("expect.metric", {"at_ms": 0, **args})])
+    with pytest.raises(MeasurementUnavailable) as failure:
+        executor.check_measured_expectations({"scenario.steps_performed": 2}, {})
+    assert failure.value.code == VIRTUAL_EXPECTATION_UNEVALUABLE
+
+
+@pytest.mark.parametrize("args", [
+    {"assertion_id": 7, "outcome": "passed"},
+    {"assertion_id": "expectations_met", "outcome": 1},
+    {"assertion_id": "expectations_met"},                                      # no outcome
+    {"outcome": "passed"},                                                     # no assertion_id
+])
+def test_an_expect_assertion_argument_of_the_wrong_type_is_unevaluable_not_a_crash(args):
+    from jarvis.testlab.runners import MeasurementUnavailable
+    from jarvis.testlab.virtual.executor import VIRTUAL_EXPECTATION_UNEVALUABLE
+
+    spec = _scenario_spec("scenario.expectations_failed_count")
+    executor = _expectation_executor(spec, [("expect.assertion", {"at_ms": 0, **args})])
+    with pytest.raises(MeasurementUnavailable) as failure:
+        executor.check_measured_expectations({}, {"expectations_met": "passed"})
+    assert failure.value.code == VIRTUAL_EXPECTATION_UNEVALUABLE
+
+
+def test_a_well_typed_expect_assertion_still_reads_its_outcome():
+    """The guards must not have swallowed the normal path."""
+    spec = _scenario_spec("scenario.expectations_failed_count")
+    executor = _expectation_executor(spec, [
+        ("expect.assertion", {"at_ms": 0, "assertion_id": "expectations_met", "outcome": "failed"})])
+    executor.check_measured_expectations({}, {"expectations_met": "passed"})
+    assert executor.expectations_failed == 1
+    assert "expected 'failed'" in executor.expectation_results[0].detail

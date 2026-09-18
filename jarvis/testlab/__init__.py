@@ -44,4 +44,19 @@ Slice 05 adds execution: the pure worker protocol `jarvis.testlab.jobs`
 `jarvis.testlab.maintenance` (scheduled store upkeep) and
 `jarvis.testlab.selftest` (the `selftest.worker` TEST FIXTURE diagnostic, never a
 seed diagnostic).
+
+Slice 06 adds the `virtual` execution profile (`jarvis.testlab.virtual`): the
+production voice path mounted in memory with controlled doubles, and the five
+registered `virtual` runners.
+
+Slice 07 adds synthesis and experiments: the pure `jarvis.testlab.scoring`
+(the declared `weighted_mean`, computed by the supervisor),
+`jarvis.testlab.outcomes` (how a terminal run READS: passed / failed /
+inconclusive / refused / crashed / cancelled, derived from status and failure
+code), `jarvis.testlab.compare` (per-metric deltas, assertion changes,
+incomparability, aggregates) and `jarvis.testlab.sweeps` (the sweep declaration,
+its expansion and its record), plus the I/O modules
+`jarvis.testlab.sweep_runner` (`SweepRunner`: bounded fan-out over a supervisor,
+partial failure, cancellation, the summary artifact) and
+`jarvis.testlab.filesystem_sweep_store` (`FilesystemSweepStore`).
 """

@@ -18,9 +18,15 @@ ROOT = Path(__file__).resolve().parents[2]
 #: are deliberately absent from both lists below.
 #: Slice 05 adds the worker protocol documents (`jobs.py`), which stay pure: the supervisor and
 #: the worker read and write the files, the codec only describes them.
+#: Slice 07 adds the score computation, the outcome classification, the run comparison and the
+#: sweep contracts. All four are pure by construction: a score is a function of a declaration and
+#: a measurement, an outcome of a status and a failure code, a comparison of two records, and a
+#: sweep expansion of its own declaration. The orchestrator (`sweep_runner.py`) and the sweep
+#: store adapter are the I/O modules and are deliberately absent from both lists below.
 CONTRACT_MODULES = ("__init__", "validation", "identity", "profiles", "diagnostics", "scenarios", "runs", "store",
                     "retention", "redaction", "bundle", "bundle_rules", "bundle_builder", "primitives",
-                    "implementations", "manifests", "promotion", "jobs")
+                    "implementations", "manifests", "promotion", "jobs", "scoring", "outcomes", "compare",
+                    "sweeps")
 ALLOWED_IMPORTS = {
     "__future__", "collections.abc", "dataclasses", "datetime", "enum", "hashlib", "json", "math", "re", "types",
     "typing", "jarvis.domain.conversation_events", "jarvis.domain.voice_state", "jarvis.testlab.validation",
@@ -28,6 +34,7 @@ ALLOWED_IMPORTS = {
     "jarvis.testlab.store", "urllib.parse", "jarvis.domain.conversation_event_store", "jarvis.testlab.redaction",
     "jarvis.testlab.bundle", "jarvis.testlab.bundle_rules", "bisect", "jarvis.testlab.scenarios",
     "jarvis.testlab.primitives", "jarvis.testlab.implementations", "jarvis.testlab.manifests",
+    "jarvis.testlab.jobs", "jarvis.testlab.outcomes", "jarvis.testlab.sweeps",
 }
 #: Clock, entropy, filesystem, process and dynamic execution entry points.
 FORBIDDEN_CALLS = {"now", "utcnow", "today", "time", "monotonic", "perf_counter", "uuid4", "token_hex", "urandom",

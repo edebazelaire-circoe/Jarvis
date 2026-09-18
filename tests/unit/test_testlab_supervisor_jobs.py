@@ -70,9 +70,18 @@ def test_a_job_document_is_strict():
 
 def test_a_measured_result_round_trips():
     ref = ArtifactRef(ArtifactKind.REPORT, "report.json", "application/json", "b" * 64, 12)
-    result = WorkerResult(RUN_ID, WorkerStatus.MEASURED, metrics={"selftest.value": 0}, score=42.0,
+    result = WorkerResult(RUN_ID, WorkerStatus.MEASURED, metrics={"selftest.value": 0},
                           join_ids={"conversation_id": "c-1"}, artifacts=(ref,))
     assert WorkerResult.from_dict(json.loads(json.dumps(result.to_dict()))) == result
+
+
+def test_a_worker_result_cannot_carry_a_score():
+    """Slice 07: the worker measures and never judges, so `score` is not a field it has."""
+    with pytest.raises(TypeError):
+        WorkerResult(RUN_ID, WorkerStatus.MEASURED, metrics={"selftest.value": 0}, score=42.0)
+    payload = {**WorkerResult(RUN_ID, WorkerStatus.MEASURED, metrics={"selftest.value": 0}).to_dict(), "score": 99.0}
+    with pytest.raises(TestLabError, match="testlab_fields_mismatch"):
+        WorkerResult.from_dict(payload)
 
 
 def test_a_failed_result_carries_a_failure_and_no_measurement():

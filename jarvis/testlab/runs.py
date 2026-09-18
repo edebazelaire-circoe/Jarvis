@@ -220,6 +220,26 @@ class RunFailure:
 
 #: Failure code set by `complete_run` when blocking assertions could not conclude.
 FAILURE_ASSERTIONS_INCONCLUSIVE = "assertions_inconclusive"
+#: How many missing blocking assertions the failure detail names before abbreviating.
+MAX_NAMED_MISSING_ASSERTIONS = 8
+
+
+def inconclusive_detail(results: tuple[AssertionResult, ...]) -> str:
+    """Why the blocking assertions could not conclude, naming them.
+
+    An assertion id designates exactly one metric in the declaration, so naming the
+    assertions answers "which measurement is missing" for anyone holding the spec —
+    without putting a measured VALUE in a failure detail. An empty detail used to make
+    the two "could not measure" shapes indistinguishable without re-deriving the run.
+    """
+    missing = sorted(result.assertion_id for result in results
+                     if result.blocking and result.outcome is AssertionOutcome.MISSING)
+    if not missing:
+        return "the diagnostic evaluated no blocking assertion, so nothing could conclude"
+    named = ", ".join(missing[:MAX_NAMED_MISSING_ASSERTIONS])
+    rest = len(missing) - MAX_NAMED_MISSING_ASSERTIONS
+    return (f"no measurement for blocking assertion(s): {named}" + (f" and {rest} more" if rest > 0 else ""))[
+        :MAX_FAILURE_DETAIL_CHARS]
 
 
 def _freeze_metrics(values: object) -> Mapping[str, bool | int | float]:
@@ -494,7 +514,8 @@ def complete_run(run: TestRun, *, at: datetime, assertion_results: tuple[Asserti
 
     failed blocking assertion -> `failed`; all blocking passed -> `passed`;
     otherwise (missing measurement, no blocking result) -> `errored` with
-    failure code `assertions_inconclusive`.
+    failure code `assertions_inconclusive` and a detail naming the blocking
+    assertions that had no measurement (`inconclusive_detail`).
     """
     if not isinstance(run, TestRun):
         raise fail("complete_run takes a TestRun", FIELD_INVALID)
@@ -504,7 +525,8 @@ def complete_run(run: TestRun, *, at: datetime, assertion_results: tuple[Asserti
     target = {AssertionVerdict.PASSED: RunStatus.PASSED, AssertionVerdict.FAILED: RunStatus.FAILED}.get(
         verdict, RunStatus.ERRORED)
     check_transition(run.status, target)
-    failure = RunFailure(FAILURE_ASSERTIONS_INCONCLUSIVE) if target is RunStatus.ERRORED else None
+    failure = (RunFailure(FAILURE_ASSERTIONS_INCONCLUSIVE, inconclusive_detail(assertion_results))
+               if target is RunStatus.ERRORED else None)
     return replace(run, status=target, finished_at=at, assertion_results=assertion_results, metrics=metrics,
                    score=score, failure=failure, artifacts=run.artifacts if artifacts is None else artifacts)
 

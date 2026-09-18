@@ -30,9 +30,8 @@ from dataclasses import dataclass
 
 from jarvis.domain.v2 import SpeechKind, SpeechRequest
 from jarvis.testlab.diagnostics import MetricValue
-from jarvis.testlab.runners import RunContext, RunOutcome
+from jarvis.testlab.runners import MeasurementUnavailable, RunContext, RunOutcome
 from jarvis.testlab.runs import ArtifactKind
-from jarvis.testlab.validation import TestLabError
 from jarvis.testlab.virtual.echo_guard import VirtualEchoGuard
 from jarvis.testlab.virtual.executor import POLL_S, STEP_TIMEOUT_S, VirtualExecutor, VirtualStepError
 from jarvis.testlab.virtual.harness import CHUNK_MS, BrainTurnHandle, VoiceStack, voice_stack
@@ -55,8 +54,14 @@ SPEECH_TERMINAL_KINDS = ("voice.speech.completed", "voice.speech.interrupted", "
                          "voice.speech.expired", "voice.speech.speak_failed")
 
 
-class VirtualRunError(TestLabError):
-    """The virtual stack could not reach a state the diagnostic needs to measure anything."""
+class VirtualRunError(MeasurementUnavailable):
+    """The virtual stack could not reach a state the diagnostic needs to measure anything.
+
+    A `MeasurementUnavailable` since Slice 07: the worker records
+    `measurement_unavailable` and the run reads `inconclusive` — "could not
+    measure", told apart from the `assertions_inconclusive` of a metric that was
+    simply never reported, and from the `runner_failed` of an unforeseen defect.
+    """
 
 
 def _failed(detail: str) -> VirtualRunError:
@@ -143,6 +148,36 @@ async def submit_user_turn(context: RunContext, stack: VoiceStack, text: str) ->
     await wait_condition(context, lambda: stack.journal.count("voice.brain_turn_submitted") > submitted,
                          "the brain turn submission of the user turn")
     return await stack.backend.next_turn(timeout=max(1.0, min(STEP_TIMEOUT_S, context.remaining_s)))
+
+
+#: The two measurements that carry scenario expectations. ANY diagnostic that declares
+#: `scenario.expectations_failed_count` — a seed with a scenario as much as an ad-hoc
+#: probe — turns a failed expectation into a product verdict through its own blocking
+#: assertion. A diagnostic that does not declare it cannot express one, so an unmet
+#: expectation ends `inconclusive` BY DESIGN (docs/testlab.md, "The expect.* verdict rule").
+EXPECTATION_COUNT_METRIC = "scenario.expectations_failed_count"
+EXPECTATION_METRICS = ("scenario.expectations_declared", EXPECTATION_COUNT_METRIC)
+
+
+def expectation_metrics(context: RunContext, executor: VirtualExecutor) -> dict[str, MetricValue]:
+    """Scenario expectations as MEASUREMENTS when the declaration can carry them.
+
+    Why this is not "generic runner only": `expect.event` is the one expectation form
+    that states something a seed's own metrics cannot (the Conversation Event log), and
+    a real defect there must be able to read `failed`, not "could not measure". So the
+    rule is a property of the DECLARATION, not of the runner: declare the metric and a
+    blocking assertion on it, and your scenario's expectations become a verdict; declare
+    neither, and an unmet expectation refuses the run as inconclusive rather than being
+    dropped. Either way no runner decides a status — the supervisor still derives it.
+    """
+    declared = {spec.name for spec in context.diagnostic.metrics}
+    if EXPECTATION_COUNT_METRIC not in declared:
+        executor.require_expectations_met()
+        return {}
+    measured: dict[str, MetricValue] = {EXPECTATION_COUNT_METRIC: executor.expectations_failed}
+    if "scenario.expectations_declared" in declared:
+        measured["scenario.expectations_declared"] = len(executor.expectations)
+    return measured
 
 
 def _ms_between(start: TraceLine | None, end: TraceLine | None) -> int | None:
@@ -362,6 +397,10 @@ class StaleSupersessionRunner:
             await executor.run(scenario)
             metrics = _supersession_metrics(journal, executor)
             executor.check_measured_expectations(metrics, {})
+            # A version of this diagnostic that declares `scenario.expectations_failed_count`
+            # turns an unmet expectation into its own verdict; v1 does not, so one refuses
+            # the run as inconclusive instead of being dropped.
+            metrics.update(expectation_metrics(context, executor))
             context.log(f"supersession: superseded={metrics['speech.superseded_count']} "
                         f"stale_delivered={metrics['speech.stale_delivered_count']} "
                         f"latest_delivered={metrics['speech.latest_intent_delivered']}")
@@ -560,12 +599,17 @@ def _latency_metrics(journal: TraceRecordingJournal) -> dict[str, MetricValue]:
 
 @dataclass(frozen=True, slots=True)
 class ScenarioRunner:
-    """`testlab.scenario.virtual`: performs an ad-hoc scenario and measures nothing of its own.
+    """`testlab.scenario.virtual`: performs an ad-hoc scenario and measures the scenario itself.
 
-    An ad-hoc diagnostic declares its own metrics; until Slice 07 gives this runner a
-    measurement contract, it reports only what every scenario can offer — the steps it
-    performed — and any diagnostic whose metrics it cannot produce fails loudly rather
-    than storing a verdict derived from nothing.
+    **The measurement contract (Slice 07).** An ad-hoc diagnostic declares its own
+    metrics, and the only things a generic runner can honestly measure are properties
+    of the scenario it just performed. Those four are `SCENARIO_METRICS`; a diagnostic
+    that declares anything else is refused loudly rather than stored with a verdict
+    derived from nothing.
+
+    The expectation half is `expectation_metrics`, which is shared with every
+    specialized runner: the rule is a property of the DECLARATION, not of the runner
+    (see that function and docs/testlab.md, "The `expect.*` verdict rule").
     """
 
     async def run(self, context: RunContext) -> RunOutcome:
@@ -583,14 +627,22 @@ class ScenarioRunner:
             await executor.run(scenario)
             metrics: dict[str, MetricValue] = {"scenario.steps_performed": len(scenario.steps),
                                                "scenario.checkpoints_reached": len(executor.checkpoints)}
+            # Evaluated before the expectation counts are added, so an `expect.metric` reads
+            # what the scenario produced and never its own count (which would be circular).
             executor.check_measured_expectations(metrics, {})
+            metrics.update(expectation_metrics(context, executor))
+            context.log(f"scenario: steps={metrics['scenario.steps_performed']} "
+                        f"checkpoints={metrics['scenario.checkpoints_reached']} "
+                        f"expectations={len(executor.expectations)} unmet={executor.expectations_failed}")
             await close_session(context, stack)
         await commit_trace(context, journal)
         return RunOutcome(metrics={name: value for name, value in metrics.items() if name in declared})
 
 
-#: What the generic scenario runner can report, whatever the scenario is.
-SCENARIO_METRICS = ("scenario.steps_performed", "scenario.checkpoints_reached")
+#: What the generic scenario runner can report, whatever the scenario is. A diagnostic
+#: using `testlab.scenario.virtual` declares a subset of these and nothing else.
+SCENARIO_METRICS = ("scenario.steps_performed", "scenario.checkpoints_reached",
+                    "scenario.expectations_declared", "scenario.expectations_failed_count")
 
 
 __all__ = ["PayloadIntegrityRunner", "QueueLatencyRunner", "ScenarioRunner", "SelfEchoRunner",

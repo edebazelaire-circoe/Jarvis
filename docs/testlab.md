@@ -23,8 +23,12 @@ normal CI.
   - `implementations.py` (Slice 04): `ImplementationEntry`, `ImplementationRegistry`, `default_implementations`;
   - `manifests.py` (Slice 04): `DiagnosticManifest`, `CatalogLock`, `LockEntry`, `check_manifest`, `render_manifest`, `CatalogError`;
   - `promotion.py` (Slice 04): `promote_scenario`, `PromotionResult`, `PromotionRefused`;
-  - `jobs.py` (Slice 05): `WorkerJob`, `WorkerResult`, the per-run protocol file names and the failure-code vocabulary.
-- I/O modules (Slices 02, 03 and 04, see Storage, DiagnosticBundle and Catalog):
+  - `jobs.py` (Slice 05): `WorkerJob`, `WorkerResult`, the per-run protocol file names and the failure-code vocabulary;
+  - `scoring.py` (Slice 07): `component_score`, `score_breakdown`, `compute_score` (the `weighted_mean` contract);
+  - `outcomes.py` (Slice 07): `RunOutcomeClass`, `FAILURE_OUTCOMES`, `outcome_of`, `classify_run`, `RunOutcomeSummary`;
+  - `compare.py` (Slice 07): `compare_runs`, `compare_against`, `aggregate_runs`, `median`, their delta and incomparability types;
+  - `sweeps.py` (Slice 07): `SweepSpec`, `SweptParameter`, `SweepPoint`, `expand_points`, `check_sweep_spec`, `SweepRecord`, `SweepStatus`.
+- I/O modules (Slices 02, 03, 04, 05 and 07, see Storage, DiagnosticBundle, Catalog and Sweeps):
   - `_fs.py` (private, Slice 03): lock, atomic write, path budget and link helpers shared by both filesystem stores;
   - `filesystem_store.py`: `FilesystemTestRunStore`, the local durable adapter;
   - `capture.py`: `read_git_revision`, `capture_code_identity`, `capture_environment`, `build_config_snapshot`, `store_config_snapshot`, plus `redact_evidence` / `failure_detail` (Slice 05, captured worker output);
@@ -37,7 +41,9 @@ normal CI.
   - `worker_launcher.py` (Slice 05): `SubprocessWorkerLauncher` and the `WorkerLauncher` seam;
   - `worker.py` (Slice 05): the worker entry point `python -m jarvis.testlab.worker`;
   - `maintenance.py` (Slice 05): `MaintenancePolicy`, `run_maintenance_pass`;
-  - `selftest.py` (Slice 05): the `selftest.worker` test fixture diagnostic and its runner.
+  - `selftest.py` (Slice 05): the `selftest.worker` test fixture diagnostic and its runner;
+  - `sweep_runner.py` (Slice 07): `SweepRunner`, `SweepPolicy`, `build_sweep_summary`;
+  - `filesystem_sweep_store.py` (Slice 07): `FilesystemSweepStore`.
 - Official manifests: `jarvis/testlab/official/<domain>/<name>.v<N>.json` plus `catalog.lock.json`.
 - Conformance tests: `tests/unit/test_testlab_identity.py`,
   `tests/unit/test_testlab_profiles.py`, `tests/unit/test_testlab_diagnostics.py`,
@@ -48,21 +54,28 @@ normal CI.
   `tests/unit/test_testlab_primitives.py`, `tests/unit/test_testlab_primitives_replay.py`,
   `tests/unit/test_testlab_catalog.py`, `tests/unit/test_testlab_catalog_promotion.py`,
   `tests/unit/test_testlab_supervisor.py`, `tests/unit/test_testlab_supervisor_jobs.py`,
-  `tests/integration/test_testlab_worker.py`, opt-in
+  `tests/unit/test_testlab_virtual.py`, `tests/unit/test_testlab_scoring.py`,
+  `tests/unit/test_testlab_scoring_outcomes.py`, `tests/unit/test_testlab_compare.py`,
+  `tests/unit/test_testlab_sweep.py`, `tests/unit/test_testlab_sweep_runner.py`,
+  `tests/integration/test_testlab_worker.py`, `tests/integration/test_testlab_sweep_runs.py`, opt-in
   `tests/integration/test_testlab_bundle_real_session.py`; shared builders `tests/fakes/testlab.py`,
   session fixture `tests/fakes/testlab_bundle.py`.
-- Handoff: `tasks/jarvis-category2-test-lab/` (Slices 01, 02, 03, 04, 05).
+- Handoff: `tasks/jarvis-category2-test-lab/` (Slices 01 to 07).
 
-Status 2026-09-17: contracts (Slice 01), run persistence (Slice 02), the
+Status 2026-09-18: contracts (Slice 01), run persistence (Slice 02), the
 DiagnosticBundle with its capture service and bundle store (Slice 03), the
 catalog with its manifests, primitive vocabulary and promotion path (Slice 04),
-and the run supervisor with its isolated worker process (Slice 05). Runs execute,
-but only the `selftest.worker` test fixture has a runner: every seed profile is
-still `unavailable`, and a run of one is persisted `errored` with
-`runner_unavailable`. The supervisor schedules the store upkeep and owns the run
-store root it is given; nothing composes it into the application yet (no default
-root wiring, no CLI or HTTP entry). Profile runners (06, 08, 09), score
-computation and sweeps (07), API/CLI/HTTP (10) and UI (11) do not exist yet.
+the run supervisor with its isolated worker process (Slice 05), the `virtual`
+profile with its five registered runners (Slice 06), and scoring, outcomes,
+comparison and parameter sweeps (Slice 07). The four seed diagnostics run on
+`virtual` through real worker processes, a run carries its declared score, a
+terminal run classifies as `passed` / `failed` / `inconclusive` / `refused` /
+`crashed` / `cancelled`, and a sweep fans isolated runs out over declared
+parameter values and persists a replayable record. The supervisor schedules the
+store upkeep and owns the run store root it is given; nothing composes it into
+the application yet (no default root wiring, no CLI or HTTP entry). The `audio`,
+`live` and `hardware:*` profiles (08, 09), API/CLI/HTTP (10), UI (11) and the
+rollout (12) do not exist yet.
 
 ## Invariants
 
@@ -212,9 +225,10 @@ Non-blocking outcomes and the score never change the verdict.
 
 `ScoreContract {method, components}`: `none` (no component, run score null) or
 `weighted_mean` (1..16 components `{metric, weight (0 < w ≤ 1000), best,
-worst}`, distinct metrics). Binding formula for Slice 07: each component maps
-the metric linearly from `worst` (0) to `best` (100), clamped to 0..100; the
-score is the weight-weighted mean. The score is a UI synthesis, never a verdict.
+worst}`, distinct metrics). Binding formula: each component maps the metric
+linearly from `worst` (0) to `best` (100), clamped to 0..100; the score is the
+weight-weighted mean. The score is a UI synthesis, never a verdict. It is
+computed by `jarvis.testlab.scoring`, in the supervisor (see "Scoring").
 
 ## Scenarios
 
@@ -458,7 +472,15 @@ Loading compares every manifest with its lock entry:
 | a locked version whose manifest is gone | `testlab_catalog_lock_orphan` |
 | the lock itself is malformed or locks a version twice | `testlab_catalog_lock_invalid` |
 
-A wording edit (title, any description) is not drift: stored runs stay conforming.
+**The integrity chain does not cover prose.** A wording edit — the title, or any
+description of the diagnostic, a parameter, a metric, an assertion or the override
+allowlist — changes no fingerprint, so it raises no drift error and needs no version
+bump or lock edit. That is deliberate and it is the same property that keeps a
+wording-only re-promotion comparable (`existing=true`, lock untouched) and stored runs
+conforming: a sentence is not what a run was judged by. The consequence is worth stating
+plainly — the lock proves that the *semantics* of a published version have not moved, not
+that its text is the text that was reviewed. Review the prose in the diff, not in the
+catalog test.
 
 Publishing or republishing a version (by promotion or by hand) always ends with the
 lock, which is data the human writes, never a generated side effect of loading:
@@ -474,6 +496,12 @@ lock_path = DEFAULT_CATALOG_ROOT / LOCK_FILE_NAME
 lock = CatalogLock.decode_text(lock_path.read_text(encoding="utf-8")).with_entry(entry)
 lock_path.write_text(lock.render(), encoding="utf-8")
 ```
+
+`with_entry` refuses to replace a version that is already locked, and nothing else:
+it will happily add v4 to a diagnostic published up to v2, because a lock is a flat
+set of entries and knows nothing about history. Only `load_catalog` refuses the hole
+(`testlab_catalog_history_gap`), so **a publishing tool must load the catalog after
+writing** — which is exactly what step 5 below does by running the catalog test.
 
 ## Promotion
 
@@ -525,17 +553,35 @@ a new diagnostic — so it never imports the catalog and stays pure.
 
 ## Seed diagnostics
 
-The catalog ships the four Slice 12 seeds, all at version 1, all with the `virtual`
-profile only. Slice 06 registered their runners (Virtual profile), so all four are
-`available` and runnable today. Slices 08, 09 and 12 add other profiles through a
-version bump, which keeps v1 in the history.
+The catalog ships the four Slice 12 seeds with the `virtual` profile only. Slice 06
+registered their runners (Virtual profile), so all four are `available` and runnable
+today. Slices 08, 09 and 12 add other profiles through a version bump, which keeps the
+earlier version in the history.
+
+`speech.stale_supersession` is published at **v1 and v2**; every other seed is at v1. A
+request without an explicit version resolves to the latest, so a plain
+`RunRequest("speech.stale_supersession", VIRTUAL)` runs v2.
 
 | Diagnostic | Blocking assertions | Notes |
 |---|---|---|
 | `voice.self_echo` | `barge_in.false_confirmed_count = 0`, `output.completed = true` | Jarvis speaks while its own output returns as input; parameters `output.duration_ms`, `echo.candidate_count`. |
 | `speech.payload_integrity` | `speech.payload_mismatch_count = 0`, `speech.replayed_payload_count = 0`, `speech.undelivered_count = 0` | Virtual measure only: scripted payload vs the payload the harness delivered. The producer signal `voice.state.spoken_diverged` compares raw strings and is **not** used (Issue `speech-payload-integrity-needs-normalized-measure.md`). |
-| `speech.stale_supersession` | `speech.stale_delivered_count = 0`, `speech.latest_intent_delivered = true` | Carries the converted replay fixture `stale_ack_35_9s` as its scenario, provenance included. |
-| `voice.queue_latency` | `speech.queue_free_to_started_ms ≤ 3000`, `speech.started_to_first_audio_ms ≤ 4000` | Thresholds match the `latency.above_threshold` bundle rule; `user_turn.end_to_first_audio_ms ≤ 8000` is non-blocking (brain time, Slice 07). Virtual time measures scheduler delays, never provider or device latency. |
+| `speech.stale_supersession` v1 | `speech.stale_delivered_count = 0`, `speech.latest_intent_delivered = true` | Carries the converted replay fixture `stale_ack_35_9s` as its scenario, provenance included. |
+| `speech.stale_supersession` v2 | the two above, plus `scenario.expectations_failed_count = 0` | Same profiles, parameters and scenario as v1; adds `scenario.expectations_declared` and `scenario.expectations_failed_count` so that an `expect.*` step in its scenario can end the run `failed` rather than `inconclusive` (see "The `expect.*` verdict rule"). **The shipped scenario declares no expectation**, so on the seed's own run both measurements are 0 and the new blocking assertion is vacuous: it exists for a scenario SUPPLIED to this diagnostic, and it is the only thing that can make such a scenario's expectations a verdict. |
+| `voice.queue_latency` | `speech.queue_free_to_started_ms ≤ 3000`, `speech.started_to_first_audio_ms ≤ 4000` | Thresholds match the `latency.above_threshold` bundle rule; `user_turn.end_to_first_audio_ms ≤ 8000` stays **non-blocking** and informational (Slice 07 brain-budget decision below). Virtual time measures scheduler delays, never provider or device latency. |
+
+**Brain budget (Slice 07 decision).** Most of the latency findings the Slice 03
+bundle raised on the real 2026-09-12 session were brain delay, not scheduler
+delay. It does **not** become a blocking assertion of `voice.queue_latency`:
+that diagnostic is about the speech scheduler's own delays, and on the `virtual`
+profile the brain's thinking time is a run parameter
+(`brain.result_delay_ms`), so asserting on it would test the parameter, not the
+product. `user_turn.end_to_first_audio_ms` therefore stays exactly where it is,
+non-blocking, as the end-to-end context number a reader needs beside the
+scheduler ones — and it is what a sweep over `brain.result_delay_ms` moves. A
+real brain budget needs a diagnostic of its own, with the brain stage joins as
+its metrics; that is a **new manifest awaiting approval**, not a semantic edit of
+a shipped one, and Slice 07 ships no manifest change.
 
 ## TestRun
 
@@ -608,6 +654,329 @@ targets; it refuses `passed` and `failed`, which only
 `complete_run(run, at=, assertion_results=, metrics=, score=, artifacts=)`
 derives from the verdict: `passed` → `passed`, `failed` → `failed`,
 `inconclusive` → `errored` with failure code `assertions_inconclusive`.
+
+That failure carries a detail (`inconclusive_detail`) naming the blocking
+assertions that had no measurement, or saying that no blocking assertion was
+evaluated at all. An assertion id designates exactly one metric in the
+declaration, so it answers "which measurement is missing" without putting a
+measured VALUE in a failure detail; an empty detail used to make the two "could
+not measure" shapes indistinguishable without re-deriving the run.
+
+## Scoring
+
+`jarvis/testlab/scoring.py` (pure). Metrics and assertions are the primary
+evidence; the score is a **synthesis** shown beside them.
+
+`ScoreMethod.weighted_mean`, exactly as declared: each component maps its metric
+linearly from `worst` (0) to `best` (100), clamps the result into 0..100, and the
+score is the weight-weighted mean of the component scores, rounded to
+`SCORE_DECIMALS` (4). The direction is carried by which side `best` is on, which
+`DiagnosticSpec` already checked against the metric's `MetricDirection`, so a
+`lower_better` metric has `best < worst` and the mapping needs no special case.
+
+| Call | Returns |
+|---|---|
+| `component_score(component, value)` | `(score, clamped)` for one component |
+| `score_breakdown(contract, metrics)` | `ScoreBreakdown {method, score, components, missing}` |
+| `compute_score(contract, metrics)` | the score, or None |
+
+Two rules:
+
+- **The score never decides a status.** `complete_run` derives `passed` /
+  `failed` / `errored` from the blocking assertions alone. A run with score 100
+  and a failed blocking assertion is `failed`; a run with score 0 whose blocking
+  assertions all passed is `passed`. Both are proven by test
+  (`tests/unit/test_testlab_scoring.py`).
+- **A score is all-or-nothing.** If any metric a component names was not
+  measured, the score is `None` and `ScoreBreakdown.missing` says which. A
+  weighted mean over the components that happened to be measured is not the
+  declared synthesis, and it would let a diagnostic that measured half of what it
+  promised look comparable to one that measured everything.
+
+**Where it runs: the supervisor** (`_store_measured`), from the worker's metrics
+and the declaration the run was queued against. Slice 05 made the worker
+measurement-only, so `WorkerResult` and `RunOutcome` carry **no score field at
+all** (removed in Slice 07): a field the supervisor would have to ignore is dead
+contract data and a way for a runner to publish a judgement it has no declaration
+to justify. A run the supervisor stopped keeps its partial metrics as evidence
+but gets no score, for the same reason a partial mean is refused.
+
+## Outcomes
+
+`jarvis/testlab/outcomes.py` (pure). `RunStatus` is what the state machine and
+the store enforce; an **outcome** is how a human or a caller reads the result. It
+is derived from `(status, failure code)` with a closed table — no new status is
+invented (Slice 01 forbids it) and nothing parses prose.
+
+| Outcome | Means | Typical cause |
+|---|---|---|
+| `passed` | the product did what the diagnostic declared | every blocking assertion passed |
+| `failed` | the product did NOT do what it declared | a blocking assertion failed |
+| `inconclusive` | **could not measure**: no verdict was available | a metric was never measured, a stimulus was never answered, the run outlived its budget |
+| `refused` | the Test Lab declined; nothing was learned about the product | permission, a resource that never freed, an unavailable runner or catalog |
+| `crashed` | the Test Lab itself broke around the run | the worker died, its result was unusable, the declaration refused it |
+| `cancelled` | a caller, or the supervisor stopping, ended it | `cancel()`, shutdown |
+| `pending` | not terminal yet | `queued`, `running` |
+
+`outcome_of(status, failure_code)` is the table; `classify_run(run)` returns
+`RunOutcomeSummary {run_id, status, outcome, failure_code, verdict,
+failed_assertions, missing_assertions, measured, score}` with `.conclusive` and
+`.to_dict()`. `NO_VERDICT_OUTCOMES` is everything but `passed` and `failed`: a
+caller comparing runs excludes them rather than counting them as failures.
+
+`FAILURE_OUTCOMES` maps every code of the Slice 05 vocabulary plus
+`assertions_inconclusive`, and a test asserts that coverage. A code that is
+**not** in the table reads `crashed`, because an unmapped failure is one we did
+not foresee, and a run we cannot explain must never read as a measurement.
+
+Two Slice 07 codes join the vocabulary, both `inconclusive`:
+
+| Code | Meaning |
+|---|---|
+| `measurement_unavailable` | the runner reached the product but could not obtain a measurement the declaration needs: a stimulus the stack never answered, a step the authored situation could not perform, an expectation with nothing to evaluate against |
+| `scenario_expectation_unmet` | an evaluable `expect.*` step disagreed, in a diagnostic that declares no metric able to carry it |
+
+This resolves the Slice 06 carry-over: a missing join still ends
+`errored` / `assertions_inconclusive` and an unanswered onset now ends
+`errored` / `measurement_unavailable`. Both read `inconclusive`, and the failure
+code — a stable identifier, not prose — still tells them apart.
+
+A runner declares "could not measure" by raising a typed exception, never by a
+string the worker has to recognise: `runners.MeasurementUnavailable` (which
+`VirtualRunError` and `VirtualStepError` subclass) and
+`runners.ScenarioExpectationUnmet`. `worker.runner_failure_code(exc)` maps those
+two and nothing else; anything else is `runner_failed`, which reads `crashed`.
+
+### The `expect.*` verdict rule
+
+An `expect.*` step is either a statement about the **product** or a defect of the
+**scenario**, and the two must not share a shape.
+
+**Which verdict a scenario expectation can produce is a property of the
+DECLARATION, not of the runner.** Any diagnostic that declares
+`scenario.expectations_failed_count` — a seed shipping a scenario as much as an
+ad-hoc probe — carries its expectations as a product verdict; one that does not
+cannot express a failed expectation at all, and gets `inconclusive` by design.
+`jarvis.testlab.virtual.runners.expectation_metrics` is that single rule, shared
+by the generic runner and every specialized one.
+
+| Case | Treated as | Ends |
+|---|---|---|
+| Evaluated and disagrees, and the diagnostic declares `scenario.expectations_failed_count` | product verdict: the count is a MEASUREMENT, and the diagnostic's own blocking assertion (`scenario.expectations_failed_count eq 0`) turns it into a verdict through the ordinary path | `failed` |
+| Evaluated and disagrees, in a diagnostic that does NOT declare that metric | it has no way to say so, and dropping it silently is worse; the authored situation did not materialise, so the run is not the experiment that was asked for | `errored` / `scenario_expectation_unmet` → `inconclusive` |
+| Could not be evaluated at all: the metric was never measured, it is not declared, the comparator or threshold does not fit it, the assertion was not evaluated, no conversation was opened, the event scan could not finish | authoring / structural, never a statement about the product | `errored` / `measurement_unavailable` (code `testlab_virtual_expectation_unevaluable`) → `inconclusive` |
+
+The consequence is that a failing expectation reaches `failed` **without any new
+path**: the supervisor still derives the verdict from a measurement against the
+declaration, exactly as for a seed, and no runner ever writes a status.
+`VirtualExecutor` records an `ExpectationResult {index, primitive, met, detail}`
+per evaluated step; `expectations_failed` is the count, and
+`require_expectations_met()` is what `expectation_metrics` calls when the
+declaration cannot carry one.
+
+This matters most for `expect.event`, the only expectation form that states
+something a seed's own metrics cannot (the Conversation Event log). A real defect
+there must be able to read `failed`, not "could not measure" — so a seed that
+wants that declares the metric, through a version bump like any other semantic
+change. `speech.stale_supersession` v2 is exactly that bump, and the pair is
+proven end to end: the same scenario with an unmet `expect.event` ends `failed`
+on v2 and `errored` / `scenario_expectation_unmet` → `inconclusive` on v1
+(`tests/integration/test_testlab_virtual_runs.py`). A v1 run stored before the
+bump still validates against v1 (`Catalog.check_run`), and comparing it with a v2
+run reads `different_version` rather than a delta.
+
+**Counting events.** `expect.event` pages the event store with
+`MAX_EVENT_PAGE_LIMIT` per page, at most `MAX_EVENT_PAGES` (20) pages. It never
+asks for a larger page: the store refuses one, which used to make EVERY
+`expect.event` step raise and read `crashed`, met or not. A scan it cannot finish
+— more than 10 000 events, or a page with `skipped_rows` — yields a LOWER BOUND,
+and a count that may be short cannot decide `count_min` / `count_max`, so the step
+refuses to judge instead of truncating silently.
+
+## Comparison
+
+`jarvis/testlab/compare.py` (pure, deterministic, stdlib only — the one order
+statistic computes its own median). Same inputs, same comparison, byte for byte.
+
+**Compatibility rule.** Two runs are comparable when they executed the same
+declaration on the same profile:
+
+```text
+diagnostic_id == diagnostic_id and diagnostic_version == diagnostic_version
+and diagnostic_fingerprint == diagnostic_fingerprint and profile == profile
+```
+
+The fingerprint is the strict part, on purpose: it covers metrics, units,
+directions, assertions, thresholds and the score contract, so two runs that share
+it cannot disagree about what a metric means. Two runs of "the same version"
+whose declaration was edited in place do not share it, and their numbers are not
+the same numbers.
+
+What is **not** an incomparability: different parameters, overrides, code
+revision or environment. Those are what an experiment varies — a sweep compares
+runs that differ by exactly one parameter — so they are reported as
+`RunComparison.differences` (`FieldDifference {field, baseline, candidate}`).
+
+`compare_runs(baseline, candidate, metrics=, candidate_metrics=)` returns
+`RunComparison`:
+
+| Field | Content |
+|---|---|
+| `comparable` | the rule above |
+| `metrics` | `MetricDelta {metric, unit, direction, baseline, candidate, delta, percent_change, change}` |
+| `assertions` | `AssertionDelta {assertion_id, blocking, baseline, candidate, change}` |
+| `score_delta` | `(baseline, candidate, delta)` when both runs scored |
+| `differences` | the inputs that differed |
+| `incomparable` | `Incomparability {subject, reason, detail}` |
+| `regressions` | blocking assertions that passed and no longer do |
+
+`MetricChange` is `better` / `worse` / `unchanged` / `changed`. Direction
+awareness needs the declaration: `metrics=` takes a `DiagnosticSpec` or a
+`name -> MetricSpec` map, and without it every move reads `changed`, because a
+delta with no direction is a number, not an improvement. A boolean metric has no
+distance (`delta` and `percent_change` are null) but still has a direction. A
+zero baseline has no `percent_change`. Equality is exact: no epsilon.
+
+`AssertionChange` is `unchanged` / `fixed` / `regressed` / `appeared` /
+`disappeared` / `changed`. `passed -> missing` is a **regression** (an assertion
+nobody could evaluate is not a pass) and `missing -> passed` is `fixed`. Between
+two non-passing outcomes — `missing -> failed` and `failed -> missing` — the change
+is `changed`, not a regression and not a fix: neither end is a pass, so calling
+either direction an improvement would be a judgement the evidence does not support.
+
+`IncomparableReason`: `different_diagnostic`, `different_version`,
+`different_declaration`, `different_profile`, `metric_missing_in_baseline`,
+`metric_missing_in_candidate`, `different_value_type`, `different_unit`,
+`run_not_terminal`. The last one flags a `queued` or `running` record on either
+side: it carries no metrics and no verdict by invariant, so without the flag it
+would read as "every metric disappeared" rather than "there is nothing here yet".
+`candidate_metrics=` is what makes `different_unit` reachable: when the two
+declarations give one name different units, the metric is listed instead of
+subtracted (1500 ms and 1.5 s are not a 1498.5 regression).
+
+`compare_against(baseline, candidates, metrics=)` keeps the order it was given.
+`aggregate_runs(runs, metrics=)` returns `RunAggregate {run_ids, outcomes,
+metrics, score}`, where each `MetricAggregate` carries `count`, `minimum`,
+`maximum` and `median` — a sweep read at a glance. A metric only some runs
+measured is aggregated over those runs and `count` says how many, so a spread
+over three of five runs never looks like a spread over five.
+
+## Sweeps
+
+`jarvis/testlab/sweeps.py` (pure: declaration, expansion, record),
+`jarvis/testlab/sweep_runner.py` (orchestration),
+`jarvis/testlab/filesystem_sweep_store.py` (persistence).
+
+**A sweep never writes a permanent setting.** Locked decision 9, made mechanical:
+a `SweepSpec` has no field naming a settings file, the orchestrator has no write
+path to one, and every swept value travels as a run-local parameter or a
+run-local override — exactly like a single run's, through the supervisor, which
+only ever reads the permanent file and copies it into the run scratch. The
+summary names the best point per metric and stops there. Proven by
+`tests/integration/test_testlab_sweep_runs.py`, which sweeps over a real settings
+file and asserts its bytes are unchanged.
+
+### Declaration
+
+`SweepSpec {diagnostic_id, profile, version, parameters, overrides, swept,
+repetitions, scenario, title, description}`, document `jarvis.testlab.sweep`
+version 1, with `to_dict` / `from_dict` / `fingerprint()`.
+
+`SweptParameter {name, target, values}` is one axis; `target` is `parameter` (a
+declared `ParameterSpec`) or `override` (a name in the manifest's
+`override_allowlist`). `SweptParameter.from_range(name, target, start=, stop=,
+step=)` expands an inclusive numeric range to explicit values at construction —
+computed as `start + i * step`, never accumulated, so a float range does not
+drift — because the stored declaration must be the exact list of values that ran.
+
+Bounds, refused as a whole rather than truncated: `MAX_SWEPT_PARAMETERS` 4,
+`MAX_SWEEP_VALUES` 64 per axis, `MAX_SWEEP_POINTS` 256, `MAX_SWEEP_RUNS` 512
+(points × repetitions), `MAX_REPETITIONS` 16. A silently shortened sweep is a
+conclusion drawn from evidence nobody asked for.
+
+`check_sweep_spec(spec, diagnostic, override_allowlist)` validates every swept
+and fixed value with `check_parameter_value`, exactly as a single run's would be,
+and returns the points; `SweepError` (`testlab_sweep_invalid`) on the first
+violation. A sweep can therefore never reach a value, a setting or a profile a
+single `RunRequest` could not.
+
+`expand_points(spec)` is the cartesian product in declaration order, last axis
+varying fastest: `SweepPoint {index, values, parameters, overrides}` with a
+`label` (`name=value` pairs) for logs and reports.
+
+### Orchestration
+
+`SweepRunner(supervisor=, store=, policy=, diagnostics=)`, with
+`await run(spec, grant=) -> SweepRecord` and `await cancel(sweep_id) -> bool`.
+
+- **Sweep id.** One `tls-…` id, minted once and passed as `RunRequest.sweep_id`
+  on every run, so the store's existing `RunQuery(sweep_id=…)` filter is the way
+  back to the evidence.
+- **Bounded fan-out.** Submission is windowed by `SweepPolicy.max_in_flight`,
+  clamped down to the supervisor's `max_concurrent_runs`. Submitting every point
+  at once would not run them faster — the supervisor bounds concurrency anyway —
+  but it would make every queued run accrue blocked time against
+  `max_queue_wait_s` and expire as `resource_wait_timeout`. Sweeps are also why
+  `max_concurrent_runs` is worth raising above its default of 2 when the host
+  allows it.
+- **Partial failure is a result.** A point whose run errored, timed out or could
+  not even be submitted is recorded with its outcome (or a point-level
+  `RunFailure` with code `sweep_failed`) and the sweep carries on.
+- **Cancellation.** `cancel(sweep_id)` starts no further point and cancels the
+  in-flight runs through the supervisor; the record ends `cancelled` and keeps
+  what already ran. It returns False when this runner does not hold that sweep.
+- **Refusals.** `run()` raises `SweepError` only when no honest record could be
+  written at all (unknown diagnostic, unsupported profile, a value the
+  declaration refuses) — the same doctrine as `RunSupervisor.submit`. Everything
+  after that is persisted instead.
+- **Visible progress.** `testlab.sweep.started`, `testlab.sweep.run_finished`
+  (point label, outcome, `completed/total`, elapsed seconds),
+  `testlab.sweep.point_failed`, `testlab.sweep.cancelling`,
+  `testlab.sweep.finished`. The record on disk is rewritten at the same moment,
+  so a long sweep is never a silent process and a crashed orchestrator leaves the
+  points it had already run.
+
+### Record and summary
+
+```text
+<root>/sweeps/<sweep_id>/sweep.json      canonical JSON of the SweepRecord
+<root>/sweeps/<sweep_id>/summary.json    the readable summary artifact
+<root>/sweeps/<sweep_id>/.sweep-*.tmp    write in progress (or crash leftover)
+<root>/sweeps/.staging-<sweep_id>-*      sweep being created
+<root>/locks/<sweep_id>.lock             single-writer OS lock of the sweep
+```
+
+`SweepRecord {sweep_id, created_at, spec, status, diagnostic_version,
+diagnostic_fingerprint, points, finished_at, failure}`, document
+`jarvis.testlab.sweep_record` version 1. `SweepStatus` is `running`, `completed`,
+`cancelled` or `failed`; `points` holds one `SweepPointResult {point, runs,
+failure}` per point, with `SweepRunOutcome {run_id, status, outcome,
+failure_code, score}` per run. `outcome_counts()` reads the whole sweep at a
+glance.
+
+A **running** sweep record is rewritten as it progresses — it is the
+orchestrator's own progress log — and a **terminal** one is immutable, like a
+terminal run (`testlab_store_conflict`). The runs themselves are ordinary
+`TestRun` records in the run store, tagged with the sweep id, and the run store's
+own rules are what make them evidence; this directory only holds what the runs
+cannot say: the declaration that produced them and the order they were meant to
+run in. That is what makes a sweep replayable.
+
+`build_sweep_summary(record, runs, diagnostic)` is pure, so the summary can be
+rebuilt from stored records at any time. Document `jarvis.testlab.sweep_summary`
+version 1: the declaration, the outcome counts, one entry per point with its
+`RunAggregate` and its `RunComparison` against the first point that measured
+anything, `best_points` (for every directed metric, which point had the best
+median), and a `note` stating that nothing here was written to permanent
+settings.
+
+`SweepStore` (port in `store.py`): `put_sweep`, `get_sweep`, `list_sweeps`,
+`put_sweep_summary`, `get_sweep_summary`; errors `SweepNotFoundError`,
+`SweepRecordCorruptError`. Unreadable or stray entries are reported in
+`SweepPage.corrupt`, never skipped in silence. `put_sweep_summary` is
+**write-once** (`testlab_store_conflict` on a second call), the same rule as a
+terminal record and for the same reason: a summary is only ever written when the
+sweep ends, so a rewrite would edit the conclusion of a finished experiment.
 
 ## Redaction and forbidden code
 
@@ -886,6 +1255,48 @@ One writer at a time per run, enforced by two mechanisms:
    `expected`. A writer re-reads (`get_run`) and decides again, so no update is
    silently lost.
 
+### Listing cache
+
+`list_runs` decodes one record per run in the store, and decoding is not cheap
+(strict codec plus the redaction scan). Sweeps make listings hot, so
+`FilesystemTestRunStore` keeps the decoded record of **terminal** runs in a
+bounded LRU (`listing_cache_size`, default `DEFAULT_LISTING_CACHE` = 2048; 0
+disables it), keyed by the record's `(st_mtime_ns, st_size)`.
+
+**Every listed run is re-stated, and a cached entry whose stamp moved is
+re-read.** A terminal record is immutable *through this store*, but the file is
+an ordinary file: truncated by a crash, edited by hand or restored from a backup,
+it becomes corrupt or different. A cache that trusted immutability kept serving
+the old decoded record and reported `corrupt` empty — switching the Slice 02
+corruption mechanism off in exactly the long-lived supervisor process it was built
+for — and gave one process two truths, `list_runs` serving a record `get_run`
+refused. One `os.stat` per listed run is noise against reading and decoding them.
+
+Non-terminal records change under the reader and are never cached, and `get_run` /
+`update_run` never consult the cache at all, so the compare-and-swap still reads
+the bytes on disk every time. `delete_run` evicts. The manifest defect of a cached
+run is remembered with it and revalidated by the same stamp.
+
+**The stamp catches mistakes, not malice.** It is `(st_mtime_ns, st_size)`: an edit
+that deliberately restores both — writing a same-sized record and resetting the
+timestamp with `os.utime` — is served from the cache by `list_runs` while `get_run`
+returns the new bytes. That is the documented threat model (see "Threat model"): the
+store defends against crashes, truncation, partial writes and honest mistakes, not
+against a process that already has write access to the run directory and is trying to
+lie about it. Anyone in that position can rewrite the record for every reader anyway.
+
+Measured on this host with a warm page cache, filtering by `sweep_id`: at 2000
+stored runs, 1.9–2.9 s per call without the cache against 140–193 ms warm with it;
+at 500 runs, 350–390 ms against 37–53 ms. The stat pass is the difference between
+those warm numbers and the 66 ms / 17 ms an unvalidated cache reached — correctness
+worth an order of magnitude less speedup, still 8× to 14× faster than no cache.
+
+A store holding more than `listing_cache_size` terminal runs evicts in LRU order,
+so a listing that walks past the ceiling re-decodes the runs that fell out and the
+speedup degrades gracefully toward the uncached figures; it never becomes wrong,
+only slower. Raise `listing_cache_size` (memory is a few kB per record) if a
+deployment keeps more runs than that and lists them often.
+
 ### Corruption handling
 
 A record that is missing, not UTF-8, not strict JSON, fails the `TestRun` codec,
@@ -1077,7 +1488,7 @@ observable `TestRun`; the worker executes it and measures.
 | Module | Role |
 |---|---|
 | `jobs.py` (pure) | `WorkerJob` / `WorkerResult` documents, the per-run file names, the closed failure-code vocabulary |
-| `runners.py` | `DiagnosticRunner` protocol, `RunContext`, `RunArtifacts`, `RunOutcome`, `RunCancelled`: the seam Slices 06/08/09 implement |
+| `runners.py` | `DiagnosticRunner` protocol, `RunContext`, `RunArtifacts`, `RunOutcome`, `RunCancelled`, `MeasurementUnavailable`, `ScenarioExpectationUnmet`: the seam Slices 06/08/09 implement |
 | `supervisor.py` | `RunSupervisor`, `RunRequest`, `SupervisorPolicy`, `AdoptionReport`: queueing, reservation, bounds, persistence, adoption |
 | `worker_launcher.py` | `SubprocessWorkerLauncher`: process start, stderr capture, tree kill (injectable `WorkerLauncher` seam) |
 | `worker.py` | `python -m jarvis.testlab.worker <job.json>`: the child process |
@@ -1166,9 +1577,10 @@ the run was queued against, resolves the implementation in the registry
 runner with a `RunContext`.
 
 **The worker reports measurements, never a verdict.** `WorkerResult` carries
-`metrics`, an optional `score`, `join_ids` and the artifact references it
-committed. The supervisor derives every `AssertionResult` with
-`evaluate_assertion` from the declaration, calls `complete_run`, then
+`metrics`, `join_ids` and the artifact references it committed — and **no score**
+(Slice 07 removed the field; see "Scoring"). The supervisor derives every
+`AssertionResult` with `evaluate_assertion` from the declaration, computes the
+declared score with `jarvis.testlab.scoring`, calls `complete_run`, then
 `check_run_against_spec`. A run whose measurements contradict its declaration
 (an undeclared metric, a value outside its unit) is stored `errored` with
 `result_contradicts_spec`, never `passed`.
@@ -1368,7 +1780,7 @@ it. Retention stays disabled unless enabled explicitly.
 
 ### Failure codes
 
-`RunFailure.code` values this Slice produces (`jobs.FAILURE_CODES`):
+`RunFailure.code` values the execution path produces (`jobs.FAILURE_CODES`). How each one READS to a caller is the table in "Outcomes":
 
 | Code | Status | Meaning |
 |---|---|---|
@@ -1390,8 +1802,10 @@ it. Retention stays disabled unless enabled explicitly.
 | `isolation_violation` | `errored` | The worker's roots are not inside the run scratch |
 | `catalog_unavailable` | `errored` | The catalog could not be loaded, or the declaration drifted |
 | `runner_unavailable` | `errored` | Reserved, unregistered, or mismatched implementation name |
-| `runner_failed` | `errored` | The runner raised, or its measurements are invalid |
+| `runner_failed` | `errored` | The runner raised something unforeseen, or its measurements are invalid |
 | `supervisor_stopped` | `cancelled` | The supervisor stopped while the run was queued or running |
+| `measurement_unavailable` | `errored` | Slice 07: the runner could not obtain a measurement the declaration needs (it raised `MeasurementUnavailable`) |
+| `scenario_expectation_unmet` | `errored` | Slice 07: an evaluable `expect.*` step disagreed in a diagnostic that cannot carry the count |
 
 Supervisor refusals raised to the caller use `testlab_supervisor_request_invalid`,
 `testlab_supervisor_stopped`, `testlab_supervisor_unknown_run` and
@@ -1717,10 +2131,15 @@ never uses `voice.state.spoken_diverged`: that producer signal compares raw stri
 and fires on ordinary transcription noise (see
 `tasks/jarvis-category2-test-lab/Issues/speech-payload-integrity-needs-normalized-measure.md`).
 
-`testlab.scenario.virtual` is the generic ad-hoc runner. It performs any scenario and
-reports `scenario.steps_performed` and `scenario.checkpoints_reached`; a diagnostic
-declaring anything else fails with `testlab_virtual_run_failed` rather than storing a
-verdict derived from nothing. Slice 07 owns its measurement contract.
+`testlab.scenario.virtual` is the generic ad-hoc runner, and its **measurement
+contract** (Slice 07) is exactly `SCENARIO_METRICS`: `scenario.steps_performed`,
+`scenario.checkpoints_reached`, `scenario.expectations_declared` and
+`scenario.expectations_failed_count`. A diagnostic declaring anything else fails with
+`testlab_virtual_run_failed` rather than storing a verdict derived from nothing. The
+last of the four is what lets an ad-hoc diagnostic FAIL: declare a blocking
+`scenario.expectations_failed_count eq 0` and an `expect.*` step that disagrees becomes
+an ordinary measured verdict (see "The `expect.*` verdict rule"). A diagnostic that does
+not declare it ends `inconclusive` on an unmet expectation instead of dropping it.
 
 Each seed's failure path is proven, not assumed: a real confirmed barge-in, a
 corrupted delivered payload, an intent that is never delivered, and a first audio
@@ -1748,13 +2167,15 @@ past the declared threshold each turn the corresponding blocking assertion `fail
   lines, not sound; the unanswered-onset guard checks that the stack answered, not why;
   and `VirtualEchoGuard`'s far-end state is latched for the session rather than decaying
   like the real duplex guard.
-- **A verdict beyond its metrics.** An `expect.*` step that fails raises
-  `testlab_virtual_expectation_failed`, which the supervisor stores as `errored`, not
-  `failed`. Slice 07 owns the richer verdict. The same is true of a run the profile
-  refuses to judge: a missing latency join ends `errored` / `assertions_inconclusive`
-  and an unanswered barge-in onset ends `errored` / `runner_failed`. Both are correct
-  today — the run produced no verdict — but a reader has to open the failure detail to
-  see which, and Slice 07 should give "the diagnostic could not measure" its own shape.
+- **A verdict beyond its metrics.** A runner measures; only a declared blocking
+  assertion fails a run. Slice 07 closed the two gaps this used to leave: an
+  `expect.*` step that disagrees is now a measured count an ad-hoc diagnostic can
+  assert on (so it can end `failed`), and a run the profile refuses to judge has its
+  own shape — a missing latency join ends `errored` / `assertions_inconclusive`, an
+  unanswered barge-in onset ends `errored` / `measurement_unavailable`, and both
+  classify as the outcome `inconclusive` while keeping distinct codes (see
+  "Outcomes"). What remains true is that the virtual profile still cannot produce a
+  verdict its own declared metrics do not carry.
 
 ### Validation
 
@@ -2301,6 +2722,14 @@ two in the tree-kill test):
 
 ```powershell
 .venv/Scripts/python -m pytest -q -p no:cacheprovider tests/integration/test_testlab_worker.py
+```
+
+Sweeps run real workers too, at most two at once and two or three points per
+sweep (the voice stack is mounted only by the one test that has to prove the
+`virtual` profile really sweeps):
+
+```powershell
+.venv/Scripts/python -m pytest -q -p no:cacheprovider tests/integration/test_testlab_sweep_runs.py
 ```
 
 The replay compatibility layer is covered by the existing replay tests, which must

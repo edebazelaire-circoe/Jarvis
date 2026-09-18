@@ -1458,8 +1458,16 @@ captured over it segments into exactly one voice session. Its waits are conditio
 run's remaining time, never a wall clock, so a cancel or a deadline ends a run cooperatively, and no
 part of the profile reads a clock to decide anything. A seed refuses to certify silence: a stimulus
 the stack never answers, or a latency join that never happened, ends the run inconclusive or failed
-rather than passing on absent evidence. The
-`audio`, `live` and `hardware` profiles come in later Slices of
+rather than passing on absent evidence. On top of that, a terminal run is READ through a derived
+outcome — `passed`, `failed`, `inconclusive` ("could not measure"), `refused`, `crashed`,
+`cancelled` — computed from its status and its stable failure code, with no new status invented and
+no prose to parse; the supervisor computes the declared `weighted_mean` score from the metrics,
+which never changes a verdict; two runs of the same declaration, version, fingerprint and profile
+compare as per-metric deltas with direction awareness, everything else being listed as explicitly
+incomparable; and a parameter sweep fans isolated runs out over declared values under one sweep id,
+tolerating a failing point, cancellable as a whole, persisted as a replayable record plus a summary
+artifact — and it never writes a winning value into permanent settings, because the sweep reports
+and the human decides. The `audio`, `live` and `hardware` profiles come in later Slices of
 `tasks/jarvis-category2-test-lab/`.
 
 ## Sub-agent routing

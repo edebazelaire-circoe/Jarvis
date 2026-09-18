@@ -9,7 +9,7 @@ Start with `00-project-manager`; it is the readiness gate and is not delegated. 
 - [x] `04-catalog-scenarios` — Diagnostic catalog, manifests, and safe ad-hoc scenarios
 - [x] `05-supervisor-worker` — Run supervisor and isolated worker lifecycle
 - [x] `06-virtual-profile-harness` — Virtual profile from async conversation harness
-- [ ] `07-metrics-scoring-sweeps` — Metrics, scoring, comparisons, and parameter sweeps
+- [x] `07-metrics-scoring-sweeps` — Metrics, scoring, comparisons, and parameter sweeps
 - [ ] `08-audio-live-profiles` — Controlled audio and live-provider profiles
 - [ ] `09-hardware-guided` — Hardware auto/guided profiles and resource gates
 - [ ] `10-control-center-api-cli` — Native API, CLI, and Control Center HTTP surface

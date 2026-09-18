@@ -45,6 +45,7 @@ from jarvis.testlab.runs import (
     TestRun,
     check_transition,
 )
+from jarvis.testlab.sweeps import SweepRecord
 from jarvis.testlab.validation import TestLabError, check_enum, check_number, check_time, fail
 
 # Stable store error codes (docs/testlab.md, "Storage").
@@ -435,6 +436,68 @@ class BundlePage:
     #: Unreadable bundle directories and stray entries met while scanning (never counted toward `limit`).
     corrupt: tuple[CorruptRunEntry, ...] = ()
     next_cursor: str | None = None
+
+
+class SweepNotFoundError(TestLabStoreError):
+    """No sweep directory exists for this sweep id."""
+
+
+class SweepRecordCorruptError(TestLabStoreError):
+    """The stored sweep record cannot be read or decoded. Never silently skipped."""
+
+
+@dataclass(frozen=True, slots=True)
+class SweepQuery:
+    """Filters for `list_sweeps`. Order is by sweep id, which is creation time then nonce."""
+
+    limit: int = DEFAULT_PAGE_LIMIT
+    newest_first: bool = True
+    after_sweep_id: str | None = None
+
+    def __post_init__(self) -> None:
+        check_number(self.limit, "limit", minimum=1, maximum=MAX_PAGE_LIMIT, integer=True)
+        if type(self.newest_first) is not bool:
+            raise fail("newest_first must be a boolean")
+        check_sweep_id(self.after_sweep_id, "after_sweep_id", optional=True)
+
+
+@dataclass(frozen=True, slots=True)
+class SweepPage:
+    sweeps: tuple[SweepRecord, ...]
+    #: Unreadable sweep directories and stray entries met while scanning.
+    corrupt: tuple[CorruptRunEntry, ...] = ()
+    next_cursor: str | None = None
+
+
+class SweepStore(Protocol):
+    """Durable sweep records and their summary artifact (docs/testlab.md, "Sweeps").
+
+    A sweep record is REWRITTEN as the sweep progresses (unlike a `TestRun`, whose
+    terminal record is immutable): it is the orchestrator's own progress log, while
+    the evidence of each point lives in the `TestRun` records the sweep produced and
+    those obey the run store's rules. A terminal sweep record is never rewritten.
+    """
+
+    def put_sweep(self, record: SweepRecord) -> SweepRecord:
+        """Create or update a sweep record. Refuses to rewrite a terminal one."""
+        ...
+
+    def get_sweep(self, sweep_id: str) -> SweepRecord:
+        """`SweepNotFoundError` or `SweepRecordCorruptError` instead of a record."""
+        ...
+
+    def list_sweeps(self, query: SweepQuery = SweepQuery()) -> SweepPage: ...
+
+    def put_sweep_summary(self, sweep_id: str, document: Mapping[str, object]) -> None:
+        """Store the readable summary artifact of a finished sweep (canonical JSON).
+
+        Write-once, like a terminal record: a second write is `testlab_store_conflict`.
+        """
+        ...
+
+    def get_sweep_summary(self, sweep_id: str) -> Mapping[str, object]:
+        """The stored summary document; `SweepNotFoundError` when the sweep has none."""
+        ...
 
 
 class BundleStore(Protocol):
