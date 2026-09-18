@@ -70,6 +70,9 @@ BRAIN_INTENT_REVISED = "brain.intent.revised"
 # `DiagnosticSink`, que le composition root branche sur `RuntimeJournal`).
 BRAIN_TURN_FAILED_KIND = "core.brain.turn_failed"
 BRAIN_TURN_CANCELLED_KIND = "core.brain.turn_cancelled"
+#: L'utilisateur a repris la parole pendant que le cerveau réfléchissait, et la
+#: surface a demandé l'abandon de la réponse en vol (barge-in en réflexion).
+BRAIN_TURN_ABANDONED_KIND = "core.brain.turn_abandoned"
 BRAIN_BACKEND_CONTRACT_KIND = "core.brain.backend_contract_violation"
 BRAIN_WORK_CANCELLED_KIND = "core.brain.work_cancelled"
 BRAIN_WORK_CANCEL_FAILED_KIND = "core.brain.work_cancel_failed"
@@ -246,6 +249,10 @@ class BrainOrchestrator:
         self._reported_interruptions: dict[str, dict[str, None]] = {}
         self._accepted: dict[str, BrainTurnAcceptance] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
+        # Conversation de chaque tâche en vol : `cancel_turn()` refuse ainsi
+        # d'abandonner le tour d'une autre conversation. Borné par `_tasks`, et
+        # retiré dans le même `finally`.
+        self._task_conversations: dict[str, str] = {}
         # Seul le tour qui active un travail en devient propriétaire. Un tour
         # qui décrit un travail déjà actif ne peut pas le solder en échouant.
         # Aucun lien avec l'annulation des jobs exécutés indépendamment de Core.
@@ -619,7 +626,90 @@ class BrainOrchestrator:
 
             task = asyncio.create_task(self._run_turn(turn, state), name=f"jarvis-brain-{turn.correlation_id}")
             self._tasks[turn.correlation_id] = task
+            self._task_conversations[turn.correlation_id] = turn.conversation_id
             return acceptance
+
+    async def cancel_turn(self, conversation_id: str, correlation_id: str) -> dict[str, object]:
+        """Abandonner la **réponse** d'un tour en vol, sans tuer ce qu'il a lancé.
+
+        Seul appelant prévu : la surface vocale, quand l'utilisateur reprend la
+        parole pendant que le cerveau réfléchit. Avant cette voie, l'interruption
+        n'existait que pendant la parole : couper un cerveau silencieux ne
+        produisait rien, le tour continuait, et sa réponse tombait ensuite
+        par-dessus la question suivante.
+
+        Ce qui est abandonné
+        --------------------
+        La tâche possédée par l'orchestrateur pour ce `correlation_id`, et elle
+        seule. `_run_turn` sait déjà solder un `CancelledError` : trace, retrait
+        de `_tasks`, des propriétés de travail et des tours incertains. Aucune
+        parole ne part, aucun échec n'est publié — un tour abandonné n'est pas
+        un tour en panne.
+
+        Le travail que **ce tour** avait déclaré (`brain-turn:{correlation_id}`)
+        est retiré de l'état public : sans cela, une réponse jamais rendue
+        laisserait un travail actif pour toujours, et l'écran resterait occupé
+        par un cerveau qui ne pense plus.
+
+        Ce qui n'est **pas** touché
+        ---------------------------
+        Le travail exécutable. `_cancel_jobs()` n'est **pas** appelé : les jobs
+        et les sous-agents vivent dans `OwnedJobExecution` / `BackBrainWorker`,
+        hors de cette tâche. Ils continuent, rendront leur résultat, et le
+        cerveau le relaiera par `announce_notice()`. La rétention de la
+        Décision 16 tient : couper la parole n'annule pas la tâche (Décisions 15
+        et 35). Interrompre JARVIS ne tue donc jamais ce qu'il a lancé — seule
+        sa réponse orale est abandonnée.
+
+        Rend `{"cancelled": bool, ...}`. `False` quand plus rien ne tournait sous
+        cette corrélation : la surface a le droit d'arriver après la fin, et ce
+        n'est pas une erreur.
+        """
+
+        task = self._tasks.get(correlation_id)
+        owner_conversation = self._task_conversations.get(correlation_id)
+        if task is None or task.done() or (owner_conversation is not None and owner_conversation != conversation_id):
+            return {"cancelled": False, "conversation_id": conversation_id,
+                    "correlation_id": correlation_id, "reason": "no_turn_in_flight",
+                    "retired_work_ids": []}
+        # Lu **avant** l'annulation : le `finally` de `_run_turn` retire ces
+        # propriétés, et on ne saurait plus alors quel travail ce tour portait.
+        owned = tuple(work_id for (conversation, work_id), owner in self._work_owners.items()
+                      if conversation == conversation_id and owner == correlation_id)
+        task.cancel()
+        retained: tuple[str, ...] = ()
+        state = None
+        previous_revision = 0
+        if owned:
+            async with self._lock:
+                current = self.working_state(conversation_id)
+                previous_revision = current.revision
+                retained = tuple(item for item in current.active_work_ids if item not in owned)
+                if retained != current.active_work_ids:
+                    state = self._revise(conversation_id, active_work_ids=retained)
+        if state is not None:
+            await self._publish_revision(
+                BrainIntentRevision(
+                    conversation_id=conversation_id,
+                    revision=state.revision,
+                    previous_revision=previous_revision,
+                    cancelled_work_ids=owned,
+                    retained_work_ids=retained,
+                ),
+                correlation_id=correlation_id,
+            )
+            await self._publish(BRAIN_STATE_UPDATED, state.to_public_payload(), conversation_id, correlation_id)
+        self._diagnostics.emit(
+            BRAIN_TURN_ABANDONED_KIND,
+            "réponse du cerveau abandonnée : l'utilisateur a repris la parole pendant la réflexion",
+            data={"conversation_id": conversation_id, "correlation_id": correlation_id,
+                  "retired_work_ids": list(owned), "retained_work_ids": list(retained),
+                  # Rendu explicite parce que c'est la promesse du barge-in en
+                  # réflexion : rien de ce qui tourne n'est tué.
+                  "jobs_cancelled": False},
+        )
+        return {"cancelled": True, "conversation_id": conversation_id,
+                "correlation_id": correlation_id, "retired_work_ids": list(owned)}
 
     async def stop(self) -> None:
         """Annuler et solder tout travail cerveau en vol.
@@ -639,6 +729,7 @@ class BrainOrchestrator:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._tasks.clear()
+        self._task_conversations.clear()
 
     # -- relais spontanés ---------------------------------------------------
 
@@ -1046,6 +1137,7 @@ class BrainOrchestrator:
                     },
                 )
             self._tasks.pop(turn.correlation_id, None)
+            self._task_conversations.pop(turn.correlation_id, None)
             for key, owner in tuple(self._work_owners.items()):
                 if key[0] == turn.conversation_id and owner == turn.correlation_id:
                     self._work_owners.pop(key)

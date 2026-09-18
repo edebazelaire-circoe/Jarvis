@@ -533,6 +533,11 @@ class PersistentVoiceRuntime:
             # demande de parole y était rattachée. Sans ce fil, l'historique
             # présenterait comme entendue une phrase tronquée.
             on_interruption=speech.note_interruption if speech is not None else None,
+            # 19/09/2026 : couper JARVIS pendant qu'il réfléchit ne coupe aucune
+            # phrase — il n'y en a pas. Ce fil-là abandonne le tour : la file de
+            # parole est purgée et Core arrête la tâche du cerveau. Ce que le
+            # tour avait lancé continue.
+            on_turn_abandoned=speech.abandon_turn if speech is not None else None,
             # L'ordonnanceur ne parle pas par-dessus l'utilisateur, et décide
             # seul si un accusé de réception sert encore.
             on_user_speech=speech.note_user_speech if speech is not None else None,
