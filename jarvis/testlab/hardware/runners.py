@@ -83,6 +83,7 @@ from jarvis.testlab.hardware.prompts import (
 )
 from jarvis.testlab.runners import MeasurementUnavailable, RunCancelled, RunContext, RunOutcome
 from jarvis.testlab.runs import ArtifactKind
+from jarvis.testlab.validation import fail
 from jarvis.testlab.virtual.executor import VirtualExecutor
 from jarvis.testlab.virtual.harness import CHUNK_MS, FakeAudio, VoiceStack
 from jarvis.testlab.virtual.runners import (
@@ -129,10 +130,10 @@ VOICE_FLOOR_DBFS = -50.0
 #: the microphone heard literally nothing — not "a quiet room", which still carries the
 #: echo of what Jarvis played.
 SILENCE_FLOOR_DBFS = -90.0
-#: How far above the echo-only level a near-end report has to be before the run treats it
-#: as a person. The echo-only level is not a constant: it is measured in the SILENT phase
-#: of the same run, in the same room, at the same volume.
-ECHO_MARGIN_DB = 6.0
+#: Frames of the detector's own per-frame near-end verdict that count as speech rather
+#: than a click. It is `NearEndDetector.min_run_frames` — the product's number, not ours —
+#: and 6 frames is 60 ms.
+NEAR_END_FRAMES = 6
 #: Microphone blocks the run listens to before Jarvis speaks, to learn what the room
 #: sounds like on its own. Three 50 ms blocks; a human takes longer than that to breathe.
 BASELINE_BLOCKS = 3
@@ -208,6 +209,58 @@ class SpokenPhase:
 
 # ------------------------------------------------------------- the device audio
 
+class NearEndWatch:
+    """Counts the frames in which the PRODUCT judged a near-end voice present.
+
+    This exists because `NEAR_END` is an EDGE. `NearEndDetector.update` returns True only
+    at the instant speech is CONFIRMED, and the detector then stays `latched` until Jarvis
+    falls silent; while it is latched, a genuine human voice raises no signal at all. A run
+    that waited for the signal therefore missed a person who spoke after the gate had
+    already latched once — measured: the detector reported `last_near=True` for all 310
+    frames of the voice and emitted nothing, so the true-positive case failed 10 times out
+    of 10 and the guided profile would have told a human, wrongly, that it did not hear
+    them.
+
+    `CaptureFrameContext.near_end` is the same detector's PER-FRAME verdict, delivered to
+    this observer for every frame whatever the latch or the gate is doing. It is a level,
+    not an edge, and it is the product's own judgement rather than a threshold of ours.
+
+    Runs in the capture thread: it counts and returns. Nothing here allocates, blocks, or
+    touches the audio.
+    """
+
+    __slots__ = ("near_frames", "far_frames", "frames", "latched_frames", "latched")
+
+    def __init__(self) -> None:
+        self.frames = 0
+        self.near_frames = 0
+        self.far_frames = 0
+        self.latched_frames = 0
+        #: The detector's CURRENT verdict: it has confirmed a near-end voice and is holding
+        #: that until Jarvis falls silent. Sticky state, which is what "will this stack let
+        #: a barge-in through right now" actually depends on.
+        self.latched = False
+
+    def observe(self, frame: bytes, context: Any) -> None:
+        del frame
+        self.frames += 1
+        if context.near_end:
+            self.near_frames += 1
+        if context.far_end:
+            self.far_frames += 1
+        self.latched = context.near_end_latched
+        if context.near_end_latched:
+            self.latched_frames += 1
+
+    def reset(self) -> None:
+        """Follows `CaptureProcessor.reset`; the counters are per capture, not per run."""
+        self.frames = self.near_frames = self.far_frames = self.latched_frames = 0
+        self.latched = False
+
+    def close(self) -> None:
+        return None
+
+
 class LevelledCapture:
     """The production `CaptureProcessor`, with the RAW microphone level read on the way in.
 
@@ -223,10 +276,12 @@ class LevelledCapture:
     tiny, and a closed gate makes it nothing) nor a boolean can give them.
     """
 
-    __slots__ = ("_inner", "peak", "session_peak")
+    __slots__ = ("_inner", "peak", "session_peak", "watch")
 
-    def __init__(self, inner: Any) -> None:
+    def __init__(self, inner: Any, watch: NearEndWatch | None = None) -> None:
         self._inner = inner
+        #: The per-frame near-end counter mounted on this capture, when there is one.
+        self.watch = watch
         #: Peak since the last `reset_peak` (one guided step).
         self.peak = 0
         #: Peak since the run began. Never reset: it is what proves the microphone was
@@ -301,18 +356,32 @@ class DeviceAudio(SoundDeviceRealtimeAudio):
         with self._cursor_lock:
             return int(self._written_ms_locked())
 
-    def heard_voice_since(self, mark: tuple[int, int], *, above_dbfs: float) -> bool:
-        """Did the capture report a near-end voice LOUD ENOUGH not to be Jarvis, since `mark`?
+    def near_frames_since(self, mark: tuple[int, ...]) -> int:
+        """How many frames the PRODUCT judged to carry a near-end voice since `mark`."""
+        watch = self._watch
+        return 0 if watch is None else max(0, watch.near_frames - (mark[2] if len(mark) > 2 else 0))
 
-        Both halves are needed and neither is enough. The near-end signal is the product's
-        own live judgement, and it is the only thing that can say "somebody is talking over
-        Jarvis" while Jarvis is talking. The level is what tells that judgement apart from
-        the canceller's own residual: `above_dbfs` is what this microphone reads when
-        Jarvis speaks and NOBODY is talking, measured in this same run, so a voice has to
-        beat the echo rather than merely exist alongside it.
+    def heard_voice_since(self, mark: tuple[int, ...], *,
+                          min_frames: int = NEAR_END_FRAMES) -> bool:
+        """Did the capture judge a near-end voice present for long enough to be speech?
+
+        Frames, not the `NEAR_END` signal: the signal is an EDGE and fires once, at the
+        instant speech is confirmed, after which the detector stays latched and a genuine
+        voice raises nothing (see `NearEndWatch`). Frames, not a decibel margin over the
+        echo either: the margin was the other half of the same mistake, because it asked a
+        person to beat a level the product had already discounted.
+
+        Two conditions, and each one covers the other's blind spot. Enough FRAMES since the
+        mark says the voice in question — the one that arrived after `mark` — is really in
+        the capture; `min_frames` is the detector's OWN `min_run_frames` (6 frames = 60 ms),
+        its definition of speech rather than a click, so the number is the product's and not
+        ours. `near_end_confirmed` says the detector is currently holding that verdict,
+        which is the state a barge-in decision actually consults. Frames alone fire before
+        the stack would act on them; the latch alone can be left over from the echo and
+        fires before the voice has arrived at all. Both, and the answer is "a voice this
+        stack would act on is in the room now".
         """
-        peak, signals, _captured = self.heard_since(mark)
-        return NEAR_END in signals and peak > above_dbfs
+        return self.near_frames_since(mark) >= min_frames and self.near_end_confirmed
 
     @property
     def run_peak_dbfs(self) -> float | None:
@@ -322,15 +391,35 @@ class DeviceAudio(SoundDeviceRealtimeAudio):
             return None
         return _sample_dbfs(probe.session_peak)
 
+    @property
+    def near_end_confirmed(self) -> bool:
+        """Has the PRODUCT confirmed a near-end voice and is it still holding that?
+
+        `NearEndDetector.latched`, via the per-frame observer. This is the state a barge-in
+        decision actually consults, so it is the honest answer to "will this stack let one
+        through now" — as opposed to the `NEAR_END` signal, which is the instant it changed
+        its mind, and to the per-frame `near_end` verdict, which is weaker than the
+        detector's own `min_frames`/`min_run_frames` rule for calling something speech.
+        """
+        watch = self._watch
+        return bool(watch is not None and watch.latched)
+
+    @property
+    def _watch(self) -> NearEndWatch | None:
+        probe = self.capture
+        return probe.watch if isinstance(probe, LevelledCapture) else None
+
     # A "window" is one guided step: mark it open, read what was heard while it was.
-    def mark(self) -> tuple[int, int]:
+    def mark(self) -> tuple[int, int, int]:
         self._peak_sample = 0
         probe = self.capture
         if isinstance(probe, LevelledCapture):
             probe.reset_peak()
-        return len(self.capture_signals), int(self.captured_bytes)
+        watch = self._watch
+        return (len(self.capture_signals), int(self.captured_bytes),
+                0 if watch is None else watch.near_frames)
 
-    def heard_since(self, mark: tuple[int, int]) -> tuple[float, tuple[str, ...], int]:
+    def heard_since(self, mark: tuple[int, ...]) -> tuple[float, tuple[str, ...], int]:
         """`(peak dBFS, capture signals, bytes captured)` since `mark`.
 
         The peak is the RAW microphone level when the run mounted a `LevelledCapture`,
@@ -386,12 +475,13 @@ async def hardware_voice_stack(context: RunContext, *, echo_cancellation: bool =
     context.log(f"devices: input={selection.input_device!r} ({selection.input_source}) "
                 f"output={selection.output_device!r} ({selection.output_source})")
     check_device_formats(selection)
+    watch = NearEndWatch()
     build = build_capture(capture_rate=VOICE_SAMPLE_RATE, render_rate=VOICE_SAMPLE_RATE,
-                          echo_cancellation=echo_cancellation)
+                          echo_cancellation=echo_cancellation, observer=watch)
     if build.aec_error is not None:
         context.log(f"echo canceller unavailable: {build.aec_error}")
     context.log(f"audio chain: aec_engaged={build.aec_engaged} reason={build.aec_unavailable_reason}")
-    capture = LevelledCapture(build.capture)
+    capture = LevelledCapture(build.capture, watch)
     try:
         async with virtual_voice_stack(context, capture_factory=lambda: capture,
                                        audio_class=device_audio_class(selection)) as (stack, journal, core):
@@ -708,7 +798,14 @@ async def raise_provider_onset(context: RunContext, stack: VoiceStack, onset: An
     if onset is None:
         await stack.session.interrupt()
         return True
-    return bool(await onset(context, stack))
+    raised = await onset(context, stack)
+    if raised is None:
+        # Not "declined": a seam that forgets to return its answer would silently turn every
+        # candidate into a decline, and the run would report that it could not measure while
+        # looking perfectly healthy. That is our defect, so it reads as one.
+        raise fail("a provider-onset seam must return whether it raised an onset; None is not "
+                   "'declined'", HARDWARE_RUN_FAILED)
+    return bool(raised)
 
 
 async def measure_room(context: RunContext, audio: DeviceAudio) -> float:
@@ -788,7 +885,8 @@ class SelfEchoGuidedRunner:
                 peak, signals, captured = audio.heard_since(mark)
                 quiet_room = RoomVoice(before_dbfs=baseline,
                                        after_dbfs=await measure_room(context, audio),
-                                       near_end_seen=NEAR_END in signals, window_peak_dbfs=peak)
+                                       near_end_frames=audio.near_frames_since(mark),
+                                       window_peak_dbfs=peak)
                 # `certain` in BOTH steps: "a person made a sound" means the same thing
                 # and is measured the same way, whichever claim needs it. A suspicion is
                 # recorded (`near_end_seen`) and never decides on its own — that is the
@@ -798,26 +896,22 @@ class SelfEchoGuidedRunner:
                                 **quiet_room.to_dict())
                 context.log(f"silent phase: peak={peak:.1f} dBFS room before={baseline:.1f} "
                             f"after={quiet_room.after_dbfs:.1f} captured={captured} B "
-                            f"signals={sorted(set(signals))} decided={quiet.decided} "
+                            f"near_frames={quiet_room.near_end_frames} decided={quiet.decided} "
                             f"confirmed={quiet.confirmed} first_onset_ms={quiet.first_onset_ms}")
 
                 # --- phase 2: the human is asked to interrupt; a confirmation is the measurement.
                 await session.ask(prompt_for(GuidedAction.INTERRUPT, PROMPT_INTERRUPT, phrase=phrase,
                                              deadline_s=_phase_deadline(context, duration_ms)))
                 mark = audio.mark()
-                # What this microphone reads while Jarvis speaks and NOBODY is talking,
-                # measured a moment ago in this same room: the bar a voice has to clear.
-                echo_level = quiet_room.window_peak_dbfs
                 cut_in = await self._speak(context, stack, journal, audio, clip, CUT_IN_WORK_ID,
                                            "jarvis continue ton recit s il te plait",
                                            "jarvis poursuit son recit pour laisser le temps de le couper",
-                                           duration_ms, 1,
-                                           onset=heard_voice_onset(mark, above_dbfs=echo_level
-                                                                   + ECHO_MARGIN_DB))
+                                           duration_ms, 1, onset=heard_voice_onset(mark))
                 peak, signals, captured = audio.heard_since(mark)
                 spoken_room = RoomVoice(before_dbfs=quiet_room.after_dbfs,
                                         after_dbfs=await measure_room(context, audio),
-                                        near_end_seen=NEAR_END in signals, window_peak_dbfs=peak)
+                                        near_end_frames=audio.near_frames_since(mark),
+                                        window_peak_dbfs=peak)
                 # The SAME object, the same measurements and the same predicate as phase 1.
                 # The window peak carries Jarvis's echo at a voice's level, and the near-end
                 # signal also rises on the canceller's residual, so either of them alone
@@ -828,7 +922,7 @@ class SelfEchoGuidedRunner:
                                 peak_dbfs=max(peak, spoken_room.after_dbfs),
                                 **spoken_room.to_dict())
                 context.log(f"interrupt phase: peak={peak:.1f} dBFS room after="
-                            f"{spoken_room.after_dbfs:.1f} echo_bar={echo_level + ECHO_MARGIN_DB:.1f} "
+                            f"{spoken_room.after_dbfs:.1f} near_frames={spoken_room.near_end_frames} "
                             f"captured={captured} B signals={sorted(set(signals))} "
                             f"decided={cut_in.decided} confirmed={cut_in.confirmed} "
                             f"voice_certain={spoken_room.certain}")
@@ -933,10 +1027,17 @@ class RoomVoice:
 
     before_dbfs: float
     after_dbfs: float
-    near_end_seen: bool
+    #: Frames in which the PRODUCT judged a near-end voice present during the step. A
+    #: count and not a flag, because the near-end SIGNAL is an edge that fires once and
+    #: then goes quiet for the rest of the utterance (see `NearEndWatch`).
+    near_end_frames: int
     #: What the microphone read during the step, echo included. Evidence for an operator,
     #: never a decision: on a hardware profile it carries Jarvis at a voice's level.
     window_peak_dbfs: float
+
+    @property
+    def near_end_seen(self) -> bool:
+        return self.near_end_frames >= NEAR_END_FRAMES
 
     @property
     def certain(self) -> bool:
@@ -954,11 +1055,12 @@ class RoomVoice:
                 "room_after_dbfs": round(self.after_dbfs, 1),
                 "window_peak_dbfs": round(self.window_peak_dbfs, 1),
                 "near_end_seen": self.near_end_seen,
+                "near_end_frames": self.near_end_frames,
                 "voice_floor_dbfs": VOICE_FLOOR_DBFS,
                 "certain": self.certain}
 
 
-def heard_voice_onset(mark: tuple[int, int], *, above_dbfs: float) -> Any:
+def heard_voice_onset(mark: tuple[int, ...], *, min_frames: int = NEAR_END_FRAMES) -> Any:
     """The interrupt phase's provider onset: raised only when a voice was actually heard.
 
     A provider reports that the user is speaking when the user is speaking. Raising the
@@ -968,13 +1070,20 @@ def heard_voice_onset(mark: tuple[int, int], *, above_dbfs: float) -> Any:
     instead leaves `barge_in.true_confirmed_count` at zero and lets
     `require_measurable_interrupt` say the claim was not measured.
 
-    `above_dbfs` is what this microphone reads while Jarvis speaks and nobody is talking,
-    measured in the SILENT phase of this same run: the bare near-end signal was not enough,
-    because the detector also raises on the canceller's residual over a long utterance.
+    "Reported a voice" is `min_frames` FRAMES of the detector's per-frame verdict, not its
+    edge-triggered signal and not a decibel margin over the echo. Both of those were wrong
+    in the same way: the signal fires once and then the detector latches, and the margin
+    asked a person to beat a level the product had already discounted. Either of them made
+    the run miss a genuine interrupt — deterministically, 10 runs out of 10.
+
+    Being permissive here is safe, and deliberate. The onset only asks the stack to DECIDE;
+    what the run may CLAIM is gated separately on `RoomVoice.certain`, a silent-window
+    measurement that nothing Jarvis does can produce. An echo can get an onset raised; it
+    can never get the claim certified.
     """
     async def raise_when_heard(context: RunContext, stack: VoiceStack) -> bool:
         del context
-        if not mounted_device_audio(stack).heard_voice_since(mark, above_dbfs=above_dbfs):
+        if not mounted_device_audio(stack).heard_voice_since(mark, min_frames=min_frames):
             return False
         await stack.session.interrupt()
         return True

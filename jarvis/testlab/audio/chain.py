@@ -67,7 +67,7 @@ class CaptureBuild:
 
 
 def build_capture(*, capture_rate: int = VOICE_SAMPLE_RATE, render_rate: int = VOICE_SAMPLE_RATE,
-                  echo_cancellation: bool = True) -> CaptureBuild:
+                  echo_cancellation: bool = True, observer: Any = None) -> CaptureBuild:
     """Build the PRODUCTION duplex capture, with the real canceller when one is installed.
 
     A missing `livekit.rtc` is not a failure: `CaptureProcessor` runs without a
@@ -106,7 +106,10 @@ def build_capture(*, capture_rate: int = VOICE_SAMPLE_RATE, render_rate: int = V
     # No `owner_buffer_ms`: the Solo Owner replay buffer belongs to a diagnostic that
     # measures the owner gate, and no Slice 08 diagnostic does. A knob no caller sets is
     # dead contract data; the Slice that needs it adds it with its runner.
-    capture = CaptureProcessor(capture_rate=capture_rate, render_rate=render_rate, canceller=canceller)
+    # `observer` is the production `CaptureObserver` seam: it receives the cleaned frame and
+    # what the guard concluded about it, once per 10 ms frame, and can change nothing.
+    capture = CaptureProcessor(capture_rate=capture_rate, render_rate=render_rate, canceller=canceller,
+                               observer=observer)
     return CaptureBuild(capture=capture, capture_rate=capture_rate, render_rate=render_rate,
                         aec_engaged=canceller is not None, aec_unavailable_reason=reason, canceller_name=name,
                         aec_error=error)

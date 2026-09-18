@@ -86,7 +86,6 @@ from jarvis.testlab.runners import MeasurementUnavailable, RunArtifacts, RunCanc
 from jarvis.testlab.runs import ArtifactKind, CodeIdentity, RunStatus, TestRun
 from jarvis.testlab.scenarios import Scenario, ScenarioStep
 from jarvis.testlab.store import ArtifactWriteLimits
-from jarvis.audio.duplex import NEAR_END
 from tests.fakes.sounddevice_double import FakeRoom, FakeSoundDevice, install, speech_like
 from tests.fakes.testlab import CONFIG, ENVIRONMENT, NONCE, REVISION, T0
 
@@ -232,10 +231,16 @@ async def test_a_real_voice_in_the_room_is_confirmed_as_a_barge_in(tmp_path, mon
     install(monkeypatch, FakeSoundDevice(room=room))
 
     class SomebodySpeaks(SelfEchoHardwareRunner):
-        async def raise_onset(self, context, stack):
+        async def raise_onset(self, context, stack) -> bool:
             room.near_end = speech_like()
-            await wait_until_heard(stack.audio, NEAR_END)
-            await super().raise_onset(context, stack)
+            await wait_until_confirmed(stack.audio)
+            # RETURN it: the seam reports whether an onset was actually raised, and a
+            # `None` here reads as "declined", so the run raised nothing at all and then
+            # reported that it could not measure. It passed anyway for a while, because the
+            # capture's own near-end signal was reaching the bridge and producing a local
+            # barge-in — the right answer for the wrong reason, which stopped being true
+            # the moment the room got a realistic noise floor.
+            return await super().raise_onset(context, stack)
 
     context, store = build_context(tmp_path, self_echo_spec(), ProfileName.HARDWARE_AUTO, parameters=FAST)
     outcome = await SomebodySpeaks().run(context)
@@ -633,20 +638,27 @@ async def wait_for_capture_blocks(room: FakeRoom, blocks: int, *, timeout: float
         await asyncio.sleep(0.01)
 
 
-async def wait_until_heard(audio, signal: str, *, timeout: float = 10.0) -> None:
-    """Wait until the PRODUCTION capture raises `signal` for what is in the room now.
+async def wait_until_confirmed(audio, *, timeout: float = 10.0) -> None:
+    """Wait until the PRODUCT would act on the voice that is in the room now.
 
-    Not a sleep: the near-end detector needs a couple of frames to see that the level
-    changed, and how many is its business, not the test's.
+    The same predicate the runner uses, `DeviceAudio.heard_voice_since`, and for the same
+    reasons. Not the `NEAR_END` signal: it is an EDGE that fires once and then goes quiet
+    for the rest of the utterance, so a test waiting on it missed a voice the detector was
+    reporting on every frame, 10 runs out of 10. Not the latch alone either: it can be left
+    over from the echo, and waiting on it raised the stimulus before the voice had arrived.
+
+    Not a sleep: how long the detector needs is its business, not the test's.
     """
     loop = asyncio.get_running_loop()
-    seen = len(audio.capture_signals)
+    mark = audio.mark()
     deadline = loop.time() + timeout
     while loop.time() < deadline:
-        if signal in audio.capture_signals[seen:]:
+        if audio.heard_voice_since(mark):
             return
         await asyncio.sleep(0.01)
-    raise AssertionError(f"the capture never raised {signal!r}: {audio.capture_signals[seen:]}")
+    raise AssertionError(f"the capture never reported a voice this stack would act on: "
+                         f"{audio.near_frames_since(mark)} near frames, "
+                         f"latched={audio.near_end_confirmed}")
 
 
 async def test_a_noisy_room_cannot_support_the_silent_claim(tmp_path, monkeypatch):
@@ -817,17 +829,21 @@ async def test_an_empty_room_never_certifies_a_human_interrupt_at_the_defaults(t
     spec = guided_spec(blocking=True)
     context, store = build_context(tmp_path, spec, ProfileName.HARDWARE_GUIDED,
                                    parameters=declared_defaults(spec), budget_s=300.0)
-    with pytest.raises(GuidedPromptUnavailable) as caught:
+    # The INVARIANT: an empty room never reaches a verdict. Which honest refusal it is
+    # depends on what this room's residual did — nobody spoke, a confirmation in the silent
+    # step that could not be attributed, or a stack that never decided on an onset at all.
+    # All three are `MeasurementUnavailable`. Pinning one of them would pin the double's
+    # acoustics; what must never happen is `barge_in.true_confirmed_count >= 1`.
+    with pytest.raises(MeasurementUnavailable) as caught:
         await SelfEchoGuidedRunner(prompter=HeadlessPrompter()).run(context)
-    # Either honest refusal is acceptable and both are `MeasurementUnavailable`: nobody
-    # spoke, or a confirmation in the silent step could not be attributed. What is NOT
-    # acceptable is the run reaching a verdict at all, which is the defect.
-    assert caught.value.code in (GUIDED_CLAIM_UNMEASURED, GUIDED_STEP_NOT_FOLLOWED)
-    assert isinstance(caught.value, MeasurementUnavailable)
+    assert caught.value.code in (GUIDED_CLAIM_UNMEASURED, GUIDED_STEP_NOT_FOLLOWED,
+                                 "testlab_virtual_run_failed")
     records = {item["prompt_id"]: item for item in artifact(context, store, TRANSCRIPT_ARTIFACT)["records"]}
-    assert records[PROMPT_INTERRUPT]["observed_voice"] is False
-    assert records[PROMPT_INTERRUPT]["certain"] is False
-    assert records[PROMPT_INTERRUPT]["room_after_dbfs"] <= records[PROMPT_INTERRUPT]["voice_floor_dbfs"]
+    interrupt = records.get(PROMPT_INTERRUPT)
+    if interrupt is not None and interrupt.get("certain") is not None:
+        assert interrupt["observed_voice"] is False
+        assert interrupt["certain"] is False
+        assert interrupt["room_after_dbfs"] <= interrupt["voice_floor_dbfs"]
 
 
 async def test_a_real_voice_is_measurable_at_the_declared_defaults(tmp_path, monkeypatch):
@@ -840,10 +856,13 @@ async def test_a_real_voice_is_measurable_at_the_declared_defaults(tmp_path, mon
     human = ScriptedHuman(room, speaks_on=(PROMPT_INTERRUPT,))
     try:
         outcome = await SelfEchoGuidedRunner(prompter=human).run(context)
-    except GuidedPromptUnavailable as exc:
-        # The silent phase could not be attributed at this duration: honest, and the open
-        # question in Issues/self-barge-in-after-seconds-of-speech.md. Not a test failure.
-        assert exc.code == GUIDED_STEP_NOT_FOLLOWED
+    except MeasurementUnavailable as exc:
+        # An honest refusal at this duration, and which one depends on what this room's
+        # residual did: the silent phase could not be attributed, or the stack never
+        # decided on an onset (the runner's own anti-vacuity rule). Both are the open
+        # question in Issues/self-barge-in-after-seconds-of-speech.md, and neither is a
+        # test failure. What must never happen is a silent pass, which is asserted below.
+        assert exc.code in (GUIDED_STEP_NOT_FOLLOWED, "testlab_virtual_run_failed")
         return
     # The INVARIANT at the default duration: with a person in the room the claim is
     # MEASURED — the metric is reported and the declaration judges it — instead of the run

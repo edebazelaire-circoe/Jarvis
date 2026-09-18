@@ -2717,12 +2717,31 @@ the step, which the product itself did not call, is not detected — tell the op
 keep speaking until the step ends, which the script does.
 
 **The provider reports speech when there is speech.** On the interrupt step the run raises
-the provider's VAD onset only once the capture has reported a near-end voice **above the
-echo-only level measured in the silent phase of the same run**, plus `ECHO_MARGIN_DB`
-(6 dB). The bare signal was not enough, for the reason above. With nothing in the room it
-declines, `barge_in.true_confirmed_count` stays zero, and the claim is reported as
-unmeasured. `DeviceAudio.heard_voice_since(mark, above_dbfs=...)` is the one place that
-question is asked.
+the provider's VAD onset only once the capture reports a voice this stack would act on;
+with nothing in the room it declines, `barge_in.true_confirmed_count` stays zero, and the
+claim is reported as unmeasured. `DeviceAudio.heard_voice_since(mark)` is the one place
+that question is asked, and what it asks took three attempts to get right:
+
+| Signal | Why it is wrong on its own |
+|---|---|
+| the `NEAR_END` signal | an EDGE: it fires once, at the instant speech is CONFIRMED, and the detector then stays latched for the rest of the utterance. A genuine voice arriving after the gate had already latched raised NOTHING — the detector reported `near_end` on all 310 frames of it and the run missed every one. 10 failures in 10 runs of the true-positive case |
+| a decibel margin over the echo | asks a person to beat a level the product has already discounted; fragile, and tuned |
+| the per-frame `near_end` verdict alone | weaker than the detector's own rule for calling something speech, so the stimulus is raised before the stack would act on it |
+| the `latched` state alone | can be left over from the ECHO, so it fires before the voice has arrived at all |
+
+What it uses is both of the last two: `NEAR_END_FRAMES` (6 frames = 60 ms, the detector's
+own `min_run_frames`) of the per-frame verdict SINCE the mark, and the detector currently
+holding its latch. The frames say the voice in question is really in the capture; the latch
+says the stack would act on it. The per-frame verdict reaches the Test Lab through the
+production `CaptureObserver` seam (`NearEndWatch`), which is delivered for every frame
+whatever the latch and the gate are doing.
+
+Being permissive here is safe and deliberate: an onset only asks the stack to DECIDE. What
+the run may CLAIM stays gated on `RoomVoice.certain`, a silent-window measurement nothing
+Jarvis does can produce. An echo can get an onset raised; it can never get a claim
+certified. Measured at 1 000 / 3 000 / 8 000 ms, the two sides are 65 dB apart: an empty
+room reads -65.2 dBFS after the step and a person reads -0.0 to -0.4, against a -50 dBFS
+threshold.
 
 **And a zero is never a silent pass.** When the human acknowledged the interrupt step and
 the stack confirmed nothing, the claim the guided profile exists to make was not made.
@@ -2743,7 +2762,8 @@ evidence worth keeping. Per prompt: the declaration, `shown_at` and `acknowledge
 `prompt_count`, `acknowledged_count`, `late_count` and the `unfollowed` ids.
 
 **And the PROVENANCE of `observed_voice`** (`RoomVoice.to_dict`): `room_before_dbfs`,
-`room_after_dbfs`, `window_peak_dbfs`, `near_end_seen`, `voice_floor_dbfs` and `certain`.
+`room_after_dbfs`, `window_peak_dbfs`, `near_end_seen`, `near_end_frames`,
+`voice_floor_dbfs` and `certain`.
 Without it a record said `voice: true` and a reader had no way to tell a person from
 Jarvis's own echo — which is precisely how an empty room certified a human interrupt. A
 stored guided record now carries the numbers the decision was made on.

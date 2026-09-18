@@ -765,3 +765,29 @@ async def test_every_hardware_artifact_path_fits_the_budget_and_the_path_rule():
 
 async def test_the_late_grace_is_a_bound_a_caller_can_see():
     assert 0 < LATE_GRACE_S <= MAX_PROMPT_DEADLINE_S
+
+
+# --------------------------------------------------- the provider-onset seam
+
+async def test_an_onset_seam_that_forgets_to_answer_is_a_defect_not_a_decline():
+    """`None` is not "declined": it would silently turn every candidate into one.
+
+    That is exactly what happened — a test seam dropped its `return`, every onset read as
+    declined, and the run reported it could not measure while looking healthy. It went
+    unnoticed because the capture's own near-end signal was reaching the bridge and
+    producing a barge-in anyway: the right answer for the wrong reason.
+    """
+    from jarvis.testlab.hardware.runners import raise_provider_onset
+
+    async def forgetful(context, stack):
+        del context, stack
+
+    with pytest.raises(TestLabError) as caught:
+        await raise_provider_onset(None, None, forgetful)
+    assert "must return whether it raised" in caught.value.detail
+
+    async def declines(context, stack):
+        del context, stack
+        return False
+
+    assert await raise_provider_onset(None, None, declines) is False
