@@ -30,7 +30,7 @@ import threading
 import numpy as np
 import pytest
 
-from jarvis.audio.duplex import FRAME_MS, OWNER_REPLAY, CaptureProcessor, OwnerReplay
+from jarvis.audio.duplex import FRAME_MS, OWNER_REPLAY, CaptureProcessor, NearEndDiagnostics, OwnerReplay
 from jarvis.domain.speaker import OwnerState, OwnerStateSnapshot, VerifierAvailability
 from jarvis.runtime.realtime_audio import (
     BARGE_IN_OWNER_CONFIRMED_KIND,
@@ -74,12 +74,21 @@ class ScriptedDetector:
         self.latched = False
         self.last_near = False
         self.coupling_db = self.initial_coupling_db = 0.0
+        self.latched_excess_db = None
+        self.warmup_frames = 0
         self._refractory = 0
         self._far_frames = 0
 
     @property
     def far_recent(self) -> bool:
         return bool(self.far(self.index))
+
+    def diagnostics(self, *, guard_open: bool) -> NearEndDiagnostics:
+        return NearEndDiagnostics(
+            mic_db=-30.0, ref_env_db=-20.0, floor_db=-60.0, coupling_db=self.coupling_db,
+            excess_db=-10.0, margin_db=0.0, far_frames=self._far_frames, warming_up=False,
+            latched=self.latched, guard_open=guard_open,
+        )
 
     def update(self, mic_db: float, ref_db: float) -> bool:
         del mic_db, ref_db

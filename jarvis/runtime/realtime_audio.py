@@ -443,6 +443,16 @@ class SoundDeviceRealtimeAudio:
         if self.capture is not None:
             self.capture.release_near_end(learn=learn)
 
+    def near_end_diagnostics(self) -> dict[str, object] | None:
+        """Niveaux du détecteur de parole proche, ou None sans capture duplex.
+
+        Scalaires en dB, destinés à la trace : sans eux, un faux barge-in sur
+        haut-parleurs ne s'explique qu'en devinant.
+        """
+
+        snapshot = getattr(self.capture, "near_end_diagnostics", None)
+        return snapshot().as_data() if snapshot is not None else None
+
     # -- Solo Owner : flux ouvert par le propriétaire (tâche 06) -------------
 
     @property
@@ -984,10 +994,25 @@ class SoundDeviceRealtimeAudio:
         return self._stop_task
 
     async def stop_output(self) -> bool:
-        """Invalidate immediately; false means native cleanup still owns output."""
+        """Invalidate immediately; false means native cleanup still owns output.
+
+        Un refus du pilote ne remonte pas : la sortie est déjà invalidée et
+        `_native` l'a marquée indisponible. L'appelant lit ce faux comme un
+        nettoyage en attente, exactement comme une deadline dépassée. Laisser
+        l'exception traverser tuerait la session vocale entière au moment
+        précis où l'utilisateur coupe la parole (poste réel, 18/09/2026).
+        """
         self._invalidate_output()
         task = self._request_output_stop()
-        return bool(task.result()) if await self._bounded_device_wait(task, "stop") else False
+        try:
+            completed = await self._bounded_device_wait(task, "stop")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._device_trace("audio.stop_failed", level="error", code="audio_stop_failed",
+                               operation="stop", exception_type=type(exc).__name__, cleanup_pending=True)
+            return False
+        return bool(task.result()) if completed else False
 
     async def _stop_owned(self) -> bool:
         if self._start_task is not None:
@@ -1010,7 +1035,15 @@ class SoundDeviceRealtimeAudio:
                 return True
             if self._closing:
                 return False
-            stream.abort(ignore_errors=False)
+            if not self._output_stopped:
+                try:
+                    stream.abort(ignore_errors=False)
+                except Exception as exc:
+                    # Le flux peut s'être arrêté entre la lecture du drapeau et
+                    # l'abort (drain Live, fin de bloc) : PortAudio refuse alors
+                    # avec paStreamIsStopped, alors que l'état visé est atteint.
+                    if not _is_stream_already_stopped(exc):
+                        raise
             self._output_stopped = True  # Next valid write starts lazily.
             return True
 
@@ -2635,6 +2668,18 @@ class RealtimeConversationBridge:
         if setter is not None:
             setter(gain)
 
+    def _near_end_levels(self) -> dict[str, object]:
+        """Niveaux du détecteur, préfixés `near_`, pour une trace de barge-in.
+
+        Vide sans capture duplex. C'est le seul endroit d'où l'on voit, sur un
+        poste réel, pourquoi l'écho des haut-parleurs a franchi la marge : le
+        plancher, le couplage appris, et de combien la trame l'a dépassé.
+        """
+
+        snapshot = getattr(self.audio, "near_end_diagnostics", None)
+        levels = snapshot() if snapshot is not None else None
+        return {f"near_{key}": value for key, value in levels.items()} if levels else {}
+
     def _barge_in_allowed(self) -> bool:
         """Le VAD du fournisseur a-t-il pu entendre autre chose que l'écho ?
 
@@ -2683,7 +2728,8 @@ class RealtimeConversationBridge:
         self._trace(
             "voice.barge_in_pending",
             "Parole locale candidate : volume inchangé, confirmation attendue",
-            data={"conversation_id": self.conversation_id, "authority": self.barge_in_authority.value},
+            data={"conversation_id": self.conversation_id, "authority": self.barge_in_authority.value,
+                  **self._near_end_levels()},
         )
         asyncio.get_running_loop().call_later(self.barge_in_confirm_s, self._post, "barge_timeout", token)
 
@@ -2711,14 +2757,17 @@ class RealtimeConversationBridge:
         # rouvre la garde en boucle, lui, finit toujours par être appris.
         self._barge_rejections += 1
         self._barge_rejected_at = asyncio.get_running_loop().time()
-        self._release_near_end(learn=self._barge_rejections > 1)
+        learn = self._barge_rejections > 1
+        levels = self._near_end_levels()
+        self._release_near_end(learn=learn)
         if self._barge_pending_ducked:
             self._trace(
                 "voice.barge_in_rejected",
                 "Parole locale non confirmée par le fournisseur : JARVIS reprend à plein volume",
                 data={"conversation_id": self.conversation_id,
                       "session_id": str(getattr(self.session, "session_id", "")) or None,
-                      "code": "barge_in_not_confirmed"},
+                      "code": "barge_in_not_confirmed", "learned": learn,
+                      "rejections": self._barge_rejections, **levels},
             )
         else:
             self._trace(
@@ -2729,6 +2778,9 @@ class RealtimeConversationBridge:
                     "session_id": str(getattr(self.session, "session_id", "")) or None,
                     "code": "barge_in_not_confirmed",
                     "authority": self.barge_in_authority.value,
+                    "learned": learn,
+                    "rejections": self._barge_rejections,
+                    **levels,
                 },
             )
 
@@ -2785,7 +2837,8 @@ class RealtimeConversationBridge:
         self._trace(
             "voice.barge_in_confirming",
             "Parole confirmée par le fournisseur : volume baissé, coupure si elle dure",
-            data={"conversation_id": self.conversation_id, "sustain_ms": round(self.barge_in_sustain_s * 1000)},
+            data={"conversation_id": self.conversation_id, "sustain_ms": round(self.barge_in_sustain_s * 1000),
+                  **self._near_end_levels()},
         )
         asyncio.get_running_loop().call_later(self.barge_in_sustain_s, self._post, "barge_sustain", self._barge_pending_token)
 
@@ -2806,13 +2859,14 @@ class RealtimeConversationBridge:
         if self._barge_pending_ducked:
             self._set_output_gain(1.0)
         self._barge_pending_ducked = False
+        levels = self._near_end_levels()
         self._release_near_end(learn=True)
         self._trace(
             "voice.barge_in_rejected",
             "Parole trop brève pour une interruption : JARVIS reprend à plein volume",
             data={"conversation_id": self.conversation_id,
                   "session_id": str(getattr(self.session, "session_id", "")) or None,
-                  "code": code},
+                  "code": code, "learned": True, **levels},
         )
 
     # -- Solo Owner : la confirmation du propriétaire coupe (tâche 05) --------
@@ -3751,6 +3805,36 @@ class RealtimeConversationBridge:
             if callable(discard):
                 discard(_optional_text(event.payload.get("item_id")))
 
+    #: Raisons d'écarter un transcript qui désignent la sortie de JARVIS, et
+    #: elles seules : le segment venait des haut-parleurs, pas de la pièce. Une
+    #: hésitation, un bruit de bureau ou une langue improbable viennent, eux,
+    #: bien du micro de près — les apprendre comme de l'écho rendrait JARVIS
+    #: sourd à l'utilisateur.
+    ECHO_EVIDENCE_REASONS = frozenset({"echo", "residual_echo", "playback_hallucination", "hallucination"})
+
+    def _learn_echo_from_dropped_segment(self, reason: str, *, near_playback: bool) -> None:
+        """Le transcript prouve après coup que ce segment était l'écho de JARVIS.
+
+        Le détecteur n'apprenait qu'au *rejet* d'un candidat. Un candidat
+        **confirmé** puis coupé ne lui apprenait donc rien, et le même niveau
+        d'écho rouvrait la garde phrase après phrase — la boucle observée sur
+        haut-parleurs le 18/09/2026. C'est ici que la preuve arrive : le
+        couplage remonte juste assez pour que cet écho-là ne passe plus, et il
+        redescend de lui-même dès que JARVIS reparle sans être coupé.
+        """
+
+        if not near_playback or reason not in self.ECHO_EVIDENCE_REASONS:
+            return
+        levels = self._near_end_levels()
+        self._release_near_end(learn=True)
+        self._trace(
+            "voice.echo_learned",
+            "Segment écarté comme écho : le couplage du détecteur rattrape le niveau entendu",
+            data={"conversation_id": self.conversation_id,
+                  "session_id": str(getattr(self.session, "session_id", "")) or None,
+                  "code": f"echo_learned_{reason}", "reason": reason, **levels},
+        )
+
     def _admit_canonical_transcript(self, item_id: str | None, *, source_correlation_id: str | None = None) -> None:
         admit = getattr(self.session, "admit_transcript", None)
         if callable(admit):
@@ -3777,13 +3861,14 @@ class RealtimeConversationBridge:
         decision = self.classifier.classify(text, active=True, engaged=engaged)
         self._trace("voice.transcript", text or "<empty>", data={"addressing": decision.value})
         if self.continuous and text:
-            reason = noise_reason(text)
+            reason = noise_reason(text, near_playback=near_playback)
             if reason is None and near_playback and self._echo.is_echo(text):
                 reason = "echo"
             if reason is not None:
                 # Ce n'est pas un propos de l'utilisateur : ni tour, ni
                 # réarmement du délai, et l'écran revient à l'écoute.
                 self._latency.forget(LATENCY_BRAIN_TURN_ACCEPTED, self.conversation_id)
+                self._learn_echo_from_dropped_segment(reason, near_playback=near_playback)
                 self._trace(
                     "voice.transcript_dropped",
                     text[:300],

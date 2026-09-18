@@ -188,6 +188,7 @@ class GuardedAudio(SoundDeviceRealtimeAudio):
         self.gate_open = gate_open
         self.far_recent = False
         self.released = 0
+        self.learns: list[bool] = []
         self.gains: list[float] = []
         self.stop_output_calls = 0
 
@@ -203,8 +204,9 @@ class GuardedAudio(SoundDeviceRealtimeAudio):
     def far_end_recent(self) -> bool:
         return self.far_recent
 
-    def release_near_end(self) -> None:
+    def release_near_end(self, *, learn: bool = True) -> None:  # type: ignore[override]
         self.released += 1
+        self.learns.append(learn)
 
     def set_output_gain(self, gain: float) -> None:
         self.gains.append(gain)
@@ -493,6 +495,53 @@ def test_a_rejected_detection_teaches_the_detector_the_real_echo_level():
     _, again = run_capture(processor, echo[len(echo) // 3:], reference[len(reference) // 3:])
 
     assert again == []
+
+
+def test_the_detector_still_learns_when_the_proof_arrives_after_jarvis_fell_silent():
+    """Barge-in confirmé sur l'écho, coupure, puis le transcript le démasque.
+
+    Entre le verrou et la preuve, JARVIS s'est tu et la fenêtre a été vidée :
+    sans `latched_excess_db`, l'apprentissage tardif ne rattrapait rien et le
+    même écho rouvrait la garde à la phrase suivante (poste réel, 18/09/2026).
+    """
+
+    detector = NearEndDetector(initial_coupling_db=-15.0, warmup_frames=0)
+    detector.coupling_db = -50.0  # appris au casque
+    processor = CaptureProcessor(capture_rate=RATE, render_rate=RATE, detector=detector)
+    echo, reference = tone(3.0, amplitude=0.05), tone(3.0, amplitude=0.3)
+
+    _, first = run_capture(processor, echo[: len(echo) // 3], reference[: len(reference) // 3])
+    assert first
+    # La sortie est coupée : plus de référence, JARVIS se tait, la fenêtre se vide.
+    processor.clear_reference()
+    run_capture(processor, silence(1.0), silence(1.0))
+    assert not detector._recent_excess and detector.latched_excess_db is not None
+
+    learned_from = detector.coupling_db
+    processor.release_near_end(learn=True)  # le transcript était une hallucination
+    run_capture(processor, silence(0.02), silence(0.02))  # la demande s'applique au bloc suivant
+
+    assert detector.coupling_db > learned_from
+    _, again = run_capture(processor, echo[len(echo) // 3:], reference[len(reference) // 3:])
+    assert again == []
+
+
+def test_the_detector_reports_its_levels_without_touching_them():
+    detector = NearEndDetector(initial_coupling_db=-15.0, warmup_frames=0)
+    processor = CaptureProcessor(capture_rate=RATE, render_rate=RATE, detector=detector)
+    run_capture(processor, tone(0.5, amplitude=0.05), tone(0.5, amplitude=0.3))
+
+    before = (detector.coupling_db, detector.floor_db, detector.latched)
+    data = processor.near_end_diagnostics().as_data()
+
+    assert (detector.coupling_db, detector.floor_db, detector.latched) == before
+    assert set(data) == {"mic_db", "ref_env_db", "floor_db", "coupling_db", "excess_db",
+                         "margin_db", "far_frames", "warming_up", "latched", "guard_open"}
+    assert data["ref_env_db"] > data["mic_db"]  # l'écho est sous ce qui est joué
+    assert data["excess_db"] == pytest.approx(data["mic_db"] - data["ref_env_db"], abs=0.11)
+    # Ce que le bridge journalise, et rien sans capture duplex.
+    assert SoundDeviceRealtimeAudio(capture=processor).near_end_diagnostics() == data
+    assert SoundDeviceRealtimeAudio().near_end_diagnostics() is None
 
 
 def test_the_preroll_never_replays_what_was_already_sent():
@@ -989,6 +1038,36 @@ def test_noise_transcripts_are_recognised(text, reason):  # noqa: ANN001
     assert noise_reason(text) == reason
 
 
+@pytest.mark.parametrize(
+    "text,reason",
+    [
+        # Poste réel du 18/09/2026 : haut-parleurs, micro ambiant, l'écho
+        # résiduel devient une phrase brève sans rapport avec la question.
+        ("La plateforme.", "residual_echo"),
+        ("Le budget.", "residual_echo"),
+        ("Mhm.", "filler"),
+        ("Merci.", "playback_hallucination"),
+        ("Bonjour à tous.", "playback_hallucination"),
+        ("Au revoir.", "playback_hallucination"),
+        # Une vraie interruption brève reste un propos : il suffit d'un mot
+        # d'interruction dans le segment.
+        ("Non, arrête.", None),
+        ("Stop ça.", None),
+        ("Attendez...", None),
+        ("D'accord.", None),
+        ("Continue là.", None),
+        # Le nom prononcé l'emporte, et une phrase entière n'est jamais brève.
+        ("Merci Jarvis.", None),
+        ("Qu'est-ce qu'il y a ?", None),
+    ],
+)
+def test_speaker_echo_is_only_filtered_over_jarvis_voice(text, reason):  # noqa: ANN001
+    """Les mêmes phrases dites dans le silence restent des propos de l'utilisateur."""
+
+    assert noise_reason(text, near_playback=True) == reason
+    assert noise_reason(text) == (reason if reason in (None, "filler") else None)
+
+
 def test_the_echo_loop_of_the_eleventh_of_september_is_recognised():
     """Les faux tours relevés dans runtime/trace.jsonl ce jour-là."""
 
@@ -1208,6 +1287,116 @@ async def test_jarvis_hearing_himself_is_not_a_turn():
 
     assert core.brain_turns == []
     assert journal.of("voice.transcript_dropped")[0]["data"]["reason"] == "echo"
+
+
+async def test_a_short_hallucination_over_the_speakers_is_not_a_turn():
+    """Poste réel du 18/09/2026 : « La plateforme. » née de l'écho, pas de l'utilisateur."""
+
+    audio = GuardedAudio(guarded=False)
+    core, journal = RecordingCore(), RecordingJournal()
+    bridge = build_bridge(audio, core=core, journal=journal)
+
+    await feed(
+        bridge,
+        [
+            event("realtime.output_started", output_id="out-1"),
+            audio_delta(1, output_id="out-1"),
+            event("realtime.assistant_transcript", text="Je propose d'allonger le délai. Je l'applique ?", output_id="out-1"),
+            event("realtime.response_done", status="completed", output_id="out-1"),
+            event("realtime.speech_started", item_id="item-echo"),
+            event("realtime.transcript", text="La plateforme.", item_id="item-echo"),
+        ],
+    )
+
+    assert core.brain_turns == []
+    assert journal.of("voice.transcript_dropped")[0]["data"]["reason"] == "residual_echo"
+
+
+async def test_barge_in_traces_carry_the_detector_levels():
+    """Sans ces chiffres, un faux barge-in sur haut-parleurs ne se diagnostique qu'en devinant."""
+
+    processor = CaptureProcessor(capture_rate=RATE, render_rate=RATE)
+    run_capture(processor, tone(0.5, amplitude=0.05), tone(0.5, amplitude=0.3))
+    audio = SoundDeviceRealtimeAudio(capture=processor)
+    journal = RecordingJournal()
+    bridge = build_bridge(audio, journal=journal)
+    bridge._playing = True
+
+    await bridge._on_near_end()
+
+    data = journal.of("voice.barge_in_pending")[0]["data"]
+    assert data["near_coupling_db"] == pytest.approx(processor.detector.coupling_db, abs=0.05)
+    assert {"near_mic_db", "near_ref_env_db", "near_floor_db", "near_margin_db", "near_latched"} <= set(data)
+
+
+async def test_a_dropped_echo_teaches_the_detector_even_after_a_confirmed_cut():
+    """Le chaînon manquant : un barge-in confirmé sur l'écho n'apprenait rien.
+
+    Le détecteur n'apprenait qu'au *rejet* d'un candidat. Confirmé puis coupé,
+    le même niveau d'écho rouvrait la garde à chaque phrase.
+    """
+
+    audio = GuardedAudio(guarded=False)
+    core, journal = RecordingCore(), RecordingJournal()
+    bridge = build_bridge(audio, core=core, journal=journal)
+
+    await feed(
+        bridge,
+        [
+            event("realtime.output_started", output_id="out-1"),
+            audio_delta(1, output_id="out-1"),
+            event("realtime.assistant_transcript", text="Je propose d'allonger le délai. Je l'applique ?", output_id="out-1"),
+            event("realtime.response_done", status="completed", output_id="out-1"),
+            event("realtime.speech_started", item_id="item-echo"),
+            event("realtime.transcript", text="La plateforme.", item_id="item-echo"),
+        ],
+    )
+
+    assert core.brain_turns == []
+    assert audio.learns == [True]
+    assert journal.of("voice.echo_learned")[0]["data"]["reason"] == "residual_echo"
+
+
+async def test_office_noise_is_never_learned_as_speaker_echo():
+    """Un bruit de bureau vient du micro de près : l'apprendre rendrait JARVIS sourd."""
+
+    audio = GuardedAudio(guarded=False)
+    core = RecordingCore()
+    bridge = build_bridge(audio, core=core)
+
+    await feed(
+        bridge,
+        [
+            event("realtime.output_started", output_id="out-1"),
+            audio_delta(1, output_id="out-1"),
+            event("realtime.response_done", status="completed", output_id="out-1"),
+            event("realtime.speech_started", item_id="i1"),
+            event("realtime.transcript", text="директор", item_id="i1"),
+        ],
+    )
+
+    assert core.brain_turns == [] and audio.learns == []
+
+
+async def test_a_short_answer_over_jarvis_voice_is_still_a_turn():
+    """La règle brève ne doit pas manger la réponse la plus naturelle à une question."""
+
+    core = RecordingCore()
+    bridge = build_bridge(GuardedAudio(guarded=False), core=core)
+
+    await feed(
+        bridge,
+        [
+            event("realtime.output_started", output_id="out-1"),
+            audio_delta(1, output_id="out-1"),
+            event("realtime.assistant_transcript", text="Je propose d'allonger le délai. Je l'applique ?", output_id="out-1"),
+            event("realtime.response_done", status="completed", output_id="out-1"),
+            event("realtime.speech_started", item_id="item-1"),
+            event("realtime.transcript", text="Non, arrête.", item_id="item-1"),
+        ],
+    )
+
+    assert [turn["content"] for turn in core.brain_turns] == ["Non, arrête."]
 
 
 async def test_repeating_jarvis_long_after_he_spoke_is_a_real_answer():

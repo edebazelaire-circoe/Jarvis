@@ -1862,7 +1862,12 @@ Quatre points, à ne jamais présenter comme acquis :
    d'écho (`jarvis/audio/duplex.py`, rapport `docs/fixes/voice-duplex/`), dont
    les marges ne sont validées qu'en simulation. Sur poste, le journal dit quel
    mode tourne (`voice.duplex`) et trace chaque décision de barge-in et chaque
-   transcript écarté. `legacy` reste le repli half-duplex.
+   transcript écarté. Depuis le 18 septembre 2026, `voice.barge_in_pending`,
+   `voice.barge_in_confirming`, `voice.barge_in_rejected` et `voice.echo_learned`
+   portent les niveaux du détecteur (`near_mic_db`, `near_ref_env_db`,
+   `near_floor_db`, `near_coupling_db`, `near_excess_db`, `near_margin_db`,
+   `near_warming_up`) : c'est de là que se lisent les marges réelles d'une pièce,
+   sur haut-parleurs comme au casque. `legacy` reste le repli half-duplex.
 2. **Aucune exécution contre le vrai OpenAI.** Le test de fumée
    `tests/integration/test_live_openai.py` couvre le chemin continu mais reste
    sauté par défaut et n'a pas été lancé.

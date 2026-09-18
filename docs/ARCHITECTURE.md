@@ -3282,7 +3282,12 @@ model candidates with availability).
   but its margins — and the Solo Owner verification built on top of them — have
   only been measured in simulation and on synthetic voices: the workstation
   protocol `docs/HARDWARE_ACCEPTANCE.md` is still to be run. `legacy` remains the
-  half-duplex fallback and the default.
+  half-duplex fallback and the default. On loudspeakers, the near-end detector's
+  coupling is what tracks the room's nonlinear residual; since 18 September 2026
+  it learns from a confirmed cut whose transcript turns out to be echo, not only
+  from a rejected candidate, and the `near_*` fields of the barge-in traces carry
+  the levels the margins are judged on (report `docs/fixes/voice-speaker-echo/`).
+  How fast that converges in a given room is still unmeasured.
 - Gemini Live is not part of continuous mode.
 - One brain, no multi-agent scheduling.
 - The transport is still the direct OpenAI Realtime WebSocket; WebRTC plus a

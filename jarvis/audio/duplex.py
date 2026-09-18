@@ -121,6 +121,58 @@ class CaptureFrameContext:
 
 
 @dataclass(frozen=True, slots=True)
+class NearEndDiagnostics:
+    """Ce que le détecteur savait à la dernière trame. Scalaires seulement.
+
+    Construit à la demande, depuis la boucle asyncio, pour la trace du bridge :
+    sans ces chiffres, un faux barge-in sur haut-parleurs ne se diagnostique
+    qu'en devinant (poste réel, 18/09/2026). Jamais d'audio, jamais d'empreinte.
+
+    - `mic_db` / `ref_env_db` : énergie de la trame nettoyée, et enveloppe de
+      la référence sur la fenêtre de maintien ;
+    - `floor_db` : plancher de bruit appris dans les silences de JARVIS ;
+    - `coupling_db` : écart appris entre l'écho résiduel et la référence ;
+    - `excess_db` : `mic_db - ref_env_db` de la trame ;
+    - `margin_db` : de combien la trame dépasse la plus contraignante de ses
+      deux bornes — plancher plus `floor_margin_db`, écho attendu plus
+      `echo_margin_db`. Positif, la trame est « proche » ; c'est le chiffre qui
+      dit de combien l'écho d'une pièce a franchi la marge ;
+    - `far_frames` : trames où JARVIS était nettement audible depuis le début
+      de la session ; `warming_up` : moins que `warmup_frames`, le couplage est
+      donc tenu à son plancher de chauffe ;
+    - `latched` : parole proche confirmée ; `guard_open` : le fournisseur
+      entend le micro.
+    """
+
+    mic_db: float
+    ref_env_db: float
+    floor_db: float
+    coupling_db: float
+    excess_db: float
+    margin_db: float
+    far_frames: int
+    warming_up: bool
+    latched: bool
+    guard_open: bool
+
+    def as_data(self) -> dict[str, object]:
+        """Forme journalisable : arrondie au dixième de dB, prête pour la trace."""
+
+        return {
+            "mic_db": round(self.mic_db, 1),
+            "ref_env_db": round(self.ref_env_db, 1),
+            "floor_db": round(self.floor_db, 1),
+            "coupling_db": round(self.coupling_db, 1),
+            "excess_db": round(self.excess_db, 1),
+            "margin_db": round(self.margin_db, 1),
+            "far_frames": self.far_frames,
+            "warming_up": self.warming_up,
+            "latched": self.latched,
+            "guard_open": self.guard_open,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class OwnerReplay:
     """Ce qu'une ouverture du flux par le propriétaire a rejoué (tâche 06).
 
@@ -248,6 +300,31 @@ class NearEndDetector:
         #: détecteur n'en dépend. JARVIS silencieux, seule la marge au
         #: plancher compte.
         self.last_near = False
+        #: Dernière trame intégrée, pour la trace (`diagnostics()`).
+        self.last_mic_db = _SILENCE_DB
+        self.last_ref_env_db = _SILENCE_DB
+        self.last_margin_db = 0.0
+        #: Écart maximal observé à l'instant du verrou. Survit à la remise à
+        #: zéro de la fenêtre, donc à la fin de la parole de JARVIS : c'est ce
+        #: que `release(learn=True)` rattrape quand la preuve que ce candidat
+        #: était de l'écho n'arrive qu'après (transcript écarté, 18/09/2026).
+        self.latched_excess_db: float | None = None
+
+    def diagnostics(self, *, guard_open: bool) -> NearEndDiagnostics:
+        """Instantané des niveaux de la dernière trame, pour la trace du bridge."""
+
+        return NearEndDiagnostics(
+            mic_db=self.last_mic_db,
+            ref_env_db=self.last_ref_env_db,
+            floor_db=self.floor_db,
+            coupling_db=self.coupling_db,
+            excess_db=self.last_mic_db - self.last_ref_env_db,
+            margin_db=self.last_margin_db,
+            far_frames=self._far_frames,
+            warming_up=self._far_frames < self.warmup_frames,
+            latched=self.latched,
+            guard_open=guard_open,
+        )
 
     @property
     def far_recent(self) -> bool:
@@ -269,12 +346,19 @@ class NearEndDetector:
         confirmer trop tard une vraie voix (17/09/2026, confirmation 140 ms
         après la fenêtre). Apprendre cette voix comme de l'écho rendait JARVIS
         de plus en plus dur à couper, rejet après rejet.
+
+        La preuve arrive parfois bien après le verrou : un barge-in confirmé
+        puis coupé, dont le transcript se révèle une hallucination sur l'écho
+        (18/09/2026). JARVIS s'est tu entre-temps, la fenêtre est vide, et
+        `latched_excess_db` porte alors le niveau à rattraper.
         """
 
-        if learn and self._recent_excess:
-            observed = max(self._recent_excess) - self.echo_margin_db + 2.0
+        excess = max(self._recent_excess) if self._recent_excess else self.latched_excess_db
+        if learn and excess is not None:
+            observed = excess - self.echo_margin_db + 2.0
             self.coupling_db = min(20.0, max(self.coupling_db, observed))
         self.latched = False
+        self.latched_excess_db = None
         self._reset_window()
         self._refractory = self.refractory_frames
 
@@ -293,9 +377,11 @@ class NearEndDetector:
 
         self._references.append(ref_db)
         ref_env = max(self._references)
+        self.last_mic_db, self.last_ref_env_db = mic_db, ref_env
         far_now = ref_env > self.REF_SILENCE_DB
         self._frames_since_far = 0 if far_now else self._frames_since_far + 1
         if not self.far_recent:
+            self.last_margin_db = mic_db - (self.floor_db + self.floor_margin_db)
             self._update_floor(mic_db)
             self.last_near = mic_db > self.floor_db + self.floor_margin_db
             self.latched = False
@@ -313,6 +399,12 @@ class NearEndDetector:
         predicted = ref_env + coupling if far_now else -math.inf
         near = mic_db > self.floor_db + self.floor_margin_db and mic_db > predicted + self.echo_margin_db
         self.last_near = near
+        # Ce qui manque à la trame pour franchir la plus contraignante des deux
+        # bornes : positif, elle est proche. Diagnostic seul.
+        self.last_margin_db = min(
+            mic_db - (self.floor_db + self.floor_margin_db),
+            mic_db - (predicted + self.echo_margin_db) if far_now else math.inf,
+        )
         recently_near = any(self._near)
         self._near.append(near)
         if ref_env > self.REF_LEARN_DB and not near and not recently_near and not self.latched:
@@ -331,6 +423,7 @@ class NearEndDetector:
             and self._longest_run(self._near) >= self.min_run_frames
         ):
             self.latched = True
+            self.latched_excess_db = max(self._recent_excess) if self._recent_excess else None
             return True
         return False
 
@@ -512,6 +605,7 @@ class CaptureProcessor:
         self._owner_flow = False
         detector = self.detector
         detector.latched = False
+        detector.latched_excess_db = None
         detector._reset_window()
         detector._refractory = 0
         detector.coupling_db = max(detector.coupling_db, detector.initial_coupling_db)
@@ -553,6 +647,17 @@ class CaptureProcessor:
     @property
     def far_recent(self) -> bool:
         return self.detector.far_recent
+
+    def near_end_diagnostics(self) -> NearEndDiagnostics:
+        """Niveaux de la dernière trame traitée, pour la trace du bridge.
+
+        Lecture depuis la boucle asyncio de scalaires écrits par le thread de
+        capture : une valeur peut dater d'une trame, aucune décision n'en
+        dépend, et rien n'est pris sous `_lock` — la capture ne doit jamais
+        attendre la trace.
+        """
+
+        return self.detector.diagnostics(guard_open=self._gate_open)
 
     @property
     def stream_ms(self) -> int:

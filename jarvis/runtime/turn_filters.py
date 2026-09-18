@@ -41,7 +41,44 @@ HALLUCINATED_PHRASES: tuple[str, ...] = (
 )
 
 # Hésitations isolées : un segment qui ne contient que cela n'est pas un tour.
-FILLERS = frozenset({"euh", "heu", "hum", "hmm", "mmh", "mh", "ah", "oh", "bah", "ben", "hein", "pfff", "pff"})
+FILLERS = frozenset({"euh", "heu", "hum", "hmm", "hmmm", "mmh", "mh", "mhm", "mm", "mmm", "ah", "oh",
+                     "bah", "ben", "hein", "pfff", "pff"})
+
+# Formules polies que les modèles de transcription produisent aussi sur l'écho
+# des haut-parleurs — elles viennent du même corpus de sous-titres que
+# `HALLUCINATED_PHRASES`, mais sont trop courantes pour être écartées dans le
+# silence. Elles ne comptent donc que sur un segment capté par-dessus la voix de
+# JARVIS (`near_playback`) : un « Merci. » dit quand il se tait reste un propos.
+PLAYBACK_HALLUCINATIONS: frozenset[str] = frozenset({
+    "merci", "merci beaucoup", "merci bien", "merci a tous", "merci a vous",
+    "merci de votre attention", "bonjour", "bonjour a tous", "bonjour a toutes et a tous",
+    "bonsoir", "bonsoir a tous", "salut a tous", "au revoir", "a bientot", "a tres bientot",
+    "a la prochaine", "bonne journee", "bonne soiree", "bonne nuit",
+    "musique", "generique", "applaudissements", "rires", "c est parti", "voila", "et voila",
+})
+
+# Mots dont une vraie interruption d'un ou deux mots est faite : une réponse,
+# un ordre d'arrêt, une relance. Il en suffit d'**un** pour que le segment
+# reste un propos — « non arrête », « stop ça », « continue là » passent.
+# Par-dessus la voix de JARVIS, un segment aussi court qui n'en contient aucun
+# est de l'écho résiduel : le micro ambiant reprend les haut-parleurs et le
+# modèle écrit une phrase brève sans rapport avec ce qui a été dit
+# (« La plateforme. », poste réel du 18/09/2026).
+SHORT_INTERRUPTION_WORDS: frozenset[str] = frozenset({
+    "oui", "ouais", "non", "si", "ok", "okay", "accord", "exact", "exactement",
+    "stop", "arrete", "arretez", "arreter", "annule", "annulez", "coupe",
+    "attends", "attendez", "patiente", "chut", "tais", "taisez", "silence",
+    "pardon", "quoi", "comment", "pourquoi", "qui", "quand", "hein",
+    "continue", "continuez", "vas", "allez", "alors", "apres", "ensuite",
+    "repete", "repetez", "redis", "reprends", "explique", "detaille",
+    "fort", "vite", "lentement", "francais", "anglais",
+    "parfait", "super", "genial", "nickel", "bravo", "faux", "erreur",
+    "sais", "vois", "compris", "attendu", "ecoute", "ecoutez", "regarde",
+})
+
+#: Au-delà, un segment porte assez de mots pour qu'un reste d'écho ne passe
+#: plus pour une consigne : seule `PLAYBACK_HALLUCINATIONS` s'applique encore.
+MAX_ECHO_WORDS = 2
 
 _WORD = re.compile(r"[a-z0-9']+")
 
@@ -66,7 +103,7 @@ def _latin_share(text: str) -> float:
     return latin / len(letters)
 
 
-def noise_reason(text: str) -> str | None:
+def noise_reason(text: str, *, near_playback: bool = False) -> str | None:
     """Dire pourquoi un transcript n'est pas un propos de l'utilisateur, ou None.
 
     - `no_letters` : rien à lire (ponctuation, chiffres isolés, vide).
@@ -75,6 +112,17 @@ def noise_reason(text: str) -> str | None:
       hallucination, pas une phrase russe.
     - `hallucination` : formule de sous-titrage connue.
     - `filler` : hésitation isolée.
+
+    `near_playback` — le segment chevauche la parole de JARVIS, ou la suit de
+    peu — ajoute deux raisons, et elles ne valent que là : sans casque, le micro
+    ambiant reprend les haut-parleurs, et ce que le modèle écrit sur ce reste
+    d'écho est court et poli, jamais une consigne.
+
+    - `playback_hallucination` : formule de politesse de `PLAYBACK_HALLUCINATIONS`.
+    - `residual_echo` : au plus `MAX_ECHO_WORDS` mots, dont aucun de
+      `SHORT_INTERRUPTION_WORDS`.
+
+    Le nom prononcé l'emporte sur les deux : « Stop Jarvis » reste un propos.
     """
 
     stripped = (text or "").strip()
@@ -90,6 +138,14 @@ def noise_reason(text: str) -> str | None:
     tokens = normalized.split()
     if all(token in FILLERS for token in tokens):
         return "filler"
+    if not near_playback or mentions_jarvis(stripped):
+        return None
+    if any(token in SHORT_INTERRUPTION_WORDS for token in tokens):
+        return None
+    if normalized in PLAYBACK_HALLUCINATIONS:
+        return "playback_hallucination"
+    if len(tokens) <= MAX_ECHO_WORDS:
+        return "residual_echo"
     return None
 
 
