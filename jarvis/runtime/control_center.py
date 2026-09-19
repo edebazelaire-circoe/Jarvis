@@ -519,6 +519,9 @@ class ControlCenter:
         # `scene.enabled`.
         self.barehands_mcp = barehands_mcp
         self._barehands_unconfigured_reported = False
+        # Une seule ligne de journal par processus pour un bloc de réglages
+        # illisible : `GET /api/barehands` part à chaque ouverture de l'onglet.
+        self._barehands_foreign_reported = False
         self.barehands_commands = BarehandsCommandBroker(
             journal=self.journal,
             gate=lambda: bool(barehands.load(self._settings())["enabled"]),
@@ -1756,7 +1759,28 @@ class ControlCenter:
 
     async def get_barehands(self, request: web.Request) -> web.Response:
         del request
-        return web.json_response(barehands.describe(self._settings(), self.barehands_vendor_root))
+        settings = self._settings()
+        # Un bloc écrit par un Jarvis plus récent ne s'applique pas — c'est le
+        # bon choix — mais il se taisait : ni bandeau, ni journal, et la
+        # première écriture ordinaire l'effaçait. La lecture est fréquente
+        # (chaque ouverture de l'onglet), donc la ligne ne part qu'une fois par
+        # processus ; ce qui reste visible, lui, est dans la réponse
+        # (`unreadable`, `stored_schema_version`) et ne s'épuise pas.
+        seen = barehands.inspect(settings)
+        if seen["unreadable"] and not self._barehands_foreign_reported:
+            self._barehands_foreign_reported = True
+            self.journal.emit(
+                "settings.barehands.foreign_version",
+                "Réglages Bare Hands écrits par une version plus récente (schéma "
+                f"{seen['stored_schema_version']}) : non appliqués, gardés tels quels ; "
+                f"la prochaine écriture les rangera sous « {seen['archive_key']} »",
+                level="warning",
+                data={"code": "barehands_stored_version_unreadable",
+                      "stored_schema_version": seen["stored_schema_version"],
+                      "schema_version": barehands.SCHEMA_VERSION,
+                      "archive_key": seen["archive_key"]},
+            )
+        return web.json_response(barehands.describe(settings, self.barehands_vendor_root))
 
     async def save_barehands(self, request: web.Request) -> web.Response:
         """Enregistrer les réglages Bare Hands, dans le fichier de réglages commun.
@@ -1777,6 +1801,10 @@ class ControlCenter:
         # Ce qui était appliqué **avant** l'écriture : c'est la seule fenêtre
         # où on peut encore le lire, `apply` écrivant dans `current`.
         before = barehands.load(current)
+        # Et ce que le bloc **était**, pour la même raison : `apply` archive
+        # puis remplace, donc après lui plus rien ne dit qu'il était illisible.
+        seen = barehands.inspect(current)
+        replaced_archive = seen["archive_key"] in barehands.archived_keys(current)
         try:
             value = barehands.apply(current, payload)
         except barehands.BarehandsSettingsError as exc:
@@ -1813,6 +1841,22 @@ class ControlCenter:
             data={"enabled": value["enabled"], "assets_installed": state["assets"]["installed"],
                   "changed": changed},
         )
+        # L'archivage a sa propre ligne : la précédente parle de ce qui a été
+        # enregistré, celle-ci de ce qui a failli être détruit. Les mêler
+        # rendrait la seconde invisible dans un filtre sur `settings.barehands`.
+        if seen["unreadable"]:
+            self.journal.emit(
+                "settings.barehands.archived",
+                f"Réglages Bare Hands en schéma {seen['stored_schema_version']} conservés sous "
+                f"« {seen['archive_key']} » avant d'être remplacés par les valeurs d'usine"
+                + (" (une archive de la même version a été remplacée)" if replaced_archive else ""),
+                level="warning",
+                data={"code": "barehands_stored_version_archived",
+                      "stored_schema_version": seen["stored_schema_version"],
+                      "schema_version": barehands.SCHEMA_VERSION,
+                      "archive_key": seen["archive_key"],
+                      "replaced_previous_archive": replaced_archive},
+            )
         return web.json_response(state)
 
     # ------------------------------------------------- canal de commandes (Slice 12)

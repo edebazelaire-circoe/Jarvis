@@ -126,6 +126,18 @@ SETTINGS_DEFAULTS: dict[str, Any] = {
 #: Clé de version dans la charge utile et dans le fichier.
 SCHEMA_KEY = "schema_version"
 
+#: Préfixe des clés d'archive, à la racine du fichier de réglages, à côté de
+#: ``SETTING_KEY``. Un bloc que **cette** version ne sait pas lire y est rangé
+#: avant d'être remplacé par les défauts, au lieu d'être écrasé sans un mot.
+#:
+#: Scénario : l'utilisateur lance un Jarvis plus récent qui écrit une v3, revient
+#: à cette version, recoche Bare Hands — et ``apply`` repart de ``load()``,
+#: c'est-à-dire des défauts, et réécrit la clé entière. Ses réglages v3
+#: disparaissaient sans un mot à l'écran ni dans le journal. La clé porte la
+#: version archivée, pour que deux retours en arrière depuis deux versions
+#: différentes ne se recouvrent pas.
+ARCHIVE_KEY_PREFIX = "barehands_test_mode_archived_v"
+
 
 class BarehandsSettingsError(ValueError):
     def __init__(self, code: str, message: str) -> None:
@@ -151,6 +163,59 @@ def _stored_version(stored: Mapping[str, Any]) -> int:
         return -1
 
 
+def _archive_key(version: int | None) -> str:
+    """Où va un bloc illisible. ``unknown`` couvre un numéro non numérique."""
+
+    return f"{ARCHIVE_KEY_PREFIX}{version if isinstance(version, int) and version >= 0 else 'unknown'}"
+
+
+def inspect(settings: Mapping[str, Any]) -> dict[str, Any]:
+    """Ce que le bloc stocké dit de lui-même, **avant** toute tolérance.
+
+    ``load`` répond « voici les réglages qui s'appliquent » et ne peut donc pas
+    distinguer des défauts parce qu'il n'y avait rien des défauts parce que
+    ce qu'il y avait était illisible. Les deux se ressemblent à l'octet près et
+    ne veulent pas dire la même chose : le premier est le premier lancement, le
+    second est une perte annoncée. C'est cette fonction qui les sépare, et
+    ``describe`` qui la publie.
+    """
+
+    stored = settings.get(SETTING_KEY)
+    present = isinstance(stored, Mapping)
+    version = _stored_version(stored) if present else None
+    unreadable = present and version != SCHEMA_VERSION and version not in MIGRATED_SCHEMA_VERSIONS
+    return {
+        "present": present,
+        "stored_schema_version": version,
+        "unreadable": unreadable,
+        "archive_key": _archive_key(version) if unreadable else None,
+    }
+
+
+def archived_keys(settings: Mapping[str, Any]) -> list[str]:
+    """Les blocs déjà mis de côté, dans l'ordre. Ce que l'écran peut nommer."""
+
+    return sorted(key for key in settings if str(key).startswith(ARCHIVE_KEY_PREFIX))
+
+
+def archive_unreadable(settings: dict[str, Any]) -> str | None:
+    """Ranger un bloc illisible sous sa clé de version. Rend la clé, ou ``None``.
+
+    Appelée par ``apply`` **avant** l'écriture : c'est le seul instant où le
+    bloc étranger existe encore. Une archive de la même version déjà présente
+    est remplacée par celle-ci — c'est la plus récente que l'utilisateur ait
+    eue, l'autre ayant déjà été remplacée par un aller-retour antérieur — et
+    l'appelant le dit dans le journal plutôt que de le taire.
+    """
+
+    seen = inspect(settings)
+    if not seen["unreadable"]:
+        return None
+    key = str(seen["archive_key"])
+    settings[key] = dict(settings[SETTING_KEY])
+    return key
+
+
 def load(settings: Mapping[str, Any]) -> dict[str, Any]:
     """Les réglages tels qu'ils s'appliquent. Toute valeur douteuse vaut le défaut.
 
@@ -163,12 +228,15 @@ def load(settings: Mapping[str, Any]) -> dict[str, Any]:
     pas : on n'en garde rien et Bare Hands reste éteint. Agir sur des réglages
     qu'on ne sait pas lire serait la panne que le refus codé existe pour
     empêcher ; le refus explicite, lui, arrive à l'écriture (``apply``).
+
+    Tolérante, mais plus **muette** : ``inspect`` dit que ces défauts viennent
+    d'un bloc illisible, ``describe`` le publie, et ``archive_unreadable`` garde
+    le bloc avant que la première écriture ordinaire ne le remplace.
     """
 
     stored = settings.get(SETTING_KEY)
     stored = stored if isinstance(stored, Mapping) else {}
-    version = _stored_version(stored)
-    if version != SCHEMA_VERSION and version not in MIGRATED_SCHEMA_VERSIONS:
+    if inspect(settings)["unreadable"]:
         return dict(SETTINGS_DEFAULTS)
     value = dict(SETTINGS_DEFAULTS)
     for key, default in SETTINGS_DEFAULTS.items():
@@ -252,6 +320,13 @@ def apply(settings: dict[str, Any], payload: Any) -> dict[str, Any]:
             value[key] = _check_tool(raw)
         else:
             value[key] = _check_number(key, raw)
+    # **Avant** d'écrire : c'est le dernier instant où un bloc étranger existe
+    # encore. `value` part de `load()`, c'est-à-dire des défauts quand le bloc
+    # est illisible, et la ligne suivante remplace la clé entière — c'est là
+    # que les réglages d'un Jarvis plus récent disparaissaient sans un mot.
+    # L'appelant lit `inspect()` avant d'appeler pour le dire à l'écran et au
+    # journal ; ici on se contente de ne pas détruire.
+    archive_unreadable(settings)
     settings[SETTING_KEY] = {SCHEMA_KEY: SCHEMA_VERSION, **value}
     return dict(value)
 
@@ -292,12 +367,23 @@ def describe(settings: Mapping[str, Any], root: Path) -> dict[str, Any]:
     par la page : élargir la charge utile ne devait pas déplacer le seul champ
     qui existait. ``tools`` dit **quels outils ont un moteur**, pour que la
     palette n'ait pas à le deviner ni à recopier la table.
+
+    ``schema_version`` est la version que **ce serveur écrit**, et elle valait
+    2 quoi qu'il ait lu : la page ne pouvait donc pas distinguer « des défauts
+    parce qu'illisible » de « des défauts parce que neuf ».
+    ``stored_schema_version`` (``null`` quand il n'y a rien d'enregistré) et
+    ``unreadable`` les séparent, et ``archived`` nomme les blocs déjà mis de
+    côté, pour que le bandeau dise **où** ils sont plutôt que « perdus ».
     """
 
+    seen = inspect(settings)
     return {
         **load(settings),
         "status": "experimental",
         "schema_version": SCHEMA_VERSION,
+        "stored_schema_version": seen["stored_schema_version"],
+        "unreadable": seen["unreadable"],
+        "archived": archived_keys(settings),
         "tools": list(TOOLS),
         "installed_tools": list(INSTALLED_TOOLS),
         "assets": describe_assets(root),

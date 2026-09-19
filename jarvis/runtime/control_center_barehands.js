@@ -3821,6 +3821,10 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
        tout le reste de ce fichier le lit déjà là, et les deux sont tenus
        ensemble par `applyServerState`. */
     settings:BH.normalizeSettings(),
+    /* Ce que le serveur a **lu** dans le fichier, par opposition à ce qu'il
+       écrit : `null` tant qu'on ne lui a pas parlé, pour que « on ne sait pas
+       encore » ne se dessine pas comme « tout va bien ». */
+    stored:null,
     status:{state:'off',code:'off',title:Core.MESSAGES.off.title,message:Core.MESSAGES.off.detail,error:null}};
 
   /* Une seule instance, nommée : la surimpression et l'interaction sont des
@@ -3883,6 +3887,37 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
 
   function applyAssets(state){if(state&&state.assets)view.assets=state.assets}
 
+  /* Ce que le serveur a **lu**, par opposition à ce qu'il écrit. Un bloc de
+     réglages écrit par un Jarvis plus récent ne s'applique pas — c'est le bon
+     choix — mais il se taisait : `schema_version` valait 2 quoi qu'il ait lu,
+     donc « des défauts parce qu'illisible » et « des défauts parce que neuf »
+     arrivaient identiques ici, et le bandeau ne pouvait rien dire. */
+  function applyStored(state){
+    const source=state&&typeof state==='object'?state:{};
+    view.stored={
+      unreadable:source.unreadable===true,
+      version:Number.isFinite(Number(source.stored_schema_version))&&source.stored_schema_version!==null
+        ?Number(source.stored_schema_version):null,
+      archived:Array.isArray(source.archived)?source.archived.slice():[],
+    };
+  }
+
+  /* Vu à l'écran, et pas seulement dans le journal du serveur : c'est la seule
+     phrase qui dit à l'utilisateur pourquoi ses réglages ne sont pas ceux
+     qu'il a laissés, et où ils sont passés. Deux états distincts, parce qu'ils
+     demandent deux choses différentes : avant l'écriture le bloc est encore
+     là, après elle il est rangé sous une clé qu'on nomme. */
+  function storedHtml(){
+    const stored=view.stored;
+    if(!stored)return '';
+    const kept=stored.archived.length
+      ?`<div class="hint">Un bloc précédent est conservé sous ${stored.archived.map(esc).join(', ')} dans <code>runtime/control-center-settings.json</code> : rien n’a été détruit.</div>`:'';
+    if(!stored.unreadable)return kept;
+    const version=stored.version===null?'inconnu':String(stored.version);
+    return `<div class="notice warn"><strong>Réglages écrits par une version plus récente de Jarvis (schéma ${esc(version)})</strong>
+      <div class="hint">Cette version n’écrit que le schéma ${esc(String(BH.SETTINGS_SCHEMA_VERSION))} et ne sait pas les lire : elle ne les applique pas et n’en devine rien — Bare Hands utilise ses valeurs d’usine. Le bloc est intact ; le prochain enregistrement le rangera sous une clé d’archive au lieu de l’écraser.</div></div>${kept}`;
+  }
+
   /* **Slice 07 : les réglages atteignent le moteur.** Un seul endroit les y
      porte, pour que « ce que l'écran montre » et « ce que la main fait » ne
      puissent pas diverger. Tout ce qui est ici est **vivant** : un réglage qui
@@ -3914,6 +3949,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
      un réglage illisible vaut mieux lu par un humain qu'appliqué de travers. */
   function applyServerState(state){
     applyAssets(state);
+    applyStored(state);
     try{
       view.settings=BH.fromServerState(state);
       applyToEngine(view.settings);
@@ -4092,7 +4128,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
   function statusHtml(){
     const s=view.status,cls=s.state==='error'?'bad':'info';
     const error=view.error?`<div class="notice bad">${esc(view.error)}</div>`:'';
-    return `${error}<div class="notice ${cls}"><strong>${esc(s.title)}</strong><div class="hint">${esc(s.message)}</div></div>`;
+    return `${error}${storedHtml()}<div class="notice ${cls}"><strong>${esc(s.title)}</strong><div class="hint">${esc(s.message)}</div></div>`;
   }
 
   function assetsHtml(){

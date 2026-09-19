@@ -539,7 +539,7 @@ def test_sensitivity_reaches_a_hand_that_is_already_being_tracked(tmp_path):
 #: modèle et le contrôleur ne peut jamais être engagé.
 CAMERA = "var WANT_CAMERA=true;\n"
 
-BROWSER = ELEMENTS + r"""
+BROWSER_HEAD = ELEMENTS + r"""
 const live=[];
 const parse=html=>{
   const found=[];
@@ -664,7 +664,13 @@ global.JarvisSceneInteract=require(SCENE_INTERACT_PATH);
    envoie et le rend à plat. Ce qui lie ce double au vrai gestionnaire est un
    test de parité à part
    (`test_the_payload_the_page_builds_is_accepted_by_the_real_route`). */
-const server={state:C.toServerPayload({}),calls:[],fail:null,gate:null,hangGet:false};
+/* L'état de départ est celui d'une installation neuve, **tel que le vrai
+   `describe()` le rend** : les trois champs que la page lit pour distinguer
+   « des défauts parce qu'illisible » de « des défauts parce que neuf » en font
+   partie. Un double qui ne les porte pas ne peut pas tomber comme le vrai. */
+const server={state:Object.assign(C.toServerPayload({}),
+    {stored_schema_version:null,unreadable:false,archived:[]}),
+  calls:[],fail:null,gate:null,hangGet:false,foreignVersion:3};
 global.api=async(path,opts)=>{
   server.calls.push({path,body:opts&&opts.body?JSON.parse(opts.body):null});
   if(!opts||opts.method!=='POST'){
@@ -679,6 +685,15 @@ global.api=async(path,opts)=>{
   if(server.gate)await server.gate;
   if(server.fail)throw Object.assign(new Error(server.fail),{status:400});
   server.state=Object.assign({},server.state,JSON.parse(opts.body));
+  /* Comme le vrai `apply` : un bloc illisible est rangé sous sa clé de version
+     **avant** d'être remplacé, et la réponse suivante n'est plus « illisible »
+     mais « une archive existe ». Un double qui garderait `unreadable` vrai
+     après l'écriture rendrait le bandeau de retour intestable. */
+  if(server.state.unreadable){
+    server.state=Object.assign({},server.state,{unreadable:false,
+      stored_schema_version:C.SETTINGS_SCHEMA_VERSION,
+      archived:server.state.archived.concat([`barehands_test_mode_archived_v${server.foreignVersion}`])});
+  }
   return Object.assign({},server.state,{assets:{installed:true,missing:[]}});
 };
 /* Le journal de la page, capture plutot que laisse partir sur la sortie : il
@@ -701,6 +716,14 @@ global.modalSave=fixed.modalSave;
 global.modalSub=fixed.modalSub;
 global.modalContent=modalContent;
 
+"""
+
+#: Ce que le fichier de réglages contient **avant** que la page ne se charge.
+#: La page relit `/api/barehands` dès son démarrage, donc un test qui configure
+#: le double après coup décrit une situation qui n'arrive jamais : le serveur
+#: aurait changé d'avis entre le chargement et la première image. Tout ce qui
+#: doit être vrai *à l'ouverture de l'onglet* s'écrit ici.
+BROWSER_TAIL = r"""
 delete require.cache[require.resolve(SCRIPT_PATH)];
 require(SCRIPT_PATH);
 const BAREHANDS=window.JarvisBarehands;
@@ -708,6 +731,14 @@ const settle=async()=>{for(let i=0;i<12;i+=1)await new Promise(r=>setImmediate(r
 const openTab=async()=>{await settle();await renderTab();await settle()};
 const byAttr=(name,value)=>live.find(n=>n.attrs[name]===value)||null;
 """
+
+BROWSER = BROWSER_HEAD + BROWSER_TAIL
+
+
+def browser(setup: str = "") -> str:
+    """Le monde navigateur, avec un état de serveur posé avant le chargement."""
+
+    return BROWSER_HEAD + setup + BROWSER_TAIL
 
 
 def test_the_tab_draws_two_surfaces_and_writes_what_is_touched(tmp_path):
@@ -1580,6 +1611,70 @@ def test_refreshing_the_panel_never_rewrites_the_body_of_the_tab(tmp_path):
 # --------------------------------------------------------- page et vraie route
 
 
+def test_settings_written_by_a_newer_jarvis_are_named_on_screen_not_silently_replaced(tmp_path):
+    """**Constat R6, côté écran.** Le serveur les gardait, l'écran se taisait.
+
+    Un utilisateur revenu en arrière voit ses réglages revenus d'usine sans un
+    mot : ni ce qui s'est passé, ni où sont passés les siens. Un retour à
+    l'usine indiscernable d'une perte est une perte.
+    """
+
+    result = run_node(tmp_path, browser("""
+      /* Ce que le serveur rend quand il a lu un bloc qu'il ne sait pas lire :
+         les défauts, **et** de quoi le dire. Posé **avant** le chargement de
+         la page, parce que c'est ainsi que ça arrive : le bloc étranger est
+         déjà dans le fichier quand l'onglet s'ouvre. */
+      server.state=Object.assign({},server.state,
+        {unreadable:true,stored_schema_version:3,archived:[]});
+    """) + """
+      await openTab();
+      const warned=document.getElementById('barehandsStatus').innerHTML;
+      /* Et les réglages appliqués sont bien ceux d'usine : le bandeau dit ce
+         que le moteur fait, il ne le décrit pas de travers. */
+      const applied=[BAREHANDS.settings().tool,BAREHANDS.settings().sensitivity];
+      // Recocher : c'est l'écriture qui aurait détruit le bloc.
+      document.getElementById('f_barehands').checked=true;
+      document.getElementById('f_barehands').fire('change');
+      await settle();
+      const after=document.getElementById('barehandsStatus').innerHTML;
+      out({warned,applied,after,
+        sent:server.calls.filter(c=>c.body).length,
+        archived:server.state.archived});
+    """, name="foreign")
+
+    # Vu : la version lue, ce que cette version écrit, et ce qui va arriver au
+    # bloc — pas « erreur » ni le silence d'avant.
+    assert "version plus récente" in result["warned"]
+    assert "schéma 3" in result["warned"]
+    assert "clé d’archive" in result["warned"], "l'écran dit que rien ne sera écrasé"
+    assert result["applied"] == ["pointer", 1], "les valeurs d'usine s'appliquent vraiment"
+
+    # Après l'écriture : plus d'avertissement, et la clé où le bloc est rangé
+    # est **nommée**. « Ils ont survécu » sans dire où n'est pas une réponse.
+    assert result["sent"] == 1
+    assert result["archived"] == ["barehands_test_mode_archived_v3"]
+    assert "version plus récente" not in result["after"]
+    assert "barehands_test_mode_archived_v3" in result["after"]
+    assert "rien n’a été détruit" in result["after"]
+
+
+def test_a_fresh_tab_says_nothing_about_a_version_it_never_read(tmp_path):
+    """L'autre moitié : un bandeau toujours là ne dit rien de plus qu'aucun.
+
+    Un premier lancement rend exactement les mêmes réglages qu'un bloc
+    illisible — c'est le fond du constat —, donc le bandeau doit être absent
+    ici et présent là, sans quoi il ne distingue rien."""
+
+    result = run_node(tmp_path, BROWSER + """
+      await openTab();
+      out({status:document.getElementById('barehandsStatus').innerHTML,
+        stored:[server.state.unreadable,server.state.stored_schema_version]});
+    """, name="freshtab")
+    assert result["stored"] == [False, None]
+    assert "version plus récente" not in result["status"]
+    assert "conservé" not in result["status"]
+
+
 def test_the_payload_the_page_builds_is_accepted_by_the_real_route(tmp_path):
     """La boucle fermée : la charge utile que `toServerPayload` construit part
     dans le **vrai** gestionnaire de route, est écrite dans le **vrai** fichier
@@ -1641,6 +1736,47 @@ def test_the_payload_the_page_builds_is_accepted_by_the_real_route(tmp_path):
         "sleepTimeoutMs": 45000, "tool": "select", "assistance": 0.25, "sensitivity": 2,
         "tutorialSeen": True, "calibrationEnabled": False, "diagnostics": True,
     }
+
+
+def test_the_server_double_of_these_tests_carries_every_field_the_real_route_sends(tmp_path):
+    """**La leçon des doubles**, appliquée au double de serveur de ce fichier.
+
+    Quatre défauts de réalisme ont déjà coûté cher sur cette tâche. Celui-ci
+    serait le cinquième : un double qui ne porte pas `unreadable`,
+    `stored_schema_version` ni `archived` ne peut pas tomber comme le vrai
+    serveur tombe, et un bandeau qui les lit se testerait contre du vide.
+    """
+
+    import asyncio
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node absent")
+    control = ControlCenter(runtime_root=tmp_path / "runtime", project_root=tmp_path,
+                            barehands_vendor_root=tmp_path / "vendor")
+    real = json.loads(asyncio.run(control.get_barehands(None)).text)
+
+    script = tmp_path / "double.cjs"
+    script.write_text(
+        f"const C=require({json.dumps(str(CONTRACTS))});\n"
+        "const server={state:Object.assign(C.toServerPayload({}),"
+        "{stored_schema_version:null,unreadable:false,archived:[]})};\n"
+        "process.stdout.write(JSON.stringify(Object.assign({},server.state,"
+        "{assets:{installed:true,missing:[]}})));",
+        encoding="utf-8",
+    )
+    done = subprocess.run([node, str(script)], capture_output=True, text=True, encoding="utf-8",
+                          timeout=30, check=False)
+    assert done.returncode == 0, done.stderr
+    double = json.loads(done.stdout)
+
+    # `status` et `tools`/`installed_tools` sont les seuls champs que le double
+    # n'a jamais portés : la page ne les lit pas. Tout le reste doit coïncider,
+    # sinon le double ment sur ce qui arrive à la page.
+    missing = set(real) - set(double) - {"status", "tools", "installed_tools"}
+    assert missing == set(), f"le double de serveur ne porte pas {sorted(missing)}"
+    for key in ("unreadable", "stored_schema_version", "archived"):
+        assert double[key] == real[key], key
 
 
 def test_the_page_serves_the_two_surfaces_and_never_a_dead_control(tmp_path):

@@ -1505,6 +1505,30 @@ muette. Côté serveur, `load` est **tolérant** (un fichier abîmé ne rend pas
 Bare Hands injoignable) : une version étrangère n'est pas devinée, on n'en
 garde rien et Bare Hands reste éteint ; c'est `apply` qui refuse, avec son code.
 
+**Une version stockée étrangère est ARCHIVÉE, puis remplacée par les défauts.**
+Tolérant ne veut pas dire muet. `load` rendait les défauts en silence et la
+première écriture ordinaire remplaçait le bloc — `apply` part de `load()`,
+c'est-à-dire des défauts, et réécrit la clé entière. Un utilisateur qui monte
+de version, redescend et recoche Bare Hands perdait ses réglages sans qu'un mot
+passe à l'écran ni dans le journal. Trois choses ferment ça :
+
+| Ce qui manquait | Ce qui le porte |
+|---|---|
+| distinguer « défauts parce qu'illisible » de « défauts parce que neuf » | `barehands_test_mode.inspect(settings)` → `{present, stored_schema_version, unreadable, archive_key}`, publié par `describe()` sous `stored_schema_version` (`null` si rien n'est enregistré), `unreadable` et `archived` |
+| ne pas détruire | `archive_unreadable(settings)`, appelé par `apply` **avant** l'écriture : le bloc part **tel quel** sous `barehands_test_mode_archived_v<N>`, à la racine du fichier de réglages |
+| le dire | bandeau de l'onglet Expérimental (`storedHtml`), et deux lignes de journal : `settings.barehands.foreign_version` à la lecture (une par processus, la lecture étant fréquente) et `settings.barehands.archived` à l'écriture |
+
+`schema_version` reste **ce que ce serveur écrit** : il valait 2 quoi qu'il ait
+lu, et c'est précisément ce qui rendait les deux situations indiscernables.
+Points fixés : la clé d'archive porte la **version archivée**, donc deux
+retours en arrière depuis deux versions différentes laissent deux archives ; un
+numéro non numérique va sous `…_vunknown` plutôt que sous `…_v-1` ; une archive
+de la même version est remplacée par la plus récente, et la ligne de journal le
+dit (`replaced_previous_archive`) ; un refus d'écriture n'archive **rien**, une
+archive étant une conséquence de l'écriture et non de la tentative. Le bloc est
+archivé **sans normalisation** — le normaliser reviendrait à perdre ce qu'on
+prétend garder, à commencer par les clés que cette version ne connaît pas.
+
 **Asymétrie connue, et laissée telle quelle.** Le contrat JS compare la version
 après conversion numérique : `"2"` et `schemaVersion: 1` passent. Le serveur,
 lui, compare la valeur reçue et refuse les deux. Sans conséquence aujourd'hui

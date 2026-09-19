@@ -94,6 +94,122 @@ def test_a_version_one_block_is_migrated_and_a_foreign_one_is_not_acted_upon():
     assert caught.value.code == "barehands_schema_version_unsupported"
 
 
+def test_defaults_because_unreadable_and_defaults_because_fresh_are_not_the_same_answer():
+    """`load()` rend le même dictionnaire dans les deux cas, à l'octet près.
+
+    C'est le bon comportement — un fichier abîmé ne doit pas rendre Bare Hands
+    injoignable — mais `describe()` annonçait `schema_version: 2` quoi qu'il ait
+    lu, donc la page ne pouvait pas distinguer « des défauts parce
+    qu'illisible » d'« des défauts parce que neuf ». Un premier lancement et une
+    perte annoncée arrivaient identiques à l'écran.
+    """
+
+    fresh = barehands.inspect({})
+    assert fresh == {"present": False, "stored_schema_version": None,
+                     "unreadable": False, "archive_key": None}
+
+    ours = barehands.inspect({"barehands_test_mode": {"schema_version": 2, "enabled": True}})
+    assert ours["stored_schema_version"] == 2 and ours["unreadable"] is False
+
+    # Un bloc v1 n'a pas de numéro : « écrit par nous », et converti.
+    legacy = barehands.inspect({"barehands_test_mode": {"enabled": True}})
+    assert legacy["stored_schema_version"] == barehands.SCHEMA_VERSION
+    assert legacy["unreadable"] is False
+
+    foreign = barehands.inspect({"barehands_test_mode": {"schema_version": 3, "enabled": True}})
+    assert foreign["unreadable"] is True and foreign["stored_schema_version"] == 3
+    assert foreign["archive_key"] == "barehands_test_mode_archived_v3"
+
+    # Un numéro qui n'est pas un nombre est illisible aussi, et ne se range pas
+    # sous une clé « v-1 » : un nom que personne ne saurait relire.
+    junk = barehands.inspect({"barehands_test_mode": {"schema_version": "trois"}})
+    assert junk["unreadable"] is True
+    assert junk["archive_key"] == "barehands_test_mode_archived_vunknown"
+
+
+def test_an_unreadable_block_is_kept_under_a_versioned_key_before_the_defaults_land(tmp_path):
+    """Le scénario complet du constat R6, joué en entier.
+
+    L'utilisateur lance un Jarvis plus récent qui écrit une v3, revient à cette
+    version, rouvre l'onglet Expérimental et recoche Bare Hands. `apply` part de
+    `load()` — c'est-à-dire des défauts — et réécrivait la clé **entière** : ses
+    réglages v3 étaient détruits sans qu'un seul mot passe.
+    """
+
+    del tmp_path
+    theirs = {"schema_version": 3, "enabled": True, "tool": "pan", "hover_dwell_ms": 250}
+    settings: dict = {"barehands_test_mode": dict(theirs)}
+
+    # Ce que la page apprend **avant** d'écrire : non appliqué, et pourquoi.
+    assert barehands.describe(settings, Path("nowhere"))["unreadable"] is True
+    assert barehands.describe(settings, Path("nowhere"))["stored_schema_version"] == 3
+    assert barehands.describe(settings, Path("nowhere"))["archived"] == []
+    assert barehands.describe(settings, Path("nowhere"))["enabled"] is False
+
+    barehands.apply(settings, {"enabled": True})
+
+    # Le bloc courant est bien reparti des défauts…
+    assert settings["barehands_test_mode"]["schema_version"] == barehands.SCHEMA_VERSION
+    assert settings["barehands_test_mode"]["tool"] == "pointer"
+    # …et l'ancien est intact, **y compris la clé que cette version ne connaît
+    # pas** : archiver en normalisant reviendrait à perdre ce qu'on prétend
+    # garder.
+    assert settings["barehands_test_mode_archived_v3"] == theirs
+
+    state = barehands.describe(settings, Path("nowhere"))
+    assert state["unreadable"] is False, "ce qui est écrit maintenant se relit"
+    assert state["stored_schema_version"] == barehands.SCHEMA_VERSION
+    assert state["archived"] == ["barehands_test_mode_archived_v3"], (
+        "l'écran doit pouvoir nommer où ils sont passés, pas seulement dire qu'ils ont survécu"
+    )
+
+
+def test_a_readable_block_is_never_archived_and_two_foreign_versions_do_not_collide():
+    """Archiver à chaque écriture doublerait le fichier de réglages pour rien.
+
+    Et deux retours en arrière depuis deux versions différentes doivent laisser
+    **deux** archives : une clé unique ferait de la seconde la destruction
+    silencieuse que la première a évitée.
+    """
+
+    ordinary: dict = {"barehands_test_mode": {"schema_version": 2, "enabled": True}}
+    barehands.apply(ordinary, {"enabled": False})
+    assert barehands.archived_keys(ordinary) == []
+
+    settings: dict = {"barehands_test_mode": {"schema_version": 3, "enabled": True}}
+    barehands.apply(settings, {"enabled": True})
+    settings["barehands_test_mode"] = {"schema_version": 4, "sensitivity": 3}
+    barehands.apply(settings, {"enabled": True})
+    assert barehands.archived_keys(settings) == [
+        "barehands_test_mode_archived_v3", "barehands_test_mode_archived_v4",
+    ]
+    assert settings["barehands_test_mode_archived_v3"]["schema_version"] == 3
+    assert settings["barehands_test_mode_archived_v4"]["sensitivity"] == 3
+
+    # Même version deux fois : c'est le bloc **le plus récent** qui est gardé,
+    # l'autre ayant déjà été remplacé par l'aller-retour précédent. La route le
+    # dit dans le journal plutôt que de le taire.
+    settings["barehands_test_mode"] = {"schema_version": 4, "sensitivity": 2}
+    barehands.apply(settings, {"enabled": True})
+    assert settings["barehands_test_mode_archived_v4"]["sensitivity"] == 2
+    assert len(barehands.archived_keys(settings)) == 2
+
+
+def test_a_refused_write_archives_nothing():
+    """L'archive est une conséquence de l'écriture, pas de la tentative.
+
+    Archiver avant de valider rangerait le bloc étranger **et** le laisserait
+    en place : le fichier porterait deux copies, et la prochaine écriture
+    valide écraserait l'archive par la même copie. Un refus ne touche à rien.
+    """
+
+    theirs = {"schema_version": 3, "enabled": True}
+    settings: dict = {"barehands_test_mode": dict(theirs)}
+    with pytest.raises(barehands.BarehandsSettingsError):
+        barehands.apply(settings, {"enabled": True, "tool": "gomme"})
+    assert settings == {"barehands_test_mode": theirs}, "un refus n'écrit rien, pas même une archive"
+
+
 def test_a_stored_value_out_of_range_or_of_the_wrong_type_falls_back_to_its_default():
     """Lecture **tolérante** : un fichier abîmé ne rend pas Bare Hands
     injoignable. C'est l'écriture qui refuse, pas la lecture."""
@@ -292,6 +408,87 @@ async def test_the_journal_names_the_settings_that_changed_not_only_the_switch(c
     ]
     # L'interrupteur reste lisible où il l'a toujours été.
     assert [event["data"]["enabled"] for event in events] == [True] * 5 + [False]
+
+
+async def test_a_rollback_says_on_screen_and_in_the_journal_where_the_old_settings_went(control):
+    """**Constat R6, refermé.** Le fichier survivait ; la parole, non.
+
+    Un Jarvis plus récent écrit une v3, l'utilisateur revient à cette version,
+    rouvre l'onglet, recoche Bare Hands. Rien n'apparaissait : ni bandeau, ni
+    toast, ni ligne de journal, et la première écriture ordinaire remplaçait le
+    bloc. Ici la lecture le dit, l'écriture le range, et les deux laissent une
+    trace durable — la seule qui survive à la session.
+    """
+
+    control.settings_path.parent.mkdir(parents=True, exist_ok=True)
+    theirs = {"schema_version": 3, "enabled": True, "tool": "pan", "hover_dwell_ms": 250}
+    control.settings_path.write_text(
+        json.dumps({"agent_cli": "codex", "barehands_test_mode": theirs}), encoding="utf-8")
+
+    seen = await state_of(control)
+    assert seen["unreadable"] is True and seen["stored_schema_version"] == 3
+    assert seen["schema_version"] == barehands.SCHEMA_VERSION, "ce que ce serveur écrit, inchangé"
+    assert seen["enabled"] is False, "on n'allume pas sur des réglages illisibles"
+    assert seen["archived"] == [], "rien n'est encore rangé : le bloc est intact"
+
+    read_lines = [event for event in read_jsonl_tail(control.journal.trace_path, limit=50)
+                  if event.get("kind") == "settings.barehands.foreign_version"]
+    assert len(read_lines) == 1
+    assert read_lines[0]["data"]["stored_schema_version"] == 3
+    assert read_lines[0]["data"]["code"] == "barehands_stored_version_unreadable"
+    assert "barehands_test_mode_archived_v3" in read_lines[0]["message"]
+
+    # La lecture part à chaque ouverture de l'onglet : une ligne par processus,
+    # pas une par requête — un journal noyé est un journal illisible.
+    await state_of(control)
+    await state_of(control)
+    assert len([event for event in read_jsonl_tail(control.journal.trace_path, limit=50)
+                if event.get("kind") == "settings.barehands.foreign_version"]) == 1
+
+    await control.save_barehands(JsonRequest({"enabled": True}))
+
+    stored = json.loads(control.settings_path.read_text(encoding="utf-8"))
+    assert stored["barehands_test_mode"]["schema_version"] == barehands.SCHEMA_VERSION
+    assert stored["barehands_test_mode_archived_v3"] == theirs, "le bloc v3 a survécu, tel quel"
+    assert stored["agent_cli"] == "codex", "et le reste du fichier n'a pas bougé"
+
+    after = await state_of(control)
+    assert after["unreadable"] is False
+    assert after["archived"] == ["barehands_test_mode_archived_v3"]
+
+    archived = [event for event in read_jsonl_tail(control.journal.trace_path, limit=50)
+                if event.get("kind") == "settings.barehands.archived"]
+    assert len(archived) == 1, "l'archivage a sa propre ligne, pas un champ noyé dans l'autre"
+    assert archived[0]["data"] == {
+        "code": "barehands_stored_version_archived", "stored_schema_version": 3,
+        "schema_version": barehands.SCHEMA_VERSION,
+        "archive_key": "barehands_test_mode_archived_v3", "replaced_previous_archive": False,
+    }
+    assert "conservés" in archived[0]["message"] and "v3" in archived[0]["message"]
+
+    # Une écriture ordinaire ensuite n'archive plus rien et ne redit rien.
+    await control.save_barehands(JsonRequest({"enabled": False}))
+    assert len([event for event in read_jsonl_tail(control.journal.trace_path, limit=50)
+                if event.get("kind") == "settings.barehands.archived"]) == 1
+
+
+async def test_a_fresh_install_never_claims_that_something_was_unreadable(control):
+    """L'autre moitié du constat : ne pas crier au loup au premier lancement.
+
+    Sans bloc enregistré, `stored_schema_version` vaut `null` et `unreadable`
+    est faux. Un drapeau toujours vrai ne dirait rien de plus qu'un drapeau
+    toujours faux."""
+
+    fresh = await state_of(control)
+    assert fresh["stored_schema_version"] is None
+    assert fresh["unreadable"] is False and fresh["archived"] == []
+
+    await control.save_barehands(JsonRequest({"enabled": True}))
+    ours = await state_of(control)
+    assert ours["stored_schema_version"] == barehands.SCHEMA_VERSION
+    assert ours["unreadable"] is False and ours["archived"] == []
+    assert [event for event in read_jsonl_tail(control.journal.trace_path, limit=50)
+            if str(event.get("kind", "")).startswith("settings.barehands.foreign")] == []
 
 
 async def test_rejected_toggle_writes_nothing_and_answers_400_with_its_code(control):
