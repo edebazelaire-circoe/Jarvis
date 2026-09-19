@@ -45,7 +45,9 @@ Implement semantic candidate discovery around the filtered intent point; score a
 
 - Control Center/Constellation browser code discovered by freshness audit
 - Bare Hands target resolver modules
+- `jarvis/runtime/control_center_scene_page.js` — scene nodes carry `data-object-id` (`:1496`) and are hit-tested by `target.closest('.sc-node')` (`:1609`)
 - CSS/overlay assets
+- `jarvis/runtime/control_center.py` and `jarvis/runtime/control_center.html` — marker constant, marker placement and load-order assertion for any new page module (Slice 00, F3)
 - UI tests
 
 ## Architecture Constraints
@@ -54,6 +56,8 @@ Implement semantic candidate discovery around the filtered intent point; score a
 - Per-hand and per-capture state must be explicit and testable.
 - User-visible behavior must follow the decision log rather than legacy mouse-only assumptions.
 - Unknown current repository component names must be discovered, not invented.
+- Scene objects are identified by `data-object-id` and the `.sc-node` class. Note `.sc-node` is absent from the current `INTERACTIVE` selector (`control_center_barehands.js:266`), so stars are clickable today but never hover-highlighted; the resolver must cover them.
+- Edge and corner zones exist only on `capsule` and `window` representations (Human decision D3). `point` and `signal` objects expose BODY only.
 
 ## Automated Validation
 

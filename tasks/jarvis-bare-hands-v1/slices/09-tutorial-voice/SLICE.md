@@ -22,7 +22,7 @@ This Slice is part of Bare Hands V1. Preserve the locked decisions in docs/01-de
 - Reuse the calibration overlay shell but maintain a distinct tutorial state/data path.
 - Guided steps for activation/wake, target preview, primary click, secondary/right click, contextual BODY drag/scroll, star/object drag, frame edge/corner move, bimanual resize, Tools and exit.
 - UI entry from Bare Hands Settings.
-- Voice entry points through the current Jarvis voice command architecture for activate/deactivate Bare Hands, launch calibration, launch tutorial and exit the overlay.
+- Voice entry points **over the command channel built in Slice 12**. There is no voice command registry or intent router in this repository, and in the default `continuous_brain` architecture the voice surface has no tools; the brain drives Bare Hands over MCP. This Slice wires activate/deactivate, launch calibration, launch tutorial and exit-overlay onto that channel (Slice 00, F1; Human decision D2).
 - Voice/UI actions must call the same underlying runtime commands rather than parallel implementations.
 - Tutorial must never write calibration parameters.
 - Always provide obvious X/Esc/voice exit paths.
@@ -37,7 +37,7 @@ This Slice is part of Bare Hands V1. Preserve the locked decisions in docs/01-de
 
 ## Dependencies
 
-06, 07, 08
+06, 07, 08, 12
 
 ## Implementation Steps
 
@@ -50,8 +50,10 @@ This Slice is part of Bare Hands V1. Preserve the locked decisions in docs/01-de
 ## Files Likely Touched
 
 - tutorial/overlay UI
-- current Jarvis voice command/router integration discovered by Slice 00
+- the Bare Hands command channel from Slice 12 (MCP tool, server queue, page consumer)
+- `jarvis/runtime/prompt_catalog.py` if the brain's capability text needs the tutorial and calibration commands
 - Bare Hands controller/settings
+- `jarvis/runtime/control_center.py` and `jarvis/runtime/control_center.html` — marker constant, marker placement and load-order assertion for any new page module (Slice 00, F3)
 - browser/unit/trace tests
 
 ## Architecture Constraints

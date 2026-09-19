@@ -1,1 +1,1 @@
-{"slice_id":"07","task_type":null,"work_intent":"frontend/settings","dependencies":["01","05","06"],"task_type_blocker":"Resolve against the current Workspace Task Type vocabulary before dispatch; do not invent a type."}
+{"slice_id": "07", "task_type": null, "work_intent": "frontend/settings", "dependencies": ["01", "05", "06"], "task_type_blocker": "Waived by the Human on 2026-09-19 (decision D1): no Workspace Task Type vocabulary exists in this repository. task_type stays null."}

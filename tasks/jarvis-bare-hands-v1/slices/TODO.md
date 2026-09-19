@@ -2,7 +2,9 @@
 
 ## Orchestration rule
 
-Execute Slice 00 first. No implementation Slice may begin until Slice 00 declares READY and resolves a valid Workspace Task Type for that Slice.
+Execute Slice 00 first. No implementation Slice may begin until Slice 00 declares READY.
+
+Slice 00 ran on 2026-09-19; see `00-project-manager/READINESS.md`. The Task Type gate was waived by the Human (D1), so `task_type` stays null everywhere.
 
 ## Required coding skills
 
@@ -22,6 +24,7 @@ Every coding Slice must load /caveman and /coding-guideline. Every frontend/brow
 - [ ] 09 — Implement tutorial overlay and voice entry points
 - [ ] 10 — Add diagnostics, replay traces and benchmark metrics
 - [ ] 11 — Integrate, migrate, validate end-to-end and document rollout
+- [ ] 12 — Build the Bare Hands command channel from the brain to the page (added by Slice 00, decision D2)
 
 ## Dependency graph
 
@@ -31,10 +34,24 @@ Every coding Slice must load /caveman and /coding-guideline. Every frontend/brow
 05 -> 06
 01,05,06 -> 07
 03,04,05,06,07 -> 08
-06,07,08 -> 09
+02,07 -> 12
+06,07,08,12 -> 09
 03,04,05,06,08 -> 10
-02,03,04,05,06,07,08,09,10 -> 11
+02,03,04,05,06,07,08,09,10,12 -> 11
 
-## Planning blocker
+## Resolved planning blockers
 
-task_type is intentionally null in planning metadata because the Workspace Task Type vocabulary is unavailable here. Slice 00 must resolve valid existing Task Types before dispatch; do not fabricate labels.
+Both blockers recorded in `task.json` were closed by Slice 00 on 2026-09-19.
+
+- **Task Type.** No Workspace Task Type vocabulary exists in this repository, in any form. The Human waived the gate (D1), matching the precedent of the settings, observability and category2 tasks. `task_type` stays null in every metadata file; do not fabricate labels.
+- **Freshness audit.** The Control Center, Constellation and voice-command integration points were audited against `origin/main@6af6df91`, which is exactly the planning snapshot. Findings F1-F7 are in `00-project-manager/READINESS.md`; F2, F3 and F5 were applied to the Slices below.
+
+## Standing constraints discovered by Slice 00
+
+Read `00-project-manager/READINESS.md` before implementing any Slice. In particular:
+
+- New page JS is not loaded by `<script src>`. Each module is a marker comment in `control_center.html` substituted server-side by `control_center.py`, and load order is asserted by tests. Registering a new module is part of the Slice that creates it.
+- `pointerId 9001` and the `#jarvisHands` DOM shape are a contract with `control_center_scene_page.js` and `control_center.html`, not Bare Hands internals.
+- Scene geometry lives in `control_center_scene_interact.js` and works in scene units (±160 × ±90), not pixels. Extend it; do not build parallel geometry.
+- Edge/corner manipulation applies to `capsule` and `window` representations only (Human decision D3). `point` and `signal` stars stay move-only.
+- There is no LogBroker. Emit through `RuntimeJournal` to `runtime/trace.jsonl`, with a stable `code` in `data` for every refusal.

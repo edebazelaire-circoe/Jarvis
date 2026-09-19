@@ -1,1 +1,1 @@
-{"slice_id":"11","task_type":null,"work_intent":"integration/runtime","dependencies":["02","03","04","05","06","07","08","09","10"],"task_type_blocker":"Resolve against the current Workspace Task Type vocabulary before dispatch; do not invent a type."}
+{"slice_id": "11", "task_type": null, "work_intent": "integration/runtime", "dependencies": ["02", "03", "04", "05", "06", "07", "08", "09", "10", "12"], "task_type_blocker": "Waived by the Human on 2026-09-19 (decision D1): no Workspace Task Type vocabulary exists in this repository. task_type stays null."}

@@ -8,13 +8,15 @@
 
 ## Declared state
 
-**`HUMAN_DECISION_REQUIRED`** (2026-09-19)
+**`READY`** (2026-09-19, after Human decisions)
 
-Three decisions are needed before any implementation Slice is dispatched. Everything else is resolved; the plan is sound and the repository matches it.
+First declared `HUMAN_DECISION_REQUIRED`. The Human then chose:
 
-- **D1 — Workspace Task Type.** No such vocabulary exists anywhere in the repository. Precedent across three prior tasks (settings, observability, category2 test lab) is to waive the gate and leave `task_type: null`. Recommend the same waiver.
-- **D2 — Voice entry points (F1 below).** Decision 6 and Slice 09 require voice activation of Bare Hands, calibration and tutorial. No substrate exists for this, and building it is a mechanism no Slice currently scopes. Choose: build it (enlarge 07/09 or insert a Slice), or defer voice entry to V1.1 and ship the UI button only.
-- **D3 — Scope of frame manipulation (F4 below).** Decisions 9–11 (edges/corners as manipulation zones) apply cleanly to scene objects in `capsule`/`window` representation. `point` and `signal` objects are not resizable today and have no min-size. Confirm that edge/corner manipulation targets `capsule`/`window` only.
+- **D1 — Workspace Task Type: waived.** No such vocabulary exists anywhere in the repository. `task_type` stays `null` in every Slice metadata file, matching the settings, observability and category2 precedent. The `task_type_blocker` field in all thirteen metadata files now records the waiver instead of the gate.
+- **D2 — Voice entry points: build the channel in V1.** Added **Slice 12 — Bare Hands command channel from the brain to the page**, depending on 02 and 07. Slice 09 now depends on 12 and wires its voice entry points onto that channel instead of an assumed router. Slice 11 also depends on 12.
+- **D3 — Frame manipulation: `capsule` and `window` only.** `point` and `signal` stars stay move-only. Recorded in the Architecture Constraints of Slices 05 and 06.
+
+Implementation dispatch remains blocked on one non-technical item: the Human must move the Drive folder from `to-do` to `current`.
 
 ## Blind audit — live facts that change or confirm the plan
 
@@ -114,9 +116,23 @@ Every JS module additionally gets server-side assertions: the marker is consumed
 
 Unchanged from `slices/TODO.md`; all Slice IDs and dependencies resolve. No Slice is dispatchable before this report reaches `READY`.
 
+## Planning repairs applied (2026-09-19)
+
+- **New Slice 12** — `slices/12-voice-command-channel/` with SLICE.md, metadata.json and human-validation.json (D2).
+- **Dependency graph** — `02,07 -> 12`; `06,07,08,12 -> 09`; `12` added to Slice 11. Recorded in `slices/TODO.md` and in the metadata of Slices 09 and 11.
+- **F2** — Slices 01 and 06 now list `control_center_scene_page.js` and `control_center.html` in Files Likely Touched, with an Architecture Constraint stating that replacing `pointerId 9001` is a cross-module change.
+- **F3** — Slices 01, 05, 06, 07 and 09 now list marker registration in `control_center.py` + `control_center.html` with a load-order assertion.
+- **F4 / D3** — Slice 06 is directed to extend `control_center_scene_interact.js`, in scene units, for `capsule`/`window` only. Slice 05 carries the matching resolver constraint and the `data-object-id` / `.sc-node` identity facts.
+- **F5** — Slice 07 carries the shared-tab constraint, the deliberate absence of `barehands_test_mode` from `/api/settings`, and the canonical settings-module shape.
+- **TODO.md** — gained a "Standing constraints discovered by Slice 00" section so an implementer meets these facts before opening a SLICE.md.
+
 ## Required before dispatch
 
-1. Human answers D1, D2, D3.
-2. Human moves the Drive folder `to-do/jarvis-bare-hands-v1` → `current`.
-3. Planning repairs F2, F3, F5 applied to the affected SLICE.md files.
+1. ~~Human answers D1, D2, D3.~~ Done 2026-09-19.
+2. **Human moves the Drive folder `to-do/jarvis-bare-hands-v1` → `current`.** Outstanding; the connector cannot do it.
+3. ~~Planning repairs F2, F3, F5 applied to the affected SLICE.md files.~~ Done, listed above.
 4. Targeted freshness check immediately before each Slice dispatch, per the handoff's standing rule.
+
+## Dispatch order
+
+Slice 01 is the only Slice whose dependencies are satisfied. It is dispatchable as soon as the Drive move is confirmed.

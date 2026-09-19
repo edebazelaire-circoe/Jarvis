@@ -50,11 +50,18 @@ This Slice is part of Bare Hands V1. Preserve the locked decisions in docs/01-de
 
 - Control Center settings UI
 - Bare Hands tool palette/components
+- `jarvis/runtime/control_center_barehands.js` — it creates the shared "Expérimental" tab (`:507`) and monkey-patches `renderTab`
+- `jarvis/runtime/barehands_test_mode.py` and the `GET`/`POST /api/barehands` route pair
 - settings schema/persistence/backend
 - target resolver integration
+- `jarvis/runtime/control_center.py` and `jarvis/runtime/control_center.html` — marker constant, marker placement and load-order assertion for any new page module (Slice 00, F3)
 - UI/unit tests
 
 ## Architecture Constraints
+
+- Bare Hands **creates** the "Expérimental" settings tab, and `control_center_scene_settings.js` prepends its own section to it and depends on that injection order (documented at `control_center.py:224-226`). Restructuring Bare Hands settings can silently break the Scene settings section; keep the order and the existing assertions (Slice 00, F5).
+- `barehands_test_mode` is deliberately absent from `_settings_payload` / `GET /api/settings`. It has its own immediate-write route pair so the toggle applies hot and does not depend on the rest of the settings validating (rationale at `control_center.py:1661-1666`). Preserve that unless the Human decides otherwise.
+- Follow the established settings-module shape (`SETTING_KEY`, a tolerant `load`, a strict `apply` raising a stable `.code`, and `describe`), as in `jarvis/runtime/scene_settings.py`.
 
 - One hand on a manipulation zone moves; it never resizes.
 - Only two compatible manipulation-zone captures on the same object may resize it.

@@ -45,6 +45,9 @@ Define tracker-neutral HandFrame/track identity structures, semantic gesture/pin
 
 - jarvis/runtime/control_center_barehands.js or extracted Bare Hands modules
 - jarvis/runtime/barehands_test_mode.py
+- `jarvis/runtime/control_center_scene_page.js` — it reads `pointerId===9001` (`:1874`), sniffs `#jarvisHands .jh-token` (`:1726`) and styles on `.jh-badge` (`:819`) (Slice 00, F2)
+- `jarvis/runtime/control_center.html` — the `inert` sweep exempts `#jarvisHands` by id (`:2075`) (Slice 00, F2)
+- `jarvis/runtime/control_center.py` and `jarvis/runtime/control_center.html` — marker constant, marker placement and load-order assertion for any new page module (Slice 00, F3)
 - settings schema/storage files discovered by freshness audit
 - Bare Hands tests
 - contributor/architecture docs
@@ -55,6 +58,7 @@ Define tracker-neutral HandFrame/track identity structures, semantic gesture/pin
 - Per-hand and per-capture state must be explicit and testable.
 - User-visible behavior must follow the decision log rather than legacy mouse-only assumptions.
 - Unknown current repository component names must be discovered, not invented.
+- Replacing the hard-coded `pointerId 9001` is a cross-module change. The scene page currently identifies Bare Hands by that literal and by the `#jarvisHands` DOM shape; both consumers must move in this Slice or the scene stops recognising hand input (Slice 00, F2).
 
 ## Automated Validation
 
