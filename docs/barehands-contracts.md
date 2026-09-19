@@ -255,15 +255,33 @@ comme une main qui saute, c'est-à-dire comme une autre main.
    bornée à `predictMs`) ;
 2. le coût d'un appariement est la distance prédiction ↔ détection **en
    paumes** — invariante à la distance à la caméra, comme le pincement et le
-   C — moins `handednessBonusPalms` si les latéralités s'accordent ;
-3. **la porte (`matchRadiusPalms`) se juge sur la distance seule, jamais sur le
-   coût** : la latéralité départage, elle n'ouvre pas la porte. C'est ce qui
-   empêche une étiquette qui bascule de voler une identité ;
-4. l'attribution retenue minimise le coût **total**, pas la meilleure paire
-   d'abord : au croisement, le glouton prend la paire la plus proche et impose
-   la pire à l'autre. Recherche exhaustive, bornée par `MAX_HANDS` ; au-delà de
-   quatre détections l'image se refuse (`tracking_failed`) plutôt que de
-   laisser une factorielle grandir en silence.
+   C — et **rien d'autre** ;
+3. la porte (`matchRadiusPalms`) se juge sur cette distance : au-delà, ce n'est
+   pas un appariement du tout ;
+4. l'attribution retenue minimise la distance **totale**, pas la meilleure
+   paire d'abord : au croisement, le glouton prend la paire la plus proche et
+   impose la pire à l'autre. Recherche exhaustive, bornée par `MAX_HANDS` ;
+   au-delà de quatre détections l'image se refuse (`tracking_failed`) plutôt
+   que de laisser une factorielle grandir en silence ;
+5. **la latéralité ne départage qu'à distance totale égale.** Elle est la clé
+   *secondaire* de l'attribution — à somme d'écarts égale, celle qui compte le
+   moins de désaccords d'étiquette gagne ; une étiquette absente d'un côté ou
+   de l'autre ne compte ni pour ni contre. Elle ne peut donc rien renverser.
+   Jusqu'à la reprise de la Slice 03 elle était une prime (`0,35` paume)
+   **soustraite au coût**, et une prime soustraite est une clé déguisée : deux
+   étiquettes qui basculent sur la même image — ce que fait MediaPipe quand
+   deux mains se recouvrent — faisaient payer l'échange `(d − 0,35) × 2` contre
+   `0` pour l'appariement juste, si bien que l'échange gagnait **sous 0,35
+   paume de séparation** (≈ 3 cm). Le pincement, la capture et le `pointerId`
+   partaient alors à l'autre main, définitivement au-delà de ~330 ms ;
+6. **les coûts sont des distances, donc positifs ou nuls**, et c'est ce qui
+   rend l'élagage de la recherche légitime : un total partiel minore le total
+   final. Avec la prime soustraite il ne le minorait plus, et la recherche
+   jetait de vrais optimums (670 sur 300 000 matrices 2×2 tirées au hasard) —
+   le même appariement pouvait alors dépendre de l'ordre dans lequel le
+   traqueur rend ses mains. Une troisième clé, les écarts triés du plus grand
+   au plus petit, départage ce que les deux premières laissent à égalité, pour
+   que l'ordre de la liste ne décide jamais.
 
 Les identifiants sont des **entiers à partir de 0** — `0` est une identité, et
 c'est le premier qu'émet un traqueur qui numérote ses pistes.
@@ -310,6 +328,37 @@ signal de commande, pas une mesure. `vxPxPerSec` / `vyPxPerSec` sont la dérivé
 du **point filtré**, lissée au même `dCutoffHz` : sans biais en régime établi
 (899 px/s mesurés pour 900 réels) et déjà débarrassée du tremblement.
 
+#### Temps d'établissement de la vitesse — à lire avant de s'en servir
+
+Le régime établi est exact ; le **transitoire ne l'est pas**, et il est lent.
+La vitesse publiée est lissée à `dCutoffHz` = 1 Hz, soit une constante de temps
+τ = 1/(2π·1) ≈ **159 ms**. C'est structurel, pas un réglage mal choisi : la même
+coupure basse est ce qui empêche le tremblement du repos de se lire comme un
+mouvement. Mesuré sur des images de 16 ms, main à 900 px/s :
+
+| Événement | Ce que la vitesse publiée dit |
+|---|---|
+| arrêt net | `stillness` franchit 0,5 à **~250 ms**, atteint 1 à **~585 ms** |
+| arrêt net | `stillMs` ne commence à courir qu'à ce **~585 ms** |
+| inversion franche | la vitesse garde le **mauvais signe ~120 ms** |
+| inversion franche | elle atteint 90 % de la nouvelle vitesse à **~490 ms** |
+
+Conséquences, à prendre comme des contraintes et non comme des surprises :
+
+- `stillMs` ne peut pas servir à reconnaître une immobilité **plus courte que
+  ~600 ms** après un geste franc. Une main qui arrive vite et pince aussitôt se
+  lit *en mouvement, `stillMs` = 0* ;
+- `stillness` est le seul des deux utilisable dans la demi-seconde qui suit un
+  geste, et encore : il vaut 0 pendant ~130 ms puis monte en rampe ;
+- la **position** filtrée, elle, ne traîne pas de la même façon : à 900 px/s
+  son retard est de l'ordre de 8 px et il se referme en deux ou trois images.
+  Un consommateur qui a besoin de savoir « la main a-t-elle bougé » plutôt que
+  « à quelle vitesse » doit lire un déplacement (`travelPx`), pas une vitesse.
+
+`test_the_published_velocity_takes_its_time_to_admit_a_stop_or_a_reversal`
+épingle ces quatre nombres : ils bornent ce que les Slices 04 à 06 peuvent
+décider, et une retouche de `dCutoffHz` les déplace tous.
+
 ### Qualité de suivi
 
 `handQuality(landmarks, aspect, continuity)` est le **minimum** de quatre
@@ -336,8 +385,20 @@ décision 7 ne se réarme plus que sur une main au-dessus du plancher : la
 Slice 02 avait noté cette approximation, elle est fermée. Les clics et le
 survol, eux, ne sont **pas** encore filtrés par la qualité — l'intention
 appartient aux Slices 04 et 05, qui liront `quality` et `stillMs` pour décider.
-Le guetteur de `SLEEP` ne lit pas la qualité non plus : son budget d'images
-(§1) n'a pas bougé pour cette Slice.
+
+**Le guetteur de `SLEEP` lit la même qualité que le minuteur d'ACTIVE**, et
+c'est une reprise : il ne lisait longtemps que la présence des points. La
+décision 7 était donc fermée d'un côté et rouverte de l'autre, et une main que
+l'interaction refuse pouvait la **démarrer** — cycle mesuré sur une main de
+qualité 0,125 tenant un C à 0,93 : `active` → 30 s → `sleep:idle_sleep` →
+réveil une seconde plus tard → sans fin, chaque tour détruisant toutes les
+identités, réallouant les fentes de pointeur et émettant deux pastilles. Le
+budget d'images (§1) ne bouge pas pour autant : une inférence par
+`WAKE_INTERVAL_MS`, plus une mesure de qualité qui ne coûte qu'une boucle sur
+les points déjà rendus. En veille la **continuité vaut 1** — aucune piste ne
+tourne, il n'y a pas d'identité à mettre en doute, et la seconde de maintien du
+C est le témoin de continuité du guetteur. Une main refusée **reste dessinée**,
+l'anneau n'avance pas.
 
 Et le changement se **voit** : un jeton sous le plancher se dessine pâle et
 pointillé, et la pastille compte les mains crues à part (« MAINS · 1/2 »). Sans
@@ -385,7 +446,6 @@ rien faire tomber. **Changer l'un d'eux, c'est le reporter ici.**
 | `stillSpeedPx` | 28 | px/s sous lesquels la main est posée |
 | `moveSpeedPx` | 420 | px/s au-dessus desquels elle file franchement |
 | `matchRadiusPalms` | 1,6 | porte d'appariement, en paumes |
-| `handednessBonusPalms` | 0,35 | prime d'accord de latéralité — reste sous la séparation de deux mains |
 | `predictMs` | 120 | extrapolation bornée de la vitesse d'une piste |
 | `trackVelocityBlend` | 0,5 | lissage de cette vitesse |
 | `qualityFloor` | 0,25 | recopie de `HAND_QUALITY_FLOOR` |
@@ -574,6 +634,24 @@ jamais sur une dérivée recalculée, la dérivée interne du filtre One Euro li
   `durationMs ≤ clickMaxMs`, `travelPx ≤ clickSlopPx` et
   `stillness ≥ clickStillnessMin`. Sans le troisième, un geste franc dont le
   pincement se ferme une image au passage se lirait comme un clic.
+
+**Ce que le temps d'établissement de la vitesse coûte au clic.**
+`stillness ≥ 0,5` veut dire « vitesse publiée ≤ 224 px/s », et après une
+approche à 900 px/s cette vitesse-là met **~250 ms** à retomber sous 224
+(§ Temps d'établissement). Donc, mesuré :
+
+| Contact après une approche franche | Verdict |
+|---|---|
+| relâché moins de ~250 ms après l'arrêt de la main | **`drag`**, même avec 0 px de déplacement |
+| relâché entre ~250 ms et `clickMaxMs` après la descente | `click` |
+
+Un clic délibéré **reste possible** — la fenêtre `[~250 ms, 400 ms]` n'est pas
+vide — mais un *tapotement* immédiat après un geste rapide est lu comme un
+glissement. C'est un faux `drag`, jamais un faux `click` : le sens de l'erreur
+est le bon, l'utilisateur voit « rien ne s'est passé » plutôt qu'un clic qu'il
+n'a pas demandé. `clickStillnessMin` est le seul nombre qui déplace cette
+frontière, et la Slice 08 le calibre devant une caméra réelle : le baisser
+élargit la fenêtre du clic et rapproche du faux clic sur un geste franc.
 
 ### Réglages du moteur (Slice 04)
 
@@ -849,7 +927,7 @@ Seul étage qui connaisse un traqueur ou l'expérience actuelle.
   `HandFrame`. `meta.trackIds` est le crochet par lequel la Slice 03 impose son
   identité persistante — **y compris `0`** ; `createHandTracker().update()`
   rend ces identités sous `trackIds`, alignées sur `result.landmarks`, trous
-  compris. sans elle, la latéralité sert
+  compris. Sans elle, la latéralité sert
   d'identifiant de repli, comme aujourd'hui. Une main aux points incomplets
   est ignorée, pas devinée. Une **troisième** main se refuse
   (`barehands_too_many_hands`) au lieu d'être tranchée en silence :

@@ -362,7 +362,15 @@
       /* 1 = main posée, 0 = main qui file. `stillMs` est **depuis quand** elle
          est posée : c'est cette durée, et non l'instantané, qui distingue un
          clic d'un début de glissement — une vitesse passe sous le seuil une
-         image au milieu d'un geste franc. */
+         image au milieu d'un geste franc.
+
+         Les deux se lisent sur une vitesse lissée à 1 Hz (τ ≈ 159 ms) : après
+         une main à 900 px/s stoppée net, `stillness` franchit 0,5 à ~250 ms et
+         `stillMs` ne commence à courir qu'à ~585 ms. Une immobilité plus
+         courte que ~600 ms ne se reconnaît donc pas, et un consommateur qui a
+         besoin de « la main a-t-elle bougé » doit lire un déplacement, pas une
+         vitesse. Chiffré dans `docs/barehands-contracts.md`, § Temps
+         d'établissement de la vitesse. */
       stillness:unit(source.stillness,0),
       stillMs:Math.max(0,finiteOr(source.stillMs,0)),
       quality:unit(source.quality,1),

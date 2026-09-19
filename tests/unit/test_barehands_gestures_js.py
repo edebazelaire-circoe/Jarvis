@@ -551,6 +551,79 @@ def test_a_click_and_a_drag_are_told_apart_by_travel_duration_and_stillness(tmp_
     assert result["slow"]["intent"] == "drag" and result["slow"]["durationMs"] == 934
 
 
+def test_a_tap_made_too_soon_after_a_fast_reach_is_read_as_a_drag(tmp_path):
+    """Ce que le **temps d'établissement** de la vitesse de la Slice 03 coûte au
+    clic de la Slice 04, mesuré de bout en bout plutôt que raisonné : la
+    trajectoire passe par le vrai filtre et la vraie immobilité, et c'est leur
+    sortie qui nourrit le moteur d'intention.
+
+    `stillness ≥ clickStillnessMin` (0,5) veut dire « vitesse publiée
+    ≤ 224 px/s », et cette vitesse-là est lissée à 1 Hz : après une approche à
+    900 px/s, elle met ~250 ms à retomber sous 224. Donc un contact relâché
+    moins de ~250 ms après l'arrêt de la main se conclut **`drag`, même avec un
+    déplacement nul**.
+
+    Un clic délibéré reste possible — la fenêtre `[~250 ms, clickMaxMs]` n'est
+    pas vide, et le second cas le montre — mais un tapotement immédiat après un
+    geste rapide ne passe pas. Le sens de l'erreur est le bon (un faux `drag`,
+    jamais un faux `click`), et `clickStillnessMin` est le seul nombre qui
+    déplace la frontière : la Slice 08 le calibrera devant une caméra réelle.
+
+    Ce test est ici, dans le fichier qui possède clic et glissement, parce que
+    c'est ici qu'il faut le relire le jour où l'un des deux nombres bouge."""
+
+    result = run_node(tmp_path, HAND + """
+      /* Trajectoire réelle : 900 px/s pendant 1 s puis arrêt net, à travers le
+         filtre et l'immobilité de la Slice 03. */
+      const f=B.createPointerFilter({}),s=B.createStillness({});
+      const rows=[];let x=100;
+      for(let i=0;i<200;i+=1){
+        const at=i*16,v=at<1000?900:0;
+        x+=v*.016;
+        const m=f.update({x,y:0},at);
+        const st=s.update(m.speedPxPerSec,at);
+        if(at>=1000)rows.push({t:at-1000,x:m.x,stillness:st.stillness});
+      }
+      const near=ms=>rows.reduce((best,r)=>
+        Math.abs(r.t-ms)<Math.abs(best.t-ms)?r:best,rows[0]);
+      /* Contact : pincé de `down` à `up` (millisecondes après l'arrêt de la
+         main), l'ancre figée au point où il commence. */
+      const tap=(down,up)=>{
+        const engine=B.createPinchIntentEngine({});
+        const anchor=near(down);
+        const events=[];
+        for(const r of rows){
+          if(r.t<down-32||r.t>up+16)continue;
+          const closed=r.t>=down&&r.t<=up;
+          events.push(...engine.update({hands:[input(0,closed?PRIMARY({gap:.15}):OPEN(),
+            {x:r.x,y:0,anchorX:anchor.x,anchorY:0,stillness:r.stillness})],
+            now:1000+r.t,aspect:1}).events);
+        }
+        const released=events.filter(e=>e.phase==='up')[0];
+        return released?{intent:released.intent,travelPx:Math.round(released.travelPx),
+          durationMs:Math.round(released.durationMs),
+          stillnessAtRelease:Number(near(up).stillness.toFixed(2))}:null;
+      };
+      out({quick:tap(0,150),deliberate:tap(0,350),settled:tap(600,750),
+           floor:B.DEFAULTS.clickStillnessMin});
+    """)
+    assert result["floor"] == 0.5, result
+    # Tapotement immédiat : rien n'a bougé, la durée tient largement dans
+    # `clickMaxMs`, et c'est pourtant un glissement — la vitesse publiée n'a pas
+    # encore admis que la main s'était arrêtée.
+    assert result["quick"]["intent"] == "drag"
+    assert result["quick"]["travelPx"] <= 12
+    assert result["quick"]["durationMs"] <= 400
+    assert result["quick"]["stillnessAtRelease"] < 0.5
+    # Le même contact tenu jusqu'au-delà de ~250 ms : clic, sans rien changer
+    # d'autre. La fenêtre du clic existe, elle commence juste plus tard.
+    assert result["deliberate"]["intent"] == "click"
+    assert result["deliberate"]["stillnessAtRelease"] >= 0.5
+    # Main posée depuis longtemps : le cas nominal, jamais en cause ici.
+    assert result["settled"]["intent"] == "click"
+    assert result["settled"]["stillnessAtRelease"] == 1
+
+
 def test_a_lost_hand_cancels_its_contact_instead_of_releasing_it(tmp_path):
     """Une main qui disparaît au milieu d'un pincement n'a pas cliqué : un `up`
     ferait partir l'action que la perte vient d'interrompre. La grâce est celle

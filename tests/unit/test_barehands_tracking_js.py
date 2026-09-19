@@ -178,33 +178,54 @@ def test_the_order_the_tracker_lists_its_hands_in_is_not_an_identity(tmp_path):
     assert result["tracks"] == 2, "personne n'a ouvert de piste supplémentaire"
 
 
-def test_a_handedness_label_that_flips_never_steals_an_identity(tmp_path):
+#: Séparation des deux paumes, **en paumes**, de part et d'autre de la valeur
+#: qui volait une identité avant la reprise de cette Slice. La prime d'accord
+#: valait 0,35 paume et était soustraite au coût : deux étiquettes qui
+#: basculent sur la même image payaient l'échange `(d − 0,35) × 2` contre `0`
+#: pour l'appariement juste, donc **l'échange gagnait sous 0,35** (seuil mesuré
+#: au millième : tenu à 0,36, volé à 0,34). Le test d'avant plaçait les mains à
+#: 0,8 paume, 2,3 fois au-dessus : il ne prouvait rien là où ça mordait.
+#:
+#: 0,35 paume ≈ 3 cm entre deux centres de paume — deux mains qui se recouvrent,
+#: c'est-à-dire exactement la seule image où MediaPipe retourne les deux
+#: étiquettes à la fois.
+FLIP_SEPARATIONS_PALMS = [0.8, 0.4, 0.36, 0.34, 0.3, 0.2, 0.1, 0.05, 0.02]
+
+
+@pytest.mark.parametrize("separation", FLIP_SEPARATIONS_PALMS)
+def test_a_handedness_label_that_flips_never_steals_an_identity(tmp_path, separation):
     """La latéralité est un **indice**, jamais une clé. Le traqueur réétiquette
     une main vue de profil d'une image à l'autre ; si l'étiquette était
     l'identité — ce qu'elle était avant cette Slice — les deux mains
     échangeaient leur pointeur sur une seule image mal lue.
 
-    La prime d'accord (`handednessBonusPalms`) départage à distance égale ;
-    elle reste sous la séparation des deux mains, donc elle ne peut pas
-    renverser la géométrie. Et l'étiquette de la piste, elle, se vote : une
-    image contraire ne la retourne pas, trois d'affilée oui — c'est une
-    correction d'indice, pas un vol d'identité."""
+    Elle départage désormais **à distance totale égale**, en clé secondaire de
+    l'attribution, et ne peut donc rien renverser : à toute séparation non
+    nulle, l'appariement juste coûte strictement moins cher que l'échange.
+    C'est pourquoi le test balaie des séparations de part et d'autre de
+    l'ancien seuil de vol au lieu de se poser confortablement au-dessus.
+
+    Et l'étiquette de la piste, elle, se vote : une image contraire ne la
+    retourne pas, trois d'affilée oui — c'est une correction d'indice, pas un
+    vol d'identité."""
 
     result = run_node(tmp_path, HAND + """
       const t=B.createHandTracker({});
       const steps=[];
-      // Deux mains proches (0,8 paume) : assez pour que la prime de latéralité
-      // pèse si on la laissait faire.
+      // Deux mains séparées de `sep` paumes, les deux étiquettes basculant sur
+      // la même image — ce que fait MediaPipe quand elles se recouvrent.
+      const sep=%f,palm=.2,d=sep*palm/2;
       const names=i=>i<3?['Left','Right']:['Right','Left'];
       for(let i=0;i<8;i+=1){
-        const step=t.update(scene([hand(.42,.5),hand(.58,.5)],names(i)),frame(i*33));
+        const step=t.update(scene([hand(.5-d,.5,{palm}),hand(.5+d,.5,{palm})],names(i)),frame(i*33));
         steps.push([step.tokens.map(k=>k.id),step.tokens.map(k=>k.handedness)]);
       }
       out({steps,tracks:t.size()});
-    """)
+    """ % separation)
     ids = [step[0] for step in result["steps"]]
     handedness = [step[1] for step in result["steps"]]
-    assert ids == [[0, 1]] * 8, "une étiquette qui bascule a volé une identité"
+    assert ids == [[0, 1]] * 8, (
+        f"une étiquette qui bascule a volé une identité à {separation} paume de séparation")
     assert result["tracks"] == 2
     # Trois images d'accord installent la latéralité…
     assert handedness[:3] == [["left", "right"]] * 3
@@ -214,6 +235,204 @@ def test_a_handedness_label_that_flips_never_steals_an_identity(tmp_path):
     # Trois images contraires d'affilée, si : l'indice se corrige, l'identité
     # de piste ne bouge toujours pas.
     assert handedness[5] == ["right", "left"]
+
+
+def test_a_handedness_bonus_subtracted_from_the_cost_is_refused_at_construction(tmp_path):
+    """Le réglage qui portait le défaut n'est pas laissé inerte : `options()` le
+    refuse, comme `smoothing` avant lui. Un appelant qui le passe encore
+    l'apprend à la construction — sinon un réglage sans effet serait
+    indiscernable d'un réglage appliqué, et la question « pourquoi les deux
+    mains échangent-elles encore leur pointeur ? » se poserait trois Slices
+    plus loin."""
+
+    result = run_node(tmp_path, """
+      out({
+        gone:B.DEFAULTS.handednessBonusPalms===undefined,
+        refused:['createHandTracker','createHandTrackManager','createPointerFilter']
+          .map(name=>refused(()=>B[name]({handednessBonusPalms:.35}))),
+        says:(()=>{try{B.createHandTracker({handednessBonusPalms:.35})}
+                   catch(e){return /distance égale/.test(e.message)}return false})(),
+      });
+    """)
+    assert result["gone"] is True
+    assert result["refused"] == ["RangeError"] * 3
+    assert result["says"] is True, "le refus doit nommer ce qui remplace le réglage"
+
+
+def test_the_pairing_kept_is_always_the_one_of_smallest_total_distance(tmp_path):
+    """R2 : l'élagage de `assign` n'est un vrai séparation-évaluation que si les
+    coûts sont **positifs ou nuls** — un total partiel doit minorer le total
+    final. La prime soustraite les mettait dans [−0,35 ; 1,6], et la recherche
+    jetait alors de vrais optimums : 670 attributions non minimales sur 300 000
+    matrices 2×2 tirées au hasard, mesurées par la QA.
+
+    Ce test est ce qui attrape la réintroduction d'un coût négatif, quelle
+    qu'en soit la forme. Il ne lit pas le code : il tire des géométries au
+    hasard, calcule la meilleure somme de distances par force brute — les sept
+    attributions possibles à deux détections et deux pistes — et exige que le
+    gestionnaire n'en rende jamais une moins bonne.
+
+    Le second volet est le même échantillon lu à l'envers : **l'ordre des
+    détections n'est pas une identité**. Le test dédié plus haut le montre sur
+    un cas symétrique, qui passait déjà avec la recherche cassée ; celui-ci
+    l'exige sur des milliers de géométries quelconques, où un appariement qui
+    dépend du rang dans le tableau se voit."""
+
+    result = run_node(tmp_path, """
+      let seed=987654321;
+      const rnd=()=>{seed=(seed*1103515245+12345)&0x7fffffff;return seed/0x7fffffff};
+      const PALM=.2,RADIUS=1.6;
+      const gap=(t,d)=>Math.hypot(t.x-d.x,t.y-d.y)/PALM;
+      let nonMinimal=0,orderDependent=0,swaps=0,newTracks=0,outOfGate=0;
+      for(let trial=0;trial<4000;trial+=1){
+        const A={x:.3+rnd()*.4,y:.3+rnd()*.4},Bt={x:.3+rnd()*.4,y:.3+rnd()*.4};
+        // Détections tirées autour des deux pistes : assez près pour que la
+        // porte s'ouvre, assez loin pour que l'échange soit parfois le bon.
+        const near=v=>Math.max(.02,Math.min(.98,v));
+        const P={x:near(A.x+(rnd()-.5)*.9),y:near(A.y+(rnd()-.5)*.9)};
+        const Q={x:near(Bt.x+(rnd()-.5)*.9),y:near(Bt.y+(rnd()-.5)*.9)};
+        // Étiquettes tantôt d'accord, tantôt inversées, tantôt absentes.
+        const labels=[['Left','Right'],['Right','Left'],['','']][trial%3];
+        const seeded=()=>{
+          const m=B.createHandTrackManager({});
+          m.update({hands:[{x:A.x,y:A.y,palm:PALM,handedness:'Left',handednessConfidence:.9},
+                           {x:Bt.x,y:Bt.y,palm:PALM,handedness:'Right',handednessConfidence:.9}],
+                    now:0,aspect:1});
+          return m;
+        };
+        const det=[{x:P.x,y:P.y,palm:PALM,handedness:labels[0],handednessConfidence:.9},
+                   {x:Q.x,y:Q.y,palm:PALM,handedness:labels[1],handednessConfidence:.9}];
+        const forward=seeded().update({hands:det,now:33,aspect:1}).map(e=>e.handTrackId);
+        const backward=seeded().update({hands:[det[1],det[0]],now:33,aspect:1}).map(e=>e.handTrackId);
+        // Force brute : coût d'une piste neuve = la porte, comme dans `assign`.
+        const cost=(track,detection)=>{
+          const g=gap(track===0?A:Bt,detection===0?P:Q);
+          return g<=RADIUS?g:null;
+        };
+        let best=Infinity;
+        for(const pair of [[0,1],[1,0],[0,-1],[1,-1],[-1,0],[-1,1],[-1,-1]]){
+          const a=pair[0]<0?RADIUS:cost(pair[0],0),b=pair[1]<0?RADIUS:cost(pair[1],1);
+          if(a===null||b===null)continue;
+          best=Math.min(best,a+b);
+        }
+        const priced=(id,detection)=>{
+          if(id>1)return RADIUS;                       // piste neuve
+          const c=cost(id,detection);
+          return c===null?RADIUS:c;
+        };
+        const total=priced(forward[0],0)+priced(forward[1],1);
+        if(total>best+1e-9)nonMinimal+=1;
+        /* La porte est une porte : une piste retenue au-delà de
+           `matchRadiusPalms` n'est pas un appariement moins bon, c'est un
+           appariement qui n'aurait pas dû exister. */
+        forward.forEach((id,i)=>{if(id<=1&&cost(id,i)===null)outOfGate+=1});
+        /* Lue à l'envers, la même géométrie doit rendre le même appariement.
+           Le **numéro** d'une piste neuve, lui, suit forcément l'ordre de la
+           liste — il n'est attribué qu'au moment où la détection est traitée —
+           donc on compare « quelle piste installée » et non « quel numéro ».
+           Toutes les pistes neuves se valent ici : aucune n'a d'histoire. */
+        const settled=id=>(id>1?-1:id);
+        if(!(settled(backward[0])===settled(forward[1])
+            &&settled(backward[1])===settled(forward[0])))orderDependent+=1;
+        if(forward[0]===1&&forward[1]===0)swaps+=1;
+        if(forward[0]>1||forward[1]>1)newTracks+=1;
+      }
+      out({nonMinimal,orderDependent,swaps,newTracks,outOfGate});
+    """)
+    assert result["nonMinimal"] == 0, "la recherche a rendu une attribution non minimale"
+    assert result["outOfGate"] == 0, "une détection a été appariée au-delà de la porte"
+    assert result["orderDependent"] == 0, "l'appariement a dépendu de l'ordre des détections"
+    # L'échantillon exerce bien les trois issues, sinon il ne prouverait rien :
+    # l'appariement direct, l'échange, et la piste neuve hors de la porte.
+    assert result["swaps"] > 100, result
+    assert result["newTracks"] > 100, result
+
+
+def test_what_breaks_a_tie_is_handedness_then_the_worst_pair_never_the_list_order(tmp_path):
+    """L'autre moitié de R2. Le balayage ci-dessus tire des géométries
+    quelconques, où deux attributions n'ont jamais exactement la même somme ;
+    ici les sommes sont **égales par construction**, et c'est là que se voit ce
+    qui départage.
+
+    Trois clés, dans l'ordre : la somme des écarts, puis les désaccords de
+    latéralité, puis les écarts triés du plus grand au plus petit. « La
+    première trouvée » n'en est pas une — c'est le rang dans le tableau, et
+    l'ordre où le traqueur rend ses mains n'est pas une identité. Chaque cas
+    est donc joué **dans les deux sens**, et les deux lectures doivent rendre
+    le même appariement.
+
+    Les deux géométries :
+
+    - *latéralité* — deux détections à égale distance des deux pistes, une de
+      chaque côté. Seules les étiquettes peuvent trancher, et elles tranchent
+      pour l'échange quand c'est l'échange qui les accorde ;
+    - *pire paire* — deux détections placées à droite des deux pistes, sans
+      étiquette : `0,10 + 0,10` contre `0,05 + 0,15`, même somme. On garde
+      celle dont la pire paire est la moins mauvaise, parce que c'est la seule
+      réponse qui ne dépende pas de l'ordre de la liste."""
+
+    result = run_node(tmp_path, """
+      const PALM=.2;
+      const seeded=(a,b)=>{
+        const m=B.createHandTrackManager({});
+        m.update({hands:[{x:a.x,y:a.y,palm:PALM,handedness:'Left',handednessConfidence:.9},
+                         {x:b.x,y:b.y,palm:PALM,handedness:'Right',handednessConfidence:.9}],
+                  now:0,aspect:1});
+        return m;
+      };
+      const both=(a,b,p,q)=>{
+        const one=(first,second)=>seeded(a,b)
+          .update({hands:[first,second],now:33,aspect:1}).map(e=>e.handTrackId);
+        const forward=one(p,q),backward=one(q,p);
+        return {forward,backward,mirrored:backward[0]===forward[1]&&backward[1]===forward[0]};
+      };
+      const det=(x,y,name)=>({x,y,palm:PALM,handedness:name,handednessConfidence:.9});
+      /* Égalité parfaite : les deux détections sont sur la médiatrice des deux
+         pistes, donc les quatre écarts sont deux à deux identiques. */
+      const A={x:.4,y:.5},Bt={x:.6,y:.5};
+      const agreeing=both(A,Bt,det(.5,.45,'Left'),det(.5,.55,'Right'));
+      const crossed=both(A,Bt,det(.5,.45,'Right'),det(.5,.55,'Left'));
+      /* Même somme, écarts différents : 0,10 + 0,10 contre 0,05 + 0,15, sans
+         étiquette pour départager. */
+      const C0={x:.45,y:.5},C1={x:.50,y:.5};
+      const worst=both(C0,C1,det(.55,.5,''),det(.60,.5,''));
+      /* Une étiquette **absente** ne vote ni pour ni contre — même règle que
+         le vote de latéralité. Ici la piste de gauche n'a jamais reçu
+         d'étiquette et la détection de droite n'en porte pas : compter ces
+         deux inconnues comme des désaccords ferait gagner l'échange, alors
+         que rien ne le dit. */
+      const unlabelled=(()=>{
+        const one=(first,second)=>{
+          const m=B.createHandTrackManager({});
+          m.update({hands:[{x:C0.x,y:C0.y,palm:PALM,handedness:'',handednessConfidence:0},
+                           {x:C1.x,y:C1.y,palm:PALM,handedness:'Right',handednessConfidence:.9}],
+                    now:0,aspect:1});
+          return m.update({hands:[first,second],now:33,aspect:1}).map(e=>e.handTrackId);
+        };
+        const p=det(.55,.5,'Right'),q=det(.60,.5,'');
+        const forward=one(p,q),backward=one(q,p);
+        return {forward,backward,mirrored:backward[0]===forward[1]&&backward[1]===forward[0]};
+      })();
+      out({agreeing,crossed,worst,unlabelled});
+    """)
+    # Étiquettes d'accord avec la géométrie : chacun chez soi.
+    assert result["agreeing"]["forward"] == [0, 1]
+    assert result["agreeing"]["mirrored"] is True
+    # Étiquettes croisées, distances identiques : c'est l'échange qui accorde
+    # les deux, donc c'est l'échange. La latéralité tranche **ici**, et
+    # seulement ici — jamais contre la géométrie.
+    assert result["crossed"]["forward"] == [1, 0]
+    assert result["crossed"]["mirrored"] is True
+    # À somme égale et sans étiquette : la pire paire décide (0,10 plutôt que
+    # 0,15), et la réponse ne change pas quand la liste s'inverse.
+    assert result["worst"]["forward"] == [0, 1]
+    assert result["worst"]["mirrored"] is True
+    # Deux inconnues — une piste jamais étiquetée, une détection sans
+    # étiquette — ne font pas deux désaccords : la clé 2 reste muette et c'est
+    # la pire paire qui décide, comme au cas précédent. Les compter ferait
+    # gagner l'échange sur une preuve qui n'existe pas.
+    assert result["unlabelled"]["forward"] == [0, 1]
+    assert result["unlabelled"]["mirrored"] is True
 
 
 # -------------------------------------------------------------------- filtre
@@ -330,6 +549,71 @@ def test_velocity_and_stillness_are_right_on_a_known_path(tmp_path):
     assert result["moving"]["speed"] == pytest.approx(937.5, rel=0.1)
     # Au-dessus de `moveSpeedPx` : plus rien d'immobile, et le compteur est nul.
     assert result["moving"]["stillness"] == 0 and result["moving"]["stillMs"] == 0
+
+
+def test_the_published_velocity_takes_its_time_to_admit_a_stop_or_a_reversal(tmp_path):
+    """R3 : le régime établi est exact, le **transitoire** ne l'est pas, et les
+    tests d'avant cette reprise ne couvraient qu'une rampe régulière et un
+    repos régulier — jamais le moment où la main change d'avis.
+
+    La vitesse publiée est lissée à `dCutoffHz` = 1 Hz, soit τ ≈ 159 ms. Ce
+    n'est pas un réglage mal choisi : la même coupure basse est ce qui empêche
+    le tremblement du repos de se lire comme un mouvement. Mais elle borne ce
+    que les Slices 04 à 06 peuvent décider, et ce test **épingle les quatre
+    nombres** que le contrat publie, pour qu'une retouche de `dCutoffHz` les
+    déplace au vu de tous plutôt qu'en silence.
+
+    Conséquence la plus utile à retenir : une main qui arrive vite et pince
+    aussitôt se lit *en mouvement, `stillMs` = 0*. `stillMs` ne sait pas
+    reconnaître une immobilité plus courte que ~600 ms."""
+
+    result = run_node(tmp_path, """
+      // Trajet en pixels d'écran, images de 16 ms : 900 px/s pendant 1 s, puis
+      // soit l'arrêt net, soit l'inversion franche.
+      const trace=reverse=>{
+        const f=B.createPointerFilter(),s=B.createStillness();
+        let x=100;const rows=[];
+        for(let i=0;i<200;i+=1){
+          const at=i*16,v=at<1000?900:(reverse?-900:0);
+          x+=v*.016;
+          const m=f.update({x,y:0},at);
+          const st=s.update(m.speedPxPerSec,at);
+          rows.push({t:at-1000,vx:m.vxPxPerSec,speed:m.speedPxPerSec,
+                     stillness:st.stillness,stillMs:st.stillMs});
+        }
+        return rows.filter(r=>r.t>=0);
+      };
+      const stopped=trace(false),reversed=trace(true);
+      const firstAt=(rows,ok)=>{const hit=rows.find(ok);return hit?hit.t:null};
+      const wrongSign=reversed.filter(r=>r.vx>0);
+      out({
+        halfStillAt:firstAt(stopped,r=>r.stillness>=.5),
+        fullStillAt:firstAt(stopped,r=>r.stillness>=1),
+        stillMsStartsAt:firstAt(stopped,r=>r.stillMs>0),
+        // La vitesse garde le signe de l'aller alors que la main est repartie
+        // dans l'autre sens : le dernier instant où elle se trompe.
+        wrongSignUntil:wrongSign.length?wrongSign[wrongSign.length-1].t:0,
+        reaches90At:firstAt(reversed,r=>r.vx<=-810),
+        // Régime établi, pour montrer que c'est bien le transitoire qui coûte.
+        settled:reversed[reversed.length-1].vx,
+        // Et ce que voit un pincement décidé tout de suite après l'arrêt.
+        stillnessAt150:stopped.find(r=>r.t>=150).stillness,
+      });
+    """)
+    # Arrêt net d'une main à 900 px/s : l'immobilité met une demi-seconde à se
+    # dire, et `stillMs` ne commence à courir qu'à ce moment-là.
+    assert result["halfStillAt"] == pytest.approx(250, abs=20)
+    assert result["fullStillAt"] == pytest.approx(585, abs=25)
+    assert result["stillMsStartsAt"] == result["fullStillAt"]
+    # Inversion franche : la vitesse publiée se trompe de **signe** le temps
+    # que le lissage tourne. Un consommateur qui en déduirait une direction
+    # pendant ces images-là pousserait la fenêtre dans le mauvais sens.
+    assert result["wrongSignUntil"] == pytest.approx(120, abs=20)
+    assert result["reaches90At"] == pytest.approx(490, abs=30)
+    assert result["settled"] == pytest.approx(-900, rel=0.02)
+    # Le tapotement immédiat : 150 ms après l'arrêt, `stillness` est encore
+    # sous `clickStillnessMin` (0,5), donc le contact se conclurait `drag`.
+    assert result["stillnessAt150"] < 0.5
 
 
 # ------------------------------------------------------------------- qualité

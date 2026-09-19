@@ -683,10 +683,11 @@ def test_the_idle_timer_now_reads_a_real_usable_hand_and_says_so_on_screen(tmp_p
 
     result = run_node(tmp_path, WORLD + """
       const shift=(lm,dx)=>lm.map(p=>({x:p.x+dx,y:p.y,z:0}));
-      /* Main ouverte, pas la posture en C : le guetteur de la veille ne lit
-         **pas** la qualité — il n'est pas dans ACTIVE et son budget d'images
-         ne bouge pas pour cette Slice — donc un C hors cadre se rendormirait
-         puis se réveillerait aussitôt, et le test mesurerait autre chose. */
+      /* Main ouverte, pas la posture en C : ce test mesure le **minuteur**, et
+         un C ferait entrer le réveil dans la mesure. Depuis la reprise de la
+         Slice 03 le guetteur lit la même qualité (voir
+         `test_the_watcher_wakes_on_the_same_hand_the_idle_timer_would_keep`) ;
+         une main ouverte ne réveille de toute façon jamais. */
       const clean={landmarks:[hand(1.3)]};
       const edged={landmarks:[shift(hand(1.3),.24)]};   // le pouce touche le bord
 
@@ -726,6 +727,74 @@ def test_the_idle_timer_now_reads_a_real_usable_hand_and_says_so_on_screen(tmp_p
     assert result["quality"][0] > result["quality"][1]
     # Les traits ne survivent pas à l'interaction qu'ils décrivent.
     assert result["features"] == 0
+
+
+def test_the_watcher_wakes_on_the_same_hand_the_idle_timer_would_keep(tmp_path):
+    """R4 : la décision 7 était fermée d'un côté et rouverte de l'autre. Le
+    minuteur d'ACTIVE se réarme sur `usableQuality` ; le guetteur de la veille,
+    lui, ne lisait que les points, jamais la qualité. Une main que
+    l'interaction refuse pouvait donc la **démarrer**.
+
+    Le cycle mesuré, sur une main de qualité 0,125 tenant un C à 0,93 :
+    `active` → 30 s → `sleep:idle_sleep` → réveillée une seconde plus tard →
+    30 s → … sans fin. Chaque tour appelle `interaction.clear()` et
+    `tracker.reset()` : toutes les identités détruites, toutes les fentes de
+    pointeur réallouées, deux pastilles par tour. Le commentaire de
+    `usableQuality` affirmait déjà **une** définition partagée ; il y en avait
+    deux. C'est le commentaire qu'on a rendu vrai, pas l'inverse : une
+    définition plus large côté veille ne peut produire que ce cycle.
+
+    La main refusée **reste dessinée**, et l'anneau n'avance pas : l'écran dit
+    « je te vois » et « ça ne prend pas », au lieu de la faire disparaître
+    (RÈGLE ZÉRO)."""
+
+    result = run_node(tmp_path, WORLD + """
+      // Le C de la Slice 02, déplacé jusqu'à ce que le pouce frôle le bord
+      // droit : la posture est intacte (elle ne se mesure qu'en distances),
+      // la qualité tombe sous le plancher.
+      const shift=(lm,dx)=>lm.map(p=>({x:p.x+dx,y:p.y,z:0}));
+      const edgedC={landmarks:[shift(hand(.65),.365)]};
+
+      const poor=world({result:edgedC});
+      const cp=B.createController(poor.deps);
+      await cp.enable();
+      poor.steps(300,200);                     // 60 s de guet, deux cycles possibles
+      const asleep=cp.state();
+      const statuses=poor.log.filter(l=>l.startsWith('status:'));
+
+      // Témoin : la même posture bien cadrée réveille toujours.
+      const good=world({result:C_POSE});
+      const cg=B.createController(good.deps);
+      await cg.enable();
+      good.steps(30,200);
+      const awake=cg.state();
+
+      // Ce que la main refusée vaut, des deux côtés de la frontière.
+      const lm=edgedC.landmarks[0];
+      out({asleep,awake,statuses,
+           score:Number(B.cPoseScore(lm,1,{}).toFixed(3)),
+           quality:Number(B.handQuality(lm,1,1,{}).toFixed(3)),
+           counted:B.usableQuality(B.handQuality(lm,1,1,{})),
+           // Vue à l'écran malgré tout, et l'anneau reste à zéro.
+           drawn:poor.log.filter(l=>l==='watch:1:0.00').length,
+           hidden:poor.log.filter(l=>l==='watch:0:0.00').length});
+    """)
+    # La posture est bonne, la main ne l'est pas : c'est bien le cas de la QA.
+    assert result["score"] > 0.9
+    assert result["quality"] < 0.25 and result["counted"] is False
+    # Soixante secondes de C parfait tenu par une main refusée : rien ne bouge.
+    assert result["asleep"] == "sleep"
+    assert result["statuses"] == ["status:starting:starting", "status:sleep:sleep"], (
+        "la veille a réveillé sur une main que l'interaction refuse")
+    # Et la même posture, bien cadrée, réveille : ce n'est pas le réveil qu'on
+    # a cassé, c'est la définition qu'on a alignée.
+    assert result["awake"] == "active"
+    # Vue, dessinée à chaque mesure du guetteur, et l'anneau ne progresse pas.
+    assert result["drawn"] > 100
+    # Une seule image sans main : l'entrée en veille, peinte avant que la
+    # première inférence ait eu lieu. Après, la main refusée est **vue** :
+    # la faire disparaître dirait « je ne te vois pas », ce qui est faux.
+    assert result["hidden"] == 1, "une main refusée n'est pas une main absente"
 
 
 # ------------------------------------------------------------------ parité
@@ -798,7 +867,7 @@ def test_the_controller_states_and_timings_still_match_the_contract(tmp_path):
         wakeGraceMs:B.DEFAULTS.wakeGraceMs,
         watcherFitsItsGrace:B.DEFAULTS.wakeIntervalMs<=B.DEFAULTS.wakeGraceMs,
         tuning:['minCutoffHz','betaCutoff','dCutoffHz','filterResetMs','stillSpeedPx','moveSpeedPx',
-                'matchRadiusPalms','handednessBonusPalms','predictMs','trackVelocityBlend',
+                'matchRadiusPalms','predictMs','trackVelocityBlend',
                 'qualityFloor','qualityEdge','qualityPalmMin','qualityComplete','qualityWarmupFrames']
           .map(k=>[k,B.DEFAULTS[k]]),
         semantics:['pinchMarginRatio','pinchConfidenceMin',
@@ -808,7 +877,7 @@ def test_the_controller_states_and_timings_still_match_the_contract(tmp_path):
           .map(k=>[k,B.DEFAULTS[k]]),
         fingerBand:B.DEFAULTS.fingerCurledPalms<B.DEFAULTS.fingerExtendedPalms,
         clickUnderDrag:B.DEFAULTS.clickSlopPx<B.DEFAULTS.dragSlopPx,
-        retired:['smoothing'].map(k=>B.DEFAULTS[k]===undefined),
+        retired:['smoothing','handednessBonusPalms'].map(k=>B.DEFAULTS[k]===undefined),
         watchesPerSecond:1000/B.DEFAULTS.wakeIntervalMs,
         liveStates:[B.LIVE_STATES,B.STATES.filter(B.isLiveState)],
         engaged:B.STATES.filter(B.isEngagedState),
@@ -857,7 +926,7 @@ def test_the_controller_states_and_timings_still_match_the_contract(tmp_path):
     assert result["tuning"] == [
         ["minCutoffHz", 1.2], ["betaCutoff", 0.012], ["dCutoffHz", 1], ["filterResetMs", 400],
         ["stillSpeedPx", 28], ["moveSpeedPx", 420],
-        ["matchRadiusPalms", 1.6], ["handednessBonusPalms", 0.35], ["predictMs", 120],
+        ["matchRadiusPalms", 1.6], ["predictMs", 120],
         ["trackVelocityBlend", 0.5],
         ["qualityFloor", 0.25], ["qualityEdge", 0.04], ["qualityPalmMin", 0.06],
         ["qualityComplete", 0.6], ["qualityWarmupFrames", 3],
@@ -881,7 +950,11 @@ def test_the_controller_states_and_timings_still_match_the_contract(tmp_path):
     # dessus, aucun contact ne pourrait rester indécis jusqu'au relâchement.
     assert result["fingerBand"] is True and result["clickUnderDrag"] is True
     # `smoothing` a été retiré, pas laissé inerte : `options` le refuse.
-    assert result["retired"] == [True]
+    # `handednessBonusPalms` l'a rejoint à la reprise de la Slice 03 : une prime
+    # soustraite au coût d'appariement renversait la géométrie sous 0,35 paume
+    # de séparation, et la latéralité est désormais une clé secondaire, sans
+    # nombre à régler. Laissé dans les défauts, il aurait été un réglage inerte.
+    assert result["retired"] == [True, True]
     # `LIVE_STATES` est au bloc pur ce que `LIVE_LIFECYCLES` est au contrat.
     assert result["liveStates"] == [["sleep", "active"], ["sleep", "active"]]
     assert result["liveStates"][0] == result["live"][0]

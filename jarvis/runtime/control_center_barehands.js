@@ -40,7 +40,6 @@ const JarvisBarehandsCore=(function(){
     /* Association d'identité (architecture §2). Les distances sont en paumes :
        invariantes à la distance à la caméra, comme le pincement et le C. */
     matchRadiusPalms:1.6,      // porte : au-delà, ce n'est pas la même main
-    handednessBonusPalms:.35,  // prime d'accord de latéralité — un indice, jamais une clé
     predictMs:120,             // extrapolation bornée de la vitesse d'une piste
     trackVelocityBlend:.5,     // lissage de cette vitesse : traverser un croisement, pas suivre le bruit
     /* Qualité de suivi (contrat : `HandFrame.quality`). Voir `handQuality`. */
@@ -119,6 +118,14 @@ const JarvisBarehandsCore=(function(){
        Slices plus loin devant un jeton qui tremble. */
     if(overrides&&overrides.smoothing!==undefined)
       throw new RangeError('`smoothing` n’existe plus : le filtre est adaptatif (minCutoffHz, betaCutoff)');
+    /* Même refus, même raison, et une de plus : ce réglage-là était un
+       **défaut**, pas seulement un poids mal choisi. Une prime soustraite au
+       coût d'appariement peut renverser la géométrie, et le faisait sous 0,35
+       paume de séparation. La latéralité est maintenant une clé secondaire de
+       `assign`, lue à distance égale : il n'y a plus de nombre à régler, et
+       l'accepter en silence laisserait croire qu'on en règle encore un. */
+    if(overrides&&overrides.handednessBonusPalms!==undefined)
+      throw new RangeError('`handednessBonusPalms` n’existe plus : la latéralité départage à distance égale, elle ne se soustrait plus au coût');
     const o={...DEFAULTS,...(overrides||{})};
     if(!(o.pressRatio>0&&o.pressRatio<o.releaseRatio))throw new RangeError('pressRatio doit être positif et inférieur à releaseRatio');
     if(!(o.wakeGapMin>0&&o.wakeGapMin<o.wakeGapMax))throw new RangeError('wakeGapMin doit être positif et inférieur à wakeGapMax');
@@ -149,7 +156,6 @@ const JarvisBarehandsCore=(function(){
     o.betaCutoff=atLeast(o.betaCutoff,0,DEFAULTS.betaCutoff);
     o.filterResetMs=atLeast(o.filterResetMs,0,DEFAULTS.filterResetMs);
     o.matchRadiusPalms=positive(o.matchRadiusPalms,DEFAULTS.matchRadiusPalms);
-    o.handednessBonusPalms=clamp(atLeast(o.handednessBonusPalms,0,DEFAULTS.handednessBonusPalms),0,o.matchRadiusPalms);
     o.predictMs=atLeast(o.predictMs,0,DEFAULTS.predictMs);
     o.trackVelocityBlend=clamp(atLeast(o.trackVelocityBlend,0,DEFAULTS.trackVelocityBlend),.01,1);
     o.qualityFloor=clamp(atLeast(o.qualityFloor,0,DEFAULTS.qualityFloor),0,1);
@@ -365,7 +371,26 @@ const JarvisBarehandsCore=(function(){
      « qui file », le doute est un nombre. `stillMs` dit **depuis quand** la
      main est posée — c'est cette durée que les Slices 04 à 06 liront pour
      distinguer un clic d'un début de glissement, parce que l'instantané passe
-     sous le seuil une image au milieu d'un geste franc. */
+     sous le seuil une image au milieu d'un geste franc.
+
+     **Les deux se lisent sur une vitesse qui met du temps à admettre un
+     arrêt**, et ce délai fait partie du contrat plutôt que de se découvrir à
+     l'intégration. La vitesse publiée est lissée à `dCutoffHz` = 1 Hz, soit
+     τ ≈ 159 ms. Après une main à 900 px/s stoppée net, mesuré sur des images
+     de 16 ms : `stillness` franchit 0,5 à ~250 ms, vaut 1 à ~585 ms, et
+     `stillMs` ne commence à courir qu'à ce ~585 ms. Sur une inversion franche
+     la vitesse garde le **mauvais signe** ~120 ms. C'est structurel : la même
+     coupure basse est ce qui empêche le tremblement du repos de se lire comme
+     un mouvement.
+
+     Donc `stillMs` ne reconnaît pas une immobilité plus courte que ~600 ms
+     après un geste franc, et une main qui arrive vite et pince aussitôt se lit
+     *en mouvement, `stillMs` = 0*. Ce que cela coûte au clic de la Slice 04
+     est chiffré dans `docs/barehands-contracts.md` (§ Temps d'établissement de
+     la vitesse, et § Clic contre glissement). Un consommateur qui a besoin de
+     « la main a-t-elle bougé » plutôt que « à quelle vitesse » doit lire un
+     déplacement : la position filtrée, elle, ne traîne que de quelques pixels
+     refermés en deux ou trois images. */
   function createStillness(overrides){
     const o=options(overrides);
     let stillMs=0,last=null;
@@ -1068,9 +1093,13 @@ const JarvisBarehandsCore=(function(){
     return clamp(Math.min(scale,edge,complete,clamp(Number(continuity)||0,0,1)),0,1);
   }
   /* « Cette main compte-t-elle ? » — **une** définition, partagée par le
-     minuteur de la décision 7, la pastille et la surimpression. Miroir de
-     `JarvisBarehandsContracts.isUsableQuality` (le bloc pur est chargé seul
-     par les tests node) ; le test de parité refuse la dérive. */
+     minuteur de la décision 7, le guetteur de la veille (`trustedHand`), la
+     pastille et la surimpression. La veille en avait longtemps une seconde,
+     plus large, et les deux se répondaient : un C tenu par une main que
+     l'interaction refuse réveillait quand même, puis se rendormait 30 s plus
+     tard, sans fin. Miroir de `JarvisBarehandsContracts.isUsableQuality` (le
+     bloc pur est chargé seul par les tests node) ; le test de parité refuse la
+     dérive. */
   const usableQuality=(quality,overrides)=>{
     const value=Number(quality);
     return Number.isFinite(value)&&value>=options(overrides).qualityFloor;
@@ -1093,14 +1122,24 @@ const JarvisBarehandsCore=(function(){
         invente ;
      2. le coût d'un appariement est la distance prédiction ↔ détection **en
         paumes** (invariante à la distance à la caméra, comme le pincement et
-        le C), moins une prime si les latéralités s'accordent ;
+        le C), et **rien d'autre** ;
      3. une distance au-delà de `matchRadiusPalms` n'est pas un appariement du
-        tout. **La porte se juge sur la distance seule, jamais sur le coût** :
-        la latéralité départage, elle n'ouvre pas la porte. C'est ce qui
-        empêche une étiquette qui bascule de voler une identité ;
-     4. on retient l'attribution de coût **total** minimal, pas la meilleure
-        paire d'abord : au croisement de deux mains, le glouton prend la paire
-        la plus proche et impose la pire à l'autre.
+        tout ;
+     4. on retient l'attribution de distance **totale** minimale, pas la
+        meilleure paire d'abord : au croisement de deux mains, le glouton prend
+        la paire la plus proche et impose la pire à l'autre ;
+     5. la latéralité ne départage **qu'à distance totale égale**. Elle était
+        une prime soustraite au coût jusqu'à cette reprise, et une prime
+        soustraite est une clé déguisée : deux étiquettes qui basculent sur la
+        même image — ce que fait MediaPipe quand deux mains se recouvrent —
+        payaient l'échange `(d − prime) × 2` contre `0` pour l'appariement
+        juste, si bien que **l'échange gagnait** sous `prime` paume de
+        séparation (0,35, mesuré au millième près). Le pincement, la capture et
+        le `pointerId` partaient alors à l'autre main, définitivement au-delà
+        de ~330 ms, le temps que la vitesse des pistes se referme sur l'erreur.
+        La latéralité est donc désormais une **clé secondaire** : elle ne peut
+        rien renverser, seulement choisir entre deux géométries que rien ne
+        sépare.
 
      Une détection sans piste ouvre une piste neuve, numérotée à partir de
      **0** — `0` est une identité, et le contrat le sait depuis sa reprise.
@@ -1116,6 +1155,11 @@ const JarvisBarehandsCore=(function(){
      dit (`tracking_failed`), au lieu de faire ramer la boucle sans raison
      visible. */
   const ASSIGNMENT_LIMIT=4;
+  /* Égalité de distance à la précision flottante près. Voir `assign` : ce
+     n'est pas une bande de tolérance où la latéralité aurait le droit de
+     renverser la géométrie, c'est la précision à laquelle deux sommes de
+     flottants se lisent « la même ». */
+  const MATCH_EPSILON=1e-9;
 
   function createHandTrackManager(overrides){
     const o=options(overrides);
@@ -1123,25 +1167,80 @@ const JarvisBarehandsCore=(function(){
     const tracks=new Map();
     let nextId=0;
 
-    /* Attribution de coût total minimal. `null` = porte fermée ; ne pas
+    /* Attribution de distance totale minimale. `null` = porte fermée ; ne pas
        apparier coûte `matchRadiusPalms`, si bien qu'un appariement dans la
-       porte est toujours préféré à une piste neuve. */
-    function assign(costs,detections,trackCount){
-      const best={total:Infinity,pick:null};
+       porte est toujours préféré à une piste neuve.
+
+       **Trois clés, comparées dans cet ordre, et la première décide seule sauf
+       égalité :**
+
+       1. la somme des écarts, en paumes — la géométrie, et elle seule ;
+       2. le nombre de **désaccords** de latéralité — l'indice. Une étiquette
+          absente d'un côté ou de l'autre ne compte ni pour ni contre :
+          l'absence d'indice n'est pas un indice contraire, même règle que le
+          vote. Cette clé ne peut rien renverser, puisqu'elle n'est lue qu'à
+          somme égale ;
+       3. les écarts triés du plus grand au plus petit. À somme égale, on
+          préfère l'attribution dont la pire paire est la moins mauvaise. Cette
+          clé existe pour l'**ordre** : sans elle, deux attributions à somme et
+          à latéralité égales étaient départagées par « la première trouvée »,
+          c'est-à-dire par le rang des détections dans le tableau — l'identité
+          dépendait alors de l'ordre où le traqueur rend ses mains, ce que le
+          reste de cette section refuse explicitement. Les trois clés sont
+          invariantes par permutation des détections.
+
+       **Les coûts sont des distances, donc positifs ou nuls**, et c'est ce qui
+       rend l'élagage légitime : un total partiel ne peut que croître, donc il
+       minore le total final, et une branche déjà plus chère que la meilleure
+       connue ne peut plus gagner. La prime soustraite d'avant cette reprise
+       mettait les coûts dans [−0,35 ; 1,6] : le minorant tombait, et la
+       recherche jetait des optimums — 670 attributions non minimales sur
+       300 000 matrices 2×2 tirées au hasard, mesurées. L'élagage compare à
+       `best.total + MATCH_EPSILON` et non à `best.total` : une branche à somme
+       **égale** doit rester explorée, c'est là que les clés 2 et 3 travaillent.
+
+       `MATCH_EPSILON` est une tolérance **numérique**, pas un réglage : 1e-9
+       paume, treize ordres de grandeur sous la plus petite séparation que deux
+       détections puissent avoir. Ce n'est pas une bande dans laquelle la
+       latéralité aurait le droit de renverser la géométrie — c'est la
+       précision à laquelle « la même distance » se lit sur des flottants. */
+    function assign(costs,discords,detections,trackCount){
+      const best={total:Infinity,discord:Infinity,gaps:null,pick:null};
       const current=new Array(detections).fill(-1);
       const used=new Array(trackCount).fill(false);
-      (function walk(index,total){
-        if(total>=best.total)return;
-        if(index===detections){best.total=total;best.pick=current.slice();return}
+      const better=(total,discord,gaps)=>{
+        if(total<best.total-MATCH_EPSILON)return true;
+        if(total>best.total+MATCH_EPSILON)return false;
+        if(discord!==best.discord)return discord<best.discord;
+        for(let i=0;i<gaps.length;i+=1){
+          if(gaps[i]<best.gaps[i]-MATCH_EPSILON)return true;
+          if(gaps[i]>best.gaps[i]+MATCH_EPSILON)return false;
+        }
+        return false;
+      };
+      const gaps=[];
+      (function walk(index,total,discord){
+        if(total>best.total+MATCH_EPSILON)return;
+        if(index===detections){
+          const sorted=gaps.slice().sort((a,b)=>b-a);
+          if(better(total,discord,sorted)){
+            best.total=total;best.discord=discord;best.gaps=sorted;best.pick=current.slice();
+          }
+          return;
+        }
         for(let t=0;t<trackCount;t+=1){
           if(used[t]||costs[index][t]===null)continue;
-          used[t]=true;current[index]=t;
-          walk(index+1,total+costs[index][t]);
-          used[t]=false;
+          used[t]=true;current[index]=t;gaps.push(costs[index][t]);
+          walk(index+1,total+costs[index][t],discord+(discords[index][t]?1:0));
+          gaps.pop();used[t]=false;
         }
         current[index]=-1;
-        walk(index+1,total+o.matchRadiusPalms);
-      })(0,0);
+        /* Ne pas apparier : la porte vaut son plein prix, et une piste neuve
+           n'est ni un accord ni un désaccord de latéralité. */
+        gaps.push(o.matchRadiusPalms);
+        walk(index+1,total+o.matchRadiusPalms,discord);
+        gaps.pop();
+      })(0,0,0);
       return best.pick||new Array(detections).fill(-1);
     }
 
@@ -1200,21 +1299,27 @@ const JarvisBarehandsCore=(function(){
            contre l'observation, pas contre le nombre d'appels. */
         for(const [id,track] of tracks)if(at-track.at>o.lostGraceMs)tracks.delete(id);
         const ids=[...tracks.keys()];
-        const costs=list.map(observation=>{
+        const costs=[],discords=[];
+        for(const observation of list){
           const palm=Number(observation&&observation.palm);
           const scale=Number.isFinite(palm)&&palm>1e-6?palm:1;
-          return ids.map(id=>{
+          const row=[],discord=[];
+          for(const id of ids){
             const track=tracks.get(id);
             const horizon=Math.min(Math.max(0,at-track.at),o.predictMs)/1000;
             const gap=Math.hypot(
               ((track.x+track.vx*horizon)-observation.x)*k,
               (track.y+track.vy*horizon)-observation.y)/scale;
-            if(!(gap<=o.matchRadiusPalms))return null;
-            return gap-(observation.handedness&&observation.handedness===track.handedness
-              ?o.handednessBonusPalms:0);
-          });
-        });
-        const pick=assign(costs,list.length,ids.length);
+            /* La porte se juge sur la distance, et le coût **est** cette
+               distance : la latéralité n'ouvre pas la porte et ne la ferme
+               pas non plus, elle voyage à part (`discords`). */
+            row.push(gap<=o.matchRadiusPalms?gap:null);
+            discord.push(!!(observation.handedness&&track.handedness
+              &&observation.handedness!==track.handedness));
+          }
+          costs.push(row);discords.push(discord);
+        }
+        const pick=assign(costs,discords,list.length,ids.length);
         const live=new Set();
         const out=list.map((observation,index)=>{
           const matched=pick[index]>=0;
@@ -1372,10 +1477,41 @@ const JarvisBarehandsCore=(function(){
   const isLiveState=value=>LIVE_STATES.includes(value);
   const isEngagedState=value=>isLiveState(value)||value===STATE.STARTING;
 
-  /* Première main exploitable d'un résultat de traqueur, ou `null`. */
+  /* Première main exploitable d'un résultat de traqueur, ou `null`. Celle
+     qu'on peut **dessiner** : ses points sont là, donc on sait où la montrer. */
   function usableHand(result){
     for(const landmarks of (result&&result.landmarks)||[])
       if(usableLandmarks(landmarks))return landmarks;
+    return null;
+  }
+  /* Première main qui **compte** (décision 7), ou `null`. C'est `usableHand`
+     plus `usableQuality` — la même question qu'en interaction, posée avec la
+     même définition, et c'est tout l'objet de cette fonction.
+
+     Elle existe parce que la veille et l'interaction en avaient deux. Le
+     minuteur d'ACTIVE se réarme sur `usableQuality`, le guetteur ne lisait que
+     les points : un C tenu par une main de qualité 0,125 réveillait, ACTIVE la
+     refusait aussitôt, et la session **cyclait sans fin** — actif, 30 s,
+     veille, réveil une seconde plus tard, et ainsi de suite, en détruisant
+     toutes les identités et en réallouant les fentes de pointeur à chaque
+     tour, deux pastilles par cycle. C'est exactement la classe de défaut que
+     cette Slice s'était donnée pour but de fermer, et le commentaire de
+     `usableQuality` prétendait déjà qu'il n'existait qu'une définition.
+
+     La continuité vaut 1 : en veille il n'y a **pas d'identité à mettre en
+     doute** — aucun gestionnaire de pistes ne tourne, le guetteur ne suit rien
+     d'une image à l'autre. Ce que la continuité mesure en interaction, le
+     maintien d'une seconde du C le mesure ici, et mieux : cinq mesures
+     consécutives de la même posture. Les trois autres témoins (échelle,
+     cadrage, complétude) répondent image par image et s'appliquent tels quels.
+
+     La main **refusée reste dessinée** : `watch()` la montre et la progression
+     n'avance pas, comme un C imparfait. L'écran dit « je te vois » et l'anneau
+     dit « ça ne prend pas » — RÈGLE ZÉRO —, au lieu de la faire disparaître. */
+  function trustedHand(result,aspect,overrides){
+    for(const landmarks of (result&&result.landmarks)||[])
+      if(usableLandmarks(landmarks)
+        &&usableQuality(handQuality(landmarks,aspect,1,overrides),overrides))return landmarks;
     return null;
   }
 
@@ -1507,10 +1643,20 @@ const JarvisBarehandsCore=(function(){
         return;
       }
       lastVideoTime=time;
-      const hand=usableHand(landmarker.detectForVideo(video.element,now));
-      const out=wake.update(hand?cPoseScore(hand,aspect(),deps.options):null,now);
-      const at=hand?toScreen(hand[LM.INDEX_TIP],deps.viewport(),o):null;
-      paintWatch({present:!!hand,progress:out.progress,x:at?at.x:0,y:at?at.y:0});
+      const result=landmarker.detectForVideo(video.element,now);
+      /* Deux questions, deux réponses, et c'est voulu : `seen` est la main
+         qu'on **dessine**, `counts` celle qui **compte** (décision 7, même
+         définition qu'en interaction — voir `trustedHand`). Une main vue mais
+         pas crue reste à l'écran avec un anneau qui n'avance pas ; la faire
+         disparaître dirait « je ne te vois pas », ce qui est faux, et réveiller
+         sur elle ferait cycler la session entre veille et interaction. Le
+         budget d'images ne bouge pas : une inférence par `wakeIntervalMs`,
+         comme avant, plus une mesure de qualité qui ne coûte qu'une boucle. */
+      const seen=usableHand(result);
+      const counts=trustedHand(result,aspect(),deps.options);
+      const out=wake.update(counts?cPoseScore(counts,aspect(),deps.options):null,now);
+      const at=seen?toScreen(seen[LM.INDEX_TIP],deps.viewport(),o):null;
+      paintWatch({present:!!seen,progress:out.progress,x:at?at.x:0,y:at?at.y:0});
       if(out.wake)toActive('woken');
     }
     /* Interaction complète. Le retour en veille est jugé avant de lire la

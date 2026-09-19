@@ -648,3 +648,116 @@ secondaire et la posture d'une main qui pince (la main synthétique tombait just
 en dehors des deux bandes — il a fallu la géométrie qui pince *dans* la bande du
 C et celle qui pince avec l'index écarté), et la fenêtre du double (la purge de
 la main cachait la fenêtre au lieu de l'exercer).
+
+## 2026-09-19 — Slice 03 rework (reprise), implementation agent
+
+Quatre retours de la QA de `8078f27`, repris sur l'arbre courant (Slice 04
+comprise) et non sur les commits gelés. Les deux premiers partagent une racine :
+la prime de latéralité était **soustraite au coût** d'appariement.
+
+- **Une prime soustraite au coût est une clé déguisée.** Avec les deux
+  étiquettes retournées sur la même image — ce que fait MediaPipe quand deux
+  mains se recouvrent — l'appariement juste coûtait `0`, l'échange
+  `(d − 0,35) × 2` : **l'échange gagnait sous 0,35 paume de séparation**
+  (≈ 3 cm), et le pincement, la capture et le `pointerId` partaient à l'autre
+  main — définitivement au-delà de ~330 ms, la vitesse des pistes se refermant
+  sur l'erreur. La latéralité est maintenant une **clé secondaire** de
+  `assign`, lue à distance totale égale ; la propriété garantie est donc :
+  *la géométrie décide seule, sauf égalité des sommes à 1e-9 paume près*. Il
+  n'y a plus de séparation minimale à espérer, et le test la balaie de 0,8 à
+  0,02 paume au lieu de se poser à 0,8, confortablement 2,3× au-dessus du seuil
+  qu'il croyait prouver.
+- **`handednessBonusPalms` est retiré, pas laissé inerte** — `options()` le
+  refuse en nommant ce qui le remplace, comme `smoothing` à la Slice 03. Un
+  réglage exprimé en paumes était l'erreur de catégorie elle-même : une
+  latéralité ne se mesure pas en distance. Le clamp d'`options()` le bornait à
+  `matchRadiusPalms`, **4,5× au-dessus de la valeur dangereuse**, ce qui ne
+  protégeait de rien.
+- **Les coûts positifs rendent l'élagage légitime, et c'est lui le vrai
+  gardien.** `if(total>=best.total)return` n'est un séparation-évaluation
+  valide que si un total partiel minore le total final. Avec la prime, les
+  coûts étaient dans [−0,35 ; 1,6] et la recherche jetait de vrais optimums
+  (670 sur 300 000 matrices 2×2, mesuré par la QA), le même appariement
+  pouvant dépendre de l'ordre des détections. L'élagage compare désormais à
+  `best.total + MATCH_EPSILON`, pour que les branches **à somme égale** restent
+  explorées : c'est là que la latéralité travaille. Constaté en mutant le
+  comparateur pour mettre la latéralité en clé *primaire* : la plupart des
+  tests passent quand même, parce que l'élagage coupe la branche avant que le
+  comparateur ne la voie. La non-négativité est donc la garantie ; l'ordre des
+  clés n'est que la façon de la dire.
+- **Une troisième clé pour que l'ordre de la liste ne décide jamais** : à somme
+  et à latéralité égales, les écarts triés du plus grand au plus petit — la
+  pire paire la moins mauvaise. Sans elle, « la première attribution trouvée »
+  gagnait, c'est-à-dire le rang dans le tableau. Le test d'ordre existant ne
+  l'attrapait pas : son cas est symétrique. Le nouveau balaie 4 000 géométries
+  quelconques, compare à une force brute indépendante, et rejoue chacune **à
+  l'envers**.
+- **Une étiquette absente ne vote ni pour ni contre**, même règle que le vote de
+  latéralité. Compter l'inconnu comme un désaccord faisait gagner l'échange sur
+  une preuve qui n'existe pas — mutation qui a d'abord **survécu**, puis tombée
+  après l'ajout du cas « piste jamais étiquetée + détection sans étiquette ».
+- **Le temps d'établissement de la vitesse est maintenant écrit, et chiffré.**
+  `dCutoffHz` = 1 Hz donne τ ≈ 159 ms : après 900 px/s stoppés net,
+  `stillness` franchit 0,5 à ~250 ms et vaut 1 à ~585 ms — c'est-à-dire que
+  **`stillMs` ne commence à courir qu'à ~585 ms** ; sur une inversion franche la
+  vitesse garde le **mauvais signe ~120 ms** et met ~490 ms à atteindre 90 % de
+  la nouvelle. Structurel, pas un réglage raté : la même coupure basse est ce
+  qui empêche le tremblement du repos de se lire comme un mouvement.
+- **Ce que ça coûte au clic de la Slice 04, mesuré de bout en bout.**
+  `stillness ≥ clickStillnessMin` (0,5) veut dire « vitesse publiée ≤ 224 px/s ».
+  Donc un contact relâché **moins de ~250 ms après l'arrêt de la main** est
+  conclu `drag` même avec 0 px de déplacement : mesuré, un tapotement de 128 ms
+  juste après une approche à 900 px/s rend `drag`, `travelPx` = 1,
+  `stillness` = 0,14. Un clic délibéré reste possible — la fenêtre
+  `[~250 ms, clickMaxMs]` n'est pas vide, le même contact tenu 350 ms rend
+  `click` à `stillness` 0,78 — mais **la fenêtre du clic commence plus tard
+  qu'on ne le croyait**. Le sens de l'erreur est le bon (un faux `drag`, jamais
+  un faux `click`), donc les seuils ne changent pas ici : ils sont documentés et
+  testés, et `clickStillnessMin` est le seul nombre qui déplace la frontière —
+  **à calibrer à la Slice 08 devant une caméra réelle**. La **position**
+  filtrée, elle, ne traîne que de ~8 px refermés en deux ou trois images : qui a
+  besoin de « la main a-t-elle bougé » doit lire un déplacement, pas une
+  vitesse.
+- **La décision 7 avait deux définitions, une de chaque côté du réveil.** Le
+  minuteur d'ACTIVE se réarmait sur `usableQuality`, le guetteur de la veille ne
+  lisait que la présence des points : un C tenu par une main de qualité 0,125
+  réveillait, ACTIVE la refusait, et la session **cyclait sans fin** (30 s
+  d'interaction, veille, réveil une seconde plus tard), détruisant toutes les
+  identités et réallouant les fentes de pointeur à chaque tour. C'est le
+  commentaire qu'on a rendu vrai, pas l'inverse — une définition plus large
+  côté veille ne peut produire que ce cycle. `trustedHand` pose la même
+  question que le minuteur ; la **continuité vaut 1** parce qu'en veille il n'y
+  a pas d'identité à mettre en doute, et que la seconde de maintien du C est le
+  témoin de continuité du guetteur. Le budget d'images ne bouge pas : une
+  inférence par `wakeIntervalMs`, plus une boucle sur des points déjà rendus.
+  La main refusée **reste dessinée**, l'anneau n'avance pas (RÈGLE ZÉRO) : la
+  faire disparaître dirait « je ne te vois pas », ce qui est faux.
+- **Observations laissées telles quelles, avec leur raison** : `quality` absente
+  vaut 1 (règle d'absence, et le `HandFrame` neutre n'a pas de traqueur à
+  interroger ; c'est la Slice 05 qui décidera d'en faire une porte) ; les deux
+  limites « trop de mains » répondent à deux questions différentes (le contrat
+  refuse une troisième main, le gestionnaire refuse ce que la recherche
+  exhaustive ne tient pas) ; le témoin de complétude est quasi inerte face à
+  MediaPipe, qui rend toujours 21 points — il garde sa valeur face à un autre
+  adaptateur ; une horloge qui recule est traitée comme dt=0, ce que le filtre
+  documente déjà à l'endroit où il le fait. Seule la coquille du contrat
+  (`compris. sans elle,`) est corrigée.
+
+Fichiers : `jarvis/runtime/control_center_barehands.js`,
+`jarvis/runtime/control_center_barehands_contracts.js`,
+`docs/barehands-contracts.md`, `tests/unit/test_barehands_tracking_js.py`,
+`tests/unit/test_barehands_lifecycle_js.py`,
+`tests/unit/test_barehands_gestures_js.py`.
+
+Tests, chunks en avant-plan : baseline 1 (barehands + scene logic) **173 passed**
+(159 avant : huit séparations balayées au lieu d'une, plus six tests neufs) ;
+baseline 2 (control centre + settings) **221 passed**. Aucune régression.
+Quatorze mutations tentées, douze reprises, **deux survivantes assumées** :
+`MATCH_EPSILON` mis à 0 (tolérance purement numérique — une géométrie dont les
+deux sommes diffèrent sous 1e-9 paume est une géométrie où les deux réponses
+sont justes) et la porte d'appariement doublée (mutant équivalent : au-delà de
+`matchRadiusPalms`, ne pas apparier coûte déjà moins cher que d'apparier, donc
+la porte est une redondance volontaire — la **rétrécir**, elle, fait tomber
+trois tests). Deux autres avaient d'abord survécu et sont tombées après
+renforcement : l'inconnu compté comme désaccord, et un appariement retenu
+au-delà de la porte.
