@@ -42,6 +42,7 @@ from jarvis.runtime import (
     agent_behavior,
     agent_routing,
     barehands_test_mode as barehands,
+    barehands_profile,
     cli_catalog,
     credentials as creds,
     shortcuts as shortcut_registry,
@@ -522,6 +523,8 @@ class ControlCenter:
         # Une seule ligne de journal par processus pour un bloc de réglages
         # illisible : `GET /api/barehands` part à chaque ouverture de l'onglet.
         self._barehands_foreign_reported = False
+        # Même règle pour le profil : une ligne par processus.
+        self._barehands_profile_foreign_reported = False
         self.barehands_commands = BarehandsCommandBroker(
             journal=self.journal,
             gate=lambda: bool(barehands.load(self._settings())["enabled"]),
@@ -561,6 +564,14 @@ class ControlCenter:
             web.post("/api/shortcuts", self.save_shortcuts),
             web.get("/api/barehands", self.get_barehands),
             web.post("/api/barehands", self.save_barehands),
+            # Profil de calibration (Slice 08). Route **distincte** de celle des
+            # réglages : un profil n'est pas un choix mais une mesure, il porte
+            # son propre numéro de schéma, et l'écrire ne doit pas revalider les
+            # neuf réglages. Déclarée avant `/api/barehands/commands` sans
+            # ambiguïté : aiohttp apparie sur le chemin complet.
+            web.get("/api/barehands/profile", self.get_barehands_profile),
+            web.post("/api/barehands/profile", self.save_barehands_profile),
+            web.delete("/api/barehands/profile", self.reset_barehands_profile),
             # Canal de commandes du cerveau (Slice 12) : long-poll de la page,
             # demande du serveur MCP, reçu de la page.
             web.get("/api/barehands/commands", self.barehands_commands_poll),
@@ -1858,6 +1869,109 @@ class ControlCenter:
                       "replaced_previous_archive": replaced_archive},
             )
         return web.json_response(state)
+
+    # ------------------------------------------------- profil de calibration (Slice 08)
+
+    async def get_barehands_profile(self, request: web.Request) -> web.Response:
+        del request
+        settings = self._settings()
+        seen = barehands_profile.inspect(settings)
+        if seen["unreadable"] and not self._barehands_profile_foreign_reported:
+            self._barehands_profile_foreign_reported = True
+            self.journal.emit(
+                "settings.barehands.profile_foreign_version",
+                "Profil de calibration Bare Hands écrit par une version plus récente (schéma "
+                f"{seen['stored_schema_version']}) : non appliqué, gardé tel quel ; "
+                f"la prochaine calibration le rangera sous « {seen['archive_key']} »",
+                level="warning",
+                data={"code": "barehands_profile_version_unreadable",
+                      "stored_schema_version": seen["stored_schema_version"],
+                      "schema_version": barehands_profile.SCHEMA_VERSION,
+                      "archive_key": seen["archive_key"]},
+            )
+        return web.json_response(barehands_profile.describe(settings))
+
+    async def save_barehands_profile(self, request: web.Request) -> web.Response:
+        """Enregistrer le profil dérivé d'une calibration (décisions 28 à 32).
+
+        Le serveur ne mesure rien : la caméra, les mains et l'écran sont dans la
+        page. Il **range**, et il refuse tout ce qui n'est pas une mesure
+        dérivée — c'est ici, et non dans le module JS, que la décision 32 se
+        tient contre un appelant qu'on n'a pas écrit.
+        """
+
+        try:
+            payload = await request.json()
+        except ValueError:
+            payload = None
+        current = self._settings()
+        seen = barehands_profile.inspect(current)
+        replaced_archive = seen["archive_key"] in barehands_profile.archived_keys(current)
+        try:
+            value = barehands_profile.apply(current, payload)
+        except barehands_profile.BarehandsProfileError as exc:
+            self.journal.emit(
+                "settings.barehands.profile_rejected", "Barehands calibration profile rejected",
+                level="warning", data={"code": exc.code},
+            )
+            raise web.HTTPBadRequest(text=str(exc), headers={SETTINGS_ERROR_CODE_HEADER: exc.code}) from exc
+        self._write_settings(current)
+        # Ce que la calibration a **mesuré**, nommément. « Profil enregistré »
+        # sans dire quoi rendrait une calibration complète et une calibration
+        # qui a tout raté identiques dans le journal.
+        measured = sorted(
+            f"{handedness}.{key}"
+            for handedness in barehands_profile.HANDEDNESSES
+            for key in (*barehands_profile.HAND_BOUNDS, "reach_norm")
+            if value["hands"][handedness][key] is not None
+        )
+        stages = {stage: value["stages"][stage]["status"] for stage in barehands_profile.STAGES}
+        failed = sorted(stage for stage, status in stages.items() if status == "failed")
+        summary = (
+            "Profil de calibration Bare Hands enregistré : "
+            f"{len(measured)} mesure(s), "
+            f"{sum(1 for status in stages.values() if status == 'ok')}/{len(stages)} étape(s) réussie(s)"
+        )
+        if failed:
+            summary += f" ; échouées : {', '.join(failed)}"
+        if not measured:
+            # Une calibration qui n'a rien mesuré est une nouvelle, pas un
+            # silence : le moteur garde ses défauts et l'utilisateur l'a vu.
+            summary = "Profil de calibration Bare Hands enregistré sans aucune mesure : le moteur garde ses défauts"
+        self.journal.emit(
+            "settings.barehands.profile", summary,
+            data={"calibrated": value["calibrated"], "measured": measured, "stages": stages},
+        )
+        if seen["unreadable"]:
+            self.journal.emit(
+                "settings.barehands.profile_archived",
+                f"Profil de calibration en schéma {seen['stored_schema_version']} conservé sous "
+                f"« {seen['archive_key']} » avant d'être remplacé"
+                + (" (une archive de la même version a été remplacée)" if replaced_archive else ""),
+                level="warning",
+                data={"code": "barehands_profile_version_archived",
+                      "stored_schema_version": seen["stored_schema_version"],
+                      "schema_version": barehands_profile.SCHEMA_VERSION,
+                      "archive_key": seen["archive_key"],
+                      "replaced_previous_archive": replaced_archive},
+            )
+        return web.json_response(barehands_profile.describe(current))
+
+    async def reset_barehands_profile(self, request: web.Request) -> web.Response:
+        """Rendre au moteur ses défauts d'usine (décision 31, « reset profile » du §9)."""
+
+        del request
+        current = self._settings()
+        had = barehands_profile.load(current)["calibrated"]
+        barehands_profile.clear(current)
+        self._write_settings(current)
+        self.journal.emit(
+            "settings.barehands.profile_reset",
+            "Profil de calibration Bare Hands réinitialisé"
+            if had else "Profil de calibration Bare Hands réinitialisé (il n'y avait rien de calibré)",
+            data={"had_profile": had},
+        )
+        return web.json_response(barehands_profile.describe(current))
 
     # ------------------------------------------------- canal de commandes (Slice 12)
 
