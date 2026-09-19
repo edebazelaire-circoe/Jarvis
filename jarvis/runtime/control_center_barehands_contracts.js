@@ -1037,11 +1037,51 @@
      qualité (décision 32). Une fonction non calibrée vaut `null` et retombe
      sur le défaut du moteur (décision 31). */
 
-  const PROFILE_SCHEMA_VERSION=1;
+  /* **Version 2 (Slice 08)** : le parcours de calibration existe, et il apporte
+     deux choses que la v1 ne pouvait pas porter — une tolérance de déplacement
+     **en paumes** (`travelSlopNorm`) et le rapport par étape que la décision 31
+     exige. Monter ce numéro est donc obligatoire ; la v1 se **convertit** plutôt
+     que de se refuser, ses six mesures étant toutes encore valides. */
+  const PROFILE_SCHEMA_VERSION=2;
+  /* Les versions précédentes que ce module sait convertir. Un profil v1 ne
+     portait ni `travelSlopNorm` ni `stages` : les deux prennent leur défaut
+     (`null` et « aucune étape connue »), ce qui est exactement ce que dit un
+     profil dérivé avant que la Slice 08 n'existe. C'est la couture de
+     migration, au même endroit et de la même forme que celle des réglages. */
+  const PROFILE_MIGRATED_VERSIONS=Object.freeze([1]);
   const HAND_PROFILE_DEFAULTS=Object.freeze({
     pressRatio:null,releaseRatio:null,       // seuils de pincement dérivés, sans unité
     secondaryPressRatio:null,secondaryReleaseRatio:null,
     jitterPx:null,                           // écart-type du repos, en pixels de la fenêtre
+    /* Tolérance de déplacement d'un clic, en **fraction de la largeur de
+       l'image** (0..1), comme `reachNorm` et comme les points d'un `HandFrame`.
+       C'est le règlement du résidu que la Slice 04 a laissé à la Slice 08.
+
+       `clickSlopPx`/`dragSlopPx` sont en pixels de la fenêtre alors que tout le
+       reste du moteur mesure en paumes : le même geste vaut ~3 fois plus de
+       pixels en 1920 qu'en 640, donc la **tolérance** dépendait de la résolution
+       quand la grandeur mesurée, elle, n'en dépendait pas.
+
+       **Et la paume n'est pas la réponse**, malgré le reste du fichier. Aucune
+       des deux unités n'est invariante aux deux variables, et c'est pour ça que
+       la question était ouverte : la paume est invariante à la distance à la
+       caméra mais pas à la résolution ; la fraction d'image est invariante à la
+       résolution mais pas à la distance. Ce qu'on borne ici est un déplacement
+       **à l'écran**, donc une grandeur d'écran — et la distance à laquelle
+       l'utilisateur se tient est déjà dans la mesure, puisque c'est *lui* qui
+       l'a faite, à sa place habituelle. La fraction d'image tue donc la
+       dépendance qu'on nous a signalée et absorbe l'autre dans la mesure.
+       Résidu nommé plutôt que caché : un utilisateur qui se rapproche
+       franchement de la caméra après s'être calibré voit sa tolérance devenir
+       étroite, et doit recalibrer. C'est strictement moins que la constante
+       unique d'avant, qui valait pour toutes les résolutions et tous les
+       utilisateurs à la fois.
+
+       Application : `clickSlopPx = travelSlopNorm × largeur de la fenêtre`, et
+       `dragSlopPx` garde le rapport d'usine — l'invariant `clickSlopPx <=
+       dragSlopPx` (Slice 04) traverse donc intact, comme il traverse
+       `sensitivity`. */
+    travelSlopNorm:null,
     reachNorm:null,                          /* {x,y,w,h} atteint dans l'image, en
                                                 coordonnées normalisées 0..1 comme les
                                                 points d'un HandFrame — jamais des pixels */
@@ -1060,10 +1100,54 @@
     for(const handedness of HANDEDNESSES)hands[handedness]=HAND_PROFILE_DEFAULTS;
     return Object.freeze(hands);
   };
+  /* Les étapes du parcours (Slice 08), dans l'ordre où elles se jouent. Le
+     vocabulaire vit ici et non dans le parcours parce qu'il est **persisté** :
+     la décision 31 veut qu'un profil dise quelles étapes ont abouti, et un
+     rapport dont les noms changent avec l'écran ne se relit pas. */
+  const STAGE=Object.freeze({
+    NEUTRAL:'neutral',            // main posée, ouverte : le repos et son tremblement
+    C_POSE:'c_pose',              // la posture de réveil, vérifiée contre la bande du moteur
+    PINCH_PRIMARY:'pinch_primary',
+    PINCH_SECONDARY:'pinch_secondary',
+    AIM:'aim',                    // viser une cible à l'écran et pincer
+    DRAG:'drag',                  // un court glissement
+    RESIZE:'resize',              // un petit redimensionnement à deux mains
+  });
+  const STAGES=values(STAGE);
+  /* `skipped` n'est pas `failed` : une étape qu'on n'a pas jouée (parcours
+     abandonné, deuxième main jamais vue) et une étape jouée qui n'a pas abouti
+     ne demandent pas la même chose à l'utilisateur. Les confondre ferait d'un
+     abandon un échec de mesure. */
+  const STAGE_STATUS=Object.freeze({OK:'ok',FAILED:'failed',SKIPPED:'skipped'});
+  const STAGE_STATUSES=values(STAGE_STATUS);
+  /* Pourquoi une étape n'a pas abouti — liste fermée, parce que cette phrase
+     est ce que l'utilisateur lit et ce qu'une trace relit. Une étape ratée
+     retombe sur les défauts du moteur (décision 31) ; elle ne doit jamais
+     retomber sur un nombre inventé, ni sur un silence. */
+  const STAGE_REASON=Object.freeze({
+    NO_HAND:'barehands_stage_no_hand',             // aucune main exploitable pendant l'étape
+    TIMEOUT:'barehands_stage_timeout',             // l'échéance de l'étape est passée
+    TOO_FEW_SAMPLES:'barehands_stage_too_few_samples',
+    NOT_SEPARABLE:'barehands_stage_not_separable', // repos et pincement ne se distinguent pas
+    OUT_OF_BAND:'barehands_stage_out_of_band',     // la mesure sort des bornes du contrat
+    NEEDS_TWO_HANDS:'barehands_stage_needs_two_hands',
+    CANCELLED:'barehands_stage_cancelled',         // l'utilisateur est sorti
+  });
+  const STAGE_REASONS=values(STAGE_REASON);
+  const emptyStages=()=>{
+    const stages={};
+    for(const stage of STAGES)
+      stages[stage]=Object.freeze({status:STAGE_STATUS.SKIPPED,reason:null,samples:0});
+    return Object.freeze(stages);
+  };
   const PROFILE_DEFAULTS=Object.freeze({
     schemaVersion:PROFILE_SCHEMA_VERSION,
     calibrated:false,updatedAt:null,
     hands:emptyHands(),
+    /* Décision 31 : le profil dit **quelles étapes ont abouti**. Sans lui, une
+       calibration partielle et une calibration complète se relisent pareil, et
+       personne ne sait quelles valeurs viennent de la main de l'utilisateur. */
+    stages:emptyStages(),
   });
 
   /* Un seuil d'appui au-dessus du seuil de relâchement décrit un pincement qui
@@ -1076,7 +1160,22 @@
   };
   function normalizeHandProfile(raw){
     const source=raw&&typeof raw==='object'?raw:{};
-    const ratio=(value,min,max)=>{const n=Number(value);return Number.isFinite(n)?clamp(n,min,max):null};
+    /* **`null` est une absence, pas un zéro.** `Number(null)` vaut `0`, qui est
+       fini : une valeur non mesurée était donc bornée sur le **minimum** au
+       lieu de rester nulle. Sans conséquence tant que rien ne relisait un
+       profil, parce que l'entrée venait toujours d'un objet partiel où la clé
+       manquait (`undefined` → `NaN` → `null`). Mais un profil **persisté** est
+       du JSON, et du JSON porte des `null` explicites : le relire rendait les
+       sept mesures « calibrées » à leur plancher — `pressRatio` 0,05,
+       `travelSlopNorm` 0,02 — donc `calibrated` vrai sans qu'une seule mesure
+       ait eu lieu, et `profileValue` rendant ce plancher au lieu du défaut du
+       moteur. La Slice 08 est la première à relire un profil ; c'est elle qui
+       trouve la mine. */
+    const ratio=(value,min,max)=>{
+      if(value===null||value===undefined||value==='')return null;
+      const n=Number(value);
+      return Number.isFinite(n)?clamp(n,min,max):null;
+    };
     const pressRatio=ratio(source.pressRatio,.05,.9);
     const releaseRatio=ratio(source.releaseRatio,.05,1.5);
     const secondaryPressRatio=ratio(source.secondaryPressRatio,.05,.9);
@@ -1094,13 +1193,42 @@
     return Object.freeze({
       pressRatio,releaseRatio,secondaryPressRatio,secondaryReleaseRatio,
       jitterPx:ratio(source.jitterPx,0,200),
+      /* Bornes larges mais réelles. Le défaut du moteur vaut 12 px, soit
+         ~0,008 de large sur une fenêtre de 1440 : sous 0,002 la tolérance passe
+         sous le tremblement d'une main posée et aucun clic ne se conclurait ;
+         au-delà de 0,15 (un septième de l'écran) un glissement franc resterait
+         un clic. Une mesure hors de là est une mesure ratée. */
+      travelSlopNorm:ratio(source.travelSlopNorm,.002,.15),
       reachNorm,
       quality:source.quality===undefined||source.quality===null?null:unit(source.quality,0),
     });
   }
+  /* Le rapport d'une étape : un état, un motif de la liste fermée, un compte.
+     Trois scalaires — rien qui puisse porter une image (décision 32). */
+  function normalizeStage(raw){
+    const source=raw&&typeof raw==='object'?raw:{};
+    const status=oneOf(source.status,STAGE_STATUSES,STAGE_STATUS.SKIPPED);
+    const reason=STAGE_REASONS.includes(source.reason)?source.reason:null;
+    const samples=Math.max(0,Math.round(Number(source.samples)||0));
+    /* Un état `ok` qui porte un motif d'échec, ou un `failed` muet, dit deux
+       choses contraires. Le second est le plus dangereux : « ça n'a pas
+       marché » sans raison est exactement le silence que cette Slice refuse. */
+    if(status===STAGE_STATUS.OK&&reason!==null)
+      reject('barehands_stage_report_inconsistent',
+        `Étape réussie portant un motif d'échec (${reason}).`);
+    if(status===STAGE_STATUS.FAILED&&reason===null)
+      reject('barehands_stage_report_inconsistent',
+        'Étape échouée sans motif : un échec sans raison ne se distingue pas d’une panne.');
+    return Object.freeze({status,reason,samples});
+  }
   function normalizeProfile(raw){
     const source=raw&&typeof raw==='object'?raw:{};
-    requireSchemaVersion(source.schemaVersion,PROFILE_SCHEMA_VERSION,'Profil de calibration');
+    /* Même couture que `normalizeSettings` : une version **connue** se
+       convertit ici, toute autre se refuse. La v1 n'avait ni
+       `travelSlopNorm` ni `stages` ; les deux prennent leur défaut, ce qui
+       est la conversion exacte. */
+    if(!PROFILE_MIGRATED_VERSIONS.includes(Number(source.schemaVersion)))
+      requireSchemaVersion(source.schemaVersion,PROFILE_SCHEMA_VERSION,'Profil de calibration');
     const given=source.hands&&typeof source.hands==='object'?source.hands:{};
     const hands={};
     for(const handedness of HANDEDNESSES)hands[handedness]=normalizeHandProfile(given[handedness]);
@@ -1108,14 +1236,107 @@
        « calibré », le reste retombant sur les défauts (décision 31). */
     const measured=HANDEDNESSES.some(handedness=>
       MEASURED_KEYS.some(key=>hands[handedness][key]!==null));
-    const at=Number(source.updatedAt);
+    /* Même mine que `ratio` ci-dessus, et elle mordait plus visiblement :
+       `Number(null)` vaut 0, donc un profil jamais calibré, relu depuis son
+       JSON, disait avoir été calibré le 1er janvier 1970. */
+    const at=source.updatedAt===null||source.updatedAt===undefined?NaN:Number(source.updatedAt);
+    const givenStages=source.stages&&typeof source.stages==='object'?source.stages:{};
+    const stages={};
+    for(const stage of STAGES)stages[stage]=normalizeStage(givenStages[stage]);
     return Object.freeze({
       schemaVersion:PROFILE_SCHEMA_VERSION,
       calibrated:measured,
       updatedAt:Number.isFinite(at)?at:null,
       hands:Object.freeze(hands),
+      stages:Object.freeze(stages),
     });
   }
+  /* **Décision 32, en structure et non en intention.**
+
+     La promesse « aucune image, aucun point, seulement des paramètres dérivés »
+     est tenue d'abord par `normalizeProfile`, qui est une **liste blanche** :
+     il reconstruit le profil clé par clé, donc une clé que le schéma ne nomme
+     pas n'atteint jamais le fil, et `reachNorm` est rebâtie de ses quatre
+     nombres. Un appelant qui glisserait `frames:[…]` dans un profil ne
+     l'exporte pas — pas parce qu'on le refuse, parce qu'on ne le **recopie
+     pas**.
+
+     Ce que cette liste blanche ne protège pas, c'est le schéma **lui-même** :
+     rien n'empêchait une Slice ultérieure d'ajouter à `HAND_PROFILE_DEFAULTS`
+     une clé qui accepte un objet libre, et la décision 32 tomberait sans qu'une
+     ligne ne change ailleurs. La porte est donc posée là où le trou est réel —
+     sur la **forme**, au chargement du module, comme l'inversion de
+     `SETTINGS_BOUNDS`. Un test de payload par-dessus la liste blanche, lui,
+     serait la « seconde vérité » que ce dépôt refuse : il ne pourrait pas
+     échouer.
+
+     Elle refuse tout ce qui n'est pas un nombre fini, un booléen, `null` ou un
+     mot de la liste fermée — donc toute chaîne libre (une image en base64 en
+     est une) et tout tableau (une suite de points en est un). */
+  const DERIVED_WORDS=Object.freeze([...STAGE_STATUSES,...STAGE_REASONS]);
+  function assertDerivedOnly(value,path){
+    const where=path||'profil';
+    if(value===null||value===undefined||typeof value==='boolean')return;
+    if(typeof value==='number'){
+      if(!Number.isFinite(value))
+        reject('barehands_profile_not_derived',`Valeur non finie dans le profil (${where}).`);
+      return;
+    }
+    if(typeof value==='string'){
+      if(!DERIVED_WORDS.includes(value))
+        reject('barehands_profile_not_derived',
+          `Texte libre dans le profil (${where}) : seules des valeurs dérivées y sont permises (décision 32).`);
+      return;
+    }
+    if(Array.isArray(value))
+      reject('barehands_profile_not_derived',
+        `Liste dans le profil (${where}) : une suite de points ou d'images n'y entre pas (décision 32).`);
+    if(typeof value!=='object')
+      reject('barehands_profile_not_derived',`Valeur de type ${typeof value} dans le profil (${where}).`);
+    for(const key of Object.keys(value))assertDerivedOnly(value[key],`${where}.${key}`);
+  }
+  /* La sonde, et elle est **pilotée par le schéma** plutôt qu'écrite à la
+     main : un profil rempli de valeurs plausibles ne dit rien d'une clé
+     ajoutée demain, puisque personne n'aurait pensé à la remplir. On présente
+     donc à **chaque** clé mesurable, et à chaque champ d'étape, les deux
+     formes que la décision 32 interdit — une suite de points et une image en
+     base64 — et on regarde ce que la normalisation en laisse passer.
+
+     Un refus de la normalisation (`reachNorm` dégénérée, hystérésis
+     impossible) est **aussi** une réponse sûre : la valeur n'est pas passée.
+     C'est la seule raison pour laquelle ce `catch` est muet, et c'est écrit
+     ici plutôt que sous-entendu. */
+  const LEAK_PROBES=Object.freeze([
+    Object.freeze([{x:.1,y:.2,z:.3}]),        // une suite de points
+    'data:image/png;base64,iVBORw0KGgo=',     // une image
+    Object.freeze({blob:'AAAA'}),             // un objet libre
+  ]);
+  assertDerivedOnly(PROFILE_DEFAULTS,'PROFILE_DEFAULTS');
+  for(const probe of LEAK_PROBES){
+    for(const key of MEASURED_KEYS){
+      let normalized=null;
+      try{normalized=normalizeProfile({hands:{left:{[key]:probe}}})}
+      catch(_refused){continue}   // refusé par la liste blanche : rien n'est passé
+      assertDerivedOnly(normalized,'schéma');
+    }
+    for(const field of ['status','reason','samples']){
+      let normalized=null;
+      try{normalized=normalizeProfile({stages:{neutral:{status:'ok',[field]:probe}}})}
+      catch(_refused){continue}
+      assertDerivedOnly(normalized,'schéma');
+    }
+    let dated=null;
+    try{dated=normalizeProfile({updatedAt:probe})}catch(_refused){dated=null}
+    if(dated)assertDerivedOnly(dated,'schéma');
+  }
+
+  /* Ce qui part sur le fil : la sortie de la liste blanche, rendue en objet
+     nu. Le seul chemin légal vers la route du profil, comme `toServerPayload`
+     l'est pour les réglages. */
+  function toProfilePayload(profile){
+    return JSON.parse(JSON.stringify(normalizeProfile(profile)));
+  }
+
   /* Un seuil calibré s'il existe, sinon celui du moteur (décision 31). Une
      latéralité ou une clé hors table se refuse : sans cela, une faute de
      frappe rendait le défaut du moteur et se lisait comme « pas calibré ». */
@@ -1261,7 +1482,11 @@
     INSTALLED_TOOLS,toolCapability,toolInstalled,describeTool,describeTools,
     SETTINGS_SCHEMA_VERSION,SETTINGS_MIGRATED_VERSIONS,SETTINGS_DEFAULTS,SETTINGS_BOUNDS,
     SETTINGS_WIRE_KEYS,SETTINGS_WIRE_VERSION_KEY,normalizeSettings,toServerPayload,fromServerState,
-    PROFILE_SCHEMA_VERSION,PROFILE_DEFAULTS,HAND_PROFILE_DEFAULTS,normalizeHandProfile,normalizeProfile,profileValue,
+    PROFILE_SCHEMA_VERSION,PROFILE_MIGRATED_VERSIONS,PROFILE_DEFAULTS,HAND_PROFILE_DEFAULTS,
+    PROFILE_MEASURED_KEYS:MEASURED_KEYS,
+    STAGE,STAGES,STAGE_STATUS,STAGE_STATUSES,STAGE_REASON,STAGE_REASONS,
+    normalizeHandProfile,normalizeStage,normalizeProfile,profileValue,
+    assertDerivedOnly,toProfilePayload,
     adapters:Object.freeze({MEDIAPIPE_LANDMARK,handFrameFromMediapipe,pointersFromCoreTokens,motionFromCoreToken}),
   });
   root.JarvisBarehandsContracts=api;

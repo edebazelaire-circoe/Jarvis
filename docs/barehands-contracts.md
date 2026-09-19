@@ -1573,7 +1573,7 @@ d'injection documenté à `control_center.py:224-226` est intact.
 > `barehands_flow_absent` — rien à faire pour que ça marche, tout à faire pour
 > que ce soit annoncé honnêtement.
 
-`PROFILE_SCHEMA_VERSION = 1`. Un seul profil visible, valeurs internes par main
+`PROFILE_SCHEMA_VERSION = 2`. Un seul profil visible, valeurs internes par main
 (décision 28). Un seau **par latéralité de `HANDEDNESS`** : `hands.left`,
 `hands.right` et `hands.unknown`. Le troisième existe parce que
 `createHandObservation` retombe sur `unknown` dès que le traqueur n'étiquette
@@ -1585,11 +1585,80 @@ toute main non étiquetée perdait sa calibration en silence.
 | `pressRatio`, `secondaryPressRatio` | sans unité (fraction de la paume) | 0,05 – 0,9 |
 | `releaseRatio`, `secondaryReleaseRatio` | sans unité (fraction de la paume) | 0,05 – 1,5 |
 | `jitterPx` | **pixels de la fenêtre** | 0 – 200 |
+| `travelSlopNorm` | **fraction de la largeur de l'image** (0..1) | 0,002 – 0,15 |
 | `reachNorm` | `{x,y,w,h}` en **coordonnées normalisées 0..1 de l'image**, comme les points d'un `HandFrame` — jamais des pixels | 0 – 1 |
 | `quality` | 0..1, confiance de la mesure | 0 – 1 |
 
+**Version 2 (Slice 08)**, et la v1 se **convertit** (`PROFILE_MIGRATED_VERSIONS`)
+au lieu de se refuser : ses six mesures restent valides, `travelSlopNorm` et
+`stages` prennent leur défaut — ce qui est exactement ce que dit un profil
+dérivé avant que le parcours n'existe. Deux ajouts :
+
+- **`travelSlopNorm` règle le résidu pixels-contre-paumes de la Slice 04.**
+  `clickSlopPx`/`dragSlopPx` sont en pixels de la fenêtre quand tout le reste du
+  moteur mesure en paumes : le même geste vaut ~3 fois plus de pixels en 1920
+  qu'en 640. **La paume n'est pas la réponse** pour autant. Aucune des deux
+  unités n'est invariante aux deux variables — la paume l'est à la distance à
+  la caméra mais pas à la résolution, la fraction d'image l'inverse — et c'est
+  pour ça que la question était restée ouverte. Ce qu'on borne ici est un
+  déplacement **à l'écran**, donc une grandeur d'écran ; et la distance à
+  laquelle l'utilisateur se tient est déjà dans la mesure, puisque c'est lui qui
+  l'a faite, à sa place habituelle. Application :
+  `clickSlopPx = travelSlopNorm × largeur de la fenêtre`, `dragSlopPx` gardant
+  le rapport d'usine, donc l'invariant `clickSlopPx <= dragSlopPx` traverse
+  intact comme il traverse `sensitivity`. Résidu nommé : un utilisateur qui se
+  rapproche franchement de la caméra après s'être calibré doit recalibrer —
+  strictement moins que la constante unique d'avant, qui valait pour toutes les
+  résolutions et tous les utilisateurs à la fois.
+- **`stages` dit quelles étapes ont abouti** (décision 31). `STAGE` =
+  `neutral` | `c_pose` | `pinch_primary` | `pinch_secondary` | `aim` | `drag` |
+  `resize` ; chacune porte `{status, reason, samples}` avec
+  `STAGE_STATUS` = `ok` | `failed` | `skipped` et un `reason` de la liste fermée
+  `STAGE_REASON` (`barehands_stage_no_hand`, `…_timeout`,
+  `…_too_few_samples`, `…_not_separable`, `…_out_of_band`, `…_needs_two_hands`,
+  `…_cancelled`). `skipped` n'est pas `failed` : une étape qu'on n'a pas jouée
+  et une étape jouée qui n'a pas abouti ne demandent pas la même chose à
+  l'utilisateur. Un `ok` portant un motif, ou un `failed` **muet**, se refusent
+  (`barehands_stage_report_inconsistent`) — un échec sans raison ne se distingue
+  pas d'une panne.
+
+**`null` est une absence, pas un zéro.** `Number(null)` vaut `0`, qui est fini :
+une valeur non mesurée était bornée sur son **minimum** au lieu de rester nulle.
+Sans conséquence tant que rien ne relisait un profil — l'entrée venait toujours
+d'un objet partiel où la clé *manquait*. Mais un profil persisté est du JSON, et
+du JSON porte des `null` explicites : relire un profil vierge rendait les huit
+mesures « calibrées » à leur plancher, `calibrated` vrai sans qu'une mesure ait
+eu lieu, `updatedAt` au 1<sup>er</sup> janvier 1970, et `profileValue` rendant
+ce plancher **au lieu du défaut du moteur** — la décision 31 défaite par une
+conversion de type. La Slice 08 est la première à relire un profil ; c'est elle
+qui a trouvé la mine. L'assertion qui la tient est un **aller-retour** :
+`normalizeProfile(JSON.parse(JSON.stringify(toProfilePayload(p))))` doit rendre
+`p`.
+
 **Aucune image ni vidéo** : seulement des paramètres dérivés et des métriques
-(décision 32).
+(décision 32) — et c'est tenu **en structure**, pas en intention. Deux gardes,
+qui ne se doublent pas :
+
+1. `normalizeProfile` est une **liste blanche** : il reconstruit le profil clé
+   par clé, donc une clé que le schéma ne nomme pas n'atteint jamais le fil —
+   pas parce qu'on la refuse, parce qu'on ne la recopie pas. `reachNorm` est
+   rebâtie de ses quatre nombres. `toProfilePayload` est le seul chemin légal
+   vers la route du profil, comme `toServerPayload` l'est pour les réglages.
+2. Ce que la liste blanche ne protège pas, c'est le **schéma lui-même** : rien
+   n'empêchait une Slice ultérieure d'ajouter à `HAND_PROFILE_DEFAULTS` une clé
+   acceptant un objet libre, et la décision 32 serait tombée sans qu'une ligne
+   change ailleurs. `assertDerivedOnly` est donc posée sur la **forme**, au
+   chargement du module — même idiome que l'inversion de `SETTINGS_BOUNDS` — et
+   sa sonde est **pilotée par le schéma** : elle présente à chaque clé mesurable
+   et à chaque champ d'étape une suite de points, une image en base64 et un
+   objet libre, puis vérifie ce que la normalisation en laisse passer. Un profil
+   rempli à la main ne dirait rien d'une clé que personne n'aurait pensé à
+   remplir. Mesuré : ajouter une clé `sampleFrames` qui recopie son entrée fait
+   **refuser le chargement du module**.
+
+La poser en plus sur chaque charge utile serait la « seconde vérité » que ce
+dépôt refuse (Slice 12) : par-dessus la liste blanche, elle ne pourrait pas
+échouer.
 
 - `normalizeProfile(raw)` : une valeur non mesurée vaut `null` ; `calibrated`
   est vrai dès qu'**une** mesure existe, quelle qu'elle soit — une calibration

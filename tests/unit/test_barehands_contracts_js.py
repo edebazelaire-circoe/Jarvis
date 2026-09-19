@@ -546,7 +546,10 @@ def test_settings_survive_the_partial_and_carry_the_whole_widened_payload(tmp_pa
         // Le numéro de schéma était estampillé en sortie et jamais lu en
         // entrée : une v99 revenait en v1, champs inconnus jetés, en silence.
         foreign:refused(()=>C.normalizeSettings({schemaVersion:99,enabled:true,newField:1})),
-        foreignProfile:refused(()=>C.normalizeProfile({schemaVersion:2})),
+        foreignProfile:refused(()=>C.normalizeProfile({schemaVersion:99})),
+        // La v1 du profil, elle, se **convertit** : la Slice 08 a monté le
+        // schéma, ses six mesures restent valides.
+        migratedProfile:C.normalizeProfile({schemaVersion:1,hands:{left:{pressRatio:.2}}}),
         // Aller-retour complet : ce que la route rend se relit dans le
         // vocabulaire du contrat, sans qu'aucune clé ne se perde en route.
         roundTrip:C.fromServerState(C.toServerPayload({enabled:true,tool:'pan',
@@ -563,6 +566,11 @@ def test_settings_survive_the_partial_and_carry_the_whole_widened_payload(tmp_pa
     assert result["foreign"] == "barehands_schema_version_unsupported"
     assert result["foreignFromServer"] == "barehands_schema_version_unsupported"
     assert result["foreignProfile"] == "barehands_schema_version_unsupported"
+    assert result["migratedProfile"]["schemaVersion"] == 2
+    assert result["migratedProfile"]["hands"]["left"]["pressRatio"] == 0.2
+    assert result["migratedProfile"]["hands"]["left"]["travelSlopNorm"] is None, (
+        "la clé que la v1 ne portait pas reste non mesurée, elle ne s'invente pas"
+    )
     assert result["defaults"]["enabled"] is False, "Bare Hands reste éteint par défaut"
     assert result["defaults"]["targetPreview"] is True and result["defaults"]["sleepTimeoutMs"] == 30000
     assert result["fromNothing"] == result["defaults"]
@@ -740,9 +748,9 @@ def test_a_partial_calibration_is_valid_and_the_rest_falls_back(tmp_path):
     # normalisées de l'image pour la portée (jamais des unités de scène).
     assert result["keys"] == sorted([
         "pressRatio", "releaseRatio", "secondaryPressRatio", "secondaryReleaseRatio",
-        "jitterPx", "reachNorm", "quality",
+        "jitterPx", "travelSlopNorm", "reachNorm", "quality",
     ])
-    assert result["version"] == 1
+    assert result["version"] == 2
     assert all(result["eachKeyCounts"]), "chaque mesure du profil compte pour « calibré »"
     assert result["buckets"] == ["left", "right", "unknown"]
     assert result["unknownHand"] == pytest.approx(0.2)
@@ -752,6 +760,134 @@ def test_a_partial_calibration_is_valid_and_the_rest_falls_back(tmp_path):
     assert result["noHysteresis2"] == "barehands_profile_thresholds_invalid"
     assert result["flatReach"] == "barehands_profile_reach_invalid"
     assert result["goodReach"] == {"x": 0.1, "y": 0.1, "w": 0.8, "h": 1}, "0..1, bornes comprises"
+
+
+def test_a_stored_profile_survives_its_own_json_round_trip(tmp_path):
+    """**La mine que la Slice 08 a trouvée en persistant le profil.**
+
+    `Number(null)` vaut `0`, qui est fini : une valeur **non mesurée** était
+    donc bornée sur son minimum au lieu de rester nulle. Tant que rien ne
+    relisait un profil, l'entrée venait toujours d'un objet partiel où la clé
+    **manquait** (`undefined` → `NaN` → `null`) et la mine ne mordait pas. Mais
+    un profil persisté est du JSON, et du JSON porte des `null` explicites :
+    relire un profil vierge rendait les huit mesures « calibrées » à leur
+    plancher — `pressRatio` 0,05, `travelSlopNorm` 0,002 — donc `calibrated`
+    vrai sans qu'une seule mesure ait eu lieu, `updatedAt` au 1er janvier 1970,
+    et `profileValue` rendant ce plancher **au lieu du défaut du moteur**. La
+    décision 31 était défaite par une conversion de type.
+
+    L'aller-retour est donc l'assertion, pas la valeur : un profil qui ne
+    revient pas égal à lui-même n'est pas persistable.
+    """
+
+    result = run_node(tmp_path, """
+      const round=profile=>C.normalizeProfile(JSON.parse(JSON.stringify(C.toProfilePayload(profile))));
+      const blank=C.normalizeProfile();
+      const measured=C.normalizeProfile({updatedAt:1700,hands:{
+        left:{pressRatio:.2,releaseRatio:.4,travelSlopNorm:.1,reachNorm:{x:.1,y:.2,w:.6,h:.5}},
+        right:{jitterPx:3.5,quality:.75}}});
+      const withStages=C.normalizeProfile({stages:{
+        neutral:{status:'ok',samples:42},
+        c_pose:{status:'failed',reason:'barehands_stage_timeout',samples:3}}});
+      out({
+        blankStable:JSON.stringify(round(blank))===JSON.stringify(blank),
+        blankCalibrated:round(blank).calibrated,
+        blankUpdatedAt:round(blank).updatedAt,
+        blankPress:round(blank).hands.left.pressRatio,
+        // Et la conséquence directe : le défaut du moteur, pas le plancher.
+        blankFallback:C.profileValue(round(blank),'left','pressRatio',.28),
+        measuredStable:JSON.stringify(round(measured))===JSON.stringify(measured),
+        measuredAt:round(measured).updatedAt,
+        stagesStable:JSON.stringify(round(withStages).stages)===JSON.stringify(withStages.stages),
+        stages:round(withStages).stages,
+      });
+    """)
+    assert result["blankStable"] is True, "un profil vierge doit revenir vierge"
+    assert result["blankCalibrated"] is False, "relire un profil ne le calibre pas"
+    assert result["blankUpdatedAt"] is None, "ni ne le date du 1er janvier 1970"
+    assert result["blankPress"] is None
+    assert result["blankFallback"] == pytest.approx(0.28), (
+        "une mesure absente rend le défaut du moteur, jamais le plancher de sa borne"
+    )
+    assert result["measuredStable"] is True and result["measuredAt"] == 1700
+    assert result["stagesStable"] is True
+    assert result["stages"]["neutral"] == {"status": "ok", "reason": None, "samples": 42}
+    assert result["stages"]["c_pose"]["reason"] == "barehands_stage_timeout"
+    assert result["stages"]["drag"]["status"] == "skipped", "ce qu'on n'a pas joué n'a pas échoué"
+
+
+def test_nothing_but_a_derived_scalar_can_reach_a_stored_profile(tmp_path):
+    """**Décision 32, tenue en structure et non en intention.**
+
+    Deux gardes, et elles ne se doublent pas. `normalizeProfile` est une
+    **liste blanche** : il reconstruit le profil clé par clé, donc une clé que
+    le schéma ne nomme pas n'atteint jamais le fil — pas parce qu'on la refuse,
+    parce qu'on ne la recopie pas. Ce qu'elle ne protège pas, c'est le schéma
+    **lui-même** : une Slice ultérieure pouvait ajouter à
+    `HAND_PROFILE_DEFAULTS` une clé acceptant un objet libre, et la décision 32
+    serait tombée sans qu'une ligne change ailleurs. `assertDerivedOnly` est
+    donc posée sur la **forme**, au chargement du module — même idiome que
+    l'inversion de `SETTINGS_BOUNDS`. La poser aussi sur chaque charge utile
+    serait la « seconde vérité » que ce dépôt refuse : elle ne pourrait pas
+    échouer.
+    """
+
+    result = run_node(tmp_path, """
+      const gate=value=>refused(()=>C.assertDerivedOnly(value));
+      out({
+        landmarks:gate({hands:{left:{landmarks:[{x:.1,y:.2}]}}}),
+        emptyList:gate({samples:[]}),
+        base64:gate({thumbnail:'data:image/png;base64,iVBORw0KGgo='}),
+        freeText:gate({note:'la main gauche de Clarice'}),
+        infinite:gate({quality:Infinity}),
+        // Ce que le schéma nomme passe : nombres, booléens, `null`, et les
+        // seuls mots d'un vocabulaire fermé.
+        derived:gate(C.normalizeProfile({hands:{left:{pressRatio:.2}}})),
+        words:gate({status:'ok',reason:'barehands_stage_timeout'}),
+        /* La garde de forme tourne au chargement : si elle n'avait pas tourné,
+           le module se serait chargé quand même. On la relance donc sur le
+           schéma rempli pour que la ligne de chargement soit **exercée** et
+           non seulement présente. */
+        schemaChecked:(()=>{C.assertDerivedOnly(C.PROFILE_DEFAULTS);return true})(),
+        /* Et la porte est **sur le chemin** de la persistance, pas à côté.
+           Deux gardes, pas une : `normalizeProfile` est une liste blanche —
+           une clé que le schéma ne nomme pas n'atteint jamais la seconde —
+           et `assertDerivedOnly` vérifie ce qui a survécu. La première est ce
+           qui rend la seconde inatteignable par un appelant ordinaire, et
+           c'est la bonne nouvelle : la décision 32 ne dépend pas d'elle
+           seule. */
+        smuggled:Object.keys(C.toProfilePayload(Object.assign(
+          JSON.parse(JSON.stringify(C.normalizeProfile())),
+          {frames:['AAAA'],thumbnail:'data:image/png;base64,AA'}))),
+        smuggledInHand:Object.keys(C.toProfilePayload({schemaVersion:2,
+          hands:{left:{pressRatio:.2,landmarks:[{x:1,y:2}]}}}).hands.left),
+        // `reachNorm` est la seule forme imbriquée du schéma : elle est
+        // rebâtie de ses quatre nombres, donc elle ne peut pas devenir la
+        // poche où tout passe.
+        reachPocket:Object.keys(C.toProfilePayload({schemaVersion:2,hands:{left:{
+          reachNorm:{x:0,y:0,w:1,h:1,blob:'data:image/png;base64,AA'}}}}).hands.left.reachNorm),
+        reachOk:C.toProfilePayload({schemaVersion:2,hands:{left:{
+          reachNorm:{x:0,y:0,w:1,h:1}}}}).hands.left.reachNorm,
+      });
+    """)
+    for case in ("landmarks", "emptyList", "base64", "freeText", "infinite"):
+        assert result[case] == "barehands_profile_not_derived", case
+    assert result["derived"] is None and result["words"] is None
+    # Première garde : la liste blanche. Ce que le schéma ne nomme pas n'existe
+    # pas dans ce qui part sur le fil — ni au sommet, ni dans une main.
+    assert sorted(result["smuggled"]) == ["calibrated", "hands", "schemaVersion", "stages", "updatedAt"]
+    assert "frames" not in result["smuggled"] and "thumbnail" not in result["smuggled"]
+    assert "landmarks" not in result["smuggledInHand"]
+    assert sorted(result["smuggledInHand"]) == sorted([
+        "pressRatio", "releaseRatio", "secondaryPressRatio", "secondaryReleaseRatio",
+        "jitterPx", "travelSlopNorm", "reachNorm", "quality",
+    ])
+    assert sorted(result["reachPocket"]) == ["h", "w", "x", "y"], "reachNorm est rebâtie, pas recopiée"
+    assert result["reachOk"] == {"x": 0, "y": 0, "w": 1, "h": 1}
+    # Seconde garde : la **forme**. Le module refuse de se charger si le schéma
+    # lui-même admet autre chose qu'un scalaire — c'est ce qui tient la
+    # décision 32 contre la Slice suivante, et non contre l'appelant d'à côté.
+    assert result["schemaChecked"] is True
 
 
 # --------------------------------------------------------- compatibilité
