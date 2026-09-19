@@ -1,0 +1,29 @@
+{
+  "project": "Jarvis",
+  "slug": "jarvis-bare-hands-v1",
+  "repository": "edebazelaire-circoe/Jarvis",
+  "source_snapshot": {
+    "branch": "main",
+    "sha": "6af6df91c900efa33317ffa836a7eac9abbeb181",
+    "inspected_date": "2026-09-19"
+  },
+  "summary": "Replace the native Bare Hands click experiment with a modular webcam-only Jarvis interaction stack: stable tracking, gesture recognition, primary/secondary pinch intent, semantic target understanding, one-hand move/two-hand constrained resize, tools/settings, calibration, tutorial, and diagnostics.",
+  "locked_constraints": [
+    "V1 uses standard webcams and targets Jarvis UI only.",
+    "MediaPipe remains the V1 default tracker but must sit behind an interchangeable tracker contract.",
+    "No permanent pointer; target feedback appears only during interaction intent and is configurable.",
+    "Lifecycle is OFF/SLEEP/ACTIVE with C-pose wake and 30s no-hand return to SLEEP.",
+    "Primary pinch is thumb-index; secondary/right-click pinch is thumb-middle.",
+    "BODY interacts with content; only frame edges/corners are manipulation zones.",
+    "One manipulation-zone capture moves the frame; two compatible zone captures on the same frame resize with per-zone axis constraints.",
+    "Two hands may manipulate different objects independently.",
+    "Captures latch until release; no axis inversion; clamp at minimum size; RESIZE->MOVE must not jump.",
+    "Calibration is optional, explicit, statistical/threshold-based, partially successful per function, and does not auto-learn continuously.",
+    "Calibration stores derived parameters only by default and retains no raw image/video.",
+    "Native implementation must remain clean-room with respect to pinned AGPL upstream Barehands."
+  ],
+  "planning_blockers": [
+    "Workspace Task Type vocabulary is not exposed; Slice 00 must assign valid existing Task Types before implementation dispatch.",
+    "Exact current Control Center/Constellation component contracts and voice-command registration points must be freshness-audited by Slice 00 before dependent Slices are dispatched."
+  ]
+}

@@ -1,0 +1,1 @@
+{"checks":[{"id":"HV-BH-05-01","title":"Evaluate target preview clarity","instructions":"After automated UI/runtime QA passes, test buttons, body content, edges and corners. Confirm preview helps without becoming visually noisy and the color semantics are immediately understandable.","expected":"Preview is subtle, accurate and can be disabled in Settings."}]}

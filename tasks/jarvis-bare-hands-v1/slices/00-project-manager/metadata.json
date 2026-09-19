@@ -1,0 +1,7 @@
+{
+  "slice_id": "00",
+  "task_type": null,
+  "work_intent": "project management / readiness",
+  "dependencies": [],
+  "task_type_blocker": "Resolve the current Workspace Task Type vocabulary for all implementation Slices before dispatch."
+}

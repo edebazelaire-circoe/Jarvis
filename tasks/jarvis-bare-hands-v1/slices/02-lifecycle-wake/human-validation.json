@@ -1,0 +1,1 @@
+{"checks":[{"id":"HV-BH-02-01","title":"Evaluate wake/sleep feel","instructions":"After automated runtime QA passes, use a real webcam to confirm C-pose wake progress feels deliberate, OFF truly releases the camera, and 30-second no-hand sleep is not disruptive.","expected":"Wake is predictable and sleep/off states are distinguishable in normal use."}]}
