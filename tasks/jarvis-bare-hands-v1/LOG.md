@@ -758,6 +758,9 @@ deux sommes diffèrent sous 1e-9 paume est une géométrie où les deux réponse
 sont justes) et la porte d'appariement doublée (mutant équivalent : au-delà de
 `matchRadiusPalms`, ne pas apparier coûte déjà moins cher que d'apparier, donc
 la porte est une redondance volontaire — la **rétrécir**, elle, fait tomber
-trois tests). Deux autres avaient d'abord survécu et sont tombées après
-renforcement : l'inconnu compté comme désaccord, et un appariement retenu
-au-delà de la porte.
+trois tests). Une troisième avait d'abord survécu et est tombée après
+renforcement du test : l'inconnu compté comme désaccord — il a fallu ajouter le
+cas « piste jamais étiquetée + détection sans étiquette », le seul où la règle
+d'absence change le gagnant. Le contrôle ajouté au passage (aucun appariement
+retenu au-delà de la porte) n'a pas suffi à faire tomber la porte doublée, et
+c'est ce qui a montré que ce mutant était équivalent.
