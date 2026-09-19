@@ -3141,7 +3141,7 @@ Measured: the « s » (settings) shortcut, Shift+Arrow on the node behind and a 
 
 - Its pointer replays `pointerdown`, focus, `pointerup` and `click` on the element under the token, with no drag.
 - A click on the already selected object opens its menu, and so does a long press.
-- A gesture from its pointer (`pointerId` 9001, or a token on screen) needs 10 px before it becomes a drag, so a trembling long press never moves and pins.
+- A gesture from one of its pointers (`JarvisBarehandsContracts.isBareHandsPointerId(id)` — one id per hand, slot 0 keeping the historical value — or a token on screen) needs 10 px before it becomes a drag, so a trembling long press never moves and pins. Never test the literal: a second hand has its own id, and a consumer comparing against one number stops recognising it.
 - Menu items, chips and dialog buttons are ordinary buttons.
 
 **Errors.**

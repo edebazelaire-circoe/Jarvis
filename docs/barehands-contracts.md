@@ -10,6 +10,26 @@ résolution de cible, interaction, outils, calibration) arrivent dans les Slices
 suivantes et se branchent derrière ces noms. Aucun module n'a le droit de
 redéfinir localement un nom qui vit ici.
 
+## Un refus codé plutôt qu'un défaut plausible
+
+Règle qui traverse tout ce fichier, et le seul endroit où la lire.
+
+Partout où une valeur fausse deviendrait **indiscernable d'une valeur vraie**,
+le contrat lève un `BareHandsSchemaError` portant un `code` stable,
+journalisable tel quel — il ne rend pas un défaut d'apparence normale. Une
+piste sans identité, une zone hors table, un état de capture inconnu, un
+pincement sans coordonnées, un numéro de schéma étranger, une calibration
+impossible : refus.
+
+L'**absence**, elle, reste permise partout où un défaut a un sens : un champ
+non fourni prend le défaut documenté, parce que personne n'a rien dit. C'est
+l'inconnu qui se refuse, pas le silence.
+
+Deux exceptions assumées, parce qu'elles normalisent un schéma **stocké** et
+non un événement : `normalizeSettings` et `normalizeHandProfile` bornent les
+valeurs hors plage au lieu de les refuser, et `normalizeTool` retombe sur
+`pointer`. Un événement d'interaction, lui, refuse un outil inconnu.
+
 Décisions produit adossées à ce contrat :
 `tasks/jarvis-bare-hands-v1/docs/01-decision-log.md` (citées ci-dessous par leur
 numéro) et `tasks/jarvis-bare-hands-v1/docs/02-architecture.md` (par leur §).
@@ -110,10 +130,24 @@ possédée par ce contrat.
   chez un consommateur. Personne ne recopie le littéral ; un test le vérifie
   sur `control_center_barehands.js`, `control_center_scene_page.js` et
   `control_center.html`.
-- `createSlotAllocator(max)` — `slot` / `pointerId` / `forget` / `retain` /
-  `clear`. Une main garde sa fente tant qu'elle vit ; une fente libérée est
-  réutilisée. Au-delà de `MAX_HANDS` la main surnuméraire reçoit `null` : elle
-  est suivie, pas pointée, plutôt que de voler l'identité d'une autre.
+- `createSlotAllocator(max)` — objet **gelé** portant `capacity`, `slot`,
+  `pointerId`, `forget`, `retain`, `size` et `clear`. Une main garde sa fente
+  tant qu'elle vit ; une fente libérée est réutilisée. Au-delà de `MAX_HANDS`
+  la main surnuméraire reçoit `null` : elle est suivie, pas pointée, plutôt
+  que de voler l'identité d'une autre.
+  - `capacity` est une **constante** (les fentes qui existent) ; `size()` est
+    l'**occupation** de l'instant (les fentes prises). Les deux se lisaient
+    « size ».
+  - `max` absent vaut `MAX_HANDS`. Toute autre valeur doit être un entier de
+    1 à `MAX_HANDS` : `0`, `-1` et `'oops'` rendaient un allocateur qui marche
+    alors que l'appelant s'est trompé. Refus
+    `barehands_slot_capacity_invalid`.
+  - `slot`, `pointerId`, `forget` et `retain` exigent une identité de main
+    utilisable (`barehands_hand_track_id_missing`). `0` **en est une** ;
+    `null`, `undefined` et la chaîne vide n'en sont pas. Deux clés normalisées
+    différemment laissaient une piste fantôme occuper la fente 0 pour
+    toujours — et la main suivante repartait à `9002`.
+  - `pointerId` n'utilise pas `this` : `const {pointerId} = allocator` marche.
 
 **Compatibilité.** La fente 0 vaut exactement l'identifiant d'hier : une main
 seule produit les mêmes événements qu'avant la Slice 01. La seconde main, qui
@@ -149,7 +183,9 @@ handednessConfidence, quality, points, raw})`.
 
 - `handTrackId` est l'identité persistante (la Slice 03 la rendra stable par
   continuité spatiale) ; la latéralité n'est qu'un **indice**, jamais
-  l'identité (§2).
+  l'identité (§2). **`0` est une identité**, c'est même le premier qu'émet un
+  traqueur qui numérote ses pistes : seuls `null`, `undefined` et une chaîne
+  vide ou blanche valent « absente ».
 - `points` porte les rôles de `POINT_ROLES` : `wrist`, `thumbTip`, `indexTip`,
   `middleTip`, `middleMcp`, `ringMcp`, `pinkyMcp`. Un rôle non fourni est
   absent ; le moteur qui en a besoin se déclare indisponible.
@@ -158,7 +194,8 @@ handednessConfidence, quality, points, raw})`.
 - `raw` garde les points bruts pour le diagnostic et le rejeu (§12). **Aucun
   moteur n'a le droit de les lire.**
 
-Refus (`BareHandsSchemaError`, champ `code`) : `barehands_frame_time_invalid`,
+Refus (`BareHandsSchemaError`, champ `code`) : `barehands_frame_invalid`,
+`barehands_hand_invalid`, `barehands_frame_time_invalid`,
 `barehands_hand_track_id_missing`, `barehands_hand_track_id_duplicate`,
 `barehands_too_many_hands`, `barehands_point_invalid`.
 
@@ -166,12 +203,17 @@ Refus (`BareHandsSchemaError`, champ `code`) : `barehands_frame_time_invalid`,
 
 `GESTURE` = `c_pose` | `open_palm` | `fist` | `double_close` | `clap`.
 `GESTURE_PHASE` = `start` | `hold` | `end` | `cancel`.
-`GESTURE_SCOPE` = `global` | `hand` — un geste global ne vole pas la main à une
-manipulation capturée.
+`GESTURE_SCOPE` = `global` | `hand` (liste : `GESTURE_SCOPES`) — un geste
+global ne vole pas la main à une manipulation capturée.
 
 `createGestureEvent({gesture, phase, scope, handTrackId, t, progress,
 confidence})`. Refus : `barehands_gesture_unknown`,
-`barehands_gesture_phase_unknown`.
+`barehands_gesture_phase_unknown`, `barehands_gesture_scope_unknown`,
+`barehands_hand_track_id_missing`.
+
+`scope` absent vaut `global` ; `scope` **inconnu** se refuse, parce que le
+repli silencieux était le plus dangereux des deux : `'Hand'` (majuscule) se
+lisait `global`, et le geste volait la main à une manipulation en cours.
 
 ## 5. Intention de pincement (§5, décisions 20-22)
 
@@ -184,9 +226,14 @@ clic droit est un canal, jamais un appui long (décision 22).
   points, jamais en indices de traqueur.
 - `PINCH_PHASE` = `approach` | `down` | `move` | `up` | `cancel`.
 - `createPinchEvent({channel, phase, handTrackId, slot, x, y, t, progress,
-  confidence})` calcule `pointerId` depuis `slot`. Refus :
+  confidence})` calcule `pointerId` depuis `slot`. `x` / `y` sont des
+  **pixels de la fenêtre**, comme `clientX` / `clientY` — jamais des unités de
+  scène. Ils sont **requis** pour `approach`, `down`, `move` et `up` ; seul
+  `cancel` n'a rien à viser. Sans eux, un clic partait en (0,0), le coin de
+  l'écran, où il y a toujours quelque chose à cliquer. Refus :
   `barehands_pinch_channel_unknown`, `barehands_pinch_phase_unknown`,
-  `barehands_hand_track_id_missing`.
+  `barehands_hand_track_id_missing`, `barehands_pinch_position_missing`,
+  `barehands_slot_out_of_range`.
 
 ## 6. Cible et régions (§6, décisions 3, 8, 9, 16, 23)
 
@@ -197,14 +244,30 @@ Une zone tient un ou deux **côtés** du cadre (`ZONE_SIDES`) et chaque côté
 contraint un axe (`SIDE_AXIS`). Raisonner en côtés, et non en axes, est ce qui
 rend les décisions 16 et 17 décidables. `zoneSides(zone)` / `zoneAxes(zone)`.
 
-Priorité d'aperçu en recouvrement : **coin > bord > corps**
-(`REGION_PRIORITY` = 3/2/1, `regionPriority`, `pickRegion`).
+`pickRegion(candidates)` choisit la meilleure candidate sur trois critères,
+dans cet ordre :
 
-`createTargetCandidate({objectId, kind, region, zone, bounds, actionable,
-representation, distance})` → ajoute `axes` et `feedback`. `objectId` est
+1. **actionnable d'abord** (décision 3). Une candidate non actionnable
+   n'appelle aucun retour visuel : c'est une obligation du **consommateur**,
+   que le contrat ne peut pas tenir à sa place — il l'aide en classant ces
+   candidates derrière. Les laisser gagner, c'est ne plus rien afficher là où
+   il y avait quelque chose à montrer.
+2. **priorité de région** : coin > bord > corps (`REGION_PRIORITY` = 3/2/1,
+   `regionPriority`). Une région hors table vaut 0 et **n'est pas une
+   candidate** : `pickRegion` la saute.
+3. **la plus proche** (`distancePx`). À distance égale, la première citée
+   gagne encore.
+
+`createTargetCandidate({objectId, kind, region, zone, boundsPx, actionable,
+representation, distancePx})` → ajoute `axes` et `feedback`. `objectId` est
 l'identité de la scène (`data-object-id`) ; aucun élément DOM ne traverse ce
-contrat. Une candidate non actionnable n'appelle aucun retour visuel
-(décision 3 : pas de pointeur permanent).
+contrat.
+
+**Unités.** `boundsPx` et `distancePx` sont en **pixels de la fenêtre**, comme
+`clientX` / `clientY` — jamais en unités de scène (±160 × ±90, qui vivent dans
+`control_center_scene_interact.js`). Le suffixe est dans le nom pour qu'une
+confusion se voie à la lecture, au lieu de se déboguer comme un défaut de
+géométrie dans le mauvais module.
 
 `hasManipulationZones(representation)` : seules `capsule` et `window` ont des
 zones (décision D3 de la Slice 00) ; `point` et `signal` restent
@@ -226,25 +289,90 @@ Retour visuel (décision 23) par **rôle**, la valeur vivant dans le thème :
 jusqu'au relâchement (décision 13).
 
 `createCapture({handTrackId, channel, state, objectId, region, zone, t})` valide
-la région et la zone (`barehands_region_unknown`, `barehands_zone_invalid`).
+l'identité, la région et la zone. `channel` et `state` absents prennent leur
+défaut (`primary`, `captured`) ; **inconnus**, ils se refusent — `state`
+retombait sur `captured`, l'état latché, donc la capture ne se relâchait plus
+jamais (décision 13) et rien ne disait pourquoi. Refus :
+`barehands_capture_invalid`, `barehands_hand_track_id_missing`,
+`barehands_region_unknown`, `barehands_zone_invalid`,
+`barehands_capture_state_unknown`, `barehands_pinch_channel_unknown`.
 
-`combineCaptures(a, b)` → `{mode, axes, reason}` décide ce que produisent deux
-captures :
+### `combineCaptures(a, b)`
+
+→ `{mode, axes, byHand, reason}`. Décide ce que produisent deux captures.
+
+`axes` reste l'**union** : ce que le cadre peut bouger. `byHand` dit **quelle
+main tient quoi**, indexé par `handTrackId`, chaque entrée portant
+`{sides, axes}` : les côtés du cadre que cette main tire, et les axes qui en
+découlent.
+
+`byHand` existe parce que l'union seule ne sait pas exprimer la décision 16 :
+bord droit + coin haut-droit et bord haut + coin bas-droit rendaient le même
+`{resize, [x,y]}` alors qu'ils demandent des attributions **opposées**. Sans
+lui, le moteur de la Slice 06 redériverait `ZONE_SIDES` / `SIDE_AXIS` chez lui
+— exactement la duplication que ce module existe pour éviter.
+
+Les **côtés** sont la donnée utile : deux mains peuvent tenir le même axe par
+deux côtés opposés (le bas et le haut), ce qui est un redimensionnement
+légitime et non un conflit.
 
 | Situation | `mode` | `axes` | `reason` |
 |---|---|---|---|
+| une seule capture (état normal à une main) | `null` | — | `missing_capture` |
+| la même main deux fois | `null` | — | `same_hand_twice` |
+| un `objectId` absent des deux côtés (décision 12) | `independent` | — | `object_unidentified` |
 | objets différents (décision 12) | `independent` | — | `different_objects` |
-| une des deux est BODY (décisions 8, 14) | `move` | `x,y` | `body_is_not_a_resize_handle` |
+| **les deux** sont BODY (décision 8) | `null` | — | `both_captures_are_body` |
+| une seule est BODY (décisions 10, 14) | `move` | `x,y` | `body_is_not_a_resize_handle` |
 | même zone (décision 15) | `null` | — | `same_zone_rejected` |
 | deux bords distincts | `resize` | union | — |
-| bord + coin se recouvrant (décision 16) | `resize` | union — le bord possède l'axe du côté partagé, le coin garde l'autre | — |
-| deux coins sur un même côté (décision 17) | `resize` | union **moins** l'axe partagé | — |
+| bord + coin se recouvrant (décision 16) | `resize` | union — le bord garde le côté partagé, le coin ne garde que l'autre | — |
+| deux coins sur un même côté (décision 17) | `resize` | union **moins** l'axe de ce côté, que ni l'un ni l'autre ne garde | — |
 | deux coins opposés | `resize` | `x,y` | — |
-| zone hors table (rejeu, diagnostic) | `null` | — | `zone_unknown` |
+
+Deux refus, et non des `reason`, parce qu'une entrée fausse y serait
+indiscernable d'une vraie :
+
+- une **zone hors table** d'un seul côté lève `barehands_zone_invalid`. Elle
+  produisait un redimensionnement sûr de lui (`corner:top_left` +
+  `edge:bogus` → `{resize, [x,y]}`) ; le motif `zone_unknown` que promettait
+  ce tableau ne se déclenchait que si les **deux** zones étaient inconnues.
+- une capture **sans identité de main** lève
+  `barehands_hand_track_id_missing`, et une région hors table
+  `barehands_region_unknown`. `byHand` est indexé par identité : sans elle,
+  il n'y a pas d'attribution à rendre.
+
+Deux BODY sur le même objet ne produisent **rien** : décision 8, BODY est de
+l'interaction de contenu, pas une poignée de cadre. Avant, deux mains dans le
+contenu d'une fenêtre emportaient la fenêtre entière. Quand une seule est
+BODY, le déplacement appartient à la **seule main qui tient la zone**
+(décision 10), et c'est elle seule qui apparaît dans `byHand`.
 
 Décisions 18 et 19 (pas d'inversion, bornage à la taille minimale, rebasage
 `RESIZE → MOVE`) appartiennent au moteur de la Slice 06 : la géométrie vit dans
 `control_center_scene_interact.js`, en unités de scène (±160 × ±90), pas ici.
+
+### `createInteractionEvent({type, handTrackId, slot, objectId, x, y, dx, dy, channel, tool, axes, t})`
+
+L'événement que le moteur de la Slice 06 publiera sous les noms
+d'`INTERACTION` → objet gelé `{schemaVersion, kind:'interaction', type,
+handTrackId, slot, pointerId, objectId, x, y, dx, dy, channel, tool, axes, t}`.
+
+- `x` / `y` — **pixels de la fenêtre**, requis : une interaction se produit
+  quelque part.
+- `dx` / `dy` — déplacement de défilement, en pixels de la fenêtre. Requis
+  pour `scroll`, `0` ailleurs.
+- `axes` — les axes contraints d'un `move` ou d'un `resize` : ce que rend
+  `combineCaptures().axes`, repris tel quel.
+- `channel` / `tool` — défauts `primary` / `pointer` quand ils sont absents,
+  **refusés** quand ils sont inconnus. Un événement n'est pas un réglage :
+  `normalizeTool` tolère l'inconnu parce qu'il normalise un schéma stocké.
+
+Refus : `barehands_interaction_invalid`, `barehands_interaction_unknown`,
+`barehands_hand_track_id_missing`, `barehands_interaction_position_missing`,
+`barehands_interaction_delta_missing`, `barehands_axis_unknown`,
+`barehands_tool_unknown`, `barehands_pinch_channel_unknown`,
+`barehands_slot_out_of_range`.
 
 ## 8. Outils (§8, décision 25)
 
@@ -254,8 +382,8 @@ outils disent « ce que la main veut dire » et restent distincts des réglages.
 
 ## 9. Réglages (§9), version 1
 
-`SETTINGS_SCHEMA_VERSION = 1`. `normalizeSettings(raw)` accepte l'absence, le
-partiel et le douteux, et rend toujours une valeur complète et bornée :
+`SETTINGS_SCHEMA_VERSION = 1`. `normalizeSettings(raw)` accepte l'absence et le
+partiel, et rend toujours une valeur complète et bornée :
 
 | Clé | Défaut | Bornes |
 |---|---|---|
@@ -268,6 +396,16 @@ partiel et le douteux, et rend toujours une valeur complète et bornée :
 | `tutorialSeen` | `false` | — |
 | `calibrationEnabled` | `true` | décision 27 : optionnelle |
 | `diagnostics` | `false` | §12 : enregistrement sur demande |
+
+**Le numéro de schéma est lu, pas seulement estampillé.** `schemaVersion`
+absent vaut « écrit par nous » ; tout autre nombre lève
+`barehands_schema_version_unsupported`, dans `normalizeSettings` comme dans
+`normalizeProfile`. Avant, des réglages en version 99 revenaient en version 1,
+champs inconnus jetés, sans que rien ne le dise — alors que l'en-tête du module
+promet qu'« un producteur et un consommateur qui ne partagent pas ce nombre ne
+partagent pas ce contrat ». Le jour où une migration devient nécessaire, c'est
+ce refus qui devient le point d'entrée : y accepter la version précédente et
+la convertir, plutôt que de la laisser passer muette.
 
 **Le serveur ne connaît aujourd'hui que `enabled`** :
 `barehands_test_mode.apply()` refuse tout autre champ
@@ -283,18 +421,45 @@ réglage à chaud sans dépendre de la validité du reste des réglages.
 ## 10. Profil de calibration (§10, décisions 28-32)
 
 `PROFILE_SCHEMA_VERSION = 1`. Un seul profil visible, valeurs internes par main
-(`hands.left`, `hands.right`, décision 28).
+(décision 28). Un seau **par latéralité de `HANDEDNESS`** : `hands.left`,
+`hands.right` et `hands.unknown`. Le troisième existe parce que
+`createHandObservation` retombe sur `unknown` dès que le traqueur n'étiquette
+pas la main (§2 : la latéralité est un indice, pas une identité) — sans lui,
+toute main non étiquetée perdait sa calibration en silence.
 
-Clés par main : `pressRatio`, `releaseRatio`, `secondaryPressRatio`,
-`secondaryReleaseRatio`, `jitter`, `reach`, `quality`. **Aucune image ni
-vidéo** : seulement des paramètres dérivés et des métriques (décision 32).
+| Clé par main | Unité | Bornes |
+|---|---|---|
+| `pressRatio`, `secondaryPressRatio` | sans unité (fraction de la paume) | 0,05 – 0,9 |
+| `releaseRatio`, `secondaryReleaseRatio` | sans unité (fraction de la paume) | 0,05 – 1,5 |
+| `jitterPx` | **pixels de la fenêtre** | 0 – 200 |
+| `reachNorm` | `{x,y,w,h}` en **coordonnées normalisées 0..1 de l'image**, comme les points d'un `HandFrame` — jamais des pixels | 0 – 1 |
+| `quality` | 0..1, confiance de la mesure | 0 – 1 |
 
-- `normalizeProfile(raw)` : une valeur non mesurée vaut `null` ;
-  `calibrated` est vrai dès qu'une mesure existe — une calibration partielle est
-  valide (décision 31) — et faux si rien n'a été mesuré, quoi qu'annonce
-  l'entrée.
+**Aucune image ni vidéo** : seulement des paramètres dérivés et des métriques
+(décision 32).
+
+- `normalizeProfile(raw)` : une valeur non mesurée vaut `null` ; `calibrated`
+  est vrai dès qu'**une** mesure existe, quelle qu'elle soit — une calibration
+  partielle est valide (décision 31) — et faux si rien n'a été mesuré, quoi
+  qu'annonce l'entrée. La liste des clés mesurables est lue du profil
+  lui-même, donc une mesure ajoutée par une Slice ultérieure (Slice 08,
+  `secondaryPressRatio`, décisions 21-22) compte sans qu'on y repense. Elle
+  n'en citait que trois sur sept : le drapeau et la donnée se contredisaient,
+  et une porte qui teste `calibrated` relançait la calibration pour toujours
+  tout en utilisant déjà la mesure.
+- **Une mesure impossible se refuse**, elle ne s'applique pas :
+  - `pressRatio >= releaseRatio` (le pincement ne pourrait jamais se
+    relâcher, la main resterait collée à l'objet capturé) →
+    `barehands_profile_thresholds_invalid`, pour le canal primaire comme pour
+    le secondaire ;
+  - `reachNorm` de largeur ou de hauteur nulle (tout l'écran ramené sur un
+    point, ce qui défait le repli qu'elle devait remplacer) →
+    `barehands_profile_reach_invalid`.
 - `profileValue(profile, handedness, key, fallback)` : le seuil calibré s'il
-  existe, sinon le défaut du moteur (décision 31).
+  existe, sinon le défaut du moteur (décision 31). Une latéralité hors
+  `HANDEDNESS` lève `barehands_handedness_unknown` et une clé hors profil
+  `barehands_profile_key_unknown` — sans quoi une faute de frappe rendait le
+  défaut du moteur et se lisait comme « pas calibré ».
 - V1 est statistique/seuils, sans apprentissage personnalisé ni apprentissage
   continu (décisions 29, 30).
 
@@ -306,17 +471,33 @@ Seul étage qui connaisse un traqueur ou l'expérience actuelle.
   traqueur apporte la sienne.
 - `adapters.handFrameFromMediapipe(result, meta)` — résultat MediaPipe →
   `HandFrame`. `meta.trackIds` permettra à la Slice 03 d'imposer son identité
-  persistante ; sans elle, la latéralité sert d'identifiant de repli, comme
-  aujourd'hui. Une main aux points incomplets est ignorée, pas devinée.
+  persistante — **y compris `0`** ; sans elle, la latéralité sert
+  d'identifiant de repli, comme aujourd'hui. Une main aux points incomplets
+  est ignorée, pas devinée. Une **troisième** main se refuse
+  (`barehands_too_many_hands`) au lieu d'être tranchée en silence :
+  l'adaptateur et `createHandFrame` appliquaient deux politiques opposées au
+  même événement, et la seconde main disparue n'aurait laissé aucune trace.
 - `adapters.pointersFromCoreTokens(tokens, allocator)` — jetons de
   `JarvisBarehandsCore.createHandTracker()` → `{handTrackId, slot, pointerId,
   pointerType, isPrimary, x, y, channel, phase, progress}`. C'est le chemin de
   compatibilité : l'expérience de clic garde sa forme, chaque main y gagne son
   identité.
+  - **`allocator` est obligatoire** (`barehands_allocator_required`). Il
+    était optionnel, et un allocateur neuf à chaque image donne la fente 0 à
+    qui passe en premier cette image-là : les deux mains échangent leur
+    `pointerId` en plein glissement, sans que rien ne le dise. L'appelant
+    tient un `createSlotAllocator` pour toute la durée de vie de la session —
+    c'est ce que fait `createInteraction` dans
+    `control_center_barehands.js`.
+  - Un jeton **sans `token.id`** lève `barehands_hand_track_id_missing`. Il
+    occupait auparavant la fente 0 sous une clé fantôme que `retain` ne
+    pouvait pas évincer : la main suivante repartait à `9002`, et la garantie
+    de compatibilité de ce contrat était perdue définitivement, en silence.
 
 ## Ce qui est implémenté, et ce qui ne l'est pas
 
-La Slice 01 n'a apporté aucun moteur : elle a fixé les noms.
+La Slice 01 n'a apporté aucun moteur : elle a fixé les noms — et, à sa reprise,
+la règle qui les tient : un refus codé plutôt qu'un défaut plausible.
 
 La Slice 02 implémente le premier : le cycle de vie `OFF`/`SLEEP`/`ACTIVE`
 (+ `ERROR`) et le réveil par la posture en C, dans

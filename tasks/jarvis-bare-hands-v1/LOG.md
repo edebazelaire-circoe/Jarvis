@@ -138,3 +138,93 @@ Durable discoveries for later Slices:
 Tests, foreground chunks: new file 13 passed; baseline 1 (barehands + scene
 logic) 109 passed; baseline 2 (control centre + settings) 221 passed. No
 regression.
+
+## 2026-09-19 — Slice 01 rework, implementation agent
+
+Two independent reviews of `a0c3a75` found one defect, repeated eleven times:
+**an invalid input was coerced into a plausible-looking valid output** instead
+of raising the coded error the module already had machinery for. The rework
+turns every one of those into a `BareHandsSchemaError` with a stable `code`.
+No engine added; `control_center_barehands_contracts.js`,
+`control_center_barehands.js` (two small consumer fixes), the contract doc and
+the test file are the whole change.
+
+Durable discoveries for later Slices:
+
+- **The rule the module now states out loud: a coded refusal beats a plausible
+  default.** Documented once, at the top of `docs/barehands-contracts.md`.
+  *Absence* stays permitted everywhere a default has a meaning — a field
+  nobody set takes its default. It is the *unknown* that refuses. Two
+  deliberate exceptions, both normalising **stored schemas** rather than
+  events: `normalizeSettings` / `normalizeHandProfile` still clamp
+  out-of-range numbers, and `normalizeTool` still falls back to `pointer`. An
+  interaction event refuses an unknown tool.
+- **`combineCaptures` now returns `{mode, axes, byHand, reason}`.** `axes` is
+  still the union; `byHand` is keyed by `handTrackId`, each entry
+  `{sides, axes}`. It exists because the union alone **cannot express
+  decision 16**: `edge:right + corner:top_right` and
+  `edge:top + corner:bottom_right` returned byte-identical results while
+  requiring opposite hand assignments, and the test that claimed to prove
+  decision 16 passed under an implementation with no decision-16 handling at
+  all. **Slice 06 reads `byHand[id].sides`** — the sides, not the axes, are
+  the operative datum: two hands may legitimately hold the same axis through
+  two opposite sides (bottom and top). Without it Slice 06 would re-derive
+  `ZONE_SIDES` / `SIDE_AXIS` at its own call site.
+- **BODY + BODY produces nothing** (`reason:'both_captures_are_body'`).
+  Decision 8 was violated by a branch that fired when *either* capture was
+  BODY: two hands in one window's content dragged the whole window. With one
+  BODY, the move belongs to the single hand holding the zone (decision 10),
+  and only that hand appears in `byHand`.
+- **`handTrackId` `0` is an identity, not an absence.** Five sites used
+  `String(x||'')`, so track id `0` — the first id any tracker that numbers its
+  tracks emits — was destroyed and silently replaced by handedness. Two hands
+  both reading `left` swap pointer ids mid-drag on the next frame. **Slice 03
+  will pass integer track ids**: the helper is `trackId(value, message)`,
+  rejecting only `null` / `undefined` / blank.
+- **`pointersFromCoreTokens(tokens, allocator)` — the allocator is now
+  required.** A fresh allocator per frame gives slot 0 to whoever is first in
+  that frame's array. The old signature invited the omission and a test
+  asserted it worked. Related: `retain()` keyed on `String(token&&token.id)`
+  (`"null"`) while `slot()` keyed on `String((token&&token.id)||'')` (`""`),
+  so one id-less token parked a phantom entry in slot 0 that `retain` could
+  never evict — the next real single hand got `9002`, and the headline
+  backward-compatibility guarantee was gone permanently and silently. All
+  allocator entry points now normalise through the same helper.
+- **The calibration profile has a third bucket, `hands.unknown`**, and
+  `calibrated` reads **all seven** measured keys, derived from
+  `HAND_PROFILE_DEFAULTS` itself. It read three, so a `releaseRatio`-only
+  profile reported `calibrated:false` while carrying a measurement. **Slice 08
+  gets both for free**: a key it adds counts automatically, and a hand the
+  tracker cannot label keeps its calibration instead of losing it.
+- **Units are in the names now**: `boundsPx` / `distancePx` (window pixels,
+  like `clientX`), `jitterPx` (window pixels), `reachNorm` (normalised 0..1
+  image coordinates, like `HandFrame` points). Scene geometry is in scene
+  units (±160 × ±90) in `control_center_scene_interact.js`; a mixup in
+  Slice 06 would have read as a geometry bug and been debugged in the wrong
+  module.
+- **Schema versions are read, not only stamped.** A foreign `schemaVersion`
+  on settings or profile raises `barehands_schema_version_unsupported`. That
+  refusal is the migration seam: when v2 arrives, accept the previous version
+  there and convert it. Before, `{schemaVersion:99, newField:1}` came back as
+  a clean v1 with the field dropped.
+- **`createInteractionEvent` exists.** `INTERACTION` was ten strings with no
+  factory, no payload, no refusals and no test, while six of the seven other
+  structures had one. Shape:
+  `{type, handTrackId, slot, pointerId, objectId, x, y, dx, dy, channel, tool,
+  axes, t}`. **Slice 06 should publish through it** rather than inventing a
+  local shape; `axes` takes `combineCaptures().axes` as-is.
+- **Consistency beats silence when two paths disagree**:
+  `handFrameFromMediapipe` sliced a third hand away while `createHandFrame`
+  rejected it. The slice is gone — both refuse with
+  `barehands_too_many_hands`. Unreachable while `numHands` equals `MAX_HANDS`;
+  real the moment either number rises.
+- **The `9001` sweep is now a glob** over `jarvis/runtime/*.js` plus
+  `control_center.html`, excluding the contract that owns the range. It
+  hard-coded three paths, so any module added later escaped it.
+  `docs/ARCHITECTURE.md` no longer names the literal either.
+- Slice 02's `LIFECYCLE.ERROR` was left exactly as `4fc9aa8` landed it; this
+  rework only kept the doc consistent with it.
+
+Tests, foreground chunks: baseline 1 (barehands + scene logic) **124 passed**
+(122 before, two new test functions); baseline 2 (control centre + settings)
+**221 passed**. No regression; Slice 02's 13 lifecycle tests untouched.

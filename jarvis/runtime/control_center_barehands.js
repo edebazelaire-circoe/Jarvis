@@ -531,7 +531,9 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
         for(const token of list){
           seen.add(token.id);
           let el=tokens.get(token.id);
-          if(!el){el=document.createElement('div');el.className=BH.DOM.tokenClass;el.innerHTML=`<span class="${BH.DOM.ringClass}"></span>`;root.appendChild(el);tokens.set(token.id,el)}
+          if(!el){el=document.createElement('div');el.className=BH.DOM.tokenClass;
+            const ring=document.createElement('span');ring.className=BH.DOM.ringClass;el.appendChild(ring);
+            root.appendChild(el);tokens.set(token.id,el)}
           el.style.transform=`translate3d(${token.x.toFixed(1)}px,${token.y.toFixed(1)}px,0)`;
           el.style.setProperty('--jh-progress',token.progress.toFixed(3));
           el.classList.toggle('hover',!!token.hover);
@@ -552,6 +554,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
        événements qu'avant. La seconde main a enfin le sien, au lieu que deux
        mains parlent sous un identifiant unique. */
     const slots=BH.createSlotAllocator(BH.MAX_HANDS);
+    let warnedUnslotted=false;
     const identityOf=id=>{
       const slot=slots.slot(id);
       return slot===null?null:{pointerId:BH.pointerIdForSlot(slot),isPrimary:slot===0};
@@ -583,7 +586,11 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
           const identity=identityOf(token.id);
           const raw=targetAt(token.x,token.y);
           const el=raw&&raw.closest(INTERACTIVE);
-          token.hover=!!el;
+          /* Sans fente, la main est suivie mais ne pointe pas : pas d'anneau
+             de survol non plus, sans quoi la surimpression promet un clic que
+             rien n'enverra. Inatteignable tant que `numHands` vaut
+             `MAX_HANDS` ; vrai dès que l'un des deux monte. */
+          token.hover=!!el&&!!identity;
           if(hovered.get(token.id)===el)continue;
           release(token.id);
           if(el&&identity){
@@ -601,7 +608,16 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
       click({id,x,y}){
         const raw=targetAt(x,y);
         const identity=identityOf(id);
-        if(!raw||!identity)return false;
+        /* Deux échecs différents rendaient le même `false` muet. « Rien sous
+           le jeton » est la normale ; « cette main n'a pas de fente » est une
+           panne, et elle se dit au moins une fois à la console plutôt que de
+           faire passer une main pour inerte. */
+        if(!identity){
+          if(!warnedUnslotted){warnedUnslotted=true;
+            console.warn('[barehands] main sans fente de pointeur : son clic est perdu',id)}
+          return false;
+        }
+        if(!raw)return false;
         pointer('pointerdown',raw,x,y,1,identity);pointer('mousedown',raw,x,y,1,identity);
         const focusable=raw.closest('button,a[href],input,select,textarea,summary,[tabindex]');
         if(focusable&&typeof focusable.focus==='function'){try{focusable.focus({preventScroll:true})}catch(_error){}}
