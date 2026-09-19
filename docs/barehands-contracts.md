@@ -1469,6 +1469,15 @@ muette. Côté serveur, `load` est **tolérant** (un fichier abîmé ne rend pas
 Bare Hands injoignable) : une version étrangère n'est pas devinée, on n'en
 garde rien et Bare Hands reste éteint ; c'est `apply` qui refuse, avec son code.
 
+**Asymétrie connue, et laissée telle quelle.** Le contrat JS compare la version
+après conversion numérique : `"2"` et `schemaVersion: 1` passent. Le serveur,
+lui, compare la valeur reçue et refuse les deux. Sans conséquence aujourd'hui
+— `toServerPayload` estampille toujours un nombre, donc une chaîne ne traverse
+jamais le fil — mais une v3 qui supposerait la symétrie trébucherait ici.
+Durcir le côté page refuserait au passage un bloc stocké en `"2"` qui
+fonctionne : le rapprochement appartient à la migration qui en aura besoin, pas
+à un durcissement isolé.
+
 **La route accepte les neuf réglages depuis la Slice 07.** `toServerPayload`
 reste le **seul chemin légal** vers `POST /api/barehands` : il normalise,
 borne, renomme en `snake_case` (`SETTINGS_WIRE_KEYS`, la seule table de

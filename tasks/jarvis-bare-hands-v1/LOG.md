@@ -1401,7 +1401,10 @@ Découvertes durables pour les Slices suivantes :
   d'une étoile `point`/`signal` (décision D3) sont des **poignées de cadre**. La
   porte les saute explicitement : sans ça, choisir la Main faisait disparaître
   le redimensionnement et immobilisait les étoiles, en silence. La mutation
-  « l'outil prend aussi les poignées » tombe sur les deux fichiers d'un coup.
+  « l'outil prend aussi les poignées » tombe. *(Rectification de la reprise :
+  les deux moitiés de l'exemption ont bien été mutées indépendamment, mais
+  chacune fait tomber **un** fichier, pas deux. L'exemption est couverte ; la
+  phrase l'était trop.)*
 - **Deux refus d'outil, deux phrases.** `tool_target_unsupported` (la cible ne
   peut pas honorer la capacité) et `tool_not_installed` (le moteur ne sert pas
   cette capacité) remontent sur la ligne `jh-note` qui porte déjà les gestes
