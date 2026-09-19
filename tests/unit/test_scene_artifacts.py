@@ -810,7 +810,7 @@ def test_the_page_keeps_one_tab_stop_prints_the_host_first_and_leaves_links_thei
     assert ".sc-items .sc-item-link-ref{flex:0 100 auto" in page
     assert "const list=element('ul','sc-items');list.tabIndex=-1;" in page
     assert "event.key==='PageDown'||event.key==='PageUp'" in page
-    menu = page[page.index("function onContextMenu(event)"):page.index("function select(id)")]
+    menu = page[page.index("function onContextMenu(event)"):page.index("function select(id,mode)")]
     assert menu.index("closest('.sc-item-link'))return;") < menu.index("event.preventDefault()")
     assert ".sc-items .sc-item-host{flex:none" in page and "L.hostTail(full,max)" in page
     change = page[page.index("async function changeRepresentation"):page.index("async function pinHere")]

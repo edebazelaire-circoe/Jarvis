@@ -450,6 +450,54 @@ def test_the_page_hands_the_gesture_the_drawn_position_and_not_the_stored_place(
     assert "startTime=0" not in sync
 
 
+def test_the_page_selects_several_objects_by_band_and_by_control_click(tmp_path):
+    """Demande du 19/09/2026 : tirer un rectangle dans le vide, et Ctrl-clic pour
+    ajouter ou retirer un objet de la sélection.
+
+    Ce qui est vérifié ici est le branchement, la géométrie étant prouvée sur le
+    module d'interaction : l'appui dans le vide ouvre un rectangle, le Ctrl-clic
+    bascule sans ouvrir de menu ni déplacer quoi que ce soit, et un clic dans le
+    vide sans modificateur vide la sélection — avec, lui, la garde qui empêche
+    de la jeter quand l'utilisateur est justement en train de l'agrandir."""
+
+    page = PAGE_JS.read_text(encoding="utf-8")
+    down = page[page.index("function onPointerDown("):page.index("function onPointerMove(")]
+    # Hors d'un objet : rectangle, mais pas sur les commandes de la page.
+    assert "startBand(event)" in down and ".sc-view,.sc-view-btn,.sc-status,#ctxMenu" in down
+    # Ctrl (ou Cmd) sur un objet : bascule, et rien d'autre.
+    assert "select(el.dataset.objectId,'toggle')" in down
+    assert "event.ctrlKey||event.metaKey" in down
+    # Le rectangle lit les boîtes dessinées, pas les places enregistrées.
+    end = page[page.index("function endBand("):page.index("function onPointerDown(")]
+    assert "getBoundingClientRect()" in end and "I.bandHits(" in end and "I.nextSelection(" in end
+    # Un clic dans le vide vide la sélection, sauf quand on l'agrandit.
+    outside = page[page.index("function onDocumentPointerDown("):page.index("/* Maj+flèches")]
+    assert "if(event.ctrlKey||event.metaKey||event.shiftKey)return;" in outside and "select(null)" in outside
+    # Chaque rendu repose la classe sur toute la sélection, pas sur une seule.
+    assert "record.el.classList.toggle('sc-selected',chosen.has(node.id))" in page
+    # Le rectangle ne capte pas le pointeur : ce qu'il couvre reste cliquable.
+    assert ".sc-band{position:absolute;pointer-events:none" in page
+
+
+def test_the_dropped_place_is_pending_before_the_hand_lets_go(tmp_path):
+    """Retour du 19/09/2026 : « je lâche, ça se décale à une position et ça
+    revient à la position où je l'ai lâché ».
+
+    Lâcher la main d'abord redessinait le nœud à son ancienne place — l'état
+    tenu ne connaît la nouvelle que lorsque `commitUserGeometry` l'inscrit en
+    attente. Une image pour repartir, une image pour revenir : le va-et-vient
+    que l'œil attrape. L'attente est donc inscrite avant le lâcher."""
+
+    page = PAGE_JS.read_text(encoding="utf-8")
+    release = page[page.index("function onPointerUp("):page.index("function cancelGesture(")]
+    # La place voulue part en attente, *puis* la main lâche.
+    assert (release.index("const sent=commitUserGeometry(")
+            < release.rindex("holdNode(g.id,false);")
+            < release.index("sent.catch(")), "la place voulue doit être en attente avant que la main lâche"
+    # Et le cas sans déplacement lâche quand même la main.
+    assert "if(!box||I.sameBox(box,g.box)){holdNode(g.id,false);return}" in release
+
+
 def test_stars_without_a_place_surround_the_face_instead_of_piling_up_on_one_side(tmp_path):
     result = run_node(tmp_path, r"""
       const objects=[];

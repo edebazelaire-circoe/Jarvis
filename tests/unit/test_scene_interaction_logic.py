@@ -595,3 +595,72 @@ def test_an_unknown_star_since_restart_offers_no_stop_and_says_why(tmp_path):
     assert "state-unknown(note)" not in result["note"]
     assert result["label"] == "État inconnu depuis le redémarrage de Core"
     assert result["bulk"] == []  # jamais archivé en groupe : son travail peut reprendre
+
+
+# ===========================================================================
+# Sélection multiple
+# ===========================================================================
+
+
+def test_a_band_takes_what_it_touches_whichever_way_it_is_drawn(tmp_path):
+    """Demande du 19/09/2026 : « quand je clique dans le vide et que je drague,
+    faire une sélection multiple ». Le rectangle se tire dans les quatre sens,
+    prend ce qu'il touche — les boîtes **dessinées**, celles que l'utilisateur
+    encercle, et non les places enregistrées, que le tour a déplacées — et un
+    appui qui ne bouge pas n'en est pas un."""
+
+    result = run_node(tmp_path, r"""
+      const boxes=[
+        {id:'a',left:100,top:100,width:20,height:20},
+        {id:'b',left:300,top:260,width:20,height:20},
+        {id:'loin',left:900,top:900,width:20,height:20},
+        /* Juste effleuré par le coin du rectangle : il compte. */
+        {id:'bord',left:320,top:280,width:40,height:40},
+      ];
+      const band=I.bandBox({x:320,y:280},{x:90,y:90});
+      const inverse=I.bandBox({x:90,y:90},{x:320,y:280});
+      const tap=I.bandBox({x:400,y:400},{x:403,y:402});
+      return {band,sameBothWays:JSON.stringify(band)===JSON.stringify(inverse),
+        started:I.bandStarted(band),tapStarted:I.bandStarted(tap),
+        hits:I.bandHits(band,boxes).sort(),tapHits:I.bandHits(tap,boxes),
+        min:I.BAND_MIN_PX};
+    """)
+
+    assert result["band"] == {"left": 90, "top": 90, "width": 230, "height": 190}
+    # Tiré vers le haut à gauche ou vers le bas à droite : le même rectangle.
+    assert result["sameBothWays"] is True
+    assert result["started"] is True and result["tapStarted"] is False
+    assert result["hits"] == ["a", "b", "bord"]
+    # Un appui qui tremble de trois pixels reste un clic : il ne prend rien.
+    assert result["tapHits"] == [] and result["min"] >= 4
+
+
+def test_control_click_adds_and_removes_without_losing_the_order(tmp_path):
+    """Demande du 19/09/2026 : « Ctrl-clic pour sélectionner plusieurs éléments,
+    ou en désélectionner ». L'ordre d'entrée est gardé : la dernière entrée est
+    l'ancre du menu et des flèches, et retirer un objet du milieu ne la change
+    pas."""
+
+    result = run_node(tmp_path, r"""
+      const first=I.nextSelection([],['a'],'toggle');
+      const second=I.nextSelection(first,['b'],'toggle');
+      const third=I.nextSelection(second,['c'],'toggle');
+      const middleGone=I.nextSelection(third,['b'],'toggle');
+      const backAgain=I.nextSelection(middleGone,['b'],'toggle');
+      return {first,second,third,middleGone,backAgain,
+        /* Un rectangle tenu avec Ctrl s'ajoute, sans doublon. */
+        added:I.nextSelection(['a','b'],['b','d'],'add'),
+        /* Sans modificateur, il remplace. */
+        replaced:I.nextSelection(['a','b'],['d','e'],'replace'),
+        /* Une entrée vide ne casse rien. */
+        empty:I.nextSelection(['a'],[],'replace'),
+        junk:I.nextSelection(null,[null,'','a','a'],'add')};
+    """)
+
+    assert result["third"] == ["a", "b", "c"]
+    assert result["middleGone"] == ["a", "c"]
+    # Repris, il revient à la fin : c'est lui que l'utilisateur vient de désigner.
+    assert result["backAgain"] == ["a", "c", "b"]
+    assert result["added"] == ["a", "b", "d"]
+    assert result["replaced"] == ["d", "e"]
+    assert result["empty"] == [] and result["junk"] == ["a"]

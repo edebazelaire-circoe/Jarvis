@@ -633,6 +633,10 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
 /* Gestes (Slice 08) : aucun glissement animé pendant la main de l'utilisateur. */
 .scene .sc-node.sc-dragging{transition:none!important;cursor:grabbing}
 .scene.sc-gesture{cursor:grabbing}
+/* Rectangle de sélection tiré dans le vide : un cadre fin, rien qui capte le
+   pointeur — ce qui est dessous doit rester visible et cliquable. */
+.sc-band{position:absolute;pointer-events:none;z-index:2147482000;
+  border:1px solid var(--sc-ink);background:rgba(120,170,255,.10);border-radius:2px}
 /* Sous la main : tout le champ s'arrête. L'étoile tenue garde exactement le
    décalage qu'elle avait sous le curseur, et les autres ne glissent pas pendant
    qu'on range. Le tour reprend où il s'était arrêté au relâchement. */
@@ -954,6 +958,11 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
   /* Reprise QA : sélection (poignée visible), focus à rendre après un retrait,
      étoiles en cours d'arrêt, délai réel d'un arrêt (lu dans `/api/status`). */
   let selectedId=null,pendingFocus=null,jobCancelTimeoutS=null,serverMemo={state:null,value:null},actionLiveEl=null;
+  /* Sélection, dans l'ordre d'entrée. `selectedId` en est la dernière : c'est
+     l'ancre du menu, des flèches et du focus — un seul objet à la fois y répond,
+     et c'est très bien ainsi. Le rectangle et le Ctrl-clic, eux, en tiennent
+     plusieurs (demande du 19/09/2026). */
+  let selection=[],band=null;
   const stopping=new Map();
   const actionStats={moves:0,resizes:0,representations:0,visibility:0,pins:0,archives:0,bulkArchives:0,stops:0,menus:0,refused:0,failed:0,rolledBack:0};
   const inflight=new Set();
@@ -1284,7 +1293,7 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     viewBtn=null;viewEl=null;viewRows=[];
     lastView=null;lastState=null;layout=null;layoutState=null;lastModel=null;
     viewMemo={state:null,version:-1,value:null};serverMemo={state:null,value:null};gesture=null;
-    selectedId=null;pendingFocus=null;stopping.clear();
+    selectedId=null;selection=[];band=null;pendingFocus=null;stopping.clear();
     if(keyEdit&&keyEdit.timer)window.clearTimeout(keyEdit.timer);
     keyEdit=null;
     if(pruneTimer){window.clearTimeout(pruneTimer);pruneTimer=0}
@@ -1586,7 +1595,7 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
   }
 
   function applyNodes(list,field){
-    const seen=new Set();
+    const seen=new Set(),chosen=new Set(selection);
     /* Le champ entre dans la clé de placement : une fenêtre redimensionnée
        change le centre et le resserrement, donc l'orbite de chaque objet, sans
        qu'aucune place ait bougé. */
@@ -1615,7 +1624,7 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
         if(inside){setInnerTabs(record.el,true);record.el.focus({preventScroll:true})}
       }
       if(record.anim!==node.animate){record.el.classList.toggle('sc-anim',node.animate);record.anim=node.animate}
-      record.el.classList.toggle('sc-selected',node.id===selectedId);
+      record.el.classList.toggle('sc-selected',chosen.has(node.id));
       record.el.classList.toggle('sc-stopping',stopping.has(node.id));
       const place=`${node.shape}|${node.compact}|${node.cx}|${node.cy}|${node.box.left}|${node.box.top}|${node.box.width}|${node.box.height}|${node.stack}|${shape}`;
       /* Sous la main de l'utilisateur (glisser, clavier) : l'aperçu garde la
@@ -2025,12 +2034,71 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     consoleLog('info',kind==='resize'?'scene.user_resized':'scene.user_moved',{object_id:id,steps:outcome.steps.join('+'),revision:outcome.revision});
   }
 
+  /* Appui dans le vide : début d'un rectangle de sélection. Ctrl ou Maj tenu,
+     il s'ajoute à la sélection courante au lieu de la remplacer. */
+  function startBand(event){
+    if(event.button!==undefined&&event.button!==0)return;
+    band={pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,
+      add:!!(event.ctrlKey||event.metaKey||event.shiftKey),moved:false,el:null};
+    try{root.setPointerCapture(event.pointerId)}catch(_error){/* pointeur synthétique : les évènements arrivent quand même */}
+    event.preventDefault();
+  }
+
+  function bandFrame(event){
+    const box=I.bandBox({x:band.startX,y:band.startY},{x:event.clientX,y:event.clientY});
+    if(!band.moved){
+      if(!I.bandStarted(box))return null;
+      band.moved=true;
+      band.el=document.createElement('div');
+      band.el.className='sc-band';band.el.setAttribute('aria-hidden','true');
+      root.appendChild(band.el);
+    }
+    const origin=root.getBoundingClientRect();
+    band.el.style.left=`${box.left-origin.left}px`;band.el.style.top=`${box.top-origin.top}px`;
+    band.el.style.width=`${box.width}px`;band.el.style.height=`${box.height}px`;
+    return box;
+  }
+
+  function endBand(box){
+    const held=band;
+    band=null;
+    if(held&&held.el)held.el.remove();
+    if(!held)return;
+    try{root.releasePointerCapture(held.pointerId)}catch(_error){/* capture déjà rendue */}
+    if(!held.moved||!box)return;
+    /* Les boîtes **dessinées**, lues sur la page : le champ tourne, et ce que
+       l'utilisateur encercle est ce qu'il voit, pas la place enregistrée. */
+    const boxes=[];
+    for(const [id,record] of nodes){
+      const rect=record.el.getBoundingClientRect();
+      if(rect.width||rect.height)boxes.push({id,left:rect.left,top:rect.top,width:rect.width,height:rect.height});
+    }
+    const hits=I.bandHits(box,boxes);
+    applySelection(I.nextSelection(selection,hits,held.add?'add':'replace'));
+    if(lastModel)updateTabStop(lastModel.nodes);
+    announce(selection.length?`${selection.length} objet${selection.length>1?'s':''} sélectionné${selection.length>1?'s':''}.`:'Sélection vidée.');
+  }
+
   function onPointerDown(event){
     if(event.button!==0||!enabled)return;
     const el=nodeElement(event.target);
-    if(!el)return;
+    if(!el){
+      /* Hors d'un objet : rectangle de sélection, sauf sur les commandes de la
+         page (réglages d'affichage, état) et hors de la scène. */
+      if(root.contains(event.target)&&!event.target.closest('.sc-view,.sc-view-btn,.sc-status,#ctxMenu'))startBand(event);
+      return;
+    }
     /* Lien d'entrée ou origine d'un artefact : leur clic natif, pas de geste. */
     if(event.target.closest('.sc-item-link,.sc-origin'))return;
+    /* Ctrl-clic (Cmd sur Mac) : l'objet entre dans la sélection ou en sort, et
+       rien d'autre — ni geste, ni menu, ni changement de place. */
+    if((event.ctrlKey||event.metaKey)&&!event.target.closest('.sc-grip')){
+      select(el.dataset.objectId,'toggle');
+      if(lastModel)updateTabStop(lastModel.nodes);
+      announce(selection.length?`${selection.length} objet${selection.length>1?'s':''} sélectionné${selection.length>1?'s':''}.`:'Sélection vidée.');
+      event.preventDefault();
+      return;
+    }
     const id=el.dataset.objectId,node=nodeOf(id),box=drawnBox(id),state=viewState();
     const item=state&&state.objects.get(id);
     if(!node||!box||!item)return;
@@ -2056,6 +2124,7 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
   }
 
   function onPointerMove(event){
+    if(band&&event.pointerId===band.pointerId){bandFrame(event);return}
     const g=gesture;
     if(!g||event.pointerId!==g.pointerId)return;
     const dx=event.clientX-g.startX,dy=event.clientY-g.startY;
@@ -2078,6 +2147,7 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
   }
 
   function onPointerUp(event){
+    if(band&&event.pointerId===band.pointerId){endBand(bandFrame(event));return}
     const g=gesture;
     if(!g||event.pointerId!==g.pointerId)return;
     endGesture(g);
@@ -2088,9 +2158,16 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
       return;
     }
     const box=g.mode==='resize'?g.preview:placeOf(g.preview,g.node);
+    if(!box||I.sameBox(box,g.box)){holdNode(g.id,false);return}
+    /* La place voulue est inscrite en attente **avant** de lâcher la main :
+       lâcher d'abord redessinerait le nœud à son ancienne place — le temps
+       d'une image, l'objet repartait où il était puis revenait sous le
+       curseur, et l'œil ne voyait que ce va-et-vient (19/09/2026).
+       `commitUserGeometry` inscrit l'attente avant sa première pause, donc le
+       rendu qui suit voit déjà la nouvelle place. */
+    const sent=commitUserGeometry(g.id,box,g.mode);
     holdNode(g.id,false);
-    if(!box||I.sameBox(box,g.box))return;
-    commitUserGeometry(g.id,box,g.mode).catch(error=>actionFailed(g.mode==='resize'?'Redimensionnement':'Déplacement',g.id,error));
+    sent.catch(error=>actionFailed(g.mode==='resize'?'Redimensionnement':'Déplacement',g.id,error));
   }
 
   function cancelGesture(){
@@ -2101,6 +2178,7 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
   }
 
   function onPointerCancel(event){
+    if(band&&event.pointerId===band.pointerId)endBand(null);
     if(gesture&&event.pointerId===gesture.pointerId&&(event.type==='pointercancel'||!gesture.moved))cancelGesture();
   }
 
@@ -2120,13 +2198,23 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
 
   /* Objet sélectionné : dernier objet touché ou focalisé ; sa poignée reste
      visible sans survol. Un appui ailleurs dans la page le désélectionne. */
-  function select(id){
-    if(selectedId===id)return;
-    const previous=selectedId&&nodes.get(selectedId);
-    if(previous)previous.el.classList.remove('sc-selected');
-    selectedId=id;
-    const record=id&&nodes.get(id);
-    if(record)record.el.classList.add('sc-selected');
+  /* `mode` : « replace » (défaut), « add » (Ctrl ou Maj tenu) ou « toggle »
+     (Ctrl-clic : présent, l'objet sort ; absent, il entre). `null` vide tout. */
+  function select(id,mode){
+    if(id===null)return applySelection([]);
+    if(mode&&I)return applySelection(I.nextSelection(selection,[id],mode));
+    applySelection([id]);
+  }
+
+  function applySelection(ids){
+    const next=[];
+    for(const id of ids||[])if(next.indexOf(id)<0)next.push(id);
+    const before=new Set(selection);
+    const after=new Set(next);
+    for(const id of selection)if(!after.has(id)){const record=nodes.get(id);if(record)record.el.classList.remove('sc-selected')}
+    for(const id of next)if(!before.has(id)){const record=nodes.get(id);if(record)record.el.classList.add('sc-selected')}
+    selection=next;
+    selectedId=next.length?next[next.length-1]:null;
   }
 
   function onDocumentPointerDown(event){
@@ -2134,8 +2222,10 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     const target=event.target&&event.target.closest?event.target:null;
     /* Fenêtre des réglages d'affichage : un clic ailleurs la ferme. */
     if(viewEl&&!viewEl.hidden&&(!target||!target.closest('.sc-view,.sc-view-btn')))toggleViewPanel(false);
-    if(!selectedId)return;
+    if(!selection.length)return;
     if(target&&(target.closest('#sceneLayer .sc-node')||target.closest('#ctxMenu')||target.closest('#confirmBack')))return;
+    /* Ctrl ou Maj tenu : l'utilisateur agrandit sa sélection, il ne la jette pas. */
+    if(event.ctrlKey||event.metaKey||event.shiftKey)return;
     select(null);
   }
 
@@ -2850,7 +2940,7 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
         revision:lastState?lastState.revision:null,nodes:nodes.size,commits:committer.stats(),stats:view.stats,
         health:lastView?lastView.health:null,resolved:layout&&layoutState===viewState()?layout.resolved.length:0,
         pending:pending?pending.size():0,actions:{...actionStats},gesture:gesture?{id:gesture.id,mode:gesture.mode,moved:gesture.moved,threshold:gesture.threshold}:null,
-        selected:selectedId,stopping:[...stopping.keys()],jobCancelTimeoutS,captures:capturer?capturer.stats():null,
+        selected:selectedId,selection:[...selection],stopping:[...stopping.keys()],jobCancelTimeoutS,captures:capturer?capturer.stats():null,
         tabStops:root?root.querySelectorAll('[tabindex="0"]').length:0,animated:root?root.querySelectorAll('.sc-anim').length:0};
     },
   });
