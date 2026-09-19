@@ -15,6 +15,7 @@ import time
 import pytest
 
 from jarvis.domain import routing
+from jarvis.domain.agent_charter import CHARTER_MARK
 from jarvis.runtime import agent_routing, routing_hook
 from jarvis.runtime.catalog_view import CatalogViewService
 from jarvis.runtime.journal import read_jsonl_tail
@@ -67,6 +68,19 @@ def applied(output: dict) -> str:
 
 def updated(output: dict) -> dict:
     return (output.get("hookSpecificOutput") or {}).get("updatedInput", {})
+
+
+def routed_model(output: dict) -> str:
+    """Le modèle imposé par l'aiguillage, ou \"\" quand il n'a rien imposé.
+
+    L'entrée réécrite est renvoyée entière (la charte du chantier s'y ajoute) :
+    ce qui prouve l'aiguillage est donc la valeur de `model`, pas l'existence
+    d'une réécriture."""
+    return str(updated(output).get("model") or "")
+
+
+def brief_of(output: dict) -> str:
+    return str(updated(output).get("prompt") or "")
 
 
 # --------------------------------------------------------------------- profil
@@ -210,7 +224,11 @@ def test_the_hook_reads_the_settings_file_and_answers_on_its_own(tmp_path, monke
 
     output = routing_hook.run(call(model="grand"), tmp_path)
 
-    assert updated(output) == {"model": "petit"}
+    assert routed_model(output) == "petit"
+    # L'entrée repart entière : la consigne et la description survivent à la
+    # réécriture du modèle, quelle que soit la façon dont le CLI l'applique.
+    assert brief_of(output).endswith("Fais-le.")
+    assert updated(output)["description"] == "[code] Corriger le bug"
     # La preuve est dans la trace, en codes : de quoi expliquer le choix.
     [event] = [e for e in read_jsonl_tail(tmp_path / "trace.jsonl") if e["kind"] == "agent.routing.decided"]
     assert event["data"]["profile"] == "code"
@@ -298,8 +316,17 @@ def test_stale_saved_model_is_nonselectable_in_view_and_noneligible_in_hook(tmp_
         )
 
 
-def test_the_hook_without_any_settings_says_nothing(tmp_path):
-    assert routing_hook.run(call(), tmp_path) == {}
+def test_the_hook_without_any_settings_imposes_no_model_and_still_signs_the_brief(tmp_path):
+    """Sans réglages, l'aiguillage n'a pas d'opinion — la charte, si.
+
+    Elle ne dépend d'aucun réglage : un poste sans politique d'aiguillage ne
+    doit pas envoyer ses sous-agents sans leur dire de quoi ils répondent."""
+
+    output = routing_hook.run(call(), tmp_path)
+
+    assert routed_model(output) == ""
+    assert brief_of(output).startswith(CHARTER_MARK)
+    assert brief_of(output).endswith("Fais-le.")
 
 
 def test_a_byte_order_mark_never_silently_switches_routing_off(tmp_path, monkeypatch):
@@ -318,7 +345,7 @@ def test_a_byte_order_mark_never_silently_switches_routing_off(tmp_path, monkeyp
     (tmp_path / "control-center-settings.json").write_text(json.dumps(settings), encoding="utf-8-sig")
 
     assert routing_hook.load_settings(tmp_path) == settings
-    assert updated(routing_hook.run(call(model="grand"), tmp_path)) == {"model": "petit"}
+    assert routed_model(routing_hook.run(call(model="grand"), tmp_path)) == "petit"
 
 
 def test_the_hook_reads_a_marked_event_from_its_standard_input(tmp_path, monkeypatch, capsys):
@@ -335,7 +362,7 @@ def test_the_hook_reads_a_marked_event_from_its_standard_input(tmp_path, monkeyp
     monkeypatch.setattr(sys, "stdin", io.StringIO("﻿" + json.dumps(call(model="grand"))))
     assert routing_hook.main(["--runtime-root", str(tmp_path)]) == 0
 
-    assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["updatedInput"] == {"model": "petit"}
+    assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["updatedInput"]["model"] == "petit"
 
 
 def test_a_broken_routing_policy_never_paralyses_the_brain(tmp_path, monkeypatch):
@@ -346,7 +373,10 @@ def test_a_broken_routing_policy_never_paralyses_the_brain(tmp_path, monkeypatch
 
     monkeypatch.setattr(routing_hook, "local_agents", boom)
 
-    assert routing_hook.run(call(), tmp_path) == {}
+    # L'aiguillage se tait ; la charte, elle, ne dépend pas du catalogue.
+    output = routing_hook.run(call(), tmp_path)
+    assert routed_model(output) == ""
+    assert brief_of(output).startswith(CHARTER_MARK)
     # La panne est dite, une fois, là où les erreurs vivent.
     [failure] = [e for e in read_jsonl_tail(tmp_path / "errors.jsonl") if e["kind"] == "agent.routing.failed"]
     assert failure["data"]["code"] == "routing_hook_failed"
@@ -404,3 +434,69 @@ def test_the_running_brain_is_launched_with_that_hook(tmp_path, monkeypatch):
 
 async def _start(agent) -> None:  # noqa: ANN001
     await agent.start()
+
+
+# ===========================================================================
+# Charte du chantier
+# ===========================================================================
+
+
+def test_the_charter_is_signed_on_the_brief_the_brain_wrote():
+    """Le cerveau décrit le problème ; le rôle, lui, est posé par le code.
+
+    Le 18/09/2026 sa consigne prescrivait la preuve à fournir, et le sous-agent
+    l'a remplie sur la mauvaise grandeur. La charte arrive donc avant elle, sur
+    l'appel lui-même, et dit ce qui prouve quoi."""
+
+    signed = brief_of(routing_hook.run(call(), pathlib.Path("."))) if False else None
+    change = routing_hook.charter_input(call())
+
+    assert change is not None
+    brief = str(change["prompt"])
+    assert brief.startswith(CHARTER_MARK)
+    assert brief.endswith("Fais-le.")
+    # Les quatre règles qui manquaient au tour raté.
+    for rule in ("fais-la\néchouer sur le code actuel", "couche où l'utilisateur perçoit",
+                 "arrête-toi et\ndis-le", "QUESTION", "BLOQUÉ"):
+        assert rule in brief, rule
+    assert signed is None
+
+
+def test_a_brief_already_signed_is_never_signed_twice():
+    """Un chantier qui délègue à son tour passe par le même hook : deux chartes
+    se contrediraient sur le rôle, et la seconde repousserait la vraie demande
+    hors de vue."""
+
+    once = routing_hook.charter_input(call())
+    twice = routing_hook.charter_input(call(prompt=str(once["prompt"])))
+
+    assert twice is None
+
+
+def test_the_profile_marker_stays_in_front_of_the_charter():
+    """Le profil se lit au premier mot entre crochets : la charte ne l'enterre
+    pas, sans quoi l'aiguillage d'un appel imbriqué retomberait sur general."""
+
+    change = routing_hook.charter_input(call(prompt="[fast] Résume ce fichier."))
+
+    assert str(change["prompt"]).startswith("[fast] ")
+    assert routing_hook.read_profile({"prompt": str(change["prompt"])}) == "fast"
+
+
+def test_nothing_is_signed_when_there_is_no_brief_and_no_subagent():
+    assert routing_hook.charter_input(call(prompt="")) is None
+    assert routing_hook.charter_input({"tool_name": "Bash", "tool_input": {"prompt": "ls"}}) is None
+
+
+def test_a_refused_profile_stays_refused_and_carries_no_charter(tmp_path, monkeypatch):
+    """Un refus ne part pas : il n'y a pas de chantier à cadrer, et la charte
+    ne doit pas transformer un « deny » en « allow »."""
+
+    monkeypatch.setattr(routing_hook, "local_agents", lambda: [CODEX])
+    _write_settings(tmp_path, {"enabled": True, "profiles": {"code": {"candidates": [{"agent": "claude", "model": "petit"}],
+                                                                      "allow_general_fallback": False}}})
+
+    output = routing_hook.run(call(), tmp_path)
+
+    assert applied(output) == "deny"
+    assert updated(output) == {}
