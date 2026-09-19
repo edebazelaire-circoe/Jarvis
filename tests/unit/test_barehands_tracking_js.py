@@ -602,3 +602,45 @@ def test_a_hand_without_a_usable_identity_is_skipped_not_fatal(tmp_path):
     assert result["after"] is True
     # Le refus n'a pas été affaibli là où il est juste : le contrat le tient.
     assert result["contract"] == "barehands_hand_track_id_missing"
+
+
+def test_the_page_publishes_gestures_and_contacts_through_the_contract(tmp_path):
+    """Slice 04. Le bloc pur porte sa forme de travail — il est chargé seul par
+    node et ne peut pas lire le contrat — donc c'est la **page** qui publie, à
+    travers `createGestureEvent` et `createPinchEvent`. Ce test garde le
+    câblage : la fente de pointeur vient de l'allocateur de l'interaction (le
+    moteur ne connaît pas les fentes, et une fente inventée volerait un
+    `pointerId` à l'autre main), et les deux entrées existent sur l'API
+    publique plutôt que dans une console.
+
+    Hors interaction, tout est vide : une posture affichée pour une main que
+    plus rien ne regarde serait pire qu'un écran vide."""
+
+    result = run_node(tmp_path, f"const SCRIPT_PATH={json.dumps(str(SCRIPT))};" + BROWSER + """
+      const api=window.JarvisBarehands;
+      const idle={gestures:api.gestures(),pinch:api.pinch()};
+      const interaction=api.adapters.createInteraction();
+      out({
+        exposed:[typeof api.gestures,typeof api.pinch,typeof api.diagnostics],
+        idle:[idle.gestures.events.length,idle.gestures.suppressed.length,
+              idle.gestures.postures.length,idle.pinch.events.length,
+              idle.pinch.contacts.length],
+        /* La fente vient de l'allocateur, et une main inconnue n'en invente
+           pas : `null` est ce que `createPinchEvent` accepte. */
+        slots:[interaction.slotOf(0),interaction.slotOf(1),interaction.slotOf('  '),
+               interaction.slotOf(null)],
+        pointerIds:[C.pointerIdForSlot(interaction.slotOf(0)),
+                    C.pointerIdForSlot(interaction.slotOf(1))],
+        /* Ce que la page publierait d'un contact : la forme du contrat, avec
+           l'identité de pointeur que la fente porte. */
+        published:C.createPinchEvent({channel:'secondary',phase:'down',handTrackId:1,
+          slot:interaction.slotOf(1),x:10,y:20,intent:'undecided'}),
+      });
+    """)
+    assert result["exposed"] == ["function", "function", "function"]
+    assert result["idle"] == [0, 0, 0, 0, 0]
+    assert result["slots"] == [0, 1, None, None]
+    assert result["pointerIds"] == [9001, 9002]
+    assert result["published"]["pointerId"] == 9002
+    assert result["published"]["channel"] == "secondary"
+    assert result["published"]["intent"] == "undecided"

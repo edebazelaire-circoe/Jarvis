@@ -388,6 +388,46 @@
   const GESTURE_SCOPE=Object.freeze({GLOBAL:'global',HAND:'hand'});
   const GESTURE_SCOPES=values(GESTURE_SCOPE);
 
+  /* Table d'arbitrage (architecture §4, Slice 04). L'architecture demande
+     qu'« un geste global ne vole pas la main à une manipulation capturée,
+     **sauf autorisation explicite** » : la portée dit *à qui* le geste
+     appartient, `duringCapture` est l'autorisation, et les deux vivent ici
+     parce que la Slice 05 (retour visuel) et la Slice 06 (captures) doivent
+     lire la même table que le moteur.
+
+     - `global` se tait dès que **n'importe quelle** main tient une capture ;
+     - `hand` se tait quand **cette** main en tient une, et reste permis
+       pendant que l'autre manipule (décision 12 : deux mains indépendantes).
+
+     La seule autorisation accordée est la **main ouverte**, et elle n'est pas
+     un cas d'école : une manipulation qu'on ne peut pas abandonner est un
+     piège, et le geste universel pour lâcher doit fonctionner exactement quand
+     quelque chose est tenu. Ouvrir cette porte à d'autres gestes est une
+     décision produit, pas un réglage : elle se prend ici, une fois. */
+  const GESTURE_RULES=Object.freeze({
+    c_pose:Object.freeze({scope:GESTURE_SCOPE.HAND,duringCapture:false}),
+    open_palm:Object.freeze({scope:GESTURE_SCOPE.GLOBAL,duringCapture:true}),
+    fist:Object.freeze({scope:GESTURE_SCOPE.HAND,duringCapture:false}),
+    double_close:Object.freeze({scope:GESTURE_SCOPE.HAND,duringCapture:false}),
+    clap:Object.freeze({scope:GESTURE_SCOPE.GLOBAL,duringCapture:false}),
+  });
+  /* Un geste hors table n'a pas de portée « par défaut » : le repli `global`
+     serait le plus dangereux des deux, exactement comme pour `scope`. */
+  const gestureRule=gesture=>GESTURE_RULES[gesture]
+    ||reject('barehands_gesture_unknown',`Geste inconnu : ${String(gesture)}.`);
+  const gestureScope=gesture=>gestureRule(gesture).scope;
+  const gestureAllowedDuringCapture=gesture=>gestureRule(gesture).duringCapture;
+  /* « Ce geste doit-il se taire ? » — une définition, partagée par le moteur,
+     le retour visuel et les liaisons. `captured` est l'ensemble des identités
+     de main qui tiennent une capture. */
+  function isGestureSuppressed(gesture,handTrackId,captured){
+    const rule=gestureRule(gesture);
+    if(rule.duringCapture)return false;
+    const held=new Set([...(captured||[])].map(id=>String(id)));
+    if(rule.scope===GESTURE_SCOPE.GLOBAL)return held.size>0;
+    return handTrackId!==undefined&&handTrackId!==null&&held.has(String(handTrackId));
+  }
+
   function createGestureEvent(raw){
     const source=raw&&typeof raw==='object'?raw:reject('barehands_gesture_invalid','Geste attendu sous forme d’objet.');
     if(!GESTURES.includes(source.gesture))
@@ -423,6 +463,24 @@
   const PINCH_FINGERS=Object.freeze({primary:Object.freeze(['thumbTip','indexTip']),secondary:Object.freeze(['thumbTip','middleTip'])});
   const PINCH_PHASE=Object.freeze({APPROACH:'approach',DOWN:'down',MOVE:'move',UP:'up',CANCEL:'cancel'});
   const PINCH_PHASES=values(PINCH_PHASE);
+  /* Ce qu'un contact **voulait dire** (décision 22). Le clic droit n'est pas
+     ici : c'est un canal, pas une intention — le doigt le décide, jamais la
+     durée. Ce que la durée et le déplacement décident, c'est ceci :
+
+     - `drag` se tranche **en cours de route**, dès que la main a franchi la
+       tolérance : une main qui repart d'où elle est venue a tout de même
+       glissé ;
+     - `click` ne se tranche qu'au relâchement — on ne peut pas savoir qu'un
+       contact sera court avant qu'il finisse ;
+     - `undecided` est l'état honnête entre les deux, et il a un nom pour que
+       personne ne le lise « clic » par défaut.
+
+     Le défilement n'en est pas non plus : il dépend de la **cible** sous la
+     main, que la Slice 05 résout et que la Slice 06 consomme. Ce contrat
+     fournit les ingrédients (`travelPx`, `durationMs`, plus la vitesse et
+     l'immobilité de `createMotionSample`), pas la conclusion. */
+  const PINCH_INTENT=Object.freeze({UNDECIDED:'undecided',CLICK:'click',DRAG:'drag'});
+  const PINCH_INTENTS=values(PINCH_INTENT);
 
   function createPinchEvent(raw){
     const source=raw&&typeof raw==='object'?raw:reject('barehands_pinch_invalid','Pincement attendu sous forme d’objet.');
@@ -449,6 +507,14 @@
       t:finiteOr(source.t,0),
       progress:unit(source.progress,source.phase===PINCH_PHASE.DOWN?1:0),
       confidence:unit(source.confidence,1),
+      /* Décision 22 : la durée et le déplacement du contact **contribuent** à
+         l'intention, ils ne la remplacent pas et ne font jamais un clic droit.
+         Absents, l'intention est `undecided` — jamais `click`, qui est la
+         conclusion, pas le défaut. */
+      intent:enumOr(source.intent,PINCH_INTENTS,PINCH_INTENT.UNDECIDED,
+        'barehands_pinch_intent_unknown','Intention de pincement'),
+      travelPx:Math.max(0,finiteOr(source.travelPx,0)),
+      durationMs:Math.max(0,finiteOr(source.durationMs,0)),
     });
   }
 
@@ -993,7 +1059,9 @@
     POINT_ROLES,createHandObservation,createHandFrame,
     HAND_QUALITY_FLOOR,isUsableQuality,createMotionSample,
     GESTURE,GESTURES,GESTURE_PHASE,GESTURE_PHASES,GESTURE_SCOPE,GESTURE_SCOPES,createGestureEvent,
+    GESTURE_RULES,gestureScope,gestureAllowedDuringCapture,isGestureSuppressed,
     PINCH_CHANNEL,PINCH_CHANNELS,PINCH_FINGERS,PINCH_PHASE,PINCH_PHASES,createPinchEvent,
+    PINCH_INTENT,PINCH_INTENTS,
     REGION,REGIONS,EDGE,EDGES,CORNER,CORNERS,SIDE_AXIS,ZONE_SIDES,zoneSides,zoneAxes,
     REGION_PRIORITY,regionPriority,pickRegion,FEEDBACK,FEEDBACK_TOKENS,
     createTargetCandidate,ZONED_REPRESENTATIONS,hasManipulationZones,

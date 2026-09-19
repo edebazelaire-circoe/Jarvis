@@ -420,6 +420,91 @@ confidence})`. Refus : `barehands_gesture_unknown`,
 repli silencieux était le plus dangereux des deux : `'Hand'` (majuscule) se
 lisait `global`, et le geste volait la main à une manipulation en cours.
 
+### Le moteur (Slice 04)
+
+`JarvisBarehandsCore.createGestureEngine(options)` — logique pure, horloge
+injectée, aucun DOM. Une image entre
+(`{hands:[{handTrackId, landmarks}], now, aspect, captured}`), trois listes
+sortent : `events`, `suppressed` et `postures`. Les **liaisons** geste → effet
+n'y sont pas : elles appartiennent aux Slices 05 et 06, et c'est ce qui les
+garde découplées de la reconnaissance.
+
+La posture en C n'est pas réimplantée : le moteur appelle `cPoseScore`, la
+mesure de la Slice 02, avec sa bande effective et son balayage. Une seconde
+lecture aurait fait deux jeux de seuils, et la Slice 08 n'aurait pas su lequel
+calibrer.
+
+| Geste | Ce qui le distingue | Phases émises |
+|---|---|---|
+| `c_pose` | `cPoseScore` : écart pouce-index dans la bande, index tendu | `hold` (progression), `start`, `end`, `cancel` |
+| `open_palm` | les quatre doigts **tendus** et le pouce au-delà de `wakeGapMax` | idem |
+| `fist` | les quatre doigts **repliés** (le pouce n'y entre pas) | idem |
+| `double_close` | deux `fist:start` dans `doubleCloseMs` | `end` |
+| `clap` | deux paumes à moins de `clapPalms`, **en rapprochement** à `clapSpeedPalms` | `end` |
+
+Trois propriétés qui ne sont pas des réglages heureux mais des exclusions par
+construction :
+
+- **poing contre main ouverte** : l'un veut l'extension nulle, l'autre
+  l'extension pleine ;
+- **C contre main ouverte** : `wakeGapMax` est, par sa propre définition
+  (Slice 02), « l'écart où le score du C tombe à zéro côté main ouverte ». La
+  main ouverte le relit comme plancher, donc les deux ne peuvent pas être vraies
+  ensemble sans qu'un seul nombre bouge ;
+- **une main qui pince n'est aucune posture** : si l'un des deux canaux passe
+  sous `releaseRatio`, `c_pose` et `open_palm` valent 0. Le canal primaire était
+  déjà couvert par construction (`wakeGapMin` > `releaseRatio`, Slice 02) ; le
+  **secondaire ne l'était pas**, et il ne pouvait pas l'être — il pousse le
+  pouce *de côté*, pas vers l'index. Mesuré : un clic droit franc laisse l'écart
+  pouce-index à 0,72 paume, en plein milieu de la bande du C, donc **un clic
+  droit tenu une seconde réveillait la veille** ; le même avec l'index écarté a
+  quatre doigts tendus et le pouce au large, c'est-à-dire une main ouverte. La
+  garantie est maintenant dite, et `cPoseScore` la porte lui-même pour que le
+  guetteur de veille en profite aussi.
+
+Les scores sont des **rampes**, jamais des seuils nus : un doigt à moitié plié
+donne un score moyen, donc une posture qui n'aboutit pas, plutôt qu'un geste qui
+clignote. `postureHoldMs` finit le travail, et — troisième application de la
+leçon de la reprise de la Slice 02 — **le temps non observé ne compte jamais** :
+une posture qui apparaît ne crédite pas le temps passé sans elle, et un trou plus
+long que `lostGraceMs` la fait recommencer. Une image malformée est **sautée**,
+jamais lue comme un relâchement.
+
+### Arbitrage : `GESTURE_RULES`
+
+L'architecture §4 exige qu'« un geste global ne vole pas la main à une
+manipulation capturée, **sauf autorisation explicite** ». La table est dans le
+contrat — moteur, retour visuel et liaisons doivent lire la même — et se consulte
+par `gestureScope(gesture)`, `gestureAllowedDuringCapture(gesture)` et
+`isGestureSuppressed(gesture, handTrackId, captured)`.
+
+| Geste | Portée | Permis pendant une capture |
+|---|---|---|
+| `c_pose` | `hand` | non |
+| `open_palm` | `global` | **oui** |
+| `fist` | `hand` | non |
+| `double_close` | `hand` | non |
+| `clap` | `global` | non |
+
+- `global` se tait dès que **n'importe quelle** main tient une capture ;
+- `hand` se tait quand **cette** main en tient une, et reste permis pendant que
+  l'autre manipule (décision 12 : deux mains indépendantes).
+
+La seule autorisation accordée est la **main ouverte**, et ce n'est pas un cas
+d'école : une manipulation qu'on ne peut pas abandonner est un piège, et le geste
+universel pour lâcher doit fonctionner exactement quand quelque chose est tenu.
+Ouvrir la porte à un autre geste est une décision produit, pas un réglage.
+
+L'arbitrage se décide **à la publication**, pas à la reconnaissance : la posture
+garde sa progression pendant la capture, sinon relâcher ferait réapparaître un
+geste à moitié construit. Ce qui est étouffé part dans `suppressed` avec sa
+raison (`capture_active`) plutôt que de disparaître : un geste qui s'évanouit
+sans trace est indiscernable d'un geste non reconnu, et c'est la première
+question qu'on se posera.
+
+`captured` est la couture de la **Slice 06**, qui possède les captures ; vide
+tant qu'elles n'existent pas, donc rien n'est étouffé aujourd'hui.
+
 ## 5. Intention de pincement (§5, décisions 20-22)
 
 Le pincement est un **flux de contact**, pas une commande de clic. La durée et
@@ -439,6 +524,86 @@ clic droit est un canal, jamais un appui long (décision 22).
   `barehands_pinch_channel_unknown`, `barehands_pinch_phase_unknown`,
   `barehands_hand_track_id_missing`, `barehands_pinch_position_missing`,
   `barehands_slot_out_of_range`.
+- `PINCH_INTENT` = `undecided` | `click` | `drag`, porté par l'événement avec
+  `travelPx` et `durationMs`. Une intention **inconnue** se refuse
+  (`barehands_pinch_intent_unknown`) ; absente, elle vaut `undecided` — jamais
+  `click`, qui est une conclusion, pas un défaut. Le clic droit n'y est pas :
+  c'est un **canal**, décidé par le doigt (décision 22). Le défilement non plus :
+  il dépend de la cible, que la Slice 05 résout et que la Slice 06 consomme — ce
+  contrat fournit les ingrédients, pas la conclusion.
+
+### Le moteur (Slice 04)
+
+`JarvisBarehandsCore.createPinchIntentEngine(options)`, deux canaux par main
+(`createPinchChannel`), logique pure. Entrée :
+`{hands:[{handTrackId, landmarks, x, y, anchorX, anchorY, stillness, quality}],
+now, aspect}`.
+
+**Ce qui sépare les deux canaux n'est pas un seuil, c'est une marge.** Les deux
+se mesurent pareil — du pouce à un bout de doigt, rapporté à la paume — et
+partagent donc `pressRatio` / `releaseRatio`. Une main qui se **ferme
+entièrement** rapproche le pouce de l'index *et* du majeur : les deux rapports
+tombent ensemble sous le seuil, et un moteur qui regarderait chaque canal
+isolément lirait un clic droit dans un poing. La **confiance** d'un canal est
+donc l'écart qui le sépare de l'autre (`ramp(autre − sien, 0,
+pinchMarginRatio)`), nulle quand les deux se valent, et il faut
+`pinchConfidenceMin` pour descendre en contact.
+
+Un contact ne **commence** ni sur une main que le suivi ne croit pas
+(`usableQuality`, décision 7) ni sur une fermeture de main entière. Un contact
+**en cours** ne s'interrompt pas pour une note qui baisse : une main qui sort à
+moitié du cadre au milieu d'un glissement doit pouvoir le finir. Il ne se termine
+que par un relâchement ou par la perte de la main — et la perte donne un
+`cancel`, jamais un `up`, sans quoi l'arrêt déclencherait l'action qu'il vient
+d'interrompre.
+
+**Quel point porte l'événement** : `approach` et `down` visent l'**ancre** figée
+(la cible ne glisse pas sous les doigts au moment de cliquer) ; `move` et `up`
+suivent la position **filtrée** (un glissement resté sur l'ancre ne déplacerait
+rien). Sur un clic les deux sont à moins de `clickSlopPx` l'une de l'autre, par
+définition du clic.
+
+**Clic contre glissement** (décision 22), sur les traits que la Slice 03 publie —
+jamais sur une dérivée recalculée, la dérivée interne du filtre One Euro lisant
+40 px/s sur une main immobile :
+
+- `drag` se tranche **en cours de route**, dès que le déplacement maximal depuis
+  la descente franchit `dragSlopPx` : une main qui revient d'où elle est venue a
+  tout de même glissé ;
+- `click` ne se tranche qu'au **relâchement**, et demande les trois :
+  `durationMs ≤ clickMaxMs`, `travelPx ≤ clickSlopPx` et
+  `stillness ≥ clickStillnessMin`. Sans le troisième, un geste franc dont le
+  pincement se ferme une image au passage se lirait comme un clic.
+
+### Réglages du moteur (Slice 04)
+
+Mêmes règles que ceux de la Slice 03 : ils vivent dans
+`JarvisBarehandsCore.DEFAULTS`, ils sont épinglés par
+`test_the_controller_states_and_timings_still_match_the_contract`, et **changer
+l'un d'eux, c'est le reporter ici**.
+
+| Réglage | Défaut | Rôle |
+|---|---|---|
+| `pinchMarginRatio` | 0,18 | écart entre les deux canaux qui donne la pleine confiance |
+| `pinchConfidenceMin` | 0,5 | confiance exigée pour descendre en contact |
+| `clickMaxMs` | 400 | au-delà, un contact n'est plus un clic |
+| `clickSlopPx` | 12 | déplacement toléré dans un clic |
+| `dragSlopPx` | 26 | au-delà, le contact **est** un glissement |
+| `clickStillnessMin` | 0,5 | immobilité exigée au relâchement pour conclure à un clic |
+| `fingerCurledPalms` | 1,15 | portée en dessous de laquelle un doigt est replié |
+| `fingerExtendedPalms` | 1,6 | portée au-dessus de laquelle il est tendu |
+| `postureScore` | 0,7 | score minimal pour qu'une posture compte |
+| `postureHoldMs` | 250 | durée tenue avant qu'une posture s'annonce |
+| `doubleCloseMs` | 600 | écart maximal entre deux fermetures d'un double |
+| `clapPalms` | 1,4 | distance des deux centres de paume, en paumes |
+| `clapSpeedPalms` | 2,5 | vitesse de rapprochement exigée (paumes/s) |
+| `gestureCooldownMs` | 500 | anti-rebond des gestes discrets |
+
+Deux d'entre eux ne sont pas libres : `fingerCurledPalms < fingerExtendedPalms`
+est refusé à la construction (`RangeError`, quatrième invariant de paire
+d'`options()`), et `clickSlopPx < dragSlopPx` — au-dessus, aucun contact ne
+pourrait rester indécis jusqu'au relâchement. La **Slice 08** calibre ces
+nombres ; `window.JarvisBarehands.gestures()` et `.pinch()` sont ce qu'elle lira.
 
 ## 6. Cible et régions (§6, décisions 3, 8, 9, 16, 23)
 
@@ -758,7 +923,17 @@ exploitable » se lit enfin sur une qualité mesurée plutôt que sur la
 présence d'un jeton. Aucun module de page n'est ajouté, donc l'ordre
 d'insertion (« Insertion dans la page ») est inchangé.
 
-Restent à venir : pincement secondaire, résolveur sémantique,
+La Slice 04 implante les deux moteurs sémantiques (§4, §5) dans le même
+fichier — `handPosture`, `createGestureEngine`, `createPinchChannel`,
+`createPinchIntentEngine`, plus `pinchRatioFor` et l'hystérésis partagée
+`createContactState` — couverts par `tests/unit/test_barehands_gestures_js.py`.
+Elle ne dessine rien et ne lie rien : la Slice 05 possède le retour visuel
+(décision 23) et la Slice 06 les actions. Le contrôleur ne les fait tourner
+qu'en ACTIVE, le budget d'images de la veille étant un acquis mesuré de la
+Slice 02. Aucun module de page n'est ajouté, donc l'ordre d'insertion est
+inchangé.
+
+Restent à venir : résolveur sémantique,
 déplacement/redimensionnement, calibration, tutoriel, diagnostics et le canal
 de commandes de la voix (Slices 03 à 12). `window.JarvisBarehands.activate()` /
 `.sleep()` / `.lifecycle()` sont le point d'entrée que la Slice 12 branchera.

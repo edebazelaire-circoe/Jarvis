@@ -320,6 +320,39 @@ l'interaction retourne d'elle-même en veille — la caméra n'est pas rendue, l
 guetteur reprend. Le délai est jugé **avant** la lecture de la vidéo : une
 caméra figée rendort aussi au lieu de rester active pour toujours.
 
+**Gestes et pincements reconnus (`active`)** — depuis la Slice 04, deux moteurs
+sémantiques tournent à côté des jetons, **en interaction seulement** (la veille
+garde son budget de 5 images par seconde). Ils *reconnaissent et publient* ; ils
+ne déclenchent encore aucune action, qui viendra avec le retour visuel et le
+moteur d'interaction.
+
+- **Pincement**, deux canaux : pouce + **index** (primaire) et pouce + **majeur**
+  (secondaire, le clic droit). Le clic droit est un **doigt**, jamais un appui
+  long. Chaque canal a ses propres états — approche, contact, déplacement,
+  relâchement, annulation — et une **confiance** qui mesure ce qui le sépare de
+  l'autre : une main qui se ferme entièrement rapproche le pouce des deux
+  doigts à la fois, et n'est donc ni un clic ni un clic droit.
+- **Intention** du canal primaire : un contact court, sur place et relâché main
+  immobile est un **clic** ; dès que la main dépasse la tolérance de
+  déplacement, c'est un **glissement**, décidé en chemin. Une main perdue en
+  cours de contact **annule**, elle ne relâche pas : l'arrêt ne doit pas
+  déclencher ce qu'il interrompt.
+- **Postures** : le **C** de réveil (la même mesure que le guetteur), la **main
+  ouverte**, le **poing**, la **double fermeture** (deux poings rapprochés dans
+  le temps) et le **claquement** (deux paumes qui se rejoignent vite). Une
+  posture doit être tenue un quart de seconde avant d'être annoncée ; une main
+  qui pince n'est aucune posture.
+- **Arbitrage** : un geste global ne volera pas la main à une manipulation en
+  cours quand celles-ci existeront — seule la **main ouverte** est autorisée à
+  passer, parce qu'une manipulation qu'on ne peut pas abandonner est un piège.
+
+À lire depuis la console : `JarvisBarehands.gestures()` (événements, gestes
+étouffés avec leur raison, postures et progressions de la dernière image) et
+`JarvisBarehands.pinch()` (événements de contact au format du contrat, avec
+l'identité de pointeur de chaque main, et l'état des deux canaux). Les deux sont
+vides hors interaction. Contrat complet : `docs/barehands-contracts.md` § 4 et
+§ 5.
+
 **Panne (`error`)** — caméra refusée, absente, occupée ou débranchée, modèle
 absent, suivi ou surimpression en échec. C'est un état distinct d'`off` : il dit
 « arrêté sans l'avoir demandé », là où `off` dit « l'utilisateur l'a voulu ».

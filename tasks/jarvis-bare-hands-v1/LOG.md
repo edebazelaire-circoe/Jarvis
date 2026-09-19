@@ -456,3 +456,195 @@ décision 7 réarmée sur n'importe quelle main, vitesse publiée depuis la dér
 interne, appariement par position dans le tableau — plus deux sur le bloc
 navigateur (classe `faint` retirée, pastille qui cache le compte des mains non
 crues).
+
+## 2026-09-19 — Slice 02 rework (reprise), implementation agent
+
+Trois restes de la revue de régression de `6713a4f` / `0e8fdba`, corrigés avant
+la Slice 04 et commités à part.
+
+- **Un guetteur plus lent que sa propre grâce désactive le réveil, en silence.**
+  Le guetteur de veille n'appelle `createWakeDetector` qu'une fois par
+  `wakeIntervalMs` : le `dt` que voit le détecteur **est** cette cadence.
+  Au-delà de `wakeGraceMs`, chaque mesure arrive après un trou plus long que la
+  grâce, le maintien repart de zéro à chaque image et la posture en C ne peut
+  plus jamais aboutir — **0 ms crédité sur dix secondes de C parfait**. Aucune
+  erreur, aucune trace, aucun test rouge : tous les tests de réveil passent la
+  cadence en surcharge explicite, donc muter le défaut ne fait rien tomber. Le
+  réglage livré (200/400) est sain ; c'est la *forme* qui est un piège, armé le
+  jour où quelqu'un baisse la cadence pour le processeur ou où la Slice 08
+  descend la grâce. `options()` le refuse désormais à la construction, à côté
+  des deux invariants de paire qui existaient déjà. **`interval === grace` reste
+  permis et réveille encore** : un trou *égal* à la grâce n'est pas au-delà.
+  **Leçon générale, quatrième occurrence dans ce module : deux nombres dont
+  l'un borne l'autre ne se règlent pas séparément — l'invariant se pose là où
+  on les construit.**
+- **Un refus codé dans un chemin par image vaut la fin de la session.**
+  `identityOf` appelle l'allocateur par jeton et par image, dans le `try` de la
+  boucle : le `barehands_hand_track_id_missing` de la reprise de la Slice 01 y
+  devenait `tracking_failed` — caméra rendue, ERROR, toast de 9 s — pour un
+  jeton sans identité. C'est la règle que la reprise de la Slice 02 avait posée
+  côté points et laissée ouverte côté identité. **Le contrat continue de
+  refuser ; c'est le consommateur qui garde.** La main reste suivie et dessinée,
+  simplement sans pointeur.
+- **Annuler un démarrage est un arrêt voulu, et ça se dit.** `disable()`
+  demandait « Bare Hands **fonctionne** » (`isLiveState`) là où la question est
+  « quelque chose est-il **tenu** ? » (`isEngagedState`). STARTING tombait du
+  mauvais côté : décocher l'interrupteur pendant l'invite de permission
+  n'émettait aucun toast. Or la caméra est rendue **de façon asynchrone** —
+  `track.stop()` n'arrive qu'une fois `getUserMedia` résolu — donc l'utilisateur
+  annulait sans aucune confirmation que la webcam s'était éteinte (RÈGLE ZÉRO).
+  ERROR reste muet, ce qui était l'objet du correctif de la Slice 02.
+
+Tests : quatre ajoutés, cinq mutations tentées, cinq tuées (retirer
+l'invariant ; refuser le cas d'égalité ; retirer la garde d'identité ; laisser
+`retain` non filtré ; revenir à `isLiveState`). Baseline 1 **145 passed**
+(141 avant), baseline 2 **221 passed**.
+
+## 2026-09-19 — Slice 04, implementation agent
+
+Les deux moteurs sémantiques — gestes et intention de pincement — dans les deux
+modules existants. **Aucun module de page ajouté, donc F3 ne s'applique pas** et
+l'ordre `contracts → barehands → scene page` est intact. Moteur :
+`handPosture`, `createGestureEngine`, `createPinchChannel`,
+`createPinchIntentEngine`, `pinchRatioFor`, `createContactState` dans
+`jarvis/runtime/control_center_barehands.js` ; le contrat gagne
+`GESTURE_RULES` / `gestureScope` / `gestureAllowedDuringCapture` /
+`isGestureSuppressed` et `PINCH_INTENT`, plus `intent` / `travelPx` /
+`durationMs` sur `createPinchEvent`. Couverture :
+`tests/unit/test_barehands_gestures_js.py` (12 tests) plus un test de cycle de
+vie et un test du bloc navigateur. Contrat lisible :
+`docs/barehands-contracts.md` § 4 et § 5.
+
+Découvertes durables pour les Slices suivantes :
+
+- **Le canal secondaire échappait à la garantie « un pincement ne réveille
+  pas ».** La Slice 02 l'avait obtenue par construction côté index —
+  `wakeGapMin` (0,46) au-dessus de `releaseRatio` (0,42), donc un pouce posé sur
+  l'index sort de la bande du C. Le pouce-majeur de la décision 21 **pousse le
+  pouce de côté, pas vers l'index** : mesuré, un clic droit franc laisse l'écart
+  pouce-index à **0,72 paume**, en plein milieu de la bande effective
+  [0,499 ; 0,811]. Conséquences réelles : **un clic droit tenu une seconde
+  réveillait la veille**, et le moteur de gestes lisait « C » sur une main qui
+  pince. Avec l'index écarté, la même main marque **1 en main ouverte** (quatre
+  doigts tendus, pouce au large). La géométrie du C ne peut pas le dire seule :
+  elle doit lire le second doigt. `cPoseScore` le fait maintenant lui-même — le
+  guetteur de veille en profite donc aussi — et `handPosture` pose la règle
+  générale : **une main qui pince (l'un ou l'autre canal sous `releaseRatio`)
+  n'est aucune posture.** Absent du traqueur, le majeur ne change rien : il n'y
+  a pas de pincement secondaire connu, donc rien à écarter.
+- **Ce qui sépare les deux canaux n'est pas un seuil, c'est une marge.** Les
+  deux se mesurent pareil (pouce → bout de doigt, rapporté à la paume) et
+  partagent donc `pressRatio`/`releaseRatio` — un seuil propre au majeur aurait
+  été un nombre de plus sans question de plus. Mais une main qui se **ferme
+  entièrement** fait tomber les **deux** rapports sous le seuil : mesuré sur un
+  poing, 0,18 côté index et 0,11 côté majeur. Un moteur qui regarderait chaque
+  canal isolément lirait un clic droit dans un poing. La confiance d'un canal
+  est donc `ramp(autre − sien, 0, pinchMarginRatio)`, nulle quand les deux se
+  valent, et il faut `pinchConfidenceMin` pour descendre. C'est ce que demandait
+  « rejeter la fermeture de main entière comme clic droit ».
+- **Un contact ne commence pas sur une main douteuse, mais ne s'interrompt pas
+  pour une note qui baisse.** `usableQuality` (décision 7) garde l'entrée en
+  contact ; une main qui sort à moitié du cadre au milieu d'un glissement doit
+  pouvoir le finir. Seuls un relâchement ou la perte de la main le terminent —
+  et la perte donne un **`cancel`, jamais un `up`** : un `up` déclencherait
+  l'action que l'arrêt vient d'interrompre. Même chose au retour en veille et à
+  l'extinction (`cancelAll`).
+- **L'événement ne porte pas le même point selon sa phase.** `approach` et
+  `down` visent l'**ancre figée** (la cible ne glisse pas sous les doigts au
+  moment de cliquer) ; `move` et `up` suivent la position **filtrée** (un
+  glissement resté sur l'ancre ne déplacerait rien). Les deux voyagent donc
+  séparément du jeton au moteur — `x/y` du jeton est l'ancre, `filteredX/Y` la
+  main. **La Slice 06 doit lire la phase avant de croire la position.**
+- **Le glissement se tranche en chemin, le clic seulement au relâchement.** Dès
+  que le déplacement **maximal** depuis la descente franchit `dragSlopPx`,
+  l'intention est prise et ne revient pas : une main qui repart d'où elle est
+  venue a tout de même glissé (`travelPx` est un maximum, pas une distance
+  courante). Le clic, lui, ne peut pas se savoir court avant d'être fini, et
+  demande les **trois** témoins : durée, déplacement, et l'**immobilité publiée
+  par la Slice 03**. Sans le troisième, un geste franc dont le pincement se
+  ferme une image au passage se lit comme un clic — c'est la mutation
+  `clickStillnessMin → 0`, et elle tombe.
+- **L'arbitrage se décide à la publication, pas à la reconnaissance.** La
+  posture garde sa progression pendant une capture ; sinon relâcher ferait
+  réapparaître un geste à moitié construit. Ce qui est étouffé part dans
+  `suppressed` avec sa raison plutôt que de disparaître : un geste qui s'évanouit
+  sans trace est indiscernable d'un geste non reconnu. **`captured` est la
+  couture de la Slice 06** — vide aujourd'hui, donc rien n'est étouffé.
+- **La portée dit *à qui* le geste appartient, pas *qui* le fait.** `global` se
+  tait dès que **n'importe quelle** main tient une capture ; `hand` seulement
+  pour la sienne, la décision 12 voulant deux mains indépendantes. Sans cette
+  distinction, le claquement — dont le `handTrackId` est `null` — ne serait
+  **jamais** étouffé. La seule autorisation explicite est la **main ouverte** :
+  une manipulation qu'on ne peut pas abandonner est un piège, et le geste
+  universel pour lâcher doit marcher exactement quand quelque chose est tenu.
+  Ouvrir la porte à un autre geste est une décision produit, prise dans
+  `GESTURE_RULES`, pas un réglage.
+- **`usableLandmarks` est paramétré, pas élargi.** La Slice 04 lit sept points
+  (les trois bouts de doigt manquants) ; exiger les sept partout aurait refusé
+  une main partielle que le réveil sait pourtant mesurer — une régression
+  silencieuse sur le chemin de la Slice 02. Chaque moteur déclare donc ce qu'il
+  lit (`USED_LANDMARKS`, `SECONDARY_LANDMARKS`, `POSTURE_LANDMARKS`) et le
+  prédicat reste **unique et total** : un second argument qui n'est pas une
+  liste de points (l'indice qu'un `.map` passe) retombe sur l'ensemble par
+  défaut, parce qu'une exception levée là redeviendrait `tracking_failed`.
+- **Le C n'est pas réimplanté.** `cPoseScore` est appelé tel quel : une seconde
+  lecture aurait fait deux jeux de seuils, et la Slice 08 n'aurait pas su lequel
+  calibrer. Même raison pour l'hystérésis, extraite en `createContactState` et
+  partagée par le chemin de compatibilité du clic et par le nouveau flux — deux
+  copies auraient donné deux hystérésis à régler et une seule documentée.
+- **Trois exclusions par construction, pas trois seuils heureux** : poing contre
+  main ouverte par l'extension ; C contre main ouverte par `wakeGapMax`, qui est
+  *par sa propre définition* « l'écart où le score du C tombe à zéro côté main
+  ouverte » ; et le pincement contre les deux par la règle ci-dessus. Aucune des
+  trois ne dépend d'un réglage bien choisi.
+- **L'instantané des postures se prend après la mise à jour.** Pris avant, il
+  décrivait l'image précédente, et l'anneau de la **Slice 05** aurait eu une
+  image de retard sur l'événement qui l'accompagne — deux chiffres différents
+  pour le même instant.
+- **Les moteurs ne tournent qu'en ACTIVE.** Le budget d'images de la veille
+  (5 inférences contre 60) est un acquis mesuré de la Slice 02 ; la veille n'a
+  qu'une question et `createWakeDetector` y répond déjà. Un test le vérifie
+  maintenant sur la sortie sémantique elle-même, qui est **vide en veille** et
+  vidée à chaque retour en veille — comme les traits de la Slice 03, elle ne
+  doit jamais survivre à ce qu'elle décrit.
+- **Le bloc pur publie à travers le contrat depuis la page.** Il ne peut pas
+  lire le contrat (les tests node le chargent seul), donc il porte sa forme de
+  travail et `window.JarvisBarehands.gestures()` / `.pinch()` la font passer par
+  `createGestureEvent` / `createPinchEvent`. Un test fait transiter **tout** ce
+  que les moteurs émettent, phase par phase, par les deux fabriques : sans lui
+  les deux formes divergent en silence et la panne sort chez le consommateur.
+  La **fente de pointeur** vient de l'allocateur de l'interaction
+  (`interaction.slotOf`), jamais du moteur : une fente inventée volerait un
+  `pointerId` à l'autre main.
+- **Quatorze réglages nouveaux, tous épinglés** par
+  `test_the_controller_states_and_timings_still_match_the_contract` et
+  republiés dans `docs/barehands-contracts.md` § 5. Deux d'entre eux ne sont pas
+  libres : `fingerCurledPalms < fingerExtendedPalms` est refusé à la
+  construction (quatrième invariant de paire d'`options()`), et
+  `clickSlopPx < dragSlopPx` — au-dessus, aucun contact ne pourrait rester
+  indécis jusqu'au relâchement. **La Slice 08 les calibre** ;
+  `gestures()`/`pinch()` sont ce qu'elle lira.
+- **Ce que la Slice 04 n'a pas fait, à dessein** : elle ne dessine rien
+  (décision 23 appartient à la Slice 05 — les couleurs sont dans
+  `FEEDBACK_TOKENS` depuis la Slice 01, et `suppressed`/`postures`/`contacts`
+  sont ce qu'il faut pour les choisir) et elle ne lie aucun geste à une action
+  (Slice 06). Le défilement n'est pas décidé non plus : il dépend de la cible,
+  donc le contrat fournit `travelPx`/`durationMs` et les traits de la Slice 03,
+  pas la conclusion.
+- **Pour la validation runtime de la Slice 11** : les fixtures sont
+  synthétiques, à aspect 1 et doigts en éventail régulier. Deux nombres méritent
+  d'être revus devant une caméra 640×480 — `pinchMarginRatio` (la séparation
+  réelle entre index et majeur dépend de la main) et `postureScore` 0,7 sur un
+  poing vu de face, où les bouts de doigt sont mal estimés parce qu'occultés.
+
+Tests, chunks en avant-plan : nouveau fichier **12 passed** ; baseline 1
+(barehands + scene logic) **159 passed** (145 avant : 12 nouveaux, un test de
+cycle de vie et un test du bloc navigateur) ; baseline 2 (control centre +
+settings) **221 passed**. Aucune régression. Dix-sept mutations tentées, dix-sept
+reprises — cinq d'entre elles seulement après avoir renforcé les tests qu'elles
+avaient traversés : la portée ignorée (le claquement anonyme n'était jamais
+étouffé), le maintien créditant du temps non tenu, le C ignorant le canal
+secondaire et la posture d'une main qui pince (la main synthétique tombait juste
+en dehors des deux bandes — il a fallu la géométrie qui pince *dans* la bande du
+C et celle qui pince avec l'index écarté), et la fenêtre du double (la purge de
+la main cachait la fenêtre au lieu de l'exercer).

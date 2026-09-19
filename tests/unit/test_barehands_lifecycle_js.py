@@ -731,6 +731,54 @@ def test_the_idle_timer_now_reads_a_real_usable_hand_and_says_so_on_screen(tmp_p
 # ------------------------------------------------------------------ parité
 
 
+def test_the_semantic_engines_run_in_interaction_and_never_in_the_watcher(tmp_path):
+    """Slice 04, et la contrainte que la Slice 02 a laissée derrière elle : le
+    budget d'images de la veille est un acquis mesuré (5 inférences contre 60),
+    et le travail sémantique n'a rien à y faire — la veille n'a qu'une
+    question, la posture de réveil, à laquelle `createWakeDetector` répond
+    déjà.
+
+    Et la sortie sémantique ne survit jamais à ce qu'elle décrit : revenir en
+    veille la vide, comme les traits de mouvement de la Slice 03. Une posture
+    affichée pour une main que plus rien ne regarde serait pire qu'un écran
+    vide."""
+
+    result = run_node(tmp_path, WORLD + """
+      const w=world({result:C_POSE,options:{wakeIntervalMs:200,wakeHoldMs:1000,wakeGraceMs:400}});
+      const c=B.createController(w.deps);
+      await c.enable();
+      w.steps(3,200);
+      const watching=c.semantics();
+      await c.activate();
+      w.steps(3,16);
+      const interacting=c.semantics();
+      c.sleep();
+      const asleep=c.semantics();
+      out({
+        watching:[watching.gestures.postures.length,watching.gestures.events.length,
+                  watching.pinch.contacts.length],
+        interacting:[interacting.gestures.postures.length,
+                     interacting.gestures.events.length,
+                     interacting.pinch.contacts.length],
+        /* Ce que la main tenue produit : un C reconnu, et les deux canaux de
+           pincement au repos sur la même main. */
+        gesture:[...new Set(interacting.gestures.events.map(e=>e.gesture+':'+e.scope))],
+        channels:interacting.pinch.contacts.map(c=>c.channel+':'+c.state),
+        asleep:[asleep.gestures.postures.length,asleep.pinch.contacts.length],
+        /* Aucune capture n'existe encore (Slice 06) : rien n'est étouffé. */
+        suppressed:interacting.gestures.suppressed.length,
+      });
+    """)
+    # En veille : le guetteur, et rien d'autre.
+    assert result["watching"] == [0, 0, 0]
+    # En interaction : une main, une posture lue, les deux canaux suivis.
+    assert result["interacting"][0] == 1 and result["interacting"][2] == 2
+    assert result["gesture"] == ["c_pose:hand"]
+    assert result["channels"] == ["primary:open", "secondary:open"]
+    assert result["suppressed"] == 0
+    assert result["asleep"] == [0, 0]
+
+
 def test_the_controller_states_and_timings_still_match_the_contract(tmp_path):
     """Le bloc pur est chargé seul par node : il ne peut pas lire le contrat et
     recopie donc ses noms et ses durées. Ce test est ce qui interdit la dérive."""
@@ -753,6 +801,13 @@ def test_the_controller_states_and_timings_still_match_the_contract(tmp_path):
                 'matchRadiusPalms','handednessBonusPalms','predictMs','trackVelocityBlend',
                 'qualityFloor','qualityEdge','qualityPalmMin','qualityComplete','qualityWarmupFrames']
           .map(k=>[k,B.DEFAULTS[k]]),
+        semantics:['pinchMarginRatio','pinchConfidenceMin',
+                   'clickMaxMs','clickSlopPx','dragSlopPx','clickStillnessMin',
+                   'fingerCurledPalms','fingerExtendedPalms','postureScore','postureHoldMs',
+                   'doubleCloseMs','clapPalms','clapSpeedPalms','gestureCooldownMs']
+          .map(k=>[k,B.DEFAULTS[k]]),
+        fingerBand:B.DEFAULTS.fingerCurledPalms<B.DEFAULTS.fingerExtendedPalms,
+        clickUnderDrag:B.DEFAULTS.clickSlopPx<B.DEFAULTS.dragSlopPx,
         retired:['smoothing'].map(k=>B.DEFAULTS[k]===undefined),
         watchesPerSecond:1000/B.DEFAULTS.wakeIntervalMs,
         liveStates:[B.LIVE_STATES,B.STATES.filter(B.isLiveState)],
@@ -807,6 +862,24 @@ def test_the_controller_states_and_timings_still_match_the_contract(tmp_path):
         ["qualityFloor", 0.25], ["qualityEdge", 0.04], ["qualityPalmMin", 0.06],
         ["qualityComplete", 0.6], ["qualityWarmupFrames", 3],
     ]
+    # Slice 04 : quatorze réglages de plus, même règle — un défaut que personne
+    # n'affirme se mute sans rien faire tomber, et le contrat lisible les
+    # publie. Changer l'un d'eux, c'est le reporter ici **et** dans
+    # `docs/barehands-contracts.md`.
+    assert result["semantics"] == [
+        ["pinchMarginRatio", 0.18], ["pinchConfidenceMin", 0.5],
+        ["clickMaxMs", 400], ["clickSlopPx", 12], ["dragSlopPx", 26],
+        ["clickStillnessMin", 0.5],
+        ["fingerCurledPalms", 1.15], ["fingerExtendedPalms", 1.6],
+        ["postureScore", 0.7], ["postureHoldMs", 250],
+        ["doubleCloseMs", 600], ["clapPalms", 1.4], ["clapSpeedPalms", 2.5],
+        ["gestureCooldownMs", 500],
+    ]
+    # Deux relations, pas deux nombres libres : un doigt ne peut pas être
+    # « replié » plus loin qu'il n'est « tendu » (`options()` le refuse), et la
+    # tolérance d'un clic reste sous celle qui déclenche un glissement — au
+    # dessus, aucun contact ne pourrait rester indécis jusqu'au relâchement.
+    assert result["fingerBand"] is True and result["clickUnderDrag"] is True
     # `smoothing` a été retiré, pas laissé inerte : `options` le refuse.
     assert result["retired"] == [True]
     # `LIVE_STATES` est au bloc pur ce que `LIVE_LIFECYCLES` est au contrat.
