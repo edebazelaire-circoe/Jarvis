@@ -146,6 +146,38 @@ def test_identity_survives_a_one_frame_dropout_but_not_a_real_absence(tmp_path):
     assert result["resurrected"] == 1
 
 
+def test_the_order_the_tracker_lists_its_hands_in_is_not_an_identity(tmp_path):
+    """Rien ne promet que le traqueur rende ses mains dans le même ordre d'une
+    image à l'autre. L'identité ne doit donc tenir ni à l'indice dans le
+    tableau, ni à l'étiquette qui l'accompagne : l'appariement se fait sur
+    **toutes** les paires, pas rang par rang.
+
+    Les deux mains ne bougent pas ; seul l'ordre de la liste s'inverse. Les
+    identités doivent suivre les mains, donc s'inverser dans la sortie."""
+
+    result = run_node(tmp_path, HAND + """
+      const t=B.createHandTracker({});
+      const left=hand(.42,.5),right=hand(.58,.5);
+      const steps=[];
+      for(let i=0;i<6;i+=1){
+        const flipped=i>=3;
+        const step=t.update(flipped?scene([right,left],['Right','Left'])
+                                   :scene([left,right],['Left','Right']),frame(i*33));
+        steps.push(step.tokens.map(k=>[k.id,Math.round(k.rawX)]));
+      }
+      out({steps,tracks:t.size()});
+    """)
+    listed = result["steps"]
+    # Avant le retournement : piste 0 à gauche, piste 1 à droite.
+    assert listed[2][0][0] == 0 and listed[2][1][0] == 1
+    # Après : la liste est inversée, les identités suivent les mains.
+    assert listed[3][0][0] == 1 and listed[3][1][0] == 0
+    # Et chaque identité est restée sur sa position d'écran.
+    left_px = [x for step in listed for (i, x) in step if i == 0]
+    assert len(set(left_px)) == 1, "la piste 0 a changé de main"
+    assert result["tracks"] == 2, "personne n'a ouvert de piste supplémentaire"
+
+
 def test_a_handedness_label_that_flips_never_steals_an_identity(tmp_path):
     """La latéralité est un **indice**, jamais une clé. Le traqueur réétiquette
     une main vue de profil d'une image à l'autre ; si l'étiquette était

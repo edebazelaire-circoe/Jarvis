@@ -441,12 +441,18 @@ Découvertes durables pour les Slices suivantes :
   `window`, ce qui installe la surimpression. Toute Slice qui touche
   `createOverlay` / `createInteraction` peut le réutiliser.
 
-Tests, chunks en avant-plan : nouveau fichier **10 passed** ; baseline 1
+- **L'ordre de la liste n'est pas une identité non plus.** Rien ne promet que
+  le traqueur rende ses mains dans le même ordre d'une image à l'autre :
+  l'appariement porte sur **toutes** les paires, pas rang par rang. Apparier
+  par position dans le tableau fait tomber le test dédié.
+
+Tests, chunks en avant-plan : nouveau fichier **11 passed** ; baseline 1
 (barehands + scene logic) **130 passed** (129 avant, un test de cycle de vie
 ajouté) ; baseline 2 (control centre + settings) **221 passed**. Aucune
 régression. Neuf mutations vérifiées, chacune reprise par le seul test visé :
 `predictMs`→0, `handednessBonusPalms`→1,2, `betaCutoff`→0, `minCutoffHz`→12,
 purge après appariement, latéralité comme porte, qualité minimum→moyenne,
 décision 7 réarmée sur n'importe quelle main, vitesse publiée depuis la dérivée
-interne — plus deux sur le bloc navigateur (classe `faint` retirée, pastille
-qui cache le compte des mains non crues).
+interne, appariement par position dans le tableau — plus deux sur le bloc
+navigateur (classe `faint` retirée, pastille qui cache le compte des mains non
+crues).
