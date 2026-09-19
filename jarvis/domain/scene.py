@@ -252,19 +252,29 @@ class SceneOp(StrEnum):
     ATTACH_ARTIFACT = "attach_artifact"
 
 
-#: Opérations de disposition : seul l'utilisateur archive (Décision 14).
+#: Opérations de disposition : archiver un objet, seul ou en lot.
 ARCHIVE_OPS = frozenset({SceneOp.ARCHIVE, SceneOp.ARCHIVE_MANY})
 
 #: Matrice d'autorité par opération. S'y ajoutent des règles par champ et par
 #: nature, appliquées sur l'effet réel de la commande (voir
-#: `apply_scene_command`). `pin`/`unpin` sont réservées à l'utilisateur :
-#: `pinned_by_user` enregistre une décision de l'utilisateur, et un `unpin` du
-#: cerveau suffirait à contourner la protection de géométrie.
+#: `apply_scene_command`).
+#:
+#: **Le cerveau a exactement la main de l'utilisateur** (19/09/2026, règle posée
+#: par l'utilisateur après trois demandes) : tout ce qu'une personne déclenche
+#: depuis le Control Center ou la scène, JARVIS doit pouvoir le faire sur
+#: commande, archivage et épinglage compris. La Décision 14 (« le cerveau
+#: n'archive pas en V1 ») et la réserve sur `pin`/`unpin` sont levées : elles
+#: faisaient renvoyer le geste à l'utilisateur, ce qu'il refuse.
+#:
+#: Ce qui reste refusé au cerveau n'est jamais « ça t'appartient » mais une
+#: vérité d'une autre couche : `runtime` n'est pas une personne mais le
+#: projecteur de Core, et `EXECUTION_FIELDS` se lit dans Core au lieu de
+#: s'écrire depuis la scène (Décision 17).
 ALLOWED_SCENE_OPS: dict[SceneActor, frozenset[SceneOp]] = {
     SceneActor.RUNTIME: frozenset(
         {SceneOp.UPSERT_OBJECT, SceneOp.PATCH_OBJECT, SceneOp.LINK, SceneOp.UNLINK, SceneOp.ATTACH_SIGNAL}
     ),
-    SceneActor.BRAIN: frozenset(set(SceneOp) - ARCHIVE_OPS - {SceneOp.PIN, SceneOp.UNPIN}),
+    SceneActor.BRAIN: frozenset(SceneOp),
     SceneActor.USER: frozenset(SceneOp),
 }
 
@@ -1408,7 +1418,13 @@ def _check_write_authority(
         raise _rejected(SceneRefusal.EXECUTION_TRUTH)
     if "geometry" not in changed:
         return
-    if before.constraints.pinned_by_user and (actor is not SceneActor.USER or placed_by is PlacedBy.RESOLVER):
+    # L'épingle protège la place contre le **placement automatique**, pas
+    # contre une commande explicite (19/09/2026). Le cerveau peut désépingler,
+    # déplacer, réépingler : lui refuser le déplacement n'ajoutait aucune
+    # garantie, seulement un détour et un « je ne peux pas » de plus.
+    # `runtime` n'arrive jamais ici : la géométrie est un champ de composition,
+    # qui lui est refusé plus haut (`RUNTIME_COMPOSITION`).
+    if before.constraints.pinned_by_user and placed_by is PlacedBy.RESOLVER:
         raise _rejected(SceneRefusal.PINNED_BY_USER)
     if (
         placed_by is PlacedBy.RESOLVER

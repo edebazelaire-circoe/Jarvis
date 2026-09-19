@@ -93,6 +93,15 @@ def _env_float(name: str, default: float, *, minimum: float = 0.0, maximum: floa
     return value if maximum is None or value <= maximum else default
 
 
+def _env_flag(name: str, default: bool) -> bool:
+    """Interrupteur d'environnement tolérant : `0`, `non`, `false` coupent."""
+
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() not in {"0", "no", "non", "false", "off"}
+
+
 def frame_db(frame: bytes) -> float:
     """Énergie RMS d'une trame int16, en dB par rapport à la pleine échelle."""
 
@@ -165,7 +174,11 @@ class NearEndDiagnostics:
       de la session ; `warming_up` : moins que `warmup_frames`, le couplage est
       donc tenu à son plancher de chauffe ;
     - `latched` : parole proche confirmée ; `guard_open` : le fournisseur
-      entend le micro.
+      entend le micro ;
+    - `echo_lead_ms` / `echo_lead_confidence` : avance mesurée de la référence
+      sur l'écho, et la corrélation qui l'a établie (`EchoDelayEstimator`).
+      C'est le paramètre dont dépend toute l'annulation : sous 25 ms, AEC3
+      passe de 50 dB d'atténuation à 10 dB. Zéro veut dire « jamais mesurée ».
     """
 
     mic_db: float
@@ -178,6 +191,8 @@ class NearEndDiagnostics:
     warming_up: bool
     latched: bool
     guard_open: bool
+    echo_lead_ms: int = 0
+    echo_lead_confidence: float = 0.0
 
     def as_data(self) -> dict[str, object]:
         """Forme journalisable : arrondie au dixième de dB, prête pour la trace."""
@@ -193,6 +208,8 @@ class NearEndDiagnostics:
             "warming_up": self.warming_up,
             "latched": self.latched,
             "guard_open": self.guard_open,
+            "echo_lead_ms": self.echo_lead_ms,
+            "echo_lead_confidence": round(self.echo_lead_confidence, 2),
         }
 
 
@@ -243,6 +260,134 @@ class CaptureObserver(Protocol):
     def close(self) -> None: ...
 
 
+@dataclass(frozen=True, slots=True)
+class EchoAlignment:
+    """Un réalignement de la référence du détecteur sur la pièce, pour la trace.
+
+    Scalaires seulement : l'avance retenue, celle qu'elle remplace, la
+    corrélation qui l'a établie, et l'instant du flux de capture.
+    """
+
+    lead_ms: int
+    previous_lead_ms: int
+    confidence: float
+    stream_ms: int
+
+    def as_data(self) -> dict[str, object]:
+        return {
+            "lead_ms": self.lead_ms,
+            "previous_lead_ms": self.previous_lead_ms,
+            "confidence": round(self.confidence, 2),
+            "stream_ms": self.stream_ms,
+        }
+
+
+class EchoDelayEstimator:
+    """Mesure l'avance de la référence sur l'écho, par corrélation d'enveloppes.
+
+    Le couple (référence remise à l'annuleur, micro brut) donne une mesure
+    directe du trajet haut-parleurs → micro : la même montée d'énergie
+    apparaît dans les deux, décalée du temps que met le son à sortir du tampon
+    du périphérique, à traverser la liaison — une enceinte Bluetooth ajoute
+    150 à 300 ms — et à revenir. Seules les enveloppes en dB sont gardées :
+    500 flottants par flux, jamais d'audio, jamais rien de persisté.
+
+    Pourquoi cette mesure existe (poste réel, 19/09/2026). L'avance de la
+    référence est le paramètre dont dépend toute l'annulation : mesurée sur
+    AEC3 par `docs/fixes/voice-duplex-bluetooth/`, elle vaut 50 dB
+    d'atténuation au-dessus de 25 ms et 4 à 10 dB en dessous. Elle n'était ni
+    réglée, ni mesurée, ni visible : la file de référence avançait au rythme
+    que le tampon du périphérique avait laissé, et personne ne pouvait dire
+    lequel.
+
+    Elle sert ici à une chose : le détecteur compare le micro à la référence
+    **telle qu'elle est audible**, donc retardée de cette avance. Sans cela la
+    référence se tait pendant que la pièce résonne encore, la fin de chaque
+    phrase est jugée contre le seul plancher de bruit, et JARVIS se coupe
+    lui-même à chaque phrase. L'annuleur, lui, garde la référence en avance :
+    c'est ce dont il a besoin.
+
+    Appelé depuis le thread de capture, une fois par trame. Le tri et la
+    corrélation ne tournent qu'une fois par seconde, sur 500 points.
+    """
+
+    #: 5 s d'historique : assez pour couvrir plusieurs syllabes de JARVIS.
+    HISTORY_FRAMES = 500
+    #: Une mesure par seconde au plus.
+    PROBE_EVERY_FRAMES = 100
+    #: Sans 1,2 s de JARVIS nettement audible dans la fenêtre, il n'y a rien à
+    #: corréler : la mesure précédente tient.
+    MIN_FAR_FRAMES = 120
+    #: Sous cette corrélation, le pic ne désigne rien : la mesure est écartée.
+    MIN_CONFIDENCE = 0.4
+    #: Les enveloppes sont écrêtées : une trame numériquement nulle (-120 dB)
+    #: pèserait autant qu'une syllabe dans la corrélation.
+    FLOOR_DB = -85.0
+
+    def __init__(self, *, max_lead_frames: int = MAX_ECHO_LEAD_FRAMES) -> None:
+        self.max_lead_frames = max(1, int(max_lead_frames))
+        self._mic: deque[float] = deque(maxlen=self.HISTORY_FRAMES)
+        self._ref: deque[float] = deque(maxlen=self.HISTORY_FRAMES)
+        self._since_probe = 0
+        #: Avance retenue, en trames de 10 ms. Négative, l'écho précède sa
+        #: propre référence et aucun annuleur ne peut rien : c'est un défaut
+        #: de la chaîne, pas du détecteur, et il doit se voir dans la trace.
+        self.lead_frames = 0
+        self.confidence = 0.0
+        #: Faux tant qu'aucune corrélation n'a abouti : `lead_frames` est alors
+        #: un défaut, pas une mesure.
+        self.measured = False
+
+    @property
+    def lead_ms(self) -> int:
+        return self.lead_frames * FRAME_MS
+
+    def reset(self) -> None:
+        """Nouvelle session : l'historique ne vaut plus, la mesure si.
+
+        Le périphérique n'a pas changé entre deux réveils ; la mesure reste
+        donc le meilleur point de départ, et la première corrélation de la
+        session suivante la confirmera ou la corrigera.
+        """
+
+        self._mic.clear()
+        self._ref.clear()
+        self._since_probe = 0
+
+    def observe(self, mic_db: float, ref_db: float) -> bool:
+        """Intégrer une trame ; rend True quand une mesure vient d'aboutir."""
+
+        self._mic.append(max(self.FLOOR_DB, mic_db))
+        self._ref.append(max(self.FLOOR_DB, ref_db))
+        self._since_probe += 1
+        if self._since_probe < self.PROBE_EVERY_FRAMES or len(self._mic) < self.HISTORY_FRAMES:
+            return False
+        self._since_probe = 0
+        if sum(1 for value in self._ref if value > NearEndDetector.REF_LEARN_DB) < self.MIN_FAR_FRAMES:
+            return False
+        return self._correlate()
+
+    def _correlate(self) -> bool:
+        mic = np.fromiter(self._mic, dtype=np.float64, count=len(self._mic))
+        ref = np.fromiter(self._ref, dtype=np.float64, count=len(self._ref))
+        mic -= mic.mean()
+        ref -= ref.mean()
+        norm = float(np.linalg.norm(mic) * np.linalg.norm(ref))
+        if norm < 1e-9:
+            return False
+        centre = len(ref) - 1
+        full = np.correlate(mic, ref, mode="full") / norm
+        window = full[centre - self.max_lead_frames:centre + self.max_lead_frames + 1]
+        index = int(np.argmax(window))
+        peak = float(window[index])
+        if peak < self.MIN_CONFIDENCE:
+            return False
+        self.lead_frames = index - self.max_lead_frames
+        self.confidence = peak
+        self.measured = True
+        return True
+
+
 class NearEndDetector:
     """Décide, trame par trame, si l'utilisateur parle par-dessus JARVIS.
 
@@ -252,10 +397,11 @@ class NearEndDetector:
       longue pour couvrir la latence du périphérique et la réverbération.
     - plancher : minimum glissant de l'énergie du micro, mesuré seulement quand
       JARVIS se tait ; une longue réponse ne peut donc pas le faire monter.
-    - couplage : écart appris entre l'écho résiduel et `ref_env`. Il monte vite
-      (un écho sous-estimé déclencherait un faux barge-in) et descend lentement.
-      Un écho résiduel sous le plancher compte comme « au plancher », sans quoi
-      un annuleur efficace laisserait le couplage figé à sa valeur initiale.
+    - couplage : écart appris entre l'écho résiduel et `ref_env`. C'est un
+      percentile haut des résidus récents, pas leur moyenne : voir
+      `_learn_coupling`. Il monte immédiatement — un écho sous-estimé
+      déclencherait un faux barge-in — et ne redescend qu'à
+      `coupling_decay_db` par trame.
 
     Une trame est « proche » quand elle dépasse le plancher de `floor_margin_db`
     et l'écho attendu de `echo_margin_db`. La parole est confirmée — et le
@@ -280,6 +426,17 @@ class NearEndDetector:
     REF_LEARN_DB = -40.0
     FLOOR_MIN_DB = -70.0
     FLOOR_MAX_DB = -35.0
+    #: Résidus retenus pour le percentile : 6 s de JARVIS nettement audible.
+    #: C'est là qu'est la mémoire d'une bouffée — elle pèse sur le percentile
+    #: tant qu'elle n'est pas sortie de la fenêtre.
+    COUPLING_WINDOW_FRAMES = 600
+    #: Avant cette quantité de résidus, le percentile ne peut que FAIRE MONTER
+    #: le couplage : la valeur initiale, prudente, tient tant que la pièce
+    #: n'est pas décrite.
+    COUPLING_MIN_FRAMES = 100
+    #: Le percentile n'est retrié qu'une trame sur cinq : 600 flottants triés
+    #: toutes les 50 ms dans le thread PortAudio, soit quelques dizaines de µs.
+    COUPLING_REFRESH_FRAMES = 5
 
     def __init__(
         self,
@@ -296,6 +453,7 @@ class NearEndDetector:
         refractory_frames: int = 50,
         warmup_frames: int = 300,
         warmup_coupling_db: float = -15.0,
+        coupling_percentile: float = 90.0,
     ) -> None:
         self.coupling_db = float(initial_coupling_db)
         self.initial_coupling_db = float(initial_coupling_db)
@@ -316,6 +474,11 @@ class NearEndDetector:
         # une parole supposée est récusée, c'est qu'il s'agissait d'écho, et
         # c'est ce niveau que le couplage doit rattraper.
         self._recent_excess: deque[float] = deque(maxlen=window_frames)
+        # Résidus des trames apprenables, pour le percentile (`_learn_coupling`).
+        self.coupling_percentile = float(coupling_percentile)
+        self._excess_history: deque[float] = deque(maxlen=self.COUPLING_WINDOW_FRAMES)
+        self._percentile_db: float | None = None
+        self._since_percentile = 0
         self.warmup_coupling_db = warmup_coupling_db
         self._far_frames = 0
         self.floor_db = -60.0
@@ -346,7 +509,8 @@ class NearEndDetector:
         #: était de l'écho n'arrive qu'après (transcript écarté, 18/09/2026).
         self.latched_excess_db: float | None = None
 
-    def diagnostics(self, *, guard_open: bool) -> NearEndDiagnostics:
+    def diagnostics(self, *, guard_open: bool, echo_lead_ms: int = 0,
+                    echo_lead_confidence: float = 0.0) -> NearEndDiagnostics:
         """Instantané des niveaux de la dernière trame, pour la trace du bridge."""
 
         return NearEndDiagnostics(
@@ -360,6 +524,8 @@ class NearEndDetector:
             warming_up=self._far_frames < self.warmup_frames,
             latched=self.latched,
             guard_open=guard_open,
+            echo_lead_ms=echo_lead_ms,
+            echo_lead_confidence=echo_lead_confidence,
         )
 
     @property
@@ -393,6 +559,12 @@ class NearEndDetector:
         if learn and excess is not None:
             observed = excess - self.echo_margin_db + 2.0
             self.coupling_db = min(20.0, max(self.coupling_db, observed))
+            # La preuve entre aussi dans la fenêtre du percentile : cette
+            # bouffée-là avait été jugée « proche », donc écartée de
+            # l'apprentissage continu, et c'est précisément celle qu'il faut
+            # décrire.
+            self._excess_history.append(excess)
+            self._percentile_db = None
         self.latched = False
         self.latched_excess_db = None
         self._reset_window()
@@ -450,9 +622,7 @@ class NearEndDetector:
             # Appris seulement quand JARVIS est nettement audible : dans ses
             # pauses, le micro ne contient que le bruit ambiant, et l'écart
             # mesuré ne dirait plus rien de l'écho.
-            observed = mic_db - ref_env
-            rate = 0.05 if observed > self.coupling_db else 0.02
-            self.coupling_db = min(20.0, max(-60.0, self.coupling_db + rate * (observed - self.coupling_db)))
+            self._learn_coupling(mic_db - ref_env)
         if self._refractory > 0:
             self._refractory -= 1
             return False
@@ -465,6 +635,46 @@ class NearEndDetector:
             self.latched_excess_db = max(self._recent_excess) if self._recent_excess else None
             return True
         return False
+
+    def _learn_coupling(self, observed: float) -> None:
+        """Rapprocher le couplage du niveau que l'écho atteint VRAIMENT.
+
+        Un annuleur d'écho ne laisse pas un résidu constant : il tient
+        cinquante décibels la plupart du temps et lâche par bouffées, à chaque
+        fois que son alignement se perd — une liaison Bluetooth en produit une
+        à chaque réajustement de sa gigue. La moyenne glissante d'avant
+        apprenait le résidu TYPIQUE ; sur le poste réel du 19/09/2026 elle
+        s'établissait à −59,5 dB pendant que les bouffées, elles, montaient à
+        −6 dB de ce qui était joué. Chaque bouffée franchissait la marge de
+        trente décibels, devenait « l'utilisateur parle », et JARVIS se coupait
+        lui-même phrase après phrase.
+
+        Le couplage suit donc un percentile haut des résidus récents : il
+        décrit la bouffée, pas le calme entre deux bouffées. Il monte dès
+        qu'une bouffée entre dans la fenêtre — un écho sous-estimé coûte une
+        fausse interruption — et ne retombe que lorsqu'elle en sort, six
+        secondes de parole de JARVIS plus tard. La mémoire est la fenêtre
+        elle-même ; il n'y a pas d'autre inertie à régler.
+
+        Ce que cela change quand l'annulation fonctionne : le percentile des
+        résidus est alors lui aussi très bas (−45 dB mesurés sur AEC3 aligné),
+        la marge reste large, et couper JARVIS demande la même voix qu'avant.
+        Quand elle ne fonctionne pas, JARVIS devient dur à interrompre au lieu
+        de s'interrompre tout seul — c'est le bon sens de l'échec.
+        """
+
+        self._excess_history.append(observed)
+        self._since_percentile += 1
+        if self._percentile_db is None or self._since_percentile >= self.COUPLING_REFRESH_FRAMES:
+            self._since_percentile = 0
+            ordered = sorted(self._excess_history)
+            index = min(len(ordered) - 1, int(self.coupling_percentile / 100.0 * len(ordered)))
+            self._percentile_db = ordered[index]
+        target = self._percentile_db
+        if target >= self.coupling_db:
+            self.coupling_db = min(20.0, target)
+        elif len(self._excess_history) >= self.COUPLING_MIN_FRAMES:
+            self.coupling_db = max(-60.0, target)
 
     @staticmethod
     def _longest_run(values) -> int:  # noqa: ANN001 - itérable de booléens
@@ -548,6 +758,8 @@ class CaptureProcessor:
             floor_margin_db=_env_float("JARVIS_NEAR_END_FLOOR_MARGIN_DB", 12.0, minimum=0.0, maximum=60.0),
             echo_margin_db=_env_float("JARVIS_NEAR_END_ECHO_MARGIN_DB", 10.0, minimum=0.0, maximum=60.0),
             min_run_frames=max(1, round(_env_float("JARVIS_NEAR_END_MIN_RUN_MS", 60.0, minimum=10.0, maximum=1000.0) / FRAME_MS)),
+            # Percentile des résidus et vitesse de retour (`_learn_coupling`).
+            coupling_percentile=_env_float("JARVIS_NEAR_END_COUPLING_PERCENTILE", 90.0, minimum=50.0, maximum=100.0),
         )
         # Sans annuleur, le pré-roll est surtout de l'écho : on n'en garde que
         # le strict nécessaire pour ne pas couper la première syllabe.
@@ -586,6 +798,14 @@ class CaptureProcessor:
         # refermer aussitôt après le rejeu).
         self._owner_flow_request: tuple[bool, int, int | None, bool] | None = None
         self._owner_replays: deque[OwnerReplay] = deque(maxlen=4)
+        # Alignement de la référence du détecteur sur la pièce : la mesure vit
+        # dans le thread de capture, les rapports partent sous `_lock`.
+        self.delay_estimator = EchoDelayEstimator() if _env_flag("JARVIS_ECHO_ALIGN", True) else None
+        # Historique des niveaux de référence : sa tête est la référence telle
+        # qu'elle est AUDIBLE maintenant, c'est-à-dire celle d'il y a
+        # `lead` trames. Longueur 1 tant qu'aucune avance n'est mesurée.
+        self._ref_db_history: deque[float] = deque([_SILENCE_DB], maxlen=1)
+        self._alignments: deque[EchoAlignment] = deque(maxlen=4)
 
     # -- côté sortie ----------------------------------------------------------
 
@@ -642,6 +862,7 @@ class CaptureProcessor:
             self._owner_gate_wanted = False
             self._owner_flow_request = None
             self._owner_replays.clear()
+            self._alignments.clear()
         self._carry = b""
         self._preroll.clear()
         self._gate_open = True
@@ -657,6 +878,10 @@ class CaptureProcessor:
         detector._reset_window()
         detector._refractory = 0
         detector.coupling_db = max(detector.coupling_db, detector.initial_coupling_db)
+        if self.delay_estimator is not None:
+            # L'historique d'une session close ne vaut plus ; l'avance mesurée,
+            # elle, décrit le périphérique, qui n'a pas changé.
+            self.delay_estimator.reset()
         observer = self.observer
         if observer is not None and not self.observer_failed:
             try:
@@ -718,6 +943,25 @@ class CaptureProcessor:
 
         return self.detector.voiced_frames
 
+    @property
+    def echo_lead_ms(self) -> int:
+        """Avance mesurée de la référence sur l'écho, en millisecondes.
+
+        Zéro tant qu'aucune corrélation n'a abouti — et zéro aussi quand la
+        mesure dit zéro : `EchoDelayEstimator.measured` distingue les deux.
+        """
+
+        estimator = self.delay_estimator
+        return estimator.lead_ms if estimator is not None else 0
+
+    def take_alignments(self) -> tuple[EchoAlignment, ...]:
+        """Réalignements faits depuis le dernier appel (au plus 4), pour la trace."""
+
+        with self._lock:
+            alignments = tuple(self._alignments)
+            self._alignments.clear()
+        return alignments
+
     def near_end_diagnostics(self) -> NearEndDiagnostics:
         """Niveaux de la dernière trame traitée, pour la trace du bridge.
 
@@ -727,7 +971,12 @@ class CaptureProcessor:
         attendre la trace.
         """
 
-        return self.detector.diagnostics(guard_open=self._gate_open)
+        estimator = self.delay_estimator
+        return self.detector.diagnostics(
+            guard_open=self._gate_open,
+            echo_lead_ms=estimator.lead_ms if estimator is not None else 0,
+            echo_lead_confidence=estimator.confidence if estimator is not None else 0.0,
+        )
 
     @property
     def stream_ms(self) -> int:
@@ -827,8 +1076,20 @@ class CaptureProcessor:
         for offset in range(0, usable, size):
             frame = data[offset:offset + size]
             reference = self._pop_reference()
+            reference_db = frame_db(reference)
+            estimator = self.delay_estimator
+            # Le micro BRUT : c'est lui qui porte l'écho, donc lui qui se
+            # corrèle à la référence. Après l'annuleur il n'en resterait rien
+            # à corréler, précisément quand l'annulation marche.
+            raw_mic_db = frame_db(frame) if estimator is not None else 0.0
             frame = self._cancel_echo(frame, reference)
-            confirmed = self.detector.update(frame_db(frame), frame_db(reference))
+            if estimator is not None and estimator.observe(raw_mic_db, reference_db):
+                self._align_reference(estimator)
+            self._ref_db_history.append(reference_db)
+            # L'annuleur reçoit la référence en avance — il lui en faut une ;
+            # le détecteur la reçoit retardée de cette avance, donc telle
+            # qu'elle est audible dans la pièce à cet instant.
+            confirmed = self.detector.update(frame_db(frame), self._ref_db_history[0])
             if self._owner_gate:
                 # Solo Owner : seul le propriétaire ouvre le flux, que JARVIS
                 # parle ou se taise (tâche 07) — une autre voix n'atteint
@@ -869,6 +1130,37 @@ class CaptureProcessor:
             self._observe(frame)
             self._stream_frames += 1
         return bytes(out), tuple(signals)
+
+    def _align_reference(self, estimator: EchoDelayEstimator) -> None:
+        """Retarder la référence du détecteur de l'avance qui vient d'être mesurée.
+
+        Thread de capture. Une avance négative — l'écho précède sa propre
+        référence — ne se rattrape pas en retardant quoi que ce soit : elle
+        est reportée telle quelle dans la trace, et le détecteur garde la
+        référence à l'instant.
+
+        L'allongement est comblé par la plus ancienne valeur connue, jamais par
+        du silence : pendant les quelques trames où l'historique se remplit, un
+        silence inventé ferait juger l'écho contre le seul plancher de bruit —
+        exactement le faux barge-in que cet alignement existe pour empêcher.
+        """
+
+        lead = max(0, min(MAX_ECHO_LEAD_FRAMES, estimator.lead_frames))
+        previous = (self._ref_db_history.maxlen or 1) - 1
+        if lead == previous:
+            return
+        oldest = self._ref_db_history[0] if self._ref_db_history else _SILENCE_DB
+        aligned: deque[float] = deque(self._ref_db_history, maxlen=lead + 1)
+        while len(aligned) < lead + 1:
+            aligned.appendleft(oldest)
+        self._ref_db_history = aligned
+        with self._lock:
+            self._alignments.append(EchoAlignment(
+                lead_ms=lead * FRAME_MS,
+                previous_lead_ms=previous * FRAME_MS,
+                confidence=estimator.confidence,
+                stream_ms=self._stream_frames * FRAME_MS,
+            ))
 
     def _apply_owner_commands(
         self,

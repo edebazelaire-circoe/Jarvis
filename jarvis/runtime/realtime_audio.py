@@ -503,6 +503,26 @@ class SoundDeviceRealtimeAudio:
         if callback is not None:
             for signal in signals:
                 callback(signal)
+        self._trace_echo_alignment()
+
+    def _trace_echo_alignment(self) -> None:
+        """Journaliser l'avance de la référence sur l'écho, quand elle change.
+
+        L'avance mesurée est le paramètre dont dépend toute l'annulation :
+        au-dessus de 25 ms AEC3 retire 50 dB d'écho, en dessous il n'en retire
+        que 10 (`docs/fixes/voice-duplex-bluetooth/`). Une enceinte Bluetooth
+        ajoute 150 à 300 ms au tampon du périphérique, et la faire apparaître
+        à côté de la latence que le pilote déclare est la seule façon de
+        distinguer un annuleur en panne d'une liaison qui ment.
+        """
+
+        take = getattr(self.capture, "take_alignments", None)
+        if take is None:
+            return
+        for alignment in take():
+            self._device_trace("voice.echo_alignment",
+                               device_latency_ms=self._output_latency_ms,
+                               **alignment.as_data())
 
     # -- garde d'écho : état lu par le bridge ---------------------------------
 

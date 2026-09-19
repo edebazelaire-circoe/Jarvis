@@ -536,7 +536,8 @@ def test_the_detector_reports_its_levels_without_touching_them():
 
     assert (detector.coupling_db, detector.floor_db, detector.latched) == before
     assert set(data) == {"mic_db", "ref_env_db", "floor_db", "coupling_db", "excess_db",
-                         "margin_db", "far_frames", "warming_up", "latched", "guard_open"}
+                         "margin_db", "far_frames", "warming_up", "latched", "guard_open",
+                         "echo_lead_ms", "echo_lead_confidence"}
     assert data["ref_env_db"] > data["mic_db"]  # l'écho est sous ce qui est joué
     assert data["excess_db"] == pytest.approx(data["mic_db"] - data["ref_env_db"], abs=0.11)
     # Ce que le bridge journalise, et rien sans capture duplex.
