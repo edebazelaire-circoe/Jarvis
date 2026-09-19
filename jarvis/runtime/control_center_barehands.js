@@ -164,7 +164,19 @@ const JarvisBarehandsCore=(function(){
      posture qui vient d'apparaître ne crédite pas le temps passé sans elle.
      Une perte plus courte que `wakeGraceMs` est un trou du traqueur et garde
      la progression ; au-delà, tout retombe à zéro, progression comprise, et le
-     réveil redevient possible. `wake` ne part qu'une fois par maintien. */
+     réveil redevient possible. `wake` ne part qu'une fois par maintien.
+
+     Une perte se dit de deux façons, et la tolérance est la même pour les
+     deux : une mesure explicitement non tenue, et **un trou entre deux
+     mesures**. Un intervalle pendant lequel `update` n'est pas appelé est du
+     temps *non observé* : rien n'y atteste la posture. Le créditer rendait une
+     seconde de maintien à partir de deux images — une caméra figée (le
+     guetteur sort avant d'appeler ici), un onglet en arrière-plan ou un écran
+     rabattu (l'horloge avance, pas la boucle d'images) suffisaient à entrer en
+     interaction sur une posture vaguement en C tenue une seule image, et
+     l'anneau de progression de la décision 5 sautait de 0 à 100 % sans jamais
+     se dessiner. Au-delà de `wakeGraceMs`, le trou se lit donc comme la perte
+     qu'il est, et le maintien recommence — observé, cette fois. */
   function createWakeDetector(overrides){
     const o=options(overrides);
     let held=0,last=null,wasHeld=false,lostSince=null,fired=false;
@@ -175,6 +187,9 @@ const JarvisBarehandsCore=(function(){
         const at=Number.isFinite(t)?t:0;
         const dt=last===null?0:Math.max(0,at-last);
         last=at;
+        /* Trou plus long que la tolérance : tout ce qui précède est hors de
+           vue, donc perdu. La mesure présente ouvre un nouveau maintien. */
+        if(dt>o.wakeGraceMs){held=0;wasHeld=false;lostSince=null;fired=false}
         const value=Number(score);
         const holding=Number.isFinite(value)&&value>=o.wakeScore;
         if(!holding){
@@ -250,6 +265,7 @@ const JarvisBarehandsCore=(function(){
     camera_unsupported:{title:'Caméra non prise en charge',detail:'Ce navigateur n’expose pas la caméra à cette page.'},
     assets_missing:{title:'Modèle introuvable',detail:'Les fichiers MediaPipe ne sont pas installés : lancez python scripts/bootstrap_third_party.py.'},
     tracking_failed:{title:'Suivi interrompu',detail:'Le suivi des mains a échoué : caméra libérée.'},
+    overlay_failed:{title:'Affichage interrompu',detail:'La surimpression des mains n’a pas pu se dessiner : suivi arrêté, caméra libérée.'},
     start_failed:{title:'Démarrage impossible',detail:'Le suivi des mains n’a pas pu démarrer.'},
   });
 
@@ -321,6 +337,19 @@ const JarvisBarehandsCore=(function(){
       generation+=1;teardown();state=STATE.ERROR;emit(code||classifyError(error),error);
     }
     const aspect=()=>(video&&video.width&&video.height)?video.width/video.height:4/3;
+    /* La surimpression n'est pas le suivi. `teardown` enveloppe chaque appel
+       sorti d'ici parce qu'on rend déjà tout ; les transitions, elles, le
+       laissaient nu, et un anneau qui lève se lisait « suivi interrompu :
+       caméra libérée » ou « démarrage impossible » — une cause inventée à la
+       place de la vraie. Le code voyage avec l'erreur et `classifyError` le
+       reconnaît : la panne d'affichage se dit sous son nom. */
+    function paintWatch(value){
+      try{deps.overlay.watch(value)}
+      catch(error){
+        throw Object.assign(new Error(`surimpression : ${(error&&error.message)||error}`),
+          {code:'overlay_failed',cause:error});
+      }
+    }
     /* SLEEP → ACTIVE et ACTIVE → SLEEP. La caméra, le modèle et la vidéo ne
        bougent pas : seules l'interaction et la surimpression changent de
        régime, et tout compteur repart de zéro pour que le réveil suivant ne
@@ -328,13 +357,13 @@ const JarvisBarehandsCore=(function(){
     function toActive(code){
       wake.reset();tracker.reset();lastVideoTime=-1;lastHandAt=deps.now();
       state=STATE.ACTIVE;emit(code||'active');
-      deps.overlay.watch(null);
+      paintWatch(null);
     }
     function toSleep(code){
       tracker.reset();wake.reset();lastVideoTime=-1;lastWatchAt=-Infinity;
       try{deps.interaction.clear()}catch(_error){}
       state=STATE.SLEEP;emit(code||'sleep');
-      deps.overlay.watch({present:false,progress:0,x:0,y:0});
+      paintWatch({present:false,progress:0,x:0,y:0});
     }
     /* Guetteur de veille. Budget d'images : le coût n'est pas la boucle mais
        l'inférence MediaPipe (plusieurs millisecondes par image). On ne la
@@ -348,12 +377,26 @@ const JarvisBarehandsCore=(function(){
       if(now-lastWatchAt<o.wakeIntervalMs)return;
       lastWatchAt=now;
       const time=video.currentTime();
-      if(time===lastVideoTime)return;
+      /* Horloge vidéo figée : aucune image nouvelle à lire. Ce n'est pas une
+         posture tenue, c'est une **absence d'observation**, et elle se déclare
+         telle quelle plutôt que de sortir en silence — sinon l'anneau reste
+         figé sur une progression que plus rien n'alimente, et le guetteur ne
+         voit pas passer le gel. Le détecteur la traite comme une perte : au
+         bout de `wakeGraceMs` la progression retombe, à l'écran comme dedans.
+         Deux mécanismes se recouvrent ici, à dessein : celui-ci voit une
+         caméra figée, la borne de `createWakeDetector` voit une boucle
+         d'images arrêtée (onglet en arrière-plan, écran rabattu), et aucun des
+         deux ne peut se bloquer de la même façon que l'autre. */
+      if(time===lastVideoTime){
+        const stalled=wake.update(null,now);
+        paintWatch({present:false,progress:stalled.progress,x:0,y:0});
+        return;
+      }
       lastVideoTime=time;
       const hand=usableHand(landmarker.detectForVideo(video.element,now));
       const out=wake.update(hand?cPoseScore(hand,aspect(),deps.options):null,now);
       const at=hand?toScreen(hand[LM.INDEX_TIP],deps.viewport(),o):null;
-      deps.overlay.watch({present:!!hand,progress:out.progress,x:at?at.x:0,y:at?at.y:0});
+      paintWatch({present:!!hand,progress:out.progress,x:at?at.x:0,y:at?at.y:0});
       if(out.wake)toActive('woken');
     }
     /* Interaction complète. Le retour en veille est jugé avant de lire la
@@ -381,7 +424,10 @@ const JarvisBarehandsCore=(function(){
       try{
         const now=deps.now();
         if(state===STATE.SLEEP)watch(now);else interact(now,mine);
-      }catch(error){fail(error,'tracking_failed');return}
+      /* Une erreur qui porte son propre code le garde : la surimpression
+         n'est pas la caméra, et `tracking_failed` lui inventerait une cause.
+         Sans code connu, l'image qui a levé est bien le suivi. */
+      }catch(error){fail(error,(error&&MESSAGES[error.code])?error.code:'tracking_failed');return}
       if(mine===generation&&(state===STATE.SLEEP||state===STATE.ACTIVE))frame=deps.requestFrame(tick);
     }
     async function enable(){

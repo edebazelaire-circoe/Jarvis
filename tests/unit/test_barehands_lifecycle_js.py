@@ -168,6 +168,64 @@ def test_the_wake_hold_accumulates_survives_a_gap_and_resets(tmp_path):
     assert result["again"] == 0.0
 
 
+def test_a_gap_between_two_samples_is_time_nobody_observed(tmp_path):
+    """Le trou entre deux mesures n'est pas du maintien : c'est du temps que
+    personne n'a regardé. `dt` était du temps mural non borné, si bien que deux
+    mesures tenues à 60 s d'écart validaient la seconde de maintien — une
+    caméra figée (le guetteur sort avant d'appeler ici), un onglet en
+    arrière-plan ou un écran rabattu faisaient entrer en interaction sur une
+    seule image vaguement en C, et l'anneau de la décision 5 sautait de 0 à
+    100 % sans jamais se dessiner."""
+
+    result = run_node(tmp_path, WORLD + """
+      const far=B.createWakeDetector({wakeHoldMs:1000,wakeGraceMs:400});
+      const before=far.update(1,0);
+      const after=far.update(1,60000);            // deux mesures, 60 s d'écart
+      /* Ni en une fois, ni en tranches : cinq mesures tenues, chacune au-delà
+         de la tolérance, ne créditent toujours rien. */
+      const sliced=B.createWakeDetector({wakeHoldMs:1000,wakeGraceMs:400});
+      const slices=[0,401,802,1203,1604].map(t=>Number(sliced.update(1,t).progress.toFixed(2)));
+      /* Un trou ne met pas le maintien en pause : il le perd. 600 ms acquises,
+         un gel, puis la posture revient — le compte repart de zéro. */
+      const resumed=B.createWakeDetector({wakeHoldMs:1000,wakeGraceMs:400});
+      for(const t of [0,200,400,600])resumed.update(1,t);
+      const stalled=resumed.update(1,60000);
+      const next=resumed.update(1,60200);
+      /* Le même trou vu du contrôleur : caméra figée en veille, posture en C
+         avant et après. L'anneau continue de dire la vérité pendant le gel. */
+      const w=world({result:C_POSE,options:{wakeIntervalMs:200,wakeHoldMs:1000,wakeGraceMs:400}});
+      const c=B.createController(w.deps);
+      await c.enable();
+      w.steps(4,200);                             // 600 ms de posture tenue
+      const held=w.log.filter(l=>l.startsWith('watch:')).pop();
+      const mark=w.log.length;
+      w.state.frozen=true;w.steps(300,200);       // 60 s d'horloge, aucune image neuve
+      const during=w.log.slice(mark).filter(l=>l.startsWith('watch:'));
+      w.state.frozen=false;w.step(200);           // une image en bande, 60 s plus tard
+      out({before:before.progress,
+           after:{progress:after.progress,wake:after.wake,heldMs:after.heldMs},
+           slices,stalled:stalled.progress,next:Number(next.progress.toFixed(2)),
+           held,frozenWatches:during.length,frozenLast:during[during.length-1],
+           state:c.state(),woke:w.log.includes('status:active:woken'),
+           ring:w.log.filter(l=>l.startsWith('watch:')).pop()});
+    """)
+    # Deux mesures tenues à 60 s d'écart : rien de crédité, aucun réveil.
+    assert result["before"] == 0
+    assert result["after"] == {"progress": 0, "wake": False, "heldMs": 0}
+    assert result["slices"] == [0.0, 0.0, 0.0, 0.0, 0.0]
+    # Le trou perd l'acquis au lieu de le mettre en pause.
+    assert result["stalled"] == 0 and result["next"] == 0.2
+    # Contrôleur : 600 ms tenues avant le gel…
+    assert result["held"] == "watch:1:0.60"
+    # … pendant le gel l'anneau est tenu à jour et retombe, au lieu de rester
+    # figé sur une progression que plus rien n'alimente.
+    assert result["frozenWatches"] == 300
+    assert result["frozenLast"] == "watch:0:0.00"
+    # … et l'image d'après le gel ouvre un maintien neuf, elle ne le conclut pas.
+    assert result["state"] == "sleep" and result["woke"] is False
+    assert result["ring"] == "watch:1:0.00"
+
+
 # ------------------------------------------------------------- transitions
 
 
@@ -340,6 +398,26 @@ def test_every_stop_path_releases_the_camera(tmp_path):
     assert result["sleepError"]["code"] == "status:error:tracking_failed"
     assert result["activeError"]["state"] == "error"
     assert result["activeError"]["code"] == "status:error:tracking_failed"
+
+
+def test_a_broken_overlay_is_not_blamed_on_the_camera(tmp_path):
+    """`teardown` enveloppait chaque appel à la surimpression, les transitions
+    non : un anneau qui lève sortait sous « Suivi interrompu — caméra
+    libérée », une cause inventée à la place de la vraie. L'arrêt reste le
+    même, le motif devient exact."""
+
+    result = run_node(tmp_path, WORLD + """
+      const w=world();const c=B.createController(w.deps);
+      await c.enable();
+      w.deps.overlay.watch=()=>{throw new Error('DOM parti')};
+      w.step(200);
+      out({state:c.state(),last:w.log.filter(l=>l.startsWith('status:')).pop(),
+           stopped:w.track.stopped,frames:w.frames.size});
+    """)
+    assert result["state"] == "error"
+    assert result["last"] == "status:error:overlay_failed"
+    # ERROR ne tient rien, quelle que soit la cause qui y mène.
+    assert result["stopped"] is True and result["frames"] == 0
 
 
 def test_a_camera_lost_in_sleep_is_reported_like_one_lost_in_interaction(tmp_path):
