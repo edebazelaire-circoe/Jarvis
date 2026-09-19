@@ -7,7 +7,7 @@ give the same id.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 import re
 
 from jarvis.testlab.validation import DOTTED_NAME, check_hex, check_time, fail
@@ -90,6 +90,25 @@ def _check_timed_id(value: object, prefix: str, name: str, optional: bool) -> No
         datetime.strptime(match.group(2)[:15], "%Y%m%dT%H%M%S")
     except ValueError:
         raise fail(f"{name} does not carry a valid calendar time") from None
+
+
+def id_created_at(value: str, name: str = "id") -> datetime:
+    """The creation time a run, sweep or bundle id carries. The inverse of `id_timestamp`.
+
+    Slice 12 retention ages a sweep or a bundle from here rather than from its decoded
+    record: the id is validated on every read, the two can never disagree (a record whose
+    id time differs from its `created_at` does not construct), and a retention pass over a
+    thousand entries must not decode a thousand documents to find out how old they are.
+    """
+    match = _TIMED_ID.fullmatch(value) if isinstance(value, str) else None
+    if match is None:
+        raise fail(f"{name} must be a Test Lab id carrying a timestamp")
+    stamp = match.group(2)
+    try:
+        moment = datetime.strptime(stamp[:15], "%Y%m%dT%H%M%S")
+    except ValueError:
+        raise fail(f"{name} does not carry a valid calendar time") from None
+    return moment.replace(microsecond=int(stamp[15:18]) * 1000, tzinfo=UTC)
 
 
 def check_run_id(value: object, name: str = "run_id", *, optional: bool = False) -> None:

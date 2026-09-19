@@ -185,6 +185,10 @@ class RunUsage:
     bytes_by_kind: Mapping[ArtifactKind, int] = field(default_factory=dict)
     #: When the run became terminal (retention ages terminal runs from here).
     finished_at: datetime | None = None
+    #: What this run points at in the other two stores. Archive retention (Slice 12)
+    #: never deletes an entry a stored run references.
+    sweep_id: str | None = None
+    bundle_id: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "bytes_by_kind", MappingProxyType(dict(self.bytes_by_kind)))
@@ -193,6 +197,23 @@ class RunUsage:
 @dataclass(frozen=True, slots=True)
 class StorageUsage:
     runs: tuple[RunUsage, ...]
+    corrupt: tuple[CorruptRunEntry, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class EntryUsage:
+    """Disk usage of one sweep directory or one bundle directory (Slice 12 retention)."""
+
+    entry_id: str
+    created_at: datetime
+    total_bytes: int
+    #: A sweep whose record is not terminal. Always false for a bundle (written once).
+    active: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class EntryStorageUsage:
+    entries: tuple[EntryUsage, ...] = ()
     corrupt: tuple[CorruptRunEntry, ...] = ()
 
 
@@ -307,6 +328,38 @@ def check_run_update(stored: TestRun, updated: TestRun) -> None:
                                     f"run {stored.run_id}: artifact references are only added, never removed or changed")
 
 
+def check_bundle_attachment(stored: TestRun, bundle_id: str) -> bool:
+    """Is attaching `bundle_id` to `stored` a write? (Slice 12; `docs/testlab.md`, "Bundle of a run".)
+
+    `bundle_id` stays in `IMMUTABLE_RUN_FIELDS`, so `update_run` still refuses to touch
+    it: `attach_bundle` is the single, named way it can ever be set after creation. The
+    rule is narrower than an update:
+
+    - already exactly this bundle -> `False`, nothing to write. A bundle id is derived
+      from the evidence content, so re-capturing the same trace yields the same id and
+      the operation must be idempotent rather than a conflict;
+    - another bundle is attached -> `testlab_store_immutable_field`. A run points at one
+      normalization of its own evidence, and replacing it would silently rewrite what a
+      stored comparison referred to;
+    - nothing attached -> `True`.
+
+    A TERMINAL run may be attached to, and that is the normal case: the bundle is built
+    from artifacts the run has already committed, so it cannot exist before the run ends.
+    Nothing about what executed changes — no status, no metric, no assertion, no artifact
+    — which is why this is not a hole in the terminal-immutability rule but an exception
+    to it, stated once and enforced in one place.
+    """
+    if not isinstance(stored, TestRun):
+        raise fail("check_bundle_attachment takes a TestRun record")
+    check_bundle_id(bundle_id)
+    if stored.bundle_id == bundle_id:
+        return False
+    if stored.bundle_id is not None:
+        raise TestLabStoreError(STORE_IMMUTABLE_FIELD,
+                                f"run {stored.run_id}: another bundle is already attached")
+    return True
+
+
 # ------------------------------------------------------------------- port
 
 class TestRunStore(Protocol):
@@ -340,6 +393,15 @@ class TestRunStore(Protocol):
 
     def delete_run(self, run_id: str) -> None:
         """Retention deletion of a terminal run (the only way a terminal record changes)."""
+        ...
+
+    def attach_bundle(self, run_id: str, bundle_id: str) -> TestRun:
+        """Reference the `DiagnosticBundle` captured from this run's own evidence.
+
+        The only field of a terminal record that may be written, and the only way
+        `bundle_id` is ever set after `create_run` (`check_bundle_attachment` is the
+        rule). Idempotent for the same id; `testlab_store_immutable_field` for another.
+        """
         ...
 
     def put_artifact(self, run_id: str, path: str, *, kind: ArtifactKind, media_type: str,
@@ -499,6 +561,18 @@ class SweepStore(Protocol):
         """The stored summary document; `SweepNotFoundError` when the sweep has none."""
         ...
 
+    def delete_sweep(self, sweep_id: str) -> None:
+        """Retention deletion of a TERMINAL sweep record and its summary (Slice 12).
+
+        Refused while the sweep runs, and refused when the record does not decode. The
+        runs it produced are untouched: deleting the index never deletes measurements.
+        """
+        ...
+
+    def storage_usage(self) -> EntryStorageUsage:
+        """Per-sweep disk usage, for `plan_archive_retention`."""
+        ...
+
 
 class BundleStore(Protocol):
     """Durable DiagnosticBundles (docs/testlab.md, "DiagnosticBundle", "Storage").
@@ -517,3 +591,15 @@ class BundleStore(Protocol):
         ...
 
     def list_bundles(self, query: BundleQuery = BundleQuery()) -> BundlePage: ...
+
+    def delete_bundle(self, bundle_id: str) -> None:
+        """Retention deletion of one stored bundle (Slice 12). Refused when it does not decode.
+
+        Whether a stored run still REFERENCES this bundle is the planner's question, not
+        this store's: only the planner sees the run usage (`referenced_archive_ids`).
+        """
+        ...
+
+    def storage_usage(self) -> EntryStorageUsage:
+        """Per-bundle disk usage, for `plan_archive_retention`."""
+        ...

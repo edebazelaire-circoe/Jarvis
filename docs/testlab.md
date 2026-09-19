@@ -14,7 +14,11 @@ normal CI.
   - `scenarios.py`: `Scenario`, `ScenarioStep`;
   - `runs.py`: `TestRun`, `RunStatus` state machine, `ArtifactRef`, `CodeIdentity`, `RunFailure`;
   - `store.py` (Slice 02): `TestRunStore` port, `RunQuery`/`RunPage`, usage types, `ArtifactWriteLimits`, store errors, `check_run_update`;
-  - `retention.py` (Slice 02): `TestLabRetentionPolicy`, `plan_retention`, `apply_retention_plan`;
+  - `retention.py` (Slices 02 and 12): `TestLabRetentionPolicy`, `plan_retention`, `apply_retention_plan`,
+    and for `sweeps/` and `bundles/` `ArchiveUsage`, `plan_archive_retention`, `apply_archive_retention_plan`,
+    `referenced_archive_ids`;
+  - `run_bundle.py` (Slice 12): `select_trace_artifact`, `run_session_selector` (which evidence of a stored
+    run is its journal, and which session its bundle describes);
   - `redaction.py` (Slice 03): `redact_urls`, `redact_identifying_text` (moved from `capture.py`, which re-exports them);
   - `bundle.py` (Slice 03): `DiagnosticBundle` schema and strict codec, vocabularies, `SECTION_LIMITS`;
   - `bundle_rules.py` (Slice 03): `AnomalyRule`, `DEFAULT_RULES`, `RULE_EVALUATORS`, `evaluate_rules`;
@@ -57,25 +61,119 @@ normal CI.
   `tests/unit/test_testlab_virtual.py`, `tests/unit/test_testlab_scoring.py`,
   `tests/unit/test_testlab_scoring_outcomes.py`, `tests/unit/test_testlab_compare.py`,
   `tests/unit/test_testlab_sweep.py`, `tests/unit/test_testlab_sweep_runner.py`,
-  `tests/integration/test_testlab_worker.py`, `tests/integration/test_testlab_sweep_runs.py`, opt-in
-  `tests/integration/test_testlab_bundle_real_session.py`; shared builders `tests/fakes/testlab.py`,
-  session fixture `tests/fakes/testlab_bundle.py`.
-- Handoff: `tasks/jarvis-category2-test-lab/` (Slices 01 to 07).
+  `tests/unit/test_testlab_run_bundle.py`, `tests/unit/test_testlab_archive_retention.py`,
+  `tests/unit/test_testlab_rollout_gate.py`,
+  `tests/integration/test_testlab_worker.py`, `tests/integration/test_testlab_sweep_runs.py`,
+  `tests/integration/test_testlab_rollout.py`; opt-in and left skipped
+  `tests/integration/test_testlab_bundle_real_session.py`,
+  `tests/integration/test_testlab_e2e_real_session.py` (the machine half of HV-TL-E2E-01),
+  `tests/integration/test_testlab_audio_devices.py`, `tests/integration/test_testlab_hardware_devices.py`;
+  shared builders `tests/fakes/testlab.py`, session fixture `tests/fakes/testlab_bundle.py`.
+- Handoff: `tasks/jarvis-category2-test-lab/` (Slices 01 to 12), operator runbook
+  `tasks/jarvis-category2-test-lab/operator-runbook.md`.
 
-Status 2026-09-18: contracts (Slice 01), run persistence (Slice 02), the
-DiagnosticBundle with its capture service and bundle store (Slice 03), the
-catalog with its manifests, primitive vocabulary and promotion path (Slice 04),
-the run supervisor with its isolated worker process (Slice 05), the `virtual`
-profile with its five registered runners (Slice 06), and scoring, outcomes,
-comparison and parameter sweeps (Slice 07). The four seed diagnostics run on
-`virtual` through real worker processes, a run carries its declared score, a
-terminal run classifies as `passed` / `failed` / `inconclusive` / `refused` /
-`crashed` / `cancelled`, and a sweep fans isolated runs out over declared
-parameter values and persists a replayable record. The supervisor schedules the
-store upkeep and owns the run store root it is given; nothing composes it into
-the application yet (no default root wiring, no CLI or HTTP entry). The `audio`,
-`live` and `hardware:*` profiles (08, 09), API/CLI/HTTP (10), UI (11) and the
-rollout (12) do not exist yet.
+Status 2026-09-19: complete. Contracts (Slice 01), run persistence (02), the
+DiagnosticBundle with its capture service and bundle store (03), the catalog with
+its manifests, primitive vocabulary and promotion path (04), the run supervisor
+with its isolated worker process (05), the `virtual` profile (06), scoring,
+outcomes, comparison and sweeps (07), the `audio` and `live` profiles (08), the
+two `hardware` profiles and guided runs (09), the composition with its native
+API, CLI and HTTP surface (10), the Control Center panel (11), and the rollout,
+seed publication, run bundles and retention (12).
+
+What that means concretely: five published diagnostics run through real worker
+processes on five profiles; a terminal run classifies as `passed` / `failed` /
+`inconclusive` / `refused` / `crashed` / `cancelled` and carries its declared
+score; a sweep fans isolated runs out over declared parameter values; a real
+session and a run alike normalize into a `DiagnosticBundle`, and a run references
+its own; and retention bounds all three stores. What no automated test has ever
+done, deliberately: open a real microphone or speaker, call a real provider, or
+prompt a human. Those three are the Human validation checks HV-TL-HW-01,
+HV-TL-UI-01 and HV-TL-E2E-01, and the operator runbook for them is
+`tasks/jarvis-category2-test-lab/operator-runbook.md`.
+
+## Where to start
+
+If you are reading this because something went wrong with Jarvis's voice, this
+section is the whole map. Everything after it is detail.
+
+**What the Test Lab is for.** One thing: turning "Jarvis cut himself off again"
+into a number somebody can act on. It reproduces a symptom under a declared
+stimulus, measures exactly what the declaration says it measures, and stores a
+record you can compare with the next one. It has no intelligence, it never
+guesses, and it never changes a setting of the live Jarvis.
+
+**What it is not.** It is not CI. Nothing here runs on every release (Rollout
+gate). It is not a debugging agent: it produces evidence, and a human or an
+agent does the reasoning.
+
+### The shortest path from a symptom to an answer
+
+```powershell
+# 0. what can be measured at all
+.venv/Scripts/python -m jarvis.testlab list
+
+# 1. the symptom happened for real: normalize the session into evidence
+.venv/Scripts/python -m jarvis.testlab capture --session-id <voice session id>
+
+# 2. read what the normalizer already noticed, without opening a log
+.venv/Scripts/python -m jarvis.testlab bundles --id <tlb-...>
+
+# 3. reproduce it deterministically: pick the diagnostic whose findings match
+.venv/Scripts/python -m jarvis.testlab run voice.self_echo --profile virtual
+
+# 4. change ONE thing and run it again, then put the two side by side
+.venv/Scripts/python -m jarvis.testlab compare <baseline run> <candidate run>
+```
+
+Step 1 needs nothing but the live `runtime/trace.jsonl`. Steps 3 and 4 need
+nothing at all: `virtual` opens no device, calls no provider and costs no money.
+When you cannot tell which value matters, `sweep` runs step 3 across a range in
+one command, and `capture --run <tlr-...>` turns a RUN's own trace into a bundle
+with the same shape as step 1's, so the incident and its reproduction can be read
+the same way.
+
+### The four seeds, and the question each one answers
+
+| Seed | The question | Where the answer comes from |
+|---|---|---|
+| `voice.self_echo` | Does Jarvis interrupt himself on his own voice? | The echo canceller and the near-end gate, driven by real output |
+| `speech.payload_integrity` | Does what Jarvis meant to say reach the speaker intact? | The scheduler's payloads, scripted against delivered |
+| `speech.stale_supersession` | When you change your mind, does the OLD answer still play? | The scheduler's supersession rules, on the 2026-09-11 incident's own timeline |
+| `voice.queue_latency` | Where did the seconds before Jarvis spoke go? | The speech stages, split so scheduler delay is not confused with brain delay |
+
+A fifth diagnostic, `voice.barge_in_response`, asks the opposite of the first:
+can a real person get through the gate? It is `hardware:guided` only, because
+nothing but a person in the room can answer it.
+
+### The five profiles, and what each one can prove
+
+| Profile | What is real | Needs | Costs |
+|---|---|---|---|
+| `virtual` | the whole speech stack, with doubles for the device and the provider | nothing | nothing |
+| `audio` | the above, plus the REAL echo canceller over an injected room | nothing | nothing |
+| `live` | the above, plus a REAL provider session | `JARVIS_TESTLAB_LIVE=1` | money |
+| `hardware:auto` | the above without the provider, over the REAL speaker and microphone | `JARVIS_TESTLAB_HARDWARE=1`, free devices | the room must be quiet |
+| `hardware:guided` | the above, with a PERSON following timed prompts | also `JARVIS_TESTLAB_GUIDED=1` | a few minutes of somebody's attention |
+
+Each profile is the one before it with ONE substitution, which is what makes a
+disagreement between two of them informative: it names the layer that caused it.
+Go up the table only when the profile below cannot answer the question — "What
+the virtual profile cannot prove" and the equivalent section of each profile say
+exactly where that line is.
+
+### Three things worth knowing before you trust a result
+
+- **A run that could not measure says so.** `inconclusive` is a first-class
+  outcome, distinct from `failed`, and the failure detail names what was missing
+  (Outcomes).
+- **The declaration decides the verdict, never the runner.** A metric nothing
+  declared cannot fail a run, and a runner cannot publish a judgement
+  (Metrics, assertions and score).
+- **A double can be wrong about acoustics.** Everything the `virtual`, `audio`
+  and `hardware` doubles cannot settle is listed per profile, and the one open
+  question is written up in
+  `tasks/jarvis-category2-test-lab/Issues/self-barge-in-after-seconds-of-speech.md`.
 
 ## Invariants
 
@@ -569,24 +667,41 @@ a new diagnostic — so it never imports the catalog and stays pure.
 
 ## Seed diagnostics
 
-The catalog ships the four Slice 12 seeds with the `virtual` profile only. Slice 06
-registered their runners (Virtual profile), so all four are `available` and runnable
-today. Slices 08, 09 and 12 add other profiles through a version bump, which keeps the
-earlier version in the history.
+The catalog ships four seeds that every profile chain is built on, plus one guided
+diagnostic that only a person can answer. A request without an explicit version
+resolves to the latest, and every earlier version stays in the history and stays valid
+for the runs that were judged by it.
 
-Slice 08 registered `audio` and `live` runners and PROPOSED two version bumps, neither
-published: `voice.self_echo` v2 (adds the `audio` profile) and `voice.queue_latency` v2
-(adds the `live` profile). Both are rendered and validated in
-`tasks/jarvis-category2-test-lab/slices/08-audio-live-profiles/`; nothing about v1
-changes, and `catalog.lock.json` is untouched until a human publishes them.
+| Diagnostic | Published versions | Latest profiles |
+|---|---|---|
+| `voice.self_echo` | v1, v2, v3 | `virtual`, `audio`, `hardware:auto` |
+| `speech.payload_integrity` | v1 | `virtual` |
+| `speech.stale_supersession` | v1, v2 | `virtual` |
+| `voice.queue_latency` | v1, v2 | `virtual`, `live` |
+| `voice.barge_in_response` | v1 | `hardware:guided` |
 
-`speech.stale_supersession` is published at **v1 and v2**; every other seed is at v1. A
-request without an explicit version resolves to the latest, so a plain
-`RunRequest("speech.stale_supersession", VIRTUAL)` runs v2.
+Each bump ADDS a profile or a measurement and changes nothing about the previous
+version: v2 of `voice.self_echo` added `audio` and the declared `echo.coupling_db`
+(Slice 09), v3 added `hardware:auto` (Slice 12), v2 of `voice.queue_latency` added
+`live`, and v2 of `speech.stale_supersession` added the two expectation metrics and the
+blocking assertion that turns an unmet `expect.*` into a verdict.
+
+**`voice.barge_in_response` v1 is the opposite claim, and it is its own diagnostic on
+purpose.** `voice.self_echo` asserts that the gate stays SHUT for Jarvis's own voice; a
+gate that never opens satisfies that perfectly while being completely broken. The
+positive claim - a real human voice gets through - is blocking here
+(`barge_in.true_confirmed_count >= 1`), and it could not live on `voice.self_echo`
+because assertions are diagnostic-level: a blocking assertion on a guided-only metric
+would make every `virtual` run of that diagnostic inconclusive. It declares
+`hardware:guided` alone, and its `no_false_barge_in` assertion is evaluated in the same
+run, in the same room, against the same person - which is what makes the pair
+meaningful rather than two separate measurements. **It takes a human being: see
+HV-TL-HW-01 and the operator runbook.**
 
 | Diagnostic | Blocking assertions | Notes |
 |---|---|---|
-| `voice.self_echo` | `barge_in.false_confirmed_count = 0`, `output.completed = true` | Jarvis speaks while its own output returns as input; parameters `output.duration_ms`, `echo.candidate_count`. |
+| `voice.self_echo` | `barge_in.false_confirmed_count = 0`, `output.completed = true` | Jarvis speaks while its own output returns as input; parameters `output.duration_ms`, `echo.candidate_count`, and from v2 `echo.coupling_db`, from v3 `device.input` / `device.output`. Read `Issues/self-barge-in-after-seconds-of-speech.md` before acting on a result at the declared default of 8 000 ms. |
+| `voice.barge_in_response` v1 | `barge_in.true_confirmed_count >= 1`, `barge_in.false_confirmed_count = 0` | `hardware:guided` only. A person is prompted to stay silent, then to interrupt; both claims are measured in the same room in the same run. |
 | `speech.payload_integrity` | `speech.payload_mismatch_count = 0`, `speech.replayed_payload_count = 0`, `speech.undelivered_count = 0` | Virtual measure only: scripted payload vs the payload the harness delivered. The producer signal `voice.state.spoken_diverged` compares raw strings and is **not** used (Issue `speech-payload-integrity-needs-normalized-measure.md`). |
 | `speech.stale_supersession` v1 | `speech.stale_delivered_count = 0`, `speech.latest_intent_delivered = true` | Carries the converted replay fixture `stale_ack_35_9s` as its scenario, provenance included. |
 | `speech.stale_supersession` v2 | the two above, plus `scenario.expectations_failed_count = 0` | Same profiles, parameters and scenario as v1; adds `scenario.expectations_declared` and `scenario.expectations_failed_count` so that an `expect.*` step in its scenario can end the run `failed` rather than `inconclusive` (see "The `expect.*` verdict rule"). **The shipped scenario declares no expectation**, so on the seed's own run both measurements are 0 and the new blocking assertion is vacuous: it exists for a scenario SUPPLIED to this diagnostic, and it is the only thing that can make such a scenario's expectations a verdict. |
@@ -602,8 +717,27 @@ product. `user_turn.end_to_first_audio_ms` therefore stays exactly where it is,
 non-blocking, as the end-to-end context number a reader needs beside the
 scheduler ones — and it is what a sweep over `brain.result_delay_ms` moves. A
 real brain budget needs a diagnostic of its own, with the brain stage joins as
-its metrics; that is a **new manifest awaiting approval**, not a semantic edit of
-a shipped one, and Slice 07 ships no manifest change.
+its metrics; that is a **new manifest**, not a semantic edit of a shipped one, and
+Slice 07 shipped no manifest change.
+
+**Slice 12 decided not to ship it, and the reason is the same one, one level up.**
+A `brain.budget` diagnostic would have to assert on `user_turn.end_to_first_audio_ms`
+or on the brain stage joins. On `virtual`, `audio` and `hardware:*` the brain is a
+scripted double whose thinking time is the run parameter `brain.result_delay_ms`, so
+every such assertion tests the parameter. On `live` the provider is real but the BRAIN
+is still the harness's - no profile in this Test Lab runs the real Core brain, because
+nothing in Slices 06 to 09 substitutes it. A diagnostic whose blocking assertion cannot
+be reached by any profile it declares is a manifest that documents an intention, and
+the catalog would be a worse index for containing it.
+
+What would have to exist first, for whoever picks this up: a profile that mounts the
+REAL brain (which means a real LLM provider, a real prompt registry and a real memory
+read, i.e. a second `live` chain), or a diagnostic that measures the brain from a
+captured bundle instead of from a run - the Slice 03 `latency` section already joins
+the brain stages, and 17 of the 18 latency findings on the real 2026-09-12 session were
+brain delay. The second is the cheaper and more honest of the two, and it needs no new
+profile: it needs the bundle to become an INPUT of a diagnostic, which `TestRun.bundle_id`
+now expresses but no runner yet reads.
 
 ## TestRun
 
@@ -1208,6 +1342,12 @@ regressed status, so the caller is never trusted.
 - identity fields never change (`testlab_store_immutable_field`): `run_id`, `diagnostic_id`, `diagnostic_version`, `profile`, `created_at`, `code`, `config_fingerprint`, `diagnostic_fingerprint`, `parameters`, `overrides`, `bundle_id`, `sweep_id`, `parent_run_id`, `scenario_id`, `scenario_fingerprint`;
 - `started_at` never changes once set;
 - artifact references are only added, never removed or rewritten;
+- `bundle_id` is the ONE exception to terminal immutability, and it has its own operation rather than a
+  hole in this rule: `attach_bundle(run_id, bundle_id)` (`check_bundle_attachment`) sets it once, from
+  null, on a terminal or non-terminal run, and `update_run` still refuses to touch it. It is idempotent
+  for the same id (a bundle id is derived from the evidence content, so re-capturing the same trace
+  yields the same id) and `testlab_store_immutable_field` for another. Nothing about what executed
+  changes: no status, no metric, no assertion, no artifact - see "Bundle of a run";
 - `environment` names added by the update stay within `store.ENVIRONMENT_FACT_NAMES` (`testlab_store_environment_refused`; `create_run` checks every name), so the no-identifying-facts rule is enforced at the store boundary, not left to runner discipline. Names already present in the stored record are not re-checked, so a legacy or foreign record can still be cancelled, errored and deleted. The Slice 01 record contract is unchanged; the store is stricter than the codec.
 
 ### Layout on disk
@@ -1415,6 +1555,8 @@ supervisor schedules it, outside active runs (Supervisor and workers, Maintenanc
 | `max_total_bytes` | 2 GiB (every byte under the run directories) |
 | `max_bytes_by_kind` | `audio_clip`: 256 MiB (referenced artifact bytes) |
 | `max_deletions_per_apply` | 128 (1..1024) |
+| `max_sweeps` / `max_sweep_bytes` | 500 / 256 MiB (`<root>/sweeps/`) |
+| `max_bundles` / `max_bundle_bytes` | 500 / 512 MiB (`<root>/bundles/`) |
 
 `plan_retention(policy, usage, *, now)` is pure. Only whole terminal runs are
 deleted: removing one artifact would leave a terminal record referencing missing
@@ -1428,6 +1570,51 @@ are `deferred`. `apply_retention_plan(store, plan)` calls `delete_run`, which
 re-checks under the lock that the run is still terminal, so a stale plan cannot
 delete an active run. Refusals are reported as `(run_id, code)` in `skipped`
 and never stop the pass.
+
+**The other two stores** (Slice 12). `runs/` was bounded from Slice 02; `sweeps/`
+and `bundles/` grew without bound until now, and a sweep of 256 points writes 256
+runs plus a record, so the index grows fastest exactly when the store does.
+`plan_archive_retention(policy, ArchiveUsage, *, now, referenced)` is the same
+shape and the same rule order as `plan_retention` - `max_age`, then the count
+bound, then the byte bound - with two differences that matter:
+
+- **sweeps and bundles have SEPARATE bounds** and are planned independently, so a
+  thousand cheap bundles cannot evict the sweep record somebody is reading;
+- **an entry a STORED RUN references is never selected** (`blocked_referenced`).
+  `referenced_archive_ids(usage)` collects every `sweep_id` and `bundle_id` of
+  every stored run, from the usage the planner was given. `retention_plan()` shows
+  both halves from ONE snapshot, so its preview still lists a bundle whose only run
+  it also plans to delete; `maintain()` plans the archive half AFTER the run half
+  has applied, from fresh usage, so that bundle is collected in the same pass. The
+  rule is "never ahead of itself": a run deletion can be refused at apply time, and
+  nothing is deleted on the strength of a deletion that has not happened.
+
+A running sweep is never selected either (`blocked_active`, from the record's own
+status AND from `SweepRunner.active_sweep_ids`), nor is a corrupt entry
+(`blocked_corrupt`) - and both stores refuse the deletion again themselves:
+`delete_sweep` refuses a non-terminal record, and both refuse an entry that does
+not decode, because an unreadable entry is evidence of a defect and nothing here
+deletes evidence of a defect automatically.
+
+The two stores find that out at different moments, deliberately. A sweep usage
+reads the record for its status anyway, so a broken sweep is already `corrupt` in
+the plan. A bundle usage decodes nothing, so a broken bundle is an ordinary entry
+the planner may select - and `delete_bundle` refuses it, which the pass reports in
+`skipped` with `testlab_store_corrupt`. Either way it survives; the invariant is
+"never deleted", not "never selected". Deleting a sweep record never touches
+the runs it produced: they are ordinary `TestRun` records with their own
+retention, and deleting the index must not delete the measurements.
+
+Ages come from the ID, not from a decoded document (`identity.id_created_at`, the
+inverse of `id_timestamp`): both ids embed their creation time, both are validated
+on every read, and a pass over a thousand entries must not decode a thousand
+documents to find out how old they are.
+
+Where it runs: the RUN half is the supervisor's (`maintain()`), because a
+temporaries sweep can race a `put_artifact` and only the supervisor knows no run
+of its own is writing. The ARCHIVE half runs in `TestLabApi.maintain()` and takes
+no such gate - it touches neither `runs/` nor a run scratch. `testlab retention`
+shows both plans; `testlab retention --apply` runs both halves.
 
 ### Capture
 
@@ -3093,6 +3280,129 @@ $env:JARVIS_TESTLAB_HARDWARE = "1"
 $env:JARVIS_TESTLAB_GUIDED = "1"
 ```
 
+## Rollout gate
+
+Category 2 must never enter a normal release run. `scripts/verify_release.py`
+runs the whole single-process `pytest -q` and then its AST and lock checks; if
+the Test Lab could reach a device, a provider or a person from there, every
+release would take the user's microphone or spend the user's money.
+
+**The decision, stated plainly: the release path is NOT changed, and that is the
+point.** No flag was added to `verify_release.py`, no pytest marker, no
+`pyproject` entry. Two reasons.
+
+1. The Test Lab's default tests are doubles. They open nothing, call nothing and
+   pay nothing, and they are what stops a subsystem nobody runs daily from
+   rotting. Excluding them would buy a couple of minutes and lose the only thing
+   that keeps the contract honest.
+2. Everything that is expensive is ALREADY behind a process-environment switch
+   the supervisor's own reservation path enforces, and nothing in the suite or
+   in `verify_release.py` sets one. Adding a marker would create a second,
+   weaker gate beside a mechanical one that already holds — and a gate that can
+   be forgotten is worse than no second gate at all.
+
+So the gate is not a new mechanism. It is the assertion that the existing one
+holds, and it lives in `tests/unit/test_testlab_rollout_gate.py`.
+
+<!-- testlab-rollout -->
+
+| Switch | Unlocks | Default |
+|---|---|---|
+| `JARVIS_TESTLAB_LIVE` | `realtime_provider`, `llm_provider`: a real, PAID provider session | unset |
+| `JARVIS_TESTLAB_HARDWARE` | `audio_input_device`, `audio_output_device`: this workstation's real microphone and speaker | unset |
+| `JARVIS_TESTLAB_GUIDED` | `human_presence`: a run may stop and ask a person to do something | unset |
+| `JARVIS_TESTLAB_AUDIO_ARTIFACTS` | storing `audio_clip` artifacts (the one kind that can carry a voice) | unset |
+| `JARVIS_TESTLAB_MAX_COST_USD` | the money budget of ONE run, in dollars | `0`, which refuses a paid run |
+| `JARVIS_TESTLAB_AUDIO` | (tests only) `tests/integration/test_testlab_audio_devices.py`: enumerate the real devices | unset |
+| `JARVIS_TESTLAB_AUDIO_PLAYBACK` | (tests only) the same file's level that records two seconds of the microphone | unset |
+| `JARVIS_TESTLAB_REAL_SESSION` | (tests only) `tests/integration/test_testlab_bundle_real_session.py` and `test_testlab_e2e_real_session.py`: read the live `runtime/trace.jsonl` and Core's state database, read-only | unset |
+
+<!-- /testlab-rollout -->
+
+What the gate test asserts, and why each part exists:
+
+- **no switch is set in the default run**, and `read_environment_grant(os.environ)`
+  returns an EMPTY grant with a zero budget. This is not a restatement: it reads
+  the same function a real run reads, in the same process;
+- **only the free profiles are reachable** under that grant, decided by
+  `check_profile_permission` itself — `virtual` and `audio` yes, `live`,
+  `hardware:auto` and `hardware:guided` refused, with the denial reasons;
+- **every test module that can reach a device or a provider refuses to run
+  without a switch**, checked two ways and both by AST over the source, never by
+  substring: a module that READS one of those switches from the process
+  environment must carry a skip whose CONDITION reads it (so a `skipif` guarding
+  something else no longer counts, and the spelling — single quotes, a constant,
+  `from os import getenv`, `"NAME" in os.environ`, a subscript — no longer
+  matters), and a module that IMPORTS `sounddevice`, `pyaudio`, `openai` or
+  `livekit` must carry an environment skip at all. Those four libraries are the
+  outside world: there is no way to open this host's sound hardware or call a
+  paid provider without one of them, which is what catches the shape a new
+  offender actually has — code that opens a device while naming no switch.
+  Jarvis's own `realtime_audio`, `audio_devices` and `openai_realtime` are
+  deliberately NOT in that list: about fifty modules import them and every one
+  drives them with a double, so an import of them says nothing. Stated limit: a
+  switch name assembled at runtime is not resolved, and a module doing that to
+  reach a device still has to import one of the four. A twelve-row probe table
+  in the same file measures the check against both kinds of offender and against
+  four legitimate modules it must leave alone;
+- **`verify_release.py` neither imports nor names the Test Lab and sets no
+  switch**;
+- **importing `jarvis.testlab.api`, `.cli` or `.composition` in a fresh
+  interpreter loads no `sounddevice`, no `openai` and no `httpx`**, so listing a
+  run is never a reason for PortAudio to be opened. The hardware detector is
+  imported lazily (`TestLab._build_contention`) exactly for this.
+
+### How a maintainer runs the Test Lab deliberately
+
+Never from CI, never from `verify_release.py`, and always as an explicit act in
+a shell where the switch is visible:
+
+```powershell
+# free: no device, no provider, no human, no money. This is the default authority.
+.venv/Scripts/python -m jarvis.testlab run voice.self_echo --profile virtual
+
+# the real echo canceller, still no device and no provider
+.venv/Scripts/python -m jarvis.testlab run voice.self_echo --profile audio
+
+# the real speaker and microphone of THIS workstation (refused while Jarvis holds them)
+$env:JARVIS_TESTLAB_HARDWARE = "1"
+.venv/Scripts/python -m jarvis.testlab run voice.self_echo --profile hardware:auto
+
+# a real, PAID provider session, with a budget the process authorizes
+$env:JARVIS_TESTLAB_LIVE = "1"; $env:JARVIS_TESTLAB_MAX_COST_USD = "0.50"
+.venv/Scripts/python -m jarvis.testlab run voice.queue_latency --profile live
+
+# a person in the room, following timed prompts in this terminal
+$env:JARVIS_TESTLAB_HARDWARE = "1"; $env:JARVIS_TESTLAB_GUIDED = "1"
+.venv/Scripts/python -m jarvis.testlab run voice.barge_in_response --profile hardware:guided --guided
+```
+
+The Control Center panel is the same authority by construction: the grant comes
+from the environment of the process serving it, so a browser can only ask for
+LESS than the operator who started Jarvis allowed (Where a capability grant
+comes from). The operator runbook for the three human checks is
+`tasks/jarvis-category2-test-lab/operator-runbook.md`.
+
+**The cost of the Test Lab in the default suite, measured on this workstation**
+(`.venv/Scripts/python -m pytest -q -p no:cacheprovider`, one chunk per top-level
+directory, warm page cache):
+
+| Chunk | Before Slice 12 | After Slice 12 |
+|---|---|---|
+| `tests/unit` | 6 241 passed, 2 skipped, **386.8 s** | 6 306 passed, 2 skipped, **389.7 s** |
+| `tests/integration` + `e2e` + `replay` | 553 passed, 16 skipped, **381.7 s** | 560 passed, 19 skipped, **395.3 s** |
+| whole default run | **768.5 s** | **785.0 s** (+2.1 %) |
+
+65 new unit tests and 7 new integration tests, for about 16 s. Read that figure
+against this host's own spread: the unit chunk was measured three times on the
+SAME tree at 381.1 s, 381.9 s and 389.7 s, so a 9 s band is noise here and the
+real cost of the unit tests is below it. The three new skips are the new opt-in
+tests, which is the shape that matters: work that needs a device, a provider or
+a person is ADDED as skipped, never as time.
+
+No device was opened, no provider was called and no prompt was shown in either
+measurement, and no `JARVIS_TESTLAB_*` switch was set in either.
+
 ## DiagnosticBundle
 
 A normalized, versioned evidence document built mechanically from one real
@@ -3603,10 +3913,53 @@ lock (`tlb-`).
 
 A bundle is immutable. Stray names, links and unreadable bundles are listed in
 `corrupt` (`CorruptRunEntry`) and diagnosed as `testlab_bundle_listing_corrupt`;
-nothing is deleted automatically. No sweep removes bundle staging leftovers yet
-(readers ignore these hidden entries), and bundles have no retention yet.
-`TestRun.bundle_id` references a stored bundle, but the run store does not check
-that the bundle exists.
+nothing is deleted automatically by a listing. No sweep removes bundle staging
+leftovers (readers ignore these hidden entries). Since Slice 12 the store has
+`delete_bundle` and `storage_usage`, which retention uses (Retention); a bundle
+that does not decode is refused rather than deleted. `TestRun.bundle_id`
+references a stored bundle, and the run store still does not check that the
+bundle exists - but retention does, in the other direction: it never deletes a
+bundle a stored run points at.
+
+### Bundle of a run
+
+Slice 03 normalizes a REAL session; Slice 06 made a run write the live runtime's
+own kinds into its own `trace.jsonl` and commit it as a `trace_excerpt` artifact,
+with `session_id = <run_id>-s<n>`. Slice 12 joins the two, because a runner may
+not write the run record and `WorkerResult` carries no bundle id.
+
+```powershell
+.venv/Scripts/python -m jarvis.testlab capture --run tlr-...
+```
+
+`TestLabApi.capture_run_bundle(run_id, session_id=None, attach=True)` (also
+`POST /api/testlab/runs/{run_id}/bundle`):
+
+1. `run_bundle.select_trace_artifact(run)` picks the run's journal by KIND, never
+   by name, so it holds for any profile whose runner commits one. No
+   `trace_excerpt` is `testlab_run_bundle_no_trace`; more than one is refused
+   rather than guessed at;
+2. `run_bundle.run_session_selector(run)` selects `<run_id>-s1`, the run's first
+   voice session. A run that mounted several is normalized one at a time
+   (`--session-id`): a bundle is the evidence of ONE session, and merging two
+   would make every rule's horizon a lie;
+3. the SAME reader, the same rules and the same document as a live capture, over
+   the stored artifact's path - so nothing is loaded whole into memory
+   (`FilesystemTestRunStore.artifact_path`, checked like every other access);
+4. Conversation Events are never read here. A run writes none, and pointing this
+   at the live state database would mix a reproduction with whatever the
+   workstation happened to be doing;
+5. `attach` sets `TestRun.bundle_id` through `attach_bundle`, so
+   `testlab runs --bundle <tlb-...>` finds every run that normalized to the same
+   evidence. `--no-store` (`store: false`) builds the document and keeps nothing, and
+   therefore attaches nothing either: a record may not point at a bundle that was never
+   written.
+
+Why both directions are worth having: a bundle of a real session says what Jarvis
+did on this workstation, and a bundle of a RUN says what Jarvis did under a
+declared stimulus - in a document of exactly the same shape. That is what makes
+"the incident and the reproduction, side by side" a comparison of two bundles
+rather than a comparison of a bundle with a log.
 
 ## Native API, CLI and HTTP
 
@@ -3742,7 +4095,7 @@ they are an unrecognized argument and the program exits 2 with its usage.
 | `compare BASELINE CANDIDATE` | per-metric deltas, assertion changes, incomparabilities |
 | `sweep [ID] [--spec FILE] [--axis N=V1,V2] [--repetitions N]` | execute a sweep and report every point |
 | `sweeps [--id TLS] [--limit N]` | stored sweeps, or one with its summary |
-| `capture [--conversation-id ...] [--session-id ...] [--start T] [--end T] [--no-events] [--no-store]` | normalize a real session into a DiagnosticBundle |
+| `capture [--run TLR] [--conversation-id ...] [--session-id ...] [--start T] [--end T] [--no-events] [--no-store]` | normalize a real session into a DiagnosticBundle; `--run` normalizes a stored run's own trace and references the bundle from it |
 | `bundles [--id TLB] [--document]` | stored DiagnosticBundles, or one with its coverage and findings |
 | `retention [--apply]` | what retention would delete; `--apply` runs one upkeep pass |
 | `guided RUN_ID` | attach this terminal to a running guided run's prompts |
@@ -3799,7 +4152,8 @@ flag or a missing positional, which argparse prints on stderr before this progra
 A failure the program did not foresee answers `testlab_cli_failed` with a FIXED sentence
 — its type, message and traceback are on stderr only, because an agent forwarding the
 document must not carry a path or a token out of a message the code happened to hold.
-The progress ticker and the guided countdown are redrawn in place (``) on a terminal
+The progress ticker and the guided countdown are redrawn in place (`
+`) on a terminal
 and appended as plain lines when stderr is not one, so a 30-second step never scrolls its
 own instruction off the screen.
 
@@ -3871,6 +4225,7 @@ cross-site`. The run store is synchronous, so every call into it runs in
 | `/api/testlab/runs` | POST | queue a run; **202** with `{run_id}` |
 | `/api/testlab/runs/{run_id}` | GET | one run with its outcome, artifacts and declaration; `?wait_s=` long-polls (at most 30 s) |
 | `/api/testlab/runs/{run_id}/cancel` | POST | ask it to stop; `{held}` is false when this supervisor does not own it |
+| `/api/testlab/runs/{run_id}/bundle` | POST | normalize THIS run's stored trace into a bundle and reference it from the run (`session_id`, `attach`, `store`) |
 | `/api/testlab/runs/{run_id}/artifacts/{path}` | GET | the artifact bytes, verified against the recorded sha256 |
 | `/api/testlab/runs/{run_id}/prompt` | GET | the open guided prompt with `remaining_s`, or `{prompt: null}` |
 | `/api/testlab/runs/{run_id}/prompt` | POST | acknowledge or refuse it (`prompt_id`, `sequence`, `refused`, `note`) |
@@ -3944,10 +4299,13 @@ responses are the shape below with `"ok": true` added.
 | `sweep` | `{"sweep": SweepRecord.to_dict(), "summary": the sweep summary document or null}` |
 | `sweeps page` | `{"sweeps": [SweepRecord], "corrupt": [...], "next_cursor": ...}` |
 | `bundle` | `{"bundle": summary, "coverage": ..., "findings": [...], "stored": status or null}` |
+| `run bundle` | the bundle shape plus `{"run_id", "artifact", "attached_bundle_id": tlb-... or null}` |
 | `prompt` | `{"run_id", "prompt": GuidedPrompt or null, "sequence", "shown_at", "elapsed_s", "remaining_s"}` |
 | `status` | `{"config", "started", "active_runs", "pending_runs", "reserved_capabilities", "active_sweeps", "contention", "storage"}` |
-| `retention plan` | `{"enabled", "cutoff", "deletions", "deferred", "blocked_active", "blocked_corrupt", "unmet"}` |
-| `upkeep pass` | `{"ran", "swept", "sweep_error", "skipped_active", "deleted", "delete_failures"}` |
+| `retention plan` | `{"enabled", "cutoff", "deletions", "deferred", "blocked_active", "blocked_corrupt", "unmet", "archive"}` |
+| `archive plan` (`retention plan.archive`) | the same fields with `{kind, entry_id, reason}` deletions, plus `blocked_referenced` |
+| `upkeep pass` | `{"ran", "swept", "sweep_error", "skipped_active", "deleted", "delete_failures", "archive"}` |
+| `archive pass` (`upkeep pass.archive`) | `{"ran", "deleted": [{kind, entry_id}], "delete_failures": [{kind, entry_id, code}]}` |
 | refusal | `{"ok": false, "code": <stable code>, "error": <sentence>}` |
 
 `outcome` is derived ONCE, by `classify_run`, and carries `outcome`, `failure_code`,
@@ -4099,9 +4457,19 @@ fixture, no voice stack and no device):
 .venv/Scripts/python -m pytest -q -p no:cacheprovider tests/integration/test_testlab_cli_e2e.py tests/integration/test_testlab_http_routes.py
 ```
 
-Opt-in real-session smoke test. It reads the local `runtime/trace.jsonl`, opens
-`data/state/jarvis.sqlite3` read-only, and prints counts only:
+The Slice 12 workflow, in process and with doubles: one declaration on two profiles, an
+ad-hoc scenario promoted into an official diagnostic that then runs, a comparison, and an
+upkeep pass that reclaims space in all three stores:
 
 ```powershell
-$env:JARVIS_TESTLAB_REAL_SESSION=1; .venv/Scripts/python -m pytest -q -s -p no:cacheprovider tests/integration/test_testlab_bundle_real_session.py
+.venv/Scripts/python -m pytest -q -p no:cacheprovider tests/unit/test_testlab_run_bundle.py tests/unit/test_testlab_archive_retention.py tests/unit/test_testlab_rollout_gate.py tests/integration/test_testlab_rollout.py
+```
+
+Opt-in real-session tests. They read the local `runtime/trace.jsonl`, open
+`data/state/jarvis.sqlite3` read-only, print counts only, and open no device and call no
+provider. The second is the machine half of HV-TL-E2E-01 (capture a real session, run a
+targeted diagnostic, capture the run's own bundle, compare):
+
+```powershell
+$env:JARVIS_TESTLAB_REAL_SESSION=1; .venv/Scripts/python -m pytest -q -s -p no:cacheprovider tests/integration/test_testlab_bundle_real_session.py tests/integration/test_testlab_e2e_real_session.py
 ```

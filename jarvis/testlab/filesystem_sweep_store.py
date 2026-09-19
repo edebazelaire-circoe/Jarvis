@@ -41,16 +41,20 @@ from jarvis.testlab._fs import (
     is_link,
     store_error,
     tmp_name,
+    tree_bytes,
     write_atomic,
 )
-from jarvis.testlab.identity import check_sweep_id
+from jarvis.testlab.identity import check_sweep_id, id_created_at
 from jarvis.testlab.store import (
+    STORE_BUSY,
     STORE_CONFLICT,
     STORE_CORRUPT,
     STORE_IO,
     STORE_NOT_FOUND,
     STORE_PATH_UNSAFE,
     CorruptRunEntry,
+    EntryStorageUsage,
+    EntryUsage,
     SweepNotFoundError,
     SweepPage,
     SweepQuery,
@@ -251,6 +255,50 @@ class FilesystemSweepStore:
                 continue
             names.append(entry.name)
         return names, stray
+
+    def delete_sweep(self, sweep_id: str) -> None:
+        """Retention deletion of a TERMINAL sweep record and its summary (Slice 12).
+
+        Refused while the sweep is running (`testlab_store_conflict`) and refused when
+        the record does not decode: a corrupt entry is evidence of a defect, and nothing
+        in the Test Lab deletes evidence of a defect automatically.
+
+        The runs the sweep produced are NOT touched. They are ordinary `TestRun` records
+        with their own retention; deleting the index never deletes the measurements.
+        """
+        self._existing_dir(sweep_id)  # not found before any lock file is created
+        with EntryLock(self.locks_dir / f"{sweep_id}.lock", f"sweep {sweep_id}", self.lock_timeout_s):
+            sweep_dir = self._existing_dir(sweep_id)
+            record = self._read(sweep_dir, sweep_id)
+            if record.status not in SWEEP_TERMINAL_STATUSES:
+                raise _store_error(STORE_CONFLICT, f"sweep {sweep_id} is {record.status.value}: "
+                                                   "only a terminal sweep can be deleted")
+            try:
+                shutil.rmtree(sweep_dir)
+            except OSError as exc:
+                raise _store_error(STORE_BUSY, f"sweep {sweep_id}: directory is held open, not deleted",
+                                   exc) from exc
+        try:
+            (self.locks_dir / f"{sweep_id}.lock").unlink(missing_ok=True)
+        except OSError:
+            # intentional: another process still holds the (empty) lock file open on Windows.
+            pass
+        self._diagnostics.emit("testlab_sweep_deleted", "Test Lab sweep deleted by retention", sweep_id=sweep_id)
+
+    def storage_usage(self) -> EntryStorageUsage:
+        """Per-sweep disk usage for the retention planner. The record is read for its status only."""
+        names, corrupt = self._entries()
+        entries: list[EntryUsage] = []
+        for sweep_id in sorted(names):
+            sweep_dir = self.sweeps_dir / sweep_id
+            try:
+                record = self._read(sweep_dir, sweep_id)
+            except TestLabStoreError as exc:
+                corrupt.append(CorruptRunEntry(sweep_id, exc.code, exc.detail))
+                continue
+            entries.append(EntryUsage(sweep_id, id_created_at(sweep_id, "sweep_id"), tree_bytes(sweep_dir),
+                                      active=record.status not in SWEEP_TERMINAL_STATUSES))
+        return EntryStorageUsage(tuple(entries), tuple(corrupt))
 
     def put_sweep_summary(self, sweep_id: str, document: Mapping[str, object]) -> None:
         """Store the readable summary of a sweep next to its record. Write-once.

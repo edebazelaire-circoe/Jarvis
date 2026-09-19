@@ -23,10 +23,13 @@ ROOT = Path(__file__).resolve().parents[2]
 #: a measurement, an outcome of a status and a failure code, a comparison of two records, and a
 #: sweep expansion of its own declaration. The orchestrator (`sweep_runner.py`) and the sweep
 #: store adapter are the I/O modules and are deliberately absent from both lists below.
+#: Slice 12 adds `run_bundle`: which stored artifact of a run is its journal, and which session
+#: its bundle describes. Both are decisions about a record, so the module reads no file - the
+#: reading is `bundle_capture`'s and the composition is the facade's.
 CONTRACT_MODULES = ("__init__", "validation", "identity", "profiles", "diagnostics", "scenarios", "runs", "store",
                     "retention", "redaction", "bundle", "bundle_rules", "bundle_builder", "primitives",
                     "implementations", "manifests", "promotion", "jobs", "scoring", "outcomes", "compare",
-                    "sweeps")
+                    "sweeps", "run_bundle")
 ALLOWED_IMPORTS = {
     "__future__", "collections.abc", "dataclasses", "datetime", "enum", "hashlib", "json", "math", "re", "types",
     "typing", "jarvis.domain.conversation_events", "jarvis.domain.voice_state", "jarvis.testlab.validation",
@@ -35,6 +38,7 @@ ALLOWED_IMPORTS = {
     "jarvis.testlab.bundle", "jarvis.testlab.bundle_rules", "bisect", "jarvis.testlab.scenarios",
     "jarvis.testlab.primitives", "jarvis.testlab.implementations", "jarvis.testlab.manifests",
     "jarvis.testlab.jobs", "jarvis.testlab.outcomes", "jarvis.testlab.sweeps",
+    "jarvis.testlab.bundle_builder",
 }
 #: Clock, entropy, filesystem, process and dynamic execution entry points.
 FORBIDDEN_CALLS = {"now", "utcnow", "today", "time", "monotonic", "perf_counter", "uuid4", "token_hex", "urandom",

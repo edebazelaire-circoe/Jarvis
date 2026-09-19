@@ -32,11 +32,13 @@ from jarvis.testlab._fs import (
     is_link,
     store_error,
     tmp_name,
+    tree_bytes,
     write_atomic,
 )
 from jarvis.testlab.bundle import MAX_BUNDLE_BYTES, DiagnosticBundle
-from jarvis.testlab.identity import check_bundle_id
+from jarvis.testlab.identity import check_bundle_id, id_created_at
 from jarvis.testlab.store import (
+    STORE_BUSY,
     STORE_CONFLICT,
     STORE_CORRUPT,
     STORE_IO,
@@ -51,6 +53,8 @@ from jarvis.testlab.store import (
     BundleRecordCorruptError,
     BundleSummary,
     CorruptRunEntry,
+    EntryStorageUsage,
+    EntryUsage,
     TestLabStoreError,
 )
 from jarvis.testlab.validation import TestLabError, name_for_message
@@ -172,6 +176,68 @@ class FilesystemBundleStore:
             self._diagnose("testlab_bundle_corrupt", "Test Lab bundle unreadable", level="warning",
                            bundle_id=bundle_id, detail=exc.detail)
             raise
+
+    def delete_bundle(self, bundle_id: str) -> None:
+        """Retention deletion of one stored bundle (Slice 12).
+
+        Refused when the bundle does not decode, for the same reason the sweep store
+        refuses it: an unreadable entry is evidence of a defect. A run that references
+        this bundle is not consulted here — that rule lives in the planner, which has
+        the run usage this store cannot see (`referenced_archive_ids`).
+        """
+        bundle_dir = self._bundle_dir(bundle_id)
+        with EntryLock(self.locks_dir / f"{bundle_id}.lock", f"bundle {bundle_id}", self.lock_timeout_s):
+            try:
+                if is_link(bundle_dir):
+                    raise TestLabStoreError(STORE_PATH_UNSAFE, f"bundle {bundle_id}: bundle directory is a link")
+                if not bundle_dir.is_dir():
+                    raise BundleNotFoundError(STORE_NOT_FOUND, f"bundle {bundle_id} does not exist")
+            except OSError as exc:
+                raise _store_error(STORE_IO, f"bundle {bundle_id}: bundle directory cannot be inspected",
+                                   exc) from exc
+            self._read(bundle_dir, bundle_id)
+            try:
+                shutil.rmtree(bundle_dir)
+            except OSError as exc:
+                raise _store_error(STORE_BUSY, f"bundle {bundle_id}: directory is held open, not deleted",
+                                   exc) from exc
+        try:
+            (self.locks_dir / f"{bundle_id}.lock").unlink(missing_ok=True)
+        except OSError:
+            # intentional: another process still holds the (empty) lock file open on Windows.
+            pass
+        self._diagnose("testlab_bundle_deleted", "Test Lab bundle deleted by retention", bundle_id=bundle_id)
+
+    def storage_usage(self) -> EntryStorageUsage:
+        """Per-bundle disk usage for the retention planner.
+
+        The age comes from the bundle id, not from a decoded document: a bundle is
+        immutable and its id carries the session start, so a pass over a thousand
+        bundles states a thousand directories instead of decoding a thousand documents.
+        """
+        entries: list[EntryUsage] = []
+        corrupt: list[CorruptRunEntry] = []
+        try:
+            scanned = list(os.scandir(self.bundles_dir))
+        except FileNotFoundError:
+            return EntryStorageUsage()  # intentional: no bundle was ever stored
+        except OSError as exc:
+            raise _store_error(STORE_IO, "bundles directory cannot be listed", exc) from exc
+        for entry in scanned:
+            if entry.name.startswith(STAGING_PREFIX):
+                continue
+            try:
+                check_bundle_id(entry.name)
+            except TestLabError:
+                corrupt.append(CorruptRunEntry(name_for_message(entry.name), STORE_CORRUPT,
+                                               "entry is not a bundle directory (unrecognized name)"))
+                continue
+            if entry.is_symlink() or Path(entry.path).is_junction() or not entry.is_dir(follow_symlinks=False):
+                corrupt.append(CorruptRunEntry(entry.name, STORE_CORRUPT, "entry is not a plain bundle directory"))
+                continue
+            entries.append(EntryUsage(entry.name, id_created_at(entry.name, "bundle_id"),
+                                      tree_bytes(Path(entry.path))))
+        return EntryStorageUsage(tuple(sorted(entries, key=lambda item: item.entry_id)), tuple(corrupt))
 
     def list_bundles(self, query: BundleQuery = BundleQuery()) -> BundlePage:
         """Bundles in id order (each read and decoded); stray and unreadable entries are reported in `corrupt`."""

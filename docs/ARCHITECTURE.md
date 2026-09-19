@@ -3258,6 +3258,24 @@ never widen it, and every other gate stays inside the supervisor. A guided run i
 terminal with the prompt, its deadline and a live countdown taken from the worker's own clock,
 because a step with no visible countdown is indistinguishable from a frozen run.
 
+Five diagnostics are published, and the rollout is deliberate. Four are the seeds every
+profile chain was built on (`voice.self_echo`, `speech.payload_integrity`,
+`speech.stale_supersession`, `voice.queue_latency`); the fifth,
+`voice.barge_in_response`, is `hardware:guided` only and makes the one claim a machine
+cannot — that a real human voice gets through the echo gate — because a gate that never
+opens satisfies `voice.self_echo` perfectly while being completely broken. A run's own
+`trace.jsonl` now normalizes into a `DiagnosticBundle` with exactly the shape a real
+session's does, and the run references it (`attach_bundle`, the one field of a terminal
+record the store will write), so the incident and its reproduction are read the same way.
+Retention bounds all three stores: `runs/` as before, and `sweeps/` and `bundles/` with
+their own counts and byte budgets, never deleting a running sweep, a corrupt entry, or an
+entry a stored run still points at. **Category 2 never enters a release run**:
+`scripts/verify_release.py` is unchanged and sets no switch, every expensive path is behind
+a process-environment opt-in the default suite leaves unset, and
+`tests/unit/test_testlab_rollout_gate.py` asserts that — the ambient grant is empty, only
+the free profiles are reachable, every test that reads a switch is skipped without it, and
+importing the Test Lab loads no `sounddevice` and no provider client.
+
 ## Sub-agent routing
 
 The brain is a CLI process (`claude -p --input-format stream-json`). It spawns

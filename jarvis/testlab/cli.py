@@ -266,6 +266,9 @@ def build_parser() -> argparse.ArgumentParser:
     sweeps.add_argument("--limit", type=int, default=20)
 
     capture = commands.add_parser("capture", help="normalize a real session into a DiagnosticBundle")
+    capture.add_argument("--run", default=None, dest="run_id",
+                         help="normalize a stored RUN's own trace instead of the live journal, "
+                              "and reference the bundle from the run")
     capture.add_argument("--conversation-id", default=None)
     capture.add_argument("--session-id", default=None)
     capture.add_argument("--start", default=None, help="ISO-8601 instant, e.g. 2026-09-18T10:00:00Z")
@@ -417,6 +420,14 @@ def render_sweeps(payload: Mapping[str, Any]) -> str:
 
 
 def render_bundle(payload: Mapping[str, Any]) -> str:
+    """One bundle, as the operator reads it: what was covered, and what the rules found.
+
+    The two accessors here are the DOCUMENT's, not a guess at it (`docs/testlab.md`,
+    "Coverage" and "Anomaly rules"): coverage is keyed by source at the top level, and a
+    finding carries `rule_id` / `subject_kind` / `subject_id` / `measured`. Both were
+    wrong until Slice 12 rework, which is why the line the runbook tells an operator to
+    look for was never printed and why any session WITH a finding crashed the command.
+    """
     bundle = payload["bundle"]
     lines = [f"{bundle['bundle_id']}  captured {bundle['captured_at']}",
              f"  session {bundle['started_at']} -> {bundle['ended_at']}",
@@ -425,12 +436,44 @@ def render_bundle(payload: Mapping[str, Any]) -> str:
              f"  findings: {bundle['finding_count']}"]
     if payload.get("stored") is not None:
         lines.append(f"  stored: {payload['stored']}")
-    for source, coverage in sorted(payload.get("coverage", {}).get("sources", {}).items()):
-        reason = f" ({coverage['reason']})" if coverage.get("reason") else ""
-        lines.append(f"  source {source}: {coverage['status']}{reason}")
-    for finding in payload.get("findings", ()):
-        lines.append(f"  finding {finding['rule']} on {finding.get('subject')}")
+    if payload.get("attached_bundle_id"):
+        made = "now references" if payload.get("attached") else "already referenced"
+        lines.append(f"  run {payload['run_id']} {made} {payload['attached_bundle_id']}")
+    lines.extend(render_coverage(payload.get("coverage") or {}))
+    lines.extend(f"  finding {_finding_line(item)}" for item in payload.get("findings", ()))
     return "\n".join(lines)
+
+
+def render_coverage(coverage: Mapping[str, Any]) -> list[str]:
+    """The source lines, plus the two facts that decide whether a bundle can be trusted.
+
+    A source is an entry that carries a `status`; `content`, `limits`, `segments` and
+    `warnings` are not sources and are reported on their own terms. Selecting by shape
+    rather than by a hard-coded list means a source added later prints without a change
+    here, and a document that is not a coverage document prints nothing instead of raising.
+    """
+    lines = []
+    for name, entry in sorted(coverage.items()):
+        if not isinstance(entry, Mapping) or "status" not in entry:
+            continue
+        reason = f" ({entry['reason']})" if entry.get("reason") else ""
+        lines.append(f"  source {name}: {entry['status']}{reason}")
+    segments = coverage.get("segments")
+    if isinstance(segments, Mapping) and "count" in segments:
+        lines.append(f"  voice sessions: {segments['count']}")
+    warnings = coverage.get("warnings")
+    if warnings:
+        lines.append(f"  coverage warnings: {', '.join(str(item) for item in warnings)}")
+    return lines
+
+
+def _finding_line(finding: Mapping[str, Any]) -> str:
+    """`<rule_id> on <subject_kind> <subject_id> at <at>  name=value, ...`."""
+    measured = ", ".join(f"{item['name']}={item['value']}" for item in finding.get("measured", ())
+                         if isinstance(item, Mapping) and "name" in item)
+    subject = " ".join(str(finding[key]) for key in ("subject_kind", "subject_id") if finding.get(key))
+    head = f"{finding['rule_id']} on {subject or 'the session'} at {finding['at']}"
+    return f"{head}  {measured}" if measured else head
 
 
 def render_bundles(payload: Mapping[str, Any]) -> str:
@@ -473,7 +516,28 @@ def render_retention(payload: Mapping[str, Any]) -> str:
         lines.append(f"  {len(payload['blocked_corrupt'])} unreadable entr(y/ies) are kept as evidence")
     if payload["unmet"]:
         lines.append(f"  bounds still exceeded afterwards: {', '.join(payload['unmet'])}")
+    lines.extend(_archive_plan_lines(payload.get("archive")))
     return "\n".join(lines)
+
+
+def _archive_plan_lines(archive: Mapping[str, Any] | None) -> list[str]:
+    """The `sweeps/` and `bundles/` half of the plan, which has bounds of its own."""
+    if archive is None:
+        return []
+    if not archive["enabled"]:
+        return ["sweeps and bundles: retention is disabled, nothing would be deleted"]
+    lines = [f"sweeps and bundles: would delete {len(archive['deletions'])} entr(y/ies) "
+             f"({archive['deferred']} deferred)"]
+    lines.extend(f"  {item['kind']} {item['entry_id']}: {item['reason']}" for item in archive["deletions"])
+    if archive["blocked_active"]:
+        lines.append(f"  {archive['blocked_active']} running sweep(s) are never deleted")
+    if archive["blocked_referenced"]:
+        lines.append(f"  {archive['blocked_referenced']} entr(y/ies) a stored run points at are never deleted")
+    if archive["blocked_corrupt"]:
+        lines.append(f"  {len(archive['blocked_corrupt'])} unreadable entr(y/ies) are kept as evidence")
+    if archive["unmet"]:
+        lines.append(f"  bounds still exceeded afterwards: {', '.join(archive['unmet'])}")
+    return lines
 
 
 def render_maintenance(payload: Mapping[str, Any]) -> str:
@@ -485,6 +549,11 @@ def render_maintenance(payload: Mapping[str, Any]) -> str:
         lines.append(f"  !! the sweep half failed: {payload['sweep_error']}")
     for failure in payload["delete_failures"]:
         lines.append(f"  !! {failure['run_id']}: {failure['code']}")
+    archive = payload.get("archive")
+    if archive and archive["ran"]:
+        lines.append(f"  sweeps and bundles: {len(archive['deleted'])} entr(y/ies) deleted")
+        lines.extend(f"  !! {item['kind']} {item['entry_id']}: {item['code']}"
+                     for item in archive["delete_failures"])
     return "\n".join(lines)
 
 
@@ -704,6 +773,14 @@ async def _sweep_command(api: TestLabApi, args: argparse.Namespace,
 
 async def _capture_command(api: TestLabApi, args: argparse.Namespace,
                            console: Console) -> tuple[int, Any, str | None]:
+    if args.run_id is not None:
+        if args.conversation_id or args.start or args.end:
+            raise TestLabCliError("--run normalizes that run's own trace, so it takes no session window. "
+                                  "Use --session-id alone to pick one of its voice sessions.")
+        console.note(f"  reading the stored trace of {args.run_id}...")
+        payload = await api.capture_run_bundle(args.run_id, session_id=args.session_id,
+                                               store=not args.no_store)
+        return EXIT_OK, payload, render_bundle(payload)
     selector = SessionSelector(conversation_id=args.conversation_id, session_id=args.session_id,
                                start=parse_time_argument(args.start, "--start"),
                                end=parse_time_argument(args.end, "--end"))

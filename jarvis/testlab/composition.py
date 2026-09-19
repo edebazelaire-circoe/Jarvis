@@ -91,6 +91,13 @@ AUDIO_ARTIFACTS_ENV = "JARVIS_TESTLAB_AUDIO_ARTIFACTS"
 #: Money the operator authorizes for ONE run, in US dollars. Absent or unreadable: 0.
 MAX_COST_ENV = "JARVIS_TESTLAB_MAX_COST_USD"
 
+#: Every process-environment switch that can widen a Test Lab run past `virtual`: a
+#: provider, a device, a person, raw audio on disk, money. The ROLLOUT GATE
+#: (`docs/testlab.md`, "Rollout gate") asserts the default test run sets none of them, so
+#: no ordinary CI or release run can reach a device, a provider or a human by accident.
+#: Add a switch here when you add one, or the gate stops covering it.
+OPT_IN_ENV_NAMES = (LIVE_OPT_IN_ENV, HARDWARE_OPT_IN_ENV, GUIDED_OPT_IN_ENV, AUDIO_ARTIFACTS_ENV, MAX_COST_ENV)
+
 COMPOSITION_INVALID = "testlab_composition_invalid"
 
 

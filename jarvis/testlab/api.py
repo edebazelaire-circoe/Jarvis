@@ -42,7 +42,17 @@ from jarvis.testlab.maintenance import MaintenanceReport
 from jarvis.testlab.outcomes import classify_run
 from jarvis.testlab.primitives import DEFAULT_PRIMITIVES
 from jarvis.testlab.profiles import ProfileName, ResourceGrant
-from jarvis.testlab.retention import RetentionPlan, plan_retention
+from jarvis.testlab.retention import (
+    ArchiveRetentionPlan,
+    ArchiveRetentionReport,
+    ArchiveUsage,
+    RetentionPlan,
+    apply_archive_retention_plan,
+    plan_archive_retention,
+    plan_retention,
+    referenced_archive_ids,
+)
+from jarvis.testlab.run_bundle import run_session_selector, select_trace_artifact
 from jarvis.testlab.runs import TERMINAL_STATUSES, RunStatus, TestRun
 from jarvis.testlab.scenarios import Scenario
 from jarvis.testlab.store import (
@@ -111,6 +121,26 @@ def plan_view(plan: RetentionPlan) -> dict[str, Any]:
             "deferred": plan.deferred, "blocked_active": plan.blocked_active,
             "blocked_corrupt": corrupt_view(plan.blocked_corrupt),
             "unmet": [reason.value for reason in plan.unmet]}
+
+
+def archive_plan_view(plan: ArchiveRetentionPlan) -> dict[str, Any]:
+    """What archive retention WOULD delete from `sweeps/` and `bundles/`. Nothing is deleted."""
+    return {"enabled": plan.enabled, "cutoff": format_time(plan.cutoff),
+            "deletions": [{"kind": item.kind.value, "entry_id": item.entry_id, "reason": item.reason.value}
+                          for item in plan.deletions],
+            "deferred": plan.deferred, "blocked_active": plan.blocked_active,
+            "blocked_referenced": plan.blocked_referenced,
+            "blocked_corrupt": corrupt_view(plan.blocked_corrupt),
+            "unmet": [reason.value for reason in plan.unmet]}
+
+
+def archive_maintenance_view(report: ArchiveRetentionReport | None) -> dict[str, Any]:
+    if report is None:
+        return {"ran": False, "deleted": [], "delete_failures": []}
+    return {"ran": True,
+            "deleted": [{"kind": item.kind.value, "entry_id": item.entry_id} for item in report.deleted],
+            "delete_failures": [{"kind": kind, "entry_id": entry_id, "code": code}
+                                for kind, entry_id, code in report.skipped]}
 
 
 def maintenance_view(report: MaintenanceReport | None) -> dict[str, Any]:
@@ -200,17 +230,27 @@ class TestLabApi:
                                 scenario: Scenario | Mapping[str, Any] | None = None) -> CatalogEntry:
         """Every refusal a run request earns BEFORE anything is created or locked.
 
-        The profile name, the ad-hoc scenario's vocabulary and the existence of the
-        declaration are all questions for the catalog, which needs no work root. Both
-        surfaces call this before taking one, so an unknown diagnostic never leaves a
-        directory and a lock behind on a machine where nothing was ever run.
+        The profile name, whether the resolved declaration DECLARES that profile, the
+        ad-hoc scenario's vocabulary and the existence of the declaration are all questions
+        for the catalog, which needs no work root. Both surfaces call this before taking
+        one, so an unknown diagnostic never leaves a directory and a lock behind on a
+        machine where nothing was ever run.
+
+        The declared-profile check is here and not only in the supervisor because of what
+        the operator sees otherwise: `run voice.barge_in_response` takes `--profile virtual`
+        by default and that diagnostic is `hardware:guided` only, so the run went as far as
+        the work root before being refused - and while the Control Center holds it, the
+        refusal that came back was `testlab_supervisor_work_root_busy`, which names the
+        wrong cause entirely.
 
         It only MOVES a refusal earlier: `submit_run` resolves the entry again and the
         supervisor stays the authority on what a run is queued against.
         """
-        _profile(profile)
+        resolved = _profile(profile)
         _scenario(scenario)
-        return await asyncio.to_thread(self._entry, diagnostic_id, version)
+        entry = await asyncio.to_thread(self._entry, diagnostic_id, version)
+        entry.resources_and_cost(resolved)
+        return entry
 
     async def submit_run(self, diagnostic_id: str, profile: ProfileName | str, *, version: int | None = None,
                          parameters: Mapping[str, Any] | None = None,
@@ -419,6 +459,44 @@ class TestLabApi:
         path = self._lab.config.state_database
         return StateDatabaseEventSource(path) if path.is_file() else None
 
+    async def capture_run_bundle(self, run_id: str, *, session_id: str | None = None,
+                                 attach: bool = True, store: bool = True) -> dict[str, Any]:
+        """Normalize a stored RUN's own trace into a bundle, and reference it from the run.
+
+        The other half of `capture_bundle`: same reader, same rules, same document, over
+        the `trace_excerpt` a run committed instead of the live journal. Conversation
+        Events are never read here — a run writes none, and pointing this at the live
+        state database would mix a reproduction with whatever the workstation was doing.
+
+        `attach` writes `TestRun.bundle_id`, which is the point: `runs --bundle-id <id>`
+        then finds every run that normalized to the same evidence. It is idempotent (a
+        bundle id is content-derived) and it is the only field of a terminal record the
+        store will write. `store=False` builds the document and keeps nothing, and it
+        therefore attaches nothing either: a record may not point at a bundle that was
+        never written.
+        """
+        run = await self._read_run(run_id)
+        ref = select_trace_artifact(run)
+        path = await asyncio.to_thread(self._lab.store.artifact_path, run_id, ref.path)
+        result = await capture_diagnostic_bundle(
+            run_session_selector(run, session_id=session_id), captured_at=self._lab.supervisor.clock(),
+            trace_path=path, event_source=None, code=run.code, config_fingerprint=run.config_fingerprint,
+            store=self._lab.bundle_store if store else None, diagnostics=self._lab.diagnostics)
+        bundle = result.bundle
+        attached = run.bundle_id
+        if attach and store:
+            attached = (await asyncio.to_thread(self._lab.store.attach_bundle, run_id, bundle.bundle_id)).bundle_id
+        return {"run_id": run_id, "artifact": ref.path, "attached_bundle_id": attached,
+                # Did THIS call make the reference? A run captured twice, or captured with
+                # `store=False` after it was already attached, still HAS a bundle id, and
+                # reporting that as "now references" would credit this call with somebody
+                # else's write.
+                "attached": bool(attach and store and run.bundle_id is None and attached is not None),
+                "bundle": bundle_view(BundleSummary.of(bundle)),
+                "stored": None if result.put is None else result.put.status.value,
+                "coverage": dict(bundle.document["coverage"]),
+                "findings": [dict(item) for item in bundle.findings]}
+
     async def list_bundles(self, **filters: Any) -> dict[str, Any]:
         query = BundleQuery(**{name: value for name, value in filters.items() if value is not None})
         page = await asyncio.to_thread(self._lab.bundle_store.list_bundles, query)
@@ -483,15 +561,43 @@ class TestLabApi:
                             "total_bytes": sum(item.total_bytes for item in usage.runs)}}
 
     async def retention_plan(self) -> dict[str, Any]:
-        """What retention WOULD delete. Nothing is deleted by reading this."""
+        """What retention WOULD delete, in all three stores. Nothing is deleted by reading this."""
         policy = self._lab.config.policy.maintenance.retention
         now = self._lab.supervisor.clock()
         usage = await asyncio.to_thread(self._lab.store.storage_usage)
-        return plan_view(await asyncio.to_thread(plan_retention, policy, usage, now=now))
+        archive, referenced = await asyncio.to_thread(self._archive_usage, usage)
+        return {**plan_view(await asyncio.to_thread(plan_retention, policy, usage, now=now)),
+                "archive": archive_plan_view(await asyncio.to_thread(plan_archive_retention, policy, archive,
+                                                                     now=now, referenced=referenced))}
+
+    def _archive_usage(self, usage: Any) -> tuple[ArchiveUsage, frozenset[str]]:
+        """`sweeps/` and `bundles/` usage, plus the ids a stored run points at. Synchronous."""
+        return (ArchiveUsage.of(self._lab.sweep_store.storage_usage(), self._lab.bundle_store.storage_usage()),
+                referenced_archive_ids(usage))
 
     async def maintain(self) -> dict[str, Any]:
-        """Run one upkeep pass (stale temporaries then retention), if no run is active."""
-        return maintenance_view(await self._lab.supervisor.maintain())
+        """Run one upkeep pass over all three stores, if no run is active.
+
+        The RUN half is the supervisor's, because a temporaries sweep can race a
+        `put_artifact` and only the supervisor knows no run of its own is writing. The
+        ARCHIVE half runs here and takes no such gate: it touches neither `runs/` nor a
+        run scratch, and the one thing it must not disturb — a sweep in flight — it reads
+        from the sweep runner and from each record's own status.
+        """
+        report = await self._lab.supervisor.maintain()
+        view = maintenance_view(report)
+        view["archive"] = archive_maintenance_view(None if report is None else await self._maintain_archive())
+        return view
+
+    async def _maintain_archive(self) -> ArchiveRetentionReport:
+        policy = self._lab.config.policy.maintenance.retention
+        now = self._lab.supervisor.clock()
+        usage = await asyncio.to_thread(self._lab.store.storage_usage)
+        archive, referenced = await asyncio.to_thread(self._archive_usage, usage)
+        plan = await asyncio.to_thread(plan_archive_retention, policy, archive, now=now,
+                                       referenced=referenced | frozenset(self._lab.sweep_runner.active_sweep_ids))
+        return await asyncio.to_thread(apply_archive_retention_plan, plan,
+                                       sweep_store=self._lab.sweep_store, bundle_store=self._lab.bundle_store)
 
 
 # ------------------------------------------------------------------ decoding

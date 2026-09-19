@@ -12,14 +12,24 @@ run still has a writer.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import StrEnum
 from types import MappingProxyType
 
 from jarvis.testlab.runs import TERMINAL_STATUSES, ArtifactKind
-from jarvis.testlab.store import CorruptRunEntry, RunUsage, StorageUsage, TestLabStoreError, TestRunStore
+from jarvis.testlab.store import (
+    BundleStore,
+    CorruptRunEntry,
+    EntryStorageUsage,
+    EntryUsage,
+    RunUsage,
+    StorageUsage,
+    SweepStore,
+    TestLabStoreError,
+    TestRunStore,
+)
 from jarvis.testlab.validation import check_number, check_time, fail
 
 _GIB = 1024 * 1024 * 1024
@@ -32,6 +42,15 @@ class RetentionReason(StrEnum):
     MAX_RUNS = "max_runs"
     MAX_KIND_BYTES = "max_kind_bytes"
     MAX_TOTAL_BYTES = "max_total_bytes"
+    #: Archive bound: too many sweep records, or too many bundles.
+    MAX_ENTRIES = "max_entries"
+
+
+class ArchiveKind(StrEnum):
+    """The two stores beside `runs/` that also grow without bound."""
+
+    SWEEP = "sweep"
+    BUNDLE = "bundle"
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +72,13 @@ class TestLabRetentionPolicy:
         default_factory=lambda: {ArtifactKind.AUDIO_CLIP: 256 * _MIB})
     #: Bounded work per apply; the rest is deferred to the next pass.
     max_deletions_per_apply: int = 128
+    #: `<root>/sweeps/`: how many sweep records, and how many bytes they may hold.
+    max_sweeps: int = 500
+    max_sweep_bytes: int = 256 * _MIB
+    #: `<root>/bundles/`: how many bundles, and how many bytes they may hold. A bundle is
+    #: a normalized document of a session, so it is small; a lot of them are not.
+    max_bundles: int = 500
+    max_bundle_bytes: int = 512 * _MIB
 
     def __post_init__(self) -> None:
         if type(self.enabled) is not bool:
@@ -69,6 +95,10 @@ class TestLabRetentionPolicy:
             check_number(cap, f"retention max_bytes_by_kind.{kind.value}", minimum=1, integer=True)
         check_number(self.max_deletions_per_apply, "retention max_deletions_per_apply", minimum=1,
                      maximum=MAX_DELETIONS_PER_APPLY, integer=True)
+        check_number(self.max_sweeps, "retention max_sweeps", minimum=1, integer=True)
+        check_number(self.max_sweep_bytes, "retention max_sweep_bytes", minimum=1, integer=True)
+        check_number(self.max_bundles, "retention max_bundles", minimum=1, integer=True)
+        check_number(self.max_bundle_bytes, "retention max_bundle_bytes", minimum=1, integer=True)
         object.__setattr__(self, "max_bytes_by_kind", MappingProxyType(dict(self.max_bytes_by_kind)))
 
 
@@ -188,3 +218,150 @@ def apply_retention_plan(store: TestRunStore, plan: RetentionPlan) -> RetentionR
             continue
         deleted.append(deletion.run_id)
     return RetentionReport(plan=plan, deleted=tuple(deleted), skipped=tuple(skipped))
+
+
+# ------------------------------------------------------- the other two stores
+
+@dataclass(frozen=True, slots=True)
+class ArchiveUsage:
+    """What `<root>/sweeps/` and `<root>/bundles/` hold: the two adapters' `storage_usage()`."""
+
+    sweeps: tuple[EntryUsage, ...] = ()
+    bundles: tuple[EntryUsage, ...] = ()
+    corrupt: tuple[CorruptRunEntry, ...] = ()
+
+    @classmethod
+    def of(cls, sweeps: EntryStorageUsage, bundles: EntryStorageUsage) -> "ArchiveUsage":
+        """The two store usages as one input, corrupt entries merged."""
+        return cls(sweeps.entries, bundles.entries, (*sweeps.corrupt, *bundles.corrupt))
+
+
+@dataclass(frozen=True, slots=True)
+class ArchiveDeletion:
+    kind: ArchiveKind
+    entry_id: str
+    reason: RetentionReason
+
+
+@dataclass(frozen=True, slots=True)
+class ArchiveRetentionPlan:
+    enabled: bool
+    cutoff: datetime | None
+    deletions: tuple[ArchiveDeletion, ...] = ()
+    deferred: int = 0
+    #: Sweeps still running: never deleted, still counted in the bounds.
+    blocked_active: int = 0
+    #: Entries a STORED RUN points at (`sweep_id`, `bundle_id`): never deleted.
+    blocked_referenced: int = 0
+    blocked_corrupt: tuple[CorruptRunEntry, ...] = ()
+    unmet: tuple[RetentionReason, ...] = ()
+
+
+def referenced_archive_ids(usage: StorageUsage) -> frozenset[str]:
+    """Every sweep id and bundle id a STORED RUN points at. Pure.
+
+    Deleting one of these would leave a terminal record referring to evidence that is
+    gone, which is exactly what the run rule ("whole terminal runs only") exists to
+    prevent. The reference set is taken from ALL stored runs, including the ones this
+    very pass plans to delete: a run deletion can be refused at apply time, so a bundle
+    whose last run disappears is collected by the NEXT pass rather than by an optimistic
+    one. Retention converges in two passes instead of one, and never ahead of itself.
+    """
+    if not isinstance(usage, StorageUsage):
+        raise fail("referenced_archive_ids takes a StorageUsage")
+    return frozenset({item for run in usage.runs for item in (run.sweep_id, run.bundle_id) if item is not None})
+
+
+def plan_archive_retention(policy: TestLabRetentionPolicy, usage: ArchiveUsage, *, now: datetime,
+                           referenced: Collection[str] = ()) -> ArchiveRetentionPlan:
+    """Which sweeps and bundles to delete, oldest first, and why. Pure.
+
+    Same shape and same rule order as `plan_retention`: `max_age`, then the count bound,
+    then the byte bound, each deleting the oldest deletable entries until it holds.
+    Sweeps and bundles have SEPARATE bounds and are planned independently - a thousand
+    cheap bundles must not evict the sweep an operator is reading.
+
+    Three things are never selected, and each is counted rather than hidden: an active
+    sweep, an entry a stored run references, and a corrupt entry.
+    """
+    if not isinstance(policy, TestLabRetentionPolicy) or not isinstance(usage, ArchiveUsage):
+        raise fail("plan_archive_retention takes a TestLabRetentionPolicy and an ArchiveUsage")
+    check_time(now, "now")
+    protected = frozenset(referenced)
+    blocked_active = sum(1 for item in usage.sweeps if item.active)
+    blocked_referenced = sum(1 for group in (usage.sweeps, usage.bundles)
+                             for item in group if item.entry_id in protected)
+    if not policy.enabled:
+        return ArchiveRetentionPlan(enabled=False, cutoff=None, blocked_active=blocked_active,
+                                    blocked_referenced=blocked_referenced, blocked_corrupt=usage.corrupt)
+    cutoff = now - policy.max_age
+    selected: list[ArchiveDeletion] = []
+    unmet: list[RetentionReason] = []
+    for kind, entries, max_entries, max_bytes in (
+            (ArchiveKind.SWEEP, usage.sweeps, policy.max_sweeps, policy.max_sweep_bytes),
+            (ArchiveKind.BUNDLE, usage.bundles, policy.max_bundles, policy.max_bundle_bytes)):
+        remaining = sorted(entries, key=lambda item: item.entry_id)
+        deletable = [item for item in remaining if not item.active and item.entry_id not in protected]
+
+        def take(item: EntryUsage, reason: RetentionReason, group: ArchiveKind = kind) -> None:
+            remaining.remove(item)
+            deletable.remove(item)
+            selected.append(ArchiveDeletion(group, item.entry_id, reason))
+
+        for item in list(deletable):
+            if item.created_at < cutoff:
+                take(item, RetentionReason.MAX_AGE)
+        while len(remaining) > max_entries:
+            if not deletable:
+                unmet.append(RetentionReason.MAX_ENTRIES)
+                break
+            take(deletable[0], RetentionReason.MAX_ENTRIES)
+        while sum(item.total_bytes for item in remaining) > max_bytes:
+            if not deletable:
+                unmet.append(RetentionReason.MAX_TOTAL_BYTES)
+                break
+            take(deletable[0], RetentionReason.MAX_TOTAL_BYTES)
+    ordered = sorted(selected, key=lambda deletion: (deletion.kind.value, deletion.entry_id))
+    limit = policy.max_deletions_per_apply
+    return ArchiveRetentionPlan(enabled=True, cutoff=cutoff, deletions=tuple(ordered[:limit]),
+                                deferred=max(0, len(ordered) - limit), blocked_active=blocked_active,
+                                blocked_referenced=blocked_referenced, blocked_corrupt=usage.corrupt,
+                                unmet=tuple(dict.fromkeys(unmet)))
+
+
+@dataclass(frozen=True, slots=True)
+class ArchiveRetentionReport:
+    plan: ArchiveRetentionPlan
+    deleted: tuple[ArchiveDeletion, ...] = ()
+    #: `(kind, entry id, store error code)`: refused at apply time (held open, I/O, gone).
+    skipped: tuple[tuple[str, str, str], ...] = ()
+
+
+def apply_archive_retention_plan(plan: ArchiveRetentionPlan, *, sweep_store: SweepStore | None = None,
+                                 bundle_store: BundleStore | None = None) -> ArchiveRetentionReport:
+    """Delete the planned sweeps and bundles through their ports. One refusal never stops the pass.
+
+    A store the caller did not give keeps its entries: that is how a composition with
+    only one of the two, or a test, asks for half the pass.
+    """
+    if not isinstance(plan, ArchiveRetentionPlan):
+        raise fail("apply_archive_retention_plan takes an ArchiveRetentionPlan")
+    deleted: list[ArchiveDeletion] = []
+    skipped: list[tuple[str, str, str]] = []
+    for deletion in plan.deletions:
+        is_sweep = deletion.kind is ArchiveKind.SWEEP
+        store = sweep_store if is_sweep else bundle_store
+        if store is None:
+            continue  # intentional: a store this caller did not compose keeps its entries
+        try:
+            if is_sweep:
+                store.delete_sweep(deletion.entry_id)
+            else:
+                store.delete_bundle(deletion.entry_id)
+        except TestLabStoreError as exc:
+            # Captured, then continue: the refusal is reported with its stable code and
+            # the next pass re-plans from fresh usage.
+            skipped.append((deletion.kind.value, deletion.entry_id, exc.code))
+            continue
+        deleted.append(deletion)
+    return ArchiveRetentionReport(plan=plan, deleted=tuple(deleted), skipped=tuple(skipped))

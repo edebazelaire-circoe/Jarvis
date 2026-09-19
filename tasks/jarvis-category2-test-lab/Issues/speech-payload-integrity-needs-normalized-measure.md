@@ -16,3 +16,17 @@ Suggested fix, owned by the voice state producer, not by the Test Lab: emit, wit
 - the `speech_id` and the playback status.
 
 With it, a Slice 12 assertion can threshold the similarity (for example word error rate below 0.2 on a completed playback), and the bundle can map it as a speech measure without ever copying text.
+
+## Slice 12 decision (2026-09-19): still open, and still not the Test Lab's to close
+
+`speech.payload_integrity` ships at v1 with the harness measure only, exactly as Slice 04
+wrote it, and Slice 12 did not bump it. Nothing changed on the producer side, so an
+assertion on a normalized similarity would have no signal to threshold: the version bump
+belongs with the producer change, in one reviewable step, not before it.
+
+What that costs today, stated plainly: the seed proves the SCHEDULER delivers what was
+scripted, and says nothing about whether what Jarvis actually spoke matched what he meant
+to say. The bundle still counts `spoken_divergences` and `state_divergences` on speech
+items, so the evidence is visible in a captured session; it is just not a verdict.
+
+Owner unchanged: `jarvis/core/voice_state.py`.

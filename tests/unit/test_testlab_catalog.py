@@ -59,7 +59,11 @@ from jarvis.testlab.scenarios import Scenario, ScenarioStep
 from jarvis.testlab.validation import FORBIDDEN_CODE, FORBIDDEN_PRIVATE_DATA
 from tests.fakes.testlab import queued_run
 
+#: The four `virtual` seeds. Every one of them runs with no device, no provider and no human.
 SEEDS = {"voice.self_echo", "speech.payload_integrity", "speech.stale_supersession", "voice.queue_latency"}
+#: The whole published catalog. `voice.barge_in_response` (Slice 12) is `hardware:guided`
+#: ONLY: it asks a person to interrupt Jarvis, which no virtual profile can stand in for.
+PUBLISHED = SEEDS | {"voice.barge_in_response"}
 IMPLEMENTATION = "testlab.scenario.virtual"
 
 
@@ -116,15 +120,17 @@ def failure(root: Path, **options) -> CatalogError:
 
 # ------------------------------------------------------------- seed catalog
 
-def test_the_official_catalog_loads_with_its_four_seed_diagnostics():
+def test_the_official_catalog_loads_with_its_published_diagnostics():
     catalog = load_catalog()
-    assert {entry.diagnostic_id for entry in catalog.list_diagnostics()} == SEEDS
+    assert {entry.diagnostic_id for entry in catalog.list_diagnostics()} == PUBLISHED
     for entry in catalog.list_diagnostics():
         assert entry.path == entry.manifest.relative_path
         assert (DEFAULT_CATALOG_ROOT / entry.path).is_file()
+        assert entry.diagnostic.assertions and any(item.blocking for item in entry.diagnostic.assertions)
+        if entry.diagnostic_id not in SEEDS:
+            continue
         virtual = entry.resources_and_cost(ProfileName.VIRTUAL)
         assert virtual.requires == frozenset() and virtual.cost.max_cost_usd == 0
-        assert entry.diagnostic.assertions and any(item.blocking for item in entry.diagnostic.assertions)
 
 
 def test_the_seed_virtual_profiles_are_available_to_a_supervisor_and_its_workers():
@@ -137,12 +143,12 @@ def test_the_seed_virtual_profiles_are_available_to_a_supervisor_and_its_workers
     """
     declared = load_catalog(implementations=default_implementations())
     executed = load_catalog(implementations=catalog_implementations())
-    for entry in executed.list_diagnostics():
+    for entry in (item for item in executed.list_diagnostics() if item.diagnostic_id in SEEDS):
         virtual = entry.resources_and_cost(ProfileName.VIRTUAL)
         assert virtual.available, entry.diagnostic_id
         assert virtual.implementation.unavailable_reason is None
         assert virtual.implementation.name.endswith(".virtual")
-    for entry in declared.list_diagnostics():
+    for entry in (item for item in declared.list_diagnostics() if item.diagnostic_id in SEEDS):
         virtual = entry.resources_and_cost(ProfileName.VIRTUAL)
         assert not virtual.available
         assert virtual.implementation.unavailable_reason == "runner_not_registered"

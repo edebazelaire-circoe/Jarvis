@@ -31,6 +31,7 @@ from pathlib import Path
 import pytest
 
 from jarvis.runtime.audio_devices import AudioDiagnosticError
+from jarvis.testlab.catalog import DEFAULT_CATALOG_ROOT
 from jarvis.testlab.diagnostics import (
     AssertionSpec,
     Comparator,
@@ -92,15 +93,13 @@ from tests.fakes.testlab import CONFIG, ENVIRONMENT, NONCE, REVISION, T0
 
 pytestmark = pytest.mark.asyncio
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-#: The two manifests PROPOSED by this Slice, read from their files rather than restated so
-#: the runners and the declarations that would judge them cannot drift while they wait for
-#: approval. `voice.self_echo` v3 carries the `hardware:auto` NEGATIVE claim; the guided
-#: POSITIVE claim is its own diagnostic, with a blocking assertion, because a gate that
-#: never opens satisfies the negative one perfectly while being completely broken.
-SLICE_09 = REPO_ROOT / "tasks/jarvis-category2-test-lab/slices/09-hardware-guided"
-PROPOSED_V3 = SLICE_09 / "proposed-voice.self_echo.v3.json"
-PROPOSED_GUIDED = SLICE_09 / "proposed-voice.barge_in_response.v1.json"
+#: The two manifests PUBLISHED by Slice 12, read from the catalog rather than restated so
+#: the runners and the declarations that judge them cannot drift. `voice.self_echo` v3
+#: carries the `hardware:auto` NEGATIVE claim; the guided POSITIVE claim is its own
+#: diagnostic, with a blocking assertion, because a gate that never opens satisfies the
+#: negative one perfectly while being completely broken.
+PUBLISHED_V3 = DEFAULT_CATALOG_ROOT / "voice" / "self_echo.v3.json"
+PUBLISHED_GUIDED = DEFAULT_CATALOG_ROOT / "voice" / "barge_in_response.v1.json"
 RUN_ID = format_run_id(T0, NONCE)
 RUN_BUDGET_S = 120.0
 #: Short on purpose: the point is the acoustic decision, not the length of the output.
@@ -148,7 +147,7 @@ async def guided_attempts(build_run, *, attempts: int = GUIDED_ATTEMPTS):
 
 
 def self_echo_spec() -> DiagnosticSpec:
-    return decode_manifest_text(PROPOSED_V3.read_text(encoding="utf-8")).diagnostic
+    return decode_manifest_text(PUBLISHED_V3.read_text(encoding="utf-8")).diagnostic
 
 
 def guided_spec(*, blocking: bool = True) -> DiagnosticSpec:
@@ -159,7 +158,7 @@ def guided_spec(*, blocking: bool = True) -> DiagnosticSpec:
     """
     from dataclasses import replace
 
-    spec = decode_manifest_text(PROPOSED_GUIDED.read_text(encoding="utf-8")).diagnostic
+    spec = decode_manifest_text(PUBLISHED_GUIDED.read_text(encoding="utf-8")).diagnostic
     if blocking:
         return spec
     return replace(spec, assertions=tuple(item for item in spec.assertions

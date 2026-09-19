@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from collections.abc import Iterable, Iterator
+from dataclasses import replace
 import hashlib
 import os
 from pathlib import Path
@@ -44,6 +45,7 @@ from jarvis.testlab._fs import (
     is_link as _is_link,
     store_error,
     tmp_name,
+    tree_bytes as _tree_bytes,
     write_atomic,
 )
 from jarvis.ports.v2 import DiagnosticSink
@@ -79,6 +81,7 @@ from jarvis.testlab.store import (
     StorageUsage,
     TestLabStoreError,
     check_run_environment,
+    check_bundle_attachment,
     check_run_update,
 )
 from jarvis.testlab.validation import (
@@ -375,6 +378,23 @@ class FilesystemTestRunStore:
                            previous=stored.status.value, status=updated.status.value)
         return updated
 
+    def attach_bundle(self, run_id: str, bundle_id: str) -> TestRun:
+        """Set `bundle_id` on a stored run, once, under its lock. See `check_bundle_attachment`."""
+        self._existing_run_dir(run_id)  # not found before any lock file is created
+        with self._lock(run_id):
+            run_dir = self._existing_run_dir(run_id)
+            stored = self._read_record(run_dir, run_id)
+            if not check_bundle_attachment(stored, bundle_id):
+                return stored
+            attached = replace(stored, bundle_id=bundle_id)
+            self._write_atomic(run_dir, RECORD_NAME, self._encode(attached), run_id)
+        # The listing cache keys on (mtime, size), which the rewrite moves, so the next
+        # `list_runs` re-reads this record anyway; evicting is belt and braces.
+        self._listing_cache.pop(run_id, None)
+        self._diagnose("testlab_run_bundle_attached", "Test Lab run references its DiagnosticBundle",
+                       run_id=run_id, bundle_id=bundle_id)
+        return attached
+
     def list_runs(self, query: RunQuery = RunQuery()) -> RunPage:
         if not isinstance(query, RunQuery):
             raise TypeError("list_runs takes a RunQuery")
@@ -669,6 +689,15 @@ class FilesystemTestRunStore:
                 return self._artifact_target(run_dir, run_id, path), ref
         raise TestLabStoreError(STORE_NOT_FOUND, f"run {run_id}: artifact.path is not referenced by the record")
 
+    def artifact_path(self, run_id: str, path: str) -> Path:
+        """The filesystem path of one REFERENCED artifact, checked like every other access.
+
+        Adapter-only (a path is not a `TestRunStore` concept): the Slice 12 bundle capture
+        reads a run's stored `trace.jsonl` with the same bounded reader it uses on the live
+        journal, which takes a path and never loads the file into memory.
+        """
+        return self._referenced(run_id, path)[0]
+
     def read_artifact(self, run_id: str, path: str, *, verify: bool = True) -> bytes:
         """One read; with `verify`, the returned bytes themselves are hashed and sized against the reference."""
         target, ref = self._referenced(run_id, path)
@@ -711,7 +740,7 @@ class FilesystemTestRunStore:
             for ref in run.artifacts:
                 by_kind[ref.kind] = by_kind.get(ref.kind, 0) + ref.size_bytes
             usage.append(RunUsage(run_id, run.created_at, run.status, _tree_bytes(run_dir), by_kind,
-                                  finished_at=run.finished_at))
+                                  finished_at=run.finished_at, sweep_id=run.sweep_id, bundle_id=run.bundle_id))
         return StorageUsage(runs=tuple(usage), corrupt=tuple(corrupt))
 
     def remove_stale_temporaries(self, *, older_than_s: float = DEFAULT_STALE_TEMPORARY_S) -> int:
@@ -810,25 +839,3 @@ def _remove_empty_subdirectories(run_dir: Path, horizon: float) -> int:
 
     visit(run_dir)
     return removed
-
-
-def _tree_bytes(directory: Path) -> int:
-    total = 0
-    stack = [directory]
-    while stack:
-        current = stack.pop()
-        try:
-            entries = list(os.scandir(current))
-        except OSError:
-            continue  # intentional: a directory removed during the scan holds no bytes to count
-        for entry in entries:
-            try:
-                if _is_link(Path(entry.path)):
-                    continue  # a link's target lies outside the run: not its bytes
-                if entry.is_dir(follow_symlinks=False):
-                    stack.append(Path(entry.path))
-                else:
-                    total += entry.stat(follow_symlinks=False).st_size
-            except OSError:
-                continue  # intentional: a file removed during the scan holds no bytes to count
-    return total

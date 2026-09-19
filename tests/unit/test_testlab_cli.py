@@ -13,6 +13,7 @@ import io
 import json
 from pathlib import Path
 import re
+import tempfile
 
 import pytest
 
@@ -40,6 +41,7 @@ from jarvis.testlab.cli import (
     needs_supervisor,
     parse_assignments,
     parse_axis,
+    render_bundle,
     render_comparison,
     render_retention,
     render_run_detail,
@@ -414,3 +416,99 @@ def test_the_unforeseen_failure_payload_carries_no_raw_exception_text():
     path or a token out of a message the code happened to be holding."""
     assert CLI_FAILED_MESSAGE and "stderr" in CLI_FAILED_MESSAGE
     assert "{" not in CLI_FAILED_MESSAGE and "%s" not in CLI_FAILED_MESSAGE
+
+
+# ------------------------------------------- bundle rendering (Slice 12 rework)
+
+def real_bundle_payload(**changes):
+    """The `bundle` view of a REAL `DiagnosticBundle`, built by the domain, with findings.
+
+    Built rather than restated on purpose. `render_bundle` shipped reading `finding["rule"]`
+    and `coverage["sources"]`, neither of which the document has ever had; every fixture in
+    the suite had zero findings and no test referenced the function, so a real session with
+    a finding crashed the command and the coverage lines were silently never printed. A
+    payload invented here would have reproduced the same mistake, so this one comes through
+    the builder and the API's own view.
+    """
+    from datetime import timedelta
+
+    from jarvis.testlab.api import bundle_view
+    from jarvis.testlab.bundle_builder import EventEvidence, SourceStatus, build_diagnostic_bundle
+    from jarvis.testlab.bundle_capture import read_session_trace
+    from jarvis.testlab.store import BundleSummary
+    import tests.fakes.testlab_bundle as fx
+
+    directory = Path(tempfile.mkdtemp())
+    fx.write_trace(directory / "trace.jsonl")
+    events = EventEvidence(SourceStatus.AVAILABLE, origin="export", events=tuple(fx.session_events()),
+                           export_complete=True)
+    moments = [item.event.occurred_at for item in events.events]
+    trace = read_session_trace(directory / "trace.jsonl", fx.selector(),
+                               start=min(moments) - timedelta(seconds=30),
+                               end=max(moments) + timedelta(seconds=30)).evidence
+    bundle = build_diagnostic_bundle(fx.selector(), context=fx.context(), events=events, trace=trace)
+    payload = {"bundle": bundle_view(BundleSummary.of(bundle)), "stored": "stored",
+               "coverage": dict(bundle.document["coverage"]),
+               "findings": [dict(item) for item in bundle.findings]}
+    payload.update(changes)
+    return payload, bundle
+
+
+def test_render_bundle_prints_every_finding_of_a_real_bundle():
+    payload, bundle = real_bundle_payload()
+    assert bundle.findings, "this fixture must carry findings, or it cannot guard the renderer"
+
+    text = render_bundle(payload)
+
+    assert text.count("  finding ") == len(bundle.findings)
+    for finding in bundle.findings:
+        assert finding["rule_id"] in text
+        assert str(finding["subject_id"]) in text
+        for measure in finding["measured"]:
+            assert f"{measure['name']}={measure['value']}" in text
+    assert "rule_id" not in text, "the label is the rule, not the field name"
+
+
+def test_render_bundle_prints_a_source_that_could_not_be_read():
+    """The exact line the operator runbook tells a human to look for."""
+    payload, _ = real_bundle_payload()
+    payload["coverage"] = {**payload["coverage"],
+                           "conversation_events": {**payload["coverage"]["conversation_events"],
+                                                   "status": "unavailable",
+                                                   "reason": "conversation_events_table_absent"}}
+
+    text = render_bundle(payload)
+
+    assert "  source conversation_events: unavailable (conversation_events_table_absent)" in text
+    assert "  source runtime_journal: available" in text
+    assert "  source voice_session_reports:" in text
+
+
+def test_render_bundle_reports_only_the_entries_that_are_sources():
+    """`content`, `limits`, `segments` and `warnings` live beside the sources, not among them."""
+    payload, _ = real_bundle_payload()
+    coverage = payload["coverage"]
+    assert {"content", "limits", "segments", "warnings"} <= set(coverage), "the document shape moved"
+
+    text = render_bundle(payload)
+
+    assert "source content" not in text and "source limits" not in text
+    assert "source segments" not in text and "source warnings" not in text
+    assert f"  voice sessions: {coverage['segments']['count']}" in text
+
+
+def test_render_bundle_says_when_a_capture_stored_nothing_and_attached_nothing():
+    payload, _ = real_bundle_payload(stored=None, findings=[], coverage={})
+    text = render_bundle(payload)
+    assert "stored" not in text and "references" not in text
+    assert "finding" not in text.partition("findings:")[2].partition("\n")[2]
+
+
+def test_render_bundle_says_whether_THIS_call_made_the_reference():
+    """A run captured twice still HAS a bundle id; only the first call made it."""
+    run_id, bundle_id = "tlr-20260917T105800123Z-0123456789abcdef", "tlb-20260917T120000000Z-" + "a" * 16
+    made, _ = real_bundle_payload(run_id=run_id, attached_bundle_id=bundle_id, attached=True)
+    already, _ = real_bundle_payload(run_id=run_id, attached_bundle_id=bundle_id, attached=False)
+
+    assert f"  run {run_id} now references {bundle_id}" in render_bundle(made)
+    assert f"  run {run_id} already referenced {bundle_id}" in render_bundle(already)

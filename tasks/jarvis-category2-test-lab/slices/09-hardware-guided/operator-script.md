@@ -1,5 +1,9 @@
 # HV-TL-HW-01 — operator script
 
+> Part of [`../../operator-runbook.md`](../../operator-runbook.md), which covers all three
+> Human checks. This page is the detailed one for the acoustic check; the runbook has the
+> short form, the CLI route and what to write down.
+
 **What this proves:** that Jarvis, speaking out loud through this laptop's own speaker
 and hearing itself through this laptop's own microphone, does not mistake its own voice
 for yours — and that it still hears you when you really do cut in. No automated test can
@@ -53,11 +57,15 @@ $env:JARVIS_TESTLAB_GUIDED = "1"
 ```
 
 **Where the prompts appear, and what you press.** The run itself has no screen: it
-publishes each step and waits. What shows it to you is a *presenter*, and until the Test
-Lab CLI exists (Slice 10) the presenter is the little one built into this test — it prints
-the step in **this terminal** and waits for you to press **Enter**. So: read the line, do
-what it says, press Enter. `-s` in the command above is what lets it print and read your
-keystroke; without it pytest swallows both and every step will time out.
+publishes each step and waits. What shows it to you is a *presenter*. This test has a
+little one built in — it prints the step in **this terminal** and waits for **Enter** —
+and `-s` in the command above is what lets it print and read your keystroke; without it
+pytest swallows both and every step will time out.
+
+Since Slice 10 there are two other presenters for exactly the same prompts, and either is
+a valid way to do this check: the CLI (`python -m jarvis.testlab run voice.barge_in_response
+--profile hardware:guided --guided`, with a real countdown), and the Control Center LAB
+panel. The runbook lists both.
 
 Nothing else is required of you — no id to type, no file to touch.
 
@@ -87,8 +95,10 @@ Four steps. Each one prints what to do, how long you have, and waits for **Enter
 | 4 | **ACKNOWLEDGE** | Press Enter if the session sounded right: Jarvis spoke twice, it did not stammer or cut itself off, and it stopped when you spoke over it. | The one judgement no metric makes. |
 
 Each step shows how long you have. That deadline is **derived from the diagnostic's
-`output.duration_ms`** — it is that, plus thirty seconds. The proposed manifests default to
-8 seconds of speech, so you are asked to hold still for well under a minute. If somebody
+`output.duration_ms`** — it is that, plus thirty seconds. The two manifests this check uses
+are now PUBLISHED (`voice.self_echo` v3 for the `hardware:auto` half, `voice.barge_in_response`
+v1 for the guided half) and default to 8 seconds of speech, so you are asked to hold still
+for well under a minute. If somebody
 raises that parameter, this script gets proportionally more tedious; it is not a bug, but
 it is worth knowing before you agree to run it.
 

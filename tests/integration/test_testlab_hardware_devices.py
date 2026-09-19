@@ -34,6 +34,7 @@ import pytest
 
 from jarvis.testlab.devices import ContentionState, default_contention_detector
 from jarvis.testlab.diagnostics import assertions_verdict, evaluate_assertion, resolve_parameters
+from jarvis.testlab.catalog import DEFAULT_CATALOG_ROOT
 from jarvis.testlab.filesystem_store import FilesystemTestRunStore
 from jarvis.testlab.hardware.channel import FilePrompter, PromptWatcher
 from jarvis.testlab.hardware.devices import DeviceUnavailable, hardware_contention_detector
@@ -63,11 +64,10 @@ pytestmark = pytest.mark.asyncio
 REPO_ROOT = Path(__file__).resolve().parents[2]
 #: The runtime root the workstation Jarvis publishes its voice signals in.
 LIVE_RUNTIME_ROOT = Path(os.getenv("JARVIS_TESTLAB_LIVE_RUNTIME") or (REPO_ROOT / "runtime"))
-SLICE_09 = REPO_ROOT / "tasks/jarvis-category2-test-lab/slices/09-hardware-guided"
-#: The two manifests this Slice PROPOSES: the `hardware:auto` negative claim, and the
-#: guided positive claim as its own diagnostic with a blocking assertion.
-PROPOSED_V3 = SLICE_09 / "proposed-voice.self_echo.v3.json"
-PROPOSED_GUIDED = SLICE_09 / "proposed-voice.barge_in_response.v1.json"
+#: The two PUBLISHED manifests: the `hardware:auto` negative claim, and the guided
+#: positive claim as its own diagnostic with a blocking assertion.
+PUBLISHED_V3 = DEFAULT_CATALOG_ROOT / "voice" / "self_echo.v3.json"
+PUBLISHED_GUIDED = DEFAULT_CATALOG_ROOT / "voice" / "barge_in_response.v1.json"
 RUN_ID = format_run_id(T0, NONCE)
 #: Short: the human is standing there, and the acoustic claim does not need a monologue.
 PARAMETERS = {"output.duration_ms": 3000, "echo.candidate_count": 3}
@@ -88,7 +88,7 @@ def require_free_devices() -> None:
 
 
 def spec_for(profile: ProfileName):
-    source = PROPOSED_GUIDED if profile is ProfileName.HARDWARE_GUIDED else PROPOSED_V3
+    source = PUBLISHED_GUIDED if profile is ProfileName.HARDWARE_GUIDED else PUBLISHED_V3
     return decode_manifest_text(source.read_text(encoding="utf-8")).diagnostic
 
 

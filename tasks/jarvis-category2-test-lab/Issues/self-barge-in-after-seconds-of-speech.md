@@ -88,8 +88,18 @@ voice runtime in any case. For whoever picks it up:
 .venv/Scripts/python -m pytest -q -p no:cacheprovider -s tests/integration/test_testlab_hardware_runners.py -k defaults
 ```
 
-The decisive run is HV-TL-HW-01 at `output.duration_ms = 8000` on the real workstation
-(`tasks/jarvis-category2-test-lab/slices/09-hardware-guided/operator-script.md`). If
+The decisive run is HV-TL-HW-01 at `output.duration_ms = 8000` on the real workstation.
+Since Slice 12 the two manifests it needs are PUBLISHED, so it can also be run straight
+from the CLI:
+
+```powershell
+$env:JARVIS_TESTLAB_HARDWARE = "1"; $env:JARVIS_TESTLAB_GUIDED = "1"
+.venv/Scripts/python -m jarvis.testlab run voice.barge_in_response --profile hardware:guided --guided
+```
+
+The operator pages are
+`tasks/jarvis-category2-test-lab/operator-runbook.md` (short form, what to write down)
+and `slices/09-hardware-guided/operator-script.md` (the acoustics in detail). If
 `barge_in.false_confirmed_count` is 1 or more there, with a real room and a real speaker,
 this stops being an open question and becomes the defect `voice.self_echo` was written to
 find.

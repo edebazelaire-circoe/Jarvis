@@ -513,6 +513,11 @@ async def test_the_guided_refusal_creates_no_directory_and_takes_no_lock(api, la
 @pytest.mark.parametrize("argv, code", [
     (["run", SELFTEST_DIAGNOSTIC_ID, "-p", "malformed"], EXIT_USAGE),
     (["run", "voice.nope"], EXIT_ERROR),
+    # A profile the declaration does not offer is a CATALOG question, so it is asked before
+    # the lock: `run voice.barge_in_response` takes `--profile virtual` by default and that
+    # diagnostic is `hardware:guided` only. Refusing it after `_take_work_root` meant that,
+    # with the Control Center running, the operator was told `work_root_busy` instead.
+    (["run", SELFTEST_DIAGNOSTIC_ID, "--profile", "live"], EXIT_ERROR),
     (["run", SELFTEST_DIAGNOSTIC_ID, "--scenario", "no-such-file.json"], EXIT_ERROR),
     (["sweep", SELFTEST_DIAGNOSTIC_ID, "--axis", "malformed"], EXIT_USAGE),
     (["sweep", "voice.nope", "--axis", "value=1,2"], EXIT_ERROR),

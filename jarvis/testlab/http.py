@@ -225,6 +225,7 @@ class TestLabRoutes:
             web.post(f"{base}/runs", guard(self.submit_run)),
             web.get(f"{base}/runs/{{run_id}}", guard(self.get_run)),
             web.post(f"{base}/runs/{{run_id}}/cancel", guard(self.cancel_run)),
+            web.post(f"{base}/runs/{{run_id}}/bundle", guard(self.capture_run_bundle)),
             web.get(f"{base}/runs/{{run_id}}/artifacts/{{path:.+}}", guard(self.artifact)),
             web.get(f"{base}/runs/{{run_id}}/prompt", guard(self.pending_prompt)),
             web.post(f"{base}/runs/{{run_id}}/prompt", guard(self.acknowledge_prompt)),
@@ -370,6 +371,18 @@ class TestLabRoutes:
                                    end=parse_time_argument(body.get("end"), "end"))
         return _ok(await self._api.capture_bundle(selector, with_events=bool(body.get("events", True)),
                                                   store=bool(body.get("store", True))))
+
+    async def capture_run_bundle(self, request: web.Request) -> web.Response:
+        """Normalize a stored run's own trace into a bundle and reference it from the run.
+
+        No work root: this reads a stored artifact and writes a bundle, so it needs no
+        supervisor and works while a CLI run holds the lock.
+        """
+        body = await _body(request)
+        return _ok(await self._api.capture_run_bundle(request.match_info["run_id"],
+                                                      session_id=body.get("session_id"),
+                                                      attach=bool(body.get("attach", True)),
+                                                      store=bool(body.get("store", True))))
 
     async def retention(self, request: web.Request) -> web.Response:
         return _ok(await self._api.retention_plan())

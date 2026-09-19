@@ -183,3 +183,32 @@ def write_atomic(directory: Path, target_name: str, payload: bytes, *, label: st
             # temporaries sweep deletes; the write failure below is the error.
             pass
         raise store_error(STORE_IO, f"{label}: record write failed, previous record intact", exc) from exc
+
+
+def tree_bytes(directory: Path) -> int:
+    """Every byte under `directory`, links never followed (a link's target is not its bytes).
+
+    Extracted from `filesystem_store.py` in Slice 12, unchanged, because the sweep and
+    bundle stores now report their own usage to the retention planner and must count the
+    same way the run store does. Never raises: an entry removed during the scan holds no
+    bytes to count, which is also why usage is a snapshot and not a ledger.
+    """
+    total = 0
+    stack = [directory]
+    while stack:
+        current = stack.pop()
+        try:
+            entries = list(os.scandir(current))
+        except OSError:
+            continue  # intentional: a directory removed during the scan holds no bytes to count
+        for entry in entries:
+            try:
+                if is_link(Path(entry.path)):
+                    continue  # a link's target lies outside the tree: not its bytes
+                if entry.is_dir(follow_symlinks=False):
+                    stack.append(Path(entry.path))
+                else:
+                    total += entry.stat(follow_symlinks=False).st_size
+            except OSError:
+                continue  # intentional: a file removed during the scan holds no bytes to count
+    return total
