@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-TL-UI-01",
+      "title": "Validate Test Lab operator workflow",
+      "instructions": "After automated UI/runtime QA, use Control Center to choose one diagnostic, inspect required resources, run it, inspect metrics/artifacts, and compare two runs.",
+      "expected": "A human can complete the targeted workflow without reading logs or using CLI; status and evidence are understandable."
+    }
+  ]
+}

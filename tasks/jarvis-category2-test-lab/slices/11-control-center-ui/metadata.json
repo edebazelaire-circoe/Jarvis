@@ -1,0 +1,9 @@
+{
+  "slice_id": "11",
+  "task_type": null,
+  "work_intent": "control center test lab ui",
+  "dependencies": [
+    "10-control-center-api-cli"
+  ],
+  "task_type_blocker": "Resolve against the current Workspace Task Type vocabulary before dispatch; do not invent a type."
+}

@@ -1,0 +1,9 @@
+{
+  "slice_id": "09",
+  "task_type": null,
+  "work_intent": "hardware auto/guided profiles and resource gates",
+  "dependencies": [
+    "08-audio-live-profiles"
+  ],
+  "task_type_blocker": "Resolve against the current Workspace Task Type vocabulary before dispatch; do not invent a type."
+}

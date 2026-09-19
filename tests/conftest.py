@@ -20,6 +20,59 @@ CONTROL_CENTER_WORK_JS = Path(__file__).resolve().parents[1] / "jarvis" / "runti
 CONTROL_CENTER_SCENE_JS = CONTROL_CENTER_WORK_JS.with_name("control_center_scene.js")
 _NODE = shutil.which("node")
 
+#: Racine du dépôt, et le répertoire que le Test Lab (Slice 10) compose sous la racine
+#: runtime RÉELLE quand un test oublie de lui donner un `tmp_path`.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+TESTLAB_REAL_ROOT = REPO_ROOT / "runtime" / "testlab"
+
+
+@pytest.fixture(autouse=True)
+def testlab_stays_in_its_temporary_root(request):
+    """Un test du Test Lab qui compose contre le `runtime/` du dépôt échoue tout de suite.
+
+    Un `TestLabApi` construit sans racine explicite tombe sur `JARVIS_RUNTIME_DIR`, donc
+    sur `runtime/` — il y crée `testlab/work/.supervisor.lock` et, le temps du test, ferme
+    le Test Lab au Jarvis qui tourne sur ce poste. C'est arrivé une fois pendant la
+    Slice 10 ; ce garde-fou refuse au lieu de compter sur quelqu'un pour le remarquer.
+
+    Deux mesures, la première suffisant seule : aucune racine composée ne doit sortir du
+    dépôt-temporaire, et `runtime/testlab` ne doit pas apparaître pendant le test.
+    """
+    module = Path(str(getattr(request.node, "fspath", ""))).name
+    if not module.startswith("test_testlab"):
+        yield
+        return
+    from jarvis.testlab import composition
+
+    existed = TESTLAB_REAL_ROOT.exists()
+    composed: list[Path] = []
+    original = composition.TestLab.__init__
+
+    def recording(self, config, **options):  # noqa: ANN001 - même signature que l'original
+        composed.append(Path(config.root))
+        original(self, config, **options)
+
+    composition.TestLab.__init__ = recording
+    try:
+        yield
+    finally:
+        composition.TestLab.__init__ = original
+    inside_repo = [root for root in composed if _under(root, REPO_ROOT)]
+    appeared = TESTLAB_REAL_ROOT.exists() and not existed
+    if appeared:
+        shutil.rmtree(TESTLAB_REAL_ROOT, ignore_errors=True)
+    assert not inside_repo, (f"{request.node.nodeid} a composé un Test Lab dans le dépôt "
+                             f"({inside_repo[0]}) au lieu d'un tmp_path")
+    assert not appeared, f"{request.node.nodeid} a créé {TESTLAB_REAL_ROOT} (supprimé)"
+
+
+def _under(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+    except ValueError:
+        return False
+    return True
+
 
 @pytest.fixture
 def page_logic():

@@ -147,8 +147,8 @@ html[data-jarvis-theme="omega"] .dock button.active{
   background:rgba(10,19,26,.72);transform:translateY(-1px)}
 html[data-jarvis-theme="omega"] .dock .badge{right:-4px;top:-4px;transform:scale(.82)}
 /* Pastilles d'arrière-plan : en ligne, juste à gauche du bouton Agents (premier
-   des 5 outils : 5×34 + 4×6 = 194 px depuis right:18px). */
-html[data-jarvis-theme="omega"] .bgpills{top:22px;right:222px;flex-direction:row-reverse;gap:6px;z-index:50}
+   des 6 outils : 6×34 + 5×6 = 234 px depuis right:18px). */
+html[data-jarvis-theme="omega"] .bgpills{top:22px;right:262px;flex-direction:row-reverse;gap:6px;z-index:50}
 html[data-jarvis-theme="omega"] .bgpill{width:26px;height:26px;font-size:10px;background:rgba(5,11,16,.56);backdrop-filter:blur(16px)}
 html[data-jarvis-theme="omega"] .bgpop{border-radius:14px;background:rgba(4,10,15,.92);backdrop-filter:blur(26px)}
 html[data-jarvis-theme="omega"] .panel{
@@ -210,6 +210,7 @@ html[data-jarvis-theme="omega"] .choice.theme-choice.selected{
       trace:`<svg ${common}><path d="M3 12h4l2.2-6 4.1 12 2.2-6H21"/></svg>`,
       errors:`<svg ${common}><path d="M12 3 2.6 20h18.8L12 3Z"/><path d="M12 9v4M12 17h.01"/></svg>`,
       timeline:`<svg ${common}><path d="M4 4v16M10 4v7M10 15v5M16 4v3M16 11v9M20 4v16"/></svg>`,
+      testlab:`<svg ${common}><path d="M10 3h4M10.5 3v6.2L5.2 18a2 2 0 0 0 1.7 3h10.2a2 2 0 0 0 1.7-3l-5.3-8.8V3"/><path d="M8 15h8"/></svg>`,
     };
     return icons[name]||icons.trace;
   }
@@ -218,9 +219,10 @@ html[data-jarvis-theme="omega"] .choice.theme-choice.selected{
     const specs=[
       ['agentsButton','agents',1],
       ['openTimeline','timeline',2],
-      [null,'trace',3],
-      ['openSettings','settings',4],
-      [null,'errors',5],
+      ['openTestLab','testlab',3],
+      [null,'trace',4],
+      ['openSettings','settings',5],
+      [null,'errors',6],
     ];
     for(const [id,name,order] of specs){
       const button=id?document.getElementById(id):document.querySelector(`.dock button[data-panel="${name}"]`);

@@ -1,0 +1,60 @@
+{
+  "schema": "jarvis.testlab.catalog_lock",
+  "schema_version": 1,
+  "entries": [
+    {
+      "diagnostic_id": "speech.payload_integrity",
+      "version": 1,
+      "path": "speech/payload_integrity.v1.json",
+      "manifest_fingerprint": "f5ccf81aea2f0cdb8efa6d3e9694586884e1b45f6187100c26e6710b911e855b"
+    },
+    {
+      "diagnostic_id": "speech.stale_supersession",
+      "version": 1,
+      "path": "speech/stale_supersession.v1.json",
+      "manifest_fingerprint": "5be195b3c51d39de1951ea4b7882e6b6ffe0ceb4fba5eca810898052c5532c30"
+    },
+    {
+      "diagnostic_id": "speech.stale_supersession",
+      "version": 2,
+      "path": "speech/stale_supersession.v2.json",
+      "manifest_fingerprint": "9cbb198ffff51c3c1c13c1ebc73c00290de2bb5b9d3dcba01bd2c9a754db3e87"
+    },
+    {
+      "diagnostic_id": "voice.barge_in_response",
+      "version": 1,
+      "path": "voice/barge_in_response.v1.json",
+      "manifest_fingerprint": "3350bc14fd46d9b9ade40afacfd9880e5605d52cf65aed2267e4352c67b8d1a0"
+    },
+    {
+      "diagnostic_id": "voice.queue_latency",
+      "version": 1,
+      "path": "voice/queue_latency.v1.json",
+      "manifest_fingerprint": "7f4a08ce80ec187c6e0a1499ce12f5fd0aeb6369d9ca7c7fd5d9f4de84310bd8"
+    },
+    {
+      "diagnostic_id": "voice.queue_latency",
+      "version": 2,
+      "path": "voice/queue_latency.v2.json",
+      "manifest_fingerprint": "6f32cd9e6c85fb8a895255c5f4d89d38ee6ce7cf1c6f6f51f2084d256ed23e07"
+    },
+    {
+      "diagnostic_id": "voice.self_echo",
+      "version": 1,
+      "path": "voice/self_echo.v1.json",
+      "manifest_fingerprint": "310a98db03fb881674da23e113930f15c05fad72ac804c5df6c4993fcd32a1a7"
+    },
+    {
+      "diagnostic_id": "voice.self_echo",
+      "version": 2,
+      "path": "voice/self_echo.v2.json",
+      "manifest_fingerprint": "044aea1ad0ba425add02930bbd4440bf47d5745b89419473debc9270158372e4"
+    },
+    {
+      "diagnostic_id": "voice.self_echo",
+      "version": 3,
+      "path": "voice/self_echo.v3.json",
+      "manifest_fingerprint": "3fe5e82a08c7cc671c05311e98a963c0097b81c8a577b528220fc11d9b9f5210"
+    }
+  ]
+}

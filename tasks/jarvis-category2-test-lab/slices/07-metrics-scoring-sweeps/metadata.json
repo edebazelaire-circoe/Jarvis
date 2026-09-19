@@ -1,0 +1,11 @@
+{
+  "slice_id": "07",
+  "task_type": null,
+  "work_intent": "metrics, scoring, comparisons, and parameter sweeps",
+  "dependencies": [
+    "02-run-persistence-artifacts",
+    "04-catalog-scenarios",
+    "06-virtual-profile-harness"
+  ],
+  "task_type_blocker": "Resolve against the current Workspace Task Type vocabulary before dispatch; do not invent a type."
+}

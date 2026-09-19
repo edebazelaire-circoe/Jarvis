@@ -1,0 +1,148 @@
+{
+  "schema": "jarvis.testlab.manifest",
+  "schema_version": 1,
+  "diagnostic": {
+    "schema": "jarvis.testlab.diagnostic",
+    "schema_version": 1,
+    "diagnostic_id": "voice.barge_in_response",
+    "version": 1,
+    "title": "A real human voice interrupts Jarvis",
+    "domain": "voice",
+    "description": "A person is asked to stay silent while Jarvis speaks, then to cut it off out loud. The echo gate must stay closed for the room's echo and open for the person.",
+    "profiles": [
+      {
+        "name": "hardware:guided",
+        "implementation": "voice.self_echo.hardware_guided",
+        "requires": [
+          "audio_input_device",
+          "audio_output_device",
+          "human_presence"
+        ],
+        "cost": {
+          "max_duration_s": 900,
+          "max_cost_usd": 0
+        }
+      }
+    ],
+    "parameters": [
+      {
+        "name": "output.duration_ms",
+        "type": "int",
+        "default": 8000,
+        "minimum": 500,
+        "maximum": 120000,
+        "choices": [],
+        "max_length": null,
+        "description": "How long Jarvis speaks in EACH of the two phases. The per-phase prompt deadline is derived from it (plus thirty seconds), so a large value asks a person to hold still for that long, twice. See Issues/self-barge-in-after-seconds-of-speech.md before lowering it: the false-positive claim is duration-sensitive and only becomes interesting after several seconds of continuous speech."
+      },
+      {
+        "name": "echo.candidate_count",
+        "type": "int",
+        "default": 3,
+        "minimum": 0,
+        "maximum": 64,
+        "choices": [],
+        "max_length": null,
+        "description": "Barge-in candidates raised while the human is asked to stay silent. They buy the NEGATIVE half of this run: each is an independent chance for the gate to open on the room's echo. The positive half needs exactly one, raised when the person actually speaks. Three rather than the seven voice.self_echo declares, because a human is holding still throughout and each candidate costs them time."
+      },
+      {
+        "name": "human.interrupt_phrase",
+        "type": "str",
+        "default": "jarvis arrete toi",
+        "minimum": null,
+        "maximum": null,
+        "choices": [],
+        "max_length": 120,
+        "description": "What the human is asked to say to cut Jarvis off."
+      },
+      {
+        "name": "device.input",
+        "type": "str",
+        "default": "",
+        "minimum": null,
+        "maximum": null,
+        "choices": [],
+        "max_length": 120,
+        "description": "Microphone id or name; empty means the workstation's configured device."
+      },
+      {
+        "name": "device.output",
+        "type": "str",
+        "default": "",
+        "minimum": null,
+        "maximum": null,
+        "choices": [],
+        "max_length": 120,
+        "description": "Output id or name; empty means the workstation's configured device."
+      }
+    ],
+    "metrics": [
+      {
+        "name": "barge_in.true_confirmed_count",
+        "unit": "count",
+        "direction": "higher_better",
+        "description": "Barge-ins confirmed while a real human was asked to interrupt."
+      },
+      {
+        "name": "barge_in.false_confirmed_count",
+        "unit": "count",
+        "direction": "lower_better",
+        "description": "Barge-ins confirmed while the human was asked to stay silent."
+      },
+      {
+        "name": "barge_in.rejected_count",
+        "unit": "count",
+        "direction": "neutral",
+        "description": "Candidates the owner decision rejected across both phases."
+      },
+      {
+        "name": "barge_in.first_candidate_offset_ms",
+        "unit": "ms",
+        "direction": "neutral",
+        "description": "Output already played when the first barge-in candidate was raised. The echo canceller keeps a 400 ms pre-roll, so a candidate before that would measure its convergence, not the gate."
+      },
+      {
+        "name": "guided.prompt_count",
+        "unit": "count",
+        "direction": "neutral",
+        "description": "Instructions addressed to the human during the run."
+      },
+      {
+        "name": "guided.late_prompt_count",
+        "unit": "count",
+        "direction": "lower_better",
+        "description": "Instructions the human acknowledged after their deadline."
+      },
+      {
+        "name": "output.played_ms",
+        "unit": "ms",
+        "direction": "neutral",
+        "description": "Audio actually played across both phases."
+      }
+    ],
+    "assertions": [
+      {
+        "assertion_id": "real_voice_interrupts",
+        "metric": "barge_in.true_confirmed_count",
+        "comparator": "ge",
+        "threshold": 1,
+        "blocking": true,
+        "description": "A real human voice gets through the echo gate. Blocking, and this is the whole point of the diagnostic: a gate that never opens satisfies voice.self_echo perfectly while being completely broken."
+      },
+      {
+        "assertion_id": "no_false_barge_in",
+        "metric": "barge_in.false_confirmed_count",
+        "comparator": "eq",
+        "threshold": 0,
+        "blocking": true,
+        "description": "And it stays closed for Jarvis's own voice in the same room, in the same run."
+      }
+    ],
+    "score": {
+      "method": "none",
+      "components": []
+    }
+  },
+  "override_allowlist": [],
+  "scenario": null
+}

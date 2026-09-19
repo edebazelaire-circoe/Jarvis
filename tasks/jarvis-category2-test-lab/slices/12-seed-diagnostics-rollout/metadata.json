@@ -1,0 +1,14 @@
+{
+  "slice_id": "12",
+  "task_type": null,
+  "work_intent": "seed diagnostics, end-to-end rollout, docs, and retention",
+  "dependencies": [
+    "06-virtual-profile-harness",
+    "07-metrics-scoring-sweeps",
+    "08-audio-live-profiles",
+    "09-hardware-guided",
+    "10-control-center-api-cli",
+    "11-control-center-ui"
+  ],
+  "task_type_blocker": "Resolve against the current Workspace Task Type vocabulary before dispatch; do not invent a type."
+}

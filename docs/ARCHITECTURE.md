@@ -3231,6 +3231,114 @@ clock; no measure crosses the Core/Voice boundary. `LatencyTracker` builds its
 own message from the measure name, so a caller cannot smuggle transcript content
 into it.
 
+## Category 2 Test Lab
+
+Targeted, opt-in diagnosis after an observed failure, separate from normal CI and
+from `RuntimeJournal`. The domain contracts are in `jarvis/testlab/` (pure: no
+I/O, no clock, no provider import): `DiagnosticSpec` with its profiles
+(`virtual`, `audio`, `live`, `hardware:auto`, `hardware:guided`), parameters,
+metrics, blocking assertions and score declaration; the mechanical capability and
+cost permission check; safe declarative `Scenario` steps of registered
+primitives; and the `TestRun` record with its state machine, joined to
+conversation traces through the Conversation Events `TRACE_JOIN_FIELDS`. Contract:
+[Category 2 Test Lab](testlab.md). Runs persist through a filesystem store meant to be rooted at
+`<runtime>/testlab/` (one directory per run, atomic writes, per-run writer lock and
+compare-and-swap, bounded opt-in audio, retention planner), never in
+`data/state/jarvis.sqlite3`. A real session enters the Test Lab as a
+`DiagnosticBundle` (`jarvis.testlab.bundle`): a versioned document built mechanically from
+Conversation Events and bounded, redacted `RuntimeJournal` lines (turns, speech delivery,
+playback, barge-in, provider events, latency joins, deterministic anomaly rules), with
+provenance on every item and explicit source coverage, stored under `<root>/bundles/`.
+Official diagnostics are declarative manifests under `jarvis/testlab/official/`, locked by
+`catalog.lock.json` (editing a published version without bumping it fails the catalog test).
+Their profiles name an implementation registered in code — never an import path from data — and a
+profile whose runner is not written yet is declared `unavailable` with a reason. Scenario steps
+come from a closed registered vocabulary that is a superset of the `jarvis.voice_replay` action
+DSL (now in `jarvis/testlab/replay.py`, with `tests/replay/voice_replay.py` as a thin layer over
+it), and an ad-hoc scenario becomes an official version through a pure promotion function whose
+output a human reviews and publishes. Every run executes in a supervised worker process, never in
+the Control Center: `RunSupervisor` persists the queued record before it returns a run id, reserves
+the capabilities the profile declares so two runs never contend for the provider, a device or the
+human, and bounds the run with a startup, heartbeat, duration and cancel-grace deadline before
+killing the whole process tree (Windows Job Object, POSIX process group). The worker gets a per-run
+scratch directory as its `JARVIS_RUNTIME_DIR` / `JARVIS_DATA_ROOT` with a copy of the settings, so
+the permanent `runtime/control-center-settings.json` is never written; it reports measurements only,
+and the supervisor derives the verdict and re-checks it against the declaration before storing.
+A supervisor that died leaves no run `running`: the next start reaps or recovers them from the
+worker lock and the result file, and schedules the store upkeep. The first execution profile is
+`virtual` (`jarvis/testlab/virtual/`): the production voice path — Core, the local protocol, the
+brain orchestrator, the speech scheduler, the voice runtime and the Realtime bridge — mounted in
+memory with five named doubles (Realtime session, audio streams, brain backend, duplex echo guard,
+wake word). It is the async conversation harness moved into the product, so
+`tests/integration/async_conversation_harness.py` and `tests/fakes/audio_device.py` are re-exports
+and their tests keep passing unchanged. A virtual run writes the live runtime's own `trace.jsonl`
+with a `session_id` derived from the run id, stores it as evidence, and a `DiagnosticBundle`
+captured over it segments into exactly one voice session. Its waits are conditions bounded by the
+run's remaining time, never a wall clock, so a cancel or a deadline ends a run cooperatively, and no
+part of the profile reads a clock to decide anything. A seed refuses to certify silence: a stimulus
+the stack never answers, or a latency join that never happened, ends the run inconclusive or failed
+rather than passing on absent evidence. On top of that, a terminal run is READ through a derived
+outcome — `passed`, `failed`, `inconclusive` ("could not measure"), `refused`, `crashed`,
+`cancelled` — computed from its status and its stable failure code, with no new status invented and
+no prose to parse; the supervisor computes the declared `weighted_mean` score from the metrics,
+which never changes a verdict; two runs of the same declaration, version, fingerprint and profile
+compare as per-metric deltas with direction awareness, everything else being listed as explicitly
+incomparable; and a parameter sweep fans isolated runs out over declared values under one sweep id,
+tolerating a failing point, cancellable as a whole, persisted as a replayable record plus a summary
+artifact — and it never writes a winning value into permanent settings, because the sweep reports
+and the human decides. Two more profiles now exist. The `audio` profile
+(`jarvis/testlab/audio/`) is the virtual stack with the REAL duplex capture, the real WebRTC echo
+canceller and the real near-end detector put back, driven by a synthetic fixture injected through
+the production capture callback instead of a microphone: it opens no device and calls no provider,
+and it proves the one acoustic claim the virtual profile cannot — the gate stays closed on Jarvis's
+own echo and opens for a real near-end voice. The `live` profile (`jarvis/testlab/live/`) is the
+same chain with a REAL provider session, behind four mechanical gates (capability, declared budget,
+an explicit `JARVIS_TESTLAB_LIVE=1` opt-in checked in the supervisor's reservation path, and an API
+key in the worker), folding the provider's own `voice.realtime.usage` lines into a mid-run cost
+budget that aborts the session the moment the estimate crosses; it has never been run against a
+real provider. Before an audio DEVICE is ever reserved, the supervisor reads the live runtime's own
+voice heartbeat and state files and refuses unless they positively say the workstation Jarvis is
+not using them (READINESS B9) — fail-closed, so "unknown" refuses too, and a run that loses the
+devices mid-flight is stopped as inconclusive rather than sharing a microphone with a live
+conversation. The two `hardware` profiles (`jarvis/testlab/hardware/`) are the `audio` profile
+with the product's own `SoundDeviceRealtimeAudio` put back, so the microphone, the speaker and the
+room are real; `hardware:guided` adds the human as an explicit scenario actor through a prompt file
+channel, and every device failure reads `inconclusive`, never a product verdict.
+
+All of it is composed and exposed in one place. `jarvis/testlab/composition.py` builds the whole
+subsystem from `V2Settings` / `JARVIS_RUNTIME_DIR` — one shared run store, the sweep and bundle
+stores, the catalog, the supervisor with its work root and contention detector, and the retention
+policy — under `<runtime>/testlab/`, creating nothing until first use. `jarvis/testlab/api.py` is
+the one facade above it, and the CLI (`python -m jarvis.testlab`, human-readable or `--json`, with
+exit codes that tell `passed` from `failed`, `inconclusive`, `refused`, `crashed` and `cancelled`)
+and the Control Center routes under `/api/testlab` both call it, so the three surfaces cannot
+disagree. The routes live in `jarvis/testlab/http.py` and are registered by one call from
+`ControlCenter.__init__`; `/api/testlab` is a read-guarded prefix, submitting a run or a sweep
+answers at once with its id, and progress is a poll or a bounded long poll. A capability is granted
+only by the process environment (`JARVIS_TESTLAB_LIVE`, `JARVIS_TESTLAB_HARDWARE`,
+`JARVIS_TESTLAB_GUIDED`, `JARVIS_TESTLAB_MAX_COST_USD`): a caller may narrow that grant and can
+never widen it, and every other gate stays inside the supervisor. A guided run is presented on a
+terminal with the prompt, its deadline and a live countdown taken from the worker's own clock,
+because a step with no visible countdown is indistinguishable from a frozen run.
+
+Five diagnostics are published, and the rollout is deliberate. Four are the seeds every
+profile chain was built on (`voice.self_echo`, `speech.payload_integrity`,
+`speech.stale_supersession`, `voice.queue_latency`); the fifth,
+`voice.barge_in_response`, is `hardware:guided` only and makes the one claim a machine
+cannot — that a real human voice gets through the echo gate — because a gate that never
+opens satisfies `voice.self_echo` perfectly while being completely broken. A run's own
+`trace.jsonl` now normalizes into a `DiagnosticBundle` with exactly the shape a real
+session's does, and the run references it (`attach_bundle`, the one field of a terminal
+record the store will write), so the incident and its reproduction are read the same way.
+Retention bounds all three stores: `runs/` as before, and `sweeps/` and `bundles/` with
+their own counts and byte budgets, never deleting a running sweep, a corrupt entry, or an
+entry a stored run still points at. **Category 2 never enters a release run**:
+`scripts/verify_release.py` is unchanged and sets no switch, every expensive path is behind
+a process-environment opt-in the default suite leaves unset, and
+`tests/unit/test_testlab_rollout_gate.py` asserts that — the ambient grant is empty, only
+the free profiles are reachable, every test that reads a switch is skipped without it, and
+importing the Test Lab loads no `sounddevice` and no provider client.
+
 ## Sub-agent routing
 
 The brain is a CLI process (`claude -p --input-format stream-json`). It spawns
