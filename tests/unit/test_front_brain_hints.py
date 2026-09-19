@@ -256,10 +256,14 @@ def test_advisory_consumer_has_no_mutation_or_execution_capability(tmp_path):
                                       FrontBrainHintValue(action, "PRIVATE_HYPOTHESIS", 1, 1, True, SpeechPriority.IMMEDIATE), 10)
         assert consume(consumer, expected, result).value.suggested_action is action
         assert expected.input == original and not original.committed
-        # A confident PREAMBLE does not create Task06's missing work evidence.
-        decision = decide_reflex(text="Question utile", enabled=True, admitted=True, user_speaking=False,
-                                 useful_ready=False, work_confirmed=False, work_terminal=False,
-                                 noticeable_wait=True, already_used=False, stale=False)
+        # A confident PREAMBLE does not shorten Task06's own deadline, nor create
+        # the work evidence the rollback gate asks for.
+        arguments = dict(text="Question utile", enabled=True, admitted=True, user_speaking=False,
+                         useful_ready=False, work_confirmed=False, work_terminal=False,
+                         already_used=False, stale=False)
+        decision = decide_reflex(**arguments, noticeable_wait=False)
+        assert decision.action is ReflexAction.WAIT and decision.reason == "answer_may_arrive_quickly"
+        decision = decide_reflex(**arguments, noticeable_wait=True, require_work=True)
         assert decision.action is ReflexAction.WAIT and decision.reason == "work_unconfirmed"
     rows = read_jsonl_tail(journal.trace_path)
     assert [row["kind"] for row in rows] == ["voice.hint.expected", "voice.hint.consumed"] * 2

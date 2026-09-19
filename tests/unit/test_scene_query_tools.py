@@ -240,7 +240,7 @@ async def test_get_returns_everything_an_artifact_carries_and_its_star(core, too
         {"label": "Banque", "url": "https://banque.example@evil.example/login", "link": False, "host": None},
         {"label": "Note sans lien", "ref": "r1"},
     ]
-    assert (detail["kind"], detail["category"], detail["origin"], detail["representation"]) == ("artifact", "research", "brain", "capsule")
+    assert (detail["kind"], detail["category"], detail["origin"], detail["representation"]) == ("artifact", "research", "brain", "point")
     assert detail["geometry"] == [0, 0, 40, 20] and detail["layer"] == 120 and detail["order"] == 0
     assert detail["constraints"] == {"placed_by": "brain", "pinned_by_user": False}
     assert detail["work_ref"] is None and detail["exec_state"] == "unknown" and detail["visibility"] == "visible"
@@ -376,7 +376,9 @@ async def test_the_catalog_adds_two_read_tools_counted_as_display_work():
     server = build_server(DisplayMcpTarget("127.0.0.1", 1, Path("absent.token")))
     names = tuple(tool.name for tool in await server.list_tools())
     # Slice 09, partie 2 : `scene_capture` s'ajoute, lecture seule aussi.
-    assert names == TOOL_NAMES and len(TOOL_NAMES) == 10
+    # Slice 13 : `scene_update_many`, seul outil de lot (le reste est un argument
+    # de plus sur les outils qui existaient).
+    assert names == TOOL_NAMES and len(TOOL_NAMES) == 11
     assert READ_TOOL_NAMES == ("scene_inspect", "scene_query", "scene_get", "scene_capture")
     for name in ("scene_query", "scene_get"):
         assert f"mcp__jarvis-display__{name}" in claude_local.DISPLAY_TOOLS

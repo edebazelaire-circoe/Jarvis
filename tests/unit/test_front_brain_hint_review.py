@@ -234,10 +234,12 @@ def test_action_advice_neither_attests_work_nor_executes_or_commits(action):
     assert decision.value == advice
     assert consumer._expected == original and not original.input.committed
     assert original.origin_source is None
-    # Independent Task06 authority still sees no confirmed work.
-    actual = decide_reflex(text="Compare the prices", enabled=True, admitted=True, user_speaking=False,
-        useful_ready=False, work_confirmed=False, work_terminal=False, noticeable_wait=True,
-        already_used=False, stale=False)
+    # Independent Task06 authority keeps its own deadline and its own controls:
+    # a suggested PREAMBLE neither shortens the wait nor attests any work.
+    arguments = dict(text="Compare the prices", enabled=True, admitted=True, user_speaking=False,
+        useful_ready=False, work_confirmed=False, work_terminal=False, already_used=False, stale=False)
+    assert decide_reflex(**arguments, noticeable_wait=False).reason == "answer_may_arrive_quickly"
+    actual = decide_reflex(**arguments, noticeable_wait=True, require_work=True)
     assert actual.action is ReflexAction.WAIT and actual.reason == "work_unconfirmed"
     assert list(inspect.signature(FrontBrainHintConsumer).parameters) == ["diagnostics"]
     assert not any(hasattr(consumer, name) for name in ("submit_turn", "submit_job", "speak", "call_tool", "commit"))

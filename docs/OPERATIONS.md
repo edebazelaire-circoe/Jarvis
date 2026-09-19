@@ -383,6 +383,9 @@ Main environment overrides:
 | `JARVIS_VOICE_TURN_MODE` | `auto` (server VAD, default) or `manual` (second key press) |
 | `JARVIS_VOICE_STACK` | `openai_realtime` (default) or `gemini_live` |
 | `JARVIS_VOICE_ARCH` | `legacy` (default, computed) or `continuous_brain`; see "Deux architectures vocales" below. The **Architecture** choice of the Control Center (tab Mode vocal) takes precedence; this variable only applies while that choice is left on "Par défaut" |
+| `JARVIS_REFLEX_ENABLED` | cerveau réflexe du mode continu : `1` (défaut) ou `0`. La case **Cerveau réflexe (mode continu)** des réglages Voice passe devant ; la variable ne s'applique que tant que cette case n'a jamais été enregistrée |
+| `JARVIS_REFLEX_DELAY_MS` | silence toléré avant que le réflexe parle ; défaut 1200. `0` = jamais. Le champ **Délai avant accusé de réception** du Control Center passe devant |
+| `JARVIS_REFLEX_REQUIRE_WORK` | retour arrière : `1` n'autorise le réflexe que si Core a publié un `brain.work.started` corrélé. Défaut `0` depuis la remise en route du 18 septembre 2026 — cette exigence rendait le réflexe muet dès que le cerveau répondait sans déclarer de travail de fond |
 | `JARVIS_ACTIVE_TIMEOUT_S` | useful-inactivity timeout of an ACTIVE voice session; default 90. `0` = jamais : seule la touche de réveil (F9) ou « Jarvis mute » met fin à la conversation. Toute autre valeur doit être >= 5. Le champ « Délai d'inactivité » des réglages du Control Center passe devant |
 | `JARVIS_AGENT_CLI` | `claude` (default) or `codex` |
 | `JARVIS_CLAUDE_MODEL` | model passed to `claude --model`; empty means the CLI default |
@@ -1056,6 +1059,7 @@ Vérifier dans `runtime/trace.jsonl` (niveau info sauf mention) :
 | --- | --- |
 | `core.scene.projection_reconciled` | la projection a relu tout l'état de travail : au démarrage (`reason: start`), après des événements perdus (`revision_gap`), après une réinitialisation du travail (`store_changed`) ou au retour de la scène (`scene_unavailable`) |
 | `core.scene.star_created` | une étoile est née (`object_id`, `kind`, `source`, `status`) |
+| `core.scene.star_finished` | une étoile a fini (`object_id`, `source`, `status`) : à l'écran, anneau vert et coche pour une fin normale, rouge et croix pour un échec ; une seule ligne par étoile, rien d'autre ne bouge |
 | `core.scene.signal_raised` / `core.scene.signal_retired` | un signal posé / retiré |
 | `core.scene.projection_unavailable` (avertissement, une fois par panne) | la scène ne répond pas (fichier refusé au démarrage, écriture en échec) : le travail continue, la projection réessaie jusqu'à 30 s d'intervalle |
 | `core.scene.projection_restored` | la scène répond de nouveau ; `suppressed` compte les tentatives manquées ; la projection a tout réconcilié |
@@ -1491,13 +1495,52 @@ et le cerveau la connaît (« haut gauche ≈ x −150, y −70 »).
 
 **Placement automatique.** Un objet sans position (étoile d'un nouveau
 sous-agent, note créée sans géométrie par le cerveau) est placé par la page :
-les étoiles à gauche du visage, un enfant près de son parent, un signal contre
-son étoile, les résultats à droite. La page **enregistre ce placement une seule
+les étoiles **autour du visage**, en couronne (la première en haut, puis à
+droite, en bas, à gauche, et ainsi de suite : le ciel se remplit de partout, pas
+d'un seul côté), un enfant près de son parent, un signal contre son étoile, les
+résultats à droite. La page **enregistre ce placement une seule
 fois dans Core** (commande `set_geometry`, `placed_by = resolver`, journalisée
 `scene.command`) : après un rechargement, dans un autre onglet ou après un
 redémarrage, la disposition est identique. Un objet placé par le cerveau ou par
 vous, ou épinglé, n'est jamais déplacé par la page. Avec plusieurs onglets
 ouverts, un seul à la fois (un onglet visible) enregistre les placements.
+
+**Affichage des étoiles** (petit bouton en forme d'étoile, en bas à droite de
+l'écran, dès que la scène est allumée). Il ouvre une fenêtre qui règle *comment*
+la constellation se montre ; chaque changement se voit tout de suite et reste
+enregistré dans ce navigateur.
+
+| Réglage | Ce qu'il change |
+| --- | --- |
+| `Taille des étoiles` | le cœur lumineux, sa lueur et les anneaux d'état (0,6 × à 2,4 ×). La zone sensible au clic ne change pas : une étoile minuscule reste aussi facile à attraper |
+| `Halo` | le voile large autour de l'étoile (0 × = plus de halo du tout) |
+| `Halo qui respire` | éteint, le halo garde une seule intensité |
+| `Gravitation` | éteinte, les étoiles sont parfaitement immobiles (aucune animation ne tourne) |
+| `Ampleur de l'orbite` | la taille de l'ellipse parcourue (0,3 × à 2,5 ×). À 1 ×, d'une dizaine de pixels à 38 px selon l'éloignement du centre. Elle reste bornée par la place libre : une étoile ne sort jamais de la zone sûre |
+| `Vitesse de l'orbite` | 0,25 × à 4 × ; un tour dure 26 s à 1 ×, la même durée pour toutes les étoiles — une étoile et son signal ne se séparent donc jamais |
+| `Fils entre les objets` | masque ou montre les traits qui relient une étoile à son parent, à son signal, à ses résultats |
+
+Seules les **étoiles** (les points) gravitent : une capsule ou une fenêtre reste
+fixe. Un objet **épinglé gravite comme les autres** — l'épingle protège sa place
+(ni le résolveur ni le cerveau ne la changent), pas son dessin, et la dérive
+n'écrit jamais rien. Comme tout déplacement à la main épingle l'objet, une scène
+rangée par vous serait sinon entièrement immobile (retour utilisateur du
+18/09/2026). Si Windows a les effets d'animation désactivés
+(`prefers-reduced-motion`), la gravitation et la respiration du halo ne tournent
+pas, quel que soit le réglage : c'est voulu.
+
+« Réinitialiser » revient aux valeurs livrées (tout à 1 ×, tout allumé) et ne
+s'allume que si quelque chose a été changé. Un réglage sans effet (l'ampleur de
+l'orbite quand la gravitation est éteinte) est grisé mais garde sa valeur.
+Échap ou un clic ailleurs ferme la fenêtre.
+
+Ce sont des préférences **de ce navigateur** : rien n'est envoyé à Core. Ni la
+scène enregistrée, ni les positions, ni ce que voit le cerveau (`scene_capture`
+dessine toujours les tailles de référence) ne changent — deux écrans de la même
+scène montrent les mêmes objets aux mêmes places. Les autres fenêtres du même
+navigateur suivent le réglage aussitôt. En navigation privée, ou si le site n'a
+pas le droit d'enregistrer, les réglages fonctionnent mais repartent des valeurs
+livrées à chaque ouverture (`[scène] scene.view_not_saved` en console).
 
 **Indicateur discret** (en bas à gauche, sur la ligne de l'indication vocale ;
 au-dessus du badge Barehands quand il est affiché). Le compteur (durée, prochain
@@ -1675,7 +1718,10 @@ peut en choisir une autre ; elle prend alors une couleur stable tirée de son no
 
 **Lire un artefact.**
 
-- En capsule (forme par défaut) : sa catégorie puis son titre, près de l'étoile.
+- En point (forme par défaut) : une étoile de la couleur de sa catégorie, près
+  de l'étoile qu'il explique ; son titre au survol.
+- En capsule (menu de l'objet → « Afficher en capsule ») : sa catégorie puis son
+  titre, près de l'étoile.
 - En fenêtre (menu de l'objet → « Afficher en fenêtre », ou « montre-moi le
   résultat de la recherche » au cerveau) : catégorie et nombre d'entrées, titre,
   un bouton qui ramène à l'étoile expliquée (titre et état du sous-agent), le
@@ -1772,6 +1818,32 @@ fournisseur ensuite, et le tour suivant porte simplement
 annuler. `Jarvis Mute` arrête la voix, jamais le travail de Core, et ne réveille
 jamais la voix pour prononcer un résultat que vous avez coupé.
 
+### Le cerveau réflexe : faire patienter pendant que le cerveau réfléchit
+
+En mode continu, la surface prononce au plus **une** phrase courte par tour
+(« Je regarde ça. ») quand le cerveau n'a toujours rien dit au bout du délai
+d'accusé. Le déclencheur est le silence, pas une déclaration de travail : le
+cerveau répond le plus souvent lui-même, sans tâche de fond, et exiger un
+`brain.work.started` corrélé l'a laissé muet du 13 au 18 septembre 2026
+(51 décisions `work_unconfirmed` dans `runtime/trace.jsonl`, aucun réflexe
+prononcé).
+
+Ce qui l'empêche de parler à contretemps n'a pas changé : une réponse du cerveau
+déjà prête annule le préambule avant qu'il ne commence à jouer
+(`useful_content_ready`), un travail déjà terminé le retient (`work_terminal`),
+un seul par tour (`already_used`), rien avant l'échéance
+(`answer_may_arrive_quickly`), rien pendant que l'utilisateur parle, et rien sur
+un simple « OK », une correction ou un « attends je réfléchis ». Chaque décision
+est journalisée en `voice.reflex.decided` (action, `reason`, `phase`).
+
+Trois réglages, dans cet ordre de précédence : le Control Center (onglet
+**Mode vocal**, section Conversation : la case **Cerveau réflexe (mode continu)**
+et le champ **Délai avant accusé de réception**), puis `JARVIS_REFLEX_ENABLED`
+et `JARVIS_REFLEX_DELAY_MS`, puis les défauts (activé, 1200 ms). Un délai de `0`
+ou la case décochée rendent le silence complet. `JARVIS_REFLEX_REQUIRE_WORK=1`
+restaure l'ancienne porte. Le mode `legacy` n'a pas de réflexe : il reçoit
+toujours un délai nul.
+
 ### Basculer, et revenir
 
 Le plus simple : onglet **Mode vocal** du Control Center, champ
@@ -1862,7 +1934,12 @@ Quatre points, à ne jamais présenter comme acquis :
    d'écho (`jarvis/audio/duplex.py`, rapport `docs/fixes/voice-duplex/`), dont
    les marges ne sont validées qu'en simulation. Sur poste, le journal dit quel
    mode tourne (`voice.duplex`) et trace chaque décision de barge-in et chaque
-   transcript écarté. `legacy` reste le repli half-duplex.
+   transcript écarté. Depuis le 18 septembre 2026, `voice.barge_in_pending`,
+   `voice.barge_in_confirming`, `voice.barge_in_rejected` et `voice.echo_learned`
+   portent les niveaux du détecteur (`near_mic_db`, `near_ref_env_db`,
+   `near_floor_db`, `near_coupling_db`, `near_excess_db`, `near_margin_db`,
+   `near_warming_up`) : c'est de là que se lisent les marges réelles d'une pièce,
+   sur haut-parleurs comme au casque. `legacy` reste le repli half-duplex.
 2. **Aucune exécution contre le vrai OpenAI.** Le test de fumée
    `tests/integration/test_live_openai.py` couvre le chemin continu mais reste
    sauté par défaut et n'a pas été lancé.

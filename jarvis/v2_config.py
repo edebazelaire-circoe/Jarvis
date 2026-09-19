@@ -153,6 +153,89 @@ def recommended_realtime_model(voice_arch: VoiceArchitecture) -> str:
     return DEFAULT_REALTIME_MODEL
 
 
+# -- Cerveau réflexe de la surface -----------------------------------------
+#
+# Le réflexe est la phrase courte que la surface prononce quand le cerveau
+# tarde, pour faire patienter. Trois réglages, et un seul endroit qui les lit.
+#
+# Précédence, la même que `voice_arch` : le réglage du Control Center
+# (`voice_stack_settings.openai_realtime.*`) passe devant, la variable
+# d'environnement n'est qu'un défaut de secours, et la constante ci-dessous
+# ferme la marche. Un réglage jamais enregistré vaut « non posé », pas « faux » :
+# c'est ce qui laisse le `.env` décider tant que l'interface n'a rien imposé.
+REFLEX_ENABLED_SETTING = "reflex_enabled"
+REFLEX_DELAY_SETTING = "ack_delay_ms"
+REFLEX_ENABLED_ENV = "JARVIS_REFLEX_ENABLED"
+REFLEX_DELAY_ENV = "JARVIS_REFLEX_DELAY_MS"
+REFLEX_REQUIRE_WORK_ENV = "JARVIS_REFLEX_REQUIRE_WORK"
+
+# Valeur historique du Control Center, conservée comme défaut : au-delà d'une
+# seconde deux dixièmes sans un mot, l'attente s'entend.
+DEFAULT_REFLEX_DELAY_MS = 1200
+
+_TRUE_WORDS = frozenset({"1", "true", "yes", "on", "oui", "vrai"})
+_FALSE_WORDS = frozenset({"0", "false", "no", "off", "non", "faux"})
+
+
+def _parse_bool(raw: object, *, name: str) -> bool:
+    if isinstance(raw, bool):
+        return raw
+    normalized = str(raw).strip().lower()
+    if normalized in _TRUE_WORDS:
+        return True
+    if normalized in _FALSE_WORDS:
+        return False
+    raise ConfigurationError(f"{name} must be a boolean")
+
+
+def _bool_env(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    return _parse_bool(raw, name=name)
+
+
+def reflex_enabled(stored: object = None) -> bool:
+    """Le cerveau réflexe doit-il parler ? Réglage, puis variable, puis oui."""
+
+    if stored is None or (isinstance(stored, str) and not stored.strip()):
+        return _bool_env(REFLEX_ENABLED_ENV, True)
+    return _parse_bool(stored, name=REFLEX_ENABLED_SETTING)
+
+
+def reflex_delay_s(stored: object = None) -> float:
+    """Silence toléré avant que le réflexe parle, en secondes. 0 = jamais."""
+
+    if stored is None or (isinstance(stored, str) and not stored.strip()):
+        raw: object = os.getenv(REFLEX_DELAY_ENV)
+        name = REFLEX_DELAY_ENV
+        if raw is None or not str(raw).strip():
+            raw, name = DEFAULT_REFLEX_DELAY_MS, "DEFAULT_REFLEX_DELAY_MS"
+    else:
+        raw, name = stored, REFLEX_DELAY_SETTING
+    if isinstance(raw, bool):
+        raise ConfigurationError(f"{name} must be a number of milliseconds")
+    try:
+        value = float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError) as exc:
+        raise ConfigurationError(f"{name} must be a number of milliseconds") from exc
+    if not math.isfinite(value) or value < 0:
+        raise ConfigurationError(f"{name} must be a positive number of milliseconds")
+    return value / 1000.0
+
+
+def reflex_requires_confirmed_work() -> bool:
+    """Retour arrière : n'autoriser le réflexe qu'avec un travail attesté.
+
+    C'était la porte de `f0aec10`, et la cause du silence depuis le 13 septembre
+    2026 : le cerveau répond le plus souvent sans déclarer de travail de fond,
+    le candidat expirait donc sans un mot. Elle reste accessible par
+    `JARVIS_REFLEX_REQUIRE_WORK=1` pour revenir en arrière sans redéployer.
+    """
+
+    return _bool_env(REFLEX_REQUIRE_WORK_ENV, False)
+
+
 # Plancher d'un délai d'activité utile non nul. En dessous, une simple pause
 # pour réfléchir suffirait à renvoyer la session au fond.
 MIN_ACTIVE_TIMEOUT_S = 5.0

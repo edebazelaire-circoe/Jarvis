@@ -35,14 +35,15 @@ class DeviceStream:
         self.writes.append(block)
 
 
-async def rig(pipeline):
+async def rig(pipeline, *, declared_work=True):
     facade, wire, client, conversation, events, history = pipeline
     scheduler = SpeechScheduler(core=EmptyCore(), conversation_id=conversation, session=facade,
                                 journal=RecordingJournal(), reflex_delay_s=.01)
     scheduler.update_speech_context(context(conversation, "request"))
     scheduler._running = True
-    await scheduler.handle_core_event(ProtocolEnvelope(message_type="brain.work.started", payload={
-        "conversation_id": conversation, "correlation_id": "request", "work_id": "work"}))
+    if declared_work:
+        await scheduler.handle_core_event(ProtocolEnvelope(message_type="brain.work.started", payload={
+            "conversation_id": conversation, "correlation_id": "request", "work_id": "work"}))
     audio = SoundDeviceRealtimeAudio()
     audio._output = DeviceStream()
     bridge = RealtimeConversationBridge(core=client, session=facade, conversation_id=conversation, audio=audio,
@@ -216,3 +217,52 @@ async def test_blocked_exact_cancel_does_not_block_reader_or_cancel_new_response
     finally:
         cancel_release.set()
         await scheduler.stop()
+
+
+async def test_a_silent_brain_reaches_the_speaker_without_any_declared_work(pipeline):
+    """Le chemin complet, decide -> emis -> joue, sans `brain.work.started`.
+
+    Ce que ce test prouve, et qu'un test de politique ne peut pas prouver : la
+    decision PREAMBLE traverse la facade, le frontend canonique et l'unique
+    lecteur de fil jusqu'a un `response.create` audio, puis le PCM rendu est
+    reellement ecrit sur le peripherique. Le reflexe avait deja ete decide sans
+    jamais etre emis ; c'est cette moitie-la du chemin que l'on verrouille ici.
+    """
+    facade, wire, client, conversation, events, _ = pipeline
+    scheduler, audio, bridge = await rig(pipeline, declared_work=False)
+    request(scheduler)
+
+    await scheduler._maybe_speak_reflex()
+
+    output = scheduler._live_reflex.output_id
+    created = [item for item in wire.sent if item["type"] == "response.create"]
+    assert len(created) == 1, "un seul preambule, et il part vraiment sur le fil"
+    assert created[0]["response"]["output_modalities"] == ["audio"]
+    assert created[0]["response"]["metadata"][OUTPUT_ID_METADATA_KEY] == output
+    assert scheduler._reflex_decisions["request"].reason == "brain_silent_wait"
+
+    emit_response(wire, output)
+    audio_event = await until(events, "realtime.audio")
+    await bridge._play_audio(1, audio_event)
+
+    assert audio._output.writes, "le preambule doit atteindre le peripherique de sortie"
+    assert scheduler.output_admission(output).state is OutputAdmissionState.WRITTEN
+    assert not any(item["type"] == "response.cancel" for item in wire.sent)
+    await scheduler.stop()
+
+
+async def test_an_undeclared_preamble_is_still_dropped_when_the_answer_is_ready(pipeline):
+    """Relacher la porte ne doit pas laisser le reflexe doubler le cerveau."""
+    facade, wire, client, conversation, events, _ = pipeline
+    scheduler, audio, bridge = await rig(pipeline, declared_work=False)
+    scheduler._enqueue(SpeechRequest(conversation, "La reponse du cerveau", correlation_id="request",
+                                     source=source("request")))
+    scheduler.request_reflex("Peux-tu comparer les prix entre les deux architectures ?", correlation_id="request")
+
+    assert scheduler._reflex is None
+
+    await scheduler._maybe_speak_reflex()
+
+    assert not any(item["type"] == "response.create" for item in wire.sent)
+    assert audio._output.writes == []
+    await scheduler.stop()

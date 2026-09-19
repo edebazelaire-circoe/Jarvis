@@ -195,6 +195,52 @@ async def test_close_still_reports_real_output_abort_failures():
     assert stream.closed is True
 
 
+async def test_a_second_barge_in_tolerates_the_output_stopped_by_the_first():
+    """Crash du 18 septembre : deux coupures sans une seule écriture entre elles.
+
+    La première laisse le flux arrêté mais possédé, la sortie suivante ouverte
+    n'a encore rien écrit (le `start()` est paresseux), et l'abort de la seconde
+    tombait sur `paStreamIsStopped` — remonté jusqu'à la sortie du processus.
+    """
+
+    class CountingStream(FakeOutputStream):
+        aborts = 0
+
+        def abort(self, *, ignore_errors=True) -> None:
+            self.aborts += 1
+            super().abort()
+
+    audio = SoundDeviceRealtimeAudio()
+    stream = CountingStream()
+    audio._output = stream
+
+    assert await audio.stop_output() is True
+    assert await audio.stop_output() is True
+
+    assert stream.aborts == 1, "le second arrêt a redemandé un abort au flux déjà arrêté"
+    # La sortie reste utilisable : la prochaine écriture redémarre le flux.
+    await audio.play_b64(pcm_b64(1))
+    assert len(stream.writes) == 1
+
+
+async def test_a_refused_stop_degrades_instead_of_killing_the_voice_session():
+    """Le pilote refuse l'arrêt : sortie indisponible, nettoyage en attente, pas d'exception."""
+
+    class PortAudioError(Exception):
+        pass
+
+    class BrokenStream(FakeOutputStream):
+        def abort(self, *, ignore_errors=True) -> None:
+            raise PortAudioError("Error aborting stream: Unanticipated host error [PaErrorCode -9999]", -9999)
+
+    audio = SoundDeviceRealtimeAudio()
+    stream = BrokenStream()
+    audio._output = stream
+
+    assert await audio.stop_output() is False
+    assert audio._output_unavailable is True
+
+
 async def test_input_teardown_waits_for_callbacks_rather_than_aborting():
     """stop() attend les callbacks en vol ; abort() les abandonnerait."""
     audio = SoundDeviceRealtimeAudio()

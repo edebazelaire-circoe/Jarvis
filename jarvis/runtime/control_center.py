@@ -215,6 +215,12 @@ SCENE_CAPTURE_SCRIPT_FILE = "control_center_scene_capture.js"
 #: Route d'envoi des captures : ses refus d'origine ont la forme d'erreur de scène.
 SCENE_CAPTURE_ROUTE_PREFIX = "/api/scene/captures/"
 SCENE_CAPTURE_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_CAPTURE_JS__*/"
+#: Réglages d'affichage de la constellation (Slice 12) : définition des
+#: réglages, normalisation, variables CSS et options de la dérive orbitale
+#: (`window.JarvisSceneView`, logique pure). Le bouton et sa fenêtre vivent dans
+#: le bloc navigateur du rendu, qui le lit : inséré avant lui.
+SCENE_VIEW_SCRIPT_FILE = "control_center_scene_view.js"
+SCENE_VIEW_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_VIEW_JS__*/"
 #: Réglage `scene.enabled` à l'écran (Slice 11) : section de l'onglet
 #: Expérimental (logique pure `window.JarvisSceneSettings` testée par node, puis
 #: son branchement), insérée après Barehands, qui crée cet onglet.
@@ -736,6 +742,9 @@ class ControlCenter:
         )
         html = html.replace(
             SCENE_CAPTURE_SCRIPT_MARKER, page.with_name(SCENE_CAPTURE_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            SCENE_VIEW_SCRIPT_MARKER, page.with_name(SCENE_VIEW_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         html = html.replace(
             SCENE_PAGE_SCRIPT_MARKER, page.with_name(SCENE_PAGE_SCRIPT_FILE).read_text(encoding="utf-8")

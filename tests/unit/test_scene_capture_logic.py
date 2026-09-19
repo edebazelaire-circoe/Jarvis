@@ -26,7 +26,7 @@ CAPTURE_PRELUDE = r"""
 const C=require(PATHS.capture);
 const ID='A'.repeat(32),ID2='B'.repeat(32);
 const palette={background:'#010203',ink:'#eeeeee',muted:'#999999',edge:'#444444',surface:'#101010',warn:'#ffaa00',error:'#ff0000',
-  tones:{agent:'#ffffff',research:'#00ffff',doc:'#00ff00'}};
+  done:'#00cc66',tones:{agent:'#ffffff',research:'#00ffff',doc:'#00ff00'}};
 function fakeCtx(){
   const calls=[];
   const record=name=>(...args)=>calls.push([name,...args]);
@@ -347,3 +347,30 @@ def test_the_page_never_waits_for_a_frame_to_encode_a_capture():
     assert "Capture.encodePng(canvas," in body
     for waiting in ("convertToBlob", "toBlob", "OffscreenCanvas", "requestAnimationFrame", "Worker"):
         assert waiting not in body
+
+
+def test_the_capture_draws_the_finish_marker_like_the_page(tmp_path):
+    """Anneau serré vert pour une fin normale, rouge pour un échec ; rien pour un signal."""
+
+    result = run_node(tmp_path, r"""
+      const base={id:'s',shape:'point',compact:false,kind:'agent',category:'agent',title:'Sous-agent',tone:'agent',stack:1,
+        box:{left:100,top:100,width:16,height:16},cx:108,cy:108,pinned:false,itemCount:0,items:[],summary:'',
+        signal:false,live:false,urgency:'none',restartUnknown:false};
+      const out={};
+      for(const [name,extra] of [['completed',{exec:'completed'}],['failed',{exec:'failed'}],
+          ['running',{exec:'running'}],['cancelled',{exec:'cancelled'}],
+          ['signal',{exec:'failed',signal:true,live:true,urgency:'high'}]]){
+        const plan=C.drawCommands({nodes:[Object.assign({},base,extra)],edges:[]},{width:1280,height:720},palette,L);
+        const rings=plan.commands.filter(c=>c.op==='circle'&&c.r>4).map(c=>[c.r,c.stroke]);
+        out[name]=rings;
+      }
+      return out;
+    """)
+
+    assert result["completed"] == [[7.5, "#00cc66"]]
+    assert result["failed"] == [[7.5, "#ff0000"]]
+    # Inchangé : en cours (anneau large, teinte neutre) et fins sans marque.
+    assert result["running"] == [[9, "#999999"]]
+    assert result["cancelled"] == []
+    # Un signal garde son anneau d'alerte, jamais la marque de fin.
+    assert result["signal"] == [[9, "#ff0000"]]

@@ -67,6 +67,10 @@ MAX_TITLE_CHARS = 160
 MAX_PAYLOAD_SUMMARY_CHARS = 2_000
 MAX_PAYLOAD_ITEMS = 32
 MAX_ITEM_LABEL_CHARS = 160
+#: Étiquette posée à côté d'un objet et reliée à lui par un trait (annotation) :
+#: une ligne très courte, lue d'un coup d'œil. Bornée bien en dessous du titre :
+#: une légende n'est pas un résumé, et le rendu la dessine hors de l'objet.
+MAX_ANNOTATION_CHARS = 60
 MAX_ITEM_REF_CHARS = 256
 MAX_URL_CHARS = 2_048
 #: Taille JSON UTF-8 compacte d'une charge. Refusée au-delà, jamais tronquée.
@@ -477,18 +481,25 @@ class ScenePayloadItem:
 
 @dataclass(frozen=True, slots=True)
 class ScenePayload:
-    """Contenu affichable borné : titre, résumé, entrées (artefacts surtout).
+    """Contenu affichable borné : titre, résumé, entrées (artefacts surtout), annotation.
 
     Titre et libellés : une ligne imprimable. Résumé : plusieurs lignes, sans
     caractère de contrôle C0 autre que `\\n` et `\\t`.
+
+    `annotation` est l'étiquette courte posée **à côté** de l'objet et reliée à
+    lui par un trait : elle appartient à la charge de l'objet annoté, donc elle
+    le suit quand il bouge et disparaît avec lui. Vide : aucune étiquette. Comme
+    le reste de la charge, c'est une donnée d'affichage, jamais une consigne.
     """
 
     title: str = ""
     summary: str = ""
     items: tuple[ScenePayloadItem, ...] = ()
+    annotation: str = ""
 
     def __post_init__(self) -> None:
         check_text("title", self.title, MAX_TITLE_CHARS)
+        check_text("annotation", self.annotation, MAX_ANNOTATION_CHARS)
         _check_multiline_text("summary", self.summary, MAX_PAYLOAD_SUMMARY_CHARS)
         if not isinstance(self.items, tuple) or not all(isinstance(item, ScenePayloadItem) for item in self.items):
             raise TypeError("items must be a tuple of ScenePayloadItem")
@@ -499,16 +510,25 @@ class ScenePayload:
             raise ValueError(f"payload exceeds {MAX_PAYLOAD_BYTES} bytes ({size})")
 
     def to_payload(self) -> dict[str, Any]:
-        return {"title": self.title, "summary": self.summary, "items": [item.to_payload() for item in self.items]}
+        wire: dict[str, Any] = {"title": self.title, "summary": self.summary,
+                                "items": [item.to_payload() for item in self.items]}
+        # Clé émise seulement quand une étiquette existe : la forme du fil ne
+        # change pas pour les scènes qui n'en portent aucune (lecteurs plus
+        # anciens, instantanés déjà écrits), et `from_payload` la tient pour
+        # facultative dans les deux sens.
+        if self.annotation:
+            wire["annotation"] = self.annotation
+        return wire
 
     @classmethod
     def from_payload(cls, payload: object) -> ScenePayload:
-        data = _check_keys("payload", payload, frozenset(), frozenset({"title", "summary", "items"}))
+        data = _check_keys("payload", payload, frozenset(), frozenset({"title", "summary", "items", "annotation"}))
         items = _list("items", data.get("items", []), MAX_PAYLOAD_ITEMS)
         return cls(
             title=data.get("title", ""),
             summary=data.get("summary", ""),
             items=tuple(ScenePayloadItem.from_payload(item) for item in items),
+            annotation=data.get("annotation", ""),
         )
 
 

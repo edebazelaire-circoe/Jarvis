@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import os
 import threading
 import time
 import unicodedata
@@ -72,6 +73,69 @@ class BargeInAuthority(StrEnum):
     ACOUSTIC = "acoustic"
     OWNER = "owner"
 
+
+def _env_float(name: str, default: float, *, minimum: float = 0.0, maximum: float | None = None) -> float:
+    """Seuil réglable par l'environnement, borné, sans jamais lever.
+
+    Une valeur illisible ou hors bornes retombe sur le défaut : un `.env`
+    mal tapé ne doit pas empêcher une session vocale de démarrer.
+    """
+
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = float(raw.strip().replace(",", "."))
+    except ValueError:
+        return default
+    if value != value or value < minimum:  # NaN inclus
+        return default
+    return value if maximum is None or value <= maximum else default
+
+
+# -- Barge-in acoustique : seuils réglables (voir `docs/fixes/voice-duplex/`) --
+#
+# Le 18/09/2026, sur poste réel, JARVIS se coupait lui-même une à deux secondes
+# après le début de chaque phrase. La chaîne : l'écho résiduel de sa propre voix
+# franchit le détecteur de parole proche → la garde s'ouvre → le pré-roll (de
+# l'écho) part au fournisseur → son VAD émet `speech_started` → le bridge baisse
+# le volume et, `barge_in_sustain_s` plus tard, ne revérifiait que
+# `_user_speaking`, c'est-à-dire le verrou du VAD du fournisseur, que ce même
+# écho tient ouvert. La « parole soutenue » était donc une tautologie : la
+# coupure était acquise dès la première bouffée d'écho.
+#
+# La preuve exigée est désormais locale et mesurée pendant la fenêtre : combien
+# de trames de 10 ms le détecteur a réellement jugées « proches »
+# (`CaptureProcessor.voiced_frames`), et de combien la plus forte a dépassé ses
+# bornes. Sans capture duplex (piles de test, capture brute), rien n'a changé.
+
+#: Attente d'un `speech_started` du fournisseur après un candidat acoustique,
+#: avant de refermer la garde. Défaut historique : 1,5 s.
+BARGE_IN_CONFIRM_S = _env_float("JARVIS_BARGE_IN_CONFIRM_S", 1.5, minimum=0.1, maximum=10.0)
+#: Durée pendant laquelle la parole doit tenir avant de couper JARVIS. Portée de
+#: 0,6 s (défaut historique) à 0,9 s : une bouffée d'écho est brève, et le duck
+#: est maintenant assez doux et assez réversible pour qu'attendre ne s'entende
+#: plus. Un vrai barge-in reste possible : il suffit de continuer à parler.
+BARGE_IN_SUSTAIN_S = _env_float("JARVIS_BARGE_IN_SUSTAIN_S", 0.9, minimum=0.0, maximum=5.0)
+#: Gain appliqué pendant la preuve. Porté de 0,3 (−10,5 dB, entendu comme une
+#: coupure) à 0,6 (−4,4 dB) : l'utilisateur s'entend toujours pris en compte,
+#: mais une fin de phrase traversée par un faux positif reste intelligible.
+BARGE_IN_DUCK_GAIN = _env_float("JARVIS_BARGE_IN_DUCK_GAIN", 0.6, minimum=0.05, maximum=1.0)
+#: Voix locale cumulée exigée dans la fenêtre avant de couper, en millisecondes
+#: de trames « proches ». Nouveau : avant, zéro milliseconde suffisait.
+BARGE_IN_MIN_VOICED_MS = _env_float("JARVIS_BARGE_IN_MIN_VOICED_MS", 350.0, minimum=0.0, maximum=5000.0)
+#: Silence local toléré à l'intérieur de la fenêtre. Au-delà, le candidat est
+#: rejeté **tout de suite** et le volume revient : plus d'atténuation tenue
+#: jusqu'au bout de l'énoncé. Assez long pour une occlusive ou une respiration.
+BARGE_IN_SILENCE_GRACE_MS = _env_float("JARVIS_BARGE_IN_SILENCE_GRACE_MS", 300.0, minimum=50.0, maximum=5000.0)
+#: Dépassement le plus fort exigé sur la fenêtre (dB au-dessus de la plus
+#: contraignante des bornes du détecteur). Une vraie voix dépasse largement ;
+#: une bouffée d'écho rase la marge. Nouveau : avant, aucun seuil d'énergie.
+BARGE_IN_MIN_MARGIN_DB = _env_float("JARVIS_BARGE_IN_MIN_MARGIN_DB", 6.0, minimum=0.0, maximum=60.0)
+#: Pas d'échantillonnage de la preuve pendant la fenêtre.
+BARGE_IN_POLL_S = _env_float("JARVIS_BARGE_IN_POLL_MS", 50.0, minimum=10.0, maximum=500.0) / 1000.0
+#: Durée d'une trame du détecteur de parole proche (`jarvis.audio.duplex`).
+NEAR_END_FRAME_MS = 10
 
 # Diagnostics du barge-in Solo Owner : scalaires seulement, jamais d'audio ni
 # d'empreinte vocale. Les instants sont ceux de l'horloge de la capture.
@@ -442,6 +506,32 @@ class SoundDeviceRealtimeAudio:
 
         if self.capture is not None:
             self.capture.release_near_end(learn=learn)
+
+    def near_end_diagnostics(self) -> dict[str, object] | None:
+        """Niveaux du détecteur de parole proche, ou None sans capture duplex.
+
+        Scalaires en dB, destinés à la trace : sans eux, un faux barge-in sur
+        haut-parleurs ne s'explique qu'en devinant.
+        """
+
+        snapshot = getattr(self.capture, "near_end_diagnostics", None)
+        return snapshot().as_data() if snapshot is not None else None
+
+    @property
+    def near_end_frame_counters(self) -> tuple[int, int] | None:
+        """(trames intégrées, trames « proches ») depuis le début, ou None.
+
+        None sans capture duplex : le bridge n'a alors aucune preuve locale à
+        exiger et s'en remet au VAD du fournisseur, comme avant le 18/09/2026.
+        Les deux compteurs vont ensemble : le premier figé signifie que la
+        capture ne tourne pas, ce qui ne prouve pas que l'utilisateur se tait.
+        """
+
+        processed = getattr(self.capture, "processed_frames", None)
+        voiced = getattr(self.capture, "voiced_frames", None)
+        if not isinstance(processed, int) or not isinstance(voiced, int):
+            return None
+        return processed, voiced
 
     # -- Solo Owner : flux ouvert par le propriétaire (tâche 06) -------------
 
@@ -984,10 +1074,25 @@ class SoundDeviceRealtimeAudio:
         return self._stop_task
 
     async def stop_output(self) -> bool:
-        """Invalidate immediately; false means native cleanup still owns output."""
+        """Invalidate immediately; false means native cleanup still owns output.
+
+        Un refus du pilote ne remonte pas : la sortie est déjà invalidée et
+        `_native` l'a marquée indisponible. L'appelant lit ce faux comme un
+        nettoyage en attente, exactement comme une deadline dépassée. Laisser
+        l'exception traverser tuerait la session vocale entière au moment
+        précis où l'utilisateur coupe la parole (poste réel, 18/09/2026).
+        """
         self._invalidate_output()
         task = self._request_output_stop()
-        return bool(task.result()) if await self._bounded_device_wait(task, "stop") else False
+        try:
+            completed = await self._bounded_device_wait(task, "stop")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._device_trace("audio.stop_failed", level="error", code="audio_stop_failed",
+                               operation="stop", exception_type=type(exc).__name__, cleanup_pending=True)
+            return False
+        return bool(task.result()) if completed else False
 
     async def _stop_owned(self) -> bool:
         if self._start_task is not None:
@@ -1010,7 +1115,15 @@ class SoundDeviceRealtimeAudio:
                 return True
             if self._closing:
                 return False
-            stream.abort(ignore_errors=False)
+            if not self._output_stopped:
+                try:
+                    stream.abort(ignore_errors=False)
+                except Exception as exc:
+                    # Le flux peut s'être arrêté entre la lecture du drapeau et
+                    # l'abort (drain Live, fin de bloc) : PortAudio refuse alors
+                    # avec paStreamIsStopped, alors que l'état visé est atteint.
+                    if not _is_stream_already_stopped(exc):
+                        raise
             self._output_stopped = True  # Next valid write starts lazily.
             return True
 
@@ -1197,9 +1310,12 @@ class RealtimeConversationBridge:
         journal: RuntimeJournal | None = None,
         claude=None,
         engagement_window_s: float = 30.0,
-        barge_in_confirm_s: float = 1.5,
-        barge_in_duck_gain: float = 0.3,
-        barge_in_sustain_s: float = 0.6,
+        barge_in_confirm_s: float = BARGE_IN_CONFIRM_S,
+        barge_in_duck_gain: float = BARGE_IN_DUCK_GAIN,
+        barge_in_sustain_s: float = BARGE_IN_SUSTAIN_S,
+        barge_in_min_voiced_ms: float = BARGE_IN_MIN_VOICED_MS,
+        barge_in_silence_grace_ms: float = BARGE_IN_SILENCE_GRACE_MS,
+        barge_in_min_margin_db: float = BARGE_IN_MIN_MARGIN_DB,
         clock: Callable[[], float] | None = None,
         barge_in_authority: BargeInAuthority = BargeInAuthority.ACOUSTIC,
         owner_source: "OwnerStateSource | None" = None,
@@ -1314,6 +1430,11 @@ class RealtimeConversationBridge:
         self.barge_in_confirm_s = barge_in_confirm_s
         self.barge_in_duck_gain = barge_in_duck_gain
         self.barge_in_sustain_s = barge_in_sustain_s
+        # Preuve locale exigée pendant la fenêtre de confirmation. Voir le bloc
+        # de constantes en tête de module pour les variables d'environnement.
+        self.barge_in_min_voiced_ms = barge_in_min_voiced_ms
+        self.barge_in_silence_grace_s = barge_in_silence_grace_ms / 1000.0
+        self.barge_in_min_margin_db = barge_in_min_margin_db
         # Le réveil vaut engagement : la première phrase après F9 est adressée.
         self._last_engaged = self._clock()
         self._echo = EchoGuard(clock=self._clock)
@@ -1336,6 +1457,15 @@ class RealtimeConversationBridge:
         # la voix est baissée, la coupure attend que la parole dure
         # `barge_in_sustain_s` (voir `_confirm_sustained_barge_in`).
         self._barge_confirming = False
+        # Preuve accumulée pendant cette fenêtre (18/09/2026). `None` quand la
+        # capture ne sait pas compter les trames proches : la décision retombe
+        # alors sur le seul VAD du fournisseur, comme avant.
+        self._barge_voiced_seen = 0          # trames de 10 ms jugées proches
+        self._barge_frames_seen = 0          # trames intégrées par la capture
+        self._barge_counters: tuple[int, int] | None = None   # derniers compteurs lus
+        self._barge_peak_margin_db = 0.0     # plus fort dépassement observé
+        self._barge_ducked_at = 0.0          # instant de la baisse (boucle)
+        self._barge_voice_at = 0.0           # dernière trame proche observée
         # Candidat acoustique refermé faute de confirmation : quand (horloge de
         # la boucle), et combien d'affilée sur la parole en cours de JARVIS.
         # Voir `_on_barge_timeout` et `_late_barge_confirmation`.
@@ -1520,6 +1650,7 @@ class RealtimeConversationBridge:
         self._drop_audio_before = self._seq
         self._barge_pending = False
         self._barge_confirming = False
+        self._barge_counters = None
         self._barge_pending_token += 1
         self._barge_rejected_at = None
         self._barge_rejections = 0
@@ -2635,6 +2766,18 @@ class RealtimeConversationBridge:
         if setter is not None:
             setter(gain)
 
+    def _near_end_levels(self) -> dict[str, object]:
+        """Niveaux du détecteur, préfixés `near_`, pour une trace de barge-in.
+
+        Vide sans capture duplex. C'est le seul endroit d'où l'on voit, sur un
+        poste réel, pourquoi l'écho des haut-parleurs a franchi la marge : le
+        plancher, le couplage appris, et de combien la trame l'a dépassé.
+        """
+
+        snapshot = getattr(self.audio, "near_end_diagnostics", None)
+        levels = snapshot() if snapshot is not None else None
+        return {f"near_{key}": value for key, value in levels.items()} if levels else {}
+
     def _barge_in_allowed(self) -> bool:
         """Le VAD du fournisseur a-t-il pu entendre autre chose que l'écho ?
 
@@ -2683,7 +2826,8 @@ class RealtimeConversationBridge:
         self._trace(
             "voice.barge_in_pending",
             "Parole locale candidate : volume inchangé, confirmation attendue",
-            data={"conversation_id": self.conversation_id, "authority": self.barge_in_authority.value},
+            data={"conversation_id": self.conversation_id, "authority": self.barge_in_authority.value,
+                  **self._near_end_levels()},
         )
         asyncio.get_running_loop().call_later(self.barge_in_confirm_s, self._post, "barge_timeout", token)
 
@@ -2711,14 +2855,17 @@ class RealtimeConversationBridge:
         # rouvre la garde en boucle, lui, finit toujours par être appris.
         self._barge_rejections += 1
         self._barge_rejected_at = asyncio.get_running_loop().time()
-        self._release_near_end(learn=self._barge_rejections > 1)
+        learn = self._barge_rejections > 1
+        levels = self._near_end_levels()
+        self._release_near_end(learn=learn)
         if self._barge_pending_ducked:
             self._trace(
                 "voice.barge_in_rejected",
                 "Parole locale non confirmée par le fournisseur : JARVIS reprend à plein volume",
                 data={"conversation_id": self.conversation_id,
                       "session_id": str(getattr(self.session, "session_id", "")) or None,
-                      "code": "barge_in_not_confirmed"},
+                      "code": "barge_in_not_confirmed", "learned": learn,
+                      "rejections": self._barge_rejections, **levels},
             )
         else:
             self._trace(
@@ -2729,6 +2876,9 @@ class RealtimeConversationBridge:
                     "session_id": str(getattr(self.session, "session_id", "")) or None,
                     "code": "barge_in_not_confirmed",
                     "authority": self.barge_in_authority.value,
+                    "learned": learn,
+                    "rejections": self._barge_rejections,
+                    **levels,
                 },
             )
 
@@ -2762,15 +2912,42 @@ class RealtimeConversationBridge:
             return False
         return asyncio.get_running_loop().time() - rejected_at <= self.BARGE_IN_LATE_CONFIRM_S
 
+    def _frame_counters(self) -> tuple[int, int] | None:
+        """(trames intégrées, trames proches) de la capture, ou None."""
+
+        counters = getattr(self.audio, "near_end_frame_counters", None)
+        return counters if isinstance(counters, tuple) and len(counters) == 2 else None
+
+    def _last_margin_db(self) -> float:
+        """Dépassement de la dernière trame, ou 0 sans détecteur."""
+
+        levels = self._near_end_levels()
+        margin = levels.get("near_margin_db")
+        return float(margin) if isinstance(margin, (int, float)) else 0.0
+
     async def _confirm_sustained_barge_in(self) -> None:
-        """Le fournisseur confirme un candidat acoustique : baisser, puis couper si ça dure.
+        """Le fournisseur confirme un candidat acoustique : baisser, puis mesurer.
 
         Le 17/09/2026, l'écho résiduel de JARVIS ouvrait un candidat, la garde
         laissait passer sa propre voix, et le VAD du fournisseur « confirmait »
         en moins d'une seconde : JARVIS se coupait lui-même (« Merci. »,
-        transcript vide). Une bouffée d'écho est brève ; une vraie interruption
-        dure. La voix baisse tout de suite — l'utilisateur est entendu — et la
-        coupure n'a lieu que si la parole tient `barge_in_sustain_s`.
+        transcript vide). La parade d'alors — attendre `barge_in_sustain_s` puis
+        relire `_user_speaking` — n'en était pas une : `_user_speaking` est le
+        verrou du VAD du fournisseur, et ce verrou reste fermé bien plus
+        longtemps que la fenêtre. Le 18/09/2026, la trace le montre noir sur
+        blanc : des coupures confirmées avec un micro à −79, −93, −103 dBFS,
+        c'est-à-dire du silence, à 0,7 à 1,3 s du début de chaque phrase.
+
+        La preuve est donc mesurée localement pendant la fenêtre, tous les
+        `BARGE_IN_POLL_S` : combien de trames le détecteur juge « proches »
+        (`barge_in_min_voiced_ms` exigées) et de combien la plus forte dépasse
+        ses bornes (`barge_in_min_margin_db`). Un trou de silence de plus de
+        `barge_in_silence_grace_s` referme le candidat **immédiatement**, et le
+        volume revient sans attendre la fin de la fenêtre : une fin de phrase ne
+        peut plus rester atténuée jusqu'à son terme.
+
+        Sans capture duplex (piles de test, capture brute), le compteur n'existe
+        pas et la décision reste celle d'avant : durée, puis `_user_speaking`.
         """
 
         if self._barge_confirming:
@@ -2778,27 +2955,94 @@ class RealtimeConversationBridge:
         if self.barge_in_sustain_s <= 0:
             await self._barge_in()
             return
+        loop = asyncio.get_running_loop()
         self._barge_confirming = True
+        self._barge_counters = self._frame_counters()
+        self._barge_frames_seen = 0
+        self._barge_voiced_seen = 0
+        self._barge_peak_margin_db = self._last_margin_db()
+        self._barge_ducked_at = self._barge_voice_at = loop.time()
         if not self._barge_pending_ducked:
             self._set_output_gain(self.barge_in_duck_gain)
             self._barge_pending_ducked = True
         self._trace(
             "voice.barge_in_confirming",
-            "Parole confirmée par le fournisseur : volume baissé, coupure si elle dure",
-            data={"conversation_id": self.conversation_id, "sustain_ms": round(self.barge_in_sustain_s * 1000)},
+            "Parole confirmée par le fournisseur : volume baissé, coupure si elle dure et porte",
+            data={"conversation_id": self.conversation_id, "sustain_ms": round(self.barge_in_sustain_s * 1000),
+                  "duck_gain": round(self.barge_in_duck_gain, 3),
+                  "min_voiced_ms": round(self.barge_in_min_voiced_ms),
+                  "min_margin_db": round(self.barge_in_min_margin_db, 1),
+                  "local_evidence": self._barge_counters is not None,
+                  **self._near_end_levels()},
         )
-        asyncio.get_running_loop().call_later(self.barge_in_sustain_s, self._post, "barge_sustain", self._barge_pending_token)
+        loop.call_later(min(BARGE_IN_POLL_S, self.barge_in_sustain_s), self._post, "barge_sustain", self._barge_pending_token)
 
     async def _on_barge_sustain(self, token: object) -> None:
+        """Un pas de la fenêtre de preuve : accumuler, rejeter tôt, ou décider."""
+
         if not self._barge_confirming or token != self._barge_pending_token:
             return
-        if self._user_speaking and self._output_live():
+        if not self._output_live():
+            # Plus rien à couper : la phrase s'est terminée pendant la preuve.
+            # Rendre le volume maintenant, pas à la fin de la réponse.
+            await self._reject_barge_confirmation("barge_in_output_finished")
+            return
+        loop = asyncio.get_running_loop()
+        now = loop.time()
+        counters = self._frame_counters()
+        if counters is not None and self._barge_counters is not None:
+            processed = max(0, counters[0] - self._barge_counters[0])
+            voiced = max(0, counters[1] - self._barge_counters[1])
+            self._barge_counters = counters
+            self._barge_frames_seen += processed
+            self._barge_voiced_seen += voiced
+            if voiced:
+                self._barge_voice_at = now
+                self._barge_peak_margin_db = max(self._barge_peak_margin_db, self._last_margin_db())
+            elif not processed:
+                # Aucune trame intégrée : la capture ne tourne pas (rejeu hors
+                # ligne, périphérique arrêté). Son silence ne prouve rien —
+                # surtout pas que l'utilisateur s'est tu.
+                self._barge_voice_at = now
+            elif now - self._barge_voice_at >= self.barge_in_silence_grace_s:
+                # Le micro s'est tu pendant que JARVIS jouait en sourdine : ce
+                # n'était pas l'utilisateur. Le volume remonte tout de suite.
+                await self._reject_barge_confirmation("barge_in_local_voice_gone")
+                return
+        if now - self._barge_ducked_at < self.barge_in_sustain_s:
+            loop.call_later(BARGE_IN_POLL_S, self._post, "barge_sustain", self._barge_pending_token)
+            return
+        await self._decide_sustained_barge_in()
+
+    async def _decide_sustained_barge_in(self) -> None:
+        """Fin de la fenêtre : couper seulement sur une preuve locale tenue."""
+
+        if not self._user_speaking:
+            await self._reject_barge_confirmation("barge_in_speech_too_short")
+            return
+        if self._barge_counters is None or not self._barge_frames_seen:
+            # Aucune preuve locale disponible — pas de capture duplex, ou
+            # capture arrêtée pendant la fenêtre : décision d'avant le
+            # 18/09/2026, le VAD du fournisseur fait foi.
             await self._barge_in()
             return
-        await self._reject_barge_confirmation("barge_in_output_finished" if not self._output_live() else "barge_in_speech_too_short")
+        voiced_ms = self._barge_voiced_seen * NEAR_END_FRAME_MS
+        if voiced_ms < self.barge_in_min_voiced_ms:
+            await self._reject_barge_confirmation("barge_in_local_voice_too_short", voiced_ms=voiced_ms)
+            return
+        if self._barge_peak_margin_db < self.barge_in_min_margin_db:
+            await self._reject_barge_confirmation("barge_in_local_voice_too_weak", voiced_ms=voiced_ms)
+            return
+        await self._barge_in()
 
-    async def _reject_barge_confirmation(self, code: str) -> None:
-        """Parole trop brève (ou plus rien à couper) : c'était l'écho, JARVIS reprend."""
+    async def _reject_barge_confirmation(self, code: str, *, voiced_ms: float | None = None) -> None:
+        """Preuve insuffisante : c'était l'écho, JARVIS reprend à plein volume.
+
+        Le retour au volume normal est posé ici, avant la trace : quelle que
+        soit la raison — silence local, parole trop courte, trop faible, ou
+        sortie déjà terminée — la voix ne reste jamais baissée jusqu'à la fin
+        de l'énoncé (retour du 18/09/2026).
+        """
 
         self._barge_confirming = False
         self._barge_pending = False
@@ -2806,13 +3050,25 @@ class RealtimeConversationBridge:
         if self._barge_pending_ducked:
             self._set_output_gain(1.0)
         self._barge_pending_ducked = False
-        self._release_near_end(learn=True)
+        levels = self._near_end_levels()
+        ducked_ms = round(max(0.0, asyncio.get_running_loop().time() - self._barge_ducked_at) * 1000)
+        seen_ms = self._barge_voiced_seen * NEAR_END_FRAME_MS if self._barge_counters is not None else 0
+        # Apprendre, c'est décréter que ce qui vient d'être entendu était de
+        # l'écho, et rendre le détecteur sourd à ce niveau. Légitime pour une
+        # bouffée ; dangereux quand la capture a bel et bien entendu une voix
+        # tenue — un locuteur qui reprend son souffle deviendrait inaudible.
+        learn = seen_ms < self.barge_in_min_voiced_ms
+        self._barge_counters = None
+        self._release_near_end(learn=learn)
         self._trace(
             "voice.barge_in_rejected",
             "Parole trop brève pour une interruption : JARVIS reprend à plein volume",
             data={"conversation_id": self.conversation_id,
                   "session_id": str(getattr(self.session, "session_id", "")) or None,
-                  "code": code},
+                  "code": code, "learned": learn, "ducked_ms": ducked_ms,
+                  "voiced_ms": round(voiced_ms) if voiced_ms is not None else seen_ms,
+                  "peak_margin_db": round(self._barge_peak_margin_db, 1),
+                  **levels},
         )
 
     # -- Solo Owner : la confirmation du propriétaire coupe (tâche 05) --------
@@ -3468,8 +3724,11 @@ class RealtimeConversationBridge:
                 # Plus rien ne joue : fin de parole de JARVIS. Un barge-in en
                 # attente n'a plus rien à couper, la voix suivante repart à
                 # plein volume, et la conversation reste engagée.
-                if self._barge_pending:
+                if self._barge_pending or self._barge_confirming:
                     self._barge_pending = False
+                    self._barge_confirming = False
+                    self._barge_pending_ducked = False
+                    self._barge_counters = None
                     self._barge_pending_token += 1
                 self._barge_rejected_at = None
                 self._barge_rejections = 0
@@ -3565,7 +3824,17 @@ class RealtimeConversationBridge:
                     # Barge-in : JARVIS parle et l'utilisateur enchaîne. Le
                     # chemin legacy, half-duplex, ne peut pas se trouver
                     # dans cet état — il garde donc exactement sa trace.
-                    await self._barge_in()
+                    if getattr(self.audio, "has_echo_guard", False):
+                        # Garde ouverte sans candidat enregistré : c'est encore
+                        # elle qui a laissé passer ce que le fournisseur a
+                        # entendu, donc peut-être l'écho de JARVIS. Même preuve
+                        # de durée et d'énergie que partout ailleurs (18/09/2026).
+                        self._barge_pending = True
+                        self._barge_pending_ducked = False
+                        self._barge_pending_token += 1
+                        await self._confirm_sustained_barge_in()
+                    else:
+                        await self._barge_in()
                 elif self._late_barge_confirmation():
                     # Confirmation arrivée juste après la fenêtre du candidat :
                     # c'est encore lui. Même preuve de durée qu'à l'heure.
@@ -3751,6 +4020,36 @@ class RealtimeConversationBridge:
             if callable(discard):
                 discard(_optional_text(event.payload.get("item_id")))
 
+    #: Raisons d'écarter un transcript qui désignent la sortie de JARVIS, et
+    #: elles seules : le segment venait des haut-parleurs, pas de la pièce. Une
+    #: hésitation, un bruit de bureau ou une langue improbable viennent, eux,
+    #: bien du micro de près — les apprendre comme de l'écho rendrait JARVIS
+    #: sourd à l'utilisateur.
+    ECHO_EVIDENCE_REASONS = frozenset({"echo", "residual_echo", "playback_hallucination", "hallucination"})
+
+    def _learn_echo_from_dropped_segment(self, reason: str, *, near_playback: bool) -> None:
+        """Le transcript prouve après coup que ce segment était l'écho de JARVIS.
+
+        Le détecteur n'apprenait qu'au *rejet* d'un candidat. Un candidat
+        **confirmé** puis coupé ne lui apprenait donc rien, et le même niveau
+        d'écho rouvrait la garde phrase après phrase — la boucle observée sur
+        haut-parleurs le 18/09/2026. C'est ici que la preuve arrive : le
+        couplage remonte juste assez pour que cet écho-là ne passe plus, et il
+        redescend de lui-même dès que JARVIS reparle sans être coupé.
+        """
+
+        if not near_playback or reason not in self.ECHO_EVIDENCE_REASONS:
+            return
+        levels = self._near_end_levels()
+        self._release_near_end(learn=True)
+        self._trace(
+            "voice.echo_learned",
+            "Segment écarté comme écho : le couplage du détecteur rattrape le niveau entendu",
+            data={"conversation_id": self.conversation_id,
+                  "session_id": str(getattr(self.session, "session_id", "")) or None,
+                  "code": f"echo_learned_{reason}", "reason": reason, **levels},
+        )
+
     def _admit_canonical_transcript(self, item_id: str | None, *, source_correlation_id: str | None = None) -> None:
         admit = getattr(self.session, "admit_transcript", None)
         if callable(admit):
@@ -3777,13 +4076,14 @@ class RealtimeConversationBridge:
         decision = self.classifier.classify(text, active=True, engaged=engaged)
         self._trace("voice.transcript", text or "<empty>", data={"addressing": decision.value})
         if self.continuous and text:
-            reason = noise_reason(text)
+            reason = noise_reason(text, near_playback=near_playback)
             if reason is None and near_playback and self._echo.is_echo(text):
                 reason = "echo"
             if reason is not None:
                 # Ce n'est pas un propos de l'utilisateur : ni tour, ni
                 # réarmement du délai, et l'écran revient à l'écoute.
                 self._latency.forget(LATENCY_BRAIN_TURN_ACCEPTED, self.conversation_id)
+                self._learn_echo_from_dropped_segment(reason, near_playback=near_playback)
                 self._trace(
                     "voice.transcript_dropped",
                     text[:300],

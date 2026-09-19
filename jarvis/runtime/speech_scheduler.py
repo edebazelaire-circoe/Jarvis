@@ -227,6 +227,7 @@ class SpeechScheduler:
         reconnect_delay_s: float | None = None,
         transient_ttl_s: float | None = None,
         reflex_delay_s: float = 0.0,
+        reflex_require_work: bool = False,
         user_speech_hold_s: float | None = None,
         conversation_events: ConversationEventRecorder | None = None,
     ) -> None:
@@ -295,6 +296,9 @@ class SpeechScheduler:
         # Accusé de réception : délai laissé au cerveau avant que la surface
         # ne dise qu'elle a compris. 0 = jamais.
         self.reflex_delay_s = max(0.0, float(reflex_delay_s))
+        # Retour arrière seulement : exiger un `brain.work.started` corrélé
+        # avant d'autoriser le préambule. Voir `decide_reflex`.
+        self.reflex_require_work = bool(reflex_require_work)
         self.user_speech_hold_s = self.USER_SPEECH_HOLD_MAX_S if user_speech_hold_s is None else user_speech_hold_s
         self._reflex: _Reflex | None = None
         self._live_reflex: _Reflex | None = None
@@ -419,6 +423,10 @@ class SpeechScheduler:
         la répétition « Entendu. » à chaque phrase était précisément ce qui
         rendait la conversation mécanique. Le plus récent remplace le
         précédent.
+
+        Le silence du cerveau suffit : aucune déclaration de travail de fond
+        n'est exigée (`decide_reflex`), sans quoi les tours auxquels le cerveau
+        répond lui-même — l'immense majorité — resteraient sans accusé.
         """
 
         now = asyncio.get_running_loop().time()
@@ -443,7 +451,8 @@ class SpeechScheduler:
         )
         decision = self._decide_reflex(candidate)
         self._record_reflex_decision(candidate, decision, "request")
-        if decision.reason not in ("work_unconfirmed", "answer_may_arrive_quickly", "confirmed_work_wait"):
+        if decision.reason not in ("work_unconfirmed", "answer_may_arrive_quickly",
+                                   "confirmed_work_wait", "brain_silent_wait"):
             return
         self._reflex = candidate
         self._wakeup.set()
@@ -458,7 +467,7 @@ class SpeechScheduler:
             work_confirmed=any(correlation == reflex.correlation_id and active for correlation, active in self._reflex_work.values()),
             work_terminal=reflex.correlation_id in self._reflex_terminal,
             noticeable_wait=now >= reflex.due, already_used=reflex.correlation_id in self._reflex_used,
-            stale=now > reflex.expires)
+            stale=now > reflex.expires, require_work=self.reflex_require_work)
 
     def _record_reflex_decision(self, reflex: _Reflex, decision: ReflexDecision, phase: str) -> None:
         self._reflex_decisions[reflex.correlation_id] = decision

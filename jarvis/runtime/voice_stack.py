@@ -28,6 +28,7 @@ from jarvis.v2_config import (
     DEFAULT_OWNER_EVIDENCE_MS,
     DEFAULT_OWNER_SHORT_EVIDENCE_MS,
     DEFAULT_OWNER_SHORT_MARGIN,
+    DEFAULT_REFLEX_DELAY_MS,
     MAX_OWNER_EVIDENCE_MS,
     MAX_OWNER_SHORT_MARGIN,
     MIN_OWNER_EVIDENCE_MS,
@@ -207,15 +208,26 @@ OPENAI_REALTIME = VoiceStackSpec(
             "puissiez le couper en parlant. Sans elle, il faut parler plus fort que lui.",
         ),
         Field(
+            key="reflex_enabled",
+            label="Cerveau réflexe (mode continu)",
+            kind="toggle",
+            default=True,
+            hint="Fait patienter à l'oral pendant que le cerveau réfléchit : une phrase courte "
+            "après le délai ci-dessous, au plus une par tour, annulée si la réponse arrive "
+            "avant. Coupé, JARVIS reste muet jusqu'à la réponse. Ce réglage passe devant "
+            "JARVIS_REFLEX_ENABLED.",
+        ),
+        Field(
             key="ack_delay_ms",
             label="Délai avant accusé de réception (ms)",
             kind="number",
-            default=1200,
+            default=DEFAULT_REFLEX_DELAY_MS,
             minimum=0,
             maximum=10000,
             step=100,
-            hint="Mode continu : si la réponse tarde au-delà, JARVIS dit brièvement ce qu'il fait "
-            "(« Je regarde les commits. »). 0 = jamais.",
+            hint="Mode continu : silence toléré avant que le cerveau réflexe ne parle. Au-delà, "
+            "JARVIS dit brièvement qu'il examine la demande. 0 = jamais. Passe devant "
+            "JARVIS_REFLEX_DELAY_MS.",
         ),
         Field(
             key="vad_type",
@@ -547,6 +559,20 @@ LEGACY_FIELDS: tuple[tuple[str, str, str], ...] = (
 )
 
 
+def stored_for(settings: dict[str, Any], stack: object = None) -> dict[str, Any]:
+    """Ce que l'interface a réellement enregistré pour cette pile, sans défaut.
+
+    `settings_for` comble les trous, ce qui est juste pour construire une
+    session mais efface la différence entre « jamais réglé » et « réglé à la
+    valeur par défaut ». Un réglage dont une variable d'environnement est le
+    défaut de secours (le cerveau réflexe) a besoin de cette différence.
+    """
+    spec = stack_spec(stack if stack is not None else settings.get("voice_stack"))
+    stored = settings.get("voice_stack_settings")
+    saved = stored.get(spec.id) if isinstance(stored, dict) and isinstance(stored.get(spec.id), dict) else {}
+    return {item.key: saved[item.key] for item in spec.fields if item.key in saved}
+
+
 def settings_for(settings: dict[str, Any], stack: object = None) -> dict[str, Any]:
     """Réglages effectifs d'une pile : ses défauts, l'ancien format, puis le nouveau."""
     spec = stack_spec(stack if stack is not None else settings.get("voice_stack"))
@@ -557,8 +583,7 @@ def settings_for(settings: dict[str, Any], stack: object = None) -> dict[str, An
         legacy = settings.get(legacy_key)
         if field_key in values and legacy not in (None, ""):
             values[field_key] = legacy
-    stored = settings.get("voice_stack_settings")
-    saved = stored.get(spec.id) if isinstance(stored, dict) and isinstance(stored.get(spec.id), dict) else {}
+    saved = stored_for(settings, spec.id)
     values.update({key: saved[key] for key in values if key in saved})
     return values
 

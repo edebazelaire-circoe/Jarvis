@@ -31,6 +31,11 @@ Règles (voir `docs/ARCHITECTURE.md` › *Runtime scene projection*) :
   le travail quitte cet état, la projection retire son propre signal : elle
   délie le lien `explains` (droit ouvert au runtime par la Slice 04) puis note
   l'état du travail dans l'`exec_state` du signal ;
+- **fin** : le passage à un état terminal (`completed`, `failed`, `cancelled`,
+  `interrupted`) journalise `core.scene.star_finished`, une seule fois par
+  étoile (un état terminal ne le redevient pas). Rien d'autre ne change : la
+  page seule en tire une marque (anneau vert et coche pour une fin normale,
+  rouge et croix pour un échec) ;
 - **archivé** : une étoile archivée par l'utilisateur ne renaît jamais ; la
   projection lit la pierre tombale avant d'écrire et n'envoie rien ;
 - **redémarrage de Core** (Slice 10) : au démarrage, avant la première
@@ -110,6 +115,11 @@ SCENE_PROJECTION_RESTORED_KIND = "core.scene.projection_restored"
 SCENE_PROJECTION_FAILED_KIND = "core.scene.projection_failed"
 SCENE_PROJECTION_CONFLICT_KIND = "core.scene.projection_conflict"
 SCENE_STAR_CREATED_KIND = "core.scene.star_created"
+#: Fin de travail : l'étoile vient d'atteindre un état terminal
+#: (`completed`, `failed`, `cancelled`, `interrupted`). Pendant de
+#: `star_created` : la page en fait un anneau vert (fin normale) ou rouge
+#: (échec) autour de l'étoile, avec sa petite icône.
+SCENE_STAR_FINISHED_KIND = "core.scene.star_finished"
 SCENE_SIGNAL_RAISED_KIND = "core.scene.signal_raised"
 SCENE_SIGNAL_RETIRED_KIND = "core.scene.signal_retired"
 SCENE_PROJECTION_SATURATED_KIND = "core.scene.projection_saturated"
@@ -1150,6 +1160,16 @@ class SceneProjector:
                 data={"object_id": star_id, "kind": fields.kind.value, "source": item.source, "status": item.status.value},
             )
             await self._link_children(item, star_id)
+        reached = ExecState(item.status.value)
+        if update.changed and reached in TERMINAL_EXEC_STATES and (current is None or current.exec_state not in TERMINAL_EXEC_STATES):
+            # Pendant de `star_created` : le travail vient de finir. Une seule
+            # ligne par étoile (un état terminal ne redevient pas terminal), et
+            # rien d'autre ne change : ni visibilité, ni disposition (Décision 12).
+            self._emit(
+                SCENE_STAR_FINISHED_KIND,
+                "travail terminé : l'étoile porte sa marque de fin",
+                data={"object_id": star_id, "source": item.source, "status": item.status.value},
+            )
         if item.parent_external_id is not None:
             await self._link_parent(item)
         await self._project_signal(item, star_id, fields.work_ref)
