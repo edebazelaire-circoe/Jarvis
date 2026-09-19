@@ -67,3 +67,74 @@ Durable discoveries for later Slices:
 Tests, foreground chunks: new file 15 passed; baseline 1 (barehands + scene
 logic) 94 passed; baseline 2 (control centre + settings) 221 passed; adjacent
 scene/timeline suites 46 passed. No regression.
+
+## 2026-09-19 — Slice 02, implementation agent
+
+OFF/SLEEP/ACTIVE lifecycle and the C-pose wake flow landed in the two existing
+Bare Hands modules — no new page module, so **F3 does not apply to this Slice**
+and the load order `contracts → barehands → scene page` is untouched. New
+engine functions are all in `jarvis/runtime/control_center_barehands.js`
+(`cPoseScore`, `createWakeDetector`, `STATE`/`STATES`, a rewritten
+`createController`), covered by `tests/unit/test_barehands_lifecycle_js.py`
+(13 tests, injected clock, no sleeps).
+
+Durable discoveries for later Slices:
+
+- **`LIFECYCLE` has a fourth name: `ERROR`.** Three states silently erased
+  camera failures: `lifecycleOfControllerState('error')` returned `'off'`, so a
+  refused camera, a busy webcam and missing MediaPipe assets all read as "the
+  user turned it off". `ERROR` means *stopped without being asked*. It holds
+  nothing — `teardown` runs before it is published — and the specific reason
+  survives beside it in the status `code` (`camera_denied`, `camera_busy`,
+  `camera_ended`, `camera_missing`, `assets_missing`, `tracking_failed`), never
+  flattened into the state. Recovery is an explicit re-enable; `activate()`
+  from `ERROR` powers on first. Added `LIVE_LIFECYCLES` / `isLiveLifecycle()`
+  because `!== OFF` now means "running **or** broken" and would read a failure
+  as a working system. Every later Slice that switches on the enum must handle
+  four cases.
+- **Powering on lands in SLEEP, never in ACTIVE.** `enabled` still means "not
+  OFF", so the server payload is untouched (Slice 07 still owns widening it).
+  Interaction requires an explicit wake: the C-pose, the new
+  "Activer l'interaction" button in the Expérimental tab, or
+  `window.JarvisBarehands.activate()`. **Slice 12 should call
+  `window.JarvisBarehands.activate()` / `.sleep()` / `.lifecycle()`** rather
+  than the controller: they carry the busy flag, the error surface and the
+  panel refresh.
+- **The pure block still cannot read the contract**, so `DEFAULTS.wakeHoldMs`
+  and `DEFAULTS.sleepTimeoutMs` restate `WAKE_HOLD_MS` / `SLEEP_TIMEOUT_MS`,
+  and `STATE` restates `LIFECYCLE`. A parity test
+  (`test_the_controller_states_and_timings_still_match_the_contract`) is what
+  forbids the drift; the browser block additionally passes the contract values
+  into `createController({options:…})`. Any Slice adding a shared constant to
+  the core owes that test a line.
+- **The wake posture is two palm-relative measurements, not a classifier.**
+  Thumb-index gap in `[0.46, 0.85]` palms (the floor sits above the pinch
+  `releaseRatio` of 0.42 so a pinch in progress can never wake) and index reach
+  above 1.35 palms from the wrist (which is what rejects a fist — its
+  thumb-index gap lands inside the band). Both ends soften over `wakeSoft` of
+  the range, so a borderline posture scores low and simply never completes its
+  hold instead of flickering. Slice 08's calibration can tune all four.
+- **SLEEP is cheap by cadence, not by a cheaper model.** The controller keeps
+  one RAF loop, but in SLEEP `detectForVideo` runs at most once per
+  `wakeIntervalMs` (200 ms → 5 fps), and nothing else runs: no smoothing, no
+  tokens, no hover, no clicks. Measured by
+  `test_sleep_runs_a_fraction_of_the_inferences_that_interaction_runs`: 5
+  inferences against ACTIVE's 60 over the same 60 frames. 1000 ms of hold still
+  leaves five samples.
+- **The 30 s idle check runs *before* reading the video clock.** Put after it,
+  a frozen camera would keep ACTIVE alive forever, because the `currentTime`
+  guard returns early. There is a test for the frozen camera.
+- **`MESSAGES.running` is gone**, replaced by `sleep` / `active` / `woken` /
+  `idle_sleep`. `lifecycleOfControllerState('running')` still maps to `active`
+  so older journal lines stay readable, but nothing emits it any more.
+- **Test doubles for the controller now need `overlay.watch(state|null)`** in
+  addition to `render(tokens)`. `tests/unit/test_barehands_pointer_js.py` was
+  updated in place: its `enable()` assertions became `sleep` plus an explicit
+  `activate()`, since powering on no longer interacts.
+- Per the coordinator's note, this Slice uses none of `combineCaptures`,
+  `normalizeProfile` or the optional-allocator path of
+  `pointersFromCoreTokens`; their rework is unaffected by it.
+
+Tests, foreground chunks: new file 13 passed; baseline 1 (barehands + scene
+logic) 109 passed; baseline 2 (control centre + settings) 221 passed. No
+regression.

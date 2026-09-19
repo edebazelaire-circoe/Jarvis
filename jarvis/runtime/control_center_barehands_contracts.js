@@ -60,13 +60,31 @@
      Cycle de vie (décisions 4, 5, 7).
      OFF libère la caméra ; SLEEP garde un guetteur léger ; ACTIVE interagit. */
 
-  const LIFECYCLE=Object.freeze({OFF:'off',SLEEP:'sleep',ACTIVE:'active'});
+  /* `ERROR` n'est pas dans la décision 4, qui nomme trois états d'usage. Il
+     s'y ajoute parce que sans lui une caméra refusée, une webcam occupée et un
+     modèle absent se liraient tous « éteint », c'est-à-dire « l'utilisateur
+     l'a voulu » — la panne disparaîtrait de l'état. `ERROR` dit exactement
+     l'inverse : arrêté sans l'avoir demandé. Comme OFF, il ne tient rien (la
+     caméra est rendue avant qu'il soit publié) ; le motif précis vit à côté,
+     dans le `code` du statut (`camera_denied`, `camera_busy`,
+     `assets_missing`…), jamais aplati dans l'état. On en sort en rallumant. */
+  const LIFECYCLE=Object.freeze({OFF:'off',SLEEP:'sleep',ACTIVE:'active',ERROR:'error'});
   const LIFECYCLES=values(LIFECYCLE);
-  /* Le contrôleur actuel n'a pas encore de SLEEP : ses états se lisent comme
-     un cycle de vie réduit. `starting` n'est pas encore ACTIVE — rien
-     n'interagit tant que la première image n'est pas suivie. */
-  const LEGACY_CONTROLLER_LIFECYCLE=Object.freeze({off:'off',starting:'off',running:'active',error:'off'});
-  const lifecycleOfControllerState=state=>LEGACY_CONTROLLER_LIFECYCLE[String(state)]||LIFECYCLE.OFF;
+  /* États d'usage : ceux où Bare Hands fonctionne. Un appelant qui veut
+     « allumé ou pas » teste ceci plutôt que `!== OFF`, qui rendrait une panne
+     pour un fonctionnement. */
+  const LIVE_LIFECYCLES=Object.freeze([LIFECYCLE.SLEEP,LIFECYCLE.ACTIVE]);
+  const isLiveLifecycle=value=>LIVE_LIFECYCLES.includes(String(value));
+  /* Les états du contrôleur (`control_center_barehands.js`) lus dans ce
+     vocabulaire. `sleep`, `active` et `error` sont les siens depuis la
+     Slice 02 ; `starting` vaut `off`, parce que rien n'interagit et que rien
+     n'est encore tenu pour de bon. `running` est l'ancien nom d'`active`,
+     gardé pour qu'un état journalisé avant la Slice 02 se relise encore. */
+  const CONTROLLER_LIFECYCLE=Object.freeze({
+    off:'off',starting:'off',error:'error',
+    sleep:'sleep',active:'active',running:'active',
+  });
+  const lifecycleOfControllerState=state=>CONTROLLER_LIFECYCLE[String(state)]||LIFECYCLE.OFF;
   /* Décision 7 : 30 s sans main exploitable ramène ACTIVE à SLEEP.
      Décision 5 : la posture de réveil se tient environ une seconde. */
   const SLEEP_TIMEOUT_MS=30000;
@@ -133,6 +151,9 @@
     styleId:'jarvisHandsStyle',
     tokenClass:'jh-token',
     ringClass:'jh-ring',
+    /* Anneau de progression du réveil en veille (Slice 02, décision 5) : il ne
+       suit aucune main en particulier, il n'y en a qu'un. */
+    wakeClass:'jh-wake',
     badgeClass:'jh-badge',
     hoverClass:'jarvis-hand-hover',
     rootSelector:'#jarvisHands',
@@ -602,7 +623,8 @@
 
   const api=Object.freeze({
     SCHEMA_VERSION,BareHandsSchemaError,
-    LIFECYCLE,LIFECYCLES,lifecycleOfControllerState,SLEEP_TIMEOUT_MS,WAKE_HOLD_MS,
+    LIFECYCLE,LIFECYCLES,LIVE_LIFECYCLES,isLiveLifecycle,lifecycleOfControllerState,
+    SLEEP_TIMEOUT_MS,WAKE_HOLD_MS,
     MAX_HANDS,POINTER_ID_BASE,POINTER_ID_MAX,POINTER_TYPE,
     pointerIdForSlot,slotForPointerId,isBareHandsPointerId,createSlotAllocator,
     DOM,isOverlayRoot,HANDEDNESS,HANDEDNESSES,

@@ -46,15 +46,49 @@ L'ordre est vérifié par
 
 ## 1. Cycle de vie
 
-`LIFECYCLE` = `off` | `sleep` | `active` (décision 4). `OFF` libère la caméra,
-`SLEEP` garde un guetteur léger, `ACTIVE` interagit.
+`LIFECYCLE` = `off` | `sleep` | `active` | `error`. Les trois premiers sont les
+états d'usage de la décision 4 : `OFF` libère la caméra, `SLEEP` garde un
+guetteur léger, `ACTIVE` interagit. Implémenté par `createController` dans
+`jarvis/runtime/control_center_barehands.js` (Slice 02).
+
+`ERROR` s'y ajoute à la Slice 02 : sans lui, une caméra refusée, une webcam
+occupée ou un modèle absent se liraient `off`, c'est-à-dire « l'utilisateur l'a
+voulu », et la panne disparaîtrait de l'état. Comme `OFF` il ne tient rien — la
+caméra, le modèle, la vidéo et la boucle d'images sont rendus **avant** qu'il
+soit publié — mais il dit « arrêté sans l'avoir demandé ». Le motif précis vit
+à côté, dans le `code` du statut (`camera_denied`, `camera_busy`,
+`camera_missing`, `camera_ended`, `assets_missing`, `tracking_failed`…), jamais
+aplati dans l'état. On en sort en rallumant : le bouton du bandeau devient
+« Réessayer » et `activate()` rallume avant de réveiller.
 
 - `SLEEP_TIMEOUT_MS = 30000` — 30 s sans main exploitable ramène `ACTIVE` à
-  `SLEEP` (décision 7).
+  `SLEEP` (décision 7). Jugé avant la lecture de la vidéo : une caméra figée
+  rendort aussi.
 - `WAKE_HOLD_MS = 1000` — durée de maintien de la posture C (décision 5).
-- `lifecycleOfControllerState(state)` lit les états du contrôleur actuel
-  (`off` / `starting` / `running` / `error`) dans ce vocabulaire. `starting`
-  vaut `off` : rien n'interagit tant que la première image n'est pas suivie.
+- `LIVE_LIFECYCLES` = `['sleep','active']` et `isLiveLifecycle(value)` — « Bare
+  Hands fonctionne ». Un appelant teste ceci plutôt que `!== OFF`, qui rendrait
+  une panne pour un fonctionnement.
+- `lifecycleOfControllerState(state)` lit les états du contrôleur
+  (`off` / `starting` / `sleep` / `active` / `error`) dans ce vocabulaire.
+  `starting` vaut `off` : rien n'interagit tant que la première image n'est pas
+  suivie. `running`, l'ancien nom d'`active`, reste compris pour qu'un état
+  journalisé avant la Slice 02 se relise encore.
+
+### Transitions (Slice 02)
+
+| De | Vers | Déclencheur |
+|---|---|---|
+| `off` | `sleep` | l'interrupteur « Activer Barehands », ou `activate()` qui allume d'abord |
+| `sleep` | `active` | posture en C tenue `WAKE_HOLD_MS`, ou le bouton « Activer l'interaction » |
+| `active` | `sleep` | bouton « Mettre en veille », ou `SLEEP_TIMEOUT_MS` sans main exploitable |
+| `sleep` / `active` | `off` | l'interrupteur, ou `pagehide` |
+| `sleep` / `active` / `starting` | `error` | caméra refusée, occupée, coupée, modèle absent, suivi en échec |
+| `error` | `sleep` | rallumage explicite (interrupteur ou bouton) |
+
+Allumer mène à `sleep`, jamais directement à `active` : rien n'interagit tant
+que l'utilisateur n'a pas réveillé. Le guetteur de `SLEEP` ne lance son
+inférence qu'une fois par `wakeIntervalMs` (200 ms, soit 5 images/s) et ne
+calcule ni jeton, ni survol, ni clic ; `ACTIVE` suit chaque image.
 
 ## 2. Identité de main et de pointeur
 
@@ -95,6 +129,7 @@ parlait sous la même identité, a désormais la sienne.
 | `tokenSelector` | `#jarvisHands .jh-token` | `control_center_scene_page.js` (`barehandsActive()`) |
 | `badgeSelector` | `#jarvisHands .jh-badge` | CSS de la scène (décalage de `.sc-status`) |
 | `tokenClass`, `ringClass`, `badgeClass`, `styleId`, `hoverClass` | — | surimpression |
+| `wakeClass` | `jh-wake` | anneau de progression du réveil en veille (Slice 02) — un seul, il ne suit aucune main en particulier |
 
 `isOverlayRoot(el)` est le test que fait `confirmInertCandidate` : la
 surimpression des mains reste vivante derrière une boîte de confirmation, sans
@@ -279,10 +314,25 @@ Seul étage qui connaisse un traqueur ou l'expérience actuelle.
   compatibilité : l'expérience de clic garde sa forme, chaque main y gagne son
   identité.
 
-## Ce que la Slice 01 ne fait pas
+## Ce qui est implémenté, et ce qui ne l'est pas
 
-Aucun moteur, aucun changement de comportement visible. Le pointeur à mains
-nues reste l'expérience de clic d'aujourd'hui : jeton sur l'index, pincement
-pouce-index, clic synthétisé. `OFF`/`SLEEP`/`ACTIVE`, réveil en C, pincement
-secondaire, résolveur sémantique, déplacement/redimensionnement, calibration,
-tutoriel et diagnostics arrivent dans les Slices 02 à 12.
+La Slice 01 n'a apporté aucun moteur : elle a fixé les noms.
+
+La Slice 02 implémente le premier : le cycle de vie `OFF`/`SLEEP`/`ACTIVE`
+(+ `ERROR`) et le réveil par la posture en C, dans
+`jarvis/runtime/control_center_barehands.js` — `cPoseScore`,
+`createWakeDetector`, `createController` — couverts par
+`tests/unit/test_barehands_lifecycle_js.py`.
+
+La posture de réveil se lit sur deux mesures, toutes deux rapportées à la paume
+donc indépendantes de la distance à la caméra : l'écart pouce-index entre
+`wakeGapMin` (0,46 — au-dessus du relâchement du pincement, pour qu'un
+pincement en cours ne réveille jamais) et `wakeGapMax` (0,85 — au-delà, main
+ouverte), et la portée de l'index depuis le poignet au-dessus de `wakeIndexMin`
+(1,35 paume), qui écarte le poing. Ces seuils sont des défauts du moteur ; la
+calibration de la Slice 08 pourra les affiner.
+
+Restent à venir : pincement secondaire, résolveur sémantique,
+déplacement/redimensionnement, calibration, tutoriel, diagnostics et le canal
+de commandes de la voix (Slices 03 à 12). `window.JarvisBarehands.activate()` /
+`.sleep()` / `.lifecycle()` sont le point d'entrée que la Slice 12 branchera.

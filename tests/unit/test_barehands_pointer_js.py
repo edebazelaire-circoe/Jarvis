@@ -151,7 +151,7 @@ function world(opts={}){
     createLandmarker:async()=>{log.push('model.load');if(opts.noAssets)throw Object.assign(new Error('x'),{code:'assets_missing'});
       return {detectForVideo:()=>opts.result||{landmarks:[]},close(){log.push('model.close')}}},
     attachVideo:async()=>({element:{},width:640,height:480,currentTime:()=>++time,dispose(){log.push('video.dispose')}}),
-    overlay:{mounted:false,mount(){this.mounted=true;log.push('overlay.mount')},unmount(){if(this.mounted)log.push('overlay.unmount');this.mounted=false},render(t){log.push('render:'+t.length)}},
+    overlay:{mounted:false,mount(){this.mounted=true;log.push('overlay.mount')},unmount(){if(this.mounted)log.push('overlay.unmount');this.mounted=false},render(t){log.push('render:'+t.length)},watch(w){log.push('watch:'+(w?w.progress.toFixed(2):'off'))}},
     interaction:{hover(){},click(c){log.push('click');if(opts.onClick)opts.onClick(c)},clear(){log.push('hover.clear')}},
     requestFrame:fn=>{const id=++frameId;frames.set(id,fn);return id},
     cancelFrame:id=>{frames.delete(id);log.push('frame.cancel')},
@@ -169,14 +169,19 @@ def test_enable_then_disable_releases_camera_model_video_and_overlay(tmp_path):
       const w=world({result:{landmarks:[hand(.2)]}});
       const c=B.createController(w.deps);
       const state=await c.enable();
+      const awake=await c.activate();
       w.pump();
       const running=[...w.log];w.log.length=0;
       c.disable();
-      out({state,running,stopped:w.log,after:c.state(),trackStopped:w.track.stopped,pendingFrames:w.frames.size});
+      out({state,awake,running,stopped:w.log,after:c.state(),trackStopped:w.track.stopped,pendingFrames:w.frames.size});
     """)
-    assert result["state"] == "running"
+    # Depuis la Slice 02, allumer mène à la veille ; l'interaction demande un
+    # réveil. Le chemin d'acquisition, lui, est le même.
+    assert result["state"] == "sleep" and result["awake"] == "active"
     assert result["running"] == [
-        "status:starting:starting", "model.load", "camera.open", "overlay.mount", "status:running:running", "render:1",
+        "status:starting:starting", "model.load", "camera.open", "overlay.mount",
+        "hover.clear", "status:sleep:sleep", "watch:0.00",
+        "status:active:active", "watch:off", "render:1",
     ]
     assert result["trackStopped"] is True
     assert {"frame.cancel", "track.stop", "video.dispose", "model.close", "hover.clear", "overlay.unmount"} <= set(result["stopped"])
@@ -231,7 +236,7 @@ def test_camera_unplugged_and_click_that_disables_both_stop_the_loop(tmp_path):
       const onClick=()=>cb.disable();
       b.deps.interaction.click=()=>{b.log.push('click');onClick()};
       cb=B.createController(b.deps);
-      await cb.enable();b.pump();
+      await cb.enable();await cb.activate();b.pump();
       out({unplugged:[ca.state(),a.log[a.log.length-1],a.track.stopped],
            clicked:[cb.state(),b.log.includes('click'),b.frames.size,b.track.stopped]});
     """)
