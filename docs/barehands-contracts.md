@@ -512,7 +512,17 @@ construction :
   main ouverte le relit comme plancher, donc les deux ne peuvent pas être vraies
   ensemble sans qu'un seul nombre bouge ;
 - **une main qui pince n'est aucune posture** : si l'un des deux canaux passe
-  sous `releaseRatio`, `c_pose` et `open_palm` valent 0. Le canal primaire était
+  sous `releaseRatio`, `open_palm` vaut 0, et `c_pose` descend en **rampe** vers
+  0 entre `releaseRatio` et `pressRatio` — zéro sous `pressRatio`, c'est-à-dire
+  au seuil où le contact entre réellement. C'était un `return 0` sec au-dessus
+  de `releaseRatio`, la seule frontière non adoucie du fichier : une main dont
+  le pouce passe près du majeur sans rien pincer clignotait 1 ↔ 0 sur le
+  tremblement du traqueur, n'aboutissait jamais au maintien d'une seconde, et
+  ne disait pas pourquoi. Mesuré sur 1 152 poses en C géométriquement valides,
+  la falaise en annulait **167** (un C qui s'ouvre vers le bas) ; la rampe en
+  rend 45 au-dessus du seuil de maintien et donne aux 122 autres un score
+  gradué. Un pincement secondaire franc reste exactement à 0. Le canal primaire
+  était
   déjà couvert par construction (`wakeGapMin` > `releaseRatio`, Slice 02) ; le
   **secondaire ne l'était pas**, et il ne pouvait pas l'être — il pousse le
   pouce *de côté*, pas vers l'index. Mesuré : un clic droit franc laisse l'écart
@@ -562,6 +572,31 @@ raison (`capture_active`) plutôt que de disparaître : un geste qui s'évanouit
 sans trace est indiscernable d'un geste non reconnu, et c'est la première
 question qu'on se posera.
 
+**L'arbitrage ne s'applique qu'aux phases qui demandent d'agir.** `start` et
+`hold` sont des demandes : les étouffer ne coûte que l'action qui n'a pas eu
+lieu. `end` et `cancel` **rendent** quelque chose sur quoi le consommateur a
+déjà agi : les étouffer le laisse accroché pour toujours. Mesuré avant
+correction : un poing annoncé alors que rien n'était capturé, puis une capture
+prise, puis la main ouverte → `fist:end` étouffé et plus rien ensuite ; sur une
+perte de main, `fist:cancel` étouffé **et** l'état de la main effacé dans la
+foulée, si bien que plus rien ne pouvait corriger. `isGestureSuppressed` ne
+connaît pas les phases : elle répond pour `start`/`hold`, et pour la fin des
+deux gestes **ponctuels** (`clap`, `double_close`), qui n'ont que celle-là et
+dont elle *est* la demande.
+
+> **Invariant.** Tout `start` publié reçoit **exactement une** phase terminale
+> (`end` ou `cancel`), et aucune phase terminale n'arrive sans `start`. La
+> seconde moitié n'est pas décorative : un `start` étouffé produisait tout de
+> même un `end`, et un consommateur qui apparie les deux croyait relâcher ce
+> qu'il n'avait jamais pris.
+
+Un geste sans règle dans la table ne lève pas dans la boucle d'images — ce
+serait `tracking_failed`, caméra rendue, pour un nom manquant. Il retombe sur
+la règle la plus **silencieuse** : portée `global`, aucune autorisation pendant
+une capture, donc il ne peut jamais voler la main à une manipulation. Le
+contrat, lui, refuse un geste inconnu (`barehands_gesture_unknown`) : c'est la
+bonne réponse hors de la boucle, là où le refus se lit.
+
 `captured` est la couture de la **Slice 06**, qui possède les captures ; vide
 tant qu'elles n'existent pas, donc rien n'est étouffé aujourd'hui.
 
@@ -596,8 +631,8 @@ clic droit est un canal, jamais un appui long (décision 22).
 
 `JarvisBarehandsCore.createPinchIntentEngine(options)`, deux canaux par main
 (`createPinchChannel`), logique pure. Entrée :
-`{hands:[{handTrackId, landmarks, x, y, anchorX, anchorY, stillness, quality}],
-now, aspect}`.
+`{hands:[{handTrackId, landmarks, x, y, palmX, palmY, anchorX, anchorY,
+stillness, quality}], now, aspect}`.
 
 **Ce qui sépare les deux canaux n'est pas un seuil, c'est une marge.** Les deux
 se mesurent pareil — du pouce à un bout de doigt, rapporté à la paume — et
@@ -608,6 +643,49 @@ isolément lirait un clic droit dans un poing. La **confiance** d'un canal est
 donc l'écart qui le sépare de l'autre (`ramp(autre − sien, 0,
 pinchMarginRatio)`), nulle quand les deux se valent, et il faut
 `pinchConfidenceMin` pour descendre en contact.
+
+**Mais la marge ne peut pas porter cela toute seule**, et la mesure l'a dit :
+avec `pinchMarginRatio` à 0,18 le poing du dépôt n'était écarté que de **0,02
+paume**, un poing un peu moins serré passait, et le poing le plus courant — le
+pouce replié *en travers* de la paume, sans toucher l'index — produisait un
+clic droit de confiance **1,0**. Le même nombre, tiré dans l'autre sens,
+bloquait un pincement primaire légitime dès que le majeur suivait l'index à
+moins de 8°. Deux contraintes contradictoires sur une seule constante.
+
+La fermeture de main entière est donc lue par un **second témoin** :
+`handClosure(landmarks, aspect)` = `1 − max(extension des quatre doigts)`, la
+même mesure et les mêmes deux constantes (`fingerCurledPalms`,
+`fingerExtendedPalms`) que le score `fist` du vocabulaire des gestes — un poing
+*est* « tous les doigts repliés », ce n'est pas une coïncidence de seuils. La
+confiance est multipliée par `1 − handClosure`.
+
+> **Garantie.** Quatre doigts à `fingerCurledPalms` (1,15 paume du poignet) ou
+> en deçà ⇒ confiance **exactement** nulle sur les deux canaux, quelles que
+> soient la marge et les deux distances. **Marge :** mesurée à 1,000 sur toute
+> la famille des poings (doigts à 0,7 / 0,8 / 0,9 paume, pouce sur l'index comme
+> replié en travers) et 0,000 sur tous les pincements francs et sur le C — pleine
+> échelle, là où la marge seule offrait 0,02 paume. Un poing devrait lever un
+> doigt de 0,9 à plus de 1,15 paume (~22 mm) avant de seulement commencer à
+> compter. Et cela ne coûte rien à un vrai pincement : il lui reste au moins un
+> doigt tendu.
+
+Libérée de la fermeture, `pinchMarginRatio` ne répond plus qu'à sa vraie
+question — **de quel doigt s'agit-il** — et descend à 0,12, soit 0,06 paume
+d'écart exigé (~5 mm sur une paume de 90 mm) : au-dessus du tremblement d'un
+bout de doigt, en dessous de l'écart qu'un pincement délibéré produit. Sur le
+balayage « le majeur suit l'index », tout est admis jusqu'à 3° de séparation,
+contre 8° avant.
+
+**Une image malformée se saute par canal, pas par image.** Les deux canaux ne
+lisent pas le même bout de doigt (`INDEX_TIP` pour le primaire, `MIDDLE_TIP`
+pour le secondaire) : n'en perdre qu'un laissait l'image passer et donnait
+`null` au canal aveugle — ce qui faisait retomber son hystérésis à `open` et
+**émettait un `up`**. Mesuré : pendant un clic droit, perdre `MIDDLE_TIP` une
+seule image produisait `secondary:up intent=click`, or c'est le point le plus
+probablement occulté d'un pincement pouce-majeur, le pouce étant devant. Un
+canal dont le rapport ne se lit pas ne reçoit rien : son état, son intention et
+son contact traversent l'image intacts. `contacts` le publie avec
+`ratio: null`.
 
 Un contact ne **commence** ni sur une main que le suivi ne croit pas
 (`usableQuality`, décision 7) ni sur une fermeture de main entière. Un contact
@@ -620,8 +698,30 @@ d'interrompre.
 **Quel point porte l'événement** : `approach` et `down` visent l'**ancre** figée
 (la cible ne glisse pas sous les doigts au moment de cliquer) ; `move` et `up`
 suivent la position **filtrée** (un glissement resté sur l'ancre ne déplacerait
-rien). Sur un clic les deux sont à moins de `clickSlopPx` l'une de l'autre, par
-définition du clic.
+rien).
+
+**Et quel point mesure le déplacement : ni l'un ni l'autre.** `travelPx` se lit
+sur `palmX`/`palmY`, le **centre de la paume** en pixels de la fenêtre. Il se
+lisait sur le bout de l'index — c'est-à-dire sur le doigt qui *fait* le
+pincement primaire, qui parcourt un demi-palme en se refermant sans que la main
+ait bougé. Mesuré de bout en bout, main parfaitement immobile, en 1920×1080 :
+un pincement textbook marquait **39,4 px** contre un `dragSlopPx` de 26, et
+`dragSlopPx` latche `drag` sans retour — `intent: click` était **inatteignable
+pour une vraie main**, quelle que soit la taille de la paume, dès que l'index
+faisait la moitié de la fermeture. C'est le défaut que la Slice 03 a corrigé une
+couche plus haut, dans les mêmes termes : elle ancre l'identité sur le centre de
+la paume « parce que l'index parcourt plusieurs paumes pendant un pincement ».
+Ici il se lisait comme une main qui glisse, là comme une main qui saute — même
+repère, même raison. Le jeton, lui, continue de suivre l'index : c'est ce que
+l'utilisateur vise.
+
+Sur le même pincement, le même de bout en bout : `travelPx` 0 à 8,7 px selon la
+taille de la paume, `intent: click`, et le chemin de clic hérité
+(`createPinchDetector`) continue de produire son clic unique.
+
+`palmX`/`palmY` absents, le moteur retombe sur `x`/`y` : un déplacement
+**sur-évalué**, donc un faux `drag`, jamais un faux `click`. Le sens de l'erreur
+reste le bon.
 
 **Clic contre glissement** (décision 22), sur les traits que la Slice 03 publie —
 jamais sur une dérivée recalculée, la dérivée interne du filtre One Euro lisant
@@ -645,6 +745,13 @@ approche à 900 px/s cette vitesse-là met **~250 ms** à retomber sous 224
 | relâché moins de ~250 ms après l'arrêt de la main | **`drag`**, même avec 0 px de déplacement |
 | relâché entre ~250 ms et `clickMaxMs` après la descente | `click` |
 
+Cette fenêtre est la **seule** contrainte qui reste sur le clic. Elle ne
+s'applique qu'après une approche franche : une main déjà posée a `stillness` à 1
+et clique en 144 ms, mesuré de bout en bout. Le déplacement, lui, ne bloque plus
+rien depuis qu'il se lit sur la paume (§ *Quel point mesure le déplacement*) —
+il valait 39,4 px pour 26 autorisés sur une main strictement immobile, et
+c'était lui, et non `stillness`, qui rendait le clic inatteignable.
+
 Un clic délibéré **reste possible** — la fenêtre `[~250 ms, 400 ms]` n'est pas
 vide — mais un *tapotement* immédiat après un geste rapide est lu comme un
 glissement. C'est un faux `drag`, jamais un faux `click` : le sens de l'erreur
@@ -662,7 +769,7 @@ l'un d'eux, c'est le reporter ici**.
 
 | Réglage | Défaut | Rôle |
 |---|---|---|
-| `pinchMarginRatio` | 0,18 | écart entre les deux canaux qui donne la pleine confiance |
+| `pinchMarginRatio` | 0,12 | écart entre les deux canaux qui donne la pleine confiance |
 | `pinchConfidenceMin` | 0,5 | confiance exigée pour descendre en contact |
 | `clickMaxMs` | 400 | au-delà, un contact n'est plus un clic |
 | `clickSlopPx` | 12 | déplacement toléré dans un clic |
@@ -677,11 +784,17 @@ l'un d'eux, c'est le reporter ici**.
 | `clapSpeedPalms` | 2,5 | vitesse de rapprochement exigée (paumes/s) |
 | `gestureCooldownMs` | 500 | anti-rebond des gestes discrets |
 
-Deux d'entre eux ne sont pas libres : `fingerCurledPalms < fingerExtendedPalms`
-est refusé à la construction (`RangeError`, quatrième invariant de paire
-d'`options()`), et `clickSlopPx < dragSlopPx` — au-dessus, aucun contact ne
-pourrait rester indécis jusqu'au relâchement. La **Slice 08** calibre ces
-nombres ; `window.JarvisBarehands.gestures()` et `.pinch()` sont ce qu'elle lira.
+Deux d'entre eux ne sont pas libres, et **les deux se refusent à la
+construction** (`RangeError`) : `fingerCurledPalms < fingerExtendedPalms`
+(quatrième invariant de paire d'`options()`) et `clickSlopPx <= dragSlopPx`
+(cinquième). Le second ne faisait que s'écrire ici : `clickSlopPx` au-dessus de
+`dragSlopPx` est **silencieusement tronqué**, puisque le contact est déjà `drag`
+quand le test du clic s'exécute — `createPinchIntentEngine({clickSlopPx: 100})`
+était accepté et ne changeait rien. C'est la **troisième** apparition de cette
+classe de défaut sur cette tâche, après `smoothing` et
+`wakeIntervalMs`/`wakeGraceMs` ; l'égalité reste permise, elle ne tronque rien.
+La **Slice 08** calibre ces nombres ; `window.JarvisBarehands.gestures()` et
+`.pinch()` sont ce qu'elle lira.
 
 ## 6. Cible et régions (§6, décisions 3, 8, 9, 16, 23)
 

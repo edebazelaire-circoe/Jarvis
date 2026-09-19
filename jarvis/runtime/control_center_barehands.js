@@ -81,7 +81,17 @@ const JarvisBarehandsCore=(function(){
        mesurent en paumes, du pouce à un bout de doigt, donc un seuil propre au
        majeur serait un nombre de plus sans question de plus. Ce qui les sépare
        n'est pas un seuil, c'est une **marge**. */
-    pinchMarginRatio:.18,    // écart minimal entre les deux canaux pour être sûr duquel il s'agit
+    /* Écart entre les deux canaux qui donne la pleine confiance. Il valait
+       0,18 tant qu'il devait, **seul**, écarter la fermeture de main entière :
+       à ce prix il écartait le poing de 0,02 paume et bloquait un pincement
+       primaire dès que le majeur suivait l'index à moins de 8°. Une seule
+       marge ne pouvait pas tenir les deux — la fermeture est maintenant lue
+       sur l'extension des doigts (`handClosure`), et cette marge-ci ne répond
+       plus qu'à sa vraie question : **de quel doigt s'agit-il**. Libérée, elle
+       descend à 0,12, soit 0,06 paume d'écart exigé (~5 mm sur une paume de
+       90 mm) — au-dessus du tremblement d'un bout de doigt, en dessous de
+       l'écart qu'un pincement délibéré produit. */
+    pinchMarginRatio:.12,    // écart minimal entre les deux canaux pour être sûr duquel il s'agit
     pinchConfidenceMin:.5,   // confiance de canal exigée pour descendre en contact
     /* ---- Slice 04 : clic contre glissement (décision 22). Lus sur la vitesse
        et l'immobilité **publiées par la Slice 03**, jamais sur une dérivée
@@ -178,6 +188,19 @@ const JarvisBarehandsCore=(function(){
     o.clickMaxMs=Math.max(0,Number(o.clickMaxMs)||0);
     o.clickSlopPx=Math.max(0,Number(o.clickSlopPx)||0);
     o.dragSlopPx=Math.max(0,Number(o.dragSlopPx)||0);
+    /* Cinquième invariant de paire, et la **troisième** fois que cette classe
+       de défaut se présente sur cette tâche (après `smoothing` et
+       `wakeIntervalMs`/`wakeGraceMs`) : le glissement se tranche en cours de
+       route à `dragSlopPx`, le clic ne se juge qu'au relâchement. Un
+       `clickSlopPx` au-dessus de `dragSlopPx` est donc **silencieusement
+       tronqué** — le contact est déjà DRAG quand le test du clic s'exécute, et
+       toute la tolérance au-delà de `dragSlopPx` est du réglage sans effet.
+       `createPinchIntentEngine({clickSlopPx:100})` était accepté et ne
+       changeait rien. Le contrat l'écrivait déjà (`clickSlopPx < dragSlopPx`) ;
+       il se refuse désormais là où il se lit. L'égalité reste permise : elle
+       tronque zéro. */
+    if(o.clickSlopPx>o.dragSlopPx)
+      throw new RangeError('clickSlopPx ne peut pas dépasser dragSlopPx : le glissement se tranche en chemin, donc toute tolérance de clic au-delà est tronquée sans rien dire');
     o.clickStillnessMin=clamp(atLeast(o.clickStillnessMin,0,DEFAULTS.clickStillnessMin),0,1);
     o.postureScore=clamp(atLeast(o.postureScore,0,DEFAULTS.postureScore),0,1);
     o.postureHoldMs=Math.max(0,Number(o.postureHoldMs)||0);
@@ -505,15 +528,31 @@ const JarvisBarehandsCore=(function(){
        une main qui pince. La géométrie ne peut pas le dire toute seule : elle
        doit lire le second doigt. Absent du traqueur, il n'y a pas de pincement
        secondaire connu, donc rien à écarter — la mesure du C reste celle de la
-       Slice 02, sur ses quatre points. */
+       Slice 02, sur ses quatre points.
+
+       Cette exclusion était d'abord un `return 0` sec au-dessus de
+       `releaseRatio` — la **seule** frontière non adoucie d'un fichier qui
+       adoucit toutes les autres, et pour la raison qu'elles le sont : une main
+       dont le pouce passe près du majeur sans rien pincer clignotait 1 ↔ 0 sur
+       le tremblement du traqueur, n'aboutissait jamais au maintien d'une
+       seconde, et ne disait pas pourquoi. Mesuré sur 1 152 poses en C
+       géométriquement valides, la falaise en annulait **167** — un C qui
+       s'ouvre vers le bas, pouce sous le bout de l'index, majeur à demi replié.
+       C'est donc une rampe, sur la bande que l'hystérésis possède déjà : zéro
+       sous `pressRatio` — le seuil où le contact **entre** réellement, et le
+       plus proche de l'état de contact qu'un score sans mémoire puisse lire —
+       et plein au-dessus de `releaseRatio`. 45 de ces 167 poses repassent
+       au-dessus du seuil de maintien, les 122 autres gagnent un score gradué
+       au lieu d'un zéro, et un vrai pincement secondaire (rapport ≤ 0,28)
+       reste exactement à zéro. */
     const secondary=pinchRatioFor(landmarks,k,PINCH_CHANNEL.SECONDARY);
-    if(secondary!==null&&secondary<o.releaseRatio)return 0;
+    const apart=secondary===null?1:ramp(secondary,o.pressRatio,o.releaseRatio);
     const gap=distance(landmarks[LM.THUMB_TIP],landmarks[LM.INDEX_TIP],k)/palm;
     const reach=distance(landmarks[LM.WRIST],landmarks[LM.INDEX_TIP],k)/palm;
     const soft=Math.max(1e-6,(o.wakeGapMax-o.wakeGapMin)*o.wakeSoft);
     const open=Math.min(ramp(gap,o.wakeGapMin,o.wakeGapMin+soft),1-ramp(gap,o.wakeGapMax-soft,o.wakeGapMax));
     const extended=ramp(reach,o.wakeIndexMin,o.wakeIndexMin*(1+o.wakeSoft));
-    return clamp(Math.min(open,extended),0,1);
+    return clamp(Math.min(open,extended,apart),0,1);
   }
 
   /* Maintien du réveil : la posture doit tenir `wakeHoldMs` d'affilée. Le
@@ -634,6 +673,20 @@ const JarvisBarehandsCore=(function(){
     clap:Object.freeze({scope:GESTURE_SCOPE.GLOBAL,duringCapture:false}),
   });
   const gestureScope=gesture=>(GESTURE_RULES[gesture]||{}).scope||null;
+  /* Repli pour un geste sans règle. `gestureScope` se gardait déjà ; la
+     publication du moteur lisait `GESTURE_RULES[gesture].duringCapture` à nu,
+     et une sixième posture ajoutée un jour aurait levé **dans la boucle
+     d'images**, c'est-à-dire en `tracking_failed` : caméra rendue, session
+     terminée, pour un nom manquant dans une table. Le contrat, lui, refuse un
+     geste inconnu (`barehands_gesture_unknown`) — c'est la bonne réponse hors
+     de la boucle, où le refus se lit.
+     Le repli est le plus **silencieux** possible : portée globale et aucune
+     autorisation pendant une capture, donc un geste sans règle ne peut jamais
+     voler la main à une manipulation en cours. Le contrat prend le repli
+     inverse sur une portée inconnue (`global` y est le plus dangereux) parce
+     qu'il décrit un événement déjà émis ; ici on décide d'émettre. */
+  const UNRULED_GESTURE=Object.freeze({scope:GESTURE_SCOPE.GLOBAL,duringCapture:false});
+  const ruleFor=gesture=>GESTURE_RULES[gesture]||UNRULED_GESTURE;
 
   const FINGER=Object.freeze({index:LM.INDEX_TIP,middle:LM.MIDDLE_TIP,ring:LM.RING_TIP,pinky:LM.PINKY_TIP});
   const FINGERS=Object.freeze(Object.keys(FINGER));
@@ -645,6 +698,60 @@ const JarvisBarehandsCore=(function(){
     x:(landmarks[LM.WRIST].x+landmarks[LM.MIDDLE_MCP].x)/2,
     y:(landmarks[LM.WRIST].y+landmarks[LM.MIDDLE_MCP].y)/2});
 
+  /* Extension des quatre doigts, **une fois** pour les deux questions qui la
+     posent : la posture (`handPosture`, qui nomme le geste) et la fermeture de
+     main entière (`handClosure`, qui interdit un contact). Recopier la boucle
+     aurait donné deux lectures d'« un doigt est-il tendu » à calibrer et une
+     seule documentée — même raison que l'extraction de `createContactState`.
+
+     Elle se lit sur les points **présents**, pas sur les sept de
+     `POSTURE_LANDMARKS` : `handPosture` exige les sept avant d'appeler, mais
+     `handClosure` doit répondre à une main dont l'annulaire manque — ce sont
+     les deux derniers doigts que l'occlusion emporte en premier, et refuser de
+     conclure là voudrait dire « aucun pincement ne peut commencer pendant que
+     l'auriculaire est caché ». `readable` dit sur combien de doigts la réponse
+     s'appuie ; `highest` reste le maximum de ceux-là, ce qui est la lecture
+     prudente : un seul doigt tendu suffit à dire que la main n'est pas fermée,
+     et il est vu ou il ne l'est pas. */
+  function fingerExtensions(landmarks,k,palm,o){
+    const extension={};
+    let lowest=1,highest=0,readable=0;
+    for(const finger of FINGERS){
+      const at=FINGER[finger];
+      if(!usablePoint(landmarks[at])){extension[finger]=null;continue}
+      const reach=distance(landmarks[LM.WRIST],landmarks[at],k)/palm;
+      const value=ramp(reach,o.fingerCurledPalms,o.fingerExtendedPalms);
+      extension[finger]=value;readable+=1;
+      lowest=Math.min(lowest,value);highest=Math.max(highest,value);
+    }
+    return {extension,lowest,highest,readable};
+  }
+
+  /* **Fermeture de main entière**, 0..1, ou `null` si aucun bout de doigt ne
+     se lit. C'est le second témoin qu'exigeait la décision 21 : la marge entre
+     les deux canaux ne pouvait pas, à elle seule, séparer un poing d'un clic
+     droit. Un poing rapproche le pouce de l'index *et* du majeur, mais il fait
+     aussi — et c'est **sa** définition, pas une coïncidence de seuils —
+     replier les quatre doigts. L'engin de pincement lit donc ici ce que le
+     vocabulaire des gestes appelle déjà « poing », avec les mêmes deux
+     constantes et aucune de plus.
+
+     Mesuré : 1,000 sur toute la famille des poings (doigts à 0,7 / 0,8 / 0,9
+     paume, pouce sur l'index comme pouce replié en travers de la paume),
+     0,000 sur tous les pincements francs (primaire, secondaire, index écarté)
+     et sur le C. La séparation est pleine échelle ; celle que la marge seule
+     offrait valait 0,02 paume. */
+  function handClosure(landmarks,aspect,overrides){
+    const o=options(overrides);
+    if(!Array.isArray(landmarks))return null;
+    if(!usablePoint(landmarks[LM.WRIST])||!usablePoint(landmarks[LM.MIDDLE_MCP]))return null;
+    const k=Number(aspect)>0?Number(aspect):1;
+    const palm=distance(landmarks[LM.WRIST],landmarks[LM.MIDDLE_MCP],k);
+    if(!(palm>1e-6))return null;
+    const read=fingerExtensions(landmarks,k,palm,o);
+    return read.readable?clamp(1-read.highest,0,1):null;
+  }
+
   /* Posture d'une main, ou `null` si l'image ne porte pas les points qu'elle
      lit. `null` veut dire **sautée**, jamais « posture relâchée » : une image
      malformée ne doit pas interrompre un geste en cours (règle de la reprise
@@ -655,14 +762,9 @@ const JarvisBarehandsCore=(function(){
     const k=Number(aspect)>0?Number(aspect):1;
     const palm=distance(landmarks[LM.WRIST],landmarks[LM.MIDDLE_MCP],k);
     if(!(palm>1e-6))return null;
-    const extension={};
-    let lowest=1,highest=0;
-    for(const finger of FINGERS){
-      const reach=distance(landmarks[LM.WRIST],landmarks[FINGER[finger]],k)/palm;
-      const value=ramp(reach,o.fingerCurledPalms,o.fingerExtendedPalms);
-      extension[finger]=value;
-      lowest=Math.min(lowest,value);highest=Math.max(highest,value);
-    }
+    // Les sept points sont là (`POSTURE_LANDMARKS`) : les quatre doigts se
+    // lisent tous, `extension` ne porte donc aucun `null` de ce côté-ci.
+    const {extension,lowest,highest}=fingerExtensions(landmarks,k,palm,o);
     const gap=distance(landmarks[LM.THUMB_TIP],landmarks[LM.INDEX_TIP],k)/palm;
     /* Même adoucissement que le C, et pour la même raison : une frontière nette
        ferait clignoter la posture d'un pouce posé pile dessus. */
@@ -707,7 +809,12 @@ const JarvisBarehandsCore=(function(){
 
     const fresh=()=>{
       const postures={};
-      for(const gesture of POSTURE_GESTURES)postures[gesture]={heldMs:0,holding:false,started:false};
+      /* `started` = la posture a fini son maintien ; `announced` = son `start`
+         est **parti**. Les deux ne sont pas le même fait : un `start` étouffé
+         par une capture laisse `started` vrai — la reconnaissance continue,
+         c'est voulu — mais rien n'a été annoncé, donc rien n'a à être rendu. */
+      for(const gesture of POSTURE_GESTURES)
+        postures[gesture]={heldMs:0,holding:false,started:false,announced:false};
       return {at:null,postures,closes:[],doubleAt:-Infinity};
     };
 
@@ -727,17 +834,38 @@ const JarvisBarehandsCore=(function(){
            posture garde sa progression, son début et sa fin), seule la
            publication se tait. Sans cela, relâcher une capture ferait
            réapparaître un geste à moitié construit. */
+        const build=(gesture,phase,handTrackId,progress,confidence)=>({
+          gesture,phase,scope:ruleFor(gesture).scope,
+          handTrackId:handTrackId===null||handTrackId===undefined?null:handTrackId,
+          t:now,progress:clamp(progress,0,1),confidence:clamp(confidence,0,1)});
+        /* **Une demande d'agir** : `start`, `hold`, et la fin des deux gestes
+           ponctuels (le claquement et le double, qui n'ont que celle-là et
+           dont elle *est* la demande). Arbitrée. */
         const publish=(gesture,phase,handTrackId,progress,confidence)=>{
-          const rule=GESTURE_RULES[gesture];
+          const rule=ruleFor(gesture);
           const blocked=!rule.duringCapture&&(rule.scope===GESTURE_SCOPE.GLOBAL
             ?captured.size>0
             :handTrackId!==null&&captured.has(String(handTrackId)));
-          const event={gesture,phase,scope:rule.scope,
-            handTrackId:handTrackId===null||handTrackId===undefined?null:handTrackId,
-            t:now,progress:clamp(progress,0,1),confidence:clamp(confidence,0,1)};
+          const event=build(gesture,phase,handTrackId,progress,confidence);
           if(blocked)suppressed.push({...event,reason:'capture_active'});
           else events.push(event);
           return !blocked;
+        };
+        /* **Une libération** : la fin ou l'annulation d'une posture dont le
+           `start` est déjà parti. Toujours délivrée, capture ou pas.
+
+           L'arbitrage ne peut pas être la même règle pour les deux. Un `start`
+           demande d'agir — l'étouffer ne coûte que l'action qui n'a pas eu
+           lieu. Un `end`/`cancel` rend quelque chose sur quoi le consommateur
+           a **déjà** agi : l'étouffer le laisse accroché pour toujours.
+           Mesuré : un poing annoncé libre, puis une capture prise, puis la
+           main ouverte → `fist:end` étouffé, et plus rien ensuite ; sur une
+           perte de main, `fist:cancel` étouffé **et** l'état effacé dans la
+           foulée, si bien que rien ne pouvait plus corriger. L'invariant est
+           désormais : tout `start` publié reçoit exactement une phase
+           terminale, et aucune phase terminale n'arrive sans `start`. */
+        const release=(gesture,phase,handTrackId,progress,confidence)=>{
+          events.push(build(gesture,phase,handTrackId,progress,confidence));
         };
 
         /* Purge **avant** de lire, comme la Slice 03 : une boucle d'images
@@ -748,8 +876,11 @@ const JarvisBarehandsCore=(function(){
            qui la tient. */
         for(const [id,state] of [...hands]){
           if(state.at!==null&&now-state.at<=o.lostGraceMs)continue;
+          /* La main s'en va et son état part avec elle : c'est la **dernière**
+             occasion de rendre ce qui a été annoncé. Un `cancel` étouffé ici
+             ne revenait jamais, puisque la ligne suivante efface l'état. */
           for(const gesture of POSTURE_GESTURES)
-            if(state.postures[gesture].started)publish(gesture,GESTURE_PHASE.CANCEL,id,0,0);
+            if(state.postures[gesture].announced)release(gesture,GESTURE_PHASE.CANCEL,id,0,0);
           hands.delete(id);
         }
 
@@ -771,8 +902,13 @@ const JarvisBarehandsCore=(function(){
             const score=posture.scores[gesture];
             const holding=score>=o.postureScore;
             if(!holding){
-              if(own.started)publish(gesture,GESTURE_PHASE.END,id,1,score);
-              own.started=false;own.holding=false;own.heldMs=0;
+              /* Rendu seulement si quelque chose a été annoncé. Sans ce test,
+                 un `start` étouffé par une capture produisait tout de même un
+                 `end` : un consommateur qui apparie début et fin voyait une
+                 fin orpheline, et croyait relâcher ce qu'il n'avait jamais
+                 pris. L'autre moitié du même invariant. */
+              if(own.announced)release(gesture,GESTURE_PHASE.END,id,1,score);
+              own.started=false;own.announced=false;own.holding=false;own.heldMs=0;
               continue;
             }
             /* Une posture qui vient d'apparaître ne crédite pas le temps passé
@@ -783,7 +919,7 @@ const JarvisBarehandsCore=(function(){
             if(own.started)continue;
             if(own.heldMs>=o.postureHoldMs){
               own.started=true;
-              publish(gesture,GESTURE_PHASE.START,id,1,score);
+              own.announced=publish(gesture,GESTURE_PHASE.START,id,1,score);
               if(gesture===GESTURE.FIST){
                 /* Double fermeture : deux poings **commencés** dans la fenêtre.
                    Le poing garde ses propres événements — un consommateur lié
@@ -876,6 +1012,34 @@ const JarvisBarehandsCore=(function(){
        parce qu'un glissement qui resterait sur l'ancre ne déplacerait rien.
        Sur un clic les deux sont à moins de `clickSlopPx` l'une de l'autre, par
        définition du clic. */
+    /* **Où est la main**, par opposition à où elle vise. `x`/`y` suivent le
+       bout de l'index : c'est ce que l'utilisateur pointe, et c'est juste pour
+       le pointeur. C'était faux pour le **déplacement d'un contact**, parce
+       que l'index est aussi le doigt qui *fait* le pincement primaire : il
+       parcourt un demi-palme en se refermant, sans que la main ait bougé d'un
+       millimètre. Mesuré de bout en bout, main parfaitement immobile, un
+       pincement textbook marquait 39,4 px contre un `dragSlopPx` de 26 — et
+       `dragSlopPx` latche DRAG sans retour : `intent:click` était
+       **inatteignable** pour une vraie main.
+
+       C'est exactement le défaut que la Slice 03 a corrigé une couche plus
+       haut, avec les mêmes mots : elle ancre l'identité sur le **centre de la
+       paume** « parce que l'index parcourt plusieurs paumes pendant un
+       pincement, et qu'une main qui pince se lirait comme une main qui saute ».
+       Ici elle se lisait comme une main qui glisse. Même repère, même raison.
+
+       `palmX`/`palmY` sont donc le centre de la paume en pixels de la fenêtre,
+       fournis par l'appelant comme le sont déjà `x`/`y` et l'ancre — le moteur
+       ne connaît ni la surimpression ni `toScreen`. Absents, il retombe sur
+       `x`/`y`, c'est-à-dire sur le comportement d'avant : un déplacement
+       **sur-évalué**, donc un faux `drag` et jamais un faux `click`. Le sens
+       de l'erreur reste le bon, et le seul appelant du dépôt les fournit. */
+    const handAt=sample=>{
+      const px=Number(sample.palmX),py=Number(sample.palmY);
+      return Number.isFinite(px)&&Number.isFinite(py)
+        ?{x:px,y:py}:{x:sample.x,y:sample.y};
+    };
+
     const event=(phase,sample,x,y,progress)=>({
       channel,phase,handTrackId:sample.handTrackId,
       x,y,t:sample.now,progress:clamp(progress,0,1),confidence:sample.confidence,
@@ -887,9 +1051,14 @@ const JarvisBarehandsCore=(function(){
       channel,
       state:()=>contact.state(),
       intent:()=>held?held.intent:PINCH_INTENT.UNDECIDED,
-      /* `sample` : `{handTrackId, ratio, other, quality, x, y, anchorX,
-         anchorY, stillness, now, confidence}` — `confidence` est calculée par
-         le moteur, qui seul voit les deux canaux. */
+      /* `sample` : `{handTrackId, ratio, other, quality, x, y, palmX, palmY,
+         anchorX, anchorY, stillness, now, confidence}` — `confidence` est
+         calculée par le moteur, qui seul voit les deux canaux et la fermeture
+         de la main. Trois couples de coordonnées, trois questions : où la main
+         **vise** (`anchorX`/`anchorY`, figé), où le pointeur **est**
+         (`x`/`y`, le bout de l'index filtré), et où la **main** est
+         (`palmX`/`palmY`, le centre de la paume) — seul le troisième mesure un
+         déplacement, voir `handAt`. */
       update(sample){
         const out=[];
         /* Un contact ne **commence** ni sur une main que le suivi ne croit pas
@@ -900,9 +1069,10 @@ const JarvisBarehandsCore=(function(){
            relâchement ou par la perte de la main. */
         const trusted=sample.confidence>=o.pinchConfidenceMin&&usableQuality(sample.quality,overrides);
         const step=contact.update(held||trusted?sample.ratio:null);
+        const at=handAt(sample);
         if(held){
           held.durationMs=Math.max(0,sample.now-held.at);
-          held.travelPx=Math.max(held.travelPx,Math.hypot(sample.x-held.x,sample.y-held.y));
+          held.travelPx=Math.max(held.travelPx,Math.hypot(at.x-held.x,at.y-held.y));
           /* Le glissement se décide **en cours de route** : dès que la main a
              franchi `dragSlopPx`, l'intention est prise et ne revient pas —
              une main qui repart d'où elle est venue a tout de même glissé. Le
@@ -911,7 +1081,7 @@ const JarvisBarehandsCore=(function(){
           if(held.travelPx>o.dragSlopPx)held.intent=PINCH_INTENT.DRAG;
         }
         if(step.state==='pressed'&&step.entered&&!held){
-          held={at:sample.now,x:sample.x,y:sample.y,travelPx:0,durationMs:0,
+          held={at:sample.now,x:at.x,y:at.y,travelPx:0,durationMs:0,
             intent:PINCH_INTENT.UNDECIDED};
           lastX=sample.anchorX;lastY=sample.anchorY;
           out.push(event(PINCH_PHASE.DOWN,sample,sample.anchorX,sample.anchorY,1));
@@ -962,10 +1132,11 @@ const JarvisBarehandsCore=(function(){
       primary:createPinchChannel(PINCH_CHANNEL.PRIMARY,overrides),
       secondary:createPinchChannel(PINCH_CHANNEL.SECONDARY,overrides)}});
     return {
-      /* `{hands:[{handTrackId, landmarks, x, y, anchorX, anchorY, stillness,
-         quality}], now, aspect}` — `x`/`y` en **pixels de la fenêtre**, la
-         position filtrée de la Slice 03 ; `anchorX`/`anchorY` le point de
-         visée figé. Les deux, parce qu'ils ne servent pas à la même chose. */
+      /* `{hands:[{handTrackId, landmarks, x, y, palmX, palmY, anchorX,
+         anchorY, stillness, quality}], now, aspect}` — tous en **pixels de la
+         fenêtre** : `x`/`y` la position filtrée de la Slice 03,
+         `anchorX`/`anchorY` le point de visée figé, `palmX`/`palmY` le centre
+         de la paume. Les trois, parce qu'ils ne servent pas à la même chose. */
       update(frame){
         const f=frame||{};
         const now=Number(f.now);
@@ -988,25 +1159,63 @@ const JarvisBarehandsCore=(function(){
           if(id===undefined||id===null)continue;
           const ratios={};
           for(const channel of PINCH_CHANNELS)ratios[channel]=pinchRatioFor(hand.landmarks,k,channel);
-          // Image malformée : sautée, jamais lue comme un relâchement.
+          /* Image malformée : sautée, jamais lue comme un relâchement — et
+             sautée **par canal**, pas par image. Les deux canaux ne lisent pas
+             le même bout de doigt (`USED_LANDMARKS` veut `INDEX_TIP`,
+             `SECONDARY_LANDMARKS` veut `MIDDLE_TIP`) : n'en perdre qu'un
+             laissait l'autre lisible, donc l'image n'était pas sautée, donc le
+             canal aveugle recevait `null` — et `null` fait retomber
+             `createContactState` à `open`, ce qui **émettait un `up`**.
+             Mesuré : pendant un clic droit, perdre `MIDDLE_TIP` une seule
+             image donnait `secondary:up intent=click` ; or c'est le point le
+             plus probablement occulté d'un pincement pouce-majeur, le pouce
+             étant devant. Le consommateur lâchait l'objet et recevait un clic
+             droit sur une main qui n'avait rien relâché.
+             Le test d'origine ne pouvait pas le voir : il coupait le doigt du
+             canal **au repos** pendant que l'autre tenait. */
           if(ratios.primary===null&&ratios.secondary===null)continue;
           const key=String(id);
           if(!hands.has(key))hands.set(key,make());
           const state=hands.get(key);
           state.at=now;
+          /* Fermeture de main entière, lue une fois par main sur l'extension
+             des doigts. `null` — pas un seul bout de doigt lisible — vaut 1,
+             la lecture prudente : rien ne dit que la main est ouverte, donc
+             rien ne commence. Le cas est inatteignable ici (un canal lisible
+             implique son bout de doigt), et c'est justement pourquoi le repli
+             doit être celui qui échoue du bon côté s'il le devenait. */
+          const closed=handClosure(hand.landmarks,k,overrides);
+          const open=1-(closed===null?1:closed);
           for(const channel of PINCH_CHANNELS){
             const own=ratios[channel],other=ratios[channel===PINCH_CHANNEL.PRIMARY
               ?PINCH_CHANNEL.SECONDARY:PINCH_CHANNEL.PRIMARY];
-            /* La confiance d'un canal est ce qui le **sépare** de l'autre. Les
-               deux rapports ensemble — une main qui se ferme — la mettent à
-               zéro, des deux côtés : un poing n'est ni un clic ni un clic
-               droit. */
-            const confidence=Number.isFinite(own)&&Number.isFinite(other)
-              ?clamp(ramp(other-own,0,o.pinchMarginRatio),0,1):0;
             const engine=state.channels[channel];
+            if(own===null){
+              /* Ce canal-ci ne se lit pas cette image : on ne lui donne rien.
+                 Son état, son intention et son contact éventuel traversent
+                 l'image intacts — c'est ce que « sautée » veut dire. */
+              contacts.push({handTrackId:id,channel,state:engine.state(),
+                intent:engine.intent(),ratio:null,confidence:0});
+              continue;
+            }
+            /* La confiance d'un canal est ce qui le **sépare** de l'autre,
+               **et** ce qui sépare la main d'un poing. Les deux rapports
+               ensemble mettent la première à zéro ; les quatre doigts repliés
+               mettent la seconde à zéro. Il fallait les deux : la marge seule
+               n'écartait le poing du dépôt que de 0,02 paume, et un vrai poing
+               au pouce replié en travers de la paume marquait une confiance de
+               **1,0** — un clic droit maximalement sûr sur une main fermée.
+               Garantie : quatre doigts à `fingerCurledPalms` ou en deçà
+               donnent `open = 0`, donc une confiance **exactement** nulle sur
+               les deux canaux, quelles que soient la marge et les distances.
+               Elle ne coûte rien à un vrai pincement : il lui reste au moins un
+               doigt tendu, donc `open = 1`. */
+            const confidence=Number.isFinite(own)&&Number.isFinite(other)
+              ?clamp(ramp(other-own,0,o.pinchMarginRatio)*open,0,1):0;
             for(const produced of engine.update({handTrackId:id,ratio:own,other,confidence,
               quality:hand.quality,stillness:hand.stillness,now,
               x:Number(hand.x),y:Number(hand.y),
+              palmX:Number(hand.palmX),palmY:Number(hand.palmY),
               anchorX:Number(hand.anchorX===undefined?hand.x:hand.anchorX),
               anchorY:Number(hand.anchorY===undefined?hand.y:hand.anchorY)}))events.push(produced);
             contacts.push({handTrackId:id,channel,state:engine.state(),
@@ -1402,7 +1611,13 @@ const JarvisBarehandsCore=(function(){
           else if(!hand.anchor)hand.anchor={x:motion.x,y:motion.y};
           const aim=hand.anchor||motion;
           if(pinch.click)clicks.push({id,x:aim.x,y:aim.y});
-          tokens.push({id,x:aim.x,y:aim.y,
+          /* Où la **main** est, par opposition à où elle vise : le centre de la
+             paume, en pixels de la fenêtre. Même repère que l'association
+             d'identité, et pour la même raison — il ne bouge pas parce qu'un
+             doigt se referme. La Slice 04 y mesure le déplacement d'un
+             contact ; le jeton, lui, continue de suivre l'index. */
+          const palm=toScreen(palmCenter(landmarks),frame.viewport,o);
+          tokens.push({id,x:aim.x,y:aim.y,palmX:palm.x,palmY:palm.y,
             rawX:motion.rawX,rawY:motion.rawY,filteredX:motion.x,filteredY:motion.y,
             vxPxPerSec:motion.vxPxPerSec,vyPxPerSec:motion.vyPxPerSec,speedPxPerSec:motion.speedPxPerSec,
             stillness:still.stillness,stillMs:still.stillMs,
@@ -1693,6 +1908,7 @@ const JarvisBarehandsCore=(function(){
         if(!token)return;
         observed.push({handTrackId:id,landmarks,
           x:token.filteredX,y:token.filteredY,anchorX:token.x,anchorY:token.y,
+          palmX:token.palmX,palmY:token.palmY,
           stillness:token.stillness,quality:token.quality});
       });
       const held=typeof deps.captures==='function'?deps.captures():[];
@@ -1787,8 +2003,9 @@ const JarvisBarehandsCore=(function(){
 
   return {LM,STATE,STATES,LIVE_STATES,isLiveState,isEngagedState,usableLandmarks,usableQuality,
     USED_LANDMARKS,SECONDARY_LANDMARKS,POSTURE_LANDMARKS,
-    DEFAULTS,MESSAGES,pinchRatio,pinchRatioFor,cPoseScore,handQuality,handPosture,toScreen,
+    DEFAULTS,MESSAGES,pinchRatio,pinchRatioFor,cPoseScore,handQuality,handPosture,handClosure,toScreen,
     GESTURE,GESTURES,GESTURE_PHASE,GESTURE_SCOPE,GESTURE_RULES,POSTURE_GESTURES,gestureScope,
+    gestureRuleFor:ruleFor,
     PINCH_CHANNEL,PINCH_CHANNELS,PINCH_PHASE,PINCH_INTENT,
     createPinchDetector,createWakeDetector,createPointerFilter,createStillness,
     createGestureEngine,createPinchChannel,createPinchIntentEngine,

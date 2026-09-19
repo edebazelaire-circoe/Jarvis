@@ -67,7 +67,7 @@ function hand(opts){
   const at=(deg,reach)=>({x:wrist.x+o.palm*reach*Math.sin(RAD(deg)),
                           y:wrist.y-o.palm*reach*Math.cos(RAD(deg)),z:0});
   lm[8]=at(o.indexAngle===undefined?FAN.index:o.indexAngle,o.index);
-  lm[12]=at(FAN.middle,o.middle);
+  lm[12]=at(o.middleAngle===undefined?FAN.middle:o.middleAngle,o.middle);
   lm[16]=at(FAN.ring,o.ring);lm[20]=at(FAN.pinky,o.pinky);
   const anchor=o.pinch==='index'?lm[8]:o.pinch==='middle'?lm[12]:null;
   lm[4]=anchor?{x:anchor.x+o.palm*o.gap,y:anchor.y,z:0}:at(o.thumbAngle,o.thumbReach);
@@ -86,6 +86,18 @@ const SECONDARY=o=>hand(Object.assign({pinch:'middle',gap:.15},o||{}));
    Les quatre doigts sont tendus et le pouce est loin de l'index — tout ce qui
    fait une main ouverte, sur une main qui pince. */
 const SPLAYED=o=>SECONDARY(Object.assign({indexAngle:-45},o||{}));
+/* Un pincement **en cours**, main immobile : `t` va de 0 (ouvert) à 1 (fermé),
+   `share` dit quelle part de la fermeture l'index fait en se repliant — le
+   reste, c'est le pouce qui vient. Un vrai pincement a `share` autour de 1 :
+   c'est l'index qui bouge. Le poignet et la base du majeur, eux, ne bougent
+   pas du tout, ce qui est exactement le point. */
+const PINCHING=(t,share,o)=>hand(Object.assign(
+  {pinch:'index',index:1.85-.5*t*share,gap:.65-.5*t},o||{}));
+/* Le poing le plus courant, et le plus dangereux : le pouce replié **en
+   travers** de la paume, loin de l'index et du majeur. Ce n'est pas un
+   pincement, et la marge entre les deux canaux le lisait pourtant comme un
+   clic droit de confiance 1. */
+const FIST_THUMB_ACROSS=o=>FIST(Object.assign({pinch:null,thumbAngle:20,thumbReach:.55},o||{}));
 
 /* Entrée des moteurs. `x`/`y` sont des pixels de la fenêtre — la position
    filtrée de la Slice 03 — et `anchorX`/`anchorY` le point de visée figé. */
@@ -794,3 +806,526 @@ def test_everything_the_engines_emit_is_accepted_by_the_contract(tmp_path):
     pairs = result["vocabulary"]
     for index in range(0, len(pairs), 2):
         assert pairs[index] == pairs[index + 1], pairs[index]
+
+
+# ------------------------------------------- de la géométrie aux intentions
+
+
+def test_a_real_pinch_driven_from_landmark_geometry_is_a_click_not_a_drag(tmp_path):
+    """**Le test qui manquait.** Tous les autres du chapitre « pincement »
+    nourrissent le moteur à la main — `x:100, y:100, anchorX:100, stillness:1`
+    — si bien que le cas `click` y avait `travelPx: 0` *par construction*.
+    Aucun ne faisait passer une vraie géométrie de main par le traqueur et le
+    filtre de la Slice 03, et c'est exactement là que vivait le défaut.
+
+    Mesuré de bout en bout, main **parfaitement immobile**, un seul pincement
+    textbook en 1920×1080 : le déplacement était lu sur le bout de l'index,
+    c'est-à-dire sur le doigt qui *fait* le pincement primaire. Il parcourt un
+    demi-palme en se refermant, soit 39,4 px contre un `dragSlopPx` de 26 — et
+    `dragSlopPx` latche `drag` sans retour. `intent: click` était
+    **inatteignable pour une vraie main**.
+
+    La Slice 03 a corrigé le même défaut une couche plus haut, dans les mêmes
+    termes : elle ancre l'identité sur le **centre de la paume** « parce que
+    l'index parcourt plusieurs paumes pendant un pincement, et qu'une main qui
+    pince se lirait comme une main qui saute ». Ici elle se lisait comme une
+    main qui glisse. Le déplacement d'un contact se mesure donc au même repère.
+    Le jeton, lui, continue de suivre l'index : c'est ce que l'utilisateur
+    vise, et ce sont deux questions différentes."""
+
+    result = run_node(tmp_path, HAND + """
+      const VIEWPORT={width:1920,height:1080};
+      /* Une main posée qui pince puis relâche, du traqueur au moteur.
+         `anchor` dit quel point le moteur reçoit comme position de la **main** :
+         le centre de la paume (`palm`) ou le bout de l'index (`tip`, l'ancien). */
+      const run=opts=>{
+        const o=Object.assign({share:1,palm:.16,drift:0,anchor:'palm'},opts||{});
+        const tracker=B.createHandTracker({}),engine=B.createPinchIntentEngine({});
+        const events=[];let clicks=0;
+        for(let i=0;i<26;i+=1){
+          const now=i*16;
+          // 6 images ouvertes, 6 de fermeture, 10 tenues, puis relâchement.
+          const t=i<6?0:i<12?(i-6)/6:i<22?1:0;
+          const lm=PINCHING(t,o.share,{cx:.5+(o.drift*i)/25,palm:o.palm});
+          const out=tracker.update({landmarks:[lm]},{viewport:VIEWPORT,aspect:16/9,now});
+          clicks+=out.clicks.length;
+          const token=out.tokens[0];
+          events.push(...engine.update({hands:[{handTrackId:token.id,landmarks:lm,
+            x:token.filteredX,y:token.filteredY,
+            anchorX:token.x,anchorY:token.y,
+            palmX:o.anchor==='palm'?token.palmX:token.filteredX,
+            palmY:o.anchor==='palm'?token.palmY:token.filteredY,
+            stillness:token.stillness,quality:token.quality}],now,aspect:16/9}).events);
+        }
+        const up=events.filter(e=>e.phase==='up')[0];
+        return {legacyClicks:clicks,moves:events.filter(e=>e.phase==='move').length,
+          intent:up&&up.intent,travelPx:up&&Number(up.travelPx.toFixed(1)),
+          durationMs:up&&up.durationMs};
+      };
+      const sizes=[.12,.16,.20];
+      out({
+        // L'index fait toute la fermeture : le vrai pincement.
+        palmAnchor:sizes.map(palm=>run({palm})),
+        // Le même geste mesuré sur le bout de l'index : le défaut, épinglé.
+        tipAnchor:sizes.map(palm=>run({palm,anchor:'tip'})),
+        // Même quand l'index ne fait que la moitié de la fermeture, le mesurer
+        // sur lui sur-évalue le déplacement.
+        halfShare:run({share:.5,anchor:'tip'}),
+        halfSharePalm:run({share:.5}),
+        // Une main qui traverse réellement l'écran continue de glisser.
+        travelling:run({drift:.2}),
+        slop:[B.DEFAULTS.clickSlopPx,B.DEFAULTS.dragSlopPx],
+      });
+    """)
+    assert result["slop"] == [12, 26]
+    # Trois tailles de paume, un clic à chaque fois, et un déplacement qui tient
+    # dans `clickSlopPx` — la main n'a pas bougé, le moteur le dit enfin.
+    for measured in result["palmAnchor"]:
+        assert measured["intent"] == "click", measured
+        assert measured["travelPx"] <= 12, measured
+        assert measured["durationMs"] <= 400, measured
+    # Le même geste lu sur le bout de l'index : `drag`, et le déplacement grandit
+    # avec la paume — c'est le doigt qui se referme, pas la main qui part.
+    assert [m["intent"] for m in result["tipAnchor"]] == ["drag", "drag", "drag"]
+    assert result["tipAnchor"][2]["travelPx"] > 26
+    assert result["tipAnchor"][2]["travelPx"] > result["tipAnchor"][0]["travelPx"]
+    # Même à mi-part, le bout de l'index sur-évalue : c'est structurel, pas un
+    # effet de seuil.
+    assert result["halfShare"]["travelPx"] > result["halfSharePalm"]["travelPx"]
+    assert result["halfSharePalm"]["intent"] == "click"
+    # Une main qui traverse vraiment reste un glissement : la correction ne rend
+    # pas le moteur aveugle au déplacement, elle le mesure au bon endroit.
+    assert result["travelling"]["intent"] == "drag"
+    assert result["travelling"]["travelPx"] > 26
+    # Et le chemin de clic hérité (Slices 00-03) n'a pas bougé : un clic, une
+    # fois, sur chacun de ces gestes.
+    for key in ("palmAnchor", "tipAnchor"):
+        assert [m["legacyClicks"] for m in result[key]] == [1, 1, 1], key
+    assert result["travelling"]["legacyClicks"] == 1
+    # Note pour la Slice 06 : la main n'a pas translaté et le moteur émet tout
+    # de même des `move`, parce que la position filtrée **suit l'index**. Ce
+    # sont deux questions différentes, et c'est voulu.
+    assert result["palmAnchor"][1]["moves"] > 0
+
+
+def test_losing_the_held_channels_own_fingertip_is_not_a_release(tmp_path):
+    """Une image malformée se saute **par canal**, pas par image.
+
+    Les deux canaux ne lisent pas le même bout de doigt : le primaire veut
+    `INDEX_TIP`, le secondaire `MIDDLE_TIP`. L'image n'était sautée que si les
+    **deux** étaient illisibles, si bien que perdre exactement le doigt du canal
+    qui tient laissait l'image passer — et un `null` fait retomber l'hystérésis
+    à `open`, donc **émet un `up`**.
+
+    Ce n'est pas un cas d'école : `MIDDLE_TIP` est le point le plus
+    probablement occulté d'un pincement pouce-majeur, le pouce étant devant. Le
+    consommateur lâchait l'objet et recevait un clic droit au milieu d'un
+    glissement, sur une main qui n'avait rien relâché.
+
+    Le test d'origine coupait le doigt du canal **au repos** pendant que l'autre
+    tenait : le canal qui tient ne voyait jamais de `null`, et l'angle mort
+    était exactement là."""
+
+    result = run_node(tmp_path, HAND + """
+      const blind=(lm,at)=>{const copy=lm.map(p=>p);copy[at]=undefined;return copy};
+      /* Un contact établi sur `lm`, puis deux images où le doigt `at` manque,
+         puis le retour de la main entière. */
+      const run=(lm,at)=>{
+        const engine=B.createPinchIntentEngine({});
+        const frames=[];
+        for(const now of [0,16])frames.push(engine.update({hands:[input(0,lm)],now,aspect:1}));
+        for(const now of [32,48])frames.push(engine.update(
+          {hands:[input(0,blind(lm,at))],now,aspect:1}));
+        const back=engine.update({hands:[input(0,lm)],now:64,aspect:1});
+        const channel=at===B.LM.MIDDLE_TIP?'secondary':'primary';
+        const own=list=>list.filter(c=>c.channel===channel);
+        return {events:frames.map(f=>phases(f.events)),
+          blindRatios:frames[2].contacts.map(c=>c.channel+':'+c.ratio),
+          blindState:own(frames[2].contacts).map(c=>c.state),
+          alive:own(back.contacts).map(c=>c.state),
+          intent:own(back.contacts).map(c=>c.intent)};
+      };
+      /* Contrôle : les deux doigts perdus d'un coup — l'image est sautée en
+         entier, et ce comportement-là était déjà juste. */
+      const both=()=>{
+        const engine=B.createPinchIntentEngine({});
+        for(const now of [0,16])engine.update({hands:[input(0,PRIMARY())],now,aspect:1});
+        const lost=blind(blind(PRIMARY(),B.LM.INDEX_TIP),B.LM.MIDDLE_TIP);
+        const gone=engine.update({hands:[input(0,lost)],now:32,aspect:1});
+        return {events:phases(gone.events),contacts:gone.contacts.length};
+      };
+      out({secondary:run(SECONDARY(),B.LM.MIDDLE_TIP),
+           primary:run(PRIMARY(),B.LM.INDEX_TIP),
+           both:both()});
+    """)
+    for channel in ("primary", "secondary"):
+        measured = result[channel]
+        # Descente, puis deux images aveugles qui n'émettent **rien** : ni `up`,
+        # ni `cancel`, ni `approach`.
+        assert measured["events"] == [
+            ["%s:approach" % channel], ["%s:down" % channel], [], []
+        ], channel
+        # Le canal aveugle se publie tout de même, avec un rapport `null` :
+        # disparaître serait une autre façon de dire « relâché ».
+        assert "%s:null" % channel in measured["blindRatios"], channel
+        assert measured["blindState"] == ["pressed"], channel
+        # Et le contact est toujours là, dans le même état, à l'image d'après.
+        assert measured["alive"] == ["pressed"], channel
+        assert measured["intent"] == ["undecided"], channel
+    # Les deux doigts perdus : l'image entière est sautée, rien n'est publié.
+    assert result["both"] == {"events": [], "contacts": 0}
+
+
+def test_a_closed_fist_can_never_start_a_contact_whatever_the_margin(tmp_path):
+    """« Rejeter la fermeture de main entière comme clic droit » — la ligne du
+    contrat de la Slice, tenue cette fois par une **garantie** plutôt que par
+    une marge bien choisie.
+
+    La marge entre les deux canaux n'écartait le poing du dépôt que de 0,02
+    paume : desserrez-le un peu et il passe ; repliez le pouce **en travers de
+    la paume** — le poing le plus courant, celui où le pouce ne touche rien —
+    et il produisait un clic droit de confiance **1,0**. Le même nombre, tiré
+    dans l'autre sens, bloquait un pincement primaire légitime dès que le majeur
+    suivait l'index. Deux contraintes contradictoires sur une seule constante.
+
+    Une main fermée se reconnaît à ce qu'elle *est* — les quatre doigts repliés
+    — et `handPosture` mesurait déjà cette extension. Le moteur de pincement lit
+    donc `handClosure`, la même mesure et les mêmes deux constantes, et la
+    multiplie à la confiance."""
+
+    result = run_node(tmp_path, HAND + """
+      const run=lm=>{
+        const engine=B.createPinchIntentEngine({});
+        const events=[];
+        for(const now of [0,16,32,48])events.push(...engine.update(
+          {hands:[input(0,lm)],now,aspect:1}).events);
+        const last=engine.update({hands:[input(0,lm)],now:64,aspect:1});
+        const closure=B.handClosure(lm,1,{});
+        return {events:phases(events),
+          confidence:Number(Math.max(...last.contacts.map(c=>c.confidence)).toFixed(3)),
+          closure:closure===null?null:Number(closure.toFixed(3))};
+      };
+      const fists={
+        pinned:FIST(),
+        looser:FIST({index:.8,middle:.8,ring:.8,pinky:.8}),
+        loose:FIST({index:.7,middle:.7,ring:.7,pinky:.7}),
+        thumbAcross:FIST_THUMB_ACROSS(),
+        thumbAcrossLoose:FIST_THUMB_ACROSS({index:.8,middle:.8,ring:.8,pinky:.8}),
+      };
+      const real={primary:PRIMARY(),secondary:SECONDARY(),splayed:SPLAYED(),
+                  closing:PINCHING(1,1)};
+      /* Le majeur qui suit l'index : ce que la marge bloquait de l'autre côté.
+         Le balayage part de l'éventail du dépôt (17°) et resserre jusqu'à ce
+         que les deux doigts se confondent. */
+      const following={};
+      for(const sep of [17,13,11,9,8,7,6,5,4,3,2,1,0]){
+        const lm=PRIMARY({indexAngle:-25,middleAngle:-25+sep});
+        following[sep]={...run(lm),
+          gapPalms:Number((B.pinchRatioFor(lm,1,'secondary')
+                          -B.pinchRatioFor(lm,1,'primary')).toFixed(3))};
+      }
+      out({
+        fists:Object.fromEntries(Object.entries(fists).map(([k,lm])=>[k,run(lm)])),
+        real:Object.fromEntries(Object.entries(real).map(([k,lm])=>[k,run(lm)])),
+        following,
+        /* La garantie tient sur la **définition** du poing, pas sur une valeur :
+           quatre doigts sous `fingerCurledPalms` donnent une fermeture pleine,
+           et un seul doigt tendu suffit à la lever. */
+        boundary:[B.DEFAULTS.fingerCurledPalms,B.DEFAULTS.fingerExtendedPalms],
+        oneFingerUp:Number(B.handClosure(FIST({index:1.85}),1,{}).toFixed(3)),
+        /* Elle se lit sur les doigts **présents** : refuser de conclure sans
+           l'auriculaire voudrait dire « aucun pincement ne commence pendant
+           qu'il est caché », or c'est le premier que l'occlusion emporte. */
+        withoutPinky:(()=>{const lm=FIST();lm[20]=undefined;
+          return Number(B.handClosure(lm,1,{}).toFixed(3))})(),
+        withoutFingers:(()=>{const lm=FIST();
+          for(const at of [8,12,16,20])lm[at]=undefined;return B.handClosure(lm,1,{})})(),
+        margin:B.DEFAULTS.pinchMarginRatio,floor:B.DEFAULTS.pinchConfidenceMin,
+        /* Sans la fermeture, la marge seule laisserait passer : les rapports
+           bruts d'un poing au pouce en travers sont très séparés. */
+        rawMargin:(()=>{const lm=FIST_THUMB_ACROSS();
+          const p=B.pinchRatioFor(lm,1,'primary'),s=B.pinchRatioFor(lm,1,'secondary');
+          return Number(Math.min(1,Math.max(0,(p-s)/B.DEFAULTS.pinchMarginRatio)).toFixed(3))})(),
+      });
+    """)
+    assert result["boundary"] == [1.15, 1.6]
+    assert result["margin"] == 0.12 and result["floor"] == 0.5
+    # Cinq poings, aucun contact, et une confiance **exactement** nulle : ce
+    # n'est pas « sous le plancher de peu », c'est zéro par construction.
+    for name, measured in result["fists"].items():
+        assert measured["events"] == [], name
+        assert measured["confidence"] == 0.0, name
+        assert measured["closure"] == 1.0, name
+    # Sans le second témoin, ce poing-là aurait la confiance maximale : la marge
+    # ne le rejetait pas, elle le **certifiait**.
+    assert result["rawMargin"] == 1.0
+    # La garantie ne coûte rien à un vrai pincement : il lui reste des doigts
+    # tendus, donc une fermeture nulle et une confiance intacte.
+    for name, measured in result["real"].items():
+        channel = "secondary" if name in ("secondary", "splayed") else "primary"
+        assert measured["closure"] == 0.0, name
+        assert measured["events"] == ["%s:approach" % channel, "%s:down" % channel], name
+    # Un seul doigt relevé lève la fermeture : le poing n'est pas un seuil flou,
+    # c'est « tous les doigts repliés ».
+    assert result["oneFingerUp"] == 0.0
+    # Et elle se lit sur les doigts présents ; sans aucun d'eux, elle se tait
+    # (`null`) plutôt que de deviner — le moteur prend alors le repli prudent.
+    assert result["withoutPinky"] == 1.0
+    assert result["withoutFingers"] is None
+    # L'autre moitié du défaut. Libérée de la fermeture, la marge admet le majeur
+    # qui suit l'index partout sauf dans une fenêtre de deux degrés.
+    admitted = [sep for sep, m in result["following"].items() if m["events"]]
+    refused = sorted(int(sep) for sep, m in result["following"].items() if not m["events"])
+    assert refused == [4, 5], result["following"]
+    assert len(admitted) == 11
+    # Le décrochage était à 8° : 7° et 9° passent désormais, et confortablement.
+    for sep in ("7", "8", "9"):
+        assert result["following"][sep]["confidence"] >= 0.6, sep
+    # Ce qui reste refusé n'est pas un artefact de seuil : c'est une **égalité
+    # géométrique**. Le bout du majeur y est à moins de 0,06 paume (~5 mm) de
+    # l'écart du pouce à l'index — le majeur occupe le point de pincement, et
+    # aucune distance ne peut alors nommer le canal. Refuser est la bonne
+    # réponse : un contact sur le mauvais canal, c'est un clic droit involontaire.
+    for sep in ("4", "5"):
+        assert result["following"][sep]["gapPalms"] < 0.06, sep
+    assert min(result["following"][sep]["gapPalms"] for sep in ("7", "8", "9")) >= 0.06
+
+
+def test_a_published_gesture_always_gets_exactly_one_terminal_phase(tmp_path):
+    """L'arbitrage de capture s'appliquait à **toutes** les phases, `end` et
+    `cancel` comprises. Or un `start` et un `end` ne demandent pas la même
+    chose : un `start` demande d'agir, et l'étouffer ne coûte que l'action qui
+    n'a pas eu lieu ; un `end`/`cancel` **rend** quelque chose sur quoi le
+    consommateur a déjà agi, et l'étouffer le laisse accroché pour toujours.
+
+    Le cas de la main perdue était pire : le moteur étouffait le `cancel` puis
+    effaçait l'état de la main dans la foulée, si bien que plus rien ne pouvait
+    corriger — un poing latché à vie.
+
+    L'autre moitié du même invariant : un `end` partait après un `start`
+    étouffé, et un consommateur qui apparie les deux croyait relâcher ce qu'il
+    n'avait jamais pris.
+
+    Invariant : **tout `start` publié reçoit exactement une phase terminale, et
+    aucune phase terminale n'arrive sans `start`.**"""
+
+    result = run_node(tmp_path, HAND + """
+      const one=lm=>[{handTrackId:0,landmarks:lm}];
+      // Quatre images de poing : `postureHoldMs` tenu, donc `fist:start`.
+      const held=(engine,captured)=>{
+        const events=[],suppressed=[];
+        for(const now of [0,100,200,300]){
+          const o=engine.update({hands:one(FIST()),now,aspect:1,captured});
+          events.push(...o.events);suppressed.push(...o.suppressed);
+        }
+        return {events:names(events),suppressed:names(suppressed)};
+      };
+      // 1. Annoncé libre, puis une capture est prise, puis la main s'ouvre.
+      const a=B.createGestureEngine({});
+      const opened=held(a,[]);
+      const ending=a.update({hands:one(OPEN()),now:400,aspect:1,captured:[0]});
+      // 2. Annoncé libre, capture prise, puis la main est **perdue**.
+      const b=B.createGestureEngine({});
+      held(b,[]);
+      const lost=b.update({hands:[],now:1000,aspect:1,captured:[0]});
+      // 3. `start` étouffé dès le départ : pas de fin orpheline au relâchement.
+      const c=B.createGestureEngine({});
+      const muted=held(c,[0]);
+      const after=c.update({hands:one(OPEN()),now:400,aspect:1,captured:[0]});
+      // 4. `start` étouffé, puis la main est perdue : rien à rendre non plus.
+      const d=B.createGestureEngine({});
+      held(d,[0]);
+      const mutedLost=d.update({hands:[],now:1000,aspect:1,captured:[0]});
+      /* 5. L'invariant, compté sur une séquence entière et deux mains : la 0
+         capturée par intermittence, la 1 capturée à un autre moment. */
+      const e=B.createGestureEngine({});
+      const two=lm=>[{handTrackId:0,landmarks:lm},{handTrackId:1,landmarks:lm}];
+      const seen=[];
+      const script=[[0,FIST(),[]],[100,FIST(),[]],[200,FIST(),[0]],[300,FIST(),[0]],
+                    [400,FIST(),[0]],[500,OPEN(),[0]],[600,OPEN(),[]],
+                    [700,FIST(),[]],[800,FIST(),[]],[900,FIST(),[1]],[1000,FIST(),[1]],
+                    [1100,OPEN(),[1]],[2000,OPEN(),[]]];
+      for(const [now,lm,captured] of script)
+        seen.push(...e.update({hands:two(lm),now,aspect:1,captured}).events);
+      seen.push(...e.update({hands:[],now:3000,aspect:1,captured:[0,1]}).events);
+      const tally={};
+      for(const ev of seen.filter(x=>B.POSTURE_GESTURES.includes(x.gesture))){
+        const mark=ev.phase==='start'?'s'
+          :(ev.phase==='end'||ev.phase==='cancel')?'t':null;
+        if(!mark)continue;
+        const key=ev.gesture+'#'+ev.handTrackId;
+        tally[key]=(tally[key]||'')+mark;
+      }
+      out({
+        opened,ending:{events:names(ending.events),suppressed:names(ending.suppressed)},
+        lost:{events:names(lost.events),suppressed:names(lost.suppressed),size:b.size()},
+        muted,after:{events:names(after.events),suppressed:names(after.suppressed)},
+        mutedLost:{events:names(mutedLost.events),suppressed:names(mutedLost.suppressed)},
+        tally,
+      });
+    """)
+    # 1. Le poing s'annonce pendant que rien n'est capturé…
+    assert result["opened"]["events"] == ["fist:hold", "fist:hold", "fist:hold", "fist:start"]
+    assert result["opened"]["suppressed"] == []
+    # …et sa fin passe **malgré** la capture prise entre-temps. Sans cela, le
+    # consommateur restait accroché au poing pour toujours.
+    assert result["ending"]["events"] == ["open_palm:hold", "fist:end"]
+    assert result["ending"]["suppressed"] == []
+    # 2. Main perdue pendant la capture : `cancel` délivré. C'était la dernière
+    # occasion — la ligne suivante efface l'état de la main.
+    assert result["lost"]["events"] == ["fist:cancel"]
+    assert result["lost"]["suppressed"] == []
+    assert result["lost"]["size"] == 0
+    # 3. `start` étouffé : tout est étouffé, et rien d'orphelin ne suit.
+    assert result["muted"]["events"] == []
+    assert result["muted"]["suppressed"] == [
+        "fist:hold", "fist:hold", "fist:hold", "fist:start",
+    ]
+    assert [name for name in result["after"]["events"] if name.startswith("fist")] == []
+    assert [name for name in result["after"]["suppressed"] if name.startswith("fist")] == []
+    # 4. Ni à la perte de la main.
+    assert result["mutedLost"] == {"events": [], "suppressed": []}
+    # 5. L'invariant sur toute la séquence : `start` et phase terminale
+    # strictement alternés, jamais deux de suite, jamais une fin d'abord.
+    assert result["tally"], "la séquence doit produire des postures"
+    for key, order in result["tally"].items():
+        assert "ss" not in order and "tt" not in order, (key, order)
+        assert order.startswith("s"), (key, order)
+        assert order.count("s") == order.count("t"), (key, order)
+
+
+def test_a_c_whose_thumb_nears_the_middle_finger_fades_instead_of_falling_off_a_cliff(tmp_path):
+    """Le rejet du pincement secondaire par `cPoseScore` était un `return 0` sec
+    au-dessus de `releaseRatio` — la **seule** frontière non adoucie d'un
+    fichier qui adoucit toutes les autres, et pour la raison qu'elles le sont :
+    une main posée dessus clignote sur le tremblement du traqueur, n'aboutit
+    jamais au maintien d'une seconde, et ne dit pas pourquoi.
+
+    Deux problèmes, donc : le seuil — `releaseRatio`, et non l'entrée réelle en
+    contact — et la falaise. La garde est maintenant une rampe sur la bande que
+    l'hystérésis possède déjà : zéro sous `pressRatio`, le seuil où le contact
+    **entre**, et le plus proche de l'état de contact qu'un score sans mémoire
+    puisse lire ; pleine au-dessus de `releaseRatio`.
+
+    Ce qu'elle doit continuer d'empêcher n'a pas bougé : un clic droit franc ne
+    réveille pas la veille."""
+
+    result = run_node(tmp_path, HAND + """
+      const score=lm=>B.cPoseScore(lm,1,{});
+      const D=B.DEFAULTS;
+      /* Le majeur seul se déplace : l'écart pouce-index et la portée de l'index
+         ne bougent pas, donc **seule** la garde du canal secondaire change. Le
+         rapport secondaire vaut exactement `d`. C'est le cas physique du
+         constat : un C dont le majeur est à demi replié vers le pouce. */
+      const base=C_HAND();
+      const nearing=d=>{const lm=base.map(p=>p);
+        lm[12]={x:lm[4].x+d*.2,y:lm[4].y,z:0};return lm};
+      const sweep=[];
+      for(let d=.10;d<=.601;d+=.025)
+        sweep.push([Number(d.toFixed(3)),Number(score(nearing(d)).toFixed(3))]);
+      /* Ce que la falaise annulait, compté : les poses dont la seule géométrie
+         du C est bonne et dont le pouce passe simplement près du majeur. Le
+         témoin « avant » est la règle d'alors, rejouée ici. */
+      let valid=0,cliffed=0,graded=0,restored=0,stillZero=0;
+      for(let mid=.8;mid<=1.61;mid+=.1)
+       for(let dx=-.9;dx<=.91;dx+=.1)
+        for(let dy=-.9;dy<=.91;dy+=.1){
+          const lm=hand({middle:mid,ring:.9,pinky:.9,pinch:null});
+          lm[4]={x:lm[8].x+dx*.2,y:lm[8].y+dy*.2,z:0};
+          // La géométrie du C seule : la garde désarmée par ses propres seuils.
+          const bare=B.cPoseScore(lm,1,{pressRatio:.001,releaseRatio:.002});
+          if(bare<D.wakeScore)continue;
+          valid+=1;
+          const secondary=B.pinchRatioFor(lm,1,'secondary');
+          const before=(secondary!==null&&secondary<D.releaseRatio)?0:bare;
+          if(before>=D.wakeScore)continue;
+          cliffed+=1;
+          const now=score(lm);
+          if(now>=D.wakeScore)restored+=1;
+          if(now>0)graded+=1;else stillZero+=1;
+        }
+      out({sweep,valid,cliffed,graded,restored,stillZero,
+           /* Ce que la garde doit continuer d'empêcher, inchangé. */
+           realRightClick:[score(SECONDARY()),score(SPLAYED())],
+           baseScore:score(base),
+           thresholds:[D.pressRatio,D.releaseRatio,D.wakeScore]});
+    """)
+    assert result["thresholds"] == [0.28, 0.42, 0.5]
+    assert result["baseScore"] == 1
+    # Un clic droit franc ne réveille toujours pas : c'est toute la raison
+    # d'être de la garde, et elle n'a pas bougé d'un pouce.
+    assert result["realRightClick"] == [0, 0]
+    # La falaise annulait des poses que la géométrie du C accepte…
+    assert result["valid"] > 1000 and result["cliffed"] > 100
+    # …dont une part repasse au-dessus du seuil de maintien, et une part de plus
+    # gagne un score gradué au lieu d'un zéro sec.
+    assert result["restored"] > 0
+    assert result["graded"] > result["restored"]
+    # Les dernières restent à zéro, et c'est juste : le pouce y touche vraiment
+    # le majeur (rapport sous `pressRatio`), donc c'est un pincement, pas un C.
+    assert result["stillZero"] > 0
+    # Continuité : en traversant la bande, le score monte par paliers. Le plus
+    # grand saut d'un échantillon au suivant reste petit — c'est **ça** qui
+    # empêche le clignotement, là où la falaise sautait de 0 à 1 d'un coup.
+    values = [value for _, value in result["sweep"]]
+    assert values[0] == 0 and values[-1] == 1
+    jumps = [abs(b - a) for a, b in zip(values, values[1:])]
+    assert max(jumps) <= 0.2, result["sweep"]
+    # Et elle est monotone : plus le pouce s'éloigne du majeur, plus le C vaut.
+    assert values == sorted(values), result["sweep"]
+    # Les bornes sont bien celles de l'hystérésis, pas deux nombres de plus.
+    inside = [value for ratio, value in result["sweep"] if 0.28 < ratio < 0.42]
+    assert all(0 < value < 1 for value in inside), result["sweep"]
+
+
+def test_the_engine_refuses_a_truncated_click_tolerance_and_never_throws_on_an_unknown_gesture(tmp_path):
+    """Deux défauts de la même famille, et c'est la **troisième** fois que
+    celle-ci se présente sur cette tâche.
+
+    `clickSlopPx` au-dessus de `dragSlopPx` est silencieusement tronqué : le
+    glissement se tranche en cours de route à `dragSlopPx`, donc le contact est
+    déjà `drag` quand le test du clic s'exécute.
+    `createPinchIntentEngine({clickSlopPx:100, dragSlopPx:26})` était **accepté**
+    et ne changeait rien — la Slice 08 aurait monté la tolérance pour une main
+    tremblante, sans effet, sans erreur et sans test rouge. Le contrat l'écrivait
+    déjà ; il se refuse désormais là où il se lit. L'égalité reste permise :
+    elle ne tronque rien.
+
+    Et la table `GESTURE_RULES` se lisait à nu dans la publication : une sixième
+    posture ajoutée un jour aurait levé **dans la boucle d'images**, donc en
+    `tracking_failed` — caméra rendue, session terminée, pour un nom manquant.
+    Le repli est le plus silencieux possible : portée globale et aucune
+    autorisation pendant une capture, donc un geste sans règle ne peut jamais
+    voler la main à une manipulation en cours. Le contrat, lui, refuse : c'est
+    la bonne réponse hors de la boucle, là où le refus se lit."""
+
+    result = run_node(tmp_path, HAND + """
+      const message=fn=>{try{fn();return null}catch(e){return e.name}};
+      out({
+        truncated:message(()=>B.createPinchIntentEngine({clickSlopPx:100,dragSlopPx:26})),
+        // Le cas limite : égal ne tronque rien, donc reste permis.
+        equal:message(()=>B.createPinchIntentEngine({clickSlopPx:26,dragSlopPx:26})),
+        under:message(()=>B.createPinchIntentEngine({clickSlopPx:10,dragSlopPx:26})),
+        // Le même refus partout où ces réglages entrent.
+        channel:message(()=>B.createPinchChannel('primary',{clickSlopPx:100,dragSlopPx:26})),
+        tracker:message(()=>B.createHandTracker({clickSlopPx:100,dragSlopPx:26})),
+        // Les quatre autres refus de construction n'ont pas bougé.
+        others:[message(()=>B.createPinchIntentEngine({pressRatio:.5,releaseRatio:.4})),
+                message(()=>B.createPinchIntentEngine({fingerCurledPalms:2,fingerExtendedPalms:1})),
+                message(()=>B.createWakeDetector({wakeIntervalMs:500,wakeGraceMs:400})),
+                message(()=>B.createPointerFilter({smoothing:.45})),
+                message(()=>B.createHandTrackManager({handednessBonusPalms:.35}))],
+        // Un geste sans règle : la publication ne lève pas, elle se tait.
+        unknown:[B.gestureRuleFor('wave').scope,B.gestureRuleFor('wave').duringCapture],
+        known:B.GESTURES.map(g=>B.gestureRuleFor(g)===B.GESTURE_RULES[g]),
+        contract:refused(()=>C.gestureScope('wave')),
+      });
+    """)
+    assert result["truncated"] == "RangeError"
+    assert result["equal"] is None and result["under"] is None
+    assert result["channel"] == "RangeError" and result["tracker"] == "RangeError"
+    assert result["others"] == ["RangeError"] * 5
+    # Le repli le plus silencieux : global, jamais permis pendant une capture.
+    assert result["unknown"] == ["global", False]
+    assert all(result["known"]), "un geste connu garde sa propre règle"
+    assert result["contract"] == "barehands_gesture_unknown"

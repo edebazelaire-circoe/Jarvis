@@ -935,8 +935,14 @@ def test_the_controller_states_and_timings_still_match_the_contract(tmp_path):
     # n'affirme se mute sans rien faire tomber, et le contrat lisible les
     # publie. Changer l'un d'eux, c'est le reporter ici **et** dans
     # `docs/barehands-contracts.md`.
+    # `pinchMarginRatio` est passé de 0,18 à 0,12 à la reprise de la Slice 04 :
+    # tant qu'il devait écarter **seul** la fermeture de main entière, il ne
+    # l'écartait que de 0,02 paume et bloquait un pincement primaire dès que le
+    # majeur suivait l'index. La fermeture se lit désormais sur l'extension des
+    # doigts (`handClosure`) et cette marge ne répond plus qu'à « de quel doigt
+    # s'agit-il ».
     assert result["semantics"] == [
-        ["pinchMarginRatio", 0.18], ["pinchConfidenceMin", 0.5],
+        ["pinchMarginRatio", 0.12], ["pinchConfidenceMin", 0.5],
         ["clickMaxMs", 400], ["clickSlopPx", 12], ["dragSlopPx", 26],
         ["clickStillnessMin", 0.5],
         ["fingerCurledPalms", 1.15], ["fingerExtendedPalms", 1.6],
@@ -1021,3 +1027,69 @@ def test_the_wake_ring_draws_a_circular_progress():
 
     source = SCRIPT.read_text(encoding="utf-8")
     assert source.count("conic-gradient(currentColor calc(var(--jh-progress,0) * 1turn)") == 2
+
+
+def test_the_active_loop_hands_the_engines_the_palm_and_not_only_the_pointer(tmp_path):
+    """La couture que les tests de moteur ne peuvent pas voir : c'est la boucle
+    d'interaction qui décide **ce que** les moteurs reçoivent.
+
+    Le jeton porte trois couples de coordonnées et ils ne répondent pas à la
+    même question — le filtré suit l'index, l'ancre est le point de visée figé,
+    et le centre de la paume dit où la **main** est. Nourrir le moteur
+    d'intention des deux premiers seulement, c'est lui redonner le défaut que la
+    reprise vient de fermer : l'index parcourt un demi-palme en se refermant, et
+    un clic sur place se lisait `drag`.
+
+    On pince donc pour de vrai, à travers le contrôleur entier — caméra,
+    traqueur, filtre, immobilité, moteurs — et on lit `semantics().pinch`."""
+
+    result = run_node(tmp_path, WORLD + """
+      /* Un pincement où l'**index se replie** vers le pouce qui vient : le
+         poignet et la base du majeur ne bougent pas d'un pixel, donc la main
+         est immobile et seul le doigt travaille. */
+      const closing=t=>({landmarks:[hand(.65-.5*t,1.8-.5*t)]});
+      const w=world({result:C_POSE,options:{wakeIntervalMs:200}});
+      // Un écran réel : en 100×100 le doigt ne parcourt pas assez de pixels
+      // pour que la question se pose.
+      w.deps.viewport=()=>({width:1920,height:1080});
+      const c=B.createController(w.deps);
+      await c.enable();
+      w.steps(6,200);                                  // le C réveille
+      const woke=c.state();
+      /* `semantics()` ne porte que le dernier instant — c'est son contrat —
+         donc on relève à chaque image. */
+      const seen=[];
+      const advance=result=>{w.state.result=result;w.step(16);
+        seen.push(...c.semantics().pinch.events)};
+      for(let i=0;i<6;i+=1)advance(closing(0));        // main ouverte, posée
+      const pointer=c.features()[0];
+      for(let i=1;i<=6;i+=1)advance(closing(i/6));     // l'index se replie
+      for(let i=0;i<10;i+=1)advance(closing(1));       // pincement tenu
+      const token=c.features()[0];
+      advance(closing(0));                             // relâchement
+      const down=seen.map(e=>e.channel+':'+e.phase);
+      const released=seen.filter(e=>e.phase==='up')[0];
+      out({woke,down,
+           up:released?{channel:released.channel,intent:released.intent,
+             travelPx:Number(released.travelPx.toFixed(1)),
+             durationMs:released.durationMs}:null,
+           /* Le jeton porte bien les trois points, et celui de la paume ne
+              bouge pas pendant que celui de l'index parcourt l'écran. */
+           palmMoved:Number(Math.hypot(token.palmX-pointer.palmX,
+                                       token.palmY-pointer.palmY).toFixed(1)),
+           tipMoved:Number(Math.hypot(token.filteredX-pointer.filteredX,
+                                      token.filteredY-pointer.filteredY).toFixed(1)),
+           slop:[B.DEFAULTS.clickSlopPx,B.DEFAULTS.dragSlopPx]});
+    """)
+    assert result["woke"] == "active"
+    assert result["slop"] == [12, 26]
+    # Le doigt a traversé bien plus que `dragSlopPx`…
+    assert result["tipMoved"] > 26, result
+    # …pendant que la main, elle, n'a pas bougé du tout.
+    assert result["palmMoved"] == 0.0, result
+    # Et c'est la seconde mesure que le moteur reçoit : un clic, pas un
+    # glissement. Sans la paume dans `observed`, ce contact valait `drag`.
+    assert "primary:down" in result["down"] and "primary:up" in result["down"]
+    assert result["up"]["channel"] == "primary"
+    assert result["up"]["intent"] == "click", result
+    assert result["up"]["travelPx"] <= 12, result

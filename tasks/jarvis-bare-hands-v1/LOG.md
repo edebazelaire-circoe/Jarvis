@@ -764,3 +764,130 @@ cas « piste jamais étiquetée + détection sans étiquette », le seul où la 
 d'absence change le gagnant. Le contrôle ajouté au passage (aucun appariement
 retenu au-delà de la porte) n'a pas suffi à faire tomber la porte doublée, et
 c'est ce qui a montré que ce mutant était équivalent.
+
+## 2026-09-19 — Slice 04, reprise (R1-R4, N1-N5)
+
+La QA a piloté les **vrais** modules depuis une **vraie géométrie de points**,
+ce que les tests de la Slice 04 ne faisaient jamais : chaque constat est une
+mesure. Elle a aussi corrigé l'hypothèse qu'on lui avait donnée — ce n'est pas
+`stillness` qui bloquait le clic, c'est `travelPx`.
+
+**Découverte durable n° 1 — le repère d'une mesure vaut le seuil.** Le
+déplacement d'un contact se lisait sur le bout de l'index, c'est-à-dire sur le
+doigt qui *fait* le pincement primaire. Main strictement immobile, 1920×1080,
+un pincement textbook : **39,4 px** contre `dragSlopPx` 26, et `dragSlopPx`
+latche `drag` sans retour — `intent: click` était **inatteignable pour une
+vraie main**. C'est le défaut que la Slice 03 avait déjà corrigé une couche plus
+haut, avec les mêmes mots (« l'index parcourt plusieurs paumes pendant un
+pincement »), pour l'association d'identité. Là il faisait sauter une main, ici
+il la faisait glisser. Le déplacement se mesure désormais sur le **centre de la
+paume** (`palmX`/`palmY`, pixels de la fenêtre, publiés par le jeton) ; le
+pointeur continue de suivre l'index, parce que c'est ce que l'utilisateur vise.
+Mesuré après : `click`, 0 à 8,7 px selon la taille de paume.
+**La leçon générale : quand un seuil surprend, vérifier d'abord sur quoi la
+grandeur est mesurée, pas la valeur du seuil.** Le même repère avait déjà
+trompé deux Slices.
+
+**Découverte durable n° 2 — un `start` et un `end` ne s'arbitrent pas pareil.**
+L'arbitrage de capture s'appliquait à toutes les phases. Un `start` demande
+d'agir : l'étouffer ne coûte que l'action. Un `end`/`cancel` **rend** quelque
+chose sur quoi le consommateur a déjà agi : l'étouffer le laisse accroché pour
+toujours. Pire, sur une perte de main le moteur étouffait le `cancel` **puis**
+effaçait l'état, si bien que plus rien ne pouvait corriger. L'invariant qui
+règle les deux moitiés (dont l'`end` orphelin de N3) : *tout `start` publié
+reçoit exactement une phase terminale, et aucune phase terminale n'arrive sans
+`start`*. Il demande deux faits distincts par posture — `started` (le maintien
+est fini) et `announced` (le `start` est **parti**) — là où un seul drapeau les
+confondait.
+
+**Découverte durable n° 3 — « image malformée » se décide par lecteur, pas par
+image.** Les deux canaux de pincement ne lisent pas le même bout de doigt.
+L'image n'était sautée que si les **deux** étaient illisibles : perdre
+exactement le doigt du canal qui tient laissait l'image passer, le canal aveugle
+recevait `null`, l'hystérésis retombait à `open` et **un `up` partait**. Or
+`MIDDLE_TIP` est le point le plus probablement occulté d'un pincement
+pouce-majeur, le pouce étant devant. Le test d'origine coupait le doigt du canal
+**au repos** : l'angle mort était le canal qui tient. Règle : *le prédicat de
+sautabilité appartient au lecteur, et chaque lecteur déclare ce qu'il lit.*
+
+**Découverte durable n° 4 — une constante à qui l'on demande deux choses
+contraires n'a pas de bonne valeur.** `pinchMarginRatio` devait à la fois
+écarter la fermeture de main entière et admettre un pincement primaire. Il
+n'écartait le poing du dépôt que de **0,02 paume** (un poing un peu desserré
+passait ; le pouce replié *en travers de la paume* — le poing le plus courant —
+donnait un clic droit de confiance **1,0**) et bloquait le primaire dès que le
+majeur suivait l'index à moins de 8°. Aucune valeur ne tenait les deux. La
+fermeture a donc son **propre témoin** : `handClosure` = `1 − max(extension des
+quatre doigts)`, la même mesure et les deux mêmes constantes que le score
+`fist` — un poing *est* « tous les doigts repliés ». Garantie : quatre doigts à
+`fingerCurledPalms` ou en deçà ⇒ confiance **exactement** nulle sur les deux
+canaux, quelles que soient la marge et les distances. Mesuré 1,000 sur toute la
+famille des poings, 0,000 sur tous les pincements francs : pleine échelle contre
+0,02 paume. Libérée, la marge descend à **0,12** et admet le majeur qui suit
+l'index partout sauf dans une fenêtre de deux degrés, où le bout du majeur est à
+moins de 0,06 paume (~5 mm) du point de pincement — une **égalité géométrique**,
+pas un artefact de seuil, et refuser y est juste : un contact sur le mauvais
+canal est un clic droit involontaire.
+
+**La fenêtre du clic, maintenant.** `travelPx` ne bloque plus rien. Il reste la
+seule contrainte de la Slice 03, et elle ne s'applique qu'**après une approche
+franche** : `stillness ≥ 0,5` veut dire vitesse publiée ≤ 224 px/s, ~250 ms
+après une main à 900 px/s. Donc fenêtre `[~250 ms, clickMaxMs 400]` après un
+geste rapide, et **aucune attente** pour une main déjà posée — mesuré
+de bout en bout : clic à 144 ms, `stillness` 1. Le test de la Slice 03
+(`test_a_tap_made_too_soon_after_a_fast_reach_is_read_as_a_drag`) est intact et
+reste le lieu où relire cette frontière.
+
+**Non bloquants.** N1 : la garde du C était la **seule** frontière non adoucie
+d'un fichier qui adoucit toutes les autres — `return 0` sec au-dessus de
+`releaseRatio`. Mesuré sur 1 152 poses en C géométriquement valides, elle en
+annulait 167. C'est une rampe sur la bande que l'hystérésis possède déjà : zéro
+sous `pressRatio` (le seuil où le contact **entre**, le plus proche de l'état de
+contact qu'un score sans mémoire puisse lire), plein au-dessus de
+`releaseRatio` ; un pincement secondaire franc reste à zéro. N2 :
+`clickSlopPx > dragSlopPx` est silencieusement tronqué et se refuse désormais à
+la construction — **troisième** apparition de cette classe sur cette tâche,
+après `smoothing` et `wakeIntervalMs`/`wakeGraceMs` ; le contrat l'écrivait
+déjà sans que le code l'applique, ce qui est la forme la plus trompeuse du
+défaut. N4 : un test pilote enfin les moteurs depuis la géométrie, à travers le
+traqueur et le filtre de la Slice 03, plus un second à travers le **contrôleur
+entier** — c'est cette couture-là, et elle seule, qui décide *ce que* les
+moteurs reçoivent, et aucun test de moteur ne peut la voir. N5 : la table
+`GESTURE_RULES` se lisait à nu dans la boucle d'images ; un geste sans règle y
+aurait levé en `tracking_failed`. Repli le plus silencieux possible (global,
+jamais permis pendant une capture) ; le contrat, lui, refuse — c'est la bonne
+réponse hors de la boucle.
+
+**Ce qui n'a pas bougé, sur instruction et vérifié :** `createPinchDetector` et
+`createContactState` ne sont pas touchés (le chemin de clic hérité, prouvé
+identique sur 336 000 pas) ; l'identité reste une distance pure avec la
+latéralité en clé secondaire, `handednessBonusPalms` toujours refusé ; les
+dix-huit constantes de la Slice 03 gardent leur valeur. Une seule constante
+change de valeur, `pinchMarginRatio` 0,18 → 0,12, reportée dans le test qui
+l'épingle et dans `docs/barehands-contracts.md` ; aucune constante nouvelle —
+la fermeture réutilise `fingerCurledPalms`/`fingerExtendedPalms`, la rampe du C
+réutilise `pressRatio`/`releaseRatio`.
+
+**Résidu connu, pour la Slice 08.** `clickSlopPx`/`dragSlopPx` sont en **pixels
+de la fenêtre** : le même geste mesure ~3 fois plus de pixels en 1920 de large
+qu'en 640. Tout le reste du fichier mesure en paumes précisément pour être
+invariant. Ce n'est plus bloquant depuis que le repère est la paume (un clic sur
+place vaut quelques pixels à toute résolution), mais la **tolérance** au
+déplacement réel, elle, dépend de la résolution. À trancher à la calibration,
+pas ici.
+
+Fichiers : `jarvis/runtime/control_center_barehands.js`,
+`docs/barehands-contracts.md`, `tests/unit/test_barehands_gestures_js.py`,
+`tests/unit/test_barehands_lifecycle_js.py`.
+
+Tests, chunks en avant-plan : baseline 1 (barehands + scene logic) **180 passed**
+(173 avant, sept tests neufs) ; baseline 2 (control centre + settings)
+**221 passed**. Aucune régression. Vingt-trois mutations tentées, vingt-deux
+reprises, **une survivante assumée** : « fermeture inconnue traitée comme main
+ouverte » (`closed===null ? 0 : closed`). Mutant **équivalent** — `handClosure`
+ne rend `null` que si le poignet, la base du majeur ou tous les bouts de doigt
+manquent, or un canal dont le rapport se lit exige déjà le poignet, la base du
+majeur et son propre bout de doigt : la branche est inatteignable. Le repli
+prudent (fermeture pleine, donc rien ne commence) est gardé pour qu'elle échoue
+du bon côté le jour où elle cesserait de l'être, et `handClosure` renvoyant
+`null` sans aucun bout de doigt est épinglé à part.
