@@ -91,6 +91,23 @@ const JarvisBarehandsCore=(function(){
     if(!(o.pressRatio>0&&o.pressRatio<o.releaseRatio))throw new RangeError('pressRatio doit être positif et inférieur à releaseRatio');
     if(!(o.wakeGapMin>0&&o.wakeGapMin<o.wakeGapMax))throw new RangeError('wakeGapMin doit être positif et inférieur à wakeGapMax');
     if(!(o.stillSpeedPx>=0&&o.stillSpeedPx<o.moveSpeedPx))throw new RangeError('stillSpeedPx doit rester sous moveSpeedPx');
+    /* Troisième invariant de paire, et le seul dont la violation ne se voit
+       nulle part : le guetteur de veille n'appelle `createWakeDetector` qu'une
+       fois par `wakeIntervalMs`, donc le `dt` que voit le détecteur **est**
+       cette cadence. Si elle dépasse `wakeGraceMs`, chaque mesure arrive après
+       un trou plus long que la grâce, le maintien repart de zéro à chaque
+       échantillon et la posture en C ne peut plus aboutir — mesuré : 0 ms de
+       maintien crédité sur dix secondes de C parfait. Aucune erreur, aucune
+       trace, aucun test rouge : tous les tests de réveil passent
+       `wakeIntervalMs` en surcharge explicite. Le piège se referme le jour où
+       quelqu'un abaisse la cadence pour le processeur (200 → 500) ou où la
+       Slice 08 descend `wakeGraceMs`. Il se refuse donc à la construction.
+       `interval === grace` reste permis : un trou **égal** à la grâce n'est pas
+       au-delà, et c'est le cas limite du réglage d'usine. */
+    o.wakeIntervalMs=Math.max(0,Number(o.wakeIntervalMs)||0);
+    o.wakeGraceMs=Math.max(0,Number(o.wakeGraceMs)||0);
+    if(o.wakeIntervalMs>o.wakeGraceMs)
+      throw new RangeError('wakeIntervalMs ne peut pas dépasser wakeGraceMs : le guetteur échantillonne à cette cadence, et un trou plus long que la grâce annule le maintien à chaque image — le réveil deviendrait impossible sans rien dire');
     o.margin=clamp(Number(o.margin)||0,0,.45);
     o.pressFrames=Math.max(1,Math.round(o.pressFrames));
     /* Une coupure nulle ou négative fige le filtre sur son premier point : le
@@ -110,8 +127,6 @@ const JarvisBarehandsCore=(function(){
     o.qualityWarmupFrames=Math.max(1,Math.round(atLeast(o.qualityWarmupFrames,1,DEFAULTS.qualityWarmupFrames)));
     o.wakeHoldMs=Math.max(0,Number(o.wakeHoldMs)||0);
     o.sleepTimeoutMs=Math.max(0,Number(o.sleepTimeoutMs)||0);
-    o.wakeIntervalMs=Math.max(0,Number(o.wakeIntervalMs)||0);
-    o.wakeGraceMs=Math.max(0,Number(o.wakeGraceMs)||0);
     o.wakeSoft=clamp(Number(o.wakeSoft)||0,0,.5);
     o.wakeScore=clamp(Number(o.wakeScore)||0,0,1);
     return o;
@@ -969,9 +984,18 @@ const JarvisBarehandsCore=(function(){
     }
     function disable(){
       /* « Barehands arrêté — caméra libérée » ne vaut que si quelque chose
-         tournait. Depuis ERROR, ce toast écrasait « Caméra refusée » par une
-         phrase fausse, et la cause réelle disparaissait de l'écran. */
-      const wasOn=isLiveState(state);
+         était tenu. Depuis ERROR, ce toast écrasait « Caméra refusée » par une
+         phrase fausse, et la cause réelle disparaissait de l'écran — c'est ce
+         qu'`isEngagedState` exclut, et c'était tout l'objet du correctif.
+         `isLiveState` en excluait un second, sans raison : **STARTING**.
+         Décocher l'interrupteur pendant l'invite de permission annule un
+         démarrage en vol — le cas que `isEngagedState` existe pour nommer — et
+         n'émettait alors aucun toast du tout (`off` n'est pas notifié). Or la
+         caméra est rendue de façon **asynchrone** ici : `track.stop()` n'arrive
+         qu'une fois `getUserMedia` résolu. Sans un mot à l'écran, l'utilisateur
+         annule et n'a aucune confirmation que la webcam s'est éteinte
+         (RÈGLE ZÉRO). Une annulation est un arrêt voulu : elle se dit. */
+      const wasOn=isEngagedState(state);
       generation+=1;teardown();state=STATE.OFF;
       emit(wasOn?'disabled':'off');
       return state;
@@ -1132,8 +1156,25 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
        mains parlent sous un identifiant unique. */
     const slots=BH.createSlotAllocator(BH.MAX_HANDS);
     let warnedUnslotted=false;
+    /* Identité utilisable d'une main, ou `null`. Le contrat **refuse** une
+       identité vide (`trackId`), et il a raison : une fente de pointeur
+       appartient à une main identifiée. Mais ce refus arrive ici **par jeton et
+       par image**, dans le `try` de la boucle, où il se convertit en
+       `tracking_failed` : session terminée, caméra rendue, toast de 9 s — pour
+       un jeton sans identité. C'est la règle que la reprise de la Slice 02 a
+       posée côté points (`usableLandmarks`) et laissée ouverte côté identité :
+       **une image malformée se saute, elle n'arrête rien**. La main reste donc
+       suivie et dessinée, simplement sans pointeur — et `click` le dit une fois
+       à la console au lieu de la faire passer pour inerte. */
+    const handKey=id=>{
+      if(id===undefined||id===null)return null;
+      const key=String(id).trim();
+      return key||null;
+    };
     const identityOf=id=>{
-      const slot=slots.slot(id);
+      const key=handKey(id);
+      if(key===null)return null;
+      const slot=slots.slot(key);
       return slot===null?null:{pointerId:BH.pointerIdForSlot(slot),isPrimary:slot===0};
     };
     function targetAt(x,y){
@@ -1177,8 +1218,10 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
         }
         for(const id of [...hovered.keys()])if(!live.has(id))release(id);
         // Une main partie rend sa fente : deux mains qui vont et viennent en
-        // retrouvent toujours une.
-        slots.retain(live);
+        // retrouvent toujours une. Les identités vides sont écartées avant
+        // d'arriver au contrat, qui les refuserait — et ce refus-là tomberait
+        // dans la boucle d'images, où il vaut la fin de la session.
+        slots.retain([...live].map(handKey).filter(key=>key!==null));
       },
       /* Un vrai clic : la séquence qu'enverrait une souris, sur l'élément exact
          sous le jeton (les écouteurs, labels, cases et liens réagissent). */

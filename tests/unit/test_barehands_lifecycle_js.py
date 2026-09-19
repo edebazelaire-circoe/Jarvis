@@ -213,6 +213,80 @@ def test_the_wake_hold_accumulates_survives_a_gap_and_resets(tmp_path):
     assert result["again"] == 0.0
 
 
+def test_a_watcher_slower_than_its_own_grace_is_refused_at_construction(tmp_path):
+    """N-A. Le guetteur n'appelle le détecteur qu'une fois par
+    `wakeIntervalMs` : le `dt` que voit `createWakeDetector` **est** cette
+    cadence. Au-delà de `wakeGraceMs`, chaque mesure arrive après un trou plus
+    long que la grâce, le maintien repart de zéro à chaque image et la posture
+    en C ne peut plus jamais aboutir — 0 ms crédité sur dix secondes de C
+    parfait, sans erreur, sans trace et sans test rouge (tous les tests de
+    réveil passent la cadence en surcharge explicite).
+
+    `options()` tenait déjà deux invariants de paire de cette forme
+    (`pressRatio < releaseRatio`, `wakeGapMin < wakeGapMax`) ; voici le
+    troisième. Le cas limite `interval === grace` reste permis : un trou
+    **égal** à la grâce n'est pas au-delà."""
+
+    result = run_node(tmp_path, WORLD + """
+      // `options()` n'est pas exporté : on l'atteint par la fabrique qui
+      // l'appelle, c'est-à-dire par le chemin qu'emprunte vraiment le réglage.
+      const refused=opts=>{try{B.createWakeDetector(opts);return null}catch(e){return e.name}};
+      // Le mécanisme, mesuré sur le détecteur seul : des mesures espacées de
+      // plus que la grâce ne créditent rien, quelle que soit la posture.
+      const starved=B.createWakeDetector({wakeHoldMs:1000,wakeGraceMs:400});
+      let held=0;
+      for(let t=0;t<=10000;t+=500)held=starved.update(1,t).heldMs;
+      // Et le refus, à la construction plutôt qu'au premier C tenu en vain.
+      const shipping=refused({wakeIntervalMs:200,wakeGraceMs:400});
+      const equal=refused({wakeIntervalMs:400,wakeGraceMs:400});
+      const slower=refused({wakeIntervalMs:500,wakeGraceMs:400});
+      const tighterGrace=refused({wakeIntervalMs:200,wakeGraceMs:100});
+      let message='';
+      try{B.createWakeDetector({wakeIntervalMs:500,wakeGraceMs:400})}catch(e){message=e.message}
+      // Un contrôleur ne se construit pas non plus sur un réglage impossible.
+      let controller=null;
+      try{B.createController(world({options:{wakeIntervalMs:500,wakeGraceMs:400}}).deps)}
+      catch(e){controller=e.name}
+      out({held,shipping,equal,slower,tighterGrace,controller,
+           names:['wakeIntervalMs','wakeGraceMs'].map(k=>message.includes(k)),
+           defaults:[B.DEFAULTS.wakeIntervalMs,B.DEFAULTS.wakeGraceMs]});
+    """)
+    # Dix secondes de posture parfaite, échantillonnées plus lentement que la
+    # grâce : rien n'est crédité. C'est la panne silencieuse que l'invariant
+    # rend impossible à configurer.
+    assert result["held"] == 0
+    # Le réglage d'usine et le cas limite passent ; au-delà, refus.
+    assert result["shipping"] is None and result["equal"] is None
+    assert result["slower"] == "RangeError" and result["tighterGrace"] == "RangeError"
+    assert result["controller"] == "RangeError"
+    # Le message nomme les deux réglages : un refus qui ne dit pas quoi changer
+    # se contourne en remettant l'autre nombre au hasard.
+    assert result["names"] == [True, True]
+    # Et le défaut livré respecte l'invariant qu'il vient de poser.
+    assert result["defaults"] == [200, 400]
+    assert result["defaults"][0] <= result["defaults"][1]
+
+
+def test_a_watcher_sampling_exactly_at_its_grace_still_wakes(tmp_path):
+    """Le cas limite, de bout en bout : `wakeIntervalMs === wakeGraceMs` est le
+    réglage le plus lent qui reste légal, et il doit encore réveiller. Un
+    invariant trop strict (`<` au lieu de `<=`) refuserait un réglage qui
+    marche ; trop lâche, il laisse passer celui qui ne marche jamais."""
+
+    result = run_node(tmp_path, WORLD + """
+      const w=world({result:C_POSE,options:{wakeIntervalMs:400,wakeHoldMs:1000,wakeGraceMs:400}});
+      const c=B.createController(w.deps);
+      await c.enable();
+      const progress=[];
+      for(let i=0;i<5;i+=1){w.step(400);progress.push(w.log.filter(l=>l.startsWith('watch:')).pop())}
+      out({state:c.state(),progress,woken:w.log.includes('status:active:woken')});
+    """)
+    # Quatre mesures consécutives : 0, 400, 800 puis 1200 ms — le maintien
+    # aboutit, et l'anneau s'est bien rempli en chemin plutôt que de sauter.
+    assert result["progress"][:3] == ["watch:1:0.00", "watch:1:0.40", "watch:1:0.80"]
+    assert result["state"] == "active" and result["woken"] is True
+
+
 def test_a_gap_between_two_samples_is_time_nobody_observed(tmp_path):
     """Le trou entre deux mesures n'est pas du maintien : c'est du temps que
     personne n'a regardé. `dt` était du temps mural non borné, si bien que deux
@@ -515,6 +589,53 @@ def test_switching_off_after_a_failure_does_not_overwrite_the_cause(tmp_path):
     assert result["off"] == "off" and result["last"] == "status:off:off"
 
 
+def test_cancelling_a_start_still_confirms_that_the_camera_was_released(tmp_path):
+    """N-C. `disable()` demandait « Bare Hands **fonctionne** » (`isLiveState`)
+    là où la question est « quelque chose est-il **tenu** ? » (`isEngagedState`).
+    STARTING tombait donc du mauvais côté : décocher l'interrupteur pendant
+    l'invite de permission émettait `off`, que la page ne notifie pas — aucun
+    toast du tout.
+
+    RÈGLE ZÉRO : la caméra est rendue de façon **asynchrone** ici, `track.stop()`
+    n'arrivant qu'une fois `getUserMedia` résolu. Sans un mot à l'écran,
+    l'utilisateur annule et n'a aucune confirmation que la webcam s'est éteinte.
+    Une annulation est un arrêt voulu ; elle se dit. ERROR, lui, reste muet :
+    c'est le cas que le correctif de la Slice 02 visait, et il ne bouge pas."""
+
+    result = run_node(tmp_path, WORLD + """
+      const w=world();
+      const open=w.deps.getUserMedia;
+      let unblock;
+      const prompt=new Promise(r=>{unblock=r});
+      // La permission est en vol : l'humain n'a pas encore répondu à l'invite.
+      w.deps.getUserMedia=async c=>{await prompt;return open(c)};
+      const ctrl=B.createController(w.deps);
+      const starting=ctrl.enable();          // volontairement pas attendu
+      // Le modèle se charge d'abord ; on laisse les micro-tâches filer jusqu'à
+      // ce que le démarrage soit réellement posé sur l'invite de la caméra.
+      await new Promise(r=>setImmediate(r));
+      const during=ctrl.state();
+      const stoppedBefore=w.track.stopped;
+      const off=ctrl.disable();              // l'utilisateur décoche
+      const said=w.log.filter(l=>l.startsWith('status:')).pop();
+      unblock();await starting;              // la caméra arrive après coup
+      out({during,off,said,stoppedBefore,stoppedAfter:w.track.stopped,
+           engaged:B.isEngagedState('starting'),live:B.isLiveState('starting'),
+           state:ctrl.state()});
+    """)
+    assert result["during"] == "starting"
+    # Ce que le correctif rétablit : le mot « arrêté · caméra libérée », que la
+    # page notifie, au lieu du `off` silencieux.
+    assert result["off"] == "off" and result["said"] == "status:off:disabled"
+    # Et la raison pour laquelle il fallait le dire : la caméra n'était pas
+    # encore là au moment du clic, elle n'est rendue qu'après.
+    assert result["stoppedBefore"] is False and result["stoppedAfter"] is True
+    # Les deux prédicats ne répondent pas à la même question ; c'est le second
+    # qui gouverne ce qu'on **rend**, donc ce qu'on annonce.
+    assert result["engaged"] is True and result["live"] is False
+    assert result["state"] == "off"
+
+
 def test_a_broken_overlay_is_not_blamed_on_the_camera(tmp_path):
     """`teardown` enveloppait chaque appel à la surimpression, les transitions
     non : un anneau qui lève sortait sous « Suivi interrompu — caméra
@@ -626,6 +747,8 @@ def test_the_controller_states_and_timings_still_match_the_contract(tmp_path):
         holdMs:[B.DEFAULTS.wakeHoldMs,C.WAKE_HOLD_MS],
         intervalMs:[B.DEFAULTS.wakeIntervalMs,C.WAKE_INTERVAL_MS],
         qualityFloor:[B.DEFAULTS.qualityFloor,C.HAND_QUALITY_FLOOR],
+        wakeGraceMs:B.DEFAULTS.wakeGraceMs,
+        watcherFitsItsGrace:B.DEFAULTS.wakeIntervalMs<=B.DEFAULTS.wakeGraceMs,
         tuning:['minCutoffHz','betaCutoff','dCutoffHz','filterResetMs','stillSpeedPx','moveSpeedPx',
                 'matchRadiusPalms','handednessBonusPalms','predictMs','trackVelocityBlend',
                 'qualityFloor','qualityEdge','qualityPalmMin','qualityComplete','qualityWarmupFrames']
@@ -661,6 +784,12 @@ def test_the_controller_states_and_timings_still_match_the_contract(tmp_path):
     # explicite, si bien que muter le défaut ne faisait rien tomber.
     assert result["intervalMs"] == [200, 200]
     assert result["watchesPerSecond"] == 5
+    # N-A : la cadence du guetteur et la tolérance de trou ne sont pas deux
+    # nombres indépendants — le `dt` que voit le détecteur **est** la cadence.
+    # `interval > grace` désactive le réveil en silence, `options()` le refuse,
+    # et le défaut livré doit évidemment respecter son propre invariant.
+    assert result["wakeGraceMs"] == 400
+    assert result["watcherFitsItsGrace"] is True
     # Slice 03 : le plancher de qualité est le seul nombre de cette Slice que
     # le contrat possède aussi — c'est lui qui dit « une main exploitable »
     # (décision 7), des deux côtés de la frontière.

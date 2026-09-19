@@ -291,7 +291,16 @@ et index écartés sans se toucher, index déplié, **tenue une seconde**
 (`WAKE_HOLD_MS`). Un anneau de progression circulaire se remplit autour de la
 main et dit combien de la seconde est acquise ; relâcher avant la fin annule.
 Un trou du traqueur de moins de 400 ms (`wakeGraceMs`) est pardonné ; un trou
-plus long remet la progression à zéro. **Le temps non observé ne compte jamais** :
+plus long remet la progression à zéro. **Ces deux nombres ne se règlent pas
+séparément** : le guetteur n'échantillonne qu'une fois par `wakeIntervalMs`,
+donc l'écart entre deux mesures **est** cette cadence, et
+`wakeIntervalMs > wakeGraceMs` ferait retomber le maintien à chaque image — la
+posture en C ne pourrait plus jamais aboutir, sans erreur ni trace. `options()`
+refuse donc ce couple à la construction (`RangeError`), au même titre que
+`pressRatio < releaseRatio` et `wakeGapMin < wakeGapMax` ; l'égalité
+(`interval === grace`) reste permise et réveille encore. Baisser la cadence du
+guetteur pour économiser le processeur, ou descendre la tolérance de trou,
+oblige donc à regarder l'autre nombre. **Le temps non observé ne compte jamais** :
 une caméra figée, un onglet passé en arrière-plan ou un écran rabattu ne
 crédient rien du maintien, même si la posture était là avant et après.
 

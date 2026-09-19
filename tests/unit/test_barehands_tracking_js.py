@@ -487,18 +487,24 @@ const node=()=>{
       toggle:(c,on)=>{if(on)classes.add(c);else classes.delete(c)},
       contains:c=>classes.has(c)},
     classes,
-    setAttribute(){},parent:null,
+    setAttribute(){},parent:null,dispatchEvent(){return true},
     appendChild(c){c.parent=this;this.children.push(c)},
     remove(){if(!this.parent)return;const at=this.parent.children.indexOf(this);
       if(at>=0)this.parent.children.splice(at,1);this.parent=null}};
 };
 global.window={addEventListener(){},innerWidth:1000,innerHeight:800};
 global.document={createElement:node,getElementById:()=>null,
-  head:node(),body:node()};
+  head:node(),body:node(),
+  /* Le bloc navigateur vise avec `elementFromPoint` ; `hit` est ce que le
+     jeton trouve sous lui, `null` par défaut (rien à cliquer). */
+  elementFromPoint:()=>global.hit||null};
+global.hit=null;
 global.navigator={mediaDevices:null};
 global.performance={now:()=>0};
 global.requestAnimationFrame=()=>0;global.cancelAnimationFrame=()=>{};
 global.setTimeout=()=>0;
+// Le chemin de compatibilité DOM du clic construit ses événements souris.
+global.MouseEvent=class{constructor(type,init){Object.assign(this,init||{});this.type=type}};
 global.JarvisBarehandsContracts=C;
 // Le harnais a déjà chargé le module sans `window` : le bloc navigateur ne
 // s'est donc pas installé. On vide le cache pour le rejouer avec un `window`.
@@ -548,3 +554,51 @@ def test_a_hand_the_tracker_does_not_trust_says_so_on_screen(tmp_path):
     # Les traits sont lisibles sans caméra ni console de développement, et
     # vides hors interaction.
     assert result["styled"] == ["function", 0]
+
+
+def test_a_hand_without_a_usable_identity_is_skipped_not_fatal(tmp_path):
+    """N-B. `createSlotAllocator().slot()` était total (`String(id)`) ; la
+    reprise de la Slice 01 lui a donné `trackId()`, qui **refuse** une identité
+    vide — à raison, une fente de pointeur appartient à une main identifiée.
+    Mais `identityOf` l'appelle par jeton et par image, dans le `try` de la
+    boucle, où le refus se convertit en `tracking_failed` : session terminée,
+    caméra rendue, toast de 9 s, pour un jeton sans nom.
+
+    C'est exactement la règle que la reprise de la Slice 02 a posée côté points
+    (`usableLandmarks`) et laissée ouverte côté identité : **une image
+    malformée se saute, elle n'arrête rien**. La main reste suivie et dessinée,
+    simplement sans pointeur — et le clic perdu se dit à la console plutôt que
+    de faire passer une main pour inerte."""
+
+    result = run_node(tmp_path, f"const SCRIPT_PATH={json.dumps(str(SCRIPT))};" + BROWSER + """
+      // `targetAt` écarte ce qui appartient à la surimpression : la cible
+      // répond donc `null` pour ce sélecteur-là, et elle-même pour les autres.
+      const target=node();target.closest=sel=>sel===C.DOM.rootSelector?null:target;
+      global.hit=target;
+      const interaction=window.JarvisBarehands.adapters.createInteraction();
+      const token=id=>({id,x:10,y:20,progress:0,state:'open',click:false,hover:false});
+      // Une image entière : une main identifiée, trois qui ne le sont pas.
+      const blanks=[token(0),token('  '),token(null),token(undefined)];
+      let threw=null;
+      try{interaction.hover(blanks)}catch(e){threw=e.code||e.name}
+      const hovered=blanks.map(t=>t.hover);
+      // Le clic d'une main sans identité se perd, il ne lève pas.
+      let clickThrew=null,clicked=null;
+      try{clicked=[interaction.click({id:0,x:10,y:20}),interaction.click({id:'  ',x:10,y:20})]}
+      catch(e){clickThrew=e.code||e.name}
+      // L'image suivante, normale, retrouve son pointeur : rien n'est resté cassé.
+      let after=null;
+      try{interaction.hover([token(0)]);after=true}catch(e){after=e.code||e.name}
+      // Le contrat, lui, continue de refuser — c'est le consommateur qui garde.
+      const contract=(()=>{try{C.createSlotAllocator(2).slot('  ');return null}
+        catch(e){return e.code}})();
+      out({threw,hovered,clickThrew,clicked,after,contract});
+    """)
+    assert result["threw"] is None, "une identité vide ne doit pas tuer la session"
+    # La main identifiée survole ; les autres sont suivies sans pointer, comme
+    # une main surnuméraire — mieux qu'un identifiant volé à une autre main.
+    assert result["hovered"] == [True, False, False, False]
+    assert result["clickThrew"] is None and result["clicked"] == [True, False]
+    assert result["after"] is True
+    # Le refus n'a pas été affaibli là où il est juste : le contrat le tient.
+    assert result["contract"] == "barehands_hand_track_id_missing"
