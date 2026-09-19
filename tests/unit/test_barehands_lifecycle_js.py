@@ -215,6 +215,89 @@ def test_the_wake_hold_accumulates_survives_a_gap_and_resets(tmp_path):
     assert result["again"] == 0.0
 
 
+def test_a_wake_band_that_cannot_hold_a_c_pose_is_refused_at_construction(tmp_path):
+    """L'invariant `wakeGapMin < wakeGapMax`, enfin tenu par un test à lui.
+
+    Il était cité par le docstring voisin et épinglé nulle part : les deux
+    constantes n'apparaissaient que dans des assertions de **valeur** et de
+    bande effective, donc supprimer la ligne de garde d'`options()` laissait
+    toute la suite au vert. Une paire dangereuse sans test rouge est une paire
+    non gardée.
+
+    Ce que la garde empêche, dans les deux sens :
+
+    - **bande inversée ou de largeur nulle** (`min >= max`) : la bande
+      effective est `[min + s·wakeScore, max − s·wakeScore]` avec
+      `s = (max − min)·wakeSoft` ; à `min >= max` elle est vide, donc aucun
+      écart pouce-index n'atteint plus `wakeScore` et la posture en C ne
+      réveille plus jamais. Aucune erreur, aucune trace — la panne exacte que
+      la paire `wakeIntervalMs > wakeGraceMs` produit par un autre chemin ;
+    - **minimum non positif** : la bande s'ouvre jusqu'au contact, et un
+      **pincement en cours** entre dedans. C'est précisément ce que
+      `wakeGapMin` existe pour interdire (contrat § 1 : « au-dessus du
+      relâchement du pincement, pour qu'un pincement en cours ne réveille
+      jamais ») : la main réveillerait en cliquant.
+
+    Et le refus est à **chaque porte par laquelle le réglage arrive** —
+    `cPoseScore`, `createWakeDetector`, `createController` — comme la septième
+    paire. Un réglage impossible n'est donc même pas mesurable : c'est pour ça
+    que ce test l'affirme par le refus et non par un score nul.
+    """
+
+    result = run_node(tmp_path, WORLD + """
+      const D=B.DEFAULTS;
+      const refused=fn=>{try{fn();return null}catch(e){return e.name}};
+      const detector=opts=>refused(()=>B.createWakeDetector(opts));
+      /* « Soutient un maintien » veut dire « atteint `wakeScore` », comme le
+         tableau du contrat, sur la vraie géométrie de main. */
+      const sustains=gap=>B.cPoseScore(hand(gap,2.5),1)>=D.wakeScore;
+      const inverted={wakeGapMin:.85,wakeGapMax:.46};
+      out({
+        // Le réglage d'usine réveille sur un C, et jamais sur un pincement
+        // fermé : c'est la propriété que la borne basse existe pour tenir.
+        shippingWakes:sustains(.65),
+        pinchWakesToday:sustains(0),
+        releaseRatio:D.releaseRatio,
+        // Les refus, à la construction plutôt qu'au premier C tenu en vain.
+        shipping:detector({}),
+        invertedRefusal:detector(inverted),
+        equal:detector({wakeGapMin:.85,wakeGapMax:.85}),
+        zero:detector({wakeGapMin:0}),
+        negative:detector({wakeGapMin:-.2}),
+        notANumber:detector({wakeGapMin:'large'}),
+        // Les deux autres portes du même réglage.
+        score:refused(()=>B.cPoseScore(hand(.65,2.5),1,inverted)),
+        controller:refused(()=>B.createController(world({options:inverted}).deps)),
+        message:(()=>{try{B.createWakeDetector(inverted);return ''}catch(e){return e.message}})(),
+        defaults:[D.wakeGapMin,D.wakeGapMax],
+      });
+    """)
+    # Le réglage livré réveille sur un C : sans cette ligne, « le pincement ne
+    # réveille pas » serait aussi vrai d'un moteur qui ne réveille rien.
+    assert result["shippingWakes"] is True
+    assert result["pinchWakesToday"] is False, (
+        "le réglage d'usine garde le réveil hors de portée d'un pincement"
+    )
+    assert result["defaults"][0] > result["releaseRatio"], (
+        "la borne basse vit au-dessus du relâchement du pincement (contrat § 1)"
+    )
+    # Le réglage d'usine passe ; les cinq formes impossibles sont refusées, y
+    # compris l'égalité — une bande de largeur nulle ne soutient rien non plus.
+    assert result["shipping"] is None
+    for case in ("invertedRefusal", "equal", "zero", "negative", "notANumber"):
+        assert result[case] == "RangeError", case
+    # Chaque porte par laquelle le réglage arrive le refuse, pas seulement la
+    # première : un score calculé sur une bande vide rendrait 0 sans rien dire.
+    assert result["score"] == "RangeError"
+    assert result["controller"] == "RangeError"
+    # Le message nomme les deux réglages : un refus qui ne dit pas quoi changer
+    # se contourne en remettant l'autre nombre au hasard.
+    assert "wakeGapMin" in result["message"] and "wakeGapMax" in result["message"]
+    # Et le défaut livré respecte l'invariant qu'il vient de poser.
+    assert result["defaults"] == [0.46, 0.85]
+    assert result["defaults"][0] < result["defaults"][1]
+
+
 def test_a_watcher_slower_than_its_own_grace_is_refused_at_construction(tmp_path):
     """N-A. Le guetteur n'appelle le détecteur qu'une fois par
     `wakeIntervalMs` : le `dt` que voit `createWakeDetector` **est** cette
