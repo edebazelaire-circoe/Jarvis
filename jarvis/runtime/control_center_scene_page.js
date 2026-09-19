@@ -774,7 +774,11 @@ ${orbitKeyframes()}
    passer de troisième ligne. */
 .sc-wtitle{flex:none;margin:0 13px 8px;padding:0;font-size:13px;font-weight:600;line-height:1.35;max-height:2.7em;color:#f1f8fb;overflow:hidden;
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere}
-.sc-summary{flex:1 1 auto;min-height:0;padding:0 13px 10px;font-size:12px;line-height:1.5;color:#b3cbd6;white-space:pre-wrap;overflow:hidden;overflow-wrap:anywhere;
+/* Résumé plus haut que la place qui lui reste : il défile dans la fenêtre
+   (molette, PageHaut/PageBas) au lieu d'être coupé sans recours. Barre fine et
+   discrète, la même que la liste d'un artefact. */
+.sc-summary{flex:1 1 auto;min-height:0;padding:0 13px 10px;font-size:12px;line-height:1.5;color:#b3cbd6;white-space:pre-wrap;overflow:hidden auto;overflow-wrap:anywhere;
+  overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:rgba(151,191,209,.28) transparent;
   -webkit-mask-image:linear-gradient(#000 calc(100% - 22px),transparent);mask-image:linear-gradient(#000 calc(100% - 22px),transparent)}
 /* Liste bornée : la dernière ligne visible s'efface au lieu d'être coupée net. */
 .sc-items{flex:none;list-style:none;margin:0;padding:8px 13px 11px;display:grid;gap:4px;border-top:1px solid var(--sc-edge);max-height:45%;overflow:hidden;
@@ -799,7 +803,8 @@ ${orbitKeyframes()}
 .sc-kind-artifact.sc-window .sc-summary{flex:0 0 auto;max-height:38%}
 .sc-kind-artifact.sc-window .sc-items{flex:1 1 auto;max-height:none;min-height:0;align-content:start;overflow-y:auto;overscroll-behavior:contain;
   scrollbar-width:thin;scrollbar-color:rgba(151,191,209,.28) transparent}
-.sc-items.sc-at-end{-webkit-mask-image:none;mask-image:none}
+/* Défilé jusqu'en bas : plus rien à annoncer, le fondu s'efface. */
+.sc-items.sc-at-end,.sc-summary.sc-at-end{-webkit-mask-image:none;mask-image:none}
 /* Résumé entier : pas de fondu sur sa dernière ligne. */
 .sc-summary.sc-fits{-webkit-mask-image:none;mask-image:none}
 .sc-items .sc-item-link{display:flex;gap:10px;align-items:baseline;flex:1 1 auto;min-width:0;color:#e6f4fa;text-decoration:none;border-radius:3px;cursor:pointer}
@@ -1378,7 +1383,13 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
       const state=badge(node.exec,node.restartUnknown);if(state)head.append(state);
       parts.push(head,element('div','sc-wtitle',node.title));
       if(node.explains)parts.push(originButton(node.explains));
-      if(node.summary)parts.push(element('div','sc-summary',node.summary));
+      if(node.summary){
+        /* Comme la liste d'un artefact : un conteneur qui défile deviendrait un
+           arrêt de tabulation sans nom (Chrome). Hors tabulation, il défile à la
+           molette et par PageHaut/PageBas depuis la fenêtre. */
+        const summary=element('div','sc-summary',node.summary);summary.tabIndex=-1;
+        parts.push(summary);
+      }
       if(node.items.length){
         /* Un conteneur qui défile deviendrait un arrêt de tabulation sans nom
            (Chrome) : hors tabulation, défilement par PageHaut/PageBas depuis la
@@ -1450,6 +1461,10 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     el.style.transform=`translate(${rect.left}px,${rect.top}px)`;
     el.style.width=node.shape==='point'?'':`${rect.width}px`;
     el.style.height=node.shape==='point'?'':`${rect.height}px`;
+    /* Hauteur de la boîte d'une fenêtre : plafond que `fitWindowHeights`
+       applique après le rendu, quand il sait ce que le contenu occupe. */
+    if(node.shape==='window')el.dataset.boxHeight=String(rect.height);
+    else delete el.dataset.boxHeight;
     el.style.zIndex=String(node.stack);
     markOrbit(el);
     /* Respiration du halo décalée par la place de l'étoile : stable d'un rendu
@@ -1560,11 +1575,43 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
 
   /* Liste d'éléments entière : pas de fondu. */
   function markItemsThatFit(){
+    fitWindowHeights();
     fitHosts();
-    for(const summary of root.querySelectorAll('.sc-summary'))summary.classList.toggle('sc-fits',summary.scrollHeight<=summary.clientHeight+1);
+    for(const summary of root.querySelectorAll('.sc-summary')){
+      summary.classList.toggle('sc-fits',summary.scrollHeight<=summary.clientHeight+1);
+      markScrolledToEnd(summary);
+    }
     for(const list of root.querySelectorAll('.sc-items')){
       list.classList.toggle('sc-fits',list.scrollHeight<=list.clientHeight+1);
-      markItemsEnd(list);
+      markScrolledToEnd(list);
+    }
+  }
+
+  /* Fenêtre plus haute que ce qu'elle montre : dessinée à la hauteur de son
+     contenu, collée en haut de sa boîte, pour qu'aucun vide ne traîne en bas.
+     Rendu seulement — comme la capsule dessinée à sa hauteur naturelle dans une
+     boîte plus grande (`JarvisSceneLayout.drawnRect`) : la boîte enregistrée
+     dans la scène ne change pas, et la place réservée autour non plus. Un
+     contenu plus haut que la boîte garde la hauteur de la boîte et défile.
+
+     La mesure (hauteur libre, puis hauteur retenue) coûte deux calculs de mise
+     en page : elle n'est refaite que si la boîte, la largeur ou le contenu de
+     la fenêtre ont changé — un rendu de routine ne la déclenche pas, et le
+     défilement en cours de l'utilisateur n'est jamais remis à zéro. */
+  function fitWindowHeights(){
+    for(const record of nodes.values()){
+      const el=record.el;
+      /* Sous la main de l'utilisateur : la fenêtre suit la poignée, elle ne se
+         recroqueville pas au milieu du geste. Elle se recalera au relâchement. */
+      if(record.dragging||!el.classList.contains('sc-window'))continue;
+      const box=Number(el.dataset.boxHeight||0);
+      if(!(box>0))continue;
+      const key=`${box}|${el.style.width}|${record.content}`;
+      if(record.fitKey===key)continue;
+      record.fitKey=key;
+      el.style.height='auto';
+      const natural=Math.ceil(el.getBoundingClientRect().height);
+      el.style.height=`${natural>0?Math.min(box,natural):box}px`;
     }
   }
 
@@ -1596,14 +1643,16 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     }
   }
 
-  /* Liste défilée jusqu'en bas : plus de fondu sur la dernière entrée. */
-  function markItemsEnd(list){
-    list.classList.toggle('sc-at-end',list.scrollTop+list.clientHeight>=list.scrollHeight-1);
+  /* Contenu défilé jusqu'en bas (liste d'un artefact, résumé d'une fenêtre) :
+     plus de fondu sur la dernière ligne. */
+  function markScrolledToEnd(el){
+    el.classList.toggle('sc-at-end',el.scrollTop+el.clientHeight>=el.scrollHeight-1);
   }
 
   function onScroll(event){
-    const list=event.target;
-    if(list&&list.classList&&list.classList.contains('sc-items'))markItemsEnd(list);
+    const el=event.target;
+    if(!el||!el.classList)return;
+    if(el.classList.contains('sc-items')||el.classList.contains('sc-summary'))markScrolledToEnd(el);
   }
 
   /* Tabulation itinérante : un seul arrêt de tabulation dans la scène. */
@@ -1634,11 +1683,14 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
       el.blur();return;
     }
     if((event.key==='PageDown'||event.key==='PageUp')&&!event.altKey&&!event.ctrlKey&&!event.metaKey){
-      const list=el.querySelector('.sc-items');
-      if(list&&list.scrollHeight>list.clientHeight+1){
+      /* La liste d'abord (l'artefact la met en avant), sinon le résumé de la
+         fenêtre : le seul des deux qui déborde se laisse parcourir. */
+      const scroller=[el.querySelector('.sc-items'),el.querySelector('.sc-summary')]
+        .find(part=>part&&part.scrollHeight>part.clientHeight+1);
+      if(scroller){
         event.preventDefault();
-        list.scrollTop+=(event.key==='PageDown'?1:-1)*Math.max(20,Math.round(list.clientHeight*0.85));
-        markItemsEnd(list);
+        scroller.scrollTop+=(event.key==='PageDown'?1:-1)*Math.max(20,Math.round(scroller.clientHeight*0.85));
+        markScrolledToEnd(scroller);
       }
       return;
     }
