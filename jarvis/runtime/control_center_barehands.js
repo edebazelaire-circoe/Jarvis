@@ -22,8 +22,29 @@ const JarvisBarehandsCore=(function(){
     cooldownMs:450,     // anti-rebond : délai minimal entre deux clics d'une même main
     margin:.12,         // bord de l'image ignoré : l'écran entier reste atteignable
     mirror:true,        // caméra frontale : l'image est vue en miroir
-    smoothing:.45,      // lissage exponentiel du jeton (1 = aucun)
-    lostGraceMs:250,    // une main perdue garde son état ce temps-là
+    lostGraceMs:250,    // une main perdue garde son identité et son état ce temps-là
+    /* Filtre adaptatif du jeton (Slice 03, architecture §3). Remplace le
+       `smoothing:.45` fixe, qui ne pouvait pas tenir le repos et la vitesse à
+       la fois. Voir `createPointerFilter`. */
+    minCutoffHz:1.2,    // coupure au repos : plus bas = plus calme
+    betaCutoff:.012,    // gain de réactivité : plus haut = moins de retard
+    dCutoffHz:1,        // coupure de l'estimation de vitesse
+    filterResetMs:400,  // trou au-delà duquel le filtre repart au lieu de croire la vitesse
+    /* Immobilité (px/s de la fenêtre) : rampe, pas seuil binaire. */
+    stillSpeedPx:28,    // en dessous, la main est posée
+    moveSpeedPx:420,    // au-dessus, elle file franchement
+    /* Association d'identité (architecture §2). Les distances sont en paumes :
+       invariantes à la distance à la caméra, comme le pincement et le C. */
+    matchRadiusPalms:1.6,      // porte : au-delà, ce n'est pas la même main
+    handednessBonusPalms:.35,  // prime d'accord de latéralité — un indice, jamais une clé
+    predictMs:120,             // extrapolation bornée de la vitesse d'une piste
+    trackVelocityBlend:.5,     // lissage de cette vitesse : traverser un croisement, pas suivre le bruit
+    /* Qualité de suivi (contrat : `HandFrame.quality`). Voir `handQuality`. */
+    qualityFloor:.25,          // recopie de `JarvisBarehandsContracts.HAND_QUALITY_FLOOR`
+    qualityEdge:.04,           // bande d'image où le cadrage se dégrade
+    qualityPalmMin:.06,        // paume en dessous de laquelle les rapports n'ont plus de sens
+    qualityComplete:.6,        // fraction de points finis en dessous de laquelle la main est devinée
+    qualityWarmupFrames:3,     // images consécutives avant qu'une piste soit « installée »
     /* Réveil et veille (décisions 4, 5, 7). Ces deux durées appartiennent au
        contrat (`JarvisBarehandsContracts.SLEEP_TIMEOUT_MS`, `WAKE_HOLD_MS`) ;
        elles sont recopiées ici parce que le bloc pur est chargé seul par les
@@ -55,13 +76,38 @@ const JarvisBarehandsCore=(function(){
   });
   const clamp=(v,min,max)=>Math.max(min,Math.min(max,v));
 
+  const positive=(value,fallback)=>{const n=Number(value);return Number.isFinite(n)&&n>0?n:fallback};
+  const atLeast=(value,min,fallback)=>{const n=Number(value);return Number.isFinite(n)&&n>=min?n:fallback};
+
   function options(overrides){
+    /* `smoothing` a disparu à la Slice 03. L'accepter en silence rendrait un
+       réglage sans effet indiscernable d'un réglage appliqué — précisément le
+       défaut que la reprise de la Slice 01 a chassé partout ailleurs. Un
+       appelant qui le passe encore l'apprend à la construction, pas trois
+       Slices plus loin devant un jeton qui tremble. */
+    if(overrides&&overrides.smoothing!==undefined)
+      throw new RangeError('`smoothing` n’existe plus : le filtre est adaptatif (minCutoffHz, betaCutoff)');
     const o={...DEFAULTS,...(overrides||{})};
     if(!(o.pressRatio>0&&o.pressRatio<o.releaseRatio))throw new RangeError('pressRatio doit être positif et inférieur à releaseRatio');
     if(!(o.wakeGapMin>0&&o.wakeGapMin<o.wakeGapMax))throw new RangeError('wakeGapMin doit être positif et inférieur à wakeGapMax');
+    if(!(o.stillSpeedPx>=0&&o.stillSpeedPx<o.moveSpeedPx))throw new RangeError('stillSpeedPx doit rester sous moveSpeedPx');
     o.margin=clamp(Number(o.margin)||0,0,.45);
-    o.smoothing=clamp(Number(o.smoothing)||1,.01,1);
     o.pressFrames=Math.max(1,Math.round(o.pressFrames));
+    /* Une coupure nulle ou négative fige le filtre sur son premier point : le
+       jeton ne bougerait plus, sans que rien ne le dise. */
+    o.minCutoffHz=positive(o.minCutoffHz,DEFAULTS.minCutoffHz);
+    o.dCutoffHz=positive(o.dCutoffHz,DEFAULTS.dCutoffHz);
+    o.betaCutoff=atLeast(o.betaCutoff,0,DEFAULTS.betaCutoff);
+    o.filterResetMs=atLeast(o.filterResetMs,0,DEFAULTS.filterResetMs);
+    o.matchRadiusPalms=positive(o.matchRadiusPalms,DEFAULTS.matchRadiusPalms);
+    o.handednessBonusPalms=clamp(atLeast(o.handednessBonusPalms,0,DEFAULTS.handednessBonusPalms),0,o.matchRadiusPalms);
+    o.predictMs=atLeast(o.predictMs,0,DEFAULTS.predictMs);
+    o.trackVelocityBlend=clamp(atLeast(o.trackVelocityBlend,0,DEFAULTS.trackVelocityBlend),.01,1);
+    o.qualityFloor=clamp(atLeast(o.qualityFloor,0,DEFAULTS.qualityFloor),0,1);
+    o.qualityEdge=positive(o.qualityEdge,DEFAULTS.qualityEdge);
+    o.qualityPalmMin=positive(o.qualityPalmMin,DEFAULTS.qualityPalmMin);
+    o.qualityComplete=clamp(atLeast(o.qualityComplete,0,DEFAULTS.qualityComplete),0,1);
+    o.qualityWarmupFrames=Math.max(1,Math.round(atLeast(o.qualityWarmupFrames,1,DEFAULTS.qualityWarmupFrames)));
     o.wakeHoldMs=Math.max(0,Number(o.wakeHoldMs)||0);
     o.sleepTimeoutMs=Math.max(0,Number(o.sleepTimeoutMs)||0);
     o.wakeIntervalMs=Math.max(0,Number(o.wakeIntervalMs)||0);
@@ -112,9 +158,135 @@ const JarvisBarehandsCore=(function(){
     };
   }
 
-  function smooth(previous,next,alpha){
-    if(!previous)return {x:next.x,y:next.y};
-    return {x:previous.x+(next.x-previous.x)*alpha,y:previous.y+(next.y-previous.y)*alpha};
+  /* ------------------------------------------------------------------
+     Filtre adaptatif du pointeur (architecture §3, Slice 03).
+
+     Le lissage d'hier tenait dans un seul coefficient, `smoothing:.45`, le
+     même quoi qu'il arrive. Un coefficient unique ne peut pas tenir les deux
+     promesses à la fois : assez bas, il calme le tremblement du repos mais
+     traîne derrière un geste rapide ; assez haut, il suit le geste mais laisse
+     passer le tremblement. Il fallait choisir laquelle des deux sacrifier, et
+     0,45 était le milieu qui rate les deux.
+
+     Le filtre One Euro (Casiez, Roussel & Vogel, CHI 2012) fait varier la
+     fréquence de coupure **avec la vitesse** : main posée → coupure basse →
+     très lissé ; main qui file → coupure haute → presque transparent.
+     Réimplémenté ici depuis la formule publiée ; aucune ligne de l'amont
+     Barehands (décision 33).
+
+       α(f) = 1 / (1 + (1/(2πf))/dt)                       dt en secondes
+       v  = (x − x̂ₙ₋₁)/dt        v̂ = lissage(v, α(dCutoffHz))
+       fc = minCutoffHz + betaCutoff·|v̂|
+       x̂  = lissage(x, α(fc))
+
+     `minCutoffHz` règle le repos, `betaCutoff` règle le retard. Les deux se
+     mesurent, et un test les compare **tous les deux** au lissage fixe d'hier :
+     gagner sur l'un en perdant sur l'autre n'est pas un progrès, c'est le
+     compromis qu'on vient de refuser.
+
+     Les positions sont en pixels de la fenêtre, les vitesses en pixels par
+     seconde — l'unité est dans le nom (leçon de la reprise de la Slice 01). */
+  const lowpass=()=>{
+    let value=null;
+    return {
+      filter(x,alpha){value=value===null?x:value+alpha*(x-value);return value},
+      value(){return value},
+      reset(){value=null},
+    };
+  };
+
+  function createPointerFilter(overrides){
+    const o=options(overrides);
+    const x=lowpass(),y=lowpass(),dx=lowpass(),dy=lowpass(),sx=lowpass(),sy=lowpass();
+    let last=null,vx=0,vy=0;
+    const alpha=(cutoff,seconds)=>{const tau=1/(2*Math.PI*cutoff);return 1/(1+tau/seconds)};
+    const reset=()=>{x.reset();y.reset();dx.reset();dy.reset();sx.reset();sy.reset();last=null;vx=0;vy=0};
+    const sample=(rawX,rawY)=>({
+      x:x.value(),y:y.value(),rawX,rawY,
+      vxPxPerSec:vx,vyPxPerSec:vy,speedPxPerSec:Math.hypot(vx,vy),
+    });
+    return {
+      update(point,now){
+        const rawX=Number(point&&point.x),rawY=Number(point&&point.y),at=Number(now);
+        /* Tous les appelants passent par `usableLandmarks` avant d'arriver
+           ici : un point inutilisable à ce stade est un défaut de code, pas
+           une image bancale. Le taire ferait geler le jeton sur sa dernière
+           position — un curseur immobile que l'utilisateur lit comme un
+           plantage, sans rien à l'écran ni dans la console. La boucle d'images
+           le convertit en `tracking_failed`, qui se voit et se journalise. */
+        if(!Number.isFinite(rawX)||!Number.isFinite(rawY)||!Number.isFinite(at))
+          throw Object.assign(new Error('filtre du pointeur : point ou horodatage inutilisable'),
+            {code:'tracking_failed'});
+        /* Leçon de la reprise de la Slice 02, reprise telle quelle : un trou
+           est du temps **non observé**, et une vitesse calculée dessus est une
+           invention — la main a pu aller n'importe où entre les deux. Au-delà
+           de `filterResetMs` (onglet en arrière-plan, caméra figée, main
+           revenue après une absence), le filtre repart du point présent au
+           lieu de créditer l'intervalle. */
+        if(last!==null&&at-last>o.filterResetMs)reset();
+        const dt=last===null?0:at-last;
+        last=at;
+        if(!(dt>0)){
+          /* Deux mesures au même instant, ou une horloge qui recule : aucune
+             durée, donc aucune vitesse. On initialise plutôt que de diviser
+             par zéro et de publier une vitesse infinie. */
+          if(x.value()===null){x.filter(rawX,1);y.filter(rawY,1)}
+          return sample(rawX,rawY);
+        }
+        const seconds=dt/1000;
+        const smoothing=alpha(o.dCutoffHz,seconds);
+        /* Dérivée **interne** du filtre, mesurée contre la sortie précédente
+           comme l'exige la formule publiée. C'est un signal de commande, pas
+           une mesure : sur une rampe, la sortie traîne d'un retard constant,
+           et cette dérivée lit donc la vitesse *plus* ce retard divisé par dt
+           — 1400 px/s pour une main à 900, et jusqu'à 40 px/s sur une main
+           parfaitement immobile qui tremble de trois pixels. Publiée telle
+           quelle elle aurait dit « la main bouge » au repos, et l'immobilité
+           des Slices 04-06 n'aurait jamais valu 1. Elle sert à ouvrir la
+           coupure, rien d'autre. */
+        const rx=dx.filter((rawX-x.value())/seconds,smoothing);
+        const ry=dy.filter((rawY-y.value())/seconds,smoothing);
+        const cutoff=o.minCutoffHz+o.betaCutoff*Math.hypot(rx,ry);
+        const a=alpha(cutoff,seconds);
+        const fromX=x.value(),fromY=y.value();
+        x.filter(rawX,a);y.filter(rawY,a);
+        /* La vitesse **publiée** est celle du point filtré, lissée au même
+           `dCutoffHz` : sans biais en régime établi (899 px/s mesurés pour 900
+           réels) et déjà débarrassée du tremblement, puisqu'elle dérive d'un
+           signal qui l'est. C'est la vitesse du curseur que l'interaction
+           déplace — la seule dont une intention de clic ou de glissement peut
+           répondre. */
+        vx=sx.filter((x.value()-fromX)/seconds,smoothing);
+        vy=sy.filter((y.value()-fromY)/seconds,smoothing);
+        return sample(rawX,rawY);
+      },
+      reset,
+    };
+  }
+
+  /* Immobilité. `stillness` est une rampe, pas un seuil : entre « posée » et
+     « qui file », le doute est un nombre. `stillMs` dit **depuis quand** la
+     main est posée — c'est cette durée que les Slices 04 à 06 liront pour
+     distinguer un clic d'un début de glissement, parce que l'instantané passe
+     sous le seuil une image au milieu d'un geste franc. */
+  function createStillness(overrides){
+    const o=options(overrides);
+    let stillMs=0,last=null;
+    return {
+      update(speed,now){
+        const at=Number(now);
+        const dt=last===null||!Number.isFinite(at)?0:Math.max(0,at-last);
+        if(Number.isFinite(at))last=at;
+        const value=Number(speed);
+        const moving=!Number.isFinite(value)||value>o.stillSpeedPx;
+        // Même borne que partout ailleurs : un intervalle non observé ne se
+        // crédite pas — une main « immobile depuis 60 s » à travers un onglet
+        // en arrière-plan serait un mensonge que les Slices suivantes liraient.
+        if(moving||dt>o.filterResetMs)stillMs=0;else stillMs+=dt;
+        return {stillness:Number.isFinite(value)?1-ramp(value,o.stillSpeedPx,o.moveSpeedPx):0,stillMs};
+      },
+      reset(){stillMs=0;last=null},
+    };
   }
 
   /* Pincement d'une main. États : open → pinching (en cours) → pressed.
@@ -233,46 +405,313 @@ const JarvisBarehandsCore=(function(){
     };
   }
 
-  function handKey(result,index){
+  /* Latéralité annoncée par le traqueur pour une détection : un **indice**,
+     jamais une identité (architecture §2). La chaîne vide vaut « rien dit ». */
+  function handLabel(result,index){
     const groups=(result&&(result.handedness||result.handednesses))||[];
     const first=Array.isArray(groups[index])?groups[index][0]:null;
-    return first&&first.categoryName?String(first.categoryName).toLowerCase():`hand-${index}`;
+    return first&&first.categoryName?String(first.categoryName).toLowerCase():'';
+  }
+  function handScore(result,index){
+    const groups=(result&&(result.handedness||result.handednesses))||[];
+    const first=Array.isArray(groups[index])?groups[index][0]:null;
+    const score=Number(first&&first.score);
+    // Absence = défaut (règle du contrat) : un traqueur qui ne note pas sa
+    // latéralité n'est pas un traqueur qui doute de la sienne.
+    return Number.isFinite(score)?clamp(score,0,1):1;
   }
 
-  /* Résultat MediaPipe → jetons à afficher et clics à rejouer. Pendant un
-     pincement, le jeton se fige là où il était quand les doigts ont commencé
-     à se rapprocher : le clic tombe sur ce qui était visé, pas à côté. */
+  /* Qualité de suivi, 0..1, telle que la nomme le contrat (`HandFrame.quality`,
+     §1) : 0 = main devinée, 1 = main franche. Quatre témoins, tous lisibles
+     sur l'image ou sur la piste :
+
+     - **l'échelle** : une paume minuscule ou dégénérée ôte son sens à tout ce
+       qui se mesure en paumes (pincement, posture de réveil) ;
+     - **le cadrage** : le point utile le plus proche d'un bord. Une main qui
+       sort du cadre rend des points extrapolés, et rien dans le résultat du
+       traqueur ne le dit. La bande est étroite (4 %) **exprès** : la marge de
+       `toScreen` (12 %) existe pour qu'on puisse viser le bord de l'écran, et
+       une qualité qui s'effondrerait là endormirait une session en plein
+       usage — une panne pire que celle qu'elle corrige ;
+     - **la complétude** : les 21 points, pas seulement les quatre qu'on lit.
+       Un traqueur qui n'en rend qu'une poignée a deviné le reste ;
+     - **la continuité**, que seule la piste connaît : une main qui vient
+       d'apparaître, ou qui revient après un trou, est une main dont on
+       *suppose* que c'est la même. C'est exactement ce que « devinée » veut
+       dire.
+
+     C'est le **minimum** des quatre, pas leur moyenne : une moyenne laisse
+     trois bons chiffres cacher celui qui dit que la main sort du cadre, et
+     c'est précisément celui-là qu'il fallait lire.
+
+     Ce qui n'y est **pas** : le score de latéralité du traqueur. Il répond à
+     « suis-je sûr que c'est une main *gauche* », pas à « suis-je sûr que c'est
+     une main ». Une main vue de profil a une latéralité ambiguë et des points
+     parfaits ; l'y mêler ferait baisser la confiance pour une raison qui n'a
+     rien à voir avec elle. */
+  function handQuality(landmarks,aspect,continuity,overrides){
+    const o=options(overrides);
+    if(!usableLandmarks(landmarks))return 0;
+    const k=Number(aspect)>0?Number(aspect):1;
+    const scale=ramp(distance(landmarks[LM.WRIST],landmarks[LM.MIDDLE_MCP],k),o.qualityPalmMin/2,o.qualityPalmMin);
+    let edge=1;
+    for(const at of USED_LANDMARKS){
+      const point=landmarks[at];
+      edge=Math.min(edge,ramp(Math.min(point.x,1-point.x,point.y,1-point.y),0,o.qualityEdge));
+    }
+    let finite=0;
+    for(const point of landmarks)if(usablePoint(point))finite+=1;
+    const complete=ramp(finite/Math.max(1,landmarks.length),o.qualityComplete,1);
+    return clamp(Math.min(scale,edge,complete,clamp(Number(continuity)||0,0,1)),0,1);
+  }
+  /* « Cette main compte-t-elle ? » — **une** définition, partagée par le
+     minuteur de la décision 7, la pastille et la surimpression. Miroir de
+     `JarvisBarehandsContracts.isUsableQuality` (le bloc pur est chargé seul
+     par les tests node) ; le test de parité refuse la dérive. */
+  const usableQuality=(quality,overrides)=>{
+    const value=Number(quality);
+    return Number.isFinite(value)&&value>=options(overrides).qualityFloor;
+  };
+
+  /* ------------------------------------------------------------------
+     Identité de main persistante (architecture §2).
+
+     La latéralité ne fait pas une identité. Le traqueur la réétiquette d'une
+     image à l'autre — une main vue de profil, deux mains qui se croisent, une
+     paume qui se retourne — et l'expérience d'hier s'en servait de clé : les
+     deux mains échangeaient leur jeton, leur pincement et leur `pointerId` au
+     milieu d'un geste, sans que rien ne le dise. Le contrat l'écrit déjà : la
+     latéralité est un indice, jamais l'identité.
+
+     Ici l'identité vient de la **continuité spatiale**. Chaque image :
+
+     1. chaque piste prédit où elle devrait être — dernière position plus
+        vitesse, extrapolation bornée à `predictMs`, parce qu'au-delà on
+        invente ;
+     2. le coût d'un appariement est la distance prédiction ↔ détection **en
+        paumes** (invariante à la distance à la caméra, comme le pincement et
+        le C), moins une prime si les latéralités s'accordent ;
+     3. une distance au-delà de `matchRadiusPalms` n'est pas un appariement du
+        tout. **La porte se juge sur la distance seule, jamais sur le coût** :
+        la latéralité départage, elle n'ouvre pas la porte. C'est ce qui
+        empêche une étiquette qui bascule de voler une identité ;
+     4. on retient l'attribution de coût **total** minimal, pas la meilleure
+        paire d'abord : au croisement de deux mains, le glouton prend la paire
+        la plus proche et impose la pire à l'autre.
+
+     Une détection sans piste ouvre une piste neuve, numérotée à partir de
+     **0** — `0` est une identité, et le contrat le sait depuis sa reprise.
+     Une piste sans détection survit `lostGraceMs` : un trou d'une image ne
+     coûte pas l'identité, donc ne casse ni une capture ni un glissement en
+     cours. Elle revient avec sa continuité retombée, parce qu'on *suppose*
+     que c'est la même main. */
+
+  /* Recherche exhaustive : `MAX_HANDS` vaut 2 et le contrat refuse la
+     troisième main, donc l'arbre tient en quelques feuilles. Au-delà il
+     faudrait un algorithme hongrois — plutôt que de laisser une factorielle
+     grandir en silence le jour où `numHands` monte, l'image se refuse et le
+     dit (`tracking_failed`), au lieu de faire ramer la boucle sans raison
+     visible. */
+  const ASSIGNMENT_LIMIT=4;
+
+  function createHandTrackManager(overrides){
+    const o=options(overrides);
+    const settle=o.qualityWarmupFrames;
+    const tracks=new Map();
+    let nextId=0;
+
+    /* Attribution de coût total minimal. `null` = porte fermée ; ne pas
+       apparier coûte `matchRadiusPalms`, si bien qu'un appariement dans la
+       porte est toujours préféré à une piste neuve. */
+    function assign(costs,detections,trackCount){
+      const best={total:Infinity,pick:null};
+      const current=new Array(detections).fill(-1);
+      const used=new Array(trackCount).fill(false);
+      (function walk(index,total){
+        if(total>=best.total)return;
+        if(index===detections){best.total=total;best.pick=current.slice();return}
+        for(let t=0;t<trackCount;t+=1){
+          if(used[t]||costs[index][t]===null)continue;
+          used[t]=true;current[index]=t;
+          walk(index+1,total+costs[index][t]);
+          used[t]=false;
+        }
+        current[index]=-1;
+        walk(index+1,total+o.matchRadiusPalms);
+      })(0,0);
+      return best.pick||new Array(detections).fill(-1);
+    }
+
+    /* La latéralité se vote, elle ne se lit pas image par image : une seule
+       image contraire ne renverse pas une identité installée. Le gain est
+       `1/qualityWarmupFrames` — ce dépôt appelle « installé » trois images
+       consécutives, et il n'y a pas de raison que ce soit deux nombres.
+       Une étiquette absente ne vote pas : l'absence d'indice n'est pas un
+       indice contraire. */
+    function vote(track,label,confidence){
+      if(!label)return;
+      const gain=clamp(confidence,0,1)/settle;
+      if(label===track.handedness){track.vote=clamp(track.vote+gain,0,1);return}
+      track.vote-=gain;
+      if(track.vote<=0){track.handedness=label;track.vote=gain}
+    }
+
+    function advance(track,observation,at){
+      const dt=Math.max(0,at-track.at);
+      if(dt>0){
+        const seconds=dt/1000;
+        const vx=(observation.x-track.x)/seconds,vy=(observation.y-track.y)/seconds;
+        track.vx+=(vx-track.vx)*o.trackVelocityBlend;
+        track.vy+=(vy-track.vy)*o.trackVelocityBlend;
+      }
+      track.x=observation.x;track.y=observation.y;track.at=at;
+      /* Revenue d'un trou : l'identité tient, la confiance non. Le compteur
+         d'images consécutives repart, donc la qualité dit « devinée » le temps
+         de le redevenir. */
+      if(track.missed){track.seen=1;track.recovered=true;track.missed=false}
+      else{track.seen+=1;track.recovered=false}
+      vote(track,observation.handedness,observation.handednessConfidence);
+    }
+
+    return {
+      /* `{hands:[{x,y,palm,handedness,handednessConfidence}], now, aspect}` →
+         une entrée par main, dans le même ordre. Les positions sont en
+         coordonnées d'image normalisées (0..1 par axe), `palm` déjà corrigée
+         de l'aspect. Aucun indice MediaPipe n'arrive jusqu'ici. */
+      update(frame){
+        const f=frame||{};
+        const at=Number(f.now);
+        if(!Number.isFinite(at))
+          throw Object.assign(new Error('suivi des mains : horodatage inutilisable'),{code:'tracking_failed'});
+        const k=Number(f.aspect)>0?Number(f.aspect):1;
+        const list=Array.isArray(f.hands)?f.hands:[];
+        if(list.length>ASSIGNMENT_LIMIT)
+          throw Object.assign(new Error(`suivi des mains : ${list.length} détections, au-delà de la recherche exhaustive (${ASSIGNMENT_LIMIT})`),
+            {code:'tracking_failed'});
+        /* Purge **avant** d'apparier, et non après. Purger après ne regarde
+           que les images qu'on a reçues : une boucle arrêtée (onglet en
+           arrière-plan, écran rabattu, caméra figée) ne purge rien, et la
+           première image du retour retrouve une piste vieille de dix secondes
+           encore posée là où la main était — ressuscitée, avec sa capture et
+           son `pointerId`. Même leçon que la Slice 02 : la grâce se compte
+           contre l'observation, pas contre le nombre d'appels. */
+        for(const [id,track] of tracks)if(at-track.at>o.lostGraceMs)tracks.delete(id);
+        const ids=[...tracks.keys()];
+        const costs=list.map(observation=>{
+          const palm=Number(observation&&observation.palm);
+          const scale=Number.isFinite(palm)&&palm>1e-6?palm:1;
+          return ids.map(id=>{
+            const track=tracks.get(id);
+            const horizon=Math.min(Math.max(0,at-track.at),o.predictMs)/1000;
+            const gap=Math.hypot(
+              ((track.x+track.vx*horizon)-observation.x)*k,
+              (track.y+track.vy*horizon)-observation.y)/scale;
+            if(!(gap<=o.matchRadiusPalms))return null;
+            return gap-(observation.handedness&&observation.handedness===track.handedness
+              ?o.handednessBonusPalms:0);
+          });
+        });
+        const pick=assign(costs,list.length,ids.length);
+        const live=new Set();
+        const out=list.map((observation,index)=>{
+          const matched=pick[index]>=0;
+          const id=matched?ids[pick[index]]:nextId++;
+          if(matched)advance(tracks.get(id),observation,at);
+          else tracks.set(id,{x:observation.x,y:observation.y,vx:0,vy:0,at,
+            seen:1,missed:false,recovered:false,
+            handedness:observation.handedness||'',vote:clamp(observation.handednessConfidence,0,1)/settle});
+          const track=tracks.get(id);
+          live.add(id);
+          return Object.freeze({handTrackId:id,
+            handedness:track.handedness||'unknown',handednessConfidence:track.vote,
+            continuity:clamp(track.seen/settle,0,1),
+            isNew:!matched,recovered:track.recovered,ageFrames:track.seen});
+        });
+        // Vue nulle part cette image : l'identité tient (la purge du début
+        // décidera), la continuité non — c'est `advance` qui la fera retomber.
+        for(const [id,track] of tracks)if(!live.has(id))track.missed=true;
+        return out;
+      },
+      has(id){return tracks.has(id)},
+      reset(){tracks.clear();nextId=0},
+      size(){return tracks.size},
+    };
+  }
+
+  /* Résultat du traqueur → jetons à afficher, clics à rejouer et identités
+     stables. Pendant un pincement, le jeton se fige là où il était quand les
+     doigts ont commencé à se rapprocher : le clic tombe sur ce qui était visé,
+     pas à côté.
+
+     Chaque jeton porte trois couples de coordonnées, et les trois servent :
+     `rawX`/`rawY` ce que le traqueur a rendu, `filteredX`/`filteredY` la
+     sortie du filtre, `x`/`y` le point d'affichage et de visée — le filtré,
+     ou l'ancre gelée pendant un pincement. Sans les deux premiers, un filtre
+     ne se règle pas et la calibration ne peut pas mesurer le tremblement
+     (`jitterPx`) ; pendant un pincement, `x`/`y` ne dit plus rien de la main. */
   function createHandTracker(overrides){
     const o=options(overrides);
+    const manager=createHandTrackManager(overrides);
     const hands=new Map();
     return {
       update(result,frame){
-        const tokens=[],clicks=[],seen=new Set();
+        const now=frame.now;
+        const k=Number(frame.aspect)>0?Number(frame.aspect):1;
         const list=(result&&result.landmarks)||[];
+        const observations=[],sources=[];
+        const trackIds=list.map(()=>null);
         list.forEach((landmarks,index)=>{
           /* Même définition qu'ailleurs : une main qui ne donne pas ses quatre
              points ne porte pas de jeton — et, décision 7, ne réarme donc pas
              le retour en veille sous une définition plus large que celle du
              guetteur. Les deux se répondaient à un point d'écart. */
           if(!usableLandmarks(landmarks))return;
-          let id=handKey(result,index);
-          if(seen.has(id))id=`${id}-${index}`;
-          seen.add(id);
-          let hand=hands.get(id);
-          if(!hand){hand={detector:createPinchDetector(o),point:null,anchor:null,lastSeen:frame.now};hands.set(id,hand)}
-          hand.lastSeen=frame.now;
-          hand.point=smooth(hand.point,toScreen(landmarks[LM.INDEX_TIP],frame.viewport,o),o.smoothing);
-          const pinch=hand.detector.update(pinchRatio(landmarks,frame.aspect),frame.now);
-          if(pinch.state==='open')hand.anchor=null;
-          else if(!hand.anchor)hand.anchor={...hand.point};
-          const at=hand.anchor||hand.point;
-          if(pinch.click)clicks.push({id,x:at.x,y:at.y});
-          tokens.push({id,x:at.x,y:at.y,state:pinch.state,progress:pinch.progress,click:pinch.click,hover:false});
+          const wrist=landmarks[LM.WRIST],middle=landmarks[LM.MIDDLE_MCP];
+          observations.push({
+            /* Le repère de l'association est le **centre de la paume**, pas le
+               bout de l'index : l'index parcourt plusieurs paumes pendant un
+               pincement, et une main qui pince se lirait comme une main qui
+               saute — c'est-à-dire comme une autre main. */
+            x:(wrist.x+middle.x)/2,y:(wrist.y+middle.y)/2,
+            palm:distance(wrist,middle,k),
+            handedness:handLabel(result,index),handednessConfidence:handScore(result,index),
+          });
+          sources.push({index,landmarks});
         });
-        for(const [id,hand] of hands)if(!seen.has(id)&&frame.now-hand.lastSeen>o.lostGraceMs)hands.delete(id);
-        return {tokens,clicks};
+        const assigned=manager.update({hands:observations,now,aspect:k});
+        const tokens=[],clicks=[];
+        assigned.forEach((entry,rank)=>{
+          const {index,landmarks}=sources[rank];
+          const id=entry.handTrackId;
+          trackIds[index]=id;
+          let hand=hands.get(id);
+          if(!hand){hand={detector:createPinchDetector(overrides),filter:createPointerFilter(overrides),
+            still:createStillness(overrides),anchor:null};hands.set(id,hand)}
+          const motion=hand.filter.update(toScreen(landmarks[LM.INDEX_TIP],frame.viewport,o),now);
+          const still=hand.still.update(motion.speedPxPerSec,now);
+          const pinch=hand.detector.update(pinchRatio(landmarks,k),now);
+          if(pinch.state==='open')hand.anchor=null;
+          else if(!hand.anchor)hand.anchor={x:motion.x,y:motion.y};
+          const aim=hand.anchor||motion;
+          if(pinch.click)clicks.push({id,x:aim.x,y:aim.y});
+          tokens.push({id,x:aim.x,y:aim.y,
+            rawX:motion.rawX,rawY:motion.rawY,filteredX:motion.x,filteredY:motion.y,
+            vxPxPerSec:motion.vxPxPerSec,vyPxPerSec:motion.vyPxPerSec,speedPxPerSec:motion.speedPxPerSec,
+            stillness:still.stillness,stillMs:still.stillMs,
+            quality:handQuality(landmarks,k,entry.continuity,overrides),
+            handedness:entry.handedness,
+            state:pinch.state,progress:pinch.progress,click:pinch.click,hover:false,t:now});
+        });
+        /* L'état par main vit exactement aussi longtemps que son identité :
+           c'est le gestionnaire qui tient la grâce, un seul endroit plutôt que
+           deux horloges qui se répondent à quelques millisecondes près. */
+        for(const id of [...hands.keys()])if(!manager.has(id))hands.delete(id);
+        /* `trackIds` est aligné sur `result.landmarks`, trous compris : c'est
+           ce que `handFrameFromMediapipe(result,{trackIds})` attend pour
+           imposer l'identité persistante au `HandFrame` neutre. */
+        return {tokens,clicks,trackIds};
       },
-      reset(){hands.clear()},
+      reset(){manager.reset();hands.clear()},
       size(){return hands.size},
     };
   }
@@ -358,6 +797,12 @@ const JarvisBarehandsCore=(function(){
     /* Guetteur : dernière inférence de veille. Interaction : dernière image où
        une main exploitable a été vue, qui arme le retour en veille. */
     let lastWatchAt=-Infinity,lastHandAt=0;
+    /* Dernier lot de traits de mouvement publié (Slice 03) : ce que
+       `window.JarvisBarehands.diagnostics()` rend lisible sans caméra ni
+       console, et ce que la calibration de la Slice 08 mesurera. Vidé partout
+       où l'interaction s'arrête, pour qu'il ne survive jamais à ce qu'il
+       décrit. */
+    let features=[];
 
     function emit(code,error){
       const message=MESSAGES[code]||MESSAGES.start_failed;
@@ -374,7 +819,7 @@ const JarvisBarehandsCore=(function(){
       if(landmarker){try{landmarker.close()}catch(_error){}landmarker=null}
       try{deps.interaction.clear()}catch(_error){}
       try{deps.overlay.unmount()}catch(_error){}
-      tracker.reset();wake.reset();lastVideoTime=-1;lastWatchAt=-Infinity;lastHandAt=0;
+      tracker.reset();wake.reset();lastVideoTime=-1;lastWatchAt=-Infinity;lastHandAt=0;features=[];
     }
     function fail(error,code){
       generation+=1;teardown();state=STATE.ERROR;emit(code||classifyError(error),error);
@@ -398,12 +843,12 @@ const JarvisBarehandsCore=(function(){
        régime, et tout compteur repart de zéro pour que le réveil suivant ne
        parte pas d'un reste. */
     function toActive(code){
-      wake.reset();tracker.reset();lastVideoTime=-1;lastHandAt=deps.now();
+      wake.reset();tracker.reset();lastVideoTime=-1;lastHandAt=deps.now();features=[];
       state=STATE.ACTIVE;emit(code||'active');
       paintWatch(null);
     }
     function toSleep(code){
-      tracker.reset();wake.reset();lastVideoTime=-1;lastWatchAt=-Infinity;
+      tracker.reset();wake.reset();lastVideoTime=-1;lastWatchAt=-Infinity;features=[];
       try{deps.interaction.clear()}catch(_error){}
       state=STATE.SLEEP;emit(code||'sleep');
       paintWatch({present:false,progress:0,x:0,y:0});
@@ -452,9 +897,20 @@ const JarvisBarehandsCore=(function(){
       lastVideoTime=time;
       const result=landmarker.detectForVideo(video.element,now);
       const out=tracker.update(result,{viewport:deps.viewport(),aspect:aspect(),now});
-      if(out.tokens.length)lastHandAt=now;
+      /* Décision 7 : « une main exploitable ». La Slice 02 a dû l'approximer
+         en « une main quelconque », faute de qualité à lire — une main à
+         moitié hors cadre, ou une ombre que le traqueur devine, gardait donc
+         l'interaction éveillée pour toujours. La qualité existe désormais : le
+         minuteur se réarme sur une main en laquelle on a confiance. Le jeton
+         reste affiché dans tous les cas, et se dessine pâle : l'écran dit
+         « je te vois mais je ne te crois pas », plutôt que de laisser la
+         session s'endormir sans prévenir (RÈGLE ZÉRO). */
+      if(out.tokens.some(token=>usableQuality(token.quality,deps.options)))lastHandAt=now;
       deps.interaction.hover(out.tokens);
       deps.overlay.render(out.tokens);
+      // Traits du dernier instant, pour la calibration et les diagnostics
+      // (architecture §12) : lus après le survol, donc `hover` y est juste.
+      features=out.tokens;
       for(const click of out.clicks){
         deps.interaction.click(click);
         if(mine!==generation)return;  // le clic a éteint le mode test
@@ -520,12 +976,13 @@ const JarvisBarehandsCore=(function(){
       emit(wasOn?'disabled':'off');
       return state;
     }
-    return {enable,activate,sleep,disable,state:()=>state,tick};
+    return {enable,activate,sleep,disable,state:()=>state,features:()=>features,tick};
   }
 
-  return {LM,STATE,STATES,LIVE_STATES,isLiveState,isEngagedState,usableLandmarks,
-    DEFAULTS,MESSAGES,pinchRatio,cPoseScore,toScreen,smooth,
-    createPinchDetector,createWakeDetector,createHandTracker,classifyError,createController};
+  return {LM,STATE,STATES,LIVE_STATES,isLiveState,isEngagedState,usableLandmarks,usableQuality,
+    DEFAULTS,MESSAGES,pinchRatio,cPoseScore,handQuality,toScreen,
+    createPinchDetector,createWakeDetector,createPointerFilter,createStillness,
+    createHandTrackManager,createHandTracker,classifyError,createController};
 })();
 
 /* Exécution par les tests (node) ; dans la page, `module` n'existe pas. */
@@ -561,6 +1018,11 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
           mask:radial-gradient(farthest-side,transparent calc(100% - 3px),#000 calc(100% - 2px))}
 #jarvisHands .jh-token.hover{width:46px;height:46px;margin:-23px 0 0 -23px;background:color-mix(in srgb,currentColor 24%,transparent)}
 #jarvisHands .jh-token.pinching{border-style:dashed}
+/* Main vue mais pas crue (qualité sous le plancher : hors cadre, trop loin,
+   à peine apparue). Le jeton reste — la masquer dirait « je ne te vois pas »,
+   ce qui est faux — mais il s'efface, parce que cette main-là ne tient pas la
+   session éveillée et que l'écran doit le dire avant que la veille arrive. */
+#jarvisHands .jh-token.faint{opacity:.42;border-style:dotted}
 #jarvisHands .jh-token.pressed{width:24px;height:24px;margin:-12px 0 0 -12px;background:color-mix(in srgb,currentColor 60%,transparent)}
 #jarvisHands .jh-token.clicked::before{content:'';position:absolute;inset:-3px;border-radius:50%;border:2px solid currentColor;animation:jhClick .38s ease-out forwards}
 @keyframes jhClick{from{transform:scale(1);opacity:.95}to{transform:scale(2.6);opacity:0}}
@@ -593,6 +1055,14 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
      d'« en interaction, mais je ne vois personne », alors que seule la veille
      avait son mot à elle. */
   const BADGE=Object.freeze({mounted:'MAINS · TEST',sleep:'MAINS · VEILLE',active:'MAINS · ACTIF'});
+
+  /* Un jeton en lequel on a confiance. Une qualité **absente** vaut « personne
+     n'a rien dit » et reste crue — la règle d'absence du contrat — pour que le
+     jeton posé à la main depuis la console (`adapters.createOverlay`) ne se
+     dessine pas pâle sans raison. C'est une note basse, pas une note
+     manquante, qui efface un jeton. */
+  const believed=token=>token.quality===undefined||token.quality===null
+    ?true:Core.usableQuality(token.quality);
 
   function createOverlay(){
     let root=null,badge=null,wake=null;
@@ -627,7 +1097,9 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
       render(list){
         if(!root)return;
         const seen=new Set();
+        let trusted=0;
         for(const token of list){
+          if(believed(token))trusted+=1;
           seen.add(token.id);
           let el=tokens.get(token.id);
           if(!el){el=document.createElement('div');el.className=BH.DOM.tokenClass;
@@ -638,10 +1110,16 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
           el.classList.toggle('hover',!!token.hover);
           el.classList.toggle('pinching',token.state==='pinching');
           el.classList.toggle('pressed',token.state==='pressed');
+          el.classList.toggle('faint',!believed(token));
           if(token.click){el.classList.remove('clicked');void el.offsetWidth;el.classList.add('clicked')}
         }
         for(const [id,el] of tokens)if(!seen.has(id)){el.remove();tokens.delete(id)}
-        if(badge)badge.textContent=list.length?`MAINS · ${list.length}`:BADGE.active;
+        /* La pastille compte les mains **crues**, et annonce les autres à part
+           (« 1/2 ») : « 2 » alors qu'une seule tient la session éveillée était
+           un chiffre exact et une information fausse. */
+        if(badge)badge.textContent=!list.length?BADGE.active
+          :trusted===list.length?`MAINS · ${list.length}`
+          :`MAINS · ${trusted}/${list.length}`;
       },
     };
   }
@@ -929,7 +1407,8 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
         <li>Chaque main visible affiche un jeton rond qui suit le bout de l'index ; il grossit au survol d'un élément cliquable.</li>
         <li>Rapprocher pouce et index remplit l'anneau du jeton (pincement en cours) ; le jeton se fige pour viser.</li>
         <li>Pincement franc : clic sous le jeton (onde visuelle). Rouvrir les doigts avant de recliquer.</li>
-        <li>Sans main vue pendant 30 secondes, l'interaction retourne en veille ; la caméra reste ouverte pour le guetteur.</li>
+        <li>Un jeton <strong>pâle et pointillé</strong> signale une main que le suivi ne tient pas pour sûre — elle sort du cadre, elle est trop loin, ou elle vient d'apparaître. Elle est affichée et cliquable, mais elle ne maintient pas l'interaction éveillée : la pastille compte alors « 1/2 ».</li>
+        <li>Sans main <em>sûre</em> vue pendant 30 secondes, l'interaction retourne en veille ; la caméra reste ouverte pour le guetteur.</li>
       </ul>
       <div class="hint" style="margin-top:10px">Limites du mode test : pas de glisser-déposer ni de défilement ; une liste déroulante ne s'ouvre pas au pincement (le navigateur l'interdit aux clics simulés) ; le visage ai-visualizer (iframe) ne reçoit pas les clics.</div>
     </section>`;
@@ -983,6 +1462,12 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
        plus tard du canal de commandes de la voix (Slice 12). */
     activate:()=>setAwake(true),sleep:()=>setAwake(false),
     lifecycle,
+    /* Traits du dernier instant, par main : identité de piste stable, position
+       brute **et** filtrée, vitesse, immobilité et qualité (architecture §3,
+       §12). C'est ce que la calibration de la Slice 08 mesurera et ce qu'un
+       réglage de filtre se relit pour savoir ce qu'il a changé — un filtre
+       dont on ne voit que la sortie ne se règle pas. Vide hors interaction. */
+    diagnostics:()=>controller.features().map(BH.adapters.motionFromCoreToken),
     // Diagnostic sans caméra : poser un jeton et cliquer depuis la console.
     adapters:Object.freeze({createOverlay,createInteraction}),
   });

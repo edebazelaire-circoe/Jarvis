@@ -547,6 +547,66 @@ def test_a_camera_lost_in_sleep_is_reported_like_one_lost_in_interaction(tmp_pat
     assert result["stopped"] is True
 
 
+def test_the_idle_timer_now_reads_a_real_usable_hand_and_says_so_on_screen(tmp_path):
+    """Décision 7 : 30 s **sans main exploitable** ramènent ACTIVE en veille.
+    La Slice 02 a dû lire « exploitable » comme « une main quelconque », faute
+    de qualité à lire, et l'a noté comme une approximation à fermer. Elle se
+    ferme ici.
+
+    Une main dont un point utile sort du cadre est une main dont le traqueur
+    extrapole les points : elle tenait l'interaction éveillée indéfiniment,
+    parce qu'elle produisait un jeton. Elle produit toujours un jeton — la
+    masquer dirait « je ne te vois pas », ce qui est faux — mais elle ne
+    réarme plus le minuteur, et l'écran le dit avant que la veille arrive :
+    le jeton se dessine pâle et la pastille compte les mains crues à part."""
+
+    result = run_node(tmp_path, WORLD + """
+      const shift=(lm,dx)=>lm.map(p=>({x:p.x+dx,y:p.y,z:0}));
+      /* Main ouverte, pas la posture en C : le guetteur de la veille ne lit
+         **pas** la qualité — il n'est pas dans ACTIVE et son budget d'images
+         ne bouge pas pour cette Slice — donc un C hors cadre se rendormirait
+         puis se réveillerait aussitôt, et le test mesurerait autre chose. */
+      const clean={landmarks:[hand(1.3)]};
+      const edged={landmarks:[shift(hand(1.3),.24)]};   // le pouce touche le bord
+
+      const good=world({result:clean});
+      const cg=B.createController(good.deps);
+      await cg.enable();await cg.activate();
+      good.steps(200,200);                              // 40 s de main franche
+      const stayed=cg.state();
+
+      const poor=world({result:edged});
+      const cp=B.createController(poor.deps);
+      await cp.enable();await cp.activate();
+      const before=cp.state();
+      poor.steps(200,200);
+      const slept=cp.state();
+
+      // Le jeton existe dans les deux cas : c'est la confiance qui diffère.
+      const t=B.createHandTracker({});
+      const f=now=>({viewport:{width:100,height:100},aspect:1,now});
+      const seenClean=t.update(clean,f(0)).tokens[0];
+      const u=B.createHandTracker({});
+      const seenEdged=u.update(edged,f(0)).tokens[0];
+      out({stayed,before,slept,
+           reason:poor.log.filter(l=>l.startsWith('status:')).pop(),
+           quality:[seenClean.quality,seenEdged.quality],
+           counted:[B.usableQuality(seenClean.quality),B.usableQuality(seenEdged.quality)],
+           tokens:[!!seenClean,!!seenEdged],
+           features:cp.features().length});
+    """)
+    assert result["stayed"] == "active", "une main franche doit tenir l'interaction éveillée"
+    assert result["before"] == "active"
+    assert result["slept"] == "sleep"
+    assert result["reason"] == "status:sleep:idle_sleep"
+    # Les deux mains portent un jeton ; une seule des deux compte.
+    assert result["tokens"] == [True, True]
+    assert result["counted"] == [True, False]
+    assert result["quality"][0] > result["quality"][1]
+    # Les traits ne survivent pas à l'interaction qu'ils décrivent.
+    assert result["features"] == 0
+
+
 # ------------------------------------------------------------------ parité
 
 
@@ -565,6 +625,12 @@ def test_the_controller_states_and_timings_still_match_the_contract(tmp_path):
         sleepMs:[B.DEFAULTS.sleepTimeoutMs,C.SLEEP_TIMEOUT_MS,C.SETTINGS_DEFAULTS.sleepTimeoutMs],
         holdMs:[B.DEFAULTS.wakeHoldMs,C.WAKE_HOLD_MS],
         intervalMs:[B.DEFAULTS.wakeIntervalMs,C.WAKE_INTERVAL_MS],
+        qualityFloor:[B.DEFAULTS.qualityFloor,C.HAND_QUALITY_FLOOR],
+        tuning:['minCutoffHz','betaCutoff','dCutoffHz','filterResetMs','stillSpeedPx','moveSpeedPx',
+                'matchRadiusPalms','handednessBonusPalms','predictMs','trackVelocityBlend',
+                'qualityFloor','qualityEdge','qualityPalmMin','qualityComplete','qualityWarmupFrames']
+          .map(k=>[k,B.DEFAULTS[k]]),
+        retired:['smoothing'].map(k=>B.DEFAULTS[k]===undefined),
         watchesPerSecond:1000/B.DEFAULTS.wakeIntervalMs,
         liveStates:[B.LIVE_STATES,B.STATES.filter(B.isLiveState)],
         engaged:B.STATES.filter(B.isEngagedState),
@@ -595,6 +661,25 @@ def test_the_controller_states_and_timings_still_match_the_contract(tmp_path):
     # explicite, si bien que muter le défaut ne faisait rien tomber.
     assert result["intervalMs"] == [200, 200]
     assert result["watchesPerSecond"] == 5
+    # Slice 03 : le plancher de qualité est le seul nombre de cette Slice que
+    # le contrat possède aussi — c'est lui qui dit « une main exploitable »
+    # (décision 7), des deux côtés de la frontière.
+    assert result["qualityFloor"] == [0.25, 0.25]
+    # Les autres sont des réglages du moteur, mais ils sont épinglés ici pour
+    # la même raison que `wakeIntervalMs` (N4) : un défaut que personne
+    # n'affirme se mute sans rien faire tomber, et le contrat lisible le
+    # publie. Changer l'un d'eux, c'est reporter la valeur ici et dans
+    # `docs/barehands-contracts.md`.
+    assert result["tuning"] == [
+        ["minCutoffHz", 1.2], ["betaCutoff", 0.012], ["dCutoffHz", 1], ["filterResetMs", 400],
+        ["stillSpeedPx", 28], ["moveSpeedPx", 420],
+        ["matchRadiusPalms", 1.6], ["handednessBonusPalms", 0.35], ["predictMs", 120],
+        ["trackVelocityBlend", 0.5],
+        ["qualityFloor", 0.25], ["qualityEdge", 0.04], ["qualityPalmMin", 0.06],
+        ["qualityComplete", 0.6], ["qualityWarmupFrames", 3],
+    ]
+    # `smoothing` a été retiré, pas laissé inerte : `options` le refuse.
+    assert result["retired"] == [True]
     # `LIVE_STATES` est au bloc pur ce que `LIVE_LIFECYCLES` est au contrat.
     assert result["liveStates"] == [["sleep", "active"], ["sleep", "active"]]
     assert result["liveStates"][0] == result["live"][0]

@@ -212,7 +212,13 @@ handednessConfidence, quality, points, raw})`.
   `middleTip`, `middleMcp`, `ringMcp`, `pinkyMcp`. Un rôle non fourni est
   absent ; le moteur qui en a besoin se déclare indisponible.
 - `quality` ∈ [0,1] : 0 main devinée, 1 main franche. Les seuils et
-  l'assistance s'y réfèrent, jamais à un score propre au traqueur.
+  l'assistance s'y réfèrent, jamais à un score propre au traqueur. Calculée
+  par `JarvisBarehandsCore.handQuality` depuis la Slice 03 — voir §3 bis.
+- `HAND_QUALITY_FLOOR = 0,25` et `isUsableQuality(value)` — **le seul** endroit
+  qui dise à partir d'où une main *compte*. C'est ce que la décision 7
+  appelait « une main exploitable » : la Slice 02 a dû l'approximer en « une
+  main quelconque », faute de qualité à lire. Le moteur le recopie sous
+  `DEFAULTS.qualityFloor` et le test de parité refuse la dérive.
 - `raw` garde les points bruts pour le diagnostic et le rejeu (§12). **Aucun
   moteur n'a le droit de les lire.**
 
@@ -220,6 +226,183 @@ Refus (`BareHandsSchemaError`, champ `code`) : `barehands_frame_invalid`,
 `barehands_hand_invalid`, `barehands_frame_time_invalid`,
 `barehands_hand_track_id_missing`, `barehands_hand_track_id_duplicate`,
 `barehands_too_many_hands`, `barehands_point_invalid`.
+
+## 3 bis. Identité, filtrage et mouvement (§2, §3, Slice 03)
+
+Le `HandFrame` de la §3 dit *ce qu'on voit*. Cette section dit **comment on
+sait que c'est la même main d'une image à l'autre**, et ce que vaut ce qu'on en
+mesure. Implémentation : `jarvis/runtime/control_center_barehands.js`
+(`createHandTrackManager`, `createPointerFilter`, `createStillness`,
+`handQuality`, `createHandTracker`), couverte par
+`tests/unit/test_barehands_tracking_js.py`.
+
+### Identité de piste
+
+La latéralité ne fait pas une identité — le contrat le disait déjà, le moteur
+s'en servait quand même comme clé. Un traqueur réétiquette une main vue de
+profil, deux mains qui se croisent, une paume qui se retourne : les deux mains
+échangeaient alors leur jeton, leur pincement et leur `pointerId` au milieu
+d'un geste, sans que rien ne le dise.
+
+L'identité vient de la **continuité spatiale**, mesurée au **centre de la
+paume** (milieu poignet ↔ base du majeur) et non au bout de l'index, qui
+parcourt plusieurs paumes pendant un pincement — une main qui pince se lirait
+comme une main qui saute, c'est-à-dire comme une autre main.
+
+À chaque image :
+
+1. chaque piste prédit sa position (dernière position + vitesse, extrapolation
+   bornée à `predictMs`) ;
+2. le coût d'un appariement est la distance prédiction ↔ détection **en
+   paumes** — invariante à la distance à la caméra, comme le pincement et le
+   C — moins `handednessBonusPalms` si les latéralités s'accordent ;
+3. **la porte (`matchRadiusPalms`) se juge sur la distance seule, jamais sur le
+   coût** : la latéralité départage, elle n'ouvre pas la porte. C'est ce qui
+   empêche une étiquette qui bascule de voler une identité ;
+4. l'attribution retenue minimise le coût **total**, pas la meilleure paire
+   d'abord : au croisement, le glouton prend la paire la plus proche et impose
+   la pire à l'autre. Recherche exhaustive, bornée par `MAX_HANDS` ; au-delà de
+   quatre détections l'image se refuse (`tracking_failed`) plutôt que de
+   laisser une factorielle grandir en silence.
+
+Les identifiants sont des **entiers à partir de 0** — `0` est une identité, et
+c'est le premier qu'émet un traqueur qui numérote ses pistes.
+
+Une piste sans détection survit `lostGraceMs` : un trou d'une image ne coûte
+pas l'identité, donc ne casse ni une capture ni un glissement. Elle revient
+avec sa continuité retombée, parce qu'on *suppose* que c'est la même main.
+La purge se fait **avant** l'appariement, pas après : purger après ne regarde
+que les images reçues, et la première image du retour d'un onglet en
+arrière-plan retrouverait une piste vieille de dix secondes encore posée là où
+la main était — ressuscitée, avec sa capture. Même règle que la Slice 02 : la
+grâce se compte contre l'observation, pas contre le nombre d'appels.
+
+La latéralité de la piste, elle, se **vote** (gain `1/qualityWarmupFrames`) :
+une image contraire ne retourne pas une étiquette installée, trois d'affilée
+oui. Une étiquette absente ne vote pas — l'absence d'indice n'est pas un indice
+contraire.
+
+### Filtre adaptatif
+
+`smoothing: 0,45` a disparu. Un coefficient fixe ne peut pas tenir les deux
+promesses : bas, il calme le repos et traîne ; haut, il suit le geste et laisse
+passer le tremblement. `options()` **refuse** désormais `smoothing`
+(`RangeError`) au lieu de l'ignorer, pour qu'un réglage sans effet ne soit pas
+indiscernable d'un réglage appliqué.
+
+Le filtre One Euro (Casiez, Roussel & Vogel, CHI 2012 — réimplémenté depuis la
+formule publiée, aucune ligne de l'amont, décision 33) fait varier la coupure
+avec la vitesse. Mesuré contre l'ancien lissage, sur les deux fronts à la fois :
+
+| | tremblement résiduel au repos (±3 px) | retard à 1 500 px/s |
+|---|---|---|
+| `smoothing: 0,45` | 1,31 px | 29,3 px |
+| One Euro | 0,68 px (**0,52×**) | 9,2 px (**0,31×**) |
+
+Les deux sont assertés dans le **même** test : gagner sur l'un en perdant sur
+l'autre n'est pas un progrès, c'est le compromis qu'on refuse.
+
+**La vitesse publiée n'est pas la dérivée interne du filtre.** One Euro mesure
+sa dérivée contre sa propre sortie précédente, qui traîne : sur une rampe elle
+lit la vitesse *plus* le retard divisé par dt — 1 400 px/s pour une main à 900,
+et jusqu'à 40 px/s sur une main immobile qui tremble de trois pixels. C'est un
+signal de commande, pas une mesure. `vxPxPerSec` / `vyPxPerSec` sont la dérivée
+du **point filtré**, lissée au même `dCutoffHz` : sans biais en régime établi
+(899 px/s mesurés pour 900 réels) et déjà débarrassée du tremblement.
+
+### Qualité de suivi
+
+`handQuality(landmarks, aspect, continuity)` est le **minimum** de quatre
+témoins — pas leur moyenne, qui laisserait trois bons chiffres cacher celui qui
+dit que la main sort du cadre :
+
+| Témoin | Ce qu'il lit | Réglage |
+|---|---|---|
+| échelle | paume minuscule ou dégénérée : les rapports mesurés en paumes n'ont plus de sens | `qualityPalmMin` |
+| cadrage | le point utile le plus proche d'un bord de l'image ; une main qui sort du cadre rend des points extrapolés, et rien dans le résultat ne le dit | `qualityEdge` |
+| complétude | les 21 points, pas seulement les quatre qu'on lit | `qualityComplete` |
+| continuité | une main qui vient d'apparaître ou qui revient d'un trou est une main qu'on *suppose* être la même | `qualityWarmupFrames` |
+
+La bande de cadrage est étroite (4 %) **exprès** : la marge de `toScreen`
+(12 %) existe pour qu'on puisse viser le bord de l'écran, et une qualité qui
+s'effondrerait là endormirait une session en plein usage — une panne pire que
+celle qu'elle corrige.
+
+Le score de latéralité du traqueur n'y entre **pas** : il répond à « suis-je
+sûr que c'est une main *gauche* », pas à « suis-je sûr que c'est une main ».
+
+**Ce que la qualité change, et ce qu'elle ne change pas.** Le minuteur de la
+décision 7 ne se réarme plus que sur une main au-dessus du plancher : la
+Slice 02 avait noté cette approximation, elle est fermée. Les clics et le
+survol, eux, ne sont **pas** encore filtrés par la qualité — l'intention
+appartient aux Slices 04 et 05, qui liront `quality` et `stillMs` pour décider.
+Le guetteur de `SLEEP` ne lit pas la qualité non plus : son budget d'images
+(§1) n'a pas bougé pour cette Slice.
+
+Et le changement se **voit** : un jeton sous le plancher se dessine pâle et
+pointillé, et la pastille compte les mains crues à part (« MAINS · 1/2 »). Sans
+cela, l'utilisateur verrait son jeton, se croirait suivi, et la session
+s'endormirait sous ses yeux sans explication.
+
+### `createMotionSample({handTrackId, rawX, rawY, x, y, vxPxPerSec, vyPxPerSec, speedPxPerSec, stillness, stillMs, quality, t})`
+
+→ objet gelé `{schemaVersion, kind:'motion', …}`. La forme nommée que les
+Slices 04 à 06 liront, plutôt que dix champs libres — `INTERACTION` a montré ce
+que coûte un nom sans forme.
+
+- **Deux positions, pas une.** `rawX`/`rawY` est le point tel que le traqueur
+  l'a rendu, `x`/`y` le point **filtré**. Les deux sont nécessaires : la
+  calibration mesure le tremblement sur leur écart (`jitterPx`, §10) et le banc
+  de rejeu (§12) compare l'erreur de l'un à l'erreur de l'autre. Un filtre dont
+  on ne voit que la sortie ne se règle pas.
+- `x`/`y` n'est jamais l'ancre de visée que le jeton fige pendant un
+  pincement : cet échantillon décrit la main, pas l'affichage.
+- **Unités** : positions en **pixels de la fenêtre** (comme `clientX`) ; les
+  vitesses portent la leur dans leur nom.
+- `stillness` 1 = main posée, 0 = main qui file ; `stillMs` dit **depuis
+  quand**. C'est la durée, et non l'instantané, qui distingue un clic d'un
+  début de glissement : une vitesse passe sous le seuil une image au milieu
+  d'un geste franc.
+- Refus : `barehands_motion_invalid`, `barehands_hand_track_id_missing`,
+  `barehands_motion_position_missing` — une position absente ne se remplace pas
+  par (0,0), le coin de l'écran étant un endroit plausible où une immobilité
+  mesurée serait indiscernable d'une vraie.
+
+### Réglages du moteur (Slice 03)
+
+Ils vivent dans `JarvisBarehandsCore.DEFAULTS`, pas dans le contrat : seul le
+plancher de qualité est partagé. Ils sont épinglés par
+`test_the_controller_states_and_timings_still_match_the_contract` pour la même
+raison que `WAKE_INTERVAL_MS` — un défaut que personne n'affirme se mute sans
+rien faire tomber. **Changer l'un d'eux, c'est le reporter ici.**
+
+| Réglage | Défaut | Rôle |
+|---|---|---|
+| `minCutoffHz` | 1,2 | coupure au repos : plus bas = plus calme |
+| `betaCutoff` | 0,012 | gain de réactivité : plus haut = moins de retard |
+| `dCutoffHz` | 1 | coupure de l'estimation de vitesse |
+| `filterResetMs` | 400 | trou au-delà duquel le filtre repart au lieu de croire la vitesse |
+| `stillSpeedPx` | 28 | px/s sous lesquels la main est posée |
+| `moveSpeedPx` | 420 | px/s au-dessus desquels elle file franchement |
+| `matchRadiusPalms` | 1,6 | porte d'appariement, en paumes |
+| `handednessBonusPalms` | 0,35 | prime d'accord de latéralité — reste sous la séparation de deux mains |
+| `predictMs` | 120 | extrapolation bornée de la vitesse d'une piste |
+| `trackVelocityBlend` | 0,5 | lissage de cette vitesse |
+| `qualityFloor` | 0,25 | recopie de `HAND_QUALITY_FLOOR` |
+| `qualityEdge` | 0,04 | bande d'image où le cadrage se dégrade |
+| `qualityPalmMin` | 0,06 | paume minimale crédible |
+| `qualityComplete` | 0,6 | fraction de points finis en dessous de laquelle la main est devinée |
+| `qualityWarmupFrames` | 3 | images consécutives avant qu'une piste soit installée |
+
+`lostGraceMs` (250, antérieur à cette Slice) est devenu la **grâce
+d'identité** : c'est lui, et lui seul, qui décide combien de temps une main
+perdue reste la même main. L'état par main (pincement, filtre, ancre) vit
+exactement aussi longtemps que son identité — une seule horloge au lieu de deux
+qui se répondaient à quelques millisecondes près.
+
+C'est **la Slice 08** qui calibre ces nombres, et
+`window.JarvisBarehands.diagnostics()` est ce qu'elle lira : les traits du
+dernier instant, par main, sous la forme de `createMotionSample`.
 
 ## 4. Gestes (§4, décision 5)
 
@@ -498,8 +681,10 @@ Seul étage qui connaisse un traqueur ou l'expérience actuelle.
 - `adapters.MEDIAPIPE_LANDMARK` — table d'indices, pas un contrat ; un autre
   traqueur apporte la sienne.
 - `adapters.handFrameFromMediapipe(result, meta)` — résultat MediaPipe →
-  `HandFrame`. `meta.trackIds` permettra à la Slice 03 d'imposer son identité
-  persistante — **y compris `0`** ; sans elle, la latéralité sert
+  `HandFrame`. `meta.trackIds` est le crochet par lequel la Slice 03 impose son
+  identité persistante — **y compris `0`** ; `createHandTracker().update()`
+  rend ces identités sous `trackIds`, alignées sur `result.landmarks`, trous
+  compris. sans elle, la latéralité sert
   d'identifiant de repli, comme aujourd'hui. Une main aux points incomplets
   est ignorée, pas devinée. Une **troisième** main se refuse
   (`barehands_too_many_hands`) au lieu d'être tranchée en silence :
@@ -521,6 +706,12 @@ Seul étage qui connaisse un traqueur ou l'expérience actuelle.
     occupait auparavant la fente 0 sous une clé fantôme que `retain` ne
     pouvait pas évincer : la main suivante repartait à `9002`, et la garantie
     de compatibilité de ce contrat était perdue définitivement, en silence.
+- `adapters.motionFromCoreToken(token)` — jeton de `createHandTracker()` →
+  `createMotionSample` (§3 bis). Même rôle que `pointersFromCoreTokens` pour
+  l'identité de pointeur : le moteur garde sa forme de travail, le contrat
+  possède celle qui traverse les Slices. `x`/`y` prennent la position
+  **filtrée** du jeton, pas son `x` d'affichage, qui se fige sur l'ancre
+  pendant un pincement.
 
 ## Ce qui est implémenté, et ce qui ne l'est pas
 
@@ -556,6 +747,16 @@ la **Slice 08** calibre : citer 1,35 pour la portée se trompe de 10 % sur le
 nombre à mesurer. Un balayage la recalcule et la compare à ce tableau
 (`test_the_band_that_actually_sustains_a_hold_is_the_one_documented`) ; changer
 un des quatre défauts sans reporter la bande ici fait tomber ce test.
+
+La Slice 03 implante le deuxième moteur : l'identité de main persistante, le
+filtrage adaptatif et les traits de mouvement (§3 bis), dans le même fichier
+— `createHandTrackManager`, `createPointerFilter`, `createStillness`,
+`handQuality`, `createHandTracker` réécrit — couverts par
+`tests/unit/test_barehands_tracking_js.py`. Elle **ferme l'approximation de la
+décision 7** que la Slice 02 avait dû laisser ouverte : « une main
+exploitable » se lit enfin sur une qualité mesurée plutôt que sur la
+présence d'un jeton. Aucun module de page n'est ajouté, donc l'ordre
+d'insertion (« Insertion dans la page ») est inchangé.
 
 Restent à venir : pincement secondaire, résolveur sémantique,
 déplacement/redimensionnement, calibration, tutoriel, diagnostics et le canal

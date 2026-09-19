@@ -663,7 +663,9 @@ def test_the_current_click_experiment_maps_onto_the_new_identity_unchanged(tmp_p
         none:C.adapters.pointersFromCoreTokens(null,C.createSlotAllocator(2)),
       });
     """)
-    assert result["ids"] == ["left", "right"]
+    # Slice 03 : l'identité d'une main est un numéro de piste stable, pas la
+    # latéralité annoncée — que le traqueur réétiquette d'une image à l'autre.
+    assert result["ids"] == ["0", "1"]
     assert result["pointers"] == [9001, 9002], "deux mains, deux identités"
     assert result["primary"] == [True, False] and result["types"] == ["mouse"]
     assert result["phasesOpen"] == ["up", "up"]

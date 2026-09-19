@@ -1,0 +1,518 @@
+"""Identité de main, filtrage adaptatif et traits de mouvement (Slice 03),
+exécutés par node.
+
+Deux mains devant une caméra ne se testent pas ici. Ce qui l'est : qu'une
+identité de piste survive à un croisement, à un trou d'une image et à une
+étiquette de latéralité qui bascule ; qu'elle ne survive **pas** à une absence
+plus longue que la grâce, ni à une boucle d'images arrêtée ; que le filtre
+adaptatif gagne *à la fois* sur le tremblement du repos et sur le retard en
+mouvement rapide, parce que gagner sur l'un en perdant sur l'autre est le
+compromis qu'il remplace ; que vitesse et immobilité disent la vérité sur un
+trajet connu ; et que la qualité de suivi note ce qu'elle promet de noter.
+
+L'horloge est injectée : aucune attente réelle, aucun minuteur.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import shutil
+import subprocess
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+RUNTIME = ROOT / "jarvis" / "runtime"
+SCRIPT = RUNTIME / "control_center_barehands.js"
+CONTRACTS = RUNTIME / "control_center_barehands_contracts.js"
+
+
+def run_node(tmp_path: Path, source: str) -> object:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node absent")
+    script = tmp_path / "barehands-tracking.cjs"
+    script.write_text(
+        f"const B=require({json.dumps(str(SCRIPT))});\n"
+        f"const C=require({json.dumps(str(CONTRACTS))});\n"
+        "const out=v=>process.stdout.write(JSON.stringify(v));\n"
+        "const refused=fn=>{try{fn();return null}catch(e){return e.code||e.name}};\n"
+        "(async()=>{" + source + "})().catch(e=>{console.error(e&&e.stack||e);process.exit(1)});",
+        encoding="utf-8",
+    )
+    completed = subprocess.run(
+        [node, str(script)], capture_output=True, text=True, encoding="utf-8", timeout=30, check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return json.loads(completed.stdout)
+
+
+#: Main synthétique repérée par le **centre de sa paume** (cx, cy), la paume
+#: mesurant `palm` du poignet à la base du majeur, l'index au-dessus et le
+#: pouce à `gap` paumes de l'index. Toutes les positions utilisées restent
+#: loin des bords de l'image : le cadrage ne dégrade rien sauf quand un test
+#: le demande explicitement.
+HAND = """
+function hand(cx,cy,opts){
+  const o=Object.assign({gap:.5,palm:.2},opts||{});
+  const lm=Array.from({length:21},()=>({x:cx,y:cy,z:0}));
+  lm[0]={x:cx,y:cy+o.palm/2,z:0};
+  lm[9]={x:cx,y:cy-o.palm/2,z:0};
+  lm[8]={x:cx,y:cy-o.palm*1.2,z:0};
+  lm[4]={x:cx+o.palm*o.gap,y:lm[8].y,z:0};
+  return lm;
+}
+const scene=(hands,names)=>({landmarks:hands,
+  handedness:(names||[]).map(n=>[{categoryName:n,score:.95}])});
+const frame=now=>({viewport:{width:1000,height:800},aspect:1,now});
+"""
+
+
+# ------------------------------------------------------------------ identité
+
+
+def test_two_hands_that_cross_keep_their_identity(tmp_path):
+    """Le cas que la latéralité ne sait pas traiter. Deux mains se croisent :
+    à l'image du croisement, chaque détection est **plus proche de la dernière
+    position de l'autre piste** que de la sienne. Le plus-proche-voisin nu
+    échange alors les deux identités au milieu du geste — c'est-à-dire les
+    deux `pointerId`, les deux pincements et les deux captures.
+
+    Ici les deux mains portent la **même** étiquette, pour que l'indice de
+    latéralité ne puisse pas sauver l'association : seule la continuité
+    spatiale décide, par la prédiction de vitesse."""
+
+    result = run_node(tmp_path, HAND + """
+      const t=B.createHandTracker({});
+      const ids=[],xs=[];
+      for(let i=0;i<6;i+=1){
+        const a=.20+.12*i,b=.80-.12*i;
+        const step=t.update(scene([hand(a,.5),hand(b,.5)],['Left','Left']),frame(i*33));
+        ids.push(step.tokens.map(k=>k.id));
+        xs.push([Number(a.toFixed(2)),Number(b.toFixed(2))]);
+      }
+      out({ids,xs,tracks:t.size()});
+    """)
+    # Les deux mains traversent bien l'une devant l'autre.
+    assert result["xs"][0] == [0.2, 0.8] and result["xs"][5] == [0.8, 0.2]
+    # La détection 0 est toujours la main partie de la gauche : son identité ne
+    # doit pas changer quand elle passe à droite.
+    assert result["ids"] == [[0, 1]] * 6, "les identités ont été échangées au croisement"
+    assert result["tracks"] == 2, "personne n'a ouvert de piste supplémentaire"
+
+
+def test_identity_survives_a_one_frame_dropout_but_not_a_real_absence(tmp_path):
+    """Un trou d'une image est un défaut du traqueur, pas une main qui part :
+    lui coûter son identité casserait la capture en cours. Une absence plus
+    longue que la grâce, elle, est une vraie perte — la main suivante est une
+    autre main, et prétendre le contraire lui donnerait la capture de la
+    précédente.
+
+    Au retour, l'identité tient mais la **confiance** retombe : on *suppose*
+    que c'est la même main, et c'est exactement ce que `quality` doit dire."""
+
+    result = run_node(tmp_path, HAND + """
+      const t=B.createHandTracker({});
+      const one=at=>t.update(scene([hand(.40,.5)],['Left']),frame(at));
+      const seen=[];
+      for(const at of [0,33,66])seen.push(one(at));
+      t.update(scene([],[]),frame(99));                 // une image sans main
+      for(const at of [132,165])seen.push(one(at));
+      const short=seen.map(s=>s.tokens[0].id);
+      const quality=seen.map(s=>Number(s.tokens[0].quality.toFixed(3)));
+
+      const u=B.createHandTracker({});
+      const far=[0,33,66].map(at=>u.update(scene([hand(.40,.5)],['Left']),frame(at)).tokens[0].id);
+      // Plus long que `lostGraceMs` : la main d'après est une autre main.
+      far.push(u.update(scene([hand(.40,.5)],['Left']),frame(66+400)).tokens[0].id);
+
+      // Boucle d'images arrêtée (onglet en arrière-plan) : aucune image ne
+      // passe pendant dix secondes, donc aucune purge ne s'exécute.
+      const v=B.createHandTracker({});
+      v.update(scene([hand(.40,.5)],['Left']),frame(0));
+      const resurrected=v.update(scene([hand(.40,.5)],['Left']),frame(10000)).tokens[0].id;
+      out({short,quality,far,resurrected,tracks:t.size()});
+    """)
+    assert result["short"] == [0, 0, 0, 0, 0], "un trou d'une image a coûté l'identité"
+    assert result["tracks"] == 1
+    # Installée avant le trou, devinée juste après : la qualité le dit.
+    assert result["quality"][2] == 1
+    assert result["quality"][3] == pytest.approx(1 / 3, abs=0.001)
+    assert result["quality"][4] == pytest.approx(2 / 3, abs=0.001)
+    assert result["far"] == [0, 0, 0, 1], "une absence longue doit donner une identité neuve"
+    # Le temps non observé ne se crédite pas : une piste ne ressuscite pas
+    # parce que personne n'a regardé entre-temps.
+    assert result["resurrected"] == 1
+
+
+def test_a_handedness_label_that_flips_never_steals_an_identity(tmp_path):
+    """La latéralité est un **indice**, jamais une clé. Le traqueur réétiquette
+    une main vue de profil d'une image à l'autre ; si l'étiquette était
+    l'identité — ce qu'elle était avant cette Slice — les deux mains
+    échangeaient leur pointeur sur une seule image mal lue.
+
+    La prime d'accord (`handednessBonusPalms`) départage à distance égale ;
+    elle reste sous la séparation des deux mains, donc elle ne peut pas
+    renverser la géométrie. Et l'étiquette de la piste, elle, se vote : une
+    image contraire ne la retourne pas, trois d'affilée oui — c'est une
+    correction d'indice, pas un vol d'identité."""
+
+    result = run_node(tmp_path, HAND + """
+      const t=B.createHandTracker({});
+      const steps=[];
+      // Deux mains proches (0,8 paume) : assez pour que la prime de latéralité
+      // pèse si on la laissait faire.
+      const names=i=>i<3?['Left','Right']:['Right','Left'];
+      for(let i=0;i<8;i+=1){
+        const step=t.update(scene([hand(.42,.5),hand(.58,.5)],names(i)),frame(i*33));
+        steps.push([step.tokens.map(k=>k.id),step.tokens.map(k=>k.handedness)]);
+      }
+      out({steps,tracks:t.size()});
+    """)
+    ids = [step[0] for step in result["steps"]]
+    handedness = [step[1] for step in result["steps"]]
+    assert ids == [[0, 1]] * 8, "une étiquette qui bascule a volé une identité"
+    assert result["tracks"] == 2
+    # Trois images d'accord installent la latéralité…
+    assert handedness[:3] == [["left", "right"]] * 3
+    # …et une seule image contraire ne la retourne pas.
+    assert handedness[3] == ["left", "right"]
+    assert handedness[4] == ["left", "right"]
+    # Trois images contraires d'affilée, si : l'indice se corrige, l'identité
+    # de piste ne bouge toujours pas.
+    assert handedness[5] == ["right", "left"]
+
+
+# -------------------------------------------------------------------- filtre
+
+
+#: Le lissage exponentiel fixe d'avant la Slice 03, reconstruit ici pour que la
+#: comparaison porte sur le comportement et non sur deux nombres choisis.
+FIXED = """
+const fixedSmoothing=alpha=>{let p=null;return x=>{p=p===null?x:p+(x-p)*alpha;return p}};
+let seed=12345;
+const noise=()=>{seed=(seed*1103515245+12345)&0x7fffffff;return seed/0x7fffffff*2-1};
+"""
+
+
+def test_the_filter_wins_at_rest_and_in_fast_motion_at_the_same_time(tmp_path):
+    """Le fond de cette Slice. Un lissage à coefficient fixe ne peut pas tenir
+    les deux bouts : bas, il calme le repos et traîne ; haut, il suit le geste
+    et laisse passer le tremblement. `smoothing:.45` était le milieu qui rate
+    les deux.
+
+    Les deux mesures sont donc dans **le même test**, exprès : améliorer le
+    repos en dégradant le retard (ou l'inverse) n'est pas un progrès, c'est le
+    compromis qu'on vient de refuser. Mettre `betaCutoff` à 0 rend le filtre
+    meilleur au repos et pire que le fixe en mouvement ; le monter beaucoup
+    fait l'inverse. Les deux mutations font tomber ce test."""
+
+    result = run_node(tmp_path, FIXED + """
+      // Repos : main posée à (500,400) qui tremble de ±3 px.
+      let f=B.createPointerFilter(),fx=fixedSmoothing(.45),fy=fixedSmoothing(.45);
+      let adaptive=0,fixed=0,count=0;
+      for(let i=0;i<200;i+=1){
+        const x=500+noise()*3,y=400+noise()*3;
+        const a=f.update({x,y},i*16);const bx=fx(x),by=fy(y);
+        if(i>40){adaptive+=(a.x-500)**2+(a.y-400)**2;fixed+=(bx-500)**2+(by-400)**2;count+=1}
+      }
+      const restAdaptive=Math.sqrt(adaptive/count),restFixed=Math.sqrt(fixed/count);
+
+      // Mouvement franc : 1500 px/s pendant une seconde.
+      f=B.createPointerFilter();fx=fixedSmoothing(.45);
+      let lagAdaptive=0,lagFixed=0;
+      for(let i=0;i<60;i+=1){
+        const x=100+1500*(i*16/1000);
+        const a=f.update({x,y:0},i*16),b=fx(x);
+        lagAdaptive=Math.abs(a.x-x);lagFixed=Math.abs(b-x);
+      }
+      out({restAdaptive,restFixed,lagAdaptive,lagFixed,
+           restRatio:restAdaptive/restFixed,lagRatio:lagAdaptive/lagFixed});
+    """)
+    # Au repos : moitié moins de tremblement résiduel que le lissage fixe.
+    assert result["restRatio"] < 0.7, result
+    # En mouvement : moins d'un tiers du retard. Le jeton d'hier traînait de
+    # presque 30 px derrière un geste franc — assez pour cliquer à côté.
+    assert result["lagRatio"] < 0.5, result
+    assert result["lagFixed"] > 25 and result["lagAdaptive"] < 15
+
+
+def test_the_filter_refuses_to_credit_time_it_did_not_observe(tmp_path):
+    """Reprise de la leçon de la Slice 02, dans un autre module. Une vitesse
+    calculée à travers un trou est une invention : la main a pu aller
+    n'importe où. Le filtre repart du point présent plutôt que de traverser le
+    trou à grande vitesse — sans quoi la première image du retour d'un onglet
+    en arrière-plan publie un jeton qui file à 40 000 px/s, et l'immobilité que
+    les Slices 04-06 liront est fausse au pire moment."""
+
+    result = run_node(tmp_path, """
+      const f=B.createPointerFilter();
+      f.update({x:100,y:100},0);f.update({x:104,y:100},16);
+      const across=f.update({x:900,y:100},16+5000);      // 5 s sans rien voir
+      const g=B.createPointerFilter();
+      g.update({x:100,y:100},0);g.update({x:104,y:100},16);
+      const within=g.update({x:120,y:100},32);           // image suivante, normale
+      const h=B.createPointerFilter();
+      h.update({x:100,y:100},0);
+      const sameInstant=h.update({x:400,y:100},0);       // deux mesures, aucun temps
+      out({across:[across.x,across.vxPxPerSec],
+           within:[Number(within.vxPxPerSec.toFixed(0))],
+           sameInstant:[sameInstant.x,sameInstant.vxPxPerSec]});
+    """)
+    # Le filtre repart sur le point présent, sans vitesse inventée.
+    assert result["across"] == [900, 0]
+    assert result["within"][0] > 0
+    # Horodatage identique : ni division par zéro, ni vitesse infinie.
+    assert result["sameInstant"] == [100, 0]
+
+
+def test_velocity_and_stillness_are_right_on_a_known_path(tmp_path):
+    """Trajet connu, à travers le traqueur complet : main posée qui tremble,
+    puis main qui file à une vitesse d'écran calculable. `stillness` doit
+    valoir 1 pendant le repos **malgré** le tremblement — mesurée sur le point
+    brut elle vaudrait 0, un tremblement de 3 px à 60 Hz se lisant 187 px/s."""
+
+    result = run_node(tmp_path, HAND + """
+      let seed=7;const noise=()=>{seed=(seed*1103515245+12345)&0x7fffffff;return seed/0x7fffffff*2-1};
+      const t=B.createHandTracker({margin:0,mirror:false});
+      // Viewport 1000 px de large, marge nulle : cx .001 = 1 px d'écran.
+      let last=null;
+      for(let i=0;i<20;i+=1)last=t.update(scene([hand(.40+noise()*.003,.5)],['Left']),frame(i*16)).tokens[0];
+      const still={stillness:last.stillness,stillMs:last.stillMs,
+        speed:last.speedPxPerSec,jitterPx:Math.abs(last.rawX-last.filteredX)};
+      // Puis 30 images à .015 par image = 15 px / 16 ms = 937,5 px/s.
+      for(let i=0;i<30;i+=1)last=t.update(scene([hand(.40+.015*(i+1),.5)],['Left']),frame((20+i)*16)).tokens[0];
+      out({still,moving:{vx:last.vxPxPerSec,vy:last.vyPxPerSec,speed:last.speedPxPerSec,
+        stillness:last.stillness,stillMs:last.stillMs}});
+    """)
+    # Repos : immobile, et immobile depuis 19 images de 16 ms.
+    assert result["still"]["stillness"] == 1
+    assert result["still"]["stillMs"] == pytest.approx(19 * 16, abs=1)
+    assert result["still"]["speed"] < 28
+    # Le filtre travaille : le brut et le filtré ne coïncident pas au repos.
+    assert result["still"]["jitterPx"] > 0
+    # Mouvement : 937,5 px/s attendus, à 10 % près.
+    assert result["moving"]["vx"] == pytest.approx(937.5, rel=0.1)
+    assert abs(result["moving"]["vy"]) < 30
+    assert result["moving"]["speed"] == pytest.approx(937.5, rel=0.1)
+    # Au-dessus de `moveSpeedPx` : plus rien d'immobile, et le compteur est nul.
+    assert result["moving"]["stillness"] == 0 and result["moving"]["stillMs"] == 0
+
+
+# ------------------------------------------------------------------- qualité
+
+
+def test_quality_notes_what_it_promises_to_note(tmp_path):
+    """`quality` vaut 0 pour une main devinée et 1 pour une main franche. Elle
+    est le **minimum** de ses témoins : une moyenne laisserait trois bons
+    chiffres cacher celui qui dit que la main sort du cadre."""
+
+    result = run_node(tmp_path, HAND + """
+      const q=(lm,continuity)=>Number(B.handQuality(lm,1,continuity===undefined?1:continuity).toFixed(3));
+      const edged=hand(.40,.5);edged[4]={x:.995,y:edged[4].y,z:0};   // pouce presque au bord
+      const outside=hand(.40,.5);outside[4]={x:1,y:outside[4].y,z:0};  // pouce sur le bord
+      const holed=hand(.40,.5);for(let i=10;i<21;i+=1)holed[i]={x:NaN,y:NaN,z:0};
+      out({
+        clean:q(hand(.40,.5)),
+        tiny:q(hand(.40,.5,{palm:.02})),
+        edge:q(edged),outside:q(outside),
+        holed:q(holed),
+        fresh:q(hand(.40,.5),1/3),
+        unusable:[B.handQuality([],1,1),B.handQuality(null,1,1)],
+        floor:[B.DEFAULTS.qualityFloor,C.HAND_QUALITY_FLOOR],
+        usable:[1,.5,.25,.24,0,NaN,null].map(v=>B.usableQuality(v)),
+        contract:[1,.5,.25,.24,0,NaN,null].map(v=>C.isUsableQuality(v)),
+      });
+    """)
+    assert result["clean"] == 1
+    # Paume minuscule : les rapports mesurés en paumes n'ont plus de sens.
+    assert result["tiny"] == 0
+    # Un seul point qui approche le bord suffit à faire tomber la note sous le
+    # plancher : c'est le minimum des témoins, pas leur moyenne — les trois
+    # autres valent 1 ici.
+    assert result["edge"] == 0.125 and result["edge"] < result["floor"][0]
+    assert result["outside"] == 0
+    assert result["holed"] < 0.25
+    # Une main qui vient d'apparaître est devinée, mais elle compte : un
+    # plancher qui l'écarterait ferait dormir une session en plein usage.
+    assert result["fresh"] == pytest.approx(1 / 3, abs=0.001)
+    assert result["unusable"] == [0, 0]
+    # Une seule définition du plancher, des deux côtés de la frontière.
+    assert result["floor"] == [0.25, 0.25]
+    assert result["usable"] == [True, True, True, False, False, False, False]
+    assert result["contract"] == result["usable"]
+
+
+# ---------------------------------------------------- passage vers le contrat
+
+
+def test_the_stable_identity_reaches_the_neutral_hand_frame_and_the_motion_sample(tmp_path):
+    """Le crochet que la Slice 01 avait laissé : `handFrameFromMediapipe(result,
+    {trackIds})` impose l'identité persistante au `HandFrame` neutre — `0`
+    compris, ce que la reprise de la Slice 01 a corrigé exprès pour cette
+    Slice. Et `motionFromCoreToken` donne aux Slices 04-06 une forme nommée
+    plutôt que dix champs libres."""
+
+    result = run_node(tmp_path, HAND + """
+      const t=B.createHandTracker({margin:0,mirror:false});
+      const result=scene([hand(.40,.5),hand(.70,.5)],['Left','Right']);
+      const first=t.update(result,frame(0));
+      const second=t.update(result,frame(16));
+      const neutral=C.adapters.handFrameFromMediapipe(result,{trackIds:second.trackIds,t:16,width:640,height:480});
+      const motion=second.tokens.map(C.adapters.motionFromCoreToken);
+      out({
+        trackIds:second.trackIds,
+        frameIds:neutral.hands.map(h=>h.handTrackId),
+        // `0` traverse l'adaptateur au lieu d'être remplacé par la latéralité.
+        zeroSurvives:neutral.hands[0].handTrackId,
+        tracker:neutral.source.tracker,
+        motion:motion.map(m=>[m.kind,m.handTrackId,typeof m.rawX,typeof m.x,
+          typeof m.vxPxPerSec,typeof m.stillness,typeof m.quality]),
+        frozen:Object.isFrozen(motion[0]),
+        // Les deux positions restent distinctes : c'est ce qui rend le filtre
+        // réglable et la calibration mesurable.
+        carriesBoth:motion.map(m=>[m.rawX,m.x]),
+        refusals:[
+          refused(()=>C.createMotionSample({rawX:1,rawY:1,x:1,y:1})),
+          refused(()=>C.createMotionSample({handTrackId:0,rawX:1,rawY:1,x:1})),
+          refused(()=>C.createMotionSample(null)),
+        ],
+        firstIds:first.tokens.map(k=>k.id),
+      });
+    """)
+    assert result["trackIds"] == [0, 1] and result["firstIds"] == [0, 1]
+    assert result["frameIds"] == ["0", "1"]
+    assert result["zeroSurvives"] == "0"
+    assert result["tracker"] == "mediapipe_hand_landmarker"
+    assert result["motion"] == [
+        ["motion", "0", "number", "number", "number", "number", "number"],
+        ["motion", "1", "number", "number", "number", "number", "number"],
+    ]
+    assert result["frozen"] is True
+    assert result["carriesBoth"][0][0] == pytest.approx(result["carriesBoth"][0][1], abs=5)
+    # Un refus codé plutôt qu'un défaut plausible : sans identité, sans
+    # coordonnées, ou sans objet du tout.
+    assert result["refusals"] == [
+        "barehands_hand_track_id_missing",
+        "barehands_motion_position_missing",
+        "barehands_motion_invalid",
+    ]
+
+
+# ------------------------------------------------------------------- refus
+
+
+def test_the_tuning_refuses_what_would_silently_do_nothing(tmp_path):
+    """Règle du contrat, appliquée au moteur : un réglage faux se refuse, il ne
+    se remplace pas. `smoothing` en est le cas le plus traître — il a existé,
+    il ne fait plus rien, et l'accepter en silence rendrait un réglage sans
+    effet indiscernable d'un réglage appliqué."""
+
+    result = run_node(tmp_path, HAND + """
+      out({
+        retired:refused(()=>B.createHandTracker({smoothing:.2})),
+        retiredFilter:refused(()=>B.createPointerFilter({smoothing:1})),
+        inverted:refused(()=>B.createStillness({stillSpeedPx:500,moveSpeedPx:100})),
+        // Un point inutilisable arrive ici après `usableLandmarks` : c'est un
+        // défaut de code. Le taire gèlerait le jeton sur sa dernière position,
+        // un curseur immobile qu'on lit comme un plantage.
+        blindPoint:refused(()=>B.createPointerFilter().update({x:NaN,y:1},0)),
+        blindClock:refused(()=>B.createPointerFilter().update({x:1,y:1},NaN)),
+        blindManager:refused(()=>B.createHandTrackManager({}).update({hands:[],now:'bientôt'})),
+        // Au-delà de la recherche exhaustive : l'image se refuse et le dit,
+        // au lieu de faire ramer la boucle sans raison visible.
+        tooMany:refused(()=>B.createHandTrackManager({}).update(
+          {hands:Array.from({length:5},(_v,i)=>({x:.1*i,y:.5,palm:.2})),now:0,aspect:1})),
+        // Un réglage hors plage retombe sur le défaut documenté plutôt que de
+        // figer le filtre sur son premier point.
+        zeroCutoff:B.createPointerFilter({minCutoffHz:0})?'construit':'',
+      });
+    """)
+    assert result["retired"] == "RangeError"
+    assert result["retiredFilter"] == "RangeError"
+    assert result["inverted"] == "RangeError"
+    assert result["blindPoint"] == "tracking_failed"
+    assert result["blindClock"] == "tracking_failed"
+    assert result["blindManager"] == "tracking_failed"
+    assert result["tooMany"] == "tracking_failed"
+    assert result["zeroCutoff"] == "construit"
+
+
+# --------------------------------------------------------------- surimpression
+
+
+#: Le bloc navigateur de `control_center_barehands.js` s'exécute au `require`
+#: dès qu'un `window` existe. Ces doubles sont le minimum qu'il touche à
+#: l'installation ; `setTimeout` ne déclenche rien, sa suite appartient à la
+#: page (réglages, `/api/barehands`).
+BROWSER = """
+const node=()=>{
+  const classes=new Set();
+  return {children:[],className:'',id:'',textContent:'',offsetWidth:1,
+    style:{setProperty(k,v){this[k]=v}},
+    classList:{add:c=>classes.add(c),remove:c=>classes.delete(c),
+      toggle:(c,on)=>{if(on)classes.add(c);else classes.delete(c)},
+      contains:c=>classes.has(c)},
+    classes,
+    setAttribute(){},parent:null,
+    appendChild(c){c.parent=this;this.children.push(c)},
+    remove(){if(!this.parent)return;const at=this.parent.children.indexOf(this);
+      if(at>=0)this.parent.children.splice(at,1);this.parent=null}};
+};
+global.window={addEventListener(){},innerWidth:1000,innerHeight:800};
+global.document={createElement:node,getElementById:()=>null,
+  head:node(),body:node()};
+global.navigator={mediaDevices:null};
+global.performance={now:()=>0};
+global.requestAnimationFrame=()=>0;global.cancelAnimationFrame=()=>{};
+global.setTimeout=()=>0;
+global.JarvisBarehandsContracts=C;
+// Le harnais a déjà chargé le module sans `window` : le bloc navigateur ne
+// s'est donc pas installé. On vide le cache pour le rejouer avec un `window`.
+delete require.cache[require.resolve(SCRIPT_PATH)];
+require(SCRIPT_PATH);
+const overlay=window.JarvisBarehands.adapters.createOverlay();
+overlay.mount();
+const badge=()=>document.body.children[0].children[1].textContent;
+const painted=()=>document.body.children[0].children.slice(2);
+"""
+
+
+def test_a_hand_the_tracker_does_not_trust_says_so_on_screen(tmp_path):
+    """RÈGLE ZÉRO. La qualité change un comportement que rien ne montrait : une
+    main sous le plancher n'empêche plus la veille d'arriver. Si l'écran n'en
+    dit rien, l'utilisateur voit son jeton, se croit suivi, et la session
+    s'endort sous ses yeux sans explication.
+
+    Le jeton reste donc affiché — le masquer dirait « je ne te vois pas », ce
+    qui est faux — mais pâle et pointillé, et la pastille compte les mains
+    crues à part (« 1/2 ») au lieu d'annoncer un chiffre exact et une
+    information fausse."""
+
+    result = run_node(tmp_path, f"const SCRIPT_PATH={json.dumps(str(SCRIPT))};" + BROWSER + """
+      const token=(id,quality)=>({id,x:10*id,y:20,progress:0,state:'open',
+        click:false,hover:false,quality});
+      overlay.render([token(0,1),token(1,.05)]);
+      const two=painted().map(el=>el.classList.contains('faint'));
+      const mixed=badge();
+      overlay.render([token(0,1)]);
+      const alone=badge();
+      overlay.render([token(0,1),token(1,.9)]);
+      const both=badge();
+      // Jeton posé à la main depuis la console : aucune mesure, donc aucune
+      // raison de le dessiner pâle.
+      overlay.render([{id:9,x:1,y:1,progress:0,state:'open',click:false,hover:false}]);
+      const unmeasured=painted().some(el=>el.classList.contains('faint'));
+      out({two,mixed,alone,both,unmeasured,
+        styled:[typeof window.JarvisBarehands.diagnostics,
+                window.JarvisBarehands.diagnostics().length]});
+    """)
+    assert result["two"] == [False, True], "la main sous le plancher doit se voir"
+    assert result["mixed"] == "MAINS · 1/2"
+    assert result["alone"] == "MAINS · 1"
+    assert result["both"] == "MAINS · 2"
+    assert result["unmeasured"] is False
+    # Les traits sont lisibles sans caméra ni console de développement, et
+    # vides hors interaction.
+    assert result["styled"] == ["function", 0]

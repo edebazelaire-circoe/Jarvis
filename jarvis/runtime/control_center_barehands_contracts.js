@@ -271,7 +271,9 @@
       handedness:oneOf(source.handedness,HANDEDNESSES,HANDEDNESS.UNKNOWN),
       handednessConfidence:unit(source.handednessConfidence,0),
       /* Qualité de suivi : 0 = main devinée, 1 = main franche. Les seuils et
-         l'assistance s'y réfèrent plutôt qu'à un score propre au traqueur. */
+         l'assistance s'y réfèrent plutôt qu'à un score propre au traqueur.
+         Calculée depuis la Slice 03 par `JarvisBarehandsCore.handQuality` ;
+         `HAND_QUALITY_FLOOR` dit à partir d'où une main **compte**. */
       quality:unit(source.quality,1),
       points:Object.freeze(points),
       /* Points bruts du traqueur, gardés pour le diagnostic et le rejeu
@@ -302,6 +304,69 @@
       source:Object.freeze({width,height,aspect:height>0&&width>0?width/height:finiteOr(given.aspect,4/3),
         tracker:String(given.tracker||'unknown')}),
       hands:Object.freeze(hands),
+    });
+  }
+
+  /* Seuil de confiance d'une main. `quality` est une note continue ; ce nombre
+     est le **seul** endroit qui dise à partir d'où une main compte. La
+     décision 7 le demandait déjà — son minuteur de 30 s se réarme sur « une
+     main exploitable » — et la Slice 02 a dû l'approximer en « une main
+     quelconque », faute de qualité à lire : une main à moitié hors cadre
+     tenait donc l'interaction éveillée indéfiniment. Le moteur le recopie sous
+     `DEFAULTS.qualityFloor` (le bloc pur est chargé seul par les tests node) et
+     le test de parité refuse la dérive.
+
+     Bas à dessein : il écarte une main devinée, pas une main mal placée. Une
+     qualité sévère ferait dormir une session en plein usage, ce qui est une
+     panne bien pire que celle qu'elle corrige. */
+  const HAND_QUALITY_FLOOR=.25;
+  const isUsableQuality=value=>Number.isFinite(Number(value))&&Number(value)>=HAND_QUALITY_FLOOR;
+
+  /* ---- Traits de mouvement (architecture §3, Slice 03).
+
+     Ce que le filtre adaptatif rend observable, et ce que les Slices 04 à 06
+     liront pour trancher clic contre glissement. Comme les six autres
+     structures de ce fichier, il a une fabrique plutôt que dix champs libres :
+     `INTERACTION` a montré ce que coûte un nom sans forme — chaque
+     consommateur invente la sienne, et les unités se perdent au premier appel.
+
+     **Deux positions, pas une.** `rawX`/`rawY` est le point tel que le traqueur
+     l'a rendu, `x`/`y` le point filtré. Les deux sont nécessaires : la
+     calibration mesure le tremblement sur leur écart (`jitterPx`, §10) et le
+     banc de rejeu (§12) compare l'erreur de l'un à l'erreur de l'autre. Un
+     filtre dont on ne voit que la sortie ne se règle pas.
+
+     `x`/`y` est la position **filtrée**, jamais l'ancre de visée que le jeton
+     fige pendant un pincement : cet échantillon décrit la main, pas l'affichage.
+
+     Unités : les positions sont en **pixels de la fenêtre**, comme
+     `clientX`/`clientY` et comme `createPinchEvent` ; les vitesses portent la
+     leur dans leur nom. */
+  function createMotionSample(raw){
+    const source=raw&&typeof raw==='object'?raw:reject('barehands_motion_invalid','Échantillon de mouvement attendu sous forme d’objet.');
+    const handTrackId=trackId(source.handTrackId,'Un échantillon de mouvement appartient à une main identifiée.');
+    /* Une position manquante ne se remplace pas par (0,0) : le coin de
+       l'écran est un endroit plausible, et une immobilité mesurée là serait
+       indiscernable d'une vraie. */
+    const at=key=>{
+      const n=Number(source[key]);
+      return Number.isFinite(n)?n:reject('barehands_motion_position_missing',
+        `Un échantillon de mouvement porte ses coordonnées : ${key} est requis, en pixels de la fenêtre.`);
+    };
+    return Object.freeze({
+      schemaVersion:SCHEMA_VERSION,kind:'motion',
+      handTrackId,
+      rawX:at('rawX'),rawY:at('rawY'),x:at('x'),y:at('y'),
+      vxPxPerSec:finiteOr(source.vxPxPerSec,0),vyPxPerSec:finiteOr(source.vyPxPerSec,0),
+      speedPxPerSec:Math.max(0,finiteOr(source.speedPxPerSec,0)),
+      /* 1 = main posée, 0 = main qui file. `stillMs` est **depuis quand** elle
+         est posée : c'est cette durée, et non l'instantané, qui distingue un
+         clic d'un début de glissement — une vitesse passe sous le seuil une
+         image au milieu d'un geste franc. */
+      stillness:unit(source.stillness,0),
+      stillMs:Math.max(0,finiteOr(source.stillMs,0)),
+      quality:unit(source.quality,1),
+      t:finiteOr(source.t,0),
     });
   }
 
@@ -902,6 +967,21 @@
     });
   }
 
+  /* Jeton de `createHandTracker` → échantillon de mouvement neutre. Même rôle
+     que `pointersFromCoreTokens` pour l'identité de pointeur : le moteur garde
+     sa forme de travail, le contrat possède celle qui traverse les Slices.
+     `x`/`y` prennent la position **filtrée** du jeton (`filteredX`), pas son
+     `x` d'affichage, qui se fige sur l'ancre pendant un pincement. */
+  const motionFromCoreToken=token=>createMotionSample({
+    handTrackId:token&&token.id,
+    rawX:token&&token.rawX,rawY:token&&token.rawY,
+    x:token&&token.filteredX,y:token&&token.filteredY,
+    vxPxPerSec:token&&token.vxPxPerSec,vyPxPerSec:token&&token.vyPxPerSec,
+    speedPxPerSec:token&&token.speedPxPerSec,
+    stillness:token&&token.stillness,stillMs:token&&token.stillMs,
+    quality:token&&token.quality,t:token&&token.t,
+  });
+
   const api=Object.freeze({
     SCHEMA_VERSION,BareHandsSchemaError,
     LIFECYCLE,LIFECYCLES,LIVE_LIFECYCLES,isLiveLifecycle,lifecycleOfControllerState,
@@ -911,6 +991,7 @@
     pointerIdForSlot,slotForPointerId,isBareHandsPointerId,createSlotAllocator,
     DOM,isOverlayRoot,HANDEDNESS,HANDEDNESSES,
     POINT_ROLES,createHandObservation,createHandFrame,
+    HAND_QUALITY_FLOOR,isUsableQuality,createMotionSample,
     GESTURE,GESTURES,GESTURE_PHASE,GESTURE_PHASES,GESTURE_SCOPE,GESTURE_SCOPES,createGestureEvent,
     PINCH_CHANNEL,PINCH_CHANNELS,PINCH_FINGERS,PINCH_PHASE,PINCH_PHASES,createPinchEvent,
     REGION,REGIONS,EDGE,EDGES,CORNER,CORNERS,SIDE_AXIS,ZONE_SIDES,zoneSides,zoneAxes,
@@ -921,7 +1002,7 @@
     TOOL,TOOLS,TOOL_DEFAULT,normalizeTool,
     SETTINGS_SCHEMA_VERSION,SETTINGS_DEFAULTS,normalizeSettings,toServerPayload,
     PROFILE_SCHEMA_VERSION,PROFILE_DEFAULTS,HAND_PROFILE_DEFAULTS,normalizeHandProfile,normalizeProfile,profileValue,
-    adapters:Object.freeze({MEDIAPIPE_LANDMARK,handFrameFromMediapipe,pointersFromCoreTokens}),
+    adapters:Object.freeze({MEDIAPIPE_LANDMARK,handFrameFromMediapipe,pointersFromCoreTokens,motionFromCoreToken}),
   });
   root.JarvisBarehandsContracts=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;

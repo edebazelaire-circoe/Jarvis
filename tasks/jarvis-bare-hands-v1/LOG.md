@@ -321,3 +321,132 @@ Tests, foreground chunks: baseline 1 (barehands + scene logic) **129 passed**
 (124 before, five new test functions); baseline 2 (control centre + settings)
 **221 passed**. Each new test was mutation-checked against the defect it
 targets.
+
+## 2026-09-19 — Slice 03, implementation agent
+
+Identité de main persistante, filtrage adaptatif et traits de mouvement, dans
+les deux modules existants — **aucun module de page ajouté, donc F3 ne
+s'applique pas** et l'ordre `contracts → barehands → scene page` est intact.
+Le moteur est dans `jarvis/runtime/control_center_barehands.js`
+(`createHandTrackManager`, `createPointerFilter`, `createStillness`,
+`handQuality`, `usableQuality`, `createHandTracker` réécrit) ; le contrat gagne
+`HAND_QUALITY_FLOOR` / `isUsableQuality` / `createMotionSample` /
+`adapters.motionFromCoreToken`. Couverture :
+`tests/unit/test_barehands_tracking_js.py` (10 tests) plus un test de cycle de
+vie. Contrat lisible : `docs/barehands-contracts.md` §3 bis.
+
+Découvertes durables pour les Slices suivantes :
+
+- **La dérivée interne d'un filtre One Euro n'est pas une vitesse.** Publiée
+  telle quelle — ce qu'a fait mon premier jet — elle lit **1 400 px/s pour une
+  main à 900**, et jusqu'à **40 px/s sur une main immobile** qui tremble de
+  trois pixels. La formule publiée mesure sa dérivée contre sa **propre sortie
+  précédente**, qui traîne : elle lit donc la vitesse *plus* le retard divisé
+  par dt. C'est un signal de commande — il sert à ouvrir la coupure — et rien
+  d'autre. `vxPxPerSec` / `vyPxPerSec` sont la dérivée du **point filtré**,
+  relissée au même `dCutoffHz` : 899 px/s mesurés pour 900 réels, et ≤ 5,5 px/s
+  au repos. **Les Slices 04-06 en dépendent directement** : avec la dérivée
+  interne, `stillness` n'aurait jamais valu 1 (40 > `stillSpeedPx` 28) et
+  aucun clic ne se serait distingué d'un glissement.
+- **La porte d'appariement se juge sur la distance seule, jamais sur le coût.**
+  La latéralité entre dans le coût (prime `handednessBonusPalms` 0,35) mais pas
+  dans la porte (`matchRadiusPalms` 1,6). C'est cette séparation, et le fait
+  que la prime reste **sous** la séparation typique de deux mains, qui fait
+  qu'une étiquette qui bascule ne peut pas voler une identité. Monter la prime
+  à 1,2 suffit à rendre le vol possible — il y a un test de mutation pour ça.
+- **L'attribution minimise le coût total, pas la meilleure paire d'abord.** Au
+  croisement de deux mains, le glouton prend la paire la plus proche et impose
+  la pire à l'autre. Recherche exhaustive, légitime parce que `MAX_HANDS` vaut
+  2 ; au-delà de quatre détections l'image **se refuse** (`tracking_failed`)
+  plutôt que de laisser une factorielle grandir en silence. Une Slice qui monte
+  `numHands` doit remplacer la recherche par un algorithme hongrois.
+- **La prédiction de vitesse est ce qui tient le croisement**, pas la distance.
+  À l'image du croisement, chaque détection est plus proche de la dernière
+  position de *l'autre* piste. `predictMs: 0` fait échanger les deux identités,
+  donc les deux `pointerId`, les deux pincements et les deux captures.
+- **Purger les pistes mortes AVANT d'apparier, jamais après.** Purger après ne
+  regarde que les images reçues : une boucle d'images arrêtée (onglet en
+  arrière-plan, écran rabattu, caméra figée) ne purge rien, et la première
+  image du retour retrouve une piste vieille de dix secondes encore posée là où
+  la main était — **ressuscitée avec sa capture**. Troisième occurrence de la
+  leçon de la Slice 02 dans ce module (les deux autres : le filtre repart
+  au-delà de `filterResetMs`, `stillMs` ne crédite pas un intervalle non
+  observé). **Formulation générale : toute grâce se compte contre
+  l'observation, pas contre le nombre d'appels.**
+- **Le repère d'identité est le centre de la paume, pas le bout de l'index.**
+  L'index parcourt plusieurs paumes pendant un pincement : associer dessus
+  ferait lire une main qui pince comme une main qui saute, c'est-à-dire comme
+  une autre main. Le jeton, lui, suit toujours l'index — les deux points ont
+  deux rôles.
+- **`quality` est le minimum de ses témoins, pas leur moyenne.** Échelle,
+  cadrage, complétude, continuité. Une moyenne laisse trois bons chiffres
+  cacher celui qui dit que la main sort du cadre, et c'est précisément
+  celui-là qu'il fallait lire — la mutation « minimum → moyenne » fait tomber
+  trois tests. Le **score de latéralité du traqueur n'y entre pas** : il répond
+  à « suis-je sûr que c'est une main *gauche* », pas à « suis-je sûr que c'est
+  une main » ; une main vue de profil a une latéralité ambiguë et des points
+  parfaits.
+- **La bande de cadrage est étroite (4 %) exprès.** La marge de `toScreen`
+  (12 %) existe pour qu'on puisse viser le bord de l'écran : une qualité qui
+  s'effondrerait là endormirait une session en plein usage — une panne pire que
+  celle qu'on corrige. Même raison pour un plancher bas (0,25) : il écarte une
+  main devinée, pas une main mal placée. Une main qui vient d'apparaître vaut
+  1/3 et **compte**.
+- **L'approximation de la décision 7 est fermée.** Le minuteur de 30 s se
+  réarme sur `usableQuality(token.quality)` et non plus sur « un jeton
+  existe ». Ce que la Slice 03 n'a **pas** fait, à dessein : les clics et le
+  survol ne sont pas filtrés par la qualité — l'intention appartient aux
+  Slices 04/05, qui lisent `quality` et `stillMs` ; et le guetteur de `SLEEP`
+  ne lit pas la qualité, son budget d'images est intact. Conséquence observée
+  en écrivant le test : un C tenu hors cadre s'endort à 30 s puis **se réveille
+  aussitôt**, les deux mécanismes étant indépendants. À trancher par la
+  Slice 08 ou la validation runtime de la Slice 11, pas ici.
+- **Un changement de comportement invisible est un défaut.** Le plancher de
+  qualité fait arriver la veille alors que l'utilisateur voit son jeton. Le
+  jeton sous le plancher se dessine donc **pâle et pointillé**
+  (`.jh-token.faint`) et la pastille compte les mains crues à part
+  (« MAINS · 1/2 ») — un chiffre exact et une information fausse était le
+  risque. Une qualité **absente** (jeton posé à la main depuis la console)
+  reste crue : c'est la règle d'absence du contrat.
+- **`smoothing` est retiré, pas laissé inerte.** `options()` lève un
+  `RangeError` nommant son remplacement. Un réglage sans effet serait
+  indiscernable d'un réglage appliqué — le défaut même que la reprise de la
+  Slice 01 a chassé partout ailleurs. Trois tests le passaient ; ils ont été
+  mis à jour en place.
+- **Les identifiants de piste sont des entiers à partir de 0.** Le correctif
+  `trackId()` de la reprise de la Slice 01 est désormais exercé pour de vrai :
+  `slots.retain([0,1])`, `allocator.slot(0)` et
+  `handFrameFromMediapipe(result,{trackIds:[0,1]})` voient tous `0` et le
+  gardent. `createHandTracker().update()` rend `trackIds` aligné sur
+  `result.landmarks`, trous compris — **c'est l'entrée du `HandFrame` neutre
+  pour la Slice 06**.
+- **Le jeton porte trois couples de coordonnées, et les trois servent** :
+  `rawX/rawY` (traqueur), `filteredX/filteredY` (filtre), `x/y` (affichage et
+  visée — le filtré, ou l'ancre gelée pendant un pincement). Pendant un
+  pincement `x/y` ne dit plus rien de la main : la Slice 08 doit mesurer
+  `jitterPx` sur l'écart brut ↔ filtré, jamais sur `x/y`.
+- **`lostGraceMs` (250 ms) est devenu la grâce d'identité.** Un seul nombre
+  décide combien de temps une main perdue reste la même main, et l'état par
+  main (pincement, filtre, ancre) vit exactement aussi longtemps que son
+  identité — une horloge au lieu de deux qui se répondaient à quelques
+  millisecondes près.
+- **Quinze réglages nouveaux, tous épinglés** par
+  `test_the_controller_states_and_timings_still_match_the_contract` et
+  republiés dans `docs/barehands-contracts.md` §3 bis. Leçon N4 de la
+  Slice 02 : un défaut que personne n'affirme se mute sans rien faire tomber.
+  Seul `qualityFloor` est partagé avec le contrat. **La Slice 08 calibre ces
+  nombres** et `window.JarvisBarehands.diagnostics()` est ce qu'elle lira.
+- **Le bloc navigateur avait zéro test ; il en a un.** Un harnais de DOM
+  minimal (30 lignes) vide le cache de `require` et recharge le module avec un
+  `window`, ce qui installe la surimpression. Toute Slice qui touche
+  `createOverlay` / `createInteraction` peut le réutiliser.
+
+Tests, chunks en avant-plan : nouveau fichier **10 passed** ; baseline 1
+(barehands + scene logic) **130 passed** (129 avant, un test de cycle de vie
+ajouté) ; baseline 2 (control centre + settings) **221 passed**. Aucune
+régression. Neuf mutations vérifiées, chacune reprise par le seul test visé :
+`predictMs`→0, `handednessBonusPalms`→1,2, `betaCutoff`→0, `minCutoffHz`→12,
+purge après appariement, latéralité comme porte, qualité minimum→moyenne,
+décision 7 réarmée sur n'importe quelle main, vitesse publiée depuis la dérivée
+interne — plus deux sur le bloc navigateur (classe `faint` retirée, pastille
+qui cache le compte des mains non crues).
