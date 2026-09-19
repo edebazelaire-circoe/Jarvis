@@ -830,7 +830,11 @@ dans cet ordre :
    n'appelle aucun retour visuel : c'est une obligation du **consommateur**,
    que le contrat ne peut pas tenir à sa place — il l'aide en classant ces
    candidates derrière. Les laisser gagner, c'est ne plus rien afficher là où
-   il y avait quelque chose à montrer.
+   il y avait quelque chose à montrer. Côté Slice 05, cette obligation est
+   désormais une **porte** et non un classement : le résolveur écarte la
+   candidate non actionnable, `targets()` ne la publie donc pas, et l'aperçu la
+   refuse aussi. Le classement reste ici pour tout autre appelant de
+   `pickRegion`, mais plus rien de non actionnable ne l'atteint par ce chemin.
 2. **priorité de région** : coin > bord > corps (`REGION_PRIORITY` = 3/2/1,
    `regionPriority`). Une région hors table vaut 0 et **n'est pas une
    candidate** : `pickRegion` la saute.
@@ -838,9 +842,15 @@ dans cet ordre :
    gagne encore.
 
 `createTargetCandidate({objectId, kind, region, zone, boundsPx, actionable,
-representation, distancePx})` → ajoute `axes` et `feedback`. `objectId` est
-l'identité de la scène (`data-object-id`) ; aucun élément DOM ne traverse ce
-contrat.
+representation, distancePx})` → ajoute `axes`. `objectId` est l'identité de la
+scène (`data-object-id`) ; aucun élément DOM ne traverse ce contrat.
+
+Elle n'ajoute **pas** de `feedback`, et c'est structurel : le rôle de couleur
+dépend du canal (décision 23), qu'une candidate ne porte pas — le canal
+appartient à la main, pas à la partie du cadre qu'elle vise. Le champ a existé,
+avec la valeur `region === body ? body : zone`, c'est-à-dire une seconde règle
+aveugle au canal qui rendait « jaune » là où l'écran affichait « rouge ». Qui
+dessine appelle `feedbackRole(region, channel)`.
 
 **Unités.** `boundsPx` et `distancePx` sont en **pixels de la fenêtre**, comme
 `clientX` / `clientY` — jamais en unités de scène (±160 × ±90, qui vivent dans
@@ -870,8 +880,16 @@ c'est le **canal** qui passe devant la région : un coin visé au pouce-majeur e
 rouge, pas jaune, parce que « clic droit » est une intention et non une partie
 du cadre. Canal absent = `primary` (règle d'absence) ; canal ou région inconnus
 se refusent — une couleur inventée dirait à l'utilisateur qu'il va faire autre
-chose que ce qu'il fait. `createTargetCandidate.feedback` en est le cas
-primaire.
+chose que ce qu'il fait.
+
+C'est la **seule** source de la décision 23. `createTargetCandidate` en a porté
+une seconde copie, aveugle au canal ; la documentation la désignait comme « le
+cas primaire » de `feedbackRole`, ce qui était impossible à tenir puisque la
+fabrique ne reçoit pas de canal. Seule la réécriture du champ par l'adaptateur
+rendait `targets()` juste ; un consommateur passant par la fabrique — le point
+d'entrée documenté — obtenait du jaune pendant que l'écran affichait du rouge.
+Le champ est retiré, et l'aperçu redemande le rôle au contrat plutôt que de
+retomber sur « bleu » quand il manque.
 
 ### Le résolveur (Slice 05)
 
@@ -921,6 +939,21 @@ distance ne se tranche pas sur l'ordre de création.
 d'aperçu dans l'arbre — pas « caché », pas « transparent » : absent. C'est aussi
 ce qui paie la performance : la lecture du DOM n'a lieu que sous intention.
 
+La règle vaut aussi pour le **contour hérité** (`DOM.hoverClass`,
+`jarvis-hand-hover`), et c'est là qu'elle manquait : il s'ajoutait pour tout
+jeton suivi au-dessus d'un élément interactif, sans pincement ni geste, si bien
+qu'une main qui traverse la page entourait chaque bouton au passage. La preuve
+« aucun élément d'aperçu dans l'arbre » ne parlait que du nouveau mécanisme.
+Il suit désormais l'intention — et seulement là où l'aperçu n'entoure pas déjà
+l'élément, parce qu'un contour d'accent autour d'un cadre bleu, jaune ou rouge
+ajouterait une quatrième couleur à une règle où la couleur *est* le sens
+(décision 23). Le chemin du clic — `hovered`, fentes de pointeur,
+`pointerover` / `mouseover`, `createPinchDetector` — n'est pas touché : seule la
+présentation a changé.
+
+Ce qu'un consommateur reçoit est aussi **actionnable** : voir `pickRegion`
+ci-dessus, la décision 3 y est une porte.
+
 **Dynamique jusqu'à la descente, stable ensuite.** Sous contact (`pressed`), le
 descripteur est **figé** — objet, région, zone, cadre et nom — quoi que fasse la
 main et même si la collecte ne voit plus l'objet. C'est ce que la Slice 06
@@ -955,8 +988,41 @@ se vise à l'œil, pas à la paume.
 |---|---|---|
 | `targetZonePx` | 14 | bande d'un bord : il faut y **entrer** pour prendre la zone |
 | `targetZoneHoldPx` | 20 | bande qui la **garde** (hystérésis) |
-| `targetZoneMaxRatio` | 0,3 | la bande ne prend jamais plus que cette fraction du petit côté |
+| `targetZoneMaxRatio` | 0,3 | la bande **tenue** ne prend jamais plus que cette fraction du petit côté |
 | `targetAssistPx` | 24 | portée d'assistance hors du cadre |
+
+**Comment les trois se composent** (`JarvisBarehandsCore.targetBand`) :
+
+```
+tenue  = min(targetZoneHoldPx, min(w, h) × targetZoneMaxRatio)
+entrée = tenue × (targetZonePx / targetZoneHoldPx)
+```
+
+Le plafond proportionnel ne borne que la bande **tenue** : c'est elle qui décide
+du corps qui survit à une zone prise, donc c'est elle qui doit tenir dans la
+fraction — la garantie « au moins 40 % de corps sur le petit côté » est celle
+d'avant, au pixel près. La bande d'entrée s'en déduit en gardant le rapport des
+deux réglages, si bien que **l'hystérésis ne peut plus s'annuler** sur un petit
+objet.
+
+Les deux bandes étaient auparavant plafonnées séparément par la même fraction,
+et rendaient donc le même nombre dès que `0,3 × petit côté ≤ targetZonePx`,
+c'est-à-dire sur tout objet de moins de 46,7 px : capsule (24 à 42 px dessinés,
+`CAPSULE_MIN_HEIGHT_PX`) et fenêtre compacte (28 px, zonée) avaient une
+hystérésis **nulle**, et l'aperçu clignotait entre le bord et le corps sur un
+demi-pixel de tremblement. Elle ne survivait que sur les grands objets, là où le
+clignotement gêne le moins.
+
+| objet | dessiné | entrée | tenue | hystérésis |
+|---|---|---|---|---|
+| capsule minimale @1080p | 96×30 | 6,30 | 9,00 | 2,70 |
+| capsule par défaut @1080p | 240×42 | 8,82 | 12,60 | 3,78 |
+| capsule par défaut @720p | 160×28 | 5,88 | 8,40 | 2,52 |
+| fenêtre compacte @1080p | 384×28 | 5,88 | 8,40 | 2,52 |
+| fenêtre par défaut @1080p | 384×240 | 14,00 | 20,00 | 6,00 |
+
+La dernière ligne est inchangée : c'était le seul cas où le plafond ne mordait
+pas.
 
 Deux relations, et les deux **se refusent à la construction** :
 

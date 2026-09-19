@@ -1373,6 +1373,16 @@ const JarvisBarehandsCore=(function(){
   const TARGET_SIDES=Object.freeze({HORIZONTAL:Object.freeze(['left','right']),
     VERTICAL:Object.freeze(['top','bottom'])});
 
+  /* Une coordonnée **est un nombre**, et ce n'est pas la même question que
+     « se convertit en nombre ». `Number.isFinite(Number(v))` refusait bien
+     `NaN`, `undefined` et `'abc'`, mais laissait passer `null`, `''`, `[]` et
+     `false`, qui valent tous **0** : une main sans position visait alors le
+     coin supérieur gauche de l'écran, où il y a toujours quelque chose à
+     saisir. C'est la classe de défaut que le contrat dit déjà corrigée pour
+     les événements de pincement — « sans coordonnées, un clic partait en
+     (0,0) » — et elle vivait encore ici. */
+  const finiteCoord=value=>typeof value==='number'&&Number.isFinite(value);
+
   const finiteRect=value=>{
     const r=value&&typeof value==='object'?value:null;
     if(!r)return null;
@@ -1386,12 +1396,34 @@ const JarvisBarehandsCore=(function(){
      `targetZoneHoldPx` quand la zone est déjà tenue) et une fraction du petit
      côté, pour qu'une capsule de 24 px de haut garde un corps. Sans la
      seconde, les deux bandes opposées se rejoignaient et la décision 8
-     devenait inatteignable sur l'objet le plus courant. */
+     devenait inatteignable sur l'objet le plus courant.
+
+     **Le plafond ne s'applique qu'à la bande large, et la bande d'entrée s'en
+     déduit.** Appliqué aux deux indépendamment, il rendait le même nombre dès
+     que `0,3 × petit côté <= targetZonePx`, c'est-à-dire sur tout objet de
+     moins de 46,7 px : une capsule (24 à 42 px) et une fenêtre compacte
+     (28 px) avaient une hystérésis **nulle**, et l'aperçu clignotait entre le
+     bord et le corps sur un demi-pixel de tremblement — exactement le symptôme
+     que la paire existe pour empêcher. L'hystérésis ne survivait que sur les
+     grands objets, là où le clignotement est le moins gênant.
+
+     C'est bien la bande **large** qui doit tenir dans la fraction : c'est elle
+     qui décide du corps qui reste quand la zone est tenue, donc la garantie
+     « au moins 40 % de corps sur chaque axe » est celle d'avant, au pixel
+     près. La bande d'entrée garde le rapport des deux réglages
+     (`targetZonePx / targetZoneHoldPx`, 14/20 par défaut) : l'hystérésis
+     devient proportionnelle au lieu de disparaître, et les deux nombres
+     continuent de se régler ensemble plutôt que de se croiser. Réglés égaux,
+     elle vaut zéro — mais parce qu'on l'a demandé, pas parce que l'objet est
+     petit. */
   function bandFor(bounds,o,holding){
     const rect=finiteRect(bounds);
     if(!rect)return 0;
-    return Math.min(holding?o.targetZoneHoldPx:o.targetZonePx,
-      Math.min(rect.w,rect.h)*o.targetZoneMaxRatio);
+    const hold=Math.min(o.targetZoneHoldPx,Math.min(rect.w,rect.h)*o.targetZoneMaxRatio);
+    if(holding)return hold;
+    /* `targetZoneHoldPx` nul (les deux réglages à zéro : plus de zones du tout)
+       ne divise pas — il n'y a pas de bande à réduire. */
+    return o.targetZoneHoldPx>0?hold*(o.targetZonePx/o.targetZoneHoldPx):0;
   }
   const targetBand=(bounds,overrides,holding)=>bandFor(bounds,options(overrides),holding);
 
@@ -1409,8 +1441,8 @@ const JarvisBarehandsCore=(function(){
   function regionAt(bounds,point,band){
     const rect=finiteRect(bounds);
     if(!rect)return null;
-    const x=Number(point&&point.x),y=Number(point&&point.y);
-    if(!Number.isFinite(x)||!Number.isFinite(y))return null;
+    const x=point&&point.x,y=point&&point.y;
+    if(!finiteCoord(x)||!finiteCoord(y))return null;
     const x1=rect.x+rect.w,y1=rect.y+rect.h;
     const left=x-rect.x,right=x1-x,top=y-rect.y,bottom=y1-y;
     const reach=Math.max(0,Number(band)||0);
@@ -1461,8 +1493,10 @@ const JarvisBarehandsCore=(function(){
 
      Deux étapes, et l'ordre n'est pas indifférent :
 
-     1. **quel objet** — le plus proche (`distancePx`), actionnable d'abord, et
-        à égalité le premier cité (le module de collecte cite celui du dessus
+     1. **quel objet** — parmi les **actionnables** (décision 3 : ce qu'on ne
+        peut pas actionner n'est pas une cible, donc rien à dessiner et rien à
+        publier), le plus proche (`distancePx`), et à égalité le premier cité
+        (le module de collecte cite celui du dessus
         en tête). La priorité de région ne participe **pas** à ce choix : elle
         départage un *recouvrement*, et l'appliquer entre objets ferait gagner
         le coin d'un objet à 20 px sur le bord de celui qu'on touche.
@@ -1530,8 +1564,14 @@ const JarvisBarehandsCore=(function(){
           if(state==='pressed'&&previous&&previous.locked){
             previous.at=now;out.push(previous.target);continue;
           }
-          const point={x:Number(hand.x),y:Number(hand.y)};
-          if(!Number.isFinite(point.x)||!Number.isFinite(point.y)){held.delete(k);continue}
+          /* Le point n'est pas validé ici : `regionAt` le fait, une fois, pour
+             tout le monde — et une main sans position ne rend alors aucune
+             candidate, donc elle **oublie** ce qu'elle tenait par le chemin
+             normal (`if(!best)`). Un second contrôle au-dessus existait ; il
+             rendait exactement le même résultat, et aucun test ne pouvait
+             l'en distinguer. Une ligne qu'aucun test ne peut atteindre n'est
+             pas une ceinture, c'est une ligne de moins à lire. */
+          const point={x:hand.x,y:hand.y};
           const reach=o.targetAssistPx*assistOf(hand.assistance);
           let best=null,bestBand=0;
           for(const object of candidates){
@@ -1546,11 +1586,28 @@ const JarvisBarehandsCore=(function(){
               &&previous.target.region!==TARGET_REGION.BODY;
             const band=object.zoned?bandFor(object.boundsPx,o,holding):0;
             const found=targetRegionsOf(object,point,band);
-            if(!found||found.distancePx>reach)continue;
-            const better=!best
-              ||(found.actionable!==best.actionable?found.actionable
-                :found.distancePx<best.distancePx);
-            if(better){best=found;bestBand=band}
+            /* **Décision 3, et c'est une porte, pas un classement.** Une
+               candidate non actionnable n'appelle aucun retour visuel : le
+               contrat le dit en toutes lettres (« c'est une obligation du
+               consommateur ») et personne ne la tenait. Un bouton désactivé
+               seul sous un doigt qui pince se résolvait à d=0, se publiait à
+               la Slice 06 et se dessinait — un cadre bleu et un nom autour
+               d'un contrôle qui ne fera rien. Un retour visuel qui promet une
+               action impossible est pire que pas de retour du tout.
+
+               Elle est tenue **ici** plutôt que chez l'aperçu parce que
+               `targets()` publie ce que rend ce résolveur : filtrer plus bas
+               aurait laissé la Slice 06 ouvrir une capture sur un contrôle
+               désactivé, à moins qu'elle ne refiltre — donc à moins d'une
+               seconde règle, qui divergerait en silence.
+
+               Le classement « actionnable d'abord » de `pickRegion` reste : il
+               est du contrat, il garde son sens pour tout autre appelant, et
+               ici il ne peut plus rien trancher puisque plus rien de non
+               actionnable ne l'atteint. Le résolveur, lui, n'en garde pas une
+               copie : le plus proche gagne, un point. */
+            if(!found||!found.actionable||found.distancePx>reach)continue;
+            if(!best||found.distancePx<best.distancePx){best=found;bestBand=band}
           }
           if(!best){held.delete(k);continue}
           const picked=pick(best.regions);
@@ -2943,6 +3000,12 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
 
   function createInteraction(){
     const hovered=new Map();
+    /* Les éléments qui portent **effectivement** le contour hérité, et rien
+       d'autre. `hovered` dit « quelle main est au-dessus de quoi » (chemin du
+       clic) ; ceci dit « qu'est-ce qui est souligné à l'écran »
+       (présentation). Les deux se confondaient, et c'est ainsi que le contour
+       suivait une main simplement suivie — voir `paintHover`. */
+    let outlined=new Set();
     /* Résolution de cible et aperçu (Slice 05). La règle de recouvrement vient
        du contrat : le bloc pur ne la réinvente pas, il la reçoit. */
     const resolver=Core.createTargetResolver({pickRegion:BH.pickRegion});
@@ -3011,10 +3074,66 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
       const previous=hovered.get(id);
       hovered.delete(id);
       const identity=identityOf(id);
+      /* Le contour ne se retire plus ici : il a un seul propriétaire,
+         `paintHover`, qui le repose à chaque image d'après l'intention. Deux
+         endroits qui posent et retirent la même classe se seraient marchés
+         dessus dès que deux mains visent le même élément. Les événements, eux,
+         sont inchangés — c'est le chemin du clic. */
       if(previous&&identity&&![...hovered.values()].includes(previous)){
-        previous.classList.remove(BH.DOM.hoverClass);
         pointer('pointerout',previous,0,0,0,identity);pointer('mouseout',previous,0,0,0,identity);
       }
+    }
+    /* Qui **veut** quelque chose, à cet instant : une main qui pince ou qui
+       approche. Même définition que celle du résolveur (décision 3), lue de la
+       même source, pour qu'« intention » veuille dire la même chose à l'écran
+       et dans la géométrie. */
+    function intendingHands(){
+      const out=new Set();
+      for(const contact of (typeof contactsOf==='function'?contactsOf():null)||[])
+        if(contact&&(contact.state==='pinching'||contact.state==='pressed'))
+          out.add(String(contact.handTrackId));
+      return out;
+    }
+    /* Le contour hérité (`jarvis-hand-hover`), **décision 3 enfin tenue à
+       l'écran**.
+
+       Il s'ajoutait pour tout jeton suivi survolant un élément interactif :
+       pas de pincement, pas de geste, aucune intention — donc une main qui
+       traverse la page entourait chaque bouton au passage, ce qui est
+       exactement le curseur permanent que la décision 3 refuse. La preuve
+       `previews().length==0` ne disait rien de lui : elle ne parle que du
+       nouvel aperçu.
+
+       Deux conditions, et la seconde est de la décision 23 : la main a une
+       intention, **et** l'aperçu de cible ne dessine pas déjà cet élément-là.
+       Le contour porte la couleur d'accent de la surimpression ; posé autour
+       d'un objet que l'aperçu entoure déjà en bleu, en jaune ou en rouge, il
+       ajouterait une quatrième couleur sans sens à une règle où la couleur
+       *est* le sens. Quand l'aperçu est éteint (décision 24), le chemin de
+       clic hérité garde ainsi son seul repère, sous intention.
+
+       Ce qui n'est pas touché : la mesure. `hovered`, les fentes, les
+       `pointerover`/`mouseover` et les clics sont ceux d'avant, au mot près.
+       C'est de la présentation. */
+    function paintHover(){
+      const intent=intendingHands();
+      const previewed=new Set();
+      if(previewOn)for(const target of resolved){
+        const look=decor.get(`${target.handTrackId}|${target.channel}`);
+        if(look&&look.element)previewed.add(look.element);
+      }
+      const wanted=new Set();
+      for(const [id,el] of hovered)
+        if(el&&intent.has(String(id))&&!previewed.has(el))wanted.add(el);
+      for(const el of outlined)if(!wanted.has(el))el.classList.remove(BH.DOM.hoverClass);
+      for(const el of wanted)if(!outlined.has(el))el.classList.add(BH.DOM.hoverClass);
+      outlined=wanted;
+    }
+    /* Plus rien de souligné : l'extinction et la veille ne laissent pas un
+       contour derrière elles. */
+    function clearOutlines(){
+      for(const el of outlined)el.classList.remove(BH.DOM.hoverClass);
+      outlined=new Set();
     }
     /* Une image de résolution de cible.
 
@@ -3251,7 +3370,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
           if(hovered.get(token.id)===el)continue;
           release(token.id);
           if(el&&identity){
-            hovered.set(token.id,el);el.classList.add(BH.DOM.hoverClass);
+            hovered.set(token.id,el);
             pointer('pointerover',el,token.x,token.y,0,identity);pointer('mouseover',el,token.x,token.y,0,identity);
           }
         }
@@ -3265,6 +3384,9 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
            mêmes jetons : deux lectures du même instant donneraient deux
            réponses pour un seul geste. */
         resolveTargets(tokens);
+        /* Le contour hérité se repose **après** la résolution : il a besoin de
+           savoir ce que l'aperçu dessine déjà (décision 23). */
+        paintHover();
         /* Puis ce que les mains **tiennent** (Slice 06). Après la résolution,
            jamais avant : une capture s'ouvre sur la cible figée de cette
            image-là. */
@@ -3338,6 +3460,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
          à la surimpression, telle quelle, comme celle d'un geste étouffé. */
       refusal(){const list=engine.refusals();return list.length?list[0].reason:''},
       clear(){
+        clearOutlines();
         for(const id of [...hovered.keys()])release(id);
         /* Tout ce qui est tenu est **annulé**, jamais relâché : aucune géométrie
            n'est validée par une extinction ou un retour en veille. */

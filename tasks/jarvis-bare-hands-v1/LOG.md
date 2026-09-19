@@ -1174,3 +1174,108 @@ gardée pour que l'intention soit lisible) ; et ne plus sauter `same_hand_twice`
 dans la construction du couple (une main n'a qu'une capture **primaire**, donc la
 branche est inatteignable — c'est un filet du contrat, et la mutation qui le rend
 atteignable, « le canal secondaire manipule », tombe, elle).
+
+## Slice 05 — reprise QA : trois défauts que la mutation ne pouvait pas voir
+
+La leçon d'abord, parce qu'elle explique pourquoi les trois avaient traversé un
+balayage 32/32 : **la mutation valide les tests qu'on a contre le code qu'on a
+écrit.** Elle ne peut pas trouver une porte qu'on n'a jamais écrite, une ligne
+dupliquée qu'aucun test n'exerce, ni une fixture qui ne ressemble pas au
+produit. Les trois défauts étaient exactement ces trois formes-là.
+
+- **L'hystérésis de zone valait numériquement zéro sur toute capsule et toute
+  fenêtre compacte.** Le plafond proportionnel (`targetZoneMaxRatio`) bornait
+  les **deux** bandes séparément, si bien que dès que `0,3 × petit côté ≤ 14`
+  — tout objet sous 46,7 px — les deux `Math.min` rendaient le même nombre.
+  Une capsule par défaut (240×42) : 12,60 et 12,60. Elle ne survivait que sur
+  les grands objets, là où le clignotement gêne le moins. Désormais le plafond
+  ne borne que la bande **tenue** (c'est elle qui décide du corps qui reste,
+  donc la garantie des 40 % est intacte au pixel près) et la bande d'entrée
+  s'en déduit par le rapport des deux réglages : 8,82 / 12,60 sur la même
+  capsule. **La preuve était déjà dans le test de la Slice** — il affirmait
+  `band == 7.2 and held == 7.2` avec un commentaire notant que la bande large
+  était plafonnée pareil : constaté, écrit, conséquence non tirée. Toutes les
+  fixtures zonées du fichier faisaient ≥ 110 px de petit côté. **Une fixture
+  qui ne ressemble pas au produit ne peut être sauvée par aucune mutation.**
+- **`createTargetCandidate` portait une seconde règle de couleur, aveugle au
+  canal**, 45 lignes sous le `feedbackRole` ajouté pour être la source unique —
+  et la documentation la désignait comme « le cas primaire » de `feedbackRole`,
+  ce qui était impossible puisque la fabrique ne reçoit pas de canal. Seule la
+  réécriture du champ par l'adaptateur rendait `targets()` juste : un
+  consommateur passant par le point d'entrée **documenté** obtenait jaune
+  pendant que l'écran affichait rouge. Le champ est retiré (une candidate ne
+  connaît pas le canal), et l'aperçu **redemande** le rôle au contrat au lieu de
+  retomber sur bleu quand il manque. Aucun test ne lisait ce champ : il était
+  calculé dans un test des contrats et jamais affirmé.
+- **Une cible non actionnable était résolue, publiée et dessinée.**
+  `actionable` servait à *classer*, jamais à *fermer* : il n'y avait d'`if`
+  nulle part. Un bouton désactivé seul sous un doigt qui pince se résolvait à
+  d=0 et recevait un cadre bleu avec son nom — la promesse d'une action
+  impossible, ce que le contrat interdit en toutes lettres depuis le début en la
+  nommant « obligation du consommateur ». La porte est **dans le résolveur**,
+  pour que `targets()` ne publie pas à la Slice 06 ce qu'elle devrait refiltrer,
+  et **aussi dans l'aperçu**, parce que c'est lui que le contrat nomme et qu'il
+  se laisse appeler directement.
+
+Non bloquants tranchés :
+
+- **N1 — une coordonnée est un nombre, pas « quelque chose qui se convertit ».**
+  `Number.isFinite(Number(v))` refusait `NaN`/`undefined`/`'abc'` mais laissait
+  passer `null`, `''`, `[]` et `false`, qui valent tous 0 : une main sans
+  position visait le coin supérieur gauche, où il y a toujours quelque chose à
+  saisir. Même classe que celle que le contrat dit corrigée pour les événements
+  de pincement. Le contrôle vit **une seule fois**, dans `regionAt` ; le second,
+  au-dessus de la boucle du résolveur, a été retiré — la mutation a montré
+  qu'aucun test ne pouvait le distinguer du chemin normal (`if(!best)`), ce qui
+  est la définition d'une ligne redondante.
+- **N3 — `zoneRect` refuse au lieu de deviner.** Son dernier `return` était
+  inconditionnel : un côté inconnu ressortait en « bord droit ». Latent (le seul
+  appel vivant est gardé en amont), mais c'est une fonction exportée dont
+  l'échec était une réponse assurée et fausse. Elle rend `null`, l'aperçu cache
+  la barre et le dit une fois à la console.
+- **N4 — sans objet : la Slice 06 l'a câblé depuis.** `resolver.release` a un
+  appelant de production (`createInteractionEngine({onRelease})`), vérifié sur
+  l'arbre courant. Le constat datait de `3eb2447`.
+- **N2 — pas d'hystérésis sur le choix d'objet, et c'est un choix.** Une souris
+  se comporte pareil, donc ce n'est pas une régression ; surtout, une mémoire
+  d'objet collerait la visée à un objet que la main a quitté, alors que la
+  mémoire de *région* ne survit qu'à l'intérieur d'un objet déjà choisi. Le gel
+  au contact (`locked`) couvre déjà le seul moment où changer d'objet coûte le
+  geste. À revoir si un usage réel montre le contraire.
+- **N5 — l'assistance de 24 px reste battue par un conteneur, et c'est correct.**
+  Un doigt **dans** un cadre est à distance 0 de ce cadre : c'est la réponse
+  vraie, et la résolution en deux temps choisit ensuite la partie. Préférer la
+  petite candidate contenue demanderait une règle de taille ou de spécificité,
+  c'est-à-dire exactement le classement inter-objets que la résolution en deux
+  temps existe pour refuser. Borne connue de `.choice`/`.acard`/`label`.
+
+**Décision 3 est désormais tenue à l'écran.** Le contour hérité
+(`jarvis-hand-hover`) s'ajoutait pour tout jeton **suivi** au-dessus d'un
+élément interactif : une main qui traverse la page entourait chaque bouton au
+passage. La preuve `previews().length == 0` ne parlait que du nouveau mécanisme.
+Il suit maintenant l'**intention** — et seulement là où l'aperçu n'entoure pas
+déjà l'élément, parce qu'un contour d'accent autour d'un cadre bleu, jaune ou
+rouge ajouterait une quatrième couleur à une règle où la couleur *est* le sens
+(décision 23). Quand l'aperçu est éteint (décision 24), le chemin de clic hérité
+garde ainsi son seul repère, sous intention. **Le chemin du clic n'est pas
+touché** : `hovered`, les fentes, `pointerover`/`mouseover` et
+`createPinchDetector` sont ceux d'avant, au mot près — c'est de la présentation,
+et elle a désormais un propriétaire unique (`paintHover`), au lieu d'être posée
+dans la boucle de survol et retirée dans `release`.
+
+Fichiers : `jarvis/runtime/control_center_barehands.js`,
+`jarvis/runtime/control_center_barehands_target.js`,
+`jarvis/runtime/control_center_barehands_contracts.js`,
+`docs/barehands-contracts.md`, `tests/unit/test_barehands_target_js.py`,
+`tests/unit/test_barehands_contracts_js.py`.
+
+Tests, chunks en avant-plan : baseline 1 (barehands + scène) **229 → 235
+passed** (six fixtures neuves) ; baseline 2 (centre de contrôle) **284 passed**,
+inchangée ; les 26 tests de la Slice 06 passent sans modification ;
+`-k "barehands or control_center or scene"` **1376 passed**. **Vingt-deux
+mutations tentées, vingt-deux reprises, aucune survivante** — y compris les cinq
+qui restaurent le défaut d'origine (plafond sur les deux bandes, couleur aveugle
+au canal rendue à la fabrique, repli silencieux en bleu, porte
+d'actionnabilité retirée, contour posé sans intention). Une survivante du
+premier passage a été tuée en **supprimant** la ligne qu'elle épargnait plutôt
+qu'en écrivant un test qui ne pouvait pas la distinguer.

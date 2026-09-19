@@ -331,7 +331,14 @@ def test_a_corner_wins_the_preview_over_an_edge_and_an_edge_over_the_body(tmp_pa
         pickedWithoutCorner:C.pickRegion([body,edge]).zone,
         empty:C.pickRegion([]),
         axes:[edge.axes,corner.axes,body.axes],
-        feedback:[body.feedback,edge.feedback,C.FEEDBACK.SECONDARY],
+        /* Le rôle de couleur se demande à `feedbackRole`, avec le canal : une
+           candidate n'en porte plus, parce qu'elle ne connaît pas le canal.
+           Cette ligne lisait `body.feedback`/`edge.feedback` — la copie
+           aveugle au canal — et son résultat n'était jamais affirmé. */
+        feedback:[C.feedbackRole(body.region,'primary'),
+                  C.feedbackRole(edge.region,'primary'),
+                  C.feedbackRole(corner.region,'secondary')],
+        onCandidate:[body.feedback,edge.feedback,corner.feedback],
         tokens:Object.keys(C.FEEDBACK_TOKENS).sort(),
         zoned:['capsule','window','point','signal'].map(C.hasManipulationZones),
         badRegion:refused(()=>C.createTargetCandidate({region:'middle'})),
@@ -362,8 +369,11 @@ def test_a_corner_wins_the_preview_over_an_edge_and_an_edge_over_the_body(tmp_pa
     assert result["picked"] == "bottom_right" and result["pickedWithoutCorner"] == "right"
     assert result["empty"] is None
     assert result["axes"] == [["x"], ["x", "y"], []]
-    # Décision 23 : corps bleu, zone jaune, clic droit rouge — par le rôle.
+    # Décision 23 : corps bleu, zone jaune, clic droit rouge — par le rôle, et
+    # par lui seul. Le coin est ici en `secondary` : c'est précisément le cas
+    # que la copie portée par la candidate rendait « zone ».
     assert result["feedback"] == ["body", "zone", "secondary"]
+    assert result["onCandidate"] == [None, None, None], "une candidate ne porte pas de couleur"
     assert result["tokens"] == ["body", "secondary", "zone"]
     # Décision D3 de la Slice 00 : seules capsule et window ont des zones.
     assert result["zoned"] == [True, True, False, False]

@@ -162,7 +162,9 @@ def test_a_capsule_too_short_for_its_band_still_has_a_body(tmp_path):
       /* Sans le plafond proportionnel, la même bande vaudrait 14 et le centre
          exact de la capsule se lirait « bord haut ». */
       const naive=B.regionAt(capsule,{x:60,y:12},14);
-      /* La bande large (hystérésis) est plafonnée par la même fraction. */
+      /* C'est la bande **large** que la fraction plafonne : c'est elle qui
+         décide du corps qui reste quand la zone est tenue. La bande d'entrée
+         s'en déduit, donc elle reste sous elle. */
       const held=B.targetBand(capsule,{},true);
       out({band:Number(band.toFixed(2)),held:Number(held.toFixed(2)),
         centre:[centre.vertical,centre.horizontal],naive:[naive.vertical,naive.horizontal],
@@ -173,7 +175,14 @@ def test_a_capsule_too_short_for_its_band_still_has_a_body(tmp_path):
         refusedRatioZero:refused(()=>B.createTargetResolver({pickRegion:C.pickRegion,targetZoneMaxRatio:0})),
       });
     """)
-    assert result["band"] == 7.2 and result["held"] == 7.2
+    # La bande qui **garde** vaut la fraction (0,3 × 24) ; celle qui **prend**
+    # en garde le rapport des réglages (14/20). Le corps survit exactement
+    # comme avant — c'est la bande large qui le décide — et l'hystérésis n'est
+    # plus nulle. Avant, les deux valaient 7,2 : la zone se perdait au pixel
+    # même où elle se prenait.
+    assert result["held"] == 7.2
+    assert result["band"] == pytest.approx(5.04, abs=0.001)
+    assert result["held"] - result["band"] > 2, "une zone tenue doit être plus dure à perdre"
     assert result["centre"] == [None, None], "la capsule a perdu son corps"
     assert result["naive"] == ["top", None], "sans plafond, le centre se lit « bord »"
     # Et le bord reste atteignable : le plafond rétrécit la bande, il ne la tue pas.
@@ -295,10 +304,26 @@ def test_the_topmost_candidate_wins_a_tie_and_elementfrompoint_is_the_hint(tmp_p
       r.reset();
       const distances=[dead,live].map(o=>Number(
         B.targetRegionsOf(o,{x:299,y:299},B.targetBand(o.boundsPx,{})).distancePx.toFixed(2)));
-      out({first,second,overActionable,distances});
+      /* **Décision 3 comme porte.** Seule sous un doigt qui pince, la
+         candidate non actionnable ne se résout pas du tout — sans quoi elle
+         était publiée à la Slice 06 et dessinée : un cadre bleu et un nom
+         autour d'un bouton désactivé, c'est-à-dire la promesse d'une action
+         qui n'arrivera pas. Et `pressed` ne la fige pas non plus : une capture
+         ne peut pas s'ouvrir sur ce qui ne s'actionne pas. */
+      r.reset();
+      const deadAlone=say(r.update({now:0,candidates:refs([dead]),
+        hands:[aim(1,'pinching',150,150)]})[0]);
+      r.reset();
+      const deadAlonePressed=say(r.update({now:0,candidates:refs([dead]),
+        hands:[aim(1,'pressed',150,150)]})[0]);
+      out({first,second,overActionable,distances,deadAlone,deadAlonePressed});
     """)
     assert result["first"] == "above:body"
     assert result["second"] == "below:body", "l'ordre cité doit trancher l'égalité"
+    # Seule sous le doigt, la candidate non actionnable ne devient pas une
+    # cible : elle n'est pas « classée derrière », elle est écartée.
+    assert result["deadAlone"] is None
+    assert result["deadAlonePressed"] is None
     # La candidate non actionnable est bien la plus proche : c'est ce qui rend
     # l'assertion suivante discriminante.
     assert result["distances"] == [0.0, pytest.approx(1.41, abs=0.01)]
@@ -387,6 +412,151 @@ def test_a_zone_once_taken_survives_a_pixel_of_tremor(tmp_path):
     ]
     assert result["refusedInverted"] == "RangeError"
     assert result["equalAllowed"] == "construit"
+
+
+def test_the_hysteresis_survives_at_the_size_objects_are_actually_drawn(tmp_path):
+    """Le test au-dessus prouve l'hystérésis sur un objet de 200×200 — c'est-à-
+    dire là où le plafond proportionnel ne mord pas. Sur **tout** objet dont le
+    petit côté est sous 46,7 px, les deux bandes étaient plafonnées séparément
+    par la même fraction, rendaient donc le même nombre, et l'hystérésis valait
+    zéro. Ce n'est pas un cas limite : `control_center_scene_layout.js` dessine
+    les capsules à partir de 24 px (`CAPSULE_MIN_HEIGHT_PX`) et une fenêtre
+    compacte à 28 px — et une fenêtre compacte est zonée. L'hystérésis ne
+    survivait que là où le clignotement dérange le moins.
+
+    Une fixture doit ressembler au produit : les tailles ci-dessous sont celles
+    que la scène dessine, aux deux résolutions courantes."""
+
+    result = run_node(tmp_path, FIXTURE + """
+      /* Petit côté, en pixels de la fenêtre, tel que la scène les dessine. */
+      const sizes={capsuleMin:[96,30],capsuleDefault:[240,42],capsule720:[160,28],
+        compactWindow:[384,28],windowDefault:[384,240]};
+      const bands={},bodies={};
+      for(const name of Object.keys(sizes)){
+        const [w,h]=sizes[name],box={x:0,y:0,w,h},short=Math.min(w,h);
+        const band=B.targetBand(box,{}),held=B.targetBand(box,{},true);
+        bands[name]=[Number(band.toFixed(2)),Number(held.toFixed(2)),
+          Number((held-band).toFixed(2))];
+        /* Ce qui reste de corps quand la zone est **tenue** : c'est la bande
+           large qui décide de cette garantie, et c'est pour cela que c'est elle
+           que le plafond borne. */
+        bodies[name]=Number(((short-2*held)/short).toFixed(3));
+      }
+      /* Le tremblement rapporté : ±0,6 px au bord de la bande d'**entrée**, sur
+         la capsule par défaut. Ce qui est visé ne doit pas changer d'une image
+         à l'autre — c'est le clignotement jaune/bleu que la paire existe pour
+         empêcher, et qui se lit « main qui tremble ». */
+      const capsule=object('cap',0,0,240,42,{representation:'capsule'});
+      const tremble=options=>{
+        const r=resolver(options);
+        const edge=B.targetBand(capsule.boundsPx,options||{});
+        return [edge-.6,edge+.6,edge-.6,edge+.6,edge-.6].map(y=>
+          say(r.update({now:0,candidates:refs([capsule]),
+            hands:[aim(1,'pinching',120,y)]})[0]));
+      };
+      out({bands,bodies,steady:tremble({}),flat:tremble({targetZoneHoldPx:14})});
+    """)
+    # [entrée, tenue, hystérésis]. Avant : les deux colonnes étaient égales et
+    # la troisième valait 0 partout, sauf sur la grande fenêtre.
+    assert result["bands"]["capsuleMin"] == [6.3, 9.0, 2.7]
+    assert result["bands"]["capsuleDefault"] == [8.82, 12.6, 3.78]
+    assert result["bands"]["capsule720"] == [5.88, 8.4, 2.52]
+    assert result["bands"]["compactWindow"] == [5.88, 8.4, 2.52]
+    # La grande fenêtre ne bouge pas d'un pixel : c'est le seul cas où le
+    # plafond ne mordait pas, et il rendait déjà 14/20.
+    assert result["bands"]["windowDefault"] == [14.0, 20.0, 6.0]
+    for name, (band, held, gap) in result["bands"].items():
+        assert band < held, name
+        assert gap >= 2.5, f"{name} : une zone tenue doit rester nettement plus dure à perdre"
+    # Et la raison d'être du plafond est intacte : au moins 40 % de corps sur
+    # le petit côté, zone tenue comprise (décision 8).
+    for name, body in result["bodies"].items():
+        assert body >= 0.399, f"{name} : la capsule a perdu son corps"
+    # Le tremblement ne fait plus clignoter : on entre à 8,82 et on garde
+    # jusqu'à 12,6, donc ±0,6 px autour de l'entrée reste dans la bande tenue.
+    assert result["steady"] == ["cap:edge:top"] * 5
+    # Réglées égales, les deux bandes se confondent et le clignotement revient :
+    # c'est exactement ce que toute capsule subissait.
+    assert result["flat"] == ["cap:edge:top", "cap:body", "cap:edge:top",
+                              "cap:body", "cap:edge:top"]
+
+
+def test_a_hand_without_coordinates_aims_nowhere_not_at_the_top_left_corner(tmp_path):
+    """« Sans coordonnées, un clic partait en (0,0) — le coin de l'écran, où il
+    y a toujours quelque chose à cliquer. » Le contrat dit ce défaut corrigé
+    pour les événements de pincement ; il vivait encore ici, sous une autre
+    forme.
+
+    `Number.isFinite(Number(v))` répond à « se convertit en nombre », pas à
+    « est un nombre » : `null`, `''`, `[]` et `false` valent tous 0 et
+    passaient la garde. Une main sans position visait donc le coin supérieur
+    gauche, et une cible s'y trouve toujours."""
+
+    result = run_node(tmp_path, FIXTURE + """
+      const corner=object('coin',0,0,200,200);
+      const aimAt=(x,y)=>{
+        const r=resolver({});
+        return say(r.update({now:0,candidates:refs([corner]),
+          hands:[aim(1,'pinching',x,y)]})[0]);
+      };
+      const bad=[null,'',[],false,undefined,NaN,'abc',{}];
+      out({
+        valid:aimAt(10,10),
+        refused:bad.map(v=>aimAt(v,10)),
+        refusedY:bad.map(v=>aimAt(10,v)),
+        /* La même question à la géométrie exportée, qui refusait déjà NaN. */
+        region:bad.map(v=>B.regionAt({x:0,y:0,w:10,h:10},{x:v,y:5},2)),
+        /* Et une main qui perd sa position **oublie** ce qu'elle tenait : elle
+           ne garde pas une cible figée sur une coordonnée absente. */
+        forgets:(()=>{const r=resolver({});
+          const one=say(r.update({now:0,candidates:refs([corner]),
+            hands:[aim(1,'pinching',10,10)]})[0]);
+          const two=r.update({now:1,candidates:refs([corner]),
+            hands:[aim(1,'pinching',null,10)]}).length;
+          return [one,two,r.size()]})(),
+      });
+    """)
+    assert result["valid"] == "coin:corner:top_left"
+    assert result["refused"] == [None] * 8, "une coordonnée doit être un nombre"
+    assert result["refusedY"] == [None] * 8
+    assert result["region"] == [None] * 8
+    assert result["forgets"] == ["coin:corner:top_left", 0, 0]
+
+
+def test_a_zone_the_drawing_cannot_read_refuses_instead_of_guessing(tmp_path):
+    """`zoneRect` terminait par un `return` inconditionnel : un côté inconnu —
+    ou absent — ressortait en « bord droit ». Les trois `if` manquaient, et la
+    fonction répondait quand même, avec assurance et à côté de la question.
+    Le seul appel vivant est gardé en amont, donc c'était latent ; mais c'est
+    une fonction exportée et testée, et la règle que ce module se donne partout
+    ailleurs est de **refuser** ce qu'il n'a pas su lire (une représentation
+    absente n'ouvre pas de zones, une candidate sans rectangle n'en est pas
+    une). Un défaut latent est un défaut qui attend son second appelant."""
+
+    result = run_node(tmp_path, """
+      const T=require(TARGET_PATH);
+      const bounds={x:0,y:0,w:200,h:100};
+      const rect=(region,zone)=>T.zoneRect({boundsPx:bounds,region,zone,bandPx:10});
+      const box=r=>r===null?null:[r.left,r.top,r.width,r.height];
+      out({
+        top:box(rect('edge','top')),bottom:box(rect('edge','bottom')),
+        left:box(rect('edge','left')),right:box(rect('edge','right')),
+        corner:(()=>{const r=rect('corner','bottom_right');
+          return [r.corner,r.left,r.top,r.hide]})(),
+        /* Ce que le dessin ne sait pas lire : pas de bord droit par défaut. */
+        unknown:rect('edge','milieu'),
+        absent:rect('edge',null),
+        empty:rect('edge',''),
+      });
+    """)
+    assert result["top"] == [0, 0, 200, 10]
+    assert result["bottom"] == [0, 90, 200, 10]
+    assert result["left"] == [0, 0, 10, 100]
+    assert result["right"] == [190, 0, 10, 100]
+    assert result["corner"][0] is True and result["corner"][1] == 182
+    assert result["unknown"] is None, "un côté inconnu ne se dessine pas « à droite »"
+    assert result["absent"] is None
+    assert result["empty"] is None
 
 
 def test_the_overlap_rule_is_handed_to_the_resolver_never_reinvented(tmp_path):
@@ -598,6 +768,11 @@ def test_the_contract_owns_the_colour_rule_and_the_channel_comes_first(tmp_path)
     droit » est une intention et non une partie du cadre : un coin visé au
     pouce-majeur est rouge, pas jaune.
 
+    « Une seule » se vérifie : `createTargetCandidate` en portait une seconde,
+    aveugle au canal, que seule la réécriture du champ par l'adaptateur rendait
+    inoffensive — la documentation, elle, désignait la candidate comme le cas
+    primaire de `feedbackRole`, ce qui était structurellement impossible.
+
     Une couleur inventée dirait à l'utilisateur qu'il va faire autre chose que
     ce qu'il fait : un canal ou une région inconnus se refusent."""
 
@@ -608,9 +783,17 @@ def test_the_contract_owns_the_colour_rule_and_the_channel_comes_first(tmp_path)
         absent:C.feedbackRole('body'),
         tokens:C.FEEDBACK_TOKENS,
         roles:C.FEEDBACK,
-        /* La candidate porte le cas primaire, et les deux s'accordent. */
+        /* La candidate ne porte **aucune** couleur : elle ne connaît pas le
+           canal, donc elle ne peut pas répondre à la question. Elle en portait
+           une — `region===body ? body : zone` — qui rendait « jaune » là où
+           l'écran affichait « rouge », et que rien n'exerçait. */
         candidate:['body','edge'].map(region=>C.createTargetCandidate({region,
           zone:region==='edge'?'top':null,boundsPx:{x:0,y:0,w:10,h:10}}).feedback),
+        candidateKeys:Object.keys(C.createTargetCandidate({region:'body',
+          boundsPx:{x:0,y:0,w:10,h:10}})).includes('feedback'),
+        /* Et la seule règle qui reste sait, elle, distinguer les deux cas que
+           la copie confondait : le même coin, deux canaux, deux couleurs. */
+        corner:['primary','secondary'].map(ch=>C.feedbackRole('corner',ch)),
         badChannel:refused(()=>C.feedbackRole('body','middle')),
         badRegion:refused(()=>C.feedbackRole('milieu','primary')),
       });
@@ -618,7 +801,9 @@ def test_the_contract_owns_the_colour_rule_and_the_channel_comes_first(tmp_path)
     assert result["primary"] == ["body", "zone", "zone"]
     assert result["secondary"] == ["secondary", "secondary", "secondary"]
     assert result["absent"] == "body", "canal absent = primaire (règle d'absence)"
-    assert result["candidate"] == ["body", "zone"]
+    assert result["candidate"] == [None, None], "une candidate ne décide pas d'une couleur"
+    assert result["candidateKeys"] is False, "le champ est retiré, pas laissé vide"
+    assert result["corner"] == ["zone", "secondary"]
     assert result["roles"] == {"BODY": "body", "ZONE": "zone", "SECONDARY": "secondary"}
     assert result["tokens"]["body"]["cssVar"] == "--bh-feedback-body"
     assert result["tokens"]["zone"]["cssVar"] == "--bh-feedback-zone"
@@ -1014,6 +1199,167 @@ def test_the_preview_can_be_switched_off_without_switching_off_the_resolution(tm
     assert result["settingExists"] is True, "décision 24 : le réglage est au contrat"
     # L'assistance se borne au lieu de se refuser : c'est un réglage stocké.
     assert result["assistance"] == [0, 1, 1]
+
+
+def test_a_disabled_control_is_never_targeted_published_or_drawn(tmp_path):
+    """**Décision 3, et RÈGLE ZÉRO.** « Une candidate qui ne s'actionne pas
+    n'appelle aucun retour visuel » : le contrat l'écrit noir sur blanc et le
+    nomme une obligation du consommateur. `actionable` servait pourtant
+    uniquement à *classer* — il n'y avait d'`if` nulle part. Un bouton
+    désactivé seul sous un doigt qui pince se résolvait à d=0, se publiait à
+    `targets()` et recevait un cadre bleu avec son nom. Un retour visuel qui
+    promet une action impossible est pire que pas de retour du tout, et il
+    aurait laissé la Slice 06 ouvrir une capture dessus.
+
+    Les trois refus du module sont du produit, pas de la théorie :
+    `button.sc-view-reset:disabled` existe dans la page de scène."""
+
+    result = run_node(tmp_path, BROWSER + """
+      const shot=()=>[previews().length,interaction.targets().length];
+      const probe=el=>{global.page=[el];
+        frame([token(1,140,115)],[contact(1,'pinching')]);
+        const seen=shot();
+        interaction.clear();
+        return seen};
+      const off=button({left:100,top:100,width:80,height:30},'Réinitialiser');
+      off.disabled=true;
+      const aria=button({left:100,top:100,width:80,height:30},'Aria');
+      aria.setAttribute('aria-disabled','true');
+      const inside=button({left:100,top:100,width:80,height:30},'Inerte');
+      node({sel:['[inert]']}).appendChild(inside);
+      /* Et sous contact : une capture ne peut pas s'ouvrir sur ce qui ne
+         s'actionne pas, donc la cible ne se fige pas non plus. */
+      const pressed=(()=>{global.page=[off];
+        frame([token(1,140,115)],[contact(1,'pressed')]);
+        const seen=shot();interaction.clear();return seen})();
+      /* Le voisin actionnable, lui, est visé : la porte écarte la candidate,
+         elle n'éteint pas la résolution. */
+      const live=button({left:100,top:100,width:80,height:30},'Activer');
+      global.page=[off,live];
+      frame([token(1,140,115)],[contact(1,'pinching')]);
+      const both=[previews().length,interaction.targets().length,
+        previews()[0]&&previews()[0].children[1].textContent];
+      interaction.clear();
+      out({disabled:probe(off),aria:probe(aria),inert:probe(inside),pressed,both});
+    """)
+    # Rien de dessiné, et rien de publié : la Slice 06 ne le voit pas non plus.
+    assert result["disabled"] == [0, 0]
+    assert result["aria"] == [0, 0]
+    assert result["inert"] == [0, 0]
+    assert result["pressed"] == [0, 0]
+    # La porte écarte une candidate, elle n'éteint pas la visée.
+    assert result["both"] == [1, 1, "Activer"]
+
+
+def test_the_preview_refuses_on_its_own_what_it_cannot_promise(tmp_path):
+    """L'aperçu est le **consommateur** que le contrat nomme, et il doit tenir
+    ses deux obligations sans dépendre de qui l'appelle — le résolveur est une
+    porte, pas une excuse : la Slice 06 et les tests dessinent aussi par ici.
+
+    Deux refus. Une candidate non actionnable ne se dessine pas (décision 3).
+    Et une couleur qu'on ne sait pas nommer ne se dessine pas non plus : le
+    dessin lisait `target.feedback || body`, donc un descripteur sans champ —
+    exactement celui que produit la fabrique du contrat depuis qu'elle n'en
+    porte plus — se serait dessiné « corps normal », en bleu, pendant qu'un
+    clic droit était visé. Le rôle se **redemande** au contrat, avec le canal,
+    et un refus ne se dessine pas plutôt que de retomber sur une couleur."""
+
+    result = run_node(tmp_path, BROWSER + """
+      interaction.clear();
+      const P=require(TARGET_PATH).createTargetPreview();
+      const t=extra=>Object.assign({handTrackId:9,channel:'primary',region:'body',
+        zone:null,boundsPx:{x:0,y:0,w:40,h:20},actionable:true,locked:false,
+        name:'X',radiusPx:4},extra||{});
+      const draw=extra=>{P.render([t(extra)]);
+        const el=previews()[0];
+        const seen=[previews().length,el?el.attrs['data-feedback']:null];
+        P.render([]);return seen};
+      out({
+        actionable:draw({}),
+        /* Décision 3 : le consommateur nommé la tient lui aussi. */
+        notActionable:draw({actionable:false}),
+        /* Sans champ `feedback`, le rôle vient de `feedbackRole(région, canal)`
+           — c'est le canal qui décide, et c'est tout l'écart entre jaune et
+           rouge sur un coin. */
+        derivedBody:draw({feedback:null}),
+        derivedZone:draw({feedback:null,region:'corner',zone:'top_left'}),
+        derivedSecondary:draw({feedback:null,channel:'secondary',
+          region:'corner',zone:'top_left'}),
+        /* Région ou canal illisibles : refus, pas de repli en bleu. */
+        badRegion:draw({feedback:null,region:'milieu'}),
+        badChannel:draw({feedback:null,channel:'milieu'}),
+        empty:[previews().length,P.size()],
+      });
+    """)
+    assert result["actionable"] == [1, "body"]
+    assert result["notActionable"] == [0, None]
+    assert result["derivedBody"] == [1, "body"]
+    assert result["derivedZone"] == [1, "zone"]
+    # Le cas que la copie aveugle au canal rendait « zone » : un coin au clic
+    # droit est rouge. Sans la dérivation, il se serait dessiné en bleu.
+    assert result["derivedSecondary"] == [1, "secondary"]
+    assert result["badRegion"] == [0, None], "pas de couleur inventée"
+    assert result["badChannel"] == [0, None]
+    assert result["empty"] == [0, 0]
+
+
+def test_the_legacy_hover_outline_follows_an_intention_not_a_tracked_hand(tmp_path):
+    """**Décision 3 tenue à l'écran, pas seulement dans le nouveau mécanisme.**
+    Le contour hérité (`jarvis-hand-hover`) s'ajoutait pour tout jeton suivi
+    au-dessus d'un élément interactif : pas de pincement, pas de geste, aucune
+    intention. Une main qui traverse la page entourait donc chaque bouton au
+    passage — exactement le curseur permanent que la décision 3 refuse. La
+    preuve « aucun élément d'aperçu dans l'arbre » ne disait rien de lui :
+    elle ne parle que du nouvel aperçu.
+
+    Deux conditions désormais, et la seconde vient de la décision 23 : la main
+    a une intention, **et** l'aperçu n'entoure pas déjà cet élément. Le contour
+    porte la couleur d'accent ; posé autour d'un objet déjà cerclé de bleu, de
+    jaune ou de rouge, il ajouterait une quatrième couleur à une règle où la
+    couleur *est* le sens.
+
+    Ce qui ne bouge pas : la mesure. Les `pointerover`/`mouseover`, les fentes
+    de pointeur et le clic sont ceux d'avant — c'est de la présentation."""
+
+    result = run_node(tmp_path, BROWSER + """
+      const b=button({left:100,top:100,width:80,height:30},'Activer');
+      global.page=[b];
+      const lit=()=>b.classes.has(C.DOM.hoverClass);
+      const seen={};
+      /* Suivie, au-dessus du bouton, sans intention : rien. */
+      frame([token(1,140,115)],[contact(1,'open')]);
+      seen.tracked=[lit(),previews().length];
+      /* Aucun contact publié du tout : rien non plus. */
+      frame([token(1,140,115)],[]);
+      seen.noContact=lit();
+      /* Intention, aperçu allumé : c'est l'aperçu qui dit ce qui est visé. */
+      frame([token(1,140,115)],[contact(1,'pinching')]);
+      seen.intentWithPreview=[lit(),previews().length];
+      /* Aperçu éteint (décision 24) : le chemin de clic hérité garde son
+         repère, et seulement sous intention. */
+      api.targetPreview(false);
+      frame([token(1,140,115)],[contact(1,'pinching')]);
+      seen.intentWithoutPreview=[lit(),previews().length];
+      frame([token(1,140,115)],[contact(1,'open')]);
+      seen.backToTracked=lit();
+      frame([token(1,140,115)],[contact(1,'pressed')]);
+      seen.pressed=lit();
+      interaction.clear();
+      seen.afterClear=lit();
+      api.targetPreview(true);
+      out(seen);
+    """)
+    # Suivie sans intention : ni contour, ni aperçu. C'est la décision 3.
+    assert result["tracked"] == [False, 0]
+    assert result["noContact"] is False
+    # Sous intention, l'aperçu parle — et il parle seul.
+    assert result["intentWithPreview"] == [False, 1]
+    # Aperçu coupé : le contour hérité reprend son rôle, sous intention.
+    assert result["intentWithoutPreview"] == [True, 0]
+    # Et il repart avec l'intention, sans attendre que la main s'en aille.
+    assert result["backToTracked"] is False
+    assert result["pressed"] is True
+    assert result["afterClear"] is False
 
 
 def test_a_gesture_suppressed_during_a_manipulation_says_so_on_screen(tmp_path):

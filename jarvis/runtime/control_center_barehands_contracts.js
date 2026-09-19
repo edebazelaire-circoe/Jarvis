@@ -609,7 +609,12 @@
      parce que « clic droit » est une intention et non une partie du cadre : un
      coin visé au pouce-majeur est rouge, pas jaune. Elle vit ici et non chez
      le consommateur pour que le moteur, l'aperçu et les réglages lisent la
-     même règle — `createTargetCandidate.feedback` en est le cas primaire.
+     même règle, et elle en est la **seule** source : `createTargetCandidate`
+     en portait une seconde copie, aveugle au canal, qui rendait « jaune » là
+     où l'écran affichait « rouge ». Une candidate ne connaît pas le canal — le
+     canal appartient à la main, pas à la partie du cadre qu'elle vise — donc
+     elle ne porte plus de couleur du tout, et qui dessine appelle cette
+     fonction avec la région **et** le canal.
 
      Canal absent = `primary` (règle d'absence) ; canal ou région **inconnus**
      se refusent : une couleur inventée dirait à l'utilisateur qu'il va faire
@@ -666,7 +671,11 @@
       representation:source.representation===undefined||source.representation===null?null:String(source.representation),
       /* Distance du jeton à la candidate, en pixels de la fenêtre. */
       distancePx:Math.max(0,finiteOr(source.distancePx,0)),
-      feedback:source.region===REGION.BODY?FEEDBACK.BODY:FEEDBACK.ZONE,
+      /* Pas de `feedback` ici, à dessein (décision 23) : le rôle de couleur
+         dépend du **canal**, qu'une candidate ne porte pas. Le champ existait
+         et valait `region===BODY ? body : zone` — une seconde règle, aveugle
+         au canal, qui rendait jaune un coin visé au clic droit. C'est
+         `feedbackRole(region, canal)` qui le décide, et lui seul. */
     });
   }
   /* Zones de manipulation : seules ces représentations en ont (décision D3). */

@@ -234,14 +234,35 @@
     if(side==='top')return {left:0,top:0,width:bounds.w,height:band};
     if(side==='bottom')return {left:0,top:bounds.h-band,width:bounds.w,height:band};
     if(side==='left')return {left:0,top:0,width:band,height:bounds.h};
-    return {left:bounds.w-band,top:0,width:band,height:bounds.h};
+    if(side==='right')return {left:bounds.w-band,top:0,width:band,height:bounds.h};
+    /* Une zone qu'on ne sait pas lire ne se dessine pas. Le dernier `return`
+       était inconditionnel : un côté inconnu — ou absent — ressortait en
+       « bord droit », c'est-à-dire une réponse **assurée et fausse** là où le
+       module se donne pour règle de refuser. Le seul appel vivant est gardé en
+       amont, donc c'était latent ; mais une fonction exportée qui ment est un
+       défaut qui attend son second appelant. */
+    return null;
   }
 
   const px=value=>`${Math.round(Number(value)*10)/10}px`;
 
+  /* Le rôle de couleur d'une cible, **demandé au contrat** plutôt que lu d'un
+     champ facultatif. `target.feedback||FEEDBACK.BODY` retombait en bleu dès
+     que le champ manquait : une visée au clic droit se dessinait alors
+     « corps normal », c'est-à-dire qu'elle annonçait autre chose que ce qui
+     allait se passer. La candidate du contrat ne porte plus de couleur (elle
+     ne connaît pas le canal) ; `feedbackRole(région, canal)` la connaît, et il
+     **refuse** une région ou un canal inconnus. Un refus ne se dessine pas :
+     `null` ici veut dire « rien à montrer », pas « bleu par défaut ». */
+  const feedbackOf=target=>{
+    if(target.feedback)return {role:String(target.feedback)};
+    try{return {role:BH.feedbackRole(target.region,target.channel)}}
+    catch(error){return {error}}
+  };
+
   function createTargetPreview(){
     const drawn=new Map();
-    let warned=false;
+    let warned=false,warnedFeedback=false,warnedZone=false;
     const host=()=>(typeof document!=='undefined'&&document.getElementById
       ?document.getElementById(BH.DOM.rootId):null);
     const drop=key=>{
@@ -269,6 +290,26 @@
         const live=new Set();
         for(const target of targets){
           if(!target||!target.boundsPx)continue;
+          /* **Décision 3.** Une candidate non actionnable n'appelle aucun
+             retour visuel, et le contrat nomme l'aperçu comme le consommateur
+             qui le doit (`createTargetCandidate`, champ `actionable`). Le
+             résolveur ne lui en envoie plus — c'est là que la porte principale
+             est tenue — mais l'obligation est écrite ici, donc elle est tenue
+             ici aussi : ce module se dessine à la demande de qui l'appelle, et
+             un bouton désactivé entouré de bleu promet une action qui
+             n'arrivera pas. */
+          if(target.actionable===false)continue;
+          /* Une couleur qu'on ne sait pas nommer ne se dessine pas : elle
+             dirait à l'utilisateur qu'il va faire autre chose que ce qu'il
+             fait. Le refus se dit — une fois, la boucle d'images n'est pas un
+             journal — avec la raison telle que le contrat l'a donnée. */
+          const role=feedbackOf(target);
+          if(!role.role){
+            if(!warnedFeedback){warnedFeedback=true;
+              console.warn('[barehands] aperçu de cible sans rôle de couleur lisible : rien ne sera dessiné pour elle',
+                (role.error&&role.error.message)||role.error)}
+            continue;
+          }
           const key=`${target.handTrackId}|${target.channel}`;
           live.add(key);
           let entry=drawn.get(key);
@@ -293,13 +334,20 @@
           entry.box.style.width=px(bounds.w);
           entry.box.style.height=px(bounds.h);
           entry.box.style.borderRadius=px(Math.min(Number(target.radiusPx)||0,Math.min(bounds.w,bounds.h)/2));
-          entry.box.setAttribute('data-feedback',String(target.feedback||BH.FEEDBACK.BODY));
+          entry.box.setAttribute('data-feedback',role.role);
           entry.box.setAttribute('data-region',String(target.region||BH.REGION.BODY));
           entry.box.setAttribute('data-locked',target.locked?'1':'0');
           const zoned=target.region!==BH.REGION.BODY&&BH.zoneSides(target.zone).length>0;
-          entry.zone.style.display=zoned?'block':'none';
-          if(zoned){
-            const rect=zoneRect(target);
+          /* `zoneRect` refuse une zone qu'il ne sait pas lire : la barre reste
+             alors cachée, et le cadre seul dit ce qui est visé. Un refus dans
+             une boucle d'images se dit une fois — c'est un défaut, pas une
+             normale : le résolveur a retenu une zone que le dessin ne sait pas
+             placer. */
+          const rect=zoned?zoneRect(target):null;
+          if(zoned&&!rect&&!warnedZone){warnedZone=true;
+            console.warn('[barehands] zone de cible illisible au dessin : barre masquée',String(target.zone))}
+          entry.zone.style.display=rect?'block':'none';
+          if(rect){
             entry.zone.style.left=px(rect.left);entry.zone.style.top=px(rect.top);
             entry.zone.style.width=px(rect.width);entry.zone.style.height=px(rect.height);
             entry.zone.classList.toggle('jh-corner',!!rect.corner);
