@@ -1003,9 +1003,12 @@ def test_the_engine_refuses_to_be_built_without_the_rules_it_must_not_rewrite(tm
         halfGeometry:refused(()=>B.createInteractionEngine({contracts:C,
           geometry:{manipulateBox(){},resizable(){},sameBox(){}}})),
         built:!!B.createInteractionEngine({contracts:C,geometry:G}),
-        /* Et le moteur n'a pas sa propre table des côtés : il lit celle du
-           contrat, sous son nom. */
-        source:!/SIDE_AXIS\\s*=\\s*Object\\.freeze/.test(require('fs')
+        /* Et le moteur n'a pas sa propre table des côtés. Le garde ne cherche
+           plus le **nom** `SIDE_AXIS` — une table renommée `AXIS_OF`, ou
+           écrite sans `Object.freeze`, passait tranquillement : il cherche la
+           **forme**, c'est-à-dire un côté de cadre associé à un axe, qui est
+           tout ce qu'une seconde copie pourrait être. */
+        source:!/\\b(left|right|top|bottom)\\b\\s*:\\s*['"]?[xy]['"]?/.test(require('fs')
           .readFileSync(SCRIPT_PATH,'utf8').split('Moteur d’interaction et captures')[1]||''),
       });
     """)
@@ -1014,6 +1017,388 @@ def test_the_engine_refuses_to_be_built_without_the_rules_it_must_not_rewrite(tm
         assert result[case] == "RangeError", case
     assert result["built"] is True
     assert result["source"] is True, "le moteur a redérivé la table des côtés"
+
+
+# ------------------------------------------------ suspension et reprise
+
+
+#: Les cinq façons dont une manipulation **saute un tour** alors que son plan
+#: survit. Chacune laissait la course de la main s'accumuler pour l'appliquer
+#: d'un coup à la reprise.
+SUSPENSIONS = ("same_zone", "neutralized", "not_resizable", "viewport", "lost")
+
+
+def test_a_plan_that_skipped_a_frame_is_rebased_when_it_resumes(tmp_path):
+    """**Décision 19, et son second déclencheur.** La signature dit *qui tient
+    quoi* : elle attrape une main qui entre, une main qui se retire, un axe
+    neutralisé, une main re-détectée sous une **autre** identité. Elle ne peut
+    pas dire « ce plan n'a pas tourné à l'image précédente ».
+
+    Or un plan survit à cinq suspensions au moins — la même zone prise deux fois
+    (décision 15), les axes tous neutralisés, une forme qui ne se redimensionne
+    pas, une fenêtre de scène non mesurable, et surtout **une main que le suivi
+    perd le temps d'un clignement puis retrouve au même identifiant**, ailleurs.
+    Pendant ce temps la main continue de voyager ; sans rebasage à la reprise,
+    tout ce voyage s'appliquait en une image, et le cadre se posait là où il
+    tombait.
+
+    Le test mesure donc l'image de la **reprise** : elle doit être exactement la
+    dernière image conduite, comme le test de la décision 19 mesure l'image de
+    la transition."""
+
+    result = run_node(tmp_path, FIXTURE + """
+      const run=(how)=>{
+        const shape=how==='not_resizable'?'point':'window';
+        const world=makeWorld({win:{box:shape==='point'?{x:0,y:0,w:6,h:6}:{x:0,y:0,w:64,h:40},
+          representation:shape}});
+        let vp={scale:6};
+        world.api.viewport=()=>vp;
+        const neutral={mode:null,axes:[],byHand:{},reason:'axes_all_neutralized'};
+        const contracts=how==='neutralized'
+          ?Object.assign({},C,{combineCaptures:(a,b)=>b?neutral:C.combineCaptures(a,b)})
+          :C;
+        const e=B.createInteractionEngine({contracts,geometry:G,world:world.api});
+        const solo=[tgt(1,'win','edge','right')];
+        const pair=[solo[0],tgt(2,'win','edge',how==='same_zone'?'right':'left')];
+        const seen=[];
+        const frame=(now,tokens,targets,events,contacts)=>{
+          const step=e.update({now,tokens,targets,events:events||[],contacts:contacts||[]});
+          seen.push({previews:world.log.previews.length,
+            box:world.log.previews.length?boxes(world.log).pop():null,
+            refusals:step.refusals.map(r=>r.reason)});
+        };
+        /* Une main tient le bord droit et déplace le cadre de 60 px = 10 unités. */
+        frame(0,[tok(1,400,300)],solo,[ev(1,'down',400,300)],[held(1,'undecided')]);
+        frame(16,[tok(1,460,300)],solo,[],[held(1,'drag')]);
+        frame(32,[tok(1,520,300)],solo,[],[held(1,'drag')]);
+        const driven=seen[seen.length-1];
+        /* Puis la suspension, pendant que la main voyage de 360 px — 60 unités,
+           un cinquième de la zone sûre. */
+        const away=[700,880];
+        if(how==='lost'){
+          for(const k of [0,1,2])frame(48+16*k,[],[],[],[]);
+        }else if(how==='viewport'){
+          vp=null;
+          frame(48,[tok(1,700,300)],solo,[],[held(1,'drag')]);
+          frame(64,[tok(1,880,300)],solo,[],[held(1,'drag')]);
+          frame(80,[tok(1,880,300)],solo,[],[held(1,'drag')]);
+        }else{
+          frame(48,[tok(1,520,300),tok(2,530,300)],pair,
+            [ev(2,'down',530,300)],[held(1,'drag'),held(2,'undecided')]);
+          for(const k of [0,1])frame(64+16*k,[tok(1,away[k],300),tok(2,530,300)],pair,
+            [],[held(1,'drag'),held(2,'drag')]);
+        }
+        const suspended=seen[seen.length-1];
+        /* La reprise, **sans que la main ne bouge** : l'image doit être la même. */
+        if(how==='lost')frame(96,[tok(1,880,300)],solo,[],[held(1,'drag')]);
+        else if(how==='viewport'){vp={scale:6};frame(96,[tok(1,880,300)],solo,[],[held(1,'drag')])}
+        else frame(96,[tok(1,880,300),tok(2,530,300)],solo,
+          [ev(2,'up',530,300)],[held(1,'drag')]);
+        const resumed=seen[seen.length-1];
+        /* Et elle repart de là où elle est : 60 px de plus, 10 unités de plus. */
+        frame(112,[tok(1,940,300)],solo,[],[held(1,'drag')]);
+        const after=seen[seen.length-1];
+        return {driven:driven.box,duringRefusals:suspended.refusals,
+          frozen:suspended.previews===driven.previews,
+          resumed:resumed.box,quiet:resumed.previews===driven.previews,
+          after:after.box};
+      };
+      const all={};
+      for(const how of ['same_zone','neutralized','not_resizable','viewport','lost'])all[how]=run(how);
+      out(all);
+    """)
+    reasons = {"same_zone": ["same_zone_rejected"], "neutralized": ["axes_all_neutralized"],
+               "not_resizable": ["frame_not_resizable"], "viewport": ["viewport_unavailable"],
+               # Un clignement du suivi n'est pas un refus : il ne dure qu'une
+               # image ou deux, et une ligne qui clignote à l'écran dirait moins
+               # que le jeton de main qui disparaît déjà.
+               "lost": []}
+    for how in SUSPENSIONS:
+        case = result[how]
+        size = [6, 6] if how == "not_resizable" else [64, 40]
+        assert case["driven"] == [10, 0] + size, (how, case["driven"])
+        assert case["duringRefusals"] == reasons[how], (how, case["duringRefusals"])
+        assert case["frozen"] is True, f"{how} : le cadre a bougé pendant la suspension"
+        # L'image de la reprise est **identique** : rien n'a été publié, donc
+        # rien n'a sauté.
+        assert case["resumed"] == case["driven"], f"{how} : le cadre a sauté à la reprise"
+        assert case["quiet"] is True, f"{how} : la reprise a publié un aperçu"
+        # Puis la suite repart d'où la main est, pas d'où elle était.
+        assert case["after"] == [20, 0] + size, (how, case["after"])
+
+
+def test_a_hand_lost_for_a_blink_freezes_the_frame_instead_of_teleporting_it(tmp_path):
+    """La suspension la plus banale, et la seule que l'utilisateur rencontre
+    vraiment : la caméra cligne au milieu d'un glissement. La capture survit
+    (`lostGraceMs`), la main revient **sous le même identifiant de piste** —
+    donc la signature ne change pas — mais 440 px plus loin.
+
+    Sans le second déclencheur, ces 440 px devenaient 68 unités en une image. Ce
+    test les mesure en unités de scène pour que le chiffre reste lisible."""
+
+    result = run_node(tmp_path, FIXTURE + """
+      const world=makeWorld({win:{box:{x:0,y:0,w:64,h:40},representation:'window'}});
+      const e=engineOf({world:world.api});
+      const solo=[tgt(1,'win','edge','right')];
+      e.update({now:0,tokens:[tok(1,400,300)],targets:solo,
+        events:[ev(1,'down',400,300)],contacts:[held(1,'undecided')]});
+      e.update({now:16,tokens:[tok(1,460,300)],targets:solo,events:[],contacts:[held(1,'drag')]});
+      const plansBefore=e.plans().map(p=>p.signature);
+      /* Trois images sans main, puis la même piste, 440 px plus loin. */
+      for(const k of [0,1,2])e.update({now:32+16*k,tokens:[],targets:[],events:[],contacts:[]});
+      const alive=e.capturedHands();
+      const back=e.update({now:80,tokens:[tok(1,900,300)],targets:solo,
+        events:[],contacts:[held(1,'drag')]});
+      const plansAfter=e.plans().map(p=>p.signature);
+      out({plansBefore,alive,plansAfter,
+        previews:world.log.previews.length,
+        refusals:back.refusals.map(r=>r.reason),
+        types:back.interactions.map(i=>i.type)});
+    """)
+    # La capture a survécu au clignement, et la signature est restée la même :
+    # c'est précisément ce qu'elle ne peut pas voir.
+    assert result["alive"] == [1]
+    assert result["plansAfter"] == result["plansBefore"] == ["move|xy|1:right"]
+    # Rien n'a été publié à la reprise : ni aperçu, ni déplacement, ni refus.
+    assert result["previews"] == 0, "le cadre a téléporté de 68 unités"
+    assert result["types"] == [] and result["refusals"] == []
+
+
+def test_a_one_frame_dropout_during_a_two_hand_resize_says_nothing_and_moves_nothing(tmp_path):
+    """Une image sans l'une des deux mains n'est pas un geste : c'est un trou du
+    suivi. Le cadre ne bouge donc **pas du tout** pendant ce trou — ni de
+    travers, ce qu'il faisait quand le côté de la main absente servait encore
+    d'ancre, ni en publiant pour une main qui n'a pas de paume, ce qui posait
+    `barehands_interaction_invalid` à l'écran, mot pour mot.
+
+    RÈGLE ZÉRO, dans l'autre sens : un code interne affiché à l'utilisateur ne
+    dit rien de ce qui se passe. Ici il n'y a rien à dire — la main revient à
+    l'image suivante — et le silence est la bonne réponse, à condition que rien
+    ne bouge pendant ce temps."""
+
+    result = run_node(tmp_path, FIXTURE + """
+      const world=makeWorld({win:{box:{x:-32,y:-20,w:64,h:40},representation:'window'}});
+      const dom=makeDom([]);
+      const e=engineOf({world:world.api,dom:dom.api});
+      const targets=[tgt(1,'win','edge','left'),tgt(2,'win','edge','right')];
+      const both=[held(1,'drag'),held(2,'drag')];
+      e.update({now:0,tokens:[tok(1,400,300),tok(2,900,300)],targets,
+        events:[ev(1,'down',400,300),ev(2,'down',900,300)],
+        contacts:[held(1,'undecided'),held(2,'undecided')]});
+      e.update({now:16,tokens:[tok(1,340,300),tok(2,960,300)],targets,events:[],contacts:both});
+      e.update({now:32,tokens:[tok(1,280,300),tok(2,1020,300)],targets,events:[],contacts:both});
+      const widened=boxes(world.log).pop();
+      const previews=world.log.previews.length;
+      /* La main 2 manque une image. La main 1, elle, continue de voyager. */
+      const blink=e.update({now:48,tokens:[tok(1,220,300)],targets,events:[],contacts:both});
+      const during=world.log.previews.length===previews?widened:boxes(world.log).pop();
+      /* Elle revient là où elle serait allée : le cadre reprend **de là**. */
+      const resume=e.update({now:64,tokens:[tok(1,220,300),tok(2,1080,300)],targets,
+        events:[],contacts:both});
+      const resumed=world.log.previews.length===previews?widened:boxes(world.log).pop();
+      e.update({now:80,tokens:[tok(1,160,300),tok(2,1140,300)],targets,events:[],contacts:both});
+      out({widened,during,resumed,after:boxes(world.log).pop(),
+        blinkRefusals:blink.refusals.map(r=>r.reason),
+        resumeRefusals:resume.refusals.map(r=>r.reason),
+        blinkTypes:blink.interactions.map(i=>i.type),
+        dom:[...new Set(dom.log.map(d=>d.type))]});
+    """)
+    assert result["widened"] == [-42, -20, 84, 40]
+    # Rien pendant le trou : pas de redimensionnement de travers, pas d'événement.
+    assert result["during"] == result["widened"], "le cadre s'est redimensionné de travers"
+    assert result["blinkTypes"] == []
+    # Et surtout : pas un code interne à l'écran.
+    assert result["blinkRefusals"] == [], result["blinkRefusals"]
+    assert "barehands_interaction_invalid" not in result["blinkRefusals"]
+    # La reprise ne saute pas, puis les deux mains écartent de nouveau.
+    assert result["resumed"] == result["widened"], "le cadre a sauté au retour de la main"
+    assert result["resumeRefusals"] == []
+    assert result["after"] == [-52, -20, 104, 40], result["after"]
+    assert result["dom"] == ["resize"]
+
+
+def test_a_scene_that_cannot_be_measured_refuses_instead_of_moving_six_times_too_far(tmp_path):
+    """La fenêtre de la scène est ce qui convertit les pixels en unités (~6 px
+    par unité en 1080p). Absente, `pxToUnits` retombait à 1:1 **en silence** :
+    60 px de paume devenaient 60 unités au lieu de 10, un cinquième de la zone
+    sûre pour un geste de trois centimètres.
+
+    Un repli silencieux sur une mauvaise échelle est pire qu'un refus : le geste
+    part six fois trop loin et l'utilisateur ne sait pas pourquoi."""
+
+    result = run_node(tmp_path, FIXTURE + """
+      const run=(viewport)=>{
+        const world=makeWorld({win:{box:{x:0,y:0,w:64,h:40},representation:'window'}});
+        world.api.viewport=viewport;
+        const e=engineOf({world:world.api});
+        const solo=[tgt(1,'win','edge','right')];
+        e.update({now:0,tokens:[tok(1,400,300)],targets:solo,
+          events:[ev(1,'down',400,300)],contacts:[held(1,'undecided')]});
+        e.update({now:16,tokens:[tok(1,460,300)],targets:solo,events:[],contacts:[held(1,'drag')]});
+        const step=e.update({now:32,tokens:[tok(1,520,300)],targets:solo,events:[],contacts:[held(1,'drag')]});
+        e.update({now:48,tokens:[],targets:[],events:[ev(1,'up',520,300)],contacts:[]});
+        return {refusals:step.refusals.map(r=>r.reason),
+          box:world.log.previews.length?boxes(world.log).pop():null,
+          commits:world.log.commits.length};
+      };
+      out({good:run(()=>({scale:6})),
+        missing:run(()=>null),
+        zero:run(()=>({scale:0})),
+        absent:run(undefined)});
+    """)
+    assert result["good"]["box"] == [10, 0, 64, 40] and result["good"]["refusals"] == []
+    for how in ("missing", "zero", "absent"):
+        assert result[how]["refusals"] == ["viewport_unavailable"], how
+        assert result[how]["box"] is None, f"{how} : le cadre a bougé sans échelle"
+        assert result[how]["commits"] == 0, f"{how} : une géométrie fausse est partie à Core"
+    # Un monde qui **lance** n'est pas un cas de ce moteur : la page enveloppe
+    # chaque appel de scène (`sceneCall`) et rend `null` — qui tombe dans le
+    # refus ci-dessus, par le même chemin.
+
+
+def test_two_hands_on_a_move_only_star_let_the_first_one_keep_moving_it(tmp_path):
+    """**Décision 8 contre décision D3**, et le cas que la décision 8 seule
+    laissait muet. Deux corps ne déplacent pas une fenêtre : chaque main y fait
+    son interaction de contenu, plus bas. Sur une étoile `point` ou `signal`, ce
+    raisonnement tombe — son corps n'est pas du contenu, c'est sa **seule**
+    prise, et la boucle de contenu la saute elle aussi. Le résultat était un
+    cadre figé, aucune interaction, et **aucun refus** : l'étoile qu'une main
+    traînait s'arrêtait net, sans un mot.
+
+    Ce qui est décidé ici : la **première** main (la plus ancienne à la
+    descente) continue de déplacer l'étoile, et la seconde se dit à l'écran.
+    Une étoile `point` fait six unités ; deux mains dessus, c'est presque
+    toujours la seconde qui arrive par accident sur un geste en cours — et
+    « l'attraper à deux mains et tirer » est la première chose qu'on essaie sur
+    une forme dont on vient d'apprendre qu'elle ne se redimensionne pas. Geler
+    le geste en cours punirait la main qui avait raison ; le refus, lui,
+    explique."""
+
+    result = run_node(tmp_path, FIXTURE + """
+      const world=makeWorld({star:{box:{x:0,y:0,w:6,h:6},representation:'point'}});
+      const dom=makeDom([]);
+      const e=engineOf({world:world.api,dom:dom.api});
+      const body=(id)=>Object.assign(tgt(id,'star','body',null),{representation:'point'});
+      const solo=[body(1)];
+      const pair=[body(1),body(2)];
+      e.update({now:0,tokens:[tok(1,400,300)],targets:solo,
+        events:[ev(1,'down',400,300)],contacts:[held(1,'undecided')]});
+      e.update({now:16,tokens:[tok(1,460,300)],targets:solo,events:[],contacts:[held(1,'drag')]});
+      e.update({now:32,tokens:[tok(1,520,300)],targets:solo,events:[],contacts:[held(1,'drag')]});
+      const alone=boxes(world.log).pop();
+      /* La seconde main se pose sur la même étoile. */
+      const joined=e.update({now:48,tokens:[tok(1,520,300),tok(2,524,304)],targets:pair,
+        events:[ev(2,'down',524,304)],contacts:[held(1,'drag'),held(2,'undecided')]});
+      /* La première continue de tirer ; la seconde ne tire rien. */
+      const held2=e.update({now:64,tokens:[tok(1,580,300),tok(2,524,304)],targets:pair,
+        events:[],contacts:[held(1,'drag'),held(2,'drag')]});
+      const together=boxes(world.log).pop();
+      const release=e.update({now:80,tokens:[tok(1,580,300),tok(2,524,304)],targets:pair,
+        events:[ev(2,'up',524,304)],contacts:[held(1,'drag')]});
+      const afterRelease=boxes(world.log).pop();
+      e.update({now:96,tokens:[tok(1,640,300)],targets:solo,events:[],contacts:[held(1,'drag')]});
+      const last=boxes(world.log).pop();
+      e.update({now:112,tokens:[],targets:[],events:[ev(1,'up',640,300)],contacts:[]});
+      out({alone,together,afterRelease,last,
+        joinedRefusals:joined.refusals.map(r=>[r.handTrackId,r.reason]),
+        heldRefusals:held2.refusals.map(r=>r.reason),
+        releaseTypes:release.interactions.map(i=>i.type),
+        moves:[...new Set(held2.interactions.map(i=>i.type))],
+        dom:[...new Set(dom.log.map(d=>d.type))],
+        commits:world.log.commits.map(c=>[c.mode,c.box.x,c.box.y])});
+    """)
+    assert result["alone"] == [10, 0, 6, 6]
+    # La seconde main se dit, et **à chaque image** du maintien — pas seulement
+    # à celle où elle arrive.
+    assert result["joinedRefusals"] == [[2, "star_moves_with_one_hand"]], result["joinedRefusals"]
+    assert result["heldRefusals"] == ["star_moves_with_one_hand"]
+    # Pendant ce temps la première main continue : 60 px de plus, 10 unités.
+    assert result["together"] == [20, 0, 6, 6], result["together"]
+    assert result["moves"] == ["move"]
+    # Le corps d'une étoile n'est jamais du contenu : le double journalise tout
+    # ce qui se publie, et il n'y a là aucune séquence de contenu — la page, elle,
+    # ne dispatche rien pour un `move` ni pour un `click`.
+    assert result["dom"] == ["move", "click"], result["dom"]
+    assert not ({"drag_start", "drag_move", "drag_end", "scroll", "select"} & set(result["dom"]))
+    # Au retrait de la seconde main, le cadre ne saute pas — et la seconde main
+    # n'ayant rien déplacé, son relâchement reste un clic, comme toute prise
+    # refusée.
+    assert result["afterRelease"] == result["together"], "l'étoile a sauté au retrait"
+    assert result["releaseTypes"] == ["click"]
+    assert result["last"] == [30, 0, 6, 6]
+    assert result["commits"] == [["move", 30, 0]]
+
+
+def test_a_disabled_target_never_opens_a_capture(tmp_path):
+    """**Décision 3, en profondeur.** Le résolveur de la Slice 05 est la porte :
+    il ne publie plus rien de non actionnable. Ce refus-ci est donc
+    inatteignable par le chemin réel — il existe parce que le moteur est
+    **injectable**, et que rien ne garantit que son prochain appelant sera ce
+    résolveur-là. Sans lui, un contrôle désactivé recevrait une vraie séquence
+    `pointerdown`/`pointermove`/`pointerup`, et un champ `inert` prendrait le
+    focus.
+
+    L'absence du champ reste crue, elle : « personne n'a rien dit » n'est pas
+    « non »."""
+
+    result = run_node(tmp_path, FIXTURE + """
+      const run=(actionable)=>{
+        const dom=makeDom([]);
+        const e=engineOf({dom:dom.api});
+        const target=Object.assign(tgt(1,null,'body',null),
+          {kind:'button',representation:null,actionable});
+        const step=e.update({now:0,tokens:[tok(1,400,300)],targets:[target],
+          events:[ev(1,'down',400,300)],contacts:[held(1,'undecided')]});
+        e.update({now:16,tokens:[tok(1,440,300)],targets:[target],events:[],contacts:[held(1,'drag')]});
+        e.update({now:32,tokens:[tok(1,480,300)],targets:[target],events:[],contacts:[held(1,'drag')]});
+        const up=e.update({now:48,tokens:[tok(1,480,300)],targets:[],
+          events:[ev(1,'up',480,300)],contacts:[]});
+        return {refusals:step.refusals.map(r=>r.reason),captures:step.captures,
+          dom:dom.log.map(d=>d.type),types:up.interactions.map(i=>i.type)};
+      };
+      out({disabled:run(false),actionable:run(true),unsaid:run(undefined)});
+    """)
+    assert result["disabled"]["refusals"] == ["target_not_actionable"]
+    assert result["disabled"]["captures"] == [] and result["disabled"]["dom"] == []
+    assert result["disabled"]["types"] == [], "un contrôle désactivé a été cliqué"
+    for how in ("actionable", "unsaid"):
+        assert result[how]["refusals"] == [], how
+        assert result[how]["dom"] == ["drag_start", "drag_move", "drag_end"], how
+
+
+def test_two_hands_on_the_same_side_refuse_instead_of_ending_the_session(tmp_path):
+    """L'invariant que `combineCaptures` garantit (décisions 16 et 17, vérifié
+    sur les 64 couples de zones) était gardé ici par une **erreur lancée hors de
+    la boucle d'images** : le contrat qui dérive un jour aurait fini la session
+    de suivi, au lieu de sauter une image.
+
+    C'est exactement la règle que `publish` suit cent soixante-dix lignes plus
+    haut, et que cette tâche a déjà dû réparer trois fois : un refus codé dans
+    une boucle d'images se dit et se saute."""
+
+    result = run_node(tmp_path, FIXTURE + """
+      const world=makeWorld({win:{box:{x:0,y:0,w:64,h:40},representation:'window'}});
+      const broken={mode:'resize',axes:['x'],byHand:{
+        1:{sides:['right'],axes:['x']},2:{sides:['right'],axes:['x']}},reason:null};
+      const contracts=Object.assign({},C,{combineCaptures:(a,b)=>b?broken:C.combineCaptures(a,b)});
+      const e=B.createInteractionEngine({contracts,geometry:G,world:world.api});
+      const targets=[tgt(1,'win','edge','right'),tgt(2,'win','edge','left')];
+      const both=[held(1,'drag'),held(2,'drag')];
+      e.update({now:0,tokens:[tok(1,900,300),tok(2,400,300)],targets,
+        events:[ev(1,'down',900,300),ev(2,'down',400,300)],
+        contacts:[held(1,'undecided'),held(2,'undecided')]});
+      const thrown=refused(()=>e.update({now:16,tokens:[tok(1,960,300),tok(2,340,300)],
+        targets,events:[],contacts:both}));
+      const step=e.update({now:32,tokens:[tok(1,1020,300),tok(2,280,300)],
+        targets,events:[],contacts:both});
+      out({thrown,refusals:step.refusals.map(r=>r.reason),
+        previews:world.log.previews.length,alive:e.capturedHands().sort()});
+    """)
+    assert result["thrown"] is None, "le moteur a terminé la session sur un contrat dérivé"
+    assert result["refusals"] == ["side_held_twice"]
+    assert result["previews"] == 0
+    # Et le suivi continue : les deux captures sont encore là.
+    assert result["alive"] == [1, 2]
 
 
 # ------------------------------------------------------ la chaîne entière
@@ -1201,13 +1586,31 @@ def test_two_real_hands_on_one_frame_resize_it_and_commit_one_geometry(tmp_path)
 #: Le même double de DOM que la Slice 05, augmenté de ce que la Slice 06
 #: consomme : des événements dispatchés qu'on peut relire, et une scène qui
 #: publie ses cadres manipulables.
+#:
+#: Et **augmenté de ce qui fait un élément** : `nodeType`, la chaîne des parents
+#: par `parentElement`, les tailles de défilement, et un `getComputedStyle`
+#: global. Sans elles, `scrollHost` sortait à la première itération, tout
+#: élément était « ne défile pas », et les tests de cette page affirmaient une
+#: sémantique de **glissement** pour des éléments que le produit traite en
+#: **défilement** — le chemin réel de défilement n'était exécuté par aucun test.
+#: Les valeurs suivent le rectangle, comme dans un vrai document : un élément
+#: qui n'a pas plus de contenu que de boîte ne défile pas.
 BROWSER = """
 const registry=[];
 const node=(opts)=>{
-  const o=Object.assign({sel:[],rect:null,id:'',dataset:{},label:''},opts||{});
+  const o=Object.assign({sel:[],rect:null,id:'',dataset:{},label:'',scroll:null},opts||{});
   const classes=new Set();
+  const r=o.rect||{left:0,top:0,width:0,height:0};
+  const s=o.scroll||null;
   const el={children:[],className:'',id:o.id,textContent:o.label,offsetWidth:1,
     sel:o.sel,dataset:o.dataset,attrs:{},parent:null,events:[],
+    nodeType:1,
+    clientWidth:r.width,clientHeight:r.height,
+    scrollWidth:s&&s.width!==undefined?s.width:r.width,
+    scrollHeight:s&&s.height!==undefined?s.height:r.height,
+    scrollLeft:s&&s.left!==undefined?s.left:0,
+    scrollTop:s&&s.top!==undefined?s.top:0,
+    overflow:s?(s.overflow||'auto'):'visible',
     style:{setProperty(k,v){this[k]=v}},
     classList:{add:c=>classes.add(c),remove:c=>classes.delete(c),
       toggle:(c,on)=>{if(on)classes.add(c);else classes.delete(c)},
@@ -1223,9 +1626,14 @@ const node=(opts)=>{
     appendChild(c){c.parent=el;el.children.push(c);return c},
     remove(){if(!el.parent)return;const at=el.parent.children.indexOf(el);
       if(at>=0)el.parent.children.splice(at,1);el.parent=null}};
+  /* `parentElement`, et non `parent` : c'est le nom que remonte la chaîne des
+     ancêtres dans un document, donc c'est celui que le produit lit. */
+  Object.defineProperty(el,'parentElement',{get(){return el.parent}});
   registry.push(el);
   return el;
 };
+global.getComputedStyle=el=>({overflowY:(el&&el.overflow)||'visible',
+  overflowX:(el&&el.overflow)||'visible'});
 global.page=[];
 global.window={addEventListener(){},innerWidth:1000,innerHeight:800};
 global.document={createElement:()=>node(),
@@ -1270,6 +1678,9 @@ const root=()=>document.body.children[0];
 const star=(id,rect,representation,label)=>node({sel:['.sc-node[data-object-id]'],rect,
   dataset:{objectId:id,representation},label:label||id});
 const button=(rect,label)=>node({sel:['button'],rect,label:label||''});
+/* Une carte : du contenu ordinaire, ni étoile ni champ — donc ce que la
+   décision 8 laisse décider à l'élément lui-même. */
+const card=(rect,scroll,label)=>node({sel:['.acard'],rect,scroll,label:label||'Carte'});
 const token=(id,x,y,px,py)=>({id,x,y,palmX:px===undefined?x:px,palmY:py===undefined?y:py,
   progress:0,state:'pressed',click:false,hover:false,quality:1});
 const contact=(id,state,intent,channel)=>({handTrackId:id,channel:channel||'primary',
@@ -1380,14 +1791,19 @@ def test_the_page_dispatches_compatibility_events_for_content_only(tmp_path):
         [{handTrackId:1,channel:'primary',phase:'cancel'}]);
       out({dragged,context,types:contextTypes,
         lost:b.events.map(e=>e.type),
+        slotZero:C.pointerIdForSlot(0),
         scene:sceneLog.begins});
     """)
     # Le survol hérité (`pointerover`/`mouseover`) reste ce qu'il était : ce qui
     # nous appartient est la séquence de contact.
     kinds = [row[0] for row in result["dragged"] if "over" not in row[0] and "out" not in row[0]]
     assert kinds == ["pointerdown", "mousedown", "pointermove", "mousemove", "pointerup", "mouseup"]
-    # Identité par main, dans la plage du contrat — jamais le littéral 9001 ici.
+    # Identité par main : une seule main ici, donc la fente 0 — dont le
+    # pointeur **vaut** 9001, le littéral d'hier. Ce qui a changé n'est pas la
+    # valeur, c'est qu'elle vienne de la fente : deux mains donnent deux
+    # identités (voir le test qui les fait glisser ensemble).
     assert {row[1] for row in result["dragged"] if row[1] is not None} == {9001}
+    assert result["slotZero"] == 9001
     # Le type de pointeur reste celui du contrat (`POINTER_TYPE`), qui se fait
     # passer pour une souris afin que la page d'aujourd'hui l'écoute.
     assert {row[2] for row in result["dragged"] if row[2]} == {"mouse"}
@@ -1399,6 +1815,108 @@ def test_the_page_dispatches_compatibility_events_for_content_only(tmp_path):
     assert "pointerup" not in lost and "click" not in lost
     # Un bouton n'est pas un cadre : la scène n'a jamais été sollicitée.
     assert result["scene"] == []
+
+
+def test_a_scrollable_element_really_scrolls_and_never_drags(tmp_path):
+    """**Décision 8**, sa moitié la plus fragile : le chemin de défilement
+    **réel**, celui qui trouve l'ancêtre qui défile et qui déplace vraiment son
+    contenu.
+
+    Il n'était exécuté par aucun test, et le double de DOM ne pouvait pas
+    l'atteindre : sans `nodeType`, sans `parentElement`, sans tailles de
+    défilement et sans `getComputedStyle`, `scrollHost` sortait à la première
+    itération et **tout** élément était « ne défile pas ». Les tests de cette
+    page affirmaient donc une sémantique de glissement pour des éléments que le
+    produit traite en défilement.
+
+    Ce qui est épinglé maintenant : l'ancêtre **le plus proche** qui défile, le
+    déplacement exact (la main tire le contenu), aucun double défilement, et
+    aucune séquence de pointeur — un élément qui défile ne se traîne pas."""
+
+    result = run_node(tmp_path, BROWSER + """
+      const run=(how)=>{
+        const panel=node({sel:[],rect:{left:100,top:100,width:400,height:300},
+          scroll:how==='none'?null:{height:900,top:500}});
+        const c=card({left:120,top:140,width:360,height:200},
+          how==='self'?{height:800,top:500}:null);
+        panel.appendChild(c);
+        global.page=[c];
+        const at={x:300,y:240};
+        shot(0,[token(1,at.x,at.y)],[contact(1,'pressed')],
+          [{handTrackId:1,channel:'primary',phase:'down',x:at.x,y:at.y}]);
+        const kind=interaction.targets().map(t=>t.kind);
+        /* La main s'arme, puis tire de 30 px vers le bas. */
+        shot(16,[token(1,at.x,at.y)],[contact(1,'pressed','drag')],[]);
+        shot(32,[token(1,at.x,at.y+30)],[contact(1,'pressed','drag')],[]);
+        const semantics=api.interactions().map(i=>[i.type,i.dx,i.dy]);
+        shot(48,[token(1,at.x,at.y+30)],[],
+          [{handTrackId:1,channel:'primary',phase:'up',x:at.x,y:at.y+30}]);
+        const seq=el=>el.events.map(e=>e.type).filter(t=>t.indexOf('over')<0&&t.indexOf('out')<0);
+        return {kind,semantics,
+          panel:[panel.scrollTop,panel.scrollLeft],card:[c.scrollTop,c.scrollLeft],
+          panelEvents:seq(panel),cardEvents:seq(c),
+          wheel:[...panel.events,...c.events].filter(e=>e.type==='wheel')
+            .map(e=>[e.deltaX,e.deltaY])};
+      };
+      out({ancestor:run('ancestor'),self:run('self'),none:run('none')});
+    """)
+    for how in ("ancestor", "self", "none"):
+        assert result[how]["kind"] == ["card"], (how, result[how]["kind"])
+    # L'ancêtre qui défile prend le déplacement, **exactement** : 500 → 470 pour
+    # 30 px tirés vers le bas, parce que la main tire le contenu vers elle.
+    assert result["ancestor"]["semantics"] == [["scroll", 0, 30]]
+    assert result["ancestor"]["panel"] == [470, 0], result["ancestor"]["panel"]
+    # Et l'élément lui-même n'a pas bougé : pas de double défilement.
+    assert result["ancestor"]["card"] == [0, 0]
+    assert result["ancestor"]["cardEvents"] == [], "un élément qui défile a été traîné"
+    assert result["ancestor"]["wheel"] == [[0, -30]]
+    # Le plus proche gagne : quand l'élément défile lui-même, l'ancêtre ne bouge pas.
+    assert result["self"]["card"] == [470, 0], result["self"]["card"]
+    assert result["self"]["panel"] == [500, 0], "l'ancêtre a défilé en plus de l'élément"
+    # Et sans rien qui défile, c'est un glissement — la vraie séquence de pointeur.
+    assert result["none"]["semantics"] == [["drag_move", 0, 0]]
+    assert result["none"]["cardEvents"] == ["pointerdown", "mousedown", "pointermove",
+                                            "mousemove", "pointerup", "mouseup"]
+    assert result["none"]["wheel"] == []
+    assert result["none"]["panel"] == [0, 0] and result["none"]["card"] == [0, 0]
+
+
+def test_two_hands_speak_under_two_pointer_identities_through_the_dom(tmp_path):
+    """Critère d'acceptation : « identité de pointeur unique et stable par
+    main ». Le constat F2 était l'inverse — deux mains parlaient sous le même
+    `9001`, et la page ne pouvait pas les distinguer.
+
+    Le test fait glisser **deux** mains en même temps, sur deux éléments, et lit
+    les identités telles que le DOM les reçoit : deux, distinctes, et les mêmes
+    d'une image à l'autre."""
+
+    result = run_node(tmp_path, BROWSER + """
+      const a=button({left:100,top:100,width:120,height:40},'Un');
+      const b=button({left:400,top:100,width:120,height:40},'Deux');
+      global.page=[a,b];
+      const pa={x:160,y:120},pb={x:460,y:120};
+      shot(0,[token(1,pa.x,pa.y),token(2,pb.x,pb.y)],
+        [contact(1,'pressed'),contact(2,'pressed')],
+        [{handTrackId:1,channel:'primary',phase:'down',x:pa.x,y:pa.y},
+         {handTrackId:2,channel:'primary',phase:'down',x:pb.x,y:pb.y}]);
+      for(const k of [1,2])
+        shot(16*k,[token(1,pa.x+10*k,pa.y),token(2,pb.x+10*k,pb.y)],
+          [contact(1,'pressed','drag'),contact(2,'pressed','drag')],[]);
+      shot(48,[token(1,pa.x+20,pa.y),token(2,pb.x+20,pb.y)],[],
+        [{handTrackId:1,channel:'primary',phase:'up',x:pa.x+20,y:pa.y},
+         {handTrackId:2,channel:'primary',phase:'up',x:pb.x+20,y:pb.y}]);
+      const ids=el=>[...new Set(el.events.filter(e=>e.pointerId!==undefined&&e.pointerId!==null)
+        .map(e=>e.pointerId))];
+      out({first:ids(a),second:ids(b),
+        inRange:[...ids(a),...ids(b)].every(id=>C.isBareHandsPointerId(id)),
+        types:a.events.map(e=>e.type).filter(t=>t.indexOf('over')<0&&t.indexOf('out')<0)});
+    """)
+    # Une identité par main, stable sur tout le geste, et deux **différentes**.
+    assert len(result["first"]) == 1 and len(result["second"]) == 1
+    assert result["first"] != result["second"], "deux mains sous la même identité de pointeur"
+    assert result["inRange"] is True
+    assert result["types"] == ["pointerdown", "mousedown", "pointermove", "mousemove",
+                               "pointerup", "mouseup"]
 
 
 def test_a_grip_the_contract_refuses_is_written_on_the_screen(tmp_path):
@@ -1496,5 +2014,9 @@ def test_the_scene_publishes_a_frame_seam_that_reuses_its_own_geometry(tmp_path)
     # réciproquement, une main ne vole pas un nœud que la souris tient déjà.
     assert "frames.cancel(id);" in source
     assert "if(gesture&&gesture.id===id)return null;" in seam
+    # Éteinte, la scène ne rend **pas** de fenêtre : `begin` avait sa porte,
+    # `viewport` non — et une échelle absente vaut six fois trop de course, en
+    # silence, côté Bare Hands (qui la refuse maintenant).
+    assert "viewport(){return enabled&&root?viewportNow():null}" in seam
     # Et la couture est publiée.
     assert "frames," in source.split("window.JarvisScene=Object.freeze")[1]

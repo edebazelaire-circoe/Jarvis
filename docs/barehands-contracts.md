@@ -1167,6 +1167,7 @@ porte.
 | deux zones compatibles, même objet | redimensionnement contraint (11, 16, 17) |
 | le corps d'une capsule ou d'une fenêtre | **contenu** (décision 8) : jamais le cadre |
 | le corps d'une étoile `point`/`signal` | déplacement : c'est sa seule prise (D3) |
+| deux corps sur une étoile `point`/`signal` | la **première** main continue ; la seconde est un refus |
 | canal secondaire | `context` au relâchement, jamais une manipulation (21, 23) |
 
 Seules les captures du canal **primaire** sur un objet identifié entrent dans un
@@ -1179,14 +1180,50 @@ moteur.
 n'atteint pas : `same_hand_twice` écarte la capture du couple (une main ne se
 couple pas à elle-même) et la première tient seule ; `object_unidentified` et
 `different_objects` laissent les mains indépendantes ; `both_captures_are_body`
-ne produit **rien** ; `same_zone_rejected` et `axes_all_neutralized` sont des
-**refus**, et un motif inconnu en est un aussi — jamais un silence. Un refus
-s'écrit à l'écran, sur la ligne qui porte déjà les gestes étouffés (RÈGLE ZÉRO).
+ne produit **rien sur une capsule ou une fenêtre** — chaque main y fait son
+interaction de contenu — mais sur une étoile `point`/`signal`, dont le corps
+n'est pas du contenu mais sa seule prise, la **première** main (la plus ancienne
+à la descente) continue de la déplacer et la seconde est refusée
+(`star_moves_with_one_hand`) : geler le geste en cours punirait la main qui
+avait raison, et le figer sans un mot était indiscernable d'une panne ;
+`same_zone_rejected` et `axes_all_neutralized` sont des **refus**, et un motif
+inconnu en est un aussi — jamais un silence. Un refus s'écrit à l'écran, sur la
+ligne qui porte déjà les gestes étouffés (RÈGLE ZÉRO).
 
-**Rebasage.** À chaque changement de plan — une main qui entre, une main qui se
-retire, l'armement lui-même — la référence devient le cadre **tel qu'il est** et
-les mains **là où elles sont** (`rebaseManipulation`). La décision 19
-(`RESIZE → MOVE`) en est le cas nommé ; le cadre ne saute à aucun des trois.
+Quatre refus sont **du moteur** et non du contrat : `object_not_drawn` (rien à
+tenir dans la scène), `frame_not_resizable` (décision D3),
+`viewport_unavailable` (la fenêtre de la scène ne se mesure pas — sans elle,
+`pxToUnits` retomberait à 1:1, soit six fois trop de course, en silence) et
+`side_held_twice` (l'invariant des décisions 16/17, qui **se dit et se saute**
+au lieu de terminer la session). S'y ajoute `target_not_actionable`, une
+défense en profondeur : le résolveur de la Slice 05 est la porte de la décision
+3 et ne publie plus rien de non actionnable, mais ce moteur est injectable et ne
+suppose pas son appelant.
+
+**Rebasage, et ses deux déclencheurs.** À chaque changement de plan — une main
+qui entre, une main qui se retire, l'armement lui-même, une main re-détectée
+sous une **autre** identité de piste — la référence devient le cadre **tel qu'il
+est** et les mains **là où elles sont** (`rebaseManipulation`). La décision 19
+(`RESIZE → MOVE`) en est le cas nommé ; le cadre ne saute à aucun.
+
+Le second déclencheur est ce que la signature (`mode | axes | qui tient quels
+côtés`) ne peut pas voir : **un plan qui n'a pas tourné à l'image précédente**.
+Un plan survit à ses suspensions — une prise refusée (`same_zone_rejected`,
+`axes_all_neutralized`, `frame_not_resizable`, `viewport_unavailable`,
+`side_held_twice`), et surtout une main que le suivi perd le temps d'un
+clignement puis retrouve **sous le même identifiant**, ailleurs. La main, elle,
+continue de voyager ; sans rebasage à la reprise, tout ce voyage s'appliquait en
+une image (mesuré : 68 unités pour un clignement de trois images). Le plan porte
+donc le **numéro de l'image** où il a conduit pour la dernière fois, et un trou
+vaut un changement de signature.
+
+**Toutes les mains du couple, ou aucune.** Une main sans paume à cette image
+(un trou du suivi, pas un relâchement : la capture vit jusqu'à `lostGraceMs`) ne
+laisse pas l'autre tirer seule. Son côté ferait sinon office d'ancre — le cadre
+se redimensionnait de travers pendant le clignement — et publier pour une main
+sans paume posait `barehands_interaction_invalid`, mot pour mot, à l'écran. La
+manipulation **se suspend** pour cette image, en silence (un trou d'une image ne
+mérite pas une ligne qui clignote), et reprend rebasée.
 
 **Géométrie et unités.** `manipulateBox` est le **seul** endroit où des pixels de
 la fenêtre deviennent des unités de scène (`pxToUnits`, `vp.scale` ≈ 6 px/unité

@@ -1927,7 +1927,11 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     /* Main perdue, veille, extinction : le cadre revient où il était et rien
        n'est envoyé — la même réponse que `pointercancel` à la souris. */
     cancel(id){if(framesRelease(id))scheduleRender()},
-    viewport(){return viewportNow()},
+    /* La même porte que `begin` : scène éteinte, pas de fenêtre. Sans elle,
+       `viewportNow()` lisait `root.clientWidth` sur un `root` qui n'existe pas
+       — et une échelle absente, côté Bare Hands, est ce qui fait qu'un geste
+       part six fois trop loin. Mieux vaut `null`, qui se refuse et se dit. */
+    viewport(){return enabled&&root?viewportNow():null},
   });
 
   function onPointerDown(event){

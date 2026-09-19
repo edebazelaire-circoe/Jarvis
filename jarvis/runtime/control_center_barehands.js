@@ -1694,6 +1694,11 @@ const JarvisBarehandsCore=(function(){
     /* Un plan de manipulation par objet : sa signature, sa boîte de référence,
        les ancres des mains qui le tirent, et la boîte affichée. */
     const plans=new Map();
+    /* Le **numéro de l'image** en cours. Il ne mesure pas le temps : il dit
+       seulement si un plan a été conduit à l'image *précédente* ou s'il a sauté
+       un tour. Un horodatage ne le dirait pas — rien ne garantit le pas entre
+       deux images, et `now` est ce que l'appelant veut bien donner. */
+    let frameIndex=0;
     let refused=[];
     /* Les mains qui ont **conduit** une manipulation pendant l'image en cours,
        celles qui viennent de relâcher comprises : c'est ce que le chemin de clic
@@ -1770,6 +1775,19 @@ const JarvisBarehandsCore=(function(){
       &&entry.objectId!==null&&entry.objectId!==undefined;
 
     function openCapture(handTrackId,channel,target,now){
+      /* **Décision 3, en profondeur.** Le résolveur de la Slice 05 est la porte :
+         il ne publie plus rien de non actionnable, donc ce refus est
+         inatteignable par le chemin réel. Il est là parce que ce moteur est
+         **injectable** — il se construit avec ses contrats et sa géométrie, et
+         rien ne garantit que son prochain appelant sera ce résolveur-là. Sans
+         lui, une cible désactivée ouvrirait une capture et produirait un vrai
+         `pointerdown` sur un contrôle qui ne fera rien.
+         L'**absence** du champ reste crue, comme partout ailleurs ici : c'est
+         « personne n'a rien dit », pas « non ». */
+      if(target&&target.actionable===false){
+        refused.push({handTrackId,channel,objectId:target.objectId,reason:'target_not_actionable'});
+        return null;
+      }
       let capture=null;
       try{
         capture=C.createCapture({handTrackId,channel,state:'captured',
@@ -1840,8 +1858,16 @@ const JarvisBarehandsCore=(function(){
       Object.keys(byHand).sort().map(id=>`${id}:${byHand[id].sides.join('+')}`).join(',');
 
     function manipulate(objectId,mode,axes,byHand,entries,palms,now,out){
-      const drivers=Object.keys(byHand).filter(id=>palms[id]);
-      if(!drivers.length)return;
+      const hands=Object.keys(byHand);
+      const drivers=hands.filter(id=>palms[id]);
+      /* **Toutes** les mains du couple, ou aucune. Une main que le suivi perd
+         pendant une image garde sa capture (`lostGraceMs`), mais son côté n'est
+         pas pour autant une ancre : laisser l'autre main tirer seule
+         redimensionnerait le cadre de travers pendant le clignement, et
+         publierait un événement pour une main qui n'a pas de paume. La
+         manipulation **se suspend** — et, parce qu'elle s'est suspendue, elle se
+         rebase à la reprise, juste en dessous. */
+      if(!drivers.length||drivers.length!==hands.length)return;
       const signature=signatureOf(mode,axes,byHand);
       let plan=plans.get(objectId);
       /* Rien ne bouge tant qu'aucune main tenant ce cadre n'a **glissé** : le
@@ -1855,7 +1881,7 @@ const JarvisBarehandsCore=(function(){
       if(!plan){
         const base=world&&typeof world.begin==='function'?world.begin(objectId):null;
         if(!base||!base.box){refuse(entries[0],'object_not_drawn');return}
-        plan={signature:null,representation:base.representation,lastEnd:'up',
+        plan={signature:null,drivenFrame:null,representation:base.representation,lastEnd:'up',
           origin:{...base.box},start:{...base.box},box:{...base.box},anchorsPx:{}};
         plans.set(objectId,plan);
       }
@@ -1864,28 +1890,56 @@ const JarvisBarehandsCore=(function(){
          se dit, plutôt qu'un redimensionnement sûr de lui sur une forme qui n'en
          a pas. */
       if(mode==='resize'&&!G.resizable(plan.representation)){refuse(entries[0],'frame_not_resizable');return}
+      if(mode==='resize'){
+        /* Deux mains ne gardent jamais le même côté : `combineCaptures` a déjà
+           tranché (décisions 16 et 17), et un contrôle exhaustif des 64 couples
+           de zones n'a trouvé aucune exception. Si cela arrivait quand même, ce
+           serait le contrat qui aurait changé — mais un contrat qui change ne
+           vaut pas la fin de la session : le refus **se dit et se saute**, comme
+           partout ailleurs dans cette boucle d'images, au lieu de lancer une
+           erreur hors de `update()`. Et il se lit sur l'attribution seule, avant
+           le rebasage, pour que l'image suspendue reprenne sans saut. */
+        const seen=new Set();
+        for(const id of hands)for(const side of byHand[id].sides){
+          if(seen.has(side)){refuse(entries[0],'side_held_twice');return}
+          seen.add(side);
+        }
+      }
+      /* **Décision 18 et la conversion.** La fenêtre de la scène est ce qui
+         donne l'échelle pixels → unités ; sans elle `pxToUnits` retomberait à
+         1:1, soit six fois trop de course pour le même geste. Une échelle qu'on
+         ne connaît pas se **refuse** : un cadre qui ne bouge pas en le disant
+         est réparable, un cadre qui part six fois trop loin ne l'est pas. */
+      const vp=world&&typeof world.viewport==='function'?world.viewport():null;
+      if(!vp||!(Number(vp.scale)>0)){refuse(entries[0],'viewport_unavailable');return}
       plan.mode=mode;
-      if(plan.signature!==signature){
+      /* **Décision 19, et son second déclencheur.** La signature dit *qui tient
+         quoi* : elle attrape une main qui entre, une main qui se retire, un axe
+         neutralisé, une main re-détectée sous une **autre** identité de piste.
+         Elle ne peut pas dire « ce plan n'a pas tourné à l'image précédente » —
+         or c'est exactement ce que laissent derrière elles toutes les
+         suspensions : une prise refusée, une forme qui ne se redimensionne pas,
+         une fenêtre non mesurable, et surtout une main que le suivi perd le
+         temps d'un clignement puis retrouve **sous la même identité**, ailleurs.
+         Sans ce second déclencheur, la course accumulée pendant la suspension
+         s'appliquait d'un coup à la reprise : mesuré à 68 unités. */
+      const resumed=plan.drivenFrame!==frameIndex-1;
+      if(plan.signature!==signature||resumed){
         const rebased=G.rebaseManipulation(plan.box,palms);
         plan.signature=signature;plan.start=rebased.start;plan.anchorsPx=rebased.anchorsPx;
       }
+      plan.drivenFrame=frameIndex;
       const sidesPx={};
       let deltaPx={dx:0,dy:0};
       for(const id of drivers){
         const anchor=plan.anchorsPx[id];
         const palm=palms[id];
-        if(!anchor||!palm)continue;
+        if(!anchor)continue;
         const dx=palm.x-anchor.x,dy=palm.y-anchor.y;
         if(mode==='resize'){
           for(const side of byHand[id].sides){
             const axis=C.SIDE_AXIS[side];
             if(axis===undefined)continue;
-            /* Deux mains ne gardent jamais le même côté : `combineCaptures` a
-               déjà tranché (décisions 16 et 17). Si cela arrivait, ce serait le
-               contrat qui aurait changé, pas une donnée à moyenner. */
-            if(sidesPx[side]!==undefined)throw Object.assign(
-              new Error(`deux mains tiennent le côté ${side} : combineCaptures ne devrait pas le permettre`),
-              {code:'tracking_failed'});
             sidesPx[side]=axis==='x'?dx:dy;
           }
         }else deltaPx={dx,dy};
@@ -1897,7 +1951,7 @@ const JarvisBarehandsCore=(function(){
         entry.drove=true;drove.add(String(entry.handTrackId));
       }
       const box=G.manipulateBox({start:plan.start,representation:plan.representation,
-        mode,axes,sidesPx,deltaPx,vp:world&&typeof world.viewport==='function'?world.viewport():null});
+        mode,axes,sidesPx,deltaPx,vp});
       if(G.sameBox(box,plan.box))return;
       plan.box=box;
       if(world&&typeof world.preview==='function')world.preview(objectId,box);
@@ -1931,7 +1985,7 @@ const JarvisBarehandsCore=(function(){
         const now=Number(f.now);
         if(!Number.isFinite(now))
           throw Object.assign(new Error('moteur d’interaction : horodatage inutilisable'),{code:'tracking_failed'});
-        refused=[];drove=new Set();
+        refused=[];drove=new Set();frameIndex+=1;
         const out=[];
         const palms={},aims={};
         for(const token of Array.isArray(f.tokens)?f.tokens:[]){
@@ -2025,7 +2079,28 @@ const JarvisBarehandsCore=(function(){
             /* Décision 8 : deux mains dans le contenu d'une fenêtre ne
                l'emportent pas. Chacune fait son interaction de contenu, plus
                bas — il n'y a donc rien à faire ici, et surtout pas un
-               déplacement. */
+               déplacement.
+
+               **Sauf sur une étoile déplaçable seulement** (décision D3), où cet
+               argument tombe : son corps n'est pas du contenu, c'est sa seule
+               prise, et la boucle de contenu la saute elle aussi
+               (`movesByBody`). Le résultat était alors un cadre figé, sans
+               interaction et **sans un mot** — la main qui traînait l'étoile
+               s'arrêtait net, ce qui est indiscernable d'une panne.
+
+               Ce qui est choisi ici : la **première** main (la plus ancienne à
+               la descente) continue de déplacer l'étoile, et la seconde se dit.
+               Parce qu'une étoile `point` fait ~6 unités : deux mains dessus,
+               c'est presque toujours la seconde qui arrive par accident sur un
+               geste déjà en cours — et « attraper à deux mains et tirer » est la
+               première chose qu'on essaie sur une forme dont on vient
+               d'apprendre qu'elle ne se redimensionne pas. Punir le geste en
+               cours pour l'arrivée de l'autre main serait la mauvaise moitié du
+               choix ; geler n'apprend rien, le refus dit ce qui se passe. */
+            if(movesByBody(pair.first)){
+              single(pair.first);
+              refuse(pair.second,'star_moves_with_one_hand');
+            }
           }else if(verdict.reason==='object_unidentified'||verdict.reason==='different_objects'){
             /* Décision 12. Inatteignable depuis ce seau — il porte un
                identifiant et ne groupe qu'un objet — mais si le contrat le
@@ -2069,13 +2144,14 @@ const JarvisBarehandsCore=(function(){
           else if(entry.content.mode===CONTENT_MODE.DRAG)
             publish(out,I.DRAG_MOVE,entry,aim,{t:now,mode:entry.content.mode});
         }
+        /* Ce que l'image rend, et **rien de plus** : `manipulating` et `drove`
+           étaient publiés ici aussi, en doublon de `drivenHands()` — deux
+           lectures du même fait, de deux types différents (identités brutes
+           d'un côté, chaînes de l'autre), et sans un seul lecteur. Le clic
+           hérité lit `drivenHands()`, qui est la seule des trois à compter les
+           mains qui viennent de relâcher. */
         return {interactions:out,refusals:refused,
-          captures:[...new Set([...captures.values()].map(entry=>entry.handTrackId))],
-          /* Les mains qui **conduisent** un cadre en ce moment, et celles qui
-             viennent de le rendre : les deux comptent pour le clic hérité, qui
-             est traité après nous dans l'image. */
-          manipulating:[...new Set([...captures.values()].filter(entry=>entry.drove).map(entry=>entry.handTrackId))],
-          drove:[...drove]};
+          captures:[...new Set([...captures.values()].map(entry=>entry.handTrackId))]};
       },
       /* Arrêt volontaire (veille, extinction, perte du suivi) : tout est
          **annulé**, jamais relâché, et aucune géométrie n'est validée. */
@@ -2929,6 +3005,10 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
       if(reason==='axes_all_neutralized')return 'PRISE REFUSÉE · les deux mains s’annulent';
       if(reason==='frame_not_resizable')return 'PRISE REFUSÉE · cette forme ne se redimensionne pas';
       if(reason==='object_not_drawn')return 'PRISE REFUSÉE · objet absent de la scène';
+      if(reason==='star_moves_with_one_hand')return 'PRISE REFUSÉE · cette forme se déplace à une main';
+      if(reason==='viewport_unavailable')return 'PRISE REFUSÉE · la scène ne se mesure pas';
+      if(reason==='side_held_twice')return 'PRISE REFUSÉE · deux mains sur le même côté';
+      if(reason==='target_not_actionable')return 'PRISE REFUSÉE · ce contrôle est inactif';
       return `GESTE IGNORÉ · ${String(reason)}`;
     };
     return {
