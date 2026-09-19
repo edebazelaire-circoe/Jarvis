@@ -2034,14 +2034,46 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     consoleLog('info',kind==='resize'?'scene.user_resized':'scene.user_moved',{object_id:id,steps:outcome.steps.join('+'),revision:outcome.revision});
   }
 
-  /* Appui dans le vide : début d'un rectangle de sélection. Ctrl ou Maj tenu,
-     il s'ajoute à la sélection courante au lieu de la remplacer. */
+  /* Un appui qui peut ouvrir un rectangle de sélection : sur le fond de la
+     page, sur le visage ou sur la scène elle-même — jamais sur un objet (qui a
+     son propre geste), ni sur une commande, ni dans un panneau du Control
+     Center, qui gardent les leurs. */
+  function bandCandidate(event){
+    if(!enabled||!root||root.hidden||band||gesture)return false;
+    if(event.button!==undefined&&event.button!==0)return false;
+    const target=event.target;
+    if(!target||!target.closest)return false;
+    if(target.closest('#sceneLayer .sc-node,.sc-view,.sc-view-btn,.sc-status,#ctxMenu,#confirmBack'))return false;
+    if(target.closest('a,button,input,select,textarea,label,summary,[contenteditable],[role="button"],[role="tab"],[role="menuitem"]'))return false;
+    return target===document.body||target===root||target===document.documentElement
+      ||target.classList.contains('face')||target.closest('#sceneLayer')===root;
+  }
+
+  /* Début d'un rectangle de sélection. Ctrl ou Maj tenu, il s'ajoute à la
+     sélection courante au lieu de la remplacer. La suite du geste est écoutée
+     sur le document : la scène ne reçoit pas les évènements du vide, et une
+     capture de pointeur sur un calque transparent aux clics ne se comporte pas
+     de la même façon d'un navigateur à l'autre. */
   function startBand(event){
-    if(event.button!==undefined&&event.button!==0)return;
     band={pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,
       add:!!(event.ctrlKey||event.metaKey||event.shiftKey),moved:false,el:null};
-    try{root.setPointerCapture(event.pointerId)}catch(_error){/* pointeur synthétique : les évènements arrivent quand même */}
-    event.preventDefault();
+    document.addEventListener('pointermove',onBandMove,true);
+    document.addEventListener('pointerup',onBandUp,true);
+    document.addEventListener('pointercancel',onBandUp,true);
+  }
+
+  function onBandMove(event){
+    if(!band||event.pointerId!==band.pointerId)return;
+    const box=bandFrame(event);
+    if(box)event.preventDefault();
+  }
+
+  function onBandUp(event){
+    if(!band||event.pointerId!==band.pointerId)return;
+    document.removeEventListener('pointermove',onBandMove,true);
+    document.removeEventListener('pointerup',onBandUp,true);
+    document.removeEventListener('pointercancel',onBandUp,true);
+    endBand(event.type==='pointercancel'?null:bandFrame(event));
   }
 
   function bandFrame(event){
@@ -2063,9 +2095,7 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     const held=band;
     band=null;
     if(held&&held.el)held.el.remove();
-    if(!held)return;
-    try{root.releasePointerCapture(held.pointerId)}catch(_error){/* capture déjà rendue */}
-    if(!held.moved||!box)return;
+    if(!held||!held.moved||!box)return;
     /* Les boîtes **dessinées**, lues sur la page : le champ tourne, et ce que
        l'utilisateur encercle est ce qu'il voit, pas la place enregistrée. */
     const boxes=[];
@@ -2082,12 +2112,10 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
   function onPointerDown(event){
     if(event.button!==0||!enabled)return;
     const el=nodeElement(event.target);
-    if(!el){
-      /* Hors d'un objet : rectangle de sélection, sauf sur les commandes de la
-         page (réglages d'affichage, état) et hors de la scène. */
-      if(root.contains(event.target)&&!event.target.closest('.sc-view,.sc-view-btn,.sc-status,#ctxMenu'))startBand(event);
-      return;
-    }
+    /* Le vide n'arrive jamais ici : la scène laisse passer les clics partout
+       sauf sur ses objets (`pointer-events`), donc le rectangle de sélection
+       naît du document (`onDocumentPointerDown`). */
+    if(!el)return;
     /* Lien d'entrée ou origine d'un artefact : leur clic natif, pas de geste. */
     if(event.target.closest('.sc-item-link,.sc-origin'))return;
     /* Ctrl-clic (Cmd sur Mac) : l'objet entre dans la sélection ou en sort, et
@@ -2102,12 +2130,25 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     const id=el.dataset.objectId,node=nodeOf(id),box=drawnBox(id),state=viewState();
     const item=state&&state.objects.get(id);
     if(!node||!box||!item)return;
+    /* Objets emmenés par le geste : toute la sélection quand on prend l'un des
+       siens, sinon le seul objet pris. Un redimensionnement ne concerne que
+       l'objet dont on tient la poignée. */
+    const resizing=!!event.target.closest('.sc-grip')&&I.resizable(item.representation);
+    const carried=[];
+    for(const memberId of (!resizing&&selection.length>1&&selection.indexOf(id)>=0?selection:[id])){
+      const record=nodes.get(memberId),memberNode=nodeOf(memberId),memberBox=drawnBox(memberId);
+      const memberItem=state&&state.objects.get(memberId);
+      if(!record||!memberNode||!memberBox||!memberItem)continue;
+      carried.push({id:memberId,el:record.el,node:memberNode,representation:memberItem.representation,
+        box:{x:memberBox.x,y:memberBox.y,w:memberBox.w,h:memberBox.h},preview:null});
+    }
+    if(!carried.length)return;
     if(gesture)cancelGesture();
     if(keyEdit)flushKeyEdit('pointer');
     if(typeof closeMenu==='function')closeMenu(false);
-    const resize=!!event.target.closest('.sc-grip')&&I.resizable(item.representation);
-    gesture={id,el,node,mode:resize?'resize':'move',pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,
+    gesture={id,el,node,mode:resizing?'resize':'move',pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,
       box:{x:box.x,y:box.y,w:box.w,h:box.h},representation:item.representation,moved:false,menuOpened:false,preview:null,
+      carried,
       wasSelected:document.activeElement===el,longTimer:0,
       threshold:I.dragThreshold(event.pointerType,event.pointerId===9001||barehandsActive())};
     /* Appui long sans bouger : menu (Barehands, écran tactile). */
@@ -2124,7 +2165,6 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
   }
 
   function onPointerMove(event){
-    if(band&&event.pointerId===band.pointerId){bandFrame(event);return}
     const g=gesture;
     if(!g||event.pointerId!==g.pointerId)return;
     const dx=event.clientX-g.startX,dy=event.clientY-g.startY;
@@ -2132,11 +2172,23 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
       if(g.menuOpened||Math.hypot(dx,dy)<g.threshold)return;
       g.moved=true;
       window.clearTimeout(g.longTimer);
-      holdNode(g.id,true);root.classList.add('sc-gesture');
+      for(const member of g.carried)holdNode(member.id,true);
+      root.classList.add('sc-gesture');
     }
     const units=I.pxToUnits(viewportNow(),dx,dy);
-    g.preview=g.mode==='resize'?I.resizeBox(g.box,units.dx,units.dy,g.representation):I.dragBox(g.box,units.dx,units.dy,g.representation);
-    previewAt(g.el,g.node,g.preview);
+    if(g.mode==='resize'){
+      g.preview=I.resizeBox(g.box,units.dx,units.dy,g.representation);
+      previewAt(g.el,g.node,g.preview);
+      return;
+    }
+    /* Le même écart pour tous : la sélection se déplace d'un bloc, chacun borné
+       à la zone sûre pour son compte — un objet déjà au bord retient sa place,
+       il n'arrête pas les autres. */
+    for(const member of g.carried){
+      member.preview=I.dragBox(member.box,units.dx,units.dy,member.representation);
+      previewAt(member.el,member.node,member.preview);
+      if(member.id===g.id)g.preview=member.preview;
+    }
   }
 
   function endGesture(g){
@@ -2147,7 +2199,6 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
   }
 
   function onPointerUp(event){
-    if(band&&event.pointerId===band.pointerId){endBand(bandFrame(event));return}
     const g=gesture;
     if(!g||event.pointerId!==g.pointerId)return;
     endGesture(g);
@@ -2157,28 +2208,34 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
       if(g.wasSelected)openObjectMenu(g.id,{x:event.clientX,y:event.clientY,above:event.clientY},g.el);
       return;
     }
-    const box=g.mode==='resize'?g.preview:placeOf(g.preview,g.node);
-    if(!box||I.sameBox(box,g.box)){holdNode(g.id,false);return}
-    /* La place voulue est inscrite en attente **avant** de lâcher la main :
-       lâcher d'abord redessinerait le nœud à son ancienne place — le temps
-       d'une image, l'objet repartait où il était puis revenait sous le
+    /* Les places voulues sont inscrites en attente **avant** de lâcher la
+       main : lâcher d'abord redessinerait les nœuds à leur ancienne place — le
+       temps d'une image, l'objet repartait où il était puis revenait sous le
        curseur, et l'œil ne voyait que ce va-et-vient (19/09/2026).
        `commitUserGeometry` inscrit l'attente avant sa première pause, donc le
-       rendu qui suit voit déjà la nouvelle place. */
-    const sent=commitUserGeometry(g.id,box,g.mode);
-    holdNode(g.id,false);
-    sent.catch(error=>actionFailed(g.mode==='resize'?'Redimensionnement':'Déplacement',g.id,error));
+       rendu qui suit voit déjà les nouvelles places. */
+    const sent=[];
+    if(g.mode==='resize'){
+      if(g.preview&&!I.sameBox(g.preview,g.box))sent.push([g.id,commitUserGeometry(g.id,g.preview,g.mode)]);
+    }else for(const member of g.carried){
+      const box=placeOf(member.preview,member.node);
+      if(!box||I.sameBox(box,member.box))continue;
+      sent.push([member.id,commitUserGeometry(member.id,box,g.mode)]);
+    }
+    for(const member of g.carried)holdNode(member.id,false);
+    const action=g.mode==='resize'?'Redimensionnement':'Déplacement';
+    for(const [id,promise] of sent)promise.catch(error=>actionFailed(action,id,error));
+    if(sent.length>1)announce(`${sent.length} objets déplacés.`);
   }
 
   function cancelGesture(){
     const g=gesture;
     if(!g)return;
     endGesture(g);
-    if(g.moved)holdNode(g.id,false);
+    if(g.moved)for(const member of g.carried)holdNode(member.id,false);
   }
 
   function onPointerCancel(event){
-    if(band&&event.pointerId===band.pointerId)endBand(null);
     if(gesture&&event.pointerId===gesture.pointerId&&(event.type==='pointercancel'||!gesture.moved))cancelGesture();
   }
 
@@ -2227,6 +2284,12 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     /* Ctrl ou Maj tenu : l'utilisateur agrandit sa sélection, il ne la jette pas. */
     if(event.ctrlKey||event.metaKey||event.shiftKey)return;
     select(null);
+  }
+
+  /* Le rectangle de sélection s'ouvre ici, dans la même écoute : c'est le seul
+     endroit qui voit les appuis du vide. */
+  function onDocumentBandDown(event){
+    if(bandCandidate(event))startBand(event);
   }
 
   /* Maj+flèches / Ctrl+flèches : aperçu tout de suite, validation au relâchement
@@ -2595,7 +2658,6 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
   /* Extrémités des fils qui touchent le nœud tenu, pour cette image. */
   function followEdges(){
     if(!follow||!root||!fieldEl)return;
-    if(!nodes.has(follow.id)){stopFollow();return}
     /* De l'écran vers le repère du groupe : les extrémités posées ici passent
        ensuite par la rotation du champ, comme celles des autres fils, et
        retombent donc exactement sur les centres lus à l'écran. */
@@ -2603,7 +2665,7 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     if(!screen)return;
     const matrix=screen.inverse();
     for(const {edge,line} of edgeLines){
-      if(edge.from!==follow.id&&edge.to!==follow.id)continue;
+      if(!follow.ids.has(edge.from)&&!follow.ids.has(edge.to))continue;
       const a=anchorOf(edge.from,matrix),b=anchorOf(edge.to,matrix);
       if(!a||!b)continue;
       line.setAttribute('x1',a.x);line.setAttribute('y1',a.y);
@@ -2617,17 +2679,22 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     followEdges();
   }
 
+  /* Plusieurs nœuds peuvent être tenus à la fois (sélection multiple) : leurs
+     fils suivent tous, sinon ceux des objets emmenés resteraient en arrière. */
   function startFollow(id){
-    if(follow&&follow.id===id)return;
-    stopFollow();
-    follow={id,raf:0};
+    if(follow){follow.ids.add(id);return}
+    follow={ids:new Set([id]),raf:0};
     followFrame();
   }
 
   /* Fin du geste (ou nœud parti) : les extrémités posées à la main ne valent
      plus rien, la passe suivante redessine tous les fils, dérive comprise. */
   function stopFollow(id){
-    if(!follow||(id!==undefined&&follow.id!==id))return;
+    if(!follow)return;
+    if(id!==undefined){
+      follow.ids.delete(id);
+      if(follow.ids.size)return;
+    }
     if(follow.raf)cancelAnimationFrame(follow.raf);
     follow=null;
     edgesSig='';
@@ -2905,6 +2972,7 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
       window.addEventListener('storage',onViewStorage);
       document.addEventListener('visibilitychange',onVisibility);
       document.addEventListener('pointerdown',onDocumentPointerDown,true);
+      document.addEventListener('pointerdown',onDocumentBandDown,true);
       loop.setVisible(document.visibilityState!=='hidden');
       const visible=document.visibilityState!=='hidden';
       const start=()=>{if(enabled)loop.setEnabled(true)};

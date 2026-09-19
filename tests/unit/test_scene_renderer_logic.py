@@ -432,7 +432,7 @@ def test_the_page_hands_the_gesture_the_drawn_position_and_not_the_stored_place(
     # Le relâchement passe par la place, pas par la boîte dessinée ; un
     # redimensionnement, lui, n'a pas bougé de place.
     release = page[page.index("function onPointerUp("):page.index("function cancelGesture(")]
-    assert "placeOf(g.preview,g.node)" in release and "g.mode==='resize'?g.preview" in release
+    assert "placeOf(member.preview,member.node)" in release and "g.mode==='resize'" in release
     place = page[page.index("function placeOf("):page.index("function fieldTurn(")]
     assert "L.orbitTurnPoint(" in place and "L.orbitUnturn(" in place
     # L'angle du tour est lu sur l'animation, jamais sur l'horloge du document :
@@ -462,8 +462,19 @@ def test_the_page_selects_several_objects_by_band_and_by_control_click(tmp_path)
 
     page = PAGE_JS.read_text(encoding="utf-8")
     down = page[page.index("function onPointerDown("):page.index("function onPointerMove(")]
-    # Hors d'un objet : rectangle, mais pas sur les commandes de la page.
-    assert "startBand(event)" in down and ".sc-view,.sc-view-btn,.sc-status,#ctxMenu" in down
+    # Le vide ne passe pas par la scène : elle est transparente aux clics partout
+    # sauf sur ses objets. Le rectangle naît donc de l'écoute du document, et
+    # seulement sur le fond, le visage ou la scène — jamais sur une commande.
+    assert "startBand(event)" not in down
+    candidate = page[page.index("function bandCandidate("):page.index("function startBand(")]
+    assert "#sceneLayer .sc-node,.sc-view,.sc-view-btn,.sc-status,#ctxMenu,#confirmBack" in candidate
+    assert "a,button,input,select,textarea,label" in candidate
+    assert "target===document.body" in candidate and "classList.contains('face')" in candidate
+    assert "document.addEventListener('pointerdown',onDocumentBandDown,true)" in page
+    # Le reste du geste s'écoute aussi sur le document : une capture de pointeur
+    # sur un calque transparent aux clics ne vaut pas partout.
+    start = page[page.index("function startBand("):page.index("function onBandMove(")]
+    assert "document.addEventListener('pointermove',onBandMove,true)" in start
     # Ctrl (ou Cmd) sur un objet : bascule, et rien d'autre.
     assert "select(el.dataset.objectId,'toggle')" in down
     assert "event.ctrlKey||event.metaKey" in down
@@ -491,11 +502,39 @@ def test_the_dropped_place_is_pending_before_the_hand_lets_go(tmp_path):
     page = PAGE_JS.read_text(encoding="utf-8")
     release = page[page.index("function onPointerUp("):page.index("function cancelGesture(")]
     # La place voulue part en attente, *puis* la main lâche.
-    assert (release.index("const sent=commitUserGeometry(")
-            < release.rindex("holdNode(g.id,false);")
-            < release.index("sent.catch(")), "la place voulue doit être en attente avant que la main lâche"
-    # Et le cas sans déplacement lâche quand même la main.
-    assert "if(!box||I.sameBox(box,g.box)){holdNode(g.id,false);return}" in release
+    assert (release.index("commitUserGeometry(member.id,box,g.mode)")
+            < release.index("for(const member of g.carried)holdNode(member.id,false);")
+            < release.index("promise.catch(")), "les places voulues doivent être en attente avant que la main lâche"
+    # Et un objet qui n'a pas bougé n'envoie rien, la main lâche quand même.
+    assert "if(!box||I.sameBox(box,member.box))continue;" in release
+
+
+def test_a_gesture_on_a_selected_object_carries_the_whole_selection(tmp_path):
+    """Demande du 19/09/2026 : « quand j'ai plusieurs éléments sélectionnés et
+    que je les déplace, je suis censé les déplacer tous en même temps ».
+
+    Le geste emmène donc toute la sélection quand il part de l'un des siens :
+    le même écart pour tous, chacun borné pour son compte — un objet déjà au
+    bord garde sa place sans arrêter les autres —, une commande par objet qui a
+    bougé, et les fils de tous les objets tenus qui suivent. Un
+    redimensionnement, lui, ne concerne que la poignée qu'on tient."""
+
+    page = PAGE_JS.read_text(encoding="utf-8")
+    down = page[page.index("function onPointerDown("):page.index("function onPointerMove(")]
+    # La sélection est emmenée seulement si l'objet pris en fait partie, et
+    # jamais pour un redimensionnement.
+    assert "!resizing&&selection.length>1&&selection.indexOf(id)>=0?selection:[id]" in down
+    move = page[page.index("function onPointerMove("):page.index("function endGesture(")]
+    assert "for(const member of g.carried)" in move and "I.dragBox(member.box,units.dx,units.dy,member.representation)" in move
+    # Un objet par commande : Core valide chaque place, et un refus n'emporte
+    # pas les autres.
+    release = page[page.index("function onPointerUp("):page.index("function cancelGesture(")]
+    assert "commitUserGeometry(member.id,box,g.mode)" in release
+    # Les fils de tous les objets tenus suivent, pas seulement ceux du dernier.
+    follow = page[page.index("function startFollow("):page.index("function applyEdges(")]
+    assert "follow.ids.add(id)" in follow
+    edges = page[page.index("function followEdges("):page.index("function followFrame(")]
+    assert "follow.ids.has(edge.from)||" in edges or "!follow.ids.has(edge.from)&&!follow.ids.has(edge.to)" in edges
 
 
 def test_stars_without_a_place_surround_the_face_instead_of_piling_up_on_one_side(tmp_path):
