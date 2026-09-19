@@ -43,6 +43,9 @@ def _parser() -> argparse.ArgumentParser:
     # Lancée par le CLI du cerveau via `--mcp-config` (scene.enabled), pas par
     # un humain : stdout est le protocole MCP.
     sub.add_parser("display-mcp", help="Serve the brain scene display MCP tools over stdio")
+    # Même chose pour Bare Hands (Slice 12), lancée quand l'interrupteur
+    # `barehands_test_mode.enabled` est vrai : elle joint le Control Center.
+    sub.add_parser("barehands-mcp", help="Serve the brain Bare Hands MCP tools over stdio")
     # Appelée par le CLI d'agent lui-même, pas par un humain : elle lit
     # l'appel d'outil sur stdin et rend la décision d'aiguillage sur stdout.
     routing_hook = sub.add_parser("routing-hook", help="Apply the sub-agent routing policy to one agent CLI tool call")
@@ -80,6 +83,12 @@ async def _drive_mcp() -> int:
 
 async def _display_mcp() -> int:
     from jarvis.runtime.display_mcp import serve_stdio
+
+    return await serve_stdio()
+
+
+async def _barehands_mcp() -> int:
+    from jarvis.runtime.barehands_mcp import serve_stdio
 
     return await serve_stdio()
 
@@ -960,6 +969,10 @@ async def _run_control_center_v2() -> int:
     # Outils d'affichage du cerveau (Slice 06) : déclarés au CLI seulement si
     # `scene.enabled` ; le serveur MCP joint Core avec ces coordonnées.
     from jarvis.runtime.display_mcp import DisplayMcpTarget
+    # Outils Bare Hands du cerveau (Slice 12) : déclarés au CLI seulement si
+    # l'utilisateur a allumé Bare Hands. Ce serveur MCP joint **ce** Control
+    # Center, pas Core : Bare Hands n'existe nulle part dans Core.
+    from jarvis.runtime.barehands_mcp import BarehandsMcpTarget
 
     control = ControlCenter(
         runtime_root=runtime_root,
@@ -975,6 +988,7 @@ async def _run_control_center_v2() -> int:
             core_host=settings.core_host, core_port=settings.core_port,
             token_file=settings.token_file, runtime_root=runtime_root,
         ),
+        barehands_mcp=BarehandsMcpTarget("127.0.0.1", ui_port, runtime_root),
     )
     await control.start(port=ui_port)
     url = f"http://127.0.0.1:{ui_port}/"
@@ -1147,6 +1161,7 @@ async def _amain(argv: list[str] | None = None) -> int:
     if command == "drive-auth": return await _drive_auth()
     if command == "drive-mcp": return await _drive_mcp()
     if command == "display-mcp": return await _display_mcp()
+    if command == "barehands-mcp": return await _barehands_mcp()
     if command == "routing-hook":
         from jarvis.runtime.routing_hook import main as routing_hook_main
 

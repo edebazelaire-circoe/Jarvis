@@ -87,8 +87,20 @@ from jarvis.runtime.conversation_event_view import ConversationEventView, Conver
 from jarvis.runtime.work_ingress import TrackerWorkObserver, WorkIngressForwarder
 from jarvis.runtime.work_view import NOT_CONFIGURED, CoreWorkView, unavailable_payload
 from jarvis.protocol import scene_wire
+from jarvis.domain.barehands_command import (
+    BAD_RECEIPT,
+    BAD_REQUEST,
+    MAX_COMMAND_REQUEST_BYTES,
+    MAX_POLL_WAIT_S,
+    MAX_RECEIPT_BYTES,
+    BarehandsCommandError,
+    parse_receipt,
+    parse_request,
+)
+from jarvis.runtime.barehands_commands import BarehandsCommandBroker
 from jarvis.domain.scene_capture import INVALID_PNG, MAX_CAPTURE_BYTES, UNKNOWN_CAPTURE, check_capture_id, png_dimensions
 from jarvis.protocol.strict_json import loads_strict_json
+from jarvis.runtime.barehands_mcp import BarehandsMcpTarget
 from jarvis.runtime.display_mcp import DisplayMcpTarget
 from jarvis.runtime.scene_view import (
     CoreSceneView,
@@ -203,6 +215,13 @@ BAREHANDS_TARGET_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_TARGET_JS__*/"
 #: plus son branchement navigateur. Même insertion que les scripts ci-dessus.
 BAREHANDS_SCRIPT_FILE = "control_center_barehands.js"
 BAREHANDS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_JS__*/"
+#: Canal de commandes du cerveau vers Bare Hands (Slice 12) : long-poll de
+#: `GET /api/barehands/commands` et remise de chaque commande au **même** point
+#: d'entrée que le bouton (`window.JarvisBarehands`). Inséré APRÈS le pointeur,
+#: qui pose ce point d'entrée : son bloc navigateur le lit au chargement et
+#: refuse de s'installer sans lui.
+BAREHANDS_COMMANDS_SCRIPT_FILE = "control_center_barehands_commands.js"
+BAREHANDS_COMMANDS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_COMMANDS_JS__*/"
 #: Client pur de la scène constellation (Slice 03) : application ordonnée des
 #: patchs et détection de resynchronisation. Il n'expose que
 #: `window.JarvisSceneClient` et ne touche pas au DOM ; le rendu vient en Slice 05.
@@ -432,6 +451,7 @@ class ControlCenter:
         live_view: CoreLiveStatusView | None = None,
         scene_view: CoreSceneView | None = None,
         display_mcp: DisplayMcpTarget | None = None,
+        barehands_mcp: "BarehandsMcpTarget | None" = None,
         voice_registry: VoiceCapabilityRegistry | None = None,
         barehands_vendor_root: Path | None = None,
     ) -> None:
@@ -485,6 +505,17 @@ class ControlCenter:
         # à l'agent Claude seulement quand `scene.enabled` est vrai.
         self.display_mcp = display_mcp
         self._display_unconfigured_reported = False
+        # Canal de commandes Bare Hands (Slice 12) : où le serveur MCP
+        # `jarvis-barehands` joint **ce** Control Center, et le courtier qui
+        # tient la commande en vol. Remis à l'agent Claude seulement quand
+        # `barehands_test_mode.enabled` est vrai, comme `display_mcp` l'est sur
+        # `scene.enabled`.
+        self.barehands_mcp = barehands_mcp
+        self._barehands_unconfigured_reported = False
+        self.barehands_commands = BarehandsCommandBroker(
+            journal=self.journal,
+            gate=lambda: bool(barehands.load(self._settings())["enabled"]),
+        )
 
         settings = self._settings()
         self._agent_id = cli_catalog.normalize_agent_cli(settings.get("agent_cli"))
@@ -520,6 +551,11 @@ class ControlCenter:
             web.post("/api/shortcuts", self.save_shortcuts),
             web.get("/api/barehands", self.get_barehands),
             web.post("/api/barehands", self.save_barehands),
+            # Canal de commandes du cerveau (Slice 12) : long-poll de la page,
+            # demande du serveur MCP, reçu de la page.
+            web.get("/api/barehands/commands", self.barehands_commands_poll),
+            web.post("/api/barehands/commands", self.barehands_command_request),
+            web.post("/api/barehands/commands/{command_id}", self.barehands_command_receipt),
             web.get(barehands.ASSET_ROUTE_PREFIX + "{asset:.+}", self.barehands_asset),
             web.get("/api/audio/devices", self.audio_devices),
             web.post("/api/audio/test", self.audio_test),
@@ -615,6 +651,22 @@ class ControlCenter:
                     level="warning",
                     data={"code": "display_mcp_unconfigured", "source": scene["source"]},
                 )
+        if hasattr(agent, "barehands_mcp"):
+            # Même règle et même moment que l'affichage : effectif au prochain
+            # (re)démarrage du cerveau. Éteint, le cerveau est lancé exactement
+            # comme avant — ni serveur `jarvis-barehands`, ni consigne : il ne
+            # peut donc pas prétendre piloter des mains qui n'existent pas.
+            hands_on = bool(barehands.load(settings)["enabled"])
+            agent.barehands_mcp = self.barehands_mcp if hands_on else None
+            if hands_on and self.barehands_mcp is None and not self._barehands_unconfigured_reported:
+                self._barehands_unconfigured_reported = True
+                self.journal.emit(
+                    "barehands.mcp_unconfigured",
+                    "Bare Hands est allumé mais le Control Center ne connaît pas sa propre adresse : "
+                    "outils Bare Hands non déclarés au cerveau",
+                    level="warning",
+                    data={"code": "barehands_mcp_unconfigured"},
+                )
         if callable(getattr(agent, "set_prompt_overrides", None)):
             agent.set_prompt_overrides(prompt_override_document(settings))
 
@@ -696,6 +748,10 @@ class ControlCenter:
             self.journal.emit("agent.unavailable", str(exc), level="error")
 
     async def stop(self) -> None:
+        # Avant tout le reste : un appel du cerveau qui attend une page rend la
+        # main tout de suite avec sa cause, au lieu d'attendre son échéance
+        # pendant que le serveur se ferme sous lui.
+        self.barehands_commands.close()
         for agent in list(self._agents.values()):
             try:
                 await agent.stop()
@@ -750,6 +806,10 @@ class ControlCenter:
         )
         html = html.replace(
             BAREHANDS_SCRIPT_MARKER, page.with_name(BAREHANDS_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            BAREHANDS_COMMANDS_SCRIPT_MARKER,
+            page.with_name(BAREHANDS_COMMANDS_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             SCENE_SCRIPT_MARKER, page.with_name(SCENE_SCRIPT_FILE).read_text(encoding="utf-8")
@@ -841,6 +901,12 @@ class ControlCenter:
             # calque et n'ouvre sa lecture que s'il est vrai. Lu à chaque
             # sondage, sans E/S de plus que les réglages déjà lus.
             "scene": load_scene_gate(settings),
+            # Interrupteur Bare Hands (Slice 12) : la page n'ouvre son canal de
+            # commandes que s'il est vrai. Même raison et même battement que
+            # `scene` juste au-dessus — c'est ce qui évite une seconde boucle
+            # permanente dans la page pour apprendre un booléen (constat F1 :
+            # `/api/status` ne portait aucun champ Bare Hands).
+            "barehands": {"enabled": bool(barehands.load(settings)["enabled"])},
             # Bornes que la page affiche (Slice 08, reprise QA) : délai réel de
             # l'arrêt d'un job à travers ce Control Center, `null` sans Core.
             "scene_limits": {
@@ -1699,6 +1765,10 @@ class ControlCenter:
             )
             raise web.HTTPBadRequest(text=str(exc), headers={SETTINGS_ERROR_CODE_HEADER: exc.code}) from exc
         self._write_settings(current)
+        # L'interrupteur commande aussi la surface d'outils du cerveau (Slice
+        # 12) : sans ce rappel, allumer Bare Hands laisserait le canal de
+        # commandes sans outil jusqu'au prochain enregistrement des réglages.
+        self._apply_agent_settings(current)
         state = barehands.describe(current, self.barehands_vendor_root)
         self.journal.emit(
             "settings.barehands",
@@ -1706,6 +1776,109 @@ class ControlCenter:
             data={"enabled": value["enabled"], "assets_installed": state["assets"]["installed"]},
         )
         return web.json_response(state)
+
+    # ------------------------------------------------- canal de commandes (Slice 12)
+
+    @staticmethod
+    def _barehands_error(status: int, code: str, message: str) -> web.Response:
+        """Refus du canal de commandes : le code dans le corps **et** dans l'en-tête.
+
+        Les deux idiomes du dépôt se rencontrent ici pour une raison précise :
+        le corps JSON (`{"error": {code, message}}`, forme de la famille scène)
+        est ce que la page lit, et l'en-tête `X-Jarvis-Error-Code` (forme de la
+        famille réglages) est ce que le **serveur MCP** lit pour transformer un
+        refus en erreur d'outil sans analyser une phrase française.
+        """
+
+        return web.json_response(
+            scene_wire.error_body(code, message), status=status, headers={SETTINGS_ERROR_CODE_HEADER: code}
+        )
+
+    async def barehands_commands_poll(self, request: web.Request) -> web.Response:
+        """Long-poll de la page : rend la commande en attente, ou rien.
+
+        `wait_s` (0 à `MAX_POLL_WAIT_S`) ; 0 est une lecture courte. Toujours
+        200 : `{"command": {...}}` ou `{"command": null}`. La page rouvre
+        aussitôt — c'est elle qui tient la boucle, et seulement pendant que Bare
+        Hands est allumé et que l'onglet est visible.
+        """
+
+        unknown = set(request.query) - {"wait_s"}
+        if unknown:
+            return self._barehands_error(400, BAD_REQUEST, "paramètre inconnu : " + ", ".join(sorted(unknown)))
+        try:
+            wait_s = float(request.query.get("wait_s", "0"))
+        except ValueError:
+            return self._barehands_error(400, BAD_REQUEST, "wait_s doit être un nombre")
+        if not 0.0 <= wait_s <= MAX_POLL_WAIT_S:
+            return self._barehands_error(400, BAD_REQUEST, f"wait_s doit être entre 0 et {MAX_POLL_WAIT_S:g}")
+        broker = self.barehands_commands
+        deadline = time.monotonic() + wait_s
+        while True:
+            # L'événement est pris **avant** la lecture : une commande créée
+            # entre les deux lève l'événement déjà attendu, elle n'est pas perdue.
+            wake = broker.wake_event()
+            command = broker.deliver()
+            if command is not None:
+                return web.json_response({"command": command})
+            due = broker.delivery_due()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return web.json_response({"command": None})
+            timeout = remaining if due is None else min(remaining, due)
+            try:
+                await asyncio.wait_for(wake.wait(), timeout=max(0.0, timeout))
+            except TimeoutError:
+                # Échéance du long-poll, ou l'heure de redonner la commande :
+                # la boucle retranche et décide, elle ne suppose rien.
+                continue
+
+    async def barehands_command_request(self, request: web.Request) -> web.Response:
+        """Demande du cerveau (serveur MCP `jarvis-barehands`) : une commande, attendue jusqu'à son échéance.
+
+        Rend 200 et le reçu de la page (`outcome`, `lifecycle`, …), ou un refus
+        codé. Jamais un succès par défaut : sans page visible, c'est 504
+        `barehands_no_visible_page`, pas un 200 optimiste.
+        """
+
+        if request.query:
+            return self._barehands_error(400, BAD_REQUEST, "unexpected query")
+        try:
+            raw = await scene_wire.read_bounded_body(request, MAX_COMMAND_REQUEST_BYTES)
+        except scene_wire.SceneBodyTooLarge:
+            return self._barehands_error(413, BAD_REQUEST, f"la demande dépasse {MAX_COMMAND_REQUEST_BYTES} octets")
+        try:
+            name = parse_request(json.loads(raw.decode("utf-8")) if raw else None)
+        except (UnicodeDecodeError, ValueError) as exc:
+            code = getattr(exc, "code", BAD_REQUEST)
+            status = getattr(exc, "status", 400)
+            return self._barehands_error(status, code, str(exc))
+        try:
+            return web.json_response(await self.barehands_commands.request(name))
+        except BarehandsCommandError as exc:
+            return self._barehands_error(exc.status, exc.code, str(exc))
+
+    async def barehands_command_receipt(self, request: web.Request) -> web.Response:
+        """Reçu de la page pour une commande remise : ce qu'elle a **constaté**.
+
+        Origine vérifiée par le middleware, comme tout POST. Identifiant de la
+        forme attendue (404 sinon), corps borné, reçu strictement validé : un
+        refus sans code connu est refusé ici plutôt que recopié au cerveau.
+        """
+
+        if request.query:
+            return self._barehands_error(400, BAD_RECEIPT, "unexpected query")
+        try:
+            raw = await scene_wire.read_bounded_body(request, MAX_RECEIPT_BYTES)
+        except scene_wire.SceneBodyTooLarge:
+            return self._barehands_error(413, BAD_RECEIPT, f"le reçu dépasse {MAX_RECEIPT_BYTES} octets")
+        try:
+            receipt = parse_receipt(json.loads(raw.decode("utf-8")) if raw else None)
+            return web.json_response(self.barehands_commands.complete(request.match_info["command_id"], receipt))
+        except BarehandsCommandError as exc:
+            return self._barehands_error(exc.status, exc.code, str(exc))
+        except (UnicodeDecodeError, ValueError) as exc:
+            return self._barehands_error(400, BAD_RECEIPT, f"reçu illisible : {exc}")
 
     async def barehands_asset(self, request: web.Request) -> web.StreamResponse:
         found = barehands.asset_path(self.barehands_vendor_root, request.match_info["asset"])

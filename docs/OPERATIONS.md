@@ -375,7 +375,8 @@ porte le bouton qui en change — « Allumer et activer », « Activer
 l'interaction », « Mettre en veille », « Réessayer ». Pendant le démarrage il
 affiche le temps écoulé et se désarme : la sortie est l'interrupteur du dessus,
 qui annule un démarrage encore en vol. C'est le second chemin d'activation exigé
-par la décision 6 ; la voix empruntera le même (Slice 12). Depuis la console :
+par la décision 6 ; **la voix emprunte le même depuis la Slice 12** (voir
+« Piloter Bare Hands à la voix » ci-dessous). Depuis la console :
 `JarvisBarehands.activate()` (allume si besoin, puis réveille),
 `JarvisBarehands.sleep()` (rendort sans rendre la caméra),
 `JarvisBarehands.lifecycle()` (l'état lu dans le vocabulaire du contrat) et
@@ -388,6 +389,39 @@ le toast reste à l'écran 9 s et porte la cause réelle. Dans les deux cas, un
 seul chemin (`teardown`) arrête les pistes caméra, ferme le modèle, retire la
 vidéo, les jetons et le survol ; un toast et l'onglet disent pourquoi. Un
 démarrage encore en vol quand on éteint rend la caméra dès qu'elle arrive.
+
+#### Piloter Bare Hands à la voix (Slice 12)
+
+« Active les mains » n'est **pas** reconnu par la surface vocale : en
+architecture `continuous_brain` elle n'a aucun outil (Décision 34) et il
+n'existe dans ce dépôt ni registre de commandes vocales ni routeur d'intention.
+C'est le **cerveau** (CLI Claude) qui reconnaît la demande et appelle un outil :
+
+```
+parole → cerveau → outil MCP jarvis-barehands → POST /api/barehands/commands
+       → long-poll de la page → window.JarvisBarehands → reçu → réponse au cerveau
+```
+
+Cinq outils, un par action : `barehands_activate`, `barehands_deactivate`,
+`barehands_calibrate`, `barehands_tutorial`, `barehands_exit_overlay`. Les trois
+derniers **refusent aujourd'hui** (`barehands_flow_absent`) : les parcours
+arrivent aux Slices 08 et 09. Aucun outil ne touche l'interrupteur, les réglages
+ni l'outil de la main : le cerveau réveille et rendort, rien de plus.
+
+Le serveur MCP `jarvis-barehands` n'est déclaré au CLI **que** si l'utilisateur
+a allumé Bare Hands, avec sa consigne système ; éteint, le cerveau est lancé
+exactement comme avant et ne sait pas que ces outils existent. Comme pour
+l'affichage, c'est effectif au prochain **(re)démarrage du cerveau**. Le canal
+côté page ne s'ouvre que pendant que l'interrupteur est vrai et que l'onglet est
+**visible** ; il suit `/api/status` (`barehands.enabled`), sans minuterie de
+plus. Fenêtre fermée ou onglet caché : `barehands_no_visible_page` après 3 s —
+JARVIS le dit, il ne prétend pas avoir activé.
+
+Refus HTTP : code stable dans le corps JSON **et** dans `X-Jarvis-Error-Code`.
+Événements de trace : `barehands.command_requested`, `…_delivered`,
+`…_applied`, `…_refused`, `…_expired`, `…_abandoned`, `barehands.receipt_refused`,
+`barehands.tool`, `barehands.tool_failed`. Contrat complet :
+`docs/barehands-contracts.md` § 12.
 
 Assets : non versionnés, ce sont ceux que `scripts/bootstrap_third_party.py` a
 vendorisés sous `third_party/barehands/vendor` (MediaPipe Tasks Vision 0.10.14,

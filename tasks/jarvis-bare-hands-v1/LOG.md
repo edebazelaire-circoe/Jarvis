@@ -1570,3 +1570,136 @@ seulement enregistré, la réinitialisation qui préserve l'interrupteur, et les
 deux du clavier (la flèche qui saute un outil sans moteur, et l'arrêt de
 tabulation du premier dessin). Aucune n'a été tuée en assouplissant une
 assertion.
+
+## 2026-09-19 — Slice 12, implementation agent
+
+Slice ajoutée par l'audit de la Slice 00 (décision humaine D2). Le canal de
+commandes du cerveau vers Bare Hands : `jarvis/domain/barehands_command.py`
+(vocabulaire, bornes, codes), `jarvis/runtime/barehands_commands.py` (le
+courtier), trois routes `/api/barehands/commands`,
+`jarvis/runtime/barehands_mcp.py` (serveur stdio `jarvis-barehands`) et
+`jarvis/runtime/control_center_barehands_commands.js` (le consommateur de page).
+
+- **Le constat F1 tient toujours, vérifié sur l'arbre vivant** : aucun registre
+  de commandes vocales, aucun routeur d'intention (`intent_router|voice_command|
+  command_registry` : zéro occurrence dans `jarvis/`), `tools_for(continuous_brain
+  =True)` rend toujours `[]`, et la surface Realtime reste interdite de
+  revendiquer une action. La voix n'a donc **qu'un** chemin, et c'est celui-ci.
+- **Le courtier vit dans le Control Center, pas dans Core.** Le précédent
+  (`capture_request`) passe par Core parce que la scène **est** un objet de
+  Core. Bare Hands n'existe nulle part dans Core : ni interrupteur, ni réglages,
+  ni page. Y faire voyager la commande aurait demandé des routes `/v1/…`, un
+  client protocolaire et un relais, pour trois sauts de plus et zéro
+  propriétaire de plus. Le serveur MCP joint donc le Control Center, derrière le
+  **même** garde d'origine que `POST /api/barehands` — la route qui bascule déjà
+  le même interrupteur. Un appelant capable d'atteindre l'une atteint l'autre :
+  le canal n'ajoute aucune autorité, il en emprunte une qui existe.
+- **Échéance 3 s, et c'est un arbitrage, pas une valeur ronde.** Plus courte que
+  les 5 s d'une capture parce qu'une capture doit dessiner un canevas et
+  téléverser un PNG, quand une commande n'a qu'à traverser un long-poll déjà
+  ouvert et appeler une fonction locale. En face, la commande naît d'une phrase
+  prononcée et le cerveau **bloque** dessus pendant que la conversation attend :
+  une commande qui part quatre secondes après que l'utilisateur est passé à
+  autre chose est pire qu'un refus.
+- **Aucune minuterie ajoutée à la page.** L'interrupteur voyage par
+  `/api/status` — `refreshStatus` est le seul battement déjà permanent, et c'est
+  exactement la couture de `JarvisScene.gate`. Le constat F1 notait que
+  `/api/status` ne portait aucun champ Bare Hands : c'est ce trou-là qui est
+  bouché. La boucle de commandes, elle, est un long-poll qui se rappelle
+  lui-même et n'existe que pendant que l'interrupteur est vrai **et** que
+  l'onglet est visible.
+- **La campagne de mutations a trouvé un vrai défaut, pas seulement un trou de
+  test.** Mon `evaluate` comptait les générations pour faire sortir la boucle à
+  la fermeture. Fermer puis rouvrir la porte pendant que la boucle est garée sur
+  un long-poll incrémentait deux fois le compteur : la boucle sortait alors que
+  la porte était rouverte, et `running` valant encore vrai au moment de rouvrir,
+  personne ne la relançait. **Bare Hands allumé, canal muet, rien à l'écran pour
+  le dire** — et le cerveau n'aurait eu pour seul indice que
+  `barehands_no_visible_page` devant une fenêtre parfaitement visible. Le
+  compteur était en outre redondant : `while(active())` suffit à arrêter, et
+  `running` seul suffit à empêcher deux boucles. Supprimé plutôt que testé.
+  Formulation générale : **une garde qui double une condition déjà suffisante
+  n'est pas de la défense en profondeur, c'est une seconde vérité** — et la
+  seconde vérité finit par contredire la première.
+- **Un appel qui ne lève pas n'est pas une preuve.** Pour `activate`/`deactivate`
+  la preuve est l'état **relu** (`lifecycle()`) : `setAwake` avale ses erreurs
+  dans `view.error` et ne rejette jamais, donc son retour ne dit rien. Cette
+  règle a été durcie en cours de Slice après un signalement de la QA de la
+  Slice 07 : `JarvisBarehands.tool('scissors')` normalise vers `pointer`,
+  enregistre, n'affiche rien et **rend un succès**, ce qui rend le refus serveur
+  `barehands_tool_unknown` inatteignable par la page. Conséquence pour ce canal,
+  au-delà de ne pas router `tool` : un parcours (Slices 08/09) n'a **aucun** état
+  observable, donc il doit **confirmer** explicitement (`true` ou `{ok:true}`)
+  sous peine de `barehands_flow_unconfirmed`. Sans cette marche, le jour où la
+  Slice 08 pose un `calibrate()` qui ne fait rien, la voix annoncerait un
+  parcours ouvert.
+- **Quatre portes de la surface restent délibérément hors de la table** —
+  `enable`, `disable`, `settings`, `tool` — et un test lit l'absence sur la
+  **vraie** surface plutôt que dans la table. L'interrupteur appartient à
+  l'utilisateur : l'éteindre par la voix retirerait au cerveau l'outil qui vient
+  de servir.
+- **La preuve du point d'entrée unique est dynamique, pas une lecture de code.**
+  Le double de DOM de la Slice 07 exécute le **vrai** bloc navigateur du
+  pointeur, donc `window.JarvisBarehands` est le vrai. Deux runs node partent du
+  même état (`off`) : l'un clique `#barehandsWake`, l'autre fait passer une
+  commande par le canal. Les deux laissent la page dans un état **identique** —
+  même cycle de vie, même `#barehandsLifecycle` redessiné, même bandeau
+  `camera_unsupported`. `#barehandsLifecycle` n'est réécrit que par
+  `refreshPanel()`, que seul `setAwake` appelle : une implantation parallèle du
+  réveil laisserait ce bloc intact. Et sous node il n'y a pas de caméra, donc le
+  refus est **réel** des deux côtés — c'est ce qui rend la comparaison probante
+  au lieu d'être une mise en scène.
+- **Quatre programmes de prompt pour deux interrupteurs indépendants**, composés
+  par un constructeur plutôt que recopiés. Le test qui compte n'est pas celui du
+  registre : c'est celui qui lance le **vrai** agent et lit l'argv. Tester le
+  registre seul laissait passer la seule ligne qui relie « serveur MCP déclaré »
+  à « consigne envoyée » — mutation M22, survivante au premier passage.
+- **Deux `--mcp-config`, pas deux chemins accolés.** L'option du CLI est
+  variadique : un chemin nu en deuxième position serait indissociable d'un
+  argument positionnel, et un chemin Windows avec une espace s'y scinderait.
+  Vérifié **sur le vrai CLI** : `claude --strict-mcp-config --mcp-config a.json
+  --mcp-config "b with space.json" -p …` charge les deux serveurs et liste les
+  dix outils (cinq par serveur) — ce qui prouve du même coup que
+  `serve_stdio()` tourne pour de vrai au bout du protocole.
+- **`consumed` n'est pas la même garde que « la réponse est posée ».** Entre le
+  reçu de la page et la reprise de l'appel du cerveau, la commande est encore en
+  place : un second onglet qui sonde dans cet intervalle la recevrait deux fois.
+  Deux mutations (M6, M10) ont survécu au premier passage parce que mon test
+  laissait la **fenêtre de redistribution** rendre `None` à la place de
+  `consumed`. Il faut forcer la fenêtre à échéance pour que l'assertion parle de
+  la bonne garde.
+- **Ce que le cerveau voit aujourd'hui pour la calibration, le tutoriel et la
+  sortie de panneau** : `barehands_flow_absent`, avec la phrase « ne prétends
+  pas l'avoir lancé ». Le transport est complet et testé de bout en bout ; seule
+  la dernière marche manque, et un test qui installe un faux point d'entrée
+  prouve que le jour où les Slices 08 et 09 le posent, rien ne change ici.
+- **Ce que la Slice 12 n'a pas touché, à dessein** : ni `createPinchDetector`,
+  ni le budget d'images de la veille, ni les sept paires de construction, ni les
+  deux refus de chargement existants (un troisième s'ajoute, de la même classe),
+  ni aucune des constantes épinglées. Aucune constante nouvelle dans `DEFAULTS` :
+  le canal ne règle rien, il transporte.
+
+Fichiers : `jarvis/domain/barehands_command.py` (nouveau),
+`jarvis/runtime/barehands_commands.py` (nouveau),
+`jarvis/runtime/barehands_mcp.py` (nouveau),
+`jarvis/runtime/control_center_barehands_commands.js` (nouveau),
+`jarvis/runtime/control_center.py`, `jarvis/runtime/control_center.html`,
+`jarvis/runtime/claude_local.py`, `jarvis/runtime/prompt_catalog.py`,
+`jarvis/app.py`, `docs/barehands-contracts.md`, `docs/OPERATIONS.md`,
+`tests/unit/test_barehands_command_channel.py` (nouveau),
+`tests/unit/test_barehands_commands_js.py` (nouveau).
+
+Tests, chunks en avant-plan : nouveaux fichiers **26 + 12 = 38 passed** ;
+baseline 1 (Bare Hands + scène, onze fichiers) **276 passed**, inchangée ;
+baseline 2 (`test_control_center_*`) **284 passed**, inchangée ; MCP + prompts +
+`scene_settings` **148 passed**, inchangée ; `-k "claude or brain or agent or app
+or mcp or barehands"` **1422 passed** ; `-k "settings or scene or prompt or
+control"` **1643 passed**. Aucune régression.
+
+**Quarante mutations tentées, quarante reprises** — six seulement après
+renforcement : les deux de l'usage unique (`consumed` masqué par la fenêtre de
+redistribution), celle du programme de prompt (le registre testé sans l'argv du
+lancement), celle du refus de chargement du module, et les deux de la boucle —
+dont une, M28, a été **supprimée plutôt que tuée** parce qu'elle visait du code
+qui s'est révélé faux et redondant. Aucune n'a été tuée en assouplissant une
+assertion.

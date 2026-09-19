@@ -143,6 +143,11 @@ def default_prompt_registry() -> PromptRegistry:
         # Artefacts groupés après un travail terminé (Slice 07) : même programme.
         _descriptor("backend.claude.conversation.artifacts", claude_local, "BRAIN_ARTIFACT_PROMPT",
                     claude_local.BRAIN_ARTIFACT_PROMPT, apply_policy="read_only"),
+        # Consigne Bare Hands (Slice 12) : seulement dans les programmes dont le
+        # nom porte `barehands`, choisis quand `barehands_test_mode.enabled` est
+        # vrai. Indépendante de la scène — les deux interrupteurs ne sont pas liés.
+        _descriptor("backend.claude.conversation.barehands", claude_local, "BRAIN_BAREHANDS_PROMPT",
+                    claude_local.BRAIN_BAREHANDS_PROMPT, apply_policy="read_only"),
         _descriptor("backend.claude.job_result.system", claude_local, "JOB_RESULT_SYSTEM_PROMPT",
                     claude_local.JOB_RESULT_SYSTEM_PROMPT, apply_policy="read_only"),
         _descriptor("backend.claude.speculative.system", claude_local, "SPECULATIVE_SYSTEM_PROMPT",
@@ -173,6 +178,28 @@ def default_prompt_registry() -> PromptRegistry:
                                     PromptOperation.APPEND if context == "voice.recent_context" else PromptOperation.MESSAGE))
         steps.append(PromptStep(tools, "session.tools", PromptOperation.REPLACE))
         return PromptProgram(program_id, target, tuple(steps))
+
+    def backend_session(program_id: str, invocation: str, *, display: bool = False, hands: bool = False) -> PromptProgram:
+        """La consigne système du cerveau conversationnel, composée de ses capacités **déclarées**.
+
+        Deux interrupteurs indépendants (`scene.enabled`, `barehands_test_mode.enabled`)
+        donnent quatre programmes ; ils sont construits ici plutôt que recopiés,
+        pour qu'un bloc corrigé le soit dans les quatre. L'ordre est celui d'avant
+        la Slice 12 : écran d'abord, mains ensuite, ajout de l'utilisateur en dernier.
+        """
+
+        steps = [PromptStep("backend.claude.conversation.system", "cli.append_system_prompt")]
+        if display:
+            steps += [
+                PromptStep("backend.claude.conversation.display", "cli.append_system_prompt", separator="\n"),
+                # Sans séparateur : la ligne prolonge la liste « ÉCRAN ».
+                PromptStep("backend.claude.conversation.scene_read", "cli.append_system_prompt"),
+                PromptStep("backend.claude.conversation.artifacts", "cli.append_system_prompt", separator="\n"),
+            ]
+        if hands:
+            steps.append(PromptStep("backend.claude.conversation.barehands", "cli.append_system_prompt", separator="\n"))
+        steps.append(PromptStep("backend.system.addition", "cli.append_system_prompt", separator="\n"))
+        return PromptProgram(program_id, PromptTarget("backend", None, "claude", None, None, invocation), tuple(steps))
 
     programs = (
         session("voice.simple.openai.session",
@@ -211,20 +238,13 @@ def default_prompt_registry() -> PromptRegistry:
                           PromptStep("front_brain.analysis.input", "request.user_message", PromptOperation.MESSAGE),
                           PromptStep("front_brain.analysis.schema", "request.response_schema", PromptOperation.REPLACE),
                       )),
-        PromptProgram("backend.claude.conversation.session",
-                      PromptTarget("backend", None, "claude", None, None, "conversation_session"), (
-                          PromptStep("backend.claude.conversation.system", "cli.append_system_prompt"),
-                          PromptStep("backend.system.addition", "cli.append_system_prompt", separator="\n"),
-                      )),
-        PromptProgram("backend.claude.conversation.display_session",
-                      PromptTarget("backend", None, "claude", None, None, "conversation_display_session"), (
-                          PromptStep("backend.claude.conversation.system", "cli.append_system_prompt"),
-                          PromptStep("backend.claude.conversation.display", "cli.append_system_prompt", separator="\n"),
-                          # Sans séparateur : la ligne prolonge la liste « ÉCRAN ».
-                          PromptStep("backend.claude.conversation.scene_read", "cli.append_system_prompt"),
-                          PromptStep("backend.claude.conversation.artifacts", "cli.append_system_prompt", separator="\n"),
-                          PromptStep("backend.system.addition", "cli.append_system_prompt", separator="\n"),
-                      )),
+        backend_session("backend.claude.conversation.session", "conversation_session"),
+        backend_session("backend.claude.conversation.display_session", "conversation_display_session",
+                        display=True),
+        backend_session("backend.claude.conversation.barehands_session", "conversation_barehands_session",
+                        hands=True),
+        backend_session("backend.claude.conversation.display_barehands_session",
+                        "conversation_display_barehands_session", display=True, hands=True),
         PromptProgram("backend.claude.job_result.session",
                       PromptTarget("backend", None, "claude", None, None, "job_result_session"), (
                           PromptStep("backend.claude.job_result.system", "cli.append_system_prompt"),

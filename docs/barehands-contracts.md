@@ -58,8 +58,14 @@ repère commenté dans `control_center.html`, substitué côté serveur par
 (`jarvis/runtime/control_center.py`) et **précède** ses deux lecteurs :
 
 ```
-…_BAREHANDS_CONTRACTS_JS__ → …_BAREHANDS_TARGET_JS__ → …_BAREHANDS_JS__ → …_SCENE_PAGE_JS__
+…_BAREHANDS_CONTRACTS_JS__ → …_BAREHANDS_TARGET_JS__ → …_BAREHANDS_JS__
+→ …_BAREHANDS_COMMANDS_JS__ → …_SCENE_PAGE_JS__
 ```
+
+(`…_BAREHANDS_COMMANDS_JS__` est arrivé à la Slice 12 : le canal de commandes
+du cerveau lit `window.JarvisBarehands`, que le pointeur pose, donc il vient
+après lui. Son bloc navigateur **refuse de s'installer** sans cette surface,
+pour que l'ordre casse à l'insertion et non trois clics plus tard.)
 
 (`…_BAREHANDS_TARGET_JS__` est arrivé à la Slice 05 : il lit les contrats et se
 fait lire par le pointeur, donc il vit exactement entre les deux.)
@@ -1533,6 +1539,100 @@ Seul étage qui connaisse un traqueur ou l'expérience actuelle.
   **filtrée** du jeton, pas son `x` d'affichage, qui se fige sur l'ancre
   pendant un pincement.
 
+## 12. Canal de commandes du cerveau (décision 6, Slice 12)
+
+Seule section sans `§` d'architecture : elle n'existait pas au découpage. Le
+constat **F1** de la Slice 00 a montré que la décision 6 (« le bouton
+d'interface **et la voix** activent/désactivent Bare Hands ») n'avait aucun
+substrat — ni registre de commandes vocales, ni routeur d'intention, et une
+surface Realtime sans aucun outil en `continuous_brain` (Décision 34). Le
+chemin réel d'une commande vocale est donc :
+
+```
+parole → cerveau (CLI Claude) → outil MCP `jarvis-barehands`
+       → POST /api/barehands/commands (Control Center)
+       → long-poll de la page → window.JarvisBarehands → reçu
+```
+
+**Vocabulaire**, fermé des deux côtés (`jarvis/domain/barehands_command.py`
+pour les noms, `control_center_barehands_commands.js` pour ce qu'ils
+déclenchent ; test de parité) :
+
+| Commande | Outil du cerveau | Point d'entrée de la page | Aujourd'hui |
+|---|---|---|---|
+| `activate` | `barehands_activate` | `JarvisBarehands.activate()` | vivant |
+| `deactivate` | `barehands_deactivate` | `JarvisBarehands.sleep()` | vivant |
+| `calibrate` | `barehands_calibrate` | `JarvisBarehands.calibrate()` | **absent** (Slice 08) |
+| `tutorial` | `barehands_tutorial` | `JarvisBarehands.tutorial()` | **absent** (Slice 09) |
+| `exit_overlay` | `barehands_exit_overlay` | `JarvisBarehands.exitOverlay()` | **absent** (Slice 09) |
+
+Ce sont **exactement** les points d'entrée du bouton : `#barehandsWake` appelle
+`setAwake`, et `JarvisBarehands.activate`/`sleep` *sont* `setAwake(true/false)`.
+Conséquence visible et testée : une commande vocale redessine le panneau
+Expérimental, parce que `setAwake` finit par `refreshPanel()`.
+
+**Quatre portes de la surface restent délibérément hors de la table.**
+`enable`/`disable` : l'interrupteur appartient à l'utilisateur, et l'éteindre
+par la voix retirerait au cerveau l'outil qui vient de servir. `settings` et
+`tool` : la QA de la Slice 07 a mesuré que `tool('scissors')` normalise vers
+`pointer`, enregistre, n'affiche rien et **rend un succès**, ce qui rend le
+refus serveur `barehands_tool_unknown` inatteignable par la page. Une commande
+d'outil n'entrera ici que quand elle pourra être vérifiée.
+
+**Issues et codes.** Un reçu porte `outcome` (`applied` | `duplicate` |
+`refused`) et le `lifecycle` **relu après l'appel** — jamais l'état demandé.
+Les codes de refus de la page sont une liste fermée, refusée côté serveur si
+elle s'en écarte :
+
+| Code | Sens |
+|---|---|
+| `barehands_flow_absent` | le point d'entrée n'existe pas dans cette version |
+| `barehands_flow_unconfirmed` | le parcours a été appelé et n'a **pas confirmé** |
+| `barehands_lifecycle_refused` | l'état visé n'a pas été atteint (caméra, erreur) |
+| `barehands_command_unknown` | la page ne connaît pas ce nom de commande |
+
+Côté serveur : `barehands_disabled` (409), `barehands_command_unknown` (400),
+`barehands_command_busy` (409), `barehands_no_visible_page` (504),
+`barehands_unknown_command` (404), `barehands_command_expired` (410),
+`barehands_command_cancelled` (503), `barehands_bad_request` (400),
+`barehands_bad_receipt` (400) ; côté outil, `barehands_channel_unreachable`.
+Chaque refus HTTP porte son code dans le corps **et** dans
+`X-Jarvis-Error-Code` : le corps est ce qu'un humain lit, l'en-tête ce que le
+serveur MCP lit sans analyser une phrase française.
+
+**Un appel qui ne lève pas n'est pas une preuve.** Pour `activate`/`deactivate`
+la preuve est l'état relu (`lifecycle()`), parce qu'il en existe un ; `setAwake`
+avale ses erreurs dans `view.error` et ne rejette jamais, donc son retour ne dit
+rien. Pour un parcours, il n'y a pas d'état observable : il doit **confirmer**
+en résolvant `true` ou `{ok:true}`, sans quoi c'est `barehands_flow_unconfirmed`.
+Les Slices 08 et 09 héritent de ce contrat — c'est le prix d'entrée pour être
+annoncé à l'utilisateur.
+
+**Transport.** Échéance **3 s** (`COMMAND_DEADLINE_S`), plus courte que les 5 s
+d'une capture de scène : une capture doit dessiner et téléverser une image, une
+commande n'a qu'à traverser un long-poll déjà ouvert. En face, la commande naît
+d'une phrase prononcée et le cerveau bloque dessus pendant que la conversation
+attend — une commande qui s'exécute quatre secondes après que l'utilisateur est
+passé à autre chose est pire qu'un refus. Une commande à la fois ; identifiant
+aléatoire à **usage unique** ; redistribution au plus une fois par seconde.
+
+**Porte, et inertie.** Éteint, il n'y a ni serveur MCP ni consigne système (le
+cerveau ne sait pas que ces outils existent), la route refuse
+`barehands_disabled` **avant** toute attente, et la page n'ouvre aucun
+long-poll. L'interrupteur voyage par `/api/status` (`barehands.enabled`), le
+seul battement déjà permanent de la page : **aucune minuterie n'est ajoutée**.
+La boucle ne vit que pendant que l'interrupteur est vrai *et* que l'onglet est
+visible — un onglet caché ne doit pas prendre une commande qu'il ne peut pas
+honorer, et le serveur dira « aucune page visible », ce qui sera vrai.
+
+**Journal** (`runtime/trace.jsonl`, `code` stable dans `data`, identifiant court
+commun à toutes les lignes d'une même commande) : `barehands.command_requested`,
+`barehands.command_delivered`, `barehands.command_applied`,
+`barehands.command_refused`, `barehands.command_expired`,
+`barehands.command_abandoned`, `barehands.receipt_refused`, plus
+`barehands.tool` / `barehands.tool_failed` et `barehands.server_started` /
+`barehands.server_stopped` côté serveur MCP.
+
 ## Ce qui est implémenté, et ce qui ne l'est pas
 
 La Slice 01 n'a apporté aucun moteur : elle a fixé les noms — et, à sa reprise,
@@ -1611,10 +1711,25 @@ constante nouvelle dans `DEFAULTS`** : les deux nombres que les réglages
 déplacent (`sleepTimeoutMs`, et `clickSlopPx`/`dragSlopPx` par `sensitivity`)
 existaient déjà.
 
-Restent à venir : calibration, tutoriel, diagnostics enregistrés et le canal de
-commandes de la voix (Slices 08 à 12).
-`window.JarvisBarehands.activate()` / `.sleep()` / `.lifecycle()` sont le point
-d'entrée que la Slice 12 branchera — avec `.settings(patch)` et `.tool(name)`,
-qui appliquent **et** enregistrent — et `.captures()` / `.interactions()` /
-`.diagnostics()` ce que la Slice 10 lira. `tutorialSeen` et
-`calibrationEnabled` attendent les Slices 08 et 09.
+La Slice 12 implante le canal de commandes du cerveau (§ 12, décision 6) :
+`jarvis/domain/barehands_command.py` (vocabulaire, bornes, codes),
+`jarvis/runtime/barehands_commands.py` (le courtier, calqué sur
+`jarvis/core/scene_capture.py`), trois routes sur `/api/barehands/commands`,
+`jarvis/runtime/barehands_mcp.py` (serveur stdio `jarvis-barehands`, cinq
+outils) et `jarvis/runtime/control_center_barehands_commands.js` — **un module
+de page ajouté**, donc l'ordre d'insertion a changé (voir « Insertion dans la
+page »). Couverte par `tests/unit/test_barehands_command_channel.py` et
+`tests/unit/test_barehands_commands_js.py`. Aucune constante nouvelle dans
+`DEFAULTS` : le canal ne règle rien, il transporte.
+
+`window.JarvisBarehands.activate()` / `.sleep()` / `.lifecycle()` sont
+désormais **branchés** : la voix et le bouton passent par le même `setAwake`.
+`.settings(patch)` et `.tool(name)` restent **hors** du canal tant que leur
+succès n'est pas vérifiable (§ 12) ; `.captures()` / `.interactions()` /
+`.diagnostics()` sont ce que la Slice 10 lira.
+
+Restent à venir : calibration, tutoriel et diagnostics enregistrés (Slices 08 à
+10). `tutorialSeen` et `calibrationEnabled` attendent toujours les Slices 08 et
+09 ; leurs trois commandes traversent tout le canal et se refusent
+`barehands_flow_absent` à la dernière marche, parce que le point d'entrée
+n'existe pas encore.
