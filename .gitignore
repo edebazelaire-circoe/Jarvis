@@ -30,3 +30,6 @@ owner-voice-profile*.json
 
 # Etat local Visual Studio
 .vs/
+
+# Worktrees et état local du CLI : un chantier n'est pas un sous-module.
+.claude/

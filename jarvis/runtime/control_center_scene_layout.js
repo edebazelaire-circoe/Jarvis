@@ -444,36 +444,38 @@
     return {x:box.x+(box.w-w)/2,y:box.y+(box.h-h)/2,w,h};
   }
 
-  /* -------------------------------------------------------- dérive du champ */
+  /* ---------------------------------------------------------- gravitation */
 
   /* La constellation tourne autour du centre de la fenêtre — le soleil JARVIS,
      dessiné par le visage, auquel la scène ne touche pas.
 
-     **Un seul mouvement, continu, partagé par tout le champ** : au même
-     instant, chaque étoile, chaque capsule, chaque fenêtre et le calque des
-     fils sont décalés du *même* vecteur, qui parcourt un cercle à vitesse
-     constante, toujours dans le même sens, sans jamais repartir en arrière
-     (retour utilisateur du 18/09/2026 : « beaucoup de trucs sont fixes, mais ça
-     oscille — je veux une rotation continue »).
+     **Une vraie rotation** : chaque objet parcourt le cercle centré sur ce
+     point qui passe par sa place, dans le sens horaire, à vitesse angulaire
+     constante — un tour par période, sans jamais s'arrêter ni repartir en
+     arrière. Une étoile à gauche du visage se retrouve à sa droite au bout
+     d'une demi-période ; c'est à cela qu'on voit que le champ tourne.
 
-     Pourquoi un cercle parcouru par translation, et non une rotation autour du
-     visage : tout mouvement rigide du champ s'écrit `R(θ)·p + b`, et le
-     déplacement d'un objet vaut alors `2 · |p − c| · sin(θ/2)` autour du centre
-     instantané `c`. Un angle qui croît sans fin emmène donc les objets loin du
-     centre à deux fois leur rayon — sous la barre du haut, puis hors du cadre.
-     Garder l'excursion bornée *et* l'angle monotone n'est possible qu'avec
-     `θ = 0`, c'est-à-dire la translation. La version précédente gardait la
-     rotation et bornait l'excursion en échantillonnant l'angle sur `sin` du
-     temps : un pendule, très exactement le va-et-vient dont l'utilisateur ne
-     veut plus. Ici `sin` et `cos` ne servent qu'à convertir en x/y un angle qui,
-     lui, avance tout seul.
+     Ce que faisaient les deux versions précédentes, et pourquoi c'était faux :
+     la première échantillonnait l'angle sur `sin` du temps — un pendule, qui
+     repart en arrière à chaque demi-période (« ça oscille »). La seconde a
+     rendu l'angle monotone mais l'a appliqué à une *translation* : tous les
+     objets recevaient le même décalage, donc aucune position relative ne
+     changeait et rien ne tournait autour de rien (« ça ne bouge pas du tout »).
+     Elle s'était imposé qu'aucun objet ne s'éloigne de sa place de plus d'un
+     rayon — contrainte que personne n'avait demandée, et qui interdit la
+     rotation par construction.
 
-     Ce qui est gardé de cette version : le champ bouge d'un bloc. Le mouvement
-     se lit comme une orbite — chaque objet parcourt un cercle entier, tous
-     ensemble, jamais une ellipse et une phase à lui — et les fils restent noués
-     de centre à centre sans rattrapage : une translation envoie le segment qui
-     joint deux objets sur le segment qui joint leurs deux nouvelles places. Le
-     calque des fils reçoit donc le même vecteur que les objets.
+     Ce qui restait vrai de son raisonnement : les fils. Une rotation, comme
+     une translation, envoie le segment qui joint deux objets sur le segment
+     qui joint leurs deux nouvelles places. Les fils restent donc noués de
+     centre à centre sans rattrapage — le calque des fils tourne d'un bloc, du
+     même angle, autour du même centre.
+
+     Ce qui borne le mouvement : une rotation garde chaque objet à distance
+     constante du centre. Il suffit donc que le disque qu'il balaie tienne dans
+     la zone sûre. Quand un objet est trop loin pour cela, tout le champ est
+     rapproché du centre d'un même facteur (`scale`), une fois, sans animation :
+     la composition se resserre sans se déformer, et le tour reste entier.
 
      Rendu seulement : rien n'est écrit dans la scène, la place de référence ne
      bouge pas d'un pixel, la capture ne voit que les places. Un objet épinglé
@@ -481,28 +483,38 @@
      qui veut une scène figée éteint la gravitation dans « Affichage des
      étoiles ». */
 
-  /* Rayon du cercle parcouru, en pixels, à l'ampleur de référence. */
-  const ORBIT_RADIUS_PX=22;
-  const ORBIT_RADIUS_MAX_PX=60;
-  /* En dessous, le champ est tenu pour immobile : la page n'anime rien. */
-  const ORBIT_RADIUS_MIN_PX=1;
-  /* Un tour complet à vitesse 1. */
-  const ORBIT_PERIOD_MS=32000;
-  /* Place libre accordée d'office à chaque objet, en pixels, avant de rogner le
-     rayon du champ. Sans elle, un seul objet posé au bord de la zone sûre
-     figerait tout le ciel — le mouvement étant rigide, le rayon est celui du
-     plus contraint. La zone sûre est elle-même prise au plus large (calculée
-     pour la plus petite fenêtre prise en charge) : ces quelques pixels y sont
-     encore couverts par les commandes de la page. Le plancher suit l'ampleur
-     voulue par l'utilisateur, borné : sans cela, dans une scène où un objet
-     touche le bord, le curseur « Ampleur de l'orbite » ne servirait à rien (le
-     rayon serait déjà rogné avant lui). */
-  const ORBIT_SLACK_FLOOR=18,ORBIT_SLACK_FLOOR_MAX=32;
+  /* Un tour complet à vitesse 1. Quatre minutes : le mouvement se voit sur une
+     étoile qu'on suit, et ne tire pas l'œil pendant qu'on lit. */
+  const ORBIT_PERIOD_MS=240000;
+  /* En deçà de ce rayon, un objet est au centre : il ne tourne pas. Le visage y
+     est, et un objet posé dessus doit y rester. */
+  const ORBIT_CENTER_PX=3;
+  /* Resserrement maximal accordé pour faire tenir le tour dans la zone sûre.
+     Plus bas, la composition serait méconnaissable : mieux vaut laisser un
+     objet lointain frôler le bord du cadre, qui est plus large que la zone. */
+  const ORBIT_SCALE_MIN=.35;
+  /* Écartement maximal quand la place le permet. Le champ *remplit* le cadre
+     plutôt que de rester serré autour du visage (retour du 19/09/2026 : « les
+     points sont trop proches du centre, il faudrait qu'ils soient plus
+     écartés ») : le résolveur pose les étoiles sur les premiers anneaux libres,
+     tout près du visage, et rien ensuite ne les écartait. Le plafond évite
+     qu'une scène à deux étoiles ne les projette dans les coins. */
+  const ORBIT_SCALE_MAX=2.2;
+  /* Allongement maximal de l'ellipse. Le cadre est deux fois plus large que
+     haut ; suivre ce format à la lettre ferait passer une étoile du haut de
+     l'écran à son bord gauche, et la constellation se lirait comme un champ
+     qu'on étire plutôt que comme un champ qui tourne. Une ellipse une fois et
+     demie plus large que haute écarte le champ sans déformer ce qu'on voit. */
+  const ORBIT_ASPECT_MAX=1.6;
+  /* Formes qui ne tournent pas. Une fenêtre est un panneau qu'on lit, pas une
+     étoile : la voir dériver sous les yeux pendant sa lecture est un défaut,
+     pas une décoration (retour du 19/09/2026). */
+  const ORBIT_STILL_SHAPES=Object.freeze(['window']);
 
   /* Ampleur et vitesse réglables par l'utilisateur (fenêtre « Affichage des
      étoiles », `JarvisSceneView`) : bornes du multiplicateur, le défaut étant 1.
-     L'ampleur est multipliée **avant** la borne de la zone sûre : une orbite
-     plus large ne fait donc jamais sortir un objet de la zone. */
+     L'ampleur écarte ou resserre le champ autour du centre ; elle reste bornée
+     par la zone sûre, donc elle ne fait jamais sortir un objet. */
   const ORBIT_GAIN_MIN=.25,ORBIT_GAIN_MAX=4;
 
   /* Absent, nul ou illisible : la valeur de référence (1), jamais une orbite
@@ -513,54 +525,116 @@
   }
 
   /* Étapes du tour, dont la page fait ses images-clés : `ORBIT_STEPS` points
-     d'un cercle unité, du haut vers la droite, puis le bas, puis la gauche —
-     un angle qui ne fait qu'avancer, du même pas à chaque étape, et boucle
-     exactement sur son départ. `at` est la fraction de la période (en %),
-     `angle` l'angle atteint (en degrés, de 0 à 360, strictement croissant),
-     `x`/`y` le vecteur unité à multiplier par le rayon.
+     d'un cercle unité, de la droite vers le bas, puis la gauche, puis le haut —
+     l'ordre horaire à l'écran, où `y` descend. `at` est la fraction de la
+     période (en %), `angle` l'angle atteint (en degrés, de 0 à 360, strictement
+     croissant), `x`/`y` le vecteur unité à multiplier par les deux rayons.
 
      Un tour en segments droits plutôt qu'en arcs : entre deux étapes le
      navigateur interpole linéairement, la corde raccourcit le rayon de
-     `1 − cos(π/ORBIT_STEPS)`, soit trois dixièmes de pixel au rayon maximal.
-     Le pas est le même partout : la vitesse ne varie pas, et elle ne s'annule
-     jamais — ce que faisait le pendule à chacun de ses deux extrêmes. */
-  const ORBIT_STEPS=32;
+     `1 − cos(π/ORBIT_STEPS)`, soit un demi-pixel pour une étoile à 400 px du
+     centre. Le pas est le même partout : la vitesse ne varie pas, et elle ne
+     s'annule jamais — ce que faisait le pendule à chacun de ses deux extrêmes. */
+  const ORBIT_STEPS=64;
   function orbitSteps(){
     const steps=[];
     for(let k=0;k<=ORBIT_STEPS;k++){
       const angle=2*Math.PI*k/ORBIT_STEPS;
       steps.push({at:Math.round(k/ORBIT_STEPS*1e4)/100,
         angle:Math.round(k/ORBIT_STEPS*36000)/100,
-        x:Math.round(Math.sin(angle)*1e4)/1e4||0,
-        y:Math.round(-Math.cos(angle)*1e4)/1e4||0});
+        x:Math.round(Math.cos(angle)*1e4)/1e4||0,
+        y:Math.round(Math.sin(angle)*1e4)/1e4||0});
     }
     return steps;
   }
 
-  /* Rayon du cercle parcouru par tout le champ dessiné, ou `null` (champ
-     immobile) : le plus grand qui garde chaque nœud dans la zone de composition
-     sûre, au plancher de place libre près, borné par le réglage de
-     l'utilisateur. Le mouvement étant une translation, l'excursion d'un objet
-     sur chaque axe vaut au plus le rayon, quel que soit son éloignement du
-     centre.
+  function orbitTurns(node){
+    return !!node&&ORBIT_STILL_SHAPES.indexOf(node.shape)<0;
+  }
+
+  /* Le tour du champ pour ce rendu, ou `null` (rien à faire tourner).
+
+     `cx`/`cy` : le centre, `ms` : la durée d'un tour, `ax`/`ay` : les demi-axes
+     de la plus grande ellipse centrée qui tienne dans la zone sûre, `scale` :
+     l'écartement appliqué au champ.
+
+     Pourquoi une ellipse et non un cercle : l'écran est deux fois plus large
+     que haut. Sur un cercle, le tour entier d'une étoile est borné par la
+     hauteur — la moitié de la largeur reste vide, et le champ doit être
+     resserré autour du visage pour que personne ne sorte par le haut. Sur une
+     ellipse au format du cadre, chaque objet garde sa position relative dans le
+     cadre tout au long du tour : le champ occupe l'écran, et rien n'en sort.
+     C'est aussi ce à quoi ressemble un système en orbite vu de biais.
+
      `options` (facultatif) : `{gain, rate}`, l'ampleur et la vitesse voulues,
-     1 par défaut. Rend `{px, ms}` : le rayon en pixels et la durée d'un tour. */
-  function orbitDrift(nodes,vp,options){
+     1 par défaut. */
+  function orbitField(nodes,vp,options){
     const gain=orbitFactor(options&&options.gain),rate=orbitFactor(options&&options.rate);
-    let radius=Math.min(ORBIT_RADIUS_PX*gain,ORBIT_RADIUS_MAX_PX);
-    const floor=Math.min(ORBIT_SLACK_FLOOR*gain,ORBIT_SLACK_FLOOR_MAX);
     const area=toScreen(vp,{x:SAFE_AREA.x0,y:SAFE_AREA.y0,w:SAFE_AREA.x1-SAFE_AREA.x0,h:SAFE_AREA.y1-SAFE_AREA.y0});
+    const ay=Math.min(vp.cy-area.top,area.top+area.height-vp.cy);
+    const ax=Math.min(vp.cx-area.left,area.left+area.width-vp.cx,ay*ORBIT_ASPECT_MAX);
+    if(!(ax>0&&ay>0))return null;
+    let room=Infinity,turning=false;
     for(const node of nodes||[]){
+      if(!orbitTurns(node))continue;
+      const radius=Math.hypot(node.cx-vp.cx,node.cy-vp.cy);
+      if(!(radius>ORBIT_CENTER_PX))continue;
+      turning=true;
+      /* Rayon de l'objet dans le repère de l'ellipse, et place qui reste devant
+         lui : sa boîte dessinée doit tenir où qu'elle arrive sur son ellipse. */
       const rect=drawnRect(node);
-      /* Place libre autour de la boîte dessinée, jamais moins que le plancher :
-         un objet déjà hors de la zone sûre ne retient donc pas le champ. */
-      const slackX=Math.max(floor,Math.min(rect.left-area.left,area.left+area.width-(rect.left+rect.width)));
-      const slackY=Math.max(floor,Math.min(rect.top-area.top,area.top+area.height-(rect.top+rect.height)));
-      radius=Math.min(radius,slackX,slackY);
-      if(!(radius>ORBIT_RADIUS_MIN_PX))return null;
+      const reach=Math.hypot((node.cx-vp.cx)/ax,(node.cy-vp.cy)/ay);
+      const inset=Math.min(1-rect.width/(2*ax),1-rect.height/(2*ay));
+      room=Math.min(room,inset/reach);
     }
-    if(!(radius>ORBIT_RADIUS_MIN_PX))return null;
-    return {px:Math.round(radius*1000)/1000,ms:Math.round(ORBIT_PERIOD_MS/rate)};
+    if(!turning)return null;
+    /* Par défaut le champ remplit la place disponible, borné ; le réglage de
+       l'utilisateur multiplie ce remplissage, sans jamais dépasser la place. */
+    const fill=Math.min(ORBIT_SCALE_MAX,Math.max(ORBIT_SCALE_MIN,room));
+    const scale=Math.max(ORBIT_SCALE_MIN,Math.min(gain*fill,Math.max(ORBIT_SCALE_MIN,room)));
+    return {cx:round1(vp.cx),cy:round1(vp.cy),ax:round1(ax),ay:round1(ay),
+      ms:Math.round(ORBIT_PERIOD_MS/rate),scale:Math.round(scale*1000)/1000};
+  }
+
+  /* L'orbite d'un objet dans ce champ, ou `null` s'il n'en a pas (au centre, ou
+     forme qui ne tourne pas) : les deux rayons de son ellipse, l'écart à sa
+     place (que l'animation retranche, la place restant dans `transform`), et le
+     décalage de phase qui le pose sur son propre point de l'ellipse. Même
+     vitesse angulaire pour tous, une phase par objet : c'est exactement ce qui
+     fait une rotation, et non un champ qui glisse d'un bloc. */
+  function orbitTrack(node,field){
+    if(!field||!orbitTurns(node))return null;
+    const dx=node.cx-field.cx,dy=node.cy-field.cy;
+    if(!(Math.hypot(dx,dy)>ORBIT_CENTER_PX))return null;
+    const ux=dx/field.ax,uy=dy/field.ay,reach=Math.hypot(ux,uy);
+    const turn=((Math.atan2(uy,ux)/(2*Math.PI))%1+1)%1;
+    return {rx:round1(field.scale*reach*field.ax),ry:round1(field.scale*reach*field.ay),
+      dx:round1(dx),dy:round1(dy),delayMs:-Math.round(turn*field.ms)};
+  }
+
+  /* Où le tour dessine la place `point`, à la fraction `turn` de la période :
+     la carte que l'animation applique, en une fonction, pour que la page puisse
+     la calculer sans relire le style. */
+  function orbitTurnPoint(point,field,turn){
+    if(!field)return {x:point.x,y:point.y};
+    const ux=(point.x-field.cx)/field.ax,uy=(point.y-field.cy)/field.ay;
+    const reach=Math.hypot(ux,uy);
+    const angle=Math.atan2(uy,ux)+2*Math.PI*(((Number(turn)||0)%1+1)%1);
+    return {x:round1(field.cx+field.scale*reach*field.ax*Math.cos(angle)),
+      y:round1(field.cy+field.scale*reach*field.ay*Math.sin(angle))};
+  }
+
+  /* La place d'un point dessiné : l'inverse du tour, à la fraction `turn` de la
+     période. C'est ce qui garde un objet lâché exactement sous le curseur —
+     sans cela, il sauterait d'un demi-tour au relâchement, la place enregistrée
+     étant relue par le tour au moment où il repart. */
+  function orbitUnturn(point,field,turn){
+    if(!field)return {x:point.x,y:point.y};
+    const angle=-2*Math.PI*(((Number(turn)||0)%1+1)%1);
+    const ux=(point.x-field.cx)/field.ax,uy=(point.y-field.cy)/field.ay;
+    const cos=Math.cos(angle),sin=Math.sin(angle);
+    return {x:round1(field.cx+(ux*cos-uy*sin)/field.scale*field.ax),
+      y:round1(field.cy+(ux*sin+uy*cos)/field.scale*field.ay)};
   }
 
   /* Anneaux animés au plus (coût de style) : signaux vivants urgents d'abord,
@@ -1082,7 +1156,7 @@
 
   const api=Object.freeze({FRAME,SAFE_AREA,FACE_ZONE,OBJECT_LIMIT,DEFAULT_SIZE,WORK_BUDGET,COMMIT_MAX_ATTEMPTS,READABLE,MAX_ANIMATED,CAPSULE_MAX,drawnBox,
     RESTART_UNKNOWN_LABEL,restartUnknown,ARTIFACT_CATEGORIES,linkOf,explainedTarget,explainsIndex,artifactsExplaining,itemsOf,hostTail,isOrphanArtifact,orphanArtifacts,
-    artifactsLeftOrphan,placeFor,linkHost,linkLength,POINT_HIT_PX,CAPSULE_MIN_HEIGHT_PX,drawnRect,ORBIT_STEPS,orbitSteps,orbitDrift,
+    artifactsLeftOrphan,placeFor,linkHost,linkLength,POINT_HIT_PX,CAPSULE_MIN_HEIGHT_PX,drawnRect,ORBIT_STEPS,orbitSteps,orbitField,orbitTrack,orbitTurnPoint,orbitUnturn,orbitTurns,
     viewport,toScreen,cleanLine,cleanText,toneOf,isLiveSignal,signalUrgency,signalErrorClass,anchorsOf,depthOf,resolveLayout,
     stackOf,viewModel,compactShape,spatialOrder,nextFocus,commitKey,commitCommand,commitCandidates,nextRetryAt,classifyCommit,settleCommit});
   root.JarvisSceneLayout=api;

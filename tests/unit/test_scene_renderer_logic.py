@@ -117,6 +117,28 @@ def run_node(tmp_path: Path, body: str, data: Any = None) -> Any:
     return json.loads(result.stdout)
 
 
+#: Position dessinée d'un objet à une fraction de la période, en JavaScript :
+#: le fragment que partagent les tests de la gravitation. Elle se lit sur ce que
+#: le navigateur interpole entre deux images-clés, décalage de phase compris —
+#: pas sur les paramètres d'où elle sort. C'est la leçon du tour raté du
+#: 18/09/2026 : le test d'alors mesurait le vecteur que le code fabriquait, et
+#: passait sur un écran parfaitement immobile.
+RENDERED = r"""
+      const steps=L.orbitSteps();
+      const rendered=(node,track,field,frac)=>{
+        if(!track)return {x:node.cx,y:node.cy};
+        const local=(((frac-track.delayMs/field.ms)%1)+1)%1;
+        const t=local*L.ORBIT_STEPS,k=Math.floor(t),f=t-k;
+        const a=steps[k],b=steps[k+1];
+        return {x:node.cx+(a.x+(b.x-a.x)*f)*track.rx-track.dx,
+                y:node.cy+(a.y+(b.y-a.y)*f)*track.ry-track.dy};
+      };
+      const angleAt=(node,track,field,frac)=>{
+        const p=rendered(node,track,field,frac);
+        return Math.atan2(p.y-field.cy,p.x-field.cx);
+      };
+"""
+
 # ---------------------------------------------------------------- repère
 
 
@@ -255,11 +277,16 @@ def test_a_signal_sits_next_to_its_star_live_or_retired(tmp_path):
     assert result["retired"] <= 16 and result["retired"] == result["retiredNearest"]
 
 
-def test_the_whole_field_turns_continuously_in_one_direction_so_the_links_stay_tied(tmp_path):
-    """Retour utilisateur du 18/09/2026 : « ça oscille, je veux une rotation
-    continue ». L'angle du champ ne fait donc qu'avancer — même pas, même sens,
-    jamais d'arrêt ni de retour — et comme le décalage est le même pour tous,
-    les fils restent noués."""
+def test_every_star_turns_clockwise_around_the_face_a_full_turn_per_period(tmp_path):
+    """Retours des 18 et 19/09/2026 : « ça oscille, je veux une rotation
+    continue », puis « ça ne bouge pas du tout, c'est complètement cassé ».
+
+    Ce que l'utilisateur regarde n'est pas un vecteur mais une étoile : elle doit
+    faire le tour du visage, dans le sens horaire, sans jamais s'arrêter ni
+    revenir en arrière, et se retrouver de l'autre côté au bout d'une
+    demi-période. La version d'avant faisait glisser tout le champ du même
+    décalage : l'angle de son vecteur avançait, aucune étoile ne tournait autour
+    de rien, et le test d'alors mesurait le vecteur."""
 
     result = run_node(tmp_path, r"""
       const objects=[];
@@ -267,75 +294,88 @@ def test_the_whole_field_turns_continuously_in_one_direction_so_the_links_stay_t
       const s=state(objects);
       const vp=L.viewport(1920,1080);
       const vm=L.viewModel(s,L.resolveLayout(s),vp);
-      const drift=L.orbitDrift(vm.nodes,vp);
-      const steps=L.orbitSteps();
-      /* Décalage dessiné à une fraction de période, tel que le navigateur
-         l'interpole entre deux images-clés : c'est ce que l'œil suit. */
-      const at=frac=>{
-        const t=(((frac%1)+1)%1)*L.ORBIT_STEPS,k=Math.floor(t),f=t-k;
-        const a=steps[k],b=steps[k+1];
-        return {x:(a.x+(b.x-a.x)*f)*drift.px,y:(a.y+(b.y-a.y)*f)*drift.px};
-      };
-      /* Deux périodes, image par image : l'angle relu du décalage, déplié. */
+      const field=L.orbitField(vm.nodes,vp);
+      const tracks=vm.nodes.map(n=>L.orbitTrack(n,field));
+""" + RENDERED + r"""
+      /* Une période, image par image, pour chaque étoile : l'angle déplié. */
       const FRAMES=720;
-      let prev=null,turned=0,back=0,least=Infinity,most=0;
-      const radii=[];
-      for(let i=0;i<=FRAMES;i++){
-        const p=at(2*i/FRAMES);
-        radii.push(Math.hypot(p.x,p.y));
-        if(prev){
-          let d=Math.atan2(p.y,p.x)-Math.atan2(prev.y,prev.x);
+      const turns=[],back=[],speeds=[],radii=[],opposite=[],aspect=[];
+      for(let i=0;i<vm.nodes.length;i++){
+        const node=vm.nodes[i],track=tracks[i];
+        if(!track){turns.push(null);continue}
+        let prev=angleAt(node,track,field,0),total=0,reverse=0,least=Infinity,most=0;
+        const seen=[];
+        for(let k=1;k<=FRAMES;k++){
+          const a=angleAt(node,track,field,k/FRAMES);
+          let d=a-prev;
           while(d<=-Math.PI)d+=2*Math.PI;
           while(d>Math.PI)d-=2*Math.PI;
-          turned+=d;if(d<=0)back++;
+          total+=d;if(d<=0)reverse++;
           least=Math.min(least,d);most=Math.max(most,d);
+          prev=a;
+          const p=rendered(node,track,field,k/FRAMES);
+          seen.push(Math.hypot(p.x-field.cx,p.y-field.cy));
         }
-        prev=p;
+        turns.push(Math.round(total/(2*Math.PI)*1000)/1000);
+        back.push(reverse);
+        speeds.push(Math.round(most/least*1000)/1000);
+        radii.push(Math.round((Math.max(...seen)-Math.min(...seen))*100)/100);
+        aspect.push(Math.round(track.rx/track.ry*100)/100);
+        /* Une demi-période plus tard, l'étoile est de l'autre côté du visage. */
+        const start=rendered(node,track,field,0),half=rendered(node,track,field,.5);
+        opposite.push(Math.round((Math.hypot(half.x-start.x,half.y-start.y)
+          /(2*Math.hypot(start.x-field.cx,start.y-field.cy)))*1000)/1000);
       }
-      /* Un fil entre deux étoiles : ses deux bouts reçoivent le même décalage,
-         sa longueur ne change donc pas d'un pixel et il reste noué de centre à
-         centre. */
-      const centers=vm.nodes.map(n=>({x:n.cx,y:n.cy}));
-      const tied=(i,j)=>Math.max(...[0,.17,.4,.63,.91].map(frac=>{
-        const a=centers[i],b=centers[j],d=at(frac);
-        return Math.abs(Math.hypot(a.x-b.x,a.y-b.y)-Math.hypot(a.x+d.x-b.x-d.x,a.y+d.y-b.y-d.y));}));
-      return {nodes:vm.nodes.length,drift,
-        /* L'angle des images-clés : strictement croissant, du même pas. */
-        angles:steps.map(st=>st.angle),
-        firstAndLast:[steps[0].angle,steps[steps.length-1].angle],
-        stepGaps:[...new Set(steps.slice(1).map((st,i)=>Math.round((st.angle-steps[i].angle)*1e6)/1e6))],
-        back,turns:Math.round(turned/(2*Math.PI)*1000)/1000,
-        speedSpread:Math.round(most/least*1000)/1000,
-        radius:{min:Math.round(Math.min(...radii)*100)/100,max:Math.round(Math.max(...radii)*100)/100},
-        links:Math.round(Math.max(tied(0,1),tied(0,5),tied(3,7))*1e6)/1e6,
-        /* Course d'une étoile sur une période (px) et vitesse moyenne (px/s). */
-        travel:Math.round(2*Math.PI*drift.px),
-        speed:Math.round(2*Math.PI*drift.px/(drift.ms/1000)*10)/10};
+      /* Deux étoiles voisines : la même vitesse angulaire, des phases
+         différentes — un champ qui glisse d'un bloc les aurait identiques. */
+      const phases=new Set(tracks.filter(Boolean).map(t=>t.delayMs));
+      /* Ce que l'écart entre deux étoiles fait pendant le tour : il respire,
+         puisque le champ est étiré ; ce qui compte est que les deux bouts d'un
+         fil restent sur les centres, ce que garantit une carte affine. */
+      const gap=(i,j)=>Math.max(...[0,.17,.4,.63,.91].map(frac=>{
+        const a=rendered(vm.nodes[i],tracks[i],field,frac),b=rendered(vm.nodes[j],tracks[j],field,frac);
+        const a0=rendered(vm.nodes[i],tracks[i],field,0),b0=rendered(vm.nodes[j],tracks[j],field,0);
+        return Math.abs(Math.hypot(a.x-b.x,a.y-b.y)-Math.hypot(a0.x-b0.x,a0.y-b0.y));}));
+      return {nodes:vm.nodes.length,ms:field.ms,scale:field.scale,
+        turns,back,speeds,radii,opposite,aspect,phases:phases.size,
+        links:Math.round(Math.max(gap(0,1),gap(0,5),gap(3,7))*1000)/1000,
+        /* Course d'une étoile sur une période, et vitesse moyenne (px/s). */
+        travel:Math.round(2*Math.PI*Math.max(...tracks.filter(Boolean).map(t=>t.rx))),
+        speed:Math.round(2*Math.PI*Math.max(...tracks.filter(Boolean).map(t=>t.rx))/(field.ms/1000)*10)/10};
     """)
 
     assert result["nodes"] == 10
-    # Un seul rayon et une seule période pour tout le champ : il se déplace d'un
-    # bloc, et deux étoiles voisines ne se séparent jamais.
-    assert result["drift"]["ms"] == 32000
-    assert result["drift"]["px"] > 0
-    assert result["links"] < 1e-6
-    # L'angle des images-clés : de 0 à 360°, strictement croissant, du même pas.
-    assert result["angles"] == sorted(result["angles"]) and len(set(result["angles"])) == len(result["angles"])
-    assert result["firstAndLast"] == [0, 360]
-    assert len(result["stepGaps"]) == 1 and result["stepGaps"][0] > 0
-    # Deux périodes image par image : deux tours pleins, pas une seule image qui
-    # recule ou qui s'arrête (le va-et-vient d'avant en comptait la moitié), et
-    # une vitesse qui ne varie pas d'un pour cent.
-    assert result["back"] == 0
-    assert result["turns"] == pytest.approx(2, abs=0.01)
-    assert result["speedSpread"] <= 1.01
-    # Un cercle, pas une ellipse : le rayon tient au demi-pixel près (la corde
-    # d'une étape le raccourcit de 1 − cos(π/32)).
-    assert result["radius"]["max"] - result["radius"]["min"] <= 0.5
-    # Un mouvement qu'on voit : quelques dizaines de pixels de course, quelques
-    # pixels par seconde, jamais brusque.
-    assert 20 <= result["travel"] <= 400
-    assert 1 <= result["speed"] <= 10
+    turning = [value for value in result["turns"] if value is not None]
+    assert len(turning) == 10, "aucune étoile n'est au centre dans cette scène"
+    # Chaque étoile fait exactement un tour, dans le sens horaire, sans une
+    # seule image qui recule ou qui s'arrête, à vitesse angulaire constante.
+    for value in turning:
+        assert value == pytest.approx(1, abs=0.01)
+    assert result["back"] == [0] * 10
+    # La vitesse *angulaire* n'est pas constante sur une ellipse : elle varie du
+    # carré de l'allongement, et c'est tout — jamais un arrêt, jamais un retour.
+    assert max(result["speeds"]) == pytest.approx(result["aspect"][0] ** 2, rel=0.02)
+    # Une ellipse au format du cadre, la même pour tout le champ : un écran deux
+    # fois plus large que haut ne laisse pas un cercle s'écarter du visage sans
+    # sortir par le haut (retour du 19/09/2026 : « trop proches du centre »).
+    # L'allongement est plafonné pour que le champ tourne au lieu de s'étirer.
+    assert len(set(result["aspect"])) == 1
+    assert 1 < result["aspect"][0] <= 1.61
+    # À la demi-période, l'étoile est diamétralement opposée à son départ : la
+    # corde vaut le diamètre. Une translation aurait donné une fraction infime.
+    for value in result["opposite"]:
+        assert value == pytest.approx(1, abs=0.01)
+    # Dix étoiles, dix phases : c'est ce qui distingue une rotation d'un champ
+    # qui glisse — là, une seule phase aurait suffi.
+    assert result["phases"] == 10
+    # Les fils restent noués : l'ellipse est une carte affine, elle envoie le
+    # segment qui joint deux étoiles sur celui qui joint leurs nouvelles places.
+    # L'écart, lui, respire avec le champ — ce n'est plus une isométrie.
+    assert result["links"] > 0
+    # Un mouvement qu'on voit, sans qu'il tire l'œil.
+    assert result["ms"] == 240000
+    assert 200 <= result["travel"] <= 4000
+    assert 1 <= result["speed"] <= 20
 
 
 def test_the_page_turns_and_arrests_the_stars_and_the_links_together(tmp_path):
@@ -344,15 +384,22 @@ def test_the_page_turns_and_arrests_the_stars_and_the_links_together(tmp_path):
     les fils de leurs étoiles entre deux images."""
 
     page = PAGE_JS.read_text(encoding="utf-8")
-    # La même animation, la même variable de période, et le même défaut que
-    # `ORBIT_PERIOD_MS` : les nœuds et le calque des fils.
-    assert page.count("animation:sc-orbit var(--sc-orbit-ms,32000ms) linear infinite") == 2
-    assert "@keyframes sc-field" not in page
+    # La même période, le même défaut que `ORBIT_PERIOD_MS`, et la même horloge :
+    # les étoiles tournent par `translate`, le calque des fils par une rotation
+    # autour du même centre. Deux animations, un seul temps.
+    assert page.count("var(--sc-orbit-ms,240000ms) linear infinite") == 2
+    assert "animation:sc-orbit var(--sc-orbit-ms,240000ms) linear infinite" in page
+    assert "animation:sc-orbit-field var(--sc-orbit-ms,240000ms) linear infinite" in page
+    assert "transform-origin:var(--sc-orbit-cx,50%) var(--sc-orbit-cy,50%)" in page
     # Les étapes sortent de `JarvisSceneLayout.orbitSteps` — un angle qui avance
-    # tout seul. La page ne fait que le convertir en décalage : plus une seule
+    # tout seul. La page ne fait que le convertir en place : plus une seule
     # fonction du temps dans les images-clés.
     generator = page[page.index("function orbitKeyframes()"):page.index("@keyframes sc-orbit{")]
-    assert "L.orbitSteps()" in generator and "var(--sc-orbit-r,0px)" in generator
+    assert "L.orbitSteps()" in generator
+    # Deux rayons (l'ellipse au format du cadre), et l'écart à la place retranché :
+    # sans lui, l'objet tournerait autour de lui-même au lieu du visage.
+    assert "var(--sc-orbit-rx,0px)" in generator and "var(--sc-orbit-ry,0px)" in generator
+    assert "var(--sc-orbit-dx,0px)" in generator and "var(--sc-orbit-dy,0px)" in generator
     assert "sin(" not in generator and "cos(" not in generator
     # Champ arrêté (scène peuplée, plus de place, réglage de l'utilisateur) :
     # les étoiles et les fils s'arrêtent ensemble. Une étoile arrêtée ne perd
@@ -361,7 +408,46 @@ def test_the_page_turns_and_arrests_the_stars_and_the_links_together(tmp_path):
     stars = ",".join(f".scene.{f} .sc-orbit" for f in ("sc-calm", "sc-still", "sc-no-orbit"))
     links = ",".join(f".scene.{f} .sc-field" for f in ("sc-calm", "sc-still", "sc-no-orbit"))
     assert f"{stars}{{animation:none;translate:none}}" in page
-    assert f"{links}{{animation:none;translate:none}}" in page
+    assert f"{links}{{animation:none;transform:none}}" in page
+
+
+def test_the_page_hands_the_gesture_the_drawn_position_and_not_the_stored_place(tmp_path):
+    """Le geste, du côté de la page : le champ s'arrête sous la main, l'étoile
+    tenue garde son décalage, et ce qui part à Core est la place dont le tour
+    redessine le point lâché.
+
+    Trois pièces, trois façons de casser le glisser-déposer : sans la pause, le
+    champ continue de tourner sous le curseur ; sans la garde dans `applyOrbit`,
+    l'étoile perd son décalage à la première image et saute loin de la main
+    (« un énorme décalage entre l'endroit où je clique et l'endroit où l'objet
+    est », 19/09/2026) ; sans l'inverse du tour au relâchement, elle saute au
+    moment où l'animation reprend."""
+
+    page = PAGE_JS.read_text(encoding="utf-8")
+    # Le champ s'arrête pendant le geste, étoiles et fils ensemble.
+    assert ".scene.sc-gesture .sc-orbit,.scene.sc-gesture .sc-field{animation-play-state:paused}" in page
+    # L'étoile tenue garde le décalage qu'elle avait sous le curseur.
+    orbit = page[page.index("function applyOrbit("):page.index("function markOrbit(")]
+    assert "sc-dragging" in orbit and "return" in orbit
+    # Le relâchement passe par la place, pas par la boîte dessinée ; un
+    # redimensionnement, lui, n'a pas bougé de place.
+    release = page[page.index("function onPointerUp("):page.index("function cancelGesture(")]
+    assert "placeOf(g.preview,g.node)" in release and "g.mode==='resize'?g.preview" in release
+    place = page[page.index("function placeOf("):page.index("function fieldTurn(")]
+    assert "L.orbitTurnPoint(" in place and "L.orbitUnturn(" in place
+    # L'angle du tour est lu sur l'animation, jamais sur l'horloge du document :
+    # une scène en pause ou une page cachée le désynchroniserait.
+    turn = page[page.index("function fieldTurn("):page.index("function holdNode(")]
+    assert "fieldClock()" in turn and "document.timeline" not in turn
+    # Et toutes les étoiles sont remises à l'heure **du champ**, jamais à celle
+    # du document. Un geste met les animations en pause : elles reprennent en
+    # retard du temps qu'il a duré, et le lâcher épingle l'objet, donc réécrit
+    # ses classes, donc resynchronise son orbite. Remise sur zéro, l'étoile
+    # sautait à la phase du document — mesuré dans un vrai Chrome : 912 px de
+    # l'endroit lâché, et son fil resté à la même distance (19/09/2026).
+    sync = page[page.index("function syncOrbit("):page.index("function fieldClock(")]
+    assert "fieldClock()" in sync and "anim.currentTime=now" in sync
+    assert "startTime=0" not in sync
 
 
 def test_stars_without_a_place_surround_the_face_instead_of_piling_up_on_one_side(tmp_path):
@@ -396,53 +482,151 @@ def test_the_orbit_follows_the_user_setting_without_leaving_the_safe_area(tmp_pa
         constraints:{placed_by:'user',pinned_by_user:!!pinned}});
       const fieldOf=(objects,options)=>{const s=state(objects);
         const vm=L.viewModel(s,L.resolveLayout(s),vp);
-        return {drift:L.orbitDrift(vm.nodes,vp,options),vm};};
-      const driftOf=(objects,options)=>fieldOf(objects,options).drift;
-      /* Deux scènes à une étoile : la même place, épinglée ou non. */
-      const free=[star('star',60,-30)],pinned=[star('star',60,-30,true)];
-      const base=driftOf(free);
-      /* Étoile posée au coin de la zone sûre : elle rogne le rayon de tout le
-         champ (le mouvement est rigide), et une orbite réglée quatre fois plus
-         large ne la sort pas de la zone — au plancher de place libre près, qui
-         l'empêche de figer le ciel à elle seule. */
+        return {field:L.orbitField(vm.nodes,vp,options),vm};};
+      const radiusOf=(objects,options)=>{const f=fieldOf(objects,options);
+        return f.field?L.orbitTrack(f.vm.nodes[0],f.field).rx:0;};
+      const msOf=(objects,options)=>fieldOf(objects,options).field.ms;
+      /* Deux scènes à une étoile, assez près du visage pour que l'ampleur ait
+         de la place devant elle : la même place, épinglée ou non. */
+      const free=[star('star',20,-10)],pinned=[star('star',20,-10,true)];
+""" + RENDERED + r"""
+      /* Étoile posée au coin de la zone sûre : elle resserre tout le champ (la
+         rotation est rigide), et une orbite réglée quatre fois plus large ne la
+         fait pas sortir de la zone à un seul instant du tour. */
       const corner=fieldOf([star('star',60,-30),star('edge',132,62)],{gain:4});
       const node=corner.vm.nodes.find(n=>n.id==='edge');
-      const rect=L.drawnRect(node),r=corner.drift.px;
+      const track=L.orbitTrack(node,corner.field);
+      const rect=L.drawnRect(node);
       const area=L.toScreen(vp,{x:L.SAFE_AREA.x0,y:L.SAFE_AREA.y0,w:L.SAFE_AREA.x1-L.SAFE_AREA.x0,h:L.SAFE_AREA.y1-L.SAFE_AREA.y0});
-      /* Le champ étant translaté, l'excursion de la boîte vaut le rayon. */
-      const out={x:Math.round((rect.left+rect.width+r-(area.left+area.width))*10)/10,
-        y:Math.round((rect.top+rect.height+r-(area.top+area.height))*10)/10};
-      return {base,wide:driftOf(free,{gain:2}),narrow:driftOf(free,{gain:.3}),
-        slow:driftOf(free,{rate:.5}).ms,fast:driftOf(free,{rate:4}).ms,
-        absurd:driftOf(free,{gain:1e6}).px,corner:corner.drift.px,
-        cornerFree:driftOf(free,{gain:4}).px,out,
-        pinnedSameAsFree:JSON.stringify(driftOf(pinned))===JSON.stringify(base),
+      let out=0;
+      for(let k=0;k<=240;k++){
+        const p=rendered(node,track,corner.field,k/240);
+        out=Math.max(out,area.left-(p.x-rect.width/2),(p.x+rect.width/2)-(area.left+area.width),
+                         area.top-(p.y-rect.height/2),(p.y+rect.height/2)-(area.top+area.height));
+      }
+      const base=radiusOf(free);
+      return {base,wide:radiusOf(free,{gain:2}),narrow:radiusOf(free,{gain:.3}),
+        ms:msOf(free),slow:msOf(free,{rate:.5}),fast:msOf(free,{rate:4}),
+        absurd:radiusOf(free,{gain:1e6}),corner:L.orbitTrack(corner.vm.nodes.find(n=>n.id==='star'),corner.field).rx,
+        cornerFree:radiusOf(free,{gain:4}),out:Math.round(out*10)/10,
+        /* Place libre autour du centre pour l'étoile de `free` : la borne que
+           l'ampleur ne peut pas franchir. */
+        room:Math.round(fieldOf(free).field.ax*10)/10,
+        /* Le champ remplit la place par défaut, au lieu de rester serré autour
+           du visage : l'écartement dépasse 1 sur une scène peu peuplée. */
+        fill:fieldOf(free).field.scale,
+        centred:L.orbitTrack({cx:vp.cx,cy:vp.cy,shape:'point',box:{left:0,top:0,width:6,height:6}},corner.field),
+        /* Une fenêtre ne tourne pas : elle n'a pas d'orbite du tout. */
+        windowTrack:L.orbitTrack({cx:vp.cx+200,cy:vp.cy+100,shape:'window',box:{left:0,top:0,width:64,height:40}},corner.field),
+        pinnedSameAsFree:radiusOf(pinned)===base,
         pinnedIsPinned:fieldOf(pinned).vm.nodes[0].pinned,
         /* Un réglage illisible ne casse rien : c'est la valeur de référence. */
-        broken:JSON.stringify(driftOf(free,{gain:'grand',rate:null}))===JSON.stringify(base)};
+        broken:radiusOf(free,{gain:'grand',rate:null})===base};
     """)
 
     base, wide, narrow = result["base"], result["wide"], result["narrow"]
-    # L'ampleur suit le réglage ; la période, elle, ne bouge pas avec elle.
-    assert wide["px"] == pytest.approx(base["px"] * 2, abs=0.01)
-    assert narrow["px"] == pytest.approx(base["px"] * 0.3, abs=0.01)
-    assert wide["ms"] == base["ms"] == narrow["ms"]
+    # L'ampleur resserre le champ à la lettre, et l'écarte jusqu'à la place
+    # disponible : au-delà, c'est la zone sûre qui décide, pas le curseur.
+    assert narrow == pytest.approx(base * 0.3, abs=0.5)
+    assert base < wide <= result["room"] and wide == result["absurd"]
+    assert result["ms"] == 240000
     # La vitesse divise la période : deux fois plus lente, quatre fois plus vive.
-    assert result["slow"] == pytest.approx(base["ms"] * 2, abs=2)
-    assert result["fast"] == pytest.approx(base["ms"] / 4, abs=2)
-    # Bornée : une ampleur absurde reste un petit cercle.
-    assert base["px"] < result["absurd"] <= 60
-    # Le coin de la zone sûre rogne le rayon du champ sans le figer, et l'étoile
-    # n'en sort que du plancher de place libre — 18 px, porté au plus à 32 px
-    # quand l'utilisateur demande une orbite plus large (ici quatre fois).
+    assert result["slow"] == pytest.approx(result["ms"] * 2, abs=2)
+    assert result["fast"] == pytest.approx(result["ms"] / 4, abs=2)
+    # Bornée par la zone sûre : une ampleur absurde ne fait pas sortir l'étoile
+    # du cadre, elle la pousse au plus loin que son ellipse y tienne.
+    assert base < result["absurd"] <= result["room"]
+    # Par défaut le champ s'écarte pour occuper l'écran (retour du 19/09/2026).
+    assert result["fill"] > 1
+    # Le coin de la zone sûre resserre le champ sans l'arrêter, et l'étoile n'en
+    # sort à aucun instant du tour.
     assert 0 < result["corner"] < result["cornerFree"]
-    assert result["out"]["x"] <= 32 and result["out"]["y"] <= 32
+    assert result["out"] <= 0
+    # Un objet posé sur le visage ne tourne pas : il est le centre. Une fenêtre
+    # non plus, où qu'elle soit (retour du 19/09/2026).
+    assert result["centred"] is None and result["windowTrack"] is None
     # Épinglé : le même champ que n'importe quelle étoile (retour utilisateur du
     # 18/09/2026 : toute géométrie posée à la main épingle, donc une scène
     # rangée par l'utilisateur était entièrement immobile). Le tour ne touche
     # pas à la place : l'épingle protège la géométrie, pas le dessin.
     assert result["pinnedIsPinned"] is True and result["pinnedSameAsFree"] is True
     assert result["broken"] is True
+
+
+def test_a_window_stays_still_while_the_stars_turn_around_it(tmp_path):
+    """Retour du 19/09/2026 : « quand un élément est en mode fenêtre, il ne doit
+    pas avoir de mouvement orbital ». Une fenêtre est un panneau qu'on lit ; la
+    voir dériver sous les yeux pendant sa lecture est un défaut. Elle ne retient
+    pas non plus le champ : sa taille rognerait l'écartement de tout le monde."""
+
+    result = run_node(tmp_path, r"""
+      const objects=[obj('brain-window','window',{geometry:{x:60,y:-30,w:64,h:40},origin:'brain'})];
+      for(let i=0;i<6;i++)objects.push(obj(`claude:${i}`,'agent'));
+      const s=state(objects);
+      const vp=L.viewport(1920,1080);
+      const vm=L.viewModel(s,L.resolveLayout(s),vp);
+      const field=L.orbitField(vm.nodes,vp);
+      const window_=vm.nodes.find(n=>n.shape==='window'),star=vm.nodes.find(n=>n.shape==='point');
+      /* Le même champ, la fenêtre retirée : son écartement ne doit pas bouger. */
+      const stars=state(objects.filter(o=>o.kind!=='window'));
+      const starsOnly=L.orbitField(L.viewModel(stars,L.resolveLayout(stars),vp).nodes,vp);
+      return {windowShape:window_.shape,windowTrack:L.orbitTrack(window_,field),
+        starTurns:!!L.orbitTrack(star,field),turnsWindow:L.orbitTurns(window_),turnsStar:L.orbitTurns(star),
+        scale:field.scale,scaleWithoutWindow:starsOnly.scale};
+    """)
+
+    assert result["windowShape"] == "window"
+    assert result["windowTrack"] is None and result["turnsWindow"] is False
+    assert result["starTurns"] is True and result["turnsStar"] is True
+    assert result["scale"] == result["scaleWithoutWindow"]
+
+
+def test_an_object_dropped_under_the_cursor_stays_where_it_was_dropped(tmp_path):
+    """Retour du 19/09/2026 : « le drag and drop est complètement cassé, il y a
+    un énorme décalage entre l'endroit où je clique et l'endroit où l'objet
+    est ». La place enregistrée est relue par le tour, qui lui rajoute son
+    décalage : lâcher le point dessiné tel quel faisait sauter l'étoile d'un
+    demi-tour. `orbitUnturn` rend la place dont le tour redessine ce point."""
+
+    result = run_node(tmp_path, r"""
+      const objects=[];
+      for(let i=0;i<8;i++)objects.push(obj(`claude:${i}`,'agent'));
+      const s=state(objects);
+      const vp=L.viewport(1920,1080);
+      const vm=L.viewModel(s,L.resolveLayout(s),vp);
+      const field=L.orbitField(vm.nodes,vp);
+      /* Le geste, tel que la page le vit : l'étoile est dessinée quelque part
+         (le tour lui ajoute son décalage), la main la déplace de `move`, et la
+         place enregistrée doit être celle que le tour redessine sous le
+         curseur — sinon l'étoile saute au relâchement. */
+      const drops=[{x:180,y:-60},{x:-320,y:140},{x:40,y:-260},{x:520,y:0}];
+      const errors=[];
+      for(const turn of [0,.12,.37,.5,.83]){
+        for(const node of vm.nodes.slice(0,4)){
+          for(const move of drops){
+            const held=L.orbitTurnPoint({x:node.cx,y:node.cy},field,turn);
+            const seen={x:held.x+move.x,y:held.y+move.y};
+            const place=L.orbitUnturn(seen,field,turn);
+            const back=L.orbitTurnPoint(place,field,turn);
+            errors.push(Math.round(Math.hypot(back.x-seen.x,back.y-seen.y)*100)/100);
+          }
+        }
+      }
+      /* Champ arrêté : la place d'un point est le point lui-même. */
+      const still=L.orbitUnturn({x:1300,y:400},null,.3);
+      return {worst:Math.max(...errors),still,turn0:L.orbitUnturn({x:1300,y:400},field,0),
+        /* Une fenêtre ne tourne pas : sa boîte lâchée est sa boîte. */
+        windowKept:L.orbitTrack({cx:1300,cy:400,shape:'window',box:{left:0,top:0,width:64,height:40}},field)};
+    """)
+
+    # L'étoile lâchée est retrouvée au pixel près, à n'importe quel instant du
+    # tour, pour n'importe quel déplacement de la main.
+    assert result["worst"] <= 0.2
+    assert result["windowKept"] is None
+    # Sans champ, rien à défaire.
+    assert result["still"] == {"x": 1300, "y": 400}
+    # À l'origine du tour, la place ne diffère du point que par l'écartement.
+    assert result["turn0"] != {"x": 1300, "y": 400}
 
 
 def test_a_full_scene_is_placed_inside_the_safe_area_without_same_layer_overlap(tmp_path):

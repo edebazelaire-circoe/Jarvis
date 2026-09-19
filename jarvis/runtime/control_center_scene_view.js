@@ -34,11 +34,11 @@
     Object.freeze({id:'breathe',type:'toggle',label:'Halo qui respire',value:true,needs:'halo',
       hint:'Sinon le halo reste d’une seule intensité.'}),
     Object.freeze({id:'orbit',type:'toggle',label:'Gravitation',value:true,
-      hint:'La constellation tourne lentement autour de JARVIS, d’un bloc. Éteinte, elle est parfaitement immobile.'}),
+      hint:'Chaque étoile tourne lentement autour de JARVIS, dans le sens horaire. Éteinte, la constellation est parfaitement immobile.'}),
     Object.freeze({id:'spread',type:'range',label:'Ampleur de l’orbite',min:.3,max:2.5,step:.1,value:1,needs:'orbit',
-      hint:'L’angle de la rotation. Il reste borné par la place libre autour des objets les plus au bord.'}),
+      hint:'L’écartement du champ autour de JARVIS. Il reste borné par la place libre : une étoile ne sort jamais de la zone sûre en tournant.'}),
     Object.freeze({id:'speed',type:'range',label:'Vitesse de l’orbite',min:.25,max:4,step:.25,value:1,needs:'orbit',
-      hint:'Un aller-retour dure environ trente secondes à vitesse 1.'}),
+      hint:'Un tour complet dure environ quatre minutes à vitesse 1.'}),
     Object.freeze({id:'links',type:'toggle',label:'Fils entre les objets',value:true,
       hint:'Les traits qui relient une étoile à son parent, à son signal, à ses résultats.'}),
   ]);
@@ -134,8 +134,8 @@
     return out;
   }
 
-  /* Options de `JarvisSceneLayout.orbitDrift`, ou `null` quand la gravitation
-     est éteinte : la page ne calcule alors aucun angle. */
+  /* Options de `JarvisSceneLayout.orbitField`, ou `null` quand la gravitation
+     est éteinte : la page ne calcule alors aucun tour. */
   function orbitOptions(settings){
     const value=normalize(settings);
     if(!value.orbit)return null;

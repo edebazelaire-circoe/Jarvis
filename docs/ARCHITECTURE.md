@@ -2835,28 +2835,57 @@ the brain sees never changes.
   execution rings read through `calc`) and classes `sc-no-halo`,
   `sc-still-halo`, `sc-no-orbit`, `sc-no-links` — immediate, without waiting for
   a render — then schedules one render for the drift.
-- Gravity off computes **no** drift at all (`orbitOptions` returns `null`);
-  otherwise `orbitOf(node, vp, {gain, rate})` multiplies the angular amplitude
-  **before** the safe-area clamp, so a wider orbit never pushes a star out of
-  it, and divides the period by the rate (both factors clamped to 0.25–4, a
-  missing or unreadable one reading as 1).
-- The drift itself (Slice 12 rework of the Slice 11 numbers, from the user
-  report of 18/09/2026 « les étoiles ne bougent pas »): a constant angular
-  amplitude `ORBIT_ARC_RAD` = 0.06 rad (≈ 3.4° either side of the stored place),
-  so the excursion grows with the radius — 10 to 38 px (`ORBIT_MAX_PX`) on a real
-  scene — with a **single** period for every star (`ORBIT_PERIOD_MS` = 26 s, no
-  radius term any more, which used to let two neighbours slowly separate) and
-  the phase read from the place's angle, so the corona drifts like a wave. Two
-  objects at the same place (a star and its signal) get exactly the same drift
-  and never come apart; a thread still follows the average drift of its two
-  ends, exact for that pair and a small approximation for a long thread. The former numbers (0.024 rad capped at 9 px, period
-  24–72 s by radius) moved a real star by ~9 px per 40 s — technically animated,
-  visually immobile. **A pinned object drifts like any other**: every geometry the
-  user sets by hand also pins it (decision 9), so excluding pins — as Slice 11
-  did — froze any scene the user had arranged; the pin protects the *place* from
-  the resolver and the brain, not the rendering, and the drift writes nothing.
-  Only points drift (a capsule or a window never does), and
-  `prefers-reduced-motion` still cancels the animation whatever the setting.
+- Gravity off computes **no** field at all (`orbitOptions` returns `null`);
+  otherwise `orbitField(nodes, vp, {gain, rate})` returns the centre of the
+  turn, its period (divided by the rate) and the one shrink factor that keeps
+  every swept circle inside the safe area, and `orbitTrack(node, field)` gives
+  one object its radius, the offset to its place and its phase. Both factors are
+  clamped to 0.25–4, a missing or unreadable one reading as 1; the amplitude
+  spreads or tightens the field around the centre and is clamped by the safe
+  area, so a wider orbit never pushes a star out of it.
+- The motion itself (rework of 19/09/2026, after two rejected attempts): **a
+  real turn** around the centre of the window. Every object travels the ellipse
+  centred there that passes through its place, clockwise, one turn per
+  `ORBIT_PERIOD_MS` (240 s at speed 1). All share the period and the keyframes
+  and differ only by their two radii (`--sc-orbit-rx`, `--sc-orbit-ry`) and
+  their phase (`animation-delay`) — that difference is what makes a turn instead
+  of a field sliding as one. An ellipse, not a circle, because the frame is
+  twice as wide as it is tall: on a circle the whole turn is bounded by the
+  height, half the width stays empty and the field has to hug the face to keep
+  anyone from leaving through the top — which is exactly what the user saw
+  (« les points sont trop proches du centre »). Its stretch is capped at
+  `ORBIT_ASPECT_MAX` = 1.6 so the field reads as turning, not as being pulled
+  sideways. By default the field **fills** the room available (up to
+  `ORBIT_SCALE_MAX` = 2.2, floor `ORBIT_SCALE_MIN` = 0.35), and the amplitude
+  setting multiplies that fill without ever exceeding the room.
+- What came before, and why it was rejected: Slice 11/12 drifted each star along
+  a small arc; the 18/09 rework sampled the angle on `sin` of time — a pendulum,
+  reversing twice a period (« ça oscille, je veux une rotation continue ») — and
+  the rework of that same night made the angle monotone but applied it to a
+  **single shared translation**, which changes no relative position at all
+  (« ça ne bouge pas du tout »). Its own justification — that any rotation would
+  carry distant objects out of the frame — held only under a constraint nobody
+  had asked for (that no object drift more than one radius from its place).
+- `orbitTurns(node)` excludes the shapes in `ORBIT_STILL_SHAPES` — windows: a
+  window is a panel one reads, and watching it drift under the eyes is a defect
+  (user report of 19/09/2026). A still window neither turns nor constrains the
+  field's spread.
+- A gesture pauses the whole field (`.scene.sc-gesture`), and `applyOrbit` leaves
+  a held node's offset exactly as it was under the cursor. On release the drop
+  point goes back through `orbitUnturn(point, field, turn)`, the inverse of the
+  turn at the angle the field is currently at, so what is stored is the place
+  whose drawing *is* the drop point: the object stays under the cursor instead of
+  jumping half a turn away. `fieldTurn()` reads that angle from the animation
+  itself, never from the document clock, so a paused scene or a hidden page
+  cannot desynchronise it.
+- **A pinned object turns like any other**: every geometry the user sets by hand
+  also pins it (decision 9), so excluding pins — as Slice 11 did — froze any
+  scene the user had arranged; the pin protects the *place* from the resolver and
+  the brain, not the rendering, and the turn writes nothing. Capsules turn with
+  the field, the thread layer follows the same affine map
+  (`scale(ax,ay) scale(k) rotate(θ) scale(1/ax,1/ay)` about the centre) so a
+  thread stays tied end to end without being redrawn, and `prefers-reduced-motion`
+  still cancels the animation whatever the setting.
 - A setting whose condition is off (halo at zero, gravity off) is greyed and
   disabled but keeps its value. `storage` events keep every open tab on the same
   look; a refused `localStorage` (private window) falls back to the reference

@@ -588,9 +588,22 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisScenePageCor
      tombe sur les deux nouveaux centres, à tout instant. `--sc-orbit-r`, posé
      par la page sur le conteneur, est le rayon du cercle parcouru. */
   function orbitKeyframes(){
-    const r='var(--sc-orbit-r,0px)';
-    const steps=L.orbitSteps().map(step=>`${step.at}%{translate:calc(${r} * ${step.x}) calc(${r} * ${step.y})}`);
-    return `@keyframes sc-orbit{${steps.join('')}}`;
+    const rx='var(--sc-orbit-rx,0px)',ry='var(--sc-orbit-ry,0px)';
+    const dx='var(--sc-orbit-dx,0px)',dy='var(--sc-orbit-dy,0px)';
+    /* Position sur le cercle, moins l'écart à la place : `transform` garde la
+       place (la géométrie de la scène), `translate` porte le tour et rien
+       d'autre. Un objet au centre n'a ni rayon ni écart : il ne bouge pas. */
+    const steps=L.orbitSteps().map(step=>
+      `${step.at}%{translate:calc(${rx} * ${step.x} - ${dx}) calc(${ry} * ${step.y} - ${dy})}`);
+    /* Le calque des fils tourne du même angle autour du même centre : une
+       rotation envoie le segment qui joint deux étoiles sur le segment qui
+       joint leurs deux nouvelles places, donc les fils restent noués sans
+       qu'on les redessine. Le resserrement du champ voyage avec. */
+    const field=L.orbitSteps().map(step=>
+      `${step.at}%{transform:scale(var(--sc-orbit-ax,1),var(--sc-orbit-ay,1)) `
+      + `scale(var(--sc-orbit-scale,1)) rotate(${step.angle}deg) `
+      + `scale(var(--sc-orbit-iax,1),var(--sc-orbit-iay,1))}`);
+    return `@keyframes sc-orbit{${steps.join('')}}@keyframes sc-orbit-field{${field.join('')}}`;
   }
 
   /* Registre d'empilement de la page (voir `control_center.html`) : visage 0,
@@ -620,6 +633,10 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
 /* Gestes (Slice 08) : aucun glissement animé pendant la main de l'utilisateur. */
 .scene .sc-node.sc-dragging{transition:none!important;cursor:grabbing}
 .scene.sc-gesture{cursor:grabbing}
+/* Sous la main : tout le champ s'arrête. L'étoile tenue garde exactement le
+   décalage qu'elle avait sous le curseur, et les autres ne glissent pas pendant
+   qu'on range. Le tour reprend où il s'était arrêté au relâchement. */
+.scene.sc-gesture .sc-orbit,.scene.sc-gesture .sc-field{animation-play-state:paused}
 .sc-capsule,.sc-window{cursor:grab}
 .sc-grip{position:absolute;right:3px;bottom:3px;width:13px;height:13px;display:grid;place-items:center;color:var(--sc-muted);cursor:nwse-resize;
   opacity:0;transition:opacity .14s ease-out}
@@ -635,28 +652,30 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
 .sc-grip:hover{color:var(--sc-ink)}
 /* Seul le déplacement glisse (composition) ; une taille change d'un coup. */
 .scene.sc-ready .sc-node{transition:transform .42s cubic-bezier(.16,1,.3,1)}
-/* Gravitation : **tout le champ parcourt le même cercle** ('--sc-orbit-r',
-   rayon calculé par 'JarvisSceneLayout.orbitDrift'), lentement, d'un tour
-   complet par période, toujours dans le même sens et à vitesse constante —
-   jamais un va-et-vient. Chaque nœud et le calque des fils ('.sc-field') lisent
-   la même animation et reçoivent donc le même décalage, dans la propriété
-   'translate'. Le mouvement étant une translation, l'extrémité d'un fil tombe
-   exactement sur le centre de son étoile, à tout instant, et aucun objet ne
-   s'éloigne de sa place de plus d'un rayon — là où un angle qui tourne pour de
-   bon emmènerait hors du cadre ce qui est loin du centre. La place elle-même
-   reste dans 'transform' (la géométrie de la scène) : le tour s'ajoute
-   par-dessus et n'est jamais enregistré. Capsules et fenêtres tournent avec le
-   champ : c'est ce qui garde leurs fils noués, et l'arrangement, lui, ne change
-   pas d'un pixel. Une étoile épinglée tourne comme les autres — sa place, elle,
-   ne change pas. */
-.scene .sc-orbit{animation:sc-orbit var(--sc-orbit-ms,32000ms) linear infinite}
-.scene .sc-field{animation:sc-orbit var(--sc-orbit-ms,32000ms) linear infinite}
+/* Gravitation : **le champ tourne autour du visage**. Chaque objet parcourt le
+   cercle centré sur le centre de la fenêtre qui passe par sa place, dans le
+   sens horaire, un tour par période, à vitesse angulaire constante — jamais un
+   va-et-vient, et jamais le champ entier qui glisse d'un bloc (les deux
+   versions précédentes, l'une puis l'autre). Tous lisent la même animation et
+   la même période ; ce qui les distingue est leur rayon ('--sc-orbit-r') et
+   leur phase ('animation-delay'), calculés par 'JarvisSceneLayout.orbitTrack'.
+   Le calque des fils ('.sc-field') tourne du même angle autour du même centre :
+   une rotation envoie le segment qui joint deux étoiles sur celui qui joint
+   leurs nouvelles places, donc l'extrémité d'un fil reste sur le centre de son
+   étoile sans qu'on le redessine. La place elle-même reste dans 'transform' (la
+   géométrie de la scène) : le tour s'ajoute par-dessus, dans 'translate', et
+   n'est jamais enregistré. Capsules et fenêtres tournent avec le champ, et
+   l'arrangement ne change pas d'un pixel. Une étoile épinglée tourne comme les
+   autres — sa place, elle, ne change pas. */
+.scene .sc-orbit{animation:sc-orbit var(--sc-orbit-ms,240000ms) linear infinite}
+.scene .sc-field{transform-box:view-box;transform-origin:var(--sc-orbit-cx,50%) var(--sc-orbit-cy,50%);
+  animation:sc-orbit-field var(--sc-orbit-ms,240000ms) linear infinite}
 ${orbitKeyframes()}
 /* Scène très peuplée : la gravitation et les halos s'arrêtent (une couche de
    composition par étoile). La lecture prime sur le mouvement. 'sc-still' : pas
    la place de tourner sans sortir de la zone sûre — le champ reste immobile. */
 .scene.sc-calm .sc-orbit,.scene.sc-still .sc-orbit,.scene.sc-no-orbit .sc-orbit{animation:none;translate:none}
-.scene.sc-calm .sc-field,.scene.sc-still .sc-field,.scene.sc-no-orbit .sc-field{animation:none;translate:none}
+.scene.sc-calm .sc-field,.scene.sc-still .sc-field,.scene.sc-no-orbit .sc-field{animation:none;transform:none}
 .scene.sc-calm .sc-mark::after{animation:none}
 /* Réglages d'affichage de l'utilisateur ('JarvisSceneView', fenêtre « Affichage
    des étoiles ») : la gravitation éteinte s'arrête tout de suite, sans attendre
@@ -896,7 +915,8 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
   .scene .sc-ring,.scene .sc-note::before,.scene .sc-node.sc-stopping .sc-ring{animation:none!important}
   /* Ni gravitation ni respiration : l'étoile garde sa lueur, immobile. */
   .scene .sc-orbit,.scene .sc-field,.scene .sc-mark::after{animation:none!important}
-  .scene .sc-orbit,.scene .sc-field{translate:none!important}
+  .scene .sc-orbit{translate:none!important}
+  .scene .sc-field{transform:none!important}
   .scene .sc-label{transition:none}
 }`;
 
@@ -928,6 +948,9 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
   /* Slice 08 : modifications optimistes, geste en cours, édition au clavier. */
   const pending=I?I.createPending():null;
   let viewMemo={state:null,version:-1,value:null},gesture=null,keyEdit=null,kbdMenuAt=0,pruneTimer=0;
+  /* Dernier tour calculé : le rendu le pose, le relâchement d'un geste le relit
+     pour retrouver la place d'un point dessiné. */
+  let lastField=null;
   /* Reprise QA : sélection (poignée visible), focus à rendre après un retrait,
      étoiles en cours d'arrêt, délai réel d'un arrêt (lu dans `/api/status`). */
   let selectedId=null,pendingFocus=null,jobCancelTimeoutS=null,serverMemo={state:null,value:null},actionLiveEl=null;
@@ -1456,7 +1479,7 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
      Le tour du champ s'ajoute par-dessus, dans la propriété `translate`
      (`markOrbit`) : il ne touche ni au placement dessiné, ni à la géométrie de
      la scène, ni à la capture. */
-  function position(el,node){
+  function position(el,node,field){
     const rect=L.drawnRect(node);
     el.style.transform=`translate(${rect.left}px,${rect.top}px)`;
     el.style.width=node.shape==='point'?'':`${rect.width}px`;
@@ -1466,18 +1489,38 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     if(node.shape==='window')el.dataset.boxHeight=String(rect.height);
     else delete el.dataset.boxHeight;
     el.style.zIndex=String(node.stack);
-    markOrbit(el);
+    applyOrbit(el,node,field);
     /* Respiration du halo décalée par la place de l'étoile : stable d'un rendu
        à l'autre, et tous les halos ne battent pas ensemble. */
     if(node.shape==='point')el.style.setProperty('--sc-glow-delay',`${glowDelay(node)}ms`);
   }
 
-  /* Le nœud prend le tour du champ, une fois : tous les objets reçoivent le
-     même décalage, y compris celui qui serait posé au centre — sinon son fil
-     décrocherait. Reposer une place ne relance rien (la classe est déjà là) :
-     le nœud suit sa nouvelle place sans perdre la phase du champ, c'est ce qui
+  /* L'orbite de ce nœud : son rayon et sa phase, qui sont à lui, puis la classe
+     qui déclenche l'animation commune. Un nœud au centre n'en a pas — il
+     tournerait sur un rayon nul, et la classe l'exclurait de l'arrêt collectif
+     pour rien. Reposer une place ne relance rien (la classe est déjà là) : le
+     nœud suit sa nouvelle place sans perdre la phase du champ, c'est ce qui
      tient l'étoile sous le curseur pendant un geste. Le champ, lui, est arrêté
      ou non par le conteneur. */
+  function applyOrbit(el,node,field){
+    /* Geste en cours : l'étoile est tenue par la main. Son tour est en pause et
+       son décalage doit rester celui qu'elle avait au moment de la prise —
+       le lui retirer ici la ferait sauter loin du curseur, d'un demi-tour. */
+    if(el.classList.contains('sc-dragging'))return;
+    const track=field?L.orbitTrack(node,field):null;
+    if(!track){
+      el.classList.remove('sc-orbit');
+      el.style.animationDelay='';el.style.translate='';
+      return;
+    }
+    el.style.setProperty('--sc-orbit-rx',`${track.rx}px`);
+    el.style.setProperty('--sc-orbit-ry',`${track.ry}px`);
+    el.style.setProperty('--sc-orbit-dx',`${track.dx}px`);
+    el.style.setProperty('--sc-orbit-dy',`${track.dy}px`);
+    el.style.animationDelay=`${track.delayMs}ms`;
+    markOrbit(el);
+  }
+
   function markOrbit(el){
     if(!el||el.classList.contains('sc-orbit'))return;
     el.classList.add('sc-orbit');
@@ -1492,12 +1535,32 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
      Appelé au moment où la classe est posée, jamais à chaque image. */
   function syncOrbit(el){
     if(!el||!el.getAnimations)return;
+    const now=fieldClock();
     try{
       for(const anim of el.getAnimations()){
-        if(anim.animationName!=='sc-orbit')continue;
-        if(anim.startTime!==0)anim.startTime=0;
+        if(anim.animationName!=='sc-orbit'&&anim.animationName!=='sc-orbit-field')continue;
+        if(Number(anim.currentTime)!==now)anim.currentTime=now;
       }
     }catch(_error){/* animation sans horloge (page cachée) : la passe suivante réessaie. */}
+  }
+
+  /* L'horloge du champ : le temps du tour tel que le calque des fils le vit.
+
+     C'est *lui* la référence, et non l'horloge du document : un geste met les
+     animations en pause, et elles reprennent donc en retard sur le document,
+     du temps qu'a duré le geste. Une étoile resynchronisée sur zéro après cela
+     sautait à la phase du document — ce qu'on voyait au lâcher, l'objet posé
+     ailleurs qu'à l'endroit lâché, et son fil resté en arrière, le calque, lui,
+     étant à l'heure du champ. */
+  function fieldClock(){
+    if(fieldEl&&fieldEl.getAnimations)try{
+      for(const anim of fieldEl.getAnimations()){
+        if(anim.animationName!=='sc-orbit-field')continue;
+        const time=Number(anim.currentTime);
+        if(Number.isFinite(time))return time;
+      }
+    }catch(_error){/* pas encore d'horloge : l'origine fait une référence. */}
+    return 0;
   }
 
   /* Champ arrêté puis relancé (scène trop peuplée, réglage de l'utilisateur,
@@ -1508,7 +1571,12 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     if(frozen===fieldFrozen)return;
     fieldFrozen=frozen;
     if(frozen)return;
-    syncOrbit(fieldEl);
+    /* Le calque d'abord : c'est lui qui porte l'horloge que les autres lisent.
+       Sa propre remise à l'heure part donc de l'origine, une seule fois. */
+    if(fieldEl&&fieldEl.getAnimations)try{
+      for(const anim of fieldEl.getAnimations())
+        if(anim.animationName==='sc-orbit-field'&&anim.startTime!==0)anim.startTime=0;
+    }catch(_error){/* animation sans horloge : la passe suivante réessaie. */}
     for(const record of nodes.values())syncOrbit(record.el);
   }
 
@@ -1517,8 +1585,12 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     return -Math.round(seed/97*GLOW_MS);
   }
 
-  function applyNodes(list){
+  function applyNodes(list,field){
     const seen=new Set();
+    /* Le champ entre dans la clé de placement : une fenêtre redimensionnée
+       change le centre et le resserrement, donc l'orbite de chaque objet, sans
+       qu'aucune place ait bougé. */
+    const shape=field?`${field.cx}|${field.cy}|${field.scale}|${field.ms}`:'';
     for(const node of list){
       seen.add(node.id);
       let record=nodes.get(node.id);
@@ -1545,10 +1617,10 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
       if(record.anim!==node.animate){record.el.classList.toggle('sc-anim',node.animate);record.anim=node.animate}
       record.el.classList.toggle('sc-selected',node.id===selectedId);
       record.el.classList.toggle('sc-stopping',stopping.has(node.id));
-      const place=`${node.shape}|${node.compact}|${node.cx}|${node.cy}|${node.box.left}|${node.box.top}|${node.box.width}|${node.box.height}|${node.stack}`;
+      const place=`${node.shape}|${node.compact}|${node.cx}|${node.cy}|${node.box.left}|${node.box.top}|${node.box.width}|${node.box.height}|${node.stack}|${shape}`;
       /* Sous la main de l'utilisateur (glisser, clavier) : l'aperçu garde la
          place — c'est le geste qui pose le placement, image par image. */
-      if(place!==record.place&&!record.dragging){position(record.el,node);record.place=place}
+      if(place!==record.place&&!record.dragging){position(record.el,node,field);record.place=place}
     }
     for(const [id,record] of nodes){
       if(seen.has(id))continue;
@@ -1799,6 +1871,36 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     position(el,preview);
   }
 
+  /* La place à enregistrer pour une boîte lâchée à l'écran : le tour est relu à
+     l'envers, à l'angle où il est en ce moment. Sans cela l'objet resterait sous
+     le curseur jusqu'au relâchement, puis sauterait — la place enregistrée étant
+     reprise par le tour, qui lui rajouterait son décalage par-dessus.
+     Un objet qui ne tourne pas (fenêtre, champ arrêté) garde sa boîte. */
+  function placeOf(box,node){
+    if(!box||!lastField||!L.orbitTrack(node,lastField))return box;
+    const vp=viewportNow();
+    const screen=L.toScreen(vp,L.drawnBox(node.representation,box));
+    /* Où l'objet est *dessiné* au moment du lâcher : sa place d'avant, telle que
+       le tour la dessine, plus le déplacement de la main. Le tour est en pause
+       sous la main : son décalage est donc resté celui de la prise, et c'est
+       bien ce point-là que l'utilisateur voit sous son curseur. */
+    const turn=fieldTurn();
+    const moved={x:screen.left+screen.width/2-node.cx,y:screen.top+screen.height/2-node.cy};
+    const held=L.orbitTurnPoint({x:node.cx,y:node.cy},lastField,turn);
+    const drop={x:held.x+moved.x,y:held.y+moved.y};
+    const place=L.orbitUnturn(drop,lastField,turn);
+    const shift=I.pxToUnits(vp,place.x-node.cx-moved.x,place.y-node.cy-moved.y);
+    return {...box,x:Math.round((box.x+shift.dx)*10)/10,y:Math.round((box.y+shift.dy)*10)/10};
+  }
+
+  /* Où en est le tour, en fraction de période : lu sur l'animation elle-même,
+     jamais sur l'horloge du document — une page cachée, une scène en pause ou un
+     geste en cours arrêtent l'animation, pas le temps qui passe. */
+  function fieldTurn(){
+    if(!lastField)return 0;
+    return ((fieldClock()/lastField.ms)%1+1)%1;
+  }
+
   function holdNode(id,held){
     const record=nodes.get(id);
     if(!record)return;
@@ -1985,7 +2087,7 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
       if(g.wasSelected)openObjectMenu(g.id,{x:event.clientX,y:event.clientY,above:event.clientY},g.el);
       return;
     }
-    const box=g.preview;
+    const box=g.mode==='resize'?g.preview:placeOf(g.preview,g.node);
     holdNode(g.id,false);
     if(!box||I.sameBox(box,g.box))return;
     commitUserGeometry(g.id,box,g.mode).catch(error=>actionFailed(g.mode==='resize'?'Redimensionnement':'Déplacement',g.id,error));
@@ -2480,21 +2582,34 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     markFresh(lastState,now);
     lastModel=L.viewModel(viewState(),current,vp,{objectLimit:lastView?lastView.objectLimit:L.OBJECT_LIMIT,errorLabels:errorLabels(),
       animatable:node=>(freshUntil.get(node.id)||{until:0}).until>now});
-    /* Gravitation : **un seul rayon** pour tout le champ, calculé pour ce rendu
-       seulement — le tour, lui, est continu et ne repart jamais de zéro. Scène
-       très peuplée : tout s'immobilise. Gravitation éteinte par l'utilisateur :
-       aucun rayon n'est calculé, la classe `sc-no-orbit` a déjà arrêté ce qui
+    /* Gravitation : le centre, la période et le resserrement du champ sont
+       calculés pour ce rendu ; le rayon et la phase, eux, appartiennent à
+       chaque objet. Le tour est continu et ne repart jamais de zéro. Scène très
+       peuplée : tout s'immobilise. Gravitation éteinte par l'utilisateur :
+       aucun champ n'est calculé, la classe `sc-no-orbit` a déjà arrêté ce qui
        tournait. */
     const points=lastModel.nodes.reduce((n,node)=>n+(node.shape==='point'?1:0),0);
     const options=V?V.orbitOptions(viewPrefs):undefined;
-    const drift=options===null?null:L.orbitDrift(lastModel.nodes,vp,options);
-    if(drift){root.style.setProperty('--sc-orbit-r',`${drift.px}px`);root.style.setProperty('--sc-orbit-ms',`${drift.ms}ms`)}
+    const field=options===null?null:L.orbitField(lastModel.nodes,vp,options);
+    lastField=field;
+    if(field){
+      root.style.setProperty('--sc-orbit-ms',`${field.ms}ms`);
+      root.style.setProperty('--sc-orbit-cx',`${field.cx}px`);
+      root.style.setProperty('--sc-orbit-cy',`${field.cy}px`);
+      root.style.setProperty('--sc-orbit-scale',String(field.scale));
+      /* Les deux demi-axes et leurs inverses, calculés ici : une division dans
+         `calc()` par une variable reste mal servie d'un navigateur à l'autre. */
+      root.style.setProperty('--sc-orbit-ax',String(field.ax));
+      root.style.setProperty('--sc-orbit-ay',String(field.ay));
+      root.style.setProperty('--sc-orbit-iax',String(Math.round(1e6/field.ax)/1e6));
+      root.style.setProperty('--sc-orbit-iay',String(Math.round(1e6/field.ay)/1e6));
+    }
     const calm=points>CALM_POINTS;
     root.classList.toggle('sc-calm',calm);
-    root.classList.toggle('sc-still',!drift);
-    applyNodes(lastModel.nodes);
+    root.classList.toggle('sc-still',!field);
+    applyNodes(lastModel.nodes,field);
     applyEdges(lastModel.edges,vp);
-    syncField(calm||!drift||options===null);
+    syncField(calm||!field||options===null);
     renderStatus();
     /* Transitions actives seulement après le premier placement : pas de
        glissement depuis l'origine au chargement. */
