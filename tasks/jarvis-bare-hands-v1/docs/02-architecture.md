@@ -32,7 +32,7 @@ Do not encode all behavior as synthetic DOM PointerEvents. The current code uses
 
 ## 8. BareHandsTools
 
-Separate active “what the hand means” modes from engine settings. Provide an extensible tool contract and initial UI palette for default/pointer, hand/pan, highlighter, drawing and selection.
+Separate active “what the hand means” modes from engine settings. Provide an extensible tool contract and initial UI palette for default/pointer, hand/pan and selection. (Amended after Slice 07 shipped: highlighter and drawing need an annotation layer that V1 does not have, and no Slice owned them, so they are out of V1 scope. The extension recipe is kept in `docs/barehands-contracts.md` §8.)
 
 ## 9. BareHandsSettings
 

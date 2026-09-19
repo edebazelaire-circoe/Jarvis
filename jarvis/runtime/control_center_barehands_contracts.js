@@ -848,7 +848,7 @@
   /* ------------------------------------------------------------------ 8
      Outils : « ce que la main veut dire », distinct des réglages (décision 25). */
 
-  const TOOL=Object.freeze({POINTER:'pointer',PAN:'pan',HIGHLIGHTER:'highlighter',DRAW:'draw',SELECT:'select'});
+  const TOOL=Object.freeze({POINTER:'pointer',PAN:'pan',SELECT:'select'});
   const TOOLS=values(TOOL);
   const TOOL_DEFAULT=TOOL.POINTER;
   const normalizeTool=value=>oneOf(value,TOOLS,TOOL_DEFAULT);
@@ -869,22 +869,30 @@
      `TOOL_CAPABILITY`, une dans `TOOL_LABEL` ; puis, pour qu'il soit
      **installé**, servir sa capacité dans le moteur et l'ajouter à
      `SERVED_CAPABILITIES`. Un test de parité refuse un outil sans capacité et
-     une capacité servie sans outil. */
+     une capacité servie sans outil.
+
+     **La couche d'annotation est hors V1 (décision du Human, reprise de la
+     Slice 07).** `highlighter` et `draw` étaient déclarés ici, refusés partout
+     et possédés par aucune Slice : deux outils sur cinq étaient des promesses
+     que rien n'allait tenir. Ils sont retirés de la table. Ce qui reste — et
+     qui est la recette d'extension, pas du code mort — c'est le mécanisme qui
+     **refuse** un outil déclaré sans moteur : `SERVED_CAPABILITIES`,
+     `toolInstalled`, le motif de `describeTool` et, côté moteur, la porte
+     `tool_not_installed`. Déclarer demain un outil `annotate` sans le servir le
+     fait griser avec son motif au lieu de le rendre choisissable et inerte. */
   const TOOL_CAPABILITY_CONTEXTUAL='contextual';
   const TOOL_CAPABILITY=Object.freeze({
     [TOOL.POINTER]:TOOL_CAPABILITY_CONTEXTUAL,
     [TOOL.PAN]:'scroll',
-    [TOOL.HIGHLIGHTER]:'annotate',
-    [TOOL.DRAW]:'annotate',
     [TOOL.SELECT]:'select',
   });
-  /* Les capacités que le moteur V1 sert réellement. `annotate` n'y est pas :
-     il n'existe aucune couche d'annotation, donc le surligneur et le dessin
-     sont **déclarés et refusés**, jamais acceptés en silence. */
+  /* Les capacités que le moteur V1 sert réellement. La table ci-dessus ne
+     déclare aujourd'hui que celles-là : la palette offre donc exactement ce
+     qui marche. La liste reste **distincte** de `TOOL_CAPABILITY` parce que
+     c'est elle qui rend « installé » vérifiable plutôt qu'affirmé. */
   const SERVED_CAPABILITIES=Object.freeze([TOOL_CAPABILITY_CONTEXTUAL,'scroll','select']);
   const TOOL_LABEL=Object.freeze({
-    [TOOL.POINTER]:'Pointeur',[TOOL.PAN]:'Main',[TOOL.HIGHLIGHTER]:'Surligneur',
-    [TOOL.DRAW]:'Dessin',[TOOL.SELECT]:'Sélection',
+    [TOOL.POINTER]:'Pointeur',[TOOL.PAN]:'Main',[TOOL.SELECT]:'Sélection',
   });
   /* Un outil **inconnu** se refuse ici : ce n'est pas un schéma stocké, c'est
      une question sur une table. `normalizeTool`, lui, garde sa tolérance

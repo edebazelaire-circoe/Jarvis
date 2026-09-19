@@ -19,7 +19,8 @@ This Slice is part of Bare Hands V1. Preserve the locked decisions in docs/01-de
 
 ### In Scope
 
-- Add an extensible Bare Hands Tool contract and palette with initial modes: default/pointer, hand/pan, highlighter, drawing and selection.
+- Add an extensible Bare Hands Tool contract and palette with initial modes: default/pointer, hand/pan and selection.
+  (Amended after the Slice shipped, by Human decision: `highlighter` and `draw` are **out of V1 scope**. They were declared and refused with no owning Slice, so the palette now offers exactly what works. The extension recipe for an annotation layer is preserved in `docs/barehands-contracts.md` §8.)
 - Tool behavior must be capability-gated by target/component; unsupported tools must fail safely.
 - Keep default mode context-sensitive rather than globally forcing drag.
 - Expand Bare Hands Settings beyond the legacy enabled boolean: enable/disable, target-feedback visibility, calibration entry, tutorial entry, sleep timeout/default, reset profile, and only safe/understandable sensitivity or assistance controls.
@@ -76,7 +77,7 @@ Settings round-trip/schema tests; tool capability-gating fixtures; target-feedba
 
 ## Acceptance Criteria
 
-Tools and Settings are visibly and architecturally distinct. Default interaction remains contextual. Target preview can be disabled. Unsupported tool/target combinations are safe and understandable.
+Tools and Settings are visibly and architecturally distinct. Default interaction remains contextual. Target preview can be disabled. Unsupported tool/target combinations are safe and understandable. Every declared tool has an engine: the palette offers `pointer`, `pan` and `select`, and nothing that would be greyed out for the whole of V1.
 
 ## Documentation Updates
 

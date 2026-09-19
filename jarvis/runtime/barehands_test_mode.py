@@ -82,12 +82,14 @@ INSTALL_HINT = "python scripts/bootstrap_third_party.py"
 #: Outils (contrat § 8, décision 25) : « ce que la main veut dire », distinct
 #: des réglages. Miroir serveur de ``TOOLS`` du contrat JS — la parité est
 #: testée en exécutant le contrat sous node, pas supposée.
-TOOLS: tuple[str, ...] = ("pointer", "pan", "highlighter", "draw", "select")
+TOOLS: tuple[str, ...] = ("pointer", "pan", "select")
 
-#: Les outils que le moteur V1 sait réellement servir. Les deux autres
-#: (``highlighter``, ``draw``) demandent une couche d'annotation qui n'existe
-#: pas : ils sont **déclarés et refusés**, jamais acceptés en silence — un
-#: réglage sans effet serait indiscernable d'un réglage appliqué.
+#: Les outils que le moteur V1 sait réellement servir. Ils coïncident avec
+#: ``TOOLS`` depuis que la couche d'annotation est **hors V1** : ``highlighter``
+#: et ``draw`` étaient déclarés, refusés partout et possédés par aucune Slice.
+#: La table reste **séparée** parce que c'est elle qui rend « installé »
+#: vérifiable : un outil déclaré demain sans moteur se refuse ici
+#: (``barehands_tool_not_installed``) au lieu d'être accepté sans effet.
 INSTALLED_TOOLS: tuple[str, ...] = ("pointer", "pan", "select")
 
 #: Bornes des réglages numériques, miroir de ``SETTINGS_BOUNDS`` du contrat.

@@ -3961,10 +3961,11 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
          (contrat § 8), et la réponse est non. Sans cette ligne, `tool('ciseaux')`
          devenait `pointer`, partait sur le fil **déjà normalisé** — donc le
          refus du serveur était inatteignable depuis la page — et se
-         journalisait « réglage enregistré ». Un outil déclaré mais sans moteur
-         (`highlighter`, `draw`) passe ici et se fait refuser par le serveur,
-         qui est le seul à savoir ce qu'il sert : les deux refus gardent leur
-         phrase. */
+         journalisait « réglage enregistré ». Un outil déclaré mais **sans
+         moteur** passerait ici et se ferait refuser par le serveur, seul à
+         savoir ce qu'il sert : les deux refus gardent leur phrase et leur
+         auteur. La table n'en déclare aucun depuis que la couche d'annotation
+         est hors V1, mais la porte reste la recette d'extension. */
       if(patch&&patch.tool!==undefined)BH.toolCapability(patch.tool);
       next=BH.normalizeSettings({...previous,...(patch||{})});
       applyToEngine(next);
@@ -4141,8 +4142,6 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
     pointer:'Contextuel : clic, glissement, défilement ou sélection selon ce qu’il y a sous la main. C’est le comportement par défaut, et il ne force rien.',
     pan:'Le contenu suit la main. Une cible qui ne défile pas est refusée, avec un mot à l’écran.',
     select:'Désigner et sélectionner. Réservé aux champs de saisie et aux étoiles de la scène ; ailleurs, refusé.',
-    highlighter:'Déclaré au contrat, sans moteur en V1 : il n’existe pas encore de couche d’annotation. Le choisir est refusé plutôt qu’accepté sans effet.',
-    draw:'Déclaré au contrat, sans moteur en V1 : il n’existe pas encore de couche d’annotation. Le choisir est refusé plutôt qu’accepté sans effet.',
   });
   const UNAVAILABLE='Aucun moteur derrière cet outil en V1.';
 

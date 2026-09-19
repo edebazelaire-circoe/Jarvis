@@ -1004,8 +1004,7 @@ def test_the_controller_states_and_timings_still_match_the_contract(tmp_path):
     assert result["settingsVersion"] == barehands_test_mode.SCHEMA_VERSION
     assert result["migrated"] == list(barehands_test_mode.MIGRATED_SCHEMA_VERSIONS)
     assert result["toolCapabilities"] == [
-        ["pointer", "contextual"], ["pan", "scroll"], ["highlighter", "annotate"],
-        ["draw", "annotate"], ["select", "select"],
+        ["pointer", "contextual"], ["pan", "scroll"], ["select", "select"],
     ]
     assert result["served"] == ["contextual", "scroll", "select"]
     assert result["installedTools"] == list(barehands_test_mode.INSTALLED_TOOLS)

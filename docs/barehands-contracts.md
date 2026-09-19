@@ -1310,7 +1310,7 @@ Refus : `barehands_interaction_invalid`, `barehands_interaction_unknown`,
 
 ## 8. Outils (§8, décision 25)
 
-`TOOL` = `pointer` | `pan` | `highlighter` | `draw` | `select`,
+`TOOL` = `pointer` | `pan` | `select`,
 `TOOL_DEFAULT = 'pointer'`, `normalizeTool(value)` retombe sur le défaut. Les
 outils disent « ce que la main veut dire » et restent distincts des réglages :
 un outil se choisit en pleine session et ne se calibre pas ; un réglage se
@@ -1328,8 +1328,34 @@ moteur (`CONTENT_MODE` dans `control_center_barehands.js`) — sauf
 | `pointer` | `contextual` | oui | rien : le moteur décide de ce qu'il y a sous la main |
 | `pan` | `scroll` | oui | que la cible défile |
 | `select` | `select` | oui | un champ de saisie ou une étoile de la scène |
-| `highlighter` | `annotate` | **non** | — aucune couche d'annotation en V1 |
-| `draw` | `annotate` | **non** | — idem |
+
+**La couche d'annotation est délibérément hors du périmètre V1.** `highlighter`
+et `draw` ont été **retirés** de `TOOL`, `TOOL_CAPABILITY`, `TOOL_LABEL`, de la
+palette et du miroir serveur (`barehands_test_mode.TOOLS`). Ils y étaient
+déclarés, refusés partout et possédés par **aucune Slice** : la Slice 07 en
+était le seul propriétaire et elle a livré. Deux outils sur cinq étaient donc
+une promesse que rien n'allait tenir, et un outil grisé pour toujours se lit
+comme une panne permanente. La palette offre maintenant exactement ce qui
+marche : `pointer`, `pan`, `select`. Un nom retiré n'est pas « déclaré sans
+moteur », il est **inconnu** : `toolCapability('draw')` et
+`POST /api/barehands {"tool":"draw"}` rendent tous deux
+`barehands_tool_unknown`.
+
+**La recette d'extension, elle, est conservée** — c'est le mécanisme qui refuse,
+pas les deux noms, qui avait de la valeur. Restent en place et testés :
+`SERVED_CAPABILITIES` (distinct de `TOOL_CAPABILITY`), `toolInstalled`,
+`INSTALLED_TOOLS`, le `reason` de `describeTool`, le refus serveur
+`barehands_tool_not_installed`, le grisé motivé de la palette et la porte
+`tool_not_installed` de `openCapture`. Ajouter demain une couche d'annotation,
+c'est : une entrée dans les trois tables, puis servir `annotate` dans le moteur
+et l'ajouter à `SERVED_CAPABILITIES`. Tant que la dernière marche manque,
+l'outil est **déclaré, grisé avec son motif, et refusé partout** plutôt
+qu'enregistré sans effet. Deux tests exercent cette marche manquante en
+déclarant l'outil qu'une Slice future déclarerait — `ink`, capacité `annotate`,
+non servie — plutôt qu'en l'affirmant :
+`test_barehands_tools_settings_js::test_a_tool_declared_without_an_engine_refuses_every_capture`
+(par la couture `contracts` du moteur) et
+`test_barehands_test_mode::test_a_tool_declared_without_an_engine_is_still_refused_by_its_own_name`.
 
 `SERVED_CAPABILITIES` liste les capacités que le moteur sert ;
 `toolInstalled(tool)` n'est donc pas un drapeau écrit à la main mais une
@@ -1430,9 +1456,11 @@ de relire le moteur était de le reconfigurer, donc « réglage enregistré » e
 
 `normalizeTool` garde sa tolérance : elle sert à relire un schéma stocké. Une
 **écriture** est une question posée à la table des outils (§8), et la réponse
-est non. Un outil déclaré mais sans moteur (`highlighter`, `draw`) passe cette
-porte et se fait refuser par le serveur, seul à savoir ce qu'il sert : les deux
-refus gardent leur phrase et leur auteur.
+est non. Un outil déclaré mais **sans moteur** passerait cette porte et se
+ferait refuser par le serveur, seul à savoir ce qu'il sert : les deux refus
+gardent leur phrase et leur auteur. La table n'en déclare aucun depuis que la
+couche d'annotation est hors V1 (§8), mais la porte reste la recette
+d'extension.
 
 **`enabled` est le seul dont l'état moteur ne passe pas par `applyToEngine`**, et
 son échec d'écriture a donc sa propre règle. Décocher libère la caméra *avant*

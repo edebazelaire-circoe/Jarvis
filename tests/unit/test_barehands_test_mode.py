@@ -127,11 +127,11 @@ def test_a_stored_value_out_of_range_or_of_the_wrong_type_falls_back_to_its_defa
         ({"enabled": True, "assistance": 1.5}, "barehands_setting_out_of_range"),
         ({"enabled": True, "sensitivity": 0.1}, "barehands_setting_out_of_range"),
         ({"enabled": True, "tool": "gomme"}, "barehands_tool_unknown"),
-        # Déclaré au contrat, sans moteur : refusé **par son nom**, jamais
-        # accepté en silence — un outil sans effet serait indiscernable d'un
-        # outil appliqué.
-        ({"enabled": True, "tool": "highlighter"}, "barehands_tool_not_installed"),
-        ({"enabled": True, "tool": "draw"}, "barehands_tool_not_installed"),
+        # `highlighter` et `draw` ont quitté la table : la couche d'annotation
+        # est hors V1. Ils se refusent donc désormais comme n'importe quel nom
+        # inconnu, et non plus comme « déclaré sans moteur ».
+        ({"enabled": True, "tool": "highlighter"}, "barehands_tool_unknown"),
+        ({"enabled": True, "tool": "draw"}, "barehands_tool_unknown"),
     ],
 )
 def test_apply_rejects_malformed_payloads_with_a_stable_code(payload, code):
@@ -141,6 +141,29 @@ def test_apply_rejects_malformed_payloads_with_a_stable_code(payload, code):
         barehands.apply(settings, payload)
     assert caught.value.code == code
     assert settings == {"barehands_test_mode": stored}, "un refus n'écrit rien"
+
+
+def test_a_tool_declared_without_an_engine_is_still_refused_by_its_own_name(monkeypatch):
+    """La recette d'extension, vivante après le retrait de la couche d'annotation.
+
+    ``TOOLS`` et ``INSTALLED_TOOLS`` coïncident aujourd'hui — la palette offre
+    exactement ce qui marche —, donc ce refus n'est plus atteignable par un nom
+    du produit. Il reste la seule chose qui empêche le **prochain** outil
+    déclaré sans moteur d'être enregistré et sans effet, ce qui serait
+    indiscernable d'un réglage appliqué. On le déclare donc ici comme une Slice
+    future le déclarerait : dans ``TOOLS``, absent d'``INSTALLED_TOOLS``.
+    """
+
+    monkeypatch.setattr(barehands, "TOOLS", barehands.TOOLS + ("ink",))
+    settings: dict = {}
+    with pytest.raises(barehands.BarehandsSettingsError) as caught:
+        barehands.apply(settings, {"enabled": True, "tool": "ink"})
+    assert caught.value.code == "barehands_tool_not_installed"
+    # Et la phrase nomme l'outil **et** ce qui reste possible : un refus qui
+    # ne dit ni quoi ni quoi d'autre laisse l'appelant sans issue.
+    assert "ink" in str(caught.value)
+    assert "pointer, pan, select" in str(caught.value)
+    assert settings == {}, "un refus n'écrit rien"
 
 
 def test_the_whole_widened_payload_is_accepted_and_an_absent_key_keeps_what_is_stored():

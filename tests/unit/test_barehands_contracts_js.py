@@ -536,7 +536,7 @@ def test_settings_survive_the_partial_and_carry_the_whole_widened_payload(tmp_pa
         fromNothing:C.normalizeSettings(null),
         partial:C.normalizeSettings({targetPreview:false,sensitivity:99,sleepTimeoutMs:1,tool:'gomme'}),
         junkDropped:Object.keys(C.normalizeSettings({inventé:true})).includes('inventé'),
-        payload:C.toServerPayload({enabled:true,diagnostics:true,tool:'draw'}),
+        payload:C.toServerPayload({enabled:true,diagnostics:true,tool:'select'}),
         tools:C.TOOLS,defaultTool:C.TOOL_DEFAULT,
         version:C.SETTINGS_SCHEMA_VERSION,
         // Version 1 : la **couture de migration**. Elle ne se taisait pas
@@ -576,7 +576,7 @@ def test_settings_survive_the_partial_and_carry_the_whole_widened_payload(tmp_pa
     assert result["payload"] == {
         "schema_version": barehands_test_mode.SCHEMA_VERSION,
         "enabled": True, "target_preview": True, "sleep_timeout_ms": 30000,
-        "tool": "draw", "assistance": 0.5, "sensitivity": 1,
+        "tool": "select", "assistance": 0.5, "sensitivity": 1,
         "tutorial_seen": False, "calibration_enabled": True, "diagnostics": True,
     }
     assert set(result["payload"]) - {"schema_version"} == set(barehands_test_mode.SETTINGS_DEFAULTS), (
@@ -588,7 +588,7 @@ def test_settings_survive_the_partial_and_carry_the_whole_widened_payload(tmp_pa
         "tool": "pan", "assistance": 0.25, "sensitivity": 2,
         "tutorialSeen": True, "calibrationEnabled": False, "diagnostics": True,
     }
-    assert result["tools"] == ["pointer", "pan", "highlighter", "draw", "select"]
+    assert result["tools"] == ["pointer", "pan", "select"]
     assert result["defaultTool"] == "pointer"
     assert result["version"] == barehands_test_mode.SCHEMA_VERSION
 
@@ -617,6 +617,11 @@ def test_a_tool_declares_a_capability_and_an_uninstalled_one_says_so(tmp_path):
           cap=>cap===C.TOOL_CAPABILITY_CONTEXTUAL||C.TOOLS.some(t=>C.TOOL_CAPABILITY[t]===cap)),
         // Tolérance documentée : un schéma **stocké** retombe sur le défaut.
         normalized:C.normalizeTool('gomme'),
+        // La couche d'annotation est hors V1 : ses deux outils ne sont plus
+        // déclarés, donc ils se refusent comme n'importe quel nom inconnu.
+        annotate:refused(()=>C.toolCapability('highlighter')),
+        allDeclaredAreInstalled:C.TOOLS.every(C.toolInstalled),
+        annotateServed:C.SERVED_CAPABILITIES.includes('annotate'),
       });
     """)
     assert result["unknown"] == "barehands_tool_unknown"
@@ -630,14 +635,17 @@ def test_a_tool_declares_a_capability_and_an_uninstalled_one_says_so(tmp_path):
     assert by_id["pointer"]["capability"] == "contextual" and by_id["pointer"]["installed"] is True
     assert by_id["pan"]["capability"] == "scroll" and by_id["pan"]["installed"] is True
     assert by_id["select"]["capability"] == "select" and by_id["select"]["installed"] is True
-    # Le surligneur et le dessin demandent une couche d'annotation qui n'existe
-    # pas : déclarés, refusés, et la raison est lisible — un outil grisé sans
-    # motif serait indiscernable d'une panne.
-    for name in ("highlighter", "draw"):
-        assert by_id[name]["capability"] == "annotate"
-        assert by_id[name]["installed"] is False
-        assert by_id[name]["reason"] == "barehands_tool_not_installed"
+    # La couche d'annotation est **hors V1** : `highlighter` et `draw` ont
+    # quitté la table plutôt que d'y rester déclarés et refusés. La palette
+    # offre donc exactement ce qui marche.
+    assert set(by_id) == {"pointer", "pan", "select"}
+    assert result["annotate"] == "barehands_tool_unknown"
     assert all(tool["reason"] == "" for tool in result["described"] if tool["installed"])
+    # Et ce qui reste vrai après le retrait : aucun outil déclaré n'est
+    # désinstallé, et `toolInstalled` continue de **lire** la table servie
+    # plutôt que d'affirmer « oui » — c'est la recette d'extension.
+    assert result["allDeclaredAreInstalled"] is True
+    assert result["annotateServed"] is False
 
 
 def test_the_settings_bounds_are_one_table_and_refuse_an_inverted_pair(tmp_path):

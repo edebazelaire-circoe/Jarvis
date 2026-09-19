@@ -117,9 +117,9 @@ const held=(id,intent)=>({handTrackId:id,channel:'primary',state:'pressed',inten
 /* Une prise de corps, tirée sur trois images, avec l'outil demandé. Rend ce
    que le DOM a reçu et ce que le moteur a refusé : les deux, parce qu'un outil
    qui ne s'applique pas doit produire **un refus** et non un silence. */
-const bodyRun=(tool,kind,scrollable,extra)=>{
+const bodyRun=(tool,kind,scrollable,extra,contracts)=>{
   const dom=makeDom(scrollable?[kind]:[]);
-  const e=engineOf({dom:dom.api,slotOf:()=>0});
+  const e=engineOf({dom:dom.api,slotOf:()=>0,contracts:contracts||C});
   if(tool)e.setTool(tool);
   const target=Object.assign(tgt(1,null,'body',null),{kind,representation:null},extra||{});
   let refusals=[];
@@ -219,16 +219,30 @@ def test_a_tool_that_forces_a_meaning_refuses_a_target_that_cannot_honour_it(tmp
 def test_a_tool_declared_without_an_engine_refuses_every_capture(tmp_path):
     """Un outil sans moteur ne ressemble jamais à un outil qui marche.
 
-    Le réglage le refuse et la palette le grise, mais ce moteur est
-    **injectable** : il ne suppose pas que son appelant a filtré (même raison
-    que `target_not_actionable`, Slice 06). Il refuse donc partout — corps
-    **et** zone —, parce qu'un outil indisponible n'a pas de cible privilégiée.
+    **La couche d'annotation est hors V1** : `highlighter` et `draw` ont quitté
+    la table des outils, donc aucun nom du produit n'atteint plus ce refus. Il
+    reste la recette d'extension — et une recette qu'aucun test n'exerce est un
+    souhait. On déclare donc ici l'outil que la Slice qui rouvrira le sujet
+    déclarera : une capacité `annotate` que `SERVED_CAPABILITIES` ne sert pas,
+    injectée par la **vraie** couture `contracts` du moteur.
+
+    Le moteur est injectable et ne suppose pas que son appelant a filtré (même
+    raison que `target_not_actionable`, Slice 06) : il refuse donc partout —
+    corps **et** zone —, parce qu'un outil indisponible n'a pas de cible
+    privilégiée.
     """
 
     result = run_node(tmp_path, FIXTURE + """
-      const zoneRun=tool=>{
+      /* La table des outils d'une V2 possible : un outil de plus, sa capacité
+         `annotate`, et rien qui la serve. Tout le reste du contrat est le vrai
+         — c'est `toolCapability` seul qui est élargi, exactement ce qu'une
+         entrée de plus dans `TOOL_CAPABILITY` produirait. */
+      const FUTURE=Object.assign({},C,{
+        toolCapability:name=>String(name)==='ink'?'annotate':C.toolCapability(name),
+      });
+      const zoneRun=(tool,contracts)=>{
         const e=engineOf({dom:makeDom([]).api,world:makeWorld({A:{box:{x:0,y:0,w:64,h:40},
-          representation:'window'}}),slotOf:()=>0});
+          representation:'window'}}),slotOf:()=>0,contracts:contracts||C});
         if(tool)e.setTool(tool);
         const s=e.update({now:0,tokens:[tok(1,400,300)],
           targets:[tgt(1,'A','edge','right')],events:[ev(1,'down',400,300)],
@@ -236,22 +250,28 @@ def test_a_tool_declared_without_an_engine_refuses_every_capture(tmp_path):
         return {refusals:s.refusals.map(r=>r.reason),captures:s.captures.length};
       };
       out({
-        body:bodyRun('highlighter','button',false),
-        draw:bodyRun('draw','card',true),
-        zone:zoneRun('highlighter'),
+        body:bodyRun('ink','button',false,null,FUTURE),
+        onScroller:bodyRun('ink','card',true,null,FUTURE),
+        zone:zoneRun('ink',FUTURE),
         zoneWithPointer:zoneRun('pointer'),
         unknown:refused(()=>engineOf({}).setTool('gomme')),
+        // Et les deux noms retirés ne sont plus « déclarés sans moteur » : ils
+        // sont inconnus, comme n'importe quel nom qui n'est pas au contrat.
+        retired:refused(()=>engineOf({}).setTool('highlighter')),
         // Une palette et un moteur qui ne s'accordent pas sur « installé »
         // donneraient un outil choisissable et sans effet.
         installed:C.INSTALLED_TOOLS,
+        declared:C.TOOLS,
       });
     """)
     assert result["body"]["dom"] == [] and result["body"]["refusals"] == ["tool_not_installed"]
-    assert result["draw"]["dom"] == [] and result["draw"]["refusals"] == ["tool_not_installed"]
+    assert result["onScroller"]["dom"] == [] and result["onScroller"]["refusals"] == ["tool_not_installed"]
     assert result["zone"] == {"refusals": ["tool_not_installed"], "captures": 0}
     assert result["zoneWithPointer"] == {"refusals": [], "captures": 1}
     assert result["unknown"] == "barehands_tool_unknown"
+    assert result["retired"] == "barehands_tool_unknown"
     assert result["installed"] == list(barehands.INSTALLED_TOOLS)
+    assert result["declared"] == list(barehands.TOOLS) == ["pointer", "pan", "select"]
 
 
 def test_a_tool_never_takes_a_frame_handle_nor_the_only_grip_of_a_move_only_star(tmp_path):
@@ -806,8 +826,10 @@ def test_resetting_the_settings_never_turns_the_camera_off(tmp_path):
       byAttr('data-barehands-tool','select').fire('click');
       await settle();
       /* Au clavier : un seul arrêt de tabulation, les flèches parcourent la
-         palette et sautent les outils sans moteur — s'arrêter sur l'un d'eux
-         serait un cul-de-sac que la souris ne rencontre jamais. */
+         palette et sautent ce qui est désarmé — s'arrêter sur un bouton
+         qu'on ne peut pas choisir est un cul-de-sac que la souris ne
+         rencontre jamais. Depuis que la couche d'annotation est hors V1, le
+         seul désarmement atteignable est celui d'une écriture en vol. */
       /* Tel que la page l'a **écrit**, avant tout rafraîchissement. */
       const firstPaint=(modalContent.innerHTML.match(/<button[^>]*data-barehands-tool[^>]*>/g)||[])
         .filter(tag=>/tabindex="0"/.test(tag))
@@ -815,9 +837,8 @@ def test_resetting_the_settings_never_turns_the_camera_off(tmp_path):
       const focusable=()=>live.filter(n=>n.attrs['data-barehands-tool'])
         .map(n=>[n.attrs['data-barehands-tool'],n.attrs.tabindex,n.disabled]);
       const stops=focusable();
-      /* `pan` est suivi de `highlighter` dans la palette, et `highlighter` n'a
-         pas de moteur : c'est la seule paire qui distingue « la flèche saute
-         ce qui est désarmé » de « la flèche avance d'un rang ». */
+      /* La palette n'offre plus que ce qui marche : `pan` est suivi de
+         `select`, et la flèche y va. */
       byAttr('data-barehands-tool','pan').fire('keydown',{key:'ArrowRight'});
       await settle();
       const skipped=BAREHANDS.settings().tool;
@@ -855,13 +876,11 @@ def test_resetting_the_settings_never_turns_the_camera_off(tmp_path):
     assert result["lastWrite"] is True, "la charge utile de la réinitialisation garde l'interrupteur"
     assert result["toggle"] is True
     # Un seul arrêt de tabulation, sur l'outil actif ; les autres sont hors du
-    # parcours, et les deux sans moteur sont désarmés.
-    assert [row[1] for row in result["stops"]] == ["-1", "-1", "-1", "-1", "0"], result["stops"]
-    assert [row[0] for row in result["stops"] if row[2]] == ["highlighter", "draw"]
-    # La flèche saute les deux outils désarmés au lieu de s'y arrêter : un
-    # cul-de-sac au clavier que la souris ne rencontre jamais, puisqu'elle voit
-    # tout de suite qu'ils sont grisés.
-    assert result["skipped"] == "select", "la flèche saute `highlighter`"
+    # parcours. Aucun n'est désarmé : la palette n'offre plus que ce qui marche.
+    assert [row[0] for row in result["stops"]] == ["pointer", "pan", "select"]
+    assert [row[1] for row in result["stops"]] == ["-1", "-1", "0"], result["stops"]
+    assert [row[0] for row in result["stops"] if row[2]] == []
+    assert result["skipped"] == "select"
     # Depuis le dernier outil installé, elle revient au premier.
     assert result["wrapped"] == "pointer"
     assert result["backwards"] == "select"
@@ -1370,13 +1389,14 @@ def test_an_unknown_tool_is_refused_and_never_normalised_into_the_pointer(tmp_pa
       const after=writes();
       const banner=document.getElementById('barehandsStatus').innerHTML;
       const said=toasts.slice();
-      /* Un outil **déclaré mais sans moteur** n'est pas un outil inconnu : il
-         existe dans la table, et c'est le serveur — seul à savoir ce qu'il
-         sert — qui le refuse. Il doit donc continuer de partir sur le fil. */
-      server.fail='L’outil « highlighter » est déclaré mais sans moteur en V1.';
-      const notInstalled=await BAREHANDS.tool('highlighter');
+      /* `highlighter` a quitté la table avec la couche d'annotation : il se
+         refuse désormais **ici**, comme n'importe quel nom inconnu, et ne part
+         plus sur le fil. La porte du serveur reste, pour l'outil qu'une Slice
+         future déclarerait sans le servir. */
+      const retired=await BAREHANDS.tool('highlighter');
+      const retiredBanner=document.getElementById('barehandsStatus').innerHTML;
       out({
-        refused,notInstalled,
+        refused,retired,retiredBanner,
         wrote:after-before,
         sentToServer:server.calls.filter(c=>c.body).map(c=>c.body.tool),
         // L'outil n'a pas bougé, ni à l'écran ni dans le moteur.
@@ -1400,10 +1420,11 @@ def test_an_unknown_tool_is_refused_and_never_normalised_into_the_pointer(tmp_pa
     assert any("barehands_tool_unknown" in line for line in result["warned"])
     # Une écriture réussie par outil installé, et aucune pour le refus.
     assert result["saved"] == 1, "seule l'écriture acceptée est journalisée"
-    # L'outil sans moteur, lui, va bien jusqu'au serveur : les deux refus
-    # gardent leur phrase et leur auteur.
-    assert result["notInstalled"] is None
-    assert result["sentToServer"][-1] == "highlighter"
+    # Un nom retiré de la table se refuse comme un nom inconnu, et ne part pas
+    # sur le fil : `select` reste le dernier outil écrit.
+    assert result["retired"] is None
+    assert result["sentToServer"][-1] == "select"
+    assert "highlighter" in result["retiredBanner"], "le nom retiré est dans la phrase"
 
 
 def test_a_switch_off_the_server_refuses_leaves_the_screen_saying_what_the_camera_did(tmp_path):
