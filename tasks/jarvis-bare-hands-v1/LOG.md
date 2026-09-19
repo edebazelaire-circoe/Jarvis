@@ -1039,3 +1039,138 @@ partir la main hors de la collecte) et la barre de zone dessinée au mauvais
 endroit (`zoneRect` n'était vérifié qu'indirectement). La trente-deuxième,
 `data-representation` non posée, n'est reprise que par une lecture de source :
 voir le résidu ci-dessus.
+
+## 2026-09-19 — Slice 06, implementation agent
+
+Le moteur de captures et la géométrie bimanuelle. **Aucun module de page ajouté**
+— le constat F3 ne s'applique donc pas, l'ordre
+`contracts → target → barehands → scene page` est intact — mais une **dépendance
+de chargement** l'est : le bloc navigateur du pointeur lit désormais
+`JarvisSceneInteract` (inséré bien plus haut), et un test d'ordre le dit.
+Moteur pur : `createInteractionEngine` dans
+`jarvis/runtime/control_center_barehands.js`. Géométrie : `resizeBySides`,
+`manipulateBox`, `rebaseManipulation` **étendus dans**
+`jarvis/runtime/control_center_scene_interact.js`. Couture de la scène :
+`window.JarvisScene.frames`. Couverture :
+`tests/unit/test_barehands_interaction_js.py` (26 tests). Contrat lisible :
+`docs/barehands-contracts.md` § 7.
+
+Découvertes durables pour les Slices suivantes :
+
+- **Le seuil qui arme une manipulation n'est pas un nombre nouveau, c'est
+  `dragSlopPx`.** La première version ajoutait un `manipulationSlopPx` — et donc
+  une sixième paire dangereuse à refuser (`manipulationSlopPx >= clickSlopPx`,
+  sans quoi un clic sur un bord déplace le cadre **et l'épingle**, puisque toute
+  géométrie de l'utilisateur épingle). Or l'intention `drag` de la Slice 04
+  répond déjà exactement à cette question, sur la **paume**, et la paire
+  `clickSlopPx <= dragSlopPx` est déjà refusée à la construction. **La Slice 06
+  n'ajoute aucune constante à `DEFAULTS`** : le seul réglage qu'elle aurait
+  introduit était une question déjà tranchée ailleurs. Corollaire pour la
+  Slice 08 : calibrer `dragSlopPx` déplace aussi le seuil de manipulation.
+- **La paire dangereuse de cette Slice n'est pas un réglage, ce sont deux
+  constantes de forme.** `clamp(v, lo, hi)` rend **`hi`** quand `lo > hi` : un
+  `MAX_SIZE` passé sous `MIN_SIZE` ferait donc gagner le maximum et inverserait
+  la décision 18 — une capsule réductible à rien, sans exception ni test rouge.
+  Il n'y a pas de constructeur là où vivent ces constantes, donc **le refus se
+  pose au chargement du module**. Cinquième occurrence de la classe sur cette
+  tâche, et la première qui ne porte pas sur des options.
+- **Un seul rebasage sert trois transitions.** La décision 19 nomme
+  `RESIZE → MOVE`, mais le saut arrive partout où l'attribution change :
+  à l'**armement** (les pixels déjà parcourus depuis la descente seraient
+  réinterprétés d'un coup), quand une seconde main **entre** (`MOVE → RESIZE`),
+  et quand une main **se retire**. Le moteur calcule donc une *signature* du
+  plan — mode, axes, et **qui tient quels côtés** — et rebase dès qu'elle
+  change. Ce n'est pas de la prudence : une main perdue puis **revenue sous une
+  autre identité de piste** (au-delà de `lostGraceMs`, c'est une main neuve) qui
+  reprend le même bord ne change ni le mode ni les axes. Sans le « qui » dans la
+  signature, elle n'aurait jamais d'ancre et tirerait dans le vide pour
+  toujours. Il y a un test pour ce cas ; la mutation qui enlève le « qui » ne
+  tombe que sur lui.
+- **Le corps entre dans le couple, il n'est pas filtré avant.** Premier jet : ne
+  considérer que les captures de zone, puisque le corps n'est pas une poignée.
+  Effet : `combineCaptures` ne voyait jamais un corps, donc les branches
+  `body_is_not_a_resize_handle` (décisions 10/14) et `both_captures_are_body`
+  (décision 8) étaient **inatteignables** et le moteur les réécrivait chez lui —
+  exactement la duplication que le contrat existe pour empêcher. La règle d'une
+  capture **seule** reste au moteur (le contrat ne parle que de couples) et elle
+  dit la même chose : corps d'une capsule ou d'une fenêtre ⇒ contenu.
+- **« Déplaçable seulement » ne peut pas vouloir dire « pas déplaçable ».** Une
+  étoile `point` ou `signal` n'a pas de zones (décision D3), donc son **corps**
+  est sa seule prise. Le prédicat demande trois choses — une étoile de la scène,
+  identifiée, d'une représentation non redimensionnable — et les trois comptent :
+  sans les deux premières, le corps de n'importe quel bouton du DOM passait pour
+  une étoile, donc n'était **ni traîné ni cliqué**. Défaut trouvé par le test des
+  interactions de contenu, pas par relecture.
+- **Le déplacement d'un cadre se mesure sur la paume, le pointeur vise avec
+  l'index.** Troisième occurrence de cette leçon (Slice 03 pour l'identité,
+  Slice 04 pour `travelPx`). La mutation « suivre le bout du doigt » fait tomber
+  le test de bout en bout : l'index parcourt un demi-palme en se refermant, donc
+  le cadre partirait tout seul au moment de la prise.
+- **Le clic hérité devait être retenu, pas supprimé.** `createPinchDetector` rend
+  un clic à **chaque** relâchement, glissement compris : sans porte, tout
+  déplacement à mains nues se terminait par un clic sur l'objet qu'on venait de
+  poser, et sur une étoile déjà sélectionnée par l'ouverture de son menu. Ce qui
+  est touché est la **livraison** (`interaction.click` rend `false` pour une main
+  qui a conduit un cadre pendant l'image), jamais la mesure : le détecteur prouvé
+  sur 336 000 pas n'est pas modifié. La porte lit une main qui **a conduit**,
+  pas une main qui **tient** — le relâchement ferme la capture avant que la
+  boucle des clics s'exécute, donc une porte sur les captures vivantes serait
+  ouverte exactement à l'image qui compte.
+- **Le corps d'une étoile n'émet aucune séquence de pointeur.** La page de scène
+  lit un glissement de pointeur sur `.sc-node` comme un déplacement de cadre
+  (`onPointerDown`, seuil grossier pour Barehands) : émettre la compatibilité DOM
+  sur le corps d'une capsule ferait, par un autre chemin, exactement ce que la
+  décision 8 interdit. Le corps d'une étoile se **sélectionne**.
+- **La scène tient le cadre, elle ne le recalcule pas.**
+  `window.JarvisScene.frames` réutilise `drawnBox`, `previewAt`, `holdNode` et
+  `commitUserGeometry` : l'épinglage (décision 9), l'affichage optimiste, le
+  bornage et les refus sont les mêmes pour la souris et pour la main. Une souris
+  qui se pose sur un cadre tenu **gagne** (la tenue s'annule) ; une annulation
+  rend le cadre à sa place et n'envoie rien, comme `pointercancel`.
+- **Une annulation ne valide jamais une géométrie.** Main perdue, retour en
+  veille, extinction : le cadre revient où il était. C'est la réponse de la
+  souris à `pointercancel`, et la seule honnête quand on ne sait plus où la main
+  était. **La Slice 11 doit le regarder devant une caméra** : c'est le seul
+  endroit où « la caméra a cligné » coûte le geste en cours.
+- **Le refus se voit.** `same_zone_rejected`, `axes_all_neutralized`,
+  `frame_not_resizable` et `object_not_drawn` remontent sur la ligne qui portait
+  déjà les gestes étouffés de la Slice 04, et un motif **inconnu** s'affiche tel
+  quel — ce nom est la seule information que cette ligne transporte. Sans elle,
+  deux mains sur la même zone sont indiscernables d'une panne.
+- **Ce que la Slice 06 n'a pas fait, à dessein** : elle ne touche ni
+  `createPinchDetector`, ni `createContactState`, ni l'appariement d'identité de
+  la Slice 03, ni le budget d'images de la veille, ni aucune des constantes
+  épinglées ; elle ne branche aucun réglage (Slice 07) ; la sélection de texte
+  fine reste un **outil** (contrat § 8) et non une main nue. Résidu connu, hérité
+  de la Slice 05 : le contour `jarvis-hand-hover` n'est toujours pas conditionné
+  à l'intention.
+- **Deux harnais de test existants ont dû apprendre un module de plus** :
+  `test_barehands_target_js.py` et `test_barehands_tracking_js.py` chargent
+  maintenant `control_center_scene_interact.js` dans leur double de DOM, parce
+  que le bloc navigateur le lit directement. Toute Slice qui fait lire un
+  nouveau module global au pointeur doit les mettre à jour en même temps.
+
+Fichiers : `jarvis/runtime/control_center_barehands.js`,
+`jarvis/runtime/control_center_scene_interact.js`,
+`jarvis/runtime/control_center_scene_page.js`, `docs/barehands-contracts.md`,
+`tests/unit/test_barehands_interaction_js.py` (nouveau),
+`tests/unit/test_barehands_target_js.py`,
+`tests/unit/test_barehands_tracking_js.py`.
+
+Tests, chunks en avant-plan : nouveau fichier **26 passed** ; baseline 1
+(barehands + scene logic) **203 passed** ; baseline 2 (control centre +
+settings) **221 passed** ; suites de scène adjacentes **506 passed**. Aucune
+régression. **Trente-deux mutations tentées, vingt-neuf reprises** — huit
+seulement après avoir renforcé les tests qu'elles avaient traversées : le partage
+du manque en deux parts égales au lieu du prorata, le canal secondaire admis dans
+un couple, la signature sans « qui tient quoi », une zone refusée qui traîne du
+contenu, les axes retirés de l'événement publié, un glissement annulé qui envoie
+`pointerup`, une main qui vole un nœud tenu par la souris, et la scène qui valide
+une boîte inchangée. **Trois survivantes assumées, toutes équivalentes** :
+convertir les deux axes par `pxToUnits(...).dx` (l'échelle est unique, donc
+`.dx === .dy`) ; retirer la réentrée en zone sûre de `resizeAxis` (`clampBox`
+fait déjà exactement ce déplacement à taille constante — redondance volontaire,
+gardée pour que l'intention soit lisible) ; et ne plus sauter `same_hand_twice`
+dans la construction du couple (une main n'a qu'une capture **primaire**, donc la
+branche est inatteignable — c'est un filet du contrat, et la mutation qui le rend
+atteignable, « le canal secondaire manipule », tombe, elle).

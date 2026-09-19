@@ -1576,6 +1576,473 @@ const JarvisBarehandsCore=(function(){
   }
 
   /* ------------------------------------------------------------------
+     Moteur d'interaction et captures (architecture §7, décisions 8-19, Slice 06).
+
+     Une capture est ce qu'une main **tient**. Elle s'ouvre à la descente du
+     pincement sur la cible **figée** que la Slice 05 publie (décision 13 : elle
+     est latchée jusqu'au relâchement, sinon un glissement de 30 px changerait
+     l'objet au milieu du geste), et elle se ferme sur le relâchement ou sur la
+     perte de la main.
+
+     Ce moteur **ne décide pas** ce que deux captures produisent : cette règle
+     est `combineCaptures` (contrat § 7, décisions 12 et 14-17), et il la lit —
+     y compris `byHand[id].sides`, parce que ce sont les **côtés** qui sont la
+     donnée utile : deux mains peuvent tenir le même axe par deux côtés opposés,
+     ce qu'une lecture par axes seuls prendrait pour un conflit. Redériver
+     `ZONE_SIDES`/`SIDE_AXIS` ici serait exactement la duplication que le
+     contrat existe pour éviter. Il ne décide pas non plus la géométrie : les
+     décisions 18 et 19 vivent avec `clampBox` et `MIN_SIZE` dans
+     `control_center_scene_interact.js`, en **unités de scène**, et c'est là que
+     les pixels de la fenêtre sont convertis, une fois, dans `manipulateBox`.
+
+     Le bloc pur ne peut pas lire les contrats (node le charge seul) : les deux
+     lui sont donc **injectés**, comme `pickRegion` l'est au résolveur de la
+     Slice 05, et il se refuse à la construction plutôt que d'en écrire une
+     seconde copie.
+
+     Trois repères, trois rôles, et les confondre est le piège de cette couche :
+
+     - la **paume** (`palmX`/`palmY`) est où la main *est* : c'est elle qui
+       mesure un déplacement, donc c'est elle qui déplace un cadre ;
+     - le bout de l'index est ce que la main *vise* : c'est le pointeur ;
+     - l'ancre figée est ce qu'elle visait **à la descente** : c'est ce que
+       portent `approach` et `down`.
+
+     Et la phase dit lequel : un événement `move`/`up` porte la position
+     filtrée, un `down` porte l'ancre. */
+
+  /* Ce qu'une capture de corps fait du contenu, décidé sur la **sémantique de
+     la cible** et non sur le pixel qu'elle occupe (décision 8). */
+  const CONTENT_MODE=Object.freeze({DRAG:'drag',SCROLL:'scroll',SELECT:'select'});
+
+  function createInteractionEngine(deps){
+    const d=deps&&typeof deps==='object'?deps:{};
+    const C=d.contracts;
+    const RULES=['combineCaptures','createCapture','createInteractionEvent','SIDE_AXIS','INTERACTION','zoneSides'];
+    if(!C||RULES.some(name=>C[name]===undefined))
+      throw new RangeError('createInteractionEngine exige `contracts` (JarvisBarehandsContracts) : les décisions 12 et 14-17 appartiennent à combineCaptures, et une seconde règle ici divergerait en silence de celle que le contrat publie');
+    const G=d.geometry;
+    const GEOMETRY=['manipulateBox','rebaseManipulation','resizable','sameBox'];
+    if(!G||GEOMETRY.some(name=>typeof G[name]!=='function'))
+      throw new RangeError('createInteractionEngine exige `geometry` (JarvisSceneInteract) : les décisions 18 et 19 vivent avec clampBox et MIN_SIZE, en unités de scène, et la conversion pixels → unités n’a qu’un seul endroit');
+    const world=d.world&&typeof d.world==='object'?d.world:null;
+    const dom=d.dom&&typeof d.dom==='object'?d.dom:null;
+    const slotOf=typeof d.slotOf==='function'?d.slotOf:()=>null;
+    const o=options(d.options);
+    const I=C.INTERACTION;
+
+    /* Une capture par main **et par canal** (décision 21 : le clic droit est un
+       canal), comme les cibles de la Slice 05. */
+    const captures=new Map();
+    /* Un plan de manipulation par objet : sa signature, sa boîte de référence,
+       les ancres des mains qui le tirent, et la boîte affichée. */
+    const plans=new Map();
+    let refused=[];
+    /* Les mains qui ont **conduit** une manipulation pendant l'image en cours,
+       celles qui viennent de relâcher comprises : c'est ce que le chemin de clic
+       hérité consulte pour ne pas poser un clic sur l'objet qu'on vient de
+       déplacer. Vidé à chaque image, comme tout ce qui décrit un instant. */
+    let drove=new Set();
+
+    const keyOf=(id,channel)=>`${String(id)}|${String(channel===undefined||channel===null?PINCH_CHANNEL.PRIMARY:channel)}`;
+    const refuse=(entry,reason)=>{refused.push({handTrackId:entry?entry.handTrackId:null,
+      channel:entry?entry.channel:null,objectId:entry?entry.objectId:null,reason})};
+
+    function publish(out,type,entry,point,extra){
+      const source=extra&&typeof extra==='object'?extra:{};
+      /* Un refus codé dans une boucle d'images vaut la fin de la session (leçon
+         des Slices 02 et 04) : une interaction mal formée se dit et se saute,
+         elle n'arrête pas le suivi. */
+      let event=null;
+      try{
+        event=C.createInteractionEvent({type,handTrackId:entry.handTrackId,
+          slot:slotOf(entry.handTrackId),objectId:entry.objectId,
+          x:point.x,y:point.y,dx:source.dx,dy:source.dy,
+          channel:entry.channel,axes:source.axes,t:source.t});
+      }catch(error){
+        refuse(entry,(error&&error.code)||'barehands_interaction_invalid');
+        return null;
+      }
+      out.push(event);
+      if(dom&&typeof dom.emit==='function'){
+        try{dom.emit(event,{target:entry.target,cancelled:!!source.cancelled,mode:source.mode})}
+        catch(error){refuse(entry,'dom_emit_failed')}
+      }
+      return event;
+    }
+
+    /* Ce que le corps d'une cible accepte. Une étoile de la scène est à part, et
+       ce n'est pas un détail de confort : la page de scène lit un glissement de
+       pointeur sur `.sc-node` comme un **déplacement de cadre**, donc émettre la
+       séquence de pointeur sur le corps d'une capsule ferait exactement ce que
+       la décision 8 interdit. Son corps se **sélectionne**, il ne se traîne
+       pas. */
+    function contentMode(target){
+      if(!target)return CONTENT_MODE.DRAG;
+      if(target.kind==='scene_object')return CONTENT_MODE.SELECT;
+      if(target.kind==='field')return CONTENT_MODE.SELECT;
+      if(dom&&typeof dom.scrollable==='function'&&dom.scrollable(target))return CONTENT_MODE.SCROLL;
+      return CONTENT_MODE.DRAG;
+    }
+
+    /* Une étoile sans zones (décision D3 : `point` et `signal`) n'a que son
+       corps pour être déplacée — « déplaçables seulement » ne peut pas vouloir
+       dire « pas déplaçables ». Une capsule ou une fenêtre, elle, garde son
+       corps pour le contenu (décision 8) et ses bords pour le cadre. */
+    /* Et les trois conditions comptent : **une étoile de la scène** (un bouton
+       du DOM n'a pas de cadre à déplacer), **identifiée** (sans `objectId` il
+       n'y a pas d'objet à bouger), et d'une représentation qui ne se
+       redimensionne pas. Sans les deux premières, le corps de n'importe quel
+       contrôle du DOM aurait été pris pour une étoile — donc jamais traîné, et
+       jamais cliqué non plus. */
+    const movesByBody=entry=>entry.capture.region===TARGET_REGION.BODY
+      &&entry.objectId!==null&&entry.objectId!==undefined
+      &&!!entry.target&&entry.target.kind==='scene_object'
+      &&!G.resizable(entry.target.representation);
+    /* Ce qui **peut** entrer dans un couple de captures : le canal primaire sur
+       un objet identifié. Le clic droit n'en est pas — c'est une **intention**,
+       pas une partie du cadre (décision 23) — et un élément sans identité de
+       scène ne se couple à rien (décision 12, que le contrat redit lui-même
+       sous `object_unidentified`).
+
+       Le corps **y entre**, et c'est voulu : c'est `combineCaptures` qui doit
+       dire que corps + zone déplace (décisions 10 et 14) et que corps + corps ne
+       produit rien (décision 8). Le filtrer ici rendrait ces deux règles
+       inatteignables et les réécrirait en silence. */
+    const frameCandidate=entry=>entry.channel===PINCH_CHANNEL.PRIMARY
+      &&entry.objectId!==null&&entry.objectId!==undefined;
+
+    function openCapture(handTrackId,channel,target,now){
+      let capture=null;
+      try{
+        capture=C.createCapture({handTrackId,channel,state:'captured',
+          objectId:target.objectId,region:target.region,zone:target.zone,t:now});
+      }catch(error){
+        refused.push({handTrackId,channel,objectId:target?target.objectId:null,
+          reason:(error&&error.code)||'barehands_capture_invalid'});
+        return null;
+      }
+      const entry={key:keyOf(handTrackId,channel),handTrackId,channel,capture,target,
+        objectId:capture.objectId,at:now,downAt:now,armed:false,drove:false,
+        content:{mode:contentMode(target),started:false,lastX:null,lastY:null}};
+      captures.set(entry.key,entry);
+      return entry;
+    }
+
+    /* Toute capture publiée reçoit exactement une fin, et une fin ne s'étouffe
+       pas : un `drag_start` sans `drag_end` laisse le consommateur accroché pour
+       toujours (leçon de la reprise de la Slice 04). */
+    function closeCapture(entry,phase,point,now,out){
+      captures.delete(entry.key);
+      entry.endedWith=phase;
+      /* La dernière fin décide du sort du plan : une manipulation **annulée**
+         ne valide rien. */
+      const plan=entry.objectId===null?null:plans.get(String(entry.objectId));
+      if(plan&&entry.drove)plan.lastEnd=phase;
+      const at=point||{x:entry.content.lastX,y:entry.content.lastY};
+      const usable=!!at&&Number.isFinite(at.x)&&Number.isFinite(at.y);
+      if(entry.content.started&&entry.content.mode===CONTENT_MODE.DRAG&&usable)
+        publish(out,I.DRAG_END,entry,at,{t:now,cancelled:phase==='cancel',mode:entry.content.mode});
+      /* Une capture qui a **déplacé** quelque chose n'a pas cliqué dessus. Sans
+         cette porte, chaque déplacement finirait par un clic sur l'objet qu'on
+         vient de poser — et c'est elle que le chemin de clic hérité consulte
+         aussi, pour la même raison. */
+      if(phase!=='cancel'&&usable&&!entry.drove){
+        /* Le canal secondaire est un **doigt**, jamais une durée (décision 22) :
+           son relâchement est un clic droit, que le contact ait glissé ou non. */
+        if(entry.channel===PINCH_CHANNEL.SECONDARY)publish(out,I.CONTEXT,entry,at,{t:now});
+        else if(entry.content.started&&entry.content.mode===CONTENT_MODE.SELECT)
+          publish(out,I.SELECT,entry,at,{t:now});
+        else if(!entry.content.started)publish(out,I.CLICK,entry,at,{t:now});
+      }
+      if(entry.drove)drove.add(String(entry.handTrackId));
+      if(typeof d.onRelease==='function')
+        try{d.onRelease(entry.handTrackId,entry.channel)}catch(_error){}
+    }
+
+    /* Le couple que deux captures forment, lu du contrat. Une main ne se couple
+       pas à elle-même : `same_hand_twice` est un filet du contrat, pas un
+       résultat à interpréter, donc on passe à la capture suivante. */
+    function pairFor(list){
+      const sorted=[...list].sort((a,b)=>(a.downAt-b.downAt)||(a.key<b.key?-1:1));
+      const first=sorted[0]||null;
+      if(!first)return {first:null,second:null,out:null};
+      for(let i=1;i<sorted.length;i+=1){
+        const out=C.combineCaptures(first.capture,sorted[i].capture);
+        if(out.reason==='same_hand_twice')continue;
+        return {first,second:sorted[i],out};
+      }
+      return {first,second:null,out:C.combineCaptures(first.capture,null)};
+    }
+
+    /* La signature d'un plan : le mode, les axes, et **qui tient quels côtés**.
+       Elle change dès que l'attribution change — une main qui entre, une main
+       qui se retire, un axe neutralisé — et c'est ce changement, et lui seul,
+       qui déclenche le rebasage de la décision 19. */
+    const signatureOf=(mode,axes,byHand)=>`${mode}|${axes.join('')}|`+
+      Object.keys(byHand).sort().map(id=>`${id}:${byHand[id].sides.join('+')}`).join(',');
+
+    function manipulate(objectId,mode,axes,byHand,entries,palms,now,out){
+      const drivers=Object.keys(byHand).filter(id=>palms[id]);
+      if(!drivers.length)return;
+      const signature=signatureOf(mode,axes,byHand);
+      let plan=plans.get(objectId);
+      /* Rien ne bouge tant qu'aucune main tenant ce cadre n'a **glissé** : le
+         seuil est celui de la Slice 04 (`dragSlopPx`, mesuré sur la paume), pas
+         un nombre de plus. Sans lui, un clic sur un bord déplacerait le cadre
+         d'un pixel — et **l'épinglerait** au passage, puisque toute géométrie de
+         l'utilisateur épingle. C'est aussi ce qui garantit qu'une main ne
+         redimensionne pas par accident. */
+      const armed=entries.some(entry=>entry.armed&&byHand[String(entry.handTrackId)]);
+      if(!plan&&!armed)return;
+      if(!plan){
+        const base=world&&typeof world.begin==='function'?world.begin(objectId):null;
+        if(!base||!base.box){refuse(entries[0],'object_not_drawn');return}
+        plan={signature:null,representation:base.representation,lastEnd:'up',
+          origin:{...base.box},start:{...base.box},box:{...base.box},anchorsPx:{}};
+        plans.set(objectId,plan);
+      }
+      /* Décision D3 : seules `capsule` et `window` se redimensionnent. Les zones
+         n'existent pas ailleurs, donc ce refus est un filet — mais un filet qui
+         se dit, plutôt qu'un redimensionnement sûr de lui sur une forme qui n'en
+         a pas. */
+      if(mode==='resize'&&!G.resizable(plan.representation)){refuse(entries[0],'frame_not_resizable');return}
+      plan.mode=mode;
+      if(plan.signature!==signature){
+        const rebased=G.rebaseManipulation(plan.box,palms);
+        plan.signature=signature;plan.start=rebased.start;plan.anchorsPx=rebased.anchorsPx;
+      }
+      const sidesPx={};
+      let deltaPx={dx:0,dy:0};
+      for(const id of drivers){
+        const anchor=plan.anchorsPx[id];
+        const palm=palms[id];
+        if(!anchor||!palm)continue;
+        const dx=palm.x-anchor.x,dy=palm.y-anchor.y;
+        if(mode==='resize'){
+          for(const side of byHand[id].sides){
+            const axis=C.SIDE_AXIS[side];
+            if(axis===undefined)continue;
+            /* Deux mains ne gardent jamais le même côté : `combineCaptures` a
+               déjà tranché (décisions 16 et 17). Si cela arrivait, ce serait le
+               contrat qui aurait changé, pas une donnée à moyenner. */
+            if(sidesPx[side]!==undefined)throw Object.assign(
+              new Error(`deux mains tiennent le côté ${side} : combineCaptures ne devrait pas le permettre`),
+              {code:'tracking_failed'});
+            sidesPx[side]=axis==='x'?dx:dy;
+          }
+        }else deltaPx={dx,dy};
+      }
+      /* La manipulation est **conduite** dès que le plan existe, qu'elle ait
+         bougé d'une unité ou non : c'est elle qui tient la main, donc ni clic ni
+         geste ne partent de là (décision 13). */
+      for(const entry of entries)if(byHand[String(entry.handTrackId)]){
+        entry.drove=true;drove.add(String(entry.handTrackId));
+      }
+      const box=G.manipulateBox({start:plan.start,representation:plan.representation,
+        mode,axes,sidesPx,deltaPx,vp:world&&typeof world.viewport==='function'?world.viewport():null});
+      if(G.sameBox(box,plan.box))return;
+      plan.box=box;
+      if(world&&typeof world.preview==='function')world.preview(objectId,box);
+      for(const entry of entries){
+        if(!byHand[String(entry.handTrackId)])continue;
+        const palm=palms[String(entry.handTrackId)];
+        publish(out,mode==='resize'?I.RESIZE:I.MOVE,entry,palm,{axes,t:now});
+      }
+    }
+
+    /* Un plan se rend quand plus aucune main ne tient son cadre. Une fin par
+       **annulation** (main perdue, veille, extinction) ne valide rien : c'est ce
+       que fait déjà la souris sur `pointercancel`, et c'est la seule réponse
+       honnête quand on ne sait plus où était la main. */
+    function closePlan(objectId,plan,cancelled){
+      plans.delete(objectId);
+      if(!world)return;
+      if(cancelled||G.sameBox(plan.box,plan.origin)){
+        if(typeof world.cancel==='function')world.cancel(objectId);
+        return;
+      }
+      if(typeof world.commit==='function')world.commit(objectId,plan.box,plan.mode||'move');
+    }
+
+    return {
+      /* `{now, tokens, events, contacts, targets}` — les jetons de la Slice 03
+         (position filtrée, ancre, **paume**), les événements et contacts de la
+         Slice 04, les cibles figées de la Slice 05. */
+      update(frame){
+        const f=frame||{};
+        const now=Number(f.now);
+        if(!Number.isFinite(now))
+          throw Object.assign(new Error('moteur d’interaction : horodatage inutilisable'),{code:'tracking_failed'});
+        refused=[];drove=new Set();
+        const out=[];
+        const palms={},aims={};
+        for(const token of Array.isArray(f.tokens)?f.tokens:[]){
+          const id=token&&token.id;
+          if(id===undefined||id===null)continue;
+          const px=Number(token.palmX),py=Number(token.palmY);
+          const x=Number(token.x),y=Number(token.y);
+          if(Number.isFinite(px)&&Number.isFinite(py))palms[String(id)]={x:px,y:py};
+          else if(Number.isFinite(x)&&Number.isFinite(y))palms[String(id)]={x,y};
+          if(Number.isFinite(x)&&Number.isFinite(y))aims[String(id)]={x,y};
+        }
+        const targets=new Map();
+        for(const target of Array.isArray(f.targets)?f.targets:[])
+          if(target)targets.set(keyOf(target.handTrackId,target.channel),target);
+        /* L'intention vit dans les contacts, publiés à chaque image par la
+           Slice 04 : c'est elle qui arme une manipulation et qui sépare un clic
+           d'un glissement. */
+        for(const contact of Array.isArray(f.contacts)?f.contacts:[]){
+          const entry=captures.get(keyOf(contact&&contact.handTrackId,contact&&contact.channel));
+          if(entry&&contact.intent===PINCH_INTENT.DRAG)entry.armed=true;
+        }
+        for(const event of Array.isArray(f.events)?f.events:[]){
+          if(!event)continue;
+          const key=keyOf(event.handTrackId,event.channel);
+          const point=Number.isFinite(Number(event.x))&&Number.isFinite(Number(event.y))
+            ?{x:Number(event.x),y:Number(event.y)}:null;
+          if(event.phase===PINCH_PHASE.DOWN){
+            const held=captures.get(key);
+            if(held)closeCapture(held,'cancel',point,now,out);
+            const target=targets.get(key);
+            /* Rien sous la main : il n'y a rien à tenir. Ce n'est pas un refus,
+               c'est la normale (décision 3 : hors cible, pas de pointeur). */
+            if(target)openCapture(event.handTrackId,event.channel,target,now);
+            continue;
+          }
+          const entry=captures.get(key);
+          if(!entry)continue;
+          entry.at=now;
+          if(event.phase===PINCH_PHASE.UP)closeCapture(entry,'up',point,now,out);
+          /* La perte donne un `cancel`, jamais un `up` : un `up` déclencherait
+             l'action que l'arrêt vient d'interrompre. */
+          else if(event.phase===PINCH_PHASE.CANCEL)closeCapture(entry,'cancel',null,now,out);
+        }
+        /* Filet : une capture dont la main a disparu sans que le canal ait
+           publié son annulation ne survit pas à son identité. Même horloge
+           qu'ailleurs, et comptée contre l'observation. */
+        for(const entry of [...captures.values()]){
+          if(palms[String(entry.handTrackId)])entry.at=now;
+          else if(now-entry.at>o.lostGraceMs)closeCapture(entry,'cancel',null,now,out);
+        }
+        /* Les captures vivantes, par objet. Une capture sans `objectId` ne se
+           couple à rien (décision 12 : deux éléments anonymes restent deux mains
+           indépendantes), et le contrat le dit lui-même. */
+        const byObject=new Map();
+        for(const entry of captures.values()){
+          const id=entry.objectId===null||entry.objectId===undefined?null:String(entry.objectId);
+          const bucket=id===null?`@${entry.key}`:id;
+          if(!byObject.has(bucket))byObject.set(bucket,[]);
+          byObject.get(bucket).push(entry);
+        }
+        for(const [bucket,list] of byObject){
+          const objectId=bucket.charAt(0)==='@'?null:bucket;
+          if(objectId===null)continue;   // un élément anonyme ne se couple à rien
+          const candidates=list.filter(frameCandidate);
+          let pair=null;
+          try{pair=pairFor(candidates)}
+          catch(error){refuse(candidates[0]||list[0],(error&&error.code)||'barehands_capture_invalid');continue}
+          if(!pair||!pair.first)continue;
+          const verdict=pair.out||{mode:null,axes:[],byHand:{},reason:'missing_capture'};
+          /* Une seule capture : la décision 10 pour une zone, la décision D3
+             pour une étoile déplaçable seulement — et la **décision 8** pour le
+             corps d'une capsule ou d'une fenêtre, qui reste du contenu. Le
+             contrat ne parle que de couples ; la règle d'une capture seule est
+             ici, et elle dit la même chose. */
+          const single=entry=>{
+            if(entry.capture.region===TARGET_REGION.BODY&&!movesByBody(entry))return;
+            const id=String(entry.handTrackId);
+            manipulate(objectId,'move',['x','y'],
+              {[id]:{sides:[...C.zoneSides(entry.capture.zone)],axes:['x','y']}},
+              [entry],palms,now,out);
+          };
+          if(verdict.mode==='resize'||verdict.mode==='move'){
+            /* Décision 16/17 pour `resize`, décisions 10/14 pour `move` : les
+               côtés et les mains viennent de `byHand`, jamais d'une seconde
+               lecture des zones ici. */
+            manipulate(objectId,verdict.mode,[...verdict.axes],verdict.byHand,
+              candidates.filter(entry=>verdict.byHand[String(entry.handTrackId)]),
+              palms,now,out);
+          }else if(verdict.reason==='missing_capture'||verdict.reason==='same_hand_twice')single(pair.first);
+          else if(verdict.reason==='both_captures_are_body'){
+            /* Décision 8 : deux mains dans le contenu d'une fenêtre ne
+               l'emportent pas. Chacune fait son interaction de contenu, plus
+               bas — il n'y a donc rien à faire ici, et surtout pas un
+               déplacement. */
+          }else if(verdict.reason==='object_unidentified'||verdict.reason==='different_objects'){
+            /* Décision 12. Inatteignable depuis ce seau — il porte un
+               identifiant et ne groupe qu'un objet — mais si le contrat le
+               disait, deux mains resteraient **indépendantes** : chacune sur son
+               propre chemin, ce que fait déjà la suite. */
+          }else refuse(pair.first,verdict.reason||'capture_conflict');
+        }
+        /* Un plan dont plus aucune main ne tient le cadre se rend : la dernière
+           fin décide s'il se valide ou s'il s'annule. */
+        for(const [objectId,plan] of [...plans]){
+          const alive=[...captures.values()].some(entry=>entry.drove&&String(entry.objectId)===objectId);
+          if(alive)continue;
+          closePlan(objectId,plan,plan.lastEnd==='cancel');
+        }
+        /* Interaction de contenu (décision 8) : ce qui n'est pas un cadre. */
+        for(const entry of captures.values()){
+          if(entry.drove)continue;                              // cette main tient un cadre
+          if(entry.capture.region!==TARGET_REGION.BODY)continue; // une zone n'est jamais du contenu
+          /* Une étoile déplaçable seulement (décision D3) : son corps est sa
+             seule prise, donc il ne devient jamais du contenu — même si le plan
+             n'a pas pu s'ouvrir (objet sorti du dessin). Sinon un `pointerdown`
+             partirait dessus et la page de scène le lirait comme un second
+             déplacement, par un autre chemin. */
+          if(movesByBody(entry))continue;
+          if(entry.channel===PINCH_CHANNEL.SECONDARY)continue;   // un clic droit ne traîne rien
+          const aim=aims[String(entry.handTrackId)];
+          if(!aim)continue;
+          if(!entry.armed){entry.content.lastX=aim.x;entry.content.lastY=aim.y;continue}
+          if(!entry.content.started){
+            entry.content.started=true;
+            entry.content.lastX=aim.x;entry.content.lastY=aim.y;
+            if(entry.content.mode===CONTENT_MODE.DRAG)
+              publish(out,I.DRAG_START,entry,aim,{t:now,mode:entry.content.mode});
+            continue;
+          }
+          const dx=aim.x-entry.content.lastX,dy=aim.y-entry.content.lastY;
+          if(dx===0&&dy===0)continue;
+          entry.content.lastX=aim.x;entry.content.lastY=aim.y;
+          if(entry.content.mode===CONTENT_MODE.SCROLL)
+            publish(out,I.SCROLL,entry,aim,{dx,dy,t:now,mode:entry.content.mode});
+          else if(entry.content.mode===CONTENT_MODE.DRAG)
+            publish(out,I.DRAG_MOVE,entry,aim,{t:now,mode:entry.content.mode});
+        }
+        return {interactions:out,refusals:refused,
+          captures:[...new Set([...captures.values()].map(entry=>entry.handTrackId))],
+          /* Les mains qui **conduisent** un cadre en ce moment, et celles qui
+             viennent de le rendre : les deux comptent pour le clic hérité, qui
+             est traité après nous dans l'image. */
+          manipulating:[...new Set([...captures.values()].filter(entry=>entry.drove).map(entry=>entry.handTrackId))],
+          drove:[...drove]};
+      },
+      /* Arrêt volontaire (veille, extinction, perte du suivi) : tout est
+         **annulé**, jamais relâché, et aucune géométrie n'est validée. */
+      cancelAll(now){
+        const out=[];
+        refused=[];
+        const at=Number(now)||0;
+        for(const entry of [...captures.values()])closeCapture(entry,'cancel',null,at,out);
+        for(const [objectId,plan] of [...plans])closePlan(objectId,plan,true);
+        return out;
+      },
+      reset(){captures.clear();plans.clear();refused=[];drove=new Set()},
+      capturedHands(){return [...new Set([...captures.values()].map(entry=>entry.handTrackId))]},
+      /* Ce que le clic hérité consulte : les mains qui ont conduit un cadre
+         pendant cette image, celles qui viennent de relâcher comprises. */
+      drivenHands(){return [...new Set([...drove,...[...captures.values()].filter(entry=>entry.drove).map(entry=>String(entry.handTrackId))])]},
+      refusals(){return refused},
+      plans(){return [...plans].map(([objectId,plan])=>({objectId,box:{...plan.box},
+        signature:plan.signature,representation:plan.representation}))},
+      size(){return captures.size},
+    };
+  }
+
+  /* ------------------------------------------------------------------
      Identité de main persistante (architecture §2).
 
      La latéralité ne fait pas une identité. Le traqueur la réétiquette d'une
@@ -2183,8 +2650,13 @@ const JarvisBarehandsCore=(function(){
          main qui insiste sans effet, et rien pour dire que c'est voulu. La
          raison du premier étouffement de l'image remonte donc à la
          surimpression, telle quelle. */
+      /* Et ce que la Slice 06 a **refusé** de manipuler (deux mains sur la même
+         prise, axes neutralisés, objet sorti du dessin) : même ligne, même
+         raison. Un geste étouffé passe devant — il est plus rare et plus
+         surprenant. Lu après `hover`, donc c'est bien le refus de cette image. */
       const muted=semantics.gestures.suppressed;
-      deps.overlay.render(out.tokens,muted.length?muted[0].reason:'');
+      const refused=typeof deps.interaction.refusal==='function'?deps.interaction.refusal():'';
+      deps.overlay.render(out.tokens,muted.length?muted[0].reason:refused);
       // Traits du dernier instant, pour la calibration et les diagnostics
       // (architecture §12) : lus après le survol, donc `hover` y est juste.
       features=out.tokens;
@@ -2277,6 +2749,7 @@ const JarvisBarehandsCore=(function(){
     createPinchDetector,createWakeDetector,createPointerFilter,createStillness,
     createGestureEngine,createPinchChannel,createPinchIntentEngine,
     TARGET_REGION,TARGET_SIDES,targetBand,regionAt,targetRegionsOf,createTargetResolver,
+    CONTENT_MODE,createInteractionEngine,
     createHandTrackManager,createHandTracker,classifyError,createController};
 })();
 
@@ -2299,6 +2772,13 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
      erreur d'insertion, pas un état d'exécution, et un aperçu qui se tairait
      poliment laisserait la décision 3 sans preuve qu'elle est tenue. */
   const TARGET=JarvisBarehandsTarget;
+  /* Géométrie de la scène (`control_center_scene_interact.js`, inséré bien avant
+     ce module) : `clampBox`, `MIN_SIZE`, `manipulateBox`, `rebaseManipulation`.
+     Les décisions 18 et 19 y vivent, en **unités de scène**, et c'est là que les
+     pixels de la fenêtre sont convertis. Lecture directe, comme celle de
+     l'aperçu de cible : un module de page absent est une erreur d'insertion,
+     pas un état d'exécution. */
+  const GEOMETRY=JarvisSceneInteract;
   const API='/api/barehands';
   const ASSET_BASE='/barehands/assets';
   const TAB_ID='experimental';
@@ -2384,6 +2864,14 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
     const noteFor=reason=>{
       if(!reason)return '';
       if(reason==='capture_active')return 'GESTE IGNORÉ · une main manipule';
+      /* Refus de manipulation (Slice 06). Une prise que le contrat rejette ne
+         fait rien à l'écran : sans un mot, c'est une main qui insiste sans
+         effet, indiscernable d'une panne. Une raison **inconnue** s'affiche
+         telle quelle, pour la même raison qu'un geste étouffé. */
+      if(reason==='same_zone_rejected')return 'PRISE REFUSÉE · deux mains sur la même zone';
+      if(reason==='axes_all_neutralized')return 'PRISE REFUSÉE · les deux mains s’annulent';
+      if(reason==='frame_not_resizable')return 'PRISE REFUSÉE · cette forme ne se redimensionne pas';
+      if(reason==='object_not_drawn')return 'PRISE REFUSÉE · objet absent de la scène';
       return `GESTE IGNORÉ · ${String(reason)}`;
     };
     return {
@@ -2465,6 +2953,9 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
        n'existe pas — ce qui est exactement le comportement voulu hors
        interaction. */
     let contactsOf=null;
+    /* Les événements de contact de l'image (Slice 04) : c'est eux qui ouvrent et
+       ferment une capture, là où `contactsOf` donne l'état et l'intention. */
+    let pinchOf=null;
     /* Décision 24 : l'aperçu se règle. Le réglage lui-même appartient à la
        Slice 07 ; ce qui est à nous, c'est l'interrupteur qu'elle branchera.
        Il éteint le **dessin**, pas la résolution : la Slice 06 continue de
@@ -2509,8 +3000,9 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
       const el=document.elementFromPoint(x,y);
       return el&&!el.closest(BH.DOM.rootSelector)?el:null;
     }
-    function pointer(type,el,x,y,buttons,identity){
-      const init={bubbles:true,cancelable:true,composed:true,view:window,clientX:x,clientY:y,button:0,buttons};
+    function pointer(type,el,x,y,buttons,identity,button){
+      const init={bubbles:true,cancelable:true,composed:true,view:window,clientX:x,clientY:y,
+        button:Number(button)||0,buttons};
       if(type.startsWith('pointer')&&typeof PointerEvent==='function')
         el.dispatchEvent(new PointerEvent(type,{...init,pointerId:identity.pointerId,pointerType:BH.POINTER_TYPE,isPrimary:identity.isPrimary}));
       else if(!type.startsWith('pointer'))el.dispatchEvent(new MouseEvent(type,init));
@@ -2572,7 +3064,12 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
           let look=decor.get(key);
           if(!target.locked||!look){
             const source=target.ref===null?null:candidates[target.ref];
-            look={name:source?source.name:'',radiusPx:source?source.radiusPx:0};
+            /* L'élément voyage avec l'apparence et pour la même raison : il
+               n'est pas de la géométrie, il ne traverse pas le contrat (§ 6),
+               et une cible figée n'a plus de candidate où le relire. C'est la
+               sortie de compatibilité DOM de la Slice 06 qui le consomme. */
+            look={name:source?source.name:'',radiusPx:source?source.radiusPx:0,
+              element:source?source.element:null};
             decor.set(key,look);
           }
           out.push({...target,
@@ -2584,6 +3081,158 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
       for(const key of [...decor.keys()])if(!live.has(key))decor.delete(key);
       resolved=out;
       preview.render(previewOn?out:[]);
+    }
+
+    /* ------------------------------------------------ Slice 06 : captures
+
+       Le moteur est **pur** et vit dans le bloc ci-dessus ; ce qui suit est ce
+       que seule la page peut faire : tenir le cadre de la scène (monde) et
+       rendre des événements du DOM pour le contenu (compatibilité). */
+
+    /* L'élément de chaque cible **figée**, gardé à part de `decor` : `decor`
+       est élagué sur ce que le résolveur rend encore, et une capture qui se
+       ferme n'a plus de cible — son `drag_end` et son clic arriveraient alors
+       sans élément. C'est le relâchement du moteur qui l'élague, pas l'image. */
+    const elements=new Map();
+    const elementFor=target=>{
+      if(!target)return null;
+      const entry=elements.get(`${target.handTrackId}|${target.channel}`);
+      return entry||null;
+    };
+    const scrollHost=el=>{
+      let node=el;
+      while(node&&node.nodeType===1){
+        const canScroll=(node.scrollHeight-node.clientHeight>1)||(node.scrollWidth-node.clientWidth>1);
+        if(canScroll){
+          const style=typeof getComputedStyle==='function'?getComputedStyle(node):null;
+          const overflow=style?`${style.overflowY} ${style.overflowX}`:'auto';
+          if(/auto|scroll|overlay/.test(overflow))return node;
+        }
+        node=node.parentElement;
+      }
+      return null;
+    };
+
+    /* Le monde de la scène : `window.JarvisScene.frames`, publié par
+       `control_center_scene_page.js`. Il est lu **à l'appel** et non au
+       chargement, parce que la page de scène est insérée après ce module
+       (ordre `contracts → target → barehands → scene page`) — et parce qu'elle
+       reste inerte tant que `scene.enabled` est faux, auquel cas il n'y a
+       simplement pas de cadre à tenir. */
+    let warnedNoScene=false;
+    const frames=()=>{
+      const scene=window.JarvisScene;
+      const api=scene&&scene.frames;
+      if(!api&&!warnedNoScene){warnedNoScene=true;
+        console.warn('[barehands] la scène n’expose pas de cadres manipulables : aucun objet ne se déplacera')}
+      return api||null;
+    };
+    const sceneCall=(name,fallback,...args)=>{
+      const api=frames();
+      if(!api||typeof api[name]!=='function')return fallback;
+      try{return api[name](...args)}
+      catch(error){console.warn('[barehands] scène :',name,error);return fallback}
+    };
+    const world={
+      begin:objectId=>sceneCall('begin',null,objectId),
+      preview:(objectId,box)=>sceneCall('preview',null,objectId,box),
+      commit:(objectId,box,mode)=>sceneCall('commit',null,objectId,box,mode),
+      cancel:objectId=>sceneCall('cancel',null,objectId),
+      viewport:()=>sceneCall('viewport',null),
+    };
+
+    /* Sortie de **compatibilité** DOM (architecture §7). Le modèle de
+       manipulation n'est pas fait d'événements de pointeur synthétiques : ceux
+       qui restent servent le **contenu**, là où la page d'aujourd'hui écoute
+       déjà une souris.
+
+       Ce qui n'y est pas, et pourquoi : le **clic** reste au chemin hérité
+       (`createPinchDetector`), prouvé identique sur 336 000 pas — l'émettre ici
+       aussi enverrait deux clics pour un pincement ; et `move`/`resize` n'ont
+       pas d'équivalent DOM, c'est la scène qui les applique. */
+    const dom={
+      scrollable(target){
+        const el=elementFor(target);
+        return !!el&&!!scrollHost(el);
+      },
+      emit(event,context){
+        const el=elementFor(context&&context.target);
+        const identity=identityOf(event.handTrackId);
+        if(!el||!identity)return;
+        const x=event.x,y=event.y;
+        if(event.type===BH.INTERACTION.CONTEXT){
+          /* Décision 21 : le clic droit est un doigt. Le menu contextuel de la
+             page l'écoute par `contextmenu`, comme pour une souris. */
+          pointer('contextmenu',el,x,y,0,identity,2);
+          return;
+        }
+        if(event.type===BH.INTERACTION.DRAG_START){
+          pointer('pointerdown',el,x,y,1,identity);pointer('mousedown',el,x,y,1,identity);
+          return;
+        }
+        if(event.type===BH.INTERACTION.DRAG_MOVE){
+          pointer('pointermove',el,x,y,1,identity);pointer('mousemove',el,x,y,1,identity);
+          return;
+        }
+        if(event.type===BH.INTERACTION.DRAG_END){
+          /* La perte donne une annulation, jamais un relâchement : un `pointerup`
+             déclencherait l'action que l'arrêt vient d'interrompre. */
+          if(context&&context.cancelled)pointer('pointercancel',el,x,y,0,identity);
+          else{pointer('pointerup',el,x,y,0,identity);pointer('mouseup',el,x,y,0,identity)}
+          return;
+        }
+        if(event.type===BH.INTERACTION.SCROLL){
+          const host=scrollHost(el);
+          if(!host)return;
+          /* Un défilement synthétique ne défile pas : un `wheel` non approuvé
+             est ignoré par le navigateur. On défile donc **pour de vrai** — la
+             main tire le contenu — et l'événement part quand même, pour qui
+             l'écoute. */
+          host.scrollTop-=event.dy;host.scrollLeft-=event.dx;
+          if(typeof WheelEvent==='function')
+            host.dispatchEvent(new WheelEvent('wheel',{bubbles:true,cancelable:true,composed:true,
+              clientX:x,clientY:y,deltaX:-event.dx,deltaY:-event.dy}));
+          return;
+        }
+        if(event.type===BH.INTERACTION.SELECT){
+          /* Sélectionner, c'est désigner : un champ prend le focus et se
+             sélectionne, le reste se contente de l'événement sémantique. La
+             sélection de texte fine appartient à un outil (contrat § 8), pas à
+             une main nue en V1. */
+          if(typeof el.focus==='function'){try{el.focus({preventScroll:true})}catch(_error){}}
+          if(typeof el.select==='function'){try{el.select()}catch(_error){}}
+        }
+      },
+    };
+
+    const engine=Core.createInteractionEngine({
+      contracts:BH,geometry:GEOMETRY,world,dom,
+      slotOf:id=>{const key=handKey(id);return key===null?null:slots.slot(key)},
+      /* Le contact est rendu : la cible figée et son élément le sont aussi. */
+      onRelease:(handTrackId,channel)=>{
+        resolver.release(handTrackId,channel);
+        elements.delete(`${handTrackId}|${channel}`);
+      },
+    });
+    let interactions=[];
+
+    /* Une image du moteur de captures, après la résolution de cible : elle lit
+       les contacts et les événements de la Slice 04, et les cibles **figées** de
+       la Slice 05. Les deux dans le même instant, comme le survol. */
+    function runCaptures(tokens){
+      for(const target of resolved){
+        if(!target.locked)continue;
+        const key=`${target.handTrackId}|${target.channel}`;
+        if(elements.has(key))continue;
+        const look=decor.get(key);
+        if(look&&look.element)elements.set(key,look.element);
+      }
+      const step=engine.update({now:performance.now(),tokens,
+        targets:resolved,
+        contacts:typeof contactsOf==='function'?contactsOf()||[]:[],
+        events:typeof pinchOf==='function'?pinchOf()||[]:[]});
+      interactions=step.interactions;
+      return step;
     }
 
     return {
@@ -2616,10 +3265,22 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
            mêmes jetons : deux lectures du même instant donneraient deux
            réponses pour un seul geste. */
         resolveTargets(tokens);
+        /* Puis ce que les mains **tiennent** (Slice 06). Après la résolution,
+           jamais avant : une capture s'ouvre sur la cible figée de cette
+           image-là. */
+        runCaptures(tokens);
       },
       /* Un vrai clic : la séquence qu'enverrait une souris, sur l'élément exact
          sous le jeton (les écouteurs, labels, cases et liens réagissent). */
       click({id,x,y}){
+        /* **Décision 13.** Une main qui tient un cadre ne clique pas dessus en
+           le relâchant. Le détecteur hérité (`createPinchDetector`) rend un clic
+           à **chaque** relâchement, glissement compris : sans cette porte, tout
+           déplacement se terminait par un clic sur l'objet qu'on venait de
+           poser — et, sur une étoile déjà sélectionnée, par l'ouverture de son
+           menu. Le détecteur, lui, n'est pas touché : c'est la **livraison** du
+           clic qui attend, pas sa mesure. */
+        if(engine.drivenHands().includes(String(id)))return false;
         const raw=targetAt(x,y);
         const identity=identityOf(id);
         /* Deux échecs différents rendaient le même `false` muet. « Rien sous
@@ -2647,6 +3308,9 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
          d'appeler `hover`, donc cette source rend bien les contacts de l'image
          en cours (Slice 04 : `contacts[].state`). */
       readContacts(fn){contactsOf=typeof fn==='function'?fn:null},
+      /* Même couture pour les **événements** de contact : ce sont eux qui font
+         descendre et remonter une capture (Slice 04 : `pinch().events`). */
+      readPinch(fn){pinchOf=typeof fn==='function'?fn:null},
       /* Décision 24. Éteindre l'aperçu retire ce qui est dessiné **tout de
          suite** : laisser le dernier cadre à l'écran jusqu'à la prochaine
          image ferait d'un réglage appliqué et d'un réglage sans effet la même
@@ -2666,9 +3330,21 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
       /* Ce que la Slice 06 consommera : une cible par main **et par canal**,
          figée dès la descente. Vide hors intention (décision 3). */
       targets(){return resolved},
+      /* Ce que les mains tiennent et ce qu'elles produisent (Slice 06). */
+      captures(){return engine.capturedHands()},
+      interactions(){return interactions},
+      /* RÈGLE ZÉRO : une manipulation refusée (deux mains sur la même prise,
+         axes neutralisés, objet sorti du dessin) doit se voir. La raison remonte
+         à la surimpression, telle quelle, comme celle d'un geste étouffé. */
+      refusal(){const list=engine.refusals();return list.length?list[0].reason:''},
       clear(){
         for(const id of [...hovered.keys()])release(id);
-        slots.clear();resolver.reset();preview.clear();decor.clear();resolved=[];
+        /* Tout ce qui est tenu est **annulé**, jamais relâché : aucune géométrie
+           n'est validée par une extinction ou un retour en veille. */
+        engine.cancelAll(typeof performance!=='undefined'?performance.now():0);
+        engine.reset();
+        slots.clear();resolver.reset();preview.clear();decor.clear();elements.clear();
+        resolved=[];interactions=[];
       },
     };
   }
@@ -2725,6 +3401,11 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
       wakeIntervalMs:BH.WAKE_INTERVAL_MS},
     createLandmarker,attachVideo,
     overlay:overlayView,interaction:interactionView,
+    /* La couture de la Slice 04, branchée par la Slice 06 : les mains qui
+       tiennent une capture. Un geste global se tait pendant qu'une main
+       manipule (contrat § 4, `GESTURE_RULES`), sauf la main ouverte — une
+       manipulation qu'on ne peut pas abandonner serait un piège. */
+    captures:()=>interactionView.captures(),
     requestFrame:fn=>requestAnimationFrame(fn),cancelFrame:id=>cancelAnimationFrame(id),
     now:()=>performance.now(),viewport:()=>({width:window.innerWidth,height:window.innerHeight}),
     onStatus:onStatus,
@@ -2736,6 +3417,10 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
      ajoutant une dépendance au contrôleur : le bloc pur n'a pas à connaître
      l'aperçu, et les doubles de test du contrôleur n'ont rien à apprendre. */
   interactionView.readContacts(()=>controller.semantics().pinch.contacts);
+  /* Et les événements, qui font descendre et remonter les captures (Slice 06).
+     Même branchement, même raison : l'intention vient des moteurs, la page est
+     la seule à savoir ce qu'il y a sous la main. */
+  interactionView.readPinch(()=>controller.semantics().pinch.events);
 
   /* Tout changement de cycle de vie se voit : un panneau qui n'est pas ouvert
      ne dit rien, donc la bascule passe aussi par un toast. Un échec reste plus
@@ -2987,6 +3672,12 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
       locked:target.locked,feedback:target.feedback}))),
     /* Décision 24 : l'aperçu se règle. La Slice 07 branchera le réglage
        `targetPreview` ici ; d'ici là, c'est la console et les tests. */
+    /* Slice 06. Ce que les mains **tiennent** et ce qu'elles produisent, du
+       dernier instant : les captures par main, et les interactions publiées à
+       travers `createInteractionEvent` (donc avec leur `pointerId` de main).
+       Vide hors interaction, comme tout ce qui décrit un instant. */
+    captures:()=>Object.freeze([...interactionView.captures()]),
+    interactions:()=>Object.freeze(interactionView.interactions().map(event=>event)),
     targetPreview:value=>interactionView.showTargets(value),
     /* Contrat § 9 : `assistance`, même partage. */
     targetAssistance:value=>interactionView.setAssistance(value),

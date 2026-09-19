@@ -1873,6 +1873,63 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     consoleLog('info',kind==='resize'?'scene.user_resized':'scene.user_moved',{object_id:id,steps:outcome.steps.join('+'),revision:outcome.revision});
   }
 
+  /* --------------------------------- cadres tenus à mains nues (Bare Hands, Slice 06)
+
+     Bare Hands ne déplace pas un objet en envoyant des événements de pointeur :
+     une manipulation à deux mains n'a pas d'équivalent DOM, et le chemin de la
+     souris ci-dessous ne sait redimensionner que par le coin bas droit. Il tient
+     donc le cadre par cette couture, qui **réutilise** exactement ce que la
+     souris utilise — `drawnBox`, `previewAt`, `holdNode`, `commitUserGeometry` —
+     au lieu d'une seconde géométrie. La sienne, en unités de scène, est celle de
+     `JarvisSceneInteract` ; ici, rien de nouveau n'est calculé.
+
+     Une seule main tient un objet à la fois : si la souris s'y met, elle gagne
+     (`onPointerDown` annule la tenue), parce que c'est le geste le plus
+     explicite des deux. */
+  const barehandsHeld=new Set();
+
+  function framesRelease(id){
+    if(!barehandsHeld.delete(id))return false;
+    holdNode(id,false);
+    return true;
+  }
+
+  const frames=Object.freeze({
+    /* Le cadre d'un objet dessiné, et sa forme. `null` quand il n'y a rien à
+       tenir — scène éteinte, objet absent du dessin, ou souris déjà dessus :
+       le moteur le dit alors à l'écran plutôt que de manipuler un fantôme. */
+    begin(id){
+      if(!enabled)return null;
+      if(gesture&&gesture.id===id)return null;
+      const node=nodeOf(id),box=drawnBox(id),state=viewState();
+      const item=state&&state.objects.get(id);
+      if(!node||!box||!item)return null;
+      barehandsHeld.add(id);
+      holdNode(id,true);
+      return {objectId:id,box:{x:box.x,y:box.y,w:box.w,h:box.h},representation:item.representation};
+    },
+    /* Aperçu optimiste **local** : rien ne part à Core tant que la main tient,
+       exactement comme un glissement à la souris. */
+    preview(id,box){
+      if(!barehandsHeld.has(id))return;
+      const node=nodeOf(id),record=nodes.get(id);
+      if(node&&record&&box)previewAt(record.el,node,box);
+    },
+    /* Relâchement : la place part à Core (et épingle l'objet, décision 9). */
+    commit(id,box,mode){
+      const start=drawnBox(id);
+      framesRelease(id);
+      if(!box||(start&&I.sameBox(box,start)))return;
+      const kind=mode==='resize'?'resize':'move';
+      commitUserGeometry(id,box,kind)
+        .catch(error=>actionFailed(kind==='resize'?'Redimensionnement':'Déplacement',id,error));
+    },
+    /* Main perdue, veille, extinction : le cadre revient où il était et rien
+       n'est envoyé — la même réponse que `pointercancel` à la souris. */
+    cancel(id){if(framesRelease(id))scheduleRender()},
+    viewport(){return viewportNow()},
+  });
+
   function onPointerDown(event){
     if(event.button!==0||!enabled)return;
     const el=nodeElement(event.target);
@@ -1882,6 +1939,10 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     const id=el.dataset.objectId,node=nodeOf(id),box=drawnBox(id),state=viewState();
     const item=state&&state.objects.get(id);
     if(!node||!box||!item)return;
+    /* Une main tenait ce cadre : la souris est le geste le plus explicite des
+       deux, elle gagne — et la tenue s'annule proprement plutôt que de laisser
+       deux aperçus se disputer le même nœud. */
+    frames.cancel(id);
     if(gesture)cancelGesture();
     if(keyEdit)flushKeyEdit('pointer');
     if(typeof closeMenu==='function')closeMenu(false);
@@ -2664,6 +2725,10 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
 
   window.JarvisScene=Object.freeze({
     version:2,gate,
+    /* Cadres manipulables à mains nues (Bare Hands V1, Slice 06). Le pointeur
+       est inséré **avant** ce module, donc il lit cette couture à l'appel et non
+       au chargement. */
+    frames,
     /* `/api/status` a échoué : la prochaine réussite relance la lecture. */
     statusLost(){statusFailed=true},
     /* Diagnostic (console, validation) : aucune écriture. */
@@ -2674,6 +2739,7 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
         health:lastView?lastView.health:null,resolved:layout&&layoutState===viewState()?layout.resolved.length:0,
         pending:pending?pending.size():0,actions:{...actionStats},gesture:gesture?{id:gesture.id,mode:gesture.mode,moved:gesture.moved,threshold:gesture.threshold}:null,
         selected:selectedId,stopping:[...stopping.keys()],jobCancelTimeoutS,captures:capturer?capturer.stats():null,
+        barehands:[...barehandsHeld],
         tabStops:root?root.querySelectorAll('[tabindex="0"]').length:0,animated:root?root.querySelectorAll('.sc-anim').length:0};
     },
   });

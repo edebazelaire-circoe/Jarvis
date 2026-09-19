@@ -103,6 +103,147 @@
 
   const resizable=representation=>representation==='capsule'||representation==='window';
 
+  /* ------------------------------------ manipulation à mains nues (Slice 06)
+
+     Décisions 10, 11, 16, 17, 18 et 19 du handoff `jarvis-bare-hands-v1`. Ce
+     bloc est le **seul endroit** où des pixels de fenêtre deviennent des unités
+     de scène : le moteur Bare Hands mesure tout en pixels (`boundsPx`,
+     `palmX`/`palmY`, comme `clientX`), la scène vit en unités (±160 × ±90). Une
+     conversion faite ailleurs se déboguerait comme un défaut de géométrie dans
+     le mauvais module.
+
+     Ce bloc ne décide **jamais** quelle main tient quels côtés : cette règle
+     est celle de `combineCaptures`
+     (`control_center_barehands_contracts.js`, décisions 12 et 14-17) et arrive
+     ici sous forme de données — un côté, un déplacement. Deux tables des côtés
+     auraient divergé en silence. */
+
+  /* Invariant de paire des constantes de forme, posé au chargement plutôt que
+     découvert sur un cadre qui rétrécit sous son minimum. `clamp(v,lo,hi)` rend
+     `hi` quand `lo > hi` : un maximum passé sous le minimum ferait donc gagner
+     le **maximum**, et la décision 18 (« borner à la taille minimale ») serait
+     silencieusement inversée — aucune exception, aucun test rouge, juste une
+     capsule qu'on peut réduire à rien. Il n'y a pas de constructeur ici, donc
+     le refus se pose là où les constantes se lisent. */
+  for(const representation of Object.keys(MIN_SIZE)){
+    const max=MAX_SIZE[representation];
+    if(!max)continue;
+    if(max.w<MIN_SIZE[representation].w||max.h<MIN_SIZE[representation].h)
+      throw new RangeError(`MAX_SIZE.${representation} ne peut pas passer sous MIN_SIZE.${representation} : le bornage rendrait le maximum et la taille minimale ne tiendrait plus`);
+  }
+
+  /* Un axe d'un redimensionnement par les côtés. `dLo`/`dHi` sont les
+     déplacements des deux côtés de cet axe, en unités ; `undefined` veut dire
+     « ce côté n'est tenu par personne », donc il ne bouge pas — c'est lui
+     l'ancre, et c'est ce qui fait qu'un redimensionnement par le bord droit ne
+     déplace pas le bord gauche.
+
+     Décision 18, les deux moitiés : la taille finale est bornée à
+     `[minSize, maxSize]`, donc **jamais négative** — deux mains qui se croisent
+     s'arrêtent à la taille minimale au lieu de retourner le cadre. Quand les
+     deux côtés bougent, le manque se répartit **au prorata de ce que chaque
+     main a demandé** : une seule règle pour « une main pousse » et « deux mains
+     poussent », au lieu d'un cas particulier par situation. */
+  function resizeAxis(lo,size,dLo,dHi,minSize,maxSize,bound0,bound1){
+    const movesLo=Number.isFinite(dLo),movesHi=Number.isFinite(dHi);
+    let a=clamp(lo+(movesLo?dLo:0),bound0,bound1);
+    let b=clamp(lo+size+(movesHi?dHi:0),bound0,bound1);
+    const wanted=b-a,target=clamp(wanted,minSize,maxSize);
+    if(target!==wanted){
+      const deficit=target-wanted;
+      const wLo=movesLo?Math.abs(dLo):0,wHi=movesHi?Math.abs(dHi):0,sum=wLo+wHi;
+      if(!movesLo)b=a+target;
+      else if(!movesHi)a=b-target;
+      else if(sum>0){a-=deficit*(wLo/sum);b+=deficit*(wHi/sum)}
+      else{a-=deficit/2;b+=deficit/2}
+    }
+    /* Ramener dans la zone sûre **sans changer la taille** : un cadre poussé
+       contre le bord s'arrête, il ne maigrit pas. */
+    const span=b-a;
+    if(a<bound0){a=bound0;b=a+span}
+    if(b>bound1){b=bound1;a=b-span}
+    return {lo:a,size:b-a};
+  }
+
+  /* Redimensionner en tirant sur des **côtés** nommés : `sides` est
+     `{left?, right?, top?, bottom?}`, chaque valeur étant le déplacement de ce
+     côté le long de son axe, **en unités**. Un côté absent est une ancre.
+
+     C'est la généralisation de `resizeBox` (poignée bas-droite, coin haut
+     gauche épinglé), qui reste le chemin de la souris et ne bouge pas. */
+  function resizeBySides(start,sides,representation){
+    const held=sides&&typeof sides==='object'?sides:{};
+    const min=MIN_SIZE[representation]||{w:1,h:1};
+    const areaW=SAFE_AREA.x1-SAFE_AREA.x0,areaH=SAFE_AREA.y1-SAFE_AREA.y0;
+    const max=MAX_SIZE[representation]||{w:areaW,h:areaH};
+    const x=resizeAxis(start.x,start.w,held.left,held.right,min.w,Math.min(max.w,areaW),SAFE_AREA.x0,SAFE_AREA.x1);
+    const y=resizeAxis(start.y,start.h,held.top,held.bottom,min.h,Math.min(max.h,areaH),SAFE_AREA.y0,SAFE_AREA.y1);
+    return clampBox({x:x.lo,y:y.lo,w:x.size,h:y.size},representation);
+  }
+
+  /* Axe de chaque côté. Ce n'est pas la règle du contrat (qui décide **quelle
+     main garde quel côté**) mais le sens des mots : « haut » et « bas » bornent
+     la hauteur. Le moteur passe donc des côtés déjà attribués, et cette table
+     ne fait que les lire. */
+  const MANIPULATION_SIDES=Object.freeze({top:'y',bottom:'y',left:'x',right:'x'});
+
+  /* Une image de manipulation, et la **conversion d'unités de la Slice 06**.
+
+     `plan` :
+       - `start` — la boîte de référence, en unités (voir `rebaseManipulation`) ;
+       - `representation` — la forme, qui porte ses tailles minimale et maximale ;
+       - `mode` — `move` (décision 10) ou `resize` (décision 11) ;
+       - `axes` — `combineCaptures().axes`, repris tel quel : un axe neutralisé
+         par la décision 17 n'y est pas, donc il ne bouge pas ;
+       - `sidesPx` — pour un redimensionnement, le déplacement **en pixels de la
+         fenêtre** de chaque côté tenu, déjà attribué par `combineCaptures` ;
+       - `deltaPx` — pour un déplacement, le déplacement de la main ;
+       - `vp` — la fenêtre de la scène (`JarvisSceneLayout.viewport`), d'où vient
+         l'échelle (~6 px/unité en 1080p).
+
+     Le seul endroit du dépôt où `pxToUnits` sert au chemin Bare Hands. */
+  function manipulateBox(plan){
+    const p=plan||{};
+    const vp=p.vp,start=p.start,representation=p.representation;
+    const axes=Array.isArray(p.axes)?p.axes:['x','y'];
+    if(p.mode==='resize'){
+      const sidesPx=p.sidesPx&&typeof p.sidesPx==='object'?p.sidesPx:{};
+      const units={};
+      for(const side of Object.keys(sidesPx)){
+        const axis=MANIPULATION_SIDES[side];
+        if(!axis)throw new RangeError(`Côté de cadre inconnu : ${String(side)}`);
+        if(!axes.includes(axis))continue;   // axe neutralisé (décision 17)
+        const value=Number(sidesPx[side]);
+        if(!Number.isFinite(value))continue;
+        units[side]=axis==='x'?pxToUnits(vp,value,0).dx:pxToUnits(vp,0,value).dy;
+      }
+      return resizeBySides(start,units,representation);
+    }
+    const delta=p.deltaPx&&typeof p.deltaPx==='object'?p.deltaPx:{};
+    const moved=pxToUnits(vp,Number(delta.dx)||0,Number(delta.dy)||0);
+    return dragBox(start,axes.includes('x')?moved.dx:0,axes.includes('y')?moved.dy:0,representation);
+  }
+
+  /* **Décision 19**, et elle sert à chaque changement de plan, pas seulement à
+     `RESIZE → MOVE` : la nouvelle référence est le cadre **tel qu'il est** et
+     les mains **là où elles sont**. Le déplacement suivant vaut donc zéro, et
+     le cadre ne saute pas — ni quand une main se retire d'un redimensionnement,
+     ni quand une seconde main entre, ni quand un déplacement s'arme.
+
+     Rebaser sur la boîte d'origine et laisser courir les anciennes ancres
+     ferait exactement l'inverse : le cadre rattraperait d'un coup tout ce que
+     l'autre main avait fait. */
+  function rebaseManipulation(box,pointsPx){
+    const anchorsPx={};
+    const source=pointsPx&&typeof pointsPx==='object'?pointsPx:{};
+    for(const key of Object.keys(source)){
+      const point=source[key];
+      const x=Number(point&&point.x),y=Number(point&&point.y);
+      if(Number.isFinite(x)&&Number.isFinite(y))anchorsPx[key]={x,y};
+    }
+    return {start:{x:box.x,y:box.y,w:box.w,h:box.h},anchorsPx};
+  }
+
   /* Touche → intention. `{type:'move'|'resize', dx, dy}`, `{type:'menu'}`,
      `{type:'nav'}` (flèches seules, Début, Fin) ou null. */
   function keyIntent(event){
@@ -499,6 +640,7 @@
   const api=Object.freeze({FRAME,SAFE_AREA,KEY_STEP,KEY_STEP_LARGE,MIN_SIZE,MAX_SIZE,DEFAULT_SIZE,DRAG_THRESHOLD_PX,COARSE_DRAG_THRESHOLD_PX,
     LONG_PRESS_MS,PENDING_MAX_MS,MAX_ARCHIVE_IDS,MAX_COMMAND_BYTES,TERMINAL,REFUSALS,TRANSPORT,
     clampBox,dragThreshold,pxToUnits,dragBox,resizeBox,resizable,keyIntent,applyKey,representationBox,sameBox,
+    MANIPULATION_SIDES,resizeBySides,manipulateBox,rebaseManipulation,
     signalOwners,cascadeOf,bulkSelection,chunkIds,menuModel,commands,transportFailure,networkFailure,classifyResponse,stopOutcome,
     focusAfterRemoval,commitLayout,geometrySteps,commitGeometry,createPending,hiddenObjects});
   root.JarvisSceneInteract=api;

@@ -39,6 +39,7 @@ CONTRACTS = RUNTIME / "control_center_barehands_contracts.js"
 TARGET = RUNTIME / "control_center_barehands_target.js"
 PAGE_HTML = RUNTIME / "control_center.html"
 SCENE_PAGE = RUNTIME / "control_center_scene_page.js"
+SCENE_INTERACT = RUNTIME / "control_center_scene_interact.js"
 
 
 def run_node(tmp_path: Path, source: str) -> object:
@@ -49,6 +50,7 @@ def run_node(tmp_path: Path, source: str) -> object:
     script.write_text(
         f"const SCRIPT_PATH={json.dumps(str(SCRIPT))};\n"
         f"const TARGET_PATH={json.dumps(str(TARGET))};\n"
+        f"const SCENE_INTERACT_PATH={json.dumps(str(SCENE_INTERACT))};\n"
         f"const B=require(SCRIPT_PATH);\n"
         f"const C=require({json.dumps(str(CONTRACTS))});\n"
         "const out=v=>process.stdout.write(JSON.stringify(v));\n"
@@ -700,6 +702,10 @@ global.MouseEvent=class{constructor(type,init){Object.assign(this,init||{});this
 global.JarvisBarehandsContracts=C;
 global.window.JarvisBarehandsContracts=C;
 global.JarvisBarehandsTarget=require(TARGET_PATH);
+/* La géométrie de la scène est insérée bien avant le pointeur dans la page
+   (Slice 06 : les décisions 18 et 19 y vivent). Le bloc navigateur la lit
+   directement, comme il lit les contrats et l'aperçu de cible. */
+global.JarvisSceneInteract=require(SCENE_INTERACT_PATH);
 delete require.cache[require.resolve(SCRIPT_PATH)];
 require(SCRIPT_PATH);
 const api=window.JarvisBarehands;

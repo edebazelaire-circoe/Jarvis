@@ -64,6 +64,14 @@ repère commenté dans `control_center.html`, substitué côté serveur par
 (`…_BAREHANDS_TARGET_JS__` est arrivé à la Slice 05 : il lit les contrats et se
 fait lire par le pointeur, donc il vit exactement entre les deux.)
 
+La Slice 06 n'ajoute **aucun** module de page, mais elle ajoute une dépendance :
+le bloc navigateur du pointeur lit `JarvisSceneInteract` au chargement (la
+géométrie de la scène, où vivent les décisions 18 et 19). Ce module est inséré
+bien plus haut (`…_CONTROL_CENTER_SCENE_INTERACT_JS__`), et l'ordre est
+asserté par
+`test_barehands_interaction_js::test_the_page_serves_the_scene_geometry_before_the_pointer_that_reads_it` :
+servi après le pointeur, la page casserait à l'insertion — pas à l'usage.
+
 L'ordre est vérifié par
 `test_barehands_contracts_js::test_the_page_serves_the_contracts_before_everything_that_reads_them`.
 
@@ -1046,6 +1054,129 @@ Décisions 18 et 19 (pas d'inversion, bornage à la taille minimale, rebasage
 `RESIZE → MOVE`) appartiennent au moteur de la Slice 06 : la géométrie vit dans
 `control_center_scene_interact.js`, en unités de scène (±160 × ±90), pas ici.
 
+### Le moteur (Slice 06)
+
+`JarvisBarehandsCore.createInteractionEngine(deps)` — logique pure, aucun DOM.
+Il tient les captures, coordonne les mains et publie des `INTERACTION` ; la
+moitié navigateur (les événements du DOM, et la scène qui tient le cadre) vit
+dans le bloc navigateur de `control_center_barehands.js`. Couverture :
+`tests/unit/test_barehands_interaction_js.py`.
+
+**Rien n'est réimplanté, tout est injecté.** Le bloc pur est chargé seul par
+node et ne peut lire ni les contrats ni la géométrie ; il les **reçoit**, comme
+`createTargetResolver` reçoit `pickRegion`, et se refuse (`RangeError`) sans
+eux :
+
+| Dépendance | Ce qu'elle apporte |
+|---|---|
+| `contracts` | `combineCaptures`, `createCapture`, `createInteractionEvent`, `SIDE_AXIS`, `zoneSides`, `INTERACTION` |
+| `geometry` | `JarvisSceneInteract` : `manipulateBox`, `rebaseManipulation`, `resizable`, `sameBox` |
+| `world` | la scène qui tient le cadre (`window.JarvisScene.frames`) |
+| `dom` | la sortie de compatibilité (`scrollable`, `emit`) |
+| `slotOf` / `onRelease` | la fente de pointeur de la main ; le relâchement de la cible figée |
+
+**Cycle d'une capture.** Elle s'ouvre sur un `down` de la Slice 04, sur la cible
+**figée** de la Slice 05 (décision 13 : sans le gel, un glissement de 30 px
+changerait l'objet au milieu du geste) ; elle se ferme sur `up` (l'action
+part : clic, contexte, sélection) ou sur `cancel` (rien ne part — la perte n'est
+jamais un relâchement court). Une capture par main **et par canal**.
+
+**Rien ne bouge avant que la main ait glissé.** Une manipulation s'arme quand
+l'intention du contact devient `drag` — `dragSlopPx` de la Slice 04, mesuré sur
+la **paume**, pas un seuil de plus. C'est ce qui garantit qu'un clic sur un bord
+ne déplace pas le cadre, et ne l'**épingle** donc pas (toute géométrie de
+l'utilisateur épingle, décision 9).
+
+**Trois repères, trois rôles**, et les confondre est le piège de cette couche :
+la **paume** (`palmX`/`palmY`) est où la main *est*, donc ce qui déplace un
+cadre ; le bout de l'index est ce qu'elle *vise*, donc le pointeur ; l'ancre
+figée est ce qu'elle visait à la descente. La phase dit lequel un événement
+porte.
+
+**Ce que produit une capture**, selon ce qu'elle tient :
+
+| Ce qui est tenu | Effet |
+|---|---|
+| une zone, une main | déplacement du cadre entier (décision 10) |
+| deux zones compatibles, même objet | redimensionnement contraint (11, 16, 17) |
+| le corps d'une capsule ou d'une fenêtre | **contenu** (décision 8) : jamais le cadre |
+| le corps d'une étoile `point`/`signal` | déplacement : c'est sa seule prise (D3) |
+| canal secondaire | `context` au relâchement, jamais une manipulation (21, 23) |
+
+Seules les captures du canal **primaire** sur un objet identifié entrent dans un
+couple. Le corps y entre aussi, et c'est voulu : c'est `combineCaptures` qui doit
+dire que corps + zone déplace et que corps + corps ne produit rien. Le filtrer
+avant rendrait les décisions 8, 10 et 14 inatteignables et les réécrirait dans le
+moteur.
+
+**Chaque motif du contrat est traité**, y compris ceux que le chemin réel
+n'atteint pas : `same_hand_twice` écarte la capture du couple (une main ne se
+couple pas à elle-même) et la première tient seule ; `object_unidentified` et
+`different_objects` laissent les mains indépendantes ; `both_captures_are_body`
+ne produit **rien** ; `same_zone_rejected` et `axes_all_neutralized` sont des
+**refus**, et un motif inconnu en est un aussi — jamais un silence. Un refus
+s'écrit à l'écran, sur la ligne qui porte déjà les gestes étouffés (RÈGLE ZÉRO).
+
+**Rebasage.** À chaque changement de plan — une main qui entre, une main qui se
+retire, l'armement lui-même — la référence devient le cadre **tel qu'il est** et
+les mains **là où elles sont** (`rebaseManipulation`). La décision 19
+(`RESIZE → MOVE`) en est le cas nommé ; le cadre ne saute à aucun des trois.
+
+**Géométrie et unités.** `manipulateBox` est le **seul** endroit où des pixels de
+la fenêtre deviennent des unités de scène (`pxToUnits`, `vp.scale` ≈ 6 px/unité
+en 1080p). Il reçoit `combineCaptures().axes` tel quel — un axe neutralisé par
+la décision 17 n'y est pas, donc il ne bouge pas — et, pour un
+redimensionnement, le déplacement de chaque **côté** déjà attribué.
+`resizeBySides` borne à `MIN_SIZE`/`MAX_SIZE` et à `SAFE_AREA` : la taille finale
+est donc toujours positive, et deux mains qui se croisent s'arrêtent à la taille
+minimale au lieu de retourner le cadre (décision 18). `MAX_SIZE` sous `MIN_SIZE`
+**se refuse au chargement** du module : `clamp(v, lo, hi)` rend `hi` quand
+`lo > hi`, donc le maximum gagnerait et la décision 18 s'inverserait sans un mot.
+
+**Aucun réglage nouveau.** La Slice 06 n'ajoute aucune constante à `DEFAULTS` :
+l'armement réutilise `dragSlopPx`, la grâce d'identité `lostGraceMs`, et les
+tailles viennent de `MIN_SIZE`/`MAX_SIZE` de la scène.
+
+### La compatibilité DOM (Slice 06)
+
+Architecture § 7 : *ne pas encoder tout le comportement en `PointerEvent`
+synthétiques*. Le modèle de manipulation est le sien ; les événements du DOM
+restent une sortie de **compatibilité** pour le contenu, là où la page écoute
+déjà une souris.
+
+| Interaction | Sortie DOM |
+|---|---|
+| `click` | **le chemin hérité** (`createPinchDetector`), inchangé |
+| `context` | `contextmenu`, bouton 2 |
+| `drag_start`/`drag_move`/`drag_end` | `pointerdown`/`move`/`up`, ou `pointercancel` sur annulation |
+| `scroll` | défilement **réel** du premier ancêtre défilable, plus un `wheel` |
+| `select` | focus et sélection d'un champ ; ailleurs, l'événement sémantique seul |
+| `move` / `resize` | **aucune** : la scène les applique par sa couture |
+
+Deux absences volontaires. Le **clic** n'est pas publié en DOM par le moteur :
+le détecteur hérité en rend un à chaque relâchement, et l'émettre ici aussi en
+enverrait deux. En revanche sa **livraison** attend : une main qui a conduit un
+cadre ne clique pas dessus en le relâchant — sans cette porte, tout déplacement
+se terminait par un clic sur l'objet qu'on venait de poser. Le détecteur, lui,
+n'est pas touché. Et le corps d'une **étoile** n'émet aucune séquence de
+pointeur : la page de scène lirait un glissement sur `.sc-node` comme un
+déplacement de cadre, c'est-à-dire exactement ce que la décision 8 interdit, par
+un autre chemin.
+
+### La couture de la scène (Slice 06)
+
+`window.JarvisScene.frames` (`control_center_scene_page.js`) :
+`begin(objectId)` → `{box, representation}` ou `null`, `preview(objectId, box)`,
+`commit(objectId, box, mode)`, `cancel(objectId)`, `viewport()`. Elle
+**réutilise** ce que la souris utilise — `drawnBox`, `previewAt`, `holdNode`,
+`commitUserGeometry` — au lieu d'une seconde géométrie, donc l'épinglage, le
+bornage et l'affichage optimiste sont les mêmes des deux côtés. Le pointeur étant
+inséré **avant** la page de scène, il la lit à l'appel et non au chargement.
+Une souris qui se pose sur un cadre tenu à mains nues **gagne** : la tenue
+s'annule, parce que c'est le geste le plus explicite des deux. Une annulation
+(main perdue, veille, extinction) rend le cadre à sa place et n'envoie rien, la
+même réponse que `pointercancel`.
+
 ### `createInteractionEvent({type, handTrackId, slot, objectId, x, y, dx, dy, channel, tool, axes, t})`
 
 L'événement que le moteur de la Slice 06 publiera sous les noms
@@ -1257,7 +1388,17 @@ qu'en ACTIVE, le budget d'images de la veille étant un acquis mesuré de la
 Slice 02. Aucun module de page n'est ajouté, donc l'ordre d'insertion est
 inchangé.
 
-Restent à venir : résolveur sémantique,
-déplacement/redimensionnement, calibration, tutoriel, diagnostics et le canal
-de commandes de la voix (Slices 03 à 12). `window.JarvisBarehands.activate()` /
-`.sleep()` / `.lifecycle()` sont le point d'entrée que la Slice 12 branchera.
+La Slice 06 implante le moteur de captures (§7) : `createInteractionEngine` dans
+le bloc pur, la sortie de compatibilité DOM et l'adaptateur de scène dans le bloc
+navigateur, la couture `window.JarvisScene.frames` dans la page de scène, et
+`resizeBySides` / `manipulateBox` / `rebaseManipulation` dans
+`control_center_scene_interact.js` — la géométrie existante étendue, pas une
+seconde. Couverte par `tests/unit/test_barehands_interaction_js.py`. Aucun module
+de page n'est ajouté ; une dépendance de chargement l'est (voir « Insertion dans
+la page »). Aucune constante nouvelle dans `DEFAULTS`.
+
+Restent à venir : outils et réglages, calibration, tutoriel, diagnostics et le
+canal de commandes de la voix (Slices 07 à 12).
+`window.JarvisBarehands.activate()` / `.sleep()` / `.lifecycle()` sont le point
+d'entrée que la Slice 12 branchera, et `.captures()` / `.interactions()` ce que
+la Slice 10 lira.
