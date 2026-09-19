@@ -197,6 +197,23 @@ VERBATIM_SPEECH_INSTRUCTION = (
     "<<<TEXTE>>>\n{text}\n<<<FIN>>>"
 )
 
+# Contexte de prompt des réponses que JARVIS commande lui-même : vide. `input`
+# dit au fournisseur quels éléments placer devant la consigne ; une liste vide
+# n'en place aucun.
+#
+# Sans ce champ, la consigne est rédigée avec toute la conversation du
+# fournisseur en contexte. Un préambule coupé au barge-in y laisse un élément
+# audio dont la troncature a retiré le transcript : le modèle le prend pour un
+# tour inachevé, le reprend, puis répond de lui-même à la demande au lieu de
+# lire le texte du cerveau — « je ne peux pas lire un texte que je n'ai pas ».
+# Mesuré contre le vrai fournisseur sur la séquence réflexe → barge-in →
+# lecture : 0/5 lectures fidèles sans ce champ, 5/5 avec.
+#
+# Seule l'entrée est concernée. La sortie reste créée dans la conversation par
+# défaut, donc tronquable au barge-in suivant (spec section 12) : vérifié contre
+# le fournisseur, `conversation.item.truncate` accepte l'élément produit.
+OWN_PROMPT_CONTEXT: tuple[dict[str, object], ...] = ()
+
 
 def build_turn_detection(
     *,
@@ -642,7 +659,9 @@ class OpenAIRealtimeSession:
 
         La réponse est créée dans la conversation par défaut, et non hors bande,
         afin que l'audio produit devienne un élément tronquable au barge-in
-        (spec section 12).
+        (spec section 12). Son contexte d'entrée, lui, est vide : la lecture
+        fidèle ne doit rien à la conversation, et la voir la faisait dérailler
+        (`OWN_PROMPT_CONTEXT`).
 
         L'identifiant rendu est local et opaque : les identifiants fournisseur
         n'arrivent qu'ensuite, sur `realtime.output_started`, qui rappelle ce
@@ -662,6 +681,7 @@ class OpenAIRealtimeSession:
                 "type": "response.create",
                 "response": {
                     "instructions": instructions,
+                    "input": list(OWN_PROMPT_CONTEXT),
                     "output_modalities": ["audio"],
                     "metadata": {
                         OUTPUT_ID_METADATA_KEY: output.output_id,
@@ -680,9 +700,13 @@ class OpenAIRealtimeSession:
         """Faire accuser réception de la dernière demande, et rendre l'identifiant de sortie.
 
         Même mécanique que `speak()` : un seul `response.create` dans la
-        conversation par défaut, donc tronquable au barge-in, et aucun faux
-        tour `role=user`. La sortie n'a pas de `speech_id` : c'est un réflexe
-        de surface, que le bridge persiste comme tel (spec section 15).
+        conversation par défaut, donc tronquable au barge-in, aucun faux tour
+        `role=user`, et un contexte d'entrée vide. La consigne porte déjà la
+        transcription à accuser et les phrases à éviter : le réflexe n'a rien
+        à tirer de la conversation, et l'y exposer lui ferait reprendre un
+        préambule coupé (`OWN_PROMPT_CONTEXT`). La sortie n'a pas de
+        `speech_id` : c'est un réflexe de surface, que le bridge persiste comme
+        tel (spec section 15).
         """
 
         from jarvis.runtime.prompt_runtime import prompt_channel, prompt_evidence, resolve_prompt
@@ -698,6 +722,7 @@ class OpenAIRealtimeSession:
                 "type": "response.create",
                 "response": {
                     "instructions": instructions,
+                    "input": list(OWN_PROMPT_CONTEXT),
                     "output_modalities": ["audio"],
                     "metadata": {OUTPUT_ID_METADATA_KEY: output.output_id},
                 },

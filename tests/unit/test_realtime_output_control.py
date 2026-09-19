@@ -90,6 +90,7 @@ async def test_speak_emits_a_single_response_create_without_a_fake_user_turn():
             "type": "response.create",
             "response": {
                 "instructions": session.ws.sent[0]["response"]["instructions"],  # type: ignore[index]
+                "input": [],
                 "output_modalities": ["audio"],
                 "metadata": {
                     OUTPUT_ID_METADATA_KEY: output_id,
@@ -104,6 +105,25 @@ async def test_speak_emits_a_single_response_create_without_a_fake_user_turn():
     # Aucun element de conversation n'est fabrique : pas de faux tour user.
     assert all(frame["type"] != "conversation.item.create" for frame in session.ws.sent)
     assert session.output_for_speech(request.id) is not None
+
+
+async def test_a_commanded_response_never_takes_the_conversation_as_its_prompt():
+    """La conversation du fournisseur n'entre pas dans une réponse commandée.
+
+    Avec elle en contexte, un préambule coupé au barge-in — élément audio dont
+    la troncature a retiré le transcript — passe pour un tour inachevé : le
+    modèle le reprend, puis répond de lui-même au lieu de lire le texte du
+    cerveau. Contre le vrai fournisseur, 0 lecture fidèle sur 5 dans cette
+    séquence, 5 sur 5 avec un contexte d'entrée vide.
+    """
+
+    session = make_session()
+
+    await session.speak(speech("Trois fichiers ont changé."))
+    await session.speak_reflex(transcript="Pousse les commits")
+
+    assert [frame["type"] for frame in session.ws.sent] == ["response.create", "response.create"]
+    assert [frame["response"]["input"] for frame in session.ws.sent] == [[], []]  # type: ignore[index]
 
 
 async def test_send_context_still_uses_the_legacy_user_item_path():
