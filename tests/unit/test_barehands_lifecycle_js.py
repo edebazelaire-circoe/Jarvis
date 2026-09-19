@@ -20,6 +20,8 @@ import subprocess
 
 import pytest
 
+from jarvis.runtime import barehands_test_mode
+
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / "jarvis" / "runtime"
 SCRIPT = RUNTIME / "control_center_barehands.js"
@@ -883,6 +885,30 @@ def test_the_controller_states_and_timings_still_match_the_contract(tmp_path):
         sides:[B.TARGET_SIDES.HORIZONTAL.concat(B.TARGET_SIDES.VERTICAL).sort(),
                Object.keys(C.SIDE_AXIS).sort()],
         targetClasses:[C.DOM.targetClass,C.DOM.targetZoneClass,C.DOM.noteClass],
+        diagClass:C.DOM.diagClass,
+        /* Slice 07. La Slice n'ajoute **aucune** constante à `DEFAULTS` : les
+           deux réglages qu'elle branche (`sleepTimeoutMs`, et `sensitivity` qui
+           divise les deux tolérances de déplacement) sont des nombres qui
+           existaient déjà. Ce qui est neuf vit dans le contrat, et c'est ça
+           qu'on épingle. */
+        settingsVersion:C.SETTINGS_SCHEMA_VERSION,
+        migrated:C.SETTINGS_MIGRATED_VERSIONS,
+        toolCapabilities:C.TOOLS.map(t=>[t,C.TOOL_CAPABILITY[t]]),
+        served:C.SERVED_CAPABILITIES,
+        installedTools:C.INSTALLED_TOOLS,
+        /* La capacité d'un outil **est** un mode de contenu du moteur, sauf
+           `contextual` qui est l'absence d'exigence. Sans cette parité il
+           faudrait une table de correspondance, et elle dériverait. */
+        servedAreContentModes:C.SERVED_CAPABILITIES
+          .filter(c=>c!==C.TOOL_CAPABILITY_CONTEXTUAL)
+          .every(c=>B.CONTENT_MODES.includes(c)),
+        contentModes:B.CONTENT_MODES,
+        selectableKinds:B.SELECTABLE_KINDS,
+        settingsBounds:Object.keys(C.SETTINGS_BOUNDS).sort()
+          .map(k=>[k,C.SETTINGS_BOUNDS[k].min,C.SETTINGS_BOUNDS[k].max]),
+        /* Septième paire dangereuse : le réglage livré doit évidemment
+           respecter son propre invariant, comme la cadence du guetteur. */
+        sleepOverHold:B.DEFAULTS.sleepTimeoutMs>B.DEFAULTS.wakeHoldMs,
         fingerBand:B.DEFAULTS.fingerCurledPalms<B.DEFAULTS.fingerExtendedPalms,
         clickUnderDrag:B.DEFAULTS.clickSlopPx<B.DEFAULTS.dragSlopPx,
         retired:['smoothing','handednessBonusPalms'].map(k=>B.DEFAULTS[k]===undefined),
@@ -972,6 +998,27 @@ def test_the_controller_states_and_timings_still_match_the_contract(tmp_path):
     # bandes opposées se rejoignent et le corps disparaît — décision 8
     # inatteignable sur une capsule).
     assert result["holdOverEnter"] is True and result["bodySurvives"] is True
+    # Slice 07 : aucune constante nouvelle dans `DEFAULTS`, mais quatre tables
+    # neuves au contrat, épinglées pour la même raison — une table que personne
+    # n'affirme se mute sans rien faire tomber.
+    assert result["settingsVersion"] == barehands_test_mode.SCHEMA_VERSION
+    assert result["migrated"] == list(barehands_test_mode.MIGRATED_SCHEMA_VERSIONS)
+    assert result["toolCapabilities"] == [
+        ["pointer", "contextual"], ["pan", "scroll"], ["highlighter", "annotate"],
+        ["draw", "annotate"], ["select", "select"],
+    ]
+    assert result["served"] == ["contextual", "scroll", "select"]
+    assert result["installedTools"] == list(barehands_test_mode.INSTALLED_TOOLS)
+    assert result["servedAreContentModes"] is True
+    assert result["contentModes"] == ["drag", "scroll", "select"]
+    assert result["selectableKinds"] == ["field", "scene_object"]
+    assert result["settingsBounds"] == [
+        ["assistance", 0, 1], ["sensitivity", 0.25, 4], ["sleepTimeoutMs", 5000, 600000],
+    ]
+    assert result["sleepOverHold"] is True
+    # La lecture de diagnostic (réglage `diagnostics`) a son nom au contrat,
+    # comme tout ce que la feuille de style dessine.
+    assert result["diagClass"] == "jh-diag"
     # Le bloc pur recopie aussi le vocabulaire des régions et des côtés, pour la
     # même raison que `STATE` recopie `LIFECYCLE`.
     assert result["regions"][0] == result["regions"][1]

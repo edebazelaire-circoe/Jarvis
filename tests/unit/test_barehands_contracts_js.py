@@ -529,7 +529,7 @@ def test_an_interaction_event_has_a_shape_and_refuses_what_it_cannot_carry(tmp_p
 # --------------------------------------------------------- réglages et profil
 
 
-def test_settings_survive_the_partial_and_never_widen_the_server_payload(tmp_path):
+def test_settings_survive_the_partial_and_carry_the_whole_widened_payload(tmp_path):
     result = run_node(tmp_path, """
       out({
         defaults:C.normalizeSettings(),
@@ -539,15 +539,29 @@ def test_settings_survive_the_partial_and_never_widen_the_server_payload(tmp_pat
         payload:C.toServerPayload({enabled:true,diagnostics:true,tool:'draw'}),
         tools:C.TOOLS,defaultTool:C.TOOL_DEFAULT,
         version:C.SETTINGS_SCHEMA_VERSION,
-        ours:C.normalizeSettings({schemaVersion:1,enabled:true}).enabled,
+        // Version 1 : la **couture de migration**. Elle ne se taisait pas
+        // avant la Slice 07, elle refusait ; c'est le refus qui devient le
+        // point d'entrée de la conversion le jour où une version arrive.
+        migrated:C.normalizeSettings({schemaVersion:1,enabled:true,sleepTimeoutMs:45000}),
         // Le numéro de schéma était estampillé en sortie et jamais lu en
         // entrée : une v99 revenait en v1, champs inconnus jetés, en silence.
         foreign:refused(()=>C.normalizeSettings({schemaVersion:99,enabled:true,newField:1})),
         foreignProfile:refused(()=>C.normalizeProfile({schemaVersion:2})),
+        // Aller-retour complet : ce que la route rend se relit dans le
+        // vocabulaire du contrat, sans qu'aucune clé ne se perde en route.
+        roundTrip:C.fromServerState(C.toServerPayload({enabled:true,tool:'pan',
+          sleepTimeoutMs:45000,assistance:.25,sensitivity:2,diagnostics:true,
+          targetPreview:false,tutorialSeen:true,calibrationEnabled:false})),
+        // Le serveur annonce sa version ; une version étrangère venue de la
+        // route se refuse comme une version étrangère venue du fichier.
+        foreignFromServer:refused(()=>C.fromServerState({schema_version:99,enabled:true})),
       });
     """)
-    assert result["ours"] is True, "notre propre version reste lisible"
+    assert result["migrated"]["enabled"] is True, "une version précédente se convertit"
+    assert result["migrated"]["sleepTimeoutMs"] == 45000, "et garde ce qu'elle portait"
+    assert result["migrated"]["schemaVersion"] == barehands_test_mode.SCHEMA_VERSION
     assert result["foreign"] == "barehands_schema_version_unsupported"
+    assert result["foreignFromServer"] == "barehands_schema_version_unsupported"
     assert result["foreignProfile"] == "barehands_schema_version_unsupported"
     assert result["defaults"]["enabled"] is False, "Bare Hands reste éteint par défaut"
     assert result["defaults"]["targetPreview"] is True and result["defaults"]["sleepTimeoutMs"] == 30000
@@ -556,11 +570,116 @@ def test_settings_survive_the_partial_and_never_widen_the_server_payload(tmp_pat
     assert result["partial"]["sensitivity"] == 4 and result["partial"]["sleepTimeoutMs"] == 5000
     assert result["partial"]["tool"] == "pointer", "un outil inconnu retombe sur le défaut"
     assert result["junkDropped"] is False
-    # La route `/api/barehands` ne connaît que `enabled` : ne rien lui envoyer d'autre.
-    assert result["payload"] == {"enabled": True}
+    # Slice 07 : la route accepte les neuf réglages, en `snake_case` comme le
+    # reste du Control Center, estampillés de la version que les deux côtés
+    # ont montée ensemble.
+    assert result["payload"] == {
+        "schema_version": barehands_test_mode.SCHEMA_VERSION,
+        "enabled": True, "target_preview": True, "sleep_timeout_ms": 30000,
+        "tool": "draw", "assistance": 0.5, "sensitivity": 1,
+        "tutorial_seen": False, "calibration_enabled": True, "diagnostics": True,
+    }
+    assert set(result["payload"]) - {"schema_version"} == set(barehands_test_mode.SETTINGS_DEFAULTS), (
+        "les deux tables des réglages nomment exactement les mêmes clés"
+    )
+    assert result["roundTrip"] == {
+        "schemaVersion": barehands_test_mode.SCHEMA_VERSION,
+        "enabled": True, "targetPreview": False, "sleepTimeoutMs": 45000,
+        "tool": "pan", "assistance": 0.25, "sensitivity": 2,
+        "tutorialSeen": True, "calibrationEnabled": False, "diagnostics": True,
+    }
     assert result["tools"] == ["pointer", "pan", "highlighter", "draw", "select"]
     assert result["defaultTool"] == "pointer"
     assert result["version"] == barehands_test_mode.SCHEMA_VERSION
+
+
+def test_a_tool_declares_a_capability_and_an_uninstalled_one_says_so(tmp_path):
+    """Décision 25 : un outil dit « ce que la main veut dire ».
+
+    La capacité **est** un mode de contenu du moteur, donc « installé » se lit
+    sur une table et non sur un drapeau écrit à la main — un outil déclaré sans
+    moteur ne peut pas ressembler à un outil qui marche.
+    """
+
+    result = run_node(tmp_path, """
+      out({
+        described:C.describeTools(),
+        installed:C.INSTALLED_TOOLS,
+        served:C.SERVED_CAPABILITIES,
+        contextual:C.toolCapability('pointer'),
+        unknown:refused(()=>C.toolCapability('gomme')),
+        // Chaque outil de `TOOL` a une capacité et une étiquette : un outil
+        // ajouté sans elles serait dessiné sans nom et gaterait sur undefined.
+        everyToolHasACapability:C.TOOLS.every(t=>typeof C.TOOL_CAPABILITY[t]==='string'),
+        everyToolHasALabel:C.TOOLS.every(t=>typeof C.TOOL_LABEL[t]==='string'&&C.TOOL_LABEL[t].length>0),
+        // Et l'inverse : aucune capacité servie sans outil qui la demande.
+        noOrphanCapability:C.SERVED_CAPABILITIES.every(
+          cap=>cap===C.TOOL_CAPABILITY_CONTEXTUAL||C.TOOLS.some(t=>C.TOOL_CAPABILITY[t]===cap)),
+        // Tolérance documentée : un schéma **stocké** retombe sur le défaut.
+        normalized:C.normalizeTool('gomme'),
+      });
+    """)
+    assert result["unknown"] == "barehands_tool_unknown"
+    assert result["contextual"] == "contextual"
+    assert result["normalized"] == "pointer"
+    assert result["everyToolHasACapability"] is True
+    assert result["everyToolHasALabel"] is True
+    assert result["noOrphanCapability"] is True
+    assert result["installed"] == list(barehands_test_mode.INSTALLED_TOOLS)
+    by_id = {tool["id"]: tool for tool in result["described"]}
+    assert by_id["pointer"]["capability"] == "contextual" and by_id["pointer"]["installed"] is True
+    assert by_id["pan"]["capability"] == "scroll" and by_id["pan"]["installed"] is True
+    assert by_id["select"]["capability"] == "select" and by_id["select"]["installed"] is True
+    # Le surligneur et le dessin demandent une couche d'annotation qui n'existe
+    # pas : déclarés, refusés, et la raison est lisible — un outil grisé sans
+    # motif serait indiscernable d'une panne.
+    for name in ("highlighter", "draw"):
+        assert by_id[name]["capability"] == "annotate"
+        assert by_id[name]["installed"] is False
+        assert by_id[name]["reason"] == "barehands_tool_not_installed"
+    assert all(tool["reason"] == "" for tool in result["described"] if tool["installed"])
+
+
+def test_the_settings_bounds_are_one_table_and_refuse_an_inverted_pair(tmp_path):
+    """`clamp(v, lo, hi)` rend `lo` quand `lo > hi` : une borne inversée
+    épinglerait tous les réglages sur une seule valeur, sans exception ni test
+    rouge. Il n'y a pas de constructeur là où vit la table — le refus se pose
+    donc au chargement du module, comme `MIN_SIZE`/`MAX_SIZE` à la Slice 06."""
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node absent")
+    source = CONTRACTS.read_text(encoding="utf-8")
+    broken = source.replace("sleepTimeoutMs:Object.freeze({min:5000,max:600000,step:5000})",
+                            "sleepTimeoutMs:Object.freeze({min:600000,max:5000,step:5000})")
+    assert broken != source, "la table des bornes a changé de forme : ce test doit suivre"
+    (tmp_path / "broken.js").write_text(broken, encoding="utf-8")
+    shim = tmp_path / "load-broken.cjs"
+    shim.write_text(
+        "try{require('./broken.js');console.log(JSON.stringify({loaded:true}))}"
+        "catch(error){console.log(JSON.stringify({error:String(error.message)}))}",
+        encoding="utf-8",
+    )
+    out = subprocess.run([node, str(shim)], capture_output=True, text=True, encoding="utf-8",
+                         cwd=tmp_path, timeout=30, check=True)
+    assert "le minimum doit rester sous le maximum" in json.loads(out.stdout)["error"]
+
+    result = run_node(tmp_path, """
+      out({
+        keys:Object.keys(C.SETTINGS_BOUNDS).sort(),
+        // Les bornes du contrat sont celles que `normalizeSettings` applique :
+        // une table lue par l'écran et une autre par la normalisation auraient
+        // dessiné des curseurs dont les extrémités ne veulent rien dire.
+        low:C.normalizeSettings({sleepTimeoutMs:-1,assistance:-1,sensitivity:-1}),
+        high:C.normalizeSettings({sleepTimeoutMs:1e9,assistance:9,sensitivity:9}),
+        bounds:C.SETTINGS_BOUNDS,
+      });
+    """)
+    assert result["keys"] == ["assistance", "sensitivity", "sleepTimeoutMs"]
+    for key in result["keys"]:
+        assert result["low"][key] == result["bounds"][key]["min"]
+        assert result["high"][key] == result["bounds"][key]["max"]
+        assert result["bounds"][key]["min"] < result["bounds"][key]["max"]
 
 
 def test_a_partial_calibration_is_valid_and_the_rest_falls_back(tmp_path):

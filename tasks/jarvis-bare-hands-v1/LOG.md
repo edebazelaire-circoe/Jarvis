@@ -1369,3 +1369,204 @@ l'invariant rend inatteignable) ont été **supprimées** ; les deux autres
 disaient la même absence — aucun cas d'une boîte qui **déborde sans défiler** —
 et ont été tuées en ajoutant `overflow:hidden` au test, pas en assouplissant
 l'assertion.
+
+## 2026-09-19 — Slice 07, implementation agent
+
+Outils et réglages (§8, §9, décisions 24 et 25). **Aucun module de page ajouté**
+— le constat F3 ne s'applique pas, l'ordre `contracts → target → barehands →
+scene page` est intact — et **aucune constante nouvelle dans `DEFAULTS`**. Le
+contrat gagne `TOOL_CAPABILITY` / `SERVED_CAPABILITIES` / `describeTools` /
+`SETTINGS_BOUNDS` / `SETTINGS_WIRE_KEYS` / `fromServerState` et monte à
+`SETTINGS_SCHEMA_VERSION = 2` ; `barehands_test_mode.py` monte à
+`SCHEMA_VERSION = 2` et accepte les neuf réglages ; le moteur gagne `setTool` et
+la porte outil/cible, le contrôleur `configure`. Couverture :
+`tests/unit/test_barehands_tools_settings_js.py` (15 tests). Contrat lisible :
+`docs/barehands-contracts.md` § 8 et § 9 ; exploitation : `docs/OPERATIONS.md`.
+
+Découvertes durables pour les Slices suivantes :
+
+- **La capacité d'un outil *est* un mode de contenu du moteur, et c'est ce qui
+  supprime la table de correspondance.** Premier jet : un drapeau `installed`
+  écrit à la main à côté de chaque outil, plus une table
+  capacité → `CONTENT_MODE` dans le moteur. Deux endroits à tenir d'accord, donc
+  deux endroits pour dériver — exactement la forme que la Slice 05 a refusée en
+  faisant **recevoir** `pickRegion` au bloc pur au lieu de le recopier. En
+  nommant les capacités comme les modes (`scroll`, `select`), « installé »
+  devient une **lecture** (`SERVED_CAPABILITIES.includes(capability)`) et non
+  une affirmation, et la palette, le serveur et le moteur répondent à la même
+  question par la même table. `contextual` reste à part parce que ce n'est pas
+  une exigence, c'est l'absence d'exigence — c'est ce qui fait que « l'outil par
+  défaut reste contextuel » n'est pas un cas particulier mais la porte d'entrée.
+- **Un outil ne touche que le contenu.** Les zones (décisions 9-11) et le corps
+  d'une étoile `point`/`signal` (décision D3) sont des **poignées de cadre**. La
+  porte les saute explicitement : sans ça, choisir la Main faisait disparaître
+  le redimensionnement et immobilisait les étoiles, en silence. La mutation
+  « l'outil prend aussi les poignées » tombe sur les deux fichiers d'un coup.
+- **Deux refus d'outil, deux phrases.** `tool_target_unsupported` (la cible ne
+  peut pas honorer la capacité) et `tool_not_installed` (le moteur ne sert pas
+  cette capacité) remontent sur la ligne `jh-note` qui porte déjà les gestes
+  étouffés et les prises refusées. La mutation « une phrase générique pour les
+  deux » a **survécu** au premier passage : aucun test ne lisait `noteFor`. Une
+  ligne dont la seule information est *laquelle des règles a parlé* doit être
+  lue par un test, sinon elle se vide sans rien faire tomber.
+- **La deuxième porte est de la défense en profondeur, et elle est justifiée.**
+  Un outil sans moteur est déjà refusé par le serveur et grisé par la palette ;
+  il est refusé **une troisième fois** dans `openCapture`, parce que ce moteur
+  est injectable et ne suppose pas son appelant — même raison que
+  `target_not_actionable` à la Slice 06. Contrairement aux lignes redondantes
+  supprimées aux Slices 05 et 06, celle-ci est **atteignable par un test** :
+  `engine.setTool('highlighter')` suffit, et la mutation tombe.
+- **Septième paire dangereuse : `sleepTimeoutMs <= wakeHoldMs`**, et la première
+  que les **réglages** rendent atteignable. En dessous, la seconde de posture en
+  C coûte plus cher que le temps qu'elle achète : on réveille, la veille reprend
+  la main à l'image suivante, et la session cycle en détruisant à chaque tour
+  les identités de piste et les fentes de pointeur — la panne que la reprise de
+  la Slice 03 avait mesurée par un autre chemin. L'égalité se refuse aussi : un
+  réveil qui dure exactement sa propre posture n'en est pas un. La borne basse
+  du contrat (5 000 ms) est cinq fois au-dessus, donc **l'écran ne peut pas
+  l'atteindre** — et c'est précisément pour ça que le refus est au moteur et non
+  dans les bornes : une borne d'interface n'est pas un invariant.
+- **Une paire dangereuse au seul constructeur est une paire sans garde dès qu'un
+  réglage existe.** `controller.configure` repasse par `options()` en entier, à
+  chaque écriture : tous les invariants de paire sont revérifiés là où le
+  réglage arrive. Et `options()` lève **avant** qu'on garde le fusionné, donc un
+  réglage refusé ne laisse pas le moteur à moitié changé. Les surcharges
+  s'**accumulent** (`liveOptions`) : repartir de `deps.options` à chaque appel
+  ferait qu'un réglage en défait un autre dès qu'ils ne voyagent pas ensemble.
+- **Un réglage à chaud doit atteindre les mains déjà suivies.** Trois mutations
+  ont survécu au premier balayage, toutes la même racine : mon test de
+  sensibilité pilotait un `createPinchChannel` construit à la main. Il prouvait
+  que les seuils font ce qu'ils disent, pas que le **réglage** les atteint — et
+  trois lignes pouvaient disparaître sans rien faire tomber (le contrôleur ne
+  transmettant plus au moteur de pincement, le moteur ne transmettant plus aux
+  mains déjà là). Le test qui les tue part d'une vraie géométrie de main, passe
+  par le traqueur, le filtre et les deux moteurs, **à travers le contrôleur
+  entier**, et change le réglage quand la main est suivie depuis huit images.
+  Mesuré : le même geste, 10,1 px de paume, rend `click` à sensibilité 1 et
+  `drag` à 2. **Formulation générale, et c'est la même que la QA a posée à la
+  Slice 06 : un réglage lu sur l'objet qu'on vient d'écrire ne prouve rien ; il
+  faut le lire sur ce que la main fait.**
+- **`sensitivity` divise les deux tolérances, jamais une.** N'en diviser qu'une
+  produit la paire que la Slice 04 refuse (`clickSlopPx > dragSlopPx`) : à
+  sensibilité 4 le réglage serait **refusé** au lieu d'être appliqué. Le test
+  qui l'attrape est celui qui pousse le curseur à sa borne haute par l'écran —
+  une valeur extrême légale est un cas de test, pas une curiosité.
+- **Un affichage optimiste doit savoir revenir.** Un réglage est appliqué au
+  moteur **avant** d'être enregistré, pour que la main suive sans attendre le
+  réseau. Si l'écriture échoue, laisser le moteur sur la valeur refusée ferait
+  mentir la case qu'on vient de décocher : `saveSettings` rend l'ancienne valeur
+  au moteur *et* à l'écran, dit la phrase du serveur dans le bandeau, la
+  journalise, et relâche tout dans un `finally`. Il rend `null` sur échec —
+  rendre l'ancienne valeur ferait qu'un appelant ne peut pas distinguer un refus
+  d'un succès.
+- **Réinitialiser n'éteint pas la caméra.** `enabled` est reporté tel quel :
+  remettre l'interrupteur à son défaut au passage couperait la webcam sans que
+  rien ne l'annonce. La mutation a survécu jusqu'à ce qu'un test réinitialise
+  **alors que Bare Hands est allumé** — une réinitialisation testée depuis
+  l'état par défaut ne peut rien dire sur ce qu'elle préserve.
+- **Deux réglages restent persistés et décoratifs, et l'écran le dit.**
+  `tutorialSeen` et `calibrationEnabled` traversent la route, le fichier et la
+  normalisation ; **aucun parcours ne les lit encore** (Slices 08 et 09). Un
+  encadré de l'onglet l'énonce, plutôt qu'un bouton « Calibrer… » qui ne ferait
+  rien : un contrôle inerte se lit comme une panne, une phrase se lit comme une
+  attente. Les sept autres sont vivants, et `applyToEngine` est le **seul**
+  endroit qui les porte au moteur — un réglage qui n'y trouve pas sa ligne n'a
+  pas sa place dans la table.
+- **« Réinitialiser le profil » (§9) n'a pas été implanté, et c'est délibéré :**
+  il n'existe aucun profil de calibration persisté. Le construire ici donnerait
+  deux propriétaires à la Slice 08. Le bouton porte donc le nom de ce qu'il fait
+  vraiment — « Réinitialiser les réglages » — et l'écran dit qu'aucun profil
+  n'existe encore à effacer. **La Slice 08 hérite du reste du § 9.**
+- **La lecture de diagnostic est *absente* quand elle est éteinte, pas
+  transparente.** Même règle que l'aperçu de cible à la Slice 05 : c'est la
+  seule forme d'un réglage qu'un test puisse affirmer. Et elle paraît **tout de
+  suite** quand on l'allume, en redessinant le dernier lot de jetons — attendre
+  l'image suivante ferait d'un réglage appliqué et d'un réglage sans effet la
+  même chose pendant une seconde.
+- **Le serveur borne à la lecture et refuse à l'écriture.** `load` est tolérant
+  (un fichier abîmé ne rend pas Bare Hands injoignable, comme
+  `scene_settings.stored_gate`) ; `apply` refuse, avec un `code` stable. Une
+  version de schéma **étrangère** au fichier n'est pas devinée : on n'en garde
+  rien et Bare Hands reste éteint — agir sur des réglages qu'on ne sait pas lire
+  est précisément ce que le refus codé existe pour empêcher. Une clé **absente**
+  d'une écriture garde ce qui est enregistré, si bien que `{"enabled": false}`
+  seul reste valide : c'est la raison d'être de cette route (F5), et la
+  remplacer par « absence = défaut » ferait qu'un `curl` de l'interrupteur
+  réinitialise huit réglages en silence.
+- **Les deux moitiés du schéma sont tenues par des tests qui *exécutent* l'autre
+  côté.** Un test node compare `TOOLS`, `INSTALLED_TOOLS`, les défauts et les
+  bornes du contrat à leur miroir Python ; un autre construit la charge utile
+  par `toServerPayload`, la passe au **vrai** `ControlCenter.save_barehands`,
+  relit par `get_barehands` et la repasse par `fromServerState`. Une clé
+  renommée d'un côté sort en `barehands_unknown_field`, pas trois Slices plus
+  loin.
+- **La couture de migration fait enfin quelque chose.** `schemaVersion: 1` est
+  **converti** au lieu d'être refusé (`SETTINGS_MIGRATED_VERSIONS`) : côté page
+  c'est une re-estampille, côté serveur un bloc v1 ne portait que `enabled` et
+  les huit autres clés prennent leur défaut. Tout autre nombre lève toujours
+  `barehands_schema_version_unsupported` — c'est là que la v3 s'accrochera.
+- **Les bornes des réglages sont une table, et une table se refuse au
+  chargement.** `clamp(v, lo, hi)` rend `lo` quand `lo > hi` : une borne
+  inversée épinglerait tous les réglages sur une valeur unique, sans exception
+  ni test rouge, et l'écran dessinerait des curseurs dont aucune position ne
+  change quoi que ce soit. Sixième occurrence de la classe sur cette tâche, et
+  la deuxième qui ne porte pas sur des options (après `MIN_SIZE`/`MAX_SIZE`).
+- **F5 tenu en n'y touchant pas.** La Slice 07 n'enveloppe **pas** `renderTab`
+  une troisième fois : elle écrit deux sections de plus dans le même
+  `modalContent.innerHTML`. La chaîne reste `scene_settings → barehands`, donc
+  la section de scène continue de se préfixer, et l'assertion d'ordre existante
+  (`test_scene_settings_ui`) n'a pas bougé. **Toute Slice qui voudra une
+  troisième surface dans cet onglet devrait faire pareil** : un enveloppement de
+  plus, c'est une chaîne dont l'ordre dépend de l'insertion des modules.
+- **Le double de DOM de l'onglet est construit à partir du balisage réel.** Il
+  analyse la chaîne que la page écrit vraiment et n'enregistre les contrôles que
+  pour `#modalContent` — les petits blocs que `refreshPanel` rafraîchit ne
+  doivent pas effacer la liste, ce que le vrai DOM ne fait pas non plus. C'est
+  ce double qui a trouvé le premier défaut de la Slice : `interactionView`
+  n'exposait pas `setTool`, donc l'onglet aurait levé à la première ouverture.
+  **Un double qui ne peut pas échouer comme le vrai ne prouve rien** — troisième
+  application de la leçon sur cette tâche.
+- **La palette est un groupe de boutons radio, avec le clavier qui va avec.**
+  `role="radio"` sans navigation aux flèches annonce à un lecteur d'écran une
+  promesse que la page ne tient pas. Un `tabindex` mouvant (un seul arrêt, sur
+  l'outil actif) et les quatre flèches, qui **sautent** les outils sans moteur :
+  s'y arrêter est un cul-de-sac au clavier, alors que la souris voit tout de
+  suite qu'ils sont grisés. Deux mutations ont survécu au premier passage : la
+  paire d'outils que mon test parcourait (`select` → droite) donnait la même
+  réponse avec et sans le saut, et le `tabindex` du balisage était couvert par
+  le rafraîchissement qui suit. Il a fallu la seule paire discriminante
+  (`pan` → droite, qui enjambe `highlighter`) et une assertion sur le
+  **premier** dessin — celui d'avant toute relecture de `/api/barehands`, qui
+  peut échouer.
+- **Le journal du chemin normal est testé, pas seulement celui de l'échec.**
+  Chaque écriture réussie laisse une ligne `info`, chaque échec une ligne `warn`
+  et un seul toast `bad` : « rien dans le journal » ne doit pas vouloir dire à la
+  fois « tout va bien » et « mort ».
+- **Ce que la Slice 07 n'a pas fait, à dessein** : elle ne touche ni
+  `createPinchDetector`, ni `createContactState`, ni le budget d'images de la
+  veille, ni la frontière unique pixels ↔ unités, ni aucune des constantes
+  épinglées ; elle n'ajoute aucun module de page ; le contour hérité
+  `jarvis-hand-hover` reste ce que la reprise de la Slice 05 en a fait ; et
+  `highlighter`/`draw` ne sont pas inventés — la persistance, la portée et le
+  comportement au défilement d'une couche d'annotation sont des décisions
+  produit que personne n'a prises.
+
+Fichiers : `jarvis/runtime/control_center_barehands_contracts.js`,
+`jarvis/runtime/control_center_barehands.js`,
+`jarvis/runtime/barehands_test_mode.py`, `docs/barehands-contracts.md`,
+`docs/OPERATIONS.md`, `tests/unit/test_barehands_tools_settings_js.py`
+(nouveau), `tests/unit/test_barehands_contracts_js.py`,
+`tests/unit/test_barehands_test_mode.py`,
+`tests/unit/test_barehands_lifecycle_js.py`.
+
+Tests, chunks en avant-plan : nouveau fichier **15 passed** ; baseline 1
+(barehands + scène, onze fichiers) **244 → 276 passed** ; baseline 2 (centre de
+contrôle et réglages) **393 passed**, inchangée ; `-k scene` **889 passed**,
+inchangée. Aucune régression. **Trente-cinq mutations tentées, trente-cinq
+reprises** — huit seulement après renforcement : les trois de la chaîne du
+réglage vivant (contrôleur → moteur de pincement → mains déjà suivies), la
+phrase propre d'un refus d'outil, l'aperçu atteint par le réglage et non
+seulement enregistré, la réinitialisation qui préserve l'interrupteur, et les
+deux du clavier (la flèche qui saute un outil sans moteur, et l'arrêt de
+tabulation du premier dessin). Aucune n'a été tuée en assouplissant une
+assertion.

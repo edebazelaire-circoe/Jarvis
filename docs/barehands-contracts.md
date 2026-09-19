@@ -1306,51 +1306,148 @@ Refus : `barehands_interaction_invalid`, `barehands_interaction_unknown`,
 
 `TOOL` = `pointer` | `pan` | `highlighter` | `draw` | `select`,
 `TOOL_DEFAULT = 'pointer'`, `normalizeTool(value)` retombe sur le défaut. Les
-outils disent « ce que la main veut dire » et restent distincts des réglages.
+outils disent « ce que la main veut dire » et restent distincts des réglages :
+un outil se choisit en pleine session et ne se calibre pas ; un réglage se
+persiste et dit comment Bare Hands se comporte. L'écran tient les deux dans
+**deux sections** de l'onglet Expérimental, pour que la distinction se voie
+autant qu'elle s'écrit.
 
-## 9. Réglages (§9), version 1
+**Un outil est une exigence sur la cible, et rien d'autre.** `TOOL_CAPABILITY`
+donne la capacité de chacun, et cette capacité **est** un mode de contenu du
+moteur (`CONTENT_MODE` dans `control_center_barehands.js`) — sauf
+`TOOL_CAPABILITY_CONTEXTUAL`, qui est l'absence d'exigence :
 
-`SETTINGS_SCHEMA_VERSION = 1`. `normalizeSettings(raw)` accepte l'absence et le
+| Outil | Capacité | Installé | Ce qu'il exige de la cible |
+|---|---|---|---|
+| `pointer` | `contextual` | oui | rien : le moteur décide de ce qu'il y a sous la main |
+| `pan` | `scroll` | oui | que la cible défile |
+| `select` | `select` | oui | un champ de saisie ou une étoile de la scène |
+| `highlighter` | `annotate` | **non** | — aucune couche d'annotation en V1 |
+| `draw` | `annotate` | **non** | — idem |
+
+`SERVED_CAPABILITIES` liste les capacités que le moteur sert ;
+`toolInstalled(tool)` n'est donc pas un drapeau écrit à la main mais une
+lecture de cette table, et `INSTALLED_TOOLS` s'en déduit. `describeTools()`
+rend ce que la palette dessine — nom, capacité, disponibilité et **le motif**
+d'une indisponibilité (`barehands_tool_not_installed`), parce qu'un outil grisé
+sans motif est indiscernable d'une panne. `toolCapability(value)` **refuse** un
+nom inconnu (`barehands_tool_unknown`) : ce n'est pas un schéma stocké, c'est
+une question sur une table ; `normalizeTool` garde sa tolérance documentée.
+
+**Ajouter un outil**, c'est : une entrée dans `TOOL`, une dans
+`TOOL_CAPABILITY`, une dans `TOOL_LABEL` ; puis, pour qu'il soit *installé*,
+servir sa capacité dans le moteur et l'ajouter à `SERVED_CAPABILITIES`. Un test
+de parité refuse un outil sans capacité et une capacité servie sans outil, et
+un second compare la table du contrat à son miroir serveur
+(`barehands_test_mode.TOOLS` / `INSTALLED_TOOLS`) **en exécutant** le contrat.
+
+**Ce qu'un outil ne touche pas.** Les zones de manipulation (décisions 9 à 11)
+et le corps d'une étoile `point`/`signal` (décision D3) sont des **poignées de
+cadre**, pas du contenu : un bord reste un bord quel que soit l'outil, et le
+corps d'une étoile reste sa seule prise. Les rendre à l'outil actif ferait
+disparaître le redimensionnement dès qu'on choisit la Main, et immobiliserait
+les étoiles sous tout autre outil que le pointeur — en silence.
+
+**Une combinaison outil/cible impossible se refuse et se dit.** `openCapture`
+rend `tool_target_unsupported` (la cible ne peut pas honorer la capacité) ou
+`tool_not_installed` (le moteur ne sert pas cette capacité, défense en
+profondeur : ce moteur est injectable et ne suppose pas que son appelant a
+filtré). Les deux remontent sur la ligne `jh-note` qui porte déjà les gestes
+étouffés de la Slice 04 et les prises refusées de la Slice 06, avec **leur
+propre phrase** — une main qui se pose et ne fait rien serait indiscernable
+d'une panne. L'outil actif voyage aussi sur chaque `INTERACTION` publiée
+(§ 7) : un consommateur qui reçoit un `scroll` peut savoir s'il vient du
+contenu ou de l'outil Main.
+
+## 9. Réglages (§9), version 2
+
+`SETTINGS_SCHEMA_VERSION = 2`. `normalizeSettings(raw)` accepte l'absence et le
 partiel, et rend toujours une valeur complète et bornée :
 
-| Clé | Défaut | Bornes |
-|---|---|---|
-| `enabled` | `false` | Bare Hands reste éteint par défaut |
-| `targetPreview` | `true` | décision 24 |
-| `sleepTimeoutMs` | `30000` | 5 000 – 600 000 (**pas encore actif**, voir ci-dessous) |
-| `tool` | `pointer` | `TOOLS` |
-| `assistance` | `0.5` | 0 – 1 |
-| `sensitivity` | `1` | 0,25 – 4 |
-| `tutorialSeen` | `false` | — |
-| `calibrationEnabled` | `true` | décision 27 : optionnelle |
-| `diagnostics` | `false` | §12 : enregistrement sur demande |
+| Clé | Défaut | Bornes | Ce qu'elle fait vraiment |
+|---|---|---|---|
+| `enabled` | `false` | — | allume/éteint ; éteint, la caméra est rendue |
+| `targetPreview` | `true` | — | décision 24 : éteint, l'aperçu est retiré **tout de suite** ; la cible continue d'être résolue |
+| `sleepTimeoutMs` | `30000` | 5 000 – 600 000 | décision 7 : le délai réel du retour en veille (`controller.configure`) |
+| `tool` | `pointer` | `TOOLS` installés | § 8 |
+| `assistance` | `0.5` | 0 – 1 | portée d'assistance = `targetAssistPx × 2 × assistance` |
+| `sensitivity` | `1` | 0,25 – 4 | **divise** `clickSlopPx` et `dragSlopPx` |
+| `tutorialSeen` | `false` | — | persisté ; **aucun parcours ne le lit encore** |
+| `calibrationEnabled` | `true` | — | décision 27 ; persisté ; **aucun parcours ne le lit encore** |
+| `diagnostics` | `false` | — | §12 : lecture à l'écran (`jh-diag`), présente ou **absente** de l'arbre |
 
-**`sleepTimeoutMs` est exposé mais pas encore branché.** Le contrôleur de la
-Slice 02 reçoit la constante `SLEEP_TIMEOUT_MS`, pas la valeur des réglages :
-écrire `{sleepTimeoutMs: 120000}` normalise et persiste correctement, et ne
-change rien au délai réel. **La Slice 07 possède les réglages** ; c'est elle
-qui câblera le champ. D'ici là, ne pas le supposer vivant.
+`SETTINGS_BOUNDS` tient les bornes une seule fois : l'écran dessine ses
+curseurs dessus, `normalizeSettings` borne dessus, le serveur refuse dessus.
+**Une borne inversée se refuse au chargement du module** — `clamp(v, lo, hi)`
+rend `lo` quand `lo > hi`, donc tous les réglages seraient épinglés sur une
+valeur unique, sans exception ni test rouge. Même classe que `MIN_SIZE`/
+`MAX_SIZE` à la Slice 06 : il n'y a pas de constructeur là où vit la table.
 
-**Le numéro de schéma est lu, pas seulement estampillé.** `schemaVersion`
-absent vaut « écrit par nous » ; tout autre nombre lève
-`barehands_schema_version_unsupported`, dans `normalizeSettings` comme dans
-`normalizeProfile`. Avant, des réglages en version 99 revenaient en version 1,
-champs inconnus jetés, sans que rien ne le dise — alors que l'en-tête du module
-promet qu'« un producteur et un consommateur qui ne partagent pas ce nombre ne
-partagent pas ce contrat ». Le jour où une migration devient nécessaire, c'est
-ce refus qui devient le point d'entrée : y accepter la version précédente et
-la convertir, plutôt que de la laisser passer muette.
+**Deux réglages sont persistés et décoratifs, et l'écran le dit.**
+`tutorialSeen` et `calibrationEnabled` traversent la route, le fichier et la
+normalisation ; aucun parcours de calibration (Slice 08) ni de tutoriel ne
+les lit encore. L'onglet porte un encadré qui l'énonce, plutôt qu'un bouton
+qui ne ferait rien — un contrôle inerte se lit comme une panne, une phrase se
+lit comme une attente. Tous les autres sont **vivants** :
+`applyToEngine(settings)` est le seul endroit qui les porte au moteur, et un
+réglage qui n'y trouverait pas sa ligne n'aurait pas sa place dans la table.
 
-**Le serveur ne connaît aujourd'hui que `enabled`** :
-`barehands_test_mode.apply()` refuse tout autre champ
-(`barehands_unknown_field`). `toServerPayload(settings)` est donc le seul chemin
-vers `POST /api/barehands`. Élargir la route, c'est monter
-`barehands_test_mode.SCHEMA_VERSION` et `SETTINGS_SCHEMA_VERSION` dans le même
-changement ; `GET /api/barehands` annonce la version sous `schema_version`.
+**`sensitivity` divise les deux tolérances, pas une.** Le même facteur des deux
+côtés, donc l'invariant `clickSlopPx <= dragSlopPx` (Slice 04) traverse intact
+quelle que soit la sensibilité ; n'en diviser qu'une le ferait **refuser** aux
+sensibilités hautes. Et `1` rend exactement les défauts du moteur — règle posée
+par l'assistance à la Slice 05 : quand un réglage stocké multiplie une
+constante du moteur, c'est le défaut du réglage qui doit rendre le défaut du
+moteur, sans quoi brancher le champ serait à soi seul une régression invisible.
+
+**Septième paire dangereuse : `sleepTimeoutMs <= wakeHoldMs`.** C'est la
+première que les réglages rendent atteignable. Sous `wakeHoldMs`, la seconde de
+posture en C coûte plus cher que tout le temps qu'elle achète : on réveille, et
+la veille a déjà repris la main à l'image suivante. La session **cycle** en
+détruisant à chaque tour les identités de piste et les fentes de pointeur —
+exactement la panne que la reprise de la Slice 03 a mesurée par un autre
+chemin. `options()` la refuse, donc `createController` **et**
+`controller.configure` la refusent, chacun là où le réglage arrive ; la borne
+basse du contrat (5 000 ms) est cinq fois au-dessus, ce qui protège l'écran
+mais pas un appelant, et c'est pour ça que le refus est au moteur.
+
+**Le numéro de schéma est lu, pas seulement estampillé, et c'est la couture de
+migration.** `schemaVersion` absent vaut « écrit par nous ». `1` est
+**converti** (`SETTINGS_MIGRATED_VERSIONS`) : côté page la v1 portait déjà les
+neuf clés, la conversion est donc une re-estampille ; côté serveur un bloc v1
+ne portait que `enabled`, et les huit autres clés prennent leur défaut. Tout
+autre nombre lève `barehands_schema_version_unsupported`, dans
+`normalizeSettings`, dans `fromServerState` et dans `normalizeProfile`. C'est
+ce refus qui est devenu le point d'entrée de la prochaine migration : y
+accepter la version précédente et la convertir, plutôt que de la laisser passer
+muette. Côté serveur, `load` est **tolérant** (un fichier abîmé ne rend pas
+Bare Hands injoignable) : une version étrangère n'est pas devinée, on n'en
+garde rien et Bare Hands reste éteint ; c'est `apply` qui refuse, avec son code.
+
+**La route accepte les neuf réglages depuis la Slice 07.** `toServerPayload`
+reste le **seul chemin légal** vers `POST /api/barehands` : il normalise,
+borne, renomme en `snake_case` (`SETTINGS_WIRE_KEYS`, la seule table de
+passage, testée aller-retour) et estampille `schema_version`. `fromServerState`
+fait le chemin inverse. Élargir encore la route, c'est monter
+`barehands_test_mode.SCHEMA_VERSION` **et** `SETTINGS_SCHEMA_VERSION` dans le
+même changement. Le serveur refuse, avec un `code` stable repris dans
+`X-Jarvis-Error-Code` : `barehands_bad_payload`, `barehands_unknown_field`,
+`barehands_enabled_missing`, `barehands_enabled_not_boolean`,
+`barehands_setting_not_boolean`, `barehands_setting_not_a_number`,
+`barehands_setting_out_of_range`, `barehands_tool_unknown`,
+`barehands_tool_not_installed`, `barehands_schema_version_unsupported`. Une
+clé **absente** garde ce qui est enregistré : `{"enabled": false}` seul reste
+une écriture valide, ce qui est la raison d'être de cette route.
 
 Rappel de la Slice 00 (constat F5) : `barehands_test_mode` n'est
 délibérément **pas** dans `/api/settings`. Sa paire de routes dédiée applique le
-réglage à chaud sans dépendre de la validité du reste des réglages.
+réglage à chaud sans dépendre de la validité du reste des réglages. Et l'onglet
+« Expérimental » reste une surface **partagée** : Bare Hands le crée
+(`TABS.push`) et enveloppe `renderTab` ; `control_center_scene_settings.js`,
+inséré après, enveloppe à son tour et **préfixe** sa section. La Slice 07
+n'ajoute aucun module de page et ne touche pas à cette chaîne : elle écrit deux
+sections de plus dans le même `modalContent.innerHTML`, donc l'ordre
+d'injection documenté à `control_center.py:224-226` est intact.
 
 ## 10. Profil de calibration (§10, décisions 28-32)
 
@@ -1500,8 +1597,24 @@ seconde. Couverte par `tests/unit/test_barehands_interaction_js.py`. Aucun modul
 de page n'est ajouté ; une dépendance de chargement l'est (voir « Insertion dans
 la page »). Aucune constante nouvelle dans `DEFAULTS`.
 
-Restent à venir : outils et réglages, calibration, tutoriel, diagnostics et le
-canal de commandes de la voix (Slices 07 à 12).
+La Slice 07 implante les outils et les réglages (§8, §9, décisions 24 et 25) :
+`TOOL_CAPABILITY` / `SERVED_CAPABILITIES` / `describeTools` / `SETTINGS_BOUNDS`
+/ `SETTINGS_WIRE_KEYS` / `fromServerState` dans le contrat ; `setTool` et la
+porte outil/cible dans `createInteractionEngine` ; `controller.configure` et la
+septième paire dangereuse dans le contrôleur ; la palette, les réglages et la
+lecture de diagnostic dans le bloc navigateur ; et les neuf réglages dans
+`jarvis/runtime/barehands_test_mode.py` (schéma v2, `load` tolérant, `apply`
+strict). Couverte par `tests/unit/test_barehands_tools_settings_js.py`. **Aucun
+module de page ajouté** — le constat F3 ne s'applique pas, l'ordre
+`contracts → target → barehands → scene page` est intact — et **aucune
+constante nouvelle dans `DEFAULTS`** : les deux nombres que les réglages
+déplacent (`sleepTimeoutMs`, et `clickSlopPx`/`dragSlopPx` par `sensitivity`)
+existaient déjà.
+
+Restent à venir : calibration, tutoriel, diagnostics enregistrés et le canal de
+commandes de la voix (Slices 08 à 12).
 `window.JarvisBarehands.activate()` / `.sleep()` / `.lifecycle()` sont le point
-d'entrée que la Slice 12 branchera, et `.captures()` / `.interactions()` ce que
-la Slice 10 lira.
+d'entrée que la Slice 12 branchera — avec `.settings(patch)` et `.tool(name)`,
+qui appliquent **et** enregistrent — et `.captures()` / `.interactions()` /
+`.diagnostics()` ce que la Slice 10 lira. `tutorialSeen` et
+`calibrationEnabled` attendent les Slices 08 et 09.

@@ -243,6 +243,11 @@
        (geste étouffé pendant une manipulation). Un geste qui disparaît sans
        trace est indiscernable d'un geste non reconnu. */
     noteClass:'jh-note',
+    /* Lecture de diagnostic à l'écran (architecture §12, réglage
+       `diagnostics`). Éteinte, elle n'existe **pas** dans l'arbre : c'est la
+       seule forme d'un réglage qu'un test puisse vérifier, la même que pour
+       l'aperçu de cible (décision 3). */
+    diagClass:'jh-diag',
     rootSelector:'#jarvisHands',
     tokenSelector:'#jarvisHands .jh-token',
     badgeSelector:'#jarvisHands .jh-badge',
@@ -848,51 +853,173 @@
   const TOOL_DEFAULT=TOOL.POINTER;
   const normalizeTool=value=>oneOf(value,TOOLS,TOOL_DEFAULT);
 
+  /* Ce qu'un outil **exige** de la cible. C'est la seule chose qu'un outil
+     ajoute au contrat : le reste (dessiner la palette, refuser une prise) se
+     déduit de cette table.
+
+     `contextual` n'est pas une capacité de cible : c'est l'absence d'exigence,
+     le mode par défaut, celui qui laisse le moteur décider selon ce qu'il y a
+     sous la main (décision 25 : l'outil par défaut reste contextuel). Les
+     autres valeurs sont, **littéralement**, des modes de contenu du moteur
+     (`CONTENT_MODE` dans `control_center_barehands.js`) : un outil est
+     « installé » exactement quand le moteur sert sa capacité. Faire des deux
+     un seul vocabulaire évite la table de correspondance qui aurait dérivé.
+
+     Ajouter un outil, c'est donc : une entrée dans `TOOL`, une dans
+     `TOOL_CAPABILITY`, une dans `TOOL_LABEL` ; puis, pour qu'il soit
+     **installé**, servir sa capacité dans le moteur et l'ajouter à
+     `SERVED_CAPABILITIES`. Un test de parité refuse un outil sans capacité et
+     une capacité servie sans outil. */
+  const TOOL_CAPABILITY_CONTEXTUAL='contextual';
+  const TOOL_CAPABILITY=Object.freeze({
+    [TOOL.POINTER]:TOOL_CAPABILITY_CONTEXTUAL,
+    [TOOL.PAN]:'scroll',
+    [TOOL.HIGHLIGHTER]:'annotate',
+    [TOOL.DRAW]:'annotate',
+    [TOOL.SELECT]:'select',
+  });
+  /* Les capacités que le moteur V1 sert réellement. `annotate` n'y est pas :
+     il n'existe aucune couche d'annotation, donc le surligneur et le dessin
+     sont **déclarés et refusés**, jamais acceptés en silence. */
+  const SERVED_CAPABILITIES=Object.freeze([TOOL_CAPABILITY_CONTEXTUAL,'scroll','select']);
+  const TOOL_LABEL=Object.freeze({
+    [TOOL.POINTER]:'Pointeur',[TOOL.PAN]:'Main',[TOOL.HIGHLIGHTER]:'Surligneur',
+    [TOOL.DRAW]:'Dessin',[TOOL.SELECT]:'Sélection',
+  });
+  /* Un outil **inconnu** se refuse ici : ce n'est pas un schéma stocké, c'est
+     une question sur une table. `normalizeTool`, lui, garde sa tolérance
+     documentée. */
+  const toolCapability=value=>{
+    const tool=String(value);
+    const capability=TOOL_CAPABILITY[tool];
+    if(capability===undefined)reject('barehands_tool_unknown',`Outil Bare Hands inconnu : ${tool}.`);
+    return capability;
+  };
+  const toolInstalled=value=>SERVED_CAPABILITIES.includes(toolCapability(value));
+  const INSTALLED_TOOLS=Object.freeze(TOOLS.filter(toolInstalled));
+  /* Ce que la palette dessine, sans recopier une table : nom, capacité,
+     disponibilité et **la raison** d'une indisponibilité — sans elle, un outil
+     grisé est indiscernable d'une panne. */
+  const describeTool=value=>{
+    const tool=String(value);
+    const capability=toolCapability(tool);
+    const installed=SERVED_CAPABILITIES.includes(capability);
+    return Object.freeze({
+      id:tool,label:TOOL_LABEL[tool]||tool,capability,installed,
+      reason:installed?'':'barehands_tool_not_installed',
+    });
+  };
+  const describeTools=()=>Object.freeze(TOOLS.map(describeTool));
+
   /* ------------------------------------------------------------------ 9
      Réglages (architecture §9), versionnés et tolérants au partiel.
 
-     Attention : le serveur ne connaît aujourd'hui que `enabled`
-     (`barehands_test_mode.apply` refuse tout autre champ). `toServerPayload`
-     est donc le seul chemin vers `/api/barehands` tant qu'une Slice
-     ultérieure n'a pas élargi la route. */
+     **Version 2 (Slice 07)** : la route `/api/barehands` n'acceptait que
+     `enabled` ; elle accepte maintenant les neuf réglages. `toServerPayload`
+     reste le seul chemin légal vers elle, et `SETTINGS_SCHEMA_VERSION` monte
+     avec `barehands_test_mode.SCHEMA_VERSION`, dans le même changement — un
+     producteur et un consommateur qui ne partagent pas ce nombre ne partagent
+     pas ce contrat. */
 
-  const SETTINGS_SCHEMA_VERSION=1;
+  const SETTINGS_SCHEMA_VERSION=2;
+  /* Les versions précédentes que ce module sait **convertir**. La v1 portait
+     les mêmes neuf clés côté page ; seule la route était plus étroite. La
+     conversion est donc une re-estampille, et c'est ici — pas dans un silence —
+     que la prochaine s'écrira. */
+  const SETTINGS_MIGRATED_VERSIONS=Object.freeze([1]);
   const SETTINGS_DEFAULTS=Object.freeze({
     schemaVersion:SETTINGS_SCHEMA_VERSION,
     enabled:false,            // Bare Hands reste éteint par défaut
     targetPreview:true,       // décision 24 : l'aperçu de cible est réglable
-    /* Décision 7. **Exposé, pas encore branché** : le contrôleur de la
-       Slice 02 reçoit la constante `SLEEP_TIMEOUT_MS`, pas ce champ. L'écrire
-       normalise et persiste, et ne change rien au délai réel. La Slice 07
-       possède les réglages et le câblera ; d'ici là, ne pas le supposer vivant. */
+    /* Décision 7. Branché par la Slice 07 : le contrôleur reçoit désormais
+       cette valeur (`controller.configure`) et non plus la seule constante
+       `SLEEP_TIMEOUT_MS`, qui reste le **défaut**. */
     sleepTimeoutMs:SLEEP_TIMEOUT_MS,
     tool:TOOL_DEFAULT,
     assistance:0.5,           // assistance de visée, bornée et sûre
-    sensitivity:1,
+    sensitivity:1,            // divise `clickSlopPx`/`dragSlopPx` : 1 = défauts du moteur
     tutorialSeen:false,
     calibrationEnabled:true,  // décision 27 : la calibration reste optionnelle
-    diagnostics:false,        // architecture §12 : enregistrement sur demande
+    diagnostics:false,        // architecture §12 : lecture à la demande
   });
+  /* Bornes des réglages numériques, en un seul endroit : l'écran dessine ses
+     curseurs dessus, `normalizeSettings` borne dessus, et le serveur refuse
+     dessus. Trois lectures d'une table, pas trois tables.
+
+     **Paire dangereuse, refusée au chargement du module.** `clamp(v,lo,hi)`
+     rend `lo` quand `lo > hi` : une borne inversée épinglerait *tous* les
+     réglages sur une seule valeur, silencieusement, et l'écran dessinerait des
+     curseurs dont aucune position ne change quoi que ce soit. Il n'y a pas de
+     constructeur là où vit cette table — comme `MIN_SIZE`/`MAX_SIZE` à la
+     Slice 06 —, donc le refus se pose ici, au chargement. */
+  const SETTINGS_BOUNDS=Object.freeze({
+    sleepTimeoutMs:Object.freeze({min:5000,max:600000,step:5000}),
+    assistance:Object.freeze({min:0,max:1,step:.05}),
+    sensitivity:Object.freeze({min:.25,max:4,step:.05}),
+  });
+  for(const key of Object.keys(SETTINGS_BOUNDS)){
+    const bound=SETTINGS_BOUNDS[key];
+    if(!(bound.min<bound.max))
+      throw new RangeError(`SETTINGS_BOUNDS.${key} : le minimum doit rester sous le maximum, sinon clamp() épingle tous les réglages sur une seule valeur sans rien dire`);
+    if(!(bound.min<=SETTINGS_DEFAULTS[key]&&SETTINGS_DEFAULTS[key]<=bound.max))
+      throw new RangeError(`SETTINGS_DEFAULTS.${key} tombe hors de ses propres bornes`);
+  }
+  /* Le nom de chaque réglage sur le fil et dans le fichier de réglages. La
+     route parle `snake_case` comme tout le reste du Control Center, le contrat
+     parle `camelCase` comme tout le reste de Bare Hands : une seule table fait
+     le passage, dans les deux sens, et un test la parcourt aller-retour. */
+  const SETTINGS_WIRE_KEYS=Object.freeze({
+    enabled:'enabled',targetPreview:'target_preview',sleepTimeoutMs:'sleep_timeout_ms',
+    tool:'tool',assistance:'assistance',sensitivity:'sensitivity',
+    tutorialSeen:'tutorial_seen',calibrationEnabled:'calibration_enabled',diagnostics:'diagnostics',
+  });
+  const SETTINGS_WIRE_VERSION_KEY='schema_version';
   function normalizeSettings(raw){
     const source=raw&&typeof raw==='object'?raw:{};
     /* Le numéro de schéma était estampillé en sortie et jamais lu en entrée :
        des réglages en version 99 revenaient en version 1, champs inconnus
-       jetés, sans que rien ne le dise. */
-    requireSchemaVersion(source.schemaVersion,SETTINGS_SCHEMA_VERSION,'Réglages Bare Hands');
+       jetés, sans que rien ne le dise. C'est ce refus qui est devenu, à la
+       Slice 07, la porte d'entrée de la migration : une version **connue** se
+       convertit ici, toute autre se refuse. */
+    if(!SETTINGS_MIGRATED_VERSIONS.includes(Number(source.schemaVersion)))
+      requireSchemaVersion(source.schemaVersion,SETTINGS_SCHEMA_VERSION,'Réglages Bare Hands');
     return Object.freeze({
       schemaVersion:SETTINGS_SCHEMA_VERSION,
       enabled:bool(source.enabled,SETTINGS_DEFAULTS.enabled),
       targetPreview:bool(source.targetPreview,SETTINGS_DEFAULTS.targetPreview),
-      sleepTimeoutMs:clamp(finiteOr(source.sleepTimeoutMs,SETTINGS_DEFAULTS.sleepTimeoutMs),5000,600000),
+      sleepTimeoutMs:clamp(finiteOr(source.sleepTimeoutMs,SETTINGS_DEFAULTS.sleepTimeoutMs),
+        SETTINGS_BOUNDS.sleepTimeoutMs.min,SETTINGS_BOUNDS.sleepTimeoutMs.max),
       tool:normalizeTool(source.tool),
       assistance:unit(source.assistance,SETTINGS_DEFAULTS.assistance),
-      sensitivity:clamp(finiteOr(source.sensitivity,SETTINGS_DEFAULTS.sensitivity),.25,4),
+      sensitivity:clamp(finiteOr(source.sensitivity,SETTINGS_DEFAULTS.sensitivity),
+        SETTINGS_BOUNDS.sensitivity.min,SETTINGS_BOUNDS.sensitivity.max),
       tutorialSeen:bool(source.tutorialSeen,SETTINGS_DEFAULTS.tutorialSeen),
       calibrationEnabled:bool(source.calibrationEnabled,SETTINGS_DEFAULTS.calibrationEnabled),
       diagnostics:bool(source.diagnostics,SETTINGS_DEFAULTS.diagnostics),
     });
   }
-  const toServerPayload=settings=>({enabled:normalizeSettings(settings).enabled});
+  /* Le seul chemin légal vers `POST /api/barehands` : normalisé, borné,
+     renommé, estampillé. Un appelant qui construirait la charge utile à la
+     main enverrait des valeurs que le serveur refuserait — ou, pire, un outil
+     déclaré mais sans moteur. */
+  function toServerPayload(settings){
+    const value=normalizeSettings(settings);
+    const out={[SETTINGS_WIRE_VERSION_KEY]:SETTINGS_SCHEMA_VERSION};
+    for(const key of Object.keys(SETTINGS_WIRE_KEYS))out[SETTINGS_WIRE_KEYS[key]]=value[key];
+    return out;
+  }
+  /* Et le retour : ce que `GET`/`POST /api/barehands` rendent, à plat, relu
+     dans le vocabulaire du contrat. Les champs hors table (`assets`,
+     `status`, `tools`) ne sont pas des réglages et ne passent pas par ici. */
+  function fromServerState(state){
+    const source=state&&typeof state==='object'?state:{};
+    const raw={schemaVersion:source[SETTINGS_WIRE_VERSION_KEY]};
+    for(const key of Object.keys(SETTINGS_WIRE_KEYS)){
+      const wire=source[SETTINGS_WIRE_KEYS[key]];
+      if(wire!==undefined)raw[key]=wire;
+    }
+    return normalizeSettings(raw);
+  }
 
   /* ------------------------------------------------------------------ 10
      Profil de calibration (architecture §10, décisions 28-32).
@@ -1122,7 +1249,10 @@
     INTERACTION,INTERACTIONS,CAPTURE_STATE,CAPTURE_STATES,createCapture,combineCaptures,
     createInteractionEvent,
     TOOL,TOOLS,TOOL_DEFAULT,normalizeTool,
-    SETTINGS_SCHEMA_VERSION,SETTINGS_DEFAULTS,normalizeSettings,toServerPayload,
+    TOOL_CAPABILITY,TOOL_CAPABILITY_CONTEXTUAL,TOOL_LABEL,SERVED_CAPABILITIES,
+    INSTALLED_TOOLS,toolCapability,toolInstalled,describeTool,describeTools,
+    SETTINGS_SCHEMA_VERSION,SETTINGS_MIGRATED_VERSIONS,SETTINGS_DEFAULTS,SETTINGS_BOUNDS,
+    SETTINGS_WIRE_KEYS,SETTINGS_WIRE_VERSION_KEY,normalizeSettings,toServerPayload,fromServerState,
     PROFILE_SCHEMA_VERSION,PROFILE_DEFAULTS,HAND_PROFILE_DEFAULTS,normalizeHandProfile,normalizeProfile,profileValue,
     adapters:Object.freeze({MEDIAPIPE_LANDMARK,handFrameFromMediapipe,pointersFromCoreTokens,motionFromCoreToken}),
   });

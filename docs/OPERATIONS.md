@@ -267,12 +267,18 @@ L'onglet **Expérimental** (ajouté par `jarvis/runtime/control_center_barehands
 comme l'onglet Apparence l'est par la couche de thèmes) porte un interrupteur
 **Activer Barehands (mode test)**, éteint par défaut. Il s'applique et
 s'enregistre immédiatement, sans bouton Enregistrer, sous
-`barehands_test_mode.enabled` dans `runtime/control-center-settings.json` ; il
-reste actif au prochain chargement de la page. Route dédiée, comme les
-raccourcis : `GET /api/barehands` (état + présence des assets) et
-`POST /api/barehands` (`{"enabled": true|false}`, refus HTTP 400 avec code
-stable `barehands_*`, rien d'écrit). Événements : `settings.barehands`,
-`settings.barehands.rejected`.
+`barehands_test_mode` dans `runtime/control-center-settings.json` ; il reste
+actif au prochain chargement de la page. Route dédiée, comme les raccourcis :
+`GET /api/barehands` (réglages + outils + présence des assets) et
+`POST /api/barehands` (refus HTTP 400 avec code stable `barehands_*`, rien
+d'écrit). Depuis la Slice 07 la route porte **les neuf réglages**, en
+`snake_case`, estampillés `schema_version` ; une clé absente garde ce qui est
+enregistré, si bien que `{"enabled": false}` seul reste une écriture valide.
+Événements : `settings.barehands`, `settings.barehands.rejected`.
+
+Cette route est **délibérément hors de `/api/settings`** : elle s'applique à
+chaud et ne dépend pas de la validité du reste des réglages (voix, CLI), qu'un
+enregistrement complet revaliderait.
 
 Activé, la page ouvre la webcam et suit les mains **dans le navigateur**
 (MediaPipe Hand Landmarker, WASM + modèle `hand_landmarker.task`), sans service
@@ -404,6 +410,56 @@ déroulante `<select>` ne s'ouvre pas sur un clic simulé ; le visage
 ai-visualizer (iframe) ne reçoit pas les clics ; le survol n'active pas les
 styles `:hover` natifs (un contour les remplace) ; le suivi tourne sur le fil
 principal de la page.
+
+#### Outils et Réglages (Slice 07)
+
+L'onglet porte **deux sections de plus**, et la distinction est le sujet
+(décision 25) : un **outil** dit « ce que la main veut dire » et se change en
+pleine session ; un **réglage** dit « comment Bare Hands se comporte » et se
+persiste.
+
+**Outils.** Palette de cinq. `Pointeur` reste **contextuel** — clic,
+glissement, défilement ou sélection selon ce qu'il y a sous la main, c'est-à-dire
+le comportement d'avant. `Main` impose le défilement, `Sélection` impose la
+désignation ; l'une et l'autre **refusent** une cible qui ne s'y prête pas, et
+le refus s'écrit sous la pastille (`OUTIL INAPPLICABLE · cette cible ne s'y
+prête pas`). `Surligneur` et `Dessin` sont déclarés au contrat mais n'ont
+**aucun moteur** en V1 : ils sont dessinés et désarmés, avec leur motif en
+infobulle, et le serveur les refuse (`barehands_tool_not_installed`) plutôt que
+de les accepter sans effet. Un outil ne prend jamais un bord, un coin, ni le
+corps d'une étoile `point`/`signal` : ce sont des poignées de cadre.
+
+**Réglages**, tous appliqués à chaud et enregistrés immédiatement :
+
+| Réglage | Effet |
+|---|---|
+| Aperçu de la cible | décision 24 : éteint, le cadre et la zone ne sont plus dessinés ; la cible continue d'être résolue, et le contour hérité reste le repère sous intention |
+| Assistance de visée | portée au-delà du cadre, 0 à 48 px ; le défaut (0,5) rend exactement la portée d'usine |
+| Sensibilité du geste | divise les deux tolérances de déplacement (`clickSlopPx`, `dragSlopPx`) ; le défaut rend les seuils d'usine |
+| Retour en veille | décision 7, 5 s à 600 s ; c'est enfin le délai **réel** (le contrôleur recevait la constante) |
+| Lecture de diagnostic | panneau en bas à droite : qualité, vitesse et immobilité par main. Rien n'est enregistré ; éteint, le panneau est **absent** de l'arbre |
+| Proposer la calibration | décision 27 ; **persisté, aucun parcours ne le lit encore** |
+| Tutoriel déjà vu | **persisté, aucun parcours ne le lit encore** |
+| Réinitialiser les réglages | rend les valeurs d'usine ; **ne touche pas à l'interrupteur**, donc n'éteint jamais la caméra |
+
+Les deux réglages en attente sont annoncés comme tels par un encadré de
+l'onglet, plutôt que par un bouton qui ne ferait rien : un contrôle inerte se
+lit comme une panne.
+
+**Septième paire dangereuse.** `sleepTimeoutMs` doit rester **au-dessus** de
+`wakeHoldMs` : en dessous, la seconde de posture en C coûte plus cher que le
+temps qu'elle achète, la veille reprend la main à l'image suivante et la
+session cycle — en détruisant à chaque tour les identités de piste et les
+fentes de pointeur. `options()` le refuse à la construction **et** à chaque
+`controller.configure`, comme `pressRatio < releaseRatio` et les cinq autres.
+La borne basse de l'écran (5 s) est cinq fois au-dessus : le refus protège un
+appelant, pas l'interface.
+
+**Depuis la console** : `JarvisBarehands.settings()` lit, `settings({...})`
+écrit (normalisé, appliqué, enregistré, `null` si rien n'a été enregistré) ;
+`tools()` liste la palette et `tool('pan')` en choisit un. `targetPreview()` et
+`targetAssistance()` changent le moteur **sans** persister — un essai n'a pas à
+devenir une préférence.
 
 #### Procédure de test manuel (caméra réelle)
 

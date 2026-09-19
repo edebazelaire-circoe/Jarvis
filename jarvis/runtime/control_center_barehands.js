@@ -184,6 +184,21 @@ const JarvisBarehandsCore=(function(){
     o.qualityWarmupFrames=Math.max(1,Math.round(atLeast(o.qualityWarmupFrames,1,DEFAULTS.qualityWarmupFrames)));
     o.wakeHoldMs=Math.max(0,Number(o.wakeHoldMs)||0);
     o.sleepTimeoutMs=Math.max(0,Number(o.sleepTimeoutMs)||0);
+    /* Septième invariant de paire, et le premier que les **réglages** rendent
+       atteignable : la Slice 07 laisse l'utilisateur écrire `sleepTimeoutMs`.
+       Sous `wakeHoldMs`, la seconde de posture en C coûte plus cher que tout
+       le temps qu'elle achète : on réveille, et le minuteur d'inactivité a
+       déjà expiré à l'image suivante. La session **cycle** — réveil, veille,
+       réveil — en détruisant à chaque tour les identités de piste et les
+       fentes de pointeur, exactement la panne que la reprise de la Slice 03 a
+       mesurée par un autre chemin. Rien ne lève, rien ne tombe : le réveil a
+       simplement l'air de ne pas tenir. L'égalité se refuse aussi, parce qu'un
+       réveil qui dure exactement le temps de sa propre posture n'en est pas un.
+       La borne basse du contrat (5 000 ms) est cinq fois au-dessus de
+       `wakeHoldMs` : un réglage venu de l'écran ne peut pas l'atteindre, et
+       c'est bien pour ça qu'il faut le refuser ici plutôt que d'y compter. */
+    if(!(o.sleepTimeoutMs>o.wakeHoldMs))
+      throw new RangeError('sleepTimeoutMs doit rester au-dessus de wakeHoldMs : sous cette durée, la veille reprend la main avant que la posture de réveil ait servi à quoi que ce soit, et la session cycle sans rien dire');
     o.wakeSoft=clamp(Number(o.wakeSoft)||0,0,.5);
     o.wakeScore=clamp(Number(o.wakeScore)||0,0,1);
     /* Quatrième invariant de paire : un doigt ne peut pas être « replié » plus
@@ -1153,6 +1168,13 @@ const JarvisBarehandsCore=(function(){
           progress:0,confidence:0,intent:at.intent,travelPx:at.travelPx,durationMs:at.durationMs};
       },
       reset(){contact.reset();held=null;lastProgress=null;lastX=null;lastY=null},
+      /* Réglage **à chaud** (Slice 07 : `settings.sensitivity` divise les deux
+         tolérances de déplacement). Les seuils sont relus à chaque image, donc
+         les remplacer en place suffit et ne perd aucun contact en cours — et
+         `options()` refait passer tous les invariants de paire, si bien qu'un
+         réglage dangereux se refuse là où il arrive plutôt qu'à la prochaine
+         construction. */
+      configure(next){Object.assign(o,options(next))},
     };
   }
 
@@ -1161,10 +1183,15 @@ const JarvisBarehandsCore=(function(){
      main. */
   function createPinchIntentEngine(overrides){
     const o=options(overrides);
+    /* Les surcharges **vivantes** : un réglage changé en cours de session doit
+       aussi atteindre les mains qui apparaîtront ensuite, pas seulement celles
+       qui sont déjà là. Une main neuve construite sur les surcharges d'origine
+       aurait travaillé avec des seuils que l'écran n'affiche plus. */
+    let live={...(overrides||{})};
     const hands=new Map();
     const make=()=>({at:null,channels:{
-      primary:createPinchChannel(PINCH_CHANNEL.PRIMARY,overrides),
-      secondary:createPinchChannel(PINCH_CHANNEL.SECONDARY,overrides)}});
+      primary:createPinchChannel(PINCH_CHANNEL.PRIMARY,live),
+      secondary:createPinchChannel(PINCH_CHANNEL.SECONDARY,live)}});
     return {
       /* `{hands:[{handTrackId, landmarks, x, y, palmX, palmY, anchorX,
          anchorY, stillness, quality}], now, aspect}` — tous en **pixels de la
@@ -1273,6 +1300,18 @@ const JarvisBarehandsCore=(function(){
       },
       reset(){hands.clear()},
       size(){return hands.size},
+      /* Réglage à chaud, propagé aux deux canaux de **chaque main déjà
+         suivie** en plus des surcharges vivantes : sans la boucle, la main qui
+         est sous la caméra au moment du changement garderait les anciens
+         seuils jusqu'à ce qu'elle disparaisse — le réglage aurait l'air
+         appliqué à l'écran et pas dans la main. */
+      configure(partial){
+        live={...live,...(partial||{})};
+        Object.assign(o,options(live));
+        for(const state of hands.values())
+          for(const channel of PINCH_CHANNELS)state.channels[channel].configure(live);
+        return {...live};
+      },
     };
   }
 
@@ -1671,11 +1710,22 @@ const JarvisBarehandsCore=(function(){
   /* Ce qu'une capture de corps fait du contenu, décidé sur la **sémantique de
      la cible** et non sur le pixel qu'elle occupe (décision 8). */
   const CONTENT_MODE=Object.freeze({DRAG:'drag',SCROLL:'scroll',SELECT:'select'});
+  const CONTENT_MODES=Object.freeze(Object.keys(CONTENT_MODE).map(k=>CONTENT_MODE[k]));
+  /* Ce que le mode `select` sait réellement faire, et rien de plus : la sortie
+     DOM y donne le focus et appelle `select()`. Sur un `div` il n'y aurait
+     personne pour l'entendre — l'outil Sélection doit donc **refuser** cette
+     cible-là plutôt que de rendre une main inerte. */
+  const SELECTABLE_KINDS=Object.freeze(['field','scene_object']);
 
   function createInteractionEngine(deps){
     const d=deps&&typeof deps==='object'?deps:{};
     const C=d.contracts;
-    const RULES=['combineCaptures','createCapture','createInteractionEvent','SIDE_AXIS','INTERACTION','zoneSides'];
+    const RULES=['combineCaptures','createCapture','createInteractionEvent','SIDE_AXIS','INTERACTION','zoneSides',
+      /* Slice 07. La table des outils appartient au contrat (§ 8), comme
+         `pickRegion` appartenait au contrat à la Slice 05 : une seconde table
+         écrite ici divergerait en silence de celle que la palette dessine et
+         que le serveur refuse. */
+      'TOOL_DEFAULT','TOOL_CAPABILITY_CONTEXTUAL','toolCapability'];
     if(!C||RULES.some(name=>C[name]===undefined))
       throw new RangeError('createInteractionEngine exige `contracts` (JarvisBarehandsContracts) : les décisions 12 et 14-17 appartiennent à combineCaptures, et une seconde règle ici divergerait en silence de celle que le contrat publie');
     const G=d.geometry;
@@ -1720,7 +1770,12 @@ const JarvisBarehandsCore=(function(){
         event=C.createInteractionEvent({type,handTrackId:entry.handTrackId,
           slot:slotOf(entry.handTrackId),objectId:entry.objectId,
           x:point.x,y:point.y,dx:source.dx,dy:source.dy,
-          channel:entry.channel,axes:source.axes,t:source.t});
+          /* L'outil actif voyage avec l'événement (contrat § 7) : un
+             consommateur qui reçoit un `scroll` doit pouvoir savoir s'il vient
+             d'un contenu défilant ou de l'outil Main. Le contrat **refuse** un
+             outil inconnu ici, contrairement à `normalizeTool` : un événement
+             n'est pas un schéma stocké. */
+          channel:entry.channel,tool,axes:source.axes,t:source.t});
       }catch(error){
         refuse(entry,(error&&error.code)||'barehands_interaction_invalid');
         return null;
@@ -1745,6 +1800,44 @@ const JarvisBarehandsCore=(function(){
       if(target.kind==='field')return CONTENT_MODE.SELECT;
       if(dom&&typeof dom.scrollable==='function'&&dom.scrollable(target))return CONTENT_MODE.SCROLL;
       return CONTENT_MODE.DRAG;
+    }
+
+    /* **Décision 25 : l'outil, distinct des réglages.** Un outil dit ce que la
+       main veut dire ; un réglage dit comment Bare Hands se comporte. Le
+       premier se change en pleine session et ne se calibre pas, le second se
+       persiste et se règle — deux concepts, deux surfaces.
+
+       La capacité d'un outil **est** un mode de contenu (contrat § 8), donc il
+       n'y a aucune table de correspondance à tenir ici : la question est
+       seulement « ce moteur sert-il cette capacité ? » puis « cette cible-ci
+       peut-elle l'honorer ? ». L'outil par défaut n'exige rien et laisse le
+       moteur décider de ce qu'il y a sous la main — c'est ce que « le mode par
+       défaut reste contextuel » veut dire, et c'est pour ça que `pointer` ne
+       passe par aucune des portes ci-dessous.
+
+       Ce que l'outil ne touche pas : les **zones** de manipulation (un bord
+       reste un bord, décisions 9 à 11) et le corps d'une étoile déplaçable
+       seulement (décision D3 : c'est sa seule prise, donc un cadre et non du
+       contenu — la lui prendre la rendrait immobile sous tout autre outil). */
+    let tool=C.TOOL_DEFAULT;
+    const selectable=target=>!!target&&SELECTABLE_KINDS.includes(target.kind);
+    function toolPlan(entry){
+      const capability=C.toolCapability(tool);
+      if(capability===C.TOOL_CAPABILITY_CONTEXTUAL)return {mode:contentMode(entry.target)};
+      /* Un outil déclaré sans moteur ne prend rien, nulle part : le réglage le
+         refuse déjà et la palette le grise, mais ce moteur est **injectable**
+         et ne suppose pas son appelant (même raison que `target_not_actionable`
+         à la Slice 06). Le refuser partout vaut mieux qu'une main qui se pose
+         et ne fait rien. */
+      if(!CONTENT_MODES.includes(capability))return {reason:'tool_not_installed'};
+      if(entry.capture.region!==TARGET_REGION.BODY||movesByBody(entry))
+        return {mode:contentMode(entry.target)};
+      if(capability===CONTENT_MODE.SCROLL
+        &&!(dom&&typeof dom.scrollable==='function'&&dom.scrollable(entry.target)))
+        return {reason:'tool_target_unsupported'};
+      if(capability===CONTENT_MODE.SELECT&&!selectable(entry.target))
+        return {reason:'tool_target_unsupported'};
+      return {mode:capability};
     }
 
     /* Une étoile sans zones (décision D3 : `point` et `signal`) n'a que son
@@ -1799,7 +1892,17 @@ const JarvisBarehandsCore=(function(){
       }
       const entry={key:keyOf(handTrackId,channel),handTrackId,channel,capture,target,
         objectId:capture.objectId,at:now,downAt:now,armed:false,drove:false,
-        content:{mode:contentMode(target),started:false,lastX:null,lastY:null}};
+        content:{mode:null,started:false,lastX:null,lastY:null}};
+      /* **La prise refusée par l'outil se dit.** Une main qui se pose et ne
+         produit rien est indiscernable d'une panne (RÈGLE ZÉRO) ; le motif
+         remonte sur la ligne qui porte déjà les gestes étouffés et les refus
+         de manipulation. */
+      const plan=toolPlan(entry);
+      if(plan.reason){
+        refused.push({handTrackId,channel,objectId:capture.objectId,reason:plan.reason,tool});
+        return null;
+      }
+      entry.content.mode=plan.mode;
       captures.set(entry.key,entry);
       return entry;
     }
@@ -2178,6 +2281,14 @@ const JarvisBarehandsCore=(function(){
          pendant cette image, celles qui viennent de relâcher comprises. */
       drivenHands(){return [...new Set([...drove,...[...captures.values()].filter(entry=>entry.drove).map(entry=>String(entry.handTrackId))])]},
       refusals(){return refused},
+      /* L'outil actif (décision 25). `toolCapability` **refuse** un nom
+         inconnu : c'est une question sur une table, pas un schéma stocké, et
+         l'appel arrive hors de la boucle d'images — un refus y est sûr. Les
+         captures en cours ne sont pas relues : chacune a déjà décidé ce
+         qu'elle voulait dire, et la changer en cours de geste ferait faire à
+         la main l'inverse de ce qu'elle a commencé. */
+      setTool(value){C.toolCapability(value);tool=String(value);return tool},
+      tool(){return tool},
       plans(){return [...plans].map(([objectId,plan])=>({objectId,box:{...plan.box},
         signature:plan.signature,representation:plan.representation}))},
       size(){return captures.size},
@@ -2615,6 +2726,9 @@ const JarvisBarehandsCore=(function(){
      de l'onglet Expérimental. */
   function createController(deps){
     const o=options(deps.options);
+    /* Surcharges vivantes du moteur : ce que `configure` a accumulé depuis la
+       construction. Voir `configure` plus bas. */
+    let liveOptions={...(deps.options||{})};
     const tracker=createHandTracker(deps.options);
     const wake=createWakeDetector(deps.options);
     /* Les deux moteurs de la Slice 04. Ils ne tournent qu'en ACTIVE : le budget
@@ -2876,7 +2990,33 @@ const JarvisBarehandsCore=(function(){
       emit(wasOn?'disabled':'off');
       return state;
     }
-    return {enable,activate,sleep,disable,state:()=>state,features:()=>features,
+    /* **Slice 07 : les réglages atteignent le moteur.** `sleepTimeoutMs` était
+       exposé, normalisé, persisté — et inerte, parce que le contrôleur ne
+       lisait que la constante. Le voici branché, avec la seule forme qui ne
+       mente pas : `options()` revalide **tous** les invariants de paire à
+       chaque écriture, donc un réglage dangereux se refuse là où il arrive,
+       pas à la prochaine construction. Un refus ici ne casse rien : l'appelant
+       (l'écran) l'attrape et le dit, et le moteur garde ce qu'il avait.
+
+       Ce qui n'est **pas** reconfigurable à chaud, et pourquoi : le traqueur
+       d'identité, le filtre et le guetteur de réveil tiennent un état par main
+       construit sur leurs seuils. Les rejouer en pleine session ferait sauter
+       les identités de piste — la panne que la Slice 03 a passé une reprise à
+       fermer. La calibration (Slice 08) les reprendra à froid. */
+    function configure(partial){
+      /* Les surcharges s'**accumulent**. Repartir de `deps.options` à chaque
+         appel perdrait le réglage précédent dès que deux d'entre eux ne
+         voyagent pas ensemble, et le second aurait l'air d'avoir défait le
+         premier. `options()` lève **avant** qu'on garde quoi que ce soit : un
+         réglage refusé ne laisse pas le moteur à moitié changé. */
+      const merged={...liveOptions,...(partial||{})};
+      const next=options(merged);
+      liveOptions=merged;
+      Object.assign(o,next);
+      pinches.configure(merged);
+      return {sleepTimeoutMs:o.sleepTimeoutMs,clickSlopPx:o.clickSlopPx,dragSlopPx:o.dragSlopPx};
+    }
+    return {enable,activate,sleep,disable,state:()=>state,features:()=>features,configure,
       /* Sortie sémantique du dernier instant : ce que la Slice 05 dessinera et
          ce que la Slice 06 liera à des actions. Vide hors interaction. */
       semantics:()=>semantics,tick};
@@ -2891,7 +3031,7 @@ const JarvisBarehandsCore=(function(){
     createPinchDetector,createWakeDetector,createPointerFilter,createStillness,
     createGestureEngine,createPinchChannel,createPinchIntentEngine,
     TARGET_REGION,TARGET_SIDES,targetBand,regionAt,targetRegionsOf,createTargetResolver,
-    CONTENT_MODE,createInteractionEngine,
+    CONTENT_MODE,CONTENT_MODES,SELECTABLE_KINDS,createInteractionEngine,
     createHandTrackManager,createHandTracker,classifyError,createController};
 })();
 
@@ -2969,6 +3109,22 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
   font:10px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.06em;
   color:var(--bh-feedback-zone,#ffd166);border:1px solid color-mix(in srgb,currentColor 32%,transparent);
   background:rgba(3,8,12,.62);backdrop-filter:blur(12px)}
+/* Lecture de diagnostic (reglage "diagnostics", architecture §12) : ce que le
+   suivi croit voir, par main, pendant qu'on s'en sert. Elle n'est PAS dans
+   l'arbre quand le reglage est faux — un panneau transparent et un panneau
+   absent ne se testent pas pareil. */
+#jarvisHands .jh-diag{position:fixed;right:18px;bottom:18px;padding:7px 11px;border-radius:10px;max-width:46ch;
+  font:10px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.04em;white-space:pre;
+  color:${ACCENT};border:1px solid color-mix(in srgb,currentColor 30%,transparent);
+  background:rgba(3,8,12,.66);backdrop-filter:blur(12px)}
+/* Les sections que Barehands ajoute a l'onglet Experimental. Portee par une
+   classe a nous, et non par "section + section", pour ne rien changer aux
+   autres onglets de la meme fenetre. */
+#modalContent .bh-section{border-top:1px solid var(--line);padding-top:22px;margin-top:18px}
+#modalContent .bh-section [type=range]{accent-color:var(--accent);cursor:pointer}
+#modalContent .bh-section [type=range]:disabled{cursor:default;opacity:.5}
+#modalContent .bh-section button[role=radio]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+#modalContent .bh-section button[role=radio][disabled]{opacity:.45;cursor:not-allowed}
 .jarvis-hand-hover{outline:2px solid ${ACCENT}!important;outline-offset:2px!important}
 @media(prefers-reduced-motion:reduce){#jarvisHands .jh-token,#jarvisHands .jh-wake{transition:none}#jarvisHands .jh-token.clicked::before{animation:none}}`;
 
@@ -2997,7 +3153,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
     ?true:Core.usableQuality(token.quality);
 
   function createOverlay(){
-    let root=null,badge=null,wake=null,note=null;
+    let root=null,badge=null,wake=null,note=null,diag=null;
     const tokens=new Map();
     /* Un geste étouffé porte sa raison (contrat § 4) ; l'écran la porte aussi.
        Une raison inconnue n'est pas remplacée par une phrase générique : elle
@@ -3018,8 +3174,43 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
       if(reason==='viewport_unavailable')return 'PRISE REFUSÉE · la scène ne se mesure pas';
       if(reason==='side_held_twice')return 'PRISE REFUSÉE · deux mains sur le même côté';
       if(reason==='target_not_actionable')return 'PRISE REFUSÉE · ce contrôle est inactif';
+      /* Slice 07, décision 25. Un outil qui ne s'applique pas à ce qu'on vise
+         doit **le dire** : sinon la main se pose, rien ne se passe, et
+         l'utilisateur lit une panne là où il y a une règle. Quel outil est
+         actif est déjà à l'écran, dans la palette — cette ligne dit ce qui
+         manque, pas ce qui est choisi. */
+      if(reason==='tool_target_unsupported')return 'OUTIL INAPPLICABLE · cette cible ne s’y prête pas';
+      if(reason==='tool_not_installed')return 'OUTIL INDISPONIBLE · aucun moteur derrière cet outil';
       return `GESTE IGNORÉ · ${String(reason)}`;
     };
+    /* Réglage `diagnostics` (architecture §12). Le panneau est **créé et
+       retiré**, jamais caché : un réglage appliqué et un réglage sans effet
+       doivent être distinguables, et un élément absent est la seule forme
+       qu'un test puisse affirmer (même règle que l'aperçu de cible). */
+    let diagnostics=false;
+    /* Le dernier lot dessiné. Allumer la lecture au milieu d'une session doit
+       montrer ce que l'écran montre **déjà**, pas attendre l'image suivante
+       pour dire quelque chose. */
+    let lastTokens=[];
+    const diagLine=token=>{
+      const q=Number(token.quality),s=Number(token.speedPxPerSec),still=Number(token.stillness);
+      return `#${String(token.id)}  q ${Number.isFinite(q)?q.toFixed(2):'—'}`
+        +`  v ${Number.isFinite(s)?Math.round(s):'—'} px/s`
+        +`  imm ${Number.isFinite(still)?still.toFixed(2):'—'}`
+        +`  ${String(token.state||'—')}`;
+    };
+    /* `null` = « redessine ce que tu montrais déjà » : allumer la lecture au
+       milieu d'une session doit montrer l'image en cours, pas attendre la
+       suivante pour dire quelque chose. */
+    function paintDiagnostics(list){
+      if(Array.isArray(list))lastTokens=list;
+      if(!root)return;
+      if(!diagnostics){if(diag){diag.remove();diag=null}return}
+      if(!diag){diag=document.createElement('div');diag.className=BH.DOM.diagClass;root.appendChild(diag)}
+      diag.textContent=lastTokens.length
+        ?lastTokens.map(diagLine).join('\n')
+        :'aucune main suivie';
+    }
     return {
       mount(){
         ensureStyle();
@@ -3030,11 +3221,21 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
         note=document.createElement('div');note.className=BH.DOM.noteClass;
         note.style.display='none';
         root.appendChild(wake);root.appendChild(badge);root.appendChild(note);document.body.appendChild(root);
+        paintDiagnostics(null);
       },
       unmount(){
         if(root)root.remove();
-        root=null;badge=null;wake=null;note=null;tokens.clear();
+        root=null;badge=null;wake=null;note=null;diag=null;lastTokens=[];tokens.clear();
       },
+      /* Réglage `diagnostics` : rendu **tout de suite**, comme l'aperçu de
+         cible (décision 24) — attendre l'image suivante ferait d'un réglage
+         appliqué et d'un réglage sans effet la même chose pendant une seconde. */
+      showDiagnostics(value){
+        diagnostics=value===true;
+        paintDiagnostics(null);
+        return diagnostics;
+      },
+      diagnosticsShown(){return diagnostics},
       /* Veille : ni jeton ni survol — un seul anneau de progression, visible
          seulement quand une main est vue, qui dit combien de la seconde de
          maintien est acquise (décision 5). `null` le range (retour en ACTIVE). */
@@ -3083,6 +3284,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
         if(badge)badge.textContent=!list.length?BADGE.active
           :trusted===list.length?`MAINS · ${list.length}`
           :`MAINS · ${trusted}/${list.length}`;
+        paintDiagnostics(list);
       },
     };
   }
@@ -3531,6 +3733,15 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
         if(!previewOn)preview.clear();
         return previewOn;
       },
+      /* Lisible, pas seulement écrivable : un réglage qu'on ne peut que poser
+         ne se distingue pas d'un réglage qu'on n'a pas posé. */
+      targetsShown(){return previewOn},
+      /* Décision 25. L'outil appartient au moteur de captures — c'est lui qui
+         décide ce qu'une prise de corps veut dire. La page ne fait que le lui
+         passer : une seconde mémoire d'outil ici donnerait deux réponses à la
+         même question, dont une seule serait lue. */
+      setTool(value){return engine.setTool(value)},
+      tool(){return engine.tool()},
       /* Assistance des réglages (contrat § 9), bornée par le contrat lui-même
          si la Slice 07 la fait passer par `normalizeSettings`. */
       setAssistance(value){
@@ -3594,6 +3805,11 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
   }
 
   const view={enabled:false,assets:null,busy:false,error:'',
+    /* Slice 07. Les réglages tels que le serveur les a rendus, normalisés par
+       le contrat. `enabled` en est un : il garde son champ à part parce que
+       tout le reste de ce fichier le lit déjà là, et les deux sont tenus
+       ensemble par `applyServerState`. */
+    settings:BH.normalizeSettings(),
     status:{state:'off',code:'off',title:Core.MESSAGES.off.title,message:Core.MESSAGES.off.detail,error:null}};
 
   /* Une seule instance, nommée : la surimpression et l'interaction sont des
@@ -3656,12 +3872,96 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
 
   function applyAssets(state){if(state&&state.assets)view.assets=state.assets}
 
+  /* **Slice 07 : les réglages atteignent le moteur.** Un seul endroit les y
+     porte, pour que « ce que l'écran montre » et « ce que la main fait » ne
+     puissent pas diverger. Tout ce qui est ici est **vivant** : un réglage qui
+     ne trouverait pas sa ligne dans cette fonction n'aurait pas sa place dans
+     la table des réglages.
+
+     `sensitivity` **divise** les deux tolérances de déplacement du moteur
+     (`clickSlopPx`, `dragSlopPx`, Slice 04) : plus sensible, moins de
+     mouvement toléré avant qu'un contact devienne un glissement. Les deux sont
+     divisées par le **même** facteur, donc l'invariant `clickSlopPx <=
+     dragSlopPx` traverse intact. Et 1 rend exactement les défauts du moteur —
+     règle posée par la Slice 05 : quand un réglage stocké multiplie une
+     constante du moteur, son défaut doit rendre le défaut du moteur, sans quoi
+     le seul fait de brancher le champ serait une régression invisible. */
+  function applyToEngine(settings){
+    interactionView.setTool(settings.tool);
+    interactionView.showTargets(settings.targetPreview);
+    interactionView.setAssistance(settings.assistance);
+    overlayView.showDiagnostics(settings.diagnostics);
+    controller.configure({
+      sleepTimeoutMs:settings.sleepTimeoutMs,
+      clickSlopPx:Core.DEFAULTS.clickSlopPx/settings.sensitivity,
+      dragSlopPx:Core.DEFAULTS.dragSlopPx/settings.sensitivity,
+    });
+  }
+
+  /* Ce que le serveur vient de dire, appliqué et affiché. Une version de
+     schéma étrangère **se dit** au lieu d'être devinée : le contrat lève, et
+     un réglage illisible vaut mieux lu par un humain qu'appliqué de travers. */
   function applyServerState(state){
     applyAssets(state);
+    try{
+      view.settings=BH.fromServerState(state);
+      applyToEngine(view.settings);
+      view.error='';
+    }catch(error){
+      view.error=`Réglages Bare Hands non appliqués : ${error&&error.message||error}`;
+      console.warn('[barehands] réglages',(error&&error.code)||'',error);
+      if(typeof toast==='function')
+        toast({title:'Réglages Bare Hands non appliqués',sub:String(error&&error.message||error),kind:'bad',ms:9000});
+    }
     view.enabled=!!(state&&state.enabled===true);
     if(view.enabled)controller.enable();
     else if(Core.isEngagedState(controller.state()))controller.disable();
     refreshPanel();
+  }
+
+  /* Écrire un réglage : appliqué **tout de suite** au moteur (la main suit
+     sans attendre le réseau), puis enregistré. Un échec d'écriture rend
+     l'ancienne valeur au moteur *et* à l'écran — laisser le moteur sur une
+     valeur que le serveur a refusée ferait mentir la case qu'on vient de
+     décocher. Les trois obligations de la règle zéro : vu (bandeau + toast),
+     journalisé (console, seul canal de cette page), relâché (`finally`). */
+  async function saveSettings(patch){
+    if(view.busy)return null;
+    const previous=view.settings;
+    let next=null;
+    try{
+      next=BH.normalizeSettings({...previous,...(patch||{})});
+      applyToEngine(next);
+    }catch(error){
+      view.error=`Réglage refusé : ${error&&error.message||error}`;
+      console.warn('[barehands] réglage refusé',(error&&error.code)||'',error);
+      if(typeof toast==='function')
+        toast({title:'Réglage Bare Hands refusé',sub:String(error&&error.message||error),kind:'bad',ms:7000});
+      try{applyToEngine(previous)}catch(_error){/* l'ancien a déjà été accepté */}
+      refreshPanel();
+      return null;
+    }
+    view.settings=next;view.busy=true;view.error='';
+    refreshPanel();
+    try{
+      const state=await api(API,{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify(BH.toServerPayload(next))});
+      view.busy=false;
+      applyServerState(state);
+      console.info('[barehands] réglage enregistré',Object.keys(patch||{}));
+      return view.settings;
+    }catch(error){
+      view.settings=previous;
+      try{applyToEngine(previous)}catch(_error){/* l'ancien a déjà été accepté */}
+      view.error=`Réglage non enregistré : ${error&&error.message||error}`;
+      console.warn('[barehands] écriture des réglages',error);
+      if(typeof toast==='function')
+        toast({title:'Réglage Bare Hands non enregistré',sub:String(error&&error.message||error),kind:'bad',ms:7000});
+      return null;
+    }finally{
+      view.busy=false;
+      refreshPanel();
+    }
   }
 
   /* Nom visible du cycle de vie, lu du contrat plutôt que de l'état interne.
@@ -3718,17 +4018,9 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
   }
 
   async function setEnabled(enabled){
-    view.busy=true;view.error='';
     // Éteindre n'attend pas l'écriture : la caméra est libérée tout de suite.
     if(!enabled&&Core.isEngagedState(controller.state()))controller.disable();
-    refreshPanel();
-    try{
-      const state=await api(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled})});
-      view.busy=false;applyServerState(state);
-    }catch(error){
-      view.busy=false;view.error=`Réglage non enregistré : ${error.message}`;
-      refreshPanel();
-    }
+    await saveSettings({enabled});
   }
 
   function statusHtml(){
@@ -3768,6 +4060,115 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
     </div>`;
   }
 
+  /* ------------------------------------------------------------------
+     Outils et réglages (Slice 07, décisions 24 et 25).
+
+     **Deux concepts, deux sections, et la distinction est visible** : l'outil
+     dit ce que la main veut dire *maintenant* ; les réglages disent comment
+     Bare Hands se comporte. Les fondre en une seule liste ferait du choix d'un
+     outil un réglage de plus, et du retour en veille une façon de tenir la
+     main — ce que la décision 25 refuse précisément.
+
+     Ce que chaque outil fait, en français, à côté de ce qu'il **exige** : le
+     contrat possède le nom et la capacité (§ 8), l'écran possède la phrase.
+     Une capacité sans moteur n'est pas grisée en silence — elle dit pourquoi. */
+  const TOOL_HINT=Object.freeze({
+    pointer:'Contextuel : clic, glissement, défilement ou sélection selon ce qu’il y a sous la main. C’est le comportement par défaut, et il ne force rien.',
+    pan:'Le contenu suit la main. Une cible qui ne défile pas est refusée, avec un mot à l’écran.',
+    select:'Désigner et sélectionner. Réservé aux champs de saisie et aux étoiles de la scène ; ailleurs, refusé.',
+    highlighter:'Déclaré au contrat, sans moteur en V1 : il n’existe pas encore de couche d’annotation. Le choisir est refusé plutôt qu’accepté sans effet.',
+    draw:'Déclaré au contrat, sans moteur en V1 : il n’existe pas encore de couche d’annotation. Le choisir est refusé plutôt qu’accepté sans effet.',
+  });
+  const UNAVAILABLE='Aucun moteur derrière cet outil en V1.';
+
+  function toolsHtml(){
+    const active=view.settings.tool;
+    const buttons=BH.describeTools().map(tool=>{
+      const on=tool.id===active;
+      const off=!tool.installed||view.busy;
+      /* Motif « groupe de boutons radio » : un seul arrêt de tabulation, les
+         flèches parcourent la palette. Sans le `tabindex` mouvant, un lecteur
+         d'écran annonce un groupe de radios que le clavier traverse un par un,
+         c'est-à-dire une promesse que la page ne tient pas. */
+      return `<button type="button" role="radio" class="action small${on?' primary':''}" `
+        +`data-barehands-tool="${esc(tool.id)}" aria-checked="${on?'true':'false'}" `
+        +`tabindex="${on?0:-1}" `
+        +`${off?'disabled':''} ${tool.installed?'':`title="${esc(UNAVAILABLE)}"`}>`
+        +`${esc(tool.label)}${tool.installed?'':' <span class="tag">—</span>'}</button>`;
+    }).join('');
+    return `<section class="bh-section" id="barehandsTools">
+      <h3>Outils</h3>
+      <div class="hint" style="margin-bottom:12px">Ce que la main veut dire. Distinct des réglages : un outil se choisit en pleine session et ne change pas la façon dont Bare Hands se comporte, seulement le sens de ce qu’on saisit. Les bords et les coins d’un cadre restent des poignées quel que soit l’outil.</div>
+      <div class="row" role="radiogroup" aria-label="Outil Bare Hands" style="flex-wrap:wrap;gap:8px">${buttons}</div>
+      <div class="hint" style="margin-top:10px" id="barehandsToolHint">${esc(TOOL_HINT[active]||'')}</div>
+    </section>`;
+  }
+
+  const seconds=ms=>`${Math.round(Number(ms)/1000)} s`;
+  /* La portée réelle de l'assistance, en pixels, à côté du facteur : « 0,5 »
+     ne dit rien, « 24 px » dit ce que la main gagne. Le facteur 2 est celui du
+     moteur (Slice 05), pas un nombre inventé ici. */
+  const assistPx=value=>`${Math.round(Core.DEFAULTS.targetAssistPx*2*Number(value))} px`;
+  const slopPx=value=>`${Math.round(Core.DEFAULTS.dragSlopPx/Number(value))} px`;
+  const decimal=value=>String(Number(value).toFixed(2)).replace('.',',');
+  /* Ce que dit le chiffre à côté d'un curseur. Une seule table : le dessin
+     initial et la mise à jour pendant qu'on tire la lisent toutes les deux,
+     sans quoi la valeur affichée au chargement et celle affichée en tirant
+     auraient deux formulations. */
+  const RANGE_TEXT=Object.freeze({
+    assistance:v=>`× ${decimal(v)} · ${assistPx(v)}`,
+    sensitivity:v=>`× ${decimal(v)} · glissement à ${slopPx(v)}`,
+    sleepTimeoutMs:v=>seconds(v),
+  });
+  function paintRangeValue(key,value){
+    const el=document.querySelector(`[data-barehands-value="${key}"]`);
+    if(el&&RANGE_TEXT[key])el.textContent=RANGE_TEXT[key](value);
+  }
+
+  function rangeHtml(key,label,hint){
+    const bound=BH.SETTINGS_BOUNDS[key];
+    return `<div class="field" style="margin-bottom:14px">
+      <label for="bh_${esc(key)}">${esc(label)} · <strong data-barehands-value="${esc(key)}">${esc(RANGE_TEXT[key](view.settings[key]))}</strong></label>
+      <input type="range" id="bh_${esc(key)}" data-barehands-range="${esc(key)}"
+        min="${bound.min}" max="${bound.max}" step="${bound.step}" value="${Number(view.settings[key])}"
+        ${view.busy?'disabled':''} style="width:100%;max-width:320px">
+      <div class="hint">${esc(hint)}</div></div>`;
+  }
+
+  function checkHtml(key,label,hint){
+    return `<div class="field inline"><input type="checkbox" id="bh_${esc(key)}" data-barehands-check="${esc(key)}"
+        ${view.settings[key]?'checked':''} ${view.busy?'disabled':''}>
+      <div><label for="bh_${esc(key)}">${esc(label)}</label>
+      <div class="hint">${esc(hint)}</div></div></div>`;
+  }
+
+  function settingsHtml(){
+    return `<section class="bh-section" id="barehandsSettings">
+      <h3>Réglages</h3>
+      <div class="hint" style="margin-bottom:14px">Comment Bare Hands se comporte. Enregistrés immédiatement et appliqués à chaud, sans recharger la page.</div>
+      ${checkHtml('targetPreview','Aperçu de la cible',
+        'Le cadre de l’objet visé et la zone retenue s’affichent dès qu’un pincement s’amorce. Éteint, la cible continue d’être résolue — seul le dessin disparaît, l’action reste la même.')}
+      ${rangeHtml('assistance','Assistance de visée',
+        'Portée au-delà du cadre où une petite erreur de visée compte quand même. À 0 il faut viser dans l’objet ; le défaut rend exactement la portée d’usine.')}
+      ${rangeHtml('sensitivity','Sensibilité du geste',
+        'Combien la main doit parcourir avant qu’un contact devienne un glissement plutôt qu’un clic. Plus sensible, moins de mouvement toléré dans un clic. Le défaut rend les seuils d’usine.')}
+      ${rangeHtml('sleepTimeoutMs','Retour en veille',
+        'Sans main sûre pendant ce temps, l’interaction retourne en veille. La caméra reste ouverte pour le guetteur de réveil ; seul « Éteint » la libère.')}
+      ${checkHtml('diagnostics','Lecture de diagnostic à l’écran',
+        'Qualité, vitesse et immobilité de chaque main suivie, en bas à droite pendant l’interaction. Rien n’est enregistré : c’est une lecture, pas un enregistreur.')}
+      ${checkHtml('calibrationEnabled','Proposer la calibration',
+        'Garde la calibration optionnelle et explicite : Bare Hands ne mesurera jamais votre main sans que vous l’ayez lancée.')}
+      ${checkHtml('tutorialSeen','Tutoriel déjà vu',
+        'Décochez pour que le tutoriel soit reproposé la prochaine fois qu’il existera.')}
+      <div class="notice info"><strong>Calibration et tutoriel : les parcours ne sont pas encore installés</strong>
+        <div class="hint">Les deux réglages ci-dessus sont enregistrés et attendent le parcours qui les lira. D’ici là, Bare Hands utilise ses seuils d’usine et n’ouvre aucun tutoriel — dit ici plutôt que promis par un bouton qui ne ferait rien.</div></div>
+      <div class="field inline" style="align-items:center;gap:10px;margin-top:14px">
+        <button type="button" class="action small" id="barehandsReset" ${view.busy?'disabled':''}>Réinitialiser les réglages</button>
+        <div class="hint">Rend aux sept réglages ci-dessus et à l’outil leur valeur d’usine. L’interrupteur ci-dessus n’y touche pas : réinitialiser n’éteint pas la caméra. Aucun profil de calibration n’existe encore à effacer.</div>
+      </div>
+    </section>`;
+  }
+
   function panelHtml(){
     const missing=assetsHtml();
     return `<section>
@@ -3779,6 +4180,10 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
       <div id="barehandsLifecycle">${lifecycleHtml()}</div>
       <div id="barehandsStatus">${statusHtml()}</div>
       <div id="barehandsAssets">${missing}</div>
+    </section>
+    ${toolsHtml()}
+    ${settingsHtml()}
+    <section class="bh-section">
       <h3>Gestes</h3>
       <ul class="hint" style="padding-left:18px;line-height:1.7">
         <li><strong>Réveil :</strong> en veille, formez un C avec le pouce et l'index — écartés sans se toucher, index déplié — et tenez une seconde. L'anneau se remplit autour de la main ; relâcher avant la fin annule.</li>
@@ -3800,6 +4205,100 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
     if(button)button.addEventListener('click',()=>setAwake(lifecycle()!==BH.LIFECYCLE.ACTIVE));
   }
 
+  /* Tous les contrôles de l'onglet, armés une fois à l'ouverture. Les deux
+     sections d'outils et de réglages ne sont **jamais** redessinées ensuite :
+     leurs valeurs sont remises à jour en place. Redessiner arracherait le
+     focus et le curseur qu'on est en train de tirer, exactement au moment où
+     l'on s'en sert. */
+  function bindPanel(){
+    const toggle=document.getElementById('f_barehands');
+    if(toggle)toggle.addEventListener('change',()=>setEnabled(toggle.checked));
+    for(const button of document.querySelectorAll('[data-barehands-tool]')){
+      button.addEventListener('click',()=>saveSettings({tool:button.getAttribute('data-barehands-tool')}));
+      button.addEventListener('keydown',event=>moveTool(button,event));
+    }
+    for(const box of document.querySelectorAll('[data-barehands-check]'))
+      box.addEventListener('change',()=>saveSettings({[box.getAttribute('data-barehands-check')]:box.checked}));
+    for(const range of document.querySelectorAll('[data-barehands-range]')){
+      const key=range.getAttribute('data-barehands-range');
+      /* `input` ne fait que dire le chiffre pendant qu'on tire ; `change`
+         enregistre. Écrire à chaque pixel enverrait une requête par image, et
+         le serveur répondrait des valeurs déjà périmées. */
+      range.addEventListener('input',()=>paintRangeValue(key,Number(range.value)));
+      range.addEventListener('change',()=>saveSettings({[key]:Number(range.value)}));
+    }
+    const reset=document.getElementById('barehandsReset');
+    if(reset)reset.addEventListener('click',resetSettings);
+    bindWake();
+  }
+
+  /* Les flèches parcourent la palette et **sautent** ce qui n'a pas de moteur :
+     s'arrêter sur un outil qu'on ne peut pas choisir est un cul-de-sac au
+     clavier, alors que la souris, elle, voit tout de suite qu'il est grisé. */
+  function moveTool(button,event){
+    const step=event.key==='ArrowRight'||event.key==='ArrowDown'?1
+      :event.key==='ArrowLeft'||event.key==='ArrowUp'?-1:0;
+    if(!step)return;
+    if(typeof event.preventDefault==='function')event.preventDefault();
+    const list=[...document.querySelectorAll('[data-barehands-tool]')].filter(el=>!el.disabled);
+    const at=list.indexOf(button);
+    if(at<0||list.length<2)return;
+    const next=list[(at+step+list.length)%list.length];
+    if(typeof next.focus==='function')try{next.focus()}catch(_error){/* retiré entre-temps */}
+    saveSettings({tool:next.getAttribute('data-barehands-tool')});
+  }
+
+  function refreshTools(){
+    const active=view.settings.tool;
+    for(const button of document.querySelectorAll('[data-barehands-tool]')){
+      const id=button.getAttribute('data-barehands-tool');
+      const on=id===active;
+      button.classList.toggle('primary',on);
+      button.setAttribute('aria-checked',on?'true':'false');
+      button.setAttribute('tabindex',on?'0':'-1');
+      /* Un outil sans moteur reste **dessiné** et désarmé : le retirer de la
+         palette ferait croire qu'il n'existe pas, alors qu'il est au contrat
+         et qu'il arrive. Son titre dit pourquoi il ne se choisit pas. */
+      button.disabled=!BH.toolInstalled(id)||view.busy;
+    }
+    const hint=document.getElementById('barehandsToolHint');
+    if(hint)hint.textContent=TOOL_HINT[active]||'';
+  }
+
+  function refreshSettings(){
+    for(const box of document.querySelectorAll('[data-barehands-check]')){
+      const key=box.getAttribute('data-barehands-check');
+      box.checked=!!view.settings[key];box.disabled=view.busy;
+    }
+    for(const range of document.querySelectorAll('[data-barehands-range]')){
+      const key=range.getAttribute('data-barehands-range');
+      // Le curseur qu'on tire garde sa position : c'est la main qui commande.
+      if(document.activeElement!==range)range.value=String(view.settings[key]);
+      range.disabled=view.busy;
+      paintRangeValue(key,Number(range.value));
+    }
+    const reset=document.getElementById('barehandsReset');
+    if(reset)reset.disabled=view.busy;
+  }
+
+  /* Réinitialiser, c'est rendre leur valeur d'usine aux réglages — **pas**
+     éteindre la caméra. `enabled` est reporté tel quel : un bouton qui coupe
+     la webcam sans l'annoncer n'est pas une réinitialisation, c'est une
+     extinction déguisée. Le profil de calibration n'existe pas encore : il n'y
+     a rien d'autre à effacer, et l'écran le dit plutôt que de le laisser
+     croire. */
+  async function resetSettings(){
+    const ok=typeof confirmDialog!=='function'||await confirmDialog({
+      title:'Réinitialiser les réglages Bare Hands ?',
+      lines:['Les réglages et l’outil reprennent leur valeur d’usine.',
+        'L’interrupteur ne bouge pas : la caméra reste dans l’état où elle est.'],
+      confirmLabel:'Réinitialiser'});
+    if(!ok)return;
+    const saved=await saveSettings({...BH.SETTINGS_DEFAULTS,enabled:view.settings.enabled});
+    if(saved&&typeof toast==='function')
+      toast({title:'Réglages Bare Hands réinitialisés',sub:'Valeurs d’usine restaurées.',kind:'ok',ms:3500});
+  }
+
   function refreshPanel(){
     if(typeof SET==='undefined'||!SET.open||SET.tab!==TAB_ID)return;
     const toggle=document.getElementById('f_barehands');
@@ -3810,6 +4309,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
     if(status)status.innerHTML=statusHtml();
     const assets=document.getElementById('barehandsAssets');
     if(assets)assets.innerHTML=assetsHtml();
+    refreshTools();refreshSettings();
   }
 
   function installSettingsTab(){
@@ -3823,9 +4323,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
       modalSave.style.display='none';
       modalSub.textContent='Fonctions en test : appliquées et enregistrées immédiatement.';
       modalContent.innerHTML=panelHtml();
-      const toggle=document.getElementById('f_barehands');
-      if(toggle)toggle.addEventListener('change',()=>setEnabled(toggle.checked));
-      bindWake();
+      bindPanel();
       say('','');
       // Relire la présence des assets sans redessiner l'onglet.
       api(API).then(state=>{applyAssets(state);refreshPanel()}).catch(()=>{});
@@ -3882,17 +4380,31 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
       ...BH.createTargetCandidate(target),
       handTrackId:target.handTrackId,channel:target.channel,
       locked:target.locked,feedback:target.feedback}))),
-    /* Décision 24 : l'aperçu se règle. La Slice 07 branchera le réglage
-       `targetPreview` ici ; d'ici là, c'est la console et les tests. */
     /* Slice 06. Ce que les mains **tiennent** et ce qu'elles produisent, du
        dernier instant : les captures par main, et les interactions publiées à
        travers `createInteractionEvent` (donc avec leur `pointerId` de main).
        Vide hors interaction, comme tout ce qui décrit un instant. */
     captures:()=>Object.freeze([...interactionView.captures()]),
     interactions:()=>Object.freeze(interactionView.interactions().map(event=>event)),
-    targetPreview:value=>interactionView.showTargets(value),
-    /* Contrat § 9 : `assistance`, même partage. */
+    /* **Décision 24 et contrat § 9, branchés (Slice 07).** Ces deux-là sont
+       la porte *sans persistance* : elles changent le moteur pour l'instant et
+       ne touchent pas au fichier de réglages. Ce que l'écran manipule, et ce
+       que la Slice 12 appellera, c'est `settings(patch)` — qui applique **et**
+       enregistre, donc qui survit au rechargement. Les deux existent parce
+       qu'un essai depuis la console n'a pas à devenir une préférence. */
+    targetPreview:value=>value===undefined
+      ?interactionView.targetsShown():interactionView.showTargets(value),
     targetAssistance:value=>interactionView.setAssistance(value),
+    /* Slice 07. Les réglages tels qu'ils s'appliquent ; avec un objet, ils
+       s'écrivent (normalisés, appliqués à chaud, enregistrés). Rend `null`
+       quand rien n'a été enregistré — un appelant qui ne peut pas distinguer
+       un refus d'un succès en fabriquerait un. */
+    settings:patch=>patch===undefined?view.settings:saveSettings(patch),
+    /* L'outil actif (décision 25), sans passer par l'écran : le point d'entrée
+       du canal de commandes de la voix (Slice 12), « prends le surligneur ».
+       Un outil sans moteur est **refusé** par le serveur, pas ignoré. */
+    tools:()=>BH.describeTools(),
+    tool:value=>value===undefined?view.settings.tool:saveSettings({tool:value}),
     /* Diagnostic sans caméra : poser un jeton et cliquer depuis la console.
        Les deux **instances vivantes** sont là aussi — ce sont elles que le
        contrôleur tient, donc les seules par lesquelles `targets()` et la
