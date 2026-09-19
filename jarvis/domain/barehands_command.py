@@ -53,9 +53,6 @@ OUTCOMES: tuple[str, ...] = ("applied", "duplicate", "refused")
 #: s'exécute quatre secondes après que l'utilisateur est passé à autre chose
 #: est pire qu'un refus — d'où « périmé » plutôt que « en attente ».
 COMMAND_DEADLINE_S = 3.0
-#: Une commande encore en attente est redonnée au long-poll au plus une fois
-#: par seconde : un onglet qui reprend la main la reçoit sans boucle serrée.
-COMMAND_REDELIVER_S = 1.0
 #: Attente maximale d'un long-poll de la page (au-delà, réponse vide et la page
 #: rouvre). Sous les délais d'inactivité habituels des proxys locaux.
 MAX_POLL_WAIT_S = 25.0
@@ -72,12 +69,27 @@ MAX_REASON_CHARS = 200
 COMMAND_UNKNOWN = "barehands_command_unknown"
 COMMAND_BUSY = "barehands_command_busy"
 COMMAND_DISABLED = "barehands_disabled"
+#: **Personne n'a pris la commande** : aucun long-poll ne l'a emportée. C'est
+#: la seule lecture que `deliveries == 0` autorise, et la phrase qui l'accompagne
+#: (fenêtre fermée, onglet caché, page pas chargée) n'est vraie que là.
 NO_VISIBLE_PAGE = "barehands_no_visible_page"
 UNKNOWN_COMMAND_ID = "barehands_unknown_command"
+#: **La page a pris la commande et n'a pas rendu son reçu dans l'échéance.**
+#: Deux causes vécues, indiscernables d'ici : la page bloque (l'invite
+#: d'autorisation caméra du navigateur tient `activate()` bien au-delà de 3 s),
+#: ou son reçu s'est perdu. Distinguer ce code de `NO_VISIBLE_PAGE` est un
+#: correctif de la QA de la Slice 12 : la trace portait `deliveries: 1` et le
+#: code « aucune page visible » sur la même ligne, et JARVIS envoyait
+#: l'utilisateur chercher une fenêtre qu'il avait sous les yeux.
 COMMAND_EXPIRED = "barehands_command_expired"
 COMMAND_CANCELLED = "barehands_command_cancelled"
 BAD_REQUEST = "barehands_bad_request"
 BAD_RECEIPT = "barehands_bad_receipt"
+#: Origine non-boucle-locale sur un POST du canal. Le garde d'origine du Control
+#: Center lève sinon un `HTTPForbidden` en texte brut : pas de corps JSON, pas
+#: d'en-tête de code, donc un refus que le serveur MCP ne sait pas nommer. La
+#: route de capture de scène a déjà son cas particulier pour exactement ça.
+FORBIDDEN_ORIGIN = "barehands_forbidden_origin"
 #: Côté serveur MCP : le Control Center n'a pas répondu.
 CHANNEL_UNREACHABLE = "barehands_channel_unreachable"
 
@@ -131,12 +143,21 @@ _COMMAND_ID = re.compile(r"\A[A-Za-z0-9_-]{32,64}\Z")
 
 
 class BarehandsCommandError(ValueError):
-    """Commande refusée ; `code` stable et statut HTTP de la route."""
+    """Commande refusée ; `code` stable et statut HTTP de la route.
 
-    def __init__(self, code: str, message: str, status: int = 400) -> None:
+    `command_id` est l'identifiant **court** de la commande concernée quand il
+    y en a une (échéance, abandon, arrêt). Il voyage jusqu'au corps d'erreur
+    pour que le serveur MCP puisse relier son échec à la ligne du courtier :
+    sans lui, un opérateur ne joint les deux moitiés de la trace que par
+    adjacence de dates, et deux commandes de même nom qui se suivent sont
+    indiscernables (QA de la Slice 12).
+    """
+
+    def __init__(self, code: str, message: str, status: int = 400, command_id: str | None = None) -> None:
         super().__init__(message)
         self.code = code
         self.status = status
+        self.command_id = command_id
 
 
 def check_command_id(value: object) -> str:

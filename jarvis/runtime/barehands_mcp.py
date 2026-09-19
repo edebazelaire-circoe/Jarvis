@@ -14,10 +14,19 @@ absente** : pas d'outil grisé, pas de refus à expliquer, rien à halluciner.
 
 Contrairement à `display_mcp`, ce serveur joint le **Control Center**, pas Core :
 Bare Hands n'existe nulle part dans Core (ni interrupteur, ni réglages, ni page).
-Il parle à la boucle locale, protégée par le même garde d'origine que
-`POST /api/barehands` — l'interrupteur que cette même route bascule déjà. Un
-appelant capable d'atteindre l'une atteint l'autre : ce canal n'ajoute aucune
-autorité, il en emprunte une qui existe.
+Il parle à la boucle locale. **Les deux POST** (`POST /api/barehands/commands`
+et le reçu) sont protégés par le même garde d'origine que `POST /api/barehands`,
+l'interrupteur que cette même route bascule déjà : pour eux, un appelant capable
+d'atteindre l'une atteint l'autre, et ce canal n'ajoute aucune autorité.
+
+**Le GET, lui, ne l'est pas** : `GET /api/barehands/commands` n'est pas dans
+`READ_GUARDED_ROUTES`, donc une page tierce visitée pendant que Bare Hands est
+allumé peut ouvrir le long-poll et **consommer une remise** — elle ne peut ni
+lire la réponse (pas de CORS) ni forger un reçu (le POST est gardé, et
+l'identifiant est imprévisible), mais elle peut faire disparaître une commande.
+`GET /api/scene/patches` a exactement la même forme : c'est un motif préexistant
+du dépôt, pas une invention de cette Slice, et le corriger vaut pour les deux à
+la fois. La QA de la Slice 12 l'a relevé ; l'Issue est ouverte.
 
 Catalogue V1, cinq outils, un par action (Slice 12) : `barehands_activate`,
 `barehands_deactivate`, `barehands_calibrate`, `barehands_tutorial`,
@@ -269,16 +278,18 @@ class BarehandsCommandTools:
             error = body.get("error") if isinstance(body, dict) else None
             code = header_code or (error.get("code") if isinstance(error, dict) else None) or CHANNEL_UNREACHABLE
             message = (error.get("message") if isinstance(error, dict) else None) or f"HTTP {status}"
+            command_id = error.get("id") if isinstance(error, dict) else None
             self._emit("barehands.tool_failed", f"{tool} : {code}", level="warning",
-                       data={"tool": tool, "command": command, "code": code, "status": status})
+                       data={"tool": tool, "command": command, "id": command_id, "code": code,
+                             "status": status})
             raise BarehandsToolError(code, self._explain(code, message))
         if not isinstance(body, dict) or body.get("outcome") not in _OUTCOME_SENTENCES:
             code = body.get("code") if isinstance(body, dict) else None
             reason = body.get("reason") if isinstance(body, dict) else None
             lifecycle = body.get("lifecycle") if isinstance(body, dict) else None
             self._emit("barehands.tool_failed", f"{tool} : refusé par la page ({code})", level="warning",
-                       data={"tool": tool, "command": command, "code": code, "lifecycle": lifecycle,
-                             "reason": reason})
+                       data={"tool": tool, "command": command, "id": body.get("id") if isinstance(body, dict) else None,
+                             "code": code, "lifecycle": lifecycle, "reason": reason})
             detail = f"Bare Hands est en état « {lifecycle} »." if lifecycle else ""
             if reason:
                 detail = (detail + " " + str(reason)).strip()
@@ -286,9 +297,14 @@ class BarehandsCommandTools:
                 str(code or CHANNEL_UNREACHABLE),
                 self._explain(str(code or ""), detail or "La page a refusé la commande sans la décrire."),
             )
+        # `id` : l'identifiant court du courtier, recopié tel quel. C'est la
+        # seule chose qui relie cette ligne aux `barehands.command_*` de la même
+        # commande ; sans elle, deux commandes de même nom qui se suivent ne se
+        # distinguent que par l'heure, et l'opérateur devine (QA de la Slice 12).
         self._emit("barehands.tool", f"{tool} : {body['outcome']}", data={
-            "tool": tool, "command": command, "outcome": body["outcome"], "lifecycle": body.get("lifecycle"),
-            "duration_ms": body.get("duration_ms"), "deliveries": body.get("deliveries")})
+            "tool": tool, "command": command, "id": body.get("id"), "outcome": body["outcome"],
+            "lifecycle": body.get("lifecycle"), "duration_ms": body.get("duration_ms"),
+            "deliveries": body.get("deliveries")})
         return {
             "command": command,
             "outcome": body["outcome"],

@@ -1781,3 +1781,192 @@ cinq de la QA, la suppression complète de `controller.configure` (qu'aucune des
 cinq ne couvrait), les deux voisines déjà tuées, et cinq visées sur les
 correctifs eux-mêmes, dont `Object.assign(o,next)` retiré de `configure` pour
 vérifier que la lecture du moteur n'est pas une tautologie.
+
+## Slice 12 — reprise (QA de `8267b40`) : le canal disait des causes fausses
+
+La QA a conduit la **vraie** chaîne (outils MCP réels → aiohttp réel sur TCP →
+handlers réels du Control Center → courtier réel → `RuntimeJournal` réel) sur 12
+commandes et 14 scénarios, et en a rapporté un `runtime/trace.jsonl` authentique.
+Les deux constats bloquants étaient la **même espèce**, et c'est la panne que
+cette Slice existait pour empêcher, arrivée par son propre chemin de rapport :
+**le canal nommait une cause fausse**.
+
+- **`deactivate` échouait depuis l'état par défaut de la page, et accusait la
+  caméra.** `sleep()` ne fait rien hors d'`ACTIVE` ; depuis `off` — l'état de
+  **tout onglet fraîchement ouvert** — l'état relu restait `off`, ne valait pas
+  la cible `sleep`, et devenait `barehands_lifecycle_refused`, dont la phrase
+  rendue au cerveau dit « Bare Hands est peut-être en erreur (caméra
+  indisponible ou refusée) ». Personne n'avait touché la caméra. La table des
+  points d'entrée porte donc un **ensemble** d'états de fin acceptables
+  (`targets`) au lieu d'un état unique : `deactivate` accepte `sleep` **ou**
+  `off`, et `duplicate` se décide sur « rien n'a changé » (`before === after`),
+  plus sur « l'état vaut la cible ». `error` n'est pas accepté : c'est le seul
+  état où la phrase sur la caméra dit la vérité.
+- **Et le test de la Slice canonisait le défaut, avec une cause impossible.**
+  `assert result["receipts"][0]["code"] == vocab.LIFECYCLE_REFUSED  # pas de
+  caméra sous node` — or ce test pilote `deactivate` depuis `off` et ne clique
+  jamais sur le réveil, donc **rien n'ouvre la caméra**. Le commentaire
+  expliquait l'assertion par une cause qui ne pouvait pas s'appliquer. C'est
+  pour ça que quarante mutations l'avaient manqué : *un mutant ne peut pas tuer
+  un défaut qu'un test affirme.* L'assertion **et** son commentaire sont
+  corrigés, et la table des cas porte maintenant `off` et `error` explicitement.
+- **L'échéance disait « aucune page visible » alors que la page avait pris la
+  commande.** La ligne de trace se contredisait elle-même :
+  `command_expired {"code":"barehands_no_visible_page", …, "deliveries":1}`.
+  Scénario vécu : l'utilisateur dit « active les mains », le navigateur lève son
+  invite d'autorisation caméra, `activate()` reste bloqué au-delà de trois
+  secondes, et JARVIS envoie l'utilisateur chercher une fenêtre qu'il a sous les
+  yeux, avec l'invite ouverte dedans. `deliveries` était déjà dans la charge
+  utile et était déjà le discriminant ; `COMMAND_EXPIRED` était déjà défini et
+  inatteignable. `deliveries: 0` reste `barehands_no_visible_page` ;
+  `deliveries > 0` devient `barehands_command_expired`, avec une phrase qui dit
+  que l'issue est **inconnue** — ni « c'est fait », ni « ça a échoué ».
+
+### Une commande, une page (avant que les Slices 08 et 09 ne fassent mordre)
+
+`deliver()` ne **rationnait** que la redistribution (`last_delivered +
+redeliver_s`) : il n'y avait aucun état entre « remise » et « consommée ». Avec
+une échéance de 3 s et une fenêtre d'1 s, jusqu'à **trois** remises, et la trace
+le prouvait — `XbnS6Xwu` remis à `deliveries:1` puis `deliveries:2`, les deux
+sondeurs servis. Comme `once()` → `apply()` est inconditionnel, **les deux
+onglets appelaient le point d'entrée** ; seul le premier reçu était accepté,
+donc le cerveau n'apprenait qu'un seul départ. Inoffensif pour `activate`, qui
+est idempotent ; pour `tutorial`/`calibrate`, **deux parcours démarraient** — et
+ces parcours sont la charge utile des deux Slices suivantes.
+
+La remise est donc **exclusive** : le premier long-poll qui la demande
+l'emporte, tout autre reçoit `{"command": null}` et ne la voit jamais.
+`COMMAND_REDELIVER_S`, `redeliver_s` et `delivery_due()` disparaissent avec la
+fenêtre qu'ils servaient, et la boucle de long-poll n'a plus de minuterie de
+redistribution à retrancher de son attente. Ce qui est perdu se **nomme** au
+lieu de se cacher : une remise qui n'arrive pas à destination n'est plus
+rattrapée, et le cerveau l'apprend comme `barehands_command_expired` avec
+`deliveries: 1` — ce que le correctif précédent vient précisément de rendre
+dicible. Le perdant, lui, n'existe plus : il n'y a pas de perdant, parce qu'il
+n'y a pas eu de course.
+
+`consumed` **reste testé dans `deliver()`** alors que `delivered` le couvre en
+pratique : les deux gardes répondent à deux questions différentes (« quelqu'un
+l'a-t-il emportée ? » et « a-t-elle déjà été honorée ? »), et chaque test
+neutralise l'une pour prouver que l'autre tient seule.
+
+### Le reste
+
+- **L'identifiant court traverse les deux moitiés de la trace.** Il est dans le
+  corps de la réponse 200 *et* dans le corps d'erreur des refus qui concernent
+  une commande née (`BarehandsCommandError.command_id`), si bien que
+  `barehands.tool` et `barehands.tool_failed` le portent. Avant, on ne joignait
+  la moitié MCP à la moitié courtier que par adjacence de dates, et deux
+  commandes de même nom qui se suivent étaient indiscernables.
+- **La branche 410 n'est pas morte, elle est étroite — et c'est écrit.** Le
+  reçu tardif *ordinaire* reçoit 404, parce que le `finally` de `request()`
+  retire la commande de la place à l'échéance. La branche ne se joue que dans
+  l'intervalle où l'échéance est passée et où le réveil de `wait_for` n'a pas
+  encore été ordonnancé — la garder est ce qui empêche, là, d'accepter un reçu
+  dont le cerveau n'entendra jamais parler. Le test qui la force existait déjà ;
+  le commentaire qui dit qu'elle n'est pas le chemin ordinaire manquait.
+- **Un identifiant de reçu hors forme laisse enfin une ligne.** `check_command_id`
+  levait avant le premier `_emit`, donc un identifiant grossier repartait en 404
+  avec **zéro** ligne de trace pendant qu'un identifiant bien formé mais forgé
+  en produisait une : l'attaque la plus grossière était la seule invisible. La
+  ligne porte `id: null` et `id_chars` — la valeur elle-même vient d'un inconnu
+  et n'est pas recopiée.
+- **Un événement, un `kind`.** `barehands.command_refused` couvrait trois pannes
+  de natures différentes avec trois formes de `data` ; filtrer la trace dessus
+  mêlait les refus de transport aux refus de la page. Séparés en
+  `barehands.command_disabled`, `barehands.command_busy` et
+  `barehands.command_refused`, qui ne désigne plus que « la page a dit non ».
+- **Un POST d'origine étrangère porte un code.** Le garde levait un
+  `HTTPForbidden` en texte brut : ni corps JSON ni `X-Jarvis-Error-Code`, donc
+  rien à nommer pour le serveur MCP, alors que « tout refus porte un code
+  stable » est une contrainte de cette Slice — et que la route de capture de
+  scène a son cas particulier pour exactement ça deux lignes plus haut. C'est
+  `barehands_forbidden_origin` (403), corps **et** en-tête, sur les deux POST du
+  canal, l'origine illisible comprise.
+- **La levée de chargement ne peut plus emporter la page entière.** Le module
+  refuse toujours de s'installer sans `window.JarvisBarehands` — l'intention est
+  juste : casser à l'insertion, pas trois clics plus tard. Mais le test mesurait
+  un rayon que la vraie page n'a pas : sous node chaque module est un `require()`
+  séparé, alors que **la page servie n'a qu'une seule balise `<script>`**, où
+  les cinq modules Bare Hands, la scène, la timeline, le Test Lab et ~2500
+  lignes de logique de page sont concaténés. Une levée non rattrapée y avortait
+  tout ce qui suit. Elle est rattrapée au point d'appel : le canal ne s'installe
+  pas, la console porte la cause entière, et le reste de la page vit. Le test
+  épingle les trois.
+- **Le contrat `flow_unconfirmed` est signalé là où on le lira.** Il vivait au
+  § 12 ; §§ 9 et 10 — ce qu'une implantation de calibration ouvre — n'y
+  renvoyaient pas. Chacune porte maintenant son encadré : un appel qui ne lève
+  pas n'est pas une preuve, un parcours doit **confirmer** en résolvant `true`
+  ou `{ok:true}`, et tout le reste est un refus. Les Slices 08 et 09 en
+  dépendent.
+- **La docstring sur l'autorité est corrigée.** « Un appelant capable
+  d'atteindre l'une atteint l'autre » est vrai des deux POST et **faux du GET** :
+  `GET /api/barehands/commands` n'est pas dans `READ_GUARDED_ROUTES`, donc une
+  page tierce peut ouvrir le long-poll et — la remise étant désormais exclusive
+  — **faire disparaître** une commande, sans pouvoir ni lire la réponse ni
+  forger un reçu. `GET /api/scene/patches` a la même forme : motif préexistant
+  du dépôt, pas une invention de cette Slice. Issue ouverte.
+
+### Laissé en Issue
+
+- `Issues/page-failures-never-reach-the-server.md` — les pannes de la page
+  (`command_poll_failed`, `receipt_failed`, …) sont **console-only**. Le dépôt
+  n'a aucun canal client → serveur nulle part dans la page ; en poser un pour le
+  seul canal de commandes serait la deuxième vérité que ce dépôt interdit.
+- `Issues/a-voice-command-leaves-no-trace-on-screen.md` — une commande vocale
+  appliquée est indiscernable d'un clic à l'écran, et une commande vocale
+  refusée n'y produit rien. La RÈGLE ZÉRO tient (l'utilisateur **entend** JARVIS
+  le dire), mais l'œil n'a rien. Le canal expose déjà `state().last` et
+  `stats()` : c'est un rendu, et il appartient à la Slice 09.
+- `Issues/unguarded-get-lets-a-foreign-page-burn-a-delivery.md` — le GET non
+  gardé ci-dessus, dont le correctif est commun avec la scène.
+
+### Ce que la QA a confirmé et qu'il ne fallait pas déranger
+
+L'usage unique (attaqué cinq fois, cinq refus), les trois cas de bord justes de
+l'échéance, le vocabulaire fermé, la preuve du point d'entrée partagé, la porte
+et l'autorité, l'absence de faux succès, le rejet par `confirmed()` des valeurs
+fausses et des objets muets, le test de régression de M28, la complétude et
+l'ordre de la trace et son absence de données sensibles, les assertions d'ordre
+de chargement par index. Tout est resté en place et retesté.
+
+Fichiers : `jarvis/domain/barehands_command.py`,
+`jarvis/runtime/barehands_commands.py`, `jarvis/runtime/barehands_mcp.py`,
+`jarvis/runtime/control_center.py`,
+`jarvis/runtime/control_center_barehands_commands.js`,
+`docs/barehands-contracts.md`, `docs/OPERATIONS.md`,
+`tests/unit/test_barehands_command_channel.py`,
+`tests/unit/test_barehands_commands_js.py`, trois fichiers d'`Issues/`
+(nouveaux).
+
+Tests, avant-plan : les deux fichiers de la Slice **41 passed** (baseline 38 +
+3) ; `test_control_center_*` **284 passed**, inchangée ; les neuf
+`test_barehands_*_js.py` + `test_barehands_test_mode.py` **232 passed**,
+inchangée ; les trois fichiers de scène qui touchent Bare Hands **82 passed**.
+**Dix-sept mutations tentées, dix-sept mortes, aucun survivant** — dont les deux
+sens de l'inversion sur chacun des deux correctifs bloquants (`off` retiré des
+états acceptés *et* `error` ajouté ; `took` forcé à `False` *et* à `True` *et*
+son seuil déplacé), parce qu'un correctif qui ne tombe que dans un sens n'est
+pas mesuré.
+
+Preuve de trace (chaîne réelle, reçu de R1 calculé par le **vrai** module sous
+node contre la **vraie** surface, puis posté tel quel) :
+
+```
+---- R1 « mets les mains en veille » depuis l'état par défaut (off) ----
+  +  0.310s info    barehands.command_requested  {"command": "deactivate", "id": "TN_UV2h9", "deadline_ms": 3000, "source": "brain"}
+  +  0.311s info    barehands.command_delivered  {"command": "deactivate", "id": "TN_UV2h9", "deliveries": 1, "remaining_ms": 2999}
+  +  0.312s info    barehands.command_applied    {"command": "deactivate", "id": "TN_UV2h9", "outcome": "duplicate", "lifecycle": "off", "duration_ms": 2, "deliveries": 1}
+  +  0.313s info    barehands.tool               {"tool": "barehands_deactivate", "command": "deactivate", "id": "TN_UV2h9", "outcome": "duplicate", "lifecycle": "off", "duration_ms": 2, "deliveries": 1}
+        → le cerveau lit : « Rien à faire : Bare Hands était déjà dans cet état. »
+
+---- R2 la page PREND la commande puis se tait ----
+  +  0.372s info    barehands.command_delivered  {"command": "tutorial", "id": "Q6yLEOAI", "deliveries": 1, "remaining_ms": 2999}
+  +  3.383s warning barehands.command_expired    {"code": "barehands_command_expired", "command": "tutorial", "id": "Q6yLEOAI", "deliveries": 1, "waited_ms": 3012}
+---- R2b personne n'écoute vraiment ----
+  +  6.395s warning barehands.command_expired    {"code": "barehands_no_visible_page", "command": "activate", "id": "xmb7Ithp", "deliveries": 0, "waited_ms": 3008}
+
+---- R3 deux onglets ----
+  +  6.462s info    barehands.command_delivered  {"command": "tutorial", "id": "lGZxbJ2F", "deliveries": 1, "remaining_ms": 2999}
+        → une seule ligne de remise ; l'onglet B n'a jamais vu la commande.
+```

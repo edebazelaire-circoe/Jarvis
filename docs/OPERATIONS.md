@@ -415,13 +415,19 @@ l'affichage, c'est effectif au prochain **(re)démarrage du cerveau**. Le canal
 côté page ne s'ouvre que pendant que l'interrupteur est vrai et que l'onglet est
 **visible** ; il suit `/api/status` (`barehands.enabled`), sans minuterie de
 plus. Fenêtre fermée ou onglet caché : `barehands_no_visible_page` après 3 s —
-JARVIS le dit, il ne prétend pas avoir activé.
+JARVIS le dit, il ne prétend pas avoir activé. Page **visible mais muette**
+(l'invite d'autorisation caméra du navigateur tient `activate()` au-delà de 3 s,
+par exemple) : c'est `barehands_command_expired`, et JARVIS dit que l'issue est
+inconnue au lieu d'envoyer chercher une fenêtre qui est là. La ligne de trace se
+lit sur `deliveries` : `0`, personne ne l'a prise ; `1`, une page l'a prise.
 
 Refus HTTP : code stable dans le corps JSON **et** dans `X-Jarvis-Error-Code`.
 Événements de trace : `barehands.command_requested`, `…_delivered`,
-`…_applied`, `…_refused`, `…_expired`, `…_abandoned`, `barehands.receipt_refused`,
-`barehands.tool`, `barehands.tool_failed`. Contrat complet :
-`docs/barehands-contracts.md` § 12.
+`…_applied`, `…_expired`, `…_abandoned`, `…_disabled` (interrupteur éteint),
+`…_busy` (une commande est déjà en vol), `…_refused` (**la page** a dit non),
+`barehands.receipt_refused`, `barehands.tool`, `barehands.tool_failed`. Toutes
+les lignes d'une même commande portent le même `data.id` court, des deux côtés
+du saut MCP. Contrat complet : `docs/barehands-contracts.md` § 12.
 
 Assets : non versionnés, ce sont ceux que `scripts/bootstrap_third_party.py` a
 vendorisés sous `third_party/barehands/vendor` (MediaPipe Tasks Vision 0.10.14,

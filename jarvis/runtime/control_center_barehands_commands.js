@@ -31,8 +31,12 @@
    Insertion : `control_center.py` / `control_center.html`, APRÈS
    `control_center_barehands.js`, qui pose `window.JarvisBarehands`. Le bloc
    navigateur le lit au chargement et **refuse de s'installer** sans lui : servi
-   trop tôt, la page casse à l'insertion, pas à l'usage. Un test de page vérifie
-   l'ordre (constat F3 de la Slice 00). */
+   trop tôt, le canal ne s'installe pas et la console dit pourquoi, à
+   l'insertion et non trois clics plus tard. Le refus est **rattrapé ici**
+   (`installJarvisBarehandsCommands`) parce que la page servie concatène tous
+   ses modules dans une seule balise `<script>` : une levée qui remonterait
+   emporterait la scène, la timeline et le Test Lab avec elle. Un test de page
+   vérifie l'ordre (constat F3 de la Slice 00). */
 (function(root){
   'use strict';
 
@@ -41,11 +45,22 @@
      tient que les noms : un test de parité compare les deux tables, si bien
      qu'une commande ajoutée d'un côté seulement tombe tout de suite.
 
-     `target` : l'état que le cycle de vie doit montrer **après** l'appel pour
-     que la commande compte comme appliquée. Les parcours (Slices 08 et 09) n'en
-     ont pas : leur critère de succès est une décision produit que personne n'a
-     encore prise, et inventer « ouvert » ici serait exactement le faux succès
-     que cette Slice existe pour empêcher — d'où `confirmed()` plus bas.
+     `targets` : les états que le cycle de vie a le droit de montrer **après**
+     l'appel. C'est un **ensemble**, pas un état unique, et la QA de la Slice 12
+     a payé la différence : `sleep()` ne fait rien hors d'`ACTIVE`, donc
+     `deactivate` depuis `off` — l'état de **tout onglet fraîchement ouvert** —
+     laissait `off`, ce qui ne valait pas `sleep` et devenait un refus
+     `barehands_lifecycle_refused`, dont la phrase accuse la caméra. Personne
+     n'avait touché la caméra : la main ne tournait simplement pas. « Ne pilote
+     plus » est vrai en `sleep` **et** en `off` ; les deux sont donc des fins
+     acceptables, et rien à faire se dit `duplicate`. `error` n'en est pas une :
+     là, quelque chose est cassé, et c'est le seul cas où la phrase sur la
+     caméra dit la vérité.
+
+     Les parcours (Slices 08 et 09) n'ont pas de `targets` : leur critère de
+     succès est une décision produit que personne n'a encore prise, et inventer
+     « ouvert » ici serait exactement le faux succès que cette Slice existe pour
+     empêcher — d'où `confirmed()` plus bas.
 
      **Quatre portes de `JarvisBarehands` sont délibérément absentes de cette
      table**, et leur absence est une décision, pas un oubli :
@@ -59,11 +74,11 @@
      relisant l'outil effectivement appliqué, soit derrière une porte qui
      refuse un nom inconnu. */
   const ENTRY_POINTS=Object.freeze({
-    activate:Object.freeze({method:'activate',target:'active'}),
-    deactivate:Object.freeze({method:'sleep',target:'sleep'}),
-    calibrate:Object.freeze({method:'calibrate',target:null}),
-    tutorial:Object.freeze({method:'tutorial',target:null}),
-    exit_overlay:Object.freeze({method:'exitOverlay',target:null}),
+    activate:Object.freeze({method:'activate',targets:Object.freeze(['active'])}),
+    deactivate:Object.freeze({method:'sleep',targets:Object.freeze(['sleep','off'])}),
+    calibrate:Object.freeze({method:'calibrate',targets:null}),
+    tutorial:Object.freeze({method:'tutorial',targets:null}),
+    exit_overlay:Object.freeze({method:'exitOverlay',targets:null}),
   });
   const COMMANDS=Object.freeze(Object.keys(ENTRY_POINTS));
 
@@ -168,7 +183,7 @@
         return {outcome:'refused',lifecycle:lifecycleOf(),code:LIFECYCLE_REFUSED,reason:messageOf(error)};
       }
       const after=lifecycleOf();
-      if(!spec.target){
+      if(!spec.targets){
         /* Pas d'état observable à relire : la seule preuve possible est une
            confirmation explicite du parcours. Sans elle, refus. */
         if(!confirmed(answer))
@@ -176,10 +191,13 @@
             reason:`JarvisBarehands.${spec.method} n'a pas confirmé le démarrage`};
         return {outcome:'applied',lifecycle:after,code:null,reason:null};
       }
-      if(after!==spec.target)
+      if(spec.targets.indexOf(after)<0)
         return {outcome:'refused',lifecycle:after,code:LIFECYCLE_REFUSED,
-          reason:`état ${after} au lieu de ${spec.target}`};
-      return {outcome:before===spec.target?'duplicate':'applied',lifecycle:after,code:null,reason:null};
+          reason:`état ${after} au lieu de ${spec.targets.join(' ou ')}`};
+      /* L'état est acceptable. Reste à dire si quelque chose a **changé** :
+         c'est la seule différence entre « c'est fait » et « rien à faire », et
+         l'utilisateur n'entend pas la même phrase. */
+      return {outcome:before===after?'duplicate':'applied',lifecycle:after,code:null,reason:null};
     }
 
     async function sendReceipt(id,receipt){
@@ -301,7 +319,7 @@
 
   if(typeof window==='undefined'||typeof document==='undefined')return;
 
-  (function installJarvisBarehandsCommands(){
+  function installJarvisBarehandsCommands(){
     if(!window.JarvisBarehands)
       throw new Error('JarvisBarehandsCommands : control_center_barehands.js doit être inséré avant ce module');
 
@@ -348,5 +366,21 @@
       statusLost(){channel.setEnabled(false)},
       state:channel.state,stats:channel.stats,
     });
-  })();
+  }
+
+  /* **La levée reste, mais elle ne sort pas d'ici.** La page servie n'a qu'**une
+     seule** balise `<script>` : les cinq modules Bare Hands, la scène, la
+     timeline, le Test Lab et ~2500 lignes de logique de page y sont concaténés.
+     Une levée non rattrapée au chargement d'un module y avorte donc tout ce qui
+     suit — la QA de la Slice 12 l'a relevé — alors que sous node, où chaque
+     module est un `require()` séparé, elle ne tuait que le module. L'intention
+     (casser à l'insertion, pas trois clics plus tard) est juste ; son rayon ne
+     l'était pas. Rattrapée ici, la panne garde sa portée : ce canal ne
+     s'installe pas, le reste de la page vit, et la console porte la cause. */
+  try{
+    installJarvisBarehandsCommands();
+  }catch(error){
+    console.error('[barehands] barehands.command_channel_not_installed '
+      +JSON.stringify({error:String(error&&error.message||error)}));
+  }
 })(typeof window!=='undefined'?window:globalThis);

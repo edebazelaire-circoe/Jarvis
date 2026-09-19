@@ -13,6 +13,9 @@ Ce que ce fichier épingle :
   donc le vrai `activate()` finit en `error`, et le reçu dit `refused` /
   `barehands_lifecycle_refused` / `error`. C'est un refus honnête de bout en
   bout, pas une mise en scène ;
+- **et « ne pilote plus » est vrai en `off` comme en `sleep`** : `deactivate`
+  depuis l'état de tout onglet fraîchement ouvert est `duplicate`, pas un refus
+  qui accuserait une caméra que personne n'a touchée ;
 - **ce qu'un cerveau voit aujourd'hui** pour la calibration, le tutoriel et la
   sortie de panneau : leurs points d'entrée sont **absents de la vraie
   surface**, ce que le test lit sur l'objet réel, donc `barehands_flow_absent` ;
@@ -282,7 +285,12 @@ def test_an_already_reached_state_is_a_duplicate_not_a_change(tmp_path):
       const refused=await drive(makeSurface('sleep',{activate:'error'}),'activate');
       const slept=await drive(makeSurface('active',{sleep:'sleep'}),'deactivate');
       const sleptTwice=await drive(makeSurface('sleep',{sleep:'sleep'}),'deactivate');
-      out({already,changed,refused,slept,sleptTwice});
+      /* Les deux états que `sleep()` ne bouge pas, parce qu'elle ne fait rien
+         hors d'ACTIVE : `off` (rien ne tournait) et `error` (quelque chose est
+         cassé). Le premier n'a rien à faire, le second a une cause à dire. */
+      const fromOff=await drive(makeSurface('off',{}),'deactivate');
+      const fromError=await drive(makeSurface('error',{}),'deactivate');
+      out({already,changed,refused,slept,sleptTwice,fromOff,fromError});
     """, "duplicate")
     assert result["already"] == {"outcome": "duplicate", "lifecycle": "active", "code": None, "reason": None}
     assert result["changed"] == {"outcome": "applied", "lifecycle": "active", "code": None, "reason": None}
@@ -291,6 +299,18 @@ def test_an_already_reached_state_is_a_duplicate_not_a_change(tmp_path):
     assert result["refused"]["reason"] == "état error au lieu de active"
     assert result["slept"]["outcome"] == "applied" and result["slept"]["lifecycle"] == "sleep"
     assert result["sleptTwice"]["outcome"] == "duplicate"
+    # **Le défaut que la QA de la Slice 12 a trouvé.** « Mets les mains en
+    # veille » depuis `off` — l'état de tout onglet fraîchement ouvert — rendait
+    # un refus `barehands_lifecycle_refused`, dont la phrase rendue au cerveau
+    # dit « Bare Hands est peut-être en erreur (caméra indisponible ou
+    # refusée) ». Personne n'avait touché la caméra : la main ne tournait pas.
+    # « Ne pilote plus » est vrai en `off` comme en `sleep` ; c'est `duplicate`.
+    assert result["fromOff"] == {"outcome": "duplicate", "lifecycle": "off", "code": None, "reason": None}
+    # `error` n'est pas une fin acceptable : là, quelque chose **est** cassé, et
+    # c'est le seul état où la phrase sur la caméra dit la vérité.
+    assert result["fromError"]["outcome"] == "refused"
+    assert result["fromError"]["code"] == vocab.LIFECYCLE_REFUSED
+    assert result["fromError"]["reason"] == "état error au lieu de sleep ou off"
 
 
 def test_the_channel_never_touches_the_switch_the_settings_or_the_tool(tmp_path):
@@ -356,23 +376,37 @@ def test_nothing_runs_until_the_switch_is_true_and_the_tab_is_visible(tmp_path):
 
 
 def test_the_module_refuses_to_install_without_the_surface_it_drives(tmp_path):
-    """Constat F3, rendu exécutable : l'ordre d'insertion doit casser **à
-    l'insertion**, pas trois clics plus tard. Sans cette levée, un module servi
+    """Constat F3, rendu exécutable : l'ordre d'insertion doit se voir **à
+    l'insertion**, pas trois clics plus tard. Sans ce refus, un module servi
     trop tôt s'installerait, ne trouverait jamais de surface, et Bare Hands
-    serait allumé avec un canal muet — une panne que rien à l'écran n'annonce."""
+    serait allumé avec un canal muet — une panne que rien n'annonce.
+
+    Mais le refus ne doit pas **sortir du module**. La page servie n'a qu'une
+    seule balise `<script>`, où les cinq modules Bare Hands, la scène, la
+    timeline, le Test Lab et ~2500 lignes de logique de page sont concaténés :
+    une levée non rattrapée y avorte tout ce qui suit. Sous node, où chaque
+    module est un `require()` séparé, elle n'en tuait qu'un — le test mesurait
+    donc un rayon que la vraie page n'a pas (QA de la Slice 12). Le module se
+    charge, le canal ne s'installe pas, et la console porte la cause."""
 
     result = run_node(tmp_path, """
       global.window={};global.document={addEventListener(){},visibilityState:'visible'};
-      let refused=null;
-      try{require(COMMANDS_PATH)}catch(error){refused=String(error&&error.message||error)}
+      const errors=[];const realError=console.error;console.error=m=>errors.push(String(m));
+      let threw=null;
+      try{require(COMMANDS_PATH)}catch(error){threw=String(error&&error.message||error)}
+      console.error=realError;
       /* Le bloc pur, lui, s'est chargé : c'est ce qui permet à node de le
-         tester sans page, et à la levée de ne viser que l'installation. */
-      out({refused,pureLoaded:typeof window.JarvisBarehandsCommands==='object',
+         tester sans page, et au refus de ne viser que l'installation. */
+      out({threw,errors,pureLoaded:typeof window.JarvisBarehandsCommands==='object',
         channelInstalled:typeof window.JarvisBarehandsCommandChannel!=='undefined'});
     """, "install")
-    assert "control_center_barehands.js doit être inséré avant ce module" in (result["refused"] or "")
+    assert result["threw"] is None, "la levée ne sort pas du module : elle emporterait toute la page"
+    assert result["channelInstalled"] is False, "et le canal ne s'installe pas quand même"
     assert result["pureLoaded"] is True
-    assert result["channelInstalled"] is False
+    # La cause est dite, en entier, là où la page écrit déjà ses pannes.
+    assert len(result["errors"]) == 1
+    assert "barehands.command_channel_not_installed" in result["errors"][0]
+    assert "control_center_barehands.js doit être inséré avant ce module" in result["errors"][0]
 
 
 def test_closing_and_reopening_the_gate_while_parked_leaves_a_live_channel(tmp_path):
@@ -410,8 +444,17 @@ def test_closing_and_reopening_the_gate_while_parked_leaves_a_live_channel(tmp_p
     assert result["state"]["enabled"] is True and result["state"]["running"] is True
     # Le canal a bien repris et répondu : une seule boucle, toujours vivante.
     assert len(result["receipts"]) == 1
-    assert result["receipts"][0]["code"] == vocab.LIFECYCLE_REFUSED  # pas de caméra sous node
-    assert result["state"]["last"] == "deactivate:refused"
+    # `deactivate` depuis `off` — l'état de cet onglet, et de tout onglet
+    # fraîchement ouvert. La main ne pilotait rien : il n'y a **rien à faire**,
+    # et c'est `duplicate`. Cette assertion disait `barehands_lifecycle_refused`
+    # et l'expliquait par « pas de caméra sous node » : le commentaire décrivait
+    # une cause qui ne peut pas s'appliquer, puisque le test ne clique jamais sur
+    # le réveil et que rien n'ouvre la caméra. Le défaut réel était que `sleep()`
+    # ne fait rien hors d'`ACTIVE`, donc l'état restait `off`, ne valait pas
+    # `sleep`, et devenait un refus qui accusait la caméra à la voix.
+    assert result["receipts"][0] == {"outcome": "duplicate", "lifecycle": "off",
+                                     "code": None, "reason": None}
+    assert result["state"]["last"] == "deactivate:duplicate"
 
 
 def test_the_page_table_and_the_python_vocabulary_name_the_same_commands(tmp_path):

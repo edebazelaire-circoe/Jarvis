@@ -11,10 +11,14 @@ Ce que ce fichier épingle :
 
 - **le vocabulaire est fermé** et chaque refus porte un code stable, dans le
   corps *et* dans `X-Jarvis-Error-Code` ;
-- **une commande expire** : sans page visible, le cerveau reçoit
-  `barehands_no_visible_page` après l'échéance, jamais un 200 optimiste, et un
-  reçu arrivé trop tard est refusé plutôt qu'appliqué ;
-- **l'identifiant est à usage unique** : le second reçu est refusé ;
+- **une commande expire, et l'échéance dit *pourquoi*** : personne ne l'a prise
+  (`deliveries: 0`) donne `barehands_no_visible_page` ; une page l'a prise et
+  s'est tue (`deliveries: 1`) donne `barehands_command_expired` — jamais un 200
+  optimiste, et un reçu arrivé trop tard est refusé plutôt qu'appliqué ;
+- **une commande, une page** : la remise est exclusive, donc deux onglets ne
+  lancent jamais deux fois le même parcours ;
+- **l'identifiant est à usage unique** : le second reçu est refusé, et un
+  identifiant hors forme laisse la même trace qu'un identifiant forgé ;
 - **la porte** : Bare Hands éteint, la route refuse, `/api/status` le dit, et
   l'agent ne reçoit **ni** serveur MCP **ni** consigne ;
 - **aucun faux succès** : un refus de la page devient une erreur d'outil, pas
@@ -214,7 +218,6 @@ def test_the_deadline_is_bounded_and_shorter_than_a_scene_capture():
     from jarvis.domain.scene_capture import CAPTURE_DEADLINE_S
 
     assert 0 < vocab.COMMAND_DEADLINE_S < CAPTURE_DEADLINE_S
-    assert vocab.COMMAND_REDELIVER_S < vocab.COMMAND_DEADLINE_S
     assert vocab.COMMAND_DEADLINE_S < vocab.MAX_POLL_WAIT_S
 
 
@@ -234,7 +237,7 @@ async def test_a_command_with_nobody_listening_expires_instead_of_succeeding(tmp
         await broker.request("activate")
     assert caught.value.code == vocab.NO_VISIBLE_PAGE and caught.value.status == 504
     # La place est rendue : une commande échue n'occupe pas le canal.
-    assert broker.delivery_due() is None
+    assert broker.deliver() is None
     lines = {line["kind"]: line for line in read_jsonl_tail(journal.trace_path, limit=20)}
     assert set(lines) == {"barehands.command_requested", "barehands.command_expired"}
     expired = lines["barehands.command_expired"]
@@ -244,25 +247,103 @@ async def test_a_command_with_nobody_listening_expires_instead_of_succeeding(tmp
     assert expired["data"]["waited_ms"] >= 0
 
 
-async def test_a_pending_command_is_redelivered_at_most_once_per_window(tmp_path):
-    """Deux fenêtres ouvertes ne se disputent pas la commande en boucle serrée :
-    la redistribution est bornée, exactement comme celle d'une capture."""
+async def test_one_command_reaches_exactly_one_page_and_never_a_second(tmp_path):
+    """**Une commande, une page.** Deux onglets ouverts sondent la même commande :
+    le premier l'emporte, le second ne la voit jamais.
+
+    Ce n'est pas une limite de cadence, et la nuance a été payée. La version
+    précédente ne faisait que rationner la redistribution — une par seconde,
+    sous une échéance de trois — si bien qu'une commande partait jusqu'à
+    **trois** fois, que chaque onglet servi appelait le point d'entrée, et que
+    seul le premier reçu était accepté : le cerveau n'apprenait qu'un seul
+    départ pendant que deux tutoriels s'ouvraient. La boucle est donc avancée
+    de force ici, bien au-delà de toute fenêtre : rien ne doit ressortir."""
 
     from jarvis.runtime.journal import RuntimeJournal
 
-    broker = BarehandsCommandBroker(journal=RuntimeJournal(tmp_path), deadline_s=5.0, redeliver_s=5.0)
+    journal = RuntimeJournal(tmp_path)
+    broker = BarehandsCommandBroker(journal=journal, deadline_s=5.0)
     task = asyncio.ensure_future(broker.request("deactivate"))
     await asyncio.sleep(0)
     first = broker.deliver()
     assert first is not None and first["name"] == "deactivate" and first["remaining_ms"] > 0
-    # Aussitôt après, rien : la fenêtre de redistribution n'est pas écoulée.
+    # Le second onglet, tout de suite **et** après n'importe quelle attente : rien.
     assert broker.deliver() is None
-    assert broker.delivery_due() > 0
+    await asyncio.sleep(0.05)
+    assert broker.deliver() is None, "la remise est exclusive, pas rationnée"
     broker.complete(first["id"], {"outcome": "applied", "lifecycle": "sleep", "code": None, "reason": None})
     answer = await task
     assert answer["outcome"] == "applied" and answer["deliveries"] == 1 and answer["command"] == "deactivate"
-    # Consommée : plus rien à remettre, même à la fenêtre suivante.
-    assert broker.deliver() is None and broker.delivery_due() is None
+    # Une seule ligne de remise dans la trace : c'est ce qu'un opérateur lit.
+    delivered = [line for line in read_jsonl_tail(journal.trace_path, limit=20)
+                 if line["kind"] == "barehands.command_delivered"]
+    assert len(delivered) == 1 and delivered[0]["data"]["deliveries"] == 1
+    assert broker.deliver() is None
+
+
+async def test_a_page_that_took_the_command_and_went_silent_is_not_an_absent_page(tmp_path):
+    """Les deux échéances ne disent **pas** la même chose, et `deliveries` est ce
+    qui les sépare.
+
+    Le cas : l'utilisateur dit « active les mains », le navigateur lève son
+    invite d'autorisation caméra, `activate()` reste bloqué au-delà de trois
+    secondes. La page est là, visible, avec l'invite ouverte devant
+    l'utilisateur. Répondre « aucune fenêtre du Control Center n'est visible »
+    l'envoie réparer ce qui n'est pas cassé — c'est le reproche exact de la QA
+    de la Slice 12, qui a mesuré la ligne `deliveries:1` sous le code
+    `barehands_no_visible_page`."""
+
+    from jarvis.runtime.journal import RuntimeJournal
+
+    journal = RuntimeJournal(tmp_path)
+    broker = BarehandsCommandBroker(journal=journal, deadline_s=0.05)
+    task = asyncio.ensure_future(broker.request("activate"))
+    await asyncio.sleep(0)
+    taken = broker.deliver()
+    assert taken is not None, "la page a bien pris la commande"
+    with pytest.raises(BarehandsCommandError) as caught:
+        await task
+    assert caught.value.code == vocab.COMMAND_EXPIRED and caught.value.status == 504
+    # La phrase dit ce qui s'est passé, et refuse de trancher l'issue.
+    sentence = str(caught.value)
+    assert "visible" not in sentence and "fenêtre fermée" not in sentence
+    assert "pris la commande" in sentence and "caméra" in sentence
+    assert "ne dis ni que c'est fait, ni que ça a échoué" in sentence
+    # Et l'identifiant voyage avec le refus : la trace se recolle.
+    assert caught.value.command_id == taken["id"][:8]
+    expired = [line for line in read_jsonl_tail(journal.trace_path, limit=20)
+               if line["kind"] == "barehands.command_expired"][-1]
+    assert expired["data"]["code"] == vocab.COMMAND_EXPIRED and expired["data"]["deliveries"] == 1
+    assert expired["data"]["id"] == taken["id"][:8]
+
+
+async def test_a_malformed_receipt_id_is_as_visible_in_the_trace_as_a_forged_one(tmp_path):
+    """Même route, même classe d'attaque, même visibilité.
+
+    Un identifiant bien formé mais inventé produisait `barehands.receipt_refused` ;
+    un identifiant hors forme ne produisait **rien du tout**, parce que la
+    validation levait avant la première ligne de journal. L'attaque la plus
+    grossière était la seule invisible. L'identifiant n'est pas recopié dans la
+    trace — il vient d'un inconnu — mais sa longueur y est."""
+
+    from jarvis.runtime.journal import RuntimeJournal
+
+    journal = RuntimeJournal(tmp_path)
+    broker = BarehandsCommandBroker(journal=journal, deadline_s=30.0)
+    receipt = {"outcome": "applied", "lifecycle": "active", "code": None, "reason": None}
+    with pytest.raises(BarehandsCommandError) as malformed:
+        broker.complete("trop-court", receipt)
+    with pytest.raises(BarehandsCommandError) as forged:
+        broker.complete("Z" * 32, receipt)
+    assert malformed.value.code == forged.value.code == vocab.UNKNOWN_COMMAND_ID
+    assert malformed.value.status == forged.value.status == 404
+    refused = [line for line in read_jsonl_tail(journal.trace_path, limit=20)
+               if line["kind"] == "barehands.receipt_refused"]
+    assert len(refused) == 2, "les deux refus laissent une ligne, pas seulement le second"
+    assert refused[0]["data"] == {"code": vocab.UNKNOWN_COMMAND_ID, "id": None, "id_chars": len("trop-court")}
+    assert refused[1]["data"]["id"] == "Z" * 8
+    # Et l'identifiant hors forme n'est pas recopié dans la trace.
+    assert "trop-court" not in json.dumps(refused[0])
 
 
 async def test_one_command_at_a_time_and_one_receipt_per_command(tmp_path):
@@ -297,7 +378,10 @@ async def test_a_receipt_after_the_deadline_is_refused_not_applied(tmp_path):
     command = broker.deliver()
     with pytest.raises(BarehandsCommandError) as caught:
         await task
-    assert caught.value.code == vocab.NO_VISIBLE_PAGE
+    # La page a **pris** la commande et s'est tue : ce n'est pas « aucune page
+    # visible », c'est « échue chez la page ». La distinction est tout l'objet
+    # de `test_a_page_that_took_the_command_and_went_silent_...`.
+    assert caught.value.code == vocab.COMMAND_EXPIRED
     with pytest.raises(BarehandsCommandError) as late:
         broker.complete(command["id"], {"outcome": "applied", "lifecycle": "active", "code": None, "reason": None})
     # La commande a quitté la place à son échéance : le reçu tardif est inconnu.
@@ -318,18 +402,19 @@ async def test_a_command_already_answered_is_never_handed_out_again(tmp_path):
 
     from jarvis.runtime.journal import RuntimeJournal
 
-    broker = BarehandsCommandBroker(journal=RuntimeJournal(tmp_path), deadline_s=30.0, redeliver_s=1.0)
+    broker = BarehandsCommandBroker(journal=RuntimeJournal(tmp_path), deadline_s=30.0)
     task = asyncio.ensure_future(broker.request("activate"))
     await asyncio.sleep(0)
     command = broker.deliver()
     assert command is not None
     broker.complete(command["id"], {"outcome": "applied", "lifecycle": "active", "code": None, "reason": None})
     # La commande n'a pas encore quitté la place : l'appel du cerveau n'a pas
-    # repris. La fenêtre, elle, est écoulée.
-    broker._pending.last_delivered = float("-inf")  # noqa: SLF001 - la fenêtre, rendue non pertinente
+    # repris. `consumed` est donc la seule garde en jeu — la remise exclusive
+    # est **neutralisée** ici, sinon c'est elle qui rendrait `None` et
+    # l'assertion ne dirait plus rien du reçu déjà pris.
+    broker._pending.delivered = False  # noqa: SLF001 - l'exclusion, rendue non pertinente
     assert broker._pending is not None  # noqa: SLF001
     assert broker.deliver() is None, "une commande déjà rendue ne se redonne pas"
-    assert broker.delivery_due() is None
     assert (await task)["deliveries"] == 1
 
 
@@ -375,7 +460,10 @@ async def test_the_gate_refuses_before_waiting_rather_than_after(tmp_path):
     assert caught.value.code == vocab.COMMAND_DISABLED and caught.value.status == 409
     assert "Expérimental" in str(caught.value)
     assert asyncio.get_running_loop().time() - started < 1.0, "refus immédiat, pas après l'échéance"
-    assert kinds_of(journal) == ["barehands.command_refused"]
+    # Un refus de transport n'est pas un refus de la page : trois causes
+    # distinctes portaient le même `kind`, si bien que filtrer la trace dessus
+    # mêlait « éteint », « occupé » et « la page a dit non » (QA de la Slice 12).
+    assert kinds_of(journal) == ["barehands.command_disabled"]
 
 
 async def test_shutdown_hands_a_waiting_brain_its_cause_instead_of_a_timeout(tmp_path):
@@ -422,11 +510,43 @@ async def test_the_page_receives_a_command_on_its_long_poll_and_answers_it(runni
     ]
     assert len({line["data"]["id"] for line in lines}) == 1
     assert all(line["data"]["command"] == "activate" for line in lines)
+    # **Et le cerveau reçoit cet identifiant-là.** Sans lui, la moitié MCP de la
+    # trace ne se recolle à la moitié courtier que par adjacence de dates, et
+    # deux commandes de même nom qui se suivent sont indiscernables.
+    assert answer["id"] == command["id"][:8] == lines[0]["data"]["id"]
 
 
 async def test_an_empty_long_poll_returns_nothing_rather_than_hanging(running, session):
     await running.enable()
     assert await running.poll(session, wait_s=0) == {"command": None}
+
+
+async def test_a_cross_origin_post_is_refused_with_a_code_like_every_other_refusal(running, session):
+    """« Tout refus porte un code stable » est une contrainte de cette Slice, et
+    le garde d'origine y échappait : il levait un `HTTPForbidden` en texte brut,
+    sans corps JSON ni `X-Jarvis-Error-Code`, donc le serveur MCP n'avait rien à
+    nommer. La route de capture de scène a son cas particulier pour exactement
+    ça depuis toujours ; celle-ci ne l'avait pas."""
+
+    evil = {"Origin": "http://evil.example"}
+    for url, payload in (
+        (f"{running.base}/api/barehands/commands", {"command": "activate"}),
+        (f"{running.base}/api/barehands/commands/{'A' * 32}", {"outcome": "applied", "lifecycle": "active"}),
+    ):
+        async with session.post(url, json=payload, headers=evil) as response:
+            assert response.status == 403
+            assert response.headers.get(SETTINGS_ERROR_CODE_HEADER) == vocab.FORBIDDEN_ORIGIN
+            assert (await response.json())["error"]["code"] == vocab.FORBIDDEN_ORIGIN
+    # Et l'origine illisible passe par le même refus codé, pas par un texte brut.
+    async with session.post(f"{running.base}/api/barehands/commands", json={"command": "activate"},
+                            headers={"Origin": "http://[oops"}) as response:
+        assert response.status == 403
+        assert response.headers.get(SETTINGS_ERROR_CODE_HEADER) == vocab.FORBIDDEN_ORIGIN
+    # La boucle locale, elle, passe : le garde refuse l'étranger, pas la page.
+    await running.enable()
+    async with session.get(f"{running.base}/api/barehands/commands?wait_s=0",
+                           headers={"Origin": f"http://127.0.0.1:{running.port}"}) as response:
+        assert response.status == 200
 
 
 async def test_every_http_refusal_mirrors_its_code_in_the_header(running, session):

@@ -90,6 +90,7 @@ from jarvis.protocol import scene_wire
 from jarvis.domain.barehands_command import (
     BAD_RECEIPT,
     BAD_REQUEST,
+    FORBIDDEN_ORIGIN,
     MAX_COMMAND_REQUEST_BYTES,
     MAX_POLL_WAIT_S,
     MAX_RECEIPT_BYTES,
@@ -245,6 +246,12 @@ SCENE_INTERACT_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_INTERACT_JS__*/"
 SCENE_CAPTURE_SCRIPT_FILE = "control_center_scene_capture.js"
 #: Route d'envoi des captures : ses refus d'origine ont la forme d'erreur de scène.
 SCENE_CAPTURE_ROUTE_PREFIX = "/api/scene/captures/"
+#: Canal de commandes Bare Hands (Slice 12). Un POST d'origine étrangère y est
+#: refusé comme partout ailleurs, mais **avec la forme d'erreur du canal** :
+#: sans elle, le garde lève un `HTTPForbidden` en texte brut, sans corps JSON ni
+#: `X-Jarvis-Error-Code`, et le serveur MCP n'a plus de code à nommer — alors
+#: que « tout refus porte un code stable » est une contrainte de cette Slice.
+BAREHANDS_COMMANDS_ROUTE_PREFIX = "/api/barehands/commands"
 SCENE_CAPTURE_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_CAPTURE_JS__*/"
 #: Réglages d'affichage de la constellation (Slice 12) : définition des
 #: réglages, normalisation, variables CSS et options de la dérive orbitale
@@ -722,12 +729,20 @@ class ControlCenter:
                     host = urlparse(origin).hostname
                 except ValueError:
                     host = None
-                    if not request.path.startswith(SCENE_CAPTURE_ROUTE_PREFIX):
+                    # Les deux routes qui savent rendre un refus **codé** le
+                    # rendent : `host = None` retombe plus bas sur leur propre
+                    # forme d'erreur au lieu d'un texte brut sans code.
+                    if not request.path.startswith((SCENE_CAPTURE_ROUTE_PREFIX,
+                                                    BAREHANDS_COMMANDS_ROUTE_PREFIX)):
                         raise web.HTTPForbidden(text="invalid origin")
                 if host not in LOOPBACK_HOSTS:
                     if request.path.startswith(SCENE_CAPTURE_ROUTE_PREFIX):
                         # Même forme d'erreur que les autres refus de la route de capture.
                         return self._scene_error(403, "forbidden_origin", "forbidden origin")
+                    if request.path.startswith(BAREHANDS_COMMANDS_ROUTE_PREFIX):
+                        # Idem pour le canal de commandes : code stable dans le
+                        # corps **et** dans l'en-tête, comme tous ses autres refus.
+                        return self._barehands_error(403, FORBIDDEN_ORIGIN, "forbidden origin")
                     raise web.HTTPForbidden(text="forbidden origin")
         return await handler(request)
 
@@ -1803,7 +1818,7 @@ class ControlCenter:
     # ------------------------------------------------- canal de commandes (Slice 12)
 
     @staticmethod
-    def _barehands_error(status: int, code: str, message: str) -> web.Response:
+    def _barehands_error(status: int, code: str, message: str, command_id: str | None = None) -> web.Response:
         """Refus du canal de commandes : le code dans le corps **et** dans l'en-tête.
 
         Les deux idiomes du dépôt se rencontrent ici pour une raison précise :
@@ -1811,10 +1826,16 @@ class ControlCenter:
         est ce que la page lit, et l'en-tête `X-Jarvis-Error-Code` (forme de la
         famille réglages) est ce que le **serveur MCP** lit pour transformer un
         refus en erreur d'outil sans analyser une phrase française.
+
+        `command_id` (l'identifiant **court**, quand le refus en concerne une)
+        va dans le corps : c'est lui qui relie l'échec vu du serveur MCP aux
+        lignes du courtier dans la même trace.
         """
 
+        extra = {"id": command_id} if command_id else {}
         return web.json_response(
-            scene_wire.error_body(code, message), status=status, headers={SETTINGS_ERROR_CODE_HEADER: code}
+            scene_wire.error_body(code, message, **extra), status=status,
+            headers={SETTINGS_ERROR_CODE_HEADER: code},
         )
 
     async def barehands_commands_poll(self, request: web.Request) -> web.Response:
@@ -1844,16 +1865,18 @@ class ControlCenter:
             command = broker.deliver()
             if command is not None:
                 return web.json_response({"command": command})
-            due = broker.delivery_due()
+            # Rien à attendre d'autre qu'une **nouvelle** commande : la remise
+            # est exclusive, donc une commande déjà emportée par un autre
+            # onglet ne repassera jamais par ici. Aucune minuterie de
+            # redistribution à retrancher de l'attente.
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return web.json_response({"command": None})
-            timeout = remaining if due is None else min(remaining, due)
             try:
-                await asyncio.wait_for(wake.wait(), timeout=max(0.0, timeout))
+                await asyncio.wait_for(wake.wait(), timeout=remaining)
             except TimeoutError:
-                # Échéance du long-poll, ou l'heure de redonner la commande :
-                # la boucle retranche et décide, elle ne suppose rien.
+                # Échéance du long-poll : la boucle retranche et décide, elle ne
+                # suppose rien.
                 continue
 
     async def barehands_command_request(self, request: web.Request) -> web.Response:
@@ -1879,7 +1902,7 @@ class ControlCenter:
         try:
             return web.json_response(await self.barehands_commands.request(name))
         except BarehandsCommandError as exc:
-            return self._barehands_error(exc.status, exc.code, str(exc))
+            return self._barehands_error(exc.status, exc.code, str(exc), exc.command_id)
 
     async def barehands_command_receipt(self, request: web.Request) -> web.Response:
         """Reçu de la page pour une commande remise : ce qu'elle a **constaté**.
@@ -1899,7 +1922,7 @@ class ControlCenter:
             receipt = parse_receipt(json.loads(raw.decode("utf-8")) if raw else None)
             return web.json_response(self.barehands_commands.complete(request.match_info["command_id"], receipt))
         except BarehandsCommandError as exc:
-            return self._barehands_error(exc.status, exc.code, str(exc))
+            return self._barehands_error(exc.status, exc.code, str(exc), exc.command_id)
         except (UnicodeDecodeError, ValueError) as exc:
             return self._barehands_error(400, BAD_RECEIPT, f"reçu illisible : {exc}")
 

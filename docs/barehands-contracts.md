@@ -1367,6 +1367,14 @@ contenu ou de l'outil Main.
 
 ## 9. Réglages (§9), version 2
 
+> **Vous implantez un point d'entrée de parcours (Slice 08, Slice 09) ?** Lisez
+> d'abord le contrat `flow_unconfirmed` du § 12. En un mot : un appel qui ne
+> lève pas n'est **pas** une preuve, donc un parcours doit **confirmer** en
+> résolvant `true` ou `{ok:true}`. Tout le reste — `undefined`, `null`, `false`,
+> un objet muet comme `{}` ou `{ok:false}` — est un refus
+> `barehands_flow_unconfirmed`, et JARVIS dira à l'utilisateur que ça n'a pas
+> démarré. C'est le prix d'entrée pour être annoncé.
+
 `SETTINGS_SCHEMA_VERSION = 2`. `normalizeSettings(raw)` accepte l'absence et le
 partiel, et rend toujours une valeur complète et bornée :
 
@@ -1505,6 +1513,14 @@ d'injection documenté à `control_center.py:224-226` est intact.
 
 ## 10. Profil de calibration (§10, décisions 28-32)
 
+> **Le parcours de calibration sera appelé par la voix autant que par le bouton**
+> (§ 12). Son point d'entrée `JarvisBarehands.calibrate()` doit donc **confirmer**
+> son démarrage en résolvant `true` ou `{ok:true}` ; `undefined`, `null`,
+> `false` et l'objet muet sont des refus `barehands_flow_unconfirmed`. Tant que
+> le point d'entrée n'existe pas, le canal refuse proprement avec
+> `barehands_flow_absent` — rien à faire pour que ça marche, tout à faire pour
+> que ce soit annoncé honnêtement.
+
 `PROFILE_SCHEMA_VERSION = 1`. Un seul profil visible, valeurs internes par main
 (décision 28). Un seau **par latéralité de `HANDEDNESS`** : `hands.left`,
 `hands.right` et `hands.unknown`. Le troisième existe parce que
@@ -1606,13 +1622,24 @@ parole → cerveau (CLI Claude) → outil MCP `jarvis-barehands`
 pour les noms, `control_center_barehands_commands.js` pour ce qu'ils
 déclenchent ; test de parité) :
 
-| Commande | Outil du cerveau | Point d'entrée de la page | Aujourd'hui |
-|---|---|---|---|
-| `activate` | `barehands_activate` | `JarvisBarehands.activate()` | vivant |
-| `deactivate` | `barehands_deactivate` | `JarvisBarehands.sleep()` | vivant |
-| `calibrate` | `barehands_calibrate` | `JarvisBarehands.calibrate()` | **absent** (Slice 08) |
-| `tutorial` | `barehands_tutorial` | `JarvisBarehands.tutorial()` | **absent** (Slice 09) |
-| `exit_overlay` | `barehands_exit_overlay` | `JarvisBarehands.exitOverlay()` | **absent** (Slice 09) |
+| Commande | Outil du cerveau | Point d'entrée de la page | États de fin acceptés | Aujourd'hui |
+|---|---|---|---|---|
+| `activate` | `barehands_activate` | `JarvisBarehands.activate()` | `active` | vivant |
+| `deactivate` | `barehands_deactivate` | `JarvisBarehands.sleep()` | `sleep` **ou** `off` | vivant |
+| `calibrate` | `barehands_calibrate` | `JarvisBarehands.calibrate()` | — (confirmation) | **absent** (Slice 08) |
+| `tutorial` | `barehands_tutorial` | `JarvisBarehands.tutorial()` | — (confirmation) | **absent** (Slice 09) |
+| `exit_overlay` | `barehands_exit_overlay` | `JarvisBarehands.exitOverlay()` | — (confirmation) | **absent** (Slice 09) |
+
+**Un ensemble d'états de fin, pas un état unique.** `sleep()` ne fait rien hors
+d'`ACTIVE` : depuis `off` — l'état de **tout onglet fraîchement ouvert** — la
+page reste en `off`. Exiger `sleep` faisait de « mets les mains en veille » un
+refus `barehands_lifecycle_refused`, dont la phrase rendue au cerveau accuse la
+caméra ; personne n'avait touché la caméra, la main ne tournait simplement pas.
+« Ne pilote plus » est vrai en `sleep` comme en `off`, donc les deux sont
+acceptés et rien à faire se dit `duplicate`. `error` n'est **pas** accepté :
+là, quelque chose est cassé, et c'est le seul cas où la phrase sur la caméra
+dit la vérité. `duplicate` est choisi sur « l'état n'a pas changé », pas sur
+« l'état vaut la cible ».
 
 Ce sont **exactement** les points d'entrée du bouton : `#barehandsWake` appelle
 `setAwake`, et `JarvisBarehands.activate`/`sleep` *sont* `setAwake(true/false)`.
@@ -1647,7 +1674,12 @@ Côté serveur : `barehands_disabled` (409), `barehands_command_unknown` (400),
 `barehands_command_busy` (409), `barehands_no_visible_page` (504),
 `barehands_unknown_command` (404), `barehands_command_expired` (410),
 `barehands_command_cancelled` (503), `barehands_bad_request` (400),
-`barehands_bad_receipt` (400) ; côté outil, `barehands_channel_unreachable`.
+`barehands_bad_receipt` (400), `barehands_forbidden_origin` (403) ; côté outil,
+`barehands_channel_unreachable`. `barehands_command_expired` a **deux** emplois,
+et c'est la même panne vue de deux bouts : 504 pour le cerveau dont la commande
+a échu chez une page qui l'avait prise, 410 pour la page dont le reçu arrive
+après l'échéance alors que la commande est encore en place (course étroite ; le
+reçu tardif ordinaire reçoit 404, la commande ayant déjà quitté la place).
 Chaque refus HTTP porte son code dans le corps **et** dans
 `X-Jarvis-Error-Code` : le corps est ce qu'un humain lit, l'en-tête ce que le
 serveur MCP lit sans analyser une phrase française.
@@ -1666,7 +1698,28 @@ commande n'a qu'à traverser un long-poll déjà ouvert. En face, la commande na
 d'une phrase prononcée et le cerveau bloque dessus pendant que la conversation
 attend — une commande qui s'exécute quatre secondes après que l'utilisateur est
 passé à autre chose est pire qu'un refus. Une commande à la fois ; identifiant
-aléatoire à **usage unique** ; redistribution au plus une fois par seconde.
+aléatoire à **usage unique**.
+
+**Remise exclusive : une commande, une page.** Le premier long-poll qui la
+demande l'emporte ; tout autre onglet reçoit `{"command": null}` et ne la voit
+jamais. Ce n'est pas une limite de cadence — la version initiale rationnait la
+redistribution à une par seconde sous une échéance de trois, donc une commande
+partait jusqu'à **trois** fois, chaque onglet servi appelait le point d'entrée,
+et seul le premier reçu était accepté : pour `activate` c'était inoffensif, pour
+`tutorial`/`calibrate` deux parcours démarraient et le cerveau n'en voyait
+qu'un. Ce qui est perdu en échange est nommé plutôt que caché : une remise qui
+n'arrive pas à destination n'est plus rattrapée, et le cerveau l'apprend comme
+telle.
+
+**Deux échéances, deux causes, et `deliveries` les sépare.** `deliveries: 0` :
+aucun long-poll n'a emporté la commande, donc `barehands_no_visible_page`, et la
+phrase (fenêtre fermée, onglet caché, page pas chargée) est vraie.
+`deliveries: 1` : une page l'a prise et n'a pas rendu son reçu — typiquement
+l'invite d'autorisation caméra du navigateur, qui tient `activate()` bien
+au-delà de trois secondes — donc `barehands_command_expired`, et la phrase dit
+que l'issue est **inconnue** : ni « c'est fait », ni « ça a échoué ». Le code
+unique d'avant envoyait l'utilisateur chercher une fenêtre qu'il avait sous les
+yeux.
 
 **Porte, et inertie.** Éteint, il n'y a ni serveur MCP ni consigne système (le
 cerveau ne sait pas que ces outils existent), la route refuse
@@ -1680,10 +1733,25 @@ honorer, et le serveur dira « aucune page visible », ce qui sera vrai.
 **Journal** (`runtime/trace.jsonl`, `code` stable dans `data`, identifiant court
 commun à toutes les lignes d'une même commande) : `barehands.command_requested`,
 `barehands.command_delivered`, `barehands.command_applied`,
-`barehands.command_refused`, `barehands.command_expired`,
+`barehands.command_applied`, `barehands.command_expired`,
 `barehands.command_abandoned`, `barehands.receipt_refused`, plus
 `barehands.tool` / `barehands.tool_failed` et `barehands.server_started` /
 `barehands.server_stopped` côté serveur MCP.
+
+**Un événement, un `kind`.** Trois refus de natures différentes partageaient
+`barehands.command_refused` avec trois formes de `data` : filtrer la trace
+dessus mêlait les refus de transport aux refus de la page. Ils sont séparés —
+`barehands.command_disabled` (l'interrupteur est éteint),
+`barehands.command_busy` (une autre commande est en vol) et
+`barehands.command_refused`, qui ne désigne plus que **la page a dit non**.
+
+**L'identifiant court traverse les deux moitiés.** Il est dans le corps de la
+réponse 200 **et** dans le corps d'erreur des refus qui concernent une commande
+née, donc `barehands.tool` et `barehands.tool_failed` le portent : la moitié MCP
+de la trace se recolle à la moitié courtier autrement que par adjacence de
+dates. Un reçu à identifiant **hors forme** laisse lui aussi sa ligne
+(`id: null`, `id_chars`) : sans elle, l'attaque la plus grossière était la seule
+invisible, alors qu'un identifiant bien formé mais forgé se voyait.
 
 ## Ce qui est implémenté, et ce qui ne l'est pas
 
