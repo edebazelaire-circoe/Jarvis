@@ -187,6 +187,13 @@ LIVE_SCRIPT_FILE = "control_center_live.js"
 LIVE_SCRIPT_MARKER = "/*__CONTROL_CENTER_LIVE_JS__*/"
 CATALOG_SCRIPT_FILE = "control_center_catalog.js"
 CATALOG_SCRIPT_MARKER = "/*__CONTROL_CENTER_CATALOG_JS__*/"
+#: Contrats et schémas Bare Hands V1 (Slice 01) : identité de main et de
+#: pointeur, HandFrame neutre, gestes, pincement, régions de cible,
+#: interaction, outils, réglages et profil de calibration
+#: (`window.JarvisBarehandsContracts`, logique pure). Inséré AVANT le pointeur
+#: et la page de scène, qui lisent tous deux l'identité de pointeur.
+BAREHANDS_CONTRACTS_SCRIPT_FILE = "control_center_barehands_contracts.js"
+BAREHANDS_CONTRACTS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_CONTRACTS_JS__*/"
 #: Pointeur à mains nues (Barehands, mode test) : logique pure testée par node,
 #: plus son branchement navigateur. Même insertion que les scripts ci-dessus.
 BAREHANDS_SCRIPT_FILE = "control_center_barehands.js"
@@ -727,6 +734,10 @@ class ControlCenter:
         )
         html = html.replace(
             CATALOG_SCRIPT_MARKER, page.with_name(CATALOG_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            BAREHANDS_CONTRACTS_SCRIPT_MARKER,
+            page.with_name(BAREHANDS_CONTRACTS_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             BAREHANDS_SCRIPT_MARKER, page.with_name(BAREHANDS_SCRIPT_FILE).read_text(encoding="utf-8")

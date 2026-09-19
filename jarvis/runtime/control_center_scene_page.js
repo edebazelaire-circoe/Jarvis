@@ -813,7 +813,10 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
   color:color-mix(in srgb,var(--tone) 72%,var(--sc-ink))}
 .sc-link-artifact{stroke:color-mix(in srgb,var(--tone) 50%,transparent);stroke-dasharray:5 3}
 /* Indicateurs : en bas à gauche, sur la ligne de l'indication vocale, hors de
-   la zone de composition ; au-dessus du badge Barehands quand il est là. */
+   la zone de composition ; au-dessus du badge Barehands quand il est là.
+   Le sélecteur du badge est celui du contrat Bare Hands
+   (JarvisBarehandsContracts.DOM.badgeSelector) : une feuille de style ne peut
+   pas le lire, un test refuse qu'il en diverge. */
 .sc-status{position:absolute;left:18px;bottom:18px;z-index:2147483600;display:flex;flex-wrap:wrap-reverse;align-items:center;gap:6px;
   max-width:calc(50vw - 150px);pointer-events:none}
 body:has(#jarvisHands .jh-badge) .sc-status{bottom:52px}
@@ -1723,7 +1726,11 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
   function titleOf(id){const node=nodeOf(id);return node?node.title:id}
   function quoted(id){const text=titleOf(id);return `« ${text.length>60?text.slice(0,59)+'…':text} »`}
   const errorText=error=>String(error&&error.message||error);
-  const barehandsActive=()=>!!document.querySelector('#jarvisHands .jh-token');
+  /* Bare Hands est reconnu par son contrat (`control_center_barehands_contracts.js`,
+     inséré avant ce module), jamais par un sélecteur ou un identifiant de
+     pointeur recopié ici. */
+  const BH=window.JarvisBarehandsContracts;
+  const barehandsActive=()=>!!document.querySelector(BH.DOM.tokenSelector);
 
   /* Aperçu d'une boîte (unités) sur le nœud, dans sa forme dessinée. */
   function previewAt(el,node,box){
@@ -1871,7 +1878,7 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     gesture={id,el,node,mode:resize?'resize':'move',pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,
       box:{x:box.x,y:box.y,w:box.w,h:box.h},representation:item.representation,moved:false,menuOpened:false,preview:null,
       wasSelected:document.activeElement===el,longTimer:0,
-      threshold:I.dragThreshold(event.pointerType,event.pointerId===9001||barehandsActive())};
+      threshold:I.dragThreshold(event.pointerType,BH.isBareHandsPointerId(event.pointerId)||barehandsActive())};
     /* Appui long sans bouger : menu (Barehands, écran tactile). */
     const current=gesture;
     current.longTimer=window.setTimeout(()=>{

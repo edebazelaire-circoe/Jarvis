@@ -1071,6 +1071,9 @@ const STATUS={
    mode/vérification) : `jarvis/runtime/control_center_work.js`, inséré ici tel
    quel par le serveur et exécuté tel quel par les tests node. */
 /*__CONTROL_CENTER_WORK_JS__*/
+/* Contrats et schémas Bare Hands V1 (Slice 01), lus par le pointeur et par la
+   page de scène : `control_center_barehands_contracts.js`. Avant les deux. */
+/*__CONTROL_CENTER_BAREHANDS_CONTRACTS_JS__*/
 /* Barehands en mode test (pointeur à mains nues) : `control_center_barehands.js`. */
 /*__CONTROL_CENTER_BAREHANDS_JS__*/
 /*__CONTROL_CENTER_SCENE_PAGE_JS__*/
@@ -2072,7 +2075,10 @@ function closeMenu(restore){
 const CONFIRM={resolve:null,previous:null,inert:[],observer:null,backWasInert:false};
 /* Enfant de `body` à rendre inerte pendant la confirmation : tout sauf le panneau,
    la main de Barehands et les scripts, et seulement s'il ne l'était pas déjà. */
-function confirmInertCandidate(el,back){return el!==back&&el.id!=='jarvisHands'&&el.tagName!=='SCRIPT'&&!el.inert}
+/* La surimpression des mains reste vivante derrière la boîte : sans elle on ne
+   pourrait plus répondre à mains nues. Sa racine est nommée par le contrat
+   Bare Hands (`JarvisBarehandsContracts.DOM.rootId`), pas par un littéral. */
+function confirmInertCandidate(el,back){return el!==back&&!JarvisBarehandsContracts.isOverlayRoot(el)&&el.tagName!=='SCRIPT'&&!el.inert}
 function confirmDialog({title,lines=[],confirmLabel='Confirmer',cancelLabel='Annuler',danger=false}){
   if(CONFIRM.resolve)finishConfirm(false);
   closeMenu(false);

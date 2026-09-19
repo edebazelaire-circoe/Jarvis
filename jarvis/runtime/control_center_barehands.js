@@ -259,6 +259,10 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
 (function installJarvisBarehands(){
   if(typeof window==='undefined'||typeof document==='undefined')return;
   const Core=JarvisBarehandsCore;
+  /* Noms partagés avec la scène et la page (identité de pointeur, formes du
+     DOM) : `control_center_barehands_contracts.js`, inséré juste avant. Le
+     bloc pur ci-dessus ne le lit pas — les tests node le chargent seul. */
+  const BH=JarvisBarehandsContracts;
   const API='/api/barehands';
   const ASSET_BASE='/barehands/assets';
   const TAB_ID='experimental';
@@ -287,10 +291,13 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
 .jarvis-hand-hover{outline:2px solid ${ACCENT}!important;outline-offset:2px!important}
 @media(prefers-reduced-motion:reduce){#jarvisHands .jh-token{transition:none}#jarvisHands .jh-token.clicked::before{animation:none}}`;
 
+  /* La feuille ci-dessus écrit ses sélecteurs en clair : elle est lue telle
+     quelle par les tests. Le contrat reste la source des noms, et un test
+     (`test_barehands_contracts_js`) refuse qu'ils divergent. */
   function ensureStyle(){
-    if(document.getElementById('jarvisHandsStyle'))return;
+    if(document.getElementById(BH.DOM.styleId))return;
     const style=document.createElement('style');
-    style.id='jarvisHandsStyle';style.textContent=STYLE;
+    style.id=BH.DOM.styleId;style.textContent=STYLE;
     document.head.appendChild(style);
   }
 
@@ -301,8 +308,8 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
       mount(){
         ensureStyle();
         if(root)return;
-        root=document.createElement('div');root.id='jarvisHands';root.setAttribute('aria-hidden','true');
-        badge=document.createElement('div');badge.className='jh-badge';badge.textContent='MAINS · TEST';
+        root=document.createElement('div');root.id=BH.DOM.rootId;root.setAttribute('aria-hidden','true');
+        badge=document.createElement('div');badge.className=BH.DOM.badgeClass;badge.textContent='MAINS · TEST';
         root.appendChild(badge);document.body.appendChild(root);
       },
       unmount(){
@@ -315,7 +322,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
         for(const token of list){
           seen.add(token.id);
           let el=tokens.get(token.id);
-          if(!el){el=document.createElement('div');el.className='jh-token';el.innerHTML='<span class="jh-ring"></span>';root.appendChild(el);tokens.set(token.id,el)}
+          if(!el){el=document.createElement('div');el.className=BH.DOM.tokenClass;el.innerHTML=`<span class="${BH.DOM.ringClass}"></span>`;root.appendChild(el);tokens.set(token.id,el)}
           el.style.transform=`translate3d(${token.x.toFixed(1)}px,${token.y.toFixed(1)}px,0)`;
           el.style.setProperty('--jh-progress',token.progress.toFixed(3));
           el.classList.toggle('hover',!!token.hover);
@@ -331,22 +338,32 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
 
   function createInteraction(){
     const hovered=new Map();
+    /* Identité de pointeur par main (contrat Slice 01, constat F2). La fente 0
+       vaut `BH.POINTER_ID_BASE` : une main seule envoie exactement les mêmes
+       événements qu'avant. La seconde main a enfin le sien, au lieu que deux
+       mains parlent sous un identifiant unique. */
+    const slots=BH.createSlotAllocator(BH.MAX_HANDS);
+    const identityOf=id=>{
+      const slot=slots.slot(id);
+      return slot===null?null:{pointerId:BH.pointerIdForSlot(slot),isPrimary:slot===0};
+    };
     function targetAt(x,y){
       const el=document.elementFromPoint(x,y);
-      return el&&!el.closest('#jarvisHands')?el:null;
+      return el&&!el.closest(BH.DOM.rootSelector)?el:null;
     }
-    function pointer(type,el,x,y,buttons){
+    function pointer(type,el,x,y,buttons,identity){
       const init={bubbles:true,cancelable:true,composed:true,view:window,clientX:x,clientY:y,button:0,buttons};
       if(type.startsWith('pointer')&&typeof PointerEvent==='function')
-        el.dispatchEvent(new PointerEvent(type,{...init,pointerId:9001,pointerType:'mouse',isPrimary:true}));
+        el.dispatchEvent(new PointerEvent(type,{...init,pointerId:identity.pointerId,pointerType:BH.POINTER_TYPE,isPrimary:identity.isPrimary}));
       else if(!type.startsWith('pointer'))el.dispatchEvent(new MouseEvent(type,init));
     }
     function release(id){
       const previous=hovered.get(id);
       hovered.delete(id);
-      if(previous&&![...hovered.values()].includes(previous)){
-        previous.classList.remove('jarvis-hand-hover');
-        pointer('pointerout',previous,0,0,0);pointer('mouseout',previous,0,0,0);
+      const identity=identityOf(id);
+      if(previous&&identity&&![...hovered.values()].includes(previous)){
+        previous.classList.remove(BH.DOM.hoverClass);
+        pointer('pointerout',previous,0,0,0,identity);pointer('mouseout',previous,0,0,0,identity);
       }
     }
     return {
@@ -354,30 +371,35 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
         const live=new Set();
         for(const token of tokens){
           live.add(token.id);
+          const identity=identityOf(token.id);
           const raw=targetAt(token.x,token.y);
           const el=raw&&raw.closest(INTERACTIVE);
           token.hover=!!el;
           if(hovered.get(token.id)===el)continue;
           release(token.id);
-          if(el){
-            hovered.set(token.id,el);el.classList.add('jarvis-hand-hover');
-            pointer('pointerover',el,token.x,token.y,0);pointer('mouseover',el,token.x,token.y,0);
+          if(el&&identity){
+            hovered.set(token.id,el);el.classList.add(BH.DOM.hoverClass);
+            pointer('pointerover',el,token.x,token.y,0,identity);pointer('mouseover',el,token.x,token.y,0,identity);
           }
         }
         for(const id of [...hovered.keys()])if(!live.has(id))release(id);
+        // Une main partie rend sa fente : deux mains qui vont et viennent en
+        // retrouvent toujours une.
+        slots.retain(live);
       },
       /* Un vrai clic : la séquence qu'enverrait une souris, sur l'élément exact
          sous le jeton (les écouteurs, labels, cases et liens réagissent). */
-      click({x,y}){
+      click({id,x,y}){
         const raw=targetAt(x,y);
-        if(!raw)return false;
-        pointer('pointerdown',raw,x,y,1);pointer('mousedown',raw,x,y,1);
+        const identity=identityOf(id);
+        if(!raw||!identity)return false;
+        pointer('pointerdown',raw,x,y,1,identity);pointer('mousedown',raw,x,y,1,identity);
         const focusable=raw.closest('button,a[href],input,select,textarea,summary,[tabindex]');
         if(focusable&&typeof focusable.focus==='function'){try{focusable.focus({preventScroll:true})}catch(_error){}}
-        pointer('pointerup',raw,x,y,0);pointer('mouseup',raw,x,y,0);pointer('click',raw,x,y,0);
+        pointer('pointerup',raw,x,y,0,identity);pointer('mouseup',raw,x,y,0,identity);pointer('click',raw,x,y,0,identity);
         return true;
       },
-      clear(){for(const id of [...hovered.keys()])release(id)},
+      clear(){for(const id of [...hovered.keys()])release(id);slots.clear()},
     };
   }
 
@@ -522,7 +544,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
   }
 
   window.JarvisBarehands=Object.freeze({
-    version:1,core:Core,
+    version:1,core:Core,contracts:BH,
     state:()=>({enabled:view.enabled,status:view.status,assets:view.assets,controller:controller.state()}),
     enable:()=>setEnabled(true),disable:()=>setEnabled(false),
     // Diagnostic sans caméra : poser un jeton et cliquer depuis la console.

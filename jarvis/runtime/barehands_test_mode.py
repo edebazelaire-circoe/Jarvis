@@ -25,6 +25,14 @@ from typing import Any, Mapping
 #: Bloc de réglages. Absent, tout est éteint.
 SETTING_KEY = "barehands_test_mode"
 
+#: Version du schéma de réglages Bare Hands, annoncée par ``describe`` pour que
+#: la page sache à quoi elle parle. Elle vaut celle de
+#: ``control_center_barehands_contracts.js`` (``SETTINGS_SCHEMA_VERSION``), et le
+#: contrat écrit est ``docs/barehands-contracts.md``. Le serveur n'accepte
+#: aujourd'hui que ``enabled`` : élargir ce bloc, c'est monter cette version et
+#: étendre ``apply`` dans le même changement.
+SCHEMA_VERSION = 1
+
 #: Surcharge du dossier des assets vendorisés (ex. un worktree sans install).
 VENDOR_ENV = "JARVIS_BAREHANDS_VENDOR_DIR"
 
@@ -116,4 +124,9 @@ def describe_assets(root: Path) -> dict[str, Any]:
 
 
 def describe(settings: Mapping[str, Any], root: Path) -> dict[str, Any]:
-    return {**load(settings), "status": "experimental", "assets": describe_assets(root)}
+    return {
+        **load(settings),
+        "status": "experimental",
+        "schema_version": SCHEMA_VERSION,
+        "assets": describe_assets(root),
+    }
