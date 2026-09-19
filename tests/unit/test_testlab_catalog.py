@@ -155,10 +155,18 @@ def test_the_seed_virtual_profiles_are_available_to_a_supervisor_and_its_workers
 
 
 def test_the_seed_stale_supersession_reuses_the_replay_fixture_scenario():
-    scenario = load_catalog().describe("speech.stale_supersession").manifest.scenario
-    assert scenario.scenario_id == "stale_ack_35_9s"
-    assert scenario.provenance.source_path.endswith("transcript-2026-09-11.md")
-    assert scenario.steps[-1].args[AT_MS] == 35_900
+    """v1 and v2 ARE the converted fixture; v3 keeps its provenance and extends its timeline."""
+    catalog = load_catalog()
+    for version in (1, 2):
+        scenario = catalog.describe("speech.stale_supersession", version).manifest.scenario
+        assert scenario.scenario_id == "stale_ack_35_9s"
+        assert scenario.provenance.source_path.endswith("transcript-2026-09-11.md")
+        assert scenario.steps[-1].args[AT_MS] == 35_900
+    latest = catalog.describe("speech.stale_supersession").manifest.scenario
+    assert latest.scenario_id == "stale_ack_and_late_answer_35_9s"
+    assert latest.provenance.source_path.endswith("transcript-2026-09-11.md")
+    # The incident's own release is still there, with the late answer of the past intent after it.
+    assert [step.args[AT_MS] for step in latest.steps if step.primitive == "device.release"] == [35_900]
 
 
 def test_the_seed_payload_integrity_measures_the_harness_not_the_divergence_signal():
@@ -446,15 +454,15 @@ def test_manifest_text_round_trips_with_a_stable_fingerprint():
     assert decoded.fingerprint() != manifest(2).fingerprint()
 
 
-# ---------------------------------- the shipped speech.stale_supersession v2
+# ---------------------------------- the shipped speech.stale_supersession v2 and v3
 
 def test_the_shipped_catalog_publishes_both_versions_of_stale_supersession():
     """v2 adds the expectation metrics and one blocking assertion; v1 keeps its history slot."""
     catalog = load_catalog(implementations=catalog_implementations())
     versions = catalog.versions("speech.stale_supersession")
-    assert versions == (1, 2)
-    assert catalog.describe("speech.stale_supersession").version == 2  # no version means the latest
-    v1, v2 = (catalog.describe("speech.stale_supersession", version).diagnostic for version in versions)
+    assert versions == (1, 2, 3)
+    assert catalog.describe("speech.stale_supersession").version == 3  # no version means the latest
+    v1, v2 = (catalog.describe("speech.stale_supersession", version).diagnostic for version in (1, 2))
     assert [metric.name for metric in v2.metrics] == [metric.name for metric in v1.metrics] + [
         "scenario.expectations_declared", "scenario.expectations_failed_count"]
     assert [item.assertion_id for item in v2.assertions] == [item.assertion_id for item in v1.assertions] + [
@@ -467,6 +475,46 @@ def test_the_shipped_catalog_publishes_both_versions_of_stale_supersession():
     assert v2.parameters == v1.parameters
     entries = {entry.version: entry for entry in catalog.history("speech.stale_supersession")}
     assert entries[1].manifest.scenario == entries[2].manifest.scenario
+
+
+def test_v3_of_stale_supersession_adds_the_carried_over_half_without_touching_v2():
+    """The 2026-09-19 decision: a stale ANSWER is carried over, a stale acknowledgement is not.
+
+    v3 adds one measurement and one blocking assertion for the half that was missing, and
+    a scenario that states both halves as `expect.*` steps. v2 is untouched, scenario
+    included: a run judged by it measured a situation where only the transient case occurs.
+    """
+    catalog = load_catalog(implementations=catalog_implementations())
+    v2, v3 = (catalog.describe("speech.stale_supersession", version).diagnostic for version in (2, 3))
+    assert [metric.name for metric in v3.metrics] == [
+        "speech.superseded_count", "speech.stale_delivered_count", "speech.carried_over_delivered_count",
+        "speech.latest_intent_delivered", "speech.stale_wait_ms",
+        "scenario.expectations_declared", "scenario.expectations_failed_count"]
+    assert {metric.name for metric in v3.metrics} - {metric.name for metric in v2.metrics} == {
+        "speech.carried_over_delivered_count"}
+    carried = v3.metric_index["speech.carried_over_delivered_count"]
+    assert (carried.unit.value, carried.direction.value) == ("count", "higher_better")
+    assert [item.assertion_id for item in v3.assertions] == [
+        "no_stale_delivery", "carried_over_answer_spoken", "latest_intent_wins", "scenario_expectations_met"]
+    blocking = v3.assertion_index["carried_over_answer_spoken"]
+    assert (blocking.metric, blocking.comparator.value, blocking.threshold, blocking.blocking) == (
+        "speech.carried_over_delivered_count", "ge", 1, True)
+    assert v3.profiles.keys() == v2.profiles.keys() and v3.parameters == v2.parameters
+
+    # The scenario is what changed semantically, which is why this is a new version and not prose.
+    entries = {entry.version: entry for entry in catalog.history("speech.stale_supersession")}
+    scenario = entries[3].manifest.scenario
+    assert scenario != entries[2].manifest.scenario
+    enqueued = {step.args["candidate_id"]: step.args for step in scenario.steps
+                if step.primitive == "scheduler.enqueue"}
+    assert enqueued["old-ack"]["kind"] == "ack" and enqueued["old-ack"]["intent_epoch"] == 1
+    assert enqueued["old-result"]["kind"] == "result" and enqueued["old-result"]["intent_epoch"] == 1
+    assert enqueued["new-result"]["intent_epoch"] == 2
+    # Both halves of the rule are stated by the scenario itself, not only by the assertions.
+    expected = {(step.args["metric"], step.args["comparator"], step.args["threshold"])
+                for step in scenario.steps if step.primitive == "expect.metric"}
+    assert expected == {("speech.carried_over_delivered_count", "ge", 1),
+                        ("speech.stale_delivered_count", "eq", 0)}
 
 
 def test_a_stored_v1_run_still_validates_against_v1_after_v2_is_published():
@@ -491,3 +539,12 @@ def test_a_stored_v1_run_still_validates_against_v1_after_v2_is_published():
 
     with pytest.raises(TestLabError, match="diagnostic_id/diagnostic_version"):
         check_run_against_spec(run, v2)
+
+    # Publishing v3 changes neither: the run stays judged by the declaration it named, and
+    # v3's extra measurement is not retroactively expected of it.
+    v3 = catalog.describe("speech.stale_supersession", 3).diagnostic
+    catalog.check_run(run)
+    assert run.diagnostic_fingerprint not in {v2.fingerprint(), v3.fingerprint()}
+    assert "speech.carried_over_delivered_count" not in v1.metric_index
+    with pytest.raises(TestLabError, match="diagnostic_id/diagnostic_version"):
+        check_run_against_spec(run, v3)

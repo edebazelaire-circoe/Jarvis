@@ -964,8 +964,10 @@ class SceneDisplayTools:
 
         Règles, dans l'ordre, **avant** tout envoi :
 
-        - un objet `pinned_by_user` est écarté du lot, jamais touché (l'utilisateur
-          l'a fixé) ; il apparaît dans `refused` avec ce motif ;
+        - un objet `pinned_by_user` suit le lot quand le seul changement demandé
+          est la **visibilité** (l'épingle protège sa place, pas sa présence à
+          l'écran) ; pour tout autre changement il est écarté du lot et apparaît
+          dans `refused` avec ce motif ;
         - au-delà de `MAX_BATCH_TARGETS` objets désignés, l'appel entier est refusé
           (rien n'est envoyé) : un lot doit rester lisible et réversible ;
         - masquer un lot qui couvre la moitié ou plus des objets encore visibles
@@ -1017,11 +1019,14 @@ class SceneDisplayTools:
                     refused.append({"id": object_id, "reason": reason.value})
                 else:
                     designated.append(item)
-        # L'épingle de l'utilisateur passe avant tout le reste : un lot ne la
-        # discute pas, il l'écarte et le dit.
-        pinned = [item for item in designated if item.constraints.pinned_by_user]
+        # L'épingle de l'utilisateur protège la **place** de l'objet, pas sa
+        # présence à l'écran : un lot qui ne fait que masquer ou réafficher
+        # l'atteint comme les autres. Tout autre changement l'écarte encore.
+        visibility_only = set(given) == {"visibility"}
+        pinned = [] if visibility_only else [item for item in designated if item.constraints.pinned_by_user]
         refused.extend({"id": item.object_id, "reason": SceneRefusal.PINNED_BY_USER.value} for item in pinned)
-        targets = [item for item in designated if not item.constraints.pinned_by_user]
+        skipped = {item.object_id for item in pinned}
+        targets = [item for item in designated if item.object_id not in skipped]
         matched = len(designated) + len(refused) - len(pinned)
         self._guard_selection(targets, matched, parsed_visibility, before, confirm)
 
@@ -1080,8 +1085,8 @@ class SceneDisplayTools:
                               "rappelle l'outil pour la suite")
         if pinned:
             result["pinned_skipped"] = len(pinned)
-            result["pinned_note"] = ("objets épinglés par l'utilisateur : jamais touchés par un lot ; "
-                                     "demande-lui de les désépingler, ou agis objet par objet")
+            result["pinned_note"] = ("objets épinglés par l'utilisateur : un lot ne change que leur visibilité "
+                                     "(masquer, réafficher) ; pour ce changement-ci, agis objet par objet")
         if hint is not None:
             result["scene_changed"] = hint
         return result
@@ -2347,8 +2352,10 @@ lot touchera. connected désigne toute une constellation (un objet et ce qui lui
 est relié) ; explains ce qui explique une étoile ; les membres d'un groupe se
 prennent avec connected sur le groupe.
 
-Garanties : les objets épinglés par l'utilisateur (pinned_by_user) ne sont
-**jamais** touchés, ils reviennent dans refused avec ce motif. Au-delà de
+Garanties : l'épingle de l'utilisateur (pinned_by_user) protège la **place**
+d'un objet, pas sa présence à l'écran — un lot qui ne fait que masquer ou
+réafficher atteint les objets épinglés comme les autres, sans les déplacer ;
+tout autre changement les écarte et les rend dans refused avec ce motif. Au-delà de
 {MAX_BATCH_TARGETS} objets désignés, l'appel entier est refusé sans rien envoyer
 (resserre le filtre). Masquer la moitié ou plus des objets encore visibles
 demande confirm=true. Le lot est best-effort, objet par objet, sans retour

@@ -405,6 +405,46 @@ class BrainSpeechInterruption:
         }
 
 
+#: Réponses encore en attente de bouche remises au cerveau à un tour donné.
+MAX_BRAIN_PENDING_REPLIES = 4
+
+
+@dataclass(frozen=True, slots=True)
+class BrainPendingReply:
+    """Une réponse que le cerveau a rédigée et que la bouche n'a pas encore dite.
+
+    C'est l'autre moitié de `BrainSpeechInterruption` : là, une phrase commencée
+    n'a pas été entendue jusqu'au bout ; ici, une phrase n'a pas encore commencé.
+    Jusqu'au 19/09/2026, une nouvelle intention la périmait en bloc et elle
+    mourait en silence. Depuis, elle est dite — et le cerveau la voit venir, à
+    son tour suivant, pour ne pas la répéter et pour pouvoir la retirer si elle
+    n'a plus de sens.
+
+    - `work_id` / `correlation_id` : la désignation exacte, celle qu'il faut
+      nommer pour la retirer (`BrainEventKind.SUPERSEDED`) ;
+    - `kind` : `result`, `error` ou `question` — une parole transitoire n'arrive
+      jamais ici, elle se périme d'elle-même ;
+    - `text` : ce qui va être dit, tel qu'il a été écrit.
+    """
+
+    work_id: str
+    correlation_id: str
+    kind: str
+    text: str
+
+    def __post_init__(self) -> None:
+        for name in ("work_id", "correlation_id", "kind"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"pending reply needs its {name}")
+        if not isinstance(self.text, str) or not self.text.strip():
+            raise ValueError("pending reply needs its text")
+
+    def to_payload(self) -> dict[str, Any]:
+        return {"work_id": self.work_id, "correlation_id": self.correlation_id,
+                "kind": self.kind, "text": clip_text(self.text, MAX_INTERRUPTED_TEXT_CHARS)}
+
+
 @dataclass(frozen=True, slots=True)
 class BrainContext:
     """Ce que Core remet au backend pour un tour, en plus du tour lui-même.
@@ -419,6 +459,8 @@ class BrainContext:
     work: BrainWorkContext | None = None
     #: Réponses coupées depuis le tour précédent (voir `BrainSpeechInterruption`).
     interruptions: tuple[BrainSpeechInterruption, ...] = ()
+    #: Réponses écrites aux tours précédents et pas encore dites (`BrainPendingReply`).
+    pending_replies: tuple[BrainPendingReply, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.state, BrainWorkingState):
@@ -429,3 +471,7 @@ class BrainContext:
             raise ValueError("interruptions must be a bounded tuple")
         if not all(isinstance(item, BrainSpeechInterruption) for item in self.interruptions):
             raise TypeError("interruptions must be BrainSpeechInterruption")
+        if not isinstance(self.pending_replies, tuple) or len(self.pending_replies) > MAX_BRAIN_PENDING_REPLIES:
+            raise ValueError("pending replies must be a bounded tuple")
+        if not all(isinstance(item, BrainPendingReply) for item in self.pending_replies):
+            raise TypeError("pending replies must be BrainPendingReply")

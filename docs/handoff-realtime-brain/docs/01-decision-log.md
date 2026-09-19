@@ -965,3 +965,41 @@ asking the agent; moving that would break the start marks of latency measures 5 
 And `brain.turn.accepted` still drops transient queued speech even for an uncertain turn.
 Both are narrower than the boundary this decision protects, and both are named here
 rather than left to be rediscovered.
+
+## Decision 47 — A stale answer is spoken or explicitly settled, never buried
+**Status:** locked by the user on 2026-09-19.
+
+**Context:** Decision 14 says the brain owns truth, and that the surface never throws a
+`result`, `error` or `question` away. Decision 35 says work — and the queued speech that
+describes it — is removed only by an explicit, named brain decision. Both were contradicted
+in practice by two mechanical rules of age:
+
+- `SpeechScheduler._eligibility` deferred any durable utterance whose intent was no longer
+  current. `_deferred` is only drained when that exact intent becomes current again, which
+  never happens: the entry was a silent grave. 22 occurrences in `runtime/trace.jsonl`, one
+  survivor.
+- `BrainOrchestrator._take_stale_replies` invalidated, on every new intent, the dependency
+  of every reply already emitted and not yet spoken — a removal in bulk, without the brain
+  naming anything.
+
+**Decision:** relevance is judged by the brain, not by age.
+
+- The surface carries a durable utterance of a past intent over to the current intent and
+  speaks it (`reason: carried_over`), after what the current intent already has queued. A
+  transient one (`progress`, `ack`) is still dropped: its truth evaporated on its own.
+- Between two origins, authority comes from the intent, not from the writing time: an
+  utterance of the *current* intent replaces a carried-over one occupying the same speech
+  slot (same `supersedes_key` or same `work_id`); never the reverse.
+- Core hands the brain, at its next turn, the replies it has written and that the mouth has
+  not said yet (`BrainContext.pending_replies`, rendered in the agent brief). This is the
+  "context between what must be said and what is about to be said" the user asked for: the
+  brain does not repeat them, and can retire one by naming it.
+- A durable utterance that dies unspoken is settled out loud: `voice.speech.abandoned`, at
+  `warning`, carrying the withheld text and the reason. Silence is never the record.
+
+**Residual, named rather than rediscovered:** the only instrument the Control Center brain
+has to retire a pending reply is a token in its own answer
+(`[[jarvis:retire <work_id>]]`, `control_center_brain.RETIRE_MARKER`), stripped before
+speech and honoured only for the ids Core just handed it. It is the same shape as
+`BRAIN_NOT_ADDRESSED_ANSWER` (Decision 44) and for the same reason: the agent's answer is
+the only channel it owns towards Core. A real tool would be better.

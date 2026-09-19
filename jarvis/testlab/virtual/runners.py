@@ -24,11 +24,11 @@ Determinism, cancellation and deadlines:
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
-from jarvis.domain.v2 import SpeechKind, SpeechRequest
+from jarvis.domain.v2 import TRANSIENT_SPEECH_KINDS, SpeechKind, SpeechRequest
 from jarvis.testlab.diagnostics import MetricValue
 from jarvis.testlab.runners import MeasurementUnavailable, RunContext, RunOutcome
 from jarvis.testlab.runs import ArtifactKind
@@ -403,7 +403,8 @@ class StaleSupersessionRunner:
             await open_session(context, stack)
             executor = VirtualExecutor(stack=stack, context=context, journal=journal)
             await executor.run(scenario)
-            metrics = _supersession_metrics(journal, executor)
+            metrics = _supersession_metrics(journal, executor,
+                                            {spec.name for spec in context.diagnostic.metrics})
             executor.check_measured_expectations(metrics, {})
             # A version of this diagnostic that declares `scenario.expectations_failed_count`
             # turns an unmet expectation into its own verdict; v1 does not, so one refuses
@@ -411,6 +412,7 @@ class StaleSupersessionRunner:
             metrics.update(expectation_metrics(context, executor))
             context.log(f"supersession: superseded={metrics['speech.superseded_count']} "
                         f"stale_delivered={metrics['speech.stale_delivered_count']} "
+                        f"carried_over_delivered={metrics.get(CARRIED_OVER_METRIC, 'not declared')} "
                         f"latest_delivered={metrics['speech.latest_intent_delivered']}")
             await close_session(context, stack)
         # After the teardown: the last lines of a run are written while Core stops, and an
@@ -424,9 +426,25 @@ _SCHEDULER_SEEN_KINDS = ("voice.speech.queued", "voice.speech.presentation_decid
 _SUPERSEDED_KINDS = ("voice.speech.superseded", "voice.speech.expired")
 _DELIVERY_KINDS = ("voice.speech.started", "voice.speech.completed")
 
+#: Declared only from v3 on. A version that does not declare it is not measured for it:
+#: its stored runs keep exactly the metric set they were judged by.
+CARRIED_OVER_METRIC = "speech.carried_over_delivered_count"
 
-def _supersession_metrics(journal: TraceRecordingJournal, executor: VirtualExecutor) -> dict[str, MetricValue]:
-    """Derive the four declared measures from the journal and the scenario's virtual timeline.
+
+def _supersession_metrics(journal: TraceRecordingJournal, executor: VirtualExecutor,
+                          declared: Collection[str]) -> dict[str, MetricValue]:
+    """Derive the declared measures from the journal and the scenario's virtual timeline.
+
+    **A stale delivery is a TRANSIENT delivery.** Until the 2026-09-19 product decision,
+    any candidate spoken after a newer intent had reached the scheduler counted here, and
+    the blocking assertion read "a revised or expired answer is never spoken". That claim
+    now holds for progress and acknowledgements only: their truth is an instant that has
+    passed. A durable answer — result, error, question — of a past intent is carried over
+    onto the current intent and spoken unless the brain withdraws it, so counting it as a
+    stale delivery would make this diagnostic fail on the fixed behaviour. The two
+    populations are therefore counted apart, by the `kind` the SCENARIO declared
+    (`CandidateRecord.kind`, one of `ack` / `result`), against the production list
+    `TRANSIENT_SPEECH_KINDS` — not against a list this module keeps.
 
     **Staleness is keyed on candidate identity, not on the label the stack applied.** The
     earlier version only counted a delivery that followed a `voice.speech.superseded` line,
@@ -459,6 +477,7 @@ def _supersession_metrics(journal: TraceRecordingJournal, executor: VirtualExecu
             delivered_at.setdefault(speech_id, index)
 
     stale_delivered = 0
+    carried_over_delivered = 0
     stale_wait_ms = 0
     for candidate_id, record in executor.candidates.items():
         revised_at = _revision_index(candidate_id, record, executor, seen_at)
@@ -473,19 +492,25 @@ def _supersession_metrics(journal: TraceRecordingJournal, executor: VirtualExecu
             continue
         resolved_at = stale_at
         if delivery is not None and delivery > stale_at:
-            stale_delivered += 1
-            resolved_at = delivery  # a stale payload that IS spoken waited until it spoke
+            if SpeechKind(record.kind) in TRANSIENT_SPEECH_KINDS:
+                stale_delivered += 1
+            else:
+                carried_over_delivered += 1
+            resolved_at = delivery  # a payload spoken past the revision waited until it spoke
         stale_wait_ms = max(stale_wait_ms, executor.virtual_time_of(resolved_at) - record.enqueued_at_ms)
 
     epochs = [(record.intent_epoch, record.candidate_id) for record in executor.candidates.values()
               if record.intent_epoch is not None]
     latest = max(epochs)[1] if epochs else None
-    return {
+    metrics: dict[str, MetricValue] = {
         "speech.superseded_count": len(ended_at),
         "speech.stale_delivered_count": stale_delivered,
-        "speech.latest_intent_delivered": bool(latest is not None and latest in delivered_at),
-        "speech.stale_wait_ms": max(0, stale_wait_ms),
     }
+    if CARRIED_OVER_METRIC in declared:
+        metrics[CARRIED_OVER_METRIC] = carried_over_delivered
+    metrics["speech.latest_intent_delivered"] = bool(latest is not None and latest in delivered_at)
+    metrics["speech.stale_wait_ms"] = max(0, stale_wait_ms)
+    return metrics
 
 
 def _revision_index(candidate_id: str, record, executor: VirtualExecutor,

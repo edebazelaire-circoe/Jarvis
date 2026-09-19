@@ -59,6 +59,10 @@ SPEECH_IGNORED = "voice.speech.ignored"
 SPEECH_TURN_ABANDONED = "voice.speech.turn_abandoned"
 SPEECH_DECIDED = "voice.speech.presentation_decided"
 SPEECH_ERROR_WITHHELD = "voice.speech.error_withheld"
+# Solde explicite d'une parole durable qui meurt sans avoir été tentée. Une
+# réponse ne disparaît jamais en silence : ou elle est dite, ou cette ligne dit
+# qui l'a retirée et ce qu'elle contenait.
+SPEECH_ABANDONED = "voice.speech.abandoned"
 
 # Accusé de réception de la surface (mode continu) : proposé par le bridge après
 # un tour adressé, prononcé seulement si le cerveau n'a encore rien dit.
@@ -1038,19 +1042,40 @@ class SpeechScheduler:
             return SpeechCandidateStatus.DEFERRED, "source_state_unknown"
         if any(dependency in self._invalidated_dependencies for dependency in request.source.dependencies):
             return SpeechCandidateStatus.SUPERSEDED, "dependency_revoked"
+        carried_over = False
         if (request.source.intent_id, request.source.intent_epoch) != (self._current_source.intent_id, self._current_source.intent_epoch):
             if isinstance(request, ConversationCandidate):
                 if request.source.intent_epoch > self._intent_watermark:
                     return SpeechCandidateStatus.DEFERRED, "source_state_unknown"
                 return SpeechCandidateStatus.SUPERSEDED, "stale_source"
-            status = SpeechCandidateStatus.SUPERSEDED if request.kind in TRANSIENT_KINDS else SpeechCandidateStatus.DEFERRED
-            return status, "stale_source"
+            if request.kind in TRANSIENT_KINDS:
+                # Une progression ou un accusé décrivent un instant. L'instant
+                # est passé : leur vérité s'est évaporée toute seule.
+                return SpeechCandidateStatus.SUPERSEDED, "stale_source"
+            if request.source.intent_epoch > self._intent_watermark:
+                # Intention plus récente que ce que la surface connaît : elle
+                # arrive, elle sera replanifiée. Ce n'est pas du passé.
+                return SpeechCandidateStatus.DEFERRED, "source_state_unknown"
+            # Parole durable d'une intention passée. Une intention ne revient
+            # jamais (`intent_id == turn_id`, et l'époque ne recule pas) : la
+            # différer, c'est l'enterrer en silence — 22 élocutions du cerveau
+            # ont fini là, une seule a été dite. Décision de l'utilisateur du
+            # 19/09/2026 : « une réponse sans retard faut qu'elle soit dite si
+            # c'est cohérent avec le contexte ». La cohérence n'est pas une
+            # règle d'ancienneté que la surface pourrait appliquer : un
+            # résultat, une erreur ou une question restent vrais tant que le
+            # cerveau ne les a pas retirés (Décision 14), et le retrait se fait
+            # par désignation explicite du `work_id` (`BrainEventKind.SUPERSEDED`,
+            # `jarvis/domain/v2.py`), jamais en bloc. La parole est donc
+            # reportée sur l'intention courante, après ce que celle-ci a déjà
+            # en file, et le cerveau garde la main pour la retirer.
+            carried_over = True
         if isinstance(request, ConversationCandidate):
             available = callable(getattr(self.session, "request_conversation", None)) and callable(getattr(self.session, "invalidate_unstarted_output", None))
             return (SpeechCandidateStatus.ELIGIBLE, "current_intent") if available else (SpeechCandidateStatus.DEFERRED, "output_admission_unavailable")
         if not callable(getattr(self.session, "speak_reserved", None)) or not callable(getattr(self.session, "invalidate_unstarted_output", None)):
             return SpeechCandidateStatus.DEFERRED, "output_admission_unavailable"
-        return SpeechCandidateStatus.ELIGIBLE, "current_intent"
+        return SpeechCandidateStatus.ELIGIBLE, "carried_over" if carried_over else "current_intent"
 
     def _decision(self, request: SpeechRequest, status: SpeechCandidateStatus, reason: str) -> None:
         if isinstance(request, ConversationCandidate):
@@ -1069,19 +1094,40 @@ class SpeechScheduler:
             # Une panne muette est le pire des cas : on ne sait pas qu'on ne sait
             # pas. Le 16/09/2026 à 07:38:57, la parole d'erreur du handover est
             # restée ici, `deferred`/`stale_source`, et personne n'a rien
-            # entendu. Différer une erreur reste la bonne décision de
-            # présentation — son intention est passée, et le cerveau la redira
-            # sur l'intention courante depuis son contexte de travail — mais
-            # cela ne doit plus jamais passer pour un silence normal.
+            # entendu. Depuis la Décision de l'utilisateur du 19/09/2026, une
+            # intention passée ne diffère plus rien ; ce qui reste différé l'est
+            # pour une source inconnue ou une admission absente, donc pour un
+            # temps borné — mais cela ne doit toujours pas passer pour un
+            # silence normal.
             self._trace(SPEECH_ERROR_WITHHELD, "Erreur non prononcée : son intention n'est plus courante",
                         level="warning", data={**self._fields(request), "reason": reason,
                                                "outcome_id": request.outcome_id})
+        if terminal_channel is not None:
+            self._settle_unspoken(request, status.value, reason)
         self._trace(SPEECH_DECIDED, "Speech presentation decision", data={**self._fields(request),
             "status": status.value, "reason": reason, "outcome_id": request.outcome_id,
             "intent_id": request.source.intent_id if request.source else None,
             "intent_epoch": request.source.intent_epoch if request.source else None,
             "chunk": candidate.chunk.to_payload(),
             "age_ms": max(0, int((self.clock.now() - request.created_at).total_seconds() * 1000))})
+
+    def _settle_unspoken(self, request: SpeechRequest, status: str, reason: str) -> None:
+        """Solder à voix haute une parole durable qui meurt sans avoir été tentée.
+
+        C'est un solde, pas un incident de file : il est dit une fois, en clair,
+        avec le texte qui n'a pas été prononcé et la raison de son retrait.
+        « Une réponse complète jetée mérite au minimum le même traitement que la
+        parole d'erreur » (retour du 19/09/2026) — sans quoi cela « passe pour
+        un silence normal ». Une progression ou un accusé ne sont pas soldés :
+        leur vérité s'évapore d'elle-même, et le dire à chaque tour noierait le
+        signal.
+        """
+
+        if request.kind in TRANSIENT_KINDS or request.id in self._attempted_ids:
+            return
+        self._trace(SPEECH_ABANDONED, "Réponse du cerveau soldée sans avoir été dite",
+                    level="warning", data={**self._fields(request), "reason": reason, "status": status,
+                                           "outcome_id": request.outcome_id, "text": public_text(request.text)})
 
     def _retain_candidate(self, candidate: _Candidate) -> bool:
         while len(self._candidates) >= 256:
@@ -1109,6 +1155,38 @@ class SpeechScheduler:
                 self._deferred[request.id] = request
         self._decision(request, status, reason)
 
+    def _on_current_intent(self, request: SpeechRequest) -> bool:
+        source, current = request.source, self._current_source
+        return (source is not None and current is not None
+                and (source.intent_id, source.intent_epoch) == (current.intent_id, current.intent_epoch))
+
+    def _may_supersede(self, newer: SpeechRequest, older: SpeechRequest) -> bool:
+        """Qui a autorité pour remplacer qui, maintenant que le passé parle encore.
+
+        Même origine exacte : la règle d'origine, inchangée. Origines
+        différentes : seule une parole de l'intention **courante** remplace une
+        parole reportée d'une intention passée — jamais l'inverse. Sans cette
+        dissymétrie, un vieux résultat arrivé en retard effacerait le travail
+        courant (`_enqueue`, « a late old result cannot remove current work ») ;
+        sans le report, le cerveau redirait l'ancienne version d'un même travail
+        après la nouvelle.
+        """
+
+        if not isinstance(newer, SpeechRequest) or not isinstance(older, SpeechRequest) or newer.id == older.id:
+            return False
+        if newer.source == older.source:
+            return newer.supersedes(older)
+        if not (self._on_current_intent(newer) and not self._on_current_intent(older)):
+            return False
+        # Entre deux origines, l'autorité vient de l'intention, pas de l'heure
+        # de rédaction : une réponse reportée arrive forcément « après » celle
+        # de l'intention courante, et `supersedes` la ferait gagner sur sa seule
+        # date. La même clé de supersession désigne le même emplacement de
+        # parole : l'intention courante l'occupe.
+        return (newer.supersedes(older)
+                or (newer.supersedes_key is not None and newer.supersedes_key == older.supersedes_key)
+                or (newer.work_id is not None and newer.work_id == older.work_id))
+
     def _replan(self) -> None:
         for request in tuple(self._pending):
             status, reason = self._eligibility(request)
@@ -1121,16 +1199,16 @@ class SpeechScheduler:
                 continue  # Re-expression requires a new Core request/chain identity.
             status, reason = self._eligibility(request)
             if status is SpeechCandidateStatus.ELIGIBLE and len(self._pending) < 64:
-                same_origin = [queued for queued in self._pending if isinstance(queued, SpeechRequest) and queued.source == request.source
-                               and self._candidates[queued.id].chunk.chain_id != self._candidates[request.id].chunk.chain_id]
-                if any(queued.supersedes(request) for queued in same_origin):
+                others = [queued for queued in self._pending if isinstance(queued, SpeechRequest)
+                          and self._candidates[queued.id].chunk.chain_id != self._candidates[request.id].chunk.chain_id]
+                if any(self._may_supersede(queued, request) for queued in others):
                     self._defer(request, SpeechCandidateStatus.SUPERSEDED, "superseded_on_arrival")
                     continue
-                for queued in same_origin:
-                    if request.supersedes(queued):
+                for queued in others:
+                    if self._may_supersede(request, queued):
                         self._defer(queued, SpeechCandidateStatus.SUPERSEDED, "superseded")
                 active = self._active
-                if active is not None and isinstance(active.request, SpeechRequest) and active.request.source == request.source and request.supersedes(active.request):
+                if active is not None and isinstance(active.request, SpeechRequest) and self._may_supersede(request, active.request):
                     self._invalidate_presentation(active, "superseded")
                 self._deferred.pop(request.id, None)
                 self._pending.append(request)
@@ -1191,19 +1269,20 @@ class SpeechScheduler:
             return
         if len(self._seen_speech_ids) + len(spans) > 4096:
             return
-        # Replacement needs eligible, exact-origin authority; a late old result cannot remove current work.
+        # Replacement needs eligible authority (`_may_supersede`); a late old result cannot remove current work.
         incoming_status, _ = self._eligibility(request)
         existing = tuple(item for item in self._pending if isinstance(item, SpeechRequest)) + tuple(self._deferred.values())
-        if incoming_status is SpeechCandidateStatus.ELIGIBLE and any(queued.source == request.source and queued.supersedes(request) for queued in existing):
+        if incoming_status is SpeechCandidateStatus.ELIGIBLE and any(self._may_supersede(queued, request) for queued in existing):
             self._trace(SPEECH_SUPERSEDED, "Speech superseded on arrival", data={
                 **self._fields(request), "reason": "superseded_on_arrival",
                 **self._mouth_event(_T.MOUTH_SPEECH_SUPERSEDED, request, SPEECH_SUPERSEDED, reason="superseded_on_arrival")})
+            self._settle_unspoken(request, SpeechCandidateStatus.SUPERSEDED.value, "superseded_on_arrival")
             return
         for queued in existing:
-            if incoming_status is SpeechCandidateStatus.ELIGIBLE and queued.source == request.source and request.supersedes(queued):
+            if incoming_status is SpeechCandidateStatus.ELIGIBLE and self._may_supersede(request, queued):
                 self._defer(queued, SpeechCandidateStatus.SUPERSEDED, "superseded")
         active = self._active
-        if incoming_status is SpeechCandidateStatus.ELIGIBLE and active is not None and isinstance(active.request, SpeechRequest) and active.request.source == request.source and request.supersedes(active.request):
+        if incoming_status is SpeechCandidateStatus.ELIGIBLE and active is not None and isinstance(active.request, SpeechRequest) and self._may_supersede(request, active.request):
             self._invalidate_presentation(active, "superseded")
         self._chain_next[request.id] = 0
         for index, span in enumerate(spans):

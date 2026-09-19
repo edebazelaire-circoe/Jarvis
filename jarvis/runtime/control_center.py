@@ -15,6 +15,7 @@ import uuid
 import aiohttp
 from aiohttp import web
 
+from jarvis.adapters.control_center_brain import RETIRE_MARKER
 from jarvis.adapters.file_replace import replace_with_retry
 from jarvis.adapters.webrtc_echo import echo_cancellation_installed
 from jarvis.domain.errors import ConfigurationError
@@ -444,6 +445,37 @@ def render_interrupted_speech(items: object) -> list[str]:
     return lines
 
 
+def render_pending_speech(items: object) -> list[str]:
+    """Dire au cerveau ce qui va sortir de sa bouche avant qu'il n'écrive.
+
+    C'est le contexte qui manquait entre ce qui doit être dit et ce qui va être
+    dit : ces réponses ont été rédigées aux tours précédents, la bouche ne les a
+    pas encore prononcées, et elles le seront. Sans ces lignes, le cerveau
+    répète ce qui va être dit, ou laisse partir une phrase que l'utilisateur ne
+    comprendra plus.
+
+    Le retrait est nommé, jamais global (Décision 35) : une seule réponse à la
+    fois, désignée par son identifiant.
+    """
+
+    lines: list[str] = []
+    for item in items if isinstance(items, list) else ():
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "").strip()
+        work_id = str(item.get("work_id") or "").strip()
+        if not text or not work_id:
+            continue
+        lines.append(
+            f"PAS ENCORE DIT : ta réponse « {text} » attend la bouche et sera prononcée "
+            "après ce que tu vas dire maintenant. L'utilisateur ne la connaît pas encore. "
+            "Ne la répète pas. Si elle a encore du sens après ce qu'il vient de dire, "
+            "laisse-la passer. Si elle n'en a plus, retire-la en écrivant seule sur une "
+            f"ligne, au tout début de ta réponse : {RETIRE_MARKER}{work_id}]]"
+        )
+    return lines
+
+
 def build_agent_brief(context: dict[str, Any], text: str) -> str:
     """Préfixer la demande de ce que Core sait, et de ce dont il doute.
 
@@ -468,6 +500,7 @@ def build_agent_brief(context: dict[str, Any], text: str) -> str:
     else:
         lines.append("Adressage : direct. La demande t'est adressée.")
     lines.extend(render_interrupted_speech(context.get("interrupted_speech")))
+    lines.extend(render_pending_speech(context.get("pending_speech")))
     state = context.get("state")
     if isinstance(state, dict):
         for key, label in _BRIEF_STATE_FIELDS:

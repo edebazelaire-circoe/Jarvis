@@ -6,7 +6,7 @@
     "schema_version": 1,
     "diagnostic_id": "speech.stale_supersession",
     "version": 2,
-    "title": "Superseded speech is never delivered",
+    "title": "A stale acknowledgement is never delivered",
     "domain": "speech",
     "description": "Reproduces the 2026-09-11 stale acknowledgement: an ack queued behind a busy output while a new turn revises the intent.",
     "profiles": [
@@ -32,7 +32,7 @@
         "name": "speech.stale_delivered_count",
         "unit": "count",
         "direction": "lower_better",
-        "description": "Candidates started or completed after their own supersession or expiry."
+        "description": "Transient candidates (progress, acknowledgement) started or completed after a newer intent had reached the scheduler."
       },
       {
         "name": "speech.latest_intent_delivered",
@@ -44,7 +44,7 @@
         "name": "speech.stale_wait_ms",
         "unit": "ms",
         "direction": "lower_better",
-        "description": "How long a superseded candidate stayed queued."
+        "description": "How long a candidate stayed queued past the arrival of a newer intent."
       },
       {
         "name": "scenario.expectations_declared",
@@ -66,7 +66,7 @@
         "comparator": "eq",
         "threshold": 0,
         "blocking": true,
-        "description": "A revised or expired answer is never spoken."
+        "description": "A progress or acknowledgement whose moment has passed is never spoken."
       },
       {
         "assertion_id": "latest_intent_wins",

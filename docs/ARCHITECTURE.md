@@ -422,6 +422,17 @@ filters by conversation, orders by priority then FIFO, expires TTL, honours
 silent while Voice is in background. Its lifetime is the lifetime of the ACTIVE
 voice transport, not of the work.
 
+A new user intent does not bury the answer to the previous one (Decision 47). A
+transient utterance (`progress`, `ack`) of a past intent is dropped — its truth
+evaporated with the moment it described. A durable one (`result`, `error`,
+`question`) is carried over to the current intent and spoken, unless the brain
+retires it by naming its `work_id`, or unless an utterance of the current intent
+occupies the same speech slot. Core hands the brain, at its next turn, the
+replies still waiting for the mouth (`BrainContext.pending_replies`), so that
+judgment is made where both halves are known. A durable utterance that dies
+unspoken is settled out loud: `voice.speech.abandoned`, at `warning`, with its
+text.
+
 Barge-in has a fixed order in `RealtimeConversationBridge._barge_in()`: local
 stop first (one call into PortAudio), then freeze the playback cursor, then
 `cancel_output`, then `truncate`. The user stops hearing Jarvis before any

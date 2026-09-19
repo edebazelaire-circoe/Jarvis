@@ -68,6 +68,10 @@ OWNER_REPLAY_MARGIN_MS = 150
 FRAME_MS = 10
 _BYTES_PER_SAMPLE = 2  # int16 mono
 _SILENCE_DB = -120.0
+#: Avance maximale de la référence sur l'écho que l'estimateur cherche, et donc
+#: retard maximal qu'il peut aligner : une liaison Bluetooth ajoute 150 à 300 ms
+#: au tampon du périphérique, jamais une seconde.
+MAX_ECHO_LEAD_FRAMES = 100
 
 
 def _env_float(name: str, default: float, *, minimum: float = 0.0, maximum: float | None = None) -> float:

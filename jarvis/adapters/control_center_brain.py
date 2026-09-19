@@ -35,6 +35,7 @@ côté Voice. La passerelle reste en place tant que le chemin legacy existe
 from __future__ import annotations
 
 import asyncio
+import re
 
 import aiohttp
 
@@ -50,7 +51,7 @@ from jarvis.domain.v2 import (
     SpeechPriority,
     SpeechRequest,
 )
-from jarvis.domain.brain_context import BrainContext, BrainSpeechInterruption, BrainWorkContext
+from jarvis.domain.brain_context import BrainContext, BrainPendingReply, BrainSpeechInterruption, BrainWorkContext
 from jarvis.ports.v2 import BrainEventSink
 
 # Jetons d'erreur stables publiés dans `brain.work.failed.error_class`. Ils
@@ -81,6 +82,7 @@ def _turn_context(
     state: BrainWorkingState | None,
     work: BrainWorkContext | None = None,
     interruptions: tuple[BrainSpeechInterruption, ...] = (),
+    pending_replies: tuple[BrainPendingReply, ...] = (),
 ) -> dict[str, object]:
     """Le contexte public que Core joint au tour, et rien d'autre.
 
@@ -114,6 +116,11 @@ def _turn_context(
         # Réponses que l'utilisateur a coupées : ce qu'il en a entendu, pour que
         # l'agent ne tienne pas pour dit ce qui ne l'a pas été.
         context["interrupted_speech"] = [item.to_payload() for item in interruptions]
+    if pending_replies:
+        # Réponses écrites aux tours précédents et pas encore dites. Elles vont
+        # l'être : c'est le contexte qui manquait entre ce qui doit être dit et
+        # ce qui va être dit (décision du 19/09/2026).
+        context["pending_speech"] = [item.to_payload() for item in pending_replies]
     return context
 
 
@@ -127,6 +134,35 @@ def _turn_conversation(turn: BrainTurnInput, work_id: str) -> dict[str, str]:
     """
 
     return {"conversation_id": turn.conversation_id, "correlation_id": turn.correlation_id, "work_id": work_id}
+
+
+#: Ce que l'agent écrit, seul sur une ligne, pour retirer une réponse qu'il a
+#: rédigée et qui n'a pas encore été dite. Même nature que
+#: `BRAIN_NOT_ADDRESSED_ANSWER` : un jeton convenu dans la réponse, parce que
+#: c'est le seul canal que l'agent local possède vers Core (Décision 44). Le
+#: `work_id` doit être l'un de ceux que Core vient de lui remettre : le cerveau
+#: retire par désignation (Décision 35), et ne peut désigner que ce qui l'attend.
+RETIRE_MARKER = "[[jarvis:retire "
+_RETIRE_LINE = re.compile(r"^\s*\[\[jarvis:retire\s+([^\]\s]{1,256})\s*\]\]\s*$", re.MULTILINE)
+
+
+def _take_retired(answer: str, pending: tuple[BrainPendingReply, ...]) -> tuple[str, tuple[str, ...]]:
+    """Séparer, dans la réponse de l'agent, ce qu'il dit de ce qu'il retire.
+
+    Le marqueur ne se prononce jamais : il est retiré du texte, quoi qu'il
+    arrive. Un identifiant qui n'est pas dans ce que Core a remis est ignoré —
+    un modèle ne retire pas un travail qu'on ne lui a pas soumis.
+    """
+
+    if RETIRE_MARKER.rstrip() not in answer:
+        return answer, ()
+    allowed = {item.work_id for item in pending}
+    designated: list[str] = []
+    for match in _RETIRE_LINE.finditer(answer):
+        work_id = match.group(1)
+        if work_id in allowed and work_id not in designated:
+            designated.append(work_id)
+    return _RETIRE_LINE.sub("", answer).strip(), tuple(designated)
 
 
 def _public_answer(raw: object) -> str:
@@ -242,7 +278,8 @@ class ControlCenterBrainBackend:
         """Même tour, avec le travail en cours que Core a lu pour lui (capacité
         `ContextAwareBrainBackend`, tâche 12) : il part dans `context.work`."""
 
-        return await self._run(turn, context.state, context.work, emit, interruptions=context.interruptions)
+        return await self._run(turn, context.state, context.work, emit, interruptions=context.interruptions,
+                               pending_replies=context.pending_replies)
 
     async def _run(
         self,
@@ -252,6 +289,7 @@ class ControlCenterBrainBackend:
         emit: BrainEventSink,
         *,
         interruptions: tuple[BrainSpeechInterruption, ...] = (),
+        pending_replies: tuple[BrainPendingReply, ...] = (),
     ) -> BrainTurnResult:
         work_id = f"brain-turn:{turn.correlation_id}"
         await emit.emit(
@@ -263,10 +301,11 @@ class ControlCenterBrainBackend:
                 public_summary="Demande transmise à l'agent local.",
             )
         )
-        outcome = await self._ask(turn.text, _turn_context(turn, state, work, interruptions),
+        outcome = await self._ask(turn.text, _turn_context(turn, state, work, interruptions, pending_replies),
                                   conversation=_turn_conversation(turn, work_id))
         if outcome.get("ok"):
-            return await self._settle_success(turn, work_id, _public_answer(outcome.get("text")), emit)
+            answer, retired = _take_retired(_public_answer(outcome.get("text")), pending_replies)
+            return await self._settle_success(turn, work_id, answer, emit, retired=retired)
         return await self._settle_failure(
             turn,
             work_id,
@@ -275,9 +314,26 @@ class ControlCenterBrainBackend:
             emit=emit,
         )
 
-    async def _settle_success(self, turn: BrainTurnInput, work_id: str, answer: str, emit: BrainEventSink) -> BrainTurnResult:
-        """Clore un tour réussi : ce que l'agent a écrit devient de la parole publique."""
+    async def _settle_success(self, turn: BrainTurnInput, work_id: str, answer: str, emit: BrainEventSink,
+                              *, retired: tuple[str, ...] = ()) -> BrainTurnResult:
+        """Clore un tour réussi : ce que l'agent a écrit devient de la parole publique.
 
+        Avant de dire ce tour-ci, l'agent solde ce qu'il retire : une réponse
+        écrite plus tôt et pas encore dite, qu'il juge caduque après ce que
+        l'utilisateur vient de dire. C'est la moitié « abandonnée explicitement »
+        de la décision du 19/09/2026, et elle passe par le seul chemin de
+        retrait qui existe : une désignation nommée (Décision 35).
+        """
+
+        for retired_work_id in retired:
+            await emit.emit(
+                BrainEvent(
+                    kind=BrainEventKind.SUPERSEDED,
+                    conversation_id=turn.conversation_id,
+                    correlation_id=turn.correlation_id,
+                    work_id=retired_work_id,
+                )
+            )
         await emit.emit(
             BrainEvent(
                 kind=BrainEventKind.COMPLETED,

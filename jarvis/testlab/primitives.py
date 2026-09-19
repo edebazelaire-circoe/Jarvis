@@ -459,6 +459,10 @@ TESTLAB_PRIMITIVES: tuple[PrimitiveSpec, ...] = (
                "The user says an authored utterance (virtual transcript, or live text input)."),
     _primitive("user.interrupt", ("turn_id", "text"), (), _SPOKEN,
                "The user starts speaking over Jarvis output with an authored utterance."),
+    _primitive("device.play_through", ("candidate_id",), ("played_ms",), _VIRTUAL,
+               "The output Jarvis opened for this speech candidate plays to its end, freeing the mouth "
+               "for what the scheduler holds next. device.release cannot: Jarvis's own output id is a "
+               "runtime value no authored step can know."),
     _primitive("time.wait", (), (), ALL_PROFILES,
                "Virtual time advances to at_ms with no stimulus (lets timers, TTLs and queues act). "
                "On a hardware profile the wait is real."),

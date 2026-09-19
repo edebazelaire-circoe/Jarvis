@@ -283,8 +283,11 @@ def _brain_backend_from_env():
 def _brain_availability_from_env() -> dict[str, object]:
     """Réglages de disponibilité du cerveau pour Core, actifs par défaut.
 
-    - `JARVIS_SUPERSEDE_STALE_REPLIES` (défaut 1) : une nouvelle intention
-      périme la parole des tours précédents encore en file (retour n° 8).
+    - `JARVIS_SUPERSEDE_STALE_REPLIES` (défaut 0 depuis le 19/09/2026) : une
+      nouvelle intention périmait la parole des tours précédents encore en file
+      (retour n° 8). L'utilisateur a écarté cette règle mécanique d'ancienneté :
+      une réponse encore cohérente doit être dite, et seul le cerveau la retire,
+      en nommant son travail. Poser `1` rétablit l'ancien comportement.
     - `JARVIS_BRAIN_TURN_BUDGET_S` (défaut 8) : au-delà, le tour est signalé
       dans la trace (`core.brain.turn_slow`, `core.brain.turn_over_budget`).
     - `JARVIS_WORK_WAKE_INTERVAL_S` (défaut 10) : écart minimal entre deux
@@ -295,7 +298,7 @@ def _brain_availability_from_env() -> dict[str, object]:
     from jarvis.core.brain_context import DEFAULT_WAKE_INTERVAL_S
     from jarvis.core.brain_service import DEFAULT_TURN_BUDGET_S
 
-    supersede = os.getenv("JARVIS_SUPERSEDE_STALE_REPLIES", "1").strip().lower() not in {"0", "false", "no", "off"}
+    supersede = os.getenv("JARVIS_SUPERSEDE_STALE_REPLIES", "0").strip().lower() in {"1", "true", "yes", "on"}
     try:
         budget = float(os.getenv("JARVIS_BRAIN_TURN_BUDGET_S") or DEFAULT_TURN_BUDGET_S)
     except ValueError:

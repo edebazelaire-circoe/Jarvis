@@ -27,6 +27,12 @@
       "manifest_fingerprint": "9cbb198ffff51c3c1c13c1ebc73c00290de2bb5b9d3dcba01bd2c9a754db3e87"
     },
     {
+      "diagnostic_id": "speech.stale_supersession",
+      "version": 3,
+      "path": "speech/stale_supersession.v3.json",
+      "manifest_fingerprint": "ecf11b0a3580135c2d3c47d10cfef82e6069f745bdd89190e7903373984d96fc"
+    },
+    {
       "diagnostic_id": "voice.barge_in_response",
       "version": 1,
       "path": "voice/barge_in_response.v1.json",

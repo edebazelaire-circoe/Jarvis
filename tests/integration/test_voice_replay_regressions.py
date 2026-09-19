@@ -228,14 +228,17 @@ async def test_backend_85_7s_does_not_block_later_turn_admission_on_full_stack(t
             )
             historical_results.append(result)
             await handles[0].complete_work(str(step.data["work_id"]), summary=result.text)
+            # Le tour lent a été doublé par deux tours plus récents : sa réponse
+            # n'est plus celle de l'intention courante. Elle reste vraie, donc
+            # elle est reportée et dite (décision du 19/09/2026), au lieu
+            # d'attendre une intention qui ne reviendra jamais.
             await _eventually(
                 lambda: any(
                     event["data"].get("speech_id") == result.id
-                    and event["data"].get("status") == "deferred"
-                    and event["data"].get("reason") == "stale_source"
+                    and event["data"].get("reason") == "carried_over"
                     for event in stack.journal.of("voice.speech.presentation_decided")
                 ),
-                message="historical result was not retained as stale-source pending speech",
+                message="historical result was not carried over to the current intent",
             )
 
         async def release(step):  # noqa: ANN001
@@ -262,7 +265,12 @@ async def test_backend_85_7s_does_not_block_later_turn_admission_on_full_stack(t
         assert len(stack.backend.handles) == 3
         assert stack.journal.count("voice.brain_turn_submitted") == 3
         assert stack.core_journal.count("core.brain.backend_task_started") == 1
-        assert stack.session.spoken == []
+        await _eventually(
+            lambda: [item.text for item in stack.session.spoken] == [historical_results[0].text],
+            message="the carried-over answer of the slow turn was never spoken",
+        )
+        assert stack.journal.of("voice.speech.abandoned") == []
+        assert stack.journal.of("voice.speech.abandoned") == []
         state = stack.core.brain.working_state(stack.conversation_id)
         assert historical_results[0].text in state.known_public_facts
         for handle in handles[1:]:

@@ -265,10 +265,15 @@ class _Executor:
         return self._times.get(index, 0)
 
 
-def _candidate(candidate_id, epoch, at_ms):
+def _candidate(candidate_id, epoch, at_ms, kind="ack"):
     from jarvis.testlab.virtual.executor import CandidateRecord
 
-    return CandidateRecord(candidate_id, "ack", at_ms, intent_id=f"i-{epoch}", intent_epoch=epoch)
+    return CandidateRecord(candidate_id, kind, at_ms, intent_id=f"i-{epoch}", intent_epoch=epoch)
+
+
+#: What v3 declares. Passing it asks for the durable count; v1 and v2 pass nothing and
+#: are not measured for it, which is the point of the argument.
+V3_METRICS = ("speech.carried_over_delivered_count",)
 
 
 def test_supersession_measures_report_the_stale_wait_in_virtual_time(tmp_path):
@@ -279,7 +284,7 @@ def test_supersession_measures_report_the_stale_wait_in_virtual_time(tmp_path):
     journal.emit("voice.speech.completed", "", data={"speech_id": "new"})
     executor = _Executor({"old": _candidate("old", 1, 0), "new": _candidate("new", 2, 28000)},
                          {0: 0, 1: 28000, 2: 35900, 3: 35900})
-    assert _supersession_metrics(journal, executor) == {
+    assert _supersession_metrics(journal, executor, ()) == {
         "speech.superseded_count": 1,
         "speech.stale_delivered_count": 0,
         "speech.latest_intent_delivered": True,
@@ -293,7 +298,7 @@ def test_supersession_measures_catch_a_candidate_spoken_after_its_own_supersessi
     journal.emit("voice.speech.superseded", "", data={"speech_id": "old"})
     journal.emit("voice.speech.started", "", data={"speech_id": "old"})
     executor = _Executor({"old": _candidate("old", 1, 0)}, {0: 0, 1: 1000, 2: 2000})
-    metrics = _supersession_metrics(journal, executor)
+    metrics = _supersession_metrics(journal, executor, V3_METRICS)
     assert metrics["speech.stale_delivered_count"] == 1
     assert metrics["speech.latest_intent_delivered"] is True  # it was delivered, staleness is the other measure
 
@@ -313,7 +318,7 @@ def test_supersession_measures_catch_a_stale_candidate_the_stack_never_labelled(
     executor = _Executor({"old-ack": _candidate("old-ack", 1, 0),
                           "new-result": _candidate("new-result", 2, 28000)},
                          {0: 0, 1: 28000, 2: 35900, 3: 35900})
-    metrics = _supersession_metrics(journal, executor)
+    metrics = _supersession_metrics(journal, executor, V3_METRICS)
     assert metrics["speech.superseded_count"] == 0       # the stack never admitted it
     assert metrics["speech.stale_delivered_count"] == 1  # it was stale all the same
     assert metrics["speech.stale_wait_ms"] == 35900      # the incident's own delay
@@ -329,9 +334,45 @@ def test_a_candidate_is_not_stale_before_the_scheduler_saw_the_later_intent(tmp_
     journal.emit("voice.speech.queued", "", data={"speech_id": "second"})
     executor = _Executor({"first": _candidate("first", 1, 0), "second": _candidate("second", 2, 5000)},
                          {0: 0, 1: 100, 2: 200, 3: 5000})
-    metrics = _supersession_metrics(journal, executor)
+    metrics = _supersession_metrics(journal, executor, V3_METRICS)
     assert metrics["speech.stale_delivered_count"] == 0
     assert metrics["speech.stale_wait_ms"] == 0
+
+
+def test_a_durable_answer_spoken_past_the_revision_is_carried_over_not_stale(tmp_path):
+    """The 2026-09-19 split: same journal, two populations, two counts.
+
+    The acknowledgement and the answer of one past intent are both spoken after a later
+    epoch reached the scheduler. Before the split both read as stale deliveries and the
+    blocking assertion failed on the CORRECTED product; the kind the scenario declared
+    is what separates them.
+    """
+    journal = TraceRecordingJournal(tmp_path)
+    journal.emit("voice.speech.queued", "", data={"speech_id": "old-ack"})
+    journal.emit("voice.speech.queued", "", data={"speech_id": "old-result"})
+    journal.emit("voice.speech.queued", "", data={"speech_id": "new-result"})
+    journal.emit("voice.speech.started", "", data={"speech_id": "old-result"})
+    journal.emit("voice.speech.started", "", data={"speech_id": "old-ack"})
+    executor = _Executor({"old-ack": _candidate("old-ack", 1, 0),
+                          "old-result": _candidate("old-result", 1, 0, kind="result"),
+                          "new-result": _candidate("new-result", 2, 28000, kind="result")},
+                         {0: 0, 1: 0, 2: 28000, 3: 35900, 4: 35900})
+    metrics = _supersession_metrics(journal, executor, V3_METRICS)
+    assert metrics["speech.stale_delivered_count"] == 1        # the acknowledgement, a defect
+    assert metrics["speech.carried_over_delivered_count"] == 1  # the answer, the intended behaviour
+
+
+def test_a_version_that_does_not_declare_the_carried_over_count_is_not_measured_for_it(tmp_path):
+    """A stored v1/v2 run keeps exactly the metric set it was judged by."""
+    journal = TraceRecordingJournal(tmp_path)
+    journal.emit("voice.speech.queued", "", data={"speech_id": "old-result"})
+    journal.emit("voice.speech.queued", "", data={"speech_id": "new-result"})
+    journal.emit("voice.speech.started", "", data={"speech_id": "old-result"})
+    executor = _Executor({"old-result": _candidate("old-result", 1, 0, kind="result"),
+                          "new-result": _candidate("new-result", 2, 28000, kind="result")},
+                         {0: 0, 1: 28000, 2: 35900})
+    assert "speech.carried_over_delivered_count" not in _supersession_metrics(journal, executor, ())
+    assert _supersession_metrics(journal, executor, V3_METRICS)["speech.carried_over_delivered_count"] == 1
 
 
 def test_latency_measures_join_the_stages_of_each_speech(tmp_path):

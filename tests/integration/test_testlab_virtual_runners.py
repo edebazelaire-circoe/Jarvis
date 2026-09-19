@@ -189,6 +189,50 @@ async def test_speech_stale_supersession_passes_the_seed_and_fails_an_undelivere
     assert outcome == "failed" and results["latest_intent_wins"] == "failed"
 
 
+def _v3_scenario_without_the_late_answer() -> Scenario:
+    """v3's own situation with the durable answer of the past intent never enqueued.
+
+    That is the defect `carried_over_answer_spoken` watches for, expressed as data: the
+    brain's answer never reaches the surface, so there is nothing to carry over. Nothing
+    else changes — the acknowledgement still dies, the current answer is still spoken.
+    """
+    shipped = _entry("speech.stale_supersession", 3).manifest.scenario
+    steps = tuple(step for step in shipped.steps
+                  if step.args.get("candidate_id") != "old-result")
+    return Scenario("stale_ack_and_no_late_answer", steps, title="The late answer never arrives",
+                    description="v3's situation, with the durable answer of the past intent missing.",
+                    provenance=shipped.provenance)
+
+
+async def test_speech_stale_supersession_v3_carries_the_answer_over_and_fails_without_it(tmp_path):
+    """v3: the stale ACK is buried, the stale ANSWER is spoken, and both halves are measured.
+
+    The two counts come from one journal: `stale_delivered_count` is the transient
+    population (the acknowledgement, which must never speak) and
+    `carried_over_delivered_count` the durable one (the answer, which must). Drop the
+    answer from the situation and the new blocking assertion fails — which is the only
+    thing that makes it a measurement rather than a sentence.
+    """
+    context = build_context(tmp_path / "ok", "speech.stale_supersession", version=3)
+    good = await StaleSupersessionRunner().run(context)
+    bad = await StaleSupersessionRunner().run(
+        build_context(tmp_path / "ko", "speech.stale_supersession", version=3,
+                      scenario=_v3_scenario_without_the_late_answer()))
+
+    assert dict(good.metrics) == {"speech.superseded_count": 1, "speech.stale_delivered_count": 0,
+                                  "speech.carried_over_delivered_count": 1,
+                                  "speech.latest_intent_delivered": True, "speech.stale_wait_ms": 28000,
+                                  "scenario.expectations_declared": 2, "scenario.expectations_failed_count": 0}
+    assert verdict_of(context, good.metrics)[0] == "passed"
+
+    assert dict(bad.metrics)["speech.carried_over_delivered_count"] == 0
+    assert dict(bad.metrics)["speech.stale_delivered_count"] == 0  # the acknowledgement is still buried
+    assert dict(bad.metrics)["scenario.expectations_failed_count"] == 1
+    outcome, results = verdict_of(context, bad.metrics)
+    assert outcome == "failed" and results["carried_over_answer_spoken"] == "failed"
+    assert results["no_stale_delivery"] == "passed" and results["latest_intent_wins"] == "passed"
+
+
 class _SlowFirstAudio(QueueLatencyRunner):
     """Fault: the first audio of a started speech arrives past the declared threshold."""
 

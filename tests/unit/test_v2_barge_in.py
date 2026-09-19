@@ -995,16 +995,14 @@ async def test_a_progress_queued_during_the_interruption_is_dropped_by_the_new_t
         retired = next(item for item in scheduler.presentation_snapshot()["candidates"] if item["speech_id"] == "speech-2")
         assert retired["status"] == "superseded" and retired["reason"] == "stale_source"
 
-        # The same old work may finish after the new intent. Its result remains
-        # available for a future explicit selection; the old voice is deferred.
+        # Le même travail peut finir après la nouvelle intention. Son résultat
+        # reste vrai : il est reporté sur l'intention courante et dit, au lieu
+        # d'attendre une intention qui ne reviendra jamais (19/09/2026).
         late_result = speech_request("Trois messages.", speech_id="speech-3")
         await core.publish(speech_envelope(late_result))
-        await until(lambda: late_result.id in scheduler._deferred)
-        assert scheduler._deferred[late_result.id].text == late_result.text
-        assert scheduler._deferred[late_result.id].source == late_result.source
-        deferred = next(item for item in scheduler.presentation_snapshot()["candidates"] if item["speech_id"] == late_result.id)
-        assert deferred["status"] == "deferred" and deferred["reason"] == "stale_source"
-        assert [request.text for request in session.spoken] == ["Je regarde."]
-        assert not any(turn["content"] == late_result.text for turn in core.turns)
+        await until(lambda: [request.text for request in session.spoken] == ["Je regarde.", "Trois messages."])
+        assert late_result.id not in scheduler._deferred
+        carried = next(item for item in scheduler.presentation_snapshot()["candidates"] if item["speech_id"] == late_result.id)
+        assert carried["status"] == "started" and carried["reason"] == "generation_requested"
     finally:
         await scheduler.stop()

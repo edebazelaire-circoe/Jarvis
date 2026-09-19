@@ -5,6 +5,7 @@ import base64
 import pytest
 
 from jarvis.adapters.openai_realtime import OUTPUT_ID_METADATA_KEY, SPEECH_ID_METADATA_KEY
+from jarvis.domain.speech_presentation import SpeechDependency
 from jarvis.domain.v2 import SpeechKind, SpeechRequest
 from jarvis.runtime.output_admission import OutputAdmissionState
 from jarvis.runtime.realtime_audio import RealtimeConversationBridge, SoundDeviceRealtimeAudio
@@ -28,7 +29,8 @@ def setup(pipeline):
     scheduler.update_speech_context(context(conversation, "origin"))
     scheduler._running = True
     request = SpeechRequest(conversation, "Exact useful answer", kind=SpeechKind.RESULT,
-                            correlation_id="origin", source=source("origin"), outcome_id="retained-outcome")
+                            correlation_id="origin", source=source("origin", work_id="retired-work"),
+                            outcome_id="retained-outcome")
     scheduler._enqueue(request)
     assert scheduler._pop_next() == request
     audio = SoundDeviceRealtimeAudio()
@@ -55,7 +57,13 @@ async def retire(wire, scheduler, events):
 
 
 @pytest.mark.parametrize("barrier", ["core_registration", "provider_create", "device_lock"])
-async def test_new_intent_before_first_write_never_becomes_heard(pipeline, barrier):
+async def test_a_result_the_brain_retires_before_the_first_write_never_becomes_heard(pipeline, barrier):
+    """Depuis le 19/09/2026, une intention neuve ne suffit plus à retirer une
+    réponse durable : elle est reportée et dite. Ce qui la retire encore, et
+    qui est mesuré ici, c'est la désignation explicite du cerveau
+    (`dependency_revoked`) — le seul retrait que la doctrine reconnaisse
+    (Décision 35)."""
+
     facade, wire, client, conversation, events, history = pipeline
     scheduler, request, audio, bridge = setup(pipeline)
     entered, release = asyncio.Event(), asyncio.Event()
@@ -95,7 +103,8 @@ async def test_new_intent_before_first_write_never_becomes_heard(pipeline, barri
                 locked = True
                 playing = asyncio.create_task(bridge._play_audio(1, audio_event))
                 await asyncio.sleep(.01)
-        scheduler.update_speech_context(context(conversation, "new-origin", epoch=2))
+        scheduler.update_speech_context(context(conversation, "new-origin", epoch=2,
+                                                invalid=(SpeechDependency("retired-work", "origin"),)))
         assert scheduler.output_admission(output).state is OutputAdmissionState.INVALIDATED
         await asyncio.sleep(0)  # Let the owned, exact cancellation reach the adapter.
         release.set()

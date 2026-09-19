@@ -78,7 +78,7 @@
 **Tests / enforcement:** No “I checked”, “done”, or fabricated result unless state confirms it.
 
 ## Decision 08 — Speech queue is freshness-aware, not strict FIFO
-**Status:** locked
+**Status:** locked, amended on 2026-09-19 (see the amendment below)
 
 **Decision:** Unstarted/remaining speech can be cancelled, merged, reprioritized, or dropped when a newer user turn makes it stale.
 
@@ -87,6 +87,38 @@
 **Implications:** Every speech item needs source turn, age/freshness, priority, and cancellation state.
 
 **Tests / enforcement:** Stale queued response never plays after a superseding user correction.
+
+### Amendment 2026-09-19 — freshness applies to transient speech only
+**Status:** locked by the user, in his own words.
+
+> « Une réponse sans retard faut qu'elle soit dite si c'est cohérent avec le contexte, en
+> fait c'est ça le problème, j'ai l'impression qu'il manque vachement de gestion de
+> contexte entre ce qui doit être dit, ce qui va être dit. […] normalement le brain est
+> censé être capable de faire cette distinction entre ce qui doit être dit et… »
+
+**What was wrong:** the rule above was read as *age*, and applied to every kind of
+speech. A `result`, an `error` or a `question` of a past intent went to
+`SpeechScheduler._deferred` — a queue whose only exit is the return of an intention that
+never returns (`intent_id == turn_id`, and the epoch never moves back). Measured on
+`runtime/trace.jsonl`: 22 brain utterances reached `deferred / stale_source`, one was
+eventually spoken. On 2026-09-19 at 13:27:27 UTC a complete 852-character answer died
+that way, 3 ms after being written, while the user was still waiting for it. The
+"superseding user correction" of the sentence above was in fact a *second question*, and
+nobody had decided that a second question cancels the answer to the first.
+
+**Amended decision:** freshness is a property of *transient* speech (`progress`, `ack`),
+whose truth evaporates with the moment it describes — they are still dropped. A durable
+utterance (`result`, `error`, `question`) is **carried over** to the current intent and
+spoken; only the brain retires it, by naming its `work_id` (Decision 35 of the
+realtime-brain log: "work is removed only by an explicit, named brain decision"). Core no
+longer supersedes pending replies in bulk on each new intent; it hands them to the brain
+as the context of its next turn, so the judgment is made where both halves are known —
+what must be said, and what is about to be said.
+
+**Tests / enforcement:** a durable answer of a past intent is spoken
+(`reason: carried_over`); a transient one never is (`superseded / stale_source`); a
+durable one that dies unspoken emits `voice.speech.abandoned` at `warning` with its text.
+`JARVIS_SUPERSEDE_STALE_REPLIES=1` restores the previous rule unchanged.
 
 ## Decision 09 — Backend work must not block conversation
 **Status:** locked

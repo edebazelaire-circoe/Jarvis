@@ -80,6 +80,11 @@ def _classify(kind: str, data: dict[str, Any]) -> str | None:
         # Une erreur rédigée que l'ordonnanceur n'a pas prononcée : c'est
         # précisément le trou qu'on ne veut plus jamais laisser muet.
         return FAILED
+    if kind == "voice.speech.abandoned":
+        # Une réponse complète rédigée puis retirée sans avoir été dite. Le
+        # retrait est légitime — c'est le cerveau qui l'a décidé — mais
+        # l'utilisateur doit pouvoir constater qu'une réponse existait.
+        return ATTENTION
     if kind in ("core.brain.woken_by_work", "core.brain.notice_dropped"):
         return ATTENTION
     if kind == "core.work.attention":

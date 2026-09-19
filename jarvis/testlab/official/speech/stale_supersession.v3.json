@@ -5,10 +5,10 @@
     "schema": "jarvis.testlab.diagnostic",
     "schema_version": 1,
     "diagnostic_id": "speech.stale_supersession",
-    "version": 1,
-    "title": "A stale acknowledgement is never delivered",
+    "version": 3,
+    "title": "A stale acknowledgement dies, a stale answer is carried over",
     "domain": "speech",
-    "description": "Reproduces the 2026-09-11 stale acknowledgement: an ack queued behind a busy output while a new turn revises the intent.",
+    "description": "Reproduces the 2026-09-11 stale acknowledgement and adds the answer of the same past intent: a transient speech whose moment has passed is never spoken, while a durable answer (result, error, question) is carried over onto the current intent and delivered.",
     "profiles": [
       {
         "name": "virtual",
@@ -35,6 +35,12 @@
         "description": "Transient candidates (progress, acknowledgement) started or completed after a newer intent had reached the scheduler."
       },
       {
+        "name": "speech.carried_over_delivered_count",
+        "unit": "count",
+        "direction": "higher_better",
+        "description": "Durable candidates (result, error, question) of a past intent that were still spoken, carried over onto the current intent."
+      },
+      {
         "name": "speech.latest_intent_delivered",
         "unit": "boolean",
         "direction": "higher_better",
@@ -45,6 +51,18 @@
         "unit": "ms",
         "direction": "lower_better",
         "description": "How long a candidate stayed queued past the arrival of a newer intent."
+      },
+      {
+        "name": "scenario.expectations_declared",
+        "unit": "count",
+        "direction": "neutral",
+        "description": "Scenario expect.* steps this run evaluated."
+      },
+      {
+        "name": "scenario.expectations_failed_count",
+        "unit": "count",
+        "direction": "lower_better",
+        "description": "Scenario expect.* steps the run evaluated and did not meet."
       }
     ],
     "assertions": [
@@ -57,12 +75,28 @@
         "description": "A progress or acknowledgement whose moment has passed is never spoken."
       },
       {
+        "assertion_id": "carried_over_answer_spoken",
+        "metric": "speech.carried_over_delivered_count",
+        "comparator": "ge",
+        "threshold": 1,
+        "blocking": true,
+        "description": "An answer of a past intent is still spoken instead of dying in the queue."
+      },
+      {
         "assertion_id": "latest_intent_wins",
         "metric": "speech.latest_intent_delivered",
         "comparator": "eq",
         "threshold": true,
         "blocking": true,
         "description": "The answer of the latest intent is the one delivered."
+      },
+      {
+        "assertion_id": "scenario_expectations_met",
+        "metric": "scenario.expectations_failed_count",
+        "comparator": "eq",
+        "threshold": 0,
+        "blocking": true,
+        "description": "Every expectation the scenario states about this situation held."
       }
     ],
     "score": {
@@ -74,9 +108,9 @@
   "scenario": {
     "schema": "jarvis.testlab.scenario",
     "schema_version": 1,
-    "scenario_id": "stale_ack_35_9s",
-    "title": "Stale acknowledgement behind a busy output",
-    "description": "An ack queued behind a playing output while a later turn revises the intent.",
+    "scenario_id": "stale_ack_and_late_answer_35_9s",
+    "title": "Stale acknowledgement and carried-over answer behind a busy output",
+    "description": "An acknowledgement queued behind a playing output while a later turn revises the intent, and the answer of that same past intent arriving once the current turn has been answered: the acknowledgement dies with its moment, the answer is carried over and still spoken.",
     "provenance": {
       "source_path": "tasks/jarvis_voice_architectures_handoff/sources/transcript-2026-09-11.md",
       "source_kind": "human_trace_reconstruction",
@@ -91,12 +125,20 @@
         {
           "source_ref": "TASK.md lines 47-50",
           "fact": "A superseded candidate must not become spoken at the historical delay."
+        },
+        {
+          "source_ref": "user decision, 2026-09-19",
+          "fact": "A durable answer (result, error, question) of a past intent is still spoken unless the brain withdraws it."
         }
       ],
       "constructed": [
         {
           "source_ref": "fixture design",
           "fact": "Intent epochs, identifiers, and the 28000 ms supersession point are synthetic."
+        },
+        {
+          "source_ref": "fixture design",
+          "fact": "The late durable candidate old-result of the past intent, and its 36000 ms arrival, are synthetic."
         }
       ]
     },
@@ -142,6 +184,56 @@
         "args": {
           "at_ms": 35900,
           "output_id": "prior-output"
+        }
+      },
+      {
+        "primitive": "brain.release",
+        "args": {
+          "at_ms": 35950,
+          "work_id": "new-intent-work"
+        }
+      },
+      {
+        "primitive": "scheduler.enqueue",
+        "args": {
+          "at_ms": 36000,
+          "candidate_id": "old-result",
+          "intent_id": "intent-old",
+          "intent_epoch": 1,
+          "kind": "result",
+          "ttl_ms": 60000
+        }
+      },
+      {
+        "primitive": "device.play_through",
+        "args": {
+          "at_ms": 37000,
+          "candidate_id": "new-result",
+          "played_ms": 300
+        }
+      },
+      {
+        "primitive": "time.wait",
+        "args": {
+          "at_ms": 40000
+        }
+      },
+      {
+        "primitive": "expect.metric",
+        "args": {
+          "at_ms": 40000,
+          "metric": "speech.carried_over_delivered_count",
+          "comparator": "ge",
+          "threshold": 1
+        }
+      },
+      {
+        "primitive": "expect.metric",
+        "args": {
+          "at_ms": 40000,
+          "metric": "speech.stale_delivered_count",
+          "comparator": "eq",
+          "threshold": 0
         }
       }
     ]

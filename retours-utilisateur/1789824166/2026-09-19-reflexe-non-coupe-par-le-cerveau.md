@@ -256,3 +256,9 @@ intention ou deux ?** Le code répond « deux » ; l'utilisateur, à l'oral, en 
 visiblement une réponse pour chacune. C'est un arbitrage à trancher, pas à deviner.
 
 Aucun code de production n'a été modifié : diagnostic uniquement.
+
+---
+
+**Suite** — l'utilisateur a re-signalé le même défaut à la session suivante
+(16:40:00). Sa reformulation et ce qu'elle précise de son attente sont consignées dans
+`retours-utilisateur/1789828800/2026-09-19-reflexe-non-coupe-par-le-cerveau-suite.md`.

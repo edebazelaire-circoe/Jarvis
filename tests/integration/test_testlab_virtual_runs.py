@@ -61,13 +61,16 @@ def build(tmp_path: Path, *, max_run_duration_s: float | None = None, cancel_gra
     return supervisor, store
 
 
-async def run_seed(tmp_path: Path, diagnostic_id: str, **parameters):
-    """Submit one seed run and wait for its terminal record. Exactly one worker process."""
+async def run_seed(tmp_path: Path, diagnostic_id: str, *, version: int | None = None, **parameters):
+    """Submit one seed run and wait for its terminal record. Exactly one worker process.
+
+    `version=None` is the product default — no version means the latest published one.
+    """
     supervisor, store = build(tmp_path)
     await supervisor.start()
     try:
         run_id = await supervisor.submit(RunRequest(diagnostic_id=diagnostic_id, profile=ProfileName.VIRTUAL,
-                                                    parameters=parameters))
+                                                    version=version, parameters=parameters))
         run = await supervisor.wait(run_id, timeout_s=WAIT_S)
     finally:
         await supervisor.aclose()
@@ -107,18 +110,36 @@ async def test_speech_payload_integrity_passes_in_a_real_worker(tmp_path):
 
 
 async def test_speech_stale_supersession_replays_its_shipped_scenario_in_a_real_worker(tmp_path):
-    """No version means the latest, which is v2 since the expectation metrics were published.
+    """No version means the latest, which is v3 since the carried-over answer was published.
 
-    The shipped scenario carries no `expect.*` step, so both expectation measurements are
-    0 and the situation's own four measurements are unchanged from v1.
+    v3's scenario states both halves of the 2026-09-19 rule as `expect.metric` steps, so
+    two expectations are declared and both hold: the acknowledgement of the past intent is
+    never spoken (`stale_delivered_count = 0`) and the ANSWER of that same past intent is
+    (`carried_over_delivered_count = 1`). The incident's own 28 s wait is unchanged.
     """
     run, _store = await run_seed(tmp_path, "speech.stale_supersession")
     assert run.status is RunStatus.PASSED, run.failure
-    assert run.diagnostic_version == 2
+    assert run.diagnostic_version == 3
+    assert dict(run.metrics) == {"speech.superseded_count": 1, "speech.stale_delivered_count": 0,
+                                 "speech.carried_over_delivered_count": 1,
+                                 "speech.latest_intent_delivered": True, "speech.stale_wait_ms": 28000,
+                                 "scenario.expectations_declared": 2, "scenario.expectations_failed_count": 0}
+    assert run.scenario_id == "stale_ack_and_late_answer_35_9s"
+
+
+async def test_the_published_v2_of_stale_supersession_still_runs_its_own_situation(tmp_path):
+    """A version is not retired by the next one: v2's scenario, judged by v2, is untouched.
+
+    Its situation holds only the transient case, so the restriction of
+    `speech.stale_delivered_count` to transient kinds changes none of its numbers — and
+    `speech.carried_over_delivered_count`, which v2 does not declare, is not measured.
+    """
+    run, _store = await run_seed(tmp_path, "speech.stale_supersession", version=2)
+    assert run.status is RunStatus.PASSED, run.failure
+    assert run.diagnostic_version == 2 and run.scenario_id == "stale_ack_35_9s"
     assert dict(run.metrics) == {"speech.superseded_count": 1, "speech.stale_delivered_count": 0,
                                  "speech.latest_intent_delivered": True, "speech.stale_wait_ms": 28000,
                                  "scenario.expectations_declared": 0, "scenario.expectations_failed_count": 0}
-    assert run.scenario_id == "stale_ack_35_9s"
 
 
 async def test_voice_queue_latency_passes_in_a_real_worker(tmp_path):
@@ -191,8 +212,10 @@ def _scenario_with_unmet_expectation():
     from jarvis.testlab.scenarios import Scenario, ScenarioStep
     from jarvis.testlab.selftest import catalog_implementations
 
+    # v2's own scenario, explicitly: this test is about what v2 declares and v1 does not,
+    # and the latest version has since moved on to its own, longer situation.
     shipped = load_catalog(implementations=catalog_implementations()).describe(
-        "speech.stale_supersession").manifest.scenario
+        "speech.stale_supersession", 2).manifest.scenario
     return Scenario("stale_ack_35_9s_with_expectation",
                     title="The shipped stale situation, with an event expectation",
                     description="The converted incident scenario plus an expectation the run cannot meet.",
@@ -208,9 +231,8 @@ async def test_the_published_v2_turns_an_unmet_expectation_into_a_verdict_and_v1
     Two runs of the SAME scenario on the SAME implementation, differing only by the
     declaration they are judged against:
 
-    - no explicit version resolves to the latest, v2, which declares
-      `scenario.expectations_failed_count` and a blocking assertion on it, so the unmet
-      expectation is a measured 1 and the run is `failed` — a product verdict;
+    - v2 declares `scenario.expectations_failed_count` and a blocking assertion on it, so
+      the unmet expectation is a measured 1 and the run is `failed` — a product verdict;
     - pinned to v1, which declares neither, the same unmet expectation cannot be
       expressed, so the run is `errored` / `scenario_expectation_unmet`, read as
       `inconclusive` — "could not measure", by design.
@@ -225,7 +247,7 @@ async def test_the_published_v2_turns_an_unmet_expectation_into_a_verdict_and_v1
     await supervisor.start()
     try:
         latest_id = await supervisor.submit(RunRequest(diagnostic_id="speech.stale_supersession",
-                                                       profile=ProfileName.VIRTUAL, scenario=scenario))
+                                                       profile=ProfileName.VIRTUAL, version=2, scenario=scenario))
         latest = await supervisor.wait(latest_id, timeout_s=WAIT_S)
         pinned_id = await supervisor.submit(RunRequest(diagnostic_id="speech.stale_supersession",
                                                        profile=ProfileName.VIRTUAL, version=1, scenario=scenario))
@@ -233,7 +255,6 @@ async def test_the_published_v2_turns_an_unmet_expectation_into_a_verdict_and_v1
     finally:
         await supervisor.aclose()
 
-    # A request without a version targets the latest published declaration.
     assert latest.diagnostic_version == 2
     assert latest.status is RunStatus.FAILED, latest.failure
     assert classify_run(latest).outcome is RunOutcomeClass.FAILED

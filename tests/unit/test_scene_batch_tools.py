@@ -6,7 +6,9 @@ réelle : `SceneDisplayTools` → `CoreSceneTransport` → `LocalProtocolServer`
 `JarvisCoreApplication.scene`. Ce qui doit tenir :
 
 - un lot remplace N appels unitaires et rend des comptes vrais ;
-- un objet épinglé par l'utilisateur n'est **jamais** touché, et le dit ;
+- l'épingle de l'utilisateur protège la **place** d'un objet, pas sa présence à
+  l'écran : un lot qui ne fait que masquer ou réafficher l'atteint comme les
+  autres ; tout autre changement l'écarte, et le dit ;
 - les refus sont rendus avec leur motif, jamais avalés ;
 - une sélection trop large, ou un masquage qui viderait l'écran, est refusé
   **avant** tout envoi ;
@@ -108,7 +110,7 @@ async def test_a_second_identical_batch_changes_nothing_and_says_so(core, tools)
 # ------------------------------------------------------------------ l'épingle de l'utilisateur
 
 
-async def test_a_batch_never_touches_an_object_the_user_pinned_and_reports_the_refusal(core, tools):
+async def test_a_batch_leaves_a_pinned_object_alone_for_anything_but_visibility_and_says_so(core, tools):
     made = await notes(tools, 3)
     pinned = made[0]
     await user_command(core, {"op": "pin", "object_id": pinned})
@@ -131,11 +133,47 @@ async def test_an_explicit_list_of_ids_cannot_bypass_the_pin(core, tools):
     await user_command(core, {"op": "pin", "object_id": made[0]})
     await tools.inspect()
 
-    result = await tools.update_many(object_ids=made, visibility="hidden")
+    result = await tools.update_many(object_ids=made, category="archive")
 
     assert result["pinned_skipped"] == 1 and result["applied"] == 1
     stored = await snapshot_objects(core)
-    assert stored[made[0]]["visibility"] == "visible" and stored[made[1]]["visibility"] == "hidden"
+    assert stored[made[0]]["category"] == "note" and stored[made[1]]["category"] == "archive"
+
+
+async def test_a_batch_hides_a_pinned_object_because_the_pin_protects_its_place_not_its_visibility(core, tools):
+    """« cache tout ce qui est validé » : les objets épinglés sont masqués comme les autres."""
+
+    made = await notes(tools, 3)
+    pinned = made[0]
+    await user_command(core, {"op": "pin", "object_id": pinned})
+    await tools.inspect()
+
+    result = await tools.update_many(select={"kind": "window"}, visibility="hidden", confirm=True)
+
+    assert result["applied"] == 3 and result["targets"] == 3 and result["refused"] == 0
+    assert "pinned_skipped" not in result and "pinned_note" not in result
+    assert not any(row["reason"] == "pinned_by_user" for row in result["refused_ids"])
+    stored = await snapshot_objects(core)
+    assert all(stored[object_id]["visibility"] == "hidden" for object_id in made)
+    # L'épingle et la place tiennent : seule la visibilité a bougé.
+    assert stored[pinned]["constraints"]["pinned_by_user"] is True
+    assert stored[pinned]["geometry"]["x"] == -100
+
+
+async def test_a_batch_shows_a_pinned_object_again_without_moving_it(core, tools):
+    made = await notes(tools, 2)
+    pinned = made[0]
+    await user_command(core, {"op": "pin", "object_id": pinned})
+    await tools.inspect()
+    before = (await snapshot_objects(core))[pinned]["geometry"]
+    await tools.update_many(object_ids=made, visibility="hidden", confirm=True)
+
+    result = await tools.update_many(object_ids=made, visibility="visible")
+
+    assert result["applied"] == 2 and result["refused"] == 0 and "pinned_skipped" not in result
+    stored = await snapshot_objects(core)
+    assert all(stored[object_id]["visibility"] == "visible" for object_id in made)
+    assert stored[pinned]["geometry"] == before
 
 
 # ------------------------------------------------------------------ refus rendus, jamais avalés

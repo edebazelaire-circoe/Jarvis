@@ -49,7 +49,10 @@ from jarvis.core.conversation_event_emitter import (
 from jarvis.domain.conversation_events import ConversationEventType
 from jarvis.core.voice_admission import VoiceTurnAdmissionService
 from jarvis.domain.speech_presentation import OutcomeKind, OutcomeStatus, SpeechDependency, semantic_text_spans, speech_id
-from jarvis.domain.brain_context import MAX_BRAIN_INTERRUPTIONS, BrainContext, BrainSpeechInterruption, WorkAttention
+from jarvis.domain.brain_context import (
+    MAX_BRAIN_INTERRUPTIONS, MAX_BRAIN_PENDING_REPLIES,
+    BrainContext, BrainPendingReply, BrainSpeechInterruption, WorkAttention,
+)
 from jarvis.domain.work_attention_prompt import WORK_ATTENTION_WAKE_PROMPT
 from jarvis.ports.v2 import BrainBackend, ConversationEventRecorder, DiagnosticSink, WorkCanceller, supports_brain_context
 
@@ -83,6 +86,8 @@ BRAIN_SPEECH_DROPPED_KIND = "core.brain.speech_dropped"
 BRAIN_TURN_SLOW_KIND = "core.brain.turn_slow"
 BRAIN_TURN_OVER_BUDGET_KIND = "core.brain.turn_over_budget"
 BRAIN_REPLIES_SUPERSEDED_KIND = "core.brain.replies_superseded"
+# Réponses écrites, pas encore dites, remises au cerveau pour qu'il en juge.
+BRAIN_REPLIES_PENDING_KIND = "core.brain.replies_pending"
 BRAIN_NOTICE_RELAYED_KIND = "core.brain.notice_relayed"
 BRAIN_NOTICE_DROPPED_KIND = "core.brain.notice_dropped"
 BRAIN_BACKEND_TASK_STARTED_KIND = "core.brain.backend_task_started"
@@ -101,6 +106,15 @@ BRAIN_FIRST_PROGRESS_LATENCY_KIND = "core.brain.latency.first_public_progress"
 BRAIN_WORK_COMPLETED_LATENCY_KIND = "core.brain.latency.work_completed"
 
 NO_BACKEND_ERROR = "brain_backend_not_configured"
+
+
+@dataclass(frozen=True, slots=True)
+class _PendingReply:
+    """Une parole durable émise par le cerveau et pas encore sûrement dite."""
+
+    seq: int
+    kind: str
+    text: str
 
 
 def _stable_error_class(value: str | None) -> str:
@@ -217,7 +231,7 @@ class BrainOrchestrator:
         jobs: WorkCanceller | None = None,
         diagnostics: DiagnosticSink | None = None,
         transient_speech_ttl_s: float = DEFAULT_TRANSIENT_SPEECH_TTL_S,
-        supersede_stale_replies: bool = True,
+        supersede_stale_replies: bool = False,
         turn_budget_s: float = DEFAULT_TURN_BUDGET_S,
         work_context: BrainContextBuilder | None = None,
         voice_ledger=None,
@@ -286,7 +300,12 @@ class BrainOrchestrator:
         # dont le cerveau a déjà émis la parole, par conversation, avec le
         # numéro d'ordre de cette parole ; vidé à chaque nouvelle intention.
         self._supersede_stale_replies = supersede_stale_replies
-        self._spoken_works: dict[str, dict[tuple[str, str], int]] = {}
+        self._spoken_works: dict[str, dict[tuple[str, str], _PendingReply]] = {}
+        # Ces mêmes réponses, prises au moment où une nouvelle intention
+        # s'impose et gardées jusqu'à l'appel du backend : c'est au cerveau, et
+        # à lui seul, de dire si elles ont encore du sens. Borné par le nombre
+        # de tours en vol, vidé avec la tâche du tour.
+        self._pending_replies: dict[str, tuple[BrainPendingReply, ...]] = {}
         # Numéro d'ordre des paroles émises ; un tour incertain retient celui
         # de son arrivée (`_unconfirmed_since`), borné comme `_unconfirmed_turns`.
         self._speech_seq = 0
@@ -556,6 +575,7 @@ class BrainOrchestrator:
             self._last_conversation_id = turn.conversation_id
             revision: BrainIntentRevision | None = None
             superseded: tuple[str, ...] = ()
+            pending: tuple[BrainPendingReply, ...] = ()
             if turn.addressing is AddressingDecision.UNCERTAIN:
                 # Moitié aval de la Décision 44. La surface ne jette plus un
                 # tour douteux, elle transmet le doute : Core ne doit donc pas
@@ -580,12 +600,11 @@ class BrainOrchestrator:
                 # parole à Jarvis — garde tout le travail en cours. Core ne peut
                 # d'ailleurs pas savoir ici ce que le cerveau va décider : seule une
                 # décision explicite ultérieure retirera un travail.
-                # Seule exception, qui ne retire aucun travail : la parole déjà
-                # émise par les tours précédents et pas encore dite est périmée
-                # (`superseded`), l'utilisateur ayant relancé entre-temps.
-                # L'ordonnanceur ne la retire que de sa file : une phrase en
-                # cours de lecture n'est jamais coupée par ce chemin.
-                superseded = await self._take_stale_replies(turn.conversation_id, before_seq=None)
+                # La parole déjà émise par les tours précédents et pas encore
+                # dite n'est plus périmée d'office : elle est reprise ici et
+                # remise au cerveau, qui seul peut juger si elle a encore du
+                # sens (`_take_pending_replies`, décision du 19/09/2026).
+                pending, superseded = await self._take_pending_replies(turn.conversation_id, before_seq=None)
                 revision = BrainIntentRevision(
                     conversation_id=turn.conversation_id,
                     revision=state.revision,
@@ -622,7 +641,7 @@ class BrainOrchestrator:
             if revision is not None:
                 await self._publish(BRAIN_INTENT_REVISED, revision.to_payload(), turn.conversation_id, turn.correlation_id)
                 await self._publish(BRAIN_STATE_UPDATED, state.to_public_payload(), turn.conversation_id, turn.correlation_id)
-            self._note_superseded_replies(turn.conversation_id, turn.correlation_id, superseded)
+            self._note_pending_replies(turn.conversation_id, turn.correlation_id, pending, superseded)
 
             task = asyncio.create_task(self._run_turn(turn, state), name=f"jarvis-brain-{turn.correlation_id}")
             self._tasks[turn.correlation_id] = task
@@ -971,35 +990,66 @@ class BrainOrchestrator:
 
     # -- réponses périmées --------------------------------------------------
 
-    async def _take_stale_replies(self, conversation_id: str, *, before_seq: int | None) -> tuple[str, ...]:
-        """Retirer et rendre les travaux dont la parole a déjà été émise.
+    async def _take_pending_replies(
+        self, conversation_id: str, *, before_seq: int | None,
+    ) -> tuple[tuple[BrainPendingReply, ...], tuple[str, ...]]:
+        """Reprendre la parole déjà émise des tours précédents, et la remettre au cerveau.
 
         Appelée quand une nouvelle intention s'impose : un tour adressé à son
         arrivée (`before_seq=None`, tout ce qui a été émis jusque-là), ou un
         tour incertain au moment où le cerveau le prend (`before_seq` = repère
         de son arrivée : une réponse émise après lui reste due, comme pour un
-        tour adressé). Ne touche aucun travail : seule la parole en attente
-        est visée, et l'ordonnanceur vocal ne la retire que de sa file.
+        tour adressé). Ne touche aucun travail.
+
+        Jusqu'au 19/09/2026, cette reprise **périmait** ces paroles en bloc, en
+        invalidant leur dépendance : une réponse complète mourait donc parce que
+        l'utilisateur avait reparlé, sans que personne n'en juge le contenu.
+        C'est exactement la règle mécanique d'ancienneté que l'utilisateur a
+        écartée, et elle contredisait la Décision 35 (« retirer du travail se
+        fait par désignation, jamais en bloc »). Ce qui est repris ici est
+        désormais **remis au cerveau** comme contexte de son tour : lui seul
+        décide si ces réponses ont encore du sens, et les retire en les nommant.
+
+        `supersede_stale_replies` garde l'ancien comportement, pour pouvoir y
+        revenir sans rien réécrire ; il est désactivé par défaut.
+
+        Rend `(à remettre au cerveau, travaux périmés d'office)` : la seconde
+        moitié est vide hors de l'ancien comportement.
         """
 
-        if not self._supersede_stale_replies:
-            return ()
         spoken = self._spoken_works.get(conversation_id)
         if not spoken:
-            return ()
-        stale = tuple(key for key, seq in spoken.items() if before_seq is None or seq <= before_seq)
+            return (), ()
+        stale = tuple(key for key, entry in spoken.items() if before_seq is None or entry.seq <= before_seq)
+        replies = []
+        for key in stale:
+            entry = spoken.pop(key)
+            replies.append(BrainPendingReply(work_id=key[0], correlation_id=key[1], kind=entry.kind, text=entry.text))
+        if not self._supersede_stale_replies:
+            return tuple(replies[-MAX_BRAIN_PENDING_REPLIES:]), ()
         for work_id, correlation_id in stale:
             await self.outcomes.repository.invalidate_brain_dependency(conversation_id, SpeechDependency(work_id, correlation_id))
-            del spoken[(work_id, correlation_id)]
-        return tuple(dict.fromkeys(work_id for work_id, _ in stale))
+        return (), tuple(dict.fromkeys(work_id for work_id, _ in stale))
 
-    def _note_superseded_replies(self, conversation_id: str, correlation_id: str, work_ids: tuple[str, ...]) -> None:
+    def _note_pending_replies(self, conversation_id: str, correlation_id: str,
+                              replies: tuple[BrainPendingReply, ...], work_ids: tuple[str, ...]) -> None:
         if work_ids:
             self._diagnostics.emit(
                 BRAIN_REPLIES_SUPERSEDED_KIND,
                 "nouvelle intention : la parole encore en attente des tours précédents est périmée",
                 level="info",
                 data={"conversation_id": conversation_id, "correlation_id": correlation_id, "work_ids": list(work_ids)},
+            )
+        if replies:
+            self._pending_replies[correlation_id] = replies
+            while len(self._pending_replies) > 64:
+                self._pending_replies.pop(next(iter(self._pending_replies)))
+            self._diagnostics.emit(
+                BRAIN_REPLIES_PENDING_KIND,
+                "nouvelle intention : les réponses écrites et pas encore dites sont remises au cerveau",
+                level="info",
+                data={"conversation_id": conversation_id, "correlation_id": correlation_id,
+                      "work_ids": [item.work_id for item in replies], "kinds": [item.kind for item in replies]},
             )
 
     # -- adressage incertain ------------------------------------------------
@@ -1047,7 +1097,7 @@ class BrainOrchestrator:
             state = self._revise(turn.conversation_id, current_user_intent=turn.text, unresolved_questions=())
             # Même règle qu'à l'arrivée d'un tour adressé, appliquée au moment
             # où ce tour devient l'intention.
-            superseded = await self._take_stale_replies(turn.conversation_id, before_seq=arrived_at)
+            pending, superseded = await self._take_pending_replies(turn.conversation_id, before_seq=arrived_at)
             revision = BrainIntentRevision(
                 conversation_id=turn.conversation_id,
                 revision=state.revision,
@@ -1060,7 +1110,7 @@ class BrainOrchestrator:
         # voit `previous_revision` suivre l'accusé sans trou (Décision 31).
         await self._publish(BRAIN_INTENT_REVISED, revision.to_payload(), turn.conversation_id, turn.correlation_id)
         await self._publish(BRAIN_STATE_UPDATED, state.to_public_payload(), turn.conversation_id, turn.correlation_id)
-        self._note_superseded_replies(turn.conversation_id, turn.correlation_id, superseded)
+        self._note_pending_replies(turn.conversation_id, turn.correlation_id, pending, superseded)
 
     # -- exécution ----------------------------------------------------------
 
@@ -1165,7 +1215,8 @@ class BrainOrchestrator:
         if self._work_context is not None:
             work = await self._work_context.work_context(correlation_id=turn.correlation_id)
         return await self._backend.run_turn_with_context(
-            turn, BrainContext(state=state, work=work, interruptions=interruptions), sink)
+            turn, BrainContext(state=state, work=work, interruptions=interruptions,
+                               pending_replies=self._pending_replies.pop(turn.correlation_id, ())), sink)
 
     #: Libellé d'un fait public dont l'utilisateur n'a entendu que le début.
     INTERRUPTED_FACT_SUFFIX = "… [coupé par l'utilisateur : la suite n'a pas été entendue]"
@@ -1890,9 +1941,12 @@ class BrainOrchestrator:
         # Après la promotion, qui périme la parole des tours précédents : celle-ci
         # sera périmée à son tour par la prochaine intention, si elle attend
         # encore d'être dite. Une parole transitoire a déjà son échéance.
-        if self._supersede_stale_replies and speech.work_id and not speech.is_transient:
+        if speech.work_id and not speech.is_transient:
             self._speech_seq += 1
-            self._spoken_works.setdefault(speech.conversation_id, {})[(speech.work_id, speech.correlation_id)] = self._speech_seq
+            spoken = self._spoken_works.setdefault(speech.conversation_id, {})
+            spoken[(speech.work_id, speech.correlation_id)] = _PendingReply(self._speech_seq, speech.kind.value, speech.text)
+            while len(spoken) > 32:
+                spoken.pop(next(iter(spoken)))
         state: BrainWorkingState | None = None
         if speech.kind is SpeechKind.QUESTION:
             async with self._lock:

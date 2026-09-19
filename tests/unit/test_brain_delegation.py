@@ -523,6 +523,24 @@ class ScriptedBackend:
     release: dict[str, asyncio.Event] = field(default_factory=dict)
     delay_s: float = 0.0
 
+    #: Contexte reçu à chaque tour, dans l'ordre (capacité `ContextAwareBrainBackend`).
+    contexts: list = field(default_factory=list)
+    #: Réponses à retirer, par texte de tour : `{texte: (work_id, ...)}`.
+    retire: dict = field(default_factory=dict)
+
+    async def run_turn_with_context(self, turn: BrainTurnInput, context, emit) -> BrainTurnResult:
+        self.contexts.append(context)
+        for work_id in self.retire.get(turn.text, ()):
+            await emit.emit(
+                BrainEvent(
+                    kind=BrainEventKind.SUPERSEDED,
+                    conversation_id=turn.conversation_id,
+                    correlation_id=turn.correlation_id,
+                    work_id=work_id,
+                )
+            )
+        return await self.run_turn(turn, context.state, emit)
+
     async def run_turn(self, turn: BrainTurnInput, state, emit) -> BrainTurnResult:
         del state
         if self.delay_s:
@@ -571,12 +589,76 @@ def _drain(queue: asyncio.Queue[ProtocolEnvelope]) -> list[ProtocolEnvelope]:
     return collected
 
 
-async def test_a_new_intent_supersedes_the_replies_still_waiting_to_be_said(tmp_path):
+async def test_a_new_intent_hands_the_unspoken_reply_to_the_brain_instead_of_burying_it(tmp_path):
+    """Décision de l'utilisateur du 19/09/2026 : une réponse rédigée et pas
+    encore dite n'est plus périmée parce qu'il a reparlé.
+
+    Elle reste due — aucun travail retiré — et elle est remise au cerveau au
+    tour suivant, avec son texte et son identifiant : c'est là, et là seulement,
+    que se juge si elle a encore du sens.
+    """
+
+    backend = ScriptedBackend(replies={"C'est à voir.": "D'accord, on verra.",
+                                       "Attends, je réfléchis.": "Je t'écoute."})
+    brain, events, state, conversation_id, sink = await _orchestrator(tmp_path, backend)
+    try:
+        first = BrainTurnInput(conversation_id=conversation_id, text="C'est à voir.")
+        await brain.submit(first)
+        await _idle(brain)
+
+        queue = events.subscribe()
+        second = BrainTurnInput(conversation_id=conversation_id, text="Attends, je réfléchis.")
+        await brain.submit(second)
+        [revision] = [e.payload for e in _drain(queue) if e.message_type == BRAIN_INTENT_REVISED]
+        await _idle(brain)
+
+        pending = f"brain-turn:{first.correlation_id}"
+        assert revision["superseded_work_ids"] == []
+        assert sink.of("core.brain.replies_superseded") == []
+        assert sink.of("core.brain.replies_pending")[0]["work_ids"] == [pending]
+
+        # Et le cerveau la voit venir, avec son texte : c'est le contexte qui
+        # manquait entre ce qui doit être dit et ce qui va être dit.
+        [carried] = backend.contexts[-1].pending_replies
+        assert (carried.work_id, carried.kind, carried.text) == (pending, "result", "D'accord, on verra.")
+    finally:
+        await brain.stop()
+        await state.close()
+
+
+async def test_the_brain_retires_a_pending_reply_by_naming_it(tmp_path):
+    """L'autre moitié de la décision : quand elle n'a plus de sens, elle est
+    abandonnée explicitement — par désignation du cerveau (Décision 35), jamais
+    par une règle d'ancienneté."""
+
+    backend = ScriptedBackend(replies={"C'est à voir.": "D'accord, on verra.", "Non, laisse tomber.": "Entendu."})
+    brain, events, state, conversation_id, sink = await _orchestrator(tmp_path, backend)
+    try:
+        first = BrainTurnInput(conversation_id=conversation_id, text="C'est à voir.")
+        await brain.submit(first)
+        await _idle(brain)
+        stale = f"brain-turn:{first.correlation_id}"
+        backend.retire["Non, laisse tomber."] = (stale,)
+
+        queue = events.subscribe()
+        await brain.submit(BrainTurnInput(conversation_id=conversation_id, text="Non, laisse tomber."))
+        await _idle(brain)
+
+        revisions = [e.payload for e in _drain(queue) if e.message_type == BRAIN_INTENT_REVISED]
+        assert stale in {work for payload in revisions for work in payload["superseded_work_ids"]}
+    finally:
+        await brain.stop()
+        await state.close()
+
+
+async def test_the_old_age_rule_still_supersedes_the_replies_when_it_is_switched_back_on(tmp_path):
     """Retour n° 8 : « C'est à voir » prêt à 15:43:29, lu 30 s plus tard, après
-    que l'utilisateur avait déjà relancé."""
+    que l'utilisateur avait déjà relancé. La règle qui en est née est désormais
+    éteinte par défaut ; `JARVIS_SUPERSEDE_STALE_REPLIES=1` la rétablit telle
+    quelle, et c'est ce que ce test garde."""
 
     backend = ScriptedBackend(replies={"C'est à voir.": "D'accord, on verra."})
-    brain, events, state, conversation_id, sink = await _orchestrator(tmp_path, backend)
+    brain, events, state, conversation_id, sink = await _orchestrator(tmp_path, backend, supersede_stale_replies=True)
     try:
         first = BrainTurnInput(conversation_id=conversation_id, text="C'est à voir.")
         await brain.submit(first)
@@ -621,14 +703,19 @@ async def test_the_supersession_can_be_switched_off(tmp_path):
 
 async def test_an_uncertain_turn_supersedes_only_replies_older_than_itself(tmp_path):
     """Promu quand le cerveau le prend, un tour incertain ne périme que ce qui
-    était déjà émis à son arrivée : une réponse émise après lui reste due."""
+    était déjà émis à son arrivée : une réponse émise après lui reste due.
+
+    Mesuré sous l'ancienne règle d'ancienneté (`supersede_stale_replies=True`),
+    la seule où quelque chose est périmé sans décision du cerveau : c'est le
+    découpage par l'ordre d'arrivée qui est vérifié ici, pas la péremption.
+    """
 
     gate = asyncio.Event()
     backend = ScriptedBackend(
         replies={"Vieux.": "Vieille réponse.", "En vol.": "Réponse du tour en vol.", "hmm, et le prix ?": "Quatre centimes."},
         release={"En vol.": gate},
     )
-    brain, events, state, conversation_id, _sink = await _orchestrator(tmp_path, backend)
+    brain, events, state, conversation_id, _sink = await _orchestrator(tmp_path, backend, supersede_stale_replies=True)
     try:
         old = BrainTurnInput(conversation_id=conversation_id, text="Vieux.")
         await brain.submit(old)
@@ -791,9 +878,14 @@ async def _until(predicate) -> None:
 
 
 @pytest.mark.parametrize("write_started", [False, True], ids=["zero-write", "write-started"])
-async def test_a_superseded_reply_leaves_the_queue_but_never_cuts_what_is_playing(tmp_path, write_started):
-    """Bout à bout, orchestrateur → ordonnanceur vocal : la réponse en cours de
-    lecture va au bout, celle qui attendait derrière n'est jamais dite."""
+async def test_a_pending_reply_waits_its_turn_and_is_said_without_cutting_what_is_playing(tmp_path, write_started):
+    """Bout à bout, orchestrateur → ordonnanceur vocal, le cas exact du 19/09.
+
+    L'utilisateur relance deux fois pendant que Jarvis parle. Avant, la réponse
+    qui attendait derrière n'était jamais dite : elle mourait `deferred` puis
+    `dependency_revoked`. Maintenant elle attend son tour, ne coupe rien, et
+    sort quand la bouche se libère.
+    """
 
     from jarvis.runtime.speech_scheduler import SpeechScheduler
     from jarvis.runtime.output_admission import OutputAdmissionState
@@ -822,32 +914,25 @@ async def test_a_superseded_reply_leaves_the_queue_but_never_cuts_what_is_playin
         [second_queued] = [data for data in journal.of("voice.speech.queued")
                            if data["correlation_id"] == second_turn.correlation_id]
         second_speech_id = second_queued["speech_id"]
-        # Il relance encore avant qu'elle soit dite.
+        # Il relance encore avant qu'elle soit dite. Elle reste due.
         await brain.submit(BrainTurnInput(conversation_id=conversation_id, text="Trois."))
-        await _until(lambda: scheduler.pending_count == 0)
-
-        assert session.cancelled == 0
-        if write_started:
-            assert session.invalidated == [] and session.active_output_id == output_id
-            assert token.state is OutputAdmissionState.WRITE_STARTED
-            token.finish_write(succeeded=True)
-        else:
-            await _until(lambda: session.invalidated == [output_id])
-            assert token.state is OutputAdmissionState.INVALIDATED
-            assert not session.begin_write(output_id) and session.spoken == []
-        await scheduler.note_output_event(ProtocolEnvelope(message_type="realtime.response_done", payload={"output_id": output_id, "status": "completed"}))
         await asyncio.sleep(0.05)
+        assert scheduler.pending_count == 1
+        assert session.cancelled == 0 and session.invalidated == []
 
-        assert session.spoken == (["Réponse une, en cours de lecture."] if write_started else [])
-        assert len(session.requests) == 1  # The queued second answer never gets an output reservation.
-        dropped = [data for kind, _level, data in journal.events if kind == "voice.speech.superseded"]
-        [second_dropped] = [data for data in dropped if data["speech_id"] == second_speech_id]
-        assert (second_dropped["correlation_id"], second_dropped["work_id"], second_dropped["reason"]) == (
-            second_turn.correlation_id, f"brain-turn:{second_turn.correlation_id}", "dependency_revoked")
-        # The first candidate may also acquire a stale dependency diagnosis;
-        # this is separate from cancelling its already-started native write.
-        other_dropped = [data for data in dropped if data["speech_id"] != second_speech_id]
-        assert all(data["speech_id"] == session.requests[output_id].id for data in other_dropped)
+        # La bouche se libère : ce qui attendait est dit, enfin.
+        if not write_started:
+            assert session.begin_write(output_id)
+        token.finish_write(succeeded=True)
+        await scheduler.note_output_event(ProtocolEnvelope(message_type="realtime.response_done", payload={"output_id": output_id, "status": "completed"}))
+        await _until(lambda: len(session.requests) == 2)
+        second_output = session.active_output_id
+        assert session.begin_write(second_output)
+        assert session.spoken == ["Réponse une, en cours de lecture.", "Réponse deux, en attente."]
+        assert session.requests[second_output].id == second_speech_id
+        # Rien n'a été soldé sans être dit : aucune réponse n'est perdue.
+        assert journal.of("voice.speech.abandoned") == []
+        assert [data["reason"] for data in journal.of("voice.speech.superseded")] == []
     finally:
         await scheduler.stop()
         await brain.stop()

@@ -457,6 +457,25 @@ class VirtualExecutor:
         await self._push("realtime.response_done", output_id=output_id, status="completed")
         await self._settle()
 
+    async def _handle_device_play_through(self, index: int, step: ScenarioStep) -> None:
+        """Let the output Jarvis opened for this candidate play to its end.
+
+        The candidate is NAMED so the step states which utterance it lets finish, and a
+        mismatch fails loudly instead of quietly ending whatever happens to be open: the
+        scenario declares the sequence, it does not discover it.
+        """
+        self._refuse_when_closed(index, step)
+        candidate_id = str(step.args["candidate_id"])
+        active = self.stack.session.active_speech_id
+        if active != candidate_id:
+            raise _step_error(index, step, f"candidate {candidate_id} is not the speech being played "
+                                           f"(the surface is playing {active or 'nothing'})")
+        played_ms = int(step.args.get("played_ms") or CHUNK_MS)
+        await self.stack.speak_and_finish(chunks=max(1, math.ceil(played_ms / CHUNK_MS)))
+        await self._settle()
+        await self.wait_for(lambda: self._journal_has("voice.speech.completed", speech_id=candidate_id),
+                            index, step, f"speech {candidate_id} reaching its end")
+
     async def _play(self, output_id: str, played_ms: int) -> None:
         """Feed `played_ms` of provider audio for `output_id`, in whole 100 ms output blocks."""
         from jarvis.testlab.virtual.harness import audio_chunk_b64
@@ -655,6 +674,7 @@ HANDLERS: Mapping[str, Handler] = {
     "device.output_busy": VirtualExecutor._handle_device_output_busy,
     "device.consume": VirtualExecutor._handle_device_consume,
     "device.release": VirtualExecutor._handle_device_release,
+    "device.play_through": VirtualExecutor._handle_device_play_through,
     "control.stop": VirtualExecutor._handle_control_stop,
     "control.checkpoint": VirtualExecutor._handle_control_checkpoint,
     "time.wait": VirtualExecutor._handle_time_wait,

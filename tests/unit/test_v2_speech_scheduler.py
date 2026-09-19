@@ -503,8 +503,12 @@ async def test_a_question_preempts_a_low_priority_progress():
         await scheduler.stop()
 
 
-async def test_progress_queued_before_an_intent_revision_is_abandoned():
-    """Un nouveau tour utilisateur périme la progression de l'intention précédente."""
+async def test_progress_queued_before_an_intent_revision_is_abandoned_but_the_result_is_said():
+    """Un nouveau tour utilisateur périme la progression de l'intention précédente.
+
+    Pas son résultat : celui-ci reste vrai, il est reporté sur l'intention
+    courante et dit dès que la bouche se libère (décision du 19/09/2026).
+    """
 
     core, session, journal = FakeCore(), FakeVoiceSession(), RecordingJournal()
     scheduler = build_scheduler(core, session, journal=journal)
@@ -523,14 +527,14 @@ async def test_progress_queued_before_an_intent_revision_is_abandoned():
         await wait_for(lambda: scheduler.pending_count == 2)
 
         await core.publish(brain_envelope("brain.turn.accepted", {"turn_id": "turn-2", "revision": 2}, correlation_id="corr-2"))
-        await wait_for(lambda: scheduler.pending_count == 0 and bool(scheduler._deferred))
+        await wait_for(lambda: scheduler.pending_count == 1)
 
         await release_surface(scheduler, held)
-        await asyncio.sleep(.03)
-        assert session.texts() == []
-        assert [item.text for item in scheduler._deferred.values()] == ["Trois messages attendent une réponse."]
+        await wait_for(lambda: session.texts() == ["Trois messages attendent une réponse."])
+        assert not scheduler._deferred
         assert scheduler.presentation_snapshot()["candidates"][0]["status"] == "superseded"
         assert journal.of("voice.speech.superseded")[0]["data"]["reason"] == "stale_source"
+        assert journal.of("voice.speech.abandoned") == []
     finally:
         await scheduler.stop()
 
@@ -609,11 +613,10 @@ async def test_a_revision_without_work_lists_still_drops_stale_progress():
                 correlation_id="corr-2",
             )
         )
-        await wait_for(lambda: scheduler.pending_count == 0 and bool(scheduler._deferred))
+        await wait_for(lambda: scheduler.pending_count == 1)
         await release_surface(scheduler, held)
-        await asyncio.sleep(.03)
-        assert session.texts() == []
-        assert [item.text for item in scheduler._deferred.values()] == ["Trois réponses attendent."]
+        await wait_for(lambda: session.texts() == ["Trois réponses attendent."])
+        assert not scheduler._deferred
     finally:
         await scheduler.stop()
 
