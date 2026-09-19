@@ -1279,3 +1279,93 @@ au canal rendue à la fabrique, repli silencieux en bleu, porte
 d'actionnabilité retirée, contour posé sans intention). Une survivante du
 premier passage a été tuée en **supprimant** la ligne qu'elle épargnait plutôt
 qu'en écrivant un test qui ne pouvait pas la distinguer.
+
+## Slice 06 — reprise : une manipulation suspendue se rebase (R1, R2, N1-N4)
+
+**Ce qu'une signature ne peut pas dire.** `plan.signature` est
+`mode | axes | qui-tient-quels-côtés`. Elle attrape tout ce qui change
+l'attribution — une main qui entre, une qui se retire, un axe neutralisé, une
+main re-détectée sous un **autre** identifiant de piste (et ce « qui » est
+porteur : sans lui, la main revenue n'aurait jamais d'ancre). Elle ne peut pas
+dire **« ce plan n'a pas tourné à l'image précédente »**, et c'est exactement ce
+que laissent derrière elles toutes les suspensions, pendant que la main continue
+de voyager. Le plan porte donc maintenant le **numéro de l'image** où il a
+conduit pour la dernière fois ; un trou vaut un changement de signature. Les
+deux déclencheurs coexistent — le second ne remplace pas le premier.
+
+Cinq suspensions mènent là, toutes mesurées : `same_zone_rejected` (décision
+15), `axes_all_neutralized`, `frame_not_resizable`, `viewport_unavailable`
+(nouveau), et **la main que le suivi perd le temps d'un clignement puis retrouve
+sous le même identifiant** — 3 images perdues, 440 px plus loin, **68 unités en
+une image**, sans refus et sans un mot. C'est la seule que l'utilisateur
+rencontre vraiment ; les quatre autres demandent deux mains.
+
+**Toutes les mains du couple, ou aucune.** Une main sans paume à cette image
+gardait sa capture (`lostGraceMs`) et son côté servait encore d'**ancre** : le
+cadre se redimensionnait de travers pendant le clignement, et `publish` sur une
+paume `undefined` posait `barehands_interaction_invalid`, mot pour mot, sur la
+ligne de la surimpression. La manipulation se suspend pour cette image, **en
+silence** (un trou d'une image ne mérite pas une ligne qui clignote) et reprend
+rebasée. C'est la même règle qui rend la publication sûre : plus aucun
+conducteur sans paume, donc plus aucun garde à écrire en dessous.
+
+**Deux mains sur une étoile déplaçable seulement.** La décision 8 argumentait
+« chacune fait son interaction de contenu, plus bas » — vrai pour une capsule ou
+une fenêtre, faux pour une étoile `point`/`signal`, dont le corps n'est pas du
+contenu mais sa **seule** prise : la boucle de contenu la saute elle aussi
+(`movesByBody`). Résultat : cadre figé, aucune interaction, `refusals == []` à
+chaque image du maintien. La **première** main (la plus ancienne à la descente)
+continue maintenant de déplacer l'étoile, et la seconde est un refus enregistré
+(`star_moves_with_one_hand`). Une étoile `point` fait six unités : la seconde
+main est presque toujours un accident sur un geste déjà en cours, et geler ce
+geste punirait la main qui avait raison. Son relâchement reste un clic, comme
+toute prise refusée (même règle que la décision 15).
+
+**Un fixture irréaliste cachait le chemin de défilement en entier.** Le double
+de nœud du harnais n'avait ni `nodeType`, ni `parentElement`, ni tailles de
+défilement, et aucun `getComputedStyle` n'était défini : `scrollHost` sortait à
+la **première** itération, `dom.scrollable()` rendait toujours faux, et les
+tests affirmaient une sémantique de **glissement** pour des éléments que le
+produit traite en **défilement**. Troisième fois sur cette tâche qu'un fixture
+irréaliste cache un défaut. Le nœud ressemble maintenant à un élément (les
+tailles suivent le rectangle, comme dans un document), et le chemin réel est
+épinglé : ancêtre le plus proche, déplacement exact sur les deux axes
+(500 → 470, 300 → 280), aucun double défilement, `overflow:hidden` qui déborde
+**ne défile pas**, une boîte qui ne déborde que de largeur défile, et aucune
+séquence de pointeur. **À emporter en Slice 11 : un double qui ne peut pas
+échouer comme le vrai ne prouve rien.**
+
+**Le reste.** Une fenêtre de scène absente ou nulle **refuse**
+(`viewport_unavailable`) au lieu de retomber à 1:1 — 60 px devenaient 60 unités
+au lieu de 10, six fois trop, en silence ; `frames.viewport()` a reçu la porte
+`enabled` que `frames.begin` avait déjà. `actionable:false` est refusé à
+`openCapture` : le résolveur de la Slice 05 est **la** porte de la décision 3,
+celle-ci est une défense en profondeur, parce que ce moteur est injectable et ne
+suppose pas son appelant. L'invariant des côtés doubles **se dit et se saute**
+(`side_held_twice`) au lieu de lancer `tracking_failed` hors de la boucle
+d'images. `step.manipulating` et `step.drove` sont supprimés : deux lectures du
+même fait, de deux types, sans lecteur — `drivenHands()` est celle que le clic
+hérité consulte. Le garde de source de `SIDE_AXIS` cherche désormais la
+**forme** d'une table côté → axe, pas le nom. Deux mains ont enfin un test
+d'identités de pointeur distinctes à travers le DOM (critère d'acceptation).
+
+Non traités, et assumés : seul `refusals[0]` atteint l'écran (un second refus
+différent dans la même image est perdu) ; le `wheel` dispatché n'a **aucun
+auditeur** dans le dépôt, c'est le `scrollTop` qui fait tout le travail ;
+`frames.begin` tourne avant le contrôle `frame_not_resizable`, donc le chemin du
+refus ouvre puis annule un plan chaque image (inatteignable aujourd'hui).
+
+Fichiers : `jarvis/runtime/control_center_barehands.js`,
+`jarvis/runtime/control_center_scene_page.js`, `docs/barehands-contracts.md`,
+`tests/unit/test_barehands_interaction_js.py`.
+
+Tests, en avant-plan : baseline 1 (barehands + scène, dix fichiers) **235 → 244
+passed** (neuf tests neufs) ; baseline 2 (centre de contrôle) **284 passed**,
+inchangée ; `-k scene` **889 passed**, inchangée. **Trente-deux mutations
+tentées, trente-deux reprises.** Les quatre survivantes du premier passage ont
+été traitées sans remplissage : deux lignes devenues **réellement redondantes**
+(`if(!drivers.length)` que l'égalité tranche déjà, `if(!anchor)continue` que
+l'invariant rend inatteignable) ont été **supprimées** ; les deux autres
+disaient la même absence — aucun cas d'une boîte qui **déborde sans défiler** —
+et ont été tuées en ajoutant `overflow:hidden` au test, pas en assouplissant
+l'assertion.

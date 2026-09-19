@@ -1835,22 +1835,30 @@ def test_a_scrollable_element_really_scrolls_and_never_drags(tmp_path):
 
     result = run_node(tmp_path, BROWSER + """
       const run=(how)=>{
-        const panel=node({sel:[],rect:{left:100,top:100,width:400,height:300},
-          scroll:how==='none'?null:{height:900,top:500}});
+        const room={ancestor:{height:900,width:1200,top:500,left:300},
+          self:{height:900,width:1200,top:500,left:300},
+          /* Une boîte qui ne déborde **que** de largeur : l'autre moitié du
+             test de `scrollHost`, qu'aucun défilement vertical ne couvre. */
+          wide:{width:1200,left:300},
+          /* Déborde, mais ne défile pas : `overflow:hidden` est une boîte
+             rognée, pas une zone de défilement. */
+          hidden:{height:900,width:1200,top:500,left:300,overflow:'hidden'},
+          none:null}[how];
+        const panel=node({sel:[],rect:{left:100,top:100,width:400,height:300},scroll:room});
         const c=card({left:120,top:140,width:360,height:200},
-          how==='self'?{height:800,top:500}:null);
+          how==='self'?{height:800,width:1200,top:500,left:300}:null);
         panel.appendChild(c);
         global.page=[c];
         const at={x:300,y:240};
         shot(0,[token(1,at.x,at.y)],[contact(1,'pressed')],
           [{handTrackId:1,channel:'primary',phase:'down',x:at.x,y:at.y}]);
         const kind=interaction.targets().map(t=>t.kind);
-        /* La main s'arme, puis tire de 30 px vers le bas. */
+        /* La main s'arme, puis tire de 20 px à droite et 30 px vers le bas. */
         shot(16,[token(1,at.x,at.y)],[contact(1,'pressed','drag')],[]);
-        shot(32,[token(1,at.x,at.y+30)],[contact(1,'pressed','drag')],[]);
+        shot(32,[token(1,at.x+20,at.y+30)],[contact(1,'pressed','drag')],[]);
         const semantics=api.interactions().map(i=>[i.type,i.dx,i.dy]);
-        shot(48,[token(1,at.x,at.y+30)],[],
-          [{handTrackId:1,channel:'primary',phase:'up',x:at.x,y:at.y+30}]);
+        shot(48,[token(1,at.x+20,at.y+30)],[],
+          [{handTrackId:1,channel:'primary',phase:'up',x:at.x+20,y:at.y+30}]);
         const seq=el=>el.events.map(e=>e.type).filter(t=>t.indexOf('over')<0&&t.indexOf('out')<0);
         return {kind,semantics,
           panel:[panel.scrollTop,panel.scrollLeft],card:[c.scrollTop,c.scrollLeft],
@@ -1858,21 +1866,32 @@ def test_a_scrollable_element_really_scrolls_and_never_drags(tmp_path):
           wheel:[...panel.events,...c.events].filter(e=>e.type==='wheel')
             .map(e=>[e.deltaX,e.deltaY])};
       };
-      out({ancestor:run('ancestor'),self:run('self'),none:run('none')});
+      out({ancestor:run('ancestor'),self:run('self'),wide:run('wide'),
+        hidden:run('hidden'),none:run('none')});
     """)
-    for how in ("ancestor", "self", "none"):
+    for how in ("ancestor", "self", "wide", "hidden", "none"):
         assert result[how]["kind"] == ["card"], (how, result[how]["kind"])
-    # L'ancêtre qui défile prend le déplacement, **exactement** : 500 → 470 pour
-    # 30 px tirés vers le bas, parce que la main tire le contenu vers elle.
-    assert result["ancestor"]["semantics"] == [["scroll", 0, 30]]
-    assert result["ancestor"]["panel"] == [470, 0], result["ancestor"]["panel"]
+    # L'ancêtre qui défile prend le déplacement, **exactement** et sur les deux
+    # axes : 500 → 470 et 300 → 280, parce que la main tire le contenu vers elle.
+    assert result["ancestor"]["semantics"] == [["scroll", 20, 30]]
+    assert result["ancestor"]["panel"] == [470, 280], result["ancestor"]["panel"]
     # Et l'élément lui-même n'a pas bougé : pas de double défilement.
     assert result["ancestor"]["card"] == [0, 0]
     assert result["ancestor"]["cardEvents"] == [], "un élément qui défile a été traîné"
-    assert result["ancestor"]["wheel"] == [[0, -30]]
+    assert result["ancestor"]["wheel"] == [[-20, -30]]
     # Le plus proche gagne : quand l'élément défile lui-même, l'ancêtre ne bouge pas.
-    assert result["self"]["card"] == [470, 0], result["self"]["card"]
-    assert result["self"]["panel"] == [500, 0], "l'ancêtre a défilé en plus de l'élément"
+    assert result["self"]["card"] == [470, 280], result["self"]["card"]
+    assert result["self"]["panel"] == [500, 300], "l'ancêtre a défilé en plus de l'élément"
+    # Une boîte qui ne déborde que de **largeur** défile aussi : la hauteur n'est
+    # pas ce qui décide.
+    assert result["wide"]["semantics"] == [["scroll", 20, 30]]
+    assert result["wide"]["panel"] == [-30, 280], result["wide"]["panel"]
+    # Ce qui déborde ne défile pas pour autant : `overflow:hidden` est une boîte
+    # rognée. La main la traîne, elle ne la fait pas défiler — et c'est le style
+    # calculé qui le dit, pas la seule taille.
+    assert result["hidden"]["semantics"] == [["drag_move", 0, 0]]
+    assert result["hidden"]["panel"] == [500, 300], "une boîte rognée a défilé"
+    assert result["hidden"]["cardEvents"][:2] == ["pointerdown", "mousedown"]
     # Et sans rien qui défile, c'est un glissement — la vraie séquence de pointeur.
     assert result["none"]["semantics"] == [["drag_move", 0, 0]]
     assert result["none"]["cardEvents"] == ["pointerdown", "mousedown", "pointermove",

@@ -1866,8 +1866,12 @@ const JarvisBarehandsCore=(function(){
          redimensionnerait le cadre de travers pendant le clignement, et
          publierait un événement pour une main qui n'a pas de paume. La
          manipulation **se suspend** — et, parce qu'elle s'est suspendue, elle se
-         rebase à la reprise, juste en dessous. */
-      if(!drivers.length||drivers.length!==hands.length)return;
+         rebase à la reprise, juste en dessous.
+
+         Un `if(!drivers.length)` vivait ici aussi : il ne pouvait plus rien
+         trancher que cette égalité ne tranche déjà (aucune paume et aucune main
+         est le même compte), et aucun test ne pouvait l'en distinguer. */
+      if(drivers.length!==hands.length)return;
       const signature=signatureOf(mode,axes,byHand);
       let plan=plans.get(objectId);
       /* Rien ne bouge tant qu'aucune main tenant ce cadre n'a **glissé** : le
@@ -1931,10 +1935,15 @@ const JarvisBarehandsCore=(function(){
       plan.drivenFrame=frameIndex;
       const sidesPx={};
       let deltaPx={dx:0,dy:0};
+      /* Chaque conducteur a son ancre, et c'est un invariant, pas un espoir :
+         toutes les mains du couple ont une paume (au-dessus), les ancres sont
+         **reconstruites à partir des paumes** à chaque rebasage, et toute
+         entrée ou sortie de main change la signature — donc rebase. Un
+         `if(!anchor)continue` gardait ce point ; il ne pouvait plus se produire,
+         et une ligne qu'aucun test ne peut atteindre n'est pas une ceinture. */
       for(const id of drivers){
         const anchor=plan.anchorsPx[id];
         const palm=palms[id];
-        if(!anchor)continue;
         const dx=palm.x-anchor.x,dy=palm.y-anchor.y;
         if(mode==='resize'){
           for(const side of byHand[id].sides){
