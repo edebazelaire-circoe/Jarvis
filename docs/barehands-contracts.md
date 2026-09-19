@@ -1398,6 +1398,45 @@ lit comme une attente. Tous les autres sont **vivants** :
 `applyToEngine(settings)` est le seul endroit qui les porte au moteur, et un
 réglage qui n'y trouverait pas sa ligne n'aurait pas sa place dans la table.
 
+**Et « le seul endroit » n'est pas une preuve : chaque réglage a un test qui
+part de l'écran et finit sur un comportement.** La reprise de la Slice 07 a
+mesuré que cinq lignes de `applyToEngine` pouvaient disparaître sans qu'un seul
+test tombe, parce que les tests appelaient la **porte du moteur**
+(`overlay.showDiagnostics(true)`, `targetAssistance(0)`, `configure({…})`), ce
+qui prouve la méthode et jamais le câblage. La règle est donc : un réglage se
+vérifie en l'écrivant **là où l'utilisateur l'écrit** — une case, un curseur,
+un bouton de palette — puis en regardant ce que la main fait. Et le moteur se
+relit : `controller.options()`, publié par `JarvisBarehands.engine()`, rend ce
+qu'il applique vraiment (`sleepTimeoutMs`, `clickSlopPx`, `dragSlopPx`,
+`wakeHoldMs`, `wakeIntervalMs`), en lecture seule — sans elle, la seule façon
+de relire le moteur était de le reconfigurer, donc « réglage enregistré » et
+« réglage appliqué » n'étaient pas distinguables.
+
+**Écrire un réglage : trois refus nommés, aucun silence.**
+
+| Ce qui arrive | Ce que fait `saveSettings` |
+|---|---|
+| une écriture est déjà en vol (`view.busy`) | rend `null`, **avec** bandeau, toast et ligne de console — les contrôles de l'écran sont désarmés, donc seul un appelant sans écran (voix, console) y arrive, et c'est lui qui n'a rien à lire |
+| `patch.tool` est un nom **inconnu** | `toolCapability` lève `barehands_tool_unknown` **avant** la normalisation : la valeur ne part pas sur le fil et ne retombe jamais sur `pointer` |
+| le serveur refuse ou le réseau tombe | l'ancienne valeur revient au moteur (`applyToEngine(previous)`) **et** à l'écran |
+
+`normalizeTool` garde sa tolérance : elle sert à relire un schéma stocké. Une
+**écriture** est une question posée à la table des outils (§8), et la réponse
+est non. Un outil déclaré mais sans moteur (`highlighter`, `draw`) passe cette
+porte et se fait refuser par le serveur, seul à savoir ce qu'il sert : les deux
+refus gardent leur phrase et leur auteur.
+
+**`enabled` est le seul dont l'état moteur ne passe pas par `applyToEngine`**, et
+son échec d'écriture a donc sa propre règle. Décocher libère la caméra *avant*
+l'écriture, exprès (l'objectif n'attend pas le réseau). Si l'écriture échoue,
+on **ne rallume pas** : rouvrir la caméra — et son invite de permission — parce
+qu'un *enregistrement* a échoué ferait faire à la machine ce que personne n'a
+demandé. L'écran suit donc le moteur (la case se décoche), et la divergence qui
+reste — le serveur, lui, dit toujours « allumé » — est **nommée** dans le
+bandeau et dans un toast : Bare Hands sera de nouveau allumé au prochain
+chargement. Le toast est nécessaire parce que ce chemin s'atteint panneau
+fermé, par `JarvisBarehands.disable()`.
+
 **`sensitivity` divise les deux tolérances, pas une.** Le même facteur des deux
 côtés, donc l'invariant `clickSlopPx <= dragSlopPx` (Slice 04) traverse intact
 quelle que soit la sensibilité ; n'en diviser qu'une le ferait **refuser** aux
@@ -1574,10 +1613,14 @@ Expérimental, parce que `setAwake` finit par `refreshPanel()`.
 **Quatre portes de la surface restent délibérément hors de la table.**
 `enable`/`disable` : l'interrupteur appartient à l'utilisateur, et l'éteindre
 par la voix retirerait au cerveau l'outil qui vient de servir. `settings` et
-`tool` : la QA de la Slice 07 a mesuré que `tool('scissors')` normalise vers
-`pointer`, enregistre, n'affiche rien et **rend un succès**, ce qui rend le
-refus serveur `barehands_tool_unknown` inatteignable par la page. Une commande
-d'outil n'entrera ici que quand elle pourra être vérifiée.
+`tool` : la QA de la Slice 07 a mesuré que `tool('scissors')` normalisait vers
+`pointer`, enregistrait, n'affichait rien et **rendait un succès**, ce qui
+rendait le refus serveur `barehands_tool_unknown` inatteignable par la page.
+**La porte est réparée depuis** (elle refuse un nom inconnu avant de
+normaliser, §9), et la décision tient quand même : la défense en profondeur
+voulue par la Slice 12 — un canal qui ne transporte que ce qu'il sait vérifier
+— ne dépend pas de la solidité de la porte d'en face. Une commande d'outil
+n'entrera ici que quand elle aura son propre refus et son propre reçu.
 
 **Issues et codes.** Un reçu porte `outcome` (`applied` | `duplicate` |
 `refused`) et le `lifecycle` **relu après l'appel** — jamais l'état demandé.

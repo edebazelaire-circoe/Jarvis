@@ -841,7 +841,12 @@ def test_the_preview_style_sheet_names_the_three_feedback_variables(tmp_path):
 #: les sélecteurs qu'il satisfait et le rectangle qu'il occupe, ce qui suffit à
 #: exercer la collecte, `elementFromPoint`, et l'arbre dans lequel l'aperçu se
 #: dessine (ou pas — décision 3).
-BROWSER = """
+#: La moitié **géométrie** du double : les éléments de page, et les deux
+#: lectures d'arbre dont la collecte de cible a besoin. Elle est nommée à part
+#: parce que la Slice 07 en a besoin telle quelle pour prouver qu'un réglage
+#: écrit à l'écran change ce que la main atteint — et qu'un quatrième double de
+#: DOM aurait dérivé de celui-ci sans que rien ne le dise.
+ELEMENTS = """
 const registry=[];
 const node=(opts)=>{
   const o=Object.assign({sel:[],rect:null,id:'',dataset:{},label:''},opts||{});
@@ -867,17 +872,22 @@ const node=(opts)=>{
 };
 /* Ce que la page contient, posé par chaque test dans `global.page`. */
 global.page=[];
+/* Le plus profond au point visé, donc le **dernier** dans l'ordre du document
+   parmi ceux qui le contiennent : c'est ce que fait le navigateur pour des
+   frères absolument positionnés. */
+const pageAt=(x,y)=>global.page.filter(el=>{
+  const r=el.getBoundingClientRect();
+  return x>=r.left&&x<=r.left+r.width&&y>=r.top&&y<=r.top+r.height}).pop()||null;
+const pageQuery=sel=>global.page.filter(el=>el.matches(sel));
+"""
+
+BROWSER = ELEMENTS + """
 global.window={addEventListener(){},innerWidth:1000,innerHeight:800};
 global.document={createElement:()=>node(),
   getElementById:id=>registry.find(el=>el.id===id&&el.parent)||null,
   head:node(),body:node(),
-  /* Le plus profond au point visé, donc le **dernier** dans l'ordre du
-     document parmi ceux qui le contiennent : c'est ce que fait le navigateur
-     pour des frères absolument positionnés. */
-  elementFromPoint:(x,y)=>global.page.filter(el=>{
-    const r=el.getBoundingClientRect();
-    return x>=r.left&&x<=r.left+r.width&&y>=r.top&&y<=r.top+r.height}).pop()||null,
-  querySelectorAll:sel=>global.page.filter(el=>el.matches(sel))};
+  elementFromPoint:pageAt,
+  querySelectorAll:pageQuery};
 global.navigator={mediaDevices:null};
 global.performance={now:()=>global.clock||0};
 global.clock=0;

@@ -232,6 +232,45 @@ async def test_toggle_is_persisted_in_the_shared_settings_file_and_survives_a_re
     assert [event["data"]["enabled"] for event in events] == [True, False]
 
 
+async def test_the_journal_names_the_settings_that_changed_not_only_the_switch(control):
+    """Le journal durable est la seule trace qui survit à la session : il doit
+    dire **ce qui a changé**.
+
+    La route porte les neuf réglages depuis la Slice 07, et le message n'avait
+    pas suivi : trois déplacements du curseur de sensibilité écrivaient trois
+    lignes identiques disant « Barehands (mode test) activé », et aucun des
+    huit autres réglages n'apparaissait nulle part. Un journal qui dit la même
+    chose quoi qu'il arrive ne dit rien."""
+
+    await control.save_barehands(JsonRequest({"enabled": True}))
+    await control.save_barehands(JsonRequest({"enabled": True, "sensitivity": 2}))
+    await control.save_barehands(JsonRequest({"enabled": True, "sensitivity": 3}))
+    await control.save_barehands(JsonRequest({"enabled": True, "tool": "select", "diagnostics": True}))
+    # Une écriture qui ne change rien arrive pour de bon, et se dit telle quelle.
+    await control.save_barehands(JsonRequest({"enabled": True}))
+    await control.save_barehands(JsonRequest({"enabled": False}))
+
+    events = [event for event in read_jsonl_tail(control.journal.trace_path, limit=50)
+              if event.get("kind") == "settings.barehands"]
+    messages = [event["message"] for event in events]
+
+    assert messages == [
+        "Bare Hands activé (mode test)",
+        "Réglages Bare Hands : sensitivity=2",
+        "Réglages Bare Hands : sensitivity=3",
+        "Réglages Bare Hands : diagnostics=True, tool=select",
+        "Réglages Bare Hands réécrits sans changement",
+        "Bare Hands désactivé (mode test)",
+    ], messages
+    # Et la donnée porte le détail, relisible par une machine.
+    assert [event["data"]["changed"] for event in events] == [
+        {"enabled": True}, {"sensitivity": 2}, {"sensitivity": 3},
+        {"tool": "select", "diagnostics": True}, {}, {"enabled": False},
+    ]
+    # L'interrupteur reste lisible où il l'a toujours été.
+    assert [event["data"]["enabled"] for event in events] == [True] * 5 + [False]
+
+
 async def test_rejected_toggle_writes_nothing_and_answers_400_with_its_code(control):
     await control.save_barehands(JsonRequest({"enabled": True}))
     before = control.settings_path.read_text(encoding="utf-8")

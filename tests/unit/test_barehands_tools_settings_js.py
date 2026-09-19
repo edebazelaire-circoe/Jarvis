@@ -44,6 +44,11 @@ from jarvis.runtime.control_center import ControlCenter
 from test_barehands_lifecycle_js import WORLD  # noqa: E402
 from test_barehands_gestures_js import HAND as GESTURE_GEOMETRY  # noqa: E402
 
+# Les elements de page et leur geometrie : le meme double que la Slice 05, pas
+# une copie. Un reglage qui agit sur ce que la main **atteint** ne se prouve
+# que sur un arbre qui a des rectangles.
+from test_barehands_target_js import ELEMENTS  # noqa: E402
+
 #: La geometrie de main de la Slice 04, enfermee dans une fermeture pour n'en
 #: sortir que `PINCHING` : elle definit un `hand()` qui n'est pas celui du
 #: monde injecte, et deux `hand` dans une meme source se marcheraient dessus
@@ -508,7 +513,13 @@ def test_sensitivity_reaches_a_hand_that_is_already_being_tracked(tmp_path):
 #: du balisage que la page écrit vraiment, les sélecteurs cherchent dans ces
 #: éléments, et les écouteurs se déclenchent. Un double qui ne peut pas échouer
 #: comme le vrai ne prouve rien (leçon de la reprise de la Slice 06).
-BROWSER = r"""
+
+#: À préfixer à `BROWSER` pour que le double de navigateur ait une caméra : sans
+#: elle, `enable()` refuse sur `camera_unsupported` avant même de charger le
+#: modèle et le contrôleur ne peut jamais être engagé.
+CAMERA = "var WANT_CAMERA=true;\n"
+
+BROWSER = ELEMENTS + r"""
 const live=[];
 const parse=html=>{
   const found=[];
@@ -551,10 +562,31 @@ const makeNode=(tag,attrs,text)=>{
        vie, assets) ne doivent surtout pas effacer la liste des contrôles — le
        faire aurait rendu le harnais incapable de voir le rafraîchissement, ce
        que le vrai DOM ne fait pas. */
-    set innerHTML(html){this._html=html;
+    /* Écrire `innerHTML` **détruit** les enfants : c'est ce que fait le vrai
+       DOM, et c'est exactement ce que le constat F5 redoute (une section
+       ajoutée par un autre module emportée par une réécriture). Le double ne
+       le faisait pas — il ne pouvait donc pas échouer comme le vrai. Le
+       compteur, lui, rend la réécriture **observable** : « le panneau n'est
+       pas réécrit » est une affirmation qu'un test peut tenir. */
+    set innerHTML(html){this._html=html;this.htmlWrites=(this.htmlWrites||0)+1;
+      for(const child of this.children.splice(0))child.parent=null;
       if(this.registers){live.length=0;for(const n of parse(html))live.push(n)}},
     get innerHTML(){return this._html},
   };
+};
+/* Ce que la page **crée** elle-même (la surimpression, l'hôte de l'aperçu)
+   vit dans l'arbre de `document.body`, pas dans le balisage que l'onglet vient
+   d'écrire : `getElementById` doit donc chercher dans les deux, comme le vrai.
+   Sans cela `createTargetPreview` ne trouve jamais son hôte et ne dessine
+   rien — un double qui ne peut pas réussir comme le vrai ne prouve pas plus
+   qu'un double qui ne peut pas échouer. */
+const deep=(root,id)=>{
+  for(const child of root.children){
+    if(child.id===id)return child;
+    const found=deep(child,id);
+    if(found)return found;
+  }
+  return null;
 };
 const modalContent=makeNode('div',{id:'modalContent'});
 modalContent.registers=true;
@@ -564,16 +596,36 @@ global.window={addEventListener(){},innerWidth:1000,innerHeight:800};
 global.document={createElement:tag=>makeNode(tag,{},''),
   head:makeNode('head',{},''),body:makeNode('body',{},''),
   activeElement:null,
-  getElementById:id=>fixed[id]||live.find(n=>n.id===id)||null,
+  getElementById:id=>fixed[id]||live.find(n=>n.id===id)||deep(global.document.body,id)||null,
   querySelector:sel=>(global.document.querySelectorAll(sel)[0]||null),
+  /* Deux arbres dans un seul document, et c'est le vrai qui décide lequel :
+     les **contrôles** de l'onglet sont ceux que `innerHTML` vient d'écrire (on
+     les cherche par attribut), et le reste de la **page** — ce qu'une main
+     peut viser — est posé par le test dans `global.page`, avec sa géométrie.
+     Sans le second, aucun réglage qui agit sur la résolution de cible
+     (`assistance`, `targetPreview`, l'outil) n'a de comportement observable
+     ici : la collecte rendrait toujours une liste vide. */
   querySelectorAll:sel=>{
     const m=/^\[([-\w]+)(?:="([^"]*)")?\]$/.exec(sel);
-    if(!m)return [];
+    if(!m)return pageQuery(sel);
     return live.filter(n=>n.attrs[m[1]]!==undefined&&(m[2]===undefined||n.attrs[m[1]]===m[2]));
   },
-  elementFromPoint:()=>null};
-global.navigator={mediaDevices:null};
-global.performance={now:()=>0};
+  elementFromPoint:pageAt};
+/* **Pas de caméra par défaut** : node n'en a pas, et plusieurs tests décrivent
+   précisément ce refus de démarrage (`camera_unsupported`), y compris ceux du
+   canal de commandes de la Slice 12. Un test qui a besoin d'un contrôleur
+   **engagé** — la seule façon d'observer « décocher libère la caméra » —
+   préfixe sa source par la constante `CAMERA`.
+
+   `global.navigator=...` ne prend pas : node 21+ en expose un en lecture
+   seule, et l'affectation échouait **en silence**, le double héritant du
+   navigateur de node sans que rien ne le dise. */
+const cameraDouble=(typeof WANT_CAMERA!=='undefined'&&WANT_CAMERA)
+  ?{getUserMedia:async()=>({getTracks:()=>[],getVideoTracks:()=>[]})}:null;
+Object.defineProperty(global,'navigator',{configurable:true,writable:true,
+  value:{mediaDevices:cameraDouble}});
+global.performance={now:()=>global.clock||0};
+global.clock=0;
 global.requestAnimationFrame=()=>0;global.cancelAnimationFrame=()=>{};
 /* La page installe son onglet dans un `setTimeout(...,0)` : l'exécuter tout de
    suite est ce que fait le navigateur une image plus tard, et c'est la seule
@@ -592,11 +644,19 @@ global.JarvisSceneInteract=require(SCENE_INTERACT_PATH);
    envoie et le rend à plat. Ce qui lie ce double au vrai gestionnaire est un
    test de parité à part
    (`test_the_payload_the_page_builds_is_accepted_by_the_real_route`). */
-const server={state:C.toServerPayload({}),calls:[],fail:null};
+const server={state:C.toServerPayload({}),calls:[],fail:null,gate:null,hangGet:false};
 global.api=async(path,opts)=>{
   server.calls.push({path,body:opts&&opts.body?JSON.parse(opts.body):null});
-  if(!opts||opts.method!=='POST')
+  if(!opts||opts.method!=='POST'){
+    /* Une lecture qui ne revient pas : c'est la seule façon de tenir le
+       contrôleur en `starting` sans caméra, puisque le chargement du modèle
+       commence par relire `/api/barehands`. */
+    if(server.hangGet)return new Promise(()=>{});
     return Object.assign({},server.state,{assets:{installed:true,missing:[]}});
+  }
+  // Une écriture qu'on peut retenir : deux écritures concurrentes n'existent
+  // que si la première est encore en vol quand la seconde part.
+  if(server.gate)await server.gate;
   if(server.fail)throw Object.assign(new Error(server.fail),{status:400});
   server.state=Object.assign({},server.state,JSON.parse(opts.body));
   return Object.assign({},server.state,{assets:{installed:true,missing:[]}});
@@ -923,6 +983,577 @@ def test_the_target_preview_and_the_diagnostics_readout_obey_their_settings(tmp_
     assert result["backOff"] == 0
     assert result["preview"] == [False, True]
     assert result["assistance"] == [0, 1]
+
+
+# ------------------------------------------- du réglage écrit au comportement
+
+# Les six tests qui suivent ferment le trou que la reprise de la Slice 07 a
+# trouvé : les réglages **étaient** branchés, et pourtant cinq lignes de
+# `applyToEngine` pouvaient disparaître sans qu'un seul test tombe. La cause
+# n'est pas la couverture, c'est le point d'entrée : les tests appelaient la
+# porte du moteur (`overlay.showDiagnostics(true)`, `BAREHANDS.targetAssistance(0)`,
+# `controller.configure({...})`), ce qui prouve la **méthode** et jamais le
+# **câblage**. Ici, rien n'est appelé sur le moteur : on écrit le réglage là où
+# l'utilisateur l'écrit — une case, un curseur, un bouton de palette — et on
+# regarde ce que la main fait ensuite.
+
+
+def test_a_slider_written_on_the_screen_is_what_the_engine_then_obeys(tmp_path):
+    """`sleepTimeoutMs` et `sensitivity` ne se lisent pas dans le fichier : ils
+    se lisent **dans le moteur**, puis se vérifient sur un vrai contrôleur et un
+    vrai canal de pincement.
+
+    C'est le test qui tue les deux mutants les plus silencieux : `sleepTimeoutMs`
+    revenu à la constante (le réglage redevient inerte, exactement la panne que
+    la Slice 07 existait pour fermer) et `sensitivity` qui ne divise qu'une des
+    deux tolérances (l'invariant de la Slice 04 se met alors à refuser le tiers
+    inférieur du curseur que l'écran propose)."""
+
+    result = run_node(tmp_path, BROWSER + WORLD + """
+      await openTab();
+      const slide=async(key,value)=>{
+        const range=byAttr('data-barehands-range',key);
+        range.value=String(value);range.fire('change');
+        await settle();
+        return BAREHANDS.engine();
+      };
+      /* Ce que le moteur dit appliquer, rendu à un **vrai** contrôleur : il
+         s'endort dessus, ou il ne s'endort pas. Le nombre ne se relit pas, il
+         se subit. */
+      const sleepsAfter=async(options,waitS)=>{
+        const w=world({result:{landmarks:[hand(.2)]},options:{sleepTimeoutMs:C.SLEEP_TIMEOUT_MS}});
+        const c=B.createController(w.deps);
+        await c.enable();await c.activate();
+        c.configure({sleepTimeoutMs:options.sleepTimeoutMs});
+        w.steps(3,1000);w.state.result=NO_HAND;w.steps(waitS,1000);
+        return c.state();
+      };
+      /* Et le même pour la sensibilité : le canal de la Slice 04 construit sur
+         ce que le moteur applique, la même main, le même déplacement. */
+      const verdict=(options,travel)=>{
+        const ch=B.createPinchChannel('primary',
+          {clickSlopPx:options.clickSlopPx,dragSlopPx:options.dragSlopPx});
+        const at=(now,x,ratio)=>ch.update({handTrackId:1,ratio,other:1,confidence:1,
+          quality:1,stillness:1,now,x,y:0,palmX:x,palmY:0,anchorX:x,anchorY:0});
+        at(0,0,.6);at(16,0,.1);at(32,0,.1);at(48,travel,.1);
+        const up=at(64,travel,.9).find(e=>e.phase==='up');
+        return up?up.intent:null;
+      };
+      const factory=BAREHANDS.engine();
+      const short=await slide('sleepTimeoutMs',5000);
+      const shortAtFour=await sleepsAfter(short,4),shortAtFive=await sleepsAfter(short,5);
+      const long=await slide('sleepTimeoutMs',120000);
+      const longAtThirtyOne=await sleepsAfter(long,31);
+      const loud=await slide('sensitivity',2);
+      const quiet=await slide('sensitivity',C.SETTINGS_BOUNDS.sensitivity.min);
+      out({
+        // Le moteur applique le nombre du curseur, pas la constante d'usine.
+        factory:[factory.sleepTimeoutMs,factory.clickSlopPx,factory.dragSlopPx],
+        short:short.sleepTimeoutMs,long:long.sleepTimeoutMs,
+        shortAtFour,shortAtFive,longAtThirtyOne,
+        // Les deux tolérances divisées par le **même** facteur.
+        loud:[loud.clickSlopPx,loud.dragSlopPx],
+        quiet:[quiet.clickSlopPx,quiet.dragSlopPx],
+        // Et le verdict change avec le curseur : huit pixels de paume sont un
+        // clic d'usine et un glissement à sensibilité double.
+        verdicts:[verdict(factory,8),verdict(loud,8),verdict(quiet,30)],
+        // Le moteur et le fichier disent la même chose, et c'est vérifiable.
+        agree:BAREHANDS.settings().sensitivity===C.SETTINGS_BOUNDS.sensitivity.min
+          &&BAREHANDS.engine().sleepTimeoutMs===BAREHANDS.settings().sleepTimeoutMs,
+        // Aucune de ces écritures n'a été refusée.
+        banner:/refusé/.test(document.getElementById('barehandsStatus').innerHTML),
+      });
+    """, name="obeys")
+    assert result["factory"] == [30000, 12, 26], "sans réglage, le moteur garde ses défauts"
+    assert (result["short"], result["long"]) == (5000, 120000)
+    # Le nombre écrit à l'écran endort vraiment une session, au temps demandé.
+    assert result["shortAtFour"] == "active" and result["shortAtFive"] == "sleep"
+    assert result["longAtThirtyOne"] == "active", "le réglage long tient là où l'usine aurait lâché"
+    assert result["loud"] == [6, 13], "les deux tolérances, divisées par le même facteur"
+    assert result["quiet"] == [48, 104]
+    assert result["verdicts"] == ["click", "drag", "click"]
+    assert result["agree"] is True
+    assert result["banner"] is False
+
+
+def test_no_slider_position_the_screen_offers_is_refused_by_the_engine(tmp_path):
+    """Le balayage, **par l'écran** cette fois. Le contrat sait déjà qu'aucune
+    valeur légale ne construit une paire dangereuse ; ce que ce test ajoute est
+    que le chemin qui va du curseur au moteur préserve cette propriété.
+
+    C'est la mesure exacte du coût du mutant « ne diviser qu'une tolérance » :
+    il transforme le tiers inférieur du curseur de sensibilité — sa position
+    minimale comprise — en « Réglage refusé » sur une position que l'écran
+    lui-même propose."""
+
+    result = run_node(tmp_path, BROWSER + """
+      await openTab();
+      const sweep=async key=>{
+        const b=C.SETTINGS_BOUNDS[key];
+        const seen=[];
+        for(let i=0;b.min+i*b.step<=b.max+1e-9;i+=1){
+          const value=Number((b.min+i*b.step).toFixed(6));
+          const range=byAttr('data-barehands-range',key);
+          range.value=String(value);range.fire('change');
+          await settle();
+          const engine=BAREHANDS.engine();
+          seen.push({value,
+            refused:/Réglage refusé/.test(document.getElementById('barehandsStatus').innerHTML),
+            saved:BAREHANDS.settings()[key],
+            ordered:engine.clickSlopPx<=engine.dragSlopPx});
+        }
+        return seen;
+      };
+      const report=async key=>{
+        const seen=await sweep(key);
+        return {count:seen.length,
+          refused:seen.filter(s=>s.refused).map(s=>s.value),
+          missed:seen.filter(s=>s.saved!==s.value).map(s=>s.value),
+          disordered:seen.filter(s=>!s.ordered).map(s=>s.value)};
+      };
+      const sensitivity=await report('sensitivity');
+      const assistance=await report('assistance');
+      const sleep=await report('sleepTimeoutMs');
+      out({sensitivity,assistance,sleep,
+        writes:server.calls.filter(c=>c.body).length});
+    """, name="sweep")
+    for key in ("sensitivity", "assistance", "sleep"):
+        assert result[key]["refused"] == [], f"{key} : une position offerte et refusée"
+        assert result[key]["missed"] == [], f"{key} : une position offerte et non appliquée"
+        assert result[key]["disordered"] == [], f"{key} : clickSlopPx passé au-dessus de dragSlopPx"
+    assert result["sensitivity"]["count"] == 76
+    assert result["assistance"]["count"] == 21
+    assert result["sleep"]["count"] == 120
+    # Chaque position a vraiment voyagé : aucune écriture avalée en route.
+    assert result["writes"] == 76 + 21 + 120
+
+
+def test_the_diagnostics_box_adds_and_removes_the_readout_from_the_tree(tmp_path):
+    """**Décision 24, prise par le bon bout.** Le test précédent appelait
+    `overlay.showDiagnostics(true)` : il prouvait que la surimpression sait
+    dessiner une lecture, pas que la case la commande. Supprimer la ligne de
+    câblage laissait passer les deux.
+
+    Ici, on coche la case de l'onglet et on regarde l'arbre."""
+
+    result = run_node(tmp_path, BROWSER + """
+      await openTab();
+      const overlay=BAREHANDS.adapters.overlay;
+      overlay.mount();
+      const root=document.body.children[document.body.children.length-1];
+      const diag=()=>root.children.filter(c=>c.className===C.DOM.diagClass).length;
+      const token=id=>({id,x:10,y:20,progress:0,state:'open',click:false,hover:false,
+        quality:.9,speedPxPerSec:42,stillness:.8});
+      const check=async(key,value)=>{
+        const box=byAttr('data-barehands-check',key);
+        box.checked=value;box.fire('change');
+        await settle();
+      };
+      overlay.render([token(0)]);
+      const before=diag();
+      await check('diagnostics',true);
+      overlay.render([token(0)]);
+      const on=diag();
+      const line=root.children.find(c=>c.className===C.DOM.diagClass).textContent;
+      await check('diagnostics',false);
+      overlay.render([token(0)]);
+      const off=diag();
+      out({before,on,off,line,
+        // Et ce que le serveur a reçu, pour que « à l'écran » et « enregistré »
+        // ne puissent pas se séparer en silence.
+        wire:server.calls.filter(c=>c.body).map(c=>c.body.diagnostics)});
+    """, name="diagbox")
+    assert result["before"] == 0, "éteinte par défaut, la lecture est absente de l'arbre"
+    assert result["on"] == 1, "cocher la case la fait paraître"
+    assert "q 0.90" in result["line"] and "42 px/s" in result["line"]
+    assert result["off"] == 0, "la décocher la retire"
+    assert result["wire"] == [True, False]
+
+
+def test_the_aiming_assistance_written_on_the_screen_widens_what_the_hand_reaches(tmp_path):
+    """`assistance` est le réglage dont la suppression du câblage était la plus
+    invisible : le moteur garde alors 0,5, qui est **le défaut**, donc tout ce
+    qui ne déplace pas explicitement le curseur continue de marcher.
+
+    Ce que le réglage change vraiment est la portée hors du cadre : à quelle
+    distance une visée approximative attrape quand même. On la mesure sur une
+    vraie cible, avec un vrai résolveur, en poussant le curseur de l'onglet."""
+
+    result = run_node(tmp_path, BROWSER + """
+      await openTab();
+      const interaction=BAREHANDS.adapters.interaction;
+      /* Un bouton à 40 px du jeton : hors de portée au réglage d'usine
+         (24 px), dedans à l'assistance maximale (48 px). */
+      const target=node({sel:['button'],rect:{left:100,top:100,width:80,height:30},
+        dataset:{},label:'Allumer'});
+      global.page=[target];
+      const aim=()=>{
+        interaction.readContacts(()=>[{handTrackId:1,channel:'primary',state:'pinching',
+          intent:'undecided',ratio:.3,confidence:1}]);
+        interaction.hover([{id:1,x:60,y:115,progress:0,state:'open',click:false,
+          hover:false,quality:1}]);
+        return BAREHANDS.targets().length;
+      };
+      const slide=async value=>{
+        const range=byAttr('data-barehands-range','assistance');
+        range.value=String(value);range.fire('change');
+        await settle();
+        return aim();
+      };
+      const factory=aim();
+      const none=await slide(0);
+      const full=await slide(1);
+      const shown=live.find(n=>n.attrs['data-barehands-value']==='assistance').textContent;
+      const back=await slide(.5);
+      out({factory,none,full,back,shown,
+        });
+    """, name="assist")
+    assert result["factory"] == 0, "à 0,5, quarante pixels sont hors de portée"
+    assert result["none"] == 0, "assistance coupée : rien n'est rattrapé"
+    assert result["full"] == 1, "assistance maximale : la visée approximative attrape"
+    assert result["back"] == 0, "et revenir au défaut rend sa portée d'usine"
+    assert "48" in result["shown"], "le chiffre affiché est la portée réelle"
+
+
+def test_the_tool_chosen_on_the_palette_decides_what_a_grab_means(tmp_path):
+    """L'outil, par le comportement et non par le relecteur : `pan` sur ce qui
+    ne défile pas est **refusé**, donc aucune capture ne s'ouvre, là où le
+    pointeur contextuel en ouvre une. Relire `interaction.tool()` prouvait que
+    la page a posé une valeur ; ceci prouve que le moteur de captures l'applique."""
+
+    result = run_node(tmp_path, BROWSER + """
+      await openTab();
+      const interaction=BAREHANDS.adapters.interaction;
+      const target=node({sel:['button'],rect:{left:200,top:100,width:120,height:40},
+        dataset:{},label:'Bouton'});
+      global.page=[target];
+      const token=(x,y,px)=>({id:1,x,y,palmX:px===undefined?x:px,palmY:y,
+        progress:0,state:'pressed',click:false,hover:false,quality:1});
+      const contact=intent=>({handTrackId:1,channel:'primary',state:'pressed',
+        intent:intent||'undecided',ratio:.3,confidence:1});
+      const shot=(now,tokens,contacts,events)=>{global.clock=now;
+        interaction.readContacts(()=>contacts||[]);
+        interaction.readPinch(()=>events||[]);
+        interaction.hover(tokens);};
+      /* Une prise de corps complète, du contact au relâchement. */
+      const grab=base=>{
+        shot(base,[token(260,120)],[contact()],
+          [{handTrackId:1,channel:'primary',phase:'down',x:260,y:120}]);
+        const held=interaction.captures().length;
+        shot(base+16,[token(260,120,320)],[contact('drag')],[]);
+        shot(base+32,[token(260,120,320)],[],
+          [{handTrackId:1,channel:'primary',phase:'up',x:260,y:120}]);
+        shot(base+48,[],[],[]);
+        return held;
+      };
+      const pick=async tool=>{
+        byAttr('data-barehands-tool',tool).fire('click');
+        await settle();
+      };
+      const contextual=grab(0);
+      await pick('pan');
+      const panned=grab(1000);
+      await pick('pointer');
+      const again=grab(2000);
+      out({contextual,panned,again,
+        engine:BAREHANDS.adapters.interaction.tool(),
+        wire:server.calls.filter(c=>c.body).map(c=>c.body.tool)});
+    """, name="palette")
+    assert result["contextual"] == 1, "le pointeur ouvre la prise sur un bouton"
+    assert result["panned"] == 0, "`pan` sur ce qui ne défile pas est refusé, pas ignoré"
+    assert result["again"] == 1, "et revenir au pointeur la rouvre"
+    assert result["engine"] == "pointer"
+    assert result["wire"] == ["pan", "pointer"]
+
+
+def test_a_write_the_server_refuses_gives_the_engine_its_previous_numbers_back(tmp_path):
+    """Le contrat de la Slice 07 dit qu'un échec d'écriture rend l'ancienne
+    valeur au moteur **et** à l'écran. Il était vérifié sur l'aperçu de cible,
+    qui se relit par une porte ; le mutant qui supprimait `applyToEngine(previous)`
+    du chemin d'échec réseau survivait donc. Ici, ce sont les nombres que le
+    moteur applique qu'on relit — et le refus de schéma, lui, n'atteint jamais
+    le moteur."""
+
+    result = run_node(tmp_path, BROWSER + """
+      await openTab();
+      const range=byAttr('data-barehands-range','sensitivity');
+      range.value='2';range.fire('change');
+      await settle();
+      const saved=BAREHANDS.engine();
+      server.fail='réglages indisponibles';
+      const next=byAttr('data-barehands-range','sensitivity');
+      next.value='4';next.fire('change');
+      await settle();
+      const after=BAREHANDS.engine();
+      out({
+        saved:[saved.clickSlopPx,saved.dragSlopPx],
+        after:[after.clickSlopPx,after.dragSlopPx],
+        settings:BAREHANDS.settings().sensitivity,
+        said:/Réglage non enregistré/.test(document.getElementById('barehandsStatus').innerHTML),
+        // Et le curseur revient à la position que le moteur applique : un
+        // curseur qui reste à 4 pendant que la main obéit à 2 ferait deux
+        // réponses à l'écran pour un seul réglage.
+        slider:byAttr('data-barehands-range','sensitivity').value,
+      });
+    """, name="revert")
+    assert result["saved"] == [6, 13]
+    assert result["after"] == [6, 13], "le moteur reprend les nombres de la valeur enregistrée"
+    assert result["settings"] == 2
+    assert result["said"] is True
+    assert result["slider"] == "2"
+
+
+def test_switching_the_preview_off_on_the_screen_stops_the_drawing_not_the_resolution(tmp_path):
+    """**Décision 24, par l'arbre.** La case ne coupe pas la résolution de
+    cible : elle coupe le **dessin**. Les deux se distinguent en regardant ce
+    que la surimpression contient pendant que `targets()` continue de répondre
+    — et c'est la seule forme qu'un mutant qui supprime le câblage ne peut pas
+    imiter."""
+
+    result = run_node(tmp_path, BROWSER + """
+      await openTab();
+      const interaction=BAREHANDS.adapters.interaction;
+      BAREHANDS.adapters.overlay.mount();
+      const drawn=()=>document.body.children.reduce((n,c)=>
+        n+c.children.filter(k=>k.className===C.DOM.targetClass).length,0);
+      const target=node({sel:['button'],rect:{left:100,top:100,width:80,height:30},
+        dataset:{},label:'Allumer'});
+      global.page=[target];
+      const aim=()=>{
+        interaction.readContacts(()=>[{handTrackId:1,channel:'primary',state:'pinching',
+          intent:'undecided',ratio:.3,confidence:1}]);
+        interaction.hover([{id:1,x:140,y:115,progress:0,state:'open',click:false,
+          hover:false,quality:1}]);
+        return [BAREHANDS.targets().length,drawn()];
+      };
+      const on=aim();
+      const box=byAttr('data-barehands-check','targetPreview');
+      box.checked=false;box.fire('change');
+      await settle();
+      // Le dessin part **tout de suite**, sans attendre l'image suivante.
+      const atOnce=drawn();
+      const off=aim();
+      const back=byAttr('data-barehands-check','targetPreview');
+      back.checked=true;back.fire('change');
+      await settle();
+      const again=aim();
+      out({on,atOnce,off,again});
+    """, name="preview")
+    assert result["on"] == [1, 1], "aperçu allumé : la cible est résolue et dessinée"
+    assert result["atOnce"] == 0, "décocher retire le dessin sans attendre l'image suivante"
+    assert result["off"] == [1, 0], "aperçu éteint : la cible est toujours résolue, rien n'est dessiné"
+    assert result["again"] == [1, 1]
+
+
+# --------------------------------------------------- ce qu'un refus doit dire
+
+
+def test_an_unknown_tool_is_refused_and_never_normalised_into_the_pointer(tmp_path):
+    """**R2.** `normalizeTool` retombe sur « pointeur » pour tout nom inconnu :
+    c'est sa tolérance documentée, et elle est juste pour **relire un schéma
+    stocké**. Sur le chemin d'**écriture**, elle produisait le pire silence de
+    la Slice : `tool('ciseaux')` changeait l'outil pour Pointeur, envoyait au
+    serveur la valeur déjà normalisée — donc son refus `barehands_tool_unknown`
+    était inatteignable depuis la page —, ne montrait ni bandeau ni toast, et
+    journalisait « réglage enregistré ».
+
+    C'est la porte que le canal de commandes de la voix (Slice 12) emprunte :
+    un nom mal transcrit repartait en « j'ai bien changé d'outil »."""
+
+    result = run_node(tmp_path, BROWSER + """
+      await openTab();
+      byAttr('data-barehands-tool','select').fire('click');
+      await settle();
+      const writes=()=>server.calls.filter(c=>c.body).length;
+      const before=writes();
+      const refused=await BAREHANDS.tool('ciseaux');
+      const after=writes();
+      const banner=document.getElementById('barehandsStatus').innerHTML;
+      const said=toasts.slice();
+      /* Un outil **déclaré mais sans moteur** n'est pas un outil inconnu : il
+         existe dans la table, et c'est le serveur — seul à savoir ce qu'il
+         sert — qui le refuse. Il doit donc continuer de partir sur le fil. */
+      server.fail='L’outil « highlighter » est déclaré mais sans moteur en V1.';
+      const notInstalled=await BAREHANDS.tool('highlighter');
+      out({
+        refused,notInstalled,
+        wrote:after-before,
+        sentToServer:server.calls.filter(c=>c.body).map(c=>c.body.tool),
+        // L'outil n'a pas bougé, ni à l'écran ni dans le moteur.
+        tool:BAREHANDS.settings().tool,
+        engineTool:BAREHANDS.adapters.interaction.tool(),
+        // Vu : le nom exact, qui est la seule information de cette ligne.
+        banner,said,
+        // Journalisé : avec son code, jamais « enregistré ».
+        warned:logged.filter(l=>l[0]==='warn').map(l=>l[1]),
+        saved:logged.filter(l=>l[0]==='info'&&/enregistré/.test(l[1])).length,
+      });
+    """, name="unknowntool")
+    assert result["refused"] is None, "un outil inconnu ne rend pas des réglages"
+    assert result["wrote"] == 0, "et ne part jamais sur le fil, fût-il normalisé"
+    assert result["tool"] == "select" and result["engineTool"] == "select", (
+        "ni l'écran ni le moteur ne retombent sur le pointeur"
+    )
+    assert "Outil Bare Hands inconnu" in result["banner"]
+    assert "ciseaux" in result["banner"], "le nom refusé est dans la phrase"
+    assert result["said"][-1] == "bad"
+    assert any("barehands_tool_unknown" in line for line in result["warned"])
+    # Une écriture réussie par outil installé, et aucune pour le refus.
+    assert result["saved"] == 1, "seule l'écriture acceptée est journalisée"
+    # L'outil sans moteur, lui, va bien jusqu'au serveur : les deux refus
+    # gardent leur phrase et leur auteur.
+    assert result["notInstalled"] is None
+    assert result["sentToServer"][-1] == "highlighter"
+
+
+def test_a_switch_off_the_server_refuses_leaves_the_screen_saying_what_the_camera_did(tmp_path):
+    """**R3.** `enabled` est le seul réglage dont l'état moteur ne passe pas par
+    `applyToEngine` : décocher libère la caméra **avant** l'écriture, exprès.
+    L'échec rendait alors « l'ancienne valeur » à l'écran, donc recochait la
+    case — pendant que la caméra, elle, restait éteinte. Case cochée, serveur
+    allumé, caméra éteinte : il fallait basculer deux fois pour en sortir.
+
+    On ne rallume pas : rouvrir la caméra parce qu'un **enregistrement** a
+    échoué ferait faire à la machine ce que personne n'a demandé. L'écran suit
+    donc le moteur, et ce qui reste divergent — le serveur — est nommé."""
+
+    result = run_node(tmp_path, CAMERA + BROWSER + """
+      await openTab();
+      /* Allumer pour de bon : le contrôleur part, et la lecture qui ne revient
+         pas le laisse en `starting`, c'est-à-dire engagé — la caméra est
+         demandée, il y a donc quelque chose à libérer. */
+      server.hangGet=true;
+      const toggle=document.getElementById('f_barehands');
+      toggle.checked=true;toggle.fire('change');
+      await settle();
+      const started=BAREHANDS.state().controller;
+      // Puis le serveur tombe, et l'utilisateur décoche.
+      server.fail='réglages indisponibles';
+      toasts.length=0;
+      const box=document.getElementById('f_barehands');
+      box.checked=false;box.fire('change');
+      await settle();
+      out({started,
+        controller:BAREHANDS.state().controller,
+        checkbox:document.getElementById('f_barehands').checked,
+        enabled:BAREHANDS.state().enabled,
+        // Le serveur, lui, n'a pas changé d'avis : c'est la divergence qui
+        // reste, et c'est celle que l'écran doit nommer.
+        serverStillEnabled:server.state.enabled,
+        banner:document.getElementById('barehandsStatus').innerHTML,
+        toasts,
+        warned:logged.filter(l=>l[0]==='warn').length,
+      });
+    """, name="offrefused")
+    assert result["started"] == "starting", "la caméra a bien été demandée"
+    assert result["controller"] == "off", "décocher libère la caméra sans attendre le réseau"
+    assert result["serverStillEnabled"] is True, "et le serveur, lui, n'a rien enregistré"
+    # L'écran suit le moteur : la case dit ce que la caméra fait.
+    assert result["checkbox"] is False, "la case ne se recoche pas sur une caméra éteinte"
+    assert result["enabled"] is False
+    # Et la divergence qui reste est écrite en toutes lettres.
+    assert "Réglage non enregistré" in result["banner"]
+    assert "caméra a bien été libérée" in result["banner"]
+    assert "prochain chargement" in result["banner"]
+    # Trois phrases pour trois faits, et aucune n'est la répétition d'une
+    # autre : le cycle de vie annonce l'extinction (toast déjà en place), puis
+    # l'échec d'écriture dit sa cause, puis la divergence qui reste dit ce que
+    # l'utilisateur retrouvera au prochain chargement. La dernière est la
+    # seule qui n'avait aucun canal : le panneau peut être fermé (la voix de
+    # la Slice 12 passe par la même porte), et le bandeau n'est alors lu par
+    # personne.
+    assert result["toasts"] == ["warn", "bad", "warn"], result["toasts"]
+    assert result["warned"] >= 1
+
+
+def test_a_write_dropped_because_another_is_in_flight_says_so(tmp_path):
+    """**R4.** `if(view.busy)return null` rendait `null` — le même `null` qu'un
+    refus — sans un mot nulle part. Les contrôles de l'écran sont désarmés
+    pendant l'attente, donc seul un appelant **sans écran** peut y arriver :
+    la voix (Slice 12) et la console, c'est-à-dire exactement celui à qui un
+    abandon muet ne laisse rien à lire."""
+
+    result = run_node(tmp_path, BROWSER + """
+      await openTab();
+      let release;
+      server.gate=new Promise(r=>{release=r});
+      const first=BAREHANDS.settings({assistance:.25});
+      const dropped=await BAREHANDS.settings({assistance:.75});
+      const banner=document.getElementById('barehandsStatus').innerHTML;
+      release();server.gate=null;
+      await first;
+      await settle();
+      out({dropped,banner,toasts,
+        // Une seule écriture est partie, et c'est la première.
+        writes:server.calls.filter(c=>c.body).map(c=>c.body.assistance),
+        settings:BAREHANDS.settings().assistance,
+        warned:logged.filter(l=>l[0]==='warn').map(l=>l[1]),
+        // Et le bandeau ne reste pas : l'écriture qui a abouti le remplace.
+        after:document.getElementById('barehandsStatus').innerHTML,
+      });
+    """, name="busy")
+    assert result["dropped"] is None
+    assert result["writes"] == [0.25], "la seconde écriture est perdue — mais plus en silence"
+    assert result["settings"] == 0.25
+    assert "déjà en cours" in result["banner"]
+    assert result["toasts"] == ["warn"]
+    assert any("écriture en cours" in line for line in result["warned"])
+    assert "déjà en cours" not in result["after"], "le bandeau part avec la cause"
+
+
+def test_refreshing_the_panel_never_rewrites_the_body_of_the_tab(tmp_path):
+    """**Constat F5, par le comportement.** L'ordre d'insertion des modules est
+    vérifié sur la source servie ; ce qu'aucune lecture de source ne peut voir,
+    c'est une évolution où `refreshPanel()` se mettrait à réécrire
+    `modalContent.innerHTML` — ce qui emporterait la section Scène que
+    `control_center_scene_settings` place en tête du même onglet.
+
+    Le mécanisme tient à une propriété vérifiable ici : le corps de l'onglet
+    n'est écrit qu'au dessin de l'onglet, jamais par un rafraîchissement. Tout
+    ce que la Slice 07 fait vivre — écriture, refus, échec réseau, bascule
+    d'outil, cycle de vie — passe par `refreshPanel()` et ne doit pas
+    l'incrémenter. (La vérification des deux modules dans un seul DOM reste
+    une vérification d'exécution : ce double n'a pas `prepend`.)"""
+
+    result = run_node(tmp_path, BROWSER + """
+      await openTab();
+      const written=()=>modalContent.htmlWrites;
+      const atPaint=written();
+      // Une écriture qui réussit.
+      byAttr('data-barehands-tool','pan').fire('click');
+      await settle();
+      const afterTool=written();
+      // Un curseur, une case, l'interrupteur.
+      const range=byAttr('data-barehands-range','assistance');
+      range.value='0.75';range.fire('change');
+      await settle();
+      const box=byAttr('data-barehands-check','diagnostics');
+      box.checked=true;box.fire('change');
+      await settle();
+      const toggle=document.getElementById('f_barehands');
+      toggle.checked=true;toggle.fire('change');
+      await settle();
+      // Un refus de contrat, puis un échec réseau.
+      await BAREHANDS.tool('ciseaux');
+      server.fail='réglages indisponibles';
+      const last=byAttr('data-barehands-range','assistance');
+      last.value='0.25';last.fire('change');
+      await settle();
+      const afterAll=written();
+      // Et un second dessin d'onglet, lui, réécrit bien le corps.
+      await renderTab();await settle();
+      out({atPaint,afterTool,afterAll,afterRender:written(),
+        // Le panneau a pourtant bien été rafraîchi entre-temps.
+        refreshed:document.getElementById('barehandsStatus').innerHTML.length>0});
+    """, name="f5")
+    assert result["atPaint"] == 1, "le corps de l'onglet est écrit une fois, au dessin"
+    assert result["afterTool"] == 1
+    assert result["afterAll"] == 1, (
+        "aucun rafraîchissement ne réécrit le corps de l'onglet : c'est ce qui "
+        "laisse vivre la section Scène du module voisin (constat F5)"
+    )
+    assert result["refreshed"] is True
+    assert result["afterRender"] == 2, "redessiner l'onglet, en revanche, le réécrit"
 
 
 # --------------------------------------------------------- page et vraie route

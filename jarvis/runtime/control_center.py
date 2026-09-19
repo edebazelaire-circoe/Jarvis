@@ -1744,11 +1744,14 @@ class ControlCenter:
         return web.json_response(barehands.describe(self._settings(), self.barehands_vendor_root))
 
     async def save_barehands(self, request: web.Request) -> web.Response:
-        """Enregistrer l'interrupteur seul, dans le fichier de réglages commun.
+        """Enregistrer les réglages Bare Hands, dans le fichier de réglages commun.
 
-        Route dédiée, comme les raccourcis : l'interrupteur s'applique à chaud
-        et ne doit pas dépendre de la validité du reste des réglages (voix,
-        CLI) qu'un enregistrement complet revaliderait.
+        Route dédiée, comme les raccourcis : ils s'appliquent à chaud et ne
+        doivent pas dépendre de la validité du reste des réglages (voix, CLI)
+        qu'un enregistrement complet revaliderait. Depuis la Slice 07 elle
+        porte les neuf réglages du contrat § 9, pas le seul interrupteur ;
+        ``enabled`` reste obligatoire et une charge utile réduite à lui seul
+        reste valide (constat F5).
         """
 
         try:
@@ -1756,6 +1759,9 @@ class ControlCenter:
         except ValueError:
             payload = None
         current = self._settings()
+        # Ce qui était appliqué **avant** l'écriture : c'est la seule fenêtre
+        # où on peut encore le lire, `apply` écrivant dans `current`.
+        before = barehands.load(current)
         try:
             value = barehands.apply(current, payload)
         except barehands.BarehandsSettingsError as exc:
@@ -1770,10 +1776,27 @@ class ControlCenter:
         # commandes sans outil jusqu'au prochain enregistrement des réglages.
         self._apply_agent_settings(current)
         state = barehands.describe(current, self.barehands_vendor_root)
+        # Ce que cette écriture a **changé**, nommément. La route porte neuf
+        # réglages : un message qui ne parle que de l'interrupteur écrivait la
+        # même ligne « activé » pour trois déplacements de curseur, et aucun
+        # des huit autres réglages n'apparaissait nulle part dans le journal.
+        changed = {key: value[key] for key in barehands.SETTINGS_DEFAULTS if value[key] != before.get(key)}
+        if "enabled" in changed:
+            summary = "Bare Hands {} (mode test)".format("activé" if value["enabled"] else "désactivé")
+            rest = {key: changed[key] for key in changed if key != "enabled"}
+            if rest:
+                summary += " ; " + ", ".join(f"{key}={rest[key]}" for key in sorted(rest))
+        elif changed:
+            summary = "Réglages Bare Hands : " + ", ".join(f"{key}={changed[key]}" for key in sorted(changed))
+        else:
+            # Une écriture qui ne change rien arrive pour de bon (réenregistrer
+            # la même valeur) : la taire ferait d'une route appelée et d'une
+            # route muette la même trace.
+            summary = "Réglages Bare Hands réécrits sans changement"
         self.journal.emit(
-            "settings.barehands",
-            f"Barehands (mode test) {'activé' if value['enabled'] else 'désactivé'}",
-            data={"enabled": value["enabled"], "assets_installed": state["assets"]["installed"]},
+            "settings.barehands", summary,
+            data={"enabled": value["enabled"], "assets_installed": state["assets"]["installed"],
+                  "changed": changed},
         )
         return web.json_response(state)
 

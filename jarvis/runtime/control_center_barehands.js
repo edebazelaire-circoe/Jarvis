@@ -3016,7 +3016,18 @@ const JarvisBarehandsCore=(function(){
       pinches.configure(merged);
       return {sleepTimeoutMs:o.sleepTimeoutMs,clickSlopPx:o.clickSlopPx,dragSlopPx:o.dragSlopPx};
     }
+    /* Ce que le moteur applique **vraiment**, en lecture seule. Sans elle, un
+       réglage porté jusqu'ici ne se distingue pas d'un réglage enregistré et
+       jamais transmis : `configure` ne rend ses valeurs qu'à celui qui écrit,
+       donc personne — ni l'écran, ni un test, ni la console — ne pouvait
+       relire le moteur sans le reconfigurer au passage. Les trois que la
+       Slice 07 pilote, plus les deux durées de cycle de vie qui participent
+       aux mêmes paires dangereuses. */
+    const readOptions=()=>Object.freeze({sleepTimeoutMs:o.sleepTimeoutMs,
+      clickSlopPx:o.clickSlopPx,dragSlopPx:o.dragSlopPx,
+      wakeHoldMs:o.wakeHoldMs,wakeIntervalMs:o.wakeIntervalMs});
     return {enable,activate,sleep,disable,state:()=>state,features:()=>features,configure,
+      options:readOptions,
       /* Sortie sémantique du dernier instant : ce que la Slice 05 dessinera et
          ce que la Slice 06 liera à des actions. Vide hors interaction. */
       semantics:()=>semantics,tick};
@@ -3926,10 +3937,35 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
      décocher. Les trois obligations de la règle zéro : vu (bandeau + toast),
      journalisé (console, seul canal de cette page), relâché (`finally`). */
   async function saveSettings(patch){
-    if(view.busy)return null;
+    /* Une écriture pendant qu'une autre part n'est pas prise — mais elle se
+       **dit**. Les contrôles de l'écran sont désarmés pendant l'attente, donc
+       seul un appelant sans écran peut arriver ici : la voix (Slice 12) et la
+       console. C'est précisément celui à qui un abandon muet ne laisse rien à
+       lire, et il rendait `null` comme un refus sans qu'aucun mot ne dise
+       lequel des deux. */
+    if(view.busy){
+      const message='Un réglage Bare Hands est déjà en cours d’enregistrement ; celui-ci n’a pas été pris. Réessayez dans un instant.';
+      view.error=message;
+      console.warn('[barehands] réglage non pris (écriture en cours)',Object.keys(patch||{}));
+      if(typeof toast==='function')
+        toast({title:'Réglage Bare Hands non pris',sub:message,kind:'warn',ms:5000});
+      refreshPanel();
+      return null;
+    }
     const previous=view.settings;
     let next=null;
     try{
+      /* Un outil **inconnu** se refuse ici, avant toute normalisation.
+         `normalizeTool` tolère l'inconnu parce qu'il relit un schéma stocké ;
+         une écriture, elle, est une question posée à la table des outils
+         (contrat § 8), et la réponse est non. Sans cette ligne, `tool('ciseaux')`
+         devenait `pointer`, partait sur le fil **déjà normalisé** — donc le
+         refus du serveur était inatteignable depuis la page — et se
+         journalisait « réglage enregistré ». Un outil déclaré mais sans moteur
+         (`highlighter`, `draw`) passe ici et se fait refuser par le serveur,
+         qui est le seul à savoir ce qu'il sert : les deux refus gardent leur
+         phrase. */
+      if(patch&&patch.tool!==undefined)BH.toolCapability(patch.tool);
       next=BH.normalizeSettings({...previous,...(patch||{})});
       applyToEngine(next);
     }catch(error){
@@ -4017,10 +4053,39 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
     view.busy=false;refreshPanel();
   }
 
+  /* **R3.** `enabled` est le seul réglage dont l'état moteur ne passe pas par
+     `applyToEngine` : la caméra est rendue **avant** l'écriture, exprès, pour
+     qu'une décoche libère l'objectif sans attendre le réseau. L'échec
+     d'écriture rendait donc l'ancienne valeur au moteur et à l'écran comme
+     pour les autres — sauf que pour celui-là « l'ancienne valeur à l'écran »
+     recochait une case pendant que la caméra, elle, restait éteinte : case
+     cochée, serveur allumé, caméra éteinte, et deux bascules pour en sortir.
+
+     Des deux issues, on ne rallume pas. Rouvrir la caméra (et, au navigateur,
+     son invite de permission) parce qu'un **enregistrement** a échoué ferait
+     faire à la machine quelque chose que personne n'a demandé, sur le chemin
+     le moins sûr de la page. L'écran suit donc le moteur — la caméra est
+     éteinte, la case le dit — et la seule chose qui reste divergente, le
+     réglage resté « allumé » sur le serveur, est **nommée** : c'est ce que
+     l'utilisateur retrouvera au prochain chargement. */
   async function setEnabled(enabled){
     // Éteindre n'attend pas l'écriture : la caméra est libérée tout de suite.
-    if(!enabled&&Core.isEngagedState(controller.state()))controller.disable();
-    await saveSettings({enabled});
+    const released=!enabled&&Core.isEngagedState(controller.state());
+    if(released)controller.disable();
+    const saved=await saveSettings({enabled});
+    if(saved!==null||!released)return saved;
+    view.enabled=false;
+    view.error=`${view.error} La caméra a bien été libérée ; c'est le réglage qui n'a pas été enregistré, et Bare Hands sera de nouveau allumé au prochain chargement.`;
+    /* Le bandeau ne suffit pas : ce chemin s'atteint aussi le panneau fermé
+       (`JarvisBarehands.disable()`, donc la voix de la Slice 12), où le toast
+       est le seul canal. Deux faits, deux phrases — celle de `saveSettings`
+       dit pourquoi l'écriture a échoué, celle-ci dit où en est la caméra. */
+    if(typeof toast==='function')
+      toast({title:'Bare Hands se rallumera au prochain chargement',
+        sub:'La caméra est bien libérée, mais le réglage n’a pas pu être enregistré.',
+        kind:'warn',ms:7000});
+    refreshPanel();
+    return saved;
   }
 
   function statusHtml(){
@@ -4334,6 +4399,14 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
     version:2,core:Core,contracts:BH,
     state:()=>({enabled:view.enabled,status:view.status,assets:view.assets,
       controller:controller.state(),lifecycle:lifecycle()}),
+    /* **Ce que le moteur applique**, par opposition à `settings()`, qui dit ce
+       que le fichier contient. Les deux doivent coïncider, et jusqu'ici rien
+       ne permettait de le vérifier : cinq câblages de `applyToEngine`
+       pouvaient disparaître sans qu'aucune lecture ne change, parce que la
+       seule façon de relire le moteur était de le reconfigurer. Un réglage
+       qu'on ne peut pas relire là où il agit est un réglage qu'on ne peut pas
+       dire branché. */
+    engine:()=>controller.options(),
     enable:()=>setEnabled(true),disable:()=>setEnabled(false),
     /* Réveil et veille sans passer par l'écran : point d'entrée du bouton, et
        plus tard du canal de commandes de la voix (Slice 12). */
@@ -4402,7 +4475,9 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
     settings:patch=>patch===undefined?view.settings:saveSettings(patch),
     /* L'outil actif (décision 25), sans passer par l'écran : le point d'entrée
        du canal de commandes de la voix (Slice 12), « prends le surligneur ».
-       Un outil sans moteur est **refusé** par le serveur, pas ignoré. */
+       Un outil **inconnu** est refusé par `saveSettings` (contrat § 8), un
+       outil déclaré mais **sans moteur** l'est par le serveur : dans les deux
+       cas un refus nommé, jamais un silence ni un repli sur « pointeur ». */
     tools:()=>BH.describeTools(),
     tool:value=>value===undefined?view.settings.tool:saveSettings({tool:value}),
     /* Diagnostic sans caméra : poser un jeton et cliquer depuis la console.

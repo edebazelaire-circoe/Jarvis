@@ -1703,3 +1703,78 @@ lancement), celle du refus de chargement du module, et les deux de la boucle —
 dont une, M28, a été **supprimée plutôt que tuée** parce qu'elle visait du code
 qui s'est révélé faux et redondant. Aucune n'a été tuée en assouplissant une
 assertion.
+
+
+## Slice 07 — reprise (QA de `1411421`) : ce qui **tient** les réglages en place
+
+Trois constats MAJEURS, aucun bloquant. Le défaut commun n'était pas le
+câblage (il était bon) mais ce qui l'empêche de disparaître.
+
+- **Appeler la porte du moteur prouve la méthode, jamais le câblage.** Six
+  fichiers de tests, 152 assertions, et cinq lignes de `applyToEngine`
+  pouvaient paraître sans que rien ne tombe, parce que les tests écrivaient
+  `overlay.showDiagnostics(true)`, `BAREHANDS.targetAssistance(0)`,
+  `controller.configure({…})`. La règle qui remplace : **un réglage se vérifie
+  en l'écrivant là où l'utilisateur l'écrit**, puis en regardant ce que la main
+  fait. Onze mutations de câblage tentées, onze mortes.
+- **Un moteur qu'on ne peut relire qu'en le reconfigurant ne se vérifie pas.**
+  `configure` ne rendait ses valeurs qu'à celui qui écrit : « enregistré » et
+  « appliqué » étaient indistinguables de l'extérieur. D'où
+  `controller.options()` / `JarvisBarehands.engine()`, en lecture seule. C'est
+  la même leçon que `targetsShown()` à la Slice 05, une couche plus bas.
+- **Le coût exact d'un mutant se mesure à l'écran.** `sensitivity` ne divisant
+  qu'une tolérance ne « casse » rien : il transforme le tiers inférieur du
+  curseur — sa position minimale comprise — en « Réglage refusé » sur une
+  position que l'écran propose. Le balayage des 76 positions **par l'écran**
+  (et non par le contrat) est ce qui le rattrape.
+- **Une tolérance de lecture n'est pas une tolérance d'écriture.**
+  `normalizeTool` retombe sur `pointer` pour relire un schéma stocké ; sur le
+  chemin d'écriture, la même ligne faisait de `tool('ciseaux')` un succès
+  silencieux **et** rendait le refus serveur inatteignable, puisque la page
+  postait la valeur déjà normalisée. Une porte de lecture et une porte
+  d'écriture ne partagent pas leur indulgence.
+- **`enabled` n'est pas un réglage comme les autres**, et son échec d'écriture
+  ne peut pas suivre la règle générale : son état moteur ne passe pas par
+  `applyToEngine` (la caméra est rendue **avant** l'écriture, exprès). Rendre
+  « l'ancienne valeur à l'écran » recochait la case sur une caméra éteinte.
+  **On ne rallume pas** : rouvrir une caméra parce qu'un enregistrement a
+  échoué ferait faire à la machine ce que personne n'a demandé. L'écran suit le
+  moteur, et la divergence qui reste se **nomme** (bandeau + toast, parce que
+  ce chemin s'atteint panneau fermé par `JarvisBarehands.disable()`).
+- **Un journal qui dit la même chose quoi qu'il arrive ne dit rien.** La route
+  porte neuf réglages ; le message n'en nommait qu'un. Il nomme maintenant ce
+  qui a **changé**, et une écriture sans changement le dit aussi — la taire
+  ferait d'une route appelée et d'une route muette la même trace.
+- **Deux leçons sur les doubles**, trouvées en écrivant ces tests :
+  `global.navigator = …` **ne prend pas** (node 21+ l'expose en lecture seule,
+  l'affectation échoue en silence) — le harnais héritait du navigateur de node
+  depuis toujours ; et le `innerHTML` du double ne détruisait pas ses enfants,
+  donc il ne pouvait pas échouer comme le vrai sur le constat F5. Les deux sont
+  corrigées ; la seconde a donné l'assertion comportementale qui manquait
+  (« un rafraîchissement ne réécrit jamais le corps de l'onglet »).
+- **Le double de DOM géométrique de la Slice 05 est maintenant partagé**
+  (`test_barehands_target_js.ELEMENTS`) au lieu d'être recopié une quatrième
+  fois : sans arbre à rectangles, aucun réglage qui agit sur ce que la main
+  **atteint** n'a de comportement observable.
+- **Laissé en Issue** : un bloc de réglages en version étrangère est écrasé en
+  silence par la première écriture ordinaire
+  (`Issues/barehands-foreign-stored-version-overwritten.md`). Le contrat JS
+  refuse bruyamment, le serveur se tait : l'asymétrie est le cœur du constat,
+  et la refermer demande une décision de produit (archiver ou écraser).
+
+Fichiers : `jarvis/runtime/control_center_barehands.js`,
+`jarvis/runtime/control_center.py`, `docs/barehands-contracts.md`,
+`tests/unit/test_barehands_tools_settings_js.py`,
+`tests/unit/test_barehands_target_js.py`,
+`tests/unit/test_barehands_test_mode.py`,
+`tasks/jarvis-bare-hands-v1/Issues/barehands-foreign-stored-version-overwritten.md`
+(nouveau).
+
+Tests, avant-plan : Bare Hands + scène **300 passed** (baseline 288 après
+Slice 12 + 12 nouveaux) ; `test_control_center_*` **284 passed**, inchangée ;
+les deux fichiers de la Slice 12 **38 passed**, inchangés ; `-k "doc or
+contract"` **693 passed**. **Quatorze mutations tentées, quatorze mortes** — les
+cinq de la QA, la suppression complète de `controller.configure` (qu'aucune des
+cinq ne couvrait), les deux voisines déjà tuées, et cinq visées sur les
+correctifs eux-mêmes, dont `Object.assign(o,next)` retiré de `configure` pour
+vérifier que la lecture du moteur n'est pas une tautologie.
