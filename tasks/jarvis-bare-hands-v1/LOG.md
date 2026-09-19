@@ -891,3 +891,151 @@ majeur et son propre bout de doigt : la branche est inatteignable. Le repli
 prudent (fermeture pleine, donc rien ne commence) est gardé pour qu'elle échoue
 du bon côté le jour où elle cesserait de l'être, et `handClosure` renvoyant
 `null` sans aucun bout de doigt est épinglé à part.
+
+## 2026-09-19 — Slice 05, implementation agent
+
+Le résolveur de cible sémantique et le retour visuel de visée. **Premier module
+de page ajouté depuis la Slice 01**, donc le constat F3 s'applique :
+`jarvis/runtime/control_center_barehands_target.js`
+(`window.JarvisBarehandsTarget`), son couple
+`BAREHANDS_TARGET_SCRIPT_FILE`/`_MARKER` dans `control_center.py`, son repère
+dans `control_center.html`, et une assertion d'ordre. Le nouvel ordre est
+`contracts → target → barehands → scene page` : le module lit les contrats et se
+fait lire par le pointeur, donc il vit exactement entre les deux.
+
+La géométrie et l'hystérésis sont **pures** (`targetBand`, `regionAt`,
+`targetRegionsOf`, `createTargetResolver` dans
+`jarvis/runtime/control_center_barehands.js`) ; le module de page ne fait que
+lire l'arbre et dessiner. Le contrat gagne `feedbackRole` et trois noms de DOM.
+Couverture : `tests/unit/test_barehands_target_js.py` (23 tests). Contrat
+lisible : `docs/barehands-contracts.md` § 6.
+
+Découvertes durables pour les Slices suivantes :
+
+- **« En recouvrement » veut dire *au même point*, et c'est une contrainte de
+  composition, pas une nuance de vocabulaire.** `pickRegion` classe
+  actionnable → priorité → distance : appliquée à plat sur les candidates de
+  **tous** les objets, elle fait gagner le coin d'un cadre situé à 11 px
+  (priorité 3) sur le corps du bouton que le doigt touche réellement
+  (priorité 1), la distance n'étant lue qu'en troisième. La résolution est donc
+  en deux temps : *le plus proche décide quel objet, `pickRegion` décide quelle
+  partie*. Mesuré et épinglé ; c'est la seule composition où les deux critères
+  disent ce qu'ils veulent dire. **La Slice 06 hérite de la règle** : la
+  priorité de région ne traverse jamais deux objets.
+- **Le bloc pur ne réimplante pas la règle du contrat, il la reçoit.**
+  `createTargetResolver` **exige** `pickRegion` et se refuse sans elle
+  (`RangeError`). Le bloc pur est chargé seul par node et ne peut pas lire le
+  contrat ; une seconde priorité écrite ici aurait divergé en silence de celle
+  que la Slice 06 lira. C'est le troisième recours à cette forme après
+  `STATE`/`LIFECYCLE` et `DEFAULTS`/constantes du contrat, mais le premier où
+  l'injection remplace la recopie — préférable quand il s'agit d'un
+  **algorithme** et non d'une valeur.
+- **Une bande de zone a besoin de deux bornes, et la seconde ferme une
+  décision.** `targetZonePx` (14 px) seul prend les deux moitiés d'une capsule
+  de 24 px de haut : plus un seul pixel de **corps**, donc la décision 8
+  (« BODY est de l'interaction de contenu ») inatteignable sur l'objet le plus
+  courant de la scène, sans rien qui le dise. La bande est aussi plafonnée à
+  `targetZoneMaxRatio` (0,3) du petit côté, et `≥ 0,5` se refuse à la
+  construction. Effet de bord utile : sous 0,5, « les deux côtés d'un axe à la
+  fois » devient **structurellement impossible**, donc un coin ne peut pas être
+  inventé sur un objet étroit.
+- **Quatrième apparition de la paire qui se règle séparément.**
+  `targetZonePx` / `targetZoneHoldPx` sont l'hystérésis d'une zone, exactement
+  comme `pressRatio`/`releaseRatio` l'est d'un contact. Inversées, la zone se
+  perd **plus tôt** qu'elle ne se prend : l'aperçu clignote précisément là où
+  l'hystérésis existe pour qu'il ne clignote pas, rien ne lève, rien ne tombe, et
+  le symptôme se lit comme un tremblement de main. Refusé à la construction, à
+  côté de `smoothing`, `wakeIntervalMs`/`wakeGraceMs` et
+  `clickSlopPx`/`dragSlopPx`. L'égalité reste permise.
+- **Un facteur 2 sur l'assistance, pour que brancher un réglage ne change
+  rien.** `settings.assistance` vaut 0,5 par défaut (contrat § 9). Multiplier
+  `targetAssistPx` par l'assistance nue aurait **divisé la portée par deux** le
+  jour où la Slice 07 branche le champ — une régression invisible, causée par un
+  câblage et non par un changement. La portée est donc
+  `targetAssistPx × 2 × assistance` : 0,5 rend exactement le défaut du moteur, 0
+  coupe, 1 double. **Règle générale : quand un réglage stocké multiplie une
+  constante du moteur, c'est le défaut du réglage qui doit rendre le défaut du
+  moteur.**
+- **Décision 3 se tient par la structure de l'arbre, pas par une opacité.** Hors
+  intention (aucun canal `pinching` ni `pressed`), il n'y a **aucun élément
+  d'aperçu dans le DOM** — pas caché, pas transparent : absent. C'est la seule
+  forme de la règle qu'un test puisse vérifier, et elle paie la performance au
+  passage : `querySelectorAll` + un `getBoundingClientRect` par candidate ne
+  s'exécutent que sous intention, jamais dans une session au repos. **La
+  Slice 07 ne doit pas transformer ce retrait en `display:none`.**
+- **`elementFromPoint` participe sans décider.** Deux objets qui se recouvrent
+  rendent la **même** distance (zéro) : sans autre critère, c'est l'ordre du
+  document — l'ordre de création — qui tranche, donc pas ce que l'utilisateur
+  voit. La collecte cite en tête celui qu'`elementFromPoint` trouve au-dessus, et
+  le résolveur lit « le premier cité » comme le contrat le fait. C'est
+  exactement l'écart entre cette Slice et un survol de souris : le pixel est un
+  indice, la géométrie sémantique est la réponse.
+- **La représentation se déclare, elle ne se devine pas.** `sc-capsule` est la
+  forme **dessinée**, qui retombe en capsule puis en point quand la place manque
+  (`compactShape`, `control_center_scene_layout.js:936`). Lire les zones dessus
+  ferait perdre les siennes à une fenêtre compacte, et en donnerait à une
+  capsule dessinée en point. La page de scène pose donc `data-representation`
+  dans `applyNodes` — **à chaque passe, et non dans `fill()`**, dont la mémoire
+  de contenu ne regarde pas la représentation : un changement de représentation
+  à forme dessinée constante ne rappellerait pas `fill()`. Représentation
+  illisible ⇒ corps seul, l'erreur qui échoue du bon côté.
+- **Un renvoi opaque plutôt qu'un réappariement sur des coordonnées.** Le nom et
+  l'arrondi d'une cible ne sont pas de la géométrie et ne traversent pas le
+  résolveur ; il faut donc les relire de la candidate collectée. Une cible
+  **figée** n'a plus de candidate sous la main — l'objet n'est plus dans la
+  portée — et le rang 0 de la collecte désigne alors un *autre* objet :
+  l'étiquette annonçait ce qu'on ne tient pas, silencieusement. Le descripteur
+  porte donc `ref`, et son apparence est gelée avec lui.
+- **`suppressed` arrive enfin à l'écran** (RÈGLE ZÉRO). Le contrat range depuis
+  la Slice 04 la raison d'un geste étouffé « plutôt que de la faire
+  disparaître » ; elle n'allait nulle part. Elle s'écrit maintenant sous la
+  pastille (`jh-note`), et une raison **inconnue** s'affiche telle quelle : ce
+  nom est la seule information que cette ligne transporte, le remplacer par une
+  phrase générique la viderait. Passé au second argument de `overlay.render`
+  pour que les doubles de test existants l'ignorent sans se casser.
+- **Ce que la Slice 06 consomme** : `window.JarvisBarehands.targets()`, une
+  entrée par main **et par canal** (décision 21 : le clic droit est un canal),
+  publiée à travers `createTargetCandidate` et augmentée de `handTrackId`,
+  `channel`, `locked` et `feedback`. `createCapture({handTrackId, channel,
+  state, objectId, region, zone, t})` se construit directement dessus. **`locked`
+  est la couture** : la cible est dynamique tant que la main approche et **figée**
+  dès la descente — objet, région, zone, cadre et nom — quoi que fasse la main.
+  Sans ce gel, un glissement de 30 px changerait l'objet capturé au milieu du
+  geste.
+- **Ce que la Slice 05 n'a pas fait, à dessein** : elle ne touche pas au
+  sélecteur `INTERACTIVE` ni au survol hérité (le contour `jarvis-hand-hover`
+  reste ce qu'il était), et elle ne lie aucune cible à une action. **Résidu
+  connu pour la Slice 06 ou 07** : ce contour-là, lui, n'est pas conditionné à
+  l'intention — c'est le mécanisme d'hier que la décision 3 remplace, et le
+  déconditionner touche le chemin de clic hérité, qu'on m'a demandé de ne pas
+  déranger.
+- **Résidu connu, plus faible que le reste** : il n'existe pas de harnais DOM
+  pour `installJarvisScene`, donc l'écriture de `data-representation` est
+  vérifiée par lecture de source (la garde, l'écriture et la **source** de la
+  valeur — `node.representation` et non `node.shape`). À exercer pour de vrai à
+  la validation runtime de la Slice 11.
+
+Fichiers : `jarvis/runtime/control_center_barehands_target.js` (nouveau),
+`jarvis/runtime/control_center_barehands.js`,
+`jarvis/runtime/control_center_barehands_contracts.js`,
+`jarvis/runtime/control_center_scene_page.js`, `jarvis/runtime/control_center.py`,
+`jarvis/runtime/control_center.html`, `docs/barehands-contracts.md`,
+`tests/unit/test_barehands_target_js.py` (nouveau),
+`tests/unit/test_barehands_lifecycle_js.py`,
+`tests/unit/test_barehands_tracking_js.py`.
+
+Tests, chunks en avant-plan : nouveau fichier **23 passed** ; baseline 1
+(barehands + scene logic) **180 passed** ; baseline 2 (control centre +
+settings) **221 passed** ; suites de scène adjacentes **413 passed**. Aucune
+régression. **Trente-deux mutations tentées, trente-deux reprises** — six
+d'entre elles seulement après avoir renforcé les tests qu'elles avaient
+traversées : les zones données à toutes les représentations et la représentation
+devinée (l'étoile était sondée en son centre, où les deux réponses se
+confondent — il a fallu la sonder sur son **coin**), l'indice
+d'`elementFromPoint` retiré (aucun test ne passait par la collecte), l'ordre
+actionnable-d'abord (la candidate non actionnable était hors de portée, donc
+jamais en concurrence), l'étiquette d'une cible figée (aucun test ne faisait
+partir la main hors de la collecte) et la barre de zone dessinée au mauvais
+endroit (`zoneRect` n'était vérifié qu'indirectement). La trente-deuxième,
+`data-representation` non posée, n'est reprise que par une lecture de source :
+voir le résidu ci-dessus.

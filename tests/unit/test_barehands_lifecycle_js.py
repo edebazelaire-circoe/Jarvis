@@ -875,6 +875,14 @@ def test_the_controller_states_and_timings_still_match_the_contract(tmp_path):
                    'fingerCurledPalms','fingerExtendedPalms','postureScore','postureHoldMs',
                    'doubleCloseMs','clapPalms','clapSpeedPalms','gestureCooldownMs']
           .map(k=>[k,B.DEFAULTS[k]]),
+        targeting:['targetZonePx','targetZoneHoldPx','targetZoneMaxRatio','targetAssistPx']
+          .map(k=>[k,B.DEFAULTS[k]]),
+        holdOverEnter:B.DEFAULTS.targetZonePx<=B.DEFAULTS.targetZoneHoldPx,
+        bodySurvives:B.DEFAULTS.targetZoneMaxRatio<.5,
+        regions:[B.TARGET_REGION,C.REGION],
+        sides:[B.TARGET_SIDES.HORIZONTAL.concat(B.TARGET_SIDES.VERTICAL).sort(),
+               Object.keys(C.SIDE_AXIS).sort()],
+        targetClasses:[C.DOM.targetClass,C.DOM.targetZoneClass,C.DOM.noteClass],
         fingerBand:B.DEFAULTS.fingerCurledPalms<B.DEFAULTS.fingerExtendedPalms,
         clickUnderDrag:B.DEFAULTS.clickSlopPx<B.DEFAULTS.dragSlopPx,
         retired:['smoothing','handednessBonusPalms'].map(k=>B.DEFAULTS[k]===undefined),
@@ -950,6 +958,25 @@ def test_the_controller_states_and_timings_still_match_the_contract(tmp_path):
         ["doubleCloseMs", 600], ["clapPalms", 1.4], ["clapSpeedPalms", 2.5],
         ["gestureCooldownMs", 500],
     ]
+    # Slice 05 : quatre réglages de plus, même règle. Tout est en **pixels de
+    # la fenêtre** (comme `boundsPx`/`distancePx` du contrat) : une zone se vise
+    # à l'œil, pas à la paume.
+    assert result["targeting"] == [
+        ["targetZonePx", 14], ["targetZoneHoldPx", 20],
+        ["targetZoneMaxRatio", 0.3], ["targetAssistPx", 24],
+    ]
+    # Deux relations de plus, et les deux se refusent à la construction : la
+    # bande qui **garde** une zone ne peut pas être sous celle qui la **prend**
+    # (sinon l'aperçu clignote là où l'hystérésis existe pour qu'il ne clignote
+    # pas), et la bande ne peut pas atteindre la moitié du côté (sinon les deux
+    # bandes opposées se rejoignent et le corps disparaît — décision 8
+    # inatteignable sur une capsule).
+    assert result["holdOverEnter"] is True and result["bodySurvives"] is True
+    # Le bloc pur recopie aussi le vocabulaire des régions et des côtés, pour la
+    # même raison que `STATE` recopie `LIFECYCLE`.
+    assert result["regions"][0] == result["regions"][1]
+    assert result["sides"][0] == result["sides"][1]
+    assert result["targetClasses"] == ["jh-target", "jh-target-zone", "jh-note"]
     # Deux relations, pas deux nombres libres : un doigt ne peut pas être
     # « replié » plus loin qu'il n'est « tendu » (`options()` le refuse), et la
     # tolérance d'un clic reste sous celle qui déclenche un glissement — au

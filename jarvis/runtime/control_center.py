@@ -194,6 +194,11 @@ CATALOG_SCRIPT_MARKER = "/*__CONTROL_CENTER_CATALOG_JS__*/"
 #: et la page de scène, qui lisent tous deux l'identité de pointeur.
 BAREHANDS_CONTRACTS_SCRIPT_FILE = "control_center_barehands_contracts.js"
 BAREHANDS_CONTRACTS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_CONTRACTS_JS__*/"
+#: Cible sémantique Bare Hands (Slice 05) : collecte des candidates du DOM et
+#: aperçu visuel des régions (`window.JarvisBarehandsTarget`). Inséré APRÈS les
+#: contrats, qu'il lit, et AVANT le pointeur, qui le lit.
+BAREHANDS_TARGET_SCRIPT_FILE = "control_center_barehands_target.js"
+BAREHANDS_TARGET_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_TARGET_JS__*/"
 #: Pointeur à mains nues (Barehands, mode test) : logique pure testée par node,
 #: plus son branchement navigateur. Même insertion que les scripts ci-dessus.
 BAREHANDS_SCRIPT_FILE = "control_center_barehands.js"
@@ -738,6 +743,10 @@ class ControlCenter:
         html = html.replace(
             BAREHANDS_CONTRACTS_SCRIPT_MARKER,
             page.with_name(BAREHANDS_CONTRACTS_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            BAREHANDS_TARGET_SCRIPT_MARKER,
+            page.with_name(BAREHANDS_TARGET_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             BAREHANDS_SCRIPT_MARKER, page.with_name(BAREHANDS_SCRIPT_FILE).read_text(encoding="utf-8")

@@ -1515,6 +1515,17 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
         record.place='';
         if(inside){setInnerTabs(record.el,true);record.el.focus({preventScroll:true})}
       }
+      /* Métadonnée sémantique lue par Bare Hands (Slice 05) : quelles zones de
+          manipulation cet objet accepte. Elle est posée ici, et non déduite des
+          classes, parce que la classe porte la forme **dessinée** (sc-capsule,
+          sc-point), qui retombe quand la place manque : une fenêtre dessinée en
+          capsule, ou une capsule dessinée en point, perdraient leurs zones sans
+          que leur géométrie ait changé. Elle est posée à chaque passe et non
+          dans fill(), dont la mémoire de contenu ne regarde pas la
+          représentation : un changement de representation à forme dessinée
+          constante ne rappellerait pas fill(). */
+      if(record.el.dataset.representation!==node.representation)
+        record.el.dataset.representation=node.representation;
       if(record.anim!==node.animate){record.el.classList.toggle('sc-anim',node.animate);record.anim=node.animate}
       record.el.classList.toggle('sc-selected',node.id===selectedId);
       record.el.classList.toggle('sc-stopping',stopping.has(node.id));

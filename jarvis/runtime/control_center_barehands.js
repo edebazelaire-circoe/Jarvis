@@ -114,6 +114,15 @@ const JarvisBarehandsCore=(function(){
     clapPalms:1.4,           // distance des deux centres de paume, en paumes
     clapSpeedPalms:2.5,      // vitesse de rapprochement exigée (paumes/s) : deux mains posées côte à côte ne claquent pas
     gestureCooldownMs:500,   // anti-rebond des gestes discrets (clap, double fermeture)
+    /* ---- Slice 05 : cible sémantique et aperçu (architecture §6, décisions
+       3, 8, 9, 16, 23, 24). Tout est en **pixels de la fenêtre**, comme
+       `boundsPx`/`distancePx` du contrat : ce sont des tailles à l'écran, pas
+       des rapports à la paume. Une zone de manipulation se vise avec l'œil,
+       pas avec la main. */
+    targetZonePx:14,        // bande d'un bord : il faut y **entrer** pour prendre la zone
+    targetZoneHoldPx:20,    // bande qui la **garde** : hystérésis, même idiome que pressRatio/releaseRatio
+    targetZoneMaxRatio:.3,  // la bande ne prend jamais plus que cette fraction du petit côté
+    targetAssistPx:24,      // portée d'assistance hors du cadre (une petite erreur de visée vise quand même)
   });
   const clamp=(v,min,max)=>Math.max(min,Math.min(max,v));
 
@@ -208,6 +217,31 @@ const JarvisBarehandsCore=(function(){
     o.clapPalms=positive(o.clapPalms,DEFAULTS.clapPalms);
     o.clapSpeedPalms=atLeast(o.clapSpeedPalms,0,DEFAULTS.clapSpeedPalms);
     o.gestureCooldownMs=Math.max(0,Number(o.gestureCooldownMs)||0);
+    o.targetZonePx=Math.max(0,Number(o.targetZonePx)||0);
+    o.targetZoneHoldPx=Math.max(0,Number(o.targetZoneHoldPx)||0);
+    o.targetAssistPx=Math.max(0,Number(o.targetAssistPx)||0);
+    /* Sixième invariant de paire, et la **quatrième** fois que cette classe de
+       défaut se présente sur cette tâche (après `smoothing`,
+       `wakeIntervalMs`/`wakeGraceMs` et `clickSlopPx`/`dragSlopPx`) : la bande
+       d'entrée et la bande de maintien sont l'hystérésis d'une zone, exactement
+       comme `pressRatio`/`releaseRatio` le sont d'un contact. Inversées, la
+       zone se perd **plus tôt** qu'elle ne se prend : le bord se prend à
+       `targetZonePx`, se rend dès `targetZoneHoldPx`, et l'aperçu clignote
+       précisément là où l'hystérésis existe pour qu'il ne clignote pas. Rien ne
+       lève, rien ne tombe, et le symptôme se lit comme un tremblement de main.
+       L'égalité reste permise : elle vaut « pas d'hystérésis », pas une
+       inversion. */
+    if(o.targetZoneHoldPx<o.targetZonePx)
+      throw new RangeError('targetZoneHoldPx ne peut pas être sous targetZonePx : la bande qui garde une zone doit être au moins celle qui la prend, sinon l’aperçu clignote au lieu de tenir');
+    /* Et un invariant à un seul nombre, qui efface une décision entière s'il
+       passe : les deux bandes opposées d'un axe se rejoignent à la moitié du
+       côté. À 0,5 il n'existe plus un seul point de **corps** dans un objet
+       étroit — la décision 8 (BODY est de l'interaction de contenu) devient
+       inatteignable sur les capsules, qui sont les objets les plus courants, et
+       rien ne le dit. */
+    o.targetZoneMaxRatio=Number(o.targetZoneMaxRatio);
+    if(!(o.targetZoneMaxRatio>0&&o.targetZoneMaxRatio<.5))
+      throw new RangeError('targetZoneMaxRatio doit rester entre 0 et 0,5 exclus : à la moitié du côté, les deux bandes opposées se rejoignent et le corps de l’objet disparaît');
     return o;
   }
 
@@ -1315,6 +1349,233 @@ const JarvisBarehandsCore=(function(){
   };
 
   /* ------------------------------------------------------------------
+     Cible sémantique (architecture §6, décisions 3, 8, 9, 16, 23, 24).
+
+     `document.elementFromPoint` répond à « quel élément occupe ce pixel ». La
+     question de cette Slice en est une autre : « que veut saisir cette
+     main ? ». Elle se résout sur la **géométrie sémantique** des objets de
+     Jarvis — leur cadre, leur type, leur actionnabilité, leurs zones — et
+     l'élément sous le doigt n'en est qu'un indice parmi d'autres (il sert de
+     départage « celui du dessus », voir le module d'aperçu).
+
+     Tout est en **pixels de la fenêtre**. La scène, elle, vit en unités
+     (±160 × ±90) : les deux espaces ne se rencontrent jamais ici, c'est
+     `getBoundingClientRect` qui fait la conversion une fois, à la collecte.
+
+     Le bloc pur ne peut pas lire le contrat (les tests node le chargent seul).
+     Il ne **réinvente** donc pas la priorité coin > bord > corps : elle lui est
+     passée (`pickRegion`), et une seconde règle ici aurait divergé en silence
+     de celle que la Slice 06 lira. */
+
+  const TARGET_REGION=Object.freeze({BODY:'body',EDGE:'edge',CORNER:'corner'});
+  /* Miroir de `JarvisBarehandsContracts.EDGE`/`CORNER`, pour la même raison
+     que `STATE` est celui de `LIFECYCLE` : un test de parité refuse la dérive. */
+  const TARGET_SIDES=Object.freeze({HORIZONTAL:Object.freeze(['left','right']),
+    VERTICAL:Object.freeze(['top','bottom'])});
+
+  const finiteRect=value=>{
+    const r=value&&typeof value==='object'?value:null;
+    if(!r)return null;
+    const x=Number(r.x),y=Number(r.y),w=Number(r.w),h=Number(r.h);
+    if(![x,y,w,h].every(Number.isFinite)||w<=0||h<=0)return null;
+    return {x,y,w,h};
+  };
+
+  /* Épaisseur de la bande d'un bord, en pixels de la fenêtre. Deux bornes, et
+     les deux comptent : une taille lisible à l'écran (`targetZonePx`, ou
+     `targetZoneHoldPx` quand la zone est déjà tenue) et une fraction du petit
+     côté, pour qu'une capsule de 24 px de haut garde un corps. Sans la
+     seconde, les deux bandes opposées se rejoignaient et la décision 8
+     devenait inatteignable sur l'objet le plus courant. */
+  function bandFor(bounds,o,holding){
+    const rect=finiteRect(bounds);
+    if(!rect)return 0;
+    return Math.min(holding?o.targetZoneHoldPx:o.targetZonePx,
+      Math.min(rect.w,rect.h)*o.targetZoneMaxRatio);
+  }
+  const targetBand=(bounds,overrides,holding)=>bandFor(bounds,options(overrides),holding);
+
+  /* Quelle **partie** d'un cadre un point désigne, et à quelle distance.
+
+     Dedans : les côtés dont on est à moins de `band` — au plus un par axe,
+     le plus proche, sinon un point au centre d'un objet minuscule tiendrait
+     « gauche » et « droite » à la fois. Dehors : les côtés **franchis**, ce qui
+     donne naturellement le bord qu'on approche, et le coin quand on approche
+     en diagonale. Zéro côté = corps.
+
+     `distancePx` est la distance du point au rectangle (0 dedans) : c'est ce
+     que `pickRegion` lit en troisième critère, et ce que la résolution entre
+     objets lit en premier. */
+  function regionAt(bounds,point,band){
+    const rect=finiteRect(bounds);
+    if(!rect)return null;
+    const x=Number(point&&point.x),y=Number(point&&point.y);
+    if(!Number.isFinite(x)||!Number.isFinite(y))return null;
+    const x1=rect.x+rect.w,y1=rect.y+rect.h;
+    const left=x-rect.x,right=x1-x,top=y-rect.y,bottom=y1-y;
+    const reach=Math.max(0,Number(band)||0);
+    const outside=left<0||right<0||top<0||bottom<0;
+    const distancePx=Math.hypot(Math.max(rect.x-x,0,x-x1),Math.max(rect.y-y,0,y-y1));
+    let horizontal=null,vertical=null;
+    if(outside){
+      if(left<0)horizontal='left';else if(right<0)horizontal='right';
+      if(top<0)vertical='top';else if(bottom<0)vertical='bottom';
+    }else if(reach>0){
+      if(Math.min(left,right)<=reach)horizontal=left<=right?'left':'right';
+      if(Math.min(top,bottom)<=reach)vertical=top<=bottom?'top':'bottom';
+    }
+    return {horizontal,vertical,distancePx,outside};
+  }
+
+  /* Les candidates qu'un objet offre à un point : son corps, plus — s'il a des
+     zones (décision D3 : capsule et fenêtre seulement) — chaque côté retenu et
+     le coin quand il y en a deux. Toutes à la même distance, ce qui est
+     exactement le cas de **recouvrement** que `pickRegion` tranche
+     (coin > bord > corps). */
+  function targetRegionsOf(object,point,band){
+    const geometry=regionAt(object.boundsPx,point,object.zoned?band:0);
+    if(!geometry)return null;
+    const shared={objectId:object.objectId,kind:object.kind,
+      /* Renvoi opaque vers la candidate d'origine. La géométrie n'a rien à
+         faire de l'élément du DOM — aucun n'en traverse ce module (contrat
+         § 6) — mais l'appelant doit pouvoir retrouver ce qu'il a collecté sans
+         réapparier sur des coordonnées, ce qui échouerait dès qu'une cible est
+         figée et que la main est partie ailleurs. */
+      ref:object.ref===undefined?null:object.ref,
+      representation:object.representation,actionable:object.actionable!==false,
+      boundsPx:object.boundsPx,distancePx:geometry.distancePx};
+    const regions=[{...shared,region:TARGET_REGION.BODY,zone:null}];
+    if(object.zoned){
+      const {horizontal,vertical}=geometry;
+      if(horizontal)regions.push({...shared,region:TARGET_REGION.EDGE,zone:horizontal});
+      if(vertical)regions.push({...shared,region:TARGET_REGION.EDGE,zone:vertical});
+      if(horizontal&&vertical)
+        regions.push({...shared,region:TARGET_REGION.CORNER,zone:`${vertical}_${horizontal}`});
+    }
+    return {distancePx:geometry.distancePx,actionable:shared.actionable,regions};
+  }
+
+  /* Le résolveur. Une entrée par main **et par canal** : la décision 21 fait du
+     clic droit un canal, donc la même main peut viser en bleu d'un doigt et en
+     rouge de l'autre, et les deux ne se latchent pas ensemble.
+
+     Deux étapes, et l'ordre n'est pas indifférent :
+
+     1. **quel objet** — le plus proche (`distancePx`), actionnable d'abord, et
+        à égalité le premier cité (le module de collecte cite celui du dessus
+        en tête). La priorité de région ne participe **pas** à ce choix : elle
+        départage un *recouvrement*, et l'appliquer entre objets ferait gagner
+        le coin d'un objet à 20 px sur le bord de celui qu'on touche.
+     2. **quelle partie** — `pickRegion` sur les candidates de cet objet, qui
+        sont toutes à la même distance : coin > bord > corps, la règle du
+        contrat, appliquée là où elle veut dire quelque chose.
+
+     L'hystérésis est celle d'un contact (`pressRatio`/`releaseRatio`) : une
+     zone déjà tenue se juge sur la bande large, les autres sur la bande
+     étroite. Sans elle, un tremblement d'un pixel au bord de la bande fait
+     clignoter l'aperçu entre le coin et tout le cadre. */
+  function createTargetResolver(overrides){
+    const o=options(overrides);
+    const pick=overrides&&overrides.pickRegion;
+    if(typeof pick!=='function')
+      throw new RangeError('createTargetResolver exige `pickRegion` : la priorité coin > bord > corps appartient au contrat (JarvisBarehandsContracts.pickRegion), et une seconde règle ici divergerait en silence');
+    const held=new Map();
+    const keyOf=(id,channel)=>`${String(id)}|${String(channel)}`;
+    /* L'assistance des réglages (contrat §9, bornée 0..1, défaut **0,5**)
+       multiplie la portée. Le facteur 2 est ce qui fait du défaut des réglages
+       le défaut du moteur : `assistance` 0,5 rend exactement `targetAssistPx`,
+       0 coupe l'assistance et 1 la double. Sans lui, brancher le réglage à la
+       Slice 07 aurait **divisé la portée par deux** sans que personne n'ait
+       rien changé — une régression invisible au câblage. */
+    const assistOf=value=>{
+      if(value===undefined||value===null)return 1;
+      const n=Number(value);
+      return Number.isFinite(n)?clamp(n,0,1)*2:1;
+    };
+    return {
+      /* Le rayon que la collecte doit balayer pour cette assistance : le
+         module de page ne redérive pas ce nombre, sinon il collecterait un
+         disque et le résolveur en jugerait un autre. */
+      reach(assistance){return o.targetAssistPx*assistOf(assistance)},
+      /* `{now, candidates:[{objectId, kind, representation, zoned, actionable,
+         boundsPx}], hands:[{handTrackId, channel, state, x, y, assistance}]}`.
+         `state` est celui que publie `createPinchChannel` : `open`,
+         `pinching` (approche : décision 3, c'est **là** que l'aperçu vit) ou
+         `pressed` (contact : le descripteur est figé). */
+      update(frame){
+        const f=frame||{};
+        const now=Number(f.now);
+        if(!Number.isFinite(now))
+          throw Object.assign(new Error('résolution de cible : horodatage inutilisable'),{code:'tracking_failed'});
+        const candidates=Array.isArray(f.candidates)?f.candidates:[];
+        const hands=Array.isArray(f.hands)?f.hands:[];
+        /* Même horloge d'identité que partout ailleurs : ce qu'une main tenait
+           meurt avec elle, et la grâce se compte contre l'observation. */
+        for(const [k,entry] of [...held])if(now-entry.at>o.lostGraceMs)held.delete(k);
+        const out=[];
+        for(const hand of hands){
+          const id=hand&&hand.handTrackId;
+          if(id===undefined||id===null)continue;
+          const channel=String((hand&&hand.channel)||'primary');
+          const k=keyOf(id,channel);
+          const state=String((hand&&hand.state)||'open');
+          /* **Décision 3.** Hors intention, il n'y a pas de cible — donc rien
+             à dessiner, et pas un curseur qui reste. C'est ici que la règle est
+             tenue, une fois, plutôt que dans chaque dessin. */
+          if(state!=='pinching'&&state!=='pressed'){held.delete(k);continue}
+          const previous=held.get(k);
+          /* Dynamique jusqu'à la descente, stable ensuite : sous contact, le
+             descripteur ne bouge plus, quoi que fasse la main. C'est ce que la
+             Slice 06 latche (décision 13). */
+          if(state==='pressed'&&previous&&previous.locked){
+            previous.at=now;out.push(previous.target);continue;
+          }
+          const point={x:Number(hand.x),y:Number(hand.y)};
+          if(!Number.isFinite(point.x)||!Number.isFinite(point.y)){held.delete(k);continue}
+          const reach=o.targetAssistPx*assistOf(hand.assistance);
+          let best=null,bestBand=0;
+          for(const object of candidates){
+            if(!object)continue;
+            /* L'hystérésis suit un **objet identifié**. Sans ce garde-fou,
+               deux candidates sans identité (les contrôles du DOM le sont
+               toutes) auraient partagé la même mémoire — inoffensif tant
+               qu'elles n'ont pas de zones, faux le jour où elles en auront. */
+            const oid=object.objectId===undefined||object.objectId===null?null:String(object.objectId);
+            const holding=!!previous&&!!previous.target&&oid!==null
+              &&previous.target.objectId===oid
+              &&previous.target.region!==TARGET_REGION.BODY;
+            const band=object.zoned?bandFor(object.boundsPx,o,holding):0;
+            const found=targetRegionsOf(object,point,band);
+            if(!found||found.distancePx>reach)continue;
+            const better=!best
+              ||(found.actionable!==best.actionable?found.actionable
+                :found.distancePx<best.distancePx);
+            if(better){best=found;bestBand=band}
+          }
+          if(!best){held.delete(k);continue}
+          const picked=pick(best.regions);
+          if(!picked){held.delete(k);continue}
+          const target=Object.freeze({handTrackId:id,channel,
+            locked:state==='pressed',bandPx:bestBand,
+            objectId:picked.objectId===undefined||picked.objectId===null?null:String(picked.objectId),
+            kind:picked.kind,region:picked.region,zone:picked.zone,ref:picked.ref,
+            representation:picked.representation,actionable:picked.actionable,
+            boundsPx:picked.boundsPx,distancePx:picked.distancePx});
+          held.set(k,{at:now,locked:state==='pressed',target});
+          out.push(target);
+        }
+        return out;
+      },
+      /* Le contact est rendu : la cible figée l'est aussi. */
+      release(handTrackId,channel){
+        held.delete(keyOf(handTrackId,channel===undefined||channel===null?'primary':channel));
+      },
+      reset(){held.clear()},
+      size(){return held.size},
+    };
+  }
+
+  /* ------------------------------------------------------------------
      Identité de main persistante (architecture §2).
 
      La latéralité ne fait pas une identité. Le traqueur la réétiquette d'une
@@ -1917,7 +2178,13 @@ const JarvisBarehandsCore=(function(){
         pinch:pinches.update({hands:observed,now,aspect:aspect()}),
       };
       deps.interaction.hover(out.tokens);
-      deps.overlay.render(out.tokens);
+      /* RÈGLE ZÉRO. Un geste étouffé pendant une manipulation (contrat § 4)
+         partait dans `suppressed` et n'arrivait nulle part : à l'écran, une
+         main qui insiste sans effet, et rien pour dire que c'est voulu. La
+         raison du premier étouffement de l'image remonte donc à la
+         surimpression, telle quelle. */
+      const muted=semantics.gestures.suppressed;
+      deps.overlay.render(out.tokens,muted.length?muted[0].reason:'');
       // Traits du dernier instant, pour la calibration et les diagnostics
       // (architecture §12) : lus après le survol, donc `hover` y est juste.
       features=out.tokens;
@@ -2009,6 +2276,7 @@ const JarvisBarehandsCore=(function(){
     PINCH_CHANNEL,PINCH_CHANNELS,PINCH_PHASE,PINCH_INTENT,
     createPinchDetector,createWakeDetector,createPointerFilter,createStillness,
     createGestureEngine,createPinchChannel,createPinchIntentEngine,
+    TARGET_REGION,TARGET_SIDES,targetBand,regionAt,targetRegionsOf,createTargetResolver,
     createHandTrackManager,createHandTracker,classifyError,createController};
 })();
 
@@ -2025,6 +2293,12 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
      DOM) : `control_center_barehands_contracts.js`, inséré juste avant. Le
      bloc pur ci-dessus ne le lit pas — les tests node le chargent seul. */
   const BH=JarvisBarehandsContracts;
+  /* Collecte des candidates et aperçu de cible (Slice 05) :
+     `control_center_barehands_target.js`, inséré juste avant. Sa lecture ici
+     est **directe** et non conditionnelle : un module de page absent est une
+     erreur d'insertion, pas un état d'exécution, et un aperçu qui se tairait
+     poliment laisserait la décision 3 sans preuve qu'elle est tenue. */
+  const TARGET=JarvisBarehandsTarget;
   const API='/api/barehands';
   const ASSET_BASE='/barehands/assets';
   const TAB_ID='experimental';
@@ -2064,6 +2338,15 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
   font:600 20px/1 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.1em;color:currentColor;opacity:.75}
 #jarvisHands .jh-badge{position:fixed;left:18px;bottom:18px;padding:6px 10px;border-radius:999px;font:10px/1 ui-monospace,SFMono-Regular,Consolas,monospace;
   letter-spacing:.12em;color:${ACCENT};border:1px solid color-mix(in srgb,currentColor 35%,transparent);background:rgba(3,8,12,.55);backdrop-filter:blur(12px)}
+/* Ce qui a été refusé, juste au-dessus de la pastille : un geste étouffé
+   pendant une manipulation (contrat § 4, liste "suppressed") disparaissait sans
+   un mot, ce qui est indiscernable d'un geste non reconnu — et c'est la
+   première question qu'on se pose devant une main qui ne fait rien.
+   (Pas d'accent grave dans ce commentaire : il vit dans un littéral gabarit.) */
+#jarvisHands .jh-note{position:fixed;left:18px;bottom:46px;padding:5px 10px;border-radius:999px;
+  font:10px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.06em;
+  color:var(--bh-feedback-zone,#ffd166);border:1px solid color-mix(in srgb,currentColor 32%,transparent);
+  background:rgba(3,8,12,.62);backdrop-filter:blur(12px)}
 .jarvis-hand-hover{outline:2px solid ${ACCENT}!important;outline-offset:2px!important}
 @media(prefers-reduced-motion:reduce){#jarvisHands .jh-token,#jarvisHands .jh-wake{transition:none}#jarvisHands .jh-token.clicked::before{animation:none}}`;
 
@@ -2092,8 +2375,17 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
     ?true:Core.usableQuality(token.quality);
 
   function createOverlay(){
-    let root=null,badge=null,wake=null;
+    let root=null,badge=null,wake=null,note=null;
     const tokens=new Map();
+    /* Un geste étouffé porte sa raison (contrat § 4) ; l'écran la porte aussi.
+       Une raison inconnue n'est pas remplacée par une phrase générique : elle
+       s'affiche telle quelle entre parenthèses, parce que le nom exact est la
+       seule information que cette ligne existe pour transporter. */
+    const noteFor=reason=>{
+      if(!reason)return '';
+      if(reason==='capture_active')return 'GESTE IGNORÉ · une main manipule';
+      return `GESTE IGNORÉ · ${String(reason)}`;
+    };
     return {
       mount(){
         ensureStyle();
@@ -2101,11 +2393,13 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
         root=document.createElement('div');root.id=BH.DOM.rootId;root.setAttribute('aria-hidden','true');
         badge=document.createElement('div');badge.className=BH.DOM.badgeClass;badge.textContent=BADGE.mounted;
         wake=document.createElement('div');wake.className=BH.DOM.wakeClass;
-        root.appendChild(wake);root.appendChild(badge);document.body.appendChild(root);
+        note=document.createElement('div');note.className=BH.DOM.noteClass;
+        note.style.display='none';
+        root.appendChild(wake);root.appendChild(badge);root.appendChild(note);document.body.appendChild(root);
       },
       unmount(){
         if(root)root.remove();
-        root=null;badge=null;wake=null;tokens.clear();
+        root=null;badge=null;wake=null;note=null;tokens.clear();
       },
       /* Veille : ni jeton ni survol — un seul anneau de progression, visible
          seulement quand une main est vue, qui dit combien de la seconde de
@@ -2121,8 +2415,16 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
           ?`${BADGE.sleep} ${Math.round(Number(state.progress||0)*100)}%`
           :BADGE.sleep;
       },
-      render(list){
+      /* `suppression` : la raison du premier geste étouffé de cette image, ou
+         rien. Second argument plutôt que méthode à part pour que les doubles
+         de test existants (`render(tokens){…}`) l'ignorent sans se casser. */
+      render(list,suppression){
         if(!root)return;
+        if(note){
+          const text=noteFor(suppression);
+          note.textContent=text;
+          note.style.display=text?'block':'none';
+        }
         const seen=new Set();
         let trusted=0;
         for(const token of list){
@@ -2153,6 +2455,29 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
 
   function createInteraction(){
     const hovered=new Map();
+    /* Résolution de cible et aperçu (Slice 05). La règle de recouvrement vient
+       du contrat : le bloc pur ne la réinvente pas, il la reçoit. */
+    const resolver=Core.createTargetResolver({pickRegion:BH.pickRegion});
+    const preview=TARGET.createTargetPreview();
+    /* D'où vient l'intention. Le contrôleur range la sortie des moteurs
+       **avant** d'appeler `hover`, donc lire ses contacts ici, c'est lire ceux
+       de l'image en cours. Non branchée, la source ne rend rien et l'aperçu
+       n'existe pas — ce qui est exactement le comportement voulu hors
+       interaction. */
+    let contactsOf=null;
+    /* Décision 24 : l'aperçu se règle. Le réglage lui-même appartient à la
+       Slice 07 ; ce qui est à nous, c'est l'interrupteur qu'elle branchera.
+       Il éteint le **dessin**, pas la résolution : la Slice 06 continue de
+       recevoir sa cible, sans quoi couper une aide visuelle couperait aussi
+       la manipulation. */
+    let previewOn=true;
+    /* Assistance (contrat § 9) : 0,5 par défaut, ce qui vaut exactement
+       `targetAssistPx`. Même partage — la Slice 07 branche, nous exposons. */
+    let assistance=.5;
+    let resolved=[];
+    /* Nom et arrondi de la cible de chaque main : ce qui n'est pas de la
+       géométrie et que le résolveur ne transporte donc pas. */
+    const decor=new Map();
     /* Identité de pointeur par main (contrat Slice 01, constat F2). La fente 0
        vaut `BH.POINTER_ID_BASE` : une main seule envoie exactement les mêmes
        événements qu'avant. La seconde main a enfin le sien, au lieu que deux
@@ -2199,6 +2524,68 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
         pointer('pointerout',previous,0,0,0,identity);pointer('mouseout',previous,0,0,0,identity);
       }
     }
+    /* Une image de résolution de cible.
+
+       **Décision 3 tenue ici, et visible dans l'arbre** : la collecte ne part
+       que pour une main qui pince ou approche, et une image sans intention
+       rend une liste vide, que l'aperçu traduit en *aucun élément*. Il n'y a
+       donc jamais de curseur qui reste — et le coût de la lecture du DOM n'est
+       jamais payé par une session au repos.
+
+       Une main par appel : `collect` cite en tête la candidate qui est **au
+       dessus** au point visé (`elementFromPoint`), et ce classement n'a de
+       sens que pour ce point-là. Deux mains mélangées dans une seule liste
+       auraient hérité du dessus de l'autre. */
+    function resolveTargets(tokens){
+      const contacts=typeof contactsOf==='function'?contactsOf():null;
+      const byId=new Map((tokens||[]).map(token=>[String(token.id),token]));
+      const out=[];
+      for(const contact of contacts||[]){
+        const token=byId.get(String(contact&&contact.handTrackId));
+        if(!token)continue;
+        const wanted=contact.state==='pinching'||contact.state==='pressed';
+        /* On vise avec `token.x`/`token.y` — le point d'**affichage**, donc
+           l'ancre figée pendant un pincement — et non `filteredX`/`filteredY`.
+           Deux raisons, et la seconde est décisive :
+
+           - le bout de l'index parcourt un demi-palme en se refermant sans que
+             la main ait bougé (leçon des Slices 03 et 04) : suivre le point
+             filtré ferait dériver l'aperçu du seul fait de la fermeture ;
+           - le **jeton** se fige déjà là, et l'utilisateur le voit. Un aperçu
+             calculé ailleurs que le point dessiné donnerait deux réponses à
+             l'écran pour un seul geste, et c'est l'aperçu qui aurait tort :
+             c'est le jeton que l'utilisateur croit. */
+        const hand={handTrackId:contact.handTrackId,channel:contact.channel,
+          state:contact.state,x:token.x,y:token.y,assistance};
+        /* Sans intention on passe quand même la main au résolveur : c'est
+           ainsi qu'il **oublie** ce qu'elle tenait, plutôt que de le garder
+           jusqu'à la grâce. */
+        const candidates=wanted
+          ?TARGET.collect({x:token.x,y:token.y},resolver.reach(assistance)):[];
+        for(const target of resolver.update({now:performance.now(),candidates,hands:[hand]})){
+          /* Le nom et l'arrondi ne sont pas de la géométrie : ils ne traversent
+             pas le résolveur, on les relit de la candidate par son renvoi.
+             Une cible **figée** n'a plus de candidate sous la main — la main a
+             bougé, la collecte ne la voit plus — donc son apparence est gardée
+             telle qu'elle était à la descente, comme le descripteur lui-même. */
+          const key=`${target.handTrackId}|${target.channel}`;
+          let look=decor.get(key);
+          if(!target.locked||!look){
+            const source=target.ref===null?null:candidates[target.ref];
+            look={name:source?source.name:'',radiusPx:source?source.radiusPx:0};
+            decor.set(key,look);
+          }
+          out.push({...target,
+            feedback:BH.feedbackRole(target.region,target.channel),
+            name:look.name,radiusPx:look.radiusPx});
+        }
+      }
+      const live=new Set(out.map(target=>`${target.handTrackId}|${target.channel}`));
+      for(const key of [...decor.keys()])if(!live.has(key))decor.delete(key);
+      resolved=out;
+      preview.render(previewOn?out:[]);
+    }
+
     return {
       hover(tokens){
         const live=new Set();
@@ -2225,6 +2612,10 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
         // d'arriver au contrat, qui les refuserait — et ce refus-là tomberait
         // dans la boucle d'images, où il vaut la fin de la session.
         slots.retain([...live].map(handKey).filter(key=>key!==null));
+        /* La cible se résout sur la **même image** que le survol et sur les
+           mêmes jetons : deux lectures du même instant donneraient deux
+           réponses pour un seul geste. */
+        resolveTargets(tokens);
       },
       /* Un vrai clic : la séquence qu'enverrait une souris, sur l'élément exact
          sous le jeton (les écouteurs, labels, cases et liens réagissent). */
@@ -2252,7 +2643,33 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
          inventée volerait un `pointerId` à l'autre main. `null` = pas de
          fente, ce que `createPinchEvent` accepte. */
       slotOf(id){const key=handKey(id);return key===null?null:slots.slot(key)},
-      clear(){for(const id of [...hovered.keys()])release(id);slots.clear()},
+      /* Où lire l'intention. Le contrôleur range la sortie des moteurs avant
+         d'appeler `hover`, donc cette source rend bien les contacts de l'image
+         en cours (Slice 04 : `contacts[].state`). */
+      readContacts(fn){contactsOf=typeof fn==='function'?fn:null},
+      /* Décision 24. Éteindre l'aperçu retire ce qui est dessiné **tout de
+         suite** : laisser le dernier cadre à l'écran jusqu'à la prochaine
+         image ferait d'un réglage appliqué et d'un réglage sans effet la même
+         chose pendant une seconde. */
+      showTargets(value){
+        previewOn=value!==false;
+        if(!previewOn)preview.clear();
+        return previewOn;
+      },
+      /* Assistance des réglages (contrat § 9), bornée par le contrat lui-même
+         si la Slice 07 la fait passer par `normalizeSettings`. */
+      setAssistance(value){
+        const n=Number(value);
+        if(Number.isFinite(n))assistance=Math.max(0,Math.min(1,n));
+        return assistance;
+      },
+      /* Ce que la Slice 06 consommera : une cible par main **et par canal**,
+         figée dès la descente. Vide hors intention (décision 3). */
+      targets(){return resolved},
+      clear(){
+        for(const id of [...hovered.keys()])release(id);
+        slots.clear();resolver.reset();preview.clear();decor.clear();resolved=[];
+      },
     };
   }
 
@@ -2312,6 +2729,13 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
     now:()=>performance.now(),viewport:()=>({width:window.innerWidth,height:window.innerHeight}),
     onStatus:onStatus,
   });
+
+  /* La cible se résout dans l'adaptateur DOM, qui est le seul à pouvoir lire
+     la page — mais l'**intention** vient des moteurs, que le contrôleur
+     possède. Le branchement se fait donc ici, après les deux, plutôt qu'en
+     ajoutant une dépendance au contrôleur : le bloc pur n'a pas à connaître
+     l'aperçu, et les doubles de test du contrôleur n'ont rien à apprendre. */
+  interactionView.readContacts(()=>controller.semantics().pinch.contacts);
 
   /* Tout changement de cycle de vie se voit : un panneau qui n'est pas ouvert
      ne dit rien, donc la bascule passe aussi par un toast. Un échec reste plus
@@ -2552,8 +2976,26 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
         contacts:out.pinch.contacts,
       });
     },
-    // Diagnostic sans caméra : poser un jeton et cliquer depuis la console.
-    adapters:Object.freeze({createOverlay,createInteraction}),
+    /* Slice 05. Ce que la Slice 06 lira pour ouvrir une capture : une cible
+       par main et par canal, publiée **à travers le contrat** comme les gestes
+       et les contacts, plus ce que le contrat ne porte pas (`handTrackId`,
+       `channel`, `locked`, `feedback`). Vide hors intention — décision 3, et
+       c'est aussi la preuve qu'on peut lire sans caméra. */
+    targets:()=>Object.freeze(interactionView.targets().map(target=>Object.freeze({
+      ...BH.createTargetCandidate(target),
+      handTrackId:target.handTrackId,channel:target.channel,
+      locked:target.locked,feedback:target.feedback}))),
+    /* Décision 24 : l'aperçu se règle. La Slice 07 branchera le réglage
+       `targetPreview` ici ; d'ici là, c'est la console et les tests. */
+    targetPreview:value=>interactionView.showTargets(value),
+    /* Contrat § 9 : `assistance`, même partage. */
+    targetAssistance:value=>interactionView.setAssistance(value),
+    /* Diagnostic sans caméra : poser un jeton et cliquer depuis la console.
+       Les deux **instances vivantes** sont là aussi — ce sont elles que le
+       contrôleur tient, donc les seules par lesquelles `targets()` et la
+       surimpression se laissent exercer sans webcam. */
+    adapters:Object.freeze({createOverlay,createInteraction,
+      overlay:overlayView,interaction:interactionView}),
   });
 
   setTimeout(()=>{

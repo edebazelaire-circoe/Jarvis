@@ -231,6 +231,18 @@
     wakeClass:'jh-wake',
     badgeClass:'jh-badge',
     hoverClass:'jarvis-hand-hover',
+    /* Aperçu de cible (Slice 05, décision 3). Deux classes, parce qu'il y a
+       deux choses à dire : `targetClass` trace l'objet visé, `targetZoneClass`
+       le **seul** bord ou coin retenu. Un objet dont on ne montrerait que le
+       contour ne dirait pas ce qui sera saisi. Elles n'existent dans l'arbre
+       que pendant une intention — voir `jh-note` pour l'autre moitié de la
+       règle zéro. */
+    targetClass:'jh-target',
+    targetZoneClass:'jh-target-zone',
+    /* Une phrase courte sous la pastille : ce qui a été **refusé** et pourquoi
+       (geste étouffé pendant une manipulation). Un geste qui disparaît sans
+       trace est indiscernable d'un geste non reconnu. */
+    noteClass:'jh-note',
     rootSelector:'#jarvisHands',
     tokenSelector:'#jarvisHands .jh-token',
     badgeSelector:'#jarvisHands .jh-badge',
@@ -592,6 +604,26 @@
     secondary:Object.freeze({cssVar:'--bh-feedback-secondary',fallback:'#ff5d73'}), // rouge : clic droit
   });
 
+  /* Quel rôle de couleur porte un retour visuel, décision 23 entière en une
+     ligne. La région dit bleu ou jaune ; le **canal** passe devant les deux,
+     parce que « clic droit » est une intention et non une partie du cadre : un
+     coin visé au pouce-majeur est rouge, pas jaune. Elle vit ici et non chez
+     le consommateur pour que le moteur, l'aperçu et les réglages lisent la
+     même règle — `createTargetCandidate.feedback` en est le cas primaire.
+
+     Canal absent = `primary` (règle d'absence) ; canal ou région **inconnus**
+     se refusent : une couleur inventée dirait à l'utilisateur qu'il va faire
+     autre chose que ce qu'il fait. */
+  function feedbackRole(region,channel){
+    if(!REGIONS.includes(region))
+      reject('barehands_region_unknown',`Région inconnue : ${String(region)}.`);
+    const value=channel===undefined||channel===null?PINCH_CHANNEL.PRIMARY:String(channel);
+    if(!PINCH_CHANNELS.includes(value))
+      reject('barehands_pinch_channel_unknown',`Canal de pincement inconnu : ${String(channel)}.`);
+    if(value===PINCH_CHANNEL.SECONDARY)return FEEDBACK.SECONDARY;
+    return region===REGION.BODY?FEEDBACK.BODY:FEEDBACK.ZONE;
+  }
+
   /* Candidate de cible. `objectId` est l'identité de la scène
      (`data-object-id`) quand il y en a une ; `element` reste au consommateur
      navigateur et ne traverse jamais ce contrat. */
@@ -617,7 +649,12 @@
       /* **Pixels de la fenêtre**, comme `clientX`/`clientY` — jamais des
          unités de scène (±160 × ±90, `control_center_scene_interact.js`). Le
          suffixe est là pour qu'une confusion d'unité se voie à la lecture
-         plutôt que de se déboguer comme un défaut de géométrie. */
+         plutôt que de se déboguer comme un défaut de géométrie.
+
+         C'est le cadre de l'**objet entier**, pas celui de la zone : la zone
+         est entièrement décrite par `region` + `zone`, et sa bande se redérive
+         de ce cadre (`JarvisBarehandsCore.targetBand`). Deux rectangles pour
+         une même chose auraient divergé. */
       boundsPx:Object.freeze({x:finiteOr(bounds.x,0),y:finiteOr(bounds.y,0),
         w:Math.max(0,finiteOr(bounds.w,0)),h:Math.max(0,finiteOr(bounds.h,0))}),
       /* Décision 3 : pas de pointeur permanent. Une candidate non actionnable
@@ -1071,7 +1108,7 @@
     PINCH_CHANNEL,PINCH_CHANNELS,PINCH_FINGERS,PINCH_PHASE,PINCH_PHASES,createPinchEvent,
     PINCH_INTENT,PINCH_INTENTS,
     REGION,REGIONS,EDGE,EDGES,CORNER,CORNERS,SIDE_AXIS,ZONE_SIDES,zoneSides,zoneAxes,
-    REGION_PRIORITY,regionPriority,pickRegion,FEEDBACK,FEEDBACK_TOKENS,
+    REGION_PRIORITY,regionPriority,pickRegion,FEEDBACK,FEEDBACK_TOKENS,feedbackRole,
     createTargetCandidate,ZONED_REPRESENTATIONS,hasManipulationZones,
     INTERACTION,INTERACTIONS,CAPTURE_STATE,CAPTURE_STATES,createCapture,combineCaptures,
     createInteractionEvent,

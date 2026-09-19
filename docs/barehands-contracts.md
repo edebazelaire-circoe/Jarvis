@@ -58,8 +58,11 @@ repère commenté dans `control_center.html`, substitué côté serveur par
 (`jarvis/runtime/control_center.py`) et **précède** ses deux lecteurs :
 
 ```
-…_BAREHANDS_CONTRACTS_JS__  →  …_BAREHANDS_JS__  →  …_SCENE_PAGE_JS__
+…_BAREHANDS_CONTRACTS_JS__ → …_BAREHANDS_TARGET_JS__ → …_BAREHANDS_JS__ → …_SCENE_PAGE_JS__
 ```
+
+(`…_BAREHANDS_TARGET_JS__` est arrivé à la Slice 05 : il lit les contrats et se
+fait lire par le pointeur, donc il vit exactement entre les deux.)
 
 L'ordre est vérifié par
 `test_barehands_contracts_js::test_the_page_serves_the_contracts_before_everything_that_reads_them`.
@@ -186,6 +189,8 @@ parlait sous la même identité, a désormais la sienne.
 | `badgeSelector` | `#jarvisHands .jh-badge` | CSS de la scène (décalage de `.sc-status`) |
 | `tokenClass`, `ringClass`, `badgeClass`, `styleId`, `hoverClass` | — | surimpression |
 | `wakeClass` | `jh-wake` | anneau de progression du réveil en veille (Slice 02) — un seul, il ne suit aucune main en particulier |
+| `targetClass` / `targetZoneClass` | `jh-target` / `jh-target-zone` | aperçu de cible (Slice 05) : le cadre visé, puis le **seul** bord ou coin retenu |
+| `noteClass` | `jh-note` | ce qui a été **refusé** : geste étouffé pendant une manipulation, avec sa raison |
 
 `isOverlayRoot(el)` est le test que fait `confirmInertCandidate` : la
 surimpression des mains reste vivante derrière une boîte de confirmation, sans
@@ -572,6 +577,11 @@ raison (`capture_active`) plutôt que de disparaître : un geste qui s'évanouit
 sans trace est indiscernable d'un geste non reconnu, et c'est la première
 question qu'on se posera.
 
+Depuis la Slice 05, cette raison **arrive à l'écran** : la surimpression écrit
+« GESTE IGNORÉ · une main manipule » sous la pastille (`DOM.noteClass`), et une
+raison inconnue s'y affiche telle quelle plutôt que d'être remplacée par une
+phrase générique — ce nom est la seule information que cette ligne transporte.
+
 **L'arbitrage ne s'applique qu'aux phases qui demandent d'agir.** `start` et
 `hold` sont des demandes : les étouffer ne coûte que l'action qui n'a pas eu
 lieu. `end` et `cancel` **rendent** quelque chose sur quoi le consommateur a
@@ -830,6 +840,11 @@ contrat.
 confusion se voie à la lecture, au lieu de se déboguer comme un défaut de
 géométrie dans le mauvais module.
 
+`boundsPx` est le cadre de l'**objet entier**, pas celui de la zone : la zone
+est entièrement décrite par `region` + `zone`, et sa bande se redérive de ce
+cadre (`JarvisBarehandsCore.targetBand`). Deux rectangles pour une même chose
+auraient divergé.
+
 `hasManipulationZones(representation)` : seules `capsule` et `window` ont des
 zones (décision D3 de la Slice 00) ; `point` et `signal` restent
 déplaçables seulement.
@@ -841,6 +856,124 @@ Retour visuel (décision 23) par **rôle**, la valeur vivant dans le thème :
 | `body` | `--bh-feedback-body` | `#6ee7ff` | corps / normal (bleu) |
 | `zone` | `--bh-feedback-zone` | `#ffd166` | zone de manipulation (jaune) |
 | `secondary` | `--bh-feedback-secondary` | `#ff5d73` | clic droit (rouge) |
+
+`feedbackRole(region, channel)` est la décision 23 entière en une ligne, et
+c'est le **canal** qui passe devant la région : un coin visé au pouce-majeur est
+rouge, pas jaune, parce que « clic droit » est une intention et non une partie
+du cadre. Canal absent = `primary` (règle d'absence) ; canal ou région inconnus
+se refusent — une couleur inventée dirait à l'utilisateur qu'il va faire autre
+chose que ce qu'il fait. `createTargetCandidate.feedback` en est le cas
+primaire.
+
+### Le résolveur (Slice 05)
+
+`JarvisBarehandsCore.createTargetResolver(options)` — logique pure, aucun DOM.
+La moitié navigateur (collecte des candidates et dessin) vit dans le **nouveau
+module de page** `jarvis/runtime/control_center_barehands_target.js`
+(`window.JarvisBarehandsTarget`), inséré **entre** les contrats et le pointeur :
+
+```
+…_BAREHANDS_CONTRACTS_JS__ → …_BAREHANDS_TARGET_JS__ → …_BAREHANDS_JS__ → …_SCENE_PAGE_JS__
+```
+
+Couverture : `tests/unit/test_barehands_target_js.py`.
+
+**Deux étapes, et l'ordre n'est pas indifférent.**
+
+1. **Quel objet** — le plus proche (`distancePx`), actionnable d'abord, et à
+   égalité le premier cité.
+2. **Quelle partie** — `pickRegion` sur les candidates de **cet** objet, qui
+   sont toutes à la même distance : coin > bord > corps.
+
+La priorité de région ne participe pas au premier choix, et c'est le cœur de la
+Slice : « en recouvrement » veut dire *au même point*. Appliquée entre objets,
+elle fait gagner le coin d'un cadre situé à 11 px sur le corps du bouton que le
+doigt touche réellement — priorité 3 contre 1, la distance n'étant lue qu'en
+troisième. Mesuré et épinglé
+(`test_priority_settles_an_overlap_inside_one_object_never_between_two`).
+
+Le bloc pur ne peut pas lire le contrat : il ne **réimplante** donc pas la
+priorité, il la **reçoit** (`options.pickRegion`), et un résolveur construit
+sans elle se refuse plutôt que d'en inventer une seconde.
+
+**Géométrie des zones.** Dedans, les côtés dont on est à moins d'une bande, au
+plus un par axe — le plus proche, sinon un point tiendrait « gauche » et
+« droite » du même cadre, donc un coin qui n'existe pas. Dehors, les côtés
+**franchis**, ce qui donne le bord qu'on approche et le coin quand on approche
+en diagonale. Zéro côté = corps. Tout en **pixels de la fenêtre** :
+`getBoundingClientRect` fait la conversion une fois, et les unités de scène
+n'entrent jamais dans ce chemin.
+
+**`elementFromPoint` participe sans décider.** Il dit seulement quelle candidate
+est au-dessus au point visé, et celle-là est citée en tête pour que l'égalité de
+distance ne se tranche pas sur l'ordre de création.
+
+**Décision 3, tenue par la structure.** Une main dont aucun canal n'est
+`pinching` ou `pressed` n'a **pas de cible** : il n'y a alors aucun élément
+d'aperçu dans l'arbre — pas « caché », pas « transparent » : absent. C'est aussi
+ce qui paie la performance : la lecture du DOM n'a lieu que sous intention.
+
+**Dynamique jusqu'à la descente, stable ensuite.** Sous contact (`pressed`), le
+descripteur est **figé** — objet, région, zone, cadre et nom — quoi que fasse la
+main et même si la collecte ne voit plus l'objet. C'est ce que la Slice 06
+latche (décision 13) : sans le gel, un glissement de 30 px changerait l'objet
+capturé au milieu du geste. Une entrée par main **et par canal** : le gel de
+l'un ne gèle pas l'autre.
+
+**Ce que la Slice 06 consomme** : `window.JarvisBarehands.targets()` rend, par
+main et par canal, une `createTargetCandidate` (donc `objectId`, `region`,
+`zone`, `axes`, `representation`, `boundsPx`, `distancePx`, `actionable`) plus
+`handTrackId`, `channel`, `locked` et `feedback`. `createCapture({handTrackId,
+channel, state, objectId, region, zone, t})` se construit directement dessus, et
+`combineCaptures` prend la suite.
+
+**Métadonnée de composant.** Un objet de scène déclare ce qu'il accepte par
+`data-object-id` et `data-representation`, posés par
+`control_center_scene_page.js`. La représentation n'est **pas** déduite des
+classes : `sc-capsule` est la forme *dessinée*, qui retombe en capsule puis en
+point quand la place manque — une fenêtre compacte perdrait alors ses zones sans
+que sa géométrie ait changé. Représentation illisible ⇒ corps seul : refuser des
+zones qu'on n'a pas su lire échoue du bon côté.
+
+### Réglages du moteur (Slice 05)
+
+Mêmes règles que ceux des Slices 03 et 04 : ils vivent dans
+`JarvisBarehandsCore.DEFAULTS`, ils sont épinglés par
+`test_the_controller_states_and_timings_still_match_the_contract`, et **changer
+l'un d'eux, c'est le reporter ici**. Tous en **pixels de la fenêtre** : une zone
+se vise à l'œil, pas à la paume.
+
+| Réglage | Défaut | Rôle |
+|---|---|---|
+| `targetZonePx` | 14 | bande d'un bord : il faut y **entrer** pour prendre la zone |
+| `targetZoneHoldPx` | 20 | bande qui la **garde** (hystérésis) |
+| `targetZoneMaxRatio` | 0,3 | la bande ne prend jamais plus que cette fraction du petit côté |
+| `targetAssistPx` | 24 | portée d'assistance hors du cadre |
+
+Deux relations, et les deux **se refusent à la construction** :
+
+- `targetZonePx <= targetZoneHoldPx` — **quatrième** apparition de cette classe
+  de défaut sur cette tâche, après `smoothing`, `wakeIntervalMs`/`wakeGraceMs` et
+  `clickSlopPx`/`dragSlopPx`. Inversées, la zone se perd **plus tôt** qu'elle ne
+  se prend et l'aperçu clignote précisément là où l'hystérésis existe pour qu'il
+  ne clignote pas. Rien ne lève, rien ne tombe, et le symptôme se lit comme un
+  tremblement de main. L'égalité reste permise : elle vaut « pas
+  d'hystérésis ».
+- `0 < targetZoneMaxRatio < 0,5` — à la moitié du côté, les deux bandes opposées
+  d'un axe se rejoignent : il n'existe plus un seul point de **corps** dans une
+  capsule de 24 px de haut, et la décision 8 devient inatteignable sur l'objet
+  le plus courant de la scène.
+
+`assistance` (§ 9, défaut **0,5**) multiplie `targetAssistPx` par `2 ×
+assistance` : 0,5 rend exactement la portée par défaut, 0 coupe l'assistance et
+1 la double. Le facteur 2 est ce qui fait du défaut des réglages le défaut du
+moteur — sans lui, brancher le réglage à la Slice 07 aurait divisé la portée par
+deux sans que personne n'ait rien changé.
+
+Décision 24 : `window.JarvisBarehands.targetPreview(bool)` éteint le **dessin**,
+pas la résolution — sans cette séparation, couper une aide visuelle couperait
+aussi la manipulation. La Slice 07 y branchera `settings.targetPreview`, et
+`targetAssistance(value)` à `settings.assistance`.
 
 ## 7. Interaction et capture (§7, décisions 10-19)
 

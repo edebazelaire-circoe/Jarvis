@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / "jarvis" / "runtime"
 SCRIPT = RUNTIME / "control_center_barehands.js"
 CONTRACTS = RUNTIME / "control_center_barehands_contracts.js"
+TARGET = RUNTIME / "control_center_barehands_target.js"
 
 
 def run_node(tmp_path: Path, source: str) -> object:
@@ -771,7 +772,9 @@ const node=()=>{
       toggle:(c,on)=>{if(on)classes.add(c);else classes.delete(c)},
       contains:c=>classes.has(c)},
     classes,
-    setAttribute(){},parent:null,dispatchEvent(){return true},
+    dataset:{},attrs:{},matches:()=>false,
+    getBoundingClientRect:()=>({left:0,top:0,width:0,height:0}),
+    setAttribute(k,v){this.attrs[k]=String(v)},parent:null,dispatchEvent(){return true},
     appendChild(c){c.parent=this;this.children.push(c)},
     remove(){if(!this.parent)return;const at=this.parent.children.indexOf(this);
       if(at>=0)this.parent.children.splice(at,1);this.parent=null}};
@@ -781,7 +784,10 @@ global.document={createElement:node,getElementById:()=>null,
   head:node(),body:node(),
   /* Le bloc navigateur vise avec `elementFromPoint` ; `hit` est ce que le
      jeton trouve sous lui, `null` par défaut (rien à cliquer). */
-  elementFromPoint:()=>global.hit||null};
+  elementFromPoint:()=>global.hit||null,
+  /* Slice 05 : la collecte des candidates balaie la page. Aucune ici — ces
+     tests-là parlent de la surimpression, pas de la cible. */
+  querySelectorAll:()=>[]};
 global.hit=null;
 global.navigator={mediaDevices:null};
 global.performance={now:()=>0};
@@ -790,6 +796,11 @@ global.setTimeout=()=>0;
 // Le chemin de compatibilité DOM du clic construit ses événements souris.
 global.MouseEvent=class{constructor(type,init){Object.assign(this,init||{});this.type=type}};
 global.JarvisBarehandsContracts=C;
+// Slice 05 : le pointeur lit le module de cible, inséré juste avant lui dans la
+// page. Dans le navigateur les deux vivent sur `window` ; ici le module lit son
+// `root`, donc les contrats doivent y être aussi.
+global.window.JarvisBarehandsContracts=C;
+global.JarvisBarehandsTarget=require(TARGET_PATH);
 // Le harnais a déjà chargé le module sans `window` : le bloc navigateur ne
 // s'est donc pas installé. On vide le cache pour le rejouer avec un `window`.
 delete require.cache[require.resolve(SCRIPT_PATH)];
@@ -797,7 +808,9 @@ require(SCRIPT_PATH);
 const overlay=window.JarvisBarehands.adapters.createOverlay();
 overlay.mount();
 const badge=()=>document.body.children[0].children[1].textContent;
-const painted=()=>document.body.children[0].children.slice(2);
+// L'anneau de veille, la pastille et la ligne des refus (Slice 05) précèdent
+// les jetons dans la surimpression.
+const painted=()=>document.body.children[0].children.slice(3);
 """
 
 
@@ -812,7 +825,7 @@ def test_a_hand_the_tracker_does_not_trust_says_so_on_screen(tmp_path):
     crues à part (« 1/2 ») au lieu d'annoncer un chiffre exact et une
     information fausse."""
 
-    result = run_node(tmp_path, f"const SCRIPT_PATH={json.dumps(str(SCRIPT))};" + BROWSER + """
+    result = run_node(tmp_path, f"const SCRIPT_PATH={json.dumps(str(SCRIPT))};const TARGET_PATH={json.dumps(str(TARGET))};" + BROWSER + """
       const token=(id,quality)=>({id,x:10*id,y:20,progress:0,state:'open',
         click:false,hover:false,quality});
       overlay.render([token(0,1),token(1,.05)]);
@@ -854,7 +867,7 @@ def test_a_hand_without_a_usable_identity_is_skipped_not_fatal(tmp_path):
     simplement sans pointeur — et le clic perdu se dit à la console plutôt que
     de faire passer une main pour inerte."""
 
-    result = run_node(tmp_path, f"const SCRIPT_PATH={json.dumps(str(SCRIPT))};" + BROWSER + """
+    result = run_node(tmp_path, f"const SCRIPT_PATH={json.dumps(str(SCRIPT))};const TARGET_PATH={json.dumps(str(TARGET))};" + BROWSER + """
       // `targetAt` écarte ce qui appartient à la surimpression : la cible
       // répond donc `null` pour ce sélecteur-là, et elle-même pour les autres.
       const target=node();target.closest=sel=>sel===C.DOM.rootSelector?null:target;
@@ -900,7 +913,7 @@ def test_the_page_publishes_gestures_and_contacts_through_the_contract(tmp_path)
     Hors interaction, tout est vide : une posture affichée pour une main que
     plus rien ne regarde serait pire qu'un écran vide."""
 
-    result = run_node(tmp_path, f"const SCRIPT_PATH={json.dumps(str(SCRIPT))};" + BROWSER + """
+    result = run_node(tmp_path, f"const SCRIPT_PATH={json.dumps(str(SCRIPT))};const TARGET_PATH={json.dumps(str(TARGET))};" + BROWSER + """
       const api=window.JarvisBarehands;
       const idle={gestures:api.gestures(),pinch:api.pinch()};
       const interaction=api.adapters.createInteraction();
