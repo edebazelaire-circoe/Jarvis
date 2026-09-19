@@ -40,7 +40,9 @@ from jarvis.domain import barehands_command as vocab
 # Le double de DOM de l'onglet Expérimental est **réutilisé**, pas recopié : il
 # exécute le vrai bloc navigateur du pointeur, et une seconde version dériverait
 # de celle que la Slice 07 tient.
-from test_barehands_tools_settings_js import BROWSER, CONTRACTS, SCENE_INTERACT, SCRIPT, TARGET  # noqa: E402
+from test_barehands_tools_settings_js import (  # noqa: E402
+    BROWSER, CALIBRATION, CONTRACTS, SCENE_INTERACT, SCRIPT, TARGET,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / "jarvis" / "runtime"
@@ -101,6 +103,7 @@ def run_node(tmp_path: Path, source: str, name: str) -> object:
     script = tmp_path / f"barehands-commands-{name}.cjs"
     script.write_text(
         f"const SCRIPT_PATH={json.dumps(str(SCRIPT))};\n"
+        f"const CALIBRATION_PATH={json.dumps(str(CALIBRATION))};\n"
         f"const TARGET_PATH={json.dumps(str(TARGET))};\n"
         f"const SCENE_INTERACT_PATH={json.dumps(str(SCENE_INTERACT))};\n"
         f"const CONTRACTS_PATH={json.dumps(str(CONTRACTS))};\n"
@@ -191,9 +194,17 @@ def test_the_button_and_the_voice_leave_the_page_in_the_same_state(tmp_path):
 
 
 def test_what_a_brain_sees_today_for_calibration_tutorial_and_overlay(tmp_path):
-    """Lu sur la **vraie** surface : `activate` et `sleep` existent, les trois
-    parcours des Slices 08 et 09 n'existent pas. Le transport les porte quand
-    même, et refuse avec un code qui dit précisément ça."""
+    """Lu sur la **vraie** surface. `activate` et `sleep` existent depuis la
+    Slice 12 ; **`calibrate` existe depuis la Slice 08**, et le canal n'a pas
+    changé d'une ligne pour ça — c'était la promesse de cette table.
+
+    Les deux parcours de la Slice 09 n'existent toujours pas, et le transport
+    les porte quand même en refusant avec un code qui dit précisément ça.
+
+    Sous node il n'y a pas de caméra : `calibrate()` refuse donc de démarrer un
+    parcours qui a besoin de voir des mains, et il le refuse **en ne confirmant
+    pas**. C'est exactement ce que le contrat § 12 prévoit, et c'est pour cela
+    que le refus est réel ici plutôt que mis en scène."""
 
     observed = _observed(tmp_path, """
       queue('calibrate');queue('tutorial');queue('exit_overlay');
@@ -203,14 +214,19 @@ def test_what_a_brain_sees_today_for_calibration_tutorial_and_overlay(tmp_path):
     assert observed["present"] == [
         ["activate", "activate", True],
         ["deactivate", "sleep", True],
-        ["calibrate", "calibrate", False],
+        ["calibrate", "calibrate", True],
         ["tutorial", "tutorial", False],
         ["exit_overlay", "exitOverlay", False],
     ]
-    assert [r["code"] for r in observed["receipts"]] == [vocab.FLOW_ABSENT] * 3
     assert [r["outcome"] for r in observed["receipts"]] == ["refused"] * 3
-    assert observed["receipts"][0]["reason"] == "JarvisBarehands.calibrate n'existe pas dans cette version"
-    # La page n'a pas bougé : un parcours absent ne touche à rien.
+    # `calibrate` est **appelé** et ne confirme pas (pas de caméra sous node) ;
+    # les deux autres n'existent pas du tout. Deux codes, deux causes.
+    assert [r["code"] for r in observed["receipts"]] == [
+        vocab.FLOW_UNCONFIRMED, vocab.FLOW_ABSENT, vocab.FLOW_ABSENT,
+    ]
+    assert observed["receipts"][0]["reason"] == "JarvisBarehands.calibrate n'a pas confirmé le démarrage"
+    assert observed["receipts"][1]["reason"] == "JarvisBarehands.tutorial n'existe pas dans cette version"
+    # La page n'a pas bougé : aucun parcours n'a pu démarrer.
     assert observed["after"]["lifecycle"] == observed["before"]["lifecycle"] == "off"
 
 

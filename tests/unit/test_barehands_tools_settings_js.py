@@ -60,6 +60,7 @@ RUNTIME = ROOT / "jarvis" / "runtime"
 SCRIPT = RUNTIME / "control_center_barehands.js"
 CONTRACTS = RUNTIME / "control_center_barehands_contracts.js"
 TARGET = RUNTIME / "control_center_barehands_target.js"
+CALIBRATION = RUNTIME / "control_center_barehands_calibration.js"
 SCENE_INTERACT = RUNTIME / "control_center_scene_interact.js"
 
 
@@ -70,6 +71,7 @@ def run_node(tmp_path: Path, source: str, name: str = "tools") -> object:
     script = tmp_path / f"barehands-{name}.cjs"
     script.write_text(
         f"const SCRIPT_PATH={json.dumps(str(SCRIPT))};\n"
+        f"const CALIBRATION_PATH={json.dumps(str(CALIBRATION))};\n"
         f"const TARGET_PATH={json.dumps(str(TARGET))};\n"
         f"const SCENE_INTERACT_PATH={json.dumps(str(SCENE_INTERACT))};\n"
         f"const CONTRACTS_PATH={json.dumps(str(CONTRACTS))};\n"
@@ -658,6 +660,9 @@ global.esc=v=>String(v).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'
 global.JarvisBarehandsContracts=C;
 global.window.JarvisBarehandsContracts=C;
 global.JarvisBarehandsTarget=require(TARGET_PATH);
+/* Parcours de calibration (Slice 08) : la page l'insere entre les contrats
+   et le pointeur, qui le lit pour poser `calibrate()` sur sa surface gelee. */
+global.JarvisBarehandsCalibration=require(CALIBRATION_PATH);
 global.JarvisSceneInteract=require(SCENE_INTERACT_PATH);
 
 /* Le serveur : la **même** forme que la vraie route — il range ce qu'on lui
@@ -670,9 +675,40 @@ global.JarvisSceneInteract=require(SCENE_INTERACT_PATH);
    partie. Un double qui ne les porte pas ne peut pas tomber comme le vrai. */
 const server={state:Object.assign(C.toServerPayload({}),
     {stored_schema_version:null,unreadable:false,archived:[]}),
-  calls:[],fail:null,gate:null,hangGet:false,foreignVersion:3};
+  calls:[],fail:null,gate:null,hangGet:false,foreignVersion:3,profileFail:null};
+/* Le profil de calibration (Slice 08) a sa **propre** route, comme le vrai
+   serveur : l'ecrire ne revalide pas les neuf reglages, et la relire ne passe
+   pas par le meme bloc. Un double qui les confondrait cacherait exactement ce
+   que la separation existe pour garantir. */
+server.profile={schema_version:2,calibrated:false,updated_at:null,
+  hands:{left:{},right:{},unknown:{}},
+  stages:{},stored_schema_version:null,unreadable:false,archived:[]};
+const emptyHand=()=>({press_ratio:null,release_ratio:null,
+  secondary_press_ratio:null,secondary_release_ratio:null,
+  jitter_px:null,travel_slop_norm:null,reach_norm:null,quality:null});
+const profileState=()=>({...server.profile,
+  hands:Object.fromEntries(['left','right','unknown'].map(h=>
+    [h,Object.assign(emptyHand(),server.profile.hands[h]||{})])),
+  stages:Object.fromEntries(['neutral','c_pose','pinch_primary','pinch_secondary',
+    'aim','drag','resize'].map(k=>[k,server.profile.stages[k]
+      ||{status:'skipped',reason:null,samples:0}])),
+  calibrated:['left','right','unknown'].some(h=>Object.values(server.profile.hands[h]||{})
+    .some(v=>v!==null&&v!==undefined))});
 global.api=async(path,opts)=>{
   server.calls.push({path,body:opts&&opts.body?JSON.parse(opts.body):null});
+  if(String(path).endsWith('/profile')){
+    if(server.profileFail)throw Object.assign(new Error(server.profileFail),{status:400});
+    const method=(opts&&opts.method)||'GET';
+    if(method==='POST'){
+      const body=JSON.parse(opts.body);
+      server.profile={...server.profile,hands:body.hands,stages:body.stages,
+        updated_at:body.updated_at};
+    }else if(method==='DELETE'){
+      server.profile={...server.profile,hands:{left:{},right:{},unknown:{}},
+        stages:{},updated_at:null};
+    }
+    return profileState();
+  }
   if(!opts||opts.method!=='POST'){
     /* Une lecture qui ne revient pas : c'est la seule façon de tenir le
        contrôleur en `starting` sans caméra, puisque le chargement du modèle
@@ -832,7 +868,10 @@ def test_the_tab_draws_two_surfaces_and_writes_what_is_touched(tmp_path):
     sleep_ms, tool, preview, enabled, was_enabled = result["reset"]
     assert (sleep_ms, tool, preview) == (30000, "pointer", True)
     assert enabled is was_enabled
-    assert result["logged"] == 4, "chaque ecriture reussie laisse une ligne"
+    # Quatre ecritures reussies, plus la relecture du profil de calibration au
+    # demarrage (Slice 08) : le chemin **normal** se journalise aussi, sans quoi
+    # « rien dans le journal » voudrait dire a la fois « tout va bien » et « mort ».
+    assert result["logged"] == 5, "chaque ecriture reussie laisse une ligne, et la relecture du profil aussi"
     # L'outil aussi atteint le moteur : apres la reinitialisation, la palette
     # et le moteur de captures disent la meme chose.
     assert result["tool"] == "pointer"
@@ -1799,7 +1838,128 @@ def test_the_page_serves_the_two_surfaces_and_never_a_dead_control(tmp_path):
     for key in ("assistance", "sensitivity", "sleepTimeoutMs"):
         assert f"rangeHtml('{key}'" in served, key
     assert "barehandsReset" in served
-    assert "les parcours ne sont pas encore installés" in served
+    # **Slice 08** : la calibration a maintenant un parcours, donc un bouton —
+    # et c'est le seul contrôle de cet onglet qui ait cessé d'être une phrase.
+    assert 'id="barehandsCalibration"' in served
+    assert "barehandsCalibrate" in served and "barehandsProfileReset" in served
+    # Le tutoriel, lui, est toujours dit en toutes lettres plutôt que promis
+    # par un contrôle inerte (Slice 09).
+    assert "Le tutoriel n’est pas encore installé" in served
+    assert "aucune image ni vidéo" in served, "la décision 32 est dite à l'utilisateur, pas seulement tenue"
     # Le sous-titre de l'onglet reste celui que `control_center_scene_settings`
     # remplace ensuite : l'ordre d'injection est intact (constat F5).
     assert served.index("TABS.push({id:TAB_ID,label:'Expérimental'") < served.index("function installSection()")
+
+
+# ------------------------------------------- le profil atteint vraiment la main
+
+
+def test_a_calibrated_profile_reaches_the_engine_hand_by_hand_and_pixel_by_pixel(tmp_path):
+    """**La regle de la Slice 07, appliquee au profil** : un reglage lu sur
+    l'objet qu'on vient d'ecrire ne prouve rien ; il faut le lire sur ce que le
+    moteur applique. Un profil par main est plus invisible encore, puisque rien
+    a l'ecran ne le montre — d'ou `engine().hands`.
+
+    Trois choses a la fois, parce qu'elles se cassent separement : les seuils
+    **par main** atteignent le canal qui va bien, la tolerance de deplacement
+    **echelle avec la fenetre** (c'est le reglement du residu de la Slice 04),
+    et une demi-hysteresis est **ignoree** plutot que composee avec un defaut
+    du moteur — ce qui produirait la paire que `options()` refuse.
+    """
+
+    result = run_node(tmp_path, browser("""
+      server.profile={...server.profile,
+        hands:{
+          left:{press_ratio:.18,release_ratio:.5,
+                secondary_press_ratio:.22,secondary_release_ratio:.55,
+                travel_slop_norm:.02},
+          /* La main droite n'a qu'une **moitie** d'hysteresis : mesuree seule,
+             elle formerait avec le defaut du moteur une paire que le moteur
+             refuse a la construction. */
+          right:{press_ratio:.6},
+          unknown:{}},
+        stages:{}};
+    """) + """
+      await openTab();
+      const engine=BAREHANDS.engine();
+      const before=[engine.clickSlopPx,engine.dragSlopPx];
+      out({
+        left:engine.hands.left,right:engine.hands.right,unknown:engine.hands.unknown,
+        defaults:[C.normalizeSettings().sensitivity,
+          BAREHANDS.core.DEFAULTS.pressRatio,BAREHANDS.core.DEFAULTS.releaseRatio,
+          BAREHANDS.core.DEFAULTS.clickSlopPx,BAREHANDS.core.DEFAULTS.dragSlopPx],
+        width:window.innerWidth,
+        slop:before,
+        travel:BAREHANDS.calibration().travel,
+        profileCalibrated:BAREHANDS.profile().calibrated,
+      });
+    """, name="profileengine")
+
+    sensitivity, press, release, click_px, drag_px = result["defaults"]
+    # La main gauche applique **ses** mesures, sur les deux canaux.
+    assert result["left"]["primary"] == {"pressRatio": 0.18, "releaseRatio": 0.5}
+    assert result["left"]["secondary"] == {"pressRatio": 0.22, "releaseRatio": 0.55}
+    # La main droite n'a qu'une moitie : le moteur garde ses deux defauts.
+    assert result["right"]["primary"] == {"pressRatio": press, "releaseRatio": release}
+    assert result["unknown"]["primary"] == {"pressRatio": press, "releaseRatio": release}
+    # La tolerance **echelle avec la fenetre** : c'est ce qui fait qu'un meme
+    # geste vaut le meme nombre de pixels a toutes les resolutions.
+    assert result["width"] == 1000
+    assert result["slop"][0] == pytest.approx(0.02 * 1000 / sensitivity)
+    # Le rapport d'usine entre les deux tolerances est conserve, donc
+    # l'invariant `clickSlopPx <= dragSlopPx` traverse intact.
+    assert result["slop"][1] == pytest.approx(result["slop"][0] * drag_px / click_px)
+    assert result["slop"][0] <= result["slop"][1]
+    assert result["travel"]["calibrated"] is True
+    assert result["profileCalibrated"] is True
+
+
+def test_without_a_profile_the_engine_keeps_exactly_its_factory_thresholds(tmp_path):
+    """L'autre moitie : sans mesure, rien ne bouge. Sans ce test, « le profil
+    est applique » serait aussi vrai d'un moteur qui applique n'importe quoi."""
+
+    result = run_node(tmp_path, BROWSER + """
+      await openTab();
+      const engine=BAREHANDS.engine();
+      out({hands:engine.hands,slop:[engine.clickSlopPx,engine.dragSlopPx],
+        defaults:[BAREHANDS.core.DEFAULTS.pressRatio,BAREHANDS.core.DEFAULTS.releaseRatio,
+          BAREHANDS.core.DEFAULTS.clickSlopPx,BAREHANDS.core.DEFAULTS.dragSlopPx],
+        calibrated:BAREHANDS.profile().calibrated,
+        travel:BAREHANDS.calibration().travel});
+    """, name="noprofile")
+    press, release, click_px, drag_px = result["defaults"]
+    for handedness in ("left", "right", "unknown"):
+        for channel in ("primary", "secondary"):
+            assert result["hands"][handedness][channel] == {
+                "pressRatio": press, "releaseRatio": release}, (handedness, channel)
+    assert result["slop"] == [click_px, drag_px]
+    assert result["calibrated"] is False and result["travel"]["calibrated"] is False
+
+
+def test_calibration_switched_off_refuses_the_flow_and_says_so_on_screen(tmp_path):
+    """**Decision 27**, et le contrat § 12. `calibrationEnabled` etait persiste
+    et decoratif depuis la Slice 07 ; il commande maintenant une porte. Le refus
+    doit etre un **non** (`ok` faux), sans quoi le canal annoncerait a
+    l'utilisateur un parcours qui n'a pas demarre."""
+
+    result = run_node(tmp_path, BROWSER + """
+      await openTab();
+      byAttr('data-barehands-check','calibrationEnabled').checked=false;
+      byAttr('data-barehands-check','calibrationEnabled').fire('change');
+      await settle();
+      const answer=await BAREHANDS.calibrate();
+      out({answer,said:toasts.slice(-1)[0],
+        banner:document.getElementById('barehandsStatus').innerHTML,
+        warned:logged.filter(l=>l[0]==='warn').map(l=>l[1]).slice(-1)[0],
+        // Aucune coque ne s'est ouverte.
+        shell:document.body.children.filter(n=>n.id==='jarvisFlow').length,
+        running:BAREHANDS.calibration().running});
+    """, name="calibdisabled")
+    assert result["answer"]["ok"] is False, (
+        "un refus doit etre un non : `{ok:true}` ferait annoncer un parcours qui n'a pas demarre"
+    )
+    assert result["answer"]["code"] == "barehands_calibration_disabled"
+    assert result["shell"] == 0 and result["running"] is False
+    assert "desactivee" in result["said"] or result["said"] == "warn"
+    assert "Proposer la calibration" in result["banner"]
+    assert result["warned"] is not None

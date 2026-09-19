@@ -214,6 +214,15 @@ BAREHANDS_CONTRACTS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_CONTRACTS_JS__
 BAREHANDS_TARGET_SCRIPT_FILE = "control_center_barehands_target.js"
 BAREHANDS_TARGET_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_TARGET_JS__*/"
 #: Pointeur à mains nues (Barehands, mode test) : logique pure testée par node,
+#: Parcours de calibration et coque de surimpression Bare Hands (Slice 08,
+#: architecture §10 et §11, décisions 26 à 32). Inséré **après** les contrats
+#: qu'il lit et **avant** le pointeur, qui le lit pour poser
+#: `JarvisBarehands.calibrate()` sur sa surface gelée — une surface qu'on ne
+#: peut pas compléter après coup, donc l'ordre casse à l'insertion et non trois
+#: clics plus tard.
+BAREHANDS_CALIBRATION_SCRIPT_FILE = "control_center_barehands_calibration.js"
+BAREHANDS_CALIBRATION_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_CALIBRATION_JS__*/"
+
 #: plus son branchement navigateur. Même insertion que les scripts ci-dessus.
 BAREHANDS_SCRIPT_FILE = "control_center_barehands.js"
 BAREHANDS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_JS__*/"
@@ -832,6 +841,10 @@ class ControlCenter:
         html = html.replace(
             BAREHANDS_TARGET_SCRIPT_MARKER,
             page.with_name(BAREHANDS_TARGET_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            BAREHANDS_CALIBRATION_SCRIPT_MARKER,
+            page.with_name(BAREHANDS_CALIBRATION_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             BAREHANDS_SCRIPT_MARKER, page.with_name(BAREHANDS_SCRIPT_FILE).read_text(encoding="utf-8")

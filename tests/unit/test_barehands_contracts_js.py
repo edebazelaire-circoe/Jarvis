@@ -21,6 +21,7 @@ import pytest
 
 from jarvis.runtime import barehands_test_mode
 from jarvis.runtime.control_center import (
+    BAREHANDS_CALIBRATION_SCRIPT_MARKER,
     BAREHANDS_CONTRACTS_SCRIPT_MARKER,
     BAREHANDS_SCRIPT_MARKER,
     SCENE_PAGE_SCRIPT_MARKER,
@@ -800,6 +801,14 @@ def test_a_stored_profile_survives_its_own_json_round_trip(tmp_path):
         measuredAt:round(measured).updatedAt,
         stagesStable:JSON.stringify(round(withStages).stages)===JSON.stringify(withStages.stages),
         stages:round(withStages).stages,
+        /* Un `ok` qui porte un motif d'echec et un `failed` **muet** disent deux
+           choses contraires. Le second est le plus dangereux : « ca n'a pas
+           marche » sans raison ne se distingue pas d'une panne, et c'est tout
+           le silence que cette Slice existe pour refuser. */
+        okWithReason:refused(()=>C.normalizeStage({status:'ok',reason:C.STAGE_REASON.TIMEOUT})),
+        failedMute:refused(()=>C.normalizeStage({status:'failed'})),
+        failedNamed:C.normalizeStage({status:'failed',reason:C.STAGE_REASON.NO_HAND,samples:3}),
+        skippedMute:C.normalizeStage({status:'skipped'}),
       });
     """)
     assert result["blankStable"] is True, "un profil vierge doit revenir vierge"
@@ -814,6 +823,15 @@ def test_a_stored_profile_survives_its_own_json_round_trip(tmp_path):
     assert result["stages"]["neutral"] == {"status": "ok", "reason": None, "samples": 42}
     assert result["stages"]["c_pose"]["reason"] == "barehands_stage_timeout"
     assert result["stages"]["drag"]["status"] == "skipped", "ce qu'on n'a pas joué n'a pas échoué"
+    assert result["okWithReason"] == "barehands_stage_report_inconsistent"
+    assert result["failedMute"] == "barehands_stage_report_inconsistent", (
+        "un échec sans raison ne se distingue pas d'une panne"
+    )
+    assert result["failedNamed"] == {
+        "status": "failed", "reason": "barehands_stage_no_hand", "samples": 3}
+    # `skipped` est le seul état qui ait le droit d'être muet : ne pas jouer une
+    # étape n'a pas de cause à donner.
+    assert result["skippedMute"] == {"status": "skipped", "reason": None, "samples": 0}
 
 
 def test_nothing_but_a_derived_scalar_can_reach_a_stored_profile(tmp_path):
@@ -983,3 +1001,167 @@ async def test_the_server_announces_the_settings_schema_version(tmp_path):
     state = barehands_test_mode.describe({}, tmp_path)
     assert state["schema_version"] == barehands_test_mode.SCHEMA_VERSION
     assert state["enabled"] is False and state["status"] == "experimental"
+
+
+async def test_the_page_serves_the_calibration_before_the_pointer_that_reads_it(tmp_path):
+    """Constat F3 : un module de page est un repère substitué par le serveur, et
+    son rang est porteur. Celui-ci est lu par `control_center_barehands.js`
+    pour poser `JarvisBarehands.calibrate()` sur sa surface — **gelée**, donc
+    impossible à compléter après coup. Servi trop tard, la page casserait à
+    l'insertion et non trois clics plus tard, ce qui est le but.
+
+    L'ordre est asserté **par index dans la page servie**, pas par la présence
+    des repères : deux modules peuvent être présents et mal ordonnés."""
+
+    control = ControlCenter(runtime_root=tmp_path, project_root=tmp_path)
+    html = (await control.index(None)).text
+    raw = PAGE_HTML.read_text(encoding="utf-8")
+
+    assert BAREHANDS_CALIBRATION_SCRIPT_MARKER in raw, "le repère vit dans la page"
+    assert BAREHANDS_CALIBRATION_SCRIPT_MARKER not in html, "le repère a été remplacé"
+    # Dans la source : contrats → cible → calibration → pointeur.
+    assert (raw.index(BAREHANDS_CONTRACTS_SCRIPT_MARKER)
+            < raw.index(BAREHANDS_CALIBRATION_SCRIPT_MARKER)
+            < raw.index(BAREHANDS_SCRIPT_MARKER))
+    # Et dans la page **servie**, sur le code lui-même.
+    assert (html.index("root.JarvisBarehandsContracts=api")
+            < html.index("root.JarvisBarehandsCalibration=api")
+            < html.index("function installJarvisBarehands"))
+    assert "window.JarvisBarehandsCalibration" not in raw, "la page ne le définit pas elle-même"
+    # Le module refuse de se charger sans les contrats : l'ordre casse à
+    # l'insertion, comme pour l'aperçu de cible et le canal de commandes.
+    assert "les contrats Bare Hands doivent être insérés avant ce module" in html
+
+
+def test_the_calibration_stylesheet_agrees_with_the_dom_names_the_contract_owns(tmp_path):
+    """Meme regle que pour la surimpression des mains : le contrat possede les
+    noms du DOM, la feuille les dessine. Une classe renommee d'un cote sort ici
+    au lieu de produire une coque invisible.
+
+    La feuille est lue **produite** et non dans la source : elle est composee a
+    partir des noms du contrat, donc relire le fichier ne montrerait que les
+    interpolations — c'est le texte rendu qui doit porter les vrais noms.
+    """
+
+    result = run_node(tmp_path, """
+      const K=require(%s);
+      out({dom:C.DOM,style:K.STYLE,styleId:K.STYLE_ID});
+    """ % json.dumps(str(RUNTIME / "control_center_barehands_calibration.js")))
+    names, style = result["dom"], result["style"]
+
+    assert result["styleId"] == names["flowStyleId"]
+    assert f"#{names['flowRootId']}{{" in style
+    for key in ("flowStepClass", "flowProgressClass", "flowNoteClass", "flowTargetClass"):
+        assert f"#{names['flowRootId']} .{names[key]}" in style, key
+    # La coque vit **sous** la surimpression des mains : l'utilisateur calibre
+    # avec ses mains, donc son jeton doit rester visible par-dessus.
+    hands = (RUNTIME / "control_center_barehands.js").read_text(encoding="utf-8")
+    assert "z-index:2147483000" in hands, "la surimpression des mains, inchangee"
+    assert "z-index:2147482000" in style
+    assert 2147482000 < 2147483000
+    # Et la cible a la taille que le produit dessine : 24 px, pas une capsule
+    # de confort qu'aucune main n'aurait a viser (lecon des fixtures de la tache).
+    assert "width:24px;height:24px" in style
+    # Le mouvement se coupe quand l'utilisateur l'a demande au systeme.
+    assert "prefers-reduced-motion" in style
+
+
+def test_the_calibration_constants_are_pinned_like_every_other_engine_table(tmp_path):
+    """Une table que personne n'affirme se mute sans rien faire tomber. Les
+    réglages du parcours, ses étapes et le vocabulaire du rapport sont épinglés
+    ici, comme `DEFAULTS` l'est pour le moteur."""
+
+    result = run_node(tmp_path, """
+      const K=require(%s);
+      out({
+        defaults:Object.keys(K.DEFAULTS).sort().map(k=>[k,K.DEFAULTS[k]]),
+        steps:K.STEPS.map(s=>[s.id,s.hold===true,s.needs]),
+        stages:C.STAGES,statuses:C.STAGE_STATUSES,reasons:C.STAGE_REASONS,
+        profileVersion:C.PROFILE_SCHEMA_VERSION,
+        measured:C.PROFILE_MEASURED_KEYS,
+      });
+    """ % json.dumps(str(RUNTIME / "control_center_barehands_calibration.js")))
+
+    assert result["defaults"] == [
+        ["pinchRepeats", 4],
+        ["pressAt", 0.35],
+        ["releaseAt", 0.65],
+        ["sampleQualityMin", 0.4],
+        ["separationMinPalms", 0.12],
+        ["stageHoldMs", 2500],
+        ["stageMinSamples", 20],
+        ["stageTimeoutMs", 20000],
+        ["travelSlopMargin", 1.6],
+        ["travelSlopMax", 0.15],
+        ["travelSlopMin", 0.002],
+    ]
+    # Les sept étapes du contrat, dans l'ordre, avec ce que chacune exige.
+    assert result["steps"] == [
+        ["neutral", True, 1], ["c_pose", True, 1],
+        ["pinch_primary", False, 1], ["pinch_secondary", False, 1],
+        ["aim", False, 1], ["drag", False, 1], ["resize", False, 2],
+    ]
+    assert [step[0] for step in result["steps"]] == result["stages"], (
+        "les étapes du parcours sont celles que le profil persiste, pas une seconde liste"
+    )
+    assert result["statuses"] == ["ok", "failed", "skipped"]
+    assert result["reasons"] == [
+        "barehands_stage_no_hand", "barehands_stage_timeout",
+        "barehands_stage_too_few_samples", "barehands_stage_not_separable",
+        "barehands_stage_out_of_band", "barehands_stage_needs_two_hands",
+        "barehands_stage_cancelled",
+    ]
+    assert result["profileVersion"] == 2
+    assert sorted(result["measured"]) == sorted([
+        "pressRatio", "releaseRatio", "secondaryPressRatio", "secondaryReleaseRatio",
+        "jitterPx", "travelSlopNorm", "reachNorm", "quality",
+    ])
+
+
+def test_the_module_refuses_to_load_if_the_schema_itself_admits_an_image(tmp_path):
+    """**La garde de forme, exercee pour de vrai.**
+
+    `assertDerivedOnly` tourne au chargement du module et sonde chaque cle
+    mesurable. Tant qu'aucune cle ne fuit, la retirer ne fait rien tomber — ce
+    qui est exactement le cas d'un garde-fou tourne vers l'avenir. On le
+    mesure donc comme il se mesure : en **ecrivant la Slice future**, c'est-a-
+    dire en ajoutant au contrat une cle qui recopie son entree, et en
+    verifiant que le module refuse alors de se charger.
+    """
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node absent")
+    source = CONTRACTS.read_text(encoding="utf-8")
+    leaky = source.replace(
+        "    quality:null,                            // 0..1, confiance de la mesure\n  });",
+        "    quality:null,\n    sampleFrames:null,\n  });", 1)
+    leaky = leaky.replace(
+        "      quality:source.quality===undefined||source.quality===null?null:unit(source.quality,0),\n    });",
+        "      quality:source.quality===undefined||source.quality===null?null:unit(source.quality,0),\n"
+        "      sampleFrames:source.sampleFrames||null,\n    });", 1)
+    assert leaky != source, "les deux ancres de la mutation doivent exister"
+
+    victim = tmp_path / "leaky-contracts.js"
+    victim.write_text(leaky, encoding="utf-8")
+    script = tmp_path / "leak.cjs"
+    script.write_text(
+        f"try{{require({json.dumps(str(victim))});process.stdout.write('LOADED')}}"
+        "catch(e){process.stdout.write(String(e&&e.code||e))}",
+        encoding="utf-8",
+    )
+    done = subprocess.run([node, str(script)], capture_output=True, text=True,
+                          encoding="utf-8", timeout=30, check=False)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == "barehands_profile_not_derived", (
+        "une cle du profil qui recopie son entree doit faire refuser le chargement du module"
+    )
+
+    # Et le contrat **reel**, lui, se charge : la sonde ne crie pas au loup.
+    ok = tmp_path / "ok.cjs"
+    ok.write_text(
+        f"require({json.dumps(str(CONTRACTS))});process.stdout.write('LOADED')",
+        encoding="utf-8")
+    done = subprocess.run([node, str(ok)], capture_output=True, text=True,
+                          encoding="utf-8", timeout=30, check=False)
+    assert done.stdout == "LOADED"

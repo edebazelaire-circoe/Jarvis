@@ -72,6 +72,26 @@ Fixture-based derivation tests; profile schema/version/migration tests; spatial-
 
 Calibration can complete quickly, produces a stable profile, handles per-function failure gracefully, changes only intended tunables, and can be reset. Default storage is derived data only.
 
+### Implementation notes (Slice 08, as shipped)
+
+- The seven stages ship as scoped: `neutral`, `c_pose`, `pinch_primary`,
+  `pinch_secondary`, `aim`, `drag`, `resize`. **`c_pose` verifies rather than
+  calibrates**, and that is deliberate: the wake band is read by the SLEEP
+  watcher, before a hand has any identity or handedness, so a per-hand
+  threshold would have no reader (decision 28 keeps one visible profile). The
+  stage answers the question the user actually asks — "does my C wake it?" —
+  and its answer lives in the per-stage report.
+- **Profile schema raised to version 2**, with v1 migrated rather than refused.
+  The new `travelSlopNorm` settles the pixels-vs-palms residue Slice 04 left
+  open; `stages` carries decision 31's per-stage report.
+- **Three new dangerous pairs** refused at construction
+  (`stageTimeoutMs <= stageHoldMs`, `pressAt >= releaseAt`,
+  `travelSlopMin >= travelSlopMax`) — the ninth, tenth and eleventh on this
+  task.
+- Persistence lives on its own key and routes (`/api/barehands/profile`),
+  deliberately not widened into `/api/barehands`: a profile is a measurement,
+  not a choice, and it versions on its own clock.
+
 ## Documentation Updates
 
 Document calibration algorithm, profile schema/version, stored fields, privacy policy, fallback behavior and reset semantics.

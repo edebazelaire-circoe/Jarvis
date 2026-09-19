@@ -42,9 +42,13 @@ Persist behavior controls separately from tool selection: enable/disable, target
 
 One simple visible profile; internal left/right values are allowed. Store derived thresholds, hysteresis, motion/jitter stats, spatial mapping/correction, quality and schema version.
 
+Implemented by Slice 08 at schema version 2: `jarvis/runtime/control_center_barehands_calibration.js` derives, `jarvis/runtime/barehands_profile.py` persists under its own settings key and routes, and `docs/barehands-contracts.md` §10 is the contract. The click-vs-drag tolerance is stored as `travelSlopNorm`, a fraction of the image width — the unit that survives a resolution change, which is what Slice 04 left open.
+
 ## 11. Calibration / Tutorial overlay
 
 One full-screen overlay shell over the current UI with dark/blurred background, target placement, progress, voice-capable instructions and obvious exit paths.
+
+Built by Slice 08 as `JarvisBarehandsCalibration.createFlowOverlay({document, now, setInterval, clearInterval})`. It knows nothing about calibration — it shows steps — so Slice 09's tutorial reuses it unchanged (decision 26). It sits just below the hand overlay (`z-index` 2147482000 against 2147483000) and exempts every Bare Hands root from its `inert` sweep: the user calibrates *with their hands*, so the hand token must stay alive and visible throughout.
 
 ## 12. Recorder / Replay / Benchmark
 

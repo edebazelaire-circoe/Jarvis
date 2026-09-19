@@ -251,9 +251,33 @@
     rootSelector:'#jarvisHands',
     tokenSelector:'#jarvisHands .jh-token',
     badgeSelector:'#jarvisHands .jh-badge',
+    /* **Coque de parcours** (Slice 08, architecture §11, décision 26) : une
+       surimpression plein écran, sombre et floutée, partagée par la
+       calibration et le tutoriel. Racine **distincte** de `jarvisHands`, et
+       c'est la seule façon que les deux soient vrais en même temps : la
+       surimpression des mains est `pointer-events:none` et doit rester au
+       dessus — l'utilisateur calibre **avec ses mains**, donc il doit voir son
+       jeton pendant tout le parcours. */
+    flowRootId:'jarvisFlow',
+    flowStyleId:'jarvisFlowStyle',
+    flowStepClass:'jf-step',
+    flowProgressClass:'jf-progress',
+    /* Le point à viser d'une étape de visée : il est **dans la coque**, donc à
+       des coordonnées que le parcours connaît — viser un élément de la page
+       demanderait que la page ait un élément à viser. */
+    flowTargetClass:'jf-target',
+    /* La ligne vivante : ce que l'étape attend, ce qu'elle a mesuré, et
+       pourquoi elle a échoué. Même rôle que `jh-note` pour l'interaction. */
+    flowNoteClass:'jf-note',
+    flowRootSelector:'#jarvisFlow',
   });
   /* Sans DOM dans ce module : on lit l'identifiant, on n'interroge pas l'arbre. */
   const isOverlayRoot=el=>!!el&&el.id===DOM.rootId;
+  /* La coque d'un parcours est **aussi** une racine Bare Hands : les balayages
+     `inert` de la page doivent l'épargner comme ils épargnent la surimpression
+     des mains, sans quoi le parcours se désarmerait lui-même. */
+  const isFlowRoot=el=>!!el&&el.id===DOM.flowRootId;
+  const isBareHandsRoot=el=>isOverlayRoot(el)||isFlowRoot(el);
 
   const HANDEDNESS=Object.freeze({LEFT:'left',RIGHT:'right',UNKNOWN:'unknown'});
   const HANDEDNESSES=values(HANDEDNESS);
@@ -1465,7 +1489,7 @@
     FAILURE_CODE,FAILURE_CODES,isFailureCode,
     MAX_HANDS,POINTER_ID_BASE,POINTER_ID_MAX,POINTER_TYPE,
     pointerIdForSlot,slotForPointerId,isBareHandsPointerId,createSlotAllocator,
-    DOM,isOverlayRoot,HANDEDNESS,HANDEDNESSES,
+    DOM,isOverlayRoot,isFlowRoot,isBareHandsRoot,HANDEDNESS,HANDEDNESSES,
     POINT_ROLES,createHandObservation,createHandFrame,
     HAND_QUALITY_FLOOR,isUsableQuality,createMotionSample,
     GESTURE,GESTURES,GESTURE_PHASE,GESTURE_PHASES,GESTURE_SCOPE,GESTURE_SCOPES,createGestureEvent,

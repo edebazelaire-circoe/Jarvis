@@ -1970,3 +1970,163 @@ node contre la **vraie** surface, puis posté tel quel) :
   +  6.462s info    barehands.command_delivered  {"command": "tutorial", "id": "lGZxbJ2F", "deliveries": 1, "remaining_ms": 2999}
         → une seule ligne de remise ; l'onglet B n'a jamais vu la commande.
 ```
+
+## 2026-09-20 — Slice 08, implementation agent
+
+La calibration : coque de parcours, dérivation, profil v2, persistance,
+application par main. Plus trois reprises portées en tête de Slice.
+
+### Les trois reprises
+
+- **Deux outils sur cinq ne promettaient rien.** `highlighter` et `draw`
+  étaient déclarés au contrat, refusés partout et possédés par **aucune
+  Slice** — la 07 en était le seul propriétaire et elle a livré. Un outil grisé
+  pour toute la V1 se lit comme une panne permanente. Retirés. Ce qui reste est
+  le **mécanisme** qui refuse, pas les deux noms : `SERVED_CAPABILITIES`
+  distinct de `TOOL_CAPABILITY`, `toolInstalled`, le motif de `describeTool`, le
+  refus serveur et la porte `tool_not_installed`. **Découverte durable : une
+  recette d'extension qu'aucun test n'exerce est un souhait.** Les deux tests
+  qui la tiennent ne l'atteignent plus par un nom du produit — ils *déclarent*
+  l'outil qu'une Slice future déclarerait (`ink`, capacité `annotate`, non
+  servie), côté moteur par la vraie couture `contracts`, côté serveur par
+  `TOOLS` élargi.
+- **Une version stockée étrangère est archivée, puis défaut** (constat R6,
+  décision du Human). `load` était tolérant **et muet** : `apply` repart de
+  `load()`, donc des défauts, et réécrit la clé entière. `inspect()` sépare
+  enfin « défauts parce qu'illisible » de « défauts parce que neuf », que
+  `load()` rendait à l'octet près ; `archive_unreadable()` range le bloc **tel
+  quel** sous `…_archived_v<N>` juste avant l'écriture, donc un refus n'archive
+  rien. Le mécanisme a resservi au profil trois heures plus tard, ce qui est le
+  meilleur argument pour l'avoir écrit comme une forme et non comme un
+  correctif.
+- **`wakeGapMin < wakeGapMax` était cité partout et gardé par personne.** Les
+  deux constantes n'apparaissaient que dans des assertions de valeur et de
+  bande effective ; supprimer la ligne de garde laissait toute la suite au vert,
+  ainsi que ses deux affaiblissements. **Formulation générale : un invariant
+  cité dans un docstring voisin est un invariant non testé** — le docstring
+  était même la raison pour laquelle personne ne l'avait revérifié.
+
+### Slice 08
+
+- **Découverte durable — `Number(null)` vaut 0, qui est fini.** Une mesure non
+  mesurée était bornée sur son **plancher** au lieu de rester nulle. Inoffensif
+  pendant sept Slices, parce que l'entrée venait toujours d'un objet partiel où
+  la clé *manquait* (`undefined` → `NaN` → `null`). Mais un profil persisté est
+  du JSON, et du JSON porte des `null` explicites : relire un profil vierge
+  rendait les huit mesures « calibrées » à leur plancher, `calibrated` vrai sans
+  une seule mesure, `updatedAt` au 1er janvier 1970, et `profileValue` rendant
+  ce plancher **au lieu du défaut du moteur**. La décision 31 défaite par une
+  conversion de type. **La Slice 08 est la première à relire un profil, et c'est
+  pour ça qu'elle a trouvé la mine : un schéma qu'on n'a jamais relu n'est pas
+  un schéma testé.** L'assertion qui la tient est un **aller-retour**
+  (`normalize(JSON.parse(JSON.stringify(payload)))` doit rendre l'original), pas
+  une valeur — une assertion de valeur aurait passé.
+- **Décision 32 tenue par la couture, pas par la discipline.** Le contrôleur
+  réduit chaque image à un enregistrement de **scalaires** (`deps.onMeasure`)
+  avant de la passer au parcours : le parcours ne peut pas persister une image,
+  une vidéo ni un point parce qu'il n'en a jamais eu. **Formulation générale :
+  une promesse sur ce que du code ne fera pas est plus faible qu'une couture
+  qui ne peut pas le transporter.** Mesuré sur la vraie géométrie à travers le
+  vrai traqueur : rien ne traverse qu'un nombre, un `null`, ou la latéralité —
+  seule chaîne, et d'un vocabulaire fermé.
+- **La garde de forme se pilote par le schéma, pas par un exemple.** Un profil
+  rempli à la main ne dit rien d'une clé que personne n'aurait pensé à remplir.
+  `assertDerivedOnly` tourne au **chargement du module** et présente à *chaque*
+  clé mesurable et à chaque champ d'étape une suite de points, une image base64
+  et un objet libre. Mesuré : ajouter une clé `sampleFrames` qui recopie son
+  entrée fait **refuser le chargement**. Pas de troisième garde sur chaque
+  charge utile — par-dessus la liste blanche de `normalizeProfile`, elle ne
+  pourrait pas échouer, et la Slice 12 appelle ça une seconde vérité.
+- **Pixels contre paumes, tranché.** `travelSlopNorm` est une **fraction de la
+  largeur de l'image**. La paume n'était pas la réponse malgré tout le reste du
+  fichier : **aucune des deux unités n'est invariante aux deux variables** — la
+  paume l'est à la distance à la caméra mais pas à la résolution, la fraction
+  d'image l'inverse —, et c'est pour ça que la question était restée ouverte
+  depuis la Slice 04. Ce qu'on borne est un déplacement **à l'écran**, donc une
+  grandeur d'écran ; et la distance à laquelle l'utilisateur se tient est déjà
+  dans la mesure, puisque c'est lui qui l'a faite, à sa place habituelle.
+  Résidu nommé : se rapprocher franchement de la caméra après s'être calibré
+  demande de recalibrer — strictement moins que la constante unique d'avant,
+  qui valait pour toutes les résolutions et tous les utilisateurs à la fois.
+- **Une hystérésis se calibre par paire, ou pas du tout.** Mélanger un seuil
+  mesuré et un défaut du moteur peut inverser `press < release`, que
+  `options()` refuse **à la construction** : une calibration partielle
+  (décision 31) ferait alors *tomber* le moteur au lieu de le laisser retomber
+  sur ses défauts. La règle est écrite aux trois étages, et le serveur la nomme
+  (`barehands_profile_thresholds_incomplete`). **Classe générale : une
+  protection à la construction transforme une valeur partielle en panne si la
+  valeur partielle est *composée* avec un défaut.**
+- **Le C se vérifie, il ne se calibre pas.** La bande de réveil est lue par le
+  guetteur de veille, c'est-à-dire **avant** qu'une main ait une latéralité :
+  un seuil par main n'y aurait aucun lecteur. L'étape répond donc à la question
+  que l'utilisateur se pose — « est-ce que mon C réveille ? » — et elle doit
+  tenir compte du **gating pouce-majeur** de la Slice 04 : un C dont le majeur
+  reste près du pouce marque zéro alors que son écart pouce-index est parfait.
+  Cette cause est nommée **en premier**, parce qu'elle rend les deux autres
+  mesures trompeuses et que personne ne peut la deviner.
+- **Refuser plutôt que raboter.** Deux états qu'on ne distingue pas ne donnent
+  pas un seuil médiocre : ils donnent un seuil qui fait **clignoter** le
+  contact, donc des clics qu'on n'a pas demandés. Vrai du pincement contre le
+  repos (`separationMinPalms`) comme du clic contre le glissement.
+- **Le motif d'un échec survivait zéro milliseconde.** La phrase écrite par
+  l'étape ratée était effacée par `overlay.step()` à l'image suivante :
+  l'utilisateur voyait son C refusé sans jamais apprendre que c'était son
+  majeur. Elle est **portée** dans l'étape suivante, préfixée du nom de l'étape
+  et suivie de « on continue ». **Formulation générale : une phrase affichée
+  juste avant un changement d'écran n'est pas affichée.**
+- **Trois paires dangereuses de plus** (9, 10, 11), toutes de la classe qui est
+  apparue huit fois : `stageTimeoutMs <= stageHoldMs`, `pressAt >= releaseAt`,
+  `travelSlopMin >= travelSlopMax`. Elles échouent toutes **en silence, en
+  retombant sur les défauts**, ce qui se lit « l'utilisateur s'y prend mal » —
+  c'est ce qui les rend pires qu'une exception.
+- **L'interrupteur reste à l'utilisateur.** `calibrate()` réveille mais
+  **n'allume pas** Bare Hands : le § 12 garde `enable`/`disable` hors du canal
+  de commandes pour cette raison, et un parcours qui allumerait au passage
+  rendrait la décision contournable par un autre nom. Il refuse en disant quoi
+  faire.
+- **Le canal de la Slice 12 n'a pas changé d'une ligne.** `calibrate` était déjà
+  dans sa table, routé vers un point d'entrée absent ; poser la méthode a suffi.
+  Le test qui affirmait son absence affirme maintenant sa présence **et** le
+  refus réel qu'elle produit sous node (pas de caméra → `flow_unconfirmed`), ce
+  qui est la preuve que le contrat `flow_unconfirmed` mord pour de bon.
+- **Un double de serveur qui ne porte pas les champs du vrai ne prouve rien.**
+  Le double de `test_barehands_tools_settings_js` ne portait ni `unreadable` ni
+  `stored_schema_version` ni `archived` : il aurait été le cinquième défaut de
+  réalisme de cette tâche. Un test de parité le compare désormais à
+  `describe()`. Et il a fallu une couture `browser(setup)` : la page relit
+  `/api/barehands` **à son démarrage**, donc un état de serveur posé après coup
+  décrit une situation qui n'arrive jamais.
+- **Un test qui compte les images mesure la cadence du double.** Les premières
+  versions des tests de parcours fixaient un nombre d'images par étape et
+  tombaient dès qu'une étape se concluait plus tôt. `feedUntil` nourrit
+  **jusqu'à ce que l'étape bouge** : c'est le parcours qu'on veut mesurer, pas
+  le pas de temps du pilote.
+
+### Laissé tel quel, et pourquoi
+
+- La cause exacte d'un refus de `calibrate()` (`…_disabled`,
+  `…_no_camera`) **n'atteint pas le cerveau** : le canal a une liste de codes
+  fermée et rend `barehands_flow_unconfirmed`, dont la phrase est générique.
+  C'est vrai, mais pauvre. La cause est à l'écran, dans le toast et dans la
+  console. Élargir la liste des codes du canal appartient au canal, pas ici.
+- `api(API).then(applyServerState).catch(()=>{})` et le `.catch(()=>{})` de
+  `renderTab` restent **muets** — préexistants, hors Slice, et de la même
+  famille que l'Issue `page-failures-never-reach-the-server`.
+
+### Fichiers
+
+`jarvis/runtime/control_center_barehands_calibration.js` (nouveau),
+`jarvis/runtime/barehands_profile.py` (nouveau),
+`jarvis/runtime/control_center_barehands_contracts.js`,
+`jarvis/runtime/control_center_barehands.js`,
+`jarvis/runtime/control_center.py`, `jarvis/runtime/control_center.html`,
+`jarvis/runtime/barehands_test_mode.py`, `docs/barehands-contracts.md`,
+`tasks/jarvis-bare-hands-v1/docs/02-architecture.md`,
+`tasks/jarvis-bare-hands-v1/Issues/barehands-foreign-stored-version-overwritten.md`,
+`tasks/jarvis-bare-hands-v1/slices/07-tools-settings/` (SLICE.md,
+human-validation.json), et les tests : `test_barehands_calibration_js.py` et
+`test_barehands_profile.py` (nouveaux), plus `test_barehands_contracts_js.py`,
+`test_barehands_lifecycle_js.py`, `test_barehands_test_mode.py`,
+`test_barehands_tools_settings_js.py`, `test_barehands_commands_js.py`,
+`test_barehands_target_js.py`, `test_barehands_interaction_js.py`,
+`test_barehands_tracking_js.py`.

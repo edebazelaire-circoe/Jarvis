@@ -58,9 +58,17 @@ repère commenté dans `control_center.html`, substitué côté serveur par
 (`jarvis/runtime/control_center.py`) et **précède** ses deux lecteurs :
 
 ```
-…_BAREHANDS_CONTRACTS_JS__ → …_BAREHANDS_TARGET_JS__ → …_BAREHANDS_JS__
+…_BAREHANDS_CONTRACTS_JS__ → …_BAREHANDS_TARGET_JS__
+→ …_BAREHANDS_CALIBRATION_JS__ → …_BAREHANDS_JS__
 → …_BAREHANDS_COMMANDS_JS__ → …_SCENE_PAGE_JS__
 ```
+
+(`…_BAREHANDS_CALIBRATION_JS__` est arrivé à la Slice 08 : le parcours de
+calibration et la coque de surimpression. Il lit les contrats et **se fait
+lire** par le pointeur, qui pose `JarvisBarehands.calibrate()` sur sa surface —
+et cette surface est **gelée**, donc impossible à compléter après coup. Servi
+trop tard, la page casse à l'insertion et non trois clics plus tard, ce qui est
+exactement le but.)
 
 (`…_BAREHANDS_COMMANDS_JS__` est arrivé à la Slice 12 : le canal de commandes
 du cerveau lit `window.JarvisBarehands`, que le pointeur pose, donc il vient
@@ -1412,8 +1420,8 @@ partiel, et rend toujours une valeur complète et bornée :
 | `tool` | `pointer` | `TOOLS` installés | § 8 |
 | `assistance` | `0.5` | 0 – 1 | portée d'assistance = `targetAssistPx × 2 × assistance` |
 | `sensitivity` | `1` | 0,25 – 4 | **divise** `clickSlopPx` et `dragSlopPx` |
-| `tutorialSeen` | `false` | — | persisté ; **aucun parcours ne le lit encore** |
-| `calibrationEnabled` | `true` | — | décision 27 ; persisté ; **aucun parcours ne le lit encore** |
+| `tutorialSeen` | `false` | — | persisté ; **aucun parcours ne le lit encore** (Slice 09) |
+| `calibrationEnabled` | `true` | — | décision 27 ; **lu par la Slice 08** : décoché, le bouton « Calibrer… » est grisé et `JarvisBarehands.calibrate()` refuse |
 | `diagnostics` | `false` | — | §12 : lecture à l'écran (`jh-diag`), présente ou **absente** de l'arbre |
 
 `SETTINGS_BOUNDS` tient les bornes une seule fois : l'écran dessine ses
@@ -1423,12 +1431,15 @@ rend `lo` quand `lo > hi`, donc tous les réglages seraient épinglés sur une
 valeur unique, sans exception ni test rouge. Même classe que `MIN_SIZE`/
 `MAX_SIZE` à la Slice 06 : il n'y a pas de constructeur là où vit la table.
 
-**Deux réglages sont persistés et décoratifs, et l'écran le dit.**
-`tutorialSeen` et `calibrationEnabled` traversent la route, le fichier et la
-normalisation ; aucun parcours de calibration (Slice 08) ni de tutoriel ne
-les lit encore. L'onglet porte un encadré qui l'énonce, plutôt qu'un bouton
-qui ne ferait rien — un contrôle inerte se lit comme une panne, une phrase se
-lit comme une attente. Tous les autres sont **vivants** :
+**Il n'en reste qu'un décoratif, et l'écran le dit toujours.**
+`calibrationEnabled` est **vivant depuis la Slice 08** : décoché, le bouton
+« Calibrer… » est grisé avec son motif et `JarvisBarehands.calibrate()` refuse
+`barehands_calibration_disabled` — c'est la décision 27 rendue exécutable.
+`tutorialSeen` traverse toujours la route, le fichier et la normalisation sans
+qu'aucun parcours ne le lise (Slice 09) ; l'onglet garde pour lui seul
+l'encadré qui l'énonce, plutôt qu'un bouton qui ne ferait rien — un contrôle
+inerte se lit comme une panne, une phrase se lit comme une attente. Tous les
+autres sont **vivants** :
 `applyToEngine(settings)` est le seul endroit qui les porte au moteur, et un
 réglage qui n'y trouverait pas sa ligne n'aurait pas sa place dans la table.
 
@@ -1685,6 +1696,141 @@ dépôt refuse (Slice 12) : par-dessus la liste blanche, elle ne pourrait pas
 - V1 est statistique/seuils, sans apprentissage personnalisé ni apprentissage
   continu (décisions 29, 30).
 
+### Le parcours (Slice 08)
+
+`jarvis/runtime/control_center_barehands_calibration.js`
+(`window.JarvisBarehandsCalibration`). Deux choses y vivent, et c'est la
+**décision 26** qui les met ensemble : la **coque** de surimpression, et le
+**parcours**. La coque ne sait rien de la calibration — elle affiche des
+étapes — et c'est ce qui permettra au tutoriel (Slice 09) de la reprendre sans
+la modifier. `createFlowOverlay({document, now, setInterval, clearInterval})`
+rend `open/step/progress/note/target/buttons/report/expired/close`.
+
+**Décision 27 : optionnelle et explicite.** Rien ne mesure avant qu'on l'ait
+demandé. Deux portes, une seule implantation : le bouton « Calibrer… » de
+l'onglet Expérimental et `JarvisBarehands.calibrate()`, que le canal de
+commandes appelle (§ 12). `calibrate()` **confirme** en résolvant
+`{ok:true, flow:'calibration', step, steps}` dès que la coque est à l'écran et
+que la première étape tourne — le **démarrage**, pas la fin : l'échéance du
+canal est de trois secondes et un parcours en prend trente. Deux refus, rendus
+`{ok:false, code}` (donc `barehands_flow_unconfirmed` côté canal) **et** dits à
+l'écran, parce que c'est le seul endroit où leur cause exacte survit :
+`barehands_calibration_disabled` (interrupteur éteint, ou `calibrationEnabled`
+décoché) et `barehands_calibration_no_camera`. Un second appel pendant que la
+coque est ouverte **confirme** (`already:true`) : répondre « non » ferait dire à
+JARVIS que ça n'a pas démarré devant une coque ouverte à l'écran.
+
+**L'interrupteur reste à l'utilisateur.** `calibrate()` réveille (`activate` est
+déjà dans la table du canal) mais **n'allume pas** Bare Hands : le § 12 garde
+`enable`/`disable` hors du canal pour cette raison, et un parcours qui
+allumerait au passage rendrait la décision contournable par un autre nom.
+
+**Les sept étapes, ce qu'elles mesurent, et comment elles échouent**
+(décision 31 : chacune réussit ou échoue **seule**, et ce qui n'est pas mesuré
+garde le défaut du moteur) :
+
+| Étape | Mesure | Clé(s) du profil | Échecs propres |
+|---|---|---|---|
+| `neutral` | tremblement au repos, 95e centile de l'écart **brut ↔ filtré** | `jitterPx` | trop peu d'échantillons |
+| `c_pose` | **vérifie**, ne calibre pas : écart, portée et score contre la bande effective | *(aucune)* | majeur trop près du pouce, écart trop bas/haut, index replié |
+| `pinch_primary` | bande parcourue entre ouvert et fermé | `pressRatio`, `releaseRatio` | états inséparables |
+| `pinch_secondary` | idem sur le canal pouce-majeur | `secondaryPressRatio`, `secondaryReleaseRatio` | idem |
+| `aim` | déplacement de la paume pendant un clic délibéré | (moitié de `travelSlopNorm`) | échéance |
+| `drag` | déplacement d'un glissement délibéré | (autre moitié) | clic et glissement inséparables |
+| `resize` | deux mains vues ensemble | `reachNorm`, `quality` de la seconde main | `barehands_stage_needs_two_hands` |
+
+`reachNorm` et `quality` se dérivent de **toute** la séance, pas d'une étape :
+la portée est ce que la main a atteint pendant qu'on lui demandait autre chose.
+
+**Le C ne pose aucun seuil, et c'est délibéré.** La bande de réveil
+(`wakeGapMin`/`wakeGapMax`/`wakeIndexMin`) est lue par le guetteur de veille,
+c'est-à-dire **avant** qu'une main ait une identité ou une latéralité : un seuil
+par main n'y aurait aucun lecteur, et la décision 28 ne veut qu'un profil
+visible. L'étape répond donc à la question que l'utilisateur se pose — « est-ce
+que mon C réveille ? » — et sa réponse vit dans le rapport. Elle recalcule la
+bande **effective** depuis les défauts du moteur plutôt que de la recopier
+(citer 1,35 pour la portée se trompe de 10 %), et elle tient compte du
+**gating pouce-majeur** de la Slice 04 : `handPosture` annule toute posture dès
+qu'un des deux rapports passe sous `releaseRatio`, donc un C dont le majeur
+reste près du pouce marque zéro alors que son écart pouce-index est parfait.
+Cette cause est nommée **en premier** et en toutes lettres, parce que
+l'utilisateur ne peut pas la deviner et qu'elle rend les deux autres mesures
+trompeuses.
+
+**Refuser plutôt que raboter.** `deriveHysteresis` exige
+`separationMinPalms = 0,12` entre l'ouvert et le fermé : deux états qu'on ne
+distingue pas ne donnent pas un seuil médiocre, ils donnent un seuil qui fait
+**clignoter** le contact, donc des clics qu'on n'a pas demandés. De même,
+`deriveTravelSlop` exige que le clic le plus agité reste sous le glissement le
+plus sage. `pressAt = 0,35` place le seuil d'appui au tiers de la bande : un
+pincement **confortable**, pas entièrement fermé, compte déjà.
+
+**Une hystérésis se calibre par paire, ou pas du tout.** Mélanger un seuil
+mesuré et un défaut du moteur peut inverser `press < release`, que `options()`
+refuse à la construction : une calibration partielle ferait alors **tomber** le
+moteur au lieu de le laisser retomber sur ses défauts. La règle est écrite aux
+trois étages — le parcours n'écrit que des paires, la page n'applique que des
+paires, et le serveur refuse la demi-mesure avec
+`barehands_profile_thresholds_incomplete`.
+
+**Application, et elle est relisible.** `controller.options()` rend désormais
+`hands.{left,right,unknown}.{primary,secondary}.{pressRatio,releaseRatio}` en
+plus des cinq valeurs de la Slice 07 : sans cela, « profil enregistré » et
+« profil appliqué » n'étaient pas distinguables, et un profil par main est plus
+invisible encore, puisque rien à l'écran ne le montre. Les seuils par main
+entrent par `deps.handOverrides(handedness, channel)`, que le moteur interroge
+pour chaque main qu'il construit **et** quand la latéralité d'une piste change
+— sans quoi une main garderait les seuils de la latéralité qu'on lui avait
+d'abord prêtée.
+
+**Trois paires dangereuses de plus** (neuvième, dixième, onzième de la tâche),
+refusées à la construction de `JarvisBarehandsCalibration.options()`. Elles
+échouent toutes de la même façon — en silence, en retombant sur les défauts, ce
+qui se lit « l'utilisateur s'y prend mal » :
+
+- `stageTimeoutMs <= stageHoldMs` : l'étape expire pendant que l'utilisateur
+  tient la pose. Même espèce que `sleepTimeoutMs <= wakeHoldMs`.
+- `pressAt >= releaseAt` : chaque calibration dérive un
+  `pressRatio >= releaseRatio` que le contrat refuse — et l'échec se lirait
+  « votre pincement n'est pas mesurable ».
+- `travelSlopMin >= travelSlopMax` : `clamp` rend la borne basse à tout le
+  monde, donc **tous** les utilisateurs reçoivent la même tolérance et
+  « calibré » devient indiscernable de « pas calibré ». Même espèce que
+  `SETTINGS_BOUNDS` inversé.
+
+**Persistance.** `jarvis/runtime/barehands_profile.py` et
+`GET`/`POST`/`DELETE /api/barehands/profile`, sous la clé
+`barehands_calibration_profile`. Route et clé **distinctes** de celles des
+réglages : un profil n'est pas un choix mais une mesure, il porte son propre
+numéro de schéma, et l'écrire ne doit pas revalider les neuf réglages. La forme
+du module est reprise de `barehands_test_mode` — `load` tolérant, `apply`
+strict à code stable, `describe`, et l'archivage d'un bloc en version étrangère
+avant de le remplacer. Une écriture remplace le profil **en entier**,
+contrairement aux réglages : fusionner deux séances de mesure sur une même main
+sans le dire, alors que la seconde est celle que l'utilisateur vient de juger
+nécessaire. Codes de refus :
+`barehands_profile_bad_payload`, `barehands_profile_unknown_field`,
+`barehands_profile_not_derived`, `barehands_profile_out_of_range`,
+`barehands_profile_thresholds_invalid`,
+`barehands_profile_thresholds_incomplete`, `barehands_profile_reach_invalid`,
+`barehands_profile_handedness_unknown`, `barehands_profile_stage_unknown`,
+`barehands_profile_stage_inconsistent`,
+`barehands_profile_schema_version_unsupported`.
+
+**Appliquer et effacer sont explicites.** Le parcours montre son rapport et
+n'écrit **rien** tant que « Appliquer et enregistrer » n'a pas été pressé ;
+quitter (bouton ou Échap) n'écrit rien du tout. Un échec d'enregistrement garde
+la coque ouverte avec « Réessayer » — la refermer jetterait une minute de
+mesures. « Effacer le profil » (`DELETE`) **retire** le bloc au lieu de le
+remplir de nulls, pour que « aucun profil » et « profil vide » se relisent
+pareil.
+
+**Décision 30 : aucun apprentissage continu.** La couture `deps.onMeasure` du
+contrôleur n'est posée que **pendant** un parcours et retirée à sa fin ; le
+contrôleur teste `typeof deps.onMeasure === 'function'` avant de construire quoi
+que ce soit, donc hors calibration le budget d'images est exactement celui
+d'avant — l'acquis mesuré de la Slice 02 est intact.
+
 ## 11. Adaptateurs
 
 Seul étage qui connaisse un traqueur ou l'expérience actuelle.
@@ -1747,7 +1893,7 @@ déclenchent ; test de parité) :
 |---|---|---|---|---|
 | `activate` | `barehands_activate` | `JarvisBarehands.activate()` | `active` | vivant |
 | `deactivate` | `barehands_deactivate` | `JarvisBarehands.sleep()` | `sleep` **ou** `off` | vivant |
-| `calibrate` | `barehands_calibrate` | `JarvisBarehands.calibrate()` | — (confirmation) | **absent** (Slice 08) |
+| `calibrate` | `barehands_calibrate` | `JarvisBarehands.calibrate()` | — (confirmation) | **vivant** (Slice 08) |
 | `tutorial` | `barehands_tutorial` | `JarvisBarehands.tutorial()` | — (confirmation) | **absent** (Slice 09) |
 | `exit_overlay` | `barehands_exit_overlay` | `JarvisBarehands.exitOverlay()` | — (confirmation) | **absent** (Slice 09) |
 
@@ -1969,8 +2115,24 @@ désormais **branchés** : la voix et le bouton passent par le même `setAwake`.
 succès n'est pas vérifiable (§ 12) ; `.captures()` / `.interactions()` /
 `.diagnostics()` sont ce que la Slice 10 lira.
 
-Restent à venir : calibration, tutoriel et diagnostics enregistrés (Slices 08 à
-10). `tutorialSeen` et `calibrationEnabled` attendent toujours les Slices 08 et
-09 ; leurs trois commandes traversent tout le canal et se refusent
-`barehands_flow_absent` à la dernière marche, parce que le point d'entrée
-n'existe pas encore.
+La Slice 08 implante la calibration (§ 10, § 11, décisions 26 à 32) :
+`control_center_barehands_calibration.js` — **un module de page ajouté**, donc
+l'ordre d'insertion a changé (voir « Insertion dans la page ») —,
+`jarvis/runtime/barehands_profile.py` avec ses trois routes,
+`JarvisBarehands.calibrate()` / `.profile()` / `.calibration()`, la couture
+`deps.onMeasure` du contrôleur, les seuils par main dans
+`createPinchIntentEngine`, et le profil en **version 2**. Couverte par
+`tests/unit/test_barehands_calibration_js.py` et
+`tests/unit/test_barehands_profile.py`. Aucune constante nouvelle dans
+`DEFAULTS` du moteur : les nombres du parcours vivent dans les siens, et les
+deux tolérances qu'il déplace existaient déjà.
+
+`window.JarvisBarehands.calibrate()` est **branché** : la voix et le bouton
+passent par la même porte, et le canal de la Slice 12 n'a pas changé d'une
+ligne pour ça — c'était la promesse de sa table.
+
+Restent à venir : tutoriel et diagnostics enregistrés (Slices 09 et 10).
+`tutorialSeen` attend toujours la Slice 09 ; `tutorial` et `exit_overlay`
+traversent tout le canal et se refusent `barehands_flow_absent` à la dernière
+marche, parce que leur point d'entrée n'existe pas encore. La **coque** qu'ils
+réutiliseront, elle, existe et est testée.

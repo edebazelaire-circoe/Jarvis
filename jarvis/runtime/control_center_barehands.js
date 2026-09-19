@@ -764,16 +764,23 @@ const JarvisBarehandsCore=(function(){
      et il est vu ou il ne l'est pas. */
   function fingerExtensions(landmarks,k,palm,o){
     const extension={};
+    /* La portée **en paumes**, à côté du score de rampe qu'on en tire. Elle
+       était calculée puis jetée, si bien que le seul moyen de la relire était
+       de recalculer `distance/palm` ailleurs — et la Slice 08 en a besoin pour
+       dire à l'utilisateur *de combien* sa portée d'index manque la bande de
+       réveil. Un score de rampe ne le dit pas : à 0 il dit « en dessous »,
+       pas « en dessous de combien ». */
+    const reach={};
     let lowest=1,highest=0,readable=0;
     for(const finger of FINGERS){
       const at=FINGER[finger];
-      if(!usablePoint(landmarks[at])){extension[finger]=null;continue}
-      const reach=distance(landmarks[LM.WRIST],landmarks[at],k)/palm;
-      const value=ramp(reach,o.fingerCurledPalms,o.fingerExtendedPalms);
-      extension[finger]=value;readable+=1;
+      if(!usablePoint(landmarks[at])){extension[finger]=null;reach[finger]=null;continue}
+      const palms=distance(landmarks[LM.WRIST],landmarks[at],k)/palm;
+      const value=ramp(palms,o.fingerCurledPalms,o.fingerExtendedPalms);
+      extension[finger]=value;reach[finger]=palms;readable+=1;
       lowest=Math.min(lowest,value);highest=Math.max(highest,value);
     }
-    return {extension,lowest,highest,readable};
+    return {extension,reach,lowest,highest,readable};
   }
 
   /* **Fermeture de main entière**, 0..1, ou `null` si aucun bout de doigt ne
@@ -813,7 +820,7 @@ const JarvisBarehandsCore=(function(){
     if(!(palm>1e-6))return null;
     // Les sept points sont là (`POSTURE_LANDMARKS`) : les quatre doigts se
     // lisent tous, `extension` ne porte donc aucun `null` de ce côté-ci.
-    const {extension,lowest,highest}=fingerExtensions(landmarks,k,palm,o);
+    const {extension,reach,lowest,highest}=fingerExtensions(landmarks,k,palm,o);
     const gap=distance(landmarks[LM.THUMB_TIP],landmarks[LM.INDEX_TIP],k)/palm;
     /* Même adoucissement que le C, et pour la même raison : une frontière nette
        ferait clignoter la posture d'un pouce posé pile dessus. */
@@ -836,7 +843,16 @@ const JarvisBarehandsCore=(function(){
     scores[GESTURE.OPEN_PALM]=contact?0
       :clamp(Math.min(lowest,ramp(gap,o.wakeGapMax-soft,o.wakeGapMax)),0,1);
     scores[GESTURE.FIST]=clamp(1-highest,0,1);
-    return {extension:Object.freeze(extension),gapPalms:gap,
+    return {extension:Object.freeze(extension),
+      /* La portée de chaque doigt depuis le poignet, **en paumes** — la même
+         grandeur que `wakeIndexMin`, donc celle que la Slice 08 compare à la
+         bande de réveil. `extension` en est le score de rampe : à 0 il dit
+         « en dessous », jamais « en dessous de combien ». */
+      reach:Object.freeze(reach),gapPalms:gap,
+      /* Nom trompeur conservé par compatibilité : c'est la paume en
+         **coordonnées normalisées de l'image** (poignet → base du majeur), pas
+         un rapport à elle-même. C'est elle qui convertit une mesure en paumes
+         vers la fraction d'image que le profil persiste. */
       palmPalms:palm,center:palmCenter(landmarks),scores:Object.freeze(scores)};
   }
 
@@ -1181,17 +1197,34 @@ const JarvisBarehandsCore=(function(){
   /* Les deux canaux de toutes les mains. Chaque main a les siens : deux mains
      pincent indépendamment (décision 12), et un canal ne sait rien de l'autre
      main. */
-  function createPinchIntentEngine(overrides){
+  function createPinchIntentEngine(overrides,deps){
     const o=options(overrides);
     /* Les surcharges **vivantes** : un réglage changé en cours de session doit
        aussi atteindre les mains qui apparaîtront ensuite, pas seulement celles
        qui sont déjà là. Une main neuve construite sur les surcharges d'origine
        aurait travaillé avec des seuils que l'écran n'affiche plus. */
     let live={...(overrides||{})};
+    /* **Le profil de calibration entre par ici** (Slice 08, décision 28 :
+       valeurs internes par main). Une fonction, pas une table : le bloc pur est
+       chargé seul par les tests node et ne peut pas lire le contrat, donc il ne
+       sait pas ce qu'est un profil — il sait seulement demander « quelles
+       surcharges pour cette main, sur ce canal ». Absente, rien ne change :
+       c'est exactement le moteur d'avant.
+
+       Les deux canaux partagent les noms `pressRatio`/`releaseRatio` mais sont
+       deux instances : donner au secondaire les seuils mesurés sur le majeur,
+       c'est lui passer d'autres valeurs sous les mêmes noms, sans clé
+       nouvelle. */
+    const handOverrides=deps&&typeof deps.handOverrides==='function'?deps.handOverrides:null;
+    const forHand=(handedness,channel)=>{
+      if(!handOverrides)return live;
+      const extra=handOverrides(handedness,channel);
+      return extra&&typeof extra==='object'?{...live,...extra}:live;
+    };
     const hands=new Map();
-    const make=()=>({at:null,channels:{
-      primary:createPinchChannel(PINCH_CHANNEL.PRIMARY,live),
-      secondary:createPinchChannel(PINCH_CHANNEL.SECONDARY,live)}});
+    const make=handedness=>({at:null,handedness:handedness||'unknown',channels:{
+      primary:createPinchChannel(PINCH_CHANNEL.PRIMARY,forHand(handedness,PINCH_CHANNEL.PRIMARY)),
+      secondary:createPinchChannel(PINCH_CHANNEL.SECONDARY,forHand(handedness,PINCH_CHANNEL.SECONDARY))}});
     return {
       /* `{hands:[{handTrackId, landmarks, x, y, palmX, palmY, anchorX,
          anchorY, stillness, quality}], now, aspect}` — tous en **pixels de la
@@ -1236,8 +1269,19 @@ const JarvisBarehandsCore=(function(){
              canal **au repos** pendant que l'autre tenait. */
           if(ratios.primary===null&&ratios.secondary===null)continue;
           const key=String(id);
-          if(!hands.has(key))hands.set(key,make());
+          const handedness=String((hand&&hand.handedness)||'unknown');
+          if(!hands.has(key))hands.set(key,make(handedness));
           const state=hands.get(key);
+          /* La latéralité est un **indice** qui peut changer en cours de piste
+             (architecture §2 : le vote se déplace). Quand elle change, les
+             seuils calibrés de cette main changent avec elle — sinon la main
+             garderait ceux de la latéralité qu'on lui avait d'abord prêtée,
+             jusqu'à ce qu'elle disparaisse. */
+          if(handOverrides&&state.handedness!==handedness){
+            state.handedness=handedness;
+            for(const channel of PINCH_CHANNELS)
+              state.channels[channel].configure(forHand(handedness,channel));
+          }
           state.at=now;
           /* Fermeture de main entière, lue une fois par main sur l'extension
              des doigts. `null` — pas un seul bout de doigt lisible — vaut 1,
@@ -1309,8 +1353,22 @@ const JarvisBarehandsCore=(function(){
         live={...live,...(partial||{})};
         Object.assign(o,options(live));
         for(const state of hands.values())
-          for(const channel of PINCH_CHANNELS)state.channels[channel].configure(live);
+          for(const channel of PINCH_CHANNELS)
+            state.channels[channel].configure(forHand(state.handedness,channel));
         return {...live};
+      },
+      /* Ce que **chaque main** applique vraiment, relisible sans reconfigurer.
+         Règle de la Slice 07 : un réglage qu'on ne peut relire que sur l'objet
+         qu'on vient d'écrire n'est pas un réglage qu'on peut dire branché — et
+         un profil par main l'est encore moins, puisque rien à l'écran ne le
+         montre. */
+      handOptionsFor(handedness){
+        const read={};
+        for(const channel of PINCH_CHANNELS){
+          const merged=options(forHand(String(handedness||'unknown'),channel));
+          read[channel]=Object.freeze({pressRatio:merged.pressRatio,releaseRatio:merged.releaseRatio});
+        }
+        return Object.freeze(read);
       },
     };
   }
@@ -2737,7 +2795,11 @@ const JarvisBarehandsCore=(function(){
        qu'une question, la posture de réveil, et `createWakeDetector` y répond
        déjà. */
     const gestures=createGestureEngine(deps.options);
-    const pinches=createPinchIntentEngine(deps.options);
+    const pinches=createPinchIntentEngine(deps.options,
+      /* Le profil de calibration, s'il y en a un (Slice 08). Le contrôleur ne
+         sait pas plus que le moteur ce qu'est un profil : il passe la question
+         telle quelle. */
+      {handOverrides:typeof deps.handOverrides==='function'?deps.handOverrides:null});
     let state=STATE.OFF,generation=0,landmarker=null,stream=null,video=null,frame=0,lastVideoTime=-1;
     /* Guetteur : dernière inférence de veille. Interaction : dernière image où
        une main exploitable a été vue, qui arme le retour en veille. */
@@ -2916,6 +2978,53 @@ const JarvisBarehandsCore=(function(){
       // Traits du dernier instant, pour la calibration et les diagnostics
       // (architecture §12) : lus après le survol, donc `hover` y est juste.
       features=out.tokens;
+      /* **La couture de la calibration (Slice 08), et la décision 32 en
+         structure.** Le parcours ne reçoit jamais de points : il reçoit, par
+         main, un enregistrement de **scalaires** construit ici. Il ne peut donc
+         pas persister une image, un point ni une vidéo — non parce qu'on le lui
+         interdit, parce qu'il n'en a jamais eu. La promesse est tenue par ce
+         qui traverse la couture, pas par la discipline de ce qui est derrière.
+
+         Rien n'est calculé tant que personne n'écoute : hors calibration le
+         budget d'images est exactement celui d'avant. */
+      if(typeof deps.onMeasure==='function'&&observed.length){
+        const k=aspect();
+        const samples=[];
+        for(const hand of observed){
+          const token=byId.get(String(hand.handTrackId));
+          const posture=handPosture(hand.landmarks,k,deps.options);
+          const tip=hand.landmarks[LM.INDEX_TIP];
+          samples.push({
+            handTrackId:hand.handTrackId,
+            handedness:String((token&&token.handedness)||'unknown'),
+            t:now,
+            /* Les deux rapports de pincement, la posture en C et la fermeture :
+               tout ce dont les étapes ont besoin, déjà réduit à des nombres. */
+            primaryRatio:pinchRatioFor(hand.landmarks,k,PINCH_CHANNEL.PRIMARY),
+            secondaryRatio:pinchRatioFor(hand.landmarks,k,PINCH_CHANNEL.SECONDARY),
+            cPose:cPoseScore(hand.landmarks,k,deps.options),
+            closure:handClosure(hand.landmarks,k,deps.options),
+            gapPalms:posture?posture.gapPalms:null,
+            indexReachPalms:posture&&posture.reach?posture.reach.index:null,
+            /* La paume en coordonnées normalisées de l'image : c'est elle qui
+               convertit une mesure en paumes vers la fraction d'image que le
+               profil persiste (`travelSlopNorm`). */
+            palmNorm:posture?posture.palmPalms:null,
+            // Position de la main dans l'**image**, 0..1, comme `reachNorm`.
+            xNorm:tip&&Number.isFinite(tip.x)?tip.x:null,
+            yNorm:tip&&Number.isFinite(tip.y)?tip.y:null,
+            /* Brut contre filtré : c'est **là** que se lit le tremblement, et
+               jamais sur `x`/`y` du jeton, qui se fige sur l'ancre pendant un
+               pincement et ne dit alors plus rien de la main. */
+            rawX:token?token.rawX:null,rawY:token?token.rawY:null,
+            filteredX:token?token.filteredX:null,filteredY:token?token.filteredY:null,
+            palmX:hand.palmX,palmY:hand.palmY,
+            quality:hand.quality,stillness:hand.stillness,
+            speedPxPerSec:token?token.speedPxPerSec:null,
+          });
+        }
+        deps.onMeasure({now,aspect:k,viewport:deps.viewport(),hands:samples});
+      }
       for(const click of out.clicks){
         deps.interaction.click(click);
         if(mine!==generation)return;  // le clic a éteint le mode test
@@ -3023,9 +3132,19 @@ const JarvisBarehandsCore=(function(){
        relire le moteur sans le reconfigurer au passage. Les trois que la
        Slice 07 pilote, plus les deux durées de cycle de vie qui participent
        aux mêmes paires dangereuses. */
-    const readOptions=()=>Object.freeze({sleepTimeoutMs:o.sleepTimeoutMs,
+      const readOptions=()=>Object.freeze({sleepTimeoutMs:o.sleepTimeoutMs,
       clickSlopPx:o.clickSlopPx,dragSlopPx:o.dragSlopPx,
-      wakeHoldMs:o.wakeHoldMs,wakeIntervalMs:o.wakeIntervalMs});
+      wakeHoldMs:o.wakeHoldMs,wakeIntervalMs:o.wakeIntervalMs,
+      /* Ce que le **profil** applique, par main : sans cette ligne, « profil
+         enregistré » et « profil appliqué » n'étaient pas distinguables, ce qui
+         est exactement la panne que `options()` a été ajouté pour empêcher à la
+         Slice 07 — et un profil par main est plus invisible encore, puisque
+         rien à l'écran ne le montre. */
+      hands:Object.freeze({
+        left:pinches.handOptionsFor('left'),
+        right:pinches.handOptionsFor('right'),
+        unknown:pinches.handOptionsFor('unknown'),
+      })});
     return {enable,activate,sleep,disable,state:()=>state,features:()=>features,configure,
       options:readOptions,
       /* Sortie sémantique du dernier instant : ce que la Slice 05 dessinera et
@@ -3065,6 +3184,13 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
      erreur d'insertion, pas un état d'exécution, et un aperçu qui se tairait
      poliment laisserait la décision 3 sans preuve qu'elle est tenue. */
   const TARGET=JarvisBarehandsTarget;
+  /* Parcours de calibration et coque de surimpression (Slice 08) :
+     `control_center_barehands_calibration.js`, inséré juste avant. Lu
+     **directement**, pour la même raison que l'aperçu de cible : un module de
+     page absent est une erreur d'insertion, pas un état d'exécution — et ici
+     elle casserait plus tard et plus mal, `JarvisBarehands.calibrate` étant
+     posé sur une surface **gelée** qu'on ne peut pas compléter après coup. */
+  const CALIB=JarvisBarehandsCalibration;
   /* Géométrie de la scène (`control_center_scene_interact.js`, inséré bien avant
      ce module) : `clampBox`, `MIN_SIZE`, `manipulateBox`, `rebaseManipulation`.
      Les décisions 18 et 19 y vivent, en **unités de scène**, et c'est là que les
@@ -3073,6 +3199,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
      pas un état d'exécution. */
   const GEOMETRY=JarvisSceneInteract;
   const API='/api/barehands';
+  const PROFILE_API='/api/barehands/profile';
   const ASSET_BASE='/barehands/assets';
   const TAB_ID='experimental';
   /* Ce qu'un jeton « survole » : l'élément cliquable le plus proche. */
@@ -3825,6 +3952,9 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
        écrit : `null` tant qu'on ne lui a pas parlé, pour que « on ne sait pas
        encore » ne se dessine pas comme « tout va bien ». */
     stored:null,
+    /* Le profil de calibration (Slice 08). `null` tant qu'on ne l'a pas relu :
+       « pas encore demandé » et « rien de calibré » ne se dessinent pas pareil. */
+    profile:null,profileError:'',
     status:{state:'off',code:'off',title:Core.MESSAGES.off.title,message:Core.MESSAGES.off.detail,error:null}};
 
   /* Une seule instance, nommée : la surimpression et l'interaction sont des
@@ -3833,7 +3963,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
      interroger. */
   const overlayView=createOverlay(),interactionView=createInteraction();
 
-  const controller=Core.createController({
+  const controllerDeps={
     getUserMedia:navigator.mediaDevices&&typeof navigator.mediaDevices.getUserMedia==='function'
       ?constraints=>navigator.mediaDevices.getUserMedia(constraints):null,
     /* Les durées du cycle de vie viennent du contrat, pas des défauts du
@@ -3849,10 +3979,30 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
        manipule (contrat § 4, `GESTURE_RULES`), sauf la main ouverte — une
        manipulation qu'on ne peut pas abandonner serait un piège. */
     captures:()=>interactionView.captures(),
+    /* **Le profil de calibration entre par ici** (Slice 08, décision 28). Le
+       moteur ne sait pas ce qu'est un profil : il demande « quelles surcharges
+       pour cette main, sur ce canal », et c'est le contrat qui répond.
+
+       Une hystérésis est rendue **par paire ou pas du tout** : mélanger un
+       seuil mesuré et un défaut du moteur peut inverser `press < release`, que
+       `options()` refuse à la construction — une calibration partielle
+       (décision 31) ferait alors tomber le moteur au lieu de retomber sur ses
+       défauts. La même règle est écrite côté serveur, où elle porte un code. */
+    handOverrides:(handedness,channel)=>{
+      const profile=view.profile;
+      if(!profile||!profile.calibrated)return null;
+      const press=channel===BH.PINCH_CHANNEL.SECONDARY?'secondaryPressRatio':'pressRatio';
+      const release=channel===BH.PINCH_CHANNEL.SECONDARY?'secondaryReleaseRatio':'releaseRatio';
+      const low=BH.profileValue(profile,handedness,press,null);
+      const high=BH.profileValue(profile,handedness,release,null);
+      if(low===null||high===null||!(low<high))return null;
+      return {pressRatio:low,releaseRatio:high};
+    },
     requestFrame:fn=>requestAnimationFrame(fn),cancelFrame:id=>cancelAnimationFrame(id),
     now:()=>performance.now(),viewport:()=>({width:window.innerWidth,height:window.innerHeight}),
     onStatus:onStatus,
-  });
+  };
+  const controller=Core.createController(controllerDeps);
 
   /* La cible se résout dans l'adaptateur DOM, qui est le seul à pouvoir lire
      la page — mais l'**intention** vient des moteurs, que le contrôleur
@@ -3932,16 +4082,59 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
      règle posée par la Slice 05 : quand un réglage stocké multiplie une
      constante du moteur, son défaut doit rendre le défaut du moteur, sans quoi
      le seul fait de brancher le champ serait une régression invisible. */
+  /* **La tolérance de déplacement, composée en un seul endroit.** Elle a
+     maintenant deux sources — le réglage `sensitivity` et la mesure
+     `travelSlopNorm` du profil — et les composer à deux endroits les ferait
+     diverger au premier changement.
+
+     `travelSlopNorm` est une **fraction de la largeur de l'image** : la
+     multiplier par la largeur de la fenêtre est ce qui règle le résidu de la
+     Slice 04, puisque le même geste rend alors le même nombre de pixels à
+     toutes les résolutions. Le rapport d'usine entre les deux tolérances est
+     conservé, donc l'invariant `clickSlopPx <= dragSlopPx` traverse intact —
+     exactement comme il traverse `sensitivity`. */
+  const RATIO=Core.DEFAULTS.dragSlopPx/Core.DEFAULTS.clickSlopPx;
+  function travelSlopFor(settings,profile){
+    /* La main **qui a été mesurée**, pas une moyenne : on prend la première
+       latéralité qui porte la mesure. Une moyenne de deux mains calibrées
+       séparément serait un nombre qu'aucune des deux n'a produit. */
+    let norm=null;
+    for(const handedness of BH.HANDEDNESSES){
+      const value=BH.profileValue(profile,handedness,'travelSlopNorm',null);
+      if(value!==null&&value!==undefined){norm=value;break}
+    }
+    const clickSlopPx=norm===null
+      ?Core.DEFAULTS.clickSlopPx
+      :Math.max(1,norm*(window.innerWidth||Core.DEFAULTS.clickSlopPx/0.008));
+    return {clickSlopPx:clickSlopPx/settings.sensitivity,
+      dragSlopPx:clickSlopPx*RATIO/settings.sensitivity,
+      calibrated:norm!==null};
+  }
   function applyToEngine(settings){
     interactionView.setTool(settings.tool);
     interactionView.showTargets(settings.targetPreview);
     interactionView.setAssistance(settings.assistance);
     overlayView.showDiagnostics(settings.diagnostics);
+    const travel=travelSlopFor(settings,view.profile);
     controller.configure({
       sleepTimeoutMs:settings.sleepTimeoutMs,
-      clickSlopPx:Core.DEFAULTS.clickSlopPx/settings.sensitivity,
-      dragSlopPx:Core.DEFAULTS.dragSlopPx/settings.sensitivity,
+      clickSlopPx:travel.clickSlopPx,
+      dragSlopPx:travel.dragSlopPx,
     });
+  }
+  /* Le profil change : c'est le **même** chemin que pour un réglage, parce
+     qu'un profil et un réglage se composent dans les mêmes deux nombres. Les
+     seuils par main, eux, n'ont pas besoin d'être poussés : le moteur les
+     redemande par `handOverrides` à chaque main qu'il construit ou
+     reconfigure. */
+  function applyProfile(profile){
+    view.profile=profile;
+    applyToEngine(view.settings);
+    /* Les mains **déjà suivies** reprennent leurs seuils : sans ce rappel, la
+       main qui est sous la caméra au moment où la calibration se termine
+       garderait les anciens jusqu'à ce qu'elle disparaisse — le profil aurait
+       l'air appliqué à l'écran et pas dans la main (règle de la Slice 07). */
+    controller.configure({});
   }
 
   /* Ce que le serveur vient de dire, appliqué et affiché. Une version de
@@ -3964,6 +4157,189 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
     if(view.enabled)controller.enable();
     else if(Core.isEngagedState(controller.state()))controller.disable();
     refreshPanel();
+  }
+
+  /* ------------------------------------------------------------------
+     Calibration (Slice 08, décisions 26 à 32).
+
+     La coque est construite **une fois** et partagée : c'est la décision 26,
+     et c'est ce que la Slice 09 reprendra pour le tutoriel. Le parcours, lui,
+     est construit à la demande — il ne tourne que quand l'utilisateur l'a
+     lancé (décision 27) et s'arrête quand il a fini (décision 30). */
+  let flowShell=null,calibration=null;
+  function calibrationFlow(){
+    if(calibration)return calibration;
+    flowShell=flowShell||CALIB.createFlowOverlay({document,
+      now:()=>Date.now(),
+      setInterval:(fn,ms)=>window.setInterval(fn,ms),
+      clearInterval:id=>window.clearInterval(id)});
+    calibration=CALIB.createCalibration({
+      overlay:flowShell,now:()=>Date.now(),
+      engineDefaults:Core.DEFAULTS,
+      viewport:()=>({width:window.innerWidth,height:window.innerHeight}),
+      save:payload=>saveProfile(payload),
+      onSaved:()=>{stopMeasuring();refreshPanel()},
+      onCancelled:()=>{stopMeasuring();refreshPanel()},
+      log:(level,message,detail)=>{
+        if(level==='warn')console.warn(message,detail);else console.info(message,detail);
+      },
+    });
+    return calibration;
+  }
+  /* La couture du contrôleur n'est branchée **que pendant** un parcours : hors
+     calibration, le budget d'images est exactement celui d'avant (décision 27,
+     et l'acquis mesuré de la Slice 02). */
+  function startMeasuring(){
+    /* La couture est **posée sur les dépendances du contrôleur**, pas dans une
+       branche qu'il évaluerait à chaque image : il teste `typeof
+       deps.onMeasure`, donc l'absence de parcours est l'absence de fonction,
+       et rien n'est calculé. Une fonction toujours présente qui rendrait tout
+       de suite aurait fait payer à chaque session le coût d'une
+       fonctionnalité que personne n'a lancée. */
+    controllerDeps.onMeasure=record=>{
+      const flow=calibration;
+      if(flow&&flow.isRunning())flow.feed(record);
+    };
+  }
+  function stopMeasuring(){delete controllerDeps.onMeasure}
+
+  async function loadProfile(){
+    try{
+      const state=await api(PROFILE_API);
+      view.profile=BH.normalizeProfile(fromProfileState(state));
+      view.profileError='';
+      applyProfile(view.profile);
+      console.info('[barehands] profil de calibration relu',
+        view.profile.calibrated?'calibré':'aucune mesure');
+    }catch(error){
+      /* RÈGLE ZÉRO : un profil qu'on n'a pas pu relire n'est pas un profil
+         vide. Le moteur garde ses défauts — ce qui est le bon repli — mais
+         l'écran le **dit**, sans quoi « pas calibré » et « pas lisible »
+         seraient la même phrase. */
+      view.profile=null;
+      view.profileError=`Profil de calibration illisible : ${error&&error.message||error}`;
+      console.warn('[barehands] profil de calibration illisible',error);
+    }
+    refreshPanel();
+  }
+  /* La route parle `snake_case`, le contrat `camelCase` : une seule table de
+     passage, comme `SETTINGS_WIRE_KEYS` pour les réglages. */
+  const PROFILE_WIRE=Object.freeze({pressRatio:'press_ratio',releaseRatio:'release_ratio',
+    secondaryPressRatio:'secondary_press_ratio',secondaryReleaseRatio:'secondary_release_ratio',
+    jitterPx:'jitter_px',travelSlopNorm:'travel_slop_norm',reachNorm:'reach_norm',quality:'quality'});
+  function fromProfileState(state){
+    const source=state&&typeof state==='object'?state:{};
+    const hands={};
+    for(const handedness of BH.HANDEDNESSES){
+      const given=(source.hands&&source.hands[handedness])||{};
+      const hand={};
+      for(const key of Object.keys(PROFILE_WIRE))hand[key]=given[PROFILE_WIRE[key]];
+      hands[handedness]=hand;
+    }
+    return {schemaVersion:source.schema_version,calibrated:source.calibrated,
+      updatedAt:source.updated_at,hands,stages:source.stages};
+  }
+  function toProfileWire(payload){
+    const hands={};
+    for(const handedness of BH.HANDEDNESSES){
+      const given=(payload.hands&&payload.hands[handedness])||{};
+      const hand={};
+      for(const key of Object.keys(PROFILE_WIRE))hand[PROFILE_WIRE[key]]=given[key];
+      hands[handedness]=hand;
+    }
+    return {schema_version:payload.schemaVersion,updated_at:payload.updatedAt,
+      hands,stages:payload.stages};
+  }
+  async function saveProfile(payload){
+    const state=await api(PROFILE_API,{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(toProfileWire(payload))});
+    view.profile=BH.normalizeProfile(fromProfileState(state));
+    view.profileError='';
+    applyProfile(view.profile);
+    if(typeof toast==='function')
+      toast({title:'Profil de calibration enregistré',
+        sub:view.profile.calibrated?'Bare Hands utilise vos mesures.'
+          :'Aucune mesure retenue : Bare Hands garde ses valeurs d’usine.',
+        kind:view.profile.calibrated?'ok':'warn',ms:5000});
+    return view.profile;
+  }
+  async function resetProfile(){
+    const ok=typeof confirmDialog==='function'?await confirmDialog({
+      title:'Réinitialiser le profil de calibration ?',
+      lines:['Bare Hands reviendra à ses seuils d’usine pour toutes les mains.',
+        'Les réglages de l’onglet ne sont pas touchés.'],
+      confirmLabel:'Réinitialiser'}):true;
+    if(!ok)return null;
+    try{
+      const state=await api(PROFILE_API,{method:'DELETE'});
+      view.profile=BH.normalizeProfile(fromProfileState(state));
+      view.profileError='';
+      applyProfile(view.profile);
+      console.info('[barehands] profil de calibration réinitialisé');
+      if(typeof toast==='function')
+        toast({title:'Profil réinitialisé',sub:'Bare Hands est revenu à ses seuils d’usine.',kind:'ok',ms:4000});
+    }catch(error){
+      view.profileError=`Réinitialisation impossible : ${error&&error.message||error}`;
+      console.warn('[barehands] profil non réinitialisé',error);
+      if(typeof toast==='function')
+        toast({title:'Profil non réinitialisé',sub:String(error&&error.message||error),kind:'bad',ms:7000});
+    }
+    refreshPanel();
+    return view.profile;
+  }
+
+  /* **Le point d'entrée du parcours**, appelé par le bouton *et* par la voix
+     (canal de commandes, Slice 12). Il **confirme** en résolvant `{ok:true}`,
+     faute de quoi le canal refuse `barehands_flow_unconfirmed` et JARVIS dit à
+     l'utilisateur que ça n'a pas démarré. Il confirme le **démarrage**, pas la
+     fin : l'échéance du canal est de trois secondes et une calibration en
+     prend trente.
+
+     Les deux refus possibles sont rendus `{ok:false, code}` — le canal les
+     traduit en « n'a pas confirmé », ce qui est vrai — **et** dits à l'écran,
+     parce que c'est le seul endroit où leur cause exacte survit. */
+  async function startCalibration(){
+    if(!view.settings.calibrationEnabled){
+      const message='La calibration est désactivée dans les réglages Bare Hands. Cochez « Proposer la calibration » pour la relancer.';
+      view.error=message;console.warn('[barehands] calibration refusée (désactivée)');
+      if(typeof toast==='function')
+        toast({title:'Calibration désactivée',sub:message,kind:'warn',ms:6000});
+      refreshPanel();
+      return {ok:false,code:'barehands_calibration_disabled',reason:message};
+    }
+    const flow=calibrationFlow();
+    if(flow.isRunning())return flow.start();
+    /* **L'interrupteur appartient à l'utilisateur**, et cette porte est aussi
+       celle de la voix. Le § 12 garde délibérément `enable`/`disable` hors de
+       la table des commandes pour cette raison ; un parcours qui allumerait
+       Bare Hands au passage rendrait la décision contournable par un autre
+       nom. On refuse donc, en disant quoi faire — plutôt que d'ouvrir une
+       caméra que personne n'a rallumée. */
+    if(!view.enabled){
+      const message='Bare Hands est éteint : cochez « Activer Barehands » avant de lancer la calibration.';
+      view.error=message;console.warn('[barehands] calibration refusée (éteint)');
+      if(typeof toast==='function')
+        toast({title:'Calibration impossible',sub:message,kind:'warn',ms:6000});
+      refreshPanel();
+      return {ok:false,code:'barehands_calibration_disabled',reason:message};
+    }
+    /* Réveiller, en revanche, est exactement ce que la voix sait déjà faire
+       (`activate` est dans la table) : calibrer demande des mains vivantes. */
+    try{await setAwake(true)}
+    catch(_error){/* `setAwake` avale ses erreurs dans `view.error` */}
+    if(lifecycle()!==BH.LIFECYCLE.ACTIVE){
+      const message=view.error||'Bare Hands n’a pas pu activer la caméra : la calibration a besoin de voir vos mains.';
+      if(typeof toast==='function')
+        toast({title:'Calibration impossible',sub:message,kind:'bad',ms:8000});
+      console.warn('[barehands] calibration refusée (caméra)',view.status&&view.status.code);
+      refreshPanel();
+      return {ok:false,code:'barehands_calibration_no_camera',reason:message};
+    }
+    startMeasuring();
+    const started=flow.start();
+    refreshPanel();
+    return started;
   }
 
   /* Écrire un réglage : appliqué **tout de suite** au moteur (la main suit
@@ -4204,6 +4580,80 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
     </section>`;
   }
 
+  /* ------------------------------------------------------------------
+     Calibration (Slice 08, décisions 26 à 32), sa propre section.
+
+     **Décision 27 : optionnelle et explicite.** Il y a un bouton, et rien ne
+     se mesure avant qu'on l'ait pressé — ni au démarrage, ni en tâche de fond.
+     La même porte sert à la voix (canal de commandes, Slice 12).
+
+     Ce que l'écran doit dire, et qui n'existait pas : **ce qui est calibré**.
+     « Profil enregistré » sans dire quoi laisse l'utilisateur incapable de
+     savoir si sa main gauche est mesurée, si une étape a échoué, ou si ce
+     qu'il ressent vient de ses mesures ou des valeurs d'usine. */
+  const STAGE_LABEL=Object.freeze({
+    neutral:'Repos',c_pose:'Posture de réveil',
+    pinch_primary:'Pincement pouce-index',pinch_secondary:'Pincement pouce-majeur',
+    aim:'Visée',drag:'Glissement',resize:'Deux mains',
+  });
+  const MEASURE_LABEL=Object.freeze({
+    pressRatio:'seuil de pincement',releaseRatio:'seuil de relâchement',
+    secondaryPressRatio:'seuil de clic droit',secondaryReleaseRatio:'relâchement du clic droit',
+    jitterPx:'tremblement au repos',travelSlopNorm:'tolérance clic/glissement',
+    reachNorm:'portée dans l’image',quality:'qualité de la mesure',
+  });
+  function handSummary(profile,handedness){
+    const measured=BH.PROFILE_MEASURED_KEYS
+      .filter(key=>BH.profileValue(profile,handedness,key,null)!==null)
+      .map(key=>MEASURE_LABEL[key]||key);
+    return measured;
+  }
+  /* L'état du profil seul : c'est ce que `refreshPanel` redessine, et la
+     section entière n'est écrite qu'au premier dessin. Redessiner la section
+     dans son propre conteneur l'imbriquerait dans elle-même à chaque
+     rafraîchissement. */
+  function profileStateHtml(){
+    const profile=view.profile;
+    const failed=profile?BH.STAGES.filter(stage=>
+      profile.stages[stage].status===BH.STAGE_STATUS.FAILED):[];
+    /* Trois états, trois phrases — et jamais la même pour deux causes
+       différentes : on ne sait pas encore, on sait qu'il n'y a rien, on sait
+       ce qu'il y a. */
+    const state=view.profileError
+      ?`<div class="notice bad"><strong>Profil illisible</strong><div class="hint">${esc(view.profileError)} Bare Hands utilise ses seuils d’usine en attendant.</div></div>`
+      :profile===null
+        ?'<div class="hint">Lecture du profil…</div>'
+        :!profile.calibrated
+          ?'<div class="hint">Aucune mesure enregistrée : Bare Hands utilise ses seuils d’usine, les mêmes pour tout le monde.</div>'
+          :`<div class="hint">Calibré${profile.updatedAt?` le ${esc(new Date(profile.updatedAt).toLocaleString('fr-FR'))}`:''}.</div>
+             <ul class="hint" style="padding-left:18px;margin:8px 0 0">${
+               BH.HANDEDNESSES.map(handedness=>{
+                 const measured=handSummary(profile,handedness);
+                 return measured.length
+                   ?`<li><strong>${esc(HAND_LABEL[handedness])}</strong> : ${esc(measured.join(', '))}</li>`:'';
+               }).join('')}</ul>
+             ${failed.length?`<div class="hint" style="margin-top:8px">Étapes non mesurées, qui gardent les valeurs d’usine : ${
+               esc(failed.map(stage=>STAGE_LABEL[stage]||stage).join(', '))}.</div>`:''}`;
+    return state;
+  }
+  function calibrationHtml(){
+    const disabled=!view.settings.calibrationEnabled;
+    return `<section class="bh-section" id="barehandsCalibration">
+      <h3>Calibration</h3>
+      <div class="hint" style="margin-bottom:12px">Une mesure courte qui adapte les seuils de Bare Hands à <strong>votre</strong> main. Elle ne démarre que si vous la lancez, ne conserve <strong>aucune image ni vidéo</strong> — seulement des nombres dérivés — et chaque étape peut être passée : ce qui n’est pas mesuré garde la valeur d’usine.</div>
+      <div id="barehandsProfile">${profileStateHtml()}</div>
+      <div class="field inline" style="align-items:center;gap:10px;margin-top:14px">
+        <button type="button" class="action small primary" id="barehandsCalibrate" ${disabled||view.busy?'disabled':''}
+          ${disabled?`title="${esc('Cochez « Proposer la calibration » ci-dessus pour l’activer.')}"`:''}>Calibrer…</button>
+        <button type="button" class="action small" id="barehandsProfileReset" ${view.busy||!(view.profile&&view.profile.calibrated)?'disabled':''}>Effacer le profil</button>
+        <div class="hint">${disabled
+          ?'La calibration est désactivée dans les réglages ci-dessus.'
+          :'La caméra s’allume au lancement et le parcours prend environ une minute. Vous voyez les mesures avant qu’elles soient enregistrées.'}</div>
+      </div>
+    </section>`;
+  }
+  const HAND_LABEL=Object.freeze({left:'Main gauche',right:'Main droite',unknown:'Main non étiquetée'});
+
   const seconds=ms=>`${Math.round(Number(ms)/1000)} s`;
   /* La portée réelle de l'assistance, en pixels, à côté du facteur : « 0,5 »
      ne dit rien, « 24 px » dit ce que la main gagne. Le facteur 2 est celui du
@@ -4260,13 +4710,14 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
         'Garde la calibration optionnelle et explicite : Bare Hands ne mesurera jamais votre main sans que vous l’ayez lancée.')}
       ${checkHtml('tutorialSeen','Tutoriel déjà vu',
         'Décochez pour que le tutoriel soit reproposé la prochaine fois qu’il existera.')}
-      <div class="notice info"><strong>Calibration et tutoriel : les parcours ne sont pas encore installés</strong>
-        <div class="hint">Les deux réglages ci-dessus sont enregistrés et attendent le parcours qui les lira. D’ici là, Bare Hands utilise ses seuils d’usine et n’ouvre aucun tutoriel — dit ici plutôt que promis par un bouton qui ne ferait rien.</div></div>
+      <div class="notice info"><strong>Le tutoriel n’est pas encore installé</strong>
+        <div class="hint">« Tutoriel déjà vu » est enregistré et attend le parcours qui le lira (Slice 09). D’ici là, aucun tutoriel ne s’ouvre — dit ici plutôt que promis par un bouton qui ne ferait rien.</div></div>
       <div class="field inline" style="align-items:center;gap:10px;margin-top:14px">
         <button type="button" class="action small" id="barehandsReset" ${view.busy?'disabled':''}>Réinitialiser les réglages</button>
-        <div class="hint">Rend aux sept réglages ci-dessus et à l’outil leur valeur d’usine. L’interrupteur ci-dessus n’y touche pas : réinitialiser n’éteint pas la caméra. Aucun profil de calibration n’existe encore à effacer.</div>
+        <div class="hint">Rend aux sept réglages ci-dessus et à l’outil leur valeur d’usine. L’interrupteur ci-dessus n’y touche pas : réinitialiser n’éteint pas la caméra. Le profil de calibration a son propre bouton ci-dessous : ce sont deux choses distinctes.</div>
       </div>
-    </section>`;
+    </section>
+    ${calibrationHtml()}`;
   }
 
   function panelHtml(){
@@ -4329,6 +4780,13 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
     }
     const reset=document.getElementById('barehandsReset');
     if(reset)reset.addEventListener('click',resetSettings);
+    /* Décision 27 : la calibration a une **porte**, et c'est la même que celle
+       de la voix. Un bouton qui appellerait autre chose que `startCalibration`
+       serait une seconde implantation du parcours. */
+    const calibrate=document.getElementById('barehandsCalibrate');
+    if(calibrate)calibrate.addEventListener('click',()=>{startCalibration()});
+    const wipe=document.getElementById('barehandsProfileReset');
+    if(wipe)wipe.addEventListener('click',resetProfile);
     bindWake();
   }
 
@@ -4409,6 +4867,12 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
     if(status)status.innerHTML=statusHtml();
     const assets=document.getElementById('barehandsAssets');
     if(assets)assets.innerHTML=assetsHtml();
+    const profile=document.getElementById('barehandsProfile');
+    if(profile)profile.innerHTML=profileStateHtml();
+    const calibrate=document.getElementById('barehandsCalibrate');
+    if(calibrate)calibrate.disabled=!view.settings.calibrationEnabled||view.busy;
+    const wipe=document.getElementById('barehandsProfileReset');
+    if(wipe)wipe.disabled=view.busy||!(view.profile&&view.profile.calibrated);
     refreshTools();refreshSettings();
   }
 
@@ -4515,6 +4979,18 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
        cas un refus nommé, jamais un silence ni un repli sur « pointeur ». */
     tools:()=>BH.describeTools(),
     tool:value=>value===undefined?view.settings.tool:saveSettings({tool:value}),
+    /* **Le parcours de calibration** (Slice 08, décisions 26-32). Même porte
+       pour le bouton et pour la voix : le canal de commandes appelle ceci et
+       exige une **confirmation** (`{ok:true}`), sans quoi il refuse
+       `barehands_flow_unconfirmed` (contrat § 12). */
+    calibrate:()=>startCalibration(),
+    /* Le profil tel qu'il est appliqué, et ce que le moteur en fait. Les deux,
+       parce que « profil enregistré » et « profil appliqué » ne sont pas la
+       même chose — c'est la règle que `engine()` a posée à la Slice 07. */
+    profile:()=>view.profile,
+    calibration:()=>Object.freeze({running:!!(calibration&&calibration.isRunning()),
+      step:calibration?calibration.stepId():null,
+      travel:travelSlopFor(view.settings,view.profile)}),
     /* Diagnostic sans caméra : poser un jeton et cliquer depuis la console.
        Les deux **instances vivantes** sont là aussi — ce sont elles que le
        contrôleur tient, donc les seules par lesquelles `targets()` et la
@@ -4526,6 +5002,10 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
   setTimeout(()=>{
     installSettingsTab();
     api(API).then(applyServerState).catch(()=>{});
+    /* Le profil est relu au démarrage, comme les réglages : sans lui, la
+       première session après une calibration repartirait sur les seuils
+       d'usine, et « enregistré » n'aurait rien voulu dire. */
+    loadProfile();
   },0);
   window.addEventListener('pagehide',()=>{if(Core.isEngagedState(controller.state()))controller.disable()});
 })();

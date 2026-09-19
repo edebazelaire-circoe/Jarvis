@@ -47,6 +47,7 @@ RUNTIME = ROOT / "jarvis" / "runtime"
 SCRIPT = RUNTIME / "control_center_barehands.js"
 CONTRACTS = RUNTIME / "control_center_barehands_contracts.js"
 TARGET = RUNTIME / "control_center_barehands_target.js"
+CALIBRATION = RUNTIME / "control_center_barehands_calibration.js"
 SCENE_INTERACT = RUNTIME / "control_center_scene_interact.js"
 SCENE_PAGE = RUNTIME / "control_center_scene_page.js"
 PAGE_HTML = RUNTIME / "control_center.html"
@@ -59,6 +60,7 @@ def run_node(tmp_path: Path, source: str) -> object:
     script = tmp_path / "barehands-interaction.cjs"
     script.write_text(
         f"const SCRIPT_PATH={json.dumps(str(SCRIPT))};\n"
+        f"const CALIBRATION_PATH={json.dumps(str(CALIBRATION))};\n"
         f"const TARGET_PATH={json.dumps(str(TARGET))};\n"
         f"const SCENE_INTERACT_PATH={json.dumps(str(SCENE_INTERACT))};\n"
         f"const B=require(SCRIPT_PATH);\n"
@@ -1654,6 +1656,9 @@ global.WheelEvent=class{constructor(type,init){Object.assign(this,init||{});this
 global.JarvisBarehandsContracts=C;
 global.window.JarvisBarehandsContracts=C;
 global.JarvisBarehandsTarget=require(TARGET_PATH);
+/* Parcours de calibration (Slice 08) : la page l'insere entre les contrats
+   et le pointeur, qui le lit pour poser `calibrate()` sur sa surface gelee. */
+global.JarvisBarehandsCalibration=require(CALIBRATION_PATH);
 /* Slice 06 : la géométrie de la scène est insérée bien avant le pointeur. */
 global.JarvisSceneInteract=G;
 /* Et la scène publie ses cadres manipulables — la vraie couture est lue par
