@@ -108,12 +108,21 @@ Durable discoveries for later Slices:
   into `createController({options:…})`. Any Slice adding a shared constant to
   the core owes that test a line.
 - **The wake posture is two palm-relative measurements, not a classifier.**
-  Thumb-index gap in `[0.46, 0.85]` palms (the floor sits above the pinch
-  `releaseRatio` of 0.42 so a pinch in progress can never wake) and index reach
-  above 1.35 palms from the wrist (which is what rejects a fist — its
-  thumb-index gap lands inside the band). Both ends soften over `wakeSoft` of
-  the range, so a borderline posture scores low and simply never completes its
-  hold instead of flickering. Slice 08's calibration can tune all four.
+  Thumb-index gap (its floor sits above the pinch `releaseRatio` of 0.42 so a
+  pinch in progress can never wake) and index reach from the wrist (which is
+  what rejects a fist — its thumb-index gap lands inside the band). Both ends
+  soften over `wakeSoft` of the range, so a borderline posture scores low and
+  simply never completes its hold instead of flickering.
+  **`wakeGapMin` 0.46 / `wakeGapMax` 0.85 / `wakeIndexMin` 1.35 are the score's
+  zero-crossings, not the wake thresholds** — this LOG, the contract doc and
+  Slice 02's commit message all quoted them as if they were. Because the ends
+  soften and `wakeScore` 0.5 must be sustained, the band that actually holds is
+  **gap ∈ [0.499, 0.811], reach ≥ 1.485** — `wakeGapMin + s·wakeScore` …
+  `wakeGapMax − s·wakeScore` and `wakeIndexMin·(1 + wakeSoft·wakeScore)`, with
+  `s = (wakeGapMax − wakeGapMin)·wakeSoft = 0.078`. **That is what Slice 08
+  calibrates**; the reach figure was 10 % off. A sweep re-derives it and
+  compares it to the published table
+  (`test_the_band_that_actually_sustains_a_hold_is_the_one_documented`).
 - **SLEEP is cheap by cadence, not by a cheaper model.** The controller keeps
   one RAF loop, but in SLEEP `detectForVideo` runs at most once per
   `wakeIntervalMs` (200 ms → 5 fps), and nothing else runs: no smoothing, no
@@ -228,3 +237,87 @@ Durable discoveries for later Slices:
 Tests, foreground chunks: baseline 1 (barehands + scene logic) **124 passed**
 (122 before, two new test functions); baseline 2 (control centre + settings)
 **221 passed**. No regression; Slice 02's 13 lifecycle tests untouched.
+
+## 2026-09-19 — Slice 02 rework, implementation agent
+
+- **A hold detector must never credit time it did not observe.** `dt` was the
+  unbounded wall-clock gap between the two most recent `update()` calls, so
+  **two held samples 60 s apart completed the one-second hold** and Bare Hands
+  entered ACTIVE and started firing synthetic clicks. Two live routes, both
+  reachable without a bug anywhere else: a frozen camera (the watcher
+  early-returns on `time === lastVideoTime` *before* calling the detector, so
+  the was-holding flag survives the whole stall) and a backgrounded tab or a
+  closed lid (RAF stops, `performance.now()` does not). **The fix is to read a
+  gap beyond `wakeGraceMs` as the loss it is, not to clamp the credit at
+  `wakeGraceMs`.** Clamping neutralises the 60 s case and passes every test,
+  but it still pays for unobserved time, it lets a hold be assembled from
+  samples minutes apart, and it still cannot draw decision 5's ring. The
+  invariant above `createWakeDetector` already said *d'affilée* — consecutively
+  — and a gap and an explicitly-not-held sample are the same absence of
+  evidence, so they get the same tolerance. **Any future hold/dwell/long-press
+  in this repo inherits this**: bound the clock against observation, not
+  against a number.
+- **Two overlapping mechanisms, on purpose.** The detector bound catches a
+  stopped frame loop; the watcher now declares a stalled video clock instead of
+  returning in silence, so the ring keeps telling the truth during a freeze
+  rather than sitting on a progress nothing feeds. Neither can be stuck the way
+  the other can.
+- **The published wake thresholds were the score's zero-crossings.** The commit
+  message, the contract doc and this LOG all quoted `wakeGapMin` 0.46 /
+  `wakeGapMax` 0.85 / `wakeIndexMin` 1.35 as the wake band. They are where the
+  score reaches **zero**. Because both ranges soften over `wakeSoft` and
+  `wakeScore` 0.5 must be sustained, the band that actually holds is
+  **gap ∈ [0.499, 0.811], reach ≥ 1.485** — `wakeGapMin + s·wakeScore` …
+  `wakeGapMax − s·wakeScore` and `wakeIndexMin·(1 + wakeSoft·wakeScore)` with
+  `s = (wakeGapMax − wakeGapMin)·wakeSoft`. **Slice 08 calibrates that band**,
+  and a sweep now re-derives it and compares it to the published table.
+- **`!== OFF` was two questions wearing one predicate.** "Bare Hands works"
+  (`isLiveState` / the contract's `isLiveLifecycle`) excludes ERROR — otherwise
+  switching off after a refused camera announces « caméra libérée » over
+  « Caméra refusée ». "Something is held and must be released"
+  (`isEngagedState`) **includes STARTING**, because cancelling an in-flight
+  start is exactly what releases the camera that is on its way. Converting the
+  three browser call sites to the live predicate, as the review suggested,
+  would have silently broken the audited 18-path camera release. Two names, two
+  jobs.
+- **A name that promises validation must perform it.** `usableHand` checked
+  `landmarks.length > 9` and never looked at the entries, so one undefined
+  landmark threw inside `cPoseScore` and `tick`'s catch converted it to
+  `tracking_failed` — full teardown, ERROR, 9 s toast, for a single frame. It
+  also disagreed with the token path (`> 8`), while decision 7's 30 s timer
+  re-arms on tokens: two definitions of "usable hand" in one controller. One
+  `usableLandmarks` now, validating the four points actually read.
+- **The overlay is not the tracker.** `teardown` wrapped every consumer call;
+  the lifecycle transitions did not, so a throwing overlay surfaced as
+  `tracking_failed` / `start_failed` — a cause invented in place of the real
+  one. It carries `overlay_failed` now, and the contract owns the whole failure
+  vocabulary (`FAILURE_CODES` / `isFailureCode`) with parity tested in both
+  directions, so a code cannot be published without being documented.
+- **A figure promised on screen belongs in the contract.** `wakeIntervalMs`
+  200 (the "5 images/s") lived only in the engine defaults, and the budget test
+  passed it as an explicit override — mutating the default to 500 left all 13
+  tests green. `WAKE_INTERVAL_MS` joined `SLEEP_TIMEOUT_MS` / `WAKE_HOLD_MS`,
+  the panel computes its sentence from it, and the default is covered.
+- **`settings.sleepTimeoutMs` is exposed and inert.** Normalised and persisted,
+  but the controller takes `SLEEP_TIMEOUT_MS`. **Slice 07 owns settings** and
+  must wire it; until then nothing may assume it is live. Recorded in the
+  contract, the module and the settings table.
+- **`getUserMedia` cannot have a deadline** — behind it is a permission prompt
+  a human takes as long as they like to answer. So STARTING gets the other half
+  of Rule Zero instead: it says how long it has been waiting and that the
+  switch above cancels it. It no longer renders as « Éteint » under a button
+  that returned `starting` without awaiting the start and settled in SLEEP.
+- **Untouched on purpose**, per the review's verified-sound list: the 18-path
+  camera release, the SLEEP frame budget, the wake-once latch, the
+  un-farmable grace window, the 30 s ordering, ERROR semantics, and the two
+  strengthened pointer tests. Also carried forward, not fixed: SLEEP's 60 Hz
+  RAF loop and the per-frame `viewport()` layout read.
+- **Still open for Slice 11 runtime validation**: a flat hand with fingers
+  together and the thumb adducted may land inside the effective band and wake
+  after a genuine second. The synthetic fixture is axis-aligned at aspect 1;
+  the device runs 640×480.
+
+Tests, foreground chunks: baseline 1 (barehands + scene logic) **129 passed**
+(124 before, five new test functions); baseline 2 (control centre + settings)
+**221 passed**. Each new test was mutation-checked against the defect it
+targets.

@@ -276,7 +276,26 @@ stable `barehands_*`, rien d'écrit). Événements : `settings.barehands`,
 
 Activé, la page ouvre la webcam et suit les mains **dans le navigateur**
 (MediaPipe Hand Landmarker, WASM + modèle `hand_landmarker.task`), sans service
-cloud ni serveur Barehands. Chaque main détectée affiche un jeton rond qui suit
+cloud ni serveur Barehands. Mais **allumer, c'est guetter** : depuis la Slice 02
+le cycle de vie vaut `off` → `sleep` → `active` (décision 4) et l'interrupteur
+mène en **veille**, jamais directement à l'interaction. Aucun jeton, aucun
+survol et aucun clic tant que l'utilisateur n'a pas réveillé. Contrat complet :
+`docs/barehands-contracts.md` § 1.
+
+**Veille (`sleep`)** — la caméra reste ouverte mais n'alimente qu'un guetteur
+cadencé à **5 images par seconde** (une inférence toutes les 200 ms,
+`WAKE_INTERVAL_MS`) ; entre deux, la boucle d'images ne fait qu'une comparaison
+d'horodatage. Pastille `MAINS · VEILLE` en bas à gauche, `MAINS · VEILLE 40 %`
+dès qu'une main est vue. Le réveil est la **posture en C** (décision 5) : pouce
+et index écartés sans se toucher, index déplié, **tenue une seconde**
+(`WAKE_HOLD_MS`). Un anneau de progression circulaire se remplit autour de la
+main et dit combien de la seconde est acquise ; relâcher avant la fin annule.
+Un trou du traqueur de moins de 400 ms (`wakeGraceMs`) est pardonné ; un trou
+plus long remet la progression à zéro. **Le temps non observé ne compte jamais** :
+une caméra figée, un onglet passé en arrière-plan ou un écran rabattu ne
+crédient rien du maintien, même si la posture était là avant et après.
+
+**Interaction (`active`)** — chaque main détectée affiche un jeton rond qui suit
 le bout de l'index (image vue en miroir, 12 % de bord ignoré pour atteindre les
 coins). Retour visuel : le jeton grossit et l'élément visé est cerné au survol ;
 l'anneau se remplit pendant le rapprochement pouce-index et le jeton se fige
@@ -287,12 +306,40 @@ fermeture de fenêtre. Seuils (`JarvisBarehandsCore.DEFAULTS`) : pincé sous 0,2
 de la taille de paume, relâché au-dessus de 0,42 (hystérésis), deux images de
 confirmation, 450 ms d'anti-rebond, un seul clic par pincement. Le jeton suit
 la couleur d'accent du thème (`--omega-accent` sous Omega, `--accent` sinon).
+Sans main exploitable pendant **30 secondes** (`SLEEP_TIMEOUT_MS`, décision 7),
+l'interaction retourne d'elle-même en veille — la caméra n'est pas rendue, le
+guetteur reprend. Le délai est jugé **avant** la lecture de la vidéo : une
+caméra figée rendort aussi au lieu de rester active pour toujours.
 
-Arrêt : interrupteur coupé, caméra refusée, absente, occupée ou débranchée,
-modèle absent, erreur du suivi, fermeture de la page. Dans tous les cas, un seul
-chemin (`teardown`) arrête les pistes caméra, ferme le modèle, retire la vidéo,
-les jetons et le survol ; un toast et l'onglet disent pourquoi. Un démarrage
-encore en vol quand on éteint rend la caméra dès qu'elle arrive.
+**Panne (`error`)** — caméra refusée, absente, occupée ou débranchée, modèle
+absent, suivi ou surimpression en échec. C'est un état distinct d'`off` : il dit
+« arrêté sans l'avoir demandé », là où `off` dit « l'utilisateur l'a voulu ».
+Comme `off` il ne tient rien — caméra, modèle, vidéo et boucle d'images sont
+rendus **avant** qu'il soit publié — et le motif précis vit à côté de l'état,
+dans le code du statut (`camera_denied`, `camera_busy`, `camera_missing`,
+`camera_ended`, `camera_unsupported`, `assets_missing`, `tracking_failed`,
+`overlay_failed`, `start_failed`), jamais aplati dedans. On en sort en
+rallumant.
+
+**Bandeau de cycle de vie**, sous l'interrupteur de l'onglet : il nomme l'état
+courant (`Éteint`, `Démarrage…`, `En veille`, `Actif`, `Interrompu · <code>`) et
+porte le bouton qui en change — « Allumer et activer », « Activer
+l'interaction », « Mettre en veille », « Réessayer ». Pendant le démarrage il
+affiche le temps écoulé et se désarme : la sortie est l'interrupteur du dessus,
+qui annule un démarrage encore en vol. C'est le second chemin d'activation exigé
+par la décision 6 ; la voix empruntera le même (Slice 12). Depuis la console :
+`JarvisBarehands.activate()` (allume si besoin, puis réveille),
+`JarvisBarehands.sleep()` (rendort sans rendre la caméra),
+`JarvisBarehands.lifecycle()` (l'état lu dans le vocabulaire du contrat) et
+`JarvisBarehands.state()` pour le détail.
+
+Arrêt **voulu** : interrupteur coupé, `pagehide`. L'état devient `off` et le
+toast dit « Barehands arrêté ». Arrêt **subi** : caméra refusée, absente,
+occupée ou débranchée, modèle absent, erreur du suivi. L'état devient `error`,
+le toast reste à l'écran 9 s et porte la cause réelle. Dans les deux cas, un
+seul chemin (`teardown`) arrête les pistes caméra, ferme le modèle, retire la
+vidéo, les jetons et le survol ; un toast et l'onglet disent pourquoi. Un
+démarrage encore en vol quand on éteint rend la caméra dès qu'elle arrive.
 
 Assets : non versionnés, ce sont ceux que `scripts/bootstrap_third_party.py` a
 vendorisés sous `third_party/barehands/vendor` (MediaPipe Tasks Vision 0.10.14,
@@ -323,20 +370,47 @@ principal de la page.
    `http://127.0.0.1:17654/` dans Chrome. Depuis un worktree, en parallèle d'un
    JARVIS déjà lancé : `JARVIS_UI_PORT=17655`, `JARVIS_VISUALIZER_ENABLED=0`,
    `JARVIS_BAREHANDS_VENDOR_DIR=<dépôt principal>\third_party\barehands\vendor`.
-3. SET → Expérimental → cocher l'interrupteur. Attendu : invite caméra, puis
-   toast « Barehands actif » et pastille `MAINS · TEST` en bas à gauche.
-4. Montrer une main : un jeton suit l'index ; deux mains, deux jetons.
+3. SET → Expérimental → cocher l'interrupteur. Attendu : invite caméra, le
+   bandeau passe par « Démarrage… » avec son compteur de secondes, puis toast
+   **« Barehands en veille »** et pastille **`MAINS · VEILLE`** en bas à gauche.
+   Le bandeau lit « Cycle de vie : **En veille** », bouton « Activer
+   l'interaction ». **Aucun jeton ne doit apparaître**, même en agitant les
+   mains : la veille guette, elle ne pointe pas.
+4. **Réveil par la posture (décision 5).** Former un C — pouce et index écartés
+   sans se toucher, index bien déplié, main à plat face caméra. Attendu : la
+   pastille passe à `MAINS · VEILLE 20 %`, `40 %`… et un anneau de progression
+   se remplit autour de la main en une seconde environ. Relâcher à mi-course :
+   la progression retombe, rien ne s'active. Retenir la posture jusqu'au bout :
+   toast « Barehands activé », pastille `MAINS · ACTIF`, bandeau « Actif ».
+5. **Le temps non observé ne compte pas (R1).** Reformer le C et, à mi-anneau,
+   masquer la main une bonne seconde, ou passer l'onglet en arrière-plan, ou
+   rabattre l'écran une minute. Au retour : l'anneau **repart de zéro**.
+   Attendu : aucune activation en une image. Un réveil qui surviendrait sans
+   seconde de maintien réellement observée est un défaut bloquant.
+6. Montrer une main : un jeton suit l'index ; deux mains, deux jetons.
    Survoler un bouton du dock : jeton agrandi, bouton cerné.
-5. Rapprocher lentement pouce et index : anneau qui se remplit, jeton figé.
+7. Rapprocher lentement pouce et index : anneau qui se remplit, jeton figé.
    Pincer franchement sur le bouton Trace : le panneau s'ouvre (onde de clic).
    Rester pincé : aucun second clic. Rouvrir puis repincer : nouveau clic.
-6. Ouvrir SET, changer d'onglet et cocher une case au pincement.
-7. Couper l'interrupteur au pincement : jetons retirés, voyant caméra éteint,
-   toast « Barehands arrêté ». Recharger la page : toujours éteint.
-8. Réactiver, recharger : le mode test repart seul. Refuser la caméra dans
-   Chrome (icône de l'adresse) puis recharger : toast « Caméra refusée »,
-   aucune surimpression, message dans l'onglet.
-9. Débrancher la webcam pendant le suivi : « Caméra coupée », tout est retiré.
+8. Ouvrir SET, changer d'onglet et cocher une case au pincement.
+9. **Veille par le bouton, et retour.** SET → Expérimental → « Mettre en
+   veille » : jetons retirés, pastille `MAINS · VEILLE`, **le voyant caméra
+   reste allumé** (c'est SLEEP, pas OFF). « Activer l'interaction » : les jetons
+   reviennent sans nouvelle invite caméra. Même chose depuis la console avec
+   `JarvisBarehands.sleep()` / `JarvisBarehands.activate()`.
+10. **Retour en veille après 30 s (décision 7).** En interaction, sortir les
+    mains du champ et attendre 30 secondes sans bouger. Attendu : toast « Retour
+    en veille », pastille `MAINS · VEILLE`, voyant caméra toujours allumé.
+11. Couper l'interrupteur au pincement : jetons retirés, voyant caméra éteint,
+    toast « Barehands arrêté », bandeau « Éteint ». Recharger la page :
+    toujours éteint, et la page repart en veille, pas en interaction.
+12. Réactiver, recharger : le mode test repart seul **en veille**. Refuser la
+    caméra dans Chrome (icône de l'adresse) puis recharger : toast « Caméra
+    refusée », aucune surimpression, message dans l'onglet, et le bandeau lit
+    « Interrompu · camera_denied » avec un bouton « Réessayer » — **pas**
+    « Éteint » : une panne n'est pas un arrêt voulu.
+13. Débrancher la webcam pendant le suivi : « Caméra coupée », tout est retiré,
+    bandeau « Interrompu · camera_ended ».
 
 ## Confirmation behavior
 
