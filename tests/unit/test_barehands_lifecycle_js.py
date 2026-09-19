@@ -127,6 +127,51 @@ def test_the_wake_posture_is_a_c_and_nothing_else(tmp_path):
     assert result["scaleFree"] is True
 
 
+def test_the_band_that_actually_sustains_a_hold_is_the_one_documented(tmp_path):
+    """`wakeGapMin`/`wakeGapMax`/`wakeIndexMin` sont les **zéros du score**, pas
+    les seuils de réveil : les plages s'adoucissent sur `wakeSoft` et il faut
+    tenir `wakeScore`. Le commit de la Slice 02, le contrat et le LOG citaient
+    les zéros — 10 % d'erreur sur la portée, dans les nombres mêmes que la
+    Slice 08 doit calibrer. Balayage contre forme close, puis contre le
+    tableau publié."""
+
+    result = run_node(tmp_path, HAND + """
+      const D=B.DEFAULTS;
+      const s=(D.wakeGapMax-D.wakeGapMin)*D.wakeSoft;
+      const closed={gapMin:D.wakeGapMin+s*D.wakeScore,gapMax:D.wakeGapMax-s*D.wakeScore,
+                    reachMin:D.wakeIndexMin*(1+D.wakeSoft*D.wakeScore)};
+      const sustains=(gap,reach)=>B.cPoseScore(hand(gap,reach),1)>=D.wakeScore;
+      let lo=null,hi=null;
+      for(let g=.30;g<1.20;g+=1e-4)if(sustains(g,2.5)){if(lo===null)lo=g;hi=g}
+      let reach=null;
+      for(let r=1.0;r<2.5;r+=1e-4)if(sustains(.65,r)){reach=r;break}
+      out({closed,measured:{gapMin:lo,gapMax:hi,reachMin:reach},
+           /* Juste dedans compte, juste dehors ne compte pas : la bande est
+              bien une frontière, pas une coïncidence de pas de balayage. */
+           edges:[sustains(closed.gapMin+1e-6,2.5),sustains(closed.gapMin-1e-3,2.5),
+                  sustains(closed.gapMax-1e-6,2.5),sustains(closed.gapMax+1e-3,2.5),
+                  sustains(.65,closed.reachMin+1e-6),sustains(.65,closed.reachMin-1e-3)],
+           /* Les zéros ne soutiennent rien : c'est tout le propos. */
+           atZeroCrossings:[sustains(D.wakeGapMin,2.5),sustains(D.wakeGapMax,2.5),
+                            sustains(.65,D.wakeIndexMin)]});
+    """)
+    band = (
+        round(result["measured"]["gapMin"], 3),
+        round(result["measured"]["gapMax"], 3),
+        round(result["measured"]["reachMin"], 3),
+    )
+    assert band == (0.499, 0.811, 1.485)
+    for key in ("gapMin", "gapMax", "reachMin"):
+        assert result["measured"][key] == pytest.approx(result["closed"][key], abs=1e-4), key
+    assert result["edges"] == [True, False, True, False, True, False]
+    assert result["atZeroCrossings"] == [False, False, False]
+    # La bande publiée est celle-là, en toutes lettres : un défaut qui bouge
+    # sans que le tableau bouge fait tomber ce test avant la Slice 08.
+    contract = (ROOT / "docs" / "barehands-contracts.md").read_text(encoding="utf-8")
+    assert "0,499 à 0,811 paume" in contract
+    assert "≥ 1,485 paume" in contract
+
+
 def test_the_wake_hold_accumulates_survives_a_gap_and_resets(tmp_path):
     """Le maintien compte le temps où la posture est tenue *d'affilée*. Un trou
     court est un raté du traqueur et se pardonne ; un trou long remet à zéro."""
@@ -345,18 +390,23 @@ def test_sleep_runs_a_fraction_of_the_inferences_that_interaction_runs(tmp_path)
     MediaPipe, donc elle est cadencée. ACTIVE suit chaque image."""
 
     result = run_node(tmp_path, WORLD + """
-      const asleep=world({options:{wakeIntervalMs:200}});
+      /* Aucune surcharge : c'est la **cadence par défaut** qui est promise à
+         l'écran et dans le contrat, donc c'est elle qu'il faut couvrir. Passée
+         en argument, muter le défaut 200 → 500 ne faisait rien tomber. */
+      const asleep=world();
       const c=B.createController(asleep.deps);
       await c.enable();asleep.steps(60,16);
-      const awake=world({options:{wakeIntervalMs:200}});
+      const awake=world();
       const c2=B.createController(awake.deps);
       await c2.enable();await c2.activate();awake.steps(60,16);
-      out({sleep:asleep.seen(),active:awake.seen(),state:[c.state(),c2.state()]});
+      out({sleep:asleep.seen(),active:awake.seen(),state:[c.state(),c2.state()],
+           interval:B.DEFAULTS.wakeIntervalMs});
     """)
     # 60 images à 16 ms = 960 ms : cinq inférences à 5 images/s, contre une par
     # image en interaction.
     assert result["sleep"] == 5
     assert result["active"] == 60
+    assert result["interval"] == 200
     assert result["state"] == ["sleep", "active"]
 
 
@@ -398,6 +448,71 @@ def test_every_stop_path_releases_the_camera(tmp_path):
     assert result["sleepError"]["code"] == "status:error:tracking_failed"
     assert result["activeError"]["state"] == "error"
     assert result["activeError"]["code"] == "status:error:tracking_failed"
+
+
+def test_a_malformed_landmark_skips_a_frame_instead_of_ending_the_session(tmp_path):
+    """`usableHand` promettait une validation qu'il ne faisait pas : il comptait
+    les points sans les regarder. Un seul point absent faisait lever
+    `cPoseScore`, que la boucle d'images convertit en `tracking_failed` —
+    caméra rendue, ERROR, toast de 9 s, pour une image. Et « exploitable » se
+    disait de deux façons dans le même contrôleur : 8 points pour poser un
+    jeton, 9 pour le guetteur, alors que le minuteur de la décision 7 se
+    réarme sur les jetons."""
+
+    result = run_node(tmp_path, WORLD + """
+      const broken=hand(.65);broken[4]=undefined;   // pouce absent
+      const short=hand(.65).slice(0,9);             // pas de base du majeur
+      const nan=hand(.65);nan[8]={x:NaN,y:.3,z:0};  // index sans coordonnée
+      const frame={viewport:{width:100,height:100},aspect:1,now:0};
+      const t=B.createHandTracker({});
+      const tokens=[short,broken,nan,hand(.65)].map(lm=>t.update({landmarks:[lm]},frame).tokens.length);
+      const w=world({result:{landmarks:[broken]},options:{wakeIntervalMs:200}});
+      const c=B.createController(w.deps);
+      await c.enable();
+      w.steps(10,200);                              // dix images malformées d'affilée
+      const survived=c.state();
+      w.state.result=C_POSE;w.steps(6,200);         // la posture revient, le réveil marche
+      out({survived,after:c.state(),woke:w.log.includes('status:active:woken'),
+           usable:[hand(.65),broken,short,nan,[],null].map(B.usableLandmarks),
+           scores:[B.cPoseScore(broken,1),B.cPoseScore(short,1),B.cPoseScore(nan,1)],
+           ratios:[B.pinchRatio(broken,1),B.pinchRatio(nan,1)],
+           tokens});
+    """)
+    # Une seule définition d'« exploitable », et elle regarde les entrées.
+    assert result["usable"] == [True, False, False, False, False, False]
+    # Les mesures refusent au lieu de lever : c'est ce qui rend l'image sautable.
+    assert result["scores"] == [None, None, None] and result["ratios"] == [None, None]
+    # Les jetons partagent cette définition : plus de main « exploitable » pour
+    # le minuteur de veille et inexploitable pour le guetteur.
+    assert result["tokens"] == [0, 0, 0, 1]
+    # Dix images malformées ne coûtent ni la caméra ni la session.
+    assert result["survived"] == "sleep"
+    assert result["after"] == "active" and result["woke"] is True
+
+
+def test_switching_off_after_a_failure_does_not_overwrite_the_cause(tmp_path):
+    """`state !== OFF` disait « allumé » d'un état qui ne tient rien. Couper
+    l'interrupteur depuis ERROR remplaçait donc « Caméra refusée — Autorisez la
+    caméra… » par « Barehands arrêté — caméra libérée » : une phrase fausse, à
+    la place de la seule information utile."""
+
+    result = run_node(tmp_path, WORLD + """
+      const w=world();
+      w.deps.getUserMedia=async()=>{const e=new Error('non');e.name='NotAllowedError';throw e};
+      const c=B.createController(w.deps);
+      await c.enable();
+      const engaged=B.isEngagedState(c.state());
+      const afterError=w.log.filter(l=>l.startsWith('status:')).pop();
+      const off=c.disable();        // appelé quand même : le message doit rester juste
+      out({engaged,afterError,off,last:w.log.filter(l=>l.startsWith('status:')).pop(),
+           live:B.isLiveState('error')});
+    """)
+    # Rien n'est tenu : la page n'a plus de raison d'appeler `disable()`, donc
+    # la cause reste à l'écran.
+    assert result["engaged"] is False and result["live"] is False
+    assert result["afterError"] == "status:error:camera_denied"
+    # Appelé explicitement, `disable()` dit « éteint », jamais « caméra libérée ».
+    assert result["off"] == "off" and result["last"] == "status:off:off"
 
 
 def test_a_broken_overlay_is_not_blamed_on_the_camera(tmp_path):
@@ -449,6 +564,14 @@ def test_the_controller_states_and_timings_still_match_the_contract(tmp_path):
                  C.lifecycleOfControllerState(undefined),C.lifecycleOfControllerState(null)],
         sleepMs:[B.DEFAULTS.sleepTimeoutMs,C.SLEEP_TIMEOUT_MS,C.SETTINGS_DEFAULTS.sleepTimeoutMs],
         holdMs:[B.DEFAULTS.wakeHoldMs,C.WAKE_HOLD_MS],
+        intervalMs:[B.DEFAULTS.wakeIntervalMs,C.WAKE_INTERVAL_MS],
+        watchesPerSecond:1000/B.DEFAULTS.wakeIntervalMs,
+        liveStates:[B.LIVE_STATES,B.STATES.filter(B.isLiveState)],
+        engaged:B.STATES.filter(B.isEngagedState),
+        failureCodes:[C.FAILURE_CODES,C.FAILURE_CODES.filter(k=>!!B.MESSAGES[k])],
+        classified:['NotAllowedError','NotFoundError','NotReadableError','Autre']
+          .map(name=>C.isFailureCode(B.classifyError(Object.assign(new Error('x'),{name})))),
+        messageKeys:Object.keys(B.MESSAGES).filter(k=>!C.isFailureCode(k)),
         wakeClass:C.DOM.wakeClass,
       });
     """)
@@ -467,6 +590,31 @@ def test_the_controller_states_and_timings_still_match_the_contract(tmp_path):
     assert result["unknown"] == ["off", "off", "off"]
     assert result["sleepMs"] == [30000, 30000, 30000]
     assert result["holdMs"] == [1000, 1000]
+    # N4 : la cadence du guetteur est promise « 5 images par seconde » dans le
+    # contrat *et* à l'écran. Le test de budget la passait en surcharge
+    # explicite, si bien que muter le défaut ne faisait rien tomber.
+    assert result["intervalMs"] == [200, 200]
+    assert result["watchesPerSecond"] == 5
+    # `LIVE_STATES` est au bloc pur ce que `LIVE_LIFECYCLES` est au contrat.
+    assert result["liveStates"] == [["sleep", "active"], ["sleep", "active"]]
+    assert result["liveStates"][0] == result["live"][0]
+    # « Tenu et à rendre » n'est pas « fonctionne » : un démarrage en vol en est,
+    # et son annulation est ce qui libère la caméra qui arrive. ERROR, non : il
+    # a déjà tout rendu, et l'y mettre referait passer un arrêt subi pour voulu.
+    assert result["engaged"] == ["starting", "sleep", "active"]
+    # N9 : le vocabulaire des codes d'ERROR est promis par le contrat et détenu
+    # par le moteur ; sans parité, c'est exactement la dérive qu'ERROR évite.
+    assert result["failureCodes"][0] == result["failureCodes"][1]
+    assert set(result["failureCodes"][0]) == {
+        "camera_denied", "camera_missing", "camera_busy", "camera_ended",
+        "camera_unsupported", "assets_missing", "tracking_failed",
+        "overlay_failed", "start_failed",
+    }
+    assert result["classified"] == [True, True, True, True]
+    # Le reste de `MESSAGES` raconte le cycle de vie, il ne motive pas une panne.
+    assert result["messageKeys"] == [
+        "off", "starting", "sleep", "active", "woken", "idle_sleep", "disabled",
+    ]
     assert result["wakeClass"] == "jh-wake"
 
 
@@ -501,12 +649,15 @@ def test_a_camera_failure_is_not_the_same_state_as_a_user_switching_off(tmp_path
     assert result["released"] is True and result["frames"] == 0
 
 
-def test_the_wake_ring_is_styled_where_the_contract_says_it_is():
-    """La feuille de style ne peut pas lire le contrat : ce test le fait pour
-    elle, comme pour les autres noms du DOM."""
+def test_the_wake_ring_draws_a_circular_progress():
+    """Décision 5 : « circular progress feedback ». La même mécanique que
+    l'anneau de pincement, sur la variable que la surimpression écrit.
+
+    Le **nom** de la classe, lui, n'est pas pinné ici : il appartient au
+    contrat, et c'est
+    `test_barehands_contracts_js::test_the_style_sheets_agree_with_the_dom_names_the_contract_owns`
+    qui compare la feuille au contrat pour les quatre noms d'un coup. Deux
+    littéraux Python qui s'accordent ne prouvent rien."""
 
     source = SCRIPT.read_text(encoding="utf-8")
-    assert "#jarvisHands .jh-wake{" in source
-    # Progression circulaire (décision 5) : la même mécanique que l'anneau de
-    # pincement, sur la variable que la surimpression écrit.
-    assert "conic-gradient(currentColor calc(var(--jh-progress,0) * 1turn)" in source
+    assert source.count("conic-gradient(currentColor calc(var(--jh-progress,0) * 1turn)") == 2

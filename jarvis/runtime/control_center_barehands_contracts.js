@@ -128,6 +128,28 @@
      Décision 5 : la posture de réveil se tient environ une seconde. */
   const SLEEP_TIMEOUT_MS=30000;
   const WAKE_HOLD_MS=1000;
+  /* Cadence du guetteur de SLEEP. Promise « 5 images par seconde » dans le
+     contrat lisible *et* à l'écran, dans l'onglet Expérimental : elle vit donc
+     ici, au même titre que les deux durées ci-dessus, plutôt que dans les seuls
+     défauts du moteur où muter 200 → 500 ne faisait rien tomber. */
+  const WAKE_INTERVAL_MS=200;
+
+  /* Motifs d'arrêt subi : le `code` que porte un statut `error`, à côté de
+     l'état et jamais aplati dedans. Le moteur (`control_center_barehands.js`)
+     possède les messages ; le contrat possède le **vocabulaire**, faute de quoi
+     un code publié et un code documenté divergent en silence — la dérive même
+     qu'`ERROR` a été ajouté pour empêcher. Parité testée dans les deux sens :
+     chaque code a son message, et toute autre clé de `MESSAGES` raconte le
+     cycle de vie au lieu de motiver une panne. */
+  const FAILURE_CODE=Object.freeze({
+    CAMERA_DENIED:'camera_denied',CAMERA_MISSING:'camera_missing',
+    CAMERA_BUSY:'camera_busy',CAMERA_ENDED:'camera_ended',
+    CAMERA_UNSUPPORTED:'camera_unsupported',ASSETS_MISSING:'assets_missing',
+    TRACKING_FAILED:'tracking_failed',OVERLAY_FAILED:'overlay_failed',
+    START_FAILED:'start_failed',
+  });
+  const FAILURE_CODES=values(FAILURE_CODE);
+  const isFailureCode=value=>FAILURE_CODES.includes(String(value));
 
   /* ------------------------------------------------------------------ 2
      Identité de main et identité de pointeur (Slice 00, constat F2). */
@@ -654,7 +676,11 @@
     schemaVersion:SETTINGS_SCHEMA_VERSION,
     enabled:false,            // Bare Hands reste éteint par défaut
     targetPreview:true,       // décision 24 : l'aperçu de cible est réglable
-    sleepTimeoutMs:SLEEP_TIMEOUT_MS,   // décision 7
+    /* Décision 7. **Exposé, pas encore branché** : le contrôleur de la
+       Slice 02 reçoit la constante `SLEEP_TIMEOUT_MS`, pas ce champ. L'écrire
+       normalise et persiste, et ne change rien au délai réel. La Slice 07
+       possède les réglages et le câblera ; d'ici là, ne pas le supposer vivant. */
+    sleepTimeoutMs:SLEEP_TIMEOUT_MS,
     tool:TOOL_DEFAULT,
     assistance:0.5,           // assistance de visée, bornée et sûre
     sensitivity:1,
@@ -879,7 +905,8 @@
   const api=Object.freeze({
     SCHEMA_VERSION,BareHandsSchemaError,
     LIFECYCLE,LIFECYCLES,LIVE_LIFECYCLES,isLiveLifecycle,lifecycleOfControllerState,
-    SLEEP_TIMEOUT_MS,WAKE_HOLD_MS,
+    SLEEP_TIMEOUT_MS,WAKE_HOLD_MS,WAKE_INTERVAL_MS,
+    FAILURE_CODE,FAILURE_CODES,isFailureCode,
     MAX_HANDS,POINTER_ID_BASE,POINTER_ID_MAX,POINTER_TYPE,
     pointerIdForSlot,slotForPointerId,isBareHandsPointerId,createSlotAllocator,
     DOM,isOverlayRoot,HANDEDNESS,HANDEDNESSES,

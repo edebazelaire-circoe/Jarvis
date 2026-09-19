@@ -85,9 +85,31 @@ aplati dans l'état. On en sort en rallumant : le bouton du bandeau devient
   `SLEEP` (décision 7). Jugé avant la lecture de la vidéo : une caméra figée
   rendort aussi.
 - `WAKE_HOLD_MS = 1000` — durée de maintien de la posture C (décision 5).
+- `WAKE_INTERVAL_MS = 200` — cadence du guetteur de `SLEEP`, soit les
+  **5 images par seconde** promises ici et à l'écran. La valeur vit dans le
+  contrat pour qu'un seul endroit la fixe : c'est une promesse affichée.
+- `FAILURE_CODES` / `isFailureCode(value)` — le vocabulaire des `code` que porte
+  un statut `error` : `camera_denied`, `camera_missing`, `camera_busy`,
+  `camera_ended`, `camera_unsupported`, `assets_missing`, `tracking_failed`,
+  `overlay_failed`, `start_failed`. Le moteur possède les messages, le contrat
+  possède les noms, et la parité est testée dans les deux sens : chaque code a
+  son message, et toute autre clé de `MESSAGES` raconte le cycle de vie
+  (`off`, `starting`, `sleep`, `active`, `woken`, `idle_sleep`, `disabled`) au
+  lieu de motiver une panne.
+- `overlay_failed` existe parce que la surimpression n'est pas le suivi : un
+  anneau qui lève sortait sous `tracking_failed`, c'est-à-dire « caméra
+  libérée », une cause inventée à la place de la vraie.
 - `LIVE_LIFECYCLES` = `['sleep','active']` et `isLiveLifecycle(value)` — « Bare
   Hands fonctionne ». Un appelant teste ceci plutôt que `!== OFF`, qui rendrait
-  une panne pour un fonctionnement.
+  une panne pour un fonctionnement : depuis `error`, couper l'interrupteur
+  annonçait « Barehands arrêté — caméra libérée » par-dessus « Caméra refusée »,
+  c'est-à-dire une phrase fausse à la place de la seule information utile.
+  Côté moteur, `LIVE_STATES` / `isLiveState` en sont le miroir (le bloc pur est
+  chargé seul par les tests node), et `isEngagedState` répond à l'**autre**
+  question, que `!== OFF` confondait avec celle-ci : « quelque chose est-il tenu
+  et à rendre ? » — la veille, l'interaction, et aussi un **démarrage encore en
+  vol**, dont l'annulation est ce qui libère la caméra qui arrive. `error` n'en
+  est pas : il a déjà tout rendu.
 - `lifecycleOfControllerState(state)` lit les états du contrôleur
   (`off` / `starting` / `sleep` / `active` / `error`) dans ce vocabulaire.
   `starting` vaut `off` : rien n'interagit tant que la première image n'est pas
@@ -389,13 +411,19 @@ partiel, et rend toujours une valeur complète et bornée :
 |---|---|---|
 | `enabled` | `false` | Bare Hands reste éteint par défaut |
 | `targetPreview` | `true` | décision 24 |
-| `sleepTimeoutMs` | `30000` | 5 000 – 600 000 |
+| `sleepTimeoutMs` | `30000` | 5 000 – 600 000 (**pas encore actif**, voir ci-dessous) |
 | `tool` | `pointer` | `TOOLS` |
 | `assistance` | `0.5` | 0 – 1 |
 | `sensitivity` | `1` | 0,25 – 4 |
 | `tutorialSeen` | `false` | — |
 | `calibrationEnabled` | `true` | décision 27 : optionnelle |
 | `diagnostics` | `false` | §12 : enregistrement sur demande |
+
+**`sleepTimeoutMs` est exposé mais pas encore branché.** Le contrôleur de la
+Slice 02 reçoit la constante `SLEEP_TIMEOUT_MS`, pas la valeur des réglages :
+écrire `{sleepTimeoutMs: 120000}` normalise et persiste correctement, et ne
+change rien au délai réel. **La Slice 07 possède les réglages** ; c'est elle
+qui câblera le champ. D'ici là, ne pas le supposer vivant.
 
 **Le numéro de schéma est lu, pas seulement estampillé.** `schemaVersion`
 absent vaut « écrit par nous » ; tout autre nombre lève
@@ -506,12 +534,28 @@ La Slice 02 implémente le premier : le cycle de vie `OFF`/`SLEEP`/`ACTIVE`
 `tests/unit/test_barehands_lifecycle_js.py`.
 
 La posture de réveil se lit sur deux mesures, toutes deux rapportées à la paume
-donc indépendantes de la distance à la caméra : l'écart pouce-index entre
-`wakeGapMin` (0,46 — au-dessus du relâchement du pincement, pour qu'un
-pincement en cours ne réveille jamais) et `wakeGapMax` (0,85 — au-delà, main
-ouverte), et la portée de l'index depuis le poignet au-dessus de `wakeIndexMin`
-(1,35 paume), qui écarte le poing. Ces seuils sont des défauts du moteur ; la
-calibration de la Slice 08 pourra les affiner.
+donc indépendantes de la distance à la caméra : l'écart pouce-index, et la
+portée de l'index depuis le poignet — celle qui écarte le poing, dont l'écart
+pouce-index tomberait par hasard dans la bande.
+
+Quatre défauts du moteur la décrivent : `wakeGapMin` (0,46 — au-dessus du
+relâchement du pincement, pour qu'un pincement en cours ne réveille jamais),
+`wakeGapMax` (0,85 — au-delà, main ouverte), `wakeIndexMin` (1,35 paume) et
+`wakeSoft` (0,2). **Ce ne sont pas les seuils de réveil** : ce sont les points
+où le score atteint zéro. Les deux plages s'adoucissent sur `wakeSoft` de leur
+largeur, et il faut tenir `wakeScore` (0,5) pour que la posture compte. La
+bande qui **soutient réellement un maintien** est donc plus étroite :
+
+| Mesure | Bande effective | Zéro du score | Formule |
+|---|---|---|---|
+| écart pouce-index | **0,499 à 0,811 paume** | 0,46 à 0,85 | `wakeGapMin + s·wakeScore` … `wakeGapMax − s·wakeScore` |
+| portée de l'index | **≥ 1,485 paume** | 1,35 | `wakeIndexMin · (1 + wakeSoft·wakeScore)` |
+
+avec `s = (wakeGapMax − wakeGapMin) · wakeSoft = 0,078`. C'est cette bande que
+la **Slice 08** calibre : citer 1,35 pour la portée se trompe de 10 % sur le
+nombre à mesurer. Un balayage la recalcule et la compare à ce tableau
+(`test_the_band_that_actually_sustains_a_hold_is_the_one_documented`) ; changer
+un des quatre défauts sans reporter la bande ici fait tomber ce test.
 
 Restent à venir : pincement secondaire, résolveur sémantique,
 déplacement/redimensionnement, calibration, tutoriel, diagnostics et le canal

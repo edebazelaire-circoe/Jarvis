@@ -37,10 +37,19 @@ const JarvisBarehandsCore=(function(){
        index déplié. L'écart est rapporté à la paume, la portée de l'index au
        poignet : mêmes seuils quelle que soit la distance à la caméra.
        `wakeGapMin` reste au-dessus de `releaseRatio` pour qu'un pincement en
-       cours ne se lise jamais comme un réveil. */
-    wakeGapMin:.46,        // sous cet écart : pincement, pas un C
-    wakeGapMax:.85,        // au-dessus : main ouverte
-    wakeIndexMin:1.35,     // bout d'index à moins de 1,35 paume du poignet : poing
+       cours ne se lise jamais comme un réveil.
+
+       Ces quatre nombres sont les **zéros du score**, pas les seuils de
+       réveil : avec l'adoucissement de `wakeSoft` et le `wakeScore` qu'il faut
+       tenir, la bande qui soutient réellement un maintien est plus étroite —
+       écart dans [0,499 ; 0,811] et portée ≥ 1,485, soit
+       `wakeGapMin + s·wakeScore` … `wakeGapMax − s·wakeScore` et
+       `wakeIndexMin·(1 + wakeSoft·wakeScore)`, avec
+       `s = (wakeGapMax − wakeGapMin)·wakeSoft`. C'est la bande effective que
+       la Slice 08 calibre, et celle que publie `docs/barehands-contracts.md`. */
+    wakeGapMin:.46,        // écart où le score tombe à 0 côté pincement
+    wakeGapMax:.85,        // écart où il tombe à 0 côté main ouverte
+    wakeIndexMin:1.35,     // portée où il tombe à 0 : en dessous, un poing
     wakeSoft:.2,           // fraction de la plage où le score retombe à 0
     wakeScore:.5,          // score minimal tenu pour que la posture compte
   });
@@ -66,11 +75,25 @@ const JarvisBarehandsCore=(function(){
     return Math.hypot((a.x-b.x)*aspect,a.y-b.y);
   }
 
+  /* Ce que « main exploitable » veut dire, **une fois** pour tout le fichier.
+     Il y en avait deux lectures : les jetons exigeaient `length > INDEX_TIP`,
+     le guetteur et le minuteur de veille `length > MIDDLE_MCP`, et aucune des
+     deux ne regardait les entrées. Un seul point absent faisait lever
+     `cPoseScore` sur `landmarks[4].x`, ce que la boucle d'images convertit en
+     `tracking_failed` : session terminée, caméra rendue, toast de 9 s — pour
+     une image. Une image malformée se saute ; elle n'arrête rien.
+     Seuls les quatre points réellement lus sont exigés : exiger les 21 aurait
+     refusé une main partielle que le traqueur sait pourtant mesurer. */
+  const USED_LANDMARKS=Object.freeze([LM.WRIST,LM.THUMB_TIP,LM.INDEX_TIP,LM.MIDDLE_MCP]);
+  const usablePoint=point=>!!point&&Number.isFinite(Number(point.x))&&Number.isFinite(Number(point.y));
+  const usableLandmarks=landmarks=>Array.isArray(landmarks)
+    &&landmarks.length>LM.MIDDLE_MCP&&USED_LANDMARKS.every(at=>usablePoint(landmarks[at]));
+
   /* Écart pouce-index rapporté à la paume (poignet → base du majeur) : même
      seuil quelle que soit la distance à la caméra. `aspect` = largeur/hauteur
      de l'image, les coordonnées MediaPipe étant normalisées par axe. */
   function pinchRatio(landmarks,aspect){
-    if(!Array.isArray(landmarks)||landmarks.length<=LM.MIDDLE_MCP)return null;
+    if(!usableLandmarks(landmarks))return null;
     const k=Number(aspect)>0?Number(aspect):1;
     const palm=distance(landmarks[LM.WRIST],landmarks[LM.MIDDLE_MCP],k);
     if(!(palm>1e-6))return null;
@@ -146,7 +169,7 @@ const JarvisBarehandsCore=(function(){
      pas, plutôt qu'un réveil clignotant. */
   function cPoseScore(landmarks,aspect,overrides){
     const o=options(overrides);
-    if(!Array.isArray(landmarks)||landmarks.length<=LM.MIDDLE_MCP)return null;
+    if(!usableLandmarks(landmarks))return null;
     const k=Number(aspect)>0?Number(aspect):1;
     const palm=distance(landmarks[LM.WRIST],landmarks[LM.MIDDLE_MCP],k);
     if(!(palm>1e-6))return null;
@@ -227,7 +250,11 @@ const JarvisBarehandsCore=(function(){
         const tokens=[],clicks=[],seen=new Set();
         const list=(result&&result.landmarks)||[];
         list.forEach((landmarks,index)=>{
-          if(!Array.isArray(landmarks)||landmarks.length<=LM.INDEX_TIP)return;
+          /* Même définition qu'ailleurs : une main qui ne donne pas ses quatre
+             points ne porte pas de jeton — et, décision 7, ne réarme donc pas
+             le retour en veille sous une définition plus large que celle du
+             guetteur. Les deux se répondaient à un point d'écart. */
+          if(!usableLandmarks(landmarks))return;
           let id=handKey(result,index);
           if(seen.has(id))id=`${id}-${index}`;
           seen.add(id);
@@ -286,11 +313,27 @@ const JarvisBarehandsCore=(function(){
      seul — donc un test de parité refuse qu'elles divergent. */
   const STATE=Object.freeze({OFF:'off',STARTING:'starting',SLEEP:'sleep',ACTIVE:'active',ERROR:'error'});
   const STATES=Object.freeze(Object.keys(STATE).map(k=>STATE[k]));
+  /* Deux lectures d'« allumé » qu'un seul `!== OFF` confondait, et qui ne
+     recouvrent pas les mêmes états :
+
+     - `isLiveState` — **Bare Hands fonctionne**. C'est ce qu'on annonce : une
+       panne n'est pas un fonctionnement, un démarrage pas encore un. Miroir de
+       `JarvisBarehandsContracts.LIVE_LIFECYCLES`, comme `STATE` l'est de
+       `LIFECYCLE` et pour la même raison (le bloc pur est chargé seul par les
+       tests node) ; le test de parité refuse qu'ils divergent.
+     - `isEngagedState` — **quelque chose est tenu et doit être rendu** : la
+       veille, l'interaction, mais aussi un démarrage encore en vol, dont
+       l'annulation est précisément ce qui libère la caméra qui arrive. `ERROR`
+       n'en est pas : il a déjà tout rendu avant d'être publié, et l'y mettre
+       ferait repasser un arrêt subi pour un arrêt voulu. */
+  const LIVE_STATES=Object.freeze([STATE.SLEEP,STATE.ACTIVE]);
+  const isLiveState=value=>LIVE_STATES.includes(value);
+  const isEngagedState=value=>isLiveState(value)||value===STATE.STARTING;
 
   /* Première main exploitable d'un résultat de traqueur, ou `null`. */
   function usableHand(result){
     for(const landmarks of (result&&result.landmarks)||[])
-      if(Array.isArray(landmarks)&&landmarks.length>LM.MIDDLE_MCP)return landmarks;
+      if(usableLandmarks(landmarks))return landmarks;
     return null;
   }
 
@@ -469,7 +512,10 @@ const JarvisBarehandsCore=(function(){
       return state;
     }
     function disable(){
-      const wasOn=state!==STATE.OFF;
+      /* « Barehands arrêté — caméra libérée » ne vaut que si quelque chose
+         tournait. Depuis ERROR, ce toast écrasait « Caméra refusée » par une
+         phrase fausse, et la cause réelle disparaissait de l'écran. */
+      const wasOn=isLiveState(state);
       generation+=1;teardown();state=STATE.OFF;
       emit(wasOn?'disabled':'off');
       return state;
@@ -477,7 +523,8 @@ const JarvisBarehandsCore=(function(){
     return {enable,activate,sleep,disable,state:()=>state,tick};
   }
 
-  return {LM,STATE,STATES,DEFAULTS,MESSAGES,pinchRatio,cPoseScore,toScreen,smooth,
+  return {LM,STATE,STATES,LIVE_STATES,isLiveState,isEngagedState,usableLandmarks,
+    DEFAULTS,MESSAGES,pinchRatio,cPoseScore,toScreen,smooth,
     createPinchDetector,createWakeDetector,createHandTracker,classifyError,createController};
 })();
 
@@ -541,6 +588,12 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
     document.head.appendChild(style);
   }
 
+  /* Ce que dit la pastille. « MAINS · TEST » était à la fois le texte du
+     montage et celui d'ACTIVE sans main : l'écran ne distinguait pas « prêt »
+     d'« en interaction, mais je ne vois personne », alors que seule la veille
+     avait son mot à elle. */
+  const BADGE=Object.freeze({mounted:'MAINS · TEST',sleep:'MAINS · VEILLE',active:'MAINS · ACTIF'});
+
   function createOverlay(){
     let root=null,badge=null,wake=null;
     const tokens=new Map();
@@ -549,7 +602,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
         ensureStyle();
         if(root)return;
         root=document.createElement('div');root.id=BH.DOM.rootId;root.setAttribute('aria-hidden','true');
-        badge=document.createElement('div');badge.className=BH.DOM.badgeClass;badge.textContent='MAINS · TEST';
+        badge=document.createElement('div');badge.className=BH.DOM.badgeClass;badge.textContent=BADGE.mounted;
         wake=document.createElement('div');wake.className=BH.DOM.wakeClass;
         root.appendChild(wake);root.appendChild(badge);document.body.appendChild(root);
       },
@@ -562,14 +615,14 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
          maintien est acquise (décision 5). `null` le range (retour en ACTIVE). */
       watch(state){
         if(!root||!wake)return;
-        if(!state){wake.classList.remove('seen');badge.textContent='MAINS · TEST';return}
+        if(!state){wake.classList.remove('seen');badge.textContent=BADGE.active;return}
         this.render([]);
         wake.classList.toggle('seen',!!state.present);
         wake.style.transform=`translate3d(${Number(state.x||0).toFixed(1)}px,${Number(state.y||0).toFixed(1)}px,0)`;
         wake.style.setProperty('--jh-progress',Number(state.progress||0).toFixed(3));
         badge.textContent=state.present
-          ?`MAINS · VEILLE ${Math.round(Number(state.progress||0)*100)}%`
-          :'MAINS · VEILLE';
+          ?`${BADGE.sleep} ${Math.round(Number(state.progress||0)*100)}%`
+          :BADGE.sleep;
       },
       render(list){
         if(!root)return;
@@ -588,7 +641,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
           if(token.click){el.classList.remove('clicked');void el.offsetWidth;el.classList.add('clicked')}
         }
         for(const [id,el] of tokens)if(!seen.has(id)){el.remove();tokens.delete(id)}
-        if(badge)badge.textContent=list.length?`MAINS · ${list.length}`:'MAINS · TEST';
+        if(badge)badge.textContent=list.length?`MAINS · ${list.length}`:BADGE.active;
       },
     };
   }
@@ -712,9 +765,12 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
   const controller=Core.createController({
     getUserMedia:navigator.mediaDevices&&typeof navigator.mediaDevices.getUserMedia==='function'
       ?constraints=>navigator.mediaDevices.getUserMedia(constraints):null,
-    /* Les deux durées du cycle de vie viennent du contrat, pas des défauts du
-       moteur : un seul endroit les fixe (décisions 5, 7). */
-    options:{sleepTimeoutMs:BH.SLEEP_TIMEOUT_MS,wakeHoldMs:BH.WAKE_HOLD_MS},
+    /* Les durées du cycle de vie viennent du contrat, pas des défauts du
+       moteur : un seul endroit les fixe (décisions 5, 7). La cadence du
+       guetteur les rejoint — c'est elle que l'onglet promet « 5 images par
+       seconde », et une promesse affichée ne se règle pas ailleurs. */
+    options:{sleepTimeoutMs:BH.SLEEP_TIMEOUT_MS,wakeHoldMs:BH.WAKE_HOLD_MS,
+      wakeIntervalMs:BH.WAKE_INTERVAL_MS},
     createLandmarker,attachVideo,
     overlay:createOverlay(),interaction:createInteraction(),
     requestFrame:fn=>requestAnimationFrame(fn),cancelFrame:id=>cancelAnimationFrame(id),
@@ -729,8 +785,12 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
     const previous=view.status;
     view.status=status;
     if(status.state==='error'&&status.error)console.warn('[barehands]',status.code,status.error);
-    const notify=status.state==='error'||status.state===BH.LIFECYCLE.ACTIVE||status.state===BH.LIFECYCLE.SLEEP
-      ||(status.code==='disabled'&&previous.state!=='error');
+    watchStartingClock();
+    /* « Bare Hands fonctionne » se demande au contrat, pas à une liste
+       recopiée ici : `starting` n'est pas un fonctionnement et n'a pas à
+       sonner deux fois avant la veille. */
+    const notify=status.state===BH.LIFECYCLE.ERROR||BH.isLiveLifecycle(status.state)
+      ||(status.code==='disabled'&&previous.state!==BH.LIFECYCLE.ERROR);
     if(notify&&typeof toast==='function')
       toast({title:status.title,sub:status.message,
         kind:status.state==='error'?'bad':status.state===BH.LIFECYCLE.ACTIVE?'ok':'warn',
@@ -744,16 +804,47 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
     applyAssets(state);
     view.enabled=!!(state&&state.enabled===true);
     if(view.enabled)controller.enable();
-    else if(controller.state()!==Core.STATE.OFF)controller.disable();
+    else if(Core.isEngagedState(controller.state()))controller.disable();
     refreshPanel();
   }
 
-  /* Nom visible du cycle de vie, lu du contrat plutôt que de l'état interne. */
-  const LIFECYCLE_LABEL=Object.freeze({off:'Éteint',sleep:'En veille',active:'Actif',
+  /* Nom visible du cycle de vie, lu du contrat plutôt que de l'état interne.
+     `starting` fait exception, et c'est voulu des deux côtés : le contrat le
+     range sous `off` parce que rien n'interagit et que rien n'est tenu pour de
+     bon — mais l'afficher « Éteint » sous un bouton « Allumer et activer »,
+     pendant que le statut juste en dessous dit « Barehands démarre… », donnait
+     un écran qui se contredit et un bouton qui ne fait rien (`enable()` rend
+     `starting` sans attendre le démarrage en vol : le contrôleur se posait en
+     veille, jamais en interaction, et l'utilisateur devait recliquer sans
+     savoir pourquoi). L'écran nomme donc le démarrage. */
+  const LIFECYCLE_LABEL=Object.freeze({off:'Éteint',starting:'Démarrage…',sleep:'En veille',active:'Actif',
     /* Arrêté sans l'avoir demandé : le motif exact reste dans `view.status.code`
        et s'affiche juste en dessous, il n'est pas aplati dans l'état. */
     error:'Interrompu'});
   const lifecycle=()=>BH.lifecycleOfControllerState(controller.state());
+  const starting=()=>controller.state()===Core.STATE.STARTING;
+
+  /* RULE ZERO. Le démarrage attend `getUserMedia`, qui n'a pas de délai et ne
+     peut pas en avoir : derrière, c'est une invite de permission qu'un humain
+     met le temps qu'il veut à lire. Un état qui peut durer doit donc dire
+     **depuis combien de temps** il dure — sinon « démarre… » et « bloqué » se
+     ressemblent — et **comment en sortir** : ici l'interrupteur du dessus, qui
+     annule un démarrage en vol et rend la caméra dès qu'elle arrive. Le
+     compteur s'arrête de lui-même dès que l'état change. */
+  let startingSince=0,startingTimer=0;
+  function stopStartingClock(){
+    if(startingTimer){clearInterval(startingTimer);startingTimer=0}
+  }
+  function watchStartingClock(){
+    if(!starting()){stopStartingClock();return}
+    if(startingTimer)return;
+    startingSince=Date.now();
+    startingTimer=setInterval(()=>{
+      if(!starting()){stopStartingClock();return}
+      refreshPanel();
+    },1000);
+  }
+  const startingSeconds=()=>Math.max(0,Math.round((Date.now()-startingSince)/1000));
 
   /* Réveil et mise en veille à la main : le second chemin d'activation exigé
      par la décision 4, à côté de la posture en C. La voix empruntera le même
@@ -773,7 +864,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
   async function setEnabled(enabled){
     view.busy=true;view.error='';
     // Éteindre n'attend pas l'écriture : la caméra est libérée tout de suite.
-    if(!enabled&&controller.state()!==Core.STATE.OFF)controller.disable();
+    if(!enabled&&Core.isEngagedState(controller.state()))controller.disable();
     refreshPanel();
     try{
       const state=await api(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled})});
@@ -800,17 +891,24 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
      Éteint, le bouton allume puis réveille d'un coup — l'interrupteur du
      dessus reste le seul à écrire le réglage sur le serveur. */
   function lifecycleHtml(){
-    const at=lifecycle(),awake=at===BH.LIFECYCLE.ACTIVE;
-    const label=awake?'Mettre en veille'
+    const booting=starting(),at=booting?Core.STATE.STARTING:lifecycle();
+    const awake=at===BH.LIFECYCLE.ACTIVE;
+    /* Pendant le démarrage le bouton est désarmé plutôt que trompeur : il
+       n'aurait rien à activer qui ne soit déjà en route. */
+    const label=booting?`Démarrage… ${startingSeconds()} s`
+      :awake?'Mettre en veille'
       :at===BH.LIFECYCLE.SLEEP?'Activer l’interaction'
       :at===BH.LIFECYCLE.ERROR?'Réessayer':'Allumer et activer';
     /* Une panne ne se lit pas « éteint » : l'état le dit, et le code du motif
        reste visible à côté du nom. */
     const why=at===BH.LIFECYCLE.ERROR&&view.status&&view.status.code?` · ${esc(view.status.code)}`:'';
+    const hint=booting
+      ?'Chargement du modèle et ouverture de la caméra. Si le navigateur attend votre autorisation, répondez à l’invite ; pour annuler, décochez l’interrupteur ci-dessus — la caméra est rendue dès qu’elle arrive.'
+      :`Éteint, la caméra est libérée. En veille, elle ne sert qu'au guetteur de réveil (${Math.round(1000/BH.WAKE_INTERVAL_MS)} images par seconde, aucun clic).`;
     return `<div class="field inline" style="align-items:center;gap:10px;margin-top:2px">
-      <button type="button" class="action${awake?'':' primary'}" id="barehandsWake" data-barehands-wake ${view.busy?'disabled':''}>${label}</button>
+      <button type="button" class="action${awake||booting?'':' primary'}" id="barehandsWake" data-barehands-wake ${view.busy||booting?'disabled':''}>${esc(label)}</button>
       <div><div class="hint">Cycle de vie : <strong>${esc(LIFECYCLE_LABEL[at]||at)}</strong>${why}</div>
-      <div class="hint">Éteint, la caméra est libérée. En veille, elle ne sert qu'au guetteur de réveil (5 images par seconde, aucun clic).</div></div>
+      <div class="hint">${esc(hint)}</div></div>
     </div>`;
   }
 
@@ -893,5 +991,5 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
     installSettingsTab();
     api(API).then(applyServerState).catch(()=>{});
   },0);
-  window.addEventListener('pagehide',()=>{if(controller.state()!==Core.STATE.OFF)controller.disable()});
+  window.addEventListener('pagehide',()=>{if(Core.isEngagedState(controller.state()))controller.disable()});
 })();

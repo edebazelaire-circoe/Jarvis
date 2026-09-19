@@ -172,7 +172,10 @@ def test_the_style_sheets_agree_with_the_dom_names_the_contract_owns(tmp_path):
     barehands = BAREHANDS.read_text(encoding="utf-8")
     scene = SCENE_PAGE.read_text(encoding="utf-8")
     assert f"{names['rootSelector']}{{" in barehands
-    for key in ("tokenClass", "ringClass", "badgeClass"):
+    # `wakeClass` (Slice 02) entre dans ce tuple plutôt que dans un test à
+    # part : la dérive se prend par la comparaison contrat-feuille que ce dépôt
+    # possède, pas par la coïncidence de deux littéraux Python.
+    for key in ("tokenClass", "ringClass", "badgeClass", "wakeClass"):
         assert f"{names['rootSelector']} .{names[key]}" in barehands, key
     assert f".{names['hoverClass']}{{" in barehands
     # La scène décale ses indicateurs au-dessus du badge des mains.
