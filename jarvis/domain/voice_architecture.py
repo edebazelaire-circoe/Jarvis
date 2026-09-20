@@ -72,6 +72,7 @@ class DuplexVoiceConfig:
     conversation_model: VoiceModelRef
     client_delegation: bool = True
     idle_timeout_s: float = 60.0
+    brain_orchestration: bool = True
     architecture: VoiceArchitectureId = VoiceArchitectureId.DUPLEX
 
     def __post_init__(self) -> None:
@@ -79,6 +80,10 @@ class DuplexVoiceConfig:
         _model(self.conversation_model)
         if self.client_delegation is not True:
             raise VoiceConfigError("voice_client_delegation_required", "Duplex requires client_delegation=true")
+        # False retombe sur l'analyse spéculative sans outils : c'est un repli
+        # explicite, pas un défaut. Un réglage absent vaut donc True.
+        if type(self.brain_orchestration) is not bool:
+            raise VoiceConfigError("voice_brain_orchestration_invalid", "brain_orchestration must be a boolean")
         if (isinstance(self.idle_timeout_s, bool)
                 or not isinstance(self.idle_timeout_s, (int, float))
                 or not 5 <= self.idle_timeout_s <= 3600

@@ -54,6 +54,7 @@ _ARCH_CATEGORY = {
     "conversation_model": "models", "reflex_model": "models", "analysis_model": "models",
     "speculative_deltas": "conversation", "reasoning_effort": "models",
     "client_delegation": "architecture", "idle_timeout_s": "conversation",
+    "brain_orchestration": "architecture",
 }
 _ARCH_ADVANCED = frozenset({"speculative_deltas", "reasoning_effort", "client_delegation"})
 _ARCH_HELP = {
@@ -64,12 +65,13 @@ _ARCH_HELP = {
     "reasoning_effort": "Front Brain ; options du descripteur du modèle d'analyse.",
     "client_delegation": "Invariant Duplex, affiché en lecture seule.",
     "idle_timeout_s": "Durée facturable de la session Duplex.",
+    "brain_orchestration": "Duplex ; une délégation ouvre un tour cerveau complet. Désactivé, elle retombe sur l'analyse spéculative sans outils.",
 }
 
 PERSISTABLE_OPTION_IDS: tuple[str, ...] = (
     "voice_stack", "voice_arch", "architecture", "conversation_model", "reflex_model",
     "analysis_model", "speculative_deltas", "reasoning_effort", "client_delegation",
-    "idle_timeout_s", "openai.model", "openai.voice", "openai.turn_mode",
+    "idle_timeout_s", "brain_orchestration", "openai.model", "openai.voice", "openai.turn_mode",
     "openai.transcription_model", "openai.transcription_language", "openai.noise_reduction",
     "openai.echo_cancellation", "openai.reflex_enabled", "openai.ack_delay_ms", "openai.vad_type",
     "openai.vad_eagerness", "openai.vad_threshold", "openai.vad_prefix_padding_ms",

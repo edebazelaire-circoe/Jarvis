@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from collections import OrderedDict
+from collections import OrderedDict, deque
 import uuid
 
 from jarvis.adapters.openai_live_frontend import OpenAILiveFrontend, aiohttp_live_connector
@@ -27,6 +27,46 @@ from jarvis.runtime.live_primary_owner import DurableLiveSessionOwner
 from jarvis.runtime.voice_observations import VoiceObservationDispatcher
 
 
+MAX_REQUEST_UTF8 = 8192
+MAX_REQUEST_DELTAS = 256
+# MAX_APPEND_UTF8 vaut 500 côté adaptateur : on découpe sous cette borne pour
+# qu'un résultat de cerveau, régulièrement plus long, reste prononçable.
+MAX_APPEND_CHUNK_UTF8 = 450
+MAX_APPEND_CHUNKS = 12
+_BOUNDARIES = (".!?…", ";:", ",")
+_WHITESPACE = " \n\t"
+
+
+def _head(rest: str, limit: int) -> str:
+    """Longest prefix under the byte bound, cut at the latest natural boundary."""
+    head = rest.encode("utf-8")[:limit].decode("utf-8", "ignore")
+    if len(head) == len(rest):
+        return head
+    for group in _BOUNDARIES:
+        index = max((head.rfind(mark) for mark in group), default=-1)
+        if index > 0:
+            return head[:index + 1]
+    index = max((head.rfind(mark) for mark in _WHITESPACE), default=-1)
+    # index 0 ne progresserait pas : on coupe alors au milieu du jeton, ce qui
+    # reste préférable à une boucle sans fin ou à un texte muet.
+    return head[:index] if index > 0 else head
+
+
+def append_segments(text: str, limit: int = MAX_APPEND_CHUNK_UTF8) -> list[str]:
+    """Ordered speakable segments; one segment for anything already short."""
+    segments: list[str] = []
+    rest = text.strip()
+    while rest and len(rest.encode("utf-8")) > limit:
+        head = _head(rest, limit)
+        chunk = head.strip()
+        if chunk:
+            segments.append(chunk)
+        rest = rest[len(head):].lstrip()
+    if rest:
+        segments.append(rest)
+    return segments
+
+
 class LiveFrontendSession:
     """Migration facade for the existing device bridge; canonical Core remains primary."""
 
@@ -35,7 +75,8 @@ class LiveFrontendSession:
     requires_local_quiescence_without_output_final = True
 
     def __init__(self, frontend: OpenAILiveFrontend, session_id: str, *, poll_interval_s: float = .05,
-                 lifecycle_owner: DurableLiveSessionOwner | None = None, prompt_evidence=None) -> None:
+                 lifecycle_owner: DurableLiveSessionOwner | None = None, prompt_evidence=None,
+                 brain_orchestration: bool = True) -> None:
         self.frontend, self.session_id = frontend, session_id
         self._poll_interval_s = poll_interval_s
         self.core = None
@@ -55,6 +96,10 @@ class LiveFrontendSession:
         self.journal = None
         self.input_observation_revision = 0
         self._playback_suppressed = False
+        self._request_deltas: deque[str] = deque()
+        self._request_bytes = 0
+        self._request_held = False
+        self._brain_orchestration = brain_orchestration
         self._lifecycle_owner = lifecycle_owner
         self.prompt_applications = [dict(prompt_evidence)] if isinstance(prompt_evidence, dict) else []
 
@@ -82,7 +127,8 @@ class LiveFrontendSession:
         )
         session = cls(frontend, session_id, poll_interval_s=poll_interval_s,
                       lifecycle_owner=owner,
-                      prompt_evidence=prompt_evidence(resolution, application="sent", channel="session.instructions"))
+                      prompt_evidence=prompt_evidence(resolution, application="sent", channel="session.instructions"),
+                      brain_orchestration=mode.brain_orchestration)
         if owner is not None:
             owner.set_fenced_callback(session._on_fenced)
         config = VoiceFrontendConfig(mode, initial_context=selected_voice_context(context),
@@ -182,7 +228,40 @@ class LiveFrontendSession:
         if journal is not None:
             for item in self.prompt_applications:
                 journal.emit("voice.prompt", "Prompt application recorded", data=dict(item))
-        self._delegations = LiveDelegationController(self, poll_interval_s=self._poll_interval_s)
+        self._delegations = LiveDelegationController(self, poll_interval_s=self._poll_interval_s,
+                                                     brain_orchestration=self._brain_orchestration)
+
+    def _note_request_delta(self, delta: str) -> None:
+        """Rebuild the current spoken request from word-level input fragments.
+
+        The Live API publishes no input final: the delegation is the de-facto
+        end of the request, so the only text a delegation can carry is what the
+        session accumulated. Bounded on both sides, oldest first.
+        """
+        if not delta:
+            return
+        self._request_deltas.append(delta)
+        self._request_bytes += len(delta.encode("utf-8"))
+        while len(self._request_deltas) > MAX_REQUEST_DELTAS or self._request_bytes > MAX_REQUEST_UTF8:
+            self._request_bytes -= len(self._request_deltas.popleft().encode("utf-8"))
+
+    def hold_pending_request(self) -> None:
+        """Keep the accumulated request while a delegation is being dispatched.
+
+        The model answers "je m'en charge" within the same few milliseconds:
+        without the hold, its own transcript would erase the request text that
+        the delegation is about to carry.
+        """
+        self._request_held = True
+
+    def reset_pending_request(self) -> None:
+        self._request_deltas.clear()
+        self._request_bytes = 0
+        self._request_held = False
+
+    def pending_request_text(self) -> str | None:
+        text = " ".join("".join(self._request_deltas).split())
+        return text or None
 
     async def flush_observations(self) -> None:
         if self._dispatcher is None:
@@ -211,7 +290,7 @@ class LiveFrontendSession:
     async def send_context(self, text: str) -> None:
         if self._lifecycle_owner is not None:
             self._lifecycle_owner.assert_active()
-        self._require(await self.frontend.append_quiet_context(VoiceTextUpdate(text), operation=self._operation()))
+        await self._append_chunked("thinking", text, VoiceCorrelation(self.session_id))
 
     async def keepalive(self) -> None:
         return None
@@ -226,9 +305,40 @@ class LiveFrontendSession:
                                        source_correlation_id=request.correlation_id, backend_work_id=request.work_id)
         if self._dispatcher is not None:
             await self._dispatcher.register_speech(correlation, request.text)
-        self._require(await self.frontend.append_spoken_result(VoiceTextUpdate(request.text),
-                                                               operation=self._operation(correlation)))
+        await self._append_chunked("commentary", request.text, correlation)
         return output_id or str(uuid.uuid4())
+
+    async def _append_chunked(self, channel: str, text: str, correlation: VoiceCorrelation) -> None:
+        """Append one bounded segment at a time; the first one keeps the old contract.
+
+        The provider refuses anything above MAX_APPEND_UTF8, so a whole brain
+        answer used to be dropped without a word. Segments go out in order and
+        stop as soon as the session can no longer speak: a half-said result is
+        better than a wrong one, and what was dropped is traced, never silent.
+        """
+        method = (self.frontend.append_spoken_result if channel == "commentary"
+                  else self.frontend.append_quiet_context)
+        segments = append_segments(text)
+        spoken = 0
+        for index, chunk in enumerate(segments[:MAX_APPEND_CHUNKS]):
+            if index and (self._closed or self.playback_suppressed):
+                break
+            result = await method(VoiceTextUpdate(chunk), operation=self._operation(correlation))
+            if not index:
+                self._require(result)
+            elif result.status not in {VoiceOperationStatus.ACCEPTED, VoiceOperationStatus.COMPLETED}:
+                break
+            spoken = index + 1
+        dropped = sum(len(chunk.encode("utf-8")) for chunk in segments[spoken:])
+        if dropped and self.journal is not None:
+            try:
+                self.journal.emit("voice.live.speech_truncated", "Live append truncated", data={
+                    "session_id": self.session_id, "conversation_id": self.conversation_id,
+                    "channel": channel, "chunks": spoken, "segments": len(segments),
+                    "dropped_bytes": dropped,
+                })
+            except Exception:
+                pass
 
     async def cancel_output(self, cursor: PlaybackCursor | None = None) -> None:
         del cursor  # Device suppression happens first; Live has no exact native cancel.
@@ -296,6 +406,11 @@ class LiveFrontendSession:
     def _observe(self, event) -> None:
         if isinstance(event.payload, UserTranscriptDelta):
             self.input_observation_revision += 1
+            self._note_request_delta(event.payload.delta)
+        elif isinstance(event.payload, AssistantTranscriptDelta) and not self._request_held:
+            # Une réponse du modèle ferme la demande en cours ; tant qu'une
+            # délégation est en vol, elle ne l'efface pas.
+            self.reset_pending_request()
         if event.correlation.output_id:
             key = str(event.correlation.output_id)
             if key not in self._outputs:

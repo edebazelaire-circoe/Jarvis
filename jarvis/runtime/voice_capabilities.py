@@ -75,8 +75,10 @@ class VoiceCapabilityRegistry:
                     {"key": "client_delegation", "label": "Délégation client active", "kind": "toggle", "default": True, "readonly": True},
                     {"key": "idle_timeout_s", "label": "Fermeture après inactivité (secondes)", "kind": "number",
                      "default": 60, "min": 5, "max": 3600},
+                    {"key": "brain_orchestration", "label": "Déléguer au cerveau (outils et sous-agents)",
+                     "kind": "toggle", "default": True},
                 ])
-                defaults.update(client_delegation=True, idle_timeout_s=60)
+                defaults.update(client_delegation=True, idle_timeout_s=60, brain_orchestration=True)
             label, description = descriptions[mode]
             result.append({"id": mode.value, "label": label, "description": description,
                            "fields": fields, "defaults": defaults,

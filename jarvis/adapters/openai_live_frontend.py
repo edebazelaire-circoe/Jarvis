@@ -437,7 +437,8 @@ class OpenAILiveFrontend:
                 raise ValueError("invalid client delegation")
             delegation_id = self._identity(delegation.get("id"), "delegation id")
             offset = value.get("offset_ms")
-            if isinstance(offset, bool) or not isinstance(offset, (int, float)):
+            if (isinstance(offset, bool) or not isinstance(offset, (int, float))
+                    or not math.isfinite(offset) or offset < 0):
                 raise ValueError("invalid delegation offset")
             if delegation_id not in self._known_delegations and len(self._known_delegations) >= 64:
                 self._fail(VoiceErrorCode.CONTEXT_LIMIT, None, "Live delegation bound")
@@ -445,7 +446,10 @@ class OpenAILiveFrontend:
             self._known_delegations.add(delegation_id)
             assert self._correlation is not None
             correlation = replace(self._correlation, provider_delegation_id=ProviderDelegationId(delegation_id))
-            self._enqueue(VoiceDelegationRequested(self._input_revision), correlation=correlation,
+            # `offset_ms` ne borne aucun transcript : le fournisseur l'émet dans
+            # les mêmes millisecondes que le dernier delta d'entrée. Il voyage
+            # comme diagnostic, jamais comme filtre.
+            self._enqueue(VoiceDelegationRequested(self._input_revision, int(offset)), correlation=correlation,
                           provider_event_id=provider_event,
                           interval=VoiceSessionInterval(float(offset), float(offset)))
         elif kind == "session.usage.updated":

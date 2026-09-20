@@ -68,7 +68,7 @@ async def test_progress_is_quiet_and_fresh_result_is_exact_commentary_after_core
                  {"status": "running", "fresh": True, "progress": {"public_summary": "Exact provisional fact"}},
                  {"status": "completed", "fresh": True, "result": {"text": "Exact final result"}}))
     session = Session(frontend, core)
-    controller = LiveDelegationController(session, poll_interval_s=.001)
+    controller = LiveDelegationController(session, poll_interval_s=.001, brain_orchestration=False)
     event = frontend.event(VoiceDelegationRequested(3), correlation=VoiceCorrelation(
         "live-session", provider_delegation_id=ProviderDelegationId("delegation")))
 
@@ -93,7 +93,7 @@ async def test_progress_is_quiet_and_fresh_result_is_exact_commentary_after_core
 async def test_stale_or_failed_result_is_never_injected(terminal):
     frontend = FakeVoiceFrontend()
     await ready(frontend)
-    controller = LiveDelegationController(Session(frontend, Core((terminal,))), poll_interval_s=.001)
+    controller = LiveDelegationController(Session(frontend, Core((terminal,))), poll_interval_s=.001, brain_orchestration=False)
     event = frontend.event(VoiceDelegationRequested(1), correlation=VoiceCorrelation(
         "live-session", provider_delegation_id=ProviderDelegationId("delegation")))
 
@@ -123,7 +123,7 @@ async def test_pending_trigger_capacity_is_bounded_and_duplicate_is_idempotent()
     async def blocked_flush():
         await gate.wait()
     session.flush_observations = blocked_flush
-    controller = LiveDelegationController(session, max_pending=1)
+    controller = LiveDelegationController(session, max_pending=1, brain_orchestration=False)
     first = frontend.event(VoiceDelegationRequested(1), correlation=VoiceCorrelation(
         "live-session", provider_delegation_id=ProviderDelegationId("first")))
     second = frontend.event(VoiceDelegationRequested(1), correlation=VoiceCorrelation(

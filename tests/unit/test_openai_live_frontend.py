@@ -123,6 +123,7 @@ async def test_reader_maps_deltas_audio_delegation_and_usage_without_finals():
     assert events[3].provider_event_id is None
     assert isinstance(events[4].payload, VoiceDelegationRequested)
     assert events[4].payload.context_revision == 2
+    assert events[4].payload.offset_ms == 25
     assert events[4].correlation.provider_delegation_id == "delegation-opaque"
     assert events[4].provider_interval.start_ms == events[4].provider_interval.end_ms == 25
     assert events[5].payload == VoiceUsageUpdated(VoiceUsageSource.PROVIDER_SNAPSHOT, duration_s=1.25)
