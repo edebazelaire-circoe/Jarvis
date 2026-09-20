@@ -270,7 +270,7 @@ def test_what_a_brain_sees_today_for_calibration_tutorial_and_overlay(tmp_path):
     confirmation explicite, et ce cas la mesure pour de bon plutôt que de la
     mettre en scène. **L'onglet s'ouvre avec Bare Hands éteint**, et c'est cette
     porte-là qui refuse — `if(!view.enabled)`, code
-    `barehands_calibration_disabled` / `barehands_tutorial_disabled` —, pas
+    `barehands_calibration_lifecycle_off` depuis la Slice 08 —, pas
     l'absence de caméra sous node, qui est la porte **suivante** et n'est jamais
     atteinte. Le commentaire l'attribuait à la caméra : une cause fausse dans un
     test est pire qu'une cause absente, parce qu'elle se croit.
@@ -321,8 +321,10 @@ def test_what_a_brain_sees_today_for_calibration_tutorial_and_overlay(tmp_path):
     # **Et c'est bien l'interrupteur qui a refusé, pas la caméra.** Sans cette
     # lecture, un `calibrate()` rendant `undefined` sans rien lancer donnerait
     # exactement le même reçu.
+    # Slice 08 : `..._lifecycle_off`, et non `..._disabled`, parce que c'est
+    # l'interrupteur qui a refusé et non le réglage « Proposer la calibration ».
     assert observed["gates"]["calibrate"] == {
-        "ok": False, "code": "barehands_calibration_disabled",
+        "ok": False, "code": "barehands_calibration_lifecycle_off",
         "reason": observed["gates"]["calibrate"]["reason"]}
     # **Slice 02** : le refus nomme le contrôle qui existe, pas celui qui a
     # été retiré. Une phrase qui désigne une case disparue est une phrase qui
@@ -333,7 +335,7 @@ def test_what_a_brain_sees_today_for_calibration_tutorial_and_overlay(tmp_path):
     # calibration ; quand elle refuse, c'est son code qui remonte. Renommer le
     # refus en `barehands_tutorial_*` cacherait **lequel** des parcours a
     # échoué — et il n'y en a plus qu'un.
-    assert observed["gates"]["tutorial"]["code"] == "barehands_calibration_disabled"
+    assert observed["gates"]["tutorial"]["code"] == "barehands_calibration_lifecycle_off"
     assert "bouton à icône de main" in observed["gates"]["tutorial"]["reason"]
     # Le refus n'est pas décoré : `startTutorialAlias` ne colle sa phrase de
     # dépréciation qu'à une confirmation, parce qu'un refus doit porter sa

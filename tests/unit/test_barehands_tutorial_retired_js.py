@@ -249,7 +249,9 @@ def test_the_deprecated_door_inherits_the_calibration_refusals_under_their_own_c
     """, "refuseOff")
 
     assert off["refused"]["ok"] is False
-    assert off["refused"]["code"] == "barehands_calibration_disabled"
+    # Slice 08 : la cause « Bare Hands éteint » a son propre code, distinct du
+    # réglage décoché. L'alias en hérite tel quel — c'est tout son contrat.
+    assert off["refused"]["code"] == "barehands_calibration_lifecycle_off"
     # **Rien n'a été allumé.** L'interrupteur appartient à l'utilisateur (§ 12) ;
     # l'alias n'est pas un autre nom pour le contourner.
     assert off["still"] == {"enabled": False, "lifecycle": "off", "open": False}

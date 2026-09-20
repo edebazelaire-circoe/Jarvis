@@ -48,7 +48,8 @@ le courtier le renvoie dans le corps 200, et `barehands_mcp` le colle à sa
 phrase d'issue. Le cerveau lit donc « Fait. Commande dépréciée : … c'est la
 calibration qui a été ouverte. » et ne peut pas annoncer un tutoriel.
 
-**Ses refus gardent le nom de ce qui a refusé** — `barehands_calibration_disabled`,
+**Ses refus gardent le nom de ce qui a refusé** —
+`barehands_calibration_disabled`, `barehands_calibration_lifecycle_off`,
 `barehands_calibration_no_camera` — parce que c'est la calibration qui a refusé.
 
 **Condition de suppression.** Quand un changement de contrat des commandes Bare

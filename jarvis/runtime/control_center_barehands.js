@@ -5272,7 +5272,28 @@ try{
       if(typeof toast==='function')
         toast({title:'Calibration impossible',sub:message,kind:'warn',ms:6000});
       refreshPanel();
-      return {ok:false,code:'barehands_calibration_disabled',reason:message};
+      /* **Son propre code** (Slice 08, report de la Slice 07B).
+
+         Jusqu'ici les deux refus que `startCalibration` connaît d'avance
+         partageaient `barehands_calibration_disabled`, et seule la phrase les
+         distinguait. Un code existe pour qu'une machine puisse brancher
+         dessus ; un code qui ne discrimine rien que la phrase ne dise déjà
+         mieux ne fait pas son métier — et c'est la voix qui le paie, puisque
+         le canal ne remonte qu'un code et un `reason` à JARVIS.
+
+         Les deux remèdes sont différents et incompatibles : « cochez
+         « Proposer la calibration » dans les réglages » contre « choisissez
+         Veille ou Actif sur le bouton en haut à gauche ». Un appelant qui veut
+         guider l'utilisateur doit pouvoir choisir sans analyser du français.
+
+         Le module HUD avait déjà tranché dans ce sens en inventant
+         `barehands_hud_surface_missing` pour sa troisième cause plutôt que de
+         la déguiser en « décoché » : on suit ce précédent au lieu de le
+         contredire. `disabled` reste ce qu'il dit — la calibration est
+         désactivée dans les réglages ; l'extinction de Bare Hands prend
+         `barehands_calibration_lifecycle_off`, nommé d'après le cycle de vie
+         pour qu'aucun lecteur ne le confonde avec le réglage. */
+      return {ok:false,code:'barehands_calibration_lifecycle_off',reason:message};
     }
     /* Réveiller, en revanche, est exactement ce que la voix sait déjà faire
        (`activate` est dans la table) : calibrer demande des mains vivantes. */
@@ -5788,6 +5809,39 @@ try{
       <div class="hint">${esc(hint)}</div></div></div>`;
   }
 
+  /* **Deux limites connues, replacées** (Slice 08).
+
+     La Slice 04 a supprimé le bloc « Gestes » et deux de ses phrases étaient
+     devenues fausses — elles sont mortes à juste titre. Quatre phrases
+     **vraies** sont parties avec. Deux décrivaient ce que l'utilisateur a sous
+     les yeux et sont revenues dans la carte d'aide (`helpModel().reading`) ;
+     les deux autres, celles-ci, ne décrivent rien : elles disent ce qui **ne
+     marchera pas**, et l'utilisateur les rencontrera en croyant à une panne.
+
+     Elles sont ici, et pas dans la carte d'aide, pour la raison qui fonde la
+     décision 14 : cet onglet est de la **configuration**, et une limite
+     assumée est de la documentation, pas une action de session. Les mettre
+     dans l'aide rouvrirait le mur de texte que la Slice 04 a eu raison de
+     fermer ; les taire laisserait un clic sans effet passer pour un bug.
+
+     **Ce ne sont pas des réglages** — rien ici ne se coche ni ne s'enregistre —
+     donc le bloc ferme la section plutôt que de s'intercaler entre deux
+     contrôles, et il n'entre pas dans le compte des « six réglages ci-dessus »
+     que le bouton de réinitialisation annonce.
+
+     Les deux faits sont structurels, pas des défauts à corriger un jour : le
+     navigateur réserve l'ouverture d'un `<select>` à un événement de confiance,
+     et `document.querySelectorAll` ne traverse pas la frontière d'une iframe
+     — le visage ai-visualizer en est une (`control_center.html:730`). Si l'un
+     des deux cessait d'être vrai, c'est cette phrase-là qu'il faudrait
+     retirer. */
+  function limitsHtml(){
+    return `<div class="field" style="margin-top:18px">
+      <label>Deux limites connues</label>
+      <div class="hint">Une <strong>liste déroulante</strong> ne s’ouvre pas au pincement : le navigateur réserve son ouverture à un vrai clic de souris, et Bare Hands en produit un synthétique. Le <strong>visage ai-visualizer</strong> est une iframe : elle ne reçoit pas les clics de Bare Hands. Dans les deux cas rien n’est cassé — utilisez la souris pour ces deux éléments.</div>
+    </div>`;
+  }
+
   function settingsHtml(){
     return `<section class="bh-section" id="${SECTION.settings}">
       <h3>Réglages</h3>
@@ -5808,6 +5862,7 @@ try{
         <button type="button" class="action small" id="barehandsReset" ${view.busy?'disabled':''}>Réinitialiser les réglages</button>
         <div class="hint">Rend aux six réglages ci-dessus et à l’outil leur valeur d’usine. Le cycle de vie n’y touche pas : réinitialiser n’éteint pas la caméra, et le bouton à icône de main en haut à gauche reste dans l’état où il est. Le profil de calibration a son propre bouton ci-dessous : ce sont deux choses distinctes.</div>
       </div>
+      ${limitsHtml()}
     </section>
     ${calibrationHtml()}
     ${recordHtml()}`;

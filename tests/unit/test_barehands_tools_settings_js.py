@@ -2237,3 +2237,63 @@ def test_the_quick_entry_points_open_the_tab_and_reveal_their_section(tmp_path):
     # son nom, pas ouverte à moitié.
     assert result["unknown"]["ok"] is False
     assert result["unknown"]["code"] == "barehands_settings_section_unknown"
+
+
+def test_the_settings_carry_the_two_known_limits(tmp_path):
+    """**Les deux autres phrases vraies retirées avec le bloc « Gestes »**
+    (report de la Slice 04 vers la Slice 08).
+
+    Quatre phrases vraies sont mortes avec un bloc dont deux phrases étaient
+    fausses. Deux décrivaient ce qu'on voit à l'écran et sont revenues dans la
+    carte d'aide (`test_the_token_legend_returns_the_true_sentences_slice_04_deleted`).
+    Les deux autres — celles-ci — ne décrivent rien : elles disent ce qui **ne
+    marchera pas**, et l'utilisateur les rencontrera en croyant à une panne.
+
+    Elles sont dans les réglages, et c'est la décision 14 qui le veut : cet
+    onglet est de la **configuration**, et une limite assumée est de la
+    documentation, pas une action de session. Les mettre dans l'aide
+    rouvrirait le mur de texte que la Slice 04 a eu raison de fermer.
+
+    Ce que ce test épingle, au-delà de la présence :
+
+    - **ce ne sont pas des réglages** — rien ne se coche, rien ne s'enregistre,
+      et le compte des cases et curseurs ne bouge pas, donc la phrase du bouton
+      de réinitialisation (« les six réglages ci-dessus ») reste vraie ;
+    - l'ancien libellé « Limites du mode test » ne revient pas : le bloc
+      supprimé reste supprimé, ce sont ses **phrases vraies** qui reviennent,
+      pas lui.
+    """
+
+    import asyncio
+
+    control = ControlCenter(runtime_root=tmp_path / "runtime", project_root=tmp_path,
+                            barehands_vendor_root=tmp_path / "vendor")
+    served = asyncio.run(control.index(None)).text
+
+    assert "function limitsHtml()" in served
+    # Appelé, et **dans** la section des réglages : un bloc construit que rien
+    # n'insère est exactement le défaut que la Slice 04 a refusé pour la clé
+    # `gestures`.
+    assert "${limitsHtml()}" in served
+    assert served.index("function settingsHtml()") < served.index("${limitsHtml()}")
+
+    assert "Deux limites connues" in served
+    # La liste déroulante : le navigateur réserve l'ouverture à un clic de
+    # confiance, et Bare Hands en produit un synthétique.
+    assert "liste déroulante" in served and "vrai clic de souris" in served
+    # L'iframe du visage : `querySelectorAll` ne traverse pas sa frontière.
+    assert "ai-visualizer" in served and "iframe" in served
+    # Et la phrase dit quoi faire — une limite sans issue se lit comme une
+    # panne (RÈGLE ZÉRO).
+    assert "utilisez la souris" in served.lower()
+
+    # **Pas un réglage.** Le bloc ne porte ni case, ni curseur, ni identifiant
+    # que `bindPanel` irait chercher.
+    block = served[served.index("function limitsHtml()"):]
+    block = block[:block.index("function settingsHtml()")]
+    for forbidden in ("data-barehands-check", "data-barehands-range",
+                      "<input", "<button", "checkHtml", "rangeHtml"):
+        assert forbidden not in block, forbidden
+
+    # L'ancien bloc reste mort : c'est son libellé, pas ses phrases vraies.
+    assert "Limites du mode test" not in served

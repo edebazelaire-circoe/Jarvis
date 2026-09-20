@@ -1222,12 +1222,17 @@ def test_calibration_says_why_it_cannot_be_chosen(tmp_path):
 
     assert result["ok"] == {"act": "calibration", "label": "Calibrer…"}
     assert result["error"] == {"act": "calibration", "label": "Calibrer…"}
-    # Décoché dans les réglages, et Bare Hands éteint : deux causes, une seule
-    # phrase chacune, et le code du moteur dans les deux cas.
+    # Décoché dans les réglages, et Bare Hands éteint : **deux causes, deux
+    # codes** depuis la Slice 08. Ils en partageaient un, et seule la phrase
+    # les distinguait — un code qui ne discrimine rien ne fait pas son métier,
+    # et c'est la voix qui le payait, puisque le canal ne remonte qu'un code et
+    # un `reason`. Les deux remèdes sont incompatibles : cocher une case, ou
+    # rallumer Bare Hands.
     assert result["unchecked"]["note"] == "barehands_calibration_disabled"
     assert "Proposer la calibration" in result["unchecked"]["label"]
-    assert result["off"]["note"] == "barehands_calibration_disabled"
+    assert result["off"]["note"] == "barehands_calibration_lifecycle_off"
     assert "éteint" in result["off"]["label"]
+    assert result["unchecked"]["note"] != result["off"]["note"]
     # Une surface illisible est une **troisième** cause : elle ne se déguise
     # pas en « décoché », ce qui enverrait l'utilisateur cocher une case déjà
     # cochée.

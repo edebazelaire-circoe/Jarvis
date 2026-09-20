@@ -240,12 +240,22 @@ def test_the_help_never_presents_an_unbound_recogniser_as_a_command(tmp_path):
                  "Claquement des deux paumes"):
         assert name in idle, name
     # Les seules postures dessinées sont celles qui agissent : la main au
-    # repos (les trois états), le C, et les quatre demi-pincements.
+    # repos (les trois états), le C, les quatre demi-pincements, et — depuis la
+    # Slice 08 — la mire du pincement visé, qui illustre la légende du jeton.
+    #
+    # `pinch_target` **n'est pas un reconnaisseur** : ce n'est pas un membre de
+    # `GESTURES`, c'est le second anneau pointillé qui dit « région visée ». La
+    # garantie que ce test porte — aucun geste non lié n'est dessiné — est donc
+    # intacte, et l'assertion ci-dessous la rend explicite plutôt que de faire
+    # confiance à la liste littérale.
     assert sorted(set(result["poses"])) == [
         "pinch_primary_closed", "pinch_primary_open",
         "pinch_secondary_closed", "pinch_secondary_open",
-        "rest", "wake_c",
+        "pinch_target", "rest", "wake_c",
     ]
+    assert not (set(result["poses"]) & set(result["unbound"])), (
+        "aucune posture dessinée ne porte le nom d'un geste reconnu mais non lié"
+    )
 
 
 def test_the_help_says_what_the_contracts_say_and_not_a_second_version(tmp_path):
@@ -652,3 +662,93 @@ def test_the_advanced_surface_stays_where_it_has_always_been(tmp_path):
     assert result["calls"] == [["showSettings", "barehandsRecord"]]
     assert result["closed"] is None, "la carte s'efface derrière l'onglet"
     assert result["sections"] == ["calibration", "record", "settings"]
+
+
+def test_the_token_legend_returns_the_true_sentences_slice_04_deleted(tmp_path):
+    """**Quatre phrases vraies sont mortes avec un bloc faux** (report de la
+    Slice 04 vers la Slice 08).
+
+    La Slice 04 a supprimé le bloc « Gestes » des réglages parce que deux de
+    ses phrases étaient devenues fausses — le pincement secondaire y était
+    rangé parmi les non-liés, et il annonçait « pas de glisser-déposer ni de
+    défilement » alors que les quatre captures sont implantées. Ce retrait
+    était juste. Mais **quatre phrases vraies** sont parties avec lui, et deux
+    d'entre elles décrivent ce que l'utilisateur a sous les yeux.
+
+    Elles reviennent ici, dans l'aide, et pas dans les réglages : la RÈGLE
+    ZÉRO le tranche. Un jeton pâle qu'on ne sait pas lire est exactement le cas
+    où « ça marche » et « c'est cassé » se ressemblent, et la réponse doit être
+    à un clic de l'écran où la question se pose. Les deux autres phrases sont
+    des **limites**, pas une légende, et vont aux réglages — c'est
+    `test_the_settings_carry_the_two_known_limits` qui les tient.
+
+    Ce que ce test épingle :
+
+    - les deux phrases sont **dans la carte**, pas seulement dans le modèle ;
+    - les doigts du pincement primaire sont **lus de `PINCH_FINGERS`** et la
+      durée de veille de `SLEEP_TIMEOUT_MS` — pas une seconde rédaction ;
+    - la pastille des mains est décrite par **ce qu'elle compte**, jamais par
+      le littéral « MAINS · 1/2 », qui n'est pas un contrat et ferait mentir
+      l'aide le jour où il change ;
+    - **aucun astérisque de mise en forme** ne traverse le texte : la Slice 07
+      a déjà dû réparer une consigne où deux paires s'affichaient telles
+      quelles (`1912d91`), et ces chaînes partent aussi en `textContent`.
+    """
+
+    result = run_node(tmp_path, browser() + r"""
+      const model=CARDS.helpModel();
+      await BAREHANDS.showHelp();
+      await settle();
+      const heads=deepAll(cardRoot,n=>n.tagName==='H3').map(n=>n.textContent);
+      out({
+        title:model.reading.title,
+        pose:model.reading.pose,
+        token:model.reading.token,
+        unsure:model.reading.unsure,
+        heads,
+        /* Lu du contrat, pas recopié : si un canal changeait de doigts, la
+           phrase changerait toute seule. */
+        primaryFingers:C.PINCH_FINGERS[C.PINCH_CHANNEL.PRIMARY],
+        sleepSeconds:Math.round(C.SLEEP_TIMEOUT_MS/1000),
+        /* Le texte réellement dessiné, pas le modèle. */
+        drawn:textOf(cardRoot),
+      });
+    """, name="legend")
+
+    seen = result["drawn"]
+    # Les deux phrases sont à l'écran, pas seulement dans le modèle.
+    assert result["token"] in seen
+    assert result["unsure"] in seen
+    assert result["title"] in result["heads"]
+
+    # **Le jeton** : la phrase du bloc « Gestes » supprimé, rendue à l'écran.
+    for fragment in ("jeton rond", "au bout de l’index", "grossit",
+                     "remplit l’anneau", "fige pour viser", "onde",
+                     "Rouvrez les doigts"):
+        assert fragment in result["token"], fragment
+
+    # Les doigts viennent du contrat. Deux doigts aujourd'hui ; la phrase les
+    # nomme tous, quels qu'ils soient.
+    assert result["primaryFingers"] == ["thumbTip", "indexTip"]
+    assert "pouce et index" in result["token"]
+
+    # **La main non fiable** : l'autre phrase vraie qui était partie.
+    for fragment in ("pâle et pointillé", "sort du cadre", "trop loin",
+                     "vient d’apparaître", "cliquable"):
+        assert fragment in result["unsure"], fragment
+
+    # La durée de veille est lue, pas écrite.
+    assert f"{result['sleepSeconds']} secondes" in result["unsure"]
+
+    # **La pastille est décrite par ce qu'elle compte.** Citer son libellé
+    # ferait mentir l'aide le jour où il change : il vit dans
+    # `control_center_barehands.js` et n'est pas un contrat.
+    assert "mains sûres" in result["unsure"]
+    assert "MAINS" not in result["unsure"] and "1/2" not in result["unsure"]
+
+    # Aucun astérisque de mise en forme : ces chaînes partent en `textContent`.
+    assert "*" not in result["token"] and "*" not in result["unsure"]
+
+    # La mire du pincement visé illustre la légende — la seule posture du
+    # vocabulaire qui dise « région visée » plutôt qu'un geste.
+    assert result["pose"] == "pinch_target"

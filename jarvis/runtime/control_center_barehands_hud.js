@@ -275,9 +275,17 @@
 
      Les deux refus que `startCalibration` connaît d'avance sont connaissables
      d'ici aussi, donc l'entrée les dit plutôt que de laisser l'utilisateur
-     cliquer pour apprendre. Ils gardent leur **code du moteur**
-     (`barehands_calibration_disabled`) : deux causes, une seule phrase, et
-     jamais un code inventé ici pour l'occasion.
+     cliquer pour apprendre. Ils gardent leur **code du moteur** — jamais un
+     code inventé ici pour l'occasion.
+
+     Depuis la Slice 08 ces deux codes sont **distincts** : le réglage décoché
+     reste `barehands_calibration_disabled`, l'extinction de Bare Hands prend
+     `barehands_calibration_lifecycle_off`. Ils partageaient un code et ne se
+     distinguaient que par la phrase, ce qui obligeait tout appelant — la voix
+     en premier — à lire du français pour choisir entre deux remèdes
+     incompatibles. Les deux valeurs se lisent toujours du moteur et cette
+     table doit suivre `startCalibration` ligne pour ligne :
+     `test_calibration_says_why_it_cannot_be_chosen` tombe si elles divergent.
 
      Le troisième, `barehands_calibration_no_camera`, n'est **pas** anticipé et
      c'est délibéré : depuis une panne, `activate()` peut parfaitement
@@ -295,7 +303,7 @@
       return Object.freeze({code:'barehands_calibration_disabled',
         reason:'« Proposer la calibration » est décoché dans les réglages'});
     if(!view.enabled)
-      return Object.freeze({code:'barehands_calibration_disabled',
+      return Object.freeze({code:'barehands_calibration_lifecycle_off',
         reason:'Bare Hands est éteint : choisissez Veille ou Actif d’abord'});
     return null;
   }
@@ -479,6 +487,45 @@
           color:`var(${token.cssVar},${token.fallback})`,
         });
       })),
+      /* **La légende du jeton** (Slice 08, vérités replacées).
+
+         La Slice 04 a supprimé le bloc « Gestes » des réglages, à juste titre :
+         deux de ses phrases étaient devenues fausses. Mais quatre phrases
+         **vraies** sont parties avec, et deux d'entre elles décrivent ce que
+         l'utilisateur a sous les yeux — le jeton rond, et le jeton pâle et
+         pointillé d'une main que le suivi ne tient pas pour sûre.
+
+         Elles reviennent **ici** plutôt que dans les réglages, et c'est la
+         RÈGLE ZÉRO qui tranche : un jeton pâle qu'on ne sait pas lire est
+         exactement le cas où « ça marche » et « c'est cassé » se ressemblent.
+         La réponse doit être à un clic de l'écran où la question se pose (clic
+         droit → Aide), pas dans un modal de configuration qu'on n'ouvre pas en
+         pleine session. Les deux autres phrases, qui sont des **limites** et
+         non une légende, vont aux réglages (`settingsHtml`).
+
+         Contrainte du § 16 tenue : les doigts viennent de `PINCH_FINGERS`, la
+         durée de `SLEEP_TIMEOUT_MS`. Et la pastille des mains est décrite par
+         **ce qu'elle compte**, jamais par le littéral « MAINS · 1/2 » : ce
+         libellé vit dans `control_center_barehands.js` et n'est pas un
+         contrat, donc le citer ferait mentir l'aide le jour où il change. */
+      reading:Object.freeze({
+        title:'Ce que vous voyez à l’écran',
+        /* Le littéral, comme `lifecycle` et `wake` juste au-dessus : ce modèle
+           est **pur** et `HAND` n'est lu qu'au dessin. */
+        pose:'pinch_target',
+        token:`Chaque main suivie porte un jeton rond au bout de l’index ; il grossit quand il `
+          +`survole un élément cliquable. Rapprocher ${fingersOf(BH.PINCH_CHANNEL.PRIMARY).join(' et ')} `
+          +`remplit l’anneau du jeton et le fige pour viser ; le pincement franc dépose le clic `
+          +`sous le jeton, avec une onde. Rouvrez les doigts avant de recliquer.`,
+        /* Aucun astérisque de mise en forme dans ces phrases : elles partent en
+           `textContent`, et la Slice 07 a déjà dû réparer une consigne où deux
+           paires d'astérisques s'affichaient telles quelles (`1912d91`). Le
+           relief se fait en DOM, au dessin, pas dans la chaîne. */
+        unsure:`Un jeton pâle et pointillé signale une main que le suivi ne tient pas pour `
+          +`sûre — elle sort du cadre, elle est trop loin, ou elle vient d’apparaître. Elle reste `
+          +`affichée et cliquable, mais elle ne compte pas parmi les mains sûres : seule une main `
+          +`sûre retarde le retour en veille de ${round(BH.SLEEP_TIMEOUT_MS,1000)} secondes.`,
+      }),
       /* **Les reconnus sans effet.** Déduits, jamais listés à la main. */
       unbound:Object.freeze(BH.GESTURES
         .filter(gesture=>!GESTURE_BOUND.includes(gesture))
@@ -2193,6 +2240,20 @@
         swatches.appendChild(line);
       }
       colours.appendChild(swatches);
+
+      /* **La légende du jeton.** Elle suit les couleurs parce que c'est la
+         même question — « qu'est-ce que je regarde ? » —, et précède les
+         gestes sans effet parce qu'elle, elle décrit quelque chose qui agit. */
+      const reading=block(body,model.reading.title);
+      const readRow=el('div','bh-card-row');
+      const readArt=el('div','bh-card-art');
+      readArt.appendChild(handArt(model.reading.pose,54));
+      readRow.appendChild(readArt);
+      const readText=el('div');
+      readText.appendChild(el('p',null,model.reading.token));
+      readText.appendChild(el('p','bh-card-note',model.reading.unsure));
+      readRow.appendChild(readText);
+      reading.appendChild(readRow);
 
       /* **Reconnus, sans effet.** Ils sont dits, parce que les taire ferait
          croire que le moteur ne les voit pas — et ils sont dits *comme*

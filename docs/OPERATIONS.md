@@ -403,8 +403,9 @@ parole → cerveau → outil MCP jarvis-barehands → POST /api/barehands/comman
 ```
 
 Cinq outils, un par action : `barehands_activate`, `barehands_deactivate`,
-`barehands_calibrate`, `barehands_tutorial`, `barehands_exit_overlay`. Les trois
-parcours sont **vivants** (Slices 08 à 10). `barehands_tutorial` est
+`barehands_calibrate`, `barehands_tutorial`, `barehands_exit_overlay`. Les cinq
+outils sont **vivants**, mais il ne reste **qu'un seul parcours** : la
+calibration. `barehands_tutorial` est
 **déprécié** depuis la Slice 07B de l'affinage d'UI : le parcours de tutoriel
 séparé a été retiré, l'outil ouvre la **calibration**, et sa note le dit au
 cerveau — préférer `barehands_calibrate`. Aucun outil ne touche l'interrupteur,
