@@ -62,6 +62,7 @@ CONTRACTS = RUNTIME / "control_center_barehands_contracts.js"
 TARGET = RUNTIME / "control_center_barehands_target.js"
 CALIBRATION = RUNTIME / "control_center_barehands_calibration.js"
 TUTORIAL = RUNTIME / "control_center_barehands_tutorial.js"
+RECORDER = RUNTIME / "control_center_barehands_recorder.js"
 SCENE_INTERACT = RUNTIME / "control_center_scene_interact.js"
 
 
@@ -74,6 +75,7 @@ def run_node(tmp_path: Path, source: str, name: str = "tools") -> object:
         f"const SCRIPT_PATH={json.dumps(str(SCRIPT))};\n"
         f"const CALIBRATION_PATH={json.dumps(str(CALIBRATION))};\n"
         f"const TUTORIAL_PATH={json.dumps(str(TUTORIAL))};\n"
+        f"const RECORDER_PATH={json.dumps(str(RECORDER))};\n"
         f"const TARGET_PATH={json.dumps(str(TARGET))};\n"
         f"const SCENE_INTERACT_PATH={json.dumps(str(SCENE_INTERACT))};\n"
         f"const CONTRACTS_PATH={json.dumps(str(CONTRACTS))};\n"
@@ -666,6 +668,9 @@ global.JarvisBarehandsTarget=require(TARGET_PATH);
    et le pointeur, qui le lit pour poser `calibrate()` sur sa surface gelee. */
 global.JarvisBarehandsCalibration=require(CALIBRATION_PATH);
 global.JarvisBarehandsTutorial=require(TUTORIAL_PATH);
+/* Enregistreur de diagnostic (Slice 10) : insere apres le tutoriel et avant
+   le pointeur, qui le lit pour poser `record` sur sa surface gelee. */
+global.JarvisBarehandsRecorder=require(RECORDER_PATH);
 global.JarvisSceneInteract=require(SCENE_INTERACT_PATH);
 
 /* Le serveur : la **même** forme que la vraie route — il range ce qu'on lui
@@ -793,6 +798,11 @@ global.setInterval=(fn,ms)=>{timers.push({fn,ms});return timers.length};
 global.clearInterval=id=>{if(id>=1&&timers[id-1])timers[id-1]=null};
 global.window.setInterval=global.setInterval;
 global.window.clearInterval=global.clearInterval;
+/* La page arme aussi des `setTimeout` (Slice 10 : l'echeance d'un
+   enregistrement). Sans eux sur `window`, le double ne peut pas echouer comme
+   la vraie chose : il leverait la ou le navigateur arme. */
+global.window.setTimeout=(fn,ms)=>{timers.push({fn,ms,once:true});return timers.length};
+global.window.clearTimeout=global.clearInterval;
 const ticks=()=>timers.filter(Boolean).length;
 const tick=n=>{for(let i=0;i<(n||1);i+=1)for(const t of timers.slice())if(t)t.fn()};
 """

@@ -3212,6 +3212,16 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
   if(!TUTO)
     console.error('[barehands] barehands.tutorial_unavailable '
       +JSON.stringify({error:'control_center_barehands_tutorial.js ne s’est pas installé : le tutoriel refusera, le reste de Bare Hands est intact'}));
+  /* Enregistreur, rejeu et mesures (Slice 10, §12). Lu **défensivement** pour
+     la même raison que le tutoriel : sa garde de forme peut refuser de
+     l'installer, et la page servie n'a qu'une seule balise `<script>`. Absent,
+     `record.start()` refuse avec un code et l'onglet le dit ; tout le reste de
+     Bare Hands est intact, y compris les deux parcours. */
+  const REC=(typeof JarvisBarehandsRecorder!=='undefined'&&JarvisBarehandsRecorder)
+    ||window.JarvisBarehandsRecorder||null;
+  if(!REC)
+    console.error('[barehands] barehands.recorder_unavailable '
+      +JSON.stringify({error:'control_center_barehands_recorder.js ne s’est pas installé : l’enregistrement de diagnostic refusera, le reste de Bare Hands est intact'}));
   /* Géométrie de la scène (`control_center_scene_interact.js`, inséré bien avant
      ce module) : `clampBox`, `MIN_SIZE`, `manipulateBox`, `rebaseManipulation`.
      Les décisions 18 et 19 y vivent, en **unités de scène**, et c'est là que les
@@ -4005,6 +4015,10 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
        tout le reste de ce fichier le lit déjà là, et les deux sont tenus
        ensemble par `applyServerState`. */
     settings:BH.normalizeSettings(),
+    /* La dernière trace de diagnostic envoyée, ou l'échec de son envoi
+       (Slice 10). `null` tant que personne n'a enregistré, pour que « rien
+       n'a été enregistré » ne se dessine pas comme « tout va bien ». */
+    trace:null,
     /* Ce que le serveur a **lu** dans le fichier, par opposition à ce qu'il
        écrit : `null` tant qu'on ne lui a pas parlé, pour que « on ne sait pas
        encore » ne se dessine pas comme « tout va bien ». */
@@ -4313,19 +4327,54 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
      **refuse de se construire sans horloge** — la leçon que la Slice 09 a tirée
      de la croix de sortie : une garantie que chaque appelant doit se rappeler
      de respecter n'est pas une garantie, c'est une convention. */
-  function startMeasuring(){
-    /* La couture est **posée sur les dépendances du contrôleur**, pas dans une
-       branche qu'il évaluerait à chaque image : il teste `typeof
-       deps.onMeasure`, donc l'absence de parcours est l'absence de fonction,
-       et rien n'est calculé. Une fonction toujours présente qui rendrait tout
-       de suite aurait fait payer à chaque session le coût d'une
-       fonctionnalité que personne n'a lancée. */
+  /* **Une seule réduction, deux consommateurs** (Slice 10).
+
+     La couture est **posée sur les dépendances du contrôleur**, pas dans une
+     branche qu'il évaluerait à chaque image : il teste `typeof
+     deps.onMeasure`, donc l'absence de consommateur est l'absence de fonction,
+     et rien n'est calculé. Une fonction toujours présente qui rendrait tout de
+     suite aurait fait payer à chaque session le coût d'une fonctionnalité que
+     personne n'a lancée. C'est cette propriété-là qui tient le budget
+     d'images, et elle est **inchangée** : sans calibration et sans
+     enregistrement, `measureSinks` est vide, la clé est supprimée, et le coût
+     par image est exactement celui d'avant.
+
+     Ils sont deux depuis la Slice 10 : la calibration, et l'enregistreur de
+     diagnostic. Élargir la couture aurait été le mauvais réflexe — la question
+     que la Slice 09 pose est « ce consommateur a-t-il besoin de **cette**
+     couture », et la réponse est oui : l'enregistreur veut exactement
+     l'enregistrement de scalaires qu'elle produit déjà, ni plus ni moins. Ce
+     qu'il ne faut pas, c'est **deux propriétaires d'une même clé** : arrêter
+     la calibration effacerait la couture de l'enregistreur et une séance
+     s'arrêterait sans que rien ne le dise. D'où un registre nommé, et
+     `measureSeam()` qui le relit — sans lecture, « les deux écoutent » et
+     « l'un a été effacé par l'autre » s'écrivent pareil. */
+  const measureSinks=new Map();
+  function openMeasureSeam(name,sink){
+    measureSinks.set(name,sink);
+    if(typeof controllerDeps.onMeasure==='function')return measureSinks.size;
     controllerDeps.onMeasure=record=>{
+      for(const [who,fn] of [...measureSinks.entries()]){
+        /* Un consommateur qui lève ne doit pas emporter l'autre, ni la boucle
+           d'images (leçon des Slices 02 et 04) : il se dit et se saute. */
+        try{fn(record)}
+        catch(error){console.warn(`[barehands] consommateur de mesures « ${who} » a levé`,error)}
+      }
+    };
+    return measureSinks.size;
+  }
+  function closeMeasureSeam(name){
+    measureSinks.delete(name);
+    if(!measureSinks.size)delete controllerDeps.onMeasure;
+    return measureSinks.size;
+  }
+  function startMeasuring(){
+    openMeasureSeam('calibration',record=>{
       const flow=calibration;
       if(flow&&flow.isRunning())flow.feed(record);
-    };
+    });
   }
-  function stopMeasuring(){delete controllerDeps.onMeasure}
+  function stopMeasuring(){closeMeasureSeam('calibration')}
 
   /* ------------------------------------------------------------------
      Tutoriel (Slice 09, décisions 6 et 26).
@@ -4455,6 +4504,239 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
     else shell().note(`Tutoriel terminé (${result&&result.done||0} étape(s) sur ${result&&result.total||(TUTO?TUTO.STEPS.length:0)}).`,'ok');
     refreshPanel();
     return saved;
+  }
+
+  /* ------------------------------------------------------------------
+     Enregistrement de diagnostic (Slice 10, architecture §12, décision 32).
+
+     **Ce qui est enregistré, et comment l'utilisateur le sait.** Une trace ne
+     porte que des faits dérivés — aucun point de main, aucune image, aucune
+     vidéo, aucun identifiant — et le module le tient par trois mécanismes
+     structurels, pas par intention (voir son en-tête). Ce qui est tenu **ici**
+     est la seconde moitié de la promesse : l'enregistrement est éteint par
+     défaut, ne s'allume que sur une action explicite, **dit à l'écran** qu'il
+     tourne, depuis combien de temps, combien d'images il a prises et combien
+     il lui reste, et s'arrête tout seul au bout de son échéance. Ce qui
+     observe sans le dire est ce que personne n'accepte.
+
+     **Coût quand personne n'enregistre : nul.** L'enregistreur n'est pas un
+     consommateur permanent de la couture de mesures : il s'y inscrit au
+     démarrage et s'en retire à l'arrêt. Hors enregistrement et hors
+     calibration, `controllerDeps.onMeasure` n'existe pas, donc le contrôleur
+     ne construit aucun enregistrement de scalaires — le budget d'images est
+     exactement celui d'avant, ce qu'un test mesure sur le vrai contrôleur. */
+  const TRACE_API='/api/barehands/traces';
+  let recorder=null,recorderTick=0;
+  function recorderFlow(options){
+    if(recorder&&options===undefined)return recorder;
+    if(!REC)return null;
+    recorder=REC.createRecorder({
+      options,
+      now:()=>Date.now(),
+      setTimeout:(fn,ms)=>window.setTimeout(fn,ms),
+      clearTimeout:id=>window.clearTimeout(id),
+      /* L'arrêt, quelle qu'en soit la cause — le bouton, l'échéance ou le
+         plafond d'images. Les trois passent ici, donc une trace ne peut pas
+         être perdue parce que l'utilisateur n'a pas appuyé sur le bouton. */
+      onStop:trace=>{closeMeasureSeam('recorder');stopPainting();saveTrace(trace)},
+      log:(level,message,detail)=>{
+        if(level==='warn')console.warn(message,detail);else console.info(message,detail);
+      },
+    });
+    return recorder;
+  }
+
+  /* Ce que l'enregistreur reçoit : l'enregistrement de scalaires du contrôleur
+     (décision 32, déjà réduit), **plus** ce que la page publie déjà — les
+     candidates de cible en cours, les issues de l'instant et les gestes.
+     Aucune de ces trois portes ne transporte de point de main, et le module
+     réduit encore ce qu'il reçoit (`readFrame`). La liste blanche est donc
+     écrite des deux côtés, et c'est celle du module qui est vérifiée au
+     chargement. */
+  function traceFrame(record){
+    let candidates=[],events=[],gestures=[];
+    try{
+      candidates=interactionView.targets();
+      events=interactionView.interactions();
+      const semantics=controller.semantics();
+      gestures=[
+        ...semantics.gestures.events.map(event=>({name:event.gesture,phase:event.phase,suppressed:false})),
+        ...semantics.gestures.suppressed.map(event=>({name:event.gesture,phase:event.phase,suppressed:true})),
+      ];
+    }catch(error){
+      /* Lire l'instant ne doit pas arrêter un enregistrement : ce qu'on ne
+         peut pas lire vaut « rien vu » pour cette image, et le compte d'images
+         retenues le dira. */
+      console.warn('[barehands] enregistrement : l’instant est illisible',error);
+      candidates=[];events=[];gestures=[];
+    }
+    const hands=(record&&Array.isArray(record.hands)?record.hands:[]);
+    return {lifecycle:lifecycle(),hands,candidates,events,gestures};
+  }
+
+  /* Le compteur vivant. La RÈGLE ZÉRO demande qu'un état long dise **depuis
+     combien de temps** il dure : sans repeinture périodique, « ça enregistre »
+     et « c'est figé » s'écrivent pareil à l'écran. Il ne vit que pendant
+     l'enregistrement, et il est démarré et arrêté par les deux mêmes portes
+     que lui. */
+  function startPainting(){
+    if(recorderTick)return recorderTick;
+    recorderTick=window.setInterval(()=>{
+      const state=document.getElementById('barehandsRecordState');
+      if(state)state.innerHTML=recordStateHtml();
+    },250);
+    return recorderTick;
+  }
+  function stopPainting(){
+    if(!recorderTick)return false;
+    window.clearInterval(recorderTick);recorderTick=0;
+    return true;
+  }
+
+  /* **Le point d'entrée de l'enregistrement.** Comme les deux parcours, il
+     confirme ou refuse avec un code, et le refus est dit à l'écran parce que
+     c'est le seul endroit où sa cause exacte survit. */
+  function startRecording(overrides){
+    if(!REC){
+      const message='L’enregistrement de diagnostic n’a pas pu être chargé dans cette page. Rechargez le Control Center ; la console porte la cause exacte.';
+      view.error=message;console.warn('[barehands] enregistrement indisponible (module non installé)');
+      if(typeof toast==='function')
+        toast({title:'Enregistrement indisponible',sub:message,kind:'bad',ms:8000});
+      refreshPanel();
+      return {ok:false,code:'barehands_recorder_not_installed',reason:message};
+    }
+    /* Déjà en cours : c'est l'état demandé, et une seconde demande ne doit ni
+       le couper ni le reconstruire. */
+    if(recorder&&recorder.isRecording())return recorder.start();
+    if(!view.enabled){
+      const message='Bare Hands est éteint : cochez « Activer Barehands » avant d’enregistrer. L’interrupteur reste à vous.';
+      view.error=message;console.warn('[barehands] enregistrement refusé (éteint)');
+      if(typeof toast==='function')
+        toast({title:'Enregistrement impossible',sub:message,kind:'warn',ms:6000});
+      refreshPanel();
+      return {ok:false,code:'barehands_recorder_disabled',reason:message};
+    }
+    /* **Les options sont celles de cette séance-là.** Un outil de diagnostic
+       qu'on ne peut pas recadencer depuis la console est à moitié inutile, et
+       les deux paires dangereuses se refusent **ici**, à la construction,
+       plutôt qu'au premier utilisateur qui relirait une trace d'une image. */
+    const spec=overrides&&typeof overrides==='object'?overrides:{};
+    let flow,started;
+    try{flow=recorderFlow(spec.options)}
+    catch(error){
+      const message=`Enregistrement refusé : ${error&&error.message||error}`;
+      view.error=message;console.warn('[barehands] enregistrement refusé',error);
+      if(typeof toast==='function')
+        toast({title:'Enregistrement impossible',sub:message,kind:'bad',ms:8000});
+      refreshPanel();
+      return {ok:false,code:error&&error.code||'barehands_recorder_refused',reason:message};
+    }
+    try{started=flow.start({viewport:{width:window.innerWidth,height:window.innerHeight}})}
+    catch(error){
+      const message=`Enregistrement refusé : ${error&&error.message||error}`;
+      view.error=message;console.warn('[barehands] enregistrement refusé',error);
+      if(typeof toast==='function')
+        toast({title:'Enregistrement impossible',sub:message,kind:'bad',ms:8000});
+      refreshPanel();
+      return {ok:false,code:error&&error.code||'barehands_recorder_refused',reason:message};
+    }
+    /* La couture ne s'ouvre qu'**après** que l'enregistreur a accepté : une
+       couture ouverte devant un enregistreur qui a refusé ferait payer chaque
+       image pour rien, sans que rien ne l'enregistre. */
+    openMeasureSeam('recorder',record=>{
+      const flow=recorder;
+      if(flow&&flow.isRecording())flow.feed(traceFrame(record));
+    });
+    startPainting();
+    if(typeof toast==='function')
+      toast({title:'Enregistrement de diagnostic démarré',
+        sub:'Aucune image, aucune vidéo, aucun point de main : seulement des mesures dérivées. Il s’arrête tout seul.',
+        kind:'ok',ms:6000});
+    refreshPanel();
+    return started;
+  }
+  function stopRecording(){
+    const flow=recorder;
+    if(!flow||!flow.isRecording()){
+      refreshPanel();
+      /* Rien n'enregistrait : c'est l'état demandé, donc un succès — et
+         `already` le dit, pour que personne n'annonce un arrêt qui n'a pas eu
+         lieu (même raison qu'`exitOverlay`). */
+      return {ok:true,already:true,recording:false};
+    }
+    const trace=flow.stop();
+    refreshPanel();
+    return {ok:true,recording:false,frames:trace?trace.frames.length:0};
+  }
+
+  /* **Où la trace va, et ce qu'elle laisse comme preuve.** Elle part sur la
+     route, le serveur l'écrit sous `runtime/barehands-traces/` et journalise
+     une ligne par enregistrement (`RuntimeJournal`, constat F6 de la Slice 00).
+     Un échec d'envoi a ses trois obligations — vu à l'écran, journalisé,
+     interface relâchée — et la trace **reste lisible dans la page**
+     (`record.trace()`), pour qu'une séance ne soit pas perdue par une panne de
+     réseau. */
+  async function saveTrace(trace){
+    view.trace=null;
+    try{
+      const answer=await api(TRACE_API,{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify(trace)});
+      view.trace={id:String(answer&&answer.trace_id||''),frames:trace.frames.length,
+        path:String(answer&&answer.path||''),error:''};
+      console.info('[barehands] trace enregistrée',view.trace);
+      if(typeof toast==='function')
+        toast({title:'Trace enregistrée',
+          sub:`${trace.frames.length} image(s) · ${view.trace.id}`,kind:'ok',ms:6000});
+    }catch(error){
+      const message=String(error&&error.message||error);
+      view.trace={id:'',frames:trace.frames.length,path:'',error:message};
+      console.warn('[barehands] trace non enregistrée',error);
+      if(typeof toast==='function')
+        toast({title:'Trace non enregistrée',
+          sub:`${message} — elle reste lisible dans cette page par JarvisBarehands.record.trace().`,
+          kind:'bad',ms:9000});
+    }
+    refreshPanel();
+    return view.trace;
+  }
+
+  function recordState(){
+    const flow=recorder;
+    const state=flow?flow.state():{recording:false,frames:0,observed:0,dropped:0,
+      elapsedMs:0,remainingMs:0,maxFrames:0,maxDurationMs:0};
+    return {installed:!!REC,...state,
+      /* Ce que la couture de mesures porte **en ce moment**, relu plutôt que
+         promis : c'est ce qui distingue « l'enregistreur écoute » de
+         « quelqu'un a fermé la couture sous lui ». */
+      seam:measureSeamNames(),
+      last:view.trace?{...view.trace}:null};
+  }
+  function measureSeamNames(){return [...measureSinks.keys()].sort()}
+
+  function recordStateHtml(){
+    const state=recordState();
+    if(!state.installed)
+      return '<div class="notice bad"><strong>Enregistrement indisponible</strong><div class="hint">Son module ne s’est pas installé dans cette page. Rechargez le Control Center ; la console porte la cause exacte. Le reste de Bare Hands fonctionne normalement.</div></div>';
+    if(state.recording)
+      return `<div class="notice info"><strong>Enregistrement en cours</strong><div class="hint">${esc(String(state.frames))} image(s) retenue(s) sur ${esc(String(state.observed))} vue(s) · ${esc(seconds(state.elapsedMs))} écoulée(s) · il s’arrête tout seul dans ${esc(seconds(state.remainingMs))}, ou par le bouton « Arrêter ». Aucune image, aucune vidéo, aucun point de main n’est retenu.</div></div>`;
+    if(state.last&&state.last.error)
+      return `<div class="notice bad"><strong>Trace non enregistrée</strong><div class="hint">${esc(state.last.error)} — les ${esc(String(state.last.frames))} image(s) restent lisibles dans cette page par <code>JarvisBarehands.record.trace()</code>.</div></div>`;
+    if(state.last)
+      return `<div class="notice ok"><strong>Trace enregistrée</strong><div class="hint">${esc(String(state.last.frames))} image(s) · <code>${esc(state.last.id)}</code>. Rejouez-la sous plusieurs réglages avec <code>python -m jarvis barehands-replay</code>.</div></div>`;
+    return '<div class="hint">Rien n’est enregistré. Un enregistrement retient des <strong>mesures dérivées</strong> — position brute et filtrée, ratios de pincement, immobilité, issues — et jamais une image, une vidéo ni les points de votre main. Il s’arrête tout seul au bout de deux minutes.</div>';
+  }
+  function recordHtml(){
+    const state=recordState();
+    return `<section class="bh-section" id="barehandsRecord">
+      <h3>Enregistrement de diagnostic</h3>
+      <div class="hint" style="margin-bottom:12px">Pour régler Bare Hands sur des <strong>faits</strong> plutôt qu'à l'estime : une séance enregistrée une fois se rejoue autant qu'on veut, sous autant de réglages qu'on veut, et rend des mesures comparables. Éteint par défaut, et il ne s'allume que d'ici.</div>
+      <div id="barehandsRecordState">${recordStateHtml()}</div>
+      <div class="field inline" style="align-items:center;gap:10px;margin-top:14px">
+        <button type="button" class="action small${state.recording?'':' primary'}" id="barehandsRecordStart" ${view.busy||state.recording||!state.installed?'disabled':''}>Enregistrer une séance…</button>
+        <button type="button" class="action small" id="barehandsRecordStop" ${state.recording?'':'disabled'}>Arrêter</button>
+      </div>
+    </section>`;
   }
 
   async function loadProfile(){
@@ -5180,7 +5462,8 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
       </div>
     </section>
     ${calibrationHtml()}
-    ${tutorialHtml()}`;
+    ${tutorialHtml()}
+    ${recordHtml()}`;
   }
 
   function panelHtml(){
@@ -5258,6 +5541,14 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
        interdit explicitement. */
     const teach=document.getElementById('barehandsTutorialStart');
     if(teach)teach.addEventListener('click',()=>{startTutorial()});
+    /* Slice 10 : une seule porte pour l'enregistrement, comme pour les deux
+       parcours. Un bouton qui appellerait le module directement serait une
+       seconde implantation — et celle-ci sauterait le refus « Bare Hands est
+       éteint » et l'ouverture de la couture de mesures. */
+    const tape=document.getElementById('barehandsRecordStart');
+    if(tape)tape.addEventListener('click',()=>{startRecording()});
+    const untape=document.getElementById('barehandsRecordStop');
+    if(untape)untape.addEventListener('click',()=>{stopRecording()});
     bindWake();
   }
 
@@ -5353,6 +5644,15 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
       const state=tutorialState();
       teach.disabled=view.busy||state.running||!state.installed;
       teach.textContent=state.seen?'Revoir le tutoriel…':'Lancer le tutoriel…';
+    }
+    const taping=document.getElementById('barehandsRecordState');
+    if(taping)taping.innerHTML=recordStateHtml();
+    const tape=document.getElementById('barehandsRecordStart');
+    const untape=document.getElementById('barehandsRecordStop');
+    if(tape||untape){
+      const state=recordState();
+      if(tape)tape.disabled=view.busy||state.recording||!state.installed;
+      if(untape)untape.disabled=!state.recording;
     }
     refreshTools();refreshSettings();
   }
@@ -5486,6 +5786,27 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
        là où il agit est un réglage qu'on ne peut pas dire branché — appliquée
        à une garantie de **non**-mesure. */
     measuring:()=>typeof controllerDeps.onMeasure==='function',
+    /* **Qui** écoute la couture de mesures, et pas seulement qu'elle est
+       ouverte. `measuring()` restait vrai quel que soit le consommateur : avec
+       deux (la calibration et l'enregistreur, Slice 10), « une calibration
+       mesure » et « une séance s'enregistre » s'écrivaient pareil. */
+    measureSeam:()=>Object.freeze(measureSeamNames()),
+    /* L'enregistrement de diagnostic (Slice 10, §12). `start`/`stop` sont la
+       **même** porte que les deux boutons de l'onglet ; `state()` est ce que
+       l'écran affiche ; `trace()` rend la dernière trace terminée, même si son
+       envoi a échoué — une séance ne se perd pas par une panne de réseau. */
+    record:Object.freeze({
+      start:spec=>startRecording(spec),
+      stop:()=>stopRecording(),
+      state:()=>Object.freeze(recordState()),
+      trace:()=>{const flow=recorder;return flow?flow.trace():null},
+      /* Le rejeu et les mesures, posés ici parce que c'est la surface que la
+         console d'un développeur atteint. Le `core` est fourni : le module de
+         rejeu ne va pas le chercher dans un global, il le reçoit. */
+      replay:(trace,config)=>REC?REC.replay(trace,config,{core:Core}):null,
+      metrics:replayed=>REC?REC.metricsOf(replayed):null,
+      compare:(trace,configs)=>REC?REC.compare(trace,configs,{core:Core}):null,
+    }),
     /* **Ce que la voix vient de faire**, publié pour la même raison que le
        reste : le canal de commandes y dépose son reçu (Slice 12 →
        `deps.onReceipt`), la page le dessine, et un opérateur peut le relire

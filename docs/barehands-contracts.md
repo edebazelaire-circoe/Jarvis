@@ -2392,6 +2392,213 @@ commande vocale, et une **ligne du panneau Expérimental** qui survit au toast
 et porte l'heure, le nom, l'issue, le code du refus et le cycle de vie relu.
 `JarvisBarehands.voice.last()` la rend à la console.
 
+## 14. Enregistrement, rejeu et mesures (architecture §12, décision 32, Slice 10)
+
+> **Rendre Bare Hands réglable par des faits.** Jusqu'ici un seuil se changeait
+> à l'estime : on refaisait le geste, on disait « c'est mieux », et personne ne
+> pouvait comparer deux réglages autrement qu'en les revivant. Une séance
+> enregistrée une fois se rejoue autant qu'on veut, sous autant de
+> configurations qu'on veut, et rend des **nombres comparables**.
+
+`jarvis/runtime/control_center_barehands_recorder.js`
+(`window.JarvisBarehandsRecorder`). Inséré après le tutoriel, avant le
+pointeur. Miroir serveur : `jarvis/runtime/barehands_trace.py`. Pilote de rejeu :
+`jarvis/runtime/barehands_replay.py`. Diagnostic du Test Lab :
+`barehands.input_quality` (`jarvis/testlab/official/barehands/`).
+
+### Ce qu'une trace contient — et ce qu'elle ne contient pas
+
+**Aucun point de main. Aucune image. Aucune vidéo. Aucun identifiant.**
+
+La Slice écrivait pourtant « schéma de trace contenant horodatages, **points de
+main**, latéralité/confiance, points bruts et filtrés, vitesse/immobilité, états
+de geste et de pincement, candidates de cible, captures et issues ». Huit de ces
+neuf éléments sont des scalaires dérivés que le contrôleur produit déjà
+(§10, couture `deps.onMeasure`). Le neuvième — les vingt et un points d'une
+main — est une **reconstruction de la main de l'utilisateur**. Il n'est pas
+enregistré, et l'argument est en trois points :
+
+1. **Aucun rejeu nommé par la Slice n'en a besoin.** Le filtre se nourrit de
+   `rawX`/`rawY` et d'un horodatage ; l'hystérésis de pincement
+   (`createPinchChannel`) d'un **ratio** scalaire ; le résolveur d'une position
+   et de rectangles. Aucun des trois ne reçoit de points dans le moteur réel.
+   Les points ne serviraient qu'à dériver des traits qui n'existent pas encore,
+   c'est-à-dire à changer l'extracteur — hors périmètre de la Slice.
+2. **La décision 32 dit « seulement des paramètres dérivés et des mesures de
+   qualité ».** Un tableau de points n'est ni l'un ni l'autre.
+3. **Et la garantie ne serait pas tenable par intention.** Un enregistreur qui
+   *pourrait* recevoir des points n'a besoin que d'une Slice distraite.
+
+Trois mécanismes le tiennent, qui ne se doublent pas — les mêmes que la
+Slice 08, dans le même ordre :
+
+- **Une couture qui réduit avant que l'enregistreur ne voie quoi que ce soit.**
+  Il est nourri par `deps.onMeasure`, qui a déjà réduit l'image à un
+  enregistrement de scalaires. Il ne reçoit pas de points parce qu'il n'en a
+  jamais eu : `createRecorder` n'accepte qu'une **liste blanche** de six
+  dépendances (`options`, `now`, `log`, `onStop`, `setTimeout`, `clearTimeout`)
+  et refuse tout autre nom avec `barehands_trace_cannot_carry_raw_input`.
+- **Une liste blanche qui reconstruit clé par clé.** `readFrame`, `readHand`,
+  `readCandidate`, `readEvent`, `readGesture`. Ce que le schéma ne nomme pas
+  n'atteint jamais la trace — pas parce qu'on le refuse, parce qu'on ne le
+  recopie pas. Elle est **idempotente** : une trace relue du disque ou rejouée
+  repasse par elle et en ressort identique, sans quoi la géométrie d'une
+  candidate (envoyée dans `boundsPx`, stockée à plat) et `onObject` (envoyé
+  comme `objectId`, stocké en booléen) disparaîtraient au second passage.
+- **Une garde de forme au chargement du module**, pilotée par le schéma :
+  `assertDerivedOnly` présente à **chaque clé** de **chaque forme** une suite de
+  points, une image en base64 et un objet libre, et porte ses **jumelles bien
+  formées** qu'aucun lecteur ne peut refuser en chemin (leçon de la reprise de
+  la Slice 08). Refusée, le module **ne s'installe pas** ; la levée est
+  contenue, comme au § 13.
+
+Deux réductions de plus : `handTrackId` devient une **fente** (`slot`, 0 ou 1),
+et une candidate garde sa géométrie et trois mots de vocabulaires fermés —
+jamais son `objectId`, jamais son libellé. Son `kind` passe par un vocabulaire
+**fermé à nous** (`TRACE_KINDS`), parce que le contrat le laisse en texte libre
+(§6) et qu'un type libre est la porte par laquelle un libellé entrerait ; ce qui
+n'y est pas devient `other`. Un test de parité le compare à
+`JarvisBarehandsTarget.KINDS`.
+
+| Niveau | Clés |
+|---|---|
+| trace | `schema`, `schemaVersion`, `startedAt`, `durationMs`, `stoppedBecause`, `viewport`, `observedFrames`, `droppedFrames`, `frames` |
+| image | `t` (**relatif** au début), `lifecycle`, `hands`, `candidates`, `events`, `gestures` |
+| main | `slot`, `handedness`, `primaryRatio`, `secondaryRatio`, `cPose`, `closure`, `gapPalms`, `indexReachPalms`, `palmNorm`, `rawX/Y`, `filteredX/Y`, `palmX/Y`, `quality`, `stillness`, `speedPxPerSec` |
+| candidate | `ref`, `kind`, `region`, `representation`, `actionable`, `x`, `y`, `w`, `h` |
+| issue | `type`, `channel`, `onObject` (**booléen**), `axes` (**compte**) |
+| geste | `name`, `phase`, `suppressed` |
+
+### Et l'utilisateur le sait
+
+RÈGLE ZÉRO, appliquée à une fonctionnalité qui observe : ce qui observe sans le
+dire est ce que personne n'accepte. L'enregistrement est **éteint par défaut**,
+ne s'allume que par le bouton « Enregistrer une séance… » de l'onglet
+Expérimental ou par `JarvisBarehands.record.start()` — la **même** porte —, et
+la section dit en permanence qu'il tourne, combien d'images il a retenues sur
+combien vues, depuis combien de temps, dans combien de temps il s'arrêtera, et
+ce qu'il ne retient pas. Le bouton « Arrêter » est la sortie.
+
+**Il finit toujours**, de trois façons, et chacune le dit : `asked` (le bouton),
+`deadline` (l'échéance, armée par `setTimeout` et **indépendante des images** :
+une caméra figée laisserait sinon l'enregistrement en cours pour toujours) et
+`max_frames` (le plafond, qui **arrête** au lieu de tronquer en silence — une
+trace coupée sans le dire se relit comme une séance courte).
+
+**Deux paires dangereuses de plus** (quinzième et seizième de la tâche),
+refusées à la construction :
+
+- `sampleEveryMs >= maxDurationMs` : l'enregistrement dure son temps et rend une
+  seule image ; chaque mesure du rejeu serait nulle ou dégénérée et le banc
+  d'essai accuserait une configuration là où rien n'a été mesuré ;
+- `maxFrames` sous ce que l'échéance annoncée réclame : l'écran promet deux
+  minutes, le plafond tombe au bout de vingt secondes. Même espèce que
+  `watchdogMs >= stepTimeoutMs` : le budget accordé doit couvrir le temps exigé.
+
+### Ce que cela coûte quand personne n'enregistre : rien
+
+La couture de mesures est **posée sur les dépendances du contrôleur**, pas dans
+une branche qu'il évaluerait. Elle a deux consommateurs depuis cette Slice — la
+calibration et l'enregistreur —, tenus par un **registre nommé** :
+`openMeasureSeam(nom, sink)` / `closeMeasureSeam(nom)`. Deux propriétaires d'une
+clé unique auraient fait qu'arrêter l'un arrête l'autre : fermer une
+surimpression aurait coupé une séance en cours sans que rien ne le dise.
+`JarvisBarehands.measureSeam()` relit **qui** écoute ; sans cette lecture,
+« l'enregistreur écoute » et « quelqu'un a fermé la couture sous lui »
+s'écrivent pareil.
+
+Hors enregistrement **et** hors calibration, la clé n'existe pas : le contrôleur
+ne construit aucun enregistrement de scalaires, et le budget d'images est
+exactement celui d'avant. Un test le mesure sur le vrai contrôleur.
+
+### Le rejeu
+
+`JarvisBarehands.record.replay(trace, config)` et `.compare(trace, configs)`
+côté console ; `python -m jarvis barehands-replay <trace> --config NOM=JSON …`
+côté terminal ; `barehands_replay.compare()` côté code.
+
+**Il ne réimplante rien** : les moteurs du rejeu sont `createPointerFilter`,
+`createPinchChannel` et `createTargetResolver` du bloc pur, reçus par
+`deps.core`. Un rejeu qui referait le filtre dans son coin mesurerait sa propre
+copie, et le jour où les deux divergeraient c'est le banc d'essai qui aurait
+raison contre le produit. C'est aussi pourquoi le pilote Python **appelle node**
+au lieu de traduire : une traduction est une seconde implantation.
+
+**Déterminisme** : ni horloge, ni hasard, ni réseau, ni DOM — il lit les
+horodatages de la trace. Deux exécutions rendent des nombres identiques, ce
+qu'un test affirme en les comparant sérialisés.
+
+**Quatre axes**, fermés et publiés (`REPLAY_AXES`) : `filter`, `thresholds`,
+`assistance`, `resolver`. Un axe inconnu est **refusé** : accepté, il serait une
+configuration sans effet, et deux colonnes identiques se liraient « ce réglage
+ne change rien » au lieu de « ce réglage n'a pas été appliqué ».
+
+**Une version inconnue se refuse** (`barehands_trace_version_unsupported`),
+elle ne se devine pas : devinée, elle rendrait des nombres sans rapport avec ce
+qui a été enregistré — et ils seraient crus, parce qu'ils ont la forme de
+mesures.
+
+### Les mesures
+
+Douze, toutes des **faits** : un compte, un quantile ou un rapport de comptes.
+Rien n'est pondéré, rien n'est noté. Une mesure qu'on ne peut pas établir rend
+`null` — jamais zéro, qui se lirait « mesuré, et parfait ». Les distances sont
+en **fraction de la largeur d'image**, la seule unité qui survive à un
+changement de résolution (même choix que `travelSlopNorm`, §10).
+
+| Mesure | Unité | Ce qu'elle dit |
+|---|---|---|
+| `replay.frames_count` | compte | combien d'images ont été mesurées — ce qui dit ce que vaut le reste |
+| `click.target_success_ratio` | rapport | clics et clics droits qui avaient une candidate **résolue** sous la main |
+| `pointer.error_p50_norm` | rapport | médiane de l'écart du point filtré au point brut |
+| `pointer.error_p95_norm` | rapport | 95e centile du même écart |
+| `pointer.stationary_jitter_p95_norm` | rapport | le même, **seulement** quand la main est immobile |
+| `pinch.false_primary_hz` | Hz | cycles pouce-index appuyé-relâché trop courts pour avoir été voulus |
+| `pinch.false_secondary_hz` | Hz | le même, sur le canal pouce-majeur |
+| `gesture.false_positive_hz` | Hz | gestes globaux **étouffés** parce qu'une capture était tenue (§4) |
+| `interaction.latency_p50_ms` | ms | du contact à son issue |
+| `hand.loss_recovery_p95_ms` | ms | de la perte d'une fente à son retour |
+| `drag.continuity_ratio` | rapport | part des images de glissement qui en continuaient un |
+| `resize.two_hand_stability_ratio` | rapport | part des images de redimensionnement qui avaient encore deux mains |
+
+### Où la trace va
+
+`POST /api/barehands/traces` → `<runtime>/barehands-traces/<horodatage>-<empreinte>.json`,
+et **une** ligne dans `runtime/trace.jsonl` par enregistrement
+(`barehands.trace_recorded`, code stable dans `data`). Le serveur repasse le
+document par la liste blanche : le module JS est de notre côté, le réseau ne
+l'est pas — même partage des rôles qu'au § 10. Trois refus codés, rendus dans
+`X-Jarvis-Error-Code` : `barehands_trace_schema_unknown`,
+`barehands_trace_version_unsupported`, `barehands_trace_invalid`. Un échec
+d'envoi est dit à l'écran, journalisé, et la trace **reste lisible dans la
+page** (`record.trace()`) : une séance ne se perd pas par une panne de réseau.
+
+### Le banc d'essai
+
+`barehands.input_quality` v1, profil `virtual`, aucune capacité requise, coût
+nul. Il rejoue une **trace d'or synthétique**
+(`jarvis/testlab/fixtures/barehands/golden.v1.json`) sous la configuration que
+ses cinq paramètres décrivent. Elle est synthétique exprès : une trace d'or
+versionnée dans un dépôt ne doit être la séance de personne. Elle contient
+délibérément un clic **de peu à côté** — trente pixels sous un bouton —, sans
+quoi changer l'assistance ne changerait aucun nombre et le banc d'essai
+conclurait « ce réglage ne sert à rien » d'une séance incapable de le montrer.
+
+Trois assertions bloquantes : assez d'images mesurées, le tremblement au repos
+sous un centième de largeur d'écran, et la majorité des clics sur leur cible.
+Node absent rend `MeasurementUnavailable` — une mesure qu'on n'a pas pu prendre
+n'est pas une mesure à zéro.
+
+### Ajouter un autre traqueur au même banc
+
+Rien du rejeu ne connaît MediaPipe : il lit une trace. Un traqueur futur
+(gant, caméra de profondeur, autre modèle) n'a donc qu'à **produire le même
+schéma** — les mêmes scalaires dérivés, par la même couture `deps.onMeasure` —
+pour être mesuré par les mêmes douze mesures et comparé au précédent sur une
+séance identique. Ce qui changerait, si son vocabulaire différait, est une
+version de schéma : `schemaVersion` monte, l'ancien rejeu **refuse** la nouvelle
+plutôt que de la deviner, et les deux versions cohabitent sur le disque.
+
 ## Ce qui est implémenté, et ce qui ne l'est pas
 
 La Slice 01 n'a apporté aucun moteur : elle a fixé les noms — et, à sa reprise,

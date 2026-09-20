@@ -44,7 +44,7 @@ from jarvis.domain import barehands_command as vocab
 # exécute le vrai bloc navigateur du pointeur, et une seconde version dériverait
 # de celle que la Slice 07 tient.
 from test_barehands_tools_settings_js import (  # noqa: E402
-    BROWSER, CALIBRATION, CONTRACTS, SCENE_INTERACT, SCRIPT, TARGET, TUTORIAL,
+    BROWSER, CALIBRATION, CONTRACTS, RECORDER, SCENE_INTERACT, SCRIPT, TARGET, TUTORIAL,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -108,6 +108,7 @@ def run_node(tmp_path: Path, source: str, name: str) -> object:
         f"const SCRIPT_PATH={json.dumps(str(SCRIPT))};\n"
         f"const CALIBRATION_PATH={json.dumps(str(CALIBRATION))};\n"
         f"const TUTORIAL_PATH={json.dumps(str(TUTORIAL))};\n"
+        f"const RECORDER_PATH={json.dumps(str(RECORDER))};\n"
         f"const TARGET_PATH={json.dumps(str(TARGET))};\n"
         f"const SCENE_INTERACT_PATH={json.dumps(str(SCENE_INTERACT))};\n"
         f"const CONTRACTS_PATH={json.dumps(str(CONTRACTS))};\n"

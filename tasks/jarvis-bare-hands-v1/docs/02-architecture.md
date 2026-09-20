@@ -53,3 +53,21 @@ Built by Slice 08 as `JarvisBarehandsCalibration.createFlowOverlay({document, no
 ## 12. Recorder / Replay / Benchmark
 
 Opt-in trace recorder for landmark/state traces and deterministic replay under alternate filter/threshold/resolver configurations.
+
+Built by Slice 10 as `jarvis/runtime/control_center_barehands_recorder.js`
+(`window.JarvisBarehandsRecorder`), with a server-side mirror
+(`barehands_trace.py`), a node-driven replay driver (`barehands_replay.py`), a
+CLI (`python -m jarvis barehands-replay`) and one Test Lab diagnostic
+(`barehands.input_quality`). Contract: `docs/barehands-contracts.md` §14.
+
+**Amended on one point, deliberately: a trace holds no landmarks.** Eight of the
+nine items this section listed are derived scalars the controller already
+produces through the decision-32 seam; the ninth — the twenty-one points of a
+hand — is a reconstruction of the user's hand, and none of the three replays
+this section names (filter, threshold, resolver) ever receives points in the
+real engine. Recording them would buy nothing this Slice can use and would make
+decision 32 a matter of intention. The recorder therefore sits behind the
+reducing seam and *cannot* receive them; a whitelist rebuilds every key, and a
+schema-driven load-time guard presents landmarks, a base64 image and a free
+object to every key of every shape. A future tracker joins the same benchmark by
+producing the same derived schema, not by widening it.

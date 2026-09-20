@@ -2646,3 +2646,166 @@ il est refermé. Seul le drapeau strictement `true` compte.
 
 `control_center_barehands_commands.js` disait encore que les parcours
 n'existaient pas.
+
+---
+
+## S10 — Diagnostics, rejeu et mesures
+
+### La décision qui gouverne cette Slice : **une trace ne porte aucun point de main**
+
+La SLICE.md demandait « un schéma de trace contenant horodatages, **points de
+main**, latéralité/confiance, points bruts et filtrés, vitesse/immobilité, états
+de geste et de pincement, candidates de cible, captures et issues ». Huit de ces
+neuf éléments sont des **scalaires dérivés** que le contrôleur produit déjà par
+la couture `deps.onMeasure` de la Slice 08. Le neuvième est une
+**reconstruction de la main de l'utilisateur**.
+
+Il n'est pas enregistré, et l'argument est vérifiable plutôt que moral :
+
+1. **Aucun rejeu nommé par la Slice n'en a besoin.** Vérifié dans le code :
+   `createPointerFilter.update` prend un point et un horodatage,
+   `createPinchChannel.update` prend un **ratio** scalaire,
+   `createTargetResolver.update` prend une position et des rectangles. Aucun des
+   trois ne reçoit de points. Les points ne serviraient qu'à dériver des traits
+   qui n'existent pas encore, c'est-à-dire à changer l'extracteur — hors
+   périmètre déclaré de la Slice.
+2. La décision 32 dit « seulement des paramètres dérivés et des mesures de
+   qualité ». Un tableau de points n'est ni l'un ni l'autre.
+3. Un enregistreur qui *pourrait* en recevoir n'a besoin que d'une Slice
+   distraite.
+
+**Écart assumé et documenté** au § 14 du contrat et au § 12 de l'architecture du
+handoff, pour qu'une Slice future ne le relise pas comme un oubli.
+
+### Trois mécanismes, pas une promesse
+
+Les mêmes que la Slice 08, dans le même ordre : une **couture qui réduit avant**
+que l'enregistreur ne voie quoi que ce soit (il ne reçoit pas de points parce
+qu'il n'en a jamais eu) ; une **liste blanche qui reconstruit clé par clé** ; une
+**garde de forme au chargement du module**, pilotée par le schéma, avec ses
+**jumelles bien formées** — la leçon de la reprise de la Slice 08. Plus deux
+réductions : `handTrackId` devient une fente, et une candidate garde sa
+géométrie sans son identité ni son libellé, son `kind` passant par un
+vocabulaire fermé *à nous* parce que le contrat le laisse en texte libre.
+
+### Trois défauts trouvés par la construction, et ils sont de la même famille
+
+**Aucun n'a été trouvé par un test que j'avais prévu ; les trois l'ont été en
+exerçant le produit pour de vrai.**
+
+1. **`start()` posait `recording = true` avant d'armer son échéance.** Une
+   horloge qui lève laissait donc un enregistrement « en cours » que plus rien
+   ne pouvait arrêter — exactement ce que l'exigence de `setTimeout` à la
+   construction existe pour empêcher, contournée par le seul chemin qu'elle ne
+   couvrait pas. Trouvé parce que le double de navigateur n'avait pas
+   `window.setTimeout` : la page rendait `{ok:false}` et `state().recording`
+   valait quand même vrai.
+2. **La liste blanche n'était pas idempotente.** La page envoie la géométrie
+   d'une candidate dans `boundsPx` et une issue avec son `objectId` et sa liste
+   d'axes ; une trace porte la géométrie à plat, un booléen et un compte. Le
+   rejeu **relit une trace déjà normalisée** — c'est ce qui fait que la même
+   liste blanche protège la page, le disque et le réseau. Résultat mesuré : le
+   résolveur ne voyait plus **aucune** cible, et `click.target_success_ratio`
+   valait 0 sur la trace d'or. Une mesure qui disait « aucun clic n'a atteint sa
+   cible » d'une séance où tous l'avaient atteinte : fausse, et crédible.
+   **Formulation : une liste blanche qui ne sait pas se relire n'est pas une
+   liste blanche, c'est un convertisseur.**
+3. **`Number(null) === 0`, pour la troisième fois sur cette tâche**, et la pire :
+   `num()` rendait `0` pour une absence, donc relire une trace transformait
+   chaque scalaire absent en mesure au plancher — `stillness:null` se lisait
+   « la main bougeait », `quality:null` « la main était mauvaise ».
+
+Un quatrième, trouvé en lisant la sortie du CLI : quand l'assistance n'était pas
+configurée, le résolveur ne tournait pas et `targets` retombait sur « combien de
+candidates existaient », qui n'est pas « combien ont été résolues ».
+`click.target_success_ratio` valait **1 gratuitement**. **Une mesure qui dit
+« tout va bien » parce que personne ne l'a prise est pire qu'une mesure absente,
+parce qu'elle est crue.** Le résolveur tourne désormais toujours, avec le défaut
+du moteur ; qui veut couper l'aide passe `0`, ce qui est un réglage et non une
+absence de mesure.
+
+### Une seule réduction, deux consommateurs
+
+La couture `deps.onMeasure` a désormais la calibration **et** l'enregistreur. La
+question que pose la Slice 09 — « ce consommateur a-t-il besoin de *cette*
+couture ? » — a une réponse positive ici, pour la première fois : l'enregistreur
+veut exactement l'enregistrement de scalaires qu'elle produit, ni plus ni moins.
+Ce qu'il ne fallait pas, c'est **deux propriétaires d'une même clé** : arrêter la
+calibration aurait effacé la couture de l'enregistreur, et fermer une
+surimpression aurait coupé une séance en cours sans que rien ne le dise. D'où un
+registre nommé et `measureSeam()` qui le relit. Hors des deux, la clé n'existe
+pas : le budget d'images est exactement celui d'avant, ce qu'un test mesure sur
+le vrai contrôleur.
+
+### Paires dangereuses n° 15 et 16
+
+- `sampleEveryMs >= maxDurationMs` : tout l'enregistrement ne retient qu'une
+  image, chaque mesure du rejeu est nulle ou dégénérée, et le banc d'essai
+  accuse une configuration là où rien n'a été mesuré.
+- `maxFrames` sous ce que l'échéance annoncée réclame : l'écran promet deux
+  minutes, le plafond tombe au bout de vingt secondes, et la trace se relit comme
+  une séance courte. Même espèce que `watchdogMs >= stepTimeoutMs`.
+
+Et un refus de chargement de plus (le troisième de la tâche) : la garde de forme
+du schéma de trace, contenue comme celle du tutoriel.
+
+### Le rejeu ne réimplante rien, et c'est pourquoi Python appelle node
+
+Les moteurs du rejeu sont les **vrais** : `createPointerFilter`,
+`createPinchChannel`, `createTargetResolver`. Les traduire en Python aurait été
+une seconde implantation, et le jour où les deux divergeraient c'est le banc
+d'essai qui aurait raison contre le produit — la panne la plus coûteuse possible
+pour un outil de réglage. `barehands_replay.py` écrit donc un pilote `.cjs` dans
+un dossier temporaire et lit du JSON sur stdout, exactement comme le harnais de
+tests de cette tâche. Node absent lève `ReplayUnavailable` : une mesure qu'on n'a
+pas pu prendre n'est pas une mesure à zéro.
+
+### La trace d'or est synthétique, et c'est une propriété
+
+Personne n'a mis la main devant une caméra pour la produire : **une trace d'or
+versionnée dans un dépôt ne doit être la séance de personne.** Elle est fabriquée
+par le **vrai** enregistreur à partir d'une séance écrite à la main, et on lui
+présente exprès, à chaque image, vingt et un points, une image en base64, un
+identifiant de suivi et un identifiant d'objet — la trace livrée est donc aussi
+la preuve qu'il ne les retient pas.
+
+Deux traits d'écriture valent d'être retenus, parce qu'ils sont la même leçon que
+« un double qui ne peut pas échouer comme la vraie chose ne prouve rien »,
+appliquée à une **entrée de banc d'essai** :
+
+- les pincements sont des **rampes**, pas des marches d'escalier : une marche est
+  insensible aux seuils, et le banc aurait conclu « changer les seuils ne change
+  rien » d'une trace incapable de le montrer ;
+- elle contient un clic **de peu à côté**, trente pixels sous un bouton : sans
+  lui, changer l'assistance ne changerait aucun nombre.
+
+**Formulation générale : une trace de référence qui ne peut pas distinguer deux
+configurations mesure la trace, pas les configurations.**
+
+### Ce que la mutation a trouvé (20 mutations, deux directions)
+
+Seize tuées d'emblée ; **quatre survivants, tous de la même espèce** : les tests
+épinglaient le *déterminisme* du rejeu et le fait qu'un axe change les nombres,
+mais aucun n'épinglait ce qu'une mesure **veut dire**. Un rejeu parfaitement
+déterministe dont le « 95e centile » serait une médiane, dont un « par seconde »
+serait un par milliseconde, dont le « tremblement au repos » compterait les
+images où la main court, et qui ne retiendrait qu'une main sur deux, passait
+tout.
+
+**Formulation : une mesure que personne n'épingle est une mesure qui dérive — et
+un test qui vérifie qu'un nombre *bouge* ne vérifie pas qu'il veut dire quelque
+chose.** Fermé par un test qui mesure des **définitions** sur une trace
+construite pour que chacune ait une réponse connue : durée et gestes étouffés
+connus (le taux doit être leur quotient en secondes), immobilité puis course (le
+tremblement doit rester sous l'erreur générale), deux mains à chaque image de
+redimensionnement (la stabilité vaut 1), 95e centile strictement au-dessus de la
+médiane. Les vingt mutations sont tuées.
+
+### Le Test Lab, sans nouveau harnais (constat F6)
+
+`barehands.input_quality` v1 rejoint le catalogue officiel : un dossier de
+domaine `official/barehands/`, une réservation dans `implementations.py`, un
+paquet `jarvis/testlab/barehands/` calqué sur `virtual/registry.py` — il vit
+hors de `virtual/` parce que ce paquet *est* la pile voix, qu'une trace de main
+rejouée n'a aucune raison de charger — et une entrée de verrou. C'est le premier
+diagnostic du dépôt qui **ne mesure personne**.

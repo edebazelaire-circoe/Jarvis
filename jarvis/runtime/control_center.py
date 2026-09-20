@@ -43,6 +43,7 @@ from jarvis.runtime import (
     agent_routing,
     barehands_test_mode as barehands,
     barehands_profile,
+    barehands_trace,
     cli_catalog,
     credentials as creds,
     shortcuts as shortcut_registry,
@@ -229,6 +230,14 @@ BAREHANDS_CALIBRATION_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_CALIBRATION_
 #: `.exitOverlay()` sur sa surface gelée.
 BAREHANDS_TUTORIAL_SCRIPT_FILE = "control_center_barehands_tutorial.js"
 BAREHANDS_TUTORIAL_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_TUTORIAL_JS__*/"
+#: Enregistrement, rejeu et mesures Bare Hands (Slice 10, architecture §12,
+#: décision 32) : schéma de trace, liste blanche, garde de forme au chargement,
+#: enregistreur opt-in et rejeu déterministe (`window.JarvisBarehandsRecorder`).
+#: Inséré **après** les contrats qu'il lit et **avant** le pointeur, qui le lit
+#: pour poser `JarvisBarehands.record` sur sa surface gelée — une surface qu'on
+#: ne peut pas compléter après coup.
+BAREHANDS_RECORDER_SCRIPT_FILE = "control_center_barehands_recorder.js"
+BAREHANDS_RECORDER_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_RECORDER_JS__*/"
 
 #: plus son branchement navigateur. Même insertion que les scripts ci-dessus.
 BAREHANDS_SCRIPT_FILE = "control_center_barehands.js"
@@ -590,6 +599,10 @@ class ControlCenter:
             web.delete("/api/barehands/profile", self.reset_barehands_profile),
             # Canal de commandes du cerveau (Slice 12) : long-poll de la page,
             # demande du serveur MCP, reçu de la page.
+            # Traces de diagnostic (Slice 10). Déclarée avant
+            # `/api/barehands/commands` pour la même raison que le profil :
+            # les chemins littéraux passent avant les préfixes.
+            web.post("/api/barehands/traces", self.save_barehands_trace),
             web.get("/api/barehands/commands", self.barehands_commands_poll),
             web.post("/api/barehands/commands", self.barehands_command_request),
             web.post("/api/barehands/commands/{command_id}", self.barehands_command_receipt),
@@ -856,6 +869,10 @@ class ControlCenter:
         html = html.replace(
             BAREHANDS_TUTORIAL_SCRIPT_MARKER,
             page.with_name(BAREHANDS_TUTORIAL_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            BAREHANDS_RECORDER_SCRIPT_MARKER,
+            page.with_name(BAREHANDS_RECORDER_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             BAREHANDS_SCRIPT_MARKER, page.with_name(BAREHANDS_SCRIPT_FILE).read_text(encoding="utf-8")
@@ -1895,6 +1912,51 @@ class ControlCenter:
         return web.json_response(state)
 
     # ------------------------------------------------- profil de calibration (Slice 08)
+
+    async def save_barehands_trace(self, request: web.Request) -> web.Response:
+        """Ranger une trace de diagnostic Bare Hands (Slice 10, décision 32).
+
+        Le serveur ne mesure rien et n'enregistre rien de lui-même : la caméra,
+        les mains et l'écran sont dans la page, et l'enregistrement est une
+        action explicite de l'utilisateur. Il **range** — et il refuse tout ce
+        qui n'est pas une mesure dérivée, parce que le module JS est de notre
+        côté et que cette route ne l'est pas.
+
+        Une ligne de journal par trace, avec son code : sans elle, « personne
+        n'a enregistré » et « l'enregistrement est mort » seraient la même
+        absence dans `runtime/trace.jsonl`.
+        """
+
+        try:
+            payload = await request.json()
+        except ValueError:
+            payload = None
+        try:
+            stored = barehands_trace.store(self.runtime_root, payload)
+        except barehands_trace.BarehandsTraceError as exc:
+            self.journal.emit(
+                "barehands.trace_rejected", f"Trace de diagnostic Bare Hands refusée : {exc}",
+                level="error", data={"code": exc.code},
+            )
+            raise web.HTTPBadRequest(
+                text=str(exc), headers={SETTINGS_ERROR_CODE_HEADER: exc.code}) from exc
+        # Le chemin **normal** se journalise aussi : un journal qui ne porte que
+        # les échecs rend « rien dans le journal » indiscernable de « mort ».
+        summary = (
+            f"Trace de diagnostic Bare Hands enregistrée : {stored['frames']} image(s) "
+            f"sur {stored['observed_frames']} vue(s), {round(stored['duration_ms'] / 1000)} s"
+        )
+        if stored["dropped_frames"]:
+            summary += f" ; {stored['dropped_frames']} image(s) refusée(s) par le plafond"
+        self.journal.emit(
+            "barehands.trace_recorded", summary,
+            data={"code": "barehands_trace_recorded", "trace_id": stored["trace_id"],
+                  "frames": stored["frames"], "observed_frames": stored["observed_frames"],
+                  "dropped_frames": stored["dropped_frames"],
+                  "duration_ms": stored["duration_ms"],
+                  "stopped_because": stored["stopped_because"], "bytes": stored["bytes"]},
+        )
+        return web.json_response(stored)
 
     async def get_barehands_profile(self, request: web.Request) -> web.Response:
         del request
