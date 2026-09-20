@@ -22,7 +22,7 @@ from jarvis.domain.v2 import (
 )
 from jarvis.domain.reflex_policy import ReflexAction, ReflexDecision, decide_reflex
 from jarvis.domain.voice_frontend import VoiceReflexRequest
-from jarvis.domain.speech_presentation import SpeechCandidateStatus, SpeechChunk, SpeechDependency, SpeechSource, SpeechTextSpan, semantic_text_spans
+from jarvis.domain.speech_presentation import MAX_SPEECH_CHUNK_TEXT, SpeechCandidateStatus, SpeechChunk, SpeechDependency, SpeechSource, SpeechTextSpan, semantic_text_spans
 from jarvis.domain.conversation_events import ConversationEventType, EventShape, event_shape
 from jarvis.ports.v2 import Clock, ConversationEventRecorder, RealtimeOutputControl, supports_reflex
 from jarvis.runtime.conversation_event_forwarder import PRODUCER_SPEECH_SCHEDULER, optional_id, public_text
@@ -610,6 +610,19 @@ class SpeechScheduler:
         self._wakeup.set()
         return True
 
+    @property
+    def _without_output_final(self) -> bool:
+        """La surface n'annonce jamais la fin d'une sortie (GPT-Live, duplex).
+
+        Tout ce que l'ordonnanceur compte sur une fin de sortie y est faux :
+        une identité de sortie du fournisseur ne se referme jamais, et une
+        parole ne peut jamais être constatée « complète ». La surface, elle,
+        restitue seule le texte entier en ajouts bornés et ordonnés
+        (`live_frontend_session.append_segments`).
+        """
+
+        return bool(getattr(self.session, "requires_local_quiescence_without_output_final", False))
+
     def _output_still_alive(self, output_id: str) -> bool:
         if getattr(self.session, "active_output_id", None) == output_id:
             return True
@@ -666,7 +679,12 @@ class SpeechScheduler:
             )
             return
         if event.message_type == "realtime.output_started":
-            if output_id:
+            if output_id and not self._without_output_final:
+                # Sans fin de sortie, rien ne retirerait jamais cette identité :
+                # la file resterait occupée pour la vie de la session, et plus
+                # une seule parole du cerveau ne serait dite après la première
+                # sortie du fournisseur. La quiescence locale est déjà tenue
+                # par le bridge, et l'utilisateur par `_user_speaking`.
                 self._live_outputs.add(output_id)
                 self._idle.clear()
             return
@@ -1267,6 +1285,22 @@ class SpeechScheduler:
         except ValueError:
             self._trace(SPEECH_DECIDED, "Speech presentation deferred", data={**self._fields(request), "status": "deferred", "reason": "semantic_chunk_limit", "outcome_id": request.outcome_id})
             return
+        if len(spans) > 1 and self._without_output_final:
+            # Une chaîne de paragraphes suppose qu'on puisse constater la fin
+            # du précédent. Sans elle, chaque maillon finit « interrompu », la
+            # chaîne est bloquée, et seul le premier paragraphe d'un résultat
+            # était dit — le reste partait en `interrupted_chain`. La surface
+            # découpe elle-même le texte en ajouts bornés : on la laisse faire.
+            # Fusion bornée par `MAX_SPEECH_CHUNK_TEXT`, qui est aussi la borne
+            # du texte annoncé au ledger (`register_speech`).
+            merged: list[SpeechTextSpan] = []
+            for span in spans:
+                head = merged[-1] if merged else None
+                if head is not None and span.end - head.start <= MAX_SPEECH_CHUNK_TEXT:
+                    merged[-1] = SpeechTextSpan(head.start, span.end)
+                else:
+                    merged.append(span)
+            spans = tuple(merged)
         if len(self._seen_speech_ids) + len(spans) > 4096:
             return
         # Replacement needs eligible authority (`_may_supersede`); a late old result cannot remove current work.
@@ -1466,7 +1500,12 @@ class SpeechScheduler:
                 await asyncio.wait_for(self._idle.wait(), timeout=self.output_timeout_s)
                 return
             except asyncio.TimeoutError:
-                if getattr(self.session, "active_output_id", None) is not None or any(
+                # `active_output_id` d'une surface sans fin de sortie ne désigne
+                # que la dernière sortie *observée* : elle ne redevient jamais
+                # nulle, et la prendre pour une lecture en cours condamnerait
+                # cette attente à ne jamais finir.
+                playing = None if self._without_output_final else getattr(self.session, "active_output_id", None)
+                if playing is not None or any(
                     self._output_still_alive(output_id) for output_id in self._live_outputs
                 ):
                     continue

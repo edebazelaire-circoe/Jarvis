@@ -434,3 +434,132 @@ async def test_per_word_deltas_rebuild_the_sentence_without_inserted_separators(
     finally:
         await asyncio.wait_for(session.close(), 3)
         await asyncio.wait_for(reader, 1)
+
+
+# ---------------------------------------------------------------------------
+# Relais spontané : le résultat d'un sous-agent fini doit atteindre le canal
+# commentaire et être dit, comme dans l'architecture simple. GPT-Live n'annonce
+# jamais la fin d'une sortie ; tout ce que l'ordonnanceur comptait dessus s'y
+# bloquait (file muette à vie, chaîne de paragraphes enterrée).
+# ---------------------------------------------------------------------------
+
+NOTICE = ("J'ai fini l'analyse de l'architecture. " * 12).strip()
+
+
+async def relay(wire, journal=None, *, output_timeout_s=.2):
+    """Ordonnanceur de parole réel branché sur une session Live réelle."""
+    from tests.unit.test_v2_speech_scheduler import FakeCore, build_scheduler
+    core = FakeCore()
+    session = await live_session(wire, BrainCore(), journal=journal)
+    scheduler = build_scheduler(core, session, journal=journal, output_timeout_s=output_timeout_s)
+    await scheduler.start()
+    return core, session, scheduler
+
+
+def commentary(wire):
+    return [m["content"] for m in wire.sent if m["type"] == "session.commentary.append"]
+
+
+async def appended(wire, text, *, timeout=3):
+    """Attendre que le canal commentaire porte `text` entier, puis rendre ses ajouts."""
+    async with asyncio.timeout(timeout):
+        while " ".join(" ".join(commentary(wire)).split()) != " ".join(text.split()):
+            await asyncio.sleep(0)
+    return commentary(wire)
+
+
+async def test_a_provider_output_never_mutes_the_relay_for_the_rest_of_the_session():
+    """Une sortie du fournisseur ne se referme jamais : elle ne doit rien occuper.
+
+    Le bridge annonce `realtime.output_started` dès que le modèle Live parle de
+    lui-même. Comptée comme sortie vivante, elle ne serait jamais retirée — et
+    le résultat du sous-agent, arrivé après, n'aurait plus jamais son tour.
+    """
+    from jarvis.domain.v2 import ProtocolEnvelope, SpeechKind
+    from tests.unit.test_v2_speech_scheduler import speech_envelope
+    wire = LiveWire()
+    core, session, scheduler = await relay(wire)
+    reader = drain(session)
+    try:
+        wire.push({"type": "session.output_transcript.delta", "event_id": "o1",
+                   "delta": "Je m'en charge.", "start_ms": 0, "end_ms": 100})
+        async with asyncio.timeout(3):
+            while session.active_output_id is None:
+                await asyncio.sleep(0)
+        await scheduler.note_output_event(ProtocolEnvelope(
+            message_type="realtime.output_started", payload={"output_id": session.active_output_id}))
+        await core.publish(speech_envelope("Le sous-agent a fini.", kind=SpeechKind.RESULT))
+        assert await appended(wire, "Le sous-agent a fini.") == ["Le sous-agent a fini."]
+    finally:
+        await asyncio.wait_for(scheduler.stop(), 3)
+        await asyncio.wait_for(session.close(), 3)
+        await asyncio.wait_for(reader, 1)
+
+
+async def test_a_multi_paragraph_result_is_appended_whole_and_chunked_under_the_bound():
+    """Aucun paragraphe n'est enterré, et le découpage sous 450 octets sert.
+
+    Sans fin de sortie, chaque maillon d'une chaîne de paragraphes finissait
+    « interrompu » : la chaîne était bloquée et seul le premier était dit. La
+    surface reçoit donc le texte entier et le découpe elle-même.
+    """
+    from jarvis.domain.v2 import SpeechKind
+    from tests.unit.test_v2_speech_scheduler import speech_envelope
+    wire = LiveWire()
+    text = NOTICE + "\n\n" + NOTICE
+    assert len(text.encode("utf-8")) > MAX_APPEND_CHUNK_UTF8
+    core, session, scheduler = await relay(wire)
+    reader = drain(session)
+    try:
+        await core.publish(speech_envelope(text, kind=SpeechKind.RESULT))
+        contents = await appended(wire, text)
+        assert len(contents) >= 2
+        assert all(len(chunk.encode("utf-8")) <= MAX_APPEND_CHUNK_UTF8 for chunk in contents)
+    finally:
+        await asyncio.wait_for(scheduler.stop(), 3)
+        await asyncio.wait_for(session.close(), 3)
+        await asyncio.wait_for(reader, 1)
+
+
+async def test_a_surface_that_ends_its_outputs_keeps_the_paragraph_chain():
+    """Le découpage par paragraphe reste entier pour une surface normale."""
+    from jarvis.domain.v2 import SpeechKind
+    from tests.unit.test_v2_speech_scheduler import (
+        FakeCore, FakeVoiceSession, build_scheduler, finish_speech, speech_envelope, wait_for)
+    core, session = FakeCore(), FakeVoiceSession()
+    scheduler = build_scheduler(core, session, output_timeout_s=.2)
+    await scheduler.start()
+    try:
+        await core.publish(speech_envelope("Premier paragraphe.\n\nSecond paragraphe.", kind=SpeechKind.RESULT))
+        for _ in range(2):
+            await wait_for(lambda: session.active_output_id is not None)
+            await finish_speech(scheduler, session)
+        assert session.texts() == ["Premier paragraphe.\n\n", "Second paragraphe."]
+    finally:
+        await asyncio.wait_for(scheduler.stop(), 3)
+
+
+async def test_an_oversized_result_stays_under_the_ledger_text_bound():
+    """La fusion des paragraphes reste bornée par `MAX_SPEECH_CHUNK_TEXT`.
+
+    C'est aussi la borne du texte annoncé au ledger (`register_speech`, 8192) :
+    fusionner sans elle ferait refuser la parole entière, donc perdre tout le
+    résultat au lieu d'en perdre la queue.
+    """
+    from jarvis.domain.speech_presentation import MAX_SPEECH_CHUNK_TEXT
+    from jarvis.domain.v2 import SpeechKind
+    from tests.unit.test_v2_speech_scheduler import FakeCore, build_scheduler, speech_envelope
+
+    class Live(SimpleNamespace):
+        requires_local_quiescence_without_output_final = True
+
+    paragraph = ("Une phrase du résultat du sous-agent. " * 40).strip()
+    text = "\n\n".join(paragraph for _ in range(8))
+    assert len(text) > MAX_SPEECH_CHUNK_TEXT
+    core = FakeCore()
+    scheduler = build_scheduler(core, Live(session_id="live", active_output_id=None), output_timeout_s=.2)
+    scheduler._enqueue(SpeechRequest.from_payload(
+        speech_envelope(text, kind=SpeechKind.RESULT).payload))
+    chains = [candidate.chunk for candidate in scheduler._candidates.values()]
+    assert 1 < len(chains) < 8
+    assert all(chunk.span.end - chunk.span.start <= MAX_SPEECH_CHUNK_TEXT for chunk in chains)
