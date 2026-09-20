@@ -1272,3 +1272,595 @@ def payload_of_a_run_where_every_stage_failed(tmp_path) -> dict:
       await new Promise(r=>setImmediate(r));
       out(saved[saved.length-1]);
     """, name="failedrun")
+
+
+# ------------------------------------------------- refonte Slice 05 : la coque
+#
+# Ce qui suit épingle le **remplacement** de la carte centrée, pas son réglage.
+# L'utilisateur a refusé la composition elle-même : une carte de 560 px avec son
+# fond, son ombre et son rayon de 20 px, au milieu d'un noir plat. Un test qui
+# vérifierait « la carte est plus jolie » raterait le sujet ; ceux-ci vérifient
+# qu'il n'y a plus de carte, que le cadre entier est la surface, et que le
+# centre est **libre et nommé** pour que les Slices 06 et 07 s'y installent sans
+# inventer chacune sa géométrie.
+
+
+#: La composition refusée, mot pour mot. Ces déclarations **étaient** la carte :
+#: si l'une revient dans la feuille, la carte est revenue avec elle.
+REJECTED_CARD = (
+    "max-width:560px",
+    "border-radius:20px",
+    "background:rgba(16,22,34,.72)",
+    "box-shadow:0 24px 80px rgba(0,0,0,.55)",
+)
+
+
+def test_the_rejected_centred_card_is_gone_and_the_shell_is_the_whole_frame(tmp_path):
+    """**Décision 18**, et c'est le cœur de cette slice.
+
+    « Le centre est réservé à l'exercice » ne peut pas être vrai tant qu'une
+    boîte de 560 px occupe ce centre. Ce test lit donc deux choses : que les
+    quatre déclarations qui *faisaient* la carte ont disparu, et que ce qui les
+    remplace occupe le cadre — une grille en trois rangées dont celle du milieu
+    est la scène, sans fond, sans bordure et sans ombre à elle.
+
+    Les `none`/`0` explicites de `.jf-step` ne sont pas décoratifs : ils sont la
+    seule façon qu'un test distingue « la carte a été retirée » de « la règle a
+    été oubliée quelque part ailleurs dans la feuille ».
+    """
+
+    result = run_node(tmp_path, DOM + """
+      const shell=K.createFlowOverlay({document,now,setInterval:()=>1,clearInterval:()=>{}});
+      shell.open({title:'Calibration Bare Hands',exit:()=>{}});
+      shell.step({index:2,total:7,title:'Posture de réveil',
+        instruction:'Formez un C.',deadlineMs:20000});
+      const root=flowRoot();
+      const layout=find(root,C.DOM.flowStepClass)[0];
+      out({
+        style:K.STYLE,
+        /* L'arbre : un voile, puis la mise en page. Le voile est une **couche**
+           et non un fond de la racine, sans quoi le flou s'appliquerait aussi
+           au titre qu'il doit rendre lisible. */
+        rootKids:root.children.map(n=>n.className||n.tagName),
+        /* Les trois rangées, dans l'ordre : bandeau haut, scène au milieu,
+           pied en bas. La scène est la rangée centrale — c'est la décision 19
+           lue dans l'arbre et non dans une feuille. */
+        layoutKids:layout.children.map(n=>n.className||n.tagName),
+        /* Rien de tout cela n'a besoin d'être construit deux fois. */
+        oneStage:find(root,C.DOM.flowStageClass).length,
+        oneHeader:find(root,C.DOM.flowHeaderClass).length,
+        /* Le rapport de fin vit **dans la scène** : à la dernière page il n'y a
+           plus d'exercice, donc le centre lui revient. */
+        reportInStage:find(find(root,C.DOM.flowStageClass)[0],'jf-report').length,
+        /* La scène est **vide** tant qu'une étape n'y a rien monté : c'est le
+           sujet de la slice, et une coque qui y dessinerait quelque chose
+           d'elle-même reprendrait la place qu'elle vient de libérer. */
+        demoEmpty:find(root,C.DOM.flowDemoClass)[0].children.length,
+        exerciseEmpty:find(root,C.DOM.flowExerciseClass)[0].children.length,
+      });
+    """, name="noCard")
+
+    style = result["style"]
+    for dead in REJECTED_CARD:
+        assert dead not in style, (
+            f"« {dead} » faisait la carte centrée que l'utilisateur a refusée ; "
+            "elle est revenue dans la feuille."
+        )
+    # Ce qui remplace la carte occupe le cadre, et le dit explicitement.
+    assert "position:fixed;inset:0;z-index:2147482000" in style
+    for gone in ("max-width:none", "background:none", "border:0",
+                 "border-radius:0", "box-shadow:none"):
+        assert gone in style, f"`.jf-step` doit déclarer {gone} : la carte est partie"
+    assert "grid-template-rows:auto minmax(0,1fr) auto" in style, (
+        "trois rangées, et c'est celle du milieu qui s'étire : le centre est à l'exercice"
+    )
+    # La coque est une feuille **injectée** : elle ne peut pas hériter du reset
+    # de la page. Sans cette ligne, `height:100%` plus une gouttière pousse le
+    # pied hors du cadre — et le compteur et la sortie sont dans le pied, donc
+    # la RÈGLE ZÉRO dépendrait du reset de l'hôte.
+    assert "#jarvisFlow,#jarvisFlow *{box-sizing:border-box}" in style
+    assert result["rootKids"] == ["jf-veil", "jf-step"]
+    assert result["layoutKids"] == [
+        "jf-progress", "jf-close", "jf-header", "jf-stage", "jf-foot",
+    ], "bandeau, scène, pied — et la scène est la rangée du milieu"
+    assert result["oneStage"] == 1 and result["oneHeader"] == 1
+    assert result["reportInStage"] == 1
+    assert result["demoEmpty"] == 0 and result["exerciseEmpty"] == 0
+
+
+def test_the_shell_publishes_five_named_regions_and_refuses_the_two_it_owns(tmp_path):
+    """**Le livrable de cette slice**, autant que le dessin.
+
+    Les Slices 06 et 07 montent leur contenu dans cette coque. Sans vocabulaire
+    publié, chacune inventerait sa propre géométrie dans le centre laissé libre,
+    et « le centre est réservé à l'exercice » redeviendrait une intention.
+
+    Deux régions se **refusent** : `progress` est écrite par `progress()`,
+    `controls` par `buttons()`, et les deux sont réécrites à chaque étape. Les y
+    laisser monter serait le défaut plausible par excellence — le contenu
+    disparaîtrait à l'étape suivante sans un mot, et personne ne saurait
+    pourquoi. Le refus **nomme le propriétaire**, donc il enseigne.
+    """
+
+    result = run_node(tmp_path, DOM + """
+      const shell=K.createFlowOverlay({document,now,setInterval:()=>1,clearInterval:()=>{}});
+      /* Fermée, la coque ne rend **pas** de régions et ne se construit pas pour
+         l'occasion : une image qui arrive après Échap ne doit pas faire
+         réapparaître une surimpression que l'utilisateur vient de quitter. */
+      const beforeOpen=shell.regions();
+      shell.open({title:'Calibration Bare Hands',exit:()=>{}});
+      shell.step({index:1,total:7,title:'Main au repos',instruction:'Ne bougez plus.',
+        deadlineMs:20000});
+      const root=flowRoot();
+      const regions=shell.regions();
+      const drawn=name=>{const n=document.createElement('div');n.className='mine-'+name;return n};
+      const demo=shell.mount('demo',drawn('demo'));
+      const exercise=shell.mount('exercise',drawn('exercise'));
+      const extra=shell.mount('feedback',drawn('feedback'));
+      out({
+        beforeOpen,
+        slots:K.FLOW_SLOTS,mountable:K.FLOW_MOUNTABLE,
+        /* Les régions publiées sont **les nœuds de l'arbre**, pas des copies :
+           deux chemins vers un nœud finissent toujours par diverger. */
+        sameNodes:[
+          regions.demo===find(root,C.DOM.flowDemoClass)[0],
+          regions.exercise===find(root,C.DOM.flowExerciseClass)[0],
+          regions.feedback===find(root,C.DOM.flowFeedbackClass)[0],
+          regions.progress===find(root,C.DOM.flowProgressClass)[0],
+          regions.controls===find(root,C.DOM.flowControlsClass)[0],
+          regions.stage===find(root,C.DOM.flowStageClass)[0],
+          regions.header===find(root,C.DOM.flowHeaderClass)[0],
+        ],
+        keys:Object.keys(regions).sort(),
+        /* Ce qui est monté est **là où on l'a demandé**. */
+        placed:[
+          regions.demo.children.map(n=>n.className),
+          regions.exercise.children.map(n=>n.className),
+          regions.feedback.children.map(n=>n.className),
+        ],
+        returned:[demo.className,exercise.className,extra.className],
+        /* Vider ne retire que ce que le parcours a posé : la ligne de
+           commentaire que la coque tient dans `feedback` lui appartient. */
+        clearedDemo:shell.clear('demo'),
+        afterClear:regions.demo.children.length,
+        noteSurvives:regions.feedback.children.map(n=>n.className),
+        /* Les deux refus, et un nom inconnu. */
+        unknown:refused(()=>shell.mount('milieu',drawn('x'))),
+        ownedProgress:refused(()=>shell.mount('progress',drawn('x'))),
+        ownedControls:refused(()=>shell.mount('controls',drawn('x'))),
+        clearOwned:refused(()=>shell.clear('controls')),
+        whyProgress:(()=>{try{shell.mount('progress',drawn('x'))}catch(e){return e.message}})(),
+      });
+    """, name="regions")
+
+    assert result["beforeOpen"] is None, "une coque fermée n'a pas de régions"
+    assert result["slots"] == ["demo", "exercise", "feedback", "progress", "controls"]
+    assert result["mountable"] == ["demo", "exercise", "feedback"]
+    assert result["keys"] == [
+        "controls", "demo", "exercise", "feedback", "header", "progress", "stage",
+    ]
+    assert all(result["sameNodes"]), "les régions publiées sont les nœuds de l'arbre"
+    assert result["placed"] == [
+        ["mine-demo"], ["mine-exercise"], ["jf-note", "mine-feedback"],
+    ]
+    assert result["returned"] == ["mine-demo", "mine-exercise", "mine-feedback"]
+    assert result["clearedDemo"] == 1 and result["afterClear"] == 0
+    assert result["noteSurvives"] == ["jf-note", "mine-feedback"], (
+        "vider « demo » ne touche pas « feedback », et rien ne touche la ligne de la coque"
+    )
+    assert result["unknown"] == "RangeError"
+    assert result["ownedProgress"] == "RangeError"
+    assert result["ownedControls"] == "RangeError"
+    assert result["clearOwned"] == "RangeError"
+    # Le refus **enseigne** : il nomme qui possède la région et ce qui arriverait.
+    assert "progress()" in result["whyProgress"] and "buttons()" in result["whyProgress"]
+
+
+def test_a_new_step_empties_the_stage_the_previous_one_filled(tmp_path):
+    """Même règle que les boutons, et pour la même raison.
+
+    Une démonstration qui survivrait à son étape montrerait la main d'une autre
+    consigne — et l'utilisateur ferait le geste affiché. C'est pire que de ne
+    rien montrer : c'est montrer le faux, ce que la Slice 04 vient justement de
+    corriger dans l'aide.
+    """
+
+    result = run_node(tmp_path, DOM + """
+      const shell=K.createFlowOverlay({document,now,setInterval:()=>1,clearInterval:()=>{}});
+      shell.open({title:'Calibration Bare Hands',exit:()=>{}});
+      shell.step({index:1,total:7,title:'Main au repos',instruction:'Ne bougez plus.',deadlineMs:20000});
+      const node=name=>{const n=document.createElement('div');n.className=name;return n};
+      const drawing=node('main-au-repos');
+      shell.mount('demo',drawing);
+      shell.mount('exercise',node('cible'));
+      shell.mount('feedback',node('jauge'));
+      shell.note('Gardez la main immobile.','');
+      const before={
+        demo:shell.regions().demo.children.length,
+        exercise:shell.regions().exercise.children.length,
+        feedback:shell.regions().feedback.children.map(n=>n.className),
+        noteText:find(flowRoot(),C.DOM.flowNoteClass)[0].textContent,
+      };
+      shell.step({index:2,total:7,title:'Posture de réveil',instruction:'Formez un C.',deadlineMs:20000});
+      out({
+        before,
+        after:{
+          demo:shell.regions().demo.children.length,
+          exercise:shell.regions().exercise.children.length,
+          feedback:shell.regions().feedback.children.map(n=>n.className),
+          noteText:find(flowRoot(),C.DOM.flowNoteClass)[0].textContent,
+        },
+        /* Détaché **pour de vrai** : le double décroche comme le vrai décroche,
+           donc un nœud qui traînerait encore dans l'arbre se verrait. */
+        handDetached:drawing.parent===null,
+        instruction:find(flowRoot(),'jf-instruction')[0].textContent,
+      });
+    """, name="stageClear")
+
+    assert result["before"]["demo"] == 1 and result["before"]["exercise"] == 1
+    assert result["before"]["feedback"] == ["jf-note", "jauge"]
+    assert result["before"]["noteText"] == "Gardez la main immobile."
+    assert result["after"]["demo"] == 0 and result["after"]["exercise"] == 0
+    assert result["after"]["feedback"] == ["jf-note"], (
+        "la scène est vidée, et la ligne de commentaire de la coque reste"
+    )
+    assert result["after"]["noteText"] == ""
+    assert result["handDetached"] is True
+    assert result["instruction"] == "Formez un C."
+
+
+def test_green_is_a_brief_recognition_and_never_the_ambient_colour(tmp_path):
+    """**Décision 21**, et la leçon de l'ACTIVE vert retiré.
+
+    Le bleu est la consigne ; le vert dit « ce geste vient d'être reconnu ». Une
+    couleur de succès qu'on peut laisser allumée cesse de signaler un succès —
+    c'est exactement pourquoi l'utilisateur a retiré l'ACTIVE vert, et le même
+    instinct vaut ici.
+
+    Il n'existe donc **aucun chemin** qui allume le vert sans échéance : une
+    durée absente ou non finie se refuse, une durée trop longue est ramenée au
+    plafond publié, le changement d'étape l'éteint, et la fermeture aussi. Le
+    vert est lu sur l'horloge injectée, jamais sur l'attribut : « on l'a posé »
+    et « il est encore vrai » sont deux faits différents.
+    """
+
+    result = run_node(tmp_path, DOM + """
+      const shell=K.createFlowOverlay({document,now,setInterval:()=>1,clearInterval:()=>{}});
+      shell.open({title:'Calibration Bare Hands',exit:()=>{}});
+      shell.step({index:3,total:7,title:'Pincement pouce-index',
+        instruction:'Pincez, puis rouvrez.',deadlineMs:20000});
+      const root=flowRoot();
+      const lit=()=>[root.getAttribute('data-flash'),shell.flashing()];
+      const atRest=lit();
+      const held=shell.flash(600);
+      const justAfter=lit();
+      clock+=300;
+      shell.note('2 pincement(s) sur 4','');
+      const halfway=lit();
+      clock+=400;
+      /* L'horloge de la coque l'éteint — celle qui peint déjà le compteur, et
+         non un minuteur séparé qui pourrait se perdre. */
+      shell.progress(.5);
+      const expired=lit();
+      /* Le plafond : une durée de dosage excessif est ramenée, pas levée. Lever
+         au milieu d'une image **réussie** tuerait le parcours pour un geste que
+         l'utilisateur a bien fait. */
+      const clamped=shell.flash(999999);
+      const stillOn=lit();
+      /* Le vert ne traverse pas une frontière d'étape : « reconnu » parlait de
+         l'étape précédente. */
+      shell.step({index:4,total:7,title:'Pincement pouce-majeur',
+        instruction:'Même chose avec le majeur.',deadlineMs:20000});
+      const afterStep=lit();
+      shell.flash(800);
+      shell.close();
+      out({
+        atRest,held,justAfter,halfway,expired,clamped,stillOn,afterStep,
+        max:K.FLASH_MAX_MS,
+        afterClose:shell.flashing(),
+        /* Les refus : sans échéance, le vert deviendrait la couleur ambiante. */
+        noDuration:refused(()=>shell.flash()),
+        zero:refused(()=>shell.flash(0)),
+        negative:refused(()=>shell.flash(-5)),
+        infinite:refused(()=>shell.flash(Infinity)),
+        notANumber:refused(()=>shell.flash('longtemps')),
+        style:K.STYLE,
+      });
+    """, name="flash")
+
+    assert result["atRest"] == ["", False], "au repos la coque est bleue"
+    assert result["held"] == 600
+    assert result["justAfter"] == ["ok", True]
+    assert result["halfway"] == ["ok", True], "il tient pendant sa durée"
+    assert result["expired"] == ["", False], "et il s'éteint tout seul"
+    assert result["clamped"] == result["max"] == 2000, (
+        "une durée excessive est ramenée au plafond publié, pas acceptée telle quelle"
+    )
+    assert result["stillOn"] == ["ok", True]
+    assert result["afterStep"] == ["", False], "le vert ne traverse pas une étape"
+    assert result["afterClose"] is False
+    for why in ("noDuration", "zero", "negative", "infinite", "notANumber"):
+        assert result[why] == "RangeError", why
+    # Tout ce qui verdit est sous l'attribut que seule `flash()` pose, ou bien
+    # nomme un statut ponctuel (rapport de fin, note de succès). Il n'existe pas
+    # de règle qui rende une surface verte en permanence.
+    style = result["style"]
+    for line in style.splitlines():
+        if "--jf-ok" not in line:
+            continue
+        assert ("[data-flash=" in line
+                or "--jf-ok:#" in line
+                or ".jf-ok{" in line
+                or '[data-kind="ok"]' in line), (
+            f"« {line.strip()} » rend une surface verte hors d'un flash borné, "
+            "d'un statut de rapport ou d'une note de succès"
+        )
+
+
+def test_the_veil_keeps_the_jarvis_scene_visible_behind_the_shell(tmp_path):
+    """**Décision 18** : « flou translucide plein écran », et « moins noir mort,
+    plus atmosphérique » que le fond de modale qui a été refusé.
+
+    Le point technique qui fait la différence : l'assombrissement passe par
+    `backdrop-filter: brightness()` et non par une nappe opaque. La scène JARVIS
+    garde donc sa **couleur** derrière au lieu d'être recouverte de gris, et la
+    nappe posée par-dessus peut rester légère. `saturate` l'empêche de virer au
+    gris, la teinte bleue du haut dit que c'est un mode JARVIS et non un voile
+    générique.
+
+    Et il reste lisible **sans** `backdrop-filter` : un navigateur qui ne floute
+    pas ne doit pas laisser la scène traverser le titre.
+    """
+
+    result = run_node(tmp_path, DOM + """
+      const shell=K.createFlowOverlay({document,now,setInterval:()=>1,clearInterval:()=>{}});
+      shell.open({title:'Calibration Bare Hands',exit:()=>{}});
+      const root=flowRoot();
+      const veil=find(root,C.DOM.flowVeilClass)[0];
+      out({
+        style:K.STYLE,
+        /* Le voile est une **couche** posée avant la mise en page, donc sous
+           elle : un voile qui recouvrirait le titre flouterait ce qu'il doit
+           rendre lisible. */
+        veilFirst:root.children.indexOf(veil)===0,
+        veilHidden:veil.getAttribute('aria-hidden'),
+      });
+    """, name="veil")
+
+    style = result["style"]
+    assert result["veilFirst"] is True
+    assert result["veilHidden"] == "true", "le voile n'est pas du contenu"
+    # L'assombrissement se fait **sur ce qu'il y a derrière**, pas avec du noir.
+    assert "backdrop-filter:blur(18px) saturate(118%) brightness(.76)" in style
+    assert "-webkit-backdrop-filter:blur(18px) saturate(118%) brightness(.76)" in style
+    # La nappe reste légère : c'est ce qui laisse la scène lisible derrière.
+    assert "linear-gradient(180deg,rgba(4,9,16,.52),rgba(3,7,13,.68))" in style
+    assert "rgba(6,9,16,.82)" not in style, "le fond de modale refusé, plus noir et plat"
+    # Atmosphérique plutôt que plat : une teinte JARVIS et une vignette.
+    assert "radial-gradient(120% 86% at 50% -8%,rgba(110,231,255,.13)" in style
+    # Le voile n'avale pas les interactions ; c'est la racine qui les capte.
+    assert "pointer-events:none" in style
+    # Et sans flou, la nappe porte seule la lisibilité.
+    assert "@supports not ((backdrop-filter:blur(1px))" in style
+    assert "rgba(4,9,16,.92)" in style
+    # Le suivi des mains reste **au-dessus** : on calibre avec ses mains.
+    hands = BAREHANDS.read_text(encoding="utf-8")
+    assert "z-index:2147483000" in hands
+    assert "z-index:2147482000" in style
+    assert 2147482000 < 2147483000
+
+
+def test_the_shell_adapts_to_small_frames_and_stays_usable_without_motion(tmp_path):
+    """Deux exigences de la slice, et elles se tiennent.
+
+    **Adaptation** : ce n'est pas seulement la largeur. Une fenêtre *basse*
+    (paysage de téléphone, moitié d'écran) manque de hauteur, et si le titre
+    mangeait la scène l'exercice deviendrait injouable — ce qui est pire que de
+    perdre deux tailles de police. Les deux cas ont donc leur palier.
+
+    **Moins de mouvement** : tout ce qui bouge s'arrête, mais ce qui *portait
+    l'information* est **remplacé** plutôt que supprimé. La cible ne pulse plus,
+    donc elle reçoit un halo fixe plus marqué : une cible qu'on ne trouve pas
+    rend l'étape injouable, et « accessible » ne peut pas vouloir dire
+    « inutilisable ».
+    """
+
+    result = run_node(tmp_path, "out({style:K.STYLE});", name="adapt")
+    style = result["style"]
+
+    # --- adaptation en largeur : gouttière de 16 px, titre borné, commandes larges
+    assert "@media (max-width:720px){" in style
+    phone = style.split("@media (max-width:720px){")[1].split("\n}")[0]
+    assert "padding:clamp(22px,5vh,44px) 16px 18px" in phone, "16 px de gouttière"
+    assert "font-size:clamp(24px,7.2vw,34px)" in phone, "le titre tient dans le cadre"
+    assert "jf-controls" in phone and "flex:1 1 44%" in phone
+    # Au doigt, une commande se vise : 44 px de haut (13 px de gouttière
+    # verticale plus la ligne), pas les 36 px qui suffisent à la souris.
+    assert "padding:13px 18px" in phone
+    # Et la croix de sortie ne rétrécit pas : sur un écran tactile, elle est
+    # le chemin de sortie le plus direct des trois.
+    assert "width:36px;height:36px" not in phone
+    # --- adaptation en hauteur : le bandeau cède, la scène garde le centre
+    assert "@media (max-height:560px){" in style
+    short = style.split("@media (max-height:560px){")[1].split("\n}")[0]
+    assert "font-size:clamp(20px,3.6vh,30px)" in short
+    assert "padding-top:clamp(14px,3vh,26px)" in short
+    # Aucune largeur fixe ne peut déborder le cadre : tout est borné au viewport.
+    assert "width:min(580px,92vw)" in style and "max-width:min(960px,94vw)" in style
+
+    # --- moins de mouvement
+    assert "@media (prefers-reduced-motion:reduce){" in style
+    calm = style.split("@media (prefers-reduced-motion:reduce){")[1].split("\n}")[0]
+    for stopped in ("animation:none", "transition:none"):
+        assert stopped in calm
+    # La cible perd sa pulsation et **gagne** un halo : elle reste trouvable.
+    assert "box-shadow:0 0 0 7px rgba(110,231,255,.3)" in calm, (
+        "sans pulsation, la cible doit rester repérable autrement"
+    )
+    # L'entrée en fondu de la coque s'arrête aussi.
+    assert "jfEnter" in style
+
+
+def test_closing_the_shell_releases_every_region_and_every_resource(tmp_path):
+    """Échap, la croix et `close()` laissent la page **telle qu'ils l'ont
+    trouvée** — et la coque a maintenant plus de choses à rendre qu'avant.
+
+    Ce qui est ajouté à la liste par cette slice : les nœuds que le parcours a
+    montés dans la scène, la table des régions, et le vert. Un arbre de parcours
+    terminé qu'une table retiendrait en vie est une fuite qu'aucun écran ne
+    montre — c'est exactement l'espèce de défaut que ce dépôt veut voir tomber
+    dans un test plutôt que dans six mois.
+    """
+
+    result = run_node(tmp_path, DOM + """
+      const page=document.createElement('div');page.id='page';document.body.appendChild(page);
+      const hands=document.createElement('div');hands.id=C.DOM.rootId;document.body.appendChild(hands);
+      const cleared=[];
+      const exits=[];
+      const shell=K.createFlowOverlay({document,now,
+        setInterval:()=>77,clearInterval:id=>cleared.push(id)});
+      shell.open({title:'Calibration Bare Hands',exit:why=>exits.push(why)});
+      shell.step({index:5,total:7,title:'Viser et cliquer',
+        instruction:'Amenez le jeton sur le point.',deadlineMs:20000});
+      const mine=document.createElement('div');mine.className='cible-dessinee';
+      shell.mount('exercise',mine);
+      shell.target({x:640,y:446});
+      shell.flash(1500);
+      const before={
+        mounted:mine.parent!==null,
+        target:find(flowRoot(),C.DOM.flowTargetClass).length,
+        flashing:shell.flashing(),
+        inerted:document.body.children.filter(n=>n.inert).map(n=>n.id),
+      };
+      /* Échap **puis** fermeture : le parcours décide quoi faire d'une sortie,
+         la coque ne se referme pas toute seule. */
+      document.fire('keydown',{key:'Escape'});
+      const closed=shell.close();
+      out({
+        before,closed,exits,
+        clearedTimers:cleared,
+        stillAttached:!!flowRoot(),
+        mountDetached:mine.parent===null,
+        regions:shell.regions(),
+        flashing:shell.flashing(),
+        open:shell.isOpen(),
+        listenersLeft:(document.listeners.keydown||[]).length,
+        inertLeft:document.body.children.filter(n=>n.inert).map(n=>n.id),
+        /* Fermée, la coque **refuse de dessiner** au lieu de se reconstruire
+           sur une page que l'utilisateur vient de quitter. */
+        mountAfterClose:shell.mount('demo',document.createElement('div')),
+        clearAfterClose:shell.clear('demo'),
+        stepAfterClose:shell.step({index:6,total:7,title:'x',instruction:'y'}),
+        targetAfterClose:shell.target({x:1,y:2}),
+        flashAfterClose:shell.flash(500),
+        /* Et elle se rouvre proprement : la table des régions est reconstruite,
+           pas ressuscitée. */
+        reopened:(()=>{shell.open({title:'Tutoriel Bare Hands',exit:()=>{}});
+          const r=shell.regions();
+          return {ok:!!r,demoEmpty:r.demo.children.length,
+            note:find(flowRoot(),C.DOM.flowNoteClass).length,
+            flash:flowRoot().getAttribute('data-flash')}})(),
+      });
+    """, name="release")
+
+    assert result["before"] == {
+        "mounted": True, "target": 1, "flashing": True, "inerted": ["page"],
+    }
+    assert result["closed"] is True and result["exits"] == ["escape"]
+    assert result["clearedTimers"] == [77], "la minuterie du compteur est rendue"
+    assert result["stillAttached"] is False
+    assert result["mountDetached"] is True, "ce que le parcours a monté est détaché"
+    assert result["regions"] is None and result["flashing"] is False
+    assert result["open"] is False
+    assert result["listenersLeft"] == 0
+    assert result["inertLeft"] == [], "la page est réarmée"
+    # Fermée, elle refuse — sans lever, parce qu'une image en vol n'est pas une faute.
+    assert result["mountAfterClose"] is None
+    assert result["clearAfterClose"] == 0
+    assert result["stepAfterClose"] is None
+    assert result["targetAfterClose"] is None
+    assert result["flashAfterClose"] == 0
+    # Rouverte : une coque neuve, pas la précédente recollée.
+    assert result["reopened"] == {"ok": True, "demoEmpty": 0, "note": 1, "flash": ""}
+
+
+def test_rule_zero_still_holds_its_four_promises_in_the_new_layout(tmp_path):
+    """La carte est partie ; **les quatre promesses restent**.
+
+    C'est la contrainte la plus facile à perdre dans une refonte visuelle : le
+    compteur et l'échéance vivaient dans un coin de la carte, et une mise en
+    page qui les oublierait rendrait « ça attend » indiscernable de « c'est
+    bloqué » — la correction la plus répétée de ce dépôt.
+
+    Les quatre, relues dans la nouvelle mise en page :
+      1. que ça tourne — le rail avance et les segments situent l'étape ;
+      2. quoi — le titre et la consigne, grands et **hauts** (décision 19) ;
+      3. depuis combien de temps — « 12 s » et « 8 s restantes », mot pour mot ;
+      4. comment sortir — la croix permanente, au coin de l'**écran** cette
+         fois, plus Échap, plus le bouton de l'étape.
+    """
+
+    result = run_node(tmp_path, DOM + """
+      const exits=[];
+      const shell=K.createFlowOverlay({document,now,setInterval:()=>1,clearInterval:()=>{}});
+      shell.open({title:'Calibration Bare Hands',exit:why=>exits.push(why)});
+      shell.step({index:2,total:7,title:'Posture de réveil',
+        instruction:'Formez un C : pouce et index écartés sans se toucher.',deadlineMs:20000});
+      const root=flowRoot();
+      const header=find(root,C.DOM.flowHeaderClass)[0];
+      const layout=find(root,C.DOM.flowStepClass)[0];
+      clock+=12000;
+      shell.progress(.35);
+      const cross=allButtons(root).find(n=>n.getAttribute('data-flow-close')!==null);
+      out({
+        // 1. que ça tourne
+        rail:find(root,C.DOM.flowProgressClass)[0].children[0].style.width,
+        dots:find(root,'jf-dots')[0].children.map(n=>n.getAttribute('data-at')),
+        // 2. quoi, et **haut** : le bandeau précède la scène dans la grille.
+        headerAboveStage:layout.children.indexOf(header)
+          <layout.children.indexOf(find(root,C.DOM.flowStageClass)[0]),
+        kicker:header.children[0].children[0].textContent,
+        title:header.children[1].textContent,
+        instruction:header.children[2].textContent,
+        // 3. depuis combien de temps — les mots exacts n'ont pas changé.
+        clock:find(root,'jf-meta')[0].children.map(n=>n.textContent),
+        // 4. comment sortir — trois chemins, dont un que le parcours ne peut effacer.
+        crossLabel:cross.getAttribute('aria-label'),
+        crossTitle:cross.getAttribute('title'),
+        crossGlyph:cross.textContent,
+        /* La croix est posée **hors** des commandes : `buttons()` vide les
+           commandes à chaque étape, et une sortie qu'un parcours peut effacer
+           sans le savoir n'est pas une sortie. */
+        crossOutsideControls:find(root,C.DOM.flowControlsClass)[0].children.length===0,
+        escape:(()=>{document.fire('keydown',{key:'Escape'});return exits.slice()})(),
+        clickCross:(()=>{cross.fire('click');return exits.slice()})(),
+        // Le commentaire vivant est **annoncé**, pas seulement dessiné.
+        noteLive:find(root,C.DOM.flowNoteClass)[0].getAttribute('aria-live'),
+        // Une racine d'accessibilité stable, et le focus qui la suit.
+        role:root.getAttribute('role'),modal:root.getAttribute('aria-modal'),
+        label:root.getAttribute('aria-label'),tab:root.getAttribute('tabindex'),
+      });
+    """, name="ruleZero")
+
+    assert result["rail"] == "35%"
+    assert result["dots"] == ["done", "now", "next", "next", "next", "next", "next"], (
+        "la progression globale situe l'étape sans peser"
+    )
+    assert result["headerAboveStage"] is True, (
+        "titre et consigne **hauts**, au-dessus de la scène (décision 19)"
+    )
+    assert result["kicker"] == "Étape 2 sur 7"
+    assert result["title"] == "Posture de réveil"
+    assert result["instruction"].startswith("Formez un C")
+    assert result["clock"] == ["12 s", "8 s restantes"], (
+        "« ça attend » et « c'est bloqué » doivent rester distinguables"
+    )
+    assert result["crossLabel"] == "Quitter ce parcours"
+    assert result["crossTitle"] == "Quitter (Échap)"
+    assert result["crossGlyph"] == "×"
+    assert result["crossOutsideControls"] is True
+    assert result["escape"] == ["escape"]
+    assert result["clickCross"] == ["escape", "fermeture"]
+    assert result["noteLive"] == "polite"
+    assert result["role"] == "dialog" and result["modal"] == "true"
+    assert result["label"] == "Calibration Bare Hands" and result["tab"] == "-1"

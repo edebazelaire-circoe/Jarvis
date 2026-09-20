@@ -1092,7 +1092,19 @@ def test_the_calibration_stylesheet_agrees_with_the_dom_names_the_contract_owns(
 
     assert result["styleId"] == names["flowStyleId"]
     assert f"#{names['flowRootId']}{{" in style
-    for key in ("flowStepClass", "flowProgressClass", "flowNoteClass", "flowTargetClass"):
+    for key in (
+        "flowStepClass", "flowProgressClass", "flowNoteClass", "flowTargetClass",
+        # Les régions nommées de la refonte (Slice 05). Elles entrent dans ce
+        # tuple plutôt que dans un test à part, pour la raison qui a déjà fait
+        # entrer `wakeClass` dans le sien : la dérive se prend par la
+        # comparaison contrat-feuille que ce dépôt possède, pas par la
+        # coïncidence de deux littéraux Python. Une région déclarée au contrat
+        # mais jamais dessinée est une fente où la Slice 06 monterait son
+        # exercice dans le vide, et rien ne le dirait.
+        "flowVeilClass", "flowHeaderClass", "flowStageClass",
+        "flowDemoClass", "flowExerciseClass", "flowFeedbackClass",
+        "flowControlsClass",
+    ):
         assert f"#{names['flowRootId']} .{names[key]}" in style, key
     # La coque vit **sous** la surimpression des mains : l'utilisateur calibre
     # avec ses mains, donc son jeton doit rester visible par-dessus.

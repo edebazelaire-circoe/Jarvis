@@ -3,11 +3,22 @@
 
    Deux choses vivent ici, et c'est la décision 26 qui les met ensemble :
 
-   - **la coque de surimpression**, plein écran, sombre et floutée, avec un
-     titre, une consigne, une progression, un compteur vivant et une sortie
-     évidente. Elle ne sait rien de la calibration : elle affiche des étapes.
-     Le tutoriel (Slice 09) la réutilise telle quelle — « deux parcours, une
-     coque » est un choix de produit, pas une ressemblance ;
+   - **la coque de surimpression**, plein écran, floutée et **sans carte**,
+     avec un titre, une consigne, une progression, un compteur vivant et une
+     sortie évidente. Elle ne sait rien de la calibration : elle affiche des
+     étapes. Le tutoriel (Slice 09) la réutilise telle quelle — « deux
+     parcours, une coque » est un choix de produit, pas une ressemblance ;
+
+     **Refonte, Slice 05 (décisions 18 à 21, architecture §6).** La carte
+     centrée de 560 px a été refusée par l'utilisateur : pas rabotée,
+     remplacée. Ce qui la remplace est une **couche de présentation plein
+     cadre** — un voile flouté qui laisse la scène JARVIS visible derrière au
+     lieu de la recouvrir de noir, un bandeau haut (numéro, grand titre, une
+     phrase), une **scène centrale vide** qui occupe l'essentiel du cadre, une
+     progression légère et des commandes secondaires. La scène est vide
+     *volontairement* : elle se remplit par `mount()`, et les cinq régions
+     nommées (`FLOW_SLOTS`) sont le contrat que les parcours suivants lisent au
+     lieu d'inventer chacun leur géométrie ;
    - **la dérivation**, pure : des échantillons entrent, des seuils sortent.
      Aucun DOM, aucune horloge, aucun réseau — node la pilote sans navigateur.
 
@@ -388,58 +399,250 @@
      les siens (`done`/`missed`/`skipped`). Publiés pour qu'un parcours puisse
      s'y conformer au lieu de le deviner. */
   const FLOW_STATUS=Object.freeze(['ok','failed','skipped']);
+
+  /* Les **cinq régions nommées** de la coque (refonte Slice 05, décisions 18 et
+     19, architecture §6). Elles sont le livrable de cette slice autant que le
+     dessin : sans un vocabulaire publié, chaque parcours qui vient inventerait
+     sa propre géométrie dans le centre laissé libre, et « le centre est
+     réservé à l'exercice » redeviendrait une intention au lieu d'un contrat.
+
+     Trois se **remplissent** (`mount`/`clear`), deux appartiennent à la coque
+     et se refusent : `progress` est écrite par `progress()`, `controls` par
+     `buttons()`, et toutes deux sont réécrites à chaque étape — un contenu
+     monté là disparaîtrait sans un mot, c'est-à-dire le défaut plausible que
+     ce dépôt refuse. */
+  const FLOW_SLOTS=Object.freeze(['demo','exercise','feedback','progress','controls']);
+  const FLOW_MOUNTABLE=Object.freeze(['demo','exercise','feedback']);
+  /* **Le plafond du vert** (décision 21). Le bleu est la couleur de la
+     consigne ; le vert dit « reconnu », brièvement. L'ACTIVE vert a été retiré
+     par l'utilisateur lui-même, et le même instinct vaut ici : une couleur de
+     succès qu'on peut laisser allumée devient la couleur ambiante, et ne dit
+     alors plus rien. `flash()` borne donc toute tenue à cette valeur, publiée
+     pour qu'un test l'épingle au lieu de la deviner. */
+  const FLASH_MAX_MS=2000;
+
   const STYLE_ID=BH.DOM.flowStyleId;
   const ACCENT='var(--omega-accent,var(--accent,#6ee7ff))';
+  /* Écrit avec deux raccourcis parce que la feuille a triplé de taille et
+     qu'une règle illisible ne se relit pas. `R` est la racine, `D` les noms du
+     contrat : le texte **produit** porte les vrais noms, et c'est lui que le
+     test contrat-feuille compare. */
+  const R=`#${BH.DOM.flowRootId}`;
+  const D=BH.DOM;
   const STYLE=`
-#${BH.DOM.flowRootId}{position:fixed;inset:0;z-index:2147482000;display:flex;align-items:center;
-  justify-content:center;background:rgba(6,9,16,.82);backdrop-filter:blur(14px);
-  -webkit-backdrop-filter:blur(14px);font:14px/1.6 system-ui,-apple-system,Segoe UI,sans-serif;color:#e8eef8}
-#${BH.DOM.flowRootId}[hidden]{display:none}
-#${BH.DOM.flowRootId} .${BH.DOM.flowStepClass}{position:relative;max-width:560px;padding:32px 36px;text-align:center;
-  border-radius:20px;background:rgba(16,22,34,.72);box-shadow:0 24px 80px rgba(0,0,0,.55);
-  border:1px solid rgba(255,255,255,.08)}
+/* ================================================================= Slice 05
+   La coque **plein cadre**. Ce qui a été retiré compte autant que ce qui a été
+   ajouté : la carte centrée de 560 px, son rayon de 20 px, son fond propre et
+   son ombre portée ont été refusés par l'utilisateur, mot pour mot. Il ne
+   reste aucune boîte — une grille occupe le cadre, le voile est la seule
+   surface qui teinte, et le centre est vide *par construction* pour que
+   l'exercice s'y installe.
+
+   Trois couches, et elles ne se recouvrent pas au hasard :
+     0 — le voile (flou, assombrissement, teinte bleue) ;
+     1 — la mise en page de l'étape (bandeau, scène, pied) ;
+     2+ — le rail de progression, la croix de sortie, la cible.
+   La surimpression des mains, elle, n'est pas ici : elle est un **frère** dans
+   \`body\`, à 2147483000, donc au-dessus de tout ceci — on calibre avec ses
+   mains, il faut voir son jeton. */
+/* \`box-sizing\` est posé **ici** et non hérité de la page. La coque est une
+   feuille injectée : elle doit tenir sur une page qui n'a pas de remise à zéro,
+   sinon \`height:100%\` plus une gouttière pousse le pied hors du cadre — et le
+   compteur et la sortie sont dans le pied. Une RÈGLE ZÉRO qui dépend du reset
+   de l'hôte n'est pas une garantie. */
+${R},${R} *{box-sizing:border-box}
+${R}{position:fixed;inset:0;z-index:2147482000;overflow:hidden;
+  color:#e9f1fb;font:14px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;
+  --jf-accent:${ACCENT};
+  /* Le vert n'est **pas** un jeton de la coque au repos : il n'est lu que sous
+     \`[data-flash]\`, et \`flash()\` borne sa durée. Décision 21. */
+  --jf-ok:#6ff2b0;
+  --jf-bad:#ffa3a3;
+  --jf-muted:#93a6bd;
+  --jf-soft:#c6d5e6;
+  --jf-gutter:clamp(18px,4.5vw,64px);
+  --jf-sans:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+  animation:jfEnter .34s cubic-bezier(.2,.7,.3,1) both}
+${R}[hidden]{display:none}
+/* **Le voile** (décision 18). Deux choses qu'on ne fait pas : une nappe noire
+   opaque, et un flou seul. L'assombrissement passe par
+   \`backdrop-filter: brightness()\`, donc la scène JARVIS garde sa **couleur**
+   au lieu d'être recouverte ; \`saturate\` l'empêche de virer au gris ; la
+   nappe par-dessus est légère (.52 au centre) et dégradée, ce qui donne
+   l'atmosphère que l'utilisateur demandait à la place du noir mort. La teinte
+   bleue du haut dit que ce n'est pas un voile générique : c'est un mode. */
+${R} .${D.flowVeilClass}{position:absolute;inset:0;z-index:0;pointer-events:none;
+  background:
+    radial-gradient(120% 86% at 50% -8%,rgba(110,231,255,.13),transparent 58%),
+    radial-gradient(140% 120% at 50% 112%,rgba(8,20,34,.66),transparent 70%),
+    linear-gradient(180deg,rgba(4,9,16,.52),rgba(3,7,13,.68));
+  backdrop-filter:blur(18px) saturate(118%) brightness(.76);
+  -webkit-backdrop-filter:blur(18px) saturate(118%) brightness(.76)}
+/* Sans \`backdrop-filter\`, la nappe porte **seule** la lisibilité du texte :
+   elle s'opacifie plutôt que de laisser la scène traverser un titre. Un
+   navigateur qui ne floute pas ne doit pas rendre la consigne illisible. */
+@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
+  ${R} .${D.flowVeilClass}{background:linear-gradient(180deg,rgba(4,9,16,.92),rgba(3,7,13,.95))}
+}
+/* **La mise en page de l'étape.** Les cinq \`none\`/\`0\` ne sont pas du bruit :
+   ils disent que la carte est partie, et un test les lit. */
+${R} .${D.flowStepClass}{position:relative;z-index:1;height:100%;
+  display:grid;grid-template-rows:auto minmax(0,1fr) auto;gap:clamp(12px,2.4vh,28px);
+  padding:clamp(30px,6vh,76px) var(--jf-gutter) clamp(18px,3.4vh,40px);
+  max-width:none;background:none;border:0;border-radius:0;box-shadow:none}
+/* Le rail de progression : une **ligne de cheveu** sur l'arête du cadre.
+   Utile, et léger — la progression ne doit pas concurrencer l'exercice. */
+${R} .${D.flowProgressClass}{position:absolute;top:0;left:0;right:0;height:2px;z-index:2;
+  background:rgba(255,255,255,.07)}
+${R} .${D.flowProgressClass} i{display:block;height:100%;width:0;
+  background:linear-gradient(90deg,rgba(110,231,255,.3),var(--jf-accent));
+  box-shadow:0 0 12px rgba(110,231,255,.5);transition:width .12s linear}
 /* La sortie **permanente**. Les boutons d'une étape sont redessinés à chaque
    étape, donc « on peut toujours sortir » dépendait de ce que le parcours
    pensait à dessiner — et le rapport de calibration, par exemple, n'offre que
-   « Annuler ». Celle-ci ne bouge pas, ne dépend d'aucun parcours, et occupe le
-   coin où on la cherche. Quatrième point de la RÈGLE ZÉRO : comment en sortir. */
-#${BH.DOM.flowRootId} .jf-close{position:absolute;top:10px;right:10px;width:34px;height:34px;padding:0;
-  display:flex;align-items:center;justify-content:center;border-radius:50%;
-  font-size:20px;line-height:1;color:#8b99ad;background:transparent;border:1px solid transparent}
-#${BH.DOM.flowRootId} .jf-close:hover{color:#e8eef8;background:rgba(255,255,255,.1);
-  border-color:rgba(255,255,255,.16)}
-#${BH.DOM.flowRootId} .jf-close:focus-visible{outline:2px solid ${ACCENT};outline-offset:2px}
-#${BH.DOM.flowRootId} .jf-kicker{font-size:12px;letter-spacing:.14em;text-transform:uppercase;
-  color:${ACCENT};margin-bottom:10px}
-#${BH.DOM.flowRootId} h2{margin:0 0 12px;font-size:24px;font-weight:600;letter-spacing:-.01em}
-#${BH.DOM.flowRootId} .jf-instruction{margin:0 0 20px;color:#c3cede;font-size:15px}
-#${BH.DOM.flowRootId} .${BH.DOM.flowProgressClass}{height:6px;border-radius:999px;overflow:hidden;
-  background:rgba(255,255,255,.1);margin:0 0 10px}
-#${BH.DOM.flowRootId} .${BH.DOM.flowProgressClass} i{display:block;height:100%;width:0;border-radius:999px;
-  background:${ACCENT};transition:width .12s linear}
-#${BH.DOM.flowRootId} .jf-meta{display:flex;justify-content:space-between;gap:12px;font-size:12px;
-  color:#8b99ad;margin-bottom:18px}
-#${BH.DOM.flowRootId} .${BH.DOM.flowNoteClass}{min-height:20px;font-size:13px;color:#c3cede;margin-bottom:18px}
-#${BH.DOM.flowRootId} .${BH.DOM.flowNoteClass}[data-kind="bad"]{color:#ff9b9b}
-#${BH.DOM.flowRootId} .${BH.DOM.flowNoteClass}[data-kind="ok"]{color:#8ce8b4}
-#${BH.DOM.flowRootId} .jf-actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
-#${BH.DOM.flowRootId} button{font:inherit;padding:9px 18px;border-radius:10px;cursor:pointer;
-  border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.06);color:inherit}
-#${BH.DOM.flowRootId} button.primary{background:${ACCENT};color:#04121a;border-color:transparent;font-weight:600}
-#${BH.DOM.flowRootId} .${BH.DOM.flowTargetClass}{position:fixed;width:24px;height:24px;margin:-12px 0 0 -12px;
-  border-radius:50%;border:2px solid ${ACCENT};box-shadow:0 0 0 6px rgba(110,231,255,.18);
+   « Annuler ». Celle-ci ne bouge pas, ne dépend d'aucun parcours, et occupe
+   maintenant le coin **de l'écran** et non celui d'une carte. Quatrième point
+   de la RÈGLE ZÉRO : comment en sortir. */
+${R} .jf-close{position:absolute;z-index:3;top:clamp(12px,2vh,24px);right:clamp(12px,2vw,28px);
+  width:40px;height:40px;padding:0;display:flex;align-items:center;justify-content:center;
+  border-radius:50%;font-size:20px;line-height:1;letter-spacing:0;
+  color:var(--jf-muted);background:transparent;border:1px solid rgba(255,255,255,.12)}
+${R} .jf-close:hover{color:#e9f1fb;background:rgba(255,255,255,.1);
+  border-color:rgba(255,255,255,.22)}
+${R} .jf-close:focus-visible{outline:2px solid var(--jf-accent);outline-offset:3px}
+/* ---------------------------------------------------------------- bandeau
+   **Haut, grand, calme** (décision 19). Le titre est la seule chose de la
+   coque qui ait le droit d'être grande ; tout le reste se tait. */
+${R} .${D.flowHeaderClass}{display:flex;flex-direction:column;align-items:center;
+  gap:clamp(8px,1.4vh,14px);text-align:center;max-width:min(960px,94vw);margin:0 auto}
+${R} .jf-kicker{display:flex;align-items:center;gap:14px;
+  font-size:12px;letter-spacing:.24em;text-transform:uppercase;color:var(--jf-accent)}
+/* La progression **globale**, en segments : où on en est dans le parcours,
+   lisible d'un coup d'œil et sans peser. Le compte exact est dans le texte
+   juste à côté ; ces traits ne le répètent pas, ils le situent. */
+${R} .jf-dots{display:flex;gap:5px;align-items:center}
+${R} .jf-dots span{width:16px;height:2px;border-radius:999px;background:rgba(255,255,255,.16);
+  transition:width .2s ease,background .2s ease}
+${R} .jf-dots span[data-at="done"]{background:rgba(110,231,255,.5)}
+${R} .jf-dots span[data-at="now"]{width:30px;background:var(--jf-accent);
+  box-shadow:0 0 10px rgba(110,231,255,.6)}
+${R} h2{margin:0;font-family:var(--jf-sans);font-weight:600;letter-spacing:-.02em;
+  font-size:clamp(28px,4.4vw,54px);line-height:1.08;text-wrap:balance}
+${R} .jf-instruction{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
+  font-size:clamp(15px,1.5vw,20px);line-height:1.5;max-width:56ch;text-wrap:pretty}
+/* ------------------------------------------------------------------ scène
+   **Le centre, réservé** (décision 19). La coque ne dessine rien ici : elle
+   tient la place, la centre, et donne la couleur. \`color\` est le crochet du
+   dessin de main de la Slice 04 — ses tracés sont en \`currentColor\`, donc
+   une main montée dans \`jf-demo\` est bleue sans rien savoir de la coque, et
+   devient verte pendant un \`flash()\` sans une ligne de plus. */
+${R} .${D.flowStageClass}{position:relative;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:clamp(14px,3vh,34px);
+  min-height:0;color:var(--jf-accent);transition:color .22s ease}
+${R} .${D.flowDemoClass},${R} .${D.flowExerciseClass}{display:flex;align-items:center;
+  justify-content:center;width:100%;min-height:0}
+${R} .${D.flowDemoClass}{flex:0 0 auto}
+${R} .${D.flowExerciseClass}{flex:1 1 auto}
+/* Une fente vide ne prend pas de place : une étape qui n'a qu'une
+   démonstration ne doit pas laisser un trou centré sous elle. */
+${R} .${D.flowDemoClass}:empty,${R} .${D.flowExerciseClass}:empty{display:none}
+/* ------------------------------------------------------------------- pied */
+${R} .jf-foot{display:flex;flex-direction:column;align-items:center;gap:clamp(10px,1.8vh,18px)}
+/* **Sous la scène, jamais par-dessus.** Un commentaire vivant qui recouvre
+   l'exercice cache ce qu'il commente. */
+${R} .${D.flowFeedbackClass}{display:flex;flex-direction:column;align-items:center;gap:8px;
+  width:100%;min-height:24px;text-align:center}
+${R} .${D.flowNoteClass}{font-family:var(--jf-sans);font-size:clamp(13px,1.2vw,16px);
+  color:var(--jf-soft);transition:color .2s ease}
+${R} .${D.flowNoteClass}[data-kind="bad"]{color:var(--jf-bad)}
+${R} .${D.flowNoteClass}[data-kind="ok"]{color:var(--jf-ok)}
+/* Le compteur vivant, en petit : troisième point de la RÈGLE ZÉRO. Il est
+   discret mais il est **là**, et il l'est à chaque instant. */
+${R} .jf-meta{display:flex;gap:20px;font-size:11px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--jf-muted)}
+/* Les commandes sont **secondaires** : des contours, pas des blocs. Seule
+   l'action que l'utilisateur doit vraiment choisir (« Appliquer ») est pleine. */
+${R} .${D.flowControlsClass}{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+${R} button{font:inherit;font-size:13px;letter-spacing:.05em;padding:10px 20px;border-radius:999px;
+  cursor:pointer;color:var(--jf-muted);background:transparent;border:1px solid rgba(255,255,255,.14);
+  transition:color .18s ease,border-color .18s ease,background .18s ease}
+${R} button:hover{color:#e9f1fb;border-color:rgba(110,231,255,.45);background:rgba(110,231,255,.08)}
+${R} button:focus-visible{outline:2px solid var(--jf-accent);outline-offset:3px}
+${R} button.primary{color:#04121a;background:var(--jf-accent);border-color:transparent;font-weight:600}
+${R} button.primary:hover{color:#04121a;background:#9af0ff}
+/* Le rapport de fin vit **dans la scène** : à la dernière page il n'y a plus
+   d'exercice, donc le centre lui revient. Il n'est plus tassé en bas d'une
+   carte, il est ce qu'on est venu lire. */
+${R} .jf-report{margin:0;padding:0;list-style:none;width:min(580px,92vw);font-size:13px}
+${R} .jf-report[hidden]{display:none}
+${R} .jf-report li{display:flex;justify-content:space-between;gap:18px;padding:9px 2px;
+  border-bottom:1px solid rgba(255,255,255,.07)}
+${R} .jf-report b{font-weight:400;color:var(--jf-soft)}
+${R} .jf-ok{color:var(--jf-ok)}
+${R} .jf-failed{color:var(--jf-bad)}
+${R} .jf-skipped{color:var(--jf-muted)}
+${R} .${D.flowTargetClass}{position:fixed;z-index:4;width:24px;height:24px;margin:-12px 0 0 -12px;
+  border-radius:50%;border:2px solid var(--jf-accent);
+  box-shadow:0 0 0 6px rgba(110,231,255,.16),0 0 26px rgba(110,231,255,.34);
   animation:jfPulse 1.4s ease-in-out infinite}
-#${BH.DOM.flowRootId} .jf-report{text-align:left;margin:0 0 18px;padding:0;list-style:none;font-size:13px}
-#${BH.DOM.flowRootId} .jf-report li{display:flex;justify-content:space-between;gap:12px;padding:5px 0;
-  border-bottom:1px solid rgba(255,255,255,.06)}
-#${BH.DOM.flowRootId} .jf-report b{font-weight:500;color:#c3cede}
-#${BH.DOM.flowRootId} .jf-ok{color:#8ce8b4}
-#${BH.DOM.flowRootId} .jf-failed{color:#ff9b9b}
-#${BH.DOM.flowRootId} .jf-skipped{color:#8b99ad}
+/* ------------------------------------------------- le vert, et sa laisse
+   Décision 21 : bleu = consigne, vert = **un geste vient d'être reconnu**.
+   Tout ce qui verdit est sous cet attribut, que seule \`flash()\` pose et que
+   l'horloge de la coque retire — il n'existe aucun chemin qui laisse le vert
+   allumé, et c'est exprès. L'ACTIVE vert a été retiré par l'utilisateur ; on
+   ne le réintroduit pas par la bande. */
+${R}[data-flash="ok"] .${D.flowStageClass}{color:var(--jf-ok)}
+${R}[data-flash="ok"] .${D.flowProgressClass} i{background:var(--jf-ok);
+  box-shadow:0 0 14px rgba(111,242,176,.55)}
+${R}[data-flash="ok"] .${D.flowTargetClass}{border-color:var(--jf-ok);
+  box-shadow:0 0 0 6px rgba(111,242,176,.2),0 0 26px rgba(111,242,176,.3)}
 @keyframes jfPulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.25);opacity:.65}}
+@keyframes jfEnter{from{opacity:0}to{opacity:1}}
+/* ------------------------------------------------------------- adaptation
+   Téléphone : gouttière de 16 px, titre ramené à une taille lisible sans
+   déborder, commandes sur toute la largeur. Rien ne sort du cadre — aucun
+   défilement horizontal. */
+@media (max-width:720px){
+  ${R} .${D.flowStepClass}{padding:clamp(22px,5vh,44px) 16px 18px;gap:12px}
+  ${R} h2{font-size:clamp(24px,7.2vw,34px)}
+  ${R} .jf-instruction{font-size:15px;max-width:40ch}
+  ${R} .${D.flowStageClass}{gap:16px}
+  ${R} .${D.flowControlsClass}{width:100%}
+  /* Au doigt, une commande se vise : 44 px de haut, pas 36. La coque est
+     secondaire, elle n'est pas pour autant à rater. */
+  ${R} .${D.flowControlsClass} button{flex:1 1 44%;padding:13px 18px}
+  ${R} .jf-close{top:12px;right:12px}
+  ${R} .jf-dots span{width:12px}
+  ${R} .jf-dots span[data-at="now"]{width:22px}
+}
+/* Fenêtre **basse** (paysage de téléphone, moitié d'écran) : c'est la hauteur
+   qui manque, pas la largeur. Le bandeau se resserre pour que la scène garde
+   le centre — si le titre mangeait la scène, l'exercice deviendrait
+   injouable, ce qui est pire que de perdre deux tailles de police. */
+@media (max-height:560px){
+  ${R} .${D.flowStepClass}{padding-top:clamp(14px,3vh,26px);gap:8px}
+  ${R} .${D.flowHeaderClass}{gap:4px}
+  ${R} h2{font-size:clamp(20px,3.6vh,30px)}
+  ${R} .jf-instruction{font-size:14px;line-height:1.4}
+  ${R} .${D.flowStageClass}{gap:10px}
+  ${R} .jf-foot{gap:8px}
+  ${R} .jf-meta{font-size:10px}
+  ${R} .jf-report li{padding:5px 2px}
+}
+/* --------------------------------------------------------- moins de mouvement
+   Tout ce qui bouge s'arrête, et **ce qui portait l'information est remplacé**
+   plutôt que supprimé : la cible ne pulse plus, donc elle reçoit un halo fixe
+   plus marqué — une cible qu'on ne trouve pas rend l'étape injouable, et
+   « accessible » ne peut pas vouloir dire « inutilisable ». */
 @media (prefers-reduced-motion:reduce){
-  #${BH.DOM.flowRootId} .${BH.DOM.flowTargetClass}{animation:none}
-  #${BH.DOM.flowRootId} .${BH.DOM.flowProgressClass} i{transition:none}
+  ${R}{animation:none}
+  ${R} .${D.flowTargetClass}{animation:none;
+    box-shadow:0 0 0 7px rgba(110,231,255,.3),0 0 0 1px rgba(110,231,255,.55)}
+  ${R} .${D.flowProgressClass} i{transition:none}
+  ${R} .jf-dots span{transition:none}
+  ${R} .${D.flowNoteClass}{transition:none}
+  ${R} .${D.flowStageClass}{transition:none}
+  ${R} button{transition:none}
 }`;
 
   /* La coque. `document` est **injecté** : c'est la couture qui la rend
@@ -451,13 +654,29 @@
     if(!doc||typeof doc.createElement!=='function')
       throw new RangeError('createFlowOverlay exige `document` : la coque dessine, et un module qui lit un global qu’il n’a pas déclaré ne se teste pas');
     const now=typeof d.now==='function'?d.now:()=>Date.now();
-    let root=null,kicker=null,heading=null,instruction=null,bar=null,elapsed=null,deadline=null;
+    let root=null,veil=null,kickerText=null,dots=null,heading=null,instruction=null;
+    let bar=null,elapsed=null,deadline=null;
     let note=null,actions=null,report=null,target=null,timer=null;
     let openedAt=null,stageAt=null,stageLimit=null,onExit=null,onKey=null,inerted=[];
+    /* Les cinq régions nommées, par leur nom public. Un objet plutôt que cinq
+       variables : `mount('demo',…)` et `regions().demo` doivent désigner le
+       **même** nœud, et deux chemins vers un nœud finissent toujours par
+       diverger quand ils ne partagent pas la table. */
+    let slot=null;
+    /* Ce que le parcours a monté, par région. Tenu pour que `clear()` retire
+       **exactement** ce qu'il a posé : vider `jf-feedback` en bloc emporterait
+       la ligne de commentaire que la coque y tient, et la RÈGLE ZÉRO perdrait
+       sa phrase sans que personne ne l'ait demandé. */
+    let mounted=null;
     /* Jusqu'à quand la ligne de commentaire est **tenue** (voir `note`).
        Remise à zéro à chaque ouverture et à chaque fermeture : une tenue qui
        survivrait à la coque bâillonnerait le parcours suivant. */
     let heldUntil=0;
+    /* Jusqu'à quand le vert est allumé (décision 21). Même mécanique que
+       `heldUntil`, et pour la même raison : une échéance lue sur l'horloge
+       injectée, donc un test qui pilote le temps voit exactement ce que
+       l'écran montre. Il n'existe pas de chemin qui l'allume sans échéance. */
+    let flashUntil=0;
 
     function ensureStyle(){
       if(doc.getElementById(STYLE_ID))return;
@@ -477,18 +696,67 @@
        dépôt. */
     function paintClock(){
       if(!root||root.hidden)return;
+      /* Le vert s'éteint **ici**, sur la même horloge que le compteur : une
+         couleur de succès qui dépendrait d'un `setTimeout` séparé pourrait
+         rester allumée si ce minuteur-là était perdu, et le vert deviendrait
+         ambiant — exactement ce que la décision 21 refuse. */
+      paintFlash();
       const since=Math.max(0,Math.round((now()-openedAt)/1000));
       elapsed.textContent=`${since} s`;
       if(stageLimit===null||stageAt===null){deadline.textContent='';return}
       const left=Math.max(0,Math.ceil((stageLimit-(now()-stageAt))/1000));
       deadline.textContent=`${left} s restantes`;
     }
+    /* Le vert, peint depuis l'échéance et jamais depuis un appel. Rend l'état
+       réel, pour que « allumé » soit lisible par un test comme il l'est à
+       l'écran. */
+    function paintFlash(){
+      if(!root)return false;
+      const on=flashUntil>now();
+      if(!on)flashUntil=0;
+      root.setAttribute('data-flash',on?'ok':'');
+      return on;
+    }
+    /* La progression **globale**, en segments : où on en est dans le parcours.
+       Le compte exact reste dans le texte à côté — ces traits le situent, ils
+       ne le répètent pas. Bornée à vingt-quatre segments : au-delà, une barre
+       de traits d'un pixel ne dit plus rien et déborde le bandeau, alors que
+       « Étape 40 sur 300 » reste vrai et lisible juste à côté. */
+    const DOTS_MAX=24;
+    function paintDots(index,total){
+      if(!dots)return 0;
+      dots.innerHTML='';
+      const drawn=Math.max(1,Math.min(total,DOTS_MAX));
+      for(let i=1;i<=drawn;i+=1){
+        const segment=el('span');
+        segment.setAttribute('data-at',i<index?'done':i===index?'now':'next');
+        dots.appendChild(segment);
+      }
+      return drawn;
+    }
     function build(){
       ensureStyle();
       root=el('div');root.id=BH.DOM.flowRootId;
       root.setAttribute('role','dialog');
       root.setAttribute('aria-modal','true');
+      /* Focalisable, pour que le focus quitte la page que le balayage `inert`
+         vient de désarmer. Sans cela le focus reste sur un nœud désarmé, et
+         la navigation au clavier part de nulle part. */
+      root.setAttribute('tabindex','-1');
+      root.setAttribute('data-flash','');
+      /* Le voile est une **couche**, pas un fond de la racine : il porte le
+         flou et l'assombrissement, et la mise en page passe au-dessus sans
+         les subir. `pointer-events:none` lui est posé par la feuille — ce
+         n'est pas lui qui avale les clics, c'est la racine. */
+      veil=el('div',BH.DOM.flowVeilClass);
+      veil.setAttribute('aria-hidden','true');
+      root.appendChild(veil);
       const step=el('div',BH.DOM.flowStepClass);
+      /* Le rail de progression, **frère du bandeau et non enfant** : il est
+         collé à l'arête du cadre, sur toute la largeur. */
+      const progress=el('div',BH.DOM.flowProgressClass);
+      bar=el('i');progress.appendChild(bar);
+      step.appendChild(progress);
       /* Posée **une fois**, hors de `actions` : `buttons()` vide `actions` à
          chaque étape, et une sortie qu'un parcours peut effacer sans le savoir
          n'est pas une sortie. Elle porte `data-flow-close` et non
@@ -501,22 +769,56 @@
       close.setAttribute('title','Quitter (Échap)');
       close.addEventListener('click',()=>{if(onExit)onExit('fermeture')});
       step.appendChild(close);
-      kicker=el('div','jf-kicker');
+      /* ------------------------------------------------------- le bandeau */
+      const header=el('div',BH.DOM.flowHeaderClass);
+      const kicker=el('div','jf-kicker');
+      kickerText=el('span');
+      dots=el('div','jf-dots');
+      kicker.appendChild(kickerText);kicker.appendChild(dots);
       heading=el('h2');
       instruction=el('p','jf-instruction');
-      const progress=el('div',BH.DOM.flowProgressClass);
-      bar=el('i');progress.appendChild(bar);
+      header.appendChild(kicker);header.appendChild(heading);header.appendChild(instruction);
+      /* --------------------------------------------------------- la scène
+         **Vide, et c'est le sujet de cette slice.** La coque tient la place et
+         donne la couleur ; ce qui s'y montre appartient à l'étape. Le rapport
+         de fin y vit aussi : à la dernière page il n'y a plus d'exercice, donc
+         le centre lui revient. */
+      const stage=el('div',BH.DOM.flowStageClass);
+      const demo=el('div',BH.DOM.flowDemoClass);
+      const exercise=el('div',BH.DOM.flowExerciseClass);
+      report=el('ul','jf-report');report.hidden=true;
+      stage.appendChild(demo);stage.appendChild(exercise);stage.appendChild(report);
+      /* ----------------------------------------------------------- le pied */
+      const foot=el('div','jf-foot');
+      const feedback=el('div',BH.DOM.flowFeedbackClass);
+      note=el('div',BH.DOM.flowNoteClass);
+      /* Annoncée : un commentaire vivant qui n'existe qu'en pixels n'existe
+         pas pour qui ne regarde pas l'écran. */
+      note.setAttribute('aria-live','polite');
+      note.setAttribute('data-kind','');
+      feedback.appendChild(note);
       const meta=el('div','jf-meta');
       elapsed=el('span','','0 s');deadline=el('span');
       meta.appendChild(elapsed);meta.appendChild(deadline);
-      note=el('div',BH.DOM.flowNoteClass);
-      report=el('ul','jf-report');report.hidden=true;
-      actions=el('div','jf-actions');
-      step.appendChild(kicker);step.appendChild(heading);step.appendChild(instruction);
-      step.appendChild(progress);step.appendChild(meta);step.appendChild(note);
-      step.appendChild(report);step.appendChild(actions);
+      actions=el('div',BH.DOM.flowControlsClass);
+      foot.appendChild(feedback);foot.appendChild(meta);foot.appendChild(actions);
+      step.appendChild(header);step.appendChild(stage);step.appendChild(foot);
       root.appendChild(step);
+      /* La table des régions, écrite **une fois** : `regions()` la publie et
+         `mount()` la consulte, donc les deux ne peuvent pas désigner deux
+         nœuds différents. */
+      slot=Object.freeze({header,stage,demo,exercise,feedback,progress,controls:actions});
+      mounted={demo:[],exercise:[],feedback:[]};
       (doc.body||doc.documentElement).appendChild(root);
+    }
+    /* Retirer ce que le parcours a monté dans une région, et **rien d'autre**.
+       Rend le nombre de nœuds retirés. */
+    function unmount(name){
+      const list=mounted&&mounted[name];
+      if(!list||!list.length)return 0;
+      const count=list.length;
+      for(const node of list.splice(0,count))if(node&&typeof node.remove==='function')node.remove();
+      return count;
     }
     /* Le balayage `inert`, **et l'exemption**. La page derrière est désarmée
        pendant le parcours, mais la surimpression des mains ne l'est pas : on
@@ -545,10 +847,16 @@
           throw new RangeError('createFlowOverlay.open exige `exit` : une surimpression plein écran sans sortie est un piège');
         if(!root)build();
         onExit=s.exit;
-        openedAt=now();stageAt=null;stageLimit=null;heldUntil=0;
+        openedAt=now();stageAt=null;stageLimit=null;heldUntil=0;flashUntil=0;
         root.hidden=false;
         root.setAttribute('aria-label',String(s.title||'Parcours Bare Hands'));
+        paintFlash();
         sweepInert(true);
+        /* Le focus suit la coque. Le balayage `inert` vient de désarmer la
+           page : laisser le focus dessus ferait partir la navigation au
+           clavier d'un nœud qui ne répond plus. Gardé, parce qu'un double de
+           DOM n'a pas de focus et que la coque n'en dépend pas. */
+        if(typeof root.focus==='function')root.focus();
         onKey=event=>{if(event&&event.key==='Escape'){event.preventDefault&&event.preventDefault();onExit('escape')}};
         if(typeof doc.addEventListener==='function')doc.addEventListener('keydown',onKey);
         /* La minuterie du compteur est **injectée** : sans elle la coque
@@ -565,17 +873,97 @@
       step(spec){
         const s=spec&&typeof spec==='object'?spec:{};
         if(!root)return null;
-        kicker.textContent=`Étape ${Number(s.index)||1} sur ${Number(s.total)||1}`;
+        const index=Number(s.index)||1,total=Number(s.total)||1;
+        kickerText.textContent=`Étape ${index} sur ${total}`;
+        paintDots(index,total);
         heading.textContent=String(s.title||'');
         instruction.textContent=String(s.instruction||'');
         note.textContent='';note.setAttribute('data-kind','');
         report.hidden=true;
+        /* **La scène est vidée par l'étape qui arrive**, exactement comme les
+           boutons le sont. Une démonstration qui survivrait à son étape
+           montrerait la main d'une autre consigne, et c'est pire que rien :
+           l'utilisateur ferait le geste affiché. Même règle que `buttons()`,
+           écrite au même endroit pour qu'on ne l'oublie pas d'un côté. */
+        for(const name of FLOW_MOUNTABLE)unmount(name);
+        /* Le vert ne traverse pas une frontière d'étape : « reconnu » parlait
+           de l'étape précédente. */
+        flashUntil=0;paintFlash();
         stageAt=now();
         stageLimit=Number.isFinite(Number(s.deadlineMs))?Number(s.deadlineMs):null;
         this.progress(0);
         paintClock();
         return true;
       },
+      /* ------------------------------------------------ les régions nommées
+         (refonte Slice 05, architecture §6, décisions 18 et 19)
+
+         Le contrat que les parcours suivants lisent au lieu d'inventer chacun
+         sa mise en page. `regions()` rend les nœuds, `mount()` y pose du
+         contenu, `clear()` le retire. La coque décide **où** ; l'étape décide
+         **quoi**.
+
+         Rend `null` quand la coque est fermée, et ne la construit pas : une
+         image qui arrive après Échap ne doit pas faire réapparaître une
+         surimpression que l'utilisateur vient de quitter. */
+      regions(){return root?slot:null},
+      /* Poser un nœud dans une région. Le nœud appartient à l'appelant ; la
+         coque se contente de le placer, de le retirer au changement d'étape et
+         de lui donner une couleur (`currentColor` vaut le bleu de la consigne
+         dans la scène, et le vert pendant un `flash()` — c'est le crochet des
+         dessins de main de la Slice 04, qui tracent en `currentColor`). */
+      mount(name,node){
+        const region=String(name);
+        if(!FLOW_SLOTS.includes(region))
+          throw new RangeError(`createFlowOverlay.mount : région « ${region} » inconnue. `
+            +`Les régions de la coque sont ${FLOW_SLOTS.join(', ')}.`);
+        if(!FLOW_MOUNTABLE.includes(region))
+          throw new RangeError(`createFlowOverlay.mount : la région « ${region} » appartient à la coque. `
+            +'« progress » est écrite par progress(), « controls » par buttons(), et les deux sont '
+            +'réécrites à chaque étape — un contenu monté là disparaîtrait sans un mot. '
+            +`Les régions qui se remplissent sont ${FLOW_MOUNTABLE.join(', ')}.`);
+        if(!root||!node)return null;
+        slot[region].appendChild(node);
+        mounted[region].push(node);
+        return node;
+      },
+      /* Vider une région, et **elle seule**. Ne retire que ce que `mount()` a
+         posé : la ligne de commentaire que la coque tient dans `feedback` lui
+         appartient et survit. Rend le nombre de nœuds retirés. */
+      clear(name){
+        const region=String(name);
+        if(!FLOW_MOUNTABLE.includes(region))
+          throw new RangeError(`createFlowOverlay.clear : région « ${region} » hors des régions qui se remplissent `
+            +`(${FLOW_MOUNTABLE.join(', ')}).`);
+        if(!root)return 0;
+        return unmount(region);
+      },
+      /* **Le vert, et sa laisse** (décision 21). Un geste vient d'être
+         reconnu : la scène, le rail et la cible verdissent pour une durée
+         **bornée**, puis l'horloge de la coque les rend au bleu. Il n'existe
+         aucun appel qui allume le vert sans échéance, et c'est le point : le
+         vert ACTIVE a été retiré par l'utilisateur parce qu'une couleur de
+         succès permanente cesse de signaler un succès. Rend la durée retenue. */
+      flash(ms){
+        const span=Number(ms);
+        if(!Number.isFinite(span)||span<=0)
+          throw new RangeError('createFlowOverlay.flash exige une durée finie et positive : le vert dit '
+            +'« reconnu », pas « en cours ». Sans échéance il deviendrait la couleur ambiante de la coque, '
+            +'ce que la décision 21 refuse explicitement.');
+        if(!root)return 0;
+        /* Bornée plutôt que refusée au-delà du plafond : une durée trop longue
+           est une erreur de dosage, pas une erreur de sens, et lever au milieu
+           d'une image reconnue tuerait le parcours pour un geste **réussi**.
+           Le plafond est publié (`FLASH_MAX_MS`) pour qu'il se lise au lieu de
+           se deviner. */
+        const held=Math.min(span,FLASH_MAX_MS);
+        flashUntil=now()+held;
+        paintFlash();
+        return held;
+      },
+      /* Le vert est-il allumé ? Lu sur l'échéance, jamais sur l'attribut :
+         « on l'a posé » et « il est encore vrai » sont deux faits différents. */
+      flashing(){return !!root&&flashUntil>now()},
       progress(value){
         if(!bar)return 0;
         const at=Math.min(Math.max(Number(value)||0,0),1);
@@ -613,6 +1001,11 @@
         heldUntil=held?now()+hold:0;
         note.textContent=String(text||'');
         note.setAttribute('data-kind',String(kind||''));
+        /* Repeint le vert en passant : les deux parcours écrivent une note à
+           chaque image, donc c'est le chemin le plus souvent emprunté de la
+           coque — celui qui garantit que le vert s'éteint même sans minuterie
+           injectée (un test qui pilote l'horloge à la main n'en a pas). */
+        paintFlash();
         return note.textContent;
       },
       /* Le point à viser, en **pixels de la fenêtre** : la coque dessine à
@@ -680,8 +1073,17 @@
         onKey=null;
         sweepInert(false);
         if(target){target.remove();target=null}
+        /* Les nœuds montés sont détachés **explicitement** avant que la racine
+           parte : `root.remove()` suffirait à les sortir de la page, mais pas
+           à vider la table — et une table qui survit à la coque ferait tenir
+           en vie l'arbre d'un parcours terminé (une fuite qu'aucun écran ne
+           montre). Même raison que la remise à zéro de `heldUntil`. */
+        for(const name of FLOW_MOUNTABLE)unmount(name);
+        mounted=null;slot=null;
         root.remove();root=null;
-        openedAt=null;stageAt=null;stageLimit=null;heldUntil=0;
+        veil=null;kickerText=null;dots=null;heading=null;instruction=null;
+        bar=null;elapsed=null;deadline=null;note=null;actions=null;report=null;
+        openedAt=null;stageAt=null;stageLimit=null;heldUntil=0;flashUntil=0;
         return true;
       },
     };
@@ -1175,7 +1577,7 @@
   }
 
   const api=Object.freeze({
-    DEFAULTS,options,STEPS,FLOW_STATUS,
+    DEFAULTS,options,STEPS,FLOW_STATUS,FLOW_SLOTS,FLOW_MOUNTABLE,FLASH_MAX_MS,
     quantile,median,stdev,
     deriveJitter,deriveHysteresis,deriveTravelSlop,deriveReach,checkCPose,wakeBandOf,
     createFlowOverlay,createCalibration,STYLE,STYLE_ID,

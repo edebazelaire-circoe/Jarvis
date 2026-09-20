@@ -2046,7 +2046,98 @@ dépôt refuse (Slice 12) : par-dessus la liste blanche, elle ne pourrait pas
 **parcours**. La coque ne sait rien de la calibration — elle affiche des
 étapes — et c'est ce qui permettra au tutoriel (Slice 09) de la reprendre sans
 la modifier. `createFlowOverlay({document, now, setInterval, clearInterval})`
-rend `open/step/progress/note/target/buttons/report/expired/elapsedMs/close/isOpen`.
+rend `open/step/progress/note/target/buttons/report/expired/elapsedMs/close/isOpen`,
+plus `regions/mount/clear/flash/flashing` depuis la refonte ci-dessous.
+
+#### La coque plein cadre et ses cinq régions (refonte, Slice 05)
+
+**Décisions 18 à 21, architecture §6.** La composition d'origine — une carte
+centrée de 560 px, avec son fond, son ombre et son rayon de 20 px, posée au
+milieu d'un noir plat — a été **refusée par l'utilisateur**. Pas réglée :
+remplacée. Ce qui la remplace n'est pas une carte plus grande, c'est
+l'absence de carte.
+
+**Le voile** (`jf-veil`). Une couche à part, sous la mise en page, qui porte le
+flou et l'assombrissement. Le point qui fait la différence : l'assombrissement
+passe par `backdrop-filter: brightness(.76)` et non par une nappe opaque, donc
+la scène JARVIS garde sa **couleur** derrière au lieu d'être recouverte de gris
+— « plus atmosphérique, moins noir mort » est une propriété du filtre, pas du
+dosage d'un noir. `saturate(118%)` l'empêche de virer au gris, une teinte bleue
+en haut dit que c'est un mode JARVIS et non un voile générique, et la nappe
+posée par-dessus reste légère (`.52`). Un `@supports not (backdrop-filter…)`
+l'opacifie là où le flou n'existe pas : sans lui, la scène traverserait le
+titre qu'elle doit laisser lire.
+
+**La mise en page** (`jf-step`, le nom n'a pas bougé parce qu'il n'a jamais
+désigné une boîte). Une grille plein cadre en trois rangées —
+`auto / minmax(0,1fr) / auto` : bandeau haut, **scène au milieu**, pied en bas.
+Elle déclare `max-width:none; background:none; border:0; border-radius:0;
+box-shadow:none`, et ces cinq déclarations sont lues par un test : c'est la
+seule façon de distinguer « la carte a été retirée » de « la règle a été
+oubliée ailleurs ».
+
+**Les cinq régions nommées** — le contrat que les parcours suivants lisent au
+lieu d'inventer chacun leur géométrie dans le centre laissé libre :
+
+| région | classe | qui la remplit |
+|---|---|---|
+| `demo` | `jf-demo` | le parcours, par `mount()` — la démonstration |
+| `exercise` | `jf-exercise` | le parcours, par `mount()` — la cible de l'exercice |
+| `feedback` | `jf-feedback` | la coque y tient `jf-note` ; le parcours peut y ajouter |
+| `progress` | `jf-progress` | **la coque seule** (`progress()`) |
+| `controls` | `jf-controls` | **la coque seule** (`buttons()`) |
+
+- `regions()` rend les nœuds eux-mêmes (`demo, exercise, feedback, progress,
+  controls, stage, header`), ou `null` si la coque est fermée — et **ne la
+  construit pas** : une image qui arrive après Échap ne doit pas faire
+  réapparaître une surimpression que l'utilisateur vient de quitter.
+- `mount(région, nœud)` place, `clear(région)` retire **exactement ce que
+  `mount` a posé** : vider `feedback` en bloc emporterait la ligne de
+  commentaire de la coque, et la RÈGLE ZÉRO perdrait sa phrase sans que
+  personne l'ait demandé.
+- `mount('progress'|'controls', …)` **lève**, et le message nomme le
+  propriétaire. Les y laisser monter serait le défaut plausible par excellence :
+  les deux sont réécrites à chaque étape, donc le contenu disparaîtrait sans un
+  mot.
+- `step()` vide `demo`, `exercise` et l'ajout de `feedback`, exactement comme il
+  redessine les boutons. Une démonstration qui survivrait à son étape montrerait
+  la main d'une **autre** consigne, et l'utilisateur ferait le geste affiché.
+- La scène porte `color: var(--jf-accent)`. C'est le crochet du dessin de main
+  de la Slice 04 : ses tracés sont en `currentColor`, donc une main montée dans
+  `jf-demo` est bleue sans rien savoir de la coque. La coque ne dessine **aucune
+  main** elle-même — `control_center_barehands_hand_art.js` est le seul
+  alphabet de formes, et en poser un second était la faute à éviter.
+
+**Décision 21 : le bleu guide, le vert félicite brièvement.** `flash(ms)` pose
+`data-flash="ok"` sur la racine pour une durée **bornée** (`FLASH_MAX_MS`,
+2000 ms) ; l'horloge qui peint déjà le compteur l'éteint. Une durée absente,
+nulle, négative ou non finie se **refuse** ; une durée excessive est ramenée au
+plafond plutôt que levée, parce que lever au milieu d'une image *réussie*
+tuerait le parcours pour un geste que l'utilisateur a bien fait. `flashing()`
+lit l'échéance et non l'attribut. Le changement d'étape et la fermeture
+l'éteignent. Il n'existe aucun chemin qui laisse le vert allumé, et c'est
+exprès : l'ACTIVE vert a été retiré par l'utilisateur lui-même (décision 5)
+parce qu'une couleur de succès permanente cesse de signaler un succès.
+
+**La RÈGLE ZÉRO traverse la refonte inchangée** : le rail de progression et les
+segments d'étape disent que ça tourne, le titre et la consigne disent quoi —
+grands et **hauts** (décision 19) —, `12 s` / `8 s restantes` disent depuis
+combien de temps, mot pour mot comme avant, et la croix permanente (au coin de
+l'**écran** désormais, plus d'une carte), Échap et le bouton de l'étape disent
+comment sortir.
+
+**Adaptation et mouvement.** Deux paliers, parce que ce n'est pas seulement la
+largeur : `max-width:720px` (gouttière de 16 px, commandes pleine largeur) et
+`max-height:560px` — une fenêtre basse manque de hauteur, et un titre qui
+mangerait la scène rendrait l'exercice injouable. Sous
+`prefers-reduced-motion`, tout s'arrête, mais ce qui *portait l'information* est
+**remplacé** plutôt que supprimé : la cible perd sa pulsation et gagne un halo
+fixe plus marqué, parce qu'« accessible » ne peut pas vouloir dire
+« inutilisable ».
+
+**L'empilement ne bouge pas** : coque 2147482000, surimpression des mains
+2147483000. Les jetons dessinent **au-dessus** de la coque, exprès — une
+calibration pendant laquelle on ne voit pas sa propre main ne sert à rien.
 
 **`note(text, kind, holdMs)` — la seule ligne qui puisse être tenue**
 (Slice 10). Les deux parcours la réécrivent à **chaque image**, puisque leur
