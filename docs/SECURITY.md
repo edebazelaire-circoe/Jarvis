@@ -131,12 +131,31 @@ locks the setting: writes are refused `scene_env_override`), the conversational
 Claude CLI brain launched afterwards gets a **write-capable** MCP server, `jarvis-display` (`python -m jarvis display-mcp`,
 declared per launch through `--mcp-config`; `docs/ARCHITECTURE.md` › *Brain
 display MCP*). It can create, edit, move, hide and link scene objects in Core's
-persistent scene. It cannot archive, pin or unpin: those tools do not exist in
-its catalog (decision 14, pinned by a test), and Core's reducer refuses those
-operations to actor `brain` regardless (`op_not_allowed`), as it refuses moving an
-object the user pinned (`pinned_by_user`) and creating execution stars
-(`execution_node`). Background jobs and speculative analysis never receive the
-server; speculative analysis keeps `--strict-mcp-config` and no tools.
+persistent scene, and since the 19/09/2026 rule it also archives, pins and
+unpins through `scene_archive` and `scene_pin`: **the brain has exactly the
+user's hand** on the scene (`ALLOWED_SCENE_OPS[brain] = frozenset(SceneOp)`;
+decision 14 and the pin/unpin reservation are lifted, because they sent the
+gesture back to the user). This is not a wider attack surface — the brain could
+already reach every one of those operations by shell, by file or by
+`POST /v1/scene/commands` with `runtime/core.token` — but a **named, bounded and
+traced** capability instead of an out-of-catalog, out-of-journal workaround:
+each call is a catalogued tool with readable selectors, bounded at 128
+designated objects per call (`selection_too_large`, refused before anything is
+sent), and it leaves `display.tool` / `display.tool_refused` in
+`runtime/trace.jsonl`. Background jobs and speculative analysis never receive
+the server; speculative analysis keeps `--strict-mcp-config` and no tools.
+
+What the reducer still refuses to the brain is never "this belongs to the user"
+but a truth from another layer: actor `runtime` is Core's projector, not a
+person (`op_not_allowed` for `runtime`); `exec_state`/`work_ref` are read from
+Core and not written from the scene (`execution_truth`, decision 17); an
+`agent`/`job` star is born of an execution fact, not of a command
+(`execution_node`); and a `resolver` placement is committed by `user` only
+(`resolver_actor`), the browser's AutoResolver going through the Control
+Center's user proxy. A user pin protects an object's **place** against automatic
+placement, not its presence on screen: `pinned_by_user` now refuses only a
+`placed_by = resolver` write, and a pinned object stays movable by explicit
+command, hideable and archivable.
 
 What this guarantee is **not**:
 
@@ -145,13 +164,15 @@ What this guarantee is **not**:
   credential shared by every local JARVIS process;
 - the brain runs as the same OS user with `--permission-mode bypassPermissions`
   and has Bash, file and web tools. It can read `core.token` and send
-  `POST /v1/scene/commands` claiming `user`, which would archive or pin anything
-  (and it can already modify files, including the scene database, or the code);
+  `POST /v1/scene/commands` claiming `user`, which would commit the last writes
+  the reducer keeps for that actor (a `resolver` placement), and it can already
+  modify files, including the scene database, or the code;
 - the V1 guarantee therefore holds for an **honest caller** only: tool catalog +
-  reducer authority. The brain prompt tells it never to work around archive
-  through shell, HTTP or files, which is an instruction, not an enforcement.
-  Evidence that it complied comes from `runtime/trace.jsonl` (tool calls), not
-  from a boundary.
+  reducer authority. What the catalog buys is not prevention but legibility —
+  every scene write the brain makes on its own behalf is a named tool call with
+  its selector and its counts in `runtime/trace.jsonl`, and a write that went
+  around the catalog would leave no `display.*` entry at all. Evidence comes
+  from the journal, not from a boundary.
 
 Prompt injection through the scene. Runtime star titles are sub-agent labels,
 which can copy web or file content, and they enter the brain's context through
@@ -169,10 +190,14 @@ between execution stars nor the link of a runtime failure signal
 forms (`reserved_id`), so an honest brain cannot silence or pre-empt a failure
 signal. Same honest-caller limit as above.
 
-User controls (Slice 08). Two new write paths exist, neither in the brain's tool
-catalog. `archive_many` is a user-only scene op (one command can archive every
-terminal star, its signals and orphan artifacts, at most 512 ids): the reducer refuses it to actor
-`brain` (`op_not_allowed`). `POST /v1/work/cancel` is **not** refused to the brain
+User controls (Slice 08). `archive_many` is bounded by **content**, not by
+actor: one command archives every terminal star, its signals and orphan
+artifacts (at most 512 ids), and the reducer refuses the **whole** batch as soon
+as one id does not qualify (`bulk_archivable` / `not_bulk_archivable`), so a
+confirmed count that went stale is recomputed instead of half-applied. It stays
+in practice the page's op — the brain's tools archive object by object with
+`archive` — but no authority rule reserves it to `user`.
+`POST /v1/work/cancel` is **not** refused to the brain
 by construction: it has no actor at all and is protected by the bearer token only,
 like every Core route; it cancels exactly one Core job (never a Claude sub-agent,
 409 `not_cancellable` for any other source) and never touches the brain work item
@@ -180,9 +205,8 @@ behind it. The Control Center exposes them to the page only through
 `POST /api/scene/commands` (actor forced to `user`) and `POST /api/jobs/cancel`
 (origin guard like every POST, strict 4 KiB body, only `source = job` relayed).
 The threat model does not change in kind: a brain that reads `core.token` can
-already claim `user`, and it can now bulk-archive finished work in one call or
-cancel a Core job through the token route, just as it could archive one object
-at a time or kill processes with its own tools. Same honest-caller limit.
+already claim `user`, and it can cancel a Core job through the token route just
+as it could kill processes with its own tools. Same honest-caller limit.
 
 Semantic artifacts and openable links (Slice 07). The brain's
 `scene_add_artifact` writes one artifact and its `explains` link through the
@@ -359,7 +383,7 @@ JSON — the same standing as `runtime/trace.jsonl`.
 - Confirmation is conversational, not OS-level privileged authorization.
 - Board placement is an ephemeral UI write and intentionally does not require confirmation.
 - V1 has no destructive memory delete tool, no messaging/email tool, no browser navigation tool and no general filesystem writer.
-- v0.2 constellation scene: the brain's display tool is write-capable and scene actors are declared, not authenticated; a brain that ignores its instructions can impersonate `user` with `runtime/core.token` (see control 13). Scene text (runtime star titles from sub-agent labels) reaches the brain and is marked as data only; injection resistance is not guaranteed.
+- v0.2 constellation scene: the brain's display tool is write-capable and, by the user's own rule, holds the same scene hand as the user — archive, pin and unpin included, bounded at 128 designated objects per call and journalled as `display.tool`. Scene actors are declared, not authenticated; a brain that ignores its instructions can impersonate `user` with `runtime/core.token` (see control 13). Scene text (runtime star titles from sub-agent labels) reaches the brain and is marked as data only; injection resistance is not guaranteed.
 
 ## Release rule
 

@@ -83,8 +83,9 @@ is `rejected_authority` (`runtime_composition`).
   touches `visibility` or `disposition`. A completed, unreviewed star stays
   active and visible.
 - **Hidden** = active but not rendered; recoverable (decision 13).
-- **Archived** = out of the active scene, kept for history. Only `user` archives
-  (decision 14). Archiving removes the object from `SceneSnapshot.objects`,
+- **Archived** = out of the active scene, kept for history. `brain` and `user`
+  both archive (19/09/2026: the brain has exactly the user's hand, decision 14
+  lifted). Archiving removes the object from `SceneSnapshot.objects`,
   deletes every relation that touches it, and appends its id to
   `SceneSnapshot.archived_ids` (a **tombstone**). The patch carries the full
   object with `disposition = archived` (`archive_object` op) so the store can
@@ -134,8 +135,8 @@ commands.
 | `pin` / `unpin` | `object_id` | set/clear `pinned_by_user` (pin needs a placed object) |
 | `link` | `relation` | add a relation, or change the layer of the same relation (brain/user; runtime never changes a layer); brain/user never create a `parent_of` between execution nodes (`runtime_owned`) |
 | `unlink` | `relation_id` | remove a relation (absent → `duplicate`); for runtime, also how it retires its own signal; brain/user cannot remove runtime topology or signal links (`runtime_owned`) |
-| `archive` | `object_id` | user disposition; an execution star takes its runtime signals (cascade, Slice 08) |
-| `archive_many` | `object_ids` (1–512, unique) | user bulk disposition of terminal execution stars, their runtime signals, orphan runtime signals and orphan artifacts (Slice 07), all or nothing, one revision (Slice 08) |
+| `archive` | `object_id` | disposition (brain or user); an execution star takes its runtime signals (cascade, Slice 08) |
+| `archive_many` | `object_ids` (1–512, unique) | bulk disposition of terminal execution stars, their runtime signals, orphan runtime signals and orphan artifacts (Slice 07), all or nothing, one revision (Slice 08) |
 | `attach_signal` | `object_id`, `fields`, `target_id` | create/update an `attention` object and its `explains` relation |
 | `attach_artifact` | `object_id`, `fields`, `target_id`, `relation_id` (≠ `object_id`) | create/update an `artifact` object **and** its `explains` relation to `target_id`, one patch, all or nothing (Slice 07) |
 
@@ -146,6 +147,15 @@ commands.
 
 Enforced by `apply_scene_command`, not by callers or tool catalogues.
 
+**The brain has exactly the user's hand** (19/09/2026, user rule):
+`ALLOWED_SCENE_OPS[brain] = ALLOWED_SCENE_OPS[user] = every op`, archiving and
+pinning included. Decision 14 (« the brain does not archive in V1 ») and the
+reservation on `pin`/`unpin` are lifted: they sent the gesture back to the user,
+which he refuses. What is still refused to the brain is never "this belongs to
+the user" but a truth of another layer: `runtime` is not a person but Core's
+projector, and `exec_state` / `work_ref` are read in Core instead of being
+written from the scene (decision 17).
+
 Operation level (`ALLOWED_SCENE_OPS`):
 
 | Op | runtime | brain | user |
@@ -155,12 +165,12 @@ Operation level (`ALLOWED_SCENE_OPS`):
 | `set_geometry` | ✘ | ✔ | ✔ |
 | `set_representation` | ✘ | ✔ | ✔ |
 | `set_visibility` | ✘ | ✔ | ✔ |
-| `pin` | ✘ | ✘ | ✔ |
-| `unpin` | ✘ | ✘ | ✔ |
+| `pin` | ✘ | ✔ | ✔ |
+| `unpin` | ✘ | ✔ | ✔ |
 | `link` | ✔ | ✔ | ✔ |
 | `unlink` | ✔ | ✔ | ✔ |
-| `archive` | ✘ | ✘ | ✔ |
-| `archive_many` | ✘ | ✘ | ✔ |
+| `archive` | ✘ | ✔ | ✔ |
+| `archive_many` | ✘ | ✔ | ✔ |
 | `attach_signal` | ✔ | ✔ | ✔ |
 | `attach_artifact` | ✘ | ✔ | ✔ |
 
@@ -227,10 +237,13 @@ Rules:
   runtime created under those ids (patch, hide, relayer an existing relation)
   stays allowed; re-attaching a retired runtime signal (`attach_signal` creating
   its relation again) is the runtime's.
-- **Pins**: a `pinned_by_user` object is moved or resized by the user only
-  (`pinned_by_user`), and never by a resolver placement even when a user
-  command carries it. `pin`/`unpin` are user-only because the flag records a
-  user decision and a brain `unpin` would bypass the protection.
+- **Pins**: a pin protects an object's **place against automatic placement**,
+  not its presence on screen. A `pinned_by_user` object is never moved by a
+  resolver placement (`pinned_by_user`), even when a user command carries it;
+  an explicit `set_geometry` from brain or user goes through, and the object
+  stays hideable and archivable. `pin`/`unpin` are open to brain and user
+  alike: refusing the brain the move only added a detour and one more "I
+  cannot" — it unpins, moves, pins again — without adding any guarantee.
 - **Resolver** (`set_geometry` with `placed_by = resolver`) is accepted from
   actor `user` only, because the browser AutoResolver commits through the
   Control Center user proxy; from brain it is `resolver_actor` (runtime has no
@@ -345,7 +358,8 @@ item reaches a terminal `exec_state` (`completed`, `failed`, `cancelled`,
 state; it now also journals `core.scene.star_finished` (`object_id`, `source`,
 `status`), once per star — a terminal state never becomes terminal again. No
 visibility, disposition or layout change follows (decision 12): the star stays
-exactly where it is until the user archives it.
+exactly where it is until someone archives it (the user from the page, the
+brain with `scene_archive`).
 
 The renderer reads only `exec_state`, like every other cue:
 
@@ -413,14 +427,15 @@ target is an execution node, else the first active execution node with the same
 `work_ref` `(source, external_id)` (`work_id` may be set later), else `None`
 (orphan). Retired signals, which have no link, are found by their `work_ref`.
 
-**Cascade** (`archive`, user): archiving an execution star also archives every
+**Cascade** (`archive`, brain or user): archiving an execution star also archives every
 runtime signal it owns (`runtime_signals_of`), in the same patch and revision,
 signals first then the star, then one `delete_relation` per relation touching any
 of them. The star's tombstone is therefore the newest and the last to be
 evicted. Brain and user `attention` objects are never cascaded; archiving a signal
 alone keeps its star.
 
-**`archive_many`** (user only): `object_ids`, 1 to `MAX_ARCHIVE_MANY_IDS` (512)
+**`archive_many`** (no actor reservation: bounded by its content, not by who
+asks): `object_ids`, 1 to `MAX_ARCHIVE_MANY_IDS` (512)
 unique ids, list length checked before decoding. Rule (`bulk_archivable(snapshot,
 id, selected)`):
 
@@ -464,9 +479,10 @@ action; no runtime auto-artifact.
 - **Write.** `attach_artifact` creates or updates the artifact and its `explains`
   relation to the target (usually the sub-agent's star) in one patch. A refused
   link leaves no orphan artifact; replaying the command is `duplicate`. Why a
-  domain op rather than `upsert_object` then `link`: the brain cannot delete or
-  archive (decision 14), so a compensation for a refused link does not exist for
-  it, and a pre-check before two commands still races with the user.
+  domain op rather than `upsert_object` then `link`: a compensation after the
+  fact (archiving the artifact whose link was refused) still races the user and
+  leaves a window where an orphan artifact holds a slot in the scene; a
+  pre-check before two commands races the same way.
 - **Grouping rule** (tool side, `scene_add_artifact`): one active artifact per
   target and category (category stored lowercase, compared without case). A new
   call with the same target and category completes the first such artifact
@@ -505,9 +521,9 @@ action; no runtime auto-artifact.
   Archiving its star does not cascade to it (the cascade takes runtime signals
   only); the relation goes with the star and the artifact stays, unlinked: an
   **orphan artifact** (`is_orphan_artifact`: no `explains` relation from it, so no
-  link to any active object). `archive_many` (user only) takes an artifact **only
+  link to any active object). `archive_many` takes an artifact **only
   when it is orphan**, re-validated by the reducer; an artifact still linked is
-  `not_bulk_archivable`, the brain is `op_not_allowed`. The page offers « Archiver
+  `not_bulk_archivable`, whoever asks. The page offers « Archiver
   les artefacts orphelins (N)… » as its own confirmed action, and both archive
   confirmations say what stays. An artifact the brain created without ever linking
   it counts as orphan too.
@@ -649,8 +665,9 @@ revision, patch}` — refusals are outcomes, not HTTP errors.
   Core directly and are unaffected.
 - **Actors over HTTP**: `brain` and `user` only; `runtime` is 403. The Control
   Center proxy forces `user`. The actor is declared, not authenticated: the
-  brain shares the OS user and could read the token, so decision 14 holds
-  through the tool catalog and the reducer, not through the transport.
+  brain shares the OS user and could read the token, so what the reducer
+  protects (runtime's reach, execution truth, resolver placement) holds through
+  the reducer, not through a tool catalog nor through the transport.
 - **Browser applier**: `jarvis/runtime/control_center_scene.js` mirrors
   `apply_scene_patch` (same order, same refusals, same eviction) and signals a
   resync on a gap, a refused patch, another epoch or scene, or
@@ -663,7 +680,10 @@ revision, patch}` — refusals are outcomes, not HTTP errors.
 
 Slice 06 (`ARCHITECTURE.md` › *Brain display MCP*). The brain's MCP tools
 (`jarvis/runtime/display_mcp.py`) speak this vocabulary as actor `brain`, one
-`SceneCommand` per call, never `placed_by`, never `archive`, `archive_many`, `pin` or `unpin`.
+`SceneCommand` per call, never `placed_by` and never `archive_many` (the
+interface's op: it refuses a whole batch on the first id that is neither
+terminal work nor an orphan artifact — `scene_archive` sends one `archive` per
+object instead).
 
 The tools are declared to the CLI only when the gate `scene.enabled` is true
 (`jarvis/runtime/scene_settings.py`). That gate is **true by default** since the
@@ -683,6 +703,8 @@ these tools follow the gate.
 | `scene_update_object` | `object_id`, `category?`, `title?`, `summary?`, `items?`, `representation?`, `geometry?`, `layer?`, `order?`, `visibility?`, `annotation?` (`""` removes the label) | geometry only → `set_geometry`; representation (± geometry) only → `set_representation`; visibility only → `set_visibility`; otherwise one `patch_object` with every given field (payload merged with the current one) | `pinned_by_user`, `unknown_object`, `object_archived` |
 | `scene_update_many` (Slice 13) | `select?` (the very filters of `scene_query`) **or** `object_ids?` (1–32), never both; at least one change among `visibility?`, `representation?`, `category?`, `layer?`, `order?`, `annotation?`; `confirm?` | one `set_visibility` / `set_representation` / `patch_object` per target (same routing as `scene_update_object`), best-effort, in order, no rollback; returns `matched`, `targets`, `applied`, `duplicate`, `refused` with a reason per id, `atomicity: best_effort` | **a pin protects an object's place, not its presence on screen**: a batch whose only change is `visibility` reaches pinned objects like any other (nothing moves them); any other change drops them before anything is sent (reported as refused `pinned_by_user`); `selection_too_large` above 32 designated objects and `selection_too_broad` when hiding covers half or more of the visible objects without `confirm` (both refuse the whole call, nothing sent); per object `unknown_object`, `object_archived` |
 | `scene_set_visibility` | `object_id` + `visibility`, or `scope="all_hidden"` + `visibility="visible"` | `set_visibility`; with the scope, one `set_visibility` per object hidden in the current snapshot (≤ 128 per call, 15 s budget), counts and ids returned | `unknown_object`, `object_archived` (counted per object with the scope) |
+| `scene_archive` (Slice 13) | `select?` (the very filters of `scene_query`) **or** `object_ids?`, never both | one `archive` per designated object, best-effort, in order, no rollback; each execution star takes its runtime signals (cascade); returns `matched`, `targets`, `applied`, `duplicate`, `refused` with a reason per id, `atomicity: best_effort` | reaches active, hidden **and** pinned objects without exception (a pin protects a place, not a presence); `selection_too_large` above 128 designated objects (refuses the whole call, nothing sent); per object `unknown_object`, `object_archived` |
+| `scene_pin` (Slice 13) | `pinned` (bool), `select?` (the very filters of `scene_query`) **or** `object_ids?`, never both | one `pin` or `unpin` per designated object, best-effort, same report shape | reaches objects pinned by the user too (the flag records the last decision, not a property of an actor); per object `unplaced` (pinning an object never placed), `unknown_object`, `object_archived`; `selection_too_large` above 128 |
 | `scene_link` | `from_id`, `to_id`, `kind`, `relation_id?` (`brain-…` only), `layer?` | `link`; `layer` key omitted unless given (never a default of 50); an existing identical relation without a layer is a local `duplicate`, nothing sent | `relation_conflict`, `relation_limit`, `unknown_object`, `object_archived`, `reserved_id` (domain side), `runtime_owned` (`parent_of` between execution nodes) |
 | `scene_unlink` | `relation_id` | `unlink` (absent → `duplicate`) | `runtime_owned` |
 | `scene_add_artifact` | `target_id`, `category`, `title`, `summary?`, `items?`, `items_mode?` (`append` default \| `replace`), `representation?`, `geometry?` (both applied on creation only) | one `attach_artifact`, under a per-(target, category) lock: on the first active artifact of that category already explaining the target (`action = updated`, payload merged, `ignored` lists a representation or geometry not applied), else on a fresh `brain-artifact-<hex>` with relation `brain-explains-<hash>` (`action = created`, point by default); `rule` is the short code `un_par_cible_et_categorie` | `object_archived` / `unknown_object` for the target (checked before sending, nothing sent), `pinned_by_user`, `scene_full`, `relation_limit`, `relation_conflict` |
@@ -692,8 +714,11 @@ through `scene_update_object`; there is no separate update tool.
 
 Actions on **several** objects go through `scene_update_many` rather than one
 call per object: one selector vocabulary (that of `scene_query`, so the brain
-can preview the set by reading before acting), one change, one report. No
-batch tool archives or pins — both stay with the user (Decision 14).
+can preview the set by reading before acting), one change, one report.
+`scene_archive` and `scene_pin` (Slice 13) use the same vocabulary for the two
+dispositions the brain used to lack: archiving and pinning are now the brain's
+too, named, bounded (128 designated objects) and journaled (`display.tool`),
+instead of being reachable only by going around the catalog.
 
 An `annotation` is the short caption drawn beside an object and tied to it by a
 leader line. It lives in the object's payload (`ScenePayload.annotation`,

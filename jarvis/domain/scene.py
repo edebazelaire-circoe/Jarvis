@@ -1264,8 +1264,8 @@ def apply_scene_command(snapshot: SceneSnapshot, command: SceneCommand) -> Scene
     Contrôles, dans l'ordre :
 
     1. matrice `ALLOWED_SCENE_OPS` : une opération hors droits est refusée
-       avant même de regarder la scène (`archive` par le cerveau est refusé
-       même sur un objet inconnu) ;
+       avant même de regarder la scène (`set_visibility` par le `runtime` est
+       refusé même sur un objet inconnu) ;
     2. existence et disposition des objets visés (`invalid`) ;
     3. autorité sur l'**effet** : `runtime` n'écrit que des nœuds
        d'exécution et des signaux qu'il a lui-même créés (`origin`), jamais un
@@ -1273,10 +1273,10 @@ def apply_scene_command(snapshot: SceneSnapshot, command: SceneCommand) -> Scene
        `parent_of` entre nœuds d'exécution et ne délie, en plus, que le lien
        `explains` d'un signal qu'il a posé sur un nœud qu'il a créé (retrait
        du signal, jamais archivage ni masquage) ; seul `runtime` crée un
-       `agent`/`job` et change `exec_state` ou `work_ref` ; seul `user`
-       déplace ou redimensionne un objet épinglé ; un placement `resolver`
-       n'est commis que par `user` et ne remplace ni une épingle ni un
-       placement explicite ;
+       `agent`/`job` et change `exec_state` ou `work_ref` ; une épingle ne
+       résiste qu'au placement automatique, jamais à une commande explicite
+       (cerveau compris) ; un placement `resolver` n'est commis que par `user`
+       et ne remplace ni une épingle ni un placement explicite ;
     4. bornes de la scène (`invalid`) ;
     5. si rien ne change, `duplicate` ; sinon la révision avance d'un et le
        patch décrit exactement le changement.

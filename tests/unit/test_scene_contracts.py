@@ -159,7 +159,9 @@ def test_exec_state_mirrors_work_status_plus_unknown():
 
 EXPECTED_ALLOWED = {
     RUNTIME: {SceneOp.UPSERT_OBJECT, SceneOp.PATCH_OBJECT, SceneOp.LINK, SceneOp.UNLINK, SceneOp.ATTACH_SIGNAL},
-    BRAIN: set(SceneOp) - {SceneOp.ARCHIVE, SceneOp.ARCHIVE_MANY, SceneOp.PIN, SceneOp.UNPIN},
+    # Le cerveau a exactement la main de l'utilisateur (19/09/2026) : archiver,
+    # épingler et désépingler compris. La Décision 14 est levée.
+    BRAIN: set(SceneOp),
     USER: set(SceneOp),
 }
 
@@ -237,17 +239,39 @@ def test_every_authority_matrix_cell(actor, op):
         assert_unchanged(before, update)
 
 
-# --- archivage : utilisateur seulement ----------------------------------------
+# --- archivage : l'utilisateur et le cerveau ----------------------------------
 
 
-@pytest.mark.parametrize("actor", [BRAIN, RUNTIME])
 @pytest.mark.parametrize("object_id", ["star-a", "art-1", "absent"])
-def test_archive_is_rejected_for_brain_and_runtime_whatever_the_target(actor, object_id):
+def test_archive_is_refused_to_the_runtime_whatever_the_target(object_id):
+    """`runtime` n'est pas une personne : il projette Core, il ne dispose pas de l'écran."""
+
     before = scene_with_stars()
-    update = apply_scene_command(before, cmd(SceneOp.ARCHIVE, actor, object_id=object_id))
+    update = apply_scene_command(before, cmd(SceneOp.ARCHIVE, RUNTIME, object_id=object_id))
     assert (update.outcome, update.reason) == (REJECTED, SceneRefusal.OP_NOT_ALLOWED)
     assert_unchanged(before, update)
     assert all(item.disposition is Disposition.ACTIVE for item in update.snapshot.objects)
+
+
+@pytest.mark.parametrize("object_id", ["star-a", "art-1", "star-p"])
+def test_the_brain_archives_like_the_user_including_a_pinned_object(object_id):
+    """19/09/2026 : le cerveau a exactement la main de l'utilisateur (Décision 14 levée).
+
+    Une étoile active, un artefact, un objet épinglé par l'utilisateur : le geste
+    les atteint tous. L'épingle protège la place, pas la présence à l'écran.
+    """
+
+    before = scene_with_stars()
+    update = apply_scene_command(before, cmd(SceneOp.ARCHIVE, BRAIN, object_id=object_id))
+    assert update.outcome is APPLIED
+    assert update.snapshot.get_object(object_id) is None and update.snapshot.is_archived(object_id)
+
+
+def test_the_brain_archiving_an_unknown_object_is_invalid_not_a_matter_of_authority():
+    before = scene_with_stars()
+    update = apply_scene_command(before, cmd(SceneOp.ARCHIVE, BRAIN, object_id="absent"))
+    assert (update.outcome, update.reason) == (INVALID, SceneRefusal.UNKNOWN_OBJECT)
+    assert_unchanged(before, update)
 
 
 def test_user_archive_moves_the_object_to_history_and_leaves_a_tombstone():
@@ -345,12 +369,21 @@ def test_runtime_cannot_hide_or_archive_even_alongside_a_completion():
         patch(BRAIN, "star-p", geometry=GEO_2),
         upsert(BRAIN, "star-p", kind=SceneObjectKind.AGENT, category="agent", geometry=GEO_2),
         cmd(SceneOp.SET_REPRESENTATION, BRAIN, object_id="star-p", representation=Representation.WINDOW, geometry=SceneGeometry(10, 20, 400, 300)),
-        cmd(SceneOp.SET_GEOMETRY, USER, object_id="star-p", geometry=GEO_2, placed_by=PlacedBy.RESOLVER),
     ],
-    ids=["brain-move", "brain-resize", "brain-patch", "brain-upsert", "brain-representation-resize", "user-resolver"],
+    ids=["brain-move", "brain-resize", "brain-patch", "brain-upsert", "brain-representation-resize"],
 )
-def test_brain_and_resolver_cannot_move_or_resize_a_user_pinned_object(command):
+def test_an_explicit_command_moves_a_pinned_object_even_from_the_brain(command):
+    """L'épingle protège la place contre le **placement automatique**, pas contre une commande explicite."""
+
     before = scene_with_stars()
+    update = apply_scene_command(before, command)
+    assert update.outcome is APPLIED
+    assert update.snapshot.get_object("star-p").constraints.pinned_by_user is True
+
+
+def test_the_automatic_placement_never_moves_a_pinned_object():
+    before = scene_with_stars()
+    command = cmd(SceneOp.SET_GEOMETRY, USER, object_id="star-p", geometry=GEO_2, placed_by=PlacedBy.RESOLVER)
     update = apply_scene_command(before, command)
     assert (update.outcome, update.reason) == (REJECTED, SceneRefusal.PINNED_BY_USER)
     assert_unchanged(before, update)
@@ -363,14 +396,25 @@ def test_brain_and_resolver_cannot_move_or_resize_a_user_pinned_object(command):
         (patch(RUNTIME, "star-p", geometry=GEO_2), SceneRefusal.RUNTIME_COMPOSITION),
         (upsert(RUNTIME, "star-p", kind=SceneObjectKind.AGENT, category="agent", geometry=GEO_2), SceneRefusal.RUNTIME_COMPOSITION),
         (cmd(SceneOp.UNPIN, RUNTIME, object_id="star-p"), SceneRefusal.OP_NOT_ALLOWED),
-        (cmd(SceneOp.UNPIN, BRAIN, object_id="star-p"), SceneRefusal.OP_NOT_ALLOWED),
     ],
 )
-def test_runtime_cannot_move_a_pinned_object_and_nobody_but_the_user_unpins(command, reason):
+def test_runtime_cannot_move_or_unpin_a_pinned_object(command, reason):
     before = scene_with_stars()
     update = apply_scene_command(before, command)
     assert (update.outcome, update.reason) == (REJECTED, reason)
     assert_unchanged(before, update)
+
+
+@pytest.mark.parametrize("pinned", [True, False])
+def test_the_brain_pins_and_unpins_what_the_user_pinned(pinned):
+    """Épingler et désépingler sont ouverts au cerveau : c'est ce que l'utilisateur a demandé."""
+
+    before = scene_with_stars()
+    # `star-a` est placée et libre, `star-p` est épinglée par l'utilisateur.
+    target = "star-a" if pinned else "star-p"
+    update = apply_scene_command(before, cmd(SceneOp.PIN if pinned else SceneOp.UNPIN, BRAIN, object_id=target))
+    assert update.outcome is APPLIED
+    assert update.snapshot.get_object(target).constraints.pinned_by_user is pinned
 
 
 def test_pinned_object_still_accepts_non_geometric_changes_and_echoed_geometry():
@@ -966,7 +1010,7 @@ def test_revision_is_strictly_monotonic_and_patches_are_exact_deltas():
     commands = [
         star("star-a"),
         star("star-a"),  # doublon
-        cmd(SceneOp.ARCHIVE, BRAIN, object_id="star-a"),  # refus d'autorité
+        cmd(SceneOp.ARCHIVE, RUNTIME, object_id="star-a"),  # refus d'autorité : le projecteur ne dispose pas
         patch(BRAIN, "absent", category="x"),  # invalide
         star("star-b", kind=SceneObjectKind.JOB),
         cmd(SceneOp.LINK, RUNTIME, relation=SceneRelation("rel-ab", RelationKind.PARENT_OF, "star-a", "star-b")),
@@ -974,7 +1018,7 @@ def test_revision_is_strictly_monotonic_and_patches_are_exact_deltas():
         cmd(SceneOp.SET_GEOMETRY, USER, object_id="star-a", geometry=GEO),
         cmd(SceneOp.PIN, USER, object_id="star-a"),
         cmd(SceneOp.PIN, USER, object_id="star-a"),  # doublon
-        cmd(SceneOp.SET_GEOMETRY, BRAIN, object_id="star-a", geometry=GEO_2),  # épinglé
+        cmd(SceneOp.SET_GEOMETRY, USER, object_id="star-a", geometry=GEO_2, placed_by=PlacedBy.RESOLVER),  # épinglé
         cmd(SceneOp.ARCHIVE, USER, object_id="star-b"),
     ]
     outcomes = []

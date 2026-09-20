@@ -1656,17 +1656,23 @@ a body without `actor` gets `user`, any other value (`brain`, `runtime`, empty,
 non-string, `USER`) is refused with 403 before Core is called, so the browser
 can never act as the brain. `_origin_guard` applies to the command route like
 every other `POST`. Authority itself is still decided by the reducer: a brain
-archive reaches Core and comes back 200 `rejected_authority/op_not_allowed`.
+`patch_object` writing `exec_state` reaches Core and comes back 200
+`rejected_authority/execution_truth` (decision 17: execution state is read from
+Core, never written from the scene).
 
 **Threat-model limit (stated plainly).** The token is a loopback session
 credential, not a boundary between local processes of the same user. The brain
 runs as the Claude CLI with `--permission-mode bypassPermissions` under the same
 OS user, so it can read `runtime/core.token` and call `POST /v1/scene/commands`
-itself claiming `user` — archiving, pinning, anything the user may do. In V1 the
-guarantee that the brain does not archive is the display MCP tool catalog
-(decision 14: the operation is absent from the brain's tools) plus reducer
-authority for honest callers. It is **not** a local security boundary, and the
-actor field is a declaration, not an authentication.
+itself claiming `user`. Archiving and pinning are no longer part of that gap:
+since 19/09/2026 the brain holds exactly the user's hand, names those gestures as
+`brain` through its own tools and has them journaled (`display.tool`). What the
+reducer still refuses an honest brain is another layer's truth —
+`exec_state`/`work_ref` (`execution_truth`), creating an `agent`/`job` star
+(`execution_node`), runtime-owned topology (`runtime_owned`), the runtime's
+reserved ids (`reserved_id`), a `resolver` placement (`resolver_actor`) — and
+claiming `user` would slip past exactly that. It is **not** a local security
+boundary, and the actor field is a declaration, not an authentication.
 
 Control Center proxy. `GET /api/scene` and `GET /api/scene/patches` answer
 400 for a malformed query; otherwise they answer 200 whatever the state of
@@ -2024,7 +2030,7 @@ its system prompt when the process starts, so a change applies at the next brain
 (re)start; a resumed CLI conversation keeps the system prompt it recorded first
 (`--system-prompt-snapshot`) while the tools appear at once. Slice 11 confirmed
 this on a real CLI (production model): a conversation started with the gate off,
-then resumed with the gate on, had the ten tools (`system/init`) but no
+then resumed with the gate on, had the display tools (`system/init`) but no
 `prompt_snapshot` with the display rules, and created no artifact at the next
 completion. Hence `ClaudeLocalAgent` tracks both, per process and per
 conversation: `display_tools` (`_display_tools_active`, set at each launch) and
@@ -2068,10 +2074,12 @@ and calls `refreshStatus()` so the renderer gate follows at once. Busy states us
 toast and a `[scène] scene.setting_failed` / `scene.brain_restart_failed` console
 entry, and release the UI in `finally`.
 
-Tool catalog (V1). Exactly ten tools (six from Slice 06, `scene_add_artifact`
+Tool catalog (V1). Thirteen tools (six from Slice 06, `scene_add_artifact`
 from Slice 07, the read-only `scene_query`, `scene_get` and `scene_capture` from
-Slice 09); **no
-archive, pin or unpin tool** and no parameter that could carry `actor`,
+Slice 09, `scene_update_many` for bulk actions by selector, and
+`scene_archive` / `scene_pin`, which give the brain the user's hand on
+disposition); **archiving and pinning are named ops with tools of their own**,
+never a disposition smuggled into an edit: no parameter can carry `actor`,
 `placed_by`, `exec_state`, `work_ref` or a disposition (tested; the read-only tools
 `READ_TOOL_NAMES` may *filter* on `exec_state`, nothing writes it). Unknown arguments are refused, never ignored: every tool
 schema says `additionalProperties: false` (nested geometry and items too), and
@@ -2368,6 +2376,32 @@ says `deadline_reached: true`, `remaining` and a note to call again. One summary
 `display.tool` entry (`scope: all_hidden`, counts, `deadline_reached`). Hiding by
 scope does not exist (too broad).
 
+Disposition (19–20/09/2026). Two tools carry the gestures the brain used to have
+to hand back to the user:
+
+- **`scene_archive`** (`select?`, `object_ids?`, one of the two) archives —
+  removes from the scene for good, cascade on the star's runtime signals
+  included — the designated objects. It reaches active, hidden **and pinned**
+  objects without exception: the pin protects a place against automatic
+  placement, not a presence on screen.
+- **`scene_pin`** (`pinned`, `select?`, `object_ids?`) pins or unpins them,
+  including what the user pinned; pinning an object that was never placed is
+  refused (`unplaced`, there is no place to protect yet).
+
+Both designate objects with the `scene_query` filters or an explicit id list, so
+what the brain reads is exactly what it acts on, and both are best-effort object
+by object (one domain command each, Core applies nothing in bulk), with the
+counters of the bulk unhide (`matched`, `targets`, `applied`, `duplicate`,
+`refused`, `applied_ids` / `refused_ids` capped at 20, `revision`,
+`atomicity: best_effort`, `scene_changed`), its `BULK_DEADLINE_S` = 15 s budget
+checked between commands (`remaining`, `deadline_reached`) and one summary
+`display.tool` entry (tool, op, `by: select|object_ids`, counts). Beyond
+`MAX_DISPOSE_TARGETS` = 128 designated objects the call is refused
+(`selection_too_large`) **before anything is sent**: a readability bound, never a
+reserve kept for the user. `archive_many` is not used here — it refuses the whole
+batch as soon as an id is neither a finished job nor an orphan artifact, whereas
+removing a star that is still alive is exactly what gets asked.
+
 Semantic artifacts (Slice 07, decisions 1, 2, 5, 6, 12, 15). After background
 work completes, the brain may keep what is worth returning to as **one grouped
 artifact** linked to the work's star.
@@ -2385,9 +2419,10 @@ artifact** linked to the work's star.
   runtime) writes the artifact and its `explains` relation in one patch, or
   nothing: an unknown or archived target, a taken or reserved `relation_id`, the
   relation limit, a full scene or a pin refuses both. Compensation after a refused
-  `link` was rejected because the brain cannot archive or delete (decision 14):
-  a created orphan could only be hidden, holding a slot. `attach_signal` is the
-  precedent (one object plus its link). The relation id differs from the object
+  `link` was rejected because it always runs behind the user: between the creation
+  and the archive that repairs it there is a window where an orphan artifact holds
+  a slot on the screen, and a compensation that itself fails leaves it there for
+  good. `attach_signal` is the precedent (one object plus its link). The relation id differs from the object
   id (`brain-explains-<sha256(from\nto)[:16]>`), so the link is never shaped like
   a signal link; and since the QA rework the domain refuses brain/user a `link` of
   `explains` whose `relation_id == from_id` from a non-`attention` source
@@ -2497,12 +2532,17 @@ its job object usually kills the server first, so the two events are not paired.
 
 Authority and threat model. The actor is forced to `brain` by construction (the
 tools build `SceneCommand(actor=brain)` and assert it before sending, never with
-`placed_by`). Core's reducer refuses `archive`/`pin`/`unpin` to `brain`
-(`op_not_allowed`) whatever the catalog, refuses brain and user an `unlink` of
+`placed_by`, so a brain geometry is an explicit placement and never a `resolver`
+one: only `user` commits those, the browser's AutoResolver going through the
+Control Center's user proxy, `resolver_actor`). `archive`, `pin` and `unpin` are
+the brain's exactly as they are the user's; what Core's reducer still refuses it
+is another layer's truth: `exec_state`/`work_ref`, read in Core and not written
+from the scene (`execution_truth`, decision 17), creating an `agent`/`job` star
+(`execution_node`, that is the runtime's), an `unlink` of
 runtime execution topology or of a runtime signal link, and a new `link` of
 `parent_of` between two execution nodes (`runtime_owned`, QA rework and final
 follow-up: the brain could silence a failure signal or leave false topology it
-could never remove), and refuses ids in the
+could never remove), and ids in the
 runtime's reserved forms (`reserved_id`). This protects against an honest caller
 only: see *Scene transport* › threat-model limit and `docs/SECURITY.md` › 13.
 Relations carry no origin: the runtime may remove a brain relation shaped like its
@@ -2917,8 +2957,8 @@ the brain sees never changes.
   cannot desynchronise it.
 - **A pinned object turns like any other**: every geometry the user sets by hand
   also pins it (decision 9), so excluding pins — as Slice 11 did — froze any
-  scene the user had arranged; the pin protects the *place* from the resolver and
-  the brain, not the rendering, and the turn writes nothing. Capsules turn with
+  scene the user had arranged; the pin protects the *place* from automatic
+  placement, not the rendering, and the turn writes nothing. Capsules turn with
   the field, the thread layer follows the same affine map
   (`scale(ax,ay) scale(k) rotate(θ) scale(1/ax,1/ay)` about the centre) so a
   thread stays tied end to end without being redrawn, and `prefers-reduced-motion`
@@ -3238,7 +3278,7 @@ Measured: the « s » (settings) shortcut, Shift+Arrow on the node behind and a 
 - Signals come first in the patch, so the star's tombstone is the newest and the last evicted. While it lives, the projector skips the star and its signal (`skipped_archived`, no refusal journaled).
 - Brain and user `attention` objects are never cascaded.
 
-**`archive_many`** (user-only `SceneOp`, absent from the brain matrix and the display MCP catalog) takes `object_ids`: 1 to 512 unique ids.
+**`archive_many`** takes `object_ids`: 1 to 512 unique ids. No actor is barred from it (brain and user hold the same hand); it is bounded by **content**, and in practice it stays the interface's op — the display MCP tools archive object by object with `archive` (`scene_archive`), because a whole batch refused for one id is not what a spoken « retire ça » means.
 
 - Each id is re-validated by `bulk_archivable`. Accepted: an execution star in a terminal state (`completed`, `cancelled`, `failed`, `interrupted`); a runtime signal whose owner is selected and terminal; an orphan runtime signal; an orphan artifact (no `explains` relation from it, Slice 07).
 - Already archived ids are skipped.
