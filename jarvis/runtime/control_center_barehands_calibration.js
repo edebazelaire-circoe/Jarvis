@@ -335,6 +335,13 @@
      vivant, en secondes), et comment en sortir (un bouton et Échap). Une étape
      porte toujours une échéance : « ça attend » et « c'est bloqué » se
      ressemblent trop pour qu'on laisse l'utilisateur trancher. */
+  /* Les trois mots que la coque sait **dessiner** dans un rapport, et la
+     feuille ci-dessous en définit exactement trois classes. Ce sont des
+     statuts de **présentation**, pas ceux d'un parcours : la calibration s'en
+     sert parce que `STAGE_STATUS` porte les mêmes mots, le tutoriel y traduit
+     les siens (`done`/`missed`/`skipped`). Publiés pour qu'un parcours puisse
+     s'y conformer au lieu de le deviner. */
+  const FLOW_STATUS=Object.freeze(['ok','failed','skipped']);
   const STYLE_ID=BH.DOM.flowStyleId;
   const ACCENT='var(--omega-accent,var(--accent,#6ee7ff))';
   const STYLE=`
@@ -342,9 +349,20 @@
   justify-content:center;background:rgba(6,9,16,.82);backdrop-filter:blur(14px);
   -webkit-backdrop-filter:blur(14px);font:14px/1.6 system-ui,-apple-system,Segoe UI,sans-serif;color:#e8eef8}
 #${BH.DOM.flowRootId}[hidden]{display:none}
-#${BH.DOM.flowRootId} .${BH.DOM.flowStepClass}{max-width:560px;padding:32px 36px;text-align:center;
+#${BH.DOM.flowRootId} .${BH.DOM.flowStepClass}{position:relative;max-width:560px;padding:32px 36px;text-align:center;
   border-radius:20px;background:rgba(16,22,34,.72);box-shadow:0 24px 80px rgba(0,0,0,.55);
   border:1px solid rgba(255,255,255,.08)}
+/* La sortie **permanente**. Les boutons d'une étape sont redessinés à chaque
+   étape, donc « on peut toujours sortir » dépendait de ce que le parcours
+   pensait à dessiner — et le rapport de calibration, par exemple, n'offre que
+   « Annuler ». Celle-ci ne bouge pas, ne dépend d'aucun parcours, et occupe le
+   coin où on la cherche. Quatrième point de la RÈGLE ZÉRO : comment en sortir. */
+#${BH.DOM.flowRootId} .jf-close{position:absolute;top:10px;right:10px;width:34px;height:34px;padding:0;
+  display:flex;align-items:center;justify-content:center;border-radius:50%;
+  font-size:20px;line-height:1;color:#8b99ad;background:transparent;border:1px solid transparent}
+#${BH.DOM.flowRootId} .jf-close:hover{color:#e8eef8;background:rgba(255,255,255,.1);
+  border-color:rgba(255,255,255,.16)}
+#${BH.DOM.flowRootId} .jf-close:focus-visible{outline:2px solid ${ACCENT};outline-offset:2px}
 #${BH.DOM.flowRootId} .jf-kicker{font-size:12px;letter-spacing:.14em;text-transform:uppercase;
   color:${ACCENT};margin-bottom:10px}
 #${BH.DOM.flowRootId} h2{margin:0 0 12px;font-size:24px;font-weight:600;letter-spacing:-.01em}
@@ -421,6 +439,18 @@
       root.setAttribute('role','dialog');
       root.setAttribute('aria-modal','true');
       const step=el('div',BH.DOM.flowStepClass);
+      /* Posée **une fois**, hors de `actions` : `buttons()` vide `actions` à
+         chaque étape, et une sortie qu'un parcours peut effacer sans le savoir
+         n'est pas une sortie. Elle porte `data-flow-close` et non
+         `data-flow-action`, pour que ce que le parcours dessine reste lisible
+         séparément de ce que la coque garantit. */
+      const close=el('button','jf-close','×');
+      close.setAttribute('type','button');
+      close.setAttribute('data-flow-close','1');
+      close.setAttribute('aria-label','Quitter ce parcours');
+      close.setAttribute('title','Quitter (Échap)');
+      close.addEventListener('click',()=>{if(onExit)onExit('fermeture')});
+      step.appendChild(close);
       kicker=el('div','jf-kicker');
       heading=el('h2');
       instruction=el('p','jf-instruction');
@@ -543,8 +573,21 @@
         report.innerHTML='';
         for(const row of(Array.isArray(rows)?rows:[])){
           const line=el('li');
+          /* **Un mot hors vocabulaire se refuse, il ne se dessine pas.**
+             `jf-${status}` fabriquait une classe que la feuille ne définit
+             pas : la ligne sortait sans couleur, sans erreur et sans
+             avertissement, et « réussi » ressemblait à « passé ». Le repli
+             muet sur `skipped` était pire encore — il *mentait*. C'est la
+             règle de ce dépôt (un refus codé plutôt qu'un défaut plausible),
+             et c'est ce qui tient la coque honnête pour un deuxième parcours :
+             le tutoriel (Slice 09) traduit ses propres statuts vers ces trois
+             mots de **présentation**, au lieu de les emprunter au profil. */
+          const status=String(row.status||'');
+          if(!FLOW_STATUS.includes(status))
+            throw new RangeError(`createFlowOverlay.report : statut « ${status} » hors vocabulaire de la coque (${FLOW_STATUS.join(', ')}). `
+              +'Un mot inconnu produirait une classe que la feuille ne définit pas, donc une ligne sans couleur — et « réussi » se lirait comme « passé ».');
           line.appendChild(el('b','',String(row.label||'')));
-          line.appendChild(el('span',`jf-${String(row.status||'skipped')}`,String(row.detail||'')));
+          line.appendChild(el('span',`jf-${status}`,String(row.detail||'')));
           report.appendChild(line);
         }
         report.hidden=!report.children.length;
@@ -949,7 +992,7 @@
   }
 
   const api=Object.freeze({
-    DEFAULTS,options,STEPS,
+    DEFAULTS,options,STEPS,FLOW_STATUS,
     quantile,median,stdev,
     deriveJitter,deriveHysteresis,deriveTravelSlop,deriveReach,checkCPose,wakeBandOf,
     createFlowOverlay,createCalibration,STYLE,STYLE_ID,

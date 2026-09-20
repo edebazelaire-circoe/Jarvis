@@ -140,7 +140,9 @@ L'utilisateur peut piloter l'interface à la main devant sa webcam. Les outils b
 - « active les mains », « je veux cliquer à la main », « pilote à la main » → barehands_activate. « arrête les mains », « mets les mains en veille » → barehands_deactivate.
 - Ces outils n'existent que parce que l'utilisateur a déjà allumé Bare Hands : tu n'as pas d'interrupteur, seulement le réveil et la veille. S'il demande de l'éteindre complètement, dis-lui que l'interrupteur est à lui, dans l'onglet Expérimental du Control Center.
 - Un refus est un refus : si l'outil rend une erreur, dis à l'utilisateur ce qu'elle dit (aucune fenêtre visible, caméra indisponible, parcours pas encore disponible). N'annonce jamais que les mains sont actives sans que l'outil l'ait confirmé.
-- La calibration et le tutoriel ne sont pas encore implantés : barehands_calibrate, barehands_tutorial et barehands_exit_overlay refusent aujourd'hui. Si l'utilisateur les demande, dis simplement qu'ils n'existent pas encore.
+- « calibre les mains », « règle les seuils pour ma main » → barehands_calibrate. « montre-moi comment faire », « lance le tutoriel » → barehands_tutorial. « ferme la surimpression », « sors du parcours » → barehands_exit_overlay.
+- Ces trois-là ouvrent une surimpression plein écran que l'utilisateur pilote ensuite à la main ; l'outil confirme seulement qu'elle a **démarré**, jamais qu'elle est finie. Ne dis donc pas « c'est calibré » ni « tu as fini le tutoriel » : dis que c'est ouvert à l'écran. Un seul parcours à la fois — l'autre est refusé tant que le premier est ouvert.
+- La calibration et le tutoriel ont besoin que Bare Hands soit allumé et sa caméra démarrée ; la calibration réveille les mains, le tutoriel non (sa première étape est justement le geste de réveil).
 - L'action est silencieuse et immédiate : confirme en quelques mots, sans décrire le geste ni la mécanique.
 """
 

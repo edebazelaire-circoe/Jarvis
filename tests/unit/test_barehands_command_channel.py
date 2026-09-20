@@ -616,6 +616,35 @@ async def test_the_catalog_is_exactly_the_five_commands_with_no_switch():
         assert forbidden not in names
 
 
+async def test_the_flow_tools_no_longer_tell_the_brain_they_are_unimplemented():
+    """**Une consigne périmée fait refuser au cerveau un outil qui marche**, et
+    c'est indiscernable d'une panne pour l'utilisateur, qui entend « ça
+    n'existe pas encore » devant une fonctionnalité livrée.
+
+    Les trois parcours existent depuis les Slices 08 et 09. Ce que leurs
+    descriptions doivent dire maintenant n'est plus « ce n'est pas implanté »,
+    c'est ce qu'une confirmation **signifie** : la surimpression est ouverte,
+    pas le parcours fini — sans quoi JARVIS annoncerait « c'est calibré »
+    devant un écran qui vient de s'ouvrir."""
+
+    server = build_server(BarehandsMcpTarget("127.0.0.1", 1))
+    listed = {tool.name: tool.description or "" for tool in await server.list_tools()}
+    flows = ("barehands_calibrate", "barehands_tutorial", "barehands_exit_overlay")
+    for name in flows:
+        text = listed[name]
+        for stale in ("pas encore implanté", "n'existe pas encore", "tant qu'il n'existe pas"):
+            assert stale not in text, f"{name} : consigne périmée « {stale} »"
+        # Ce qu'un succès affirme, et ce qu'il n'affirme pas.
+        assert "ouverte" in text and "PAS que le parcours est terminé" in text, name
+        # Et le refus qu'ils peuvent vraiment produire aujourd'hui.
+        assert vocab.FLOW_UNCONFIRMED in text, name
+    # La phrase du code `flow_absent` ne parle plus de Slices non livrées : ce
+    # code ne reste atteignable que pour une page plus ancienne que ce JARVIS.
+    absent = vocab.PAGE_CODE_EXPLANATIONS[vocab.FLOW_ABSENT]
+    assert "pas encore" not in absent and "Slice" not in absent
+    assert "recharger" in absent and "ne prétends pas l'avoir lancé" in absent
+
+
 async def test_a_refused_command_crosses_the_mcp_protocol_as_an_error_not_a_result(running, session):
     """Aucun faux succès, sur la chaîne entière : la page refuse, le cerveau
     reçoit une **erreur d'outil** portant le code et la phrase — jamais un
@@ -656,10 +685,14 @@ async def test_a_refused_command_crosses_the_mcp_protocol_as_an_error_not_a_resu
         await tools.close()
 
 
-async def test_the_three_unbuilt_flows_refuse_with_one_honest_code(running, session):
-    """Ce qu'un cerveau voit **aujourd'hui** pour la calibration, le tutoriel et
-    la sortie d'un panneau : un refus `barehands_flow_absent` et une phrase qui
-    dit de ne pas prétendre l'avoir lancé. Le transport, lui, est complet."""
+async def test_a_page_older_than_this_jarvis_refuses_with_one_honest_code(running, session):
+    """Les trois parcours **existent** depuis les Slices 08 et 09 : ce code ne
+    reste atteignable que pour une fenêtre plus ancienne que ce JARVIS, et
+    c'est exactement ce que sa phrase doit faire dire — recharger le Control
+    Center, et surtout ne pas prétendre l'avoir lancé.
+
+    Le transport, lui, est le même quel que soit l'âge de la page : c'est elle
+    qui décide, et lui qui rapporte ce qu'elle a dit."""
 
     await running.enable()
     tools = BarehandsCommandTools(BarehandsMcpTarget("127.0.0.1", running.port, running.control.runtime_root),

@@ -17,8 +17,11 @@ Ce que ce fichier épingle :
   depuis l'état de tout onglet fraîchement ouvert est `duplicate`, pas un refus
   qui accuserait une caméra que personne n'a touchée ;
 - **ce qu'un cerveau voit aujourd'hui** pour la calibration, le tutoriel et la
-  sortie de panneau : leurs points d'entrée sont **absents de la vraie
-  surface**, ce que le test lit sur l'objet réel, donc `barehands_flow_absent` ;
+  sortie de surimpression : les cinq points d'entrée existent désormais sur la
+  **vraie** surface (Slices 08 et 09), ce que le test lit sur l'objet réel, et
+  le contrat `flow_unconfirmed` mord pour de bon — sans caméra les deux
+  parcours refusent, tandis que `exit_overlay` confirme puisque l'état demandé
+  (« pas de surimpression ») est déjà celui de l'écran ;
 - **rien ne tourne quand Bare Hands est éteint**, et la boucle s'arrête aussi
   quand l'onglet est caché.
 
@@ -41,7 +44,7 @@ from jarvis.domain import barehands_command as vocab
 # exécute le vrai bloc navigateur du pointeur, et une seconde version dériverait
 # de celle que la Slice 07 tient.
 from test_barehands_tools_settings_js import (  # noqa: E402
-    BROWSER, CALIBRATION, CONTRACTS, SCENE_INTERACT, SCRIPT, TARGET,
+    BROWSER, CALIBRATION, CONTRACTS, SCENE_INTERACT, SCRIPT, TARGET, TUTORIAL,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -104,6 +107,7 @@ def run_node(tmp_path: Path, source: str, name: str) -> object:
     script.write_text(
         f"const SCRIPT_PATH={json.dumps(str(SCRIPT))};\n"
         f"const CALIBRATION_PATH={json.dumps(str(CALIBRATION))};\n"
+        f"const TUTORIAL_PATH={json.dumps(str(TUTORIAL))};\n"
         f"const TARGET_PATH={json.dumps(str(TARGET))};\n"
         f"const SCENE_INTERACT_PATH={json.dumps(str(SCENE_INTERACT))};\n"
         f"const CONTRACTS_PATH={json.dumps(str(CONTRACTS))};\n"
@@ -195,16 +199,21 @@ def test_the_button_and_the_voice_leave_the_page_in_the_same_state(tmp_path):
 
 def test_what_a_brain_sees_today_for_calibration_tutorial_and_overlay(tmp_path):
     """Lu sur la **vraie** surface. `activate` et `sleep` existent depuis la
-    Slice 12 ; **`calibrate` existe depuis la Slice 08**, et le canal n'a pas
-    changé d'une ligne pour ça — c'était la promesse de cette table.
+    Slice 12, `calibrate` depuis la Slice 08, `tutorial` et `exit_overlay`
+    depuis la Slice 09 — et le canal n'a **jamais** changé d'une ligne pour les
+    accueillir : c'était la promesse de sa table.
 
-    Les deux parcours de la Slice 09 n'existent toujours pas, et le transport
-    les porte quand même en refusant avec un code qui dit précisément ça.
+    Les trois parcours n'ont pas de `targets` : leur seule preuve est une
+    confirmation explicite, et ce cas la mesure pour de bon plutôt que de la
+    mettre en scène. Sous node, Bare Hands est éteint (pas de caméra) :
 
-    Sous node il n'y a pas de caméra : `calibrate()` refuse donc de démarrer un
-    parcours qui a besoin de voir des mains, et il le refuse **en ne confirmant
-    pas**. C'est exactement ce que le contrat § 12 prévoit, et c'est pour cela
-    que le refus est réel ici plutôt que mis en scène."""
+    - `calibrate` et `tutorial` **refusent en ne confirmant pas** — chacun sait
+      pourquoi et le dit à l'écran, mais le canal a une liste de codes fermée
+      et rend `barehands_flow_unconfirmed` ;
+    - `exit_overlay` **confirme** : rien n'était ouvert, et « il n'y a pas de
+      surimpression » est précisément l'état demandé. Répondre « non » ferait
+      dire à JARVIS que ça n'a pas marché devant un écran qui montre l'état
+      qu'on voulait — le même raisonnement que `deactivate` depuis `off`."""
 
     observed = _observed(tmp_path, """
       queue('calibrate');queue('tutorial');queue('exit_overlay');
@@ -215,17 +224,15 @@ def test_what_a_brain_sees_today_for_calibration_tutorial_and_overlay(tmp_path):
         ["activate", "activate", True],
         ["deactivate", "sleep", True],
         ["calibrate", "calibrate", True],
-        ["tutorial", "tutorial", False],
-        ["exit_overlay", "exitOverlay", False],
+        ["tutorial", "tutorial", True],
+        ["exit_overlay", "exitOverlay", True],
     ]
-    assert [r["outcome"] for r in observed["receipts"]] == ["refused"] * 3
-    # `calibrate` est **appelé** et ne confirme pas (pas de caméra sous node) ;
-    # les deux autres n'existent pas du tout. Deux codes, deux causes.
+    assert [r["outcome"] for r in observed["receipts"]] == ["refused", "refused", "applied"]
     assert [r["code"] for r in observed["receipts"]] == [
-        vocab.FLOW_UNCONFIRMED, vocab.FLOW_ABSENT, vocab.FLOW_ABSENT,
+        vocab.FLOW_UNCONFIRMED, vocab.FLOW_UNCONFIRMED, None,
     ]
     assert observed["receipts"][0]["reason"] == "JarvisBarehands.calibrate n'a pas confirmé le démarrage"
-    assert observed["receipts"][1]["reason"] == "JarvisBarehands.tutorial n'existe pas dans cette version"
+    assert observed["receipts"][1]["reason"] == "JarvisBarehands.tutorial n'a pas confirmé le démarrage"
     # La page n'a pas bougé : aucun parcours n'a pu démarrer.
     assert observed["after"]["lifecycle"] == observed["before"]["lifecycle"] == "off"
 

@@ -61,6 +61,7 @@ SCRIPT = RUNTIME / "control_center_barehands.js"
 CONTRACTS = RUNTIME / "control_center_barehands_contracts.js"
 TARGET = RUNTIME / "control_center_barehands_target.js"
 CALIBRATION = RUNTIME / "control_center_barehands_calibration.js"
+TUTORIAL = RUNTIME / "control_center_barehands_tutorial.js"
 SCENE_INTERACT = RUNTIME / "control_center_scene_interact.js"
 
 
@@ -72,6 +73,7 @@ def run_node(tmp_path: Path, source: str, name: str = "tools") -> object:
     script.write_text(
         f"const SCRIPT_PATH={json.dumps(str(SCRIPT))};\n"
         f"const CALIBRATION_PATH={json.dumps(str(CALIBRATION))};\n"
+        f"const TUTORIAL_PATH={json.dumps(str(TUTORIAL))};\n"
         f"const TARGET_PATH={json.dumps(str(TARGET))};\n"
         f"const SCENE_INTERACT_PATH={json.dumps(str(SCENE_INTERACT))};\n"
         f"const CONTRACTS_PATH={json.dumps(str(CONTRACTS))};\n"
@@ -663,6 +665,7 @@ global.JarvisBarehandsTarget=require(TARGET_PATH);
 /* Parcours de calibration (Slice 08) : la page l'insere entre les contrats
    et le pointeur, qui le lit pour poser `calibrate()` sur sa surface gelee. */
 global.JarvisBarehandsCalibration=require(CALIBRATION_PATH);
+global.JarvisBarehandsTutorial=require(TUTORIAL_PATH);
 global.JarvisSceneInteract=require(SCENE_INTERACT_PATH);
 
 /* Le serveur : la **même** forme que la vraie route — il range ce qu'on lui
@@ -1842,9 +1845,12 @@ def test_the_page_serves_the_two_surfaces_and_never_a_dead_control(tmp_path):
     # et c'est le seul contrôle de cet onglet qui ait cessé d'être une phrase.
     assert 'id="barehandsCalibration"' in served
     assert "barehandsCalibrate" in served and "barehandsProfileReset" in served
-    # Le tutoriel, lui, est toujours dit en toutes lettres plutôt que promis
-    # par un contrôle inerte (Slice 09).
-    assert "Le tutoriel n’est pas encore installé" in served
+    # **Slice 09** : le tutoriel a lui aussi son parcours et son bouton, et la
+    # phrase d'attente qui tenait sa place a disparu avec elle. Plus aucun
+    # contrôle inerte ne reste dans cet onglet.
+    assert 'id="barehandsTutorial"' in served
+    assert "barehandsTutorialStart" in served
+    assert "n’est pas encore installé" not in served
     assert "aucune image ni vidéo" in served, "la décision 32 est dite à l'utilisateur, pas seulement tenue"
     # Le sous-titre de l'onglet reste celui que `control_center_scene_settings`
     # remplace ensuite : l'ordre d'injection est intact (constat F5).

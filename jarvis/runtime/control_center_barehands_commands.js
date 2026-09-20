@@ -142,6 +142,11 @@
   function createCommandChannel(deps){
     const stats={polls:0,received:0,applied:0,duplicate:0,refused:0,failed:0,invalid:0,receiptFailed:0};
     let enabled=false,visible=true,running=false,failures=0,last='';
+    /* Le dernier reçu **en entier** — nom, issue, code, motif, cycle de vie
+       relu et horodatage. `state().last` n'en porte que deux champs et garde
+       sa forme : c'est un accesseur que des tests lisent, et l'élargir aurait
+       été une modification là où un ajout suffisait. */
+    let lastReceipt=null;
 
     const active=()=>enabled&&visible;
     const log=(level,event,data)=>{if(deps.log)deps.log(level,event,data||{})};
@@ -236,6 +241,20 @@
         receipt.outcome==='refused'?'barehands.command_refused':'barehands.command_applied',
         {command:command.name,id:short,outcome:receipt.outcome,lifecycle:receipt.lifecycle,
           code:receipt.code||'',ms:deps.now()-started});
+      /* **Ce que la page a constaté, rendu à la page** (Slice 09, Issue R13).
+         Le canal n'a pas de surface à lui et n'en aura pas : il *donne* son
+         reçu à qui sait dessiner. Ajouté plutôt que greffé sur `state().last`,
+         qui garde sa forme `"<commande>:<issue>"` — un accesseur dont on
+         change la forme casse ses lecteurs, et la Slice 09 n'avait besoin que
+         d'un dépôt. Une sortie qui lève ne doit pas manger le reçu : le
+         cerveau attend, et il attend la vérité du transport, pas celle de
+         l'écran. */
+      lastReceipt={name:command.name,outcome:receipt.outcome,code:receipt.code||'',
+        reason:receipt.reason||'',lifecycle:receipt.lifecycle,at:deps.now()};
+      if(typeof deps.onReceipt==='function'){
+        try{deps.onReceipt({...lastReceipt})}
+        catch(error){log('warn','barehands.receipt_sink_failed',{command:command.name,id:short,error:messageOf(error)})}
+      }
       try{
         await sendReceipt(command.id,receipt);
       }catch(error){
@@ -307,6 +326,10 @@
          canal a vraiment fait, jamais ce qu'on lui a demandé. */
       apply,dispatch,
       state(){return {enabled,visible,running,failures,last}},
+      /* Le dernier reçu en entier, pour l'écran de la Slice 09. `null` tant
+         qu'aucune commande n'est passée : « jamais » et « la dernière a
+         échoué » ne se dessinent pas pareil. */
+      last(){return lastReceipt?{...lastReceipt}:null},
       stats(){return {...stats}},
     };
   }
@@ -347,6 +370,15 @@
       now:()=>Date.now(),
       sleep:ms=>new Promise(resolve=>window.setTimeout(resolve,ms)),
       random:Math.random,
+      /* **Le reçu atteint l'écran** (Slice 09). Le canal ne dessine rien : il
+         le remet à la surface Bare Hands, qui décide où ça se voit (coque,
+         toast, panneau). Lu au moment de l'appel plutôt que capturé à
+         l'installation — la surface est gelée, mais la lire tard garde ce
+         module indifférent à l'ordre dans lequel les deux sont insérés. */
+      onReceipt:entry=>{
+        const surface=window.JarvisBarehands;
+        if(surface&&surface.voice&&typeof surface.voice.record==='function')surface.voice.record(entry);
+      },
       log:(level,event,data)=>{
         const line=`[barehands] ${event} ${JSON.stringify(data)}`;
         if(level==='error')console.error(line);
@@ -364,7 +396,7 @@
       /* Statut perdu : on ne **suppose pas** que Bare Hands est resté allumé.
          Fermer le canal est le choix sûr ; il rouvre au premier statut lu. */
       statusLost(){channel.setEnabled(false)},
-      state:channel.state,stats:channel.stats,
+      state:channel.state,stats:channel.stats,last:channel.last,
     });
   }
 

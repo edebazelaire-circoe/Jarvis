@@ -28,6 +28,7 @@ SCRIPT = RUNTIME / "control_center_barehands.js"
 CONTRACTS = RUNTIME / "control_center_barehands_contracts.js"
 TARGET = RUNTIME / "control_center_barehands_target.js"
 CALIBRATION = RUNTIME / "control_center_barehands_calibration.js"
+TUTORIAL = RUNTIME / "control_center_barehands_tutorial.js"
 SCENE_INTERACT = RUNTIME / "control_center_scene_interact.js"
 
 
@@ -806,6 +807,7 @@ global.JarvisBarehandsTarget=require(TARGET_PATH);
 /* Parcours de calibration (Slice 08) : la page l'insere entre les contrats
    et le pointeur, qui le lit pour poser `calibrate()` sur sa surface gelee. */
 global.JarvisBarehandsCalibration=require(CALIBRATION_PATH);
+global.JarvisBarehandsTutorial=require(TUTORIAL_PATH);
 // Slice 06 : la géométrie de la scène est insérée bien avant le pointeur dans
 // la page (les décisions 18 et 19 y vivent, en unités de scène). Le bloc
 // navigateur la lit directement, comme les contrats et l'aperçu de cible.
@@ -836,6 +838,7 @@ def test_a_hand_the_tracker_does_not_trust_says_so_on_screen(tmp_path):
 
     result = run_node(tmp_path, f"const SCRIPT_PATH={json.dumps(str(SCRIPT))};const TARGET_PATH={json.dumps(str(TARGET))};"
     f"const CALIBRATION_PATH={json.dumps(str(CALIBRATION))};"
+    f"const TUTORIAL_PATH={json.dumps(str(TUTORIAL))};"
         f"const SCENE_INTERACT_PATH={json.dumps(str(SCENE_INTERACT))};" + BROWSER + """
       const token=(id,quality)=>({id,x:10*id,y:20,progress:0,state:'open',
         click:false,hover:false,quality});
@@ -880,6 +883,7 @@ def test_a_hand_without_a_usable_identity_is_skipped_not_fatal(tmp_path):
 
     result = run_node(tmp_path, f"const SCRIPT_PATH={json.dumps(str(SCRIPT))};const TARGET_PATH={json.dumps(str(TARGET))};"
     f"const CALIBRATION_PATH={json.dumps(str(CALIBRATION))};"
+    f"const TUTORIAL_PATH={json.dumps(str(TUTORIAL))};"
         f"const SCENE_INTERACT_PATH={json.dumps(str(SCENE_INTERACT))};" + BROWSER + """
       // `targetAt` écarte ce qui appartient à la surimpression : la cible
       // répond donc `null` pour ce sélecteur-là, et elle-même pour les autres.
@@ -928,6 +932,7 @@ def test_the_page_publishes_gestures_and_contacts_through_the_contract(tmp_path)
 
     result = run_node(tmp_path, f"const SCRIPT_PATH={json.dumps(str(SCRIPT))};const TARGET_PATH={json.dumps(str(TARGET))};"
     f"const CALIBRATION_PATH={json.dumps(str(CALIBRATION))};"
+    f"const TUTORIAL_PATH={json.dumps(str(TUTORIAL))};"
         f"const SCENE_INTERACT_PATH={json.dumps(str(SCENE_INTERACT))};" + BROWSER + """
       const api=window.JarvisBarehands;
       const idle={gestures:api.gestures(),pinch:api.pinch()};

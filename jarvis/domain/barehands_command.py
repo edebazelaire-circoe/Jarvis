@@ -116,10 +116,13 @@ PAGE_CODES: tuple[str, ...] = (FLOW_ABSENT, FLOW_UNCONFIRMED, LIFECYCLE_REFUSED,
 #: Phrases rendues au cerveau pour les deux refus de la page. Le cerveau doit
 #: pouvoir **dire** pourquoi, pas seulement constater l'échec.
 PAGE_CODE_EXPLANATIONS: dict[str, str] = {
+    # Les trois parcours existent depuis les Slices 08 et 09. Ce code ne dit
+    # donc plus « pas encore implanté » — il ne reste atteignable que pour une
+    # page **plus ancienne** que ce JARVIS, et c'est ce qu'il doit faire dire.
     FLOW_ABSENT: (
-        "Ce parcours n'existe pas encore dans cette version de Bare Hands : la calibration "
-        "(Slice 08) et le tutoriel (Slice 09) ne sont pas implantés, donc il n'y a ni parcours "
-        "à lancer ni panneau à fermer. Dis-le à l'utilisateur ; ne prétends pas l'avoir lancé."
+        "La fenêtre du Control Center qui a répondu ne connaît pas ce parcours : elle est plus "
+        "ancienne que ce JARVIS. Dis à l'utilisateur de recharger le Control Center, puis de "
+        "redemander ; ne prétends pas l'avoir lancé."
     ),
     FLOW_UNCONFIRMED: (
         "Le parcours a été appelé mais n'a pas confirmé avoir démarré : considère qu'il ne s'est rien "

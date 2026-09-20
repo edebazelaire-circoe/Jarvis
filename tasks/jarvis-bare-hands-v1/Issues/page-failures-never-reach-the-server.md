@@ -42,3 +42,35 @@ Parce que la partie utile est **commune à toute la page** et qu'une version
 posée pour le seul canal de commandes serait la deuxième vérité que ce dépôt
 interdit : la scène et le Test Lab auraient continué de se taire, et le premier
 qui aurait cherché « les journaux du navigateur » en aurait trouvé un sur six.
+
+---
+
+## Revue de la Slice 09 — **reste ouverte**, et voici ce qui a changé autour
+
+Cette Issue m'était donnée à lire pour ne pas construire par accident la
+« seconde vérité » qu'elle décrit. Elle reste ouverte, et son diagnostic est
+intact : il n'existe toujours **aucun** canal client → serveur pour les
+journaux du Control Center, et la décision qui manque est toujours le débit
+acceptable.
+
+Ce que la Slice 09 a fait autour, et pourquoi ça ne la referme pas :
+
+- la page rend désormais visible **ce que la voix vient de faire** (Issue
+  `a-voice-command-leaves-no-trace-on-screen`, fermée). C'est une surface
+  d'**écran**, pas un journal : elle vit dans `view.voice`, elle affiche la
+  dernière commande, et elle **disparaît au rechargement**. Elle ne prétend pas
+  être une trace, et c'est exactement pour ça qu'elle ne referme rien ;
+- le tutoriel journalise dans la console comme tout le reste de la page
+  (`[barehands] tutoriel …`, chemin normal compris) et **n'ouvre pas** de
+  second canal. Poser un `POST /api/client-log` pour le seul tutoriel aurait
+  été la deuxième vérité que cette Issue interdit : la scène, la timeline, le
+  Test Lab et le canal de commandes auraient continué de se taire, et le
+  premier qui aurait cherché « les journaux du navigateur » en aurait trouvé un
+  sur six.
+
+**Une conséquence de plus à porter au dossier**, qui n'était pas nommée : la
+ligne « dernière commande vocale » est aujourd'hui la seule trace *lisible par
+un humain* d'un refus vocal, et elle est **par onglet et par session**. Un
+opérateur qui arrive après coup n'a toujours que le reçu côté serveur, sans la
+cause côté page. C'est un argument de plus pour la route bornée décrite
+ci-dessus, pas un argument pour la poser ici.

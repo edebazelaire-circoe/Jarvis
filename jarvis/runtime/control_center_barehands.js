@@ -3191,6 +3191,13 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
      elle casserait plus tard et plus mal, `JarvisBarehands.calibrate` étant
      posé sur une surface **gelée** qu'on ne peut pas compléter après coup. */
   const CALIB=JarvisBarehandsCalibration;
+  /* Parcours de tutoriel (Slice 09) : `control_center_barehands_tutorial.js`,
+     inséré juste après la calibration, dont il **reprend la coque sans la
+     modifier** (décision 26). Lu **directement**, pour la même raison que les
+     deux précédents : un module de page absent est une erreur d'insertion, et
+     `JarvisBarehands.tutorial` est posé sur une surface **gelée** qu'on ne
+     peut pas compléter après coup. */
+  const TUTO=JarvisBarehandsTutorial;
   /* Géométrie de la scène (`control_center_scene_interact.js`, inséré bien avant
      ce module) : `clampBox`, `MIN_SIZE`, `manipulateBox`, `rebaseManipulation`.
      Les décisions 18 et 19 y vivent, en **unités de scène**, et c'est là que les
@@ -3448,6 +3455,9 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
     /* Les événements de contact de l'image (Slice 04) : c'est eux qui ouvrent et
        ferment une capture, là où `contactsOf` donne l'état et l'intention. */
     let pinchOf=null;
+    /* Qui veut savoir qu'une image d'interaction vient de se terminer
+       (Slice 09, `afterFrame`). `null` hors parcours, donc rien n'est appelé. */
+    let frameSink=null;
     /* Décision 24 : l'aperçu se règle. Le réglage lui-même appartient à la
        Slice 07 ; ce qui est à nous, c'est l'interrupteur qu'elle branchera.
        Il éteint le **dessin**, pas la résolution : la Slice 06 continue de
@@ -3820,6 +3830,15 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
            jamais avant : une capture s'ouvre sur la cible figée de cette
            image-là. */
         runCaptures(tokens);
+        /* L'image est finie et ses interactions sont rangées : c'est
+           **maintenant** qu'un parcours peut les constater (Slice 09). Une
+           levée du lecteur ne doit pas arrêter le suivi — un refus codé dans
+           la boucle d'images vaut la fin de la session (leçon des Slices 02
+           et 04) — donc elle se dit et se saute. */
+        if(frameSink){
+          try{frameSink()}
+          catch(error){console.warn('[barehands] lecteur de fin d’image',error)}
+        }
       },
       /* Un vrai clic : la séquence qu'enverrait une souris, sur l'élément exact
          sous le jeton (les écouteurs, labels, cases et liens réagissent). */
@@ -3862,6 +3881,30 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
       /* Même couture pour les **événements** de contact : ce sont eux qui font
          descendre et remonter une capture (Slice 04 : `pinch().events`). */
       readPinch(fn){pinchOf=typeof fn==='function'?fn:null},
+      /* **La fin d'une image d'interaction** (Slice 09). Troisième couture du
+         même genre, et elle existe parce que `interactions()` ne décrit qu'un
+         **instant** : elle est vidée à chaque image, donc un lecteur qui
+         n'échantillonne que toutes les 500 ms rate quasiment tous les clics.
+         Le tutoriel doit constater des gestes ; il lui faut donc la cadence
+         des images, pas celle d'une minuterie.
+
+         Appelée à la fin de `hover`, où `runCaptures` vient de ranger les
+         interactions de l'image — au même endroit et pour la même raison que
+         `contactsOf` est lu là. Non branchée, elle ne coûte rien : hors
+         parcours le test `typeof` échoue et rien n'est appelé, exactement
+         comme `deps.onMeasure` côté contrôleur. Elle ne transporte **aucun**
+         argument : ce qu'un lecteur a le droit de constater, il va le chercher
+         par les portes publiques. */
+      afterFrame(fn){
+        /* Sans argument, elle **se relit** — même idiome que `targetPreview`
+           sur la surface. Sans cette lecture, « la couture est déposée à la
+           sortie » et « elle reste branchée pour toute la session » s'écrivent
+           pareil : un parcours fini laisserait une fermeture vivante appelée à
+           chaque image, pour rien, et rien ne le dirait. */
+        if(fn===undefined)return !!frameSink;
+        frameSink=typeof fn==='function'?fn:null;
+        return !!frameSink;
+      },
       /* Décision 24. Éteindre l'aperçu retire ce qui est dessiné **tout de
          suite** : laisser le dernier cadre à l'écran jusqu'à la prochaine
          image ferait d'un réglage appliqué et d'un réglage sans effet la même
@@ -3955,6 +3998,11 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
     /* Le profil de calibration (Slice 08). `null` tant qu'on ne l'a pas relu :
        « pas encore demandé » et « rien de calibré » ne se dessinent pas pareil. */
     profile:null,profileError:'',
+    /* La **dernière commande vocale**, telle que le canal l'a constatée
+       (Slice 09, Issue « une commande vocale ne se voit pas à l'écran »).
+       `null` tant qu'aucune n'est passée : « jamais » et « la dernière a
+       échoué » ne se dessinent pas pareil. */
+    voice:null,
     status:{state:'off',code:'off',title:Core.MESSAGES.off.title,message:Core.MESSAGES.off.detail,error:null}};
 
   /* Une seule instance, nommée : la surimpression et l'interaction sont des
@@ -4166,15 +4214,47 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
      et c'est ce que la Slice 09 reprendra pour le tutoriel. Le parcours, lui,
      est construit à la demande — il ne tourne que quand l'utilisateur l'a
      lancé (décision 27) et s'arrête quand il a fini (décision 30). */
-  let flowShell=null,calibration=null;
-  function calibrationFlow(){
-    if(calibration)return calibration;
-    flowShell=flowShell||CALIB.createFlowOverlay({document,
+  let flowShell=null,calibration=null,tutorial=null;
+  /* **Une coque, construite une fois, partagée par les deux parcours.** C'est
+     la décision 26 rendue littérale : la calibration et le tutoriel ne sont
+     pas deux surimpressions qui se ressemblent, c'est la même. Deux instances
+     pourraient s'ouvrir l'une sur l'autre, et `exitOverlay()` n'aurait plus de
+     référent unique. */
+  function shell(){
+    return flowShell||(flowShell=CALIB.createFlowOverlay({document,
       now:()=>Date.now(),
       setInterval:(fn,ms)=>window.setInterval(fn,ms),
-      clearInterval:id=>window.clearInterval(id)});
+      clearInterval:id=>window.clearInterval(id)}));
+  }
+  /* Le parcours ouvert, s'il y en a un. Une seule coque, donc au plus un : ce
+     que `exitOverlay()` ferme, et ce qu'un autre parcours doit refuser de
+     recouvrir. */
+  function openFlow(){
+    if(tutorial&&tutorial.isRunning())return {name:'tutorial',flow:tutorial};
+    if(calibration&&calibration.isRunning())return {name:'calibration',flow:calibration};
+    return null;
+  }
+  const FLOW_LABEL=Object.freeze({calibration:'La calibration',tutorial:'Le tutoriel'});
+  /* Un parcours déjà ouvert refuse l'autre, **en le disant**. Sans ce refus,
+     lancer le tutoriel pendant une calibration détruisait une minute de
+     mesures sans un mot — et la voix, qui ne voit pas l'écran, est justement
+     l'appelant qui peut le demander sans savoir. */
+  function flowBusy(wanted){
+    const open=openFlow();
+    if(!open||open.name===wanted)return null;
+    const message=`${FLOW_LABEL[open.name]} est déjà à l’écran. Quittez-la (bouton « Quitter », touche Échap, ou « ferme la surimpression ») avant d’en lancer une autre.`;
+    view.error=message;
+    console.warn('[barehands] parcours refusé (une coque est déjà ouverte)',{wanted,open:open.name});
+    /* La coque couvre les toasts (elle est au-dessus d'eux) : la seule surface
+       que l'utilisateur regarde à cet instant est la coque elle-même. */
+    shell().note(message,'bad');
+    refreshPanel();
+    return {ok:false,code:'barehands_flow_busy',reason:message};
+  }
+  function calibrationFlow(){
+    if(calibration)return calibration;
     calibration=CALIB.createCalibration({
-      overlay:flowShell,now:()=>Date.now(),
+      overlay:shell(),now:()=>Date.now(),
       engineDefaults:Core.DEFAULTS,
       viewport:()=>({width:window.innerWidth,height:window.innerHeight}),
       save:payload=>saveProfile(payload),
@@ -4202,6 +4282,117 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
     };
   }
   function stopMeasuring(){delete controllerDeps.onMeasure}
+
+  /* ------------------------------------------------------------------
+     Tutoriel (Slice 09, décisions 6 et 26).
+
+     **Le tutoriel n'écrit jamais de paramètre de calibration.** Trois choses
+     le tiennent, et aucune n'est une promesse :
+
+     1. `createTutorial` **refuse à la construction** toute dépendance capable
+        d'écrire (`save`, `profile`, `saveProfile`, `saveSettings`, `measure`,
+        `onMeasure`, `calibration`) — voir le module ;
+     2. le câblage ci-dessous ne lui en passe aucune : le seul effet durable
+        est `onDone`, qui écrit le **réglage** `tutorialSeen` par la porte
+        unique des réglages (`saveSettings`) ;
+     3. il n'emprunte pas la couture `deps.onMeasure` du contrôleur : ce que
+        `startWatching` lui donne est une **observation** construite ici à
+        partir de ce que la page publie déjà, où aucune mesure de main
+        n'entre. La couture de la décision 32 reste fermée pendant tout le
+        tutoriel, ce qu'un test affirme. */
+  function tutorialFlow(){
+    if(tutorial)return tutorial;
+    tutorial=TUTO.createTutorial({
+      overlay:shell(),now:()=>Date.now(),
+      onDone:result=>{markTutorialSeen(result)},
+      onExit:()=>{stopWatching();refreshPanel()},
+      log:(level,message,detail)=>{
+        if(level==='warn')console.warn(message,detail);else console.info(message,detail);
+      },
+    });
+    return tutorial;
+  }
+
+  /* Ce que le tutoriel a le droit de constater, construit **ici** à partir de
+     ce que la page publie déjà : le cycle de vie, les cibles en cours de
+     résolution, les interactions de l'instant et les deux réglages dont une
+     étape parle. Aucun échantillon de main n'y entre, et le module réduit
+     encore ce qu'il reçoit (`readObservation`) — la liste blanche est donc
+     écrite des deux côtés, et c'est celle du module qui est testée au
+     chargement. */
+  function tutorialObservation(){
+    /* Lire l'instant ne doit pas arrêter un tutoriel : ce qu'on ne peut pas
+       lire se dit et vaut « rien vu », ce que les étapes savent traiter. Le
+       cycle de vie reste hors du `try` : sans lui l'observation ne veut rien
+       dire, et il ne lit qu'un état interne. */
+    let interactions=[],targets=0,hands=0;
+    try{
+      interactions=interactionView.interactions();
+      targets=interactionView.targets().length;
+      hands=controller.features().length;
+    }catch(error){
+      console.warn('[barehands] tutoriel : l’instant est illisible',error);
+      interactions=[];targets=0;hands=0;
+    }
+    return {
+      now:Date.now(),
+      lifecycle:lifecycle(),
+      tool:view.settings.tool,
+      targetPreview:!!view.settings.targetPreview,
+      targets,hands,interactions,
+    };
+  }
+  /* **Deux mécanismes, et aucun des deux n'est de trop.**
+
+     1. **La cadence des images** (`interactionView.afterFrame`), parce que
+        `interactions()` ne décrit qu'un **instant** : elle est vidée à chaque
+        image, donc un lecteur qui n'échantillonnerait qu'à la minuterie
+        raterait la quasi-totalité des clics — le tutoriel aurait demandé un
+        geste que l'utilisateur aurait fait sans que rien ne l'enregistre, ce
+        qui est la pire panne possible pour un parcours d'apprentissage.
+     2. **Un chien de garde**, parce que cette boucle ne tourne qu'en ACTIVE et
+        seulement quand une main est vue : une étape quittée par l'utilisateur
+        ne serait jamais déclarée manquée et le compteur resterait figé sur
+        « 0 s restantes » — la panne exacte que la RÈGLE ZÉRO interdit. Il ne
+        peut pas être bloqué de la même façon que la caméra, il ne vit que
+        pendant le tutoriel, et sa cadence est bornée contre l'échéance d'une
+        étape **à la construction** (paire dangereuse n° 13).
+
+     Les deux appellent le même `feedTutorial` : une observation de plus est
+     inoffensive (une étape ne se solde qu'une fois), une observation de moins
+     ne l'est pas. */
+  let watchdog=0;
+  function feedTutorial(){
+    const flow=tutorial;
+    if(flow&&flow.isRunning())flow.feed(tutorialObservation());
+  }
+  function startWatching(){
+    interactionView.afterFrame(feedTutorial);
+    if(!watchdog)watchdog=window.setInterval(feedTutorial,TUTO.DEFAULTS.watchdogMs);
+  }
+  function stopWatching(){
+    interactionView.afterFrame(null);
+    if(watchdog){window.clearInterval(watchdog);watchdog=0}
+  }
+
+  /* `tutorialSeen` **est lu par quelqu'un depuis la Slice 09** : il décide de
+     ce que la section Tutoriel de l'onglet dit, et il est écrit ici, à
+     l'arrivée sur le récapitulatif. Il passe par la porte unique des réglages
+     — donc il est normalisé, appliqué et enregistré comme les huit autres, et
+     un échec d'écriture a déjà ses trois obligations (bandeau, toast,
+     `finally`). Ce qui manquerait sans la ligne ci-dessous, c'est de le dire
+     **dans la coque**, seule surface visible à cet instant. */
+  async function markTutorialSeen(result){
+    stopWatching();
+    refreshPanel();
+    if(view.settings.tutorialSeen){shell().note('Tutoriel terminé.','ok');return null}
+    const saved=await saveSettings({tutorialSeen:true});
+    if(saved===null)
+      shell().note('Tutoriel terminé, mais « tutoriel déjà vu » n’a pas pu être enregistré : il vous sera reproposé.','bad');
+    else shell().note(`Tutoriel terminé (${result&&result.done||0} étape(s) sur ${result&&result.total||TUTO.STEPS.length}).`,'ok');
+    refreshPanel();
+    return saved;
+  }
 
   async function loadProfile(){
     try{
@@ -4308,6 +4499,11 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
       refreshPanel();
       return {ok:false,code:'barehands_calibration_disabled',reason:message};
     }
+    /* Une seule coque : le tutoriel ouvert refuse la calibration plutôt que de
+       le recouvrir (décision 26, et `exitOverlay()` n'aurait plus de référent
+       unique). */
+    const busy=flowBusy('calibration');
+    if(busy)return busy;
     const flow=calibrationFlow();
     if(flow.isRunning())return flow.start();
     /* **L'interrupteur appartient à l'utilisateur**, et cette porte est aussi
@@ -4340,6 +4536,135 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
     const started=flow.start();
     refreshPanel();
     return started;
+  }
+
+  /* **Le point d'entrée du tutoriel**, appelé par le bouton *et* par la voix
+     (canal de commandes, § 12). Même forme que `startCalibration`, et pour les
+     mêmes raisons : il **confirme** en résolvant `{ok:true}` dès que la coque
+     est à l'écran et que la première étape tourne — le démarrage, pas la fin :
+     l'échéance du canal est de trois secondes et un tutoriel en prend
+     plusieurs minutes. Les refus sont rendus `{ok:false, code}` — le canal les
+     traduit en « n'a pas confirmé », ce qui est vrai — **et** dits à l'écran,
+     parce que c'est le seul endroit où leur cause exacte survit.
+
+     **Il ne réveille pas, et c'est la différence avec la calibration.** La
+     première étape *est* le geste de réveil : l'exécuter à la place de
+     l'utilisateur lui retirerait ce qu'on prétend lui apprendre. Comme
+     `calibrate()`, il n'allume pas non plus Bare Hands — le § 12 garde
+     `enable`/`disable` hors du canal, et un parcours qui allumerait au
+     passage rendrait la décision contournable par un autre nom. */
+  function startTutorial(){
+    const busy=flowBusy('tutorial');
+    if(busy)return busy;
+    const flow=tutorialFlow();
+    if(flow.isRunning())return flow.start();
+    if(!view.enabled){
+      const message='Bare Hands est éteint : cochez « Activer Barehands » avant de lancer le tutoriel. L’interrupteur reste à vous.';
+      view.error=message;console.warn('[barehands] tutoriel refusé (éteint)');
+      if(typeof toast==='function')
+        toast({title:'Tutoriel impossible',sub:message,kind:'warn',ms:6000});
+      refreshPanel();
+      return {ok:false,code:'barehands_tutorial_disabled',reason:message};
+    }
+    /* **Il n'y a pas de refus « pas de caméra » ici, et c'est délibéré.** La
+       calibration en a un parce qu'elle ne peut rien mesurer sans mains ; le
+       tutoriel, lui, *enseigne*, et l'endroit où « la caméra n'est pas encore
+       prête » doit se lire est justement la coque — avec sa phrase, son
+       compteur vivant et ses trois sorties. Refuser renverrait l'utilisateur à
+       un toast sans rien lui dire de ce qu'il doit faire ensuite, alors que la
+       première étape est précisément celle qui parle du réveil. Le cycle de
+       vie entre donc dans l'observation, et l'étape `wake` a une phrase pour
+       chacun de ses quatre états. */
+    const started=flow.start();
+    startWatching();
+    feedTutorial();
+    refreshPanel();
+    return started;
+  }
+
+  /* **Sortir de la surimpression**, quelle qu'elle soit. Troisième sortie du
+     contrat de Slice, à côté du bouton « Quitter » et de la touche Échap :
+     « Jarvis, ferme la surimpression ».
+
+     Il **confirme** même quand rien n'était ouvert, et c'est le même
+     raisonnement que `deactivate` au § 12 (« ne pilote plus » est vrai en
+     veille comme éteint) : ce que l'appelant demande est qu'il n'y ait pas de
+     surimpression, et il n'y en a pas. Répondre « non » ferait dire à JARVIS
+     que ça n'a pas marché devant un écran qui montre exactement l'état
+     demandé. Le reçu dit lequel des deux cas s'est produit (`closed`). */
+  function exitOverlay(){
+    const open=openFlow();
+    if(!open){
+      console.info('[barehands] sortie de surimpression : aucune n’était ouverte');
+      return {ok:true,flow:null,closed:false};
+    }
+    open.flow.exit('voix ou commande');
+    stopWatching();
+    stopMeasuring();
+    refreshPanel();
+    return {ok:true,flow:open.name,closed:true};
+  }
+
+  /* ------------------------------------------------------------------
+     Ce que la voix vient de faire, **à l'écran** (Slice 09, Issue R13 de la
+     Slice 12).
+
+     La RÈGLE ZÉRO n'était pas violée — l'utilisateur *entend* JARVIS — mais un
+     opérateur qui regarde la fenêtre ne pouvait pas distinguer une commande
+     vocale d'un clic, et une commande vocale **refusée** ne laissait rien du
+     tout à l'écran : un `console.warn`, et le silence. Le canal de la Slice 12
+     avait déjà toute la matière ; ce qui manquait était le rendu, et il a été
+     mis en attente de la Slice qui déciderait ce que la surimpression montre.
+
+     Trois surfaces, parce qu'aucune seule ne suffit :
+     - la **coque**, quand un parcours est ouvert : elle recouvre les toasts
+       (z-index 2147482000 contre 70), donc c'est la seule qu'on regarde ;
+     - un **toast**, panneau fermé — le cas ordinaire d'une commande vocale ;
+     - une **ligne du panneau Expérimental**, qui survit au toast et porte
+       l'heure, le nom, l'issue et le code du refus. */
+  const VOICE_OUTCOME=Object.freeze({applied:'appliquée',duplicate:'déjà dans cet état',refused:'refusée'});
+  function recordVoiceCommand(entry){
+    const source=entry&&typeof entry==='object'?entry:{};
+    const record={
+      name:String(source.name||'?'),
+      outcome:String(source.outcome||'refused'),
+      code:source.code?String(source.code):'',
+      reason:source.reason?String(source.reason):'',
+      lifecycle:source.lifecycle?String(source.lifecycle):'',
+      at:Date.now(),
+    };
+    view.voice=record;
+    const said=VOICE_OUTCOME[record.outcome]||record.outcome;
+    const line=`Commande vocale « ${record.name} » : ${said}`;
+    /* Le chemin **normal** se journalise aussi : un journal qui ne porte que
+       les échecs rend « rien dans le journal » indiscernable de « mort ». */
+    if(record.outcome==='refused')console.warn('[barehands] commande vocale refusée',record);
+    else console.info('[barehands] commande vocale',record);
+    const open=openFlow();
+    if(open)shell().note(`${line}${record.reason?` — ${record.reason}`:''}`,
+      record.outcome==='refused'?'bad':'ok');
+    else if(typeof toast==='function')
+      toast({title:line,sub:record.reason||record.code
+        ||`Bare Hands est ${LIFECYCLE_LABEL[record.lifecycle]||record.lifecycle||'?'}.`,
+        kind:record.outcome==='refused'?'bad':'ok',
+        ms:record.outcome==='refused'?9000:3000});
+    refreshPanel();
+    return record;
+  }
+  /* Ce que le panneau en dessine. Séparé du reste du statut : une commande
+     vocale n'est pas un état du cycle de vie, et les mêler ferait disparaître
+     la trace au premier changement d'état. */
+  function voiceHtml(){
+    const record=view.voice;
+    if(!record)
+      return '<div class="hint">Aucune commande vocale reçue depuis le chargement de cette page.</div>';
+    const when=new Date(record.at).toLocaleTimeString('fr-FR');
+    const said=VOICE_OUTCOME[record.outcome]||record.outcome;
+    const why=record.outcome==='refused'
+      ?` <span class="hint">— ${esc(record.code||'sans code')}${record.reason?` : ${esc(record.reason)}`:''}</span>`:'';
+    return `<div class="notice ${record.outcome==='refused'?'bad':'info'}">
+      <strong>${esc(when)} · ${esc(record.name)} · ${esc(said)}</strong>${why}
+      <div class="hint">Cycle de vie relu après l’appel : <strong>${esc(LIFECYCLE_LABEL[record.lifecycle]||record.lifecycle||'inconnu')}</strong>. La voix et le bouton passent par le même point d’entrée.</div></div>`;
   }
 
   /* Écrire un réglage : appliqué **tout de suite** au moteur (la main suit
@@ -4654,6 +4979,47 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
   }
   const HAND_LABEL=Object.freeze({left:'Main gauche',right:'Main droite',unknown:'Main non étiquetée'});
 
+  /* **Le tutoriel, et ce que `tutorialSeen` veut dire** (Slice 09).
+
+     Le réglage traversait la route, le fichier et la normalisation sans qu'un
+     seul parcours ne le lise ; c'est ici qu'il est lu. Il dit **« cet
+     utilisateur a traversé le tutoriel au moins une fois jusqu'au
+     récapitulatif »** — pas « il a réussi » (passer une étape reste vu :
+     l'invitation de la scène peut n'avoir ni étoile ni cadre), et pas « on le
+     lui a proposé » (quitter au milieu n'écrit rien). Il ne déclenche **aucun**
+     lancement automatique : ce qu'il change est ce que cette section dit. */
+  function tutorialState(){
+    return {running:!!(tutorial&&tutorial.isRunning()),
+      step:tutorial?tutorial.stepId():null,
+      seen:!!view.settings.tutorialSeen,
+      /* Combien d'observations le parcours a reçues : c'est ce qui distingue
+         « nourri à la cadence des images » de « nourri par la seule
+         minuterie », qui s'écrivent pareil et n'apprennent pas la même
+         chose — la seconde rate la quasi-totalité des clics. */
+      observed:tutorial?tutorial.observations():0,
+      steps:TUTO.STEPS.length};
+  }
+  function tutorialStateHtml(){
+    const state=tutorialState();
+    if(state.running)
+      return `<div class="notice info"><strong>Tutoriel en cours</strong><div class="hint">Étape « ${esc(state.step||'?')} ». La surimpression est à l’écran ; quittez-la par « Quitter », la touche Échap, ou « ferme la surimpression ».</div></div>`;
+    if(state.seen)
+      return '<div class="hint">Vous avez déjà fait le tour du tutoriel. Vous pouvez le relancer quand vous voulez ; décocher « Tutoriel déjà vu » ci-dessus remet l’invitation.</div>';
+    return `<div class="notice info"><strong>Vous n’avez pas encore fait le tutoriel</strong><div class="hint">${esc(String(TUTO.STEPS.length))} étapes guidées pour apprendre le vocabulaire complet : réveil, cible, clic, clic droit, contenu, étoile, cadre, redimensionnement à deux mains, outils et sorties. Rien n’est mesuré et <strong>aucun paramètre de calibration n’est touché</strong>.</div></div>`;
+  }
+  function tutorialHtml(){
+    const state=tutorialState();
+    return `<section class="bh-section" id="barehandsTutorial">
+      <h3>Tutoriel</h3>
+      <div class="hint" style="margin-bottom:12px">Un parcours guidé qui apprend les gestes de la V1, dans la même surimpression que la calibration — mais il ne mesure rien et n’écrit aucun profil. Chaque étape peut être passée, et on en sort à tout moment.</div>
+      <div id="barehandsTutorialState">${tutorialStateHtml()}</div>
+      <div class="field inline" style="align-items:center;gap:10px;margin-top:14px">
+        <button type="button" class="action small${state.seen?'':' primary'}" id="barehandsTutorialStart" ${view.busy||state.running?'disabled':''}>${state.seen?'Revoir le tutoriel…':'Lancer le tutoriel…'}</button>
+        <div class="hint">Bare Hands doit être allumé et sa caméra démarrée : la première étape est le geste de réveil, et le tutoriel ne le fait pas à votre place.</div>
+      </div>
+    </section>`;
+  }
+
   const seconds=ms=>`${Math.round(Number(ms)/1000)} s`;
   /* La portée réelle de l'assistance, en pixels, à côté du facteur : « 0,5 »
      ne dit rien, « 24 px » dit ce que la main gagne. Le facteur 2 est celui du
@@ -4709,15 +5075,14 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
       ${checkHtml('calibrationEnabled','Proposer la calibration',
         'Garde la calibration optionnelle et explicite : Bare Hands ne mesurera jamais votre main sans que vous l’ayez lancée.')}
       ${checkHtml('tutorialSeen','Tutoriel déjà vu',
-        'Décochez pour que le tutoriel soit reproposé la prochaine fois qu’il existera.')}
-      <div class="notice info"><strong>Le tutoriel n’est pas encore installé</strong>
-        <div class="hint">« Tutoriel déjà vu » est enregistré et attend le parcours qui le lira (Slice 09). D’ici là, aucun tutoriel ne s’ouvre — dit ici plutôt que promis par un bouton qui ne ferait rien.</div></div>
+        'Coché dès que vous avez traversé le tutoriel jusqu’à son récapitulatif. Décochez pour que l’invitation revienne — il ne se lance jamais tout seul.')}
       <div class="field inline" style="align-items:center;gap:10px;margin-top:14px">
         <button type="button" class="action small" id="barehandsReset" ${view.busy?'disabled':''}>Réinitialiser les réglages</button>
         <div class="hint">Rend aux sept réglages ci-dessus et à l’outil leur valeur d’usine. L’interrupteur ci-dessus n’y touche pas : réinitialiser n’éteint pas la caméra. Le profil de calibration a son propre bouton ci-dessous : ce sont deux choses distinctes.</div>
       </div>
     </section>
-    ${calibrationHtml()}`;
+    ${calibrationHtml()}
+    ${tutorialHtml()}`;
   }
 
   function panelHtml(){
@@ -4731,6 +5096,8 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
       <div id="barehandsLifecycle">${lifecycleHtml()}</div>
       <div id="barehandsStatus">${statusHtml()}</div>
       <div id="barehandsAssets">${missing}</div>
+      <div class="hint" style="margin-top:14px">Dernière commande vocale reçue par cette page :</div>
+      <div id="barehandsVoice">${voiceHtml()}</div>
     </section>
     ${toolsHtml()}
     ${settingsHtml()}
@@ -4787,6 +5154,12 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
     if(calibrate)calibrate.addEventListener('click',()=>{startCalibration()});
     const wipe=document.getElementById('barehandsProfileReset');
     if(wipe)wipe.addEventListener('click',resetProfile);
+    /* Décision 6 : le tutoriel a une **porte**, et c'est la même que celle de
+       la voix. Un bouton qui appellerait autre chose que `startTutorial`
+       serait une seconde implantation du parcours — ce que cette Slice
+       interdit explicitement. */
+    const teach=document.getElementById('barehandsTutorialStart');
+    if(teach)teach.addEventListener('click',()=>{startTutorial()});
     bindWake();
   }
 
@@ -4873,6 +5246,16 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
     if(calibrate)calibrate.disabled=!view.settings.calibrationEnabled||view.busy;
     const wipe=document.getElementById('barehandsProfileReset');
     if(wipe)wipe.disabled=view.busy||!(view.profile&&view.profile.calibrated);
+    const voice=document.getElementById('barehandsVoice');
+    if(voice)voice.innerHTML=voiceHtml();
+    const teaching=document.getElementById('barehandsTutorialState');
+    if(teaching)teaching.innerHTML=tutorialStateHtml();
+    const teach=document.getElementById('barehandsTutorialStart');
+    if(teach){
+      const state=tutorialState();
+      teach.disabled=view.busy||state.running;
+      teach.textContent=state.seen?'Revoir le tutoriel…':'Lancer le tutoriel…';
+    }
     refreshTools();refreshSettings();
   }
 
@@ -4984,6 +5367,34 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
        exige une **confirmation** (`{ok:true}`), sans quoi il refuse
        `barehands_flow_unconfirmed` (contrat § 12). */
     calibrate:()=>startCalibration(),
+    /* **Le parcours de tutoriel et la sortie de surimpression** (Slice 09,
+       décisions 6 et 26). Mêmes portes pour le bouton et pour la voix : le
+       canal de commandes appelle celles-ci et exige une **confirmation**
+       (`{ok:true}`), sans quoi il refuse `barehands_flow_unconfirmed`
+       (contrat § 12). Le canal n'a pas changé d'une ligne pour les poser —
+       elles étaient déjà dans sa table, routées vers un point d'entrée absent. */
+    tutorial:()=>startTutorial(),
+    exitOverlay:()=>exitOverlay(),
+    /* L'état du tutoriel, et ce que `tutorialSeen` vaut : « profil
+       enregistré » et « profil appliqué » ont appris à se distinguer à la
+       Slice 07, « tutoriel vu » et « tutoriel en cours » aussi. */
+    tutorialState:()=>Object.freeze(tutorialState()),
+    /* **La couture de mesure est-elle ouverte ?** (décision 32.) Elle n'est
+       posée que pendant une calibration, et hors d'elle le contrôleur ne
+       calcule rien. Jusqu'ici la promesse n'était lisible nulle part : « le
+       tutoriel ne mesure pas » et « le tutoriel mesure en silence »
+       s'écrivaient pareil à l'écran comme à la console. C'est la règle que
+       `engine()` a posée à la Slice 07 — un réglage qu'on ne peut pas relire
+       là où il agit est un réglage qu'on ne peut pas dire branché — appliquée
+       à une garantie de **non**-mesure. */
+    measuring:()=>typeof controllerDeps.onMeasure==='function',
+    /* **Ce que la voix vient de faire**, publié pour la même raison que le
+       reste : le canal de commandes y dépose son reçu (Slice 12 →
+       `deps.onReceipt`), la page le dessine, et un opérateur peut le relire
+       depuis la console. `record` est le seul écrivain, et il n'accepte que ce
+       que le canal constate — jamais ce qu'on lui a demandé. */
+    voice:Object.freeze({record:entry=>recordVoiceCommand(entry),
+      last:()=>view.voice?Object.freeze({...view.voice}):null}),
     /* Le profil tel qu'il est appliqué, et ce que le moteur en fait. Les deux,
        parce que « profil enregistré » et « profil appliqué » ne sont pas la
        même chose — c'est la règle que `engine()` a posée à la Slice 07. */

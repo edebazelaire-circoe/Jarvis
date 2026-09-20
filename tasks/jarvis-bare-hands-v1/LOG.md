@@ -2130,3 +2130,210 @@ human-validation.json), et les tests : `test_barehands_calibration_js.py` et
 `test_barehands_tools_settings_js.py`, `test_barehands_commands_js.py`,
 `test_barehands_target_js.py`, `test_barehands_interaction_js.py`,
 `test_barehands_tracking_js.py`.
+
+## 2026-09-20 — Slice 09, implementation agent
+
+Le tutoriel et les deux dernières portes de la voix. Un module de page ajouté,
+la coque de la Slice 08 reprise **sans la modifier**, et l'Issue R13 de la
+Slice 12 refermée.
+
+### Slice 09
+
+- **Découverte durable — la coque ne savait pas refuser un mot qu'elle ne sait
+  pas dessiner.** `report()` fabriquait `jf-${status}` : un statut hors des
+  trois que la feuille définit sortait **sans couleur**, sans erreur et sans
+  avertissement, et « réussi » se lisait comme « passé ». Le repli muet sur
+  `skipped` était pire : il *mentait*. C'était invisible tant qu'un seul
+  parcours l'appelait avec `STAGE_STATUS`. **Formulation générale : une valeur
+  interpolée dans un nom de classe est un défaut plausible déguisé en donnée —
+  la feuille de style est une liste fermée, l'appelant doit s'y refuser.**
+  `FLOW_STATUS` est publié et `report()` refuse tout autre mot ; le tutoriel
+  garde ses propres statuts (`done`/`skipped`/`missed`) et les **traduit**,
+  plutôt que d'emprunter le vocabulaire du profil à un parcours qui n'a pas le
+  droit d'y toucher.
+- **Refuser au lancement ou enseigner à l'écran : ce n'est pas la même
+  décision pour un parcours qui mesure et pour un parcours qui enseigne.** La
+  première version du tutoriel copiait le refus `…_no_camera` de la
+  calibration. C'est juste pour elle — elle ne peut rien mesurer sans mains —
+  et faux pour le tutoriel : renvoyer l'utilisateur à un toast, alors que la
+  **première étape** est précisément celle qui parle du réveil, lui retire
+  l'écran qui aurait pu le guider. Le cycle de vie entre donc dans
+  l'observation et l'étape `wake` a une phrase pour chacun de ses quatre
+  états ; une phrase unique aurait accusé la caméra dans les trois cas où elle
+  n'y est pour rien. **La leçon de méthode est que c'est le test qui l'a
+  trouvée** : node n'a pas les assets MediaPipe, donc la page y est toujours en
+  `error`, et un parcours qui refusait là n'était pas testable de bout en bout.
+  Un point d'entrée qu'on ne peut pas exercer sur la vraie page est un point
+  d'entrée dont on ne sait rien.
+- **La couture de la décision 32 n'a pas été élargie — elle n'a pas été
+  empruntée.** Le tutoriel ne lit pas `deps.onMeasure` : il reçoit une
+  **observation** que la page construit depuis ce qu'elle publie déjà
+  (cycle de vie, cibles résolues, interactions de l'instant, deux réglages), et
+  le module la réduit encore par liste blanche. Une interaction y devient
+  `{type, channel, onObject, axes}` — `onObject` est un **booléen**, jamais
+  l'identifiant. Conséquence mesurée : pendant tout un tutoriel, le contrôleur
+  n'a **pas** d'`onMeasure`, donc le budget d'images est exactement celui
+  d'avant. **Formulation générale : quand un second consommateur arrive, la
+  question n'est pas « comment élargir la couture » mais « ce consommateur
+  a-t-il besoin de cette couture ».**
+- **« N'écrit jamais de paramètre de calibration » tenu par trois gardes qui ne
+  se doublent pas** : `createTutorial` refuse **à la construction** toute
+  dépendance nommée `save`/`profile`/`saveProfile`/`saveSettings`/`measure`/
+  `onMeasure`/`calibration` (`barehands_tutorial_cannot_write_profile`) ; le
+  module ne nomme aucun chemin vers le profil, et un test le lit dans la
+  source ; et l'assertion de bout en bout est un **aller-retour** — le profil
+  relu après un tutoriel complet vaut exactement celui d'avant, et la route du
+  profil n'a pas été appelée une seule fois. C'est la règle que la Slice 08 a
+  posée avec `assertDerivedOnly`, appliquée à une garantie de *non-écriture*.
+- **Deux mécanismes pour une échéance, et le second n'est pas un luxe.** La
+  boucle d'images ne tourne qu'en ACTIVE **et** quand une main est vue : une
+  étape quittée par l'utilisateur ne serait jamais déclarée manquée, et le
+  compteur resterait figé sur « 0 s restantes » — « ça attend » et « c'est
+  bloqué » à nouveau identiques. Un chien de garde de la page nourrit donc le
+  parcours indépendamment des images, et il ne vit que pendant le tutoriel.
+  (La QA de la Slice 08 a relevé la même forme sur la calibration ; elle n'est
+  pas corrigée ici, c'est sa reprise qui la porte.)
+- **Deux paires dangereuses de plus** (12e et 13e de la tâche) :
+  `readMs >= stepTimeoutMs` — l'étape expire avant d'avoir commencé à écouter,
+  donc **toutes** sont manquées et le récapitulatif accuse quelqu'un qui a tout
+  fait — et `watchdogMs >= stepTimeoutMs` — le chien de garde plus lent que
+  l'échéance qu'il surveille laisse l'écran mentir pendant une échéance de
+  plus. Même espèce que les onze précédentes : elles échouent **en silence**.
+- **`tutorialSeen` veut dire « traversé jusqu'au récapitulatif ».** Pas
+  « réussi » (passer une étape reste vu : la scène peut n'avoir ni étoile ni
+  cadre), pas « proposé » (quitter au milieu n'écrit rien). Son **seul**
+  écrivain est `onDone`, appelé à l'arrivée sur le récapitulatif — pas sur le
+  bouton « Fermer », sans quoi finir le tutoriel puis appuyer sur Échap le
+  ferait re-proposer. Il ne peut donc pas prendre la forme que `calibrated` a
+  prise (vrai sans qu'une mesure ait eu lieu). Il ne déclenche **aucun**
+  lancement automatique : ce qu'il change est ce que la section Tutoriel dit.
+- **Une commande vocale se voit, et il faut trois surfaces.** Le point que
+  l'Issue n'avait pas : la coque est à `z-index 2147482000`, les toasts à `70`
+  — **un toast posé pendant qu'un parcours est ouvert est invisible**, et
+  « ferme la surimpression » est précisément la commande qu'on prononce à ce
+  moment-là. D'où : la coque quand un parcours est ouvert, un toast sinon, et
+  une ligne du panneau qui survit au toast et porte le **code** du refus.
+- **Le canal de la Slice 12 n'a rien appris de la page ; il lui a donné
+  quelque chose.** `deps.onReceipt` et `channel.last()` sont des ajouts ;
+  `state().last` garde sa forme `"<commande>:<issue>"`, parce que changer la
+  forme d'un accesseur casse ses lecteurs, et qu'un ajout suffisait. Un puits
+  qui lève **ne mange pas le reçu** : le cerveau attend la vérité du transport,
+  pas celle de l'écran.
+- **Une consigne de cerveau périmée fait refuser un outil qui marche.**
+  `BRAIN_BAREHANDS_PROMPT` disait encore que la calibration et le tutoriel « ne
+  sont pas encore implantés » — faux depuis la Slice 08 pour l'un. Elle dit
+  maintenant les cinq commandes **et** ce qu'une confirmation signifie : le
+  parcours a démarré, pas qu'il est fini, sans quoi JARVIS annoncerait « c'est
+  calibré » devant une surimpression qui vient de s'ouvrir. Un test de parité
+  la compare au vocabulaire de `jarvis/domain/barehands_command.py`.
+- **Le canal n'a pas changé d'une ligne pour router les deux parcours**, comme
+  à la Slice 08 : `tutorial` et `exit_overlay` étaient déjà dans sa table.
+  Le test qui affirmait leur absence affirme maintenant leur présence **et** le
+  comportement réel sous node : les deux parcours ne confirment pas (Bare Hands
+  est éteint), `exit_overlay` **confirme** — rien n'était ouvert, et c'est
+  l'état demandé.
+
+### Laissé tel quel, et pourquoi
+
+- `exitOverlay()` sur une page sans surimpression se rapporte `applied` et non
+  `duplicate` : la table du § 12 n'a pas de `duplicate` pour un parcours (pas
+  de `targets`), et l'ajouter appartient au canal. Le champ `closed` porte la
+  différence côté page, le reçu ne la porte pas.
+- La cause exacte d'un refus de `tutorial()` (`…_disabled`, `…_flow_busy`)
+  n'atteint pas le cerveau — même résidu que `calibrate()` à la Slice 08, même
+  raison (liste de codes fermée), même compensation (écran, toast, console).
+- Le module de tutoriel lit sa coque dans `JarvisBarehandsCalibration` : le nom
+  dit « calibration » alors que la coque n'en sait rien. Déplacer la coque dans
+  un module à elle est un renommage à trois fichiers pour zéro comportement ;
+  nommé ici plutôt que fait.
+
+### Fichiers
+
+`jarvis/runtime/control_center_barehands_tutorial.js` (nouveau),
+`jarvis/runtime/control_center_barehands.js`,
+`jarvis/runtime/control_center_barehands_calibration.js`,
+`jarvis/runtime/control_center_barehands_commands.js`,
+`jarvis/runtime/control_center.py`, `jarvis/runtime/control_center.html`,
+`jarvis/runtime/claude_local.py`, `docs/barehands-contracts.md`,
+les deux Issues de la Slice 12, et les tests :
+`tests/unit/test_barehands_tutorial_js.py` (nouveau), plus
+`test_barehands_commands_js.py`, `test_barehands_tools_settings_js.py`,
+`test_barehands_target_js.py`, `test_barehands_interaction_js.py`,
+`test_barehands_tracking_js.py` (les harnais node doivent servir le nouveau
+module, comme la page le sert).
+
+### La panne que la relecture du diff a trouvée, et que les tests ne voyaient pas
+
+**`interactions()` ne décrit qu'un instant, et un lecteur à la minuterie rate
+presque tout.** La première version nourrissait le tutoriel **uniquement** par
+le chien de garde (500 ms), ce qui passait tous les tests — parce que les tests
+appellent `feed()` directement. Dans la vraie page, les interactions d'une image
+sont vidées à l'image suivante : à 30-60 images par seconde, un
+échantillonnage à 500 ms aurait raté la quasi-totalité des clics. Le tutoriel
+aurait demandé un geste, l'utilisateur l'aurait fait, et rien ne l'aurait
+enregistré — la pire panne possible pour un parcours d'apprentissage, et
+**silencieuse**.
+
+La couture est donc celle des images : `interactionView.afterFrame(fn)`,
+troisième registrar du même genre que `readContacts`/`readPinch`, appelée à la
+fin de `hover` là où `runCaptures` vient de ranger les interactions de l'image.
+Elle ne transporte **aucun argument** — ce qu'un lecteur a le droit de
+constater, il va le chercher par les portes publiques — et ne coûte rien quand
+personne n'écoute. Le chien de garde reste, pour les étapes que personne ne
+nourrit. **Formulation générale : un lecteur d'état instantané doit prendre la
+cadence de ce qui le produit ; une minuterie n'échantillonne bien que ce qui
+persiste.** Et : **un test qui appelle `feed()` à la main ne dit rien de ce qui
+appelle `feed()` en vrai** — c'est `tutorialState().observed`, ajouté pour ça,
+qui rend la différence visible.
+
+### La sortie « X » appartenait au parcours, donc elle n'était pas garantie
+
+L'exigence de la Slice est « une sortie X / Échap / voix, **toujours** ». Échap
+et la voix étaient tenues par la coque et par `exitOverlay()`. La troisième ne
+l'était pas : les boutons d'une étape sont **redessinés à chaque étape**, donc
+« on peut toujours quitter » dépendait de ce que le parcours pensait à
+dessiner — et le rapport de la calibration, qui n'offre que « Appliquer » et
+« Annuler », le démontrait depuis la Slice 08 sans que personne le voie.
+
+La croix est donc posée par la **coque**, une fois, hors de `actions` (que
+`buttons()` vide). Les deux parcours en héritent sans changer une ligne, ce qui
+est exactement ce que « deux parcours, une coque » doit produire.
+**Formulation générale : une garantie que chaque appelant doit se rappeler de
+respecter n'est pas une garantie — c'est une convention.** Et la coque dit
+maintenant *laquelle* de ses sorties a servi, sans quoi une fermeture par la
+croix se journalisait « échap ».
+
+### Ce que la mutation a trouvé (40 mutations, deux directions)
+
+Trois survivants au premier passage, tous réels, tous refermés :
+
+- **la garde de forme ne tournait au chargement que dans le code** : le test
+  appelait `assertTeachingOnly()` explicitement, ce qui prouve la fonction et
+  jamais son installation. Commenter l'appel laissait tout au vert. Refermé
+  comme la Slice 08 l'avait fait pour le profil : on écrit une copie du module
+  avec une clé qui recopie son entrée, et on vérifie que `require()` **refuse**
+  en nommant la clé ;
+- **« le tutoriel n'ouvre pas la couture de mesure » n'était pas lisible** :
+  ajouter `startMeasuring()` dans `startTutorial` ne faisait rien tomber, parce
+  que rien ne lisait la couture. D'où `JarvisBarehands.measuring()`, qui lit
+  `deps.onMeasure` **lui-même** — règle de la Slice 07 (`engine()`) appliquée à
+  une garantie de *non*-mesure. Résidu nommé : seul le côté *faux* est
+  exercé ici, la caméra vivante étant hors de portée de node ;
+- **écrire `tutorialSeen` une seconde fois ne faisait rien tomber** : inoffensif
+  en apparence, sauf qu'une écriture pour rien peut repartir en « réglage non
+  pris » au moment précis où l'utilisateur vient de finir. Le test relance
+  maintenant le tutoriel et compte les écritures.
+
+Trois survivants de plus sur la couture d'images, tous refermés de la même
+façon — en rendant la couture **relisible** plutôt qu'en ajoutant une assertion
+de source : `afterFrame()` sans argument dit si elle est branchée (sans quoi
+« déposée à la sortie » et « vivante pour toute la session » s'écrivaient
+pareil), `tutorialState().observed` compte ce que le parcours a constaté, et un
+lecteur qui **lève** est exercé pour de bon — un refus codé dans la boucle
+d'images vaut la fin de la session.
+
+Deux mutations m'ont aussi corrigé le **test** plutôt que le code : la première
+version de M28 était un `void 0;` (aucun effet, donc un faux survivant), et le
+pilote du parcours complet ne pressait jamais « Fermer », si bien qu'un second
+`tutorial()` rendait `already:true` sans rien rejouer. **Un survivant est
+d'abord une question sur ce que le test croit conduire.**

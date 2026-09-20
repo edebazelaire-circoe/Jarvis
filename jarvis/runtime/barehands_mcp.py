@@ -36,9 +36,11 @@ Catalogue V1, cinq outils, un par action (Slice 12) : `barehands_activate`,
 l'état qu'elle a **constaté** après avoir appelé le point d'entrée. Tout le
 reste — refus de la page, échéance, canal injoignable, Bare Hands éteint —
 devient une erreur d'outil portant son code stable et une phrase qui dit quoi
-faire. Les parcours de calibration et de tutoriel n'existent pas encore (Slices
-08 et 09) : le transport les porte, la page les refuse avec
-`barehands_flow_absent`, et le cerveau reçoit cette phrase-là.
+faire. Les trois parcours **existent** depuis les Slices 08 et 09 ; ce qu'un
+succès affirme est qu'ils ont **démarré**, pas qu'ils sont finis — un parcours
+dure des minutes et c'est l'utilisateur qui le mène à la main. Une page plus
+ancienne que ce JARVIS les refuse encore avec `barehands_flow_absent`, et le
+cerveau reçoit cette phrase-là.
 
 Le module n'importe pas `mcp` : `build_server` le charge à la demande, comme
 `display_mcp` et `drive_mcp`, pour que `ClaudeLocalAgent` puisse en lire les
@@ -380,9 +382,19 @@ def build_server(target: BarehandsMcpTarget | None = None, *, tools: BarehandsCo
 
     mcp = StrictBarehandsMCP(SERVER_NAME, instructions=_SERVER_INSTRUCTIONS)
 
+    # Les trois parcours **existent** (Slices 08 et 09). Ce que cette note doit
+    # dire n'est donc plus « ce n'est pas implanté » — ce serait faux, et une
+    # consigne périmée fait refuser au cerveau un outil qui marche, ce qui est
+    # indiscernable d'une panne — mais ce qu'une confirmation **signifie** :
+    # la surimpression est ouverte, pas le parcours fini.
     _FLOW_NOTE = (
-        "Le parcours lui-même n'est pas encore implanté : l'outil refuse avec barehands_flow_absent "
-        "tant qu'il n'existe pas. N'annonce jamais qu'il a démarré."
+        "Un succès veut dire que la surimpression est ouverte à l'écran, PAS que le parcours est "
+        "terminé : il dure des minutes et c'est l'utilisateur qui le mène à la main. Ne dis donc "
+        "jamais « c'est calibré » ni « tu as fini le tutoriel » ; dis que c'est ouvert. Un seul "
+        "parcours à la fois — l'autre est refusé tant que le premier est à l'écran. Refus possibles : "
+        "barehands_flow_unconfirmed (le parcours n'a pas démarré : Bare Hands éteint, ou l'autre "
+        "parcours est ouvert — la cause exacte est à l'écran de l'utilisateur), barehands_flow_absent "
+        "(la page est plus ancienne que ce JARVIS et ne connaît pas ce parcours)."
     )
 
     @mcp.tool()

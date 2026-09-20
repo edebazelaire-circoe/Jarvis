@@ -59,9 +59,16 @@ repère commenté dans `control_center.html`, substitué côté serveur par
 
 ```
 …_BAREHANDS_CONTRACTS_JS__ → …_BAREHANDS_TARGET_JS__
-→ …_BAREHANDS_CALIBRATION_JS__ → …_BAREHANDS_JS__
-→ …_BAREHANDS_COMMANDS_JS__ → …_SCENE_PAGE_JS__
+→ …_BAREHANDS_CALIBRATION_JS__ → …_BAREHANDS_TUTORIAL_JS__
+→ …_BAREHANDS_JS__ → …_BAREHANDS_COMMANDS_JS__ → …_SCENE_PAGE_JS__
 ```
+
+(`…_BAREHANDS_TUTORIAL_JS__` est arrivé à la Slice 09 : le parcours de
+tutoriel. Il lit les contrats **et reprend la coque** de la calibration, donc
+il vient après les deux ; le pointeur le lit pour poser
+`JarvisBarehands.tutorial()` et `.exitOverlay()` sur sa surface gelée, donc il
+vient avant lui. Même raison, même conséquence : servi trop tard, la page casse
+à l'insertion.)
 
 (`…_BAREHANDS_CALIBRATION_JS__` est arrivé à la Slice 08 : le parcours de
 calibration et la coque de surimpression. Il lit les contrats et **se fait
@@ -2020,6 +2027,190 @@ dates. Un reçu à identifiant **hors forme** laisse lui aussi sa ligne
 (`id: null`, `id_chars`) : sans elle, l'attaque la plus grossière était la seule
 invisible, alors qu'un identifiant bien formé mais forgé se voyait.
 
+## 13. Tutoriel (décisions 6 et 26, Slice 09)
+
+> **Deux parcours, une coque.** Le tutoriel ne redessine rien : il reçoit la
+> coque du § 11 construite, exactement comme `createCalibration` la reçoit, et
+> n'appelle que son API publiée. C'est la décision 26 rendue littérale — une
+> coque qui aurait dû changer pour accueillir le second parcours aurait prouvé
+> que les deux se ressemblaient, pas qu'ils la partageaient.
+
+`jarvis/runtime/control_center_barehands_tutorial.js`
+(`window.JarvisBarehandsTutorial`). Inséré après la calibration, avant le
+pointeur.
+
+**Les dix étapes, ce qu'elles enseignent et comment elles se constatent.**
+Chacune réussit, se passe ou se manque **seule** ; rien n'est enregistré, et le
+récapitulatif dit laquelle.
+
+| Étape | Ce qu'elle enseigne | Comment elle est constatée |
+|---|---|---|
+| `wake` | la posture en C, décision 5 | `lifecycle === 'active'` |
+| `target` | l'aperçu de cible, décisions 3 et 24 | au moins une candidate résolue |
+| `click_primary` | le clic pouce-index, décision 20 | une interaction `click` |
+| `click_secondary` | le clic droit pouce-majeur, décisions 21-22 | une interaction `context` |
+| `content` | BODY est du contenu, décision 8 | un `scroll`, ou un glissement **sans** objet |
+| `object_drag` | déplacer une étoile, décision 13 | un glissement **portant** un objet |
+| `frame_move` | bord/coin déplacent le cadre, décisions 9-10 | une interaction `move` |
+| `frame_resize` | deux zones à deux mains, décisions 11 et 15-18 | une interaction `resize` |
+| `tools` | Outils ≠ Réglages, décision 25 | l'outil a changé, ou le bouton « J'ai compris » |
+| `exit` | les trois sorties | le bouton « Terminer le tutoriel » |
+
+Les deux dernières **expliquent** au lieu de mesurer (`manual: true`), et le
+récapitulatif l'écrit (« lu » plutôt que « fait ») : fabriquer une mesure là où
+il n'y a pas de geste à constater serait le faux succès que ce dépôt refuse.
+Une étape peut toujours être **passée** — la scène peut n'avoir ni étoile ni
+cadre à manipuler, et un parcours qu'on ne peut pas traverser est un cul-de-sac.
+
+**Trois sorties, à toutes les étapes**, et la première est désormais tenue par
+la **coque** plutôt que par le parcours : une croix permanente dans le coin de
+la carte (`.jf-close`, `data-flow-close`, `aria-label` « Quitter ce
+parcours »), la touche Échap, et `JarvisBarehands.exitOverlay()` que le canal
+du § 12 appelle sur « ferme la surimpression ».
+
+La croix est posée **hors de `actions`**, que `buttons()` vide à chaque étape :
+« on peut toujours quitter » dépendait sinon de ce que le parcours pensait à
+dessiner, et le rapport de la calibration — qui n'offre que « Appliquer » et
+« Annuler » — le démontrait. Les deux parcours en héritent sans changer une
+ligne, ce qui est la raison d'être de la coque partagée. La coque dit **quelle**
+sortie a servi (`escape` / `fermeture`), et le parcours le journalise : sans
+cela une fermeture par la croix se lirait « échap », et personne ne saurait
+quelle sortie les gens utilisent.
+
+**Le tutoriel n'écrit jamais de paramètre de calibration, et c'est structurel.**
+Trois gardes, qui ne se doublent pas :
+
+1. `createTutorial` **refuse à la construction** toute dépendance capable
+   d'écrire — `save`, `profile`, `saveProfile`, `saveSettings`, `measure`,
+   `onMeasure`, `calibration` — avec le code
+   `barehands_tutorial_cannot_write_profile`. Une Slice ultérieure qui
+   brancherait un écrivain de profil casse à la construction.
+2. Le module ne nomme **aucun** chemin vers le profil : ni `toProfilePayload`,
+   ni `normalizeProfile`, ni la route. Un test le lit dans la source.
+3. Le tutoriel n'emprunte pas la couture `deps.onMeasure` du contrôleur
+   (décision 32) : ce qu'il reçoit est une **observation** construite par la
+   page. La couture de mesure reste donc **fermée** pendant tout le tutoriel, et
+   le budget d'images est exactement celui d'avant. Et c'est **relisible** :
+   `JarvisBarehands.measuring()` lit la couture elle-même, pas un drapeau tenu
+   à côté — sans elle, « le tutoriel ne mesure pas » et « le tutoriel mesure en
+   silence » s'écrivaient pareil à l'écran comme à la console. Même règle que
+   `engine()` à la Slice 07, appliquée à une garantie de **non**-mesure.
+
+**Ce qu'une étape peut constater, et rien d'autre.** `readObservation` est une
+liste blanche : `{now, lifecycle, tool, targetPreview, targets, hands,
+interactions[]}`, où une interaction est réduite à
+`{type, channel, onObject, axes}` — `onObject` est un **booléen**, jamais
+l'identifiant. `assertTeachingOnly` tourne au **chargement du module** et
+présente à chaque clé une suite de points, une image en base64 et un objet
+libre : rien n'en ressort. Même idiome qu'`assertDerivedOnly` (§ 10), pilotée
+par le schéma pour la même raison.
+
+**`tutorialSeen` est lu, et voici ce qu'il veut dire.** « Cet utilisateur a
+traversé le tutoriel au moins une fois **jusqu'à son récapitulatif** » — pas
+« il a réussi » (passer une étape reste vu), pas « on le lui a proposé »
+(quitter au milieu n'écrit rien, le récapitulatif n'étant pas atteint). Il ne
+déclenche **aucun** lancement automatique : ce qu'il change est ce que la
+section Tutoriel de l'onglet dit — une invitation tant qu'il est faux, une
+phrase neutre ensuite. Il s'écrit par la porte unique des réglages
+(`saveSettings`), donc il est normalisé, borné et persisté comme les huit
+autres, et un échec d'écriture est dit **dans la coque**, seule surface visible
+à cet instant. La case « Tutoriel déjà vu » le décoche.
+
+Il ne peut pas prendre la forme que `calibrated` a prise au § 10 (vrai sans
+qu'une mesure ait eu lieu) : son seul écrivain est `onDone`, et `onDone` n'est
+appelé qu'à l'arrivée sur le récapitulatif.
+
+**Deux coutures nourrissent le parcours, et aucune n'est de trop.**
+
+1. **La cadence des images** — `interactionView.afterFrame(fn)`, appelée à la
+   fin de `hover`, là où `runCaptures` vient de ranger les interactions de
+   l'image. Elle existe parce qu'`interactions()` ne décrit qu'un **instant** :
+   elle est vidée à chaque image, donc un lecteur échantillonné à la seule
+   minuterie raterait la quasi-totalité des clics — le tutoriel aurait demandé
+   un geste que l'utilisateur aurait fait sans que rien ne l'enregistre. Elle
+   ne transporte **aucun argument** (ce qu'un lecteur a le droit de constater,
+   il va le chercher par les portes publiques) et ne coûte rien quand personne
+   n'écoute, comme `deps.onMeasure`.
+2. **Un chien de garde** (`DEFAULTS.watchdogMs`), parce que cette boucle ne
+   tourne qu'en ACTIVE **et** quand une main est vue : une étape quittée par
+   l'utilisateur ne serait jamais déclarée manquée, et le compteur resterait
+   figé sur « 0 s restantes » — « ça attend » et « c'est bloqué » à nouveau
+   identiques à l'écran. Il ne vit que pendant le tutoriel.
+
+`tutorialState().observed` compte ce que le parcours a **constaté** : sans ce
+nombre, « nourri à la cadence des images » et « nourri par la seule minuterie »
+s'écrivent pareil à l'écran comme à la console. Le motif rendu est le plus **utile**, pas le
+plus littéral : `not_active` si Bare Hands est retourné en veille, `no_hand`
+si aucune main n'a été vue, `timeout` sinon.
+
+**Deux paires dangereuses de plus** (douzième et treizième de la tâche),
+refusées à la construction de `JarvisBarehandsTutorial.options()` :
+
+- `readMs >= stepTimeoutMs` : l'étape expire avant d'avoir commencé à écouter.
+  **Toutes** les étapes seraient manquées et le récapitulatif accuserait
+  quelqu'un qui a tout fait correctement. Même espèce que
+  `stageTimeoutMs <= stageHoldMs` et `sleepTimeoutMs <= wakeHoldMs`.
+- `watchdogMs >= stepTimeoutMs` : le chien de garde plus lent que l'échéance
+  qu'il surveille laisse l'écran afficher « 0 s restantes » pendant une
+  échéance entière de plus.
+
+**Le vocabulaire de statut de la coque est refusé s'il est inconnu.**
+`report()` fabriquait `jf-${status}` : un mot hors des trois que la feuille
+définit sortait **sans couleur**, sans erreur et sans avertissement, et
+« réussi » se lisait comme « passé » ; le repli muet sur `skipped` mentait.
+La coque publie donc `FLOW_STATUS = ['ok','failed','skipped']` — des statuts de
+**présentation** — et refuse tout autre mot. Le tutoriel garde les siens
+(`done` | `skipped` | `missed`, motifs `timeout` | `no_hand` | `not_active` |
+`cancelled`) et les **traduit** : emprunter `STAGE_STATUS` ferait entrer le
+vocabulaire du profil dans un parcours qui n'a pas le droit d'y toucher.
+
+**Les points d'entrée, et ils confirment** (§ 12) :
+
+| Porte | Rend | Refus |
+|---|---|---|
+| `JarvisBarehands.tutorial()` | `{ok:true, flow:'tutorial', step, steps}` dès que la coque est à l'écran ; `{ok:true, already:true}` au second appel | `barehands_tutorial_disabled` (interrupteur éteint), `barehands_flow_busy` (l'autre parcours est ouvert) |
+| `JarvisBarehands.exitOverlay()` | `{ok:true, flow, closed:true}` ; `{ok:true, flow:null, closed:false}` si rien n'était ouvert | — |
+| `JarvisBarehands.tutorialState()` | `{running, step, seen, observed, steps}` | — |
+| `JarvisBarehands.measuring()` | `true` si la couture `deps.onMeasure` du contrôleur est posée, donc si une **calibration** mesure | — |
+
+`exitOverlay()` **confirme même quand rien n'était ouvert**, et c'est le
+raisonnement de `deactivate` au § 12 : ce que l'appelant demande est qu'il n'y
+ait pas de surimpression, et il n'y en a pas. Répondre « non » ferait dire à
+JARVIS que ça n'a pas marché devant un écran qui montre l'état demandé.
+Résidu nommé : la table du § 12 n'a pas de `duplicate` pour un parcours (pas de
+`targets`), donc « rien n'était ouvert » se rapporte `applied` ; le champ
+`closed` porte la différence, le reçu ne la porte pas.
+
+**Il n'y a pas de refus « pas de caméra », et c'est délibéré.** La calibration
+en a un parce qu'elle ne peut rien mesurer sans mains ; le tutoriel *enseigne*,
+et l'endroit où « la caméra n'est pas encore prête » doit se lire est la coque
+elle-même — avec sa phrase, son compteur vivant et ses trois sorties. Refuser
+renverrait l'utilisateur à un toast sans lui dire quoi faire ensuite, alors que
+la première étape est précisément celle qui parle du réveil. Le cycle de vie
+entre donc dans l'observation, et l'étape `wake` a une phrase pour chacun de
+ses quatre états : `active` (« c'est déjà l'état que ce geste produit »),
+`sleep` (la consigne), `off` (« la caméra n'est pas encore ouverte ») et
+`error` (le motif est dans l'onglet). Une phrase unique aurait accusé la caméra
+dans les trois cas où elle n'y est pour rien.
+
+`tutorial()` **ne réveille pas**, et c'est sa seule différence de forme avec
+`calibrate()` : sa première étape *est* le geste de réveil, et l'exécuter à la
+place de l'utilisateur lui retirerait ce qu'on prétend lui apprendre. Comme
+`calibrate()`, il n'allume pas Bare Hands — le § 12 garde `enable`/`disable`
+hors du canal, et un parcours qui allumerait au passage rendrait la décision
+contournable par un autre nom.
+
+**Une commande vocale se voit à l'écran** (Issue R13 de la Slice 12, refermée
+ici). Le canal remet son reçu à la page (`deps.onReceipt` ; `channel.last()`
+le republie, `state().last` garde sa forme), et
+`JarvisBarehands.voice.record(entry)` le dessine sur trois surfaces, parce
+qu'aucune seule ne suffit : la **coque** quand un parcours est ouvert — elle
+est au-dessus des toasts (`z-index` 2147482000 contre 70), donc c'est la seule
+qu'on regarde —, un **toast** panneau fermé, qui est le cas ordinaire d'une
+commande vocale, et une **ligne du panneau Expérimental** qui survit au toast
+et porte l'heure, le nom, l'issue, le code du refus et le cycle de vie relu.
+`JarvisBarehands.voice.last()` la rend à la console.
+
 ## Ce qui est implémenté, et ce qui ne l'est pas
 
 La Slice 01 n'a apporté aucun moteur : elle a fixé les noms — et, à sa reprise,
@@ -2131,8 +2322,21 @@ deux tolérances qu'il déplace existaient déjà.
 passent par la même porte, et le canal de la Slice 12 n'a pas changé d'une
 ligne pour ça — c'était la promesse de sa table.
 
-Restent à venir : tutoriel et diagnostics enregistrés (Slices 09 et 10).
-`tutorialSeen` attend toujours la Slice 09 ; `tutorial` et `exit_overlay`
-traversent tout le canal et se refusent `barehands_flow_absent` à la dernière
-marche, parce que leur point d'entrée n'existe pas encore. La **coque** qu'ils
-réutiliseront, elle, existe et est testée.
+La Slice 09 implante le tutoriel et les deux dernières portes de la voix
+(§ 13, décisions 6 et 26) : `control_center_barehands_tutorial.js` — **un
+module de page ajouté**, donc l'ordre d'insertion a changé (voir « Insertion
+dans la page ») —, `JarvisBarehands.tutorial()` / `.exitOverlay()` /
+`.tutorialState()` / `.voice`, la section Tutoriel et la ligne « dernière
+commande vocale » de l'onglet Expérimental, et deux ajouts ailleurs : la coque
+**refuse** un statut de rapport qu'elle ne sait pas dessiner (§ 13), et le
+canal de la Slice 12 **remet son reçu** à la page (`deps.onReceipt`,
+`channel.last()`) sans que `state().last` change de forme. Couverte par
+`tests/unit/test_barehands_tutorial_js.py`. Aucune constante nouvelle dans
+`DEFAULTS` du moteur : le tutoriel n'en règle aucun, il en parle.
+
+`window.JarvisBarehands.tutorial()` et `.exitOverlay()` sont **branchés** : les
+cinq commandes du § 12 ont désormais leur point d'entrée, et le canal n'a
+changé que pour *donner* son reçu à l'écran — jamais pour router une commande.
+`tutorialSeen` est **lu** pour la première fois (§ 13).
+
+Reste à venir : les diagnostics enregistrés (Slice 10).

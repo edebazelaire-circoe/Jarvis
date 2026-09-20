@@ -124,6 +124,11 @@ const allButtons=root=>{
   if(root)walk(root);
   return out;
 };
+/* Ce que le **parcours** dessine, par opposition à la sortie permanente que la
+   coque pose une fois pour toutes (`data-flow-close`). Les deux vivent dans le
+   même arbre et ne se lisent pas ensemble : l'une change à chaque étape,
+   l'autre ne bouge jamais. */
+const stepActions=root=>allButtons(root).map(n=>n.getAttribute('data-flow-action')).filter(Boolean);
 const press=(root,id)=>{
   const found=allButtons(root).find(node=>node.getAttribute('data-flow-action')===id);
   if(!found)throw new Error(`bouton ${id} absent`);
@@ -414,7 +419,7 @@ def test_the_shell_holds_rule_zero_and_spares_the_hand_overlay_from_its_inert_sw
          l'étape qui l'a posé déclenche ce que l'écran ne montre plus. Le double
          détruit vraiment, donc la question se pose vraiment. */
       shell.buttons([{id:'apply',label:'Appliquer',run:()=>{}}]);
-      const afterRedraw=allButtons(root).map(n=>n.getAttribute('data-flow-action'));
+      const afterRedraw=stepActions(root);
 
       const closed=shell.close();
       out({
@@ -695,7 +700,7 @@ def test_a_save_that_fails_keeps_the_measurements_on_screen_with_a_way_to_retry(
       press(flowRoot(),'apply');
       await new Promise(r=>setImmediate(r));
       const note=text(flowRoot(),C.DOM.flowNoteClass)[0];
-      const actions=allButtons(flowRoot()).map(n=>n.getAttribute('data-flow-action'));
+      const actions=stepActions(flowRoot());
       const stillOpen=!!flowRoot();
       failSave.at=false;
       press(flowRoot(),'retry');
