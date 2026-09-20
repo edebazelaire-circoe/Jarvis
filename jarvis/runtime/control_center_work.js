@@ -113,6 +113,33 @@ if(typeof module!=='undefined'&&module.exports)
   };
   const STATE_LABELS={idle:'IDLE',listening:'LISTENING',speaking:'TALKING',thinking:'THINKING'};
 
+  /* ================================================= deux couleurs, deux rôles
+
+     **`--omega-accent` est la couleur de l'agent, pas celle de l'interface.**
+     `setSnapshot` plus bas la republie sur `document.documentElement` à chaque
+     changement d'état vocal, depuis `STATE_COLORS` : bleu au repos, vert à
+     l'écoute, orange quand JARVIS parle, violet quand il réfléchit. C'est
+     juste, et c'est à l'orbe — la boule lumineuse **est** l'agent, c'est elle
+     qui doit changer de couleur quand son état change.
+
+     Ce qui ne l'était pas, c'est que le châssis s'y abonnait. La pastille
+     d'état, les boutons de la barre d'outils et la carte de thème lisaient
+     `--omega-accent` ; la colonne Bare Hands, sa palette, le jeton de main et
+     la surimpression de calibration aussi. Tant que la voix était poussée au
+     bouton, l'état dominant était `idle` et tout cela paraissait bleu. Depuis
+     que le duplex GPT-Live parle en continu, l'état dominant est `speaking` :
+     l'ambiance entière de la page virait à l'orange au rythme de la parole.
+     L'utilisateur l'a dit mieux que nous — « c'est l'agent Jarvis qui doit
+     changer de couleur selon ses états ; l'agent, c'est juste la boule
+     lumineuse ».
+
+     La règle tient donc en une phrase : **rien, hors de l'orbe, ne lit
+     `--omega-accent`.** Le châssis prend `--accent`, le bleu de l'interface,
+     qui ne dépend d'aucun état. La variable continue d'être publiée — l'orbe
+     la possède et peut la donner — mais plus personne ne s'y abonne, et
+     `tests/unit/test_agent_state_colour_stays_on_the_orb.py` le vérifie sur
+     l'ensemble des fichiers servis plutôt que de faire confiance à ce
+     commentaire. */
   const STYLE=`
 #omegaFace{position:absolute;inset:0;width:100%;height:100%;display:none;pointer-events:none;z-index:0}
 html[data-jarvis-theme="omega"] #omegaFace{display:block}
@@ -123,11 +150,11 @@ html[data-jarvis-theme="omega"] #app{background:
 html[data-jarvis-theme="omega"] .topbar{left:18px;right:auto;top:18px;z-index:45}
 html[data-jarvis-theme="omega"] .brand{display:none}
 html[data-jarvis-theme="omega"] .state{
-  border:1px solid color-mix(in srgb,var(--omega-accent,#6ee7ff) 24%,transparent);
+  border:1px solid color-mix(in srgb,var(--accent,#6ee7ff) 24%,transparent);
   border-radius:999px;background:rgba(3,8,12,.46);backdrop-filter:blur(16px);
   font-size:10px;padding:7px 10px;letter-spacing:.1em;color:#6f8591;
   box-shadow:0 8px 30px rgba(0,0,0,.2)}
-html[data-jarvis-theme="omega"] .state strong{color:var(--omega-accent,#6ee7ff)}
+html[data-jarvis-theme="omega"] .state strong{color:var(--accent,#6ee7ff)}
 html[data-jarvis-theme="omega"] .voicehint{
   bottom:18px;border:0;border-radius:999px;background:rgba(3,8,12,.42);
   color:rgba(210,229,238,.58);font-size:10px;padding:7px 11px;
@@ -143,7 +170,7 @@ html[data-jarvis-theme="omega"] .dock button{
 html[data-jarvis-theme="omega"] .dock button svg{width:15px;height:15px;display:block}
 html[data-jarvis-theme="omega"] .dock button:hover,
 html[data-jarvis-theme="omega"] .dock button.active{
-  color:var(--omega-accent,#6ee7ff);border-color:color-mix(in srgb,var(--omega-accent,#6ee7ff) 46%,transparent);
+  color:var(--accent,#6ee7ff);border-color:color-mix(in srgb,var(--accent,#6ee7ff) 46%,transparent);
   background:rgba(10,19,26,.72);transform:translateY(-1px)}
 html[data-jarvis-theme="omega"] .dock .badge{right:-4px;top:-4px;transform:scale(.82)}
 /* Pastilles d'arrière-plan : en ligne, juste à gauche du bouton Agents (premier
@@ -167,8 +194,8 @@ html[data-jarvis-theme="omega"] .modal{
   background:rgba(5,11,16,.94);box-shadow:0 30px 110px rgba(0,0,0,.58);overflow:hidden}
 html[data-jarvis-theme="omega"] .choice.theme-choice{grid-template-columns:auto 1fr;border-radius:12px}
 html[data-jarvis-theme="omega"] .choice.theme-choice.selected{
-  border-color:color-mix(in srgb,var(--omega-accent,#6ee7ff) 54%,transparent);
-  background:color-mix(in srgb,var(--omega-accent,#6ee7ff) 8%,#060d12)}
+  border-color:color-mix(in srgb,var(--accent,#6ee7ff) 54%,transparent);
+  background:color-mix(in srgb,var(--accent,#6ee7ff) 8%,#060d12)}
 .theme-choice .theme-meta{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .theme-choice .theme-preview{margin-top:10px;height:48px;border:1px solid rgba(113,144,160,.12);
   border-radius:9px;position:relative;overflow:hidden;background:#05090d}
