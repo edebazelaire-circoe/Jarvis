@@ -142,6 +142,18 @@ soit publié — mais il dit « arrêté sans l'avoir demandé ». Le motif pré
 aplati dans l'état. On en sort en rallumant : le bouton du bandeau devient
 « Réessayer » et `activate()` rallume avant de réveiller.
 
+**On en sort aussi en éteignant**, et il a fallu le dire : `setEnabled(false)`
+appelle `controller.disable()` quel que soit l'état de départ. Ce qui protège
+« Caméra refusée » d'être écrasé par « Barehands arrêté — caméra libérée » n'est
+pas une garde à l'appel, c'est `wasOn = isEngagedState(state)` **dans**
+`disable()` : depuis `ERROR` rien n'est tenu, donc `disable()` émet `off` et non
+`disabled`, et `off` n'est pas notifié par `onStatus` — aucun toast ne part, et
+celui de la panne garde l'écran avec sa cause réelle. Conditionner l'appel
+laissait au contraire le contrôleur garé en panne après une extinction
+explicitement demandée : interrupteur à faux, écran rouge, c'est-à-dire l'état
+courant qui ment pour continuer de décrire un événement passé. Le toast est le
+journal de l'événement ; l'état est l'état.
+
 - `SLEEP_TIMEOUT_MS = 30000` — 30 s sans main exploitable ramène `ACTIVE` à
   `SLEEP` (décision 7). Jugé avant la lecture de la vidéo : une caméra figée
   rendort aussi.
@@ -184,7 +196,7 @@ aplati dans l'état. On en sort en rallumant : le bouton du bandeau devient
 | `off` | `sleep` | l'interrupteur « Activer Barehands », ou `activate()` qui allume d'abord |
 | `sleep` | `active` | posture en C tenue `WAKE_HOLD_MS`, ou le bouton « Activer l'interaction » |
 | `active` | `sleep` | bouton « Mettre en veille », ou `SLEEP_TIMEOUT_MS` sans main exploitable |
-| `sleep` / `active` | `off` | l'interrupteur, ou `pagehide` |
+| `sleep` / `active` / `starting` / `error` | `off` | l'interrupteur (ou « Éteint » du contrôle de la barre du haut), ou `pagehide` |
 | `sleep` / `active` / `starting` | `error` | caméra refusée, occupée, coupée, modèle absent, suivi en échec |
 | `error` | `sleep` | rallumage explicite (interrupteur ou bouton) |
 
@@ -223,9 +235,14 @@ Ce que chaque choix fait, sur les **mêmes portes** que le panneau et que la voi
 
 | Choix | Appels | Pourquoi |
 |---|---|---|
-| Éteint | `disable()` | écrit l'interrupteur maître à faux **et** rend la caméra : c'est le seul mode où la posture en C ne peut rien, et le seul qui survive au rechargement |
-| Veille | `sleep()` si actif, puis `enable()` | `enable()` ne fait pas sortir d'`ACTIVE` ; il arme le guetteur depuis `off` comme depuis une panne et persiste le maître |
-| Actif | `activate()` puis `enable()` | `activate()` porte la chaîne entière (allumer, guetter, réveiller) en une attente ; `enable()` vient **après**, sans quoi il laisserait le contrôleur en `starting`, où `activate()` n'a rien à réveiller |
+| Éteint | `disable()` | écrit l'interrupteur maître à faux **et** rend la caméra : c'est le seul mode où la posture en C ne peut rien, et le seul qui survive au rechargement. Depuis `ERROR` aussi — voir plus bas |
+| Veille | `sleep()` si actif, puis `enable()` **s'il reste quelque chose à faire** | `enable()` ne fait pas sortir d'`ACTIVE`, donc `sleep()` d'abord. `enable()` fait deux choses — écrire le maître et armer le guetteur — et n'est appelé que si l'une au moins manque : maître vrai **et** moteur vivant, il n'y a rien à écrire ; maître vrai mais moteur éteint (panne, démarrage avorté), il faut rarmer, et c'est le seul chemin public qui le fasse |
+| Actif | `activate()`, puis `enable()` **si le maître est faux et que l'allumage a tenu** | `activate()` porte la chaîne entière (allumer, guetter, réveiller) en une attente ; `enable()` vient **après**, sans quoi il laisserait le contrôleur en `starting`, où `activate()` n'a rien à réveiller. Là il n'est plus que de la persistance : un allumage qui vient d'échouer ne s'enregistre pas comme un souhait exaucé, et le réécrire relancerait un second démarrage pour la même panne |
+
+Aucun de ces chemins n'écrit un réglage qui ne changerait rien : une écriture
+par clic n'est pas une garantie de plus, c'est un aller-retour serveur. La garde
+se lit sur le **dernier instantané de la couture** — l'autorité — jamais sur une
+copie tenue par le contrôle.
 
 Le contrôle **ne tient aucun cycle de vie** : pas de variable d'état, pas
 d'optimisme local. Une seconde mémoire ici est la dérive que la décision 7

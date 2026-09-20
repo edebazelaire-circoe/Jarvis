@@ -5326,9 +5326,28 @@ try{
      réglage resté « allumé » sur le serveur, est **nommée** : c'est ce que
      l'utilisateur retrouvera au prochain chargement. */
   async function setEnabled(enabled){
-    // Éteindre n'attend pas l'écriture : la caméra est libérée tout de suite.
+    /* **Éteindre éteint, quel que soit l'état de départ.** La garde qui
+       protège « Caméra refusée » d'être écrasée par « Barehands arrêté —
+       caméra libérée » ne vit pas ici : elle vit dans `controller.disable()`
+       (`wasOn=isEngagedState(state)`), qui depuis `ERROR` émet `off` et non
+       `disabled` — et `off` n'est pas notifié par `onStatus`. Aucun toast ne
+       part donc, et celui de la panne reste à l'écran avec sa cause réelle.
+
+       Conditionner l'appel ici faisait tout autre chose : depuis `ERROR`, le
+       contrôleur restait garé en panne après que l'utilisateur ait
+       explicitement demandé l'extinction — interrupteur à faux, écran rouge.
+       C'est l'état courant qui mentait pour continuer de décrire un événement
+       passé. Le toast est le journal de l'événement, l'écran est l'état
+       courant : deux métiers. Depuis `OFF` ou `ERROR`, `teardown()` ne rend
+       rien puisque rien n'est tenu, et `generation+=1` invalide au passage un
+       démarrage encore en vol. */
+    /* **Ce qui était vraiment tenu et vient d'être rendu**, lu *avant*
+       l'extinction — et gardé séparé, parce que ce n'est pas la même question
+       que « faut-il éteindre ». C'est celle qui gouverne la phrase « la caméra
+       a bien été libérée, c'est le réglage qui n'a pas été enregistré » plus
+       bas : sans objectif ouvert, cette phrase-là n'aurait rien à dire. */
     const released=!enabled&&Core.isEngagedState(controller.state());
-    if(released)controller.disable();
+    if(!enabled)controller.disable();
     const saved=await saveSettings({enabled});
     if(saved!==null||!released)return saved;
     view.enabled=false;

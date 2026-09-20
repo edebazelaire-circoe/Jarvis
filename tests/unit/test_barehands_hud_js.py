@@ -152,22 +152,47 @@ const modeButton=(root,mode)=>modeButtons(root).find(n=>n.attrs[H.DOM.modeAttrib
    d'instantanés choisis pour décrire une présentation sans passer par un
    moteur. Celle de la page reste branchée sur la vraie couture, et les tests
    qui parlent d'elle ne touchent pas à celle-ci. */
-const sandbox=()=>{
+const sandbox=(options)=>{
+  const o=options||{};
   const box=document.createElement('div');
   box.id='barehandsHudSandbox'+Math.random().toString(36).slice(2);
   document.body.appendChild(box);
   const calls=[];
+  /* Un contrôleur en miniature, **qui republie**. Un double qui se contentait
+     d'enregistrer les appels ne pouvait pas décrire un contrôle dont les
+     décisions se lisent sur l'état courant : il lui aurait toujours servi
+     l'état de départ, et toute garde « y a-t-il quelque chose à écrire »
+     aurait été testée contre une page figée. Les quatre portes font donc ce
+     que le vrai moteur fait — ni plus (aucune caméra, aucune image) ni moins.
+     `o.activateFails` décrit le seul cas que le vrai moteur produit et que ce
+     miniature ne produirait pas tout seul : un allumage qui échoue. */
+  let state=snap();
+  const publish=over=>{state=Object.assign({},state,over);control.render(state)};
   const surface={
-    disable(){calls.push('disable');return Promise.resolve(null)},
-    enable(){calls.push('enable');return Promise.resolve(null)},
-    activate(){calls.push('activate');return Promise.resolve(null)},
-    sleep(){calls.push('sleep');return Promise.resolve(null)},
+    disable(){calls.push('disable');
+      publish({enabled:false,lifecycle:'off',state:'off',starting:false,code:'disabled'});
+      return Promise.resolve(null)},
+    enable(){calls.push('enable');
+      /* Allumer, c'est guetter : l'interaction attend un réveil explicite.
+         Depuis une panne comme depuis l'extinction, c'est ce qui rarme. */
+      const live=state.lifecycle==='sleep'||state.lifecycle==='active';
+      publish(Object.assign({enabled:true},live?{}:{lifecycle:'sleep',state:'sleep',code:'sleep'}));
+      return Promise.resolve(null)},
+    activate(){calls.push('activate');
+      if(o.activateFails)publish({lifecycle:'error',state:'error',code:o.activateFails});
+      else publish({lifecycle:'active',state:'active',code:'woken'});
+      return Promise.resolve(null)},
+    sleep(){calls.push('sleep');
+      if(state.lifecycle==='active')publish({lifecycle:'sleep',state:'sleep',code:'sleep'});
+      return Promise.resolve(null)},
   };
   const control=H.createHudControl({document,host:box,
     surface:()=>surface,now:()=>global.clockMs,
     setInterval:global.window.setInterval,clearInterval:global.window.clearInterval,
     setTimeout:global.window.setTimeout,log:()=>{}});
-  return {box,control,calls,surface};
+  /* L'état de départ passe par le **même** chemin que la couture : `render`. */
+  const start=from=>{state=snap(from);control.render(state);return state};
+  return {box,control,calls,surface,start,at:()=>state};
 };
 /* La forme exacte que la couture publie. Écrite une fois ici pour que les
    tests de présentation décrivent un instantané et non une page. */
@@ -317,35 +342,69 @@ def test_each_mode_drives_the_authoritative_entry_points_in_order(tmp_path):
     (commentaire de `LIFECYCLE_LABEL`)."""
 
     result = run_node(tmp_path, browser() + """
-      const pick=async(mode,from)=>{
-        const {box,control,calls}=sandbox();
-        control.render(snap(from));
-        control.open();
-        await modeButton(box,mode).fire('click');
+      const pick=async(mode,from,options)=>{
+        const box=sandbox(options);
+        box.start(from);
+        box.control.open();
+        await modeButton(box.box,mode).fire('click');
         await settle();
-        return {calls,open:control.isOpen()};
+        const at=box.at();
+        return {calls:box.calls,open:box.control.isOpen(),
+          landed:[at.lifecycle,at.enabled]};
       };
       out({
         off:await pick('off',{lifecycle:'active',state:'active',enabled:true}),
+        offFromError:await pick('off',{lifecycle:'error',state:'error',
+          code:'camera_denied',enabled:true}),
         sleepFromActive:await pick('sleep',{lifecycle:'active',state:'active',enabled:true}),
+        sleepFromSleep:await pick('sleep',{lifecycle:'sleep',state:'sleep',enabled:true}),
         sleepFromOff:await pick('sleep',{lifecycle:'off',state:'off'}),
+        sleepFromStaleMaster:await pick('sleep',{lifecycle:'off',state:'off',enabled:true}),
+        sleepFromError:await pick('sleep',{lifecycle:'error',state:'error',
+          code:'camera_busy',enabled:true}),
         activeFromOff:await pick('active',{lifecycle:'off',state:'off'}),
         activeFromSleep:await pick('active',{lifecycle:'sleep',state:'sleep',enabled:true}),
         activeFromError:await pick('active',{lifecycle:'error',state:'error',code:'camera_busy'}),
+        activeThatFails:await pick('active',{lifecycle:'off',state:'off'},
+          {activateFails:'camera_denied'}),
       });
     """, name="mapping")
 
     # Éteindre, c'est `disable()` — l'écriture du maître **et** la caméra rendue.
     # Jamais `sleep()`, qui garderait l'objectif ouvert.
     assert result["off"]["calls"] == ["disable"]
-    # Endormir depuis l'interaction : on endort, puis on persiste le maître.
-    assert result["sleepFromActive"]["calls"] == ["sleep", "enable"]
+    assert result["off"]["landed"] == ["off", False]
+    # Depuis une panne aussi : l'utilisateur a demandé l'extinction, il l'obtient.
+    assert result["offFromError"]["calls"] == ["disable"]
+    assert result["offFromError"]["landed"] == ["off", False]
+    # Endormir depuis l'interaction : on endort, et il n'y a rien à écrire —
+    # le maître est déjà vrai et le moteur déjà vivant.
+    assert result["sleepFromActive"]["calls"] == ["sleep"]
+    assert result["sleepFromActive"]["landed"] == ["sleep", True]
+    # Déjà en veille et déjà allumé : **aucun** appel. Un aller-retour serveur
+    # par clic n'est pas une garantie de plus.
+    assert result["sleepFromSleep"]["calls"] == []
     # Depuis l'extinction, `enable()` seul arme le guetteur : rien à endormir.
     assert result["sleepFromOff"]["calls"] == ["enable"]
-    # Activer : la chaîne complète d'abord, la persistance ensuite.
+    assert result["sleepFromOff"]["landed"] == ["sleep", True]
+    # Maître resté vrai mais moteur éteint (démarrage avorté, panne) : il faut
+    # bien rarmer, et c'est le seul chemin public qui le fasse. La garde ne
+    # doit donc pas se contenter de regarder l'interrupteur.
+    assert result["sleepFromStaleMaster"]["calls"] == ["enable"]
+    assert result["sleepFromStaleMaster"]["landed"] == ["sleep", True]
+    assert result["sleepFromError"]["calls"] == ["enable"]
+    assert result["sleepFromError"]["landed"] == ["sleep", True]
+    # Activer : la chaîne complète d'abord, la persistance ensuite. L'ordre est
+    # porteur — `enable()` d'abord laisserait le contrôleur en démarrage.
     assert result["activeFromOff"]["calls"] == ["activate", "enable"]
-    assert result["activeFromSleep"]["calls"] == ["activate", "enable"]
+    assert result["activeFromOff"]["landed"] == ["active", True]
+    # Déjà allumé : la persistance n'a rien à faire.
+    assert result["activeFromSleep"]["calls"] == ["activate"]
     assert result["activeFromError"]["calls"] == ["activate", "enable"]
+    # Un allumage qui échoue ne s'enregistre pas comme un souhait exaucé, et
+    # ne relance pas un second démarrage pour la même panne.
+    assert result["activeThatFails"]["calls"] == ["activate"]
+    assert result["activeThatFails"]["landed"] == ["error", False]
     # Un choix referme le sélecteur : il n'y a rien d'autre à y faire.
     for key in result:
         assert result[key]["open"] is False, key
@@ -364,15 +423,19 @@ def test_choosing_off_writes_the_master_switch_and_releases_the_camera(tmp_path)
     surimpression. Le bloc navigateur ne peut pas être poussé jusque-là — node
     n'a pas de caméra — et ce fichier préfère le dire que le simuler.
 
-    Épinglé au passage : **une panne ne devient pas un « éteint » choisi.**
-    Sous node, allumer échoue ; choisir « Éteint » écrit bien le maître à faux,
-    mais le cycle de vie reste `error` et le bouton continue de montrer le
-    motif. C'est la règle du contrat § 1 — on sort d'`ERROR` en rallumant, pas
-    en repeignant — et non un oubli."""
+    Épinglé au passage : **choisir « Éteint » depuis une panne éteint vraiment.**
+    Le bouton retombe sur `off`, parce qu'il décrit l'état courant et que
+    l'utilisateur vient de le demander. Et il le fait **sans** émettre de toast
+    ni déranger celui de la panne, qui reste à l'écran avec sa cause réelle :
+    depuis `ERROR`, `controller.disable()` émet `off` et non `disabled`, et
+    `off` n'est pas notifié. Le toast est le journal de l'événement, l'écran
+    est l'état courant — deux métiers, et c'est le second que le bouton fait."""
 
     result = run_node(tmp_path, browser("server.state.enabled=true;") + WORLD + """
       await settle();
       const before={life:BAREHANDS.lifecycleStatus().lifecycle,enabled:BAREHANDS.state().enabled};
+      /* Ce que la panne a déjà dit à l'écran, avant qu'on éteigne. */
+      const toastsBefore=toasts.slice();
       const control=window.JarvisBarehandsHudControl;
       control.open();
       await modeButton(host,'off').fire('click');
@@ -397,6 +460,11 @@ def test_choosing_off_writes_the_master_switch_and_releases_the_camera(tmp_path)
         /* `isEngagedState` est la question « quelque chose est-il tenu et à
            rendre ? » : après « Éteint », la réponse doit être non. */
         holding:CORE.isEngagedState(BAREHANDS.state().controller),
+        controller:BAREHANDS.state().controller,
+        /* Éteindre depuis une panne ne doit **rien** annoncer : le toast de la
+           panne tient déjà l'écran avec la vraie cause, et une phrase de plus
+           l'écraserait. */
+        toastsBefore,toastsAfter:toasts.slice(),
         held,released:[c.state(),w.track.stopped],
         log:w.log.filter(line=>['track.stop','video.dispose','model.close','overlay.unmount']
           .includes(line)),
@@ -407,9 +475,16 @@ def test_choosing_off_writes_the_master_switch_and_releases_the_camera(tmp_path)
     assert result["writes"][-1] is False, "l'interrupteur maître part à faux sur le serveur"
     assert result["enabled"] is False
     assert result["holding"] is False, "plus rien n'est tenu"
-    # Une panne reste une panne : elle ne se repeint pas en « éteint » choisi.
-    assert result["life"] == "error" and result["tone"] == "error"
-    assert result["code"] == "camera_unsupported"
+    # L'utilisateur a demandé « Éteint » depuis une panne : il l'obtient.
+    assert result["before"]["life"] == "error", "le départ est bien une panne"
+    assert result["controller"] == "off"
+    assert result["life"] == "off" and result["tone"] == "off"
+    assert result["code"] == "off", "l'état courant, pas le motif d'une panne passée"
+    # Et rien n'a été annoncé : le toast de la panne garde l'écran et sa cause.
+    assert result["toastsAfter"] == result["toastsBefore"], (
+        "éteindre depuis une panne n'émet aucun toast et n'écrase pas le sien"
+    )
+    assert "bad" in result["toastsBefore"], "le toast de la panne est bien là"
     # Et là où quelque chose est tenu, « Éteint » rend tout.
     assert result["held"] == ["active", False]
     assert result["released"] == ["off", True], "la caméra est rendue"
@@ -444,6 +519,9 @@ def test_an_external_transition_repaints_the_button_with_the_panel_closed(tmp_pa
       await settle();
       const after=[toneOf(host),BAREHANDS.lifecycleStatus().lifecycle,
         BAREHANDS.lifecycleStatus().code];
+      /* Relevé arrêté ici : la suite décrit l'extinction, qui a son propre
+         verdict juste en dessous. */
+      const tonesWhileStarting=tones.slice();
       await BAREHANDS.disable();
       await settle();
       out({
@@ -451,7 +529,8 @@ def test_an_external_transition_repaints_the_button_with_the_panel_closed(tmp_pa
            pas s'écrire comme « personne n'écoute ». */
         seam:BAREHANDS.lifecycleSeam(),
         panelClosed:SET.open,
-        start,tones,after,
+        start,tones:tonesWhileStarting,after,
+        tonesAll:tones,
         back:[toneOf(host),BAREHANDS.lifecycleStatus().lifecycle,
           BAREHANDS.state().enabled],
         /* Et l'écran est d'accord avec le moteur, pas seulement plausible. */
@@ -470,10 +549,11 @@ def test_an_external_transition_repaints_the_button_with_the_panel_closed(tmp_pa
     assert result["tones"][0] == "off", "l'instantané courant est rejoué à l'inscription"
     assert "starting" in result["tones"], "le démarrage se voit passer"
     assert result["tones"][-1] == "error"
+    assert result["tonesAll"][-1] == "off", "puis l'extinction, elle aussi suivie"
     assert result["after"] == ["error", "error", "camera_unsupported"]
-    # Éteindre écrit bien le maître à faux, mais une panne ne se repeint pas en
-    # « éteint » choisi : on sort d'`ERROR` en rallumant (contrat § 1).
-    assert result["back"] == ["error", "error", False]
+    # Et le retour : éteindre écrit le maître à faux **et** ramène le bouton
+    # sur `off`, depuis la panne comme depuis n'importe quel autre état.
+    assert result["back"] == ["off", "off", False]
     assert result["agreed"] is True
 
 
@@ -642,8 +722,9 @@ def test_the_keyboard_reaches_everything_the_mouse_reaches(tmp_path):
     (`menuitemradio`) et non un `radiogroup`."""
 
     result = run_node(tmp_path, browser() + """
-      const {box,control,calls}=sandbox();
-      control.render(snap({lifecycle:'sleep',state:'sleep',enabled:true}));
+      const sb=sandbox();
+      const box=sb.box,control=sb.control,calls=sb.calls;
+      sb.start({lifecycle:'sleep',state:'sleep',enabled:true});
       const trig=deepFind(box,n=>n.id===H.DOM.triggerId);
       const opts=modeButtons(box);
       const at=()=>opts.findIndex(n=>n===document.activeElement);
@@ -687,7 +768,7 @@ def test_the_keyboard_reaches_everything_the_mouse_reaches(tmp_path):
     ]
     assert result["movedWithoutChoosing"] == [], "une flèche déplace le focus, elle ne choisit pas"
     assert result["tabstops"] == ["-1", "-1", "0"], "un seul arrêt de tabulation : le curseur"
-    assert result["chosen"] == ["activate", "enable"], "le clic clavier choisit, lui"
+    assert result["chosen"] == ["activate"], "le clic clavier choisit, lui"
     assert result["focusBack"] is True, "le focus revient au bouton après un choix"
     assert result["escaped"] == [False, True], "Échap referme et rend le focus"
     assert result["outsideClosed"] is False

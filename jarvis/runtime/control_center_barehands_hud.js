@@ -630,11 +630,21 @@
           await surface.disable();
         }else if(mode===BH.LIFECYCLE.SLEEP){
           /* Endormir d'abord si la main pilote : `enable()` ne fait pas sortir
-             d'ACTIVE, personne d'autre ne le ferait. Puis `enable()`, qui arme
-             le guetteur depuis `off` comme depuis une panne, et persiste le
-             maître. */
+             d'ACTIVE, personne d'autre ne le ferait. */
           if(view.lifecycle===BH.LIFECYCLE.ACTIVE)await surface.sleep();
-          await surface.enable();
+          /* `enable()` fait **deux** choses : écrire l'interrupteur maître sur
+             le serveur, et armer le guetteur. On ne l'appelle donc que s'il en
+             reste au moins une à faire. Maître déjà vrai **et** moteur déjà
+             vivant : il n'y a rien à écrire, et l'écriture serait un
+             aller-retour serveur par clic sans aucune garantie de plus. Maître
+             vrai mais moteur éteint — une panne, un démarrage avorté — : il
+             faut bien rarmer, et c'est le seul chemin public qui le fasse.
+
+             L'état lu est celui du dernier instantané de la couture, donc
+             l'autorité, jamais une copie tenue ici : c'est la règle de cette
+             Slice, et une garde qui se tromperait de source n'écrirait pas là
+             où il faut. */
+          if(!(view.enabled&&BH.isLiveLifecycle(view.lifecycle)))await surface.enable();
         }else{
           /* `activate()` porte la chaîne entière depuis `off` ou depuis une
              panne : il allume, guette, puis réveille, en une seule attente.
@@ -643,7 +653,14 @@
              et `activate()`, qui rend la main tout de suite dans cet état,
              n'aurait rien à réveiller. */
           await surface.activate();
-          await surface.enable();
+          /* Ici `enable()` n'est **que** de la persistance : le travail moteur
+             vient d'être fait. On n'écrit donc que ce qui tient vraiment. Un
+             allumage qui vient d'échouer ne s'enregistre pas comme un souhait
+             exaucé — et le réécrire relancerait un second démarrage et un
+             second message pour la même panne. Règle du canal de commandes,
+             appliquée ici : on rapporte ce que la page constate, jamais ce
+             qu'on a demandé. */
+          if(!view.enabled&&BH.isLiveLifecycle(view.lifecycle))await surface.enable();
         }
         log('info','barehands.hud_mode_selected',{mode});
         return mode;
