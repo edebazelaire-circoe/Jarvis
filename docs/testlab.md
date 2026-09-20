@@ -667,8 +667,10 @@ a new diagnostic — so it never imports the catalog and stays pure.
 
 ## Seed diagnostics
 
-The catalog ships four seeds that every profile chain is built on, plus one guided
-diagnostic that only a person can answer. A request without an explicit version
+The catalog ships five seeds that every profile chain is built on, plus one guided
+diagnostic that only a person can answer — six rows, matching the table below. (It
+said "four plus one" while the table already had six: `barehands.input_quality`
+arrived with Slice 10 and the sentence was not counted again.) A request without an explicit version
 resolves to the latest, and every earlier version stays in the history and stays valid
 for the runs that were judged by it.
 
@@ -679,6 +681,7 @@ for the runs that were judged by it.
 | `speech.stale_supersession` | v1, v2 | `virtual` |
 | `voice.queue_latency` | v1, v2 | `virtual`, `live` |
 | `voice.barge_in_response` | v1 | `hardware:guided` |
+| `barehands.input_quality` | v1 | `virtual` |
 
 Each bump ADDS a profile or a measurement and changes nothing about the previous
 version: v2 of `voice.self_echo` added `audio` and the declared `echo.coupling_db`
@@ -706,6 +709,7 @@ HV-TL-HW-01 and the operator runbook.**
 | `speech.stale_supersession` v1 | `speech.stale_delivered_count = 0`, `speech.latest_intent_delivered = true` | Carries the converted replay fixture `stale_ack_35_9s` as its scenario, provenance included. |
 | `speech.stale_supersession` v2 | the two above, plus `scenario.expectations_failed_count = 0` | Same profiles, parameters and scenario as v1; adds `scenario.expectations_declared` and `scenario.expectations_failed_count` so that an `expect.*` step in its scenario can end the run `failed` rather than `inconclusive` (see "The `expect.*` verdict rule"). **The shipped scenario declares no expectation**, so on the seed's own run both measurements are 0 and the new blocking assertion is vacuous: it exists for a scenario SUPPLIED to this diagnostic, and it is the only thing that can make such a scenario's expectations a verdict. |
 | `voice.queue_latency` | `speech.queue_free_to_started_ms ≤ 3000`, `speech.started_to_first_audio_ms ≤ 4000` | Thresholds match the `latency.above_threshold` bundle rule; `user_turn.end_to_first_audio_ms ≤ 8000` stays **non-blocking** and informational (Slice 07 brain-budget decision below). Virtual time measures scheduler delays, never provider or device latency. |
+| `barehands.input_quality` v1 | `replay.frames_count ≥ 120`, `pointer.stationary_jitter_p95_norm ≤ 0.01`, `click.target_success_ratio ≥ 0.6` | The only diagnostic that measures nobody: it replays a **synthetic golden trace** (`fixtures/barehands/golden.v1.json`) through the real Bare Hands pointer filter, pinch hysteresis and target resolver, in node. It measures the processing chain, never a camera, a tracker or a hand — the trace holds derived scalars only, no landmarks, no image, no identifier (Bare Hands decision 32, contract `docs/barehands-contracts.md` §14). The golden trace deliberately holds one near miss thirty pixels outside a button, so that `target.assistance` changes a number instead of changing nothing. Node absent raises `BareHandsRunError` — a `MeasurementUnavailable` carrying the stable code `testlab_barehands_run_failed` — so the run reads `inconclusive` and the real cause travels with it: a measurement that could not be taken is not a measurement of zero. (Until Slice 11 this path raised `TypeError` instead, because `TestLabError.__init__` takes `(code, detail)` and the runner passed one argument; node-absent then read as `crashed / runner_failed` and the cause was discarded. The runner's failure paths are now driven by a test that runs **without** node.) |
 
 **Brain budget (Slice 07 decision).** Most of the latency findings the Slice 03
 bundle raised on the real 2026-09-12 session were brain delay, not scheduler

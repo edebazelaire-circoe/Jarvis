@@ -1,0 +1,1 @@
+{"slice_id": "03", "task_type": null, "work_intent": "runtime/algorithm", "dependencies": ["01"], "task_type_blocker": "Waived by the Human on 2026-09-19 (decision D1): no Workspace Task Type vocabulary exists in this repository. task_type stays null."}

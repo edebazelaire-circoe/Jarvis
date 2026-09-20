@@ -43,6 +43,23 @@ def _parser() -> argparse.ArgumentParser:
     # Lancée par le CLI du cerveau via `--mcp-config` (scene.enabled), pas par
     # un humain : stdout est le protocole MCP.
     sub.add_parser("display-mcp", help="Serve the brain scene display MCP tools over stdio")
+    # Même chose pour Bare Hands (Slice 12), lancée quand l'interrupteur
+    # `barehands_test_mode.enabled` est vrai : elle joint le Control Center.
+    sub.add_parser("barehands-mcp", help="Serve the brain Bare Hands MCP tools over stdio")
+    # Le banc d'essai Bare Hands (Slice 10) : rejouer une trace enregistrée sous
+    # plusieurs configurations et comparer des mesures, au lieu de changer un
+    # seuil à l'estime et de refaire le geste. Appelée par un développeur.
+    replay = sub.add_parser(
+        "barehands-replay",
+        help="Replay a recorded Bare Hands trace under several configurations and compare metrics")
+    replay.add_argument("trace", help="Path to a trace under runtime/barehands-traces/, or the golden trace")
+    replay.add_argument(
+        "--config", action="append", default=[],
+        metavar="NAME=JSON",
+        help=("A configuration to replay, e.g. "
+              "souple='{\"filter\":{\"minCutoffHz\":0.3}}'. Repeat it: comparing one "
+              "configuration to itself says nothing, so at least two are required."))
+    replay.add_argument("--json", action="store_true", help="Print the raw comparison as JSON")
     # Appelée par le CLI d'agent lui-même, pas par un humain : elle lit
     # l'appel d'outil sur stdin et rend la décision d'aiguillage sur stdout.
     routing_hook = sub.add_parser("routing-hook", help="Apply the sub-agent routing policy to one agent CLI tool call")
@@ -51,6 +68,69 @@ def _parser() -> argparse.ArgumentParser:
 
     add_owner_voice_parser(sub)
     return parser
+
+
+def _barehands_replay(args) -> int:
+    """Rejouer une trace sous plusieurs configurations, et dire ce qui change.
+
+    RÈGLE ZÉRO, version terminal : la sortie nomme ce qui a **bougé** d'une
+    configuration à l'autre. Une table de nombres identiques et un axe sans
+    effet se lisent autrement pareil, et on conclurait « ce réglage ne change
+    rien » d'un réglage qui n'a pas été appliqué. Un refus dit sa cause au lieu
+    de rendre un tableau vide.
+    """
+
+    import json as _json
+
+    from jarvis.runtime import barehands_replay
+
+    configs = []
+    for raw in args.config or []:
+        name, _, body = raw.partition("=")
+        if not _:
+            print(f"--config attend NOM=JSON ; reçu « {raw} »", file=sys.stderr)
+            return 2
+        try:
+            configs.append({"name": name, "config": _json.loads(body or "{}")})
+        except ValueError as exc:
+            print(f"--config {name} : JSON illisible ({exc})", file=sys.stderr)
+            return 2
+    if not configs:
+        # Le défaut utile : l'usine contre elle-même ne dirait rien, donc on
+        # propose l'usine contre un filtre plus doux, qui est la comparaison
+        # que neuf développeurs sur dix veulent faire en premier.
+        configs = [{"name": "usine", "config": {}},
+                   {"name": "filtre-doux", "config": {"filter": {"minCutoffHz": 0.3}}}]
+    try:
+        report = barehands_replay.compare(Path(args.trace), configs)
+    except barehands_replay.ReplayUnavailable as exc:
+        print(f"Rejeu impossible : {exc}", file=sys.stderr)
+        return 3
+    except (barehands_replay.ReplayFailed, ValueError) as exc:
+        print(f"Rejeu refusé : {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(_json.dumps(report, indent=2, ensure_ascii=False))
+        return 0
+    names = [row["name"] for row in report["rows"]]
+    width = max(len(key) for key in barehands_replay.METRIC_KEYS) + 2
+    print(f"{'mesure':<{width}}" + "".join(f"{name:>22}" for name in names))
+    for key in barehands_replay.METRIC_KEYS:
+        cells = []
+        for row in report["rows"]:
+            value = row["metrics"][key]
+            # `null` est une **absence**, et il s'écrit comme telle : « 0 » se
+            # lirait « mesuré, et parfait ».
+            cells.append("non mesuré" if value is None
+                         else f"{value:.6g}" if isinstance(value, float) else str(value))
+        moved = " *" if key in report["changed"] else "  "
+        print(f"{key:<{width}}" + "".join(f"{cell:>22}" for cell in cells) + moved)
+    if report["identical"]:
+        print("\nAucune mesure n'a bougé : soit les configurations sont équivalentes, "
+              "soit cette trace ne contient rien qui les distingue.")
+    else:
+        print(f"\n* a bougé : {', '.join(report['changed'])}")
+    return 0
 
 
 async def _drive_auth() -> int:
@@ -80,6 +160,12 @@ async def _drive_mcp() -> int:
 
 async def _display_mcp() -> int:
     from jarvis.runtime.display_mcp import serve_stdio
+
+    return await serve_stdio()
+
+
+async def _barehands_mcp() -> int:
+    from jarvis.runtime.barehands_mcp import serve_stdio
 
     return await serve_stdio()
 
@@ -960,6 +1046,10 @@ async def _run_control_center_v2() -> int:
     # Outils d'affichage du cerveau (Slice 06) : déclarés au CLI seulement si
     # `scene.enabled` ; le serveur MCP joint Core avec ces coordonnées.
     from jarvis.runtime.display_mcp import DisplayMcpTarget
+    # Outils Bare Hands du cerveau (Slice 12) : déclarés au CLI seulement si
+    # l'utilisateur a allumé Bare Hands. Ce serveur MCP joint **ce** Control
+    # Center, pas Core : Bare Hands n'existe nulle part dans Core.
+    from jarvis.runtime.barehands_mcp import BarehandsMcpTarget
 
     control = ControlCenter(
         runtime_root=runtime_root,
@@ -975,6 +1065,7 @@ async def _run_control_center_v2() -> int:
             core_host=settings.core_host, core_port=settings.core_port,
             token_file=settings.token_file, runtime_root=runtime_root,
         ),
+        barehands_mcp=BarehandsMcpTarget("127.0.0.1", ui_port, runtime_root),
     )
     await control.start(port=ui_port)
     url = f"http://127.0.0.1:{ui_port}/"
@@ -1147,6 +1238,8 @@ async def _amain(argv: list[str] | None = None) -> int:
     if command == "drive-auth": return await _drive_auth()
     if command == "drive-mcp": return await _drive_mcp()
     if command == "display-mcp": return await _display_mcp()
+    if command == "barehands-mcp": return await _barehands_mcp()
+    if command == "barehands-replay": return _barehands_replay(args)
     if command == "routing-hook":
         from jarvis.runtime.routing_hook import main as routing_hook_main
 

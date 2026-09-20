@@ -42,6 +42,8 @@ from jarvis.runtime import (
     agent_behavior,
     agent_routing,
     barehands_test_mode as barehands,
+    barehands_profile,
+    barehands_trace,
     cli_catalog,
     credentials as creds,
     shortcuts as shortcut_registry,
@@ -87,8 +89,21 @@ from jarvis.runtime.conversation_event_view import ConversationEventView, Conver
 from jarvis.runtime.work_ingress import TrackerWorkObserver, WorkIngressForwarder
 from jarvis.runtime.work_view import NOT_CONFIGURED, CoreWorkView, unavailable_payload
 from jarvis.protocol import scene_wire
+from jarvis.domain.barehands_command import (
+    BAD_RECEIPT,
+    BAD_REQUEST,
+    FORBIDDEN_ORIGIN,
+    MAX_COMMAND_REQUEST_BYTES,
+    MAX_POLL_WAIT_S,
+    MAX_RECEIPT_BYTES,
+    BarehandsCommandError,
+    parse_receipt,
+    parse_request,
+)
+from jarvis.runtime.barehands_commands import BarehandsCommandBroker
 from jarvis.domain.scene_capture import INVALID_PNG, MAX_CAPTURE_BYTES, UNKNOWN_CAPTURE, check_capture_id, png_dimensions
 from jarvis.protocol.strict_json import loads_strict_json
+from jarvis.runtime.barehands_mcp import BarehandsMcpTarget
 from jarvis.runtime.display_mcp import DisplayMcpTarget
 from jarvis.runtime.scene_view import (
     CoreSceneView,
@@ -127,10 +142,32 @@ CONVERSATIONS_ROUTE = "/api/conversations"
 #: épinglé égal par `tests/unit/test_testlab_http.py`). Répété ici pour que le
 #: middleware ne dépende pas de l'import du paquet testlab.
 TESTLAB_ROUTE = "/api/testlab"
+#: Canal de commandes Bare Hands (Slice 12). Un POST d'origine étrangère y est
+#: refusé comme partout ailleurs, mais **avec la forme d'erreur du canal** :
+#: sans elle, le garde lève un `HTTPForbidden` en texte brut, sans corps JSON ni
+#: `X-Jarvis-Error-Code`, et le serveur MCP n'a plus de code à nommer — alors
+#: que « tout refus porte un code stable » est une contrainte de cette Slice.
+BAREHANDS_COMMANDS_ROUTE_PREFIX = "/api/barehands/commands"
+
 #: Préfixes dont TOUTES les méthodes sont gardées (Host de bouclage, Origin de
 #: bouclage, jamais `Sec-Fetch-Site: cross-site`) : ils exposent des transcriptions
 #: et des preuves de session, donc une lecture est aussi sensible qu'une écriture.
-READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE)
+#:
+#: Le canal de commandes y est pour une **troisième** raison, trouvée en Slice 11
+#: et qui n'est ni la confidentialité ni l'intégrité : `BarehandsCommands.deliver`
+#: marque la commande remise au **premier** long-poll qui la demande (remise une
+#: fois, à une seule page). Un `GET` d'origine étrangère est parti en requête
+#: simple — aucun préflight sur un GET sans en-tête — et le navigateur ne lui
+#: rendait que le corps, pas le serveur : la page attaquante ne **lisait** rien
+#: et **consommait** quand même. La vraie page attendait alors pour toujours une
+#: commande déjà remise, et l'utilisateur voyait « JARVIS n'ouvre pas le
+#: tutoriel » sans qu'aucun refus n'existe nulle part. Un déni de commande, pas
+#: une fuite : c'est la consommation qui est l'arme, donc le refus doit arriver
+#: **avant** le handler, et la méthode de lecture doit être gardée comme
+#: l'écriture. `GET /api/scene/patches` a la même forme de long-poll mais pas la
+#: même propriété — son curseur `after` vient de l'appelant et rien n'y est
+#: consommé côté serveur, donc un appel étranger n'y prend rien à personne.
+READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_ROUTE_PREFIX)
 
 
 #: Characters that never belong to a plain `host[:port]` authority (userinfo,
@@ -187,10 +224,53 @@ LIVE_SCRIPT_FILE = "control_center_live.js"
 LIVE_SCRIPT_MARKER = "/*__CONTROL_CENTER_LIVE_JS__*/"
 CATALOG_SCRIPT_FILE = "control_center_catalog.js"
 CATALOG_SCRIPT_MARKER = "/*__CONTROL_CENTER_CATALOG_JS__*/"
+#: Contrats et schémas Bare Hands V1 (Slice 01) : identité de main et de
+#: pointeur, HandFrame neutre, gestes, pincement, régions de cible,
+#: interaction, outils, réglages et profil de calibration
+#: (`window.JarvisBarehandsContracts`, logique pure). Inséré AVANT le pointeur
+#: et la page de scène, qui lisent tous deux l'identité de pointeur.
+BAREHANDS_CONTRACTS_SCRIPT_FILE = "control_center_barehands_contracts.js"
+BAREHANDS_CONTRACTS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_CONTRACTS_JS__*/"
+#: Cible sémantique Bare Hands (Slice 05) : collecte des candidates du DOM et
+#: aperçu visuel des régions (`window.JarvisBarehandsTarget`). Inséré APRÈS les
+#: contrats, qu'il lit, et AVANT le pointeur, qui le lit.
+BAREHANDS_TARGET_SCRIPT_FILE = "control_center_barehands_target.js"
+BAREHANDS_TARGET_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_TARGET_JS__*/"
 #: Pointeur à mains nues (Barehands, mode test) : logique pure testée par node,
+#: Parcours de calibration et coque de surimpression Bare Hands (Slice 08,
+#: architecture §10 et §11, décisions 26 à 32). Inséré **après** les contrats
+#: qu'il lit et **avant** le pointeur, qui le lit pour poser
+#: `JarvisBarehands.calibrate()` sur sa surface gelée — une surface qu'on ne
+#: peut pas compléter après coup, donc l'ordre casse à l'insertion et non trois
+#: clics plus tard.
+BAREHANDS_CALIBRATION_SCRIPT_FILE = "control_center_barehands_calibration.js"
+BAREHANDS_CALIBRATION_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_CALIBRATION_JS__*/"
+#: Parcours de tutoriel Bare Hands (Slice 09, architecture §13, décisions 6
+#: et 26). Inséré **après** la calibration, dont il reprend la **coque** de
+#: surimpression sans la modifier — deux parcours, une coque — et **avant** le
+#: pointeur, qui le lit pour poser `JarvisBarehands.tutorial()` et
+#: `.exitOverlay()` sur sa surface gelée.
+BAREHANDS_TUTORIAL_SCRIPT_FILE = "control_center_barehands_tutorial.js"
+BAREHANDS_TUTORIAL_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_TUTORIAL_JS__*/"
+#: Enregistrement, rejeu et mesures Bare Hands (Slice 10, architecture §12,
+#: décision 32) : schéma de trace, liste blanche, garde de forme au chargement,
+#: enregistreur opt-in et rejeu déterministe (`window.JarvisBarehandsRecorder`).
+#: Inséré **après** les contrats qu'il lit et **avant** le pointeur, qui le lit
+#: pour poser `JarvisBarehands.record` sur sa surface gelée — une surface qu'on
+#: ne peut pas compléter après coup.
+BAREHANDS_RECORDER_SCRIPT_FILE = "control_center_barehands_recorder.js"
+BAREHANDS_RECORDER_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_RECORDER_JS__*/"
+
 #: plus son branchement navigateur. Même insertion que les scripts ci-dessus.
 BAREHANDS_SCRIPT_FILE = "control_center_barehands.js"
 BAREHANDS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_JS__*/"
+#: Canal de commandes du cerveau vers Bare Hands (Slice 12) : long-poll de
+#: `GET /api/barehands/commands` et remise de chaque commande au **même** point
+#: d'entrée que le bouton (`window.JarvisBarehands`). Inséré APRÈS le pointeur,
+#: qui pose ce point d'entrée : son bloc navigateur le lit au chargement et
+#: refuse de s'installer sans lui.
+BAREHANDS_COMMANDS_SCRIPT_FILE = "control_center_barehands_commands.js"
+BAREHANDS_COMMANDS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_COMMANDS_JS__*/"
 #: Client pur de la scène constellation (Slice 03) : application ordonnée des
 #: patchs et détection de resynchronisation. Il n'expose que
 #: `window.JarvisSceneClient` et ne touche pas au DOM ; le rendu vient en Slice 05.
@@ -420,6 +500,7 @@ class ControlCenter:
         live_view: CoreLiveStatusView | None = None,
         scene_view: CoreSceneView | None = None,
         display_mcp: DisplayMcpTarget | None = None,
+        barehands_mcp: "BarehandsMcpTarget | None" = None,
         voice_registry: VoiceCapabilityRegistry | None = None,
         barehands_vendor_root: Path | None = None,
     ) -> None:
@@ -473,6 +554,22 @@ class ControlCenter:
         # à l'agent Claude seulement quand `scene.enabled` est vrai.
         self.display_mcp = display_mcp
         self._display_unconfigured_reported = False
+        # Canal de commandes Bare Hands (Slice 12) : où le serveur MCP
+        # `jarvis-barehands` joint **ce** Control Center, et le courtier qui
+        # tient la commande en vol. Remis à l'agent Claude seulement quand
+        # `barehands_test_mode.enabled` est vrai, comme `display_mcp` l'est sur
+        # `scene.enabled`.
+        self.barehands_mcp = barehands_mcp
+        self._barehands_unconfigured_reported = False
+        # Une seule ligne de journal par processus pour un bloc de réglages
+        # illisible : `GET /api/barehands` part à chaque ouverture de l'onglet.
+        self._barehands_foreign_reported = False
+        # Même règle pour le profil : une ligne par processus.
+        self._barehands_profile_foreign_reported = False
+        self.barehands_commands = BarehandsCommandBroker(
+            journal=self.journal,
+            gate=lambda: bool(barehands.load(self._settings())["enabled"]),
+        )
 
         settings = self._settings()
         self._agent_id = cli_catalog.normalize_agent_cli(settings.get("agent_cli"))
@@ -508,6 +605,23 @@ class ControlCenter:
             web.post("/api/shortcuts", self.save_shortcuts),
             web.get("/api/barehands", self.get_barehands),
             web.post("/api/barehands", self.save_barehands),
+            # Profil de calibration (Slice 08). Route **distincte** de celle des
+            # réglages : un profil n'est pas un choix mais une mesure, il porte
+            # son propre numéro de schéma, et l'écrire ne doit pas revalider les
+            # neuf réglages. Déclarée avant `/api/barehands/commands` sans
+            # ambiguïté : aiohttp apparie sur le chemin complet.
+            web.get("/api/barehands/profile", self.get_barehands_profile),
+            web.post("/api/barehands/profile", self.save_barehands_profile),
+            web.delete("/api/barehands/profile", self.reset_barehands_profile),
+            # Canal de commandes du cerveau (Slice 12) : long-poll de la page,
+            # demande du serveur MCP, reçu de la page.
+            # Traces de diagnostic (Slice 10). Déclarée avant
+            # `/api/barehands/commands` pour la même raison que le profil :
+            # les chemins littéraux passent avant les préfixes.
+            web.post("/api/barehands/traces", self.save_barehands_trace),
+            web.get("/api/barehands/commands", self.barehands_commands_poll),
+            web.post("/api/barehands/commands", self.barehands_command_request),
+            web.post("/api/barehands/commands/{command_id}", self.barehands_command_receipt),
             web.get(barehands.ASSET_ROUTE_PREFIX + "{asset:.+}", self.barehands_asset),
             web.get("/api/audio/devices", self.audio_devices),
             web.post("/api/audio/test", self.audio_test),
@@ -603,6 +717,22 @@ class ControlCenter:
                     level="warning",
                     data={"code": "display_mcp_unconfigured", "source": scene["source"]},
                 )
+        if hasattr(agent, "barehands_mcp"):
+            # Même règle et même moment que l'affichage : effectif au prochain
+            # (re)démarrage du cerveau. Éteint, le cerveau est lancé exactement
+            # comme avant — ni serveur `jarvis-barehands`, ni consigne : il ne
+            # peut donc pas prétendre piloter des mains qui n'existent pas.
+            hands_on = bool(barehands.load(settings)["enabled"])
+            agent.barehands_mcp = self.barehands_mcp if hands_on else None
+            if hands_on and self.barehands_mcp is None and not self._barehands_unconfigured_reported:
+                self._barehands_unconfigured_reported = True
+                self.journal.emit(
+                    "barehands.mcp_unconfigured",
+                    "Bare Hands est allumé mais le Control Center ne connaît pas sa propre adresse : "
+                    "outils Bare Hands non déclarés au cerveau",
+                    level="warning",
+                    data={"code": "barehands_mcp_unconfigured"},
+                )
         if callable(getattr(agent, "set_prompt_overrides", None)):
             agent.set_prompt_overrides(prompt_override_document(settings))
 
@@ -650,6 +780,12 @@ class ControlCenter:
             refusal = _loopback_refusal(request.headers.get("Origin"), request.headers.get("Host"),
                                         request.headers.get("Sec-Fetch-Site"))
             if refusal is not None:
+                if request.path.startswith(BAREHANDS_COMMANDS_ROUTE_PREFIX):
+                    # Le canal garde **sa** forme de refus, ici aussi : code stable
+                    # dans le corps et dans l'en-tête, sinon le serveur MCP n'a plus
+                    # de code à nommer. C'est la seule raison pour laquelle ce
+                    # préfixe n'hérite pas du refus générique ci-dessous.
+                    return self._barehands_error(403, FORBIDDEN_ORIGIN, refusal)
                 return web.json_response({"ok": False, "code": "forbidden_origin", "error": refusal}, status=403)
         elif request.method not in {"GET", "HEAD", "OPTIONS"}:
             origin = request.headers.get("Origin")
@@ -658,6 +794,13 @@ class ControlCenter:
                     host = urlparse(origin).hostname
                 except ValueError:
                     host = None
+                    # La route qui sait rendre un refus **codé** le rend :
+                    # `host = None` retombe plus bas sur sa propre forme d'erreur
+                    # au lieu d'un texte brut sans code. Le canal de commandes
+                    # n'est plus cité ici : toutes ses méthodes passent par
+                    # `READ_GUARDED_ROUTES` ci-dessus, qui est strictement plus
+                    # strict (Host de bouclage et `Sec-Fetch-Site` compris) et
+                    # rend déjà `_barehands_error`.
                     if not request.path.startswith(SCENE_CAPTURE_ROUTE_PREFIX):
                         raise web.HTTPForbidden(text="invalid origin")
                 if host not in LOOPBACK_HOSTS:
@@ -684,6 +827,10 @@ class ControlCenter:
             self.journal.emit("agent.unavailable", str(exc), level="error")
 
     async def stop(self) -> None:
+        # Avant tout le reste : un appel du cerveau qui attend une page rend la
+        # main tout de suite avec sa cause, au lieu d'attendre son échéance
+        # pendant que le serveur se ferme sous lui.
+        self.barehands_commands.close()
         for agent in list(self._agents.values()):
             try:
                 await agent.stop()
@@ -729,7 +876,31 @@ class ControlCenter:
             CATALOG_SCRIPT_MARKER, page.with_name(CATALOG_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         html = html.replace(
+            BAREHANDS_CONTRACTS_SCRIPT_MARKER,
+            page.with_name(BAREHANDS_CONTRACTS_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            BAREHANDS_TARGET_SCRIPT_MARKER,
+            page.with_name(BAREHANDS_TARGET_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            BAREHANDS_CALIBRATION_SCRIPT_MARKER,
+            page.with_name(BAREHANDS_CALIBRATION_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            BAREHANDS_TUTORIAL_SCRIPT_MARKER,
+            page.with_name(BAREHANDS_TUTORIAL_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            BAREHANDS_RECORDER_SCRIPT_MARKER,
+            page.with_name(BAREHANDS_RECORDER_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
             BAREHANDS_SCRIPT_MARKER, page.with_name(BAREHANDS_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            BAREHANDS_COMMANDS_SCRIPT_MARKER,
+            page.with_name(BAREHANDS_COMMANDS_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             SCENE_SCRIPT_MARKER, page.with_name(SCENE_SCRIPT_FILE).read_text(encoding="utf-8")
@@ -821,6 +992,12 @@ class ControlCenter:
             # calque et n'ouvre sa lecture que s'il est vrai. Lu à chaque
             # sondage, sans E/S de plus que les réglages déjà lus.
             "scene": load_scene_gate(settings),
+            # Interrupteur Bare Hands (Slice 12) : la page n'ouvre son canal de
+            # commandes que s'il est vrai. Même raison et même battement que
+            # `scene` juste au-dessus — c'est ce qui évite une seconde boucle
+            # permanente dans la page pour apprendre un booléen (constat F1 :
+            # `/api/status` ne portait aucun champ Bare Hands).
+            "barehands": {"enabled": bool(barehands.load(settings)["enabled"])},
             # Bornes que la page affiche (Slice 08, reprise QA) : délai réel de
             # l'arrêt d'un job à travers ce Control Center, `null` sans Core.
             "scene_limits": {
@@ -1655,14 +1832,38 @@ class ControlCenter:
 
     async def get_barehands(self, request: web.Request) -> web.Response:
         del request
-        return web.json_response(barehands.describe(self._settings(), self.barehands_vendor_root))
+        settings = self._settings()
+        # Un bloc écrit par un Jarvis plus récent ne s'applique pas — c'est le
+        # bon choix — mais il se taisait : ni bandeau, ni journal, et la
+        # première écriture ordinaire l'effaçait. La lecture est fréquente
+        # (chaque ouverture de l'onglet), donc la ligne ne part qu'une fois par
+        # processus ; ce qui reste visible, lui, est dans la réponse
+        # (`unreadable`, `stored_schema_version`) et ne s'épuise pas.
+        seen = barehands.inspect(settings)
+        if seen["unreadable"] and not self._barehands_foreign_reported:
+            self._barehands_foreign_reported = True
+            self.journal.emit(
+                "settings.barehands.foreign_version",
+                "Réglages Bare Hands écrits par une version plus récente (schéma "
+                f"{seen['stored_schema_version']}) : non appliqués, gardés tels quels ; "
+                f"la prochaine écriture les rangera sous « {seen['archive_key']} »",
+                level="warning",
+                data={"code": "barehands_stored_version_unreadable",
+                      "stored_schema_version": seen["stored_schema_version"],
+                      "schema_version": barehands.SCHEMA_VERSION,
+                      "archive_key": seen["archive_key"]},
+            )
+        return web.json_response(barehands.describe(settings, self.barehands_vendor_root))
 
     async def save_barehands(self, request: web.Request) -> web.Response:
-        """Enregistrer l'interrupteur seul, dans le fichier de réglages commun.
+        """Enregistrer les réglages Bare Hands, dans le fichier de réglages commun.
 
-        Route dédiée, comme les raccourcis : l'interrupteur s'applique à chaud
-        et ne doit pas dépendre de la validité du reste des réglages (voix,
-        CLI) qu'un enregistrement complet revaliderait.
+        Route dédiée, comme les raccourcis : ils s'appliquent à chaud et ne
+        doivent pas dépendre de la validité du reste des réglages (voix, CLI)
+        qu'un enregistrement complet revaliderait. Depuis la Slice 07 elle
+        porte les neuf réglages du contrat § 9, pas le seul interrupteur ;
+        ``enabled`` reste obligatoire et une charge utile réduite à lui seul
+        reste valide (constat F5).
         """
 
         try:
@@ -1670,6 +1871,13 @@ class ControlCenter:
         except ValueError:
             payload = None
         current = self._settings()
+        # Ce qui était appliqué **avant** l'écriture : c'est la seule fenêtre
+        # où on peut encore le lire, `apply` écrivant dans `current`.
+        before = barehands.load(current)
+        # Et ce que le bloc **était**, pour la même raison : `apply` archive
+        # puis remplace, donc après lui plus rien ne dit qu'il était illisible.
+        seen = barehands.inspect(current)
+        replaced_archive = seen["archive_key"] in barehands.archived_keys(current)
         try:
             value = barehands.apply(current, payload)
         except barehands.BarehandsSettingsError as exc:
@@ -1679,13 +1887,338 @@ class ControlCenter:
             )
             raise web.HTTPBadRequest(text=str(exc), headers={SETTINGS_ERROR_CODE_HEADER: exc.code}) from exc
         self._write_settings(current)
+        # L'interrupteur commande aussi la surface d'outils du cerveau (Slice
+        # 12) : sans ce rappel, allumer Bare Hands laisserait le canal de
+        # commandes sans outil jusqu'au prochain enregistrement des réglages.
+        self._apply_agent_settings(current)
         state = barehands.describe(current, self.barehands_vendor_root)
+        # Ce que cette écriture a **changé**, nommément. La route porte neuf
+        # réglages : un message qui ne parle que de l'interrupteur écrivait la
+        # même ligne « activé » pour trois déplacements de curseur, et aucun
+        # des huit autres réglages n'apparaissait nulle part dans le journal.
+        changed = {key: value[key] for key in barehands.SETTINGS_DEFAULTS if value[key] != before.get(key)}
+        if "enabled" in changed:
+            summary = "Bare Hands {} (mode test)".format("activé" if value["enabled"] else "désactivé")
+            rest = {key: changed[key] for key in changed if key != "enabled"}
+            if rest:
+                summary += " ; " + ", ".join(f"{key}={rest[key]}" for key in sorted(rest))
+        elif changed:
+            summary = "Réglages Bare Hands : " + ", ".join(f"{key}={changed[key]}" for key in sorted(changed))
+        else:
+            # Une écriture qui ne change rien arrive pour de bon (réenregistrer
+            # la même valeur) : la taire ferait d'une route appelée et d'une
+            # route muette la même trace.
+            summary = "Réglages Bare Hands réécrits sans changement"
         self.journal.emit(
-            "settings.barehands",
-            f"Barehands (mode test) {'activé' if value['enabled'] else 'désactivé'}",
-            data={"enabled": value["enabled"], "assets_installed": state["assets"]["installed"]},
+            "settings.barehands", summary,
+            data={"enabled": value["enabled"], "assets_installed": state["assets"]["installed"],
+                  "changed": changed},
         )
+        # L'archivage a sa propre ligne : la précédente parle de ce qui a été
+        # enregistré, celle-ci de ce qui a failli être détruit. Les mêler
+        # rendrait la seconde invisible dans un filtre sur `settings.barehands`.
+        if seen["unreadable"]:
+            self.journal.emit(
+                "settings.barehands.archived",
+                f"Réglages Bare Hands en schéma {seen['stored_schema_version']} conservés sous "
+                f"« {seen['archive_key']} » avant d'être remplacés par les valeurs d'usine"
+                + (" (une archive de la même version a été remplacée)" if replaced_archive else ""),
+                level="warning",
+                data={"code": "barehands_stored_version_archived",
+                      "stored_schema_version": seen["stored_schema_version"],
+                      "schema_version": barehands.SCHEMA_VERSION,
+                      "archive_key": seen["archive_key"],
+                      "replaced_previous_archive": replaced_archive},
+            )
         return web.json_response(state)
+
+    # ------------------------------------------------- profil de calibration (Slice 08)
+
+    async def save_barehands_trace(self, request: web.Request) -> web.Response:
+        """Ranger une trace de diagnostic Bare Hands (Slice 10, décision 32).
+
+        Le serveur ne mesure rien et n'enregistre rien de lui-même : la caméra,
+        les mains et l'écran sont dans la page, et l'enregistrement est une
+        action explicite de l'utilisateur. Il **range** — et il refuse tout ce
+        qui n'est pas une mesure dérivée, parce que le module JS est de notre
+        côté et que cette route ne l'est pas.
+
+        Une ligne de journal par trace, avec son code : sans elle, « personne
+        n'a enregistré » et « l'enregistrement est mort » seraient la même
+        absence dans `runtime/trace.jsonl`.
+        """
+
+        try:
+            payload = await request.json()
+        except ValueError:
+            payload = None
+        try:
+            stored = barehands_trace.store(self.runtime_root, payload)
+        except barehands_trace.BarehandsTraceError as exc:
+            self.journal.emit(
+                "barehands.trace_rejected", f"Trace de diagnostic Bare Hands refusée : {exc}",
+                level="error", data={"code": exc.code},
+            )
+            raise web.HTTPBadRequest(
+                text=str(exc), headers={SETTINGS_ERROR_CODE_HEADER: exc.code}) from exc
+        # Le chemin **normal** se journalise aussi : un journal qui ne porte que
+        # les échecs rend « rien dans le journal » indiscernable de « mort ».
+        summary = (
+            f"Trace de diagnostic Bare Hands enregistrée : {stored['frames']} image(s) "
+            f"sur {stored['observed_frames']} vue(s), {round(stored['duration_ms'] / 1000)} s"
+        )
+        if stored["dropped_frames"]:
+            summary += f" ; {stored['dropped_frames']} image(s) refusée(s) par le plafond"
+        self.journal.emit(
+            "barehands.trace_recorded", summary,
+            data={"code": "barehands_trace_recorded", "trace_id": stored["trace_id"],
+                  "frames": stored["frames"], "observed_frames": stored["observed_frames"],
+                  "dropped_frames": stored["dropped_frames"],
+                  "duration_ms": stored["duration_ms"],
+                  "stopped_because": stored["stopped_because"], "bytes": stored["bytes"]},
+        )
+        return web.json_response(stored)
+
+    async def get_barehands_profile(self, request: web.Request) -> web.Response:
+        del request
+        settings = self._settings()
+        seen = barehands_profile.inspect(settings)
+        if seen["unreadable"] and not self._barehands_profile_foreign_reported:
+            self._barehands_profile_foreign_reported = True
+            self.journal.emit(
+                "settings.barehands.profile_foreign_version",
+                "Profil de calibration Bare Hands écrit par une version plus récente (schéma "
+                f"{seen['stored_schema_version']}) : non appliqué, gardé tel quel ; "
+                f"la prochaine calibration le rangera sous « {seen['archive_key']} »",
+                level="warning",
+                data={"code": "barehands_profile_version_unreadable",
+                      "stored_schema_version": seen["stored_schema_version"],
+                      "schema_version": barehands_profile.SCHEMA_VERSION,
+                      "archive_key": seen["archive_key"]},
+            )
+        return web.json_response(barehands_profile.describe(settings))
+
+    async def save_barehands_profile(self, request: web.Request) -> web.Response:
+        """Enregistrer le profil dérivé d'une calibration (décisions 28 à 32).
+
+        Le serveur ne mesure rien : la caméra, les mains et l'écran sont dans la
+        page. Il **range**, et il refuse tout ce qui n'est pas une mesure
+        dérivée — c'est ici, et non dans le module JS, que la décision 32 se
+        tient contre un appelant qu'on n'a pas écrit.
+        """
+
+        try:
+            payload = await request.json()
+        except ValueError:
+            payload = None
+        current = self._settings()
+        seen = barehands_profile.inspect(current)
+        replaced_archive = seen["archive_key"] in barehands_profile.archived_keys(current)
+        try:
+            value = barehands_profile.apply(current, payload)
+        except barehands_profile.BarehandsProfileError as exc:
+            self.journal.emit(
+                "settings.barehands.profile_rejected", "Barehands calibration profile rejected",
+                level="warning", data={"code": exc.code},
+            )
+            raise web.HTTPBadRequest(text=str(exc), headers={SETTINGS_ERROR_CODE_HEADER: exc.code}) from exc
+        self._write_settings(current)
+        # Ce que la calibration a **mesuré**, nommément. « Profil enregistré »
+        # sans dire quoi rendrait une calibration complète et une calibration
+        # qui a tout raté identiques dans le journal.
+        # Les clés **calibrantes**, celles qui adaptent le moteur, et non toutes
+        # les clés écrites : `quality` est une métrique de séance, présente dès
+        # qu'une image a été vue. La compter faisait dire « 1 mesure(s) » à un
+        # parcours dont les sept étapes avaient échoué, et la branche « sans
+        # aucune mesure » ci-dessous ne tirait jamais.
+        measured = sorted(
+            f"{handedness}.{key}"
+            for handedness in barehands_profile.HANDEDNESSES
+            for key in barehands_profile.CALIBRATING_KEYS
+            if value["hands"][handedness][key] is not None
+        )
+        stages = {stage: value["stages"][stage]["status"] for stage in barehands_profile.STAGES}
+        failed = sorted(stage for stage, status in stages.items() if status == "failed")
+        summary = (
+            "Profil de calibration Bare Hands enregistré : "
+            f"{len(measured)} mesure(s), "
+            f"{sum(1 for status in stages.values() if status == 'ok')}/{len(stages)} étape(s) réussie(s)"
+        )
+        if failed:
+            summary += f" ; échouées : {', '.join(failed)}"
+        if not measured:
+            # Une calibration qui n'a rien mesuré est une nouvelle, pas un
+            # silence : le moteur garde ses défauts et l'utilisateur l'a vu.
+            summary = "Profil de calibration Bare Hands enregistré sans aucune mesure : le moteur garde ses défauts"
+        self.journal.emit(
+            "settings.barehands.profile", summary,
+            data={"calibrated": value["calibrated"], "measured": measured, "stages": stages},
+        )
+        if seen["unreadable"]:
+            self.journal.emit(
+                "settings.barehands.profile_archived",
+                f"Profil de calibration en schéma {seen['stored_schema_version']} conservé sous "
+                f"« {seen['archive_key']} » avant d'être remplacé"
+                + (" (une archive de la même version a été remplacée)" if replaced_archive else ""),
+                level="warning",
+                data={"code": "barehands_profile_version_archived",
+                      "stored_schema_version": seen["stored_schema_version"],
+                      "schema_version": barehands_profile.SCHEMA_VERSION,
+                      "archive_key": seen["archive_key"],
+                      "replaced_previous_archive": replaced_archive},
+            )
+        return web.json_response(barehands_profile.describe(current))
+
+    async def reset_barehands_profile(self, request: web.Request) -> web.Response:
+        """Rendre au moteur ses défauts d'usine (décision 31, « reset profile » du §9)."""
+
+        del request
+        current = self._settings()
+        # **Un profil illisible n'est pas un profil absent**, et c'est ici que
+        # les deux se confondaient : `load` rend un profil vierge pour un bloc
+        # en version étrangère, donc `calibrated` valait `False` et le journal
+        # annonçait « il n'y avait rien de calibré » **en détruisant** une
+        # calibration écrite par un Jarvis plus récent. L'inverse exact de ce
+        # que l'écriture fait déjà (constat R6) : on range avant de remplacer.
+        # Une calibration coûte une minute à l'utilisateur.
+        seen = barehands_profile.inspect(current)
+        replaced_archive = seen["archive_key"] in barehands_profile.archived_keys(current)
+        archived = barehands_profile.archive_unreadable(current)
+        had = seen["unreadable"] or barehands_profile.load(current)["calibrated"]
+        barehands_profile.clear(current)
+        self._write_settings(current)
+        self.journal.emit(
+            "settings.barehands.profile_reset",
+            "Profil de calibration Bare Hands réinitialisé"
+            if had else "Profil de calibration Bare Hands réinitialisé (il n'y avait rien de calibré)",
+            data={"had_profile": had, "unreadable": seen["unreadable"],
+                  "stored_schema_version": seen["stored_schema_version"]},
+        )
+        if archived:
+            self.journal.emit(
+                "settings.barehands.profile_archived",
+                f"Profil de calibration en schéma {seen['stored_schema_version']} conservé sous "
+                f"« {archived} » avant d'être réinitialisé"
+                + (" (une archive de la même version a été remplacée)" if replaced_archive else ""),
+                level="warning",
+                data={"code": "barehands_profile_version_archived",
+                      "stored_schema_version": seen["stored_schema_version"],
+                      "schema_version": barehands_profile.SCHEMA_VERSION,
+                      "archive_key": archived,
+                      "replaced_previous_archive": replaced_archive},
+            )
+        return web.json_response(barehands_profile.describe(current))
+
+    # ------------------------------------------------- canal de commandes (Slice 12)
+
+    @staticmethod
+    def _barehands_error(status: int, code: str, message: str, command_id: str | None = None) -> web.Response:
+        """Refus du canal de commandes : le code dans le corps **et** dans l'en-tête.
+
+        Les deux idiomes du dépôt se rencontrent ici pour une raison précise :
+        le corps JSON (`{"error": {code, message}}`, forme de la famille scène)
+        est ce que la page lit, et l'en-tête `X-Jarvis-Error-Code` (forme de la
+        famille réglages) est ce que le **serveur MCP** lit pour transformer un
+        refus en erreur d'outil sans analyser une phrase française.
+
+        `command_id` (l'identifiant **court**, quand le refus en concerne une)
+        va dans le corps : c'est lui qui relie l'échec vu du serveur MCP aux
+        lignes du courtier dans la même trace.
+        """
+
+        extra = {"id": command_id} if command_id else {}
+        return web.json_response(
+            scene_wire.error_body(code, message, **extra), status=status,
+            headers={SETTINGS_ERROR_CODE_HEADER: code},
+        )
+
+    async def barehands_commands_poll(self, request: web.Request) -> web.Response:
+        """Long-poll de la page : rend la commande en attente, ou rien.
+
+        `wait_s` (0 à `MAX_POLL_WAIT_S`) ; 0 est une lecture courte. Toujours
+        200 : `{"command": {...}}` ou `{"command": null}`. La page rouvre
+        aussitôt — c'est elle qui tient la boucle, et seulement pendant que Bare
+        Hands est allumé et que l'onglet est visible.
+        """
+
+        unknown = set(request.query) - {"wait_s"}
+        if unknown:
+            return self._barehands_error(400, BAD_REQUEST, "paramètre inconnu : " + ", ".join(sorted(unknown)))
+        try:
+            wait_s = float(request.query.get("wait_s", "0"))
+        except ValueError:
+            return self._barehands_error(400, BAD_REQUEST, "wait_s doit être un nombre")
+        if not 0.0 <= wait_s <= MAX_POLL_WAIT_S:
+            return self._barehands_error(400, BAD_REQUEST, f"wait_s doit être entre 0 et {MAX_POLL_WAIT_S:g}")
+        broker = self.barehands_commands
+        deadline = time.monotonic() + wait_s
+        while True:
+            # L'événement est pris **avant** la lecture : une commande créée
+            # entre les deux lève l'événement déjà attendu, elle n'est pas perdue.
+            wake = broker.wake_event()
+            command = broker.deliver()
+            if command is not None:
+                return web.json_response({"command": command})
+            # Rien à attendre d'autre qu'une **nouvelle** commande : la remise
+            # est exclusive, donc une commande déjà emportée par un autre
+            # onglet ne repassera jamais par ici. Aucune minuterie de
+            # redistribution à retrancher de l'attente.
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return web.json_response({"command": None})
+            try:
+                await asyncio.wait_for(wake.wait(), timeout=remaining)
+            except TimeoutError:
+                # Échéance du long-poll : la boucle retranche et décide, elle ne
+                # suppose rien.
+                continue
+
+    async def barehands_command_request(self, request: web.Request) -> web.Response:
+        """Demande du cerveau (serveur MCP `jarvis-barehands`) : une commande, attendue jusqu'à son échéance.
+
+        Rend 200 et le reçu de la page (`outcome`, `lifecycle`, …), ou un refus
+        codé. Jamais un succès par défaut : sans page visible, c'est 504
+        `barehands_no_visible_page`, pas un 200 optimiste.
+        """
+
+        if request.query:
+            return self._barehands_error(400, BAD_REQUEST, "unexpected query")
+        try:
+            raw = await scene_wire.read_bounded_body(request, MAX_COMMAND_REQUEST_BYTES)
+        except scene_wire.SceneBodyTooLarge:
+            return self._barehands_error(413, BAD_REQUEST, f"la demande dépasse {MAX_COMMAND_REQUEST_BYTES} octets")
+        try:
+            name = parse_request(json.loads(raw.decode("utf-8")) if raw else None)
+        except (UnicodeDecodeError, ValueError) as exc:
+            code = getattr(exc, "code", BAD_REQUEST)
+            status = getattr(exc, "status", 400)
+            return self._barehands_error(status, code, str(exc))
+        try:
+            return web.json_response(await self.barehands_commands.request(name))
+        except BarehandsCommandError as exc:
+            return self._barehands_error(exc.status, exc.code, str(exc), exc.command_id)
+
+    async def barehands_command_receipt(self, request: web.Request) -> web.Response:
+        """Reçu de la page pour une commande remise : ce qu'elle a **constaté**.
+
+        Origine vérifiée par le middleware, comme tout POST. Identifiant de la
+        forme attendue (404 sinon), corps borné, reçu strictement validé : un
+        refus sans code connu est refusé ici plutôt que recopié au cerveau.
+        """
+
+        if request.query:
+            return self._barehands_error(400, BAD_RECEIPT, "unexpected query")
+        try:
+            raw = await scene_wire.read_bounded_body(request, MAX_RECEIPT_BYTES)
+        except scene_wire.SceneBodyTooLarge:
+            return self._barehands_error(413, BAD_RECEIPT, f"le reçu dépasse {MAX_RECEIPT_BYTES} octets")
+        try:
+            receipt = parse_receipt(json.loads(raw.decode("utf-8")) if raw else None)
+            return web.json_response(self.barehands_commands.complete(request.match_info["command_id"], receipt))
+        except BarehandsCommandError as exc:
+            return self._barehands_error(exc.status, exc.code, str(exc), exc.command_id)
+        except (UnicodeDecodeError, ValueError) as exc:
+            return self._barehands_error(400, BAD_RECEIPT, f"reçu illisible : {exc}")
 
     async def barehands_asset(self, request: web.Request) -> web.StreamResponse:
         found = barehands.asset_path(self.barehands_vendor_root, request.match_info["asset"])

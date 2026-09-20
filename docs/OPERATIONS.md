@@ -267,16 +267,50 @@ L'onglet **Expérimental** (ajouté par `jarvis/runtime/control_center_barehands
 comme l'onglet Apparence l'est par la couche de thèmes) porte un interrupteur
 **Activer Barehands (mode test)**, éteint par défaut. Il s'applique et
 s'enregistre immédiatement, sans bouton Enregistrer, sous
-`barehands_test_mode.enabled` dans `runtime/control-center-settings.json` ; il
-reste actif au prochain chargement de la page. Route dédiée, comme les
-raccourcis : `GET /api/barehands` (état + présence des assets) et
-`POST /api/barehands` (`{"enabled": true|false}`, refus HTTP 400 avec code
-stable `barehands_*`, rien d'écrit). Événements : `settings.barehands`,
-`settings.barehands.rejected`.
+`barehands_test_mode` dans `runtime/control-center-settings.json` ; il reste
+actif au prochain chargement de la page. Route dédiée, comme les raccourcis :
+`GET /api/barehands` (réglages + outils + présence des assets) et
+`POST /api/barehands` (refus HTTP 400 avec code stable `barehands_*`, rien
+d'écrit). Depuis la Slice 07 la route porte **les neuf réglages**, en
+`snake_case`, estampillés `schema_version` ; une clé absente garde ce qui est
+enregistré, si bien que `{"enabled": false}` seul reste une écriture valide.
+Événements : `settings.barehands`, `settings.barehands.rejected`.
+
+Cette route est **délibérément hors de `/api/settings`** : elle s'applique à
+chaud et ne dépend pas de la validité du reste des réglages (voix, CLI), qu'un
+enregistrement complet revaliderait.
 
 Activé, la page ouvre la webcam et suit les mains **dans le navigateur**
 (MediaPipe Hand Landmarker, WASM + modèle `hand_landmarker.task`), sans service
-cloud ni serveur Barehands. Chaque main détectée affiche un jeton rond qui suit
+cloud ni serveur Barehands. Mais **allumer, c'est guetter** : depuis la Slice 02
+le cycle de vie vaut `off` → `sleep` → `active` (décision 4) et l'interrupteur
+mène en **veille**, jamais directement à l'interaction. Aucun jeton, aucun
+survol et aucun clic tant que l'utilisateur n'a pas réveillé. Contrat complet :
+`docs/barehands-contracts.md` § 1.
+
+**Veille (`sleep`)** — la caméra reste ouverte mais n'alimente qu'un guetteur
+cadencé à **5 images par seconde** (une inférence toutes les 200 ms,
+`WAKE_INTERVAL_MS`) ; entre deux, la boucle d'images ne fait qu'une comparaison
+d'horodatage. Pastille `MAINS · VEILLE` en bas à gauche, `MAINS · VEILLE 40 %`
+dès qu'une main est vue. Le réveil est la **posture en C** (décision 5) : pouce
+et index écartés sans se toucher, index déplié, **tenue une seconde**
+(`WAKE_HOLD_MS`). Un anneau de progression circulaire se remplit autour de la
+main et dit combien de la seconde est acquise ; relâcher avant la fin annule.
+Un trou du traqueur de moins de 400 ms (`wakeGraceMs`) est pardonné ; un trou
+plus long remet la progression à zéro. **Ces deux nombres ne se règlent pas
+séparément** : le guetteur n'échantillonne qu'une fois par `wakeIntervalMs`,
+donc l'écart entre deux mesures **est** cette cadence, et
+`wakeIntervalMs > wakeGraceMs` ferait retomber le maintien à chaque image — la
+posture en C ne pourrait plus jamais aboutir, sans erreur ni trace. `options()`
+refuse donc ce couple à la construction (`RangeError`), au même titre que
+`pressRatio < releaseRatio` et `wakeGapMin < wakeGapMax` ; l'égalité
+(`interval === grace`) reste permise et réveille encore. Baisser la cadence du
+guetteur pour économiser le processeur, ou descendre la tolérance de trou,
+oblige donc à regarder l'autre nombre. **Le temps non observé ne compte jamais** :
+une caméra figée, un onglet passé en arrière-plan ou un écran rabattu ne
+crédient rien du maintien, même si la posture était là avant et après.
+
+**Interaction (`active`)** — chaque main détectée affiche un jeton rond qui suit
 le bout de l'index (image vue en miroir, 12 % de bord ignoré pour atteindre les
 coins). Retour visuel : le jeton grossit et l'élément visé est cerné au survol ;
 l'anneau se remplit pendant le rapprochement pouce-index et le jeton se fige
@@ -287,12 +321,113 @@ fermeture de fenêtre. Seuils (`JarvisBarehandsCore.DEFAULTS`) : pincé sous 0,2
 de la taille de paume, relâché au-dessus de 0,42 (hystérésis), deux images de
 confirmation, 450 ms d'anti-rebond, un seul clic par pincement. Le jeton suit
 la couleur d'accent du thème (`--omega-accent` sous Omega, `--accent` sinon).
+Sans main exploitable pendant **30 secondes** (`SLEEP_TIMEOUT_MS`, décision 7),
+l'interaction retourne d'elle-même en veille — la caméra n'est pas rendue, le
+guetteur reprend. Le délai est jugé **avant** la lecture de la vidéo : une
+caméra figée rendort aussi au lieu de rester active pour toujours.
 
-Arrêt : interrupteur coupé, caméra refusée, absente, occupée ou débranchée,
-modèle absent, erreur du suivi, fermeture de la page. Dans tous les cas, un seul
-chemin (`teardown`) arrête les pistes caméra, ferme le modèle, retire la vidéo,
-les jetons et le survol ; un toast et l'onglet disent pourquoi. Un démarrage
-encore en vol quand on éteint rend la caméra dès qu'elle arrive.
+**Gestes et pincements reconnus (`active`)** — depuis la Slice 04, deux moteurs
+sémantiques tournent à côté des jetons, **en interaction seulement** (la veille
+garde son budget de 5 images par seconde). Ils *reconnaissent et publient* ; ils
+ne déclenchent encore aucune action, qui viendra avec le retour visuel et le
+moteur d'interaction.
+
+- **Pincement**, deux canaux : pouce + **index** (primaire) et pouce + **majeur**
+  (secondaire, le clic droit). Le clic droit est un **doigt**, jamais un appui
+  long. Chaque canal a ses propres états — approche, contact, déplacement,
+  relâchement, annulation — et une **confiance** qui mesure ce qui le sépare de
+  l'autre : une main qui se ferme entièrement rapproche le pouce des deux
+  doigts à la fois, et n'est donc ni un clic ni un clic droit.
+- **Intention** du canal primaire : un contact court, sur place et relâché main
+  immobile est un **clic** ; dès que la main dépasse la tolérance de
+  déplacement, c'est un **glissement**, décidé en chemin. Une main perdue en
+  cours de contact **annule**, elle ne relâche pas : l'arrêt ne doit pas
+  déclencher ce qu'il interrompt.
+- **Postures** : le **C** de réveil (la même mesure que le guetteur), la **main
+  ouverte**, le **poing**, la **double fermeture** (deux poings rapprochés dans
+  le temps) et le **claquement** (deux paumes qui se rejoignent vite). Une
+  posture doit être tenue un quart de seconde avant d'être annoncée ; une main
+  qui pince n'est aucune posture.
+- **Arbitrage** : un geste global ne volera pas la main à une manipulation en
+  cours quand celles-ci existeront — seule la **main ouverte** est autorisée à
+  passer, parce qu'une manipulation qu'on ne peut pas abandonner est un piège.
+
+À lire depuis la console : `JarvisBarehands.gestures()` (événements, gestes
+étouffés avec leur raison, postures et progressions de la dernière image) et
+`JarvisBarehands.pinch()` (événements de contact au format du contrat, avec
+l'identité de pointeur de chaque main, et l'état des deux canaux). Les deux sont
+vides hors interaction. Contrat complet : `docs/barehands-contracts.md` § 4 et
+§ 5.
+
+**Panne (`error`)** — caméra refusée, absente, occupée ou débranchée, modèle
+absent, suivi ou surimpression en échec. C'est un état distinct d'`off` : il dit
+« arrêté sans l'avoir demandé », là où `off` dit « l'utilisateur l'a voulu ».
+Comme `off` il ne tient rien — caméra, modèle, vidéo et boucle d'images sont
+rendus **avant** qu'il soit publié — et le motif précis vit à côté de l'état,
+dans le code du statut (`camera_denied`, `camera_busy`, `camera_missing`,
+`camera_ended`, `camera_unsupported`, `assets_missing`, `tracking_failed`,
+`overlay_failed`, `start_failed`), jamais aplati dedans. On en sort en
+rallumant.
+
+**Bandeau de cycle de vie**, sous l'interrupteur de l'onglet : il nomme l'état
+courant (`Éteint`, `Démarrage…`, `En veille`, `Actif`, `Interrompu · <code>`) et
+porte le bouton qui en change — « Allumer et activer », « Activer
+l'interaction », « Mettre en veille », « Réessayer ». Pendant le démarrage il
+affiche le temps écoulé et se désarme : la sortie est l'interrupteur du dessus,
+qui annule un démarrage encore en vol. C'est le second chemin d'activation exigé
+par la décision 6 ; **la voix emprunte le même depuis la Slice 12** (voir
+« Piloter Bare Hands à la voix » ci-dessous). Depuis la console :
+`JarvisBarehands.activate()` (allume si besoin, puis réveille),
+`JarvisBarehands.sleep()` (rendort sans rendre la caméra),
+`JarvisBarehands.lifecycle()` (l'état lu dans le vocabulaire du contrat) et
+`JarvisBarehands.state()` pour le détail.
+
+Arrêt **voulu** : interrupteur coupé, `pagehide`. L'état devient `off` et le
+toast dit « Barehands arrêté ». Arrêt **subi** : caméra refusée, absente,
+occupée ou débranchée, modèle absent, erreur du suivi. L'état devient `error`,
+le toast reste à l'écran 9 s et porte la cause réelle. Dans les deux cas, un
+seul chemin (`teardown`) arrête les pistes caméra, ferme le modèle, retire la
+vidéo, les jetons et le survol ; un toast et l'onglet disent pourquoi. Un
+démarrage encore en vol quand on éteint rend la caméra dès qu'elle arrive.
+
+#### Piloter Bare Hands à la voix (Slice 12)
+
+« Active les mains » n'est **pas** reconnu par la surface vocale : en
+architecture `continuous_brain` elle n'a aucun outil (Décision 34) et il
+n'existe dans ce dépôt ni registre de commandes vocales ni routeur d'intention.
+C'est le **cerveau** (CLI Claude) qui reconnaît la demande et appelle un outil :
+
+```
+parole → cerveau → outil MCP jarvis-barehands → POST /api/barehands/commands
+       → long-poll de la page → window.JarvisBarehands → reçu → réponse au cerveau
+```
+
+Cinq outils, un par action : `barehands_activate`, `barehands_deactivate`,
+`barehands_calibrate`, `barehands_tutorial`, `barehands_exit_overlay`. Les trois
+derniers **refusent aujourd'hui** (`barehands_flow_absent`) : les parcours
+arrivent aux Slices 08 et 09. Aucun outil ne touche l'interrupteur, les réglages
+ni l'outil de la main : le cerveau réveille et rendort, rien de plus.
+
+Le serveur MCP `jarvis-barehands` n'est déclaré au CLI **que** si l'utilisateur
+a allumé Bare Hands, avec sa consigne système ; éteint, le cerveau est lancé
+exactement comme avant et ne sait pas que ces outils existent. Comme pour
+l'affichage, c'est effectif au prochain **(re)démarrage du cerveau**. Le canal
+côté page ne s'ouvre que pendant que l'interrupteur est vrai et que l'onglet est
+**visible** ; il suit `/api/status` (`barehands.enabled`), sans minuterie de
+plus. Fenêtre fermée ou onglet caché : `barehands_no_visible_page` après 3 s —
+JARVIS le dit, il ne prétend pas avoir activé. Page **visible mais muette**
+(l'invite d'autorisation caméra du navigateur tient `activate()` au-delà de 3 s,
+par exemple) : c'est `barehands_command_expired`, et JARVIS dit que l'issue est
+inconnue au lieu d'envoyer chercher une fenêtre qui est là. La ligne de trace se
+lit sur `deliveries` : `0`, personne ne l'a prise ; `1`, une page l'a prise.
+
+Refus HTTP : code stable dans le corps JSON **et** dans `X-Jarvis-Error-Code`.
+Événements de trace : `barehands.command_requested`, `…_delivered`,
+`…_applied`, `…_expired`, `…_abandoned`, `…_disabled` (interrupteur éteint),
+`…_busy` (une commande est déjà en vol), `…_refused` (**la page** a dit non),
+`barehands.receipt_refused`, `barehands.tool`, `barehands.tool_failed`. Toutes
+les lignes d'une même commande portent le même `data.id` court, des deux côtés
+du saut MCP. Contrat complet : `docs/barehands-contracts.md` § 12.
 
 Assets : non versionnés, ce sont ceux que `scripts/bootstrap_third_party.py` a
 vendorisés sous `third_party/barehands/vendor` (MediaPipe Tasks Vision 0.10.14,
@@ -316,27 +451,313 @@ ai-visualizer (iframe) ne reçoit pas les clics ; le survol n'active pas les
 styles `:hover` natifs (un contour les remplace) ; le suivi tourne sur le fil
 principal de la page.
 
+#### Outils et Réglages (Slice 07)
+
+L'onglet porte **deux sections de plus**, et la distinction est le sujet
+(décision 25) : un **outil** dit « ce que la main veut dire » et se change en
+pleine session ; un **réglage** dit « comment Bare Hands se comporte » et se
+persiste.
+
+**Outils.** Palette de **trois**. `Pointeur` reste **contextuel** — clic,
+glissement, défilement ou sélection selon ce qu'il y a sous la main, c'est-à-dire
+le comportement d'avant. `Main` impose le défilement, `Sélection` impose la
+désignation ; l'une et l'autre **refusent** une cible qui ne s'y prête pas, et
+le refus s'écrit sous la pastille (`OUTIL INAPPLICABLE · cette cible ne s'y
+prête pas`). Un outil ne prend jamais un bord, un coin, ni le corps d'une étoile
+`point`/`signal` : ce sont des poignées de cadre.
+
+`Surligneur` et `Dessin` ont été **retirés de la V1** (décision humaine, fin de
+tâche). Ils étaient déclarés au contrat, refusés partout, et possédés par
+aucune Slice : la palette proposait deux capacités qui n'existaient pas, et
+rien à l'écran ne doit laisser croire à une capacité absente. La couche
+d'annotation sera conçue pour elle-même, plus tard. La table
+`INSTALLED_TOOLS` reste néanmoins **séparée** de `TOOLS`, bien qu'elles
+coïncident aujourd'hui : c'est elle qui rend « installé » vérifiable, donc un
+outil déclaré demain sans moteur se refait refuser
+(`barehands_tool_not_installed`) au lieu d'être accepté sans effet.
+
+**Réglages**, tous appliqués à chaud et enregistrés immédiatement :
+
+| Réglage | Effet |
+|---|---|
+| Aperçu de la cible | décision 24 : éteint, le cadre et la zone ne sont plus dessinés ; la cible continue d'être résolue, et le contour hérité reste le repère sous intention |
+| Assistance de visée | portée au-delà du cadre, 0 à 48 px ; le défaut (0,5) rend exactement la portée d'usine |
+| Sensibilité du geste | divise les deux tolérances de déplacement (`clickSlopPx`, `dragSlopPx`) ; le défaut rend les seuils d'usine |
+| Retour en veille | décision 7, 5 s à 600 s ; c'est enfin le délai **réel** (le contrôleur recevait la constante) |
+| Lecture de diagnostic | panneau en bas à droite : qualité, vitesse et immobilité par main. Rien n'est enregistré ; éteint, le panneau est **absent** de l'arbre |
+| Proposer la calibration | décision 27 ; **lu depuis la Slice 08** : décoché, le bouton « Calibrer » est désarmé et le parcours ne se propose plus |
+| Tutoriel déjà vu | **lu depuis la Slice 09** : coché, « Lancer le tutoriel » répond « Tutoriel terminé » au lieu de rejouer les dix étapes ; le parcours le coche lui-même en arrivant au bout |
+| Réinitialiser les réglages | rend les valeurs d'usine ; **ne touche pas à l'interrupteur**, donc n'éteint jamais la caméra, et **ne touche pas au profil de calibration** (voir ci-dessous) |
+
+**« Réinitialiser » réinitialise les réglages, pas le profil.** Le handoff
+parlait d'une « réinitialisation du profil » ; ce qui est livré remet les neuf
+**réglages** à l'usine et laisse la calibration enregistrée intacte. C'est un
+rétrécissement assumé et non un oubli : les deux effacements ne se pardonnent
+pas pareil — un réglage se refait en trois clics, une calibration coûte une
+minute de poses à l'utilisateur. Le profil s'efface par sa propre route
+(`clear`), qui retire le bloc au lieu de le remplir de nuls, et le moteur
+revient alors à ses défauts (décision 31).
+
+**Septième paire dangereuse.** `sleepTimeoutMs` doit rester **au-dessus** de
+`wakeHoldMs` : en dessous, la seconde de posture en C coûte plus cher que le
+temps qu'elle achète, la veille reprend la main à l'image suivante et la
+session cycle — en détruisant à chaque tour les identités de piste et les
+fentes de pointeur. `options()` le refuse à la construction **et** à chaque
+`controller.configure`, comme `pressRatio < releaseRatio` et les cinq autres.
+La borne basse de l'écran (5 s) est cinq fois au-dessus : le refus protège un
+appelant, pas l'interface.
+
+**Depuis la console** : `JarvisBarehands.settings()` lit, `settings({...})`
+écrit (normalisé, appliqué, enregistré, `null` si rien n'a été enregistré) ;
+`tools()` liste la palette et `tool('pan')` en choisit un. `targetPreview()` et
+`targetAssistance()` changent le moteur **sans** persister — un essai n'a pas à
+devenir une préférence.
+
+#### Ce qu'une main peut saisir, et les deux façons de tirer
+
+La page a longtemps dit ici que « Barehands ne glisse pas ». C'était faux depuis
+la Slice 06, et le tableau de la scène constellation, trois lignes plus haut,
+disait déjà le contraire. Voici la vraie règle, qui est une distinction et non
+un oui-ou-non.
+
+**Un glissement de pointeur, partout.** Sur une page ordinaire — un panneau, une
+liste, un champ — un pincement tenu puis déplacé émet la vraie séquence
+`pointerdown` / `pointermove` / `pointerup`, et l'annulation émet
+`pointercancel`. Ce que la souris déplace, la main le déplace.
+
+**Une capture de cadre, sur les objets de la scène.** Une étoile, une capsule ou
+une fenêtre de la constellation ne passe **pas** par le pointeur : elle passe par
+la couture `JarvisScene.frames`, qui déplace, redimensionne et valide en unités
+de scène. Une zone tenue déplace le cadre entier ; deux zones compatibles du même
+objet le redimensionnent.
+
+**Et le corps d'une étoile n'émet aucune séquence de pointeur** — c'est le
+carve-out `.sc-node` de la décision 8. Sans lui, la page de scène lirait un
+glissement sur le corps comme un déplacement de cadre, c'est-à-dire exactement ce
+que la décision 8 interdit, mais par la porte de derrière : le corps d'une
+capsule ou d'une fenêtre est du **contenu** (on y défile, on y sélectionne), pas
+une poignée. Les poignées sont les bords et les coins.
+
+**Ce qui reste vrai, en revanche : le pincement n'ouvre pas de lien.** Un
+navigateur n'ouvre un onglet que sur une activation utilisateur réelle, et un
+geste synthétisé par la page n'en est pas une. Ce n'est pas une limite de Bare
+Hands mais une règle du navigateur, la même que celle notée au § 13 de
+`docs/SECURITY.md`. Un lien se lit à la main, il se suit à la souris ou au
+clavier.
+
 #### Procédure de test manuel (caméra réelle)
+
+**Rien de ce qui suit n'a été exécuté.** Il n'y a ni webcam ni navigateur dans
+l'environnement où Bare Hands a été construit, et la validation humaine a été
+**levée** pour cette livraison — levée, pas satisfaite. Aucune phrase de ce
+dépôt sur la façon dont Bare Hands se comporte devant une vraie main n'a été
+vérifiée par observation. Ce qui suit est la dette, rassemblée en une procédure
+qu'un humain peut réellement dérouler.
+
+**Groupée par séance de caméra**, parce que c'est la contrainte réelle : ouvrir
+la caméra, se placer, régler la lumière coûte plus cher que n'importe quelle
+étape prise isolément. Sept lots, A1 à A7. A1 et A2 se tiennent d'une traite ;
+A3 demande une webcam **réellement** en 640×480 ; A7 demande le cerveau lancé.
+
+Notez la webcam, sa résolution, le navigateur et l'éclairage : ce sont les
+variables qui font diverger deux séances, et sans elles un « ça marche » ne se
+compare à rien.
+
+##### Préparation (une fois)
 
 1. Assets présents : `python scripts/bootstrap_third_party.py --verify` rend 0.
 2. Lancer le Control Center (`python -m jarvis control-center`), ouvrir
    `http://127.0.0.1:17654/` dans Chrome. Depuis un worktree, en parallèle d'un
    JARVIS déjà lancé : `JARVIS_UI_PORT=17655`, `JARVIS_VISUALIZER_ENABLED=0`,
    `JARVIS_BAREHANDS_VENDOR_DIR=<dépôt principal>\third_party\barehands\vendor`.
-3. SET → Expérimental → cocher l'interrupteur. Attendu : invite caméra, puis
-   toast « Barehands actif » et pastille `MAINS · TEST` en bas à gauche.
-4. Montrer une main : un jeton suit l'index ; deux mains, deux jetons.
-   Survoler un bouton du dock : jeton agrandi, bouton cerné.
-5. Rapprocher lentement pouce et index : anneau qui se remplit, jeton figé.
-   Pincer franchement sur le bouton Trace : le panneau s'ouvre (onde de clic).
-   Rester pincé : aucun second clic. Rouvrir puis repincer : nouveau clic.
-6. Ouvrir SET, changer d'onglet et cocher une case au pincement.
-7. Couper l'interrupteur au pincement : jetons retirés, voyant caméra éteint,
-   toast « Barehands arrêté ». Recharger la page : toujours éteint.
-8. Réactiver, recharger : le mode test repart seul. Refuser la caméra dans
-   Chrome (icône de l'adresse) puis recharger : toast « Caméra refusée »,
-   aucune surimpression, message dans l'onglet.
-9. Débrancher la webcam pendant le suivi : « Caméra coupée », tout est retiré.
+
+##### A1 — caméra, cycle de vie, pannes
+
+- **A1.1** SET → Expérimental → cocher l'interrupteur. Attendu : invite caméra,
+  le bandeau passe par « Démarrage… » avec son compteur de secondes, puis toast
+  **« Barehands en veille »** et pastille **`MAINS · VEILLE`** en bas à gauche.
+  Le bandeau lit « Cycle de vie : **En veille** », bouton « Activer
+  l'interaction ». **Aucun jeton ne doit apparaître**, même en agitant les
+  mains : la veille guette, elle ne pointe pas.
+- **A1.2** **Veille par le bouton, et retour.** SET → Expérimental → « Mettre en
+  veille » : jetons retirés, pastille `MAINS · VEILLE`, **le voyant caméra
+  reste allumé** (c'est SLEEP, pas OFF). « Activer l'interaction » : les jetons
+  reviennent sans nouvelle invite caméra. Même chose depuis la console avec
+  `JarvisBarehands.sleep()` / `JarvisBarehands.activate()`.
+- **A1.3** **Retour en veille après 30 s (décision 7).** En interaction, sortir
+  les mains du champ et attendre 30 secondes sans bouger. Attendu : toast
+  « Retour en veille », pastille `MAINS · VEILLE`, voyant caméra toujours
+  allumé. Refaire ensuite avec « Retour en veille » réglé à 5 s : c'est le délai
+  **réel** qui doit être suivi, pas la constante d'usine.
+- **A1.4** Couper l'interrupteur au pincement : jetons retirés, voyant caméra
+  éteint, toast « Barehands arrêté », bandeau « Éteint ». Recharger la page :
+  toujours éteint, et la page repart en veille, pas en interaction.
+- **A1.5** Réactiver, recharger : le mode test repart seul **en veille**.
+  Refuser la caméra dans Chrome (icône de l'adresse) puis recharger : toast
+  « Caméra refusée », aucune surimpression, message dans l'onglet, et le bandeau
+  lit « Interrompu · camera_denied » avec un bouton « Réessayer » — **pas**
+  « Éteint » : une panne n'est pas un arrêt voulu.
+- **A1.6** Débrancher la webcam pendant le suivi : « Caméra coupée », tout est
+  retiré, bandeau « Interrompu · camera_ended ».
+- **A1.7** **La caméra prise par quelqu'un d'autre.** Ouvrir Zoom, Teams ou
+  `chrome://settings` sur la même webcam, puis activer Bare Hands. Attendu : un
+  refus **qui nomme la cause**, jamais un bandeau « Démarrage… » qui ne finit
+  pas. C'est la RÈGLE ZÉRO : un état d'attente porte une échéance.
+- **A1.8** **Deux onglets du Control Center.** Attendu : les deux ouvrent la
+  caméra, ou le second dit pourquoi il ne peut pas ; aucun des deux ne reste
+  muet. Noter ce qui se passe — ce cas n'a pas de contrat écrit, et la réponse
+  observée doit en devenir un.
+
+##### A2 — la posture de réveil
+
+**A2.2 en premier : c'est l'item ouvert le plus cité de toute la tâche.** S'il
+échoue, le reste du lot peut attendre — la bande de réveil se règle d'abord.
+
+- **A2.2 — LE FAUX RÉVEIL À MAIN PLATE.** Présenter une main **plate, doigts
+  serrés, pouce collé contre l'index**, paume face caméra, et la tenir immobile
+  deux secondes. Attendu : **rien**. La pastille peut monter un peu puis
+  redescendre, mais l'anneau ne doit pas se remplir et Bare Hands ne doit pas
+  passer en `ACTIF`. Reprendre en inclinant la main de 15°, 30°, 45°, et à deux
+  distances (40 cm, 80 cm). Un réveil sur l'une de ces poses est le défaut
+  suspecté depuis la Slice 02 : le score du C tient l'écart pouce-index entre
+  `wakeGapMin` (0,46) et `wakeGapMax` (0,85) **en paumes**, et une main plate
+  vue de face peut produire un écart apparent dans cette bande alors que le
+  pouce est adducté. Si ça réveille : noter la pose, la distance et l'angle,
+  puis lire `JarvisBarehands.inspect()` pour relever `cPose`, `gapPalms` et
+  `closure` au moment du faux positif. Ce sont ces trois nombres qui disent s'il
+  faut resserrer la bande ou ajouter une condition d'index déplié.
+- **A2.1** **Le vrai réveil (décision 5).** Former un C — pouce et index écartés
+  sans se toucher, index bien déplié, main à plat face caméra. Attendu : la
+  pastille passe à `MAINS · VEILLE 20 %`, `40 %`… et un anneau de progression
+  se remplit autour de la main en une seconde environ. Relâcher à mi-course :
+  la progression retombe, rien ne s'active. Retenir la posture jusqu'au bout :
+  toast « Barehands activé », pastille `MAINS · ACTIF`, bandeau « Actif ».
+- **A2.3** **Le temps non observé ne compte pas (R1).** Reformer le C et, à
+  mi-anneau, masquer la main une bonne seconde, ou passer l'onglet en
+  arrière-plan, ou rabattre l'écran une minute. Au retour : l'anneau **repart
+  de zéro**. Attendu : aucune activation en une image. Un réveil qui
+  surviendrait sans seconde de maintien réellement observée est un défaut
+  bloquant.
+- **A2.4** **Le trou pardonné.** Masquer la main **moins de 400 ms**
+  (`wakeGraceMs`) au milieu de l'anneau. Attendu : la progression **continue**
+  au lieu de repartir de zéro. C'est la moitié d'A2.3 qu'aucun test ne peut
+  distinguer de l'autre sans caméra.
+- **A2.5** **Un pincement en cours ne réveille pas.** Pincer franchement (pouce
+  et index en contact) et tenir. Attendu : aucun anneau de réveil. La bande le
+  garantit par construction — `wakeGapMin` reste au-dessus du seuil de
+  relâchement du pincement — mais c'est une garantie sur des nombres, pas sur
+  une main.
+- **A2.6** **Deux mains qui forment le C en même temps.** Attendu : un seul
+  réveil, pas deux cycles concurrents.
+
+##### A3 — les nombres du pincement, sur une vraie 640×480
+
+Ce lot demande une webcam qui sort **réellement** du 640×480, pas une 1080p
+redimensionnée : c'est la résolution basse que les seuils doivent tenir, et
+c'est là que le bruit des points est le plus fort.
+
+- **A3.1** Pincer et relâcher **vingt fois** à distance confortable. Relever
+  `JarvisBarehands.inspect()` après chaque salve. Attendu : vingt clics, zéro
+  double-clic, zéro clic manqué.
+- **A3.2** Refaire à 40 cm puis à 100 cm. Attendu : le ratio de pincement est
+  normalisé par la paume, donc les deux distances doivent donner le même
+  comportement. Un écart ici dit que la normalisation ne tient pas.
+- **A3.3** **L'hystérésis.** Approcher pouce et index **très lentement**
+  jusqu'au seuil et s'y tenir en tremblant. Attendu : **un** clic, pas une
+  rafale. C'est ce que `pressRatio < releaseRatio` existe pour empêcher.
+- **A3.4** **Le canal secondaire.** Pincer avec le **majeur** : attendu, un
+  `contextmenu` au relâchement, jamais une manipulation. Vérifier que le menu
+  contextuel est bien celui de l'objet visé.
+- **A3.5** Main partiellement hors cadre, main de profil, main gantée, deux
+  mains qui se croisent. Attendu : pas de clic fantôme. Noter la qualité
+  (`quality`) sous laquelle le suivi devient inutilisable et comparer au
+  plancher `HAND_QUALITY_FLOOR` (0,25).
+
+##### A4 — visée, retour visuel, lisibilité
+
+- **A4.1** Montrer une main : un jeton suit l'index ; deux mains, deux jetons.
+  Survoler un bouton du dock : jeton agrandi, bouton cerné.
+- **A4.2 — LES ZONES D'UNE FENÊTRE COMPACTE.** Aucun harnais de DOM n'existe
+  pour `installJarvisScene` : `data-representation` est vérifié **en lisant la
+  source**, donc une fenêtre qui perdrait ses zones serait invisible à tous les
+  tests. Réduire la fenêtre du navigateur jusqu'à ce qu'une fenêtre de scène
+  soit petite, puis viser son bord et son coin. Attendu : bord et coin restent
+  atteignables et distincts du corps. Le corps d'une capsule de 24 px de haut
+  doit rester un corps.
+- **A4.3** **L'aperçu de cible ne se dessine que sous intention (décision 3).**
+  Main ouverte, rien ne doit être surligné. Approcher les doigts : l'aperçu
+  apparaît. Éteindre « Aperçu de la cible » : plus rien n'est dessiné, mais le
+  clic continue de viser juste.
+- **A4.4** **Les trois couleurs (décision 23)** sont-elles distinguables sur le
+  thème clair **et** sur le thème sombre, et à 80 cm ? Vérifier aussi sous le
+  réglage « mouvement réduit » du système.
+- **A4.5** **L'assistance de visée**, à 0 puis à 48 px : la différence doit être
+  ressentie sur une petite cible, et ne doit jamais faire sauter le jeton sur
+  une cible voisine.
+
+##### A5 — la manipulation, au toucher
+
+- **A5.1** Pincer franchement sur le bouton Trace : le panneau s'ouvre (onde de
+  clic). Rester pincé : aucun second clic. Rouvrir puis repincer : nouveau clic.
+- **A5.2** Ouvrir SET, changer d'onglet et cocher une case au pincement.
+- **A5.3 — LA CAMÉRA QUI CLIGNE PENDANT UN GESTE.** Nommément demandé par la
+  Slice 06 pour cette séance, mot pour mot : « le clignement de la caméra coûte
+  le geste en cours ». Commencer à déplacer une étoile, puis masquer la main
+  brusquement, ou passer une seconde devant une lampe. Attendu : l'objet est
+  **annulé** proprement (retour à sa position d'origine), et non figé à
+  mi-course ni posé au hasard. Refaire pendant un redimensionnement à deux
+  mains.
+- **A5.4** Déplacer, redimensionner par un bord, par un coin, puis à deux mains.
+  Attendu : le cadre ne se retourne jamais, s'arrête à la taille minimale, et
+  reste dans la zone de composition sûre.
+- **A5.5** **Le défilement et la sélection.** Défiler une liste longue avec
+  l'outil `Main` ; sélectionner du texte avec `Sélection` ; vérifier qu'un refus
+  d'outil s'écrit bien sous la pastille (`OUTIL INAPPLICABLE`).
+- **A5.6** Déposer un objet et vérifier qu'**aucun clic** n'est délivré dessus
+  au relâchement. C'est la porte de livraison du détecteur hérité.
+
+##### A6 — outils, réglages, calibration, tutoriel
+
+- **A6.1** Les **trois** outils de la palette se prennent à la main et le
+  changement s'applique à chaud. Aucun outil désarmé ne doit rester visible :
+  `Surligneur` et `Dessin` sont hors V1 et ne doivent plus apparaître.
+- **A6.2** Chaque réglage s'applique **à chaud** et survit à un rechargement.
+  « Réinitialiser les réglages » ne coupe pas la caméra et **ne touche pas** au
+  profil de calibration.
+- **A6.3** **Le parcours de calibration entier**, ses sept étapes, devant une
+  vraie main. Attendu : chaque étape se solde — réussie, échouée avec un motif,
+  ou sautée — et aucune n'attend pour toujours. Faire échouer une étape exprès
+  (sortir du cadre) et vérifier que le parcours **continue** (décision 31) au
+  lieu de s'arrêter. Puis vérifier que les seuils mesurés sont **appliqués** :
+  le pincement doit changer de sensibilité après un enregistrement.
+- **A6.4** Le **tutoriel** de dix étapes, en entier, puis « Recommencer » depuis
+  l'intérieur du parcours : le parcours relancé doit être **nourri** (le
+  compteur bouge, les gestes comptent). C'est la panne de la Slice 10.
+- **A6.5** Après un tutoriel terminé, « Lancer le tutoriel » doit répondre
+  « Tutoriel terminé » — et décocher « Tutoriel déjà vu » doit le rendre
+  rejouable.
+- **A6.6** **Un enregistrement de diagnostic**, du début à la fin : le démarrer,
+  faire une minute de gestes, l'arrêter, puis rejouer la trace et comparer deux
+  configurations. Ouvrir le fichier dans `runtime/barehands-traces/` et
+  **vérifier de ses yeux qu'il ne contient aucun point de main** — que des
+  nombres et des noms d'un vocabulaire fermé.
+
+##### A7 — le canal vocal (cerveau lancé)
+
+- **A7.1** Dire « active les mains », « calibre », « lance le tutoriel », « sors
+  de la surimpression », « désactive les mains ». Attendu : chacune atteint la
+  page et **le reçu revient au cerveau**, qui répond en connaissance de cause.
+- **A7.2** Demander une commande avec **aucune page ouverte**. Attendu :
+  `barehands_no_visible_page`, et le cerveau le dit au lieu d'un succès
+  optimiste.
+- **A7.3** Demander une commande, puis **fermer l'onglet** aussitôt après sa
+  remise. Attendu : `barehands_command_expired` avec `deliveries: 1` — « la page
+  l'a prise et n'a pas répondu ». Redemander en une phrase doit marcher.
+- **A7.4** **Deux onglets ouverts**, une seule commande. Attendu : **un** seul
+  parcours démarre. C'est l'exclusivité de la remise, et elle ne se voit qu'avec
+  deux onglets réels.
+- **A7.5** Bare Hands éteint, demander « calibre ». Attendu : refus codé, et le
+  cerveau propose d'allumer plutôt que de prétendre avoir calibré.
 
 ## Confirmation behavior
 
@@ -970,8 +1391,11 @@ Limites de confiance : `docs/SECURITY.md` §13.
 **Limites connues.** 512 objets actifs (≈ 400 étoiles) : au-delà, la pastille
 « Scène pleine » propose l'archivage groupé et les nouvelles étoiles attendent.
 Zone de composition prévue à partir de 1280×720 : une fenêtre plus petite peut
-cacher des bords sous les commandes. Glisser au doigt jamais vérifié ; Barehands
-ne glisse pas et n'ouvre pas les liens. Une page par profil de navigateur tient
+cacher des bords sous les commandes. Glisser au doigt (tactile) jamais vérifié.
+**Bare Hands glisse** depuis la Slice 06 — voir « ce qu'une main peut saisir, et
+les deux façons de tirer » — mais **n'ouvre pas de lien** : un pincement n'est
+pas une activation utilisateur au sens du navigateur, donc rien qui demande un
+nouvel onglet ne part d'une main. Une page par profil de navigateur tient
 la lecture de la scène : avec la chronologie ouverte dans cinq fenêtres ou plus,
 la page ralentit. Un Control Center arrêté sans être relancé laisse ses
 sous-agents « en cours ». Le brain juge lui-même : il peut parler d'un résultat

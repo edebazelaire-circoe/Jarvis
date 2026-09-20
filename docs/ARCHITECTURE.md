@@ -107,13 +107,39 @@ The Responses adapter exposes only the V1 function schemas and keeps continuatio
 
 A critical concurrency rule is enforced in `VoiceRuntime`: its lock protects microphone capture ownership only. The lock is released before STT/agent/TTS, allowing a new PTT press during speech to reach the orchestrator and cancel playback rather than blocking behind the previous turn.
 
+## Two subsystems, one word: the naming convention
+
+Two unrelated things have been called "Barehands" in this repository, three
+thousand lines apart in this very file, and the reader had no way to tell which
+one a sentence meant. From Bare Hands V1 onwards, one spelling per referent —
+this is the only place the rule is stated, and every other page defers to it:
+
+| Spelling | What it means |
+| --- | --- |
+| **Bare Hands** (two words) | the **native** Jarvis subsystem: hand tracking in the Control Center page itself, MediaPipe served locally from a closed whitelist, no separate process, no port, no token. Contract: `docs/barehands-contracts.md`. Its page modules are listed under *Bare Hands V1 page modules* below. |
+| **Barehands** (one word) | the **pinned third-party AGPL board**: a separate optional local process, `stage.html` on port 8794, commands over loopback HTTP with `X-Jarvis-Token`. Upstream-owned; Jarvis patches its snapshot at bootstrap and copies none of it. Section *Barehands (upstream board)* below. |
+
+They share a name and nothing else: no code, no process, no port, no
+dependency. The clean-room boundary between them is a licensing requirement,
+not a style preference — see *Clean-room boundary* in
+`docs/barehands-contracts.md`.
+
+Identifiers do not follow this convention and cannot: `barehands_test_mode`,
+`/api/barehands`, `JarvisBarehands`, `control_center_barehands*.js` are all
+**native**, and the one-word spelling there is historical. The rule is about
+prose. When an identifier and a sentence disagree, the sentence is the one that
+had a choice.
+
 ## UI seams
 
 ### ai-visualizer
 
 Read-only consumer of files under the runtime signal directory. It receives no board session token from the launcher.
 
-### Barehands
+### Barehands (upstream board)
+
+**One word: this is the third-party AGPL board, not the native subsystem.** See
+*Two subsystems, one word* above.
 
 Optional local process. Jarvis sends board commands via loopback HTTP. The upstream snapshot is patched at bootstrap to require:
 
@@ -3166,11 +3192,12 @@ Measured: the « s » (settings) shortcut, Shift+Arrow on the node behind and a 
 | execution star or runtime signal, when bulk selection is not empty | Archiver les travaux terminés (N objets)… (same noun as the confirmation button) |
 | artifact or star, when orphan artifacts exist (Slice 07) | Archiver les artefacts orphelins (N)… (own confirmation, linked artifacts stay) |
 
-**Barehands.**
+**Bare Hands.** (Two words: the native subsystem. See *Two subsystems, one word*.)
 
-- Its pointer replays `pointerdown`, focus, `pointerup` and `click` on the element under the token, with no drag.
-- A click on the already selected object opens its menu, and so does a long press.
-- A gesture from its pointer (`pointerId` 9001, or a token on screen) needs 10 px before it becomes a drag, so a trembling long press never moves and pins.
+- Its pointer replays `pointerdown`, focus, `pointerup` and `click` on the element under the token. Since Slice 06 of Bare Hands V1 it also replays a **content** drag (`pointerdown`/`pointermove`/`pointerup`, or `pointercancel` when the hand is lost) and a `contextmenu` for the secondary pinch — but never on a `.sc-node`: a pointer drag there would read as a frame move, which is what decision 8 forbids.
+- **Scene frames are not moved by synthetic pointer events.** A hand holding an edge or a corner drives `window.JarvisScene.frames` (`begin`/`preview`/`commit`/`cancel`/`viewport`), which reuses this page's own `drawnBox`, `previewAt`, `holdNode` and `commitUserGeometry` — so pinning, clamping, the optimistic layer and the refusals are identical for a mouse and for a hand. One zone moves the frame; two compatible zones resize it. A mouse press on a held node wins and cancels the hold; a cancelled hold commits nothing.
+- A click on the already selected object opens its menu, and so does a long press — but a hand that has just driven a frame does not click it on release (the legacy pinch detector reports a click on every release, drags included; only its delivery waits).
+- A gesture from one of its pointers (`JarvisBarehandsContracts.isBareHandsPointerId(id)` — one id per hand, slot 0 keeping the historical value — or a token on screen) needs 10 px before it becomes a drag, so a trembling long press never moves and pins. Never test the literal: a second hand has its own id, and a consumer comparing against one number stops recognising it.
 - Menu items, chips and dialog buttons are ordinary buttons.
 
 **Errors.**
@@ -3238,6 +3265,42 @@ menu › Arrêter la tâche (job star, work_ref.source = job)
 - **Route location.** The Control Center route lives under `/api/jobs`, not `/api/work`: `/api/work` stays read-only, because the UI never writes work state; the job's own observation does. A test pins an allowlist: the only UI route that affects work is `POST /api/jobs/cancel` (`source = job`), and no UI route observes or ingests work.
 - **Relay failures** are classified like commands (`command_not_sent`, `core_timeout`, `core_unreachable`, `invalid_scene_response`); 400, 404, 409 and 413 from Core are relayed with their code.
 
+
+## Bare Hands V1 page modules
+
+The **native** subsystem (two words — see *Two subsystems, one word*). Seven
+files under `jarvis/runtime/`, each inserted verbatim by `ControlCenter.index`
+at a commented marker in `control_center.html`, exactly like the scene modules
+above. Full contract: `docs/barehands-contracts.md`.
+
+| Module (`jarvis/runtime/…`) | Global | Role |
+| --- | --- | --- |
+| `control_center_barehands_contracts.js` | `JarvisBarehandsContracts` | Slice 01. It **names**, it does not execute: hand and pointer identity, the neutral `HandFrame`, gestures, pinch, target regions, interaction, tools, settings and the calibration profile. No DOM, no network, no clock. Nothing below may redefine a name that lives here. |
+| `control_center_barehands_target.js` | `JarvisBarehandsTarget` | Slice 05. The **browser** half of target resolution: reads the whole tree for candidates and draws the chosen region. The geometry and hysteresis half is pure and lives in `JarvisBarehandsCore.createTargetResolver`. Runs only under intent (decision 3). |
+| `control_center_barehands_calibration.js` | `JarvisBarehandsCalibration` | Slice 08. The calibration flow **and the overlay shell** (§11). The shell knows nothing of what it displays — it shows steps — which is what lets the tutorial reuse it unchanged (decision 26). |
+| `control_center_barehands_tutorial.js` | `JarvisBarehandsTutorial` | Slice 09. The ten-step tutorial. Takes the calibration's shell as given (`deps.overlay`), and **refuses at construction** any dependency that could write a calibration parameter. |
+| `control_center_barehands_recorder.js` | `JarvisBarehandsRecorder` | Slice 10. Opt-in diagnostic recording, deterministic replay against the **real** engines, and the measurement bench. Records **no landmarks** — scalars only, enforced by a load-time whitelist (`assertDerivedOnly`). |
+| `control_center_barehands.js` | `JarvisBarehandsCore`, `JarvisBarehands` | The engines (tracking, filtering, gestures, pinch, target resolution, interaction, controller) as a pure block node can run, then the browser block: camera, overlay, clicks, settings tab. |
+| `control_center_barehands_commands.js` | `JarvisBarehandsCommands` | Slice 12. The brain→page command channel: long-polls `GET /api/barehands/commands` and hands each command to the **same** entry point the button uses. |
+
+**Load order is a contract, not a convention**, because each module reads the
+globals of the ones before it and the pointer's surface is **frozen** — it
+cannot be completed after the fact. The order is asserted by a page test:
+
+```
+CONTRACTS → TARGET → CALIBRATION → TUTORIAL → RECORDER → BAREHANDS → COMMANDS
+```
+
+**The served page has exactly one `<script>` tag.** All nineteen page modules —
+these seven, the six scene modules, the timeline, the Test Lab and ~2500 lines
+of page logic — are concatenated into it. An uncaught throw at module load
+therefore aborts *everything after it*, which under node (one `require` per
+module) it would not. Every module-load refusal is consequently **contained**:
+it logs its cause to the console under a searchable name and leaves that module
+alone uninstalled. The refusal is not softened — its blast radius is. The
+earliest module that can refuse is `control_center_scene_interact.js`, which is
+not a Bare Hands module at all, so an uncontained throw there blanked the whole
+Control Center.
 
 ## Telemetry
 

@@ -3,6 +3,12 @@
   "schema_version": 1,
   "entries": [
     {
+      "diagnostic_id": "barehands.input_quality",
+      "version": 1,
+      "path": "barehands/input_quality.v1.json",
+      "manifest_fingerprint": "51cab937f5f2fe3d38bcd3df78e22ff6442e908d5d8ba9abb7389def3a01d1e9"
+    },
+    {
       "diagnostic_id": "speech.payload_integrity",
       "version": 1,
       "path": "speech/payload_integrity.v1.json",

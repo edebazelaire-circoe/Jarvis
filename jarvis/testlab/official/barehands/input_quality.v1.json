@@ -1,0 +1,101 @@
+{
+  "schema": "jarvis.testlab.manifest",
+  "schema_version": 1,
+  "diagnostic": {
+    "schema": "jarvis.testlab.diagnostic",
+    "schema_version": 1,
+    "diagnostic_id": "barehands.input_quality",
+    "version": 1,
+    "title": "Bare Hands pointer, pinch and target quality on a replayed trace",
+    "domain": "barehands",
+    "description": "Replays a synthetic golden trace through the real pointer filter, pinch hysteresis and target resolver. It measures the processing chain, never a camera, a tracker or anyone's hand: the trace holds derived scalars only - no landmarks, no image, no identifier (decision 32).",
+    "profiles": [
+      {
+        "name": "virtual",
+        "implementation": "barehands.input_quality.virtual",
+        "requires": [],
+        "cost": { "max_duration_s": 120, "max_cost_usd": 0 }
+      }
+    ],
+    "parameters": [
+      {
+        "name": "filter.min_cutoff_hz", "type": "float", "default": 1.2,
+        "minimum": 0.05, "maximum": 20, "choices": [], "max_length": null,
+        "description": "One Euro minimum cutoff: lower smooths a still hand and lags a fast one."
+      },
+      {
+        "name": "filter.beta_cutoff", "type": "float", "default": 0.012,
+        "minimum": 0, "maximum": 1, "choices": [], "max_length": null,
+        "description": "One Euro speed coefficient: higher follows a fast hand at the cost of jitter."
+      },
+      {
+        "name": "pinch.press_ratio", "type": "float", "default": 0.28,
+        "minimum": 0.05, "maximum": 0.9, "choices": [], "max_length": null,
+        "description": "Thumb-index ratio below which a contact is pressed."
+      },
+      {
+        "name": "pinch.release_ratio", "type": "float", "default": 0.42,
+        "minimum": 0.05, "maximum": 0.95, "choices": [], "max_length": null,
+        "description": "Ratio above which a pressed contact releases; the hysteresis band is the gap."
+      },
+      {
+        "name": "target.assistance", "type": "float", "default": 0.5,
+        "minimum": 0, "maximum": 1, "choices": [], "max_length": null,
+        "description": "Target assistance factor: 0.5 is the engine default reach, 0 none, 1 double."
+      }
+    ],
+    "metrics": [
+      { "name": "replay.frames_count", "unit": "count", "direction": "neutral",
+        "description": "Frames the replay actually measured. It says how much a run is worth." },
+      { "name": "click.target_success_ratio", "unit": "ratio", "direction": "higher_better",
+        "description": "Clicks and right clicks that had a resolved candidate under the hand." },
+      { "name": "pointer.error_p50_norm", "unit": "ratio", "direction": "lower_better",
+        "description": "Median filtered-to-raw pointer deviation, as a fraction of image width." },
+      { "name": "pointer.error_p95_norm", "unit": "ratio", "direction": "lower_better",
+        "description": "95th percentile of the same deviation." },
+      { "name": "pointer.stationary_jitter_p95_norm", "unit": "ratio", "direction": "lower_better",
+        "description": "Same deviation restricted to frames where the hand is still." },
+      { "name": "pinch.false_primary_hz", "unit": "hz", "direction": "lower_better",
+        "description": "Thumb-index press/release cycles too short to be meant, per second." },
+      { "name": "pinch.false_secondary_hz", "unit": "hz", "direction": "lower_better",
+        "description": "Same, on the thumb-middle channel." },
+      { "name": "gesture.false_positive_hz", "unit": "hz", "direction": "lower_better",
+        "description": "Global gestures suppressed because a capture was held, per second." },
+      { "name": "interaction.latency_p50_ms", "unit": "ms", "direction": "lower_better",
+        "description": "Median time from contact to its outcome." },
+      { "name": "hand.loss_recovery_p95_ms", "unit": "ms", "direction": "lower_better",
+        "description": "95th percentile of the gap between losing a hand slot and seeing it again." },
+      { "name": "drag.continuity_ratio", "unit": "ratio", "direction": "higher_better",
+        "description": "Share of drag frames that continued an uninterrupted drag." },
+      { "name": "resize.two_hand_stability_ratio", "unit": "ratio", "direction": "higher_better",
+        "description": "Share of resize frames that still had both hands." }
+    ],
+    "assertions": [
+      { "assertion_id": "frames_measured", "metric": "replay.frames_count",
+        "comparator": "ge", "threshold": 120, "blocking": true,
+        "description": "A replay that measured almost nothing must fail loudly: empty metrics read as good ones." },
+      { "assertion_id": "stationary_jitter", "metric": "pointer.stationary_jitter_p95_norm",
+        "comparator": "le", "threshold": 0.01, "blocking": true,
+        "description": "A still hand must not wander more than one percent of the image width." },
+      { "assertion_id": "click_targets", "metric": "click.target_success_ratio",
+        "comparator": "ge", "threshold": 0.6, "blocking": true,
+        "description": "Most clicks must land on a target. The golden trace deliberately holds one near miss thirty pixels outside a button, so that changing the assistance changes this number: at the default reach it is two clicks in three, at full assistance three in three. Below two thirds, the resolver has regressed." },
+      { "assertion_id": "drag_continuity", "metric": "drag.continuity_ratio",
+        "comparator": "ge", "threshold": 0.9, "blocking": false,
+        "description": "Informational: a broken drag is felt as a dropped object." },
+      { "assertion_id": "pointer_error", "metric": "pointer.error_p95_norm",
+        "comparator": "le", "threshold": 0.05, "blocking": false,
+        "description": "Informational: the filter may lag a fast hand, but not by a twentieth of the screen." }
+    ],
+    "score": {
+      "method": "weighted_mean",
+      "components": [
+        { "metric": "pointer.stationary_jitter_p95_norm", "weight": 1, "best": 0.0005, "worst": 0.01 },
+        { "metric": "pointer.error_p95_norm", "weight": 1, "best": 0.002, "worst": 0.05 },
+        { "metric": "interaction.latency_p50_ms", "weight": 1, "best": 80, "worst": 600 }
+      ]
+    }
+  },
+  "override_allowlist": [],
+  "scenario": null
+}

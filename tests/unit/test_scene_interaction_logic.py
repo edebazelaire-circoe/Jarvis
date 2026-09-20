@@ -542,7 +542,12 @@ def test_a_confirmation_over_the_conversation_timeline_stays_clickable_and_gives
     html = PAGE_HTML.read_text(encoding="utf-8")
     source = html[html.index("const CONFIRM="):html.index("$('#confirmGo').addEventListener")]
     script = tmp_path / "confirm-over-timeline.cjs"
-    script.write_text(r"""
+    script.write_text(
+        # Le balayage `inert` exempte la surimpression des mains par le contrat
+        # Bare Hands (Slice 01), plus par un identifiant recopié : le module de
+        # contrats est donc chargé ici comme la page le charge.
+        f"const JarvisBarehandsContracts=require({json.dumps(str(RUNTIME / 'control_center_barehands_contracts.js'))});\n"
+        + r"""
 const el=(id,extra)=>Object.assign({id,tagName:'DIV',inert:false,hidden:true,textContent:'',isConnected:true,
   classList:{toggle(){}},replaceChildren(){},append(){},focus(){}},extra||{});
 const nodes={app:el('app',{hidden:false}),timeline:el('timeline'),confirmBack:el('confirmBack'),confirmDialog:el('confirmDialog'),

@@ -188,6 +188,9 @@ DEFAULT_IMPLEMENTATIONS: tuple[ImplementationEntry, ...] = (
              "Self-echo through the workstation's real speaker and microphone; Slice 09 registers it."),
     reserved("voice.self_echo.hardware_guided", ProfileName.HARDWARE_GUIDED, RUNNER_NOT_REGISTERED,
              "Self-echo with the human asked to stay silent, then to interrupt; Slice 09 registers it."),
+    reserved("barehands.input_quality.virtual", ProfileName.VIRTUAL, RUNNER_NOT_REGISTERED,
+             "Replays a golden Bare Hands trace through the real filter, pinch and resolver; "
+             "jarvis.testlab.barehands.registry registers it."),
 )
 
 

@@ -849,7 +849,10 @@ ${orbitKeyframes()}
   color:color-mix(in srgb,var(--tone) 72%,var(--sc-ink))}
 .sc-link-artifact{stroke:color-mix(in srgb,var(--tone) 50%,transparent);stroke-dasharray:5 3}
 /* Indicateurs : en bas à gauche, sur la ligne de l'indication vocale, hors de
-   la zone de composition ; au-dessus du badge Barehands quand il est là. */
+   la zone de composition ; au-dessus du badge Barehands quand il est là.
+   Le sélecteur du badge est celui du contrat Bare Hands
+   (JarvisBarehandsContracts.DOM.badgeSelector) : une feuille de style ne peut
+   pas le lire, un test refuse qu'il en diverge. */
 .sc-status{position:absolute;left:18px;bottom:18px;z-index:2147483600;display:flex;flex-wrap:wrap-reverse;align-items:center;gap:6px;
   max-width:calc(50vw - 150px);pointer-events:none}
 body:has(#jarvisHands .jh-badge) .sc-status{bottom:52px}
@@ -1623,6 +1626,17 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
         record.place='';
         if(inside){setInnerTabs(record.el,true);record.el.focus({preventScroll:true})}
       }
+      /* Métadonnée sémantique lue par Bare Hands (Slice 05) : quelles zones de
+          manipulation cet objet accepte. Elle est posée ici, et non déduite des
+          classes, parce que la classe porte la forme **dessinée** (sc-capsule,
+          sc-point), qui retombe quand la place manque : une fenêtre dessinée en
+          capsule, ou une capsule dessinée en point, perdraient leurs zones sans
+          que leur géométrie ait changé. Elle est posée à chaque passe et non
+          dans fill(), dont la mémoire de contenu ne regarde pas la
+          représentation : un changement de representation à forme dessinée
+          constante ne rappellerait pas fill(). */
+      if(record.el.dataset.representation!==node.representation)
+        record.el.dataset.representation=node.representation;
       if(record.anim!==node.animate){record.el.classList.toggle('sc-anim',node.animate);record.anim=node.animate}
       record.el.classList.toggle('sc-selected',chosen.has(node.id));
       record.el.classList.toggle('sc-stopping',stopping.has(node.id));
@@ -1868,7 +1882,11 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
   function titleOf(id){const node=nodeOf(id);return node?node.title:id}
   function quoted(id){const text=titleOf(id);return `« ${text.length>60?text.slice(0,59)+'…':text} »`}
   const errorText=error=>String(error&&error.message||error);
-  const barehandsActive=()=>!!document.querySelector('#jarvisHands .jh-token');
+  /* Bare Hands est reconnu par son contrat (`control_center_barehands_contracts.js`,
+     inséré avant ce module), jamais par un sélecteur ou un identifiant de
+     pointeur recopié ici. */
+  const BH=window.JarvisBarehandsContracts;
+  const barehandsActive=()=>!!document.querySelector(BH.DOM.tokenSelector);
 
   /* Aperçu d'une boîte (unités) sur le nœud, dans sa forme dessinée. Seule la
      place change : le tour du champ continue sous l'aperçu, sans reprendre au
@@ -2034,6 +2052,81 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     consoleLog('info',kind==='resize'?'scene.user_resized':'scene.user_moved',{object_id:id,steps:outcome.steps.join('+'),revision:outcome.revision});
   }
 
+  /* --------------------------------- cadres tenus à mains nues (Bare Hands, Slice 06)
+
+     Bare Hands ne déplace pas un objet en envoyant des événements de pointeur :
+     une manipulation à deux mains n'a pas d'équivalent DOM, et le chemin de la
+     souris ci-dessous ne sait redimensionner que par le coin bas droit. Il tient
+     donc le cadre par cette couture, qui **réutilise** exactement ce que la
+     souris utilise — `drawnBox`, `previewAt`, `holdNode`, `commitUserGeometry` —
+     au lieu d'une seconde géométrie. La sienne, en unités de scène, est celle de
+     `JarvisSceneInteract` ; ici, rien de nouveau n'est calculé.
+
+     Une seule main tient un objet à la fois : si la souris s'y met, elle gagne
+     (`onPointerDown` annule la tenue), parce que c'est le geste le plus
+     explicite des deux.
+
+     **Une main prend un cadre, pas une sélection.** Depuis la fusion de
+     `origin/main`, un glissement à la souris sur un objet sélectionné emmène
+     toute la sélection (`carried`, `onPointerDown`) ; une prise à mains nues
+     n'emmène que l'objet nommé par `begin(id)`. Les deux gestes portent donc
+     le même nom et ne recouvrent pas le même ensemble, et c'est **délibéré
+     mais non décidé** : la Slice 06 a spécifié la prise d'un cadre (décisions
+     10, 11, 19), pas d'une sélection, et l'étendre demanderait un aperçu, une
+     attente (`pending`) et un refus par objet — une fonctionnalité, pas une
+     résolution de conflit. Laissé en l'état, tracé ici, à arbitrer par
+     l'humain avant d'élargir la couture. */
+  const barehandsHeld=new Set();
+
+  function framesRelease(id){
+    if(!barehandsHeld.delete(id))return false;
+    holdNode(id,false);
+    return true;
+  }
+
+  const frames=Object.freeze({
+    /* Le cadre d'un objet dessiné, et sa forme. `null` quand il n'y a rien à
+       tenir — scène éteinte, objet absent du dessin, ou souris déjà dessus :
+       le moteur le dit alors à l'écran plutôt que de manipuler un fantôme. */
+    begin(id){
+      if(!enabled)return null;
+      /* Souris déjà dessus : elle gagne, dans ce sens comme dans l'autre. Le
+         geste souris emmène toute sa sélection, donc « dessus » veut dire
+         « parmi les objets emmenés », pas seulement l'objet pris — sinon une
+         main saisirait un voisin que la souris est en train de déplacer. */
+      if(gesture&&(gesture.id===id||(gesture.carried||[]).some(member=>member.id===id)))return null;
+      const node=nodeOf(id),box=drawnBox(id),state=viewState();
+      const item=state&&state.objects.get(id);
+      if(!node||!box||!item)return null;
+      barehandsHeld.add(id);
+      holdNode(id,true);
+      return {objectId:id,box:{x:box.x,y:box.y,w:box.w,h:box.h},representation:item.representation};
+    },
+    /* Aperçu optimiste **local** : rien ne part à Core tant que la main tient,
+       exactement comme un glissement à la souris. */
+    preview(id,box){
+      if(!barehandsHeld.has(id))return;
+      const node=nodeOf(id),record=nodes.get(id);
+      if(node&&record&&box)previewAt(record.el,node,box);
+    },
+    /* Relâchement : la place part à Core (et épingle l'objet, décision 9). */
+    commit(id,box,mode){
+      const start=drawnBox(id);
+      framesRelease(id);
+      if(!box||(start&&I.sameBox(box,start)))return;
+      const kind=mode==='resize'?'resize':'move';
+      commitUserGeometry(id,box,kind)
+        .catch(error=>actionFailed(kind==='resize'?'Redimensionnement':'Déplacement',id,error));
+    },
+    /* Main perdue, veille, extinction : le cadre revient où il était et rien
+       n'est envoyé — la même réponse que `pointercancel` à la souris. */
+    cancel(id){if(framesRelease(id))scheduleRender()},
+    /* La même porte que `begin` : scène éteinte, pas de fenêtre. Sans elle,
+       `viewportNow()` lisait `root.clientWidth` sur un `root` qui n'existe pas
+       — et une échelle absente, côté Bare Hands, est ce qui fait qu'un geste
+       part six fois trop loin. Mieux vaut `null`, qui se refuse et se dit. */
+    viewport(){return enabled&&root?viewportNow():null},
+  });
   /* Un appui qui peut ouvrir un rectangle de sélection : sur le fond de la
      page, sur le visage ou sur la scène elle-même — jamais sur un objet (qui a
      son propre geste), ni sur une commande, ni dans un panneau du Control
@@ -2143,6 +2236,16 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
         box:{x:memberBox.x,y:memberBox.y,w:memberBox.w,h:memberBox.h},preview:null});
     }
     if(!carried.length)return;
+    /* Une main tenait un de ces cadres : la souris est le geste le plus
+       explicite des deux, elle gagne — et la tenue s'annule proprement plutôt
+       que de laisser deux aperçus se disputer le même nœud.
+
+       **Toute la sélection emmenée, pas seulement l'objet pris** : depuis que
+       le geste souris emmène ses voisins, `holdNode` est écrit par les deux
+       chemins pour chacun d'eux. Ne libérer que `id` laisserait une main tenir
+       un cadre que la souris déplace, et le `holdNode(member.id,false)` du
+       lâcher couperait le fil de cette main sans qu'elle le sache. */
+    for(const member of carried)frames.cancel(member.id);
     if(gesture)cancelGesture();
     if(keyEdit)flushKeyEdit('pointer');
     if(typeof closeMenu==='function')closeMenu(false);
@@ -2150,7 +2253,7 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
       box:{x:box.x,y:box.y,w:box.w,h:box.h},representation:item.representation,moved:false,menuOpened:false,preview:null,
       carried,
       wasSelected:document.activeElement===el,longTimer:0,
-      threshold:I.dragThreshold(event.pointerType,event.pointerId===9001||barehandsActive())};
+      threshold:I.dragThreshold(event.pointerType,BH.isBareHandsPointerId(event.pointerId)||barehandsActive())};
     /* Appui long sans bouger : menu (Barehands, écran tactile). */
     const current=gesture;
     current.longTimer=window.setTimeout(()=>{
@@ -2999,6 +3102,10 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
 
   window.JarvisScene=Object.freeze({
     version:2,gate,
+    /* Cadres manipulables à mains nues (Bare Hands V1, Slice 06). Le pointeur
+       est inséré **avant** ce module, donc il lit cette couture à l'appel et non
+       au chargement. */
+    frames,
     /* `/api/status` a échoué : la prochaine réussite relance la lecture. */
     statusLost(){statusFailed=true},
     /* Diagnostic (console, validation) : aucune écriture. */
@@ -3009,6 +3116,7 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
         health:lastView?lastView.health:null,resolved:layout&&layoutState===viewState()?layout.resolved.length:0,
         pending:pending?pending.size():0,actions:{...actionStats},gesture:gesture?{id:gesture.id,mode:gesture.mode,moved:gesture.moved,threshold:gesture.threshold}:null,
         selected:selectedId,selection:[...selection],stopping:[...stopping.keys()],jobCancelTimeoutS,captures:capturer?capturer.stats():null,
+        barehands:[...barehandsHeld],
         tabStops:root?root.querySelectorAll('[tabindex="0"]').length:0,animated:root?root.querySelectorAll('.sc-anim').length:0};
     },
   });

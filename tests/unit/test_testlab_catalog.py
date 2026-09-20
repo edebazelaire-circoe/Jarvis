@@ -63,7 +63,7 @@ from tests.fakes.testlab import queued_run
 SEEDS = {"voice.self_echo", "speech.payload_integrity", "speech.stale_supersession", "voice.queue_latency"}
 #: The whole published catalog. `voice.barge_in_response` (Slice 12) is `hardware:guided`
 #: ONLY: it asks a person to interrupt Jarvis, which no virtual profile can stand in for.
-PUBLISHED = SEEDS | {"voice.barge_in_response"}
+PUBLISHED = SEEDS | {"voice.barge_in_response", "barehands.input_quality"}
 IMPLEMENTATION = "testlab.scenario.virtual"
 
 
