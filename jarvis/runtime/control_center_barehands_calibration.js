@@ -422,7 +422,7 @@
       instruction:'Pincez pouce et index, puis rouvrez. Recommencez tranquillement, comme pour cliquer.',
       hold:false,needs:1}),
     Object.freeze({id:BH.STAGE.PINCH_SECONDARY,title:'Pincement pouce-majeur',
-      instruction:'Même geste, autre doigt : pincez pouce et **majeur**, puis rouvrez. L’index reste replié. C’est le clic droit.',
+      instruction:'Même geste, autre doigt : pincez pouce et majeur, puis rouvrez. L’index reste replié. C’est le clic droit.',
       hold:false,needs:1}),
     Object.freeze({id:BH.STAGE.AIM,title:'Viser et cliquer',
       instruction:'Amenez le jeton sur chaque point, puis pincez pouce et index sans bouger la main.',

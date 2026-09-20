@@ -22,7 +22,15 @@ Chaque chiffre a été **re-mesuré par l'agent 0** après le rendu de la slice,
 
 ### Dette héritée de `main`, à ne pas imputer à cette tâche
 
-`tests/unit/test_display_mcp.py` (4 échecs) et `tests/unit/test_scene_transport_client.py` (4 échecs) échouent **à l'identique à `a949f40`**, vérifié dans un worktree détaché le 2026-09-20. Huit échecs, mêmes noms, avant toute écriture de cette tâche. Ils ne sont pas réparés ici.
+Trois foyers, **23 échecs**, tous vérifiés à l'identique à `a949f40` dans un worktree détaché — donc présents sur `origin/main` avant la première écriture de cette tâche. Aucun n'est réparé ici.
+
+| Fichier | Échecs | Vérifié |
+| --- | --- | --- |
+| `tests/unit/test_display_mcp.py` | 4 | 2026-09-20, worktree détaché |
+| `tests/unit/test_scene_transport_client.py` | 4 | 2026-09-20, worktree détaché |
+| `tests/unit/test_scene_contracts.py` | 15 | 2026-09-20, worktree détaché |
+
+Le troisième foyer a été repéré par l'agent de la Slice 07A, qui l'a constaté en remisant son travail ; l'agent 0 l'a re-vérifié à `a949f40` plutôt qu'à la tête de branche. Il ne figurait dans aucun inventaire antérieur. Échantillon : `test_revision_is_strictly_monotonic_and_patches_are_exact_deltas` attend `APPLIED` et reçoit `REJECTED_AUTHORITY` — c'est le domaine Python de la scène, hors du périmètre Bare Hands.
 
 ### Décisions d'orchestration
 

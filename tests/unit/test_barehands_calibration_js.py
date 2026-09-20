@@ -3150,3 +3150,45 @@ def test_the_window_step_measures_the_canonical_pieces_and_owns_no_geometry(tmp_
     # mode est lu, jamais calculé.
     assert "done.mode===want.mode" in logic
     assert "want.mode==='resize'?done.sized:done.moved" in logic
+
+
+def test_no_step_ever_prints_its_own_emphasis_markers_on_screen(tmp_path):
+    """**Ce que l'utilisateur lit est ce qui est écrit.** Les consignes sont
+    posées en `textContent`, jamais interprétées : un `**majeur**` glissé dans
+    une chaîne pour insister ne met rien en gras, il affiche deux paires
+    d'astérisques au milieu d'une phrase — et l'étape qui apprend le clic droit
+    est précisément celle où l'utilisateur lit le plus attentivement, puisque
+    c'est la seule qui lui demande un doigt qu'il n'a pas encore utilisé.
+
+    Le défaut a vécu une slice entière sans qu'aucun test ne le voie, parce que
+    tous lisaient les consignes comme des chaînes opaques. Celui-ci lit ce que
+    la coque a réellement peint, sur les sept écrans, et refuse la syntaxe
+    Markdown que le DOM ne rendra jamais.
+    """
+
+    result = run_node(tmp_path, DOM + DRIVER + """
+      const cal=calOf();
+      cal.start();
+      const painted=[];
+      for(let i=0;i<7;i+=1){
+        painted.push({step:cal.stepId(),
+          instruction:text(flowRoot(),'jf-instruction').join(' '),
+          title:text(flowRoot(),'jf-title').join(' ')});
+        skipStep(cal);
+      }
+      out({painted});
+    """, name="emphasis")
+
+    painted = result["painted"]
+    assert len(painted) == 7, "les sept écrans publics ont été parcourus"
+
+    # `**gras**`, `_italique_`, `` `code` `` : aucun de ces marqueurs n'a de
+    # sens dans un noeud de texte. On les refuse là où l'utilisateur regarde.
+    for screen in painted:
+        for field in ("instruction", "title"):
+            written = screen[field]
+            for marker in ("**", "__", "`"):
+                assert marker not in written, (
+                    f"l'écran {screen['step']!r} affiche littéralement {marker!r} "
+                    f"dans son champ {field} : {written!r}"
+                )
