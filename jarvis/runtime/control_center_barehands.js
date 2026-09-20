@@ -1652,8 +1652,17 @@ const JarvisBarehandsCore=(function(){
           const state=String((hand&&hand.state)||'open');
           /* **Décision 3.** Hors intention, il n'y a pas de cible — donc rien
              à dessiner, et pas un curseur qui reste. C'est ici que la règle est
-             tenue, une fois, plutôt que dans chaque dessin. */
-          if(state!=='pinching'&&state!=='pressed'){held.delete(k);continue}
+             tenue, une fois, plutôt que dans chaque dessin.
+             `hover` est le **troisième** état, et c'est la décision 3 bis : une
+             main qui n'a pas encore d'intention peut demander « qu'est-ce que
+             je vise ? » et recevoir une réponse. Le résolveur la traite comme
+             une visée — même géométrie, même hystérésis de zone — mais elle ne
+             se latche jamais (`locked` reste faux) et l'appelant décide seul à
+             quoi il l'accorde. Ce qui garde la décision 3 vraie, c'est que cet
+             état n'est **demandé** que pour ce qui a des zones : le curseur
+             permanent qu'elle refuse est un cadre autour de chaque bouton, pas
+             le bord d'une fenêtre qui s'allume quand la main passe dessus. */
+          if(state!=='hover'&&state!=='pinching'&&state!=='pressed'){held.delete(k);continue}
           const previous=held.get(k);
           /* Dynamique jusqu'à la descente, stable ensuite : sous contact, le
              descripteur ne bouge plus, quoi que fasse la main. C'est ce que la
@@ -1710,7 +1719,7 @@ const JarvisBarehandsCore=(function(){
           const picked=pick(best.regions);
           if(!picked){held.delete(k);continue}
           const target=Object.freeze({handTrackId:id,channel,
-            locked:state==='pressed',bandPx:bestBand,
+            locked:state==='pressed',hover:state==='hover',bandPx:bestBand,
             objectId:picked.objectId===undefined||picked.objectId===null?null:String(picked.objectId),
             kind:picked.kind,region:picked.region,zone:picked.zone,ref:picked.ref,
             representation:picked.representation,actionable:picked.actionable,
@@ -2047,7 +2056,27 @@ const JarvisBarehandsCore=(function(){
         const base=world&&typeof world.begin==='function'?world.begin(objectId):null;
         if(!base||!base.box){refuse(entries[0],'object_not_drawn');return}
         plan={signature:null,drivenFrame:null,representation:base.representation,lastEnd:'up',
-          origin:{...base.box},start:{...base.box},box:{...base.box},anchorsPx:{}};
+          origin:{...base.box},start:{...base.box},box:{...base.box},anchorsPx:{},
+          /* Les paumes **à la descente** des mains qui arment ce cadre *cette
+             image-ci*. Elles ne servent qu'une fois — au tout premier ancrage,
+             juste en dessous — et c'est ce qui fait que le cadre rattrape les
+             vingt-six pixels du seuil au lieu de les perdre : le seuil décide
+             *si* la main glisse, jamais *de combien*.
+
+             La condition sur l'image compte autant que la paume. Un plan peut
+             s'ouvrir longtemps après l'armement — la prise a d'abord été
+             refusée (deux mains sur la même zone), la fenêtre n'était pas
+             mesurable, l'objet n'était pas dessiné — et là il n'y a rien à
+             rendre : la main a parcouru tout l'écran pendant le refus, et lui
+             rendre cette course-là téléporterait le cadre. Ces plans-là
+             commencent **où la main est**, comme les rebasages de la
+             décision 19. */
+          downPalms:{}};
+        for(const entry of entries){
+          const id=String(entry.handTrackId);
+          if(byHand[id]&&entry.downPalm&&entry.armedFrame===frameIndex)
+            plan.downPalms[id]={...entry.downPalm};
+        }
         plans.set(objectId,plan);
       }
       /* Décision D3 : seules `capsule` et `window` se redimensionnent. Les zones
@@ -2090,7 +2119,11 @@ const JarvisBarehandsCore=(function(){
          s'appliquait d'un coup à la reprise : mesuré à 68 unités. */
       const resumed=plan.drivenFrame!==frameIndex-1;
       if(plan.signature!==signature||resumed){
-        const rebased=G.rebaseManipulation(plan.box,palms);
+        /* Premier ancrage : les paumes de la **descente**, pour que la course
+           déjà parcourue sous le seuil soit rendue au cadre. Tous les autres :
+           les paumes du moment, décision 19. */
+        const from=plan.signature===null?{...palms,...plan.downPalms}:palms;
+        const rebased=G.rebaseManipulation(plan.box,from);
         plan.signature=signature;plan.start=rebased.start;plan.anchorsPx=rebased.anchorsPx;
       }
       plan.drivenFrame=frameIndex;
@@ -2175,7 +2208,15 @@ const JarvisBarehandsCore=(function(){
            d'un glissement. */
         for(const contact of Array.isArray(f.contacts)?f.contacts:[]){
           const entry=captures.get(keyOf(contact&&contact.handTrackId,contact&&contact.channel));
-          if(entry&&contact.intent===PINCH_INTENT.DRAG)entry.armed=true;
+          /* L'**image** de l'armement, et pas seulement le fait : c'est elle
+             qui dit si un plan qui s'ouvre maintenant s'ouvre *parce que* le
+             seuil vient d'être franchi — auquel cas la course déjà faite lui
+             revient — ou bien plus tard, après un refus ou une suspension, où
+             il n'y a rien à rendre et où rendre serait un saut. */
+          if(entry&&contact.intent===PINCH_INTENT.DRAG){
+            if(!entry.armed)entry.armedFrame=frameIndex;
+            entry.armed=true;
+          }
         }
         for(const event of Array.isArray(f.events)?f.events:[]){
           if(!event)continue;
@@ -2188,7 +2229,19 @@ const JarvisBarehandsCore=(function(){
             const target=targets.get(key);
             /* Rien sous la main : il n'y a rien à tenir. Ce n'est pas un refus,
                c'est la normale (décision 3 : hors cible, pas de pointeur). */
-            if(target)openCapture(event.handTrackId,event.channel,target,now);
+            if(target){
+              const opened=openCapture(event.handTrackId,event.channel,target,now);
+              /* **Où la paume était à la descente.** C'est de là que la course
+                 d'un déplacement se compte, et non de l'instant où
+                 `dragSlopPx` est franchi : entre les deux il y a vingt-six
+                 pixels que la main a bien parcourus, et les ignorer laissait
+                 le curseur devancer le cadre de cette distance-là pendant tout
+                 le geste — puis le cadre se posait vingt-six pixels en arrière
+                 de la main qui le lâchait. C'est ce que fait une souris : le
+                 seuil décide *si* on glisse, jamais *de combien*. */
+              const at=palms[String(event.handTrackId)];
+              if(opened&&at)opened.downPalm={x:at.x,y:at.y};
+            }
             continue;
           }
           const entry=captures.get(key);
@@ -2744,16 +2797,38 @@ const JarvisBarehandsCore=(function(){
   }
 
   /* Résultat du traqueur → jetons à afficher, clics à rejouer et identités
-     stables. Pendant un pincement, le jeton se fige là où il était quand les
-     doigts ont commencé à se rapprocher : le clic tombe sur ce qui était visé,
-     pas à côté.
+     stables. Pendant un pincement, le jeton se détache du bout de l'index —
+     qui parcourt un demi-palme rien qu'en se refermant — et **suit la paume**
+     depuis le point visé au moment où les doigts ont commencé à se rapprocher :
+     le clic tombe sur ce qui était visé, et une main qui emporte un cadre
+     emmène son curseur avec elle.
+
+     C'était un **gel** : l'ancre était posée à l'entrée du pincement et ne
+     bougeait plus jusqu'au relâchement. Le clic tombait bien, mais tout ce qui
+     dure plus qu'un clic mentait à l'écran — un cadre tenu se déplaçait à la
+     paume pendant que le curseur restait planté à l'endroit de la prise, puis
+     sautait au relâchement, là où le doigt venait de rouvrir. L'utilisateur
+     lisait ce saut comme « la fenêtre ne se pose pas où je l'ai lâchée ».
+     L'ancre garde donc son point de **visée** et gagne son point de **main** :
+     le jeton vaut `ancre + (paume − paume à l'ancrage)`, c'est-à-dire
+     exactement le déplacement que la Slice 06 applique au cadre. Les deux
+     bougent du même vecteur, donc ils ne se décollent jamais — et une main
+     immobile ne bouge pas d'un pixel, puisque la paume ne se referme pas.
 
      Chaque jeton porte trois couples de coordonnées, et les trois servent :
      `rawX`/`rawY` ce que le traqueur a rendu, `filteredX`/`filteredY` la
      sortie du filtre, `x`/`y` le point d'affichage et de visée — le filtré,
-     ou l'ancre gelée pendant un pincement. Sans les deux premiers, un filtre
-     ne se règle pas et la calibration ne peut pas mesurer le tremblement
-     (`jitterPx`) ; pendant un pincement, `x`/`y` ne dit plus rien de la main. */
+     ou l'ancre reportée à la paume pendant un pincement. Sans les deux
+     premiers, un filtre ne se règle pas et la calibration ne peut pas mesurer
+     le tremblement (`jitterPx`) ; pendant un pincement, `x`/`y` ne dit plus
+     rien du **bout du doigt**, mais il dit toujours où la main est allée. */
+  /* Ce qu'un rapport de pincement peut perdre sans qu'on y lise une fermeture,
+     en paumes. C'est le bruit d'une main posée, pas un réglage : au-dessus, le
+     point de visée se figerait sur le tremblement ; en dessous de zéro il n'y a
+     rien. Il vit ici parce qu'il ne décrit ni le moteur ni la main mais la
+     lecture du signal, comme `filterResetMs` décrit un trou d'observation. */
+  const AIM_SETTLE_RATIO=.02;
+
   function createHandTracker(overrides){
     const o=options(overrides);
     const manager=createHandTrackManager(overrides);
@@ -2791,20 +2866,64 @@ const JarvisBarehandsCore=(function(){
           trackIds[index]=id;
           let hand=hands.get(id);
           if(!hand){hand={detector:createPinchDetector(overrides),filter:createPointerFilter(overrides),
-            still:createStillness(overrides),anchor:null};hands.set(id,hand)}
+            still:createStillness(overrides),anchor:null,open:null,ratio:null};hands.set(id,hand)}
           const motion=hand.filter.update(toScreen(landmarks[LM.INDEX_TIP],frame.viewport,o),now);
           const still=hand.still.update(motion.speedPxPerSec,now);
-          const pinch=hand.detector.update(pinchRatio(landmarks,k),now);
-          if(pinch.state==='open')hand.anchor=null;
-          else if(!hand.anchor)hand.anchor={x:motion.x,y:motion.y};
-          const aim=hand.anchor||motion;
-          if(pinch.click)clicks.push({id,x:aim.x,y:aim.y});
+          const ratio=pinchRatio(landmarks,k);
+          const pinch=hand.detector.update(ratio,now);
           /* Où la **main** est, par opposition à où elle vise : le centre de la
              paume, en pixels de la fenêtre. Même repère que l'association
              d'identité, et pour la même raison — il ne bouge pas parce qu'un
-             doigt se referme. La Slice 04 y mesure le déplacement d'un
-             contact ; le jeton, lui, continue de suivre l'index. */
+             doigt se referme. La Slice 04 y mesure le déplacement d'un contact,
+             la Slice 06 le déplacement d'un cadre, et le jeton s'y reporte dès
+             que les doigts se rapprochent. */
           const palm=toScreen(palmCenter(landmarks),frame.viewport,o);
+          /* **L'ancre est le dernier point visé avant que les doigts ne
+             commencent à se refermer**, et non le premier point que le
+             détecteur appelle « pinching ». La nuance vaut une centaine de
+             pixels, et elle est toute la différence entre un relâchement propre
+             et un saut.
+
+             Le détecteur ne bascule qu'une fois le rapport descendu sous son
+             seuil de relâchement : à cet instant l'index est **déjà** à
+             mi-chemin du pouce. Ancré là, le jeton portait la visée d'un doigt
+             à demi replié — et, au relâchement, il revenait d'un bond à la
+             posture ouverte, puisque c'est là que le doigt retourne. Le bond
+             valait le repli, pas le geste, et c'est lui que l'on lit comme
+             « la fenêtre ne se pose pas où je l'ai lâchée ».
+
+             « Avant la fermeture » se lit sur le rapport de pincement
+             lui-même : tant qu'il ne **descend** pas, la main pointe et le
+             point de visée se met à jour ; dès qu'il descend, elle est en train
+             de pincer et le dernier point tenu devient l'ancre. La tolérance
+             est là pour le tremblement — un rapport qui oscille d'un
+             centième de paume sur une main posée ne doit pas figer la visée. Et
+             la boucle se referme d'elle-même : départ et arrivée sont la même
+             posture de doigt, donc il n'y a plus rien à rattraper.
+
+             Une main vue **déjà** en train de pincer n'a pas de point de visée
+             d'avant : elle garde le comportement d'avant, qui est le seul
+             disponible. */
+          if(pinch.state==='open'){
+            hand.anchor=null;
+            const falling=Number.isFinite(ratio)&&Number.isFinite(hand.ratio)
+              &&ratio<hand.ratio-AIM_SETTLE_RATIO;
+            if(!falling||!hand.open)hand.open={x:motion.x,y:motion.y,palmX:palm.x,palmY:palm.y};
+          }else if(!hand.anchor)
+            hand.anchor=hand.open||{x:motion.x,y:motion.y,palmX:palm.x,palmY:palm.y};
+          hand.ratio=ratio;
+          /* L'ancre **se reporte**, elle ne gèle plus : le point de visée du
+             moment où les doigts se sont rapprochés, plus ce que la paume a
+             parcouru depuis. Le même vecteur que celui qui déplace le cadre
+             (`manipulate`, ancres reconstruites sur `palms`), donc le curseur et
+             ce qu'il tient ne se décollent pas d'un pixel. La paume est prise
+             **brute**, comme celle que le moteur d'interaction reçoit : la
+             filtrer ici et pas là remettrait un décalage entre les deux, plus
+             petit mais de la même nature. */
+          const aim=hand.anchor
+            ?{x:hand.anchor.x+(palm.x-hand.anchor.palmX),y:hand.anchor.y+(palm.y-hand.anchor.palmY)}
+            :motion;
+          if(pinch.click)clicks.push({id,x:aim.x,y:aim.y});
           tokens.push({id,x:aim.x,y:aim.y,palmX:palm.x,palmY:palm.y,
             rawX:motion.rawX,rawY:motion.rawY,filteredX:motion.x,filteredY:motion.y,
             vxPxPerSec:motion.vxPxPerSec,vyPxPerSec:motion.vyPxPerSec,speedPxPerSec:motion.speedPxPerSec,
@@ -3774,45 +3893,125 @@ try{
       for(const el of outlined)el.classList.remove(BH.DOM.hoverClass);
       outlined=new Set();
     }
+    /* **Le cadre suit ce qu'il tient.**
+
+       Le descripteur d'une cible est figé à la descente (décision 13) et il
+       doit l'être : c'est lui qui dit *quel objet* et *quelle prise*, et un
+       glissement de 30 px ne doit pas changer l'un ni l'autre en cours de
+       geste. Son `boundsPx`, lui, n'est pas un descripteur : c'est *où l'objet
+       est*, et l'objet, pendant ce temps, bouge — c'est précisément ce que la
+       main est en train de lui faire. Dessiné tel que figé, le cadre jaune
+       restait planté à l'endroit de la prise pendant que la fenêtre partait
+       ailleurs, et l'étirement d'un bord ne se voyait nulle part.
+
+       On relit donc le rectangle de l'élément à chaque image. Ce n'est pas une
+       seconde source de vérité : c'est **la** source, celle que la collecte lit
+       elle aussi (`getBoundingClientRect`), simplement relue maintenant plutôt
+       qu'il y a trois cents millisecondes. Un élément disparu du dessin rend un
+       rectangle vide et on garde alors le **dernier mesuré** — pas celui de la
+       prise : une fenêtre qui disparaît au milieu d'un déplacement laisserait
+       sinon son cadre revenir d'un bond là où la main l'avait saisie, ce qui
+       est un mouvement que personne n'a fait. Un cadre au coin supérieur
+       gauche, lui, serait pire que les deux. */
+    const liveBounds=el=>{
+      if(!el||typeof el.getBoundingClientRect!=='function')return null;
+      const r=el.getBoundingClientRect();
+      const w=Number(r.width),h=Number(r.height);
+      if(!(w>0&&h>0))return null;
+      return {x:Number(r.left),y:Number(r.top),w,h};
+    };
+
+    /* **Décision 3 bis : savoir ce qu'on vise avant de le prendre.**
+
+       La décision 3 refuse un curseur permanent, et elle a raison : un cadre
+       qui s'allume autour de chaque bouton qu'une main croise est du bruit. Ce
+       qu'elle interdisait sans le vouloir, c'est la seule question qu'une main
+       nue ne peut pas résoudre autrement : *suis-je sur le bord, ou dans le
+       corps ?* Les deux prises ne font pas la même chose (décisions 8 à 11),
+       elles sont séparées par quatorze pixels, et rien à l'écran ne les
+       distinguait tant que les doigts n'avaient pas commencé à se refermer —
+       trop tard pour corriger sa visée, donc on s'y reprend à plusieurs fois.
+
+       Le survol est donc accordé **à ce qui a des zones** (capsule, fenêtre) et
+       à rien d'autre : c'est exactement l'ensemble des objets où la question se
+       pose. Un bouton, un lien, un champ n'en reçoivent pas — la décision 3
+       reste vraie là où elle voulait l'être — et le contour hérité continue de
+       les souligner sous intention.
+
+       Deux gardes de plus, parce qu'un retour de survol ne doit rien coûter à
+       qui ne le regarde pas : il ne vaut que pour le canal **primaire** (le
+       secondaire est une intention de clic droit, pas une visée), et le
+       balayage du DOM qui le nourrit est **échantillonné** — voir
+       `hoverSurvey`. */
+    const HOVER_SURVEY_MS=90;
+    let hoverAt=-Infinity,hoverList=[];
+    /* Le balayage partagé des images de survol. Sous intention, la collecte
+       reste faite sur l'image même : une main qui pince vise, et ce qu'elle
+       vise se juge sur des cadres frais. Hors intention, rien ne bouge dans la
+       page qu'un balayage de 90 ms raterait — aucune manipulation n'est en
+       cours, par définition — et le filtrage par point, lui, refait le tour de
+       la liste à chaque image. Ce qui est échantillonné est la lecture d'arbre,
+       pas la réponse. */
+    function hoverSurvey(now){
+      if(now-hoverAt<HOVER_SURVEY_MS)return hoverList;
+      hoverAt=now;hoverList=TARGET.survey();
+      return hoverList;
+    }
+
     /* Une image de résolution de cible.
 
-       **Décision 3 tenue ici, et visible dans l'arbre** : la collecte ne part
-       que pour une main qui pince ou approche, et une image sans intention
-       rend une liste vide, que l'aperçu traduit en *aucun élément*. Il n'y a
-       donc jamais de curseur qui reste — et le coût de la lecture du DOM n'est
-       jamais payé par une session au repos.
+       **Décision 3 tenue ici, et visible dans l'arbre** : hors intention, seul
+       ce qui a des zones reçoit un cadre, et une main qui ne croise rien de tel
+       rend une liste vide, que l'aperçu traduit en *aucun élément*.
 
-       Une main par appel : `collect` cite en tête la candidate qui est **au
+       Une main par appel : le filtrage cite en tête la candidate qui est **au
        dessus** au point visé (`elementFromPoint`), et ce classement n'a de
        sens que pour ce point-là. Deux mains mélangées dans une seule liste
-       auraient hérité du dessus de l'autre. */
+       auraient hérité du dessus de l'autre.
+
+       Deux listes en sortent, et c'est voulu : `resolved` — ce que `targets()`
+       publie, ce que la Slice 06 ouvre en capture, ce que la Slice 09 mesure et
+       ce que la Slice 10 enregistre — ne contient **que** l'intention, comme
+       avant. Le survol ne va qu'au dessin. Les confondre aurait fait compter un
+       cadre survolé pour une cible atteinte dans le taux de clics visés, et une
+       étape de tutoriel « vise un objet » se serait validée sans que personne
+       n'ait rien visé. */
     function resolveTargets(tokens){
       const contacts=typeof contactsOf==='function'?contactsOf():null;
       const byId=new Map((tokens||[]).map(token=>[String(token.id),token]));
-      const out=[];
+      const now=performance.now();
+      const out=[],hovering=[];
       for(const contact of contacts||[]){
         const token=byId.get(String(contact&&contact.handTrackId));
         if(!token)continue;
-        const wanted=contact.state==='pinching'||contact.state==='pressed';
+        const intent=contact.state==='pinching'||contact.state==='pressed';
+        /* Le survol ne se demande que pour le canal primaire, et seulement
+           quand aucune intention ne le remplace. */
+        const hover=!intent&&String(contact.channel)===BH.PINCH_CHANNEL.PRIMARY;
         /* On vise avec `token.x`/`token.y` — le point d'**affichage**, donc
-           l'ancre figée pendant un pincement — et non `filteredX`/`filteredY`.
-           Deux raisons, et la seconde est décisive :
+           l'ancre reportée à la paume pendant un pincement — et non
+           `filteredX`/`filteredY`. Deux raisons, et la seconde est décisive :
 
            - le bout de l'index parcourt un demi-palme en se refermant sans que
              la main ait bougé (leçon des Slices 03 et 04) : suivre le point
              filtré ferait dériver l'aperçu du seul fait de la fermeture ;
-           - le **jeton** se fige déjà là, et l'utilisateur le voit. Un aperçu
-             calculé ailleurs que le point dessiné donnerait deux réponses à
-             l'écran pour un seul geste, et c'est l'aperçu qui aurait tort :
-             c'est le jeton que l'utilisateur croit. */
+           - le **jeton** est ce que l'utilisateur voit. Un aperçu calculé
+             ailleurs que le point dessiné donnerait deux réponses à l'écran
+             pour un seul geste, et c'est l'aperçu qui aurait tort : c'est le
+             jeton que l'utilisateur croit. */
         const hand={handTrackId:contact.handTrackId,channel:contact.channel,
-          state:contact.state,x:token.x,y:token.y,assistance};
-        /* Sans intention on passe quand même la main au résolveur : c'est
-           ainsi qu'il **oublie** ce qu'elle tenait, plutôt que de le garder
-           jusqu'à la grâce. */
-        const candidates=wanted
-          ?TARGET.collect({x:token.x,y:token.y},resolver.reach(assistance)):[];
-        for(const target of resolver.update({now:performance.now(),candidates,hands:[hand]})){
+          state:intent?contact.state:(hover?'hover':contact.state),
+          x:token.x,y:token.y,assistance};
+        /* Sans intention **ni survol** on passe quand même la main au
+           résolveur : c'est ainsi qu'il **oublie** ce qu'elle tenait, plutôt
+           que de le garder jusqu'à la grâce. */
+        const at={x:token.x,y:token.y},reach=resolver.reach(assistance);
+        const candidates=intent?TARGET.collect(at,reach)
+          :(hover?TARGET.near(hoverSurvey(now),at,reach):[]);
+        for(const target of resolver.update({now,candidates,hands:[hand]})){
+          /* Un survol ne vaut que pour ce qui a des zones : c'est là, et
+             seulement là, que « bord ou corps ? » est une question. */
+          if(target.hover&&!BH.hasManipulationZones(target.representation))continue;
           /* Le nom et l'arrondi ne sont pas de la géométrie : ils ne traversent
              pas le résolveur, on les relit de la candidate par son renvoi.
              Une cible **figée** n'a plus de candidate sous la main — la main a
@@ -3830,15 +4029,22 @@ try{
               element:source?source.element:null};
             decor.set(key,look);
           }
-          out.push({...target,
+          /* Le seul champ du descripteur qu'on relit : voir `liveBounds`. Le
+             dernier mesuré voyage avec l'apparence, pour la même raison qu'elle
+             — l'élément peut partir, le cadre doit rester où il était. */
+          const measured=liveBounds(look.element);
+          if(measured)look.boundsPx=measured;
+          const drawn={...target,
+            boundsPx:measured||look.boundsPx||target.boundsPx,
             feedback:BH.feedbackRole(target.region,target.channel),
-            name:look.name,radiusPx:look.radiusPx});
+            name:look.name,radiusPx:look.radiusPx};
+          (target.hover?hovering:out).push(drawn);
         }
       }
-      const live=new Set(out.map(target=>`${target.handTrackId}|${target.channel}`));
+      const live=new Set([...out,...hovering].map(t=>`${t.handTrackId}|${t.channel}`));
       for(const key of [...decor.keys()])if(!live.has(key))decor.delete(key);
       resolved=out;
-      preview.render(previewOn?out:[]);
+      preview.render(previewOn?[...out,...hovering]:[]);
     }
 
     /* ------------------------------------------------ Slice 06 : captures
@@ -4191,6 +4397,9 @@ try{
         engine.cancelAll(typeof performance!=='undefined'?performance.now():0);
         engine.reset();
         slots.clear();resolver.reset();preview.clear();decor.clear();elements.clear();
+        /* Le balayage échantillonné meurt avec le reste : une session reprise
+           ne doit pas filtrer les cadres de la page d'avant. */
+        hoverAt=-Infinity;hoverList=[];
         resolved=[];interactions=[];
       },
     };

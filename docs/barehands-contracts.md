@@ -676,7 +676,7 @@ que coûte un nom sans forme.
   calibration mesure le tremblement sur leur écart (`jitterPx`, §10) et le banc
   de rejeu (§12) compare l'erreur de l'un à l'erreur de l'autre. Un filtre dont
   on ne voit que la sortie ne se règle pas.
-- `x`/`y` n'est jamais l'ancre de visée que le jeton fige pendant un
+- `x`/`y` n'est jamais le point de visée que le jeton reporte pendant un
   pincement : cet échantillon décrit la main, pas l'affichage.
 - **Unités** : positions en **pixels de la fenêtre** (comme `clientX`) ; les
   vitesses portent la leur dans leur nom.
@@ -713,6 +713,31 @@ rien faire tomber. **Changer l'un d'eux, c'est le reporter ici.**
 | `qualityPalmMin` | 0,06 | paume minimale crédible |
 | `qualityComplete` | 0,6 | fraction de points finis en dessous de laquelle la main est devinée |
 | `qualityWarmupFrames` | 3 | images consécutives avant qu'une piste soit installée |
+
+**Le jeton pendant un pincement : reporté, plus gelé.** Le point d'affichage
+(`x`/`y` du jeton) se détachait du bout de l'index dès l'approche — il le faut,
+l'index parcourt un demi-palme rien qu'en se refermant — mais il se **gelait**
+jusqu'au relâchement. Le clic tombait bien ; tout ce qui dure plus qu'un clic
+mentait à l'écran. Une main qui emportait un cadre laissait son curseur planté à
+l'endroit de la prise, puis celui-ci sautait au relâchement, là où le doigt
+venait de rouvrir — cent pixels et plus, lus par l'utilisateur comme « la
+fenêtre ne se pose pas où je l'ai lâchée ».
+
+Le jeton vaut donc `ancre + (paume − paume à l'ancrage)` : le même vecteur que
+celui que la Slice 06 applique au cadre (`manipulate`, ancres reconstruites sur
+les paumes), pris sur la paume **brute**, comme celle que le moteur reçoit. Le
+curseur et ce qu'il tient ne se décollent plus, et une main immobile ne bouge
+toujours pas d'un pixel — une paume ne se referme pas.
+
+Et l'**ancre est le dernier point visé avant que les doigts ne commencent à se
+refermer**, pas le premier que le détecteur appelle `pinching` : à cet
+instant-là, l'index est déjà à mi-chemin du pouce. « Avant la fermeture » se lit
+sur le rapport de pincement lui-même — tant qu'il ne descend pas (à
+`AIM_SETTLE_RATIO`, 0,02 paume, près, pour le tremblement), la main pointe et le
+point de visée se met à jour. La boucle se referme ainsi d'elle-même : départ et
+arrivée sont la même posture de doigt, donc il n'y a plus rien à rattraper au
+relâchement. Une main vue **déjà** en train de pincer n'a pas de point de visée
+d'avant et garde le comportement antérieur, le seul disponible.
 
 `lostGraceMs` (250, antérieur à cette Slice) est devenu la **grâce
 d'identité** : c'est lui, et lui seul, qui décide combien de temps une main
@@ -960,8 +985,8 @@ que par un relâchement ou par la perte de la main — et la perte donne un
 `cancel`, jamais un `up`, sans quoi l'arrêt déclencherait l'action qu'il vient
 d'interrompre.
 
-**Quel point porte l'événement** : `approach` et `down` visent l'**ancre** figée
-(la cible ne glisse pas sous les doigts au moment de cliquer) ; `move` et `up`
+**Quel point porte l'événement** : `approach` et `down` visent l'**ancre** (la
+cible ne glisse pas sous les doigts au moment de cliquer) ; `move` et `up`
 suivent la position **filtrée** (un glissement resté sur l'ancre ne déplacerait
 rien).
 
@@ -1186,6 +1211,37 @@ distance ne se tranche pas sur l'ordre de création.
 d'aperçu dans l'arbre — pas « caché », pas « transparent » : absent. C'est aussi
 ce qui paie la performance : la lecture du DOM n'a lieu que sous intention.
 
+**Décision 3 bis : savoir ce qu'on vise avant de le prendre.** La règle ci-dessus
+refusait un curseur permanent, et elle a raison ; elle interdisait aussi, sans le
+vouloir, la seule question qu'une main nue ne peut pas résoudre autrement :
+*suis-je sur le bord, ou dans le corps ?* Les deux prises ne font pas la même
+chose (décisions 8 à 11), elles sont séparées par quatorze pixels, et rien ne les
+distinguait tant que les doigts n'avaient pas commencé à se refermer — trop tard
+pour corriger sa visée. Le résolveur accepte donc un troisième état de main,
+`hover`, qui se résout comme une visée (même géométrie, même hystérésis de zone)
+mais ne se latche jamais (`locked` reste faux).
+
+Trois bornes le gardent honnête, et c'est ce qui laisse la décision 3 vraie là où
+elle visait :
+
+- il n'est demandé que pour le canal **primaire** — le secondaire est une
+  intention de clic droit, pas une visée ;
+- seul ce qui a des **zones de manipulation** (capsule, fenêtre) le reçoit : un
+  bouton, un lien, un champ survolés ne dessinent toujours rien, et le contour
+  hérité continue de les souligner sous intention ;
+- il ne va **qu'au dessin**. `targets()` — ce que la Slice 06 ouvre en capture, ce
+  que la Slice 09 mesure, ce que la Slice 10 enregistre — reste vide hors
+  intention. Les confondre aurait fait compter un cadre survolé pour une cible
+  atteinte dans le taux de clics visés.
+
+Le coût est borné par le même raisonnement : la collecte se sépare en un
+**balayage** (`survey`, la lecture d'arbre) et un **filtrage par point** (`near`,
+de l'arithmétique). Sous intention, les deux sont refaits à chaque image ; en
+survol, le balayage est échantillonné (90 ms) et seul le filtrage suit la main —
+hors intention, aucune manipulation n'est en cours, donc aucun cadre ne bouge
+qu'un balayage de 90 ms raterait. L'aperçu de survol est dessiné à voix basse
+(`data-hover="1"`), la visée sous intention à pleine intensité.
+
 La règle vaut aussi pour le **contour hérité** (`DOM.hoverClass`,
 `jarvis-hand-hover`), et c'est là qu'elle manquait : il s'ajoutait pour tout
 jeton suivi au-dessus d'un élément interactif, sans pincement ni geste, si bien
@@ -1202,11 +1258,23 @@ Ce qu'un consommateur reçoit est aussi **actionnable** : voir `pickRegion`
 ci-dessus, la décision 3 y est une porte.
 
 **Dynamique jusqu'à la descente, stable ensuite.** Sous contact (`pressed`), le
-descripteur est **figé** — objet, région, zone, cadre et nom — quoi que fasse la
-main et même si la collecte ne voit plus l'objet. C'est ce que la Slice 06
-latche (décision 13) : sans le gel, un glissement de 30 px changerait l'objet
-capturé au milieu du geste. Une entrée par main **et par canal** : le gel de
-l'un ne gèle pas l'autre.
+descripteur est **figé** — objet, région, zone et nom — quoi que fasse la main et
+même si la collecte ne voit plus l'objet. C'est ce que la Slice 06 latche
+(décision 13) : sans le gel, un glissement de 30 px changerait l'objet capturé au
+milieu du geste. Une entrée par main **et par canal** : le gel de l'un ne gèle
+pas l'autre.
+
+**Le cadre, lui, suit ce qu'il tient.** `boundsPx` n'est pas un descripteur :
+c'est *où l'objet est*, et l'objet, pendant la prise, est justement en train de
+bouger — c'est ce que la main lui fait. Figé avec le reste, le cadre jaune restait
+planté à l'endroit de la saisie pendant que la fenêtre partait ailleurs, et
+l'étirement d'un bord ne se voyait nulle part. La couture de page relit donc le
+rectangle de l'élément à chaque image (`getBoundingClientRect`, la même source que
+la collecte, simplement relue maintenant) et le substitue avant le dessin. Un
+élément disparu du dessin rend un rectangle vide : on garde alors le **dernier
+mesuré**, jamais celui de la prise — une fenêtre qui disparaît au milieu d'un
+déplacement laisserait sinon son cadre revenir d'un bond là où la main l'avait
+saisie.
 
 **Ce que la Slice 06 consomme** : `window.JarvisBarehands.targets()` rend, par
 main et par canal, une `createTargetCandidate` (donc `objectId`, `region`,
@@ -1400,11 +1468,28 @@ la **paume**, pas un seuil de plus. C'est ce qui garantit qu'un clic sur un bord
 ne déplace pas le cadre, et ne l'**épingle** donc pas (toute géométrie de
 l'utilisateur épingle, décision 9).
 
+**Mais le seuil dit *si* la main glisse, jamais *de combien*.** Le plan s'ancrait
+sur les paumes de l'image où il s'ouvre, c'est-à-dire après que le seuil eut été
+franchi : les vingt-six pixels (et davantage si la main est partie vite) étaient
+perdus pour de bon, le curseur devançait le cadre de cette distance-là pendant
+tout le geste, et le cadre se posait en arrière de la main qui le lâchait. Le
+premier ancrage lit donc la paume **à la descente** (`downPalm`, relevée à
+l'ouverture de la capture) et le cadre rattrape sa course à l'image où il s'arme
+— ce que fait une souris depuis toujours.
+
+La condition sur l'image compte autant que la paume : un plan qui s'ouvre
+**longtemps** après l'armement — la prise avait d'abord été refusée, la fenêtre
+n'était pas mesurable, l'objet n'était pas dessiné — commence là où la main est.
+La main a voyagé pendant ce refus, et lui rendre cette course téléporterait le
+cadre. Seul le plan qui s'ouvre *sur l'image même de l'armement*
+(`armedFrame === frameIndex`) reçoit sa descente ; tous les autres ancrages sont
+ceux de la décision 19.
+
 **Trois repères, trois rôles**, et les confondre est le piège de cette couche :
 la **paume** (`palmX`/`palmY`) est où la main *est*, donc ce qui déplace un
-cadre ; le bout de l'index est ce qu'elle *vise*, donc le pointeur ; l'ancre
-figée est ce qu'elle visait à la descente. La phase dit lequel un événement
-porte.
+cadre ; le bout de l'index est ce qu'elle *vise*, donc le pointeur ; l'ancre est
+ce qu'elle visait avant de se refermer, reportée sur la paume (§3). La phase dit
+lequel un événement porte.
 
 **Ce que produit une capture**, selon ce qu'elle tient :
 
@@ -2604,8 +2689,8 @@ Seul étage qui connaisse un traqueur ou l'expérience actuelle.
   `createMotionSample` (§3 bis). Même rôle que `pointersFromCoreTokens` pour
   l'identité de pointeur : le moteur garde sa forme de travail, le contrat
   possède celle qui traverse les Slices. `x`/`y` prennent la position
-  **filtrée** du jeton, pas son `x` d'affichage, qui se fige sur l'ancre
-  pendant un pincement.
+  **filtrée** du jeton, pas son `x` d'affichage, qui se reporte sur l'ancre
+  de visée pendant un pincement.
 
 ## 12. Canal de commandes du cerveau (décision 6, Slice 12)
 
@@ -3395,10 +3480,13 @@ qui le lit.
 
 Deux raisons de le séparer du pointeur plutôt que de l'y fondre : il **lit la
 page entière** (nœuds de scène, boutons, onglets, champs), ce qui n'est pas une
-responsabilité du suivi des mains ; et il ne s'exécute que **sous intention**
-(décision 3), si bien que son coût — un `querySelectorAll` et un rectangle par
-candidate — n'est jamais payé par une session au repos. C'est la décision
-produit qui paie la performance.
+responsabilité du suivi des mains ; et son coût — un `querySelectorAll` et un
+rectangle par candidate — n'est jamais payé par une session au repos. C'est la
+décision produit qui paie la performance : sous intention (décision 3) le
+balayage est refait à chaque image ; en survol (décision 3 bis) il est
+échantillonné à 90 ms et seul le filtrage par point suit la main. D'où la
+séparation de `survey()` (la lecture d'arbre) et de `near(liste, point, portée)`
+(l'arithmétique), `collect(point, portée)` restant leur composition.
 
 Elle apporte aussi le constat F4 de la Slice 00, corrigé : `.sc-node` était
 **absent** du sélecteur de survol historique, donc une étoile de la scène était

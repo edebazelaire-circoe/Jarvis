@@ -317,7 +317,14 @@ def test_a_tool_never_takes_a_frame_handle_nor_the_only_grip_of_a_move_only_star
     for key in ("panOnZone", "selectOnZone", "pointerOnZone"):
         assert result[key]["refusals"] == [], key
         assert result[key]["drove"] == ["1"], key
-        assert result[key]["dom"] == [], "une zone n'émet aucune séquence de pointeur"
+        # Le double journalise **tout** ce qui se publie, `move` compris — et
+        # `move` est justement ce qu'une zone produit dès l'armement, depuis
+        # que le cadre rattrape la course du seuil. Ce qu'une zone n'émet
+        # jamais, c'est une séquence de **contenu** : la page ne dispatche rien
+        # pour un `move`, et c'est cela que ce test garde.
+        assert set(result[key]["dom"]) <= {"move"}, result[key]["dom"]
+        assert not ({"drag_start", "drag_move", "drag_end", "scroll", "select"}
+                    & set(result[key]["dom"])), "une zone n'émet aucune séquence de pointeur"
     # Le corps d'une étoile déplaçable seulement reste sa prise, même sous `pan`
     # — qui refuserait n'importe quel autre corps non défilant.
     assert result["panOnStar"]["refusals"] == []

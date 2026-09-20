@@ -1379,6 +1379,204 @@ def test_the_legacy_hover_outline_follows_an_intention_not_a_tracked_hand(tmp_pa
     assert result["afterClear"] is False
 
 
+# ------------------------------------------- ce que la main voit et ce qu'elle tient
+
+
+def test_a_hovered_edge_lights_up_and_a_hovered_button_stays_dark(tmp_path):
+    """**Décision 3 bis : savoir ce qu'on vise avant de le prendre.**
+
+    Un bord et un corps ne font pas la même chose (décisions 8 à 11) et ils sont
+    séparés par quatorze pixels. Tant que rien ne les distinguait avant le
+    pincement, la seule façon de savoir sur lequel on était, c'était d'essayer —
+    donc de s'y reprendre à plusieurs fois. Le survol répond à la question
+    pendant qu'on peut encore corriger sa visée.
+
+    Et il y répond **seulement là où elle se pose** : la décision 3 refuse un
+    curseur permanent, donc un bouton, un lien ou un champ survolés ne reçoivent
+    toujours rien. Ce qui a des zones — capsule, fenêtre — les montre.
+
+    Ce qui ne bouge pas, et c'est la moitié du test : `targets()`, que la
+    Slice 06 ouvre en capture, que la Slice 09 mesure et que la Slice 10
+    enregistre, reste **vide hors intention**. Un cadre survolé ne doit pas se
+    compter pour une cible atteinte."""
+
+    result = run_node(tmp_path, BROWSER + """
+      const win=star('obj-1',{left:200,top:100,width:300,height:200},'window','Tâche A');
+      const b=button({left:700,top:100,width:80,height:30},'Activer');
+      global.page=[win,b];
+      const look=()=>{const el=previews()[0];
+        return el?[el.attrs['data-region'],el.attrs['data-feedback'],
+                   el.attrs['data-hover'],el.zone?1:1]:null};
+      const shot=(x,y,state)=>{frame([token(1,x,y)],[contact(1,state||'open')]);
+        return {drawn:previews().length,look:look(),measured:interaction.targets().length}};
+      out({
+        /* Le corps d'une fenêtre : cerclé, bleu, et dit survolé. */
+        body:shot(350,200),
+        /* Le bord gauche, à dix pixels : jaune, et c'est la réponse cherchée. */
+        leftEdge:shot(210,200),
+        /* Le coin haut gauche : jaune aussi, mais coin — deux axes tenus. */
+        corner:shot(205,105),
+        /* Le bouton : rien. La décision 3 reste vraie là où elle visait. */
+        button:shot(740,115),
+        /* Et sous intention, le même bord cesse d'être « survolé » : c'est la
+           visée franche, et elle se publie. */
+        intent:shot(210,200,'pinching'),
+        /* Le canal secondaire est une intention de clic droit, pas une visée :
+           il ne fabrique pas un second cadre rouge autour de tout ce que la
+           main croise. */
+        secondary:(()=>{frame([token(1,350,200)],[contact(1,'open','secondary')]);
+          return previews().length})(),
+      });
+      interaction.clear();
+    """)
+    assert result["body"]["drawn"] == 1
+    assert result["body"]["look"][:3] == ["body", "body", "1"]
+    assert result["body"]["measured"] == 0, "un survol ne se publie pas"
+    assert result["leftEdge"]["look"][:3] == ["edge", "zone", "1"]
+    assert result["leftEdge"]["measured"] == 0
+    assert result["corner"]["look"][:3] == ["corner", "zone", "1"]
+    assert result["button"] == {"drawn": 0, "look": None, "measured": 0}
+    # Sous intention : même géométrie, mais ce n'est plus un survol — et là,
+    # cette fois, la cible est publiée.
+    assert result["intent"]["look"][:3] == ["edge", "zone", "0"]
+    assert result["intent"]["measured"] == 1
+    assert result["secondary"] == 0
+
+
+def test_the_frame_follows_what_the_hand_is_moving_and_stretching(tmp_path):
+    """**Le cadre suit ce qu'il tient.**
+
+    Le descripteur d'une cible est figé à la descente (décision 13) : quel
+    objet, quelle prise. Son rectangle ne l'est pas — c'est *où l'objet est*, et
+    l'objet, pendant la prise, est justement en train de bouger. Figé aussi, le
+    cadre jaune restait planté à l'endroit de la saisie pendant que la fenêtre
+    partait ailleurs, et l'étirement d'un bord ne se voyait nulle part.
+
+    Ici la main tient le bord droit et la fenêtre s'élargit sous elle : le cadre
+    la suit, et la **barre jaune reste sur le bord tenu** — c'est-à-dire qu'elle
+    se déplace avec lui, puisque ce bord-là est celui qui bouge.
+
+    Ce que le test garde du gel : `objectId`, `region` et `zone` ne changent
+    pas, quoi que la géométrie fasse."""
+
+    result = run_node(tmp_path, BROWSER + """
+      const rect={left:200,top:100,width:300,height:200};
+      const win=star('obj-1',rect,'window','Tâche A');
+      global.page=[win];
+      const box=()=>{const el=previews()[0];
+        return el?[el.style.left,el.style.top,el.style.width,el.style.height]:null};
+      const bar=()=>{const el=previews()[0];
+        return el?[el.children[0].style.left,el.children[0].style.width]:null};
+      const held=()=>{const t=interaction.targets()[0];
+        return t?[t.objectId,t.region,t.zone]:null};
+      /* La main approche du bord droit, puis descend : la prise est prise. */
+      frame([token(1,494,200)],[contact(1,'pinching')]);
+      frame([token(1,494,200)],[contact(1,'pressed')]);
+      const grabbed={box:box(),bar:bar(),held:held()};
+      /* La fenêtre s'élargit de 120 px : c'est ce que fait la main qui tire. */
+      rect.width=420;
+      frame([token(1,614,200)],[contact(1,'pressed')]);
+      const stretched={box:box(),bar:bar(),held:held()};
+      /* Puis la même fenêtre est **déplacée** (prise de corps ailleurs) : le
+         cadre entier suit, sans changer de taille. */
+      rect.left=520;rect.top=260;
+      frame([token(1,614,200)],[contact(1,'pressed')]);
+      const moved={box:box(),held:held()};
+      /* L'objet quitte le dessin : le **dernier mesuré** vaut mieux qu'un
+         retour d'un bond à l'endroit de la prise, et mieux qu'un cadre au coin
+         supérieur gauche. */
+      rect.width=0;rect.height=0;
+      frame([token(1,614,200)],[contact(1,'pressed')]);
+      out({grabbed,stretched,moved,gone:box()});
+      interaction.clear();
+    """)
+    assert result["grabbed"]["box"] == ["200px", "100px", "300px", "200px"]
+    assert result["grabbed"]["held"] == ["obj-1", "edge", "right"]
+    # Le cadre a suivi l'étirement…
+    assert result["stretched"]["box"] == ["200px", "100px", "420px", "200px"]
+    # …et la barre jaune est restée collée au bord tenu, qui est celui qui bouge.
+    grabbed_bar = [float(v[:-2]) for v in result["grabbed"]["bar"]]
+    stretched_bar = [float(v[:-2]) for v in result["stretched"]["bar"]]
+    assert stretched_bar[1] == grabbed_bar[1], "la bande garde son épaisseur"
+    assert stretched_bar[0] == grabbed_bar[0] + 120, "la barre suit le bord droit"
+    # La prise, elle, n'a pas changé de main.
+    assert result["stretched"]["held"] == ["obj-1", "edge", "right"]
+    assert result["moved"]["box"] == ["520px", "260px", "420px", "200px"]
+    assert result["moved"]["held"] == ["obj-1", "edge", "right"]
+    assert result["gone"] == ["520px", "260px", "420px", "200px"]
+
+
+def test_the_token_follows_the_hand_while_it_holds_and_not_the_closing_finger(tmp_path):
+    """**Le curseur suit la main, pas le doigt qui se referme.**
+
+    Le jeton était **gelé** du début du pincement au relâchement. Le clic
+    tombait juste, mais tout ce qui dure plus qu'un clic mentait à l'écran : la
+    main emportait un cadre et le curseur restait planté à l'endroit de la
+    prise, puis sautait au relâchement là où le doigt venait de rouvrir. Lu de
+    l'utilisateur : « la fenêtre ne se pose pas où je l'ai lâchée ».
+
+    Le jeton vaut donc l'ancre de visée **plus ce que la paume a parcouru** :
+    exactement le vecteur que la Slice 06 applique au cadre. Les deux ne peuvent
+    plus se décoller.
+
+    Les deux moitiés comptent, et la seconde est celle que le gel protégeait :
+    un index qui se referme sur une main immobile ne doit **pas** déplacer le
+    curseur d'un pixel."""
+
+    result = run_node(tmp_path, HAND + """
+      const VIEWPORT={width:1920,height:1080};
+      const tracker=B.createHandTracker({});
+      const step=(t,cx,now)=>tracker.update({landmarks:[PINCHING(t,{cx,cy:.45})]},
+        {viewport:VIEWPORT,aspect:16/9,now}).tokens[0];
+      /* L'index se referme puis le pincement se tient, la main ne bouge pas :
+         le curseur non plus, **à partir du moment où l'ancre est prise**. */
+      const still=[];
+      for(let i=0;i<=10;i+=1)still.push(step(Math.min(1,i/6),.5,i*16));
+      const anchored=still.findIndex(t=>t.state!=='open');
+      const held=still.slice(anchored);
+      const pinched=still[still.length-1];
+      /* Pincement tenu, la main part vers la droite. */
+      let carried=null;
+      for(let i=1;i<=8;i+=1)carried=step(1,.5+i*.01,(10+i)*16);
+      /* Puis les doigts rouvrent, la main restant où elle est : c'est le
+         relâchement, et c'est là que le jeton reprend le bout de l'index. */
+      let released=null;
+      for(let i=1;i<=10;i+=1)released=step(Math.max(0,1-i/6),.58,(18+i)*16);
+      const far=(a,b)=>Number(Math.hypot(a[0]-b[0],a[1]-b[1]).toFixed(1));
+      out({
+        /* Ce que le bout du doigt parcourt en se refermant, à côté de ce que le
+           jeton parcourt sur les mêmes images : le premier est grand, le second
+           est nul. */
+        tipClosed:far([pinched.filteredX,pinched.filteredY],
+                      [held[0].filteredX,held[0].filteredY]),
+        tokenDrift:Math.max(...held.map(t=>far([t.x,t.y],[held[0].x,held[0].y]))),
+        /* Puis, la prise tenue : le jeton et la paume font le même chemin. */
+        tokenCarried:[Number((carried.x-pinched.x).toFixed(2)),
+                      Number((carried.y-pinched.y).toFixed(2))],
+        palmCarried:[Number((carried.palmX-pinched.palmX).toFixed(2)),
+                     Number((carried.palmY-pinched.palmY).toFixed(2))],
+        /* **Le saut du relâchement**, qui est ce que l'utilisateur lit comme
+           un décalage entre l'endroit lâché et l'endroit posé : la distance
+           entre le dernier jeton tenu et le premier jeton rendu au doigt. */
+        snapPx:far([released.x,released.y],[carried.x,carried.y]),
+        states:[still[0].state,pinched.state,carried.state,released.state],
+      });
+    """)
+    assert result["states"] == ["open", "pressed", "pressed", "open"]
+    # Le doigt a traversé l'écran en se refermant…
+    assert result["tipClosed"] > 25, result
+    # …et le curseur n'a pas bougé d'un pixel. C'est ce que le gel protégeait.
+    assert result["tokenDrift"] == 0.0, result
+    # Puis la main emporte son curseur, au pixel près, du même vecteur que
+    # celui qui déplacera le cadre.
+    assert result["tokenCarried"] == result["palmCarried"], result
+    assert abs(result["tokenCarried"][0]) > 50, "la main a bien traversé"
+    # Et le relâchement ne saute pas : l'ancre était la dernière posture
+    # ouverte, et c'est à cette posture-là que le doigt revient. Le seuil est
+    # celui d'un pixel de rattrapage du filtre, pas celui d'un geste.
+    assert result["snapPx"] < 4, result
+
+
 def test_a_gesture_suppressed_during_a_manipulation_says_so_on_screen(tmp_path):
     """RÈGLE ZÉRO. Le contrat étouffe les gestes pendant une capture (§ 4) et
     range la raison dans `suppressed` « plutôt que de disparaître : un geste qui

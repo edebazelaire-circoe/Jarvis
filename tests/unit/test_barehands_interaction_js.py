@@ -372,16 +372,18 @@ def test_one_zone_moves_the_whole_frame_and_never_resizes_it(tmp_path):
         captured:e.capturedHands()});
     """)
     assert result["beforeArming"] == 0, "un contact indécis ne déplace rien"
-    # L'armement **rebase** : à l'image où l'intention bascule, le déplacement
-    # vaut zéro et rien n'est dessiné — les 160 px déjà parcourus depuis la
-    # descente ne sont pas réinterprétés d'un coup. Le premier aperçu est donc
-    # celui de l'image suivante, 60 px plus loin.
-    assert result["previews"] == [[10, 0, 64, 40]], result["previews"]
+    # Le seuil décide **si** la main glisse, jamais **de combien** : à l'image
+    # où l'intention bascule, le cadre rattrape les 60 px parcourus depuis la
+    # descente (10 unités), et l'image suivante en ajoute 60 autres. Sans ce
+    # rattrapage, le curseur devançait le cadre de tout le seuil pendant le
+    # geste entier, puis le cadre se posait en arrière de la main qui le
+    # lâchait.
+    assert result["previews"] == [[10, 0, 64, 40], [20, 0, 64, 40]], result["previews"]
     assert result["previews"][-1][2] == 64 and result["previews"][-1][3] == 40, (
         "une seule main ne redimensionne jamais"
     )
     assert [c[1] for c in result["commits"]] == ["move"]
-    assert result["commits"][0][2:] == [10, 0, 64, 40]
+    assert result["commits"][0][2:] == [20, 0, 64, 40]
     assert result["cancels"] == []
     assert result["captured"] == []
     # Aucun clic publié : la main a déplacé, elle n'a pas cliqué.
@@ -532,9 +534,10 @@ def test_two_zones_on_one_frame_resize_it_with_the_sides_the_contract_gave(tmp_p
     opposite = result["opposite"]
     assert opposite["mode"] == "resize" and opposite["axes"] == ["x"]
     assert opposite["published"] == ["x"], "l'événement ne porte pas ses axes"
-    # 30 unités de chaque côté (180 px à 6 px/unité, depuis l'armement) :
-    # 64 + 60, hauteur intacte — l'axe y n'était tenu par personne.
-    assert opposite["commit"] == ["resize", -62, -20, 124, 40]
+    # 40 unités de chaque côté (240 px à 6 px/unité, comptés depuis la
+    # **descente** : le seuil dit si la main glisse, pas de combien) :
+    # 64 + 80, hauteur intacte — l'axe y n'était tenu par personne.
+    assert opposite["commit"] == ["resize", -72, -20, 144, 40]
 
     shared = result["edgeAndCorner"]
     assert shared["byHand"] == [["1", ["right"]], ["2", ["top"]]], (
@@ -543,19 +546,19 @@ def test_two_zones_on_one_frame_resize_it_with_the_sides_the_contract_gave(tmp_p
     assert shared["axes"] == ["x", "y"]
     # Le bord droit emmène la largeur, le coin ne tire que sur le haut : le
     # bord gauche et le bas n'ont bougé d'aucune unité.
-    assert shared["commit"] == ["resize", -32, -50, 94, 70]
+    assert shared["commit"] == ["resize", -32, -60, 104, 80]
 
     neutral = result["twoCornersSharingRight"]
     assert neutral["axes"] == ["y"], "décision 17 : le côté partagé neutralise son axe"
     assert neutral["published"] == ["y"]
     assert neutral["commit"][3] == 64, "la largeur ne doit pas avoir changé d'une unité"
-    assert neutral["commit"][4] == 100, "les deux coins tirent chacun son côté vertical"
+    assert neutral["commit"][4] == 120, "les deux coins tirent chacun son côté vertical"
     assert neutral["commit"][1] == -32, "le bord gauche est resté où il était"
 
     corners = result["oppositeCorners"]
     assert corners["axes"] == ["x", "y"]
     assert corners["published"] == ["xy"]
-    assert corners["commit"] == ["resize", -62, -50, 124, 100]
+    assert corners["commit"] == ["resize", -72, -60, 144, 120]
 
 
 def test_a_body_and_a_zone_never_form_a_resize(tmp_path):
@@ -587,10 +590,10 @@ def test_a_body_and_a_zone_never_form_a_resize(tmp_path):
     """)
     assert result["mode"] == "move" and result["reason"] == "body_is_not_a_resize_handle"
     assert result["byHand"] == ["1"], "seule la main qui tient la zone déplace"
-    # La main de zone est partie de 120 px vers la droite depuis l'armement :
-    # 20 unités, taille intacte — et la main de corps, partie dans l'autre sens,
+    # La main de zone est partie de 180 px vers la droite depuis sa descente :
+    # 30 unités, taille intacte — et la main de corps, partie dans l'autre sens,
     # n'a rien tiré du tout.
-    assert result["commit"] == ["move", 20, 0, 64, 40]
+    assert result["commit"] == ["move", 30, 0, 64, 40]
 
 
 def test_two_bodies_on_one_window_carry_nothing_away(tmp_path):
@@ -707,7 +710,7 @@ def test_a_right_click_never_joins_a_manipulation(tmp_path):
     """)
     # Un déplacement, jamais un redimensionnement : la main droite ne comptait pas.
     assert result["commits"] == 1
-    assert result["commit"] == ["move", -52, -20, 64, 40]
+    assert result["commit"] == ["move", -62, -20, 64, 40]
     # Et le clic droit fait ce qu'il doit : un contexte au relâchement.
     assert ["context", "secondary"] in result["types"]
 
@@ -733,8 +736,8 @@ def test_two_hands_on_two_objects_stay_independent(tmp_path):
     """)
     # Chacun déplacé sur son propre axe, et rien de l'un dans l'autre.
     assert result["commits"] == [
-        ["a", "move", -20, 0, 64, 40],
-        ["b", "move", 40, 20, 40, 7],
+        ["a", "move", -10, 0, 64, 40],
+        ["b", "move", 40, 30, 40, 7],
     ]
 
 
@@ -761,7 +764,7 @@ def test_a_capture_latches_until_release(tmp_path):
         commits:world.log.commits.map(c=>[c.id,c.box.x,c.box.w,c.box.h])});
     """)
     assert result["begins"] == ["a"], "l'objet capturé a changé en cours de geste"
-    assert result["commits"] == [["a", 20, 64, 40]]
+    assert result["commits"] == [["a", 30, 64, 40]]
 
 
 def test_releasing_one_hand_from_a_resize_continues_as_a_move_with_no_jump(tmp_path):
@@ -830,20 +833,20 @@ def test_releasing_one_hand_from_a_resize_continues_as_a_move_with_no_jump(tmp_p
         commits:world.log.commits.map(c=>[c.mode,c.box.x,c.box.y,c.box.w,c.box.h]),
         widened,regrabbed:boxes(again.log).pop()});
     """)
-    # Deux mains ont écarté le cadre de 60 px chacune depuis l'armement :
-    # 10 unités par côté, donc 64 + 20.
-    assert result["resized"] == [-42, -20, 84, 40]
+    # Deux mains ont écarté le cadre de 120 px chacune depuis leur descente :
+    # 20 unités par côté, donc 64 + 40.
+    assert result["resized"] == [-52, -20, 104, 40]
     # Le retrait d'une main ne bouge rien : c'est le rebasage.
     assert result["rebased"] == result["resized"], "le cadre a sauté au retrait d'une main"
     # Puis 60 px de paume = 10 unités de déplacement, taille inchangée.
-    assert result["after"] == [-52, -20, 84, 40]
-    assert result["commits"] == [["move", -52, -20, 84, 40]]
+    assert result["after"] == [-62, -20, 104, 40]
+    assert result["commits"] == [["move", -62, -20, 104, 40]]
     # La main revenue sous une autre identité tire pour de bon : le cadre
-    # s'élargit encore de 10 unités, alors que le mode et les axes n'ont pas
+    # s'élargit encore de 20 unités, alors que le mode et les axes n'ont pas
     # changé. Sans « qui tient quoi » dans la signature, elle n'aurait pas
     # d'ancre et ne tirerait plus jamais rien.
-    assert result["widened"] == [-42, -20, 84, 40]
-    assert result["regrabbed"] == [-42, -20, 104, 40], result["regrabbed"]
+    assert result["widened"] == [-52, -20, 104, 40]
+    assert result["regrabbed"] == [-52, -20, 124, 40], result["regrabbed"]
 
 
 # ----------------------------------------------- refus, annulation et contenu
@@ -892,7 +895,7 @@ def test_every_reason_the_contract_can_return_is_handled(tmp_path):
     """)
     # Une main deux fois : le couple n'existe pas, la première capture déplace seule.
     assert result["sameHand"]["refusals"] == [] and result["sameHand"]["previews"] > 0
-    assert result["sameHand"]["box"] == [-10, 0, 64, 40]
+    assert result["sameHand"]["box"] == [-20, 0, 64, 40]
     # Objets non identifiés : indépendants, donc aucun couple et aucun refus.
     assert result["unidentified"]["refusals"] == [] and result["unidentified"]["previews"] == 0
     # Deux corps : rien, et c'est la décision 8 — pas un refus à afficher.
@@ -1141,7 +1144,7 @@ def test_a_plan_that_skipped_a_frame_is_rebased_when_it_resumes(tmp_path):
     for how in SUSPENSIONS:
         case = result[how]
         size = [6, 6] if how == "not_resizable" else [64, 40]
-        assert case["driven"] == [10, 0] + size, (how, case["driven"])
+        assert case["driven"] == [20, 0] + size, (how, case["driven"])
         assert case["duringRefusals"] == reasons[how], (how, case["duringRefusals"])
         assert case["frozen"] is True, f"{how} : le cadre a bougé pendant la suspension"
         # L'image de la reprise est **identique** : rien n'a été publié, donc
@@ -1149,7 +1152,7 @@ def test_a_plan_that_skipped_a_frame_is_rebased_when_it_resumes(tmp_path):
         assert case["resumed"] == case["driven"], f"{how} : le cadre a sauté à la reprise"
         assert case["quiet"] is True, f"{how} : la reprise a publié un aperçu"
         # Puis la suite repart d'où la main est, pas d'où elle était.
-        assert case["after"] == [20, 0] + size, (how, case["after"])
+        assert case["after"] == [30, 0] + size, (how, case["after"])
 
 
 def test_a_hand_lost_for_a_blink_freezes_the_frame_instead_of_teleporting_it(tmp_path):
@@ -1169,13 +1172,17 @@ def test_a_hand_lost_for_a_blink_freezes_the_frame_instead_of_teleporting_it(tmp
         events:[ev(1,'down',400,300)],contacts:[held(1,'undecided')]});
       e.update({now:16,tokens:[tok(1,460,300)],targets:solo,events:[],contacts:[held(1,'drag')]});
       const plansBefore=e.plans().map(p=>p.signature);
+      /* Ce que l'armement a publié — le rattrapage du seuil, 60 px — et qui
+         n'a rien à voir avec la reprise : c'est **cette** marque qui ne doit
+         plus bouger. */
+      const previewsBefore=world.log.previews.length;
       /* Trois images sans main, puis la même piste, 440 px plus loin. */
       for(const k of [0,1,2])e.update({now:32+16*k,tokens:[],targets:[],events:[],contacts:[]});
       const alive=e.capturedHands();
       const back=e.update({now:80,tokens:[tok(1,900,300)],targets:solo,
         events:[],contacts:[held(1,'drag')]});
       const plansAfter=e.plans().map(p=>p.signature);
-      out({plansBefore,alive,plansAfter,
+      out({plansBefore,alive,plansAfter,previewsBefore,
         previews:world.log.previews.length,
         refusals:back.refusals.map(r=>r.reason),
         types:back.interactions.map(i=>i.type)});
@@ -1185,7 +1192,7 @@ def test_a_hand_lost_for_a_blink_freezes_the_frame_instead_of_teleporting_it(tmp
     assert result["alive"] == [1]
     assert result["plansAfter"] == result["plansBefore"] == ["move|xy|1:right"]
     # Rien n'a été publié à la reprise : ni aperçu, ni déplacement, ni refus.
-    assert result["previews"] == 0, "le cadre a téléporté de 68 unités"
+    assert result["previews"] == result["previewsBefore"], "le cadre a téléporté de 68 unités"
     assert result["types"] == [] and result["refusals"] == []
 
 
@@ -1228,7 +1235,7 @@ def test_a_one_frame_dropout_during_a_two_hand_resize_says_nothing_and_moves_not
         blinkTypes:blink.interactions.map(i=>i.type),
         dom:[...new Set(dom.log.map(d=>d.type))]});
     """)
-    assert result["widened"] == [-42, -20, 84, 40]
+    assert result["widened"] == [-52, -20, 104, 40]
     # Rien pendant le trou : pas de redimensionnement de travers, pas d'événement.
     assert result["during"] == result["widened"], "le cadre s'est redimensionné de travers"
     assert result["blinkTypes"] == []
@@ -1238,7 +1245,7 @@ def test_a_one_frame_dropout_during_a_two_hand_resize_says_nothing_and_moves_not
     # La reprise ne saute pas, puis les deux mains écartent de nouveau.
     assert result["resumed"] == result["widened"], "le cadre a sauté au retour de la main"
     assert result["resumeRefusals"] == []
-    assert result["after"] == [-52, -20, 104, 40], result["after"]
+    assert result["after"] == [-62, -20, 124, 40], result["after"]
     assert result["dom"] == ["resize"]
 
 
@@ -1271,7 +1278,7 @@ def test_a_scene_that_cannot_be_measured_refuses_instead_of_moving_six_times_too
         zero:run(()=>({scale:0})),
         absent:run(undefined)});
     """)
-    assert result["good"]["box"] == [10, 0, 64, 40] and result["good"]["refusals"] == []
+    assert result["good"]["box"] == [20, 0, 64, 40] and result["good"]["refusals"] == []
     for how in ("missing", "zero", "absent"):
         assert result[how]["refusals"] == ["viewport_unavailable"], how
         assert result[how]["box"] is None, f"{how} : le cadre a bougé sans échelle"
@@ -1332,13 +1339,13 @@ def test_two_hands_on_a_move_only_star_let_the_first_one_keep_moving_it(tmp_path
         dom:[...new Set(dom.log.map(d=>d.type))],
         commits:world.log.commits.map(c=>[c.mode,c.box.x,c.box.y])});
     """)
-    assert result["alone"] == [10, 0, 6, 6]
+    assert result["alone"] == [20, 0, 6, 6]
     # La seconde main se dit, et **à chaque image** du maintien — pas seulement
     # à celle où elle arrive.
     assert result["joinedRefusals"] == [[2, "star_moves_with_one_hand"]], result["joinedRefusals"]
     assert result["heldRefusals"] == ["star_moves_with_one_hand"]
     # Pendant ce temps la première main continue : 60 px de plus, 10 unités.
-    assert result["together"] == [20, 0, 6, 6], result["together"]
+    assert result["together"] == [30, 0, 6, 6], result["together"]
     assert result["moves"] == ["move"]
     # Le corps d'une étoile n'est jamais du contenu : le double journalise tout
     # ce qui se publie, et il n'y a là aucune séquence de contenu — la page, elle,
@@ -1350,8 +1357,8 @@ def test_two_hands_on_a_move_only_star_let_the_first_one_keep_moving_it(tmp_path
     # refusée.
     assert result["afterRelease"] == result["together"], "l'étoile a sauté au retrait"
     assert result["releaseTypes"] == ["click"]
-    assert result["last"] == [30, 0, 6, 6]
-    assert result["commits"] == [["move", 30, 0]]
+    assert result["last"] == [40, 0, 6, 6]
+    assert result["commits"] == [["move", 40, 0]]
 
 
 def test_a_disabled_target_never_opens_a_capture(tmp_path):

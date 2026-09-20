@@ -3008,3 +3008,75 @@ inexpliquée se lit comme un bug et se fait « corriger » par quelqu'un qui ne
 sait pas pourquoi elle était là.** C'est la raison d'être de ce fichier, et la
 seule chose que cette Slice pouvait laisser derrière elle qu'aucune autre ne
 pouvait écrire.
+
+## 2026-09-20 — Reprise produit : viser, tenir, poser
+
+Retour utilisateur sur la V1 en usage réel, trois symptômes et une seule
+phrase pour les trois : *« je ne sais pas ce que je vise, le cadre ne suit pas
+ce que je déplace, et la fenêtre ne se pose pas où je l'ai lâchée »*. Quatre
+défauts derrière, tous dans le chemin de la **présentation du geste**, aucun
+dans la géométrie.
+
+**1. On ne voyait pas les bords avant de les prendre (décision 3 bis).** Un bord
+et un corps ne font pas la même chose (décisions 8 à 11) et quatorze pixels les
+séparent ; rien ne les distinguait tant que les doigts n'avaient pas commencé à
+se refermer — trop tard pour corriger sa visée, d'où les reprises. Le résolveur
+accepte un troisième état de main, `hover` : même géométrie, même hystérésis de
+zone, jamais latché. Trois bornes le gardent honnête — canal **primaire**
+seulement, objets **à zones** seulement (une capsule, une fenêtre ; un bouton
+survolé ne dessine toujours rien, décision 3 intacte là où elle visait), et il
+ne va **qu'au dessin** : `targets()` reste vide hors intention, sinon un cadre
+survolé se serait compté pour une cible atteinte dans le taux de clics visés de
+la Slice 10 et une étape de tutoriel « vise un objet » se serait validée toute
+seule. Le coût est payé par une séparation : `survey()` (la lecture d'arbre,
+échantillonnée à 90 ms en survol) et `near()` (l'arithmétique, à chaque image).
+
+**2. Le cadre ne suivait pas ce qu'il tenait.** `boundsPx` était gelé avec le
+reste du descripteur à la descente. Mais le descripteur répond à *quel objet,
+quelle prise* — ça, il faut le geler (décision 13) — tandis que `boundsPx`
+répond à *où l'objet est*, et l'objet est justement en train de bouger. La
+couture de page relit le rectangle de l'élément à chaque image et le substitue
+avant le dessin ; l'élément disparu garde son **dernier mesuré**, jamais celui
+de la prise.
+
+**3. Le curseur était gelé pendant toute la prise.** Le jeton se détachait du
+bout de l'index dès l'approche — il le faut — mais il ne bougeait plus jusqu'au
+relâchement, où il sautait de cent pixels et plus. Il vaut désormais
+`ancre + (paume − paume à l'ancrage)`, le vecteur même que la Slice 06 applique
+au cadre. Et l'ancre est le dernier point visé **avant que le rapport de
+pincement ne descende**, pas le premier point que le détecteur appelle
+`pinching` : départ et arrivée sont alors la même posture de doigt, donc il n'y
+a plus rien à rattraper au relâchement (saut mesuré < 4 px contre ~100).
+
+**4. Le seuil de glissement mangeait sa propre course.** Le plan s'ancrait sur
+les paumes de l'image où il s'ouvre, donc **après** `dragSlopPx` : vingt-six
+pixels (davantage si la main part vite) perdus pour de bon, curseur en avance
+sur le cadre pendant tout le geste, cadre posé en arrière de la main qui le
+lâche. Le premier ancrage lit la paume **à la descente**. Le seuil dit *si* la
+main glisse, jamais *de combien* — c'est ce que fait une souris.
+  Garde-fou : seul le plan qui s'ouvre **sur l'image même de l'armement**
+  (`armedFrame === frameIndex`) reçoit sa descente. Un plan qui s'ouvre
+  longtemps après — prise d'abord refusée, fenêtre non mesurable, objet non
+  dessiné — commence là où la main est, sans quoi la course faite pendant le
+  refus téléporterait le cadre (décision 19).
+
+Quatorze tests de la Slice 06 encodaient l'ancien décalage en dur : leurs
+nombres montent d'une course de seuil, et les commentaires qui les expliquaient
+disent maintenant pourquoi. Trois tests neufs couvrent les trois symptômes
+(`test_a_hovered_edge_lights_up_and_a_hovered_button_stays_dark`,
+`test_the_frame_follows_what_the_hand_is_moving_and_stretching`,
+`test_the_token_follows_the_hand_while_it_holds_and_not_the_closing_finger`).
+436 tests Bare Hands au vert ; les 29 échecs des suites scène / control center
+sont identiques avant et après (pré-existants sur `main`).
+
+**Vérifié dans un vrai navigateur, pas seulement en node** : la page servie par
+`ControlCenter.index()` chargée dans Chrome headless, avec une sonde qui pose
+une fenêtre de scène et conduit `interaction.hover()`. Survol du corps → cadre
+bleu `data-hover="1"` ; survol du bord gauche et du coin → jaune ; sous
+intention → `data-hover="0"` ; l'élément déplacé et élargi sous la prise
+(200,150,300×200 → 520,300,420×200) emmène son cadre, la cible restant figée sur
+`edge:left`. Zéro erreur console.
+
+**Ce qu'aucune de ces preuves ne remplace** : une main devant la caméra. Le
+ressenti (largeur de bande à 14 px, tremblement du curseur reporté sur la paume
+brute, lisibilité du survol à voix basse) demande une séance réelle.

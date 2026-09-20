@@ -115,35 +115,28 @@
     Math.max(rect.x-point.x,0,point.x-(rect.x+rect.w)),
     Math.max(rect.y-point.y,0,point.y-(rect.y+rect.h)));
 
-  /* Les candidates autour d'un point, à `reach` pixels près.
+  /* **Le balayage**, sans point de vue : tout ce que la page offre, avec son
+     cadre. C'est la moitié *chère* de la collecte — un `querySelectorAll` et un
+     rectangle par candidate — et c'est la seule qui lise l'arbre.
 
-     `document.elementFromPoint` **participe** sans décider : il dit seulement
-     laquelle est au-dessus des autres, et cette candidate-là est citée en tête
-     pour que le résolveur la préfère à distance égale. Deux objets qui se
-     recouvrent rendent sinon la même distance (zéro), et c'est l'ordre du
-     document qui trancherait — c'est-à-dire l'ordre de création, pas ce que
-     l'utilisateur voit. */
-  function collect(point,reach){
+     Elle est séparée du filtrage parce que les deux ne vieillissent pas à la
+     même vitesse : les cadres d'une page ne changent qu'à un rendu, la main,
+     elle, bouge à chaque image. Un appelant qui dessine un survol (aucune
+     intention, donc aucune manipulation en cours, donc aucun cadre qui bouge)
+     peut donc garder un balayage quelques dizaines de millisecondes et refaire
+     le filtrage — qui n'est que de l'arithmétique — à chaque image. C'est ce
+     qui permet au retour de survol de la décision 3 bis d'exister sans payer
+     une lecture d'arbre par main et par image. */
+  function survey(){
     if(typeof document==='undefined'||!document.querySelectorAll)return [];
-    const x=Number(point&&point.x),y=Number(point&&point.y);
-    if(!Number.isFinite(x)||!Number.isFinite(y))return [];
-    const at={x,y};
-    const span=Math.max(0,Number(reach)||0);
     const overlay=BH.DOM.rootSelector;
-    let topmost=null;
-    if(typeof document.elementFromPoint==='function'){
-      const hit=document.elementFromPoint(x,y);
-      /* La surimpression des mains est à nous : elle ne se vise pas. */
-      if(hit&&typeof hit.closest==='function'&&!hit.closest(overlay))topmost=hit.closest(SELECTOR);
-    }
     const out=[];
-    let front=null;
     for(const el of document.querySelectorAll(SELECTOR)){
       if(typeof el.closest==='function'&&el.closest(overlay))continue;
       const rect=rectOf(el);
-      if(!rect||distanceTo(rect,at)>span)continue;
+      if(!rect)continue;
       const representation=representationOf(el);
-      const candidate={
+      out.push({
         element:el,
         /* Renvoi opaque, posé une fois la liste dans son ordre final : le
            résolveur le rend tel quel, et c'est ainsi que l'appelant retrouve le
@@ -161,17 +154,56 @@
         name:nameOf(el),
         radiusPx:RADIUS[String(representation)]||DEFAULT_RADIUS,
         boundsPx:rect,
-      };
-      out.push(candidate);
-      if(el===topmost)front=candidate;
+      });
     }
-    if(front){
-      const at=out.indexOf(front);
-      if(at>0){out.splice(at,1);out.unshift(front)}
-    }
-    out.forEach((candidate,index)=>{candidate.ref=index});
     return out;
   }
+
+  /* Les candidates d'un balayage qui sont à `reach` pixels d'un point, dans
+     l'ordre où le résolveur doit les lire. **Aucune lecture d'arbre** hors
+     `elementFromPoint`, qui est une question par point et non par candidate.
+
+     `document.elementFromPoint` **participe** sans décider : il dit seulement
+     laquelle est au-dessus des autres, et cette candidate-là est citée en tête
+     pour que le résolveur la préfère à distance égale. Deux objets qui se
+     recouvrent rendent sinon la même distance (zéro), et c'est l'ordre du
+     document qui trancherait — c'est-à-dire l'ordre de création, pas ce que
+     l'utilisateur voit. */
+  function near(list,point,reach){
+    const x=Number(point&&point.x),y=Number(point&&point.y);
+    if(!Number.isFinite(x)||!Number.isFinite(y))return [];
+    const at={x,y};
+    const span=Math.max(0,Number(reach)||0);
+    const overlay=BH.DOM.rootSelector;
+    let topmost=null;
+    if(typeof document!=='undefined'&&typeof document.elementFromPoint==='function'){
+      const hit=document.elementFromPoint(x,y);
+      /* La surimpression des mains est à nous : elle ne se vise pas. */
+      if(hit&&typeof hit.closest==='function'&&!hit.closest(overlay))topmost=hit.closest(SELECTOR);
+    }
+    const out=[];
+    let front=null;
+    for(const candidate of Array.isArray(list)?list:[]){
+      if(!candidate||!candidate.boundsPx)continue;
+      if(distanceTo(candidate.boundsPx,at)>span)continue;
+      out.push(candidate);
+      if(candidate.element===topmost)front=candidate;
+    }
+    if(front){
+      const index=out.indexOf(front);
+      if(index>0){out.splice(index,1);out.unshift(front)}
+    }
+    /* Le renvoi est celui de **cette** liste-ci : il indexe ce que l'appelant
+       passera au résolveur, et deux filtrages du même balayage n'ont pas le
+       même ordre. Écrit sur la candidate partagée, il serait juste pour la
+       dernière main servie et faux pour l'autre — d'où la copie. */
+    return out.map((candidate,index)=>({...candidate,ref:index}));
+  }
+
+  /* La collecte d'un seul point : balayer puis filtrer. C'est ce qu'appelle un
+     chemin sous intention, où la fraîcheur des cadres compte plus que leur
+     coût — une main qui pince est une main dont on sait qu'elle vise. */
+  const collect=(point,reach)=>near(survey(),point,reach);
 
   /* ------------------------------------------------------------------ aperçu
 
@@ -200,6 +232,18 @@
 #jarvisHands .jh-target[data-region="edge"],#jarvisHands .jh-target[data-region="corner"]{
   border-color:color-mix(in srgb,currentColor 28%,transparent);background:color-mix(in srgb,currentColor 5%,transparent)}
 #jarvisHands .jh-target[data-feedback="zone"]{color:${COLOR.zone}}
+/* **Survol** (décision 3 bis) : la même géométrie, dite à voix basse. Le cadre
+   et la barre de zone sont ceux de la visée — sinon le retour de survol
+   promettrait une prise différente de celle qu'on obtiendrait — mais ils sont
+   assez effacés pour qu'une main qui traverse la scène ne clignote pas, et
+   assez lisibles pour répondre à « suis-je sur le bord ? » avant d'avoir
+   pincé. La barre, elle, garde presque toute sa couleur : c'est elle qui porte
+   la réponse. */
+#jarvisHands .jh-target[data-hover="1"]{opacity:.62;box-shadow:none;
+  border-color:color-mix(in srgb,currentColor 34%,transparent);
+  background:color-mix(in srgb,currentColor 5%,transparent)}
+#jarvisHands .jh-target[data-hover="1"] .jh-target-zone{opacity:.88}
+#jarvisHands .jh-target[data-hover="1"] .jh-target-name{opacity:.8}
 #jarvisHands .jh-target[data-feedback="secondary"]{color:${COLOR.secondary};animation:jhTargetIn .14s cubic-bezier(.16,1,.3,1) both,jhTargetPulse 1.1s ease-in-out .14s infinite}
 #jarvisHands .jh-target-zone{position:absolute;box-sizing:border-box;border-radius:3px;
   background:color-mix(in srgb,currentColor 82%,transparent);
@@ -350,6 +394,12 @@
           entry.box.setAttribute('data-feedback',role.role);
           entry.box.setAttribute('data-region',String(target.region||BH.REGION.BODY));
           entry.box.setAttribute('data-locked',target.locked?'1':'0');
+          /* Ce qui est **survolé** et ce qui est **visé** ne se dessinent pas
+             pareil : l'un répond à « où suis-je ? », l'autre annonce ce qui va
+             être pris. Même arbre, même géométrie, deux intensités — la
+             distinction est un attribut et non une seconde classe, pour qu'un
+             test la lise là où il lit déjà la région et la couleur. */
+          entry.box.setAttribute('data-hover',target.hover?'1':'0');
           const zoned=target.region!==BH.REGION.BODY&&BH.zoneSides(target.zone).length>0;
           /* `zoneRect` refuse une zone qu'il ne sait pas lire : la barre reste
              alors cachée, et le cadre seul dit ce qui est visé. Un refus dans
@@ -384,7 +434,7 @@
     };
   }
 
-  const api=Object.freeze({KINDS,SELECTOR,kindOf,collect,createTargetPreview,
+  const api=Object.freeze({KINDS,SELECTOR,kindOf,survey,near,collect,createTargetPreview,
     /* La feuille est exposée pour être **lue par un test** : elle est composée
        à partir de `FEEDBACK_TOKENS`, donc la relire dans la source ne
        montrerait que les interpolations. C'est le texte produit qui doit
