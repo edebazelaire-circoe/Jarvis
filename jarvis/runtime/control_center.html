@@ -13,7 +13,11 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
    au fond ; la scène constellation (20, conteneur #sceneLayer créé par
    control_center_scene_page.js seulement si scene.enabled) passe au-dessus ;
    toute commande de la page reste au-dessus de la scène : barre du haut et
-   indication vocale 31, dock 32, panneau 33, bandeau GPT-Live 35, pastilles
+   indication vocale 31, dock 32, contrôle Bare Hands du haut-gauche 32 (même
+   rang que le dock : c'est une commande de page de la même classe, de l'autre
+   côté de l'écran) et son sélecteur de mode 36 (juste au-dessus du bandeau
+   GPT-Live, qu'un choix ouvert par l'utilisateur doit pouvoir recouvrir, et
+   sous les pastilles et les modales, qui le recouvrent), panneau 33, bandeau GPT-Live 35, pastilles
    40, chronologie de conversation 55 (modale plein écran `.tl`), fond des
    réglages 60, notifications 70, liste des pastilles 75, menu
    contextuel 80, confirmation en page 85, Barehands 2147483000. Thème Omega :
@@ -713,6 +717,14 @@ details.rd[open]>summary{margin-bottom:14px}
 <div id="app">
   <iframe class="face" src="__VISUALIZER_URL__" title="Jarvis visualizer"></iframe>
   <div class="topbar"><div class="brand">JARVIS</div><div class="state">VOICE <strong id="voiceState">IDLE</strong> · <strong id="agentName">CLAUDE</strong> <strong id="agentState">STOPPED</strong><span id="subagentState" hidden> · <strong id="subagentCount">0</strong> <span id="subagentWord">SOUS-AGENTS</span></span></div></div>
+  <!-- Emplacement du contrôle de cycle de vie Bare Hands : un contrôle autonome
+       du haut-gauche, hors de `.dock` (qui reste à droite) et hors de `.topbar`
+       (dont les événements de pointeur sont coupés). Il est **déclaré ici**, et
+       non fabriqué par le script, pour que son rang d'empilement vive dans le
+       registre ci-dessus avec tous les autres ; `control_center_barehands_hud.js`
+       le remplit, et refuse de s'installer sous un nom cherchable s'il manque.
+       C'est aussi le haut de la colonne où la palette d'outils viendra. -->
+  <div id="barehandsHud"></div>
   <section class="live-banner" id="liveBanner" role="status" aria-live="assertive" aria-label="État de la session GPT-Live" hidden>
     <span class="live-led" aria-hidden="true"></span>
     <div class="live-main"><div class="live-title">GPT-LIVE <strong id="liveState">ACTIF</strong> · <span id="liveElapsed">00:00</span></div><div class="live-meta" id="liveMeta"></div></div>
@@ -1093,6 +1105,10 @@ const STATUS={
 /*__CONTROL_CENTER_BAREHANDS_RECORDER_JS__*/
 /* Barehands en mode test (pointeur à mains nues) : `control_center_barehands.js`. */
 /*__CONTROL_CENTER_BAREHANDS_JS__*/
+/* Contrôle de cycle de vie Bare Hands de la barre du haut, après le pointeur
+   qui pose `window.JarvisBarehands` **et** sa couture de cycle de vie, à
+   laquelle il s'abonne : `control_center_barehands_hud.js`. */
+/*__CONTROL_CENTER_BAREHANDS_HUD_JS__*/
 /* Canal de commandes du cerveau vers Bare Hands (Slice 12), après le pointeur
    qui pose `window.JarvisBarehands` : `control_center_barehands_commands.js`. */
 /*__CONTROL_CENTER_BAREHANDS_COMMANDS_JS__*/

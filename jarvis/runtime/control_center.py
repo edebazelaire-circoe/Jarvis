@@ -265,6 +265,16 @@ BAREHANDS_RECORDER_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_RECORDER_JS__*/
 #: plus son branchement navigateur. Même insertion que les scripts ci-dessus.
 BAREHANDS_SCRIPT_FILE = "control_center_barehands.js"
 BAREHANDS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_JS__*/"
+#: Contrôle de cycle de vie Bare Hands de la barre du haut : bouton carré à
+#: icône de main en haut à gauche et sélecteur visuel OFF/VEILLE/ACTIF
+#: (`window.JarvisBarehandsHud`). Inséré APRÈS le pointeur, qui pose
+#: `window.JarvisBarehands` **et** la couture de diffusion du cycle de vie
+#: (`openLifecycleSeam`) à laquelle ce contrôle s'abonne : sans elle il ne
+#: reflèterait ni le réveil en C, ni le retour en veille, ni la voix. Son bloc
+#: navigateur les lit au chargement et **refuse de s'installer** sans elles,
+#: pour que l'ordre casse à l'insertion et non trois clics plus tard.
+BAREHANDS_HUD_SCRIPT_FILE = "control_center_barehands_hud.js"
+BAREHANDS_HUD_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_HUD_JS__*/"
 #: Canal de commandes du cerveau vers Bare Hands (Slice 12) : long-poll de
 #: `GET /api/barehands/commands` et remise de chaque commande au **même** point
 #: d'entrée que le bouton (`window.JarvisBarehands`). Inséré APRÈS le pointeur,
@@ -930,6 +940,10 @@ class ControlCenter:
         )
         html = html.replace(
             BAREHANDS_SCRIPT_MARKER, page.with_name(BAREHANDS_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            BAREHANDS_HUD_SCRIPT_MARKER,
+            page.with_name(BAREHANDS_HUD_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             BAREHANDS_COMMANDS_SCRIPT_MARKER,

@@ -68,11 +68,12 @@ repère commenté dans `control_center.html`, substitué côté serveur par
 …_BAREHANDS_CONTRACTS_JS__ → …_BAREHANDS_TARGET_JS__
 → …_BAREHANDS_CALIBRATION_JS__ → …_BAREHANDS_TUTORIAL_JS__
 → …_BAREHANDS_RECORDER_JS__
-→ …_BAREHANDS_JS__ → …_BAREHANDS_COMMANDS_JS__ → …_SCENE_PAGE_JS__
+→ …_BAREHANDS_JS__ → …_BAREHANDS_HUD_JS__
+→ …_BAREHANDS_COMMANDS_JS__ → …_SCENE_PAGE_JS__
 ```
 
-**Sept modules de page, et une seule balise `<script>` pour tout.** La page
-servie concatène ces sept-là, les six modules de scène, la chronologie, le Test
+**Huit modules de page, et une seule balise `<script>` pour tout.** La page
+servie concatène ces huit-là, les six modules de scène, la chronologie, le Test
 Lab et ~2500 lignes de logique de page dans **un** `<script>` : une levée non
 rattrapée au chargement d'un module y avorte donc tout ce qui suit, alors que
 sous node, où chaque module est un `require()` séparé, elle ne tuait que le
@@ -104,6 +105,14 @@ pour que l'ordre casse à l'insertion et non trois clics plus tard.)
 
 (`…_BAREHANDS_TARGET_JS__` est arrivé à la Slice 05 : il lit les contrats et se
 fait lire par le pointeur, donc il vit exactement entre les deux.)
+
+(`…_BAREHANDS_HUD_JS__` est arrivé avec le contrôle de cycle de vie de la barre
+du haut : il lit `window.JarvisBarehands` **et** la couture de diffusion du
+cycle de vie que le pointeur pose dessus, donc il vient après lui. Son bloc
+navigateur refuse de s'installer sans l'une ou l'autre, et refuse aussi sans
+l'emplacement `#barehandsHud` déclaré dans la page — trois refus nommés plutôt
+qu'un contrôle muet ou posé au hasard du `body`. L'ordre est asserté par
+`test_barehands_hud_js::test_the_page_serves_the_pointer_before_the_hud_that_subscribes_to_it`.)
 
 La Slice 06 n'ajoute **aucun** module de page, mais elle ajoute une dépendance :
 le bloc navigateur du pointeur lit `JarvisSceneInteract` au chargement (la
@@ -183,6 +192,78 @@ Allumer mène à `sleep`, jamais directement à `active` : rien n'interagit tant
 que l'utilisateur n'a pas réveillé. Le guetteur de `SLEEP` ne lance son
 inférence qu'une fois par `wakeIntervalMs` (200 ms, soit 5 images/s) et ne
 calcule ni jeton, ni survol, ni clic ; `ACTIVE` suit chaque image.
+
+### Le sélecteur de cycle de vie visible par l'utilisateur
+
+**Le contrôle de la barre du haut est la surface canonique du cycle de vie.**
+`control_center_barehands_hud.js` dessine, en haut à gauche de l'écran
+principal, un bouton carré de 64 px à icône de main en trait, et ouvre au clic
+un sélecteur visuel à trois pastilles — le **même** motif de main, dans ses
+trois variantes, directement cliquables. Ce n'est ni une liste déroulante, ni
+un cycle aveugle, et ce n'est pas un bouton du `.dock` : le dock reste à
+droite, la main est du côté gauche, avec la palette d'outils.
+
+| Présentation | Quand | Rendu |
+|---|---|---|
+| `off` | `lifecycle === 'off'` | gris fortement atténué, aucun halo |
+| `sleep` | `lifecycle === 'sleep'` | bleu Jarvis ordinaire, aucune emphase |
+| `active` | `lifecycle === 'active'` | bleu électrique plus clair **et** halo discret. **Pas vert** |
+| `starting` | `state === 'starting'` | bleu, bande de progression animée et **compteur de secondes** |
+| `error` | `lifecycle === 'error'` | rouge, pastille d'alerte, `code` du motif affiché |
+
+`starting` et `error` ne sont pas des modes sélectionnables : le sélecteur n'y
+coche **aucune** pastille. Peindre une caméra refusée ou un démarrage en vol
+comme un `off` dirait « l'utilisateur l'a voulu », ce que `ERROR` existe
+précisément pour empêcher (§ 1). Le compteur de `starting` est une exigence de
+la RÈGLE ZÉRO, pas une décoration : l'attente porte sur `getUserMedia`, donc sur
+une invite de permission que rien ne borne, et sans compteur « ça travaille » et
+« c'est figé » s'écrivent pareil.
+
+Ce que chaque choix fait, sur les **mêmes portes** que le panneau et que la voix :
+
+| Choix | Appels | Pourquoi |
+|---|---|---|
+| Éteint | `disable()` | écrit l'interrupteur maître à faux **et** rend la caméra : c'est le seul mode où la posture en C ne peut rien, et le seul qui survive au rechargement |
+| Veille | `sleep()` si actif, puis `enable()` | `enable()` ne fait pas sortir d'`ACTIVE` ; il arme le guetteur depuis `off` comme depuis une panne et persiste le maître |
+| Actif | `activate()` puis `enable()` | `activate()` porte la chaîne entière (allumer, guetter, réveiller) en une attente ; `enable()` vient **après**, sans quoi il laisserait le contrôleur en `starting`, où `activate()` n'a rien à réveiller |
+
+Le contrôle **ne tient aucun cycle de vie** : pas de variable d'état, pas
+d'optimisme local. Une seconde mémoire ici est la dérive que la décision 7
+interdit — un réveil en C, un retour en veille après 30 s ou une caméra refusée
+changeraient l'état sans que le bouton le sache.
+
+### La couture de diffusion du cycle de vie
+
+`onStatus` est le seul point par lequel **toutes** les transitions passent :
+l'écran, la voix et le canal MCP (qui appellent les mêmes portes), le réveil en
+C dans la boucle d'images, le retour en veille après `SLEEP_TIMEOUT_MS`, la
+panne et la reprise, l'arrêt au déchargement. Jusqu'ici elles n'atteignaient
+l'écran que par `refreshPanel()`, qui ne peint **que l'onglet Expérimental
+ouvert** : un contrôle vivant hors du modal n'avait rien à quoi se lier.
+
+La surface gelée porte donc, sur le modèle exact de la couture de mesures
+(§ 14) :
+
+- `openLifecycleSeam(nom, consommateur)` — inscrit un consommateur sous un nom,
+  et lui remet l'instantané **courant tout de suite**. Sans ce rejeu, un
+  contrôle installé après la dernière transition partirait d'un état d'usine
+  jusqu'à la suivante — c'est-à-dire, au rechargement, indéfiniment. Un
+  consommateur qui n'est pas une fonction est refusé
+  (`barehands_lifecycle_seam_invalid`) ;
+- `closeLifecycleSeam(nom)` — retire ce nom-là, et seulement lui ;
+- `lifecycleSeam()` — **qui** écoute. Sans lecture, « le bouton écoute » et
+  « quelqu'un l'a effacé » s'écrivent pareil ;
+- `lifecycleStatus()` — l'instantané, lisible sans s'abonner.
+
+L'instantané porte `lifecycle`, `state`, `starting`, `code`, `title`,
+`message`, `enabled` et `busy`. `starting` s'y dit explicitement parce que
+`LIFECYCLE` ne le nomme pas et n'a pas à le nommer (§ 1) : le publier ici évite
+que chaque abonné redécouvre un nom du moteur hors du moteur. Un instantané
+identique au précédent **ne se republie pas** : `refreshPanel` est appelé par
+des chemins qui ne touchent pas au cycle de vie (un curseur qu'on tire), et un
+abonné ne doit pas avoir à distinguer « ça a changé » de « on a repeint ». Un
+consommateur qui lève est journalisé et sauté ; il n'emporte ni l'autre, ni le
+rafraîchissement du panneau.
 
 ## 2. Identité de main et de pointeur
 

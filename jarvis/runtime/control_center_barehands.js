@@ -4124,6 +4124,106 @@ try{
     refreshPanel();
   }
 
+  /* ------------------------------------------------------------------
+     Couture de diffusion du cycle de vie.
+
+     `onStatus` juste au-dessus est le seul endroit où **toutes** les
+     transitions passent : la bascule du panneau, la voix et le canal MCP (qui
+     appellent les mêmes portes), le réveil en C dans la boucle d'images, le
+     retour en veille après 30 s sans main, la panne et la reprise, l'arrêt au
+     déchargement. Jusqu'ici elles n'atteignaient l'écran que par
+     `refreshPanel()`, qui ne peint **que l'onglet Expérimental ouvert** : un
+     contrôle vivant hors du modal n'avait rien à quoi se lier, et « l'état a
+     changé » et « personne ne regardait » s'écrivaient pareil.
+
+     Même patron que la couture de mesures (`openMeasureSeam`, plus bas) et pour
+     la même raison : un registre **nommé**, parce que deux consommateurs d'une
+     même clé s'effaceraient l'un l'autre en silence. Deux différences assumées,
+     toutes deux parce que celle-ci projette un **état** et non un flux :
+
+     - l'abonné reçoit l'instantané **à l'ouverture**, tout de suite. Un
+       contrôle installé après la dernière transition afficherait sinon un état
+       d'usine jusqu'à la suivante — c'est exactement le cas du rechargement de
+       page, où plus rien ne bouge avant que l'utilisateur ne touche à quelque
+       chose ;
+     - un instantané identique au précédent ne se republie pas. `refreshPanel`
+       est appelé par des chemins qui ne touchent pas au cycle de vie (un
+       curseur qu'on tire), et un abonné ne doit pas avoir à distinguer « ça a
+       changé » de « on a repeint ». */
+  const lifecycleSinks=new Map();
+  let lifecycleLast='',lifecyclePublishing=false;
+  /* Ce que la couture publie. Lu sur `view.status`, c'est-à-dire sur le
+     **dernier statut émis par le contrôleur**, et non sur une variable tenue
+     ici : une seconde mémoire du cycle de vie dans l'interface est précisément
+     ce que l'architecture interdit. */
+  function lifecycleSnapshot(){
+    const status=view.status||{};
+    const state=String(status.state||BH.LIFECYCLE.OFF);
+    return Object.freeze({
+      /* L'état d'usage, nommé par le contrat. `starting` y vaut `off` — rien
+         n'interagit — mais il voyage **à côté**, dans `state`, parce qu'un
+         démarrage peut durer (une invite de permission que personne ne borne)
+         et qu'un écran qui le peindrait « éteint » mentirait sur ce qu'il
+         attend (RÈGLE ZÉRO). */
+      lifecycle:BH.lifecycleOfControllerState(state),
+      state,
+      /* Le démarrage n'a pas de nom dans `LIFECYCLE`, et n'en aura pas : le
+         contrat le range sous `off` parce que rien n'interagit. Il se dit donc
+         ici, où le vocabulaire du contrôleur est chez lui — plutôt que de
+         laisser chaque abonné redécouvrir que `state === 'starting'`, ce qui
+         serait un nom du moteur recopié hors du moteur. */
+      starting:state===Core.STATE.STARTING,
+      /* Le motif exact d'un arrêt subi, jamais aplati dans l'état (§ 1) :
+         `camera_denied`, `camera_busy`, `assets_missing`… Sans lui, une caméra
+         refusée se peindrait comme un « éteint » que l'utilisateur aurait
+         choisi. */
+      code:status.code===undefined?null:status.code,
+      title:status.title||'',message:status.message||'',
+      /* L'interrupteur maître (le réglage `enabled` du serveur) et l'écriture
+         en vol : ensemble, ils disent si un choix est **possible** maintenant. */
+      enabled:!!view.enabled,busy:!!view.busy,
+    });
+  }
+  function publishLifecycle(){
+    if(!lifecycleSinks.size)return null;
+    const snapshot=lifecycleSnapshot();
+    const signature=JSON.stringify(snapshot);
+    if(signature===lifecycleLast)return snapshot;
+    lifecycleLast=signature;
+    /* Un abonné qui rappelle la surface (le bouton qui active) relance
+       `refreshPanel`, donc cette diffusion, pendant qu'elle court. La reprise
+       est **refusée** plutôt que réentrante : la signature a déjà retenu le
+       changement, et la diffusion qui suit le portera. */
+    if(lifecyclePublishing)return snapshot;
+    lifecyclePublishing=true;
+    try{
+      for(const [who,fn] of [...lifecycleSinks.entries()]){
+        /* Un consommateur qui lève ne doit emporter ni l'autre, ni le
+           rafraîchissement du panneau (leçon des Slices 02 et 04). */
+        try{fn(snapshot)}
+        catch(error){console.warn(`[barehands] consommateur de cycle de vie « ${who} » a levé`,error)}
+      }
+    }finally{lifecyclePublishing=false}
+    return snapshot;
+  }
+  function openLifecycleSeam(name,sink){
+    /* Un refus codé plutôt qu'un défaut plausible : une couture ouverte sur
+       rien est indiscernable d'une couture qui marche, et c'est le genre de
+       silence que la décision 7 existe pour empêcher. */
+    if(typeof sink!=='function')
+      throw Object.assign(new Error('openLifecycleSeam : un consommateur est une fonction'),
+        {code:'barehands_lifecycle_seam_invalid'});
+    const key=String(name);
+    lifecycleSinks.set(key,sink);
+    const snapshot=lifecycleSnapshot();
+    lifecycleLast=JSON.stringify(snapshot);
+    try{sink(snapshot)}
+    catch(error){console.warn(`[barehands] consommateur de cycle de vie « ${key} » a levé à l’ouverture`,error)}
+    return lifecycleSinks.size;
+  }
+  function closeLifecycleSeam(name){lifecycleSinks.delete(String(name));return lifecycleSinks.size}
+  function lifecycleSeamNames(){return [...lifecycleSinks.keys()]}
+
   function applyAssets(state){if(state&&state.assets)view.assets=state.assets}
 
   /* Ce que le serveur a **lu**, par opposition à ce qu'il écrit. Un bloc de
@@ -5662,6 +5762,15 @@ try{
   }
 
   function refreshPanel(){
+    /* **La couture d'abord, avant le garde-fou.** Tout ce qui change le cycle
+       de vie finit ici — `onStatus`, `setAwake`, `setEnabled`, `saveSettings`,
+       `applyServerState`, l'horloge de démarrage —, mais la ligne suivante ne
+       parle que du panneau : publier après elle n'aurait atteint personne tant
+       que l'onglet Expérimental est fermé, c'est-à-dire presque toujours.
+       Un instantané inchangé ne repart pas (`publishLifecycle` déduplique),
+       donc les chemins qui repeignent sans changer d'état — un curseur qu'on
+       tire — ne réveillent aucun abonné. */
+    publishLifecycle();
     if(typeof SET==='undefined'||!SET.open||SET.tab!==TAB_ID)return;
     const toggle=document.getElementById('f_barehands');
     if(toggle){toggle.checked=view.enabled;toggle.disabled=view.busy}
@@ -5833,6 +5942,21 @@ try{
        deux (la calibration et l'enregistreur, Slice 10), « une calibration
        mesure » et « une séance s'enregistre » s'écrivaient pareil. */
     measureSeam:()=>Object.freeze(measureSeamNames()),
+    /* **La couture de diffusion du cycle de vie** (décision 7 de l'affinage
+       d'UI). Ce que `state()` rend sur demande, celle-ci le **pousse** : tout
+       consommateur hors de ce module — le contrôle de la barre du haut, et ce
+       que les Slices suivantes y accrocheront — s'y abonne au lieu de sonder.
+       Elle rejoue l'instantané courant à l'ouverture, pour qu'un abonné
+       installé après la dernière transition ne parte pas d'un état d'usine.
+       `lifecycleSeam()` dit **qui** écoute, pour la même raison que
+       `measureSeam()` : sans lecture, « les deux écoutent » et « l'un a été
+       effacé par l'autre » s'écrivent pareil. */
+    openLifecycleSeam,closeLifecycleSeam,
+    lifecycleSeam:()=>Object.freeze(lifecycleSeamNames()),
+    /* Le même instantané, lisible sans s'abonner : ce que l'écran peint doit
+       pouvoir se comparer à ce que le moteur dit, depuis une console comme
+       depuis un test. */
+    lifecycleStatus:()=>lifecycleSnapshot(),
     /* L'enregistrement de diagnostic (Slice 10, §12). `start`/`stop` sont la
        **même** porte que les deux boutons de l'onglet ; `state()` est ce que
        l'écran affiche ; `trace()` rend la dernière trace terminée, même si son

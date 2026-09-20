@@ -3292,6 +3292,7 @@ above. Full contract: `docs/barehands-contracts.md`.
 | `control_center_barehands_tutorial.js` | `JarvisBarehandsTutorial` | Slice 09. The ten-step tutorial. Takes the calibration's shell as given (`deps.overlay`), and **refuses at construction** any dependency that could write a calibration parameter. |
 | `control_center_barehands_recorder.js` | `JarvisBarehandsRecorder` | Slice 10. Opt-in diagnostic recording, deterministic replay against the **real** engines, and the measurement bench. Records **no landmarks** — scalars only, enforced by a load-time whitelist (`assertDerivedOnly`). |
 | `control_center_barehands.js` | `JarvisBarehandsCore`, `JarvisBarehands` | The engines (tracking, filtering, gestures, pinch, target resolution, interaction, controller) as a pure block node can run, then the browser block: camera, overlay, clicks, settings tab. |
+| `control_center_barehands_hud.js` | `JarvisBarehandsHud` | The upper-left HUD lifecycle control: a hand-icon button and a three-state visual chooser (OFF / SLEEP / ACTIVE). Holds **no** lifecycle state — it subscribes to `JarvisBarehands.openLifecycleSeam` and drives transitions through the same entry points the settings panel and the voice channel use. |
 | `control_center_barehands_commands.js` | `JarvisBarehandsCommands` | Slice 12. The brain→page command channel: long-polls `GET /api/barehands/commands` and hands each command to the **same** entry point the button uses. |
 
 **Load order is a contract, not a convention**, because each module reads the
