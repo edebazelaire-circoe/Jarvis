@@ -1,5 +1,12 @@
 # Bare Hands V1 — contrats, schémas et frontière clean-room
 
+**« Bare Hands » (deux mots) est le sous-système natif dont parle ce document.**
+« Barehands » (un mot) est le tableau amont AGPL, un processus séparé qui n'a
+rien de commun avec lui sauf le nom. La convention est énoncée une seule fois,
+dans `docs/ARCHITECTURE.md`, « Two subsystems, one word ». Les identifiants
+(`barehands_test_mode`, `/api/barehands`, `JarvisBarehands`) ne la suivent pas
+et ne le peuvent pas : la règle porte sur la prose.
+
 Contrat de référence des interfaces Bare Hands V1. Implémentation canonique :
 `jarvis/runtime/control_center_barehands_contracts.js`
 (`window.JarvisBarehandsContracts`), logique pure, sans DOM ni réseau ni
@@ -60,8 +67,21 @@ repère commenté dans `control_center.html`, substitué côté serveur par
 ```
 …_BAREHANDS_CONTRACTS_JS__ → …_BAREHANDS_TARGET_JS__
 → …_BAREHANDS_CALIBRATION_JS__ → …_BAREHANDS_TUTORIAL_JS__
+→ …_BAREHANDS_RECORDER_JS__
 → …_BAREHANDS_JS__ → …_BAREHANDS_COMMANDS_JS__ → …_SCENE_PAGE_JS__
 ```
+
+**Sept modules de page, et une seule balise `<script>` pour tout.** La page
+servie concatène ces sept-là, les six modules de scène, la chronologie, le Test
+Lab et ~2500 lignes de logique de page dans **un** `<script>` : une levée non
+rattrapée au chargement d'un module y avorte donc tout ce qui suit, alors que
+sous node, où chaque module est un `require()` séparé, elle ne tuait que le
+module. Tout refus de chargement est par conséquent **confiné** — la cause part
+dans la console sous un nom cherchable, ce module seul reste absent, le reste de
+la page vit. Le refus n'est pas adouci, son rayon l'est. Le module qui lève le
+plus tôt n'est même pas un module Bare Hands : c'est
+`control_center_scene_interact.js`, inséré bien avant, et une levée nue y
+blanchissait le Control Center entier.
 
 (`…_BAREHANDS_TUTORIAL_JS__` est arrivé à la Slice 09 : le parcours de
 tutoriel. Il lit les contrats **et reprend la coque** de la calibration, donc
@@ -2653,6 +2673,32 @@ Elle ne dessine rien et ne lie rien : la Slice 05 possède le retour visuel
 qu'en ACTIVE, le budget d'images de la veille étant un acquis mesuré de la
 Slice 02. Aucun module de page n'est ajouté, donc l'ordre d'insertion est
 inchangé.
+
+La Slice 05 implante la résolution de cible et le retour visuel de visée
+(§6, décisions 3, 8, 9, 16, 23, 24). Elle est en **deux moitiés, et c'est le
+sujet** : la géométrie et l'hystérésis sont pures et vivent dans
+`JarvisBarehandsCore.createTargetResolver` (`control_center_barehands.js`), où
+node les teste sans DOM ; la lecture de l'arbre et le dessin vivent dans un
+**module de page à part**, `control_center_barehands_target.js`
+(`window.JarvisBarehandsTarget`). C'est la première Slice à ajouter un module,
+donc la première à faire compter l'ordre d'insertion (constat F3 de la
+Slice 00) : il se place après les contrats, qu'il lit, et avant le pointeur,
+qui le lit.
+
+Deux raisons de le séparer du pointeur plutôt que de l'y fondre : il **lit la
+page entière** (nœuds de scène, boutons, onglets, champs), ce qui n'est pas une
+responsabilité du suivi des mains ; et il ne s'exécute que **sous intention**
+(décision 3), si bien que son coût — un `querySelectorAll` et un rectangle par
+candidate — n'est jamais payé par une session au repos. C'est la décision
+produit qui paie la performance.
+
+Elle apporte aussi le constat F4 de la Slice 00, corrigé : `.sc-node` était
+**absent** du sélecteur de survol historique, donc une étoile de la scène était
+cliquable sans n'avoir jamais été surlignée. Elle est ici la candidate la plus
+intéressante de toutes, puisque c'est la seule qui ait des zones. Couverte par
+`tests/unit/test_barehands_target_js.py`. Trois constantes nouvelles dans
+`DEFAULTS` (`targetZonePx`, `targetZoneHoldPx`, `targetZoneMaxRatio`), chacune
+avec son invariant refusé à la construction.
 
 La Slice 06 implante le moteur de captures (§7) : `createInteractionEngine` dans
 le bloc pur, la sortie de compatibilité DOM et l'adaptateur de scène dans le bloc

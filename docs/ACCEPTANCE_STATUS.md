@@ -35,9 +35,35 @@ Legend:
 | 06 TTS/interruption | PASS automated; MANUAL speaker gate | Cooperative cancellation and runtime-level PTT barge-in tests pass; real speakers/TTS latency manual. |
 | 07 ActionBroker | PASS | Board no-confirm, memory write confirm, denial/timeout no write, forged policy cannot bypass broker. |
 | 08 Memory | PASS | Seed search, confirmed Markdown persist, restart persistence, index deletion/rebuild, traversal/symlink tests. |
-| 09 Barehands | IMPLEMENTED / MANUAL GATE | Hardened patch + token client + CDN removal + integrity tests pass. Physical authenticated server smoke, offline browser load and hand gestures require workstation/camera. |
+| 09 Barehands (upstream AGPL board) | IMPLEMENTED / MANUAL GATE | **One word: the third-party board on port 8794, not the native subsystem.** Hardened patch + token client + CDN removal + integrity tests pass. Physical authenticated server smoke, offline browser load and hand gestures require workstation/camera. |
 | 10 Visualizer/launcher | IMPLEMENTED / MANUAL GATE | Launcher, health degradation, state mapping and process boundaries implemented. Full multi-process launch requires bootstrapped third-party snapshots and physical workstation. |
 | 11 E2E/release | PASS automated; MANUAL GATES remain | Simulated E2E/security suite passes. Real-provider/hardware latency and gesture smoke are NOT CLAIMED. |
+
+### Bare Hands V1 (native subsystem)
+
+Delivered by the handoff `tasks/jarvis-bare-hands-v1/`, thirteen Slices (00-12).
+**Two words: this is native Jarvis code inside the Control Center page — no
+separate process, no port, no token. It is not row 09 above.**
+
+| Slice | Status | Evidence / remaining gate |
+| --- | --- | --- |
+| 00 Readiness | PASS | Findings F1-F7 and human decisions D1-D5 recorded in `slices/00-project-manager/READINESS.md`. |
+| 01-12 implementation | PASS automated; **MANUAL CAMERA GATE NOT RUN** | Every Slice implemented; 01-09 and 12 reworked after QA. Contract, engines, target resolution, interaction, tools/settings, calibration, tutorial, diagnostic recording/replay and the brain command channel all have node-executed or server-side tests. |
+| Real-camera behaviour | **WAIVED, NOT PASSED** | See below. |
+
+**The camera gate was waived for this run, which is not the same as passing
+it.** There is no webcam and no browser in this environment, so *no* statement
+in this repository about how Bare Hands feels, tracks, wakes or fails in front
+of a real hand has been verified by observation. The procedure a human must run
+is in `docs/OPERATIONS.md`, « Procédure de test manuel (caméra réelle) »,
+batched A1-A7 so it fits a small number of camera sessions. **A2.2 — a flat
+hand, fingers together, thumb adducted, may falsely wake — is the single
+most-referenced open item of the whole task and is listed first.**
+
+What *is* established without a camera: the refusals, the schemas, the
+migrations, the origin guards, the whitelists, the clean-room boundary, the
+determinism of replay, and that every module-load failure is contained. What is
+*not*: any number that describes a real hand.
 
 ## Automated acceptance executed
 
@@ -76,7 +102,7 @@ These gates are the only reason this report calls the artifact a release candida
 6. Send a request with a non-loopback `Origin` and any incorrect token.
 7. Expected: no mutation (authentication and/or origin rejection).
 
-### C. Gestures
+### C. Gestures (upstream Barehands board)
 
 In Chrome with camera permission:
 

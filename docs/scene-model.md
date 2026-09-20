@@ -546,6 +546,44 @@ a browser-local skin over this frame: they change no geometry, write no command
 and are absent from `scene_capture`, so two viewers of the same scene still see
 the same objects in the same places.
 
+## Hands are a third way in, and they change nothing here
+
+Scene objects are hand-manipulable since Slice 06 of Bare Hands V1 (the native
+subsystem — two words; see `docs/ARCHITECTURE.md` › *Two subsystems, one word*).
+This page stays the contract for scene state, and that is the point: **a hand is
+another input device, never another authority.**
+
+- A hand commits through the **same** seam a mouse uses,
+  `window.JarvisScene.frames` (`begin` / `preview` / `commit` / `cancel` /
+  `viewport`), which itself reuses the page's own `drawnBox`, `previewAt`,
+  `holdNode` and `commitUserGeometry`. Pinning, clamping to the safe area, the
+  optimistic layer and every refusal are therefore identical for a mouse and for
+  a hand — not similar, identical.
+- The command is a plain `set_geometry` with **actor `user`**. There is no
+  `barehands` actor, no new op, no new field, and nothing on the wire says a
+  hand was involved. The authority matrix above applies unchanged.
+- **Pixels become scene units in exactly one place.** The conversion lives in
+  `control_center_scene_interact.js` (`pxToUnits`, with decisions 18 and 19);
+  Bare Hands reads that module rather than carrying a second conversion, which
+  is what keeps a hand-dragged box and a mouse-dragged box landing on the same
+  integer.
+- Both paths are bounded by the same `MIN_SIZE` / `MAX_SIZE`. Two hands pulling
+  past each other stop at the minimum size instead of flipping the box — a pair
+  invariant refused at module load, not discovered on a shrinking frame.
+
+Three things a hand deliberately cannot do, and they are product decisions, not
+gaps:
+
+- **The body of a `point` or `signal` star is its only handle**; the body of a
+  capsule or a window is *content* (scroll, select), never a frame handle
+  (decision 8). Edges and corners are the handles.
+- A hand never emits a synthetic pointer drag on a `.sc-node`. The scene page
+  would read it as a frame move, which is decision 8 breached through the back
+  door.
+- A hand does not archive, does not stop work, and does not open a link. The
+  first two are menu actions with their own confirmations; the third is refused
+  by the browser, which opens tabs only on real user activation.
+
 ## Bounds and wire form
 
 | Bound | Value |
