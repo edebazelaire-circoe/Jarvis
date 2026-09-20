@@ -681,6 +681,26 @@ def test_the_settings_bounds_are_one_table_and_refuse_an_inverted_pair(tmp_path)
                          cwd=tmp_path, timeout=30, check=True)
     assert "le minimum doit rester sous le maximum" in json.loads(out.stdout)["error"]
 
+    # **La seconde moitié de la garde, qui n'était pas exercée** (Slice 11) : la
+    # même boucle refuse aussi un **défaut** tombé hors de ses propres bornes.
+    # C'est le cas le plus probable des deux — une borne se change en pensant
+    # au curseur, et le défaut qui vivait dedans se retrouve dehors. Sans ce
+    # test, la table pouvait perdre cette ligne sans qu'un seul test rougisse :
+    # une garde que personne n'exerce est un vœu.
+    stray = source.replace("assistance:0.5,", "assistance:9,")
+    assert stray != source, "le défaut visé a changé de nom : ce test doit suivre"
+    (tmp_path / "stray.js").write_text(stray, encoding="utf-8")
+    shim.write_text(
+        "try{require('./stray.js');console.log(JSON.stringify({loaded:true}))}"
+        "catch(error){console.log(JSON.stringify({error:String(error.message)}))}",
+        encoding="utf-8",
+    )
+    out = subprocess.run([node, str(shim)], capture_output=True, text=True, encoding="utf-8",
+                         cwd=tmp_path, timeout=30, check=True)
+    answer = json.loads(out.stdout)
+    assert answer.get("loaded") is not True, "un défaut hors de ses bornes s'est chargé sans un mot"
+    assert "SETTINGS_DEFAULTS.assistance tombe hors de ses propres bornes" in answer["error"]
+
     result = run_node(tmp_path, """
       out({
         keys:Object.keys(C.SETTINGS_BOUNDS).sort(),

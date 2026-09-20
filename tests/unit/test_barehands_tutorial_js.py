@@ -294,6 +294,50 @@ def test_a_tutorial_cannot_be_given_anything_that_writes_a_calibration_profile(t
         assert forbidden not in result["source"], forbidden
 
 
+def test_the_three_seams_that_feed_a_restarted_tutorial_are_refused_when_missing(tmp_path):
+    """**Les trois coutures obligatoires de `createTutorial`, exercées** (constat
+    de la Slice 11 : elles étaient refusées et aucun test ne les atteignait —
+    le refus de la coque, plus haut dans la même fabrique, tombe le premier, si
+    bien que le seul cas négatif existant, `createTutorial({})`, n'arrivait
+    jamais jusqu'à ces trois lignes).
+
+    Ce sont exactement les trois que la Slice 09 avait laissées à la page, et
+    dont l'absence produisait la panne que la RÈGLE ZÉRO interdit : « Recommencer »
+    rentre dans `begin()` **depuis l'intérieur du module**, le parcours relancé
+    n'était plus nourri du tout, et l'utilisateur faisait le C correctement
+    sous un compteur figé sur « 0 s restantes ». Elles sont obligatoires pour
+    que ce chemin ne puisse pas se reperdre — mais une obligation que personne
+    n'exerce peut disparaître dans un refactor sans qu'un test rougisse.
+
+    Chaque cas garde une coque valide : sans elle, c'est le refus d'au-dessus
+    qu'on mesurerait, et le test passerait pour la mauvaise raison."""
+
+    result = run_node(tmp_path, DOM + OBSERVE + """
+      const missing=name=>refused(()=>T.createTutorial(wiring({[name]:undefined}).deps));
+      const notCallable=name=>refused(()=>T.createTutorial(wiring({[name]:{}}).deps));
+      out({
+        shipping:refused(()=>T.createTutorial(wiring().deps)),
+        noSetInterval:missing('setInterval'),noClearInterval:missing('clearInterval'),
+        clockNotCallable:notCallable('setInterval'),
+        noFrames:missing('frames'),framesNotCallable:notCallable('frames'),
+        noObserve:missing('observe'),observeNotCallable:notCallable('observe'),
+        /* Et la preuve que la coque n'est pas ce qui a répondu : les messages
+           nomment la couture manquante, pas l'écran. */
+        says:{
+          frames:String(refusedMessage(()=>T.createTutorial(wiring({frames:undefined}).deps))),
+          observe:String(refusedMessage(()=>T.createTutorial(wiring({observe:undefined}).deps))),
+        },
+      });
+    """.replace("refusedMessage", "(fn=>{try{fn();return ''}catch(e){return e.message}})"), "seams")
+
+    assert result["shipping"] is None, "le câblage complet passe : la sonde ne crie pas au loup"
+    for case in ("noSetInterval", "noClearInterval", "clockNotCallable",
+                 "noFrames", "framesNotCallable", "noObserve", "observeNotCallable"):
+        assert result[case] == "RangeError", case
+    assert "`frames`" in result["says"]["frames"], result["says"]
+    assert "`observe`" in result["says"]["observe"], result["says"]
+
+
 def test_only_derived_facts_cross_into_a_step_and_the_guard_runs_at_module_load(tmp_path):
     """**Décision 32, deuxième fois et par un autre chemin.** La calibration
     reçoit des scalaires ; le tutoriel reçoit encore moins — des booléens, des

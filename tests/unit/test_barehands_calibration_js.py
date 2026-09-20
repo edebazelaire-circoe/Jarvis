@@ -392,6 +392,45 @@ def test_three_settings_pairs_that_would_fail_every_calibration_are_refused_at_c
     assert timeout > hold and press_at < release_at and slop_min < slop_max
 
 
+def test_a_calibration_without_a_shell_or_without_a_writer_is_refused_at_construction(tmp_path):
+    """Les deux coutures **obligatoires** de `createCalibration`, exercées
+    (constat de la Slice 11 : elles étaient refusées et jamais testées).
+
+    - **La coque** est partagée avec le tutoriel (décision 26), elle ne se
+      recrée pas ici. Absente, le parcours mesurerait sans rien montrer —
+      exactement la panne que la RÈGLE ZÉRO interdit — et il la découvrirait au
+      premier `start()`, c'est-à-dire devant l'utilisateur.
+    - **L'écrivain** (`save`) : un parcours qui mesure sans pouvoir enregistrer
+      ne dit rien à personne. Sept étapes tenues pour rien, et l'échec arrive
+      au tout dernier écran.
+
+    Une garantie que chaque appelant doit se rappeler de respecter n'est pas
+    une garantie, c'est une convention — et une garde que personne n'exerce
+    peut disparaître dans un refactor sans qu'un seul test rougisse."""
+
+    result = run_node(tmp_path, DOM + DRIVER + """
+      const whole={overlay:shellOf(),now,save:async()=>{},setInterval:()=>1,clearInterval:()=>{}};
+      const without=key=>{const d=Object.assign({},whole);delete d[key];return d};
+      out({
+        shipping:refused(()=>K.createCalibration(whole)),
+        noOverlay:refused(()=>K.createCalibration(without('overlay'))),
+        // Une coque qui n'en est pas une : le refus porte sur la **couture**
+        // (`open`), pas sur la présence d'un objet quelconque.
+        hollowOverlay:refused(()=>K.createCalibration(Object.assign({},whole,{overlay:{}}))),
+        overlayNotCallable:refused(()=>K.createCalibration(Object.assign({},whole,{overlay:{open:'oui'}}))),
+        noSave:refused(()=>K.createCalibration(without('save'))),
+        saveNotCallable:refused(()=>K.createCalibration(Object.assign({},whole,{save:{}}))),
+        // Et le voisin déjà gardé, gardé au même endroit : l'horloge.
+        noClock:refused(()=>K.createCalibration(without('setInterval'))),
+      });
+    """, name="calibDeps")
+
+    assert result["shipping"] is None, "le câblage complet passe : la sonde ne crie pas au loup"
+    for case in ("noOverlay", "hollowOverlay", "overlayNotCallable",
+                 "noSave", "saveNotCallable", "noClock"):
+        assert result[case] == "RangeError", case
+
+
 # ------------------------------------------------------------------ la coque
 
 

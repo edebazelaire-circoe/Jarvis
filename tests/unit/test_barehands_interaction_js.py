@@ -293,22 +293,43 @@ def test_a_maximum_under_its_minimum_is_refused_where_the_constants_are_read(tmp
 
     Il n'y a pas de constructeur ici : le refus se pose là où les constantes se
     lisent, au chargement du module. Le test le prouve en chargeant une copie
-    mutée."""
+    mutée.
+
+    **Et il vérifie le rayon du refus, pas seulement son existence** (Slice 11).
+    La levée est rattrapée sur place : ce module est le **premier** du `<script>`
+    unique de la page servie, donc une levée qui en sortait blanchissait le
+    Control Center entier — la scène, la timeline, le Test Lab et Bare Hands —
+    pour une constante de capsule. Confinée, la panne garde sa portée : le
+    module ne s'installe pas, la console porte la cause sous un nom cherchable,
+    et ce qui lit `JarvisSceneInteract` échoue à son tour de façon confinée.
+    Refuser et blanchir ne sont pas la même chose."""
 
     result = run_node(tmp_path, FIXTURE + """
       const fs=require('fs');
       const source=fs.readFileSync(SCENE_INTERACT_PATH,'utf8');
       const broken=source.replace('MAX_SIZE=Object.freeze({capsule:Object.freeze({w:160,h:10})})',
                                   'MAX_SIZE=Object.freeze({capsule:Object.freeze({w:8,h:4})})');
-      out({mutated:broken!==source,
-        refusal:refused(()=>{new Function(broken)()}),
+      const errors=[];const realError=console.error;
+      console.error=(...a)=>errors.push(a.map(String).join(' '));
+      const saved=globalThis.JarvisSceneInteract;
+      delete globalThis.JarvisSceneInteract;
+      const escaped=refused(()=>{new Function(broken)()});
+      const installed=typeof globalThis.JarvisSceneInteract!=='undefined';
+      globalThis.JarvisSceneInteract=saved;
+      console.error=realError;
+      out({mutated:broken!==source,escaped,installed,errors,
         /* Et le défaut qu'il attrape, mesuré sur la fonction elle-même : sans le
            refus, la capsule descendrait sous sa largeur minimale de 16. */
         healthy:G.resizeBySides({x:0,y:0,w:40,h:7},{right:-400},'capsule').w,
         min:G.MIN_SIZE.capsule.w});
     """)
     assert result["mutated"] is True, "la constante visée a changé de nom"
-    assert result["refusal"] == "RangeError"
+    # Le module refuse **et** ne s'installe pas : les deux moitiés comptent.
+    assert result["installed"] is False, "une paire de constantes inversée s'est installée quand même"
+    assert any("scene.interact_not_installed" in line for line in result["errors"]), result["errors"]
+    assert any("MAX_SIZE.capsule" in line for line in result["errors"]), result["errors"]
+    # Et rien n'est sorti du module : c'est ce qui sauve le reste de la page.
+    assert result["escaped"] is None, "la levée est sortie du module et emporte tout le `<script>`"
     assert result["healthy"] == result["min"] == 16
 
 

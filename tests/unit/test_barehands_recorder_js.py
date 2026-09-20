@@ -677,6 +677,18 @@ def test_an_unknown_trace_version_is_refused_rather_than_guessed(tmp_path):
         other:refused(()=>R.replay({...base,schema:'autre.chose'},{},deps)),
         nothing:refused(()=>R.replay(null,{},deps)),
         noCore:refused(()=>R.replay(base,{},{})),
+        /* **Le moteur à moitié là** (constat de la Slice 11). `{}` trébuche sur
+           la garde d'au-dessus : elle ne nomme que `createPointerFilter` et
+           `createPinchChannel`, si bien que la troisième exigence — le
+           résolveur de cible — n'était jamais atteinte par un test. Un cœur
+           partiel, lui, la touche. Sans résolveur, « combien de candidates
+           existaient » se compterait pour « combien ont été résolues », et le
+           taux de clics visés vaudrait 1 sans que rien ne l'ait mesuré : un
+           nombre faux, avec la forme d'une mesure. */
+        halfCore:refused(()=>R.replay(base,{},{core:{
+          createPointerFilter:Core.createPointerFilter,
+          createPinchChannel:Core.createPinchChannel,
+          PINCH_CHANNEL:Core.PINCH_CHANNEL}})),
         version:R.TRACE_SCHEMA_VERSION,schema:R.TRACE_SCHEMA});
     """, "version")
 
@@ -687,6 +699,10 @@ def test_an_unknown_trace_version_is_refused_rather_than_guessed(tmp_path):
     assert result["nothing"] == "barehands_trace_schema_unknown"
     # Et un rejeu sans les vrais moteurs est refusé : il mesurerait une copie.
     assert result["noCore"] == "RangeError"
+    # Et un coeur qui a deux moteurs sur trois est refuse par la troisieme garde,
+    # celle que `{}` n'atteignait jamais : un rejeu sans resolveur rendrait un
+    # taux de clics vises de 1 que personne n'a mesure.
+    assert result["halfCore"] == "RangeError"
     assert result["version"] == 1 and result["schema"] == "jarvis.barehands.trace"
 
 
