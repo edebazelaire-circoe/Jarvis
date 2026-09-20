@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-BH-UI-01",
+      "title": "Evaluate lifecycle control discoverability",
+      "instructions": "After automated QA passes, switch OFF, SLEEP and ACTIVE from the main HUD, then trigger ACTIVE via C-wake and return to SLEEP through inactivity. Confirm the button is easy to find and its visual state always matches reality.",
+      "expected": "OFF feels clearly inactive, SLEEP feels normally armed, ACTIVE is distinctly but subtly brighter/electric-blue, and no state looks stale."
+    }
+  ]
+}

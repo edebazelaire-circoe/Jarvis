@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-BH-UI-02",
+      "title": "Evaluate quick-action hierarchy",
+      "instructions": "After automated UI QA passes, use right click on the Bare Hands HUD button and open each available destination. Also inspect Bare Hands Settings.",
+      "expected": "Settings, Calibration, Help/Gestures and Diagnostics are immediate; activation/tools/tutorial are not redundantly buried in Settings."
+    }
+  ]
+}

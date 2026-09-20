@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-BH-UI-04",
+      "title": "Evaluate Help card clarity",
+      "instructions": "After automated UI QA passes, open Help/Gestures as if you had forgotten the Bare Hands controls. Verify that the important gestures can be understood quickly from spacing, icons and short copy.",
+      "expected": "The card is airy and visual, and it never claims an unbound gesture performs an action."
+    }
+  ]
+}

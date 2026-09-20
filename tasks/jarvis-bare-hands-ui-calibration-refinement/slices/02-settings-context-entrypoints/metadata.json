@@ -1,0 +1,1 @@
+{"slice_id":"02","task_type":null,"work_intent":"frontend/settings","dependencies":["01"],"task_type_blocker":"Resolve against the current Workspace Task Type vocabulary before dispatch; do not invent a type."}

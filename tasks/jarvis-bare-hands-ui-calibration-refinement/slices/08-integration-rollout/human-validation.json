@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-BH-UI-08",
+      "title": "Final Bare Hands UI acceptance",
+      "instructions": "Only after all machine QA passes, use a standard webcam to operate lifecycle from the HUD, switch tools, open every right-click quick action, complete the full calibration including window move/resize, trigger C-wake and voice state changes, and verify the old Tutorial/Settings-heavy workflow is gone.",
+      "expected": "Bare Hands feels like a first-class Jarvis mode, calibration is readable and spatially clear, and no existing core interaction/regression is visible."
+    }
+  ]
+}
