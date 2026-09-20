@@ -28,6 +28,7 @@ réseau, pas du module JS qu'on a écrit.
 
 from __future__ import annotations
 
+import math
 from typing import Any, Mapping
 
 #: Bloc du profil, à la racine du fichier de réglages, à côté de
@@ -244,6 +245,14 @@ def _bounded(key: str, raw: Any) -> float | None:
 
     if raw is None or isinstance(raw, bool) or not isinstance(raw, (int, float)):
         return None
+    # `NaN` n'est **pas** un nombre lisible, et il traversait : `min`/`max` le
+    # propagent en silence, `json` de la bibliothèque standard l'écrit et le
+    # relit, et un seuil `NaN` rend toute comparaison du moteur fausse — donc
+    # un pincement qui ne se déclenche jamais, sans une ligne nulle part.
+    # L'écriture le refuse déjà (`_check_number` : aucune comparaison n'est
+    # vraie), la lecture le laissait passer.
+    if not math.isfinite(raw):
+        return None
     low, high = HAND_BOUNDS[key]
     return min(max(float(raw), low), high)
 
@@ -254,7 +263,7 @@ def _load_reach(raw: Any) -> dict[str, float] | None:
     value: dict[str, float] = {}
     for key in REACH_KEYS:
         got = raw.get(key)
-        if isinstance(got, bool) or not isinstance(got, (int, float)):
+        if isinstance(got, bool) or not isinstance(got, (int, float)) or not math.isfinite(got):
             return None
         value[key] = min(max(float(got), 0.0), 1.0)
     # Une portée plate ramène tout l'écran sur un point : elle défait le repli
@@ -272,9 +281,19 @@ def _load_hand(raw: Any) -> dict[str, Any]:
     # exigeante, c'est une mesure ratée : à la lecture on la laisse tomber en
     # entier plutôt que d'en garder une moitié qui bloquerait la main sur
     # l'objet capturé. L'écriture, elle, refuse avec son code.
+    #
+    # **Et une demi-paire tombe pour la même raison.** `apply` la refuse
+    # (`barehands_profile_thresholds_incomplete`) parce qu'un seuil mesuré
+    # mélangé à un défaut du moteur peut inverser `press < release` ; la lecture
+    # la gardait pourtant, si bien qu'un fichier édité à la main ou un profil v1
+    # portant une moitié rendait `calibrated` vrai et faisait lister par l'onglet
+    # un seuil que le moteur, lui, ignorait — « profil enregistré ≠ profil
+    # appliqué ». Les deux portes disent maintenant la même chose.
     for press, release in (("press_ratio", "release_ratio"),
                            ("secondary_press_ratio", "secondary_release_ratio")):
-        if hand[press] is not None and hand[release] is not None and not hand[press] < hand[release]:
+        low, high = hand[press], hand[release]
+        if (low is None) != (high is None) or (
+                low is not None and high is not None and not low < high):
             hand[press] = None
             hand[release] = None
     return hand
@@ -321,7 +340,10 @@ def load(settings: Mapping[str, Any]) -> dict[str, Any]:
     for stage in STAGES:
         value["stages"][stage] = _load_stage(stages.get(stage))
     at = stored.get("updated_at")
-    value["updated_at"] = at if isinstance(at, (int, float)) and not isinstance(at, bool) else None
+    # Même règle que pour les mesures : `NaN` n'est pas un horodatage, et il
+    # ressortirait en date illisible à l'écran.
+    value["updated_at"] = (at if isinstance(at, (int, float)) and not isinstance(at, bool)
+                           and math.isfinite(at) else None)
     # `calibrated` est **dérivé**, jamais repris de l'entrée : « calibré » sans
     # mesure ne vaut pas calibré (contrat §10).
     value["calibrated"] = _derive_calibrated(value)
@@ -511,7 +533,8 @@ def apply(settings: dict[str, Any], payload: Any) -> dict[str, Any]:
             if got is not None:
                 value["stages"][stage] = _apply_stage(f"stages.{stage}", got)
     at = payload.get("updated_at")
-    if at is not None and (isinstance(at, bool) or not isinstance(at, (int, float))):
+    if at is not None and (isinstance(at, bool) or not isinstance(at, (int, float))
+                           or not math.isfinite(at)):
         raise BarehandsProfileError(
             "barehands_profile_not_derived", "« updated_at » doit être un horodatage en millisecondes.")
     value["updated_at"] = at

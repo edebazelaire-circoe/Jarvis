@@ -1241,7 +1241,14 @@
          un clic. Une mesure hors de là est une mesure ratée. */
       travelSlopNorm:ratio(source.travelSlopNorm,.002,.15),
       reachNorm,
-      quality:source.quality===undefined||source.quality===null?null:unit(source.quality,0),
+      /* **Même mine que `Number(null)`, dans la seule clé que le correctif
+         n'avait pas touchée.** `unit(v,0)` remplaçait toute valeur illisible
+         par son **plancher** `0` — une valeur inventée, indiscernable d'une
+         qualité mesurée nulle, là où la route rend `None`. Les deux moitiés du
+         schéma se coerçaient donc différemment sur la même entrée. `ratio` est
+         la règle de ce fichier : une valeur fausse se refuse, elle ne se
+         remplace pas. */
+      quality:ratio(source.quality,0,1),
     });
   }
   /* Le rapport d'une étape : un état, un motif de la liste fermée, un compte.
@@ -1369,6 +1376,33 @@
     let dated=null;
     try{dated=normalizeProfile({updatedAt:probe})}catch(_refused){dated=null}
     if(dated)assertDerivedOnly(dated,'schéma');
+  }
+  /* **Les deux champs que la décision 32 nomme elle-même comme le risque, et
+     que les sondes ci-dessus n'atteignaient pas.**
+
+     Un refus de la normalisation est une réponse sûre — la valeur n'est pas
+     passée — mais ce n'est pas une *couverture* : le `continue` ci-dessus
+     avalait les deux sondes qui comptent le plus, et le contrat annonçait
+     pourtant « chaque champ d'étape ». `reachNorm` portée par une sonde brute
+     dégénérait (`w` et `h` à zéro) et se faisait refuser avant le gate ;
+     `reason` était systématiquement accompagné de `status:'ok'`, ce qui rendait
+     le rapport incohérent et le faisait refuser lui aussi.
+
+     Les deux sondes ci-dessous sont donc **bien formées** : elles traversent la
+     normalisation entière et atteignent le gate à tous les coups — pas de
+     `try`, parce qu'il n'y a plus rien à rattraper. `reachNorm` est la seule
+     forme imbriquée du schéma (la route l'appelle « la seule poche où tout
+     pourrait passer » et la garde d'une vérification de clé inconnue) et
+     `reason` est le seul champ en forme de texte libre. */
+  for(const probe of LEAK_PROBES){
+    assertDerivedOnly(
+      normalizeProfile({hands:{left:{reachNorm:{x:.1,y:.1,w:.5,h:.5,leak:probe}}}}),
+      'schéma');
+    /* Un statut **non `ok`** : c'est le seul par lequel un motif survit à la
+       vérification de cohérence, donc le seul qui laisse la sonde arriver. */
+    assertDerivedOnly(
+      normalizeProfile({stages:{neutral:{status:STAGE_STATUS.SKIPPED,reason:probe}}}),
+      'schéma');
   }
 
   /* Ce qui part sur le fil : la sortie de la liste blanche, rendue en objet

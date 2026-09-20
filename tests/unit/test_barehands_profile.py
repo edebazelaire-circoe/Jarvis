@@ -513,3 +513,156 @@ def test_the_payload_the_page_builds_is_accepted_by_the_real_route(tmp_path):
     assert saved["hands"]["unknown"]["jitter_px"] == 4
     assert saved["stages"]["resize"]["reason"] == "barehands_stage_needs_two_hands"
     assert saved["schema_version"] == profile.SCHEMA_VERSION
+
+
+def test_a_half_measured_hysteresis_is_dropped_on_reading_as_it_is_on_writing():
+    """« Profil enregistré ≠ profil appliqué » : la lecture gardait une
+    demi-paire que l'écriture refuse.
+
+    `apply` refuse `barehands_profile_thresholds_incomplete` parce qu'un seuil
+    mesuré mélangé à un défaut du moteur peut inverser `press < release`. Mais
+    `load` ne laissait tomber qu'une paire **inversée**, pas une paire
+    **incomplète** : un fichier édité à la main — ou un profil v1 portant une
+    moitié — rendait `calibrated` vrai et faisait lister par l'onglet un seuil
+    que le moteur, lui, ignorait."""
+
+    settings = {profile.SETTING_KEY: {
+        "schema_version": 2,
+        "hands": {"left": {"press_ratio": 0.22},
+                  "right": {"secondary_release_ratio": 0.44},
+                  "unknown": {}},
+    }}
+    read = profile.load(settings)
+    assert read["hands"]["left"]["press_ratio"] is None, "une demi-paire ne s'applique pas"
+    assert read["hands"]["right"]["secondary_release_ratio"] is None
+    assert read["calibrated"] is False, "et elle ne fait pas croire à une calibration"
+
+    # La paire **entière** survit, elle : c'est la moitié qui tombe, pas la
+    # mesure. Et une paire inversée tombe toujours, comme avant.
+    whole = profile.load({profile.SETTING_KEY: {
+        "schema_version": 2,
+        "hands": {"left": {"press_ratio": 0.22, "release_ratio": 0.39,
+                           "jitter_px": 2.0}}}})
+    assert whole["hands"]["left"]["press_ratio"] == 0.22
+    assert whole["hands"]["left"]["release_ratio"] == 0.39
+    inverted = profile.load({profile.SETTING_KEY: {
+        "schema_version": 2,
+        "hands": {"left": {"press_ratio": 0.6, "release_ratio": 0.1}}}})
+    assert inverted["hands"]["left"]["press_ratio"] is None
+    # La demi-paire emporte sa moitié, jamais le reste de la main.
+    half = profile.load({profile.SETTING_KEY: {
+        "schema_version": 2,
+        "hands": {"left": {"press_ratio": 0.22, "jitter_px": 2.0}}}})
+    assert half["hands"]["left"]["jitter_px"] == 2.0
+    assert half["calibrated"] is True, "le reste de la main reste une calibration"
+
+
+def test_the_two_halves_coerce_an_unreadable_quality_the_same_way(tmp_path):
+    """**La même mine que `Number(null)`, dans la seule clé que le correctif
+    n'avait pas touchée.** Le contrat remplaçait une `quality` illisible par son
+    **plancher** `0` — une valeur inventée, indiscernable d'une qualité mesurée
+    nulle — là où la route rend `None`. Les deux moitiés du schéma se
+    coerçaient donc différemment sur la même entrée."""
+
+    contract = run_node(tmp_path, """
+      const read=v=>C.normalizeProfile({hands:{left:{quality:v}}}).hands.left.quality;
+      out({garbage:read('beaucoup'),empty:read(''),nul:read(null),absent:read(undefined),
+           nan:read(NaN),measured:read(.82),clampedHigh:read(9),clampedLow:read(-9),
+           zero:read(0)});
+    """)
+    for label, raw in (("garbage", "beaucoup"), ("empty", ""), ("nul", None),
+                       ("nan", float("nan"))):
+        assert contract[label] is None, label
+        assert profile._bounded("quality", raw) is None, label
+    assert contract["absent"] is None
+    # Une mesure réelle traverse, et se borne de la même façon des deux côtés.
+    assert contract["measured"] == pytest.approx(0.82)
+    assert profile._bounded("quality", 0.82) == pytest.approx(0.82)
+    assert contract["clampedHigh"] == 1 and profile._bounded("quality", 9) == 1.0
+    assert contract["clampedLow"] == 0 and profile._bounded("quality", -9) == 0.0
+    # Et zéro reste zéro : c'est une qualité mesurée, pas une absence.
+    assert contract["zero"] == 0 and profile._bounded("quality", 0) == 0.0
+
+
+async def test_resetting_a_foreign_version_profile_archives_it_and_says_so(control):
+    """**L'inverse exact de ce que l'écriture fait déjà.** `load` rend un profil
+    vierge pour un bloc en version étrangère, donc `calibrated` valait `False` :
+    le journal annonçait « il n'y avait rien de calibré » **en détruisant** une
+    calibration écrite par un Jarvis plus récent. Une calibration coûte une
+    minute à l'utilisateur ; la détruire en silence est pire ici qu'ailleurs."""
+
+    settings = control._settings()
+    settings[profile.SETTING_KEY] = {
+        "schema_version": 7,
+        "hands": {"left": {"press_ratio": 0.22, "release_ratio": 0.39}},
+        "something_we_do_not_know": 1,
+    }
+    control._write_settings(settings)
+
+    reset = json.loads((await control.reset_barehands_profile(None)).text)
+    assert reset["calibrated"] is False
+    after = control._settings()
+    assert profile.SETTING_KEY not in after, "le bloc est bien retiré"
+    # **Rangé, pas détruit** : sous sa clé de version, avec ce qu'il portait.
+    archived = profile.archived_keys(after)
+    assert archived == ["barehands_calibration_profile_archived_v7"]
+    assert after[archived[0]]["hands"]["left"]["press_ratio"] == 0.22
+    assert after[archived[0]]["something_we_do_not_know"] == 1
+
+    events = [event for event in read_jsonl_tail(control.journal.trace_path, limit=50)
+              if event.get("kind") in ("settings.barehands.profile_reset",
+                                       "settings.barehands.profile_archived")]
+    reset_event = [e for e in events if e["kind"] == "settings.barehands.profile_reset"][0]
+    assert reset_event["data"]["had_profile"] is True, (
+        "le journal disait « il n'y avait rien de calibré » en détruisant un profil"
+    )
+    assert "il n'y avait rien" not in reset_event["message"]
+    assert reset_event["data"]["stored_schema_version"] == 7
+    archived_event = [e for e in events if e["kind"] == "settings.barehands.profile_archived"][0]
+    assert archived_event["data"]["archive_key"] == archived[0]
+    assert archived_event["data"]["replaced_previous_archive"] is False
+    assert "réinitialisé" in archived_event["message"]
+
+
+async def test_resetting_nothing_at_all_still_says_there_was_nothing(control):
+    """Le contrôle de l'archivage ci-dessus : sans profil, rien n'est rangé et
+    le journal le dit — « rangé » et « il n'y avait rien » ne se confondent
+    pas."""
+
+    await control.reset_barehands_profile(None)
+    events = [event for event in read_jsonl_tail(control.journal.trace_path, limit=50)
+              if event.get("kind") == "settings.barehands.profile_reset"]
+    assert events[0]["data"]["had_profile"] is False
+    assert "il n'y avait rien de calibré" in events[0]["message"]
+    assert [e for e in read_jsonl_tail(control.journal.trace_path, limit=50)
+            if e.get("kind") == "settings.barehands.profile_archived"] == []
+
+
+def test_a_not_a_number_never_reaches_the_engine_through_the_tolerant_read():
+    """`NaN` n'est pas un nombre lisible, et il traversait la lecture.
+
+    `min`/`max` le propagent en silence, le `json` de la bibliothèque standard
+    l'écrit **et** le relit, et un seuil `NaN` rend toute comparaison du moteur
+    fausse — un pincement qui ne se déclenche jamais, sans une ligne nulle part.
+    L'écriture le refusait déjà (aucune comparaison de `_check_number` n'est
+    vraie face à `NaN`) ; les deux portes disent maintenant la même chose."""
+
+    nan = float("nan")
+    settings = {profile.SETTING_KEY: {
+        "schema_version": 2, "updated_at": nan,
+        "hands": {"left": {"jitter_px": nan, "quality": nan,
+                           "reach_norm": {"x": 0.1, "y": 0.1, "w": nan, "h": 0.5}}},
+    }}
+    read = profile.load(settings)
+    assert read["hands"]["left"]["jitter_px"] is None
+    assert read["hands"]["left"]["quality"] is None
+    assert read["hands"]["left"]["reach_norm"] is None
+    assert read["updated_at"] is None
+    assert read["calibrated"] is False, "« calibré » sur une mesure illisible"
+
+    with pytest.raises(profile.BarehandsProfileError) as caught:
+        profile.apply({}, {"schema_version": 2, "hands": {"left": {"jitter_px": nan}}})
+    assert caught.value.code == "barehands_profile_out_of_range"
+    with pytest.raises(profile.BarehandsProfileError) as caught:
+        profile.apply({}, {"schema_version": 2, "updated_at": nan})
+    assert caught.value.code == "barehands_profile_not_derived"

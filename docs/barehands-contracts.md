@@ -1675,6 +1675,19 @@ qui ne se doublent pas :
    remplir. Mesuré : ajouter une clé `sampleFrames` qui recopie son entrée fait
    **refuser le chargement du module**.
 
+   **Une sonde refusée avant le gate n'est pas une couverture.** Un refus de la
+   normalisation est une réponse *sûre* — la valeur n'est pas passée — mais le
+   `catch(_refused){continue}` avalait justement les deux champs que la
+   décision 32 nomme comme le risque : une `reachNorm` portant une sonde brute
+   dégénère (`w`/`h` à zéro) et se fait refuser avant d'atteindre le gate, et
+   `reason` était systématiquement accompagné de `status:'ok'`, ce qui rend le
+   rapport incohérent et le fait refuser lui aussi. La sonde présente donc en
+   plus deux formes **bien formées** — une portée valide qui porte une clé de
+   trop, et un motif libre sous un statut non `ok` — qui traversent la
+   normalisation entière et arrivent au gate à tous les coups. Mesuré des deux
+   côtés : une `reachNorm` qui recopie son entrée, ou un `reason` qui cesse
+   d'être borné à sa liste fermée, font refuser le chargement du module.
+
 La poser en plus sur chaque charge utile serait la « seconde vérité » que ce
 dépôt refuse (Slice 12) : par-dessus la liste blanche, elle ne pourrait pas
 échouer.
@@ -1845,7 +1858,22 @@ refuse à la construction : une calibration partielle ferait alors **tomber** le
 moteur au lieu de le laisser retomber sur ses défauts. La règle est écrite aux
 trois étages — le parcours n'écrit que des paires, la page n'applique que des
 paires, et le serveur refuse la demi-mesure avec
-`barehands_profile_thresholds_incomplete`.
+`barehands_profile_thresholds_incomplete`. **Et la lecture la laisse tomber**,
+comme elle laisse tomber une paire inversée : elle ne gardait que la seconde,
+si bien qu'un fichier édité à la main ou un profil v1 portant une moitié rendait
+`calibrated` vrai et faisait lister par l'onglet un seuil que le moteur, lui,
+ignorait — « profil enregistré ≠ profil appliqué ».
+
+**`NaN` n'est ni une mesure ni une absence**, et la lecture tolérante le
+laissait passer : `min`/`max` le propagent en silence, le `json` de la
+bibliothèque standard l'écrit **et** le relit, et un seuil `NaN` rend toute
+comparaison du moteur fausse — donc un pincement qui ne se déclenche jamais,
+sans une ligne nulle part. L'écriture le refusait déjà par accident (aucune
+comparaison de borne n'est vraie face à lui) ; les deux portes le nomment
+maintenant. Même famille que `Number(null)`, et même règle : une valeur fausse
+se refuse, elle ne se remplace pas — c'est aussi pourquoi `quality` illisible
+rend `null` des deux côtés au lieu d'être posée sur son **plancher** `0`, qui
+était une valeur inventée indiscernable d'une qualité mesurée nulle.
 
 **Application, et elle est relisible.** `controller.options()` rend désormais
 `hands.{left,right,unknown}.{primary,secondary}.{pressRatio,releaseRatio}` en
@@ -1897,7 +1925,13 @@ quitter (bouton ou Échap) n'écrit rien du tout. Un échec d'enregistrement gar
 la coque ouverte avec « Réessayer » — la refermer jetterait une minute de
 mesures. « Effacer le profil » (`DELETE`) **retire** le bloc au lieu de le
 remplir de nulls, pour que « aucun profil » et « profil vide » se relisent
-pareil.
+pareil — et **range** d'abord un bloc en version étrangère sous sa clé
+d'archive, exactement comme l'écriture. Il ne le faisait pas : `load` rend un
+profil vierge pour une version qu'il ne sait pas lire, donc `calibrated` valait
+`False` et le journal annonçait « il n'y avait rien de calibré » **en
+détruisant** une calibration écrite par un Jarvis plus récent — l'inverse exact
+du constat R6. Le bouton était désarmé pour ce cas, la route et la voix ne
+l'étaient pas.
 
 **Décision 30 : aucun apprentissage continu.** La couture `deps.onMeasure` du
 contrôleur n'est posée que **pendant** un parcours et retirée à sa fin ; le

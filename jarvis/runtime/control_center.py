@@ -1991,15 +1991,39 @@ class ControlCenter:
 
         del request
         current = self._settings()
-        had = barehands_profile.load(current)["calibrated"]
+        # **Un profil illisible n'est pas un profil absent**, et c'est ici que
+        # les deux se confondaient : `load` rend un profil vierge pour un bloc
+        # en version étrangère, donc `calibrated` valait `False` et le journal
+        # annonçait « il n'y avait rien de calibré » **en détruisant** une
+        # calibration écrite par un Jarvis plus récent. L'inverse exact de ce
+        # que l'écriture fait déjà (constat R6) : on range avant de remplacer.
+        # Une calibration coûte une minute à l'utilisateur.
+        seen = barehands_profile.inspect(current)
+        replaced_archive = seen["archive_key"] in barehands_profile.archived_keys(current)
+        archived = barehands_profile.archive_unreadable(current)
+        had = seen["unreadable"] or barehands_profile.load(current)["calibrated"]
         barehands_profile.clear(current)
         self._write_settings(current)
         self.journal.emit(
             "settings.barehands.profile_reset",
             "Profil de calibration Bare Hands réinitialisé"
             if had else "Profil de calibration Bare Hands réinitialisé (il n'y avait rien de calibré)",
-            data={"had_profile": had},
+            data={"had_profile": had, "unreadable": seen["unreadable"],
+                  "stored_schema_version": seen["stored_schema_version"]},
         )
+        if archived:
+            self.journal.emit(
+                "settings.barehands.profile_archived",
+                f"Profil de calibration en schéma {seen['stored_schema_version']} conservé sous "
+                f"« {archived} » avant d'être réinitialisé"
+                + (" (une archive de la même version a été remplacée)" if replaced_archive else ""),
+                level="warning",
+                data={"code": "barehands_profile_version_archived",
+                      "stored_schema_version": seen["stored_schema_version"],
+                      "schema_version": barehands_profile.SCHEMA_VERSION,
+                      "archive_key": archived,
+                      "replaced_previous_archive": replaced_archive},
+            )
         return web.json_response(barehands_profile.describe(current))
 
     # ------------------------------------------------- canal de commandes (Slice 12)

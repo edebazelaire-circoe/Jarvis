@@ -2429,3 +2429,31 @@ contre nos propres fixtures.
 - **La croix se journalisait « échap ».** La coque dit depuis la Slice 09
   *laquelle* de ses sorties a servi ; la calibration ignorait l'argument. Une
   cause fausse dans le journal est pire qu'une cause absente : elle se croit.
+
+### Une sonde refusée avant le gate n'est pas une couverture
+
+La garde de forme du profil (décision 32) est réelle — trois mutations qui
+fuient font refuser le chargement du module. Mais son `catch(_refused){continue}`
+avalait précisément les deux champs que la décision nomme elle-même comme le
+risque : une `reachNorm` portant une sonde brute **dégénère** (`w`/`h` à zéro)
+et se fait refuser *avant* d'atteindre le gate, et `reason` était toujours
+accompagné de `status:'ok'`, ce qui rend le rapport incohérent et le fait
+refuser lui aussi. Le contrat annonçait pourtant « chaque champ d'étape ».
+
+Un refus est une réponse *sûre* ; ce n'est pas une *couverture*. Deux sondes
+**bien formées** s'y ajoutent — une portée valide qui porte une clé de trop, un
+motif libre sous un statut non `ok` — et elles n'ont pas de `try`, parce
+qu'elles traversent à tous les coups. **Formulation générale : une sonde qui
+peut être refusée en chemin doit avoir une jumelle qui ne peut pas l'être,
+sinon on mesure le chemin au lieu de la porte.**
+
+### `NaN` n'est ni une mesure ni une absence
+
+Trouvé en écrivant le test de parité de la coercition de `quality` : la lecture
+tolérante de la route laissait passer `NaN`. `min`/`max` le propagent en
+silence, le `json` de la bibliothèque standard l'écrit **et** le relit, et un
+seuil `NaN` rend toute comparaison du moteur fausse — donc un pincement qui ne
+se déclenche jamais, sans une ligne nulle part. L'écriture le refusait par
+accident (aucune comparaison de borne n'est vraie face à lui) ; les deux portes
+le nomment maintenant. C'est la troisième valeur de la même famille que
+`Number(null)`, après le plancher `0` de `quality`.

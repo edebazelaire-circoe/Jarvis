@@ -1163,11 +1163,12 @@ def test_the_module_refuses_to_load_if_the_schema_itself_admits_an_image(tmp_pat
     leaky = source.replace(
         "    quality:null,                            // 0..1, confiance de la mesure\n  });",
         "    quality:null,\n    sampleFrames:null,\n  });", 1)
+    before = leaky
     leaky = leaky.replace(
-        "      quality:source.quality===undefined||source.quality===null?null:unit(source.quality,0),\n    });",
-        "      quality:source.quality===undefined||source.quality===null?null:unit(source.quality,0),\n"
+        "      quality:ratio(source.quality,0,1),\n    });",
+        "      quality:ratio(source.quality,0,1),\n"
         "      sampleFrames:source.sampleFrames||null,\n    });", 1)
-    assert leaky != source, "les deux ancres de la mutation doivent exister"
+    assert leaky != before and leaky != source, "les deux ancres de la mutation doivent exister"
 
     victim = tmp_path / "leaky-contracts.js"
     victim.write_text(leaky, encoding="utf-8")
@@ -1192,3 +1193,66 @@ def test_the_module_refuses_to_load_if_the_schema_itself_admits_an_image(tmp_pat
     done = subprocess.run([node, str(ok)], capture_output=True, text=True,
                           encoding="utf-8", timeout=30, check=False)
     assert done.stdout == "LOADED"
+
+
+def _module_load(tmp_path: Path, source: str, name: str) -> str:
+    """Charger une copie du contrat et rendre le code de refus, ou `LOADED`."""
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node absent")
+    victim = tmp_path / f"{name}-contracts.js"
+    victim.write_text(source, encoding="utf-8")
+    script = tmp_path / f"{name}.cjs"
+    script.write_text(
+        f"try{{require({json.dumps(str(victim))});process.stdout.write('LOADED')}}"
+        "catch(e){process.stdout.write(String(e&&e.code||e))}",
+        encoding="utf-8",
+    )
+    done = subprocess.run([node, str(script)], capture_output=True, text=True,
+                          encoding="utf-8", timeout=30, check=False)
+    assert done.returncode == 0, done.stderr
+    return done.stdout
+
+
+def test_the_gate_reaches_the_nested_pocket_and_the_only_free_string(tmp_path):
+    """**Les deux champs que la décision 32 nomme comme le risque, et que la
+    sonde n'atteignait pas.**
+
+    Un refus de la normalisation est une réponse sûre — la valeur n'est pas
+    passée — mais ce n'est pas une couverture, et le `catch(_refused){continue}`
+    de la sonde avalait précisément les deux qui comptent : une `reachNorm`
+    portant une sonde brute dégénère (`w`/`h` à zéro) et se fait refuser avant
+    le gate, et `reason` était toujours accompagné de `status:'ok'`, ce qui rend
+    le rapport incohérent et le fait refuser lui aussi. Le contrat annonçait
+    pourtant « chaque champ d'étape ».
+
+    On le mesure comme la garde de forme se mesure : en **écrivant la Slice
+    future** de chaque côté, et en vérifiant que le module refuse alors de se
+    charger."""
+
+    source = CONTRACTS.read_text(encoding="utf-8")
+
+    # 1. `reachNorm` cesse d'être rebâtie de ses quatre nombres et recopie son
+    #    entrée : la seule poche imbriquée du schéma devient celle où tout passe.
+    leaky_reach = source.replace(
+        "    const reachNorm=given?Object.freeze({x:unit(given.x,0),y:unit(given.y,0),\n"
+        "      w:unit(given.w,0),h:unit(given.h,0)}):null;",
+        "    const reachNorm=given?Object.freeze({...given}):null;", 1)
+    assert leaky_reach != source, "l'ancre de la mutation doit exister"
+    assert _module_load(tmp_path, leaky_reach, "reach") == "barehands_profile_not_derived", (
+        "une reachNorm qui recopie son entrée doit faire refuser le chargement"
+    )
+
+    # 2. `reason` cesse d'être borné à la liste fermée : le seul champ en forme
+    #    de texte libre redevient un commentaire libre.
+    leaky_reason = source.replace(
+        "    const reason=STAGE_REASONS.includes(source.reason)?source.reason:null;",
+        "    const reason=source.reason===undefined?null:source.reason;", 1)
+    assert leaky_reason != source, "l'ancre de la mutation doit exister"
+    assert _module_load(tmp_path, leaky_reason, "reason") == "barehands_profile_not_derived", (
+        "un motif d'étape en texte libre doit faire refuser le chargement"
+    )
+
+    # Et le contrat réel se charge : la sonde ne crie pas au loup.
+    assert _module_load(tmp_path, source, "real") == "LOADED"
