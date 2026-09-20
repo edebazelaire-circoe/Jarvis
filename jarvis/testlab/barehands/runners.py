@@ -17,9 +17,11 @@ tombe ici, sans qu'un humain refasse le geste.
 
 **Node absent n'est pas une mesure à zéro.** Le rejeu se fait avec les *vrais*
 moteurs, qui vivent en JavaScript ; sans node, le runner lève
-`MeasurementUnavailable` plutôt que de rendre des métriques vides, parce qu'une
-mesure qu'on n'a pas pu prendre et une mesure prise à zéro ne sont pas la même
-chose.
+`BareHandsRunError` — un `MeasurementUnavailable` portant le code stable
+`testlab_barehands_run_failed` — plutôt que de rendre des métriques vides, parce
+qu'une mesure qu'on n'a pas pu prendre et une mesure prise à zéro ne sont pas la
+même chose. L'exécution se lit alors `inconclusive`, la cause voyage avec, et
+`tests/unit/test_barehands_trace.py` exerce ce chemin **sans** node.
 """
 
 from __future__ import annotations
@@ -37,13 +39,38 @@ from jarvis.testlab.runs import ArtifactKind
 #: trace est une **entrée** du diagnostic, pas un artefact qu'il produit.
 GOLDEN_TRACE = Path(__file__).resolve().parents[1] / "fixtures" / "barehands" / "golden.v1.json"
 
+#: Code stable du refus de mesure de ce diagnostic. Il voyage avec la cause dans
+#: `measurement_unavailable`, et c'est lui qu'on cherche dans un journal — pas
+#: une phrase française qui peut être reformulée.
+BAREHANDS_RUN_FAILED = "testlab_barehands_run_failed"
+
+
+class BareHandsRunError(MeasurementUnavailable):
+    """Le rejeu n'a pas pu être mené jusqu'à une mesure.
+
+    `MeasurementUnavailable`, donc le worker enregistre `measurement_unavailable`
+    et l'exécution se lit `inconclusive` : node absent, trace d'or absente, rejeu
+    refusé. Chacun est un constat sur la **situation**, pas un défaut du produit
+    ni une mesure à zéro.
+
+    Cette classe existe parce que `TestLabError.__init__` est `(code, detail)` :
+    lever la classe de base avec une seule phrase produisait un `TypeError` qui
+    faisait lire « node absent » comme `crashed / runner_failed` et **jetait la
+    vraie cause** — l'inverse exact de ce que ce module promet. Même forme que
+    `jarvis/testlab/audio/runners.py`, seul autre paquet de profil.
+    """
+
+
+def _unavailable(detail: str) -> BareHandsRunError:
+    return BareHandsRunError(BAREHANDS_RUN_FAILED, detail)
+
 
 class InputQualityRunner:
     """Rejoue la trace d'or sous la configuration décrite par les paramètres."""
 
     async def run(self, context: RunContext) -> RunOutcome:
         if not GOLDEN_TRACE.is_file():
-            raise MeasurementUnavailable(
+            raise _unavailable(
                 f"trace d'or absente ({GOLDEN_TRACE}) : sans elle il n'y a rien à rejouer, "
                 "et rendre des métriques vides ferait passer une absence de mesure pour une mesure"
             )
@@ -63,11 +90,13 @@ class InputQualityRunner:
             rows = barehands_replay.replay(
                 GOLDEN_TRACE, [{"name": "run", "config": config}])
         except barehands_replay.ReplayUnavailable as exc:
-            raise MeasurementUnavailable(str(exc)) from exc
+            # La cause de node (« node est absent du PATH », etc.) voyage telle
+            # quelle : c'est elle qui dit à l'humain quoi installer.
+            raise _unavailable(str(exc)) from exc
         except barehands_replay.ReplayFailed as exc:
             # Un rejeu qui refuse est un **échec de mesure**, pas une mesure
             # mauvaise : le distinguer est tout l'objet de ces deux exceptions.
-            raise MeasurementUnavailable(f"le rejeu a refusé : {exc}") from exc
+            raise _unavailable(f"le rejeu a refusé : {exc}") from exc
         measured = rows[0]["metrics"]
         # Une mesure absente reste absente : `None` n'est pas rapporté, il n'est
         # pas converti en zéro. Le Test Lab lit ce qui est là, et l'assertion

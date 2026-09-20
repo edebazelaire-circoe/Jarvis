@@ -4583,7 +4583,36 @@ try{
       console.warn('[barehands] enregistrement : l’instant est illisible',error);
       candidates=[];events=[];gestures=[];
     }
-    const hands=(record&&Array.isArray(record.hands)?record.hands:[]);
+    /* **La fente vient de l'allocateur canonique, pas du rang dans le tableau.**
+       `record.hands` est ordonné par le traqueur : quand une main quitte le
+       cadre, celles qui restent se renumérotent. Une fente déduite du rang
+       changeait donc de main sous le rejeu — et la voie 0, qui porte l'histoire
+       du filtre de la main gauche, se faisait nourrir les coordonnées de la
+       droite. Mesuré sur la même séance, l'erreur de pointeur empirait d'un
+       facteur 3 à 5 selon **laquelle** des deux mains sortait du cadre, et
+       `hand.loss_recovery_p95_ms` s'attribuait à la fente devenue vacante
+       plutôt qu'à la main perdue.
+
+       `interactionView.slotOf` est `BH.createSlotAllocator` (Level 3, contraté :
+       « une main garde sa fente tant qu'elle vit ; une fente libérée est
+       réutilisée »), sur l'objet que cette fonction appelle déjà, et c'est le
+       même appel qu'à la construction d'un évènement de pincement. La fente est
+       **dérivée et non identifiante** : `handTrackId` ne traverse pas la liste
+       blanche de l'enregistreur, qui n'en écrit jamais. */
+    const hands=(record&&Array.isArray(record.hands)?record.hands:[]).map(hand=>{
+      let slot=null;
+      try{slot=interactionView.slotOf(hand&&hand.handTrackId)}
+      catch(error){
+        /* Capturé, pas tu : une main sans identité lisible ne doit pas arrêter
+           l'enregistrement, mais sa fente retombe alors sur le rang et le rejeu
+           mérite de savoir pourquoi. */
+        console.warn('[barehands] enregistrement : fente de main illisible',error);
+        slot=null;
+      }
+      /* `null` = main surnuméraire ou sans identité : l'enregistreur retombe
+         sur le rang, faute de mieux, et le dit dans son propre commentaire. */
+      return slot===null?hand:{...hand,slot};
+    });
     return {lifecycle:lifecycle(),hands,candidates,events,gestures};
   }
 

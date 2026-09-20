@@ -188,13 +188,30 @@
     gapPalms:null,indexReachPalms:null,palmNorm:null,
     rawX:null,rawY:null,filteredX:null,filteredY:null,palmX:null,palmY:null,
     quality:null,stillness:null,speedPxPerSec:null});
-  function readHand(raw,slot){
+  function readHand(raw,index){
     const source=raw&&typeof raw==='object'?raw:{};
+    /* **La fente portée, pas le rang dans le tableau.** `handTrackId` est une
+       poignée de corrélation et n'entre pas ici ; la **fente** qui l'accompagne
+       est dérivée, non identifiante, et c'est tout ce dont le rejeu a besoin —
+       savoir que c'est « la même main qu'à l'image d'avant ».
+
+       Le rang, lui, ne le dit pas : le traqueur renumérote ses mains quand
+       l'une sort du cadre, et la voie du filtre se retrouvait nourrie par
+       l'autre main. La fente vient donc de `createSlotAllocator` en amont
+       (`control_center_barehands.js`, `traceFrame`), qui la garde stable tant
+       que la main vit.
+
+       Relire une trace déjà normalisée rend la même fente : elle est lue dans
+       `source.slot`, où la passe précédente l'a écrite. L'idempotence de
+       `readFrame` tient donc toujours. */
+    const lane=num(source.slot);
+    const carried=lane!==null&&Number.isInteger(lane)&&lane>=0&&lane<BH.MAX_HANDS;
     return {
-      /* **Une fente, jamais l'identifiant.** `handTrackId` est une poignée de
-         corrélation ; un numéro de fente n'en est pas une, et le rejeu n'a
-         besoin que de savoir que c'est « la même main qu'à l'image d'avant ». */
-      slot:count(slot),
+      /* Sans fente portée — main surnuméraire, identité illisible — le rang
+         reste le dernier recours : une fente fausse vaut mieux qu'une image
+         perdue, et c'est le cas que le tableau ne distingue de toute façon
+         pas. */
+      slot:carried?lane:count(index),
       handedness:word(String(source.handedness),BH.HANDEDNESSES),
       primaryRatio:num(source.primaryRatio),secondaryRatio:num(source.secondaryRatio),
       cPose:num(source.cPose),closure:num(source.closure),
@@ -417,7 +434,16 @@
       if(timer!==null){d.clearTimeout(timer);timer=null}
       const trace=Object.freeze({
         schema:TRACE_SCHEMA,schemaVersion:TRACE_SCHEMA_VERSION,
-        startedAt,durationMs:Math.max(0,(lastAt===null?startedAt:lastAt)-startedAt),
+        /* **Pas l'heure murale.** `startedAt` est gardé en mémoire pour dater
+           les images les unes par rapport aux autres et pour armer l'échéance,
+           mais il ne part **pas** dans la trace : c'est exactement l'argument
+           qui rend `t` relatif un peu plus bas — une heure murale n'apprend
+           rien au rejeu et dit quand quelqu'un était devant sa machine. La clé
+           reste, à zéro, parce que le schéma, le contrat et la liste blanche
+           du serveur la nomment ; sa valeur, elle, n'a jamais servi au rejeu,
+           qui ne lit que `t` et `durationMs`. La trace d'or ne l'avait pas
+           montré : elle est synthétique. */
+        startedAt:0,durationMs:Math.max(0,(lastAt===null?startedAt:lastAt)-startedAt),
         stoppedBecause:reason,
         viewport:viewport||{width:0,height:0},
         options:{sampleEveryMs:o.sampleEveryMs,maxDurationMs:o.maxDurationMs,maxFrames:o.maxFrames},
@@ -554,6 +580,44 @@
     }
     const frames=Array.isArray(doc.frames)?doc.frames:[];
     const c=config&&typeof config==='object'?config:{};
+
+    /* **Un réglage mal orthographié se refuse, il ne s'ignore pas.**
+
+       Le refus d'un *axe* inconnu existait déjà, et son propre argument vaut un
+       cran plus bas : accepter une clé sans effet « ferait lire deux colonnes
+       identiques comme *ce réglage ne change rien* ». Or les moteurs reçoivent
+       leurs options par `{...DEFAULTS, ...overrides}` : une clé inconnue y
+       était avalée en silence, donc `thresholds.pinchMargnRatio` (faute de
+       frappe) était accepté, rejoué, et rendait les nombres du défaut.
+
+       `core.DEFAULTS` est la seule liste de noms qui existe, et c'est celle que
+       les moteurs lisent vraiment — la recopier ici en ferait une seconde, qui
+       divergerait. */
+    /* **L'axe inconnu se refuse ici aussi.** `REPLAY_AXES` était déclaré et
+       exporté par ce module, mais n'était lu par personne : seul le miroir
+       Python (`barehands_replay._check_config`) refusait un axe. Un appelant
+       JS — ou n'importe quel test passant par cette fonction — pouvait donc
+       poser `{filtre:{…}}` et lire des nombres qui n'étaient que le défaut.
+       Deux miroirs qui ne refusent pas la même chose ne sont pas deux miroirs. */
+    const unknownAxes=Object.keys(c).filter(axis=>!REPLAY_AXES.includes(axis));
+    if(unknownAxes.length)
+      throw new RangeError(`replay : axe de rejeu inconnu : ${unknownAxes.join(', ')}. `
+        +`Les axes sont ${REPLAY_AXES.join(', ')} — accepter une clé sans effet ferait lire `
+        +'deux colonnes identiques comme « ce réglage ne change rien ».');
+
+    const knobs=(core.DEFAULTS&&typeof core.DEFAULTS==='object')?core.DEFAULTS:null;
+    const checkKnobs=(axis,value)=>{
+      if(!knobs||!value||typeof value!=='object')return;
+      const unknown=Object.keys(value).filter(key=>!(key in knobs));
+      if(unknown.length)
+        throw new RangeError(`replay : réglage inconnu sur l’axe « ${axis} » : ${unknown.join(', ')}. `
+          +'Un nom que le moteur ne lit pas rendrait les nombres du défaut, et deux colonnes '
+          +'identiques se liraient « ce réglage ne change rien ».');
+    };
+    checkKnobs('filter',c.filter);
+    checkKnobs('thresholds',c.thresholds);
+    checkKnobs('resolver',c.resolver);
+
     const filterOptions=c.filter&&typeof c.filter==='object'?c.filter:{};
     const thresholds=c.thresholds&&typeof c.thresholds==='object'?c.thresholds:{};
     /* **L'assistance a un défaut, et le résolveur tourne toujours.**
@@ -608,6 +672,22 @@
           x:filtered?filtered.x:hand.rawX,y:filtered?filtered.y:hand.rawY,
           palmX:hand.palmX,palmY:hand.palmY,
           anchorX:filtered?filtered.x:hand.rawX,anchorY:filtered?filtered.y:hand.rawY,
+          /* ⚠️ **`confidence` est ici la qualité de suivi, pas la confiance du
+             moteur réel**, qui la dérive de la marge de pincement et de
+             l'ouverture de la main. C'est la raison pour laquelle
+             `thresholds.pinchMarginRatio` est **structurellement inerte au
+             rejeu** : balayé de 0,0 à 0,9 sur la trace d'or, il ne déplace
+             aucune mesure. Son nom est pourtant valide (il est dans
+             `core.DEFAULTS`), donc la garde de noms ci-dessus ne peut pas le
+             signaler — un réglage inerte n'est pas un réglage mal écrit.
+
+             Récupérable sans points de main : la trace porte `closure`, dont
+             l'ouverture se dérive. Non fait ici — cela changerait les nombres
+             de la trace d'or, donc l'empreinte du verrou du Test Lab et les
+             seuils des assertions, au moment de clore la tâche. Tracé.
+
+             Même statut pour `resolver.targetZonePx` et `targetZoneHoldPx` :
+             valides, acceptés, sans effet sur aucune mesure de cette trace. */
           stillness:hand.stillness,now:frame.t,confidence:hand.quality};
         const primary=hand.primaryRatio===null?null
           :lane.primary.update({...sampleAt,ratio:hand.primaryRatio,other:hand.secondaryRatio});
@@ -711,7 +791,7 @@
     let dragFrames=0,dragBreaks=0,resizeFrames=0,resizeBreaks=0;
     const pressFrom=new Map();
     const lastSeen=new Map();
-    let wasDragging=false,wasResizing=false;
+    let wasDragging=false;
 
     for(const frame of frames){
       for(const hand of frame.hands){
@@ -745,7 +825,18 @@
               pressFrom.delete(key);
               if(from!==undefined){
                 const held=frame.t-from;
-                /* **Latence d'interaction** : du contact à l'issue. */
+                /* **Latence d'interaction** : du contact à l'issue.
+
+                   ⚠️ **Ce n'est pas une latence système.** C'est la durée
+                   pendant laquelle l'utilisateur a **tenu** son pincement :
+                   un utilisateur qui appuie délibérément plus longtemps se lit
+                   comme une latence pire, alors que rien n'a ralenti. Elle est
+                   sensible aux seuils — c'est pourquoi elle reste utile comme
+                   **proxy comparatif** entre deux configurations sur la même
+                   trace, ce pour quoi le Test Lab s'en sert — mais son nom
+                   promet ce qu'elle ne mesure pas. Non renommée ici pour la
+                   même raison que `drag.continuity_ratio` : le nom voyage dans
+                   le manifeste, l'empreinte du verrou et le contrat. Tracé. */
                 latencies.push(held);
                 /* **Faux pincement** : trop court pour avoir été voulu, ou
                    annulé. */
@@ -757,7 +848,24 @@
           }
       }
       /* **Clic visé** : une issue `click` avec au moins une candidate résolue
-         sous la main à la même image. */
+         sous la main à la même image.
+
+         ⚠️ **Cette mesure ne peut pas récompenser un clic qui touche plus.**
+         Les `candidates` d'une trace sont la sortie **déjà résolue** du
+         résolveur (`targets(){return resolved}`, vide hors intention), et un
+         clic dans le vide revient avant qu'aucune interaction ne soit
+         enregistrée. Le dénominateur ne contient donc que des clics qui avaient
+         déjà réussi à l'enregistrement : la mesure dit « parmi les clics qui
+         réussissaient, combien le résolveur rejoué résout encore », et non
+         « combien de clics atteignent leur cible ». Elle peut **baisser** —
+         c'est ce qui la rend utile comme garde-fou de non-régression — elle ne
+         peut pas monter en récompensant une meilleure visée.
+
+         À savoir en la lisant, parce qu'elle porte une assertion **bloquante**
+         à ≥ 0,6 (trace d'or : 0,667) : cette assertion garde une régression du
+         résolveur, elle ne mesure pas la qualité de visée du produit. La
+         corriger demanderait que la trace porte les candidates **offertes**,
+         pas résolues — un changement de schéma, donc de version. Tracé. */
       let dragging=false,resizing=false;
       for(const event of frame.events){
         if(event.type===BH.INTERACTION.CLICK||event.type===BH.INTERACTION.CONTEXT){
@@ -778,9 +886,24 @@
       for(const gesture of frame.gestures||[])if(gesture.suppressed)falseGesture+=1;
       /* **Continuité d'un glissement** : une image de glissement qui suit une
          image de glissement est continue ; une interruption au milieu ne
-         l'est pas. Le rapport est la part continue. */
+         l'est pas. Le rapport est la part continue.
+
+         ⚠️ **Ce que cette mesure compte vraiment, et son biais connu.** Une
+         **reprise** compte comme une rupture, qu'elle vienne d'un accroc ou
+         d'un second glissement parfaitement propre. Mesuré : un glissement
+         continu rend 1.0 ; **deux glissements propres rendent 0.9** ; un seul
+         glissement avec un vrai accroc rend 0.889. Une séance où l'utilisateur
+         glisse plus souvent se note donc moins bien.
+
+         Elle reste utile **à séance constante** — c'est ainsi que le Test Lab
+         s'en sert, en comparant deux configurations sur la **même** trace, où
+         le nombre de glissements est identique des deux côtés. Elle n'est pas
+         comparable d'une séance à l'autre, et son nom ne le dit pas. Non
+         renommée ici : le nom voyage dans le manifeste du diagnostic, dans
+         l'empreinte du verrou du Test Lab et dans le contrat, et le
+         changer au moment de clore la tâche coûterait plus que le biais
+         lui-même. Tracé, à renommer avec la prochaine évolution du schéma. */
       if(dragging){dragFrames+=1;if(!wasDragging&&dragFrames>1)dragBreaks+=1}
-      else if(wasDragging)dragBreaks+=0;
       if(resizing){
         resizeFrames+=1;
         /* **Stabilité d'un redimensionnement à deux mains** : il faut deux
@@ -788,7 +911,7 @@
            milieu est la panne que la Slice 06 nomme. */
         if(frame.hands.length<2)resizeBreaks+=1;
       }
-      wasDragging=dragging;wasResizing=resizing;
+      wasDragging=dragging;
     }
 
     const durationMs=num(r.durationMs)||(frames.length?frames[frames.length-1].t:0);

@@ -380,6 +380,88 @@ def test_a_replay_that_cannot_run_says_so_instead_of_returning_empty_metrics():
     assert "node" in str(caught.value)
 
 
+def _runner_context():
+    """Un `RunContext` minimal portant les **vrais** paramètres du manifeste.
+
+    Pas de `skipif` : ce contexte sert les chemins d'échec, qui doivent être
+    exerçables sur une machine sans node — c'est précisément la machine où ils
+    se déclenchent.
+    """
+    from jarvis.testlab.catalog import load_catalog
+
+    spec = load_catalog().describe("barehands.input_quality", 1).diagnostic
+
+    class Context:
+        def __init__(self):
+            self.parameters = {p.name: p.default for p in spec.parameters}
+            self.lines: list[str] = []
+            self.artifacts: list[str] = []
+
+        def log(self, line):
+            self.lines.append(line)
+
+        def put_artifact(self, path, *, kind, media_type, data):
+            self.artifacts.append(path)
+            return path
+
+    return Context()
+
+
+def test_the_runner_says_node_is_absent_instead_of_crashing(monkeypatch):
+    """**Le chemin d'échec du runner, exercé pour de vrai.**
+
+    Le test voisin ne descend qu'au niveau du rejeu ; celui du runner est
+    `skipif(node is None)` et ne voit que le chemin heureux. Entre les deux, les
+    trois `raise` du runner n'étaient joués par personne — et ils levaient un
+    `TypeError`, parce que `TestLabError.__init__` est `(code, detail)` et qu'on
+    lui passait une seule phrase. « node absent » se lisait donc
+    `crashed / runner_failed`, la vraie cause était jetée, et `inconclusive`
+    n'était jamais atteint : l'inverse exact de ce que ce module promet.
+
+    On retire node à `shutil.which` plutôt que de simuler le rejeu : c'est le
+    vrai `replay` qui refuse, le vrai `except` qui rattrape, et la vraie
+    exception qui se construit.
+    """
+    from jarvis.testlab.barehands import runners as barehands_runners
+    from jarvis.testlab.runners import MeasurementUnavailable
+
+    monkeypatch.setattr(barehands_replay.shutil, "which", lambda _name: None)
+
+    context = _runner_context()
+    with pytest.raises(MeasurementUnavailable) as caught:
+        asyncio.run(barehands_runners.InputQualityRunner().run(context))
+
+    error = caught.value
+    # La mesure est **indisponible**, pas fausse : c'est ce que le worker
+    # enregistre en `measurement_unavailable` et que l'exécution lit
+    # `inconclusive`.
+    assert isinstance(error, barehands_runners.BareHandsRunError)
+    # Un code stable, cherchable dans un journal, et non une phrase reformulable.
+    assert error.code == barehands_runners.BAREHANDS_RUN_FAILED
+    # Et la **vraie cause** survit jusqu'à l'humain : elle nomme node.
+    assert "node" in error.detail
+    assert isinstance(error.__cause__, barehands_replay.ReplayUnavailable)
+    # Rien n'a été rendu : pas d'artefact, donc pas de mesure à zéro déguisée.
+    assert context.artifacts == []
+
+
+def test_the_runner_says_the_golden_trace_is_missing_instead_of_crashing(monkeypatch, tmp_path):
+    """Le troisième `raise` du runner, celui qui précède tout rejeu : sans trace
+    d'or il n'y a rien à mesurer, et cela se dit avec le même code stable."""
+    from jarvis.testlab.barehands import runners as barehands_runners
+    from jarvis.testlab.runners import MeasurementUnavailable
+
+    monkeypatch.setattr(barehands_runners, "GOLDEN_TRACE", tmp_path / "golden-absente.json")
+
+    context = _runner_context()
+    with pytest.raises(MeasurementUnavailable) as caught:
+        asyncio.run(barehands_runners.InputQualityRunner().run(context))
+
+    assert caught.value.code == barehands_runners.BAREHANDS_RUN_FAILED
+    assert "golden-absente.json" in caught.value.detail
+    assert context.artifacts == []
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="node absent")
 def test_the_testlab_runner_measures_the_golden_trace_under_its_parameters(tmp_path):
     """Le diagnostic enregistré dans le Test Lab, exercé pour de vrai : il lit
@@ -436,3 +518,62 @@ def test_the_testlab_runner_measures_the_golden_trace_under_its_parameters(tmp_p
             assert value >= assertion.threshold, assertion.assertion_id
         elif assertion.comparator == "le":
             assert value <= assertion.threshold, assertion.assertion_id
+
+
+def test_a_refusal_never_echoes_what_the_caller_posted():
+    """**Un refus décrit, il ne recopie pas.**
+
+    Le message d'un refus part dans deux endroits durables : le corps du 400 et
+    `runtime/trace.jsonl`. Interpolée telle quelle, la valeur de l'appelant y
+    était recopiée sans borne — un tableau de 21 points produisait une ligne de
+    journal de plus de mille caractères portant chaque coordonnée, une chaîne
+    de 5 000 caractères en produisait une de 5 057. Ce ne sont pas les mains de
+    l'utilisateur (la route est ouverte, ces valeurs sont celles de l'appelant),
+    mais un journal qu'un appelant fait grossir à volonté n'est plus un journal,
+    et la promesse « aucune coordonnée n'est écrite » se disait sans réserve.
+    """
+
+    landmarks = [{"x": 0.1 * i, "y": 0.2 * i, "z": 0.3 * i} for i in range(21)]
+    long_text = "A" * 5000
+
+    for bad_schema in (landmarks, long_text, {"a": 1, "b": 2}):
+        with pytest.raises(barehands_trace.BarehandsTraceError) as caught:
+            barehands_trace.normalize(minimal(schema=bad_schema))
+        message = str(caught.value)
+        assert caught.value.code == "barehands_trace_schema_unknown"
+        # Borné, et sans rapport avec la taille de ce qui a été posté.
+        assert len(message) < 200, len(message)
+        # Et aucune coordonnée, aucun fragment de la valeur, n'y survit.
+        assert "0.30000000000000004" not in message
+        assert "AAAA" not in message
+
+    # Une version illisible se décrit de la même façon.
+    with pytest.raises(barehands_trace.BarehandsTraceError) as caught:
+        barehands_trace.normalize(minimal(schemaVersion=landmarks))
+    assert caught.value.code == "barehands_trace_version_unsupported"
+    assert len(str(caught.value)) < 400
+    assert "0.1" not in str(caught.value)
+
+    # Et un refus reste **compréhensible** : une version courte est encore dite.
+    with pytest.raises(barehands_trace.BarehandsTraceError) as caught:
+        barehands_trace.normalize(minimal(schemaVersion=99))
+    assert "99" in str(caught.value), "un refus qui ne dit plus rien n'aide personne"
+
+
+def test_a_stored_trace_never_carries_a_wall_clock():
+    """**Une trace ne dit pas quand quelqu'un était devant sa machine.**
+
+    C'est l'argument qui rend `t` relatif au début de l'enregistrement — et
+    `startedAt` le contredisait, en portant une époque murale dans chaque trace
+    réelle. La trace d'or ne l'avait pas montré : elle est synthétique.
+
+    La clé reste (le schéma la nomme), sa valeur ne renseigne plus rien.
+    """
+
+    stored = barehands_trace.normalize(minimal(startedAt=1700000000000))
+    assert stored["startedAt"] == 0.0, (
+        "l'heure murale de l'appelant a été recopiée dans la trace rangée"
+    )
+    # Le reste de la trace est intact : on a retiré une heure, pas une mesure.
+    assert stored["durationMs"] == 320.0
+    assert len(stored["frames"]) == 2

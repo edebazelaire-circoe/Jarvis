@@ -2474,7 +2474,31 @@ Slice 08, dans le même ordre :
 
 Deux réductions de plus : `handTrackId` devient une **fente** (`slot`, 0 ou 1),
 et une candidate garde sa géométrie et trois mots de vocabulaires fermés —
-jamais son `objectId`, jamais son libellé. Son `kind` passe par un vocabulaire
+jamais son `objectId`, jamais son libellé.
+
+> **`slot` n'a qu'un sens dans ce dépôt, et c'est celui du § 6** : la voie
+> stable d'une main, attribuée par `createSlotAllocator` — « une main garde sa
+> fente tant qu'elle vit ; une fente libérée est réutilisée ». `traceFrame`
+> appelle `interactionView.slotOf(handTrackId)`, le même allocateur que les
+> fentes de pointeur et que les évènements de pincement ; l'enregistreur lit la
+> fente **portée** et n'a jamais connaissance de `handTrackId`.
+>
+> Ce paragraphe a décrit un temps une correspondance qui n'existait pas :
+> l'enregistreur numérotait les mains par leur **rang dans le tableau de
+> l'image**. Le traqueur renumérotant ses mains dès que l'une sort du cadre, la
+> fente changeait alors de main en cours de séance — et la voie 0, qui porte
+> l'historique du filtre d'une main, se faisait nourrir les coordonnées de
+> l'autre. Le mot `slot` voulait donc dire « voie stable » au § 6 et « rang de
+> l'image » ici : deux sens pour un mot, exactement ce que ce module interdit
+> ailleurs pour `p95`. Un même enregistrement mesurait jusqu'à cinq fois pire
+> selon **laquelle** des deux mains quittait le cadre.
+>
+> La trace d'or ne pouvait pas l'attraper : sa main gauche occupe la fente 0 sur
+> ses 225 images. `test_a_hand_keeps_its_lane_when_the_other_leaves_the_frame`
+> exerce la perte et le retour, et compare les deux attributions sur les mêmes
+> images.
+
+Pour la candidate, son `kind` passe par un vocabulaire
 **fermé à nous** (`TRACE_KINDS`), parce que le contrat le laisse en texte libre
 (§6) et qu'un type libre est la porte par laquelle un libellé entrerait ; ce qui
 n'y est pas devient `other`. Un test de parité le compare à

@@ -231,7 +231,7 @@ def test_the_shape_guard_runs_at_module_load_and_a_leaking_schema_never_installs
         pytest.skip("node absent")
     source = RECORDER.read_text(encoding="utf-8")
     anchor_blank = "const BLANK_HAND=Object.freeze({slot:0,handedness:null,"
-    anchor_read = "      slot:count(slot),"
+    anchor_read = "      slot:carried?lane:count(index),"
     assert source.count(anchor_blank) == 1 and source.count(anchor_read) == 1
     victim_text = (source
                    .replace(anchor_blank, anchor_blank + "sampleFrames:null,")
@@ -1001,3 +1001,149 @@ def test_the_contract_document_lists_the_same_metrics_and_axes_as_the_code():
     # Les six dépendances permises de `createRecorder`, nommées une à une.
     for dependency in ("options", "now", "log", "onStop", "setTimeout", "clearTimeout"):
         assert f"`{dependency}`" in section, dependency
+
+
+def test_a_hand_keeps_its_lane_when_the_other_leaves_the_frame(tmp_path):
+    """**Une fente est une main, pas un rang dans un tableau.**
+
+    La trace d'or ne peut pas voir ce défaut : la gauche y occupe la fente 0 du
+    début à la fin (225 images sur 225), donc le rang et la main coïncident
+    toujours. Cette séance-ci fait ce que la vraie vie fait — une main sort du
+    cadre, celles qui restent se renumérotent, puis elle revient.
+
+    Deux traces, **mêmes images, même qualité de suivi**, ne différant que par
+    la façon d'attribuer la fente : l'allocateur canonique (`createSlotAllocator`,
+    « une main garde sa fente tant qu'elle vit ») contre le rang dans le tableau.
+    Si le rang suffisait, les deux rejeux rendraient les mêmes nombres. Ils n'en
+    rendent pas les mêmes : au moment de la bascule, la voie qui porte
+    l'historique du filtre d'une main se fait nourrir les coordonnées de
+    l'autre, et le pointeur s'en ressent.
+
+    **Portée exacte.** L'allocateur est construit ici sans cycle de `retain`,
+    donc ce test épingle son contrat pur : *une main vivante ne change jamais
+    de voie*. En production, `interactionView` appelle `slots.retain(live)`, et
+    une fente **libérée** est réutilisée — une main qui revient reçoit une
+    nouvelle identité de piste et peut hériter d'une voie vacante. C'est le
+    contrat canonique, et cela ne réintroduit pas le défaut corrigé ici, qui
+    était la renumérotation des mains **survivantes**.
+    """
+
+    result = run_node(tmp_path, """
+      /* Deux mains **loin l'une de l'autre** : une confusion de voie s'y voit.
+         Tous les autres scalaires sont identiques et constants, pour que la
+         seule variable de l'expérience soit l'attribution des fentes. */
+      const hand=(id,handedness,x,y)=>({handTrackId:id,handedness,
+        primaryRatio:0.85,secondaryRatio:0.92,cPose:0.18,closure:0.25,
+        gapPalms:0.62,indexReachPalms:1.42,palmNorm:1,
+        rawX:x,rawY:y,filteredX:x,filteredY:y,palmX:x-4,palmY:y+6,
+        quality:0.93,stillness:0.97,speedPxPerSec:2});
+
+      /* La gauche sort du cadre au milieu et revient : deux bascules. */
+      const raw=[];
+      for(let i=0;i<120;i+=1){
+        const hands=[];
+        const lost=i>=40&&i<80;
+        if(!lost)hands.push(hand('hand-left','left',300+i,360));
+        hands.push(hand('hand-right','right',900+i,300));
+        raw.push({t:16*(i+1),lifecycle:'active',hands,candidates:[],events:[],gestures:[]});
+      }
+
+      /* L'allocateur canonique, appelé comme `traceFrame` l'appelle. */
+      const allocator=C.createSlotAllocator(C.MAX_HANDS);
+      const byHand=hands=>hands.map(h=>({...h,slot:allocator.slot(h.handTrackId)}));
+      /* Le défaut : la fente est le rang de l'image courante. */
+      const byIndex=hands=>hands.map((h,index)=>({...h,slot:index}));
+
+      const traceOf=assign=>({schema:R.TRACE_SCHEMA,schemaVersion:R.TRACE_SCHEMA_VERSION,
+        startedAt:0,durationMs:16*120,stoppedBecause:'asked',
+        viewport:{width:1280,height:720},
+        options:{sampleEveryMs:0,maxDurationMs:60000,maxFrames:2000},
+        observedFrames:raw.length,droppedFrames:0,
+        frames:raw.map(f=>R.readFrame({...f,hands:assign(f.hands)}))});
+
+      const stable=traceOf(byHand),renumbered=traceOf(byIndex);
+      /* Les fentes de la main droite, image par image, dans les deux traces. */
+      const lanesOf=trace=>trace.frames.map(f=>f.hands[f.hands.length-1].slot);
+      const deps={core:Core};
+      out({
+        stableLanes:[...new Set(lanesOf(stable))],
+        renumberedLanes:[...new Set(lanesOf(renumbered))],
+        handCounts:[...new Set(stable.frames.map(f=>f.hands.length))].sort(),
+        stableMetrics:R.metricsOf(R.replay(stable,{},deps)),
+        renumberedMetrics:R.metricsOf(R.replay(renumbered,{},deps)),
+      });
+    """, "lanes")
+
+    # La séance exerce bien la perte : une main, puis deux.
+    assert result["handCounts"] == [1, 2], result["handCounts"]
+    # **Le cœur du test.** Avec l'allocateur, la droite garde une seule voie de
+    # bout en bout. Avec le rang, elle en change — ce qui prouve que la séance
+    # exerce réellement le défaut, et que le premier résultat n'est pas gratuit.
+    assert result["stableLanes"] == [1], (
+        "la main droite a changé de fente alors que son identité n'a pas changé : "
+        f"{result['stableLanes']}"
+    )
+    assert sorted(result["renumberedLanes"]) == [0, 1], (
+        "le rang n'a pas renuméroté : la séance n'exerce pas le défaut"
+    )
+    # Et le rejeu s'en ressent : mêmes images, nombres différents.
+    stable = result["stableMetrics"]
+    renumbered = result["renumberedMetrics"]
+    assert stable["replay.frames_count"] == renumbered["replay.frames_count"], (
+        "les deux traces doivent porter exactement les mêmes images"
+    )
+    assert stable["pointer.error_p95_norm"] != renumbered["pointer.error_p95_norm"], (
+        "attribuer la fente au rang plutôt qu'à la main ne change rien au pointeur : "
+        "soit le rejeu ignore la fente, soit la séance n'exerce pas la bascule"
+    )
+    # La confusion de voie **dégrade** : elle ne peut pas améliorer.
+    assert renumbered["pointer.error_p95_norm"] > stable["pointer.error_p95_norm"], (
+        f"stable={stable['pointer.error_p95_norm']} "
+        f"renumeroté={renumbered['pointer.error_p95_norm']}"
+    )
+
+
+def test_a_misspelled_knob_is_refused_instead_of_quietly_doing_nothing(tmp_path):
+    """**Le refus d'un axe inconnu existait ; il s'arrêtait un cran trop haut.**
+
+    L'argument du refus d'axe est écrit dans le code : accepter une clé sans
+    effet « ferait lire deux colonnes identiques comme *ce réglage ne change
+    rien* ». Les moteurs recevant leurs options par `{...DEFAULTS, ...overrides}`,
+    une clé inconnue **à l'intérieur** d'un axe valide était pourtant avalée en
+    silence — rejouée, et rendant les nombres du défaut.
+
+    Les noms valides ne sont pas recopiés ici : ce sont ceux de `core.DEFAULTS`,
+    la seule liste que les moteurs lisent vraiment.
+
+    Et l'axe inconnu, lui, n'était refusé que par le **miroir Python**.
+    `REPLAY_AXES` était déclaré et exporté par le module JS sans que personne le
+    lise : deux miroirs qui ne refusent pas la même chose ne sont pas deux
+    miroirs. Les deux refusent maintenant.
+    """
+
+    trace = json.loads(GOLDEN.read_text(encoding="utf-8"))
+    result = run_node(tmp_path, """
+      const trace=%s;
+      const deps={core:Core};
+      out({
+        // Faute de frappe dans un axe valide : refusée.
+        typo:refused(()=>R.replay(trace,{thresholds:{pinchMargnRatio:0.2}},deps)),
+        filterTypo:refused(()=>R.replay(trace,{filter:{minCutofHz:0.5}},deps)),
+        resolverTypo:refused(()=>R.replay(trace,{resolver:{targetZonePixels:8}},deps)),
+        // Les vrais noms passent toujours.
+        good:refused(()=>R.replay(trace,{filter:{minCutoffHz:0.5},
+                                          thresholds:{pressRatio:0.4,releaseRatio:0.5},
+                                          resolver:{targetZonePx:8}},deps)),
+        // Et l'axe inconnu se refuse comme avant.
+        axis:refused(()=>R.replay(trace,{filtre:{}},deps)),
+        knobs:Object.keys(Core.DEFAULTS).length,
+      });
+    """ % json.dumps(trace), "knobs")
+
+    assert result["typo"] == "RangeError", "une faute de frappe est encore acceptée en silence"
+    assert result["filterTypo"] == "RangeError"
+    assert result["resolverTypo"] == "RangeError"
+    assert result["good"] is None, "un nom valide ne doit pas être refusé"
+    assert result["axis"] == "RangeError"
+    # La liste vient du moteur, pas d'une copie locale qui divergerait.
+    assert result["knobs"] > 20, result["knobs"]

@@ -2553,14 +2553,41 @@ repartir la relance — mais `pump()` teste `concluded` **avant** d'appeler
 `observe()`. `watching()` relit l'attache, comme `observed` relit les
 observations.
 
-**Ce que la mutation a appris ici, et c'est la leçon durable de cette reprise.**
-La panne d'origine avait **deux maillons** : la page coupait au récapitulatif
-*et* la relance ne rebranchait pas. Prise isolément, aucune des deux mutations
-qui les rejouent ne tue le test de relance — la correction est redondante par
-construction, chaque moitié suffit. Il a fallu les rejouer **ensemble** pour
-retrouver la panne. Formulation : **une panne à deux maillons ne se mute pas un
-maillon à la fois ; une mutation qui survit peut simplement dire que la
-correction est redondante — encore faut-il le vérifier plutôt que le supposer.**
+**Ce que la mutation a appris ici — corrigé après vérification par la QA.**
+
+> ⚠️ **Cette entrée disait le contraire, et elle était fausse.** Elle
+> généralisait en « **une panne à deux maillons ne se mute pas un maillon à la
+> fois** » à partir de deux mutants que j'avais rapportés survivants. La QA les
+> a rejoués sur une copie jetable : **aucun des deux ne soutenait cette
+> leçon.** Je la remplace plutôt que de la laisser, parce que les agents de
+> cette tâche lisent ce fichier et s'en serviraient pour **excuser de vrais
+> survivants** — une leçon durable fausse coûte plus cher que pas de leçon.
+
+Ce qui s'est réellement passé, mutant par mutant :
+
+- **Le premier n'a pas survécu : je l'ai manqué.** Il est tué deux fois plutôt
+  qu'une — par `test_barehands_tutorial_js.py:1085` et par
+  `test_the_flow_does_not_read_the_page_while_the_recap_is_on_screen`. Ma
+  campagne de mutation avait donc un défaut de conduite, pas le test un trou.
+- **Le second est un mutant équivalent**, et sa survie ne prouve rien. Déplacer
+  l'attache de `begin()` vers `start()` ne change aucun comportement
+  observable : `attach()` n'a qu'un appelant (`begin()`), `detach()` n'en a
+  qu'un (`stop()`), et `begin()` en a deux (`start()` et `restart()`). Sans
+  `stop()` entre les deux, les coutures sont encore attachées quand la relance
+  passe — les deux versions sont indiscernables. Un mutant équivalent ne se
+  compte pas comme un survivant.
+
+Et la prémisse elle-même était fausse : **les deux mécanismes d'alimentation
+sont complémentaires, pas redondants.** Le chien de garde seul ne peut pas
+satisfaire les six étapes d'interaction, et les images seules ne peuvent pas
+nourrir l'étape 1, qui court avant `ACTIVE`. « Chaque moitié suffit » ne
+décrivait rien.
+
+Formulation qui reste, et elle porte sur la méthode, pas sur les maillons :
+**un mutant qui survit est une question, pas une réponse.** Avant d'en conclure
+qu'une correction est redondante, il faut écarter les deux explications bien
+plus fréquentes : la campagne l'a mal rejoué, ou le mutant est équivalent.
+Ici, c'était l'une puis l'autre.
 
 Deuxième survivant, réel celui-là : « la pompe observe même au récapitulatif »
 passait, parce que mon assertion lisait `observed` — que `feed()` bloque déjà

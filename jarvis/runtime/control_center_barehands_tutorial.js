@@ -613,11 +613,21 @@
       stepId(){const step=stepAt(at);return step?step.id:null},
       /* Ce que le parcours a **constaté**, pas ce qu'on lui a promis. */
       observations(){return observed},
-      /* **Et ce qui le nourrit**, relu plutôt que promis — même règle que
-         `engine()` (Slice 07) et que `afterFrame()` sans argument (Slice 09) :
-         sans cette lecture, « les deux sources sont attachées » et « la page a
-         oublié de les rebrancher » s'écrivent pareil, à l'écran comme à la
-         console. C'est ce qui a laissé passer la panne de « Recommencer ». */
+      /* **Et ce qui le nourrit** : l'état d'attache **réel de ce parcours**,
+         et non une promesse faite à la construction. `attached` n'est vrai
+         qu'entre `attach()` et `detach()`, c'est-à-dire exactement entre
+         `d.frames(pump)` + `setInterval` et leur retrait — donc « les deux
+         sources sont attachées » et « la page a oublié de les rebrancher »
+         cessent de s'écrire pareil, à l'écran comme à la console. C'est ce qui
+         avait laissé passer la panne de « Recommencer ».
+
+         **Portée exacte, parce que le commentaire disait plus que le code.**
+         Ce n'est pas une relecture de la couture elle-même : si la page
+         retirait `d.frames` dans notre dos, `attached` dirait encore vrai. La
+         couture ne publie pas de lecteur qui le permettrait, et ce n'est pas
+         la panne qu'on a payée — celle-là venait de ce parcours, qui ne se
+         rebranchait pas. À corriger le jour où `deps.frames` saura se relire ;
+         d'ici là, ce que cette fonction affirme est borné à ce module. */
       watching(){return attached},
       /* **Le point d'entrée**, et il confirme (contrat §12). Il rend
          `{ok:true}` dès que la coque est à l'écran et que la première étape

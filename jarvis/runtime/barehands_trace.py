@@ -100,6 +100,44 @@ def _reject(code: str, message: str) -> None:
     raise BarehandsTraceError(code, message)
 
 
+#: Au-delà, la valeur d'un appelant n'est plus nommée, elle est décrite.
+_MAX_ECHOED_CHARS = 48
+
+
+def _describe(raw: Any) -> str:
+    """Ce qu'un refus a le droit de dire d'une valeur **venue de l'appelant**.
+
+    Un message de refus part dans deux endroits durables : le corps HTTP 400 et
+    ``runtime/trace.jsonl``. Interpoler la valeur telle quelle y recopiait tout
+    ce qu'on voulait bien poster — un tableau de 21 points produisait une ligne
+    de journal de 1030 caractères portant chaque coordonnée, une chaîne de 5 000
+    caractères en produisait une de 5 057, et rien ne bornait cela.
+
+    Ce n'est pas une brèche de la décision 32 — ces valeurs sont celles d'un
+    attaquant, pas la main de l'utilisateur — mais cela contredisait la
+    formulation absolue de la promesse, et un journal qu'un appelant peut faire
+    grossir à volonté n'est plus un journal. On rend donc un mot **borné**, et
+    pour tout ce qui n'est pas une courte chaîne on décrit le **type**, jamais
+    le contenu : un refus n'a pas besoin de la valeur pour être compris.
+    """
+
+    if raw is None:
+        return "absent"
+    if isinstance(raw, bool):
+        return "un booléen"
+    if isinstance(raw, (int, float)):
+        return f"« {raw!s} »"
+    if isinstance(raw, str):
+        if len(raw) <= _MAX_ECHOED_CHARS:
+            return f"« {raw} »"
+        return f"une chaîne de {len(raw)} caractères"
+    if isinstance(raw, list):
+        return f"une liste de {len(raw)} éléments"
+    if isinstance(raw, dict):
+        return f"un objet de {len(raw)} clés"
+    return f"une valeur de type {type(raw).__name__}"
+
+
 def _number(raw: Any) -> float | None:
     """Un nombre fini, ou ``None``.
 
@@ -216,11 +254,11 @@ def normalize(payload: Any) -> dict[str, Any]:
                 "Trace attendue sous forme d'objet JSON.")
     if payload.get("schema") != TRACE_SCHEMA:
         _reject("barehands_trace_schema_unknown",
-                f"Ce document n'est pas une trace Bare Hands (schema « {payload.get('schema')!s} »).")
+                f"Ce document n'est pas une trace Bare Hands (schema : {_describe(payload.get('schema'))}).")
     version = payload.get("schemaVersion")
     if version != SCHEMA_VERSION:
         _reject("barehands_trace_version_unsupported",
-                f"Trace en version {version!s} ; ce Jarvis lit la version {SCHEMA_VERSION}. "
+                f"Trace en version {_describe(version)} ; ce Jarvis lit la version {SCHEMA_VERSION}. "
                 "Une version inconnue se refuse plutôt que se deviner : rejouée au jugé, "
                 "elle produirait des nombres sans rapport avec ce qui a été enregistré.")
     frames_raw = payload.get("frames")
@@ -234,7 +272,14 @@ def normalize(payload: Any) -> dict[str, Any]:
     return {
         "schema": TRACE_SCHEMA,
         "schemaVersion": SCHEMA_VERSION,
-        "startedAt": _number(payload.get("startedAt")) or 0.0,
+        # **Jamais l'heure murale, même si l'appelant en pose une.** Le réseau
+        # n'est pas de notre côté : l'enregistreur n'en envoie plus (il pose 0),
+        # mais un appelant distrait — ou malveillant — peut encore en poster
+        # une, et une époque persistée dit quand quelqu'un était devant sa
+        # machine. C'est le même argument que celui qui rend `t` relatif. La
+        # clé reste, à zéro, parce que le schéma la nomme ; sa valeur n'a jamais
+        # servi au rejeu, qui ne lit que `t` et `durationMs`.
+        "startedAt": 0.0,
         "durationMs": _number(payload.get("durationMs")) or 0.0,
         "stoppedBecause": _word(payload.get("stoppedBecause"),
                                 ("asked", "deadline", "max_frames")),
