@@ -17,6 +17,11 @@ Base : `origin/main` @ `a949f40` — le SHA exact revu par le handoff. Branche `
 | 02 — actions rapides au clic droit + Settings nettoyés | `a95a469` | 451 / 18 |
 | 03 — palette d'outils + couture d'outils | `b6e102b` | 465 / 19 |
 | 04 — carte d'aide + carte de diagnostic + `hand_art` | `005bed2` | 486 / 21 |
+| 05 — coquille plein cadre, cinq régions | `57409d8` | 494 / 21 |
+| 06 — phases INTRO/ARMED/RUNNING/RESULT, étapes 1–5 | `c5a598d` | 501 / 21 |
+| 07A — pratique de fenêtre réelle, D4 | `a14b450` | 513 / 21 |
+| 07 — correction d'affichage par l'agent 0 | `1912d91` | 514 / 21 |
+| 07B — tutoriel retiré, commande aliasée | `fa74bdd` | 502 / 21 |
 
 Chaque chiffre a été **re-mesuré par l'agent 0** après le rendu de la slice, en deux lots au premier plan, jamais repris d'un rapport.
 
@@ -61,9 +66,20 @@ Mais **quatre phrases vraies sont parties avec**, et l'utilisateur rencontrera a
 
 Elles n'avaient pas leur place dans une carte de gestes — l'agent a eu raison de ne pas rouvrir le mur de texte. **La Slice 08 doit leur trouver une place** (une note compacte dans les réglages est le candidat naturel) ou constater explicitement qu'on assume de ne plus les dire.
 
-### Autre report vers la Slice 08
+### Autres reports vers la Slice 08
 
-Le registre de `docs/barehands-contracts.md` (dernière ligne) annonce encore « Reste à venir : les diagnostics enregistrés (Slice 10) » alors que la Slice 10 est livrée. Déjà noté en READINESS §6.
+- Le registre de `docs/barehands-contracts.md` (dernière ligne) annonce encore « Reste à venir : les diagnostics enregistrés (Slice 10) » alors que la Slice 10 est livrée. Déjà noté en READINESS §6.
+- **`barehands_calibration_disabled` sert deux causes distinctes** — le réglage décoché, et Bare Hands éteint. Un appelant ne peut pas les distinguer à partir du code seul, uniquement de la phrase. Repéré par l'agent de la 07B, hors de son périmètre. Un code par cause, ou une justification explicite de la fusion.
+
+### Le compte de tests baisse en 07B, et c'est normal
+
+514 → **502**. Le tutoriel a été **supprimé**, pas réduit à une coquille : un `createTutorial` encore constructible resterait une seconde machine à états vivante, ce que l'architecture interdit deux fois. Ses 26 tests décrivaient le module et meurent avec lui ; ceux qui décrivaient le **système** ont été relogés, pas jetés. Réconciliation par fichier, vérifiée : `514 − 26 + 11 + 2 + 2 − 1 = 502`.
+
+**Une couverture est réellement perdue**, et elle est nommée plutôt que cachée : l'ancien test de reçu vocal ouvrait la coque par `BAREHANDS.tutorial()`, qui n'exigeait pas de caméra. La seule porte restante est la calibration, qui exige `active` — état que node ne peut pas atteindre. L'assertion « un reçu refusé est dessiné dans la coque » passe donc à la liste des vérifications à l'œil. Le chemin ordinaire (panneau fermé, toast) reste couvert.
+
+### Correction d'un chiffre de l'audit initial
+
+L'audit aveugle de la Slice 00 annonçait `test_barehands_command_channel.py` à **7 tests**. Il en collecte **32**. L'erreur n'a rien cassé, mais elle rappelle qu'un chiffre de test se re-mesure et ne se recopie pas — y compris depuis un audit qu'on a soi-même commandé.
 
 ### Ce que la machine ne peut pas valider ici
 
