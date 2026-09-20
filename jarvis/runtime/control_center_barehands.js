@@ -4238,6 +4238,72 @@ try{
   function closeLifecycleSeam(name){lifecycleSinks.delete(String(name));return lifecycleSinks.size}
   function lifecycleSeamNames(){return [...lifecycleSinks.keys()]}
 
+  /* ------------------------------------------------------------------
+     Couture de diffusion de l'outil courant (Slice 03, décision 11).
+
+     **Une seconde couture, et non un champ de plus dans la première.**
+     L'outil n'est pas du cycle de vie : le contrat le range dans les réglages
+     (§ 8, `view.settings.tool`), la contrainte d'architecture de la Slice 03
+     le dit mot pour mot — « le choix d'outil est une intention de session, pas
+     un cycle de vie » — et le canal de commandes refuse justement de router
+     `tool` avec les transitions (`commands.js`, § des quatre portes absentes).
+     Les fondre ferait repeindre le bouton de cycle de vie à chaque changement
+     d'outil et, pire, ferait de « l'outil a changé » un événement de cycle de
+     vie que le prochain lecteur croirait autoritaire.
+
+     Elle publie **un seul fait** : l'outil que les réglages appliquent. Tout
+     le reste — installé ou non, libellé, capacité — appartient au contrat et
+     se lit chez lui (`BH.describeTools()`), jamais recopié dans un instantané
+     qui dériverait. La disponibilité (`busy`, `lifecycle`) voyage déjà sur la
+     couture de cycle de vie ; un abonné qui a besoin des deux s'abonne aux
+     deux, ce qui est exact plutôt que commode.
+
+     Mêmes garanties que la couture de cycle de vie, pour les mêmes raisons :
+     registre **nommé** (deux consommateurs d'une même clé s'effaceraient en
+     silence), instantané rejoué **à l'ouverture** (sans quoi un contrôle
+     installé après le chargement afficherait « pointeur » jusqu'au premier
+     changement — c'est-à-dire mentirait sur un réglage persisté), et pas de
+     republication d'un instantané identique. */
+  const toolSinks=new Map();
+  let toolLast='',toolPublishing=false;
+  function toolSnapshot(){
+    return Object.freeze({tool:view.settings.tool});
+  }
+  function publishTools(){
+    if(!toolSinks.size)return null;
+    const snapshot=toolSnapshot();
+    const signature=JSON.stringify(snapshot);
+    if(signature===toolLast)return snapshot;
+    toolLast=signature;
+    /* Un abonné qui rappelle `settings({tool})` relance `refreshPanel`, donc
+       cette diffusion, pendant qu'elle court. Refusée plutôt que réentrante :
+       la signature a déjà retenu le changement, et la diffusion qui suit le
+       portera. Même raisonnement que `publishLifecycle`. */
+    if(toolPublishing)return snapshot;
+    toolPublishing=true;
+    try{
+      for(const [who,fn] of [...toolSinks.entries()]){
+        try{fn(snapshot)}
+        catch(error){console.warn(`[barehands] consommateur d'outil « ${who} » a levé`,error)}
+      }
+    }finally{toolPublishing=false}
+    return snapshot;
+  }
+  function openToolSeam(name,sink){
+    if(typeof sink!=='function')
+      throw Object.assign(new Error('openToolSeam : un consommateur est une fonction'),
+        {code:'barehands_tool_seam_invalid'});
+    const key=String(name);
+    toolSinks.set(key,sink);
+    const snapshot=toolSnapshot();
+    toolLast=JSON.stringify(snapshot);
+    try{sink(snapshot)}
+    catch(error){console.warn(`[barehands] consommateur d'outil « ${key} » a levé à l’ouverture`,error)}
+    return toolSinks.size;
+  }
+  function closeToolSeam(name){toolSinks.delete(String(name));return toolSinks.size}
+  function toolSeamNames(){return [...toolSinks.keys()]}
+
   function applyAssets(state){if(state&&state.assets)view.assets=state.assets}
 
   /* Ce que le serveur a **lu**, par opposition à ce qu'il écrit. Un bloc de
@@ -5687,6 +5753,15 @@ try{
        donc les chemins qui repeignent sans changer d'état — un curseur qu'on
        tire — ne réveillent aucun abonné. */
     publishLifecycle();
+    /* **Et l'outil, pour exactement la même raison.** Il change par
+       `saveSettings` (l'écran, la palette, la console) et par
+       `applyServerState` (le chargement, la réponse du serveur) ; les deux
+       finissent ici, et ici seulement. Publier après le garde-fou n'aurait
+       atteint la palette de gauche que lorsque l'onglet Expérimental est
+       ouvert, c'est-à-dire précisément jamais — et la palette existe pour
+       qu'on n'ait plus à l'ouvrir (décision 11). Déduplication identique :
+       un rafraîchissement qui ne touche pas à l'outil ne réveille personne. */
+    publishTools();
     if(typeof SET==='undefined'||!SET.open||SET.tab!==TAB_ID)return;
     const status=document.getElementById('barehandsStatus');
     if(status)status.innerHTML=statusHtml();
@@ -5912,6 +5987,20 @@ try{
        cas un refus nommé, jamais un silence ni un repli sur « pointeur ». */
     tools:()=>BH.describeTools(),
     tool:value=>value===undefined?view.settings.tool:saveSettings({tool:value}),
+    /* **La couture de diffusion de l'outil** (Slice 03, décision 11). La
+       palette de gauche s'y abonne au lieu de sonder : elle doit refléter un
+       outil changé depuis la console, depuis un rechargement ou par la réponse
+       du serveur, sans que l'onglet Expérimental soit ouvert. Elle est
+       **distincte** de la couture de cycle de vie parce que les deux faits le
+       sont (contrainte d'architecture de la Slice 03) ; un abonné qui a besoin
+       des deux ouvre les deux. `toolSeam()` dit **qui** écoute, pour la même
+       raison que `lifecycleSeam()` et `measureSeam()`. */
+    openToolSeam,closeToolSeam,
+    toolSeam:()=>Object.freeze(toolSeamNames()),
+    /* Le même instantané sans s'abonner : ce que l'écran peint doit pouvoir se
+       comparer à ce que les réglages appliquent, depuis une console comme
+       depuis un test. */
+    toolStatus:()=>toolSnapshot(),
     /* **Le parcours de calibration** (Slice 08, décisions 26-32). Même porte
        pour le bouton et pour la voix : le canal de commandes appelle ceci et
        exige une **confirmation** (`{ok:true}`), sans quoi il refuse

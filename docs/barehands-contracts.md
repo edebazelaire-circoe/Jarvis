@@ -346,6 +346,41 @@ abonné ne doit pas avoir à distinguer « ça a changé » de « on a repeint �
 consommateur qui lève est journalisé et sauté ; il n'emporte ni l'autre, ni le
 rafraîchissement du panneau.
 
+### La couture de diffusion de l'outil courant (Slice 03)
+
+Une **seconde** couture, et non un champ de plus dans la première. L'outil
+n'est pas du cycle de vie : le contrat le range dans les réglages (§ 8), la
+Slice 03 le dit mot pour mot — « le choix d'outil est une intention de session,
+pas un cycle de vie » — et le canal de commandes refuse justement de router
+`tool` avec les transitions (§ 12). Les fondre aurait fait repeindre le bouton
+de cycle de vie à chaque changement d'outil et, pire, aurait fait de « l'outil
+a changé » un événement de cycle de vie que le prochain lecteur croirait
+autoritaire.
+
+Elle publie **un seul fait** : `{tool}`, l'outil que les réglages appliquent.
+Tout le reste — installé ou non, libellé, capacité — appartient au contrat et
+se lit chez lui (`describeTools()`), jamais recopié dans un instantané qui
+dériverait. La disponibilité (`busy`, `lifecycle`) voyage déjà sur la couture
+de cycle de vie ; un abonné qui a besoin des deux **ouvre les deux**, ce qui
+est exact plutôt que commode — c'est ce que fait la palette.
+
+- `openToolSeam(nom, consommateur)` — inscrit sous un nom et rejoue
+  l'instantané courant tout de suite. Sans ce rejeu, la palette afficherait
+  « pointeur » jusqu'au premier changement, c'est-à-dire mentirait sur un
+  réglage persisté à chaque rechargement. Un consommateur qui n'est pas une
+  fonction est refusé (`barehands_tool_seam_invalid`) ;
+- `closeToolSeam(nom)`, `toolSeam()`, `toolStatus()` — mêmes rôles et mêmes
+  raisons que leurs homologues du cycle de vie.
+
+`publishTools()` est appelé dans `refreshPanel()`, **juste après**
+`publishLifecycle()` et **avant** le garde-fou `SET.open` : tout ce qui change
+l'outil — `saveSettings` (l'écran, la palette, la console, la voix) et
+`applyServerState` (le chargement, la réponse du serveur) — y finit, et publier
+après le garde-fou n'aurait atteint la palette que l'onglet Expérimental
+ouvert, c'est-à-dire précisément jamais. Même déduplication, même confinement
+des levées : un consommateur qui lève est journalisé et sauté, sans emporter
+son voisin ni le rafraîchissement du panneau.
+
 ## 2. Identité de main et de pointeur
 
 L'expérience de clic envoyait **tous** ses événements sous `pointerId 9001`.
@@ -1518,6 +1553,72 @@ atteignable en pleine session — ce qu'un modal de réglages n'est pas. La
 distinction se voit donc encore plus qu'elle ne s'écrivait. Le champ `tool`,
 lui, ne bouge pas : même porte (`saveSettings`), même normalisation, même
 refus nommé pour un outil inconnu.
+
+### La palette d'outils du bord gauche (décisions 11 à 13, Slice 03)
+
+**La palette de gauche est la surface canonique de sélection d'outil en V1.**
+`control_center_barehands_hud.js` — le même module que le contrôle de cycle de
+vie, parce que c'est la même famille et le même coin d'écran — dessine sous la
+main une bande verticale **fixe** de trois icônes en trait, dans l'emplacement
+`#barehandsPalette` que `control_center.html` déclare (rang d'empilement 30,
+sous le contrôle à 32 et sous son sélecteur à 36, que la palette ne doit jamais
+recouvrir).
+
+| Ce qu'elle garantit | Comment |
+|---|---|
+| exactement les outils **installés** | peuplée par `describeTools()` à chaque peinture ; aucune liste en dur |
+| un outil sans moteur n'est **pas** un contrôle | état `absent` : gris, barré, `aria-disabled="true"`, motif `UNAVAILABLE` dans l'infobulle, clic sans effet et journalisé |
+| l'outil actif est **immédiatement** lisible | trois canaux : l'échelle de tons, un **rail** de forme, et le **nom** écrit sous la bande |
+| un seul chemin d'écriture | le clic appelle `JarvisBarehands.tool(id)`, donc `saveSettings({tool})` — aucun magasin d'outils parallèle |
+| synchronisation **bidirectionnelle** | abonnée à `openToolSeam` (l'outil) **et** `openLifecycleSeam` (la disponibilité) ; un `tool()` de console, une réponse de serveur ou un rechargement repeignent la bande, l'onglet de réglages fermé |
+| indépendance des réglages | la palette ne lit ni n'ouvre `SET` ; ouvrir les réglages n'est requis pour rien |
+
+**Les trois états** sont écrits une seule fois dans la feuille et portés par
+`data-bh-tool-state`, exactement comme la Slice 01 porte ses cinq tons sur
+`data-bh-tone` : `active` (fond, halo, rail), `idle` (trait bleu sobre),
+`absent` (gris, barré, sans halo). Le bouton, son halo, son rail et son libellé
+lisent la même définition par héritage de propriétés personnalisées ; « actif »
+ne peut donc pas vouloir dire deux choses à deux endroits.
+
+**Clavier.** `role="toolbar"`, `aria-orientation="vertical"`, un seul arrêt de
+tabulation (curseur mouvant), flèches dans les deux axes, `Home`/`End` aux
+bouts, `aria-pressed` sur chaque bouton. Les flèches **déplacent le focus sans
+choisir** — c'est le changement assumé par rapport au `moveTool()` supprimé des
+réglages, qui enregistrait à chaque touche : dans un formulaire c'était la
+sémantique d'un groupe de radios, sur l'écran principal c'eût été une écriture
+réseau par frappe et le sens de la main qui change sous les doigts. Le
+sélecteur de mode de la Slice 02 a tranché la même question pour la même
+raison. Les outils sans moteur restent **sur** le chemin du clavier
+(`aria-disabled`, pas `disabled`) : `moveTool()` les sautait, et leur motif
+n'était alors lisible que par une souris qui survole.
+
+**Bare Hands indisponible.** La palette **ne disparaît pas** et **ne fait pas
+semblant d'agir**. Éteinte, en panne ou en démarrage, elle s'atténue
+(`data-bh-live="false"`), perd le halo — le halo veut dire « quelque chose
+tourne » depuis la Slice 01 — et garde son rail et son nom, parce que l'outil
+choisi reste vrai : c'est un réglage persisté, et il s'appliquera au réveil.
+Elle reste donc **utilisable** : préparer son outil avant d'allumer est un
+choix légitime, et le désarmer aurait forcé un détour par les réglages, ce que
+la décision 11 supprime. La veille s'arrête à `sleep` : là, la caméra est tenue
+et la posture en C rend la main tout de suite. La palette ne **redit jamais**
+le cycle de vie à l'écran — le contrôle qui le porte est dans la même colonne,
+100 px au-dessus, et son étiquette dit déjà ÉTEINT / DÉMARRAGE / INTERROMPU ;
+ce qu'elle ajoute est ce que le contrôle ne dit pas, à savoir ce que devient
+**l'outil** pendant ce temps-là.
+
+**Déplacer, ancrer, pivoter sont reportés** (décision 13), donc rien n'en
+esquisse l'affordance : pas de poignée, pas de `draggable`, pas de bascule
+d'orientation. Sous 700 px la bande suit le contrôle sur le bord gauche et
+resserre ses icônes ; elle reste verticale.
+
+**Les refus sont confinés.** La palette s'installe dans son **propre** bloc
+`try` : son emplacement absent ou la couture d'outil manquante donnent
+`barehands_palette_host_missing` / `barehands_palette_seam_missing` à la
+console, et le contrôle de cycle de vie — le plus important des deux
+(décision 1) — reste entier. Un outil installé dont ce module n'a pas le dessin
+reste **choisissable** (c'est son dessin qui manque, pas son moteur), porte un
+substitut en pointillés et se dit sous `barehands_palette_icon_missing` au
+chargement.
 
 **Un outil est une exigence sur la cible, et rien d'autre.** `TOOL_CAPABILITY`
 donne la capacité de chacun, et cette capacité **est** un mode de contenu du

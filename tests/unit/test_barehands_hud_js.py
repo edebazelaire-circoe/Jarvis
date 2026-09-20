@@ -133,6 +133,13 @@ const deepAll=(root,test)=>{
 const hudHost=global.document.createElement('div');
 hudHost.id='barehandsHud';
 global.document.body.appendChild(hudHost);
+/* Et celui de la palette d'outils (Slice 03), déclaré dans le même balisage et
+   refusé sous le même principe. Les deux sont posés ici pour que le monde de
+   ce fichier soit **la page entière** : un double qui n'aurait que l'un des
+   deux ferait passer « la palette ne s'installe pas » pour la normale. */
+const paletteHost=global.document.createElement('div');
+paletteHost.id='barehandsPalette';
+global.document.body.appendChild(paletteHost);
 """
 
 TAIL = r"""
@@ -564,7 +571,11 @@ def test_an_external_transition_repaints_the_button_with_the_panel_closed(tmp_pa
       });
     """, name="seam")
 
-    assert result["seam"] == ["hud", "probe"]
+    # **Slice 03** : la palette d'outils est le second consommateur de cette
+    # couture — elle y lit la disponibilité de Bare Hands. C'est exactement ce
+    # que le registre **nommé** existe pour permettre : deux abonnés d'une même
+    # clé s'effaceraient en silence, deux noms distincts coexistent.
+    assert result["seam"] == ["hud", "palette", "probe"]
     assert result["panelClosed"] is False, "l'onglet de réglages est bien fermé"
     assert result["start"] == ["off", "ÉTEINT"]
     # Le bouton a suivi **chaque** étape, l'onglet fermé : l'attente de
@@ -620,11 +631,13 @@ def test_the_seam_replays_the_current_state_and_refuses_a_consumer_that_is_not_o
       });
     """, name="seamapi")
 
-    assert result["opened"] == 2, "le contrôle de la page, plus la sonde"
+    # Le contrôle de la page, la palette de la Slice 03, plus la sonde.
+    assert result["opened"] == 3, "les deux surfaces de la page, plus la sonde"
     assert result["replayed"] == ["off"], "l'instantané courant est rejoué tout de suite"
     assert result["repeats"] == 0, "un instantané identique ne se republie jamais"
-    assert result["closed"] == 1
-    assert result["seamAfterClose"] == ["hud"], "fermer un nom ne ferme que celui-là"
+    # `closeLifecycleSeam` rend ce qui **reste** : les deux surfaces de la page.
+    assert result["closed"] == 2
+    assert result["seamAfterClose"] == ["hud", "palette"], "fermer un nom ne ferme que celui-là"
     assert result["deafAfterClose"] is True
     assert result["refusal"] == "barehands_lifecycle_seam_invalid"
     assert result["shape"] == [
@@ -955,13 +968,20 @@ def test_the_control_refuses_by_name_rather_than_guessing(tmp_path):
       hudHost.remove();
       load();
       console.error=realError;
+      /* **Slice 03** : le module porte deux surfaces, donc deux refus, et ils
+         se trient par leur nom d'événement. C'est le point — un seul `try`
+         pour les deux aurait fait d'un emplacement oublié la perte de la
+         main. */
+      const codeOf=line=>{const at=line.indexOf('{');
+        return at<0?line:JSON.parse(line.slice(at)).code};
+      const hudLines=codes.filter(l=>l.includes('barehands.hud_not_installed'));
+      const palLines=codes.filter(l=>l.includes('barehands.palette_not_installed'));
       out({installed:typeof window.JarvisBarehandsHud==='object',
         control:typeof window.JarvisBarehandsHudControl,
-        named:codes.every(line=>line.includes('barehands.hud_not_installed')),
-        codes:codes.map(line=>{
-          const at=line.indexOf('{');
-          return at<0?line:JSON.parse(line.slice(at)).code;
-        })});
+        palette:typeof window.JarvisBarehandsPalette,
+        named:hudLines.length+palLines.length===codes.length,
+        codes:hudLines.map(codeOf),
+        paletteCodes:palLines.map(codeOf)});
     """, name="refusals")
 
     # Le module s'expose quand même : c'est son **installation** qui refuse, pas
@@ -969,8 +989,14 @@ def test_the_control_refuses_by_name_rather_than_guessing(tmp_path):
     # qui remonterait emporterait la scène, la chronologie et le Test Lab.
     assert result["installed"] is True
     assert result["control"] == "undefined", "aucun contrôle posé sur un refus"
-    assert result["named"] is True, "le refus part sous un nom cherchable"
+    assert result["palette"] == "undefined", "ni palette : les deux refusent, chacune pour soi"
+    assert result["named"] is True, "chaque refus part sous un nom cherchable"
     assert result["codes"] == [None, "barehands_hud_seam_missing", "barehands_hud_host_missing"]
+    # **Slice 03** : la palette refuse en parallèle et sous **ses** codes. Sans
+    # surface elle n'a pas de code (c'est la même absence que pour la main) ;
+    # avec une surface trop ancienne, c'est sa couture d'outil qui manque.
+    assert result["paletteCodes"] == [None, "barehands_palette_seam_missing",
+                                      "barehands_palette_seam_missing"]
 
 
 # ------------------------------------------- les quatre actions rapides (Slice 02)

@@ -13,7 +13,11 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
    au fond ; la scène constellation (20, conteneur #sceneLayer créé par
    control_center_scene_page.js seulement si scene.enabled) passe au-dessus ;
    toute commande de la page reste au-dessus de la scène : barre du haut et
-   indication vocale 31, dock 32, contrôle Bare Hands du haut-gauche 32 (même
+   indication vocale 31, palette d'outils Bare Hands 30 (Slice 03 : juste
+   SOUS le contrôle de cycle de vie et son sélecteur, qu'elle jouxte sur le
+   bord gauche — le sélecteur s'ouvre par-dessus elle et ne doit jamais se
+   faire recouvrir par la colonne d'icônes qu'il masque le temps d'un choix),
+   dock 32, contrôle Bare Hands du haut-gauche 32 (même
    rang que le dock : c'est une commande de page de la même classe, de l'autre
    côté de l'écran) et son sélecteur de mode 36 (juste au-dessus du bandeau
    GPT-Live, qu'un choix ouvert par l'utilisateur doit pouvoir recouvrir, et
@@ -729,6 +733,15 @@ details.rd[open]>summary{margin-bottom:14px}
        le remplit, et refuse de s'installer sous un nom cherchable s'il manque.
        C'est aussi le haut de la colonne où la palette d'outils viendra. -->
   <div id="barehandsHud"></div>
+  <!-- Emplacement de la palette d'outils Bare Hands (Slice 03, décisions 11 à
+       13) : une bande verticale **fixe** d'icônes sur le bord gauche, sous le
+       contrôle ci-dessus — la main et ses outils voisinent. Déclaré ici pour
+       la même raison que lui : le rang d'empilement (30) vit dans le registre
+       ci-dessus avec tous les autres, et non dispersé dans un script. Il est
+       rempli par `control_center_barehands_hud.js`, qui refuse de la dessiner
+       sous un nom cherchable si cet emplacement manque — sans emporter le
+       contrôle de cycle de vie, qui est le plus important des deux. -->
+  <div id="barehandsPalette"></div>
   <section class="live-banner" id="liveBanner" role="status" aria-live="assertive" aria-label="État de la session GPT-Live" hidden>
     <span class="live-led" aria-hidden="true"></span>
     <div class="live-main"><div class="live-title">GPT-LIVE <strong id="liveState">ACTIF</strong> · <span id="liveElapsed">00:00</span></div><div class="live-meta" id="liveMeta"></div></div>

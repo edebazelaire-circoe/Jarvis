@@ -80,6 +80,34 @@
     noteId:'barehandsHudNote',
     hintId:'barehandsHudHint',
     announceId:'barehandsHudAnnounce',
+    /* ---- la palette d'outils (Slice 03, décisions 11 à 13) ----
+       Son emplacement est **déclaré dans `control_center.html`**, comme celui
+       du contrôle ci-dessus et pour la même raison : le rang d'empilement (30)
+       vit dans le registre de la page.
+
+       Les noms sont **neufs et volontairement distincts** de ceux que la
+       Slice 02 a sortis des réglages (`barehandsTools`, `data-barehands-tool`,
+       `role=radiogroup`). Ce n'est pas de la cosmétique : un test de la
+       Slice 02 vérifie sur le balisage **réellement servi** que ces trois
+       marqueurs-là ont disparu, parce que leur retour signifierait que les
+       réglages ont repris la main sur l'outil (décision 14). Réutiliser les
+       mêmes chaînes ici aurait fait passer ce test pour une régression alors
+       que la garantie tient toujours — et, à l'inverse, l'aurait rendu
+       incapable de voir un vrai retour en arrière. */
+    paletteId:'barehandsPalette',
+    paletteStripId:'barehandsPaletteStrip',
+    paletteCaptionId:'barehandsPaletteCaption',
+    paletteAnnounceId:'barehandsPaletteAnnounce',
+    /* L'outil que chaque bouton porte, et **l'échelle des trois états** que la
+       feuille lit. Un seul attribut pour la présentation, écrit par une seule
+       fonction (`paletteOf`) : actif, disponible et sans moteur ne peuvent pas
+       diverger entre le bouton, son halo et son libellé. */
+    toolAttribute:'data-bh-tool',
+    toolStateAttribute:'data-bh-tool-state',
+    /* Le nom sous lequel la palette s'inscrit aux deux coutures. Deux parce que
+       deux faits : l'outil courant (couture d'outil) et la disponibilité de
+       Bare Hands (couture de cycle de vie). */
+    paletteSeam:'palette',
     /* L'attribut que chaque pastille du sélecteur porte, sur le modèle de
        `data-barehands-tool` de l'onglet Expérimental. */
     modeAttribute:'data-barehands-mode',
@@ -313,6 +341,198 @@
     return svg;
   }
 
+  /* --------------------------------------- la palette d'outils, sans DOM
+
+     Décision 11 : les outils sortent des réglages et deviennent une bande
+     verticale **fixe** d'icônes sur le bord gauche, sous la main. Décision 12 :
+     **seulement les outils installés aujourd'hui** — pointeur, main, sélection.
+     Décision 13 : fixe et verticale ; déplacer, ancrer et pivoter sont
+     reportés, et rien ici n'en prépare l'affordance.
+
+     **Rien n'est recopié du contrat.** La liste, les libellés, la capacité et
+     surtout l'**installation** se lisent par `BH.describeTools()` à chaque
+     peinture. Une liste en dur ici serait la table qui dérive : déclarer
+     demain un outil sans moteur le ferait apparaître choisissable et inerte,
+     ce que le § 8 du contrat a précisément construit `SERVED_CAPABILITIES`
+     pour empêcher. Ce module ne possède qu'une chose que le contrat n'a pas :
+     la phrase française et le dessin. */
+
+  /* Les trois états d'un bouton d'outil. L'échelle est **nommée ici et
+     écrite une seule fois** dans la feuille, sur le modèle de `data-bh-tone`
+     de la Slice 01 : le bouton, son halo, son rail et son libellé lisent la
+     même définition par héritage de propriétés personnalisées, donc « actif »
+     ne peut pas vouloir dire deux choses à deux endroits. */
+  const SLOT=Object.freeze({ACTIVE:'active',IDLE:'idle',ABSENT:'absent'});
+
+  /* Ce que chaque outil **fait**, en français. Reprises mot pour mot des
+     réglages d'où la décision 11 les a sorties : la phrase était juste, et la
+     réécrire aurait été une seconde version du même fait. */
+  const TOOL_HINT=Object.freeze({
+    [BH.TOOL.POINTER]:'Contextuel : clic, glissement, défilement ou sélection selon ce qu’il y a sous la main. C’est le comportement par défaut, et il ne force rien.',
+    [BH.TOOL.PAN]:'Le contenu suit la main. Une cible qui ne défile pas est refusée, avec un mot à l’écran.',
+    [BH.TOOL.SELECT]:'Désigner et sélectionner. Réservé aux champs de saisie et aux étoiles de la scène ; ailleurs, refusé.',
+  });
+  /* Le motif d'un outil déclaré au contrat mais qu'aucun moteur ne sert. Il
+     existait dans les réglages et il revient tel quel, parce que c'est
+     exactement la phrase qui empêche « grisé » de se lire « cassé ». */
+  const UNAVAILABLE='Aucun moteur derrière cet outil en V1.';
+  /* Un outil **installé** dont ce module n'a pas le dessin. Ce n'est pas un
+     état d'exécution, c'est la recette d'extension à moitié suivie (contrat
+     § 8 : `TOOL`, `TOOL_CAPABILITY`, `TOOL_LABEL`, puis la capacité servie —
+     et, pour l'écran, ces deux tables-ci). L'outil reste **choisissable**, lui
+     : c'est son dessin qui manque, pas son moteur, et le refuser priverait
+     l'utilisateur d'un outil qui marche. Il porte donc une marque de substitut
+     et se dit sous un nom cherchable plutôt que d'apparaître comme un carré
+     vide. Un test de parité le refuse avant qu'un humain ne le voie. */
+  const ARTLESS='barehands_palette_icon_missing';
+
+  /* Pourquoi la palette est en veille, par présentation. Elle ne redit
+     **jamais** le cycle de vie à l'écran : le contrôle de la barre du haut est
+     à 100 px au-dessus, dans la même colonne, et son étiquette dit déjà
+     ÉTEINT / DÉMARRAGE / INTERROMPU. Deux textes pour un même fait apprennent
+     à n'en lire aucun. Ce que la palette ajoute est ce que le contrôle ne dit
+     pas : ce que devient **l'outil** pendant ce temps-là. */
+  const DORMANT=Object.freeze({
+    [TONE.OFF]:'Bare Hands est éteint : l’outil reste choisi et s’appliquera au prochain allumage.',
+    [TONE.STARTING]:'Bare Hands démarre : l’outil reste choisi et s’appliquera dès que la main sera suivie.',
+    [TONE.ERROR]:'Bare Hands est interrompu : l’outil reste choisi et s’appliquera à la reprise.',
+  });
+
+  /* **Le modèle complet de la palette, pur.** Une seule fonction décide des
+     trois états, de la veille et de chaque libellé ; la peinture ne fait que
+     l'appliquer et les tests l'exercent sans navigateur. C'est la discipline
+     de la Slice 01 — l'échelle écrite une fois — appliquée à deux surfaces qui
+     pourraient diverger : le bouton et ce qu'il annonce.
+
+     `tool` est l'instantané de la couture d'outil ; `view` celui du cycle de
+     vie, tel que `presentationOf` l'a déjà traduit. Deux sources, parce que ce
+     sont deux faits de deux propriétaires. */
+  function paletteOf(tool,view){
+    const seen=view&&typeof view==='object'?view:presentationOf(null);
+    /* L'outil que les réglages appliquent. Un nom hors table ne se replie
+       **pas** sur « pointeur » en silence : la palette ne cocherait alors rien
+       plutôt que de cocher un outil que personne n'a choisi. */
+    const active=BH.TOOLS.includes(String(tool))?String(tool):null;
+    /* Vivante en veille **et** en actif, et c'est la même ligne que le
+       contrôle du dessus trace déjà (`MODE_HINT` : « OFF est le seul où le
+       réveil en C ne peut rien »). En veille la caméra est tenue et la posture
+       en C rend la main à l'interaction tout de suite : l'outil est à un geste
+       de servir. Éteint, en panne ou en démarrage, rien ne tient la caméra et
+       la palette le montre. */
+    const live=BH.isLiveLifecycle(seen.lifecycle)&&!seen.starting;
+    const busy=!!seen.busy;
+    const dormant=live?null:(DORMANT[seen.tone]||DORMANT[TONE.OFF]);
+    const items=BH.describeTools().map(tool_=>{
+      const art=!!TOOL_ART[tool_.id];
+      const state=!tool_.installed?SLOT.ABSENT
+        :tool_.id===active?SLOT.ACTIVE:SLOT.IDLE;
+      /* **Un outil sans moteur n'est pas un contrôle.** Ni cliquable, ni
+         activable au clavier, et `aria-disabled` plutôt que `disabled` —
+         exactement le choix de la Slice 02 pour « Calibrer… » bloqué : un
+         bouton vraiment `disabled` sort du parcours clavier, donc un lecteur
+         d'écran n'apprendrait **jamais** pourquoi l'outil manque. Il reste
+         atteignable et il dit sa raison ; il ne se choisit pas. */
+      const selectable=tool_.installed&&!busy;
+      const hint=TOOL_HINT[tool_.id]||'';
+      const reason=!tool_.installed?UNAVAILABLE:'';
+      return Object.freeze({
+        id:tool_.id,label:tool_.label,capability:tool_.capability,
+        installed:tool_.installed,art,state,selectable,hint,reason,
+        /* Ce que le survol et le lecteur d'écran reçoivent : l'outil, ce qu'il
+           fait, puis **ce qui l'empêche** quand quelque chose l'empêche. Les
+           trois empêchements sont distincts et ne se déguisent pas l'un en
+           l'autre : pas de moteur, pas de dessin, Bare Hands en veille. */
+        title:[`${tool_.label} — ${hint}`,reason,
+          art?'':`Icône manquante pour cet outil (${ARTLESS}).`,
+          dormant||''].filter(Boolean).join(' '),
+      });
+    });
+    return Object.freeze({
+      active,live,busy,dormant:dormant||null,
+      tone:seen.tone,
+      /* L'étiquette sous la bande : le **nom** de l'outil actif, en plus de
+         son icône. Deux canaux pour « lequel est choisi » — la forme et le
+         mot — parce que c'est le critère que l'Humain juge à l'œil. */
+      caption:active?String((BH.TOOL_LABEL&&BH.TOOL_LABEL[active])||active).toUpperCase():'—',
+      items:Object.freeze(items),
+    });
+  }
+
+  /* ------------------------------------------------- les icônes d'outils
+
+     Décision de l'affinage : **des icônes, pas des étiquettes de trois
+     lettres**, dans le vocabulaire de trait que la Slice 01 a posé — même
+     grille de 24, même trait de 1.5, mêmes bouts ronds, mêmes points pleins
+     aux articulations. Le point, ici, marque le **point chaud** de l'outil :
+     la pointe du curseur, le centre de prise, la cible désignée.
+
+     Aucun des trois n'est une seconde main. La main schématique est déjà,
+     juste au-dessus, l'identité de Bare Hands lui-même ; redessiner la même
+     main pour « Main » aurait mis deux mains dans la même colonne avec deux
+     sens différents, et le coin haut-gauche serait devenu illisible. `pan` est
+     donc dessiné par ce qu'il **fait** — le contenu suit la main, dans les
+     quatre directions — ce que sa propre phrase dit déjà.
+
+     `select` n'est **pas** un rectangle de sélection en pointillés : cet outil
+     désigne un objet nommé (un champ, une étoile), il ne tire pas un cadre
+     autour d'une région. Des équerres de visée autour d'une cible pleine
+     disent ce qu'il fait ; un lasso aurait promis un geste qui n'existe pas. */
+  const TOOL_ART=Object.freeze({
+    [BH.TOOL.POINTER]:Object.freeze({
+      paths:Object.freeze(['M6 3.6v14.8l3.8-3.7 2.3 5.3 2.6-1.1-2.2-5.2 5.1-.4z']),
+      dots:Object.freeze([[6,3.6]]),
+    }),
+    [BH.TOOL.PAN]:Object.freeze({
+      paths:Object.freeze([
+        'M12 4.4v15.2','M4.4 12h15.2',
+        'M9.6 6.8 12 4.4l2.4 2.4','M9.6 17.2 12 19.6l2.4-2.4',
+        'M6.8 9.6 4.4 12l2.4 2.4','M17.2 9.6 19.6 12l-2.4 2.4',
+      ]),
+      dots:Object.freeze([[12,12]]),
+    }),
+    [BH.TOOL.SELECT]:Object.freeze({
+      paths:Object.freeze([
+        'M4.7 9.2V6.1a1.4 1.4 0 0 1 1.4-1.4h3.1',
+        'M14.8 4.7h3.1a1.4 1.4 0 0 1 1.4 1.4v3.1',
+        'M19.3 14.8v3.1a1.4 1.4 0 0 1-1.4 1.4h-3.1',
+        'M9.2 19.3H6.1a1.4 1.4 0 0 1-1.4-1.4v-3.1',
+      ]),
+      dots:Object.freeze([[12,12,2.1]]),
+    }),
+  });
+
+  /* Le substitut d'un outil installé dont le dessin manque : un carré en
+     pointillés, qui ne ressemble à aucun des trois et ne prétend donc rien. */
+  const ART_MISSING=Object.freeze({
+    paths:Object.freeze(['M6.5 6.5h11v11h-11z']),dots:Object.freeze([]),dashed:true,
+  });
+
+  function toolIcon(doc,id,size){
+    const art=TOOL_ART[id]||ART_MISSING;
+    const svg=doc.createElementNS(SVG_NS,'svg');
+    svg.setAttribute('viewBox','0 0 24 24');
+    svg.setAttribute('class','bh-tool-icon');
+    svg.setAttribute('width',String(size));svg.setAttribute('height',String(size));
+    svg.setAttribute('fill','none');svg.setAttribute('stroke','currentColor');
+    svg.setAttribute('stroke-width','1.5');
+    svg.setAttribute('stroke-linecap','round');svg.setAttribute('stroke-linejoin','round');
+    svg.setAttribute('aria-hidden','true');svg.setAttribute('focusable','false');
+    for(const d of art.paths){
+      const path=doc.createElementNS(SVG_NS,'path');
+      path.setAttribute('d',d);
+      if(art.dashed)path.setAttribute('stroke-dasharray','2.5 2.5');
+      svg.appendChild(path);
+    }
+    for(const dot of art.dots){
+      const mark=doc.createElementNS(SVG_NS,'circle');
+      mark.setAttribute('cx',String(dot[0]));mark.setAttribute('cy',String(dot[1]));
+      mark.setAttribute('r',String(dot[2]===undefined?0.95:dot[2]));
+      mark.setAttribute('fill','currentColor');mark.setAttribute('stroke','none');
+      svg.appendChild(mark);
+    }
+    return svg;
+  }
+
   /* ------------------------------------------------------------- la feuille
 
      Les couleurs passent par l'indirection de thème, comme partout ailleurs
@@ -325,6 +545,33 @@
   const MUTED='var(--omega-muted,var(--muted,#7190a0))';
   const DANGER='var(--omega-danger,var(--danger,#ff6577))';
 
+  /* La géométrie de la colonne du haut-gauche, **écrite une seule fois**.
+
+     La Slice 01 posait ses quatre nombres en clair dans la feuille ; ils y
+     étaient seuls, donc justes. La Slice 03 pose une seconde boîte **sous**
+     la première, et cette boîte doit connaître la hauteur de la première pour
+     ne pas la chevaucher. Deux copies du même empilement auraient tenu
+     jusqu'au jour où l'une des deux bouge — et le symptôme aurait été une
+     palette par-dessus l'étiquette du bouton, c'est-à-dire un défaut visuel
+     qu'aucun test de comportement n'attrape. Les valeurs sont celles de la
+     Slice 01, inchangées ; seul leur lieu change.
+
+     `capLine` : `.bh-hud-cap` est en 9 px et hérite du rapport 1.2 de la
+     colonne, donc 10.8 px arrondis à 11. */
+  const GEO=Object.freeze({
+    top:76,left:18,button:64,gap:7,capLine:11,
+    /* Le blanc entre l'étiquette du contrôle et le haut de la palette. */
+    split:10,
+    /* Sous 700 px, la barre du haut se resserre et la bannière GPT-Live occupe
+       le coin : la colonne entière descend sur le bord gauche. Le décalage du
+       contrôle est celui de la Slice 01 ; la palette s'en déduit. */
+    narrowLeft:10,narrowTop:-41,
+  });
+  /* Hauteur du contrôle de cycle de vie, étiquette comprise. */
+  const HUD_BLOCK=GEO.button+GEO.gap+GEO.capLine;
+  const PALETTE_TOP=GEO.top+HUD_BLOCK+GEO.split;
+  const PALETTE_NARROW_TOP=GEO.narrowTop+HUD_BLOCK+GEO.split;
+
   const STYLE=`
 /* **Aucun \`z-index\` sur l'emplacement, et c'est délibéré.** Un rang posé ici
    ouvrirait un contexte d'empilement, et le sélecteur — 36, au-dessus du
@@ -333,8 +580,8 @@
    censé recouvrir. Les rangs vivent donc sur les deux éléments positionnés
    eux-mêmes. Même raison pour la variante étroite plus bas, qui centre par
    \`calc()\` et non par \`transform\` : une transformation ouvre le même piège. */
-#${DOM.hostId}{position:absolute;top:76px;left:18px;width:64px;
-  display:flex;flex-direction:column;align-items:center;gap:7px;
+#${DOM.hostId}{position:absolute;top:${GEO.top}px;left:${GEO.left}px;width:${GEO.button}px;
+  display:flex;flex-direction:column;align-items:center;gap:${GEO.gap}px;
   font:12px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;
   /* \`.topbar\` coupe les événements de pointeur pour laisser passer les clics
      vers le visage. Ce contrôle vit à côté d'elle et non dedans, mais il les
@@ -439,13 +686,111 @@
 #${DOM.hostId} .bh-hud-hint{margin:11px 0 0;font-size:10px;line-height:1.55;color:${MUTED};min-height:3.1em}
 #${DOM.hostId} .bh-hud-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
   clip:rect(0,0,0,0);white-space:nowrap;border:0}
+
+/* ------------------------------------------------- la palette d'outils
+
+   **Un rang d'empilement est posé ici, et contrairement au contrôle ci-dessus
+   c'est sans danger.** La note de la Slice 01 vaut pour une boîte qui doit
+   laisser sortir un enfant plus haut qu'elle : son sélecteur (36) serait
+   enfermé sous le rang du bouton (32). La palette, elle, ne contient aucune
+   surimpression — que ses propres icônes — donc le contexte d'empilement
+   qu'elle ouvre n'enferme rien. Son rang (30) est **sous** le contrôle (32) et
+   sous le sélecteur (36) exprès : le sélecteur s'ouvre par-dessus elle le
+   temps d'un choix, et l'inverse aurait fait choisir un mode à l'aveugle.
+   Pas de \`transform\` sur l'emplacement lui-même, pour la même raison que
+   la Slice 01 n'en met pas — seules les pseudo-éléments en portent. */
+#${DOM.paletteId}{position:absolute;z-index:30;
+  top:${PALETTE_TOP}px;left:${GEO.left}px;width:${GEO.button}px;
+  display:flex;flex-direction:column;align-items:center;gap:8px;
+  font:12px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;
+  /* Même précaution que le contrôle du dessus : rangée un jour sous un parent
+     aux événements coupés, la palette resterait cliquable. */
+  pointer-events:auto;
+  transition:opacity .22s ease}
+#${DOM.paletteId}[hidden]{display:none}
+/* La bande elle-même : fixe, verticale, et rien qui suggère le contraire —
+   pas de poignée, pas de bouton d'ancrage, pas de bascule d'orientation
+   (décision 13 : c'est reporté, donc ce n'est pas esquissé). */
+#${DOM.paletteId} .bh-tools{display:flex;flex-direction:column;align-items:center;gap:6px;
+  padding:6px;border:1px solid var(--line,#183343);border-radius:13px;
+  background:rgba(3,8,12,.62);
+  -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
+/* **L'échelle des trois états, écrite une seule fois**, sur le modèle de
+   \`data-bh-tone\`. Le bouton, son rail, son halo et son icône la lisent par
+   héritage : « actif » a une seule définition, par construction. */
+#${DOM.paletteId} [${DOM.toolStateAttribute}=idle]{
+  --bh-tool-ink:color-mix(in srgb,${ACCENT} 58%,transparent);
+  --bh-tool-line:transparent;--bh-tool-face:transparent;--bh-tool-glow:none}
+#${DOM.paletteId} [${DOM.toolStateAttribute}=active]{
+  --bh-tool-ink:color-mix(in srgb,${ACCENT} 86%,#fff);
+  --bh-tool-line:color-mix(in srgb,${ACCENT} 60%,transparent);
+  --bh-tool-face:color-mix(in srgb,${ACCENT} 12%,rgba(3,8,12,.88));
+  --bh-tool-glow:0 0 0 1px color-mix(in srgb,${ACCENT} 26%,transparent),
+    0 0 16px color-mix(in srgb,${ACCENT} 30%,transparent),
+    inset 0 0 14px color-mix(in srgb,${ACCENT} 12%,transparent)}
+/* Sans moteur : **gris**, jamais bleu. La couleur seule ne suffit pas et ne
+   prétend pas suffire — la barre oblique ci-dessous porte la même information
+   sans dépendre d'une teinte. */
+#${DOM.paletteId} [${DOM.toolStateAttribute}=absent]{
+  --bh-tool-ink:color-mix(in srgb,${MUTED} 40%,transparent);
+  --bh-tool-line:transparent;--bh-tool-face:transparent;--bh-tool-glow:none}
+#${DOM.paletteId} .bh-tool{position:relative;width:44px;height:44px;display:grid;place-items:center;
+  padding:0;border:1px solid var(--bh-tool-line);border-radius:10px;background:var(--bh-tool-face);
+  color:var(--bh-tool-ink);box-shadow:var(--bh-tool-glow);cursor:pointer;
+  transition:color .16s ease,border-color .16s ease,background .16s ease,
+    box-shadow .22s ease,transform .12s ease}
+#${DOM.paletteId} .bh-tool-icon{display:block;color:inherit}
+#${DOM.paletteId} .bh-tool:hover[${DOM.toolStateAttribute}=idle]{
+  background:rgba(110,231,255,.06);border-color:var(--line,#183343)}
+#${DOM.paletteId} .bh-tool:active[${DOM.toolStateAttribute}=idle]{transform:scale(.94)}
+#${DOM.paletteId} .bh-tool:focus-visible{outline:2px solid ${ACCENT};outline-offset:3px}
+/* **Le rail : ce qui rend l'outil actif lisible d'un coup d'œil**, et ce qui
+   continue de le rendre lisible quand la couleur ne peut plus rien — en veille
+   de la palette, en contraste élevé, ou pour un œil qui ne sépare pas le bleu
+   du gris. La forme dit ce que la teinte dit, deux fois plutôt qu'une. */
+#${DOM.paletteId} .bh-tool[${DOM.toolStateAttribute}=active]::before{content:'';position:absolute;
+  left:-5px;top:8px;bottom:8px;width:3px;border-radius:3px;background:currentColor;
+  box-shadow:0 0 10px color-mix(in srgb,${ACCENT} 55%,transparent)}
+/* Un outil sans moteur est **barré**. Il reste dessiné — le retirer ferait
+   croire qu'il n'existe pas, alors qu'il est au contrat — et il reste
+   atteignable au clavier pour dire pourquoi ; il ne se choisit pas. */
+#${DOM.paletteId} .bh-tool[${DOM.toolStateAttribute}=absent]{cursor:not-allowed}
+#${DOM.paletteId} .bh-tool[${DOM.toolStateAttribute}=absent]::after{content:'';position:absolute;
+  left:10px;right:10px;top:50%;height:1px;background:currentColor;opacity:.8;
+  transform:rotate(-38deg)}
+#${DOM.paletteId} .bh-tool[disabled]{opacity:.45;cursor:progress}
+/* **La veille de la palette** (décision 11 + contrainte du périmètre).
+   Bare Hands éteint, en panne ou en démarrage : la palette ne disparaît pas —
+   elle serait alors introuvable le jour où l'on rallume, et l'Humain l'a
+   voulue visible sans ouvrir les réglages — et elle ne fait pas non plus
+   semblant d'agir. Elle s'atténue, elle perd le halo (le halo veut dire
+   « quelque chose tourne », et rien ne tourne), et elle **garde son rail** :
+   quel outil est choisi reste vrai et reste lisible. Le motif est dans
+   l'infobulle et dans l'annonce ; le cycle de vie, lui, est déjà écrit en
+   toutes lettres 100 px plus haut dans la même colonne. */
+#${DOM.paletteId}[data-bh-live=false]{opacity:.5}
+#${DOM.paletteId}[data-bh-live=false] .bh-tool[${DOM.toolStateAttribute}=active]{box-shadow:none}
+#${DOM.paletteId} .bh-tool-cap{width:max-content;max-width:${GEO.button}px;text-align:center;
+  font-size:9px;letter-spacing:.14em;text-transform:uppercase;
+  color:color-mix(in srgb,${ACCENT} 72%,transparent);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  transition:color .16s ease}
+#${DOM.paletteId} .bh-hud-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
+  overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 @media(max-width:700px){
   /* En dessous de 700 px la barre du haut se resserre (\`left:10px\`), la marque
      disparaît et la bannière GPT-Live vient occuper la bande juste sous elle :
      le coin haut-gauche n'est plus libre. Le contrôle descend donc sur le bord
      gauche, en miroir du dock — le même côté que la palette d'outils à venir,
      et plus aucun croisement avec le texte de la marque ni avec la bannière. */
-  #${DOM.hostId}{top:calc(50% - 41px);left:10px}
+  #${DOM.hostId}{top:calc(50% - ${-GEO.narrowTop}px);left:${GEO.narrowLeft}px}
+  /* La palette **suit** la main, à la même distance et du même côté : la
+     colonne reste une colonne. Les icônes se resserrent parce que c'est là que
+     l'écran est le plus court, et la bande reste verticale (décision 13 : une
+     palette horizontale est reportée, pas improvisée ici). */
+  #${DOM.paletteId}{top:calc(50% + ${PALETTE_NARROW_TOP}px);left:${GEO.narrowLeft}px}
+  #${DOM.paletteId} .bh-tools{gap:5px;padding:5px}
+  #${DOM.paletteId} .bh-tool{width:38px;height:38px}
 }
 @media(prefers-reduced-motion:reduce){
   /* Le mouvement s'arrête, pas l'information : le compteur de secondes sous le
@@ -454,9 +799,26 @@
   #${DOM.hostId} .bh-hud-btn,#${DOM.hostId} .bh-hud-cap,#${DOM.hostId} .bh-hud-opt{transition:none}
   #${DOM.hostId} .bh-hud-btn::before,#${DOM.hostId} .bh-hud-wait::after,
   #${DOM.hostId} .bh-hud-pop{animation:none}
+  /* Même règle pour la palette, et même limite : le mouvement s'arrête,
+     **l'information reste**. Le rail, la barre oblique et l'étiquette du nom
+     ne sont pas des animations — ils disent lequel est choisi et lequel n'a
+     pas de moteur, immobiles. */
+  #${DOM.paletteId},#${DOM.paletteId} .bh-tool,#${DOM.paletteId} .bh-tool-cap{transition:none}
 }`;
 
   /* ------------------------------------------------------- le contrôle DOM */
+
+  /* Une seule feuille pour les deux surfaces de ce module. Le contrôle de
+     cycle de vie et la palette sont la même famille et le même coin d'écran :
+     deux balises `<style>` auraient été deux endroits où changer un ton. */
+  function installStyle(doc){
+    if(doc.getElementById(DOM.styleId))return false;
+    const style=doc.createElement('style');
+    style.id=DOM.styleId;style.textContent=STYLE;
+    doc.head.appendChild(style);
+    return true;
+  }
+
 
   /* Toutes les dépendances sont injectées : le document, la surface Bare Hands
      et l'horloge. Rien n'est lu dans un global depuis l'intérieur, ce qui est
@@ -576,12 +938,7 @@
       openQuickMenu(pointerPos(event));
     });
 
-    function ensureStyle(){
-      if(doc.getElementById(DOM.styleId))return;
-      const style=doc.createElement('style');
-      style.id=DOM.styleId;style.textContent=STYLE;
-      doc.head.appendChild(style);
-    }
+    function ensureStyle(){installStyle(doc)}
 
     /* ------------------------------------------------------------ peinture */
 
@@ -947,10 +1304,264 @@
     };
   }
 
+  /* ------------------------------------------- la palette d'outils, en DOM
+
+     Mêmes règles que le contrôle ci-dessus, et pour les mêmes raisons :
+     **aucune dépendance prise dans un global** (le document et la surface sont
+     injectés, seule façon d'exercer ceci sous node) et **aucune mémoire de ce
+     qui appartient à quelqu'un d'autre**. La palette ne tient pas l'outil : le
+     contrat tient la liste, les réglages tiennent le choix, et les deux
+     coutures le lui apportent. Ce qu'elle tient est un curseur de clavier et
+     une phrase de refus — de l'affichage, rien d'autre.
+
+     Une seconde mémoire de l'outil ici serait la dérive exacte que la
+     Slice 01 a écartée pour le cycle de vie : un `tool()` appelé depuis la
+     console ou une réponse de serveur qui corrige la valeur laisseraient la
+     bande sur son ancien choix, et l'écran mentirait sans que rien ne tombe. */
+  function createToolPalette(deps){
+    const doc=deps.document,host=deps.host;
+    const surfaceOf=deps.surface;
+    const log=deps.log||function(){};
+
+    let tool=null,view=presentationOf(null),model=paletteOf(null,view);
+    let cursor=0,failure='',picking=false,held=false,spoken='';
+
+    installStyle(doc);
+
+    /* La bande. `role="toolbar"` et **pas** `radiogroup` : dans un groupe de
+       boutons radio, les flèches *choisissent* en passant, et chaque touche
+       partirait donc en écriture réseau — c'est ce que faisait `moveTool()`
+       dans les réglages, où la cible était un formulaire. Ici, traverser la
+       palette au clavier changerait le sens de la main à chaque frappe. Le
+       sélecteur de mode de la Slice 02 a tranché la même question dans l'autre
+       sens pour la même raison (`menuitemradio` : les flèches déplacent, la
+       validation choisit) ; la palette suit sa voisine. */
+    const strip=doc.createElement('div');
+    strip.id=DOM.paletteStripId;strip.className='bh-tools';
+    strip.setAttribute('role','toolbar');
+    strip.setAttribute('aria-orientation','vertical');
+    strip.setAttribute('aria-label','Outils Bare Hands');
+    host.appendChild(strip);
+
+    /* Les boutons, **construits depuis le contrat** une fois pour toutes. La
+       liste ne change pas en cours de session : `describeTools()` est une
+       table, pas un état. Ce qui change à chaque peinture, c'est l'état de
+       chacun — et cela se fait en place, jamais en réécrivant la bande, pour
+       la même raison que le panneau de réglages ne se redessine pas : une
+       réécriture arracherait le focus au moment où l'on s'en sert. */
+    const buttons=BH.describeTools().map((described,index)=>{
+      const el=doc.createElement('button');
+      el.setAttribute('type','button');
+      el.setAttribute(DOM.toolAttribute,described.id);
+      el.className='bh-tool';
+      el.setAttribute('tabindex','-1');
+      el.appendChild(toolIcon(doc,described.id,22));
+      el.addEventListener('click',()=>{pick(described.id)});
+      el.addEventListener('keydown',event=>onKey(event,index));
+      el.addEventListener('focus',()=>{held=true;cursor=index;roving()});
+      el.addEventListener('focusout',()=>{held=false});
+      strip.appendChild(el);
+      return {id:described.id,el};
+    });
+
+    /* Le **nom** de l'outil actif, sous la bande. L'icône dit lequel par la
+       forme, le rail par la position, l'étiquette par le mot : « l'outil actif
+       est immédiatement compréhensible » est le critère que l'Humain juge à
+       l'œil, et un seul canal l'aurait joué sur une seule teinte. */
+    const caption=doc.createElement('span');
+    caption.id=DOM.paletteCaptionId;caption.className='bh-tool-cap';
+    caption.setAttribute('aria-hidden','true');
+    host.appendChild(caption);
+
+    const announce=doc.createElement('div');
+    announce.id=DOM.paletteAnnounceId;announce.className='bh-hud-sr';
+    announce.setAttribute('role','status');
+    announce.setAttribute('aria-live','polite');
+    host.appendChild(announce);
+
+    /* **La recette d'extension à moitié suivie se dit tout de suite.** Un
+       outil installé sans dessin arrive ici au chargement, pas trois clics
+       plus tard ; sans cette ligne, il serait un carré en pointillés que
+       personne ne saurait expliquer. */
+    const artless=model.items.filter(item=>item.installed&&!item.art).map(item=>item.id);
+    if(artless.length)
+      log('warn','barehands.palette_icon_missing',{code:ARTLESS,tools:artless});
+
+    function roving(){
+      /* Un seul arrêt de tabulation dans la barre d'outils : le curseur. Les
+         flèches font le reste, ce que `role="toolbar"` promet. */
+      for(let i=0;i<buttons.length;i+=1)
+        buttons[i].el.setAttribute('tabindex',i===cursor?'0':'-1');
+    }
+
+    function focusAt(index){
+      if(!buttons.length)return;
+      cursor=(index+buttons.length)%buttons.length;
+      roving();
+      const target=buttons[cursor].el;
+      if(typeof target.focus==='function')try{target.focus()}catch(_error){/* retiré entre-temps */}
+    }
+
+    function onKey(event,index){
+      const key=event&&event.key;
+      if(key==='Home'||key==='End'){
+        if(typeof event.preventDefault==='function')event.preventDefault();
+        focusAt(key==='Home'?0:buttons.length-1);return;
+      }
+      /* La bande est verticale, donc les flèches verticales la parcourent.
+         Les horizontales sont acceptées aussi : elles l'étaient dans les
+         réglages, et un utilisateur qui les a apprises là ne doit pas
+         découvrir qu'elles ont cessé de marcher. */
+      const step=key==='ArrowDown'||key==='ArrowRight'?1
+        :key==='ArrowUp'||key==='ArrowLeft'?-1:0;
+      if(!step)return;
+      if(typeof event.preventDefault==='function')event.preventDefault();
+      /* **Aucun saut.** `moveTool()` sautait les outils sans moteur, ce qui
+         les rendait inatteignables au clavier : leur motif ne pouvait être lu
+         que par une souris qui survole. Ils restent donc sur le chemin,
+         `aria-disabled` et non `disabled`, et ils disent pourquoi ils ne se
+         choisissent pas — même choix que « Calibrer… » bloqué à la Slice 02. */
+      focusAt(index+step);
+    }
+
+    /* Ce que le lecteur d'écran entend, et **seulement quand ça change**. */
+    function speak(line){
+      if(!line||line===spoken)return;
+      spoken=line;announce.textContent=line;
+    }
+
+    function paint(){
+      model=paletteOf(tool,view);
+      host.setAttribute('data-bh-live',model.live?'true':'false');
+      host.setAttribute('data-bh-busy',model.busy?'true':'false');
+      /* **Diagnostic, et rien d'autre** : aucune règle de la feuille ne le lit,
+         exprès. La palette ne redit pas le cycle de vie à l'écran (le contrôle
+         qui le porte est dans la même colonne), mais le dernier état qu'elle a
+         reçu doit rester lisible depuis une console et depuis un test — sans
+         quoi « la palette n'a pas été prévenue » et « la palette a été
+         prévenue et a choisi de ne rien montrer » s'écrivent pareil. */
+      host.setAttribute('data-bh-tone',model.tone);
+      /* Le curseur suit l'outil actif tant que personne n'a posé le focus
+         dans la bande : la tabulation arrive alors sur ce qui est choisi. */
+      if(!held){
+        const at=model.items.findIndex(item=>item.state===SLOT.ACTIVE);
+        cursor=at<0?0:at;
+      }
+      for(let i=0;i<buttons.length;i+=1){
+        const button=buttons[i],item=model.items[i];
+        button.el.setAttribute(DOM.toolStateAttribute,item.state);
+        /* `aria-pressed` et non `aria-checked` : ces boutons vivent dans une
+           barre d'outils, pas dans un groupe de radios, et c'est `pressed` qui
+           dit « cet outil est enfoncé » sans promettre qu'une flèche choisit. */
+        button.el.setAttribute('aria-pressed',item.state===SLOT.ACTIVE?'true':'false');
+        button.el.setAttribute('aria-disabled',item.installed?'false':'true');
+        /* **Deux empêchements, deux mécaniques, et c'est voulu.** Sans moteur :
+           `aria-disabled`, donc encore atteignable pour dire pourquoi. Écriture
+           en vol : vraiment `disabled`, parce que c'est une fraction de seconde
+           et qu'un second clic partirait se faire refuser par `saveSettings`
+           avec un mot que personne n'a demandé. */
+        button.el.disabled=item.installed&&model.busy;
+        button.el.setAttribute('title',item.title);
+        button.el.setAttribute('aria-label',item.title);
+      }
+      roving();
+      caption.textContent=model.caption;
+      speak(failure||(model.active
+        ?`Outil Bare Hands : ${(BH.TOOL_LABEL&&BH.TOOL_LABEL[model.active])||model.active}.${model.dormant?` ${model.dormant}`:''}`
+        :'Aucun outil Bare Hands sélectionné.'));
+      return model;
+    }
+
+    /* Choisir, par **la porte canonique**. `JarvisBarehands.tool(id)` est
+       exactement `saveSettings({tool:id})` : la même que la console, la même
+       que l'onglet appelait avant la décision 11, la même que la voix
+       appellera. Aucun magasin d'outils parallèle n'est créé ici, et c'est la
+       seule chose que cette fonction a le droit de ne pas faire. */
+    async function pick(id){
+      if(picking)return null;
+      const item=model.items.find(entry=>entry.id===id)||null;
+      /* **Un refus codé plutôt qu'un défaut plausible.** Un outil sans moteur
+         n'écrit rien et le redit ; se replier sur « pointeur » aurait changé
+         l'outil de l'utilisateur sans qu'il l'ait demandé. */
+      if(!item){
+        failure=`Outil Bare Hands inconnu : ${String(id)}.`;
+        log('error','barehands.palette_tool_unknown',{tool:String(id),code:'barehands_tool_unknown'});
+        paint();return null;
+      }
+      if(!item.installed){
+        failure=`${item.label} — ${UNAVAILABLE}`;
+        log('warn','barehands.palette_tool_not_installed',
+          {tool:item.id,code:'barehands_tool_not_installed'});
+        paint();return null;
+      }
+      if(model.busy)return null;
+      picking=true;failure='';
+      try{
+        const surface=surfaceOf();
+        if(!surface)
+          throw Object.assign(new Error('window.JarvisBarehands absent'),
+            {code:'barehands_palette_surface_missing'});
+        if(typeof surface.tool!=='function')
+          throw Object.assign(new Error('window.JarvisBarehands.tool() manque'),
+            {code:'barehands_palette_entry_missing'});
+        const outcome=await surface.tool(item.id);
+        /* `settings()` rend `null` quand rien n'a été enregistré, et il a déjà
+           dit pourquoi à l'écran par son propre toast. On ne le redit pas une
+           seconde fois — deux phrases pour un fait apprennent à n'en lire
+           aucune — mais « la palette n'a rien fait » et « la palette a fait
+           quelque chose qui a été refusé » restent distinguables au journal.
+           La couture, elle, ramènera l'outil réellement appliqué. */
+        if(outcome===null){
+          log('warn','barehands.palette_tool_refused',{tool:item.id});
+          return null;
+        }
+        log('info','barehands.palette_tool_selected',{tool:item.id});
+        return item.id;
+      }catch(error){
+        failure=`L’outil « ${item.label} » n’a pas été pris : ${(error&&error.message)||error}`;
+        log('error','barehands.palette_tool_failed',
+          {tool:item.id,code:(error&&error.code)||null,
+            error:String((error&&error.message)||error)});
+        return null;
+      }finally{
+        picking=false;
+        paint();
+      }
+    }
+
+    /* Les deux entrées de peinture, une par couture. Elles ne se confondent
+       pas : l'outil vient des réglages, la disponibilité du cycle de vie, et
+       un module qui les mélangerait perdrait la trace de qui a changé quoi. */
+    function renderTool(snapshot){
+      tool=snapshot&&typeof snapshot==='object'?snapshot.tool:snapshot;
+      return paint();
+    }
+    function renderLifecycle(snapshot){
+      view=presentationOf(snapshot);
+      return paint();
+    }
+
+    paint();
+
+    return {
+      element:host,strip,buttons,caption,
+      renderTool,renderLifecycle,pick,focusAt,
+      model:()=>model,failure:()=>failure,cursor:()=>cursor,
+      destroy(){strip.remove();caption.remove();announce.remove()},
+    };
+  }
+
   const api=Object.freeze({DOM,MODES,TONE,MODE_LABEL,MODE_HINT,CAPTION,STYLE,
     QUICK,QUICK_ORDER,QUICK_LABEL,QUICK_GATE,KBD_MENU_GUARD_MS,
     presentationOf,captionOf,labelOf,noteOf,calibrationBlockOf,quickItemsOf,
-    handIcon,createHudControl});
+    handIcon,createHudControl,
+    /* La palette d'outils (Slice 03). Les tables et le modèle pur sont
+       exportés au même titre que ceux du contrôle : c'est par eux qu'un test
+       décrit « exactement les outils installés, dans ces trois états » sans
+       ouvrir de navigateur. */
+    SLOT,TOOL_HINT,UNAVAILABLE,ARTLESS,DORMANT,TOOL_ART,GEO,
+    PALETTE_TOP,PALETTE_NARROW_TOP,
+    paletteOf,toolIcon,createToolPalette});
   root.JarvisBarehandsHud=api;
   /* Exécution par les tests (node) ; dans la page, `module` n'existe pas. */
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
@@ -1013,6 +1624,56 @@
       +JSON.stringify({seam:surface.lifecycleSeam()}));
   }
 
+  /* **La palette s'installe séparément, et c'est le point.** Elle partage ce
+     module avec le contrôle de cycle de vie parce qu'elle est la même famille
+     et le même coin d'écran, mais elle ne partage pas son sort : si son
+     emplacement manque ou si la couture d'outil n'est pas là, c'est la palette
+     qui n'apparaît pas, pas la main. L'ordre de gravité est celui de la
+     décision 1 — le cycle de vie d'abord — et un seul `try` pour les deux
+     l'aurait inversé au premier pépin. */
+  function installJarvisBarehandsPalette(){
+    const surface=window.JarvisBarehands;
+    if(!surface)
+      throw new Error('JarvisBarehandsHud : control_center_barehands.js doit être inséré avant ce module');
+    if(typeof surface.openToolSeam!=='function')
+      throw Object.assign(new Error('JarvisBarehandsHud : la couture d’outil manque sur window.JarvisBarehands'),
+        {code:'barehands_palette_seam_missing'});
+    if(typeof surface.openLifecycleSeam!=='function')
+      throw Object.assign(new Error('JarvisBarehandsHud : la couture de cycle de vie manque sur window.JarvisBarehands'),
+        {code:'barehands_hud_seam_missing'});
+    const host=document.getElementById(DOM.paletteId);
+    if(!host)
+      throw Object.assign(new Error(`JarvisBarehandsHud : l’emplacement #${DOM.paletteId} manque dans control_center.html`),
+        {code:'barehands_palette_host_missing'});
+
+    const palette=createToolPalette({
+      document,host,
+      surface:()=>window.JarvisBarehands,
+      log:(level,event,data)=>{
+        const line=`[barehands] ${event} ${JSON.stringify(data)}`;
+        if(level==='error')console.error(line);
+        else if(level==='warn')console.warn(line);
+        else console.info(line);
+      },
+    });
+    /* **Deux abonnements, deux faits.** L'outil courant vient des réglages,
+       la disponibilité du cycle de vie ; les deux rejouent leur instantané à
+       l'ouverture, donc la palette est juste dès le chargement et n'attend
+       aucun premier changement pour cesser de mentir. C'est la synchronisation
+       bidirectionnelle exigée : un `JarvisBarehands.tool('pan')` tapé dans la
+       console, un réglage écrit ailleurs ou un rechargement de page arrivent
+       par le même chemin qu'un clic sur la bande. */
+    surface.openToolSeam(DOM.paletteSeam,state=>palette.renderTool(state));
+    surface.openLifecycleSeam(DOM.paletteSeam,state=>palette.renderLifecycle(state));
+    window.JarvisBarehandsPalette=Object.freeze({
+      model:palette.model,failure:palette.failure,cursor:palette.cursor,
+      pick:palette.pick,focusAt:palette.focusAt,
+    });
+    console.info('[barehands] barehands.palette_installed '
+      +JSON.stringify({tools:palette.model().items.map(item=>item.id),
+        seam:surface.toolSeam()}));
+  }
+
   /* **La levée reste, mais elle ne sort pas d'ici.** La page servie n'a qu'une
      seule balise `<script>` : tous les modules Bare Hands, la scène, la
      timeline, le Test Lab et ~2500 lignes de logique de page y sont concaténés,
@@ -1024,6 +1685,19 @@
     installJarvisBarehandsHud();
   }catch(error){
     console.error('[barehands] barehands.hud_not_installed '
+      +JSON.stringify({code:(error&&error.code)||null,
+        error:String((error&&error.message)||error)}));
+  }
+  /* **Un second `try`, pas une seconde ligne dans le premier.** Les deux
+     surfaces de ce module tombent indépendamment : une palette qui manque
+     laisse la main et son sélecteur intacts, et une main qui manque n'emporte
+     pas la palette. Confiner deux pannes ensemble aurait fait d'un
+     emplacement oublié dans le balisage la perte du contrôle de cycle de vie,
+     c'est-à-dire de la décision 1. */
+  try{
+    installJarvisBarehandsPalette();
+  }catch(error){
+    console.error('[barehands] barehands.palette_not_installed '
       +JSON.stringify({code:(error&&error.code)||null,
         error:String((error&&error.message)||error)}));
   }
