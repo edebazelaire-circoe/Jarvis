@@ -54,6 +54,11 @@ RUNTIME = ROOT / "jarvis" / "runtime"
 CONTRACTS = RUNTIME / "control_center_barehands_contracts.js"
 CALIBRATION = RUNTIME / "control_center_barehands_calibration.js"
 BAREHANDS = RUNTIME / "control_center_barehands.js"
+#: Le vocabulaire de dessin des mains (Slice 04). La page le sert **avant** la
+#: calibration, qui le lit pour ses démonstrations d'étape et refuse de
+#: construire un parcours sans lui ; l'installer ici dans le même ordre est ce
+#: qui fait que le double tombe comme la vraie page.
+HAND_ART = RUNTIME / "control_center_barehands_hand_art.js"
 
 #: Un DOM assez réel pour tomber comme le vrai tombe. Les quatre défauts de
 #: réalisme de cette tâche sont explicitement couverts ici : les nœuds ont un
@@ -99,6 +104,11 @@ function makeNode(tag){
 const body=makeNode('body'),head=makeNode('head');
 global.document={
   createElement:makeNode,
+  /* Les démonstrations de main sont des **vrais** SVG de `hand_art` (Slice 06),
+     et `handSvg` les crée par `createElementNS`. Un double qui ne le connaît
+     pas ne pourrait pas monter la démonstration du tout — et le test dirait
+     alors que le dessin manque, au lieu de le regarder. */
+  createElementNS(ns,tag){const node=makeNode(tag);node.namespaceURI=String(ns);return node},
   head,body,documentElement:body,
   getElementById(id){
     const found=made.find(el=>el.id===id&&el.parent);
@@ -136,6 +146,28 @@ const allButtons=root=>{
    même arbre et ne se lisent pas ensemble : l'une change à chaque étape,
    l'autre ne bouge jamais. */
 const stepActions=root=>allButtons(root).map(n=>n.getAttribute('data-flow-action')).filter(Boolean);
+/* Ce que la scène **montre**, lu sur `data-bh-pose` : l'attribut que
+   `hand_art` pose sur chaque SVG précisément pour qu'un test dise quelle main
+   est à l'écran sans lire un pixel. */
+const deep=root=>{
+  const out=[];
+  const walk=node=>{out.push(node);for(const child of node.children)walk(child)};
+  if(root)walk(root);
+  return out;
+};
+const posesOn=root=>deep(root).map(n=>n.getAttribute('data-bh-pose')).filter(Boolean);
+/* Le bandeau de phases : le mot de chaque pastille et son état. C'est la
+   moitié « où en suis-je » de la RÈGLE ZÉRO quand il n'y a pas d'échéance. */
+const phaseChips=root=>deep(root).filter(n=>n.getAttribute('data-phase'))
+  .map(n=>[n.getAttribute('data-phase'),n.getAttribute('data-at')]);
+const ghostsOn=root=>deep(root).filter(n=>String(n.className||'')==='jf-ghost')
+  .map(n=>[n.style.left,n.style.top,n.getAttribute('data-at')]);
+/* Le compteur d'échéance de la coque. Vide veut dire « aucune échéance n'est
+   armée », et c'est ce qu'une phase de lecture doit montrer. */
+const deadlineText=root=>{
+  const meta=deep(root).find(n=>String(n.className||'')==='jf-meta');
+  return meta?meta.children.map(c=>c.textContent):null;
+};
 const press=(root,id)=>{
   const found=allButtons(root).find(node=>node.getAttribute('data-flow-action')===id);
   if(!found)throw new Error(`bouton ${id} absent`);
@@ -156,6 +188,8 @@ def run_node(tmp_path: Path, source: str, name: str = "calib") -> object:
         f"const C=require({json.dumps(str(CONTRACTS))});\n"
         "global.JarvisBarehandsContracts=C;\n"
         f"const B=require({json.dumps(str(BAREHANDS))});\n"
+        f"const ART=require({json.dumps(str(HAND_ART))});\n"
+        "global.JarvisBarehandsHandArt=ART;\n"
         f"const K=require({json.dumps(str(CALIBRATION))});\n"
         "const out=v=>process.stdout.write(JSON.stringify(v));\n"
         "const refused=fn=>{try{fn();return null}catch(e){return e.code||e.name||String(e)}};\n"
@@ -403,14 +437,28 @@ def test_a_calibration_without_a_shell_or_without_a_writer_is_refused_at_constru
     - **L'écrivain** (`save`) : un parcours qui mesure sans pouvoir enregistrer
       ne dit rien à personne. Sept étapes tenues pour rien, et l'échec arrive
       au tout dernier écran.
+    - **`document`** et **le vocabulaire de dessin** (Slice 06) : le parcours
+      montre maintenant une démonstration de main à chaque étape. Sans eux, il
+      s'ouvrirait sur une consigne écrite au-dessus d'un centre vide, et
+      « formez un C » ne dirait jamais lequel — le défaut plausible que ce
+      dépôt refuse.
 
     Une garantie que chaque appelant doit se rappeler de respecter n'est pas
     une garantie, c'est une convention — et une garde que personne n'exerce
     peut disparaître dans un refactor sans qu'un seul test rougisse."""
 
     result = run_node(tmp_path, DOM + DRIVER + """
-      const whole={overlay:shellOf(),now,save:async()=>{},setInterval:()=>1,clearInterval:()=>{}};
+      const whole={overlay:shellOf(),now,save:async()=>{},setInterval:()=>1,clearInterval:()=>{},document};
       const without=key=>{const d=Object.assign({},whole);delete d[key];return d};
+      /* Le vocabulaire de dessin est un module de **page**, pas une dépendance
+         injectée : on le retire donc là où le parcours le lit, c'est-à-dire du
+         global, et on le remet aussitôt. */
+      const withoutArt=()=>{
+        const keep=global.JarvisBarehandsHandArt;
+        global.JarvisBarehandsHandArt=undefined;
+        try{return refused(()=>K.createCalibration(whole))}
+        finally{global.JarvisBarehandsHandArt=keep}
+      };
       out({
         shipping:refused(()=>K.createCalibration(whole)),
         noOverlay:refused(()=>K.createCalibration(without('overlay'))),
@@ -422,12 +470,20 @@ def test_a_calibration_without_a_shell_or_without_a_writer_is_refused_at_constru
         saveNotCallable:refused(()=>K.createCalibration(Object.assign({},whole,{save:{}}))),
         // Et le voisin déjà gardé, gardé au même endroit : l'horloge.
         noClock:refused(()=>K.createCalibration(without('setInterval'))),
+        // Slice 06 : ce qu'il faut pour **montrer**.
+        noDocument:refused(()=>K.createCalibration(without('document'))),
+        hollowDocument:refused(()=>K.createCalibration(Object.assign({},whole,{document:{}}))),
+        noHandArt:withoutArt(),
+        // Et la dérivation, elle, n'a jamais eu besoin de dessiner : elle reste
+        // joignable sans coque, sans horloge et sans vocabulaire de main.
+        pureStillPure:typeof K.deriveJitter==='function'&&typeof K.deriveProfile,
       });
     """, name="calibDeps")
 
     assert result["shipping"] is None, "le câblage complet passe : la sonde ne crie pas au loup"
     for case in ("noOverlay", "hollowOverlay", "overlayNotCallable",
-                 "noSave", "saveNotCallable", "noClock"):
+                 "noSave", "saveNotCallable", "noClock",
+                 "noDocument", "hollowDocument", "noHandArt"):
         assert result[case] == "RangeError", case
 
 
@@ -544,7 +600,7 @@ const timers=[];
 const beat=n=>{for(let i=0;i<(n||1);i+=1)for(const t of timers.slice())if(t)t.fn()};
 const clocks=()=>timers.filter(Boolean).map(t=>t.ms);
 const calOf=extra=>K.createCalibration(Object.assign({
-  overlay:shellOf(),now,engineDefaults:B.DEFAULTS,
+  overlay:shellOf(),now,engineDefaults:B.DEFAULTS,document,
   setInterval:(fn,ms)=>{timers.push({fn,ms});return timers.length},
   clearInterval:id=>{if(id>=1&&timers[id-1])timers[id-1]=null},
   viewport:()=>({width:1280,height:720}),
@@ -582,12 +638,30 @@ const reportRows=()=>find(flowRoot(),'jf-report')[0].children.map(li=>
    lieu de mesurer le parcours. */
 const feedUntil=(cal,over,cap)=>{
   const from=cal.stepId();let n=0;
-  while(cal.stepId()===from&&n<(cap||600)){
+  while(cal.stepId()===from&&n<(cap||1400)){
     clock+=16;cal.feed({now:clock,hands:[hand(typeof over==='function'?over(n):over)]});n+=1;
   }
   return {from,to:cal.stepId(),frames:n};
 };
 const pinching=key=>i=>{const o={stillness:.5};o[key]=i%10<5?.15:.6;return o};
+/* **Traverser la phase de lecture sans nourrir une seule image** (Slice 06).
+   C'est le geste que le produit attend de l'utilisateur pendant qu'il lit :
+   les mains sur les genoux. L'horloge avance, le chien de garde bat, et c'est
+   lui — et lui seul — qui fait passer l'étape en `ARMED`. */
+const readOn=cal=>{clock+=K.DEFAULTS.introMs+1;beat();return cal.phase()};
+/* Tenir le verdict jusqu'au bout, puis laisser le parcours avancer. Piloté à
+   la main, comme tout le reste : jamais l'horloge murale. */
+const verdictOver=cal=>{clock+=K.DEFAULTS.resultMs+1;beat();return cal.stepId()};
+/* Passer une étape **pour de bon** : le clic la solde, le verdict se tient,
+   puis on avance. Sans la seconde moitié, « passer » laisse le parcours sur la
+   même étape et une boucle qui attend le changement tourne pour toujours. */
+const skipStep=cal=>{press(flowRoot(),'skip');return verdictOver(cal)};
+/* Un point touché : on pince, on relâche. Rendu séparément parce que l'étape
+   de visée en demande maintenant trois (décision 24). */
+const clickOnce=(cal,over)=>{
+  feed(cal,6,Object.assign({primaryRatio:.15},over||{}));
+  feed(cal,2,Object.assign({primaryRatio:.6,palmX:623},over||{}));
+};
 """
 
 
@@ -610,15 +684,23 @@ def test_a_full_run_derives_a_profile_and_nothing_is_written_until_it_is_asked(t
       // Les deux canaux de pincement, repetes.
       visited.push(feedUntil(cal,pinching('primaryRatio')).to);
       visited.push(feedUntil(cal,pinching('secondaryRatio')).to);
-      // Viser : pincer sans bouger, puis relacher.
-      feed(cal,6,{primaryRatio:.15});
-      feed(cal,2,{primaryRatio:.6,palmX:623});
+      /* Viser : la lecture d'abord, **sans une image** — mains sur les genoux,
+         ce que l'utilisateur fait pendant qu'il lit — puis trois points, parce
+         que la visee est l'exercice spatial (decision 24). */
+      readOn(cal);
+      const aimShown=cal.aim();
+      clickOnce(cal);clickOnce(cal);clickOnce(cal);
+      verdictOver(cal);
       visited.push(cal.stepId());
       // Glisser : pincer, parcourir franchement, relacher.
+      readOn(cal);
       feed(cal,6,{primaryRatio:.15});
       feed(cal,2,{primaryRatio:.6,palmX:1000});
+      verdictOver(cal);
       visited.push(cal.stepId());
+      readOn(cal);
       feedBoth(cal,60);
+      verdictOver(cal);
       const beforeApply=saved.length;
       const rows=reportRows();
       /* La phrase du récapitulatif est lue **ici**, avant « Appliquer » : elle
@@ -633,7 +715,7 @@ def test_a_full_run_derives_a_profile_and_nothing_is_written_until_it_is_asked(t
         .children[0].getAttribute('data-at');
       press(flowRoot(),'apply');
       await new Promise(r=>setImmediate(r));
-      out({started,steps:visited,recap,recapBar,
+      out({started,steps:visited,recap,recapBar,aimShown,
         beforeApply,afterApply:saved.length,rows,
         payload:saved[0]||null,closed:!flowRoot(),running:cal.isRunning()});
     """, name="fullrun")
@@ -642,6 +724,9 @@ def test_a_full_run_derives_a_profile_and_nothing_is_written_until_it_is_asked(t
     assert result["started"]["flow"] == "calibration" and result["started"]["steps"] == 7
     assert result["steps"] == ["neutral", "c_pose", "pinch_primary", "pinch_secondary",
                                "aim", "drag", "resize"]
+    # Les cibles sont **trois**, et elles ne sont posées qu'une fois la lecture
+    # passée (décision 24 : on ne demande pas de viser avant d'avoir lu).
+    assert result["aimShown"] == {"points": 3, "hits": 0, "at": 0}
     assert result["beforeApply"] == 0, "le parcours n'enregistre pas tout seul"
     assert result["afterApply"] == 1
     payload = result["payload"]
@@ -692,14 +777,21 @@ def test_a_failed_stage_falls_back_to_the_defaults_and_the_profile_says_which(tm
       const pinchNote=text(flowRoot(),C.DOM.flowNoteClass)[0];
       const afterPrimary=cal.stepId();
       // Le pincement secondaire, lui, l'utilisateur le passe.
-      press(flowRoot(),'skip');
-      const afterSkip=cal.stepId();
-      feed(cal,6,{primaryRatio:.15});feed(cal,2,{primaryRatio:.6,palmX:623});
+      const afterSkip=skipStep(cal);
+      // Viser : trois points, puis glisser.
+      readOn(cal);clickOnce(cal);clickOnce(cal);clickOnce(cal);verdictOver(cal);
+      readOn(cal);
       feed(cal,6,{primaryRatio:.15});feed(cal,2,{primaryRatio:.6,palmX:1000});
+      verdictOver(cal);
       /* Deux mains demandees, une seule montree : l'echeance passe, et le
-         motif dit **ce qui manquait**. */
+         motif dit **ce qui manquait**. L'echeance ne part qu'une fois l'etape
+         **armee** (Slice 06), donc la main se montre d'abord — c'est ce qui
+         arme — et c'est seulement ensuite que la montre descend. */
       const before=cal.stepId();
+      readOn(cal);
+      feed(cal,4,{});
       clock+=6000;cal.feed({now:clock,hands:[hand({})]});
+      verdictOver(cal);
       const rows=reportRows();
       press(flowRoot(),'apply');
       await new Promise(r=>setImmediate(r));
@@ -761,8 +853,10 @@ def test_quitting_the_flow_writes_nothing_at_all(tmp_path):
          sont deja derivees, puis refuser. C'est la que « annuler » coute le
          plus cher a respecter, donc c'est la qu'il faut le mesurer. */
       feedUntil(cal,{});
-      while(cal.isRunning()&&allButtons(flowRoot())
-        .some(n=>n.getAttribute('data-flow-action')==='skip'))press(flowRoot(),'skip');
+      /* « Passer » solde l'etape, puis le verdict se tient (Slice 06) : sans
+         la seconde moitie, la boucle attendrait un changement d'etape qui
+         n'arrive qu'une fois la tenue echue. */
+      while(cal.isRunning()&&stepActions(flowRoot()).includes('skip'))skipStep(cal);
       const derived=allButtons(flowRoot())
         .some(n=>n.getAttribute('data-flow-action')==='apply');
       press(flowRoot(),'discard');
@@ -787,8 +881,10 @@ def test_a_save_that_fails_keeps_the_measurements_on_screen_with_a_way_to_retry(
       const cal=calOf();
       cal.start();
       feedUntil(cal,{});
-      while(cal.isRunning()&&allButtons(flowRoot())
-        .some(n=>n.getAttribute('data-flow-action')==='skip'))press(flowRoot(),'skip');
+      /* « Passer » solde l'etape, puis le verdict se tient (Slice 06) : sans
+         la seconde moitie, la boucle attendrait un changement d'etape qui
+         n'arrive qu'une fois la tenue echue. */
+      while(cal.isRunning()&&stepActions(flowRoot()).includes('skip'))skipStep(cal);
       failSave.at=true;
       press(flowRoot(),'apply');
       await new Promise(r=>setImmediate(r));
@@ -977,53 +1073,105 @@ def test_a_stage_nobody_feeds_still_expires_because_a_clock_watches_it_too(tmp_p
     nom** — il n'était atteint que par une main mal suivie, c'est-à-dire par une
     main présente.
 
-    Aucun `feed()` n'est appelé ici : seule l'horloge tourne, et c'est tout ce
-    dont le chien de garde dispose dans la vraie page."""
+    **Slice 06 : ce qu'il surveille a changé, pas le fait qu'il surveille.**
+    L'échéance ne court plus qu'en phase de mesure, donc une étape que personne
+    n'a commencée n'expire plus — elle attend, indéfiniment, et c'est la
+    correction demandée. Le chien de garde garde deux emplois, tous deux
+    indispensables et tous deux invisibles sans lui : c'est **lui** qui fait
+    finir la phase de lecture (personne ne nourrit une étape pendant qu'on la
+    lit), et c'est lui qui solde une mesure dont les mains ont disparu.
+
+    Le seul chemin vers `NO_HAND` est donc devenu « se montrer, puis
+    disparaître » — et c'est le bon : une étape jamais commencée ne reproche
+    rien à personne."""
 
     result = run_node(tmp_path, DOM + DRIVER + """
       const cal=calOf({options:{stageHoldMs:300,stageTimeoutMs:5000,
         stageMinSamples:10,pinchRepeats:2,watchdogMs:100}});
       cal.start();
       const at=cal.stepId();
-      /* Le chien de garde tourne pendant que l'étape court : il **dit** ce qui
-         manque plutôt que de laisser vingt secondes d'écran muet — sans quoi
-         « la caméra ne me voit pas » et « le parcours est planté » sont la
-         même image. */
       const clocks0=clocks();
-      clock+=2000;
-      beat();
+      const phase0=cal.phase();
+      /* **La lecture finit sur le chien de garde.** Aucune image n'arrive tant
+         que l'utilisateur lit — c'est la posture qu'on attend de lui — donc
+         rien d'autre ne regarde la montre. */
+      clock+=K.DEFAULTS.introMs+1;beat();
+      const armed=cal.phase();
+      const armedSaid=text(flowRoot(),C.DOM.flowNoteClass)[0];
+      const armedMeta=deadlineText(flowRoot());
+      /* **Dix fois l'échéance, sans une seule image, et rien ne se passe.**
+         L'utilisateur garde les mains sur les genoux : l'étape attend, elle
+         n'échoue pas, et le parcours n'a pas avancé d'un pas. */
+      for(let i=0;i<10;i+=1){clock+=5000;beat()}
+      const idlePhase=cal.phase(),idleStep=cal.stepId();
+      const idleMeta=deadlineText(flowRoot());
+      const idleReports=reportRows().length;
+      /* Maintenant il se montre — l'étape s'arme — puis il retire ses mains. */
+      feed(cal,2,{});
+      const running=cal.phase();
+      const runningMeta=deadlineText(flowRoot());
+      clock+=2000;beat();
       const midStep=cal.stepId();
       const said=text(flowRoot(),C.DOM.flowNoteClass)[0];
-      // L'échéance passe. Personne n'a nourri le parcours, et il se solde.
-      clock+=4000;
-      beat();
-      const after=cal.stepId();
+      // L'échéance passe. Plus personne ne nourrit le parcours, il se solde.
+      clock+=4000;beat();
+      const after=cal.phase();
+      verdictOver(cal);
+      const nextStep=cal.stepId();
       const carried=text(flowRoot(),C.DOM.flowNoteClass)[0];
       /* Et il ne se solde qu'**une fois** : un chien de garde qui rejouerait
          l'échéance à chaque tour ferait défiler les sept étapes en sept
          tours. */
       beat(3);
       const idle=cal.stepId();
-      // Dix fois l'échéance sans une seule image : le parcours va jusqu'au
-      // bout et montre son rapport au lieu de rester sur l'étape 1 sur 7.
-      for(let i=0;i<7;i+=1){clock+=6000;beat()}
+      /* Les six étapes restantes, chacune montrée puis abandonnée : le parcours
+         va jusqu'au bout et montre son rapport. */
+      /* Une main qui qualifie l'engagement des **sept** etapes a la fois : elle
+         est immobile, son ecart pouce-index est dans la bande du C, et ses deux
+         canaux sont fermes. On l'arme, puis on la retire. */
+      const ANY={stillness:.9,gapPalms:.65,primaryRatio:.15,secondaryRatio:.15};
+      const armThenVanish=()=>{
+        clock+=K.DEFAULTS.introMs+1;beat();
+        feed(cal,2,ANY);
+        clock+=6000;beat();
+        verdictOver(cal);
+      };
+      for(let i=0;i<6;i+=1)armThenVanish();
       const rows=reportRows();
       const duringRun=clocks();
       const actions=stepActions(flowRoot());
       const watchingAtRecap=cal.watching();
       cal.exit('test');
-      out({at,midStep,said,after,carried,idle,rows,clocks0,duringRun,actions,
+      out({at,phase0,armed,armedSaid,armedMeta,idlePhase,idleStep,idleMeta,idleReports,
+        running,runningMeta,midStep,said,after,nextStep,carried,idle,rows,
+        clocks0,duringRun,actions,
         watchingAtRecap,watching:cal.watching(),afterExit:clocks(),
         noClock:refused(()=>K.createCalibration({overlay:shellOf(),now,save:async()=>{}})),
         watchdogMs:K.DEFAULTS.watchdogMs});
     """, name="noHandExpiry")
 
     assert result["at"] == "neutral"
-    # Pendant l'étape : elle court toujours, et l'écran dit pourquoi.
+    # Une étape s'ouvre en **lecture**, et la lecture finit sur le chien de garde.
+    assert result["phase0"] == "intro"
+    assert result["armed"] == "armed"
+    # **Aucune échéance n'est annoncée** tant que rien n'est mesuré : la coque
+    # compte la séance, elle n'affiche pas de « X s restantes » qui mentirait.
+    assert result["armedMeta"][1] == "", result["armedMeta"]
+    assert "quand vous voulez" in result["armedSaid"].lower(), result["armedSaid"]
+    assert "ne démarre qu" in result["armedSaid"], "elle dit que rien ne se mesure encore"
+    # **Dix fois l'échéance sans une image : rien ne descend, rien n'échoue.**
+    assert result["idlePhase"] == "armed" and result["idleStep"] == "neutral"
+    assert result["idleMeta"][1] == "", "aucun compte à rebours n'a couru"
+    assert result["idleReports"] == 0, "et aucune étape n'a été soldée"
+    # Une fois armée, la mesure a bien une échéance, et elle s'affiche.
+    assert result["running"] == "running"
+    assert result["runningMeta"][1].endswith("restantes"), result["runningMeta"]
+    # Pendant la mesure : elle court toujours, et l'écran dit ce qui manque.
     assert result["midStep"] == "neutral"
     assert "Aucune main" in result["said"]
     # L'échéance tombe sans une seule image, et le motif est celui qui aide.
-    assert result["after"] == "c_pose", "l'étape n'expirait jamais sans image"
+    assert result["after"] == "result"
+    assert result["nextStep"] == "c_pose", "l'étape armée n'expirait jamais sans image"
     assert "aucune main vue" in result["carried"]
     assert "on continue" in result["carried"].lower(), "décision 31 : le parcours survit"
     # Trois tours de chien de garde de plus ne consomment pas l'étape suivante.
@@ -1212,11 +1360,19 @@ def test_a_run_that_measured_nothing_does_not_claim_to_have_calibrated(tmp_path)
          peut aboutir, et la portée reste plate — donc rien n'est dérivé. */
       const idle={stillness:.1,primaryRatio:.9,secondaryRatio:.9,cPose:.05,
         xNorm:.42,yNorm:.40};
+      /* Il **commence** chaque exercice — sans quoi l'étape l'attendrait
+         indéfiniment et n'aurait rien à lui reprocher (Slice 06) — puis ne
+         fait rien d'exploitable. Les images sont bien collectées : c'est
+         exactement ce qui écrit `quality`. */
+      const begin={stillness:.9,gapPalms:.65,primaryRatio:.15,secondaryRatio:.15};
       const visited=[];
       for(let i=0;i<7;i+=1){
+        readOn(cal);
+        feed(cal,2,begin);
         feed(cal,4,idle);
         clock+=6000;
         cal.feed({now:clock,hands:[hand(idle)]});
+        verdictOver(cal);
         visited.push(cal.stepId());
       }
       const note=text(flowRoot(),C.DOM.flowNoteClass)[0];
@@ -1261,12 +1417,22 @@ def payload_of_a_run_where_every_stage_failed(tmp_path) -> dict:
     return run_node(tmp_path, DOM + DRIVER + """
       const cal=calOf();
       cal.start();
+      /* Une main qui **commence** chaque exercice — sinon l'étape attendrait
+         indéfiniment et la séance ne se terminerait jamais (Slice 06) — puis
+         une main qui ne fait rien d'exploitable. Les sept étapes sont donc
+         jouées, et les sept échouent. Les images inutiles sont bien collectées :
+         c'est ce qui écrit `quality`, la clé par laquelle `calibrated` devenait
+         vrai sans la moindre mesure. */
+      const begin={stillness:.9,gapPalms:.65,primaryRatio:.15,secondaryRatio:.15};
       const idle={stillness:.1,primaryRatio:.9,secondaryRatio:.9,cPose:.05,
         xNorm:.42,yNorm:.40};
       for(let i=0;i<7;i+=1){
+        readOn(cal);
+        feed(cal,2,begin);
         feed(cal,4,idle);
         clock+=6000;
         cal.feed({now:clock,hands:[hand(idle)]});
+        verdictOver(cal);
       }
       press(flowRoot(),'apply');
       await new Promise(r=>setImmediate(r));
@@ -1864,3 +2030,486 @@ def test_rule_zero_still_holds_its_four_promises_in_the_new_layout(tmp_path):
     assert result["noteLive"] == "polite"
     assert result["role"] == "dialog" and result["modal"] == "true"
     assert result["label"] == "Calibration Bare Hands" and result["tab"] == "-1"
+
+
+# ---------------------------------------- Slice 06 : lire, puis seulement après
+#
+# Ce qui suit épingle la correction que l'Humain a demandée mot pour mot : « le
+# flux actuel commence à chronométrer pendant que l'utilisateur lit. C'est
+# refusé. » Avant, une étape ouverte était une étape en cours : les vingt
+# secondes partaient à l'affichage du titre, et quelqu'un qui gardait les mains
+# sur les genoux échouait à une épreuve qu'il n'avait jamais commencée.
+#
+# Les cinq phases ne sont pas une décoration : chacune répond à « est-ce que
+# quelque chose est en train de me juger en ce moment ? », et une seule répond
+# oui.
+
+
+def test_the_reading_delay_is_deterministic_and_costs_the_measurement_nothing(tmp_path):
+    """**La phase de lecture, et le fait qu'elle ne coûte rien** (décision 22).
+
+    Trois choses, et la troisième est celle qui compte :
+
+    - la lecture dure `introMs`, ni plus ni moins, et c'est **l'horloge** qui la
+      finit — pas une image, puisque personne n'en envoie pendant qu'on lit ;
+    - pendant tout ce temps la coque n'affiche **aucun** compte à rebours, parce
+      qu'il n'y en a aucun ;
+    - et quand la mesure démarre enfin, elle démarre avec son échéance
+      **entière**. C'est la définition littérale de « le temps de lecture n'est
+      pas du temps de mesure » : trois secondes de lecture ne retirent pas trois
+      secondes à l'exercice.
+    """
+
+    result = run_node(tmp_path, DOM + DRIVER + """
+      const cal=calOf();
+      cal.start();
+      const opened={phase:cal.phase(),meta:deadlineText(flowRoot()),
+        bar:find(flowRoot(),C.DOM.flowProgressClass)[0].children[0].getAttribute('data-at')};
+      /* Une image **pendant** la lecture ne la raccourcit pas, et n'est pas
+         mesurée : elle ne fait qu'entretenir l'écran. */
+      clock+=Math.round(K.DEFAULTS.introMs/2);
+      cal.feed({now:clock,hands:[hand({})]});
+      const half={phase:cal.phase(),
+        bar:find(flowRoot(),C.DOM.flowProgressClass)[0].children[0].getAttribute('data-at'),
+        said:text(flowRoot(),C.DOM.flowNoteClass)[0]};
+      // Une milliseconde avant la fin : toujours en lecture.
+      clock+=K.DEFAULTS.introMs-Math.round(K.DEFAULTS.introMs/2)-1;beat();
+      const justBefore=cal.phase();
+      clock+=2;beat();
+      const armed=cal.phase();
+      /* L'engagement, puis la lecture de l'échéance : elle vaut l'échéance
+         **entière**, pas ce qu'il en resterait si elle avait couru pendant la
+         démonstration. */
+      feed(cal,2,{});
+      const running={phase:cal.phase(),meta:deadlineText(flowRoot())};
+      out({opened,half,justBefore,armed,running,introMs:K.DEFAULTS.introMs});
+    """, name="introDelay")
+
+    # Une étape s'ouvre en lecture, sans échéance et avec une barre à zéro.
+    assert result["opened"]["phase"] == "intro"
+    assert result["opened"]["meta"][1] == "", "aucun compte à rebours à l'ouverture"
+    assert result["opened"]["bar"] == "0.00"
+    # À mi-lecture : toujours en lecture, la barre dit où en est **la lecture**,
+    # et la phrase dit en toutes lettres que rien n'est mesuré.
+    assert result["half"]["phase"] == "intro"
+    assert 0.4 < float(result["half"]["bar"]) < 0.6, result["half"]["bar"]
+    assert "rien n" in result["half"]["said"].lower()
+    assert "mesuré" in result["half"]["said"]
+    # Le délai est déterministe : une milliseconde avant, c'est encore la lecture.
+    assert result["justBefore"] == "intro"
+    assert result["armed"] == "armed"
+    # **Et la mesure démarre avec son échéance entière** (5 000 ms ici).
+    assert result["running"]["phase"] == "running"
+    assert result["running"]["meta"][1] == "5 s restantes", result["running"]["meta"]
+
+
+def test_an_idle_user_is_never_punished_and_a_passing_hand_never_arms_anything(tmp_path):
+    """**Les deux moitiés de la correction**, et elles se tiennent.
+
+    *Rien ne descend tant que l'utilisateur n'a pas commencé.* Mains sur les
+    genoux, pendant bien plus de vingt fois l'échéance : l'étape attend, la
+    consigne reste, aucune étape n'est soldée.
+
+    *Et « commencer » ne s'attrape pas par accident.* Une main qui passe devant
+    l'objectif — elle bouge, elle ne pince pas, son écart pouce-index est celui
+    d'une main ouverte — ne qualifie **aucune** des quatre premières étapes.
+    Sans cette moitié, le défaut d'origine serait simplement décalé de trois
+    secondes : le chronomètre partirait quand même, juste un peu plus tard, et
+    sur un geste que l'utilisateur n'a pas fait.
+    """
+
+    result = run_node(tmp_path, DOM + DRIVER + """
+      const cal=calOf();
+      cal.start();
+      /* Une main qui **passe** : elle dérive vite (donc elle n'est pas posée),
+         ses deux canaux sont grands ouverts (donc elle ne pince pas), et son
+         écart pouce-index est celui d'une main ouverte (donc ce n'est pas un
+         C). Elle est parfaitement suivie — la qualité est bonne : ce n'est pas
+         un défaut de caméra, c'est quelqu'un qui bouge. */
+      const wander=i=>({stillness:.05,primaryRatio:.95,secondaryRatio:.95,cPose:0,
+        gapPalms:5.94,indexReachPalms:1.9,palmX:380+i*6,
+        xNorm:.2+(i%40)*.01,yNorm:.3+(i%30)*.01});
+      const seen=[];
+      /* Les quatre étapes qui doivent attendre **indéfiniment** : repos, C, et
+         les deux pincements (exigence de la slice). */
+      for(let s=0;s<4;s+=1){
+        readOn(cal);
+        const from=cal.stepId();
+        /* Vingt fois l'échéance de mesure, avec une main dans le cadre tout du
+           long : ni image manquante, ni caméra coupée — juste quelqu'un qui ne
+           commence pas. */
+        for(let i=0;i<600;i+=1){clock+=160;cal.feed({now:clock,hands:[hand(wander(i))]});beat()}
+        seen.push({step:from,after:cal.stepId(),phase:cal.phase(),
+          meta:deadlineText(flowRoot()),
+          bar:find(flowRoot(),C.DOM.flowProgressClass)[0].children[0].getAttribute('data-at'),
+          said:text(flowRoot(),C.DOM.flowNoteClass)[0],
+          exits:stepActions(flowRoot()),
+          closes:allButtons(flowRoot()).filter(n=>n.getAttribute('data-flow-close')).length,
+          reported:reportRows().length});
+        skipStep(cal);
+      }
+      out({seen,open:cal.isRunning()});
+    """, name="idleForever")
+
+    assert result["open"] is True, "le parcours est toujours ouvert au bout du compte"
+    assert [row["step"] for row in result["seen"]] == [
+        "neutral", "c_pose", "pinch_primary", "pinch_secondary"]
+    for row in result["seen"]:
+        step = row["step"]
+        # **Rien n'a bougé** : même étape, toujours armée, jamais soldée.
+        assert row["after"] == step, step
+        assert row["phase"] == "armed", step
+        assert row["reported"] == 0, step
+        # Aucun compte à rebours n'a couru, et la barre n'a pas avancé d'un
+        # pixel : il n'y avait rien à faire descendre.
+        assert row["meta"][1] == "", step
+        assert row["bar"] == "0.00", step
+        # RÈGLE ZÉRO, quatrième point : deux sorties de parcours plus la croix
+        # permanente, à chaque instant de cette attente.
+        assert row["exits"] == ["skip", "exit"], step
+        assert row["closes"] == 1, step
+        # Et la phrase dit ce qu'on attend de lui, sans lui reprocher quoi que
+        # ce soit — pas de « aucune main vue » rouge sur quelqu'un qui est là.
+        assert "quand vous voulez" in row["said"].lower(), (step, row["said"])
+        assert "Aucune main" not in row["said"], step
+
+
+def test_each_exercise_starts_on_its_own_signal_and_not_on_a_neighbour_s(tmp_path):
+    """**« Commencer » veut dire quelque chose de précis, étape par étape.**
+
+    Chaque prédicat ne lit que des scalaires déjà publiés et ne réemploie que
+    des seuils qui existent déjà (`band`, recalculée depuis les défauts du
+    moteur, et le seuil d'immobilité du maintien) : aucun modèle de geste n'est
+    inventé, c'est l'exigence de la slice.
+
+    Le test les prend **par la négative d'abord** : le signal du voisin ne doit
+    pas armer. Un pincement pouce-majeur pendant l'étape pouce-index est le cas
+    exact où une définition paresseuse de « l'utilisateur a commencé » ferait
+    partir la mauvaise mesure sur le bon geste.
+    """
+
+    result = run_node(tmp_path, DOM + DRIVER + """
+      const cal=calOf();
+      cal.start();
+      const rows=[];
+      /* Par étape : ce qui **ne doit pas** armer, puis ce qui doit. */
+      const table=[
+        ['neutral',{stillness:.05},{stillness:.9}],
+        // Une main ouverte n'est pas un C : son écart est hors bande.
+        ['c_pose',{gapPalms:5.94},{gapPalms:.65}],
+        // Le majeur qui se ferme n'ouvre pas l'étape du pouce-index.
+        ['pinch_primary',{primaryRatio:.9,secondaryRatio:.15},{primaryRatio:.15}],
+        // Et réciproquement.
+        ['pinch_secondary',{primaryRatio:.15,secondaryRatio:.9},{secondaryRatio:.15}],
+        // Viser part sur le pincement primaire (décision 28), pas sur une main
+        // qui se promène au-dessus du point.
+        ['aim',{primaryRatio:.9,palmX:281,palmY:259},{primaryRatio:.15}],
+        ['drag',{primaryRatio:.9},{primaryRatio:.15}],
+      ];
+      for(const row of table){
+        readOn(cal);
+        // Bien plus que `engageFrames`, et pourtant rien ne s'arme.
+        feed(cal,20,row[1]);
+        const wrong={step:cal.stepId(),phase:cal.phase(),
+          meta:deadlineText(flowRoot())[1]};
+        feed(cal,K.DEFAULTS.engageFrames,row[2]);
+        rows.push([row[0],wrong,cal.phase()]);
+        skipStep(cal);
+      }
+      /* Les deux mains : une seule main **commence** l'exercice (sinon le motif
+         « deux mains nécessaires » serait injoignable), mais ne le réussit
+         pas. */
+      readOn(cal);
+      feed(cal,3,{});
+      const resize={phase:cal.phase(),step:cal.stepId()};
+      out({rows,resize,engageFrames:K.DEFAULTS.engageFrames});
+    """, name="engagement")
+
+    assert result["engageFrames"] >= 1
+    seen = {row[0]: row for row in result["rows"]}
+    assert list(seen) == ["neutral", "c_pose", "pinch_primary", "pinch_secondary",
+                          "aim", "drag"]
+    for step, row in seen.items():
+        # Vingt images du mauvais signal : l'étape attend toujours, et aucune
+        # échéance n'a été armée derrière son dos.
+        assert row[1]["phase"] == "armed", step
+        assert row[1]["step"] == step, step
+        assert row[1]["meta"] == "", step
+        # Le bon signal, lui, démarre la mesure — et il suffit d'`engageFrames`.
+        assert row[2] == "running", step
+    # Une main suffit à **commencer** l'étape à deux mains ; c'est la mesure qui
+    # en exige deux, et son échec le dira.
+    assert result["resize"] == {"phase": "running", "step": "resize"}
+
+
+def test_the_two_pinches_never_look_alike_and_never_answer_for_each_other(tmp_path):
+    """**Décision 26, les étapes 3 et 4.** « Même grammaire, autre doigt » n'a
+    de valeur que si la différence se voit et s'applique.
+
+    À l'écran, les deux étapes montrent deux **silhouettes** différentes : le
+    pouce-index laisse le majeur dressé au-dessus du geste, le pouce-majeur
+    replie l'index et n'a plus aucun doigt levé. Ce sont des postures du
+    vocabulaire partagé (`hand_art`), lues ici par l'attribut que ce module pose
+    précisément pour ça — `data-bh-pose` —, donc sans lire un seul pixel.
+
+    Dans la logique, chaque étape ne compte que **son** canal : pincer du majeur
+    pendant l'étape du pouce-index ne doit ni l'armer ni la faire avancer d'une
+    répétition. Sinon le profil recevrait des seuils mesurés sur l'autre doigt,
+    et le clic droit de l'utilisateur deviendrait son clic gauche.
+    """
+
+    result = run_node(tmp_path, DOM + DRIVER + """
+      const cal=calOf();
+      cal.start();
+      feedUntil(cal,{});                                   // repos
+      feedUntil(cal,{cPose:.9,secondaryRatio:.9});         // C
+      // --- étape 3, pouce-index
+      const primary={step:cal.stepId(),poses:posesOn(flowRoot())};
+      readOn(cal);
+      // Le majeur pince en boucle : ce n'est pas l'étape, rien ne doit bouger.
+      feed(cal,60,i=>({secondaryRatio:i%10<5?.15:.6,primaryRatio:.9}));
+      primary.afterWrongFinger={phase:cal.phase(),step:cal.stepId()};
+      feedUntil(cal,pinching('primaryRatio'));
+      // --- étape 4, pouce-majeur
+      const secondary={step:cal.stepId(),poses:posesOn(flowRoot())};
+      readOn(cal);
+      feed(cal,60,i=>({primaryRatio:i%10<5?.15:.6,secondaryRatio:.9}));
+      secondary.afterWrongFinger={phase:cal.phase(),step:cal.stepId()};
+      feedUntil(cal,pinching('secondaryRatio'));
+      out({primary,secondary,next:cal.stepId()});
+    """, name="twoPinches")
+
+    assert result["primary"]["step"] == "pinch_primary"
+    assert result["secondary"]["step"] == "pinch_secondary"
+    # **Deux dessins, deux silhouettes** : aucune posture n'est partagée.
+    assert result["primary"]["poses"] == ["pinch_primary_open", "pinch_primary_closed"]
+    assert result["secondary"]["poses"] == ["pinch_secondary_open", "pinch_secondary_closed"]
+    assert not set(result["primary"]["poses"]) & set(result["secondary"]["poses"])
+    # Et le doigt de l'autre étape n'arme rien, même répété soixante images.
+    assert result["primary"]["afterWrongFinger"] == {"phase": "armed", "step": "pinch_primary"}
+    assert result["secondary"]["afterWrongFinger"] == {"phase": "armed", "step": "pinch_secondary"}
+    # Le bon doigt, lui, fait avancer le parcours jusqu'à la visée.
+    assert result["next"] == "aim"
+
+
+def test_the_target_step_shows_its_points_only_after_the_reading_and_counts_real_pinches(tmp_path):
+    """**Décisions 24 et 28, l'étape 5.**
+
+    Les points n'apparaissent qu'une fois la consigne lue : demander de viser
+    sous une phrase qu'on est en train de lire, c'est demander de viser avant
+    d'avoir lu. Ils sont **répartis sur la surface utile** — c'est l'exercice
+    spatial, et un seul point toujours au même endroit enseignerait « pincer »
+    au lieu de « viser et cliquer ».
+
+    Et ce qui compte est un **pincement pouce-index** réel, pas une main qui
+    passe au-dessus : la démonstration montre une main qui pince une mire, et
+    l'exercice mesure exactement ce qu'elle montre.
+    """
+
+    result = run_node(tmp_path, DOM + DRIVER + """
+      const cal=calOf();
+      cal.start();
+      feedUntil(cal,{});
+      feedUntil(cal,{cPose:.9,secondaryRatio:.9});
+      feedUntil(cal,pinching('primaryRatio'));
+      feedUntil(cal,pinching('secondaryRatio'));
+      const at=cal.stepId();
+      /* Pendant la lecture : la démonstration est là, **les points ne sont pas
+         posés**. */
+      const reading={phase:cal.phase(),poses:posesOn(flowRoot()),
+        live:find(flowRoot(),C.DOM.flowTargetClass).length,
+        ghosts:ghostsOn(flowRoot()).map(g=>g[2])};
+      readOn(cal);
+      const ready={live:find(flowRoot(),C.DOM.flowTargetClass).length,
+        ghosts:ghostsOn(flowRoot()),aim:cal.aim()};
+      /* Une main qui se promène **sur** le point sans pincer ne vaut rien :
+         ni armement, ni point marqué. */
+      for(let i=0;i<40;i+=1){clock+=16;
+        cal.feed({now:clock,hands:[hand({primaryRatio:.9,palmX:281,palmY:259})]})}
+      const hovered={phase:cal.phase(),aim:cal.aim()};
+      clickOnce(cal);
+      const first={aim:cal.aim(),step:cal.stepId(),
+        ghosts:ghostsOn(flowRoot()).map(g=>g[2]),
+        live:find(flowRoot(),C.DOM.flowTargetClass)[0].style.left};
+      clickOnce(cal);clickOnce(cal);
+      const done={phase:cal.phase(),aim:cal.aim()};
+      verdictOver(cal);
+      out({at,reading,ready,hovered,first,done,after:cal.stepId(),
+        spots:K.AIM_SPOTS,targets:K.DEFAULTS.aimTargets});
+    """, name="aimField")
+
+    assert result["at"] == "aim"
+    # Pendant la lecture : la main qui **pince une mire** est montrée
+    # (décision 28 — jamais un index tendu), et aucun point n'est posé.
+    assert result["reading"]["phase"] == "intro"
+    assert result["reading"]["poses"] == ["pinch_primary_open", "pinch_target"]
+    assert result["reading"]["live"] == 0, "aucune cible sous une consigne qu'on lit"
+    assert result["reading"]["ghosts"] == ["next", "next", "next"]
+    # Une fois lu : un point vivant, et les autres annoncés.
+    assert result["ready"]["live"] == 1
+    assert result["ready"]["aim"] == {"points": 3, "hits": 0, "at": 0}
+    assert [g[2] for g in result["ready"]["ghosts"]] == ["now", "next", "next"]
+    # **Répartis sur la surface utile**, et pas trois fois au même endroit.
+    xs = [int(g[0][:-2]) for g in result["ready"]["ghosts"]]
+    ys = [int(g[1][:-2]) for g in result["ready"]["ghosts"]]
+    assert len(set(xs)) == 3 and len(set(ys)) > 1, (xs, ys)
+    assert min(xs) < 1280 * 0.3 and max(xs) > 1280 * 0.7, xs
+    assert all(0.2 * 720 < y < 0.85 * 720 for y in ys), ys
+    # Survoler n'est pas cliquer : quarante images au-dessus du point, et
+    # l'étape attend toujours.
+    assert result["hovered"] == {"phase": "armed", "aim": {"points": 3, "hits": 0, "at": 0}}
+    # Un pincement réel marque le point, et le suivant s'allume.
+    assert result["first"]["aim"] == {"points": 3, "hits": 1, "at": 1}
+    assert result["first"]["step"] == "aim", "un point touché n'est pas l'étape finie"
+    assert result["first"]["ghosts"] == ["done", "now", "next"]
+    assert result["first"]["live"] == "%dpx" % round(1280 * 0.78)
+    # Les trois points faits, l'étape rend son verdict puis avance.
+    assert result["done"]["phase"] == "result"
+    assert result["done"]["aim"]["hits"] == 3
+    assert result["after"] == "drag"
+    assert result["targets"] == 3 and len(result["spots"]) == 3
+
+
+def test_every_step_shows_the_shared_hand_and_never_two_instructions_at_once(tmp_path):
+    """**Décision 20 et architecture §8.** Les mains de la calibration sont
+    celles du vocabulaire partagé — pas un second jeu de dessins qui dériverait
+    au premier ajustement, avec pour symptôme un utilisateur qui ne reconnaît
+    pas, dans la calibration, la main qu'il a apprise dans l'aide.
+
+    Trois faits, et le deuxième a déjà coûté cher à ce dépôt : la démonstration
+    vit dans la région `demo` que la coque publie ; elle **ne survit pas à son
+    étape** (une main d'une autre consigne fait faire le mauvais geste) ; et
+    elle n'est que de la présentation — elle ne traverse jamais `feed()` et
+    n'atteint aucun profil.
+    """
+
+    result = run_node(tmp_path, DOM + DRIVER + """
+      const cal=calOf();
+      cal.start();
+      const shown=[];
+      const record=()=>shown.push({step:cal.stepId(),
+        poses:posesOn(flowRoot()),
+        inDemo:posesOn(find(flowRoot(),C.DOM.flowDemoClass)[0]),
+        labelled:deep(flowRoot()).filter(n=>n.getAttribute('aria-label')
+          &&String(n.className||'')==='jf-mime').length,
+        captions:text(flowRoot(),'jf-caption'),
+        strokes:deep(flowRoot()).filter(n=>n.getAttribute('data-bh-pose'))
+          .map(n=>n.getAttribute('stroke')),
+        mime:deep(flowRoot()).filter(n=>String(n.className||'')==='jf-mime')
+          .map(n=>n.getAttribute('data-mime'))});
+      for(let i=0;i<7;i+=1){record();skipStep(cal)}
+      const atRecap={poses:posesOn(flowRoot()),step:cal.stepId()};
+      press(flowRoot(),'apply');
+      await new Promise(r=>setImmediate(r));
+      out({shown,atRecap,payload:saved[0]||null,
+        styleSheets:[!!document.getElementById(C.DOM.flowStyleId),
+                     !!document.getElementById(C.DOM.flowStepsStyleId)],
+        separate:C.DOM.flowStyleId!==C.DOM.flowStepsStyleId});
+    """, name="demos")
+
+    poses = {row["step"]: row["poses"] for row in result["shown"]}
+    assert poses["neutral"] == ["rest"]
+    assert poses["c_pose"] == ["wake_c"], "décision 27 : pouce + index forment le C"
+    assert poses["pinch_primary"] == ["pinch_primary_open", "pinch_primary_closed"]
+    assert poses["pinch_secondary"] == ["pinch_secondary_open", "pinch_secondary_closed"]
+    assert poses["aim"] == ["pinch_primary_open", "pinch_target"]
+    # Les deux étapes de la Slice 07 ne montrent encore rien : un centre vide
+    # est honnête, une main qui ment ne l'est pas.
+    assert poses["drag"] == [] and poses["resize"] == []
+    for row in result["shown"]:
+        # **Une seule main à l'écran à la fois** : la démonstration ne survit
+        # pas à l'étape qui l'a posée, et elle vit dans la région `demo`.
+        assert row["inDemo"] == row["poses"], row["step"]
+        # Elle trace en `currentColor` : c'est le crochet de la scène, donc le
+        # bleu de la consigne et le vert bref d'une réussite sans une ligne de
+        # plus.
+        assert set(row["strokes"]) <= {"currentColor"}, row["step"]
+        if row["poses"]:
+            # Annoncée une fois, sur le groupe — pas deux fois pour deux images
+            # du même geste.
+            assert row["labelled"] == 1, row["step"]
+            assert len(row["captions"]) == 1, row["step"]
+            # Deux postures s'alternent, une seule ne s'alterne pas.
+            assert row["mime"] == ["1" if len(row["poses"]) == 2 else "0"], row["step"]
+    # Le récapitulatif ne montre aucune main : il n'y a plus de geste à faire.
+    assert result["atRecap"] == {"poses": [], "step": None}
+    # **La démonstration n'est jamais une entrée** : sept étapes passées, donc
+    # rien de mesuré, et le profil le dit — une main dessinée n'en est pas une.
+    assert result["payload"]["calibrated"] is False
+    for handedness, hand in result["payload"]["hands"].items():
+        assert all(value is None for value in hand.values()), (handedness, hand)
+    # Deux feuilles, deux propriétaires : la coque ne sait rien des exercices.
+    assert result["styleSheets"] == [True, True]
+    assert result["separate"] is True
+
+
+def test_rule_zero_survives_a_phase_that_has_no_deadline_to_announce(tmp_path):
+    """**La question que cette slice pose à la RÈGLE ZÉRO.**
+
+    La règle demande, à tout instant : que quelque chose tourne, quoi, depuis
+    combien de temps, et comment en sortir — et elle interdit un état qui dure
+    pour toujours. `ARMED` n'a **pas d'échéance**, et c'est exprès : en poser
+    une serait un compte à rebours contre quelqu'un qui n'a rien commencé.
+
+    La règle tient quand même, et autrement :
+
+    1. *ça tourne* — le bandeau de phases montre « Prêt » allumé, et la
+       démonstration continue de mimer le geste ;
+    2. *quoi* — le titre, la consigne, et une phrase qui dit exactement ce qu'il
+       faut faire pour démarrer ;
+    3. *depuis combien de temps* — le compteur de séance de la coque continue de
+       compter ; ce qui disparaît est le compte à rebours de **mesure**, parce
+       qu'il n'y a pas de mesure ;
+    4. *comment en sortir* — « Passer cette étape », « Quitter », la croix
+       permanente, Échap.
+
+    Et l'interdiction de l'état sans fin est respectée par sa raison d'être :
+    `ARMED` n'est pas un état de travail. Rien n'y tourne qui puisse se coincer,
+    et l'utilisateur en sort par ses propres commandes, à tout moment.
+    """
+
+    result = run_node(tmp_path, DOM + DRIVER + """
+      const cal=calOf();
+      cal.start();
+      const snap=()=>({phase:cal.phase(),chips:phaseChips(flowRoot()),
+        meta:deadlineText(flowRoot()),
+        said:text(flowRoot(),C.DOM.flowNoteClass)[0],
+        exits:stepActions(flowRoot()),
+        closes:allButtons(flowRoot()).filter(n=>n.getAttribute('data-flow-close')).length,
+        demo:posesOn(flowRoot()).length});
+      const reading=snap();
+      readOn(cal);
+      const armedAt=snap();
+      clock+=30000;beat();
+      const armedLater=snap();
+      feed(cal,2,{});
+      const running=snap();
+      document.fire('keydown',{key:'Escape'});
+      out({reading,armedAt,armedLater,running,escape:!flowRoot()});
+    """, name="ruleZeroArmed")
+
+    reading = result["reading"]
+    armed, later, running = result["armedAt"], result["armedLater"], result["running"]
+    # 1 — ça tourne, et on voit **quelle** étape du geste est en cours.
+    assert reading["chips"] == [["intro", "now"], ["armed", "next"], ["running", "next"]]
+    assert armed["chips"] == [["intro", "done"], ["armed", "now"], ["running", "next"]]
+    assert running["chips"] == [["intro", "done"], ["armed", "done"], ["running", "now"]]
+    # La démonstration est là dans les trois phases : c'est le mouvement qui
+    # remplace le compte à rebours pendant l'attente.
+    assert reading["demo"] and armed["demo"] and running["demo"]
+    # 2 — ce qu'il faut faire, en français, et sans reproche.
+    assert "quand vous voulez" in armed["said"].lower(), armed["said"]
+    assert "posez une main ouverte" in armed["said"]
+    # 3 — le compteur de séance continue ; le compte à rebours de **mesure**
+    # n'apparaît qu'avec la mesure.
+    assert armed["meta"][0].endswith(" s") and armed["meta"][1] == ""
+    assert int(later["meta"][0].split(" ")[0]) > int(armed["meta"][0].split(" ")[0]), (
+        "le compteur de séance avance pendant l'attente : « ça attend » reste vivant"
+    )
+    assert later["meta"][1] == "", "et toujours aucune échéance à annoncer"
+    assert running["meta"][1].endswith("restantes"), running["meta"]
+    # 4 — trois sorties, à chaque instant, y compris pendant l'attente sans fin.
+    for row in (reading, armed, later, running):
+        assert row["exits"] == ["skip", "exit"] and row["closes"] == 1, row["phase"]
+    # Et Échap sort vraiment.
+    assert result["escape"] is True

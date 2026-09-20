@@ -61,6 +61,7 @@ SCRIPT = RUNTIME / "control_center_barehands.js"
 CONTRACTS = RUNTIME / "control_center_barehands_contracts.js"
 TARGET = RUNTIME / "control_center_barehands_target.js"
 CALIBRATION = RUNTIME / "control_center_barehands_calibration.js"
+HAND_ART = RUNTIME / "control_center_barehands_hand_art.js"
 TUTORIAL = RUNTIME / "control_center_barehands_tutorial.js"
 RECORDER = RUNTIME / "control_center_barehands_recorder.js"
 SCENE_INTERACT = RUNTIME / "control_center_scene_interact.js"
@@ -74,6 +75,7 @@ def run_node(tmp_path: Path, source: str, name: str = "tools") -> object:
     script.write_text(
         f"const SCRIPT_PATH={json.dumps(str(SCRIPT))};\n"
         f"const CALIBRATION_PATH={json.dumps(str(CALIBRATION))};\n"
+        f"const HAND_ART_PATH={json.dumps(str(HAND_ART))};\n"
         f"const TUTORIAL_PATH={json.dumps(str(TUTORIAL))};\n"
         f"const RECORDER_PATH={json.dumps(str(RECORDER))};\n"
         f"const TARGET_PATH={json.dumps(str(TARGET))};\n"
@@ -673,6 +675,12 @@ global.esc=v=>String(v).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'
 global.JarvisBarehandsContracts=C;
 global.window.JarvisBarehandsContracts=C;
 global.JarvisBarehandsTarget=require(TARGET_PATH);
+/* Vocabulaire de dessin des mains schematiques : la page l'insere **avant** la
+   calibration, qui le lit pour ses demonstrations d'etape (Slice 06) et refuse
+   de construire un parcours sans lui. Installe ici dans le meme ordre que la
+   page, sans quoi le double ne pourrait pas tomber comme la vraie chose. */
+global.JarvisBarehandsHandArt=require(HAND_ART_PATH);
+global.window.JarvisBarehandsHandArt=global.JarvisBarehandsHandArt;
 /* Parcours de calibration (Slice 08) : la page l'insere entre les contrats
    et le pointeur, qui le lit pour poser `calibrate()` sur sa surface gelee. */
 global.JarvisBarehandsCalibration=require(CALIBRATION_PATH);

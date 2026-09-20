@@ -37,8 +37,8 @@ import subprocess
 import pytest
 
 from test_barehands_tools_settings_js import (  # noqa: E402
-    CALIBRATION, CAMERA, CONTRACTS, RECORDER, SCENE_INTERACT, SCRIPT, TARGET,
-    TIMERS, TUTORIAL, browser,
+    CALIBRATION, CAMERA, CONTRACTS, HAND_ART, RECORDER, SCENE_INTERACT,
+    SCRIPT, TARGET, TIMERS, TUTORIAL, browser,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -59,6 +59,9 @@ def run_node(tmp_path: Path, source: str, name: str = "tuto") -> object:
     script.write_text(
         f"const C=require({json.dumps(str(CONTRACTS))});\n"
         "global.JarvisBarehandsContracts=C;\n"
+        # Le vocabulaire de dessin des mains, installé comme la page le sert :
+        # avant la calibration, qui refuse de construire un parcours sans lui.
+        f"global.JarvisBarehandsHandArt=require({json.dumps(str(HAND_ART))});\n"
         f"const K=require({json.dumps(str(CALIBRATION))});\n"
         f"const T=require({json.dumps(str(TUTORIAL))});\n"
         "const out=v=>process.stdout.write(JSON.stringify(v));\n"
@@ -82,6 +85,7 @@ def run_page(tmp_path: Path, source: str, name: str) -> object:
     script.write_text(
         f"const SCRIPT_PATH={json.dumps(str(SCRIPT))};\n"
         f"const CALIBRATION_PATH={json.dumps(str(CALIBRATION))};\n"
+        f"const HAND_ART_PATH={json.dumps(str(HAND_ART))};\n"
         f"const TUTORIAL_PATH={json.dumps(str(TUTORIAL))};\n"
         f"const RECORDER_PATH={json.dumps(str(RECORDER))};\n"
         f"const TARGET_PATH={json.dumps(str(TARGET))};\n"
@@ -771,7 +775,7 @@ def test_the_way_out_is_permanent_and_does_not_depend_on_what_a_flow_draws(tmp_p
 
       /* La même garantie pour la calibration, qui n'a pas changé d'une ligne :
          c'est la coque qui la porte, donc les deux parcours en héritent. */
-      const cal=K.createCalibration({overlay:K.createFlowOverlay({document,now}),now,
+      const cal=K.createCalibration({overlay:K.createFlowOverlay({document,now}),now,document,
         /* Le chien de garde de l'échéance (Slice 08) : la calibration refuse
            de se construire sans horloge. Inerte ici — ce test regarde la
            sortie, pas l'échéance. */
@@ -780,8 +784,15 @@ def test_the_way_out_is_permanent_and_does_not_depend_on_what_a_flow_draws(tmp_p
           wakeSoft:.2,wakeScore:.5,releaseRatio:.42}});
       cal.start();
       const calibration=[[cal.stepId(),closes(flowRoot()).length]];
+      /* « Passer » solde l'étape, puis son verdict se tient un instant avant
+         que le parcours avance (machine à phases, Slice 06) : l'horloge est
+         poussée à la main, sinon la boucle attendrait un changement d'étape
+         qui n'arrive jamais. */
       while(cal.isRunning()&&allButtons(flowRoot())
-        .some(n=>n.getAttribute('data-flow-action')==='skip'))press(flowRoot(),'skip');
+        .some(n=>n.getAttribute('data-flow-action')==='skip')){
+        press(flowRoot(),'skip');
+        clock+=K.DEFAULTS.resultMs+1;cal.tick();
+      }
       calibration.push(['rapport',closes(flowRoot()).length,
         allButtons(flowRoot()).map(n=>n.getAttribute('data-flow-action')).filter(Boolean)]);
       out({seen,atReport,after,calibration});
@@ -826,7 +837,7 @@ def test_the_two_flows_share_one_shell_and_neither_can_cover_the_other(tmp_path)
     result = run_node(tmp_path, DOM + OBSERVE + """
       const countRoots=()=>body.children.filter(n=>n.id===C.DOM.flowRootId).length;
       const shell=shellOf();
-      const calib=K.createCalibration({overlay:shell,now,save:async()=>{},
+      const calib=K.createCalibration({overlay:shell,now,document,save:async()=>{},
         setInterval:()=>1,clearInterval:()=>{},
         engineDefaults:B_DEFAULTS});
       const tuto=tutoOf({overlay:shell});

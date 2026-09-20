@@ -34,8 +34,8 @@ import subprocess
 import pytest
 
 from test_barehands_tools_settings_js import (  # noqa: E402
-    CAMERA, CALIBRATION, CONTRACTS, RECORDER, SCENE_INTERACT, SCRIPT, TARGET, TIMERS,
-    TUTORIAL, browser,
+    CALIBRATION, CAMERA, CONTRACTS, HAND_ART, RECORDER, SCENE_INTERACT,
+    SCRIPT, TARGET, TIMERS, TUTORIAL, browser,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -76,6 +76,7 @@ def run_page(tmp_path: Path, source: str, name: str) -> object:
     script.write_text(
         f"const SCRIPT_PATH={json.dumps(str(SCRIPT))};\n"
         f"const CALIBRATION_PATH={json.dumps(str(CALIBRATION))};\n"
+        f"const HAND_ART_PATH={json.dumps(str(HAND_ART))};\n"
         f"const TUTORIAL_PATH={json.dumps(str(TUTORIAL))};\n"
         f"const RECORDER_PATH={json.dumps(str(RECORDER))};\n"
         f"const TARGET_PATH={json.dumps(str(TARGET))};\n"

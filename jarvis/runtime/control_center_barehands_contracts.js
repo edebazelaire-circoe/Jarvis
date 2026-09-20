@@ -260,6 +260,14 @@
        jeton pendant tout le parcours. */
     flowRootId:'jarvisFlow',
     flowStyleId:'jarvisFlowStyle',
+    /* **La feuille des exercices**, séparée de celle de la coque (Slice 06).
+       Deux feuilles parce que deux propriétaires : `flowStyleId` habille une
+       coque qui ne sait rien du parcours qu'elle porte — c'est ce qui permet au
+       tutoriel de la réutiliser telle quelle — tandis que celle-ci habille les
+       démonstrations de main, le bandeau de phases et le champ de cibles, qui
+       sont de la calibration et d'elle seule. Les fondre ferait entrer les
+       gestes dans la coque par la bande. */
+    flowStepsStyleId:'jarvisFlowStepsStyle',
     /* **La mise en page d'une étape, et non plus une carte** (refonte Slice 05,
        décisions 18 et 19). Le nom n'a pas bougé parce qu'il n'a jamais désigné
        une boîte : il désigne *l'étape à l'écran*. Ce qu'il porte, si. `jf-step`

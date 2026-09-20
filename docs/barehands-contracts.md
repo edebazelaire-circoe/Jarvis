@@ -2047,7 +2047,9 @@ dépôt refuse (Slice 12) : par-dessus la liste blanche, elle ne pourrait pas
 étapes — et c'est ce qui permettra au tutoriel (Slice 09) de la reprendre sans
 la modifier. `createFlowOverlay({document, now, setInterval, clearInterval})`
 rend `open/step/progress/note/target/buttons/report/expired/elapsedMs/close/isOpen`,
-plus `regions/mount/clear/flash/flashing` depuis la refonte ci-dessous.
+plus `regions/mount/clear/flash/flashing` depuis la refonte ci-dessous, et
+`deadline` depuis la machine à phases (Slice 06). Rien n'a jamais été retiré ni
+renommé : le tutoriel (§13) reçoit la même coque sans une ligne de changement.
 
 #### La coque plein cadre et ses cinq régions (refonte, Slice 05)
 
@@ -2350,6 +2352,160 @@ contrôleur n'est posée que **pendant** un parcours et retirée à sa fin ; le
 contrôleur teste `typeof deps.onMeasure === 'function'` avant de construire quoi
 que ce soit, donc hors calibration le budget d'images est exactement celui
 d'avant — l'acquis mesuré de la Slice 02 est intact.
+
+#### Les phases d'une étape (Slice 06, décisions 22 à 24, architecture §7)
+
+**« Étape ouverte = test en cours » était faux, et l'Humain l'a refusé mot pour
+mot** : *« le flux actuel commence à chronométrer pendant que l'utilisateur
+lit. C'est refusé. »* L'échéance de vingt secondes partait à l'affichage du
+titre, donc la consigne se lisait avec une montre déjà lancée contre soi — et
+quelqu'un qui gardait les mains sur les genoux échouait à une épreuve qu'il
+n'avait jamais commencée.
+
+Une étape traverse maintenant cinq phases, et **une seule chronomètre** :
+
+| Phase | Ce qui tourne | Échéance de mesure |
+| --- | --- | --- |
+| `INTRO` | lecture, démonstration, barre de lecture | **aucune** |
+| `ARMED` | rien ; l'étape attend l'utilisateur | **aucune** |
+| `RUNNING` | mesure, chien de garde, compte à rebours | `stageTimeoutMs` |
+| `RESULT` | le verdict, tenu `resultMs` | **aucune** |
+| `NEXT` | on avance | — |
+
+`createCalibration(...).phase()` rend la phase de l'étape courante, ou `null`
+hors étape (récapitulatif, parcours fermé). Elle est publiée parce que
+« l'étape est ouverte » et « l'étape mesure » sont devenus deux faits
+différents : sans cette porte, un appelant ne pourrait que les deviner.
+
+**Où vit chaque durée.** `introMs` (2 800 ms) est la lecture minimale ;
+`resultMs` (1 100 ms) la tenue du verdict ; `stageTimeoutMs` (20 000 ms) ne
+court qu'en `RUNNING`, armé par `overlay.deadline(ms)` au moment de la
+transition et retiré (`null`) partout ailleurs. La coque n'affiche donc aucun
+compte à rebours tant que rien n'est mesuré : un « 0 s restantes » sous une
+consigne qu'on lit serait un mensonge. Et l'échéance part **entière** — trois
+secondes de lecture ne retirent pas trois secondes à l'exercice.
+
+`overlay.deadline(ms|null)` est la sixième méthode de la coque (après
+`regions/mount/clear/flash/flashing`). Elle existe parce que `step()` pose une
+échéance *et* vide la scène : une étape qui n'arme sa mesure qu'au moment de
+l'engagement ne peut pas repasser par lui sans effacer la démonstration que
+l'utilisateur est en train de regarder. La coque garde la montre, le parcours
+dit quand elle part. Une durée nulle, négative ou non finie est refusée
+(`RangeError`).
+
+**Le chien de garde garde deux emplois**, tous deux invisibles sans lui : c'est
+**lui** qui fait finir `INTRO` (personne ne nourrit une étape pendant qu'on la
+lit — les mains sont justement sur les genoux), et c'est lui qui solde une
+mesure dont les mains ont disparu. D'où la paire dangereuse n° 17 :
+`watchdogMs < introMs`, sans quoi c'est la cadence de la montre qui décide du
+moment où l'exercice s'arme.
+
+**Ce qui compte comme « l'utilisateur a commencé ».** Un prédicat par étape,
+déterministe, qui ne lit que des scalaires déjà publiés par la couture
+`deps.onMeasure` et ne réemploie que des seuils qui existent déjà — `band`
+(recalculée depuis les défauts du moteur par `wakeBandOf`) et le seuil
+d'immobilité du maintien. **Aucun modèle de geste n'est inventé, aucun
+algorithme de reconnaissance n'est touché.**
+
+| Étape | Engage quand | Signal lu |
+| --- | --- | --- |
+| `neutral` | la main est posée | `stillness >= 0.35` |
+| `c_pose` | l'écart pouce-index entre dans la bande de réveil | `gapPalms ∈ [band.gapMin, band.gapMax]` |
+| `pinch_primary` | le canal primaire se ferme | `primaryRatio < band.releaseRatio` |
+| `pinch_secondary` | le canal secondaire se ferme | `secondaryRatio < band.releaseRatio` |
+| `aim` | un pincement pouce-index (décision 28) | `primaryRatio < band.releaseRatio` |
+| `drag` | idem | `primaryRatio < band.releaseRatio` |
+| `resize` | une main sûre est vue | `hands.length >= 1` |
+
+Il faut `engageFrames` images **consécutives** ; une image qui ne qualifie pas
+remet le compteur à zéro, donc une main qui passe devant l'objectif
+n'accumule pas. Le `c_pose` s'arme sur l'écart seul et **pas** sur le score,
+délibérément : exiger le score rendrait injoignable l'échec le plus instructif
+de l'étape — un C que le majeur étouffe — puisque l'étape ne démarrerait
+jamais. Le `resize` s'arme sur une main et pas deux, pour que
+`barehands_stage_needs_two_hands` reste joignable dans le seul scénario qui
+porte son nom.
+
+**L'image qui arme n'est pas mesurée.** Le seau part vide à l'entrée en
+`RUNNING`, ce qui rend « la mesure commence quand l'utilisateur a commencé »
+littéralement vrai — et garde `barehands_stage_no_hand` joignable pour une
+étape qui s'arme puis perd ses mains, c'est-à-dire le seul cas où « montrez vos
+mains à la caméra » est le conseil utile.
+
+**RÈGLE ZÉRO pendant une phase sans échéance.** La règle interdit un état qui
+dure pour toujours *parce qu'un utilisateur ne peut pas distinguer « ça
+attend » de « c'est bloqué »*. `ARMED` porte cette distinction autrement :
+la démonstration continue de mimer le geste (*ça tourne*), le bandeau de phases
+montre « Prêt » allumé et « Mesure » éteint (*quoi*), le compteur de séance de
+la coque continue de compter (*depuis combien de temps*), la phrase dit en
+toutes lettres que la mesure ne démarre qu'au moment où l'on commence, et trois
+sorties restent à l'écran — « Passer cette étape », « Quitter », la croix
+permanente, plus Échap (*comment en sortir*). Surtout, `ARMED` **n'est pas un
+état de travail** : rien n'y tourne qui puisse se coincer, et la seule chose
+qui en sort est un geste de l'utilisateur ou l'une de ses commandes. Y poser
+une échéance serait un compte à rebours contre quelqu'un qui n'a rien commencé.
+
+#### Les exercices 1 à 5 et ce qu'ils montrent (Slice 06, décisions 20, 27, 28)
+
+Chaque étape monte sa démonstration dans la région `demo` de la coque, après
+`step()` — qui vide la scène — et jamais avant : une main qui survivrait à son
+étape ferait faire à l'utilisateur le geste d'une autre consigne. Les postures
+viennent **toutes** de `control_center_barehands_hand_art.js` (§15) ; le lien
+étape → posture vit dans la calibration, jamais dans le vocabulaire, qui ne
+connaît pas les gestes.
+
+| Étape | Postures | Ce qui doit se lire |
+| --- | --- | --- |
+| Main au repos | `rest` | une main ouverte, immobile |
+| Posture de réveil | `wake_c` | **pouce et index seuls** dessinent le C (décision 27) |
+| Pincement pouce-index | `pinch_primary_open` ↔ `pinch_primary_closed` | fermer et rouvrir, le majeur dressé hors du geste |
+| Pincement pouce-majeur | `pinch_secondary_open` ↔ `pinch_secondary_closed` | même grammaire, index replié, aucun doigt levé |
+| Viser et cliquer | `pinch_primary_open` ↔ `pinch_target` | on **pince** la cible, jamais un index tendu (décision 28) |
+
+L'alternation des trois dernières est une **animation CSS**, pas une minuterie :
+rien de plus à fermer à la sortie, et `prefers-reduced-motion` l'arrête en
+posant les deux postures côte à côte plutôt qu'en supprimant l'information —
+figé, un mime ne montrerait qu'une des deux moitiés de « fermer, rouvrir ».
+L'invariant n° 1 du vocabulaire (ouvrir et fermer un pincement ne bouge **que**
+les deux doigts qui pincent) est ce qui rend l'empilement des deux postures
+légitime.
+
+La démonstration est de la **présentation seule** (architecture §8) : elle ne
+traverse jamais `feed()`, `KEEP` ne la connaît pas, et rien de ce qu'elle
+montre n'atteint un profil.
+
+**L'étape de visée** pose `aimTargets` (3) points répartis sur la surface utile
+de la fenêtre (`AIM_SPOTS`, en fractions — la même consigne doit valoir sur un
+portable et sur un écran large). Ils n'apparaissent qu'à la **fin de la
+lecture** (décision 24) : demander de viser sous une phrase qu'on est en train
+de lire, c'est demander de viser avant d'avoir lu. Un seul point est vivant à
+la fois (`jf-target`, celui de la coque, qui pulse) ; les autres sont annoncés
+en pointillés (`jf-ghost`) et passent au trait plein une fois touchés — le
+pointillé dit une région visée, le plein un fait constaté, exactement comme la
+mire de `pinch_target` et l'icône d'outil absente de la palette. Rien ne
+verdit durablement : le vert reste l'instant d'une reconnaissance (décision 21).
+
+Si l'échéance tombe alors qu'**au moins un** point a été touché, l'étape est
+tenue pour réussie : un déplacement de clic a bien été mesuré, et le déclarer
+raté ferait retomber la tolérance clic/glissement de quelqu'un qui a
+correctement cliqué sur le défaut d'usine. Les règles de repli ne changent pas
+pour autant — une visée sans **aucun** clic échoue exactement comme avant, et
+une étape ratée laisse toujours ses clés nulles (décision 31).
+
+**Deux feuilles de style, deux propriétaires.** `jarvisFlowStyle` habille la
+coque, qui ne sait rien du parcours qu'elle porte — c'est ce qui permet au
+tutoriel de la réutiliser telle quelle. `jarvisFlowStepsStyle`
+(`DOM.flowStepsStyleId`) habille les démonstrations, le bandeau de phases et le
+champ de cibles, qui sont de la calibration et d'elle seule. Les fondre ferait
+entrer les gestes dans la coque par la bande.
+
+**Ce que `createCalibration` exige en plus depuis cette slice** : `document`
+(le parcours dessine) et `control_center_barehands_hand_art.js` inséré avant
+lui. Les deux sont refusés absents à la construction (`RangeError`), comme la
+coque et l'horloge : une calibration qui s'ouvrirait sans eux montrerait une
+consigne écrite au-dessus d'un centre vide, et « formez un C » ne dirait jamais
+lequel.
+
 
 ## 11. Adaptateurs
 

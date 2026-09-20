@@ -4488,6 +4488,11 @@ try{
     if(calibration)return calibration;
     calibration=CALIB.createCalibration({
       overlay:shell(),now:()=>Date.now(),
+      /* Le parcours dessine maintenant ses démonstrations de main (Slice 06),
+         donc il lui faut un `document` — la **même** couture que la coque, et
+         pour la même raison : un module de page qui lit un global qu'il n'a pas
+         déclaré ne se teste pas. `createCalibration` le refuse absent. */
+      document,
       /* L'horloge du chien de garde, la **même** que celle de la coque : une
          étape que plus aucune image ne nourrit expire quand même (RÈGLE ZÉRO).
          `createCalibration` la refuse absente, donc l'oublier ne se découvre
