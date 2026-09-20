@@ -22,18 +22,26 @@ Base : `origin/main` @ `a949f40` — le SHA exact revu par le handoff. Branche `
 | 07A — pratique de fenêtre réelle, D4 | `a14b450` | 513 / 21 |
 | 07 — correction d'affichage par l'agent 0 | `1912d91` | 514 / 21 |
 | 07B — tutoriel retiré, commande aliasée | `fa74bdd` | 502 / 21 |
+| 08 — intégration, migrations, docs, checklist | `0bd22b3` | 505 / 21 |
 
 Chaque chiffre a été **re-mesuré par l'agent 0** après le rendu de la slice, en deux lots au premier plan, jamais repris d'un rapport.
 
 ### Dette héritée de `main`, à ne pas imputer à cette tâche
 
-Trois foyers, **23 échecs**, tous vérifiés à l'identique à `a949f40` dans un worktree détaché — donc présents sur `origin/main` avant la première écriture de cette tâche. Aucun n'est réparé ici.
+Six foyers, **32 échecs**, tous vérifiés à l'identique à `a949f40` dans un worktree détaché — donc présents sur `origin/main` avant la première écriture de cette tâche. Aucun n'est réparé ici.
 
 | Fichier | Échecs | Vérifié |
 | --- | --- | --- |
 | `tests/unit/test_display_mcp.py` | 4 | 2026-09-20, worktree détaché |
 | `tests/unit/test_scene_transport_client.py` | 4 | 2026-09-20, worktree détaché |
 | `tests/unit/test_scene_contracts.py` | 15 | 2026-09-20, worktree détaché |
+| `tests/unit/test_scene_user_lifecycle.py` | 5 | 2026-09-20, worktree détaché |
+| `tests/unit/test_scene_artifacts.py` | 2 | 2026-09-20, worktree détaché |
+| `tests/unit/test_scene_service.py` | 2 | 2026-09-20, worktree détaché |
+
+Les six foyers relèvent du même domaine : l'autorité de la scène et les droits d'archivage du `brain`. Ils ressemblent à une seule régression non traitée, pas à six.
+
+**L'inventaire de l'agent 0 a été faux deux fois.** D'abord à 8 échecs, complété à 23 par la Slice 07A, puis à 32 par la Slice 08 — qui a balayé 43 fichiers adjacents au lieu des seuls fichiers suspects et a vérifié les neuf nouveaux à `a949f40`, comme demandé. À retenir pour la prochaine tâche : une dette héritée se mesure en balayant large **une fois**, au début, pas en ajoutant des foyers au fil des découvertes.
 
 Le troisième foyer a été repéré par l'agent de la Slice 07A, qui l'a constaté en remisant son travail ; l'agent 0 l'a re-vérifié à `a949f40` plutôt qu'à la tête de branche. Il ne figurait dans aucun inventaire antérieur. Échantillon : `test_revision_is_strictly_monotonic_and_patches_are_exact_deltas` attend `APPLIED` et reçoit `REJECTED_AUTHORITY` — c'est le domaine Python de la scène, hors du périmètre Bare Hands.
 
