@@ -1008,6 +1008,11 @@
     tool:TOOL_DEFAULT,
     assistance:0.5,           // assistance de visée, bornée et sûre
     sensitivity:1,            // divise `clickSlopPx`/`dragSlopPx` : 1 = défauts du moteur
+    /* **Compatibilité, plus personne ne l'écrit** (Slice 07B). Le parcours de
+       tutoriel est retiré ; ce champ ne porte plus qu'un fait historique, et il
+       reste dans le schéma pour ne pas imposer une montée de version à trois
+       fichiers pour un seul booléen. Il n'a plus de case à l'écran. Condition
+       de suppression : `docs/legacy/barehands-tutorial-retirement.md`. */
     tutorialSeen:false,
     calibrationEnabled:true,  // décision 27 : la calibration reste optionnelle
     diagnostics:false,        // architecture §12 : lecture à la demande

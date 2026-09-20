@@ -85,12 +85,10 @@ plus tôt n'est même pas un module Bare Hands : c'est
 `control_center_scene_interact.js`, inséré bien avant, et une levée nue y
 blanchissait le Control Center entier.
 
-(`…_BAREHANDS_TUTORIAL_JS__` est arrivé à la Slice 09 : le parcours de
-tutoriel. Il lit les contrats **et reprend la coque** de la calibration, donc
-il vient après les deux ; le pointeur le lit pour poser
-`JarvisBarehands.tutorial()` et `.exitOverlay()` sur sa surface gelée, donc il
-vient avant lui. Même raison, même conséquence : servi trop tard, la page casse
-à l'insertion.)
+(`…_BAREHANDS_TUTORIAL_JS__` est arrivé à la Slice 09 et **reparti à la
+Slice 07B** : le parcours de tutoriel a été retiré, son module supprimé, son
+repère avec. L'enregistreur suit donc désormais directement la calibration.
+Voir § 13.)
 
 (`…_BAREHANDS_CALIBRATION_JS__` est arrivé à la Slice 08 : le parcours de
 calibration et la coque de surimpression. Il lit les contrats et **se fait
@@ -309,14 +307,15 @@ Trois blocs en sont sortis et ne doivent pas y revenir :
 |---|---|---|
 | interrupteur maître `#f_barehands` et bandeau `#barehandsLifecycle` | le contrôle de la barre du haut (décision 1) | `enabled` — écrit, relu, normalisé |
 | section **Outils** `#barehandsTools` | la palette de gauche de la Slice 03 | `tool` — `JarvisBarehands.tool()` inchangé |
-| section **Tutoriel** `#barehandsTutorial` | rien : la calibration enseigne (décisions 10 et 17) | `tutorialSeen` — `JarvisBarehands.tutorialState()` inchangé |
+| section **Tutoriel** `#barehandsTutorial` | rien : la calibration enseigne (décisions 10 et 17) | `tutorial_seen` — champ de compatibilité, § 13 |
+| case **« Tutoriel déjà vu »** `#bh_tutorialSeen` (Slice 07B) | rien : le parcours qu'elle cochait n'existe plus | `tutorial_seen` — persisté, plus écrit |
 
 **La propriété de l'écran a changé de main ; celle de la donnée, non.**
 `SCHEMA_VERSION = 2` de `barehands_test_mode.py` ne bouge pas, les trois champs
-restent écrits et relus, et la migration de la commande `tutorial` appartient à
-la Slice 07. Ce qui reste dans l'onglet : l'état, les assets, la dernière
-commande vocale, les sept réglages persistants, la calibration, l'enregistrement
-de diagnostic, et le bloc de gestes brut — que la Slice 04 emportera.
+restent écrits et relus. La migration de la commande `tutorial` a été faite à
+la **Slice 07B** : alias déprécié vers la calibration, § 13. Ce qui reste dans
+l'onglet : l'état, les assets, la dernière commande vocale, les six réglages
+encore dessinés, la calibration et l'enregistrement de diagnostic.
 
 Les sections que le menu sait viser sont nommées une seule fois, dans `SECTION`
 de `control_center_barehands.js`, et publiées sur la surface gelée : un appelant
@@ -1733,7 +1732,7 @@ partiel, et rend toujours une valeur complète et bornée :
 | `tool` | `pointer` | `TOOLS` installés | § 8 |
 | `assistance` | `0.5` | 0 – 1 | portée d'assistance = `targetAssistPx × 2 × assistance` |
 | `sensitivity` | `1` | 0,25 – 4 | **divise** `clickSlopPx` et `dragSlopPx` |
-| `tutorialSeen` | `false` | — | persisté ; **aucun parcours ne le lit encore** (Slice 09) |
+| `tutorialSeen` | `false` | — | persisté ; **compatibilité** — plus écrit ni dessiné depuis la Slice 07B (§ 13) |
 | `calibrationEnabled` | `true` | — | décision 27 ; **lu par la Slice 08** : décoché, le bouton « Calibrer… » est grisé et `JarvisBarehands.calibrate()` refuse |
 | `diagnostics` | `false` | — | §12 : lecture à l'écran (`jh-diag`), présente ou **absente** de l'arbre |
 
@@ -1748,11 +1747,14 @@ valeur unique, sans exception ni test rouge. Même classe que `MIN_SIZE`/
 `calibrationEnabled` est **vivant depuis la Slice 08** : décoché, le bouton
 « Calibrer… » est grisé avec son motif et `JarvisBarehands.calibrate()` refuse
 `barehands_calibration_disabled` — c'est la décision 27 rendue exécutable.
-`tutorialSeen` traverse toujours la route, le fichier et la normalisation sans
-qu'aucun parcours ne le lise (Slice 09) ; l'onglet garde pour lui seul
-l'encadré qui l'énonce, plutôt qu'un bouton qui ne ferait rien — un contrôle
-inerte se lit comme une panne, une phrase se lit comme une attente. Tous les
-autres sont **vivants** :
+`tutorialSeen` traverse toujours la route, le fichier et la normalisation, et
+**plus personne ne l'écrit** depuis la Slice 07B : le parcours qu'il décrivait a
+été retiré. Sa case a quitté l'onglet avec lui — une case qui interroge
+l'utilisateur sur l'achèvement d'un parcours inexistant n'est pas un réglage.
+Il reste au schéma pour ne pas imposer une montée de version à trois fichiers
+pour un seul booléen inerte (§ 13,
+`docs/legacy/barehands-tutorial-retirement.md`). Tous les autres sont
+**vivants** :
 `applyToEngine(settings)` est le seul endroit qui les porte au moteur, et un
 réglage qui n'y trouverait pas sa ligne n'aurait pas sa place dans la table.
 
@@ -2609,8 +2611,8 @@ déclenchent ; test de parité) :
 | `activate` | `barehands_activate` | `JarvisBarehands.activate()` | `active` | vivant |
 | `deactivate` | `barehands_deactivate` | `JarvisBarehands.sleep()` | `sleep` **ou** `off` | vivant |
 | `calibrate` | `barehands_calibrate` | `JarvisBarehands.calibrate()` | — (confirmation) | **vivant** (Slice 08) |
-| `tutorial` | `barehands_tutorial` | `JarvisBarehands.tutorial()` | — (confirmation) | **absent** (Slice 09) |
-| `exit_overlay` | `barehands_exit_overlay` | `JarvisBarehands.exitOverlay()` | — (confirmation) | **absent** (Slice 09) |
+| `tutorial` | `barehands_tutorial` | `JarvisBarehands.tutorial()` | — (confirmation) | **alias déprécié** vers la calibration (Slice 07B, § 13) |
+| `exit_overlay` | `barehands_exit_overlay` | `JarvisBarehands.exitOverlay()` | — (confirmation) | **vivant** (Slice 09) |
 
 **Un ensemble d'états de fin, pas un état unique.** `sleep()` ne fait rien hors
 d'`ACTIVE` : depuis `off` — l'état de **tout onglet fraîchement ouvert** — la
@@ -2735,245 +2737,132 @@ dates. Un reçu à identifiant **hors forme** laisse lui aussi sa ligne
 (`id: null`, `id_chars`) : sans elle, l'attaque la plus grossière était la seule
 invisible, alors qu'un identifiant bien formé mais forgé se voyait.
 
-## 13. Tutoriel (décisions 6 et 26, Slice 09)
+## 13. Tutoriel — retiré, et ce qui reste de son nom (décisions 10 et 17, Slice 07B)
 
-> **Deux parcours, une coque.** Le tutoriel ne redessine rien : il reçoit la
-> coque du § 11 construite, exactement comme `createCalibration` la reçoit, et
-> n'appelle que son API publiée. C'est la décision 26 rendue littérale — une
-> coque qui aurait dû changer pour accueillir le second parcours aurait prouvé
-> que les deux se ressemblaient, pas qu'ils la partageaient.
+> **Il n'y a qu'un parcours guidé : la calibration.** Le tutoriel séparé a été
+> retiré. Son module (`control_center_barehands_tutorial.js`, dix étapes) est
+> **supprimé**, son insertion dans la page aussi, et aucun global ne le publie
+> plus. Ce n'est pas une désactivation : il n'existe plus de code capable de
+> construire une seconde surimpression, ce que l'architecture §9 exige en
+> toutes lettres — « ne jamais garder deux parcours ». Une coquille de
+> compatibilité qui aurait gardé `createTutorial` aurait laissé la seconde
+> machine à états **constructible**, c'est-à-dire vivante.
 
-`jarvis/runtime/control_center_barehands_tutorial.js`
-(`window.JarvisBarehandsTutorial`). Inséré après la calibration, avant le
-pointeur.
+Ce que la Slice 09 avait construit ici — dix étapes, la liste blanche
+d'observation, `assertTeachingOnly`, les deux paires dangereuses, le
+récapitulatif — est parti avec le module. La calibration (§ 10) enseigne
+désormais : six exercices et un rapport, et ses cinq premiers montrent le geste.
 
-**Ses deux levées de chargement sont contenues, et le pointeur le lit
-défensivement.** La page servie n'a qu'**une** balise `<script>` : une levée au
-chargement d'un module avorte tout ce qui suit, et une lecture directe d'un
-global absent lève tout autant. Ce module attrape donc les siennes (contrats
-absents, garde de forme refusée), journalise
-`barehands.tutorial_not_installed` en nommant la cause, et **ne s'installe
-pas** — ni le global, ni l'export node, et sans remplacer un module qui
-marchait. C'est l'idiome du canal de commandes (§ 12), pas celui de la
-calibration : celle-ci ne peut manquer que par une erreur d'insertion, alors
-que celui-ci peut aussi refuser de s'installer parce que son schéma a fui.
+### L'alias déprécié
 
-Absent, `tutorial()` **refuse avec un code** (`barehands_tutorial_not_installed`)
-et l'onglet le dit ; `exitOverlay()`, qui n'a pas besoin de ce module, continue
-de fermer une calibration ; et le reste de Bare Hands est intact.
+**Le nom `tutorial` reste au vocabulaire**, et cela relève d'un arbitrage, pas
+d'un oubli. Il est miroité sous une assertion de parité qui tourne **au
+chargement du module** en trois endroits :
 
-**Les dix étapes, ce qu'elles enseignent et comment elles se constatent.**
-Chacune réussit, se passe ou se manque **seule** ; rien n'est enregistré, et le
-récapitulatif dit laquelle.
+| Fichier | Table |
+|---|---|
+| `jarvis/runtime/control_center_barehands_commands.js` | `ENTRY_POINTS`, `COMMANDS` |
+| `jarvis/domain/barehands_command.py` | `COMMANDS` |
+| `jarvis/runtime/barehands_mcp.py` | `TOOL_NAMES`, `TOOL_COMMANDS`, assertion en fin de module |
 
-| Étape | Ce qu'elle enseigne | Comment elle est constatée |
-|---|---|---|
-| `wake` | la posture en C, décision 5 | `lifecycle === 'active'` |
-| `target` | l'aperçu de cible, décisions 3 et 24 | au moins une candidate résolue |
-| `click_primary` | le clic pouce-index, décision 20 | une interaction `click` |
-| `click_secondary` | le clic droit pouce-majeur, décisions 21-22 | une interaction `context` |
-| `content` | BODY est du contenu, décision 8 | un `scroll`, ou un glissement **sans** objet |
-| `object_drag` | déplacer une étoile, décision 13 | un glissement **portant** un objet |
-| `frame_move` | bord/coin déplacent le cadre, décisions 9-10 | une interaction `move` |
-| `frame_resize` | deux zones à deux mains, décisions 11 et 15-18 | une interaction `resize` |
-| `tools` | Outils ≠ Réglages, décision 25 | l'outil a changé, ou le bouton « J'ai compris » |
-| `exit` | les trois sorties | le bouton « Terminer le tutoriel » |
+Le retirer est une rupture coordonnée sur trois fichiers plus leurs tests, et
+une désynchronisation fait **échouer l'import** du serveur MCP. L'alias tient le
+contrat *et* l'exigence produit : une seule surface visible.
 
-Les deux dernières **expliquent** au lieu de mesurer (`manual: true`), et le
-récapitulatif l'écrit (« lu » plutôt que « fait ») : fabriquer une mesure là où
-il n'y a pas de geste à constater serait le faux succès que ce dépôt refuse.
-Une étape peut toujours être **passée** — la scène peut n'avoir ni étoile ni
-cadre à manipuler, et un parcours qu'on ne peut pas traverser est un cul-de-sac.
+**Il ouvre la calibration, et il le dit.** Le canal rapporte ce que la page
+constate, jamais ce qu'on lui a demandé (§ 12) ; un alias qui rendrait `{ok:true}`
+nu ferait dire à JARVIS « j'ai lancé le tutoriel » devant une calibration.
+`JarvisBarehands.tutorial()` décore donc la confirmation de `startCalibration()`
+de `{deprecated:true, reason}`, où `reason` est :
 
-**Trois sorties, à toutes les étapes**, et la première est désormais tenue par
-la **coque** plutôt que par le parcours : une croix permanente dans le coin de
-la carte (`.jf-close`, `data-flow-close`, `aria-label` « Quitter ce
-parcours »), la touche Échap, et `JarvisBarehands.exitOverlay()` que le canal
-du § 12 appelle sur « ferme la surimpression ».
+> Commande dépréciée : le parcours de tutoriel a été retiré, c'est la
+> calibration qui a été ouverte.
 
-La croix est posée **hors de `actions`**, que `buttons()` vide à chaque étape :
-« on peut toujours quitter » dépendait sinon de ce que le parcours pensait à
-dessiner, et le rapport de la calibration — qui n'offre que « Appliquer » et
-« Annuler » — le démontrait. Les deux parcours en héritent sans changer une
-ligne, ce qui est la raison d'être de la coque partagée. La coque dit **quelle**
-sortie a servi (`escape` / `fermeture`), et le parcours le journalise : sans
-cela une fermeture par la croix se lirait « échap », et personne ne saurait
-quelle sortie les gens utilisent.
+**Un reçu de succès peut désormais porter un `reason`.** Jusqu'ici il ne portait
+que la cause d'un refus. Aucun contrat n'a eu à bouger : `parse_receipt` ne
+réservait `code` qu'aux refus et acceptait déjà `reason` pour toute issue. Le
+canal **recopie** cette phrase, bornée à 200 caractères comme
+`MAX_REASON_CHARS` ; il n'en fabrique aucune, et un parcours muet laisse
+`reason` nul. Le courtier la renvoie dans son corps 200, et `barehands_mcp` la
+colle à sa phrase d'issue : le cerveau lit *« Fait. Commande dépréciée : … c'est
+la calibration qui a été ouverte. »*
 
-**Le tutoriel n'écrit jamais de paramètre de calibration, et c'est structurel.**
-Trois gardes, qui ne se doublent pas :
+**Il réveille, contrairement à l'ancien `startTutorial()`.** Celui-ci ne
+réveillait délibérément pas : sa première étape *était* le geste de réveil.
+Cette étape n'existe plus, et ce qui s'ouvre maintenant est une calibration, qui
+ne peut rien mesurer sans voir des mains. Garder la non-veille protégerait une
+garantie sans objet et ferait refuser `barehands_calibration_no_camera` à toute
+commande vocale `tutorial`.
 
-1. `createTutorial` n'accepte qu'une **liste blanche** de dépendances —
-   `overlay`, `options`, `now`, `log`, `onDone`, `onExit`, `setInterval`,
-   `clearInterval`, `frames`, `observe` — et refuse **tout autre nom** à la
-   construction, avec le code `barehands_tutorial_cannot_write_profile`. Une
-   Slice ultérieure qui brancherait un écrivain de profil casse à la
-   construction, qu'elle l'appelle `save` ou `persist`. C'était une liste
-   noire de sept noms jusqu'à la Slice 10 : elle ne tenait que contre les
-   noms qu'on avait pensé à écrire, dans un module dont `readObservation`
-   argumente lui-même qu'une liste blanche vaut mieux. Aucune des dix
-   dépendances permises ne peut transporter une écriture.
-2. Le module ne nomme **aucun** chemin vers le profil : ni `toProfilePayload`,
-   ni `normalizeProfile`, ni la route. Un test le lit dans la source.
-3. Le tutoriel n'emprunte pas la couture `deps.onMeasure` du contrôleur
-   (décision 32) : ce qu'il reçoit est une **observation** construite par la
-   page. La couture de mesure reste donc **fermée** pendant tout le tutoriel, et
-   le budget d'images est exactement celui d'avant. Et c'est **relisible** :
-   `JarvisBarehands.measuring()` lit la couture elle-même, pas un drapeau tenu
-   à côté — sans elle, « le tutoriel ne mesure pas » et « le tutoriel mesure en
-   silence » s'écrivaient pareil à l'écran comme à la console. Même règle que
-   `engine()` à la Slice 07, appliquée à une garantie de **non**-mesure.
+**Ses refus gardent le nom de ce qui a refusé** — `barehands_calibration_disabled`,
+`barehands_calibration_no_camera` — parce que c'est la calibration qui a refusé.
+Les renommer en `barehands_tutorial_*` cacherait lequel des parcours a échoué.
+Un refus n'est **pas** décoré : seule une confirmation porte la dépréciation.
 
-**Ce qu'une étape peut constater, et rien d'autre.** `readObservation` est une
-liste blanche : `{now, lifecycle, tool, targetPreview, targets, hands,
-interactions[]}`, où une interaction est réduite à
-`{type, channel, onObject, axes}` — `onObject` est un **booléen**, jamais
-l'identifiant. `assertTeachingOnly` tourne au **chargement du module** et
-présente à chaque clé une suite de points, une image en base64 et un objet
-libre : rien n'en ressort. Même idiome qu'`assertDerivedOnly` (§ 10), pilotée
-par le schéma pour la même raison.
+L'outil MCP `barehands_tutorial` garde son nom et change sa description : elle
+annonce la dépréciation, nomme `barehands_calibrate` comme l'outil à préférer,
+et prévient que les refus portent des codes en `barehands_calibration_*`.
 
-**`tutorialSeen` est lu, et voici ce qu'il veut dire.** « Cet utilisateur a
-traversé le tutoriel au moins une fois **jusqu'à son récapitulatif** » — pas
-« il a réussi » (passer une étape reste vu), pas « on le lui a proposé »
-(quitter au milieu n'écrit rien, le récapitulatif n'étant pas atteint). Il ne
-déclenche **aucun** lancement automatique. La section Tutoriel de l'onglet,
-qu'il pilotait, a été retirée à la Slice 02 (décisions 10 et 17) ; le champ
-reste écrit et reste lisible par `tutorialState()`, et la migration de la
-commande `tutorial` appartient à la Slice 07. Il s'écrit par la porte unique des réglages
-(`saveSettings`), donc il est normalisé, borné et persisté comme les huit
-autres, et un échec d'écriture est dit **dans la coque**, seule surface visible
-à cet instant. La case « Tutoriel déjà vu » le décoche.
+Plan de retrait complet et conditions de suppression :
+`docs/legacy/barehands-tutorial-retirement.md`.
 
-Il ne peut pas prendre la forme que `calibrated` a prise au § 10 (vrai sans
-qu'une mesure ait eu lieu) : son seul écrivain est `onDone`, et `onDone` n'est
-appelé qu'à l'arrivée sur le récapitulatif.
+### `tutorial_seen` : champ de compatibilité
 
-**Deux coutures nourrissent le parcours, et aucune n'est de trop.**
+Le réglage persisté (§ 9, `SCHEMA_VERSION = 2`) **reste au schéma et n'est plus
+écrit par personne**. Il ne dit plus que « cet utilisateur avait traversé
+l'ancien tutoriel avant son retrait », et rien ne le lit pour décider quoi que
+ce soit — il ne déclenchait déjà aucun lancement automatique. **Sa case
+« Tutoriel déjà vu » a quitté l'onglet** : une case qui interroge l'utilisateur
+sur l'achèvement d'un parcours qui n'existe plus n'est pas un réglage.
 
-1. **La cadence des images** — `deps.frames(fn)`, que la page branche sur
-   `interactionView.afterFrame(fn)`, appelée à la fin de `hover`, là où
-   `runCaptures` vient de ranger les interactions de l'image. Elle existe
-   parce qu'`interactions()` ne décrit qu'un **instant** : elle est vidée à
-   chaque image, donc un lecteur échantillonné à la seule minuterie raterait
-   la quasi-totalité des clics — le tutoriel aurait demandé un geste que
-   l'utilisateur aurait fait sans que rien ne l'enregistre. Elle ne transporte
-   **aucun argument** (ce qu'un lecteur a le droit de constater, il va le
-   chercher par les portes publiques) et ne coûte rien quand personne
-   n'écoute, comme `deps.onMeasure`.
-2. **Un chien de garde** (`o.watchdogMs`), parce que cette boucle ne
-   tourne qu'en ACTIVE **et** quand une main est vue : une étape quittée par
-   l'utilisateur ne serait jamais déclarée manquée, et le compteur resterait
-   figé sur « 0 s restantes » — « ça attend » et « c'est bloqué » à nouveau
-   identiques à l'écran. Il ne vit que pendant le tutoriel.
+Le supprimer exigerait de monter `SCHEMA_VERSION` **et**
+`SETTINGS_SCHEMA_VERSION` dans le même changement, et ferait refuser
+`validate()` (« champ inconnu ») sur toute sauvegarde venue d'une page ouverte
+avant le déploiement : une panne réelle, à 400, pour gagner un booléen inerte.
+C'est le même arbitrage que pour la commande, et il tombe du même côté.
 
-**Les deux vivent dans le parcours, et c'est la correction de la Slice 10.**
-`createTutorial` **exige** `frames`, `observe`, `setInterval` et
-`clearInterval` à la construction ; `begin()` les attache, `stop()` les
-détache. Tant que la page les posait autour de `tutorial()`, cela marchait
-exactement une fois : le bouton « Recommencer » du récapitulatif rentre dans
-`begin()` **depuis l'intérieur du module** — ni `onDone` ni `onExit` ne sont
-appelés — donc la page n'était jamais rappelée et le tutoriel relancé n'était
-plus nourri du tout. `observed` restait à 0 pendant que l'utilisateur faisait
-le C correctement, sous un compteur figé sur « 0 s restantes », et les dix
-étapes gelaient de la même façon : la panne que la paire dangereuse n° 13
-existe pour empêcher, par le seul chemin que le chien de garde ne couvrait
-pas. Une garantie que chaque appelant doit se rappeler de respecter est une
-convention, pas une garantie — c'est la leçon de la Slice 08, et la même
-raison qui fait exiger `setInterval`/`clearInterval` à `createCalibration`.
-
-Cela ferme aussi un découplage : `options()` valide `watchdogMs` sur les
-options **effectives** du parcours, alors que la page armait l'intervalle
-depuis `DEFAULTS.watchdogMs`. Les deux nombres ne coïncidaient que parce que
-la page n'en passait aucune. Le nombre validé est maintenant le nombre
-utilisé.
-
-Au récapitulatif, les deux coutures restent **attachées** — c'est ce qui fait
-repartir « Recommencer » — mais `pump()` teste `concluded` avant d'appeler
-`observe()` : un écran fixe ne fait donc pas relire la page à chaque image.
-`watching()` relit l'attache, pour la même raison qu'`observed` compte les
-observations : sans lecture, « branché » et « la page a oublié » s'écrivent
-pareil.
-
-`tutorialState().observed` compte ce que le parcours a **constaté** : sans ce
-nombre, « nourri à la cadence des images » et « nourri par la seule minuterie »
-s'écrivent pareil à l'écran comme à la console. Le motif rendu est le plus **utile**, pas le
-plus littéral : `not_active` si Bare Hands est retourné en veille, `no_hand`
-si aucune main n'a été vue, `timeout` sinon.
-
-**Deux paires dangereuses de plus** (douzième et treizième de la tâche),
-refusées à la construction de `JarvisBarehandsTutorial.options()` :
-
-- `readMs >= stepTimeoutMs` : l'étape expire avant d'avoir commencé à écouter.
-  **Toutes** les étapes seraient manquées et le récapitulatif accuserait
-  quelqu'un qui a tout fait correctement. Même espèce que
-  `stageTimeoutMs <= stageHoldMs` et `sleepTimeoutMs <= wakeHoldMs`.
-- `watchdogMs >= stepTimeoutMs` : le chien de garde plus lent que l'échéance
-  qu'il surveille laisse l'écran afficher « 0 s restantes » pendant une
-  échéance entière de plus.
-
-**Le vocabulaire de statut de la coque est refusé s'il est inconnu.**
-`report()` fabriquait `jf-${status}` : un mot hors des trois que la feuille
-définit sortait **sans couleur**, sans erreur et sans avertissement, et
-« réussi » se lisait comme « passé » ; le repli muet sur `skipped` mentait.
-La coque publie donc `FLOW_STATUS = ['ok','failed','skipped']` — des statuts de
-**présentation** — et refuse tout autre mot. Le tutoriel garde les siens
-(`done` | `skipped` | `missed`, motifs `timeout` | `no_hand` | `not_active` |
-`cancelled`) et les **traduit** : emprunter `STAGE_STATUS` ferait entrer le
-vocabulaire du profil dans un parcours qui n'a pas le droit d'y toucher.
-
-**Les points d'entrée, et ils confirment** (§ 12) :
+### Les points d'entrée qui subsistent (§ 12)
 
 | Porte | Rend | Refus |
 |---|---|---|
-| `JarvisBarehands.tutorial()` | `{ok:true, flow:'tutorial', step, steps}` dès que la coque est à l'écran ; `{ok:true, already:true}` au second appel | `barehands_tutorial_disabled` (interrupteur éteint), `barehands_flow_busy` (l'autre parcours est ouvert) |
+| `JarvisBarehands.tutorial()` | ce que `calibrate()` rend, plus `{deprecated:true, reason}` | ceux de la calibration, sous leurs propres codes |
 | `JarvisBarehands.exitOverlay()` | `{ok:true, flow, closed:true}` ; `{ok:true, flow:null, closed:false, already:true}` si rien n'était ouvert | — |
-| `JarvisBarehands.tutorialState()` | `{running, step, seen, observed, steps, installed}` | — |
+| `JarvisBarehands.tutorialState()` | `{retired:true, replacedBy:'calibration', running:false, seen}` | — |
 | `JarvisBarehands.measuring()` | `true` si la couture `deps.onMeasure` du contrôleur est posée, donc si une **calibration** mesure | — |
+
+`tutorialState()` est **gardé** parce que la surface est gelée : retirer un
+membre apprendrait moins à son appelant qu'une réponse honnête. Sa **forme**
+change, et c'est le point : `installed:false`, `steps:0` et `observed:0` se
+liraient comme une panne d'insertion, alors que la vérité est un retrait. C'est
+« un refus codé plutôt qu'un défaut plausible » appliqué à un accesseur public.
+Aucun code de production ne le lit — la Slice 09 affirmait que le canal de
+commandes l'utilisait, ce qui était faux : le canal ne lit que `lifecycle()` et
+les méthodes de sa table.
 
 `exitOverlay()` **confirme même quand rien n'était ouvert**, et c'est le
 raisonnement de `deactivate` au § 12 : ce que l'appelant demande est qu'il n'y
 ait pas de surimpression, et il n'y en a pas. Répondre « non » ferait dire à
 JARVIS que ça n'a pas marché devant un écran qui montre l'état demandé.
-**Et « rien n'a changé » se dit `duplicate`** depuis la Slice 10. Un parcours
-n'a pas d'état relisible (pas de `targets`), donc sa **confirmation** est le
-seul endroit où la distinction puisse voyager : le canal lit `already === true`
-et rend `duplicate` au lieu d'`applied`. Sans cela JARVIS disait « je l'ai
-ouvert » à qui redemandait devant une coque déjà ouverte, et « je l'ai fermée »
-devant un écran où il n'y avait rien — le faux récit que ce vocabulaire existe
-pour éviter, et que le canal applique déjà aux commandes de cycle de vie. Seul
-le drapeau `already === true` compte ; une valeur vaguement vraie reste
-`applied`. Le champ `closed` garde son sens : ce que la page a fait.
+**Et « rien n'a changé » se dit `duplicate`.** Un parcours n'a pas d'état
+relisible (pas de `targets`), donc sa **confirmation** est le seul endroit où la
+distinction puisse voyager : le canal lit `already === true` et rend `duplicate`
+au lieu d'`applied`. Sans cela JARVIS disait « je l'ai ouvert » à qui redemandait
+devant une coque déjà ouverte, et « je l'ai fermée » devant un écran où il n'y
+avait rien. Seul le drapeau `already === true` compte ; une valeur vaguement
+vraie reste `applied`. Le champ `closed` garde son sens : ce que la page a fait.
 
-**Il n'y a pas de refus « pas de caméra », et c'est délibéré.** La calibration
-en a un parce qu'elle ne peut rien mesurer sans mains ; le tutoriel *enseigne*,
-et l'endroit où « la caméra n'est pas encore prête » doit se lire est la coque
-elle-même — avec sa phrase, son compteur vivant et ses trois sorties. Refuser
-renverrait l'utilisateur à un toast sans lui dire quoi faire ensuite, alors que
-la première étape est précisément celle qui parle du réveil. Le cycle de vie
-entre donc dans l'observation, et l'étape `wake` a une phrase pour chacun de
-ses quatre états : `active` (« c'est déjà l'état que ce geste produit »),
-`sleep` (la consigne), `off` (« la caméra n'est pas encore ouverte ») et
-`error` (le motif est dans l'onglet). Une phrase unique aurait accusé la caméra
-dans les trois cas où elle n'y est pour rien.
+### Une commande vocale se voit à l'écran
 
-`tutorial()` **ne réveille pas**, et c'est sa seule différence de forme avec
-`calibrate()` : sa première étape *est* le geste de réveil, et l'exécuter à la
-place de l'utilisateur lui retirerait ce qu'on prétend lui apprendre. Comme
-`calibrate()`, il n'allume pas Bare Hands — le § 12 garde `enable`/`disable`
-hors du canal, et un parcours qui allumerait au passage rendrait la décision
-contournable par un autre nom.
-
-**Une commande vocale se voit à l'écran** (Issue R13 de la Slice 12, refermée
-ici). Le canal remet son reçu à la page (`deps.onReceipt` ; `channel.last()`
-le republie, `state().last` garde sa forme), et
-`JarvisBarehands.voice.record(entry)` le dessine sur trois surfaces, parce
-qu'aucune seule ne suffit : la **coque** quand un parcours est ouvert — elle
-est au-dessus des toasts (`z-index` 2147482000 contre 70), donc c'est la seule
-qu'on regarde —, un **toast** panneau fermé, qui est le cas ordinaire d'une
-commande vocale, et une **ligne du panneau Expérimental** qui survit au toast
-et porte l'heure, le nom, l'issue, le code du refus et le cycle de vie relu.
-`JarvisBarehands.voice.last()` la rend à la console.
+Issue R13 de la Slice 12, refermée à la Slice 09 et **toujours en vigueur**. Le
+canal remet son reçu à la page (`deps.onReceipt` ; `channel.last()` le republie,
+`state().last` garde sa forme), et `JarvisBarehands.voice.record(entry)` le
+dessine sur trois surfaces, parce qu'aucune seule ne suffit : la **coque** quand
+un parcours est ouvert — elle est au-dessus des toasts (`z-index` 2147482000
+contre 70), donc c'est la seule qu'on regarde —, un **toast** panneau fermé, qui
+est le cas ordinaire d'une commande vocale, et une **ligne du panneau
+Expérimental** qui survit au toast et porte l'heure, le nom, l'issue, le code du
+refus et le cycle de vie relu. `JarvisBarehands.voice.last()` la rend à la
+console.
 
 ## 14. Enregistrement, rejeu et mesures (architecture §12, décision 32, Slice 10)
 
@@ -3509,6 +3398,11 @@ deux tolérances qu'il déplace existaient déjà.
 `window.JarvisBarehands.calibrate()` est **branché** : la voix et le bouton
 passent par la même porte, et le canal de la Slice 12 n'a pas changé d'une
 ligne pour ça — c'était la promesse de sa table.
+
+> **Périmé depuis la Slice 07B pour tout ce qui concerne le tutoriel** : le
+> module et son fichier de tests ont été supprimés, et la commande est devenue
+> un alias déprécié vers la calibration (§ 13). Le paragraphe est gardé comme
+> trace de ce qui a existé.
 
 La Slice 09 implante le tutoriel et les deux dernières portes de la voix
 (§ 13, décisions 6 et 26) : `control_center_barehands_tutorial.js` — **un

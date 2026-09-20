@@ -105,6 +105,17 @@ SETTINGS_BOUNDS: dict[str, tuple[float, float]] = {
 SETTINGS_FLAGS: dict[str, bool] = {
     "enabled": False,             # Bare Hands reste éteint par défaut
     "target_preview": True,       # décision 24 : l'aperçu de cible est réglable
+    # **Champ de compatibilité, plus personne ne l'écrit** (Slice 07B).
+    # Le parcours de tutoriel a été retiré ; ce booléen ne dit plus que « cet
+    # utilisateur avait traversé l'ancien tutoriel avant son retrait ». Il est
+    # **gardé** plutôt que migré, et c'est un arbitrage explicite : le
+    # supprimer imposerait de monter ``SCHEMA_VERSION`` **et**
+    # ``SETTINGS_SCHEMA_VERSION`` du contrat JS dans le même changement, et de
+    # faire refuser ``validate()`` sur un ``tutorial_seen`` encore envoyé par
+    # une page ouverte avant le déploiement — une panne bien réelle, pour
+    # gagner un seul booléen. Le garder ne coûte rien : rien ne le lit pour
+    # décider quoi que ce soit. Condition de suppression et plan de migration :
+    # ``docs/legacy/barehands-tutorial-retirement.md``.
     "tutorial_seen": False,
     "calibration_enabled": True,  # décision 27 : la calibration reste optionnelle
     "diagnostics": False,         # architecture §12 : lecture à la demande

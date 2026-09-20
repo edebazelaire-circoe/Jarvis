@@ -3354,29 +3354,16 @@ try{
      elle casserait plus tard et plus mal, `JarvisBarehands.calibrate` étant
      posé sur une surface **gelée** qu'on ne peut pas compléter après coup. */
   const CALIB=JarvisBarehandsCalibration;
-  /* Parcours de tutoriel (Slice 09) : `control_center_barehands_tutorial.js`,
-     inséré juste après la calibration, dont il **reprend la coque sans la
-     modifier** (décision 26).
+  /* **Il n'y a plus de module de tutoriel** (Slice 07B, décisions 10 et 17).
+     `control_center_barehands_tutorial.js` a été supprimé : la calibration
+     enseigne, et un second parcours constructible derrière un alias serait
+     exactement la seconde machine à états que l'architecture interdit (§9,
+     « ne jamais garder deux parcours »). Ce qui reste du nom est la commande
+     `tutorial`, alias déprécié qui ouvre la calibration — voir
+     `startTutorialAlias` plus bas.
 
-     Lu **défensivement**, contrairement aux contrats, à l'aperçu de cible et à
-     la calibration, et c'est une différence assumée. Ces trois-là sont lus
-     directement parce qu'un module absent y est une erreur d'insertion ; mais
-     celui-ci peut aussi ne pas s'installer parce que **sa garde de forme a
-     refusé** (liste blanche de l'observation, décision 32), et la page servie
-     n'a qu'une seule balise `<script>` : une lecture directe d'un global
-     absent lèverait ici et emporterait la scène, la timeline et le Test Lab.
-
-     Absent, le tutoriel **refuse avec un code** au lieu de disparaître : c'est
-     ce que la surface gelée ne permettrait pas si la porte elle-même
-     manquait. `exitOverlay()`, elle, n'a pas besoin de ce module et continue
-     de fermer une calibration. */
-  const TUTO=(typeof JarvisBarehandsTutorial!=='undefined'&&JarvisBarehandsTutorial)
-    ||window.JarvisBarehandsTutorial||null;
-  if(!TUTO)
-    console.error('[barehands] barehands.tutorial_unavailable '
-      +JSON.stringify({error:'control_center_barehands_tutorial.js ne s’est pas installé : le tutoriel refusera, le reste de Bare Hands est intact'}));
-  /* Enregistreur, rejeu et mesures (Slice 10, §12). Lu **défensivement** pour
-     la même raison que le tutoriel : sa garde de forme peut refuser de
+     Enregistreur, rejeu et mesures (Slice 10, §12). Lu **défensivement** pour
+     la même raison qu'avant : sa garde de forme peut refuser de
      l'installer, et la page servie n'a qu'une seule balise `<script>`. Absent,
      `record.start()` refuse avec un code et l'onglet le dit ; tout le reste de
      Bare Hands est intact, y compris les deux parcours. */
@@ -4640,29 +4627,31 @@ try{
      et c'est ce que la Slice 09 reprendra pour le tutoriel. Le parcours, lui,
      est construit à la demande — il ne tourne que quand l'utilisateur l'a
      lancé (décision 27) et s'arrête quand il a fini (décision 30). */
-  let flowShell=null,calibration=null,tutorial=null;
-  /* **Une coque, construite une fois, partagée par les deux parcours.** C'est
-     la décision 26 rendue littérale : la calibration et le tutoriel ne sont
-     pas deux surimpressions qui se ressemblent, c'est la même. Deux instances
-     pourraient s'ouvrir l'une sur l'autre, et `exitOverlay()` n'aurait plus de
-     référent unique. */
+  let flowShell=null,calibration=null;
+  /* **Une coque, construite une fois.** La décision 26 en faisait le bien
+     commun de deux parcours ; depuis la Slice 07B il n'y en a plus qu'un, et
+     la coque reste construite une seule fois pour la même raison résiduelle :
+     `exitOverlay()` a besoin d'un référent unique, et deux instances
+     pourraient s'ouvrir l'une sur l'autre. */
   function shell(){
     return flowShell||(flowShell=CALIB.createFlowOverlay({document,
       now:()=>Date.now(),
       setInterval:(fn,ms)=>window.setInterval(fn,ms),
       clearInterval:id=>window.clearInterval(id)}));
   }
-  /* Le parcours ouvert, s'il y en a un. Une seule coque, donc au plus un : ce
-     que `exitOverlay()` ferme, et ce qu'un autre parcours doit refuser de
-     recouvrir. */
+  /* Le parcours ouvert, s'il y en a un. **Il n'y en a plus qu'un seul dans
+     tout le produit** (Slice 07B) : cette fonction ne peut donc plus rendre
+     qu'un nom. Elle reste une fonction, et `flowBusy` reste armé, parce que
+     c'est ce qui rend l'unicité *vérifiable* plutôt que promise — le jour où
+     quelqu'un rajoute un parcours, il tombe sur ce garde au lieu de recouvrir
+     silencieusement la calibration. */
   function openFlow(){
-    if(tutorial&&tutorial.isRunning())return {name:'tutorial',flow:tutorial};
     if(calibration&&calibration.isRunning())return {name:'calibration',flow:calibration};
     return null;
   }
-  const FLOW_LABEL=Object.freeze({calibration:'La calibration',tutorial:'Le tutoriel'});
+  const FLOW_LABEL=Object.freeze({calibration:'La calibration'});
   /* Un parcours déjà ouvert refuse l'autre, **en le disant**. Sans ce refus,
-     lancer le tutoriel pendant une calibration détruisait une minute de
+     lancer un second parcours pendant une calibration détruisait une minute de
      mesures sans un mot — et la voix, qui ne voit pas l'écran, est justement
      l'appelant qui peut le demander sans savoir. */
   function flowBusy(wanted){
@@ -4684,8 +4673,9 @@ try{
      **Ce que la page sait faire et que le parcours ne peut pas faire.** La
      calibration dit *où* (une région de la coque) et *quand* (la fin de la
      lecture) ; ce qui se monte là, et son branchement au moteur, appartient à
-     la page — exactement le partage de `tutorialObservation` (Slice 10), et
-     pour la même raison : un module de parcours qui irait chercher
+     la page — le même partage que celui que l'observation du tutoriel avait
+     établi (Slice 10, module depuis retiré), et pour la même raison : un
+     module de parcours qui irait chercher
      `JarvisScene`, `JarvisSceneLayout` et la façade `world` dans des globaux
      ne se testerait plus sous node.
 
@@ -4895,136 +4885,6 @@ try{
     });
   }
   function stopMeasuring(){closeMeasureSeam('calibration')}
-
-  /* ------------------------------------------------------------------
-     Tutoriel (Slice 09, décisions 6 et 26).
-
-     **Le tutoriel n'écrit jamais de paramètre de calibration.** Trois choses
-     le tiennent, et aucune n'est une promesse :
-
-     1. `createTutorial` n'accepte qu'une **liste blanche** de dépendances
-        (Slice 10) : tout nom qui n'est pas au contrat §13 est refusé à la
-        construction, écrivain connu ou nom que personne n'a encore inventé
-        — voir le module ;
-     2. le câblage ci-dessous ne lui en passe aucune : le seul effet durable
-        est `onDone`, qui écrit le **réglage** `tutorialSeen` par la porte
-        unique des réglages (`saveSettings`) ;
-     3. il n'emprunte pas la couture `deps.onMeasure` du contrôleur : ce que
-        `observe` lui donne est une **observation** construite ici à
-        partir de ce que la page publie déjà, où aucune mesure de main
-        n'entre. La couture de la décision 32 reste fermée pendant tout le
-        tutoriel, ce qu'un test affirme. */
-  function tutorialFlow(){
-    if(tutorial)return tutorial;
-    if(!TUTO)return null;
-    tutorial=TUTO.createTutorial({
-      overlay:shell(),now:()=>Date.now(),
-      /* **Les deux sources sont passées, plus posées** (Slice 10). La page
-         donne la couture d'images et le lecteur d'observation ; c'est le
-         parcours qui les attache et les détache, parce que « Recommencer »
-         rentre dans `begin()` sans que la page en sache rien. Tant que
-         c'était l'inverse, un tutoriel relancé n'était plus nourri du tout.
-         La minuterie vient d'ici parce que `window` est ici, mais la cadence
-         est celle des options **effectives** du parcours, qui sont aussi
-         celles que la paire dangereuse n° 13 valide. */
-      frames:fn=>interactionView.afterFrame(fn),
-      observe:tutorialObservation,
-      setInterval:(fn,ms)=>window.setInterval(fn,ms),
-      clearInterval:id=>window.clearInterval(id),
-      onDone:result=>{markTutorialSeen(result)},
-      onExit:()=>{refreshPanel()},
-      log:(level,message,detail)=>{
-        if(level==='warn')console.warn(message,detail);else console.info(message,detail);
-      },
-    });
-    return tutorial;
-  }
-
-  /* Ce que le tutoriel a le droit de constater, construit **ici** à partir de
-     ce que la page publie déjà : le cycle de vie, les cibles en cours de
-     résolution, les interactions de l'instant et les deux réglages dont une
-     étape parle. Aucun échantillon de main n'y entre, et le module réduit
-     encore ce qu'il reçoit (`readObservation`) — la liste blanche est donc
-     écrite des deux côtés, et c'est celle du module qui est testée au
-     chargement. */
-  function tutorialObservation(){
-    /* Lire l'instant ne doit pas arrêter un tutoriel : ce qu'on ne peut pas
-       lire se dit et vaut « rien vu », ce que les étapes savent traiter. Le
-       cycle de vie reste hors du `try` : sans lui l'observation ne veut rien
-       dire, et il ne lit qu'un état interne. */
-    let interactions=[],targets=0,hands=0;
-    try{
-      interactions=interactionView.interactions();
-      targets=interactionView.targets().length;
-      hands=controller.features().length;
-    }catch(error){
-      console.warn('[barehands] tutoriel : l’instant est illisible',error);
-      interactions=[];targets=0;hands=0;
-    }
-    return {
-      now:Date.now(),
-      lifecycle:lifecycle(),
-      tool:view.settings.tool,
-      targetPreview:!!view.settings.targetPreview,
-      targets,hands,interactions,
-    };
-  }
-  /* **Deux mécanismes, et aucun des deux n'est de trop.**
-
-     1. **La cadence des images** (`interactionView.afterFrame`), parce que
-        `interactions()` ne décrit qu'un **instant** : elle est vidée à chaque
-        image, donc un lecteur qui n'échantillonnerait qu'à la minuterie
-        raterait la quasi-totalité des clics — le tutoriel aurait demandé un
-        geste que l'utilisateur aurait fait sans que rien ne l'enregistre, ce
-        qui est la pire panne possible pour un parcours d'apprentissage.
-     2. **Un chien de garde**, parce que cette boucle ne tourne qu'en ACTIVE et
-        seulement quand une main est vue : une étape quittée par l'utilisateur
-        ne serait jamais déclarée manquée et le compteur resterait figé sur
-        « 0 s restantes » — la panne exacte que la RÈGLE ZÉRO interdit. Il ne
-        peut pas être bloqué de la même façon que la caméra, il ne vit que
-        pendant le tutoriel, et sa cadence est bornée contre l'échéance d'une
-        étape **à la construction** (paire dangereuse n° 13).
-
-     Les deux appellent le même `pump` : une observation de plus est
-     inoffensive (une étape ne se solde qu'une fois), une observation de moins
-     ne l'est pas.
-
-     **Les deux vivent dans le parcours depuis la Slice 10**, et la page ne
-     fait plus que les lui passer (voir `tutorialFlow`). Elle les posait
-     elle-même autour de `startTutorial()`, ce qui marchait exactement une
-     fois : le bouton « Recommencer » du récapitulatif rentre dans le parcours
-     **depuis l'intérieur du module**, la page n'était jamais rappelée, et le
-     tutoriel relancé n'était plus nourri du tout — `tutorialState().observed`
-     restait à 0 pendant que l'utilisateur faisait le C correctement. Une
-     garantie que l'appelant doit se rappeler de respecter n'est pas une
-     garantie ; et un repli qui partage sa source avec ce qu'il double n'en
-     est pas un non plus. */
-
-  /* `tutorialSeen` **est lu par quelqu'un depuis la Slice 09** : il décide de
-     ce que la section Tutoriel de l'onglet dit, et il est écrit ici, à
-     l'arrivée sur le récapitulatif. Il passe par la porte unique des réglages
-     — donc il est normalisé, appliqué et enregistré comme les huit autres, et
-     un échec d'écriture a déjà ses trois obligations (bandeau, toast,
-     `finally`). Ce qui manquerait sans la ligne ci-dessous, c'est de le dire
-     **dans la coque**, seule surface visible à cet instant. */
-  async function markTutorialSeen(result){
-    /* **Rien n'est détaché ici**, et c'est la correction de la Slice 10 : le
-       récapitulatif est un état vivant du parcours, d'où le bouton
-       « Recommencer » repart. Couper les sources en y arrivant était le
-       premier maillon de la panne — la relance retombait sur un parcours que
-       plus rien ne nourrissait. Le parcours les tient lui-même jusqu'à
-       `stop()`, et `pump()` n'observe pas tant que le récapitulatif est à
-       l'écran : l'attache ne coûte donc rien de plus qu'un test de booléen
-       par image. */
-    refreshPanel();
-    if(view.settings.tutorialSeen){shell().note('Tutoriel terminé.','ok');return null}
-    const saved=await saveSettings({tutorialSeen:true});
-    if(saved===null)
-      shell().note('Tutoriel terminé, mais « tutoriel déjà vu » n’a pas pu être enregistré : il vous sera reproposé.','bad');
-    else shell().note(`Tutoriel terminé (${result&&result.done||0} étape(s) sur ${result&&result.total||(TUTO?TUTO.STEPS.length:0)}).`,'ok');
-    refreshPanel();
-    return saved;
-  }
 
   /* ------------------------------------------------------------------
      Enregistrement de diagnostic (Slice 10, architecture §12, décision 32).
@@ -5432,59 +5292,59 @@ try{
     return started;
   }
 
-  /* **Le point d'entrée du tutoriel**, appelé par le bouton *et* par la voix
-     (canal de commandes, § 12). Même forme que `startCalibration`, et pour les
-     mêmes raisons : il **confirme** en résolvant `{ok:true}` dès que la coque
-     est à l'écran et que la première étape tourne — le démarrage, pas la fin :
-     l'échéance du canal est de trois secondes et un tutoriel en prend
-     plusieurs minutes. Les refus sont rendus `{ok:false, code}` — le canal les
-     traduit en « n'a pas confirmé », ce qui est vrai — **et** dits à l'écran,
-     parce que c'est le seul endroit où leur cause exacte survit.
+  /* **L'alias déprécié `tutorial`** (Slice 07B ; décisions 10 et 17,
+     architecture §9, READINESS §4).
 
-     **Il ne réveille pas, et c'est la différence avec la calibration.** La
-     première étape *est* le geste de réveil : l'exécuter à la place de
-     l'utilisateur lui retirerait ce qu'on prétend lui apprendre. Comme
-     `calibrate()`, il n'allume pas non plus Bare Hands — le § 12 garde
-     `enable`/`disable` hors du canal, et un parcours qui allumerait au
-     passage rendrait la décision contournable par un autre nom. */
-  function startTutorial(){
-    /* Le module ne s'est pas installé (mauvais ordre d'insertion, ou sa garde
-       de forme a refusé). On le **dit** avec son propre code plutôt que de
-       laisser une porte absente : le canal rendrait `barehands_flow_absent`,
-       qui est vrai, mais l'écran est le seul endroit où la cause exacte
-       survit. */
-    if(!TUTO){
-      const message='Le tutoriel n’a pas pu être chargé dans cette page. Rechargez le Control Center ; la console porte la cause exacte.';
-      view.error=message;console.warn('[barehands] tutoriel indisponible (module non installé)');
-      if(typeof toast==='function')
-        toast({title:'Tutoriel indisponible',sub:message,kind:'bad',ms:8000});
-      refreshPanel();
-      return {ok:false,code:'barehands_tutorial_not_installed',reason:message};
-    }
-    const busy=flowBusy('tutorial');
-    if(busy)return busy;
-    const flow=tutorialFlow();
-    if(flow.isRunning())return flow.start();
-    if(!view.enabled){
-      const message='Bare Hands est éteint : choisissez Veille ou Actif sur le bouton à icône de main, en haut à gauche de l’écran, avant de lancer le tutoriel. Le cycle de vie reste à vous.';
-      view.error=message;console.warn('[barehands] tutoriel refusé (éteint)');
-      if(typeof toast==='function')
-        toast({title:'Tutoriel impossible',sub:message,kind:'warn',ms:6000});
-      refreshPanel();
-      return {ok:false,code:'barehands_tutorial_disabled',reason:message};
-    }
-    /* **Il n'y a pas de refus « pas de caméra » ici, et c'est délibéré.** La
-       calibration en a un parce qu'elle ne peut rien mesurer sans mains ; le
-       tutoriel, lui, *enseigne*, et l'endroit où « la caméra n'est pas encore
-       prête » doit se lire est justement la coque — avec sa phrase, son
-       compteur vivant et ses trois sorties. Refuser renverrait l'utilisateur à
-       un toast sans rien lui dire de ce qu'il doit faire ensuite, alors que la
-       première étape est précisément celle qui parle du réveil. Le cycle de
-       vie entre donc dans l'observation, et l'étape `wake` a une phrase pour
-       chacun de ses quatre états. */
-    const started=flow.start();
-    refreshPanel();
-    return started;
+     Le parcours de tutoriel n'existe plus : son module est supprimé, son
+     entrée de réglages est partie à la Slice 02, et le menu du clic droit n'en
+     a jamais eu. Ce qui reste est **le nom**, et il reste parce que le
+     supprimer coûte plus qu'il ne rapporte : `tutorial` est miroité sous
+     assertion de parité au chargement dans `control_center_barehands_commands.js`
+     (`ENTRY_POINTS`), `jarvis/domain/barehands_command.py` (`COMMANDS`) et
+     `jarvis/runtime/barehands_mcp.py` (`TOOL_NAMES`/`TOOL_COMMANDS`, assertion
+     en fin de module). Retirer le nom est une rupture coordonnée sur trois
+     fichiers, alors que l'alias tient le contrat **et** l'exigence produit —
+     une seule surface visible.
+
+     **Il ouvre la calibration, et il le dit.** Le canal de commandes rapporte
+     ce que la page constate, jamais ce qu'on lui a demandé (§12) : un alias
+     qui rendrait `{ok:true}` nu ferait dire à JARVIS « j'ai lancé le
+     tutoriel » devant une calibration. La confirmation porte donc un `reason`
+     que le canal recopie dans le reçu, que le courtier renvoie et que l'outil
+     MCP colle à sa phrase — l'appelant lit, de bout en bout, qu'il a eu la
+     calibration.
+
+     **Il réveille, contrairement à l'ancien `startTutorial()`.** Celui-ci ne
+     réveillait délibérément pas, parce que sa première étape *était* le geste
+     de réveil et que l'exécuter à la place de l'utilisateur lui retirait ce
+     qu'on prétendait lui apprendre. Cette étape n'existe plus. Ce qui s'ouvre
+     maintenant est une calibration, qui a besoin de voir des mains pour
+     mesurer quoi que ce soit : garder la non-veille protégerait une garantie
+     qui n'a plus d'objet, et ferait refuser `barehands_calibration_no_camera`
+     à toute commande vocale `tutorial`. `startCalibration()` réveille ; l'alias
+     hérite de ce réveil, et c'est le bon comportement.
+
+     **Ses refus gardent le nom de ce qui a refusé.** L'appelant a demandé
+     `tutorial` et a obtenu la calibration ; quand elle refuse, le code est
+     `barehands_calibration_disabled` ou `barehands_calibration_no_camera`, pas
+     un code en `tutorial_*`. Renommer le refus cacherait **lequel** des deux
+     parcours a échoué, ce qui est précisément la vérité que l'alias doit
+     laisser passer. */
+  const TUTORIAL_ALIAS_REASON='Commande dépréciée : le parcours de tutoriel a été retiré, '
+    +'c’est la calibration qui a été ouverte.';
+  async function startTutorialAlias(){
+    /* La dépréciation est un fait de la page, donc elle part dans la console
+       de la page — à l'appel, pas dans un document que personne ne relit. */
+    console.warn('[barehands] barehands.tutorial_deprecated '
+      +JSON.stringify({replacedBy:'calibration',reason:TUTORIAL_ALIAS_REASON}));
+    const answer=await startCalibration();
+    /* **On n'invente pas un succès, et on ne maquille pas un refus.** Ce que
+       `startCalibration()` a rendu passe tel quel ; on n'y ajoute que la
+       phrase qui dit quel parcours s'est ouvert, et seulement quand il s'est
+       ouvert. Un refus garde son code et son motif : c'est sa cause exacte
+       qui doit remonter, pas la nôtre. */
+    if(!answer||answer.ok!==true)return answer;
+    return {...answer,flow:'calibration',deprecated:true,reason:TUTORIAL_ALIAS_REASON};
   }
 
   /* **Sortir de la surimpression**, quelle qu'elle soit. Troisième sortie du
@@ -5862,34 +5722,32 @@ try{
   }
   const HAND_LABEL=Object.freeze({left:'Main gauche',right:'Main droite',unknown:'Main non étiquetée'});
 
-  /* **Le tutoriel, et ce que `tutorialSeen` veut dire** (Slice 09).
+  /* **Ce que `tutorialState()` peut encore dire honnêtement** (Slice 07B).
 
-     Le réglage traversait la route, le fichier et la normalisation sans qu'un
-     seul parcours ne le lise ; c'est ici qu'il est lu. Il dit **« cet
-     utilisateur a traversé le tutoriel au moins une fois jusqu'au
-     récapitulatif »** — pas « il a réussi » (passer une étape reste vu :
-     l'invitation de la scène peut n'avoir ni étoile ni cadre), et pas « on le
-     lui a proposé » (quitter au milieu n'écrit rien). Il ne déclenche **aucun**
-     lancement automatique.
+     Le parcours est retiré. Cet accesseur est **gardé** — c'est un membre
+     d'une surface gelée, et le retirer serait une rupture de contrat pour un
+     appelant qui, au lieu d'apprendre quelque chose, se prendrait un
+     `undefined is not a function`. Mais sa **forme** change, et c'est
+     délibéré : `steps:0`, `observed:0` et surtout `installed:false`
+     décriraient un module simplement *absent* — un défaut plausible — là où
+     la vérité est qu'il a été *retiré*. La règle de cette tâche est « un refus
+     codé plutôt qu'un défaut plausible » ; appliquée à un accesseur public,
+     elle donne `retired:true` et `replacedBy:'calibration'`, que personne ne
+     peut confondre avec une panne d'insertion.
 
-     **La section Tutoriel de cet onglet est partie à la Slice 02** (décisions
-     10 et 17) : la calibration enseigne désormais, et le menu du bouton
-     n'offre pas de second parcours concurrent. Ce qui reste ici est le
-     **fait** : le champ est toujours écrit, relu et normalisé, et cet état
-     reste lisible de l'extérieur par `JarvisBarehands.tutorialState()`, que le
-     canal de commandes vocal utilise. La migration de la commande `tutorial`
-     elle-même appartient à la Slice 07, pas à celle-ci. */
+     **Aucun code de production ne le lit**, ce qui rend le changement de forme
+     sans coût. Le commentaire qu'il remplace affirmait que « le canal de
+     commandes vocal utilise » cet accesseur : c'était faux, le canal ne lit
+     que `lifecycle()` et les méthodes de sa table (`ENTRY_POINTS`). Erreur
+     héritée de la Slice 09, corrigée ici.
+
+     `seen` survit parce que c'est le seul fait resté vrai : cet utilisateur a
+     traversé l'ancien tutoriel jusqu'à son récapitulatif, avant son retrait.
+     Rien ne l'écrit plus ; voir `docs/legacy/barehands-tutorial-retirement.md`
+     pour la condition de suppression du champ persisté. */
   function tutorialState(){
-    return {running:!!(tutorial&&tutorial.isRunning()),
-      step:tutorial?tutorial.stepId():null,
-      seen:!!view.settings.tutorialSeen,
-      /* Combien d'observations le parcours a reçues : c'est ce qui distingue
-         « nourri à la cadence des images » de « nourri par la seule
-         minuterie », qui s'écrivent pareil et n'apprennent pas la même
-         chose — la seconde rate la quasi-totalité des clics. */
-      observed:tutorial?tutorial.observations():0,
-      installed:!!TUTO,
-      steps:TUTO?TUTO.STEPS.length:0};
+    return {retired:true,replacedBy:'calibration',running:false,
+      seen:!!view.settings.tutorialSeen};
   }
 
   const seconds=ms=>`${Math.round(Number(ms)/1000)} s`;
@@ -5946,11 +5804,9 @@ try{
         'Qualité, vitesse et immobilité de chaque main suivie, en bas à droite pendant l’interaction. Rien n’est enregistré : c’est une lecture, pas un enregistreur.')}
       ${checkHtml('calibrationEnabled','Proposer la calibration',
         'Garde la calibration optionnelle et explicite : Bare Hands ne mesurera jamais votre main sans que vous l’ayez lancée.')}
-      ${checkHtml('tutorialSeen','Tutoriel déjà vu',
-        'Coché dès que vous avez traversé le tutoriel jusqu’à son récapitulatif. Le parcours séparé a été retiré de cet onglet : c’est désormais la calibration qui enseigne les gestes. Le réglage reste enregistré et reste lisible par la voix.')}
       <div class="field inline" style="align-items:center;gap:10px;margin-top:14px">
         <button type="button" class="action small" id="barehandsReset" ${view.busy?'disabled':''}>Réinitialiser les réglages</button>
-        <div class="hint">Rend aux sept réglages ci-dessus et à l’outil leur valeur d’usine. Le cycle de vie n’y touche pas : réinitialiser n’éteint pas la caméra, et le bouton à icône de main en haut à gauche reste dans l’état où il est. Le profil de calibration a son propre bouton ci-dessous : ce sont deux choses distinctes.</div>
+        <div class="hint">Rend aux six réglages ci-dessus et à l’outil leur valeur d’usine. Le cycle de vie n’y touche pas : réinitialiser n’éteint pas la caméra, et le bouton à icône de main en haut à gauche reste dans l’état où il est. Le profil de calibration a son propre bouton ci-dessous : ce sont deux choses distinctes.</div>
       </div>
     </section>
     ${calibrationHtml()}
@@ -5968,14 +5824,21 @@ try{
      - les **outils** — la Slice 03 les rend en palette de gauche, atteignable
        en pleine session, ce qu'un modal de réglages n'est pas ;
      - le **tutoriel** — décision 10, l'entrée séparée disparaît ; la
-       calibration enseigne (décision 17).
+       calibration enseigne (décision 17). La Slice 02 avait retiré la
+       *section* de lancement ; la Slice 07B retire la dernière chose qui en
+       restait à l'écran, la case « Tutoriel déjà vu » — une case qui cochait
+       l'achèvement d'un parcours qui n'existe plus n'est pas un réglage, c'est
+       une question sans objet posée à l'utilisateur.
 
      **Rien n'est sorti du stockage pour autant** : `enabled`, `tool` et
-     `tutorialSeen` restent écrits, relus et normalisés (`SCHEMA_VERSION = 2`
-     de `barehands_test_mode.py`), et leurs portes publiques
-     (`enable`/`disable`/`activate`/`sleep`, `tool()`, `tutorial()`,
-     `tutorialState()`) sont intactes. C'est la **propriété de l'écran** qui a
-     changé de main, pas celle de la donnée. */
+     `tutorial_seen` restent écrits, relus et normalisés (`SCHEMA_VERSION = 2`
+     de `barehands_test_mode.py`), et les portes publiques
+     `enable`/`disable`/`activate`/`sleep`, `tool()`, `tutorial()` et
+     `tutorialState()` restent posées. C'est la **propriété de l'écran** qui a
+     changé de main, pas celle de la donnée : `tutorial_seen` est désormais un
+     champ de compatibilité que plus personne n'écrit et que la normalisation
+     tolère, pour ne pas imposer une migration de schéma à trois fichiers pour
+     un seul booléen (`docs/legacy/barehands-tutorial-retirement.md`). */
   function panelHtml(){
     const missing=assetsHtml();
     return `<section>
@@ -6390,17 +6253,21 @@ try{
     showSettings:section=>showSettingsTab(section),
     showHelp:()=>showHelp(),
     showDiagnostics:()=>showDiagnostics(),
-    /* **Le parcours de tutoriel et la sortie de surimpression** (Slice 09,
-       décisions 6 et 26). Mêmes portes pour le bouton et pour la voix : le
-       canal de commandes appelle celles-ci et exige une **confirmation**
-       (`{ok:true}`), sans quoi il refuse `barehands_flow_unconfirmed`
-       (contrat § 12). Le canal n'a pas changé d'une ligne pour les poser —
-       elles étaient déjà dans sa table, routées vers un point d'entrée absent. */
-    tutorial:()=>startTutorial(),
+    /* **L'alias déprécié et la sortie de surimpression.** `tutorial()` reste
+       posée — c'est une surface **gelée**, et la retirer serait une rupture de
+       contrat qui apprendrait moins à son appelant qu'une réponse honnête —
+       mais elle n'ouvre plus de tutoriel : elle ouvre la calibration et le
+       **dit** dans sa confirmation, que le canal recopie dans son reçu
+       (`startTutorialAlias`). Le canal exige toujours `{ok:true}`, sans quoi
+       il refuse `barehands_flow_unconfirmed` (contrat § 12) ; il n'a pas
+       changé d'une ligne pour cet alias, et sa table nomme toujours une
+       méthode qui existe vraiment sur cette surface. */
+    tutorial:()=>startTutorialAlias(),
     exitOverlay:()=>exitOverlay(),
-    /* L'état du tutoriel, et ce que `tutorialSeen` vaut : « profil
-       enregistré » et « profil appliqué » ont appris à se distinguer à la
-       Slice 07, « tutoriel vu » et « tutoriel en cours » aussi. */
+    /* Ce qui reste lisible du tutoriel : qu'il est **retiré**, par quoi il est
+       remplacé, et si cet utilisateur l'avait traversé avant son retrait.
+       `retired:true` plutôt qu'un `installed:false` que l'appelant lirait
+       comme une panne d'insertion. */
     tutorialState:()=>Object.freeze(tutorialState()),
     /* **La couture de mesure est-elle ouverte ?** (décision 32.) Elle n'est
        posée que pendant une calibration, et hors d'elle le contrôleur ne

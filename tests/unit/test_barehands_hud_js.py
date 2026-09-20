@@ -63,7 +63,6 @@ HUD = RUNTIME / BAREHANDS_HUD_SCRIPT_FILE
 COMMANDS = RUNTIME / "control_center_barehands_commands.js"
 TARGET = RUNTIME / "control_center_barehands_target.js"
 CALIBRATION = RUNTIME / "control_center_barehands_calibration.js"
-TUTORIAL = RUNTIME / "control_center_barehands_tutorial.js"
 RECORDER = RUNTIME / "control_center_barehands_recorder.js"
 SCENE_INTERACT = RUNTIME / "control_center_scene_interact.js"
 #: Le vocabulaire de dessin des mains (Slice 04). Le contrôle y prend son
@@ -80,7 +79,7 @@ PATCH = r"""
 const SCRIPT_PATH=%(script)s,CONTRACTS_PATH=%(contracts)s,HUD_PATH=%(hud)s;
 const COMMANDS_PATH=%(commands)s;
 const TARGET_PATH=%(target)s,CALIBRATION_PATH=%(calibration)s;
-const TUTORIAL_PATH=%(tutorial)s,RECORDER_PATH=%(recorder)s;
+const RECORDER_PATH=%(recorder)s;
 const SCENE_INTERACT_PATH=%(scene)s;
 const HAND_ART_PATH=%(handart)s;
 const C=require(CONTRACTS_PATH);
@@ -95,7 +94,6 @@ const ART=require(HAND_ART_PATH);
     "commands": json.dumps(str(COMMANDS)),
     "target": json.dumps(str(TARGET)),
     "calibration": json.dumps(str(CALIBRATION)),
-    "tutorial": json.dumps(str(TUTORIAL)),
     "recorder": json.dumps(str(RECORDER)),
     "scene": json.dumps(str(SCENE_INTERACT)),
 }

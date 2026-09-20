@@ -35,7 +35,7 @@ import pytest
 
 from test_barehands_tools_settings_js import (  # noqa: E402
     CALIBRATION, CAMERA, CONTRACTS, HAND_ART, RECORDER, SCENE_INTERACT,
-    SCRIPT, TARGET, TIMERS, TUTORIAL, browser,
+    SCRIPT, TARGET, TIMERS, browser,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -77,7 +77,6 @@ def run_page(tmp_path: Path, source: str, name: str) -> object:
         f"const SCRIPT_PATH={json.dumps(str(SCRIPT))};\n"
         f"const CALIBRATION_PATH={json.dumps(str(CALIBRATION))};\n"
         f"const HAND_ART_PATH={json.dumps(str(HAND_ART))};\n"
-        f"const TUTORIAL_PATH={json.dumps(str(TUTORIAL))};\n"
         f"const RECORDER_PATH={json.dumps(str(RECORDER))};\n"
         f"const TARGET_PATH={json.dumps(str(TARGET))};\n"
         f"const SCENE_INTERACT_PATH={json.dumps(str(SCENE_INTERACT))};\n"
@@ -883,20 +882,24 @@ def test_the_screen_says_a_recording_is_running_and_how_to_get_out(tmp_path):
 # ------------------------------------------------------------------ les épinglages
 
 
-def test_the_page_inserts_the_recorder_after_the_tutorial_and_before_the_pointer(tmp_path):
+def test_the_page_inserts_the_recorder_after_the_calibration_and_before_the_pointer(tmp_path):
     """Constat F3 de la Slice 00 : un module de page ajouté déplace l'ordre
     d'insertion, et l'ordre est un contrat. L'enregistreur lit les contrats, et
     le pointeur le lit pour poser `record` sur une surface **gelée** : il vient
     donc après les premiers et avant le second.
 
     Servi, le repère a disparu — une balise laissée en place serait un module
-    absent que personne ne verrait, la page n'ayant qu'un seul `<script>`."""
+    absent que personne ne verrait, la page n'ayant qu'un seul `<script>`.
+
+    **Le tutoriel a quitté cette chaîne à la Slice 07B** : son module est
+    supprimé, son repère n'existe plus dans la page, et l'enregistreur suit
+    désormais directement la calibration."""
 
     from jarvis.runtime.control_center import (
         BAREHANDS_CALIBRATION_SCRIPT_MARKER, BAREHANDS_COMMANDS_SCRIPT_MARKER,
         BAREHANDS_CONTRACTS_SCRIPT_MARKER, BAREHANDS_RECORDER_SCRIPT_MARKER,
         BAREHANDS_SCRIPT_MARKER, BAREHANDS_TARGET_SCRIPT_MARKER,
-        BAREHANDS_TUTORIAL_SCRIPT_MARKER, SCENE_PAGE_SCRIPT_MARKER, ControlCenter,
+        SCENE_PAGE_SCRIPT_MARKER, ControlCenter,
     )
 
     import asyncio
@@ -907,15 +910,20 @@ def test_the_page_inserts_the_recorder_after_the_tutorial_and_before_the_pointer
     served = asyncio.run(control.index(None)).text
 
     order = [BAREHANDS_CONTRACTS_SCRIPT_MARKER, BAREHANDS_TARGET_SCRIPT_MARKER,
-             BAREHANDS_CALIBRATION_SCRIPT_MARKER, BAREHANDS_TUTORIAL_SCRIPT_MARKER,
+             BAREHANDS_CALIBRATION_SCRIPT_MARKER,
              BAREHANDS_RECORDER_SCRIPT_MARKER, BAREHANDS_SCRIPT_MARKER,
              BAREHANDS_COMMANDS_SCRIPT_MARKER, SCENE_PAGE_SCRIPT_MARKER]
     places = [raw.index(marker) for marker in order]
     assert places == sorted(places), "l'ordre d'insertion documenté n'est pas celui de la page"
     assert BAREHANDS_RECORDER_SCRIPT_MARKER not in served, "le repère n'a pas été remplacé"
-    assert served.index("root.JarvisBarehandsTutorial=api") \
+    assert served.index("root.JarvisBarehandsCalibration=api") \
         < served.index("root.JarvisBarehandsRecorder=api") \
         < served.index("window.JarvisBarehands=Object.freeze(")
+    # **Aucun module de tutoriel n'est servi, et aucun repère n'en reste**
+    # (Slice 07B) : la page ne peut pas construire un second parcours, même
+    # par accident, parce qu'il n'y a plus de code pour le faire.
+    assert "JarvisBarehandsTutorial" not in served
+    assert "CONTROL_CENTER_BAREHANDS_TUTORIAL_JS" not in raw
 
 
 def test_every_recorder_constant_is_pinned_against_its_counterpart(tmp_path):

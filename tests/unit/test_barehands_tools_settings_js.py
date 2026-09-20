@@ -62,7 +62,6 @@ CONTRACTS = RUNTIME / "control_center_barehands_contracts.js"
 TARGET = RUNTIME / "control_center_barehands_target.js"
 CALIBRATION = RUNTIME / "control_center_barehands_calibration.js"
 HAND_ART = RUNTIME / "control_center_barehands_hand_art.js"
-TUTORIAL = RUNTIME / "control_center_barehands_tutorial.js"
 RECORDER = RUNTIME / "control_center_barehands_recorder.js"
 SCENE_INTERACT = RUNTIME / "control_center_scene_interact.js"
 
@@ -76,7 +75,6 @@ def run_node(tmp_path: Path, source: str, name: str = "tools") -> object:
         f"const SCRIPT_PATH={json.dumps(str(SCRIPT))};\n"
         f"const CALIBRATION_PATH={json.dumps(str(CALIBRATION))};\n"
         f"const HAND_ART_PATH={json.dumps(str(HAND_ART))};\n"
-        f"const TUTORIAL_PATH={json.dumps(str(TUTORIAL))};\n"
         f"const RECORDER_PATH={json.dumps(str(RECORDER))};\n"
         f"const TARGET_PATH={json.dumps(str(TARGET))};\n"
         f"const SCENE_INTERACT_PATH={json.dumps(str(SCENE_INTERACT))};\n"
@@ -684,7 +682,6 @@ global.window.JarvisBarehandsHandArt=global.JarvisBarehandsHandArt;
 /* Parcours de calibration (Slice 08) : la page l'insere entre les contrats
    et le pointeur, qui le lit pour poser `calibrate()` sur sa surface gelee. */
 global.JarvisBarehandsCalibration=require(CALIBRATION_PATH);
-global.JarvisBarehandsTutorial=require(TUTORIAL_PATH);
 /* Enregistreur de diagnostic (Slice 10) : insere apres le tutoriel et avant
    le pointeur, qui le lit pour poser `record` sur sa surface gelee. */
 global.JarvisBarehandsRecorder=require(RECORDER_PATH);
@@ -895,9 +892,16 @@ def test_the_tab_draws_configuration_only_and_writes_what_is_touched(tmp_path):
         shown,
         // Chaque case et chaque curseur porte un `label for` : un réglage sans
         // étiquette cliquable n'est pas utilisable au clavier.
-        labelled:['targetPreview','diagnostics','calibrationEnabled','tutorialSeen',
+        labelled:['targetPreview','diagnostics','calibrationEnabled',
                   'assistance','sensitivity','sleepTimeoutMs']
           .every(k=>html.includes(`for="bh_${k}"`)&&html.includes(`id="bh_${k}"`)),
+        /* **Et la case « Tutoriel déjà vu » n'est plus dessinée** (Slice 07B).
+           Le parcours qu'elle cochait n'existe plus ; une case qui interroge
+           l'utilisateur sur l'achèvement d'un parcours retiré n'est pas un
+           réglage. Le champ reste **persisté** (compatibilité), il n'est
+           simplement plus à l'écran — c'est la propriété de l'écran qui
+           change, pas celle de la donnée. */
+        tutorialGone:!/bh_tutorialSeen/.test(html)&&!/[Tt]utoriel/.test(html),
         // Les bornes des curseurs viennent de la table du contrat.
         bounds:['assistance','sensitivity','sleepTimeoutMs'].map(k=>
           [html.includes(`min="${C.SETTINGS_BOUNDS[k].min}"`),
@@ -917,6 +921,9 @@ def test_the_tab_draws_configuration_only_and_writes_what_is_touched(tmp_path):
         "Outils, Tutoriel et l'interrupteur maître ont quitté l'onglet (décisions 11, 10, 14)"
     )
     assert result["labelled"] is True
+    assert result["tutorialGone"] is True, (
+        "la dernière commande Tutoriel de l'onglet doit avoir disparu (décisions 10 et 17)"
+    )
     assert result["bounds"] == [[True, True], [True, True], [True, True]]
     # Trois écritures, chacune portant ce qui a été touché dans la charge utile
     # complète que `toServerPayload` construit.
@@ -1881,9 +1888,12 @@ def test_the_page_serves_configuration_only_and_never_a_dead_control(tmp_path):
                  'id="barehandsTutorial"', "barehandsTutorialStart",
                  'id="f_barehands"', 'id="barehandsLifecycle"', "barehandsWake"):
         assert gone not in served, gone
-    # Mais **rien n'est sorti du stockage** : les sept réglages persistants,
-    # `tutorialSeen` compris, sont toujours dessinés et toujours écrits.
-    for key in ("targetPreview", "diagnostics", "calibrationEnabled", "tutorialSeen"):
+    # Mais **rien n'est sorti du stockage** : les réglages persistants restent
+    # dessinés et écrits — sauf `tutorialSeen`, qui a perdu sa case à la Slice
+    # 07B et survit comme champ de compatibilité que plus personne n'écrit
+    # (`docs/legacy/barehands-tutorial-retirement.md`).
+    assert "checkHtml('tutorialSeen'" not in served
+    for key in ("targetPreview", "diagnostics", "calibrationEnabled"):
         assert f"checkHtml('{key}'" in served, key
     for key in ("assistance", "sensitivity", "sleepTimeoutMs"):
         assert f"rangeHtml('{key}'" in served, key

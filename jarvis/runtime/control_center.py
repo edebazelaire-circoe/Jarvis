@@ -256,13 +256,6 @@ BAREHANDS_TARGET_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_TARGET_JS__*/"
 #: clics plus tard.
 BAREHANDS_CALIBRATION_SCRIPT_FILE = "control_center_barehands_calibration.js"
 BAREHANDS_CALIBRATION_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_CALIBRATION_JS__*/"
-#: Parcours de tutoriel Bare Hands (Slice 09, architecture §13, décisions 6
-#: et 26). Inséré **après** la calibration, dont il reprend la **coque** de
-#: surimpression sans la modifier — deux parcours, une coque — et **avant** le
-#: pointeur, qui le lit pour poser `JarvisBarehands.tutorial()` et
-#: `.exitOverlay()` sur sa surface gelée.
-BAREHANDS_TUTORIAL_SCRIPT_FILE = "control_center_barehands_tutorial.js"
-BAREHANDS_TUTORIAL_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_TUTORIAL_JS__*/"
 #: Enregistrement, rejeu et mesures Bare Hands (Slice 10, architecture §12,
 #: décision 32) : schéma de trace, liste blanche, garde de forme au chargement,
 #: enregistreur opt-in et rejeu déterministe (`window.JarvisBarehandsRecorder`).
@@ -943,10 +936,6 @@ class ControlCenter:
         html = html.replace(
             BAREHANDS_CALIBRATION_SCRIPT_MARKER,
             page.with_name(BAREHANDS_CALIBRATION_SCRIPT_FILE).read_text(encoding="utf-8"),
-        )
-        html = html.replace(
-            BAREHANDS_TUTORIAL_SCRIPT_MARKER,
-            page.with_name(BAREHANDS_TUTORIAL_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             BAREHANDS_RECORDER_SCRIPT_MARKER,

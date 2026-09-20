@@ -32,6 +32,13 @@ Catalogue V1, cinq outils, un par action (Slice 12) : `barehands_activate`,
 `barehands_deactivate`, `barehands_calibrate`, `barehands_tutorial`,
 `barehands_exit_overlay`.
 
+**`barehands_tutorial` est déprécié depuis la Slice 07B** et ouvre la
+calibration : le parcours de tutoriel séparé a été retiré (décisions 10 et 17),
+il n'y a plus qu'un parcours guidé. L'outil n'est pas supprimé parce que son nom
+est miroité sous assertion de parité au chargement (fin de ce module) et que le
+retirer serait une rupture coordonnée sur trois fichiers ; il rend à la place ce
+que la page a **constaté**, c'est-à-dire que la calibration s'est ouverte.
+
 **Aucun faux succès.** Un outil ne rend un succès que si la page a rapporté
 l'état qu'elle a **constaté** après avoir appelé le point d'entrée. Tout le
 reste — refus de la page, échéance, canal injoignable, Bare Hands éteint —
@@ -307,11 +314,23 @@ class BarehandsCommandTools:
             "tool": tool, "command": command, "id": body.get("id"), "outcome": body["outcome"],
             "lifecycle": body.get("lifecycle"), "duration_ms": body.get("duration_ms"),
             "deliveries": body.get("deliveries")})
+        # **Ce que la page a dit de son propre parcours, recopié tel quel**
+        # (Slice 07B). Le reçu d'un succès pouvait jusqu'ici porter un `reason`
+        # que personne ne lisait ; il est devenu porteur le jour où une
+        # commande a cessé d'ouvrir ce que son nom annonce. `barehands_tutorial`
+        # ouvre la **calibration** : sans cette phrase, le cerveau lirait
+        # « Fait. » sous le mot « tutoriel » et l'annoncerait à l'utilisateur —
+        # le faux récit exact que ces outils existent pour empêcher. La phrase
+        # n'est ni fabriquée ni complétée ici : elle vient du parcours.
+        note = _OUTCOME_SENTENCES[body["outcome"]]
+        said = body.get("reason")
+        if isinstance(said, str) and said.strip():
+            note = f"{note} {said.strip()}"
         return {
             "command": command,
             "outcome": body["outcome"],
             "lifecycle": body.get("lifecycle"),
-            "note": _OUTCOME_SENTENCES[body["outcome"]],
+            "note": note,
         }
 
     @staticmethod
@@ -399,11 +418,11 @@ def build_server(target: BarehandsMcpTarget | None = None, *, tools: BarehandsCo
     _OPEN_FLOW_NOTE = (
         "Un succès veut dire que la surimpression est ouverte à l'écran, PAS que le parcours est "
         "terminé : il dure des minutes et c'est l'utilisateur qui le mène à la main. Ne dis donc "
-        "jamais « c'est calibré » ni « tu as fini le tutoriel » ; dis que c'est ouvert. Un seul "
-        "parcours à la fois — l'autre est refusé tant que le premier est à l'écran. Refus possibles : "
-        "barehands_flow_unconfirmed (le parcours n'a pas démarré : Bare Hands éteint, ou l'autre "
-        "parcours est ouvert — la cause exacte est à l'écran de l'utilisateur), barehands_flow_absent "
-        "(la page est plus ancienne que ce JARVIS et ne connaît pas ce parcours)."
+        "jamais « c'est calibré » ; dis que c'est ouvert. Refus possibles : "
+        "barehands_flow_unconfirmed (le parcours n'a pas démarré : Bare Hands éteint, calibration "
+        "décochée dans les réglages, ou caméra indisponible — la cause exacte est à l'écran de "
+        "l'utilisateur), barehands_flow_absent (la page est plus ancienne que ce JARVIS et ne "
+        "connaît pas ce parcours)."
     )
     # Celui qui ferme. Il **confirme toujours** — `exitOverlay()` rend
     # `{ok: true}` sans condition, délibérément : ce que l'appelant demande est
@@ -415,8 +434,8 @@ def build_server(target: BarehandsMcpTarget | None = None, *, tools: BarehandsCo
         "Un succès veut dire que la surimpression est fermée et que l'utilisateur a retrouvé son "
         "interface : dis que c'est fermé, jamais que c'est ouvert. Il réussit aussi quand rien "
         "n'était ouvert — le résultat demandé est le même — donc ne promets pas pour autant qu'un "
-        "parcours a été interrompu. Il ne termine ni ne valide un parcours : une calibration ou un "
-        "tutoriel fermé en cours de route n'a rien enregistré, et il faut le relancer pour le faire. "
+        "parcours a été interrompu. Il ne termine ni ne valide un parcours : une calibration fermée "
+        "en cours de route n'a rien enregistré, et il faut la relancer pour le faire. "
         "Refus possible : barehands_flow_absent (la page est plus ancienne que ce JARVIS et ne "
         "connaît pas cette commande)."
     )
@@ -448,13 +467,28 @@ def build_server(target: BarehandsMcpTarget | None = None, *, tools: BarehandsCo
     async def barehands_calibrate() -> dict:
         return await hands.send("barehands_calibrate", "calibrate")
 
-    @mcp.tool(description=f"""Lancer le tutoriel de Bare Hands (apprentissage des gestes).
+    # **Outil déprécié, gardé pour son nom** (Slice 07B, décisions 10 et 17).
+    # Le parcours de tutoriel séparé a été retiré : il n'y a plus qu'un seul
+    # parcours guidé, la calibration, et c'est elle qui enseigne les gestes.
+    # L'outil reste exposé parce que `tutorial` est miroité sous assertion de
+    # parité au chargement (fin de ce module) et que le retirer serait une
+    # rupture coordonnée sur trois fichiers. Sa description **dit ce qu'il
+    # fait**, pas ce que son nom promet : un cerveau qui lirait « lancer le
+    # tutoriel » annoncerait un tutoriel à l'utilisateur, et l'utilisateur
+    # verrait une calibration.
+    @mcp.tool(description=f"""Déprécié : le tutoriel séparé n'existe plus, cet outil ouvre la CALIBRATION.
+
+À n'appeler que si l'utilisateur demande explicitement « le tutoriel » ou « apprends-moi les gestes » :
+c'est désormais la calibration qui enseigne. Préfère barehands_calibrate, qui est le vrai nom de ce
+parcours. Après un succès, dis que la CALIBRATION est ouverte — jamais qu'un tutoriel l'est : la page
+te renvoie dans sa note ce qui s'est réellement ouvert, et c'est cela que tu rapportes. Ses refus
+portent des codes en barehands_calibration_* parce que c'est la calibration qui a refusé.
 
 {_OPEN_FLOW_NOTE}""")
     async def barehands_tutorial() -> dict:
         return await hands.send("barehands_tutorial", "tutorial")
 
-    @mcp.tool(description=f"""Fermer le panneau de calibration ou de tutoriel ouvert et revenir à l'interface.
+    @mcp.tool(description=f"""Fermer le panneau de calibration ouvert et revenir à l'interface.
 
 {_EXIT_FLOW_NOTE}""")
     async def barehands_exit_overlay() -> dict:
