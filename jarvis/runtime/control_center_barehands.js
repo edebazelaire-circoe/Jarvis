@@ -2353,6 +2353,155 @@ const JarvisBarehandsCore=(function(){
     };
   }
 
+  /* ------------------------------ Slice 07 : le cadre d'entraînement
+
+     **Un bac à sable, et c'est tout ce qu'il est.** L'étape « Manipulation de
+     fenêtre » de la calibration (décisions 29 et 30) doit faire manipuler un
+     **vrai** cadre — pas un jouet qui imite le geste — par le vrai moteur
+     d'interaction, avec la vraie résolution de cible, les vraies zones, le vrai
+     `combineCaptures` et la vraie géométrie de scène. Une seule chose doit
+     différer d'un cadre de la scène : **il n'est pas dans la scène**, ni avant,
+     ni pendant, ni après.
+
+     Ce module ne fait donc **aucune** géométrie. Il n'y a ici ni `manipulateBox`,
+     ni `rebaseManipulation`, ni règle de taille minimale, ni non-inversion, ni
+     appartenance de zone : tout cela vit dans `control_center_scene_interact.js`
+     et dans `combineCaptures`, et c'est le moteur d'interaction — inchangé — qui
+     les appelle. Ce qui vit ici est exactement ce que
+     `window.JarvisScene.frames` fait pour un objet de la scène, et rien de
+     plus : rendre le cadre qu'on saisit, afficher un aperçu, valider, annuler.
+
+     **Les quatre portes sont celles de la scène, à l'identique** (`begin`,
+     `preview`, `commit`, `cancel`), parce que le moteur ne doit pas savoir
+     lequel des deux mondes il tient. La cinquième, `viewport`, est
+     **déléguée** : l'échelle appartient à la scène et à elle seule. Elle n'est
+     pas fabriquée ici, et c'est la moitié technique de la divergence D4 — un
+     cadre d'entraînement calibré contre une échelle inventée ne calibrerait
+     rien, donc scène éteinte, il n'y a pas d'entraînement (voir
+     `STAGE_REASON.SCENE_UNAVAILABLE`).
+
+     **`commit` ne va nulle part.** Sur un objet de la scène, il appelle
+     `commitUserGeometry`, donc une commande part vers Core et la place est
+     persistée. Ici il garde la boîte en mémoire, le temps de l'exercice, et la
+     jette à `close()`. C'est la raison d'être du bac à sable, et un test le
+     vérifie des deux côtés de la calibration.
+
+     Ce que l'appelant lit : `drain()`, le journal de ce que le moteur a fait
+     depuis la dernière lecture. Un **journal** et non un état courant, parce
+     que la calibration n'échantillonne pas à la cadence des images : un état
+     lu toutes les 500 ms raterait le relâchement, c'est-à-dire précisément le
+     fait qui solde une sous-étape. Même leçon que `afterFrame` du tutoriel. */
+  const PRACTICE_OBJECT_ID='barehands:practice-frame';
+  /* La boîte de départ, en **unités de scène** : la taille par défaut d'une
+     fenêtre (`DEFAULT_SIZE.window`), centrée sur l'origine. Elle passe quand
+     même par `clampBox`, qui est le seul juge des bornes — recopier « elle
+     tient dans la zone sûre » ici serait déjà une seconde règle. */
+  const PRACTICE_BOX=Object.freeze({x:-32,y:-20,w:64,h:40});
+  function createPracticeFrame(deps){
+    const d=deps&&typeof deps==='object'?deps:{};
+    const G=d.geometry;
+    /* Les deux seules fonctions de géométrie que ce module appelle lui-même :
+       borner la boîte de départ, et savoir si une boîte a bougé. Tout le reste
+       du calcul appartient au moteur. Refusées absentes à la construction, comme
+       partout ailleurs : une géométrie manquante se découvrirait sinon sur un
+       cadre qui sort de la zone sûre devant l'utilisateur. */
+    if(!G||typeof G.clampBox!=='function'||typeof G.sameBox!=='function')
+      throw new RangeError('createPracticeFrame exige `geometry` (JarvisSceneInteract) : le cadre d’entraînement ne calcule aucune géométrie à lui — clampBox et sameBox sont les deux seules qu’il appelle, et les réécrire ici ferait diverger le bac à sable du vrai cadre qu’il doit imiter');
+    /* **L'échelle est empruntée, jamais fabriquée** (divergence D4). Une
+       fonction qui rendrait une fenêtre plausible quand la scène est éteinte
+       ferait exactement le défaut que le contrat refuse. */
+    if(typeof d.viewport!=='function')
+      throw new RangeError('createPracticeFrame exige `viewport` : l’échelle pixels → unités appartient à la scène, et une échelle inventée ferait partir le cadre six fois trop loin — scène éteinte, il n’y a pas d’entraînement, pas un entraînement approximatif');
+    const paint=typeof d.paint==='function'?d.paint:null;
+    const objectId=String(d.objectId||PRACTICE_OBJECT_ID);
+    const representation=String(d.representation||'window');
+    const origin=G.clampBox({...PRACTICE_BOX,...(d.box&&typeof d.box==='object'?d.box:{})},representation);
+    let box={...origin};
+    /* La boîte **à la prise** : c'est elle, et non la boîte de départ, qui dit
+       si un geste a déplacé ou redimensionné quelque chose. Un second geste ne
+       se compare pas au premier. */
+    let opened=null;
+    let alive=true;
+    let log=[];
+    const record=(type,extra)=>{
+      log.push(Object.freeze({type,box:{...box},...(extra||{})}));
+      return log.length;
+    };
+    const show=()=>{if(paint)paint({...box},representation)};
+    return {
+      objectId,representation,
+      box:()=>({...box}),
+      origin:()=>({...origin}),
+      /* Ce cadre est-il le nôtre ? La question que la façade `world` de la page
+         pose **avant** d'appeler la scène : c'est elle qui garantit qu'aucune
+         porte de `JarvisScene.frames` n'est traversée pour le cadre
+         d'entraînement. */
+      owns:id=>alive&&String(id)===objectId,
+      /* Le monde du moteur d'interaction. Exactement la forme de
+         `window.JarvisScene.frames` — le moteur ne doit pas pouvoir dire
+         lequel des deux il tient. */
+      world:Object.freeze({
+        begin(id){
+          if(!alive||String(id)!==objectId)return null;
+          opened={...box};
+          record('begin');
+          return {objectId,box:{...box},representation};
+        },
+        preview(id,next){
+          if(!alive||String(id)!==objectId||!next)return null;
+          if(G.sameBox(next,box))return null;
+          box={x:next.x,y:next.y,w:next.w,h:next.h};
+          show();
+          return record('preview');
+        },
+        /* **Le relâchement, et il ne part nulle part.** Sur un objet de la
+           scène, cette porte envoie la géométrie à Core ; ici elle se contente
+           de retenir ce que la main a fait, et de le dire. `moved`/`sized` sont
+           lus contre la boîte **à la prise**, parce que c'est ce geste-ci que
+           la sous-étape doit constater. */
+        commit(id,next,mode){
+          if(!alive||String(id)!==objectId)return null;
+          const from=opened||{...box};
+          if(next)box={x:next.x,y:next.y,w:next.w,h:next.h};
+          opened=null;
+          show();
+          return record('commit',{mode:mode==='resize'?'resize':'move',
+            moved:box.x!==from.x||box.y!==from.y,
+            sized:box.w!==from.w||box.h!==from.h,from:{...from}});
+        },
+        /* Main perdue, veille, extinction : le cadre revient où il était et
+           rien n'est retenu — la même réponse que la scène. */
+        cancel(id){
+          if(!alive||String(id)!==objectId)return null;
+          if(opened)box={...opened};
+          opened=null;
+          show();
+          return record('cancel');
+        },
+        /* Déléguée, et c'est le point. */
+        viewport(){return d.viewport()},
+      }),
+      /* Ce que le moteur a fait depuis la dernière lecture, puis la page est
+         tournée. Vider ici plutôt que laisser grandir : un journal qu'on ne
+         vide pas ferait resoldre une sous-étape déjà soldée à la lecture
+         suivante. */
+      drain(){const out=log;log=[];return out},
+      /* Peindre la position courante sans rien changer : c'est ce que
+         l'ouverture de l'exercice demande. */
+      show,
+      /* **Démontage**, sur tous les chemins de sortie. Après lui, les quatre
+         portes rendent `null` et `owns()` est faux : une image en retard ne
+         peut pas ressusciter un cadre que l'utilisateur vient de quitter —
+         même règle que `regions()` de la coque. */
+      close(){
+        if(!alive)return false;
+        alive=false;opened=null;log=[];
+        return true;
+      },
+      closed(){return !alive},
+    };
+  }
+
   /* ------------------------------------------------------------------
      Identité de main persistante (architecture §2).
 
@@ -3162,6 +3311,7 @@ const JarvisBarehandsCore=(function(){
     createGestureEngine,createPinchChannel,createPinchIntentEngine,
     TARGET_REGION,TARGET_SIDES,targetBand,regionAt,targetRegionsOf,createTargetResolver,
     CONTENT_MODE,CONTENT_MODES,SELECTABLE_KINDS,createInteractionEngine,
+    PRACTICE_OBJECT_ID,PRACTICE_BOX,createPracticeFrame,
     createHandTrackManager,createHandTracker,classifyError,createController};
 })();
 
@@ -3204,29 +3354,16 @@ try{
      elle casserait plus tard et plus mal, `JarvisBarehands.calibrate` étant
      posé sur une surface **gelée** qu'on ne peut pas compléter après coup. */
   const CALIB=JarvisBarehandsCalibration;
-  /* Parcours de tutoriel (Slice 09) : `control_center_barehands_tutorial.js`,
-     inséré juste après la calibration, dont il **reprend la coque sans la
-     modifier** (décision 26).
+  /* **Il n'y a plus de module de tutoriel** (Slice 07B, décisions 10 et 17).
+     `control_center_barehands_tutorial.js` a été supprimé : la calibration
+     enseigne, et un second parcours constructible derrière un alias serait
+     exactement la seconde machine à états que l'architecture interdit (§9,
+     « ne jamais garder deux parcours »). Ce qui reste du nom est la commande
+     `tutorial`, alias déprécié qui ouvre la calibration — voir
+     `startTutorialAlias` plus bas.
 
-     Lu **défensivement**, contrairement aux contrats, à l'aperçu de cible et à
-     la calibration, et c'est une différence assumée. Ces trois-là sont lus
-     directement parce qu'un module absent y est une erreur d'insertion ; mais
-     celui-ci peut aussi ne pas s'installer parce que **sa garde de forme a
-     refusé** (liste blanche de l'observation, décision 32), et la page servie
-     n'a qu'une seule balise `<script>` : une lecture directe d'un global
-     absent lèverait ici et emporterait la scène, la timeline et le Test Lab.
-
-     Absent, le tutoriel **refuse avec un code** au lieu de disparaître : c'est
-     ce que la surface gelée ne permettrait pas si la porte elle-même
-     manquait. `exitOverlay()`, elle, n'a pas besoin de ce module et continue
-     de fermer une calibration. */
-  const TUTO=(typeof JarvisBarehandsTutorial!=='undefined'&&JarvisBarehandsTutorial)
-    ||window.JarvisBarehandsTutorial||null;
-  if(!TUTO)
-    console.error('[barehands] barehands.tutorial_unavailable '
-      +JSON.stringify({error:'control_center_barehands_tutorial.js ne s’est pas installé : le tutoriel refusera, le reste de Bare Hands est intact'}));
-  /* Enregistreur, rejeu et mesures (Slice 10, §12). Lu **défensivement** pour
-     la même raison que le tutoriel : sa garde de forme peut refuser de
+     Enregistreur, rejeu et mesures (Slice 10, §12). Lu **défensivement** pour
+     la même raison qu'avant : sa garde de forme peut refuser de
      l'installer, et la page servie n'a qu'une seule balise `<script>`. Absent,
      `record.start()` refuse avec un code et l'onglet le dit ; tout le reste de
      Bare Hands est intact, y compris les deux parcours. */
@@ -3246,6 +3383,32 @@ try{
   const PROFILE_API='/api/barehands/profile';
   const ASSET_BASE='/barehands/assets';
   const TAB_ID='experimental';
+  /* Les sections de l'onglet qu'un appelant **extérieur** peut demander à voir
+     (Slice 02, décisions 8 et 16). Elles sont nommées ici et nulle part
+     ailleurs : le menu contextuel du bouton de la barre du haut les désigne
+     par ces clés, jamais par un littéral recopié, sinon un identifiant renommé
+     dans le HTML laisserait un raccourci qui ouvre l'onglet en haut sans que
+     rien ne le dise. */
+  const SECTION=Object.freeze({
+    settings:'barehandsSettings',
+    calibration:'barehandsCalibration',
+    /* **`gestures` a disparu, et c'est le livrable de la Slice 04.**
+
+       La Slice 02 avait gardé la clé en annonçant que la Slice 04 remplacerait
+       le bloc par une carte visuelle. Elle l'a fait — mais ailleurs : la carte
+       vit dans `control_center_barehands_hud.js`, hors du modal de réglages,
+       et l'onglet n'a donc plus de section de gestes du tout (décision 14 :
+       les réglages sont de la configuration).
+
+       La clé n'est pas conservée « au cas où ». Une section de réglages
+       publiée mais que plus rien ne dessine ferait échouer `revealSection`
+       sous un avertissement de console, et `showSettings('barehandsGestures')`
+       rendrait `{ok:true}` après n'avoir rien montré — un succès qui n'a pas
+       eu lieu. Le nom est donc retiré de `SECTION`, et la porte publique le
+       refuse désormais sous `barehands_settings_section_unknown`, ce qui est
+       la vérité. */
+    record:'barehandsRecord',
+  });
   /* Ce qu'un jeton « survole » : l'élément cliquable le plus proche. */
   const INTERACTIVE='button,a[href],input,select,textarea,label,summary,[role="button"],[role="tab"],[tabindex]:not([tabindex="-1"]),.choice,.acard,.toast';
   const ACCENT='var(--omega-accent,var(--accent,#6ee7ff))';
@@ -3728,13 +3891,42 @@ try{
       try{return api[name](...args)}
       catch(error){console.warn('[barehands] scène :',name,error);return fallback}
     };
+    /* **Le cadre d'entraînement de la calibration** (Slice 07), quand il y en a
+       un — c'est-à-dire pendant l'étape « Manipulation de fenêtre », et jamais
+       autrement. Il est interrogé **avant** la scène, et c'est là toute la
+       garantie du bac à sable : tant qu'il revendique son identifiant, aucune
+       des quatre portes de `JarvisScene.frames` n'est traversée pour lui, donc
+       `commitUserGeometry` ne peut pas l'atteindre et rien ne part vers Core.
+       La garantie est **structurelle** — elle ne dépend pas de ce que la
+       calibration pense à ne pas faire.
+
+       `viewport` n'est **pas** détournée, et c'est délibéré (divergence D4) :
+       l'échelle pixels → unités appartient à la scène, elle est la même pour le
+       cadre d'entraînement et pour un vrai cadre, et c'est ce qui fait que le
+       geste appris ici est le geste qui marchera là-bas. Scène éteinte, elle
+       vaut `null` et la calibration passe l'étape en le disant, plutôt que
+       d'inventer une échelle.
+
+       Nul hors calibration : le coût est alors un test de `null` par prise. */
+    let practice=null;
+    const held=objectId=>practice&&practice.owns(objectId)?practice:null;
     const world={
-      begin:objectId=>sceneCall('begin',null,objectId),
-      preview:(objectId,box)=>sceneCall('preview',null,objectId,box),
-      commit:(objectId,box,mode)=>sceneCall('commit',null,objectId,box,mode),
-      cancel:objectId=>sceneCall('cancel',null,objectId),
+      begin(objectId){const bench=held(objectId);
+        return bench?bench.world.begin(objectId):sceneCall('begin',null,objectId)},
+      preview(objectId,box){const bench=held(objectId);
+        return bench?bench.world.preview(objectId,box):sceneCall('preview',null,objectId,box)},
+      commit(objectId,box,mode){const bench=held(objectId);
+        return bench?bench.world.commit(objectId,box,mode):sceneCall('commit',null,objectId,box,mode)},
+      cancel(objectId){const bench=held(objectId);
+        return bench?bench.world.cancel(objectId):sceneCall('cancel',null,objectId)},
       viewport:()=>sceneCall('viewport',null),
     };
+    /* L'échelle de la scène, publiée. Le banc d'entraînement en a besoin pour
+       deux choses — savoir s'il peut ouvrir (divergence D4) et peindre son
+       cadre — et il doit la lire **par la même porte** que le moteur : deux
+       lectures de l'échelle qui divergeraient dessineraient le cadre ailleurs
+       que là où le moteur croit l'avoir mis. */
+    const sceneViewport=()=>world.viewport();
 
     /* Sortie de **compatibilité** DOM (architecture §7). Le modèle de
        manipulation n'est pas fait d'événements de pointeur synthétiques : ceux
@@ -3970,6 +4162,20 @@ try{
       /* Ce que la Slice 06 consommera : une cible par main **et par canal**,
          figée dès la descente. Vide hors intention (décision 3). */
       targets(){return resolved},
+      /* **Poser ou retirer le cadre d'entraînement** (Slice 07). Posée ici
+         parce que c'est ici que vit la façade `world` du moteur, et nulle part
+         ailleurs : un second propriétaire de ce routage aurait pu laisser un
+         cadre d'entraînement branché après la calibration, c'est-à-dire un
+         objet fantôme qui intercepterait un identifiant de la scène.
+         `usePractice(null)` le retire, et la calibration le fait sur **tous**
+         ses chemins de sortie. Rend `true` tant qu'un cadre est branché. */
+      usePractice(frame){
+        practice=frame&&typeof frame.owns==='function'&&frame.world?frame:null;
+        return !!practice;
+      },
+      practising(){return !!practice},
+      /* L'échelle de la scène, par la **même** porte que le moteur. */
+      viewport(){return sceneViewport()},
       /* Ce que les mains tiennent et ce qu'elles produisent (Slice 06). */
       captures(){return engine.capturedHands()},
       interactions(){return interactions},
@@ -4124,6 +4330,172 @@ try{
     refreshPanel();
   }
 
+  /* ------------------------------------------------------------------
+     Couture de diffusion du cycle de vie.
+
+     `onStatus` juste au-dessus est le seul endroit où **toutes** les
+     transitions passent : la bascule du panneau, la voix et le canal MCP (qui
+     appellent les mêmes portes), le réveil en C dans la boucle d'images, le
+     retour en veille après 30 s sans main, la panne et la reprise, l'arrêt au
+     déchargement. Jusqu'ici elles n'atteignaient l'écran que par
+     `refreshPanel()`, qui ne peint **que l'onglet Expérimental ouvert** : un
+     contrôle vivant hors du modal n'avait rien à quoi se lier, et « l'état a
+     changé » et « personne ne regardait » s'écrivaient pareil.
+
+     Même patron que la couture de mesures (`openMeasureSeam`, plus bas) et pour
+     la même raison : un registre **nommé**, parce que deux consommateurs d'une
+     même clé s'effaceraient l'un l'autre en silence. Deux différences assumées,
+     toutes deux parce que celle-ci projette un **état** et non un flux :
+
+     - l'abonné reçoit l'instantané **à l'ouverture**, tout de suite. Un
+       contrôle installé après la dernière transition afficherait sinon un état
+       d'usine jusqu'à la suivante — c'est exactement le cas du rechargement de
+       page, où plus rien ne bouge avant que l'utilisateur ne touche à quelque
+       chose ;
+     - un instantané identique au précédent ne se republie pas. `refreshPanel`
+       est appelé par des chemins qui ne touchent pas au cycle de vie (un
+       curseur qu'on tire), et un abonné ne doit pas avoir à distinguer « ça a
+       changé » de « on a repeint ». */
+  const lifecycleSinks=new Map();
+  let lifecycleLast='',lifecyclePublishing=false;
+  /* Ce que la couture publie. Lu sur `view.status`, c'est-à-dire sur le
+     **dernier statut émis par le contrôleur**, et non sur une variable tenue
+     ici : une seconde mémoire du cycle de vie dans l'interface est précisément
+     ce que l'architecture interdit. */
+  function lifecycleSnapshot(){
+    const status=view.status||{};
+    const state=String(status.state||BH.LIFECYCLE.OFF);
+    return Object.freeze({
+      /* L'état d'usage, nommé par le contrat. `starting` y vaut `off` — rien
+         n'interagit — mais il voyage **à côté**, dans `state`, parce qu'un
+         démarrage peut durer (une invite de permission que personne ne borne)
+         et qu'un écran qui le peindrait « éteint » mentirait sur ce qu'il
+         attend (RÈGLE ZÉRO). */
+      lifecycle:BH.lifecycleOfControllerState(state),
+      state,
+      /* Le démarrage n'a pas de nom dans `LIFECYCLE`, et n'en aura pas : le
+         contrat le range sous `off` parce que rien n'interagit. Il se dit donc
+         ici, où le vocabulaire du contrôleur est chez lui — plutôt que de
+         laisser chaque abonné redécouvrir que `state === 'starting'`, ce qui
+         serait un nom du moteur recopié hors du moteur. */
+      starting:state===Core.STATE.STARTING,
+      /* Le motif exact d'un arrêt subi, jamais aplati dans l'état (§ 1) :
+         `camera_denied`, `camera_busy`, `assets_missing`… Sans lui, une caméra
+         refusée se peindrait comme un « éteint » que l'utilisateur aurait
+         choisi. */
+      code:status.code===undefined?null:status.code,
+      title:status.title||'',message:status.message||'',
+      /* L'interrupteur maître (le réglage `enabled` du serveur) et l'écriture
+         en vol : ensemble, ils disent si un choix est **possible** maintenant. */
+      enabled:!!view.enabled,busy:!!view.busy,
+    });
+  }
+  function publishLifecycle(){
+    if(!lifecycleSinks.size)return null;
+    const snapshot=lifecycleSnapshot();
+    const signature=JSON.stringify(snapshot);
+    if(signature===lifecycleLast)return snapshot;
+    lifecycleLast=signature;
+    /* Un abonné qui rappelle la surface (le bouton qui active) relance
+       `refreshPanel`, donc cette diffusion, pendant qu'elle court. La reprise
+       est **refusée** plutôt que réentrante : la signature a déjà retenu le
+       changement, et la diffusion qui suit le portera. */
+    if(lifecyclePublishing)return snapshot;
+    lifecyclePublishing=true;
+    try{
+      for(const [who,fn] of [...lifecycleSinks.entries()]){
+        /* Un consommateur qui lève ne doit emporter ni l'autre, ni le
+           rafraîchissement du panneau (leçon des Slices 02 et 04). */
+        try{fn(snapshot)}
+        catch(error){console.warn(`[barehands] consommateur de cycle de vie « ${who} » a levé`,error)}
+      }
+    }finally{lifecyclePublishing=false}
+    return snapshot;
+  }
+  function openLifecycleSeam(name,sink){
+    /* Un refus codé plutôt qu'un défaut plausible : une couture ouverte sur
+       rien est indiscernable d'une couture qui marche, et c'est le genre de
+       silence que la décision 7 existe pour empêcher. */
+    if(typeof sink!=='function')
+      throw Object.assign(new Error('openLifecycleSeam : un consommateur est une fonction'),
+        {code:'barehands_lifecycle_seam_invalid'});
+    const key=String(name);
+    lifecycleSinks.set(key,sink);
+    const snapshot=lifecycleSnapshot();
+    lifecycleLast=JSON.stringify(snapshot);
+    try{sink(snapshot)}
+    catch(error){console.warn(`[barehands] consommateur de cycle de vie « ${key} » a levé à l’ouverture`,error)}
+    return lifecycleSinks.size;
+  }
+  function closeLifecycleSeam(name){lifecycleSinks.delete(String(name));return lifecycleSinks.size}
+  function lifecycleSeamNames(){return [...lifecycleSinks.keys()]}
+
+  /* ------------------------------------------------------------------
+     Couture de diffusion de l'outil courant (Slice 03, décision 11).
+
+     **Une seconde couture, et non un champ de plus dans la première.**
+     L'outil n'est pas du cycle de vie : le contrat le range dans les réglages
+     (§ 8, `view.settings.tool`), la contrainte d'architecture de la Slice 03
+     le dit mot pour mot — « le choix d'outil est une intention de session, pas
+     un cycle de vie » — et le canal de commandes refuse justement de router
+     `tool` avec les transitions (`commands.js`, § des quatre portes absentes).
+     Les fondre ferait repeindre le bouton de cycle de vie à chaque changement
+     d'outil et, pire, ferait de « l'outil a changé » un événement de cycle de
+     vie que le prochain lecteur croirait autoritaire.
+
+     Elle publie **un seul fait** : l'outil que les réglages appliquent. Tout
+     le reste — installé ou non, libellé, capacité — appartient au contrat et
+     se lit chez lui (`BH.describeTools()`), jamais recopié dans un instantané
+     qui dériverait. La disponibilité (`busy`, `lifecycle`) voyage déjà sur la
+     couture de cycle de vie ; un abonné qui a besoin des deux s'abonne aux
+     deux, ce qui est exact plutôt que commode.
+
+     Mêmes garanties que la couture de cycle de vie, pour les mêmes raisons :
+     registre **nommé** (deux consommateurs d'une même clé s'effaceraient en
+     silence), instantané rejoué **à l'ouverture** (sans quoi un contrôle
+     installé après le chargement afficherait « pointeur » jusqu'au premier
+     changement — c'est-à-dire mentirait sur un réglage persisté), et pas de
+     republication d'un instantané identique. */
+  const toolSinks=new Map();
+  let toolLast='',toolPublishing=false;
+  function toolSnapshot(){
+    return Object.freeze({tool:view.settings.tool});
+  }
+  function publishTools(){
+    if(!toolSinks.size)return null;
+    const snapshot=toolSnapshot();
+    const signature=JSON.stringify(snapshot);
+    if(signature===toolLast)return snapshot;
+    toolLast=signature;
+    /* Un abonné qui rappelle `settings({tool})` relance `refreshPanel`, donc
+       cette diffusion, pendant qu'elle court. Refusée plutôt que réentrante :
+       la signature a déjà retenu le changement, et la diffusion qui suit le
+       portera. Même raisonnement que `publishLifecycle`. */
+    if(toolPublishing)return snapshot;
+    toolPublishing=true;
+    try{
+      for(const [who,fn] of [...toolSinks.entries()]){
+        try{fn(snapshot)}
+        catch(error){console.warn(`[barehands] consommateur d'outil « ${who} » a levé`,error)}
+      }
+    }finally{toolPublishing=false}
+    return snapshot;
+  }
+  function openToolSeam(name,sink){
+    if(typeof sink!=='function')
+      throw Object.assign(new Error('openToolSeam : un consommateur est une fonction'),
+        {code:'barehands_tool_seam_invalid'});
+    const key=String(name);
+    toolSinks.set(key,sink);
+    const snapshot=toolSnapshot();
+    toolLast=JSON.stringify(snapshot);
+    try{sink(snapshot)}
+    catch(error){console.warn(`[barehands] consommateur d'outil « ${key} » a levé à l’ouverture`,error)}
+    return toolSinks.size;
+  }
+  function closeToolSeam(name){toolSinks.delete(String(name));return toolSinks.size}
+  function toolSeamNames(){return [...toolSinks.keys()]}
+
   function applyAssets(state){if(state&&state.assets)view.assets=state.assets}
 
   /* Ce que le serveur a **lu**, par opposition à ce qu'il écrit. Un bloc de
@@ -4255,29 +4627,31 @@ try{
      et c'est ce que la Slice 09 reprendra pour le tutoriel. Le parcours, lui,
      est construit à la demande — il ne tourne que quand l'utilisateur l'a
      lancé (décision 27) et s'arrête quand il a fini (décision 30). */
-  let flowShell=null,calibration=null,tutorial=null;
-  /* **Une coque, construite une fois, partagée par les deux parcours.** C'est
-     la décision 26 rendue littérale : la calibration et le tutoriel ne sont
-     pas deux surimpressions qui se ressemblent, c'est la même. Deux instances
-     pourraient s'ouvrir l'une sur l'autre, et `exitOverlay()` n'aurait plus de
-     référent unique. */
+  let flowShell=null,calibration=null;
+  /* **Une coque, construite une fois.** La décision 26 en faisait le bien
+     commun de deux parcours ; depuis la Slice 07B il n'y en a plus qu'un, et
+     la coque reste construite une seule fois pour la même raison résiduelle :
+     `exitOverlay()` a besoin d'un référent unique, et deux instances
+     pourraient s'ouvrir l'une sur l'autre. */
   function shell(){
     return flowShell||(flowShell=CALIB.createFlowOverlay({document,
       now:()=>Date.now(),
       setInterval:(fn,ms)=>window.setInterval(fn,ms),
       clearInterval:id=>window.clearInterval(id)}));
   }
-  /* Le parcours ouvert, s'il y en a un. Une seule coque, donc au plus un : ce
-     que `exitOverlay()` ferme, et ce qu'un autre parcours doit refuser de
-     recouvrir. */
+  /* Le parcours ouvert, s'il y en a un. **Il n'y en a plus qu'un seul dans
+     tout le produit** (Slice 07B) : cette fonction ne peut donc plus rendre
+     qu'un nom. Elle reste une fonction, et `flowBusy` reste armé, parce que
+     c'est ce qui rend l'unicité *vérifiable* plutôt que promise — le jour où
+     quelqu'un rajoute un parcours, il tombe sur ce garde au lieu de recouvrir
+     silencieusement la calibration. */
   function openFlow(){
-    if(tutorial&&tutorial.isRunning())return {name:'tutorial',flow:tutorial};
     if(calibration&&calibration.isRunning())return {name:'calibration',flow:calibration};
     return null;
   }
-  const FLOW_LABEL=Object.freeze({calibration:'La calibration',tutorial:'Le tutoriel'});
+  const FLOW_LABEL=Object.freeze({calibration:'La calibration'});
   /* Un parcours déjà ouvert refuse l'autre, **en le disant**. Sans ce refus,
-     lancer le tutoriel pendant une calibration détruisait une minute de
+     lancer un second parcours pendant une calibration détruisait une minute de
      mesures sans un mot — et la voix, qui ne voit pas l'écran, est justement
      l'appelant qui peut le demander sans savoir. */
   function flowBusy(wanted){
@@ -4292,10 +4666,133 @@ try{
     refreshPanel();
     return {ok:false,code:'barehands_flow_busy',reason:message};
   }
+  /* ------------------------------------------------------------------
+     Le banc d'entraînement de l'étape « Manipulation de fenêtre » (Slice 07,
+     décisions 29 et 30, architecture §10).
+
+     **Ce que la page sait faire et que le parcours ne peut pas faire.** La
+     calibration dit *où* (une région de la coque) et *quand* (la fin de la
+     lecture) ; ce qui se monte là, et son branchement au moteur, appartient à
+     la page — le même partage que celui que l'observation du tutoriel avait
+     établi (Slice 10, module depuis retiré), et pour la même raison : un
+     module de parcours qui irait chercher
+     `JarvisScene`, `JarvisSceneLayout` et la façade `world` dans des globaux
+     ne se testerait plus sous node.
+
+     **Le cadre est un vrai nœud de scène, et c'est tout l'exercice.** Il porte
+     `.sc-node` et `data-object-id`, donc le **vrai** résolveur de cible le
+     collecte (`control_center_barehands_target.js`, `SELECTOR`) ; il porte
+     `data-representation="window"`, donc il a de **vraies** zones
+     (`hasManipulationZones`) et le vrai `combineCaptures` décide ce que deux
+     mains y produisent. Rien n'est simulé : la seule chose qui diffère d'un
+     objet de la scène est le **monde** qui le tient, et c'est un bac à sable.
+
+     Son habillage ne se recopie pas non plus : la feuille de la scène est
+     **globale** (`.sc-node`, `.sc-window`, et les variables sous `.scene`),
+     donc un cadre qui porte ces classes-là ressemble au vrai parce qu'il *est*
+     dessiné par les mêmes règles. Une seconde feuille « qui imite » aurait
+     divergé au premier changement de thème.
+
+     Et la page derrière est `inert` pendant un parcours (la coque le balaie),
+     donc les vraies étoiles de la scène ne sont pas actionnables : pendant
+     l'exercice, le cadre d'entraînement est la **seule** chose que les mains
+     peuvent saisir. */
+  const PRACTICE_LAYER_CLASS='jf-practice';
+  const PRACTICE_FRAME_CLASS='jf-practice-frame';
+  function practiceBench(){
+    let frame=null,layer=null,node=null;
+    const layout=()=>window.JarvisSceneLayout||null;
+    /* Peindre, exactement comme la scène peint les siens : `toScreen` fait la
+       conversion unités → pixels, puis un `translate` et deux tailles. C'est
+       `position()` de `control_center_scene_page.js`, appelé et non recopié —
+       une seconde conversion ici mettrait le cadre ailleurs que là où le
+       moteur croit l'avoir posé. */
+    function paint(box){
+      const L=layout(),vp=interactionView.viewport();
+      if(!node||!L||!vp)return false;
+      const rect=L.toScreen(vp,box);
+      node.style.transform=`translate(${rect.left}px,${rect.top}px)`;
+      node.style.width=`${rect.width}px`;
+      node.style.height=`${rect.height}px`;
+      return true;
+    }
+    function build(){
+      layer=document.createElement('div');
+      /* `scene` pour les **variables** de la feuille de scène (`--sc-edge`,
+         `--sc-surface`, `--sc-radius`, et `--tone` par la classe de ton), pas
+         pour la mise en page : la feuille des exercices la refixe en `fixed`,
+         parce que `toScreen` rend des coordonnées de fenêtre. */
+      layer.className=`scene ${PRACTICE_LAYER_CLASS}`;
+      node=document.createElement('div');
+      node.className=`sc-node sc-window sc-tone-agent ${PRACTICE_FRAME_CLASS}`;
+      node.setAttribute('data-object-id',Core.PRACTICE_OBJECT_ID);
+      node.setAttribute('data-representation','window');
+      node.setAttribute('role','group');
+      node.setAttribute('aria-label','Fenêtre d’entraînement');
+      node.tabIndex=-1;
+      const head=document.createElement('div');head.className='sc-head';
+      const cat=document.createElement('span');cat.className='sc-cat';
+      cat.textContent='Entraînement';
+      head.appendChild(cat);
+      const title=document.createElement('p');title.className='sc-wtitle';
+      title.textContent='Fenêtre d’entraînement';
+      const body=document.createElement('div');body.className='sc-summary';
+      body.textContent='Une vraie fenêtre JARVIS, qui ne sera jamais enregistrée '
+        +'dans votre scène. Ses bords et ses coins se saisissent comme les vrais.';
+      node.appendChild(head);node.appendChild(title);node.appendChild(body);
+      layer.appendChild(node);
+    }
+    return {
+      /* L'échelle de la scène. `null` = scène éteinte, et l'étape se passe en
+         le disant (divergence D4) — elle n'invente pas d'échelle. */
+      viewport(){return interactionView.viewport()},
+      /* Ouvrir le cadre dans la région que le parcours désigne. Rend son
+         identité, ou `null` si la scène ne donne pas d'échelle — l'appelant
+         n'a alors **rien** à l'écran, ce qui est la seule réponse honnête. */
+      open(mount){
+        if(frame)return {objectId:frame.objectId,box:frame.box()};
+        if(!mount||!interactionView.viewport())return null;
+        frame=Core.createPracticeFrame({geometry:GEOMETRY,
+          viewport:()=>interactionView.viewport(),paint});
+        build();
+        mount.appendChild(layer);
+        /* Branché **après** le montage : le moteur ne doit pas pouvoir tenir
+           un cadre qui n'est pas encore à l'écran. */
+        interactionView.usePractice(frame);
+        frame.show();
+        return {objectId:frame.objectId,box:frame.box()};
+      },
+      /* Ce que le vrai moteur a fait du cadre depuis la dernière lecture. */
+      drain(){return frame?frame.drain():[]},
+      box(){return frame?frame.box():null},
+      /* **Démontage**, et il doit tenir sur tous les chemins de sortie —
+         Échap au milieu d'une capture, main perdue, étape passée, parcours
+         terminé. Le débranchement vient **avant** le retrait du nœud : le
+         moteur ne doit pas garder une porte vers un cadre qui n'est plus là. */
+      close(){
+        if(!frame)return false;
+        interactionView.usePractice(null);
+        frame.close();frame=null;
+        if(layer&&typeof layer.remove==='function')layer.remove();
+        layer=null;node=null;
+        return true;
+      },
+    };
+  }
+
   function calibrationFlow(){
     if(calibration)return calibration;
     calibration=CALIB.createCalibration({
       overlay:shell(),now:()=>Date.now(),
+      /* Le banc d'entraînement de l'étape 6 (Slice 07). Passé plutôt que lu
+         d'un global, comme tout le reste ici : c'est ce qui permet à un test
+         de lui donner un double et de piloter le vrai moteur sans navigateur. */
+      practice:practiceBench(),
+      /* Le parcours dessine maintenant ses démonstrations de main (Slice 06),
+         donc il lui faut un `document` — la **même** couture que la coque, et
+         pour la même raison : un module de page qui lit un global qu'il n'a pas
+         déclaré ne se teste pas. `createCalibration` le refuse absent. */
+      document,
       /* L'horloge du chien de garde, la **même** que celle de la coque : une
          étape que plus aucune image ne nourrit expire quand même (RÈGLE ZÉRO).
          `createCalibration` la refuse absente, donc l'oublier ne se découvre
@@ -4388,136 +4885,6 @@ try{
     });
   }
   function stopMeasuring(){closeMeasureSeam('calibration')}
-
-  /* ------------------------------------------------------------------
-     Tutoriel (Slice 09, décisions 6 et 26).
-
-     **Le tutoriel n'écrit jamais de paramètre de calibration.** Trois choses
-     le tiennent, et aucune n'est une promesse :
-
-     1. `createTutorial` n'accepte qu'une **liste blanche** de dépendances
-        (Slice 10) : tout nom qui n'est pas au contrat §13 est refusé à la
-        construction, écrivain connu ou nom que personne n'a encore inventé
-        — voir le module ;
-     2. le câblage ci-dessous ne lui en passe aucune : le seul effet durable
-        est `onDone`, qui écrit le **réglage** `tutorialSeen` par la porte
-        unique des réglages (`saveSettings`) ;
-     3. il n'emprunte pas la couture `deps.onMeasure` du contrôleur : ce que
-        `observe` lui donne est une **observation** construite ici à
-        partir de ce que la page publie déjà, où aucune mesure de main
-        n'entre. La couture de la décision 32 reste fermée pendant tout le
-        tutoriel, ce qu'un test affirme. */
-  function tutorialFlow(){
-    if(tutorial)return tutorial;
-    if(!TUTO)return null;
-    tutorial=TUTO.createTutorial({
-      overlay:shell(),now:()=>Date.now(),
-      /* **Les deux sources sont passées, plus posées** (Slice 10). La page
-         donne la couture d'images et le lecteur d'observation ; c'est le
-         parcours qui les attache et les détache, parce que « Recommencer »
-         rentre dans `begin()` sans que la page en sache rien. Tant que
-         c'était l'inverse, un tutoriel relancé n'était plus nourri du tout.
-         La minuterie vient d'ici parce que `window` est ici, mais la cadence
-         est celle des options **effectives** du parcours, qui sont aussi
-         celles que la paire dangereuse n° 13 valide. */
-      frames:fn=>interactionView.afterFrame(fn),
-      observe:tutorialObservation,
-      setInterval:(fn,ms)=>window.setInterval(fn,ms),
-      clearInterval:id=>window.clearInterval(id),
-      onDone:result=>{markTutorialSeen(result)},
-      onExit:()=>{refreshPanel()},
-      log:(level,message,detail)=>{
-        if(level==='warn')console.warn(message,detail);else console.info(message,detail);
-      },
-    });
-    return tutorial;
-  }
-
-  /* Ce que le tutoriel a le droit de constater, construit **ici** à partir de
-     ce que la page publie déjà : le cycle de vie, les cibles en cours de
-     résolution, les interactions de l'instant et les deux réglages dont une
-     étape parle. Aucun échantillon de main n'y entre, et le module réduit
-     encore ce qu'il reçoit (`readObservation`) — la liste blanche est donc
-     écrite des deux côtés, et c'est celle du module qui est testée au
-     chargement. */
-  function tutorialObservation(){
-    /* Lire l'instant ne doit pas arrêter un tutoriel : ce qu'on ne peut pas
-       lire se dit et vaut « rien vu », ce que les étapes savent traiter. Le
-       cycle de vie reste hors du `try` : sans lui l'observation ne veut rien
-       dire, et il ne lit qu'un état interne. */
-    let interactions=[],targets=0,hands=0;
-    try{
-      interactions=interactionView.interactions();
-      targets=interactionView.targets().length;
-      hands=controller.features().length;
-    }catch(error){
-      console.warn('[barehands] tutoriel : l’instant est illisible',error);
-      interactions=[];targets=0;hands=0;
-    }
-    return {
-      now:Date.now(),
-      lifecycle:lifecycle(),
-      tool:view.settings.tool,
-      targetPreview:!!view.settings.targetPreview,
-      targets,hands,interactions,
-    };
-  }
-  /* **Deux mécanismes, et aucun des deux n'est de trop.**
-
-     1. **La cadence des images** (`interactionView.afterFrame`), parce que
-        `interactions()` ne décrit qu'un **instant** : elle est vidée à chaque
-        image, donc un lecteur qui n'échantillonnerait qu'à la minuterie
-        raterait la quasi-totalité des clics — le tutoriel aurait demandé un
-        geste que l'utilisateur aurait fait sans que rien ne l'enregistre, ce
-        qui est la pire panne possible pour un parcours d'apprentissage.
-     2. **Un chien de garde**, parce que cette boucle ne tourne qu'en ACTIVE et
-        seulement quand une main est vue : une étape quittée par l'utilisateur
-        ne serait jamais déclarée manquée et le compteur resterait figé sur
-        « 0 s restantes » — la panne exacte que la RÈGLE ZÉRO interdit. Il ne
-        peut pas être bloqué de la même façon que la caméra, il ne vit que
-        pendant le tutoriel, et sa cadence est bornée contre l'échéance d'une
-        étape **à la construction** (paire dangereuse n° 13).
-
-     Les deux appellent le même `pump` : une observation de plus est
-     inoffensive (une étape ne se solde qu'une fois), une observation de moins
-     ne l'est pas.
-
-     **Les deux vivent dans le parcours depuis la Slice 10**, et la page ne
-     fait plus que les lui passer (voir `tutorialFlow`). Elle les posait
-     elle-même autour de `startTutorial()`, ce qui marchait exactement une
-     fois : le bouton « Recommencer » du récapitulatif rentre dans le parcours
-     **depuis l'intérieur du module**, la page n'était jamais rappelée, et le
-     tutoriel relancé n'était plus nourri du tout — `tutorialState().observed`
-     restait à 0 pendant que l'utilisateur faisait le C correctement. Une
-     garantie que l'appelant doit se rappeler de respecter n'est pas une
-     garantie ; et un repli qui partage sa source avec ce qu'il double n'en
-     est pas un non plus. */
-
-  /* `tutorialSeen` **est lu par quelqu'un depuis la Slice 09** : il décide de
-     ce que la section Tutoriel de l'onglet dit, et il est écrit ici, à
-     l'arrivée sur le récapitulatif. Il passe par la porte unique des réglages
-     — donc il est normalisé, appliqué et enregistré comme les huit autres, et
-     un échec d'écriture a déjà ses trois obligations (bandeau, toast,
-     `finally`). Ce qui manquerait sans la ligne ci-dessous, c'est de le dire
-     **dans la coque**, seule surface visible à cet instant. */
-  async function markTutorialSeen(result){
-    /* **Rien n'est détaché ici**, et c'est la correction de la Slice 10 : le
-       récapitulatif est un état vivant du parcours, d'où le bouton
-       « Recommencer » repart. Couper les sources en y arrivant était le
-       premier maillon de la panne — la relance retombait sur un parcours que
-       plus rien ne nourrissait. Le parcours les tient lui-même jusqu'à
-       `stop()`, et `pump()` n'observe pas tant que le récapitulatif est à
-       l'écran : l'attache ne coûte donc rien de plus qu'un test de booléen
-       par image. */
-    refreshPanel();
-    if(view.settings.tutorialSeen){shell().note('Tutoriel terminé.','ok');return null}
-    const saved=await saveSettings({tutorialSeen:true});
-    if(saved===null)
-      shell().note('Tutoriel terminé, mais « tutoriel déjà vu » n’a pas pu être enregistré : il vous sera reproposé.','bad');
-    else shell().note(`Tutoriel terminé (${result&&result.done||0} étape(s) sur ${result&&result.total||(TUTO?TUTO.STEPS.length:0)}).`,'ok');
-    refreshPanel();
-    return saved;
-  }
 
   /* ------------------------------------------------------------------
      Enregistrement de diagnostic (Slice 10, architecture §12, décision 32).
@@ -4651,7 +5018,7 @@ try{
        le couper ni le reconstruire. */
     if(recorder&&recorder.isRecording())return recorder.start();
     if(!view.enabled){
-      const message='Bare Hands est éteint : cochez « Activer Barehands » avant d’enregistrer. L’interrupteur reste à vous.';
+      const message='Bare Hands est éteint : choisissez Veille ou Actif sur le bouton à icône de main, en haut à gauche de l’écran, avant d’enregistrer. Le cycle de vie reste à vous.';
       view.error=message;console.warn('[barehands] enregistrement refusé (éteint)');
       if(typeof toast==='function')
         toast({title:'Enregistrement impossible',sub:message,kind:'warn',ms:6000});
@@ -4770,7 +5137,7 @@ try{
   }
   function recordHtml(){
     const state=recordState();
-    return `<section class="bh-section" id="barehandsRecord">
+    return `<section class="bh-section" id="${SECTION.record}">
       <h3>Enregistrement de diagnostic</h3>
       <div class="hint" style="margin-bottom:12px">Pour régler Bare Hands sur des <strong>faits</strong> plutôt qu'à l'estime : une séance enregistrée une fois se rejoue autant qu'on veut, sous autant de réglages qu'on veut, et rend des mesures comparables. Éteint par défaut, et il ne s'allume que d'ici.</div>
       <div id="barehandsRecordState">${recordStateHtml()}</div>
@@ -4900,12 +5267,33 @@ try{
        nom. On refuse donc, en disant quoi faire — plutôt que d'ouvrir une
        caméra que personne n'a rallumée. */
     if(!view.enabled){
-      const message='Bare Hands est éteint : cochez « Activer Barehands » avant de lancer la calibration.';
+      const message='Bare Hands est éteint : choisissez Veille ou Actif sur le bouton à icône de main, en haut à gauche de l’écran, avant de lancer la calibration.';
       view.error=message;console.warn('[barehands] calibration refusée (éteint)');
       if(typeof toast==='function')
         toast({title:'Calibration impossible',sub:message,kind:'warn',ms:6000});
       refreshPanel();
-      return {ok:false,code:'barehands_calibration_disabled',reason:message};
+      /* **Son propre code** (Slice 08, report de la Slice 07B).
+
+         Jusqu'ici les deux refus que `startCalibration` connaît d'avance
+         partageaient `barehands_calibration_disabled`, et seule la phrase les
+         distinguait. Un code existe pour qu'une machine puisse brancher
+         dessus ; un code qui ne discrimine rien que la phrase ne dise déjà
+         mieux ne fait pas son métier — et c'est la voix qui le paie, puisque
+         le canal ne remonte qu'un code et un `reason` à JARVIS.
+
+         Les deux remèdes sont différents et incompatibles : « cochez
+         « Proposer la calibration » dans les réglages » contre « choisissez
+         Veille ou Actif sur le bouton en haut à gauche ». Un appelant qui veut
+         guider l'utilisateur doit pouvoir choisir sans analyser du français.
+
+         Le module HUD avait déjà tranché dans ce sens en inventant
+         `barehands_hud_surface_missing` pour sa troisième cause plutôt que de
+         la déguiser en « décoché » : on suit ce précédent au lieu de le
+         contredire. `disabled` reste ce qu'il dit — la calibration est
+         désactivée dans les réglages ; l'extinction de Bare Hands prend
+         `barehands_calibration_lifecycle_off`, nommé d'après le cycle de vie
+         pour qu'aucun lecteur ne le confonde avec le réglage. */
+      return {ok:false,code:'barehands_calibration_lifecycle_off',reason:message};
     }
     /* Réveiller, en revanche, est exactement ce que la voix sait déjà faire
        (`activate` est dans la table) : calibrer demande des mains vivantes. */
@@ -4925,59 +5313,59 @@ try{
     return started;
   }
 
-  /* **Le point d'entrée du tutoriel**, appelé par le bouton *et* par la voix
-     (canal de commandes, § 12). Même forme que `startCalibration`, et pour les
-     mêmes raisons : il **confirme** en résolvant `{ok:true}` dès que la coque
-     est à l'écran et que la première étape tourne — le démarrage, pas la fin :
-     l'échéance du canal est de trois secondes et un tutoriel en prend
-     plusieurs minutes. Les refus sont rendus `{ok:false, code}` — le canal les
-     traduit en « n'a pas confirmé », ce qui est vrai — **et** dits à l'écran,
-     parce que c'est le seul endroit où leur cause exacte survit.
+  /* **L'alias déprécié `tutorial`** (Slice 07B ; décisions 10 et 17,
+     architecture §9, READINESS §4).
 
-     **Il ne réveille pas, et c'est la différence avec la calibration.** La
-     première étape *est* le geste de réveil : l'exécuter à la place de
-     l'utilisateur lui retirerait ce qu'on prétend lui apprendre. Comme
-     `calibrate()`, il n'allume pas non plus Bare Hands — le § 12 garde
-     `enable`/`disable` hors du canal, et un parcours qui allumerait au
-     passage rendrait la décision contournable par un autre nom. */
-  function startTutorial(){
-    /* Le module ne s'est pas installé (mauvais ordre d'insertion, ou sa garde
-       de forme a refusé). On le **dit** avec son propre code plutôt que de
-       laisser une porte absente : le canal rendrait `barehands_flow_absent`,
-       qui est vrai, mais l'écran est le seul endroit où la cause exacte
-       survit. */
-    if(!TUTO){
-      const message='Le tutoriel n’a pas pu être chargé dans cette page. Rechargez le Control Center ; la console porte la cause exacte.';
-      view.error=message;console.warn('[barehands] tutoriel indisponible (module non installé)');
-      if(typeof toast==='function')
-        toast({title:'Tutoriel indisponible',sub:message,kind:'bad',ms:8000});
-      refreshPanel();
-      return {ok:false,code:'barehands_tutorial_not_installed',reason:message};
-    }
-    const busy=flowBusy('tutorial');
-    if(busy)return busy;
-    const flow=tutorialFlow();
-    if(flow.isRunning())return flow.start();
-    if(!view.enabled){
-      const message='Bare Hands est éteint : cochez « Activer Barehands » avant de lancer le tutoriel. L’interrupteur reste à vous.';
-      view.error=message;console.warn('[barehands] tutoriel refusé (éteint)');
-      if(typeof toast==='function')
-        toast({title:'Tutoriel impossible',sub:message,kind:'warn',ms:6000});
-      refreshPanel();
-      return {ok:false,code:'barehands_tutorial_disabled',reason:message};
-    }
-    /* **Il n'y a pas de refus « pas de caméra » ici, et c'est délibéré.** La
-       calibration en a un parce qu'elle ne peut rien mesurer sans mains ; le
-       tutoriel, lui, *enseigne*, et l'endroit où « la caméra n'est pas encore
-       prête » doit se lire est justement la coque — avec sa phrase, son
-       compteur vivant et ses trois sorties. Refuser renverrait l'utilisateur à
-       un toast sans rien lui dire de ce qu'il doit faire ensuite, alors que la
-       première étape est précisément celle qui parle du réveil. Le cycle de
-       vie entre donc dans l'observation, et l'étape `wake` a une phrase pour
-       chacun de ses quatre états. */
-    const started=flow.start();
-    refreshPanel();
-    return started;
+     Le parcours de tutoriel n'existe plus : son module est supprimé, son
+     entrée de réglages est partie à la Slice 02, et le menu du clic droit n'en
+     a jamais eu. Ce qui reste est **le nom**, et il reste parce que le
+     supprimer coûte plus qu'il ne rapporte : `tutorial` est miroité sous
+     assertion de parité au chargement dans `control_center_barehands_commands.js`
+     (`ENTRY_POINTS`), `jarvis/domain/barehands_command.py` (`COMMANDS`) et
+     `jarvis/runtime/barehands_mcp.py` (`TOOL_NAMES`/`TOOL_COMMANDS`, assertion
+     en fin de module). Retirer le nom est une rupture coordonnée sur trois
+     fichiers, alors que l'alias tient le contrat **et** l'exigence produit —
+     une seule surface visible.
+
+     **Il ouvre la calibration, et il le dit.** Le canal de commandes rapporte
+     ce que la page constate, jamais ce qu'on lui a demandé (§12) : un alias
+     qui rendrait `{ok:true}` nu ferait dire à JARVIS « j'ai lancé le
+     tutoriel » devant une calibration. La confirmation porte donc un `reason`
+     que le canal recopie dans le reçu, que le courtier renvoie et que l'outil
+     MCP colle à sa phrase — l'appelant lit, de bout en bout, qu'il a eu la
+     calibration.
+
+     **Il réveille, contrairement à l'ancien `startTutorial()`.** Celui-ci ne
+     réveillait délibérément pas, parce que sa première étape *était* le geste
+     de réveil et que l'exécuter à la place de l'utilisateur lui retirait ce
+     qu'on prétendait lui apprendre. Cette étape n'existe plus. Ce qui s'ouvre
+     maintenant est une calibration, qui a besoin de voir des mains pour
+     mesurer quoi que ce soit : garder la non-veille protégerait une garantie
+     qui n'a plus d'objet, et ferait refuser `barehands_calibration_no_camera`
+     à toute commande vocale `tutorial`. `startCalibration()` réveille ; l'alias
+     hérite de ce réveil, et c'est le bon comportement.
+
+     **Ses refus gardent le nom de ce qui a refusé.** L'appelant a demandé
+     `tutorial` et a obtenu la calibration ; quand elle refuse, le code est
+     `barehands_calibration_disabled` ou `barehands_calibration_no_camera`, pas
+     un code en `tutorial_*`. Renommer le refus cacherait **lequel** des deux
+     parcours a échoué, ce qui est précisément la vérité que l'alias doit
+     laisser passer. */
+  const TUTORIAL_ALIAS_REASON='Commande dépréciée : le parcours de tutoriel a été retiré, '
+    +'c’est la calibration qui a été ouverte.';
+  async function startTutorialAlias(){
+    /* La dépréciation est un fait de la page, donc elle part dans la console
+       de la page — à l'appel, pas dans un document que personne ne relit. */
+    console.warn('[barehands] barehands.tutorial_deprecated '
+      +JSON.stringify({replacedBy:'calibration',reason:TUTORIAL_ALIAS_REASON}));
+    const answer=await startCalibration();
+    /* **On n'invente pas un succès, et on ne maquille pas un refus.** Ce que
+       `startCalibration()` a rendu passe tel quel ; on n'y ajoute que la
+       phrase qui dit quel parcours s'est ouvert, et seulement quand il s'est
+       ouvert. Un refus garde son code et son motif : c'est sa cause exacte
+       qui doit remonter, pas la nôtre. */
+    if(!answer||answer.ok!==true)return answer;
+    return {...answer,flow:'calibration',deprecated:true,reason:TUTORIAL_ALIAS_REASON};
   }
 
   /* **Sortir de la surimpression**, quelle qu'elle soit. Troisième sortie du
@@ -5177,23 +5565,28 @@ try{
      peut pas en avoir : derrière, c'est une invite de permission qu'un humain
      met le temps qu'il veut à lire. Un état qui peut durer doit donc dire
      **depuis combien de temps** il dure — sinon « démarre… » et « bloqué » se
-     ressemblent — et **comment en sortir** : ici l'interrupteur du dessus, qui
-     annule un démarrage en vol et rend la caméra dès qu'elle arrive. Le
-     compteur s'arrête de lui-même dès que l'état change. */
-  let startingSince=0,startingTimer=0;
+     ressemblent — et **comment en sortir**.
+
+     **Le compteur de secondes, lui, a déménagé** (Slice 01) : il vit sous le
+     bouton de la barre du haut, qui est visible même l'onglet fermé, alors que
+     celui d'ici ne s'affichait que dans un modal ouvert. Ce battement-là reste
+     pour une autre raison, et elle survit au déménagement : c'est le seul
+     réveil périodique pendant `starting`, donc le seul chemin qui repasse par
+     `publishLifecycle()` si le contrôleur quitte le démarrage sans qu'aucun
+     statut ne parte. Un instantané inchangé ne se republie pas, donc il ne
+     coûte rien quand il n'y a rien à dire. */
+  let startingTimer=0;
   function stopStartingClock(){
     if(startingTimer){clearInterval(startingTimer);startingTimer=0}
   }
   function watchStartingClock(){
     if(!starting()){stopStartingClock();return}
     if(startingTimer)return;
-    startingSince=Date.now();
     startingTimer=setInterval(()=>{
       if(!starting()){stopStartingClock();return}
       refreshPanel();
     },1000);
   }
-  const startingSeconds=()=>Math.max(0,Math.round((Date.now()-startingSince)/1000));
 
   /* Réveil et mise en veille à la main : le second chemin d'activation exigé
      par la décision 4, à côté de la posture en C. La voix empruntera le même
@@ -5226,9 +5619,28 @@ try{
      réglage resté « allumé » sur le serveur, est **nommée** : c'est ce que
      l'utilisateur retrouvera au prochain chargement. */
   async function setEnabled(enabled){
-    // Éteindre n'attend pas l'écriture : la caméra est libérée tout de suite.
+    /* **Éteindre éteint, quel que soit l'état de départ.** La garde qui
+       protège « Caméra refusée » d'être écrasée par « Barehands arrêté —
+       caméra libérée » ne vit pas ici : elle vit dans `controller.disable()`
+       (`wasOn=isEngagedState(state)`), qui depuis `ERROR` émet `off` et non
+       `disabled` — et `off` n'est pas notifié par `onStatus`. Aucun toast ne
+       part donc, et celui de la panne reste à l'écran avec sa cause réelle.
+
+       Conditionner l'appel ici faisait tout autre chose : depuis `ERROR`, le
+       contrôleur restait garé en panne après que l'utilisateur ait
+       explicitement demandé l'extinction — interrupteur à faux, écran rouge.
+       C'est l'état courant qui mentait pour continuer de décrire un événement
+       passé. Le toast est le journal de l'événement, l'écran est l'état
+       courant : deux métiers. Depuis `OFF` ou `ERROR`, `teardown()` ne rend
+       rien puisque rien n'est tenu, et `generation+=1` invalide au passage un
+       démarrage encore en vol. */
+    /* **Ce qui était vraiment tenu et vient d'être rendu**, lu *avant*
+       l'extinction — et gardé séparé, parce que ce n'est pas la même question
+       que « faut-il éteindre ». C'est celle qui gouverne la phrase « la caméra
+       a bien été libérée, c'est le réglage qui n'a pas été enregistré » plus
+       bas : sans objectif ouvert, cette phrase-là n'aurait rien à dire. */
     const released=!enabled&&Core.isEngagedState(controller.state());
-    if(released)controller.disable();
+    if(!enabled)controller.disable();
     const saved=await saveSettings({enabled});
     if(saved!==null||!released)return saved;
     view.enabled=false;
@@ -5255,73 +5667,6 @@ try{
     const assets=view.assets;
     return assets&&!assets.installed
       ?`<div class="notice bad"><strong>Modèle MediaPipe absent</strong><div class="hint">Fichiers manquants : ${assets.missing.map(esc).join(', ')}. Lancez <code>${esc(assets.install_hint)}</code> puis réessayez.</div></div>`:'';
-  }
-
-  /* Bandeau de cycle de vie : où l'on en est, et le bouton qui en change.
-     Éteint, le bouton allume puis réveille d'un coup — l'interrupteur du
-     dessus reste le seul à écrire le réglage sur le serveur. */
-  function lifecycleHtml(){
-    const booting=starting(),at=booting?Core.STATE.STARTING:lifecycle();
-    const awake=at===BH.LIFECYCLE.ACTIVE;
-    /* Pendant le démarrage le bouton est désarmé plutôt que trompeur : il
-       n'aurait rien à activer qui ne soit déjà en route. */
-    const label=booting?`Démarrage… ${startingSeconds()} s`
-      :awake?'Mettre en veille'
-      :at===BH.LIFECYCLE.SLEEP?'Activer l’interaction'
-      :at===BH.LIFECYCLE.ERROR?'Réessayer':'Allumer et activer';
-    /* Une panne ne se lit pas « éteint » : l'état le dit, et le code du motif
-       reste visible à côté du nom. */
-    const why=at===BH.LIFECYCLE.ERROR&&view.status&&view.status.code?` · ${esc(view.status.code)}`:'';
-    const hint=booting
-      ?'Chargement du modèle et ouverture de la caméra. Si le navigateur attend votre autorisation, répondez à l’invite ; pour annuler, décochez l’interrupteur ci-dessus — la caméra est rendue dès qu’elle arrive.'
-      :`Éteint, la caméra est libérée. En veille, elle ne sert qu'au guetteur de réveil (${Math.round(1000/BH.WAKE_INTERVAL_MS)} images par seconde, aucun clic).`;
-    return `<div class="field inline" style="align-items:center;gap:10px;margin-top:2px">
-      <button type="button" class="action${awake||booting?'':' primary'}" id="barehandsWake" data-barehands-wake ${view.busy||booting?'disabled':''}>${esc(label)}</button>
-      <div><div class="hint">Cycle de vie : <strong>${esc(LIFECYCLE_LABEL[at]||at)}</strong>${why}</div>
-      <div class="hint">${esc(hint)}</div></div>
-    </div>`;
-  }
-
-  /* ------------------------------------------------------------------
-     Outils et réglages (Slice 07, décisions 24 et 25).
-
-     **Deux concepts, deux sections, et la distinction est visible** : l'outil
-     dit ce que la main veut dire *maintenant* ; les réglages disent comment
-     Bare Hands se comporte. Les fondre en une seule liste ferait du choix d'un
-     outil un réglage de plus, et du retour en veille une façon de tenir la
-     main — ce que la décision 25 refuse précisément.
-
-     Ce que chaque outil fait, en français, à côté de ce qu'il **exige** : le
-     contrat possède le nom et la capacité (§ 8), l'écran possède la phrase.
-     Une capacité sans moteur n'est pas grisée en silence — elle dit pourquoi. */
-  const TOOL_HINT=Object.freeze({
-    pointer:'Contextuel : clic, glissement, défilement ou sélection selon ce qu’il y a sous la main. C’est le comportement par défaut, et il ne force rien.',
-    pan:'Le contenu suit la main. Une cible qui ne défile pas est refusée, avec un mot à l’écran.',
-    select:'Désigner et sélectionner. Réservé aux champs de saisie et aux étoiles de la scène ; ailleurs, refusé.',
-  });
-  const UNAVAILABLE='Aucun moteur derrière cet outil en V1.';
-
-  function toolsHtml(){
-    const active=view.settings.tool;
-    const buttons=BH.describeTools().map(tool=>{
-      const on=tool.id===active;
-      const off=!tool.installed||view.busy;
-      /* Motif « groupe de boutons radio » : un seul arrêt de tabulation, les
-         flèches parcourent la palette. Sans le `tabindex` mouvant, un lecteur
-         d'écran annonce un groupe de radios que le clavier traverse un par un,
-         c'est-à-dire une promesse que la page ne tient pas. */
-      return `<button type="button" role="radio" class="action small${on?' primary':''}" `
-        +`data-barehands-tool="${esc(tool.id)}" aria-checked="${on?'true':'false'}" `
-        +`tabindex="${on?0:-1}" `
-        +`${off?'disabled':''} ${tool.installed?'':`title="${esc(UNAVAILABLE)}"`}>`
-        +`${esc(tool.label)}${tool.installed?'':' <span class="tag">—</span>'}</button>`;
-    }).join('');
-    return `<section class="bh-section" id="barehandsTools">
-      <h3>Outils</h3>
-      <div class="hint" style="margin-bottom:12px">Ce que la main veut dire. Distinct des réglages : un outil se choisit en pleine session et ne change pas la façon dont Bare Hands se comporte, seulement le sens de ce qu’on saisit. Les bords et les coins d’un cadre restent des poignées quel que soit l’outil.</div>
-      <div class="row" role="radiogroup" aria-label="Outil Bare Hands" style="flex-wrap:wrap;gap:8px">${buttons}</div>
-      <div class="hint" style="margin-top:10px" id="barehandsToolHint">${esc(TOOL_HINT[active]||'')}</div>
-    </section>`;
   }
 
   /* ------------------------------------------------------------------
@@ -5382,7 +5727,7 @@ try{
   }
   function calibrationHtml(){
     const disabled=!view.settings.calibrationEnabled;
-    return `<section class="bh-section" id="barehandsCalibration">
+    return `<section class="bh-section" id="${SECTION.calibration}">
       <h3>Calibration</h3>
       <div class="hint" style="margin-bottom:12px">Une mesure courte qui adapte les seuils de Bare Hands à <strong>votre</strong> main. Elle ne démarre que si vous la lancez, ne conserve <strong>aucune image ni vidéo</strong> — seulement des nombres dérivés — et chaque étape peut être passée : ce qui n’est pas mesuré garde la valeur d’usine.</div>
       <div id="barehandsProfile">${profileStateHtml()}</div>
@@ -5398,48 +5743,32 @@ try{
   }
   const HAND_LABEL=Object.freeze({left:'Main gauche',right:'Main droite',unknown:'Main non étiquetée'});
 
-  /* **Le tutoriel, et ce que `tutorialSeen` veut dire** (Slice 09).
+  /* **Ce que `tutorialState()` peut encore dire honnêtement** (Slice 07B).
 
-     Le réglage traversait la route, le fichier et la normalisation sans qu'un
-     seul parcours ne le lise ; c'est ici qu'il est lu. Il dit **« cet
-     utilisateur a traversé le tutoriel au moins une fois jusqu'au
-     récapitulatif »** — pas « il a réussi » (passer une étape reste vu :
-     l'invitation de la scène peut n'avoir ni étoile ni cadre), et pas « on le
-     lui a proposé » (quitter au milieu n'écrit rien). Il ne déclenche **aucun**
-     lancement automatique : ce qu'il change est ce que cette section dit. */
+     Le parcours est retiré. Cet accesseur est **gardé** — c'est un membre
+     d'une surface gelée, et le retirer serait une rupture de contrat pour un
+     appelant qui, au lieu d'apprendre quelque chose, se prendrait un
+     `undefined is not a function`. Mais sa **forme** change, et c'est
+     délibéré : `steps:0`, `observed:0` et surtout `installed:false`
+     décriraient un module simplement *absent* — un défaut plausible — là où
+     la vérité est qu'il a été *retiré*. La règle de cette tâche est « un refus
+     codé plutôt qu'un défaut plausible » ; appliquée à un accesseur public,
+     elle donne `retired:true` et `replacedBy:'calibration'`, que personne ne
+     peut confondre avec une panne d'insertion.
+
+     **Aucun code de production ne le lit**, ce qui rend le changement de forme
+     sans coût. Le commentaire qu'il remplace affirmait que « le canal de
+     commandes vocal utilise » cet accesseur : c'était faux, le canal ne lit
+     que `lifecycle()` et les méthodes de sa table (`ENTRY_POINTS`). Erreur
+     héritée de la Slice 09, corrigée ici.
+
+     `seen` survit parce que c'est le seul fait resté vrai : cet utilisateur a
+     traversé l'ancien tutoriel jusqu'à son récapitulatif, avant son retrait.
+     Rien ne l'écrit plus ; voir `docs/legacy/barehands-tutorial-retirement.md`
+     pour la condition de suppression du champ persisté. */
   function tutorialState(){
-    return {running:!!(tutorial&&tutorial.isRunning()),
-      step:tutorial?tutorial.stepId():null,
-      seen:!!view.settings.tutorialSeen,
-      /* Combien d'observations le parcours a reçues : c'est ce qui distingue
-         « nourri à la cadence des images » de « nourri par la seule
-         minuterie », qui s'écrivent pareil et n'apprennent pas la même
-         chose — la seconde rate la quasi-totalité des clics. */
-      observed:tutorial?tutorial.observations():0,
-      installed:!!TUTO,
-      steps:TUTO?TUTO.STEPS.length:0};
-  }
-  function tutorialStateHtml(){
-    const state=tutorialState();
-    if(!state.installed)
-      return '<div class="notice bad"><strong>Tutoriel indisponible</strong><div class="hint">Son module ne s’est pas installé dans cette page. Rechargez le Control Center ; la console porte la cause exacte. Le reste de Bare Hands fonctionne normalement.</div></div>';
-    if(state.running)
-      return `<div class="notice info"><strong>Tutoriel en cours</strong><div class="hint">Étape « ${esc(state.step||'?')} ». La surimpression est à l’écran ; quittez-la par « Quitter », la touche Échap, ou « ferme la surimpression ».</div></div>`;
-    if(state.seen)
-      return '<div class="hint">Vous avez déjà fait le tour du tutoriel. Vous pouvez le relancer quand vous voulez ; décocher « Tutoriel déjà vu » ci-dessus remet l’invitation.</div>';
-    return `<div class="notice info"><strong>Vous n’avez pas encore fait le tutoriel</strong><div class="hint">${esc(String(state.steps))} étapes guidées pour apprendre le vocabulaire complet : réveil, cible, clic, clic droit, contenu, étoile, cadre, redimensionnement à deux mains, outils et sorties. Rien n’est mesuré et <strong>aucun paramètre de calibration n’est touché</strong>.</div></div>`;
-  }
-  function tutorialHtml(){
-    const state=tutorialState();
-    return `<section class="bh-section" id="barehandsTutorial">
-      <h3>Tutoriel</h3>
-      <div class="hint" style="margin-bottom:12px">Un parcours guidé qui apprend les gestes de la V1, dans la même surimpression que la calibration — mais il ne mesure rien et n’écrit aucun profil. Chaque étape peut être passée, et on en sort à tout moment.</div>
-      <div id="barehandsTutorialState">${tutorialStateHtml()}</div>
-      <div class="field inline" style="align-items:center;gap:10px;margin-top:14px">
-        <button type="button" class="action small${state.seen||!state.installed?'':' primary'}" id="barehandsTutorialStart" ${view.busy||state.running||!state.installed?'disabled':''}>${state.seen?'Revoir le tutoriel…':'Lancer le tutoriel…'}</button>
-        <div class="hint">Bare Hands doit être allumé et sa caméra démarrée : la première étape est le geste de réveil, et le tutoriel ne le fait pas à votre place.</div>
-      </div>
-    </section>`;
+    return {retired:true,replacedBy:'calibration',running:false,
+      seen:!!view.settings.tutorialSeen};
   }
 
   const seconds=ms=>`${Math.round(Number(ms)/1000)} s`;
@@ -5480,8 +5809,41 @@ try{
       <div class="hint">${esc(hint)}</div></div></div>`;
   }
 
+  /* **Deux limites connues, replacées** (Slice 08).
+
+     La Slice 04 a supprimé le bloc « Gestes » et deux de ses phrases étaient
+     devenues fausses — elles sont mortes à juste titre. Quatre phrases
+     **vraies** sont parties avec. Deux décrivaient ce que l'utilisateur a sous
+     les yeux et sont revenues dans la carte d'aide (`helpModel().reading`) ;
+     les deux autres, celles-ci, ne décrivent rien : elles disent ce qui **ne
+     marchera pas**, et l'utilisateur les rencontrera en croyant à une panne.
+
+     Elles sont ici, et pas dans la carte d'aide, pour la raison qui fonde la
+     décision 14 : cet onglet est de la **configuration**, et une limite
+     assumée est de la documentation, pas une action de session. Les mettre
+     dans l'aide rouvrirait le mur de texte que la Slice 04 a eu raison de
+     fermer ; les taire laisserait un clic sans effet passer pour un bug.
+
+     **Ce ne sont pas des réglages** — rien ici ne se coche ni ne s'enregistre —
+     donc le bloc ferme la section plutôt que de s'intercaler entre deux
+     contrôles, et il n'entre pas dans le compte des « six réglages ci-dessus »
+     que le bouton de réinitialisation annonce.
+
+     Les deux faits sont structurels, pas des défauts à corriger un jour : le
+     navigateur réserve l'ouverture d'un `<select>` à un événement de confiance,
+     et `document.querySelectorAll` ne traverse pas la frontière d'une iframe
+     — le visage ai-visualizer en est une (`control_center.html:730`). Si l'un
+     des deux cessait d'être vrai, c'est cette phrase-là qu'il faudrait
+     retirer. */
+  function limitsHtml(){
+    return `<div class="field" style="margin-top:18px">
+      <label>Deux limites connues</label>
+      <div class="hint">Une <strong>liste déroulante</strong> ne s’ouvre pas au pincement : le navigateur réserve son ouverture à un vrai clic de souris, et Bare Hands en produit un synthétique. Le <strong>visage ai-visualizer</strong> est une iframe : elle ne reçoit pas les clics de Bare Hands. Dans les deux cas rien n’est cassé — utilisez la souris pour ces deux éléments.</div>
+    </div>`;
+  }
+
   function settingsHtml(){
-    return `<section class="bh-section" id="barehandsSettings">
+    return `<section class="bh-section" id="${SECTION.settings}">
       <h3>Réglages</h3>
       <div class="hint" style="margin-bottom:14px">Comment Bare Hands se comporte. Enregistrés immédiatement et appliqués à chaud, sans recharger la page.</div>
       ${checkHtml('targetPreview','Aperçu de la cible',
@@ -5496,68 +5858,60 @@ try{
         'Qualité, vitesse et immobilité de chaque main suivie, en bas à droite pendant l’interaction. Rien n’est enregistré : c’est une lecture, pas un enregistreur.')}
       ${checkHtml('calibrationEnabled','Proposer la calibration',
         'Garde la calibration optionnelle et explicite : Bare Hands ne mesurera jamais votre main sans que vous l’ayez lancée.')}
-      ${checkHtml('tutorialSeen','Tutoriel déjà vu',
-        'Coché dès que vous avez traversé le tutoriel jusqu’à son récapitulatif. Décochez pour que l’invitation revienne — il ne se lance jamais tout seul.')}
       <div class="field inline" style="align-items:center;gap:10px;margin-top:14px">
         <button type="button" class="action small" id="barehandsReset" ${view.busy?'disabled':''}>Réinitialiser les réglages</button>
-        <div class="hint">Rend aux sept réglages ci-dessus et à l’outil leur valeur d’usine. L’interrupteur ci-dessus n’y touche pas : réinitialiser n’éteint pas la caméra. Le profil de calibration a son propre bouton ci-dessous : ce sont deux choses distinctes.</div>
+        <div class="hint">Rend aux six réglages ci-dessus et à l’outil leur valeur d’usine. Le cycle de vie n’y touche pas : réinitialiser n’éteint pas la caméra, et le bouton à icône de main en haut à gauche reste dans l’état où il est. Le profil de calibration a son propre bouton ci-dessous : ce sont deux choses distinctes.</div>
       </div>
+      ${limitsHtml()}
     </section>
     ${calibrationHtml()}
-    ${tutorialHtml()}
     ${recordHtml()}`;
   }
 
+  /* **Décision 14 : cet onglet est de la configuration, pas un tableau de
+     bord d'interaction.** Trois blocs en sont sortis à la Slice 02 et ne
+     doivent pas y revenir :
+
+     - l'interrupteur maître et le bandeau de cycle de vie — le bouton de la
+       barre du haut est le seul endroit où l'on allume, endort et active
+       (décision 1) ; deux commandes pour un même état se contredisent le jour
+       où l'une des deux ne se rafraîchit pas ;
+     - les **outils** — la Slice 03 les rend en palette de gauche, atteignable
+       en pleine session, ce qu'un modal de réglages n'est pas ;
+     - le **tutoriel** — décision 10, l'entrée séparée disparaît ; la
+       calibration enseigne (décision 17). La Slice 02 avait retiré la
+       *section* de lancement ; la Slice 07B retire la dernière chose qui en
+       restait à l'écran, la case « Tutoriel déjà vu » — une case qui cochait
+       l'achèvement d'un parcours qui n'existe plus n'est pas un réglage, c'est
+       une question sans objet posée à l'utilisateur.
+
+     **Rien n'est sorti du stockage pour autant** : `enabled`, `tool` et
+     `tutorial_seen` restent écrits, relus et normalisés (`SCHEMA_VERSION = 2`
+     de `barehands_test_mode.py`), et les portes publiques
+     `enable`/`disable`/`activate`/`sleep`, `tool()`, `tutorial()` et
+     `tutorialState()` restent posées. C'est la **propriété de l'écran** qui a
+     changé de main, pas celle de la donnée : `tutorial_seen` est désormais un
+     champ de compatibilité que plus personne n'écrit et que la normalisation
+     tolère, pour ne pas imposer une migration de schéma à trois fichiers pour
+     un seul booléen (`docs/legacy/barehands-tutorial-retirement.md`). */
   function panelHtml(){
     const missing=assetsHtml();
     return `<section>
       <h3>Barehands · mode test</h3>
-      <div class="hint" style="margin-bottom:14px">Piloter l'interface à mains nues. La webcam suit vos mains <strong>localement</strong> (MediaPipe, aucun envoi vers un service cloud). Le réglage est enregistré immédiatement et reste actif au prochain chargement de la page.</div>
-      <div class="field inline"><input type="checkbox" id="f_barehands" data-barehands-toggle ${view.enabled?'checked':''} ${view.busy?'disabled':''}>
-        <div><label for="f_barehands">Activer Barehands (mode test) <span class="tag warn">TEST</span></label>
-        <div class="hint">Désactivé par défaut. Éteint, la caméra est libérée et les jetons disparaissent. Activé, Barehands démarre <strong>en veille</strong> : la caméra guette le geste de réveil, sans cliquer.</div></div></div>
-      <div id="barehandsLifecycle">${lifecycleHtml()}</div>
+      <div class="hint" style="margin-bottom:14px">Piloter l'interface à mains nues. La webcam suit vos mains <strong>localement</strong> (MediaPipe, aucun envoi vers un service cloud). Les réglages ci-dessous sont enregistrés immédiatement et restent actifs au prochain chargement de la page. <strong>Allumer, endormir ou activer Bare Hands</strong> se fait depuis le bouton à icône de main, en haut à gauche de l'écran principal : c'est le seul endroit où le cycle de vie se choisit.</div>
       <div id="barehandsStatus">${statusHtml()}</div>
       <div id="barehandsAssets">${missing}</div>
       <div class="hint" style="margin-top:14px">Dernière commande vocale reçue par cette page :</div>
       <div id="barehandsVoice">${voiceHtml()}</div>
     </section>
-    ${toolsHtml()}
-    ${settingsHtml()}
-    <section class="bh-section">
-      <h3>Gestes</h3>
-      <ul class="hint" style="padding-left:18px;line-height:1.7">
-        <li><strong>Réveil :</strong> en veille, formez un C avec le pouce et l'index — écartés sans se toucher, index déplié — et tenez une seconde. L'anneau se remplit autour de la main ; relâcher avant la fin annule.</li>
-        <li>Chaque main visible affiche un jeton rond qui suit le bout de l'index ; il grossit au survol d'un élément cliquable.</li>
-        <li>Rapprocher pouce et index remplit l'anneau du jeton (pincement en cours) ; le jeton se fige pour viser.</li>
-        <li>Pincement franc : clic sous le jeton (onde visuelle). Rouvrir les doigts avant de recliquer.</li>
-        <li>Un jeton <strong>pâle et pointillé</strong> signale une main que le suivi ne tient pas pour sûre — elle sort du cadre, elle est trop loin, ou elle vient d'apparaître. Elle est affichée et cliquable, mais elle ne maintient pas l'interaction éveillée : la pastille compte alors « 1/2 ».</li>
-        <li>Sans main <em>sûre</em> vue pendant 30 secondes, l'interaction retourne en veille ; la caméra reste ouverte pour le guetteur.</li>
-        <li><strong>Reconnus, pas encore agissants :</strong> le pincement <strong>pouce-majeur</strong> (clic droit), la main ouverte, le poing, la double fermeture et le claquement des deux paumes. Ils sont mesurés et publiés à chaque image, mais aucune action ne leur est encore liée — <code>JarvisBarehands.gestures()</code> et <code>JarvisBarehands.pinch()</code> les montrent depuis la console.</li>
-      </ul>
-      <div class="hint" style="margin-top:10px">Limites du mode test : pas de glisser-déposer ni de défilement ; une liste déroulante ne s'ouvre pas au pincement (le navigateur l'interdit aux clics simulés) ; le visage ai-visualizer (iframe) ne reçoit pas les clics.</div>
-    </section>`;
+    ${settingsHtml()}`;
   }
 
-  /* Le bandeau est redessiné à chaque rafraîchissement : son bouton est neuf à
-     chaque fois, donc réarmé à chaque fois. */
-  function bindWake(){
-    const button=document.getElementById('barehandsWake');
-    if(button)button.addEventListener('click',()=>setAwake(lifecycle()!==BH.LIFECYCLE.ACTIVE));
-  }
-
-  /* Tous les contrôles de l'onglet, armés une fois à l'ouverture. Les deux
-     sections d'outils et de réglages ne sont **jamais** redessinées ensuite :
-     leurs valeurs sont remises à jour en place. Redessiner arracherait le
-     focus et le curseur qu'on est en train de tirer, exactement au moment où
-     l'on s'en sert. */
+  /* Tous les contrôles de l'onglet, armés une fois à l'ouverture. La section
+     de réglages n'est **jamais** redessinée ensuite : ses valeurs sont remises
+     à jour en place. Redessiner arracherait le focus et le curseur qu'on est
+     en train de tirer, exactement au moment où l'on s'en sert. */
   function bindPanel(){
-    const toggle=document.getElementById('f_barehands');
-    if(toggle)toggle.addEventListener('change',()=>setEnabled(toggle.checked));
-    for(const button of document.querySelectorAll('[data-barehands-tool]')){
-      button.addEventListener('click',()=>saveSettings({tool:button.getAttribute('data-barehands-tool')}));
-      button.addEventListener('keydown',event=>moveTool(button,event));
-    }
     for(const box of document.querySelectorAll('[data-barehands-check]'))
       box.addEventListener('change',()=>saveSettings({[box.getAttribute('data-barehands-check')]:box.checked}));
     for(const range of document.querySelectorAll('[data-barehands-range]')){
@@ -5577,54 +5931,14 @@ try{
     if(calibrate)calibrate.addEventListener('click',()=>{startCalibration()});
     const wipe=document.getElementById('barehandsProfileReset');
     if(wipe)wipe.addEventListener('click',resetProfile);
-    /* Décision 6 : le tutoriel a une **porte**, et c'est la même que celle de
-       la voix. Un bouton qui appellerait autre chose que `startTutorial`
-       serait une seconde implantation du parcours — ce que cette Slice
-       interdit explicitement. */
-    const teach=document.getElementById('barehandsTutorialStart');
-    if(teach)teach.addEventListener('click',()=>{startTutorial()});
-    /* Slice 10 : une seule porte pour l'enregistrement, comme pour les deux
-       parcours. Un bouton qui appellerait le module directement serait une
+    /* Slice 10 : une seule porte pour l'enregistrement, comme pour la
+       calibration. Un bouton qui appellerait le module directement serait une
        seconde implantation — et celle-ci sauterait le refus « Bare Hands est
        éteint » et l'ouverture de la couture de mesures. */
     const tape=document.getElementById('barehandsRecordStart');
     if(tape)tape.addEventListener('click',()=>{startRecording()});
     const untape=document.getElementById('barehandsRecordStop');
     if(untape)untape.addEventListener('click',()=>{stopRecording()});
-    bindWake();
-  }
-
-  /* Les flèches parcourent la palette et **sautent** ce qui n'a pas de moteur :
-     s'arrêter sur un outil qu'on ne peut pas choisir est un cul-de-sac au
-     clavier, alors que la souris, elle, voit tout de suite qu'il est grisé. */
-  function moveTool(button,event){
-    const step=event.key==='ArrowRight'||event.key==='ArrowDown'?1
-      :event.key==='ArrowLeft'||event.key==='ArrowUp'?-1:0;
-    if(!step)return;
-    if(typeof event.preventDefault==='function')event.preventDefault();
-    const list=[...document.querySelectorAll('[data-barehands-tool]')].filter(el=>!el.disabled);
-    const at=list.indexOf(button);
-    if(at<0||list.length<2)return;
-    const next=list[(at+step+list.length)%list.length];
-    if(typeof next.focus==='function')try{next.focus()}catch(_error){/* retiré entre-temps */}
-    saveSettings({tool:next.getAttribute('data-barehands-tool')});
-  }
-
-  function refreshTools(){
-    const active=view.settings.tool;
-    for(const button of document.querySelectorAll('[data-barehands-tool]')){
-      const id=button.getAttribute('data-barehands-tool');
-      const on=id===active;
-      button.classList.toggle('primary',on);
-      button.setAttribute('aria-checked',on?'true':'false');
-      button.setAttribute('tabindex',on?'0':'-1');
-      /* Un outil sans moteur reste **dessiné** et désarmé : le retirer de la
-         palette ferait croire qu'il n'existe pas, alors qu'il est au contrat
-         et qu'il arrive. Son titre dit pourquoi il ne se choisit pas. */
-      button.disabled=!BH.toolInstalled(id)||view.busy;
-    }
-    const hint=document.getElementById('barehandsToolHint');
-    if(hint)hint.textContent=TOOL_HINT[active]||'';
   }
 
   function refreshSettings(){
@@ -5653,7 +5967,7 @@ try{
     const ok=typeof confirmDialog!=='function'||await confirmDialog({
       title:'Réinitialiser les réglages Bare Hands ?',
       lines:['Les réglages et l’outil reprennent leur valeur d’usine.',
-        'L’interrupteur ne bouge pas : la caméra reste dans l’état où elle est.'],
+        'Le cycle de vie ne bouge pas : la caméra reste dans l’état où elle est, et le bouton à icône de main aussi.'],
       confirmLabel:'Réinitialiser'});
     if(!ok)return;
     const saved=await saveSettings({...BH.SETTINGS_DEFAULTS,enabled:view.settings.enabled});
@@ -5662,11 +5976,25 @@ try{
   }
 
   function refreshPanel(){
+    /* **La couture d'abord, avant le garde-fou.** Tout ce qui change le cycle
+       de vie finit ici — `onStatus`, `setAwake`, `setEnabled`, `saveSettings`,
+       `applyServerState`, l'horloge de démarrage —, mais la ligne suivante ne
+       parle que du panneau : publier après elle n'aurait atteint personne tant
+       que l'onglet Expérimental est fermé, c'est-à-dire presque toujours.
+       Un instantané inchangé ne repart pas (`publishLifecycle` déduplique),
+       donc les chemins qui repeignent sans changer d'état — un curseur qu'on
+       tire — ne réveillent aucun abonné. */
+    publishLifecycle();
+    /* **Et l'outil, pour exactement la même raison.** Il change par
+       `saveSettings` (l'écran, la palette, la console) et par
+       `applyServerState` (le chargement, la réponse du serveur) ; les deux
+       finissent ici, et ici seulement. Publier après le garde-fou n'aurait
+       atteint la palette de gauche que lorsque l'onglet Expérimental est
+       ouvert, c'est-à-dire précisément jamais — et la palette existe pour
+       qu'on n'ait plus à l'ouvrir (décision 11). Déduplication identique :
+       un rafraîchissement qui ne touche pas à l'outil ne réveille personne. */
+    publishTools();
     if(typeof SET==='undefined'||!SET.open||SET.tab!==TAB_ID)return;
-    const toggle=document.getElementById('f_barehands');
-    if(toggle){toggle.checked=view.enabled;toggle.disabled=view.busy}
-    const life=document.getElementById('barehandsLifecycle');
-    if(life){life.innerHTML=lifecycleHtml();bindWake()}
     const status=document.getElementById('barehandsStatus');
     if(status)status.innerHTML=statusHtml();
     const assets=document.getElementById('barehandsAssets');
@@ -5679,14 +6007,6 @@ try{
     if(wipe)wipe.disabled=view.busy||!(view.profile&&view.profile.calibrated);
     const voice=document.getElementById('barehandsVoice');
     if(voice)voice.innerHTML=voiceHtml();
-    const teaching=document.getElementById('barehandsTutorialState');
-    if(teaching)teaching.innerHTML=tutorialStateHtml();
-    const teach=document.getElementById('barehandsTutorialStart');
-    if(teach){
-      const state=tutorialState();
-      teach.disabled=view.busy||state.running||!state.installed;
-      teach.textContent=state.seen?'Revoir le tutoriel…':'Lancer le tutoriel…';
-    }
     const taping=document.getElementById('barehandsRecordState');
     if(taping)taping.innerHTML=recordStateHtml();
     const tape=document.getElementById('barehandsRecordStart');
@@ -5696,7 +6016,163 @@ try{
       if(tape)tape.disabled=view.busy||state.recording||!state.installed;
       if(untape)untape.disabled=!state.recording;
     }
-    refreshTools();refreshSettings();
+    refreshSettings();
+  }
+
+  /* ------------------------------------------------------------------
+     Les portes d'entrée de l'onglet, ouvertes de l'**extérieur** (Slice 02).
+
+     Le menu contextuel du bouton de la barre du haut n'a pas le droit de
+     rejouer ce que fait `renderTab` : ce serait une seconde implantation de
+     « montrer les réglages Bare Hands », et le jour où l'onglet apprend
+     quelque chose (une relecture d'assets, une révision de rendu) l'une des
+     deux l'apprendrait seule. Il appelle donc ceci, qui est aussi ce que la
+     console atteint.
+
+     Chaque issue est **nommée** : la page qui n'a pas de modal de réglages
+     (un test node, un Control Center partiellement servi) ne doit pas rendre
+     un succès silencieux, sans quoi « le menu n'a rien fait » et « le menu a
+     ouvert quelque chose d'invisible » s'écrivent pareil. */
+  const SETTINGS_REVEAL_TRIES=20,SETTINGS_REVEAL_MS=50;
+  /* Amener une section sous les yeux, une fois l'onglet peint. Le rendu est
+     asynchrone (`renderTab` est une promesse que `selectTab` n'attend pas), et
+     l'élément n'existe donc pas forcément à l'instant du clic. **Borné** :
+     vingt essais d'un vingtième de seconde, puis un refus nommé — une attente
+     qui pourrait durer pour toujours est précisément ce que la règle zéro
+     interdit, y compris quand elle est invisible. */
+  function revealSection(id,tries){
+    const left=tries===undefined?SETTINGS_REVEAL_TRIES:tries;
+    const target=typeof document!=='undefined'?document.getElementById(id):null;
+    if(target){
+      if(typeof target.scrollIntoView==='function')
+        try{target.scrollIntoView({block:'start',behavior:'smooth'})}
+        catch(_error){/* un double de test n'a pas de mise en page */}
+      return true;
+    }
+    if(left<=0){
+      console.warn('[barehands] section de réglages introuvable',id);
+      return false;
+    }
+    setTimeout(()=>revealSection(id,left-1),SETTINGS_REVEAL_MS);
+    return false;
+  }
+
+  /* **La porte unique** vers la surface de configuration Bare Hands.
+     `section` est une clé de `SECTION` (ou rien pour le haut de l'onglet). */
+  async function showSettingsTab(section){
+    const id=section===undefined||section===null?null:String(section);
+    if(id!==null&&!Object.values(SECTION).includes(id))
+      return {ok:false,code:'barehands_settings_section_unknown',
+        reason:`Section de réglages inconnue : ${id}`};
+    if(typeof SET==='undefined'||typeof openSettings!=='function'
+      ||typeof selectTab!=='function'||typeof renderTab!=='function'){
+      const message='Le modal de réglages n’est pas disponible dans cette page.';
+      console.warn('[barehands] réglages inatteignables (modal absent)');
+      if(typeof toast==='function')
+        toast({title:'Réglages Bare Hands inatteignables',sub:message,kind:'bad',ms:7000});
+      return {ok:false,code:'barehands_settings_unavailable',reason:message};
+    }
+    try{
+      if(!SET.open){
+        /* L'onglet est choisi **avant** l'ouverture : `openSettings` peint
+           `SET.tab` tel qu'il le trouve, et le corriger après aurait dessiné
+           l'onglet Voix puis le nôtre, en deux images visibles. */
+        SET.tab=TAB_ID;
+        await openSettings();
+      }else if(SET.tab!==TAB_ID){
+        selectTab(TAB_ID);
+      }
+    }catch(error){
+      const message=`Réglages Bare Hands non ouverts : ${error&&error.message||error}`;
+      console.warn('[barehands] ouverture des réglages',error);
+      if(typeof toast==='function')
+        toast({title:'Réglages Bare Hands non ouverts',sub:message,kind:'bad',ms:7000});
+      return {ok:false,code:'barehands_settings_refused',reason:message};
+    }
+    if(id!==null)revealSection(id);
+    console.info('[barehands] réglages ouverts',id||TAB_ID);
+    return {ok:true,tab:TAB_ID,section:id};
+  }
+
+  /* **Les cartes rapides du HUD**, lues au moment du clic et jamais au
+     chargement.
+
+     La carte d'aide et la carte de diagnostic vivent dans
+     `control_center_barehands_hud.js`, qui est servi **après** ce module :
+     elles ne peuvent donc pas être injectées dans la surface gelée, qui se
+     ferme ici. Ce module lit le global au moment où l'utilisateur agit, ce qui
+     est toujours après le chargement complet de la page. C'est exactement le
+     motif par lequel le contrôle du HUD reçoit `showMenu` de la page, pris
+     dans l'autre sens. */
+  const hudCards=()=>{
+    const scope=typeof window!=='undefined'?window:globalThis;
+    return scope.JarvisBarehandsHudCards||null;
+  };
+
+  /* **L'aide** (décision 8, entrée « Aide / Gestes » ; décision 15).
+
+     Le bloc de gestes de l'onglet Expérimental a été **supprimé** par cette
+     Slice : il était dense, il n'avait aucun schéma, et deux de ses phrases
+     étaient devenues fausses — il rangeait le pincement pouce-majeur parmi les
+     « reconnus, pas encore agissants » alors qu'il ouvre un vrai menu
+     contextuel, et il annonçait « pas de glisser-déposer ni de défilement »
+     alors que les deux sont implantés. Une aide fausse est pire qu'une aide
+     absente : elle se lit comme un contrat.
+
+     Il n'y a donc **pas de repli** ici. La carte absente — un module de page
+     manquant — se refuse sous un nom cherchable plutôt que de renvoyer vers un
+     écran qui n'existe plus. */
+  function showHelp(){
+    const cards=hudCards();
+    if(!cards||typeof cards.openHelp!=='function'){
+      const message='La carte d’aide n’est pas disponible dans cette page '
+        +'(control_center_barehands_hud.js absent ou non installé).';
+      console.warn('[barehands] aide inatteignable (carte absente)');
+      if(typeof toast==='function')
+        toast({title:'Aide Bare Hands inatteignable',sub:message,kind:'bad',ms:7000});
+      return {ok:false,code:'barehands_help_unavailable',reason:message};
+    }
+    cards.openHelp();
+    console.info('[barehands] aide ouverte');
+    return {ok:true,card:'help'};
+  }
+
+  /* **Le diagnostic, atteignable d'ailleurs que du fond de l'onglet**
+     (décision 16).
+
+     La Slice 02 ouvrait la surface de l'onglet et refusait délibérément de
+     démarrer une capture depuis un menu qui se referme : rien à l'écran ne
+     l'aurait datée ni arrêtée — ce que la règle zéro interdit — et la promesse
+     de confidentialité n'aurait plus eu d'endroit où être lue.
+
+     **Ce raisonnement tient, et la carte le satisfait au lieu de le
+     contourner.** Elle reste ouverte pendant la capture et porte les quatre
+     exigences : un témoin qui bat et une barre qui balaie (ça tourne), un
+     titre (quoi), le temps écoulé **et** le temps restant, rafraîchis chaque
+     seconde (depuis combien de temps), un bouton Arrêter, Échap, et l'échéance
+     qui arrête toute seule (comment en sortir). La phrase de confidentialité y
+     est, mot pour mot celle de l'onglet.
+
+     `startRecording` / `stopRecording` / `recordState` ne bougent pas d'une
+     ligne, et rien de ce qui est retenu ni de ce qui est conservé ne change :
+     ce sont les mêmes portes que les deux boutons de l'onglet, qui restent en
+     place. La découvrabilité change, la sémantique et la rétention pas. */
+  function showDiagnostics(){
+    const cards=hudCards();
+    if(cards&&typeof cards.openDiagnostics==='function'){
+      cards.openDiagnostics();
+      console.info('[barehands] diagnostic ouvert (carte)');
+      return {ok:true,card:'diagnostics'};
+    }
+    /* **Le repli est réel, pas plausible.** Contrairement à l'aide, la surface
+       d'enregistrement de l'onglet Expérimental n'a pas été supprimée : elle
+       porte toujours ses deux boutons, ses compteurs et sa phrase de
+       confidentialité. Sans la carte, y renvoyer est donc la même
+       fonctionnalité par l'autre porte, et non un succès inventé. Le détour
+       est journalisé, sans quoi « la carte a servi » et « la carte manquait »
+       s'écriraient pareil. */
+    console.warn('[barehands] carte de diagnostic absente, repli sur l’onglet');
+    return showSettingsTab(SECTION.record);
   }
 
   function installSettingsTab(){
@@ -5802,22 +6278,51 @@ try{
        cas un refus nommé, jamais un silence ni un repli sur « pointeur ». */
     tools:()=>BH.describeTools(),
     tool:value=>value===undefined?view.settings.tool:saveSettings({tool:value}),
+    /* **La couture de diffusion de l'outil** (Slice 03, décision 11). La
+       palette de gauche s'y abonne au lieu de sonder : elle doit refléter un
+       outil changé depuis la console, depuis un rechargement ou par la réponse
+       du serveur, sans que l'onglet Expérimental soit ouvert. Elle est
+       **distincte** de la couture de cycle de vie parce que les deux faits le
+       sont (contrainte d'architecture de la Slice 03) ; un abonné qui a besoin
+       des deux ouvre les deux. `toolSeam()` dit **qui** écoute, pour la même
+       raison que `lifecycleSeam()` et `measureSeam()`. */
+    openToolSeam,closeToolSeam,
+    toolSeam:()=>Object.freeze(toolSeamNames()),
+    /* Le même instantané sans s'abonner : ce que l'écran peint doit pouvoir se
+       comparer à ce que les réglages appliquent, depuis une console comme
+       depuis un test. */
+    toolStatus:()=>toolSnapshot(),
     /* **Le parcours de calibration** (Slice 08, décisions 26-32). Même porte
        pour le bouton et pour la voix : le canal de commandes appelle ceci et
        exige une **confirmation** (`{ok:true}`), sans quoi il refuse
        `barehands_flow_unconfirmed` (contrat § 12). */
     calibrate:()=>startCalibration(),
-    /* **Le parcours de tutoriel et la sortie de surimpression** (Slice 09,
-       décisions 6 et 26). Mêmes portes pour le bouton et pour la voix : le
-       canal de commandes appelle celles-ci et exige une **confirmation**
-       (`{ok:true}`), sans quoi il refuse `barehands_flow_unconfirmed`
-       (contrat § 12). Le canal n'a pas changé d'une ligne pour les poser —
-       elles étaient déjà dans sa table, routées vers un point d'entrée absent. */
-    tutorial:()=>startTutorial(),
+    /* **Les entrées rapides de la Slice 02** (décisions 8, 14 et 16). Ce sont
+       les portes que le menu contextuel du bouton de la barre du haut appelle,
+       et elles sont ici plutôt que dans le contrôle parce que c'est ce module
+       qui possède l'onglet : un menu qui bricolerait `SET.tab` lui-même serait
+       une seconde implantation de « montrer les réglages ».
+       `SECTION` est publiée avec elles pour que l'appelant désigne une section
+       par sa clé et non par un identifiant HTML recopié. */
+    SECTION,
+    showSettings:section=>showSettingsTab(section),
+    showHelp:()=>showHelp(),
+    showDiagnostics:()=>showDiagnostics(),
+    /* **L'alias déprécié et la sortie de surimpression.** `tutorial()` reste
+       posée — c'est une surface **gelée**, et la retirer serait une rupture de
+       contrat qui apprendrait moins à son appelant qu'une réponse honnête —
+       mais elle n'ouvre plus de tutoriel : elle ouvre la calibration et le
+       **dit** dans sa confirmation, que le canal recopie dans son reçu
+       (`startTutorialAlias`). Le canal exige toujours `{ok:true}`, sans quoi
+       il refuse `barehands_flow_unconfirmed` (contrat § 12) ; il n'a pas
+       changé d'une ligne pour cet alias, et sa table nomme toujours une
+       méthode qui existe vraiment sur cette surface. */
+    tutorial:()=>startTutorialAlias(),
     exitOverlay:()=>exitOverlay(),
-    /* L'état du tutoriel, et ce que `tutorialSeen` vaut : « profil
-       enregistré » et « profil appliqué » ont appris à se distinguer à la
-       Slice 07, « tutoriel vu » et « tutoriel en cours » aussi. */
+    /* Ce qui reste lisible du tutoriel : qu'il est **retiré**, par quoi il est
+       remplacé, et si cet utilisateur l'avait traversé avant son retrait.
+       `retired:true` plutôt qu'un `installed:false` que l'appelant lirait
+       comme une panne d'insertion. */
     tutorialState:()=>Object.freeze(tutorialState()),
     /* **La couture de mesure est-elle ouverte ?** (décision 32.) Elle n'est
        posée que pendant une calibration, et hors d'elle le contrôleur ne
@@ -5833,6 +6338,21 @@ try{
        deux (la calibration et l'enregistreur, Slice 10), « une calibration
        mesure » et « une séance s'enregistre » s'écrivaient pareil. */
     measureSeam:()=>Object.freeze(measureSeamNames()),
+    /* **La couture de diffusion du cycle de vie** (décision 7 de l'affinage
+       d'UI). Ce que `state()` rend sur demande, celle-ci le **pousse** : tout
+       consommateur hors de ce module — le contrôle de la barre du haut, et ce
+       que les Slices suivantes y accrocheront — s'y abonne au lieu de sonder.
+       Elle rejoue l'instantané courant à l'ouverture, pour qu'un abonné
+       installé après la dernière transition ne parte pas d'un état d'usine.
+       `lifecycleSeam()` dit **qui** écoute, pour la même raison que
+       `measureSeam()` : sans lecture, « les deux écoutent » et « l'un a été
+       effacé par l'autre » s'écrivent pareil. */
+    openLifecycleSeam,closeLifecycleSeam,
+    lifecycleSeam:()=>Object.freeze(lifecycleSeamNames()),
+    /* Le même instantané, lisible sans s'abonner : ce que l'écran peint doit
+       pouvoir se comparer à ce que le moteur dit, depuis une console comme
+       depuis un test. */
+    lifecycleStatus:()=>lifecycleSnapshot(),
     /* L'enregistrement de diagnostic (Slice 10, §12). `start`/`stop` sont la
        **même** porte que les deux boutons de l'onglet ; `state()` est ce que
        l'écran affiche ; `trace()` rend la dernière trace terminée, même si son

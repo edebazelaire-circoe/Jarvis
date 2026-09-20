@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-BH-UI-03",
+      "title": "Evaluate fast tool switching",
+      "instructions": "After automated QA passes, switch repeatedly between Pointer, Pan and Selection during normal scene use without opening Settings.",
+      "expected": "The palette feels immediate, compact and obvious, with no ambiguity about which tool is active."
+    }
+  ]
+}

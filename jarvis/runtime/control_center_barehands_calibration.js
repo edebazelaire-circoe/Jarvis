@@ -3,11 +3,22 @@
 
    Deux choses vivent ici, et c'est la décision 26 qui les met ensemble :
 
-   - **la coque de surimpression**, plein écran, sombre et floutée, avec un
-     titre, une consigne, une progression, un compteur vivant et une sortie
-     évidente. Elle ne sait rien de la calibration : elle affiche des étapes.
-     Le tutoriel (Slice 09) la réutilise telle quelle — « deux parcours, une
-     coque » est un choix de produit, pas une ressemblance ;
+   - **la coque de surimpression**, plein écran, floutée et **sans carte**,
+     avec un titre, une consigne, une progression, un compteur vivant et une
+     sortie évidente. Elle ne sait rien de la calibration : elle affiche des
+     étapes. Le tutoriel (Slice 09) la réutilise telle quelle — « deux
+     parcours, une coque » est un choix de produit, pas une ressemblance ;
+
+     **Refonte, Slice 05 (décisions 18 à 21, architecture §6).** La carte
+     centrée de 560 px a été refusée par l'utilisateur : pas rabotée,
+     remplacée. Ce qui la remplace est une **couche de présentation plein
+     cadre** — un voile flouté qui laisse la scène JARVIS visible derrière au
+     lieu de la recouvrir de noir, un bandeau haut (numéro, grand titre, une
+     phrase), une **scène centrale vide** qui occupe l'essentiel du cadre, une
+     progression légère et des commandes secondaires. La scène est vide
+     *volontairement* : elle se remplit par `mount()`, et les cinq régions
+     nommées (`FLOW_SLOTS`) sont le contrat que les parcours suivants lisent au
+     lieu d'inventer chacun leur géométrie ;
    - **la dérivation**, pure : des échantillons entrent, des seuils sortent.
      Aucun DOM, aucune horloge, aucun réseau — node la pilote sans navigateur.
 
@@ -47,6 +58,19 @@
       +JSON.stringify({error:'les contrats Bare Hands doivent être insérés avant ce module'}));
     return;
   }
+  /* **Le vocabulaire de dessin des mains** (`control_center_barehands_hand_art.js`,
+     Slice 04), servi avant ce module. Lu **à l'appel** et non figé au
+     chargement : l'ordre d'insertion est garanti par la page, mais un test qui
+     pose le global après avoir requis ce module-ci verrait sinon un `null`
+     définitif, et « le dessin manque » se lirait comme « le dessin est vide ».
+
+     Il n'est pas exigé pour **dériver** — la dérivation est pure et ne dessine
+     rien — mais il l'est pour **construire un parcours** : une calibration sans
+     démonstration montre une consigne écrite et un centre vide, c'est-à-dire le
+     défaut plausible que ce dépôt refuse. `createCalibration` le refuse donc à
+     la construction, comme il refuse déjà une coque ou une horloge absentes. */
+  const handArt=()=>root.JarvisBarehandsHandArt
+    ||(typeof JarvisBarehandsHandArt!=='undefined'?JarvisBarehandsHandArt:null);
 
   /* ------------------------------------------------------------------ 1
      Réglages du parcours, et les paires dangereuses qu'ils peuvent former.
@@ -57,9 +81,31 @@
      en retombant sur les défauts, ce qui se lit « l'utilisateur s'y prend
      mal ». */
   const DEFAULTS=Object.freeze({
-    /* Échéance d'une étape. Au-delà, l'étape **échoue et le dit** : une étape
-       qui attend pour toujours est la panne que la RÈGLE ZÉRO interdit. */
+    /* Échéance d'une étape **en mesure**, et seulement en mesure (Slice 06,
+       architecture §7). Au-delà, l'étape **échoue et le dit** : une mesure qui
+       attend pour toujours est la panne que la RÈGLE ZÉRO interdit. Elle ne
+       court ni pendant la lecture (`introMs`) ni pendant que l'étape attend que
+       l'utilisateur commence — c'est exactement la correction demandée : « le
+       flux actuel commence à chronométrer pendant qu'on lit ». */
     stageTimeoutMs:20000,
+    /* **Le temps de lecture, et ce n'est pas du temps de mesure** (décision 22).
+       Durée minimale pendant laquelle le titre, la consigne et la démonstration
+       sont à l'écran sans qu'aucune échéance ne descende. */
+    introMs:2800,
+    /* La tenue du verdict d'une étape avant de passer à la suivante
+       (phase `RESULT`). Bornée des deux côtés : un verdict affiché zéro
+       milliseconde n'a pas été rendu, un verdict qui reste est un parcours qui
+       n'avance plus. */
+    resultMs:1100,
+    /* Images **consécutives** qu'il faut pour qu'un engagement compte. À une
+       seule, un repère bruité arme l'étape et le chronomètre part contre
+       quelqu'un qui n'a rien fait — le défaut d'origine déplacé de trois
+       secondes. */
+    engageFrames:2,
+    /* Points à viser, répartis sur la surface utile de l'écran (décision 24).
+       Un seul point toujours au même endroit n'enseigne pas « viser et
+       cliquer » : il enseigne « pincer ». */
+    aimTargets:3,
     // Durée de maintien demandée dans une étape de pose (repos, C).
     stageHoldMs:2500,
     // Échantillons minimaux pour qu'une mesure compte comme une mesure.
@@ -151,6 +197,29 @@
        borne n'est plus une exigence, c'est un refus déguisé. */
     if(!(o.separationMinPalms>0&&o.separationMinPalms<1))
       throw new RangeError('separationMinPalms doit rester dans ]0,1[ : au-delà, aucune main ne sépare assez le repos du pincement, chaque mesure sort « les deux états ne se distinguent pas » et la cause est le réglage, pas l’utilisateur');
+    /* **Paire dangereuse n° 16.** Un délai de lecture nul remet exactement le
+       défaut que cette slice corrige : l'étape s'arme pendant que l'utilisateur
+       lit, et la mesure démarre sur quelqu'un qui n'a pas fini la phrase. */
+    if(!(o.introMs>0))
+      throw new RangeError('introMs doit être strictement positif : à zéro l’étape s’arme pendant que l’utilisateur lit sa consigne, et « le parcours chronomètre pendant qu’on lit » est précisément le défaut que la phase de lecture existe pour corriger');
+    /* **Paire dangereuse n° 17.** Personne ne nourrit une étape tant que
+       l'utilisateur n'a pas montré ses mains : c'est donc le chien de garde qui
+       fait finir la lecture. Plus lent qu'elle, c'est **lui** qui décide du
+       moment où l'étape s'arme, et « prêt » arrive quand la montre le veut au
+       lieu d'arriver quand la consigne a été lue. */
+    if(!(o.watchdogMs<o.introMs))
+      throw new RangeError('watchdogMs doit rester sous introMs : une étape que personne ne nourrit ne sort de la lecture que sur un battement du chien de garde, donc plus lent qu’elle il décide seul du moment où l’exercice s’arme');
+    /* **Paire dangereuse n° 18.** Un verdict tenu plus longtemps que l'échéance
+       d'une étape fait passer le parcours pour bloqué au moment précis où il
+       vient de réussir. */
+    if(!(o.resultMs>0&&o.resultMs<o.stageTimeoutMs))
+      throw new RangeError('resultMs doit rester dans ]0,stageTimeoutMs[ : à zéro le verdict d’une étape est affiché zéro milliseconde, et au-delà de l’échéance le parcours a l’air bloqué à l’instant même où il vient de réussir');
+    /* Même espèce que `stageMinSamples>=1` : en dessous de une image, le
+       prédicat d'engagement est vrai avant que l'utilisateur ait bougé. */
+    if(!(o.engageFrames>=1))
+      throw new RangeError('engageFrames doit valoir au moins 1 : en dessous, une étape s’arme sans la moindre image qualifiante et la mesure démarre avant que l’utilisateur ait commencé');
+    if(!(o.aimTargets>=1))
+      throw new RangeError('aimTargets doit valoir au moins 1 : à zéro l’étape de visée se solde sans aucun clic mesuré, et la tolérance clic/glissement de tout le monde retombe sur le défaut d’usine');
     return Object.freeze(o);
   }
 
@@ -347,23 +416,193 @@
       instruction:'Posez une main ouverte devant la caméra et ne bougez plus. On mesure votre tremblement naturel.',
       hold:true,needs:1}),
     Object.freeze({id:BH.STAGE.C_POSE,title:'Posture de réveil',
-      instruction:'Formez un C : pouce et index écartés sans se toucher, index déplié, les autres doigts détendus.',
+      instruction:'Formez un C avec le pouce et l’index seuls : les deux s’écartent sans se toucher, les trois autres doigts restent repliés.',
       hold:true,needs:1}),
     Object.freeze({id:BH.STAGE.PINCH_PRIMARY,title:'Pincement pouce-index',
       instruction:'Pincez pouce et index, puis rouvrez. Recommencez tranquillement, comme pour cliquer.',
       hold:false,needs:1}),
     Object.freeze({id:BH.STAGE.PINCH_SECONDARY,title:'Pincement pouce-majeur',
-      instruction:'Même chose avec le majeur : pincez pouce et majeur, puis rouvrez. C’est le clic droit.',
+      instruction:'Même geste, autre doigt : pincez pouce et majeur, puis rouvrez. L’index reste replié. C’est le clic droit.',
       hold:false,needs:1}),
     Object.freeze({id:BH.STAGE.AIM,title:'Viser et cliquer',
-      instruction:'Amenez le jeton sur le point, puis pincez sans bouger la main.',
+      instruction:'Amenez le jeton sur chaque point, puis pincez pouce et index sans bouger la main.',
       hold:false,needs:1,target:true}),
-    Object.freeze({id:BH.STAGE.DRAG,title:'Faire glisser',
-      instruction:'Pincez, déplacez la main franchement vers la droite, puis relâchez.',
-      hold:false,needs:1}),
-    Object.freeze({id:BH.STAGE.RESIZE,title:'Deux mains',
-      instruction:'Montrez vos deux mains et écartez-les doucement, comme pour agrandir une image.',
-      hold:false,needs:2}),
+    /* **Un écran, deux sous-étapes** (Slice 07, décisions 29 et 30).
+
+       Ce qui a été retiré compte autant que ce qui arrive. Les deux écrans
+       d'avant — « Faire glisser : déplacez la main franchement vers la droite »
+       et « Deux mains : écartez-les doucement » — demandaient des gestes **en
+       l'air**, qui ne ressemblaient à rien de ce que l'utilisateur fera
+       ensuite. On mesurait une course de paume et on comptait des mains ; on
+       n'apprenait pas à manipuler une fenêtre, et rien de ce qui a été appris
+       là ne servait devant une vraie fenêtre.
+
+       Ici on manipule **la vraie chose** : un cadre qui porte `.sc-node` et
+       `data-representation="window"`, donc le vrai résolveur de cible le
+       collecte, les vraies zones s'y dessinent, le vrai `combineCaptures`
+       décide ce que deux mains y produisent, et la vraie géométrie de scène
+       calcule sa boîte. Rien n'est réécrit ici — ni taille minimale, ni
+       non-inversion, ni appartenance de zone.
+
+       **Les deux sous-étapes partagent un seul écran et un seul cadre.** Elles
+       ne repassent donc pas par `overlay.step()` entre elles : il viderait la
+       scène, donc le cadre que l'utilisateur tient des yeux, et lui ferait
+       relire un titre qu'il vient de lire. C'est exactement ce que
+       `overlay.deadline()` existe pour permettre (Slice 06).
+
+       **Le vocabulaire persisté ne bouge pas.** `drag` et `resize` restent les
+       deux identités mesurées — un profil doit continuer de dire laquelle a
+       abouti (décision 31), et ces deux mots sont plus vrais qu'avant :
+       maintenant, `drag` *est* un déplacement de cadre et `resize` *est* un
+       redimensionnement. Ce qui change est le nombre d'**écrans**, pas le
+       nombre d'étapes. */
+    Object.freeze({id:BH.STAGE.DRAG,title:'Manipulation de fenêtre',
+      instruction:'Une vraie fenêtre JARVIS est posée au centre. On va l’attraper par ses bords — d’abord d’une main, puis des deux.',
+      hold:false,needs:1,practice:true,
+      subs:Object.freeze([
+        Object.freeze({id:BH.STAGE.DRAG,mode:'move',needs:1,
+          label:'6A · Déplacer',
+          instruction:'Pincez un bord ou un coin de la fenêtre, déplacez-la, puis relâchez.',
+          caption:'Une main sur un bord'}),
+        Object.freeze({id:BH.STAGE.RESIZE,mode:'resize',needs:2,
+          label:'6B · Redimensionner',
+          instruction:'Reprenez la même fenêtre par deux zones différentes, une par main, et écartez ou rapprochez vos mains.',
+          caption:'Deux mains, deux zones'}),
+      ])}),
+  ]);
+  /* **Les écrans publics** : les six exercices, plus le rapport (Slice 07).
+
+     Le rapport était jusqu'ici annoncé « Étape 7 sur 7 » alors que l'étape 7
+     était un exercice : deux écrans différents portaient le même numéro, et le
+     dernier exercice n'avait donc aucun écran à lui dans le décompte. Il est
+     maintenant le **septième écran**, ce que la décision 26 demande en toutes
+     lettres — « rest, C, primary pinch, secondary pinch, target pinch, window
+     manipulation, completion ». */
+  const SCREENS=STEPS.length+1;
+
+  /* ------------------------------------------------------------------ 4bis
+     **Les phases d'une étape** (architecture §7, décisions 22 et 23).
+
+     « Étape ouverte = test en cours » était faux, et cher : l'échéance de vingt
+     secondes commençait à brûler à l'instant où la consigne s'affichait, donc
+     l'utilisateur la lisait avec une montre déjà lancée contre lui — et
+     quelqu'un qui gardait les mains sur les genoux échouait à une étape qu'il
+     n'avait jamais commencée. L'Humain l'a refusé mot pour mot.
+
+     Cinq phases, et **une seule chronomètre** :
+
+     - `INTRO`   — lecture et démonstration, durée minimale `introMs`. Aucune
+                   échéance de mesure ne court ; la coque n'en affiche aucune.
+     - `ARMED`   — l'utilisateur *peut* commencer. Pour le repos, le C et les
+                   deux pincements, l'étape reste ici **indéfiniment** tant
+                   qu'il est inactif. Rien ne descend, la consigne reste.
+     - `RUNNING` — la mesure tourne, et `stageTimeoutMs` **vit ici, et
+                   seulement ici**. Le chien de garde de la page continue de la
+                   surveiller, parce que zéro main vue coupe les images.
+     - `RESULT`  — le verdict, tenu `resultMs`. Les règles de repli partiel ne
+                   changent pas d'un iota : une étape ratée laisse ses clés
+                   nulles et le moteur garde ses défauts (décision 31).
+     - `NEXT`    — on avance.
+
+     **RÈGLE ZÉRO pendant une phase sans échéance, et c'est la question que
+     cette slice pose.** La règle interdit un état qui dure pour toujours parce
+     qu'un utilisateur ne peut pas distinguer « ça attend » de « c'est
+     bloqué ». `ARMED` porte cette distinction autrement, et explicitement :
+     la démonstration continue de mimer le geste (*quelque chose tourne*), le
+     bandeau de phases montre « Prêt » allumé et « Mesure » éteint (*quoi*), le
+     compteur de la coque continue de compter la séance (*depuis combien de
+     temps*), la phrase dit en toutes lettres que rien ne se mesure tant qu'on
+     n'a pas commencé, et trois sorties sont à l'écran en permanence — « Passer
+     cette étape », « Quitter », la croix, plus Échap (*comment en sortir*).
+
+     Surtout : `ARMED` **n'est pas un état de travail**. Rien n'y tourne qui
+     puisse se coincer ; la seule chose qui en sort est un geste de
+     l'utilisateur, et il en sort par ses propres commandes. Y poser une
+     échéance serait un compte à rebours contre quelqu'un qui n'a rien
+     commencé, c'est-à-dire le défaut qu'on répare. */
+  const PHASE=Object.freeze({INTRO:'intro',ARMED:'armed',RUNNING:'running',
+    RESULT:'result',NEXT:'next'});
+  const PHASE_ORDER=Object.freeze([PHASE.INTRO,PHASE.ARMED,PHASE.RUNNING,
+    PHASE.RESULT,PHASE.NEXT]);
+  /* Les trois phases que l'utilisateur **voit** passer, et leur mot. `RESULT`
+     et `NEXT` n'ont pas de pastille : à ce moment-là les trois sont derrière
+     lui, et la phrase du verdict occupe déjà la ligne vivante. */
+  const PHASE_STRIP=Object.freeze([
+    Object.freeze([PHASE.INTRO,'Lecture']),
+    Object.freeze([PHASE.ARMED,'Prêt']),
+    Object.freeze([PHASE.RUNNING,'Mesure']),
+  ]);
+
+  /* **Le lien entre une étape et la main qu'elle montre.** Il vit ici, et
+     nulle part ailleurs : `hand_art` est un alphabet de formes qui ne sait rien
+     des gestes (frontière de la Slice 04, épinglée par un test qui grep sa
+     source). Une étape déclare la posture qu'elle montre ; le dessin déclare à
+     quoi ressemble une posture. Lier les deux est le travail de qui affiche.
+
+     `mime:true` alterne deux postures — l'invariant n° 1 de `hand_art` (ouvrir
+     et fermer un pincement ne bouge **que** les deux doigts qui pincent) est ce
+     qui rend cette alternance lisible au lieu de faire sauter toute la main.
+     L'alternance est en CSS : ce module n'ouvre aucune minuterie pour dessiner,
+     et « moins de mouvement » l'arrête en posant les deux postures côte à côte
+     plutôt qu'en supprimant l'information. */
+  const DEMO=Object.freeze({
+    [BH.STAGE.NEUTRAL]:Object.freeze({mime:false,
+      poses:Object.freeze(['REST']),caption:'Main ouverte, immobile'}),
+    /* Décision 27 : ce sont **le pouce et l'index** qui dessinent le C, et la
+       posture replie les trois autres doigts pour qu'aucune autre forme ne se
+       dispute la lecture. Un C tracé au milieu d'une main ouverte se lit
+       « main ouverte ». */
+    [BH.STAGE.C_POSE]:Object.freeze({mime:false,
+      poses:Object.freeze(['WAKE_C']),caption:'Pouce et index dessinent le C'}),
+    [BH.STAGE.PINCH_PRIMARY]:Object.freeze({mime:true,
+      poses:Object.freeze(['PINCH_PRIMARY_OPEN','PINCH_PRIMARY_CLOSED']),
+      caption:'Pouce et index : fermer, rouvrir'}),
+    /* Même grammaire, silhouette franchement différente : ici l'index est
+       replié et le majeur descend, donc la main n'a plus de doigt dressé. C'est
+       cette différence-là qui doit sauter aux yeux entre l'étape 3 et l'étape
+       4, et elle est dans les tracés, pas dans une couleur. */
+    [BH.STAGE.PINCH_SECONDARY]:Object.freeze({mime:true,
+      poses:Object.freeze(['PINCH_SECONDARY_OPEN','PINCH_SECONDARY_CLOSED']),
+      caption:'Pouce et majeur : fermer, rouvrir'}),
+    /* Décision 28 : la visée montre une main qui **pince** une cible. Jamais un
+       index tendu — `pinch_target` est littéralement le pincement primaire
+       fermé plus une mire, et un test de `hand_art` l'épingle. */
+    [BH.STAGE.AIM]:Object.freeze({mime:true,
+      poses:Object.freeze(['PINCH_PRIMARY_OPEN','PINCH_TARGET']),
+      caption:'Pincer pouce-index sur le point'}),
+    /* **Slice 07, et aucune posture nouvelle.** `hand_art` est un alphabet de
+       formes qui ne sait rien des gestes ; la question était donc « ces deux
+       sous-étapes ont-elles besoin d'une lettre de plus ? », et la réponse est
+       non. Saisir un bord, c'est pincer : 6A est le mime du pincement primaire,
+       exactement comme l'étape 3 — ce qui se déplace n'est pas la main, c'est
+       le cadre, et le cadre est à l'écran, vrai, juste à côté. Ajouter une
+       « main qui tire » aurait dessiné une information que l'exercice porte
+       déjà mieux que le dessin.
+
+       6B est le **même** pincement, deux fois, dont une en miroir : c'est
+       littéralement ce que fait l'utilisateur, et `handSvg({mirror:true})`
+       rend la main gauche sans qu'une huitième posture existe. `pair` dit à
+       `demoNode` de poser les deux côte à côte au lieu de les empiler — deux
+       mains empilées se liraient comme une seule main qui bouge, ce qui est
+       l'inverse du geste demandé. */
+    [BH.STAGE.DRAG]:Object.freeze({mime:true,aside:true,
+      poses:Object.freeze(['PINCH_PRIMARY_OPEN','PINCH_PRIMARY_CLOSED']),
+      caption:'Une main pince un bord'}),
+    [BH.STAGE.RESIZE]:Object.freeze({mime:false,pair:true,aside:true,
+      poses:Object.freeze(['PINCH_PRIMARY_CLOSED','PINCH_PRIMARY_CLOSED']),
+      mirror:Object.freeze([true,false]),
+      caption:'Deux mains, deux zones différentes'}),
+  });
+
+  /* Les points à viser, **répartis sur la surface utile** (décision 24, et les
+     mots de l'Humain : « des cibles réparties sur l'écran »). En fractions de
+     la fenêtre et non en pixels : la même consigne doit valoir sur un portable
+     et sur un écran large. Le bandeau du haut et le pied sont évités — un point
+     posé sur le titre ferait viser la consigne. */
+  const AIM_SPOTS=Object.freeze([
+    Object.freeze({x:.22,y:.36}),
+    Object.freeze({x:.78,y:.36}),
+    Object.freeze({x:.5,y:.7}),
   ]);
 
   /* ------------------------------------------------------------------ 5
@@ -388,58 +627,250 @@
      les siens (`done`/`missed`/`skipped`). Publiés pour qu'un parcours puisse
      s'y conformer au lieu de le deviner. */
   const FLOW_STATUS=Object.freeze(['ok','failed','skipped']);
+
+  /* Les **cinq régions nommées** de la coque (refonte Slice 05, décisions 18 et
+     19, architecture §6). Elles sont le livrable de cette slice autant que le
+     dessin : sans un vocabulaire publié, chaque parcours qui vient inventerait
+     sa propre géométrie dans le centre laissé libre, et « le centre est
+     réservé à l'exercice » redeviendrait une intention au lieu d'un contrat.
+
+     Trois se **remplissent** (`mount`/`clear`), deux appartiennent à la coque
+     et se refusent : `progress` est écrite par `progress()`, `controls` par
+     `buttons()`, et toutes deux sont réécrites à chaque étape — un contenu
+     monté là disparaîtrait sans un mot, c'est-à-dire le défaut plausible que
+     ce dépôt refuse. */
+  const FLOW_SLOTS=Object.freeze(['demo','exercise','feedback','progress','controls']);
+  const FLOW_MOUNTABLE=Object.freeze(['demo','exercise','feedback']);
+  /* **Le plafond du vert** (décision 21). Le bleu est la couleur de la
+     consigne ; le vert dit « reconnu », brièvement. L'ACTIVE vert a été retiré
+     par l'utilisateur lui-même, et le même instinct vaut ici : une couleur de
+     succès qu'on peut laisser allumée devient la couleur ambiante, et ne dit
+     alors plus rien. `flash()` borne donc toute tenue à cette valeur, publiée
+     pour qu'un test l'épingle au lieu de la deviner. */
+  const FLASH_MAX_MS=2000;
+
   const STYLE_ID=BH.DOM.flowStyleId;
   const ACCENT='var(--omega-accent,var(--accent,#6ee7ff))';
+  /* Écrit avec deux raccourcis parce que la feuille a triplé de taille et
+     qu'une règle illisible ne se relit pas. `R` est la racine, `D` les noms du
+     contrat : le texte **produit** porte les vrais noms, et c'est lui que le
+     test contrat-feuille compare. */
+  const R=`#${BH.DOM.flowRootId}`;
+  const D=BH.DOM;
   const STYLE=`
-#${BH.DOM.flowRootId}{position:fixed;inset:0;z-index:2147482000;display:flex;align-items:center;
-  justify-content:center;background:rgba(6,9,16,.82);backdrop-filter:blur(14px);
-  -webkit-backdrop-filter:blur(14px);font:14px/1.6 system-ui,-apple-system,Segoe UI,sans-serif;color:#e8eef8}
-#${BH.DOM.flowRootId}[hidden]{display:none}
-#${BH.DOM.flowRootId} .${BH.DOM.flowStepClass}{position:relative;max-width:560px;padding:32px 36px;text-align:center;
-  border-radius:20px;background:rgba(16,22,34,.72);box-shadow:0 24px 80px rgba(0,0,0,.55);
-  border:1px solid rgba(255,255,255,.08)}
+/* ================================================================= Slice 05
+   La coque **plein cadre**. Ce qui a été retiré compte autant que ce qui a été
+   ajouté : la carte centrée de 560 px, son rayon de 20 px, son fond propre et
+   son ombre portée ont été refusés par l'utilisateur, mot pour mot. Il ne
+   reste aucune boîte — une grille occupe le cadre, le voile est la seule
+   surface qui teinte, et le centre est vide *par construction* pour que
+   l'exercice s'y installe.
+
+   Trois couches, et elles ne se recouvrent pas au hasard :
+     0 — le voile (flou, assombrissement, teinte bleue) ;
+     1 — la mise en page de l'étape (bandeau, scène, pied) ;
+     2+ — le rail de progression, la croix de sortie, la cible.
+   La surimpression des mains, elle, n'est pas ici : elle est un **frère** dans
+   \`body\`, à 2147483000, donc au-dessus de tout ceci — on calibre avec ses
+   mains, il faut voir son jeton. */
+/* \`box-sizing\` est posé **ici** et non hérité de la page. La coque est une
+   feuille injectée : elle doit tenir sur une page qui n'a pas de remise à zéro,
+   sinon \`height:100%\` plus une gouttière pousse le pied hors du cadre — et le
+   compteur et la sortie sont dans le pied. Une RÈGLE ZÉRO qui dépend du reset
+   de l'hôte n'est pas une garantie. */
+${R},${R} *{box-sizing:border-box}
+${R}{position:fixed;inset:0;z-index:2147482000;overflow:hidden;
+  color:#e9f1fb;font:14px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;
+  --jf-accent:${ACCENT};
+  /* Le vert n'est **pas** un jeton de la coque au repos : il n'est lu que sous
+     \`[data-flash]\`, et \`flash()\` borne sa durée. Décision 21. */
+  --jf-ok:#6ff2b0;
+  --jf-bad:#ffa3a3;
+  --jf-muted:#93a6bd;
+  --jf-soft:#c6d5e6;
+  --jf-gutter:clamp(18px,4.5vw,64px);
+  --jf-sans:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+  animation:jfEnter .34s cubic-bezier(.2,.7,.3,1) both}
+${R}[hidden]{display:none}
+/* **Le voile** (décision 18). Deux choses qu'on ne fait pas : une nappe noire
+   opaque, et un flou seul. L'assombrissement passe par
+   \`backdrop-filter: brightness()\`, donc la scène JARVIS garde sa **couleur**
+   au lieu d'être recouverte ; \`saturate\` l'empêche de virer au gris ; la
+   nappe par-dessus est légère (.52 au centre) et dégradée, ce qui donne
+   l'atmosphère que l'utilisateur demandait à la place du noir mort. La teinte
+   bleue du haut dit que ce n'est pas un voile générique : c'est un mode. */
+${R} .${D.flowVeilClass}{position:absolute;inset:0;z-index:0;pointer-events:none;
+  background:
+    radial-gradient(120% 86% at 50% -8%,rgba(110,231,255,.13),transparent 58%),
+    radial-gradient(140% 120% at 50% 112%,rgba(8,20,34,.66),transparent 70%),
+    linear-gradient(180deg,rgba(4,9,16,.52),rgba(3,7,13,.68));
+  backdrop-filter:blur(18px) saturate(118%) brightness(.76);
+  -webkit-backdrop-filter:blur(18px) saturate(118%) brightness(.76)}
+/* Sans \`backdrop-filter\`, la nappe porte **seule** la lisibilité du texte :
+   elle s'opacifie plutôt que de laisser la scène traverser un titre. Un
+   navigateur qui ne floute pas ne doit pas rendre la consigne illisible. */
+@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
+  ${R} .${D.flowVeilClass}{background:linear-gradient(180deg,rgba(4,9,16,.92),rgba(3,7,13,.95))}
+}
+/* **La mise en page de l'étape.** Les cinq \`none\`/\`0\` ne sont pas du bruit :
+   ils disent que la carte est partie, et un test les lit. */
+${R} .${D.flowStepClass}{position:relative;z-index:1;height:100%;
+  display:grid;grid-template-rows:auto minmax(0,1fr) auto;gap:clamp(12px,2.4vh,28px);
+  padding:clamp(30px,6vh,76px) var(--jf-gutter) clamp(18px,3.4vh,40px);
+  max-width:none;background:none;border:0;border-radius:0;box-shadow:none}
+/* Le rail de progression : une **ligne de cheveu** sur l'arête du cadre.
+   Utile, et léger — la progression ne doit pas concurrencer l'exercice. */
+${R} .${D.flowProgressClass}{position:absolute;top:0;left:0;right:0;height:2px;z-index:2;
+  background:rgba(255,255,255,.07)}
+${R} .${D.flowProgressClass} i{display:block;height:100%;width:0;
+  background:linear-gradient(90deg,rgba(110,231,255,.3),var(--jf-accent));
+  box-shadow:0 0 12px rgba(110,231,255,.5);transition:width .12s linear}
 /* La sortie **permanente**. Les boutons d'une étape sont redessinés à chaque
    étape, donc « on peut toujours sortir » dépendait de ce que le parcours
    pensait à dessiner — et le rapport de calibration, par exemple, n'offre que
-   « Annuler ». Celle-ci ne bouge pas, ne dépend d'aucun parcours, et occupe le
-   coin où on la cherche. Quatrième point de la RÈGLE ZÉRO : comment en sortir. */
-#${BH.DOM.flowRootId} .jf-close{position:absolute;top:10px;right:10px;width:34px;height:34px;padding:0;
-  display:flex;align-items:center;justify-content:center;border-radius:50%;
-  font-size:20px;line-height:1;color:#8b99ad;background:transparent;border:1px solid transparent}
-#${BH.DOM.flowRootId} .jf-close:hover{color:#e8eef8;background:rgba(255,255,255,.1);
-  border-color:rgba(255,255,255,.16)}
-#${BH.DOM.flowRootId} .jf-close:focus-visible{outline:2px solid ${ACCENT};outline-offset:2px}
-#${BH.DOM.flowRootId} .jf-kicker{font-size:12px;letter-spacing:.14em;text-transform:uppercase;
-  color:${ACCENT};margin-bottom:10px}
-#${BH.DOM.flowRootId} h2{margin:0 0 12px;font-size:24px;font-weight:600;letter-spacing:-.01em}
-#${BH.DOM.flowRootId} .jf-instruction{margin:0 0 20px;color:#c3cede;font-size:15px}
-#${BH.DOM.flowRootId} .${BH.DOM.flowProgressClass}{height:6px;border-radius:999px;overflow:hidden;
-  background:rgba(255,255,255,.1);margin:0 0 10px}
-#${BH.DOM.flowRootId} .${BH.DOM.flowProgressClass} i{display:block;height:100%;width:0;border-radius:999px;
-  background:${ACCENT};transition:width .12s linear}
-#${BH.DOM.flowRootId} .jf-meta{display:flex;justify-content:space-between;gap:12px;font-size:12px;
-  color:#8b99ad;margin-bottom:18px}
-#${BH.DOM.flowRootId} .${BH.DOM.flowNoteClass}{min-height:20px;font-size:13px;color:#c3cede;margin-bottom:18px}
-#${BH.DOM.flowRootId} .${BH.DOM.flowNoteClass}[data-kind="bad"]{color:#ff9b9b}
-#${BH.DOM.flowRootId} .${BH.DOM.flowNoteClass}[data-kind="ok"]{color:#8ce8b4}
-#${BH.DOM.flowRootId} .jf-actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
-#${BH.DOM.flowRootId} button{font:inherit;padding:9px 18px;border-radius:10px;cursor:pointer;
-  border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.06);color:inherit}
-#${BH.DOM.flowRootId} button.primary{background:${ACCENT};color:#04121a;border-color:transparent;font-weight:600}
-#${BH.DOM.flowRootId} .${BH.DOM.flowTargetClass}{position:fixed;width:24px;height:24px;margin:-12px 0 0 -12px;
-  border-radius:50%;border:2px solid ${ACCENT};box-shadow:0 0 0 6px rgba(110,231,255,.18);
+   « Annuler ». Celle-ci ne bouge pas, ne dépend d'aucun parcours, et occupe
+   maintenant le coin **de l'écran** et non celui d'une carte. Quatrième point
+   de la RÈGLE ZÉRO : comment en sortir. */
+${R} .jf-close{position:absolute;z-index:3;top:clamp(12px,2vh,24px);right:clamp(12px,2vw,28px);
+  width:40px;height:40px;padding:0;display:flex;align-items:center;justify-content:center;
+  border-radius:50%;font-size:20px;line-height:1;letter-spacing:0;
+  color:var(--jf-muted);background:transparent;border:1px solid rgba(255,255,255,.12)}
+${R} .jf-close:hover{color:#e9f1fb;background:rgba(255,255,255,.1);
+  border-color:rgba(255,255,255,.22)}
+${R} .jf-close:focus-visible{outline:2px solid var(--jf-accent);outline-offset:3px}
+/* ---------------------------------------------------------------- bandeau
+   **Haut, grand, calme** (décision 19). Le titre est la seule chose de la
+   coque qui ait le droit d'être grande ; tout le reste se tait. */
+${R} .${D.flowHeaderClass}{display:flex;flex-direction:column;align-items:center;
+  gap:clamp(8px,1.4vh,14px);text-align:center;max-width:min(960px,94vw);margin:0 auto}
+${R} .jf-kicker{display:flex;align-items:center;gap:14px;
+  font-size:12px;letter-spacing:.24em;text-transform:uppercase;color:var(--jf-accent)}
+/* La progression **globale**, en segments : où on en est dans le parcours,
+   lisible d'un coup d'œil et sans peser. Le compte exact est dans le texte
+   juste à côté ; ces traits ne le répètent pas, ils le situent. */
+${R} .jf-dots{display:flex;gap:5px;align-items:center}
+${R} .jf-dots span{width:16px;height:2px;border-radius:999px;background:rgba(255,255,255,.16);
+  transition:width .2s ease,background .2s ease}
+${R} .jf-dots span[data-at="done"]{background:rgba(110,231,255,.5)}
+${R} .jf-dots span[data-at="now"]{width:30px;background:var(--jf-accent);
+  box-shadow:0 0 10px rgba(110,231,255,.6)}
+${R} h2{margin:0;font-family:var(--jf-sans);font-weight:600;letter-spacing:-.02em;
+  font-size:clamp(28px,4.4vw,54px);line-height:1.08;text-wrap:balance}
+${R} .jf-instruction{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
+  font-size:clamp(15px,1.5vw,20px);line-height:1.5;max-width:56ch;text-wrap:pretty}
+/* ------------------------------------------------------------------ scène
+   **Le centre, réservé** (décision 19). La coque ne dessine rien ici : elle
+   tient la place, la centre, et donne la couleur. \`color\` est le crochet du
+   dessin de main de la Slice 04 — ses tracés sont en \`currentColor\`, donc
+   une main montée dans \`jf-demo\` est bleue sans rien savoir de la coque, et
+   devient verte pendant un \`flash()\` sans une ligne de plus. */
+${R} .${D.flowStageClass}{position:relative;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:clamp(14px,3vh,34px);
+  min-height:0;color:var(--jf-accent);transition:color .22s ease}
+${R} .${D.flowDemoClass},${R} .${D.flowExerciseClass}{display:flex;align-items:center;
+  justify-content:center;width:100%;min-height:0}
+${R} .${D.flowDemoClass}{flex:0 0 auto}
+${R} .${D.flowExerciseClass}{flex:1 1 auto}
+/* Une fente vide ne prend pas de place : une étape qui n'a qu'une
+   démonstration ne doit pas laisser un trou centré sous elle. */
+${R} .${D.flowDemoClass}:empty,${R} .${D.flowExerciseClass}:empty{display:none}
+/* ------------------------------------------------------------------- pied */
+${R} .jf-foot{display:flex;flex-direction:column;align-items:center;gap:clamp(10px,1.8vh,18px)}
+/* **Sous la scène, jamais par-dessus.** Un commentaire vivant qui recouvre
+   l'exercice cache ce qu'il commente. */
+${R} .${D.flowFeedbackClass}{display:flex;flex-direction:column;align-items:center;gap:8px;
+  width:100%;min-height:24px;text-align:center}
+${R} .${D.flowNoteClass}{font-family:var(--jf-sans);font-size:clamp(13px,1.2vw,16px);
+  color:var(--jf-soft);transition:color .2s ease}
+${R} .${D.flowNoteClass}[data-kind="bad"]{color:var(--jf-bad)}
+${R} .${D.flowNoteClass}[data-kind="ok"]{color:var(--jf-ok)}
+/* Le compteur vivant, en petit : troisième point de la RÈGLE ZÉRO. Il est
+   discret mais il est **là**, et il l'est à chaque instant. */
+${R} .jf-meta{display:flex;gap:20px;font-size:11px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--jf-muted)}
+/* Les commandes sont **secondaires** : des contours, pas des blocs. Seule
+   l'action que l'utilisateur doit vraiment choisir (« Appliquer ») est pleine. */
+${R} .${D.flowControlsClass}{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+${R} button{font:inherit;font-size:13px;letter-spacing:.05em;padding:10px 20px;border-radius:999px;
+  cursor:pointer;color:var(--jf-muted);background:transparent;border:1px solid rgba(255,255,255,.14);
+  transition:color .18s ease,border-color .18s ease,background .18s ease}
+${R} button:hover{color:#e9f1fb;border-color:rgba(110,231,255,.45);background:rgba(110,231,255,.08)}
+${R} button:focus-visible{outline:2px solid var(--jf-accent);outline-offset:3px}
+${R} button.primary{color:#04121a;background:var(--jf-accent);border-color:transparent;font-weight:600}
+${R} button.primary:hover{color:#04121a;background:#9af0ff}
+/* Le rapport de fin vit **dans la scène** : à la dernière page il n'y a plus
+   d'exercice, donc le centre lui revient. Il n'est plus tassé en bas d'une
+   carte, il est ce qu'on est venu lire. */
+${R} .jf-report{margin:0;padding:0;list-style:none;width:min(580px,92vw);font-size:13px}
+${R} .jf-report[hidden]{display:none}
+${R} .jf-report li{display:flex;justify-content:space-between;gap:18px;padding:9px 2px;
+  border-bottom:1px solid rgba(255,255,255,.07)}
+${R} .jf-report b{font-weight:400;color:var(--jf-soft)}
+${R} .jf-ok{color:var(--jf-ok)}
+${R} .jf-failed{color:var(--jf-bad)}
+${R} .jf-skipped{color:var(--jf-muted)}
+${R} .${D.flowTargetClass}{position:fixed;z-index:4;width:24px;height:24px;margin:-12px 0 0 -12px;
+  border-radius:50%;border:2px solid var(--jf-accent);
+  box-shadow:0 0 0 6px rgba(110,231,255,.16),0 0 26px rgba(110,231,255,.34);
   animation:jfPulse 1.4s ease-in-out infinite}
-#${BH.DOM.flowRootId} .jf-report{text-align:left;margin:0 0 18px;padding:0;list-style:none;font-size:13px}
-#${BH.DOM.flowRootId} .jf-report li{display:flex;justify-content:space-between;gap:12px;padding:5px 0;
-  border-bottom:1px solid rgba(255,255,255,.06)}
-#${BH.DOM.flowRootId} .jf-report b{font-weight:500;color:#c3cede}
-#${BH.DOM.flowRootId} .jf-ok{color:#8ce8b4}
-#${BH.DOM.flowRootId} .jf-failed{color:#ff9b9b}
-#${BH.DOM.flowRootId} .jf-skipped{color:#8b99ad}
+/* ------------------------------------------------- le vert, et sa laisse
+   Décision 21 : bleu = consigne, vert = **un geste vient d'être reconnu**.
+   Tout ce qui verdit est sous cet attribut, que seule \`flash()\` pose et que
+   l'horloge de la coque retire — il n'existe aucun chemin qui laisse le vert
+   allumé, et c'est exprès. L'ACTIVE vert a été retiré par l'utilisateur ; on
+   ne le réintroduit pas par la bande. */
+${R}[data-flash="ok"] .${D.flowStageClass}{color:var(--jf-ok)}
+${R}[data-flash="ok"] .${D.flowProgressClass} i{background:var(--jf-ok);
+  box-shadow:0 0 14px rgba(111,242,176,.55)}
+${R}[data-flash="ok"] .${D.flowTargetClass}{border-color:var(--jf-ok);
+  box-shadow:0 0 0 6px rgba(111,242,176,.2),0 0 26px rgba(111,242,176,.3)}
 @keyframes jfPulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.25);opacity:.65}}
+@keyframes jfEnter{from{opacity:0}to{opacity:1}}
+/* ------------------------------------------------------------- adaptation
+   Téléphone : gouttière de 16 px, titre ramené à une taille lisible sans
+   déborder, commandes sur toute la largeur. Rien ne sort du cadre — aucun
+   défilement horizontal. */
+@media (max-width:720px){
+  ${R} .${D.flowStepClass}{padding:clamp(22px,5vh,44px) 16px 18px;gap:12px}
+  ${R} h2{font-size:clamp(24px,7.2vw,34px)}
+  ${R} .jf-instruction{font-size:15px;max-width:40ch}
+  ${R} .${D.flowStageClass}{gap:16px}
+  ${R} .${D.flowControlsClass}{width:100%}
+  /* Au doigt, une commande se vise : 44 px de haut, pas 36. La coque est
+     secondaire, elle n'est pas pour autant à rater. */
+  ${R} .${D.flowControlsClass} button{flex:1 1 44%;padding:13px 18px}
+  ${R} .jf-close{top:12px;right:12px}
+  ${R} .jf-dots span{width:12px}
+  ${R} .jf-dots span[data-at="now"]{width:22px}
+}
+/* Fenêtre **basse** (paysage de téléphone, moitié d'écran) : c'est la hauteur
+   qui manque, pas la largeur. Le bandeau se resserre pour que la scène garde
+   le centre — si le titre mangeait la scène, l'exercice deviendrait
+   injouable, ce qui est pire que de perdre deux tailles de police. */
+@media (max-height:560px){
+  ${R} .${D.flowStepClass}{padding-top:clamp(14px,3vh,26px);gap:8px}
+  ${R} .${D.flowHeaderClass}{gap:4px}
+  ${R} h2{font-size:clamp(20px,3.6vh,30px)}
+  ${R} .jf-instruction{font-size:14px;line-height:1.4}
+  ${R} .${D.flowStageClass}{gap:10px}
+  ${R} .jf-foot{gap:8px}
+  ${R} .jf-meta{font-size:10px}
+  ${R} .jf-report li{padding:5px 2px}
+}
+/* --------------------------------------------------------- moins de mouvement
+   Tout ce qui bouge s'arrête, et **ce qui portait l'information est remplacé**
+   plutôt que supprimé : la cible ne pulse plus, donc elle reçoit un halo fixe
+   plus marqué — une cible qu'on ne trouve pas rend l'étape injouable, et
+   « accessible » ne peut pas vouloir dire « inutilisable ». */
 @media (prefers-reduced-motion:reduce){
-  #${BH.DOM.flowRootId} .${BH.DOM.flowTargetClass}{animation:none}
-  #${BH.DOM.flowRootId} .${BH.DOM.flowProgressClass} i{transition:none}
+  ${R}{animation:none}
+  ${R} .${D.flowTargetClass}{animation:none;
+    box-shadow:0 0 0 7px rgba(110,231,255,.3),0 0 0 1px rgba(110,231,255,.55)}
+  ${R} .${D.flowProgressClass} i{transition:none}
+  ${R} .jf-dots span{transition:none}
+  ${R} .${D.flowNoteClass}{transition:none}
+  ${R} .${D.flowStageClass}{transition:none}
+  ${R} button{transition:none}
 }`;
 
   /* La coque. `document` est **injecté** : c'est la couture qui la rend
@@ -451,13 +882,29 @@
     if(!doc||typeof doc.createElement!=='function')
       throw new RangeError('createFlowOverlay exige `document` : la coque dessine, et un module qui lit un global qu’il n’a pas déclaré ne se teste pas');
     const now=typeof d.now==='function'?d.now:()=>Date.now();
-    let root=null,kicker=null,heading=null,instruction=null,bar=null,elapsed=null,deadline=null;
+    let root=null,veil=null,kickerText=null,dots=null,heading=null,instruction=null;
+    let bar=null,elapsed=null,deadline=null;
     let note=null,actions=null,report=null,target=null,timer=null;
     let openedAt=null,stageAt=null,stageLimit=null,onExit=null,onKey=null,inerted=[];
+    /* Les cinq régions nommées, par leur nom public. Un objet plutôt que cinq
+       variables : `mount('demo',…)` et `regions().demo` doivent désigner le
+       **même** nœud, et deux chemins vers un nœud finissent toujours par
+       diverger quand ils ne partagent pas la table. */
+    let slot=null;
+    /* Ce que le parcours a monté, par région. Tenu pour que `clear()` retire
+       **exactement** ce qu'il a posé : vider `jf-feedback` en bloc emporterait
+       la ligne de commentaire que la coque y tient, et la RÈGLE ZÉRO perdrait
+       sa phrase sans que personne ne l'ait demandé. */
+    let mounted=null;
     /* Jusqu'à quand la ligne de commentaire est **tenue** (voir `note`).
        Remise à zéro à chaque ouverture et à chaque fermeture : une tenue qui
        survivrait à la coque bâillonnerait le parcours suivant. */
     let heldUntil=0;
+    /* Jusqu'à quand le vert est allumé (décision 21). Même mécanique que
+       `heldUntil`, et pour la même raison : une échéance lue sur l'horloge
+       injectée, donc un test qui pilote le temps voit exactement ce que
+       l'écran montre. Il n'existe pas de chemin qui l'allume sans échéance. */
+    let flashUntil=0;
 
     function ensureStyle(){
       if(doc.getElementById(STYLE_ID))return;
@@ -477,18 +924,67 @@
        dépôt. */
     function paintClock(){
       if(!root||root.hidden)return;
+      /* Le vert s'éteint **ici**, sur la même horloge que le compteur : une
+         couleur de succès qui dépendrait d'un `setTimeout` séparé pourrait
+         rester allumée si ce minuteur-là était perdu, et le vert deviendrait
+         ambiant — exactement ce que la décision 21 refuse. */
+      paintFlash();
       const since=Math.max(0,Math.round((now()-openedAt)/1000));
       elapsed.textContent=`${since} s`;
       if(stageLimit===null||stageAt===null){deadline.textContent='';return}
       const left=Math.max(0,Math.ceil((stageLimit-(now()-stageAt))/1000));
       deadline.textContent=`${left} s restantes`;
     }
+    /* Le vert, peint depuis l'échéance et jamais depuis un appel. Rend l'état
+       réel, pour que « allumé » soit lisible par un test comme il l'est à
+       l'écran. */
+    function paintFlash(){
+      if(!root)return false;
+      const on=flashUntil>now();
+      if(!on)flashUntil=0;
+      root.setAttribute('data-flash',on?'ok':'');
+      return on;
+    }
+    /* La progression **globale**, en segments : où on en est dans le parcours.
+       Le compte exact reste dans le texte à côté — ces traits le situent, ils
+       ne le répètent pas. Bornée à vingt-quatre segments : au-delà, une barre
+       de traits d'un pixel ne dit plus rien et déborde le bandeau, alors que
+       « Étape 40 sur 300 » reste vrai et lisible juste à côté. */
+    const DOTS_MAX=24;
+    function paintDots(index,total){
+      if(!dots)return 0;
+      dots.innerHTML='';
+      const drawn=Math.max(1,Math.min(total,DOTS_MAX));
+      for(let i=1;i<=drawn;i+=1){
+        const segment=el('span');
+        segment.setAttribute('data-at',i<index?'done':i===index?'now':'next');
+        dots.appendChild(segment);
+      }
+      return drawn;
+    }
     function build(){
       ensureStyle();
       root=el('div');root.id=BH.DOM.flowRootId;
       root.setAttribute('role','dialog');
       root.setAttribute('aria-modal','true');
+      /* Focalisable, pour que le focus quitte la page que le balayage `inert`
+         vient de désarmer. Sans cela le focus reste sur un nœud désarmé, et
+         la navigation au clavier part de nulle part. */
+      root.setAttribute('tabindex','-1');
+      root.setAttribute('data-flash','');
+      /* Le voile est une **couche**, pas un fond de la racine : il porte le
+         flou et l'assombrissement, et la mise en page passe au-dessus sans
+         les subir. `pointer-events:none` lui est posé par la feuille — ce
+         n'est pas lui qui avale les clics, c'est la racine. */
+      veil=el('div',BH.DOM.flowVeilClass);
+      veil.setAttribute('aria-hidden','true');
+      root.appendChild(veil);
       const step=el('div',BH.DOM.flowStepClass);
+      /* Le rail de progression, **frère du bandeau et non enfant** : il est
+         collé à l'arête du cadre, sur toute la largeur. */
+      const progress=el('div',BH.DOM.flowProgressClass);
+      bar=el('i');progress.appendChild(bar);
+      step.appendChild(progress);
       /* Posée **une fois**, hors de `actions` : `buttons()` vide `actions` à
          chaque étape, et une sortie qu'un parcours peut effacer sans le savoir
          n'est pas une sortie. Elle porte `data-flow-close` et non
@@ -501,22 +997,56 @@
       close.setAttribute('title','Quitter (Échap)');
       close.addEventListener('click',()=>{if(onExit)onExit('fermeture')});
       step.appendChild(close);
-      kicker=el('div','jf-kicker');
+      /* ------------------------------------------------------- le bandeau */
+      const header=el('div',BH.DOM.flowHeaderClass);
+      const kicker=el('div','jf-kicker');
+      kickerText=el('span');
+      dots=el('div','jf-dots');
+      kicker.appendChild(kickerText);kicker.appendChild(dots);
       heading=el('h2');
       instruction=el('p','jf-instruction');
-      const progress=el('div',BH.DOM.flowProgressClass);
-      bar=el('i');progress.appendChild(bar);
+      header.appendChild(kicker);header.appendChild(heading);header.appendChild(instruction);
+      /* --------------------------------------------------------- la scène
+         **Vide, et c'est le sujet de cette slice.** La coque tient la place et
+         donne la couleur ; ce qui s'y montre appartient à l'étape. Le rapport
+         de fin y vit aussi : à la dernière page il n'y a plus d'exercice, donc
+         le centre lui revient. */
+      const stage=el('div',BH.DOM.flowStageClass);
+      const demo=el('div',BH.DOM.flowDemoClass);
+      const exercise=el('div',BH.DOM.flowExerciseClass);
+      report=el('ul','jf-report');report.hidden=true;
+      stage.appendChild(demo);stage.appendChild(exercise);stage.appendChild(report);
+      /* ----------------------------------------------------------- le pied */
+      const foot=el('div','jf-foot');
+      const feedback=el('div',BH.DOM.flowFeedbackClass);
+      note=el('div',BH.DOM.flowNoteClass);
+      /* Annoncée : un commentaire vivant qui n'existe qu'en pixels n'existe
+         pas pour qui ne regarde pas l'écran. */
+      note.setAttribute('aria-live','polite');
+      note.setAttribute('data-kind','');
+      feedback.appendChild(note);
       const meta=el('div','jf-meta');
       elapsed=el('span','','0 s');deadline=el('span');
       meta.appendChild(elapsed);meta.appendChild(deadline);
-      note=el('div',BH.DOM.flowNoteClass);
-      report=el('ul','jf-report');report.hidden=true;
-      actions=el('div','jf-actions');
-      step.appendChild(kicker);step.appendChild(heading);step.appendChild(instruction);
-      step.appendChild(progress);step.appendChild(meta);step.appendChild(note);
-      step.appendChild(report);step.appendChild(actions);
+      actions=el('div',BH.DOM.flowControlsClass);
+      foot.appendChild(feedback);foot.appendChild(meta);foot.appendChild(actions);
+      step.appendChild(header);step.appendChild(stage);step.appendChild(foot);
       root.appendChild(step);
+      /* La table des régions, écrite **une fois** : `regions()` la publie et
+         `mount()` la consulte, donc les deux ne peuvent pas désigner deux
+         nœuds différents. */
+      slot=Object.freeze({header,stage,demo,exercise,feedback,progress,controls:actions});
+      mounted={demo:[],exercise:[],feedback:[]};
       (doc.body||doc.documentElement).appendChild(root);
+    }
+    /* Retirer ce que le parcours a monté dans une région, et **rien d'autre**.
+       Rend le nombre de nœuds retirés. */
+    function unmount(name){
+      const list=mounted&&mounted[name];
+      if(!list||!list.length)return 0;
+      const count=list.length;
+      for(const node of list.splice(0,count))if(node&&typeof node.remove==='function')node.remove();
+      return count;
     }
     /* Le balayage `inert`, **et l'exemption**. La page derrière est désarmée
        pendant le parcours, mais la surimpression des mains ne l'est pas : on
@@ -545,10 +1075,16 @@
           throw new RangeError('createFlowOverlay.open exige `exit` : une surimpression plein écran sans sortie est un piège');
         if(!root)build();
         onExit=s.exit;
-        openedAt=now();stageAt=null;stageLimit=null;heldUntil=0;
+        openedAt=now();stageAt=null;stageLimit=null;heldUntil=0;flashUntil=0;
         root.hidden=false;
         root.setAttribute('aria-label',String(s.title||'Parcours Bare Hands'));
+        paintFlash();
         sweepInert(true);
+        /* Le focus suit la coque. Le balayage `inert` vient de désarmer la
+           page : laisser le focus dessus ferait partir la navigation au
+           clavier d'un nœud qui ne répond plus. Gardé, parce qu'un double de
+           DOM n'a pas de focus et que la coque n'en dépend pas. */
+        if(typeof root.focus==='function')root.focus();
         onKey=event=>{if(event&&event.key==='Escape'){event.preventDefault&&event.preventDefault();onExit('escape')}};
         if(typeof doc.addEventListener==='function')doc.addEventListener('keydown',onKey);
         /* La minuterie du compteur est **injectée** : sans elle la coque
@@ -565,16 +1101,121 @@
       step(spec){
         const s=spec&&typeof spec==='object'?spec:{};
         if(!root)return null;
-        kicker.textContent=`Étape ${Number(s.index)||1} sur ${Number(s.total)||1}`;
+        const index=Number(s.index)||1,total=Number(s.total)||1;
+        kickerText.textContent=`Étape ${index} sur ${total}`;
+        paintDots(index,total);
         heading.textContent=String(s.title||'');
         instruction.textContent=String(s.instruction||'');
         note.textContent='';note.setAttribute('data-kind','');
         report.hidden=true;
+        /* **La scène est vidée par l'étape qui arrive**, exactement comme les
+           boutons le sont. Une démonstration qui survivrait à son étape
+           montrerait la main d'une autre consigne, et c'est pire que rien :
+           l'utilisateur ferait le geste affiché. Même règle que `buttons()`,
+           écrite au même endroit pour qu'on ne l'oublie pas d'un côté. */
+        for(const name of FLOW_MOUNTABLE)unmount(name);
+        /* Le vert ne traverse pas une frontière d'étape : « reconnu » parlait
+           de l'étape précédente. */
+        flashUntil=0;paintFlash();
         stageAt=now();
         stageLimit=Number.isFinite(Number(s.deadlineMs))?Number(s.deadlineMs):null;
         this.progress(0);
         paintClock();
         return true;
+      },
+      /* ------------------------------------------------ les régions nommées
+         (refonte Slice 05, architecture §6, décisions 18 et 19)
+
+         Le contrat que les parcours suivants lisent au lieu d'inventer chacun
+         sa mise en page. `regions()` rend les nœuds, `mount()` y pose du
+         contenu, `clear()` le retire. La coque décide **où** ; l'étape décide
+         **quoi**.
+
+         Rend `null` quand la coque est fermée, et ne la construit pas : une
+         image qui arrive après Échap ne doit pas faire réapparaître une
+         surimpression que l'utilisateur vient de quitter. */
+      regions(){return root?slot:null},
+      /* Poser un nœud dans une région. Le nœud appartient à l'appelant ; la
+         coque se contente de le placer, de le retirer au changement d'étape et
+         de lui donner une couleur (`currentColor` vaut le bleu de la consigne
+         dans la scène, et le vert pendant un `flash()` — c'est le crochet des
+         dessins de main de la Slice 04, qui tracent en `currentColor`). */
+      mount(name,node){
+        const region=String(name);
+        if(!FLOW_SLOTS.includes(region))
+          throw new RangeError(`createFlowOverlay.mount : région « ${region} » inconnue. `
+            +`Les régions de la coque sont ${FLOW_SLOTS.join(', ')}.`);
+        if(!FLOW_MOUNTABLE.includes(region))
+          throw new RangeError(`createFlowOverlay.mount : la région « ${region} » appartient à la coque. `
+            +'« progress » est écrite par progress(), « controls » par buttons(), et les deux sont '
+            +'réécrites à chaque étape — un contenu monté là disparaîtrait sans un mot. '
+            +`Les régions qui se remplissent sont ${FLOW_MOUNTABLE.join(', ')}.`);
+        if(!root||!node)return null;
+        slot[region].appendChild(node);
+        mounted[region].push(node);
+        return node;
+      },
+      /* Vider une région, et **elle seule**. Ne retire que ce que `mount()` a
+         posé : la ligne de commentaire que la coque tient dans `feedback` lui
+         appartient et survit. Rend le nombre de nœuds retirés. */
+      clear(name){
+        const region=String(name);
+        if(!FLOW_MOUNTABLE.includes(region))
+          throw new RangeError(`createFlowOverlay.clear : région « ${region} » hors des régions qui se remplissent `
+            +`(${FLOW_MOUNTABLE.join(', ')}).`);
+        if(!root)return 0;
+        return unmount(region);
+      },
+      /* **Le vert, et sa laisse** (décision 21). Un geste vient d'être
+         reconnu : la scène, le rail et la cible verdissent pour une durée
+         **bornée**, puis l'horloge de la coque les rend au bleu. Il n'existe
+         aucun appel qui allume le vert sans échéance, et c'est le point : le
+         vert ACTIVE a été retiré par l'utilisateur parce qu'une couleur de
+         succès permanente cesse de signaler un succès. Rend la durée retenue. */
+      flash(ms){
+        const span=Number(ms);
+        if(!Number.isFinite(span)||span<=0)
+          throw new RangeError('createFlowOverlay.flash exige une durée finie et positive : le vert dit '
+            +'« reconnu », pas « en cours ». Sans échéance il deviendrait la couleur ambiante de la coque, '
+            +'ce que la décision 21 refuse explicitement.');
+        if(!root)return 0;
+        /* Bornée plutôt que refusée au-delà du plafond : une durée trop longue
+           est une erreur de dosage, pas une erreur de sens, et lever au milieu
+           d'une image reconnue tuerait le parcours pour un geste **réussi**.
+           Le plafond est publié (`FLASH_MAX_MS`) pour qu'il se lise au lieu de
+           se deviner. */
+        const held=Math.min(span,FLASH_MAX_MS);
+        flashUntil=now()+held;
+        paintFlash();
+        return held;
+      },
+      /* Le vert est-il allumé ? Lu sur l'échéance, jamais sur l'attribut :
+         « on l'a posé » et « il est encore vrai » sont deux faits différents. */
+      flashing(){return !!root&&flashUntil>now()},
+      /* **Armer l'échéance de l'étape sans la redessiner** (Slice 06).
+
+         `step()` pose une échéance *et* vide la scène. Une étape qui n'arme sa
+         mesure qu'au moment où l'utilisateur engage ne peut donc pas repasser
+         par lui : elle effacerait la démonstration qu'il est justement en train
+         de regarder, et lui ferait relire une consigne au moment où il commence
+         à faire le geste. La coque garde la montre, le parcours dit quand elle
+         part — c'est la même répartition qu'avant, à ceci près que le départ
+         n'est plus collé à l'ouverture de l'étape.
+
+         `null` retire l'échéance, et alors **aucun compte à rebours n'est
+         affiché** : c'est exactement ce qu'une phase de lecture doit montrer,
+         et l'inverse d'un « 0 s restantes » qui mentirait. Rend l'échéance
+         retenue. */
+      deadline(ms){
+        if(!root)return null;
+        const span=ms===null||ms===undefined?null:Number(ms);
+        if(span!==null&&!(Number.isFinite(span)&&span>0))
+          throw new RangeError('createFlowOverlay.deadline exige une durée finie et positive, ou null pour retirer l’échéance : '
+            +'une échéance nulle ou négative est déjà passée à l’instant où on la pose, donc l’étape expirerait à l’image suivante '
+            +'sans que l’utilisateur ait eu une seule image pour agir.');
+        stageAt=now();stageLimit=span;
+        paintClock();
+        return span;
       },
       progress(value){
         if(!bar)return 0;
@@ -613,6 +1254,11 @@
         heldUntil=held?now()+hold:0;
         note.textContent=String(text||'');
         note.setAttribute('data-kind',String(kind||''));
+        /* Repeint le vert en passant : les deux parcours écrivent une note à
+           chaque image, donc c'est le chemin le plus souvent emprunté de la
+           coque — celui qui garantit que le vert s'éteint même sans minuterie
+           injectée (un test qui pilote l'horloge à la main n'en a pas). */
+        paintFlash();
         return note.textContent;
       },
       /* Le point à viser, en **pixels de la fenêtre** : la coque dessine à
@@ -680,11 +1326,356 @@
         onKey=null;
         sweepInert(false);
         if(target){target.remove();target=null}
+        /* Les nœuds montés sont détachés **explicitement** avant que la racine
+           parte : `root.remove()` suffirait à les sortir de la page, mais pas
+           à vider la table — et une table qui survit à la coque ferait tenir
+           en vie l'arbre d'un parcours terminé (une fuite qu'aucun écran ne
+           montre). Même raison que la remise à zéro de `heldUntil`. */
+        for(const name of FLOW_MOUNTABLE)unmount(name);
+        mounted=null;slot=null;
         root.remove();root=null;
-        openedAt=null;stageAt=null;stageLimit=null;heldUntil=0;
+        veil=null;kickerText=null;dots=null;heading=null;instruction=null;
+        bar=null;elapsed=null;deadline=null;note=null;actions=null;report=null;
+        openedAt=null;stageAt=null;stageLimit=null;heldUntil=0;flashUntil=0;
         return true;
       },
     };
+  }
+
+  /* ------------------------------------------------------------------ 5bis
+     Ce que l'étape **montre** : la démonstration, le bandeau de phases et le
+     champ de cibles (architecture §8, décision 20).
+
+     Trois règles tiennent cette section entière.
+
+     **Un seul alphabet de formes.** Rien n'est dessiné ici : tout passe par
+     `hand_art`, qui trace en `currentColor`. La scène de la coque pose
+     `color: var(--jf-accent)`, donc une main montée dedans est bleue sans une
+     ligne de plus, et **verdit d'elle-même pendant un `flash()`** parce que le
+     vert recolore la scène. C'est le crochet que la Slice 05 a laissé, et il
+     évite un second système de dessin.
+
+     **La démonstration n'est jamais une entrée** (architecture §8, décision
+     32). Elle ne traverse pas `feed()`, `KEEP` ne la connaît pas, et rien de
+     ce qu'elle montre n'atteint un profil. C'est de la consigne en image.
+
+     **Aucune minuterie pour animer.** L'alternance ouvert↔fermé des étapes 3,
+     4 et 5 est une animation CSS. Une minuterie de plus serait une chose de
+     plus à fermer proprement à la sortie, pour un mouvement que la feuille
+     sait faire — et `prefers-reduced-motion` l'arrête sans que ce module ait à
+     le savoir.
+
+     Feuille **séparée de celle de la coque**, et c'est le point : la coque ne
+     sait rien du parcours qu'elle porte (c'est ce qui permet au tutoriel de la
+     réutiliser telle quelle). Ces classes-ci sont de la calibration. */
+  const STEPS_STYLE_ID=BH.DOM.flowStepsStyleId;
+  const DEMO_CLASS='jf-mime';
+  const STEPS_STYLE=`
+/* ================================================================= Slice 06
+   Les exercices : la main qui montre, le bandeau qui dit où on en est, et les
+   points à viser. Rien ici n'appartient à la coque. */
+/* ---------------------------------------------------------- la démonstration
+   Les deux postures d'un mime sont **empilées** dans la même cellule de
+   grille, pas posées l'une à côté de l'autre : c'est ce qui fait qu'on voit
+   deux doigts se fermer et non deux mains différentes. L'invariant n° 1 de
+   \`hand_art\` — ouvrir et fermer ne bouge que les deux doigts qui pincent —
+   est ce qui rend l'empilement légitime. */
+${R} .jf-demo-wrap{display:flex;flex-direction:column;align-items:center;
+  gap:clamp(8px,1.6vh,16px)}
+${R} .${DEMO_CLASS}{display:grid;place-items:center}
+${R} .${DEMO_CLASS}>svg{grid-area:1/1;width:clamp(128px,24vh,232px);height:auto;
+  filter:drop-shadow(0 0 18px rgba(110,231,255,.18))}
+${R} .${DEMO_CLASS}[data-mime="0"]>svg{opacity:1}
+${R} .${DEMO_CLASS}[data-mime="1"]>svg{opacity:0;animation:jfMime 2.4s ease-in-out infinite both}
+${R} .${DEMO_CLASS}[data-mime="1"]>svg:nth-of-type(2){animation-delay:1.2s}
+/* **Deux mains, côte à côte** (Slice 07). L'empilement est ce qui fait lire
+   « deux doigts se ferment » ; pour une démonstration à deux mains c'est
+   l'erreur exactement inverse qu'il faut éviter, donc \`data-pair\` pose les
+   deux dessins l'un à côté de l'autre. La main gauche est la droite en
+   miroir : aucune posture nouvelle n'a été ajoutée à l'alphabet. */
+${R} .${DEMO_CLASS}[data-pair="1"]{grid-auto-flow:column;align-items:center;
+  gap:clamp(14px,4vw,40px)}
+${R} .${DEMO_CLASS}[data-pair="1"]>svg{grid-area:auto;opacity:1;animation:none;
+  width:clamp(96px,16vh,150px)}
+/* **La démonstration se range** pendant l'exercice de fenêtre : le centre du
+   cadre appartient à la fenêtre d'entraînement, qui *est* l'exercice. Elle ne
+   disparaît pas pour autant — c'est elle qui prouve que quelque chose tourne
+   pendant « Prêt », où aucune échéance ne descend (RÈGLE ZÉRO). */
+${R} .jf-demo-wrap.jf-demo-aside{position:absolute;left:0;bottom:0;z-index:3;
+  align-items:flex-start;gap:6px}
+${R} .jf-demo-aside .${DEMO_CLASS}>svg{width:clamp(64px,9.5vh,104px)}
+${R} .jf-demo-aside .${DEMO_CLASS}[data-pair="1"]>svg{width:clamp(52px,7.5vh,84px)}
+${R} .jf-demo-aside .jf-caption{max-width:22ch;text-align:left;letter-spacing:.12em}
+/* La légende dit **ce que le dessin montre**, pas ce qu'il faut faire : la
+   consigne, elle, est déjà grande en haut. Deux phrases qui disent la même
+   chose se concurrencent. */
+${R} .jf-caption{margin:0;font-family:var(--jf-sans);font-size:11px;
+  letter-spacing:.18em;text-transform:uppercase;color:var(--jf-muted)}
+/* ------------------------------------------------------- le bandeau de phases
+   **Le cœur de la RÈGLE ZÉRO quand il n'y a pas d'échéance à annoncer.** Trois
+   mots, un seul allumé : l'utilisateur voit qu'on lit, puis qu'on attend, puis
+   qu'on mesure. La pastille allumée respire — c'est la « preuve de vie » que
+   le compte à rebours portait avant, sans le compte à rebours. */
+${R} .jf-phases{display:flex;gap:clamp(10px,2vw,20px);align-items:center;
+  font-family:var(--jf-sans);font-size:10px;letter-spacing:.2em;
+  text-transform:uppercase;color:var(--jf-muted)}
+${R} .jf-phases b{display:inline-flex;align-items:center;gap:7px;font-weight:400;
+  transition:color .2s ease}
+${R} .jf-phases b::before{content:'';width:6px;height:6px;border-radius:50%;
+  background:rgba(255,255,255,.16);transition:background .2s ease}
+${R} .jf-phases b[data-at="done"]{color:var(--jf-soft)}
+${R} .jf-phases b[data-at="done"]::before{background:rgba(110,231,255,.45)}
+${R} .jf-phases b[data-at="now"]{color:var(--jf-accent)}
+${R} .jf-phases b[data-at="now"]::before{background:var(--jf-accent);
+  box-shadow:0 0 10px rgba(110,231,255,.65);animation:jfBreath 1.7s ease-in-out infinite}
+/* ------------------------------------------------------- le champ de cibles
+   Les points **qui restent à faire**, en pointillés — même vocabulaire que la
+   mire de \`pinch_target\` et que l'outil absent de la palette : discontinu =
+   annoncé, plein = constaté. Le point **courant** n'est pas ici : c'est
+   \`jf-target\` de la coque, qui pulse. Un seul point vivant à la fois, sinon
+   « lequel je vise ? » redevient une question. */
+${R} .jf-ghosts{position:fixed;inset:0;z-index:3;pointer-events:none}
+${R} .jf-ghost{position:absolute;width:24px;height:24px;margin:-12px 0 0 -12px;
+  border-radius:50%;border:1.5px dashed rgba(110,231,255,.34);
+  transition:border-color .2s ease,opacity .2s ease}
+/* Touché : le trait devient **plein**, et reste bleu. Le vert dit « à
+   l'instant » et la décision 21 lui interdit de rester allumé — un point déjà
+   fait n'est plus un instant, c'est un acquis. */
+${R} .jf-ghost[data-at="done"]{border-style:solid;border-color:rgba(110,231,255,.6);
+  box-shadow:0 0 0 4px rgba(110,231,255,.1)}
+/* Le point vivant est dessiné par la coque : son fantôme s'efface pour qu'il
+   n'y ait pas deux anneaux au même endroit. */
+${R} .jf-ghost[data-at="now"]{opacity:0}
+/* ------------------------------------- la fenêtre d'entraînement (Slice 07)
+   **Le cadre n'est pas habillé ici, et c'est le sujet.** Il porte
+   \`.sc-node.sc-window\`, la feuille de la scène est **globale**, donc il est
+   dessiné par exactement les mêmes règles que les vraies fenêtres JARVIS — un
+   fond, un rayon, une ombre intérieure, un flou d'arrière-plan. Une seconde
+   feuille « qui imite » aurait divergé au premier changement de thème, et
+   l'exercice aurait cessé de ressembler à ce qu'il enseigne.
+
+   Ce qui suit ne fait que le **placer** : \`toScreen\` rend des coordonnées de
+   fenêtre, donc la couche est \`fixed\` et couvre le cadre entier. La classe
+   \`scene\` est là pour ses **variables** (\`--sc-edge\`, \`--sc-surface\`,
+   \`--sc-radius\`, \`--tone\`), pas pour sa mise en page : les trois
+   déclarations ci-dessous la reprennent. */
+${R} .jf-practice{position:fixed;inset:0;z-index:2;pointer-events:none;
+  contain:none;overflow:visible}
+${R} .jf-practice .sc-node{pointer-events:auto}
+/* **Le pointillé dit « ceci ne sera pas enregistré ».** Même vocabulaire que
+   la mire de \`pinch_target\`, que les cibles restantes et que l'outil absent
+   de la palette : discontinu = annoncé, plein = constaté. Sans lui, un cadre
+   d'entraînement parfaitement identique à une vraie fenêtre laisserait croire
+   qu'on vient de déplacer quelque chose de sa scène. */
+${R} .jf-practice-frame{outline:1.5px dashed color-mix(in srgb,var(--jf-accent) 45%,transparent);
+  outline-offset:7px}
+/* --------------------------------------- les deux temps de l'étape 6 (S07)
+   Un écran, deux sous-étapes : il faut voir laquelle on joue **et** qu'il en
+   reste une. Même grammaire que le bandeau de phases — un seul allumé — parce
+   que c'est la même question posée à une autre échelle, et deux grammaires
+   pour une question se liraient comme deux questions. */
+${R} .jf-subs{display:flex;flex-direction:column;align-items:center;
+  gap:clamp(6px,1.1vh,12px);text-align:center;width:100%}
+${R} .jf-sub-rail{display:flex;gap:clamp(12px,2.4vw,24px);align-items:center;
+  font-family:var(--jf-sans);font-size:10px;letter-spacing:.2em;
+  text-transform:uppercase;color:var(--jf-muted)}
+${R} .jf-sub-rail b{display:inline-flex;align-items:center;gap:7px;font-weight:400;
+  transition:color .2s ease}
+${R} .jf-sub-rail b::before{content:'';width:6px;height:6px;border-radius:50%;
+  background:rgba(255,255,255,.16);transition:background .2s ease}
+${R} .jf-sub-rail b[data-at="done"]{color:var(--jf-soft)}
+${R} .jf-sub-rail b[data-at="done"]::before{background:rgba(110,231,255,.45)}
+${R} .jf-sub-rail b[data-at="now"]{color:var(--jf-accent)}
+${R} .jf-sub-rail b[data-at="now"]::before{background:var(--jf-accent);
+  box-shadow:0 0 10px rgba(110,231,255,.65)}
+/* La consigne de la **sous-étape**. Le titre de l'écran reste « Manipulation
+   de fenêtre » du début à la fin : ce qui change entre 6A et 6B est ce qu'on
+   demande, pas le sujet, et repasser par \`step()\` pour le dire effacerait le
+   cadre que l'utilisateur est en train de regarder. */
+${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
+  font-size:clamp(14px,1.3vw,18px);line-height:1.5;max-width:48ch;text-wrap:pretty}
+@keyframes jfMime{0%{opacity:0}6%{opacity:1}44%{opacity:1}50%{opacity:0}100%{opacity:0}}
+@keyframes jfBreath{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.5);opacity:.6}}
+@media (max-width:720px){
+  ${R} .${DEMO_CLASS}>svg{width:clamp(108px,34vw,172px)}
+  ${R} .${DEMO_CLASS}[data-pair="1"]>svg{width:clamp(76px,22vw,118px)}
+  ${R} .jf-phases{gap:12px;font-size:9px;letter-spacing:.14em}
+  ${R} .jf-sub-rail{gap:12px;font-size:9px;letter-spacing:.14em}
+  ${R} .jf-sub-say{font-size:14px;max-width:34ch}
+  /* Au téléphone, la démonstration rangée dans un coin mangerait le cadre :
+     elle passe sous lui, en ligne, plutôt que par-dessus. */
+  ${R} .jf-demo-wrap.jf-demo-aside{position:static;align-items:center}
+  ${R} .jf-demo-aside .jf-caption{text-align:center;max-width:none}
+}
+@media (max-height:560px){
+  ${R} .${DEMO_CLASS}>svg{width:clamp(92px,20vh,148px)}
+  ${R} .jf-demo-wrap{gap:6px}
+  ${R} .jf-subs{gap:4px}
+  ${R} .jf-sub-say{font-size:13px;line-height:1.4}
+}
+/* **Moins de mouvement, et l'information reste.** Le mime ne peut pas
+   simplement s'arrêter : figé, il ne montrerait qu'une des deux postures, donc
+   « fermer et rouvrir » deviendrait « fermer ». Les deux se posent alors côte à
+   côte, toutes deux visibles — la lecture passe de la durée à l'espace. */
+@media (prefers-reduced-motion:reduce){
+  ${R} .${DEMO_CLASS}[data-mime="1"]{grid-auto-flow:column;align-items:center;
+    gap:clamp(10px,3vw,28px)}
+  ${R} .${DEMO_CLASS}[data-mime="1"]>svg{grid-area:auto;opacity:1;animation:none}
+  ${R} .jf-phases b[data-at="now"]::before{animation:none}
+  ${R} .jf-phases b,${R} .jf-phases b::before,${R} .jf-ghost{transition:none}
+  ${R} .jf-sub-rail b,${R} .jf-sub-rail b::before{transition:none}
+}`;
+
+  /* La feuille des exercices, posée une fois. Même forme que `ensureStyle()` de
+     la coque, et **pas** au même identifiant : deux propriétaires, deux
+     feuilles, donc retirer l'une ne mutile pas l'autre. */
+  function ensureStepsStyle(doc){
+    if(doc.getElementById(STEPS_STYLE_ID))return false;
+    const style=doc.createElement('style');
+    style.id=STEPS_STYLE_ID;style.textContent=STEPS_STYLE;
+    (doc.head||doc.body).appendChild(style);
+    return true;
+  }
+
+  /* La démonstration d'une étape, ou `null` quand l'étape n'en déclare pas
+     (le glissement et les deux mains sont à la Slice 07 ; leur centre reste
+     vide plutôt que de montrer une main qui ment).
+
+     **Un refus codé plutôt qu'un défaut plausible** : une posture que le
+     vocabulaire ne connaît pas lève ici, elle ne retombe pas sur `rest`. Un
+     écran qui montre une main ouverte là où on attend un pincement enseigne le
+     mauvais geste, et rien ne le signale. */
+  function demoNode(doc,stepId){
+    const spec=DEMO[stepId];
+    if(!spec)return null;
+    const art=handArt();
+    const wrap=doc.createElement('div');
+    /* `aside` : la démonstration se range dans un coin au lieu d'occuper le
+       centre. Ce n'est pas un choix esthétique — l'étape de manipulation de
+       fenêtre pose un vrai cadre au centre, et deux choses au même endroit
+       n'en font voir aucune. */
+    wrap.className=spec.aside?'jf-demo-wrap jf-demo-aside':'jf-demo-wrap';
+    const box=doc.createElement('div');
+    box.className=DEMO_CLASS;
+    box.setAttribute('data-mime',spec.mime?'1':'0');
+    /* **Côte à côte plutôt qu'empilées** (Slice 07). L'empilement est ce qui
+       fait lire « deux doigts se ferment » au lieu de « deux mains
+       différentes » ; pour une démonstration à deux mains c'est exactement
+       l'erreur inverse qu'il faut éviter — deux mains empilées se liraient
+       comme une seule qui bouge. */
+    box.setAttribute('data-pair',spec.pair?'1':'0');
+    box.setAttribute('data-demo',String(stepId));
+    /* Annoncée **une fois**, sur le groupe : les postures empilées sont deux
+       images du même fait, et deux `<title>` feraient lire le geste deux fois
+       à un lecteur d'écran. Les SVG restent donc décoratifs (`handSvg` les pose
+       `aria-hidden` quand on ne lui donne pas de `title`). */
+    box.setAttribute('role','img');
+    box.setAttribute('aria-label',spec.caption);
+    spec.poses.forEach((key,index)=>{
+      const pose=art.POSE[key];
+      if(!pose)
+        throw new RangeError(`La démonstration de l’étape ${stepId} demande la posture « ${key} », `
+          +`que le vocabulaire de dessin ne publie pas. Postures connues : ${Object.keys(art.POSE).join(', ')}. `
+          +'Une posture inconnue ne retombe pas sur la main au repos : un écran qui montre une main ouverte '
+          +'là où on attend un pincement enseigne le mauvais geste.');
+      /* `mirror` est une propriété du **dessin**, pas une posture de plus : la
+         main gauche d'un pincement est le même pincement (invariant de
+         `hand_art`). C'est pour cela que 6B n'a demandé aucune lettre nouvelle
+         à l'alphabet. */
+      box.appendChild(art.handSvg(doc,{pose,size:art.SIZE_DEFAULT*8,className:'bh-hand',
+        mirror:!!(spec.mirror&&spec.mirror[index])}));
+    });
+    const caption=doc.createElement('p');
+    caption.className='jf-caption';caption.textContent=spec.caption;
+    wrap.appendChild(box);wrap.appendChild(caption);
+    return wrap;
+  }
+
+  /* Le bandeau de phases. Rend son nœud et le seul geste qu'on lui demande :
+     dire quelle phase est en cours. */
+  function phaseStrip(doc){
+    const box=doc.createElement('div');
+    box.className='jf-phases';
+    /* Annoncé : « on est passé de la lecture à prêt » est une information, et
+       elle n'existe qu'en pixels pour qui ne regarde pas l'écran. */
+    box.setAttribute('aria-live','polite');
+    const chips={};
+    for(const row of PHASE_STRIP){
+      const chip=doc.createElement('b');
+      chip.textContent=row[1];
+      chip.setAttribute('data-phase',row[0]);
+      chip.setAttribute('data-at','next');
+      box.appendChild(chip);
+      chips[row[0]]=chip;
+    }
+    return {node:box,set(phase){
+      const rank=PHASE_ORDER.indexOf(phase);
+      for(const row of PHASE_STRIP){
+        const mine=PHASE_ORDER.indexOf(row[0]);
+        chips[row[0]].setAttribute('data-at',
+          rank<0?'next':mine<rank?'done':mine===rank?'now':'next');
+      }
+    }};
+  }
+
+  /* **Le rail des deux temps d'un écran** (Slice 07), et la consigne de celui
+     qu'on joue.
+
+     Même forme et même grammaire que `phaseStrip` — un seul allumé, ceux
+     d'avant marqués faits — parce que c'est la même question posée à une autre
+     échelle : « où en suis-je ? ». Deux grammaires pour une question se
+     liraient comme deux questions.
+
+     La consigne de la sous-étape vit **ici** et non dans le bandeau : le titre
+     de l'écran reste « Manipulation de fenêtre » du début à la fin, et repasser
+     par `overlay.step()` pour changer la phrase effacerait le cadre
+     d'entraînement que l'utilisateur est en train de regarder. */
+  function subStrip(doc,list){
+    const box=doc.createElement('div');
+    box.className='jf-subs';
+    /* Annoncé : « on est passé au second temps » est une information, et elle
+       n'existe qu'en pixels pour qui ne regarde pas l'écran. */
+    box.setAttribute('aria-live','polite');
+    const rail=doc.createElement('div');
+    rail.className='jf-sub-rail';
+    const chips=list.map(sub=>{
+      const chip=doc.createElement('b');
+      chip.textContent=sub.label;
+      chip.setAttribute('data-sub',String(sub.id));
+      chip.setAttribute('data-at','next');
+      rail.appendChild(chip);
+      return chip;
+    });
+    const line=doc.createElement('p');
+    line.className='jf-sub-say';
+    box.appendChild(rail);box.appendChild(line);
+    return {node:box,set(index){
+      chips.forEach((chip,at)=>chip.setAttribute('data-at',
+        at<index?'done':at===index?'now':'next'));
+      line.textContent=list[index]?list[index].instruction:'';
+    }};
+  }
+
+  /* Les cibles **restantes**, en pointillés, à leur place dans la fenêtre. Le
+     point courant est dessiné par la coque (`overlay.target`) : un seul anneau
+     vivant à la fois. */
+  function ghostField(doc,points){
+    const layer=doc.createElement('div');
+    layer.className='jf-ghosts';
+    layer.setAttribute('aria-hidden','true');
+    const dots=points.map(point=>{
+      const dot=doc.createElement('div');
+      dot.className='jf-ghost';
+      dot.style.left=`${Math.round(point.x)}px`;
+      dot.style.top=`${Math.round(point.y)}px`;
+      dot.setAttribute('data-at','next');
+      layer.appendChild(dot);
+      return dot;
+    });
+    return {node:layer,set(index,done){
+      dots.forEach((dot,at)=>dot.setAttribute('data-at',
+        at<done?'done':at===index?'now':'next'));
+    }};
   }
 
   /* ------------------------------------------------------------------ 6
@@ -717,18 +1708,169 @@
        `stop()`, donc elle ne vit que pendant lui (décisions 27 et 30). */
     if(typeof d.setInterval!=='function'||typeof d.clearInterval!=='function')
       throw new RangeError('createCalibration exige `setInterval`/`clearInterval` : l’échéance d’une étape ne peut pas dépendre des seules images, que zéro main observée suffit à arrêter — l’étape resterait alors ouverte pour toujours sous un compteur figé sur « 0 s restantes »');
+    /* **`document`, exigé ici et non lu dans un global** (Slice 06). Le parcours
+       dessine maintenant : une démonstration de main par étape, un bandeau de
+       phases, un champ de cibles. Même couture que la coque, et pour la même
+       raison — un module de page qui lit un global qu'il n'a pas déclaré ne se
+       teste pas sous node. */
+    const doc=d.document;
+    if(!doc||typeof doc.createElement!=='function')
+      throw new RangeError('createCalibration exige `document` : le parcours montre une démonstration de main à chaque étape, et un module qui lit un global qu’il n’a pas déclaré ne se teste pas');
+    /* Le vocabulaire de dessin, **refusé absent à la construction**. Une
+       calibration qui s'ouvrirait sans lui montrerait une consigne écrite
+       au-dessus d'un centre vide : l'utilisateur lirait « formez un C » sans
+       jamais voir lequel, ce qui est le défaut plausible que ce dépôt refuse.
+       Même espèce que la coque et l'horloge ci-dessus : une garantie que
+       l'appelant doit se rappeler de respecter n'est pas une garantie. */
+    if(!handArt())
+      throw new RangeError('createCalibration exige `control_center_barehands_hand_art.js`, inséré avant ce module : sans le vocabulaire de dessin, chaque étape montrerait une consigne écrite au-dessus d’un centre vide, et « formez un C » ne dirait pas lequel');
     const o=options(d.options);
     const band=wakeBandOf(d.engineDefaults);
     const now=typeof d.now==='function'?d.now:()=>Date.now();
     const viewport=typeof d.viewport==='function'?d.viewport:()=>({width:1280,height:720});
     const say=typeof d.log==='function'?d.log:()=>{};
+    /* **Le banc d'entraînement de l'étape 6** (Slice 07, décisions 29 et 30).
+
+       Quatre portes, pas une de plus : l'échelle de la scène, l'ouverture du
+       cadre dans une région de la coque, le journal de ce que le **vrai**
+       moteur en a fait, et le démontage. Ce module ne calcule donc aucune
+       géométrie de cadre et n'en dessine aucun — il dit *où* et *quand*, la
+       page dit *quoi*. C'est le partage de l'observation du tutoriel
+       (Slice 10), et il a la même raison d'être : un parcours qui irait
+       chercher `JarvisScene` et la façade du moteur dans des globaux ne se
+       testerait plus sous node.
+
+       **Optionnel, et son absence est nommée.** Une calibration construite
+       sans banc n'invente pas de cadre : elle passe l'étape avec
+       `STAGE_REASON.SCENE_UNAVAILABLE`, exactement comme quand la scène est
+       éteinte. Les deux cas disent la même chose à l'utilisateur — « il n'y
+       avait pas de vraie fenêtre à manipuler » — et aucun des deux ne lui fait
+       jouer un faux exercice. C'est pour cela que ce dep-là n'est pas refusé à
+       la construction alors que la coque, l'horloge, le `document` et le
+       vocabulaire de dessin le sont : les quatre autres manquent **toujours**
+       ou **jamais**, celui-ci manque à l'exécution, sur la machine de
+       l'utilisateur, et un refus de construction ferait alors disparaître les
+       cinq étapes qui, elles, n'ont besoin de rien. */
+    const PRACTICE_DOORS=['viewport','open','drain','close'];
+    const practice=d.practice&&typeof d.practice==='object'
+      &&PRACTICE_DOORS.every(door=>typeof d.practice[door]==='function')?d.practice:null;
 
     let running=false,at=-1,collected=null,reports=null,derived=null,finished=null;
     let pinchLow=false,repeats=0,aimAt=null,pressFrom=null,clickTravels=null,dragTravels=null;
     let secondHandSeen=false,holdFrom=null;
+    /* La phase de l'étape courante, l'instant où elle a commencé, et le nombre
+       d'images consécutives qui **qualifient** l'engagement. Le compteur est
+       remis à zéro par la première image qui ne qualifie pas : c'est ce qui
+       fait qu'un mouvement de passage n'arme rien (`engageFrames`). */
+    let phase=null,phaseAt=0,engageRun=0;
+    /* Une étape ne se solde **qu'une fois**. Sans ce verrou, « Passer cette
+       étape » cliqué pendant la tenue du verdict écraserait un résultat déjà
+       rendu, et le rapport dirait « passée » d'une étape que l'utilisateur
+       vient de réussir. */
+    let settled=false;
+    /* La visée : les points à l'écran, celui qu'on vise, ceux qui sont faits.
+       Les points ne sont **posés** qu'à la fin de la lecture (décision 24). */
+    let aimPoints=null,aimIndex=0,aimHits=0,ghosts=null,strip=null;
+    /* **L'écran de manipulation et ses deux temps** (Slice 07). `subAt` dit
+       lequel est joué, `subs` est son rail à l'écran, `practiceOn` dit si un
+       cadre d'entraînement est **branché au moteur** — donc s'il y a quelque
+       chose à démonter.
+
+       `holdingFrame` et `frameDone` sont les deux seuls faits que ce module
+       retient du vrai moteur : « une main tient le cadre » (l'engagement, donc
+       l'armement) et « une main vient de le relâcher en l'ayant changé » (le
+       geste, donc le verdict). Ni l'un ni l'autre n'est calculé ici. */
+    let subAt=0,subs=null,practiceOn=false,holdingFrame=false,frameDone=null;
 
     const stepAt=index=>STEPS[index]||null;
+    /* **L'étape mesurée** courante, qui n'est pas toujours l'écran courant. Un
+       écran peut en porter deux (la manipulation de fenêtre) ; c'est elle, et
+       non l'écran, qui porte une identité persistée, une exigence de mains, un
+       verdict et une ligne de rapport. Partout ailleurs ici, « étape » veut
+       dire ceci. */
+    const stageOf=(step,index)=>!step?null:(step.subs?step.subs[index]||null:step);
+    const stage=()=>stageOf(stepAt(at),subAt);
+    /* Toutes les étapes mesurées, écrans dépliés — le vocabulaire persisté, qui
+       compte sept entrées quand les écrans d'exercice n'en comptent que six. */
+    const STAGES=Object.freeze(STEPS.reduce((list,step)=>
+      list.concat(step.subs?[...step.subs]:[step]),[]));
     const blank=()=>({samples:[],xs:[],ys:[]});
+
+    /* **Ce qui compte comme « l'utilisateur a commencé »**, étape par étape.
+
+       Contrainte de la slice, et c'est la bonne : **aucun nouveau modèle de
+       geste**. Chaque prédicat ne lit que des scalaires que le contrôleur
+       publie déjà et que le reste de ce module mesure déjà — `stillness`,
+       `gapPalms`, `primaryRatio`, `secondaryRatio`, et le nombre de mains sûres
+       — et il réemploie les seuils qui existent : `band`, recalculée depuis les
+       défauts du moteur, et `HOLD_STILLNESS`, la même valeur que la tenue de
+       pose utilise trente lignes plus bas. Rien ici n'est un seuil neuf.
+
+       Ils sont volontairement **plus stricts que la mesure qu'ils arment**.
+       Un prédicat laxiste ferait partir le chronomètre sur une main qui passe
+       devant l'objectif, et le défaut d'origine serait simplement décalé de
+       trois secondes. Une main ouverte qui dérive ne pince pas, n'est pas
+       immobile et son écart pouce-index (près de six paumes) est hors de la
+       bande du C : elle ne qualifie **aucune** des cinq étapes. */
+    const HOLD_STILLNESS=.35;
+    const ENGAGE=Object.freeze({
+      // Le repos mesure un tremblement : on a commencé quand une main est posée.
+      [BH.STAGE.NEUTRAL]:hand=>Number(hand.stillness)>=HOLD_STILLNESS,
+      /* Le C : l'écart pouce-index entre dans la bande de réveil. Le score, le
+         majeur et la tenue sont l'affaire de la **mesure** — les exiger ici
+         rendrait injoignable l'échec le plus instructif de l'étape (un C que le
+         majeur étouffe), puisque l'étape ne démarrerait jamais. */
+      [BH.STAGE.C_POSE]:(hand,wake)=>Number.isFinite(hand.gapPalms)
+        &&hand.gapPalms>=wake.gapMin&&hand.gapPalms<=wake.gapMax,
+      // Les pincements : le canal concerné s'est réellement fermé une fois.
+      [BH.STAGE.PINCH_PRIMARY]:(hand,wake)=>Number.isFinite(hand.primaryRatio)
+        &&hand.primaryRatio<wake.releaseRatio,
+      [BH.STAGE.PINCH_SECONDARY]:(hand,wake)=>Number.isFinite(hand.secondaryRatio)
+        &&hand.secondaryRatio<wake.releaseRatio,
+      /* La visée et le glissement démarrent sur le **pincement primaire**, qui
+         est le geste que la cible existe pour provoquer (décision 28 : on pince
+         la cible, on ne la pointe pas). */
+      [BH.STAGE.AIM]:(hand,wake)=>Number.isFinite(hand.primaryRatio)
+        &&hand.primaryRatio<wake.releaseRatio,
+      /* **Les deux sous-étapes de la fenêtre n'ont pas de prédicat de
+         scalaires, et c'est un progrès** (Slice 07, décision 25).
+
+         Les cinq autres lisent des nombres que le contrôleur publie déjà, et
+         c'est le mieux qu'elles puissent faire : « la main est posée »,
+         « l'écart entre dans la bande », « le canal s'est fermé » sont des
+         approximations de l'engagement. Celles-ci lisent une **vraie
+         capture** : le moteur d'interaction n'ouvre un plan sur le cadre
+         d'entraînement que lorsqu'une main a réellement pincé un bord ou un
+         coin **et** commencé à tirer (`dragSlopPx`, mesuré sur la paume). Ce
+         n'est pas un signe d'engagement, c'est l'engagement lui-même — donc il
+         n'y a rien à deviner, et aucun seuil de plus à poser.
+
+         Le fait arrive par `practice.drain()`, pas par les scalaires : il n'y a
+         donc pas d'entrée ici, et `feed()` ne cherche pas de prédicat pour ces
+         deux-là. Une entrée qui rendrait `true` les armerait sur une main qui
+         passe devant l'objectif ; une entrée qui rendrait `false` les rendrait
+         injoignables. L'absence est la bonne réponse, et elle est écrite. */
+    });
+    /* **Une seule main suffit à armer 6B, alors qu'elle en demande deux**, et
+       c'est la règle que l'ancienne étape « Deux mains » avait déjà raison de
+       suivre : exiger les deux pour *commencer* rendrait `NEEDS_TWO_HANDS`
+       injoignable dans le seul scénario qui porte son nom — l'étape resterait
+       armée pour toujours au lieu de dire ce qui manque. On arme sur
+       l'engagement, on mesure sur l'exigence, et l'échec explique. Ici,
+       l'engagement est le même pour les deux temps : une prise réelle. */
+
+    /* Ce qu'il y a à faire pour démarrer, dit en français. La phrase de
+       `ARMED` est la moitié « quoi » de la RÈGLE ZÉRO quand il n'y a pas
+       d'échéance à annoncer ; l'autre moitié est le bandeau de phases. */
+    const START=Object.freeze({
+      [BH.STAGE.NEUTRAL]:'posez une main ouverte devant la caméra et ne bougez plus',
+      [BH.STAGE.C_POSE]:'formez le C avec le pouce et l’index',
+      [BH.STAGE.PINCH_PRIMARY]:'pincez pouce et index',
+      [BH.STAGE.PINCH_SECONDARY]:'pincez pouce et majeur',
+      [BH.STAGE.AIM]:'amenez le jeton sur le point, puis pincez pouce et index',
+      [BH.STAGE.DRAG]:'pincez un bord ou un coin de la fenêtre, puis tirez',
+      [BH.STAGE.RESIZE]:'pincez deux zones différentes de la fenêtre, une par main',
+    });
 
     /* Une étape se solde une fois, et une seule. `skipped` n'est pas `failed` :
        ce que l'utilisateur n'a pas joué ne lui reproche rien.
@@ -742,14 +1884,197 @@
        le fait qu'on continue quand même (décision 31). */
     let carry=null;
     function settle(status,reason,samples,detail,message){
-      const step=stepAt(at);
-      if(!step)return;
+      /* **L'étape mesurée, pas l'écran** (Slice 07) : sur l'écran de
+         manipulation, c'est 6A ou 6B qui se solde, et chacune porte sa propre
+         ligne de rapport. Le nom dit à l'utilisateur ce qu'il vient de jouer —
+         « 6A · Déplacer », pas « Manipulation de fenêtre », qui serait vrai
+         deux fois de suite et n'apprendrait rien. */
+      const step=stage();
+      /* Une seule fois. « Passer cette étape » reste cliquable pendant la tenue
+         du verdict — la sortie ne se retire jamais, RÈGLE ZÉRO — mais il ne
+         doit pas réécrire un résultat déjà rendu. */
+      if(!step||settled)return;
+      settled=true;
+      const name=step.label||step.title;
       reports[step.id]={status,reason:reason||null,samples:Math.max(0,Math.round(samples||0))};
       if(detail)say('info',`[barehands] calibration ${step.id} : ${status}`,detail);
-      carry=status===BH.STAGE_STATUS.FAILED
-        ?{text:`${step.title} : ${message||LABEL[reason]||'mesure impossible'}. Bare Hands gardera ses valeurs d’usine pour cette étape ; on continue.`,kind:'bad'}
-        :null;
-      advance();
+      const failed=status===BH.STAGE_STATUS.FAILED;
+      const text=failed
+        ?`${name} : ${message||LABEL[reason]||'mesure impossible'}. Bare Hands gardera ses valeurs d’usine pour cette étape ; on continue.`
+        :status===BH.STAGE_STATUS.SKIPPED?`${name} : ${message||'étape passée, rien n’a été mesuré.'}`
+        :`${name} : mesuré.`;
+      /* Le motif d'un échec **survit au changement d'étape** (RÈGLE ZÉRO) : il
+         est tenu ici pendant `RESULT`, puis reposé dans la lecture de l'étape
+         suivante. Écrit puis effacé par `overlay.step()`, il était affiché zéro
+         milliseconde — l'utilisateur voyait son C refusé sans jamais apprendre
+         que c'était son majeur. */
+      carry=failed?{text,kind:'bad'}:null;
+      if(status===BH.STAGE_STATUS.OK){
+        /* **Le vert, bref, et seulement sur une réussite** (décision 21). La
+           scène le porte, donc la main dessinée verdit avec elle sans une ligne
+           de plus : les tracés de `hand_art` sont en `currentColor`. */
+        overlay.flash(Math.min(o.resultMs,FLASH_MAX_MS));
+        overlay.progress(1);
+      }
+      /* Tenue exactement le temps de la phase : à l'instant où le parcours
+         avance, la laisse est échue, donc la phrase de lecture suivante n'est
+         pas bâillonnée par celle-ci. */
+      overlay.note(text,failed?'bad':status===BH.STAGE_STATUS.SKIPPED?'':'ok',o.resultMs);
+      enterPhase(PHASE.RESULT);
+    }
+
+    /* **Le changement de phase, en un seul endroit** (architecture §7). C'est
+       ici, et nulle part ailleurs, que l'échéance de mesure s'arme et se
+       retire : `stageTimeoutMs` n'existe que sous `RUNNING`. Toute autre phase
+       passe `null` à la coque, qui n'affiche alors aucun compte à rebours —
+       un « 0 s restantes » sous une consigne qu'on lit serait un mensonge. */
+    function enterPhase(next){
+      phase=next;phaseAt=now();engageRun=0;
+      if(strip)strip.set(next);
+      if(next===PHASE.RUNNING){
+        /* La mesure part **propre**. Les images de la lecture et de l'attente
+           n'ont rien collecté, mais remettre le seau à zéro ici dit l'intention
+           là où on la lit : ce qui entre dans un profil a été produit après que
+           l'utilisateur a commencé. */
+        collected=blank();
+        pinchLow=false;repeats=0;pressFrom=null;holdFrom=null;secondHandSeen=false;
+        overlay.deadline(o.stageTimeoutMs);
+        overlay.progress(0);
+      }else{
+        overlay.deadline(null);
+      }
+      if(next===PHASE.ARMED&&aimPoints){
+        /* **Décision 24 : les cibles n'apparaissent qu'ici.** Poser un point à
+           viser sous une consigne qu'on est en train de lire, c'est demander de
+           viser avant d'avoir lu. */
+        aimIndex=0;
+        if(ghosts)ghosts.set(aimIndex,aimHits);
+        overlay.target(aimPoints[aimIndex]);
+      }
+      /* **Décision 25, et c'est la même règle que les cibles.** Le cadre
+         d'entraînement n'apparaît qu'à la fin de la lecture : posé pendant
+         qu'on lit, il serait saisi avant que la consigne soit finie — et une
+         fenêtre qui arrive au milieu d'une phrase fait relever les yeux, ce qui
+         est exactement le contraire d'une phase de lecture.
+
+         Il n'est ouvert qu'**une fois** pour les deux sous-étapes : 6B reprend
+         la même fenêtre, là où 6A l'a laissée. La rouvrir la ferait sauter à sa
+         position de départ entre deux gestes, et l'utilisateur lirait ce saut
+         comme un refus de ce qu'il vient de réussir. */
+      if(next===PHASE.ARMED&&stepAt(at)&&stepAt(at).practice)openPractice();
+      paintPhase();
+    }
+
+    /* Ce que l'écran dit pendant une phase où rien ne se mesure. Appelée à
+       chaque image **et** à chaque battement du chien de garde, donc elle tient
+       aussi quand la caméra ne voit personne — c'est le cas qui compte, parce
+       que c'est celui où l'utilisateur n'a pas encore levé les mains. */
+    function paintPhase(){
+      const step=stage();
+      if(!step)return;
+      if(phase===PHASE.INTRO){
+        /* La barre avance pendant la lecture : quelque chose tourne, et ce
+           quelque chose est la lecture elle-même. Ce n'est pas un compte à
+           rebours — au bout il n'y a pas un échec, il y a « à vous ». */
+        const done=Math.min(1,Math.max(0,(now()-phaseAt)/o.introMs));
+        overlay.progress(done);
+        overlay.note('Prenez le temps de lire : rien n’est mesuré et rien ne s’écoule pendant la démonstration.','');
+        return;
+      }
+      if(phase===PHASE.ARMED){
+        overlay.progress(0);
+        overlay.note(`À vous, quand vous voulez : ${START[step.id]||'commencez le geste'}. `
+          +'La mesure ne démarre qu’à ce moment-là — vous pouvez aussi passer cette étape ou quitter.','');
+      }
+    }
+
+    /* **Lire ce que le vrai moteur a fait du cadre d'entraînement**, et en
+       tirer les deux seules conclusions que cet écran ait besoin de tirer :
+       l'utilisateur a **commencé**, l'utilisateur a **fini**.
+
+       Appelée à chaque image **et** à chaque battement du chien de garde. Les
+       deux, parce que le relâchement — le fait qui solde un temps — peut tomber
+       sur une image où la couture de mesures ne tire pas, et une conclusion
+       manquée laisserait l'utilisateur devant un exercice qu'il vient de
+       réussir. Même leçon que la cadence d'images du tutoriel.
+
+       Elle ne **décide** rien, elle constate. `mode` vient de
+       `combineCaptures` (une main sur une zone ⇒ `move` ; deux zones distinctes
+       et compatibles ⇒ `resize`) ; `moved`/`sized` viennent de la boîte que
+       `manipulateBox` a calculée sous la taille minimale et la non-inversion.
+       C'est ce qui rend 6B infalsifiable : deux zones identiques
+       (`same_zone_rejected`), deux prises de corps (`both_captures_are_body`),
+       deux captures de la même main (`same_hand_twice`) ou une seule main
+       (`missing_capture` ⇒ `move`) ne produisent **jamais** un relâchement de
+       type `resize`, parce que le contrat les a refusées bien avant d'arriver
+       ici. Il n'y a donc aucune règle de compatibilité de zones écrite dans ce
+       module — il n'y en avait pas besoin. */
+    function pumpPractice(){
+      if(!practiceOn||!practice)return false;
+      let events=[];
+      try{events=practice.drain()||[]}
+      catch(error){say('warn','[barehands] cadre d’entraînement illisible',error);return false}
+      for(const event of events){
+        /* `preview` compte autant que `begin` : le moteur n'ouvre un plan
+           qu'une fois, donc une main qui reste posée pendant qu'une seconde
+           arrive ne produit **pas** de second `begin`. Sans cette ligne, 6B
+           resterait armée sous les doigts de quelqu'un en train de
+           redimensionner. */
+        if(event.type==='begin'||event.type==='preview')holdingFrame=true;
+        else if(event.type==='cancel')holdingFrame=false;
+        else if(event.type==='commit'){holdingFrame=false;frameDone=event}
+      }
+      /* **L'armement, et c'est le signal le plus honnête du parcours** :
+         le moteur n'ouvre un plan sur ce cadre que lorsqu'une main a réellement
+         pincé un bord ou un coin **et** commencé à tirer (`dragSlopPx`, mesuré
+         sur la paume). Ce n'est pas un indice d'engagement, c'est l'engagement. */
+      if(phase===PHASE.ARMED&&(holdingFrame||frameDone))enterPhase(PHASE.RUNNING);
+      if(phase!==PHASE.RUNNING||!frameDone)return false;
+      const done=frameDone;frameDone=null;
+      const want=stage();
+      if(!want)return false;
+      const changed=want.mode==='resize'?done.sized:done.moved;
+      if(done.mode===want.mode&&changed){
+        settle(BH.STAGE_STATUS.OK,null,collected.samples.length,
+          {mode:done.mode,box:done.box,from:done.from});
+        return true;
+      }
+      /* **Un geste qui n'est pas celui qu'on demande se dit, et l'exercice
+         continue.** Se taire ferait croire que le cadre ne répond pas, alors
+         qu'il vient d'obéir — à l'autre geste. Ni réussite ni échec : l'échéance
+         court toujours, et la phrase dit quoi faire de différent. */
+      /* **Le geste d'abord, l'ampleur ensuite**, et l'ordre compte : un
+         redimensionnement pendant 6A ne bouge pas forcément le coin haut
+         gauche, donc « la fenêtre n'a pas bougé » serait techniquement vrai et
+         trompeur — la fenêtre a changé, c'est le *geste* qui n'est pas celui
+         qu'on demande. Nommer le geste apprend quelque chose ; nommer
+         l'ampleur enverrait tirer plus fort sur le mauvais geste. */
+      overlay.note(done.mode!==want.mode
+        ?(done.mode==='resize'
+          ?'C’est un redimensionnement. Pour ce temps-ci, prenez la fenêtre par une seule zone et déplacez-la entière.'
+          :'Vous l’avez déplacée. Pour la redimensionner, tenez deux zones différentes, une par main.')
+        :'La fenêtre n’a pas bougé. Tirez un peu plus franchement avant de relâcher.',
+        'bad',900);
+      return false;
+    }
+
+    /* La course d'un geste **pincé**, en fraction de la largeur de l'image, ou
+       `null` tant que le geste n'est pas relâché. C'est la moitié
+       « glissement » de `deriveTravelSlop`, extraite pour que l'étape de visée
+       et la sous-étape 6A mesurent la **même** grandeur de la même façon — deux
+       copies auraient fini par diverger d'un facteur d'échelle, et la tolérance
+       clic/glissement se serait mise à comparer deux unités différentes. */
+    function pinchTravel(first,time){
+      const pinched=Number.isFinite(first.primaryRatio)&&first.primaryRatio<band.releaseRatio;
+      if(pinched){if(pressFrom===null)pressFrom={x:first.palmX,y:first.palmY,at:time};return null}
+      if(pressFrom===null)return null;
+      const travelPx=Math.hypot(Number(first.palmX)-pressFrom.x,Number(first.palmY)-pressFrom.y);
+      /* En **fraction de la largeur de l'image**, pas en pixels : c'est l'unité
+         que le profil persiste, et la conversion se fait ici, là où la largeur
+         du moment est connue. */
+      const width=Math.max(1,Number(viewport().width)||1);
+      pressFrom=null;
+      return travelPx/width;
     }
 
     /* **L'échéance d'une étape, évaluée sans image.** Elle vit ici et non dans
@@ -759,8 +2084,25 @@
        **utile**, pas le plus littéral : « temps écoulé » est vrai de toutes ces
        pannes et n'aide personne. Rend `true` si l'étape vient de se solder. */
     function expire(){
+      /* **L'échéance n'existe que sous `RUNNING`** (architecture §7). Ailleurs
+         la coque n'en porte aucune, donc `overlay.expired()` est déjà faux ;
+         la garde est écrite quand même, parce qu'une phase sans échéance est
+         une **règle** de cette slice et non une conséquence heureuse d'un état
+         de la coque. */
+      if(phase!==PHASE.RUNNING)return false;
       if(!overlay.expired())return false;
-      const step=stepAt(at);
+      const step=stage();
+      /* **La visée ne perd pas ce qu'elle a déjà mesuré.** Un utilisateur qui a
+         touché un point sur trois a produit un déplacement de clic parfaitement
+         exploitable : déclarer l'étape ratée jetterait une mesure réelle et
+         ferait retomber sa tolérance clic/glissement sur le défaut d'usine
+         alors qu'il a bien cliqué. Les règles de repli ne bougent pas pour
+         autant — une visée sans **aucun** clic échoue exactement comme avant,
+         et une étape ratée laisse toujours ses clés nulles. */
+      if(step&&step.id===BH.STAGE.AIM&&aimHits>0){
+        settle(BH.STAGE_STATUS.OK,null,collected.samples.length);
+        return true;
+      }
       const reason=!collected.samples.length?BH.STAGE_REASON.NO_HAND
         :(step&&step.needs>1&&!secondHandSeen)?BH.STAGE_REASON.NEEDS_TWO_HANDS
         :BH.STAGE_REASON.TIMEOUT;
@@ -768,30 +2110,208 @@
       return true;
     }
 
+    /* Les points à viser, en **pixels de la fenêtre** : la coque dessine à
+       l'écran. Répartis sur la surface utile (décision 24) ; au-delà des trois
+       emplacements publiés, on recommence le tour plutôt que d'inventer des
+       positions — trois points déjà espacés couvrent la largeur. */
+    function aimField(){
+      const view=viewport();
+      const width=Number(view&&view.width)||0,height=Number(view&&view.height)||0;
+      const count=Math.max(1,Math.round(o.aimTargets));
+      const points=[];
+      for(let i=0;i<count;i+=1){
+        const spot=AIM_SPOTS[i%AIM_SPOTS.length];
+        points.push({x:Math.round(width*spot.x),y:Math.round(height*spot.y)});
+      }
+      return points;
+    }
+
+    /* La démonstration de l'**étape mesurée** courante. Appelée à l'ouverture
+       d'un écran *et* au passage de 6A à 6B, où la coque n'est justement pas
+       repassée : on remplace alors seulement ce qu'on avait posé, et le reste
+       de l'écran — titre, consigne, cadre d'entraînement — ne bouge pas. */
+    function mountDemo(){
+      const current=stage();
+      if(!current)return false;
+      overlay.clear('demo');
+      const demo=demoNode(doc,current.id);
+      if(demo)overlay.mount('demo',demo);
+      return !!demo;
+    }
+
+    /* Y a-t-il une **vraie** fenêtre à manipuler ? Deux questions en une — un
+       banc branché, et une scène qui donne son échelle — et elles ont la même
+       réponse pour l'utilisateur. */
+    function practiceReady(){
+      if(!practice)return false;
+      try{return !!practice.viewport()}
+      catch(error){say('warn','[barehands] échelle de scène illisible',error);return false}
+    }
+    function openPractice(){
+      if(practiceOn||!practice)return false;
+      /* `regions()` rend `null` quand la coque est fermée et **ne la construit
+         pas** : une image en retard ne doit pas faire réapparaître un cadre
+         dans une surimpression que l'utilisateur vient de quitter. */
+      const region=overlay.regions();
+      if(!region||!region.exercise)return false;
+      let opened=null;
+      try{opened=practice.open(region.exercise)}
+      catch(error){say('warn','[barehands] cadre d’entraînement non ouvert',error);return false}
+      if(!opened)return false;
+      practiceOn=true;holdingFrame=false;frameDone=null;
+      say('info','[barehands] cadre d’entraînement ouvert',opened);
+      return true;
+    }
+    /* **Démonté sur tous les chemins de sortie.** Il n'y a que deux passages —
+       `advance()` (changement d'écran, fin du parcours) et `stop()` (Échap,
+       croix, bouton « Quitter », enregistrement, annulation) — et aucune sortie
+       ne les contourne. Écrit là plutôt que sur chaque sortie : une garantie
+       que chaque chemin doit se rappeler de respecter n'est pas une garantie.
+
+       `overlay.step()` ne suffirait pas : le cadre n'a pas été posé par
+       `mount()` (c'est la page qui l'append dans la région), donc la coque ne
+       le retire pas, et un cadre oublié ici flotterait au-dessus du rapport. */
+    function closePractice(){
+      practiceOn=false;holdingFrame=false;frameDone=null;
+      if(!practice)return false;
+      try{return practice.close()}
+      catch(error){say('warn','[barehands] cadre d’entraînement non démonté',error);return false}
+    }
+
+    /* **Divergence D4 : la scène est éteinte, donc il n'y a pas de vraie
+       fenêtre — et ce dépôt refuse la fausse.**
+
+       Cette étape est la première du parcours à dépendre de la scène : elle lui
+       emprunte son **échelle**, parce qu'un geste calibré contre une échelle
+       inventée ne calibre rien. C'est la panne que `viewport_unavailable`
+       existe déjà pour empêcher côté moteur, vue d'ici. Les deux replis
+       possibles sont des défauts plausibles : une échelle fabriquée fait partir
+       le cadre six fois trop loin, un faux cadre fait « réussir » une étape qui
+       n'a pas mesuré le vrai geste.
+
+       Les deux temps sont donc **passés**, pas ratés — l'utilisateur n'a rien
+       manqué, sa scène était éteinte — et le rapport nomme la cause au lieu de
+       la taire. Les règles de repli partiel ne bougent pas d'un iota : clés
+       nulles, défauts du moteur (décision 31). */
+    function refuseNoScene(){
+      const step=stepAt(at);
+      for(const sub of step.subs)
+        reports[sub.id]={status:BH.STAGE_STATUS.SKIPPED,
+          reason:BH.STAGE_REASON.SCENE_UNAVAILABLE,samples:0};
+      /* Sur le dernier temps et soldé : `nextStage()` passera donc à l'écran
+         suivant au lieu de proposer 6B, qui n'a pas plus de cadre que 6A. */
+      settled=true;subAt=step.subs.length-1;
+      if(subs)subs.set(subAt);
+      say('info','[barehands] calibration : manipulation de fenêtre passée',
+        {reason:BH.STAGE_REASON.SCENE_UNAVAILABLE});
+      overlay.note(`${step.title} : ${LABEL[BH.STAGE_REASON.SCENE_UNAVAILABLE]}. `
+        +'Il n’y a pas de vraie fenêtre à manipuler, et Bare Hands préfère passer '
+        +'l’étape plutôt que vous faire répéter un geste sur un faux cadre. '
+        +'Ses valeurs d’usine restent en place ; on continue.','',o.resultMs);
+      enterPhase(PHASE.RESULT);
+    }
+
+    /* **Le passage de 6A à 6B, et il ne repasse pas par la coque.**
+
+       `overlay.step()` vide la scène et réécrit le bandeau : l'appeler ici
+       effacerait le cadre d'entraînement que l'utilisateur tient encore des
+       yeux, et lui ferait relire un titre qu'il vient de lire. Ce qui change
+       entre les deux temps est la **consigne** et la **démonstration**, pas le
+       sujet ; seuls ces deux-là sont donc remplacés, et l'échéance de mesure se
+       réarme par `overlay.deadline()` — qui a été ajoutée à la coque
+       exactement pour ce cas (Slice 06).
+
+       Le cadre, lui, **reste** : 6B reprend la fenêtre là où 6A l'a laissée. La
+       rouvrir la ferait sauter à sa position de départ entre deux gestes, et ce
+       saut se lirait comme un refus de ce qu'on vient de réussir. */
+    function enterSub(index){
+      subAt=index;settled=false;
+      collected=blank();
+      pressFrom=null;holdFrom=null;secondHandSeen=false;
+      holdingFrame=false;frameDone=null;
+      if(subs)subs.set(index);
+      mountDemo();
+      enterPhase(PHASE.INTRO);
+      if(carry){overlay.note(carry.text,carry.kind,o.resultMs);carry=null}
+    }
+    /* Après un verdict : le temps suivant du même écran, ou l'écran suivant. */
+    function nextStage(){
+      const step=stepAt(at);
+      if(step&&step.subs&&subAt+1<step.subs.length){enterSub(subAt+1);return}
+      advance();
+    }
+
     function advance(){
-      at+=1;
+      /* **Le cadre d'entraînement part le premier** : voir `closePractice()`. */
+      closePractice();
+      at+=1;subAt=0;subs=null;
       const step=stepAt(at);
       if(!step){conclude();return}
       collected=blank();
       pinchLow=false;repeats=0;pressFrom=null;holdFrom=null;secondHandSeen=false;
-      overlay.step({index:at+1,total:STEPS.length,title:step.title,
-        instruction:step.instruction,deadlineMs:o.stageTimeoutMs});
-      /* La cible d'une étape de visée est posée **au centre-bas** de l'écran :
-         un point qu'on atteint sans sortir du cadre de la caméra, ce qui est
-         justement ce qu'on n'a pas encore mesuré. */
+      settled=false;aimHits=0;aimIndex=0;ghosts=null;strip=null;aimPoints=null;
+      /* **Aucune échéance à l'ouverture** (décision 22). L'étape s'ouvre en
+         lecture : `deadlineMs:null`, donc la coque n'affiche pas de compte à
+         rebours, et `expired()` ne peut pas être vrai. Elle s'armera dans
+         `enterPhase(RUNNING)`, par `overlay.deadline()`, quand l'utilisateur
+         aura commencé.
+
+         `total` compte le **rapport** (Slice 07) : il est le septième écran, et
+         non un huitième numéro collé sur le septième. Avant, le dernier
+         exercice et le rapport s'annonçaient tous deux « 7 sur 7 ». */
+      overlay.step({index:at+1,total:SCREENS,title:step.title,
+        instruction:step.instruction,deadlineMs:null});
+      strip=phaseStrip(doc);
+      overlay.mount('feedback',strip.node);
+      /* Le rail des deux temps, pour l'écran qui en porte deux. Monté dans
+         `feedback`, à côté du bandeau de phases : les deux répondent à « où en
+         suis-je ? », à deux échelles, et les séparer ferait chercher la réponse
+         à deux endroits. */
+      if(step.subs){
+        subs=subStrip(doc,step.subs);
+        overlay.mount('feedback',subs.node);
+        subs.set(0);
+      }
+      /* **Monter après `step()`, jamais avant** : `step()` vide la scène comme
+         il redessine les boutons. Une démonstration qui survivrait à son étape
+         montrerait la main d'une autre consigne — et l'utilisateur ferait le
+         geste affiché. */
+      mountDemo();
+      /* Les cibles existent dès maintenant mais ne sont **posées** qu'à la fin
+         de la lecture (`enterPhase(ARMED)`), fantômes compris. Le cadre
+         d'entraînement suit la même règle, et au même endroit. */
+      aimAt=null;overlay.target(null);
       if(step.target){
-        const view=viewport();
-        aimAt={x:Math.round(view.width*.5),y:Math.round(view.height*.62)};
-        overlay.target(aimAt);
-      }else{aimAt=null;overlay.target(null)}
+        aimPoints=aimField();
+        ghosts=ghostField(doc,aimPoints);
+        overlay.mount('exercise',ghosts.node);
+      }
       /* Sortir, et **passer**. Une étape qu'on ne peut pas réussir sans pouvoir
          la passer est un cul-de-sac : la décision 31 existe précisément pour
-         que le parcours survive à une étape ratée. */
+         que le parcours survive à une étape ratée. Les deux sont là dès la
+         lecture : une sortie qui n'apparaîtrait qu'une fois l'exercice armé
+         manquerait justement au moment où l'utilisateur se demande dans quoi il
+         vient d'entrer.
+
+         « Passer ce temps » plutôt que « Passer cette étape » quand l'écran en
+         porte deux : le bouton ne passe que celui qu'on joue, et promettre
+         l'écran entier mentirait d'un geste. */
       overlay.buttons([
-        {id:'skip',label:'Passer cette étape',run:()=>settle(BH.STAGE_STATUS.SKIPPED,null,collected.samples.length)},
+        {id:'skip',label:step.subs?'Passer ce temps':'Passer cette étape',
+          run:()=>settle(BH.STAGE_STATUS.SKIPPED,null,collected.samples.length)},
         {id:'exit',label:'Quitter',run:()=>cancel('bouton')},
       ]);
-      if(carry){overlay.note(carry.text,carry.kind);carry=null}
+      /* **Scène éteinte : on refuse, on n'improvise pas** (divergence D4). Le
+         constat est fait ici, avant la lecture : faire lire une consigne pour
+         un exercice qui ne peut pas s'ouvrir ferait attendre l'utilisateur
+         devant un centre vide. */
+      if(step.practice&&!practiceReady()){refuseNoScene();return}
+      enterPhase(PHASE.INTRO);
+      /* **Après la phase**, pour que la phrase du verdict précédent couvre la
+         phrase de lecture et non l'inverse : ce que l'utilisateur veut savoir
+         en premier, c'est pourquoi l'étape qu'il vient de faire a échoué. Tenue
+         puis rendue à la lecture. */
+      if(carry){overlay.note(carry.text,carry.kind,o.resultMs);carry=null}
     }
 
     /* Ce qu'on garde d'une image : les scalaires de cette main, et rien
@@ -808,9 +2328,19 @@
 
     function conclude(){
       overlay.target(null);
+      /* Plus d'étape, donc plus de phase : le récapitulatif n'est pas un
+         exercice et ne s'arme pas. Les nœuds montés partent avec le `step()`
+         ci-dessous ; les références locales les lâchent ici pour qu'un arbre
+         d'étape ne survive pas au parcours. */
+      phase=null;strip=null;ghosts=null;aimPoints=null;subs=null;
       derived=deriveProfile(collectedAll,reports,o,band,viewport());
       finished=true;
-      overlay.step({index:STEPS.length,total:STEPS.length,title:'Résultat',
+      /* **Le rapport est le septième écran** (Slice 07, décision 26). Il
+         portait le numéro du dernier exercice — « 7 sur 7 » deux fois de
+         suite — si bien que l'utilisateur voyait la progression s'arrêter un
+         écran avant la fin, et que le dernier exercice n'avait aucun numéro à
+         lui. Il en a un maintenant, et il est le dernier. */
+      overlay.step({index:SCREENS,total:SCREENS,title:'Résultat',
         instruction:'Voici ce qui a été mesuré. Appliquer remplace votre profil ; annuler ne touche à rien.',
         deadlineMs:null});
       /* **Après `step()`, jamais avant.** `step()` remet la phrase à zéro : la
@@ -824,9 +2354,15 @@
         ?`${derived.measuredCount} mesure(s) retenue(s). Rien n’est enregistré tant que vous ne l’avez pas demandé.`
         :'Aucune mesure n’a pu être retenue : Bare Hands gardera ses réglages d’usine.',
         derived.measuredCount?'ok':'bad');
-      overlay.report(STEPS.map(step=>{
+      /* **Sept lignes pour six exercices**, et c'est voulu : le rapport liste
+         les étapes **mesurées**, pas les écrans. Les deux temps de la
+         manipulation de fenêtre réussissent ou échouent séparément (décision
+         31), donc ils se rendent compte séparément — « Manipulation de
+         fenêtre : échouée » ne dirait pas laquelle des deux, ce qui est
+         précisément ce que le rapport existe pour dire. */
+      overlay.report(STAGES.map(step=>{
         const report=reports[step.id];
-        return {label:step.title,status:report.status,
+        return {label:step.label||step.title,status:report.status,
           detail:report.status===BH.STAGE_STATUS.OK?`mesuré (${report.samples})`
             :report.status===BH.STAGE_STATUS.SKIPPED?'passée'
             :`échouée — ${LABEL[report.reason]||report.reason}`};
@@ -870,7 +2406,22 @@
       if(typeof d.onCancelled==='function')d.onCancelled(String(why||''));
     }
     function stop(){
+      /* **Le cadre d'entraînement part avant tout le reste.** `stop()` est
+         l'autre des deux seuls passages de sortie (avec `advance()`), et il
+         couvre Échap au milieu d'une capture, la croix, « Quitter »,
+         l'enregistrement et l'abandon. Débrancher avant de fermer la coque : le
+         moteur ne doit pas garder une porte ouverte vers un cadre dont le nœud
+         vient de partir avec la surimpression. */
+      closePractice();
       running=false;at=-1;collected=null;collectedAll=null;derived=null;finished=null;
+      /* Tout ce que l'étape tenait est lâché : une phase qui survivrait au
+         parcours ferait repartir le suivant au milieu d'une mesure, et un
+         bandeau retenu ici garderait en vie l'arbre d'un parcours terminé (une
+         fuite qu'aucun écran ne montre). Même raison que la table des régions
+         que la coque vide dans `close()`. */
+      phase=null;phaseAt=0;engageRun=0;settled=false;
+      aimPoints=null;aimIndex=0;aimHits=0;ghosts=null;strip=null;carry=null;
+      subAt=0;subs=null;
       stopClock();
       overlay.close();
     }
@@ -903,6 +2454,10 @@
       [BH.STAGE_REASON.OUT_OF_BAND]:'hors de la plage utilisable',
       [BH.STAGE_REASON.NEEDS_TWO_HANDS]:'deux mains nécessaires',
       [BH.STAGE_REASON.CANCELLED]:'interrompue',
+      /* Slice 07, divergence D4. Dit la **cause**, pas le symptôme : « la
+         scène est éteinte » est quelque chose que l'utilisateur peut corriger,
+         « étape passée » ne l'est pas. */
+      [BH.STAGE_REASON.SCENE_UNAVAILABLE]:'la scène est éteinte',
     });
 
     /* Nommé plutôt qu'anonyme : le chien de garde appelle `tick()` par la
@@ -916,7 +2471,32 @@
          « le chien de garde est posé » et « on a oublié de le poser »
          s'écrivent pareil, à l'écran comme à la console. */
       watching(){return clockId!==null},
-      stepId(){const step=stepAt(at);return step?step.id:null},
+      /* **L'étape mesurée** courante, et non l'écran : c'est elle qui porte
+         l'identité que le profil persiste, et la suite de valeurs qu'un
+         parcours complet produit est exactement la même qu'avant la Slice 07 —
+         ce sont les écrans qui ont fusionné, pas les étapes. */
+      stepId(){const step=stage();return step?step.id:null},
+      /* Le temps courant d'un écran qui en porte deux, et combien il en porte.
+         `null` ailleurs. Publié pour la même raison que `phase()` : « l'écran
+         est ouvert » et « le second temps est en cours » sont deux faits
+         différents, et sans porte on ne pourrait les distinguer qu'en
+         devinant. */
+      sub(){const step=stepAt(at);return step&&step.subs?{at:subAt,total:step.subs.length,
+        id:stage()?stage().id:null}:null},
+      /* Un cadre d'entraînement est-il branché au moteur ? Lu sur l'état réel,
+         comme `watching()` lit la minuterie : sans cette porte, « il a été
+         démonté » et « on a oublié de le démonter » s'écrivent pareil. */
+      practising(){return practiceOn},
+      /* **La phase de l'étape courante**, lue de l'extérieur. Publiée parce que
+         « l'étape est ouverte » et « l'étape mesure » sont devenus deux faits
+         différents : sans cette porte, un test — ou un appelant — ne pourrait
+         les distinguer qu'en devinant, et c'est exactement la confusion que
+         cette slice corrige. `null` hors étape (récapitulatif, parcours
+         fermé). */
+      phase(){return stepAt(at)?phase:null},
+      /* Ce que l'étape de visée demande encore : combien de points, combien de
+         touchés. Lu de l'extérieur pour la même raison. */
+      aim(){return aimPoints?{points:aimPoints.length,hits:aimHits,at:aimIndex}:null},
       /* **Le point d'entrée**, et il confirme (contrat §12). Il rend
          `{ok:true}` dès que la coque est à l'écran et que la première étape
          tourne — pas à la fin du parcours : l'échéance du canal de commandes
@@ -930,7 +2510,9 @@
              coque ouverte à l'écran. */
           return {ok:true,flow:'calibration',already:true,step:this.stepId()};
         reports={};
-        for(const step of STEPS)reports[step.id]={status:BH.STAGE_STATUS.SKIPPED,reason:null,samples:0};
+        /* Les étapes **mesurées** (sept), pas les écrans (six) : c'est le
+           vocabulaire que le profil persiste. */
+        for(const step of STAGES)reports[step.id]={status:BH.STAGE_STATUS.SKIPPED,reason:null,samples:0};
         collectedAll={};
         running=true;at=-1;finished=false;
         clickTravels=[];dragTravels=[];
@@ -941,10 +2523,23 @@
            émet, traduits ici comme le tutoriel traduit les siens. */
         overlay.open({title:'Calibration Bare Hands',
           exit:why=>cancel(EXIT_WORD[why]||String(why||'demandé'))});
+        /* La feuille des exercices, posée **après** celle de la coque : elle
+           habille ce que le parcours monte dans la scène, donc elle vient
+           après ce qui habille la scène. Posée ici et non à la construction :
+           une calibration qu'on n'a jamais lancée n'a rien à styler
+           (décision 27 — rien ne tourne tant que l'utilisateur ne l'a pas
+           demandé). */
+        ensureStepsStyle(doc);
         startClock();
         advance();
         say('info','[barehands] calibration démarrée');
-        return {ok:true,flow:'calibration',step:this.stepId(),steps:STEPS.length};
+        /* `steps` compte les **exercices** (six depuis la Slice 07), `screens`
+           les écrans que l'utilisateur va traverser, rapport compris (sept).
+           Les deux, parce que « combien d'exercices » et « combien d'écrans »
+           sont devenus deux nombres différents, et qu'un seul des deux répondu
+           à la place de l'autre serait faux la moitié du temps. */
+        return {ok:true,flow:'calibration',step:this.stepId(),
+          steps:STEPS.length,screens:SCREENS,stages:STAGES.length};
       },
       exit(reason){if(!running)return false;cancel(reason||'demandé');return true},
       /* **Le second mécanisme, et il ne peut pas être bloqué comme le
@@ -975,12 +2570,42 @@
            rien d'observable — il coûte une comparaison et dit l'intention :
            un parcours conclu ne se solde pas une fois de plus. */
         if(!running||finished||!collected||!stepAt(at))return null;
+        /* **Le chien de garde regarde aussi le cadre d'entraînement**, et il le
+           doit : le relâchement qui solde un temps peut tomber sur une image où
+           la couture de mesures ne tire pas, et personne d'autre ne le lirait.
+           Il ne fabrique toujours rien — il lit un journal que le vrai moteur a
+           écrit, exactement comme il lit une montre. */
+        if(pumpPractice())return this.stepId();
+        /* **C'est le chien de garde qui fait finir la lecture**, et c'est pour
+           cela qu'il doit rester plus rapide qu'elle (paire dangereuse n° 17).
+           Une étape que personne ne nourrit — mains sur les genoux, ce qui est
+           exactement la posture qu'on attend pendant qu'on lit — ne reçoit
+           aucune image, donc rien d'autre ne regarderait la montre. */
+        if(phase===PHASE.INTRO){
+          if(now()-phaseAt>=o.introMs)enterPhase(PHASE.ARMED);else paintPhase();
+          return this.stepId();
+        }
+        /* **Rien ne descend.** L'étape reste armée aussi longtemps que
+           l'utilisateur reste inactif : pas d'échéance, pas d'échec, la
+           consigne et les sorties restent à l'écran. C'est la correction
+           demandée, et c'est aussi pourquoi `expire()` n'est pas atteint
+           d'ici. */
+        if(phase===PHASE.ARMED){paintPhase();return this.stepId()}
+        /* Le verdict est tenu, puis on avance — y compris si plus aucune image
+           n'arrive, ce qui est le cas normal après une étape réussie (on
+           repose les mains). */
+        if(phase===PHASE.RESULT){
+          if(now()-phaseAt>=o.resultMs)nextStage();
+          return this.stepId();
+        }
         if(expire())return this.stepId();
         /* RÈGLE ZÉRO : sans cette phrase, une étape sans la moindre image
            laisse l'écran muet pendant vingt secondes — et « la caméra ne me
            voit pas » ne se distingue pas de « le parcours est planté ». Elle
            ne peut pas recouvrir un compte de pincements ni une barre de
-           maintien : ceux-là n'existent qu'à partir du premier échantillon. */
+           maintien : ceux-là n'existent qu'à partir du premier échantillon.
+           Elle ne peut pas non plus accuser quelqu'un qui n'a pas commencé :
+           on n'arrive ici qu'en mesure. */
         if(!collected.samples.length)
           overlay.note('Aucune main n’est vue. Montrez vos mains à la caméra, ou passez cette étape.','bad');
         return this.stepId();
@@ -989,13 +2614,73 @@
          puisse la lire sans connaître la machine. */
       feed(record){
         if(!running||finished)return null;
-        const step=stepAt(at);
+        /* **L'écran et l'étape mesurée sont deux choses depuis la Slice 07.**
+           L'écran porte le titre, les cibles et le cadre d'entraînement ;
+           l'étape mesurée porte l'identité persistée, l'exigence de mains et le
+           verdict. Les cinq premiers écrans n'en portent qu'une, le sixième en
+           porte deux — et tout ce qui suit lit `step`, c'est-à-dire l'étape. */
+        const screen=stepAt(at);
+        if(!screen)return null;
+        /* Ce que le **vrai** moteur a fait du cadre depuis la dernière lecture,
+           avant toute autre chose : c'est de là que viennent l'armement et le
+           verdict de cet écran-là. */
+        if(pumpPractice())return this.stepId();
+        const step=stage();
         if(!step)return null;
         const hands=(record&&Array.isArray(record.hands)?record.hands:[])
           .filter(hand=>Number(hand.quality)>=o.sampleQualityMin);
         const time=Number(record&&record.now);
+        /* **Les phases d'abord, et dans l'ordre où elles arrivent.** Une image
+           reçue pendant la lecture ou pendant l'attente ne mesure rien : elle
+           ne remplit aucun seau, elle ne fait descendre aucune échéance, et le
+           seul effet qu'elle peut avoir est de constater que l'utilisateur a
+           commencé. C'est la correction de cette slice, écrite là où elle se
+           voit. */
+        if(phase===PHASE.RESULT){
+          if(now()-phaseAt>=o.resultMs)nextStage();
+          return this.stepId();
+        }
+        if(phase===PHASE.INTRO){
+          if(now()-phaseAt<o.introMs){paintPhase();return this.stepId()}
+          enterPhase(PHASE.ARMED);
+        }
+        if(phase===PHASE.ARMED){
+          /* **L'écran de manipulation s'arme sur une vraie capture** (décision
+             25), et `pumpPractice()` l'a déjà fait au-dessus s'il y avait lieu.
+             Aucun prédicat de scalaires ici : une main qui passe devant
+             l'objectif n'ouvre pas de plan sur un cadre, donc il n'y a rien à
+             deviner et aucun seuil de plus à poser. */
+          if(screen.practice){paintPhase();return this.stepId()}
+          /* Aucune main sûre : l'étape attend, et elle le dit **sans reproche**
+             — l'utilisateur n'a rien raté, il n'a pas encore commencé. C'est la
+             différence avec la phrase rouge d'une mesure en cours. */
+          if(!hands.length){paintPhase();return this.stepId()}
+          const test=ENGAGE[step.id];
+          const qualifies=!!test&&!!test(hands[0],band,hands);
+          /* Consécutives, sinon rien : un repère bruité seul ne peut pas armer
+             une étape. Le compteur retombe à zéro à la première image qui ne
+             qualifie pas, donc un mouvement de passage devant l'objectif
+             n'accumule pas. */
+          engageRun=qualifies?engageRun+1:0;
+          if(engageRun<o.engageFrames){paintPhase();return this.stepId()}
+          enterPhase(PHASE.RUNNING);
+          /* Ce que l'image d'armement **laisse** à la mesure : pour un
+             pincement, le fait que le canal est déjà fermé, sinon l'écran
+             demanderait une répétition de plus qu'il n'en annonce. */
+          if(step.id===BH.STAGE.PINCH_PRIMARY||step.id===BH.STAGE.PINCH_SECONDARY)pinchLow=true;
+          /* **L'image qui arme n'est pas mesurée**, et c'est voulu. « La mesure
+             commence quand l'utilisateur a commencé » devient alors
+             littéralement vrai : le seau part vide, et une étape qui s'arme
+             puis perd ses mains pour de bon expire sur `NO_HAND` — le motif qui
+             dit « montrez vos mains à la caméra », c'est-à-dire le seul conseil
+             utile dans ce cas. Consommer cette image-là le rendrait
+             **injoignable**, et l'écran dirait « temps écoulé » à quelqu'un que
+             la caméra ne voit plus. Une image de moins à 30 images par seconde
+             ne coûte rien à aucune dérivation. */
+          return this.stepId();
+        }
         if(hands.length>=2)secondHandSeen=true;
-        /* L'échéance d'abord : une étape expirée ne doit pas pouvoir avaler
+        /* L'échéance ensuite : une étape expirée ne doit pas pouvoir avaler
            une image de plus, sinon « temps écoulé » dépend de la cadence.
            **Même porte que le chien de garde** (`tick`) : deux évaluations de
            l'échéance qui divergeraient rendraient le motif dépendant de qui a
@@ -1037,7 +2722,40 @@
           if(held>=o.stageHoldMs)finishHold(step);
           return this.stepId();
         }
-        if(step.id===BH.STAGE.AIM||step.id===BH.STAGE.DRAG){
+        /* **La manipulation de fenêtre ne se mesure pas dans les scalaires**
+           (Slice 07). Ce qui solde 6A et 6B est passé par `pumpPractice()`, en
+           haut : c'est le **vrai** moteur qui a bougé un **vrai** cadre. Ce qui
+           reste à faire ici tient en deux choses — nourrir la moitié
+           « glissement » de la tolérance clic/glissement, et dire à l'écran ce
+           qui se passe pendant que l'utilisateur tire. */
+        if(screen.practice){
+          /* **La moitié « glissement » de `deriveTravelSlop`, et elle reste
+             honnête ici.** 6A est exactement ce que l'ancienne étape `drag`
+             mesurait — un pincement, une course franche, un relâchement — à
+             ceci près que la main tient maintenant un vrai bord de cadre au
+             lieu de traverser le vide. La grandeur est la même (la course de la
+             **paume** entre la fermeture et l'ouverture du canal, en fraction
+             de la largeur d'image), et elle se compare donc toujours aux clics
+             de l'étape de visée. La dérivation, elle, n'est pas touchée.
+
+             **6B n'en produit aucune**, et c'est délibéré : un
+             redimensionnement à deux mains fait deux courses simultanées dont
+             aucune n'est « un glissement délibéré » au sens de
+             `deriveTravelSlop`. Les y verser élargirait la tolérance de tout le
+             monde sur une grandeur qui n'est pas celle qu'on croit mesurer. */
+          if(step.mode==='move'){
+            const travel=pinchTravel(first,time);
+            if(travel!==null)dragTravels.push(travel);
+          }
+          overlay.progress(holdingFrame?0.7:0.25);
+          overlay.note(holdingFrame
+            ?(step.mode==='resize'
+              ?'Deux zones tenues : écartez ou rapprochez vos mains, puis relâchez.'
+              :'Vous tenez la fenêtre : déplacez-la, puis relâchez.')
+            :`Attrapez la fenêtre : ${START[step.id]||'commencez le geste'}.`,'');
+          return this.stepId();
+        }
+        if(step.id===BH.STAGE.AIM){
           const pinched=Number.isFinite(first.primaryRatio)&&first.primaryRatio<band.releaseRatio;
           if(pinched&&pressFrom===null)pressFrom={x:first.palmX,y:first.palmY,at:time};
           if(!pinched&&pressFrom!==null){
@@ -1046,24 +2764,30 @@
                l'unité que le profil persiste, et la conversion se fait ici,
                là où la largeur du moment est connue. */
             const width=Math.max(1,Number(viewport().width)||1);
-            const travelNorm=travelPx/width;
-            if(step.id===BH.STAGE.AIM)clickTravels.push(travelNorm);else dragTravels.push(travelNorm);
+            clickTravels.push(travelPx/width);
             pressFrom=null;
+            /* **Un point touché n'est pas l'étape finie** (décision 24). La
+               visée enseigne « viser et cliquer » : un seul point toujours au
+               même endroit enseignerait « pincer ». Le point suivant s'allume,
+               le précédent passe en trait plein, et le vert dit « celui-là est
+               pris » — brièvement, comme partout ailleurs. */
+            if(aimPoints&&aimHits+1<aimPoints.length){
+              aimHits+=1;aimIndex=aimHits;
+              if(ghosts)ghosts.set(aimIndex,aimHits);
+              overlay.target(aimPoints[aimIndex]);
+              overlay.flash(420);
+              overlay.progress(aimHits/aimPoints.length);
+              overlay.note(`Point ${aimHits} sur ${aimPoints.length}. Visez le suivant.`,'ok',600);
+              return this.stepId();
+            }
+            aimHits+=1;
             settle(BH.STAGE_STATUS.OK,null,collected.samples.length);
             return this.stepId();
           }
-          overlay.progress(pressFrom?.6:.2);
+          const done=aimPoints?(aimHits+(pressFrom?.5:0))/aimPoints.length:(pressFrom?.6:.2);
+          overlay.progress(done);
           overlay.note(pressFrom?'Relâchez quand vous êtes prêt.'
-            :step.id===BH.STAGE.AIM?'Amenez le jeton sur le point, puis pincez.'
-            :'Pincez, puis déplacez la main.','');
-          return this.stepId();
-        }
-        if(step.id===BH.STAGE.RESIZE){
-          overlay.progress(secondHandSeen?.8:.2);
-          overlay.note(secondHandSeen?'Deux mains vues, écartez-les doucement.'
-            :'Montrez vos deux mains.','');
-          if(secondHandSeen&&collected.samples.length>=o.stageMinSamples*2)
-            settle(BH.STAGE_STATUS.OK,null,collected.samples.length);
+            :`Amenez le jeton sur le point${aimPoints&&aimPoints.length>1?` (${aimHits+1} sur ${aimPoints.length})`:''}, puis pincez.`,'');
           return this.stepId();
         }
         return this.stepId();
@@ -1175,10 +2899,11 @@
   }
 
   const api=Object.freeze({
-    DEFAULTS,options,STEPS,FLOW_STATUS,
+    DEFAULTS,options,STEPS,SCREENS,FLOW_STATUS,FLOW_SLOTS,FLOW_MOUNTABLE,FLASH_MAX_MS,
+    PHASE,PHASE_ORDER,PHASE_STRIP,DEMO,AIM_SPOTS,
     quantile,median,stdev,
     deriveJitter,deriveHysteresis,deriveTravelSlop,deriveReach,checkCPose,wakeBandOf,
-    createFlowOverlay,createCalibration,STYLE,STYLE_ID,
+    createFlowOverlay,createCalibration,STYLE,STYLE_ID,STEPS_STYLE,STEPS_STYLE_ID,
   });
   root.JarvisBarehandsCalibration=api;
   /* Exécution par les tests (node) ; dans la page, `module` n'existe pas. */

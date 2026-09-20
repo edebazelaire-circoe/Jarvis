@@ -48,7 +48,6 @@ SCRIPT = RUNTIME / "control_center_barehands.js"
 CONTRACTS = RUNTIME / "control_center_barehands_contracts.js"
 TARGET = RUNTIME / "control_center_barehands_target.js"
 CALIBRATION = RUNTIME / "control_center_barehands_calibration.js"
-TUTORIAL = RUNTIME / "control_center_barehands_tutorial.js"
 RECORDER = RUNTIME / "control_center_barehands_recorder.js"
 SCENE_INTERACT = RUNTIME / "control_center_scene_interact.js"
 SCENE_PAGE = RUNTIME / "control_center_scene_page.js"
@@ -63,7 +62,6 @@ def run_node(tmp_path: Path, source: str) -> object:
     script.write_text(
         f"const SCRIPT_PATH={json.dumps(str(SCRIPT))};\n"
         f"const CALIBRATION_PATH={json.dumps(str(CALIBRATION))};\n"
-        f"const TUTORIAL_PATH={json.dumps(str(TUTORIAL))};\n"
         f"const RECORDER_PATH={json.dumps(str(RECORDER))};\n"
         f"const TARGET_PATH={json.dumps(str(TARGET))};\n"
         f"const SCENE_INTERACT_PATH={json.dumps(str(SCENE_INTERACT))};\n"
@@ -1684,7 +1682,6 @@ global.JarvisBarehandsTarget=require(TARGET_PATH);
 /* Parcours de calibration (Slice 08) : la page l'insere entre les contrats
    et le pointeur, qui le lit pour poser `calibrate()` sur sa surface gelee. */
 global.JarvisBarehandsCalibration=require(CALIBRATION_PATH);
-global.JarvisBarehandsTutorial=require(TUTORIAL_PATH);
 /* Slice 06 : la géométrie de la scène est insérée bien avant le pointeur. */
 global.JarvisSceneInteract=G;
 /* Et la scène publie ses cadres manipulables — la vraie couture est lue par
@@ -2081,3 +2078,405 @@ def test_the_scene_publishes_a_frame_seam_that_reuses_its_own_geometry(tmp_path)
     assert "viewport(){return enabled&&root?viewportNow():null}" in seam
     # Et la couture est publiée.
     assert "frames," in source.split("window.JarvisScene=Object.freeze")[1]
+
+
+# ------------------------------------------ Slice 07 : le cadre d'entraînement
+#
+# Ce que ces tests épinglent n'est pas « la calibration affiche une fenêtre »,
+# c'est que **la fenêtre d'entraînement est la vraie chose**. Le bac à sable
+# n'est donc pas un double ici : c'est `createPracticeFrame`, branché comme
+# `world` du **vrai** moteur d'interaction, avec les **vrais** contrats et la
+# **vraie** géométrie de scène. Si une règle de manipulation était réécrite
+# quelque part pour l'exercice, elle divergerait ici et ces tests le diraient.
+
+
+#: Le bac à sable réel en guise de monde, et une échelle de scène qu'on peut
+#: éteindre — c'est la moitié technique de la divergence D4.
+PRACTICE = """
+const benchOf=opts=>{
+  const o=opts||{};
+  const scene={on:o.scene!==false,painted:[]};
+  const frame=B.createPracticeFrame({geometry:G,
+    viewport:()=>scene.on?{scale:6,width:1280,height:720,cx:640,cy:360}:null,
+    paint:box=>scene.painted.push([box.x,box.y,box.w,box.h]),
+    box:o.box});
+  return {frame,scene,api:frame.world};
+};
+const asBox=b=>[b.x,b.y,b.w,b.h];
+"""
+
+
+def test_the_practice_frame_is_moved_by_one_zone_through_the_real_engine(tmp_path):
+    """**6A, et elle exige une vraie capture de zone.**
+
+    Trois prises, trois issues, et aucune n'est décidée par la calibration :
+
+    - un **bord** tenu d'une main déplace le cadre entier (décision 10) ;
+    - le **corps** d'une fenêtre est du contenu, pas une poignée de cadre
+      (décision 8) : il ne déplace rien, donc 6A ne peut pas se solder en
+      attrapant le milieu de la fenêtre ;
+    - et le relâchement rend un `commit` de mode `move` **dont la boîte a
+      changé**, qui est exactement ce que la sous-étape constate.
+
+    Le cadre ne bouge qu'une fois la prise **armée** (`intent: drag`) : un clic
+    sur un bord ne le déplace pas d'une unité, sans quoi il s'épinglerait au
+    passage.
+    """
+
+    result = run_node(tmp_path, FIXTURE + PRACTICE + """
+      const run=(region,zone)=>{
+        const bench=benchOf();
+        const e=engineOf({world:bench.api});
+        const id=bench.frame.objectId;
+        const targets=[tgt(1,id,region,zone)];
+        const home={x:400,y:300};
+        e.update({now:0,tokens:[tok(1,home.x,home.y)],targets,
+          events:[ev(1,'down',home.x,home.y)],contacts:[held(1,'undecided')]});
+        /* Pas encore armee : rien ne bouge, et rien n'est meme commence. */
+        const beforeArming=bench.frame.drain().length;
+        for(let k=1;k<=4;k+=1)
+          e.update({now:16*k,tokens:[tok(1,home.x+30*k,home.y+12*k)],targets,
+            events:[],contacts:[held(1,'drag')]});
+        e.update({now:200,tokens:[tok(1,520,348)],targets:[],
+          events:[ev(1,'up',520,348)],contacts:[]});
+        const log=bench.frame.drain();
+        const commit=log.filter(x=>x.type==='commit')[0]||null;
+        return {beforeArming,
+          types:[...new Set(log.map(x=>x.type))],
+          box:asBox(bench.frame.box()),origin:asBox(bench.frame.origin()),
+          commit:commit?[commit.mode,commit.moved,commit.sized].concat(asBox(commit.box)):null,
+          painted:bench.scene.painted.length};
+      };
+      out({edge:run('edge','right'),corner:run('corner','top_left'),
+        body:run('body',null)});
+    """)
+
+    edge = result["edge"]
+    # Un clic sur un bord n'ouvre aucun plan : rien n'a bougé avant l'armement.
+    assert edge["beforeArming"] == 0, (
+        "un appui non armé déplaçait le cadre d'une unité — et l'épinglait au passage"
+    )
+    # La prise armée ouvre un plan, prévisualise, puis valide.
+    assert edge["types"] == ["begin", "preview", "commit"]
+    assert edge["commit"][0] == "move"
+    assert edge["commit"][1] is True and edge["commit"][2] is False, (
+        "6A constate un déplacement, et rien d'autre"
+    )
+    # 30 px par image sur quatre images, à 6 px/unité : 120 px => 20 unités en x,
+    # 48 px => 8 en y. La conversion est celle de `manipulateBox`, pas la nôtre.
+    # Le compte dit le **rebasage** (decision 19) : le plan s'ouvre a l'image qui
+    # l'arme et prend *cette* paume pour ancre, donc la course utile va de la 1re
+    # a la 4e image - trois pas, pas quatre. 30 px x 3 = 90 px, a 6 px/unite =
+    # 15 unites en x ; 12 px x 3 = 36 px = 6 en y. Un cadre parti de 20 et 8
+    # signalerait que l'image d'armement a ete comptee deux fois.
+    assert edge["commit"][3:] == [-32 + 15, -20 + 6, 64, 40]
+    assert edge["painted"] > 0, "ce que le moteur calcule est ce qui est dessiné"
+    # Un coin déplace aussi le cadre entier : une zone est une poignée de cadre.
+    assert result["corner"]["commit"][0] == "move"
+    assert result["corner"]["commit"][1] is True
+    # **Le corps d'une fenêtre est du contenu** (décision 8) : il n'ouvre aucun
+    # plan, donc 6A ne se solde pas en attrapant le milieu de la fenêtre.
+    assert result["body"]["types"] == []
+    assert result["body"]["commit"] is None
+    assert result["body"]["box"] == result["body"]["origin"]
+
+
+def test_the_practice_frame_resizes_only_on_two_distinct_compatible_zones(tmp_path):
+    """**6B, et les trois façons de ne pas la réussir.**
+
+    Ce test est le cœur de la sous-étape : ce qui décide qu'un couple de prises
+    redimensionne n'est écrit **nulle part** dans la calibration — c'est
+    `combineCaptures`, par le moteur, sur le cadre d'entraînement. Quatre
+    couples, et un seul produit un redimensionnement :
+
+    - deux bords **opposés** : le cadre grandit, et 6B se solde ;
+    - la **même zone** deux fois (`same_zone_rejected`) : rien ;
+    - deux **corps** (`both_captures_are_body`, décision 8) : rien ;
+    - et une seule main sur une zone : c'est un `move`, donc pas un
+      redimensionnement — la sous-étape ne peut pas se solder par erreur en
+      déplaçant la fenêtre à une main.
+    """
+
+    result = run_node(tmp_path, FIXTURE + PRACTICE + """
+      const run=(a,b,moveA,moveB)=>{
+        const bench=benchOf();
+        const e=engineOf({world:bench.api});
+        const id=bench.frame.objectId;
+        const mk=(hand,spec)=>tgt(hand,id,spec.region,spec.zone);
+        const targets=[mk(1,a)];
+        if(b)targets.push(mk(2,b));
+        const home={x:300,y:300},away={x:900,y:300};
+        const events=[ev(1,'down',home.x,home.y)];
+        if(b)events.push(ev(2,'down',away.x,away.y));
+        const contacts=[held(1,'undecided')];
+        if(b)contacts.push(held(2,'undecided'));
+        const toks=k=>{
+          const list=[tok(1,home.x+moveA[0]*k,home.y+moveA[1]*k)];
+          if(b)list.push(tok(2,away.x+moveB[0]*k,away.y+moveB[1]*k));
+          return list;
+        };
+        /* Les refus sont **vides a chaque image** (ils decrivent un instant) :
+           on les ramasse au vol, sinon le refus de la 2e image serait invisible
+           depuis la derniere. */
+        const seen=[];
+        const run1=f=>{for(const r of (f.refusals||[]))seen.push(r.reason)};
+        run1(e.update({now:0,tokens:toks(0),targets,events,contacts}));
+        const drag=[held(1,'drag')];if(b)drag.push(held(2,'drag'));
+        for(let k=1;k<=4;k+=1)
+          run1(e.update({now:16*k,tokens:toks(k),targets,events:[],contacts:drag}));
+        const ups=[ev(1,'up',0,0)];if(b)ups.push(ev(2,'up',0,0));
+        run1(e.update({now:200,tokens:toks(4),targets:[],events:ups,contacts:[]}));
+        const log=bench.frame.drain();
+        const commit=log.filter(x=>x.type==='commit')[0]||null;
+        return {commit:commit?[commit.mode,commit.moved,commit.sized].concat(asBox(commit.box)):null,
+          refusals:[...new Set(seen)],
+          box:asBox(bench.frame.box())};
+      };
+      const edge=z=>({region:'edge',zone:z});
+      const body={region:'body',zone:null};
+      out({
+        opposite:run(edge('left'),edge('right'),[-60,0],[60,0]),
+        sameZone:run(edge('right'),edge('right'),[60,0],[60,0]),
+        bothBodies:run(body,body,[60,0],[60,0]),
+        oneHand:run(edge('right'),null,[60,0],null),
+      });
+    """)
+
+    # **Le seul couple qui redimensionne.** 60 px par image sur quatre images,
+    # à 6 px/unité : chaque bord recule de 40 unités, donc 64 + 80 = 144.
+    opposite = result["opposite"]
+    assert opposite["commit"][0] == "resize"
+    assert opposite["commit"][2] is True, "6B constate un redimensionnement"
+    # Trois pas utiles apres le rebasage d'armement : 60 px x 3 = 180 px, soit
+    # 30 unites par bord. Le cadre passe de 64 a 124 de large et son bord gauche
+    # recule de 30. La hauteur ne bouge pas d'une unite : deux bords de l'axe x
+    # ne touchent pas y, et c'est `combineCaptures` qui l'a decide, pas ce test.
+    assert opposite["commit"][3:] == [-62, -20, 124, 40]
+
+    # **La même zone deux fois ne se redimensionne pas** (décision 15), et le
+    # refus se dit : sans lui, deux mains sur le même bord auraient été un
+    # redimensionnement confiant et faux.
+    assert result["sameZone"]["commit"] is None
+    assert "same_zone_rejected" in result["sameZone"]["refusals"]
+    assert result["sameZone"]["box"] == [-32, -20, 64, 40]
+
+    # **Deux corps ne sont pas une poignée de cadre** (décision 8).
+    assert result["bothBodies"]["commit"] is None
+    assert result["bothBodies"]["box"] == [-32, -20, 64, 40]
+
+    # **Une seule main déplace, elle ne redimensionne jamais** (décision 11) :
+    # 6B ne peut donc pas se solder en traînant la fenêtre d'une main.
+    assert result["oneHand"]["commit"][0] == "move"
+    assert result["oneHand"]["commit"][2] is False, "aucune taille n'a changé"
+
+
+def test_the_practice_frame_inherits_min_size_no_inversion_and_the_lost_hand(tmp_path):
+    """**Les règles de production s'appliquent au cadre d'entraînement**, parce
+    que ce sont les mêmes — elles ne sont pas recopiées pour l'exercice.
+
+    Trois, et chacune a déjà coûté quelque chose ailleurs :
+
+    - deux mains qui se croisent **bornent** le cadre à la taille minimale d'une
+      fenêtre au lieu de le retourner (décision 18) ;
+    - une main perdue **suspend** la manipulation au lieu de laisser l'autre
+      tirer le cadre de travers, et la reprise **rebase** donc le cadre ne
+      rattrape pas d'un coup la course de la suspension (décision 19) ;
+    - la boîte reste dans la zone sûre de la scène.
+    """
+
+    result = run_node(tmp_path, FIXTURE + PRACTICE + """
+      /* Deux mains qui se croisent tres au-dela du centre du cadre. */
+      const crossed=(function(){
+        const bench=benchOf();
+        const e=engineOf({world:bench.api});
+        const id=bench.frame.objectId;
+        const targets=[tgt(1,id,'edge','left'),tgt(2,id,'edge','right')];
+        const home={x:300,y:300},away={x:900,y:300};
+        e.update({now:0,tokens:[tok(1,home.x,home.y),tok(2,away.x,away.y)],targets,
+          events:[ev(1,'down',home.x,home.y),ev(2,'down',away.x,away.y)],
+          contacts:[held(1,'undecided'),held(2,'undecided')]});
+        for(let k=1;k<=10;k+=1)
+          e.update({now:16*k,tokens:[tok(1,home.x+80*k,300),tok(2,away.x-80*k,300)],
+            targets,events:[],contacts:[held(1,'drag'),held(2,'drag')]});
+        e.update({now:400,tokens:[],targets:[],
+          events:[ev(1,'up',0,0),ev(2,'up',0,0)],contacts:[]});
+        return asBox(bench.frame.box());
+      })();
+      /* Une main disparait au milieu du geste, puis revient ailleurs. */
+      const lost=(function(){
+        const bench=benchOf();
+        const e=engineOf({world:bench.api});
+        const id=bench.frame.objectId;
+        const targets=[tgt(1,id,'edge','left'),tgt(2,id,'edge','right')];
+        const both=k=>[tok(1,300+10*k,300),tok(2,900+10*k,300)];
+        e.update({now:0,tokens:both(0),targets,
+          events:[ev(1,'down',300,300),ev(2,'down',900,300)],
+          contacts:[held(1,'undecided'),held(2,'undecided')]});
+        e.update({now:16,tokens:both(1),targets,events:[],
+          contacts:[held(1,'drag'),held(2,'drag')]});
+        const afterOne=asBox(bench.frame.box());
+        /* La seconde main disparait : la manipulation **se suspend**. Le jeton
+           qui reste continue pourtant de courir, tres loin. */
+        for(let k=2;k<=8;k+=1)
+          e.update({now:16*k,tokens:[tok(1,300+200*k,300)],targets,events:[],
+            contacts:[held(1,'drag')]});
+        const whileLost=asBox(bench.frame.box());
+        /* Elle revient : le cadre ne doit pas rattraper d'un coup les 1 400 px
+           parcourus pendant la suspension. */
+        e.update({now:160,tokens:[tok(1,300+200*8,300),tok(2,900,300)],targets,
+          events:[],contacts:[held(1,'drag'),held(2,'drag')]});
+        const afterReturn=asBox(bench.frame.box());
+        return {afterOne,whileLost,afterReturn};
+      })();
+      out({crossed,lost,min:G.MIN_SIZE.window,safe:G.SAFE_AREA});
+    """)
+
+    minimum = result["min"]
+    x, y, w, h = result["crossed"]
+    assert w == minimum["w"], "des mains qui se croisent retournaient le cadre"
+    assert w > 0 and h > 0
+    assert result["safe"]["x0"] <= x and x + w <= result["safe"]["x1"]
+
+    lost = result["lost"]
+    # Pendant la suspension, le cadre ne bouge **pas** : laisser la main
+    # survivante tirer seule le redimensionnerait de travers.
+    assert lost["whileLost"] == lost["afterOne"], (
+        "la main restée seule a continué de redimensionner pendant le clignement"
+    )
+    # Et la reprise rebase : 1 400 px de course accumulée ne s'appliquent pas
+    # d'un coup (mesuré à 68 unités quand ce rebasage manquait).
+    assert lost["afterReturn"] == lost["afterOne"], (
+        "le cadre a rattrapé d'un coup la course de la suspension"
+    )
+
+
+def test_the_practice_frame_never_reaches_the_scene_and_dies_with_the_exercise(tmp_path):
+    """**Le bac à sable, et c'est la promesse produit de cette sous-étape.**
+
+    Le cadre d'entraînement se manipule comme un objet de la scène et n'en est
+    pas un : sa géométrie ne part nulle part. Deux garanties, et la seconde est
+    structurelle :
+
+    - `commit` **retient** la boîte et ne l'envoie pas — il n'y a aucun chemin
+      d'ici vers `commitUserGeometry` ;
+    - après `close()`, les quatre portes rendent `null` et `owns()` est faux :
+      une image en retard ne peut pas ressusciter un cadre que l'utilisateur
+      vient de quitter, ni le faire entrer dans la scène par la porte de
+      derrière.
+
+    Et l'identifiant est **nommé pour ne ressembler à aucun objet de Core** :
+    c'est ce qui permet à la façade de la page de le router vers le bac à sable
+    sans jamais interroger la scène.
+    """
+
+    result = run_node(tmp_path, FIXTURE + PRACTICE + """
+      const bench=benchOf();
+      const e=engineOf({world:bench.api});
+      const id=bench.frame.objectId;
+      const targets=[tgt(1,id,'edge','right')];
+      e.update({now:0,tokens:[tok(1,300,300)],targets,
+        events:[ev(1,'down',300,300)],contacts:[held(1,'undecided')]});
+      for(let k=1;k<=3;k+=1)
+        e.update({now:16*k,tokens:[tok(1,300+40*k,300)],targets,events:[],
+          contacts:[held(1,'drag')]});
+      e.update({now:100,tokens:[tok(1,420,300)],targets:[],
+        events:[ev(1,'up',420,300)],contacts:[]});
+      const moved=asBox(bench.frame.box());
+      const ownedBefore=bench.frame.owns(id);
+      const closed=bench.frame.close();
+      /* Apres la fermeture : plus rien ne repond, et une image en retard ne
+         peut donc pas rouvrir un plan. */
+      const after={
+        begin:bench.api.begin(id),
+        preview:bench.api.preview(id,{x:0,y:0,w:80,h:50}),
+        commit:bench.api.commit(id,{x:0,y:0,w:80,h:50},'move'),
+        cancel:bench.api.cancel(id),
+        owns:bench.frame.owns(id),
+        drained:bench.frame.drain().length,
+        closedTwice:bench.frame.close(),
+      };
+      out({id,moved,ownedBefore,closed,after,
+        viewport:bench.api.viewport(),
+        offScene:benchOf({scene:false}).api.viewport(),
+        defaultBox:asBox(B.createPracticeFrame({geometry:G,viewport:()=>({scale:6})}).box()),
+        pinned:B.PRACTICE_OBJECT_ID});
+    """)
+
+    # L'identifiant ne peut pas entrer en collision avec un objet de Core : il
+    # ne ressemble pas à un identifiant de scène, et c'est délibéré.
+    assert result["id"] == result["pinned"] == "barehands:practice-frame"
+    # Le geste a bien eu lieu, et sa boîte est retenue **localement**.
+    assert result["moved"] != [-32, -20, 64, 40]
+    assert result["ownedBefore"] is True and result["closed"] is True
+    # Après le démontage, les quatre portes se taisent.
+    after = result["after"]
+    assert after["begin"] is None and after["preview"] is None
+    assert after["commit"] is None and after["cancel"] is None
+    assert after["owns"] is False and after["drained"] == 0
+    assert after["closedTwice"] is False, "un démontage est idempotent"
+    # L'échelle vient de la scène, et scène éteinte elle vaut `null` : c'est la
+    # divergence D4, côté technique.
+    assert result["viewport"]["scale"] == 6
+    assert result["offScene"] is None
+    # La boîte de départ est bornée par `clampBox`, pas par une constante
+    # recopiée : elle tient dans la zone sûre et au-dessus du minimum.
+    assert result["defaultBox"] == [-32, -20, 64, 40]
+
+
+def test_the_page_routes_the_practice_frame_away_from_the_scene(tmp_path):
+    """**La garantie est structurelle, pas déclarative.**
+
+    Le module précédent prouve que le bac à sable ne persiste rien ; celui-ci
+    prouve que la page ne lui fait pas court-circuiter la scène par accident.
+    La façade `world` du moteur interroge le cadre d'entraînement **avant** la
+    scène, donc tant qu'il revendique son identifiant, aucune des quatre portes
+    de `JarvisScene.frames` n'est traversée pour lui — et `commitUserGeometry`
+    est inatteignable pour l'exercice.
+
+    `viewport`, elle, n'est **pas** détournée, et c'est délibéré : l'échelle
+    appartient à la scène, elle est la même pour le cadre d'entraînement et pour
+    un vrai cadre, et c'est ce qui rend le geste appris ici transposable.
+    """
+
+    source = SCRIPT.read_text(encoding="utf-8")
+    seam = source.split("const world={")[1].split("\n    };")[0]
+    # Les quatre portes demandent d'abord au banc, puis seulement a la scene :
+    # tant que le banc revendique l'identifiant, `sceneCall` n'est pas atteint.
+    for door in ("begin", "preview", "commit", "cancel"):
+        body = seam.split(door + "(objectId")[1].split("sceneCall")[0]
+        assert "held(objectId)" in body, door
+        assert "return bench?bench.world." in body, door
+        assert "sceneCall('" + door + "'" in seam, door
+    # L'echelle, elle, va toujours a la scene - jamais au banc (divergence D4).
+    assert "viewport:()=>sceneCall('viewport',null)" in seam
+    # Et le routage a **un seul** proprietaire, qui peut le retirer.
+    assert "usePractice(frame)" in source and "practice=null" in source
+
+
+def test_the_practice_frame_refuses_to_be_built_without_the_canonical_pieces(tmp_path):
+    """**Il n'y a aucune géométrie dans le bac à sable, et il le prouve en
+    refusant de se construire sans.**
+
+    Deux refus à la construction, et les deux disent la même chose : ce module
+    ne calcule rien. Sans `geometry`, il ne pourrait pas borner sa boîte de
+    départ ni savoir si une boîte a changé — et les réécrire ici ferait diverger
+    l'exercice du vrai cadre qu'il doit imiter. Sans `viewport`, il devrait
+    inventer une échelle, ce que la divergence D4 interdit explicitement.
+    """
+
+    result = run_node(tmp_path, FIXTURE + """
+      const refused=fn=>{try{fn();return null}catch(e){return String(e&&e.message||e)}};
+      out({
+        noGeometry:refused(()=>B.createPracticeFrame({viewport:()=>({scale:6})})),
+        halfGeometry:refused(()=>B.createPracticeFrame({geometry:{clampBox:()=>({})},
+          viewport:()=>({scale:6})})),
+        noViewport:refused(()=>B.createPracticeFrame({geometry:G})),
+        built:!!B.createPracticeFrame({geometry:G,viewport:()=>null}).objectId,
+      });
+    """)
+    assert "geometry" in result["noGeometry"] and "clampBox" in result["noGeometry"]
+    assert result["halfGeometry"] is not None, "une géométrie à moitié n'en est pas une"
+    assert "viewport" in result["noViewport"]
+    # Une échelle absente **à l'exécution** n'empêche pas la construction : c'est
+    # la calibration qui décide alors de passer l'étape, avec un motif nommé.
+    assert result["built"] is True

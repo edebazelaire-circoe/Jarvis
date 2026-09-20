@@ -260,8 +260,46 @@
        jeton pendant tout le parcours. */
     flowRootId:'jarvisFlow',
     flowStyleId:'jarvisFlowStyle',
+    /* **La feuille des exercices**, séparée de celle de la coque (Slice 06).
+       Deux feuilles parce que deux propriétaires : `flowStyleId` habille une
+       coque qui ne sait rien du parcours qu'elle porte — c'est ce qui permet au
+       tutoriel de la réutiliser telle quelle — tandis que celle-ci habille les
+       démonstrations de main, le bandeau de phases et le champ de cibles, qui
+       sont de la calibration et d'elle seule. Les fondre ferait entrer les
+       gestes dans la coque par la bande. */
+    flowStepsStyleId:'jarvisFlowStepsStyle',
+    /* **La mise en page d'une étape, et non plus une carte** (refonte Slice 05,
+       décisions 18 et 19). Le nom n'a pas bougé parce qu'il n'a jamais désigné
+       une boîte : il désigne *l'étape à l'écran*. Ce qu'il porte, si. `jf-step`
+       était une carte centrée de 560 px avec son fond, son ombre et son rayon
+       de 20 px, et l'utilisateur l'a **refusée** en toutes lettres. C'est
+       maintenant une grille qui occupe tout le cadre — bandeau en haut, scène
+       au milieu, commandes en bas — sans fond, sans bordure et sans ombre à
+       elle. Le voile (`flowVeilClass`) est la seule surface qui teinte. */
     flowStepClass:'jf-step',
     flowProgressClass:'jf-progress',
+    /* **Le voile**, et il est une couche à lui (décision 18). Il porte le
+       flou, l'assombrissement et la teinte bleue qui font que la scène JARVIS
+       reste *lisible derrière* au lieu d'être recouverte de noir : c'est
+       `backdrop-filter: brightness()` qui assombrit, pas une nappe opaque,
+       donc la scène garde sa couleur. Séparé de la racine pour qu'il puisse
+       apparaître en fondu sans emporter le texte avec lui. */
+    flowVeilClass:'jf-veil',
+    /* **Les cinq régions nommées** (refonte Slice 05). Elles existent pour que
+       deux parcours successifs ne réinventent pas chacun leur mise en page :
+       une étape décrit *ce qu'elle montre*, la coque décide *où*. `jf-header`
+       est haut et large (numéro, titre, une phrase) ; `jf-stage` est le centre,
+       laissé vide par la coque et rempli par l'étape ; `jf-demo` et
+       `jf-exercise` sont ses deux fentes (la démonstration et la cible de
+       l'exercice) ; `jf-feedback` est la bande sous la scène — sous, et jamais
+       par-dessus, pour qu'un commentaire vivant ne masque pas ce qu'on
+       demande de faire ; `jf-controls` est la bande secondaire des boutons. */
+    flowHeaderClass:'jf-header',
+    flowStageClass:'jf-stage',
+    flowDemoClass:'jf-demo',
+    flowExerciseClass:'jf-exercise',
+    flowFeedbackClass:'jf-feedback',
+    flowControlsClass:'jf-controls',
     /* Le point à viser d'une étape de visée : il est **dans la coque**, donc à
        des coordonnées que le parcours connaît — viser un élément de la page
        demanderait que la page ait un élément à viser. */
@@ -970,6 +1008,11 @@
     tool:TOOL_DEFAULT,
     assistance:0.5,           // assistance de visée, bornée et sûre
     sensitivity:1,            // divise `clickSlopPx`/`dragSlopPx` : 1 = défauts du moteur
+    /* **Compatibilité, plus personne ne l'écrit** (Slice 07B). Le parcours de
+       tutoriel est retiré ; ce champ ne porte plus qu'un fait historique, et il
+       reste dans le schéma pour ne pas imposer une montée de version à trois
+       fichiers pour un seul booléen. Il n'a plus de case à l'écran. Condition
+       de suppression : `docs/legacy/barehands-tutorial-retirement.md`. */
     tutorialSeen:false,
     calibrationEnabled:true,  // décision 27 : la calibration reste optionnelle
     diagnostics:false,        // architecture §12 : lecture à la demande
@@ -1173,6 +1216,24 @@
     OUT_OF_BAND:'barehands_stage_out_of_band',     // la mesure sort des bornes du contrat
     NEEDS_TWO_HANDS:'barehands_stage_needs_two_hands',
     CANCELLED:'barehands_stage_cancelled',         // l'utilisateur est sorti
+    /* **Huitième motif, ouvert par la Slice 07** (divergence D4 de la
+       READINESS). L'étape de manipulation de fenêtre est la première du
+       parcours à dépendre de la **scène** : elle fait manipuler un vrai cadre
+       par le vrai moteur, donc elle emprunte l'échelle de la scène
+       (`JarvisScene.frames.viewport()`), seule source des pixels par unité.
+
+       Scène éteinte, cette échelle vaut `null`. Les deux replis possibles sont
+       des défauts plausibles, et le contrat les refuse tous les deux : une
+       échelle inventée ferait partir le cadre six fois trop loin (c'est la
+       panne que `viewport_unavailable` existe déjà pour empêcher côté moteur),
+       et un faux cadre d'entraînement ferait « réussir » une étape qui n'a rien
+       mesuré du vrai geste. L'étape se marque donc `skipped` — pas `failed` :
+       l'utilisateur n'a rien raté, sa scène était éteinte — et le rapport le
+       dit avec ce motif-ci plutôt qu'avec le silence de `null`.
+
+       Les règles de repli partiel ne bougent pas d'un iota : une étape passée
+       laisse ses clés nulles et le moteur garde ses défauts (décision 31). */
+    SCENE_UNAVAILABLE:'barehands_stage_scene_unavailable',
   });
   const STAGE_REASONS=values(STAGE_REASON);
   const emptyStages=()=>{

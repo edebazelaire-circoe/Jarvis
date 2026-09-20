@@ -11,11 +11,15 @@
 
    - **Le même point d'entrée que le bouton.** `ENTRY_POINTS` ne nomme que des
      méthodes de `window.JarvisBarehands`, et `activate`/`sleep` sont exactement
-     ce que `#barehandsWake` appelle (`setAwake`). Rien n'est réimplanté ici :
-     une seconde implantation de « réveiller » diverge le jour où l'une des deux
-     change, et personne ne voit laquelle la voix a prise. Effet de bord
-     mesurable du choix : le panneau Expérimental se redessine après une
-     commande vocale, parce que `setAwake` finit par `refreshPanel()`.
+     ce que la pastille « Actif » du contrôle de la barre du haut appelle
+     (`setAwake`) — c'était l'interrupteur de l'onglet Expérimental jusqu'à la
+     Slice 02, c'est le bouton à icône de main depuis. Rien n'est réimplanté
+     ici : une seconde implantation de « réveiller » diverge le jour où l'une
+     des deux change, et personne ne voit laquelle la voix a prise. Effet de
+     bord mesurable du choix : la couture de cycle de vie republie après une
+     commande vocale, parce que `setAwake` finit par `refreshPanel()`, dont
+     `publishLifecycle()` est la première ligne — donc le bouton suit la voix
+     même l'onglet fermé.
    - **On rapporte ce que la page constate, jamais ce qu'on a demandé.**
      Après l'appel, le cycle de vie est **relu** (`surface.lifecycle()`). Un
      `activate` qui n'aboutit pas à `active` est un refus, pas un succès :
@@ -77,6 +81,20 @@
     activate:Object.freeze({method:'activate',targets:Object.freeze(['active'])}),
     deactivate:Object.freeze({method:'sleep',targets:Object.freeze(['sleep','off'])}),
     calibrate:Object.freeze({method:'calibrate',targets:null}),
+    /* **Alias déprécié** (Slice 07B, READINESS §4). Le parcours de tutoriel
+       n'existe plus ; le nom reste parce qu'il est miroité sous assertion de
+       parité au chargement dans `jarvis/domain/barehands_command.py` et
+       `jarvis/runtime/barehands_mcp.py`, et que le retirer serait une rupture
+       coordonnée sur trois fichiers là où l'alias tient le contrat **et**
+       l'exigence produit — une seule surface visible.
+
+       **Cette table ne route pas l'alias.** Elle continue de nommer
+       `JarvisBarehands.tutorial()`, qui existe et qui ouvre la calibration en
+       le disant. Router `tutorial` vers `'calibrate'` ici aurait caché la
+       dépréciation à tout appelant direct de la surface (console, page plus
+       ancienne) et aurait mis la décision dans le transport, alors que ce qui
+       s'ouvre est une affaire de page. Le canal ne sait toujours pas ce qu'une
+       commande déclenche : il le **relit** dans la confirmation. */
     tutorial:Object.freeze({method:'tutorial',targets:null}),
     exit_overlay:Object.freeze({method:'exitOverlay',targets:null}),
   });
@@ -91,6 +109,10 @@
   const LIFECYCLE_REFUSED='barehands_lifecycle_refused';
   const COMMAND_UNKNOWN='barehands_command_unknown';
   const PAGE_CODES=Object.freeze([FLOW_ABSENT,FLOW_UNCONFIRMED,LIFECYCLE_REFUSED,COMMAND_UNKNOWN]);
+  /* Même borne que `MAX_REASON_CHARS` du domaine Python : couper ici plutôt
+     qu'au serveur garde le reçu identique des deux côtés, donc ce que la page
+     croit avoir dit est ce que le cerveau lit. */
+  const REASON_MAX_CHARS=200;
 
   /* **Un appel qui ne lève pas n'est pas une preuve.** Mesuré ailleurs dans ce
      sous-système (QA de la Slice 07) : `JarvisBarehands.tool('scissors')`
@@ -205,8 +227,23 @@
            d'en dessous applique depuis la Slice 12. Les parcours n'ont pas
            d'état relisible (`spec.targets` est nul), donc seule leur
            confirmation peut porter la distinction : elle la porte. */
+        /* **Le parcours a le droit de dire ce qu'il a ouvert** (Slice 07B).
+           `reason` ne portait jusqu'ici que la cause d'un refus ; un succès
+           l'avait toujours nul. C'est devenu insuffisant le jour où une
+           commande a cessé d'ouvrir ce que son nom annonce : `tutorial` ouvre
+           la calibration, et un reçu muet ferait dire à JARVIS « j'ai lancé le
+           tutoriel » devant une calibration — le faux récit exact que ce canal
+           existe pour empêcher.
+
+           Ce n'est pas une entorse à « on rapporte ce que la page constate » :
+           la phrase vient du parcours lui-même et décrit **ce qu'il a fait**,
+           pas ce qu'on lui a demandé. Le canal ne la fabrique pas et ne la
+           complète pas ; il la recopie, bornée, ou n'en met aucune. Le domaine
+           Python l'accepte déjà pour toute issue (`parse_receipt` ne réserve
+           que `code` aux refus) : aucun contrat n'a eu à bouger pour ça. */
+        const said=answer&&typeof answer.reason==='string'?answer.reason.trim():'';
         return {outcome:answer&&answer.already===true?'duplicate':'applied',
-          lifecycle:after,code:null,reason:null};
+          lifecycle:after,code:null,reason:said?said.slice(0,REASON_MAX_CHARS):null};
       }
       if(spec.targets.indexOf(after)<0)
         return {outcome:'refused',lifecycle:after,code:LIFECYCLE_REFUSED,

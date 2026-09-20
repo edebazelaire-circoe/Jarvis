@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-BH-CAL-06",
+      "title": "Evaluate calibration pacing and gesture visuals",
+      "instructions": "After automated QA passes, deliberately leave your hands on your lap while reading each of steps 1–5, then engage. Verify that nothing times out early and that each schematic hand makes the expected gesture obvious.",
+      "expected": "Instructions can be read calmly, the test begins only after engagement, and C/primary/secondary/target gestures are visually unmistakable."
+    }
+  ]
+}

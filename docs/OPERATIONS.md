@@ -403,10 +403,14 @@ parole → cerveau → outil MCP jarvis-barehands → POST /api/barehands/comman
 ```
 
 Cinq outils, un par action : `barehands_activate`, `barehands_deactivate`,
-`barehands_calibrate`, `barehands_tutorial`, `barehands_exit_overlay`. Les trois
-derniers **refusent aujourd'hui** (`barehands_flow_absent`) : les parcours
-arrivent aux Slices 08 et 09. Aucun outil ne touche l'interrupteur, les réglages
-ni l'outil de la main : le cerveau réveille et rendort, rien de plus.
+`barehands_calibrate`, `barehands_tutorial`, `barehands_exit_overlay`. Les cinq
+outils sont **vivants**, mais il ne reste **qu'un seul parcours** : la
+calibration. `barehands_tutorial` est
+**déprécié** depuis la Slice 07B de l'affinage d'UI : le parcours de tutoriel
+séparé a été retiré, l'outil ouvre la **calibration**, et sa note le dit au
+cerveau — préférer `barehands_calibrate`. Aucun outil ne touche l'interrupteur,
+les réglages ni l'outil de la main : le cerveau réveille et rendort, rien de
+plus.
 
 Le serveur MCP `jarvis-barehands` n'est déclaré au CLI **que** si l'utilisateur
 a allumé Bare Hands, avec sa consigne système ; éteint, le cerveau est lancé
@@ -486,7 +490,6 @@ outil déclaré demain sans moteur se refait refuser
 | Retour en veille | décision 7, 5 s à 600 s ; c'est enfin le délai **réel** (le contrôleur recevait la constante) |
 | Lecture de diagnostic | panneau en bas à droite : qualité, vitesse et immobilité par main. Rien n'est enregistré ; éteint, le panneau est **absent** de l'arbre |
 | Proposer la calibration | décision 27 ; **lu depuis la Slice 08** : décoché, le bouton « Calibrer » est désarmé et le parcours ne se propose plus |
-| Tutoriel déjà vu | **lu depuis la Slice 09** : coché, « Lancer le tutoriel » répond « Tutoriel terminé » au lieu de rejouer les dix étapes ; le parcours le coche lui-même en arrivant au bout |
 | Réinitialiser les réglages | rend les valeurs d'usine ; **ne touche pas à l'interrupteur**, donc n'éteint jamais la caméra, et **ne touche pas au profil de calibration** (voir ci-dessous) |
 
 **« Réinitialiser » réinitialise les réglages, pas le profil.** Le handoff
@@ -716,7 +719,7 @@ c'est là que le bruit des points est le plus fort.
 - **A5.6** Déposer un objet et vérifier qu'**aucun clic** n'est délivré dessus
   au relâchement. C'est la porte de livraison du détecteur hérité.
 
-##### A6 — outils, réglages, calibration, tutoriel
+##### A6 — outils, réglages, calibration
 
 - **A6.1** Les **trois** outils de la palette se prennent à la main et le
   changement s'applique à chaud. Aucun outil désarmé ne doit rester visible :
@@ -730,12 +733,14 @@ c'est là que le bruit des points est le plus fort.
   (sortir du cadre) et vérifier que le parcours **continue** (décision 31) au
   lieu de s'arrêter. Puis vérifier que les seuils mesurés sont **appliqués** :
   le pincement doit changer de sensibilité après un enregistrement.
-- **A6.4** Le **tutoriel** de dix étapes, en entier, puis « Recommencer » depuis
-  l'intérieur du parcours : le parcours relancé doit être **nourri** (le
-  compteur bouge, les gestes comptent). C'est la panne de la Slice 10.
-- **A6.5** Après un tutoriel terminé, « Lancer le tutoriel » doit répondre
-  « Tutoriel terminé » — et décocher « Tutoriel déjà vu » doit le rendre
-  rejouable.
+- **A6.4** **Il n'y a plus de parcours de tutoriel** (Slice 07B de l'affinage
+  d'UI, décisions 10 et 17). Vérifier qu'aucune entrée Tutoriel n'existe : ni
+  section ni case dans les réglages, ni entrée du menu du clic droit. La
+  calibration est le seul parcours guidé, et c'est elle qui enseigne.
+- **A6.5** Dire « lance le tutoriel » au cerveau : la **calibration** doit
+  s'ouvrir, et JARVIS doit annoncer une calibration — jamais un tutoriel. Le
+  reçu porte la phrase de dépréciation ; un JARVIS qui dirait « j'ouvre le
+  tutoriel » est un défaut, pas une approximation.
 - **A6.6** **Un enregistrement de diagnostic**, du début à la fin : le démarrer,
   faire une minute de gestes, l'arrêter, puis rejouer la trace et comparer deux
   configurations. Ouvrir le fichier dans `runtime/barehands-traces/` et
@@ -744,9 +749,11 @@ c'est là que le bruit des points est le plus fort.
 
 ##### A7 — le canal vocal (cerveau lancé)
 
-- **A7.1** Dire « active les mains », « calibre », « lance le tutoriel », « sors
-  de la surimpression », « désactive les mains ». Attendu : chacune atteint la
-  page et **le reçu revient au cerveau**, qui répond en connaissance de cause.
+- **A7.1** Dire « active les mains », « calibre », « montre-moi comment faire »,
+  « sors de la surimpression », « désactive les mains ». Attendu : chacune
+  atteint la page et **le reçu revient au cerveau**, qui répond en connaissance
+  de cause. « Montre-moi comment faire » doit ouvrir la **calibration** : c'est
+  elle qui enseigne depuis la Slice 07B.
 - **A7.2** Demander une commande avec **aucune page ouverte**. Attendu :
   `barehands_no_visible_page`, et le cerveau le dit au lieu d'un succès
   optimiste.

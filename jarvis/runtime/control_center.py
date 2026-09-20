@@ -232,6 +232,16 @@ CATALOG_SCRIPT_MARKER = "/*__CONTROL_CENTER_CATALOG_JS__*/"
 #: et la page de scène, qui lisent tous deux l'identité de pointeur.
 BAREHANDS_CONTRACTS_SCRIPT_FILE = "control_center_barehands_contracts.js"
 BAREHANDS_CONTRACTS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_CONTRACTS_JS__*/"
+#: Vocabulaire de dessin des mains schématiques Bare Hands (décision 20) :
+#: postures en données, un seul traceur, aucune dépendance
+#: (`window.JarvisBarehandsHandArt`). Inséré APRÈS les contrats — pure
+#: convention de rangement, il n'en lit rien — et surtout **AVANT la
+#: calibration**, qui le lit pour dessiner ses mains virtuelles, et avant le
+#: contrôle du haut-gauche, qui y prend son icône. Un seul jeu de mains pour
+#: toute la fonctionnalité : deux auraient dérivé, et l'utilisateur n'aurait
+#: pas reconnu dans la calibration la main apprise dans l'aide.
+BAREHANDS_HAND_ART_SCRIPT_FILE = "control_center_barehands_hand_art.js"
+BAREHANDS_HAND_ART_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_HAND_ART_JS__*/"
 #: Cible sémantique Bare Hands (Slice 05) : collecte des candidates du DOM et
 #: aperçu visuel des régions (`window.JarvisBarehandsTarget`). Inséré APRÈS les
 #: contrats, qu'il lit, et AVANT le pointeur, qui le lit.
@@ -246,13 +256,6 @@ BAREHANDS_TARGET_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_TARGET_JS__*/"
 #: clics plus tard.
 BAREHANDS_CALIBRATION_SCRIPT_FILE = "control_center_barehands_calibration.js"
 BAREHANDS_CALIBRATION_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_CALIBRATION_JS__*/"
-#: Parcours de tutoriel Bare Hands (Slice 09, architecture §13, décisions 6
-#: et 26). Inséré **après** la calibration, dont il reprend la **coque** de
-#: surimpression sans la modifier — deux parcours, une coque — et **avant** le
-#: pointeur, qui le lit pour poser `JarvisBarehands.tutorial()` et
-#: `.exitOverlay()` sur sa surface gelée.
-BAREHANDS_TUTORIAL_SCRIPT_FILE = "control_center_barehands_tutorial.js"
-BAREHANDS_TUTORIAL_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_TUTORIAL_JS__*/"
 #: Enregistrement, rejeu et mesures Bare Hands (Slice 10, architecture §12,
 #: décision 32) : schéma de trace, liste blanche, garde de forme au chargement,
 #: enregistreur opt-in et rejeu déterministe (`window.JarvisBarehandsRecorder`).
@@ -265,6 +268,16 @@ BAREHANDS_RECORDER_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_RECORDER_JS__*/
 #: plus son branchement navigateur. Même insertion que les scripts ci-dessus.
 BAREHANDS_SCRIPT_FILE = "control_center_barehands.js"
 BAREHANDS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_JS__*/"
+#: Contrôle de cycle de vie Bare Hands de la barre du haut : bouton carré à
+#: icône de main en haut à gauche et sélecteur visuel OFF/VEILLE/ACTIF
+#: (`window.JarvisBarehandsHud`). Inséré APRÈS le pointeur, qui pose
+#: `window.JarvisBarehands` **et** la couture de diffusion du cycle de vie
+#: (`openLifecycleSeam`) à laquelle ce contrôle s'abonne : sans elle il ne
+#: reflèterait ni le réveil en C, ni le retour en veille, ni la voix. Son bloc
+#: navigateur les lit au chargement et **refuse de s'installer** sans elles,
+#: pour que l'ordre casse à l'insertion et non trois clics plus tard.
+BAREHANDS_HUD_SCRIPT_FILE = "control_center_barehands_hud.js"
+BAREHANDS_HUD_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_HUD_JS__*/"
 #: Canal de commandes du cerveau vers Bare Hands (Slice 12) : long-poll de
 #: `GET /api/barehands/commands` et remise de chaque commande au **même** point
 #: d'entrée que le bouton (`window.JarvisBarehands`). Inséré APRÈS le pointeur,
@@ -913,6 +926,10 @@ class ControlCenter:
             page.with_name(BAREHANDS_CONTRACTS_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
+            BAREHANDS_HAND_ART_SCRIPT_MARKER,
+            page.with_name(BAREHANDS_HAND_ART_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
             BAREHANDS_TARGET_SCRIPT_MARKER,
             page.with_name(BAREHANDS_TARGET_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
@@ -921,15 +938,15 @@ class ControlCenter:
             page.with_name(BAREHANDS_CALIBRATION_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
-            BAREHANDS_TUTORIAL_SCRIPT_MARKER,
-            page.with_name(BAREHANDS_TUTORIAL_SCRIPT_FILE).read_text(encoding="utf-8"),
-        )
-        html = html.replace(
             BAREHANDS_RECORDER_SCRIPT_MARKER,
             page.with_name(BAREHANDS_RECORDER_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             BAREHANDS_SCRIPT_MARKER, page.with_name(BAREHANDS_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            BAREHANDS_HUD_SCRIPT_MARKER,
+            page.with_name(BAREHANDS_HUD_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             BAREHANDS_COMMANDS_SCRIPT_MARKER,

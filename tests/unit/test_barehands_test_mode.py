@@ -570,3 +570,84 @@ def test_the_page_receives_the_pointer_script_in_place_of_its_marker(control):
     assert BAREHANDS_SCRIPT_MARKER not in served
     assert "const JarvisBarehandsCore=" in served
     assert "window.JarvisBarehands=" in served
+
+
+async def test_an_older_install_still_loads_and_drives_the_refined_ui(control, tmp_path, vendor):
+    """**La migration, vue depuis la tâche d'affinage d'UI** (Slice 08).
+
+    `test_a_version_one_block_is_migrated_and_a_foreign_one_is_not_acted_upon`
+    et son jumeau côté profil prouvent déjà que la conversion marche dans les
+    deux sens. Ce qu'ils ne peuvent pas prouver, c'est ce que l'affinage a mis
+    en jeu : entre-temps, l'interface a cessé d'être un panneau de réglages et
+    est devenue un contrôle de cycle de vie, une palette et un menu d'actions
+    rapides, tous alimentés par **ces** valeurs-là.
+
+    Le risque concret : `calibrationEnabled` n'existait pas dans un bloc v1, et
+    c'est aujourd'hui lui qui grise ou non l'entrée « Calibrer… » du menu du
+    clic droit. Un défaut mal rendu à la migration ne ferait pas planter la
+    page — il grisserait silencieusement une entrée que l'utilisateur n'a
+    jamais désactivée. C'est exactement la classe de panne qu'un test de
+    schéma ne voit pas et qu'un utilisateur voit tout de suite.
+
+    On part donc d'un **fichier de réglages écrit avant cette tâche** : un bloc
+    v1 qui ne porte que `enabled`, posé sur le disque à côté de réglages
+    étrangers qui ne doivent pas bouger, et un profil de calibration v1. Rien
+    n'est simulé : ce sont les vraies routes, le vrai `load`, le vrai `apply`.
+    """
+
+    control.settings_path.parent.mkdir(parents=True, exist_ok=True)
+    control.settings_path.write_text(json.dumps({
+        # Des réglages voisins, qu'une migration Bare Hands n'a aucune raison
+        # de toucher.
+        "agent_cli": "codex",
+        "manual_wake_key": "f8",
+        # **Un bloc v1** : `enabled` seul, sans numéro de version. C'est ce
+        # qu'un utilisateur de la V1 a réellement sur son disque.
+        "barehands_test_mode": {"enabled": True},
+        # **Un profil v1** : la paire d'hystérésis, sans les mesures que la v2
+        # a ajoutées.
+        "barehands_calibration_profile": {
+            "schema_version": 1,
+            "hands": {"left": {"press_ratio": 0.32, "release_ratio": 0.45}},
+        },
+    }), encoding="utf-8")
+
+    state = await state_of(control)
+
+    # **Les neuf clés sont là**, et l'interrupteur que la v1 portait a survécu.
+    assert state["enabled"] is True
+    for key in barehands.SETTINGS_DEFAULTS:
+        assert key in state, key
+
+    # **Le défaut qui compte pour l'UI affinée.** `calibration_enabled` n'était
+    # pas dans le bloc v1 ; il doit revenir *vrai*, sans quoi l'entrée
+    # « Calibrer… » du menu du clic droit serait grisée sous
+    # `barehands_calibration_disabled` chez tout utilisateur de la V1.
+    assert state["calibration_enabled"] is True
+    assert barehands.SETTINGS_DEFAULTS["calibration_enabled"] is True
+
+    # L'outil par défaut est celui que la palette de gauche présélectionne.
+    assert state["tool"] == "pointer" and state["tool"] in barehands.INSTALLED_TOOLS
+
+    # `tutorial_seen` est **toléré**, pas exigé et pas ressuscité : c'est un
+    # champ de compatibilité depuis la Slice 07B de l'affinage
+    # (`docs/legacy/barehands-tutorial-retirement.md`).
+    assert state["tutorial_seen"] is False
+
+    # Le profil v1 se lit, et ses deux mesures ont traversé.
+    profile = json.loads((await control.get_barehands_profile(None)).text)
+    assert profile["hands"]["left"]["press_ratio"] == 0.32
+    assert profile["hands"]["left"]["release_ratio"] == 0.45
+
+    # **Et l'écriture remonte la version.** Une lecture qui convertit sans
+    # qu'une écriture puisse réécrire laisserait le bloc en v1 pour toujours.
+    await control.save_barehands(JsonRequest({"enabled": True, "tool": "select"}))
+    stored = json.loads(control.settings_path.read_text(encoding="utf-8"))
+    assert stored["barehands_test_mode"]["schema_version"] == barehands.SCHEMA_VERSION
+    assert stored["barehands_test_mode"]["tool"] == "select"
+    assert stored["barehands_test_mode"]["calibration_enabled"] is True
+
+    # Rien n'a été archivé : une v1 n'est pas un bloc illisible.
+    assert not [key for key in stored if key.startswith("barehands_test_mode_archived")]
+    # Les réglages voisins n'ont pas bougé.
+    assert stored["agent_cli"] == "codex" and stored["manual_wake_key"] == "f8"

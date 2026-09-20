@@ -134,6 +134,11 @@ STAGE_REASONS: tuple[str, ...] = (
     "barehands_stage_out_of_band",
     "barehands_stage_needs_two_hands",
     "barehands_stage_cancelled",
+    # Slice 07 (divergence D4) : l'étape de manipulation de fenêtre emprunte
+    # l'échelle de la scène pour manipuler un vrai cadre. Scène éteinte,
+    # l'échelle vaut None : l'étape est **passée** avec ce motif plutôt que
+    # jouée contre un faux cadre. Miroir de ``STAGE_REASON.SCENE_UNAVAILABLE``.
+    "barehands_stage_scene_unavailable",
 )
 
 

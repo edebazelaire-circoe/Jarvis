@@ -1086,13 +1086,41 @@ def test_the_calibration_stylesheet_agrees_with_the_dom_names_the_contract_owns(
 
     result = run_node(tmp_path, """
       const K=require(%s);
-      out({dom:C.DOM,style:K.STYLE,styleId:K.STYLE_ID});
+      out({dom:C.DOM,style:K.STYLE,styleId:K.STYLE_ID,
+        stepsStyle:K.STEPS_STYLE,stepsStyleId:K.STEPS_STYLE_ID});
     """ % json.dumps(str(RUNTIME / "control_center_barehands_calibration.js")))
     names, style = result["dom"], result["style"]
 
     assert result["styleId"] == names["flowStyleId"]
+    # **Deux feuilles, deux propriétaires** (Slice 06). Celle de la coque
+    # habille une coque qui ne sait rien du parcours qu'elle porte — c'est ce
+    # qui permet au tutoriel de la réutiliser telle quelle ; celle des exercices
+    # habille les démonstrations de main, le bandeau de phases et le champ de
+    # cibles, qui sont de la calibration et d'elle seule. Les fondre ferait
+    # entrer les gestes dans la coque par la bande.
+    assert result["stepsStyleId"] == names["flowStepsStyleId"]
+    assert result["stepsStyleId"] != result["styleId"]
+    steps_style = result["stepsStyle"]
+    assert f"#{names['flowRootId']} " in steps_style
+    # Le mime des étapes 3, 4 et 5 s'arrête quand l'utilisateur a demandé moins
+    # de mouvement — et l'information passe alors dans l'espace plutôt que dans
+    # la durée : les deux postures se posent côte à côte au lieu de disparaître.
+    assert "prefers-reduced-motion" in steps_style
+    assert "animation:none" in steps_style
     assert f"#{names['flowRootId']}{{" in style
-    for key in ("flowStepClass", "flowProgressClass", "flowNoteClass", "flowTargetClass"):
+    for key in (
+        "flowStepClass", "flowProgressClass", "flowNoteClass", "flowTargetClass",
+        # Les régions nommées de la refonte (Slice 05). Elles entrent dans ce
+        # tuple plutôt que dans un test à part, pour la raison qui a déjà fait
+        # entrer `wakeClass` dans le sien : la dérive se prend par la
+        # comparaison contrat-feuille que ce dépôt possède, pas par la
+        # coïncidence de deux littéraux Python. Une région déclarée au contrat
+        # mais jamais dessinée est une fente où la Slice 06 monterait son
+        # exercice dans le vide, et rien ne le dirait.
+        "flowVeilClass", "flowHeaderClass", "flowStageClass",
+        "flowDemoClass", "flowExerciseClass", "flowFeedbackClass",
+        "flowControlsClass",
+    ):
         assert f"#{names['flowRootId']} .{names[key]}" in style, key
     # La coque vit **sous** la surimpression des mains : l'utilisateur calibre
     # avec ses mains, donc son jeton doit rester visible par-dessus.
@@ -1116,7 +1144,12 @@ def test_the_calibration_constants_are_pinned_like_every_other_engine_table(tmp_
       const K=require(%s);
       out({
         defaults:Object.keys(K.DEFAULTS).sort().map(k=>[k,K.DEFAULTS[k]]),
-        steps:K.STEPS.map(s=>[s.id,s.hold===true,s.needs]),
+        screens:K.SCREENS,
+        steps:K.STEPS.map(s=>[s.id,s.hold===true,s.needs,(s.subs||[]).map(x=>x.id)]),
+        /* Les étapes **mesurées**, écrans dépliés (Slice 07) : la manipulation
+           de fenêtre est un écran qui en porte deux. C'est cette liste-là, et
+           non celle des écrans, qui doit valoir le vocabulaire du profil. */
+        flowStages:K.STEPS.reduce((list,s)=>list.concat(s.subs?s.subs.map(x=>x.id):[s.id]),[]),
         stages:C.STAGES,statuses:C.STAGE_STATUSES,reasons:C.STAGE_REASONS,
         profileVersion:C.PROFILE_SCHEMA_VERSION,
         measured:C.PROFILE_MEASURED_KEYS,
@@ -1124,9 +1157,20 @@ def test_the_calibration_constants_are_pinned_like_every_other_engine_table(tmp_
     """ % json.dumps(str(RUNTIME / "control_center_barehands_calibration.js")))
 
     assert result["defaults"] == [
+        # **Le temps de lecture n'est pas du temps de mesure** (Slice 06,
+        # décision 22). Ces quatre-là décrivent la machine à phases : combien de
+        # points à viser, combien d'images consécutives valent un engagement,
+        # combien de temps dure la lecture, combien de temps se tient un
+        # verdict. Épinglés ici pour la raison qui y a mis `watchdogMs` : les
+        # paires dangereuses qu'ils forment (`watchdogMs < introMs`,
+        # `resultMs < stageTimeoutMs`) ont leurs deux nombres au même endroit.
+        ["aimTargets", 3],
+        ["engageFrames", 2],
+        ["introMs", 2800],
         ["pinchRepeats", 4],
         ["pressAt", 0.35],
         ["releaseAt", 0.65],
+        ["resultMs", 1100],
         ["sampleQualityMin", 0.4],
         ["separationMinPalms", 0.12],
         ["stageHoldMs", 2500],
@@ -1141,22 +1185,38 @@ def test_the_calibration_constants_are_pinned_like_every_other_engine_table(tmp_
         # endroit, comme celle du tutoriel.
         ["watchdogMs", 500],
     ]
-    assert dict(result["defaults"])["watchdogMs"] < dict(result["defaults"])["stageTimeoutMs"]
+    shipped = dict(result["defaults"])
+    assert shipped["watchdogMs"] < shipped["stageTimeoutMs"]
+    # Et les paires que la Slice 06 ajoute : le chien de garde reste plus rapide
+    # que la lecture qu'il fait finir, et le verdict plus court que l'échéance.
+    assert shipped["watchdogMs"] < shipped["introMs"]
+    assert 0 < shipped["resultMs"] < shipped["stageTimeoutMs"]
+    assert shipped["introMs"] > 0 and shipped["engageFrames"] >= 1 and shipped["aimTargets"] >= 1
     # Les sept étapes du contrat, dans l'ordre, avec ce que chacune exige.
+    # Slice 07 : six écrans d'exercice, sept étapes mesurées. Le sixième écran
+    # — « Manipulation de fenêtre » — porte `drag` et `resize` comme sous-étapes
+    # 6A et 6B, au lieu des deux exercices génériques d'avant.
     assert result["steps"] == [
-        ["neutral", True, 1], ["c_pose", True, 1],
-        ["pinch_primary", False, 1], ["pinch_secondary", False, 1],
-        ["aim", False, 1], ["drag", False, 1], ["resize", False, 2],
+        ["neutral", True, 1, []], ["c_pose", True, 1, []],
+        ["pinch_primary", False, 1, []], ["pinch_secondary", False, 1, []],
+        ["aim", False, 1, []], ["drag", False, 1, ["drag", "resize"]],
     ]
-    assert [step[0] for step in result["steps"]] == result["stages"], (
+    assert result["flowStages"] == result["stages"], (
         "les étapes du parcours sont celles que le profil persiste, pas une seconde liste"
     )
+    # Le rapport est le **septième écran**, pas un second « 7 sur 7 » collé sur
+    # le dernier exercice (décision 26).
+    assert result["screens"] == len(result["steps"]) + 1 == 7
     assert result["statuses"] == ["ok", "failed", "skipped"]
     assert result["reasons"] == [
         "barehands_stage_no_hand", "barehands_stage_timeout",
         "barehands_stage_too_few_samples", "barehands_stage_not_separable",
         "barehands_stage_out_of_band", "barehands_stage_needs_two_hands",
         "barehands_stage_cancelled",
+        # Slice 07, divergence D4 : l'étape de manipulation emprunte l'échelle
+        # de la scène. Scène éteinte, elle est **passée** en le disant plutôt
+        # que jouée contre un faux cadre.
+        "barehands_stage_scene_unavailable",
     ]
     assert result["profileVersion"] == 2
     assert sorted(result["measured"]) == sorted([

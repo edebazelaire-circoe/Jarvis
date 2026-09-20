@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-BH-CAL-05",
+      "title": "Evaluate full-screen calibration composition",
+      "instructions": "After automated QA passes, open calibration on the normal Jarvis scene and inspect several viewport sizes. Focus on hierarchy, breathing room, blur, text placement, central exercise space and exit controls.",
+      "expected": "It feels like an integrated full-screen Jarvis calibration mode, not a centered modal, and the center is visually available for the task."
+    }
+  ]
+}

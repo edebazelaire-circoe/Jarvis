@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-BH-CAL-07",
+      "title": "Validate real window practice",
+      "instructions": "After automated QA passes, complete calibration step 6 using a real webcam: first move the practice frame from one edge/corner, then resize it using two distinct compatible zones. Also confirm there is no separate Tutorial flow anywhere in the normal UI.",
+      "expected": "The practice behaves like real Jarvis frames, the two sub-steps are understandable, and calibration is the only guided flow."
+    }
+  ]
+}

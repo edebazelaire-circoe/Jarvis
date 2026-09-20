@@ -6,9 +6,10 @@ Ce que ce fichier épingle :
   n'est pas une lecture de code : les deux chemins sont exécutés sur le **vrai**
   bloc navigateur de `control_center_barehands.js`, depuis le même état de
   départ, et laissent la page dans un état **identique** — même cycle de vie,
-  même bloc `#barehandsLifecycle` redessiné, même bandeau. Un canal qui
-  réimplanterait « réveiller » ne redessinerait pas le panneau, parce que c'est
-  `setAwake` qui finit par `refreshPanel()` ;
+  même présentation peinte par le contrôle de la barre du haut, même bandeau.
+  Un canal qui réimplanterait « réveiller » ne repeindrait pas le bouton, parce
+  que c'est `setAwake` qui finit par `refreshPanel()`, dont `publishLifecycle()`
+  est la première ligne ;
 - **on rapporte ce que la page constate** : sous node il n'y a pas de caméra,
   donc le vrai `activate()` finit en `error`, et le reçu dit `refused` /
   `barehands_lifecycle_refused` / `error`. C'est un refus honnête de bout en
@@ -44,12 +45,50 @@ from jarvis.domain import barehands_command as vocab
 # exécute le vrai bloc navigateur du pointeur, et une seconde version dériverait
 # de celle que la Slice 07 tient.
 from test_barehands_tools_settings_js import (  # noqa: E402
-    BROWSER, CALIBRATION, CONTRACTS, RECORDER, SCENE_INTERACT, SCRIPT, TARGET, TUTORIAL,
+    BROWSER, CALIBRATION, CONTRACTS, RECORDER, SCENE_INTERACT, SCRIPT, TARGET,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / "jarvis" / "runtime"
 COMMANDS = RUNTIME / "control_center_barehands_commands.js"
+HUD = RUNTIME / "control_center_barehands_hud.js"
+#: Le vocabulaire de dessin des mains (Slice 04) : le module du HUD le lit
+#: au chargement et refuse de s'installer sans lui, comme sans les contrats.
+HAND_ART = RUNTIME / "control_center_barehands_hand_art.js"
+
+#: **Le bouton du test est le vrai bouton** (Slice 02). Jusqu'ici le chemin
+#: « bouton » était `#barehandsWake`, dans l'onglet Expérimental ; la décision 1
+#: l'a remplacé par le contrôle de la barre du haut, et la décision 14 a retiré
+#: l'ancien. Piloter ici `BAREHANDS.activate()` aurait rendu le test
+#: tautologique — le canal appelle exactement cette méthode — alors que toute la
+#: valeur du cas est de partir du **contrôle réel**, avec son DOM, son câblage
+#: d'événements et ses gardes, et de constater qu'il arrive où la voix arrive.
+#:
+#: Ce que le double de la Slice 07 n'a pas et que ce contrôle exige : un espace
+#: de noms SVG (l'icône de main est du trait), un focus qui se déplace, et le
+#: retrait d'un attribut. `Date.now` n'est **pas** figé ici, contrairement au
+#: monde de `test_barehands_hud_js` : le canal mesure de vraies durées.
+HUD_DOM = r"""
+const baseCreate=global.document.createElement;
+const enrich=node=>{
+  node.focus=function(){global.document.activeElement=this};
+  node.blur=function(){if(global.document.activeElement===this)global.document.activeElement=null};
+  node.removeAttribute=function(key){delete this.attrs[key]};
+  return node;
+};
+global.document.createElement=tag=>enrich(baseCreate(tag));
+global.document.createElementNS=(ns,tag)=>{
+  const node=enrich(baseCreate(tag));
+  node.namespaceURI=ns;
+  return node;
+};
+const hudHost=global.document.createElement('div');
+hudHost.id='barehandsHud';
+global.document.body.appendChild(hudHost);
+delete require.cache[require.resolve(HUD_PATH)];
+const HUD=require(HUD_PATH);
+const HUDCTRL=window.JarvisBarehandsHudControl;
+"""
 
 #: Ce que le canal a besoin de trouver et que le double de la Slice 07 n'a pas :
 #: de vraies minuteries (le double exécute `setTimeout` tout de suite, ce qui
@@ -107,15 +146,19 @@ def run_node(tmp_path: Path, source: str, name: str) -> object:
     script.write_text(
         f"const SCRIPT_PATH={json.dumps(str(SCRIPT))};\n"
         f"const CALIBRATION_PATH={json.dumps(str(CALIBRATION))};\n"
-        f"const TUTORIAL_PATH={json.dumps(str(TUTORIAL))};\n"
         f"const RECORDER_PATH={json.dumps(str(RECORDER))};\n"
         f"const TARGET_PATH={json.dumps(str(TARGET))};\n"
         f"const SCENE_INTERACT_PATH={json.dumps(str(SCENE_INTERACT))};\n"
         f"const CONTRACTS_PATH={json.dumps(str(CONTRACTS))};\n"
         f"const COMMANDS_PATH={json.dumps(str(COMMANDS))};\n"
+        f"const HUD_PATH={json.dumps(str(HUD))};\n"
+        f"const HAND_ART_PATH={json.dumps(str(HAND_ART))};\n"
         "const REAL_SET_TIMEOUT=setTimeout,REAL_CLEAR_TIMEOUT=clearTimeout;\n"
         "const docListeners={};\n"
         "const C=require(CONTRACTS_PATH);\n"
+        # Le vocabulaire de dessin des mains (Slice 04), chargé comme la page le
+        # sert : avant le module du HUD, qui refuse de s'installer sans lui.
+        "const ART=require(HAND_ART_PATH);\n"
         # Le vrai bloc navigateur arme de **vraies** minuteries (démarrage vidéo
         # de 10 s) dès qu'on l'active : sans sortie explicite, node attendrait
         # qu'elles retombent et chaque cas coûterait une trentaine de secondes.
@@ -143,12 +186,20 @@ const settleLong=async()=>{for(let i=0;i<40;i+=1)await new Promise(r=>REAL_SET_T
 def _observed(tmp_path: Path, drive: str, name: str) -> dict:
     """Ouvrir l'onglet, exécuter `drive`, et rendre ce que la page **montre**."""
 
-    return run_node(tmp_path, BROWSER + NETWORK + SETTLE + """
+    return run_node(tmp_path, BROWSER + NETWORK + HUD_DOM + SETTLE + """
       await openTab();
       const show=id=>{const n=document.getElementById(id);return n?n.innerHTML:'(absent)'};
-      const before={lifecycle:BAREHANDS.lifecycle(),life:show('barehandsLifecycle')};
+      /* Ce que le **bouton peint**, par opposition à ce que le moteur dit. Le
+         bandeau `#barehandsLifecycle` jouait ce rôle avant la Slice 02 ; il a
+         été retiré de l'onglet, et le témoin est désormais la présentation du
+         contrôle de la barre du haut — qui, elle, est visible l'onglet fermé.
+         C'est un meilleur témoin et non un moins bon : il n'est atteint que
+         par la couture, donc une implantation parallèle du réveil ne le
+         bougerait pas davantage que le bandeau d'avant. */
+      const paint=()=>JSON.stringify(HUDCTRL.presentation());
+      const before={lifecycle:BAREHANDS.lifecycle(),life:paint()};
       """ + drive + """
-      out({before,after:{lifecycle:BAREHANDS.lifecycle(),life:show('barehandsLifecycle'),
+      out({before,after:{lifecycle:BAREHANDS.lifecycle(),life:paint(),
         status:show('barehandsStatus')},
         receipts:network.receipts,polls:network.polls,
         /* Ce que la page a répondu **elle-même**, quand le cas s'y intéresse :
@@ -165,17 +216,24 @@ def test_the_button_and_the_voice_leave_the_page_in_the_same_state(tmp_path):
     """**La règle centrale de la Slice** : un seul point d'entrée par action.
 
     Les deux chemins partent du même état, sur le vrai bloc navigateur, et
-    arrivent au même — même cycle de vie, même bloc de cycle de vie redessiné,
-    même bandeau. Ce n'est pas une lecture de source : `#barehandsLifecycle`
-    n'est réécrit que par `refreshPanel()`, que seul `setAwake` appelle. Une
-    implantation parallèle du réveil laisserait ce bloc intact.
+    arrivent au même — même cycle de vie, même présentation peinte par le
+    bouton, même bandeau. Ce n'est pas une lecture de source : la présentation
+    du contrôle de la barre du haut n'est atteinte que par la couture de cycle
+    de vie, que seul `refreshPanel()` alimente et que seul `setAwake` déclenche
+    ici. Une implantation parallèle du réveil laisserait le bouton intact.
+
+    **Slice 02** : le chemin « bouton » part du vrai contrôle, pas de la
+    surface. `choose('active')` traverse son propre câblage puis appelle
+    `activate()` ; depuis `error`, `isLiveLifecycle` est faux et aucune
+    persistance ne s'ajoute, donc les deux chemins se réduisent au même appel
+    — ce que le test vérifie plutôt que de le supposer.
 
     Et sous node il n'y a pas de caméra : les deux chemins finissent donc en
     `error` (`camera_unsupported`). C'est exactement ce qui rend le test
     probant — un refus réel, identique des deux côtés."""
 
     button = _observed(tmp_path, """
-      document.getElementById('barehandsWake').fire('click');
+      await HUDCTRL.choose('active');
       await settle();await settleLong();
     """, "button")
     voice = _observed(tmp_path, """
@@ -188,7 +246,7 @@ def test_the_button_and_the_voice_leave_the_page_in_the_same_state(tmp_path):
     assert button["before"]["lifecycle"] == "off"
     # Le bouton a bien fait quelque chose : sans ça, l'égalité serait vide.
     assert button["after"]["lifecycle"] == "error" != button["before"]["lifecycle"]
-    assert button["after"]["life"] != button["before"]["life"], "le panneau a été redessiné"
+    assert button["after"]["life"] != button["before"]["life"], "le bouton a été repeint"
     # Et la voix laisse la page **exactement** dans cet état-là.
     assert voice["after"] == button["after"]
     assert "camera_unsupported" in button["after"]["life"]
@@ -212,7 +270,7 @@ def test_what_a_brain_sees_today_for_calibration_tutorial_and_overlay(tmp_path):
     confirmation explicite, et ce cas la mesure pour de bon plutôt que de la
     mettre en scène. **L'onglet s'ouvre avec Bare Hands éteint**, et c'est cette
     porte-là qui refuse — `if(!view.enabled)`, code
-    `barehands_calibration_disabled` / `barehands_tutorial_disabled` —, pas
+    `barehands_calibration_lifecycle_off` depuis la Slice 08 —, pas
     l'absence de caméra sous node, qui est la porte **suivante** et n'est jamais
     atteinte. Le commentaire l'attribuait à la caméra : une cause fausse dans un
     test est pire qu'une cause absente, parce qu'elle se croit.
@@ -263,14 +321,122 @@ def test_what_a_brain_sees_today_for_calibration_tutorial_and_overlay(tmp_path):
     # **Et c'est bien l'interrupteur qui a refusé, pas la caméra.** Sans cette
     # lecture, un `calibrate()` rendant `undefined` sans rien lancer donnerait
     # exactement le même reçu.
+    # Slice 08 : `..._lifecycle_off`, et non `..._disabled`, parce que c'est
+    # l'interrupteur qui a refusé et non le réglage « Proposer la calibration ».
     assert observed["gates"]["calibrate"] == {
-        "ok": False, "code": "barehands_calibration_disabled",
+        "ok": False, "code": "barehands_calibration_lifecycle_off",
         "reason": observed["gates"]["calibrate"]["reason"]}
-    assert "Activer Barehands" in observed["gates"]["calibrate"]["reason"]
-    assert observed["gates"]["tutorial"]["code"] == "barehands_tutorial_disabled"
-    assert "Activer Barehands" in observed["gates"]["tutorial"]["reason"]
+    # **Slice 02** : le refus nomme le contrôle qui existe, pas celui qui a
+    # été retiré. Une phrase qui désigne une case disparue est une phrase qui
+    # ne dit plus comment s’en sortir.
+    assert "bouton à icône de main" in observed["gates"]["calibrate"]["reason"]
+    # **L'alias déprécié hérite du refus de la calibration, sous le nom de la
+    # calibration** (Slice 07B). L'appelant a demandé `tutorial` et a obtenu la
+    # calibration ; quand elle refuse, c'est son code qui remonte. Renommer le
+    # refus en `barehands_tutorial_*` cacherait **lequel** des parcours a
+    # échoué — et il n'y en a plus qu'un.
+    assert observed["gates"]["tutorial"]["code"] == "barehands_calibration_lifecycle_off"
+    assert "bouton à icône de main" in observed["gates"]["tutorial"]["reason"]
+    # Le refus n'est pas décoré : `startTutorialAlias` ne colle sa phrase de
+    # dépréciation qu'à une confirmation, parce qu'un refus doit porter sa
+    # cause exacte et rien d'autre.
+    assert "deprecated" not in observed["gates"]["tutorial"]
     # `exit_overlay` confirme parce que l'état demandé est déjà là.
     assert observed["gates"]["exitOverlay"]["ok"] is True
+
+
+def test_the_channel_hands_its_receipt_to_the_screen_without_changing_what_it_reports(tmp_path):
+    """Repris de `test_barehands_tutorial_js.py`, supprimé à la Slice 07B avec
+    le module qu'il décrivait : cette assertion-là ne portait pas sur le
+    tutoriel, elle portait sur **le canal**, et c'est ici qu'elle vit.
+
+    Le canal n'a pas de surface à lui et n'en aura pas : il **donne** son reçu à
+    qui sait dessiner. L'ajout est un dépôt (`deps.onReceipt`) et un accesseur
+    (`last()`) ; `state().last` garde sa forme `"<commande>:<issue>"`, parce
+    qu'un accesseur dont on change la forme casse ses lecteurs.
+
+    Et une sortie qui lève ne mange pas le reçu : le cerveau attend la vérité du
+    transport, pas celle de l'écran."""
+
+    result = run_node(tmp_path, BROWSER + NETWORK + SETTLE + """
+      await openTab();
+      const seen=[];
+      let life='sleep';
+      const channel=CH.createCommandChannel({surface:()=>({lifecycle:()=>life,
+        activate:async()=>{life='active'}}),now:()=>7,sleep:async()=>{},random:()=>0.5,
+        request:async()=>({status:200,body:{}}),
+        onReceipt:entry=>seen.push(entry),log:()=>{}});
+      await channel.apply({id:'a'.repeat(32),name:'activate',remaining_ms:3000});
+      const before=channel.state().last;
+      // Un puits qui leve : le recu part quand meme, et la panne est journalisee.
+      const logs=[];
+      let angryLife='sleep';
+      const angry=CH.createCommandChannel({surface:()=>({lifecycle:()=>angryLife,
+        activate:async()=>{angryLife='active'}}),now:()=>7,sleep:async()=>{},random:()=>0.5,
+        request:async()=>({status:200,body:{}}),
+        onReceipt:()=>{throw new Error('ecran casse')},
+        log:(level,event)=>logs.push([level,event])});
+      const outcome=await angry.apply({id:'b'.repeat(32),name:'activate',remaining_ms:3000});
+      out({seen,before,last:channel.last(),outcome,logs,
+        idle:CH.createCommandChannel({surface:()=>null,now:()=>0,sleep:async()=>{},
+          random:()=>0.5,request:async()=>({status:200,body:{}}),log:()=>{}}).last()});
+    """, "receiptSink")
+
+    assert result["seen"] == [{"name": "activate", "outcome": "applied", "code": "",
+                               "reason": "", "lifecycle": "active", "at": 7}]
+    # `state().last` n'a pas changé de forme.
+    assert result["before"] == "activate:applied"
+    assert result["last"] == result["seen"][0]
+    # `null` tant que rien n'est passé : « jamais » n'est pas « échoué ».
+    assert result["idle"] is None
+    # Un puits qui lève ne mange pas le reçu, et il est journalisé.
+    assert result["outcome"] == "applied"
+    assert ["warn", "barehands.receipt_sink_failed"] in result["logs"]
+
+
+def test_a_voice_command_leaves_a_trace_on_screen_even_when_it_is_refused(tmp_path):
+    """**L'Issue R13 de la Slice 12**, reprise de `test_barehands_tutorial_js.py`.
+
+    Une commande vocale appliquée redessinait bien le panneau, mais rien ne
+    disait qu'elle venait de la voix ; et une commande vocale **refusée** ne
+    laissait rien du tout à l'écran — un `console.warn`, puis le silence. La
+    RÈGLE ZÉRO n'était pas violée (l'utilisateur *entend* JARVIS) : le manque
+    était pour l'œil.
+
+    **Une assertion de l'original n'est pas reprise, et il faut le dire.**
+    L'ancien test ouvrait la coque avec `BAREHANDS.tutorial()`, qui n'exigeait
+    pas de caméra, puis vérifiait que le reçu d'une commande refusée s'écrit
+    dans la coque (qui couvre les toasts) et y survit aux images suivantes.
+    Depuis la Slice 07B, la seule porte est la calibration, qui exige `active` —
+    hors de portée de node, qui ne charge pas MediaPipe. Cette assertion-là ne
+    peut plus être tenue sous node ; elle se juge devant une vraie webcam, comme
+    le reste du visuel de cette tâche. Ce qui **reste** tenu ici est le chemin
+    panneau fermé, qui est celui de la voix."""
+
+    result = run_node(tmp_path, BROWSER + NETWORK + SETTLE + """
+      await openTab();
+      const empty=document.getElementById('barehandsVoice').innerHTML;
+      // Un recu de refus, tel que le canal le remet (Slice 12, `onReceipt`).
+      BAREHANDS.voice.record({name:'tutorial',outcome:'refused',
+        code:'barehands_flow_unconfirmed',
+        reason:"JarvisBarehands.tutorial n’a pas confirme le demarrage",
+        lifecycle:'off'});
+      const refusedLine=document.getElementById('barehandsVoice').innerHTML;
+      const afterRefusal=toasts.slice();
+      // Puis une commande appliquee : l'ecran dit qu'elle vient de la voix.
+      BAREHANDS.voice.record({name:'activate',outcome:'applied',code:'',reason:'',lifecycle:'active'});
+      const appliedLine=document.getElementById('barehandsVoice').innerHTML;
+      out({empty,refusedLine,appliedLine,afterRefusal,last:BAREHANDS.voice.last()});
+    """, "voiceTrace")
+
+    assert "Aucune commande vocale" in result["empty"]
+    # Le refus est nommé, avec son code et la phrase exacte de la page.
+    assert "tutorial" in result["refusedLine"] and "refusée" in result["refusedLine"]
+    assert "barehands_flow_unconfirmed" in result["refusedLine"]
+    assert result["afterRefusal"][-1] == "bad", "un refus vocal se voit sans ouvrir le panneau"
+    # Une commande appliquée se voit aussi : c'est ce qui la distingue d'un clic.
+    assert "activate" in result["appliedLine"] and "appliquée" in result["appliedLine"]
+    assert result["last"]["name"] == "activate" and result["last"]["outcome"] == "applied"
 
 
 #: Une surface injectée, dont le contrat est **épinglé sur la vraie** par

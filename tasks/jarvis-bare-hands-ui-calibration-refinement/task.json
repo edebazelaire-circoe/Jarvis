@@ -1,0 +1,29 @@
+{
+  "project": "Jarvis",
+  "slug": "jarvis-bare-hands-ui-calibration-refinement",
+  "repository": "edebazelaire-circoe/Jarvis",
+  "source_snapshot": {
+    "branch": "main",
+    "sha": "a949f40c16c4a61fc563e7d7cdf1c32da913c207",
+    "inspected_date": "2026-09-20"
+  },
+  "summary": "Refine the already-implemented Bare Hands V1 UI: first-class HUD lifecycle control, right-click quick actions, fixed left tool palette, visual help, settings cleanup, full-screen calibration/tutorial experience, and real window move/resize practice.",
+  "locked_constraints": [
+    "Do not redefine existing contextual Bare Hands interaction semantics; inherit docs/barehands-contracts.md and the prior jarvis-bare-hands-v1 task.",
+    "Bare Hands main HUD button uses a hand icon and mirrors OFF/SLEEP/ACTIVE from the real controller state.",
+    "OFF is dim grey, SLEEP uses normal Jarvis blue, ACTIVE uses brighter electric blue with a subtle glow; ACTIVE is not green.",
+    "Normal click opens a visual three-state chooser, not a text dropdown; right click opens Settings, Calibration, Help/Gestures, Diagnostics.",
+    "Expose only existing tools pointer, pan and select in a fixed vertical left palette; do not add new tools.",
+    "Remove lifecycle/tool/tutorial usage controls from the primary Settings information architecture.",
+    "Remove the separate user-facing Tutorial flow; calibration becomes the guided learning flow.",
+    "Calibration uses a full-screen blurred overlay without a centered modal and reserves the center for the exercise.",
+    "Calibration steps have a minimum reading phase and do not start measurement timeouts until the user can actually engage the exercise.",
+    "Calibration steps are resting hand, C wake pose, primary pinch, secondary pinch, target pinch, window move+resize sub-steps, completion.",
+    "The virtual hand is simple schematic/robotic line art, not realistic.",
+    "Window practice must use the real Bare Hands frame target/capture/geometry semantics rather than a fake drag widget."
+  ],
+  "planning_blockers": [
+    "Workspace Task Type vocabulary is not exposed here; Slice 00 must assign valid existing Task Types before implementation dispatch.",
+    "Slice 00 must decide the safest backward-compatible migration for the existing tutorial voice/MCP command, but no separate tutorial UI/flow may remain."
+  ]
+}

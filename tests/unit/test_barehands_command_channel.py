@@ -700,6 +700,20 @@ async def test_the_flow_tools_no_longer_tell_the_brain_they_are_unimplemented():
         assert "ouverte" in text and "PAS que le parcours est terminé" in text, name
         # Et le refus qu'ils peuvent vraiment produire aujourd'hui.
         assert vocab.FLOW_UNCONFIRMED in text, name
+    # **Et `barehands_tutorial` dit qu'il est déprécié** (Slice 07B) : la
+    # description est la seule chose que le cerveau lit avant de choisir, et
+    # « Lancer le tutoriel » lui ferait annoncer un tutoriel devant une
+    # calibration. Elle nomme aussi l'outil à préférer, sans quoi le cerveau
+    # n'aurait aucune raison de changer d'habitude.
+    tutorial = listed["barehands_tutorial"]
+    assert "Déprécié" in tutorial
+    assert "CALIBRATION" in tutorial
+    assert "barehands_calibrate" in tutorial
+    assert "barehands_calibration_" in tutorial, (
+        "les refus de l'alias portent le nom de la calibration : le cerveau doit le savoir"
+    )
+    # L'outil qui **ouvre vraiment** n'a pas de dépréciation à annoncer.
+    assert "Déprécié" not in listed["barehands_calibrate"]
     # L'outil qui **ferme** dit qu'il ferme, et jamais l'inverse.
     text = listed[closing]
     assert "fermée" in text, closing
@@ -757,6 +771,115 @@ async def test_a_refused_command_crosses_the_mcp_protocol_as_an_error_not_a_resu
             # 3. Un argument inventé ne passe pas pour appliqué.
             bad = await client.call_tool("barehands_activate", {"force": True})
             assert bad.isError is True and "rien n'a été envoyé" in bad.content[0].text
+    finally:
+        await tools.close()
+
+
+async def test_the_deprecated_tutorial_tool_tells_the_brain_it_opened_the_calibration(running, session):
+    """**La trace entière de la commande dépréciée** (Slice 07B, décisions 10
+    et 17).
+
+    Le parcours de tutoriel a été retiré ; `tutorial` reste au vocabulaire — son
+    nom est miroité sous assertion de parité au chargement en trois endroits, et
+    le retirer serait une rupture coordonnée pour rien — mais il ouvre la
+    **calibration**. Le danger est exactement le faux succès que ce canal existe
+    pour empêcher : sans phrase, le cerveau lit `{"command": "tutorial",
+    "outcome": "applied", "note": "Fait."}` et annonce un tutoriel à quelqu'un
+    qui regarde une calibration.
+
+    Ce test suit la commande sur le **vrai** serveur, de l'appel d'outil MCP au
+    résultat rendu au cerveau, en passant par le long-poll et le reçu de la
+    page. Ce qu'il épingle :
+
+    1. le reçu d'un **succès** a le droit de porter un `reason` — le domaine ne
+       réservait `code` qu'aux refus, donc aucun contrat n'a eu à bouger ;
+    2. le courtier le renvoie dans son corps 200 ;
+    3. l'outil le colle à sa phrase d'issue, donc le cerveau lit ce qui s'est
+       **réellement** ouvert ;
+    4. et le journal porte la même commande, reliée par son identifiant court.
+
+    Une note qui dirait seulement « Fait. » satisferait l'issue **et** mentirait
+    à l'utilisateur : c'est pourquoi l'assertion porte sur la phrase."""
+
+    from mcp.shared.memory import create_connected_server_and_client_session
+
+    said = ("Commande dépréciée : le parcours de tutoriel a été retiré, "
+            "c’est la calibration qui a été ouverte.")
+
+    await running.enable()
+    tools = BarehandsCommandTools(BarehandsMcpTarget("127.0.0.1", running.port, running.control.runtime_root),
+                                  journal=running.control.journal)
+
+    async def page() -> str:
+        """Ce que la page fait vraiment : elle prend la commande et rapporte ce
+        qu'elle a **constaté** — la calibration ouverte, sous le nom `tutorial`."""
+
+        delivered = await running.poll(session, wait_s=10)
+        command = delivered["command"]
+        await running.receipt(session, command["id"], {
+            "outcome": "applied", "lifecycle": "active", "reason": said})
+        return command["id"]
+
+    try:
+        async with create_connected_server_and_client_session(build_server(tools=tools)) as client:
+            answering = asyncio.ensure_future(page())
+            result = await asyncio.wait_for(client.call_tool("barehands_tutorial", {}), timeout=20)
+            command_id = await answering
+        assert result.isError is False
+        payload = json.loads(result.content[0].text)
+        # Le nom de la commande reste celui qu'on a appelé : on ne réécrit pas
+        # l'histoire. C'est la **note** qui dit ce qui s'est passé.
+        assert payload["command"] == "tutorial"
+        assert payload["outcome"] == "applied"
+        assert payload["lifecycle"] == "active"
+        # **Le cœur du test** : le cerveau ne peut pas annoncer un tutoriel.
+        assert payload["note"].startswith("Fait.")
+        assert said in payload["note"]
+        assert "calibration" in payload["note"]
+        assert "dépréciée" in payload["note"]
+        # La trace du courtier porte la même commande, reliée par son
+        # identifiant court — c'est ce qui recolle les deux moitiés de la trace.
+        lines = [line for line in trace(running.control)
+                 if line["kind"] in ("barehands.command_requested", "barehands.command_delivered",
+                                     "barehands.command_applied", "barehands.tool")]
+        assert [line["kind"] for line in lines] == [
+            "barehands.command_requested", "barehands.command_delivered",
+            "barehands.command_applied", "barehands.tool",
+        ]
+        assert {line["data"]["command"] for line in lines} == {"tutorial"}
+        assert {line["data"]["id"] for line in lines} == {command_id[:8]}
+        assert lines[-1]["data"]["tool"] == "barehands_tutorial"
+        assert lines[-1]["data"]["outcome"] == "applied"
+    finally:
+        await tools.close()
+
+
+async def test_a_successful_receipt_without_a_reason_keeps_its_plain_sentence(running, session):
+    """Le pendant du précédent : rien n'est **fabriqué**.
+
+    Un parcours qui n'a rien de surprenant à annoncer ne dit rien, et la note
+    reste la phrase d'issue seule. Sans cette assertion, un `note` qui
+    concaténerait n'importe quoi passerait pour correct."""
+
+    await running.enable()
+    tools = BarehandsCommandTools(BarehandsMcpTarget("127.0.0.1", running.port, running.control.runtime_root),
+                                  journal=running.control.journal)
+
+    async def page(body: dict) -> None:
+        delivered = await running.poll(session, wait_s=10)
+        await running.receipt(session, delivered["command"]["id"], body)
+
+    try:
+        answering = asyncio.ensure_future(page({"outcome": "applied", "lifecycle": "active"}))
+        answer = await tools.send("barehands_calibrate", "calibrate")
+        await answering
+        assert answer["note"] == "Fait."
+        # Un `reason` vide ne colle pas d'espace non plus.
+        answering = asyncio.ensure_future(page(
+            {"outcome": "applied", "lifecycle": "active", "reason": "   "}))
+        answer = await tools.send("barehands_calibrate", "calibrate")
+        await answering
+        assert answer["note"] == "Fait."
     finally:
         await tools.close()
 

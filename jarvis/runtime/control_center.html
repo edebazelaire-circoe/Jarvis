@@ -13,10 +13,26 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
    au fond ; la scène constellation (20, conteneur #sceneLayer créé par
    control_center_scene_page.js seulement si scene.enabled) passe au-dessus ;
    toute commande de la page reste au-dessus de la scène : barre du haut et
-   indication vocale 31, dock 32, panneau 33, bandeau GPT-Live 35, pastilles
+   indication vocale 31, palette d'outils Bare Hands 30 (Slice 03 : juste
+   SOUS le contrôle de cycle de vie et son sélecteur, qu'elle jouxte sur le
+   bord gauche — le sélecteur s'ouvre par-dessus elle et ne doit jamais se
+   faire recouvrir par la colonne d'icônes qu'il masque le temps d'un choix),
+   dock 32, contrôle Bare Hands du haut-gauche 32 (même
+   rang que le dock : c'est une commande de page de la même classe, de l'autre
+   côté de l'écran) et son sélecteur de mode 36 (juste au-dessus du bandeau
+   GPT-Live, qu'un choix ouvert par l'utilisateur doit pouvoir recouvrir, et
+   sous les pastilles et les modales, qui le recouvrent), panneau 33, bandeau GPT-Live 35, pastilles
    40, chronologie de conversation 55 (modale plein écran `.tl`), fond des
    réglages 60, notifications 70, liste des pastilles 75, menu
-   contextuel 80, confirmation en page 85, Barehands 2147483000. Thème Omega :
+   contextuel 80 — un seul `.ctxmenu` partagé : cartes d'agents, objets de la
+   scène et, depuis la Slice 02, les quatre actions rapides du contrôle Bare
+   Hands ; 80 est au-dessus du sélecteur de mode (36), donc le menu recouvre
+   bien le sélecteur qu'il remplace et non l'inverse —,
+   cartes rapides Bare Hands 82 (Slice 04 : Aide / Gestes et Diagnostic,
+   ouvertes **depuis** le menu contextuel, donc au-dessus de ses 80 — une carte
+   qui se ferait recouvrir par le menu qui l'a ouverte serait illisible — et en
+   dessous de la confirmation en page, qui doit pouvoir les recouvrir),
+   confirmation en page 85, Barehands 2147483000. Thème Omega :
    panneau 42, barre 45, bandeau 48, dock et pastilles 50. Les couches de la
    scène (0–1000) ne s'empilent qu'à l'intérieur de son conteneur ; les rangs
    internes de la chronologie (`.tl-*`, 1–30) et de l'écran d'aiguillage (aucun :
@@ -713,6 +729,35 @@ details.rd[open]>summary{margin-bottom:14px}
 <div id="app">
   <iframe class="face" src="__VISUALIZER_URL__" title="Jarvis visualizer"></iframe>
   <div class="topbar"><div class="brand">JARVIS</div><div class="state">VOICE <strong id="voiceState">IDLE</strong> · <strong id="agentName">CLAUDE</strong> <strong id="agentState">STOPPED</strong><span id="subagentState" hidden> · <strong id="subagentCount">0</strong> <span id="subagentWord">SOUS-AGENTS</span></span></div></div>
+  <!-- Emplacement du contrôle de cycle de vie Bare Hands : un contrôle autonome
+       du haut-gauche, hors de `.dock` (qui reste à droite) et hors de `.topbar`
+       (dont les événements de pointeur sont coupés). Il est **déclaré ici**, et
+       non fabriqué par le script, pour que son rang d'empilement vive dans le
+       registre ci-dessus avec tous les autres ; `control_center_barehands_hud.js`
+       le remplit, et refuse de s'installer sous un nom cherchable s'il manque.
+       C'est aussi le haut de la colonne où la palette d'outils viendra. -->
+  <div id="barehandsHud"></div>
+  <!-- Emplacement de la palette d'outils Bare Hands (Slice 03, décisions 11 à
+       13) : une bande verticale **fixe** d'icônes sur le bord gauche, sous le
+       contrôle ci-dessus — la main et ses outils voisinent. Déclaré ici pour
+       la même raison que lui : le rang d'empilement (30) vit dans le registre
+       ci-dessus avec tous les autres, et non dispersé dans un script. Il est
+       rempli par `control_center_barehands_hud.js`, qui refuse de la dessiner
+       sous un nom cherchable si cet emplacement manque — sans emporter le
+       contrôle de cycle de vie, qui est le plus important des deux. -->
+  <div id="barehandsPalette"></div>
+  <!-- Emplacement des deux cartes rapides Bare Hands (Slice 04, décisions 15
+       et 16) : Aide / Gestes et Diagnostic, ouvertes depuis le menu du clic
+       droit du contrôle ci-dessus. **Un seul** emplacement pour les deux, une
+       seule carte ouverte à la fois. Déclaré ici pour la même raison que les
+       deux précédents : son rang d'empilement (82) vit dans le registre du
+       haut. 82 est au-dessus du menu contextuel (80), qui ouvre ces cartes et
+       doit donc se faire recouvrir par elles, et en dessous de la confirmation
+       en page (85), qui doit pouvoir les recouvrir à son tour. Rempli par
+       `control_center_barehands_hud.js`, qui refuse de dessiner les cartes
+       sous un nom cherchable si cet emplacement manque — sans emporter ni le
+       contrôle de cycle de vie ni la palette. -->
+  <div id="barehandsCards"></div>
   <section class="live-banner" id="liveBanner" role="status" aria-live="assertive" aria-label="État de la session GPT-Live" hidden>
     <span class="live-led" aria-hidden="true"></span>
     <div class="live-main"><div class="live-title">GPT-LIVE <strong id="liveState">ACTIF</strong> · <span id="liveElapsed">00:00</span></div><div class="live-meta" id="liveMeta"></div></div>
@@ -1074,6 +1119,11 @@ const STATUS={
 /* Contrats et schémas Bare Hands V1 (Slice 01), lus par le pointeur et par la
    page de scène : `control_center_barehands_contracts.js`. Avant les deux. */
 /*__CONTROL_CENTER_BAREHANDS_CONTRACTS_JS__*/
+/* Vocabulaire de dessin des mains schématiques (décision 20), lu par le
+   contrôle du haut-gauche, par la carte d'aide et — Slices 05 et 06 — par la
+   calibration. Inséré **avant la calibration**, qui est servie bien avant le
+   HUD : `control_center_barehands_hand_art.js`. */
+/*__CONTROL_CENTER_BAREHANDS_HAND_ART_JS__*/
 /* Cible sémantique et aperçu Bare Hands (Slice 05), après les contrats qu'il lit
    et avant le pointeur qui le lit : `control_center_barehands_target.js`. */
 /*__CONTROL_CENTER_BAREHANDS_TARGET_JS__*/
@@ -1082,17 +1132,16 @@ const STATUS={
    `JarvisBarehands.calibrate()` sur sa surface gelée :
    `control_center_barehands_calibration.js`. */
 /*__CONTROL_CENTER_BAREHANDS_CALIBRATION_JS__*/
-/* Parcours de tutoriel Bare Hands (Slice 09), après la calibration dont il
-   reprend la coque de surimpression telle quelle, et avant le pointeur, qui le
-   lit pour poser `JarvisBarehands.tutorial()` et `.exitOverlay()` sur sa
-   surface gelée : `control_center_barehands_tutorial.js`. */
-/*__CONTROL_CENTER_BAREHANDS_TUTORIAL_JS__*/
 /* Enregistrement, rejeu et mesures Bare Hands (Slice 10), après les contrats
    qu'il lit et avant le pointeur, qui le lit pour poser `JarvisBarehands.record`
    sur sa surface gelée : `control_center_barehands_recorder.js`. */
 /*__CONTROL_CENTER_BAREHANDS_RECORDER_JS__*/
 /* Barehands en mode test (pointeur à mains nues) : `control_center_barehands.js`. */
 /*__CONTROL_CENTER_BAREHANDS_JS__*/
+/* Contrôle de cycle de vie Bare Hands de la barre du haut, après le pointeur
+   qui pose `window.JarvisBarehands` **et** sa couture de cycle de vie, à
+   laquelle il s'abonne : `control_center_barehands_hud.js`. */
+/*__CONTROL_CENTER_BAREHANDS_HUD_JS__*/
 /* Canal de commandes du cerveau vers Bare Hands (Slice 12), après le pointeur
    qui pose `window.JarvisBarehands` : `control_center_barehands_commands.js`. */
 /*__CONTROL_CENTER_BAREHANDS_COMMANDS_JS__*/
