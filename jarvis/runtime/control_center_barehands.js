@@ -3893,26 +3893,32 @@ try{
       for(const el of outlined)el.classList.remove(BH.DOM.hoverClass);
       outlined=new Set();
     }
-    /* **Le cadre suit ce qu'il tient.**
+    /* **Où l'objet est, par opposition à ce qu'il est.**
 
        Le descripteur d'une cible est figé à la descente (décision 13) et il
        doit l'être : c'est lui qui dit *quel objet* et *quelle prise*, et un
        glissement de 30 px ne doit pas changer l'un ni l'autre en cours de
        geste. Son `boundsPx`, lui, n'est pas un descripteur : c'est *où l'objet
        est*, et l'objet, pendant ce temps, bouge — c'est précisément ce que la
-       main est en train de lui faire. Dessiné tel que figé, le cadre jaune
-       restait planté à l'endroit de la prise pendant que la fenêtre partait
-       ailleurs, et l'étirement d'un bord ne se voyait nulle part.
+       main est en train de lui faire. On relit donc le rectangle de l'élément
+       à chaque image, de **la** source (`getBoundingClientRect`), celle que la
+       collecte lit elle aussi.
 
-       On relit donc le rectangle de l'élément à chaque image. Ce n'est pas une
-       seconde source de vérité : c'est **la** source, celle que la collecte lit
-       elle aussi (`getBoundingClientRect`), simplement relue maintenant plutôt
-       qu'il y a trois cents millisecondes. Un élément disparu du dessin rend un
-       rectangle vide et on garde alors le **dernier mesuré** — pas celui de la
-       prise : une fenêtre qui disparaît au milieu d'un déplacement laisserait
-       sinon son cadre revenir d'un bond là où la main l'avait saisie, ce qui
-       est un mouvement que personne n'a fait. Un cadre au coin supérieur
-       gauche, lui, serait pire que les deux. */
+       **Ce n'est plus ce qui fait suivre le cadre**, et il faut le dire ici
+       parce que ce fut le cas pendant une version : un cadre qui *suit* est un
+       cadre en retard, puisqu'il est dessiné au début de l'image et que la
+       manipulation est appliquée à la fin. Le cadre est maintenant un **enfant**
+       de ce qu'il surligne (décision 3 ter, module d'aperçu) et n'a plus rien à
+       rattraper. Ce rectangle-ci ne sert donc qu'à deux choses honnêtes : borner
+       l'épaisseur d'une bande, et rester juste pour ce que `targets()` publie et
+       pour les cibles qui, ne pouvant pas porter d'enfant, sont encore dessinées
+       en surimpression.
+
+       Un élément disparu du dessin rend un rectangle vide et on garde alors le
+       **dernier mesuré** — pas celui de la prise : une fenêtre qui disparaît au
+       milieu d'un déplacement laisserait sinon son cadre revenir d'un bond là où
+       la main l'avait saisie, ce qui est un mouvement que personne n'a fait. Un
+       cadre au coin supérieur gauche, lui, serait pire que les deux. */
     const liveBounds=el=>{
       if(!el||typeof el.getBoundingClientRect!=='function')return null;
       const r=el.getBoundingClientRect();
@@ -4044,7 +4050,14 @@ try{
       const live=new Set([...out,...hovering].map(t=>`${t.handTrackId}|${t.channel}`));
       for(const key of [...decor.keys()])if(!live.has(key))decor.delete(key);
       resolved=out;
-      preview.render(previewOn?[...out,...hovering]:[]);
+      /* **Décision 3 ter : le surlignage est un enfant de ce qu'il surligne.**
+         L'élément ne voyage pas dans la liste — un nœud du DOM n'a rien à faire
+         dans ce que le résolveur publie ni dans ce que le moteur de captures
+         reçoit (contrat § 6) — il se **demande**, par clé, et seul le dessin le
+         demande. `decor` est déjà l'endroit où l'apparence d'une cible vit, y
+         compris figée ; c'est donc lui qui répond. */
+      preview.render(previewOn?[...out,...hovering]:[],
+        key=>{const look=decor.get(key);return look?look.element:null});
     }
 
     /* ------------------------------------------------ Slice 06 : captures

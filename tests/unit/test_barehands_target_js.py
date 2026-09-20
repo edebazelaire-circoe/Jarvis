@@ -541,23 +541,31 @@ def test_a_zone_the_drawing_cannot_read_refuses_instead_of_guessing(tmp_path):
       const T=require(TARGET_PATH);
       const bounds={x:0,y:0,w:200,h:100};
       const rect=(region,zone)=>T.zoneRect({boundsPx:bounds,region,zone,bandPx:10});
-      const box=r=>r===null?null:[r.left,r.top,r.width,r.height];
+      /* La barre est dite en **insets** : les côtés auxquels elle est collée,
+         plus son épaisseur. Un côté absent est un côté qu'elle ne tient pas. */
+      const box=r=>r===null?null:[r.left,r.right,r.top,r.bottom,r.width,r.height];
       out({
         top:box(rect('edge','top')),bottom:box(rect('edge','bottom')),
         left:box(rect('edge','left')),right:box(rect('edge','right')),
         corner:(()=>{const r=rect('corner','bottom_right');
-          return [r.corner,r.left,r.top,r.hide]})(),
+          return [r.corner,box(r),r.hide]})(),
         /* Ce que le dessin ne sait pas lire : pas de bord droit par défaut. */
         unknown:rect('edge','milieu'),
         absent:rect('edge',null),
         empty:rect('edge',''),
       });
     """)
-    assert result["top"] == [0, 0, 200, 10]
-    assert result["bottom"] == [0, 90, 200, 10]
-    assert result["left"] == [0, 0, 10, 100]
-    assert result["right"] == [190, 0, 10, 100]
-    assert result["corner"][0] is True and result["corner"][1] == 182
+    # `null` est ce que JSON fait d'un `undefined` : le côté n'est pas tenu.
+    N = None
+    assert result["top"] == [0, 0, 0, N, N, 10]
+    assert result["bottom"] == [0, 0, N, 0, N, 10]
+    assert result["left"] == [0, N, 0, 0, 10, N]
+    assert result["right"] == [N, 0, 0, 0, 10, N]
+    # Un coin tient **ses deux** côtés et ne s'étire sur aucun : deux insets et
+    # une taille, jamais une largeur déduite du cadre.
+    assert result["corner"][0] is True
+    assert result["corner"][1] == [N, 0, N, 0, 18, 18]
+    assert set(result["corner"][2]) == {"top", "left"}
     assert result["unknown"] is None, "un côté inconnu ne se dessine pas « à droite »"
     assert result["absent"] is None
     assert result["empty"] is None
@@ -820,7 +828,15 @@ def test_the_preview_style_sheet_names_the_three_feedback_variables(tmp_path):
     """Une feuille de style ne peut pas lire le contrat. Les trois variables de
     la décision 23 sont donc écrites en clair dans la feuille de l'aperçu, et ce
     test vérifie qu'elles sont bien les trois du contrat — avec leur repli, pour
-    qu'un thème muet ne rende pas un aperçu invisible."""
+    qu'un thème muet ne rende pas un aperçu invisible.
+
+    Et **aucune de ses règles n'est portée par la surimpression** (décision
+    3 ter). C'est l'inverse de ce que ce test exigeait, et le renversement est
+    la règle elle-même : un cadre imbriqué vit dans le nœud qu'il surligne,
+    donc sous la scène et hors de `#jarvisHands`. Un sélecteur qui commencerait
+    par la racine ne l'atteindrait plus — il ne serait pas « moins précis », il
+    serait sans effet, et le cadre s'afficherait nu. Les classes suffisent :
+    elles sont à nous, préfixe compris."""
 
     result = run_node(tmp_path, "out({tokens:C.FEEDBACK_TOKENS,dom:C.DOM,"
                                 "sheet:require(TARGET_PATH).STYLE});")
@@ -831,11 +847,16 @@ def test_the_preview_style_sheet_names_the_three_feedback_variables(tmp_path):
         assert f"var({token['cssVar']},{token['fallback']})" in sheet, role
     names = tokens["dom"]
     for key in ("targetClass", "targetZoneClass"):
-        assert f"{names['rootSelector']} .{names[key]}" in sheet, key
-    # La ligne des refus vit avec la pastille, donc dans la feuille du pointeur.
+        assert f".{names[key]}" in sheet, key
+        assert f"{names['rootSelector']} .{names[key]}" not in sheet, (
+            f"{key} : une règle portée par la surimpression n'atteint plus un cadre imbriqué"
+        )
+    # La ligne des refus vit avec la pastille, donc dans la feuille du pointeur —
+    # elle, n'est jamais imbriquée et reste portée par la racine.
     assert f"{names['rootSelector']} .{names['noteClass']}" in barehands
-    # Et l'aperçu se dessine dans la surimpression : pas de seconde racine à
-    # exempter du balayage `inert` de la page.
+    # Et il n'y a toujours pas de seconde racine à exempter du balayage `inert`
+    # de la page : un cadre imbriqué n'en crée pas, il emprunte celle de son
+    # hôte.
     assert "jarvisTargets" not in sheet
 
 
@@ -853,10 +874,19 @@ def test_the_preview_style_sheet_names_the_three_feedback_variables(tmp_path):
 ELEMENTS = """
 const registry=[];
 const node=(opts)=>{
-  const o=Object.assign({sel:[],rect:null,id:'',dataset:{},label:''},opts||{});
+  /* `position` et `tagName` sont ce que l'aperçu interroge pour savoir si un
+     élément **peut porter son propre surlignage** (décision 3 ter) : un enfant
+     en `inset:0` ne recouvre la boîte de son parent que si ce parent est
+     positionné, et un `input` n'a pas d'enfants du tout. Le double les déclare
+     donc, comme il déclare déjà ses sélecteurs et son rectangle — et il les
+     déclare **faux par défaut** (`static`), qui est ce qu'est un élément de
+     page ordinaire. */
+  const o=Object.assign({sel:[],rect:null,id:'',dataset:{},label:'',
+    position:'static',tagName:'DIV'},opts||{});
   const classes=new Set();
   const el={children:[],className:'',id:o.id,textContent:o.label,offsetWidth:1,
     sel:o.sel,dataset:o.dataset,attrs:{},parent:null,
+    tagName:o.tagName,position:o.position,nodeType:1,
     style:{setProperty(k,v){this[k]=v}},
     classList:{add:c=>classes.add(c),remove:c=>classes.delete(c),
       toggle:(c,on)=>{if(on)classes.add(c);else classes.delete(c)},
@@ -868,7 +898,16 @@ const node=(opts)=>{
     setAttribute(k,v){el.attrs[k]=String(v)},
     getBoundingClientRect(){return o.rect||{left:0,top:0,width:0,height:0}},
     dispatchEvent(){return true},
-    appendChild(c){c.parent=el;el.children.push(c);return c},
+    /* `appendChild` **deplace**, il ne copie pas : un noeud deja pose ailleurs
+       quitte son parent d'abord. Le double poussait sans detacher, si bien
+       qu'un element re-attache au meme parent y apparaissait deux fois — un
+       comportement qu'aucun navigateur n'a, et qui aurait fait passer pour un
+       defaut de l'aperçu ce qui n'etait qu'un defaut du double. */
+    appendChild(c){if(c.parent&&typeof c.remove==='function')c.remove();
+      c.parent=el;el.children.push(c);return c},
+    /* Le nom que le DOM donne a cette relation, et celui que le code lit pour
+       savoir si son element est encore la ou il l'avait mis. */
+    get parentNode(){return el.parent},
     remove(){if(!el.parent)return;const at=el.parent.children.indexOf(el);
       if(at>=0)el.parent.children.splice(at,1);el.parent=null}};
   registry.push(el);
@@ -893,6 +932,11 @@ global.document={createElement:()=>node(),
   elementFromPoint:pageAt,
   querySelectorAll:pageQuery};
 global.navigator={mediaDevices:null};
+/* Le style calculé, réduit à la seule question que l'aperçu lui pose : cet
+   élément est-il positionné ? Un vrai navigateur en dirait trois cents champs ;
+   celui-ci dit celui qui décide où le surlignage vit. */
+global.getComputedStyle=el=>({position:(el&&el.position)||'static',
+  overflowX:'visible',overflowY:'visible'});
 global.performance={now:()=>global.clock||0};
 global.clock=0;
 global.requestAnimationFrame=()=>0;global.cancelAnimationFrame=()=>{};
@@ -917,9 +961,18 @@ const overlay=api.adapters.overlay;
 overlay.mount();
 const interaction=api.adapters.interaction;
 const root=()=>document.body.children[0];
-const previews=()=>root().children.filter(el=>el.className===C.DOM.targetClass);
+/* **Où** un cadre est dessiné n'est plus une hypothèse du test : depuis la
+   décision 3 ter, un cadre imbriqué vit dans l'objet qu'il surligne et non dans
+   la surimpression. On cherche donc tous les cadres **attachés**, où qu'ils
+   soient — ce qui est aussi la bonne question à poser : « y a-t-il un cadre à
+   l'écran ? », pas « y a-t-il un cadre dans cette boîte-là ? ». */
+const previews=()=>registry.filter(el=>el.className===C.DOM.targetClass&&el.parent);
+/* Un nœud de scène est `position:absolute` (feuille de la scène,
+   `.sc-node{position:absolute}`) : il peut donc porter son surlignage, et c'est
+   ce qui fait qu'un objet déplacé l'emmène avec lui sans que personne ne le
+   suive. */
 const star=(id,rect,representation,label)=>node({sel:['.sc-node[data-object-id]'],rect,
-  dataset:{objectId:id,representation},label:label||id});
+  dataset:{objectId:id,representation},label:label||id,position:'absolute'});
 const button=(rect,label)=>node({sel:['button'],rect,label:label||''});
 /* Une image : les jetons du pointeur et les contacts que la Slice 04 publie. */
 const frame=(tokens,contacts)=>{
@@ -1146,9 +1199,14 @@ def test_the_bar_that_is_drawn_covers_exactly_the_zone_that_was_measured(tmp_pat
 
     result = run_node(tmp_path, """
       const T=require(TARGET_PATH);
+      /* Ce que la barre **tient** : les côtés auxquels elle est collée (0), son
+         épaisseur, et pour un coin les deux traits effacés. Un côté qu'elle ne
+         tient pas n'est pas dans la réponse. */
       const at=(region,zone,bandPx)=>{
         const r=T.zoneRect({boundsPx:{x:0,y:0,w:200,h:100},bandPx:bandPx||14,region,zone});
-        return [r.left,r.top,r.width,r.height,r.corner?r.hide.slice().sort():null];
+        return [['left','right','top','bottom'].filter(side=>r[side]===0).sort(),
+          r.width===undefined?null:r.width,r.height===undefined?null:r.height,
+          r.corner?r.hide.slice().sort():null];
       };
       out({
         top:at('edge','top'),bottom:at('edge','bottom'),
@@ -1161,24 +1219,27 @@ def test_the_bar_that_is_drawn_covers_exactly_the_zone_that_was_measured(tmp_pat
       });
     """)
     assert result["sides"] == [["top", "left"], ["bottom", "right"]]
-    # Chaque bord colle au sien, sur toute sa longueur.
-    assert result["top"] == [0, 0, 200, 14, None]
-    assert result["bottom"] == [0, 86, 200, 14, None]
-    assert result["left"] == [0, 0, 14, 100, None]
-    assert result["right"] == [186, 0, 14, 100, None]
-    # L'équerre d'un coin : posée dans son coin, et seuls ses deux côtés tenus
-    # portent un trait — les deux autres sont effacés.
-    assert result["topLeft"] == [0, 0, pytest.approx(25.2), pytest.approx(25.2), ["bottom", "right"]]
-    assert result["bottomRight"] == [
-        pytest.approx(174.8), pytest.approx(74.8),
-        pytest.approx(25.2), pytest.approx(25.2), ["left", "top"],
+    # Chaque bord colle au sien **et aux deux qui le bordent** : c'est ainsi
+    # qu'il court sur toute la longueur sans qu'on la mesure, et qu'il y reste
+    # pendant qu'on étire le cadre.
+    assert result["top"] == [["left", "right", "top"], None, 14, None]
+    assert result["bottom"] == [["bottom", "left", "right"], None, 14, None]
+    assert result["left"] == [["bottom", "left", "top"], 14, None, None]
+    assert result["right"] == [["bottom", "right", "top"], 14, None, None]
+    # L'équerre d'un coin : collée à **ses deux** côtés, une taille et pas une
+    # longueur, et seuls ses deux côtés tenus portent un trait.
+    assert result["topLeft"] == [
+        ["left", "top"], pytest.approx(25.2), pytest.approx(25.2), ["bottom", "right"],
     ]
-    assert result["topRight"][0:2] == [pytest.approx(174.8), 0]
-    assert result["topRight"][4] == ["bottom", "left"]
-    assert result["bottomLeft"][0:2] == [0, pytest.approx(74.8)]
-    assert result["bottomLeft"][4] == ["right", "top"]
+    assert result["bottomRight"] == [
+        ["bottom", "right"], pytest.approx(25.2), pytest.approx(25.2), ["left", "top"],
+    ]
+    assert result["topRight"][0] == ["right", "top"]
+    assert result["topRight"][3] == ["bottom", "left"]
+    assert result["bottomLeft"][0] == ["bottom", "left"]
+    assert result["bottomLeft"][3] == ["right", "top"]
     # L'épaisseur est celle qu'on a mesurée, pas une constante de dessin.
-    assert result["thicker"] == [0, 0, 200, 30, None]
+    assert result["thicker"] == [["left", "right", "top"], None, 30, None]
 
 
 def test_the_preview_can_be_switched_off_without_switching_off_the_resolution(tmp_path):
@@ -1443,67 +1504,96 @@ def test_a_hovered_edge_lights_up_and_a_hovered_button_stays_dark(tmp_path):
     assert result["secondary"] == 0
 
 
-def test_the_frame_follows_what_the_hand_is_moving_and_stretching(tmp_path):
-    """**Le cadre suit ce qu'il tient.**
+def test_the_frame_is_a_child_of_what_it_highlights_and_never_follows_it(tmp_path):
+    """**Décision 3 ter.** Le cadre n'est pas un objet qui en poursuit un autre :
+    c'est un **enfant** de l'objet qu'il surligne.
 
-    Le descripteur d'une cible est figé à la descente (décision 13) : quel
-    objet, quelle prise. Son rectangle ne l'est pas — c'est *où l'objet est*, et
-    l'objet, pendant la prise, est justement en train de bouger. Figé aussi, le
-    cadre jaune restait planté à l'endroit de la saisie pendant que la fenêtre
-    partait ailleurs, et l'étirement d'un bord ne se voyait nulle part.
+    La distinction n'est pas de la théorie, c'est la seule façon d'arriver à
+    zéro décalage. Un cadre séparé est mesuré avant que l'objet ne bouge et
+    dessiné après : il a une image de retard, toujours, quelle que soit la
+    finesse du suivi — et il ne sait rien des transitions CSS ni de l'animation
+    d'orbite, qu'il verrait comme une suite de sauts. Imbriqué, il n'y a plus
+    rien à suivre : le parent bouge, l'enfant bouge dans la même peinture,
+    exactement comme le titre d'une fenêtre suit la fenêtre.
 
-    Ici la main tient le bord droit et la fenêtre s'élargit sous elle : le cadre
-    la suit, et la **barre jaune reste sur le bord tenu** — c'est-à-dire qu'elle
-    se déplace avec lui, puisque ce bord-là est celui qui bouge.
+    Ce que le test regarde est donc **l'absence de coordonnées**, pas leur
+    justesse. Un cadre imbriqué qui porterait un `left` serait déjà un cadre
+    qui poursuit ; celui-ci n'en écrit aucun, à aucune image, ni à la prise ni
+    pendant qu'on étire. C'est la propriété qu'aucune comparaison de pixels ne
+    pourrait établir, et c'est celle qui tient.
 
-    Ce que le test garde du gel : `objectId`, `region` et `zone` ne changent
-    pas, quoi que la géométrie fasse."""
+    Ce qui reste figé, lui, l'est toujours : `objectId`, `region` et `zone` sont
+    ceux de la descente (décision 13), quoi que la géométrie fasse."""
 
     result = run_node(tmp_path, BROWSER + """
-      const rect={left:200,top:100,width:300,height:200};
+      const rect={left:200,top:150,width:300,height:200};
       const win=star('obj-1',rect,'window','Tâche A');
       global.page=[win];
-      const box=()=>{const el=previews()[0];
-        return el?[el.style.left,el.style.top,el.style.width,el.style.height]:null};
-      const bar=()=>{const el=previews()[0];
-        return el?[el.children[0].style.left,el.children[0].style.width]:null};
+      const box=()=>previews()[0]||null;
+      /* Qui **porte** le cadre, et ce qu'il a écrit dessus. Un cadre imbriqué
+         n'écrit rien : c'est la preuve. */
+      const where=()=>{const el=box();if(!el)return null;
+        return {host:el.parent===win?'objet':(el.parent===root()?'surimpression':'?'),
+          nested:el.attrs['data-nested'],
+          coords:['left','top','width','height'].map(k=>el.style[k]||'')}};
+      const bar=()=>{const el=box();if(!el)return null;
+        const z=el.children[0].style;
+        return ['left','right','top','bottom'].map(k=>z[k]||'').concat([z.width||'',z.height||'']);
+      };
       const held=()=>{const t=interaction.targets()[0];
         return t?[t.objectId,t.region,t.zone]:null};
       /* La main approche du bord droit, puis descend : la prise est prise. */
-      frame([token(1,494,200)],[contact(1,'pinching')]);
-      frame([token(1,494,200)],[contact(1,'pressed')]);
-      const grabbed={box:box(),bar:bar(),held:held()};
-      /* La fenêtre s'élargit de 120 px : c'est ce que fait la main qui tire. */
-      rect.width=420;
-      frame([token(1,614,200)],[contact(1,'pressed')]);
-      const stretched={box:box(),bar:bar(),held:held()};
-      /* Puis la même fenêtre est **déplacée** (prise de corps ailleurs) : le
-         cadre entier suit, sans changer de taille. */
-      rect.left=520;rect.top=260;
-      frame([token(1,614,200)],[contact(1,'pressed')]);
-      const moved={box:box(),held:held()};
-      /* L'objet quitte le dessin : le **dernier mesuré** vaut mieux qu'un
-         retour d'un bond à l'endroit de la prise, et mieux qu'un cadre au coin
-         supérieur gauche. */
-      rect.width=0;rect.height=0;
-      frame([token(1,614,200)],[contact(1,'pressed')]);
-      out({grabbed,stretched,moved,gone:box()});
+      frame([token(1,494,250)],[contact(1,'pinching')]);
+      const aiming=where();
+      frame([token(1,494,250)],[contact(1,'pressed')]);
+      const grabbed={where:where(),bar:bar(),held:held()};
+      /* La fenêtre s'élargit et se déplace sous la main, comme la scène le fait
+         à chaque image d'un geste. Rien ne doit être réécrit sur le cadre. */
+      rect.width=420;rect.left=520;rect.top=300;
+      frame([token(1,614,250)],[contact(1,'pressed')]);
+      const stretched={where:where(),bar:bar(),held:held()};
+      /* La scène réécrit le contenu du nœud (son `fill` fait
+         `replaceChildren`) : le cadre est emporté, et il revient tout seul. */
+      const carried=box();carried.remove();
+      const wiped=box();
+      frame([token(1,614,250)],[contact(1,'pressed')]);
+      const healed=where();
       interaction.clear();
+      const afterClear=previews().length;
+      /* Un bouton ordinaire est `position:static` : il ne peut pas porter son
+         cadre, et il n'en a pas besoin — on ne déplace pas un bouton. Celui-là
+         est dessiné dans la surimpression, aux coordonnées mesurées. */
+      const b=button({left:700,top:100,width:80,height:30},'Activer');
+      global.page=[b];
+      frame([token(1,740,115)],[contact(1,'pinching')]);
+      const fallback=where();
+      out({aiming,grabbed,stretched,wiped:wiped===null,healed,afterClear,fallback});
     """)
-    assert result["grabbed"]["box"] == ["200px", "100px", "300px", "200px"]
+    # Dès la visée, le cadre vit **dans** l'objet, et il n'y a aucune coordonnée
+    # à écrire : c'est le parent qui porte la position et la taille.
+    assert result["aiming"] == {"host": "objet", "nested": "1", "coords": ["", "", "", ""]}
+    assert result["grabbed"]["where"] == result["aiming"]
     assert result["grabbed"]["held"] == ["obj-1", "edge", "right"]
-    # Le cadre a suivi l'étirement…
-    assert result["stretched"]["box"] == ["200px", "100px", "420px", "200px"]
-    # …et la barre jaune est restée collée au bord tenu, qui est celui qui bouge.
-    grabbed_bar = [float(v[:-2]) for v in result["grabbed"]["bar"]]
-    stretched_bar = [float(v[:-2]) for v in result["stretched"]["bar"]]
-    assert stretched_bar[1] == grabbed_bar[1], "la bande garde son épaisseur"
-    assert stretched_bar[0] == grabbed_bar[0] + 120, "la barre suit le bord droit"
-    # La prise, elle, n'a pas changé de main.
+    # La barre tient le bord droit par ses insets — collée à droite, en haut et
+    # en bas — donc elle y reste pendant qu'on étire sans qu'on la replace.
+    # Son épaisseur est la bande **large** (`targetZoneHoldPx`, 20) : la zone est
+    # tenue, et l'aperçu montre la prise qui décide, pas celle qui l'a ouverte.
+    assert result["grabbed"]["bar"] == ["", "0px", "0px", "0px", "20px", ""]
+    # La fenêtre a changé de place **et** de taille : le cadre n'a rien écrit.
+    assert result["stretched"]["where"] == result["aiming"], result["stretched"]
+    assert result["stretched"]["bar"] == result["grabbed"]["bar"]
     assert result["stretched"]["held"] == ["obj-1", "edge", "right"]
-    assert result["moved"]["box"] == ["520px", "260px", "420px", "200px"]
-    assert result["moved"]["held"] == ["obj-1", "edge", "right"]
-    assert result["gone"] == ["520px", "260px", "420px", "200px"]
+    # Emporté par une réécriture de contenu, il revient à l'image suivante.
+    assert result["wiped"] is True
+    assert result["healed"] == result["aiming"]
+    assert result["afterClear"] == 0
+    # Et ce qui ne peut pas porter d'enfant garde le dessin en surimpression,
+    # aux coordonnées mesurées : ce sont exactement les cibles qui ne bougent
+    # pas sous la main.
+    assert result["fallback"] == {
+        "host": "surimpression", "nested": "0",
+        "coords": ["700px", "100px", "80px", "30px"],
+    }
 
 
 def test_the_token_follows_the_hand_while_it_holds_and_not_the_closing_finger(tmp_path):

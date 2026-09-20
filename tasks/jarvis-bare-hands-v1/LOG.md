@@ -3080,3 +3080,78 @@ intention → `data-hover="0"` ; l'élément déplacé et élargi sous la prise
 **Ce qu'aucune de ces preuves ne remplace** : une main devant la caméra. Le
 ressenti (largeur de bande à 14 px, tremblement du curseur reporté sur la paume
 brute, lisibilité du survol à voix basse) demande une séance réelle.
+
+## 2026-09-20 — Reprise, second tour : le surlignage n'a pas à suivre, il est dedans
+
+Retour utilisateur sur la reprise précédente : *« il y a un petit décalage de
+suivi… ce n'est pas deux objets et l'un suit l'autre, c'est imbriqué. Comme le
+texte d'une fenêtre bouge quand je déplace la fenêtre, parce que c'est son
+enfant. Même si visuellement elle est au-dessus, hiérarchiquement elle doit être
+en dessous. »*
+
+Le diagnostic est juste et il vise plus haut que le symptôme : relire le
+rectangle de l'objet à chaque image **marchait**, et c'était une erreur de
+structure. Deux objets dont l'un mesure l'autre ne peuvent pas être synchrones —
+l'aperçu est dessiné au début de l'image (`resolveTargets`) et la manipulation
+appliquée à la fin (`runCaptures` → `world.preview`), donc le cadre porte
+toujours la position d'avant. Une image de retard, par construction, quelle que
+soit la finesse du suivi. Et le poursuivant ne sait rien de ce que le navigateur
+fait sans lui : `.sc-node` glisse en 420 ms (`transition:transform`) et tourne
+sur son orbite (`animation`) — il verrait les deux comme une suite de sauts.
+
+**Le cadre est donc un enfant du nœud qu'il surligne**, collé à ses quatre bords
+(`inset:0`), et il n'écrit plus une seule coordonnée. La barre de zone suit la
+même règle : posée par insets (« collée à droite, du haut au bas, épaisse de la
+bande »), elle reste sur le bord tenu pendant qu'on l'étire, sans qu'on la
+replace. Il n'y a plus rien à synchroniser, donc plus rien qui puisse se
+désynchroniser.
+
+Ce que la structure a entraîné, et qui n'était pas optionnel :
+
+- **la feuille n'est plus portée par `#jarvisHands`** — un cadre imbriqué vit
+  hors de la surimpression, et un sélecteur partant de la racine ne serait pas
+  « moins précis », il serait sans effet ;
+- **le nœud visé passe devant ses frères**
+  (`.sc-node:has(>.jh-target:not([data-hover="1"]))`, `!important` parce que la
+  scène écrit `z-index` en ligne) ; un objet seulement **survolé** ne bouge pas
+  d'un cran, sinon une main qui traverse la scène ferait passer devant tout ce
+  qu'elle croise ;
+- **l'étiquette se pose dans le cadre** — une fenêtre coupe ce qui dépasse, et
+  un nom invisible est une cible sans nom (RÈGLE ZÉRO) ; sous 22 px de haut,
+  elle n'est pas dessinée du tout ;
+- **le ré-attachement est vérifié par image** : le `fill` de la scène fait
+  `replaceChildren()` dès qu'un titre change et emporte l'enfant. Un
+  `parentNode !==` suffit, et rend l'imbrication réparable au lieu de fragile.
+
+**Ce qui ne peut pas porter son cadre** garde le dessin en surimpression : un
+élément remplacé ou vide n'a pas d'enfants, un élément `position:static` ferait
+résoudre `inset:0` contre un autre ancêtre — le cadre ne serait pas en retard,
+il serait ailleurs. Le repli couvre exactement les cibles qui ne bougent pas sous
+la main : on ne déplace pas un bouton, on le clique. Et si un objet **déplaçable**
+s'y retrouvait un jour, le module le dit à la console plutôt que de laisser le
+retard revenir en silence.
+
+Deux mensonges du double de DOM ont été corrigés au passage, et ils auraient fait
+passer pour des défauts de l'aperçu ce qui n'était que des défauts du double :
+`appendChild` poussait sans détacher (un nœud ré-attaché apparaissait deux fois,
+ce qu'aucun navigateur ne fait), et il n'y avait ni `parentNode`, ni `nodeType`,
+ni style calculé. Le double déclare désormais sa `position` et son `tagName` —
+les deux questions que l'aperçu pose pour savoir où un cadre peut vivre — et
+`previews()` cherche les cadres **où qu'ils soient** plutôt que dans la
+surimpression, ce qui est aussi la bonne question à poser.
+
+436 tests au vert. `test_the_frame_is_a_child_of_what_it_highlights_and_never_follows_it`
+remplace le test de suivi : il ne compare plus des pixels, il vérifie
+**l'absence de coordonnées** — un cadre imbriqué qui porterait un `left` serait
+déjà un cadre qui poursuit.
+
+**Vérifié dans Chrome, sur la page servie**, avec un nœud de scène portant ses
+vraies classes (`display:flex`, `overflow:hidden`, placement par `transform`) :
+le cadre est bien enfant du nœud, n'a aucune coordonnée en ligne, hérite son
+rayon, et sa boîte est celle de l'objet **au pixel** (200,150,300×200). Puis le
+nœud est déplacé et élargi (520,300,420×200) **sans repasser par l'aperçu** : la
+boîte du cadre est identique, et la barre reste à 2 px du bord droit — les 2 px
+de la bordure du cadre. Le nœud remonte à 2147482900 sous intention et garde son
+z-index en survol. Zéro erreur console.
+
+**Ce qu'aucune de ces preuves ne remplace** : une main devant la caméra.

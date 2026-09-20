@@ -1264,17 +1264,69 @@ même si la collecte ne voit plus l'objet. C'est ce que la Slice 06 latche
 milieu du geste. Une entrée par main **et par canal** : le gel de l'un ne gèle
 pas l'autre.
 
-**Le cadre, lui, suit ce qu'il tient.** `boundsPx` n'est pas un descripteur :
-c'est *où l'objet est*, et l'objet, pendant la prise, est justement en train de
-bouger — c'est ce que la main lui fait. Figé avec le reste, le cadre jaune restait
-planté à l'endroit de la saisie pendant que la fenêtre partait ailleurs, et
-l'étirement d'un bord ne se voyait nulle part. La couture de page relit donc le
-rectangle de l'élément à chaque image (`getBoundingClientRect`, la même source que
-la collecte, simplement relue maintenant) et le substitue avant le dessin. Un
-élément disparu du dessin rend un rectangle vide : on garde alors le **dernier
-mesuré**, jamais celui de la prise — une fenêtre qui disparaît au milieu d'un
-déplacement laisserait sinon son cadre revenir d'un bond là où la main l'avait
-saisie.
+**Décision 3 ter : le surlignage est un enfant de ce qu'il surligne.**
+`boundsPx` n'est pas un descripteur — c'est *où l'objet est*, et l'objet, pendant
+la prise, est justement en train de bouger. Figé avec le reste, le cadre jaune
+restait planté à l'endroit de la saisie pendant que la fenêtre partait ailleurs.
+
+La première correction a été de relire le rectangle de l'élément à chaque image.
+Elle marchait, et elle était **fausse de structure** : deux objets dont l'un
+mesure l'autre. L'aperçu est dessiné au début de l'image, la manipulation est
+appliquée à la fin — le cadre porte donc toujours la position d'avant, une image
+de retard, quelle que soit la finesse du suivi. Et il ne sait rien de ce que le
+navigateur fait sans lui : `.sc-node` glisse en 420 ms (`transition:transform`)
+et tourne sur son orbite (`animation`) ; un poursuivant verrait ces deux-là
+comme une suite de sauts.
+
+Le cadre est donc **un enfant du nœud qu'il surligne**, collé à ses quatre bords
+(`inset:0`), et il n'écrit plus une seule coordonnée. Le parent porte la
+position, la taille, sa transition et son orbite ; l'enfant les reçoit dans la
+même peinture, exactement comme le titre d'une fenêtre suit la fenêtre. La barre
+de zone suit la même règle : elle est posée par **insets** (« collée à droite,
+du haut au bas, épaisse de la bande ») et non par un `left` calculé, si bien
+qu'elle reste sur le bord tenu pendant qu'on l'étire. Visuellement l'aperçu est
+au-dessus de l'objet ; hiérarchiquement il est dedans.
+
+Trois conséquences, et chacune est un choix :
+
+- **La feuille de style n'est plus portée par `#jarvisHands`.** Un cadre
+  imbriqué vit sous la scène, hors de la surimpression : une règle qui
+  commencerait par la racine ne l'atteindrait plus — elle ne serait pas moins
+  précise, elle serait sans effet. Les classes `jh-` suffisent, elles sont à
+  nous.
+- **Le nœud visé passe devant ses frères** (`.sc-node:has(> .jh-target:not([data-hover="1"]))`),
+  parce qu'un objet dont un voisin recouvre le bord ne répond pas à la question
+  qu'on lui pose. Un objet seulement **survolé** ne bouge pas d'un cran : une
+  main qui traverse la scène ferait sinon passer devant tout ce qu'elle croise.
+  `!important`, parce que le placement de la scène écrit `z-index` en ligne à
+  chaque rendu.
+- **L'étiquette se pose dans le cadre** quand il est imbriqué : une fenêtre et
+  une capsule coupent ce qui dépasse (`overflow:hidden`), et un nom invisible
+  est, pour l'utilisateur, une cible sans nom. Sous 22 px de haut elle n'est pas
+  dessinée du tout — elle recouvrirait la cible au lieu de la nommer.
+
+**Ce qui ne peut pas porter son cadre** le garde dans la surimpression, positionné
+comme avant : un élément remplacé ou vide (`input`, `select`, une image) n'a pas
+d'enfants, et un élément `position:static` ferait résoudre `inset:0` contre un
+tout autre ancêtre — le cadre ne serait pas en retard, il serait ailleurs. Ce
+repli est sans conséquence parce qu'il couvre exactement les cibles qui **ne
+bougent pas** sous la main : on ne déplace pas un bouton, on le clique. Ce qu'une
+main nue déplace ou étire est un nœud de scène, et un nœud de scène est
+`position:absolute`. Si cela cessait d'être vrai, le module le **dit** une fois à
+la console plutôt que de laisser le retard revenir en silence.
+
+La relecture du rectangle reste, mais elle a changé de rôle : elle n'est plus ce
+qui fait suivre le cadre, seulement ce qui garde `boundsPx` honnête pour le repli
+et pour ce que `targets()` publie. Un élément disparu du dessin rend un rectangle
+vide : on garde alors le **dernier mesuré**, jamais celui de la prise — une
+fenêtre qui disparaît au milieu d'un déplacement laisserait sinon son cadre
+revenir d'un bond là où la main l'avait saisie.
+
+Le ré-attachement, lui, se vérifie à chaque image : la scène réécrit le contenu
+d'un nœud (`el.replaceChildren()` dans son `fill`) dès qu'un titre ou un état
+d'exécution change, et emporte l'enfant avec. C'est un `parentNode !==` par
+image, et c'est ce qui rend l'imbrication réparable au lieu de fragile — le cadre
+revient tout seul à l'image suivante.
 
 **Ce que la Slice 06 consomme** : `window.JarvisBarehands.targets()` rend, par
 main et par canal, une `createTargetCandidate` (donc `objectId`, `region`,
