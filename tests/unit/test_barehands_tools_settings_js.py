@@ -1993,3 +1993,118 @@ def test_calibration_switched_off_refuses_the_flow_and_says_so_on_screen(tmp_pat
     assert "desactivee" in result["said"] or result["said"] == "warn"
     assert "Proposer la calibration" in result["banner"]
     assert result["warned"] is not None
+
+
+def test_the_extension_recipe_is_walked_end_to_end_and_not_only_its_refusal(tmp_path):
+    """**Une recette qu'aucun test ne joue est un souhait.**
+
+    Les deux tests qui gardaient la recette apres le retrait de la couche
+    d'annotation n'exercent chacun qu'un maillon : celui du serveur elargit
+    `TOOLS` seul, celui du moteur remplace `toolCapability` seul. Aucun des deux
+    n'execute les **trois etapes declarees** par le contrat — une entree dans
+    `TOOL`, une dans `TOOL_CAPABILITY`, une dans `TOOL_LABEL` — donc ni
+    `TOOLS`, ni `INSTALLED_TOOLS`, ni `describeTool`, ni `describeTools` (ce
+    que la palette dessine) n'ont jamais vu l'outil futur. Le **mecanisme de
+    refus** etait couvert ; la recette, non.
+
+    On ecrit donc ici la Slice future, dans le contrat lui-meme, et on la lit
+    **dans les deux sens** : declare sans etre servi, l'outil est grise avec son
+    motif et refuse partout ; sa capacite ajoutee a `SERVED_CAPABILITIES`, la
+    porte s'ouvre. C'est cette bascule-la que la recette promet, et elle ne
+    tenait jusqu'ici que par lecture du code.
+    """
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node absent")
+    source = CONTRACTS.read_text(encoding="utf-8")
+
+    # Les **trois** etapes declarees, et rien d'autre : l'outil est declare,
+    # sa capacite nommee, son etiquette posee. Personne ne la sert encore.
+    declared = source.replace(
+        "  const TOOL=Object.freeze({POINTER:'pointer',PAN:'pan',SELECT:'select'});",
+        "  const TOOL=Object.freeze({POINTER:'pointer',PAN:'pan',SELECT:'select',INK:'ink'});", 1)
+    declared = declared.replace(
+        "    [TOOL.SELECT]:'select',\n  });",
+        "    [TOOL.SELECT]:'select',\n    [TOOL.INK]:'annotate',\n  });", 1)
+    declared = declared.replace(
+        "    [TOOL.POINTER]:'Pointeur',[TOOL.PAN]:'Main',[TOOL.SELECT]:'Sélection',",
+        "    [TOOL.POINTER]:'Pointeur',[TOOL.PAN]:'Main',[TOOL.SELECT]:'Sélection',"
+        "[TOOL.INK]:'Encre',", 1)
+    for anchor, got in (("TOOL", declared != source),
+                        ("TOOL_CAPABILITY", "[TOOL.INK]:'annotate'" in declared),
+                        ("TOOL_LABEL", "[TOOL.INK]:'Encre'" in declared)):
+        assert got, f"l'ancre {anchor} de la recette doit exister"
+
+    # La quatrieme etape, celle qui **installe** : servir la capacite.
+    served = declared.replace(
+        "  const SERVED_CAPABILITIES=Object.freeze([TOOL_CAPABILITY_CONTEXTUAL,'scroll','select']);",
+        "  const SERVED_CAPABILITIES=Object.freeze([TOOL_CAPABILITY_CONTEXTUAL,'scroll','select','annotate']);", 1)
+    assert served != declared, "l'ancre de SERVED_CAPABILITIES doit exister"
+
+    def read(text: str, name: str) -> dict:
+        victim = tmp_path / f"{name}-contracts.js"
+        victim.write_text(text, encoding="utf-8")
+        script = tmp_path / f"{name}-recipe.cjs"
+        script.write_text(
+            f"const C=require({json.dumps(str(victim))});\n"
+            "const refused=fn=>{try{fn();return null}catch(e){return e.code||e.name||String(e)}};\n"
+            "process.stdout.write(JSON.stringify({\n"
+            "  tools:C.TOOLS,installed:C.INSTALLED_TOOLS,\n"
+            "  capability:C.toolCapability('ink'),toolInstalled:C.toolInstalled('ink'),\n"
+            "  described:C.describeTool('ink'),\n"
+            "  palette:C.describeTools().map(t=>[t.id,t.installed,t.reason]),\n"
+            "  normalized:C.normalizeSettings({tool:'ink'}).tool,\n"
+            "}));",
+            encoding="utf-8")
+        done = subprocess.run([node, str(script)], capture_output=True, text=True,
+                              encoding="utf-8", timeout=30, check=False)
+        assert done.returncode == 0, done.stderr
+        return json.loads(done.stdout)
+
+    # ---- Sens 1 : declare, pas servi. Grise **avec son motif**, refuse partout.
+    a = read(declared, "declared")
+    assert a["tools"] == ["pointer", "pan", "select", "ink"], "l'outil est bien declare"
+    assert a["installed"] == ["pointer", "pan", "select"], "et il n'est pas installe"
+    assert a["capability"] == "annotate" and a["toolInstalled"] is False
+    assert a["described"] == {"id": "ink", "label": "Encre", "capability": "annotate",
+                              "installed": False, "reason": "barehands_tool_not_installed"}
+    # **Ce que la palette dessine** : l'outil est la, grise, et il dit pourquoi.
+    # Le retirer ferait croire qu'il n'existe pas ; le laisser muet le ferait
+    # ressembler a une panne.
+    assert a["palette"][-1] == ["ink", False, "barehands_tool_not_installed"]
+    assert all(row[1] is True and row[2] == "" for row in a["palette"][:-1])
+    # Il traverse la normalisation — il est au contrat — donc seul le refus
+    # d'installation l'arrete : c'est bien la porte qu'on mesure.
+    assert a["normalized"] == "ink"
+
+    # Le moteur refuse la prise, par la **vraie** couture `contracts`.
+    engine = run_node(tmp_path, FIXTURE + """
+      const C2=require(%s);
+      out({body:bodyRun('ink','button',false,null,C2),
+           installed:C2.INSTALLED_TOOLS,
+           refusedByEngine:refused(()=>engineOf({}).setTool('ink'))});
+    """ % json.dumps(str(tmp_path / "declared-contracts.js")), name="inkengine")
+    assert engine["body"]["dom"] == [] and engine["body"]["refusals"] == ["tool_not_installed"]
+
+    # Et le serveur refuse par son propre nom, sur sa propre table.
+    import jarvis.runtime.barehands_test_mode as server_tools
+    original = server_tools.TOOLS
+    try:
+        server_tools.TOOLS = original + ("ink",)
+        settings: dict = {}
+        with pytest.raises(server_tools.BarehandsSettingsError) as caught:
+            server_tools.apply(settings, {"enabled": True, "tool": "ink"})
+        assert caught.value.code == "barehands_tool_not_installed"
+        assert settings == {}, "un refus n'ecrit rien"
+    finally:
+        server_tools.TOOLS = original
+
+    # ---- Sens 2 : la capacite est servie. **La porte s'ouvre**, et c'est la
+    # bascule que la recette promet — sans elle, « declare sans moteur » et
+    # « impossible a installer » s'ecriraient pareil.
+    b = read(served, "served")
+    assert b["installed"] == ["pointer", "pan", "select", "ink"]
+    assert b["toolInstalled"] is True
+    assert b["described"]["installed"] is True and b["described"]["reason"] == ""
+    assert b["palette"][-1] == ["ink", True, ""]

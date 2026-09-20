@@ -1365,12 +1365,22 @@ pas les deux noms, qui avait de la valeur. Restent en place et testés :
 c'est : une entrée dans les trois tables, puis servir `annotate` dans le moteur
 et l'ajouter à `SERVED_CAPABILITIES`. Tant que la dernière marche manque,
 l'outil est **déclaré, grisé avec son motif, et refusé partout** plutôt
-qu'enregistré sans effet. Deux tests exercent cette marche manquante en
-déclarant l'outil qu'une Slice future déclarerait — `ink`, capacité `annotate`,
-non servie — plutôt qu'en l'affirmant :
+qu'enregistré sans effet. Trois tests l'exercent en déclarant l'outil qu'une
+Slice future déclarerait — `ink`, capacité `annotate`, non servie — plutôt
+qu'en l'affirmant :
 `test_barehands_tools_settings_js::test_a_tool_declared_without_an_engine_refuses_every_capture`
 (par la couture `contracts` du moteur) et
-`test_barehands_test_mode::test_a_tool_declared_without_an_engine_is_still_refused_by_its_own_name`.
+`test_barehands_test_mode::test_a_tool_declared_without_an_engine_is_still_refused_by_its_own_name`
+couvrent le **mécanisme de refus**, chacun par un maillon : le premier remplace
+`toolCapability` seul, le second élargit `TOOLS` seul. Aucun des deux n'exécute
+les trois étapes déclarées ci-dessus, si bien que ni `INSTALLED_TOOLS`, ni
+`describeTool`, ni `describeTools` — ce que la palette dessine — n'avaient
+jamais vu l'outil futur : la recette *comme recette* n'était exercée par rien.
+`test_the_extension_recipe_is_walked_end_to_end_and_not_only_its_refusal` écrit
+donc la Slice future dans le contrat lui-même et la lit **dans les deux sens** :
+déclaré sans être servi, l'outil est grisé avec son motif et refusé partout ;
+sa capacité ajoutée à `SERVED_CAPABILITIES`, la porte s'ouvre. C'est cette
+bascule qui est la promesse, et elle ne tenait que par lecture du code.
 
 `SERVED_CAPABILITIES` liste les capacités que le moteur sert ;
 `toolInstalled(tool)` n'est donc pas un drapeau écrit à la main mais une

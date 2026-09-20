@@ -150,6 +150,10 @@ def _observed(tmp_path: Path, drive: str, name: str) -> dict:
       out({before,after:{lifecycle:BAREHANDS.lifecycle(),life:show('barehandsLifecycle'),
         status:show('barehandsStatus')},
         receipts:network.receipts,polls:network.polls,
+        /* Ce que la page a répondu **elle-même**, quand le cas s'y intéresse :
+           le reçu du canal ne porte qu'un code fermé, donc il ne dit pas quelle
+           porte a refusé. */
+        gates:global.__gates===undefined?null:global.__gates,
         /* Les points d'entrée que le canal nomme, lus sur la **vraie** surface. */
         present:Object.keys(CH.ENTRY_POINTS).map(k=>[k,CH.ENTRY_POINTS[k].method,
           typeof BAREHANDS[CH.ENTRY_POINTS[k].method]==='function'])});
@@ -205,7 +209,12 @@ def test_what_a_brain_sees_today_for_calibration_tutorial_and_overlay(tmp_path):
 
     Les trois parcours n'ont pas de `targets` : leur seule preuve est une
     confirmation explicite, et ce cas la mesure pour de bon plutôt que de la
-    mettre en scène. Sous node, Bare Hands est éteint (pas de caméra) :
+    mettre en scène. **L'onglet s'ouvre avec Bare Hands éteint**, et c'est cette
+    porte-là qui refuse — `if(!view.enabled)`, code
+    `barehands_calibration_disabled` / `barehands_tutorial_disabled` —, pas
+    l'absence de caméra sous node, qui est la porte **suivante** et n'est jamais
+    atteinte. Le commentaire l'attribuait à la caméra : une cause fausse dans un
+    test est pire qu'une cause absente, parce qu'elle se croit.
 
     - `calibrate` et `tutorial` **refusent en ne confirmant pas** — chacun sait
       pourquoi et le dit à l'écran, mais le canal a une liste de codes fermée
@@ -213,12 +222,25 @@ def test_what_a_brain_sees_today_for_calibration_tutorial_and_overlay(tmp_path):
     - `exit_overlay` **confirme** : rien n'était ouvert, et « il n'y a pas de
       surimpression » est précisément l'état demandé. Répondre « non » ferait
       dire à JARVIS que ça n'a pas marché devant un écran qui montre l'état
-      qu'on voulait — le même raisonnement que `deactivate` depuis `off`."""
+      qu'on voulait — le même raisonnement que `deactivate` depuis `off`.
+
+    Et **quelle** porte a refusé est désormais affirmé : sans cela, un
+    `calibrate()` qui rendrait `undefined` sans rien lancer produirait un reçu
+    identique, et le test ne saurait pas faire la différence."""
 
     observed = _observed(tmp_path, """
       queue('calibrate');queue('tutorial');queue('exit_overlay');
       CHANNEL.gate({enabled:true});
       await settleLong();await settle();await settleLong();
+      /* **Quelle** porte a refusé, lue sur la page elle-même : le canal ne
+         transporte qu'un code fermé, donc lui seul ne distingue pas « le
+         parcours a refusé en le disant » de « la fonction a rendu `undefined`
+         sans rien lancer ». */
+      const gates={calibrate:await BAREHANDS.calibrate(),
+        tutorial:await BAREHANDS.tutorial(),
+        exitOverlay:await BAREHANDS.exitOverlay()};
+      await settle();
+      global.__gates=gates;
     """, "flows")
     assert observed["present"] == [
         ["activate", "activate", True],
@@ -235,6 +257,17 @@ def test_what_a_brain_sees_today_for_calibration_tutorial_and_overlay(tmp_path):
     assert observed["receipts"][1]["reason"] == "JarvisBarehands.tutorial n'a pas confirmé le démarrage"
     # La page n'a pas bougé : aucun parcours n'a pu démarrer.
     assert observed["after"]["lifecycle"] == observed["before"]["lifecycle"] == "off"
+    # **Et c'est bien l'interrupteur qui a refusé, pas la caméra.** Sans cette
+    # lecture, un `calibrate()` rendant `undefined` sans rien lancer donnerait
+    # exactement le même reçu.
+    assert observed["gates"]["calibrate"] == {
+        "ok": False, "code": "barehands_calibration_disabled",
+        "reason": observed["gates"]["calibrate"]["reason"]}
+    assert "Activer Barehands" in observed["gates"]["calibrate"]["reason"]
+    assert observed["gates"]["tutorial"]["code"] == "barehands_tutorial_disabled"
+    assert "Activer Barehands" in observed["gates"]["tutorial"]["reason"]
+    # `exit_overlay` confirme parce que l'état demandé est déjà là.
+    assert observed["gates"]["exitOverlay"]["ok"] is True
 
 
 #: Une surface injectée, dont le contrat est **épinglé sur la vraie** par

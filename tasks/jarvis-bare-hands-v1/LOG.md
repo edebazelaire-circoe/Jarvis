@@ -2457,3 +2457,31 @@ se déclenche jamais, sans une ligne nulle part. L'écriture le refusait par
 accident (aucune comparaison de borne n'est vraie face à lui) ; les deux portes
 le nomment maintenant. C'est la troisième valeur de la même famille que
 `Number(null)`, après le plancher `0` de `quality`.
+
+### Deux demi-bouchons ne font pas une recette
+
+Le contrat déclare la recette d'extension d'un outil en trois étapes — une
+entrée dans `TOOL`, une dans `TOOL_CAPABILITY`, une dans `TOOL_LABEL` — puis une
+quatrième qui l'**installe** (servir la capacité, l'ajouter à
+`SERVED_CAPABILITIES`). Les deux tests qui la gardaient depuis le retrait de la
+couche d'annotation n'exerçaient chacun qu'un maillon : l'un élargit `TOOLS`
+côté serveur, l'autre remplace `toolCapability` côté moteur. Aucun n'exécute les
+trois étapes, donc ni `INSTALLED_TOOLS`, ni `describeTool`, ni `describeTools`
+— ce que la palette dessine — n'avaient jamais vu l'outil futur. Le **mécanisme
+de refus** était couvert ; la recette, non.
+
+Elle est maintenant jouée dans le contrat lui-même et lue **dans les deux
+sens** : déclaré sans être servi, l'outil est grisé avec son motif et refusé
+partout ; sa capacité servie, la porte s'ouvre. **Formulation générale : un
+mécanisme testé maillon par maillon n'est pas une chaîne testée** — et c'est la
+bascule, pas le refus, qui portait la promesse.
+
+### Une cause fausse dans un test se croit
+
+Le docstring de `test_what_a_brain_sees_today_for_calibration_tutorial_and_overlay`
+attribuait son refus à l'absence de caméra sous node. La porte qui refuse est la
+**précédente** : l'onglet s'ouvre avec Bare Hands éteint, donc `if(!view.enabled)`,
+code `barehands_calibration_disabled`. Et le test ne disait pas **laquelle** avait
+refusé : le canal ne transporte qu'un code fermé, donc un `calibrate()` qui
+rendrait `undefined` sans rien lancer aurait produit un reçu identique. La page
+est maintenant interrogée directement, et le code de chaque porte est affirmé.
