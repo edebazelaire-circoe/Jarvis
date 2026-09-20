@@ -117,6 +117,37 @@ const feedUntil=(flow,make,limit)=>{
   }
   return false;
 };
+/* **Les deux sources du parcours, pilotées à la main — et elles échouent
+   comme les vraies** (leçon numéro un de cette tâche : un double qui ne peut
+   pas échouer comme la vraie chose ne prouve rien).
+
+   - `frames` est une **fente unique**, exactement comme `afterFrame` côté
+     page : une seconde attache remplace la première, et `null` détache. Un
+     double qui accumulerait les abonnés ne pourrait pas montrer la fuite
+     qu'une relance aurait pu créer.
+   - `setInterval` rend un identifiant **distinct** à chaque appel et
+     `clearInterval` ne retire que celui-là : c'est la seule façon de voir
+     qu'une relance n'arme pas une seconde minuterie, ce qui ferait expirer
+     les étapes deux fois plus vite.
+   - Rien n'avance tout seul : `w.tick()` tourne les minuteries et
+     `w.frameOnce()` joue une image. Ce que le parcours reçoit est donc
+     exactement ce que le test lui donne. */
+const wiring=extra=>{
+  const w={frame:null,timers:new Map(),seq:0,observe:()=>base(),pulled:0};
+  w.deps=Object.assign({
+    overlay:shellOf(),now,
+    frames:fn=>{w.frame=typeof fn==='function'?fn:null;return !!w.frame},
+    observe:()=>{w.pulled+=1;return w.observe()},
+    setInterval:(fn,ms)=>{const id=++w.seq;w.timers.set(id,{fn,ms});return id},
+    clearInterval:id=>w.timers.delete(id),
+  },extra||{});
+  w.tick=()=>{clock+=100;for(const t of [...w.timers.values()])t.fn();return w.timers.size};
+  w.frameOnce=()=>{clock+=100;if(w.frame)w.frame();return !!w.frame};
+  w.armed=()=>w.timers.size;
+  return w;
+};
+const tutoWith=extra=>{const w=wiring(extra);w.flow=T.createTutorial(w.deps);return w};
+const tutoOf=extra=>tutoWith(extra).flow;
 """
 
 
@@ -223,21 +254,37 @@ def test_a_tutorial_cannot_be_given_anything_that_writes_a_calibration_profile(t
 
     result = run_node(tmp_path, DOM + OBSERVE + """
       const refusals={};
-      for(const name of ['save','profile','saveProfile','saveSettings','measure','onMeasure','calibration'])
-        refusals[name]=refused(()=>T.createTutorial({overlay:shellOf(),[name]:()=>{}}));
+      /* Les sept écrivains nommés par la Slice 09 — **et quatre noms qu'elle
+         n'avait pas prévus**. C'est toute la différence entre la liste noire
+         d'alors et la liste blanche d'aujourd'hui : la première tenait contre
+         les noms qu'on avait pensé à écrire, dans un module qui argumente
+         lui-même qu'une liste blanche vaut mieux. */
+      for(const name of ['save','profile','saveProfile','saveSettings','measure','onMeasure','calibration',
+                         'persist','store','writeProfile','api'])
+        refusals[name]=refused(()=>T.createTutorial(wiring({[name]:()=>{}}).deps));
       // La construction ordinaire, elle, passe.
-      const ok=!!T.createTutorial({overlay:shellOf()});
+      const ok=!!T.createTutorial(wiring().deps);
       // Et la coque reste obligatoire : un parcours sans écran est un piège.
       const noShell=refused(()=>T.createTutorial({}));
-      out({refusals,ok,noShell,
+      /* `undefined` n'est pas une dépendance : un appelant qui passe une clé
+         qu'il n'a pas remplie ne doit pas être refusé pour une couture qui
+         n'existe pas. Sinon la liste blanche serait plus stricte que la
+         lecture, et c'est la panne d'en face. */
+      const undef=refused(()=>T.createTutorial(wiring({save:undefined}).deps));
+      out({refusals,ok,noShell,undef,
         source:require('fs').readFileSync(process.env.TUTORIAL_SOURCE,'utf8')});
     """.replace("process.env.TUTORIAL_SOURCE", json.dumps(str(TUTORIAL))), "forbidden")
 
     assert set(result["refusals"]) == {"save", "profile", "saveProfile", "saveSettings",
-                                       "measure", "onMeasure", "calibration"}
+                                       "measure", "onMeasure", "calibration",
+                                       "persist", "store", "writeProfile", "api"}
     for name, code in result["refusals"].items():
         assert code == "barehands_tutorial_cannot_write_profile", name
     assert result["ok"] and result["noShell"] == "RangeError"
+    assert result["undef"] is None, (
+        "une clé laissée à `undefined` n'est pas une couture : la refuser rendrait "
+        "la liste blanche plus stricte que la lecture"
+    )
     # Et le module ne connaît aucun chemin vers le profil : ni la route, ni les
     # fabriques du contrat qui y mènent.
     for forbidden in ("toProfilePayload", "normalizeProfile", "PROFILE_SCHEMA_VERSION",
@@ -429,7 +476,7 @@ def test_a_full_run_teaches_the_vocabulary_and_each_step_is_verified_by_a_real_e
 
     result = run_node(tmp_path, DOM + OBSERVE + """
       const seen=[];
-      const flow=T.createTutorial({overlay:shellOf(),now,onDone:r=>seen.push(r)});
+      const flow=tutoOf({onDone:r=>seen.push(r)});
       const started=flow.start();
       const order=[];
       const step=()=>flow.stepId();
@@ -507,7 +554,7 @@ def test_a_step_nobody_feeds_still_expires_because_a_clock_watches_it_too(tmp_pa
     continue : décision 31, appliquée au tutoriel."""
 
     result = run_node(tmp_path, DOM + OBSERVE + """
-      const flow=T.createTutorial({overlay:shellOf(),now,
+      const flow=tutoOf({
         options:{stepTimeoutMs:4000,readMs:200,watchdogMs:100}});
       flow.start();
       feedUntil(flow,()=>base());
@@ -521,7 +568,7 @@ def test_a_step_nobody_feeds_still_expires_because_a_clock_watches_it_too(tmp_pa
       const after=flow.stepId();
       const carried=text(flowRoot(),C.DOM.flowNoteClass)[0];
       // Et une étape passée en veille est nommée par sa vraie cause.
-      const flow2=T.createTutorial({overlay:K.createFlowOverlay({document,now}),now,
+      const flow2=tutoOf({overlay:K.createFlowOverlay({document,now}),
         options:{stepTimeoutMs:4000,readMs:200,watchdogMs:100}});
       flow2.start();feedUntil(flow2,()=>base());
       clock+=300;flow2.feed(base());
@@ -543,6 +590,55 @@ def test_a_step_nobody_feeds_still_expires_because_a_clock_watches_it_too(tmp_pa
     assert result["asleep"]["target"] == {"status": "missed", "reason": "not_active"}
 
 
+def test_a_camera_fault_after_step_one_is_not_reported_as_standby(tmp_path):
+    """**Une panne n'est pas une veille**, et c'est ce qui finit l'argument de
+    la Slice 09 pour avoir retiré le refus « pas de caméra » au lancement.
+
+    L'étape 1 a une phrase pour chacun des quatre états du cycle de vie — c'est
+    précisément ce qui remplace le refus. Mais de l'étape 2 à l'étape 10, la
+    seule branche non-ACTIVE disait *« Bare Hands est retourné en veille :
+    refaites le C pour reprendre »*. Pour `lifecycle: 'error'` c'est faux : une
+    caméra en panne n'est pas une veille, et « refaites le C » ne peut pas
+    marcher. L'utilisateur lisait une consigne impossible sur neuf étapes,
+    soit plus de six minutes d'échéances cumulées.
+
+    Un refus au lancement se remplace par un écran qui dit ce qui manque — à
+    toutes les étapes, pas seulement à la première."""
+
+    result = run_node(tmp_path, DOM + OBSERVE + """
+      const said=(flow,lifecycle)=>{
+        clock+=1500;flow.feed(base({lifecycle}));
+        return text(flowRoot(),C.DOM.flowNoteClass)[0];
+      };
+      const flow=tutoOf({options:{stepTimeoutMs:40000,readMs:200,watchdogMs:100}});
+      flow.start();
+      // Étape 1 : les quatre états ont déjà chacun leur phrase.
+      const wake={error:said(flow,'error'),off:said(flow,'off'),
+        sleep:said(flow,'sleep'),active:said(flow,'active')};
+      // On passe à l'étape 2 par le geste que l'étape 1 enseigne.
+      feedUntil(flow,()=>base());
+      const at=flow.stepId();
+      const beyond={error:said(flow,'error'),sleep:said(flow,'sleep'),off:said(flow,'off')};
+      out({wake,at,beyond});
+    """, "errorbranch")
+
+    # L'étape 1 est inchangée : quatre états, quatre phrases distinctes.
+    assert len(set(result["wake"].values())) == 4, result["wake"]
+    assert result["at"] == "target"
+    # Au-delà, une panne se dit comme une panne et renvoie où la cause vit.
+    assert "interrompu" in result["beyond"]["error"], result["beyond"]
+    assert "pas la veille" in result["beyond"]["error"], (
+        "une caméra en panne annoncée comme une veille donne une consigne "
+        "qui ne peut pas marcher, pendant six minutes"
+    )
+    assert "refaites le C" not in result["beyond"]["error"]
+    assert result["beyond"]["error"] != result["beyond"]["sleep"]
+    assert "Expérimental" in result["beyond"]["error"]
+    # Et la veille garde la sienne : les deux ne se confondent pas.
+    assert "veille" in result["beyond"]["sleep"] and "refaites le C" in result["beyond"]["sleep"]
+    assert result["beyond"]["off"] == result["beyond"]["sleep"]
+
+
 def test_quitting_in_the_middle_reaches_no_recap_so_nothing_says_the_tutorial_was_seen(tmp_path):
     """`tutorialSeen` ne peut pas devenir vrai pour un tutoriel que personne n'a
     traversé — la forme exacte que `calibrated: true` a prise ailleurs sur cette
@@ -557,7 +653,7 @@ def test_quitting_in_the_middle_reaches_no_recap_so_nothing_says_the_tutorial_wa
       for(const how of ['button','escape','api']){
         const done=[],left=[];
         const shell=K.createFlowOverlay({document,now});
-        const flow=T.createTutorial({overlay:shell,now,
+        const flow=tutoOf({overlay:shell,
           onDone:r=>done.push(r),onExit:why=>left.push(why)});
         flow.start();
         feedUntil(flow,()=>base());
@@ -603,7 +699,7 @@ def test_the_way_out_is_permanent_and_does_not_depend_on_what_a_flow_draws(tmp_p
       const closes=root=>allButtons(root).filter(n=>n.getAttribute('data-flow-close')!==null);
       const seen=[];
       const left=[];
-      const flow=T.createTutorial({overlay:shellOf(),now,onExit:why=>left.push(why)});
+      const flow=tutoOf({onExit:why=>left.push(why)});
       flow.start();
       // Toutes les étapes, en les passant, puis le récapitulatif.
       for(let i=0;i<14;i+=1){
@@ -687,7 +783,7 @@ def test_the_two_flows_share_one_shell_and_neither_can_cover_the_other(tmp_path)
       const calib=K.createCalibration({overlay:shell,now,save:async()=>{},
         setInterval:()=>1,clearInterval:()=>{},
         engineDefaults:B_DEFAULTS});
-      const tuto=T.createTutorial({overlay:shell,now});
+      const tuto=tutoOf({overlay:shell});
       // Une seule coque : celle du tutoriel est celle de la calibration.
       calib.start();
       const duringCalibration={roots:countRoots(),calib:calib.isRunning(),tuto:tuto.isRunning()};
@@ -699,7 +795,22 @@ def test_the_two_flows_share_one_shell_and_neither_can_cover_the_other(tmp_path)
         /* Ce que le tutoriel appelle sur la coque, lu dans sa source : rien
            qui ne soit à l'API publiée du § 11. */
         used:[...new Set((require('fs').readFileSync(TUTORIAL_SRC,'utf8')
-          .match(/overlay\\.([a-zA-Z]+)/g)||[]).map(s=>s.slice(8)))].sort()});
+          .match(/overlay\\.([a-zA-Z]+)/g)||[]).map(s=>s.slice(8)))].sort(),
+        /* **Et les trois façons d'échapper à ce relevé**, parce qu'un relevé
+           qui ne connaît qu'une orthographe mesure l'orthographe et non
+           l'usage (même étroitesse que la garde `SIDE_AXIS`). `overlay['x']()`
+           n'écrit pas `overlay.x` ; un alias (`const o=overlay`) ni une
+           déstructuration (`const {x}=overlay`) non plus. Aucune n'existe
+           aujourd'hui — l'assertion existe pour le jour où l'une d'elles
+           apparaîtrait sans que la précédente ne bronche. */
+        evasions:(()=>{
+          const src=require('fs').readFileSync(TUTORIAL_SRC,'utf8');
+          return {
+            bracket:(src.match(/overlay\\s*\\[/g)||[]).length,
+            alias:(src.match(/=\\s*overlay\\s*[;,)]/g)||[]).length,
+            destructured:(src.match(/\\{[^{}\\n]*\\}\\s*=\\s*overlay\\b/g)||[]).length,
+          };
+        })()});
     """.replace("B_DEFAULTS", "{wakeGapMin:.46,wakeGapMax:.85,wakeIndexMin:1.35,wakeSoft:.2,wakeScore:.5,releaseRatio:.42}")
        .replace("TUTORIAL_SRC", json.dumps(str(TUTORIAL)))
        .replace("const shellOf=", "const countRoots=()=>body.children.filter(n=>n.id===C.DOM.flowRootId).length;\nconst shellOf="),
@@ -715,6 +826,12 @@ def test_the_two_flows_share_one_shell_and_neither_can_cover_the_other(tmp_path)
                                    "buttons", "report", "expired", "elapsedMs",
                                    "close", "isOpen"}
     assert {"open", "step", "note", "buttons", "report", "close"} <= set(result["used"])
+    # Et le relevé ci-dessus mesure bien l'usage : aucune des trois écritures
+    # qui lui échapperaient n'est employée.
+    assert result["evasions"] == {"bracket": 0, "alias": 0, "destructured": 0}, (
+        "le tutoriel atteint la coque par une écriture que le relevé "
+        f"d'au-dessus ne voit pas : {result['evasions']}"
+    )
 
 
 # ------------------------------------------------------- la page, la voix, le profil
@@ -801,6 +918,195 @@ def test_the_tutorial_run_on_the_real_page_never_touches_the_calibration_profile
     assert result["firstRun"] == 1 and result["secondRun"] == 1
     # Et la couture de mesure est restée fermée jusqu'au bout.
     assert result["measuring"] is False
+
+
+def test_the_flow_does_not_read_the_page_while_the_recap_is_on_screen(tmp_path):
+    """**Ce que l'attache coûte là où elle ne sert pas**, et pourquoi elle peut
+    donc rester posée jusqu'au bout.
+
+    Les deux sources restent branchées au récapitulatif — c'est ce qui fait
+    repartir « Recommencer » sans que personne n'ait à les rebrancher. Il faut
+    donc qu'elles ne coûtent rien à cet instant : `pump()` teste `concluded`
+    **avant** d'appeler `observe()`, sinon chaque image d'un écran fixe ferait
+    relire à la page ses interactions, ses cibles et ses mains, pour jeter le
+    résultat.
+
+    `observations()` ne peut pas le montrer : `feed()` refuse déjà une
+    observation quand le parcours est conclu, donc le compteur reste plat que
+    la page soit lue ou non. Ce qui se mesure ici est le nombre d'appels à
+    `observe` — c'est-à-dire la lecture elle-même."""
+
+    result = run_node(tmp_path, DOM + OBSERVE + """
+      /* La coque est la **vraie**, seulement espionnée : on lit la liste de
+         boutons qu'elle reçoit pour pouvoir les actionner, exactement comme
+         l'utilisateur le fait à l'écran. Deux des dix étapes expliquent et ne
+         se soldent que sur un bouton — un parcours qu'on ne ferait avancer
+         qu'à l'horloge n'atteindrait jamais le récapitulatif. */
+      const real=shellOf();
+      let acts=[];
+      const spy=Object.assign({},real,{buttons:list=>{acts=list;return real.buttons(list)}});
+      const pressAct=id=>{const b=acts.find(x=>x.id===id);if(!b)return false;b.run();return true};
+      const w=tutoWith({overlay:spy});
+      w.flow.start();
+      const atStart=w.pulled;
+      w.frameOnce();w.tick();
+      const running=w.pulled;
+      // Jusqu'au récapitulatif, en passant tout ce qui se passe.
+      for(let i=0;i<20&&!acts.some(b=>b.id==='again');i+=1)
+        if(!pressAct('understood'))pressAct('skip');
+      const atRecap={pulled:w.pulled,watching:w.flow.watching(),
+        concluded:acts.some(b=>b.id==='again'),armed:w.armed()};
+      // Dix images et cinq tours de chien de garde sur un écran fixe.
+      for(let i=0;i<10;i+=1)w.frameOnce();
+      w.tick();w.tick();w.tick();w.tick();w.tick();
+      const idle=w.pulled;
+      out({atStart,running,atRecap,idle});
+    """, "recapcost")
+
+    # Le lancement lit une fois : la première étape ne doit pas attendre une
+    # image pour dire quoi que ce soit.
+    assert result["atStart"] == 1
+    # En cours de parcours, une image et un tour de chien de garde lisent.
+    assert result["running"] == 3
+    # Au récapitulatif, les deux sources sont **toujours** attachées.
+    assert result["atRecap"]["concluded"] is True
+    assert result["atRecap"]["watching"] is True
+    assert result["atRecap"]["armed"] == 1, "une seule minuterie, jamais deux"
+    # Et pourtant plus rien n'est lu : quinze réveils, zéro lecture de page.
+    assert result["idle"] == result["atRecap"]["pulled"], (
+        "un récapitulatif à l'écran fait relire la page à chaque image pour "
+        f"jeter le résultat ({result['idle'] - result['atRecap']['pulled']} lectures de trop)"
+    )
+
+
+def test_restarting_from_the_recap_leaves_the_tutorial_fed_and_able_to_expire(tmp_path):
+    """**La panne que « Recommencer » réintroduisait**, et le seul chemin que
+    le chien de garde ne couvrait pas.
+
+    Les deux mécanismes qui nourrissent le parcours étaient posés par la page
+    autour de `tutorial()`. Le bouton « Recommencer » du récapitulatif, lui,
+    rentre dans `begin()` **depuis l'intérieur du module** : ni `onDone` ni
+    `onExit` ne sont appelés, la page n'est jamais rappelée, et le tutoriel
+    relancé n'était plus nourri **du tout**. L'utilisateur faisait le C
+    correctement et rien ne se passait, sous un compteur figé sur « 0 s
+    restantes », toutes les étapes gelées de la même façon — exactement la
+    panne que la RÈGLE ZÉRO interdit, que le module documente lui-même et
+    qu'il refuse à la construction sous le nom de paire dangereuse n° 13.
+
+    L'instrument qui la détecte existait déjà et était à l'écran :
+    `tutorialState().observed` restait à 0. Rien ne l'affirmait après une
+    relance. C'est ce que ce test fait, sur la **vraie** page, par les
+    **vraies** portes : huit images d'interaction par l'adaptateur que le
+    contrôleur appelle, et quatre tours de chien de garde.
+
+    La correction n'est pas de rebrancher la page depuis le module — ce serait
+    la même convention, une couche plus bas. Les deux sources vivent
+    maintenant **dans le parcours**, attachées par `begin()` et détachées par
+    `stop()` : une relance les retrouve parce que personne n'a à s'en
+    souvenir. C'est la leçon de la Slice 08, mot pour mot."""
+
+    result = run_page(tmp_path, CAMERA + browser() + TIMERS + """
+      await openTab();
+      await BAREHANDS.enable();
+      await settle();
+      /* L'horloge de la page est **décalée**, pas remplacée : la coque et le
+         parcours lisent tous deux `Date.now()` à l'appel, donc avancer
+         l'offset avance vraiment l'échéance qu'ils regardent. Sans cela,
+         « l'étape expire » ne serait qu'une lecture d'un compteur qui ne
+         bouge pas. */
+      const realNow=Date.now;
+      let offset=0;
+      Date.now=()=>realNow()+offset;
+      const frames=BAREHANDS.adapters.interaction;
+      const buttons=()=>{
+        const root=deep(document.body,C.DOM.flowRootId);
+        if(!root)return [];
+        const found=[];
+        const walk=n=>{if(n.tag==='button'||n.tagName==='BUTTON')found.push(n);
+          for(const c of n.children)walk(c)};
+        walk(root);
+        return found;
+      };
+      const press=async action=>{
+        const hit=buttons().find(b=>b.getAttribute('data-flow-action')===action);
+        if(!hit)return false;
+        hit.fire('click');
+        await settle();
+        return true;
+      };
+      /* Jusqu'au récapitulatif, et **on s'y arrête** : c'est l'état d'où part
+         « Recommencer », et c'est là que la page coupait tout. */
+      await BAREHANDS.tutorial();
+      for(let i=0;i<14;i+=1){
+        if(buttons().some(b=>b.getAttribute('data-flow-action')==='again'))break;
+        if(!(await press('understood'))&&!(await press('skip')))break;
+      }
+      const atRecap={wired:frames.afterFrame(),running:BAREHANDS.tutorialState().running,
+        again:buttons().some(b=>b.getAttribute('data-flow-action')==='again'),
+        observed:BAREHANDS.tutorialState().observed};
+      /* Au récapitulatif, les coutures restent attachées mais le parcours ne
+         compte plus d'observation : cinq images et deux tours de chien de
+         garde ne bougent rien. (Que la page ne soit pas **lue** non plus est
+         une propriété de `pump`, que seul le module peut montrer — c'est le
+         test `…does_not_read_the_page_while_the_recap_is_on_screen`, et ce
+         serait une fausse cause de le prétendre ici.) */
+      for(let i=0;i<5;i+=1)frames.hover([]);
+      tick(2);
+      const idleAtRecap=BAREHANDS.tutorialState().observed;
+
+      await press('again');
+      const afterRestart={wired:frames.afterFrame(),step:BAREHANDS.tutorialState().step,
+        observed:BAREHANDS.tutorialState().observed};
+      // Huit vraies images, puis quatre tours de chien de garde.
+      for(let i=0;i<8;i+=1)frames.hover([]);
+      const afterFrames=BAREHANDS.tutorialState().observed;
+      tick(4);
+      const afterWatchdog=BAREHANDS.tutorialState().observed;
+      /* Et l'étape relancée **expire** : le compteur ne peut pas rester figé
+         sur « 0 s restantes ». Le chien de garde seul doit y suffire, main
+         hors du cadre — c'est précisément le cas qu'il existe pour couvrir. */
+      offset+=120000;
+      tick(2);
+      const expired=BAREHANDS.tutorialState().step;
+      await BAREHANDS.exitOverlay();
+      Date.now=realNow;
+      out({atRecap,idleAtRecap,afterRestart,afterFrames,afterWatchdog,expired,
+        wiredAfterExit:frames.afterFrame(),
+        timersAfterExit:ticks(),
+        runningAfterExit:BAREHANDS.tutorialState().running});
+    """, "restart")
+
+    # Le récapitulatif est atteint, le parcours tourne toujours, et les
+    # coutures ne sont pas coupées en y arrivant.
+    assert result["atRecap"]["again"] is True
+    assert result["atRecap"]["running"] is True
+    assert result["atRecap"]["wired"] is True, (
+        "couper la cadence d'images en arrivant au récapitulatif est le "
+        "premier maillon de la panne : la relance repart sur un parcours "
+        "que plus rien ne nourrit"
+    )
+    # Et un récapitulatif à l'écran ne compte aucune observation.
+    assert result["idleAtRecap"] == result["atRecap"]["observed"], (
+        "le récapitulatif est un écran fixe : rien n'y est constaté"
+    )
+    # La relance repart à la première étape, compteur d'observations remis à zéro.
+    assert result["afterRestart"]["step"] == "wake"
+    assert result["afterRestart"]["wired"] is True
+    # **Et elle est nourrie** : huit images, huit observations de plus.
+    assert result["afterFrames"] == result["afterRestart"]["observed"] + 8, result
+    # Le chien de garde compte **en plus**, et il est bien un second mécanisme.
+    assert result["afterWatchdog"] == result["afterFrames"] + 4, result
+    # L'étape relancée expire : « ça attend » ne peut pas redevenir « c'est bloqué ».
+    assert result["expired"] != "wake", (
+        "une étape relancée qui n'expire jamais laisse le compteur figé sur "
+        "« 0 s restantes » pour toujours"
+    )
+    # Et la sortie rend tout : ni couture vivante, ni minuterie orpheline.
+    assert result["runningAfterExit"] is False
+    assert result["wiredAfterExit"] is False
+    assert result["timersAfterExit"] == 0, (
+        "une minuterie qui survit au parcours tourne jusqu'au rechargement de la page"
+    )
 
 
 def test_the_measurement_seam_stays_shut_for_the_whole_tutorial(tmp_path):
@@ -986,7 +1292,9 @@ def test_the_button_and_the_voice_are_the_same_door_and_both_confirm(tmp_path):
     assert result["busy"]["ok"] is False and result["busy"]["code"] == "barehands_flow_busy"
     assert "déjà à l’écran" in result["busy"]["reason"]
     assert result["exited"] == {"ok": True, "flow": "tutorial", "closed": True}
-    assert result["idle"] == {"ok": True, "flow": None, "closed": False}
+    # `already` : rien n'était ouvert, donc rien n'a changé — le canal en
+    # fait un `duplicate`, et le cerveau ne dit pas « je l'ai fermée ».
+    assert result["idle"] == {"ok": True, "flow": None, "closed": False, "already": True}
     assert all(result["confirmed"]), "le contrat flow_unconfirmed exige une confirmation explicite"
     # Trois parcours ouverts, trois sorties au milieu : « tutoriel vu » n'a
     # jamais été écrit, parce que le récapitulatif n'a jamais été atteint.
@@ -1057,11 +1365,28 @@ def test_a_voice_command_leaves_a_trace_on_screen_even_when_it_is_refused(tmp_pa
       const beforeShell=toasts.length;
       BAREHANDS.voice.record({name:'calibrate',outcome:'refused',code:'barehands_flow_busy',
         reason:'Le tutoriel est déjà à l’écran.',lifecycle:'sleep'});
-      const shellNote=(()=>{const root=deep(document.body,C.DOM.flowRootId);
+      const notesOf=()=>{const root=deep(document.body,C.DOM.flowRootId);
         const out=[];const walk=n=>{if(String(n.className||'').indexOf(C.DOM.flowNoteClass)>=0)out.push(n.textContent);
-          for(const c of n.children)walk(c)};if(root)walk(root);return out})();
+          for(const c of n.children)walk(c)};if(root)walk(root);return out};
+      const shellNote=notesOf();
+      /* **Et elle survit à l'image suivante.** `paint()` réécrit cette ligne
+         à **chaque** observation, c'est-à-dire à chaque image de caméra : la
+         phrase vivait 16 à 33 ms, sous une coque qui couvre le panneau et
+         sans toast en dessous. Cinq images et deux tours de chien de garde
+         plus tard, elle doit toujours être là. */
+      const realNow=Date.now;let offset=0;Date.now=()=>realNow()+offset;
+      for(let i=0;i<5;i+=1)BAREHANDS.adapters.interaction.hover([]);
+      tick(2);
+      const afterFrames=notesOf();
+      /* Et elle ne dure pas pour autant **toujours** : passé le temps de la
+         lire, l'étape reprend la parole. Un état qui ne finit jamais est
+         interdit par la même règle que celui qu'on ne voit pas. */
+      offset+=20000;
+      BAREHANDS.adapters.interaction.hover([]);
+      const afterHold=notesOf();
+      Date.now=realNow;
       out({empty,refusedLine,appliedLine,afterRefusal,
-        shellNote,shellToasts:toasts.length-beforeShell,
+        shellNote,afterFrames,afterHold,shellToasts:toasts.length-beforeShell,
         last:BAREHANDS.voice.last()});
     """, "voice")
 
@@ -1076,6 +1401,17 @@ def test_a_voice_command_leaves_a_trace_on_screen_even_when_it_is_refused(tmp_pa
     # Coque ouverte : la note y va, et **aucun** toast n'est posé dessous.
     assert any("calibrate" in note for note in result["shellNote"])
     assert result["shellToasts"] == 0
+    # **Elle survit aux images suivantes** : sans cela elle serait affichée
+    # 16 à 33 ms, sous une coque qui couvre le panneau et sans toast dessous —
+    # donc nulle part, dans le seul cas qu'on regarde.
+    assert any("calibrate" in note for note in result["afterFrames"]), (
+        "le reçu d'une commande vocale est effacé par l'image suivante : "
+        f"{result['afterFrames']}"
+    )
+    # Et elle finit : l'étape reprend la parole passé le temps de la lire.
+    assert not any("calibrate" in note for note in result["afterHold"]), (
+        "une note tenue pour toujours bâillonne l'étape qui est à l'écran"
+    )
     assert result["last"]["name"] == "calibrate" and result["last"]["code"] == "barehands_flow_busy"
 
 
@@ -1187,7 +1523,8 @@ def test_a_tutorial_module_that_did_not_install_refuses_instead_of_taking_the_pa
     assert result["rest"]["enabled"] is True
     assert result["rest"]["lifecycle"] == "string"
     assert result["rest"]["measuring"] is False
-    assert result["rest"]["exit"] == {"ok": True, "flow": None, "closed": False}
+    assert result["rest"]["exit"] == {"ok": True, "flow": None, "closed": False,
+                                      "already": True}
 
 
 def test_the_page_inserts_the_tutorial_after_the_shell_and_before_the_pointer(tmp_path):

@@ -382,12 +382,21 @@ def build_server(target: BarehandsMcpTarget | None = None, *, tools: BarehandsCo
 
     mcp = StrictBarehandsMCP(SERVER_NAME, instructions=_SERVER_INSTRUCTIONS)
 
-    # Les trois parcours **existent** (Slices 08 et 09). Ce que cette note doit
-    # dire n'est donc plus « ce n'est pas implanté » — ce serait faux, et une
-    # consigne périmée fait refuser au cerveau un outil qui marche, ce qui est
-    # indiscernable d'une panne — mais ce qu'une confirmation **signifie** :
-    # la surimpression est ouverte, pas le parcours fini.
-    _FLOW_NOTE = (
+    # Les trois parcours **existent** (Slices 08 et 09). Ce que ces notes
+    # doivent dire n'est donc plus « ce n'est pas implanté » — ce serait faux,
+    # et une consigne périmée fait refuser au cerveau un outil qui marche, ce
+    # qui est indiscernable d'une panne — mais ce qu'une confirmation
+    # **signifie**.
+    #
+    # Et elles sont **deux**, depuis la Slice 10. Une seule note collée aux
+    # trois outils faisait dire à `barehands_exit_overlay` — dont le travail
+    # est de **fermer** — « un succès veut dire que la surimpression est
+    # ouverte […] dis que c'est ouvert ». L'utilisateur demandait « ferme la
+    # surimpression », elle se fermait, et JARVIS répondait « c'est ouvert à
+    # l'écran » devant un écran vide : le faux succès exact que ces outils
+    # existent pour empêcher, à l'envers. Un outil qui ouvre et un outil qui
+    # ferme ne peuvent pas partager la phrase qui dit ce qu'un succès affirme.
+    _OPEN_FLOW_NOTE = (
         "Un succès veut dire que la surimpression est ouverte à l'écran, PAS que le parcours est "
         "terminé : il dure des minutes et c'est l'utilisateur qui le mène à la main. Ne dis donc "
         "jamais « c'est calibré » ni « tu as fini le tutoriel » ; dis que c'est ouvert. Un seul "
@@ -395,6 +404,21 @@ def build_server(target: BarehandsMcpTarget | None = None, *, tools: BarehandsCo
         "barehands_flow_unconfirmed (le parcours n'a pas démarré : Bare Hands éteint, ou l'autre "
         "parcours est ouvert — la cause exacte est à l'écran de l'utilisateur), barehands_flow_absent "
         "(la page est plus ancienne que ce JARVIS et ne connaît pas ce parcours)."
+    )
+    # Celui qui ferme. Il **confirme toujours** — `exitOverlay()` rend
+    # `{ok: true}` sans condition, délibérément : ce que l'appelant demande est
+    # qu'il n'y ait pas de surimpression, et après lui il n'y en a pas, qu'il y
+    # en ait eu une ou non. `barehands_flow_unconfirmed` ne peut donc pas
+    # sortir d'ici, et le lister apprendrait au cerveau à se méfier d'un refus
+    # qui n'arrive jamais.
+    _EXIT_FLOW_NOTE = (
+        "Un succès veut dire que la surimpression est fermée et que l'utilisateur a retrouvé son "
+        "interface : dis que c'est fermé, jamais que c'est ouvert. Il réussit aussi quand rien "
+        "n'était ouvert — le résultat demandé est le même — donc ne promets pas pour autant qu'un "
+        "parcours a été interrompu. Il ne termine ni ne valide un parcours : une calibration ou un "
+        "tutoriel fermé en cours de route n'a rien enregistré, et il faut le relancer pour le faire. "
+        "Refus possible : barehands_flow_absent (la page est plus ancienne que ce JARVIS et ne "
+        "connaît pas cette commande)."
     )
 
     @mcp.tool()
@@ -420,19 +444,19 @@ def build_server(target: BarehandsMcpTarget | None = None, *, tools: BarehandsCo
 
     @mcp.tool(description=f"""Lancer la calibration de Bare Hands (mesure des seuils de la main de l'utilisateur).
 
-{_FLOW_NOTE}""")
+{_OPEN_FLOW_NOTE}""")
     async def barehands_calibrate() -> dict:
         return await hands.send("barehands_calibrate", "calibrate")
 
     @mcp.tool(description=f"""Lancer le tutoriel de Bare Hands (apprentissage des gestes).
 
-{_FLOW_NOTE}""")
+{_OPEN_FLOW_NOTE}""")
     async def barehands_tutorial() -> dict:
         return await hands.send("barehands_tutorial", "tutorial")
 
     @mcp.tool(description=f"""Fermer le panneau de calibration ou de tutoriel ouvert et revenir à l'interface.
 
-{_FLOW_NOTE}""")
+{_EXIT_FLOW_NOTE}""")
     async def barehands_exit_overlay() -> dict:
         return await hands.send("barehands_exit_overlay", "exit_overlay")
 

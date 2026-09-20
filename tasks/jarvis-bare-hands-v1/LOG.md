@@ -2516,3 +2516,133 @@ plancher, `NaN` qui retraverse, la réinitialisation qui n'archive plus ou qui
 reste aveugle à l'illisible, tout outil déclaré réputé installé, la croix
 rejournalisée « échap », un quatrième statut d'étape au contrat, et
 `calibrate()` qui rend `undefined` sans rien lancer.
+
+---
+
+## S09 — reprise (Slice 10, tâche A)
+
+### R1 (bloquant) — « Recommencer » laissait le tutoriel relancé jamais nourri, jamais expirable
+
+Les deux mécanismes qui nourrissent le tutoriel — la cadence d'images
+(`interactionView.afterFrame`) et le chien de garde — étaient posés **par la
+page** autour de `startTutorial()`. Le bouton « Recommencer » du récapitulatif
+rentre dans `begin()` **depuis l'intérieur du module** : ni `onDone` ni
+`onExit` ne sont appelés, la page n'est jamais rappelée. Et
+`markTutorialSeen()` coupait tout en arrivant au récapitulatif. Résultat :
+`observed` restait à **0** à travers huit images réelles et quatre tours de
+chien de garde, sous un compteur figé sur « 0 s restantes », les dix étapes
+gelées de la même façon. La panne que la paire dangereuse n° 13 existe pour
+empêcher, par le seul chemin que le chien de garde ne couvrait pas.
+
+**Correction : les deux sources vivent dans le parcours, pas dans la page.**
+`createTutorial` exige `frames`, `observe`, `setInterval` et `clearInterval` à
+la construction ; `begin()` attache, `stop()` détache. Une relance les retrouve
+parce que personne n'a à s'en souvenir. C'est mot pour mot ce que la Slice 08
+avait fait pour `createCalibration`, et la formulation vaut d'être répétée :
+**une garantie que chaque appelant doit se rappeler de respecter est une
+convention, pas une garantie.**
+
+Cela referme **R8** du même geste : `options()` validait `watchdogMs` sur les
+options effectives du parcours, alors que la page armait l'intervalle depuis
+`DEFAULTS.watchdogMs`. Les deux ne coïncidaient que parce que la page n'en
+passait aucune. Le nombre validé est maintenant le nombre utilisé, et il n'y a
+plus qu'un endroit où le lire.
+
+Coût au récapitulatif : nul. Les coutures restent attachées — c'est ce qui fait
+repartir la relance — mais `pump()` teste `concluded` **avant** d'appeler
+`observe()`. `watching()` relit l'attache, comme `observed` relit les
+observations.
+
+**Ce que la mutation a appris ici, et c'est la leçon durable de cette reprise.**
+La panne d'origine avait **deux maillons** : la page coupait au récapitulatif
+*et* la relance ne rebranchait pas. Prise isolément, aucune des deux mutations
+qui les rejouent ne tue le test de relance — la correction est redondante par
+construction, chaque moitié suffit. Il a fallu les rejouer **ensemble** pour
+retrouver la panne. Formulation : **une panne à deux maillons ne se mute pas un
+maillon à la fois ; une mutation qui survit peut simplement dire que la
+correction est redondante — encore faut-il le vérifier plutôt que le supposer.**
+
+Deuxième survivant, réel celui-là : « la pompe observe même au récapitulatif »
+passait, parce que mon assertion lisait `observed` — que `feed()` bloque déjà
+quand le parcours est conclu. Le compteur restait plat que la page soit lue ou
+non : **une fausse cause dans un test.** Remplacée par une assertion qui compte
+les appels à `observe`, au niveau du module où ils sont visibles.
+
+### R2 — `barehands_exit_overlay` disait au cerveau d'annoncer « c'est ouvert »
+
+`_FLOW_NOTE` était collée aux trois outils de parcours, dont celui dont le
+travail est de **fermer**. Il disait donc : « un succès veut dire que la
+surimpression est ouverte […] dis que c'est ouvert ». L'utilisateur demandait
+« ferme la surimpression », elle se fermait, et JARVIS répondait « c'est ouvert
+à l'écran » devant un écran vide. Et `barehands_flow_unconfirmed` y était listé
+alors qu'`exitOverlay()` rend `{ok:true}` sans condition — un refus qui n'arrive
+jamais apprend au cerveau à se méfier pour rien.
+
+Deux notes désormais (`_OPEN_FLOW_NOTE`, `_EXIT_FLOW_NOTE`). **Le test épinglait
+la contradiction** (`assert "ouverte" in text` pour les trois) : c'est le hasard
+« une mutation corrige le test plutôt que le code », réalisé. Il assure
+maintenant que l'outil qui ferme dit « fermée », ne dit **pas** « ouverte », et
+ne liste pas un refus inatteignable. Règle : **un outil qui ouvre et un outil
+qui ferme ne peuvent pas partager la phrase qui dit ce qu'un succès affirme.**
+
+### R4 — le reçu d'une commande vocale vivait 16 à 33 ms
+
+La page écrivait le reçu dans `shell().note(...)` et ne posait délibérément
+aucun toast dans ce cas. Mais le `paint()` des deux parcours réécrit cette ligne
+à **chaque image**. La coque couvre le panneau (`z-index` 2147482000 contre 70),
+donc un refus vocal pendant un tutoriel — le seul cas que la Slice 09 désigne
+comme celui qu'on regarde — n'était lisible nulle part.
+
+Corrigé **dans la coque**, pas dans l'appelant : `note(text, kind, holdMs)`.
+Une note sans `holdMs` — toutes celles des deux parcours — n'efface pas une
+note tenue avant son échéance. Bornée, parce qu'un état qui dure toujours est
+interdit par la même règle que celui qu'on ne voit pas. Le calibrage bénéficie
+de la correction sans qu'une ligne y change, et sans changement de comportement
+puisqu'il ne passe jamais `holdMs`.
+
+### R5 — une caméra en panne annoncée comme une veille, pendant six minutes
+
+De l'étape 2 à l'étape 10, la seule branche non-ACTIVE disait « Bare Hands est
+retourné en veille : refaites le C pour reprendre ». Pour `lifecycle: 'error'`
+c'est faux, et la consigne ne peut pas marcher. L'étape 1 avait déjà ses quatre
+phrases — c'est ce qui remplaçait le refus au lancement ; l'argument n'était
+fini qu'une fois la branche `error` présente **partout**. Un `else if`.
+Règle : **un refus au lancement se remplace par un écran qui dit ce qui manque,
+à toutes les étapes — pas seulement à la première.**
+
+### R6 — la liste noire est devenue une liste blanche
+
+Sept noms d'écrivains interdits, dans un module dont `readObservation`
+argumente lui-même qu'une liste blanche vaut mieux. Elle tenait contre les noms
+qu'on avait pensé à écrire. `createTutorial` n'accepte plus que les dix
+dépendances du contrat et refuse tout autre nom, `persist` ou `writeProfile`
+compris, avec le même code. `undefined` n'est pas une dépendance : refuser une
+clé laissée vide rendrait la liste blanche plus stricte que la lecture, ce qui
+est la panne d'en face.
+
+### R7 — le relevé de source mesurait l'orthographe, pas l'usage
+
+`overlay\.([a-zA-Z]+)` ne voit ni `overlay['x']()`, ni un alias, ni une
+déstructuration. Aucune des trois n'existe ; trois compteurs l'affirment
+maintenant, à côté du relevé qu'ils protègent.
+
+### R10 — `already: true` était jeté par le canal
+
+Un parcours déjà à l'écran rend `{ok:true, already:true}`, et il a raison. Le
+canal rabattait toute confirmation sur `applied` : le cerveau disait « je l'ai
+ouvert » devant une coque qu'il n'avait pas ouverte. Les parcours n'ont pas
+d'état relisible (`spec.targets` nul), donc leur confirmation est le seul
+endroit où la distinction puisse voyager. `exitOverlay()` rend aussi
+`already:true` quand rien n'était ouvert — le contrat nommait ce résidu au § 13,
+il est refermé. Seul le drapeau strictement `true` compte.
+
+### R3, R9 — vérifiés, déjà faits par la reprise de la Slice 08
+
+`calibration.js:905` passe bien `exit:why=>cancel(EXIT_WORD[why]||…)` ; le test
+`test_every_stage_status_is_a_word_the_shell_can_draw` affirme bien
+`STAGE_STATUSES ⊆ FLOW_STATUS` dans les deux sens. Non refaits.
+
+### R11 — commentaire périmé retiré
+
+`control_center_barehands_commands.js` disait encore que les parcours
+n'existaient pas.

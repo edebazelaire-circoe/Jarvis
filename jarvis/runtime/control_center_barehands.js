@@ -4291,7 +4291,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
      et l'acquis mesuré de la Slice 02).
 
      **Deux mécanismes, et aucun des deux n'est de trop** — même forme que
-     `startWatching` côté tutoriel, et pour la même raison lue à l'envers :
+     les deux sources du tutoriel, et pour la même raison lue à l'envers :
 
      1. **la couture d'images** (`deps.onMeasure`), parce qu'elle seule peut
         construire un enregistrement de scalaires (décision 32) ;
@@ -4333,14 +4333,15 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
      **Le tutoriel n'écrit jamais de paramètre de calibration.** Trois choses
      le tiennent, et aucune n'est une promesse :
 
-     1. `createTutorial` **refuse à la construction** toute dépendance capable
-        d'écrire (`save`, `profile`, `saveProfile`, `saveSettings`, `measure`,
-        `onMeasure`, `calibration`) — voir le module ;
+     1. `createTutorial` n'accepte qu'une **liste blanche** de dépendances
+        (Slice 10) : tout nom qui n'est pas au contrat §13 est refusé à la
+        construction, écrivain connu ou nom que personne n'a encore inventé
+        — voir le module ;
      2. le câblage ci-dessous ne lui en passe aucune : le seul effet durable
         est `onDone`, qui écrit le **réglage** `tutorialSeen` par la porte
         unique des réglages (`saveSettings`) ;
      3. il n'emprunte pas la couture `deps.onMeasure` du contrôleur : ce que
-        `startWatching` lui donne est une **observation** construite ici à
+        `observe` lui donne est une **observation** construite ici à
         partir de ce que la page publie déjà, où aucune mesure de main
         n'entre. La couture de la décision 32 reste fermée pendant tout le
         tutoriel, ce qu'un test affirme. */
@@ -4349,8 +4350,20 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
     if(!TUTO)return null;
     tutorial=TUTO.createTutorial({
       overlay:shell(),now:()=>Date.now(),
+      /* **Les deux sources sont passées, plus posées** (Slice 10). La page
+         donne la couture d'images et le lecteur d'observation ; c'est le
+         parcours qui les attache et les détache, parce que « Recommencer »
+         rentre dans `begin()` sans que la page en sache rien. Tant que
+         c'était l'inverse, un tutoriel relancé n'était plus nourri du tout.
+         La minuterie vient d'ici parce que `window` est ici, mais la cadence
+         est celle des options **effectives** du parcours, qui sont aussi
+         celles que la paire dangereuse n° 13 valide. */
+      frames:fn=>interactionView.afterFrame(fn),
+      observe:tutorialObservation,
+      setInterval:(fn,ms)=>window.setInterval(fn,ms),
+      clearInterval:id=>window.clearInterval(id),
       onDone:result=>{markTutorialSeen(result)},
-      onExit:()=>{stopWatching();refreshPanel()},
+      onExit:()=>{refreshPanel()},
       log:(level,message,detail)=>{
         if(level==='warn')console.warn(message,detail);else console.info(message,detail);
       },
@@ -4403,22 +4416,20 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
         pendant le tutoriel, et sa cadence est bornée contre l'échéance d'une
         étape **à la construction** (paire dangereuse n° 13).
 
-     Les deux appellent le même `feedTutorial` : une observation de plus est
+     Les deux appellent le même `pump` : une observation de plus est
      inoffensive (une étape ne se solde qu'une fois), une observation de moins
-     ne l'est pas. */
-  let watchdog=0;
-  function feedTutorial(){
-    const flow=tutorial;
-    if(flow&&flow.isRunning())flow.feed(tutorialObservation());
-  }
-  function startWatching(){
-    interactionView.afterFrame(feedTutorial);
-    if(!watchdog&&TUTO)watchdog=window.setInterval(feedTutorial,TUTO.DEFAULTS.watchdogMs);
-  }
-  function stopWatching(){
-    interactionView.afterFrame(null);
-    if(watchdog){window.clearInterval(watchdog);watchdog=0}
-  }
+     ne l'est pas.
+
+     **Les deux vivent dans le parcours depuis la Slice 10**, et la page ne
+     fait plus que les lui passer (voir `tutorialFlow`). Elle les posait
+     elle-même autour de `startTutorial()`, ce qui marchait exactement une
+     fois : le bouton « Recommencer » du récapitulatif rentre dans le parcours
+     **depuis l'intérieur du module**, la page n'était jamais rappelée, et le
+     tutoriel relancé n'était plus nourri du tout — `tutorialState().observed`
+     restait à 0 pendant que l'utilisateur faisait le C correctement. Une
+     garantie que l'appelant doit se rappeler de respecter n'est pas une
+     garantie ; et un repli qui partage sa source avec ce qu'il double n'en
+     est pas un non plus. */
 
   /* `tutorialSeen` **est lu par quelqu'un depuis la Slice 09** : il décide de
      ce que la section Tutoriel de l'onglet dit, et il est écrit ici, à
@@ -4428,7 +4439,14 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
      `finally`). Ce qui manquerait sans la ligne ci-dessous, c'est de le dire
      **dans la coque**, seule surface visible à cet instant. */
   async function markTutorialSeen(result){
-    stopWatching();
+    /* **Rien n'est détaché ici**, et c'est la correction de la Slice 10 : le
+       récapitulatif est un état vivant du parcours, d'où le bouton
+       « Recommencer » repart. Couper les sources en y arrivant était le
+       premier maillon de la panne — la relance retombait sur un parcours que
+       plus rien ne nourrissait. Le parcours les tient lui-même jusqu'à
+       `stop()`, et `pump()` n'observe pas tant que le récapitulatif est à
+       l'écran : l'attache ne coûte donc rien de plus qu'un test de booléen
+       par image. */
     refreshPanel();
     if(view.settings.tutorialSeen){shell().note('Tutoriel terminé.','ok');return null}
     const saved=await saveSettings({tutorialSeen:true});
@@ -4634,8 +4652,6 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
        vie entre donc dans l'observation, et l'étape `wake` a une phrase pour
        chacun de ses quatre états. */
     const started=flow.start();
-    startWatching();
-    feedTutorial();
     refreshPanel();
     return started;
   }
@@ -4654,10 +4670,15 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
     const open=openFlow();
     if(!open){
       console.info('[barehands] sortie de surimpression : aucune n’était ouverte');
-      return {ok:true,flow:null,closed:false};
+      /* **`already` pour la même raison que les deux autres parcours**
+         (Slice 10) : c'est un succès, mais rien n'a changé. Sans ce drapeau
+         le canal rend `applied` et JARVIS dit « je l'ai fermée » devant un
+         écran où il n'y avait rien — le faux récit exact que le vocabulaire
+         `duplicate` existe pour éviter. `closed` reste ce qu'il a toujours
+         été : ce que la page a fait, que les tests de la Slice 09 lisent. */
+      return {ok:true,flow:null,closed:false,already:true};
     }
     open.flow.exit('voix ou commande');
-    stopWatching();
     stopMeasuring();
     refreshPanel();
     return {ok:true,flow:open.name,closed:true};
@@ -4681,6 +4702,12 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
      - une **ligne du panneau Expérimental**, qui survit au toast et porte
        l'heure, le nom, l'issue et le code du refus. */
   const VOICE_OUTCOME=Object.freeze({applied:'appliquée',duplicate:'déjà dans cet état',refused:'refusée'});
+  /* Combien de temps le reçu d'une commande vocale est **tenu** dans la coque
+     (`note(..., holdMs)`, Slice 10). Les mêmes durées que les toasts de
+     l'autre branche, pour que la même commande ne se lise pas deux fois moins
+     longtemps selon qu'un parcours est ouvert ou non. Bornées : la RÈGLE ZÉRO
+     interdit autant l'état qui ne se voit pas que celui qui dure toujours. */
+  const VOICE_NOTE_HOLD_MS=Object.freeze({refused:9000,applied:3000});
   function recordVoiceCommand(entry){
     const source=entry&&typeof entry==='object'?entry:{};
     const record={
@@ -4699,8 +4726,18 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
     if(record.outcome==='refused')console.warn('[barehands] commande vocale refusée',record);
     else console.info('[barehands] commande vocale',record);
     const open=openFlow();
+    /* **Tenue, sinon elle n'existe pas** (Slice 10). La ligne était écrite
+       dans la coque puis effacée par le `paint()` du parcours à l'image
+       suivante — 16 à 33 ms à 30-60 images par seconde. La coque couvre le
+       panneau (z-index 2147482000 contre 70), et aucun toast n'est posé dans
+       ce cas : un refus de commande vocale pendant un tutoriel était donc
+       invisible partout, dans le seul cas que la Slice 09 désigne comme celui
+       qu'on regarde. `VOICE_NOTE_HOLD_MS` la tient le temps qu'on la lise, et
+       pas plus : l'étape doit pouvoir reprendre la parole. Un refus est tenu
+       plus longtemps qu'un succès, comme les toasts de l'autre branche. */
     if(open)shell().note(`${line}${record.reason?` — ${record.reason}`:''}`,
-      record.outcome==='refused'?'bad':'ok');
+      record.outcome==='refused'?'bad':'ok',
+      record.outcome==='refused'?VOICE_NOTE_HOLD_MS.refused:VOICE_NOTE_HOLD_MS.applied);
     else if(typeof toast==='function')
       toast({title:line,sub:record.reason||record.code
         ||`Bare Hands est ${LIFECYCLE_LABEL[record.lifecycle]||record.lifecycle||'?'}.`,

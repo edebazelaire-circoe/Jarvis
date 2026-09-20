@@ -249,7 +249,9 @@ def test_what_a_brain_sees_today_for_calibration_tutorial_and_overlay(tmp_path):
         ["tutorial", "tutorial", True],
         ["exit_overlay", "exitOverlay", True],
     ]
-    assert [r["outcome"] for r in observed["receipts"]] == ["refused", "refused", "applied"]
+    # `exit_overlay` confirme, mais rien n'était ouvert : c'est un `duplicate`,
+    # pas quelque chose que le cerveau vient de fermer (Slice 10).
+    assert [r["outcome"] for r in observed["receipts"]] == ["refused", "refused", "duplicate"]
     assert [r["code"] for r in observed["receipts"]] == [
         vocab.FLOW_UNCONFIRMED, vocab.FLOW_UNCONFIRMED, None,
     ]
@@ -327,6 +329,62 @@ def test_a_flow_that_does_not_confirm_is_refused_not_announced(tmp_path):
     for label in ("vrai", "ok-vrai"):
         assert result["cases"][label]["outcome"] == "applied", label
         assert result["cases"][label]["code"] is None
+
+
+def test_a_flow_already_on_screen_is_a_duplicate_not_something_the_brain_just_opened(tmp_path):
+    """**`already: true` n'est pas `applied`.** Un parcours déjà à l'écran rend
+    `{ok: true, already: true}` — et il a raison : l'état demandé est l'état
+    obtenu, et répondre « non » ferait dire à JARVIS que ça n'a pas démarré
+    devant une coque ouverte.
+
+    Mais le canal jetait ce drapeau et rendait `applied`. Le cerveau disait
+    donc « je l'ai ouvert » à quelqu'un qui redemandait devant une coque déjà
+    ouverte : exactement le faux récit que `duplicate` existe pour éviter, et
+    que ce même canal applique déjà aux commandes de cycle de vie depuis la
+    Slice 12.
+
+    Les parcours n'ont pas d'état relisible (`spec.targets` est nul), donc leur
+    confirmation est le seul endroit où la distinction puisse voyager. Elle y
+    voyage."""
+
+    result = run_node(tmp_path, BROWSER + NETWORK + SURFACE + """
+      const cases={};
+      for(const [label,answer] of [
+          ['ouvert',{ok:true,flow:'tutorial',already:true,step:'wake'}],
+          ['neuf',{ok:true,flow:'tutorial',step:'wake',steps:10}],
+          // `already` faux ou absent ne doit rien changer.
+          ['faux',{ok:true,already:false}],
+          // Et il faut le **drapeau**, pas une valeur qui lui ressemble :
+          // sinon n'importe quelle chaîne vraie vaudrait « déjà ouvert ».
+          ['vaguement-vrai',{ok:true,already:'oui'}]]){
+        const made=makeSurface('sleep',{tutorial:answer});
+        cases[label]=await drive(made,'tutorial');
+      }
+      /* Fermer la surimpression **confirme toujours**, et deux fermetures de
+         suite ne sont pas deux fermetures : la seconde ne trouve rien à
+         fermer et le dit (`closed:false`). */
+      const first=await drive(makeSurface('sleep',
+        {exitOverlay:{ok:true,flow:'tutorial',closed:true}}),'exit_overlay');
+      const second=await drive(makeSurface('sleep',
+        {exitOverlay:{ok:true,flow:null,closed:false,already:true}}),'exit_overlay');
+      out({cases,first:first.outcome,second:second.outcome});
+    """, "already")
+
+    assert result["cases"]["ouvert"]["outcome"] == "duplicate", (
+        "un parcours déjà à l'écran relayé en « appliqué » fait dire au "
+        "cerveau « je l'ai ouvert » devant une coque qu'il n'a pas ouverte"
+    )
+    assert result["cases"]["ouvert"]["code"] is None
+    assert result["cases"]["neuf"]["outcome"] == "applied"
+    assert result["cases"]["faux"]["outcome"] == "applied"
+    assert result["cases"]["vaguement-vrai"]["outcome"] == "applied", (
+        "seul le drapeau `already === true` vaut « déjà » ; une valeur "
+        "vaguement vraie n'est pas une confirmation"
+    )
+    # Fermer une surimpression ouverte est un changement ; refermer le vide
+    # aussi longtemps qu'on veut n'en est pas un.
+    assert result["first"] == "applied"
+    assert result["second"] == "duplicate"
 
 
 def test_an_already_reached_state_is_a_duplicate_not_a_change(tmp_path):

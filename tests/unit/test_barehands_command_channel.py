@@ -623,21 +623,49 @@ async def test_the_flow_tools_no_longer_tell_the_brain_they_are_unimplemented():
 
     Les trois parcours existent depuis les Slices 08 et 09. Ce que leurs
     descriptions doivent dire maintenant n'est plus « ce n'est pas implanté »,
-    c'est ce qu'une confirmation **signifie** : la surimpression est ouverte,
-    pas le parcours fini — sans quoi JARVIS annoncerait « c'est calibré »
-    devant un écran qui vient de s'ouvrir."""
+    c'est ce qu'une confirmation **signifie**.
+
+    **Et ce n'est pas la même chose pour les trois**, ce que la Slice 09
+    n'avait pas vu et que ce test épinglait à l'envers : il exigeait le mot
+    « ouverte » de `barehands_exit_overlay`, dont le travail est de
+    **fermer**. La note collée aux trois outils lui faisait donc dire au
+    cerveau « un succès veut dire que la surimpression est ouverte […] dis que
+    c'est ouvert ». L'utilisateur demandait « ferme la surimpression », elle se
+    fermait, et JARVIS répondait « c'est ouvert à l'écran » devant un écran
+    vide. Le test pinglait la contradiction au lieu de la faire tomber : une
+    mutation qui aurait corrigé le code aurait été « corrigée » par lui.
+
+    Deux notes, donc, et deux assertions qui ne peuvent pas se satisfaire
+    l'une l'autre."""
 
     server = build_server(BarehandsMcpTarget("127.0.0.1", 1))
     listed = {tool.name: tool.description or "" for tool in await server.list_tools()}
-    flows = ("barehands_calibrate", "barehands_tutorial", "barehands_exit_overlay")
-    for name in flows:
+    opening = ("barehands_calibrate", "barehands_tutorial")
+    closing = "barehands_exit_overlay"
+    for name in (*opening, closing):
         text = listed[name]
         for stale in ("pas encore implanté", "n'existe pas encore", "tant qu'il n'existe pas"):
             assert stale not in text, f"{name} : consigne périmée « {stale} »"
+    for name in opening:
+        text = listed[name]
         # Ce qu'un succès affirme, et ce qu'il n'affirme pas.
         assert "ouverte" in text and "PAS que le parcours est terminé" in text, name
         # Et le refus qu'ils peuvent vraiment produire aujourd'hui.
         assert vocab.FLOW_UNCONFIRMED in text, name
+    # L'outil qui **ferme** dit qu'il ferme, et jamais l'inverse.
+    text = listed[closing]
+    assert "fermée" in text, closing
+    assert "dis que c'est fermé" in text, closing
+    assert "ouverte" not in text, (
+        "l'outil qui ferme ne doit pas apprendre au cerveau à annoncer une "
+        "surimpression ouverte devant un écran qu'il vient de vider"
+    )
+    # `barehands_flow_unconfirmed` est **inatteignable** depuis lui :
+    # `exitOverlay()` rend `{ok: true}` sans condition, délibérément. Le
+    # lister apprendrait au cerveau à se méfier d'un refus qui n'arrive
+    # jamais.
+    assert vocab.FLOW_UNCONFIRMED not in text, closing
+    assert vocab.FLOW_ABSENT in text, closing
     # La phrase du code `flow_absent` ne parle plus de Slices non livrées : ce
     # code ne reste atteignable que pour une page plus ancienne que ce JARVIS.
     absent = vocab.PAGE_CODE_EXPLANATIONS[vocab.FLOW_ABSENT]

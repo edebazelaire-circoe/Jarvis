@@ -1750,7 +1750,22 @@ dépôt refuse (Slice 12) : par-dessus la liste blanche, elle ne pourrait pas
 **parcours**. La coque ne sait rien de la calibration — elle affiche des
 étapes — et c'est ce qui permettra au tutoriel (Slice 09) de la reprendre sans
 la modifier. `createFlowOverlay({document, now, setInterval, clearInterval})`
-rend `open/step/progress/note/target/buttons/report/expired/close`.
+rend `open/step/progress/note/target/buttons/report/expired/elapsedMs/close/isOpen`.
+
+**`note(text, kind, holdMs)` — la seule ligne qui puisse être tenue**
+(Slice 10). Les deux parcours la réécrivent à **chaque image**, puisque leur
+`paint()` est appelé par la cadence de la caméra : une phrase posée par
+quelqu'un d'autre vit 16 à 33 ms. C'est ce qui est arrivé au reçu d'une
+commande vocale pendant un tutoriel — et la coque couvre le panneau
+(`z-index` 2147482000 contre 70), sans toast posé dans ce cas, donc le refus
+n'était lisible nulle part, dans le seul cas qu'on regarde. `holdMs` tient la
+phrase un temps **borné** : les notes sans `holdMs` — toutes celles des deux
+parcours — ne l'effacent pas avant son échéance, et rien d'autre ne change
+pour elles ; une note **avec** `holdMs` remplace toujours la précédente, le
+plus récent de ce que l'utilisateur a demandé étant ce qu'il attend de lire.
+Jamais infinie : un état qui dure toujours est interdit par la même règle que
+celui qu'on ne voit pas, et l'étape doit pouvoir reprendre la parole. La tenue
+est remise à zéro à l'ouverture et à la fermeture de la coque.
 
 **Décision 27 : optionnelle et explicite.** Rien ne mesure avant qu'on l'ait
 demandé. Deux portes, une seule implantation : le bouton « Calibrer… » de
@@ -2206,11 +2221,16 @@ quelle sortie les gens utilisent.
 **Le tutoriel n'écrit jamais de paramètre de calibration, et c'est structurel.**
 Trois gardes, qui ne se doublent pas :
 
-1. `createTutorial` **refuse à la construction** toute dépendance capable
-   d'écrire — `save`, `profile`, `saveProfile`, `saveSettings`, `measure`,
-   `onMeasure`, `calibration` — avec le code
-   `barehands_tutorial_cannot_write_profile`. Une Slice ultérieure qui
-   brancherait un écrivain de profil casse à la construction.
+1. `createTutorial` n'accepte qu'une **liste blanche** de dépendances —
+   `overlay`, `options`, `now`, `log`, `onDone`, `onExit`, `setInterval`,
+   `clearInterval`, `frames`, `observe` — et refuse **tout autre nom** à la
+   construction, avec le code `barehands_tutorial_cannot_write_profile`. Une
+   Slice ultérieure qui brancherait un écrivain de profil casse à la
+   construction, qu'elle l'appelle `save` ou `persist`. C'était une liste
+   noire de sept noms jusqu'à la Slice 10 : elle ne tenait que contre les
+   noms qu'on avait pensé à écrire, dans un module dont `readObservation`
+   argumente lui-même qu'une liste blanche vaut mieux. Aucune des dix
+   dépendances permises ne peut transporter une écriture.
 2. Le module ne nomme **aucun** chemin vers le profil : ni `toProfilePayload`,
    ni `normalizeProfile`, ni la route. Un test le lit dans la source.
 3. Le tutoriel n'emprunte pas la couture `deps.onMeasure` du contrôleur
@@ -2248,20 +2268,49 @@ appelé qu'à l'arrivée sur le récapitulatif.
 
 **Deux coutures nourrissent le parcours, et aucune n'est de trop.**
 
-1. **La cadence des images** — `interactionView.afterFrame(fn)`, appelée à la
-   fin de `hover`, là où `runCaptures` vient de ranger les interactions de
-   l'image. Elle existe parce qu'`interactions()` ne décrit qu'un **instant** :
-   elle est vidée à chaque image, donc un lecteur échantillonné à la seule
-   minuterie raterait la quasi-totalité des clics — le tutoriel aurait demandé
-   un geste que l'utilisateur aurait fait sans que rien ne l'enregistre. Elle
-   ne transporte **aucun argument** (ce qu'un lecteur a le droit de constater,
-   il va le chercher par les portes publiques) et ne coûte rien quand personne
+1. **La cadence des images** — `deps.frames(fn)`, que la page branche sur
+   `interactionView.afterFrame(fn)`, appelée à la fin de `hover`, là où
+   `runCaptures` vient de ranger les interactions de l'image. Elle existe
+   parce qu'`interactions()` ne décrit qu'un **instant** : elle est vidée à
+   chaque image, donc un lecteur échantillonné à la seule minuterie raterait
+   la quasi-totalité des clics — le tutoriel aurait demandé un geste que
+   l'utilisateur aurait fait sans que rien ne l'enregistre. Elle ne transporte
+   **aucun argument** (ce qu'un lecteur a le droit de constater, il va le
+   chercher par les portes publiques) et ne coûte rien quand personne
    n'écoute, comme `deps.onMeasure`.
-2. **Un chien de garde** (`DEFAULTS.watchdogMs`), parce que cette boucle ne
+2. **Un chien de garde** (`o.watchdogMs`), parce que cette boucle ne
    tourne qu'en ACTIVE **et** quand une main est vue : une étape quittée par
    l'utilisateur ne serait jamais déclarée manquée, et le compteur resterait
    figé sur « 0 s restantes » — « ça attend » et « c'est bloqué » à nouveau
    identiques à l'écran. Il ne vit que pendant le tutoriel.
+
+**Les deux vivent dans le parcours, et c'est la correction de la Slice 10.**
+`createTutorial` **exige** `frames`, `observe`, `setInterval` et
+`clearInterval` à la construction ; `begin()` les attache, `stop()` les
+détache. Tant que la page les posait autour de `tutorial()`, cela marchait
+exactement une fois : le bouton « Recommencer » du récapitulatif rentre dans
+`begin()` **depuis l'intérieur du module** — ni `onDone` ni `onExit` ne sont
+appelés — donc la page n'était jamais rappelée et le tutoriel relancé n'était
+plus nourri du tout. `observed` restait à 0 pendant que l'utilisateur faisait
+le C correctement, sous un compteur figé sur « 0 s restantes », et les dix
+étapes gelaient de la même façon : la panne que la paire dangereuse n° 13
+existe pour empêcher, par le seul chemin que le chien de garde ne couvrait
+pas. Une garantie que chaque appelant doit se rappeler de respecter est une
+convention, pas une garantie — c'est la leçon de la Slice 08, et la même
+raison qui fait exiger `setInterval`/`clearInterval` à `createCalibration`.
+
+Cela ferme aussi un découplage : `options()` valide `watchdogMs` sur les
+options **effectives** du parcours, alors que la page armait l'intervalle
+depuis `DEFAULTS.watchdogMs`. Les deux nombres ne coïncidaient que parce que
+la page n'en passait aucune. Le nombre validé est maintenant le nombre
+utilisé.
+
+Au récapitulatif, les deux coutures restent **attachées** — c'est ce qui fait
+repartir « Recommencer » — mais `pump()` teste `concluded` avant d'appeler
+`observe()` : un écran fixe ne fait donc pas relire la page à chaque image.
+`watching()` relit l'attache, pour la même raison qu'`observed` compte les
+observations : sans lecture, « branché » et « la page a oublié » s'écrivent
+pareil.
 
 `tutorialState().observed` compte ce que le parcours a **constaté** : sans ce
 nombre, « nourri à la cadence des images » et « nourri par la seule minuterie »
@@ -2295,17 +2344,23 @@ vocabulaire du profil dans un parcours qui n'a pas le droit d'y toucher.
 | Porte | Rend | Refus |
 |---|---|---|
 | `JarvisBarehands.tutorial()` | `{ok:true, flow:'tutorial', step, steps}` dès que la coque est à l'écran ; `{ok:true, already:true}` au second appel | `barehands_tutorial_disabled` (interrupteur éteint), `barehands_flow_busy` (l'autre parcours est ouvert) |
-| `JarvisBarehands.exitOverlay()` | `{ok:true, flow, closed:true}` ; `{ok:true, flow:null, closed:false}` si rien n'était ouvert | — |
-| `JarvisBarehands.tutorialState()` | `{running, step, seen, observed, steps}` | — |
+| `JarvisBarehands.exitOverlay()` | `{ok:true, flow, closed:true}` ; `{ok:true, flow:null, closed:false, already:true}` si rien n'était ouvert | — |
+| `JarvisBarehands.tutorialState()` | `{running, step, seen, observed, steps, installed}` | — |
 | `JarvisBarehands.measuring()` | `true` si la couture `deps.onMeasure` du contrôleur est posée, donc si une **calibration** mesure | — |
 
 `exitOverlay()` **confirme même quand rien n'était ouvert**, et c'est le
 raisonnement de `deactivate` au § 12 : ce que l'appelant demande est qu'il n'y
 ait pas de surimpression, et il n'y en a pas. Répondre « non » ferait dire à
 JARVIS que ça n'a pas marché devant un écran qui montre l'état demandé.
-Résidu nommé : la table du § 12 n'a pas de `duplicate` pour un parcours (pas de
-`targets`), donc « rien n'était ouvert » se rapporte `applied` ; le champ
-`closed` porte la différence, le reçu ne la porte pas.
+**Et « rien n'a changé » se dit `duplicate`** depuis la Slice 10. Un parcours
+n'a pas d'état relisible (pas de `targets`), donc sa **confirmation** est le
+seul endroit où la distinction puisse voyager : le canal lit `already === true`
+et rend `duplicate` au lieu d'`applied`. Sans cela JARVIS disait « je l'ai
+ouvert » à qui redemandait devant une coque déjà ouverte, et « je l'ai fermée »
+devant un écran où il n'y avait rien — le faux récit que ce vocabulaire existe
+pour éviter, et que le canal applique déjà aux commandes de cycle de vie. Seul
+le drapeau `already === true` compte ; une valeur vaguement vraie reste
+`applied`. Le champ `closed` garde son sens : ce que la page a fait.
 
 **Il n'y a pas de refus « pas de caméra », et c'est délibéré.** La calibration
 en a un parce qu'elle ne peut rien mesurer sans mains ; le tutoriel *enseigne*,

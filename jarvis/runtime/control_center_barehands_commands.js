@@ -172,11 +172,13 @@
       if(!spec)return {outcome:'refused',lifecycle:lifecycleOf(),code:COMMAND_UNKNOWN,
         reason:`la page ne connaît pas la commande ${name}`};
       if(!surface||typeof surface[spec.method]!=='function'){
-        /* Les parcours de calibration et de tutoriel (Slices 08 et 09)
-           n'existent pas encore : leur point d'entrée est absent, et c'est
-           **exactement** ce que le cerveau doit entendre. Le jour où la Slice
-           08 pose `JarvisBarehands.calibrate`, ce transport la trouve sans
-           qu'une ligne change ici. */
+        /* Le point d'entrée est absent de **cette** page, et c'est exactement
+           ce que le cerveau doit entendre. Les trois parcours existent depuis
+           les Slices 08 et 09 ; ce code ne reste donc atteignable que pour une
+           page plus ancienne que ce JARVIS, ou pour un module qui ne s'est pas
+           installé — ce que les strings du § 12 disent déjà. Le transport, lui,
+           n'a pas changé d'une ligne pour les accueillir : c'est ce qu'il
+           promettait. */
         return {outcome:'refused',lifecycle:lifecycleOf(),code:FLOW_ABSENT,
           reason:`JarvisBarehands.${spec.method} n'existe pas dans cette version`};
       }
@@ -194,7 +196,17 @@
         if(!confirmed(answer))
           return {outcome:'refused',lifecycle:after,code:FLOW_UNCONFIRMED,
             reason:`JarvisBarehands.${spec.method} n'a pas confirmé le démarrage`};
-        return {outcome:'applied',lifecycle:after,code:null,reason:null};
+        /* **`already` n'est pas `applied`.** Un parcours déjà à l'écran rend
+           `{ok:true, already:true}` — et il a raison, l'état demandé est
+           l'état obtenu. Mais le jeter faisait dire à JARVIS « je l'ai
+           ouvert » à qui redemande devant une coque déjà ouverte : le même
+           faux récit que « c'est fait » sur un état qui n'a pas bougé, pour
+           lequel le vocabulaire `duplicate` existe déjà et que la branche
+           d'en dessous applique depuis la Slice 12. Les parcours n'ont pas
+           d'état relisible (`spec.targets` est nul), donc seule leur
+           confirmation peut porter la distinction : elle la porte. */
+        return {outcome:answer&&answer.already===true?'duplicate':'applied',
+          lifecycle:after,code:null,reason:null};
       }
       if(spec.targets.indexOf(after)<0)
         return {outcome:'refused',lifecycle:after,code:LIFECYCLE_REFUSED,

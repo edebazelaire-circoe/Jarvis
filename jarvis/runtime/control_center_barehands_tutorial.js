@@ -64,12 +64,19 @@
        Slice 08 (« une phrase affichée juste avant un changement d'écran n'est
        pas affichée »), vue depuis l'autre bout. */
     readMs:1200,
-    /* Cadence du chien de garde **de la page**. Le parcours est nourri par la
+    /* Cadence du chien de garde **du parcours**. Le parcours est nourri par la
        boucle d'images, qui ne tourne qu'en ACTIVE et avec une main visible :
        sans second mécanisme, une étape quittée par l'utilisateur n'expirerait
        jamais et le compteur à l'écran resterait figé sur « 0 s restantes ».
-       Publiée ici et non dans la page pour que la paire dangereuse ci-dessous
-       ait ses deux nombres au même endroit. */
+
+       **Il est armé ici, et non par la page** (Slice 10). Tant que la page
+       posait l'intervalle elle-même, elle le faisait depuis `DEFAULTS`, alors
+       que la paire dangereuse n° 13 valide `o.watchdogMs` — les options
+       **effectives** du parcours. Les deux nombres ne coïncidaient que parce
+       que la page n'en passait aucune : le premier appelant qui en aurait
+       passé aurait fait valider un nombre que personne n'utilisait. Armé dans
+       le parcours, le nombre validé est le nombre utilisé, et il n'y a plus
+       qu'un seul endroit où le lire. */
     watchdogMs:500,
   });
 
@@ -295,23 +302,59 @@
      de faire de `onDone` (la page y enregistre `tutorialSeen`, un **réglage**,
      jamais un paramètre de calibration). */
 
-  /* Les dépendances qu'un tutoriel ne doit **jamais** recevoir. Refusées par
-     leur nom, à la construction : c'est ce qui rend « le tutoriel n'écrit
-     jamais de paramètre de calibration » vérifiable plutôt que promis. */
-  const FORBIDDEN=Object.freeze(['save','profile','saveProfile','saveSettings',
-    'measure','onMeasure','calibration']);
+  /* **Les seules dépendances qu'un tutoriel peut recevoir** — une liste
+     blanche, et c'est la correction de la Slice 10.
+
+     La garde d'origine était une **liste noire** de sept noms d'écrivains,
+     dans un module dont `readObservation` argumente précisément qu'une liste
+     blanche vaut mieux qu'une liste noire. Elle tenait tant que personne
+     n'inventait un huitième nom : `persist`, `store`, `writeProfile`, `api`…
+     Ici la question n'est plus « ce nom est-il interdit ? » mais « ce nom
+     est-il au contrat ? », et la réponse pour tout ce qui n'y est pas est
+     non. Le code de refus ne change pas : une dépendance d'écriture reste
+     exactement ce que ce refus existe pour arrêter. */
+  const ALLOWED=Object.freeze(['overlay','options','now','log','onDone','onExit',
+    'setInterval','clearInterval','frames','observe']);
 
   function createTutorial(deps){
     const d=deps&&typeof deps==='object'?deps:{};
     const overlay=d.overlay;
     if(!overlay||typeof overlay.open!=='function')
       throw new RangeError('createTutorial exige `overlay` (createFlowOverlay) : la coque est partagée avec la calibration (décision 26), elle ne se recrée pas ici');
-    for(const name of FORBIDDEN)
-      if(d[name]!==undefined){
-        const error=new RangeError(`createTutorial refuse la dépendance « ${name} » : le tutoriel n’écrit jamais de paramètre de calibration (contrat §13), et une couture qui pourrait le faire rendrait cette garantie déclarative au lieu de structurelle`);
+    for(const name of Object.keys(d))
+      if(d[name]!==undefined&&ALLOWED.indexOf(name)<0){
+        const error=new RangeError(`createTutorial refuse la dépendance « ${name} » : elle n’est pas au contrat §13 (${ALLOWED.join(', ')}). Le tutoriel n’écrit jamais de paramètre de calibration, et une couture qui pourrait le faire rendrait cette garantie déclarative au lieu de structurelle — une liste blanche la tient aussi contre le nom que personne n’a encore inventé`);
         error.code='barehands_tutorial_cannot_write_profile';
         throw error;
       }
+    /* **Les deux mécanismes qui nourrissent le parcours, exigés à la
+       construction** (Slice 10). Ils étaient posés par la page autour de
+       `start()`, ce qui marchait exactement une fois : « Recommencer » rentre
+       dans `begin()` **depuis l'intérieur du module**, sans que la page en
+       sache rien, et le parcours relancé n'était plus nourri du tout —
+       `observations()` restait à 0 pendant que l'utilisateur faisait le C
+       correctement, sous un compteur figé sur « 0 s restantes ». C'est la
+       panne que la RÈGLE ZÉRO interdit et que la paire dangereuse n° 13
+       existe pour empêcher, réintroduite par le seul chemin que le chien de
+       garde ne couvrait pas.
+
+       Les deux vivent donc **dans le parcours**, attachés par `begin()` et
+       détachés par `stop()` : une relance les retrouve sans que personne ait
+       à s'en souvenir. C'est la leçon de la Slice 08, mot pour mot — une
+       garantie que chaque appelant doit se rappeler de respecter n'est pas
+       une garantie, c'est une convention.
+
+       `frames` est la couture de la cadence d'images (`afterFrame` côté
+       page) ; `observe` construit l'observation. Aucune des deux ne peut
+       transporter d'écriture : l'une prend une fonction ou `null`, l'autre ne
+       prend rien et ne rend qu'une observation, que `readObservation` réduit
+       encore clé par clé. */
+    if(typeof d.setInterval!=='function'||typeof d.clearInterval!=='function')
+      throw new RangeError('createTutorial exige `setInterval`/`clearInterval` : l’échéance d’une étape ne peut pas dépendre des seules images, que zéro main observée suffit à arrêter — l’étape resterait ouverte pour toujours sous un compteur figé sur « 0 s restantes »');
+    if(typeof d.frames!=='function')
+      throw new RangeError('createTutorial exige `frames` (la couture `afterFrame`) : les interactions d’une image sont vidées à la suivante, donc un parcours nourri à la seule minuterie rate la quasi-totalité des clics — il demanderait un geste que l’utilisateur ferait sans que rien ne l’enregistre');
+    if(typeof d.observe!=='function')
+      throw new RangeError('createTutorial exige `observe` : un parcours qui ne peut pas aller chercher son observation dépend de quelqu’un qui pense à la lui apporter, et « Recommencer » est exactement le chemin où personne n’y pense');
     const o=options(d.options);
     const now=typeof d.now==='function'?d.now:()=>Date.now();
     const say=typeof d.log==='function'?d.log:()=>{};
@@ -328,6 +371,62 @@
     let observed=0;
 
     const stepAt=index=>STEPS[index]||null;
+
+    /* ---- Les deux sources, attachées au parcours et non à son lancement.
+
+       `pump()` est la seule porte des deux : la couture d'images l'appelle à
+       chaque image, le chien de garde toutes les `watchdogMs`. Une observation
+       de plus est inoffensive (une étape ne se solde qu'une fois), une
+       observation de moins ne l'est pas.
+
+       Elle **n'observe pas au récapitulatif** : `concluded` est vrai, `feed()`
+       rendrait `null` de toute façon, et construire l'observation pour la
+       jeter coûterait une lecture de la page à chaque image pendant qu'un
+       écran fixe est affiché. Les coutures restent attachées pour autant —
+       « Recommencer » remet `concluded` à faux et la cadence repart sans que
+       personne n'ait à la rebrancher, ce qui est tout l'objet de ce
+       changement. */
+    let clockId=null,attached=false;
+    /* Nommée plutôt qu'anonyme, et pour la même raison que `api.tick()` côté
+       calibration : les deux sources appellent la surface publique, donc ce
+       qu'elles font est exactement ce qu'un test peut faire à la main. */
+    let api=null;
+    function pump(){
+      if(!running||concluded)return false;
+      let observation;
+      try{observation=d.observe()}
+      catch(error){
+        /* Lire l'instant ne doit pas arrêter un tutoriel (leçon des Slices 02
+           et 04) : ce qu'on ne peut pas lire se dit et se saute. Sans ce
+           filet, une page qui lève une fois emporterait la minuterie avec
+           elle et rendrait l'étape inexpirable — la panne qu'on vient de
+           fermer, par l'autre bout. */
+        say('warn','[barehands] tutoriel : l’observation est illisible',
+          {error:String(error&&error.message||error)});
+        return false;
+      }
+      api.feed(observation);
+      return true;
+    }
+    /* Attaché par `begin()`, détaché par `stop()` : le parcours ne peut pas
+       tourner sans ses sources, et rien ne tourne quand il est fini
+       (décisions 27 et 30). Idempotent des deux côtés — `begin()` est appelé
+       une seconde fois par « Recommencer », et une seconde minuterie ferait
+       expirer les étapes deux fois plus vite. */
+    function attach(){
+      if(attached)return false;
+      attached=true;
+      d.frames(pump);
+      clockId=d.setInterval(pump,o.watchdogMs);
+      return true;
+    }
+    function detach(){
+      if(!attached)return false;
+      attached=false;
+      d.frames(null);
+      if(clockId!==null){d.clearInterval(clockId);clockId=null}
+      return true;
+    }
 
     /* Une étape se solde une fois, et une seule. `skipped` n'est pas `missed` :
        ce que l'utilisateur a choisi de passer ne lui reproche rien, et ce qu'il
@@ -403,6 +502,18 @@
         else overlay.note(step.hint||'','');
         return;
       }
+      /* **Une panne n'est pas une veille**, et le dire est ce qui finit
+         l'argument de la Slice 09 pour avoir retiré le refus « pas de
+         caméra » : le parcours ne refuse pas au lancement parce que l'écran
+         dit ce qui manque — encore faut-il qu'il le dise aux neuf autres
+         étapes. Sans cette branche, un utilisateur dont la caméra a lâché
+         lisait « refaites le C pour reprendre » de l'étape 2 à l'étape 10,
+         une consigne qui ne peut pas marcher, pendant six minutes de temps
+         d'échéance. La cause exacte vit dans l'onglet ; l'écran y renvoie. */
+      if(observation.lifecycle===BH.LIFECYCLE.ERROR){
+        overlay.note('Bare Hands s’est interrompu : ce n’est pas la veille et refaire le C n’y changera rien. Le motif est dans l’onglet Expérimental — quittez le tutoriel, réglez-le, puis relancez.','bad');
+        return;
+      }
       if(observation.lifecycle!==BH.LIFECYCLE.ACTIVE){
         overlay.note('Bare Hands est retourné en veille : refaites le C pour reprendre.','bad');
         return;
@@ -467,6 +578,13 @@
       for(const step of STEPS)reports[step.id]={status:STATUS.SKIPPED,reason:null};
       running=true;at=-1;carry=null;concluded=false;observed=0;
       advance();
+      /* Les sources **après** `advance()` : la première étape est à l'écran
+         quand la première observation arrive, et l'observation immédiate
+         ci-dessous ne peut donc pas tomber dans le vide. Elle existe parce
+         qu'attendre la première image pour dire quoi que ce soit ferait de
+         « la caméra démarre » et de « rien n'écoute » la même image. */
+      attach();
+      pump();
     }
     function finish(why){
       say('info',`[barehands] tutoriel fermé (${why})`);
@@ -486,14 +604,21 @@
     }
     function stop(){
       running=false;at=-1;reports=null;carry=null;concluded=false;
+      detach();
       overlay.close();
     }
 
-    return {
+    api={
       isRunning(){return running},
       stepId(){const step=stepAt(at);return step?step.id:null},
       /* Ce que le parcours a **constaté**, pas ce qu'on lui a promis. */
       observations(){return observed},
+      /* **Et ce qui le nourrit**, relu plutôt que promis — même règle que
+         `engine()` (Slice 07) et que `afterFrame()` sans argument (Slice 09) :
+         sans cette lecture, « les deux sources sont attachées » et « la page a
+         oublié de les rebrancher » s'écrivent pareil, à l'écran comme à la
+         console. C'est ce qui a laissé passer la panne de « Recommencer ». */
+      watching(){return attached},
       /* **Le point d'entrée**, et il confirme (contrat §12). Il rend
          `{ok:true}` dès que la coque est à l'écran et que la première étape
          tourne — le **démarrage**, pas la fin : l'échéance du canal de
@@ -559,6 +684,7 @@
          que l'écran de l'onglet affiche pendant qu'un tutoriel tourne. */
       report(){return reports?JSON.parse(JSON.stringify(reports)):null},
     };
+    return api;
   }
 
   const api=Object.freeze({

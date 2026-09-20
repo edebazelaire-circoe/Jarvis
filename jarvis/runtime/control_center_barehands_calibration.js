@@ -445,6 +445,10 @@
     let root=null,kicker=null,heading=null,instruction=null,bar=null,elapsed=null,deadline=null;
     let note=null,actions=null,report=null,target=null,timer=null;
     let openedAt=null,stageAt=null,stageLimit=null,onExit=null,onKey=null,inerted=[];
+    /* Jusqu'à quand la ligne de commentaire est **tenue** (voir `note`).
+       Remise à zéro à chaque ouverture et à chaque fermeture : une tenue qui
+       survivrait à la coque bâillonnerait le parcours suivant. */
+    let heldUntil=0;
 
     function ensureStyle(){
       if(doc.getElementById(STYLE_ID))return;
@@ -532,7 +536,7 @@
           throw new RangeError('createFlowOverlay.open exige `exit` : une surimpression plein écran sans sortie est un piège');
         if(!root)build();
         onExit=s.exit;
-        openedAt=now();stageAt=null;stageLimit=null;
+        openedAt=now();stageAt=null;stageLimit=null;heldUntil=0;
         root.hidden=false;
         root.setAttribute('aria-label',String(s.title||'Parcours Bare Hands'));
         sweepInert(true);
@@ -571,8 +575,33 @@
         paintClock();
         return at;
       },
-      note(text,kind){
+      /* La ligne de commentaire de l'étape, et **la seule qui puisse être
+         tenue** (Slice 10).
+
+         Les deux parcours la réécrivent à **chaque image** : leur `paint()`
+         est appelé par la cadence de la caméra, donc une phrase posée par
+         quelqu'un d'autre vit 16 à 33 ms à 30-60 images par seconde. C'est
+         exactement ce qui est arrivé au reçu d'une commande vocale pendant
+         un tutoriel : la coque couvre le panneau (z-index 2147482000 contre
+         70), donc « refusée — le tutoriel est déjà à l'écran » n'était
+         lisible nulle part, dans le seul cas que la Slice 09 désigne comme
+         celui qu'on regarde.
+
+         `holdMs` tient la phrase pendant un temps borné : les notes **sans**
+         `holdMs` — c'est-à-dire toutes celles des deux parcours, aujourd'hui
+         et telles quelles — ne l'effacent pas avant son échéance, et rien
+         d'autre ne change pour elles. Une tenue n'est jamais infinie : la
+         RÈGLE ZÉRO interdit un état qui dure pour toujours autant qu'un état
+         qui ne se voit pas, et l'étape doit pouvoir reprendre la parole. Une
+         note **avec** `holdMs` remplace toujours la précédente : le plus
+         récent de ce que l'utilisateur a demandé est ce qu'il attend de
+         lire. */
+      note(text,kind,holdMs){
         if(!note)return '';
+        const hold=Number(holdMs);
+        const held=Number.isFinite(hold)&&hold>0;
+        if(!held&&heldUntil>now())return note.textContent;
+        heldUntil=held?now()+hold:0;
         note.textContent=String(text||'');
         note.setAttribute('data-kind',String(kind||''));
         return note.textContent;
@@ -643,7 +672,7 @@
         sweepInert(false);
         if(target){target.remove();target=null}
         root.remove();root=null;
-        openedAt=null;stageAt=null;stageLimit=null;
+        openedAt=null;stageAt=null;stageLimit=null;heldUntil=0;
         return true;
       },
     };
