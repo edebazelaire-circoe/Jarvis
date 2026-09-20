@@ -52,6 +52,9 @@ ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / "jarvis" / "runtime"
 COMMANDS = RUNTIME / "control_center_barehands_commands.js"
 HUD = RUNTIME / "control_center_barehands_hud.js"
+#: Le vocabulaire de dessin des mains (Slice 04) : le module du HUD le lit
+#: au chargement et refuse de s'installer sans lui, comme sans les contrats.
+HAND_ART = RUNTIME / "control_center_barehands_hand_art.js"
 
 #: **Le bouton du test est le vrai bouton** (Slice 02). Jusqu'ici le chemin
 #: « bouton » était `#barehandsWake`, dans l'onglet Expérimental ; la décision 1
@@ -150,9 +153,13 @@ def run_node(tmp_path: Path, source: str, name: str) -> object:
         f"const CONTRACTS_PATH={json.dumps(str(CONTRACTS))};\n"
         f"const COMMANDS_PATH={json.dumps(str(COMMANDS))};\n"
         f"const HUD_PATH={json.dumps(str(HUD))};\n"
+        f"const HAND_ART_PATH={json.dumps(str(HAND_ART))};\n"
         "const REAL_SET_TIMEOUT=setTimeout,REAL_CLEAR_TIMEOUT=clearTimeout;\n"
         "const docListeners={};\n"
         "const C=require(CONTRACTS_PATH);\n"
+        # Le vocabulaire de dessin des mains (Slice 04), chargé comme la page le
+        # sert : avant le module du HUD, qui refuse de s'installer sans lui.
+        "const ART=require(HAND_ART_PATH);\n"
         # Le vrai bloc navigateur arme de **vraies** minuteries (démarrage vidéo
         # de 10 s) dès qu'on l'active : sans sortie explicite, node attendrait
         # qu'elles retombent et chaque cas coûterait une trentaine de secondes.

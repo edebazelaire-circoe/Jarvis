@@ -3255,9 +3255,21 @@ try{
   const SECTION=Object.freeze({
     settings:'barehandsSettings',
     calibration:'barehandsCalibration',
-    /* Le bloc de gestes brut d'aujourd'hui. La Slice 04 le remplace par une
-       carte visuelle ; la clé, elle, ne bouge pas. */
-    gestures:'barehandsGestures',
+    /* **`gestures` a disparu, et c'est le livrable de la Slice 04.**
+
+       La Slice 02 avait gardé la clé en annonçant que la Slice 04 remplacerait
+       le bloc par une carte visuelle. Elle l'a fait — mais ailleurs : la carte
+       vit dans `control_center_barehands_hud.js`, hors du modal de réglages,
+       et l'onglet n'a donc plus de section de gestes du tout (décision 14 :
+       les réglages sont de la configuration).
+
+       La clé n'est pas conservée « au cas où ». Une section de réglages
+       publiée mais que plus rien ne dessine ferait échouer `revealSection`
+       sous un avertissement de console, et `showSettings('barehandsGestures')`
+       rendrait `{ok:true}` après n'avoir rien montré — un succès qui n'a pas
+       eu lieu. Le nom est donc retiré de `SECTION`, et la porte publique le
+       refuse désormais sous `barehands_settings_section_unknown`, ce qui est
+       la vérité. */
     record:'barehandsRecord',
   });
   /* Ce qu'un jeton « survole » : l'élément cliquable le plus proche. */
@@ -5659,20 +5671,7 @@ try{
       <div class="hint" style="margin-top:14px">Dernière commande vocale reçue par cette page :</div>
       <div id="barehandsVoice">${voiceHtml()}</div>
     </section>
-    ${settingsHtml()}
-    <section class="bh-section" id="${SECTION.gestures}">
-      <h3>Gestes</h3>
-      <ul class="hint" style="padding-left:18px;line-height:1.7">
-        <li><strong>Réveil :</strong> en veille, formez un C avec le pouce et l'index — écartés sans se toucher, index déplié — et tenez une seconde. L'anneau se remplit autour de la main ; relâcher avant la fin annule.</li>
-        <li>Chaque main visible affiche un jeton rond qui suit le bout de l'index ; il grossit au survol d'un élément cliquable.</li>
-        <li>Rapprocher pouce et index remplit l'anneau du jeton (pincement en cours) ; le jeton se fige pour viser.</li>
-        <li>Pincement franc : clic sous le jeton (onde visuelle). Rouvrir les doigts avant de recliquer.</li>
-        <li>Un jeton <strong>pâle et pointillé</strong> signale une main que le suivi ne tient pas pour sûre — elle sort du cadre, elle est trop loin, ou elle vient d'apparaître. Elle est affichée et cliquable, mais elle ne maintient pas l'interaction éveillée : la pastille compte alors « 1/2 ».</li>
-        <li>Sans main <em>sûre</em> vue pendant 30 secondes, l'interaction retourne en veille ; la caméra reste ouverte pour le guetteur.</li>
-        <li><strong>Reconnus, pas encore agissants :</strong> le pincement <strong>pouce-majeur</strong> (clic droit), la main ouverte, le poing, la double fermeture et le claquement des deux paumes. Ils sont mesurés et publiés à chaque image, mais aucune action ne leur est encore liée — <code>JarvisBarehands.gestures()</code> et <code>JarvisBarehands.pinch()</code> les montrent depuis la console.</li>
-      </ul>
-      <div class="hint" style="margin-top:10px">Limites du mode test : pas de glisser-déposer ni de défilement ; une liste déroulante ne s'ouvre pas au pincement (le navigateur l'interdit aux clics simulés) ; le visage ai-visualizer (iframe) ne reçoit pas les clics.</div>
-    </section>`;
+    ${settingsHtml()}`;
   }
 
   /* Tous les contrôles de l'onglet, armés une fois à l'ouverture. La section
@@ -5862,27 +5861,86 @@ try{
     return {ok:true,tab:TAB_ID,section:id};
   }
 
-  /* **Le crochet d'aide** (décision 8, entrée « Aide / Gestes »).
+  /* **Les cartes rapides du HUD**, lues au moment du clic et jamais au
+     chargement.
 
-     La Slice 04 en fait une carte visuelle aérée avec des schémas de main
-     (décision 15). En attendant, elle **ne ment pas** : elle ouvre le bloc de
-     gestes qui existe réellement aujourd'hui, dans l'onglet où il vit. Ce qui
-     compte pour la suite est que le menu appelle *cette* fonction et pas
-     `showSettingsTab` directement : la Slice 04 remplace le corps d'ici, et
-     aucun appelant ne bouge. */
-  function showHelp(){return showSettingsTab(SECTION.gestures)}
+     La carte d'aide et la carte de diagnostic vivent dans
+     `control_center_barehands_hud.js`, qui est servi **après** ce module :
+     elles ne peuvent donc pas être injectées dans la surface gelée, qui se
+     ferme ici. Ce module lit le global au moment où l'utilisateur agit, ce qui
+     est toujours après le chargement complet de la page. C'est exactement le
+     motif par lequel le contrôle du HUD reçoit `showMenu` de la page, pris
+     dans l'autre sens. */
+  const hudCards=()=>{
+    const scope=typeof window!=='undefined'?window:globalThis;
+    return scope.JarvisBarehandsHudCards||null;
+  };
+
+  /* **L'aide** (décision 8, entrée « Aide / Gestes » ; décision 15).
+
+     Le bloc de gestes de l'onglet Expérimental a été **supprimé** par cette
+     Slice : il était dense, il n'avait aucun schéma, et deux de ses phrases
+     étaient devenues fausses — il rangeait le pincement pouce-majeur parmi les
+     « reconnus, pas encore agissants » alors qu'il ouvre un vrai menu
+     contextuel, et il annonçait « pas de glisser-déposer ni de défilement »
+     alors que les deux sont implantés. Une aide fausse est pire qu'une aide
+     absente : elle se lit comme un contrat.
+
+     Il n'y a donc **pas de repli** ici. La carte absente — un module de page
+     manquant — se refuse sous un nom cherchable plutôt que de renvoyer vers un
+     écran qui n'existe plus. */
+  function showHelp(){
+    const cards=hudCards();
+    if(!cards||typeof cards.openHelp!=='function'){
+      const message='La carte d’aide n’est pas disponible dans cette page '
+        +'(control_center_barehands_hud.js absent ou non installé).';
+      console.warn('[barehands] aide inatteignable (carte absente)');
+      if(typeof toast==='function')
+        toast({title:'Aide Bare Hands inatteignable',sub:message,kind:'bad',ms:7000});
+      return {ok:false,code:'barehands_help_unavailable',reason:message};
+    }
+    cards.openHelp();
+    console.info('[barehands] aide ouverte');
+    return {ok:true,card:'help'};
+  }
 
   /* **Le diagnostic, atteignable d'ailleurs que du fond de l'onglet**
-     (décision 16). C'est la **surface** d'enregistrement qui s'ouvre, pas un
-     enregistrement qui démarre : `startRecording` garde ses deux boutons, son
-     compteur d'images et de secondes restantes, et la phrase qui dit ce qui
-     est retenu et ce qui ne l'est pas. Lancer une capture des mains depuis un
-     menu qui se referme laisserait tourner quelque chose que rien à l'écran
-     ne daterait ni n'arrêterait — exactement ce que la règle zéro refuse —,
-     et la promesse de confidentialité n'aurait plus d'endroit où être lue. La
-     sémantique et la rétention ne changent pas d'une ligne ; la
-     découvrabilité, si. */
-  function showDiagnostics(){return showSettingsTab(SECTION.record)}
+     (décision 16).
+
+     La Slice 02 ouvrait la surface de l'onglet et refusait délibérément de
+     démarrer une capture depuis un menu qui se referme : rien à l'écran ne
+     l'aurait datée ni arrêtée — ce que la règle zéro interdit — et la promesse
+     de confidentialité n'aurait plus eu d'endroit où être lue.
+
+     **Ce raisonnement tient, et la carte le satisfait au lieu de le
+     contourner.** Elle reste ouverte pendant la capture et porte les quatre
+     exigences : un témoin qui bat et une barre qui balaie (ça tourne), un
+     titre (quoi), le temps écoulé **et** le temps restant, rafraîchis chaque
+     seconde (depuis combien de temps), un bouton Arrêter, Échap, et l'échéance
+     qui arrête toute seule (comment en sortir). La phrase de confidentialité y
+     est, mot pour mot celle de l'onglet.
+
+     `startRecording` / `stopRecording` / `recordState` ne bougent pas d'une
+     ligne, et rien de ce qui est retenu ni de ce qui est conservé ne change :
+     ce sont les mêmes portes que les deux boutons de l'onglet, qui restent en
+     place. La découvrabilité change, la sémantique et la rétention pas. */
+  function showDiagnostics(){
+    const cards=hudCards();
+    if(cards&&typeof cards.openDiagnostics==='function'){
+      cards.openDiagnostics();
+      console.info('[barehands] diagnostic ouvert (carte)');
+      return {ok:true,card:'diagnostics'};
+    }
+    /* **Le repli est réel, pas plausible.** Contrairement à l'aide, la surface
+       d'enregistrement de l'onglet Expérimental n'a pas été supprimée : elle
+       porte toujours ses deux boutons, ses compteurs et sa phrase de
+       confidentialité. Sans la carte, y renvoyer est donc la même
+       fonctionnalité par l'autre porte, et non un succès inventé. Le détour
+       est journalisé, sans quoi « la carte a servi » et « la carte manquait »
+       s'écriraient pareil. */
+    console.warn('[barehands] carte de diagnostic absente, repli sur l’onglet');
+    return showSettingsTab(SECTION.record);
+  }
 
   function installSettingsTab(){
     if(typeof TABS==='undefined'||!Array.isArray(TABS)||TABS.some(tab=>tab.id===TAB_ID))return;

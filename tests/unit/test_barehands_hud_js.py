@@ -66,6 +66,10 @@ CALIBRATION = RUNTIME / "control_center_barehands_calibration.js"
 TUTORIAL = RUNTIME / "control_center_barehands_tutorial.js"
 RECORDER = RUNTIME / "control_center_barehands_recorder.js"
 SCENE_INTERACT = RUNTIME / "control_center_scene_interact.js"
+#: Le vocabulaire de dessin des mains (Slice 04). Le contrôle y prend son
+#: icône et les cartes leurs schémas ; sous node il faut donc le charger
+#: **avant** le module du HUD, exactement comme la page le sert avant lui.
+HAND_ART = RUNTIME / "control_center_barehands_hand_art.js"
 
 #: Ce que le double de navigateur de la Slice 07 n'a pas, parce que l'onglet
 #: Expérimental n'en a pas eu besoin : un espace de noms SVG (l'icône de main
@@ -78,10 +82,15 @@ const COMMANDS_PATH=%(commands)s;
 const TARGET_PATH=%(target)s,CALIBRATION_PATH=%(calibration)s;
 const TUTORIAL_PATH=%(tutorial)s,RECORDER_PATH=%(recorder)s;
 const SCENE_INTERACT_PATH=%(scene)s;
+const HAND_ART_PATH=%(handart)s;
 const C=require(CONTRACTS_PATH);
+/* Chargé ici, avant tout le reste : le module du HUD le lit au chargement et
+   **refuse de s'installer** sans lui, comme il refuse sans les contrats. */
+const ART=require(HAND_ART_PATH);
 """ % {
     "script": json.dumps(str(SCRIPT)),
     "contracts": json.dumps(str(CONTRACTS)),
+    "handart": json.dumps(str(HAND_ART)),
     "hud": json.dumps(str(HUD)),
     "commands": json.dumps(str(COMMANDS)),
     "target": json.dumps(str(TARGET)),
@@ -99,12 +108,43 @@ const enrich=node=>{
   node.focus=function(){global.document.activeElement=this};
   node.blur=function(){if(global.document.activeElement===this)global.document.activeElement=null};
   node.removeAttribute=function(key){delete this.attrs[key]};
+  /* `tagName`, en capitales, comme le vrai DOM. Le double de la Slice 07 ne
+     portait que `tag` : un code qui trie ses nœuds sur la propriété standard
+     — le piège à focus des cartes de la Slice 04 le fait — n'aurait rien
+     trouvé sous node tout en marchant dans le navigateur, ce qui est le pire
+     des deux mondes. */
+  node.tagName=String(node.tag||'').toUpperCase();
+  /* **Vider un nœud**, ce que le double de la Slice 07 ne savait pas faire :
+     il n'avait ni `firstChild` ni `removeChild`. Les cartes de la Slice 04
+     repeignent leur corps à chaque ouverture et à chaque seconde
+     d'enregistrement ; sans ces deux-là, `while(body.firstChild)` ne tournait
+     pas une seule fois et chaque peinture **empilait** une copie de plus. Les
+     tests lisaient alors la première, c'est-à-dire la plus ancienne — un
+     double qui ment dans le sens le plus coûteux. */
+  Object.defineProperty(node,'firstChild',
+    {get(){return this.children.length?this.children[0]:null},configurable:true});
+  node.removeChild=function(child){
+    const at=this.children.indexOf(child);
+    if(at>=0)this.children.splice(at,1);
+    if(child)child.parent=null;
+    return child;
+  };
   return node;
 };
 global.document.createElement=tag=>enrich(baseCreate(tag));
 global.document.createElementNS=(ns,tag)=>{
   const node=enrich(baseCreate(tag));
   node.namespaceURI=ns;
+  return node;
+};
+/* Un nœud de texte, que le double de la Slice 07 n'avait pas : les cartes de
+   la Slice 04 mêlent du texte et des `<strong>` dans un même paragraphe, et
+   tout écrire en `textContent` aurait effacé l'emphase. Il se comporte comme
+   les autres nœuds — `textContent` et pas d'enfants — pour que le parcours
+   d'arbre des tests n'ait pas deux formes à connaître. */
+global.document.createTextNode=text=>{
+  const node=enrich(baseCreate('#text'));
+  node.textContent=String(text);
   return node;
 };
 /* L'horloge du démarrage se lit sur `Date.now()` : sous node elle doit
@@ -140,6 +180,13 @@ global.document.body.appendChild(hudHost);
 const paletteHost=global.document.createElement('div');
 paletteHost.id='barehandsPalette';
 global.document.body.appendChild(paletteHost);
+/* Et celui des deux cartes rapides (Slice 04), pour la même raison encore :
+   ce monde est **la page entière**. Un double qui ne le déclarerait pas ferait
+   passer « les cartes ne s'installent pas » pour la normale, et aucun test ne
+   verrait qu'Aide et Diagnostic ont cessé d'être atteignables. */
+const cardsHost=global.document.createElement('div');
+cardsHost.id='barehandsCards';
+global.document.body.appendChild(cardsHost);
 """
 
 TAIL = r"""
@@ -962,10 +1009,11 @@ def test_the_control_refuses_by_name_rather_than_guessing(tmp_path):
             indiscernable d'un bouton qui marche. */
       window.JarvisBarehands=Object.freeze({state:()=>({})});
       load();
-      /* 3. La couture, mais pas l'emplacement déclaré par la page. */
+      /* 3. La couture, mais pas les emplacements déclarés par la page. */
       window.JarvisBarehands=Object.freeze({state:()=>({}),
         openLifecycleSeam:()=>1,lifecycleSeam:()=>[]});
       hudHost.remove();
+      cardsHost.remove();
       load();
       console.error=realError;
       /* **Slice 03** : le module porte deux surfaces, donc deux refus, et ils
@@ -976,12 +1024,19 @@ def test_the_control_refuses_by_name_rather_than_guessing(tmp_path):
         return at<0?line:JSON.parse(line.slice(at)).code};
       const hudLines=codes.filter(l=>l.includes('barehands.hud_not_installed'));
       const palLines=codes.filter(l=>l.includes('barehands.palette_not_installed'));
+      /* **Slice 04** : une troisième surface, donc un troisième `try` et un
+         troisième refus. Les cartes n'ont besoin que de la surface gelée et de
+         leur emplacement — pas d'une couture, puisqu'elles ne s'abonnent à
+         rien — donc leurs deux causes ne sont pas celles des deux autres. */
+      const cardLines=codes.filter(l=>l.includes('barehands.cards_not_installed'));
       out({installed:typeof window.JarvisBarehandsHud==='object',
         control:typeof window.JarvisBarehandsHudControl,
         palette:typeof window.JarvisBarehandsPalette,
-        named:hudLines.length+palLines.length===codes.length,
+        cards:typeof window.JarvisBarehandsHudCards,
+        named:hudLines.length+palLines.length+cardLines.length===codes.length,
         codes:hudLines.map(codeOf),
-        paletteCodes:palLines.map(codeOf)});
+        paletteCodes:palLines.map(codeOf),
+        cardCodes:cardLines.map(codeOf)});
     """, name="refusals")
 
     # Le module s'expose quand même : c'est son **installation** qui refuse, pas
@@ -997,6 +1052,20 @@ def test_the_control_refuses_by_name_rather_than_guessing(tmp_path):
     # avec une surface trop ancienne, c'est sa couture d'outil qui manque.
     assert result["paletteCodes"] == [None, "barehands_palette_seam_missing",
                                       "barehands_palette_seam_missing"]
+    # **Slice 04** : les cartes refusent elles aussi pour leur compte, et
+    # **elles ne refusent pas aux mêmes moments** — c'est tout l'intérêt de
+    # trois `try` au lieu d'un. Elles n'ont besoin d'aucune couture : elles ne
+    # s'abonnent à rien, l'aide étant immobile et le diagnostic se relisant à
+    # la seconde tant que sa carte est ouverte. Deux causes, donc, et non trois
+    # comme pour la main : pas de surface (1), pas d'emplacement (3). Au
+    # passage (2) elles s'installent alors que les deux autres échouent, ce qui
+    # est exactement ce qu'on veut lire — une page à moitié servie garde ce
+    # qu'elle peut garder.
+    assert result["cardCodes"] == [None, "barehands_cards_host_missing"]
+    # Et le global posé au passage (2) survit à l'échec de (3) : la page n'a
+    # pas d'installation qui se défait. Le dire plutôt que de prétendre le
+    # contraire — l'assertion décrit ce qui arrive, pas ce qui arrangerait.
+    assert result["cards"] == "object"
 
 
 # ------------------------------------------- les quatre actions rapides (Slice 02)

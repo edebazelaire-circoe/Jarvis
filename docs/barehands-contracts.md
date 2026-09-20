@@ -65,15 +65,16 @@ repère commenté dans `control_center.html`, substitué côté serveur par
 (`jarvis/runtime/control_center.py`) et **précède** ses deux lecteurs :
 
 ```
-…_BAREHANDS_CONTRACTS_JS__ → …_BAREHANDS_TARGET_JS__
+…_BAREHANDS_CONTRACTS_JS__ → …_BAREHANDS_HAND_ART_JS__
+→ …_BAREHANDS_TARGET_JS__
 → …_BAREHANDS_CALIBRATION_JS__ → …_BAREHANDS_TUTORIAL_JS__
 → …_BAREHANDS_RECORDER_JS__
 → …_BAREHANDS_JS__ → …_BAREHANDS_HUD_JS__
 → …_BAREHANDS_COMMANDS_JS__ → …_SCENE_PAGE_JS__
 ```
 
-**Huit modules de page, et une seule balise `<script>` pour tout.** La page
-servie concatène ces huit-là, les six modules de scène, la chronologie, le Test
+**Neuf modules de page, et une seule balise `<script>` pour tout.** La page
+servie concatène ces neuf-là, les six modules de scène, la chronologie, le Test
 Lab et ~2500 lignes de logique de page dans **un** `<script>` : une levée non
 rattrapée au chargement d'un module y avorte donc tout ce qui suit, alors que
 sous node, où chaque module est un `require()` séparé, elle ne tuait que le
@@ -105,6 +106,14 @@ pour que l'ordre casse à l'insertion et non trois clics plus tard.)
 
 (`…_BAREHANDS_TARGET_JS__` est arrivé à la Slice 05 : il lit les contrats et se
 fait lire par le pointeur, donc il vit exactement entre les deux.)
+
+(`…_BAREHANDS_HAND_ART_JS__` est arrivé avec la carte d'aide : c'est le
+vocabulaire de dessin des mains schématiques, § 15 ci-dessous. Il ne lit
+**rien** — pas même les contrats — donc son rang n'est contraint que par ses
+lecteurs, et ils sont de part et d'autre de la page : la calibration (servie
+très tôt) et le contrôle du haut-gauche (servi très tard). Il passe donc en
+tête, juste après les contrats, par convention de rangement. Servi trop tard,
+c'est la calibration qui casserait à l'insertion.)
 
 (`…_BAREHANDS_HUD_JS__` est arrivé avec le contrôle de cycle de vie de la barre
 du haut : il lit `window.JarvisBarehands` **et** la couture de diffusion du
@@ -2910,6 +2919,173 @@ pour être mesuré par les mêmes douze mesures et comparé au précédent sur u
 séance identique. Ce qui changerait, si son vocabulaire différait, est une
 version de schéma : `schemaVersion` monte, l'ancien rejeu **refuse** la nouvelle
 plutôt que de la deviner, et les deux versions cohabitent sur le disque.
+
+## 15. Mains schématiques (décision 20 de l'affinage d'UI)
+
+Implémentation canonique :
+`jarvis/runtime/control_center_barehands_hand_art.js`
+(`window.JarvisBarehandsHandArt`), logique pure, sans DOM tant qu'on ne lui
+passe pas de document. Couverte par `tests/unit/test_barehands_hand_art_js.py`.
+
+**Un seul vocabulaire de dessin pour toute la fonctionnalité.** La Slice 01
+avait tracé une main en trait pour l'icône du contrôle de cycle de vie ; la
+carte d'aide en demande cinq de plus et la calibration en demandera autant. Ce
+module est l'endroit unique où ces mains existent. Deux jeux auraient dérivé au
+premier ajustement, et le symptôme aurait été un utilisateur qui ne reconnaît
+pas, dans la calibration, la main apprise dans l'aide.
+
+**Décision 20, littéralement :** trait schématique, presque robotique, et
+surtout pas d'anatomie. Moins précis qu'une photo, délibérément. Ce qu'un
+dessin doit faire comprendre, c'est *quels doigts bougent et où ils se
+touchent*.
+
+### Le vocabulaire
+
+Grille `0 0 24 24`, trait `1.5`, bouts et jointures ronds, `currentColor`.
+Point plein (`r = .95`) à l'articulation de chaque doigt. Anneau au trait
+(`r = 1.5`) au point de contact d'un pincement fermé. Anneau **en pointillés**
+(`r = 3`, motif `2.5 2.5`) pour une région visée — le même motif discontinu que
+l'icône d'outil sans moteur de la palette, et pas un troisième langage.
+
+Une posture est **une ligne de table**, pas un SVG dessiné à la main : cinq
+doigts, chacun une polyligne de deux à quatre points, plus un point
+d'articulation par doigt et d'éventuelles marques. Un seul traceur les
+sérialise toutes.
+
+### Les sept postures
+
+| `POSE` | ce qu'elle montre |
+| --- | --- |
+| `rest` | main ouverte au repos. **Exactement** le tracé servi depuis la Slice 01 : c'est l'icône du bouton et des trois pastilles du sélecteur. |
+| `wake_c` | la posture en C (décision 27) : pouce et index, et eux seuls, dessinent un C largement ouvert ; les trois autres doigts sont repliés. |
+| `pinch_primary_open` / `pinch_primary_closed` | pincement pouce-index. Le majeur reste **tendu**, hors du geste. |
+| `pinch_secondary_open` / `pinch_secondary_closed` | pincement pouce-majeur. L'index est **replié** et le majeur descend : aucun doigt dressé, silhouette franchement différente. |
+| `pinch_target` | le pincement visé (décision 28) : le primaire fermé, doigt pour doigt, **plus** un anneau de mire. Jamais un doigt qui pointe. |
+
+### Les invariants, et ce qu'ils achètent
+
+Trois sont épinglés par des tests parce qu'ils sont ce qu'un consommateur peut
+supposer sans relire le fichier :
+
+1. **Ouvrir et fermer un pincement ne bouge que les deux doigts qui pincent.**
+   Sans lui, une animation ferait sauter la main entière d'une image à l'autre.
+2. **Le point de contact est le même pour les deux canaux.** Ce qui distingue
+   un pincement de l'autre est le chemin, donc le doigt, donc le sens.
+3. **L'ouverture du C se situe entre celle d'un pincement ouvert et celle
+   d'une main ouverte**, ce qui est exactement ce que `cPoseScore` mesure : en
+   dessous de `wakeGapMin` c'est un pincement en cours, au-dessus de
+   `wakeGapMax` c'est une main ouverte (§ 4).
+
+### La surface
+
+`pose(id)` · `poses()` · `handShapes(spec)` · `handSvg(document, spec)` ·
+`handMarkup(spec)`, plus les tables `POSE`, `POSE_ORDER`, `DIGIT`,
+`DIGIT_ORDER`, `POSES`. `spec` = `{pose, size, mirror, className, title}`.
+
+`handSvg` et `handMarkup` lisent tous deux `handShapes` : **deux sérialiseurs,
+un seul dessin**, et un test les compare forme par forme. Un `title` fourni
+rend l'image annoncée (`role="img"`) et lui retire `aria-hidden` ; sans lui
+elle est décorative, ce qu'est une icône à côté de son libellé. `mirror` pose
+la transformation sur un `<g>` interne, jamais sur la racine, qui emporterait
+le `<title>`.
+
+**Ce module ne connaît pas les gestes.** Il ne lit pas les contrats, ne nomme
+aucun `GESTURE` et ne dit à personne ce qu'une posture déclenche : c'est un
+alphabet de formes. Lier une posture à une action appartient à qui affiche. Si
+le dessin connaissait les gestes, l'aide aurait un second contrat de gestes,
+et c'est ce que le § 16 existe pour empêcher.
+
+**Un refus codé plutôt qu'un défaut plausible :** une posture inconnue lève
+`barehands_hand_pose_unknown` et ne retombe **pas** sur `rest`. Un écran qui
+montre une main ouverte là où on attendait un pincement enseigne le mauvais
+geste, et rien ne le signale.
+
+## 16. Aide et diagnostic rapides (décisions 15 et 16 de l'affinage d'UI)
+
+Implémentation : `control_center_barehands_hud.js` — le même module que le
+contrôle de cycle de vie et la palette, pour la même raison qu'à la Slice 03 :
+même famille, même feuille, mêmes jetons de ton, et les phrases du sélecteur de
+mode y sont déjà écrites une fois. Couverte par
+`tests/unit/test_barehands_cards_js.py`.
+
+Une seule carte ouverte à la fois, un seul emplacement (`#barehandsCards`,
+rang 82 — au-dessus du menu contextuel qui les ouvre, en dessous de la
+confirmation en page). Elles s'installent dans un **troisième** `try` : un
+emplacement oublié coûte les cartes, jamais le contrôle de cycle de vie.
+
+### L'aide n'est pas un second contrat de gestes
+
+C'est la contrainte dure, et elle vaut plus que la mise en page. Tout ce qui
+peut être lu du contrat l'est :
+
+- les trois états et leurs conséquences sont les phrases du sélecteur de mode
+  (`MODE_HINT`, `CAPTION`), pas une seconde rédaction ;
+- les durées viennent de `WAKE_HOLD_MS`, `SLEEP_TIMEOUT_MS`,
+  `WAKE_INTERVAL_MS`. Le retour en veille est annoncé comme un **défaut**,
+  parce qu'il est réglable (§ 9) ;
+- les doigts de chaque canal viennent de `PINCH_FINGERS` ;
+- les couleurs viennent de `feedbackRole()` **appelée** et de
+  `FEEDBACK_TOKENS`, jamais d'une table recopiée ;
+- la liste des gestes vient de `GESTURES`.
+
+Ce qui ne peut pas se lire du contrat, c'est la **liaison** geste → action :
+elle vit dans le moteur d'interaction. Une seule table la porte
+(`GESTURE_BOUND`), et les gestes **non liés sont déduits par soustraction**.
+Conséquence voulue : un geste ajouté demain au contrat arrive « sans effet
+annoncé » plutôt que promis. Promettre une action que personne n'a branchée est
+la faute que cette règle existe pour empêcher.
+
+Aujourd'hui, `GESTURE_BOUND = [c_pose]` — le réveil, par `createWakeDetector` /
+`cPoseScore` dans `watch()`. Main ouverte, poing, double fermeture et
+claquement sont mesurés et publiés à chaque image et **rien ne les écoute** :
+la carte les nomme, sans dessin et sans verbe, dans un bloc qui dit son nom.
+
+Le **pincement secondaire**, lui, est présenté comme une commande au même rang
+que le primaire, parce qu'il en est une : il publie `INTERACTION.CONTEXT` (§ 7)
+et le pointeur le dépose en un vrai `contextmenu` du DOM.
+
+### Ce que la Slice 04 a supprimé, et pourquoi
+
+Le bloc « Gestes » de l'onglet Expérimental et sa clé `SECTION.gestures` sont
+**partis**. Deux de ses phrases étaient devenues fausses :
+
+- il rangeait le pincement pouce-majeur parmi les « reconnus, pas encore
+  agissants » — il est lié ;
+- il annonçait « pas de glisser-déposer ni de défilement » — `DRAG_START`,
+  `DRAG_MOVE`, `DRAG_END` et `SCROLL` sont tous implantés (§ 7), et `SCROLL`
+  défile vraiment l'hôte.
+
+Une aide fausse est pire qu'une aide absente : elle se lit comme un contrat.
+Rien de l'ancien bloc n'a donc été recopié. La clé n'est pas conservée « au cas
+où » non plus : publiée sans que rien ne la dessine, `showSettings` aurait rendu
+`{ok:true}` après n'avoir rien montré. `showHelp()` **refuse** sous
+`barehands_help_unavailable` quand la carte manque, faute de tout repli.
+
+### Le diagnostic, et la RÈGLE ZÉRO
+
+Décision 16 : un raccourci vers l'enregistreur existant, pas une seconde
+implantation. La carte appelle `record.start()`, `record.stop()` et
+`record.state()` — **les mêmes portes** que les deux boutons de l'onglet, qui
+restent en place pour le rejeu et la comparaison (§ 14). Rien de ce qui est
+retenu ni de ce qui est conservé ne change.
+
+La Slice 02 avait refusé de démarrer une capture depuis un menu qui se
+referme : rien à l'écran ne l'aurait datée ni arrêtée. Ce raisonnement tient, et
+la carte le **satisfait** au lieu de le contourner. Pendant une capture elle
+porte les quatre exigences : un témoin qui bat et une barre qui balaie (ça
+tourne), « Enregistrement en cours » (quoi), le temps écoulé **et** le temps
+restant relus chaque seconde (depuis combien de temps), un bouton Arrêter, Échap
+et l'échéance (comment en sortir). L'échéance et le plafond d'images sont
+annoncés **avant** de démarrer, lus de `DEFAULTS` de l'enregistreur et non
+écrits ici.
+
+Le battement d'une seconde n'est pas un détail : c'est lui qui voit une séance
+arrêtée par son échéance ou par son plafond d'images, que personne n'a
+demandée. Sans lui, la carte annoncerait une capture terminée comme si elle
+durait.
+
+La phrase de confidentialité est reprise **mot pour mot** de l'onglet : deux
+formulations de la même promesse finissent par ne plus promettre la même chose.
 
 ## Ce qui est implémenté, et ce qui ne l'est pas
 

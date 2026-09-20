@@ -232,6 +232,16 @@ CATALOG_SCRIPT_MARKER = "/*__CONTROL_CENTER_CATALOG_JS__*/"
 #: et la page de scène, qui lisent tous deux l'identité de pointeur.
 BAREHANDS_CONTRACTS_SCRIPT_FILE = "control_center_barehands_contracts.js"
 BAREHANDS_CONTRACTS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_CONTRACTS_JS__*/"
+#: Vocabulaire de dessin des mains schématiques Bare Hands (décision 20) :
+#: postures en données, un seul traceur, aucune dépendance
+#: (`window.JarvisBarehandsHandArt`). Inséré APRÈS les contrats — pure
+#: convention de rangement, il n'en lit rien — et surtout **AVANT la
+#: calibration**, qui le lit pour dessiner ses mains virtuelles, et avant le
+#: contrôle du haut-gauche, qui y prend son icône. Un seul jeu de mains pour
+#: toute la fonctionnalité : deux auraient dérivé, et l'utilisateur n'aurait
+#: pas reconnu dans la calibration la main apprise dans l'aide.
+BAREHANDS_HAND_ART_SCRIPT_FILE = "control_center_barehands_hand_art.js"
+BAREHANDS_HAND_ART_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_HAND_ART_JS__*/"
 #: Cible sémantique Bare Hands (Slice 05) : collecte des candidates du DOM et
 #: aperçu visuel des régions (`window.JarvisBarehandsTarget`). Inséré APRÈS les
 #: contrats, qu'il lit, et AVANT le pointeur, qui le lit.
@@ -921,6 +931,10 @@ class ControlCenter:
         html = html.replace(
             BAREHANDS_CONTRACTS_SCRIPT_MARKER,
             page.with_name(BAREHANDS_CONTRACTS_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            BAREHANDS_HAND_ART_SCRIPT_MARKER,
+            page.with_name(BAREHANDS_HAND_ART_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             BAREHANDS_TARGET_SCRIPT_MARKER,

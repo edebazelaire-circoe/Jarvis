@@ -116,6 +116,27 @@
        `JarvisBarehands.lifecycleSeam()` : « le bouton écoute » ne doit pas
        s'écrire comme « personne n'écoute ». */
     seamName:'hud',
+    /* ---- les deux cartes rapides (Slice 04, décisions 15 et 16) ----
+       Aide / Gestes et Diagnostic, les deux destinations du menu du clic droit
+       qui n'étaient encore que des crochets. Elles partagent **un seul**
+       emplacement — une seule peut être ouverte à la fois, et deux cartes
+       superposées seraient deux fois la même question « laquelle lis-je ? ».
+
+       L'emplacement est déclaré dans `control_center.html`, comme les deux
+       autres surfaces de ce module et pour la même raison : son rang
+       d'empilement (82) appartient au registre de la page. 82 et pas moins :
+       la carte s'ouvre **depuis** le menu contextuel (80) et doit le
+       recouvrir. 82 et pas plus : la confirmation en page (85) doit pouvoir
+       recouvrir la carte. */
+    cardsId:'barehandsCards',
+    cardId:'barehandsCard',
+    cardTitleId:'barehandsCardTitle',
+    cardBodyId:'barehandsCardBody',
+    cardCloseId:'barehandsCardClose',
+    cardAnnounceId:'barehandsCardAnnounce',
+    /* Quelle carte est ouverte, lisible par un test et par une console sans
+       compter les nœuds. */
+    cardAttribute:'data-bh-card',
   });
 
   /* Les trois modes **sélectionnables**, dans l'ordre où ils se présentent :
@@ -299,46 +320,203 @@
     }));
   }
 
+  /* ============================================ l'aide, dérivée du contrat
+
+     Décision 15 : l'aide devient une carte visuelle aérée, et non le bloc de
+     texte dense qui vivait dans l'onglet Expérimental.
+
+     **La contrainte dure est ailleurs que dans la mise en page.** Une aide qui
+     énumère des gestes devient, le jour où elle se trompe, un *second* contrat
+     de gestes — et c'est le premier qui a raison, sans que personne le sache.
+     Tout ce qui peut être lu du contrat l'est donc :
+
+     - les états et leurs conséquences viennent de `MODE_HINT` / `CAPTION`, qui
+       sont déjà, dix lignes plus haut, les phrases du sélecteur de mode. Deux
+       rédactions du même fait auraient divergé au premier ajustement ;
+     - la durée du maintien en C, le délai de retour en veille et la cadence du
+       guetteur viennent de `BH.WAKE_HOLD_MS`, `BH.SLEEP_TIMEOUT_MS` et
+       `BH.WAKE_INTERVAL_MS` ;
+     - les doigts de chaque canal viennent de `BH.PINCH_FINGERS` ;
+     - les couleurs du retour visuel viennent de `BH.feedbackRole()` **appelée**
+       et de `BH.FEEDBACK_TOKENS`, pas d'une table recopiée ;
+     - la liste des gestes vient de `BH.GESTURES`.
+
+     Ce qui ne peut **pas** se lire du contrat, c'est la **liaison** geste →
+     action : elle vit dans le moteur d'interaction et nulle part ailleurs sous
+     forme de donnée. Elle est donc écrite ici, une fois, avec le lieu qui la
+     produit en commentaire — et la soustraction fait le reste. */
+
+  /* Les gestes auxquels une action est **réellement** liée aujourd'hui.
+
+     Un seul : la posture en C. Elle réveille l'interaction depuis la veille,
+     par `createWakeDetector` / `cPoseScore` dans `watch()`
+     (`control_center_barehands.js`), et non par l'événement `GESTURE.C_POSE`,
+     qui ne tourne qu'en actif et que personne ne consomme.
+
+     Les quatre autres — main ouverte, poing, double fermeture, claquement —
+     sont mesurés et publiés à chaque image et **rien ne les écoute**. Ils ne
+     sont donc pas des commandes, et cette carte ne les présente pas comme
+     telles.
+
+     La liste des **non liés** n'est pas écrite : elle est déduite par
+     soustraction de `BH.GESTURES`. Conséquence voulue — un geste ajouté demain
+     au contrat arrive ici **sans effet annoncé**, ce qui est la seule valeur
+     par défaut acceptable pour une aide. Promettre une action que personne n'a
+     branchée est la faute que cette Slice existe pour empêcher. */
+  const GESTURE_BOUND=Object.freeze([BH.GESTURE.C_POSE]);
+  const GESTURE_LABEL=Object.freeze({
+    [BH.GESTURE.C_POSE]:'Posture en C',
+    [BH.GESTURE.OPEN_PALM]:'Main ouverte',
+    [BH.GESTURE.FIST]:'Poing',
+    [BH.GESTURE.DOUBLE_CLOSE]:'Double fermeture',
+    [BH.GESTURE.CLAP]:'Claquement des deux paumes',
+  });
+  /* Un geste du contrat dont cette carte n'a pas la phrase française. Il
+     n'est **pas** caché : le cacher ferait disparaître de l'aide un geste que
+     le moteur reconnaît, ce qui est précisément le silence qu'on refuse. Il
+     paraît sous son identifiant brut, et se dit sous un nom cherchable. */
+  const UNNAMED_GESTURE='barehands_help_gesture_unnamed';
+
+  /* Ce que chaque canal de pincement **fait**, aujourd'hui, pour de vrai.
+
+     Primaire (pouce-index) : `INTERACTION.CLICK`, `SELECT`, `DRAG_*`,
+     `SCROLL`, et `MOVE` / `RESIZE` sur un cadre — toutes publiées par
+     `createInteractionEngine`.
+
+     Secondaire (pouce-majeur) : `INTERACTION.CONTEXT`, qui part en un vrai
+     `contextmenu` du DOM. **Il est lié**, et le bloc d'aide qu'on remplace
+     disait le contraire — il le rangeait parmi les « reconnus, pas encore
+     agissants ». C'est la raison pour laquelle rien de cette carte n'a été
+     recopié de lui. */
+  const CHANNEL_TITLE=Object.freeze({
+    [BH.PINCH_CHANNEL.PRIMARY]:'Pincement principal',
+    [BH.PINCH_CHANNEL.SECONDARY]:'Pincement secondaire',
+  });
+  const CHANNEL_ACTIONS=Object.freeze({
+    [BH.PINCH_CHANNEL.PRIMARY]:Object.freeze([
+      'Cliquer : pincer puis rouvrir sans bouger.',
+      'Sélectionner : sur un champ de saisie ou un objet de la scène.',
+      'Glisser et faire défiler : pincer, puis déplacer la main.',
+      'Déplacer ou redimensionner un cadre : par son bord ou son coin, à une ou deux mains.',
+    ]),
+    [BH.PINCH_CHANNEL.SECONDARY]:Object.freeze([
+      'Clic droit : ouvre le menu contextuel, exactement comme une souris.',
+    ]),
+  });
+  /* Les postures que la carte dessine pour chaque canal : ouvert, puis fermé.
+     Ce sont des noms du vocabulaire de dessin, pas des noms de gestes. */
+  const CHANNEL_POSES=Object.freeze({
+    [BH.PINCH_CHANNEL.PRIMARY]:Object.freeze(['pinch_primary_open','pinch_primary_closed']),
+    [BH.PINCH_CHANNEL.SECONDARY]:Object.freeze(['pinch_secondary_open','pinch_secondary_closed']),
+  });
+  /* Le nom français d'un bout de doigt. `PINCH_FINGERS` les donne en rôles de
+     points (`thumbTip`, `indexTip`, `middleTip`) : la carte les traduit, elle
+     ne réécrit pas quels doigts font quel canal. */
+  const FINGER_LABEL=Object.freeze({thumbTip:'pouce',indexTip:'index',middleTip:'majeur'});
+
+  /* Les trois combinaisons qui font apparaître les trois couleurs du retour
+     visuel. La couleur n'est **pas** écrite ici : `BH.feedbackRole()` est
+     appelée avec la région et le canal, et c'est elle qui tranche. Si sa règle
+     change, cette carte change avec elle sans qu'on y touche. */
+  const FEEDBACK_CASES=Object.freeze([
+    Object.freeze({region:BH.REGION.BODY,channel:BH.PINCH_CHANNEL.PRIMARY,
+      text:'Le corps d’un objet : on le prend, on le déplace, on le clique.'}),
+    Object.freeze({region:BH.REGION.EDGE,channel:BH.PINCH_CHANNEL.PRIMARY,
+      text:'Un bord ou un coin : la zone qui déplace ou redimensionne un cadre.'}),
+    Object.freeze({region:BH.REGION.BODY,channel:BH.PINCH_CHANNEL.SECONDARY,
+      text:'Le pincement secondaire, où qu’il vise : c’est un clic droit.'}),
+  ]);
+  const FEEDBACK_LABEL=Object.freeze({
+    [BH.FEEDBACK.BODY]:'Bleu',[BH.FEEDBACK.ZONE]:'Jaune',[BH.FEEDBACK.SECONDARY]:'Rouge',
+  });
+
+  const round=(ms,unit)=>Math.round(Number(ms)/unit);
+
+  /* **Le modèle complet de l'aide, pur.** Aucune page, aucune horloge : c'est
+     lui que les tests interrogent pour vérifier, sans navigateur, qu'aucun
+     geste non lié n'est présenté comme une commande. */
+  function helpModel(){
+    const fingersOf=channel=>(BH.PINCH_FINGERS[channel]||[])
+      .map(finger=>FINGER_LABEL[finger]||String(finger));
+    return Object.freeze({
+      title:'Aide · Gestes',
+      /* Les trois états, dans l'ordre du sélecteur et avec **ses** phrases. */
+      lifecycle:Object.freeze(MODES.map(mode=>Object.freeze({
+        mode,caption:CAPTION[mode],label:MODE_LABEL[mode],hint:MODE_HINT[mode],
+        pose:'rest',
+      }))),
+      wake:Object.freeze({
+        title:'Réveiller d’un geste',
+        pose:'wake_c',
+        holdMs:BH.WAKE_HOLD_MS,
+        sleepMs:BH.SLEEP_TIMEOUT_MS,
+        text:`Depuis la veille, formez un C avec le pouce et l’index — écartés sans se toucher, `
+          +`index déplié — et tenez ${round(BH.WAKE_HOLD_MS,1000)} seconde. L’anneau se remplit `
+          +`autour de la main ; rouvrir avant la fin annule.`,
+        /* Le retour en veille est un **défaut** réglable, et le dire ainsi
+           évite qu'une aide contredise un réglage que l'utilisateur a changé. */
+        back:`Sans main sûre pendant ${round(BH.SLEEP_TIMEOUT_MS,1000)} secondes (valeur par défaut, `
+          +`réglable), l’interaction retourne en veille. La caméra reste ouverte pour le guetteur.`,
+      }),
+      pinch:Object.freeze(BH.PINCH_CHANNELS.map(channel=>Object.freeze({
+        channel,
+        title:CHANNEL_TITLE[channel]||channel,
+        fingers:Object.freeze(fingersOf(channel)),
+        /* « pouce et index », construit depuis le contrat : si un canal
+           changeait de doigts, cette phrase changerait toute seule. */
+        subtitle:fingersOf(channel).join(' et '),
+        poses:CHANNEL_POSES[channel],
+        actions:CHANNEL_ACTIONS[channel]||Object.freeze([]),
+      }))),
+      feedback:Object.freeze(FEEDBACK_CASES.map(seen=>{
+        const role=BH.feedbackRole(seen.region,seen.channel);
+        const token=BH.FEEDBACK_TOKENS[role];
+        return Object.freeze({
+          role,label:FEEDBACK_LABEL[role]||role,text:seen.text,
+          /* La valeur vit dans le thème de la page ; seul le nom de la
+             variable est un contrat. La pastille lit donc la variable, avec
+             son repli — exactement comme le moteur qui peint à l'écran. */
+          color:`var(${token.cssVar},${token.fallback})`,
+        });
+      })),
+      /* **Les reconnus sans effet.** Déduits, jamais listés à la main. */
+      unbound:Object.freeze(BH.GESTURES
+        .filter(gesture=>!GESTURE_BOUND.includes(gesture))
+        .map(gesture=>Object.freeze({
+          gesture,
+          label:GESTURE_LABEL[gesture]||gesture,
+          named:!!GESTURE_LABEL[gesture],
+        }))),
+      unnamedCode:UNNAMED_GESTURE,
+    });
+  }
+
   /* ------------------------------------------------- la main schématique */
 
   const SVG_NS='http://www.w3.org/2000/svg';
-  /* Décision 20 : des mains **schématiques**, en trait, pas d'anatomie. C'est
-     le premier tracé de ce vocabulaire dans la page — des os droits, des
-     articulations marquées, un châssis de paume — et la calibration reprendra
-     celui-ci plutôt que d'en dessiner un second. Le tracé vit ici, en données,
-     pour que les deux usages (bouton 64 px, pastille 46 px) soient le même
-     dessin à deux tailles. */
-  const HAND_PALM='M6.5 12.6v4.2a3.8 3.8 0 0 0 3.8 3.8h3.9a3.9 3.9 0 0 0 3.9-3.9v-4.1';
-  const HAND_BONES=Object.freeze([
-    'M6.5 12.6h11.6',          // châssis des jointures
-    'M9 12.4V6.7',             // index
-    'M12 12.1V5.2',            // majeur
-    'M15 12.4V6.7',            // annulaire
-    'M17.7 12.6V8.7',          // auriculaire
-    'M7 13.5 4.7 10.8',        // pouce
-  ]);
-  const HAND_JOINTS=Object.freeze([[9,9.4],[12,8.5],[15,9.4],[17.7,10.5],[5.85,11.95]]);
 
+  /* Décision 20 : des mains **schématiques**, en trait, pas d'anatomie.
+
+     Le tracé ne vit plus ici. La Slice 01 l'avait posé dans ce module parce
+     qu'il n'avait alors qu'un usage ; la Slice 04 lui en donne trois de plus
+     (la carte d'aide) et les Slices 05 et 06 un quatrième (la calibration,
+     qui ne peut pas dépendre de ce module-ci — elle est servie **avant** lui).
+     Il est donc sorti dans `control_center_barehands_hand_art.js`, chargé
+     avant la calibration, et ce module en devient un consommateur comme les
+     autres. La posture `rest` y reproduit **exactement** le dessin servi
+     jusqu'ici : même paume, mêmes os, mêmes points, même ordre.
+
+     Lu directement et refusé à l'insertion, comme les contrats : un module de
+     page absent est une erreur d'ordonnancement, pas un état d'exécution. */
+  const HAND=root.JarvisBarehandsHandArt
+    ||(typeof JarvisBarehandsHandArt!=='undefined'?JarvisBarehandsHandArt:null);
+  if(!HAND)throw new Error('JarvisBarehandsHud : control_center_barehands_hand_art.js doit être inséré avant ce module');
+
+  /* L'icône du bouton et des trois pastilles : la main au repos, à la taille
+     demandée. La signature ne bouge pas — c'est celle que la Slice 01 a posée
+     et que les tests appellent — seul son intérieur délègue. */
   function handIcon(doc,size){
-    const svg=doc.createElementNS(SVG_NS,'svg');
-    svg.setAttribute('viewBox','0 0 24 24');
-    svg.setAttribute('class','bh-hud-icon');
-    svg.setAttribute('width',String(size));svg.setAttribute('height',String(size));
-    svg.setAttribute('fill','none');svg.setAttribute('stroke','currentColor');
-    svg.setAttribute('stroke-width','1.5');
-    svg.setAttribute('stroke-linecap','round');svg.setAttribute('stroke-linejoin','round');
-    svg.setAttribute('aria-hidden','true');svg.setAttribute('focusable','false');
-    for(const d of [HAND_PALM].concat(HAND_BONES)){
-      const path=doc.createElementNS(SVG_NS,'path');
-      path.setAttribute('d',d);svg.appendChild(path);
-    }
-    for(const joint of HAND_JOINTS){
-      const dot=doc.createElementNS(SVG_NS,'circle');
-      dot.setAttribute('cx',String(joint[0]));dot.setAttribute('cy',String(joint[1]));
-      dot.setAttribute('r','.95');dot.setAttribute('fill','currentColor');
-      dot.setAttribute('stroke','none');svg.appendChild(dot);
-    }
-    return svg;
+    return HAND.handSvg(doc,{pose:HAND.POSE.REST,size,className:'bh-hud-icon'});
   }
 
   /* --------------------------------------- la palette d'outils, sans DOM
@@ -777,6 +955,159 @@
   transition:color .16s ease}
 #${DOM.paletteId} .bh-hud-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+/* ======================================= les deux cartes rapides (Slice 04)
+
+   Décision 15 : « petite fenêtre aérée, des schémas, pas un mur de texte ».
+   Tout ici sert cette phrase — une colonne unique, des blocs séparés par du
+   blanc franc, un dessin par idée, et des libellés courts en capitales qui
+   se balaient sans être lus.
+
+   L'emplacement est une nappe plein écran : elle centre la carte sans
+   \`transform\` (la note de la Slice 01 vaut ici aussi) et elle sert de cible
+   au clic de fermeture. Elle n'existe à l'écran que carte ouverte ; fermée,
+   elle est \`display:none\` et ne vole donc aucun clic à la page. */
+#${DOM.cardsId}{position:fixed;z-index:82;inset:0;display:none;
+  align-items:center;justify-content:center;padding:24px;
+  background:rgba(2,6,10,.62);
+  -webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);
+  font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}
+#${DOM.cardsId}[${DOM.cardAttribute}]{display:flex}
+#${DOM.cardsId} .bh-card{position:relative;width:min(640px,100%);max-height:100%;
+  overflow:auto;padding:22px 24px 24px;border:1px solid var(--line,#183343);border-radius:14px;
+  background:var(--panel,rgba(6,12,18,.94));box-shadow:0 26px 70px rgba(0,0,0,.6);
+  -webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px);
+  animation:bhHudPop .16s ease-out}
+#${DOM.cardsId} .bh-card:focus-visible{outline:2px solid ${ACCENT};outline-offset:3px}
+#${DOM.cardsId} .bh-card-head{display:flex;align-items:flex-start;gap:14px;margin-bottom:6px}
+#${DOM.cardsId} .bh-card-eyebrow{font-size:9px;letter-spacing:.2em;text-transform:uppercase;
+  color:${MUTED}}
+#${DOM.cardsId} .bh-card h2{margin:3px 0 0;font-size:16px;font-weight:400;letter-spacing:.04em;
+  color:var(--text,#d8edf7)}
+#${DOM.cardsId} .bh-card-close{margin-left:auto;width:30px;height:30px;flex:none;
+  display:grid;place-items:center;padding:0;border:1px solid var(--line,#183343);border-radius:8px;
+  background:transparent;color:${MUTED};font:inherit;font-size:15px;line-height:1;cursor:pointer;
+  transition:color .16s ease,border-color .16s ease}
+#${DOM.cardsId} .bh-card-close:hover{color:${ACCENT};border-color:color-mix(in srgb,${ACCENT} 45%,transparent)}
+#${DOM.cardsId} .bh-card-close:focus-visible{outline:2px solid ${ACCENT};outline-offset:2px}
+/* Le blanc, et c'est le sujet de la décision 15 : chaque bloc respire, et le
+   filet qui les sépare est plus discret que le texte qu'il sépare. */
+#${DOM.cardsId} .bh-card-block{margin-top:22px;padding-top:20px;
+  border-top:1px solid color-mix(in srgb,var(--line,#183343) 70%,transparent)}
+#${DOM.cardsId} .bh-card-block:first-of-type{border-top:0;padding-top:0}
+#${DOM.cardsId} .bh-card-block h3{margin:0 0 12px;font-size:9px;font-weight:400;
+  letter-spacing:.18em;text-transform:uppercase;color:${MUTED}}
+#${DOM.cardsId} .bh-card p{margin:0;color:var(--text,#d8edf7);opacity:.86}
+#${DOM.cardsId} .bh-card-note{margin-top:9px;font-size:11px;color:${MUTED}}
+/* Les trois états : le même dessin trois fois, et seule la teinte change —
+   c'est la démonstration, pas l'illustration. */
+#${DOM.cardsId} .bh-card-modes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+#${DOM.cardsId} .bh-card-mode{display:flex;flex-direction:column;align-items:center;gap:8px;
+  padding:12px 8px;border:1px solid color-mix(in srgb,var(--line,#183343) 80%,transparent);
+  border-radius:10px;text-align:center}
+#${DOM.cardsId} .bh-card-chip{width:46px;height:46px;display:grid;place-items:center;border-radius:10px;
+  border:1px solid var(--bh-hud-line);background:var(--bh-hud-face);color:var(--bh-hud-ink);
+  box-shadow:var(--bh-hud-glow)}
+#${DOM.cardsId} .bh-card-chip[data-bh-tone=active]{
+  box-shadow:0 0 0 1px color-mix(in srgb,${ACCENT} 24%,transparent),
+    0 0 15px color-mix(in srgb,${ACCENT} 28%,transparent)}
+#${DOM.cardsId} .bh-card-cap{font-size:9px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--bh-hud-cap)}
+#${DOM.cardsId} .bh-card-mode p{font-size:11px;line-height:1.5;opacity:.72}
+/* Une idée = un dessin à gauche, une phrase à droite. */
+#${DOM.cardsId} .bh-card-row{display:flex;align-items:flex-start;gap:16px}
+/* Le blanc entre deux idées du même bloc — les deux pincements. Il vit dans la
+   feuille et pas dans un \`style\` posé au montage : un écart écrit en JS est un
+   nombre de plus qui ne se trouve pas quand on cherche les espacements. */
+#${DOM.cardsId} .bh-card-row+.bh-card-row{margin-top:18px}
+#${DOM.cardsId} .bh-card-art{flex:none;display:flex;align-items:center;gap:6px;
+  padding:9px 10px;border:1px solid color-mix(in srgb,${ACCENT} 18%,transparent);
+  border-radius:10px;background:rgba(110,231,255,.04);color:${ACCENT}}
+#${DOM.cardsId} .bh-hand{display:block;color:inherit}
+/* La flèche entre « ouvert » et « fermé » : le geste est un mouvement, et deux
+   dessins côte à côte sans elle se lisent comme deux gestes différents. */
+#${DOM.cardsId} .bh-card-arrow{flex:none;color:${MUTED};font-size:12px}
+#${DOM.cardsId} .bh-card-lead{margin:0 0 7px;font-size:11px;letter-spacing:.14em;
+  text-transform:uppercase;color:${ACCENT}}
+#${DOM.cardsId} .bh-card-sub{margin:0 0 8px;font-size:11px;color:${MUTED}}
+#${DOM.cardsId} .bh-card ul{margin:0;padding-left:16px;line-height:1.7}
+#${DOM.cardsId} .bh-card li{color:var(--text,#d8edf7);opacity:.86}
+/* Les trois couleurs du retour visuel. La pastille **est** la couleur : la
+   nommer sans la montrer n'aiderait personne à la reconnaître à l'écran. */
+#${DOM.cardsId} .bh-card-feedback{display:flex;flex-direction:column;gap:10px}
+#${DOM.cardsId} .bh-card-swatch{display:flex;align-items:flex-start;gap:11px}
+#${DOM.cardsId} .bh-card-dot{flex:none;width:13px;height:13px;margin-top:3px;border-radius:50%;
+  background:var(--bh-card-swatch);box-shadow:0 0 10px var(--bh-card-swatch)}
+#${DOM.cardsId} .bh-card-swatch strong{font-weight:400;color:var(--bh-card-swatch)}
+/* **Les reconnus sans effet**, et leur présentation dit déjà ce qu'ils sont :
+   atténués, sans dessin, sans verbe. Une aide qui les mettrait au même rang
+   que les pincements en ferait des commandes par la mise en page seule. */
+#${DOM.cardsId} .bh-card-idle{font-size:11px;line-height:1.6;color:${MUTED}}
+#${DOM.cardsId} .bh-card-idle strong{font-weight:400;color:color-mix(in srgb,${MUTED} 70%,#fff)}
+
+/* ------------------------------------------------- la carte de diagnostic
+
+   RÈGLE ZÉRO, et c'est toute la raison de cette carte plutôt qu'un bouton
+   dans un menu : pendant un enregistrement, l'écran dit **que** ça tourne (la
+   barre balaie), **quoi** (le titre), **depuis combien de temps** et **combien
+   il reste** (deux compteurs vivants), et **comment en sortir** (Arrêter,
+   Échap, et l'échéance qui arrête toute seule). */
+#${DOM.cardsId} .bh-rec{display:flex;flex-direction:column;gap:14px}
+#${DOM.cardsId} .bh-rec-state{position:relative;overflow:hidden;
+  padding:13px 14px;border:1px solid var(--line,#183343);border-radius:10px;
+  background:rgba(3,8,12,.5)}
+#${DOM.cardsId} .bh-rec-state[data-bh-rec=on]{border-color:color-mix(in srgb,var(--warn,#ffb85c) 52%,transparent);
+  background:rgba(38,23,5,.4)}
+#${DOM.cardsId} .bh-rec-title{display:flex;align-items:center;gap:9px;
+  font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:${MUTED}}
+#${DOM.cardsId} .bh-rec-state[data-bh-rec=on] .bh-rec-title{color:var(--warn,#ffb85c)}
+/* Le point qui bat : il ne dit pas l'état, il dit que la page est vivante. */
+#${DOM.cardsId} .bh-rec-led{width:9px;height:9px;flex:none;border-radius:50%;
+  background:color-mix(in srgb,${MUTED} 50%,transparent)}
+#${DOM.cardsId} .bh-rec-state[data-bh-rec=on] .bh-rec-led{background:var(--warn,#ffb85c);
+  box-shadow:0 0 12px var(--warn,#ffb85c);animation:bhRecPulse 1.1s ease-in-out infinite}
+@keyframes bhRecPulse{0%,100%{opacity:.35}50%{opacity:1}}
+/* Les compteurs : gros, alignés, lisibles d'un coup d'œil de loin. */
+#${DOM.cardsId} .bh-rec-meters{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:10px;margin-top:12px}
+#${DOM.cardsId} .bh-rec-meter{display:flex;flex-direction:column;gap:3px}
+#${DOM.cardsId} .bh-rec-value{font-size:17px;color:var(--text,#d8edf7)}
+#${DOM.cardsId} .bh-rec-state[data-bh-rec=on] .bh-rec-value{color:var(--warn,#ffb85c)}
+#${DOM.cardsId} .bh-rec-key{font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:${MUTED}}
+/* La barre qui balaie : la seule chose qui distingue « ça tourne » de « c'est
+   figé » quand rien d'autre ne bouge. */
+#${DOM.cardsId} .bh-rec-sweep{position:absolute;left:0;right:0;bottom:0;height:2px;display:none;
+  overflow:hidden;background:color-mix(in srgb,var(--warn,#ffb85c) 22%,transparent)}
+#${DOM.cardsId} .bh-rec-state[data-bh-rec=on] .bh-rec-sweep{display:block}
+#${DOM.cardsId} .bh-rec-sweep::after{content:'';position:absolute;top:0;bottom:0;left:0;width:38%;
+  background:var(--warn,#ffb85c);animation:bhHudSweep 1.25s ease-in-out infinite}
+#${DOM.cardsId} .bh-rec-actions{display:flex;gap:10px;flex-wrap:wrap}
+#${DOM.cardsId} .bh-rec-btn{padding:9px 15px;border:1px solid var(--line,#183343);border-radius:9px;
+  background:transparent;color:var(--text,#d8edf7);font:inherit;cursor:pointer;
+  transition:color .16s ease,border-color .16s ease,background .16s ease}
+#${DOM.cardsId} .bh-rec-btn:hover:not([disabled]){border-color:color-mix(in srgb,${ACCENT} 50%,transparent);
+  background:rgba(110,231,255,.06)}
+#${DOM.cardsId} .bh-rec-btn:focus-visible{outline:2px solid ${ACCENT};outline-offset:2px}
+#${DOM.cardsId} .bh-rec-btn[disabled]{opacity:.4;cursor:not-allowed}
+#${DOM.cardsId} .bh-rec-btn[data-bh-rec-act=stop]{border-color:color-mix(in srgb,var(--warn,#ffb85c) 55%,transparent);
+  color:var(--warn,#ffb85c)}
+/* La phrase de confidentialité. Elle n'est pas une note de bas de page : elle
+   est la condition pour que ce bouton ait le droit d'exister ici. */
+#${DOM.cardsId} .bh-rec-privacy{padding:11px 13px;border-radius:9px;font-size:11px;line-height:1.6;
+  color:${MUTED};border:1px solid color-mix(in srgb,var(--line,#183343) 80%,transparent);
+  background:rgba(3,8,12,.4)}
+#${DOM.cardsId} .bh-rec-privacy strong{font-weight:400;color:var(--text,#d8edf7)}
+#${DOM.cardsId} .bh-rec-fail{margin:0;padding:9px 11px;border-radius:8px;font-size:11px;line-height:1.55;
+  color:${DANGER};border:1px solid color-mix(in srgb,${DANGER} 34%,transparent);
+  background:rgba(35,7,12,.45)}
+#${DOM.cardsId} .bh-rec-fail[hidden]{display:none}
+@media(max-width:700px){
+  /* La carte prend l'écran et la grille des trois états passe en colonne :
+     trois tuiles de 100 px côte à côte ne se lisent plus. */
+  #${DOM.cardsId}{padding:12px}
+  #${DOM.cardsId} .bh-card{padding:18px 16px 20px}
+  #${DOM.cardsId} .bh-card-modes,#${DOM.cardsId} .bh-rec-meters{grid-template-columns:1fr}
+  #${DOM.cardsId} .bh-card-row{flex-direction:column;gap:12px}
+}
 @media(max-width:700px){
   /* En dessous de 700 px la barre du haut se resserre (\`left:10px\`), la marque
      disparaît et la bannière GPT-Live vient occuper la bande juste sous elle :
@@ -804,6 +1135,13 @@
      ne sont pas des animations — ils disent lequel est choisi et lequel n'a
      pas de moteur, immobiles. */
   #${DOM.paletteId},#${DOM.paletteId} .bh-tool,#${DOM.paletteId} .bh-tool-cap{transition:none}
+  /* Même règle pour les cartes, et même limite. Ce qui s'arrête : l'entrée de
+     la carte, le battement du témoin, le balayage de la barre. Ce qui
+     **reste** : les deux compteurs de l'enregistrement, qui montent en
+     chiffres et sont la seule preuve que ça avance quand plus rien ne bouge. */
+  #${DOM.cardsId} .bh-card{animation:none}
+  #${DOM.cardsId} .bh-rec-led,#${DOM.cardsId} .bh-rec-sweep::after{animation:none}
+  #${DOM.cardsId} .bh-rec-btn,#${DOM.cardsId} .bh-card-close{transition:none}
 }`;
 
   /* ------------------------------------------------------- le contrôle DOM */
@@ -1551,6 +1889,525 @@
     };
   }
 
+  /* ==================================== les deux cartes rapides, en DOM
+
+     Décisions 15 et 16. Une seule carte à la fois, un seul emplacement, et le
+     même jeu de règles que les deux autres surfaces de ce module : rien n'est
+     pris dans un global (document, surface et horloge sont injectés, seule
+     façon d'exercer ceci sous node) et rien n'est tenu qui appartienne à
+     quelqu'un d'autre.
+
+     **Ce que ce module ne fait pas** : il n'enregistre rien, il ne décide de
+     rien de ce qui est retenu, et il ne touche à aucune rétention. Il appelle
+     `record.start()`, `record.stop()` et `record.state()` — les mêmes portes
+     que les deux boutons de l'onglet Expérimental, qui restent en place. Ce
+     qui change est la découvrabilité, et strictement elle. */
+
+  const CARD=Object.freeze({HELP:'help',DIAGNOSTICS:'diagnostics'});
+
+  /* La phrase de confidentialité, reprise **mot pour mot** de la surface
+     d'enregistrement de l'onglet Expérimental. Elle n'est pas réécrite : c'est
+     la promesse faite à l'utilisateur, et deux formulations de la même
+     promesse finissent par ne plus promettre la même chose. */
+  const RECORD_PRIVACY='Un enregistrement retient des <strong>mesures dérivées</strong> — '
+    +'position brute et filtrée, ratios de pincement, immobilité, issues — et '
+    +'jamais une image, une vidéo ni les points de votre main.';
+
+  const secondsOf=ms=>`${Math.round(Number(ms||0)/1000)} s`;
+
+  /* **Le modèle de la carte de diagnostic, pur.** Il traduit ce que
+     `record.state()` publie en ce que l'écran doit peindre, et il porte à lui
+     seul les quatre exigences de la RÈGLE ZÉRO : `running` (que ça tourne),
+     `title` (quoi), `elapsed` et `remaining` (depuis combien de temps, et
+     combien il reste), `canStop` (comment en sortir). */
+  function diagnosticsModel(state,bounds,failure){
+    const seen=state&&typeof state==='object'?state:{};
+    const installed=!!seen.installed;
+    const running=!!seen.recording;
+    const limit=bounds&&typeof bounds==='object'?bounds:{};
+    /* Les bornes en vigueur viennent de l'enregistreur dès qu'il en a une ;
+       avant le premier départ, `record.state()` rend des zéros et ce sont les
+       défauts du module qui font foi. Aucun nombre n'est inventé ici : sans
+       l'un ni l'autre, la phrase se dit **sans chiffre** plutôt qu'avec un
+       chiffre plausible. */
+    const maxDurationMs=Number(seen.maxDurationMs)>0?Number(seen.maxDurationMs)
+      :Number(limit.maxDurationMs)>0?Number(limit.maxDurationMs):0;
+    const maxFrames=Number(seen.maxFrames)>0?Number(seen.maxFrames)
+      :Number(limit.maxFrames)>0?Number(limit.maxFrames):0;
+    const bound=maxDurationMs&&maxFrames
+      ?`Il s’arrête tout seul au bout de ${secondsOf(maxDurationMs)} ou de ${maxFrames} images.`
+      :'Il s’arrête tout seul : une capture sans fin est exactement ce que la règle zéro interdit.';
+    const last=seen.last&&typeof seen.last==='object'?seen.last:null;
+    return Object.freeze({
+      installed,running,
+      title:running?'Enregistrement en cours':'Enregistrement de diagnostic',
+      /* Les trois compteurs. Pendant : retenues / écoulé / restant — les deux
+         derniers montent et descendent chaque seconde, et c'est eux qui
+         distinguent « ça travaille » de « c'est figé ». Après : ce que la
+         dernière séance a laissé, parce qu'un écran qui redevient vide après
+         un arrêt se lit comme un arrêt qui a tout perdu. */
+      meters:Object.freeze(running
+        ?[Object.freeze({key:'retenues',value:`${Number(seen.frames)||0} / ${Number(seen.observed)||0}`}),
+          Object.freeze({key:'écoulé',value:secondsOf(seen.elapsedMs)}),
+          Object.freeze({key:'restant',value:secondsOf(seen.remainingMs)})]
+        :[Object.freeze({key:'dernière séance',value:`${Number(seen.frames)||0} images`}),
+          Object.freeze({key:'durée',value:secondsOf(seen.elapsedMs)}),
+          Object.freeze({key:'écartées',value:String(Number(seen.dropped)||0)})]),
+      privacy:`${RECORD_PRIVACY} ${bound}`,
+      maxDurationMs,maxFrames,
+      /* Un enregistreur absent n'est pas « pas en train d'enregistrer » : la
+         carte ne propose alors rien et dit pourquoi, sous un nom cherchable. */
+      canStart:installed&&!running,
+      canStop:installed&&running,
+      absent:!installed,
+      absentReason:'Le module d’enregistrement n’est pas chargé dans cette page '
+        +'(barehands_recorder_not_installed) : il n’y a rien à démarrer.',
+      /* Le sort de la dernière trace envoyée. Une trace qui n'est pas partie
+         doit se voir ici : « enregistré » et « enregistré puis perdu » sont
+         deux choses, et seule la seconde demande quelque chose à l'humain. */
+      last:last?Object.freeze({id:last.id===undefined?null:last.id,
+        frames:Number(last.frames)||0,
+        path:last.path===undefined?null:last.path,
+        error:last.error===undefined||last.error===null?null:String(last.error)}):null,
+      seam:Object.freeze([].concat(seen.seam||[])),
+      failure:failure?String(failure):'',
+    });
+  }
+
+  function createQuickCards(deps){
+    const doc=deps.document,host=deps.host;
+    const surfaceOf=deps.surface;
+    const arm=deps.setInterval,disarm=deps.clearInterval;
+    const boundsOf=typeof deps.recorderBounds==='function'?deps.recorderBounds:()=>null;
+    const log=deps.log||function(){};
+
+    let open=null,poll=0,failure='',restore=null,busy=false;
+
+    installStyle(doc);
+
+    const card=doc.createElement('div');
+    card.id=DOM.cardId;card.className='bh-card';
+    card.setAttribute('role','dialog');
+    card.setAttribute('aria-modal','true');
+    card.setAttribute('aria-labelledby',DOM.cardTitleId);
+    /* Le conteneur reçoit le focus à l'ouverture : sans lui, la tabulation
+       repartirait du haut de la page, c'est-à-dire derrière la carte. */
+    card.setAttribute('tabindex','-1');
+
+    const head=doc.createElement('div');
+    head.className='bh-card-head';
+    const heading=doc.createElement('div');
+    const eyebrow=doc.createElement('div');
+    eyebrow.className='bh-card-eyebrow';eyebrow.textContent='Bare Hands';
+    const title=doc.createElement('h2');
+    title.id=DOM.cardTitleId;
+    heading.appendChild(eyebrow);heading.appendChild(title);
+    head.appendChild(heading);
+    const shut=doc.createElement('button');
+    shut.id=DOM.cardCloseId;shut.className='bh-card-close';
+    shut.setAttribute('type','button');
+    shut.setAttribute('aria-label','Fermer');
+    shut.textContent='×';
+    shut.addEventListener('click',()=>close({focus:true}));
+    head.appendChild(shut);
+    card.appendChild(head);
+
+    const body=doc.createElement('div');
+    body.id=DOM.cardBodyId;
+    card.appendChild(body);
+    host.appendChild(card);
+
+    const announce=doc.createElement('div');
+    announce.id=DOM.cardAnnounceId;announce.className='bh-hud-sr';
+    announce.setAttribute('role','status');
+    announce.setAttribute('aria-live','polite');
+    host.appendChild(announce);
+
+    /* Cliquer **à côté** ferme, cliquer dedans non. La nappe est un élément à
+       part entière, donc le test porte sur la cible et pas sur un calcul de
+       coordonnées qui se tromperait au premier défilement. */
+    host.addEventListener('click',event=>{
+      if(event&&event.target===host)close({focus:true});
+    });
+    host.addEventListener('keydown',onKey);
+
+    function onKey(event){
+      const key=event&&event.key;
+      if(key==='Escape'){
+        if(typeof event.preventDefault==='function')event.preventDefault();
+        close({focus:true});
+        return;
+      }
+      /* Le piège à focus. Une carte `aria-modal` dont la tabulation sort
+         derrière elle n'est modale que pour les voyants. */
+      if(key!=='Tab')return;
+      const stops=focusables();
+      if(!stops.length)return;
+      const at=doc.activeElement;
+      const index=stops.indexOf(at);
+      const last=stops.length-1;
+      if(event.shiftKey?(index<=0):(index===last||index<0)){
+        if(typeof event.preventDefault==='function')event.preventDefault();
+        focusOn(stops[event.shiftKey?last:0]);
+      }
+    }
+
+    const focusables=()=>collect(card).filter(node=>
+      node.tagName==='BUTTON'&&!node.disabled);
+
+    /* Le double de DOM des tests ne connaît pas `querySelectorAll` ; la page,
+       elle, s'en passe très bien. Un parcours explicite marche dans les deux. */
+    function collect(node){
+      const out=[];
+      const walk=current=>{
+        for(const child of (current&&current.children)||[]){
+          out.push(child);walk(child);
+        }
+      };
+      walk(node);
+      return out;
+    }
+
+    function focusOn(node){
+      if(node&&typeof node.focus==='function')
+        try{node.focus()}catch(_error){/* retiré entre-temps */}
+    }
+
+    function say(line){
+      if(!line)return;
+      announce.textContent=line;
+    }
+
+    /* ------------------------------------------------------- l'ouverture */
+
+    function show(kind,paint){
+      if(open&&open!==kind)clearBody();
+      if(!open)restore=doc.activeElement||null;
+      open=kind;
+      host.setAttribute(DOM.cardAttribute,kind);
+      paint();
+      focusOn(card);
+      log('info','barehands.card_opened',{card:kind});
+      return true;
+    }
+
+    function clearBody(){
+      while(body.firstChild)body.removeChild(body.firstChild);
+    }
+
+    function close(options_){
+      if(!open)return false;
+      const was=open;
+      open=null;failure='';
+      if(poll){disarm(poll);poll=0}
+      host.removeAttribute(DOM.cardAttribute);
+      clearBody();
+      if(options_&&options_.focus)focusOn(restore);
+      restore=null;
+      log('info','barehands.card_closed',{card:was});
+      return true;
+    }
+
+    /* ------------------------------------------------------- l'aide */
+
+    const el=(tag,className,text)=>{
+      const node=doc.createElement(tag);
+      if(className)node.className=className;
+      if(text!==undefined&&text!==null)node.textContent=text;
+      return node;
+    };
+    const block=(into,heading_)=>{
+      const section=el('section','bh-card-block');
+      section.appendChild(el('h3',null,heading_));
+      into.appendChild(section);
+      return section;
+    };
+    const handArt=(pose,size)=>HAND.handSvg(doc,{pose,size,className:'bh-hand'});
+
+    function paintHelp(){
+      const model=helpModel();
+      title.textContent=model.title;
+      clearBody();
+
+      const modes=block(body,'Les trois états');
+      const grid=el('div','bh-card-modes');
+      for(const state of model.lifecycle){
+        const tile=el('div','bh-card-mode');
+        tile.setAttribute(DOM.toneAttribute,state.mode);
+        const chip=el('span','bh-card-chip');
+        chip.setAttribute(DOM.toneAttribute,state.mode);
+        chip.setAttribute('aria-hidden','true');
+        chip.appendChild(handArt(HAND.POSE.REST,26));
+        tile.appendChild(chip);
+        tile.appendChild(el('span','bh-card-cap',state.caption));
+        tile.appendChild(el('p',null,state.hint));
+        grid.appendChild(tile);
+      }
+      modes.appendChild(grid);
+      modes.appendChild(el('p','bh-card-note',
+        'Le mode se choisit au clic gauche sur le bouton à icône de main, en haut à gauche.'));
+
+      const wake=block(body,model.wake.title);
+      const wakeRow=el('div','bh-card-row');
+      const wakeArt=el('div','bh-card-art');
+      wakeArt.appendChild(handArt(HAND.POSE.WAKE_C,54));
+      wakeRow.appendChild(wakeArt);
+      const wakeText=el('div');
+      wakeText.appendChild(el('p',null,model.wake.text));
+      wakeText.appendChild(el('p','bh-card-note',model.wake.back));
+      wakeRow.appendChild(wakeText);
+      wake.appendChild(wakeRow);
+
+      const pinch=block(body,'Les deux pincements');
+      for(const channel of model.pinch){
+        const row=el('div','bh-card-row');
+        row.setAttribute('data-bh-channel',channel.channel);
+        const art=el('div','bh-card-art');
+        art.appendChild(handArt(channel.poses[0],46));
+        art.appendChild(el('span','bh-card-arrow','→'));
+        art.appendChild(handArt(channel.poses[1],46));
+        row.appendChild(art);
+        const text=el('div');
+        text.appendChild(el('p','bh-card-lead',channel.title));
+        text.appendChild(el('p','bh-card-sub',channel.subtitle));
+        const list=el('ul');
+        for(const action of channel.actions)list.appendChild(el('li',null,action));
+        text.appendChild(list);
+        row.appendChild(text);
+        pinch.appendChild(row);
+      }
+
+      const colours=block(body,'Les couleurs du retour');
+      const swatches=el('div','bh-card-feedback');
+      for(const role of model.feedback){
+        const line=el('div','bh-card-swatch');
+        line.setAttribute('data-bh-feedback',role.role);
+        line.style.setProperty('--bh-card-swatch',role.color);
+        const dot=el('span','bh-card-dot');
+        dot.setAttribute('aria-hidden','true');
+        line.appendChild(dot);
+        const text=el('p');
+        text.appendChild(el('strong',null,`${role.label} — `));
+        text.appendChild(doc.createTextNode(role.text));
+        line.appendChild(text);
+        swatches.appendChild(line);
+      }
+      colours.appendChild(swatches);
+
+      /* **Reconnus, sans effet.** Ils sont dits, parce que les taire ferait
+         croire que le moteur ne les voit pas — et ils sont dits *comme*
+         n'étant pas des commandes : pas de dessin, pas de verbe, une seule
+         ligne atténuée. */
+      const idle=block(body,'Reconnus, sans effet');
+      const names=model.unbound.map(item=>item.label).join(' · ');
+      const note=el('p','bh-card-idle');
+      note.appendChild(el('strong',null,names));
+      note.appendChild(doc.createTextNode(
+        ' — mesurés et publiés à chaque image, mais aucune action ne leur est liée aujourd’hui.'));
+      idle.appendChild(note);
+      const unnamed=model.unbound.filter(item=>!item.named).map(item=>item.gesture);
+      if(unnamed.length)
+        log('warn','barehands.help_gesture_unnamed',
+          {code:model.unnamedCode,gestures:unnamed});
+
+      say(`${model.title} ouverte.`);
+    }
+
+    function openHelp(){
+      return show(CARD.HELP,paintHelp);
+    }
+
+    /* -------------------------------------------------- le diagnostic */
+
+    function readRecord(){
+      try{
+        const surface=surfaceOf();
+        if(!surface||!surface.record||typeof surface.record.state!=='function')return null;
+        return surface.record.state();
+      }catch(error){
+        log('warn','barehands.card_record_unreadable',
+          {error:String((error&&error.message)||error)});
+        return null;
+      }
+    }
+
+    function diagnosticsView(){
+      return diagnosticsModel(readRecord(),safeBounds(),failure);
+    }
+    function safeBounds(){
+      try{return boundsOf()}catch(_error){return null}
+    }
+
+    function paintDiagnostics(){
+      const model=diagnosticsView();
+      title.textContent='Diagnostic';
+      clearBody();
+
+      const section=block(body,'Enregistrement');
+      const wrap=el('div','bh-rec');
+
+      const state=el('div','bh-rec-state');
+      state.setAttribute('data-bh-rec',model.running?'on':'off');
+      const line=el('div','bh-rec-title');
+      const led=el('span','bh-rec-led');
+      led.setAttribute('aria-hidden','true');
+      line.appendChild(led);
+      line.appendChild(doc.createTextNode(model.title));
+      state.appendChild(line);
+      const meters=el('div','bh-rec-meters');
+      for(const meter of model.meters){
+        const cell=el('div','bh-rec-meter');
+        cell.setAttribute('data-bh-meter',meter.key);
+        cell.appendChild(el('span','bh-rec-value',meter.value));
+        cell.appendChild(el('span','bh-rec-key',meter.key));
+        meters.appendChild(cell);
+      }
+      state.appendChild(meters);
+      const sweep=el('span','bh-rec-sweep');
+      sweep.setAttribute('aria-hidden','true');
+      state.appendChild(sweep);
+      wrap.appendChild(state);
+
+      const fail=el('p','bh-rec-fail');
+      fail.hidden=!(model.failure||model.absent||(model.last&&model.last.error));
+      fail.textContent=model.failure
+        ||(model.absent?model.absentReason
+          :model.last&&model.last.error
+            ?`La dernière trace n’a pas été enregistrée sur le disque : ${model.last.error}`
+            :'');
+      wrap.appendChild(fail);
+
+      const actions=el('div','bh-rec-actions');
+      const start=el('button','bh-rec-btn','Démarrer');
+      start.setAttribute('type','button');
+      start.setAttribute('data-bh-rec-act','start');
+      start.disabled=!model.canStart||busy;
+      start.addEventListener('click',()=>run('start'));
+      actions.appendChild(start);
+      const stop=el('button','bh-rec-btn','Arrêter');
+      stop.setAttribute('type','button');
+      stop.setAttribute('data-bh-rec-act','stop');
+      stop.disabled=!model.canStop||busy;
+      stop.addEventListener('click',()=>run('stop'));
+      actions.appendChild(stop);
+      /* La surface complète reste là où elle a toujours été. Cette carte est
+         un **raccourci**, pas un remplacement : le rejeu, la comparaison et
+         les réglages de l'enregistreur vivent toujours dans l'onglet, et y
+         renvoyer vaut mieux que les recopier ici à moitié. */
+      const more=el('button','bh-rec-btn','Réglages avancés…');
+      more.setAttribute('type','button');
+      more.setAttribute('data-bh-rec-act','settings');
+      more.addEventListener('click',()=>run('settings'));
+      actions.appendChild(more);
+      wrap.appendChild(actions);
+
+      const privacy=el('div','bh-rec-privacy');
+      privacy.innerHTML=model.privacy;
+      wrap.appendChild(privacy);
+
+      section.appendChild(wrap);
+      return model;
+    }
+
+    /* Le battement d'une seconde. Il est armé **tant que la carte est
+       ouverte**, et pas seulement pendant un enregistrement : c'est lui qui
+       voit une séance démarrée d'ailleurs, et surtout une séance que
+       l'échéance ou le plafond d'images vient d'arrêter toute seule. Sans
+       lui, la carte annoncerait un enregistrement terminé comme s'il durait
+       encore. */
+    function watch(){
+      if(poll)return;
+      poll=arm(()=>{
+        if(!open||open!==CARD.DIAGNOSTICS){disarm(poll);poll=0;return}
+        const before=host.getAttribute('data-bh-recording');
+        const model=paintDiagnostics();
+        const nowOn=model.running?'true':'false';
+        host.setAttribute('data-bh-recording',nowOn);
+        if(before==='true'&&nowOn==='false')
+          say('Enregistrement terminé.');
+      },1000);
+    }
+
+    function openDiagnostics(){
+      const done=show(CARD.DIAGNOSTICS,()=>{
+        const model=paintDiagnostics();
+        host.setAttribute('data-bh-recording',model.running?'true':'false');
+        say(model.running
+          ?'Enregistrement de diagnostic en cours.'
+          :'Diagnostic ouvert. Aucun enregistrement en cours.');
+      });
+      watch();
+      return done;
+    }
+
+    /* Les trois actions de la carte, **par les portes existantes**. Aucune ne
+       réimplante quoi que ce soit : `record.start` et `record.stop` sont
+       exactement celles des deux boutons de l'onglet, et rien de ce qui est
+       retenu ni de ce qui est conservé ne passe par ici. */
+    async function run(act){
+      if(busy)return null;
+      busy=true;failure='';
+      try{
+        const surface=surfaceOf();
+        if(!surface)
+          throw Object.assign(new Error('window.JarvisBarehands absent'),
+            {code:'barehands_card_surface_missing'});
+        if(act==='settings'){
+          if(typeof surface.showSettings!=='function'||!surface.SECTION)
+            throw Object.assign(new Error('window.JarvisBarehands.showSettings() manque'),
+              {code:'barehands_card_entry_missing'});
+          const outcome=await surface.showSettings(surface.SECTION.record);
+          /* La carte s'efface derrière l'onglet qu'elle vient d'ouvrir : deux
+             surfaces du même sujet empilées, et l'on ne sait plus laquelle
+             répond. */
+          close({focus:false});
+          return outcome;
+        }
+        if(!surface.record||typeof surface.record[act]!=='function')
+          throw Object.assign(new Error(`window.JarvisBarehands.record.${act}() manque`),
+            {code:'barehands_card_entry_missing'});
+        const outcome=await surface.record[act]();
+        if(outcome&&outcome.ok===false){
+          /* Le refus du moteur, **avec sa cause réelle**, à l'endroit d'où le
+             clic est parti. Bare Hands éteint est le cas courant, et sa phrase
+             dit déjà où aller l'allumer. */
+          failure=String(outcome.reason||outcome.code||'Refusé.');
+          log('warn','barehands.card_record_refused',{act,code:outcome.code||null});
+        }else{
+          log('info','barehands.card_record_taken',{act,frames:outcome&&outcome.frames});
+          say(act==='start'?'Enregistrement démarré.':'Enregistrement arrêté.');
+        }
+        return outcome;
+      }catch(error){
+        failure=`L’action « ${act} » n’a pas abouti : ${(error&&error.message)||error}`;
+        log('error','barehands.card_record_failed',
+          {act,code:(error&&error.code)||null,error:String((error&&error.message)||error)});
+        return null;
+      }finally{
+        busy=false;
+        if(open===CARD.DIAGNOSTICS){
+          const model=paintDiagnostics();
+          host.setAttribute('data-bh-recording',model.running?'true':'false');
+          if(failure)say(failure);
+        }
+      }
+    }
+
+    return {
+      element:host,card,
+      openHelp,openDiagnostics,close,
+      opened:()=>open,
+      helpModel,
+      diagnostics:diagnosticsView,
+      failure:()=>failure,
+      run,
+      destroy(){
+        if(poll){disarm(poll);poll=0}
+        card.remove();announce.remove();
+      },
+    };
+  }
+
   const api=Object.freeze({DOM,MODES,TONE,MODE_LABEL,MODE_HINT,CAPTION,STYLE,
     QUICK,QUICK_ORDER,QUICK_LABEL,QUICK_GATE,KBD_MENU_GUARD_MS,
     presentationOf,captionOf,labelOf,noteOf,calibrationBlockOf,quickItemsOf,
@@ -1561,7 +2418,14 @@
        ouvrir de navigateur. */
     SLOT,TOOL_HINT,UNAVAILABLE,ARTLESS,DORMANT,TOOL_ART,GEO,
     PALETTE_TOP,PALETTE_NARROW_TOP,
-    paletteOf,toolIcon,createToolPalette});
+    paletteOf,toolIcon,createToolPalette,
+    /* Les deux cartes rapides (Slice 04). Les tables de liaison et les deux
+       modèles purs sont exportés au même titre que les précédents : c'est par
+       eux qu'un test vérifie « aucun geste non lié n'est présenté comme une
+       commande » sans ouvrir de navigateur. */
+    CARD,GESTURE_BOUND,GESTURE_LABEL,CHANNEL_ACTIONS,CHANNEL_POSES,
+    FEEDBACK_CASES,RECORD_PRIVACY,UNNAMED_GESTURE,
+    helpModel,diagnosticsModel,createQuickCards});
   root.JarvisBarehandsHud=api;
   /* Exécution par les tests (node) ; dans la page, `module` n'existe pas. */
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
@@ -1698,6 +2562,63 @@
     installJarvisBarehandsPalette();
   }catch(error){
     console.error('[barehands] barehands.palette_not_installed '
+      +JSON.stringify({code:(error&&error.code)||null,
+        error:String((error&&error.message)||error)}));
+  }
+
+  /* **Les cartes rapides, dans leur propre `try` pour la troisième fois.**
+     Même raison que la palette : trois surfaces, trois sorts. Un emplacement
+     oublié dans le balisage coûte l'aide et le diagnostic, jamais le contrôle
+     de cycle de vie (décision 1).
+
+     Elles ne s'abonnent à **aucune couture** : l'aide est immobile, et le
+     diagnostic se relit à la seconde tant que sa carte est ouverte. Ouvrir une
+     souscription permanente pour une surface fermée 99 % du temps aurait été
+     un battement d'horloge pour rien. */
+  function installJarvisBarehandsCards(){
+    const surface=window.JarvisBarehands;
+    if(!surface)
+      throw new Error('JarvisBarehandsHud : control_center_barehands.js doit être inséré avant ce module');
+    const host=document.getElementById(DOM.cardsId);
+    if(!host)
+      throw Object.assign(new Error(`JarvisBarehandsHud : l’emplacement #${DOM.cardsId} manque dans control_center.html`),
+        {code:'barehands_cards_host_missing'});
+
+    const cards=createQuickCards({
+      document,host,
+      surface:()=>window.JarvisBarehands,
+      /* Les bornes de l'enregistreur, **lues chez lui**. La carte annonce ce
+         qui est réellement en vigueur avant même le premier départ, au lieu
+         d'écrire « deux minutes » en dur et de mentir le jour où le défaut
+         change. Absentes, la phrase se dit sans chiffre. */
+      recorderBounds:()=>(window.JarvisBarehandsRecorder
+        &&window.JarvisBarehandsRecorder.DEFAULTS)||null,
+      setInterval:(fn,ms)=>window.setInterval(fn,ms),
+      clearInterval:id=>window.clearInterval(id),
+      log:(level,event,data)=>{
+        const line=`[barehands] ${event} ${JSON.stringify(data)}`;
+        if(level==='error')console.error(line);
+        else if(level==='warn')console.warn(line);
+        else console.info(line);
+      },
+    });
+    /* **La porte par laquelle `showHelp()` et `showDiagnostics()` arrivent.**
+       Le moteur possède la surface gelée et ne peut pas la compléter après
+       coup ; il lit donc ce global au moment du clic, jamais au chargement. */
+    window.JarvisBarehandsHudCards=Object.freeze({
+      openHelp:cards.openHelp,openDiagnostics:cards.openDiagnostics,
+      close:cards.close,opened:cards.opened,
+      helpModel:cards.helpModel,diagnostics:cards.diagnostics,
+      failure:cards.failure,
+    });
+    console.info('[barehands] barehands.cards_installed '
+      +JSON.stringify({cards:[CARD.HELP,CARD.DIAGNOSTICS]}));
+  }
+
+  try{
+    installJarvisBarehandsCards();
+  }catch(error){
+    console.error('[barehands] barehands.cards_not_installed '
       +JSON.stringify({code:(error&&error.code)||null,
         error:String((error&&error.message)||error)}));
   }

@@ -28,6 +28,10 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
    scène et, depuis la Slice 02, les quatre actions rapides du contrôle Bare
    Hands ; 80 est au-dessus du sélecteur de mode (36), donc le menu recouvre
    bien le sélecteur qu'il remplace et non l'inverse —,
+   cartes rapides Bare Hands 82 (Slice 04 : Aide / Gestes et Diagnostic,
+   ouvertes **depuis** le menu contextuel, donc au-dessus de ses 80 — une carte
+   qui se ferait recouvrir par le menu qui l'a ouverte serait illisible — et en
+   dessous de la confirmation en page, qui doit pouvoir les recouvrir),
    confirmation en page 85, Barehands 2147483000. Thème Omega :
    panneau 42, barre 45, bandeau 48, dock et pastilles 50. Les couches de la
    scène (0–1000) ne s'empilent qu'à l'intérieur de son conteneur ; les rangs
@@ -742,6 +746,18 @@ details.rd[open]>summary{margin-bottom:14px}
        sous un nom cherchable si cet emplacement manque — sans emporter le
        contrôle de cycle de vie, qui est le plus important des deux. -->
   <div id="barehandsPalette"></div>
+  <!-- Emplacement des deux cartes rapides Bare Hands (Slice 04, décisions 15
+       et 16) : Aide / Gestes et Diagnostic, ouvertes depuis le menu du clic
+       droit du contrôle ci-dessus. **Un seul** emplacement pour les deux, une
+       seule carte ouverte à la fois. Déclaré ici pour la même raison que les
+       deux précédents : son rang d'empilement (82) vit dans le registre du
+       haut. 82 est au-dessus du menu contextuel (80), qui ouvre ces cartes et
+       doit donc se faire recouvrir par elles, et en dessous de la confirmation
+       en page (85), qui doit pouvoir les recouvrir à son tour. Rempli par
+       `control_center_barehands_hud.js`, qui refuse de dessiner les cartes
+       sous un nom cherchable si cet emplacement manque — sans emporter ni le
+       contrôle de cycle de vie ni la palette. -->
+  <div id="barehandsCards"></div>
   <section class="live-banner" id="liveBanner" role="status" aria-live="assertive" aria-label="État de la session GPT-Live" hidden>
     <span class="live-led" aria-hidden="true"></span>
     <div class="live-main"><div class="live-title">GPT-LIVE <strong id="liveState">ACTIF</strong> · <span id="liveElapsed">00:00</span></div><div class="live-meta" id="liveMeta"></div></div>
@@ -1103,6 +1119,11 @@ const STATUS={
 /* Contrats et schémas Bare Hands V1 (Slice 01), lus par le pointeur et par la
    page de scène : `control_center_barehands_contracts.js`. Avant les deux. */
 /*__CONTROL_CENTER_BAREHANDS_CONTRACTS_JS__*/
+/* Vocabulaire de dessin des mains schématiques (décision 20), lu par le
+   contrôle du haut-gauche, par la carte d'aide et — Slices 05 et 06 — par la
+   calibration. Inséré **avant la calibration**, qui est servie bien avant le
+   HUD : `control_center_barehands_hand_art.js`. */
+/*__CONTROL_CENTER_BAREHANDS_HAND_ART_JS__*/
 /* Cible sémantique et aperçu Bare Hands (Slice 05), après les contrats qu'il lit
    et avant le pointeur qui le lit : `control_center_barehands_target.js`. */
 /*__CONTROL_CENTER_BAREHANDS_TARGET_JS__*/

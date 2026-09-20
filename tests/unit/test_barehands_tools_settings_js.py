@@ -1885,10 +1885,17 @@ def test_the_page_serves_configuration_only_and_never_a_dead_control(tmp_path):
     assert 'id="${SECTION.calibration}"' in served
     assert "barehandsCalibrate" in served and "barehandsProfileReset" in served
     # **Slice 02** : les sections que le menu d'actions rapides sait viser sont
-    # nommées une seule fois, dans `SECTION`, et le bloc de gestes en fait
-    # désormais partie — c'est le crochet que la Slice 04 emportera.
+    # nommées une seule fois, dans `SECTION`.
     assert "const SECTION=Object.freeze({" in served
-    assert 'id="${SECTION.gestures}"' in served and 'id="${SECTION.record}"' in served
+    assert 'id="${SECTION.record}"' in served
+    # **Slice 04** : le bloc de gestes est parti de l'onglet — il est devenu la
+    # carte d'aide, hors du modal (décisions 14 et 15) — et sa clé avec lui.
+    # Les deux phrases devenues fausses partent avec le bloc : le pincement
+    # pouce-majeur **est** lié (il ouvre le menu contextuel), et le
+    # glisser-déposer comme le défilement **sont** implantés.
+    for gone in ('id="barehandsGestures"', "Reconnus, pas encore agissants",
+                 "Limites du mode test", "gestures:'barehandsGestures'"):
+        assert gone not in served, gone
     assert "n’est pas encore installé" not in served
     assert "aucune image ni vidéo" in served, "la décision 32 est dite à l'utilisateur, pas seulement tenue"
     # Le sous-titre de l'onglet reste celui que `control_center_scene_settings`
@@ -2158,7 +2165,6 @@ def test_the_quick_entry_points_open_the_tab_and_reveal_their_section(tmp_path):
       shut();
       const help=await BAREHANDS.showHelp();
       await settle();
-      const gestures=seen(BAREHANDS.SECTION.gestures);
       shut();
       const diagnostics=await BAREHANDS.showDiagnostics();
       await settle();
@@ -2167,7 +2173,7 @@ def test_the_quick_entry_points_open_the_tab_and_reveal_their_section(tmp_path):
       const writes=modalContent.htmlWrites;
       const again=await BAREHANDS.showSettings(BAREHANDS.SECTION.calibration);
       await settle();
-      out({settings,help,diagnostics,again,afterSettings,gestures,record,
+      out({settings,help,diagnostics,again,afterSettings,record,
         redrawn:modalContent.htmlWrites-writes,
         calibration:seen(BAREHANDS.SECTION.calibration),
         // Le vocabulaire des sections est publié, et fermé.
@@ -2181,11 +2187,21 @@ def test_the_quick_entry_points_open_the_tab_and_reveal_their_section(tmp_path):
 
     assert result["afterSettings"] == {"open": True, "tab": "experimental"}
     assert result["settings"] == {"ok": True, "tab": "experimental", "section": None}
-    # L'aide ouvre le bloc de gestes qui existe **aujourd'hui** : c'est le
-    # crochet que la Slice 04 remplacera par sa carte visuelle (décision 15),
-    # et d'ici là elle ne promet rien qu'elle n'ait.
-    assert result["help"] == {"ok": True, "tab": "experimental", "section": "barehandsGestures"}
-    assert result["gestures"] == 1, "la section demandée est amenée sous les yeux"
+    # **Slice 04.** Le bloc de gestes de l'onglet a été supprimé et l'aide est
+    # devenue une carte, dans `control_center_barehands_hud.js`. Ce monde-ci ne
+    # charge pas ce module : l'aide **refuse donc par son nom** au lieu de
+    # renvoyer vers un écran qui n'existe plus. C'est l'écart assumé avec le
+    # diagnostic juste en dessous, et c'est le sujet de ces deux lignes.
+    assert result["help"] == {
+        "ok": False,
+        "code": "barehands_help_unavailable",
+        "reason": "La carte d’aide n’est pas disponible dans cette page "
+                  "(control_center_barehands_hud.js absent ou non installé).",
+    }
+    # Le diagnostic, lui, a un **vrai** repli : la surface d'enregistrement de
+    # l'onglet n'a pas bougé, avec ses deux boutons, ses compteurs et sa phrase
+    # de confidentialité. Sans la carte, y renvoyer est la même fonctionnalité
+    # par l'autre porte — pas un succès inventé.
     assert result["diagnostics"] == {"ok": True, "tab": "experimental", "section": "barehandsRecord"}
     assert result["record"] == 1
     # Ouvrir le diagnostic **n'enregistre pas** : ni séance, ni écriture.
@@ -2195,7 +2211,10 @@ def test_the_quick_entry_points_open_the_tab_and_reveal_their_section(tmp_path):
     # rafraîchissement en place de la Slice 07 vaut aussi pour ces portes.
     assert result["redrawn"] == 0
     assert result["calibration"] == 1
-    assert result["sections"] == ["calibration", "gestures", "record", "settings"]
+    # `gestures` a quitté `SECTION` : plus rien ne dessine cette section, et une
+    # clé publiée que rien ne peint rendrait `{ok:true}` après n'avoir rien
+    # montré.
+    assert result["sections"] == ["calibration", "record", "settings"]
     # Une section qui n'existe plus (les Outils sont partis) est refusée par
     # son nom, pas ouverte à moitié.
     assert result["unknown"]["ok"] is False

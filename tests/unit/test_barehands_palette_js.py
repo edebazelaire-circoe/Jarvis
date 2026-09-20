@@ -40,7 +40,7 @@ from jarvis.runtime.control_center import ControlCenter
 # horloge qu'on avance, et les deux emplacements que `control_center.html`
 # déclare.
 from test_barehands_tools_settings_js import BROWSER_HEAD, TIMERS  # noqa: E402
-from test_barehands_hud_js import DOM_PATCH, PATCH  # noqa: E402
+from test_barehands_hud_js import DOM_PATCH, HAND_ART, PATCH  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / "jarvis" / "runtime"
@@ -287,6 +287,12 @@ def test_a_tool_declared_without_an_engine_is_never_an_enabled_control(tmp_path)
       %(dom)s
       global.JarvisBarehandsContracts=C;
       global.window.JarvisBarehandsContracts=C;
+      /* Le vocabulaire de dessin (Slice 04), chargé comme la page le sert :
+         avant le module du HUD, qui refuse de s'installer sans lui. Ce test
+         fabrique son propre monde minuscule et ne passe pas par `PATCH`. */
+      const ART=require(%(handart)s);
+      global.JarvisBarehandsHandArt=ART;
+      global.window.JarvisBarehandsHandArt=ART;
       delete require.cache[require.resolve(%(hud)s)];
       const H=require(%(hud)s);
       const box=document.createElement('div');document.body.appendChild(box);
@@ -318,6 +324,7 @@ def test_a_tool_declared_without_an_engine_is_never_an_enabled_control(tmp_path)
         unavailable:H.UNAVAILABLE,
         failure:palette.failure()});
     """ % {"victim": json.dumps(str(victim)), "hud": json.dumps(str(HUD)),
+           "handart": json.dumps(str(HAND_ART)),
            "dom": _MINI_DOM}, name="ink")
 
     assert result["declared"] == ["pointer", "pan", "select", "ink"]

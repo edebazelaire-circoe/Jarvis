@@ -107,6 +107,7 @@ def test_mediapipe_reaches_the_page_only_through_the_closed_whitelist():
 
 @pytest.mark.parametrize("name", ["control_center_barehands.js",
                                   "control_center_barehands_contracts.js",
+                                  "control_center_barehands_hand_art.js",
                                   "control_center_barehands_target.js",
                                   "control_center_barehands_calibration.js",
                                   "control_center_barehands_tutorial.js",
@@ -114,7 +115,7 @@ def test_mediapipe_reaches_the_page_only_through_the_closed_whitelist():
                                   "control_center_barehands_hud.js",
                                   "control_center_barehands_commands.js"])
 def test_no_page_module_speaks_to_the_upstream_board(name):
-    """Les huit modules de page ne connaissent **pas** le tableau amont.
+    """Les neuf modules de page ne connaissent **pas** le tableau amont.
 
     Ils partagent un nom avec lui et rien d'autre : ni port, ni jeton, ni page.
     Un module natif qui nommerait `8794` ou `X-Jarvis-Token` aurait cessé d'être
