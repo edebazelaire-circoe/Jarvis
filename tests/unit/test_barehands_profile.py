@@ -151,7 +151,11 @@ def test_an_inconsistent_stage_report_reads_as_not_played():
         (None, "barehands_profile_bad_payload"),
         ([1], "barehands_profile_bad_payload"),
         ({}, "barehands_profile_schema_version_unsupported"),
-        ({"schema_version": 1}, "barehands_profile_schema_version_unsupported"),
+        # La v1 n'est plus ici : elle est **déclarée migratable**
+        # (`MIGRATED_SCHEMA_VERSIONS`) et le test de migration ci-dessous
+        # l'accepte. Seules la version absente et la version étrangère restent
+        # des refus — la première parce qu'on ne saura pas quoi en faire au
+        # prochain changement de schéma, la seconde parce qu'on ne sait pas la lire.
         ({"schema_version": 99}, "barehands_profile_schema_version_unsupported"),
         ({"schema_version": 2, "camera": "front"}, "barehands_profile_unknown_field"),
         ({"schema_version": 2, "hands": {"gauche": {}}}, "barehands_profile_handedness_unknown"),
@@ -200,6 +204,52 @@ def test_apply_refuses_anything_that_is_not_a_derived_measure(payload, code):
         profile.apply(settings, payload)
     assert caught.value.code == code
     assert settings == {}, "un refus n'écrit rien"
+
+
+def test_a_version_one_profile_can_be_written_back_and_comes_out_in_the_current_version():
+    """**La migration marchait dans un sens seulement** (constat de la Slice 11).
+
+    La v1 est déclarée migratable et `load` la convertit — ses six mesures
+    restent valides, `travel_slop_norm` et le rapport par étape retombent sur
+    « non mesuré ». Mais `apply` refusait *toute* version autre que la
+    courante, la v1 comprise : la page relisait une calibration v1, la
+    réenregistrait telle quelle, et le serveur qui venait de la lire la
+    refusait. Le bloc restait donc en v1 pour toujours, reconverti à chaque
+    lecture, et « migratable » ne voulait dire quelque chose qu'à la lecture.
+
+    Ce que le test épingle : la v1 **entre**, elle **ressort en v2**, et ses
+    mesures survivent au passage.
+    """
+
+    assert 1 in profile.MIGRATED_SCHEMA_VERSIONS
+
+    v1_payload = {
+        "schema_version": 1,
+        "updated_at": 1700000000000,
+        # La v1 portait la paire d'hystérésis mais ni `travel_slop_norm` ni
+        # `reach_norm` : ce sont exactement les clés que la conversion laisse
+        # à « non mesuré » plutôt que d'inventer.
+        "hands": {"right": {"press_ratio": 0.3, "release_ratio": 0.5, "jitter_px": 4.0, "quality": 0.8}},
+    }
+    settings: dict = {}
+    written = profile.apply(settings, v1_payload)
+
+    # Le bloc enregistré porte la version **courante** : la prochaine lecture
+    # n'a plus rien à convertir, et `inspect` ne le dit plus migratable.
+    assert settings[profile.SETTING_KEY]["schema_version"] == profile.SCHEMA_VERSION
+    assert profile.inspect(settings)["stored_schema_version"] == profile.SCHEMA_VERSION
+    assert profile.inspect(settings)["unreadable"] is False
+    # Les mesures de la v1 ont survécu, et ce que la v1 ne mesurait pas reste
+    # « non mesuré » — jamais un zéro, qui serait une mesure.
+    assert written["hands"]["right"]["press_ratio"] == 0.3
+    assert written["hands"]["right"]["release_ratio"] == 0.5
+    assert written["hands"]["right"]["travel_slop_norm"] is None
+    assert written["hands"]["right"]["reach_norm"] is None
+    assert written["calibrated"] is True, "une paire d'hystérésis mesurée est une calibration"
+    # Et rien n'a été archivé : une v1 n'est pas un bloc illisible.
+    assert profile.archived_keys(settings) == []
+    # Relu, le profil est le même : la migration est idempotente.
+    assert profile.load(settings)["hands"]["right"]["press_ratio"] == 0.3
 
 
 def test_a_complete_profile_round_trips_and_calibrated_is_derived_not_announced():

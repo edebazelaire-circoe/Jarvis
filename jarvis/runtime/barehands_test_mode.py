@@ -298,13 +298,23 @@ def apply(settings: dict[str, Any], payload: Any) -> dict[str, Any]:
             "barehands_unknown_field", f"Réglage Barehands inconnu : {', '.join(sorted(map(str, unknown)))}."
         )
     version = payload.get(SCHEMA_KEY)
-    if version is not None and version != SCHEMA_VERSION:
-        # La couture de migration : c'est ici qu'une version précédente
-        # s'accepterait et se convertirait, plutôt que de passer muette.
+    if version is not None and version != SCHEMA_VERSION and version not in MIGRATED_SCHEMA_VERSIONS:
         raise BarehandsSettingsError(
             "barehands_schema_version_unsupported",
             f"Réglages Bare Hands en version {version!r} ; ce serveur n'écrit que la version {SCHEMA_VERSION}.",
         )
+    # **La couture de migration, des deux côtés** (constat de la Slice 11). Elle
+    # existait à la lecture seule : `load` convertissait une v1, mais `apply`
+    # refusait *toute* version autre que la courante, la v1 comprise. Une page
+    # qui relisait un bloc v1 et le réécrivait tel quel se faisait donc refuser
+    # par un serveur qui déclare pourtant savoir le lire — le bloc restait en
+    # v1 pour toujours, reconverti à chaque lecture, et la version enregistrée
+    # ne montait jamais. « Migratable » se disait dans un sens et pas dans
+    # l'autre. Ici la conversion n'a rien à faire de plus : `value` part de
+    # `load(settings)`, qui a déjà donné leur défaut aux clés que la v1 ne
+    # portait pas, et l'écriture ci-dessous estampille `SCHEMA_VERSION`. Une
+    # version **étrangère**, elle, reste refusée : c'est la seule qu'on ne sait
+    # pas convertir.
     if "enabled" not in payload:
         raise BarehandsSettingsError("barehands_enabled_missing", "Précisez « enabled » (true ou false).")
     value = load(settings)

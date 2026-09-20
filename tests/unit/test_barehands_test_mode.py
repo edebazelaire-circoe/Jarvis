@@ -94,6 +94,32 @@ def test_a_version_one_block_is_migrated_and_a_foreign_one_is_not_acted_upon():
     assert caught.value.code == "barehands_schema_version_unsupported"
 
 
+def test_a_version_one_block_can_also_be_written_back_not_only_read(tmp_path):
+    """**La migration marchait dans un sens seulement** (constat de la Slice 11).
+
+    `load` convertissait une v1 ; `apply` refusait *toute* version autre que la
+    courante, la v1 comprise. Une page qui relisait un bloc v1 et le
+    réécrivait tel quel se faisait donc refuser par le serveur même qui venait
+    de le lire : le bloc restait en v1 pour toujours, reconverti à chaque
+    lecture, et la version enregistrée ne montait jamais.
+    """
+
+    assert 1 in barehands.MIGRATED_SCHEMA_VERSIONS
+
+    settings = {"barehands_test_mode": {"enabled": False}}   # bloc v1 : `enabled` seul
+    value = barehands.apply(settings, {"schema_version": 1, "enabled": True, "tool": "pan"})
+
+    # Écrit dans la version **courante** : la prochaine lecture n'a plus rien à
+    # convertir, et rien n'a été archivé — une v1 n'est pas un bloc illisible.
+    assert settings["barehands_test_mode"]["schema_version"] == barehands.SCHEMA_VERSION
+    assert barehands.archived_keys(settings) == []
+    # Ce que la demande portait est pris ; les huit clés que la v1 n'avait pas
+    # prennent leur défaut, exactement comme à la lecture.
+    assert value["enabled"] is True and value["tool"] == "pan"
+    assert value["sleep_timeout_ms"] == barehands.SETTINGS_DEFAULTS["sleep_timeout_ms"]
+    assert set(settings["barehands_test_mode"]) == set(barehands.SETTINGS_DEFAULTS) | {"schema_version"}
+
+
 def test_defaults_because_unreadable_and_defaults_because_fresh_are_not_the_same_answer():
     """`load()` rend le même dictionnaire dans les deux cas, à l'octet près.
 

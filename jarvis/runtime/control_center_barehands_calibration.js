@@ -37,7 +37,16 @@
 (function(root){
   'use strict';
   const BH=root.JarvisBarehandsContracts;
-  if(!BH)throw new Error('JarvisBarehandsCalibration : les contrats Bare Hands doivent être insérés avant ce module');
+  if(!BH){
+    /* Même règle que l'aperçu de cible (§6), le tutoriel (§13) et
+       l'enregistreur (§12) : la cause part dans la console et **ce module
+       seul** reste absent. La page servie n'a qu'une seule balise `<script>`,
+       donc une levée au chargement emporterait la scène, la timeline et le
+       Test Lab avec elle. Le refus n'est pas adouci — il est confiné. */
+    console.error('[barehands] barehands.calibration_not_installed '
+      +JSON.stringify({error:'les contrats Bare Hands doivent être insérés avant ce module'}));
+    return;
+  }
 
   /* ------------------------------------------------------------------ 1
      Réglages du parcours, et les paires dangereuses qu'ils peuvent former.

@@ -142,10 +142,32 @@ CONVERSATIONS_ROUTE = "/api/conversations"
 #: épinglé égal par `tests/unit/test_testlab_http.py`). Répété ici pour que le
 #: middleware ne dépende pas de l'import du paquet testlab.
 TESTLAB_ROUTE = "/api/testlab"
+#: Canal de commandes Bare Hands (Slice 12). Un POST d'origine étrangère y est
+#: refusé comme partout ailleurs, mais **avec la forme d'erreur du canal** :
+#: sans elle, le garde lève un `HTTPForbidden` en texte brut, sans corps JSON ni
+#: `X-Jarvis-Error-Code`, et le serveur MCP n'a plus de code à nommer — alors
+#: que « tout refus porte un code stable » est une contrainte de cette Slice.
+BAREHANDS_COMMANDS_ROUTE_PREFIX = "/api/barehands/commands"
+
 #: Préfixes dont TOUTES les méthodes sont gardées (Host de bouclage, Origin de
 #: bouclage, jamais `Sec-Fetch-Site: cross-site`) : ils exposent des transcriptions
 #: et des preuves de session, donc une lecture est aussi sensible qu'une écriture.
-READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE)
+#:
+#: Le canal de commandes y est pour une **troisième** raison, trouvée en Slice 11
+#: et qui n'est ni la confidentialité ni l'intégrité : `BarehandsCommands.deliver`
+#: marque la commande remise au **premier** long-poll qui la demande (remise une
+#: fois, à une seule page). Un `GET` d'origine étrangère est parti en requête
+#: simple — aucun préflight sur un GET sans en-tête — et le navigateur ne lui
+#: rendait que le corps, pas le serveur : la page attaquante ne **lisait** rien
+#: et **consommait** quand même. La vraie page attendait alors pour toujours une
+#: commande déjà remise, et l'utilisateur voyait « JARVIS n'ouvre pas le
+#: tutoriel » sans qu'aucun refus n'existe nulle part. Un déni de commande, pas
+#: une fuite : c'est la consommation qui est l'arme, donc le refus doit arriver
+#: **avant** le handler, et la méthode de lecture doit être gardée comme
+#: l'écriture. `GET /api/scene/patches` a la même forme de long-poll mais pas la
+#: même propriété — son curseur `after` vient de l'appelant et rien n'y est
+#: consommé côté serveur, donc un appel étranger n'y prend rien à personne.
+READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_ROUTE_PREFIX)
 
 
 #: Characters that never belong to a plain `host[:port]` authority (userinfo,
@@ -272,12 +294,6 @@ SCENE_INTERACT_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_INTERACT_JS__*/"
 SCENE_CAPTURE_SCRIPT_FILE = "control_center_scene_capture.js"
 #: Route d'envoi des captures : ses refus d'origine ont la forme d'erreur de scène.
 SCENE_CAPTURE_ROUTE_PREFIX = "/api/scene/captures/"
-#: Canal de commandes Bare Hands (Slice 12). Un POST d'origine étrangère y est
-#: refusé comme partout ailleurs, mais **avec la forme d'erreur du canal** :
-#: sans elle, le garde lève un `HTTPForbidden` en texte brut, sans corps JSON ni
-#: `X-Jarvis-Error-Code`, et le serveur MCP n'a plus de code à nommer — alors
-#: que « tout refus porte un code stable » est une contrainte de cette Slice.
-BAREHANDS_COMMANDS_ROUTE_PREFIX = "/api/barehands/commands"
 SCENE_CAPTURE_SCRIPT_MARKER = "/*__CONTROL_CENTER_SCENE_CAPTURE_JS__*/"
 #: Réglages d'affichage de la constellation (Slice 12) : définition des
 #: réglages, normalisation, variables CSS et options de la dérive orbitale
@@ -764,6 +780,12 @@ class ControlCenter:
             refusal = _loopback_refusal(request.headers.get("Origin"), request.headers.get("Host"),
                                         request.headers.get("Sec-Fetch-Site"))
             if refusal is not None:
+                if request.path.startswith(BAREHANDS_COMMANDS_ROUTE_PREFIX):
+                    # Le canal garde **sa** forme de refus, ici aussi : code stable
+                    # dans le corps et dans l'en-tête, sinon le serveur MCP n'a plus
+                    # de code à nommer. C'est la seule raison pour laquelle ce
+                    # préfixe n'hérite pas du refus générique ci-dessous.
+                    return self._barehands_error(403, FORBIDDEN_ORIGIN, refusal)
                 return web.json_response({"ok": False, "code": "forbidden_origin", "error": refusal}, status=403)
         elif request.method not in {"GET", "HEAD", "OPTIONS"}:
             origin = request.headers.get("Origin")
@@ -772,20 +794,19 @@ class ControlCenter:
                     host = urlparse(origin).hostname
                 except ValueError:
                     host = None
-                    # Les deux routes qui savent rendre un refus **codé** le
-                    # rendent : `host = None` retombe plus bas sur leur propre
-                    # forme d'erreur au lieu d'un texte brut sans code.
-                    if not request.path.startswith((SCENE_CAPTURE_ROUTE_PREFIX,
-                                                    BAREHANDS_COMMANDS_ROUTE_PREFIX)):
+                    # La route qui sait rendre un refus **codé** le rend :
+                    # `host = None` retombe plus bas sur sa propre forme d'erreur
+                    # au lieu d'un texte brut sans code. Le canal de commandes
+                    # n'est plus cité ici : toutes ses méthodes passent par
+                    # `READ_GUARDED_ROUTES` ci-dessus, qui est strictement plus
+                    # strict (Host de bouclage et `Sec-Fetch-Site` compris) et
+                    # rend déjà `_barehands_error`.
+                    if not request.path.startswith(SCENE_CAPTURE_ROUTE_PREFIX):
                         raise web.HTTPForbidden(text="invalid origin")
                 if host not in LOOPBACK_HOSTS:
                     if request.path.startswith(SCENE_CAPTURE_ROUTE_PREFIX):
                         # Même forme d'erreur que les autres refus de la route de capture.
                         return self._scene_error(403, "forbidden_origin", "forbidden origin")
-                    if request.path.startswith(BAREHANDS_COMMANDS_ROUTE_PREFIX):
-                        # Idem pour le canal de commandes : code stable dans le
-                        # corps **et** dans l'en-tête, comme tous ses autres refus.
-                        return self._barehands_error(403, FORBIDDEN_ORIGIN, "forbidden origin")
                     raise web.HTTPForbidden(text="forbidden origin")
         return await handler(request)
 

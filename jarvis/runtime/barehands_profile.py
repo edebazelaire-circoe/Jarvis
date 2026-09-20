@@ -494,15 +494,25 @@ def apply(settings: dict[str, Any], payload: Any) -> dict[str, Any]:
             f"Champ inconnu dans le profil : {', '.join(sorted(unknown))}.",
         )
     version = payload.get(SCHEMA_KEY)
-    if version is None or version != SCHEMA_VERSION:
-        # La couture de migration : c'est ici qu'une version précédente
-        # s'accepterait et se convertirait. Et la version est **obligatoire** à
-        # l'écriture : un profil sans numéro est un profil dont on ne saura pas
-        # quoi faire le jour où le schéma bougera.
+    if version is None or (version != SCHEMA_VERSION and version not in MIGRATED_SCHEMA_VERSIONS):
+        # La version reste **obligatoire** à l'écriture : un profil sans numéro
+        # est un profil dont on ne saura pas quoi faire le jour où le schéma
+        # bougera. Une version étrangère reste refusée : on ne la convertit pas.
         raise BarehandsProfileError(
             "barehands_profile_schema_version_unsupported",
             f"Profil de calibration en version {version!r} ; ce serveur n'écrit que la version {SCHEMA_VERSION}.",
         )
+    # **La couture de migration, des deux côtés** (constat de la Slice 11, même
+    # asymétrie que dans `barehands_test_mode`). `load` convertissait une v1 —
+    # ses six mesures restent valides, `travel_slop_norm` et le rapport par
+    # étape retombent sur « non mesuré » — mais `apply` refusait la v1 comme une
+    # version inconnue. Une calibration v1 relue puis réenregistrée se faisait
+    # donc refuser par le serveur même qui venait de la lire, et le bloc ne
+    # montait jamais en v2. La conversion n'a rien à faire de plus ici : `value`
+    # part de `defaults()`, qui porte déjà `SCHEMA_KEY: SCHEMA_VERSION`, et
+    # aucune clé du schéma v2 n'est obligatoire dans la charge utile — une v1
+    # qui n'en porte pas laisse simplement « non mesuré » là où elle ne mesurait
+    # rien, ce qui est exactement ce que `load` en faisait.
     value = defaults()
     hands = payload.get("hands")
     if hands is not None:

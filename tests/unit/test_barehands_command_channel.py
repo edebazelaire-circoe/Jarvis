@@ -53,8 +53,10 @@ from jarvis.runtime.barehands_mcp import (
 )
 from jarvis.runtime.claude_local import BRAIN_BAREHANDS_PROMPT, BRAIN_SYSTEM_PROMPT, ClaudeLocalAgent
 from jarvis.runtime.control_center import (
+    BAREHANDS_COMMANDS_ROUTE_PREFIX,
     BAREHANDS_COMMANDS_SCRIPT_MARKER,
     BAREHANDS_SCRIPT_MARKER,
+    READ_GUARDED_ROUTES,
     SCENE_PAGE_SCRIPT_MARKER,
     SETTINGS_ERROR_CODE_HEADER,
     ControlCenter,
@@ -547,6 +549,52 @@ async def test_a_cross_origin_post_is_refused_with_a_code_like_every_other_refus
     async with session.get(f"{running.base}/api/barehands/commands?wait_s=0",
                            headers={"Origin": f"http://127.0.0.1:{running.port}"}) as response:
         assert response.status == 200
+
+
+async def test_a_cross_origin_get_cannot_eat_the_command_the_page_is_waiting_for(running, session):
+    """**Un déni de commande, et non une fuite** (constat de la Slice 11).
+
+    `deliver()` marque la commande remise au **premier** long-poll qui la
+    demande. Le `GET` était la seule méthode du canal que le garde laissait
+    passer — il ne gardait alors que les écritures — et un `GET` sans en-tête
+    part en requête *simple* : aucun préflight, le serveur l'exécute, et seul le
+    **corps** est caché à la page étrangère par la politique d'origine. Elle ne
+    lisait donc rien et consommait quand même. La vraie page attendait ensuite
+    pour toujours une commande déjà remise à personne, et l'utilisateur voyait
+    « JARVIS n'ouvre pas le tutoriel » sans qu'aucun refus n'existe nulle part.
+
+    Le test le prouve dans l'ordre qui compte : la page étrangère demande
+    **avant** la vraie. Si le refus n'arrivait qu'après le handler, la commande
+    serait déjà partie et l'assertion suivante tomberait.
+    """
+
+    await running.enable()
+    asking = asyncio.ensure_future(running.ask(session, "tutorial"))
+    await asyncio.sleep(0.05)
+    for headers in ({"Origin": "http://evil.example"},
+                    # Sans `Origin` (une requête simple n'en porte pas toujours) :
+                    # c'est `Sec-Fetch-Site` que le navigateur met, et il suffit.
+                    {"Sec-Fetch-Site": "cross-site"}):
+        async with session.get(f"{running.base}/api/barehands/commands?wait_s=0",
+                               headers=headers) as response:
+            assert response.status == 403, await response.text()
+            assert response.headers.get(SETTINGS_ERROR_CODE_HEADER) == vocab.FORBIDDEN_ORIGIN
+            assert (await response.json())["error"]["code"] == vocab.FORBIDDEN_ORIGIN
+    # Et la commande est toujours là pour la page qui a le droit de la prendre.
+    delivered = await asyncio.wait_for(running.poll(session, wait_s=5), timeout=10)
+    assert delivered["command"] is not None and delivered["command"]["name"] == "tutorial"
+    status, _, _ = await running.receipt(session, delivered["command"]["id"],
+                                         {"outcome": "applied", "lifecycle": "active"})
+    assert status == 200
+    status, answer, _ = await asyncio.wait_for(asking, timeout=10)
+    assert status == 200 and answer["deliveries"] == 1
+
+
+def test_the_command_channel_is_read_guarded_like_the_transcripts():
+    """Le préfixe est **dans la table**, pas seulement gardé par coïncidence : un
+    refactor qui le retire fait rougir ce test plutôt que de rouvrir la porte."""
+
+    assert BAREHANDS_COMMANDS_ROUTE_PREFIX in READ_GUARDED_ROUTES
 
 
 async def test_every_http_refusal_mirrors_its_code_in_the_header(running, session):

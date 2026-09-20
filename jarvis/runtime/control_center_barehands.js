@@ -3171,6 +3171,19 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
 /* --------------------------------------------------------------------------
    Bloc navigateur : caméra, surimpression, clics, onglet de réglages.
    -------------------------------------------------------------------------- */
+/* **La levée reste, mais elle ne sort pas d'ici.** Ce bloc lit **directement**
+   quatre globaux de page — `JarvisBarehandsContracts`, `JarvisBarehandsTarget`,
+   `JarvisBarehandsCalibration` et `JarvisSceneInteract` — et c'est un choix
+   assumé : un module de page absent est une erreur d'insertion, pas un état
+   d'exécution, et une surface **gelée** ne se complète pas après coup. Mais la
+   page servie n'a qu'**une seule** balise `<script>` : les huit modules Bare
+   Hands, la scène, la timeline, le Test Lab et ~2500 lignes de logique de page
+   y sont concaténés, donc une `ReferenceError` ici blanchissait tout ce qui
+   suit. Rattrapée, la panne garde sa portée : Bare Hands ne s'installe pas, le
+   reste de la page vit, et la console porte la cause. Le refus n'est pas
+   adouci — il est confiné, comme dans l'enregistreur (§12), le tutoriel (§13)
+   et le canal de commandes. */
+try{
 (function installJarvisBarehands(){
   if(typeof window==='undefined'||typeof document==='undefined')return;
   const Core=JarvisBarehandsCore;
@@ -5843,3 +5856,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
   },0);
   window.addEventListener('pagehide',()=>{if(Core.isEngagedState(controller.state()))controller.disable()});
 })();
+}catch(error){
+  console.error('[barehands] barehands.pointer_not_installed '
+    +JSON.stringify({error:String(error&&error.message||error)}));
+}

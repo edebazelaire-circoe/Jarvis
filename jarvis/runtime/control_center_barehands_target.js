@@ -25,7 +25,20 @@
 (function(root){
   'use strict';
   const BH=root.JarvisBarehandsContracts;
-  if(!BH)throw new Error('JarvisBarehandsTarget : les contrats Bare Hands doivent être insérés avant ce module');
+  if(!BH){
+    /* Même règle que le tutoriel (§13) et l'enregistreur (§12) : la cause part
+       dans la console et **ce module seul** reste absent. La page servie n'a
+       qu'une seule balise `<script>` — les huit modules Bare Hands, la scène,
+       la timeline, le Test Lab et ~2500 lignes de logique de page y sont
+       concaténés — donc une levée au chargement avorte tout ce qui suit.
+       L'intention (casser à l'insertion, pas trois clics plus tard) reste
+       tenue : `control_center_barehands.js` lit ce global **directement**, et
+       son bloc navigateur est rattrapé au même titre. Ce qui change est le
+       rayon, pas le refus. */
+    console.error('[barehands] barehands.target_not_installed '
+      +JSON.stringify({error:'les contrats Bare Hands doivent être insérés avant ce module'}));
+    return;
+  }
 
   /* Ce qu'une main peut vouloir saisir, et **sous quel nom**. La table est
      ordonnée : le premier motif qui répond donne son type, qui est ce que le

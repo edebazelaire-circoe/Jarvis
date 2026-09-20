@@ -124,12 +124,22 @@
      le **maximum**, et la décision 18 (« borner à la taille minimale ») serait
      silencieusement inversée — aucune exception, aucun test rouge, juste une
      capsule qu'on peut réduire à rien. Il n'y a pas de constructeur ici, donc
-     le refus se pose là où les constantes se lisent. */
-  for(const representation of Object.keys(MIN_SIZE)){
-    const max=MAX_SIZE[representation];
-    if(!max)continue;
-    if(max.w<MIN_SIZE[representation].w||max.h<MIN_SIZE[representation].h)
-      throw new RangeError(`MAX_SIZE.${representation} ne peut pas passer sous MIN_SIZE.${representation} : le bornage rendrait le maximum et la taille minimale ne tiendrait plus`);
+     le refus se pose là où les constantes se lisent — dans une fonction
+     appelée à l'installation du module, en bas de ce fichier, pour que la
+     levée **ne sorte pas d'ici** : la page servie n'a qu'une seule balise
+     `<script>` et ce module est le **premier** qui y lève, donc une levée non
+     rattrapée y blanchit le Control Center entier — la scène, la timeline, le
+     Test Lab et Bare Hands. Confinée, la panne garde sa portée :
+     `window.JarvisSceneInteract` reste absent, la console porte la cause, et
+     `control_center_barehands.js`, qui lit ce global directement, est rattrapé
+     au même titre. */
+  function assertSizeBounds(){
+    for(const representation of Object.keys(MIN_SIZE)){
+      const max=MAX_SIZE[representation];
+      if(!max)continue;
+      if(max.w<MIN_SIZE[representation].w||max.h<MIN_SIZE[representation].h)
+        throw new RangeError(`MAX_SIZE.${representation} ne peut pas passer sous MIN_SIZE.${representation} : le bornage rendrait le maximum et la taille minimale ne tiendrait plus`);
+    }
   }
 
   /* Un axe d'un redimensionnement par les côtés. `dLo`/`dHi` sont les
@@ -643,6 +653,18 @@
     MANIPULATION_SIDES,resizeBySides,manipulateBox,rebaseManipulation,
     signalOwners,cascadeOf,bulkSelection,chunkIds,menuModel,commands,transportFailure,networkFailure,classifyResponse,stopOutcome,
     focusAfterRemoval,commitLayout,geometrySteps,commitGeometry,createPending,hiddenObjects});
-  root.JarvisSceneInteract=api;
-  if(typeof module!=='undefined'&&module.exports)module.exports=api;
+  /* **La levée reste, mais elle ne sort pas d'ici** — même forme que
+     l'enregistreur Bare Hands (§12) et le canal de commandes. Rattrapée, la
+     panne de l'invariant de paire garde sa portée : ce module ne s'installe
+     pas, la console porte la cause sous un nom cherchable, et le reste de la
+     page vit. Non rattrapée, elle blanchissait le Control Center entier, ce
+     module étant le premier du `<script>` unique de la page servie. */
+  try{
+    assertSizeBounds();
+    root.JarvisSceneInteract=api;
+    if(typeof module!=='undefined'&&module.exports)module.exports=api;
+  }catch(error){
+    console.error('[scene] scene.interact_not_installed '
+      +JSON.stringify({error:String(error&&error.message||error)}));
+  }
 })(typeof globalThis!=='undefined'?globalThis:this);
