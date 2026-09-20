@@ -319,8 +319,12 @@ séquence souris (`pointerdown`, `mousedown`, `pointerup`, `mouseup`, `click`)
 sur l'élément sous le jeton : boutons du dock, onglets, cases, cartes Agents,
 fermeture de fenêtre. Seuils (`JarvisBarehandsCore.DEFAULTS`) : pincé sous 0,28
 de la taille de paume, relâché au-dessus de 0,42 (hystérésis), deux images de
-confirmation, 450 ms d'anti-rebond, un seul clic par pincement. Le jeton suit
-la couleur d'accent du thème (`--omega-accent` sous Omega, `--accent` sinon).
+confirmation, 450 ms d'anti-rebond, un seul clic par pincement. Le jeton prend
+le bleu de l'interface (`--bh-accent`, sinon `--accent`, sinon `#6ee7ff`) et
+**ne suit pas l'état de l'agent** : `--omega-accent` est la couleur que l'orbe
+republie à chaque changement d'état vocal (orange quand JARVIS parle), et elle
+lui reste réservée — rien d'autre à l'écran ne s'y abonne, ce que vérifie
+`tests/unit/test_agent_state_colour_stays_on_the_orb.py`.
 Sans main exploitable pendant **30 secondes** (`SLEEP_TIMEOUT_MS`, décision 7),
 l'interaction retourne d'elle-même en veille — la caméra n'est pas rendue, le
 guetteur reprend. Le délai est jugé **avant** la lecture de la vidéo : une
@@ -408,14 +412,22 @@ outils sont **vivants**, mais il ne reste **qu'un seul parcours** : la
 calibration. `barehands_tutorial` est
 **déprécié** depuis la Slice 07B de l'affinage d'UI : le parcours de tutoriel
 séparé a été retiré, l'outil ouvre la **calibration**, et sa note le dit au
-cerveau — préférer `barehands_calibrate`. Aucun outil ne touche l'interrupteur,
-les réglages ni l'outil de la main : le cerveau réveille et rendort, rien de
-plus.
+cerveau — préférer `barehands_calibrate`. Aucun de ces cinq outils ne touche
+l'interrupteur, les réglages ni l'outil de la main : ce canal-là transporte le
+cycle de vie, le cerveau y réveille et y rendort, rien de plus. L'interrupteur
+maître lui-même n'est pas hors de sa portée pour autant — c'est un réglage,
+qu'il lit et écrit par le serveur de réglages (`barehands_test_mode.enabled`,
+`GET`/`POST /api/barehands`), avec l'asymétrie décrite juste dessous.
 
 Le serveur MCP `jarvis-barehands` n'est déclaré au CLI **que** si l'utilisateur
 a allumé Bare Hands, avec sa consigne système ; éteint, le cerveau est lancé
 exactement comme avant et ne sait pas que ces outils existent. Comme pour
-l'affichage, c'est effectif au prochain **(re)démarrage du cerveau**. Le canal
+l'affichage, c'est effectif au prochain **(re)démarrage du cerveau**.
+L'asymétrie à connaître avant d'écrire le réglage : **éteindre prend effet tout
+de suite** — la route des commandes relit l'interrupteur à chaque appel et
+refuse `barehands_disabled` (409), donc les outils restent listés mais tous
+leurs appels échouent —, tandis qu'**allumer** ne les fait pas apparaître dans
+la session en cours ; ils n'arrivent qu'au redémarrage suivant. Le canal
 côté page ne s'ouvre que pendant que l'interrupteur est vrai et que l'onglet est
 **visible** ; il suit `/api/status` (`barehands.enabled`), sans minuterie de
 plus. Fenêtre fermée ou onglet caché : `barehands_no_visible_page` après 3 s —
@@ -1357,8 +1369,16 @@ dans le Control Center ».
 détail d'un objet, trouver des objets, créer et modifier notes, fenêtres et
 capsules, les masquer ou les relier, grouper le résultat d'un travail terminé en
 **un** artefact par travail et par catégorie, et, pour une vérification
-visuelle (« regarde l'écran »), capturer la scène. Il **n'archive pas, n'épingle pas**, ne
-déplace pas un objet épinglé et n'arrête rien depuis la scène. Voir « outils
+visuelle (« regarde l'écran »), capturer la scène. Depuis le 19/09/2026 il
+**dispose** aussi de la scène comme vous : il archive, épingle, désépingle et
+déplace un objet que vous avez épinglé, dès que vous le lui demandez et sans
+vous renvoyer au Control Center. La règle est celle que vous avez posée : ce que
+vous pouvez faire dans l'interface, JARVIS doit pouvoir le faire sur commande.
+Ce qui lui reste refusé n'est plus une question de propriété mais de couche : il
+ne recrée pas une étoile `agent`/`job` (elles naissent du runtime seul),
+il n'écrit ni `exec_state` ni `work_ref` (ils reflètent Core, ils se lisent), et
+il n'**arrête** rien depuis la scène — arrêter une tâche n'est pas un geste de
+scène, il n'existe pas d'opération d'arrêt dans le domaine. Voir « outils
 d'affichage du cerveau » et « les artefacts ».
 
 **Ce que vous pouvez faire** (souris, clavier, Barehands ; détail : « agir sur les
@@ -1449,7 +1469,9 @@ Ce que la projection **ne fait jamais** :
 
 - elle ne retire pas une étoile terminée : une étoile finie reste en place, son
   état (`exec_state`) passe à `completed`, `failed`, `cancelled` ou
-  `interrupted` ; seul l'utilisateur l'archive ;
+  `interrupted` ; la ranger est un geste délibéré — le vôtre depuis le Control
+  Center, ou celui du cerveau quand vous le lui demandez — jamais un effet de la
+  projection ;
 - elle ne place, ne masque, ne déplace ni n'archive rien : la position est
   décidée par l'affichage, le cerveau ou l'utilisateur ;
 - elle ne ressuscite pas une étoile archivée, même si le travail donne encore
@@ -1766,8 +1788,14 @@ comptes, **128 objets au plus par appel** et 15 s au plus (au-delà :
 l'outil jusqu'à `remaining: 0`) ; il n'existe pas de « tout masquer ». Quand la scène a bougé
 depuis la dernière lecture du cerveau, les résultats de commande listent ce qui
 a changé (apparu, archivé, masqué ou réaffiché, état), dix lignes au plus.
-Il agit toujours comme acteur `brain`. **Aucun outil n'archive ni n'épingle** :
-l'archivage reste à l'utilisateur (et Core le refuse au cerveau de toute façon).
+Il agit toujours comme acteur `brain`. **`scene_archive` et `scene_pin`
+existent** (20/09/2026) : le cerveau retire des objets de la scène — actifs,
+masqués ou épinglés par vous, sans exception — et il épingle ou désépingle, 128
+objets désignés au plus par appel (une borne de lisibilité, pas une réserve à
+votre profit : au-delà, l'appel est refusé avant tout envoi et le résultat dit
+ce qui reste). Core ne le lui refuse plus : `ALLOWED_SCENE_OPS` donne à `brain`
+exactement la main de `user`, parce que vous avez demandé que JARVIS fasse ce
+que vous faites dans l'interface plutôt que de vous y renvoyer.
 Détail technique : `docs/ARCHITECTURE.md`, « Brain display MCP ».
 
 **Activer.** Interrupteur `scene.enabled`, **allumé par défaut** : une
@@ -1841,12 +1869,12 @@ Core et le **chemin** du jeton, jamais le jeton.
 | `mcp_servers` montre `jarvis-display` en `failed` | interpréteur introuvable, paquet `mcp` absent (`pip install -e .[mcp]`), variable d'environnement invalide | lancer à la main la commande de `runtime/display-mcp.json` avec son `env` : l'erreur s'affiche |
 | erreur d'outil `core_unreachable` / `command_not_sent` | Core arrêté ou jeton absent | démarrer Core ; rien n'a été appliqué |
 | erreur d'outil `core_refused` avec `401` | Core redémarré, jeton relu mais toujours refusé | vérifier `JARVIS_CORE_TOKEN_FILE` du Control Center et de Core |
-| erreur d'outil avec `reason=runtime_owned` | le cerveau a voulu retirer un lien de parenté entre étoiles ou le lien d'un signal de tâche | normal : ces liens sont au runtime ; masquer le signal, ou l'archiver depuis le Control Center |
+| erreur d'outil avec `reason=runtime_owned` | le cerveau a voulu retirer un lien de parenté entre étoiles ou le lien d'un signal de tâche | normal : ces liens sont au runtime, pas un refus adressé au cerveau ; il masque le signal (`scene_set_visibility`) ou le retire pour de bon (`scene_archive`) |
 | erreur d'outil `Arguments inconnus refusés` | le modèle a inventé un argument (`archived`, `pinned_by_user`…) | normal : rien n'est parti ; `display.tool_failed` code `unknown_argument` nomme les champs |
 | le cerveau décrit un écran qui n'est plus à jour | il n'a pas relu la scène dans le tour | chercher `mcp__jarvis-display__scene_inspect` dans le tour de la trace ; les résultats de commande portent `scene_changed` quand la scène a bougé |
 | erreur d'outil `scene_unavailable` | scène refusée par Core | voir « Scène constellation : fichier et refus » |
-| erreur d'outil avec `reason=pinned_by_user` | objet épinglé par l'utilisateur | normal : le cerveau ne le déplace pas |
-| erreur d'outil avec `reason=scene_full` | 512 objets actifs | archiver des objets terminés ; le cerveau ne peut pas |
+| erreur d'outil avec `reason=pinned_by_user` | **placement automatique** sur un objet que vous avez épinglé : l'épingle protège sa place, et elle seule | normal, et ce n'est pas « il appartient à l'utilisateur » : une commande explicite passe. Le cerveau redonne la géométrie qu'il veut, ou désépingle avec `scene_pin` |
+| erreur d'outil avec `reason=scene_full` | 512 objets actifs | archiver ce qui ne sert plus. Le cerveau le fait lui-même (`scene_archive`, par exemple `select {"exec_state": "completed"}`) — l'erreur le lui dit —, vous depuis « Archiver les travaux terminés… » |
 | `display.tool_failed` niveau erreur `display_internal_error` | défaut du serveur | remonter le message (type et texte) |
 | erreur d'outil `scene_query (near) … reason=unplaced` | l'objet de référence n'a pas encore de géométrie enregistrée (placement automatique pas encore fait par une page) | normal : ouvrir le Control Center le place en quelques secondes ; sinon `scene_get` |
 | erreur d'outil `scene_query (explains) … reason=object_archived` | l'objet a été archivé | normal : rien à expliquer dans la scène active |
