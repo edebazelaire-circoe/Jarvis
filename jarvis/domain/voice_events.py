@@ -286,13 +286,21 @@ class VoiceDelegationRequested:
 
     Exact provider delegation ID lives in correlation; no invented task text.
     A trigger neither commits a transcript nor authorizes an external action.
+
+    offset_ms is the provider's own session clock at emission. It is a
+    diagnostic only: the provider emits the trigger within the same few
+    milliseconds as the last input fragment, so it bounds no transcript.
+    None means the source did not state one, never zero.
     """
 
     kind: ClassVar[str] = "frontend.delegation_requested"
     context_revision: int
+    offset_ms: int | None = None
 
     def __post_init__(self) -> None:
         nonnegative_int(self.context_revision, "context_revision")
+        if self.offset_ms is not None:
+            nonnegative_int(self.offset_ms, "offset_ms")
 
 
 @dataclass(frozen=True, slots=True)

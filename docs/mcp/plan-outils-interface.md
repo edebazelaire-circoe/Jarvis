@@ -108,11 +108,11 @@ projection **auto-descriptive** — `voice.option_metadata` donne pour chaque
 option un `id`, `label`, `help`, `type`, `options` normalisées, `category`,
 `advanced`, `runtime_status`, `readonly`, `persistence`.
 
-Options persistables (`jarvis/runtime/voice_settings_schema.py:68-84`), **44** :
+Options persistables (`jarvis/runtime/voice_settings_schema.py:69-86`), **45** :
 
 - Architecture / modèles : `voice_stack`, `voice_arch`, `architecture`,
   `conversation_model`, `reflex_model`, `analysis_model`, `speculative_deltas`,
-  `reasoning_effort`, `client_delegation`, `idle_timeout_s`.
+  `reasoning_effort`, `client_delegation`, `idle_timeout_s`, `brain_orchestration`.
 - Pile OpenAI : `openai.model`, `.voice`, `.turn_mode`, `.transcription_model`,
   `.transcription_language`, `.noise_reduction`, `.echo_cancellation`,
   `.reflex_enabled`, `.ack_delay_ms`, `.vad_type`, `.vad_eagerness`,

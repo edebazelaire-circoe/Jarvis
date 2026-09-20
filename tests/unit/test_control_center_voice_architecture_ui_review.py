@@ -71,7 +71,8 @@ async def test_server_describes_three_understandable_architectures_and_exact_pan
     assert set(fields["front_brain"]) == {
         "reflex_model", "analysis_model", "speculative_deltas", "reasoning_effort",
     }
-    assert set(fields["duplex"]) == {"conversation_model", "client_delegation", "idle_timeout_s"}
+    assert set(fields["duplex"]) == {"conversation_model", "client_delegation", "idle_timeout_s", "brain_orchestration"}
+    assert fields["duplex"]["brain_orchestration"]["default"] is True
 
     delegation = fields["duplex"]["client_delegation"]
     assert delegation["default"] is True

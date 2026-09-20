@@ -1,4 +1,4 @@
-"""Bounded GPT-Live client delegation to durable speculative Core jobs."""
+"""Bounded GPT-Live client delegation: real brain turn, or legacy speculation."""
 from __future__ import annotations
 
 import asyncio
@@ -8,33 +8,47 @@ from dataclasses import dataclass
 from jarvis.domain.voice_events import VoiceDelegationRequested
 from jarvis.domain.voice_frontend import VoiceCorrelation, VoiceOperation, VoiceOperationStatus, VoiceTextUpdate
 
+# Le fournisseur émet la délégation dans les mêmes millisecondes que le dernier
+# delta d'entrée, parfois même avec un `offset_ms` antérieur à sa fin. On laisse
+# donc la queue de transcription arriver avant de lire la demande, sans jamais
+# filtrer sur cet offset.
+TRAILING_GRACE_S = .4
+
 
 @dataclass(frozen=True, slots=True)
 class _Trigger:
     session_id: str
     delegation_id: str
     context_revision: int
+    offset_ms: int | None = None
 
 
 class LiveDelegationController:
-    """One nonblocking poller per provider delegation; Core owns the job."""
+    """One nonblocking task per provider delegation; Core owns the work."""
 
-    def __init__(self, session, *, max_pending: int = 4, poll_interval_s: float = .05) -> None:
-        if type(max_pending) is not int or not 1 <= max_pending <= 16 or poll_interval_s <= 0:
+    def __init__(self, session, *, max_pending: int = 4, poll_interval_s: float = .05,
+                 brain_orchestration: bool = True, trailing_grace_s: float = TRAILING_GRACE_S) -> None:
+        if (type(max_pending) is not int or not 1 <= max_pending <= 16
+                or poll_interval_s <= 0 or trailing_grace_s < 0):
             raise ValueError("invalid Live delegation bounds")
         self.session = session
         self.max_pending, self.poll_interval_s = max_pending, poll_interval_s
+        self.brain_orchestration, self.trailing_grace_s = bool(brain_orchestration), trailing_grace_s
+        # Les deux chemins tracent dans le même flux : la voie doit rester
+        # lisible sans deviner, un `unavailable` spéculatif ne devant jamais
+        # passer pour un échec de tour cerveau.
+        self._path = "brain_turn" if self.brain_orchestration else "speculative"
         self._seen: OrderedDict[tuple[str, str], None] = OrderedDict()
         self._tasks: set[asyncio.Task] = set()
         self._closed = False
 
-    def _trace(self, status: str, *, job_id: str | None = None) -> None:
+    def _trace(self, status: str, *, job_id: str | None = None, offset_ms: int | None = None) -> None:
         journal = getattr(self.session, "journal", None)
         if journal is None:
             return
         try:
             journal.emit("voice.live.delegation", "Live client delegation", data={
-                "status": status, "job_id": job_id,
+                "status": status, "path": self._path, "job_id": job_id, "offset_ms": offset_ms,
                 "session_id": self.session.session_id,
                 "conversation_id": getattr(self.session, "conversation_id", None),
             })
@@ -54,8 +68,15 @@ class LiveDelegationController:
             self._trace("capacity")
             return False
         self._seen[key] = None
-        trigger = _Trigger(*key, event.payload.context_revision)
-        task = asyncio.create_task(self._submit_and_poll(trigger), name=f"jarvis-live-delegation-{delegation}")
+        trigger = _Trigger(*key, event.payload.context_revision, event.payload.offset_ms)
+        if self.brain_orchestration:
+            # La demande accumulée doit survivre à la réponse réflexe du modèle,
+            # qui arrive dans la même poignée de millisecondes.
+            hold = getattr(self.session, "hold_pending_request", None)
+            if callable(hold):
+                hold()
+        runner = self._dispatch_brain_turn if self.brain_orchestration else self._submit_and_poll
+        task = asyncio.create_task(runner(trigger), name=f"jarvis-live-delegation-{delegation}")
         self._tasks.add(task)
         task.add_done_callback(self._finished)
         return True
@@ -65,8 +86,60 @@ class LiveDelegationController:
         if not task.cancelled():
             task.exception()
 
+    def _stale(self, trigger: _Trigger) -> bool:
+        return self._closed or trigger.session_id != self.session.session_id
+
+    async def _dispatch_brain_turn(self, trigger: _Trigger) -> None:
+        """Route the delegation through the one authoritative brain ingress.
+
+        Same path as `continuous_brain` (`POST /v1/conversations/{id}/brain-turns`),
+        so the turn reaches the Claude CLI with its tools and its sub-agents.
+        Fire-and-forget: the answer comes back as `brain.speech.requested`, which
+        the SpeechScheduler already presents through the commentary channel.
+        """
+        try:
+            # Le journal durable d'abord : Core capture sa dépendance sur des
+            # observations déjà écrites, jamais sur l'état local en vol.
+            await self.session.flush_observations()
+            if self._stale(trigger):
+                return
+            if self.trailing_grace_s:
+                await asyncio.sleep(self.trailing_grace_s)
+            if self._stale(trigger):
+                return
+            await self.session.flush_observations()
+            text = self.session.pending_request_text()
+            if not text:
+                # Aucun tour vide ne part : mieux vaut perdre une délégation
+                # qu'inventer une demande que l'utilisateur n'a pas faite.
+                self._trace("empty_request", offset_ms=trigger.offset_ms)
+                return
+            correlation_id = f"live:{self.session.conversation_id}:{trigger.delegation_id}"
+            try:
+                await self.session.core.submit_brain_turn(
+                    self.session.conversation_id, content=text, correlation_id=correlation_id,
+                    source="realtime", addressing="addressed", provider_item_id=trigger.delegation_id,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as failure:
+                # 503 : Core s'arrête. La corrélation est déterministe, donc un
+                # rejeu du même identifiant de délégation resterait unique.
+                self._trace("core_stopping" if getattr(failure, "status", None) == 503 else "rejected",
+                            offset_ms=trigger.offset_ms)
+                return
+            self._trace("brain_turn_submitted", offset_ms=trigger.offset_ms)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self._trace("submission_unknown", offset_ms=trigger.offset_ms)
+        finally:
+            reset = getattr(self.session, "reset_pending_request", None)
+            if callable(reset):
+                reset()
+
     async def _append(self, channel: str, text: str, trigger: _Trigger) -> bool:
-        if self._closed or trigger.session_id != self.session.session_id:
+        if self._stale(trigger):
             return False
         if not text or len(text.encode("utf-8")) > 500:
             return False
@@ -78,11 +151,12 @@ class LiveDelegationController:
         return result.status is VoiceOperationStatus.COMPLETED
 
     async def _submit_and_poll(self, trigger: _Trigger) -> None:
+        """Legacy `brain_orchestration=false` path: speculative analysis, no tools."""
         try:
             # The delegation event and every preceding transcript fragment must
             # be durable before Core captures its immutable dependency snapshot.
             await self.session.flush_observations()
-            if self._closed or trigger.session_id != self.session.session_id:
+            if self._stale(trigger):
                 return
             submitted = await self.session.core.submit_back_brain_task(
                 self.session.conversation_id, scope="speculative_analysis",
@@ -93,7 +167,7 @@ class LiveDelegationController:
                 return
             self._trace("accepted", job_id=submitted.job_id)
             last_progress = None
-            while not self._closed and trigger.session_id == self.session.session_id:
+            while not self._stale(trigger):
                 try:
                     revision = getattr(self.session, "input_observation_revision", 0)
                     await self.session.flush_observations()

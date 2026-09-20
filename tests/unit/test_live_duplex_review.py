@@ -5,12 +5,16 @@ from types import SimpleNamespace
 
 import pytest
 
+from jarvis.domain.v2 import SpeechRequest
+from jarvis.ports.v2 import supports_reflex
 from jarvis.domain.voice_events import VoiceDelegationRequested
 from jarvis.domain.voice_frontend import VoiceCorrelation, VoiceOperationKind, VoiceOperationStatus
 from jarvis.runtime.live_delegation import LiveDelegationController
-from jarvis.runtime.live_frontend_session import LiveFrontendSession
+from jarvis.runtime.live_frontend_session import (
+    MAX_APPEND_CHUNK_UTF8, LiveFrontendSession, append_segments,
+)
 from jarvis.runtime.journal import RuntimeJournal, read_jsonl_tail
-from tests.integration.test_live_duplex_session import LiveWire
+from tests.integration.test_live_duplex_session import SPECULATIVE, LiveWire
 from tests.fakes.voice_frontend import FakeVoiceFrontend
 from tests.unit.test_live_delegation import Core, Session, ready, wait_closed
 
@@ -38,7 +42,7 @@ async def test_local_correction_during_status_request_prevents_stale_result_appe
         return {"status": "completed", "fresh": False, "result": {"text": "obsolete answer"}}
 
     core.back_brain_task_status = status
-    controller = LiveDelegationController(session, poll_interval_s=.001)
+    controller = LiveDelegationController(session, poll_interval_s=.001, brain_orchestration=False)
     assert controller.offer(trigger(frontend))
     await wait_closed(controller)
     assert not any(kind is VoiceOperationKind.SPOKEN_RESULT for kind, _, _ in frontend.calls)
@@ -50,7 +54,7 @@ async def test_stale_progress_is_not_injected_as_quiet_context():
     await ready(frontend)
     core = Core(({"status": "running", "fresh": False, "progress": {"public_summary": "obsolete fact"}},
                  {"status": "completed", "fresh": False, "result": {"text": "obsolete answer"}}))
-    controller = LiveDelegationController(Session(frontend, core), poll_interval_s=.001)
+    controller = LiveDelegationController(Session(frontend, core), poll_interval_s=.001, brain_orchestration=False)
     assert controller.offer(trigger(frontend))
     await wait_closed(controller)
     assert not any(kind is VoiceOperationKind.QUIET_CONTEXT for kind, _, _ in frontend.calls)
@@ -71,7 +75,7 @@ async def test_rejected_or_unconfirmed_append_never_logs_presented_or_retries(an
     session = Session(frontend, core)
     statuses = []
     session.journal = SimpleNamespace(emit=lambda *_, data, **__: statuses.append(data["status"]))
-    controller = LiveDelegationController(session, poll_interval_s=.001)
+    controller = LiveDelegationController(session, poll_interval_s=.001, brain_orchestration=False)
     event = trigger(frontend)
     assert controller.offer(event)
     await wait_closed(controller)
@@ -84,7 +88,7 @@ async def test_retention_saturation_does_not_rearm_old_delegation():
     frontend = FakeVoiceFrontend()
     await ready(frontend)
     core = Core(({"status": "completed", "fresh": False},) * 140)
-    controller = LiveDelegationController(Session(frontend, core), poll_interval_s=.001)
+    controller = LiveDelegationController(Session(frontend, core), poll_interval_s=.001, brain_orchestration=False)
     for index in range(129):
         controller.offer(trigger(frontend, f"delegation-{index}"))
         await wait_closed(controller)
@@ -115,7 +119,7 @@ async def test_canonical_flush_blocks_submission_but_not_reader_or_microphone():
 
     wire = LiveWire()
     session = await LiveFrontendSession.connect(api_key="unused", voice="marin", context={},
-        connector=lambda: asyncio.sleep(0, result=wire))
+        connector=lambda: asyncio.sleep(0, result=wire), architecture_config=SPECULATIVE)
     await session.attach_core(HeldCore(), "conversation")
     observed = []
 
@@ -161,7 +165,7 @@ async def test_controller_journal_failure_does_not_change_result_injection():
         raise OSError("journal unavailable")
 
     session.journal = SimpleNamespace(emit=broken)
-    controller = LiveDelegationController(session, poll_interval_s=.001)
+    controller = LiveDelegationController(session, poll_interval_s=.001, brain_orchestration=False)
     assert controller.offer(trigger(frontend))
     await wait_closed(controller)
     assert [value.text for kind, _, value in frontend.calls if kind is VoiceOperationKind.SPOKEN_RESULT] == ["exact answer"]
@@ -176,11 +180,257 @@ async def test_ack_journal_contains_identity_but_no_result_text_or_heard_claim(t
     core = Core(({"status": "completed", "fresh": True, "result": {"text": "private exact answer"}},))
     session = Session(frontend, core)
     session.journal = RuntimeJournal(tmp_path)
-    controller = LiveDelegationController(session, poll_interval_s=.001)
+    controller = LiveDelegationController(session, poll_interval_s=.001, brain_orchestration=False)
     assert controller.offer(trigger(frontend))
     await wait_closed(controller)
     rows = read_jsonl_tail(session.journal.trace_path)
     assert [row["data"]["status"] for row in rows] == ["accepted", "append_acknowledged"]
+    assert all(row["data"]["path"] == "speculative" for row in rows)
     assert all(row["data"]["job_id"] == "stable-job" for row in rows)
     assert "private exact answer" not in str(rows)
     assert not any(word in str(rows) for word in ("heard", "presented"))
+
+
+class BrainCore:
+    """Core canonique minimal : ledger accepté, tours cerveau enregistrés."""
+
+    def __init__(self) -> None:
+        self.turns: list[tuple[str, dict]] = []
+
+    async def bind_voice_session(self, *_):
+        return {"result": {"disposition": "applied"}}
+
+    async def submit_voice_observations(self, _conversation, _session, events):
+        return {"results": [{"disposition": "applied"} for _ in events]}
+
+    async def register_voice_speech(self, *_):
+        return {"result": {"disposition": "applied"}}
+
+    async def submit_brain_turn(self, conversation_id, **values):
+        self.turns.append((conversation_id, values))
+        return {"turn_id": "turn", "duplicate": False}
+
+    async def submit_back_brain_task(self, conversation_id, **values):
+        self.turns.append(("speculative", {"conversation_id": conversation_id, **values}))
+        return SimpleNamespace(status="unavailable", job_id=None)
+
+
+async def live_session(wire, core, *, grace=.01, config=None, journal=None):
+    session = await LiveFrontendSession.connect(api_key="unused", voice="marin", context={},
+        connector=lambda: asyncio.sleep(0, result=wire), architecture_config=config)
+    await session.attach_core(core, "conversation", journal=journal)
+    if session._delegations is not None:
+        session._delegations.trailing_grace_s = grace
+    return session
+
+
+def drain(session):
+    async def consume():
+        async for _ in session.events():
+            pass
+    return asyncio.create_task(consume())
+
+
+async def test_delegation_opens_one_brain_turn_with_the_reconstructed_request():
+    wire, core = LiveWire(), BrainCore()
+    session = await live_session(wire, core)
+    reader = drain(session)
+    try:
+        for index, fragment in enumerate(("Prépare", " un plan", " détaillé")):
+            wire.push({"type": "session.input_transcript.delta", "event_id": f"i{index}",
+                       "delta": fragment, "start_ms": index * 200, "end_ms": index * 200 + 100})
+        wire.push({"type": "session.delegation.created", "event_id": "d1", "offset_ms": 9200,
+                   "delegation": {"id": "item-a", "type": "delegation", "target": "client"}})
+        # Le modèle accuse réception tout seul : cela n'efface pas la demande.
+        wire.push({"type": "session.output_transcript.delta", "event_id": "o1",
+                   "delta": "Oui, je m'en charge.", "start_ms": 9200, "end_ms": 9400})
+        wire.push({"type": "session.delegation.created", "event_id": "d2", "offset_ms": 9250,
+                   "delegation": {"id": "item-a", "type": "delegation", "target": "client"}})
+        async with asyncio.timeout(2):
+            while not core.turns or session._delegations._tasks:
+                await asyncio.sleep(0)
+        assert len(core.turns) == 1
+        conversation, values = core.turns[0]
+        assert conversation == "conversation"
+        assert values["content"] == "Prépare un plan détaillé"
+        assert values["correlation_id"] == "live:conversation:item-a"
+        assert values["source"] == "realtime" and values["addressing"] == "addressed"
+        assert values["provider_item_id"] == "item-a"
+        assert session.pending_request_text() is None
+    finally:
+        await asyncio.wait_for(session.close(), 3)
+        await asyncio.wait_for(reader, 1)
+
+
+async def test_trailing_deltas_inside_the_grace_join_the_submitted_request():
+    wire, core = LiveWire(), BrainCore()
+    session = await live_session(wire, core, grace=.25)
+    reader = drain(session)
+    try:
+        wire.push({"type": "session.input_transcript.delta", "event_id": "i0",
+                   "delta": "Compare les deux", "start_ms": 0, "end_ms": 100})
+        wire.push({"type": "session.delegation.created", "event_id": "d1", "offset_ms": 100,
+                   "delegation": {"id": "item-b", "type": "delegation", "target": "client"}})
+        async with asyncio.timeout(1):
+            while session.input_observation_revision < 1:
+                await asyncio.sleep(0)
+        wire.push({"type": "session.input_transcript.delta", "event_id": "i1",
+                   "delta": " architectures", "start_ms": 100, "end_ms": 140})
+        async with asyncio.timeout(3):
+            while not core.turns:
+                await asyncio.sleep(0)
+        assert core.turns[0][1]["content"] == "Compare les deux architectures"
+    finally:
+        await asyncio.wait_for(session.close(), 3)
+        await asyncio.wait_for(reader, 1)
+
+
+async def test_delegation_without_request_text_never_submits_an_empty_turn(tmp_path):
+    wire, core = LiveWire(), BrainCore()
+    journal = RuntimeJournal(tmp_path)
+    session = await live_session(wire, core, journal=journal)
+    reader = drain(session)
+    try:
+        wire.push({"type": "session.delegation.created", "event_id": "d1", "offset_ms": 40,
+                   "delegation": {"id": "item-c", "type": "delegation", "target": "client"}})
+        async with asyncio.timeout(2):
+            while not session._delegations._seen or session._delegations._tasks:
+                await asyncio.sleep(0)
+        assert core.turns == []
+    finally:
+        await asyncio.wait_for(session.close(), 3)
+        await asyncio.wait_for(reader, 1)
+    rows = [row for row in read_jsonl_tail(journal.trace_path) if row["kind"] == "voice.live.delegation"]
+    assert [row["data"]["status"] for row in rows] == ["empty_request"]
+    assert rows[0]["data"]["offset_ms"] == 40
+    # Le repli spéculatif trace `unavailable` sur ce même flux : la voie doit
+    # rester lisible sans confondre les deux échecs.
+    assert rows[0]["data"]["path"] == "brain_turn"
+
+
+async def test_disabled_brain_orchestration_keeps_the_speculative_submission():
+    wire, core = LiveWire(), BrainCore()
+    session = await live_session(wire, core, config=SPECULATIVE)
+    reader = drain(session)
+    try:
+        wire.push({"type": "session.input_transcript.delta", "event_id": "i0",
+                   "delta": "Analyse ça", "start_ms": 0, "end_ms": 50})
+        wire.push({"type": "session.delegation.created", "event_id": "d1", "offset_ms": 50,
+                   "delegation": {"id": "item-d", "type": "delegation", "target": "client"}})
+        async with asyncio.timeout(2):
+            while not core.turns:
+                await asyncio.sleep(0)
+        scope, values = core.turns[0]
+        assert scope == "speculative" and values["scope"] == "speculative_analysis"
+        assert values["delegation_id"] == "item-d"
+        assert not any("content" in entry for _, entry in core.turns)
+    finally:
+        await asyncio.wait_for(session.close(), 3)
+        await asyncio.wait_for(reader, 1)
+
+
+def test_segments_respect_the_append_bound_and_prefer_sentence_boundaries():
+    short = "Deux est plus petit que trois."
+    assert append_segments(short) == [short]
+    long_text = " ".join(f"Phrase numéro {index} de la réponse du cerveau." for index in range(40))
+    segments = append_segments(long_text)
+    assert len(segments) >= 4
+    assert all(len(chunk.encode("utf-8")) <= MAX_APPEND_CHUNK_UTF8 for chunk in segments)
+    assert all(chunk.endswith(".") for chunk in segments)
+    assert " ".join(segments) == long_text
+    hard = "x" * 2000
+    assert all(len(chunk.encode("utf-8")) <= MAX_APPEND_CHUNK_UTF8 for chunk in append_segments(hard))
+    assert "".join(append_segments(hard)) == hard
+
+
+async def test_long_result_is_spoken_in_ordered_bounded_appends():
+    wire, core = LiveWire(), BrainCore()
+    session = await live_session(wire, core)
+    reader = drain(session)
+    try:
+        text = " ".join(f"Point {index} du résultat complet du cerveau." for index in range(50))
+        assert len(text.encode("utf-8")) > 2000
+        await asyncio.wait_for(session.speak(SpeechRequest(conversation_id="conversation", text=text, id="speech"), output_id="out"), 3)
+        appends = [message for message in wire.sent if message["type"] == "session.commentary.append"]
+        assert len(appends) >= 4
+        assert all(len(message["content"].encode("utf-8")) <= MAX_APPEND_CHUNK_UTF8 for message in appends)
+        assert " ".join(message["content"] for message in appends) == text
+    finally:
+        await asyncio.wait_for(session.close(), 3)
+        await asyncio.wait_for(reader, 1)
+
+
+async def test_short_result_still_produces_exactly_one_append():
+    wire, core = LiveWire(), BrainCore()
+    session = await live_session(wire, core)
+    reader = drain(session)
+    try:
+        await asyncio.wait_for(session.speak(SpeechRequest(conversation_id="conversation", text="Deux est plus petit que trois.", id="speech"),
+                                             output_id="out"), 3)
+        appends = [message for message in wire.sent if message["type"] == "session.commentary.append"]
+        assert [message["content"] for message in appends] == ["Deux est plus petit que trois."]
+    finally:
+        await asyncio.wait_for(session.close(), 3)
+        await asyncio.wait_for(reader, 1)
+
+
+async def test_suppressed_playback_stops_the_remaining_chunks_and_is_traced(tmp_path):
+    frontend = FakeVoiceFrontend()
+    await ready(frontend)
+    journal = RuntimeJournal(tmp_path)
+    session = LiveFrontendSession(frontend, "live-session")
+    session.journal = journal
+    text = " ".join(f"Point {index} du résultat complet du cerveau." for index in range(50))
+    original = frontend.append_spoken_result
+
+    async def one_then_suppressed(update, *, operation):
+        result = await original(update, operation=operation)
+        session.suppress_playback_until_session_end()
+        return result
+
+    frontend.append_spoken_result = one_then_suppressed
+    await session.speak(SpeechRequest(conversation_id="conversation", text=text, id="speech"), output_id="out")
+    spoken = [value.text for kind, _, value in frontend.calls if kind is VoiceOperationKind.SPOKEN_RESULT]
+    assert len(spoken) == 1
+    rows = [row for row in read_jsonl_tail(journal.trace_path) if row["kind"] == "voice.live.speech_truncated"]
+    assert rows and rows[0]["data"]["chunks"] == 1
+    assert rows[0]["data"]["dropped_bytes"] > 0
+    assert "résultat complet" not in str(rows)
+
+
+def test_duplex_has_no_reflex_surface_so_the_brain_never_double_acknowledges():
+    """En duplex, le modèle Live accuse déjà réception tout seul.
+
+    Le préambule de l'ordonnanceur est une capacité optionnelle de la surface :
+    sans `speak_reflex`/`invalidate_reflex`, `decide_reflex` le désactive et
+    seule la parole de RÉSULTAT atteint le canal commentaire.
+    """
+    assert not supports_reflex(LiveFrontendSession)
+    assert not hasattr(LiveFrontendSession, 'speak_reflex')
+    assert not hasattr(LiveFrontendSession, 'invalidate_reflex')
+
+
+async def test_per_word_deltas_rebuild_the_sentence_without_inserted_separators():
+    """GPT-Live émet un delta par mot, ponctuation et trait d'union compris.
+
+    Les fragments portent leur propre espace de tête (" Jarvis", ", lance",
+    "-moi") : on les concatène bruts, puis on normalise une seule fois. Insérer
+    un séparateur détacherait la virgule et le trait d'union.
+    """
+    wire, core = LiveWire(), BrainCore()
+    session = await live_session(wire, core)
+    reader = drain(session)
+    try:
+        fragments = (" Jarvis", ",", " lance", "-moi", " une", " analyse", " détaillée", " du", " dépôt", ".")
+        for index, fragment in enumerate(fragments):
+            wire.push({"type": "session.input_transcript.delta", "event_id": f"w{index}",
+                       "delta": fragment, "start_ms": index * 200, "end_ms": index * 200 + 100})
+        wire.push({"type": "session.delegation.created", "event_id": "d1", "offset_ms": 6800,
+                   "delegation": {"id": "item-w", "type": "delegation", "target": "client"}})
+        async with asyncio.timeout(2):
+            while not core.turns:
+                await asyncio.sleep(0)
+        assert core.turns[0][1]["content"] == "Jarvis, lance-moi une analyse détaillée du dépôt."
+    finally:
+        await asyncio.wait_for(session.close(), 3)
+        await asyncio.wait_for(reader, 1)

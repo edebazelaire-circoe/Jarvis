@@ -9,6 +9,7 @@ import pytest
 
 from jarvis.core.v2_app import JarvisCoreApplication
 from jarvis.domain.back_brain import BackBrainSubmitRequest
+from jarvis.domain.voice_architecture import DuplexVoiceConfig, VoiceModelRef
 from jarvis.domain.voice_state import MAX_SPEECHES, VoiceSpeechState
 from jarvis.runtime.live_frontend_session import LiveFrontendSession
 from tests.unit.test_back_brain_worker import harness, until
@@ -45,6 +46,11 @@ class LiveWire:
         self.incoming.put_nowait(value)
 
 
+# Ces régressions couvrent le repli `brain_orchestration=false` : le travail
+# spéculatif restreint, sans outils ni sous-agents.
+SPECULATIVE = DuplexVoiceConfig(VoiceModelRef("openai", "gpt-live-1"), brain_orchestration=False)
+
+
 class CoreClient:
     def __init__(self, core):
         self.core = core
@@ -72,7 +78,8 @@ async def test_first_live_deltas_drive_restricted_job_without_blocking_second_tu
     conversation = (await core.conversations.create()).id
     wire = LiveWire()
     session = await LiveFrontendSession.connect(api_key="unused", voice="marin", context={},
-                                                connector=lambda: asyncio.sleep(0, result=wire), poll_interval_s=.005)
+                                                connector=lambda: asyncio.sleep(0, result=wire), poll_interval_s=.005,
+                                                architecture_config=SPECULATIVE)
     await session.attach_core(CoreClient(core), conversation)
     delivered = asyncio.Queue()
 
@@ -131,7 +138,8 @@ async def test_long_conversation_settles_outputs_before_the_ledger_bound(harness
     conversation = (await core.conversations.create()).id
     wire = LiveWire()
     session = await LiveFrontendSession.connect(api_key="unused", voice="marin", context={},
-                                                connector=lambda: asyncio.sleep(0, result=wire), poll_interval_s=.005)
+                                                connector=lambda: asyncio.sleep(0, result=wire), poll_interval_s=.005,
+                                                architecture_config=SPECULATIVE)
     await session.attach_core(CoreClient(core), conversation)
     audio_events = []
 
@@ -170,7 +178,8 @@ async def test_completed_result_is_not_reused_after_session_replacement(harness,
     conversation = (await core.conversations.create()).id
     wire = LiveWire()
     session = await LiveFrontendSession.connect(api_key="unused", voice="marin", context={},
-                                                connector=lambda: asyncio.sleep(0, result=wire), poll_interval_s=.005)
+                                                connector=lambda: asyncio.sleep(0, result=wire), poll_interval_s=.005,
+                                                architecture_config=SPECULATIVE)
     await session.attach_core(CoreClient(core), conversation)
     async def drain():
         async for _ in session.events():

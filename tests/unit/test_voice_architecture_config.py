@@ -49,6 +49,25 @@ def test_duplex_requires_boolean_client_delegation(value):
 
 
 @pytest.mark.parametrize("value", [0, 1, "true", None])
+def test_duplex_requires_boolean_brain_orchestration(value):
+    with pytest.raises(VoiceConfigError) as failure:
+        DuplexVoiceConfig(LIVE, brain_orchestration=value)
+    assert failure.value.code == "voice_brain_orchestration_invalid"
+
+
+def test_absent_brain_orchestration_decodes_to_the_orchestrated_default():
+    payload = VoiceArchitectureSettings(DuplexVoiceConfig(LIVE)).to_dict()
+    assert payload["config"]["brain_orchestration"] is True
+    # Un réglage écrit avant ce champ reste lisible sans migration.
+    del payload["config"]["brain_orchestration"]
+    decoded = decode_voice_architecture(payload)
+    assert decoded.config.brain_orchestration is True
+    assert decoded.schema_version == 1
+    legacy = VoiceArchitectureSettings(DuplexVoiceConfig(LIVE, brain_orchestration=False))
+    assert decode_voice_architecture(json.loads(json.dumps(legacy.to_dict()))) == legacy
+
+
+@pytest.mark.parametrize("value", [0, 1, "true", None])
 def test_speculative_switch_requires_boolean(value):
     with pytest.raises(VoiceConfigError):
         FrontBrainVoiceConfig(REALTIME, LUNA, speculative_deltas=value)

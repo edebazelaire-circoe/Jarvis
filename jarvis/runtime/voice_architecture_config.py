@@ -104,9 +104,13 @@ def parse_voice_mode(raw: object, registry: VoiceCapabilityRegistry, *, validate
         config = FrontBrainVoiceConfig(_ref(values.get("reflex_model")), _ref(values.get("analysis_model")),
                                        values.get("speculative_deltas", True), values.get("reasoning_effort", "low"))  # type: ignore[arg-type]
     else:
-        values = _object(raw, allowed={"architecture", "conversation_model", "client_delegation", "idle_timeout_s"}, name="Duplex config")
+        values = _object(raw, allowed={"architecture", "conversation_model", "client_delegation", "idle_timeout_s",
+                                       "brain_orchestration"}, name="Duplex config")
+        # Champ absent = orchestration cerveau active : les réglages écrits
+        # avant ce champ restent lisibles sans migration ni bump de schéma.
         config = DuplexVoiceConfig(_ref(values.get("conversation_model")), values.get("client_delegation", True),
-                                   values.get("idle_timeout_s", 60.0))  # type: ignore[arg-type]
+                                   values.get("idle_timeout_s", 60.0),
+                                   values.get("brain_orchestration", True))  # type: ignore[arg-type]
     if validate_models:
         registry.validate(config)
     return config

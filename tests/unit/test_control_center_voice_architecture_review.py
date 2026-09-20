@@ -29,7 +29,7 @@ def simple():
 
 def duplex():
     return {"architecture": "duplex", "conversation_model": ref("gpt-live-1"),
-            "client_delegation": True, "idle_timeout_s": 60.0}
+            "client_delegation": True, "idle_timeout_s": 60.0, "brain_orchestration": True}
 
 
 def front_brain():
