@@ -1211,6 +1211,24 @@
     OUT_OF_BAND:'barehands_stage_out_of_band',     // la mesure sort des bornes du contrat
     NEEDS_TWO_HANDS:'barehands_stage_needs_two_hands',
     CANCELLED:'barehands_stage_cancelled',         // l'utilisateur est sorti
+    /* **Huitième motif, ouvert par la Slice 07** (divergence D4 de la
+       READINESS). L'étape de manipulation de fenêtre est la première du
+       parcours à dépendre de la **scène** : elle fait manipuler un vrai cadre
+       par le vrai moteur, donc elle emprunte l'échelle de la scène
+       (`JarvisScene.frames.viewport()`), seule source des pixels par unité.
+
+       Scène éteinte, cette échelle vaut `null`. Les deux replis possibles sont
+       des défauts plausibles, et le contrat les refuse tous les deux : une
+       échelle inventée ferait partir le cadre six fois trop loin (c'est la
+       panne que `viewport_unavailable` existe déjà pour empêcher côté moteur),
+       et un faux cadre d'entraînement ferait « réussir » une étape qui n'a rien
+       mesuré du vrai geste. L'étape se marque donc `skipped` — pas `failed` :
+       l'utilisateur n'a rien raté, sa scène était éteinte — et le rapport le
+       dit avec ce motif-ci plutôt qu'avec le silence de `null`.
+
+       Les règles de repli partiel ne bougent pas d'un iota : une étape passée
+       laisse ses clés nulles et le moteur garde ses défauts (décision 31). */
+    SCENE_UNAVAILABLE:'barehands_stage_scene_unavailable',
   });
   const STAGE_REASONS=values(STAGE_REASON);
   const emptyStages=()=>{

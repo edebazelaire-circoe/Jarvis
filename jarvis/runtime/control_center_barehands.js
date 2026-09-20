@@ -2353,6 +2353,155 @@ const JarvisBarehandsCore=(function(){
     };
   }
 
+  /* ------------------------------ Slice 07 : le cadre d'entraînement
+
+     **Un bac à sable, et c'est tout ce qu'il est.** L'étape « Manipulation de
+     fenêtre » de la calibration (décisions 29 et 30) doit faire manipuler un
+     **vrai** cadre — pas un jouet qui imite le geste — par le vrai moteur
+     d'interaction, avec la vraie résolution de cible, les vraies zones, le vrai
+     `combineCaptures` et la vraie géométrie de scène. Une seule chose doit
+     différer d'un cadre de la scène : **il n'est pas dans la scène**, ni avant,
+     ni pendant, ni après.
+
+     Ce module ne fait donc **aucune** géométrie. Il n'y a ici ni `manipulateBox`,
+     ni `rebaseManipulation`, ni règle de taille minimale, ni non-inversion, ni
+     appartenance de zone : tout cela vit dans `control_center_scene_interact.js`
+     et dans `combineCaptures`, et c'est le moteur d'interaction — inchangé — qui
+     les appelle. Ce qui vit ici est exactement ce que
+     `window.JarvisScene.frames` fait pour un objet de la scène, et rien de
+     plus : rendre le cadre qu'on saisit, afficher un aperçu, valider, annuler.
+
+     **Les quatre portes sont celles de la scène, à l'identique** (`begin`,
+     `preview`, `commit`, `cancel`), parce que le moteur ne doit pas savoir
+     lequel des deux mondes il tient. La cinquième, `viewport`, est
+     **déléguée** : l'échelle appartient à la scène et à elle seule. Elle n'est
+     pas fabriquée ici, et c'est la moitié technique de la divergence D4 — un
+     cadre d'entraînement calibré contre une échelle inventée ne calibrerait
+     rien, donc scène éteinte, il n'y a pas d'entraînement (voir
+     `STAGE_REASON.SCENE_UNAVAILABLE`).
+
+     **`commit` ne va nulle part.** Sur un objet de la scène, il appelle
+     `commitUserGeometry`, donc une commande part vers Core et la place est
+     persistée. Ici il garde la boîte en mémoire, le temps de l'exercice, et la
+     jette à `close()`. C'est la raison d'être du bac à sable, et un test le
+     vérifie des deux côtés de la calibration.
+
+     Ce que l'appelant lit : `drain()`, le journal de ce que le moteur a fait
+     depuis la dernière lecture. Un **journal** et non un état courant, parce
+     que la calibration n'échantillonne pas à la cadence des images : un état
+     lu toutes les 500 ms raterait le relâchement, c'est-à-dire précisément le
+     fait qui solde une sous-étape. Même leçon que `afterFrame` du tutoriel. */
+  const PRACTICE_OBJECT_ID='barehands:practice-frame';
+  /* La boîte de départ, en **unités de scène** : la taille par défaut d'une
+     fenêtre (`DEFAULT_SIZE.window`), centrée sur l'origine. Elle passe quand
+     même par `clampBox`, qui est le seul juge des bornes — recopier « elle
+     tient dans la zone sûre » ici serait déjà une seconde règle. */
+  const PRACTICE_BOX=Object.freeze({x:-32,y:-20,w:64,h:40});
+  function createPracticeFrame(deps){
+    const d=deps&&typeof deps==='object'?deps:{};
+    const G=d.geometry;
+    /* Les deux seules fonctions de géométrie que ce module appelle lui-même :
+       borner la boîte de départ, et savoir si une boîte a bougé. Tout le reste
+       du calcul appartient au moteur. Refusées absentes à la construction, comme
+       partout ailleurs : une géométrie manquante se découvrirait sinon sur un
+       cadre qui sort de la zone sûre devant l'utilisateur. */
+    if(!G||typeof G.clampBox!=='function'||typeof G.sameBox!=='function')
+      throw new RangeError('createPracticeFrame exige `geometry` (JarvisSceneInteract) : le cadre d’entraînement ne calcule aucune géométrie à lui — clampBox et sameBox sont les deux seules qu’il appelle, et les réécrire ici ferait diverger le bac à sable du vrai cadre qu’il doit imiter');
+    /* **L'échelle est empruntée, jamais fabriquée** (divergence D4). Une
+       fonction qui rendrait une fenêtre plausible quand la scène est éteinte
+       ferait exactement le défaut que le contrat refuse. */
+    if(typeof d.viewport!=='function')
+      throw new RangeError('createPracticeFrame exige `viewport` : l’échelle pixels → unités appartient à la scène, et une échelle inventée ferait partir le cadre six fois trop loin — scène éteinte, il n’y a pas d’entraînement, pas un entraînement approximatif');
+    const paint=typeof d.paint==='function'?d.paint:null;
+    const objectId=String(d.objectId||PRACTICE_OBJECT_ID);
+    const representation=String(d.representation||'window');
+    const origin=G.clampBox({...PRACTICE_BOX,...(d.box&&typeof d.box==='object'?d.box:{})},representation);
+    let box={...origin};
+    /* La boîte **à la prise** : c'est elle, et non la boîte de départ, qui dit
+       si un geste a déplacé ou redimensionné quelque chose. Un second geste ne
+       se compare pas au premier. */
+    let opened=null;
+    let alive=true;
+    let log=[];
+    const record=(type,extra)=>{
+      log.push(Object.freeze({type,box:{...box},...(extra||{})}));
+      return log.length;
+    };
+    const show=()=>{if(paint)paint({...box},representation)};
+    return {
+      objectId,representation,
+      box:()=>({...box}),
+      origin:()=>({...origin}),
+      /* Ce cadre est-il le nôtre ? La question que la façade `world` de la page
+         pose **avant** d'appeler la scène : c'est elle qui garantit qu'aucune
+         porte de `JarvisScene.frames` n'est traversée pour le cadre
+         d'entraînement. */
+      owns:id=>alive&&String(id)===objectId,
+      /* Le monde du moteur d'interaction. Exactement la forme de
+         `window.JarvisScene.frames` — le moteur ne doit pas pouvoir dire
+         lequel des deux il tient. */
+      world:Object.freeze({
+        begin(id){
+          if(!alive||String(id)!==objectId)return null;
+          opened={...box};
+          record('begin');
+          return {objectId,box:{...box},representation};
+        },
+        preview(id,next){
+          if(!alive||String(id)!==objectId||!next)return null;
+          if(G.sameBox(next,box))return null;
+          box={x:next.x,y:next.y,w:next.w,h:next.h};
+          show();
+          return record('preview');
+        },
+        /* **Le relâchement, et il ne part nulle part.** Sur un objet de la
+           scène, cette porte envoie la géométrie à Core ; ici elle se contente
+           de retenir ce que la main a fait, et de le dire. `moved`/`sized` sont
+           lus contre la boîte **à la prise**, parce que c'est ce geste-ci que
+           la sous-étape doit constater. */
+        commit(id,next,mode){
+          if(!alive||String(id)!==objectId)return null;
+          const from=opened||{...box};
+          if(next)box={x:next.x,y:next.y,w:next.w,h:next.h};
+          opened=null;
+          show();
+          return record('commit',{mode:mode==='resize'?'resize':'move',
+            moved:box.x!==from.x||box.y!==from.y,
+            sized:box.w!==from.w||box.h!==from.h,from:{...from}});
+        },
+        /* Main perdue, veille, extinction : le cadre revient où il était et
+           rien n'est retenu — la même réponse que la scène. */
+        cancel(id){
+          if(!alive||String(id)!==objectId)return null;
+          if(opened)box={...opened};
+          opened=null;
+          show();
+          return record('cancel');
+        },
+        /* Déléguée, et c'est le point. */
+        viewport(){return d.viewport()},
+      }),
+      /* Ce que le moteur a fait depuis la dernière lecture, puis la page est
+         tournée. Vider ici plutôt que laisser grandir : un journal qu'on ne
+         vide pas ferait resoldre une sous-étape déjà soldée à la lecture
+         suivante. */
+      drain(){const out=log;log=[];return out},
+      /* Peindre la position courante sans rien changer : c'est ce que
+         l'ouverture de l'exercice demande. */
+      show,
+      /* **Démontage**, sur tous les chemins de sortie. Après lui, les quatre
+         portes rendent `null` et `owns()` est faux : une image en retard ne
+         peut pas ressusciter un cadre que l'utilisateur vient de quitter —
+         même règle que `regions()` de la coque. */
+      close(){
+        if(!alive)return false;
+        alive=false;opened=null;log=[];
+        return true;
+      },
+      closed(){return !alive},
+    };
+  }
+
   /* ------------------------------------------------------------------
      Identité de main persistante (architecture §2).
 
@@ -3162,6 +3311,7 @@ const JarvisBarehandsCore=(function(){
     createGestureEngine,createPinchChannel,createPinchIntentEngine,
     TARGET_REGION,TARGET_SIDES,targetBand,regionAt,targetRegionsOf,createTargetResolver,
     CONTENT_MODE,CONTENT_MODES,SELECTABLE_KINDS,createInteractionEngine,
+    PRACTICE_OBJECT_ID,PRACTICE_BOX,createPracticeFrame,
     createHandTrackManager,createHandTracker,classifyError,createController};
 })();
 
@@ -3754,13 +3904,42 @@ try{
       try{return api[name](...args)}
       catch(error){console.warn('[barehands] scène :',name,error);return fallback}
     };
+    /* **Le cadre d'entraînement de la calibration** (Slice 07), quand il y en a
+       un — c'est-à-dire pendant l'étape « Manipulation de fenêtre », et jamais
+       autrement. Il est interrogé **avant** la scène, et c'est là toute la
+       garantie du bac à sable : tant qu'il revendique son identifiant, aucune
+       des quatre portes de `JarvisScene.frames` n'est traversée pour lui, donc
+       `commitUserGeometry` ne peut pas l'atteindre et rien ne part vers Core.
+       La garantie est **structurelle** — elle ne dépend pas de ce que la
+       calibration pense à ne pas faire.
+
+       `viewport` n'est **pas** détournée, et c'est délibéré (divergence D4) :
+       l'échelle pixels → unités appartient à la scène, elle est la même pour le
+       cadre d'entraînement et pour un vrai cadre, et c'est ce qui fait que le
+       geste appris ici est le geste qui marchera là-bas. Scène éteinte, elle
+       vaut `null` et la calibration passe l'étape en le disant, plutôt que
+       d'inventer une échelle.
+
+       Nul hors calibration : le coût est alors un test de `null` par prise. */
+    let practice=null;
+    const held=objectId=>practice&&practice.owns(objectId)?practice:null;
     const world={
-      begin:objectId=>sceneCall('begin',null,objectId),
-      preview:(objectId,box)=>sceneCall('preview',null,objectId,box),
-      commit:(objectId,box,mode)=>sceneCall('commit',null,objectId,box,mode),
-      cancel:objectId=>sceneCall('cancel',null,objectId),
+      begin(objectId){const bench=held(objectId);
+        return bench?bench.world.begin(objectId):sceneCall('begin',null,objectId)},
+      preview(objectId,box){const bench=held(objectId);
+        return bench?bench.world.preview(objectId,box):sceneCall('preview',null,objectId,box)},
+      commit(objectId,box,mode){const bench=held(objectId);
+        return bench?bench.world.commit(objectId,box,mode):sceneCall('commit',null,objectId,box,mode)},
+      cancel(objectId){const bench=held(objectId);
+        return bench?bench.world.cancel(objectId):sceneCall('cancel',null,objectId)},
       viewport:()=>sceneCall('viewport',null),
     };
+    /* L'échelle de la scène, publiée. Le banc d'entraînement en a besoin pour
+       deux choses — savoir s'il peut ouvrir (divergence D4) et peindre son
+       cadre — et il doit la lire **par la même porte** que le moteur : deux
+       lectures de l'échelle qui divergeraient dessineraient le cadre ailleurs
+       que là où le moteur croit l'avoir mis. */
+    const sceneViewport=()=>world.viewport();
 
     /* Sortie de **compatibilité** DOM (architecture §7). Le modèle de
        manipulation n'est pas fait d'événements de pointeur synthétiques : ceux
@@ -3996,6 +4175,20 @@ try{
       /* Ce que la Slice 06 consommera : une cible par main **et par canal**,
          figée dès la descente. Vide hors intention (décision 3). */
       targets(){return resolved},
+      /* **Poser ou retirer le cadre d'entraînement** (Slice 07). Posée ici
+         parce que c'est ici que vit la façade `world` du moteur, et nulle part
+         ailleurs : un second propriétaire de ce routage aurait pu laisser un
+         cadre d'entraînement branché après la calibration, c'est-à-dire un
+         objet fantôme qui intercepterait un identifiant de la scène.
+         `usePractice(null)` le retire, et la calibration le fait sur **tous**
+         ses chemins de sortie. Rend `true` tant qu'un cadre est branché. */
+      usePractice(frame){
+        practice=frame&&typeof frame.owns==='function'&&frame.world?frame:null;
+        return !!practice;
+      },
+      practising(){return !!practice},
+      /* L'échelle de la scène, par la **même** porte que le moteur. */
+      viewport(){return sceneViewport()},
       /* Ce que les mains tiennent et ce qu'elles produisent (Slice 06). */
       captures(){return engine.capturedHands()},
       interactions(){return interactions},
@@ -4484,10 +4677,127 @@ try{
     refreshPanel();
     return {ok:false,code:'barehands_flow_busy',reason:message};
   }
+  /* ------------------------------------------------------------------
+     Le banc d'entraînement de l'étape « Manipulation de fenêtre » (Slice 07,
+     décisions 29 et 30, architecture §10).
+
+     **Ce que la page sait faire et que le parcours ne peut pas faire.** La
+     calibration dit *où* (une région de la coque) et *quand* (la fin de la
+     lecture) ; ce qui se monte là, et son branchement au moteur, appartient à
+     la page — exactement le partage de `tutorialObservation` (Slice 10), et
+     pour la même raison : un module de parcours qui irait chercher
+     `JarvisScene`, `JarvisSceneLayout` et la façade `world` dans des globaux
+     ne se testerait plus sous node.
+
+     **Le cadre est un vrai nœud de scène, et c'est tout l'exercice.** Il porte
+     `.sc-node` et `data-object-id`, donc le **vrai** résolveur de cible le
+     collecte (`control_center_barehands_target.js`, `SELECTOR`) ; il porte
+     `data-representation="window"`, donc il a de **vraies** zones
+     (`hasManipulationZones`) et le vrai `combineCaptures` décide ce que deux
+     mains y produisent. Rien n'est simulé : la seule chose qui diffère d'un
+     objet de la scène est le **monde** qui le tient, et c'est un bac à sable.
+
+     Son habillage ne se recopie pas non plus : la feuille de la scène est
+     **globale** (`.sc-node`, `.sc-window`, et les variables sous `.scene`),
+     donc un cadre qui porte ces classes-là ressemble au vrai parce qu'il *est*
+     dessiné par les mêmes règles. Une seconde feuille « qui imite » aurait
+     divergé au premier changement de thème.
+
+     Et la page derrière est `inert` pendant un parcours (la coque le balaie),
+     donc les vraies étoiles de la scène ne sont pas actionnables : pendant
+     l'exercice, le cadre d'entraînement est la **seule** chose que les mains
+     peuvent saisir. */
+  const PRACTICE_LAYER_CLASS='jf-practice';
+  const PRACTICE_FRAME_CLASS='jf-practice-frame';
+  function practiceBench(){
+    let frame=null,layer=null,node=null;
+    const layout=()=>window.JarvisSceneLayout||null;
+    /* Peindre, exactement comme la scène peint les siens : `toScreen` fait la
+       conversion unités → pixels, puis un `translate` et deux tailles. C'est
+       `position()` de `control_center_scene_page.js`, appelé et non recopié —
+       une seconde conversion ici mettrait le cadre ailleurs que là où le
+       moteur croit l'avoir posé. */
+    function paint(box){
+      const L=layout(),vp=interactionView.viewport();
+      if(!node||!L||!vp)return false;
+      const rect=L.toScreen(vp,box);
+      node.style.transform=`translate(${rect.left}px,${rect.top}px)`;
+      node.style.width=`${rect.width}px`;
+      node.style.height=`${rect.height}px`;
+      return true;
+    }
+    function build(){
+      layer=document.createElement('div');
+      /* `scene` pour les **variables** de la feuille de scène (`--sc-edge`,
+         `--sc-surface`, `--sc-radius`, et `--tone` par la classe de ton), pas
+         pour la mise en page : la feuille des exercices la refixe en `fixed`,
+         parce que `toScreen` rend des coordonnées de fenêtre. */
+      layer.className=`scene ${PRACTICE_LAYER_CLASS}`;
+      node=document.createElement('div');
+      node.className=`sc-node sc-window sc-tone-agent ${PRACTICE_FRAME_CLASS}`;
+      node.setAttribute('data-object-id',Core.PRACTICE_OBJECT_ID);
+      node.setAttribute('data-representation','window');
+      node.setAttribute('role','group');
+      node.setAttribute('aria-label','Fenêtre d’entraînement');
+      node.tabIndex=-1;
+      const head=document.createElement('div');head.className='sc-head';
+      const cat=document.createElement('span');cat.className='sc-cat';
+      cat.textContent='Entraînement';
+      head.appendChild(cat);
+      const title=document.createElement('p');title.className='sc-wtitle';
+      title.textContent='Fenêtre d’entraînement';
+      const body=document.createElement('div');body.className='sc-summary';
+      body.textContent='Une vraie fenêtre JARVIS, qui ne sera jamais enregistrée '
+        +'dans votre scène. Ses bords et ses coins se saisissent comme les vrais.';
+      node.appendChild(head);node.appendChild(title);node.appendChild(body);
+      layer.appendChild(node);
+    }
+    return {
+      /* L'échelle de la scène. `null` = scène éteinte, et l'étape se passe en
+         le disant (divergence D4) — elle n'invente pas d'échelle. */
+      viewport(){return interactionView.viewport()},
+      /* Ouvrir le cadre dans la région que le parcours désigne. Rend son
+         identité, ou `null` si la scène ne donne pas d'échelle — l'appelant
+         n'a alors **rien** à l'écran, ce qui est la seule réponse honnête. */
+      open(mount){
+        if(frame)return {objectId:frame.objectId,box:frame.box()};
+        if(!mount||!interactionView.viewport())return null;
+        frame=Core.createPracticeFrame({geometry:GEOMETRY,
+          viewport:()=>interactionView.viewport(),paint});
+        build();
+        mount.appendChild(layer);
+        /* Branché **après** le montage : le moteur ne doit pas pouvoir tenir
+           un cadre qui n'est pas encore à l'écran. */
+        interactionView.usePractice(frame);
+        frame.show();
+        return {objectId:frame.objectId,box:frame.box()};
+      },
+      /* Ce que le vrai moteur a fait du cadre depuis la dernière lecture. */
+      drain(){return frame?frame.drain():[]},
+      box(){return frame?frame.box():null},
+      /* **Démontage**, et il doit tenir sur tous les chemins de sortie —
+         Échap au milieu d'une capture, main perdue, étape passée, parcours
+         terminé. Le débranchement vient **avant** le retrait du nœud : le
+         moteur ne doit pas garder une porte vers un cadre qui n'est plus là. */
+      close(){
+        if(!frame)return false;
+        interactionView.usePractice(null);
+        frame.close();frame=null;
+        if(layer&&typeof layer.remove==='function')layer.remove();
+        layer=null;node=null;
+        return true;
+      },
+    };
+  }
+
   function calibrationFlow(){
     if(calibration)return calibration;
     calibration=CALIB.createCalibration({
       overlay:shell(),now:()=>Date.now(),
+      /* Le banc d'entraînement de l'étape 6 (Slice 07). Passé plutôt que lu
+         d'un global, comme tout le reste ici : c'est ce qui permet à un test
+         de lui donner un double et de piloter le vrai moteur sans navigateur. */
+      practice:practiceBench(),
       /* Le parcours dessine maintenant ses démonstrations de main (Slice 06),
          donc il lui faut un `document` — la **même** couture que la coque, et
          pour la même raison : un module de page qui lit un global qu'il n'a pas

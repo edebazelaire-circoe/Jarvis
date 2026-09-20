@@ -587,6 +587,33 @@ def test_the_shell_holds_rule_zero_and_spares_the_hand_overlay_from_its_inert_sw
 C_ROOT_ID = "jarvisHands"
 
 
+def strip_js_comments(source: str) -> str:
+    """La source **sans ses commentaires**, pour les tests qui lisent le code.
+
+    Ce dépôt commente beaucoup, et en nommant les choses : la calibration
+    explique sur plusieurs paragraphes pourquoi elle n'écrit ni `manipulateBox`
+    ni `combineCaptures`. Un test qui chercherait ces noms dans le fichier brut
+    échouerait donc **sur l'explication elle-même** — et la seule façon de le
+    faire passer serait de retirer le commentaire, c'est-à-dire exactement le
+    contraire de ce qu'on veut encourager.
+    """
+
+    out: list[str] = []
+    i, n = 0, len(source)
+    while i < n:
+        two = source[i:i + 2]
+        if two == "/*":
+            end = source.find("*/", i + 2)
+            i = n if end < 0 else end + 2
+        elif two == "//":
+            end = source.find("\n", i)
+            i = n if end < 0 else end
+        else:
+            out.append(source[i])
+            i += 1
+    return "".join(out)
+
+
 #: Le pilote du parcours : des enregistrements de **scalaires**, la seule chose
 #: que la couture du contrôleur laisse passer (décision 32).
 DRIVER = r"""
@@ -599,14 +626,54 @@ const saved=[];const failSave={at:false};
 const timers=[];
 const beat=n=>{for(let i=0;i<(n||1);i+=1)for(const t of timers.slice())if(t)t.fn()};
 const clocks=()=>timers.filter(Boolean).map(t=>t.ms);
-const calOf=extra=>K.createCalibration(Object.assign({
-  overlay:shellOf(),now,engineDefaults:B.DEFAULTS,document,
-  setInterval:(fn,ms)=>{timers.push({fn,ms});return timers.length},
-  clearInterval:id=>{if(id>=1&&timers[id-1])timers[id-1]=null},
-  viewport:()=>({width:1280,height:720}),
-  options:{stageHoldMs:300,stageTimeoutMs:5000,stageMinSamples:10,pinchRepeats:2},
-  save:async payload=>{if(failSave.at)throw new Error('le serveur a refuse');saved.push(payload)},
-},extra||{}));
+/* **Le banc d'entrainement**, double (Slice 07). Il rend l'echelle de la scene
+   et un journal qu'on remplit a la main : `grab()` ouvre un plan, `nudge()`
+   previsualise, `drop()` relache. Ce qu'il ne fait **pas** : de la geometrie.
+   Les proprietes geometriques — taille minimale, non-inversion, zones
+   compatibles, main perdue — sont prouvees ailleurs, en faisant tourner le
+   **vrai** moteur d'interaction contre le **vrai** bac a sable
+   (`test_barehands_interaction_js.py`), parce qu'un double qui calculerait la
+   geometrie prouverait le double et non le produit. */
+const BOX0={x:-32,y:-20,w:64,h:40};
+const benchOf=()=>{
+  const state={opens:0,closes:0,mounted:null,events:[],live:false,scene:true};
+  return {
+    state,
+    viewport(){return state.scene?{width:1280,height:720,scale:6,cx:640,cy:360}:null},
+    open(mount){
+      if(!state.scene)return null;
+      state.opens+=1;state.mounted=mount;state.live=true;
+      return {objectId:'barehands:practice-frame',box:BOX0};
+    },
+    drain(){const out=state.events;state.events=[];return out},
+    close(){const had=state.live;state.live=false;if(had)state.closes+=1;return had},
+    /* Ce que le vrai moteur ecrirait dans le journal. */
+    grab(){state.events.push({type:'begin',box:BOX0})},
+    nudge(box){state.events.push({type:'preview',box:box||BOX0})},
+    drop(mode,over){
+      const from=BOX0,box=Object.assign({},BOX0,over||{});
+      state.events.push({type:'commit',mode,box,from,
+        moved:box.x!==from.x||box.y!==from.y,
+        sized:box.w!==from.w||box.h!==from.h});
+    },
+    lose(){state.events.push({type:'cancel',box:BOX0})},
+  };
+};
+/* Le banc de la **derniere** calibration construite : les tests le pilotent par
+   ce nom, comme ils pilotent `timers` et `clock`. */
+let bench=null;
+const calOf=extra=>{
+  bench=benchOf();
+  return K.createCalibration(Object.assign({
+    overlay:shellOf(),now,engineDefaults:B.DEFAULTS,document,
+    setInterval:(fn,ms)=>{timers.push({fn,ms});return timers.length},
+    clearInterval:id=>{if(id>=1&&timers[id-1])timers[id-1]=null},
+    viewport:()=>({width:1280,height:720}),
+    practice:bench,
+    options:{stageHoldMs:300,stageTimeoutMs:5000,stageMinSamples:10,pinchRepeats:2},
+    save:async payload=>{if(failSave.at)throw new Error('le serveur a refuse');saved.push(payload)},
+  },extra||{}));
+};
 /* Une main plausible : le jeton tremble de deux pixels autour de sa position
    filtree, la qualite est bonne, et la paume vaut un cinquieme de l'image. */
 let wobble=0;
@@ -662,6 +729,18 @@ const clickOnce=(cal,over)=>{
   feed(cal,6,Object.assign({primaryRatio:.15},over||{}));
   feed(cal,2,Object.assign({primaryRatio:.6,palmX:623},over||{}));
 };
+/* Jouer un temps de l'ecran de manipulation : on attrape un bord (ce qui
+   **arme** — c'est une vraie prise et non un scalaire), on tire, on relache.
+   `mode` est ce que `combineCaptures` aurait conclu ; `over` est ce que
+   `manipulateBox` aurait calcule. */
+const manipulate=(cal,mode,over)=>{
+  bench.grab();cal.tick();
+  feed(cal,3,{primaryRatio:.15});
+  bench.nudge(Object.assign({},BOX0,over||{}));cal.tick();
+  feed(cal,2,{primaryRatio:.6,palmX:700});
+  bench.drop(mode,over);
+  return cal.tick();
+};
 """
 
 
@@ -692,15 +771,29 @@ def test_a_full_run_derives_a_profile_and_nothing_is_written_until_it_is_asked(t
       clickOnce(cal);clickOnce(cal);clickOnce(cal);
       verdictOver(cal);
       visited.push(cal.stepId());
-      // Glisser : pincer, parcourir franchement, relacher.
+      /* **Manipulation de fenetre** (Slice 07) : un seul ecran, deux temps,
+         un seul cadre. 6A l'attrape par un bord d'une main et la deplace ;
+         6B reprend la **meme** fenetre par deux zones differentes et la
+         redimensionne. Les deux s'arment sur une vraie prise du moteur, pas
+         sur un scalaire — c'est `bench.grab()` qui les demarre. */
       readOn(cal);
-      feed(cal,6,{primaryRatio:.15});
-      feed(cal,2,{primaryRatio:.6,palmX:1000});
+      const windowScreen={practising:cal.practising(),sub:cal.sub(),
+        title:text(flowRoot(),'jf-instruction')[0]};
+      manipulate(cal,'move',{x:-10,y:-4});
       verdictOver(cal);
       visited.push(cal.stepId());
+      const secondSub=cal.sub();
       readOn(cal);
-      feedBoth(cal,60);
+      bench.grab();cal.tick();
+      feedBoth(cal,8);
+      bench.drop('resize',{w:96,h:56});
+      cal.tick();
+      /* Le cadre **survit** au passage de 6A a 6B : une seule ouverture pour
+         les deux temps, sinon la fenetre sauterait a sa position de depart
+         entre deux gestes. */
+      const benchOpens=bench.state.opens;
       verdictOver(cal);
+      const benchClosed=bench.state.live===false;
       const beforeApply=saved.length;
       const rows=reportRows();
       /* La phrase du récapitulatif est lue **ici**, avant « Appliquer » : elle
@@ -716,14 +809,32 @@ def test_a_full_run_derives_a_profile_and_nothing_is_written_until_it_is_asked(t
       press(flowRoot(),'apply');
       await new Promise(r=>setImmediate(r));
       out({started,steps:visited,recap,recapBar,aimShown,
+        windowScreen,secondSub,benchOpens,benchClosed,
         beforeApply,afterApply:saved.length,rows,
         payload:saved[0]||null,closed:!flowRoot(),running:cal.isRunning()});
     """, name="fullrun")
 
     assert result["started"]["ok"] is True
-    assert result["started"]["flow"] == "calibration" and result["started"]["steps"] == 7
+    assert result["started"]["flow"] == "calibration"
+    # Slice 07 : **six** exercices, sept écrans (le rapport est le septième),
+    # sept étapes mesurées (le sixième écran en porte deux).
+    assert result["started"]["steps"] == 6
+    assert result["started"]["screens"] == 7
+    assert result["started"]["stages"] == 7
+    # La suite des étapes **mesurées** traversées est exactement celle d'avant :
+    # ce sont les écrans qui ont fusionné, pas les étapes.
     assert result["steps"] == ["neutral", "c_pose", "pinch_primary", "pinch_secondary",
                                "aim", "drag", "resize"]
+    # L'écran de manipulation ouvre un vrai cadre, annonce ses deux temps, et
+    # n'en ouvre **qu'un** pour les deux.
+    assert result["windowScreen"]["practising"] is True
+    assert result["windowScreen"]["sub"] == {"at": 0, "total": 2, "id": "drag"}
+    assert result["secondSub"] == {"at": 1, "total": 2, "id": "resize"}
+    assert result["benchOpens"] == 1, (
+        "6B reprend la fenêtre de 6A : la rouvrir la ferait sauter à sa place "
+        "de départ entre deux gestes"
+    )
+    assert result["benchClosed"] is True, "le cadre est démonté en quittant l'écran"
     # Les cibles sont **trois**, et elles ne sont posées qu'une fois la lecture
     # passée (décision 24 : on ne demande pas de viser avant d'avoir lu).
     assert result["aimShown"] == {"points": 3, "hits": 0, "at": 0}
@@ -778,17 +889,20 @@ def test_a_failed_stage_falls_back_to_the_defaults_and_the_profile_says_which(tm
       const afterPrimary=cal.stepId();
       // Le pincement secondaire, lui, l'utilisateur le passe.
       const afterSkip=skipStep(cal);
-      // Viser : trois points, puis glisser.
+      /* Viser : trois points. Puis 6A, ou la fenetre est bel et bien deplacee
+         d'une main — c'est la moitie « glissement » de la tolerance
+         clic/glissement, et elle doit encore aboutir. */
       readOn(cal);clickOnce(cal);clickOnce(cal);clickOnce(cal);verdictOver(cal);
       readOn(cal);
-      feed(cal,6,{primaryRatio:.15});feed(cal,2,{primaryRatio:.6,palmX:1000});
+      manipulate(cal,'move',{x:-10,y:-4});
       verdictOver(cal);
-      /* Deux mains demandees, une seule montree : l'echeance passe, et le
-         motif dit **ce qui manquait**. L'echeance ne part qu'une fois l'etape
-         **armee** (Slice 06), donc la main se montre d'abord — c'est ce qui
-         arme — et c'est seulement ensuite que la montre descend. */
+      /* 6B : deux zones demandees, une seule main montree. L'echeance ne part
+         qu'une fois l'etape **armee** — ici par une vraie prise du cadre, pas
+         par un scalaire — et c'est seulement ensuite que la montre descend.
+         Le motif dit **ce qui manquait**, pas « temps ecoule ». */
       const before=cal.stepId();
       readOn(cal);
+      bench.grab();cal.tick();
       feed(cal,4,{});
       clock+=6000;cal.feed({now:clock,hands:[hand({})]});
       verdictOver(cal);
@@ -831,8 +945,12 @@ def test_a_failed_stage_falls_back_to_the_defaults_and_the_profile_says_which(tm
     labels = {row[0]: (row[1], row[2]) for row in result["rows"]}
     assert labels["Pincement pouce-index"][0] == "jf-failed"
     assert labels["Pincement pouce-majeur"][0] == "jf-skipped"
-    assert labels["Deux mains"][0] == "jf-failed"
-    assert "deux mains" in labels["Deux mains"][1]
+    # Slice 07 : le rapport nomme le **temps** qui a echoue, pas l'ecran. « 6A
+    # a marche, 6B non » est ce que l'utilisateur doit pouvoir lire ;
+    # « Manipulation de fenetre : echouee » ne dirait pas laquelle des deux.
+    assert labels["6A · Déplacer"][0] == "jf-ok"
+    assert labels["6B · Redimensionner"][0] == "jf-failed"
+    assert "deux mains" in labels["6B · Redimensionner"][1]
 
 
 def test_quitting_the_flow_writes_nothing_at_all(tmp_path):
@@ -1132,10 +1250,17 @@ def test_a_stage_nobody_feeds_still_expires_because_a_clock_watches_it_too(tmp_p
       const ANY={stillness:.9,gapPalms:.65,primaryRatio:.15,secondaryRatio:.15};
       const armThenVanish=()=>{
         clock+=K.DEFAULTS.introMs+1;beat();
-        feed(cal,2,ANY);
+        /* **L'ecran de manipulation ne s'arme pas sur un scalaire** (Slice 07) :
+           il lui faut une vraie prise du cadre. On la fait, puis on lache
+           tout — l'echeance expire alors exactement comme pour les autres, et
+           c'est bien le chien de garde qui la solde, sans une image. */
+        if(cal.practising()){bench.grab();cal.tick()}
+        else feed(cal,2,ANY);
         clock+=6000;beat();
         verdictOver(cal);
       };
+      /* Six etapes mesurees restantes apres le repos : les quatre ecrans
+         intermediaires, puis les **deux temps** de la manipulation. */
       for(let i=0;i<6;i+=1)armThenVanish();
       const rows=reportRows();
       const duringRun=clocks();
@@ -1366,9 +1491,14 @@ def test_a_run_that_measured_nothing_does_not_claim_to_have_calibrated(tmp_path)
          exactement ce qui écrit `quality`. */
       const begin={stillness:.9,gapPalms:.65,primaryRatio:.15,secondaryRatio:.15};
       const visited=[];
+      /* Sept etapes mesurees pour six ecrans (Slice 07). Les deux temps de la
+         manipulation ne s'arment pas sur un scalaire : la main attrape bien le
+         cadre, puis ne le bouge pas — ce qui est exactement « regarder l'ecran
+         sans rien faire », sur un exercice qui demande une prise. */
       for(let i=0;i<7;i+=1){
         readOn(cal);
-        feed(cal,2,begin);
+        if(cal.practising()){bench.grab();cal.tick()}
+        else feed(cal,2,begin);
         feed(cal,4,idle);
         clock+=6000;
         cal.feed({now:clock,hands:[hand(idle)]});
@@ -1426,9 +1556,15 @@ def payload_of_a_run_where_every_stage_failed(tmp_path) -> dict:
       const begin={stillness:.9,gapPalms:.65,primaryRatio:.15,secondaryRatio:.15};
       const idle={stillness:.1,primaryRatio:.9,secondaryRatio:.9,cPose:.05,
         xNorm:.42,yNorm:.40};
+      /* **Sept etapes mesurees pour six ecrans** depuis la Slice 07 : le
+         sixieme en porte deux. Les cinq premieres s'arment sur un scalaire ;
+         les deux temps de la manipulation s'arment sur une **vraie prise**,
+         qu'on simule — et qu'on ne relache jamais, ce qui les fait expirer
+         exactement comme une main qui tient sans rien faire. */
       for(let i=0;i<7;i+=1){
         readOn(cal);
-        feed(cal,2,begin);
+        if(cal.practising()){bench.grab();cal.tick()}
+        else feed(cal,2,begin);
         feed(cal,4,idle);
         clock+=6000;
         cal.feed({now:clock,hands:[hand(idle)]});
@@ -2204,7 +2340,6 @@ def test_each_exercise_starts_on_its_own_signal_and_not_on_a_neighbour_s(tmp_pat
         // Viser part sur le pincement primaire (décision 28), pas sur une main
         // qui se promène au-dessus du point.
         ['aim',{primaryRatio:.9,palmX:281,palmY:259},{primaryRatio:.15}],
-        ['drag',{primaryRatio:.9},{primaryRatio:.15}],
       ];
       for(const row of table){
         readOn(cal);
@@ -2216,19 +2351,34 @@ def test_each_exercise_starts_on_its_own_signal_and_not_on_a_neighbour_s(tmp_pat
         rows.push([row[0],wrong,cal.phase()]);
         skipStep(cal);
       }
-      /* Les deux mains : une seule main **commence** l'exercice (sinon le motif
-         « deux mains nécessaires » serait injoignable), mais ne le réussit
-         pas. */
+      /* **L'ecran de manipulation ne s'arme sur aucun scalaire**, et c'est le
+         progres de la Slice 07. Vingt images d'un pincement franc — exactement
+         le signal qui armait l'ancienne etape « Faire glisser » — laissent
+         l'exercice en attente : pincer dans le vide n'attrape pas de cadre. Ce
+         qui l'arme est une **vraie capture** du moteur sur un bord ou un coin,
+         c'est-a-dire l'engagement lui-meme et non un indice d'engagement. */
       readOn(cal);
-      feed(cal,3,{});
+      feed(cal,20,{primaryRatio:.15});
+      const windowIdle={step:cal.stepId(),phase:cal.phase(),
+        meta:deadlineText(flowRoot())[1]};
+      bench.grab();cal.tick();
+      const windowArmed={step:cal.stepId(),phase:cal.phase()};
+      /* 6B : une seule main **commence** le second temps (sinon le motif
+         « deux mains necessaires » serait injoignable), mais ne le reussit
+         pas. */
+      bench.drop('move',{x:-10});cal.tick();verdictOver(cal);
+      const resizeRead={phase:cal.phase(),step:cal.stepId()};
+      readOn(cal);
+      bench.grab();cal.tick();
       const resize={phase:cal.phase(),step:cal.stepId()};
-      out({rows,resize,engageFrames:K.DEFAULTS.engageFrames});
+      out({rows,windowIdle,windowArmed,resizeRead,resize,
+        engageFrames:K.DEFAULTS.engageFrames});
     """, name="engagement")
 
     assert result["engageFrames"] >= 1
     seen = {row[0]: row for row in result["rows"]}
     assert list(seen) == ["neutral", "c_pose", "pinch_primary", "pinch_secondary",
-                          "aim", "drag"]
+                          "aim"]
     for step, row in seen.items():
         # Vingt images du mauvais signal : l'étape attend toujours, et aucune
         # échéance n'a été armée derrière son dos.
@@ -2237,8 +2387,19 @@ def test_each_exercise_starts_on_its_own_signal_and_not_on_a_neighbour_s(tmp_pat
         assert row[1]["meta"] == "", step
         # Le bon signal, lui, démarre la mesure — et il suffit d'`engageFrames`.
         assert row[2] == "running", step
-    # Une main suffit à **commencer** l'étape à deux mains ; c'est la mesure qui
-    # en exige deux, et son échec le dira.
+    # **Slice 07 : l'écran de manipulation lit une capture, pas un scalaire.**
+    # Vingt images d'un pincement franc — le signal qui armait l'ancienne étape
+    # « Faire glisser » — ne l'arment pas, et aucune échéance n'est partie
+    # derrière le dos de l'utilisateur.
+    assert result["windowIdle"] == {"step": "drag", "phase": "armed", "meta": ""}
+    # Une vraie prise du cadre, elle, démarre la mesure immédiatement : il n'y a
+    # pas de seuil à franchir, parce que le moteur n'ouvre un plan que lorsque
+    # la main tient réellement un bord ou un coin.
+    assert result["windowArmed"] == {"step": "drag", "phase": "running"}
+    # 6B s'ouvre sur sa propre lecture, sans repasser par un nouvel écran…
+    assert result["resizeRead"] == {"phase": "intro", "step": "resize"}
+    # …et une seule main suffit à la **commencer** ; c'est la mesure qui en
+    # exige deux, et son échec le dira.
     assert result["resize"] == {"phase": "running", "step": "resize"}
 
 
@@ -2396,7 +2557,13 @@ def test_every_step_shows_the_shared_hand_and_never_two_instructions_at_once(tmp
         strokes:deep(flowRoot()).filter(n=>n.getAttribute('data-bh-pose'))
           .map(n=>n.getAttribute('stroke')),
         mime:deep(flowRoot()).filter(n=>String(n.className||'')==='jf-mime')
-          .map(n=>n.getAttribute('data-mime'))});
+          .map(n=>n.getAttribute('data-mime')),
+        /* Slice 07 : deux mains se posent **cote a cote** au lieu d'etre
+           empilees, et la gauche est la droite en miroir. */
+        pair:deep(flowRoot()).filter(n=>String(n.className||'')==='jf-mime')
+          .map(n=>n.getAttribute('data-pair')),
+        mirrors:deep(flowRoot()).filter(n=>n.getAttribute('transform')).length,
+        aside:deep(flowRoot()).filter(n=>String(n.className||'').includes('jf-demo-aside')).length});
       for(let i=0;i<7;i+=1){record();skipStep(cal)}
       const atRecap={poses:posesOn(flowRoot()),step:cal.stepId()};
       press(flowRoot(),'apply');
@@ -2413,9 +2580,25 @@ def test_every_step_shows_the_shared_hand_and_never_two_instructions_at_once(tmp
     assert poses["pinch_primary"] == ["pinch_primary_open", "pinch_primary_closed"]
     assert poses["pinch_secondary"] == ["pinch_secondary_open", "pinch_secondary_closed"]
     assert poses["aim"] == ["pinch_primary_open", "pinch_target"]
-    # Les deux étapes de la Slice 07 ne montrent encore rien : un centre vide
-    # est honnête, une main qui ment ne l'est pas.
-    assert poses["drag"] == [] and poses["resize"] == []
+    # **Slice 07, et aucune posture nouvelle.** Saisir un bord, c'est pincer :
+    # 6A est le mime du pincement primaire. 6B est le **même** pincement, deux
+    # fois, dont une en miroir — ce qui est littéralement ce que fait
+    # l'utilisateur. L'alphabet de `hand_art` n'a pas eu à s'allonger.
+    assert poses["drag"] == ["pinch_primary_open", "pinch_primary_closed"]
+    assert poses["resize"] == ["pinch_primary_closed", "pinch_primary_closed"]
+    shown = {row["step"]: row for row in result["shown"]}
+    # Deux mains se posent côte à côte, jamais empilées : empilées, elles se
+    # liraient comme une seule main qui bouge, l'inverse du geste demandé.
+    assert shown["resize"]["pair"] == ["1"] and shown["resize"]["mime"] == ["0"]
+    assert shown["drag"]["pair"] == ["0"] and shown["drag"]["mime"] == ["1"]
+    # La gauche est la droite retournée : un `<g>` de miroir, pas une huitième
+    # posture.
+    assert shown["resize"]["mirrors"] == 1, "une seule des deux mains est en miroir"
+    assert shown["aim"]["mirrors"] == 0
+    # Et pendant l'exercice de fenêtre la démonstration se range dans un coin :
+    # le centre appartient au cadre, qui **est** l'exercice.
+    assert shown["drag"]["aside"] == 1 and shown["resize"]["aside"] == 1
+    assert shown["aim"]["aside"] == 0
     for row in result["shown"]:
         # **Une seule main à l'écran à la fois** : la démonstration ne survit
         # pas à l'étape qui l'a posée, et elle vit dans la région `demo`.
@@ -2429,8 +2612,10 @@ def test_every_step_shows_the_shared_hand_and_never_two_instructions_at_once(tmp
             # du même geste.
             assert row["labelled"] == 1, row["step"]
             assert len(row["captions"]) == 1, row["step"]
-            # Deux postures s'alternent, une seule ne s'alterne pas.
-            assert row["mime"] == ["1" if len(row["poses"]) == 2 else "0"], row["step"]
+            # Deux postures s'alternent, sauf quand ce sont deux **mains**
+            # posées côte à côte (Slice 07) : celles-là ne s'alternent pas.
+            expected = "1" if len(row["poses"]) == 2 and row["pair"] == ["0"] else "0"
+            assert row["mime"] == [expected], row["step"]
     # Le récapitulatif ne montre aucune main : il n'y a plus de geste à faire.
     assert result["atRecap"] == {"poses": [], "step": None}
     # **La démonstration n'est jamais une entrée** : sept étapes passées, donc
@@ -2513,3 +2698,455 @@ def test_rule_zero_survives_a_phase_that_has_no_deadline_to_announce(tmp_path):
         assert row["exits"] == ["skip", "exit"] and row["closes"] == 1, row["phase"]
     # Et Échap sort vraiment.
     assert result["escape"] is True
+
+
+# ------------------------------------ Slice 07 : l'écran de manipulation
+#
+# Ce que la calibration doit tenir, et qui n'est pas de la géométrie : ouvrir un
+# vrai cadre au bon moment, le démonter sur **tous** les chemins de sortie, et
+# refuser honnêtement quand il n'y a pas de vraie fenêtre à manipuler.
+
+
+def test_the_window_screen_is_one_screen_with_two_arming_moments(tmp_path):
+    """**Un écran, deux temps, un seul cadre** (décisions 26 et 29).
+
+    Ce que ce test surveille est le **passage** de 6A à 6B, parce que c'est là
+    que l'implémentation paresseuse serait visible : repasser par
+    `overlay.step()` pour changer la consigne viderait la scène, donc le cadre
+    que l'utilisateur tient des yeux, et le ferait sauter à sa place de départ
+    entre deux gestes.
+
+    Trois faits, donc : le titre de l'écran ne change pas, la consigne du temps
+    **si**, et le cadre n'est ouvert qu'une fois pour les deux. Plus la règle
+    des phases : chaque temps a sa propre lecture, et chacun arme sa mesure
+    lui-même sans redessiner l'écran (`overlay.deadline()`, Slice 06).
+    """
+
+    result = run_node(tmp_path, DOM + DRIVER + """
+      const cal=calOf();
+      cal.start();
+      for(let i=0;i<5;i+=1)skipStep(cal);
+      const shot=()=>({step:cal.stepId(),phase:cal.phase(),sub:cal.sub(),
+        title:text(flowRoot(),'jf-instruction')[0],
+        heading:deep(flowRoot()).filter(n=>n.tagName==='H2')[0].textContent,
+        say:text(flowRoot(),'jf-sub-say')[0],
+        rail:deep(flowRoot()).filter(n=>n.getAttribute('data-sub'))
+          .map(n=>[n.getAttribute('data-sub'),n.getAttribute('data-at')]),
+        meta:deadlineText(flowRoot())[1],
+        opens:bench.state.opens});
+      /* Lecture de 6A : aucune echeance, et le cadre n'est pas encore la —
+         decision 25, meme regle que les cibles. */
+      const reading=shot();
+      const mountedDuringReading=bench.state.live;
+      readOn(cal);
+      const armedA=shot();
+      bench.grab();cal.tick();
+      const runningA=shot();
+      bench.drop('move',{x:-10,y:-4});cal.tick();
+      const resultA=shot();
+      verdictOver(cal);
+      /* 6B : nouvelle lecture, meme ecran, meme cadre. */
+      const readingB=shot();
+      readOn(cal);
+      const armedB=shot();
+      bench.grab();cal.tick();
+      const runningB=shot();
+      out({reading,mountedDuringReading,armedA,runningA,resultA,
+        readingB,armedB,runningB,
+        /* Le cadre est monte dans la region `exercise` de la coque, celle que
+           la Slice 05 a reservee a l'exercice — pas dans `demo`, pas dans
+           `feedback`, et surtout pas dans une region qui appartient a la coque. */
+        mountedIn:bench.state.mounted
+          &&String(bench.state.mounted.className||''),
+        timeoutMs:5000});
+    """, name="windowScreen")
+
+    # **La lecture d'abord, et rien ne descend.** Le cadre n'apparaît qu'à la
+    # fin de la lecture : posé pendant qu'on lit, il serait saisi avant que la
+    # consigne soit finie.
+    assert result["reading"]["phase"] == "intro"
+    assert result["reading"]["meta"] == "", "aucune échéance pendant la lecture"
+    assert result["mountedDuringReading"] is False, (
+        "le cadre est apparu au milieu d'une phrase"
+    )
+    assert result["armedA"]["phase"] == "armed" and result["armedA"]["opens"] == 1
+
+    # **Premier moment d'armement** : une vraie prise, et la montre part.
+    assert result["runningA"]["phase"] == "running"
+    assert result["runningA"]["meta"].endswith("s restantes"), result["runningA"]["meta"]
+    assert result["resultA"]["phase"] == "result"
+
+    # **Le passage à 6B ne redessine pas l'écran.** Même titre, même consigne
+    # d'écran, même cadre — seule la phrase du temps change.
+    assert result["readingB"]["heading"] == result["reading"]["heading"]
+    assert result["readingB"]["title"] == result["reading"]["title"]
+    assert result["readingB"]["opens"] == 1, (
+        "6B a rouvert le cadre : la fenêtre aurait sauté à sa place de départ"
+    )
+    assert result["readingB"]["say"] != result["reading"]["say"], (
+        "la consigne du temps doit changer, sinon 6B demande le geste de 6A"
+    )
+    assert "deux zones" in result["readingB"]["say"]
+
+    # Le rail dit lequel des deux temps est en cours, et qu'il en reste un.
+    assert result["reading"]["rail"] == [["drag", "now"], ["resize", "next"]]
+    assert result["readingB"]["rail"] == [["drag", "done"], ["resize", "now"]]
+
+    # **6B a sa propre lecture et son propre armement.** Sans la seconde
+    # lecture, le second temps démarrerait sa montre sur quelqu'un qui n'a pas
+    # encore lu ce qu'on lui demande de différent.
+    assert result["readingB"]["phase"] == "intro" and result["readingB"]["meta"] == ""
+    assert result["armedB"]["phase"] == "armed" and result["armedB"]["meta"] == ""
+    assert result["runningB"]["phase"] == "running"
+    assert result["runningB"]["meta"].endswith("s restantes")
+
+    # Et le cadre vit dans la région que la Slice 05 a réservée à l'exercice.
+    assert "jf-exercise" in result["mountedIn"]
+
+
+def test_a_scene_that_is_off_skips_the_window_step_and_names_why(tmp_path):
+    """**Divergence D4, et c'est un refus assumé.**
+
+    La calibration n'avait aucune dépendance à la scène avant cette slice ;
+    l'étape de manipulation lui en donne une, parce qu'elle emprunte son
+    **échelle** pour que le geste appris soit celui qui marchera. Scène
+    éteinte, cette échelle vaut `null`, et les deux replis possibles sont des
+    défauts plausibles : une échelle inventée fait partir le cadre six fois
+    trop loin, un faux cadre fait « réussir » une étape qui n'a pas mesuré le
+    vrai geste.
+
+    Ce que ce dépôt fait à la place est écrit dans son contrat fondateur — « un
+    refus codé plutôt qu'un défaut plausible » : les deux temps sont **passés**
+    (pas ratés : l'utilisateur n'a rien manqué), avec un motif **nommé** ajouté
+    à la liste fermée, et le parcours continue jusqu'au rapport.
+
+    Trois façons de ne pas avoir de fenêtre, et **une seule réponse**, parce
+    qu'elles disent la même chose à l'utilisateur : scène éteinte, banc absent,
+    banc qui refuse d'ouvrir.
+    """
+
+    result = run_node(tmp_path, DOM + DRIVER + """
+      const play=cal=>{
+        cal.start();
+        for(let i=0;i<5;i+=1)skipStep(cal);
+        const atWindow={step:cal.stepId(),phase:cal.phase(),
+          note:text(flowRoot(),C.DOM.flowNoteClass)[0],
+          meta:deadlineText(flowRoot())[1]};
+        /* Le verdict se tient, puis le parcours **continue** : un refus ne
+           ferme pas la calibration, il passe l'etape. */
+        verdictOver(cal);
+        const rows=reportRows();
+        const recap={step:cal.stepId(),actions:stepActions(flowRoot())};
+        press(flowRoot(),'apply');
+        return {atWindow,rows,recap};
+      };
+      /* 1. La scene est eteinte : `viewport()` rend null. */
+      const off=calOf();bench.state.scene=false;
+      const sceneOff=play(off);
+      await new Promise(r=>setImmediate(r));
+      const payload=saved[saved.length-1];
+      /* 2. Aucun banc du tout : une calibration construite sans. */
+      const none=calOf({practice:null});
+      const noBench=play(none);
+      await new Promise(r=>setImmediate(r));
+      out({sceneOff,noBench,payload,
+        reason:C.STAGE_REASON.SCENE_UNAVAILABLE,
+        closed:!flowRoot()});
+    """, name="sceneOff")
+
+    reason = result["reason"]
+    assert reason == "barehands_stage_scene_unavailable"
+
+    for name in ("sceneOff", "noBench"):
+        run = result[name]
+        # L'étape se solde **tout de suite**, sans faire lire une consigne pour
+        # un exercice qui ne peut pas s'ouvrir.
+        assert run["atWindow"]["phase"] == "result", name
+        assert run["atWindow"]["meta"] == "", (
+            "aucune échéance ne descend sur une étape qui ne se jouera pas"
+        )
+        # **Et la cause est dite**, en français, sur la seule surface visible.
+        assert "scène est éteinte" in run["atWindow"]["note"], run["atWindow"]["note"]
+        assert "valeurs d" in run["atWindow"]["note"], "et que le moteur garde ses défauts"
+        # Le parcours **continue** jusqu'au rapport : un refus n'est pas une
+        # panne, et les cinq autres étapes n'ont besoin d'aucune scène.
+        assert run["recap"]["step"] is None, name
+        assert run["recap"]["actions"] == ["apply", "discard"], name
+        labels = {row[0]: (row[1], row[2]) for row in run["rows"]}
+        # **Passée, pas ratée** : l'utilisateur n'a rien manqué.
+        assert labels["6A · Déplacer"][0] == "jf-skipped", name
+        assert labels["6B · Redimensionner"][0] == "jf-skipped", name
+
+    # Et le motif voyage jusqu'au profil, où une trace le relira tel quel.
+    stages = result["payload"]["stages"]
+    assert stages["drag"] == {"status": "skipped", "reason": reason, "samples": 0}
+    assert stages["resize"] == {"status": "skipped", "reason": reason, "samples": 0}
+
+
+def test_the_practice_frame_is_torn_down_on_every_way_out(tmp_path):
+    """**Le cadre d'entraînement meurt avec son exercice, quoi qu'il arrive.**
+
+    C'est la moitié produit du bac à sable : une fenêtre d'entraînement qui
+    survivrait à la calibration flotterait au-dessus de la scène de
+    l'utilisateur, et le moteur garderait une porte ouverte vers un identifiant
+    qui n'existe plus. `overlay.step()` ne suffit pas à la retirer — elle n'est
+    pas posée par `mount()`, c'est la page qui l'appende dans la région — donc
+    le démontage est explicite, et il passe par les **deux seuls** chemins de
+    sortie : `advance()` et `stop()`.
+
+    Cinq sorties, et la première est celle qui fait peur : Échap **au milieu
+    d'une capture**, c'est-à-dire pendant que la main tient le cadre.
+    """
+
+    result = run_node(tmp_path, DOM + DRIVER + """
+      const upTo=cal=>{cal.start();for(let i=0;i<5;i+=1)skipStep(cal);readOn(cal)};
+      /* 1. Echap **au milieu d'une capture**. */
+      const a=calOf();upTo(a);
+      bench.grab();a.tick();
+      const holding={phase:a.phase(),live:bench.state.live};
+      document.fire('keydown',{key:'Escape'});
+      const escaped={live:bench.state.live,closes:bench.state.closes,
+        running:a.isRunning(),practising:a.practising(),overlay:!!flowRoot()};
+      /* 2. Le bouton « Quitter », meme moment. */
+      const b=calOf();upTo(b);
+      bench.grab();b.tick();
+      press(flowRoot(),'exit');
+      const quit={live:bench.state.live,closes:bench.state.closes,practising:b.practising()};
+      /* 3. Les deux temps passes : on sort de l'ecran par le haut. */
+      const c=calOf();upTo(c);
+      skipStep(c);skipStep(c);
+      const done={live:bench.state.live,closes:bench.state.closes,
+        step:c.stepId(),practising:c.practising()};
+      /* Le rapport reste a l'ecran tant qu'on n'a pas tranche : on le ferme,
+         sinon la coque suivante n'est pas celle que `flowRoot()` trouve — la
+         page, elle, refuse d'en ouvrir deux (`barehands_flow_busy`). */
+      c.exit('test');
+      /* 4. `exit()` par la porte publique, depuis l'exterieur. */
+      const d=calOf();upTo(d);
+      bench.grab();d.tick();
+      d.exit('test');
+      const byApi={live:bench.state.live,closes:bench.state.closes};
+      /* 5. Une image **en retard** apres la sortie : elle ne doit rien
+         ressusciter, ni rouvrir un cadre dans une coque fermee. */
+      const e=calOf();upTo(e);
+      bench.grab();e.tick();
+      e.exit('test');
+      bench.state.events.push({type:'commit',mode:'move',box:{x:0,y:0,w:64,h:40},
+        from:{x:-32,y:-20,w:64,h:40},moved:true,sized:false});
+      const late={fed:e.feed({now:clock,hands:[hand({})]}),ticked:e.tick(),
+        live:bench.state.live,overlay:!!flowRoot(),opens:bench.state.opens};
+      out({holding,escaped,quit,done,byApi,late});
+    """, name="teardown")
+
+    # Le cadre était bien tenu au moment de la sortie : le test porte sur le
+    # cas qui fait peur, pas sur une sortie au repos.
+    assert result["holding"] == {"phase": "running", "live": True}
+
+    # **Échap au milieu d'une capture** : le cadre part, le moteur est
+    # débranché, la coque est fermée, et rien ne tourne plus.
+    escaped = result["escaped"]
+    assert escaped["live"] is False and escaped["closes"] == 1
+    assert escaped["running"] is False and escaped["practising"] is False
+    assert escaped["overlay"] is False
+
+    # Les trois autres sorties font exactement la même chose.
+    assert result["quit"] == {"live": False, "closes": 1, "practising": False}
+    assert result["byApi"] == {"live": False, "closes": 1}
+    # Passer les deux temps quitte l'écran vers le rapport, et le cadre part
+    # avec lui — sinon il flotterait au-dessus du rapport.
+    assert result["done"]["live"] is False and result["done"]["closes"] == 1
+    assert result["done"]["step"] is None and result["done"]["practising"] is False
+
+    # **Une image en retard ne ressuscite rien** : c'est la même règle que
+    # `regions()` qui rend `null` sur une coque fermée.
+    late = result["late"]
+    assert late["fed"] is None and late["ticked"] is None
+    assert late["live"] is False and late["overlay"] is False
+    assert late["opens"] == 1, "une image en retard a rouvert un cadre"
+
+
+def test_the_window_step_only_completes_on_the_gesture_it_asks_for(tmp_path):
+    """**6A et 6B ne se soldent pas l'une pour l'autre**, et le geste qui n'est
+    pas le bon **se dit**.
+
+    C'est la moitié calibration de la garantie que le moteur donne déjà : ce
+    n'est pas la calibration qui décide qu'un couple de prises redimensionne
+    (c'est `combineCaptures`), mais c'est elle qui décide ce qu'elle accepte
+    comme réponse. Trois refus et une acceptation :
+
+    - un relâchement **sans changement** n'est ni une réussite ni un échec — la
+      fenêtre n'a pas bougé, on le dit et l'exercice continue ;
+    - un **redimensionnement** pendant 6A ne la solde pas ;
+    - un **déplacement** pendant 6B ne la solde pas non plus, et la phrase dit
+      quoi faire de différent ;
+    - et l'échéance continue de courir pendant tout cela : rien n'a été ni
+      réussi ni raté.
+    """
+
+    result = run_node(tmp_path, DOM + DRIVER + """
+      const cal=calOf();
+      cal.start();
+      for(let i=0;i<5;i+=1)skipStep(cal);
+      readOn(cal);
+      bench.grab();cal.tick();
+      const armed=cal.phase();
+      /* Relache sans avoir rien change : la fenetre n'a pas bouge. */
+      bench.drop('move',{});cal.tick();
+      const unchanged={phase:cal.phase(),step:cal.stepId(),
+        note:text(flowRoot(),C.DOM.flowNoteClass)[0]};
+      /* Un redimensionnement pendant 6A : ce n'est pas ce qu'on demande. */
+      bench.grab();cal.tick();
+      bench.drop('resize',{w:96});cal.tick();
+      const wrongMode={phase:cal.phase(),step:cal.stepId(),
+        note:text(flowRoot(),C.DOM.flowNoteClass)[0]};
+      /* Le bon geste, enfin. */
+      bench.grab();cal.tick();
+      bench.drop('move',{x:-10});cal.tick();
+      const right={phase:cal.phase(),step:cal.stepId()};
+      verdictOver(cal);
+      readOn(cal);
+      /* 6B : un deplacement ne la solde pas. */
+      bench.grab();cal.tick();
+      bench.drop('move',{x:-18});cal.tick();
+      const movedInB={phase:cal.phase(),step:cal.stepId(),
+        note:text(flowRoot(),C.DOM.flowNoteClass)[0]};
+      bench.grab();cal.tick();
+      bench.drop('resize',{w:96,h:56});cal.tick();
+      const sized={phase:cal.phase(),step:cal.stepId()};
+      out({armed,unchanged,wrongMode,right,movedInB,sized});
+    """, name="wrongGesture")
+
+    assert result["armed"] == "running"
+
+    # **Rien n'a bougé** : ni réussite ni échec, et la phrase dit quoi faire.
+    assert result["unchanged"]["phase"] == "running"
+    assert result["unchanged"]["step"] == "drag"
+    assert "n’a pas bougé" in result["unchanged"]["note"], result["unchanged"]["note"]
+
+    # **Le mauvais geste ne solde pas la sous-étape**, et l'écran ne fait pas
+    # croire que le cadre ne répond pas : il vient d'obéir, à l'autre geste.
+    assert result["wrongMode"]["phase"] == "running"
+    assert result["wrongMode"]["step"] == "drag"
+    assert "redimensionnement" in result["wrongMode"]["note"]
+    assert "une seule zone" in result["wrongMode"]["note"]
+
+    # Le bon geste, lui, la solde.
+    assert result["right"] == {"phase": "result", "step": "drag"}
+
+    # **Et symétriquement pour 6B** : déplacer la fenêtre à une main ne la
+    # redimensionne pas, quoi qu'en pense l'utilisateur pressé.
+    assert result["movedInB"]["phase"] == "running"
+    assert result["movedInB"]["step"] == "resize"
+    assert "déplacée" in result["movedInB"]["note"]
+    assert "deux zones" in result["movedInB"]["note"]
+    assert result["sized"] == {"phase": "result", "step": "resize"}
+
+
+def test_the_window_step_still_feeds_the_click_drag_separation(tmp_path):
+    """**6A nourrit encore la moitié « glissement » de `deriveTravelSlop`**, et
+    6B n'y verse rien.
+
+    La question posée par la slice était « est-ce encore honnête ? », et la
+    réponse est oui pour 6A : la grandeur mesurée est exactement celle de
+    l'ancienne étape `drag` — la course de la **paume** entre la fermeture et
+    l'ouverture du canal, en fraction de la largeur d'image — à ceci près que
+    la main tient maintenant un vrai bord au lieu de traverser le vide. Elle se
+    compare donc toujours aux clics de l'étape de visée, et la dérivation n'est
+    pas touchée.
+
+    Pour 6B la réponse est non, et c'est un choix : un redimensionnement à deux
+    mains fait deux courses simultanées dont aucune n'est « un glissement
+    délibéré » au sens de la dérivation. Les y verser élargirait la tolérance
+    de tout le monde sur une grandeur qui n'est pas celle qu'on croit mesurer.
+    """
+
+    result = run_node(tmp_path, DOM + DRIVER + """
+      const cal=calOf();
+      cal.start();
+      for(let i=0;i<4;i+=1)skipStep(cal);
+      /* Viser : trois clics courts, qui donnent la moitie « clic ». */
+      readOn(cal);clickOnce(cal);clickOnce(cal);clickOnce(cal);verdictOver(cal);
+      /* 6A : une prise franche, donc une course bien plus longue qu'un clic. */
+      readOn(cal);
+      bench.grab();cal.tick();
+      feed(cal,4,{primaryRatio:.15});
+      feed(cal,2,{primaryRatio:.6,palmX:980});
+      bench.drop('move',{x:-24});cal.tick();
+      verdictOver(cal);
+      /* 6B : deux mains, et aucune course versee. */
+      readOn(cal);
+      bench.grab();cal.tick();
+      feedBoth(cal,6);
+      feed(cal,4,{primaryRatio:.15});
+      feed(cal,2,{primaryRatio:.6,palmX:1100});
+      bench.drop('resize',{w:96,h:56});cal.tick();
+      verdictOver(cal);
+      press(flowRoot(),'apply');
+      await new Promise(r=>setImmediate(r));
+      const payload=saved[saved.length-1];
+      out({slop:payload.hands.left.travelSlopNorm,
+        stages:payload.stages,
+        /* La derivation elle-meme n'a pas ete touchee : on la rejoue a la main
+           sur les deux moities, et elle doit rendre le meme nombre. */
+        direct:K.deriveTravelSlop([.0023,.0025,.0024],[.28],K.options({}))});
+    """, name="travel")
+
+    # Les deux temps ont abouti, et la tolérance est dérivée — donc 6A a bien
+    # produit un échantillon de glissement.
+    assert result["stages"]["drag"]["status"] == "ok"
+    assert result["stages"]["resize"]["status"] == "ok"
+    assert result["slop"] is not None, (
+        "6A ne nourrit plus la moitié « glissement » : la tolérance clic/"
+        "glissement de tout le monde retomberait sur le défaut d'usine"
+    )
+    assert 0 < result["slop"] < 1
+    # Et la dérivation est inchangée : elle refuse toujours, borne toujours, et
+    # pose toujours le seuil entre les deux gestes.
+    assert result["direct"]["ok"] is True
+    assert result["direct"]["clickHigh"] < result["direct"]["dragLow"]
+
+
+def test_the_window_step_measures_the_canonical_pieces_and_owns_no_geometry(tmp_path):
+    """**La calibration ne réimplémente rien, et sa source le montre.**
+
+    L'exigence de la slice est « reuse, do not reimplement », et la façon de la
+    tenir n'est pas une intention : c'est que le module de calibration ne
+    contienne **aucune** des quatre choses que l'architecture §10 interdit d'y
+    dupliquer — `manipulateBox`, `rebaseManipulation`, l'appartenance des zones,
+    la taille minimale — ni aucune règle de compatibilité de zones.
+
+    Ce qu'il contient à la place est une **liste blanche de quatre portes** : il
+    ne peut donc pas atteindre la scène même s'il le voulait, et c'est ce qui
+    rend le bac à sable structurel plutôt que promis.
+    """
+
+    source = CALIBRATION.read_text(encoding="utf-8")
+    # **Le code, pas les commentaires.** Ce module *parle* beaucoup de
+    # `manipulateBox` et de `combineCaptures` — c'est même le sujet de la moitié
+    # de ses commentaires, puisqu'il explique pourquoi il ne les réécrit pas.
+    # Ce qu'on vérifie ici est qu'il ne les **contient** pas.
+    logic = strip_js_comments(source.split("function createCalibration")[1])
+
+    # **Aucune géométrie de cadre ici.** Les quatre noms que l'architecture §10
+    # interdit de dupliquer n'apparaissent pas dans la logique du parcours.
+    for forbidden in ("manipulateBox", "rebaseManipulation", "resizeBySides",
+                      "clampBox", "MIN_SIZE", "MAX_SIZE", "SAFE_AREA"):
+        assert forbidden not in logic, forbidden
+    # Ni aucune table de zones ou de côtés : c'est `combineCaptures` qui décide,
+    # et une seconde table ici divergerait en silence de celle du contrat.
+    for forbidden in ("ZONE_SIDES", "zoneSides", "SIDE_AXIS", "top_left",
+                      "bottom_right", "same_zone", "combineCaptures"):
+        assert forbidden not in logic, forbidden
+
+    # **Quatre portes, et pas une de plus.** Le parcours ne reçoit du banc que
+    # ce dont il a besoin pour dire *où* et *quand* ; tout ce qui touche à la
+    # scène, au DOM et à la géométrie reste de l'autre côté de la couture.
+    assert "const PRACTICE_DOORS=['viewport','open','drain','close']" in source
+    bare = strip_js_comments(source)
+    for scene_global in ("JarvisScene", "JarvisSceneLayout", "JarvisSceneInteract"):
+        assert scene_global not in bare, scene_global
+
+    # Et ce que l'étape constate vient du moteur, pas d'une règle locale : le
+    # mode est lu, jamais calculé.
+    assert "done.mode===want.mode" in logic
+    assert "want.mode==='resize'?done.sized:done.moved" in logic

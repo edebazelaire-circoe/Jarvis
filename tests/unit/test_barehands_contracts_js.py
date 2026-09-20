@@ -1144,7 +1144,12 @@ def test_the_calibration_constants_are_pinned_like_every_other_engine_table(tmp_
       const K=require(%s);
       out({
         defaults:Object.keys(K.DEFAULTS).sort().map(k=>[k,K.DEFAULTS[k]]),
-        steps:K.STEPS.map(s=>[s.id,s.hold===true,s.needs]),
+        screens:K.SCREENS,
+        steps:K.STEPS.map(s=>[s.id,s.hold===true,s.needs,(s.subs||[]).map(x=>x.id)]),
+        /* Les étapes **mesurées**, écrans dépliés (Slice 07) : la manipulation
+           de fenêtre est un écran qui en porte deux. C'est cette liste-là, et
+           non celle des écrans, qui doit valoir le vocabulaire du profil. */
+        flowStages:K.STEPS.reduce((list,s)=>list.concat(s.subs?s.subs.map(x=>x.id):[s.id]),[]),
         stages:C.STAGES,statuses:C.STAGE_STATUSES,reasons:C.STAGE_REASONS,
         profileVersion:C.PROFILE_SCHEMA_VERSION,
         measured:C.PROFILE_MEASURED_KEYS,
@@ -1188,20 +1193,30 @@ def test_the_calibration_constants_are_pinned_like_every_other_engine_table(tmp_
     assert 0 < shipped["resultMs"] < shipped["stageTimeoutMs"]
     assert shipped["introMs"] > 0 and shipped["engageFrames"] >= 1 and shipped["aimTargets"] >= 1
     # Les sept étapes du contrat, dans l'ordre, avec ce que chacune exige.
+    # Slice 07 : six écrans d'exercice, sept étapes mesurées. Le sixième écran
+    # — « Manipulation de fenêtre » — porte `drag` et `resize` comme sous-étapes
+    # 6A et 6B, au lieu des deux exercices génériques d'avant.
     assert result["steps"] == [
-        ["neutral", True, 1], ["c_pose", True, 1],
-        ["pinch_primary", False, 1], ["pinch_secondary", False, 1],
-        ["aim", False, 1], ["drag", False, 1], ["resize", False, 2],
+        ["neutral", True, 1, []], ["c_pose", True, 1, []],
+        ["pinch_primary", False, 1, []], ["pinch_secondary", False, 1, []],
+        ["aim", False, 1, []], ["drag", False, 1, ["drag", "resize"]],
     ]
-    assert [step[0] for step in result["steps"]] == result["stages"], (
+    assert result["flowStages"] == result["stages"], (
         "les étapes du parcours sont celles que le profil persiste, pas une seconde liste"
     )
+    # Le rapport est le **septième écran**, pas un second « 7 sur 7 » collé sur
+    # le dernier exercice (décision 26).
+    assert result["screens"] == len(result["steps"]) + 1 == 7
     assert result["statuses"] == ["ok", "failed", "skipped"]
     assert result["reasons"] == [
         "barehands_stage_no_hand", "barehands_stage_timeout",
         "barehands_stage_too_few_samples", "barehands_stage_not_separable",
         "barehands_stage_out_of_band", "barehands_stage_needs_two_hands",
         "barehands_stage_cancelled",
+        # Slice 07, divergence D4 : l'étape de manipulation emprunte l'échelle
+        # de la scène. Scène éteinte, elle est **passée** en le disant plutôt
+        # que jouée contre un faux cadre.
+        "barehands_stage_scene_unavailable",
     ]
     assert result["profileVersion"] == 2
     assert sorted(result["measured"]) == sorted([

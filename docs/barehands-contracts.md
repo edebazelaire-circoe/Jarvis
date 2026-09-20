@@ -1941,7 +1941,7 @@ dérivé avant que le parcours n'existe. Deux ajouts :
   et l'inclusion est tenue par un test — voir § 11) et un `reason` de la liste fermée
   `STAGE_REASON` (`barehands_stage_no_hand`, `…_timeout`,
   `…_too_few_samples`, `…_not_separable`, `…_out_of_band`, `…_needs_two_hands`,
-  `…_cancelled`). `skipped` n'est pas `failed` : une étape qu'on n'a pas jouée
+  `…_cancelled`, `…_scene_unavailable`). `skipped` n'est pas `failed` : une étape qu'on n'a pas jouée
   et une étape jouée qui n'a pas abouti ne demandent pas la même chose à
   l'utilisateur. Un `ok` portant un motif, ou un `failed` **muet**, se refusent
   (`barehands_stage_report_inconsistent`) — un échec sans raison ne se distingue
@@ -2186,8 +2186,47 @@ garde le défaut du moteur) :
 | `pinch_primary` | bande parcourue entre ouvert et fermé | `pressRatio`, `releaseRatio` | états inséparables |
 | `pinch_secondary` | idem sur le canal pouce-majeur | `secondaryPressRatio`, `secondaryReleaseRatio` | idem |
 | `aim` | déplacement de la paume pendant un clic délibéré | (moitié de `travelSlopNorm`) | échéance |
-| `drag` | déplacement d'un glissement délibéré | (autre moitié) | clic et glissement inséparables |
-| `resize` | deux mains vues ensemble | `reachNorm`, `quality` de la seconde main | `barehands_stage_needs_two_hands` |
+| `drag` | **sous-étape 6A** : un bord ou un coin saisi d'**une** main déplace le cadre d'entraînement | (autre moitié de `travelSlopNorm`) | clic et glissement inséparables, `barehands_stage_scene_unavailable` |
+| `resize` | **sous-étape 6B** : **deux** zones distinctes et compatibles redimensionnent le même cadre | *(aucune)* | `barehands_stage_needs_two_hands`, `barehands_stage_scene_unavailable` |
+
+**Sept étapes mesurées, six écrans d'exercice** (Slice 07, décisions 26 et 29).
+`drag` et `resize` ne sont plus deux écrans génériques (« déplacez la main vers
+la droite », « écartez vos deux mains ») : ce sont les deux **sous-étapes** d'un
+seul écran public, « Manipulation de fenêtre », qui partagent un même cadre
+d'entraînement. Le vocabulaire persisté ne bouge pas — un profil dit toujours
+laquelle des deux a abouti, et c'est ce que la décision 31 demande — mais le
+parcours compte désormais **six exercices plus le rapport**, qui devient le
+septième écran au lieu de se superposer au dernier exercice.
+
+**Le cadre d'entraînement est le vrai cadre, pas un jouet** (décision 30). Il
+n'a aucune géométrie à lui : il porte `.sc-node.sc-window` et
+`data-representation="window"`, donc le **vrai** résolveur de cible le collecte
+(`.sc-node[data-object-id]`, § 6), le **vrai** `combineCaptures` décide ce que
+ses zones produisent (§ 7), et le **vrai** `manipulateBox` / `resizeBySides`
+calcule sa boîte en unités de scène. Taille minimale, non-inversion et
+suspension quand une main est perdue en découlent, elles ne sont pas réécrites.
+Deux zones identiques (`same_zone_rejected`), deux captures de corps
+(`both_captures_are_body`) ou une seule main (`missing_capture` → `move`) ne
+produisent donc **pas** de redimensionnement, et 6B ne se solde pas.
+
+Ce qu'il **n'a pas** : d'existence dans la scène. Il vit dans la région
+`exercise` de la coque, son monde est un bac à sable
+(`JarvisBarehandsCore.createPracticeFrame`) qui intercepte `begin`/`preview`/
+`commit`/`cancel` **avant** `JarvisScene.frames`, donc `commitUserGeometry`
+n'est jamais appelé pour lui et aucune commande ne part vers Core. Il est absent
+de l'état persisté de la scène avant comme après la calibration, ce qu'un test
+affirme.
+
+**`barehands_stage_scene_unavailable`, et pourquoi c'est un refus** (Slice 07,
+divergence D4). Cette étape est la première du parcours à dépendre de la scène :
+elle emprunte son **échelle** (`JarvisScene.frames.viewport()`), seule source
+des pixels par unité, parce qu'un geste calibré contre une fausse échelle ne
+calibre rien. Scène éteinte, cette échelle vaut `null`, et les deux replis
+possibles sont des défauts plausibles : une échelle inventée fait partir le
+cadre six fois trop loin (`viewport_unavailable`, § 7), un faux cadre fait
+« réussir » une étape qui n'a pas mesuré le vrai geste. L'étape se marque donc
+`skipped` — l'utilisateur n'a rien raté — et le rapport nomme la cause au lieu
+de la taire.
 
 `reachNorm` et `quality` se dérivent de **toute** la séance, pas d'une étape :
 la portée est ce que la main a atteint pendant qu'on lui demandait autre chose.
