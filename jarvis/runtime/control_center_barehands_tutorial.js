@@ -36,7 +36,15 @@
 (function(root){
   'use strict';
   const BH=root.JarvisBarehandsContracts;
-  if(!BH)throw new Error('JarvisBarehandsTutorial : les contrats Bare Hands doivent être insérés avant ce module');
+  if(!BH){
+    /* Même règle que la garde de forme plus bas : la cause part dans la
+       console et **ce module seul** reste absent. Une levée emporterait la
+       scène, la timeline et le Test Lab avec elle, la page servie n'ayant
+       qu'une balise `<script>`. */
+    console.error('[barehands] barehands.tutorial_not_installed '
+      +JSON.stringify({error:'les contrats Bare Hands doivent être insérés avant ce module'}));
+    return;
+  }
 
   /* ------------------------------------------------------------------ 1
      Réglages du parcours, et les deux paires dangereuses qu'ils forment.
@@ -553,15 +561,38 @@
     };
   }
 
-  /* La garde tourne au chargement, comme `assertDerivedOnly` : une liste
-     blanche qu'on n'exerce jamais est un souhait. */
-  assertTeachingOnly();
-
   const api=Object.freeze({
     DEFAULTS,options,STEP,STEPS,STATUS,STATUSES,REASON,REASONS,LABEL,PRESENTED,
     readObservation,readInteraction,assertTeachingOnly,createTutorial,
   });
-  root.JarvisBarehandsTutorial=api;
-  /* Exécution par les tests (node) ; dans la page, `module` n'existe pas. */
-  if(typeof module!=='undefined'&&module.exports)module.exports=api;
+
+  /* **La levée reste, mais elle ne sort pas d'ici.** La garde tourne au
+     chargement — une liste blanche qu'on n'exerce jamais est un souhait, et
+     c'est l'idiome d'`assertDerivedOnly` (§10) — mais la page servie n'a
+     qu'**une seule** balise `<script>` : les six modules Bare Hands, la scène,
+     la timeline, le Test Lab et ~2500 lignes de logique de page y sont
+     concaténés. Une levée non rattrapée au chargement d'un module y avorte
+     donc tout ce qui suit, alors que sous node, où chaque module est un
+     `require()` séparé, elle ne tuerait que le module. L'intention (casser à
+     l'insertion, pas trois clics plus tard) est juste ; son rayon ne l'était
+     pas. Rattrapée ici, comme le canal de commandes le fait depuis la
+     Slice 12, la panne garde sa portée : **ce module ne s'installe pas**, le
+     reste de la page vit, et la console porte la cause.
+
+     Ce que « pas installé » veut dire est déjà au contrat : `tutorial()`
+     refuse avec un code, l'onglet le dit, et le canal du § 12 rend
+     `barehands_flow_absent` — « cette page ne connaît pas ce parcours », qui
+     est exactement la vérité. */
+  try{
+    assertTeachingOnly();
+    root.JarvisBarehandsTutorial=api;
+    /* Exécution par les tests (node) ; dans la page, `module` n'existe pas.
+       Il n'est posé que si la garde a passé : un module qui ne s'installe pas
+       dans la page ne doit pas s'installer sous node non plus, sans quoi les
+       deux ne décriraient pas la même panne. */
+    if(typeof module!=='undefined'&&module.exports)module.exports=api;
+  }catch(error){
+    console.error('[barehands] barehands.tutorial_not_installed '
+      +JSON.stringify({error:String(error&&error.message||error)}));
+  }
 })(typeof window!=='undefined'?window:globalThis);

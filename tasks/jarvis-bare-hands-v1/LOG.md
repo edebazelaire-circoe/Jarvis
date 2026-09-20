@@ -2286,6 +2286,27 @@ persiste.** Et : **un test qui appelle `feed()` à la main ne dit rien de ce qui
 appelle `feed()` en vrai** — c'est `tutorialState().observed`, ajouté pour ça,
 qui rend la différence visible.
 
+### Les deux levées de chargement du nouveau module sont contenues
+
+Le constat de la tâche : la page servie n'a qu'**une** balise `<script>`, donc
+une levée au chargement d'un module avorte tout ce qui suit. Le module du
+tutoriel en avait deux — contrats absents, et la garde de forme
+`assertTeachingOnly`. Elles sont rattrapées comme le canal de la Slice 12
+rattrape la sienne : `barehands.tutorial_not_installed` dans la console **avec
+la cause nommée**, et le module ne s'installe pas (ni global, ni export node,
+et sans remplacer celui qui marchait).
+
+Le corollaire est côté pointeur, et c'est lui qui coûtait : `const
+TUTO=JarvisBarehandsTutorial` est une lecture directe, donc elle **lève** si le
+module n'est pas là — le rattrapage n'aurait rien sauvé. Elle est défensive, à
+la différence de celles des contrats, de l'aperçu de cible et de la
+calibration, et la différence est assumée : ces trois-là ne peuvent manquer que
+par une erreur d'insertion, celui-ci peut aussi refuser de s'installer parce que
+son schéma a fui. Absent, `tutorial()` refuse avec son code, l'onglet le dit,
+`exitOverlay()` continue de fermer une calibration, et le reste vit.
+**Formulation générale : rattraper une levée ne contient rien si le lecteur
+d'en face lit sans filet.**
+
 ### La sortie « X » appartenait au parcours, donc elle n'était pas garantie
 
 L'exigence de la Slice est « une sortie X / Échap / voix, **toujours** ». Échap

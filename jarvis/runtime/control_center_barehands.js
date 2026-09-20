@@ -3193,11 +3193,25 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
   const CALIB=JarvisBarehandsCalibration;
   /* Parcours de tutoriel (Slice 09) : `control_center_barehands_tutorial.js`,
      inséré juste après la calibration, dont il **reprend la coque sans la
-     modifier** (décision 26). Lu **directement**, pour la même raison que les
-     deux précédents : un module de page absent est une erreur d'insertion, et
-     `JarvisBarehands.tutorial` est posé sur une surface **gelée** qu'on ne
-     peut pas compléter après coup. */
-  const TUTO=JarvisBarehandsTutorial;
+     modifier** (décision 26).
+
+     Lu **défensivement**, contrairement aux contrats, à l'aperçu de cible et à
+     la calibration, et c'est une différence assumée. Ces trois-là sont lus
+     directement parce qu'un module absent y est une erreur d'insertion ; mais
+     celui-ci peut aussi ne pas s'installer parce que **sa garde de forme a
+     refusé** (liste blanche de l'observation, décision 32), et la page servie
+     n'a qu'une seule balise `<script>` : une lecture directe d'un global
+     absent lèverait ici et emporterait la scène, la timeline et le Test Lab.
+
+     Absent, le tutoriel **refuse avec un code** au lieu de disparaître : c'est
+     ce que la surface gelée ne permettrait pas si la porte elle-même
+     manquait. `exitOverlay()`, elle, n'a pas besoin de ce module et continue
+     de fermer une calibration. */
+  const TUTO=(typeof JarvisBarehandsTutorial!=='undefined'&&JarvisBarehandsTutorial)
+    ||window.JarvisBarehandsTutorial||null;
+  if(!TUTO)
+    console.error('[barehands] barehands.tutorial_unavailable '
+      +JSON.stringify({error:'control_center_barehands_tutorial.js ne s’est pas installé : le tutoriel refusera, le reste de Bare Hands est intact'}));
   /* Géométrie de la scène (`control_center_scene_interact.js`, inséré bien avant
      ce module) : `clampBox`, `MIN_SIZE`, `manipulateBox`, `rebaseManipulation`.
      Les décisions 18 et 19 y vivent, en **unités de scène**, et c'est là que les
@@ -4302,6 +4316,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
         tutoriel, ce qu'un test affirme. */
   function tutorialFlow(){
     if(tutorial)return tutorial;
+    if(!TUTO)return null;
     tutorial=TUTO.createTutorial({
       overlay:shell(),now:()=>Date.now(),
       onDone:result=>{markTutorialSeen(result)},
@@ -4368,7 +4383,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
   }
   function startWatching(){
     interactionView.afterFrame(feedTutorial);
-    if(!watchdog)watchdog=window.setInterval(feedTutorial,TUTO.DEFAULTS.watchdogMs);
+    if(!watchdog&&TUTO)watchdog=window.setInterval(feedTutorial,TUTO.DEFAULTS.watchdogMs);
   }
   function stopWatching(){
     interactionView.afterFrame(null);
@@ -4389,7 +4404,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
     const saved=await saveSettings({tutorialSeen:true});
     if(saved===null)
       shell().note('Tutoriel terminé, mais « tutoriel déjà vu » n’a pas pu être enregistré : il vous sera reproposé.','bad');
-    else shell().note(`Tutoriel terminé (${result&&result.done||0} étape(s) sur ${result&&result.total||TUTO.STEPS.length}).`,'ok');
+    else shell().note(`Tutoriel terminé (${result&&result.done||0} étape(s) sur ${result&&result.total||(TUTO?TUTO.STEPS.length:0)}).`,'ok');
     refreshPanel();
     return saved;
   }
@@ -4554,6 +4569,19 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
      `enable`/`disable` hors du canal, et un parcours qui allumerait au
      passage rendrait la décision contournable par un autre nom. */
   function startTutorial(){
+    /* Le module ne s'est pas installé (mauvais ordre d'insertion, ou sa garde
+       de forme a refusé). On le **dit** avec son propre code plutôt que de
+       laisser une porte absente : le canal rendrait `barehands_flow_absent`,
+       qui est vrai, mais l'écran est le seul endroit où la cause exacte
+       survit. */
+    if(!TUTO){
+      const message='Le tutoriel n’a pas pu être chargé dans cette page. Rechargez le Control Center ; la console porte la cause exacte.';
+      view.error=message;console.warn('[barehands] tutoriel indisponible (module non installé)');
+      if(typeof toast==='function')
+        toast({title:'Tutoriel indisponible',sub:message,kind:'bad',ms:8000});
+      refreshPanel();
+      return {ok:false,code:'barehands_tutorial_not_installed',reason:message};
+    }
     const busy=flowBusy('tutorial');
     if(busy)return busy;
     const flow=tutorialFlow();
@@ -4997,15 +5025,18 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
          minuterie », qui s'écrivent pareil et n'apprennent pas la même
          chose — la seconde rate la quasi-totalité des clics. */
       observed:tutorial?tutorial.observations():0,
-      steps:TUTO.STEPS.length};
+      installed:!!TUTO,
+      steps:TUTO?TUTO.STEPS.length:0};
   }
   function tutorialStateHtml(){
     const state=tutorialState();
+    if(!state.installed)
+      return '<div class="notice bad"><strong>Tutoriel indisponible</strong><div class="hint">Son module ne s’est pas installé dans cette page. Rechargez le Control Center ; la console porte la cause exacte. Le reste de Bare Hands fonctionne normalement.</div></div>';
     if(state.running)
       return `<div class="notice info"><strong>Tutoriel en cours</strong><div class="hint">Étape « ${esc(state.step||'?')} ». La surimpression est à l’écran ; quittez-la par « Quitter », la touche Échap, ou « ferme la surimpression ».</div></div>`;
     if(state.seen)
       return '<div class="hint">Vous avez déjà fait le tour du tutoriel. Vous pouvez le relancer quand vous voulez ; décocher « Tutoriel déjà vu » ci-dessus remet l’invitation.</div>';
-    return `<div class="notice info"><strong>Vous n’avez pas encore fait le tutoriel</strong><div class="hint">${esc(String(TUTO.STEPS.length))} étapes guidées pour apprendre le vocabulaire complet : réveil, cible, clic, clic droit, contenu, étoile, cadre, redimensionnement à deux mains, outils et sorties. Rien n’est mesuré et <strong>aucun paramètre de calibration n’est touché</strong>.</div></div>`;
+    return `<div class="notice info"><strong>Vous n’avez pas encore fait le tutoriel</strong><div class="hint">${esc(String(state.steps))} étapes guidées pour apprendre le vocabulaire complet : réveil, cible, clic, clic droit, contenu, étoile, cadre, redimensionnement à deux mains, outils et sorties. Rien n’est mesuré et <strong>aucun paramètre de calibration n’est touché</strong>.</div></div>`;
   }
   function tutorialHtml(){
     const state=tutorialState();
@@ -5014,7 +5045,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
       <div class="hint" style="margin-bottom:12px">Un parcours guidé qui apprend les gestes de la V1, dans la même surimpression que la calibration — mais il ne mesure rien et n’écrit aucun profil. Chaque étape peut être passée, et on en sort à tout moment.</div>
       <div id="barehandsTutorialState">${tutorialStateHtml()}</div>
       <div class="field inline" style="align-items:center;gap:10px;margin-top:14px">
-        <button type="button" class="action small${state.seen?'':' primary'}" id="barehandsTutorialStart" ${view.busy||state.running?'disabled':''}>${state.seen?'Revoir le tutoriel…':'Lancer le tutoriel…'}</button>
+        <button type="button" class="action small${state.seen||!state.installed?'':' primary'}" id="barehandsTutorialStart" ${view.busy||state.running||!state.installed?'disabled':''}>${state.seen?'Revoir le tutoriel…':'Lancer le tutoriel…'}</button>
         <div class="hint">Bare Hands doit être allumé et sa caméra démarrée : la première étape est le geste de réveil, et le tutoriel ne le fait pas à votre place.</div>
       </div>
     </section>`;
@@ -5253,7 +5284,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
     const teach=document.getElementById('barehandsTutorialStart');
     if(teach){
       const state=tutorialState();
-      teach.disabled=view.busy||state.running;
+      teach.disabled=view.busy||state.running||!state.installed;
       teach.textContent=state.seen?'Revoir le tutoriel…':'Lancer le tutoriel…';
     }
     refreshTools();refreshSettings();

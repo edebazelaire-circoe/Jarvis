@@ -2039,6 +2039,21 @@ invisible, alors qu'un identifiant bien formé mais forgé se voyait.
 (`window.JarvisBarehandsTutorial`). Inséré après la calibration, avant le
 pointeur.
 
+**Ses deux levées de chargement sont contenues, et le pointeur le lit
+défensivement.** La page servie n'a qu'**une** balise `<script>` : une levée au
+chargement d'un module avorte tout ce qui suit, et une lecture directe d'un
+global absent lève tout autant. Ce module attrape donc les siennes (contrats
+absents, garde de forme refusée), journalise
+`barehands.tutorial_not_installed` en nommant la cause, et **ne s'installe
+pas** — ni le global, ni l'export node, et sans remplacer un module qui
+marchait. C'est l'idiome du canal de commandes (§ 12), pas celui de la
+calibration : celle-ci ne peut manquer que par une erreur d'insertion, alors
+que celui-ci peut aussi refuser de s'installer parce que son schéma a fui.
+
+Absent, `tutorial()` **refuse avec un code** (`barehands_tutorial_not_installed`)
+et l'onglet le dit ; `exitOverlay()`, qui n'a pas besoin de ce module, continue
+de fermer une calibration ; et le reste de Bare Hands est intact.
+
 **Les dix étapes, ce qu'elles enseignent et comment elles se constatent.**
 Chacune réussit, se passe ou se manque **seule** ; rien n'est enregistré, et le
 récapitulatif dit laquelle.

@@ -303,16 +303,22 @@ def test_only_derived_facts_cross_into_a_step_and_the_guard_runs_at_module_load(
     assert result["guard"] is True
 
 
-def test_a_leaky_observation_key_makes_the_module_refuse_to_load(tmp_path):
-    """La garde est posée **au chargement du module**, comme `assertDerivedOnly`
-    (§ 10), et pas seulement disponible : une liste blanche qu'on n'exerce
-    jamais est un souhait, et un appel explicite depuis un test prouve la
-    fonction, jamais son installation.
+def test_a_leaky_observation_key_stops_the_module_installing_without_blanking_the_page(tmp_path):
+    """Deux choses à la fois, et elles tirent en sens contraire.
 
-    Mesuré comme la Slice 08 l'a mesuré pour le profil : on ajoute au schéma une
-    clé qui recopie son entrée, et on regarde si `require()` **refuse**. Sans
-    l'appel au chargement, le module se charge et la décision 32 tombe sans
-    qu'une ligne change ailleurs."""
+    **La garde tourne au chargement**, comme `assertDerivedOnly` (§ 10), et pas
+    seulement « disponible » : une liste blanche qu'on n'exerce jamais est un
+    souhait, et un appel explicite depuis un test prouve la fonction, jamais
+    son installation. Mesuré comme la Slice 08 l'a mesuré pour le profil : on
+    ajoute au schéma une clé qui recopie son entrée.
+
+    **Mais la levée ne sort pas du module.** La page servie n'a qu'**une
+    seule** balise `<script>` — six modules Bare Hands, la scène, la timeline,
+    le Test Lab et ~2500 lignes de logique de page y sont concaténés — donc une
+    levée non rattrapée au chargement avorte tout ce qui suit. L'intention
+    (casser à l'insertion) est juste ; son rayon ne l'était pas. Rattrapée, la
+    panne garde sa portée : ce module ne s'installe pas, la console porte la
+    cause **en nommant la clé fautive**, et le reste vit."""
 
     source = TUTORIAL.read_text(encoding="utf-8")
     # Une Slice future qui ajouterait une clé « pratique » recopiée telle
@@ -328,15 +334,60 @@ def test_a_leaky_observation_key_makes_the_module_refuse_to_load(tmp_path):
     copy.write_text(leaky, encoding="utf-8")
 
     result = run_node(tmp_path, """
-      const refusedLoad=refused(()=>require(%s));
-      // Et le vrai module, lui, se charge : la garde refuse la fuite, pas tout.
-      out({refusedLoad,real:typeof T.createTutorial==='function',
-        message:(()=>{try{require(%s);return ''}catch(e){return String(e&&e.message||e)}})()});
-    """ % (json.dumps(str(copy)), json.dumps(str(copy))), "leaky")
+      const errors=[];
+      const realError=console.error;
+      console.error=(...a)=>errors.push(a.map(String).join(' '));
+      let threw=null;
+      let exported=null;
+      try{exported=require(%s)}catch(e){threw=String(e&&e.message||e)}
+      console.error=realError;
+      out({threw,
+        /* Rien n'est publié : ni l'export node, ni le global de la page —
+           celui-ci porte encore le **vrai** module, que le harnais a chargé,
+           et la copie fuyante ne l'a pas remplacé. */
+        exported:exported&&Object.keys(exported).length?Object.keys(exported):[],
+        global:globalThis.JarvisBarehandsTutorial===T,
+        errors,
+        // Et le vrai module, lui, s'installe : la garde refuse la fuite, pas tout.
+        real:typeof T.createTutorial==='function'});
+    """ % json.dumps(str(copy)), "leaky")
 
-    assert result["refusedLoad"] == "RangeError",         "une clé qui recopie son entrée doit faire refuser le chargement"
-    assert "sampleFrames" in result["message"], "le refus nomme la clé fautive"
+    # **Rattrapée** : la page servie survivrait, et node ne voit pas de levée.
+    assert result["threw"] is None, "la levée doit rester dans le module"
+    # Mais rien n'est installé : ni l'export, ni le global.
+    assert result["exported"] == []
+    assert result["global"] is True, "un module qui refuse ne remplace pas celui qui marche"
+    # La console nomme l'événement **et** la clé fautive.
+    assert any("barehands.tutorial_not_installed" in line for line in result["errors"])
+    assert any("sampleFrames" in line for line in result["errors"])
     assert result["real"] is True
+
+
+def test_the_contracts_being_absent_also_stops_at_this_module_and_no_further(tmp_path):
+    """L'autre levée de chargement du module, contenue de la même façon. Un
+    ordre d'insertion faux doit rester lisible — la console le dit — sans
+    emporter la scène, la timeline et le Test Lab avec elle."""
+
+    result = run_node(tmp_path, """
+      const errors=[];
+      const realError=console.error;
+      console.error=(...a)=>errors.push(a.map(String).join(' '));
+      // Les contrats retirés : c'est l'ordre d'insertion qui serait faux.
+      const kept=globalThis.JarvisBarehandsContracts;
+      delete globalThis.JarvisBarehandsContracts;
+      delete require.cache[require.resolve(%s)];
+      let threw=null,exported=null;
+      try{exported=require(%s)}catch(e){threw=String(e&&e.message||e)}
+      globalThis.JarvisBarehandsContracts=kept;
+      console.error=realError;
+      out({threw,exported:exported&&Object.keys(exported).length?Object.keys(exported):[],
+        errors});
+    """ % (json.dumps(str(TUTORIAL)), json.dumps(str(TUTORIAL))), "noContracts")
+
+    assert result["threw"] is None, "la levée doit rester dans le module"
+    assert result["exported"] == []
+    assert any("barehands.tutorial_not_installed" in line for line in result["errors"])
+    assert any("contrats" in line for line in result["errors"])
 
 
 def test_the_two_settings_pairs_that_would_miss_every_step_are_refused_at_construction(tmp_path):
@@ -1085,6 +1136,66 @@ def test_the_channel_hands_its_receipt_to_the_screen_without_changing_what_it_re
 
 
 # ------------------------------------------------------------------ l'insertion
+
+
+def test_a_tutorial_module_that_did_not_install_refuses_instead_of_taking_the_page_down(tmp_path):
+    """**La règle de la page servie** : une seule balise `<script>` tient six
+    modules Bare Hands, la scène, la timeline, le Test Lab et ~2500 lignes de
+    logique. Une levée au chargement de l'un avorte tout ce qui suit — et une
+    lecture directe d'un global absent lève tout autant.
+
+    Le tutoriel est donc lu **défensivement**, à la différence des contrats, de
+    l'aperçu de cible et de la calibration : ceux-là ne peuvent manquer que par
+    une erreur d'insertion, celui-ci peut aussi ne pas s'installer parce que sa
+    garde de forme a refusé. Absent, il **refuse avec un code** et le dit à
+    l'écran ; le reste de Bare Hands — l'interrupteur, le réveil, la
+    calibration, et `exitOverlay()` qui n'a pas besoin de lui — est intact."""
+
+    # Le module **absent**, et absent partout : le harnais le charge dans son
+    # en-tête, donc le retirer du monde navigateur ne suffit pas — il faut
+    # aussi effacer ce que ce chargement a posé, sans quoi le test décrirait
+    # une page qui l'a bel et bien.
+    absent = browser(
+        "delete global.JarvisBarehandsTutorial;\n"
+        "delete global.window.JarvisBarehandsTutorial;\n",
+    ).replace("global.JarvisBarehandsTutorial=require(TUTORIAL_PATH);", "")
+    result = run_page(tmp_path, CAMERA + absent + TIMERS + """
+      await openTab();
+      // La page s'est chargée **entièrement** : l'onglet est dessiné.
+      const drew=modalContent.innerHTML.indexOf('barehandsTutorial')>=0;
+      const state=BAREHANDS.tutorialState();
+      const answer=await BAREHANDS.tutorial();
+      const said=document.getElementById('barehandsTutorialState').innerHTML;
+      const button=document.getElementById('barehandsTutorialStart');
+      // Et le reste de Bare Hands répond normalement.
+      await BAREHANDS.enable();
+      await settle();
+      const rest={enabled:BAREHANDS.settings().enabled,
+        lifecycle:typeof BAREHANDS.lifecycle(),
+        profile:BAREHANDS.profile()!==undefined,
+        measuring:BAREHANDS.measuring(),
+        // `exitOverlay` ne dépend pas du module du tutoriel.
+        exit:await BAREHANDS.exitOverlay()};
+      out({drew,state,answer,said,disabled:!!(button&&button.disabled),
+        rest,toasts,
+        warned:logged.some(l=>l[1].indexOf('tutoriel indisponible')>=0)});
+    """, "absent")
+
+    # La page vit : l'onglet est dessiné malgré le module manquant.
+    assert result["drew"] is True
+    assert result["state"]["installed"] is False and result["state"]["steps"] == 0
+    # Le tutoriel refuse **avec un code**, jamais en silence ni en disparaissant.
+    assert result["answer"]["ok"] is False
+    assert result["answer"]["code"] == "barehands_tutorial_not_installed"
+    # Vu à l'écran : la section le dit, le bouton est désarmé, un toast est posé.
+    assert "Tutoriel indisponible" in result["said"]
+    assert result["disabled"] is True
+    assert "bad" in result["toasts"] and result["warned"] is True
+    # Et le reste de Bare Hands est intact, `exitOverlay()` compris.
+    assert result["rest"]["enabled"] is True
+    assert result["rest"]["lifecycle"] == "string"
+    assert result["rest"]["measuring"] is False
+    assert result["rest"]["exit"] == {"ok": True, "flow": None, "closed": False}
 
 
 def test_the_page_inserts_the_tutorial_after_the_shell_and_before_the_pointer(tmp_path):
