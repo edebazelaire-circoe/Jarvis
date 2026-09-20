@@ -650,7 +650,17 @@
   const FLASH_MAX_MS=2000;
 
   const STYLE_ID=BH.DOM.flowStyleId;
-  const ACCENT='var(--omega-accent,var(--accent,#6ee7ff))';
+  /* `--omega-accent` est **l'état vocal peint**, pas un jeton de thème :
+     `control_center_work.js` le réécrit à chaque changement d'état (orange en
+     `speaking`, vert en `listening`). La coque tenait donc sa consigne en
+     orange pendant que JARVIS parlait, et — pire pour ce fichier — en **vert**
+     pendant qu'il écoutait, alors que la décision 21 quarante lignes plus haut
+     réserve le vert à « ce geste vient d'être reconnu » et borne sa durée. La
+     coque reprend le bleu de la page ; il vaut #6ee7ff, exactement les
+     `rgba(110,231,255,…)` que cette feuille écrit déjà en clair pour le voile,
+     le rail et la cible — accent et littéraux sont enfin la même couleur.
+     Voir la note de `control_center_barehands_hud.js`. */
+  const ACCENT='var(--bh-accent,var(--accent,#6ee7ff))';
   /* Écrit avec deux raccourcis parce que la feuille a triplé de taille et
      qu'une règle illisible ne se relit pas. `R` est la racine, `D` les noms du
      contrat : le texte **produit** porte les vrais noms, et c'est lui que le

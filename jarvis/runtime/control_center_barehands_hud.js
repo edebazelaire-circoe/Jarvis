@@ -766,7 +766,30 @@
      par `data-bh-tone` : le bouton et les trois pastilles du sélecteur la
      lisent par héritage de propriétés personnalisées, donc « actif » a la même
      définition aux deux endroits, par construction et non par recopie. */
-  const ACCENT='var(--omega-accent,var(--accent,#6ee7ff))';
+  /* **Pourquoi `--omega-accent` n'est plus dans cette chaîne.**
+
+     Ce n'est pas une couleur de thème : `control_center_work.js` l'écrit sur
+     `document.documentElement` à *chaque changement d'état vocal*, depuis
+     `STATE_COLORS` — `idle` bleu, `listening` **vert**, `speaking`
+     **orange**, `thinking` violet. C'est la couleur de l'orbe, et l'orbe a
+     raison de l'avoir : elle dit ce que fait la voix.
+
+     Bare Hands, lui, ne dit pas ce que fait la voix. Tant que la voix était
+     poussée au bouton, l'état dominant était `idle` et la colonne paraissait
+     bleue ; depuis que le duplex GPT-Live parle en continu, l'état dominant
+     est `speaking` et la colonne entière — bouton de cycle de vie, palette,
+     outil actif, libellés — est peinte en `rgb(255,151,61)`. L'utilisateur l'a
+     vu avant nous : « c'est en orange alors que la couleur principale, c'est
+     le bleu ».
+
+     La colonne reprend donc le bleu de la page (`--accent`, #6ee7ff, celui de
+     la barre d'outils, des badges et des compteurs), sans passer par l'état
+     vocal. Les deux bleus que décrit la décision 5 restent portés par
+     l'échelle `data-bh-tone` juste en dessous, et non par une seconde teinte :
+     au repos l'encre est diluée dans le transparent, en actif elle est
+     éclaircie vers le blanc et porte le halo — bleu ordinaire contre bleu
+     électrique. `--bh-accent` reste ouvert pour qui voudra surcharger. */
+  const ACCENT='var(--bh-accent,var(--accent,#6ee7ff))';
   const MUTED='var(--omega-muted,var(--muted,#7190a0))';
   const DANGER='var(--omega-danger,var(--danger,#ff6577))';
 
@@ -936,8 +959,14 @@
 /* La bande elle-même : fixe, verticale, et rien qui suggère le contraire —
    pas de poignée, pas de bouton d'ancrage, pas de bascule d'orientation
    (décision 13 : c'est reporté, donc ce n'est pas esquissé). */
+/* Le padding est **dissymétrique exprès** : 6 px en haut et en bas, 2 px sur
+   les côtés. La bande est verticale — le blanc vertical sépare trois outils
+   les uns des autres et sert donc à quelque chose, tandis que le blanc
+   horizontal ne sépare rien : il ne faisait qu'élargir la gélule de 12 px
+   autour d'icônes de 44, ce que l'utilisateur a appelé « un peu lourdingue ».
+   58 px de large deviennent 50, et la cible de clic reste entière. */
 #${DOM.paletteId} .bh-tools{display:flex;flex-direction:column;align-items:center;gap:6px;
-  padding:6px;border:1px solid var(--line,#183343);border-radius:13px;
+  padding:6px 2px;border:1px solid var(--line,#183343);border-radius:13px;
   background:rgba(3,8,12,.62);
   -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
 /* **L'échelle des trois états, écrite une seule fois**, sur le modèle de

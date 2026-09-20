@@ -3530,7 +3530,12 @@ try{
   });
   /* Ce qu'un jeton « survole » : l'élément cliquable le plus proche. */
   const INTERACTIVE='button,a[href],input,select,textarea,label,summary,[role="button"],[role="tab"],[tabindex]:not([tabindex="-1"]),.choice,.acard,.toast';
-  const ACCENT='var(--omega-accent,var(--accent,#6ee7ff))';
+  /* Le jeton de main suit la même règle que la colonne et la coque de
+     calibration : il ne se peint pas avec l'état vocal. `--omega-accent` est
+     réécrit par l'orbe à chaque changement d'état (orange en `speaking`), ce
+     qui faisait virer le curseur de main à l'orange dès que JARVIS parlait.
+     Voir la note de `control_center_barehands_hud.js`. */
+  const ACCENT='var(--bh-accent,var(--accent,#6ee7ff))';
 
   const STYLE=`
 #jarvisHands{position:fixed;inset:0;z-index:2147483000;pointer-events:none;overflow:hidden}
