@@ -2809,3 +2809,175 @@ paquet `jarvis/testlab/barehands/` calqué sur `virtual/registry.py` — il vit
 hors de `virtual/` parce que ce paquet *est* la pile voix, qu'une trace de main
 rejouée n'a aucune raison de charger — et une entrée de verrou. C'est le premier
 diagnostic du dépôt qui **ne mesure personne**.
+
+
+## Slice 11 — intégrer, migrer, valider et documenter la mise en service
+
+Dernière Slice de la tâche. Elle n'a pas ajouté de moteur : elle a fermé ce que
+neuf Slices et dix reprises avaient laissé, et elle a écrit ce que la tâche
+sait d'elle-même.
+
+### Trois défauts concrets, pas de la documentation
+
+**Le rayon d'une levée au chargement.** La page servie n'a qu'**une seule**
+balise `<script>` : dix-neuf modules — sept Bare Hands, six de scène, la
+chronologie, le Test Lab et ~2500 lignes de logique de page — y sont
+concaténés. Les Slices 09 et 10 avaient confiné leur propre levée ; quatre
+restaient nues. Dont `control_center_scene_interact.js`, qui est le **premier**
+module du fichier et n'est même pas un module Bare Hands : une levée y
+blanchissait le Control Center entier — la scène, la chronologie, le Test Lab et
+Bare Hands — pour une constante de capsule.
+
+Confinées de la même façon : l'aperçu de cible, la calibration, l'invariant de
+paire de la géométrie de scène, et le bloc navigateur du pointeur. Ce
+dernier était le cas intéressant : il lit **directement** quatre globaux de
+page, ce qui est un choix assumé (« un module de page absent est une erreur
+d'insertion, pas un état d'exécution ») — mais sa `ReferenceError` avait
+exactement le même rayon que la levée qu'on venait de confiner ailleurs.
+Confiner les producteurs sans confiner le consommateur n'aurait rien changé.
+
+**Formulation : le refus n'est pas adouci, son rayon l'est.** Casser à
+l'insertion plutôt que trois clics plus tard reste juste ; ce qui ne l'était pas
+est d'emporter dix-huit modules innocents avec soi.
+
+**Un déni de commande.** `GET /api/barehands/commands` n'était pas gardé alors
+que `deliver()` marque la commande remise au **premier** long-poll qui la
+demande. Le garde d'écriture ne couvrait que les méthodes d'écriture, et un GET
+sans en-tête part en requête *simple* : pas de préflight, le serveur l'exécute,
+et seul le **corps** est caché à la page étrangère. Elle ne lisait donc rien et
+consommait quand même. La vraie page attendait ensuite pour toujours une
+commande déjà remise à personne, et l'utilisateur voyait « JARVIS n'ouvre pas le
+tutoriel » sans qu'aucun refus n'existe nulle part — ni dans le journal, ni à
+l'écran, ni côté cerveau.
+
+**Formulation : ici ce n'est pas la lecture qui est l'arme, c'est la
+consommation.** La règle « une lecture est aussi sensible qu'une écriture »
+existait déjà dans ce dépôt pour la confidentialité (transcriptions, preuves de
+session) ; c'est la première fois qu'elle s'applique pour une raison de
+**disponibilité**. Un long-poll qui consomme doit être gardé comme une écriture,
+quelle que soit sa méthode HTTP.
+
+`GET /api/scene/patches` a la même forme et **pas** la même propriété : son
+curseur `after` vient de l'appelant, rien n'y est consommé côté serveur. Laissé
+hors de la table, avec la raison écrite à côté — pour que le prochain lecteur
+voie une décision et non un oubli.
+
+**« Migratable » ne se disait que dans un sens.** `load()` convertissait un bloc
+v1 — les réglages comme le profil — mais `apply()` refusait *toute* version
+autre que la courante, la v1 comprise. Une page qui relisait un bloc v1 et le
+réécrivait tel quel se faisait donc refuser par le serveur même qui venait de le
+lire. Le bloc restait en v1 pour toujours, reconverti à chaque lecture, et la
+version enregistrée ne montait jamais. Le commentaire disait « c'est ici qu'une
+version précédente s'accepterait » — la couture était nommée, à l'endroit juste,
+et vide.
+
+**Formulation : une migration qui n'existe que du côté lecture n'est pas une
+migration, c'est une tolérance.** Un cas de la liste de refus du profil
+épinglait le défaut (`{"schema_version": 1}` attendu refusé) : il en sort, avec
+la raison écrite.
+
+### Une garde que personne n'exerce est un vœu
+
+Recensement de toutes les levées de construction et de chargement des sept
+modules Bare Hands et de la géométrie de scène : **51 refus, 44 tenus par un
+test, 7 nus.**
+
+`wakeGapMin < wakeGapMax`, que la Slice 00 citait comme l'exemple du genre, est
+bien fermé depuis la reprise de la Slice 08. Les sept autres échappaient toutes
+pour la **même raison structurelle**, et elle mérite d'être nommée : *le test
+négatif existant s'arrêtait à une garde antérieure de la même fabrique.*
+`createTutorial({})` ne descend jamais jusqu'aux trois coutures de nourrissage,
+parce que le refus de la coque tombe d'abord ; `replay(…, {})` ne descend jamais
+jusqu'au résolveur, parce que la garde du cœur ne nomme que deux moteurs sur
+trois. Un cas négatif trop pauvre **valide la mauvaise garde** et paraît couvrir
+tout le reste.
+
+**Formulation : un test négatif doit être le plus riche possible, pas le plus
+pauvre.** Chaque nouveau cas garde tout le câblage valide sauf la chose exacte
+qu'il retire, et chacun vérifie d'abord que le câblage complet passe — sinon la
+sonde crie au loup et personne ne s'en aperçoit.
+
+Le test de `MAX_SIZE >= MIN_SIZE` vérifie désormais le **rayon** du refus et
+plus seulement son existence : le module ne s'installe pas, la console porte la
+cause, et rien ne sort du module. Refuser et blanchir ne sont pas la même chose,
+et un test qui n'attrape que la levée ne voit pas la différence.
+
+### Le nom, réglé une fois
+
+Deux sous-systèmes sans aucun rapport portaient le même mot, à trois mille
+lignes d'écart dans `ARCHITECTURE.md`. `SECURITY.md` était le pire des trois
+sites : il portait les deux référents avec **zéro** occurrence de « Bare Hands »
+en deux mots. Convention énoncée **une seule fois** et reprise par renvoi :
+**« Bare Hands » = le natif, « Barehands » = le tableau amont épinglé.**
+
+Les identifiants ne suivent pas la convention et ne le peuvent pas
+(`barehands_test_mode`, `/api/barehands`, `JarvisBarehands`). La règle porte sur
+la prose : **quand un identifiant et une phrase se contredisent, c'est la phrase
+qui avait le choix.**
+
+Une seule affirmation **fausse** dans tout le corpus : « Barehands ne glisse pas
+et n'ouvre pas les liens », trois lignes après un tableau du même écran qui
+listait le glissement comme pris en charge. La page se contredisait à
+l'intérieur d'un seul tableau, depuis la Slice 06. Seule la moitié « glisse »
+l'était, et la distinction qui résout — glissement de pointeur générique
+partout, capture de cadre sur les objets de scène, carve-out `.sc-node` —
+n'existait nulle part dans OPERATIONS.
+
+**Formulation : une mise à jour qui corrige un document et pas ses voisins crée
+une contradiction plus coûteuse que l'erreur d'origine**, parce qu'elle rend les
+deux passages douteux au lieu d'un seul. Deux autres passages du même écran
+étaient périmés de la même façon (la palette annonçait cinq outils quand le code
+n'en sert plus que trois ; deux réglages étaient donnés pour « lus par aucun
+parcours » alors que les Slices 08 et 09 les lisent).
+
+### La frontière clean-room avait quatre preuves et zéro test
+
+Vérifiée de quatre façons, toutes intactes à la clôture — rien de l'amont n'est
+versionné, la branche n'a touché ni `third_party/` ni `scripts/`, **une seule**
+façon de servir un fichier existe sous `jarvis/` et c'est la liste blanche de
+six noms, et les trois clauses de prose sont en place. Mais les trois clauses
+n'étaient tenues par **rien** : un refactor pouvait les effacer toutes les trois
+sans qu'une ligne rougisse.
+
+`tests/unit/test_barehands_clean_room.py` tient les quatre points mécaniquement
+vérifiables. Il ne prouve pas l'absence de copie — aucun test ne le peut — et le
+fichier le dit dans sa propre docstring plutôt que de laisser croire le
+contraire.
+
+**Une première version du test était trop grossière** et accusait
+`barehands_test_mode.py` de nommer le port du tableau amont : sa docstring le
+nomme **pour dire de ne pas le confondre**, ce qui est le contraire d'une
+dépendance. Resserré sur les sept modules de page, qui n'ont aucune raison de le
+nommer. *La distinction était le sujet du test, et le test ne la faisait pas.*
+
+### La dette de validation, rassemblée
+
+Les dettes de caméra vivaient éparpillées dans 1783 lignes de ce journal. Elles
+rejoignent la procédure manuelle **existante** de `OPERATIONS.md`, regroupées
+par **séance de caméra** — la contrainte réelle étant qu'ouvrir la caméra, se
+placer et régler la lumière coûte plus cher que n'importe quelle étape prise
+isolément. Sept lots, A1 à A7.
+
+**A2.2 est écrit en premier de son lot** : une main plate, doigts serrés, pouce
+adducté, peut réveiller à tort. Item ouvert le plus cité de toute la tâche,
+suspecté depuis la Slice 02. L'étape dit **quoi mesurer** au moment du faux
+positif (`cPose`, `gapPalms`, `closure`), pour que la séance serve à décider et
+pas seulement à constater.
+
+La procédure s'ouvre sur ce qu'elle est : rien n'a été exécuté, la validation
+humaine a été **levée** et non satisfaite.
+
+### Le registre de clôture
+
+`tasks/jarvis-bare-hands-v1/ROLLOUT.md` : les sept rétrécissements de portée
+avec leur argument (outils d'annotation hors V1, « réinitialiser » qui ne touche
+pas au profil, aucun point de main dans les traces, `reachNorm` mesurée et non
+appliquée, pas de balayage Test Lab, aucun chemin vidéo brute, aucun harnais de
+DOM pour `installJarvisScene`), la re-vérification clean-room, et les six choses
+qu'un humain doit encore faire.
+
+**Formulation : une absence argumentée est une décision ; une absence
+inexpliquée se lit comme un bug et se fait « corriger » par quelqu'un qui ne
+sait pas pourquoi elle était là.** C'est la raison d'être de ce fichier, et la
+seule chose que cette Slice pouvait laisser derrière elle qu'aucune autre ne
+pouvait écrire.

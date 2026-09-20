@@ -26,6 +26,21 @@ Every coding Slice must load /caveman and /coding-guideline. Every frontend/brow
 - [ ] 11 — Integrate, migrate, validate end-to-end and document rollout
 - [ ] 12 — Build the Bare Hands command channel from the brain to the page (added by Slice 00, decision D2)
 
+## Slice status
+
+**The unticked boxes above are a repository-wide convention, not a status.** The
+finished 2026-08-31 handoff's `TODO.md` is unticked too. Do not read them as
+evidence that a Slice is incomplete.
+
+Real status, as of Slice 11 (the last): **all thirteen Slices are implemented**;
+01-09 and 12 were reworked after QA. The close-out record — scope narrowings,
+deferrals with their reasons, the clean-room re-verification, and what a human
+must still do — is `../ROLLOUT.md`. The durable narrative is `../LOG.md`.
+
+**The real-camera validation was waived by the Human, not passed.** The
+procedure a human must still run is `docs/OPERATIONS.md` › *Procédure de test
+manuel (caméra réelle)*, batches A1-A7.
+
 ## Dependency graph
 
 00 -> 01 -> {02,03}
