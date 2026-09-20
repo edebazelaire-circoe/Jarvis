@@ -930,6 +930,12 @@
 
          Rend l'étape courante, comme `feed()`. */
       tick(){
+        /* `finished` est **redondant aujourd'hui** et gardé exprès : le
+           récapitulatif pose `deadlineMs:null` (donc `expired()` est faux) et
+           `at` a dépassé la dernière étape (donc `stepAt(at)` est nul). Deux
+           mécanismes le couvrent déjà, et une mutation qui le retire ne change
+           rien d'observable — il coûte une comparaison et dit l'intention :
+           un parcours conclu ne se solde pas une fois de plus. */
         if(!running||finished||!collected||!stepAt(at))return null;
         if(expire())return this.stepId();
         /* RÈGLE ZÉRO : sans cette phrase, une étape sans la moindre image

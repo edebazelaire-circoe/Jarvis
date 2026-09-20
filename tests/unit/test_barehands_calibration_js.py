@@ -587,9 +587,14 @@ def test_a_full_run_derives_a_profile_and_nothing_is_written_until_it_is_asked(t
          était affichée zéro milliseconde — sur la seule page qui dit à
          l'utilisateur si ses mesures ont servi. */
       const recap=text(flowRoot(),C.DOM.flowNoteClass)[0];
+      /* Et la barre est **pleine** : « où en suis-je » est le troisième point
+         de la RÈGLE ZÉRO, et une barre laissée à mi-course sur la dernière
+         page dit qu'il reste quelque chose à faire. */
+      const recapBar=find(flowRoot(),C.DOM.flowProgressClass)[0]
+        .children[0].getAttribute('data-at');
       press(flowRoot(),'apply');
       await new Promise(r=>setImmediate(r));
-      out({started,steps:visited,recap,
+      out({started,steps:visited,recap,recapBar,
         beforeApply,afterApply:saved.length,rows,
         payload:saved[0]||null,closed:!flowRoot(),running:cal.isRunning()});
     """, name="fullrun")
@@ -613,6 +618,7 @@ def test_a_full_run_derives_a_profile_and_nothing_is_written_until_it_is_asked(t
     assert [row[1] for row in result["rows"]] == ["jf-ok"] * 7
     assert "mesure(s) retenue(s)" in result["recap"], result["recap"]
     assert "Rien n" in result["recap"], "et que rien n'est écrit sans qu'on le demande"
+    assert result["recapBar"] == "1.00", "la barre reste à mi-course sur la page de fin"
     assert result["closed"] is True and result["running"] is False
 
 

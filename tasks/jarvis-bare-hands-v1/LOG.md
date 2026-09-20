@@ -2485,3 +2485,34 @@ code `barehands_calibration_disabled`. Et le test ne disait pas **laquelle** ava
 refusé : le canal ne transporte qu'un code fermé, donc un `calibrate()` qui
 rendrait `undefined` sans rien lancer aurait produit un reçu identique. La page
 est maintenant interrogée directement, et le code de chaque porte est affirmé.
+
+### Ce que la mutation a trouvé (27 mutations, deux directions)
+
+Vingt-six tuées, un survivant équivalent, et **le seul vrai survivant était ma
+mutation, pas le test** : « la phrase du récapitulatif repasse avant `step()` »
+retirait en réalité `overlay.progress(1)`, c'est-à-dire une *autre* mutation que
+celle que je croyais conduire. Rejouée correctement, l'ordre est bien tenu (deux
+tests tombent) — et la mutation accidentelle a découvert un trou réel : **rien
+n'affirmait que la barre est pleine au récapitulatif**, alors que « où en
+suis-je » est le troisième point de la RÈGLE ZÉRO et qu'une barre laissée à
+mi-course sur la dernière page dit qu'il reste quelque chose à faire. Refermé.
+**Formulation générale : un survivant est d'abord une question sur ce que le
+test croit conduire — et parfois sur ce que la mutation croit muter.**
+
+Le survivant restant est **équivalent**, et vérifié comme tel : retirer la garde
+`finished` de `tick()` ne change rien d'observable, parce que le récapitulatif
+pose `deadlineMs:null` (donc `expired()` est faux) *et* que `at` a dépassé la
+dernière étape (donc `stepAt(at)` est nul). Deux mécanismes le couvrent déjà ;
+la garde est gardée pour l'intention, et le commentaire le dit.
+
+Les mutations qui comptent, toutes tuées : l'horloge non installée, l'horloge
+qui survit au parcours, la construction qui accepte un parcours sans horloge,
+l'horloge qui meurt au premier changement d'étape (la survie à la ré-entrée), la
+phrase « aucune main » retirée, le motif rabattu sur « temps écoulé », les
+quatre paires dangereuses neutralisées, `METRIC_KEYS` vidée sur les deux
+miroirs, les deux comptes qui recomptent la métrique, les deux sondes bien
+formées retirées, la demi-paire gardée à la lecture, `quality` rendue à son
+plancher, `NaN` qui retraverse, la réinitialisation qui n'archive plus ou qui
+reste aveugle à l'illisible, tout outil déclaré réputé installé, la croix
+rejournalisée « échap », un quatrième statut d'étape au contrat, et
+`calibrate()` qui rend `undefined` sans rien lancer.
