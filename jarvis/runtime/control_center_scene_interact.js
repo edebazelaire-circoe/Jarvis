@@ -321,6 +321,64 @@
     return out;
   }
 
+  /* Rectangle de sélection tiré dans le vide, en pixels de fenêtre : la boîte
+     normalisée entre le point d'appui et le point courant. Tirer vers le haut
+     ou vers la gauche donne le même rectangle que vers le bas et la droite. */
+  function bandBox(start, current) {
+    const left = Math.min(start.x, current.x), top = Math.min(start.y, current.y);
+    return {left, top, width: Math.abs(current.x - start.x), height: Math.abs(current.y - start.y)};
+  }
+
+  /* Un rectangle de sélection compte à partir de ce côté (px). En deçà, l'appui
+     reste un clic dans le vide — qui, lui, désélectionne. */
+  const BAND_MIN_PX = 6;
+
+  function bandStarted(band) {
+    return !!band && Math.max(band.width, band.height) >= BAND_MIN_PX;
+  }
+
+  /* Objets pris par le rectangle : ceux dont la boîte **dessinée** le touche.
+     Dessinée, et non rangée : le champ tourne, et c'est ce que l'utilisateur
+     voit qu'il encercle. Toucher suffit — exiger l'objet entier obligerait à
+     englober les fenêtres pour les prendre. */
+  function bandHits(band, boxes) {
+    if (!bandStarted(band)) return [];
+    const right = band.left + band.width, bottom = band.top + band.height;
+    const out = [];
+    for (const box of boxes || []) {
+      if (!box || typeof box.id !== 'string') continue;
+      if (box.left <= right && box.left + box.width >= band.left
+          && box.top <= bottom && box.top + box.height >= band.top) out.push(box.id);
+    }
+    return out;
+  }
+
+  /* La sélection après un geste : `mode` vaut « replace » (la sélection devient
+     celle du rectangle), « add » (Ctrl ou Maj tenu : on ajoute) ou « toggle »
+     (Ctrl-clic sur un objet : présent, il sort ; absent, il entre). Rend un
+     tableau, dans l'ordre d'entrée : le dernier entré sert d'ancre au menu et
+     aux touches. */
+  function nextSelection(current, ids, mode) {
+    const chosen = Array.isArray(ids) ? ids.filter(id => typeof id === 'string' && id) : [];
+    const kept = Array.isArray(current) ? current.filter(id => typeof id === 'string' && id) : [];
+    if (mode === 'toggle') {
+      const out = kept.slice();
+      for (const id of chosen) {
+        const at = out.indexOf(id);
+        if (at < 0) out.push(id); else out.splice(at, 1);
+      }
+      return out;
+    }
+    if (mode === 'add') {
+      const out = kept.slice();
+      for (const id of chosen) if (out.indexOf(id) < 0) out.push(id);
+      return out;
+    }
+    const out = [];
+    for (const id of chosen) if (out.indexOf(id) < 0) out.push(id);
+    return out;
+  }
+
   /* Sélection « Archiver les travaux terminés » : étoiles terminées, et
      signaux runtime orphelins. Les signaux d'une étoile sélectionnée partent
      par la cascade : comptés, pas envoyés. Jamais un travail en cours, en
@@ -651,7 +709,7 @@
     LONG_PRESS_MS,PENDING_MAX_MS,MAX_ARCHIVE_IDS,MAX_COMMAND_BYTES,TERMINAL,REFUSALS,TRANSPORT,
     clampBox,dragThreshold,pxToUnits,dragBox,resizeBox,resizable,keyIntent,applyKey,representationBox,sameBox,
     MANIPULATION_SIDES,resizeBySides,manipulateBox,rebaseManipulation,
-    signalOwners,cascadeOf,bulkSelection,chunkIds,menuModel,commands,transportFailure,networkFailure,classifyResponse,stopOutcome,
+    signalOwners,cascadeOf,bulkSelection,chunkIds,menuModel,commands,BAND_MIN_PX,bandBox,bandStarted,bandHits,nextSelection,transportFailure,networkFailure,classifyResponse,stopOutcome,
     focusAfterRemoval,commitLayout,geometrySteps,commitGeometry,createPending,hiddenObjects});
   /* **La levée reste, mais elle ne sort pas d'ici** — même forme que
      l'enregistreur Bare Hands (§12) et le canal de commandes. Rattrapée, la

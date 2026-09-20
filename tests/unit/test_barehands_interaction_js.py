@@ -2062,8 +2062,19 @@ def test_the_scene_publishes_a_frame_seam_that_reuses_its_own_geometry(tmp_path)
     assert "clampBox" not in seam and "pxToUnits" not in seam
     # La souris gagne sur une main : le geste le plus explicite des deux — et
     # réciproquement, une main ne vole pas un nœud que la souris tient déjà.
-    assert "frames.cancel(id);" in source
-    assert "if(gesture&&gesture.id===id)return null;" in seam
+    #
+    # **Les deux moitiés portent sur toute la sélection, pas sur le seul objet
+    # pris.** Depuis la fusion d'`origin/main`, un glissement souris emmène ses
+    # voisins sélectionnés (`carried`), et `holdNode` est donc écrit par les
+    # deux chemins pour chacun d'eux. Ne libérer que `id` laisserait une main
+    # tenir un cadre que la souris déplace, et le `holdNode(member.id,false)`
+    # du lâcher couperait le fil de cette main sans qu'elle le sache.
+    assert "for(const member of carried)frames.cancel(member.id);" in source, (
+        "la souris ne libère pas toutes les mains des objets qu'elle emmène"
+    )
+    assert "gesture.id===id||(gesture.carried||[]).some(member=>member.id===id)" in seam, (
+        "une main peut encore saisir un voisin que la souris est en train de déplacer"
+    )
     # Éteinte, la scène ne rend **pas** de fenêtre : `begin` avait sa porte,
     # `viewport` non — et une échelle absente vaut six fois trop de course, en
     # silence, côté Bare Hands (qui la refuse maintenant).

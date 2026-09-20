@@ -11,7 +11,7 @@
    Deux parties, comme `control_center_scene_settings.js` :
    - ici, la logique pure (`window.JarvisSceneView`) : définition des réglages,
      normalisation de ce qui a été enregistré, variables CSS et classes que la
-     page pose, options de la dérive orbitale, libellés. Ni DOM, ni stockage :
+     page pose, options de la rotation du champ, libellés. Ni DOM, ni stockage :
      les tests l'exécutent avec node (`tests/unit/test_scene_view_prefs.py`) ;
    - le bouton, la fenêtre et l'enregistrement local vivent dans le bloc
      navigateur de `control_center_scene_page.js`, avec le reste de la scène.
@@ -34,11 +34,11 @@
     Object.freeze({id:'breathe',type:'toggle',label:'Halo qui respire',value:true,needs:'halo',
       hint:'Sinon le halo reste d’une seule intensité.'}),
     Object.freeze({id:'orbit',type:'toggle',label:'Gravitation',value:true,
-      hint:'Les étoiles décrivent une petite ellipse autour de leur place. Éteinte, elles sont parfaitement immobiles.'}),
+      hint:'Chaque étoile tourne lentement autour de JARVIS, dans le sens horaire. Éteinte, la constellation est parfaitement immobile.'}),
     Object.freeze({id:'spread',type:'range',label:'Ampleur de l’orbite',min:.3,max:2.5,step:.1,value:1,needs:'orbit',
-      hint:'La taille de l’ellipse. Elle reste bornée par la zone libre autour de l’étoile.'}),
+      hint:'L’écartement du champ autour de JARVIS. Il reste borné par la place libre : une étoile ne sort jamais de la zone sûre en tournant.'}),
     Object.freeze({id:'speed',type:'range',label:'Vitesse de l’orbite',min:.25,max:4,step:.25,value:1,needs:'orbit',
-      hint:'Un tour dure environ trente secondes à vitesse 1.'}),
+      hint:'Un tour complet dure environ quatre minutes à vitesse 1.'}),
     Object.freeze({id:'links',type:'toggle',label:'Fils entre les objets',value:true,
       hint:'Les traits qui relient une étoile à son parent, à son signal, à ses résultats.'}),
   ]);
@@ -134,8 +134,8 @@
     return out;
   }
 
-  /* Options de `JarvisSceneLayout.orbitOf`, ou `null` quand la gravitation est
-     éteinte : la page ne calcule alors aucune dérive. */
+  /* Options de `JarvisSceneLayout.orbitField`, ou `null` quand la gravitation
+     est éteinte : la page ne calcule alors aucun tour. */
   function orbitOptions(settings){
     const value=normalize(settings);
     if(!value.orbit)return null;

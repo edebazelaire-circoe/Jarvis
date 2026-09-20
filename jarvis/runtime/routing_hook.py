@@ -33,6 +33,7 @@ import sys
 from typing import Any, Mapping, Sequence
 
 from jarvis.domain import routing
+from jarvis.domain.agent_charter import sign_brief
 from jarvis.domain.routing import (
     CandidateRef,
     ModelCandidate,
@@ -89,6 +90,56 @@ def strip_profile(text: str) -> str:
 def _allow() -> dict[str, Any]:
     """Aucune opinion : le CLI fait ce qu'il avait prévu."""
     return {}
+
+
+def charter_input(event: Mapping[str, Any]) -> dict[str, Any] | None:
+    """La consigne signée de la charte du chantier, ou `None` si rien à changer.
+
+    Même raison d'être que la réécriture de modèle : un prompt système peut
+    prier le cerveau de bien briefer, il ne peut pas l'obliger. La charte, elle,
+    est apposée ici, sur l'appel lui-même, donc à toute profondeur et quel que
+    soit ce que le cerveau a rédigé.
+
+    Fonction pure et sans entrée-sortie : elle ne lit ni réglage ni disque, pour
+    que la charte survive à une politique d'aiguillage éteinte ou cassée.
+    """
+    if str(event.get("tool_name") or "") not in AGENT_TOOLS:
+        return None
+    tool_input = event.get("tool_input")
+    tool_input = tool_input if isinstance(tool_input, Mapping) else {}
+    brief = tool_input.get("prompt")
+    if not isinstance(brief, str) or not brief.strip():
+        return None  # Sans consigne, il n'y a pas de chantier à cadrer.
+    # Le marqueur de profil reste en tête : c'est là que le lit tout ce qui
+    # relit la consigne après coup, et la charte ne doit pas l'enterrer.
+    match = PROFILE_PATTERN.match(brief)
+    head = match.group(0) if match is not None else ""
+    signed = head + sign_brief(brief[len(head):])
+    return None if signed == brief else {"prompt": signed}
+
+
+def _merge(event: Mapping[str, Any], output: dict[str, Any], *changes: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Réunir les réécritures dans un seul `updatedInput`, complet.
+
+    L'entrée est renvoyée entière, pas seulement les clés changées : selon que
+    le CLI remplace ou fusionne, une entrée partielle perdrait la consigne — le
+    genre de doute qu'on ne laisse pas à l'exécution.
+    """
+    applied = {key: value for change in changes if change for key, value in change.items()}
+    section = dict((output.get("hookSpecificOutput") or {})) if output else {}
+    # Un refus reste un refus : rien ne part, il n'y a pas de consigne à cadrer.
+    if not applied or section.get("permissionDecision") == "deny":
+        return output
+    tool_input = event.get("tool_input")
+    tool_input = dict(tool_input) if isinstance(tool_input, Mapping) else {}
+    updated = {**tool_input, **dict(section.get("updatedInput") or {}), **applied}
+    reason = str(section.get("permissionDecisionReason") or "")
+    if "prompt" in applied:
+        note = "Charte du chantier apposée sur la consigne du sous-agent."
+        reason = f"{reason} {note}".strip()
+    # `allow` est déjà la décision du hook quand il réécrit le modèle : rien de
+    # nouveau n'est autorisé ici, seule l'entrée change.
+    return _output(str(section.get("permissionDecision") or "allow"), reason, updated)
 
 
 def _output(decision: str, reason: str, updated: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -258,13 +309,22 @@ def hook_settings(runtime_root: Path, *, python: str | None = None) -> str:
 
 
 def run(event: Mapping[str, Any], runtime_root: Path) -> dict[str, Any]:
-    """Décider et consigner. Toute panne interne se solde par un silence."""
+    """Décider et consigner. Toute panne interne se solde par un silence.
+
+    La charte du chantier est calculée d'abord, et apposée quoi qu'il arrive à
+    l'aiguillage : elle ne dépend d'aucun réglage, et une politique éteinte ne
+    doit pas rendre les sous-agents muets sur leur propre rôle.
+    """
     journal = RuntimeJournal(runtime_root)
+    try:
+        charter = charter_input(event)
+    except Exception:  # noqa: BLE001 - une charte qui lève ne vaut pas un outil perdu
+        charter = None
     try:
         settings = load_settings(runtime_root)
         policy = agent_routing.load_policy(settings)
         if not policy.enabled:
-            return _allow()
+            return _merge(event, _allow(), charter)
         candidates = offline_candidates(runtime_root, policy, settings=settings)
         output, decision = decide(event, policy, candidates)
     except Exception as exc:  # noqa: BLE001 - un hook qui lève bloquerait l'outil
@@ -277,10 +337,10 @@ def run(event: Mapping[str, Any], runtime_root: Path) -> dict[str, Any]:
             )
         except OSError:
             pass
-        return _allow()
+        return _merge(event, _allow(), charter)
 
-    _log(journal, event, output, decision)
-    return output
+    _log(journal, event, output, decision, charter=charter is not None)
+    return _merge(event, output, charter)
 
 
 def _log(
@@ -288,13 +348,15 @@ def _log(
     event: Mapping[str, Any],
     output: Mapping[str, Any],
     decision: RoutingDecision | None,
+    *,
+    charter: bool = False,
 ) -> None:
     """La preuve d'aiguillage dans la trace : des codes, jamais de raisonnement.
 
     Ce que l'on garde suffit à expliquer un mauvais choix — le profil, les
     candidats vus et leur verdict, celui retenu, ce que le cerveau demandait.
     """
-    if decision is None and not output:
+    if decision is None and not output and not charter:
         return
     tool_input = event.get("tool_input")
     tool_input = tool_input if isinstance(tool_input, Mapping) else {}
@@ -306,6 +368,9 @@ def _log(
         "requested_model": str(tool_input.get("model") or ""),
         "subagent_type": str(tool_input.get("subagent_type") or ""),
         "applied": applied or "unchanged",
+        # La charte n'est pas une décision d'aiguillage : elle est consignée à
+        # part pour qu'« unchanged » garde son sens (aucun modèle réécrit).
+        "charter": charter,
     }
     if decision is not None:
         data.update(decision.as_dict())

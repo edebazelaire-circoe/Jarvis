@@ -306,6 +306,24 @@ class LocalCoreClient:
         async with session.post(self.base_url + f"/v1/conversations/{conversation_id}/brain-turns", headers=self.headers, json=payload) as response:
             return await self._json(response)
 
+    async def cancel_brain_turn(self, conversation_id: str, *, correlation_id: str) -> dict[str, Any]:
+        """Abandonner la réponse d'un tour en vol, sans annuler son travail.
+
+        Appelée quand l'utilisateur reprend la parole pendant que le cerveau
+        réfléchit : la réponse orale de ce tour-là n'a plus lieu d'être, mais
+        tout ce que le tour a lancé (jobs, sous-agents) continue et rendra son
+        résultat par le chemin ordinaire.
+
+        Rend `{"cancelled": bool, ...}`. `cancelled=false` n'est pas une erreur :
+        le tour s'était déjà soldé entre-temps.
+        """
+
+        session = await self._http()
+        async with session.post(self.base_url + f"/v1/conversations/{conversation_id}/brain-turns/cancel",
+                                headers=self.headers,
+                                json={"schema_version": 1, "correlation_id": correlation_id}) as response:
+            return await self._json(response)
+
     async def call_tool(self, name: str, arguments: dict[str, object], *, conversation_id: str | None = None) -> dict[str, Any]:
         session = await self._http()
         payload = {"name": name, "arguments": arguments, "conversation_id": conversation_id}

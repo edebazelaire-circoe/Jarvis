@@ -580,6 +580,32 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisScenePageCor
      aussi peuplée se lit mieux immobile. */
   const CALM_POINTS=96;
 
+  /* Images-clés du tour du champ : les étapes de `JarvisSceneLayout.orbitSteps`
+     — un angle qui avance du même pas, d'un bout à l'autre de la période, et
+     qui boucle exactement sur son départ. Les nœuds et le calque des fils
+     lisent les **mêmes** étapes et reçoivent le **même** décalage
+     (`translate`) : le mouvement du champ est une translation, donc chaque fil
+     tombe sur les deux nouveaux centres, à tout instant. `--sc-orbit-r`, posé
+     par la page sur le conteneur, est le rayon du cercle parcouru. */
+  function orbitKeyframes(){
+    const rx='var(--sc-orbit-rx,0px)',ry='var(--sc-orbit-ry,0px)';
+    const dx='var(--sc-orbit-dx,0px)',dy='var(--sc-orbit-dy,0px)';
+    /* Position sur le cercle, moins l'écart à la place : `transform` garde la
+       place (la géométrie de la scène), `translate` porte le tour et rien
+       d'autre. Un objet au centre n'a ni rayon ni écart : il ne bouge pas. */
+    const steps=L.orbitSteps().map(step=>
+      `${step.at}%{translate:calc(${rx} * ${step.x} - ${dx}) calc(${ry} * ${step.y} - ${dy})}`);
+    /* Le calque des fils tourne du même angle autour du même centre : une
+       rotation envoie le segment qui joint deux étoiles sur le segment qui
+       joint leurs deux nouvelles places, donc les fils restent noués sans
+       qu'on les redessine. Le resserrement du champ voyage avec. */
+    const field=L.orbitSteps().map(step=>
+      `${step.at}%{transform:scale(var(--sc-orbit-ax,1),var(--sc-orbit-ay,1)) `
+      + `scale(var(--sc-orbit-scale,1)) rotate(${step.angle}deg) `
+      + `scale(var(--sc-orbit-iax,1),var(--sc-orbit-iay,1))}`);
+    return `@keyframes sc-orbit{${steps.join('')}}@keyframes sc-orbit-field{${field.join('')}}`;
+  }
+
   /* Registre d'empilement de la page (voir `control_center.html`) : visage 0,
      canevas Omega 0, **scène 20**, barre du haut et indication vocale 31,
      dock 32, panneau 33, bandeau GPT-Live 35, pastilles 40 (Omega : panneau
@@ -607,6 +633,14 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
 /* Gestes (Slice 08) : aucun glissement animé pendant la main de l'utilisateur. */
 .scene .sc-node.sc-dragging{transition:none!important;cursor:grabbing}
 .scene.sc-gesture{cursor:grabbing}
+/* Rectangle de sélection tiré dans le vide : un cadre fin, rien qui capte le
+   pointeur — ce qui est dessous doit rester visible et cliquable. */
+.sc-band{position:absolute;pointer-events:none;z-index:2147482000;
+  border:1px solid var(--sc-ink);background:rgba(120,170,255,.10);border-radius:2px}
+/* Sous la main : tout le champ s'arrête. L'étoile tenue garde exactement le
+   décalage qu'elle avait sous le curseur, et les autres ne glissent pas pendant
+   qu'on range. Le tour reprend où il s'était arrêté au relâchement. */
+.scene.sc-gesture .sc-orbit,.scene.sc-gesture .sc-field{animation-play-state:paused}
 .sc-capsule,.sc-window{cursor:grab}
 .sc-grip{position:absolute;right:3px;bottom:3px;width:13px;height:13px;display:grid;place-items:center;color:var(--sc-muted);cursor:nwse-resize;
   opacity:0;transition:opacity .14s ease-out}
@@ -622,33 +656,30 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
 .sc-grip:hover{color:var(--sc-ink)}
 /* Seul le déplacement glisse (composition) ; une taille change d'un coup. */
 .scene.sc-ready .sc-node{transition:transform .42s cubic-bezier(.16,1,.3,1)}
-/* Gravitation (dérive orbitale, 'JarvisSceneLayout.orbitOf') : l'étoile
-   parcourt une petite ellipse autour de sa place, très lentement. La place
-   elle-même reste dans 'transform' (la géométrie de la scène) ; la dérive tient
-   dans la propriété 'translate', appliquée en plus, jamais enregistrée. Les
-   huit étapes échantillonnent l'ellipse 'tangente · sin + radial · cos', en
-   'linear' : le mouvement tourne sans jamais s'arrêter ni repartir en arrière.
-   Une capsule ou une fenêtre n'a pas de dérive (aucune variable posée) et ne
-   bouge donc pas ; une étoile épinglée dérive comme les autres — sa place, elle,
-   ne change pas. */
-.scene .sc-orbit{animation:sc-orbit var(--sc-orbit-ms,36000ms) linear infinite;animation-delay:var(--sc-orbit-delay,0ms)}
-@keyframes sc-orbit{
-  0%{translate:var(--sc-rx) var(--sc-ry)}
-  12.5%{translate:calc(var(--sc-tx) * .707 + var(--sc-rx) * .707) calc(var(--sc-ty) * .707 + var(--sc-ry) * .707)}
-  25%{translate:var(--sc-tx) var(--sc-ty)}
-  37.5%{translate:calc(var(--sc-tx) * .707 - var(--sc-rx) * .707) calc(var(--sc-ty) * .707 - var(--sc-ry) * .707)}
-  50%{translate:calc(var(--sc-rx) * -1) calc(var(--sc-ry) * -1)}
-  62.5%{translate:calc(var(--sc-tx) * -.707 - var(--sc-rx) * .707) calc(var(--sc-ty) * -.707 - var(--sc-ry) * .707)}
-  75%{translate:calc(var(--sc-tx) * -1) calc(var(--sc-ty) * -1)}
-  87.5%{translate:calc(var(--sc-tx) * -.707 + var(--sc-rx) * .707) calc(var(--sc-ty) * -.707 + var(--sc-ry) * .707)}
-  100%{translate:var(--sc-rx) var(--sc-ry)}
-}
-/* Un lien porte la même classe : il suit les deux étoiles qu'il joint par la
-   dérive moyenne de ses extrémités (exacte pour une étoile et son signal, qui
-   partagent la même orbite). */
+/* Gravitation : **le champ tourne autour du visage**. Chaque objet parcourt le
+   cercle centré sur le centre de la fenêtre qui passe par sa place, dans le
+   sens horaire, un tour par période, à vitesse angulaire constante — jamais un
+   va-et-vient, et jamais le champ entier qui glisse d'un bloc (les deux
+   versions précédentes, l'une puis l'autre). Tous lisent la même animation et
+   la même période ; ce qui les distingue est leur rayon ('--sc-orbit-r') et
+   leur phase ('animation-delay'), calculés par 'JarvisSceneLayout.orbitTrack'.
+   Le calque des fils ('.sc-field') tourne du même angle autour du même centre :
+   une rotation envoie le segment qui joint deux étoiles sur celui qui joint
+   leurs nouvelles places, donc l'extrémité d'un fil reste sur le centre de son
+   étoile sans qu'on le redessine. La place elle-même reste dans 'transform' (la
+   géométrie de la scène) : le tour s'ajoute par-dessus, dans 'translate', et
+   n'est jamais enregistré. Capsules et fenêtres tournent avec le champ, et
+   l'arrangement ne change pas d'un pixel. Une étoile épinglée tourne comme les
+   autres — sa place, elle, ne change pas. */
+.scene .sc-orbit{animation:sc-orbit var(--sc-orbit-ms,240000ms) linear infinite}
+.scene .sc-field{transform-box:view-box;transform-origin:var(--sc-orbit-cx,50%) var(--sc-orbit-cy,50%);
+  animation:sc-orbit-field var(--sc-orbit-ms,240000ms) linear infinite}
+${orbitKeyframes()}
 /* Scène très peuplée : la gravitation et les halos s'arrêtent (une couche de
-   composition par étoile). La lecture prime sur le mouvement. */
-.scene.sc-calm .sc-orbit{animation:none;translate:none}
+   composition par étoile). La lecture prime sur le mouvement. 'sc-still' : pas
+   la place de tourner sans sortir de la zone sûre — le champ reste immobile. */
+.scene.sc-calm .sc-orbit,.scene.sc-still .sc-orbit,.scene.sc-no-orbit .sc-orbit{animation:none;translate:none}
+.scene.sc-calm .sc-field,.scene.sc-still .sc-field,.scene.sc-no-orbit .sc-field{animation:none;transform:none}
 .scene.sc-calm .sc-mark::after{animation:none}
 /* Réglages d'affichage de l'utilisateur ('JarvisSceneView', fenêtre « Affichage
    des étoiles ») : la gravitation éteinte s'arrête tout de suite, sans attendre
@@ -728,7 +759,7 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
 .sc-signal.sc-urgency-medium.sc-anim .sc-ring{animation:sc-alert 3.2s cubic-bezier(.2,.7,.3,1) infinite;will-change:transform,opacity}
 .sc-signal.sc-urgency-low .sc-mark{width:6px;height:6px;margin:-3px 0 0 -3px;box-shadow:none}
 .sc-signal.sc-urgency-low .sc-ring{width:14px;height:14px;margin:-7px 0 0 -7px;border:1px solid color-mix(in srgb,var(--tone) 38%,transparent);transform:none}
-.scene.sc-paused .sc-ring,.scene.sc-paused .sc-orbit,.scene.sc-paused .sc-mark::after{animation-play-state:paused}
+.scene.sc-paused .sc-ring,.scene.sc-paused .sc-orbit,.scene.sc-paused .sc-field,.scene.sc-paused .sc-mark::after{animation-play-state:paused}
 .sc-badge{position:absolute;right:0;top:0;width:12px;height:12px;border-radius:50%;background:#061017;display:grid;place-items:center;
   color:var(--sc-ink);box-shadow:0 0 0 1px rgba(220,236,244,.46)}
 /* Sur un point, en bas à droite : le haut droit est la place du signal. */
@@ -766,7 +797,11 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
    passer de troisième ligne. */
 .sc-wtitle{flex:none;margin:0 13px 8px;padding:0;font-size:13px;font-weight:600;line-height:1.35;max-height:2.7em;color:#f1f8fb;overflow:hidden;
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere}
-.sc-summary{flex:1 1 auto;min-height:0;padding:0 13px 10px;font-size:12px;line-height:1.5;color:#b3cbd6;white-space:pre-wrap;overflow:hidden;overflow-wrap:anywhere;
+/* Résumé plus haut que la place qui lui reste : il défile dans la fenêtre
+   (molette, PageHaut/PageBas) au lieu d'être coupé sans recours. Barre fine et
+   discrète, la même que la liste d'un artefact. */
+.sc-summary{flex:1 1 auto;min-height:0;padding:0 13px 10px;font-size:12px;line-height:1.5;color:#b3cbd6;white-space:pre-wrap;overflow:hidden auto;overflow-wrap:anywhere;
+  overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:rgba(151,191,209,.28) transparent;
   -webkit-mask-image:linear-gradient(#000 calc(100% - 22px),transparent);mask-image:linear-gradient(#000 calc(100% - 22px),transparent)}
 /* Liste bornée : la dernière ligne visible s'efface au lieu d'être coupée net. */
 .sc-items{flex:none;list-style:none;margin:0;padding:8px 13px 11px;display:grid;gap:4px;border-top:1px solid var(--sc-edge);max-height:45%;overflow:hidden;
@@ -791,7 +826,8 @@ html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc
 .sc-kind-artifact.sc-window .sc-summary{flex:0 0 auto;max-height:38%}
 .sc-kind-artifact.sc-window .sc-items{flex:1 1 auto;max-height:none;min-height:0;align-content:start;overflow-y:auto;overscroll-behavior:contain;
   scrollbar-width:thin;scrollbar-color:rgba(151,191,209,.28) transparent}
-.sc-items.sc-at-end{-webkit-mask-image:none;mask-image:none}
+/* Défilé jusqu'en bas : plus rien à annoncer, le fondu s'efface. */
+.sc-items.sc-at-end,.sc-summary.sc-at-end{-webkit-mask-image:none;mask-image:none}
 /* Résumé entier : pas de fondu sur sa dernière ligne. */
 .sc-summary.sc-fits{-webkit-mask-image:none;mask-image:none}
 .sc-items .sc-item-link{display:flex;gap:10px;align-items:baseline;flex:1 1 auto;min-width:0;color:#e6f4fa;text-decoration:none;border-radius:3px;cursor:pointer}
@@ -885,8 +921,9 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
   .scene .sc-node{transition:none!important}
   .scene .sc-ring,.scene .sc-note::before,.scene .sc-node.sc-stopping .sc-ring{animation:none!important}
   /* Ni gravitation ni respiration : l'étoile garde sa lueur, immobile. */
-  .scene .sc-orbit,.scene .sc-mark::after{animation:none!important}
+  .scene .sc-orbit,.scene .sc-field,.scene .sc-mark::after{animation:none!important}
   .scene .sc-orbit{translate:none!important}
+  .scene .sc-field{transform:none!important}
   .scene .sc-label{transition:none}
 }`;
 
@@ -909,7 +946,7 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     core_refused:'Core refuse la lecture',invalid_scene_response:'réponse invalide',timeout:'pas de réponse',
     patch_waits_busy:'trop de pages ouvertes',TypeError:'Control Center injoignable',network_error:'Control Center injoignable'};
 
-  let enabled=false,root=null,linksEl=null,statusEl=null,liveEl=null,raf=0,statusTicker=null;
+  let enabled=false,root=null,linksEl=null,fieldEl=null,statusEl=null,liveEl=null,raf=0,statusTicker=null;
   let lastView=null,lastState=null,layout=null,layoutState=null,edgesSig='',statusSig='',announced='',readyTimer=0;
   let lastModel=null,focusId=null,tabStopId=null,statusFailed=false,visibilityToken=0,animTimer=0;
   /* Slice 12 : réglages d'affichage de l'utilisateur (ce navigateur), bouton et
@@ -918,9 +955,17 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
   /* Slice 08 : modifications optimistes, geste en cours, édition au clavier. */
   const pending=I?I.createPending():null;
   let viewMemo={state:null,version:-1,value:null},gesture=null,keyEdit=null,kbdMenuAt=0,pruneTimer=0;
+  /* Dernier tour calculé : le rendu le pose, le relâchement d'un geste le relit
+     pour retrouver la place d'un point dessiné. */
+  let lastField=null;
   /* Reprise QA : sélection (poignée visible), focus à rendre après un retrait,
      étoiles en cours d'arrêt, délai réel d'un arrêt (lu dans `/api/status`). */
   let selectedId=null,pendingFocus=null,jobCancelTimeoutS=null,serverMemo={state:null,value:null},actionLiveEl=null;
+  /* Sélection, dans l'ordre d'entrée. `selectedId` en est la dernière : c'est
+     l'ancre du menu, des flèches et du focus — un seul objet à la fois y répond,
+     et c'est très bien ainsi. Le rectangle et le Ctrl-clic, eux, en tiennent
+     plusieurs (demande du 19/09/2026). */
+  let selection=[],band=null;
   const stopping=new Map();
   const actionStats={moves:0,resizes:0,representations:0,visibility:0,pins:0,archives:0,bulkArchives:0,stops:0,menus:0,refused:0,failed:0,rolledBack:0};
   const inflight=new Set();
@@ -929,6 +974,9 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
   /* Fils dessinés (`{edge,line}`, dans l'ordre de `applyEdges`) et nœud tenu
      par l'utilisateur dont ils suivent le mouvement, image par image. */
   let edgeLines=[],follow=null;
+  /* Champ immobile ou non au dernier rendu : sert à resynchroniser les
+     animations de la rotation quand il repart (`syncField`). */
+  let fieldFrozen=null;
   const leader={held:false,mode:'lock'};
   const channel=typeof BroadcastChannel==='function'?new BroadcastChannel(CHANNEL_NAME):null;
   const shared=!!channel&&!!(navigator.locks&&typeof navigator.locks.request==='function');
@@ -1197,6 +1245,13 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
       :'Scène constellation. Flèches pour parcourir, Échap pour sortir.');
     linksEl=document.createElementNS(SVG_NS,'svg');
     linksEl.setAttribute('class','sc-links');linksEl.setAttribute('aria-hidden','true');
+    /* Les fils vivent dans un groupe à part : c'est lui qui tourne avec le
+       champ, d'un bloc, autour du centre de la fenêtre. Il est créé une fois
+       pour toutes — son animation ne repart donc jamais de zéro quand les fils
+       sont redessinés, et reste en phase avec celle des nœuds. */
+    fieldEl=document.createElementNS(SVG_NS,'g');
+    fieldEl.setAttribute('class','sc-field');
+    linksEl.appendChild(fieldEl);
     statusEl=document.createElement('div');
     statusEl.className='sc-status';statusEl.hidden=true;
     /* Région vivante à part : annonce les changements d'état, jamais les
@@ -1231,17 +1286,17 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
   function teardown(){
     if(raf){cancelAnimationFrame(raf);raf=0}
     if(readyTimer){cancelAnimationFrame(readyTimer);readyTimer=0}
-    stopFollow();edgeLines=[];
+    stopFollow();edgeLines=[];fieldFrozen=null;
     stopStatusTicker();
     if(root)root.remove();
     const style=document.getElementById('jarvisSceneStyle');
     if(style)style.remove();
     if(animTimer){window.clearTimeout(animTimer);animTimer=0}
-    root=null;linksEl=null;statusEl=null;liveEl=null;actionLiveEl=null;nodes.clear();freshUntil.clear();
+    root=null;linksEl=null;fieldEl=null;statusEl=null;liveEl=null;actionLiveEl=null;nodes.clear();freshUntil.clear();
     viewBtn=null;viewEl=null;viewRows=[];
     lastView=null;lastState=null;layout=null;layoutState=null;lastModel=null;
     viewMemo={state:null,version:-1,value:null};serverMemo={state:null,value:null};gesture=null;
-    selectedId=null;pendingFocus=null;stopping.clear();
+    selectedId=null;selection=[];band=null;pendingFocus=null;stopping.clear();
     if(keyEdit&&keyEdit.timer)window.clearTimeout(keyEdit.timer);
     keyEdit=null;
     if(pruneTimer){window.clearTimeout(pruneTimer);pruneTimer=0}
@@ -1363,7 +1418,13 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
       const state=badge(node.exec,node.restartUnknown);if(state)head.append(state);
       parts.push(head,element('div','sc-wtitle',node.title));
       if(node.explains)parts.push(originButton(node.explains));
-      if(node.summary)parts.push(element('div','sc-summary',node.summary));
+      if(node.summary){
+        /* Comme la liste d'un artefact : un conteneur qui défile deviendrait un
+           arrêt de tabulation sans nom (Chrome). Hors tabulation, il défile à la
+           molette et par PageHaut/PageBas depuis la fenêtre. */
+        const summary=element('div','sc-summary',node.summary);summary.tabIndex=-1;
+        parts.push(summary);
+      }
       if(node.items.length){
         /* Un conteneur qui défile deviendrait un arrêt de tabulation sans nom
            (Chrome) : hors tabulation, défilement par PageHaut/PageBas depuis la
@@ -1427,35 +1488,108 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
   }
 
   /* Placement d'un nœud : `L.drawnRect`, la même règle que la capture (reprise QA M2).
-     `drift` est sa dérive orbitale : elle s'ajoute par la propriété `translate`
-     et ne touche ni au placement dessiné, ni à la géométrie de la scène, ni à
-     la capture. `null` : aucune dérive ; absent : aperçu d'un geste, la dérive
-     en cours est gardée telle quelle. */
-  function position(el,node,drift){
+     Le tour du champ s'ajoute par-dessus, dans la propriété `translate`
+     (`markOrbit`) : il ne touche ni au placement dessiné, ni à la géométrie de
+     la scène, ni à la capture. */
+  function position(el,node,field){
     const rect=L.drawnRect(node);
     el.style.transform=`translate(${rect.left}px,${rect.top}px)`;
     el.style.width=node.shape==='point'?'':`${rect.width}px`;
     el.style.height=node.shape==='point'?'':`${rect.height}px`;
+    /* Hauteur de la boîte d'une fenêtre : plafond que `fitWindowHeights`
+       applique après le rendu, quand il sait ce que le contenu occupe. */
+    if(node.shape==='window')el.dataset.boxHeight=String(rect.height);
+    else delete el.dataset.boxHeight;
     el.style.zIndex=String(node.stack);
-    /* Aperçu d'un geste (`drift` absent) : les animations en cours ne bougent
-       pas — l'étoile suit le curseur sans sauter ni resynchroniser son halo. */
-    if(drift===undefined)return;
-    setOrbit(el,drift);
+    applyOrbit(el,node,field);
     /* Respiration du halo décalée par la place de l'étoile : stable d'un rendu
        à l'autre, et tous les halos ne battent pas ensemble. */
     if(node.shape==='point')el.style.setProperty('--sc-glow-delay',`${glowDelay(node)}ms`);
   }
 
-  /* Variables de la dérive sur un élément (nœud ou lien), ou retrait de
-     l'animation quand il n'en a pas : autre forme qu'un point, ou pas la place
-     de dériver dans la zone sûre. */
-  function setOrbit(el,drift){
-    if(!drift){el.classList.remove('sc-orbit');return}
-    const style=el.style;
-    style.setProperty('--sc-tx',`${drift.tx}px`);style.setProperty('--sc-ty',`${drift.ty}px`);
-    style.setProperty('--sc-rx',`${drift.rx}px`);style.setProperty('--sc-ry',`${drift.ry}px`);
-    style.setProperty('--sc-orbit-ms',`${drift.ms}ms`);style.setProperty('--sc-orbit-delay',`${drift.delay}ms`);
+  /* L'orbite de ce nœud : son rayon et sa phase, qui sont à lui, puis la classe
+     qui déclenche l'animation commune. Un nœud au centre n'en a pas — il
+     tournerait sur un rayon nul, et la classe l'exclurait de l'arrêt collectif
+     pour rien. Reposer une place ne relance rien (la classe est déjà là) : le
+     nœud suit sa nouvelle place sans perdre la phase du champ, c'est ce qui
+     tient l'étoile sous le curseur pendant un geste. Le champ, lui, est arrêté
+     ou non par le conteneur. */
+  function applyOrbit(el,node,field){
+    /* Geste en cours : l'étoile est tenue par la main. Son tour est en pause et
+       son décalage doit rester celui qu'elle avait au moment de la prise —
+       le lui retirer ici la ferait sauter loin du curseur, d'un demi-tour. */
+    if(el.classList.contains('sc-dragging'))return;
+    const track=field?L.orbitTrack(node,field):null;
+    if(!track){
+      el.classList.remove('sc-orbit');
+      el.style.animationDelay='';el.style.translate='';
+      return;
+    }
+    el.style.setProperty('--sc-orbit-rx',`${track.rx}px`);
+    el.style.setProperty('--sc-orbit-ry',`${track.ry}px`);
+    el.style.setProperty('--sc-orbit-dx',`${track.dx}px`);
+    el.style.setProperty('--sc-orbit-dy',`${track.dy}px`);
+    el.style.animationDelay=`${track.delayMs}ms`;
+    markOrbit(el);
+  }
+
+  function markOrbit(el){
+    if(!el||el.classList.contains('sc-orbit'))return;
     el.classList.add('sc-orbit');
+    syncOrbit(el);
+  }
+
+  /* Toutes les animations de la rotation partagent l'origine du temps du
+     document : un nœud qui apparaît, un nœud dont `fill` a réécrit les classes
+     ou le calque des fils reprend le champ exactement là où il est, jamais au
+     début de son propre cycle. Sans cela, deux animations lancées à dix
+     secondes d'écart tourneraient en opposition et les fils décrocheraient.
+     Appelé au moment où la classe est posée, jamais à chaque image. */
+  function syncOrbit(el){
+    if(!el||!el.getAnimations)return;
+    const now=fieldClock();
+    try{
+      for(const anim of el.getAnimations()){
+        if(anim.animationName!=='sc-orbit'&&anim.animationName!=='sc-orbit-field')continue;
+        if(Number(anim.currentTime)!==now)anim.currentTime=now;
+      }
+    }catch(_error){/* animation sans horloge (page cachée) : la passe suivante réessaie. */}
+  }
+
+  /* L'horloge du champ : le temps du tour tel que le calque des fils le vit.
+
+     C'est *lui* la référence, et non l'horloge du document : un geste met les
+     animations en pause, et elles reprennent donc en retard sur le document,
+     du temps qu'a duré le geste. Une étoile resynchronisée sur zéro après cela
+     sautait à la phase du document — ce qu'on voyait au lâcher, l'objet posé
+     ailleurs qu'à l'endroit lâché, et son fil resté en arrière, le calque, lui,
+     étant à l'heure du champ. */
+  function fieldClock(){
+    if(fieldEl&&fieldEl.getAnimations)try{
+      for(const anim of fieldEl.getAnimations()){
+        if(anim.animationName!=='sc-orbit-field')continue;
+        const time=Number(anim.currentTime);
+        if(Number.isFinite(time))return time;
+      }
+    }catch(_error){/* pas encore d'horloge : l'origine fait une référence. */}
+    return 0;
+  }
+
+  /* Champ arrêté puis relancé (scène trop peuplée, réglage de l'utilisateur,
+     plus la place de tourner) : le conteneur relance d'un coup toutes les
+     animations, mais chacune avec sa propre origine — elles sont donc toutes
+     remises sur l'horloge du document. Rien à faire à l'arrêt. */
+  function syncField(frozen){
+    if(frozen===fieldFrozen)return;
+    fieldFrozen=frozen;
+    if(frozen)return;
+    /* Le calque d'abord : c'est lui qui porte l'horloge que les autres lisent.
+       Sa propre remise à l'heure part donc de l'origine, une seule fois. */
+    if(fieldEl&&fieldEl.getAnimations)try{
+      for(const anim of fieldEl.getAnimations())
+        if(anim.animationName==='sc-orbit-field'&&anim.startTime!==0)anim.startTime=0;
+    }catch(_error){/* animation sans horloge : la passe suivante réessaie. */}
+    for(const record of nodes.values())syncOrbit(record.el);
   }
 
   function glowDelay(node){
@@ -1463,35 +1597,12 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     return -Math.round(seed/97*GLOW_MS);
   }
 
-  /* Dérive de chaque nœud dessiné, une fois par rendu : lue par les nœuds puis
-     par les liens. */
-  function drifts(list,vp){
-    const map=new Map();
-    /* Gravitation éteinte par l'utilisateur : aucune dérive n'est calculée, et
-       la classe `sc-no-orbit` a déjà arrêté celles qui tournaient. */
-    const options=V?V.orbitOptions(viewPrefs):undefined;
-    if(options===null)return map;
-    for(const node of list){
-      const drift=L.orbitOf(node,vp,options);
-      if(drift)map.set(node.id,drift);
-    }
-    return map;
-  }
-
-  /* Dérive d'un lien : moyenne de celles de ses deux extrémités (exacte pour
-     une étoile et son signal, qui partagent la même orbite ; une extrémité
-     immobile freine le lien d'autant). */
-  function edgeDrift(edge,map){
-    const a=map.get(edge.from),b=map.get(edge.to);
-    if(!a&&!b)return null;
-    const mid=(p,q)=>Math.round(((p||0)+(q||0))/2*10)/10;
-    const base=a||b;
-    return {tx:mid(a&&a.tx,b&&b.tx),ty:mid(a&&a.ty,b&&b.ty),rx:mid(a&&a.rx,b&&b.rx),ry:mid(a&&a.ry,b&&b.ry),
-      ms:base.ms,delay:base.delay};
-  }
-
-  function applyNodes(list,map){
-    const seen=new Set();
+  function applyNodes(list,field){
+    const seen=new Set(),chosen=new Set(selection);
+    /* Le champ entre dans la clé de placement : une fenêtre redimensionnée
+       change le centre et le resserrement, donc l'orbite de chaque objet, sans
+       qu'aucune place ait bougé. */
+    const shape=field?`${field.cx}|${field.cy}|${field.scale}|${field.ms}`:'';
     for(const node of list){
       seen.add(node.id);
       let record=nodes.get(node.id);
@@ -1527,15 +1638,12 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
       if(record.el.dataset.representation!==node.representation)
         record.el.dataset.representation=node.representation;
       if(record.anim!==node.animate){record.el.classList.toggle('sc-anim',node.animate);record.anim=node.animate}
-      record.el.classList.toggle('sc-selected',node.id===selectedId);
+      record.el.classList.toggle('sc-selected',chosen.has(node.id));
       record.el.classList.toggle('sc-stopping',stopping.has(node.id));
-      const drift=map.get(node.id)||null;
-      const place=`${node.shape}|${node.compact}|${node.cx}|${node.cy}|${node.box.left}|${node.box.top}|${node.box.width}|${node.box.height}|${node.stack}`
-        +`|${drift?`${drift.tx},${drift.ty},${drift.ms}`:''}`;
+      const place=`${node.shape}|${node.compact}|${node.cx}|${node.cy}|${node.box.left}|${node.box.top}|${node.box.width}|${node.box.height}|${node.stack}|${shape}`;
       /* Sous la main de l'utilisateur (glisser, clavier) : l'aperçu garde la
-         place, et l'étoile garde la dérive qu'elle avait — elle suit le
-         curseur sans sauter. */
-      if(place!==record.place&&!record.dragging){position(record.el,node,drift);record.place=place}
+         place — c'est le geste qui pose le placement, image par image. */
+      if(place!==record.place&&!record.dragging){position(record.el,node,field);record.place=place}
     }
     for(const [id,record] of nodes){
       if(seen.has(id))continue;
@@ -1562,11 +1670,43 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
 
   /* Liste d'éléments entière : pas de fondu. */
   function markItemsThatFit(){
+    fitWindowHeights();
     fitHosts();
-    for(const summary of root.querySelectorAll('.sc-summary'))summary.classList.toggle('sc-fits',summary.scrollHeight<=summary.clientHeight+1);
+    for(const summary of root.querySelectorAll('.sc-summary')){
+      summary.classList.toggle('sc-fits',summary.scrollHeight<=summary.clientHeight+1);
+      markScrolledToEnd(summary);
+    }
     for(const list of root.querySelectorAll('.sc-items')){
       list.classList.toggle('sc-fits',list.scrollHeight<=list.clientHeight+1);
-      markItemsEnd(list);
+      markScrolledToEnd(list);
+    }
+  }
+
+  /* Fenêtre plus haute que ce qu'elle montre : dessinée à la hauteur de son
+     contenu, collée en haut de sa boîte, pour qu'aucun vide ne traîne en bas.
+     Rendu seulement — comme la capsule dessinée à sa hauteur naturelle dans une
+     boîte plus grande (`JarvisSceneLayout.drawnRect`) : la boîte enregistrée
+     dans la scène ne change pas, et la place réservée autour non plus. Un
+     contenu plus haut que la boîte garde la hauteur de la boîte et défile.
+
+     La mesure (hauteur libre, puis hauteur retenue) coûte deux calculs de mise
+     en page : elle n'est refaite que si la boîte, la largeur ou le contenu de
+     la fenêtre ont changé — un rendu de routine ne la déclenche pas, et le
+     défilement en cours de l'utilisateur n'est jamais remis à zéro. */
+  function fitWindowHeights(){
+    for(const record of nodes.values()){
+      const el=record.el;
+      /* Sous la main de l'utilisateur : la fenêtre suit la poignée, elle ne se
+         recroqueville pas au milieu du geste. Elle se recalera au relâchement. */
+      if(record.dragging||!el.classList.contains('sc-window'))continue;
+      const box=Number(el.dataset.boxHeight||0);
+      if(!(box>0))continue;
+      const key=`${box}|${el.style.width}|${record.content}`;
+      if(record.fitKey===key)continue;
+      record.fitKey=key;
+      el.style.height='auto';
+      const natural=Math.ceil(el.getBoundingClientRect().height);
+      el.style.height=`${natural>0?Math.min(box,natural):box}px`;
     }
   }
 
@@ -1598,14 +1738,16 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     }
   }
 
-  /* Liste défilée jusqu'en bas : plus de fondu sur la dernière entrée. */
-  function markItemsEnd(list){
-    list.classList.toggle('sc-at-end',list.scrollTop+list.clientHeight>=list.scrollHeight-1);
+  /* Contenu défilé jusqu'en bas (liste d'un artefact, résumé d'une fenêtre) :
+     plus de fondu sur la dernière ligne. */
+  function markScrolledToEnd(el){
+    el.classList.toggle('sc-at-end',el.scrollTop+el.clientHeight>=el.scrollHeight-1);
   }
 
   function onScroll(event){
-    const list=event.target;
-    if(list&&list.classList&&list.classList.contains('sc-items'))markItemsEnd(list);
+    const el=event.target;
+    if(!el||!el.classList)return;
+    if(el.classList.contains('sc-items')||el.classList.contains('sc-summary'))markScrolledToEnd(el);
   }
 
   /* Tabulation itinérante : un seul arrêt de tabulation dans la scène. */
@@ -1636,11 +1778,14 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
       el.blur();return;
     }
     if((event.key==='PageDown'||event.key==='PageUp')&&!event.altKey&&!event.ctrlKey&&!event.metaKey){
-      const list=el.querySelector('.sc-items');
-      if(list&&list.scrollHeight>list.clientHeight+1){
+      /* La liste d'abord (l'artefact la met en avant), sinon le résumé de la
+         fenêtre : le seul des deux qui déborde se laisse parcourir. */
+      const scroller=[el.querySelector('.sc-items'),el.querySelector('.sc-summary')]
+        .find(part=>part&&part.scrollHeight>part.clientHeight+1);
+      if(scroller){
         event.preventDefault();
-        list.scrollTop+=(event.key==='PageDown'?1:-1)*Math.max(20,Math.round(list.clientHeight*0.85));
-        markItemsEnd(list);
+        scroller.scrollTop+=(event.key==='PageDown'?1:-1)*Math.max(20,Math.round(scroller.clientHeight*0.85));
+        markScrolledToEnd(scroller);
       }
       return;
     }
@@ -1743,10 +1888,44 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
   const BH=window.JarvisBarehandsContracts;
   const barehandsActive=()=>!!document.querySelector(BH.DOM.tokenSelector);
 
-  /* Aperçu d'une boîte (unités) sur le nœud, dans sa forme dessinée. */
+  /* Aperçu d'une boîte (unités) sur le nœud, dans sa forme dessinée. Seule la
+     place change : le tour du champ continue sous l'aperçu, sans reprendre au
+     début, donc l'étoile reste sous le curseur et son fil noué à son centre. */
   function previewAt(el,node,box){
-    const screen=L.toScreen(viewportNow(),L.drawnBox(node.representation,box));
-    position(el,{...node,box:screen,cx:round1(screen.left+screen.width/2),cy:round1(screen.top+screen.height/2)});
+    const vp=viewportNow();
+    const screen=L.toScreen(vp,L.drawnBox(node.representation,box));
+    const preview={...node,box:screen,cx:round1(screen.left+screen.width/2),cy:round1(screen.top+screen.height/2)};
+    position(el,preview);
+  }
+
+  /* La place à enregistrer pour une boîte lâchée à l'écran : le tour est relu à
+     l'envers, à l'angle où il est en ce moment. Sans cela l'objet resterait sous
+     le curseur jusqu'au relâchement, puis sauterait — la place enregistrée étant
+     reprise par le tour, qui lui rajouterait son décalage par-dessus.
+     Un objet qui ne tourne pas (fenêtre, champ arrêté) garde sa boîte. */
+  function placeOf(box,node){
+    if(!box||!lastField||!L.orbitTrack(node,lastField))return box;
+    const vp=viewportNow();
+    const screen=L.toScreen(vp,L.drawnBox(node.representation,box));
+    /* Où l'objet est *dessiné* au moment du lâcher : sa place d'avant, telle que
+       le tour la dessine, plus le déplacement de la main. Le tour est en pause
+       sous la main : son décalage est donc resté celui de la prise, et c'est
+       bien ce point-là que l'utilisateur voit sous son curseur. */
+    const turn=fieldTurn();
+    const moved={x:screen.left+screen.width/2-node.cx,y:screen.top+screen.height/2-node.cy};
+    const held=L.orbitTurnPoint({x:node.cx,y:node.cy},lastField,turn);
+    const drop={x:held.x+moved.x,y:held.y+moved.y};
+    const place=L.orbitUnturn(drop,lastField,turn);
+    const shift=I.pxToUnits(vp,place.x-node.cx-moved.x,place.y-node.cy-moved.y);
+    return {...box,x:Math.round((box.x+shift.dx)*10)/10,y:Math.round((box.y+shift.dy)*10)/10};
+  }
+
+  /* Où en est le tour, en fraction de période : lu sur l'animation elle-même,
+     jamais sur l'horloge du document — une page cachée, une scène en pause ou un
+     geste en cours arrêtent l'animation, pas le temps qui passe. */
+  function fieldTurn(){
+    if(!lastField)return 0;
+    return ((fieldClock()/lastField.ms)%1+1)%1;
   }
 
   function holdNode(id,held){
@@ -1885,7 +2064,18 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
 
      Une seule main tient un objet à la fois : si la souris s'y met, elle gagne
      (`onPointerDown` annule la tenue), parce que c'est le geste le plus
-     explicite des deux. */
+     explicite des deux.
+
+     **Une main prend un cadre, pas une sélection.** Depuis la fusion de
+     `origin/main`, un glissement à la souris sur un objet sélectionné emmène
+     toute la sélection (`carried`, `onPointerDown`) ; une prise à mains nues
+     n'emmène que l'objet nommé par `begin(id)`. Les deux gestes portent donc
+     le même nom et ne recouvrent pas le même ensemble, et c'est **délibéré
+     mais non décidé** : la Slice 06 a spécifié la prise d'un cadre (décisions
+     10, 11, 19), pas d'une sélection, et l'étendre demanderait un aperçu, une
+     attente (`pending`) et un refus par objet — une fonctionnalité, pas une
+     résolution de conflit. Laissé en l'état, tracé ici, à arbitrer par
+     l'humain avant d'élargir la couture. */
   const barehandsHeld=new Set();
 
   function framesRelease(id){
@@ -1900,7 +2090,11 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
        le moteur le dit alors à l'écran plutôt que de manipuler un fantôme. */
     begin(id){
       if(!enabled)return null;
-      if(gesture&&gesture.id===id)return null;
+      /* Souris déjà dessus : elle gagne, dans ce sens comme dans l'autre. Le
+         geste souris emmène toute sa sélection, donc « dessus » veut dire
+         « parmi les objets emmenés », pas seulement l'objet pris — sinon une
+         main saisirait un voisin que la souris est en train de déplacer. */
+      if(gesture&&(gesture.id===id||(gesture.carried||[]).some(member=>member.id===id)))return null;
       const node=nodeOf(id),box=drawnBox(id),state=viewState();
       const item=state&&state.objects.get(id);
       if(!node||!box||!item)return null;
@@ -1933,26 +2127,131 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
        part six fois trop loin. Mieux vaut `null`, qui se refuse et se dit. */
     viewport(){return enabled&&root?viewportNow():null},
   });
+  /* Un appui qui peut ouvrir un rectangle de sélection : sur le fond de la
+     page, sur le visage ou sur la scène elle-même — jamais sur un objet (qui a
+     son propre geste), ni sur une commande, ni dans un panneau du Control
+     Center, qui gardent les leurs. */
+  function bandCandidate(event){
+    if(!enabled||!root||root.hidden||band||gesture)return false;
+    if(event.button!==undefined&&event.button!==0)return false;
+    const target=event.target;
+    if(!target||!target.closest)return false;
+    if(target.closest('#sceneLayer .sc-node,.sc-view,.sc-view-btn,.sc-status,#ctxMenu,#confirmBack'))return false;
+    if(target.closest('a,button,input,select,textarea,label,summary,[contenteditable],[role="button"],[role="tab"],[role="menuitem"]'))return false;
+    return target===document.body||target===root||target===document.documentElement
+      ||target.classList.contains('face')||target.closest('#sceneLayer')===root;
+  }
+
+  /* Début d'un rectangle de sélection. Ctrl ou Maj tenu, il s'ajoute à la
+     sélection courante au lieu de la remplacer. La suite du geste est écoutée
+     sur le document : la scène ne reçoit pas les évènements du vide, et une
+     capture de pointeur sur un calque transparent aux clics ne se comporte pas
+     de la même façon d'un navigateur à l'autre. */
+  function startBand(event){
+    band={pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,
+      add:!!(event.ctrlKey||event.metaKey||event.shiftKey),moved:false,el:null};
+    document.addEventListener('pointermove',onBandMove,true);
+    document.addEventListener('pointerup',onBandUp,true);
+    document.addEventListener('pointercancel',onBandUp,true);
+  }
+
+  function onBandMove(event){
+    if(!band||event.pointerId!==band.pointerId)return;
+    const box=bandFrame(event);
+    if(box)event.preventDefault();
+  }
+
+  function onBandUp(event){
+    if(!band||event.pointerId!==band.pointerId)return;
+    document.removeEventListener('pointermove',onBandMove,true);
+    document.removeEventListener('pointerup',onBandUp,true);
+    document.removeEventListener('pointercancel',onBandUp,true);
+    endBand(event.type==='pointercancel'?null:bandFrame(event));
+  }
+
+  function bandFrame(event){
+    const box=I.bandBox({x:band.startX,y:band.startY},{x:event.clientX,y:event.clientY});
+    if(!band.moved){
+      if(!I.bandStarted(box))return null;
+      band.moved=true;
+      band.el=document.createElement('div');
+      band.el.className='sc-band';band.el.setAttribute('aria-hidden','true');
+      root.appendChild(band.el);
+    }
+    const origin=root.getBoundingClientRect();
+    band.el.style.left=`${box.left-origin.left}px`;band.el.style.top=`${box.top-origin.top}px`;
+    band.el.style.width=`${box.width}px`;band.el.style.height=`${box.height}px`;
+    return box;
+  }
+
+  function endBand(box){
+    const held=band;
+    band=null;
+    if(held&&held.el)held.el.remove();
+    if(!held||!held.moved||!box)return;
+    /* Les boîtes **dessinées**, lues sur la page : le champ tourne, et ce que
+       l'utilisateur encercle est ce qu'il voit, pas la place enregistrée. */
+    const boxes=[];
+    for(const [id,record] of nodes){
+      const rect=record.el.getBoundingClientRect();
+      if(rect.width||rect.height)boxes.push({id,left:rect.left,top:rect.top,width:rect.width,height:rect.height});
+    }
+    const hits=I.bandHits(box,boxes);
+    applySelection(I.nextSelection(selection,hits,held.add?'add':'replace'));
+    if(lastModel)updateTabStop(lastModel.nodes);
+    announce(selection.length?`${selection.length} objet${selection.length>1?'s':''} sélectionné${selection.length>1?'s':''}.`:'Sélection vidée.');
+  }
 
   function onPointerDown(event){
     if(event.button!==0||!enabled)return;
     const el=nodeElement(event.target);
+    /* Le vide n'arrive jamais ici : la scène laisse passer les clics partout
+       sauf sur ses objets (`pointer-events`), donc le rectangle de sélection
+       naît du document (`onDocumentPointerDown`). */
     if(!el)return;
     /* Lien d'entrée ou origine d'un artefact : leur clic natif, pas de geste. */
     if(event.target.closest('.sc-item-link,.sc-origin'))return;
+    /* Ctrl-clic (Cmd sur Mac) : l'objet entre dans la sélection ou en sort, et
+       rien d'autre — ni geste, ni menu, ni changement de place. */
+    if((event.ctrlKey||event.metaKey)&&!event.target.closest('.sc-grip')){
+      select(el.dataset.objectId,'toggle');
+      if(lastModel)updateTabStop(lastModel.nodes);
+      announce(selection.length?`${selection.length} objet${selection.length>1?'s':''} sélectionné${selection.length>1?'s':''}.`:'Sélection vidée.');
+      event.preventDefault();
+      return;
+    }
     const id=el.dataset.objectId,node=nodeOf(id),box=drawnBox(id),state=viewState();
     const item=state&&state.objects.get(id);
     if(!node||!box||!item)return;
-    /* Une main tenait ce cadre : la souris est le geste le plus explicite des
-       deux, elle gagne — et la tenue s'annule proprement plutôt que de laisser
-       deux aperçus se disputer le même nœud. */
-    frames.cancel(id);
+    /* Objets emmenés par le geste : toute la sélection quand on prend l'un des
+       siens, sinon le seul objet pris. Un redimensionnement ne concerne que
+       l'objet dont on tient la poignée. */
+    const resizing=!!event.target.closest('.sc-grip')&&I.resizable(item.representation);
+    const carried=[];
+    for(const memberId of (!resizing&&selection.length>1&&selection.indexOf(id)>=0?selection:[id])){
+      const record=nodes.get(memberId),memberNode=nodeOf(memberId),memberBox=drawnBox(memberId);
+      const memberItem=state&&state.objects.get(memberId);
+      if(!record||!memberNode||!memberBox||!memberItem)continue;
+      carried.push({id:memberId,el:record.el,node:memberNode,representation:memberItem.representation,
+        box:{x:memberBox.x,y:memberBox.y,w:memberBox.w,h:memberBox.h},preview:null});
+    }
+    if(!carried.length)return;
+    /* Une main tenait un de ces cadres : la souris est le geste le plus
+       explicite des deux, elle gagne — et la tenue s'annule proprement plutôt
+       que de laisser deux aperçus se disputer le même nœud.
+
+       **Toute la sélection emmenée, pas seulement l'objet pris** : depuis que
+       le geste souris emmène ses voisins, `holdNode` est écrit par les deux
+       chemins pour chacun d'eux. Ne libérer que `id` laisserait une main tenir
+       un cadre que la souris déplace, et le `holdNode(member.id,false)` du
+       lâcher couperait le fil de cette main sans qu'elle le sache. */
+    for(const member of carried)frames.cancel(member.id);
     if(gesture)cancelGesture();
     if(keyEdit)flushKeyEdit('pointer');
     if(typeof closeMenu==='function')closeMenu(false);
-    const resize=!!event.target.closest('.sc-grip')&&I.resizable(item.representation);
-    gesture={id,el,node,mode:resize?'resize':'move',pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,
+    gesture={id,el,node,mode:resizing?'resize':'move',pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,
       box:{x:box.x,y:box.y,w:box.w,h:box.h},representation:item.representation,moved:false,menuOpened:false,preview:null,
+      carried,
       wasSelected:document.activeElement===el,longTimer:0,
       threshold:I.dragThreshold(event.pointerType,BH.isBareHandsPointerId(event.pointerId)||barehandsActive())};
     /* Appui long sans bouger : menu (Barehands, écran tactile). */
@@ -1976,11 +2275,23 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
       if(g.menuOpened||Math.hypot(dx,dy)<g.threshold)return;
       g.moved=true;
       window.clearTimeout(g.longTimer);
-      holdNode(g.id,true);root.classList.add('sc-gesture');
+      for(const member of g.carried)holdNode(member.id,true);
+      root.classList.add('sc-gesture');
     }
     const units=I.pxToUnits(viewportNow(),dx,dy);
-    g.preview=g.mode==='resize'?I.resizeBox(g.box,units.dx,units.dy,g.representation):I.dragBox(g.box,units.dx,units.dy,g.representation);
-    previewAt(g.el,g.node,g.preview);
+    if(g.mode==='resize'){
+      g.preview=I.resizeBox(g.box,units.dx,units.dy,g.representation);
+      previewAt(g.el,g.node,g.preview);
+      return;
+    }
+    /* Le même écart pour tous : la sélection se déplace d'un bloc, chacun borné
+       à la zone sûre pour son compte — un objet déjà au bord retient sa place,
+       il n'arrête pas les autres. */
+    for(const member of g.carried){
+      member.preview=I.dragBox(member.box,units.dx,units.dy,member.representation);
+      previewAt(member.el,member.node,member.preview);
+      if(member.id===g.id)g.preview=member.preview;
+    }
   }
 
   function endGesture(g){
@@ -2000,17 +2311,31 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
       if(g.wasSelected)openObjectMenu(g.id,{x:event.clientX,y:event.clientY,above:event.clientY},g.el);
       return;
     }
-    const box=g.preview;
-    holdNode(g.id,false);
-    if(!box||I.sameBox(box,g.box))return;
-    commitUserGeometry(g.id,box,g.mode).catch(error=>actionFailed(g.mode==='resize'?'Redimensionnement':'Déplacement',g.id,error));
+    /* Les places voulues sont inscrites en attente **avant** de lâcher la
+       main : lâcher d'abord redessinerait les nœuds à leur ancienne place — le
+       temps d'une image, l'objet repartait où il était puis revenait sous le
+       curseur, et l'œil ne voyait que ce va-et-vient (19/09/2026).
+       `commitUserGeometry` inscrit l'attente avant sa première pause, donc le
+       rendu qui suit voit déjà les nouvelles places. */
+    const sent=[];
+    if(g.mode==='resize'){
+      if(g.preview&&!I.sameBox(g.preview,g.box))sent.push([g.id,commitUserGeometry(g.id,g.preview,g.mode)]);
+    }else for(const member of g.carried){
+      const box=placeOf(member.preview,member.node);
+      if(!box||I.sameBox(box,member.box))continue;
+      sent.push([member.id,commitUserGeometry(member.id,box,g.mode)]);
+    }
+    for(const member of g.carried)holdNode(member.id,false);
+    const action=g.mode==='resize'?'Redimensionnement':'Déplacement';
+    for(const [id,promise] of sent)promise.catch(error=>actionFailed(action,id,error));
+    if(sent.length>1)announce(`${sent.length} objets déplacés.`);
   }
 
   function cancelGesture(){
     const g=gesture;
     if(!g)return;
     endGesture(g);
-    if(g.moved)holdNode(g.id,false);
+    if(g.moved)for(const member of g.carried)holdNode(member.id,false);
   }
 
   function onPointerCancel(event){
@@ -2033,13 +2358,23 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
 
   /* Objet sélectionné : dernier objet touché ou focalisé ; sa poignée reste
      visible sans survol. Un appui ailleurs dans la page le désélectionne. */
-  function select(id){
-    if(selectedId===id)return;
-    const previous=selectedId&&nodes.get(selectedId);
-    if(previous)previous.el.classList.remove('sc-selected');
-    selectedId=id;
-    const record=id&&nodes.get(id);
-    if(record)record.el.classList.add('sc-selected');
+  /* `mode` : « replace » (défaut), « add » (Ctrl ou Maj tenu) ou « toggle »
+     (Ctrl-clic : présent, l'objet sort ; absent, il entre). `null` vide tout. */
+  function select(id,mode){
+    if(id===null)return applySelection([]);
+    if(mode&&I)return applySelection(I.nextSelection(selection,[id],mode));
+    applySelection([id]);
+  }
+
+  function applySelection(ids){
+    const next=[];
+    for(const id of ids||[])if(next.indexOf(id)<0)next.push(id);
+    const before=new Set(selection);
+    const after=new Set(next);
+    for(const id of selection)if(!after.has(id)){const record=nodes.get(id);if(record)record.el.classList.remove('sc-selected')}
+    for(const id of next)if(!before.has(id)){const record=nodes.get(id);if(record)record.el.classList.add('sc-selected')}
+    selection=next;
+    selectedId=next.length?next[next.length-1]:null;
   }
 
   function onDocumentPointerDown(event){
@@ -2047,9 +2382,17 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     const target=event.target&&event.target.closest?event.target:null;
     /* Fenêtre des réglages d'affichage : un clic ailleurs la ferme. */
     if(viewEl&&!viewEl.hidden&&(!target||!target.closest('.sc-view,.sc-view-btn')))toggleViewPanel(false);
-    if(!selectedId)return;
+    if(!selection.length)return;
     if(target&&(target.closest('#sceneLayer .sc-node')||target.closest('#ctxMenu')||target.closest('#confirmBack')))return;
+    /* Ctrl ou Maj tenu : l'utilisateur agrandit sa sélection, il ne la jette pas. */
+    if(event.ctrlKey||event.metaKey||event.shiftKey)return;
     select(null);
+  }
+
+  /* Le rectangle de sélection s'ouvre ici, dans la même écoute : c'est le seul
+     endroit qui voit les appuis du vide. */
+  function onDocumentBandDown(event){
+    if(bandCandidate(event))startBand(event);
   }
 
   /* Maj+flèches / Ctrl+flèches : aperçu tout de suite, validation au relâchement
@@ -2400,31 +2743,34 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
 
   /* ------------------------------------------ fils pendant un geste */
 
-  /* Ancre d'un nœud dans le repère de la scène : le centre de sa zone dessinée
-     **telle qu'elle est à l'écran**. La place est dans `transform`, la dérive
-     orbitale dans `translate` : la boîte rendue est le seul endroit qui porte
-     les deux à la fois — et, pendant un geste, l'aperçu qui n'est encore écrit
-     nulle part. `null` : nœud plus dessiné. */
-  function anchorOf(id,origin){
+  /* Ancre d'un nœud dans le repère du calque des fils : le centre de sa zone
+     dessinée **telle qu'elle est à l'écran**, ramené par `matrix` dans le
+     repère du groupe qui tourne. La place est dans `transform`, l'arc du champ
+     dans `translate` : la boîte rendue est le seul endroit qui porte les deux à
+     la fois — et, pendant un geste, l'aperçu qui n'est encore écrit nulle part.
+     `null` : nœud plus dessiné. */
+  function anchorOf(id,matrix){
     const record=nodes.get(id);
     if(!record)return null;
     const r=record.el.getBoundingClientRect();
     if(!r.width&&!r.height)return null;
-    return {x:round1(r.left+r.width/2-origin.left),y:round1(r.top+r.height/2-origin.top)};
+    const point=new DOMPoint(r.left+r.width/2,r.top+r.height/2).matrixTransform(matrix);
+    return {x:round1(point.x),y:round1(point.y)};
   }
 
   /* Extrémités des fils qui touchent le nœud tenu, pour cette image. */
   function followEdges(){
-    if(!follow||!root)return;
-    if(!nodes.has(follow.id)){stopFollow();return}
-    const origin=root.getBoundingClientRect();
+    if(!follow||!root||!fieldEl)return;
+    /* De l'écran vers le repère du groupe : les extrémités posées ici passent
+       ensuite par la rotation du champ, comme celles des autres fils, et
+       retombent donc exactement sur les centres lus à l'écran. */
+    const screen=fieldEl.getScreenCTM();
+    if(!screen)return;
+    const matrix=screen.inverse();
     for(const {edge,line} of edgeLines){
-      if(edge.from!==follow.id&&edge.to!==follow.id)continue;
-      const a=anchorOf(edge.from,origin),b=anchorOf(edge.to,origin);
+      if(!follow.ids.has(edge.from)&&!follow.ids.has(edge.to))continue;
+      const a=anchorOf(edge.from,matrix),b=anchorOf(edge.to,matrix);
       if(!a||!b)continue;
-      /* La dérive des deux bouts est déjà dans les ancres : le fil ne la rejoue
-         pas par-dessus (sinon elle compterait deux fois). */
-      setOrbit(line,null);
       line.setAttribute('x1',a.x);line.setAttribute('y1',a.y);
       line.setAttribute('x2',b.x);line.setAttribute('y2',b.y);
     }
@@ -2436,38 +2782,43 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     followEdges();
   }
 
+  /* Plusieurs nœuds peuvent être tenus à la fois (sélection multiple) : leurs
+     fils suivent tous, sinon ceux des objets emmenés resteraient en arrière. */
   function startFollow(id){
-    if(follow&&follow.id===id)return;
-    stopFollow();
-    follow={id,raf:0};
+    if(follow){follow.ids.add(id);return}
+    follow={ids:new Set([id]),raf:0};
     followFrame();
   }
 
   /* Fin du geste (ou nœud parti) : les extrémités posées à la main ne valent
      plus rien, la passe suivante redessine tous les fils, dérive comprise. */
   function stopFollow(id){
-    if(!follow||(id!==undefined&&follow.id!==id))return;
+    if(!follow)return;
+    if(id!==undefined){
+      follow.ids.delete(id);
+      if(follow.ids.size)return;
+    }
     if(follow.raf)cancelAnimationFrame(follow.raf);
     follow=null;
     edgesSig='';
   }
 
-  function applyEdges(edges,vp,map){
-    const drift=edges.map(edge=>map?edgeDrift(edge,map):null);
-    const sig=`${vp.width}x${vp.height}|`+edges.map((e,i)=>`${e.id},${e.kind},${e.signal},${e.artifact},${e.tone},${e.x1},${e.y1},${e.x2},${e.y2}`
-      +`,${drift[i]?`${drift[i].tx}:${drift[i].ty}:${drift[i].ms}`:''}`).join(';');
+  /* Les fils sont posés à la place de référence de leurs deux bouts : c'est le
+     groupe qui les porte qui tourne avec le champ, du même angle que les nœuds
+     et autour du même centre. Rien à rejouer fil par fil. */
+  function applyEdges(edges,vp){
+    const sig=`${vp.width}x${vp.height}|`+edges.map(e=>`${e.id},${e.kind},${e.signal},${e.artifact},${e.tone},${e.x1},${e.y1},${e.x2},${e.y2}`).join(';');
     if(sig===edgesSig)return;
     edgesSig=sig;
     linksEl.setAttribute('viewBox',`0 0 ${vp.width} ${vp.height}`);
-    const lines=edges.map((edge,i)=>{
+    const lines=edges.map(edge=>{
       const line=document.createElementNS(SVG_NS,'line');
       line.setAttribute('x1',edge.x1);line.setAttribute('y1',edge.y1);line.setAttribute('x2',edge.x2);line.setAttribute('y2',edge.y2);
       line.setAttribute('class',`sc-link sc-link-${edge.kind}`+(edge.signal?` sc-link-signal sc-tone-${edge.tone}`:'')
         +(edge.artifact?` sc-link-artifact sc-tone-${edge.tone}`:''));
-      setOrbit(line,drift[i]);
       return line;
     });
-    linksEl.replaceChildren(...lines);
+    fieldEl.replaceChildren(...lines);
     edgeLines=edges.map((edge,i)=>({edge,line:lines[i]}));
     /* Passe pendant un geste : les fils du nœud tenu reprennent tout de suite
        leurs extrémités vivantes, sans une image de retard. */
@@ -2485,19 +2836,40 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     if(!enabled||!root)return;
     if(document.visibilityState==='hidden')return;
     const current=currentLayout();
-    if(!lastState||!current){applyNodes([],new Map());applyEdges([],{width:1,height:1},null);lastModel=null;return renderStatus()}
+    if(!lastState||!current){applyNodes([]);applyEdges([],{width:1,height:1});lastModel=null;return renderStatus()}
     const vp=L.viewport(root.clientWidth||window.innerWidth,root.clientHeight||window.innerHeight);
     const now=Date.now();
     markFresh(lastState,now);
     lastModel=L.viewModel(viewState(),current,vp,{objectLimit:lastView?lastView.objectLimit:L.OBJECT_LIMIT,errorLabels:errorLabels(),
       animatable:node=>(freshUntil.get(node.id)||{until:0}).until>now});
-    /* Gravitation : dérive de chaque étoile autour du centre, calculée pour ce
-       rendu seulement. Scène très peuplée : tout s'immobilise. */
+    /* Gravitation : le centre, la période et le resserrement du champ sont
+       calculés pour ce rendu ; le rayon et la phase, eux, appartiennent à
+       chaque objet. Le tour est continu et ne repart jamais de zéro. Scène très
+       peuplée : tout s'immobilise. Gravitation éteinte par l'utilisateur :
+       aucun champ n'est calculé, la classe `sc-no-orbit` a déjà arrêté ce qui
+       tournait. */
     const points=lastModel.nodes.reduce((n,node)=>n+(node.shape==='point'?1:0),0);
-    root.classList.toggle('sc-calm',points>CALM_POINTS);
-    const map=drifts(lastModel.nodes,vp);
-    applyNodes(lastModel.nodes,map);
-    applyEdges(lastModel.edges,vp,map);
+    const options=V?V.orbitOptions(viewPrefs):undefined;
+    const field=options===null?null:L.orbitField(lastModel.nodes,vp,options);
+    lastField=field;
+    if(field){
+      root.style.setProperty('--sc-orbit-ms',`${field.ms}ms`);
+      root.style.setProperty('--sc-orbit-cx',`${field.cx}px`);
+      root.style.setProperty('--sc-orbit-cy',`${field.cy}px`);
+      root.style.setProperty('--sc-orbit-scale',String(field.scale));
+      /* Les deux demi-axes et leurs inverses, calculés ici : une division dans
+         `calc()` par une variable reste mal servie d'un navigateur à l'autre. */
+      root.style.setProperty('--sc-orbit-ax',String(field.ax));
+      root.style.setProperty('--sc-orbit-ay',String(field.ay));
+      root.style.setProperty('--sc-orbit-iax',String(Math.round(1e6/field.ax)/1e6));
+      root.style.setProperty('--sc-orbit-iay',String(Math.round(1e6/field.ay)/1e6));
+    }
+    const calm=points>CALM_POINTS;
+    root.classList.toggle('sc-calm',calm);
+    root.classList.toggle('sc-still',!field);
+    applyNodes(lastModel.nodes,field);
+    applyEdges(lastModel.edges,vp);
+    syncField(calm||!field||options===null);
     renderStatus();
     /* Transitions actives seulement après le premier placement : pas de
        glissement depuis l'origine au chargement. */
@@ -2703,6 +3075,7 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
       window.addEventListener('storage',onViewStorage);
       document.addEventListener('visibilitychange',onVisibility);
       document.addEventListener('pointerdown',onDocumentPointerDown,true);
+      document.addEventListener('pointerdown',onDocumentBandDown,true);
       loop.setVisible(document.visibilityState!=='hidden');
       const visible=document.visibilityState!=='hidden';
       const start=()=>{if(enabled)loop.setEnabled(true)};
@@ -2742,7 +3115,7 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
         revision:lastState?lastState.revision:null,nodes:nodes.size,commits:committer.stats(),stats:view.stats,
         health:lastView?lastView.health:null,resolved:layout&&layoutState===viewState()?layout.resolved.length:0,
         pending:pending?pending.size():0,actions:{...actionStats},gesture:gesture?{id:gesture.id,mode:gesture.mode,moved:gesture.moved,threshold:gesture.threshold}:null,
-        selected:selectedId,stopping:[...stopping.keys()],jobCancelTimeoutS,captures:capturer?capturer.stats():null,
+        selected:selectedId,selection:[...selection],stopping:[...stopping.keys()],jobCancelTimeoutS,captures:capturer?capturer.stats():null,
         barehands:[...barehandsHeld],
         tabStops:root?root.querySelectorAll('[tabindex="0"]').length:0,animated:root?root.querySelectorAll('.sc-anim').length:0};
     },

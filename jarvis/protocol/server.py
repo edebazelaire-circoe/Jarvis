@@ -110,6 +110,7 @@ class LocalProtocolServer:
             web.get("/v1/conversations/{conversation_id}/context", self.context),
             web.post("/v1/conversations/{conversation_id}/turns", self.append_turn),
             web.post("/v1/conversations/{conversation_id}/brain-turns", self.submit_brain_turn),
+            web.post("/v1/conversations/{conversation_id}/brain-turns/cancel", self.cancel_brain_turn),
             web.get("/v1/conversations/{conversation_id}/speech-context", self.speech_context),
             web.get("/v1/conversations/{conversation_id}/outcomes", self.list_brain_outcomes),
             web.get("/v1/conversations/{conversation_id}/outcomes/{outcome_id}", self.get_brain_outcome),
@@ -525,6 +526,29 @@ class LocalProtocolServer:
         payload = {**jsonable(acceptance), **await self.core.brain.speech_context(turn.conversation_id),
                    "source": source.to_payload() if source else None}
         return web.json_response(payload, status=200 if acceptance.duplicate else 202)
+
+    async def cancel_brain_turn(self, request: web.Request) -> web.Response:
+        """Abandonner la réponse d'un tour en vol (barge-in pendant la réflexion).
+
+        La corrélation voyage dans le corps, pas dans le chemin : elle contient
+        des deux-points (`realtime:{conversation}:{item}`) et n'a pas à être
+        échappée deux fois pour traverser une URL.
+
+        Ne tue rien de ce que le tour a lancé : voir
+        `BrainOrchestrator.cancel_turn()`. Rend toujours 200, avec
+        `cancelled=false` quand plus rien ne tournait — la surface interrompt
+        souvent au moment exact où le tour se termine, et cette course n'est pas
+        une erreur.
+        """
+
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("cancel body must be a JSON object")
+        correlation_id = _optional_text(body.get("correlation_id"), "correlation_id")
+        if not correlation_id:
+            raise ValueError("correlation_id is required")
+        result = await self.core.brain.cancel_turn(request.match_info["conversation_id"], correlation_id)
+        return web.json_response(result)
 
     async def call_tool(self, request: web.Request) -> web.Response:
         body = await request.json()

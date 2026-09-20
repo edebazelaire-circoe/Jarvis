@@ -11,7 +11,7 @@ import sys
 from typing import Mapping
 
 from jarvis.adapters import openai_realtime
-from jarvis.domain import conversation_prompt, front_brain_prompt, live_prompt, work_attention_prompt
+from jarvis.domain import agent_charter, conversation_prompt, front_brain_prompt, live_prompt, work_attention_prompt
 from jarvis.domain.prompt_registry import (
     PromptDescriptor,
     PromptOperation,
@@ -158,6 +158,12 @@ def default_prompt_registry() -> PromptRegistry:
                     BACKEND_TURN_ADDITION, editable=True, apply_policy="next_invocation"),
         _descriptor("backend.turn.brief", control_center, "build_agent_brief", "Runtime Core context and admitted request",
                     variables=("context", "request_text"), dynamic=True, apply_policy="read_only"),
+        # Charte apposée par le hook d'aiguillage sur la consigne de chaque
+        # sous-agent (`routing_hook.charter_input`). Elle est déclarée ici parce
+        # qu'elle est visible du modèle ; elle n'est appliquée par aucun
+        # programme, le hook étant un processus court qui lit la constante.
+        _descriptor("agent.task.charter", agent_charter, "AGENT_TASK_CHARTER",
+                    agent_charter.AGENT_TASK_CHARTER, variables=("brief",), apply_policy="read_only"),
         # Consigne du tour que Core ouvre seul sur un changement de travail de
         # fond. Elle voyage comme le texte d'un tour, donc par `backend.*.turn` ;
         # elle est déclarée ici parce qu'elle est visible du modèle.

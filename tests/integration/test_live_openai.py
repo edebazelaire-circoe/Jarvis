@@ -17,6 +17,10 @@ Ce qu'ils couvrent :
   `speech_id`, premier bloc audio reçu, puis annulation de la sortie. C'est
   exactement ce que les faux websockets ne peuvent pas prouver : que le
   fournisseur accepte réellement cette forme de session et rend l'audio attendu.
+- `test_real_openai_reads_the_brain_text_after_a_barge_in` — la lecture fidèle
+  après un préambule coupé, comparée mot à mot au texte demandé. Aucun faux
+  websocket ne peut la prouver non plus : c'est le modèle, et lui seul, qui
+  décide de lire ou de répondre à la place du cerveau.
 
 Ce fichier n'a **pas** été exécuté contre le vrai OpenAI dans la tranche 12a :
 son résultat est donc « non vérifié », pas « réussi ».
@@ -25,7 +29,9 @@ son résultat est donc « non vérifié », pas « réussi ».
 from __future__ import annotations
 
 import asyncio
+import base64
 import os
+import unicodedata
 from pathlib import Path
 
 import pytest
@@ -48,6 +54,21 @@ gpt_live_only = pytest.mark.skipif(
 
 # Le fournisseur peut être lent ; il ne doit pas pouvoir être infini.
 LIVE_TIMEOUT_S = 30.0
+
+# Une phrase entière est générée avant son transcript final : le budget d'une
+# lecture complète n'est pas celui d'un premier bloc audio.
+LIVE_READING_TIMEOUT_S = 90.0
+
+# Là où l'utilisateur coupe le préambule, en millisecondes joués : la valeur
+# relevée dans la trace du 19/09 (`voice.barge_in`, 07:25:08).
+PREAMBLE_CUT_MS = 2718
+
+
+def _as_spoken(value: str) -> str:
+    """Comparer des phrases, pas des octets : le transcript a sa ponctuation."""
+
+    normalized = unicodedata.normalize("NFKC", value).replace("’", "'").replace(" ", " ")
+    return " ".join(normalized.split()).strip(" .")
 
 
 @pytest.mark.asyncio
@@ -130,6 +151,78 @@ async def test_real_openai_realtime_brain_speech():
         await asyncio.wait_for(session.cancel_output(), timeout=LIVE_TIMEOUT_S)
     finally:
         await session.close()
+
+
+@pytest.mark.asyncio
+@live_only
+async def test_real_openai_reads_the_brain_text_after_a_barge_in():
+    """La lecture fidèle survit à un préambule coupé (régression du 19/09).
+
+    Séquence relevée dans la trace : un préambule de surface, l'utilisateur qui
+    coupe — annulation puis troncature —, et la réponse du cerveau envoyée en
+    lecture fidèle huit secondes plus tard. Ce jour-là le modèle a repris le
+    préambule coupé puis répondu de lui-même : « je ne peux pas lire un texte
+    que je n'ai pas ». La troncature retire le transcript de l'élément audio, et
+    le tour inachevé qui reste dans la conversation l'emportait sur la consigne.
+
+    Rien hors ligne ne peut le montrer : c'est le modèle qui décide de lire ou
+    de parler à la place du cerveau. Mesuré contre le fournisseur, 0 lecture
+    fidèle sur 5 quand la conversation entre dans le contexte de la réponse,
+    5 sur 5 quand `speak()` la laisse dehors.
+    """
+
+    from jarvis.adapters.openai_realtime import OpenAIRealtimeSession
+    from jarvis.domain.v2 import PlaybackCursor
+
+    key = os.environ["OPENAI_API_KEY"]
+    model = os.getenv("OPENAI_REALTIME_MODEL", DEFAULT_CONTINUOUS_SURFACE_MODEL)
+    voice = os.getenv("OPENAI_REALTIME_VOICE", "cedar")
+    demand = "Est-ce que tu peux me résumer les tâches terminées ? On les prend une à une."
+    text = ("À l'écran il reste cinq travaux terminés : l'orbite qui tourne vraiment, le retour "
+            "en violet après le réflexe, et le diagnostic de latence. On commence par lequel ?")
+
+    session = await OpenAIRealtimeSession.connect(
+        api_key=key, model=model, voice=voice, context={}, tools=[], auto_turn=True,
+        continuous_brain=True,
+    )
+    heard: list[str] = []
+    speech_output: str | None = None
+    preamble_ms = 0.0
+    cut = asyncio.Event()
+    read = asyncio.Event()
+
+    async def drain() -> None:
+        nonlocal preamble_ms
+        async for envelope in session.events():
+            payload = envelope.payload or {}
+            if envelope.message_type == "realtime.audio" and speech_output is None:
+                preamble_ms += len(base64.b64decode(str(payload.get("pcm_b64") or ""))) / 48.0
+                if preamble_ms >= PREAMBLE_CUT_MS:
+                    cut.set()
+            elif (envelope.message_type == "realtime.assistant_transcript"
+                    and speech_output is not None and payload.get("output_id") == speech_output):
+                heard.append(str(payload.get("text") or ""))
+                read.set()
+
+    draining = asyncio.create_task(drain())
+    try:
+        preamble = await session.speak_reflex(transcript=demand)
+        await asyncio.wait_for(cut.wait(), timeout=LIVE_TIMEOUT_S)
+
+        cursor = PlaybackCursor(speech_id=preamble, played_ms=PREAMBLE_CUT_MS)
+        await session.cancel_output(cursor)
+        await session.truncate(cursor)
+
+        request = SpeechRequest(conversation_id="conv-live-barge-in", text=text, kind=SpeechKind.RESULT)
+        speech_output = await session.speak(request)
+        await asyncio.wait_for(read.wait(), timeout=LIVE_READING_TIMEOUT_S)
+    finally:
+        draining.cancel()
+        await session.close()
+
+    assert _as_spoken("".join(heard)) == _as_spoken(text), (
+        "la surface n'a pas lu le texte du cerveau après un barge-in : " + "".join(heard)
+    )
 
 
 @pytest.mark.asyncio

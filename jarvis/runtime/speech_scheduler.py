@@ -56,6 +56,7 @@ SPEECH_INTERRUPTED = "voice.speech.interrupted"
 SPEECH_EXPIRED = "voice.speech.expired"
 SPEECH_SUPERSEDED = "voice.speech.superseded"
 SPEECH_IGNORED = "voice.speech.ignored"
+SPEECH_TURN_ABANDONED = "voice.speech.turn_abandoned"
 SPEECH_DECIDED = "voice.speech.presentation_decided"
 SPEECH_ERROR_WITHHELD = "voice.speech.error_withheld"
 
@@ -257,6 +258,12 @@ class SpeechScheduler:
         self._candidates: OrderedDict[str, _Candidate] = OrderedDict()
         self._chain_next: OrderedDict[str, int] = OrderedDict()
         self._blocked_chains: set[str] = set()
+        # Corrélations dont l'utilisateur a repris la parole pendant que le
+        # cerveau réfléchissait : leur réponse n'a plus lieu d'être. Bornée,
+        # parce qu'une demande de parole émise juste avant l'abandon peut
+        # traverser `/v1/events` après lui, et serait sinon prononcée par-dessus
+        # la nouvelle question.
+        self._abandoned_correlations: OrderedDict[str, None] = OrderedDict()
         self._attempted_ids: set[str] = set()
         self._queued_at: dict[str, float] = {}
         self._current_source: SpeechSource | None = None
@@ -535,6 +542,69 @@ class SpeechScheduler:
         else:
             self._user_quiet.set()
             self._wakeup.set()
+
+    async def abandon_turn(self, correlation_id: str | None) -> bool:
+        """L'utilisateur a repris la parole pendant la réflexion : ce tour est abandonné.
+
+        Trois gestes, dans cet ordre, parce que le dernier peut attendre le
+        réseau et que les deux premiers rendent la main tout de suite :
+
+        1. la corrélation est notée abandonnée, ce qui rend inéligible toute
+           parole qui en vient — y compris celle qui traversait `/v1/events`
+           au moment de l'interruption ;
+        2. la file est replanifiée : les demandes déjà reçues pour ce tour
+           sortent en `superseded`, et l'accusé de réception qui l'attendait
+           est invalidé ;
+        3. Core est prié d'abandonner la tâche du tour (`cancel_brain_turn`).
+           Sans ce troisième geste, l'interruption ne ferait que **taire** le
+           cerveau : il continuerait de réfléchir et sa réponse reviendrait
+           plus tard, en travers de la question suivante.
+
+        Ce qui tourne n'est pas tué : jobs et sous-agents vivent hors de la
+        tâche du tour, et Core ne les touche pas (`BrainOrchestrator.cancel_turn`).
+
+        Un échec du troisième geste est tracé sans rien casser : la file est
+        déjà purgée localement, donc l'utilisateur a bien repris la main.
+        """
+
+        if not correlation_id or self._stopping:
+            return False
+        if correlation_id in self._abandoned_correlations:
+            return False
+        self._abandoned_correlations[correlation_id] = None
+        while len(self._abandoned_correlations) > 64:
+            self._abandoned_correlations.popitem(last=False)
+        for queued in tuple(self._pending) + tuple(self._deferred.values()):
+            if queued.correlation_id == correlation_id:
+                self._defer(queued, SpeechCandidateStatus.SUPERSEDED, "turn_abandoned")
+        self._invalidate_reflex("turn_abandoned", correlation_id=correlation_id)
+        reflex = self._reflex
+        if reflex is not None and reflex.correlation_id == correlation_id:
+            self._reflex = None
+            self._skip_reflex(reflex, "turn_abandoned")
+        self._replan()
+        cancel = getattr(self.core, "cancel_brain_turn", None)
+        cancelled: object = None
+        error: str | None = None
+        if callable(cancel):
+            try:
+                result = await cancel(self.conversation_id, correlation_id=correlation_id)
+                cancelled = bool((result or {}).get("cancelled")) if isinstance(result, dict) else None
+            except Exception as exc:  # transport, 4xx, Core arrêté : jamais fatal ici
+                error = f"{type(exc).__name__}: {exc}"
+        self._trace(
+            SPEECH_TURN_ABANDONED,
+            "Tour du cerveau abandonné : l'utilisateur a repris la parole pendant la réflexion",
+            level="warning" if error else "info",
+            data={"conversation_id": self.conversation_id,
+                  "session_id": str(getattr(self.session, "session_id", "")) or None,
+                  "correlation_id": correlation_id,
+                  "core_cancelled": cancelled,
+                  "core_reachable": callable(cancel),
+                  "error": error},
+        )
+        self._wakeup.set()
+        return True
 
     def _output_still_alive(self, output_id: str) -> bool:
         if getattr(self.session, "active_output_id", None) == output_id:
@@ -958,6 +1028,10 @@ class SpeechScheduler:
         candidate = self._candidates.get(request.id)
         if candidate is not None and candidate.chunk.chain_id in self._blocked_chains:
             return SpeechCandidateStatus.SUPERSEDED, "interrupted_chain"
+        if request.correlation_id and request.correlation_id in self._abandoned_correlations:
+            # Tour abandonné pendant la réflexion : même une parole déjà rédigée
+            # ne répond plus à ce que l'utilisateur vient de dire.
+            return SpeechCandidateStatus.SUPERSEDED, "turn_abandoned"
         if request.source is None:
             return SpeechCandidateStatus.DEFERRED, "unknown_source"
         if not self._source_complete or self._current_source is None:

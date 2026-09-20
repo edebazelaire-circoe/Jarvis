@@ -84,6 +84,28 @@ def test_the_system_prompt_makes_delegation_a_firm_rule_with_concrete_criteria()
     assert "Pas de markdown" in prompt and "tableaux" in prompt
 
 
+def test_the_system_prompt_makes_the_brain_a_witness_and_not_a_diagnostician():
+    """Ce que le cerveau transmet, et ce qu'il n'a pas le droit d'inventer.
+
+    Le 18/09/2026 sa consigne pour l'orbite portait un diagnostic et, pire, le
+    critère de recette à remplir. Le sous-agent l'a rempli à la lettre sur la
+    mauvaise grandeur ; il a fallu quatre tours pour s'en apercevoir. Le
+    cerveau rapporte donc, il ne diagnostique plus."""
+
+    prompt = BRAIN_SYSTEM_PROMPT
+    flat = " ".join(prompt.split())
+    # Le sous-agent est responsable de sa tâche, y compris de sa méthode.
+    assert "responsable de sa tâche" in flat
+    assert "tu ne lui dictes ni la solution ni la façon de la prouver" in flat
+    # Ce qui, lui, doit voyager : les mots exacts, l'observable, l'historique.
+    for carried in ("dans ses mots exacts", "ce qu'il doit constater", "déjà été essayé et refusé"):
+        assert carried in flat, carried
+    # Les questions d'un chantier ont deux urgences, et une seule bouche.
+    assert "question bloquante passe avant" in flat
+    # L'ambiguïté se tranche avec l'utilisateur, jamais dans un chantier lancé au hasard.
+    assert "tu es le seul à avoir le micro" in flat
+
+
 class _FakePipedProcess:
     pid = 4321
 

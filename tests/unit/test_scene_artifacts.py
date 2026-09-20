@@ -566,7 +566,11 @@ def test_orphan_artifacts_are_bulk_archivable_by_the_user_only_and_linked_ones_n
 #: le prompt système gagne la section « RETOURS UTILISATEUR » — où déposer la
 #: fiche quand l'utilisateur signale un dysfonctionnement constaté en usage.
 #: La consigne d'affichage, elle, ne bouge pas.
-BASE_SYSTEM_SHA256 = "add22d48f8569dca855df941fed1097b071c3a119b4086e3ec88d2932aed3eef"
+#: Délégation (19/09/2026, changement délibéré hors scène) : la règle du brief
+#: remplace « donne une consigne complète et autonome » par ce que le cerveau
+#: transmet — les mots de l'utilisateur, l'observable, l'historique des refus —
+#: et lui retire le diagnostic. La consigne d'affichage, elle, ne bouge pas.
+BASE_SYSTEM_SHA256 = "bf71be1c52ab13bceeb37ee686dd4f3aea7346182988b6b3ac983d0c2080e7ce"
 BASE_DISPLAY_SHA256 = "e8c0cdaeeaee41d2143a2149e184957bebc974dcbe4550dbc838d8f4328b28d1"
 
 
@@ -806,7 +810,7 @@ def test_the_page_keeps_one_tab_stop_prints_the_host_first_and_leaves_links_thei
     assert ".sc-items .sc-item-link-ref{flex:0 100 auto" in page
     assert "const list=element('ul','sc-items');list.tabIndex=-1;" in page
     assert "event.key==='PageDown'||event.key==='PageUp'" in page
-    menu = page[page.index("function onContextMenu(event)"):page.index("function select(id)")]
+    menu = page[page.index("function onContextMenu(event)"):page.index("function select(id,mode)")]
     assert menu.index("closest('.sc-item-link'))return;") < menu.index("event.preventDefault()")
     assert ".sc-items .sc-item-host{flex:none" in page and "L.hostTail(full,max)" in page
     change = page[page.index("async function changeRepresentation"):page.index("async function pinHere")]

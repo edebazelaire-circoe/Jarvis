@@ -137,6 +137,27 @@ BARGE_IN_POLL_S = _env_float("JARVIS_BARGE_IN_POLL_MS", 50.0, minimum=10.0, maxi
 #: Durée d'une trame du détecteur de parole proche (`jarvis.audio.duplex`).
 NEAR_END_FRAME_MS = 10
 
+# -- Barge-in pendant la réflexion (19/09/2026) -------------------------------
+#
+# Jusqu'ici l'interruption n'était armée que pendant la parole : les deux portes
+# du barge-in (`_on_near_end` et `realtime.speech_started`) exigeaient
+# `_output_live()`, c'est-à-dire de l'audio en train de jouer ou déjà reçu. Tant
+# que le cerveau réfléchissait — écran violet — parler ne produisait rien : le
+# tour continuait, et sa réponse arrivait ensuite par-dessus la question
+# suivante. L'utilisateur devait attendre.
+#
+# La porte s'ouvre désormais aussi quand le cerveau **tient la main sans rien
+# dire**. La preuve exigée ne change pas d'un iota : mêmes millisecondes de voix
+# locale, même marge d'énergie, même `speech_started` du fournisseur. Elle est
+# simplement plus sûre là qu'ailleurs — JARVIS ne parlant pas, il n'y a pas
+# d'écho à confondre avec l'utilisateur, et c'est l'écho qui avait provoqué les
+# treize fausses coupures du 18/09.
+#
+#: Au-delà, un cerveau qui n'a jamais rien dit ne tient plus la main : sans
+#: cette borne, un tour perdu (Core redémarré, réponse muette) laisserait le
+#: barge-in armé pour toujours sur une conversation en veille.
+THINKING_FLOOR_MAX_S = _env_float("JARVIS_BARGE_IN_THINKING_MAX_S", 180.0, minimum=1.0, maximum=3600.0)
+
 # Diagnostics du barge-in Solo Owner : scalaires seulement, jamais d'audio ni
 # d'empreinte vocale. Les instants sont ceux de l'horloge de la capture.
 BARGE_IN_AUTHORITY_KIND = "voice.barge_in.authority"
@@ -1297,8 +1318,10 @@ class RealtimeConversationBridge:
         on_thinking: Callable[[], object] | None = None,
         on_speaking: Callable[[], object] | None = None,
         on_response_done: Callable[[], object] | None = None,
+        on_brain_pending: Callable[[bool], object] | None = None,
         on_output_event: Callable[[ProtocolEnvelope], object] | None = None,
         on_interruption: Callable[[PlaybackCursor | None], object] | None = None,
+        on_turn_abandoned: Callable[[str | None], object] | None = None,
         on_user_speech: Callable[[bool], object] | None = None,
         on_reflex: Callable[..., object] | None = None,
         output_admission: Callable[[str], OutputAdmission | None] | None = None,
@@ -1348,6 +1371,12 @@ class RealtimeConversationBridge:
         self.on_thinking = on_thinking
         self.on_speaking = on_speaking
         self.on_response_done = on_response_done
+        # Fait indépendant de la parole : « le cerveau doit encore répondre ».
+        # Il est publié à part pour que la surface puisse dériver sa couleur
+        # au lieu de la recevoir écrasée par le dernier évènement de bouche —
+        # sans quoi le préambule du cerveau réflexe, une fois dit, rendrait
+        # l'écran à l'écoute alors que le cerveau travaille toujours.
+        self.on_brain_pending = on_brain_pending
         # Notifie l'ordonnanceur de parole du cycle de vie des sorties vocales.
         # Le bridge reste le seul lecteur de `session.events()` : ouvrir un
         # second flux ferait que les deux boucles se voleraient les évènements.
@@ -1357,6 +1386,10 @@ class RealtimeConversationBridge:
         # `SpeechRequest` la sortie restituait, donc le seul à pouvoir rendre
         # l'historique honnête (critère d'acceptation 2).
         self.on_interruption = on_interruption
+        # Coupé pendant la réflexion : il n'y a pas de phrase à arrêter, mais un
+        # tour à abandonner. Sans ce fil, l'interruption ne ferait que taire un
+        # cerveau qui continuerait de travailler pour une question périmée.
+        self.on_turn_abandoned = on_turn_abandoned
         self.auto_turn = auto_turn
         # Mode continu : la session couvre plusieurs tours, donc le flux
         # d'entrée n'est jamais fermé entre eux. Voir `_consume`.
@@ -1372,6 +1405,10 @@ class RealtimeConversationBridge:
         self._input_task: asyncio.Task[None] | None = None
         self._input_submitted = False
         self._response_had_audio = False
+        # Le cerveau a reçu un tour adressé et n'a pas encore ouvert la bouche.
+        # Vrai indépendamment de ce qui joue au haut-parleur : un préambule du
+        # cerveau réflexe se dit **pendant** que ce fait reste vrai.
+        self._brain_pending = False
         # Une réponse qui a appelé un outil n'est pas la fin du tour : le
         # résultat en déclenche une seconde, qui portera la parole finale.
         self._tool_result_pending = False
@@ -1471,6 +1508,13 @@ class RealtimeConversationBridge:
         # Voir `_on_barge_timeout` et `_late_barge_confirmation`.
         self._barge_rejected_at: float | None = None
         self._barge_rejections = 0
+        # -- La main tenue par le cerveau, sans un mot (19/09/2026) -----------
+        # Corrélation du tour confié au cerveau qui n'a pas encore ouvert la
+        # bouche, et l'instant où il est parti. Tant qu'elle vaut quelque chose,
+        # JARVIS tient la main : le barge-in est armé comme pendant la parole,
+        # et ce qu'il coupe alors n'est pas une phrase, c'est ce tour-là.
+        self._brain_floor_correlation: str | None = None
+        self._brain_floor_at = 0.0
         # -- Solo Owner : autorité du propriétaire (voir `BargeInAuthority`) --
         self.barge_in_authority = barge_in_authority
         self._owner_source = owner_source if barge_in_authority is BargeInAuthority.OWNER else None
@@ -1549,6 +1593,21 @@ class RealtimeConversationBridge:
         value = callback()
         if hasattr(value, "__await__"):
             await value
+
+    async def _note_brain_pending(self, pending: bool) -> None:
+        """Publier le fait « le cerveau doit encore répondre », à sa transition.
+
+        Deux faits vivent côte à côte pendant un tour : le cerveau réfléchit,
+        et quelque chose est en train d'être dit. Les mélanger dans un seul
+        état laissait la fin d'un préambule décider de l'écran à la place du
+        cerveau ; ici chacun est publié pour lui-même, et la surface dérive la
+        couleur qu'elle affiche.
+        """
+
+        if self._brain_pending == pending:
+            return
+        self._brain_pending = pending
+        await self._call_with(self.on_brain_pending, pending)
 
     async def _call_with(self, callback: Callable[[object], object] | None, argument: object) -> None:
         """Comme `_call`, pour un rappel qui reçoit une valeur."""
@@ -1642,6 +1701,9 @@ class RealtimeConversationBridge:
         """
 
         started = time.perf_counter()
+        # Rien ne jouait et le cerveau tenait la main : ce que l'utilisateur
+        # reprend n'est pas une phrase, c'est le tour en cours de réflexion.
+        thinking_floor = not self._output_live() and self._brain_floor()
         suppress = getattr(self.session, "suppress_playback_until_session_end", None)
         if callable(suppress):
             suppress()  # Fence both queued and future PCM before any device await.
@@ -1698,6 +1760,11 @@ class RealtimeConversationBridge:
             self._interrupted_speech_id = (
                 _optional_text(newest.get("speech_id")) or _optional_text(newest.get("output_id")) if newest else None
             )
+        if thinking_floor:
+            # Aucune phrase n'a été entendue, donc aucune n'a été coupée.
+            # Laisser une marque ici ferait dire au tour suivant que
+            # l'utilisateur a interrompu JARVIS en train de parler.
+            self._interrupted_speech_id = None
         await self._call_with(self.on_interruption, cursor)
         data: dict[str, object] = {
             "conversation_id": self.conversation_id,
@@ -1721,7 +1788,49 @@ class RealtimeConversationBridge:
         self._trace("voice.barge_in", "Interruption demandée, nettoyage audio en attente" if stopped is False else "L'utilisateur a coupé la parole de JARVIS", data=data)
         if owner is not None and stopped is not False:
             self._trace_owner_stop(owner, stop_stream_ms=stop_stream_ms, data=data)
+        if thinking_floor:
+            # Le fournisseur ne génère rien : `response.cancel` n'aurait rien à
+            # annuler, et il n'y a pas d'historique à tronquer. Ce qui doit
+            # s'arrêter est ailleurs — dans Core, où le tour réfléchit encore.
+            await self._abandon_brain_turn()
+            return
         await self._cancel_provider_output(cursor)
+
+    async def _abandon_brain_turn(self) -> None:
+        """Rendre la main quand l'utilisateur coupe un cerveau silencieux.
+
+        Trois effets, et pas un de plus :
+
+        - la main est rendue (`_release_brain_floor`), donc le barge-in se
+          désarme de lui-même jusqu'au prochain tour ;
+        - le tour est abandonné en aval (`on_turn_abandoned`) : l'ordonnanceur
+          retire sa parole de la file et prie Core d'arrêter la tâche. Sans ce
+          fil, l'interruption ne ferait que **taire** le cerveau, qui
+          continuerait de réfléchir et répondrait plus tard, en travers ;
+        - l'écran repasse à l'écoute, parce que c'est exactement ce qui se
+          passe : plus personne ne parle, plus personne ne réfléchit, et
+          l'utilisateur a la parole.
+
+        Ce que le tour avait lancé — jobs, sous-agents — continue : couper la
+        parole n'annule pas la tâche (Décisions 15 et 35), et Core ne touche
+        pas aux exécutions en cours (`BrainOrchestrator.cancel_turn`).
+        """
+
+        correlation_id = self._release_brain_floor()
+        self._trace(
+            "voice.brain_turn_abandoned",
+            "L'utilisateur a repris la parole pendant la réflexion : le tour est abandonné",
+            data={"conversation_id": self.conversation_id,
+                  "session_id": str(getattr(self.session, "session_id", "")) or None,
+                  "correlation_id": correlation_id,
+                  # La promesse, rendue vérifiable dans la trace.
+                  "work_cancelled": False},
+        )
+        await self._call_with(self.on_turn_abandoned, correlation_id)
+        # Le cerveau ne doit plus rien : sans ce fait, la surface continuerait
+        # d'afficher le violet de la réflexion par-dessus l'écoute retrouvée.
+        await self._note_brain_pending(False)
+        await self._call(self.on_listening)
 
     def _capture_stream_ms(self) -> int | None:
         """Instant présent sur l'horloge de la capture duplex, s'il y en a une."""
@@ -2253,6 +2362,11 @@ class RealtimeConversationBridge:
         payload = acceptance if isinstance(acceptance, dict) else {}
         self._admit_canonical_transcript(provider_item_id, source_correlation_id=correlation_id)
         self._last_correlation_id = correlation_id
+        # Core a pris le tour : à partir d'ici et jusqu'à la parole de ce
+        # tour-là, JARVIS tient la main sans un mot. C'est la fenêtre pendant
+        # laquelle l'interruption n'existait pas (19/09/2026).
+        self._brain_floor_correlation = correlation_id
+        self._brain_floor_at = self._clock()
         self._trace(
             "voice.brain_turn_submitted",
             text[:300],
@@ -2761,6 +2875,38 @@ class RealtimeConversationBridge:
 
         return self._playing or self._queued_audio > 0
 
+    def _brain_floor(self) -> bool:
+        """Le cerveau tient la main sans parler : il réfléchit à un tour parti d'ici.
+
+        Vrai du `submit_brain_turn()` accepté jusqu'à la parole de ce tour (ou
+        son abandon), et jamais au-delà de `THINKING_FLOOR_MAX_S` : un cerveau
+        qui n'a rien dit de la journée ne doit pas laisser le micro armé sur une
+        conversation en veille.
+        """
+
+        if not self.continuous or self._brain_floor_correlation is None:
+            return False
+        return self._clock() - self._brain_floor_at < THINKING_FLOOR_MAX_S
+
+    def _floor_live(self) -> bool:
+        """JARVIS a la main : il parle, **ou** il réfléchit.
+
+        C'est la porte du barge-in depuis le 19/09/2026. Elle ne relâche
+        aucune preuve — voir `_confirm_sustained_barge_in` — elle dit seulement
+        qu'il y a quelque chose à reprendre. Auparavant, seul `_output_live()`
+        la gardait : un cerveau silencieux ne pouvait pas être interrompu, et
+        l'utilisateur n'avait qu'à attendre.
+        """
+
+        return self._output_live() or self._brain_floor()
+
+    def _release_brain_floor(self) -> str | None:
+        """Rendre la main tenue par le cerveau, et dire quel tour la tenait."""
+
+        correlation_id, self._brain_floor_correlation = self._brain_floor_correlation, None
+        self._brain_floor_at = 0.0
+        return correlation_id
+
     def _set_output_gain(self, gain: float) -> None:
         setter = getattr(self.audio, "set_output_gain", None)
         if setter is not None:
@@ -2801,7 +2947,7 @@ class RealtimeConversationBridge:
         confirmation du propriétaire seule habilitée à interrompre.
         """
 
-        if not self.continuous or not self._output_live():
+        if not self.continuous or not self._floor_live():
             return
         if self.barge_in_authority is BargeInAuthority.OWNER:
             # Solo Owner configuré : jamais la règle acoustique, même
@@ -2977,47 +3123,77 @@ class RealtimeConversationBridge:
         )
         loop.call_later(min(BARGE_IN_POLL_S, self.barge_in_sustain_s), self._post, "barge_sustain", self._barge_pending_token)
 
+    def _accumulate_barge_evidence(self, now: float) -> str | None:
+        """Relever les compteurs de la capture et les verser dans la fenêtre.
+
+        Rend le code de rejet quand le micro s'est tu assez longtemps pour
+        refermer le candidat, `None` sinon. Extrait du pas de fenêtre pour que
+        la décision prise sur une **fin de parole** voie la même preuve : sans
+        ce relevé, une phrase terminée avant le premier pas paraîtrait n'avoir
+        laissé aucune trace, et retomberait sur la voie « pas de preuve locale ».
+        """
+
+        counters = self._frame_counters()
+        if counters is None or self._barge_counters is None:
+            return None
+        processed = max(0, counters[0] - self._barge_counters[0])
+        voiced = max(0, counters[1] - self._barge_counters[1])
+        self._barge_counters = counters
+        self._barge_frames_seen += processed
+        self._barge_voiced_seen += voiced
+        if voiced:
+            self._barge_voice_at = now
+            self._barge_peak_margin_db = max(self._barge_peak_margin_db, self._last_margin_db())
+            return None
+        if not processed:
+            # Aucune trame intégrée : la capture ne tourne pas (rejeu hors
+            # ligne, périphérique arrêté). Son silence ne prouve rien —
+            # surtout pas que l'utilisateur s'est tu.
+            self._barge_voice_at = now
+            return None
+        if now - self._barge_voice_at >= self.barge_in_silence_grace_s:
+            # Le micro s'est tu pendant que JARVIS jouait en sourdine : ce
+            # n'était pas l'utilisateur. Le volume remonte tout de suite.
+            return "barge_in_local_voice_gone"
+        return None
+
     async def _on_barge_sustain(self, token: object) -> None:
         """Un pas de la fenêtre de preuve : accumuler, rejeter tôt, ou décider."""
 
         if not self._barge_confirming or token != self._barge_pending_token:
             return
-        if not self._output_live():
-            # Plus rien à couper : la phrase s'est terminée pendant la preuve.
-            # Rendre le volume maintenant, pas à la fin de la réponse.
+        if not self._floor_live():
+            # Plus rien à reprendre : la phrase s'est terminée pendant la preuve,
+            # et le cerveau ne tient plus la main. Rendre le volume maintenant,
+            # pas à la fin de la réponse. Une réflexion en cours, elle, garde la
+            # fenêtre ouverte : il n'y a pas d'audio, mais il y a un tour.
             await self._reject_barge_confirmation("barge_in_output_finished")
             return
         loop = asyncio.get_running_loop()
         now = loop.time()
-        counters = self._frame_counters()
-        if counters is not None and self._barge_counters is not None:
-            processed = max(0, counters[0] - self._barge_counters[0])
-            voiced = max(0, counters[1] - self._barge_counters[1])
-            self._barge_counters = counters
-            self._barge_frames_seen += processed
-            self._barge_voiced_seen += voiced
-            if voiced:
-                self._barge_voice_at = now
-                self._barge_peak_margin_db = max(self._barge_peak_margin_db, self._last_margin_db())
-            elif not processed:
-                # Aucune trame intégrée : la capture ne tourne pas (rejeu hors
-                # ligne, périphérique arrêté). Son silence ne prouve rien —
-                # surtout pas que l'utilisateur s'est tu.
-                self._barge_voice_at = now
-            elif now - self._barge_voice_at >= self.barge_in_silence_grace_s:
-                # Le micro s'est tu pendant que JARVIS jouait en sourdine : ce
-                # n'était pas l'utilisateur. Le volume remonte tout de suite.
-                await self._reject_barge_confirmation("barge_in_local_voice_gone")
-                return
+        rejection = self._accumulate_barge_evidence(now)
+        if rejection is not None:
+            await self._reject_barge_confirmation(rejection)
+            return
         if now - self._barge_ducked_at < self.barge_in_sustain_s:
             loop.call_later(BARGE_IN_POLL_S, self._post, "barge_sustain", self._barge_pending_token)
             return
         await self._decide_sustained_barge_in()
 
-    async def _decide_sustained_barge_in(self) -> None:
-        """Fin de la fenêtre : couper seulement sur une preuve locale tenue."""
+    async def _decide_sustained_barge_in(self, *, require_provider_speech: bool = True) -> None:
+        """Fin de la fenêtre : couper seulement sur une preuve locale tenue.
 
-        if not self._user_speaking:
+        `require_provider_speech` n'est levé que par `_settle_confirmation_on_speech_end()`,
+        c'est-à-dire sur une fin de parole arrivée pendant la réflexion, alors
+        que **rien ne joue**. Le verrou du VAD vient alors de retomber par
+        définition : l'exiger encore reviendrait à rejeter toute phrase plus
+        courte que la fenêtre. Ce n'est pas un relâchement de la protection
+        anti-écho du 18/09 — celle-ci vit dans la preuve locale ci-dessous
+        (millisecondes de voix proche, marge d'énergie), exigée à l'identique,
+        et l'écho suppose un haut-parleur qui parle.
+        """
+
+        if require_provider_speech and not self._user_speaking:
             await self._reject_barge_confirmation("barge_in_speech_too_short")
             return
         if self._barge_counters is None or not self._barge_frames_seen:
@@ -3034,6 +3210,27 @@ class RealtimeConversationBridge:
             await self._reject_barge_confirmation("barge_in_local_voice_too_weak", voiced_ms=voiced_ms)
             return
         await self._barge_in()
+
+    async def _settle_confirmation_on_speech_end(self) -> None:
+        """La parole s'arrête pendant une fenêtre de preuve : jeter, ou trancher ?
+
+        Pendant que JARVIS parle, une fin de parole précoce est le signe même de
+        l'écho : bouffée brève, verrou qui retombe. Le candidat est jeté, et
+        c'est la protection posée le 18/09/2026.
+
+        Pendant la réflexion, rien ne sort du haut-parleur : il n'y a pas d'écho
+        à confondre avec l'utilisateur, et jeter le candidat condamnerait toute
+        phrase plus courte que `barge_in_sustain_s` — « stop », « attends » —
+        c'est-à-dire précisément les phrases par lesquelles on reprend la main.
+        On tranche alors sur la preuve locale déjà accumulée, sans en abaisser
+        la barre.
+        """
+
+        if self._brain_floor() and not self._output_live():
+            self._accumulate_barge_evidence(asyncio.get_running_loop().time())
+            await self._decide_sustained_barge_in(require_provider_speech=False)
+            return
+        await self._reject_barge_confirmation("barge_in_speech_too_short")
 
     async def _reject_barge_confirmation(self, code: str, *, voiced_ms: float | None = None) -> None:
         """Preuve insuffisante : c'était l'écho, JARVIS reprend à plein volume.
@@ -3698,6 +3895,12 @@ class RealtimeConversationBridge:
             # JARVIS commence à parler : de la parole utile, donc du
             # temps rendu à l'utilisateur pour répondre (Décision 10).
             self._track_playback_output(event)
+            if _optional_text((event.payload or {}).get("speech_id")) is not None:
+                # Une sortie portant une demande de parole est celle du
+                # cerveau : il vient de rendre sa réponse, il ne réfléchit
+                # plus. Une sortie sans `speech_id` est un réflexe de surface,
+                # et ne dit rien de l'état du cerveau.
+                await self._note_brain_pending(False)
             await self._notify_output(event)
             self._trace(
                 "voice.output_started",
@@ -3718,6 +3921,13 @@ class RealtimeConversationBridge:
         elif event.message_type == "realtime.response_done":
             response_had_audio, self._response_had_audio = self._response_had_audio, False
             status = str(event.payload.get("status") or "")
+            if _optional_text((event.payload or {}).get("speech_id")) is not None:
+                # Une sortie qui porte une demande de parole est celle du
+                # cerveau : il a rendu sa réponse, il ne tient plus la main sans
+                # parler. Une sortie sans `speech_id` est un réflexe de surface,
+                # qui ne dit rien du tour en cours — et ne doit donc pas
+                # désarmer le barge-in pendant que le cerveau réfléchit encore.
+                self._release_brain_floor()
             self._canonical_playback(event.payload, terminal=True)
             self._release_playback_output(event)
             if not self._output_live():
@@ -3807,7 +4017,7 @@ class RealtimeConversationBridge:
                     analysis.allow_item(item_id, str(uuid.uuid4()))
             if self.continuous:
                 await self._note_user_speech(True)
-            if self.continuous and self._output_live():
+            if self.continuous and self._floor_live():
                 if self.barge_in_authority is BargeInAuthority.OWNER:
                     # Solo Owner : seul le propriétaire confirmé localement
                     # coupe. Ce signal peut venir de n'importe quelle voix ;
@@ -3874,12 +4084,17 @@ class RealtimeConversationBridge:
             if self.continuous:
                 await self._note_user_speech(False)
             if self._barge_confirming:
-                await self._reject_barge_confirmation("barge_in_speech_too_short")
+                await self._settle_confirmation_on_speech_end()
         elif event.message_type == "realtime.input_committed":
             if self.continuous:
                 # Sans parole, pas de commit : si `speech_stopped` s'est
                 # perdu, c'est ici que l'utilisateur a fini de parler.
                 await self._note_user_speech(False)
+                if self._barge_confirming:
+                    # Même raisonnement qu'à `speech_stopped`, pour le cas où
+                    # celui-ci s'est perdu : une fenêtre de preuve ouverte
+                    # pendant la réflexion se tranche, elle ne se jette pas.
+                    await self._settle_confirmation_on_speech_end()
             if self.auto_turn and self.continuous:
                 # Le micro reste ouvert : c'est le VAD serveur qui
                 # découpe les tours, et fermer le flux ici condamnerait
@@ -4201,8 +4416,14 @@ class RealtimeConversationBridge:
             self._admit_canonical_transcript(item_id)
         if self.continuous and not submitted:
             # Core a refusé le tour : aucune réponse ne viendra.
+            await self._note_brain_pending(False)
             await self._call(self.on_listening)
             return False
+        if self.continuous:
+            # Le tour est parti au cerveau : à partir d'ici, et jusqu'à ce que
+            # sa propre parole s'ouvre, il réfléchit — quoi qu'il se dise
+            # entre-temps.
+            await self._note_brain_pending(True)
         await self._call(self.on_thinking)
         if self._pending_action_id is not None and normalized in {"oui", "non", "yes", "no"}:
             result = await self.core.confirm_action(self._pending_action_id, text)
