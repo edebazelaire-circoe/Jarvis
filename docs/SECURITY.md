@@ -16,7 +16,9 @@ Audio/transcript/prompt/tool data sent to the configured OpenAI API crosses the 
 
 ### Local UI boundary
 
-Barehands and ai-visualizer are separate third-party processes pinned to exact upstream revisions. They are not imported into the Jarvis core.
+**Barehands** (one word, the upstream AGPL board) and ai-visualizer are separate third-party processes pinned to exact upstream revisions. They are not imported into the Jarvis core.
+
+**Bare Hands** (two words) is a different subsystem entirely: native Jarvis code running inside the Control Center page, with no separate process, no port and no token. It shares a name with the board and nothing else. The spelling convention is stated once in `docs/ARCHITECTURE.md`, *Two subsystems, one word*; this file follows it throughout. Bare Hands has its own control, § 14 below.
 
 ### User memory boundary
 
@@ -42,13 +44,13 @@ Board and visualizer URLs are rejected unless they use HTTP and resolve by confi
 
 Note: hostname validation is a configuration guard, not a DNS pinning mechanism. Keep V1 on trusted local workstations and do not proxy these ports to external interfaces.
 
-### 5. Barehands mutation authentication
+### 5. Barehands (upstream board) mutation authentication
 
 At each full launch, Jarvis generates a high-entropy random token. It is passed in process environment to Jarvis and Barehands; commands send it only in `X-Jarvis-Token`. It is not embedded in a URL, page, config file or visualizer process environment.
 
 Patched Barehands rejects `/cmd` when the configured token is absent, mismatched, or an explicitly supplied Origin is non-loopback.
 
-### 6. No runtime CDN/model dependency for Barehands
+### 6. No runtime CDN/model dependency for Barehands (upstream board)
 
 Bootstrap downloads immutable/pinned upstream snapshots and exact browser packages/model once, verifies integrity, then replaces runtime remote references with local assets.
 
@@ -212,7 +214,7 @@ end stays visible as far as the room allows (`…ogin-check.co.uk`, never
 row); the full host is in the
 accessible name and tooltip, never pre-truncated; a long brain label or ref
 shrinks instead. Everything else stays text (`textContent`). Opening a link is a
-user click (a Barehands pinch opens nothing: popups need real user activation).
+user click (a Bare Hands pinch opens nothing: popups need real user activation).
 Right-click on a link keeps the browser's own menu. Not covered, accepted: a
 legitimate-looking but hostile `https` host and ASCII look-alikes (mitigated only
 by the printed host); international hosts are text, not links (the rule refuses
@@ -298,11 +300,60 @@ entries (`display.*`) carry identifiers and outcomes, never note content. Making
 the actor an authenticated property (per-actor credentials the brain cannot read,
 or an OS boundary around the brain) is out of V1 scope.
 
+### 14. Bare Hands (native subsystem): camera, assets, command channel, traces
+
+Four surfaces that belong to the native subsystem and to nothing else. It runs
+**inside the Control Center page**: no separate process, no port, no token, no
+network egress of its own.
+
+**The camera is opened by the page, and only after an explicit switch.** The
+`Activer Bare Hands` switch in the Expérimental tab is **off by default** and
+the browser's own camera permission prompt still gates it — Jarvis cannot grant
+it. Turning it on leads to `sleep`, never straight to interaction: the camera is
+open but feeds only a 5 fps watcher, and no pointer, hover or click exists until
+the user holds the wake pose for a second. Frames are processed in the page by
+locally served MediaPipe and are **never uploaded, never written to disk, and
+never sent to any model provider**. Closing the page or navigating away releases
+the device (`pagehide` disables an engaged controller).
+
+**There is no raw-video path at all.** Not disabled, not opt-in — absent. The
+only thing that leaves the tracker is a neutral `HandFrame` of scalars.
+
+**`GET /barehands/assets/…` serves a closed whitelist, not a directory.** Six
+exact names (`ASSETS` in `jarvis/runtime/barehands_test_mode.py`) map to six
+exact files; anything else is 404 whatever the disk holds. A repository-wide
+grep for `FileResponse|web.static|StaticFiles|send_file` under `jarvis/` returns
+**exactly one hit** — this handler — so there is no second, more permissive way
+to serve a file. Tests cover traversal, aliases and not-installed names.
+
+**The `/api/barehands/commands` trio is origin-guarded on every method**, GET
+included, and is listed in `READ_GUARDED_ROUTES` so the Host must be loopback
+too (DNS rebinding) and `Sec-Fetch-Site: cross-site` is refused outright. The
+GET matters for an unusual reason: `deliver()` marks a command delivered to the
+**first** long-poll that asks, so a cross-origin page that could not read the
+body would still have **consumed** the command — a denial of command, not a
+leak. Every refusal carries a stable code in the body **and** in
+`X-Jarvis-Error-Code`. `GET /api/scene/patches` has the same long-poll shape but
+not that property (its cursor is caller-supplied and nothing is consumed), so it
+is deliberately not in the table.
+
+**Traces are opt-in, scalar-only, and local.** Diagnostic recording is off
+unless the user starts it. A trace may carry **numbers, closed-vocabulary names
+and booleans — and nothing else**: no landmarks, no images, no free text. The
+whitelist runs at module load in the page (`assertDerivedOnly`) and again on the
+server (`jarvis/runtime/barehands_trace.py`), which refuses a document with a
+code rather than storing what it cannot vouch for. Files land in
+`<runtime_root>/barehands-traces/`, capped per document (18000 frames, 32 MiB),
+with one journal line each. **They are not pruned in V1** and are plain local
+JSON — the same standing as `runtime/trace.jsonl`.
+
 ## Residual risks / non-goals
 
+- Bare Hands traces are never pruned and are not encrypted at rest; a user who recorded a diagnostic session leaves scalar interaction data in `runtime/barehands-traces/` until they delete it by hand.
+- Bare Hands has had **no real-camera validation on this run**: the human waived those checks, which means they are un-run, not passed. See `ACCEPTANCE_STATUS.md` and the camera session in `OPERATIONS.md`.
 - OpenAI is an online provider in this V1; requests leave the machine according to provider/API policy.
-- Barehands and ai-visualizer are third-party AGPL software; operational/distribution license obligations require legal review for commercial packaging.
-- The patched Barehands page still contains upstream inline JavaScript/styles and therefore CSP allows inline execution.
+- Barehands (the upstream board) and ai-visualizer are third-party AGPL software; operational/distribution license obligations require legal review for commercial packaging. Bare Hands, the native subsystem, carries none of that code and none of that obligation — see § 14.
+- The patched Barehands board page still contains upstream inline JavaScript/styles and therefore CSP allows inline execution.
 - A fully compromised local user account can read process memory/environment, modify Python code, or replace the interpreter; V1 does not attempt to defend against a hostile OS account.
 - There is no cryptographic code signing of this Jarvis ZIP.
 - Confirmation is conversational, not OS-level privileged authorization.
@@ -312,4 +363,4 @@ or an OS boundary around the brain) is out of V1 scope.
 
 ## Release rule
 
-Do not label the V1 fully released until the manual workstation gates in `ACCEPTANCE_STATUS.md` pass, especially authenticated/unauthenticated Barehands checks, browser offline load, physical gestures, real microphone/speaker loop, and real-provider latency measurement.
+Do not label the V1 fully released until the manual workstation gates in `ACCEPTANCE_STATUS.md` pass, especially authenticated/unauthenticated Barehands board checks, the Bare Hands camera session of `OPERATIONS.md`, browser offline load, physical gestures, real microphone/speaker loop, and real-provider latency measurement.

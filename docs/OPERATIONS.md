@@ -458,16 +458,23 @@ L'onglet porte **deux sections de plus**, et la distinction est le sujet
 pleine session ; un **réglage** dit « comment Bare Hands se comporte » et se
 persiste.
 
-**Outils.** Palette de cinq. `Pointeur` reste **contextuel** — clic,
+**Outils.** Palette de **trois**. `Pointeur` reste **contextuel** — clic,
 glissement, défilement ou sélection selon ce qu'il y a sous la main, c'est-à-dire
 le comportement d'avant. `Main` impose le défilement, `Sélection` impose la
 désignation ; l'une et l'autre **refusent** une cible qui ne s'y prête pas, et
 le refus s'écrit sous la pastille (`OUTIL INAPPLICABLE · cette cible ne s'y
-prête pas`). `Surligneur` et `Dessin` sont déclarés au contrat mais n'ont
-**aucun moteur** en V1 : ils sont dessinés et désarmés, avec leur motif en
-infobulle, et le serveur les refuse (`barehands_tool_not_installed`) plutôt que
-de les accepter sans effet. Un outil ne prend jamais un bord, un coin, ni le
-corps d'une étoile `point`/`signal` : ce sont des poignées de cadre.
+prête pas`). Un outil ne prend jamais un bord, un coin, ni le corps d'une étoile
+`point`/`signal` : ce sont des poignées de cadre.
+
+`Surligneur` et `Dessin` ont été **retirés de la V1** (décision humaine, fin de
+tâche). Ils étaient déclarés au contrat, refusés partout, et possédés par
+aucune Slice : la palette proposait deux capacités qui n'existaient pas, et
+rien à l'écran ne doit laisser croire à une capacité absente. La couche
+d'annotation sera conçue pour elle-même, plus tard. La table
+`INSTALLED_TOOLS` reste néanmoins **séparée** de `TOOLS`, bien qu'elles
+coïncident aujourd'hui : c'est elle qui rend « installé » vérifiable, donc un
+outil déclaré demain sans moteur se refait refuser
+(`barehands_tool_not_installed`) au lieu d'être accepté sans effet.
 
 **Réglages**, tous appliqués à chaud et enregistrés immédiatement :
 
@@ -478,13 +485,18 @@ corps d'une étoile `point`/`signal` : ce sont des poignées de cadre.
 | Sensibilité du geste | divise les deux tolérances de déplacement (`clickSlopPx`, `dragSlopPx`) ; le défaut rend les seuils d'usine |
 | Retour en veille | décision 7, 5 s à 600 s ; c'est enfin le délai **réel** (le contrôleur recevait la constante) |
 | Lecture de diagnostic | panneau en bas à droite : qualité, vitesse et immobilité par main. Rien n'est enregistré ; éteint, le panneau est **absent** de l'arbre |
-| Proposer la calibration | décision 27 ; **persisté, aucun parcours ne le lit encore** |
-| Tutoriel déjà vu | **persisté, aucun parcours ne le lit encore** |
-| Réinitialiser les réglages | rend les valeurs d'usine ; **ne touche pas à l'interrupteur**, donc n'éteint jamais la caméra |
+| Proposer la calibration | décision 27 ; **lu depuis la Slice 08** : décoché, le bouton « Calibrer » est désarmé et le parcours ne se propose plus |
+| Tutoriel déjà vu | **lu depuis la Slice 09** : coché, « Lancer le tutoriel » répond « Tutoriel terminé » au lieu de rejouer les dix étapes ; le parcours le coche lui-même en arrivant au bout |
+| Réinitialiser les réglages | rend les valeurs d'usine ; **ne touche pas à l'interrupteur**, donc n'éteint jamais la caméra, et **ne touche pas au profil de calibration** (voir ci-dessous) |
 
-Les deux réglages en attente sont annoncés comme tels par un encadré de
-l'onglet, plutôt que par un bouton qui ne ferait rien : un contrôle inerte se
-lit comme une panne.
+**« Réinitialiser » réinitialise les réglages, pas le profil.** Le handoff
+parlait d'une « réinitialisation du profil » ; ce qui est livré remet les neuf
+**réglages** à l'usine et laisse la calibration enregistrée intacte. C'est un
+rétrécissement assumé et non un oubli : les deux effacements ne se pardonnent
+pas pareil — un réglage se refait en trois clics, une calibration coûte une
+minute de poses à l'utilisateur. Le profil s'efface par sa propre route
+(`clear`), qui retire le bloc au lieu de le remplir de nuls, et le moteur
+revient alors à ses défauts (décision 31).
 
 **Septième paire dangereuse.** `sleepTimeoutMs` doit rester **au-dessus** de
 `wakeHoldMs` : en dessous, la seconde de posture en C coûte plus cher que le
@@ -500,6 +512,38 @@ appelant, pas l'interface.
 `tools()` liste la palette et `tool('pan')` en choisit un. `targetPreview()` et
 `targetAssistance()` changent le moteur **sans** persister — un essai n'a pas à
 devenir une préférence.
+
+#### Ce qu'une main peut saisir, et les deux façons de tirer
+
+La page a longtemps dit ici que « Barehands ne glisse pas ». C'était faux depuis
+la Slice 06, et le tableau de la scène constellation, trois lignes plus haut,
+disait déjà le contraire. Voici la vraie règle, qui est une distinction et non
+un oui-ou-non.
+
+**Un glissement de pointeur, partout.** Sur une page ordinaire — un panneau, une
+liste, un champ — un pincement tenu puis déplacé émet la vraie séquence
+`pointerdown` / `pointermove` / `pointerup`, et l'annulation émet
+`pointercancel`. Ce que la souris déplace, la main le déplace.
+
+**Une capture de cadre, sur les objets de la scène.** Une étoile, une capsule ou
+une fenêtre de la constellation ne passe **pas** par le pointeur : elle passe par
+la couture `JarvisScene.frames`, qui déplace, redimensionne et valide en unités
+de scène. Une zone tenue déplace le cadre entier ; deux zones compatibles du même
+objet le redimensionnent.
+
+**Et le corps d'une étoile n'émet aucune séquence de pointeur** — c'est le
+carve-out `.sc-node` de la décision 8. Sans lui, la page de scène lirait un
+glissement sur le corps comme un déplacement de cadre, c'est-à-dire exactement ce
+que la décision 8 interdit, mais par la porte de derrière : le corps d'une
+capsule ou d'une fenêtre est du **contenu** (on y défile, on y sélectionne), pas
+une poignée. Les poignées sont les bords et les coins.
+
+**Ce qui reste vrai, en revanche : le pincement n'ouvre pas de lien.** Un
+navigateur n'ouvre un onglet que sur une activation utilisateur réelle, et un
+geste synthétisé par la page n'en est pas une. Ce n'est pas une limite de Bare
+Hands mais une règle du navigateur, la même que celle notée au § 13 de
+`docs/SECURITY.md`. Un lien se lit à la main, il se suit à la souris ou au
+clavier.
 
 #### Procédure de test manuel (caméra réelle)
 
@@ -1182,8 +1226,11 @@ Limites de confiance : `docs/SECURITY.md` §13.
 **Limites connues.** 512 objets actifs (≈ 400 étoiles) : au-delà, la pastille
 « Scène pleine » propose l'archivage groupé et les nouvelles étoiles attendent.
 Zone de composition prévue à partir de 1280×720 : une fenêtre plus petite peut
-cacher des bords sous les commandes. Glisser au doigt jamais vérifié ; Barehands
-ne glisse pas et n'ouvre pas les liens. Une page par profil de navigateur tient
+cacher des bords sous les commandes. Glisser au doigt (tactile) jamais vérifié.
+**Bare Hands glisse** depuis la Slice 06 — voir « ce qu'une main peut saisir, et
+les deux façons de tirer » — mais **n'ouvre pas de lien** : un pincement n'est
+pas une activation utilisateur au sens du navigateur, donc rien qui demande un
+nouvel onglet ne part d'une main. Une page par profil de navigateur tient
 la lecture de la scène : avec la chronologie ouverte dans cinq fenêtres ou plus,
 la page ralentit. Un Control Center arrêté sans être relancé laisse ses
 sous-agents « en cours ». Le brain juge lui-même : il peut parler d'un résultat
